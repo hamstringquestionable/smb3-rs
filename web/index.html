@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMB3 Randomizer</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>SMB3 Randomizer</h1>
+        <p class="subtitle">Super Mario Bros. 3 Randomizer</p>
+
+        <div class="section">
+            <label for="rom-input" class="file-label" id="rom-label">
+                Select ROM file...
+            </label>
+            <input type="file" id="rom-input" accept=".nes" hidden>
+            <p class="note">You must provide your own SMB3 (USA Rev 1) ROM. It is never uploaded anywhere.</p>
+        </div>
+
+        <div class="section">
+            <label for="seed-input">Seed</label>
+            <div class="seed-row">
+                <input type="text" id="seed-input" placeholder="Random">
+                <button id="random-seed-btn" title="Generate random seed">&#x1f3b2;</button>
+            </div>
+        </div>
+
+        <fieldset class="section">
+            <legend>Randomization Options</legend>
+            <label class="checkbox-label">
+                <input type="checkbox" id="opt-powerups" checked>
+                Power-ups
+            </label>
+            <label class="checkbox-label">
+                <input type="checkbox" id="opt-palettes" checked>
+                Palettes
+            </label>
+            <label class="checkbox-label">
+                <input type="checkbox" id="opt-enemies">
+                Enemies <span class="tag">experimental</span>
+            </label>
+        </fieldset>
+
+        <div class="section">
+            <label>Output Format</label>
+            <div class="radio-group">
+                <label class="radio-label">
+                    <input type="radio" name="output-format" value="ips" checked>
+                    IPS Patch (.ips)
+                </label>
+                <label class="radio-label">
+                    <input type="radio" name="output-format" value="rom">
+                    Patched ROM (.nes)
+                </label>
+            </div>
+        </div>
+
+        <button id="generate-btn" disabled>Generate</button>
+
+        <div id="status" class="status" hidden></div>
+    </div>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>
