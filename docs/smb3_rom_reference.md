@@ -341,11 +341,40 @@ Source: `smb3.asm` from the [Southbird disassembly](https://github.com/captainso
 | 0x0C | Warp Whistle |
 | 0x0D | Music Box |
 
-### Block / Power-Up Offsets
+### LATP_QBlocks — ? Block Item Table
+
+File offset: **0x1168D** (17 bytes, in PRG008)
+
+This table maps ? block tile types to the item they produce. Tile IDs start at
+`TILEA_QBLOCKFLOWER` ($60), so tile $60 = index 0, tile $61 = index 1, etc.
+
+| Index | Tile | Name | Default | Item |
+|-------|------|------|---------|------|
+| 0 | $60 | QBLOCKFLOWER | $01 | Mushroom / Fire Flower |
+| 1 | $61 | QBLOCKLEAF | $02 | Super Leaf |
+| 2 | $62 | QBLOCKSTAR | $03 | Starman |
+| 3 | $63 | QBLOCKCOIN | $04 | Coin |
+| 4 | $64 | QBLOCKCOINSTAR | $05 | Coin or Star |
+| 5 | $65 | QBLOCKCOIN2 | $04 | Coin |
+| 6 | $66 | MUNCHER | $00 | Mushroom (context) |
+| 7+ | $67+ | BRICK etc. | varies | Bricks, special blocks |
+
+LATP item IDs (different from Global Item IDs and Player_Suit values):
+- $00 = Mushroom (context-dependent)
+- $01 = Mushroom / Fire Flower
+- $02 = Super Leaf
+- $03 = Starman
+- $04 = Coin
+- $05 = Coin or Star
+
+**Important:** Index 1 (leaf) must not be randomized — World 6-5 requires a
+leaf ? block to beat the level (flying needed).
+
+### Other Block / Power-Up Offsets
 
 | File Offset | Size | Description |
 |------------|------|-------------|
-| 0x02611–0x02618 | 8 bytes | Bumped block attribute data (item types from ? blocks) |
+| 0x02611–0x02618 | 8 bytes | Bumped block attribute data (unknown secondary table) |
 | 0x0261B–0x0262A | 16 bytes | Bumped block tile mappings |
 | 0x003F0–0x003F6 | 7 bytes | Power-up properties (bit format: xxxxxx SF, S=no slide, F=flight) |
 | 0x024EE–0x024F4 | 7 bytes | ? Block sprite output table |

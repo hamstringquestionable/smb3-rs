@@ -11,6 +11,12 @@ pub struct Options {
     pub palettes: bool,
     pub enemies: bool,
     pub world_order: bool,
+    #[serde(default = "default_false")]
+    pub big_q_blocks: bool,
+}
+
+fn default_false() -> bool {
+    false
 }
 
 impl Default for Options {
@@ -20,6 +26,7 @@ impl Default for Options {
             palettes: true,
             enemies: false,
             world_order: false,
+            big_q_blocks: false,
         }
     }
 }
@@ -39,5 +46,8 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     }
     if options.world_order {
         randomize::world_order::randomize(rom, &mut rng);
+    }
+    if options.big_q_blocks {
+        randomize::enemies::randomize_big_q_blocks(rom, &mut rng);
     }
 }

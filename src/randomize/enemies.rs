@@ -94,6 +94,22 @@ const CHEEPS: &[u8] = &[
     0x88, // OBJ_ORANGECHEEP
 ];
 
+/// Big ? Block IDs — these can be swapped with each other to randomize
+/// which suit/powerup the player gets from Big ? Blocks.
+const BIG_Q_BLOCKS: &[u8] = &[
+    0x94, // OBJ_BIGQBLOCK_3UP
+    0x95, // OBJ_BIGQBLOCK_MUSHROOM
+    0x96, // OBJ_BIGQBLOCK_FIREFLOWER
+    0x97, // OBJ_BIGQBLOCK_SUPERLEAF
+    0x98, // OBJ_BIGQBLOCK_TANOOKI
+    0x99, // OBJ_BIGQBLOCK_FROG
+    0x9A, // OBJ_BIGQBLOCK_HAMMER
+];
+
+/// File offset of the Tanooki Big ? Block in World 7-F1.
+/// This block must NOT be randomized — flying/Tanooki is required to beat the level.
+const W7F1_TANOOKI_OFFSET: usize = 0x0C336;
+
 /// All swap classes collected for lookup.
 const ALL_CLASSES: &[&[u8]] = &[
     GROUND_ENEMIES,
@@ -121,6 +137,17 @@ fn find_class(id: u8) -> Option<&'static [u8]> {
 /// special objects (end-level cards, pipes, platforms, bosses, powerups,
 /// autoscroll triggers, cannons, etc.) are never modified.
 pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
+    randomize_object_data(rom, rng, false);
+}
+
+/// Randomize Big ? Blocks by swapping their IDs among the set of Big ? Block
+/// types. The Tanooki block in World 7-F1 is protected because flying is
+/// required to beat that level.
+pub fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
+    randomize_object_data(rom, rng, true);
+}
+
+fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool) {
     let len = ENEMY_DATA_END - ENEMY_DATA_START;
     let mut data = rom.read_range(ENEMY_DATA_START, len).to_vec();
 
@@ -139,10 +166,18 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
         // Now parse 3-byte entries until we hit 0xFF or end of data
         while i + 2 < data.len() && data[i] != 0xFF {
             let obj_id = data[i];
+            let file_offset = ENEMY_DATA_START + i;
 
-            // Only swap if this ID belongs to a known enemy class
-            if let Some(class) = find_class(obj_id) {
-                data[i] = *class.choose(rng).unwrap();
+            if big_q_only {
+                // Only randomize Big ? Blocks, skip 7-F1 Tanooki
+                if BIG_Q_BLOCKS.contains(&obj_id) && file_offset != W7F1_TANOOKI_OFFSET {
+                    data[i] = *BIG_Q_BLOCKS.choose(rng).unwrap();
+                }
+            } else {
+                // Only swap if this ID belongs to a known enemy class
+                if let Some(class) = find_class(obj_id) {
+                    data[i] = *class.choose(rng).unwrap();
+                }
             }
 
             // Advance past the 3-byte entry (id, x, y)
@@ -244,6 +279,81 @@ mod tests {
         assert_eq!(
             rom1.read_range(ENEMY_DATA_START, len),
             rom2.read_range(ENEMY_DATA_START, len),
+        );
+    }
+
+    fn make_bigq_test_rom() -> Rom {
+        let mut data = vec![0u8; 393232];
+        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
+        data[4] = 16;
+        data[5] = 16;
+        data[6] = 0x40;
+
+        // Segment with a regular Big ? Block (should be randomized)
+        let seg1_start = ENEMY_DATA_START;
+        let seg1 = &[
+            0xFF,
+            0x01, // page flag
+            0x94, 0x18, 0x05, // BIGQBLOCK_3UP
+            0x98, 0x16, 0x14, // BIGQBLOCK_TANOOKI
+            0x41, 0xA8, 0x15, // ENDLEVELCARD (must not change)
+            0xFF,
+        ];
+        data[seg1_start..seg1_start + seg1.len()].copy_from_slice(seg1);
+
+        // Place the protected 7-F1 Tanooki at its exact file offset
+        // W7F1_TANOOKI_OFFSET = 0x0C336, which is the ID byte of the entry.
+        // We need: [FF] [page] [0x98, x, y] [0x41, x, y] [FF]
+        // So page byte at 0x0C335, entry at 0x0C336
+        let w7f1_seg_start = W7F1_TANOOKI_OFFSET - 2; // FF + page byte before the entry
+        data[w7f1_seg_start] = 0xFF;
+        data[w7f1_seg_start + 1] = 0x01; // page flag
+        data[W7F1_TANOOKI_OFFSET] = 0x98; // BIGQBLOCK_TANOOKI
+        data[W7F1_TANOOKI_OFFSET + 1] = 0x0A;
+        data[W7F1_TANOOKI_OFFSET + 2] = 0x13;
+        data[W7F1_TANOOKI_OFFSET + 3] = 0x41; // ENDLEVELCARD
+        data[W7F1_TANOOKI_OFFSET + 4] = 0x48;
+        data[W7F1_TANOOKI_OFFSET + 5] = 0x15;
+        data[W7F1_TANOOKI_OFFSET + 6] = 0xFF;
+
+        Rom::from_bytes(&data).unwrap()
+    }
+
+    #[test]
+    fn test_big_q_blocks_randomized() {
+        let mut rom = make_bigq_test_rom();
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        randomize_big_q_blocks(&mut rom, &mut rng);
+
+        // Regular Big ? Blocks should be randomized to some Big ? Block ID
+        let base = ENEMY_DATA_START + 2; // skip FF + page
+        let result = rom.read_range(base, 9);
+        assert!(
+            BIG_Q_BLOCKS.contains(&result[0]),
+            "Big Q block not replaced with Big Q: 0x{:02X}",
+            result[0]
+        );
+        assert!(
+            BIG_Q_BLOCKS.contains(&result[3]),
+            "Big Q block not replaced with Big Q: 0x{:02X}",
+            result[3]
+        );
+        // End level card must not change
+        assert_eq!(result[6], 0x41);
+    }
+
+    #[test]
+    fn test_7f1_tanooki_protected() {
+        let mut rom = make_bigq_test_rom();
+        let mut rng = ChaCha8Rng::seed_from_u64(99);
+        randomize_big_q_blocks(&mut rom, &mut rng);
+
+        // The 7-F1 Tanooki must remain 0x98
+        let protected = rom.read_byte(W7F1_TANOOKI_OFFSET);
+        assert_eq!(
+            protected, 0x98,
+            "7-F1 Tanooki was changed to 0x{:02X}!",
+            protected
         );
     }
 }

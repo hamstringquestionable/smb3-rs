@@ -38,6 +38,10 @@ struct Cli {
     /// Enable world order randomization
     #[arg(long)]
     world_order: bool,
+
+    /// Enable Big ? Block randomization
+    #[arg(long)]
+    big_q_blocks: bool,
 }
 
 fn main() {
@@ -58,6 +62,7 @@ fn main() {
         palettes: !cli.no_palettes,
         enemies: cli.enemies,
         world_order: cli.world_order,
+        big_q_blocks: cli.big_q_blocks,
     };
 
     let ext = if cli.patched_rom { "nes" } else { "ips" };
@@ -71,6 +76,7 @@ fn main() {
     eprintln!("  Palettes: {}", if options.palettes { "on" } else { "off" });
     eprintln!("  Enemies:  {}", if options.enemies { "on" } else { "off" });
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
+    eprintln!("  Big ? Blocks: {}", if options.big_q_blocks { "on" } else { "off" });
     eprintln!("  Output:   {}", output_path.display());
 
     let result = if cli.patched_rom {

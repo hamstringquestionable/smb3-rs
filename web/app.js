@@ -14,6 +14,7 @@ const optPowerups = document.getElementById("opt-powerups");
 const optPalettes = document.getElementById("opt-palettes");
 const optEnemies = document.getElementById("opt-enemies");
 const optWorldOrder = document.getElementById("opt-world-order");
+const optBigQBlocks = document.getElementById("opt-big-q-blocks");
 
 // Initialize WASM
 init()
@@ -64,6 +65,7 @@ generateBtn.addEventListener("click", () => {
 		palettes: optPalettes.checked,
 		enemies: optEnemies.checked,
 		world_order: optWorldOrder.checked,
+		big_q_blocks: optBigQBlocks.checked,
 	});
 
 	const outputFormat = document.querySelector(
