@@ -10,6 +10,7 @@ pub struct Options {
     pub powerups: bool,
     pub palettes: bool,
     pub enemies: bool,
+    pub world_order: bool,
 }
 
 impl Default for Options {
@@ -17,7 +18,8 @@ impl Default for Options {
         Options {
             powerups: true,
             palettes: true,
-            enemies: false, // off by default — experimental
+            enemies: false,
+            world_order: false,
         }
     }
 }
@@ -34,5 +36,8 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     }
     if options.enemies {
         randomize::enemies::randomize(rom, &mut rng);
+    }
+    if options.world_order {
+        randomize::world_order::randomize(rom, &mut rng);
     }
 }

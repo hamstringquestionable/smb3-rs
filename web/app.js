@@ -13,6 +13,7 @@ const statusDiv = document.getElementById("status");
 const optPowerups = document.getElementById("opt-powerups");
 const optPalettes = document.getElementById("opt-palettes");
 const optEnemies = document.getElementById("opt-enemies");
+const optWorldOrder = document.getElementById("opt-world-order");
 
 // Initialize WASM
 init()
@@ -62,6 +63,7 @@ generateBtn.addEventListener("click", () => {
 		powerups: optPowerups.checked,
 		palettes: optPalettes.checked,
 		enemies: optEnemies.checked,
+		world_order: optWorldOrder.checked,
 	});
 
 	const outputFormat = document.querySelector(

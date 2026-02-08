@@ -104,37 +104,219 @@ World maps are stored as raw tile grids instead.
 
 | File Offset | Size | Description |
 |------------|------|-------------|
-| 0x0BFD8–0x0E00D | ~8.2 KB | Enemy-to-level definitions (all levels) |
+| 0x0BFD8–0x0E00D | ~8.2 KB | Enemy/object data for all levels (PRG006) |
 
-### Enemy IDs (Partial List)
+### Data Format
 
-**Ground enemies:**
-| ID | Enemy |
-|----|-------|
-| 0x00 | Green Goomba (walks off ledges) |
-| 0x01 | Red Goomba (turns at ledges) |
-| 0x06 | Green Koopa Troopa |
-| 0x07 | Red Koopa Troopa |
-| 0x08 | Buzzy Beetle |
-| 0x0A | Spiny |
-| 0x11 | Bob-omb |
-| 0x15 | Green Koopa Paratroopa (hops) |
+The enemy/object data is a sequence of **segments** separated by `0xFF` terminators.
+Each segment represents one level's (or sub-area's) object set:
 
-**Flying enemies:**
-| ID | Enemy |
-|----|-------|
-| 0x03 | Red Para-goomba (hops) |
-| 0x16 | Red Koopa Paratroopa (flies up/down) |
-| 0x17 | Green Koopa Paratroopa (flies left/right) |
+```
+[0xFF]                          ; Terminator / separator
+[page_flag]                     ; 1 byte: page/screen flag (usually 0x00 or 0x01)
+[obj_id] [x_pos] [y_pos]       ; 3 bytes per object entry
+[obj_id] [x_pos] [y_pos]       ; ...repeated for each object
+...
+[0xFF]                          ; Terminator
+```
 
-**Water enemies:**
-| ID | Enemy |
-|----|-------|
-| 0x19 | Blooper |
-| 0x1A | Blooper with babies |
-| 0x1B | Cheep Cheep (slow) |
-| 0x1C | Cheep Cheep (fast) |
-| 0x1E | Big Bertha |
+Each entry is exactly **3 bytes**: object ID, X position, Y position.
+The leading `0xFF` bytes at the start of the block are empty/unused segments.
+Per-level object files in the disassembly (e.g. `PRG/objects/1-1.asm`) confirm this format.
+
+### Complete Object ID List
+
+Source: `smb3.asm` from the [Southbird disassembly](https://github.com/captainsouthbird/smb3).
+
+**Special objects (must NEVER be randomized):**
+
+| ID | Name | Description |
+|----|------|-------------|
+| 0x06 | OBJ_BOUNCEDOWNUP | Down/up block bounce effect |
+| 0x07 | OBJ_WARPHIDE | Hidden warp whistle trigger (1-3) |
+| 0x08 | OBJ_PSWITCHDOOR | P-Switch door |
+| 0x09 | OBJ_AIRSHIPANCHOR | Airship anchor |
+| 0x0B | OBJ_POWERUP_1UP | 1-Up Mushroom |
+| 0x0C | OBJ_POWERUP_STARMAN | Starman / super suits |
+| 0x0D | OBJ_POWERUP_MUSHROOM | Super Mushroom |
+| 0x0E | OBJ_BOSS_KOOPALING | Koopaling boss |
+| 0x18 | OBJ_BOSS_BOWSER | King Bowser |
+| 0x19 | OBJ_POWERUP_FIREFLOWER | Fire Flower |
+| 0x1B | OBJ_BOUNCELEFTRIGHT | Left/right block bounce effect |
+| 0x1E | OBJ_POWERUP_SUPERLEAF | Super Leaf |
+| 0x1F | OBJ_GROWINGVINE | Growing vine |
+| 0x21 | OBJ_POWERUP_MUSHCARD | Free mushroom card |
+| 0x22 | OBJ_POWERUP_FIRECARD | Free flower card |
+| 0x23 | OBJ_POWERUP_STARCARD | Free star card |
+| 0x25 | OBJ_PIPEWAYCONTROLLER | Pipe-to-pipe location setter |
+| 0x34 | OBJ_TOAD | Toad and house message |
+| 0x35 | OBJ_TOADHOUSEITEM | Toad House treasure box item |
+| 0x41 | OBJ_ENDLEVELCARD | End-of-level card |
+| 0x47 | OBJ_GIANTBLOCKCTL | Giant World block enabler |
+| 0x4A | OBJ_BOOMBOOMQBALL | Boom Boom end-level ball |
+| 0x4B | OBJ_BOOMBOOMJUMP | Jumping Boom-Boom (boss) |
+| 0x4C | OBJ_BOOMBOOMFLY | Flying Boom-Boom (boss) |
+| 0x50 | OBJ_BOBOMBEXPLODE | Ready-to-explode Bob-Omb |
+| 0x52 | OBJ_TREASUREBOX | Treasure box |
+| 0x5C | OBJ_ICEBLOCK | Ice block (held item) |
+| 0x75 | OBJ_BOSSATTACK | Boss attack projectile |
+| 0x84 | OBJ_SPINYEGG | Spiny egg (from Lakitu) |
+| 0x85 | OBJ_SPINYEGGDUD | Dud spiny egg |
+| 0x94 | OBJ_BIGQBLOCK_3UP | Big ? block (3 1-ups) |
+| 0x95 | OBJ_BIGQBLOCK_MUSHROOM | Big ? block (mushroom) |
+| 0x96 | OBJ_BIGQBLOCK_FIREFLOWER | Big ? block (fire flower) |
+| 0x97 | OBJ_BIGQBLOCK_SUPERLEAF | Big ? block (leaf) |
+| 0x98 | OBJ_BIGQBLOCK_TANOOKI | Big ? block (tanooki) |
+| 0x99 | OBJ_BIGQBLOCK_FROG | Big ? block (frog suit) |
+| 0x9A | OBJ_BIGQBLOCK_HAMMER | Big ? block (hammer suit) |
+| 0xB4 | OBJ_CHEEPCHEEPBEGIN | Event: cheep cheep swarm |
+| 0xB5 | OBJ_GREENCHEEPBEGIN | Event: spike cheeps |
+| 0xB6 | OBJ_LAKITUFLEE | Event: Lakitu flee |
+| 0xB7 | OBJ_PARABEETLESBEGIN | Event: parabeetles flyby |
+| 0xB8 | OBJ_CLOUDSINBGBEGIN | Event: floating clouds |
+| 0xB9 | OBJ_WOODPLATFORMBEGIN | Event: random wood platforms |
+| 0xBA | OBJ_TREASUREBOXAPPEAR | Event: treasure box appear |
+| 0xBB | OBJ_CANCELEVENT | Event: cancel level event |
+| 0xBC–0xD0 | OBJ_CFIRE_* | Cannons, pipes, launchers (21 types) |
+| 0xD1 | OBJ_SPAWN3GREENTROOPAS | Spawner: 3 green paratroopas |
+| 0xD2 | OBJ_SPAWN3ORANGECHEEPS | Spawner: 3 orange cheep cheeps |
+| 0xD3 | OBJ_AUTOSCROLL | Autoscroll controller |
+| 0xD4 | OBJ_BONUSCONTROLLER | White Toad House / Coin Ship judge |
+| 0xD5 | OBJ_TOADANDKING | Toad and king (end of world) |
+| 0xD6 | OBJ_TREASURESET | Treasure box item setter |
+
+**Platforms & environmental objects (must NEVER be randomized):**
+
+| ID | Name | Description |
+|----|------|-------------|
+| 0x24 | OBJ_CLOUDPLATFORM_FAST | Fast cloud platform |
+| 0x26 | OBJ_WOODENPLAT_RIDER | Riding log |
+| 0x27 | OBJ_OSCILLATING_H | Horizontal oscillating platform |
+| 0x28 | OBJ_OSCILLATING_V | Vertical oscillating platform |
+| 0x2C | OBJ_CLOUDPLATFORM | Cloud platform |
+| 0x2E | OBJ_INVISIBLELIFT | Invisible lift |
+| 0x36 | OBJ_WOODENPLATFORM | Floating wooden platform |
+| 0x37 | OBJ_OSCILLATING_HS | Short horizontal oscillation |
+| 0x38 | OBJ_OSCILLATING_VS | Short vertical oscillation |
+| 0x3A | OBJ_FALLINGPLATFORM | Donut lift platform |
+| 0x3C | OBJ_WOODENPLATFORMFALL | Falling wooden platform |
+| 0x3E | OBJ_WOODENPLATFORMFLOAT | Floating log (on water) |
+| 0x44 | OBJ_WOODENPLATUNSTABLE | Fall-after-touch log |
+| 0x49 | OBJ_FLOATINGBGCLOUD | Background cloud |
+| 0x54 | OBJ_DONUTLIFTSHAKEFALL | Donut lift shake/fall |
+| 0x65 | OBJ_WATERCURRENTUPWARD | Upward water current |
+| 0x66 | OBJ_WATERCURRENTDOWNARD | Downward water current |
+| 0x90 | OBJ_TILTINGPLATFORM | Tilting platform |
+| 0x91 | OBJ_TWIRLINGPLATCWNS | Twirling platform (CW non-stop) |
+| 0x92 | OBJ_TWIRLINGPLATCW | Twirling platform (CW) |
+| 0x93 | OBJ_TWIRLINGPERIODIC | Twirling platform (periodic) |
+| 0x9D | OBJ_FIREJET_UPWARD | Upward fire jet |
+| 0xA8 | OBJ_ARROWONE | One-direction arrow platform |
+| 0xA9 | OBJ_ARROWANY | Changeable arrow platform |
+| 0xAA | OBJ_AIRSHIPPROP | Airship propeller |
+| 0xAC | OBJ_FIREJET_LEFT | Left fire jet |
+| 0xAE | OBJ_BOLTLIFT | Bolt lift |
+| 0xB0 | OBJ_BIGCANNONBALL | Big cannonball |
+| 0xB1 | OBJ_FIREJET_RIGHT | Right fire jet |
+| 0xB2 | OBJ_FIREJET_UPSIDEDOWN | Upside-down fire jet |
+
+**Enemies (safe to randomize within class):**
+
+| ID | Name | Class |
+|----|------|-------|
+| 0x29 | OBJ_SPIKE | Ground |
+| 0x2A | OBJ_PATOOIE | Ground |
+| 0x2B | OBJ_GOOMBAINSHOE | Ground (Kuribo's Shoe) |
+| 0x33 | OBJ_NIPPER | Ground |
+| 0x39 | OBJ_NIPPERHOPPING | Ground |
+| 0x3F | OBJ_DRYBONES | Ground |
+| 0x40 | OBJ_BUSTERBEATLE | Ground |
+| 0x55 | OBJ_BOBOMB | Ground |
+| 0x6B | OBJ_PILEDRIVER | Ground |
+| 0x70 | OBJ_BUZZYBEATLE | Ground |
+| 0x71 | OBJ_SPINY | Ground |
+| 0x72 | OBJ_GOOMBA | Ground |
+| 0x6C | OBJ_GREENTROOPA | Koopa (shell-bearing) |
+| 0x6D | OBJ_REDTROOPA | Koopa (shell-bearing) |
+| 0x7A | OBJ_BIGGREENTROOPA | Big enemy |
+| 0x7B | OBJ_BIGREDTROOPA | Big enemy |
+| 0x7C | OBJ_BIGGOOMBA | Big enemy |
+| 0x7E | OBJ_BIGGREENHOPPER | Big enemy |
+| 0x6E | OBJ_PARATROOPAGREENHOP | Flying |
+| 0x6F | OBJ_FLYINGREDPARATROOPA | Flying |
+| 0x73 | OBJ_PARAGOOMBA | Flying |
+| 0x74 | OBJ_PARAGOOMBAWITHMICROS | Flying |
+| 0x80 | OBJ_FLYINGGREENPARATROOPA | Flying |
+| 0x61 | OBJ_BLOOPERWITHKIDS | Water |
+| 0x62 | OBJ_BLOOPER | Water |
+| 0x63 | OBJ_BIGBERTHABIRTHER | Water |
+| 0x64 | OBJ_CHEEPCHEEPHOPPER | Water |
+| 0x6A | OBJ_BLOOPERCHILDSHOOT | Water |
+| 0x81 | OBJ_HAMMERBRO | Bro |
+| 0x82 | OBJ_BOOMERANGBRO | Bro |
+| 0x86 | OBJ_HEAVYBRO | Bro |
+| 0x87 | OBJ_FIREBRO | Bro |
+| 0xA0 | OBJ_GREENPIRANHA | Piranha |
+| 0xA1 | OBJ_GREENPIRANHA_FLIPPED | Piranha |
+| 0xA2 | OBJ_REDPIRANHA | Piranha |
+| 0xA3 | OBJ_REDPIRANHA_FLIPPED | Piranha |
+| 0xA4 | OBJ_GREENPIRANHA_FIRE | Piranha |
+| 0xA5 | OBJ_GREENPIRANHA_FIREC | Piranha |
+| 0xA6 | OBJ_VENUSFIRETRAP | Piranha |
+| 0xA7 | OBJ_VENUSFIRETRAP_CEIL | Piranha |
+| 0x77 | OBJ_GREENCHEEP | Cheep |
+| 0x88 | OBJ_ORANGECHEEP | Cheep |
+
+**Other enemies (not randomized — unique behavior):**
+
+| ID | Name | Description |
+|----|------|-------------|
+| 0x17 | OBJ_SPINYCHEEP | Spiny cheep (unique water enemy) |
+| 0x2D | OBJ_BIGBERTHA | Big Bertha (eats player) |
+| 0x2F | OBJ_BOO | Boo Diddly |
+| 0x30 | OBJ_HOTFOOT_SHY | Hot Foot (shy variant) |
+| 0x31 | OBJ_BOOSTRETCH | Stretch Boo (upright) |
+| 0x32 | OBJ_BOOSTRETCH_FLIP | Stretch Boo (flipped) |
+| 0x3B | OBJ_CHARGINGCHEEPCHEEP | Charging cheep cheep |
+| 0x3D | OBJ_NIPPERFIREBREATHER | Fire-breathing nipper |
+| 0x42 | OBJ_CHEEPCHEEPPOOL2POOL | Pool-hopping cheep (3 pool) |
+| 0x43 | OBJ_CHEEPCHEEPPOOL2POOL2 | Pool-hopping cheep (2 pool) |
+| 0x45 | OBJ_HOTFOOT | Hot Foot (random walk) |
+| 0x46 | OBJ_PIRANHASPIKEBALL | Tall plant with spike ball |
+| 0x48 | OBJ_TINYCHEEPCHEEP | Tiny cheep cheep |
+| 0x4F | OBJ_CHAINCHOMPFREE | Chain chomp (freed) |
+| 0x51 | OBJ_ROTODISCDUAL | Dual rotodisc (CW sync) |
+| 0x53 | OBJ_PODOBOOCEILING | Podoboo from ceiling |
+| 0x56 | OBJ_PIRANHASIDEWAYSLEFT | Sideways piranha (left) |
+| 0x57 | OBJ_PIRANHASIDEWAYSRIGHT | Sideways piranha (right) |
+| 0x58 | OBJ_FIRECHOMP | Fire Chomp |
+| 0x59 | OBJ_FIRESNAKE | Fire Snake |
+| 0x5A | OBJ_ROTODISCCLOCKWISE | Rotodisc (CW) |
+| 0x5B | OBJ_ROTODISCCCLOCKWISE | Rotodisc (CCW) |
+| 0x5D | OBJ_TORNADO | Tornado |
+| 0x5E | OBJ_ROTODISCDUALOPPOSE | Dual rotodisc (opposed H) |
+| 0x5F | OBJ_ROTODISCDUALOPPOSE2 | Dual rotodisc (opposed V) |
+| 0x60 | OBJ_ROTODISCDUALCCLOCK | Dual rotodisc (CCW sync) |
+| 0x67 | OBJ_LAVALOTUS | Lava lotus |
+| 0x68 | OBJ_TWIRLINGBUZZY | Twirling buzzy beetle |
+| 0x69 | OBJ_TWIRLINGSPINY | Twirling spiny |
+| 0x76 | OBJ_JUMPINGCHEEPCHEEP | Jumping cheep cheep |
+| 0x78 | OBJ_BULLETBILL | Bullet Bill |
+| 0x79 | OBJ_BULLETBILLHOMING | Homing Bullet Bill |
+| 0x7D | OBJ_BIGGREENPIRANHA | Big green piranha |
+| 0x7F | OBJ_BIGREDPIRANHA | Big red piranha |
+| 0x83 | OBJ_LAKITU | Lakitu |
+| 0x89 | OBJ_CHAINCHOMP | Chain Chomp |
+| 0x8A | OBJ_THWOMP | Thwomp (standard) |
+| 0x8B | OBJ_THWOMPLEFTSLIDE | Thwomp (left slide) |
+| 0x8C | OBJ_THWOMPRIGHTSLIDE | Thwomp (right slide) |
+| 0x8D | OBJ_THWOMPUPDOWN | Thwomp (up/down) |
+| 0x8E | OBJ_THWOMPDIAGONALUL | Thwomp (diagonal UL) |
+| 0x8F | OBJ_THWOMPDIAGONALDL | Thwomp (diagonal DL) |
+| 0x9E | OBJ_PODOBOO | Podoboo |
+| 0x9F | OBJ_PARABEETLE | Parabeetle |
+| 0xAD | OBJ_ROCKYWRENCH | Rocky Wrench |
+| 0xAF | OBJ_ENEMYSUN | Angry Sun |
 
 ---
 
@@ -267,6 +449,18 @@ Pointer tables indexed by World_Num (8 entries each):
 |-------|-------------|
 | `Map_Y_Starts` | Per-world initial Y coordinate |
 | Fixed X = 0x20 | Same X start for all worlds |
+
+### World Progression
+
+World advancement is sequential via `INC World_Num` at file offset **0x3D0A1** (PRG030, CPU $9091).
+
+Original bytes: `EE 27 07 4C A0 84` (INC $0727; JMP $84A0)
+
+The code runs after the king's room cinematic (wand return) when a world boss is defeated. There is no "next world" lookup table in the original ROM — progression is always +1.
+
+**Free space for patches:** PRG030 has unused space at **0x3DF20–0x3DF4F** (CPU $9F10–$9F3F), 48 bytes of $FF.
+
+World BGM table (PRG030): file offset **0x3C424**, 9 bytes (worlds 1-8 + warp whistle): `01 02 03 04 05 06 07 08 0B`
 
 ### Per-World Specific Offsets
 

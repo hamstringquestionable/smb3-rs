@@ -31,6 +31,7 @@ src/
     powerups.rs      # ? block item randomization (0x02611–0x0262A)
     palettes.rs      # Character/lava/Bowser color randomization
     enemies.rs       # Enemy type swapping within class (0x0BFD8–0x0E00D)
+    world_order.rs   # Shuffle world progression order (patches INC World_Num at 0x3D0A1)
 web/
   index.html         # Browser frontend
   style.css
@@ -50,4 +51,4 @@ docs/
 - IPS generation is diff-based: modify ROM bytes in memory, then diff against original
 - Conditional compilation: `clap` for native only, `wasm-bindgen` for WASM only
 - `getrandom` 0.3+ on wasm32 requires `--cfg getrandom_backend="wasm_js"` (set in `.cargo/config.toml`)
-- `rand` 0.9: use `IndexedRandom` for `.choose()`, `rng.random_range(..N)` instead of `gen_range`
+- `rand` 0.9: use `IndexedRandom` for `.choose()`, `SliceRandom` for `.shuffle()`, `rng.random_range(..N)` instead of `gen_range`

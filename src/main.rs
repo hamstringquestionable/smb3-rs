@@ -34,6 +34,10 @@ struct Cli {
     /// Enable enemy randomization (experimental)
     #[arg(long)]
     enemies: bool,
+
+    /// Enable world order randomization
+    #[arg(long)]
+    world_order: bool,
 }
 
 fn main() {
@@ -53,6 +57,7 @@ fn main() {
         powerups: !cli.no_powerups,
         palettes: !cli.no_palettes,
         enemies: cli.enemies,
+        world_order: cli.world_order,
     };
 
     let ext = if cli.patched_rom { "nes" } else { "ips" };
@@ -65,6 +70,7 @@ fn main() {
     eprintln!("  Powerups: {}", if options.powerups { "on" } else { "off" });
     eprintln!("  Palettes: {}", if options.palettes { "on" } else { "off" });
     eprintln!("  Enemies:  {}", if options.enemies { "on" } else { "off" });
+    eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
     eprintln!("  Output:   {}", output_path.display());
 
     let result = if cli.patched_rom {
