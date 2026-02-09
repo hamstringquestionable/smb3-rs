@@ -83,15 +83,15 @@ Each range contains the level layout generators for that tileset/theme.
 
 ### Level Header Format (9 bytes per level)
 
-| Byte | Contents |
-|------|----------|
-| 0–1 | Transition scenery address (pointer) |
-| 2–3 | Transition actor/enemy address (pointer) |
-| 4 | Y-start properties + course end page |
-| 5 | X-start properties, object/background palettes |
-| 6 | Transition type, scroll mode, course type |
-| 7 | Friction factor + CHR banks |
-| 8 | Timer seed + music selection |
+| Byte | Bitmask | Contents |
+|------|---------|----------|
+| 0–1 | `aaaaaaaaaaaaaaaa` | Transition scenery address (16-bit pointer) |
+| 2–3 | `aaaaaaaaaaaaaaaa` | Transition actor/enemy address (16-bit pointer) |
+| 4 | `aaa0bbbb` | a = Y-start properties (indexed table); b = course end page (0-15 screens) |
+| 5 | `_abbccddd` | a = unused; b = X-start properties; c = object palette (2 bits); d = BG palette (3 bits) |
+| 6 | `abbcdddd` | a = pipe transition type; b = vertical scroll mode; c = scroll direction; d = transition course type |
+| 7 | `aaabbbbb` | a = friction factor (3 bits); b = BG banks / CHR selection (5 bits) |
+| 8 | `aa00bbbb` | a = timer seed (2 bits, indexed); b = music track selection (4 bits) |
 
 ### Level Tile Generator Format
 
@@ -577,6 +577,39 @@ Each palette entry is typically 3 color bytes + 1 shared background color.
 
 ---
 
+## Metatile Banking System
+
+11 metatile banks (0x0C–0x17, 0x1A), each containing 256 slots at CPU $A000 with 1024-byte maps.
+
+| Bank | Tileset Style | BG Bank 0 CHR Page | BG Bank 2 CHR Page |
+|------|--------------|-------------------|-------------------|
+| 0x0C | World Map | 0x14 (Ani: 70, 72, 74) | 0x16 |
+| 0x0D | Underground | 0x1C | 0x60 |
+| 0x0E | Battle | 0x58 | 0x60 |
+| 0x0F | Plains | 0x08 | 0x60 |
+| 0x10 | Hills | 0x1C | 0x60 |
+| 0x11 | Mountains/Ice | 0x0C | 0x60 |
+| 0x12 | Water/Toad/Pipes | 0x58/0x5C/0x58 | 0x60/0x5E/0x60 |
+| 0x13 | Pipe/Giant/Clouds | 0x58/0x6E/0x38 | 0x3E/0x60/0x60 |
+| 0x14 | Desert | 0x30 | 0x60 |
+| 0x15 | Fortress | 0x10 | 0x60 |
+| 0x16 | Bonus/Slots/Cards | 0x24/0x2C/0x5C | 0x5E/0x2E/0x5E |
+| 0x17 | Airship | 0x34 | 0x6A |
+| 0x1A | HUD | 0x5C | 0x5E |
+
+### Tileset-to-PRG Page Mapping
+
+Maps 19 tilesets (0–18) to their ROM page banks:
+
+```
+PAGE_C000_ByTileset: 10, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 22, 22, 22, 14
+PAGE_A000_ByTileset: 11, 15, 21, 16, 17, 19, 18, 18, 18, 20, 23, 19, 17, 19, 13, 26, 26, 26,  9
+```
+
+Tileset index → PRG bank at $A000 (level data) and $C000 (tileset code).
+
+---
+
 ## World Map Data
 
 ### Overworld Map Tiles
@@ -596,7 +629,13 @@ Key tables in PRG010 (indexed by World_Num 0–7):
 | `World_BGM_Arrival` | 9-byte table: music track per world (8 worlds + warp zone) |
 | `FortressFXBase_ByWorld` | 8-byte table: fortress effect indices per world |
 | `World_Map_Max_PanR` | 8-byte table: max rightward scroll per world (`10,20,30,30,00,30,20,00`) |
-| `Map_EnterSpecialTiles` | Tile types that trigger level entry |
+| `Map_EnterSpecialTiles` | Tile types that trigger level entry (see bug note below) |
+
+**`Map_EnterSpecialTiles` list:** TOADHOUSE, SPADEBONUS, PIPE, ALTTOADHOUSE, CASTLEBOTTOM,
+SPIRAL, ALTSPIRAL, PATHANDNUB, DANCINGFLOWER, HANDTRAP, BOWSERCASTLELL
+
+**Known bug:** The tile entry check loop iterates up to index $1A instead of $0A,
+causing subsequent palette data bytes to be incorrectly treated as enterable tile types.
 
 ### World Map Object Data (PRG011: 0x16010–0x1800F)
 
@@ -619,6 +658,51 @@ Pointer tables indexed by World_Num (8 entries each):
 | `Map_Airship_Travel_BaseIdx` | Per-world base index (W1=0, W2=3, W3=6, ...) |
 | `MAT_Y_W[1-8][A-C]` | Y destinations: 3 sets x 6 values per world |
 | `MAT_X_W[1-8][A-C]` | X destinations: packed (lo=screen, hi=X pos) |
+
+### Level Pointer Tables (PRG012: 0x18010–0x1A00F)
+
+`Map_PrepareLevel` uses the player's world map position to look up level data via
+per-world tables. Five master pointer tables (9 words each, one per world + warp zone)
+index into per-world sub-tables:
+
+| Master Table | File Offset | Description |
+|-------------|-------------|-------------|
+| `Map_ByXHi_InitIndex` | 0x193DA | Per-screen search start indices |
+| `Map_ByRowType` | 0x193EC | Row/type + tileset (lower nibble = tileset ID) |
+| `Map_ByScrCol` | 0x193FE | Screen/column positions for matching |
+| `Map_ObjSets` | 0x19410 | Enemy/object data CPU address pointers |
+| `Map_LevelLayouts` | 0x19422 | Level layout data CPU address pointers |
+
+Each master table entry is a 16-bit CPU address pointing to the per-world sub-table
+in PRG012. Per-world sub-tables are contiguous: ByRowType (N bytes), ByScrCol (N bytes),
+ObjSets (N words), LevelLayouts (N words).
+
+**Per-world sub-table locations:**
+
+| World | RowType Offset | Entries | Description |
+|-------|---------------|---------|-------------|
+| 1 | 0x19438 | 21 | Grass Land |
+| 2 | 0x194BA | 47 | Desert Land |
+| 3 | 0x195D8 | 52 | Water Land |
+| 4 | 0x19714 | 34 | Giant Land |
+| 5 | 0x197E4 | 42 | Sky Land |
+| 6 | 0x198E4 | 57 | Ice Land |
+| 7 | 0x19A3E | 46 | Pipe Land |
+| 8 | 0x19B56 | 41 | Dark Land |
+
+**ByRowType byte encoding:** upper nibble = row/position type, lower nibble = tileset ID.
+
+**Entry type identification by ObjSets pointer value:**
+- `obj >= 0xC000 && obj < 0xD000`: regular action level (shuffleable)
+- `obj >= 0xD000`: fortress level
+- `obj == 0x0700`: Toad House
+- `obj == 0x0001` with `lay == 0x0000`: bonus game / N-Spade
+- `obj < 0x1000` (other small values): hand traps, pipe junctions, special
+
+**Level loading flow:** Player map position → match against ByRowType + ByScrCol →
+extract tileset from lower nibble → load ObjSets pointer into `Level_ObjPtr_AddrL/H` →
+load LevelLayouts pointer into `Level_LayPtr_AddrL/H` → bank-switch via
+`PAGE_A000_ByTileset[Level_Tileset]` → execute level generators.
 
 ### World Map Starting Positions
 
@@ -721,6 +805,12 @@ World BGM table (PRG030): file offset **0x3C424**, 9 bytes (worlds 1-8 + warp wh
 | 0x11E6A | Magic block hold time |
 | 0x11E6F | Magic block effect duration |
 
+**Bumped block mechanism (RAM):**
+- $036C: nametable address of bumped block (0 = no pending write)
+- $036E: metatile data in NW-NE-SW-SE order
+- On next VBlank, writes metatile to nametable; adds 32 to address for next row
+- No scroll boundary adjustment is performed
+
 ### Misc
 
 | File Offset | Description |
@@ -788,6 +878,11 @@ World BGM table (PRG030): file offset **0x3C424**, 9 bytes (worlds 1-8 + warp wh
 | $ACA6 | 0xE0 | Default upward jump velocity |
 | $ACB3 | 0x01 | Jump gravity |
 
+**Jump velocity calculation:** At $AC5A, horizontal velocity is loaded, divided by 16,
+and used to index a subtraction table (`00, 02, 04, 08`) that reduces the default jump
+velocity — faster horizontal movement = higher jump. Fall velocity is clamped at 0x40
+(effective max 0x45 after gravity).
+
 ### P-Meter & Flight
 
 | Address | Description |
@@ -816,6 +911,14 @@ World BGM table (PRG030): file offset **0x3C424**, 9 bytes (worlds 1-8 + warp wh
 |---------|------|-------------|
 | $7D00–$7D3F | 64 bytes | Mario's level completion flags |
 | $7D40–$7D7F | 64 bytes | Luigi's level completion flags |
+
+**Completion flag byte format:** `0abbccc`
+- a = player (0=Mario, 1=Luigi)
+- b = page/screen (0–3)
+- c = column (0–15)
+
+**Row indexing within each byte:** bits 7–1 = rows 0–6; bit 0 = row 8 (row 7 is skipped).
+Each entry represents a 16x16 metatile column on the world map.
 
 ---
 

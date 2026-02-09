@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use smb3r::Options;
+use smb3r::{LevelShuffle, Options};
 
 #[derive(Parser)]
 #[command(name = "smb3r", about = "Super Mario Bros. 3 Randomizer")]
@@ -42,6 +42,10 @@ struct Cli {
     /// Enable Big ? Block randomization
     #[arg(long)]
     big_q_blocks: bool,
+
+    /// Shuffle levels: off, intra-world, or cross-world
+    #[arg(long, default_value = "off")]
+    level_shuffle: String,
 }
 
 fn main() {
@@ -57,12 +61,24 @@ fn main() {
 
     let seed = cli.seed.unwrap_or_else(|| rand::random());
 
+    let level_shuffle = match cli.level_shuffle.as_str() {
+        "off" => LevelShuffle::Off,
+        "intra" | "intra-world" | "intra_world" => LevelShuffle::IntraWorld,
+        "cross" | "cross-world" | "cross_world" => LevelShuffle::CrossWorld,
+        other => {
+            eprintln!("Invalid --level-shuffle value: {other}");
+            eprintln!("Valid values: off, intra-world, cross-world");
+            process::exit(1);
+        }
+    };
+
     let options = Options {
         powerups: !cli.no_powerups,
         palettes: !cli.no_palettes,
         enemies: cli.enemies,
         world_order: cli.world_order,
         big_q_blocks: cli.big_q_blocks,
+        level_shuffle,
     };
 
     let ext = if cli.patched_rom { "nes" } else { "ips" };
@@ -77,6 +93,11 @@ fn main() {
     eprintln!("  Enemies:  {}", if options.enemies { "on" } else { "off" });
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
     eprintln!("  Big ? Blocks: {}", if options.big_q_blocks { "on" } else { "off" });
+    eprintln!("  Level shuffle: {}", match &options.level_shuffle {
+        LevelShuffle::Off => "off",
+        LevelShuffle::IntraWorld => "intra-world",
+        LevelShuffle::CrossWorld => "cross-world",
+    });
     eprintln!("  Output:   {}", output_path.display());
 
     let result = if cli.patched_rom {

@@ -4,6 +4,21 @@ use rand_chacha::ChaCha8Rng;
 use crate::randomize;
 use crate::rom::Rom;
 
+/// Level shuffle mode.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LevelShuffle {
+    Off,
+    IntraWorld,
+    CrossWorld,
+}
+
+impl Default for LevelShuffle {
+    fn default() -> Self {
+        LevelShuffle::Off
+    }
+}
+
 /// Options controlling which randomizations to apply.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Options {
@@ -13,6 +28,8 @@ pub struct Options {
     pub world_order: bool,
     #[serde(default = "default_false")]
     pub big_q_blocks: bool,
+    #[serde(default)]
+    pub level_shuffle: LevelShuffle,
 }
 
 fn default_false() -> bool {
@@ -27,6 +44,7 @@ impl Default for Options {
             enemies: false,
             world_order: false,
             big_q_blocks: false,
+            level_shuffle: LevelShuffle::Off,
         }
     }
 }
@@ -49,5 +67,10 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     }
     if options.big_q_blocks {
         randomize::enemies::randomize_big_q_blocks(rom, &mut rng);
+    }
+    match options.level_shuffle {
+        LevelShuffle::Off => {}
+        LevelShuffle::IntraWorld => randomize::levels::randomize_intra(rom, &mut rng),
+        LevelShuffle::CrossWorld => randomize::levels::randomize_cross(rom, &mut rng),
     }
 }
