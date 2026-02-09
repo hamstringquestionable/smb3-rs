@@ -93,10 +93,158 @@ Each range contains the level layout generators for that tileset/theme.
 | 7 | Friction factor + CHR banks |
 | 8 | Timer seed + music selection |
 
-### Level Tile Format
+### Level Tile Generator Format
 
 Levels use "tile generators" (variable/fixed-size construction routines), not raw tile grids.
 World maps are stored as raw tile grids instead.
+
+Each level's layout data consists of a **9-byte header** followed by **3-byte generator commands**
+terminated by `0xFF`.
+
+#### 3-Byte Generator Commands
+
+Each command is `[byte0] [byte1] [byte2]` where:
+
+```
+byte0 (Temp_Var15):
+  bits 7-5 = Generator group (0-7). Group 7 (0xE0) = level junction, not a tile generator.
+  bit  4   = Address high flag (increments Map_Tile_AddrH, selects second half of screen memory)
+  bits 3-0 = Row position (0-15) within the screen
+
+byte1 (Temp_Var16):
+  bits 7-4 = Screen number (0-15)
+  bits 3-0 = Column position (0-15) within the screen
+
+byte2 (LL_ShapeDef):
+  If upper nibble = 0x0: Fixed-size generator path
+  If upper nibble != 0:  Variable-size generator path
+```
+
+**Tile memory address calculation** (from `LoadLevel_Set_TileMemAddr` in PRG030):
+- `TileAddr_Off = (byte0_lower4 << 4) | (byte1 & 0x0F)` — encodes row + column
+- Screen base address: `Tile_Mem_Addr[(byte1 & 0xF0) >> 3]` (word-indexed table)
+- If bit 4 of byte0 is set, `Map_Tile_AddrH` is incremented (second half of screen)
+- Tile memory is column-major: next column = Y+1, next row = TileAddr_Off + 16
+- Screen boundary: when `Y & 0x0F == 0`, add `$1B0` to Map_Tile_Addr
+
+#### Fixed-Size Generators
+
+Dispatch index = `((byte0 & 0xE0) >> 1) + byte2`
+
+This gives a logical index into the tileset's `LeveLoad_FixedSizeGen_TSx` dispatch table
+(which uses `DynJump` — internally does `ASL A` to convert to word offset).
+
+**Tileset 1 (Plains) fixed-size dispatch table** (42 entries, indices 0-41):
+
+| Index Range | Group | Handler | Description |
+|-------------|-------|---------|-------------|
+| 0-7 | 0 | Various | Bushes, clouds, doors, vines, etc. |
+| 8-15 | 0 | $0000 (null) | Reserved/unused |
+| 16-40 | 1 | `LoadLevel_PowerBlock` | Power blocks (see below) |
+| 41 | 2 | `LoadLevel_EndGoal` | End-of-level goal |
+
+**`LoadLevel_PowerBlock`** (PRG014): Takes the fixed-size index, subtracts 16, uses result
+to index the `LL_PowerBlocks` table (24 entries) which maps to tile IDs:
+
+| byte2 | Index-16 | Tile ID | Tile Name | Visual | Item |
+|-------|----------|---------|-----------|--------|------|
+| 0x00 | 0 | $60 | QBLOCKFLOWER | Q-block | Mushroom/Flower |
+| 0x01 | 1 | $61 | QBLOCKLEAF | Q-block | Mushroom/Leaf |
+| 0x02 | 2 | $62 | QBLOCKSTAR | Q-block | Star |
+| 0x03 | 3 | $64 | QBLOCKCOINSTAR | Q-block | Coin/Star |
+| 0x04 | 4 | $65 | QBLOCKCOIN2 | Q-block | Coin |
+| 0x05 | 5 | $66 | MUNCHER | Muncher | — |
+| 0x06 | 6 | $68 | BRICKFLOWER | Brick | Mushroom/Flower |
+| 0x07 | 7 | $69 | BRICKLEAF | Brick | Mushroom/Leaf |
+| 0x08 | 8 | $6A | BRICKSTAR | Brick | Star |
+| 0x09 | 9 | $6C | BRICKCOINSTAR | Brick | Coin/Star |
+| 0x0A | 10 | $6D | BRICK10COIN | Brick | 10-coin |
+| 0x0B | 11 | $6E | BRICK1UP | Brick | 1-Up |
+| 0x0C | 12 | $6F | BRICKVINE | Brick | Vine |
+| 0x0D | 13 | $70 | BRICKPSWITCH | Brick | P-Switch |
+| 0x0E | 14 | $44 | INVISCOIN | Invisible | Coin |
+| 0x0F | 15 | $45 | INVIS1UP | Invisible | 1-Up |
+
+ROM offset: `LL_PowerBlocks` table at **0x1CAD4** (24 bytes, PRG014).
+
+**Important:** The `LL_PowerBlocks` table and `LoadLevel_PowerBlock` routine are **shared
+across all tilesets** — group 1 fixed-size generators always dispatch to the same handler
+regardless of tileset. This means byte2 values 0x00-0x0F have identical meaning in every level.
+
+#### Variable-Size Generators
+
+Dispatch index = `base_table[group] + (byte2 >> 4) - 1`
+
+Where `base_table = {0, 15, 30, 45, 60, 75, 90, 105}` (15 slots per group).
+
+The lower nibble of byte2 (`byte2 & 0x0F`) typically encodes width/size parameter.
+
+**`LoadLevel_BlockRun`** (PRG014): Used for runs of identical block tiles.
+Block type = `(byte2 - 0x10) >> 4` indexes into `LoadLevel_Blocks` table:
+
+| Block Index | Dispatch Index | Tile Name | Description |
+|-------------|---------------|-----------|-------------|
+| 0 | 15 | BRICK | Plain brick |
+| 1 | 16 | QBLOCKCOIN | Q-block with coin |
+| 2 | 17 | BRICKCOIN | Brick with coin |
+| 3 | 18 | WOODBLOCK | Wood block |
+| 4 | 19 | GNOTE | Green note block |
+| 5 | 20 | NOTE | Note block |
+| 6 | 21 | WOODBLOCKBOUNCE | Bouncing wood block |
+| 7 | 22 | COIN | Floating coin |
+| 8 | 43 (special) | ICEBRICK | Ice brick |
+
+Width = `byte2 & 0x0F`, tiles placed = width + 1 (loop uses BPL = inclusive).
+
+ROM offset: `LoadLevel_Blocks` table at PRG014 (9 bytes, immediately before `LoadLevel_BlockRun`).
+
+#### Variable-Length Commands (Extra Byte)
+
+Most generator commands are 3 bytes, but some variable-size routines read a **4th byte**
+from the layout data stream. If a parser assumes all commands are 3 bytes, every command
+after the first extra-byte routine will be misaligned.
+
+**Tileset 1 (Plains) extra-byte dispatches:**
+
+| Dispatch | Handler | Extra Byte Meaning |
+|----------|---------|-------------------|
+| 11, 12 | `LoadLevel_GroundRun` | Ground fill width |
+| 35-42 | `LoadLevel_TopDecoBlocks` | Rectangle width |
+
+**Other tilesets** have additional extra-byte routines (e.g., `LoadLevel_LavaRun`,
+`LoadLevel_DecoGround`, `LoadLevel_DecoCeiling`). Each tileset's variable-size dispatch
+table must be checked individually to identify which dispatches consume extra bytes.
+
+The level simulator at `tools/level_sim.py` tracks extra-byte dispatches per tileset.
+
+#### 1-1 Level Data Reference
+
+File offset: **0x1FB92** (CPU $BB82 in PRG015, bank mapped at $A000).
+Header: 9 bytes at 0x1FB92. Generator data: 0x1FB9B–0x1FCA0 (86 commands + 0xFF terminator).
+
+Bonus room: at **0x1FCA3** (CPU $BC93), entered via junction.
+
+**Important:** Some generator routines consume a 4th byte from the data stream (see
+"Variable-Length Commands" above). In TS1, `GroundRun` (dispatches 11-12) and
+`TopDecoBlocks` (dispatches 35-42) read an extra byte. Parsing all commands as 3 bytes
+will misalign every command after the first extra-byte routine, producing wrong results.
+The level simulator at `tools/level_sim.py` handles this correctly.
+
+**Group 1 power blocks found in 1-1 (verified by simulator):**
+
+| ROM Offset | Bytes | Tile | Screen | Row | Col |
+|-----------|-------|------|--------|-----|-----|
+| 0x1FBB4 | 33 0F 01 | QBLOCKLEAF ($61) | 0 | 3 | 15 |
+| 0x1FBE2 | 38 29 01 | QBLOCKLEAF ($61) | 2 | 8 | 9 |
+| 0x1FC25 | 28 5A 0B | BRICK1UP ($6E) | 5 | 8 | 10 |
+| 0x1FC28 | 37 5C 01 | QBLOCKLEAF ($61) | 5 | 7 | 12 |
+| 0x1FC6C | 37 7F 0D | BRICKPSWITCH ($70) | 7 | 7 | 15 |
+
+This matches the MarioWiki count of 3 mushroom/leaf powerups (all QBLOCKLEAF).
+
+**Tile visual verification:** The `Tile_Layout_TS1` table confirms that Q-block tiles
+($60-$65) use CHR patterns $98/$99 (animated "?" appearance), while brick tiles
+($67-$6F) all use patterns $B4/$B5 (standard brick appearance).
 
 ---
 
