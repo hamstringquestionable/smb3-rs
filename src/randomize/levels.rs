@@ -25,6 +25,12 @@ const WORLDS: [WorldTables; 8] = [
     WorldTables { rowtype_offset: 0x19B56, entry_count: 41 }, // World 8
 ];
 
+/// PRG bank loaded at CPU $A000-$BFFF for each tileset (0-18).
+/// Level layout data lives in these banks.
+const PAGE_A000_BY_TILESET: [usize; 19] = [
+    11, 15, 21, 16, 17, 19, 18, 18, 18, 20, 23, 19, 17, 19, 13, 26, 26, 26, 9,
+];
+
 /// Data that travels with a level when shuffled.
 #[derive(Clone)]
 struct LevelEntry {
@@ -35,12 +41,24 @@ struct LevelEntry {
     tileset: u8, // lower nibble of ByRowType
 }
 
-/// Returns true if this map entry is a regular action level that can be shuffled.
-/// Excludes fortresses, toad houses, bonus games, hand traps, pipe junctions, etc.
-fn is_shuffleable(obj_ptr: u16, lay_ptr: u16) -> bool {
-    // Must be a real level pointer (banked at $C000+)
-    // Must not be a fortress (obj >= $D000, fortress enemy data in higher banks)
-    // Must not be empty/special (lay = $0000)
+/// Convert a layout CPU address ($A000-$BFFF) + tileset to a ROM file offset.
+fn layout_file_offset(cpu_addr: u16, tileset: u8) -> Option<usize> {
+    if tileset as usize >= PAGE_A000_BY_TILESET.len() || cpu_addr < 0xA000 {
+        return None;
+    }
+    let bank = PAGE_A000_BY_TILESET[tileset as usize];
+    Some(bank * 0x2000 + 0x10 + (cpu_addr as usize - 0xA000))
+}
+
+/// Read the screen count from a level's 9-byte header.
+/// Header byte 4, bits 3-0 = (num_screens - 1).
+fn level_screen_count(rom: &Rom, layout_offset: usize) -> u8 {
+    (rom.read_byte(layout_offset + 4) & 0x0F) + 1
+}
+
+/// Returns true if this map entry's pointer range indicates a real level
+/// (not a fortress, toad house, bonus game, hand trap, or pipe junction).
+fn is_level_pointer(obj_ptr: u16, lay_ptr: u16) -> bool {
     obj_ptr >= 0xC000 && obj_ptr < 0xD000 && lay_ptr != 0x0000
 }
 
@@ -94,20 +112,60 @@ fn write_entry(rom: &mut Rom, world: &WorldTables, idx: usize, entry: &LevelEntr
     rom.write_byte(rowtype_off, (old & 0xF0) | (entry.tileset & 0x0F));
 }
 
+/// Collect the indices of entries that are real action levels for a given world.
+/// Excludes fortresses, toad houses, bonus games, hammer bros, pipe connectors, etc.
+///
+/// An entry is a real action level if:
+/// 1. Its obj pointer is in $C000-$CFFF (not fortress/special)
+/// 2. Its layout pointer is non-zero
+/// 3. Its (obj, lay) pair is unique within the world (excludes hammer bros)
+/// 4. Its layout has 3+ screens (excludes pipe connectors and small arenas)
+fn collect_shuffleable(rom: &Rom, world: &WorldTables) -> Vec<usize> {
+    let (_scrcol, objsets, layouts) = table_offsets(world);
+
+    // First pass: count (obj, lay) pair occurrences to detect duplicates
+    let mut pair_counts = std::collections::HashMap::new();
+    for i in 0..world.entry_count {
+        let obj_ptr = read_word(rom, objsets + i * 2);
+        let lay_ptr = read_word(rom, layouts + i * 2);
+        if is_level_pointer(obj_ptr, lay_ptr) {
+            *pair_counts.entry((obj_ptr, lay_ptr)).or_insert(0u32) += 1;
+        }
+    }
+
+    // Second pass: collect entries that pass all filters
+    let mut indices = Vec::new();
+    for i in 0..world.entry_count {
+        let obj_ptr = read_word(rom, objsets + i * 2);
+        let lay_ptr = read_word(rom, layouts + i * 2);
+        if !is_level_pointer(obj_ptr, lay_ptr) {
+            continue;
+        }
+
+        // Exclude duplicate (obj, lay) pairs (hammer bros, etc.)
+        if pair_counts[&(obj_ptr, lay_ptr)] > 1 {
+            continue;
+        }
+
+        // Exclude short levels (pipe connectors, small arenas)
+        let tileset = rom.read_byte(world.rowtype_offset + i) & 0x0F;
+        if let Some(lay_offset) = layout_file_offset(lay_ptr, tileset) {
+            if level_screen_count(rom, lay_offset) < 3 {
+                continue;
+            }
+        } else {
+            continue; // Can't resolve layout — skip
+        }
+
+        indices.push(i);
+    }
+    indices
+}
+
 /// Shuffle levels within each world independently.
 pub fn randomize_intra<R: Rng>(rom: &mut Rom, rng: &mut R) {
     for world in &WORLDS {
-        let (_scrcol, objsets, layouts) = table_offsets(world);
-
-        // Find shuffleable entry indices
-        let mut shuffleable_indices: Vec<usize> = Vec::new();
-        for i in 0..world.entry_count {
-            let obj_ptr = read_word(rom, objsets + i * 2);
-            let lay_ptr = read_word(rom, layouts + i * 2);
-            if is_shuffleable(obj_ptr, lay_ptr) {
-                shuffleable_indices.push(i);
-            }
-        }
+        let shuffleable_indices = collect_shuffleable(rom, world);
 
         if shuffleable_indices.len() <= 1 {
             continue;
@@ -135,13 +193,8 @@ pub fn randomize_cross<R: Rng>(rom: &mut Rom, rng: &mut R) {
     let mut all_indices: Vec<(usize, usize)> = Vec::new(); // (world_idx, entry_idx)
 
     for (w, world) in WORLDS.iter().enumerate() {
-        let (_scrcol, objsets, layouts) = table_offsets(world);
-        for i in 0..world.entry_count {
-            let obj_ptr = read_word(rom, objsets + i * 2);
-            let lay_ptr = read_word(rom, layouts + i * 2);
-            if is_shuffleable(obj_ptr, lay_ptr) {
-                all_indices.push((w, i));
-            }
+        for i in collect_shuffleable(rom, world) {
+            all_indices.push((w, i));
         }
     }
 
@@ -183,7 +236,10 @@ mod tests {
         let n = w.entry_count;
         let (_scrcol, objsets, layouts) = table_offsets(w);
 
-        // Set ByRowType: mix of tilesets
+        // Set ByRowType: tileset=1 (Plains), upper nibble=2
+        // Tileset 1 -> PAGE_A000_BY_TILESET[1] = bank 15
+        // Layout CPU $B000 -> file offset = 15 * 0x2000 + 0x10 + ($B000 - $A000)
+        //                   = 0x1E010 + 0x1000 = 0x1F010
         for i in 0..n {
             data[w.rowtype_offset + i] = 0x21; // upper nibble=2, tileset=1 (Plains)
         }
@@ -199,6 +255,15 @@ mod tests {
             data[obj_off + 1] = ((obj_val >> 8) & 0xFF) as u8;
             data[lay_off] = (lay_val & 0xFF) as u8;
             data[lay_off + 1] = ((lay_val >> 8) & 0xFF) as u8;
+
+            // Write a fake level header at the layout file offset so
+            // level_screen_count returns >= 3 (making it shuffleable).
+            // Header byte 4 bits 3-0 = (screens - 1), so 0x07 = 8 screens.
+            let bank = PAGE_A000_BY_TILESET[1]; // tileset 1
+            let file_off = bank * 0x2000 + 0x10 + (lay_val as usize - 0xA000);
+            if file_off + 9 < data.len() {
+                data[file_off + 4] = 0x07; // 8 screens
+            }
         }
 
         // Make entry 9 a toad house (non-shuffleable)
@@ -243,6 +308,46 @@ mod tests {
         assert_eq!(read_word(&rom, objsets + 11 * 2), fortress_obj, "Fortress should be unchanged");
         assert_eq!(read_word(&rom, objsets + 12 * 2), bonus_obj, "Bonus should be unchanged");
         assert_eq!(read_word(&rom, layouts + 12 * 2), bonus_lay, "Bonus layout should be unchanged");
+    }
+
+    #[test]
+    fn test_hammer_bros_excluded() {
+        let mut rom = make_test_rom();
+        let w = &WORLDS[0];
+        let (_scrcol, objsets, layouts) = table_offsets(w);
+
+        // Make entries 13 and 14 share the same (obj, lay) pair = hammer bros
+        let obj_off13 = objsets + 13 * 2;
+        let obj_off14 = objsets + 14 * 2;
+        let lay_off13 = layouts + 13 * 2;
+        let lay_off14 = layouts + 14 * 2;
+        // Both point to obj=0xC640 lay=0xB3E7
+        rom.write_byte(obj_off13, 0x40); rom.write_byte(obj_off13 + 1, 0xC6);
+        rom.write_byte(obj_off14, 0x40); rom.write_byte(obj_off14 + 1, 0xC6);
+        rom.write_byte(lay_off13, 0xE7); rom.write_byte(lay_off13 + 1, 0xB3);
+        rom.write_byte(lay_off14, 0xE7); rom.write_byte(lay_off14 + 1, 0xB3);
+
+        let indices = collect_shuffleable(&rom, w);
+        assert!(!indices.contains(&13), "Hammer bro entry 13 should be excluded");
+        assert!(!indices.contains(&14), "Hammer bro entry 14 should be excluded");
+    }
+
+    #[test]
+    fn test_pipe_connectors_excluded() {
+        let mut rom = make_test_rom();
+        let w = &WORLDS[0];
+        let (_scrcol, _objsets, layouts) = table_offsets(w);
+
+        // Make entry 15 a 1-screen level (pipe connector)
+        let lay_val = read_word(&rom, layouts + 15 * 2);
+        let tileset = 1u8;
+        let bank = PAGE_A000_BY_TILESET[tileset as usize];
+        let file_off = bank * 0x2000 + 0x10 + (lay_val as usize - 0xA000);
+        // Set screen count to 1: header byte 4 = 0x00 (bits 3-0 = 0, so 1 screen)
+        rom.write_byte(file_off + 4, 0x00);
+
+        let indices = collect_shuffleable(&rom, w);
+        assert!(!indices.contains(&15), "1-screen pipe connector should be excluded");
     }
 
     #[test]
