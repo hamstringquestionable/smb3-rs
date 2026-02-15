@@ -62,10 +62,56 @@ fn level_screen_count(rom: &Rom, layout_offset: usize) -> u8 {
     (rom.read_byte(layout_offset + 4) & 0x0F) + 1
 }
 
-/// Returns true if this map entry's pointer range indicates a real level
-/// (not a fortress, toad house, bonus game, hand trap, or pipe junction).
+/// Returns true if this map entry has a real level pointer (not a toad house,
+/// bonus game, hand trap, or pipe junction).
+///
+/// Previously excluded obj >= 0xD000 as "fortress", but many regular action
+/// levels (e.g. World 2 desert levels, World 8 tank/ship levels) have enemy
+/// data in the $D000+ range. Boss detection is handled separately.
 fn is_level_pointer(obj_ptr: u16, lay_ptr: u16) -> bool {
-    obj_ptr >= 0xC000 && obj_ptr < 0xD000 && lay_ptr != 0x0000
+    obj_ptr >= 0xC000 && lay_ptr != 0x0000
+}
+
+/// Boss enemy object IDs that indicate a fortress or boss level.
+/// These levels should not be shuffled.
+const BOSS_ENEMY_IDS: &[u8] = &[
+    0x0E, // OBJ_BOSS_KOOPALING
+    0x18, // OBJ_BOSS_BOWSER
+    0x4A, // OBJ_BOOMBOOMQBALL (Boom-Boom end-level ball)
+    0x4B, // OBJ_BOOMBOOMJUMP (Jumping Boom-Boom)
+    0x4C, // OBJ_BOOMBOOMFLY (Flying Boom-Boom)
+];
+
+/// File offset of the start of enemy/object data in PRG006.
+const ENEMY_DATA_BASE: usize = 0x0C010;
+
+/// CPU base address for enemy data bank.
+const ENEMY_DATA_CPU_BASE: u16 = 0xC000;
+
+/// Returns true if the enemy data at the given obj pointer contains a boss
+/// enemy (Boom-Boom, Koopaling, or Bowser), indicating a fortress or boss
+/// level that should not be shuffled.
+///
+/// Parses enemy data in proper 3-byte groups [obj_id, x, y] after the
+/// initial page flag byte.
+fn has_boss_enemy(rom: &Rom, obj_ptr: u16) -> bool {
+    if obj_ptr < ENEMY_DATA_CPU_BASE {
+        return false;
+    }
+    let file_off = ENEMY_DATA_BASE + (obj_ptr as usize - ENEMY_DATA_CPU_BASE as usize);
+    // Skip page flag byte, then scan 3-byte entries
+    let mut pos = file_off + 1;
+    loop {
+        let obj_id = rom.read_byte(pos);
+        if obj_id == 0xFF {
+            break;
+        }
+        if BOSS_ENEMY_IDS.contains(&obj_id) {
+            return true;
+        }
+        pos += 3;
+    }
+    false
 }
 
 /// Compute sub-table file offsets for a world.
@@ -122,12 +168,13 @@ fn write_entry(rom: &mut Rom, world: &WorldTables, idx: usize, entry: &LevelEntr
 }
 
 /// Collect the indices of entries that are real action levels for a given world.
-/// Excludes fortresses, toad houses, bonus games, hammer bros, pipe connectors, etc.
+/// Excludes fortresses, boss levels, toad houses, bonus games, hammer bros,
+/// pipe connectors, etc.
 ///
 /// An entry is a real action level if:
-/// 1. Its obj pointer is in $C000-$CFFF (not fortress/special)
-/// 2. Its layout pointer is non-zero
-/// 3. Its (obj, lay) pair is unique within the world (excludes hammer bros)
+/// 1. Its obj pointer >= $C000 and layout pointer is non-zero
+/// 2. Its (obj, lay) pair is unique within the world (excludes hammer bros)
+/// 3. Its enemy data does not contain boss enemies (excludes fortresses/bosses)
 /// 4. Its layout has 3+ screens (excludes pipe connectors and small arenas)
 fn collect_shuffleable(rom: &Rom, world: &WorldTables) -> Vec<usize> {
     let (_scrcol, objsets, layouts) = table_offsets(world);
@@ -153,6 +200,11 @@ fn collect_shuffleable(rom: &Rom, world: &WorldTables) -> Vec<usize> {
 
         // Exclude duplicate (obj, lay) pairs (hammer bros, etc.)
         if pair_counts[&(obj_ptr, lay_ptr)] > 1 {
+            continue;
+        }
+
+        // Exclude fortress and boss levels by scanning enemy data
+        if has_boss_enemy(rom, obj_ptr) {
             continue;
         }
 
@@ -266,6 +318,14 @@ mod tests {
             if file_off + 9 < data.len() {
                 data[file_off + 4] = 0x07; // 8 screens
             }
+
+            // Write empty enemy data (page flag + terminator) so
+            // has_boss_enemy() doesn't read garbage.
+            let enemy_off = ENEMY_DATA_BASE + (obj_val as usize - ENEMY_DATA_CPU_BASE as usize);
+            if enemy_off + 2 < data.len() {
+                data[enemy_off] = 0x01;     // page flag
+                data[enemy_off + 1] = 0xFF; // terminator (no enemies)
+            }
         }
 
         // Make entry 9 a toad house (non-shuffleable)
@@ -273,10 +333,19 @@ mod tests {
         data[obj_off9] = 0x00;
         data[obj_off9 + 1] = 0x07; // obj = 0x0700
 
-        // Make entry 11 a fortress (non-shuffleable)
+        // Make entry 11 a fortress (non-shuffleable) — place a Boom-Boom enemy
+        // in its enemy data so has_boss_enemy() detects it.
+        let obj_val_11: u16 = 0xC000 + 11 * 0x10;
         let obj_off11 = objsets + 11 * 2;
-        data[obj_off11] = 0x00;
-        data[obj_off11 + 1] = 0xD0; // obj = 0xD000
+        data[obj_off11] = (obj_val_11 & 0xFF) as u8;
+        data[obj_off11 + 1] = ((obj_val_11 >> 8) & 0xFF) as u8;
+        // Write enemy data: [page_flag=0x01, boom_boom=0x4B, x, y, 0xFF]
+        let enemy_off = ENEMY_DATA_BASE + (obj_val_11 as usize - ENEMY_DATA_CPU_BASE as usize);
+        data[enemy_off] = 0x01;     // page flag
+        data[enemy_off + 1] = 0x4B; // OBJ_BOOMBOOMJUMP
+        data[enemy_off + 2] = 0x50; // x
+        data[enemy_off + 3] = 0x18; // y (not 0x18=Bowser, this is position)
+        data[enemy_off + 4] = 0xFF; // terminator
 
         // Make entry 12 a bonus/special (non-shuffleable)
         let obj_off12 = objsets + 12 * 2;
@@ -299,17 +368,21 @@ mod tests {
 
         // Record non-shuffleable entries
         let toad_obj = read_word(&rom, objsets + 9 * 2);
+        let toad_lay = read_word(&rom, layouts + 9 * 2);
         let fortress_obj = read_word(&rom, objsets + 11 * 2);
+        let fortress_lay = read_word(&rom, layouts + 11 * 2);
         let bonus_obj = read_word(&rom, objsets + 12 * 2);
         let bonus_lay = read_word(&rom, layouts + 12 * 2);
 
         randomize_intra(&mut rom, &mut rng);
 
         // Verify non-shuffleable entries unchanged
-        assert_eq!(read_word(&rom, objsets + 9 * 2), toad_obj, "Toad house should be unchanged");
-        assert_eq!(read_word(&rom, objsets + 11 * 2), fortress_obj, "Fortress should be unchanged");
-        assert_eq!(read_word(&rom, objsets + 12 * 2), bonus_obj, "Bonus should be unchanged");
-        assert_eq!(read_word(&rom, layouts + 12 * 2), bonus_lay, "Bonus layout should be unchanged");
+        assert_eq!(read_word(&rom, objsets + 9 * 2), toad_obj, "Toad house obj should be unchanged");
+        assert_eq!(read_word(&rom, layouts + 9 * 2), toad_lay, "Toad house lay should be unchanged");
+        assert_eq!(read_word(&rom, objsets + 11 * 2), fortress_obj, "Fortress obj should be unchanged");
+        assert_eq!(read_word(&rom, layouts + 11 * 2), fortress_lay, "Fortress lay should be unchanged");
+        assert_eq!(read_word(&rom, objsets + 12 * 2), bonus_obj, "Bonus obj should be unchanged");
+        assert_eq!(read_word(&rom, layouts + 12 * 2), bonus_lay, "Bonus lay should be unchanged");
     }
 
     #[test]
