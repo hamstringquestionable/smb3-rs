@@ -4,6 +4,9 @@ use rand_chacha::ChaCha8Rng;
 use crate::randomize;
 use crate::rom::Rom;
 
+/// Returns default starting lives (4).
+fn default_starting_lives() -> u8 { 4 }
+
 /// Level shuffle mode.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -32,6 +35,9 @@ pub struct Options {
     pub level_shuffle: LevelShuffle,
     #[serde(default = "default_true")]
     pub disable_autoscroll: bool,
+    /// Set starting lives for both Mario and Luigi (1–99).
+    #[serde(default = "default_starting_lives")]
+    pub starting_lives: u8,
     /// Enable always-on airship lock (anchor effect, disables airship movement on death)
     #[serde(default = "default_true")]
     pub airship_lock: bool,
@@ -68,6 +74,7 @@ impl Default for Options {
             chest_items: true,
             remove_whistles: true,
             debug_mode: false,
+            starting_lives: default_starting_lives(),
         }
     }
 }
@@ -104,8 +111,8 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     if options.disable_autoscroll {
         randomize::autoscroll::disable_autoscroll(rom);
     }
-    // Always apply: 99 starting lives
-    randomize::qol::set_starting_lives(rom, 99);
+    // Set starting lives (default 4; user/configurable)
+    randomize::qol::set_starting_lives(rom, options.starting_lives);
     if options.debug_mode {
         randomize::qol::enable_debug_mode(rom);
     }
@@ -114,5 +121,105 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     if options.airship_lock {
         // A9 01 EA = LDA #$01; NOP (forces anchor flag always set)
         rom.write_range(0x1FABC, &[0xA9, 0x01, 0xEA]);
+        // Anchors are now useless — replace all anchor items in item tables
+        // with a single randomly chosen powerup for this seed.
+        randomize::items::replace_anchors(rom, &mut rng);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rom::Rom;
+
+    const ANCHOR_PATCH_OFFSET: usize = 0x1FABC;
+    const PATCHED_BYTES: [u8; 3] = [0xA9, 0x01, 0xEA];
+    const ANCHOR: u8 = 0x0A;
+
+    // Item table offsets (must match items.rs)
+    const HAMMER_BROS_ITEMS_OFFSET: usize = 0x16190;
+    const TOAD_HOUSE_ITEMS_OFFSET: usize = 0x3B14B;
+
+    fn make_test_rom() -> Rom {
+        let mut data = vec![0u8; 393232];
+        // iNES header
+        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
+        data[4] = 16;
+        data[5] = 16;
+        data[6] = 0x40;
+        Rom::from_bytes(&data).unwrap()
+    }
+
+    #[test]
+    fn randomized_rom_has_anchor_lock_patch_by_default() {
+        let mut rom = make_test_rom();
+        let original_bytes = rom.read_range(ANCHOR_PATCH_OFFSET, 3).to_vec();
+        let options = Options::default();
+        randomize(&mut rom, 0x12345678, &options);
+
+        assert_eq!(
+            rom.read_range(ANCHOR_PATCH_OFFSET, 3),
+            &PATCHED_BYTES,
+            "Anchor lock patch should be present by default"
+        );
+        // Sanity: the patch actually changed something
+        assert_ne!(
+            original_bytes, PATCHED_BYTES,
+            "Test ROM should not already contain the patch bytes"
+        );
+    }
+
+    #[test]
+    fn anchor_lock_patch_can_be_disabled() {
+        let mut rom = make_test_rom();
+        let original_bytes = rom.read_range(ANCHOR_PATCH_OFFSET, 3).to_vec();
+        let mut options = Options::default();
+        options.airship_lock = false;
+        randomize(&mut rom, 0x12345678, &options);
+
+        assert_eq!(
+            rom.read_range(ANCHOR_PATCH_OFFSET, 3),
+            &original_bytes[..],
+            "Anchor lock patch must NOT be present when airship_lock = false"
+        );
+    }
+
+    #[test]
+    fn anchors_replaced_when_airship_lock_on() {
+        let mut rom = make_test_rom();
+        // Place anchors in item tables
+        rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 2, ANCHOR);
+        rom.write_byte(TOAD_HOUSE_ITEMS_OFFSET + 1, ANCHOR);
+
+        let mut options = Options::default();
+        options.airship_lock = true;
+        // Disable chest_items so our manually placed anchors survive to the replacement step
+        options.chest_items = false;
+        options.remove_whistles = false;
+        randomize(&mut rom, 0x12345678, &options);
+
+        let r1 = rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 2);
+        let r2 = rom.read_byte(TOAD_HOUSE_ITEMS_OFFSET + 1);
+        assert_ne!(r1, ANCHOR, "Anchor in Hammer Bros table was not replaced");
+        assert_ne!(r2, ANCHOR, "Anchor in Toad House table was not replaced");
+        assert_eq!(r1, r2, "All anchors should become the same powerup for a given seed");
+    }
+
+    #[test]
+    fn anchors_kept_when_airship_lock_off() {
+        let mut rom = make_test_rom();
+        rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 2, ANCHOR);
+
+        let mut options = Options::default();
+        options.airship_lock = false;
+        options.chest_items = false;
+        options.remove_whistles = false;
+        randomize(&mut rom, 0x12345678, &options);
+
+        assert_eq!(
+            rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 2),
+            ANCHOR,
+            "Anchor should be preserved when airship_lock is off"
+        );
     }
 }

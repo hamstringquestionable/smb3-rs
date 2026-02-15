@@ -27,6 +27,13 @@
             </div>
         </div>
 
+        <div class="section">
+            <label for="opt-starting-lives">Starting Lives</label>
+            <select id="opt-starting-lives">
+                <!-- Options are dynamically generated: 4 to 99 -->
+            </select>
+        </div>
+
         <fieldset class="section">
             <legend>Randomization Options</legend>
             <label class="checkbox-label">
@@ -64,6 +71,10 @@
             <label class="checkbox-label">
                 <input type="checkbox" id="opt-remove-whistles" checked>
                 Remove Warp Whistles
+            </label>
+            <label class="checkbox-label">
+                <input type="checkbox" id="opt-airship-lock" checked>
+                Airship Lock <span class="tag">Anchors always work, become powerups</span>
             </label>
             <label class="checkbox-label">
                 <input type="checkbox" id="opt-debug-mode">

@@ -66,6 +66,9 @@ struct Cli {
     /// Disable airship lock (anchor effect always on by default, use this flag to disable)
     #[arg(long)]
     no_airship_lock: bool,
+    /// Set starting lives (1–99, default: 4)
+    #[arg(long, default_value_t = 4)]
+    starting_lives: u8,
 }
 
 fn main() {
@@ -104,6 +107,7 @@ fn main() {
         remove_whistles: !cli.keep_whistles,
         debug_mode: cli.debug_mode,
         airship_lock: !cli.no_airship_lock,
+        starting_lives: cli.starting_lives,
     };
 
     let ext = if cli.patched_rom { "nes" } else { "ips" };
@@ -118,6 +122,7 @@ fn main() {
     eprintln!("  Enemies:  {}", if options.enemies { "on" } else { "off" });
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
     eprintln!("  Big ? Blocks: {}", if options.big_q_blocks { "on" } else { "off" });
+    eprintln!("  Starting Lives: {}", options.starting_lives);
     eprintln!("  Level shuffle: {}", match &options.level_shuffle {
         LevelShuffle::Off => "off",
         LevelShuffle::IntraWorld => "intra-world",

@@ -18,7 +18,20 @@ const optBigQBlocks = document.getElementById("opt-big-q-blocks");
 const optLevelShuffle = document.getElementById("opt-level-shuffle");
 const optChestItems = document.getElementById("opt-chest-items");
 const optRemoveWhistles = document.getElementById("opt-remove-whistles");
+const optAirshipLock = document.getElementById("opt-airship-lock");
 const optDebugMode = document.getElementById("opt-debug-mode");
+const optStartingLives = document.getElementById("opt-starting-lives");
+
+// Dynamically populate Starting Lives dropdown (4–99)
+if (optStartingLives) {
+	for (let i = 4; i <= 99; i++) {
+		const option = document.createElement("option");
+		option.value = i;
+		option.textContent = i;
+		if (i === 4) option.selected = true;
+		optStartingLives.appendChild(option);
+	}
+}
 
 // Initialize WASM
 init()
@@ -73,6 +86,8 @@ generateBtn.addEventListener("click", () => {
 		level_shuffle: optLevelShuffle.value,
 		chest_items: optChestItems.checked,
 		remove_whistles: optRemoveWhistles.checked,
+		airship_lock: optAirshipLock.checked,
+		starting_lives: Number(optStartingLives.value),
 		debug_mode: optDebugMode.checked,
 	});
 
