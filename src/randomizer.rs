@@ -30,10 +30,19 @@ pub struct Options {
     pub big_q_blocks: bool,
     #[serde(default)]
     pub level_shuffle: LevelShuffle,
+    #[serde(default = "default_true")]
+    pub disable_autoscroll: bool,
+    /// Enable debug mode: press Select to cycle through powerup forms in-game.
+    #[serde(default = "default_false")]
+    pub debug_mode: bool,
 }
 
 fn default_false() -> bool {
     false
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Options {
@@ -45,6 +54,8 @@ impl Default for Options {
             world_order: false,
             big_q_blocks: false,
             level_shuffle: LevelShuffle::Off,
+            disable_autoscroll: true,
+            debug_mode: false,
         }
     }
 }
@@ -72,5 +83,13 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         LevelShuffle::Off => {}
         LevelShuffle::IntraWorld => randomize::levels::randomize_intra(rom, &mut rng),
         LevelShuffle::CrossWorld => randomize::levels::randomize_cross(rom, &mut rng),
+    }
+    if options.disable_autoscroll {
+        randomize::autoscroll::disable_autoscroll(rom);
+    }
+    // Always apply: 99 starting lives
+    randomize::qol::set_starting_lives(rom, 99);
+    if options.debug_mode {
+        randomize::qol::enable_debug_mode(rom);
     }
 }

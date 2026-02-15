@@ -16,6 +16,7 @@ const optEnemies = document.getElementById("opt-enemies");
 const optWorldOrder = document.getElementById("opt-world-order");
 const optBigQBlocks = document.getElementById("opt-big-q-blocks");
 const optLevelShuffle = document.getElementById("opt-level-shuffle");
+const optDebugMode = document.getElementById("opt-debug-mode");
 
 // Initialize WASM
 init()
@@ -68,6 +69,7 @@ generateBtn.addEventListener("click", () => {
 		world_order: optWorldOrder.checked,
 		big_q_blocks: optBigQBlocks.checked,
 		level_shuffle: optLevelShuffle.value,
+		debug_mode: optDebugMode.checked,
 	});
 
 	const outputFormat = document.querySelector(

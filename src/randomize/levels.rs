@@ -33,13 +33,14 @@ const PAGE_A000_BY_TILESET: [usize; 19] = [
 
 /// Data that travels with a level when shuffled.
 ///
-/// Note: the tileset is NOT included here. The ByRowType byte (which
-/// contains the tileset in its lower nibble) is part of the game's
-/// level-lookup match key — changing it causes the game to match the
-/// wrong entry, potentially loading a fortress instead. We only shuffle
-/// levels that share the same tileset so the ByRowType byte stays intact.
+/// Only the tileset (lower nibble of ByRowType) travels with the level.
+/// The upper nibble of ByRowType is the map row position — part of the
+/// game's lookup key (ByRowType + ByScrCol) — and must stay at its
+/// original slot so the game matches the correct entry when Mario
+/// steps on a map tile.
 #[derive(Clone)]
 struct LevelEntry {
+    tileset: u8,
     obj_lo: u8,
     obj_hi: u8,
     lay_lo: u8,
@@ -91,6 +92,7 @@ fn read_entry(rom: &Rom, world: &WorldTables, idx: usize) -> LevelEntry {
     let lay_off = layouts + idx * 2;
 
     LevelEntry {
+        tileset: rom.read_byte(world.rowtype_offset + idx) & 0x0F,
         obj_lo: rom.read_byte(obj_off),
         obj_hi: rom.read_byte(obj_off + 1),
         lay_lo: rom.read_byte(lay_off),
@@ -99,13 +101,19 @@ fn read_entry(rom: &Rom, world: &WorldTables, idx: usize) -> LevelEntry {
 }
 
 /// Write a LevelEntry back to ROM for a given world and entry index.
-/// ByRowType is intentionally NOT modified — its lower nibble (tileset)
-/// is part of the game's match key and must stay unchanged.
+/// Only the tileset (lower nibble of ByRowType) is updated — the upper
+/// nibble (map row position) is preserved so the game's lookup key
+/// remains correct for this map tile.
 fn write_entry(rom: &mut Rom, world: &WorldTables, idx: usize, entry: &LevelEntry) {
     let (_scrcol, objsets, layouts) = table_offsets(world);
 
     let obj_off = objsets + idx * 2;
     let lay_off = layouts + idx * 2;
+
+    // Preserve upper nibble (row), replace lower nibble (tileset)
+    let old_brt = rom.read_byte(world.rowtype_offset + idx);
+    let new_brt = (old_brt & 0xF0) | (entry.tileset & 0x0F);
+    rom.write_byte(world.rowtype_offset + idx, new_brt);
 
     rom.write_byte(obj_off, entry.obj_lo);
     rom.write_byte(obj_off + 1, entry.obj_hi);
@@ -182,57 +190,34 @@ fn shuffle_group<R: Rng>(rom: &mut Rom, rng: &mut R, indices: &[(usize, usize)])
 }
 
 /// Shuffle levels within each world independently.
-/// Levels are grouped by tileset within each world — only levels sharing
-/// the same tileset are swapped with each other.
+/// All shuffleable levels within a world are shuffled together regardless
+/// of tileset — the ByRowType byte (which contains the tileset) is swapped
+/// along with the level data so the game's lookup key stays consistent.
 pub fn randomize_intra<R: Rng>(rom: &mut Rom, rng: &mut R) {
     for (w, world) in WORLDS.iter().enumerate() {
         let shuffleable = collect_shuffleable(rom, world);
-        let groups = group_by_tileset(rom, world, &shuffleable);
-
-        for group in groups.values() {
-            let indices: Vec<(usize, usize)> = group.iter().map(|&i| (w, i)).collect();
-            shuffle_group(rom, rng, &indices);
-        }
+        let indices: Vec<(usize, usize)> = shuffleable.iter().map(|&i| (w, i)).collect();
+        shuffle_group(rom, rng, &indices);
     }
 }
 
 /// Shuffle levels across all worlds.
-/// Levels are grouped by tileset across all worlds — only levels sharing
-/// the same tileset are swapped with each other. This is necessary because
-/// the ByRowType lower nibble (tileset) is part of the game's level-lookup
-/// match key and cannot be changed.
+/// All shuffleable levels across all worlds are collected into a single
+/// pool and shuffled together. The ByRowType byte (including tileset)
+/// travels with each level so the game's lookup key stays consistent.
 pub fn randomize_cross<R: Rng>(rom: &mut Rom, rng: &mut R) {
-    // Collect all shuffleable entries grouped by tileset across all worlds
-    let mut tileset_groups: std::collections::HashMap<u8, Vec<(usize, usize)>> =
-        std::collections::HashMap::new();
+    let mut all_indices: Vec<(usize, usize)> = Vec::new();
 
     for (w, world) in WORLDS.iter().enumerate() {
         let shuffleable = collect_shuffleable(rom, world);
         for i in shuffleable {
-            let ts = rom.read_byte(world.rowtype_offset + i) & 0x0F;
-            tileset_groups.entry(ts).or_default().push((w, i));
+            all_indices.push((w, i));
         }
     }
 
-    for group in tileset_groups.values() {
-        shuffle_group(rom, rng, group);
-    }
+    shuffle_group(rom, rng, &all_indices);
 }
 
-/// Group a set of entry indices by their tileset (ByRowType lower nibble).
-fn group_by_tileset(
-    rom: &Rom,
-    world: &WorldTables,
-    indices: &[usize],
-) -> std::collections::HashMap<u8, Vec<usize>> {
-    let mut groups: std::collections::HashMap<u8, Vec<usize>> =
-        std::collections::HashMap::new();
-    for &i in indices {
-        let ts = rom.read_byte(world.rowtype_offset + i) & 0x0F;
-        groups.entry(ts).or_default().push(i);
-    }
-    groups
-}
 
 #[cfg(test)]
 mod tests {
@@ -412,40 +397,72 @@ mod tests {
     }
 
     #[test]
-    fn test_byrowtype_unchanged() {
-        let mut rom = make_test_rom();
-        let w = &WORLDS[0];
-
-        // Set distinctive ByRowType bytes (both nibbles)
-        for i in 0..w.entry_count {
-            rom.write_byte(w.rowtype_offset + i, (((i as u8) & 0x0F) << 4) | 0x01);
-        }
-
-        // Record full ByRowType bytes
-        let original: Vec<u8> = (0..w.entry_count)
-            .map(|i| rom.read_byte(w.rowtype_offset + i))
-            .collect();
-
-        let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize_intra(&mut rom, &mut rng);
-
-        // Every ByRowType byte must be completely unchanged
-        for i in 0..w.entry_count {
-            let after = rom.read_byte(w.rowtype_offset + i);
-            assert_eq!(after, original[i],
-                "ByRowType at entry {i} changed from 0x{:02X} to 0x{:02X}",
-                original[i], after);
-        }
-    }
-
-    #[test]
-    fn test_only_same_tileset_swapped() {
+    fn test_byrowtype_upper_nibble_preserved_and_tileset_travels() {
         let mut rom = make_test_rom();
         let w = &WORLDS[0];
         let (_scrcol, objsets, layouts) = table_offsets(w);
 
+        // Give entries 0-4 tileset 1 with varying upper nibbles,
+        // entries 5-7 tileset 3 with varying upper nibbles
+        for i in 0..5 {
+            let upper = ((i as u8 + 2) << 4) & 0xF0; // rows 2,3,4,5,6
+            rom.write_byte(w.rowtype_offset + i, upper | 0x01); // ts=1
+        }
+        for i in 5..9 {
+            let upper = ((i as u8 + 2) << 4) & 0xF0; // rows 7,8,9,A
+            rom.write_byte(w.rowtype_offset + i, upper | 0x03); // ts=3
+            // Write layout headers in the TS3 bank so screen count check passes
+            let lay_val = read_word(&rom, layouts + i * 2);
+            let bank = PAGE_A000_BY_TILESET[3];
+            let file_off = bank * 0x2000 + 0x10 + (lay_val as usize - 0xA000);
+            if file_off + 9 < 393232 {
+                rom.write_byte(file_off + 4, 0x07); // 8 screens
+            }
+        }
+
+        // Record original upper nibbles and (obj -> tileset) mapping
+        let shuffleable = collect_shuffleable(&rom, w);
+        let original_upper: Vec<u8> = shuffleable
+            .iter()
+            .map(|&i| rom.read_byte(w.rowtype_offset + i) & 0xF0)
+            .collect();
+        let mut obj_to_tileset: std::collections::HashMap<u16, u8> =
+            std::collections::HashMap::new();
+        for &i in &shuffleable {
+            let obj = read_word(&rom, objsets + i * 2);
+            let ts = rom.read_byte(w.rowtype_offset + i) & 0x0F;
+            obj_to_tileset.insert(obj, ts);
+        }
+
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        randomize_intra(&mut rom, &mut rng);
+
+        // Verify upper nibble (row position) is preserved at each slot
+        for (slot, &i) in shuffleable.iter().enumerate() {
+            let brt = rom.read_byte(w.rowtype_offset + i);
+            let upper = brt & 0xF0;
+            assert_eq!(upper, original_upper[slot],
+                "Entry {i}: upper nibble changed from 0x{:02X} to 0x{:02X}",
+                original_upper[slot], upper);
+        }
+
+        // Verify tileset (lower nibble) traveled with the obj pointer
+        for &i in &shuffleable {
+            let obj = read_word(&rom, objsets + i * 2);
+            let ts = rom.read_byte(w.rowtype_offset + i) & 0x0F;
+            assert_eq!(ts, obj_to_tileset[&obj],
+                "Entry {i}: tileset {ts} doesn't match original tileset {} for obj 0x{obj:04X}",
+                obj_to_tileset[&obj]);
+        }
+    }
+
+    #[test]
+    fn test_cross_tileset_shuffle_allowed() {
+        let mut rom = make_test_rom();
+        let w = &WORLDS[0];
+        let (_scrcol, _objsets, layouts) = table_offsets(w);
+
         // Give entries 0-4 tileset 1, entries 5-7 tileset 3
-        // (entries 9, 11, 12 are non-shuffleable from make_test_rom)
         for i in 0..5 {
             rom.write_byte(w.rowtype_offset + i, 0x21); // ts=1
         }
@@ -460,35 +477,31 @@ mod tests {
             }
         }
 
-        // Collect all shuffleable obj pointers per tileset group
+        // Record original tileset assignments for shuffleable entries
         let shuffleable = collect_shuffleable(&rom, w);
-        let mut ts1_orig = Vec::new();
-        let mut ts3_orig = Vec::new();
-        for &i in &shuffleable {
-            let ts = rom.read_byte(w.rowtype_offset + i) & 0x0F;
-            let obj = read_word(&rom, objsets + i * 2);
-            if ts == 1 { ts1_orig.push(obj); }
-            if ts == 3 { ts3_orig.push(obj); }
-        }
-        assert!(!ts1_orig.is_empty(), "Should have ts=1 shuffleable entries");
-        assert!(!ts3_orig.is_empty(), "Should have ts=3 shuffleable entries");
+        let original_tilesets: Vec<u8> = shuffleable
+            .iter()
+            .map(|&i| rom.read_byte(w.rowtype_offset + i) & 0x0F)
+            .collect();
 
-        let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize_intra(&mut rom, &mut rng);
+        // Shuffle many times to see if cross-tileset swaps happen
+        let mut cross_tileset_swap = false;
+        for seed in 0..20u64 {
+            let mut rom2 = rom.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize_intra(&mut rom2, &mut rng);
 
-        // After shuffle, each tileset group should only contain obj pointers
-        // from its own original set
-        for &i in &shuffleable {
-            let ts = rom.read_byte(w.rowtype_offset + i) & 0x0F;
-            let obj = read_word(&rom, objsets + i * 2);
-            if ts == 1 {
-                assert!(ts1_orig.contains(&obj),
-                    "Entry {i} (ts=1) got obj 0x{obj:04X} which belongs to ts=3 group");
-            }
-            if ts == 3 {
-                assert!(ts3_orig.contains(&obj),
-                    "Entry {i} (ts=3) got obj 0x{obj:04X} which belongs to ts=1 group");
+            let new_tilesets: Vec<u8> = shuffleable
+                .iter()
+                .map(|&i| rom2.read_byte(w.rowtype_offset + i) & 0x0F)
+                .collect();
+
+            if original_tilesets != new_tilesets {
+                cross_tileset_swap = true;
+                break;
             }
         }
+        assert!(cross_tileset_swap,
+            "Expected cross-tileset shuffling to occur in at least one of 20 seeds");
     }
 }

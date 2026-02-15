@@ -46,6 +46,14 @@ struct Cli {
     /// Shuffle levels: off, intra-world, or cross-world
     #[arg(long, default_value = "off")]
     level_shuffle: String,
+
+    /// Keep autoscrollers enabled (they are disabled by default)
+    #[arg(long)]
+    keep_autoscroll: bool,
+
+    /// Enable debug mode (press Select to cycle powerup forms)
+    #[arg(long)]
+    debug_mode: bool,
 }
 
 fn main() {
@@ -79,6 +87,8 @@ fn main() {
         world_order: cli.world_order,
         big_q_blocks: cli.big_q_blocks,
         level_shuffle,
+        disable_autoscroll: !cli.keep_autoscroll,
+        debug_mode: cli.debug_mode,
     };
 
     let ext = if cli.patched_rom { "nes" } else { "ips" };
@@ -98,6 +108,8 @@ fn main() {
         LevelShuffle::IntraWorld => "intra-world",
         LevelShuffle::CrossWorld => "cross-world",
     });
+    eprintln!("  Autoscroll: {}", if options.disable_autoscroll { "disabled" } else { "enabled" });
+    eprintln!("  Debug mode: {}", if options.debug_mode { "on" } else { "off" });
     eprintln!("  Output:   {}", output_path.display());
 
     let result = if cli.patched_rom {
