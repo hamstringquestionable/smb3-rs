@@ -3,6 +3,8 @@ use rand::seq::IndexedRandom;
 
 use crate::rom::Rom;
 
+const ANCHOR: u8 = 0x0A;
+
 /// Useful item pool for chest/reward randomization (Global Item IDs).
 const GOOD_ITEMS: &[u8] = &[
     0x01, // Mushroom
@@ -14,6 +16,17 @@ const GOOD_ITEMS: &[u8] = &[
     0x07, // Jugem's Cloud
     0x08, // P-Wing
     0x09, // Starman
+];
+
+/// Powerup-only pool for anchor replacement (excludes non-powerup items like
+/// Cloud, P-Wing, Starman which don't change suit).
+const POWERUP_ITEMS: &[u8] = &[
+    0x01, // Mushroom
+    0x02, // Fire Flower
+    0x03, // Leaf
+    0x04, // Frog Suit
+    0x05, // Tanooki Suit
+    0x06, // Hammer Suit
 ];
 
 const WARP_WHISTLE: u8 = 0x0C;
@@ -93,6 +106,42 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, remove_whistles: bool) {
     for &offset in TREASURE_CHEST_OFFSETS {
         rom.write_byte(offset, *pool.choose(rng).unwrap());
     }
+}
+
+/// Replace all anchor items (0x0A) in item tables with a single randomly
+/// chosen powerup. Since the airship lock patch makes anchors unnecessary,
+/// this turns every anchor pickup into the same powerup for a given seed
+/// (e.g., all anchors become Hammer Suits). The sprite is not changed —
+/// only the item ID in the data tables.
+pub fn replace_anchors<R: Rng>(rom: &mut Rom, rng: &mut R) {
+    let replacement = *POWERUP_ITEMS.choose(rng).unwrap();
+
+    // Hammer Bros map items
+    let mut hb = rom.read_range(HAMMER_BROS_ITEMS_OFFSET, HAMMER_BROS_ITEMS_LEN).to_vec();
+    for byte in &mut hb {
+        if *byte == ANCHOR {
+            *byte = replacement;
+        }
+    }
+    rom.write_range(HAMMER_BROS_ITEMS_OFFSET, &hb);
+
+    // Princess letter rewards
+    let mut pr = rom.read_range(PRINCESS_REWARDS_OFFSET, PRINCESS_REWARDS_LEN).to_vec();
+    for byte in &mut pr {
+        if *byte == ANCHOR {
+            *byte = replacement;
+        }
+    }
+    rom.write_range(PRINCESS_REWARDS_OFFSET, &pr);
+
+    // Toad House chests
+    let mut th = rom.read_range(TOAD_HOUSE_ITEMS_OFFSET, TOAD_HOUSE_ITEMS_LEN).to_vec();
+    for byte in &mut th {
+        if *byte == ANCHOR {
+            *byte = replacement;
+        }
+    }
+    rom.write_range(TOAD_HOUSE_ITEMS_OFFSET, &th);
 }
 
 /// Remove warp whistles without full item randomization. Replaces the 3 known
@@ -265,5 +314,64 @@ mod tests {
         for &offset in TREASURE_CHEST_OFFSETS {
             assert_eq!(rom1.read_byte(offset), rom2.read_byte(offset));
         }
+    }
+
+    #[test]
+    fn test_replace_anchors_replaces_all() {
+        let mut rom = make_test_rom();
+        // Place anchors in each item table
+        rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 2, ANCHOR);
+        rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 5, ANCHOR);
+        rom.write_byte(PRINCESS_REWARDS_OFFSET, ANCHOR);
+        rom.write_byte(TOAD_HOUSE_ITEMS_OFFSET + 1, ANCHOR);
+
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        replace_anchors(&mut rom, &mut rng);
+
+        // All anchors should be replaced with the same powerup
+        let r1 = rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 2);
+        let r2 = rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 5);
+        let r3 = rom.read_byte(PRINCESS_REWARDS_OFFSET);
+        let r4 = rom.read_byte(TOAD_HOUSE_ITEMS_OFFSET + 1);
+
+        assert_ne!(r1, ANCHOR, "Anchor was not replaced in Hammer Bros");
+        assert!(POWERUP_ITEMS.contains(&r1), "Replacement 0x{r1:02X} not a valid powerup");
+        assert_eq!(r1, r2, "All anchors should become the same item");
+        assert_eq!(r1, r3, "All anchors should become the same item");
+        assert_eq!(r1, r4, "All anchors should become the same item");
+    }
+
+    #[test]
+    fn test_replace_anchors_leaves_non_anchors() {
+        let mut rom = make_test_rom();
+        // Place a non-anchor item
+        rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 2, 0x09); // Starman
+        // Place an anchor nearby
+        rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 3, ANCHOR);
+
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        replace_anchors(&mut rom, &mut rng);
+
+        assert_eq!(rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 2), 0x09, "Non-anchor item was modified");
+        assert_ne!(rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 3), ANCHOR, "Anchor was not replaced");
+    }
+
+    #[test]
+    fn test_replace_anchors_deterministic() {
+        let mut rom1 = make_test_rom();
+        let mut rom2 = make_test_rom();
+        rom1.write_byte(HAMMER_BROS_ITEMS_OFFSET, ANCHOR);
+        rom2.write_byte(HAMMER_BROS_ITEMS_OFFSET, ANCHOR);
+
+        let mut rng1 = ChaCha8Rng::seed_from_u64(77);
+        let mut rng2 = ChaCha8Rng::seed_from_u64(77);
+        replace_anchors(&mut rom1, &mut rng1);
+        replace_anchors(&mut rom2, &mut rng2);
+
+        assert_eq!(
+            rom1.read_byte(HAMMER_BROS_ITEMS_OFFSET),
+            rom2.read_byte(HAMMER_BROS_ITEMS_OFFSET),
+            "Same seed should produce same replacement"
+        );
     }
 }
