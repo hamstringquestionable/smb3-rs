@@ -33,21 +33,19 @@ const AIRSHIP_HEADERS: &[(usize, &str)] = &[
     (0x2F49B, "W7 airship"),
 ];
 
-/// Additional level headers where byte4 needs bit 5 set (0x8C -> 0xAC).
-/// These are sub-areas in the Ice/Sky tileset region that also use
-/// airship-style scroll paths.
+/// Additional level headers that need byte4 bit 5 set (0x8C -> 0xAC).
+/// These are fortress/ship levels in other tilesets that also use
+/// autoscroll-style scroll paths.
 const EXTRA_HEADERS_BYTE4: &[usize] = &[
-    0x2315E, // Ice/Sky area
-    0x23AFC, // Ice/Sky area
+    0x23162, // Fortress area level header
+    0x23B00, // Fortress area level header
 ];
 
-/// Level headers where byte6 needs vertical scroll mode cleared.
-/// byte6 encodes: bit7=pipe transition, bits6-5=vert scroll mode,
-/// bit4=scroll direction, bits3-0=transition course type.
-/// 0xEA (vert_scroll=3) -> 0x0A (vert_scroll=0).
-const EXTRA_HEADERS_BYTE6: &[usize] = &[
-    0x2F628, // Ship sub-area
-    0x2FC26, // Ship sub-area
+/// Level headers where byte5 needs X-start position cleared (0xEA -> 0x0A).
+/// These are additional ship/fortress levels that have scroll-path modes.
+const EXTRA_HEADERS_BYTE5: &[usize] = &[
+    0x2F62E, // Ship sub-area header
+    0x2FC2C, // Ship sub-area header
 ];
 
 /// Disable all autoscrollers except 5-9 (parabeetle ride).
@@ -95,15 +93,14 @@ pub fn disable_autoscroll(rom: &mut Rom) {
         rom.write_byte(header_offset + 5, 0x0A);
     }
 
-    for &header_offset in EXTRA_HEADERS_BYTE4 {
-        // Set bit 5 in byte4
-        let b4 = rom.read_byte(header_offset + 4);
-        rom.write_byte(header_offset + 4, b4 | 0x20);
+    for &byte_offset in EXTRA_HEADERS_BYTE4 {
+        // Set bit 5: 0x8C -> 0xAC (add 0x20)
+        rom.write_byte(byte_offset, 0xAC);
     }
 
-    for &header_offset in EXTRA_HEADERS_BYTE6 {
-        // Clear vert scroll mode (bits 6-5) in byte6: 0xEA -> 0x0A
-        rom.write_byte(header_offset + 6, 0x0A);
+    for &byte_offset in EXTRA_HEADERS_BYTE5 {
+        // Clear X-start position bits 7-5: 0xEA -> 0x0A
+        rom.write_byte(byte_offset, 0x0A);
     }
 }
 
@@ -153,15 +150,15 @@ mod tests {
 
         // Set up extra byte4 headers
         for &offset in EXTRA_HEADERS_BYTE4 {
-            if offset + 9 <= data.len() {
-                data[offset + 4] = 0x8C;
+            if offset < data.len() {
+                data[offset] = 0x8C;
             }
         }
 
-        // Set up extra byte6 headers
-        for &offset in EXTRA_HEADERS_BYTE6 {
-            if offset + 9 <= data.len() {
-                data[offset + 6] = 0xEA;
+        // Set up extra byte5 headers
+        for &offset in EXTRA_HEADERS_BYTE5 {
+            if offset < data.len() {
+                data[offset] = 0xEA;
             }
         }
 
@@ -234,20 +231,20 @@ mod tests {
         disable_autoscroll(&mut rom);
 
         for &offset in EXTRA_HEADERS_BYTE4 {
-            assert_eq!(rom.read_byte(offset + 4), 0xAC,
-                "Header at 0x{:05X} byte4 should be 0xAC", offset);
+            assert_eq!(rom.read_byte(offset), 0xAC,
+                "Byte at 0x{:05X} should be 0xAC", offset);
         }
     }
 
     #[test]
-    fn test_extra_byte6_headers_patched() {
+    fn test_extra_byte5_headers_patched() {
         let mut rom = make_test_rom();
 
         disable_autoscroll(&mut rom);
 
-        for &offset in EXTRA_HEADERS_BYTE6 {
-            assert_eq!(rom.read_byte(offset + 6), 0x0A,
-                "Header at 0x{:05X} byte6 should be 0x0A", offset);
+        for &offset in EXTRA_HEADERS_BYTE5 {
+            assert_eq!(rom.read_byte(offset), 0x0A,
+                "Byte at 0x{:05X} should be 0x0A", offset);
         }
     }
 }
