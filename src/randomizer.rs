@@ -32,6 +32,15 @@ pub struct Options {
     pub level_shuffle: LevelShuffle,
     #[serde(default = "default_true")]
     pub disable_autoscroll: bool,
+    /// Enable always-on airship lock (anchor effect, disables airship movement on death)
+    #[serde(default = "default_true")]
+    pub airship_lock: bool,
+    /// Randomize chest and reward items (Hammer Bros, Toad House, Princess letter, treasure chests).
+    #[serde(default = "default_true")]
+    pub chest_items: bool,
+    /// Remove warp whistles and replace with random items.
+    #[serde(default = "default_true")]
+    pub remove_whistles: bool,
     /// Enable debug mode: press Select to cycle through powerup forms in-game.
     #[serde(default = "default_false")]
     pub debug_mode: bool,
@@ -55,6 +64,9 @@ impl Default for Options {
             big_q_blocks: false,
             level_shuffle: LevelShuffle::Off,
             disable_autoscroll: true,
+            airship_lock: true,
+            chest_items: true,
+            remove_whistles: true,
             debug_mode: false,
         }
     }
@@ -84,6 +96,11 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         LevelShuffle::IntraWorld => randomize::levels::randomize_intra(rom, &mut rng),
         LevelShuffle::CrossWorld => randomize::levels::randomize_cross(rom, &mut rng),
     }
+    if options.chest_items {
+        randomize::items::randomize(rom, &mut rng, options.remove_whistles);
+    } else if options.remove_whistles {
+        randomize::items::remove_whistles_only(rom, &mut rng);
+    }
     if options.disable_autoscroll {
         randomize::autoscroll::disable_autoscroll(rom);
     }
@@ -91,5 +108,11 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     randomize::qol::set_starting_lives(rom, 99);
     if options.debug_mode {
         randomize::qol::enable_debug_mode(rom);
+    }
+
+    // Airship lock (anchor effect always on): patch at 0x1FABC ("KXUUXZVG" / Game Genie)
+    if options.airship_lock {
+        // A9 01 EA = LDA #$01; NOP (forces anchor flag always set)
+        rom.write_range(0x1FABC, &[0xA9, 0x01, 0xEA]);
     }
 }
