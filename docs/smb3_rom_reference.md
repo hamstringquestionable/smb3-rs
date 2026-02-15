@@ -960,6 +960,71 @@ Each entry represents a 16x16 metatile column on the world map.
 
 ---
 
+## Autoscroll Disable
+
+Disabling autoscrollers requires far more than removing the D3 autoscroll objects. The reference patch `Super_Mario_Bros_3_NoAutoscrolls(Except 5-9).ips` (65 records, 662 bytes) makes changes across five ROM regions:
+
+### 1. Enemy/Object Data (0x0BFD8–0x0E00D)
+
+**D3 autoscroll removals** — 14 offsets set to 0x00:
+`0x0CA74, 0x0CB63, 0x0CC44, 0x0CD28, 0x0CDD3, 0x0CF51, 0x0D6B7, 0x0D72D, 0x0D768, 0x0D7A9, 0x0D878, 0x0D92D, 0x0D980, 0x0DA15`
+
+**NOT removed:** Level 5-9 parabeetle ride at `0x0CECE` (required for level to function — no ground without autoscroll).
+
+**Airship enemy data rewrites** — enemies repositioned/replaced for free-scroll play. Large multi-byte patches at: `0x0CC6C` (4B), `0x0CDE7` (7B), `0x0CE9A` (10B), `0x0D6DB` (9B), `0x0D6EA` (18B), `0x0D789` (6B), `0x0D7B3` (5B), `0x0D7CA` (45B), `0x0D7FD` (5B), `0x0D825` (18B), `0x0D849` (6B), `0x0D858` (6B), and others. These provide new cannon, fire jet, and enemy configurations designed for player-controlled scrolling.
+
+**Autoscroll type change:** `0x0D8DF` changed to `0x50` (converts one airship-path autoscroll to horizontal).
+
+**Segment terminators:** `0x0CFE3`, `0x0D038`, `0x0D103` — restructure enemy data segments.
+
+### 2. Level Pointer Table Redirects (PRG012: 0x18010–0x1A00F)
+
+Each W1–W7 airship gets three pointer table changes (ByRowType, ObjSets, LevelLayouts) to load the rewritten enemy/layout data:
+
+| World | ByRowType | ObjSets | LevelLayouts |
+|-------|-----------|---------|--------------|
+| W1 | 0x19449 = 0x8A | 0x19484 = [0xEA, 0xD6] | 0x194AE = [0xB7, 0xAD] |
+| W2 | 0x194DE = 0x6A | 0x19560 = [0x1C, 0xD7] | 0x195BE = [0xAB, 0xAE] |
+| W3 | 0x19609 = 0x8A | 0x196A2 = [0x57, 0xD7] | 0x1970A = [0x09, 0xB0] |
+| W4 | 0x1971A = 0x6A | 0x19764 = [0x98, 0xD7] | 0x197A8 = [0x3A, 0xB1] |
+| W5 | 0x19807 = 0xAA | 0x1987E = [0xA6, 0xD6] | 0x198D2 = [0x97, 0xAC] |
+| W6 | 0x19919 = 0x6A | 0x199C0 = [0xE5, 0xD7] | 0x19A32 = [0xB3, 0xB2] |
+| W7 | 0x19A69 = 0x9A | 0x19AF0 = [0x14, 0xD8] | 0x19B4C = [0x89, 0xB4] |
+
+### 3. Level Layout Data (Pipe/Water region)
+
+New tile generator data written for reworked airship geometry:
+- `0x24DE0` — 28 bytes: repeated metatile pattern (airship deck sections)
+- `0x24E6A` — 85 bytes: platform/geometry data (repositioned platforms and structures)
+
+### 4. Airship Level Headers (Ship data: 0x2EC07–0x30005)
+
+For each W1–W7 airship, byte4 (Y-start) and byte5 (X-start) are patched:
+
+| World | Offset | byte4→ | byte5→ | Notes |
+|-------|--------|--------|--------|-------|
+| W1 | 0x2ECAD | 0xAA | 0x0A | Y-start=5, X-start=0 |
+| W2 | 0x2EDCD | 0xAA | 0x0A | |
+| W3 | 0x2EEC1 | 0xAA | 0x0A | |
+| W4 | 0x2F01F | 0xAA | 0x0A | |
+| W5 | 0x2F150 | 0xAA | 0x0A | |
+| W6 | 0x2F2C9 | 0xAA | 0x0A | |
+| W7 | 0x2F49F | 0xAA | 0x0A | |
+
+**Extra headers:**
+- `0x23162` = 0xAC, `0x23B00` = 0xAC — fortress sub-area byte4 (set Y-start bit 5)
+- `0x2F62E` = 0x0A, `0x2FC2C` = 0x0A — ship sub-area byte5 (clear X-start bits)
+
+### 5. PRG030 Code Patch
+
+`0x3D7AD` = 0x80 — disables scroll-path camera logic in the game engine.
+
+### Key Insight
+
+Simply removing D3 objects and patching headers is insufficient. Without the enemy data rewrites and pointer redirects, airship levels exhibit broken behavior: the camera scrolls right with no Mario on screen and visual glitches occur. The header patches (byte4/byte5) only work correctly in conjunction with the full set of enemy repositioning and level layout changes. W8 auto-scrolling levels (tanks, battleship, airship) work with D3 removal alone because the PRG030 code patch at `0x3D7AD` handles their scroll behavior separately.
+
+---
+
 ## Sources
 
 - [Data Crystal ROM Map](https://datacrystal.tcrf.net/wiki/Super_Mario_Bros._3/ROM_map)
