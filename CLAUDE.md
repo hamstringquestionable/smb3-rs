@@ -36,9 +36,28 @@ web/
   index.html         # Browser frontend
   style.css
   app.js             # Loads WASM, handles file input, triggers download
+tools/
+  rom_map.py         # Generates tools/rom_map.json from the ROM
+  rom_map.json       # Pre-built ROM map (gitignored, regenerate with rom_map.py)
+  level_sim.py       # Level tile simulator for debugging individual levels
 docs/
   smb3_rom_reference.md   # ROM hacking reference (offsets, data structures, RAM map)
 ```
+
+## ROM Map
+
+**`tools/rom_map.json`** is a pre-built JSON map of the entire ROM. Before scanning the ROM manually for offsets, powerup locations, level data, enemy positions, or pointer tables, **always check `tools/rom_map.json` first**. It contains:
+
+- All 493 powerup block offsets (byte2 values, tile IDs, randomize class, protection flags)
+- All 9 level data regions with every level header, command count, and per-level powerup lists
+- All 340 world pointer table entries (type, tileset, obj/lay pointers, shuffleability)
+- All 2077 enemy/object entries (class, randomizability, protection flags)
+- Key ROM tables (LL_PowerBlocks, LATP_QBlocks, palettes, etc.)
+- Protected offsets (7-7 Q-stars, 7-F1 Tanooki)
+
+Regenerate after ROM structure changes: `nix-shell -p python3 --run "python3 tools/rom_map.py"`
+
+The map is gitignored since it's derived from the ROM file.
 
 ## ROM Reference
 

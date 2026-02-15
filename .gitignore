@@ -2,3 +2,4 @@
 /pkg
 *.nes
 *.ips
+tools/rom_map.json
