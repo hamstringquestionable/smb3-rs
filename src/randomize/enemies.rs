@@ -30,16 +30,16 @@ const GROUND_ENEMIES: &[u8] = &[
     0x40, // OBJ_BUSTERBEATLE
     0x55, // OBJ_BOBOMB
     0x6B, // OBJ_PILEDRIVER (micro goomba)
-    0x70, // OBJ_BUZZYBEATLE
     0x71, // OBJ_SPINY
     0x72, // OBJ_GOOMBA
 ];
 
-/// Koopa Troopas — kept in their own class because some levels require shells
-/// to progress. Swapping a Koopa with a Goomba could make levels unbeatable.
-const KOOPA_TROOPAS: &[u8] = &[
+/// Shell-producing enemies — kept in their own class because some levels require
+/// shells to progress. Swapping these with non-shell enemies could make levels unbeatable.
+const SHELL_ENEMIES: &[u8] = &[
     0x6C, // OBJ_GREENTROOPA
     0x6D, // OBJ_REDTROOPA
+    0x70, // OBJ_BUZZYBEATLE
 ];
 
 /// Big enemies (Giant World variants). Swap only among themselves.
@@ -113,7 +113,7 @@ const W7F1_TANOOKI_OFFSET: usize = 0x0C336;
 /// All swap classes collected for lookup.
 const ALL_CLASSES: &[&[u8]] = &[
     GROUND_ENEMIES,
-    KOOPA_TROOPAS,
+    SHELL_ENEMIES,
     BIG_ENEMIES,
     FLYING_ENEMIES,
     WATER_ENEMIES,
@@ -240,10 +240,10 @@ mod tests {
         assert_eq!(result[1], 0x0E);
         assert_eq!(result[2], 0x19);
 
-        // Green Troopa should be replaced with a Koopa
+        // Green Troopa should be replaced with a shell enemy
         assert!(
-            KOOPA_TROOPAS.contains(&result[3]),
-            "Green Troopa replaced with non-koopa: 0x{:02X}",
+            SHELL_ENEMIES.contains(&result[3]),
+            "Green Troopa replaced with non-shell enemy: 0x{:02X}",
             result[3]
         );
         assert_eq!(result[4], 0x24);
