@@ -47,6 +47,9 @@ pub struct Options {
     /// Remove warp whistles and replace with random items.
     #[serde(default = "default_true")]
     pub remove_whistles: bool,
+    /// Shuffle fortresses and airships across worlds.
+    #[serde(default = "default_false")]
+    pub shuffle_fortresses: bool,
     /// Enable debug mode: press Select to cycle through powerup forms in-game.
     #[serde(default = "default_false")]
     pub debug_mode: bool,
@@ -73,6 +76,7 @@ impl Default for Options {
             airship_lock: true,
             chest_items: true,
             remove_whistles: true,
+            shuffle_fortresses: false,
             debug_mode: false,
             starting_lives: default_starting_lives(),
         }
@@ -102,6 +106,10 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         LevelShuffle::Off => {}
         LevelShuffle::IntraWorld => randomize::levels::randomize_intra(rom, &mut rng),
         LevelShuffle::CrossWorld => randomize::levels::randomize_cross(rom, &mut rng),
+    }
+    if options.shuffle_fortresses {
+        randomize::levels::randomize_fortresses(rom, &mut rng);
+        randomize::levels::randomize_airships(rom, &mut rng);
     }
     if options.chest_items {
         randomize::items::randomize(rom, &mut rng, options.remove_whistles);

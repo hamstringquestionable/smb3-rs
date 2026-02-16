@@ -167,16 +167,24 @@ fn write_entry(rom: &mut Rom, world: &WorldTables, idx: usize, entry: &LevelEntr
     rom.write_byte(lay_off + 1, entry.lay_hi);
 }
 
+/// Known airship entry indices per world (W1-W7).
+/// These must not be shuffled by collect_shuffleable because the autoscroll
+/// patch overwrites these exact slots with redesigned airship-specific data.
+const AIRSHIP_ENTRIES: [(usize, usize); 7] = [
+    (0, 17), (1, 36), (2, 49), (3, 6), (4, 35), (5, 53), (6, 43),
+];
+
 /// Collect the indices of entries that are real action levels for a given world.
 /// Excludes fortresses, boss levels, toad houses, bonus games, hammer bros,
-/// pipe connectors, etc.
+/// pipe connectors, airships, etc.
 ///
 /// An entry is a real action level if:
 /// 1. Its obj pointer >= $C000 and layout pointer is non-zero
 /// 2. Its (obj, lay) pair is unique within the world (excludes hammer bros)
 /// 3. Its enemy data does not contain boss enemies (excludes fortresses/bosses)
 /// 4. Its layout has 3+ screens (excludes pipe connectors and small arenas)
-fn collect_shuffleable(rom: &Rom, world: &WorldTables) -> Vec<usize> {
+/// 5. It is not an airship entry (autoscroll patch overwrites these slots)
+fn collect_shuffleable(rom: &Rom, world_idx: usize, world: &WorldTables) -> Vec<usize> {
     let (_scrcol, objsets, layouts) = table_offsets(world);
 
     // First pass: count (obj, lay) pair occurrences to detect duplicates
@@ -195,6 +203,11 @@ fn collect_shuffleable(rom: &Rom, world: &WorldTables) -> Vec<usize> {
         let obj_ptr = read_word(rom, objsets + i * 2);
         let lay_ptr = read_word(rom, layouts + i * 2);
         if !is_level_pointer(obj_ptr, lay_ptr) {
+            continue;
+        }
+
+        // Exclude airship entries (autoscroll patch overwrites these slots)
+        if AIRSHIP_ENTRIES.contains(&(world_idx, i)) {
             continue;
         }
 
@@ -247,7 +260,7 @@ fn shuffle_group<R: Rng>(rom: &mut Rom, rng: &mut R, indices: &[(usize, usize)])
 /// along with the level data so the game's lookup key stays consistent.
 pub fn randomize_intra<R: Rng>(rom: &mut Rom, rng: &mut R) {
     for (w, world) in WORLDS.iter().enumerate() {
-        let shuffleable = collect_shuffleable(rom, world);
+        let shuffleable = collect_shuffleable(rom, w, world);
         let indices: Vec<(usize, usize)> = shuffleable.iter().map(|&i| (w, i)).collect();
         shuffle_group(rom, rng, &indices);
     }
@@ -261,13 +274,58 @@ pub fn randomize_cross<R: Rng>(rom: &mut Rom, rng: &mut R) {
     let mut all_indices: Vec<(usize, usize)> = Vec::new();
 
     for (w, world) in WORLDS.iter().enumerate() {
-        let shuffleable = collect_shuffleable(rom, world);
+        let shuffleable = collect_shuffleable(rom, w, world);
         for i in shuffleable {
             all_indices.push((w, i));
         }
     }
 
     shuffle_group(rom, rng, &all_indices);
+}
+
+/// Bowser's castle entry — must not be shuffled.
+const BOWSER_CASTLE: (usize, usize) = (7, 40); // W8[40]
+
+/// Collect fortress entries: levels where has_boss_enemy() is true.
+/// Excludes Bowser's castle (W8[40]) which must stay at its map position.
+fn collect_fortresses(rom: &Rom) -> Vec<(usize, usize)> {
+    let mut result = Vec::new();
+    for (w, world) in WORLDS.iter().enumerate() {
+        let (_scrcol, objsets, layouts) = table_offsets(world);
+        for i in 0..world.entry_count {
+            let obj_ptr = read_word(rom, objsets + i * 2);
+            let lay_ptr = read_word(rom, layouts + i * 2);
+            if !is_level_pointer(obj_ptr, lay_ptr) {
+                continue;
+            }
+            if (w, i) == BOWSER_CASTLE {
+                continue;
+            }
+            if has_boss_enemy(rom, obj_ptr) {
+                result.push((w, i));
+            }
+        }
+    }
+    result
+}
+
+/// Shuffle fortresses across all worlds. Any fortress can appear in any
+/// fortress map slot (except Bowser's castle which stays fixed).
+pub fn randomize_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
+    let indices = collect_fortresses(rom);
+    shuffle_group(rom, rng, &indices);
+}
+
+/// Shuffle airships across worlds 1-7. Each world's airship map tile
+/// can load any of the 7 airship levels.
+///
+/// Note: when autoscroll is disabled, the autoscroll patch overwrites
+/// airship pointer entries with world-specific redesigned data after
+/// this shuffle runs, so airship shuffle only has a visible effect
+/// when autoscroll is kept enabled.
+pub fn randomize_airships<R: Rng>(rom: &mut Rom, rng: &mut R) {
+    let indices: Vec<(usize, usize)> = AIRSHIP_ENTRIES.to_vec();
+    shuffle_group(rom, rng, &indices);
 }
 
 
@@ -402,7 +460,7 @@ mod tests {
         rom.write_byte(lay_off13, 0xE7); rom.write_byte(lay_off13 + 1, 0xB3);
         rom.write_byte(lay_off14, 0xE7); rom.write_byte(lay_off14 + 1, 0xB3);
 
-        let indices = collect_shuffleable(&rom, w);
+        let indices = collect_shuffleable(&rom, 0, w);
         assert!(!indices.contains(&13), "Hammer bro entry 13 should be excluded");
         assert!(!indices.contains(&14), "Hammer bro entry 14 should be excluded");
     }
@@ -421,7 +479,7 @@ mod tests {
         // Set screen count to 1: header byte 4 = 0x00 (bits 3-0 = 0, so 1 screen)
         rom.write_byte(file_off + 4, 0x00);
 
-        let indices = collect_shuffleable(&rom, w);
+        let indices = collect_shuffleable(&rom, 0, w);
         assert!(!indices.contains(&15), "1-screen pipe connector should be excluded");
     }
 
@@ -494,7 +552,7 @@ mod tests {
         }
 
         // Record original upper nibbles and (obj -> tileset) mapping
-        let shuffleable = collect_shuffleable(&rom, w);
+        let shuffleable = collect_shuffleable(&rom, 0, w);
         let original_upper: Vec<u8> = shuffleable
             .iter()
             .map(|&i| rom.read_byte(w.rowtype_offset + i) & 0xF0)
@@ -551,7 +609,7 @@ mod tests {
         }
 
         // Record original tileset assignments for shuffleable entries
-        let shuffleable = collect_shuffleable(&rom, w);
+        let shuffleable = collect_shuffleable(&rom, 0, w);
         let original_tilesets: Vec<u8> = shuffleable
             .iter()
             .map(|&i| rom.read_byte(w.rowtype_offset + i) & 0x0F)
@@ -576,5 +634,199 @@ mod tests {
         }
         assert!(cross_tileset_swap,
             "Expected cross-tileset shuffling to occur in at least one of 20 seeds");
+    }
+
+    /// Helper: set up a fortress entry with a Boom-Boom boss at a given
+    /// world/index with a unique obj pointer.
+    fn setup_fortress(data: &mut [u8], world_idx: usize, entry_idx: usize, obj_val: u16, lay_val: u16) {
+        let w = &WORLDS[world_idx];
+        let n = w.entry_count;
+        let scrcol = w.rowtype_offset + n;
+        let objsets = scrcol + n;
+        let layouts = objsets + n * 2;
+
+        let obj_off = objsets + entry_idx * 2;
+        let lay_off = layouts + entry_idx * 2;
+        data[obj_off] = (obj_val & 0xFF) as u8;
+        data[obj_off + 1] = ((obj_val >> 8) & 0xFF) as u8;
+        data[lay_off] = (lay_val & 0xFF) as u8;
+        data[lay_off + 1] = ((lay_val >> 8) & 0xFF) as u8;
+
+        // Set tileset 2 (fortress) in ByRowType, preserve upper nibble
+        let old_brt = data[w.rowtype_offset + entry_idx];
+        data[w.rowtype_offset + entry_idx] = (old_brt & 0xF0) | 0x02;
+
+        // Write enemy data with Boom-Boom
+        let enemy_off = ENEMY_DATA_BASE + (obj_val as usize - ENEMY_DATA_CPU_BASE as usize);
+        data[enemy_off] = 0x01;     // page flag
+        data[enemy_off + 1] = 0x4B; // OBJ_BOOMBOOMJUMP
+        data[enemy_off + 2] = 0x50;
+        data[enemy_off + 3] = 0x18;
+        data[enemy_off + 4] = 0xFF; // terminator
+    }
+
+    fn make_fortress_test_rom() -> Rom {
+        let mut data = vec![0u8; 393232];
+        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
+        data[4] = 16;
+        data[5] = 16;
+        data[6] = 0x40;
+
+        // Initialize all worlds with valid but non-level entries by default
+        for w_idx in 0..8 {
+            let w = &WORLDS[w_idx];
+            let n = w.entry_count;
+            let scrcol = w.rowtype_offset + n;
+            let objsets = scrcol + n;
+            let layouts = objsets + n * 2;
+
+            for i in 0..n {
+                // Default: special entry (obj=0x0300, won't be detected)
+                let obj_off = objsets + i * 2;
+                let lay_off = layouts + i * 2;
+                data[obj_off] = 0x00;
+                data[obj_off + 1] = 0x03;
+                data[lay_off] = 0x00;
+                data[lay_off + 1] = 0x00;
+                data[w.rowtype_offset + i] = ((i as u8) << 4) | 0x01;
+            }
+        }
+
+        // Set up 3 fortress entries across different worlds
+        // W1[11]: obj=0xC100
+        setup_fortress(&mut data, 0, 11, 0xC100, 0xA100);
+        // W3[13]: obj=0xC200
+        setup_fortress(&mut data, 2, 13, 0xC200, 0xA200);
+        // W5[31]: obj=0xC300
+        setup_fortress(&mut data, 4, 31, 0xC300, 0xA300);
+
+        // Set up Bowser's castle at W8[40] — should NOT be shuffled
+        setup_fortress(&mut data, 7, 40, 0xC400, 0xA400);
+        // Use Bowser boss ID instead of Boom-Boom
+        let bowser_off = ENEMY_DATA_BASE + (0xC400u16 as usize - ENEMY_DATA_CPU_BASE as usize);
+        data[bowser_off + 1] = 0x18; // OBJ_BOSS_BOWSER
+
+        // Set up airship entries at the known indices with unique lay pointers
+        for &(w_idx, entry_idx) in AIRSHIP_ENTRIES.iter() {
+            let w = &WORLDS[w_idx];
+            let n = w.entry_count;
+            let scrcol = w.rowtype_offset + n;
+            let objsets = scrcol + n;
+            let layouts = objsets + n * 2;
+
+            let obj_off = objsets + entry_idx * 2;
+            let lay_off = layouts + entry_idx * 2;
+            // All airships share obj=0xD2AF
+            data[obj_off] = 0xAF;
+            data[obj_off + 1] = 0xD2;
+            // Unique lay per airship
+            let lay_val: u16 = 0xA800 + (w_idx as u16) * 0x10;
+            data[lay_off] = (lay_val & 0xFF) as u8;
+            data[lay_off + 1] = ((lay_val >> 8) & 0xFF) as u8;
+            // Set tileset 2
+            data[w.rowtype_offset + entry_idx] = (data[w.rowtype_offset + entry_idx] & 0xF0) | 0x02;
+
+            // Write enemy data at obj=0xD2AF (shared, only needs to be done once)
+            let enemy_off = ENEMY_DATA_BASE + (0xD2AFusize - ENEMY_DATA_CPU_BASE as usize);
+            data[enemy_off] = 0x01;
+            data[enemy_off + 1] = 0xD5; // Koopaling battle object (not a boss ID)
+            data[enemy_off + 2] = 0x10;
+            data[enemy_off + 3] = 0x08;
+            data[enemy_off + 4] = 0xFF;
+        }
+
+        Rom::from_bytes(&data).unwrap()
+    }
+
+    #[test]
+    fn test_fortress_shuffle() {
+        let mut rom = make_fortress_test_rom();
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+
+        // Record original fortress obj pointers
+        let fortresses = collect_fortresses(&rom);
+        assert_eq!(fortresses.len(), 3, "Expected 3 fortresses (excluding Bowser)");
+        assert!(!fortresses.contains(&BOWSER_CASTLE), "Bowser should be excluded");
+
+        let original: Vec<u16> = fortresses.iter().map(|&(w, i)| {
+            let world = &WORLDS[w];
+            let (_scrcol, objsets, _layouts) = table_offsets(world);
+            read_word(&rom, objsets + i * 2)
+        }).collect();
+
+        // Record Bowser's original data
+        let bowser_w = &WORLDS[BOWSER_CASTLE.0];
+        let (_sc, bowser_objsets, bowser_layouts) = table_offsets(bowser_w);
+        let bowser_obj = read_word(&rom, bowser_objsets + BOWSER_CASTLE.1 * 2);
+        let bowser_lay = read_word(&rom, bowser_layouts + BOWSER_CASTLE.1 * 2);
+
+        randomize_fortresses(&mut rom, &mut rng);
+
+        // Bowser must be unchanged
+        assert_eq!(read_word(&rom, bowser_objsets + BOWSER_CASTLE.1 * 2), bowser_obj);
+        assert_eq!(read_word(&rom, bowser_layouts + BOWSER_CASTLE.1 * 2), bowser_lay);
+
+        // Fortress entries should still contain the same set of obj pointers (just shuffled)
+        let mut shuffled: Vec<u16> = fortresses.iter().map(|&(w, i)| {
+            let world = &WORLDS[w];
+            let (_scrcol, objsets, _layouts) = table_offsets(world);
+            read_word(&rom, objsets + i * 2)
+        }).collect();
+        let mut orig_sorted = original.clone();
+        orig_sorted.sort();
+        shuffled.sort();
+        assert_eq!(orig_sorted, shuffled, "Fortress obj pointers should be a permutation");
+    }
+
+    #[test]
+    fn test_airship_shuffle() {
+        let mut rom = make_fortress_test_rom();
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+
+        // Record original lay pointers for airships
+        let original_lays: Vec<u16> = AIRSHIP_ENTRIES.iter().map(|&(w, i)| {
+            let world = &WORLDS[w];
+            let (_scrcol, _objsets, layouts) = table_offsets(world);
+            read_word(&rom, layouts + i * 2)
+        }).collect();
+
+        randomize_airships(&mut rom, &mut rng);
+
+        let shuffled_lays: Vec<u16> = AIRSHIP_ENTRIES.iter().map(|&(w, i)| {
+            let world = &WORLDS[w];
+            let (_scrcol, _objsets, layouts) = table_offsets(world);
+            read_word(&rom, layouts + i * 2)
+        }).collect();
+
+        // Should be a permutation of originals
+        let mut orig_sorted = original_lays.clone();
+        let mut shuf_sorted = shuffled_lays.clone();
+        orig_sorted.sort();
+        shuf_sorted.sort();
+        assert_eq!(orig_sorted, shuf_sorted, "Airship lay pointers should be a permutation");
+    }
+
+    #[test]
+    fn test_fortress_shuffle_deterministic() {
+        let mut rom1 = make_fortress_test_rom();
+        let mut rom2 = make_fortress_test_rom();
+        let mut rng1 = ChaCha8Rng::seed_from_u64(77);
+        let mut rng2 = ChaCha8Rng::seed_from_u64(77);
+
+        randomize_fortresses(&mut rom1, &mut rng1);
+        randomize_fortresses(&mut rom2, &mut rng2);
+
+        for &(w, i) in collect_fortresses(&make_fortress_test_rom()).iter() {
+            let world = &WORLDS[w];
+            let (_scrcol, objsets, layouts) = table_offsets(world);
+            assert_eq!(
+                read_word(&rom1, objsets + i * 2),
+                read_word(&rom2, objsets + i * 2),
+            );
+            assert_eq!(
+                read_word(&rom1, layouts + i * 2),
+                read_word(&rom2, layouts + i * 2),
+            );
+        }
     }
 }

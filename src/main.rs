@@ -59,6 +59,10 @@ struct Cli {
     #[arg(long)]
     keep_whistles: bool,
 
+    /// Shuffle fortresses and airships across worlds
+    #[arg(long)]
+    shuffle_fortresses: bool,
+
     /// Enable debug mode (press Select to cycle powerup forms)
     #[arg(long)]
     debug_mode: bool,
@@ -105,6 +109,7 @@ fn main() {
         disable_autoscroll: !cli.keep_autoscroll,
         chest_items: !cli.no_chest_items,
         remove_whistles: !cli.keep_whistles,
+        shuffle_fortresses: cli.shuffle_fortresses,
         debug_mode: cli.debug_mode,
         airship_lock: !cli.no_airship_lock,
         starting_lives: cli.starting_lives,
@@ -128,6 +133,7 @@ fn main() {
         LevelShuffle::IntraWorld => "intra-world",
         LevelShuffle::CrossWorld => "cross-world",
     });
+    eprintln!("  Fortress/airship shuffle: {}", if options.shuffle_fortresses { "on" } else { "off" });
     eprintln!("  Autoscroll: {}", if options.disable_autoscroll { "disabled" } else { "enabled" });
     eprintln!("  Chest items: {}", if options.chest_items { "on" } else { "off" });
     eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });
