@@ -50,9 +50,6 @@ pub struct Options {
     /// Shuffle fortresses and airships across worlds.
     #[serde(default = "default_false")]
     pub shuffle_fortresses: bool,
-    /// Enable debug mode: press Select to cycle through powerup forms in-game.
-    #[serde(default = "default_false")]
-    pub debug_mode: bool,
 }
 
 fn default_false() -> bool {
@@ -77,7 +74,6 @@ impl Default for Options {
             chest_items: true,
             remove_whistles: true,
             shuffle_fortresses: false,
-            debug_mode: false,
             starting_lives: default_starting_lives(),
         }
     }
@@ -121,9 +117,6 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     }
     // Set starting lives (default 4; user/configurable)
     randomize::qol::set_starting_lives(rom, options.starting_lives);
-    if options.debug_mode {
-        randomize::qol::enable_debug_mode(rom);
-    }
 
     // Airship lock (anchor effect always on): patch at 0x1FABC ("KXUUXZVG" / Game Genie)
     if options.airship_lock {

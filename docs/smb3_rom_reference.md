@@ -815,7 +815,7 @@ World BGM table (PRG030): file offset **0x3C424**, 9 bytes (worlds 1-8 + warp wh
 
 | File Offset | Description |
 |------------|-------------|
-| 0x309D5 | Debug mode toggle (0xCC=enable, 0x35=disable) |
+| 0x309D5 | Debug mode: low byte of jump table entry (0xC5=enable, 0x35=disable). GG code KKKZSPIU. |
 | 0x3509B | 1-Up coin threshold (coins needed for extra life) |
 | 0x1451F | World spawn delay (frames before Mario appears) |
 

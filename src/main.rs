@@ -63,10 +63,6 @@ struct Cli {
     #[arg(long)]
     shuffle_fortresses: bool,
 
-    /// Enable debug mode (press Select to cycle powerup forms)
-    #[arg(long)]
-    debug_mode: bool,
-
     /// Disable airship lock (anchor effect always on by default, use this flag to disable)
     #[arg(long)]
     no_airship_lock: bool,
@@ -110,7 +106,6 @@ fn main() {
         chest_items: !cli.no_chest_items,
         remove_whistles: !cli.keep_whistles,
         shuffle_fortresses: cli.shuffle_fortresses,
-        debug_mode: cli.debug_mode,
         airship_lock: !cli.no_airship_lock,
         starting_lives: cli.starting_lives,
     };
@@ -137,7 +132,6 @@ fn main() {
     eprintln!("  Autoscroll: {}", if options.disable_autoscroll { "disabled" } else { "enabled" });
     eprintln!("  Chest items: {}", if options.chest_items { "on" } else { "off" });
     eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });
-    eprintln!("  Debug mode: {}", if options.debug_mode { "on" } else { "off" });
     eprintln!("  Airship lock: {}", if options.airship_lock { "on" } else { "off" });
     eprintln!("  Output:   {}", output_path.display());
 
