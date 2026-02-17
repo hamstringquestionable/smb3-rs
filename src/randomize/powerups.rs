@@ -50,6 +50,8 @@ const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
         extra_byte_dispatches: &[
             0,                                 // LongWoodBlock
             35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
+            60,                                // Group 4 variable
+            112,                               // Group 7 variable
         ],
     },
     LevelDataRegion { // Pipe / Water (TS7)

@@ -57,7 +57,7 @@ LEVEL_DATA_REGIONS = [
         "tileset_ids": [4, 12],
         "start": 0x227E0,
         "end": 0x24005,
-        "extra_byte_dispatches": {0, 35, 36, 37, 38, 39, 40, 41, 42},
+        "extra_byte_dispatches": {0, 35, 36, 37, 38, 39, 40, 41, 42, 60, 112},
     },
     {
         "name": "Pipe/Water (TS7)",

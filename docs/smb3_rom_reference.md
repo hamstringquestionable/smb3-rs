@@ -204,7 +204,33 @@ Most generator commands are 3 bytes, but some variable-size routines read a **4t
 from the layout data stream. If a parser assumes all commands are 3 bytes, every command
 after the first extra-byte routine will be misaligned.
 
-**Tileset 1 (Plains) extra-byte dispatches:**
+**Identifying 4-byte commands:**
+
+The correct method is a **dispatch-based lookup** using tileset-specific extra-byte
+dispatch lists. Each tileset has its own set of variable-size dispatches that consume
+an extra byte.
+
+**Tileset-specific extra-byte dispatches:**
+
+| Tileset | Extra-Byte Dispatches |
+|---------|----------------------|
+| TS1 (Plains) | 11, 12, 35-42 |
+| TS2 (Dungeon) | 35-42, 46, 47, 48 |
+| TS3 (Hilly) | 35-42, 60-71 |
+| TS4/12 (Ice/Sky) | 0, 35-42, 60, 112 |
+| TS7 (Pipe/Water) | 35-42, 57 |
+| TS9 (Desert) | 10-13, 35-42 |
+| TS10 (Ship) | 1, 2, 35-42, 48, 51 |
+
+**High-bit fallback rule (NOT universally reliable):**
+
+Some external documentation suggests using `byte0 & 0x80` (high bit set = 4-byte command)
+as a universal rule. This works for **TS3 and TS4/12** but produces incorrect alignment
+for **TS1, TS2, and other tilesets**. The high-bit rule should only be used as a last
+resort or for tilesets where the dispatch list is unknown. Always prefer dispatch-based
+detection when the tileset is known.
+
+**Tileset 1 (Plains) extra-byte examples:**
 
 | Dispatch | Handler | Extra Byte Meaning |
 |----------|---------|-------------------|
@@ -215,7 +241,8 @@ after the first extra-byte routine will be misaligned.
 `LoadLevel_DecoGround`, `LoadLevel_DecoCeiling`). Each tileset's variable-size dispatch
 table must be checked individually to identify which dispatches consume extra bytes.
 
-The level simulator at `tools/level_sim.py` tracks extra-byte dispatches per tileset.
+The level simulator at `tools/level_sim.py` tracks extra-byte dispatches per tileset,
+but it currently only implements TS1 dispatches (hardcoded).
 
 #### 1-1 Level Data Reference
 
