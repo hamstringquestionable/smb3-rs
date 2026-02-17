@@ -193,6 +193,16 @@ KEY_TABLES = {
     "World_BGM": {"offset": 0x3C424, "size": 9, "desc": "Music track per world"},
     "Princess_Rewards": {"offset": 0x360DE, "size": 7, "desc": "Princess reward items per world"},
     "Debug_Mode": {"offset": 0x309D5, "size": 1, "desc": "Debug toggle (0xCC=on, 0x35=off)"},
+    # Fortress Lock & Bridge FX tables (PRG010, 17 FX slots 0x00-0x10)
+    "FortressFX_VAddrH": {"offset": 0x147CD, "size": 17, "desc": "VRAM high byte per FX slot"},
+    "FortressFX_VAddrL": {"offset": 0x147DE, "size": 17, "desc": "VRAM low byte per FX slot"},
+    "FortressFX_MapCompIdx": {"offset": 0x147EF, "size": 34, "desc": "Map_Completions col+bit per FX slot (17x2)"},
+    "FortressFX_Patterns": {"offset": 0x14811, "size": 68, "desc": "Replacement 8x8 patterns per FX slot (17x4)"},
+    "FortressFX_MapLocationRow": {"offset": 0x14855, "size": 17, "desc": "Map row for tile replacement per FX slot"},
+    "FortressFX_MapLocation": {"offset": 0x14866, "size": 17, "desc": "Map screen+col for tile replacement per FX slot"},
+    "FortressFX_MapTileReplace": {"offset": 0x14877, "size": 17, "desc": "Replacement map tile per FX slot"},
+    "FortressFX_W1_W8": {"offset": 0x14888, "size": 32, "desc": "Per-world FX slot assignments (4 per world, 0-padded)"},
+    "FortressFXBase_ByWorld": {"offset": 0x148A8, "size": 8, "desc": "Per-world base index into FortressFX_Wx"},
 }
 
 # Boss enemy IDs for fortress/boss detection
@@ -658,6 +668,13 @@ def parse_world_tables(rom, world_idx, world_info):
             entry["exclude_reason"] = entry_type
 
         entries.append(entry)
+
+    # Map transition entries: structural map region transitions, not action levels
+    MAP_TRANSITIONS = {(4, 5)}  # W5 "Twisty Castle" tower (ground-to-sky)
+    for e in entries:
+        if (world_idx, e["index"]) in MAP_TRANSITIONS:
+            e["shuffleable"] = False
+            e["exclude_reason"] = "map_transition"
 
     # Mark duplicate (obj, lay) pairs as non-shuffleable (hammer bros)
     pair_counts = defaultdict(int)

@@ -987,6 +987,97 @@ load LevelLayouts pointer into `Level_LayPtr_AddrL/H` → bank-switch via
 | `Map_Y_Starts` | Per-world initial Y coordinate |
 | Fixed X = 0x20 | Same X start for all worlds |
 
+### Fortress Lock & Bridge FX (PRG010: 0x147CD–0x148B7)
+
+When a fortress is cleared (Boom-Boom defeated, magic ball collected), the game triggers
+a map effect that busts a lock or builds a bridge, opening progression on the overworld.
+The entire system lives in PRG010 and uses **17 FX slots** (0x00–0x10), one per
+fortress/ship in the game.
+
+**Mechanism (`MO_DoFortressFX` at Map_Operation 8):**
+
+1. Clearing a fortress sets `Map_DoFortressFX` to a 1-based index (which fortress
+   *within this world* was just cleared: 1st, 2nd, 3rd, or 4th).
+2. `MO_DoFortressFX` decrements to 0-based, then computes:
+   `absolute_index = FortressFXBase_ByWorld[World_Num] + Map_DoFortressFX`
+3. Reads the FX slot value from `FortressFX_W1[absolute_index]` (0x00–0x10).
+4. Uses the FX slot to index into all visual/map replacement tables below.
+
+**Data tables (all 17 entries, indexed by FX slot 0x00–0x10):**
+
+| File Offset | Size | Label | Description |
+|------------|------|-------|-------------|
+| 0x147CD | 17 | `FortressFX_VAddrH` | VRAM high byte for lock/bridge tile position |
+| 0x147DE | 17 | `FortressFX_VAddrL` | VRAM low byte for lock/bridge tile position |
+| 0x147EF | 34 | `FortressFX_MapCompIdx` | `Map_Completions` column + bit per FX slot (17×2 bytes) |
+| 0x14811 | 68 | `FortressFX_Patterns` | Replacement 8×8 patterns per FX slot (17×4 bytes) |
+| 0x14855 | 17 | `FortressFX_MapLocationRow` | Map row (Y position) for tile replacement |
+| 0x14866 | 17 | `FortressFX_MapLocation` | Map screen (lo nibble) + column (hi nibble) |
+| 0x14877 | 17 | `FortressFX_MapTileReplace` | Replacement map tile ID |
+| 0x14888 | 32 | `FortressFX_W1–W8` | Per-world FX slot assignments (4 slots per world, 0-padded) |
+| 0x148A8 | 8+8 | `FortressFXBase_ByWorld` | Per-world base index into `FortressFX_Wx` (8 used + 8 extra) |
+
+**Per-world FX slot assignments (`FortressFX_W1–W8` at 0x14888):**
+
+```
+W1: 00 00 00 00   →  slot 0x00 (1 fortress, 3 unused)
+W2: 01 00 00 00   →  slot 0x01 (1 fortress, 3 unused)
+W3: 02 03 00 00   →  slots 0x02, 0x03 (2 fortresses)
+W4: 04 05 00 00   →  slots 0x04, 0x05 (2 fortresses)
+W5: 06 07 00 00   →  slots 0x06, 0x07 (2 fortresses)
+W6: 08 09 0A 00   →  slots 0x08, 0x09, 0x0A (3 fortresses)
+W7: 0B 0C 00 00   →  slots 0x0B, 0x0C (2 fortresses)
+W8: 0D 0E 0F 10   →  slots 0x0D, 0x0E, 0x0F, 0x10 (4 fortresses/ships)
+```
+
+**`FortressFXBase_ByWorld` (0x148A8):** `00 04 08 0C 10 14 18 1C` — each world's
+entries are 4 bytes apart (matching the 4-slot-per-world layout above).
+
+**FX slot details (17 slots, 0x00–0x10):**
+
+| Slot | World | VRAM Addr | Scr | Col | Row | Tile | Type |
+|------|-------|-----------|-----|-----|-----|------|------|
+| 0x00 | W1 | $2948 | 0 | 4 | $50 | $46 | Lock |
+| 0x01 | W2 | $2A50 | 0 | 8 | $90 | $46 | Lock |
+| 0x02 | W3 | $2A12 | 0 | 9 | $80 | $45 | Bridge |
+| 0x03 | W3 | $294C | 1 | 6 | $50 | $46 | Lock |
+| 0x04 | W4 | $2906 | 1 | 3 | $40 | $45 | Bridge |
+| 0x05 | W4 | $2996 | 0 | 11 | $60 | $B3 | Bridge (water) |
+| 0x06 | W5 | $2986 | 0 | 3 | $60 | $B3 | Bridge (water) |
+| 0x07 | W5 | $298E | 1 | 7 | $60 | $DA | Bridge (sky) |
+| 0x08 | W6 | $299A | 0 | 13 | $60 | $DA | Bridge (sky) |
+| 0x09 | W6 | $2892 | 1 | 9 | $20 | $B3 | Bridge (water) |
+| 0x0A | W6 | $298A | 2 | 5 | $60 | $45 | Bridge |
+| 0x0B | W7 | $291A | 0 | 13 | $40 | $46 | Lock |
+| 0x0C | W7 | $29CE | 1 | 7 | $70 | $45 | Bridge |
+| 0x0D | W8 | $2910 | 0 | 8 | $40 | $46 | Lock |
+| 0x0E | W8 | $2952 | 1 | 9 | $50 | $45 | Bridge |
+| 0x0F | W8 | $2998 | 2 | 12 | $60 | $46 | Lock |
+| 0x10 | W8 | $29CA | 3 | 5 | $70 | $45 | Bridge |
+
+**Replacement tile types:** $45 = bridge segment, $46 = open path, $B3 = water bridge,
+$DA = sky bridge. Patterns ($FE/$C0 = path, $E1 = bridge rail, $D4-$D7 = water/sky bridge,
+$FF = dark/black for W8).
+
+**`FortressFX_MapCompIdx` (0x147EF):** Each FX slot has a 2-byte entry: the first byte is
+the column index into `Map_Completions` RAM ($7E40+), the second byte is the bit mask to
+OR into that column. Both Mario's and Luigi's `Map_Completions` arrays are updated
+(offset $00 and $40 respectively). This prevents the lock/bridge from reverting.
+
+**Interaction with fortress shuffling:**
+
+The FX system is entirely **map-position-based**, not level-content-based. When
+`randomize_fortresses` swaps level data (obj_ptr, lay_ptr, tileset) between fortress map
+slots, the map tile positions don't change. Clearing "World 1's fortress map tile" still
+triggers FX slot 0x00 (World 1's lock), regardless of which fortress level was loaded
+there. The lock/bridge mechanism requires no patching for fortress shuffling to work.
+
+**Future considerations:** If fortress map tiles themselves were ever moved between worlds
+(not just the level data), the `FortressFX_Wx` slot assignments would need rewriting to
+map each world's Nth fortress to the correct FX slot for its new world. The visual tables
+(VAddr, Patterns, MapLocation, MapTileReplace) are per-world-map and would remain valid
+as long as the destination world's map layout is unchanged.
+
 ### World Progression
 
 World advancement is sequential via `INC World_Num` at file offset **0x3D0A1** (PRG030, CPU $9091).

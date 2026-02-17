@@ -150,6 +150,13 @@ const AIRSHIP_ENTRIES: [(usize, usize); 7] = [
     (0, 17), (1, 36), (2, 49), (3, 6), (4, 35), (5, 53), (6, 43),
 ];
 
+/// Map transition entries that must not be shuffled.
+/// These are special map tiles that act as structural transitions between
+/// map regions, not normal action levels.
+const MAP_TRANSITION_ENTRIES: [(usize, usize); 1] = [
+    (4, 5),  // W5 "Twisty Castle" tower — ground-to-sky map transition
+];
+
 /// Collect the indices of entries that are real action levels for a given world.
 /// Excludes fortresses, boss levels, toad houses, bonus games, hammer bros,
 /// pipe connectors, airships, etc.
@@ -160,6 +167,7 @@ const AIRSHIP_ENTRIES: [(usize, usize); 7] = [
 /// 3. Its enemy data does not contain boss enemies (excludes fortresses/bosses)
 /// 4. Its layout has 3+ screens (excludes pipe connectors and small arenas)
 /// 5. It is not an airship entry (autoscroll patch overwrites these slots)
+/// 6. It is not a map transition entry (structural map region transition)
 fn collect_shuffleable(rom: &Rom, world_idx: usize, world: &WorldTables) -> Vec<usize> {
     let (_scrcol, objsets, layouts) = table_offsets(world);
 
@@ -184,6 +192,11 @@ fn collect_shuffleable(rom: &Rom, world_idx: usize, world: &WorldTables) -> Vec<
 
         // Exclude airship entries (autoscroll patch overwrites these slots)
         if AIRSHIP_ENTRIES.contains(&(world_idx, i)) {
+            continue;
+        }
+
+        // Exclude map transition entries (structural map region transitions)
+        if MAP_TRANSITION_ENTRIES.contains(&(world_idx, i)) {
             continue;
         }
 
