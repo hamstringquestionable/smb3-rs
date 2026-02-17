@@ -72,47 +72,23 @@ fn is_level_pointer(obj_ptr: u16, lay_ptr: u16) -> bool {
     obj_ptr >= 0xC000 && lay_ptr != 0x0000
 }
 
-/// Boss enemy object IDs that indicate a fortress or boss level.
-/// These levels should not be shuffled.
-const BOSS_ENEMY_IDS: &[u8] = &[
-    0x0E, // OBJ_BOSS_KOOPALING
-    0x18, // OBJ_BOSS_BOWSER
-    0x4A, // OBJ_BOOMBOOMQBALL (Boom-Boom end-level ball)
-    0x4B, // OBJ_BOOMBOOMJUMP (Jumping Boom-Boom)
-    0x4C, // OBJ_BOOMBOOMFLY (Flying Boom-Boom)
+/// All 17 fortress/boss map entries containing Boom-Boom fights.
+/// Derived from tools/rom_map.py level_groups analysis — see
+/// docs/smb3_rom_reference.md "Junctions and Sub-Areas" for methodology.
+/// Excludes Bowser's castle (W8[40]) and airships (W1-7 airship entries).
+const FORTRESS_ENTRIES: [(usize, usize); 17] = [
+    (0, 11),          // W1 fortress
+    (1, 13),          // W2 fortress
+    (2, 13), (2, 34), // W3 fortresses
+    (3, 9), (3, 16),  // W4 fortresses
+    (4, 12), (4, 31), // W5 fortresses
+    (5, 9), (5, 27), (5, 48), // W6 fortresses
+    (6, 5), (6, 40),  // W7 fortresses
+    (7, 7),           // W8 ship
+    (7, 10),          // W8 ship
+    (7, 26),          // W8 fortress
+    (7, 36),          // W8 ship
 ];
-
-/// File offset of the start of enemy/object data in PRG006.
-const ENEMY_DATA_BASE: usize = 0x0C010;
-
-/// CPU base address for enemy data bank.
-const ENEMY_DATA_CPU_BASE: u16 = 0xC000;
-
-/// Returns true if the enemy data at the given obj pointer contains a boss
-/// enemy (Boom-Boom, Koopaling, or Bowser), indicating a fortress or boss
-/// level that should not be shuffled.
-///
-/// Parses enemy data in proper 3-byte groups [obj_id, x, y] after the
-/// initial page flag byte.
-fn has_boss_enemy(rom: &Rom, obj_ptr: u16) -> bool {
-    if obj_ptr < ENEMY_DATA_CPU_BASE {
-        return false;
-    }
-    let file_off = ENEMY_DATA_BASE + (obj_ptr as usize - ENEMY_DATA_CPU_BASE as usize);
-    // Skip page flag byte, then scan 3-byte entries
-    let mut pos = file_off + 1;
-    loop {
-        let obj_id = rom.read_byte(pos);
-        if obj_id == 0xFF {
-            break;
-        }
-        if BOSS_ENEMY_IDS.contains(&obj_id) {
-            return true;
-        }
-        pos += 3;
-    }
-    false
-}
 
 /// Compute sub-table file offsets for a world.
 fn table_offsets(world: &WorldTables) -> (usize, usize, usize) {
@@ -216,8 +192,8 @@ fn collect_shuffleable(rom: &Rom, world_idx: usize, world: &WorldTables) -> Vec<
             continue;
         }
 
-        // Exclude fortress and boss levels by scanning enemy data
-        if has_boss_enemy(rom, obj_ptr) {
+        // Exclude fortress and boss levels
+        if FORTRESS_ENTRIES.contains(&(world_idx, i)) {
             continue;
         }
 
@@ -283,30 +259,11 @@ pub fn randomize_cross<R: Rng>(rom: &mut Rom, rng: &mut R) {
     shuffle_group(rom, rng, &all_indices);
 }
 
-/// Bowser's castle entry — must not be shuffled.
-const BOWSER_CASTLE: (usize, usize) = (7, 40); // W8[40]
-
-/// Collect fortress entries: levels where has_boss_enemy() is true.
+/// Collect fortress entries: all 17 levels containing Boom-Boom boss fights.
+/// Uses the hardcoded FORTRESS_ENTRIES constant derived from rom_map.py analysis.
 /// Excludes Bowser's castle (W8[40]) which must stay at its map position.
-fn collect_fortresses(rom: &Rom) -> Vec<(usize, usize)> {
-    let mut result = Vec::new();
-    for (w, world) in WORLDS.iter().enumerate() {
-        let (_scrcol, objsets, layouts) = table_offsets(world);
-        for i in 0..world.entry_count {
-            let obj_ptr = read_word(rom, objsets + i * 2);
-            let lay_ptr = read_word(rom, layouts + i * 2);
-            if !is_level_pointer(obj_ptr, lay_ptr) {
-                continue;
-            }
-            if (w, i) == BOWSER_CASTLE {
-                continue;
-            }
-            if has_boss_enemy(rom, obj_ptr) {
-                result.push((w, i));
-            }
-        }
-    }
-    result
+fn collect_fortresses(_rom: &Rom) -> Vec<(usize, usize)> {
+    FORTRESS_ENTRIES.to_vec()
 }
 
 /// Shuffle fortresses across all worlds. Any fortress can appear in any
@@ -334,6 +291,13 @@ mod tests {
     use super::*;
     use rand_chacha::ChaCha8Rng;
     use rand::SeedableRng;
+
+    /// File offset of the start of enemy/object data in PRG006 (test helper).
+    const ENEMY_DATA_BASE: usize = 0x0C010;
+    /// CPU base address for enemy data bank (test helper).
+    const ENEMY_DATA_CPU_BASE: u16 = 0xC000;
+    /// Bowser's castle entry (test helper).
+    const BOWSER_CASTLE: (usize, usize) = (7, 40);
 
     fn make_test_rom() -> Rom {
         let mut data = vec![0u8; 393232];
@@ -377,13 +341,6 @@ mod tests {
                 data[file_off + 4] = 0x07; // 8 screens
             }
 
-            // Write empty enemy data (page flag + terminator) so
-            // has_boss_enemy() doesn't read garbage.
-            let enemy_off = ENEMY_DATA_BASE + (obj_val as usize - ENEMY_DATA_CPU_BASE as usize);
-            if enemy_off + 2 < data.len() {
-                data[enemy_off] = 0x01;     // page flag
-                data[enemy_off + 1] = 0xFF; // terminator (no enemies)
-            }
         }
 
         // Make entry 9 a toad house (non-shuffleable)
@@ -391,19 +348,7 @@ mod tests {
         data[obj_off9] = 0x00;
         data[obj_off9 + 1] = 0x07; // obj = 0x0700
 
-        // Make entry 11 a fortress (non-shuffleable) — place a Boom-Boom enemy
-        // in its enemy data so has_boss_enemy() detects it.
-        let obj_val_11: u16 = 0xC000 + 11 * 0x10;
-        let obj_off11 = objsets + 11 * 2;
-        data[obj_off11] = (obj_val_11 & 0xFF) as u8;
-        data[obj_off11 + 1] = ((obj_val_11 >> 8) & 0xFF) as u8;
-        // Write enemy data: [page_flag=0x01, boom_boom=0x4B, x, y, 0xFF]
-        let enemy_off = ENEMY_DATA_BASE + (obj_val_11 as usize - ENEMY_DATA_CPU_BASE as usize);
-        data[enemy_off] = 0x01;     // page flag
-        data[enemy_off + 1] = 0x4B; // OBJ_BOOMBOOMJUMP
-        data[enemy_off + 2] = 0x50; // x
-        data[enemy_off + 3] = 0x18; // y (not 0x18=Bowser, this is position)
-        data[enemy_off + 4] = 0xFF; // terminator
+        // Entry 11 is a fortress — excluded via FORTRESS_ENTRIES constant (W1[11])
 
         // Make entry 12 a bonus/special (non-shuffleable)
         let obj_off12 = objsets + 12 * 2;
@@ -743,11 +688,12 @@ mod tests {
         let mut rom = make_fortress_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
 
-        // Record original fortress obj pointers
+        // collect_fortresses returns the hardcoded FORTRESS_ENTRIES (17 entries)
         let fortresses = collect_fortresses(&rom);
-        assert_eq!(fortresses.len(), 3, "Expected 3 fortresses (excluding Bowser)");
+        assert_eq!(fortresses.len(), 17, "Expected 17 fortress entries");
         assert!(!fortresses.contains(&BOWSER_CASTLE), "Bowser should be excluded");
 
+        // Record original obj pointers for all fortress entries
         let original: Vec<u16> = fortresses.iter().map(|&(w, i)| {
             let world = &WORLDS[w];
             let (_scrcol, objsets, _layouts) = table_offsets(world);

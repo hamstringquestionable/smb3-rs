@@ -195,6 +195,19 @@ KEY_TABLES = {
     "Debug_Mode": {"offset": 0x309D5, "size": 1, "desc": "Debug toggle (0xCC=on, 0x35=off)"},
 }
 
+# Boss enemy IDs for fortress/boss detection
+BOSS_ENEMY_IDS = {
+    0x0E: "Koopaling",
+    0x18: "Bowser",
+    0x4A: "BoomBoomQBall",
+    0x4B: "BoomBoomJump",
+    0x4C: "BoomBoomFly",
+}
+
+BOOMBOOM_IDS = {0x4A, 0x4B, 0x4C}
+KOOPALING_IDS = {0x0E}
+BOWSER_IDS = {0x18}
+
 # Character palette offsets
 PALETTE_OFFSETS = {
     "mario_normal": {"offset": 0x10539, "size": 4},
@@ -240,6 +253,34 @@ def find_enemy_class(obj_id):
         if obj_id in ids:
             return cls_name
     return None
+
+
+def scan_enemy_segment_bosses(rom, obj_cpu_ptr):
+    """Scan the enemy data segment at obj_cpu_ptr for boss enemy IDs.
+    Returns a dict with 'has_boomboom', 'has_koopaling', 'has_bowser' bools
+    and 'boss_ids' list of found boss enemy IDs."""
+    result = {"has_boomboom": False, "has_koopaling": False, "has_bowser": False, "boss_ids": []}
+    # Enemy data lives in PRG006 mapped at $C000-$DFFF
+    if obj_cpu_ptr < 0xC000 or obj_cpu_ptr > 0xDFFF:
+        return result
+    file_off = obj_file_offset(obj_cpu_ptr)
+    if file_off is None or file_off >= len(rom):
+        return result
+    pos = file_off + 1  # skip page flag byte
+    while pos + 2 < len(rom):
+        oid = rom[pos]
+        if oid == 0xFF:
+            break
+        if oid in BOSS_ENEMY_IDS:
+            result["boss_ids"].append(oid)
+            if oid in BOOMBOOM_IDS:
+                result["has_boomboom"] = True
+            if oid in KOOPALING_IDS:
+                result["has_koopaling"] = True
+            if oid in BOWSER_IDS:
+                result["has_bowser"] = True
+        pos += 3
+    return result
 
 
 # --------------------------------------------------------------------------
@@ -341,13 +382,32 @@ def scan_level_data_region(rom, region):
     levels = []
     i = region["start"]
 
+    # Compute CPU address base for this region's tileset
+    ts = region["tileset_ids"][0] if region["tileset_ids"] else None
+    bank = PAGE_A000_BY_TILESET[ts] if ts is not None and ts < len(PAGE_A000_BY_TILESET) else None
+    bank_start = bank * PRG_BANK_SIZE + PRG_OFFSET if bank is not None else None
+
     while i + 9 < region["end"]:
         # Parse header
         header = parse_level_header(rom, i)
         i += 9
 
+        # Extract enemy/object pointer from header bytes 2-3
+        enemy_ptr = header["bytes"][2] | (header["bytes"][3] << 8)
+
+        # Scan enemy data for boss enemies
+        boss_info = scan_enemy_segment_bosses(rom, enemy_ptr)
+
+        # Compute layout CPU address
+        layout_cpu = None
+        if bank_start is not None:
+            layout_cpu = 0xA000 + (header["offset"] - bank_start)
+
         # Parse commands
         commands, end = parse_level_commands(rom, i, region)
+
+        # Count junctions
+        junction_count = sum(1 for cmd in commands if cmd.get("type") == "junction")
 
         # Collect powerup blocks from this level
         powerups = []
@@ -372,9 +432,15 @@ def scan_level_data_region(rom, region):
             "end_offset": end,
             "region": region["name"],
             "header": header,
+            "enemy_ptr": enemy_ptr,
+            "layout_cpu": layout_cpu,
             "command_count": len(commands),
+            "junction_count": junction_count,
             "powerup_count": len(powerups),
             "powerups": powerups,
+            "has_boomboom": boss_info["has_boomboom"],
+            "has_koopaling": boss_info["has_koopaling"],
+            "has_bowser": boss_info["has_bowser"],
         }
         levels.append(level)
 
@@ -385,6 +451,142 @@ def scan_level_data_region(rom, region):
             break
 
     return levels
+
+
+# --------------------------------------------------------------------------
+# Level grouping (entry point + sub-areas)
+# --------------------------------------------------------------------------
+
+def build_level_groups(rom, all_region_levels, worlds_data):
+    """For each pointer table entry, find all sub-area headers reachable
+    from its position in the layout data.
+
+    Strategy: multiple pointer table entries can point into the same data
+    segment (a block of commands between two 0xFF terminators). All entries
+    within the same segment share the same sub-areas — the segments that
+    follow in the data stream. We group entries by which pre-parsed data
+    segment they fall into, then their sub-areas are the subsequent segments
+    until the next entry-containing segment.
+
+    Returns a list of level groups, each containing:
+      - entry_layout_cpu: CPU address of the entry-point level
+      - entry_obj_ptr: enemy data pointer from the entry header
+      - world_refs: list of (world, index) pointer table entries
+      - sub_areas: list of sub-area info dicts (entry segment + following)
+      - has_boomboom/has_koopaling/has_bowser: aggregate boss flags
+    """
+    # Build region lookup: for each tileset, find the region info
+    ts_to_region = {}
+    for region in all_region_levels:
+        for ts_id in region["tileset_ids"]:
+            ts_to_region[ts_id] = region
+
+    groups = []
+
+    for region_data in all_region_levels:
+        levels = region_data["levels"]
+        if not levels:
+            continue
+
+        # Build a sorted list of (file_offset_start, file_offset_end, level_dict)
+        # for each parsed level/segment in this region
+        segments = []
+        for lv in levels:
+            segments.append((lv["header_offset"], lv["end_offset"], lv))
+
+        # Collect all pointer table entries that point into this region
+        # Map each to the segment it falls within
+        # segment_idx -> [(world, index, lay_ptr, obj_ptr)]
+        seg_entries = defaultdict(list)
+
+        for wd in worlds_data:
+            for entry in wd["entries"]:
+                lay = entry["lay_ptr"]
+                if lay == 0 or entry["type"] not in ("level", "fortress"):
+                    continue
+                tileset = entry["tileset"]
+                rgn = ts_to_region.get(tileset)
+                if rgn is None or rgn["region"] != region_data["region"]:
+                    continue
+                file_off = layout_file_offset(lay, tileset)
+                if file_off is None:
+                    continue
+                # Find which segment this falls within
+                for seg_idx, (seg_start, seg_end, _) in enumerate(segments):
+                    if seg_start <= file_off < seg_end:
+                        seg_entries[seg_idx].append(
+                            (wd["world"], entry["index"], lay, entry["obj_ptr"]))
+                        break
+
+        # Identify which segments are entry-point segments (have pointer table refs)
+        entry_seg_indices = sorted(seg_entries.keys())
+
+        # For each entry-point segment, the sub-areas are the subsequent segments
+        # until the next entry-point segment
+        for i, seg_idx in enumerate(entry_seg_indices):
+            # Determine range of sub-area segments
+            if i + 1 < len(entry_seg_indices):
+                next_entry_seg = entry_seg_indices[i + 1]
+            else:
+                next_entry_seg = len(segments)
+
+            # Collect sub-area info from segments [seg_idx .. next_entry_seg)
+            # Stop at clearly invalid levels (garbage data past real level data)
+            sub_areas = []
+            for j in range(seg_idx, next_entry_seg):
+                _, _, lv = segments[j]
+                # Skip garbage: 0 commands with invalid enemy ptr
+                if j > seg_idx and lv["command_count"] == 0 and lv["enemy_ptr"] in (0x0000, 0xFFFF):
+                    continue
+                if lv["command_count"] > 700:
+                    break  # Past real data (largest valid is ~641 cmds)
+                sub_areas.append({
+                    "header_offset": lv["header_offset"],
+                    "layout_cpu": lv.get("layout_cpu"),
+                    "enemy_ptr": lv["enemy_ptr"],
+                    "screens": lv["header"]["screens"],
+                    "command_count": lv["command_count"],
+                    "junction_count": lv["junction_count"],
+                    "has_boomboom": lv["has_boomboom"],
+                    "has_koopaling": lv["has_koopaling"],
+                    "has_bowser": lv["has_bowser"],
+                })
+
+            refs = seg_entries[seg_idx]
+            world_refs = [(w, idx) for w, idx, _, _ in refs]
+            obj_ptrs = list(set(obj for _, _, _, obj in refs))
+            # Use the first ref's lay_ptr as the canonical entry
+            _, _, lay_ptr, _ = refs[0]
+            entry_enemy = sub_areas[0]["enemy_ptr"] if sub_areas else 0
+
+            # Boss flags: check BOTH layout header enemy ptrs AND pointer table obj_ptrs
+            # The obj_ptr is what the game uses for entry-point enemies;
+            # layout header bytes 2-3 are for sub-area enemy data
+            has_boomboom = any(sa["has_boomboom"] for sa in sub_areas)
+            has_koopaling = any(sa["has_koopaling"] for sa in sub_areas)
+            has_bowser = any(sa["has_bowser"] for sa in sub_areas)
+
+            for obj_ptr in obj_ptrs:
+                obj_boss = scan_enemy_segment_bosses(rom, obj_ptr)
+                has_boomboom = has_boomboom or obj_boss["has_boomboom"]
+                has_koopaling = has_koopaling or obj_boss["has_koopaling"]
+                has_bowser = has_bowser or obj_boss["has_bowser"]
+
+            groups.append({
+                "region": region_data["region"],
+                "entry_layout_cpu": lay_ptr,
+                "entry_obj_ptrs": sorted(obj_ptrs),
+                "entry_enemy_ptr": entry_enemy,
+                "world_refs": world_refs,
+                "level_count": len(sub_areas),
+                "sub_area_count": len(sub_areas) - 1,
+                "has_boomboom": has_boomboom,
+                "has_koopaling": has_koopaling,
+                "has_bowser": has_bowser,
+                "sub_areas": sub_areas,
+            })
+
+    return groups
 
 
 # --------------------------------------------------------------------------
@@ -618,6 +820,17 @@ def generate_rom_map(rom):
         "total_shuffleable": sum(w["shuffleable_count"] for w in worlds),
     }
 
+    # -- Level groups (entry point + sub-areas with boss tracking) --
+    level_groups = build_level_groups(rom, all_region_levels, worlds)
+
+    rom_map["level_groups"] = level_groups
+    rom_map["level_groups_summary"] = {
+        "total_groups": len(level_groups),
+        "groups_with_boomboom": sum(1 for g in level_groups if g["has_boomboom"]),
+        "groups_with_koopaling": sum(1 for g in level_groups if g["has_koopaling"]),
+        "groups_with_bowser": sum(1 for g in level_groups if g["has_bowser"]),
+    }
+
     # -- Enemy/object data --
     enemy_segments = parse_enemy_data(rom)
     total_enemies = sum(s["entry_count"] for s in enemy_segments)
@@ -679,6 +892,25 @@ def print_summary(rom_map):
         type_str = ", ".join(f"{k}={v}" for k, v in sorted(types.items()))
         print(f"  {world['name']}: {world['entry_count']} entries "
               f"({world['shuffleable_count']} shuffleable) [{type_str}]")
+
+    # Level groups
+    lgs = rom_map["level_groups_summary"]
+    print(f"\nLevel Groups (entry point + sub-areas):")
+    print(f"  Total groups: {lgs['total_groups']}")
+    print(f"  With Boom-Boom: {lgs['groups_with_boomboom']}")
+    print(f"  With Koopaling: {lgs['groups_with_koopaling']}")
+    print(f"  With Bowser: {lgs['groups_with_bowser']}")
+
+    # Show groups with boom-boom and their world refs
+    for g in rom_map["level_groups"]:
+        if g["has_boomboom"]:
+            refs = ", ".join(f"W{w}[{i}]" for w, i in g["world_refs"])
+            if not refs:
+                refs = "(no ptr table ref)"
+            print(f"    {refs}: lay=0x{g['entry_layout_cpu']:04X} "
+                  f"enemy=0x{g['entry_enemy_ptr']:04X} "
+                  f"{g['level_count']} levels "
+                  f"({'+ koopaling' if g['has_koopaling'] else ''}{'+ bowser' if g['has_bowser'] else ''})")
 
     # Enemy data
     ed = rom_map["enemy_data"]

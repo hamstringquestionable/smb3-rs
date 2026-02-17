@@ -52,6 +52,7 @@ docs/
 - All 9 level data regions with every level header, command count, and per-level powerup lists
 - All 340 world pointer table entries (type, tileset, obj/lay pointers, shuffleability)
 - All 2077 enemy/object entries (class, randomizability, protection flags)
+- Level groups with sub-area tracing and boss detection (Boom-Boom, Koopaling, Bowser per group)
 - Key ROM tables (LL_PowerBlocks, LATP_QBlocks, palettes, etc.)
 - Protected offsets (7-7 Q-stars, 7-F1 Tanooki)
 
