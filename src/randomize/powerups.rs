@@ -122,9 +122,11 @@ const LEVEL_HEADER_SIZE: usize = 9;
 
 /// File offsets of byte2 values that must not be randomized.
 ///
-/// 7-7 (Muncher level): three Q-star blocks that must stay star — stars are
-/// required to cross muncher fields. Verified against ROM.
+/// 7-7 (Muncher level): four Q-star blocks that must stay star — stars are
+/// required to cross muncher fields. Found by brute-scanning the sub-area
+/// at 0x23D48–0x23F1F for group 1 fixed-size byte2=0x02 patterns.
 const PROTECTED_OFFSETS: &[usize] = &[
+    0x23D7F, // 7-7 Q-star byte2 (screen 1)
     0x23DB0, // 7-7 Q-star byte2 (screen 2)
     0x23E1F, // 7-7 Q-star byte2 (screen 5)
     0x23EA0, // 7-7 Q-star byte2 (screen 8)
