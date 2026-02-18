@@ -50,6 +50,7 @@ pub struct Options {
     /// Shuffle fortresses and airships across worlds.
     #[serde(default = "default_false")]
     pub shuffle_fortresses: bool,
+
 }
 
 fn default_false() -> bool {

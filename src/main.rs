@@ -69,6 +69,8 @@ struct Cli {
     /// Set starting lives (1–99, default: 4)
     #[arg(long, default_value_t = 4)]
     starting_lives: u8,
+
+
 }
 
 fn main() {

@@ -303,8 +303,20 @@ const BOOMBOOM_Y_OFFSETS: [usize; 17] = [
     0x0DA2D, // W8[36]  Y=$47
 ];
 
-/// Starting index into FORTRESS_ENTRIES for each world.
-const FORTRESS_WORLD_BASE: [usize; 8] = [0, 1, 2, 4, 6, 8, 11, 13];
+/// Original fortress ordinal (Map_DoFortressFX value) for each position
+/// in FORTRESS_ENTRIES. Extracted from the original Y-byte upper nibbles.
+/// Note: W4 is [2, 1] not [1, 2] — entry W4[9] is the game's "second"
+/// fortress despite appearing earlier in the pointer table.
+const POSITION_ORDINALS: [u8; 17] = [
+    1,    // W1[11]
+    1,    // W2[13]
+    1, 2, // W3[13], W3[34]
+    2, 1, // W4[ 9], W4[16]  — reversed!
+    1, 2, // W5[12], W5[31]
+    1, 2, 3, // W6[ 9], W6[27], W6[48]
+    1, 2, // W7[ 5], W7[40]
+    1, 2, 3, 4, // W8[ 7], W8[10], W8[26], W8[36]
+];
 
 /// Shuffle fortresses across all worlds. Any fortress can appear in any
 /// fortress map slot (except Bowser's castle which stays fixed).
@@ -340,9 +352,8 @@ pub fn randomize_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
             .position(|&p| p == shuffled_obj)
             .expect("shuffled fortress must match an original");
 
-        // Determine the required ordinal for this position (1-based)
-        let world_base = FORTRESS_WORLD_BASE[w];
-        let ordinal_in_world = (position_idx - world_base + 1) as u8;
+        // Look up the required ordinal for this position
+        let ordinal_in_world = POSITION_ORDINALS[position_idx];
 
         // Patch the Boom-Boom Y-byte: replace upper nibble, keep lower
         let y_offset = BOOMBOOM_Y_OFFSETS[orig_idx];
@@ -835,7 +846,7 @@ mod tests {
             let lower = y_byte & 0x0F;
 
             // Upper nibble = position's ordinal in its world
-            let expected_ordinal = (position_idx - FORTRESS_WORLD_BASE[w] + 1) as u8;
+            let expected_ordinal = POSITION_ORDINALS[position_idx];
             assert_eq!(upper, expected_ordinal,
                 "Position {} (W{}): Y-byte upper nibble {} != expected ordinal {}",
                 position_idx, w + 1, upper, expected_ordinal);
