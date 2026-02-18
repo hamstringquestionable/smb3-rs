@@ -204,7 +204,33 @@ Most generator commands are 3 bytes, but some variable-size routines read a **4t
 from the layout data stream. If a parser assumes all commands are 3 bytes, every command
 after the first extra-byte routine will be misaligned.
 
-**Tileset 1 (Plains) extra-byte dispatches:**
+**Identifying 4-byte commands:**
+
+The correct method is a **dispatch-based lookup** using tileset-specific extra-byte
+dispatch lists. Each tileset has its own set of variable-size dispatches that consume
+an extra byte.
+
+**Tileset-specific extra-byte dispatches:**
+
+| Tileset | Extra-Byte Dispatches |
+|---------|----------------------|
+| TS1 (Plains) | 11, 12, 35-42 |
+| TS2 (Dungeon) | 35-42, 46, 47, 48 |
+| TS3 (Hilly) | 35-42, 60-71 |
+| TS4/12 (Ice/Sky) | 0, 35-42, 60, 112 |
+| TS7 (Pipe/Water) | 35-42, 57 |
+| TS9 (Desert) | 10-13, 35-42 |
+| TS10 (Ship) | 1, 2, 35-42, 48, 51 |
+
+**High-bit fallback rule (NOT universally reliable):**
+
+Some external documentation suggests using `byte0 & 0x80` (high bit set = 4-byte command)
+as a universal rule. This works for **TS3 and TS4/12** but produces incorrect alignment
+for **TS1, TS2, and other tilesets**. The high-bit rule should only be used as a last
+resort or for tilesets where the dispatch list is unknown. Always prefer dispatch-based
+detection when the tileset is known.
+
+**Tileset 1 (Plains) extra-byte examples:**
 
 | Dispatch | Handler | Extra Byte Meaning |
 |----------|---------|-------------------|
@@ -215,7 +241,8 @@ after the first extra-byte routine will be misaligned.
 `LoadLevel_DecoGround`, `LoadLevel_DecoCeiling`). Each tileset's variable-size dispatch
 table must be checked individually to identify which dispatches consume extra bytes.
 
-The level simulator at `tools/level_sim.py` tracks extra-byte dispatches per tileset.
+The level simulator at `tools/level_sim.py` tracks extra-byte dispatches per tileset,
+but it currently only implements TS1 dispatches (hardcoded).
 
 #### 1-1 Level Data Reference
 
@@ -245,6 +272,251 @@ This matches the MarioWiki count of 3 mushroom/leaf powerups (all QBLOCKLEAF).
 **Tile visual verification:** The `Tile_Layout_TS1` table confirms that Q-block tiles
 ($60-$65) use CHR patterns $98/$99 (animated "?" appearance), while brick tiles
 ($67-$6F) all use patterns $B4/$B5 (standard brick appearance).
+
+---
+
+### Junctions and Sub-Areas
+
+#### How Junctions Work
+
+Group 7 commands (`byte0 & 0xE0 == 0xE0`) are **level junctions** — they do not
+generate tiles. When the game encounters a junction during level loading, it advances
+to the **next 9-byte header** in the data stream and continues loading level data from
+there. This is how a single level can have multiple rooms (e.g., a fortress entry area
+followed by a Boom-Boom boss room).
+
+Junction byte2 does NOT encode a target address or offset. The game simply reads past
+the 0xFF terminator of the current section and parses the next header inline. Multiple
+junctions in a level lead to sequential sub-areas in the data stream.
+
+#### Level Data Stream Structure
+
+Each level data region contains a contiguous stream of level segments:
+
+```
+[9-byte header A][commands...][0xFF]
+[9-byte header B][commands...][0xFF]   ← sub-area of A (reached via junction)
+[9-byte header C][commands...][0xFF]   ← sub-area of A (reached via 2nd junction)
+[9-byte header D][commands...][0xFF]   ← new entry point (different level)
+[9-byte header E][commands...][0xFF]   ← sub-area of D
+...
+```
+
+There is no explicit delimiter between "entry point" and "sub-area" segments — the
+structure is only meaningful in context of what the pointer table references.
+
+#### Entry Points vs Sub-Areas
+
+- **Entry point**: A level segment whose layout CPU address is referenced by a world
+  pointer table entry. When Mario steps on a map tile, the game looks up the
+  `LevelLayouts` pointer to find the entry point.
+- **Sub-area**: A level segment that follows an entry point in the data stream. Reached
+  via junction commands during gameplay, never directly referenced by the pointer table.
+
+**Critical detail**: Multiple pointer table entries can point into the **same** data
+segment at different byte offsets. For example, W1[11] (`lay=0xA95D`) and W3[34]
+(`lay=0xAA79`) both point into the same 136-command Dungeon segment. They share the
+same sub-areas that follow in the data stream.
+
+#### Enemy Data Pointers: Entry vs Sub-Area
+
+Each level has TWO sources of enemy data:
+
+1. **Pointer table `obj_ptr`** (ObjSets word): The enemy data used when entering the
+   level from the world map. This is what the game loads first.
+2. **Layout header bytes 2-3** (`enemy_ptr`): The enemy data pointer embedded in each
+   9-byte level header. Sub-area headers use this to load enemies for their room.
+
+These are usually **different pointers**. A fortress entry might have `obj_ptr=0xD32B`
+(containing Boom-Boom) while its layout header has `enemy_ptr=0xD351` (containing
+regular enemies for the entry room). The Boom-Boom enemy is often in a sub-area's
+header enemy_ptr, not the entry point's.
+
+#### Fortress Detection via Sub-Area Tracing
+
+To identify all fortress/boss levels, you must check for Boom-Boom enemies
+(IDs 0x4A, 0x4B, 0x4C) in BOTH:
+
+1. The pointer table entry's `obj_ptr` enemy data
+2. All sub-area headers' `enemy_ptr` enemy data reachable from the entry point
+
+The `tools/rom_map.py` `build_level_groups()` function implements this by:
+- Mapping each pointer table entry to the pre-parsed data segment it falls within
+- Collecting subsequent segments (until the next entry-containing segment) as sub-areas
+- Scanning all enemy pointers (both obj_ptr and sub-area enemy_ptrs) for boss IDs
+
+#### Boom-Boom Groups (13 total in unmodified ROM)
+
+These are all pointer table entries whose level group contains a Boom-Boom enemy,
+identified by `level_groups` in `tools/rom_map.json`:
+
+| World Refs | Region | Detection Method |
+|-----------|--------|-----------------|
+| W1[11], W3[34] | Dungeon (TS2) | W1[11] obj_ptr has Boom-Boom; W3[34] shares segment |
+| W2[13] | Desert (TS9) | obj_ptr has Boom-Boom |
+| W3[13], W5[12] | Dungeon (TS2) | W3[13] obj_ptr has Boom-Boom; W5[12] shares segment |
+| W4[9] | Dungeon (TS2) | obj_ptr has Boom-Boom |
+| W4[16], W8[26], W8[40] | Dungeon (TS2) | W4[16], W8[26] obj_ptrs; W8[40] is Bowser |
+| W5[31] | Dungeon (TS2) | obj_ptr has Boom-Boom |
+| W6[9], W6[48], W7[40] | Dungeon (TS2) | W6[9], W6[48] obj_ptrs; W7[40] shares segment |
+| W6[27] | Ice/Sky (TS4/12) | Sub-area enemy_ptr 0xCACE has Boom-Boom |
+| W7[5] | Dungeon (TS2) | obj_ptr has Boom-Boom |
+| W8[8,17,18,28,35] | Underground (TS14) | Sub-area enemy_ptr 0xD528 has Boom-Boom (tanks) |
+| W8[7] | Ship (TS10) | Layout header enemy_ptr 0xDA1F has Boom-Boom |
+| W8[10] | Ship (TS10) | Layout header enemy_ptr 0xDA24 has Boom-Boom |
+| W8[36] | Ship (TS10) | Layout header enemy_ptr 0xDA1A has Boom-Boom |
+
+**Entries that leak if only checking entry-point obj_ptr:**
+W3[34] (ts=2), W5[12] (ts=2), W6[27] (ts=12), W7[40] (ts=2), W8[7] (ts=10),
+W8[10] (ts=10), W8[36] (ts=10) — these 7 entries have no boss in their obj_ptr
+enemy data and would incorrectly appear in `collect_shuffleable()` as regular levels,
+causing tileset leakage when shuffled.
+
+#### Boom-Boom Detection: Approaches Tried and Lessons Learned
+
+Identifying the 17 fortress/boss entries was harder than expected. This section
+documents the approaches tried, why they failed, and what was ultimately chosen.
+This is essential context if revisiting dynamic detection or implementing sub-area
+shuffling in the future.
+
+**Approach 1: obj_ptr range heuristic (`obj >= 0xD000`)**
+
+The initial approach assumed fortress entries always have `obj_ptr >= 0xD000`. This
+is wrong — many regular action levels also have enemy data in the $D000+ range
+(e.g., World 2 desert levels, World 4 giant levels, World 8 tanks/ships). This
+produced both false positives (regular levels flagged as fortresses) and false
+negatives (fortresses with $C000-range obj_ptrs missed). The root cause of the
+"fortress tileset leaking" bug: 7 entries with Boom-Boom only in sub-area enemy
+data were not detected as fortresses and ended up in the regular level shuffle pool.
+
+**Approach 2: Dynamic enemy scanning of entry-point obj_ptr only**
+
+Scanning each entry's `obj_ptr` enemy data for Boom-Boom IDs (0x4A, 0x4B, 0x4C)
+correctly identifies 10 of the 17 fortress entries but misses the 7 listed above
+where Boom-Boom lives in a sub-area reached via junction. This approach is necessary
+but not sufficient.
+
+**Approach 3: Forward scanning past 0xFF terminators (sub-area tracing in Rust)**
+
+After scanning the entry-point's enemy data, continue scanning forward past 0xFF
+terminators to find sub-area headers and check their `enemy_ptr` fields for
+Boom-Boom. This was implemented in `levels.rs` with `has_boomboom_in_sub_areas()`.
+
+**Why it failed:** There is no reliable way to know where one level's sub-areas end
+and another level's data begins. Level data regions pack multiple levels contiguously:
+
+```
+[Level A header][commands...][0xFF]
+[Level A sub-area 1][commands...][0xFF]    ← belongs to A
+[Level B header][commands...][0xFF]        ← different level entirely
+[Level B sub-area 1][commands...][0xFF]    ← belongs to B
+```
+
+Forward scanning from Level A inevitably crosses into Level B's data, producing
+massive false positives. In testing, this identified **58 entries** as fortresses
+instead of the correct 17. The only way to know where A ends and B begins is to
+cross-reference against the pointer table — which is exactly what `rom_map.py`'s
+`build_level_groups()` does with full pre-parsed segment data.
+
+**Approach 3b: Sub-area boundary detection heuristics**
+
+Attempted to detect sub-area boundaries using:
+- Q-Ball (0x4A) as an end marker: **Zero** Q-Ball objects exist in ROM enemy data.
+  Q-Ball is spawned by code when Boom-Boom is defeated, never placed as an enemy.
+- Command count limits (break at >700 commands): Helps filter garbage data past
+  real level regions but doesn't solve the inter-level boundary problem.
+- Empty segment detection (0-command levels with invalid enemy_ptr): Filters some
+  garbage but insufficient for general boundary detection.
+
+None of these heuristics reliably distinguish "sub-area of current level" from
+"start of next level."
+
+**Approach 4: Pre-computed level groups in rom_map.py (chosen for tooling)**
+
+The `build_level_groups()` function in `tools/rom_map.py` solves the boundary
+problem by using full knowledge of all pointer table entries and all pre-parsed
+level segments. It maps each pointer table entry to the data segment it falls
+within, then assigns subsequent segments as sub-areas until the next segment that
+contains a pointer table entry. This correctly identifies all 13 Boom-Boom groups
+(mapping to 17 pointer table entries).
+
+**Known false positive**: The W8 layout at `lay=0xB0F7` groups 5 entries
+(W8[8,17,18,28,35]) whose sub-area chain eventually reaches an enemy segment
+containing Boom-Boom. However, none of these map tiles actually lead to a
+Boom-Boom fight in gameplay. This layout's sub-area data overlaps with other
+levels' sub-areas in the data stream — the grouping algorithm cannot distinguish
+"reachable via junction" from "happens to follow in the byte stream." This group
+is excluded from FORTRESS_ENTRIES.
+
+**Approach 5: Hardcoded constant (chosen for Rust implementation)**
+
+Given that the ROM is fixed (USA Rev 1) and the fortress set never changes, all
+17 entries are hardcoded as `FORTRESS_ENTRIES` in `src/randomize/levels.rs`. This
+is consistent with the existing `AIRSHIP_ENTRIES` and `BOWSER_CASTLE` patterns.
+The values were derived from `rom_map.py`'s `build_level_groups()` analysis and
+manually verified against known gameplay.
+
+If dynamic detection is ever needed (e.g., for ROM hacks with modified fortress
+placement), Approach 4 is the correct foundation — but it requires the full
+level-group analysis that `rom_map.py` provides, not the simplified forward
+scanning attempted in Approach 3.
+
+#### Sub-Area Structure: Notes for Future Shuffling
+
+If sub-area shuffling is implemented in the future, the following structural
+details are important.
+
+**Sub-area composition of fortresses:**
+
+Fortresses typically contain 2-4 areas connected by pipe/door junctions:
+- Area 0: Entry room (referenced by pointer table, has its own enemy data via obj_ptr)
+- Area 1-N: Sub-rooms reached via junction commands in the layout data
+- Final area: Boss room containing Boom-Boom (enemy data via that area's header enemy_ptr)
+
+Example: World 3's second fortress (W3[34]) has 4 areas — Mario starts in area 0,
+travels through 2 intermediate rooms via pipe transitions, and reaches the Boom-Boom
+boss in area 3.
+
+**What makes a sub-area shuffleable:**
+
+Not all sub-areas are interchangeable. Constraints include:
+1. **Tileset compatibility**: Sub-areas inherit the tileset of their entry point.
+   Swapping a dungeon sub-area into a ship level would produce garbled graphics.
+2. **Enemy data coupling**: Each sub-area header has its own enemy_ptr. The enemies
+   must make sense for the tileset and room geometry.
+3. **Entry/exit consistency**: Junction commands in the parent area advance to the
+   "next" header in the stream. If sub-areas are reordered, junction targets change.
+   The parent's junction count must match the number of sub-areas provided.
+4. **Boss room preservation**: The final sub-area (boss room) must always contain
+   a Boom-Boom enemy for the fortress to be completable.
+5. **Shared segments**: Multiple pointer table entries can share the same data
+   segment (e.g., W1[11] and W3[34]). Modifying shared data affects all entries
+   that reference it.
+
+**Data available for sub-area analysis:**
+
+`tools/rom_map.json` `level_groups` contains per-group:
+- `sub_areas`: list of all areas in the group, each with `header_offset`,
+  `layout_cpu`, `enemy_ptr`, `screens`, `command_count`, `junction_count`,
+  and boss flags (`has_boomboom`, `has_koopaling`, `has_bowser`)
+- `world_refs`: which pointer table entries share this level group
+- `entry_obj_ptrs`: enemy data pointers for the entry points
+
+**Simplest sub-area shuffle approach:**
+
+Rather than shuffling individual sub-areas (which requires solving all the
+constraints above), shuffle entire "fortress interiors" as atomic units. This
+is what `randomize_fortresses()` already does — it swaps the complete
+(obj_ptr, lay_ptr, tileset) tuple between fortress map slots. The entire level
+including all its sub-areas moves as one piece. This is safe because:
+- The layout data stream is read-only (not modified, just re-pointed)
+- The pointer table entry carries the tileset with it
+- All sub-areas follow the entry point in the data stream and move with it
+
+For more granular sub-area shuffling (e.g., mixing rooms between fortresses),
+the junction target problem must be solved — likely by rewriting layout data
+to reorder sub-area headers in the stream, which requires careful management
+of the limited space in each tileset's data region.
 
 ---
 
@@ -693,11 +965,15 @@ ObjSets (N words), LevelLayouts (N words).
 **ByRowType byte encoding:** upper nibble = row/position type, lower nibble = tileset ID.
 
 **Entry type identification by ObjSets pointer value:**
-- `obj >= 0xC000 && obj < 0xD000`: regular action level (shuffleable)
-- `obj >= 0xD000`: fortress level
+- `obj >= 0xC000 && lay != 0x0000`: action level (regular or fortress)
 - `obj == 0x0700`: Toad House
 - `obj == 0x0001` with `lay == 0x0000`: bonus game / N-Spade
 - `obj < 0x1000` (other small values): hand traps, pipe junctions, special
+
+**Note on obj_ptr ranges:** The `obj >= 0xD000` range does NOT reliably indicate
+fortresses. Many regular action levels have enemy data in $D000+ (World 2 desert,
+World 4 giant, World 8 tanks/ships). Fortress identification requires checking for
+Boom-Boom enemies — see "Boom-Boom Detection" section above.
 
 **Level loading flow:** Player map position → match against ByRowType + ByScrCol →
 extract tileset from lower nibble → load ObjSets pointer into `Level_ObjPtr_AddrL/H` →
@@ -710,6 +986,111 @@ load LevelLayouts pointer into `Level_LayPtr_AddrL/H` → bank-switch via
 |-------|-------------|
 | `Map_Y_Starts` | Per-world initial Y coordinate |
 | Fixed X = 0x20 | Same X start for all worlds |
+
+### Fortress Lock & Bridge FX (PRG010: 0x147CD–0x148B7)
+
+When a fortress is cleared (Boom-Boom defeated, magic ball collected), the game triggers
+a map effect that busts a lock or builds a bridge, opening progression on the overworld.
+The entire system lives in PRG010 and uses **17 FX slots** (0x00–0x10), one per
+fortress/ship in the game.
+
+**Mechanism (`MO_DoFortressFX` at Map_Operation 8):**
+
+1. Clearing a fortress sets `Map_DoFortressFX` to a 1-based index (which fortress
+   *within this world* was just cleared: 1st, 2nd, 3rd, or 4th).
+2. `MO_DoFortressFX` decrements to 0-based, then computes:
+   `absolute_index = FortressFXBase_ByWorld[World_Num] + Map_DoFortressFX`
+3. Reads the FX slot value from `FortressFX_W1[absolute_index]` (0x00–0x10).
+4. Uses the FX slot to index into all visual/map replacement tables below.
+
+**Data tables (all 17 entries, indexed by FX slot 0x00–0x10):**
+
+| File Offset | Size | Label | Description |
+|------------|------|-------|-------------|
+| 0x147CD | 17 | `FortressFX_VAddrH` | VRAM high byte for lock/bridge tile position |
+| 0x147DE | 17 | `FortressFX_VAddrL` | VRAM low byte for lock/bridge tile position |
+| 0x147EF | 34 | `FortressFX_MapCompIdx` | `Map_Completions` column + bit per FX slot (17×2 bytes) |
+| 0x14811 | 68 | `FortressFX_Patterns` | Replacement 8×8 patterns per FX slot (17×4 bytes) |
+| 0x14855 | 17 | `FortressFX_MapLocationRow` | Map row (Y position) for tile replacement |
+| 0x14866 | 17 | `FortressFX_MapLocation` | Map screen (lo nibble) + column (hi nibble) |
+| 0x14877 | 17 | `FortressFX_MapTileReplace` | Replacement map tile ID |
+| 0x14888 | 32 | `FortressFX_W1–W8` | Per-world FX slot assignments (4 slots per world, 0-padded) |
+| 0x148A8 | 8+8 | `FortressFXBase_ByWorld` | Per-world base index into `FortressFX_Wx` (8 used + 8 extra) |
+
+**Per-world FX slot assignments (`FortressFX_W1–W8` at 0x14888):**
+
+```
+W1: 00 00 00 00   →  slot 0x00 (1 fortress, 3 unused)
+W2: 01 00 00 00   →  slot 0x01 (1 fortress, 3 unused)
+W3: 02 03 00 00   →  slots 0x02, 0x03 (2 fortresses)
+W4: 04 05 00 00   →  slots 0x04, 0x05 (2 fortresses)
+W5: 06 07 00 00   →  slots 0x06, 0x07 (2 fortresses)
+W6: 08 09 0A 00   →  slots 0x08, 0x09, 0x0A (3 fortresses)
+W7: 0B 0C 00 00   →  slots 0x0B, 0x0C (2 fortresses)
+W8: 0D 0E 0F 10   →  slots 0x0D, 0x0E, 0x0F, 0x10 (4 fortresses/ships)
+```
+
+**`FortressFXBase_ByWorld` (0x148A8):** `00 04 08 0C 10 14 18 1C` — each world's
+entries are 4 bytes apart (matching the 4-slot-per-world layout above).
+
+**FX slot details (17 slots, 0x00–0x10):**
+
+| Slot | World | VRAM Addr | Scr | Col | Row | Tile | Type |
+|------|-------|-----------|-----|-----|-----|------|------|
+| 0x00 | W1 | $2948 | 0 | 4 | $50 | $46 | Lock |
+| 0x01 | W2 | $2A50 | 0 | 8 | $90 | $46 | Lock |
+| 0x02 | W3 | $2A12 | 0 | 9 | $80 | $45 | Bridge |
+| 0x03 | W3 | $294C | 1 | 6 | $50 | $46 | Lock |
+| 0x04 | W4 | $2906 | 1 | 3 | $40 | $45 | Bridge |
+| 0x05 | W4 | $2996 | 0 | 11 | $60 | $B3 | Bridge (water) |
+| 0x06 | W5 | $2986 | 0 | 3 | $60 | $B3 | Bridge (water) |
+| 0x07 | W5 | $298E | 1 | 7 | $60 | $DA | Bridge (sky) |
+| 0x08 | W6 | $299A | 0 | 13 | $60 | $DA | Bridge (sky) |
+| 0x09 | W6 | $2892 | 1 | 9 | $20 | $B3 | Bridge (water) |
+| 0x0A | W6 | $298A | 2 | 5 | $60 | $45 | Bridge |
+| 0x0B | W7 | $291A | 0 | 13 | $40 | $46 | Lock |
+| 0x0C | W7 | $29CE | 1 | 7 | $70 | $45 | Bridge |
+| 0x0D | W8 | $2910 | 0 | 8 | $40 | $46 | Lock |
+| 0x0E | W8 | $2952 | 1 | 9 | $50 | $45 | Bridge |
+| 0x0F | W8 | $2998 | 2 | 12 | $60 | $46 | Lock |
+| 0x10 | W8 | $29CA | 3 | 5 | $70 | $45 | Bridge |
+
+**Replacement tile types:** $45 = bridge segment, $46 = open path, $B3 = water bridge,
+$DA = sky bridge. Patterns ($FE/$C0 = path, $E1 = bridge rail, $D4-$D7 = water/sky bridge,
+$FF = dark/black for W8).
+
+**`FortressFX_MapCompIdx` (0x147EF):** Each FX slot has a 2-byte entry: the first byte is
+the column index into `Map_Completions` RAM ($7E40+), the second byte is the bit mask to
+OR into that column. Both Mario's and Luigi's `Map_Completions` arrays are updated
+(offset $00 and $40 respectively). This prevents the lock/bridge from reverting.
+
+**Boom-Boom Y-byte and Map_DoFortressFX:**
+
+The fortress ordinal (which fortress within the world was cleared) originates from the
+Boom-Boom enemy's Y-byte in the level's enemy data. The upper nibble encodes the 1-based
+ordinal; the lower nibble is Boom-Boom's spawn Y position on screen.
+
+- Boom-Boom init at `$A9EA` (PRG003): copies Y-byte from `$88,X` to `$7F,X`, then
+  overwrites `$88,X` with 1 (resetting the Y-page for gameplay).
+- Crystal ball handler at `$A8F6` (PRG003): reads `$7F,X` and stores it to
+  `Map_DoFortressFX` (`$0745`).
+- `MO_DoFortressFX` at `$A8B0` (PRG010): decrements `$0745`, adds
+  `FortressFXBase_ByWorld[World_Num]`, and indexes into `FortressFX_W1–W8` to get
+  the FX slot.
+
+All 17 Boom-Boom Y-byte ROM offsets are in PRG006 enemy data (`$C000` bank, file
+base `0x0C010`). See `BOOMBOOM_Y_OFFSETS` in `src/randomize/levels.rs` for the
+complete list.
+
+**Interaction with fortress shuffling:**
+
+When `randomize_fortresses` swaps level data between fortress map slots, the Boom-Boom
+enemy data travels with the level — including the Y-byte whose upper nibble determines
+which lock/bridge to break. After shuffling, `randomize_fortresses` patches each
+Boom-Boom's Y-byte upper nibble to match its new position's ordinal within the
+destination world (preserving the lower nibble spawn position). The `FortressFX_W1–W8`
+table is **not** modified — it remains correct because each fortress now reports the
+right ordinal for its new world.
 
 ### World Progression
 
@@ -815,7 +1196,7 @@ World BGM table (PRG030): file offset **0x3C424**, 9 bytes (worlds 1-8 + warp wh
 
 | File Offset | Description |
 |------------|-------------|
-| 0x309D5 | Debug mode toggle (0xCC=enable, 0x35=disable) |
+| 0x309D5 | Debug mode: low byte of jump table entry (0x35=disable). GG code KKKZSPIU. Enable value uncertain — rom_map.py says 0xCC, earlier notes said 0xC5, neither worked as a ROM patch (broke title screen). GG code itself works but corrupts PRG030 since $89C5 is shared across banks. |
 | 0x3509B | 1-Up coin threshold (coins needed for extra life) |
 | 0x1451F | World spawn delay (frames before Mario appears) |
 

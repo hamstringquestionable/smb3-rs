@@ -52,6 +52,7 @@ docs/
 - All 9 level data regions with every level header, command count, and per-level powerup lists
 - All 340 world pointer table entries (type, tileset, obj/lay pointers, shuffleability)
 - All 2077 enemy/object entries (class, randomizability, protection flags)
+- Level groups with sub-area tracing and boss detection (Boom-Boom, Koopaling, Bowser per group)
 - Key ROM tables (LL_PowerBlocks, LATP_QBlocks, palettes, etc.)
 - Protected offsets (7-7 Q-stars, 7-F1 Tanooki)
 
@@ -62,6 +63,10 @@ The map is gitignored since it's derived from the ROM file.
 ## ROM Reference
 
 `docs/smb3_rom_reference.md` contains comprehensive documentation of SMB3 ROM offsets, data structures, RAM addresses, and bank layout. **When researching new ROM hacking information (offsets, data formats, pointer tables, RAM addresses, etc.), always update this document with the findings.** This avoids redundant research across sessions.
+
+## Working Style
+
+- When encountering unexpected results during investigation, **stop and ask the user** rather than continuing to dig deeper. Present what you found and what doesn't match, then let the user guide the next step.
 
 ## Key Technical Notes
 

@@ -59,9 +59,9 @@ struct Cli {
     #[arg(long)]
     keep_whistles: bool,
 
-    /// Enable debug mode (press Select to cycle powerup forms)
+    /// Shuffle fortresses and airships across worlds
     #[arg(long)]
-    debug_mode: bool,
+    shuffle_fortresses: bool,
 
     /// Disable airship lock (anchor effect always on by default, use this flag to disable)
     #[arg(long)]
@@ -69,6 +69,8 @@ struct Cli {
     /// Set starting lives (1–99, default: 4)
     #[arg(long, default_value_t = 4)]
     starting_lives: u8,
+
+
 }
 
 fn main() {
@@ -105,7 +107,7 @@ fn main() {
         disable_autoscroll: !cli.keep_autoscroll,
         chest_items: !cli.no_chest_items,
         remove_whistles: !cli.keep_whistles,
-        debug_mode: cli.debug_mode,
+        shuffle_fortresses: cli.shuffle_fortresses,
         airship_lock: !cli.no_airship_lock,
         starting_lives: cli.starting_lives,
     };
@@ -128,10 +130,10 @@ fn main() {
         LevelShuffle::IntraWorld => "intra-world",
         LevelShuffle::CrossWorld => "cross-world",
     });
+    eprintln!("  Fortress/airship shuffle: {}", if options.shuffle_fortresses { "on" } else { "off" });
     eprintln!("  Autoscroll: {}", if options.disable_autoscroll { "disabled" } else { "enabled" });
     eprintln!("  Chest items: {}", if options.chest_items { "on" } else { "off" });
     eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });
-    eprintln!("  Debug mode: {}", if options.debug_mode { "on" } else { "off" });
     eprintln!("  Airship lock: {}", if options.airship_lock { "on" } else { "off" });
     eprintln!("  Output:   {}", output_path.display());
 
