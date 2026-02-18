@@ -279,11 +279,77 @@ fn collect_fortresses(_rom: &Rom) -> Vec<(usize, usize)> {
     FORTRESS_ENTRIES.to_vec()
 }
 
+/// ROM file offset of the Boom-Boom Y-byte for each fortress (ordered same
+/// as FORTRESS_ENTRIES). The Y-byte's upper nibble encodes the fortress
+/// ordinal (1-based) used as Map_DoFortressFX, and the lower nibble is
+/// Boom-Boom's spawn Y position. All offsets are in PRG006 enemy data.
+const BOOMBOOM_Y_OFFSETS: [usize; 17] = [
+    0x0D35F, // W1[11]  Y=$17
+    0x0D262, // W2[13]  Y=$18
+    0x0D3D3, // W3[13]  Y=$17
+    0x0D3A1, // W3[34]  Y=$28
+    0x0D536, // W4[ 9]  Y=$27
+    0x0D55F, // W4[16]  Y=$17
+    0x0D40F, // W5[12]  Y=$17
+    0x0D2C7, // W5[31]  Y=$27
+    0x0D4E1, // W6[ 9]  Y=$17
+    0x0CAE1, // W6[27]  Y=$24
+    0x0D4B0, // W6[48]  Y=$37
+    0x0D4FA, // W7[ 5]  Y=$17
+    0x0D47E, // W7[40]  Y=$27
+    0x0DA32, // W8[ 7]  Y=$17
+    0x0DA37, // W8[10]  Y=$27
+    0x0D597, // W8[26]  Y=$38
+    0x0DA2D, // W8[36]  Y=$47
+];
+
+/// Starting index into FORTRESS_ENTRIES for each world.
+const FORTRESS_WORLD_BASE: [usize; 8] = [0, 1, 2, 4, 6, 8, 11, 13];
+
 /// Shuffle fortresses across all worlds. Any fortress can appear in any
 /// fortress map slot (except Bowser's castle which stays fixed).
+///
+/// After shuffling, patches each Boom-Boom's Y-byte upper nibble so it
+/// produces the correct Map_DoFortressFX value for its new map position.
+/// The upper nibble is the 1-based fortress ordinal within the world;
+/// the lower nibble (Boom-Boom's spawn Y position) is preserved.
 pub fn randomize_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
     let indices = collect_fortresses(rom);
+
+    // Record original obj_ptr for each fortress so we can identify
+    // which original level ended up at each position after shuffling.
+    let original_obj_ptrs: Vec<u16> = indices
+        .iter()
+        .map(|&(w, i)| {
+            let entry = read_entry(rom, &WORLDS[w], i);
+            u16::from_le_bytes([entry.obj_lo, entry.obj_hi])
+        })
+        .collect();
+
     shuffle_group(rom, rng, &indices);
+
+    // For each fortress position, find which original fortress landed
+    // there (by matching obj_ptr) and patch its Boom-Boom Y-byte.
+    for (position_idx, &(w, i)) in indices.iter().enumerate() {
+        let shuffled = read_entry(rom, &WORLDS[w], i);
+        let shuffled_obj = u16::from_le_bytes([shuffled.obj_lo, shuffled.obj_hi]);
+
+        // Find which original fortress this is
+        let orig_idx = original_obj_ptrs
+            .iter()
+            .position(|&p| p == shuffled_obj)
+            .expect("shuffled fortress must match an original");
+
+        // Determine the required ordinal for this position (1-based)
+        let world_base = FORTRESS_WORLD_BASE[w];
+        let ordinal_in_world = (position_idx - world_base + 1) as u8;
+
+        // Patch the Boom-Boom Y-byte: replace upper nibble, keep lower
+        let y_offset = BOOMBOOM_Y_OFFSETS[orig_idx];
+        let old_y = rom.read_byte(y_offset);
+        let new_y = (ordinal_in_world << 4) | (old_y & 0x0F);
+        rom.write_byte(y_offset, new_y);
+    }
 }
 
 /// Shuffle airships across worlds 1-7. Each world's airship map tile
@@ -650,13 +716,26 @@ mod tests {
             }
         }
 
-        // Set up 3 fortress entries across different worlds
-        // W1[11]: obj=0xC100
-        setup_fortress(&mut data, 0, 11, 0xC100, 0xA100);
-        // W3[13]: obj=0xC200
-        setup_fortress(&mut data, 2, 13, 0xC200, 0xA200);
-        // W5[31]: obj=0xC300
-        setup_fortress(&mut data, 4, 31, 0xC300, 0xA300);
+        // Set up all 17 fortress entries with unique obj/lay pointers
+        for (i, &(w_idx, entry_idx)) in FORTRESS_ENTRIES.iter().enumerate() {
+            let obj_val: u16 = 0xC100 + (i as u16) * 0x10;
+            let lay_val: u16 = 0xA100 + (i as u16) * 0x10;
+            setup_fortress(&mut data, w_idx, entry_idx, obj_val, lay_val);
+        }
+
+        // Write Boom-Boom Y-byte values at all BOOMBOOM_Y_OFFSETS.
+        // Each gets its original ordinal as upper nibble and a unique lower
+        // nibble (0x7 + fortress_index) so we can verify preservation.
+        // Original ordinals per position: W1=1, W2=1, W3=1,2, W4=2,1,
+        // W5=1,2, W6=1,2,3, W7=1,2, W8=1,2,3,4
+        let original_ordinals: [u8; 17] = [
+            1, 1, 1, 2, 2, 1, 1, 2, 1, 2, 3, 1, 2, 1, 2, 3, 4,
+        ];
+        for (i, &offset) in BOOMBOOM_Y_OFFSETS.iter().enumerate() {
+            let lower = i as u8 & 0x0F; // unique lower nibble per fortress
+            let y_byte = (original_ordinals[i] << 4) | lower;
+            data[offset] = y_byte;
+        }
 
         // Set up Bowser's castle at W8[40] — should NOT be shuffled
         setup_fortress(&mut data, 7, 40, 0xC400, 0xA400);
@@ -706,12 +785,15 @@ mod tests {
         assert_eq!(fortresses.len(), 17, "Expected 17 fortress entries");
         assert!(!fortresses.contains(&BOWSER_CASTLE), "Bowser should be excluded");
 
-        // Record original obj pointers for all fortress entries
-        let original: Vec<u16> = fortresses.iter().map(|&(w, i)| {
+        // Record original obj pointers and Y-byte lower nibbles
+        let original_objs: Vec<u16> = fortresses.iter().map(|&(w, i)| {
             let world = &WORLDS[w];
             let (_scrcol, objsets, _layouts) = table_offsets(world);
             read_word(&rom, objsets + i * 2)
         }).collect();
+        let original_y_lowers: Vec<u8> = BOOMBOOM_Y_OFFSETS.iter()
+            .map(|&off| rom.read_byte(off) & 0x0F)
+            .collect();
 
         // Record Bowser's original data
         let bowser_w = &WORLDS[BOWSER_CASTLE.0];
@@ -731,10 +813,38 @@ mod tests {
             let (_scrcol, objsets, _layouts) = table_offsets(world);
             read_word(&rom, objsets + i * 2)
         }).collect();
-        let mut orig_sorted = original.clone();
+        let mut orig_sorted = original_objs.clone();
         orig_sorted.sort();
         shuffled.sort();
         assert_eq!(orig_sorted, shuffled, "Fortress obj pointers should be a permutation");
+
+        // Verify Boom-Boom Y-byte patching: each position's Y-byte upper
+        // nibble must match its ordinal within the destination world.
+        for (position_idx, &(w, i)) in fortresses.iter().enumerate() {
+            let world = &WORLDS[w];
+            let (_scrcol, objsets, _layouts) = table_offsets(world);
+            let shuffled_obj = read_word(&rom, objsets + i * 2);
+
+            // Find which original fortress landed here
+            let orig_idx = original_objs.iter()
+                .position(|&p| p == shuffled_obj)
+                .unwrap();
+
+            let y_byte = rom.read_byte(BOOMBOOM_Y_OFFSETS[orig_idx]);
+            let upper = y_byte >> 4;
+            let lower = y_byte & 0x0F;
+
+            // Upper nibble = position's ordinal in its world
+            let expected_ordinal = (position_idx - FORTRESS_WORLD_BASE[w] + 1) as u8;
+            assert_eq!(upper, expected_ordinal,
+                "Position {} (W{}): Y-byte upper nibble {} != expected ordinal {}",
+                position_idx, w + 1, upper, expected_ordinal);
+
+            // Lower nibble must be preserved from the original fortress
+            assert_eq!(lower, original_y_lowers[orig_idx],
+                "Fortress {}: Y-byte lower nibble 0x{:X} != original 0x{:X}",
+                orig_idx, lower, original_y_lowers[orig_idx]);
+        }
     }
 
     #[test]
@@ -785,6 +895,16 @@ mod tests {
             assert_eq!(
                 read_word(&rom1, layouts + i * 2),
                 read_word(&rom2, layouts + i * 2),
+            );
+        }
+
+        // Boom-Boom Y-bytes must also be identical
+        for &offset in BOOMBOOM_Y_OFFSETS.iter() {
+            assert_eq!(
+                rom1.read_byte(offset),
+                rom2.read_byte(offset),
+                "Y-byte at 0x{:05X} differs between runs",
+                offset,
             );
         }
     }

@@ -1064,19 +1064,33 @@ the column index into `Map_Completions` RAM ($7E40+), the second byte is the bit
 OR into that column. Both Mario's and Luigi's `Map_Completions` arrays are updated
 (offset $00 and $40 respectively). This prevents the lock/bridge from reverting.
 
+**Boom-Boom Y-byte and Map_DoFortressFX:**
+
+The fortress ordinal (which fortress within the world was cleared) originates from the
+Boom-Boom enemy's Y-byte in the level's enemy data. The upper nibble encodes the 1-based
+ordinal; the lower nibble is Boom-Boom's spawn Y position on screen.
+
+- Boom-Boom init at `$A9EA` (PRG003): copies Y-byte from `$88,X` to `$7F,X`, then
+  overwrites `$88,X` with 1 (resetting the Y-page for gameplay).
+- Crystal ball handler at `$A8F6` (PRG003): reads `$7F,X` and stores it to
+  `Map_DoFortressFX` (`$0745`).
+- `MO_DoFortressFX` at `$A8B0` (PRG010): decrements `$0745`, adds
+  `FortressFXBase_ByWorld[World_Num]`, and indexes into `FortressFX_W1–W8` to get
+  the FX slot.
+
+All 17 Boom-Boom Y-byte ROM offsets are in PRG006 enemy data (`$C000` bank, file
+base `0x0C010`). See `BOOMBOOM_Y_OFFSETS` in `src/randomize/levels.rs` for the
+complete list.
+
 **Interaction with fortress shuffling:**
 
-The FX system is entirely **map-position-based**, not level-content-based. When
-`randomize_fortresses` swaps level data (obj_ptr, lay_ptr, tileset) between fortress map
-slots, the map tile positions don't change. Clearing "World 1's fortress map tile" still
-triggers FX slot 0x00 (World 1's lock), regardless of which fortress level was loaded
-there. The lock/bridge mechanism requires no patching for fortress shuffling to work.
-
-**Future considerations:** If fortress map tiles themselves were ever moved between worlds
-(not just the level data), the `FortressFX_Wx` slot assignments would need rewriting to
-map each world's Nth fortress to the correct FX slot for its new world. The visual tables
-(VAddr, Patterns, MapLocation, MapTileReplace) are per-world-map and would remain valid
-as long as the destination world's map layout is unchanged.
+When `randomize_fortresses` swaps level data between fortress map slots, the Boom-Boom
+enemy data travels with the level — including the Y-byte whose upper nibble determines
+which lock/bridge to break. After shuffling, `randomize_fortresses` patches each
+Boom-Boom's Y-byte upper nibble to match its new position's ordinal within the
+destination world (preserving the lower nibble spawn position). The `FortressFX_W1–W8`
+table is **not** modified — it remains correct because each fortress now reports the
+right ordinal for its new world.
 
 ### World Progression
 
