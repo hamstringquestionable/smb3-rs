@@ -67,6 +67,7 @@ The map is gitignored since it's derived from the ROM file.
 ## Working Style
 
 - When encountering unexpected results during investigation, **stop and ask the user** rather than continuing to dig deeper. Present what you found and what doesn't match, then let the user guide the next step.
+- **Don't chase rabbits.** When a task leads to a secondary problem, stop and summarize what you've found so far instead of diving deeper. Present the situation and let the user decide whether to pursue it. This applies to debugging chains, research tangents, and refactoring urges alike.
 
 ## Key Technical Notes
 

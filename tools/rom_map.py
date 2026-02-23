@@ -143,6 +143,23 @@ WORLDS = [
     {"name": "World 8 (Dark Land)", "rowtype_offset": 0x19B56, "entry_count": 41},
 ]
 
+# Per-world map tile grid metadata (PRG012)
+# Pointer table at 0x185A8: 9 x 2-byte LE CPU pointers (8 worlds + warp zone)
+# Storage: column-major (each column = 9 bytes for rows 0-8), 0xFF terminator after each world
+MAP_TILE_GRIDS = [
+    {"name": "World 1", "cpu_addr": 0xA5AA, "file_offset": 0x185BA, "columns": 16, "screens": 1},
+    {"name": "World 2", "cpu_addr": 0xA63B, "file_offset": 0x1864B, "columns": 32, "screens": 2},
+    {"name": "World 3", "cpu_addr": 0xA75C, "file_offset": 0x1876C, "columns": 48, "screens": 3},
+    {"name": "World 4", "cpu_addr": 0xA90D, "file_offset": 0x1891D, "columns": 32, "screens": 2},
+    {"name": "World 5", "cpu_addr": 0xAA2E, "file_offset": 0x18A3E, "columns": 32, "screens": 2},
+    {"name": "World 6", "cpu_addr": 0xAB4F, "file_offset": 0x18B5F, "columns": 48, "screens": 3},
+    {"name": "World 7", "cpu_addr": 0xAD00, "file_offset": 0x18D10, "columns": 32, "screens": 2},
+    {"name": "World 8", "cpu_addr": 0xAE21, "file_offset": 0x18E31, "columns": 64, "screens": 4},
+    {"name": "Warp Zone", "cpu_addr": 0xB062, "file_offset": 0x19072, "columns": None, "screens": None},
+]
+MAP_TILE_GRID_ROWS = 9  # All worlds have 9 rows
+MAP_TILE_GRID_PTR_TABLE = 0x185A8  # File offset of the 9-entry pointer table
+
 # Tileset-to-PRG bank mapping (bank at CPU $A000)
 PAGE_A000_BY_TILESET = [11, 15, 21, 16, 17, 19, 18, 18, 18, 20, 23, 19, 17, 19, 13, 26, 26, 26, 9]
 
@@ -192,7 +209,11 @@ KEY_TABLES = {
     "LATP_QBlocks": {"offset": 0x1168D, "size": 17, "desc": "Tile ID ($60+index) -> item type"},
     "World_BGM": {"offset": 0x3C424, "size": 9, "desc": "Music track per world"},
     "Princess_Rewards": {"offset": 0x360DE, "size": 7, "desc": "Princess reward items per world"},
-    "Debug_Mode": {"offset": 0x309D5, "size": 1, "desc": "Debug toggle (0xCC=on, 0x35=off)"},
+    "Debug_Mode": {"offset": 0x309D5, "size": 1, "desc": "Debug toggle (enable value uncertain, 0x35=off)"},
+    # World map tile grid pointer table (PRG012): 9 x 2-byte LE CPU pointers (8 worlds + warp zone)
+    "Map_TileGrid_Ptrs": {"offset": 0x185A8, "size": 18, "desc": "Per-world tile grid CPU pointers (9x2)"},
+    # World map scroll limit table (PRG010)
+    "World_Map_Max_PanR": {"offset": 0x14F44, "size": 8, "desc": "Max rightward scroll per world (0x10=1 screen)"},
     # Fortress Lock & Bridge FX tables (PRG010, 17 FX slots 0x00-0x10)
     "FortressFX_VAddrH": {"offset": 0x147CD, "size": 17, "desc": "VRAM high byte per FX slot"},
     "FortressFX_VAddrL": {"offset": 0x147DE, "size": 17, "desc": "VRAM low byte per FX slot"},

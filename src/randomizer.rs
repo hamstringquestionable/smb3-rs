@@ -50,7 +50,9 @@ pub struct Options {
     /// Shuffle fortresses and airships across worlds.
     #[serde(default = "default_false")]
     pub shuffle_fortresses: bool,
-
+    /// Redistribute fortresses across worlds (cross-world overworld shuffle).
+    #[serde(default = "default_false")]
+    pub redistribute_fortresses: bool,
 }
 
 fn default_false() -> bool {
@@ -75,6 +77,7 @@ impl Default for Options {
             chest_items: true,
             remove_whistles: true,
             shuffle_fortresses: false,
+            redistribute_fortresses: false,
             starting_lives: default_starting_lives(),
         }
     }
@@ -107,6 +110,9 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     if options.shuffle_fortresses {
         randomize::levels::randomize_fortresses(rom, &mut rng);
         randomize::levels::randomize_airships(rom, &mut rng);
+    }
+    if options.redistribute_fortresses {
+        randomize::overworld::redistribute_fortresses(rom, &mut rng);
     }
     if options.chest_items {
         randomize::items::randomize(rom, &mut rng, options.remove_whistles);

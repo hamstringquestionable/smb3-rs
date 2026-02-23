@@ -63,6 +63,10 @@ struct Cli {
     #[arg(long)]
     shuffle_fortresses: bool,
 
+    /// Redistribute fortresses across worlds (1-3 per world)
+    #[arg(long)]
+    redistribute_fortresses: bool,
+
     /// Disable airship lock (anchor effect always on by default, use this flag to disable)
     #[arg(long)]
     no_airship_lock: bool,
@@ -108,6 +112,7 @@ fn main() {
         chest_items: !cli.no_chest_items,
         remove_whistles: !cli.keep_whistles,
         shuffle_fortresses: cli.shuffle_fortresses,
+        redistribute_fortresses: cli.redistribute_fortresses,
         airship_lock: !cli.no_airship_lock,
         starting_lives: cli.starting_lives,
     };
@@ -131,6 +136,7 @@ fn main() {
         LevelShuffle::CrossWorld => "cross-world",
     });
     eprintln!("  Fortress/airship shuffle: {}", if options.shuffle_fortresses { "on" } else { "off" });
+    eprintln!("  Fortress redistribution: {}", if options.redistribute_fortresses { "on" } else { "off" });
     eprintln!("  Autoscroll: {}", if options.disable_autoscroll { "disabled" } else { "enabled" });
     eprintln!("  Chest items: {}", if options.chest_items { "on" } else { "off" });
     eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });

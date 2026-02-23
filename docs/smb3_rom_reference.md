@@ -886,28 +886,119 @@ Tileset index → PRG bank at $A000 (level data) and $C000 (tileset code).
 
 ### Overworld Map Tiles
 
-| File Offset | Size | Description |
-|------------|------|-------------|
-| 0x185BA–0x19101 | ~2.9 KB | World map tile grids (raw tile data, all worlds) |
+**Tile grid pointer table:** 9 × 2-byte little-endian CPU pointers at file offset **0x185A8** (CPU $A598, PRG012). Each points to a world's tile grid data. Entry 9 is the Warp Zone.
+
+**Storage format:** Row-major per screen (confirmed from `Map_Reload_with_Completions` in prg012.asm). Each screen is a 144-byte block of 9 rows × 16 columns, stored row-major (16 consecutive bytes per row). Multi-screen worlds have consecutive 144-byte blocks. A `0xFF` terminator byte follows each world's grid data. Total tile data spans **0x185BA–0x19101** (~2.9 KB).
+
+The loading code copies each 144-byte screen block with a sequential `LDA [src],Y / STA [dst],Y` loop (Y = 0..143), then advances the destination pointer by $1B0 for the next screen (the gap accommodates unused vertical space in tile memory).
 
 World maps are stored as raw tile grids (unlike levels which use generators).
+
+**Per-world tile grid details:**
+
+| World | CPU Addr | File Offset | Columns | Screens | Data Bytes | End Offset |
+|-------|----------|-------------|---------|---------|------------|------------|
+| W1 | $A5AA | 0x185BA | 16 | 1 | 144 + 1 | 0x1864A |
+| W2 | $A63B | 0x1864B | 32 | 2 | 288 + 1 | 0x1876B |
+| W3 | $A75C | 0x1876C | 48 | 3 | 432 + 1 | 0x1891C |
+| W4 | $A90D | 0x1891D | 32 | 2 | 288 + 1 | 0x18A3D |
+| W5 | $AA2E | 0x18A3E | 32 | 2 | 288 + 1 | 0x18B5E |
+| W6 | $AB4F | 0x18B5F | 48 | 3 | 432 + 1 | 0x18D0F |
+| W7 | $AD00 | 0x18D10 | 32 | 2 | 288 + 1 | 0x18E30 |
+| W8 | $AE21 | 0x18E31 | 64 | 4 | 576 + 1 | 0x19071 |
+| Warp | $B062 | 0x19072 | — | — | — | — |
+
+**Row-major per-screen addressing:** Tile at grid (row R, column C) is at file offset:
+```
+world_start + (C // 16) * 144 + R * 16 + (C % 16)
+```
+
+**36 unique tile IDs** appear under pointer table entries (confirmed via 100% hit rate mapping across all 340 entries in 8 worlds). Key categories:
+
+| Tile ID(s) | Category | Notes |
+|------------|----------|-------|
+| 0x03–0x0C | Level panel tiles | Border-range tiles reused as level entry dots |
+| 0x44 | Path tile | Horizontal path segment |
+| 0x47, 0x48, 0x4A, 0x4B | Path tiles | Various directional path segments (most common under entries) |
+| 0x50 | Toad house / special | Toad houses and special map nodes |
+| 0x5F | Path tile | Rare path variant |
+| 0x67 | Fortress tile | Mini-fortress entrance |
+| 0x68, 0x69 | Pipe tiles | Map pipe connectors |
+| 0xAE, 0xAF | Fortress parts | Alternate fortress tiles |
+| 0xB4 | Background (void) | Empty space / water fill (no entries land here) |
+| 0xB5, 0xBB, 0xBC | Path/level tiles | Various level-associated tiles |
+| 0xC9 | Airship dock | Airship landing tile |
+| 0xCC | Bowser's castle | Final castle tile |
+| 0xD9, 0xDC–0xDE | Dark Land tiles | W8-specific level tiles |
+| 0xE0 | Special node | Alternate toad house / special |
+| 0xE5, 0xE6 | Level tiles | Various level entries |
+| 0xE8 | Bonus game tile | Spade panel / N-Spade |
+| 0xEB | Fortress tile | Alternate fortress |
+| 0xFF | Border / unused | Map edge |
 
 ### World Map Functionality (PRG010: 0x14010–0x1600F)
 
 Key tables in PRG010 (indexed by World_Num 0–7):
 
-| Label | Description |
-|-------|-------------|
-| `World_BGM_Arrival` | 9-byte table: music track per world (8 worlds + warp zone) |
-| `FortressFXBase_ByWorld` | 8-byte table: fortress effect indices per world |
-| `World_Map_Max_PanR` | 8-byte table: max rightward scroll per world (`10,20,30,30,00,30,20,00`) |
-| `Map_EnterSpecialTiles` | Tile types that trigger level entry (see bug note below) |
+| Label | File Offset | Description |
+|-------|-------------|-------------|
+| `World_BGM_Arrival` | — | 9-byte table: music track per world (8 worlds + warp zone) |
+| `FortressFXBase_ByWorld` | 0x148A8 | 8-byte table: fortress effect indices per world |
+| `World_Map_Max_PanR` | 0x14F44 | 8-byte table: max rightward scroll per world (see below) |
+| `Map_EnterSpecialTiles` | — | Tile types that trigger level entry (see bug note below) |
+
+**`World_Map_Max_PanR` values** (8 bytes at 0x14F44):
+
+```
+W1=0x10, W2=0x20, W3=0x30, W4=0x30, W5=0x00, W6=0x30, W7=0x20, W8=0x00
+```
+
+Units: 0x10 = 1 screen of rightward scroll. Screens visible = (value >> 4) + 1.
+
+**Max_PanR vs tile grid size discrepancies:** W4 has Max_PanR=0x30 (4 screens) but only 32 columns (2 screens) of tile data. W5 has Max_PanR=0x00 (1 screen) but 32 columns (2 screens) — the ground/sky halves are stored as 16 columns each. W8 has Max_PanR=0x00 (1 screen) but 64 columns (4 screens) — the linear stage sequence uses different screen segments, not scrolling.
 
 **`Map_EnterSpecialTiles` list:** TOADHOUSE, SPADEBONUS, PIPE, ALTTOADHOUSE, CASTLEBOTTOM,
 SPIRAL, ALTSPIRAL, PATHANDNUB, DANCINGFLOWER, HANDTRAP, BOWSERCASTLELL
 
 **Known bug:** The tile entry check loop iterates up to index $1A instead of $0A,
 causing subsequent palette data bytes to be incorrectly treated as enterable tile types.
+
+### Pipe Destination Tables (PRG002: 0x046AA–0x0470D)
+
+Four 24-byte tables control where Mario appears on the overworld map after exiting a pipe transit level. Each table is indexed by the **dest byte** from the `OBJ_PIPEWAYCONTROLLER` (object 0x25) in the pipe transit level's enemy data. Each byte packs **two nibble values**: upper nibble = "left" pipe endpoint, lower nibble = "right" pipe endpoint. The game selects which nibble based on Mario's position within the pipe transit level (left/upper vs right/lower half).
+
+| Table | File Offset | Description |
+|-------|-------------|-------------|
+| `PipewayCtlr_MapXHi` | 0x046AA | Screen number for each endpoint (packed nibbles) |
+| `PipewayCtlr_MapX` | 0x046C2 | Column position for each endpoint (packed nibbles) |
+| `PipewayCtlr_MapY` | 0x046DA | Row nibble for each endpoint (packed nibbles) |
+| `PipewayCtlr_MapScrlXHi` | 0x046F2 | Map scroll position; bit 7 = center ($80) alignment |
+
+**Dest byte assignments** (from pipe transit level enemy data `01 25 02 XX FF`):
+
+| Dest | World | Pair |
+|------|-------|------|
+| 0x00 | — | Unused/unknown |
+| 0x01 | W2 | Single pipe pair |
+| 0x02–0x03 | W6 | Two pipe pairs |
+| 0x04–0x0B | W7 | Eight pipe pairs |
+| 0x0C–0x11 | W8 | Six pipe pairs |
+| 0x12–0x14 | W3 | Three pipe pairs |
+| 0x15–0x16 | W4 | Two pipe pairs |
+| 0x17 | W5 | Single pipe pair |
+
+**Example** — W2 pipe pair (dest 0x01):
+- `MapY[1] = 0x86` → upper=8 (row_nibble 8, entry 19), lower=6 (row_nibble 6, entry 16)
+- `MapX[1] = 0x8E` → upper=8 (col 8, entry 19), lower=E (col 14, entry 16)
+- `MapXHi[1] = 0x00` → both endpoints on screen 0
+
+**Pipe transit level structure:**
+- Each pipe pair shares a single `obj_ptr` (enemy data) containing `01 25 02 XX FF`
+- Both endpoints have tileset 14, 1-screen layout, and are classified as `too_short` in level shuffle
+- The two endpoints have different `lay_ptr` values but their layout data is chained: entry A's area 2 = entry B's area 1 (via junction at 0xFF terminator)
+- Layout header byte 5 differs: `0x04` vs `0x44` (bit 6 controls pipe direction / vertical scroll mode)
+
+**When moving a pipe endpoint**, update the corresponding nibble (upper or lower) in all four tables to match the new map position. The nibble assignment (upper vs lower) corresponds to which side of the pipe transit level that endpoint enters from.
 
 ### World Map Object Data (PRG011: 0x16010–0x1800F)
 
@@ -949,6 +1040,11 @@ Each master table entry is a 16-bit CPU address pointing to the per-world sub-ta
 in PRG012. Per-world sub-tables are contiguous: ByRowType (N bytes), ByScrCol (N bytes),
 ObjSets (N words), LevelLayouts (N words).
 
+**InitIndex sub-table structure:** Each world's `Map_ByXHi_InitIndex` sub-table has 1 byte per screen, located immediately before the `ByRowType` sub-table. Each byte is the entry index to start searching from for that screen (optimization so the game doesn't scan the entire table). Must be recomputed if entries are reordered within a world.
+
+Example — W1 InitIndex (2 screens): `00 15` (screen 0 starts at entry 0, screen 1 at entry 21).
+Example — W3 InitIndex (4 screens): `00 1B 2F 34` (screens 0–3 start at entries 0, 27, 47, 52).
+
 **Per-world sub-table locations:**
 
 | World | RowType Offset | Entries | Description |
@@ -962,7 +1058,37 @@ ObjSets (N words), LevelLayouts (N words).
 | 7 | 0x19A3E | 46 | Pipe Land |
 | 8 | 0x19B56 | 41 | Dark Land |
 
-**ByRowType byte encoding:** upper nibble = row/position type, lower nibble = tileset ID.
+**ByRowType byte encoding:** upper nibble = row position ("row_nibble"), lower nibble = tileset ID.
+
+**Coordinate mapping (confirmed from disassembly — 100% hit rate across all 340 entries):**
+
+Row mapping (derived from `Map_GetTile` in prg012.asm):
+```
+grid_row = row_nibble - 2
+```
+Map tiles are loaded at `Tile_Mem_Addr + $110`, but `Map_GetTile` uses base `Tile_Mem_Addr + $100`. The tile offset is `((World_Map_Y - 16) & 0xF0) | column`. With `World_Map_Y = row_nibble * 16`, this yields `grid_row = row_nibble - 2`.
+
+| row_nibble | World_Map_Y | grid_row |
+|-----------|-------------|----------|
+| 0x2 | 0x20 | 0 |
+| 0x3 | 0x30 | 1 |
+| 0x4 | 0x40 | 2 |
+| 0x5 | 0x50 | 3 |
+| 0x6 | 0x60 | 4 |
+| 0x7 | 0x70 | 5 |
+| 0x8 | 0x80 | 6 |
+| 0x9 | 0x90 | 7 |
+| 0xA | 0xA0 | 8 |
+
+Vanilla game only uses even row_nibbles (2,4,6,8,A) → even grid rows (0,2,4,6,8). Odd grid rows contain path/decoration but no enterable nodes.
+
+Column mapping (from `Map_PrepareLevel`):
+```
+screen = ByScrCol >> 4
+column = ByScrCol & 0x0F
+grid_col = screen * 16 + column
+```
+The game computes ByScrCol as `(World_Map_XHi << 4) | (World_Map_X >> 4)`.
 
 **Entry type identification by ObjSets pointer value:**
 - `obj >= 0xC000 && lay != 0x0000`: action level (regular or fortress)
