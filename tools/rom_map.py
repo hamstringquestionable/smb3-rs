@@ -239,6 +239,51 @@ BOOMBOOM_IDS = {0x4A, 0x4B, 0x4C}
 KOOPALING_IDS = {0x0E}
 BOWSER_IDS = {0x18}
 
+# Pipe destination tables (PRG002)
+PIPE_MAP_XHI = 0x046AA      # 24 bytes: packed screen numbers (upper=A, lower=B)
+PIPE_MAP_X = 0x046C2         # 24 bytes: packed column positions
+PIPE_MAP_Y = 0x046DA         # 24 bytes: packed row nibbles
+PIPE_MAP_SCRL_XHI = 0x046F2  # 24 bytes: packed scroll X high
+PIPE_DEST_COUNT = 24          # 24 destination slots
+
+# Destination byte -> world index (0-based)
+DEST_TO_WORLD = {
+    0x01: 1,  # W2
+    0x02: 5, 0x03: 5,  # W6
+    0x04: 6, 0x05: 6, 0x06: 6, 0x07: 6,  # W7
+    0x08: 6, 0x09: 6, 0x0A: 6, 0x0B: 6,  # W7
+    0x0C: 7, 0x0D: 7, 0x0E: 7, 0x0F: 7, 0x10: 7, 0x11: 7,  # W8
+    0x12: 2, 0x13: 2, 0x14: 2,  # W3
+    0x15: 3, 0x16: 3,  # W4
+    0x17: 4,  # W5
+}
+
+# Known fortress entries (world_idx, entry_idx) — detected by Boom-Boom enemies
+FORTRESS_ENTRIES = {
+    (0, 11),
+    (1, 13),
+    (2, 13), (2, 34),
+    (3, 9), (3, 16),
+    (4, 12), (4, 31),
+    (5, 9), (5, 27), (5, 48),
+    (6, 5), (6, 40),
+    (7, 7), (7, 10), (7, 26), (7, 36),
+}
+
+# Known airship entries (world_idx, entry_idx)
+AIRSHIP_ENTRIES_SET = {
+    (0, 17), (1, 36), (2, 49), (3, 6), (4, 35), (5, 53), (6, 43),
+}
+
+# Bowser's castle
+BOWSER_ENTRY_PAIR = (7, 40)
+
+# Map transition entries
+MAP_TRANSITIONS_SET = {(4, 5)}
+
+# InitIndex master table (PRG012) — 9 x 2-byte LE pointers (8 worlds + warp zone)
+INIT_INDEX_MASTER = 0x193DA
+
 # Character palette offsets
 PALETTE_OFFSETS = {
     "mario_normal": {"offset": 0x10539, "size": 4},
@@ -533,7 +578,7 @@ def build_level_groups(rom, all_region_levels, worlds_data):
         for wd in worlds_data:
             for entry in wd["entries"]:
                 lay = entry["lay_ptr"]
-                if lay == 0 or entry["type"] not in ("level", "fortress"):
+                if lay == 0 or entry["type"] not in ("level", "fortress", "airship", "bowser", "pipe", "hammer_bro"):
                     continue
                 tileset = entry["tileset"]
                 rgn = ts_to_region.get(tileset)
@@ -624,15 +669,23 @@ def build_level_groups(rom, all_region_levels, worlds_data):
 # Level pointer table parsing
 # --------------------------------------------------------------------------
 
-def classify_entry(obj_ptr, lay_ptr):
-    """Classify a level pointer table entry by type."""
+def classify_entry(world_idx, entry_idx, obj_ptr, lay_ptr, tileset):
+    """Classify a level pointer table entry by type (richer than before)."""
+    if (world_idx, entry_idx) in FORTRESS_ENTRIES:
+        return "fortress"
+    if (world_idx, entry_idx) in AIRSHIP_ENTRIES_SET:
+        return "airship"
+    if (world_idx, entry_idx) == BOWSER_ENTRY_PAIR:
+        return "bowser"
+    if (world_idx, entry_idx) in MAP_TRANSITIONS_SET:
+        return "transition"
     if obj_ptr == 0x0700:
         return "toad_house"
-    if obj_ptr >= 0xD000:
-        return "fortress"
     if obj_ptr == 0x0001 and lay_ptr == 0x0000:
         return "bonus_game"
-    if obj_ptr >= 0xC000 and obj_ptr < 0xD000 and lay_ptr != 0x0000:
+    if tileset == 14:
+        return "pipe"
+    if obj_ptr >= 0xC000 and lay_ptr != 0x0000:
         return "level"
     if obj_ptr < 0x1000:
         return "special"
@@ -655,7 +708,13 @@ def parse_world_tables(rom, world_idx, world_info):
         lay_ptr = read_word(rom, lay_off + i * 2)
 
         tileset = rowtype & 0x0F
-        entry_type = classify_entry(obj_ptr, lay_ptr)
+        row_nib = (rowtype >> 4) & 0x0F
+        screen = (scrcol >> 4) & 0x0F
+        col = scrcol & 0x0F
+        grid_row = row_nib - 2
+        grid_col = screen * 16 + col
+
+        entry_type = classify_entry(world_idx, i, obj_ptr, lay_ptr, tileset)
 
         entry = {
             "index": i,
@@ -669,10 +728,15 @@ def parse_world_tables(rom, world_idx, world_info):
             "lay_offset": lay_off + i * 2,
             "tileset": tileset,
             "type": entry_type,
+            "grid_row": grid_row,
+            "grid_col": grid_col,
+            "screen": screen,
+            "col_in_screen": col,
+            "row_nib": row_nib,
         }
 
-        # Resolve file offsets for levels
-        if entry_type in ("level", "fortress"):
+        # Resolve file offsets for levels/fortresses/airships/pipes
+        if entry_type in ("level", "fortress", "airship", "bowser", "pipe") and lay_ptr != 0:
             lay_file = layout_file_offset(lay_ptr, tileset)
             if lay_file is not None and lay_file + 9 < len(rom):
                 entry["layout_file_offset"] = lay_file
@@ -690,14 +754,7 @@ def parse_world_tables(rom, world_idx, world_info):
 
         entries.append(entry)
 
-    # Map transition entries: structural map region transitions, not action levels
-    MAP_TRANSITIONS = {(4, 5)}  # W5 "Twisty Castle" tower (ground-to-sky)
-    for e in entries:
-        if (world_idx, e["index"]) in MAP_TRANSITIONS:
-            e["shuffleable"] = False
-            e["exclude_reason"] = "map_transition"
-
-    # Mark duplicate (obj, lay) pairs as non-shuffleable (hammer bros)
+    # Mark duplicate (obj, lay) pairs as hammer bros (non-shuffleable)
     pair_counts = defaultdict(int)
     for e in entries:
         if e["type"] == "level":
@@ -705,8 +762,9 @@ def parse_world_tables(rom, world_idx, world_info):
 
     for e in entries:
         if e["type"] == "level" and pair_counts.get((e["obj_ptr"], e["lay_ptr"]), 0) > 1:
+            e["type"] = "hammer_bro"
             e["shuffleable"] = False
-            e["exclude_reason"] = "duplicate_pair"
+            e["exclude_reason"] = "hammer_bro"
 
     return {
         "world": world_idx + 1,
@@ -789,6 +847,124 @@ def parse_enemy_data(rom):
 # --------------------------------------------------------------------------
 # Main map generation
 # --------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------
+# Pipe destination tables
+# --------------------------------------------------------------------------
+
+def parse_pipe_dest_tables(rom):
+    """Parse the 4 pipe destination tables and decode all pipe pairs.
+
+    Returns a dict with:
+      - tables: raw table data (4 x 24 bytes)
+      - destinations: per-dest-index decoded info
+      - pairs_by_world: world_idx -> list of pipe pair dicts
+    """
+    tables = {
+        "map_xhi": {"offset": PIPE_MAP_XHI, "bytes": list(rom[PIPE_MAP_XHI:PIPE_MAP_XHI + PIPE_DEST_COUNT])},
+        "map_x": {"offset": PIPE_MAP_X, "bytes": list(rom[PIPE_MAP_X:PIPE_MAP_X + PIPE_DEST_COUNT])},
+        "map_y": {"offset": PIPE_MAP_Y, "bytes": list(rom[PIPE_MAP_Y:PIPE_MAP_Y + PIPE_DEST_COUNT])},
+        "map_scrl_xhi": {"offset": PIPE_MAP_SCRL_XHI, "bytes": list(rom[PIPE_MAP_SCRL_XHI:PIPE_MAP_SCRL_XHI + PIPE_DEST_COUNT])},
+    }
+
+    destinations = []
+    pairs_by_world = {i: [] for i in range(8)}
+
+    for dest in range(PIPE_DEST_COUNT):
+        xhi = rom[PIPE_MAP_XHI + dest]
+        x = rom[PIPE_MAP_X + dest]
+        y = rom[PIPE_MAP_Y + dest]
+        scrl = rom[PIPE_MAP_SCRL_XHI + dest]
+
+        a_scr = (xhi >> 4) & 0x0F
+        b_scr = xhi & 0x0F
+        a_col = (x >> 4) & 0x0F
+        b_col = x & 0x0F
+        a_row_nib = (y >> 4) & 0x0F
+        b_row_nib = y & 0x0F
+
+        a_grid_row = a_row_nib - 2
+        b_grid_row = b_row_nib - 2
+        a_grid_col = a_scr * 16 + a_col
+        b_grid_col = b_scr * 16 + b_col
+
+        world_idx = DEST_TO_WORLD.get(dest)
+
+        entry = {
+            "dest_index": dest,
+            "world": world_idx + 1 if world_idx is not None else None,
+            "world_idx": world_idx,
+            "raw_bytes": {"xhi": xhi, "x": x, "y": y, "scrl": scrl},
+            "endpoint_a": {"grid_row": a_grid_row, "grid_col": a_grid_col, "screen": a_scr, "col": a_col, "row_nib": a_row_nib},
+            "endpoint_b": {"grid_row": b_grid_row, "grid_col": b_grid_col, "screen": b_scr, "col": b_col, "row_nib": b_row_nib},
+        }
+        destinations.append(entry)
+
+        if world_idx is not None:
+            pairs_by_world[world_idx].append({
+                "dest_index": dest,
+                "a": {"grid_row": a_grid_row, "grid_col": a_grid_col},
+                "b": {"grid_row": b_grid_row, "grid_col": b_grid_col},
+            })
+
+    return {
+        "tables": tables,
+        "dest_to_world": {str(k): v for k, v in sorted(DEST_TO_WORLD.items())},
+        "destinations": destinations,
+        "pairs_by_world": {str(k): v for k, v in pairs_by_world.items()},
+        "summary": {
+            "total_dest_slots": PIPE_DEST_COUNT,
+            "active_slots": len(DEST_TO_WORLD),
+            "pairs_per_world": {f"W{k+1}": len(v) for k, v in pairs_by_world.items()},
+        },
+    }
+
+
+# --------------------------------------------------------------------------
+# InitIndex table
+# --------------------------------------------------------------------------
+
+def parse_init_index(rom):
+    """Parse the InitIndex master table and per-world sub-tables.
+
+    The InitIndex table stores per-screen byte offsets used by the game
+    to quickly find the first pointer table entry on each screen.
+
+    Returns dict with master table pointers and per-world decoded data.
+    """
+    master = []
+    for i in range(9):
+        ptr = read_word(rom, INIT_INDEX_MASTER + i * 2)
+        master.append(ptr)
+
+    per_world = []
+    for w_idx in range(8):
+        world = WORLDS[w_idx]
+        n = world["entry_count"]
+        grid_info = MAP_TILE_GRIDS[w_idx]
+        num_screens = grid_info["screens"]
+
+        # InitIndex sub-table: CPU pointer from master table
+        cpu_ptr = master[w_idx]
+        # Convert to file offset (PRG012 at bank 12, CPU $8000)
+        file_off = 12 * PRG_BANK_SIZE + PRG_OFFSET + (cpu_ptr - 0x8000)
+
+        bytes_list = list(rom[file_off:file_off + num_screens])
+
+        per_world.append({
+            "world": w_idx + 1,
+            "cpu_ptr": cpu_ptr,
+            "file_offset": file_off,
+            "screens": num_screens,
+            "bytes": bytes_list,
+        })
+
+    return {
+        "master_table_offset": INIT_INDEX_MASTER,
+        "master_pointers": master,
+        "per_world": per_world,
+    }
+
 
 def generate_rom_map(rom):
     """Generate the complete ROM map."""
@@ -896,6 +1072,12 @@ def generate_rom_map(rom):
         ],
     }
 
+    # -- Pipe destination tables --
+    rom_map["pipe_destinations"] = parse_pipe_dest_tables(rom)
+
+    # -- InitIndex table --
+    rom_map["init_index"] = parse_init_index(rom)
+
     return rom_map
 
 
@@ -966,6 +1148,18 @@ def print_summary(rom_map):
                 class_counts[cls] += 1
     if class_counts:
         print("  By class: " + ", ".join(f"{k}={v}" for k, v in sorted(class_counts.items())))
+
+    # Pipe destinations
+    pd = rom_map["pipe_destinations"]["summary"]
+    print(f"\nPipe Destinations:")
+    print(f"  Total slots: {pd['total_dest_slots']}, Active: {pd['active_slots']}")
+    print(f"  Pairs per world: {', '.join(f'{k}={v}' for k, v in sorted(pd['pairs_per_world'].items()))}")
+
+    # InitIndex
+    ii = rom_map["init_index"]
+    print(f"\nInitIndex Table:")
+    for pw in ii["per_world"]:
+        print(f"  W{pw['world']}: {pw['screens']} screens, bytes={pw['bytes']}")
 
     # Protected offsets
     prot = rom_map["protected_offsets"]
