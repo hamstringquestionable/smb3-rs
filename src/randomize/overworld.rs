@@ -474,6 +474,92 @@ pub fn redistribute_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // The existing values (00, 04, 08, 0C, 10, 14, 18, 1C) are correct.
 }
 
+// ---------------------------------------------------------------------------
+// FortressFX table offsets (17 slots each)
+// ---------------------------------------------------------------------------
+const FX_VADDR_H: usize = 0x147CD;
+const FX_VADDR_L: usize = 0x147DE;
+const FX_MAP_COMP_IDX: usize = 0x147EF; // 17 x 2 bytes
+const FX_PATTERNS: usize = 0x14811;     // 17 x 4 bytes
+const FX_MAP_LOC_ROW: usize = 0x14855;
+const FX_MAP_LOC: usize = 0x14866;
+const FX_MAP_TILE_REPLACE: usize = 0x14877;
+
+/// Lock tile ID on the overworld map.
+const TILE_LOCK: u8 = 0x54;
+
+/// Compute VRAM address for a map tile at (grid_row, col_in_screen).
+/// Formula: 0x2880 + grid_row * 64 + col_in_screen * 2
+fn fx_vram_addr(grid_row: usize, col_in_screen: usize) -> u16 {
+    (0x2880 + grid_row * 64 + col_in_screen * 2) as u16
+}
+
+/// Encode FortressFX_MapLocation byte: upper nibble = column, lower nibble = screen.
+fn fx_map_location(screen: usize, col: usize) -> u8 {
+    ((col as u8) << 4) | (screen as u8)
+}
+
+/// Encode FortressFX_MapLocationRow byte: (grid_row + 2) << 4.
+fn fx_map_location_row(grid_row: usize) -> u8 {
+    ((grid_row + 2) as u8) << 4
+}
+
+/// Update a single FX slot to point at a new map position.
+/// Writes VRAM addr, row, location, replacement tile, and lock patterns.
+fn repoint_fx_slot(
+    rom: &mut Rom,
+    slot: usize,
+    grid_row: usize,
+    screen: usize,
+    col_in_screen: usize,
+    replace_tile: u8,
+    comp_col: u8,
+    comp_bit: u8,
+) {
+    let vram = fx_vram_addr(grid_row, col_in_screen);
+    rom.write_byte(FX_VADDR_H + slot, (vram >> 8) as u8);
+    rom.write_byte(FX_VADDR_L + slot, (vram & 0xFF) as u8);
+    rom.write_byte(FX_MAP_LOC_ROW + slot, fx_map_location_row(grid_row));
+    rom.write_byte(FX_MAP_LOC + slot, fx_map_location(screen, col_in_screen));
+    rom.write_byte(FX_MAP_TILE_REPLACE + slot, replace_tile);
+    // Map_Completions persistence
+    rom.write_byte(FX_MAP_COMP_IDX + slot * 2, comp_col);
+    rom.write_byte(FX_MAP_COMP_IDX + slot * 2 + 1, comp_bit);
+    // Lock patterns: FE C0 FE C0
+    let pat_off = FX_PATTERNS + slot * 4;
+    rom.write_byte(pat_off, 0xFE);
+    rom.write_byte(pat_off + 1, 0xC0);
+    rom.write_byte(pat_off + 2, 0xFE);
+    rom.write_byte(pat_off + 3, 0xC0);
+}
+
+/// Map_Complete_Bits lookup table (PRG012): maps grid row to completion bit.
+/// Row 0 = $80, row 1 = $40, ..., row 7 = $01.
+const MAP_COMPLETE_BITS: [u8; 8] = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
+
+/// Compute the Map_Completions (column, bit) pair for a lock at a given grid position.
+/// Column = screen * 16 + col_in_screen; bit = MAP_COMPLETE_BITS[grid_row].
+fn fx_comp_idx(grid_row: usize, screen: usize, col_in_screen: usize) -> (u8, u8) {
+    let col = (screen * 16 + col_in_screen) as u8;
+    let bit = MAP_COMPLETE_BITS[grid_row];
+    (col, bit)
+}
+
+/// Place a lock tile at a grid position, saving the original tile.
+/// Returns the original tile that was at that position (for FortressFX_MapTileReplace).
+fn place_lock(rom: &mut Rom, world_idx: usize, grid_row: usize, grid_col: usize) -> u8 {
+    let offset = map_tile_offset(world_idx, grid_row, grid_col);
+    let orig = rom.read_byte(offset);
+    rom.write_byte(offset, TILE_LOCK);
+    orig
+}
+
+/// Remove a lock tile, restoring the given path tile.
+fn remove_lock(rom: &mut Rom, world_idx: usize, grid_row: usize, grid_col: usize, restore_tile: u8) {
+    let offset = map_tile_offset(world_idx, grid_row, grid_col);
+    rom.write_byte(offset, restore_tile);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

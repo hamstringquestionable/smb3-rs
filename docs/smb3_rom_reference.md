@@ -1181,14 +1181,81 @@ entries are 4 bytes apart (matching the 4-slot-per-world layout above).
 | 0x0F | W8 | $2998 | 2 | 12 | $60 | $46 | Lock |
 | 0x10 | W8 | $29CA | 3 | 5 | $70 | $45 | Bridge |
 
-**Replacement tile types:** $45 = bridge segment, $46 = open path, $B3 = water bridge,
-$DA = sky bridge. Patterns ($FE/$C0 = path, $E1 = bridge rail, $D4-$D7 = water/sky bridge,
-$FF = dark/black for W8).
+**Lock/bridge tile IDs (before → after clearing):**
+
+| Type | Original Tile | Replacement Tile | Patterns |
+|------|--------------|-----------------|----------|
+| Lock | $54 | $46 (open path) | FE C0 FE C0 |
+| Bridge | $56 | $45 (bridge) | FE FE E1 E1 |
+| Water bridge | $9D | $B3 (water bridge) | D4 D6 D5 D7 |
+| Sky bridge | $E4 | $DA (sky bridge) | FE FE E1 E1 |
+| Lock (W8-3) | $54 | $46 (open path) | FF FF FF FF |
+
+The "replacement tile" (`FortressFX_MapTileReplace`) is whatever path tile was at the
+lock/bridge position before the lock was placed. When placing a lock at a new position,
+read the current tile first and store it as the replacement.
+
+**VRAM address formula (verified against all 17 slots):**
+
+```
+VRAM = 0x2880 + grid_row * 64 + col_in_screen * 2
+```
+
+Where `grid_row = (FortressFX_MapLocationRow >> 4) - 2` and `col_in_screen = col % 16`.
+The screen number does not factor into the VRAM address because the game only renders
+one screen at a time — the FX triggers on whichever screen is currently displayed.
+
+**`FortressFX_MapLocationRow` encoding:** `(grid_row + 2) << 4`
+
+**`FortressFX_MapLocation` encoding:** `(col_in_screen << 4) | screen`
 
 **`FortressFX_MapCompIdx` (0x147EF):** Each FX slot has a 2-byte entry: the first byte is
 the column index into `Map_Completions` RAM ($7E40+), the second byte is the bit mask to
 OR into that column. Both Mario's and Luigi's `Map_Completions` arrays are updated
 (offset $00 and $40 respectively). This prevents the lock/bridge from reverting.
+
+**CRITICAL — `Map_Completions` encoding (verified via PRG012 disassembly):**
+
+The `Map_Completions` array is shared between level completion tracking and fortress FX
+persistence. `Map_Reload_with_Completions` (PRG012) iterates every column and bit,
+checking for completions and applying tile replacements.
+
+- **Column** = the map grid column: `screen * 16 + col_in_screen`
+- **Bit** = row position via `Map_Complete_Bits` LUT (PRG012):
+  `$80, $40, $20, $10, $08, $04, $02, $01` → rows 0, 1, 2, 3, 4, 5, 6, 7
+
+So for a lock at grid position (row, col) on screen S:
+```
+comp_col = S * 16 + col_in_screen
+comp_bit = Map_Complete_Bits[row] = $80 >> row
+```
+
+Example: lock at grid (1, 8) on screen 0 → col=0x08, bit=0x40.
+Example: lock at grid (3, 4) on screen 0 → col=0x04, bit=0x10 (vanilla W1 lock).
+
+**Map_Removable_Tiles (PRG012):** The game also has a separate `Map_Removable_Tiles`
+table that lists tile IDs eligible for removal during map completion processing:
+`TILE_ROCKBREAKH, TILE_ROCKBREAKV, TILE_LOCKVERT ($54), TILE_FORT ($67),
+TILE_ALTFORT, TILE_ALTLOCK, TILE_LOCKHORZ, TILE_RIVERVERT`. These tiles are checked
+during `Map_Reload_with_Completions` and replaced with their `Map_RemoveTo_Tiles`
+counterparts when the corresponding completion bit is set.
+
+**Complete procedure for repointing a lock to a new position:**
+
+1. Read the current tile at the new position (this becomes `FortressFX_MapTileReplace`)
+2. Write lock tile $54 at the new position in the map tile grid
+3. Restore the old lock position to its original path tile (e.g., $46)
+4. Update FX slot tables:
+   - `FortressFX_VAddrH/L` = `0x2880 + grid_row * 64 + col_in_screen * 2`
+   - `FortressFX_MapLocationRow` = `(grid_row + 2) << 4`
+   - `FortressFX_MapLocation` = `(col_in_screen << 4) | screen`
+   - `FortressFX_MapTileReplace` = saved original tile
+   - `FortressFX_MapCompIdx` = `(screen * 16 + col_in_screen, 0x80 >> grid_row)`
+   - `FortressFX_Patterns` = 4 bytes per type (see table above)
+5. If the fortress moved to a different world, update:
+   - `FortressFX_W1–W8` slot assignments for source and destination worlds
+   - Boom-Boom Y-byte upper nibble to the new ordinal within the destination world
+   - Pre-open the old lock/bridge position if no fortress remains to clear it
 
 **Boom-Boom Y-byte and Map_DoFortressFX:**
 
