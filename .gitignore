@@ -3,3 +3,4 @@
 *.nes
 *.ips
 tools/rom_map.json
+__pycache__/

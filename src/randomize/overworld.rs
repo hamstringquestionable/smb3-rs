@@ -488,6 +488,40 @@ const FX_MAP_TILE_REPLACE: usize = 0x14877;
 /// Lock tile ID on the overworld map.
 const TILE_LOCK: u8 = 0x54;
 
+/// Gap tile IDs for different FX types.
+const TILE_BRIDGE_GAP: u8 = 0x56;
+const TILE_WATER_GAP: u8 = 0x9D;
+const TILE_SKY_GAP: u8 = 0xE4;
+
+/// FX type determines the pattern bytes and gap tile used.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum FxType {
+    Lock,        // FE C0 FE C0 — gap tile $54
+    Bridge,      // FE FE E1 E1 — gap tile $56
+    WaterBridge, // D4 D6 D5 D7 — gap tile $9D
+    SkyBridge,   // FE FE E1 E1 — gap tile $E4
+}
+
+impl FxType {
+    fn patterns(self) -> [u8; 4] {
+        match self {
+            FxType::Lock => [0xFE, 0xC0, 0xFE, 0xC0],
+            FxType::Bridge => [0xFE, 0xFE, 0xE1, 0xE1],
+            FxType::WaterBridge => [0xD4, 0xD6, 0xD5, 0xD7],
+            FxType::SkyBridge => [0xFE, 0xFE, 0xE1, 0xE1],
+        }
+    }
+
+    fn gap_tile(self) -> u8 {
+        match self {
+            FxType::Lock => TILE_LOCK,
+            FxType::Bridge => TILE_BRIDGE_GAP,
+            FxType::WaterBridge => TILE_WATER_GAP,
+            FxType::SkyBridge => TILE_SKY_GAP,
+        }
+    }
+}
+
 /// Compute VRAM address for a map tile at (grid_row, col_in_screen).
 /// Formula: 0x2880 + grid_row * 64 + col_in_screen * 2
 fn fx_vram_addr(grid_row: usize, col_in_screen: usize) -> u16 {
@@ -505,7 +539,7 @@ fn fx_map_location_row(grid_row: usize) -> u8 {
 }
 
 /// Update a single FX slot to point at a new map position.
-/// Writes VRAM addr, row, location, replacement tile, and lock patterns.
+/// Writes VRAM addr, row, location, replacement tile, and patterns for the given FX type.
 fn repoint_fx_slot(
     rom: &mut Rom,
     slot: usize,
@@ -515,6 +549,7 @@ fn repoint_fx_slot(
     replace_tile: u8,
     comp_col: u8,
     comp_bit: u8,
+    fx_type: FxType,
 ) {
     let vram = fx_vram_addr(grid_row, col_in_screen);
     rom.write_byte(FX_VADDR_H + slot, (vram >> 8) as u8);
@@ -525,12 +560,13 @@ fn repoint_fx_slot(
     // Map_Completions persistence
     rom.write_byte(FX_MAP_COMP_IDX + slot * 2, comp_col);
     rom.write_byte(FX_MAP_COMP_IDX + slot * 2 + 1, comp_bit);
-    // Lock patterns: FE C0 FE C0
+    // Pattern bytes per FX type
+    let pats = fx_type.patterns();
     let pat_off = FX_PATTERNS + slot * 4;
-    rom.write_byte(pat_off, 0xFE);
-    rom.write_byte(pat_off + 1, 0xC0);
-    rom.write_byte(pat_off + 2, 0xFE);
-    rom.write_byte(pat_off + 3, 0xC0);
+    rom.write_byte(pat_off, pats[0]);
+    rom.write_byte(pat_off + 1, pats[1]);
+    rom.write_byte(pat_off + 2, pats[2]);
+    rom.write_byte(pat_off + 3, pats[3]);
 }
 
 /// Map_Complete_Bits lookup table (PRG012): maps grid row to completion bit.
@@ -551,6 +587,15 @@ fn place_lock(rom: &mut Rom, world_idx: usize, grid_row: usize, grid_col: usize)
     let offset = map_tile_offset(world_idx, grid_row, grid_col);
     let orig = rom.read_byte(offset);
     rom.write_byte(offset, TILE_LOCK);
+    orig
+}
+
+/// Place a gap tile (bridge/water/sky) at a grid position, saving the original tile.
+/// Returns the original tile (used as the FX replacement tile when the gap is cleared).
+fn place_gap(rom: &mut Rom, world_idx: usize, grid_row: usize, grid_col: usize, fx_type: FxType) -> u8 {
+    let offset = map_tile_offset(world_idx, grid_row, grid_col);
+    let orig = rom.read_byte(offset);
+    rom.write_byte(offset, fx_type.gap_tile());
     orig
 }
 
@@ -577,6 +622,82 @@ mod tests {
                 assert!(c >= 1 && c <= 3, "count {} out of range", c);
             }
         }
+    }
+
+    /// POC: Two fortresses in W1 — slot 0 = lock (existing), slot 1 = water bridge.
+    /// Places fortress data in entries [0] and [2] (1-1 and 1-3) for easy testing.
+    /// Replaces B3 at row 6, col 9 with water gap 9D; FX will build it back to B3.
+    #[test]
+    fn test_poc_bridge_in_w1() {
+        let rom_data = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        if rom_data.is_err() {
+            return; // Skip if ROM not available
+        }
+        let mut rom = Rom::from_bytes(&rom_data.unwrap()).unwrap();
+
+        // --- Read W1 fortress (entry 11) and W2 fortress (entry 13) ---
+        let w1_fort = read_entry(&rom, &WORLDS[0], 11);
+        let w2_fort = read_entry(&rom, &WORLDS[1], 13);
+
+        // --- Write fortresses into entries [0] and [2] (1-1 and 1-3) ---
+        write_entry(&mut rom, &WORLDS[0], 0, &w1_fort);
+        write_entry(&mut rom, &WORLDS[0], 2, &w2_fort);
+
+        // Put fortress tiles on the map for entries [0] and [2]
+        let (row0, col0) = entry_grid_position(&rom, &WORLDS[0], 0); // row 0, col 4
+        let (row2, col2) = entry_grid_position(&rom, &WORLDS[0], 2); // row 0, col 8
+        let off0 = map_tile_offset(0, row0, col0);
+        let off2 = map_tile_offset(0, row2, col2);
+        rom.write_byte(off0, TILE_FORTRESS);
+        rom.write_byte(off2, TILE_FORTRESS);
+
+        // --- Patch Boom-Boom Y-bytes: ordinal 1 and 2 ---
+        // W1 fortress Y-byte (ordinal 1)
+        let w1_y = rom.read_byte(BOOMBOOM_Y_OFFSETS_W1_7[0]);
+        rom.write_byte(BOOMBOOM_Y_OFFSETS_W1_7[0], (1 << 4) | (w1_y & 0x0F));
+        // W2 fortress Y-byte (ordinal 2)
+        let w2_y = rom.read_byte(BOOMBOOM_Y_OFFSETS_W1_7[1]);
+        rom.write_byte(BOOMBOOM_Y_OFFSETS_W1_7[1], (2 << 4) | (w2_y & 0x0F));
+
+        // --- FX slot 0: existing lock at row 3, col 4 (unchanged from vanilla) ---
+        // Already correct in the ROM — slot 0 points at the lock.
+
+        // --- FX slot 1: water bridge at row 6, col 9 ---
+        // Place water gap tile (0x9D) where B3 currently is
+        let replace_tile = place_gap(&mut rom, 0, 6, 9, FxType::WaterBridge);
+        assert_eq!(replace_tile, 0xB3, "Expected B3 (water) under the bridge gap");
+
+        // Repoint FX slot 1 to the new water bridge position
+        let screen = 0;
+        let col_in_screen = 9;
+        let (comp_col, comp_bit) = fx_comp_idx(6, screen, col_in_screen);
+        repoint_fx_slot(
+            &mut rom,
+            1,       // slot 1
+            6,       // grid_row
+            screen,
+            col_in_screen,
+            replace_tile, // 0xB3 — tile to restore when bridge is built
+            comp_col,
+            comp_bit,
+            FxType::WaterBridge,
+        );
+
+        // --- Update FortressFX_W1 to use slots 0 and 1 ---
+        rom.write_byte(FORTRESS_FX_WORLD_TABLE, 0x00);
+        rom.write_byte(FORTRESS_FX_WORLD_TABLE + 1, 0x01);
+        rom.write_byte(FORTRESS_FX_WORLD_TABLE + 2, 0x00);
+        rom.write_byte(FORTRESS_FX_WORLD_TABLE + 3, 0x00);
+
+        // --- Verify the map tile was replaced ---
+        let gap_tile = rom.read_byte(map_tile_offset(0, 6, 9));
+        assert_eq!(gap_tile, TILE_WATER_GAP);
+
+        // --- Write patched ROM for manual testing ---
+        let out_path = "target/poc_bridge_w1.nes";
+        std::fs::create_dir_all("target").ok();
+        std::fs::write(out_path, &rom.data).unwrap();
+        println!("Wrote POC ROM to {}", out_path);
     }
 
     #[test]

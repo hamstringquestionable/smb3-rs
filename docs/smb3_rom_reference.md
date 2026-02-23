@@ -1599,6 +1599,91 @@ Simply removing D3 objects and patching headers is insufficient. Without the ene
 
 ---
 
+## Pipe Destination Tables & Pipe Shuffle
+
+### Pipe Destination Tables (PRG002)
+
+Four parallel tables of 24 bytes each, used by `OBJ_PIPEWAYCONTROLLER` (enemy object 0x25) to determine where Mario exits a pipe transit level on the overworld map.
+
+| Table | ROM Offset | Contents |
+|-------|-----------|----------|
+| MapXHi | `0x046AA` | Screen number (packed nibbles) |
+| MapX | `0x046C2` | Column within screen (packed nibbles) |
+| MapY | `0x046DA` | Row nibble = grid_row + 2 (packed nibbles) |
+| MapScrlXHi | `0x046F2` | Scroll screen (packed nibbles, mirrors MapXHi) |
+
+Each byte packs **two** endpoint values as nibbles:
+- **Upper nibble** = "A" endpoint (left pipe in transit level)
+- **Lower nibble** = "B" endpoint (right pipe in transit level)
+
+The game selects which nibble to use based on Mario's position within the pipe transit level (left half → upper nibble, right half → lower nibble).
+
+### Dest Index → World Mapping
+
+| Dest | World | Dest | World | Dest | World |
+|------|-------|------|-------|------|-------|
+| 0x01 | W2 | 0x08 | W7 | 0x0F | W8 |
+| 0x02 | W6 | 0x09 | W7 | 0x10 | W8 |
+| 0x03 | W6 | 0x0A | W7 | 0x11 | W8 |
+| 0x04 | W7 | 0x0B | W7 | 0x12 | W3 |
+| 0x05 | W7 | 0x0C | W8 | 0x13 | W3 |
+| 0x06 | W7 | 0x0D | W8 | 0x14 | W3 |
+| 0x07 | W7 | 0x0E | W8 | 0x15-0x16 | W4 |
+| | | | | 0x17 | W5 |
+
+Pipe pair counts: W1=0, W2=1, W3=3, W4=2, W5=1, W6=2, W7=8, W8=6.
+
+### Pipe Transit Levels
+
+Pipe transit levels use **tileset 14** and are identified by `entry.tileset == 14` in the pointer tables. Each transit level is a single-screen underground passage. The pipe controller object is stored in enemy data as: `01 25 02 XX FF` where XX = dest index.
+
+Transit level layout data is chained: entry A's area2 = entry B's area1, creating a bidirectional connection. Layout byte5 bit 6 controls pipe direction (0x04 = left-to-right, 0x44 = right-to-left).
+
+### Pipe Shuffle Algorithm
+
+The pipe shuffle randomizes where pipe endpoints appear on each world's overworld map while ensuring all critical locations remain reachable.
+
+**Progressive placement:**
+
+1. **Open gaps**: Simulate post-fortress state by replacing gap tiles (locks → $46, bridges → $45, water gaps → $B3, sky gaps → $45)
+2. **Remove pipes**: Replace all pipe tiles with junction tile ($47)
+3. **Walk**: BFS from START tile to find initial reachable nodes
+4. **Place pairs**: For each pipe pair (in random order):
+   - If all nodes reachable → place both endpoints randomly among available reachable positions
+   - Otherwise → place one endpoint in a reachable position, the other in an unreachable position (prioritizing components containing must-reach positions like airships and Bowser's castle)
+5. **Re-walk** after each placement to update reachable set
+
+**ROM patching:**
+
+After placement, the algorithm patches the ROM:
+
+1. **Entry swaps**: For each pipe that moved, swap its pointer table entry (ByRowType, ByScrCol, ObjSets, LevelLayouts) with the entry at the target position. The tileset nibble stays with its entry (travels with the level data); only the row/screen/col position is swapped.
+2. **Dest table updates**: Write new endpoint positions as packed nibbles to all 4 destination tables.
+3. **Pointer table re-sort**: Re-sort all entries by (screen, row_nib, col) because the game's lookup scans entries sequentially from `InitIndex[screen]`, matching row first then column. Also rebuilds the InitIndex table with correct per-screen offsets.
+
+### InitIndex Table
+
+The InitIndex master table at `0x193DA` contains 9 word pointers (8 worlds + warp zone). Each points to a per-world sub-table stored just before ByRowType in ROM. Each sub-table has one byte per screen, giving the offset into ByRowType where that screen's entries begin.
+
+To compute the InitIndex file offset for a world:
+```
+init_ptr = read_word(rom, 0x193DA + world_idx * 2)
+init_file = 0x18010 + (init_ptr - 0x8000)
+```
+
+### Map Walker Movement Model
+
+The game moves the player 2 tiles at a time on the overworld: from a **node** tile, through an intermediate **path** tile, to the next **node** tile. The path tile must be valid for the movement direction:
+
+- **Horizontal** (left/right): `{$45, $B2, $B3, $AC, $B7, $B8, $DA, $B9, $E6}`
+- **Vertical** (up/down): `{$46, $B1, $AA, $AB, $B0, $DB, $BA}`
+
+Background tiles `{$B4, $FF, $02}` block movement to the destination node.
+
+Pipes create **bidirectional teleport edges** between two node positions, bypassing the path tile check.
+
+---
+
 ## Sources
 
 - [Data Crystal ROM Map](https://datacrystal.tcrf.net/wiki/Super_Mario_Bros._3/ROM_map)
