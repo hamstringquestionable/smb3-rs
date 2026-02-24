@@ -17,7 +17,7 @@ use rand::seq::SliceRandom;
 use crate::rom::Rom;
 
 use super::map_walker::{
-    self, AIRSHIP_ENTRIES, BACKGROUND_TILES, BOWSER_ENTRY, FORTRESS_ENTRIES, MAP_TILE_GRIDS,
+    self, AIRSHIP_ENTRIES, BOWSER_ENTRY, FORTRESS_ENTRIES, MAP_TILE_GRIDS,
     MAP_TRANSITIONS, PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, ROWS, TILE_PIPE,
     WORLDS, Grid,
 };
@@ -238,55 +238,25 @@ fn get_must_reach(rom: &Rom, world_idx: usize) -> HashSet<Pos> {
 // Gap opening
 // ---------------------------------------------------------------------------
 
-/// Open all fortress-gated gaps in the grid (simulate post-fortress state).
+/// Open fortress-gated gaps in the grid using the FX table (simulate post-fortress state).
 ///
-/// - Locks ($54) → vertical path ($46)
-/// - Bridges ($56) → horizontal path ($45)
-/// - Sky gaps ($E4) → horizontal path ($45)
-/// - Water gaps ($9D) → bridge ($B3), only if between non-background tiles
-fn open_gaps(grid: &mut Grid) {
-    for r in 0..grid.rows {
-        for c in 0..grid.cols {
-            let t = grid.get(r, c);
-            match t {
-                0x54 => grid.set(r, c, 0x46), // lock → vert path
-                0x56 => grid.set(r, c, 0x45), // bridge → horz path
-                0xE4 => grid.set(r, c, 0x45), // sky gap → horz path
-                0x9D => {
-                    // Water gap → bridge, only if it connects nodes/paths
-                    let mut is_gap = false;
+/// Reads the FX slots assigned to this world and replaces only the tiles that
+/// are actually wired to fortress completion effects, using each slot's stored
+/// replacement tile. This is more precise than scanning for tile IDs, which
+/// could false-positive on decorative uses of the same tile values.
+fn open_gaps(rom: &Rom, world_idx: usize, grid: &mut Grid) {
+    let fx_slots = map_walker::read_fx_slots(rom);
+    let fx_assignments = map_walker::read_world_fx_assignments(rom);
+    let world_fx = &fx_assignments[world_idx];
 
-                    // Horizontal check
-                    if c >= 1 && c + 1 < grid.cols {
-                        let left = grid.get(r, c - 1);
-                        let right = grid.get(r, c + 1);
-                        if !BACKGROUND_TILES.contains(&left)
-                            && left != 0x9D
-                            && !BACKGROUND_TILES.contains(&right)
-                            && right != 0x9D
-                        {
-                            is_gap = true;
-                        }
-                    }
-                    // Vertical check
-                    if r >= 1 && r + 1 < grid.rows {
-                        let above = grid.get(r - 1, c);
-                        let below = grid.get(r + 1, c);
-                        if !BACKGROUND_TILES.contains(&above)
-                            && above != 0x9D
-                            && !BACKGROUND_TILES.contains(&below)
-                            && below != 0x9D
-                        {
-                            is_gap = true;
-                        }
-                    }
-
-                    if is_gap {
-                        grid.set(r, c, 0xB3);
-                    }
-                }
-                _ => {}
-            }
+    for &slot_idx in world_fx {
+        let slot_idx = slot_idx as usize;
+        if slot_idx >= fx_slots.len() {
+            continue;
+        }
+        let slot = &fx_slots[slot_idx];
+        if slot.grid_row < grid.rows && slot.grid_col < grid.cols {
+            grid.set(slot.grid_row, slot.grid_col, slot.replace_tile);
         }
     }
 }
@@ -345,8 +315,8 @@ fn place_pipes_progressive<R: Rng>(
         return (grid, Vec::new());
     }
 
-    // Step 0: Open all fortress-gated gaps
-    open_gaps(&mut grid);
+    // Step 0: Open fortress-gated gaps using the FX table
+    open_gaps(rom, world_idx, &mut grid);
 
     // Step 1: Remove all pipe tiles from grid
     for pa_pb in &pipe_pairs_data {

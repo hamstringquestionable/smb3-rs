@@ -477,15 +477,17 @@ pub(super) fn read_fx_slots(rom: &Rom) -> Vec<FxSlot> {
 
 /// Read FortressFX_W1-W8: which FX slots each world uses.
 /// Returns array of 8 Vecs, one per world.
+///
+/// Each world has 4 bytes in the table, but only the first N are meaningful
+/// where N = number of fortresses in that world. The rest are zero-padded.
+/// We use the fortress count from FORTRESS_ENTRIES to know how many to read.
 pub(super) fn read_world_fx_assignments(rom: &Rom) -> [Vec<u8>; 8] {
     let mut assignments: [Vec<u8>; 8] = Default::default();
     for wi in 0..8 {
+        let fort_count = FORTRESS_ENTRIES.iter().filter(|&&(w, _)| w == wi).count();
         let base = FX_WORLD_TABLE + wi * 4;
-        for i in 0..4 {
-            let val = rom.read_byte(base + i);
-            if val != 0xFF {
-                assignments[wi].push(val);
-            }
+        for i in 0..fort_count.min(4) {
+            assignments[wi].push(rom.read_byte(base + i));
         }
     }
     assignments
