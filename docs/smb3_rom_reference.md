@@ -1336,6 +1336,91 @@ appear at the 13 vanilla FX positions. Locks ($54) can be placed on any path til
 NOT trigger the Boom-Boom FX (no crystal ball). Its lock must not block progression —
 the airship should be reachable even if the W1 fortress lock stays closed.
 
+### W3 Drawbridges
+
+World 3 has 4 drawbridge tiles on its overworld map that toggle between passable and
+blocked every time the player completes a regular level. Two are horizontal (`$B2`) and
+two are vertical (`$B1`). The toggle means only one set is passable at a time, which
+creates unpredictable routing for randomizer play.
+
+**Toggle mechanism (PRG010):**
+
+After completing a level, the post-level handler checks:
+```
+IF Map_NoLoseTurn == 0 AND World_Num == 2 THEN
+    World3_Bridge = World3_Bridge XOR 0x01
+```
+
+| File Offset | Bytes | Instruction | Description |
+|------------|-------|-------------|-------------|
+| 0x14A5E | AD 6E 79 | LDA Map_NoLoseTurn | Check if turn consumed |
+| 0x14A61 | D0 26 | BNE skip | Skip if no-lose turn (Toad House, pipe) |
+| 0x14A64 | AD 27 07 | LDA World_Num | Check world |
+| 0x14A67 | C9 02 | CMP #$02 | World 3? |
+| 0x14A69 | D0 08 | BNE skip | Skip if not W3 |
+| 0x14A6B | AD BB 07 | LDA World3_Bridge | Load bridge state |
+| 0x14A6E | 49 01 | EOR #$01 | Flip bit 0 |
+| 0x14A70 | 8D BB 07 | STA World3_Bridge | Store back |
+
+RAM `$07BB` (`World3_Bridge`): 0 = horizontal bridges passable, 1 = vertical bridges passable.
+
+**Drawbridge map tile positions:**
+
+| ROM Offset | Tile | Type | Screen | Row | Col |
+|-----------|------|------|--------|-----|-----|
+| 0x18777 | $B2 | Horizontal | 0 | 0 | 11 |
+| 0x18779 | $B2 | Horizontal | 0 | 0 | 13 |
+| 0x1880C | $B1 | Vertical | 0 | 1 | 16 |
+| 0x188F3 | $B1 | Vertical | 1 | 6 | 39 |
+
+**Passability check (PRG010, 0x15346):** Uses two lookup tables per direction:
+- `Map_DrawBridgeCheck` = [B2, B2, B1, B1] (tile to check, per direction R/L/D/U)
+- `Map_DrawBridgeCheckV` = [00, 00, 01, 01] (required World3_Bridge value)
+
+**QoL fix:** Replace all 4 drawbridge tiles with normal path tiles ($B2→$45, $B1→$46)
+and NOP the toggle code at 0x14A6B (8 bytes → EA×8). This makes all paths permanently
+passable. The toggle code becomes inert since no drawbridge tiles remain.
+
+### Breakable Rocks (Hammer Item)
+
+Breakable rocks ($51 horizontal, $52 vertical) can be destroyed by the Hammer inventory
+item. This uses a separate system from the FX locks — handled by `Inv_UseItem_Hammer`
+in PRG026 (0x34010 bank).
+
+**Mechanism:**
+1. Hammer use checks 4 adjacent tiles for $51 or $52
+2. Replaces rock with path tile ($51→$45, $52→$46) via `RockBreak_Replace` table
+3. Sets `Map_Completions` bit via `Map_SetCompletion_By_Poof` for persistence
+4. On map reload, `Map_Removable_Tiles[0..1]` handles rock→path restoration
+
+**Key data tables:**
+
+| Data | ROM Offset | Contents |
+|------|-----------|----------|
+| Map_Removable_Tiles | 0x18447 | 51 52 54 67 EB E4 56 9D (8 entries) |
+| Map_RemoveTo_Tiles | 0x1844F | 45 46 46 60 E3 DA 45 B3 (8 entries) |
+| RockBreak_Replace | 0x346C1 | 45 46 (replacement path tiles) |
+| RockBreak_TileFix | 0x346C3 | FE FE E1 FE FE C0 E1 C0 (VRAM CHR patterns) |
+
+**All breakable rocks in the ROM (9 total):**
+
+| World | ROM Offset | Tile | Screen | Row | Col | Grid Col |
+|-------|-----------|------|--------|-----|-----|----------|
+| W2 | 0x186B8 | $51 | 0 | 6 | 13 | 13 |
+| W2 | 0x186E0 | $51 | 1 | 0 | 5 | 21 |
+| W3 | 0x187DB | $51 | 0 | 6 | 15 | 15 |
+| W3 | 0x187F1 | $51 | 0 | 8 | 5 | 5 |
+| W3 | 0x187F3 | $51 | 0 | 8 | 7 | 7 |
+| W4 | 0x189E3 | $52 | 1 | 3 | 6 | 22 |
+| W4 | 0x18A16 | $51 | 1 | 6 | 9 | 25 |
+| W6 | 0x18B8C | $51 | 0 | 2 | 13 | 13 |
+| W6 | 0x18C58 | $51 | 1 | 6 | 9 | 25 |
+
+Unbreakable rocks ($53) are decorative barriers — the hammer cannot break them.
+
+**QoL fix (W2 secret rock only):** Replace the rock at 0x186E0 ($51→$45) to open the
+secret path on W2 screen 1 without requiring a hammer item.
+
 ### World Progression
 
 World advancement is sequential via `INC World_Num` at file offset **0x3D0A1** (PRG030, CPU $9091).
