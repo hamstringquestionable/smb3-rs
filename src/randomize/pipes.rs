@@ -19,7 +19,7 @@ use crate::rom::Rom;
 use super::map_walker::{
     self, AIRSHIP_ENTRIES, BOWSER_ENTRY, FORTRESS_ENTRIES, MAP_TILE_GRIDS,
     MAP_TRANSITIONS, PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, ROWS, TILE_PIPE,
-    WORLDS, Grid,
+    TILE_SPIRAL, WORLDS, Grid,
 };
 
 // ---------------------------------------------------------------------------
@@ -28,6 +28,9 @@ use super::map_walker::{
 
 /// Junction tile used when removing pipe tiles from the grid.
 const TILE_REPLACEMENT: u8 = 0x47;
+
+/// W5 Spiral Tower entries (functionally a pipe pair using dest index 0).
+const W5_SPIRAL_ENTRIES: &[(usize, usize)] = &[(4, 10), (4, 21)];
 
 /// InitIndex master table offset (9 word pointers, one per world + warp zone).
 const INIT_INDEX_MASTER: usize = 0x193DA;
@@ -130,6 +133,9 @@ fn classify_entry(world_idx: usize, entry: &PipeEntry) -> EntryType {
     if entry.obj_ptr == 0x0001 && entry.lay_ptr == 0x0000 {
         return EntryType::Bonus;
     }
+    if W5_SPIRAL_ENTRIES.contains(&(world_idx, i)) {
+        return EntryType::Pipe;
+    }
     if entry.tileset == 14 {
         return EntryType::Pipe;
     }
@@ -154,6 +160,7 @@ fn get_pipe_pairs(rom: &Rom, world_idx: usize) -> Vec<(PipeEntry, PipeEntry)> {
     }
 
     let mut pairs = Vec::new();
+    let mut unpaired: Vec<PipeEntry> = Vec::new();
     let mut keys: Vec<u16> = by_obj.keys().copied().collect();
     keys.sort();
     for key in keys {
@@ -161,9 +168,24 @@ fn get_pipe_pairs(rom: &Rom, world_idx: usize) -> Vec<(PipeEntry, PipeEntry)> {
         if group.len() == 2 {
             let mut it = group.into_iter();
             pairs.push((it.next().unwrap(), it.next().unwrap()));
+        } else {
+            unpaired.extend(group);
         }
-        // Skip solo entries (warp zone, etc.)
     }
+
+    // Pair W5 spiral tower entries (different obj_ptrs, same dest mechanism).
+    if world_idx == 4 {
+        let mut spiral: Vec<PipeEntry> = unpaired
+            .into_iter()
+            .filter(|e| W5_SPIRAL_ENTRIES.contains(&(world_idx, e.index)))
+            .collect();
+        if spiral.len() == 2 {
+            spiral.sort_by_key(|e| e.index);
+            let mut it = spiral.into_iter();
+            pairs.push((it.next().unwrap(), it.next().unwrap()));
+        }
+    }
+
     pairs
 }
 
@@ -313,7 +335,7 @@ fn place_pipes_progressive<R: Rng>(
     // Step 0: Open fortress-gated gaps using the FX table
     open_gaps(rom, world_idx, &mut grid);
 
-    // Step 1: Remove all pipe tiles from grid
+    // Step 1: Remove all pipe/spiral tiles from grid
     for pa_pb in &pipe_pairs_data {
         for p in [&pa_pb.0, &pa_pb.1] {
             grid.set(p.grid_row, p.grid_col, TILE_REPLACEMENT);
@@ -714,8 +736,8 @@ mod tests {
             None => return,
         };
 
-        // Expected pipe pair counts per world
-        let expected = [0, 1, 3, 2, 1, 2, 8, 6];
+        // Expected pipe pair counts per world (W5 = 2: 1 regular + 1 spiral tower)
+        let expected = [0, 1, 3, 2, 2, 2, 8, 6];
         for (wi, &expected_count) in expected.iter().enumerate() {
             let pairs = get_pipe_pairs(&rom, wi);
             assert_eq!(

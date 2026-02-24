@@ -31,6 +31,9 @@ pub(super) const TILE_START: u8 = 0xE5;
 /// Pipe tile ID.
 pub(super) const TILE_PIPE: u8 = 0xBC;
 
+/// W5 Spiral Tower tile ID (functionally a pipe connecting screen 0 ↔ screen 1).
+pub(super) const TILE_SPIRAL: u8 = 0x5F;
+
 /// Number of rows in every overworld map.
 pub(super) const ROWS: usize = 9;
 
@@ -50,6 +53,7 @@ pub(super) const PIPE_MAP_SCRL_XHI: usize = 0x046F2;
 
 /// Destination byte → world index (0-based). Only paired pipe destinations.
 const DEST_TO_WORLD: &[(u8, usize)] = &[
+    (0x00, 4),  // W5 (spiral tower)
     (0x01, 1),  // W2
     (0x02, 5), (0x03, 5),  // W6
     (0x04, 6), (0x05, 6), (0x06, 6), (0x07, 6),  // W7
@@ -727,6 +731,7 @@ mod tests {
     fn test_dest_indices_for_world() {
         assert_eq!(dest_indices_for_world(0).len(), 0); // W1: no pipes
         assert_eq!(dest_indices_for_world(1).len(), 1); // W2: 1 pair
+        assert_eq!(dest_indices_for_world(4).len(), 2); // W5: 1 regular + 1 spiral tower
         assert_eq!(dest_indices_for_world(6).len(), 8); // W7: 8 pairs
         assert_eq!(dest_indices_for_world(7).len(), 6); // W8: 6 pairs
     }
