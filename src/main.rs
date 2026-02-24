@@ -71,6 +71,10 @@ struct Cli {
     #[arg(long)]
     shuffle_pipes: bool,
 
+    /// Keep W3 drawbridges toggling (they are fixed open by default)
+    #[arg(long)]
+    keep_drawbridges: bool,
+
     /// Disable airship lock (anchor effect always on by default, use this flag to disable)
     #[arg(long)]
     no_airship_lock: bool,
@@ -117,6 +121,7 @@ fn main() {
         shuffle_fortresses: cli.shuffle_fortresses,
         redistribute_fortresses: cli.redistribute_fortresses,
         shuffle_pipes: cli.shuffle_pipes,
+        fix_drawbridges: !cli.keep_drawbridges,
         airship_lock: !cli.no_airship_lock,
         starting_lives: cli.starting_lives,
     };
@@ -145,6 +150,7 @@ fn main() {
     eprintln!("  Autoscroll: {}", if options.disable_autoscroll { "disabled" } else { "enabled" });
     eprintln!("  Chest items: {}", if options.chest_items { "on" } else { "off" });
     eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });
+    eprintln!("  W3 drawbridges: {}", if options.fix_drawbridges { "fixed open" } else { "toggling" });
     eprintln!("  Airship lock: {}", if options.airship_lock { "on" } else { "off" });
     eprintln!("  Output:   {}", output_path.display());
 

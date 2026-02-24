@@ -56,6 +56,9 @@ pub struct Options {
     /// Shuffle pipe endpoint positions on overworld maps.
     #[serde(default = "default_false")]
     pub shuffle_pipes: bool,
+    /// Fix W3 drawbridges so all paths are always passable.
+    #[serde(default = "default_true")]
+    pub fix_drawbridges: bool,
 }
 
 fn default_false() -> bool {
@@ -82,6 +85,7 @@ impl Default for Options {
             shuffle_fortresses: false,
             redistribute_fortresses: false,
             shuffle_pipes: false,
+            fix_drawbridges: true,
             starting_lives: default_starting_lives(),
         }
     }
@@ -129,6 +133,10 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     if options.disable_autoscroll {
         randomize::autoscroll::disable_autoscroll(rom);
     }
+    if options.fix_drawbridges {
+        randomize::qol::fix_w3_drawbridges(rom);
+    }
+
     // Set starting lives (default 4; user/configurable)
     randomize::qol::set_starting_lives(rom, options.starting_lives);
 
