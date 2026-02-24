@@ -71,6 +71,10 @@ struct Cli {
     #[arg(long)]
     shuffle_pipes: bool,
 
+    /// Shuffle lock positions on overworld maps
+    #[arg(long)]
+    shuffle_locks: bool,
+
     /// Keep W3 drawbridges toggling (they are fixed open by default)
     #[arg(long)]
     keep_drawbridges: bool,
@@ -125,6 +129,7 @@ fn main() {
         shuffle_fortresses: cli.shuffle_fortresses,
         redistribute_fortresses: cli.redistribute_fortresses,
         shuffle_pipes: cli.shuffle_pipes,
+        shuffle_locks: cli.shuffle_locks,
         fix_drawbridges: !cli.keep_drawbridges,
         remove_w2_rock: !cli.keep_w2_rock,
         airship_lock: !cli.no_airship_lock,
@@ -152,6 +157,7 @@ fn main() {
     eprintln!("  Fortress/airship shuffle: {}", if options.shuffle_fortresses { "on" } else { "off" });
     eprintln!("  Fortress redistribution: {}", if options.redistribute_fortresses { "on" } else { "off" });
     eprintln!("  Pipe shuffle: {}", if options.shuffle_pipes { "on" } else { "off" });
+    eprintln!("  Lock shuffle: {}", if options.shuffle_locks { "on" } else { "off" });
     eprintln!("  Autoscroll: {}", if options.disable_autoscroll { "disabled" } else { "enabled" });
     eprintln!("  Chest items: {}", if options.chest_items { "on" } else { "off" });
     eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });

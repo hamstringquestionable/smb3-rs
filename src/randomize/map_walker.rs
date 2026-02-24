@@ -147,6 +147,15 @@ impl Grid {
     pub fn set(&mut self, row: usize, col: usize, tile: u8) {
         self.tiles[row][col] = tile;
     }
+
+    /// Deep copy of the grid for testing lock placement scenarios.
+    pub fn clone_grid(&self) -> Grid {
+        Grid {
+            tiles: self.tiles.clone(),
+            rows: self.rows,
+            cols: self.cols,
+        }
+    }
 }
 
 /// An edge in the walk graph.
@@ -608,6 +617,24 @@ pub(super) fn render_debug(
     out
 }
 
+/// Fortress map tile ID.
+const TILE_FORTRESS: u8 = 0x67;
+
+/// Find fortress positions by scanning the tile grid for fortress tiles ($67).
+/// Returns sorted positions in row-major order (deterministic).
+fn find_fortress_tiles(grid: &Grid) -> Vec<(usize, usize)> {
+    let mut positions = Vec::new();
+    for r in 0..grid.rows {
+        for c in 0..grid.cols {
+            if grid.get(r, c) == TILE_FORTRESS {
+                positions.push((r, c));
+            }
+        }
+    }
+    positions.sort();
+    positions
+}
+
 /// Render a step-by-step fortress progression visualization for a world.
 ///
 /// Beats each reachable fortress in order, opens its lock/bridge via the FX
@@ -620,10 +647,14 @@ pub(super) fn render_progression(
 ) -> String {
     let mut grid = read_tile_grid(rom, world_idx);
     let fx_slots = read_fx_slots(rom);
-    let fx_assignments = read_world_fx_assignments(rom);
-    let world_forts = read_fortress_positions(rom, world_idx);
 
-    let world_fx = &fx_assignments[world_idx];
+    // Scan map for fortress tiles ($67) to handle post-redistribution state
+    let world_forts = find_fortress_tiles(&grid);
+    let fort_count = world_forts.len();
+    let base = FX_WORLD_TABLE + world_idx * 4;
+    let world_fx: Vec<u8> = (0..fort_count.min(4))
+        .map(|i| rom.read_byte(base + i))
+        .collect();
     let mut beaten: HashSet<usize> = HashSet::new();
     let mut out = String::new();
 
@@ -745,17 +776,32 @@ pub(super) fn read_fortress_positions(rom: &Rom, world_idx: usize) -> Vec<(usize
 ///
 /// Iteratively walks the map, beats the lowest-ordinal reachable fortress,
 /// opens its FX slot (replacing the lock/bridge tile), and re-walks.
+/// Uses hardcoded FORTRESS_ENTRIES — for post-redistribution use, call
+/// `simulate_progression_with` and pass explicit fortress positions.
 pub(super) fn simulate_progression(
     rom: &Rom,
     world_idx: usize,
     pipe_pairs: &[((usize, usize), (usize, usize))],
 ) -> Vec<ProgressionStep> {
+    let world_forts = read_fortress_positions(rom, world_idx);
+    let fx_assignments = read_world_fx_assignments(rom);
+    let world_fx = fx_assignments[world_idx].clone();
+    simulate_progression_with(rom, world_idx, pipe_pairs, &world_forts, &world_fx)
+}
+
+/// Simulate fortress progression with explicit fortress positions and FX assignments.
+///
+/// Use this after redistribution when FORTRESS_ENTRIES no longer reflects reality.
+pub(super) fn simulate_progression_with(
+    rom: &Rom,
+    world_idx: usize,
+    pipe_pairs: &[((usize, usize), (usize, usize))],
+    world_forts: &[(usize, usize)],
+    world_fx: &[u8],
+) -> Vec<ProgressionStep> {
     let mut grid = read_tile_grid(rom, world_idx);
     let fx_slots = read_fx_slots(rom);
-    let fx_assignments = read_world_fx_assignments(rom);
-    let world_forts = read_fortress_positions(rom, world_idx);
 
-    let world_fx = &fx_assignments[world_idx];
     let mut beaten: HashSet<usize> = HashSet::new();
     let mut steps = Vec::new();
 
