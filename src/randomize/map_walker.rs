@@ -528,6 +528,167 @@ pub(super) fn find_chokepoints(result: &WalkResult) -> HashSet<(usize, usize)> {
 }
 
 // ---------------------------------------------------------------------------
+// Debug visualization
+// ---------------------------------------------------------------------------
+
+// ANSI color codes
+const RESET: &str = "\x1b[0m";
+const DIM: &str = "\x1b[2m";
+const BRIGHT_GREEN: &str = "\x1b[1;32m";
+const BRIGHT_RED: &str = "\x1b[1;31m";
+const BRIGHT_CYAN: &str = "\x1b[1;36m";
+const YELLOW: &str = "\x1b[33m";
+const BRIGHT_WHITE: &str = "\x1b[1;37m";
+const _MAGENTA: &str = "\x1b[35m";
+
+/// Render a colored ASCII debug visualization of a world's overworld grid.
+///
+/// Shows reachable nodes, walked paths, chokepoints, and pipe positions
+/// using ANSI terminal colors.
+#[allow(dead_code)]
+pub(super) fn render_debug(
+    grid: &Grid,
+    walk: Option<&WalkResult>,
+    chokepoints: Option<&HashSet<(usize, usize)>>,
+    pipe_positions: Option<&HashSet<(usize, usize)>>,
+    label: &str,
+) -> String {
+    let mut out = String::new();
+
+    // Header
+    out.push_str(&format!("\n{DIM}=== {label} ({} cols) ==={RESET}\n", grid.cols));
+
+    // Column ruler
+    out.push_str(&format!("{DIM}  "));
+    for c in 0..grid.cols {
+        out.push_str(&format!("{}", c % 10));
+    }
+    out.push_str(&format!("{RESET}\n"));
+
+    // Grid rows
+    for r in 0..grid.rows {
+        out.push_str(&format!("{DIM}{r} {RESET}"));
+        for c in 0..grid.cols {
+            let tile = grid.get(r, c);
+            let pos = (r, c);
+
+            let is_node = walk.is_some_and(|w| w.nodes.contains(&pos));
+            let is_path = walk.is_some_and(|w| w.path_tiles.contains(&pos));
+
+            let (ch, color) = if tile == TILE_START {
+                ('S', BRIGHT_GREEN)
+            } else if chokepoints.is_some_and(|cp| cp.contains(&pos)) {
+                ('!', BRIGHT_RED)
+            } else if pipe_positions.is_some_and(|pp| pp.contains(&pos)) {
+                ('P', BRIGHT_CYAN)
+            } else if is_path {
+                ('~', YELLOW)
+            } else if is_node {
+                ('*', BRIGHT_WHITE)
+            } else if VALID_HORZ.contains(&tile) {
+                ('-', DIM)
+            } else if VALID_VERT.contains(&tile) {
+                ('|', DIM)
+            } else {
+                ('.', DIM)
+            };
+
+            out.push_str(&format!("{color}{ch}{RESET}"));
+        }
+        out.push('\n');
+    }
+
+    // Legend
+    out.push_str(&format!(
+        "{DIM}{BRIGHT_GREEN}S{RESET}{DIM}=start {BRIGHT_WHITE}*{RESET}{DIM}=node \
+         {YELLOW}~{RESET}{DIM}=path {BRIGHT_RED}!{RESET}{DIM}=choke \
+         {BRIGHT_CYAN}P{RESET}{DIM}=pipe{RESET}\n"
+    ));
+
+    out
+}
+
+/// Render a step-by-step fortress progression visualization for a world.
+///
+/// Beats each reachable fortress in order, opens its lock/bridge via the FX
+/// table, re-walks, and renders the grid at each step.
+#[allow(dead_code)]
+pub(super) fn render_progression(
+    rom: &Rom,
+    world_idx: usize,
+    pipe_pairs: &[((usize, usize), (usize, usize))],
+) -> String {
+    let mut grid = read_tile_grid(rom, world_idx);
+    let fx_slots = read_fx_slots(rom);
+    let fx_assignments = read_world_fx_assignments(rom);
+    let world_forts = read_fortress_positions(rom, world_idx);
+
+    let world_fx = &fx_assignments[world_idx];
+    let mut beaten: HashSet<usize> = HashSet::new();
+    let mut out = String::new();
+
+    // Collect pipe positions for display
+    let mut pipe_pos = HashSet::new();
+    for &(a, b) in pipe_pairs {
+        pipe_pos.insert(a);
+        pipe_pos.insert(b);
+    }
+
+    // Initial walk
+    let result = walk_map(&grid, pipe_pairs, None);
+    let chokes = find_chokepoints(&result);
+    out.push_str(&render_debug(
+        &grid, Some(&result), Some(&chokes), Some(&pipe_pos),
+        &format!("W{} — initial", world_idx + 1),
+    ));
+
+    loop {
+        // Re-walk with current grid state to get fresh reachable set
+        let result = walk_map(&grid, pipe_pairs, None);
+
+        let reachable_forts: Vec<usize> = world_forts
+            .iter()
+            .enumerate()
+            .filter(|(i, pos)| !beaten.contains(i) && result.nodes.contains(pos))
+            .map(|(i, _)| i)
+            .collect();
+
+        if reachable_forts.is_empty() {
+            break;
+        }
+
+        let fort_idx = reachable_forts[0];
+        let fort_pos = world_forts[fort_idx];
+        beaten.insert(fort_idx);
+
+        let mut label = format!("W{} — beat fortress {} at ({},{})",
+            world_idx + 1, fort_idx, fort_pos.0, fort_pos.1);
+
+        if fort_idx < world_fx.len() {
+            let slot_idx = world_fx[fort_idx] as usize;
+            if slot_idx < fx_slots.len() {
+                let slot = &fx_slots[slot_idx];
+                let (fx_r, fx_c) = (slot.grid_row, slot.grid_col);
+                let old = grid.get(fx_r, fx_c);
+                grid.set(fx_r, fx_c, slot.replace_tile);
+                label.push_str(&format!(
+                    " → open ({},{}) ${:02X}→${:02X}",
+                    fx_r, fx_c, old, slot.replace_tile
+                ));
+            }
+        }
+
+        let result = walk_map(&grid, pipe_pairs, None);
+        let chokes = find_chokepoints(&result);
+        out.push_str(&render_debug(
+            &grid, Some(&result), Some(&chokes), Some(&pipe_pos), &label,
+        ));
+    }
+
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Fortress progression simulation
 // ---------------------------------------------------------------------------
 
@@ -753,5 +914,94 @@ mod tests {
             !chokepoints.is_empty(),
             "W1 should have chokepoints (linear map)"
         );
+    }
+
+    #[test]
+    fn test_render_debug_visual() {
+        let rom_data = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        if rom_data.is_err() {
+            return;
+        }
+        let rom = Rom::from_bytes(&rom_data.unwrap()).unwrap();
+        let all_pipes = read_pipe_pairs(&rom);
+
+        for wi in 0..8 {
+            let grid = read_tile_grid(&rom, wi);
+            let pipes = all_pipes.get(&wi).cloned().unwrap_or_default();
+            let result = walk_map(&grid, &pipes, None);
+            let chokes = find_chokepoints(&result);
+
+            let mut pipe_pos = HashSet::new();
+            for &(a, b) in &pipes {
+                pipe_pos.insert(a);
+                pipe_pos.insert(b);
+            }
+
+            let label = format!("W{}", wi + 1);
+            let output = render_debug(&grid, Some(&result), Some(&chokes), Some(&pipe_pos), &label);
+            print!("{output}");
+        }
+    }
+
+    #[test]
+    fn test_render_progression_w6() {
+        let rom_data = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        if rom_data.is_err() {
+            return;
+        }
+        let rom = Rom::from_bytes(&rom_data.unwrap()).unwrap();
+        let all_pipes = read_pipe_pairs(&rom);
+        let pipes = all_pipes.get(&5).cloned().unwrap_or_default();
+
+        let output = render_progression(&rom, 5, &pipes);
+        print!("{output}");
+    }
+
+    #[test]
+    fn test_render_randomized_seed() {
+        let rom_data = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        if rom_data.is_err() {
+            return;
+        }
+        let mut rom = Rom::from_bytes(&rom_data.unwrap()).unwrap();
+
+        let mut options = crate::randomizer::Options::default();
+        options.shuffle_fortresses = true;
+        options.redistribute_fortresses = true;
+        options.shuffle_pipes = true;
+        let seed = 42;
+        crate::randomizer::randomize(&mut rom, seed, &options);
+
+        let all_pipes = read_pipe_pairs(&rom);
+
+        println!("\n\x1b[1;33m=== Randomized seed {seed} (fortresses + pipes) ===\x1b[0m\n");
+
+        // Debug view of all 8 worlds
+        for wi in 0..8 {
+            let grid = read_tile_grid(&rom, wi);
+            let pipes = all_pipes.get(&wi).cloned().unwrap_or_default();
+            let result = walk_map(&grid, &pipes, None);
+            let chokes = find_chokepoints(&result);
+
+            let mut pipe_pos = HashSet::new();
+            for &(a, b) in &pipes {
+                pipe_pos.insert(a);
+                pipe_pos.insert(b);
+            }
+
+            let label = format!("W{} randomized", wi + 1);
+            let output = render_debug(
+                &grid, Some(&result), Some(&chokes), Some(&pipe_pos), &label,
+            );
+            print!("{output}");
+        }
+
+        // Progression view for worlds with locks (W1-W7)
+        println!("\n\x1b[1;33m=== Progression views ===\x1b[0m\n");
+        for wi in 0..7 {
+            let pipes = all_pipes.get(&wi).cloned().unwrap_or_default();
+            let output = render_progression(&rom, wi, &pipes);
+            print!("{output}");
+        }
     }
 }
