@@ -12,39 +12,15 @@ use rand::seq::SliceRandom;
 
 use crate::rom::Rom;
 
-// Re-use WorldTables and helpers from levels.rs — but since they're private,
-// we duplicate the minimal set we need here.
+use super::map_walker::{
+    self, AIRSHIP_ENTRIES, MAP_TRANSITIONS, WORLDS,
+    FX_WORLD_TABLE, FX_MAP_LOC_ROW, FX_MAP_LOC, FX_MAP_TILE_REPLACE,
+    LevelEntry,
+};
 
-struct WorldTables {
-    rowtype_offset: usize,
-    entry_count: usize,
-}
-
-const WORLDS: [WorldTables; 8] = [
-    WorldTables { rowtype_offset: 0x19438, entry_count: 21 }, // World 1
-    WorldTables { rowtype_offset: 0x194BA, entry_count: 47 }, // World 2
-    WorldTables { rowtype_offset: 0x195D8, entry_count: 52 }, // World 3
-    WorldTables { rowtype_offset: 0x19714, entry_count: 34 }, // World 4
-    WorldTables { rowtype_offset: 0x197E4, entry_count: 42 }, // World 5
-    WorldTables { rowtype_offset: 0x198E4, entry_count: 57 }, // World 6
-    WorldTables { rowtype_offset: 0x19A3E, entry_count: 46 }, // World 7
-    WorldTables { rowtype_offset: 0x19B56, entry_count: 41 }, // World 8
-];
-
-/// PRG bank loaded at CPU $A000-$BFFF for each tileset (0-18).
-const PAGE_A000_BY_TILESET: [usize; 19] = [
-    11, 15, 21, 16, 17, 19, 18, 18, 18, 20, 23, 19, 17, 19, 13, 26, 26, 26, 9,
-];
-
-/// Data that travels with a level when shuffled.
-#[derive(Clone, Debug)]
-struct LevelEntry {
-    tileset: u8,
-    obj_lo: u8,
-    obj_hi: u8,
-    lay_lo: u8,
-    lay_hi: u8,
-}
+// ---------------------------------------------------------------------------
+// Module-specific constants
+// ---------------------------------------------------------------------------
 
 /// Vanilla fortress entries (world_idx, entry_idx) — W1-7 only.
 const FORTRESS_ENTRIES_W1_7: [(usize, usize); 13] = [
@@ -75,121 +51,8 @@ const BOOMBOOM_Y_OFFSETS_W1_7: [usize; 13] = [
     0x0D47E, // W7[40]
 ];
 
-/// Airship entries — excluded from becoming fortress slots.
-const AIRSHIP_ENTRIES: [(usize, usize); 7] = [
-    (0, 17), (1, 36), (2, 49), (3, 6), (4, 35), (5, 53), (6, 43),
-];
-
-/// Map transition entries — excluded from becoming fortress slots.
-const MAP_TRANSITION_ENTRIES: [(usize, usize); 1] = [
-    (4, 5),
-];
-
-/// FortressFX_W1-W8 table: 32 bytes at 0x14888, 4 slots per world.
-const FORTRESS_FX_WORLD_TABLE: usize = 0x14888;
-
-/// Map tile grid file offsets and column counts per world.
-/// Storage: row-major per screen, 144 bytes per screen (9 rows x 16 cols).
-const MAP_TILE_GRIDS: [(usize, usize); 8] = [
-    (0x185BA, 16),  // W1: 1 screen
-    (0x1864B, 32),  // W2: 2 screens
-    (0x1876C, 48),  // W3: 3 screens
-    (0x1891D, 32),  // W4: 2 screens
-    (0x18A3E, 32),  // W5: 2 screens
-    (0x18B5F, 48),  // W6: 3 screens
-    (0x18D10, 32),  // W7: 2 screens
-    (0x18E31, 64),  // W8: 4 screens
-];
-
-const MAP_TILE_GRID_ROWS: usize = 9;
-
 /// Fortress map tile ID.
 const TILE_FORTRESS: u8 = 0x67;
-
-
-// ---------------------------------------------------------------------------
-// ROM helpers
-// ---------------------------------------------------------------------------
-
-fn table_offsets(world: &WorldTables) -> (usize, usize, usize) {
-    let n = world.entry_count;
-    let scrcol = world.rowtype_offset + n;
-    let objsets = scrcol + n;
-    let layouts = objsets + n * 2;
-    (scrcol, objsets, layouts)
-}
-
-fn read_word(rom: &Rom, offset: usize) -> u16 {
-    let lo = rom.read_byte(offset) as u16;
-    let hi = rom.read_byte(offset + 1) as u16;
-    (hi << 8) | lo
-}
-
-fn read_entry(rom: &Rom, world: &WorldTables, idx: usize) -> LevelEntry {
-    let (_scrcol, objsets, layouts) = table_offsets(world);
-    let obj_off = objsets + idx * 2;
-    let lay_off = layouts + idx * 2;
-    LevelEntry {
-        tileset: rom.read_byte(world.rowtype_offset + idx) & 0x0F,
-        obj_lo: rom.read_byte(obj_off),
-        obj_hi: rom.read_byte(obj_off + 1),
-        lay_lo: rom.read_byte(lay_off),
-        lay_hi: rom.read_byte(lay_off + 1),
-    }
-}
-
-fn write_entry(rom: &mut Rom, world: &WorldTables, idx: usize, entry: &LevelEntry) {
-    let (_scrcol, objsets, layouts) = table_offsets(world);
-    let obj_off = objsets + idx * 2;
-    let lay_off = layouts + idx * 2;
-
-    // Preserve upper nibble (row), replace lower nibble (tileset)
-    let old_brt = rom.read_byte(world.rowtype_offset + idx);
-    let new_brt = (old_brt & 0xF0) | (entry.tileset & 0x0F);
-    rom.write_byte(world.rowtype_offset + idx, new_brt);
-
-    rom.write_byte(obj_off, entry.obj_lo);
-    rom.write_byte(obj_off + 1, entry.obj_hi);
-    rom.write_byte(lay_off, entry.lay_lo);
-    rom.write_byte(lay_off + 1, entry.lay_hi);
-}
-
-/// Compute the ROM file offset of a map tile at (row, col) in a world's tile grid.
-/// Row-major per screen: each screen is 144 bytes (9 rows x 16 cols).
-fn map_tile_offset(world_idx: usize, row: usize, col: usize) -> usize {
-    let (base, _cols) = MAP_TILE_GRIDS[world_idx];
-    let screen = col / 16;
-    let col_in_screen = col % 16;
-    base + screen * 144 + row * 16 + col_in_screen
-}
-
-/// Get the (grid_row, grid_col) for a pointer table entry by reading its
-/// ByRowType and ByScrCol bytes.
-fn entry_grid_position(rom: &Rom, world: &WorldTables, idx: usize) -> (usize, usize) {
-    let row_nibble = (rom.read_byte(world.rowtype_offset + idx) >> 4) & 0x0F;
-    let scrcol = rom.read_byte(world.rowtype_offset + world.entry_count + idx);
-    let screen = (scrcol >> 4) & 0x0F;
-    let column = scrcol & 0x0F;
-    let grid_row = (row_nibble as usize).wrapping_sub(2);
-    let grid_col = screen as usize * 16 + column as usize;
-    (grid_row, grid_col)
-}
-
-fn is_level_pointer(obj_ptr: u16, lay_ptr: u16) -> bool {
-    obj_ptr >= 0xC000 && lay_ptr != 0x0000
-}
-
-fn layout_file_offset(cpu_addr: u16, tileset: u8) -> Option<usize> {
-    if tileset as usize >= PAGE_A000_BY_TILESET.len() || cpu_addr < 0xA000 {
-        return None;
-    }
-    let bank = PAGE_A000_BY_TILESET[tileset as usize];
-    Some(bank * 0x2000 + 0x10 + (cpu_addr as usize - 0xA000))
-}
-
-fn level_screen_count(rom: &Rom, layout_offset: usize) -> u8 {
-    (rom.read_byte(layout_offset + 4) & 0x0F) + 1
-}
 
 // ---------------------------------------------------------------------------
 // Fortress redistribution
@@ -220,29 +83,29 @@ fn random_partition<R: Rng>(rng: &mut R, total: usize, buckets: usize, min: usiz
 /// Same filters as collect_shuffleable in levels.rs, but also excludes current fortresses.
 fn collect_action_levels(rom: &Rom, world_idx: usize) -> Vec<usize> {
     let world = &WORLDS[world_idx];
-    let (_scrcol, objsets, layouts) = table_offsets(world);
+    let (_scrcol, objsets, layouts) = map_walker::table_offsets(world);
 
     // Count (obj, lay) pairs to detect hammer bros duplicates
     let mut pair_counts = std::collections::HashMap::new();
     for i in 0..world.entry_count {
-        let obj_ptr = read_word(rom, objsets + i * 2);
-        let lay_ptr = read_word(rom, layouts + i * 2);
-        if is_level_pointer(obj_ptr, lay_ptr) {
+        let obj_ptr = map_walker::read_word(rom, objsets + i * 2);
+        let lay_ptr = map_walker::read_word(rom, layouts + i * 2);
+        if map_walker::is_level_pointer(obj_ptr, lay_ptr) {
             *pair_counts.entry((obj_ptr, lay_ptr)).or_insert(0u32) += 1;
         }
     }
 
     let mut indices = Vec::new();
     for i in 0..world.entry_count {
-        let obj_ptr = read_word(rom, objsets + i * 2);
-        let lay_ptr = read_word(rom, layouts + i * 2);
-        if !is_level_pointer(obj_ptr, lay_ptr) {
+        let obj_ptr = map_walker::read_word(rom, objsets + i * 2);
+        let lay_ptr = map_walker::read_word(rom, layouts + i * 2);
+        if !map_walker::is_level_pointer(obj_ptr, lay_ptr) {
             continue;
         }
         if AIRSHIP_ENTRIES.contains(&(world_idx, i)) {
             continue;
         }
-        if MAP_TRANSITION_ENTRIES.contains(&(world_idx, i)) {
+        if MAP_TRANSITIONS.contains(&(world_idx, i)) {
             continue;
         }
         if pair_counts[&(obj_ptr, lay_ptr)] > 1 {
@@ -254,8 +117,8 @@ fn collect_action_levels(rom: &Rom, world_idx: usize) -> Vec<usize> {
         }
         // Exclude short levels (pipe connectors)
         let tileset = rom.read_byte(world.rowtype_offset + i) & 0x0F;
-        if let Some(lay_offset) = layout_file_offset(lay_ptr, tileset) {
-            if level_screen_count(rom, lay_offset) < 3 {
+        if let Some(lay_offset) = map_walker::layout_file_offset(lay_ptr, tileset) {
+            if map_walker::level_screen_count(rom, lay_offset) < 3 {
                 continue;
             }
         } else {
@@ -264,8 +127,8 @@ fn collect_action_levels(rom: &Rom, world_idx: usize) -> Vec<usize> {
         // Only include entries on level panel tiles (0x03-0x0C).
         // Entries on path tiles (0x47, 0x4A, etc.) are roaming enemies
         // like piranha plants that shouldn't be converted to fortresses.
-        let (row, col) = entry_grid_position(rom, world, i);
-        let tile_off = map_tile_offset(world_idx, row, col);
+        let (row, col) = map_walker::entry_grid_position(rom, world, i);
+        let tile_off = map_walker::map_tile_offset(world_idx, row, col);
         let tile = rom.read_byte(tile_off);
         if !(0x03..=0x0C).contains(&tile) {
             continue;
@@ -289,7 +152,7 @@ pub fn redistribute_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
         .iter()
         .zip(BOOMBOOM_Y_OFFSETS_W1_7.iter())
         .map(|(&(w, i), &y_off)| {
-            let entry = read_entry(rom, &WORLDS[w], i);
+            let entry = map_walker::read_entry(rom, &WORLDS[w], i);
             (entry, y_off)
         })
         .collect();
@@ -316,15 +179,15 @@ pub fn redistribute_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
     for world_idx in 0..7 {
         for &(w, i) in &FORTRESS_ENTRIES_W1_7 {
             if w == world_idx {
-                let (row, col) = entry_grid_position(rom, &WORLDS[w], i);
-                let tile_off = map_tile_offset(w, row, col);
+                let (row, col) = map_walker::entry_grid_position(rom, &WORLDS[w], i);
+                let tile_off = map_walker::map_tile_offset(w, row, col);
                 original_tiles.insert((w, i), rom.read_byte(tile_off));
             }
         }
         let action_levels = collect_action_levels(rom, world_idx);
         for &i in &action_levels {
-            let (row, col) = entry_grid_position(rom, &WORLDS[world_idx], i);
-            let tile_off = map_tile_offset(world_idx, row, col);
+            let (row, col) = map_walker::entry_grid_position(rom, &WORLDS[world_idx], i);
+            let tile_off = map_walker::map_tile_offset(world_idx, row, col);
             original_tiles.insert((world_idx, i), rom.read_byte(tile_off));
         }
     }
@@ -344,7 +207,7 @@ pub fn redistribute_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
             // Same count — just assign fortress data from pool to existing slots
             for &slot_idx in &current_fort_slots {
                 let (ref fort_entry, _y_off) = fortress_pool[fortress_pool_idx];
-                write_entry(rom, &WORLDS[world_idx], slot_idx, fort_entry);
+                map_walker::write_entry(rom, &WORLDS[world_idx], slot_idx, fort_entry);
                 fortress_pool_idx += 1;
             }
         } else if target_fort_count > current_fort_count {
@@ -362,7 +225,7 @@ pub fn redistribute_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
 
             // Save displaced action level data and track the conversion
             for &slot_idx in &slots_to_convert {
-                displaced_levels.push(read_entry(rom, &WORLDS[world_idx], slot_idx));
+                displaced_levels.push(map_walker::read_entry(rom, &WORLDS[world_idx], slot_idx));
                 became_fortress.push((world_idx, slot_idx));
             }
 
@@ -375,7 +238,7 @@ pub fn redistribute_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
 
             for &slot_idx in &all_fort_slots {
                 let (ref fort_entry, _y_off) = fortress_pool[fortress_pool_idx];
-                write_entry(rom, &WORLDS[world_idx], slot_idx, fort_entry);
+                map_walker::write_entry(rom, &WORLDS[world_idx], slot_idx, fort_entry);
                 fortress_pool_idx += 1;
             }
         } else {
@@ -388,7 +251,7 @@ pub fn redistribute_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
             // Write fortress data to kept slots
             for &slot_idx in keep_slots {
                 let (ref fort_entry, _y_off) = fortress_pool[fortress_pool_idx];
-                write_entry(rom, &WORLDS[world_idx], slot_idx, fort_entry);
+                map_walker::write_entry(rom, &WORLDS[world_idx], slot_idx, fort_entry);
                 fortress_pool_idx += 1;
             }
 
@@ -413,7 +276,7 @@ pub fn redistribute_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
     );
 
     for (level_entry, &(w, i)) in displaced_levels.iter().zip(freed_slots.iter()) {
-        write_entry(rom, &WORLDS[w], i, level_entry);
+        map_walker::write_entry(rom, &WORLDS[w], i, level_entry);
     }
 
     // Step 4b: Swap map tiles for slots that changed type.
@@ -425,13 +288,13 @@ pub fn redistribute_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
         let level_orig_tile = original_tiles[bf]; // action level slot's original tile
 
         // Write the fortress's original tile where the action level was
-        let (row, col) = entry_grid_position(rom, &WORLDS[bf.0], bf.1);
-        let tile_off = map_tile_offset(bf.0, row, col);
+        let (row, col) = map_walker::entry_grid_position(rom, &WORLDS[bf.0], bf.1);
+        let tile_off = map_walker::map_tile_offset(bf.0, row, col);
         rom.write_byte(tile_off, fort_orig_tile);
 
         // Write the action level's original tile where the fortress was
-        let (row, col) = entry_grid_position(rom, &WORLDS[bl.0], bl.1);
-        let tile_off = map_tile_offset(bl.0, row, col);
+        let (row, col) = map_walker::entry_grid_position(rom, &WORLDS[bl.0], bl.1);
+        let tile_off = map_walker::map_tile_offset(bl.0, row, col);
         rom.write_byte(tile_off, level_orig_tile);
     }
 
@@ -451,11 +314,11 @@ pub fn redistribute_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
     }
 
     // Step 6: Rewrite FortressFX_W1-W8 slot assignments
-    // Each world gets 4 bytes at FORTRESS_FX_WORLD_TABLE + world_idx * 4.
+    // Each world gets 4 bytes at FX_WORLD_TABLE + world_idx * 4.
     // We assign FX slots 0x00-0x0C sequentially to the new fortress positions.
     let mut fx_slot = 0u8;
     for world_idx in 0..7 {
-        let base = FORTRESS_FX_WORLD_TABLE + world_idx * 4;
+        let base = FX_WORLD_TABLE + world_idx * 4;
         let count = new_counts[world_idx];
         for i in 0..4 {
             if i < count {
@@ -481,9 +344,6 @@ const FX_VADDR_H: usize = 0x147CD;
 const FX_VADDR_L: usize = 0x147DE;
 const FX_MAP_COMP_IDX: usize = 0x147EF; // 17 x 2 bytes
 const FX_PATTERNS: usize = 0x14811;     // 17 x 4 bytes
-const FX_MAP_LOC_ROW: usize = 0x14855;
-const FX_MAP_LOC: usize = 0x14866;
-const FX_MAP_TILE_REPLACE: usize = 0x14877;
 
 /// Lock tile ID on the overworld map.
 const TILE_LOCK: u8 = 0x54;
@@ -584,7 +444,7 @@ fn fx_comp_idx(grid_row: usize, screen: usize, col_in_screen: usize) -> (u8, u8)
 /// Place a lock tile at a grid position, saving the original tile.
 /// Returns the original tile that was at that position (for FortressFX_MapTileReplace).
 fn place_lock(rom: &mut Rom, world_idx: usize, grid_row: usize, grid_col: usize) -> u8 {
-    let offset = map_tile_offset(world_idx, grid_row, grid_col);
+    let offset = map_walker::map_tile_offset(world_idx, grid_row, grid_col);
     let orig = rom.read_byte(offset);
     rom.write_byte(offset, TILE_LOCK);
     orig
@@ -593,7 +453,7 @@ fn place_lock(rom: &mut Rom, world_idx: usize, grid_row: usize, grid_col: usize)
 /// Place a gap tile (bridge/water/sky) at a grid position, saving the original tile.
 /// Returns the original tile (used as the FX replacement tile when the gap is cleared).
 fn place_gap(rom: &mut Rom, world_idx: usize, grid_row: usize, grid_col: usize, fx_type: FxType) -> u8 {
-    let offset = map_tile_offset(world_idx, grid_row, grid_col);
+    let offset = map_walker::map_tile_offset(world_idx, grid_row, grid_col);
     let orig = rom.read_byte(offset);
     rom.write_byte(offset, fx_type.gap_tile());
     orig
@@ -601,7 +461,7 @@ fn place_gap(rom: &mut Rom, world_idx: usize, grid_row: usize, grid_col: usize, 
 
 /// Remove a lock tile, restoring the given path tile.
 fn remove_lock(rom: &mut Rom, world_idx: usize, grid_row: usize, grid_col: usize, restore_tile: u8) {
-    let offset = map_tile_offset(world_idx, grid_row, grid_col);
+    let offset = map_walker::map_tile_offset(world_idx, grid_row, grid_col);
     rom.write_byte(offset, restore_tile);
 }
 
@@ -636,18 +496,18 @@ mod tests {
         let mut rom = Rom::from_bytes(&rom_data.unwrap()).unwrap();
 
         // --- Read W1 fortress (entry 11) and W2 fortress (entry 13) ---
-        let w1_fort = read_entry(&rom, &WORLDS[0], 11);
-        let w2_fort = read_entry(&rom, &WORLDS[1], 13);
+        let w1_fort = map_walker::read_entry(&rom, &WORLDS[0], 11);
+        let w2_fort = map_walker::read_entry(&rom, &WORLDS[1], 13);
 
         // --- Write fortresses into entries [0] and [2] (1-1 and 1-3) ---
-        write_entry(&mut rom, &WORLDS[0], 0, &w1_fort);
-        write_entry(&mut rom, &WORLDS[0], 2, &w2_fort);
+        map_walker::write_entry(&mut rom, &WORLDS[0], 0, &w1_fort);
+        map_walker::write_entry(&mut rom, &WORLDS[0], 2, &w2_fort);
 
         // Put fortress tiles on the map for entries [0] and [2]
-        let (row0, col0) = entry_grid_position(&rom, &WORLDS[0], 0); // row 0, col 4
-        let (row2, col2) = entry_grid_position(&rom, &WORLDS[0], 2); // row 0, col 8
-        let off0 = map_tile_offset(0, row0, col0);
-        let off2 = map_tile_offset(0, row2, col2);
+        let (row0, col0) = map_walker::entry_grid_position(&rom, &WORLDS[0], 0); // row 0, col 4
+        let (row2, col2) = map_walker::entry_grid_position(&rom, &WORLDS[0], 2); // row 0, col 8
+        let off0 = map_walker::map_tile_offset(0, row0, col0);
+        let off2 = map_walker::map_tile_offset(0, row2, col2);
         rom.write_byte(off0, TILE_FORTRESS);
         rom.write_byte(off2, TILE_FORTRESS);
 
@@ -684,13 +544,13 @@ mod tests {
         );
 
         // --- Update FortressFX_W1 to use slots 0 and 1 ---
-        rom.write_byte(FORTRESS_FX_WORLD_TABLE, 0x00);
-        rom.write_byte(FORTRESS_FX_WORLD_TABLE + 1, 0x01);
-        rom.write_byte(FORTRESS_FX_WORLD_TABLE + 2, 0x00);
-        rom.write_byte(FORTRESS_FX_WORLD_TABLE + 3, 0x00);
+        rom.write_byte(FX_WORLD_TABLE, 0x00);
+        rom.write_byte(FX_WORLD_TABLE + 1, 0x01);
+        rom.write_byte(FX_WORLD_TABLE + 2, 0x00);
+        rom.write_byte(FX_WORLD_TABLE + 3, 0x00);
 
         // --- Verify the map tile was replaced ---
-        let gap_tile = rom.read_byte(map_tile_offset(0, 6, 9));
+        let gap_tile = rom.read_byte(map_walker::map_tile_offset(0, 6, 9));
         assert_eq!(gap_tile, TILE_WATER_GAP);
 
         // --- Write patched ROM for manual testing ---
@@ -734,7 +594,7 @@ mod tests {
         }
 
         // Check FX table matches
-        for off in FORTRESS_FX_WORLD_TABLE..FORTRESS_FX_WORLD_TABLE + 32 {
+        for off in FX_WORLD_TABLE..FX_WORLD_TABLE + 32 {
             assert_eq!(rom1.read_byte(off), rom2.read_byte(off));
         }
 

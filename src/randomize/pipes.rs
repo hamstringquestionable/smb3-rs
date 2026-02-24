@@ -32,11 +32,6 @@ const TILE_REPLACEMENT: u8 = 0x47;
 /// InitIndex master table offset (9 word pointers, one per world + warp zone).
 const INIT_INDEX_MASTER: usize = 0x193DA;
 
-/// Level panel tiles (action level icons on the overworld).
-// Level panel tiles — will be used when filtering becomes more sophisticated.
-#[allow(dead_code)]
-const LEVEL_PANEL_RANGE: std::ops::RangeInclusive<u8> = 0x03..=0x0C;
-
 // ---------------------------------------------------------------------------
 // Data structures
 // ---------------------------------------------------------------------------

@@ -220,6 +220,79 @@ pub(super) fn map_tile_offset(world_idx: usize, row: usize, col: usize) -> usize
 }
 
 // ---------------------------------------------------------------------------
+// Level entry helpers
+// ---------------------------------------------------------------------------
+
+/// PRG bank loaded at CPU $A000-$BFFF for each tileset (0-18).
+pub(super) const PAGE_A000_BY_TILESET: [usize; 19] = [
+    11, 15, 21, 16, 17, 19, 18, 18, 18, 20, 23, 19, 17, 19, 13, 26, 26, 26, 9,
+];
+
+/// Data that travels with a level when shuffled.
+#[derive(Clone, Debug)]
+pub(super) struct LevelEntry {
+    pub tileset: u8,
+    pub obj_lo: u8,
+    pub obj_hi: u8,
+    pub lay_lo: u8,
+    pub lay_hi: u8,
+}
+
+/// Returns true if this map entry has a real level pointer (not a toad house,
+/// bonus game, hand trap, or pipe junction).
+pub(super) fn is_level_pointer(obj_ptr: u16, lay_ptr: u16) -> bool {
+    obj_ptr >= 0xC000 && lay_ptr != 0x0000
+}
+
+/// Convert a layout CPU address ($A000-$BFFF) + tileset to a ROM file offset.
+pub(super) fn layout_file_offset(cpu_addr: u16, tileset: u8) -> Option<usize> {
+    if tileset as usize >= PAGE_A000_BY_TILESET.len() || cpu_addr < 0xA000 {
+        return None;
+    }
+    let bank = PAGE_A000_BY_TILESET[tileset as usize];
+    Some(bank * 0x2000 + 0x10 + (cpu_addr as usize - 0xA000))
+}
+
+/// Read the screen count from a level's 9-byte header.
+/// Header byte 4, bits 3-0 = (num_screens - 1).
+pub(super) fn level_screen_count(rom: &Rom, layout_offset: usize) -> u8 {
+    (rom.read_byte(layout_offset + 4) & 0x0F) + 1
+}
+
+/// Read a LevelEntry from ROM for a given world and entry index.
+pub(super) fn read_entry(rom: &Rom, world: &WorldTables, idx: usize) -> LevelEntry {
+    let (_scrcol, objsets, layouts) = table_offsets(world);
+    let obj_off = objsets + idx * 2;
+    let lay_off = layouts + idx * 2;
+
+    LevelEntry {
+        tileset: rom.read_byte(world.rowtype_offset + idx) & 0x0F,
+        obj_lo: rom.read_byte(obj_off),
+        obj_hi: rom.read_byte(obj_off + 1),
+        lay_lo: rom.read_byte(lay_off),
+        lay_hi: rom.read_byte(lay_off + 1),
+    }
+}
+
+/// Write a LevelEntry back to ROM for a given world and entry index.
+/// Only the tileset (lower nibble of ByRowType) is updated — the upper
+/// nibble (map row position) is preserved.
+pub(super) fn write_entry(rom: &mut Rom, world: &WorldTables, idx: usize, entry: &LevelEntry) {
+    let (_scrcol, objsets, layouts) = table_offsets(world);
+    let obj_off = objsets + idx * 2;
+    let lay_off = layouts + idx * 2;
+
+    let old_brt = rom.read_byte(world.rowtype_offset + idx);
+    let new_brt = (old_brt & 0xF0) | (entry.tileset & 0x0F);
+    rom.write_byte(world.rowtype_offset + idx, new_brt);
+
+    rom.write_byte(obj_off, entry.obj_lo);
+    rom.write_byte(obj_off + 1, entry.obj_hi);
+    rom.write_byte(lay_off, entry.lay_lo);
+    rom.write_byte(lay_off + 1, entry.lay_hi);
+}
+
+// ---------------------------------------------------------------------------
 // Grid reading
 // ---------------------------------------------------------------------------
 
