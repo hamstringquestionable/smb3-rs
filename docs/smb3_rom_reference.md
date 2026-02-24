@@ -1377,9 +1377,9 @@ RAM `$07BB` (`World3_Bridge`): 0 = horizontal bridges passable, 1 = vertical bri
 - `Map_DrawBridgeCheck` = [B2, B2, B1, B1] (tile to check, per direction R/L/D/U)
 - `Map_DrawBridgeCheckV` = [00, 00, 01, 01] (required World3_Bridge value)
 
-**QoL fix:** Replace all 4 drawbridge tiles with normal path tiles ($B2→$45, $B1→$46)
-and NOP the toggle code at 0x14A6B (8 bytes → EA×8). This makes all paths permanently
-passable. The toggle code becomes inert since no drawbridge tiles remain.
+**QoL fix:** Replace all 4 drawbridge tiles with regular bridge tile $B3 (always passable,
+has bridge graphic) and NOP the toggle code at 0x14A6B (8 bytes → EA×8). Using $B3 instead
+of plain path tiles ($45/$46) preserves the visual bridge appearance on the map.
 
 ### Breakable Rocks (Hammer Item)
 
