@@ -116,8 +116,8 @@ const GEN_GROUP_POWERBLOCK: u8 = 0x20; // group 1
 /// ? block powerup shapes (flower=0, leaf=1, star=2).
 const QBLOCK_SHAPES: &[u8] = &[0x00, 0x01, 0x02];
 
-/// Brick powerup shapes (flower=6, leaf=7, star=8).
-const BRICK_SHAPES: &[u8] = &[0x06, 0x07, 0x08];
+/// Brick powerup shapes (flower=6, leaf=7, star=8, 1-up=11).
+const BRICK_SHAPES: &[u8] = &[0x06, 0x07, 0x08, 0x0B];
 
 /// Level header size in bytes (skipped after each 0xFF terminator).
 const LEVEL_HEADER_SIZE: usize = 9;
