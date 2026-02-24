@@ -112,12 +112,19 @@ const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
 ///          14=invis-coin, 15=invis-1up
 const GEN_GROUP_MASK: u8 = 0xE0;
 const GEN_GROUP_POWERBLOCK: u8 = 0x20; // group 1
+const GEN_GROUP_EXTENDED: u8 = 0x40; // group 2 (notes, wood blocks)
 
 /// ? block powerup shapes (flower=0, leaf=1, star=2).
 const QBLOCK_SHAPES: &[u8] = &[0x00, 0x01, 0x02];
 
 /// Brick powerup shapes (flower=6, leaf=7, star=8, 1-up=11).
 const BRICK_SHAPES: &[u8] = &[0x06, 0x07, 0x08, 0x0B];
+
+/// Note block powerup shapes (flower=1, leaf=2, star=3).
+const NOTE_SHAPES: &[u8] = &[0x01, 0x02, 0x03];
+
+/// Wood block powerup shapes (flower=4, leaf=5, star=6).
+const WOOD_SHAPES: &[u8] = &[0x04, 0x05, 0x06];
 
 /// Level header size in bytes (skipped after each 0xFF terminator).
 const LEVEL_HEADER_SIZE: usize = 9;
@@ -134,13 +141,14 @@ const PROTECTED_OFFSETS: &[usize] = &[
     0x23EA0, // 7-7 Q-star byte2 (screen 8)
 ];
 
-/// Randomize per-level ? block and brick powerup types by scanning all level
-/// data regions for generator commands that place powerup blocks, and swapping
-/// the shape index (byte2) to a random type within the same category.
+/// Randomize per-level powerup block types by scanning all level data regions
+/// for generator commands that place powerup blocks, and swapping the shape
+/// index (byte2) to a random type within the same category.
 ///
-/// ? blocks swap among {flower, leaf, star} and bricks swap among
-/// {flower-brick, leaf-brick, star-brick}. Protected offsets (like 7-7's
-/// star bricks) are never modified.
+/// Group 1 (0x20): ? blocks swap among {flower, leaf, star}, bricks swap among
+/// {flower, leaf, star, 1-up}. Group 2 (0x40): note blocks swap among
+/// {flower, leaf, star}, wood blocks swap among {flower, leaf, star}.
+/// Protected offsets (like 7-7's star blocks) are never modified.
 pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
     for region in LEVEL_DATA_REGIONS {
         let len = region.end - region.start;
@@ -165,14 +173,22 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
             let group = b0 & GEN_GROUP_MASK;
             let is_fixed = (b2 & 0xF0) == 0;
 
-            if group == GEN_GROUP_POWERBLOCK && is_fixed {
+            if is_fixed {
                 let shape = b2 & 0x0F;
                 let file_offset = region.start + i + 2;
 
-                if QBLOCK_SHAPES.contains(&shape) && !PROTECTED_OFFSETS.contains(&file_offset) {
-                    data[i + 2] = *QBLOCK_SHAPES.choose(rng).unwrap();
-                } else if BRICK_SHAPES.contains(&shape) && !PROTECTED_OFFSETS.contains(&file_offset) {
-                    data[i + 2] = *BRICK_SHAPES.choose(rng).unwrap();
+                if group == GEN_GROUP_POWERBLOCK {
+                    if QBLOCK_SHAPES.contains(&shape) && !PROTECTED_OFFSETS.contains(&file_offset) {
+                        data[i + 2] = *QBLOCK_SHAPES.choose(rng).unwrap();
+                    } else if BRICK_SHAPES.contains(&shape) && !PROTECTED_OFFSETS.contains(&file_offset) {
+                        data[i + 2] = *BRICK_SHAPES.choose(rng).unwrap();
+                    }
+                } else if group == GEN_GROUP_EXTENDED {
+                    if NOTE_SHAPES.contains(&shape) {
+                        data[i + 2] = *NOTE_SHAPES.choose(rng).unwrap();
+                    } else if WOOD_SHAPES.contains(&shape) {
+                        data[i + 2] = *WOOD_SHAPES.choose(rng).unwrap();
+                    }
                 }
             }
 
@@ -223,6 +239,10 @@ mod tests {
             0xE0, 0x52, 0x20,
             // variable-size grp=1 (byte2 upper nibble != 0): should NOT be touched
             0x37, 0x1C, 0x11,
+            // wood block leaf: byte0=0x57 (grp=2, y=7, hi=1), byte1=0x28, byte2=0x05
+            0x57, 0x28, 0x05,
+            // note block star: byte0=0x46 (grp=2, y=6), byte1=0x37, byte2=0x03
+            0x46, 0x37, 0x03,
             0xFF, // terminator
         ];
         data[start..start + level.len()].copy_from_slice(level);
@@ -343,6 +363,23 @@ mod tests {
 
         // Also verify the GroundRun extra byte was NOT corrupted
         assert_eq!(rom.read_byte(start + 12), 0x26, "GroundRun extra byte was corrupted");
+    }
+
+    #[test]
+    fn test_wood_note_blocks_randomized() {
+        let mut rom = make_test_rom();
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        randomize(&mut rom, &mut rng);
+
+        // Wood block leaf is at: header(9) + 3 grp1 cmds(9) + 3 non-power cmds(9) + 2 = byte2
+        let wood_offset = 0x1E512 + 9 + 9 + 9 + 2;
+        let b2_wood = rom.read_byte(wood_offset);
+        assert!(WOOD_SHAPES.contains(&b2_wood), "Wood block became 0x{b2_wood:02X}");
+
+        // Note block star is 3 bytes later
+        let note_offset = wood_offset + 3;
+        let b2_note = rom.read_byte(note_offset);
+        assert!(NOTE_SHAPES.contains(&b2_note), "Note block became 0x{b2_note:02X}");
     }
 
     #[test]
