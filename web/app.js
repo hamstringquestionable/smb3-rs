@@ -21,6 +21,7 @@ const optRemoveWhistles = document.getElementById("opt-remove-whistles");
 const optShuffleFortresses = document.getElementById("opt-shuffle-fortresses");
 const optAirshipLock = document.getElementById("opt-airship-lock");
 const optFixDrawbridges = document.getElementById("opt-fix-drawbridges");
+const optRemoveW2Rock = document.getElementById("opt-remove-w2-rock");
 const optStartingLives = document.getElementById("opt-starting-lives");
 
 // Dynamically populate Starting Lives dropdown (4–99)
@@ -90,6 +91,7 @@ generateBtn.addEventListener("click", () => {
 		shuffle_fortresses: optShuffleFortresses.checked,
 		airship_lock: optAirshipLock.checked,
 		fix_drawbridges: optFixDrawbridges.checked,
+		remove_w2_rock: optRemoveW2Rock.checked,
 		starting_lives: Number(optStartingLives.value),
 	});
 

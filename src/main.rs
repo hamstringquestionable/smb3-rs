@@ -75,6 +75,10 @@ struct Cli {
     #[arg(long)]
     keep_drawbridges: bool,
 
+    /// Keep W2 secret path rock (it is removed by default)
+    #[arg(long)]
+    keep_w2_rock: bool,
+
     /// Disable airship lock (anchor effect always on by default, use this flag to disable)
     #[arg(long)]
     no_airship_lock: bool,
@@ -122,6 +126,7 @@ fn main() {
         redistribute_fortresses: cli.redistribute_fortresses,
         shuffle_pipes: cli.shuffle_pipes,
         fix_drawbridges: !cli.keep_drawbridges,
+        remove_w2_rock: !cli.keep_w2_rock,
         airship_lock: !cli.no_airship_lock,
         starting_lives: cli.starting_lives,
     };
@@ -151,6 +156,7 @@ fn main() {
     eprintln!("  Chest items: {}", if options.chest_items { "on" } else { "off" });
     eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });
     eprintln!("  W3 drawbridges: {}", if options.fix_drawbridges { "fixed open" } else { "toggling" });
+    eprintln!("  W2 secret rock: {}", if options.remove_w2_rock { "removed" } else { "kept" });
     eprintln!("  Airship lock: {}", if options.airship_lock { "on" } else { "off" });
     eprintln!("  Output:   {}", output_path.display());
 

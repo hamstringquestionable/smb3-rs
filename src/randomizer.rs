@@ -59,6 +59,9 @@ pub struct Options {
     /// Fix W3 drawbridges so all paths are always passable.
     #[serde(default = "default_true")]
     pub fix_drawbridges: bool,
+    /// Remove the W2 rock blocking the secret path.
+    #[serde(default = "default_true")]
+    pub remove_w2_rock: bool,
 }
 
 fn default_false() -> bool {
@@ -86,6 +89,7 @@ impl Default for Options {
             redistribute_fortresses: false,
             shuffle_pipes: false,
             fix_drawbridges: true,
+            remove_w2_rock: true,
             starting_lives: default_starting_lives(),
         }
     }
@@ -135,6 +139,9 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     }
     if options.fix_drawbridges {
         randomize::qol::fix_w3_drawbridges(rom);
+    }
+    if options.remove_w2_rock {
+        randomize::qol::remove_w2_rock(rom);
     }
 
     // Set starting lives (default 4; user/configurable)

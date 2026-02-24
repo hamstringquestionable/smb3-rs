@@ -14,10 +14,18 @@ const W3_BRIDGE_V2: usize = 0x188F3;
 const W3_TOGGLE_OFFSET: usize = 0x14A6B;
 const W3_TOGGLE_LEN: usize = 8;
 
+// W2 rock blocking secret path (screen 1, row 0, col 5) — $51 → $45
+const W2_SECRET_ROCK: usize = 0x186E0;
+
 /// Set starting lives for both Mario and Luigi (1–99).
 pub fn set_starting_lives(rom: &mut Rom, lives: u8) {
     let clamped = lives.min(99).max(1);
     rom.write_byte(STARTING_LIVES_OFFSET, clamped);
+}
+
+/// Remove the W2 rock blocking the secret path, replacing it with horizontal path.
+pub fn remove_w2_rock(rom: &mut Rom) {
+    rom.write_byte(W2_SECRET_ROCK, 0x45);
 }
 
 /// Replace W3 drawbridge tiles with normal path tiles and NOP the toggle code.
@@ -62,6 +70,14 @@ mod tests {
         assert_eq!(rom.read_byte(STARTING_LIVES_OFFSET), 99);
         set_starting_lives(&mut rom, 0);
         assert_eq!(rom.read_byte(STARTING_LIVES_OFFSET), 1);
+    }
+
+    #[test]
+    fn test_remove_w2_rock() {
+        let mut rom = make_test_rom();
+        rom.write_byte(W2_SECRET_ROCK, 0x51);
+        remove_w2_rock(&mut rom);
+        assert_eq!(rom.read_byte(W2_SECRET_ROCK), 0x45);
     }
 
     #[test]
