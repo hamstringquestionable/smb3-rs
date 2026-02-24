@@ -1195,6 +1195,26 @@ The "replacement tile" (`FortressFX_MapTileReplace`) is whatever path tile was a
 lock/bridge position before the lock was placed. When placing a lock at a new position,
 read the current tile first and store it as the replacement.
 
+**CRITICAL — Pattern bytes must match the replacement tile, not the gap type:**
+
+The 4-byte `FortressFX_Patterns` entry for each slot determines the VRAM CHR tiles
+written when the lock/gap opens. These must match the visual appearance of the
+replacement tile. Using the wrong patterns causes the tile to render incorrectly
+(e.g., a horizontal path looking like a vertical path) even if the collision map tile
+(`FortressFX_MapTileReplace`) is correct.
+
+| Replace Tile | Patterns | Visual |
+|-------------|----------|--------|
+| $46 (vertical path) | FE C0 FE C0 | Vertical path segment |
+| $45 (horizontal path) | FE FE E1 E1 | Horizontal path/bridge |
+| $DA (sky bridge path) | FE FE E1 E1 | Horizontal path/bridge |
+| $B3 (water bridge path) | D4 D6 D5 D7 | Water bridge tiles |
+| $B7 (horizontal path) | FE FE E1 E1 | Horizontal path/bridge |
+| (W8 slot 0x0F only) | FF FF FF FF | Special W8 tiles |
+
+When placing a lock on an arbitrary path tile, derive the patterns from the original
+tile at that position — NOT from whether the gap tile is a lock ($54) or bridge ($56).
+
 **VRAM address formula (verified against all 17 slots):**
 
 ```
@@ -1284,6 +1304,37 @@ Boom-Boom's Y-byte upper nibble to match its new position's ordinal within the
 destination world (preserving the lower nibble spawn position). The `FortressFX_W1–W8`
 table is **not** modified — it remains correct because each fortress now reports the
 right ordinal for its new world.
+
+### Lock Shuffle Design Constraints
+
+Key constraints discovered while implementing lock shuffle (see `lock-shuffle-wip` branch
+for the failed attempt):
+
+**Execution order:** Lock shuffle MUST run after pipe shuffle, because pipe shuffle calls
+`resort_pointer_table()` which reorders pointer table entries. Use `grid_pos` (map
+coordinates) instead of `entry_idx` (pointer table index) to identify fortress positions,
+since grid positions are stable across resort.
+
+**Ordinal semantics:** Beating fort with ordinal N opens FX slot N-1. The pair
+(fort, lock) at ordinal N means: beating that fort opens that lock. The lock should
+unblock the NEXT fort in the progression — not the fort it's paired with. Getting this
+backwards creates deadlocks where a fort can't be reached because its own lock blocks it.
+
+**Combined blocking:** N locks picked individually for their blocking quality may
+collectively block ALL forts. Each lock scored in isolation may block one fort, but
+2+ locks together may create an impassable barrier. Must validate that the full set of
+chosen locks still allows at least one fort to be reached, and that a valid beat→open
+progression exists.
+
+**MAP_COMPLETE_BITS coverage:** Only grid rows 0–7 have completion bits. Row 8 has no
+bit (`0x00`), so locks placed at row 8 won't persist across map reloads.
+
+**Vanilla FX positions:** Bridges ($56), water gaps ($9D), and sky gaps ($E4) should only
+appear at the 13 vanilla FX positions. Locks ($54) can be placed on any path tile.
+
+**W1 fortress secret exit:** The W1 fortress can be completed via a secret exit that does
+NOT trigger the Boom-Boom FX (no crystal ball). Its lock must not block progression —
+the airship should be reachable even if the W1 fortress lock stays closed.
 
 ### World Progression
 
