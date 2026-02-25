@@ -120,7 +120,7 @@ pub(super) const AIRSHIP_ENTRIES: &[(usize, usize)] = &[
 pub(super) const BOWSER_ENTRY: (usize, usize) = (7, 40);
 
 /// Map transition entries.
-pub(super) const MAP_TRANSITIONS: &[(usize, usize)] = &[(4, 5)];
+pub(super) const MAP_TRANSITIONS: &[(usize, usize)] = &[];
 
 // FX table offsets (17 slots)
 pub(super) const FX_MAP_LOC_ROW: usize = 0x14855;
