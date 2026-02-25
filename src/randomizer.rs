@@ -103,6 +103,16 @@ impl Default for Options {
 pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
+    // QoL map patches run first so all subsequent overworld operations
+    // (fortress redistribution, pipe shuffle, lock shuffle) see the final
+    // map connectivity and store correct replacement tiles.
+    if options.fix_drawbridges {
+        randomize::qol::fix_w3_drawbridges(rom);
+    }
+    if options.remove_w2_rock {
+        randomize::qol::remove_w2_rock(rom);
+    }
+
     if options.powerups {
         randomize::powerups::randomize(rom, &mut rng);
     }
@@ -143,12 +153,6 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     }
     if options.disable_autoscroll {
         randomize::autoscroll::disable_autoscroll(rom);
-    }
-    if options.fix_drawbridges {
-        randomize::qol::fix_w3_drawbridges(rom);
-    }
-    if options.remove_w2_rock {
-        randomize::qol::remove_w2_rock(rom);
     }
 
     // Set starting lives (default 4; user/configurable)

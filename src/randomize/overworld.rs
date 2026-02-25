@@ -561,8 +561,8 @@ const LOCKABLE_TILES: &[u8] = &[
     0xAA, // vertical path variant
     0xAB, // vertical path variant
     0xB0, // vertical path variant
-    0xB1, // vertical drawbridge (if fix_drawbridges is off)
-    0xB2, // horizontal drawbridge (if fix_drawbridges is off)
+    0xB1, // vertical drawbridge
+    0xB2, // horizontal drawbridge
     0xDB, // vertical path variant
     0xBA, // vertical path variant
 ];
