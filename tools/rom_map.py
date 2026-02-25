@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 # pyright: basic
 """
-SMB3 ROM Map Generator
+SMB3 ROM Map — comprehensive ROM analysis, map walking, and visualization.
 
-Walks the entire ROM using known pointer tables and level data structures
-to produce a comprehensive JSON map of all levels, their powerup blocks,
-enemy data, and key tables. The output avoids redundant ROM scanning in
-future sessions.
+Modes:
+  python3 tools/rom_map.py [rom]                    # generate tools/rom_map.json
+  python3 tools/rom_map.py [rom] --json out.json    # custom JSON output path
+  python3 tools/rom_map.py [rom] --walk             # BFS walk all worlds
+  python3 tools/rom_map.py [rom] --walk --world 6   # BFS walk one world
+  python3 tools/rom_map.py [rom] --progression      # fortress progression sim
+  python3 tools/rom_map.py [rom] --numbered         # BFS-ordered level numbering
+  python3 tools/rom_map.py [rom] --viz              # pointer entry overlay
+  python3 tools/rom_map.py [rom] --viz --raw        # raw hex tile IDs
 
-Usage: python3 tools/rom_map.py [rom_path] [--json output.json]
-  Default ROM: "Super Mario Bros. 3 (USA) (Rev 1).nes"
-  Default output: tools/rom_map.json
+Default ROM: "Super Mario Bros. 3 (USA) (Rev 1).nes"
 """
 
 import json
 import os
 import sys
-from collections import defaultdict
+from collections import defaultdict, deque
 
 # --------------------------------------------------------------------------
 # Constants
@@ -279,7 +282,70 @@ AIRSHIP_ENTRIES_SET = {
 BOWSER_ENTRY_PAIR = (7, 40)
 
 # Map transition entries
-MAP_TRANSITIONS_SET = {(4, 5)}
+MAP_TRANSITIONS_SET = set()
+
+# Special level-based transitions (acts like pipes but aren't in pipe dest tables)
+# W5 spiral castle (idx 10 at (2,12)) drops you at pipe (idx 21 at (2,24)) on screen 1
+SPECIAL_TRANSITIONS = [
+    (4, 10, 21),  # (world_idx, from_entry_idx, to_entry_idx)
+]
+
+# Human-readable level names, keyed by (world_idx, entry_idx)
+# Most names are auto-derived from map tiles (0x03-0x0F = level 1-13).
+# This dict holds overrides for special tiles that can't be auto-named.
+# Tile meanings: 0x67/0xEB/0xAF = fortress, 0xC9 = airship, 0xCC = bowser,
+#   0x5F = spiral castle, 0x68 = quicksand, 0x69 = pyramid,
+#   0xE6 = W8 dark-land level (unnumbered), 0x4A/0x47 = hammer bro (but some are levels)
+LEVEL_NAME_OVERRIDES = {
+    # W2: special desert tiles
+    (1, 32): "2-QS",   # quicksand (tile 0x68)
+    (1, 42): "2-Pyr",  # pyramid (tile 0x69)
+    # W5: spiral castle
+    (4, 10): "5-SC",   # spiral castle (tile 0x5F)
+    # W7: levels on hammer-bro tiles (0x4A)
+    (6, 11): "7-P1",   # Piranha level 1 (tile 0x4A, not a hammer bro)
+    (6, 45): "7-P2",   # Piranha level 2 (tile 0x4A)
+    # W8: special levels
+    (7, 5): "8-Tank",  # tank level (tile 0x47)
+    (7, 7): "8-Navy",  # navy/battleship level (fortress tile 0xAF)
+    (7, 14): "8-Hnd3", # hand trap 3 (tile 0xE6)
+    (7, 15): "8-Hnd2", # hand trap 2 (tile 0xE6)
+    (7, 16): "8-Hnd1", # hand trap 1 (tile 0xE6)
+    (7, 10): "8-Air",  # air force level (fortress tile 0x47)
+    (7, 26): "8F",     # the one true fortress
+    (7, 36): "8-STnk", # super tank (fortress tile 0x47)
+}
+
+
+def derive_level_name(world_idx, entry_idx, entry_type, tile):
+    """Derive a human-readable name from tile and entry type.
+
+    Returns name string or empty string if not a named entry.
+    """
+    w = world_idx + 1  # 1-indexed for display
+
+    # Check overrides first
+    override = LEVEL_NAME_OVERRIDES.get((world_idx, entry_idx))
+    if override:
+        return override
+
+    # Fortress by entry type (tiles vary: 0x67, 0xEB, 0xAF, 0x47...)
+    if entry_type == "fortress":
+        return f"{w}F"  # caller adds F2/F3 suffix for duplicates
+
+    # Airship by entry type
+    if entry_type == "airship":
+        return f"{w}A"
+
+    # Bowser by entry type
+    if entry_type == "bowser":
+        return "8B"
+
+    # Numbered level tiles: 0x03 = level 1, 0x04 = level 2, ...
+    if 0x03 <= tile <= 0x0F:
+        return f"{w}-{tile - 2}"
+
+    return ""
 
 # InitIndex master table (PRG012) — 9 x 2-byte LE pointers (8 worlds + warp zone)
 INIT_INDEX_MASTER = 0x193DA
@@ -295,6 +361,48 @@ PALETTE_OFFSETS = {
     "lava": {"offset": 0x36DAA, "size": 4},
     "bowser": {"offset": 0x36DFE, "size": 4},
 }
+
+
+# --------------------------------------------------------------------------
+# Map walker constants (BFS traversal, fortress progression, visualization)
+# --------------------------------------------------------------------------
+
+# Per-direction valid path tiles (Map_Object_Valid_Left/Right/Down/Up in PRG010)
+VALID_HORZ = {0x45, 0xB2, 0xB3, 0xAC, 0xB7, 0xB8, 0xDA, 0xB9, 0xE6}
+VALID_VERT = {0x46, 0xB1, 0xAA, 0xAB, 0xB0, 0xDB, 0xBA}
+
+# Directions: (delta_row, delta_col, valid_set)
+DIRECTIONS = [
+    (0, +1, VALID_HORZ),   # right
+    (0, -1, VALID_HORZ),   # left
+    (+1, 0, VALID_VERT),   # down
+    (-1, 0, VALID_VERT),   # up
+]
+
+# Special tiles
+TILE_START = 0xE5
+TILE_PIPE = 0xBC
+TILE_SPIRAL = 0x5F
+
+# Tiles that are "background" / non-walkable
+BACKGROUND_TILES = {0xB4, 0xFF, 0x02}
+
+# FX table offsets (17 slots for fortress locks/bridges)
+FX_MAP_LOC_ROW = 0x14855       # 17 bytes
+FX_MAP_LOC = 0x14866           # 17 bytes
+FX_MAP_TILE_REPLACE = 0x14877  # 17 bytes
+FX_WORLD_TABLE = 0x14888       # 32 bytes (4 per world)
+
+# ANSI color codes
+RESET   = "\033[0m"
+RED     = "\033[1;31m"
+GREEN   = "\033[1;32m"
+CYAN    = "\033[1;36m"
+MAGENTA = "\033[1;35m"
+YELLOW  = "\033[1;33m"
+DIM     = "\033[2m"
+WHITE   = "\033[1;37m"
+BLUE    = "\033[1;34m"
 
 
 # --------------------------------------------------------------------------
@@ -669,8 +777,25 @@ def build_level_groups(rom, all_region_levels, worlds_data):
 # Level pointer table parsing
 # --------------------------------------------------------------------------
 
-def classify_entry(world_idx, entry_idx, obj_ptr, lay_ptr, tileset):
-    """Classify a level pointer table entry by type (richer than before)."""
+def has_pipeway_controller(rom, obj_ptr):
+    """Check if enemy data at obj_ptr contains PIPEWAYCONTROLLER (0x25)."""
+    if obj_ptr < 0xC000 or obj_ptr > 0xDFFF:
+        return False
+    file_off = obj_file_offset(obj_ptr)
+    if file_off is None or file_off + 1 >= len(rom):
+        return False
+    pos = file_off + 1  # skip page flag
+    while pos + 2 < len(rom):
+        if rom[pos] == 0xFF:
+            break
+        if rom[pos] == 0x25:
+            return True
+        pos += 3
+    return False
+
+
+def classify_entry(world_idx, entry_idx, obj_ptr, lay_ptr, tileset, rom=None):
+    """Classify a level pointer table entry by type."""
     if (world_idx, entry_idx) in FORTRESS_ENTRIES:
         return "fortress"
     if (world_idx, entry_idx) in AIRSHIP_ENTRIES_SET:
@@ -683,7 +808,7 @@ def classify_entry(world_idx, entry_idx, obj_ptr, lay_ptr, tileset):
         return "toad_house"
     if obj_ptr == 0x0001 and lay_ptr == 0x0000:
         return "bonus_game"
-    if tileset == 14:
+    if rom is not None and obj_ptr >= 0xC000 and has_pipeway_controller(rom, obj_ptr):
         return "pipe"
     if obj_ptr >= 0xC000 and lay_ptr != 0x0000:
         return "level"
@@ -714,7 +839,7 @@ def parse_world_tables(rom, world_idx, world_info):
         grid_row = row_nib - 2
         grid_col = screen * 16 + col
 
-        entry_type = classify_entry(world_idx, i, obj_ptr, lay_ptr, tileset)
+        entry_type = classify_entry(world_idx, i, obj_ptr, lay_ptr, tileset, rom)
 
         entry = {
             "index": i,
@@ -1172,9 +1297,587 @@ def print_summary(rom_map):
     print()
 
 
+# --------------------------------------------------------------------------
+# Map walker: tile grid, BFS, pipes, FX, fortress progression
+# --------------------------------------------------------------------------
+
+def read_tile_grid(rom, world_idx):
+    """Read a world's tile grid as a 2D list [row][col]."""
+    info = MAP_TILE_GRIDS[world_idx]
+    start = info["file_offset"]
+    cols = info["columns"]
+    grid = []
+    for r in range(MAP_TILE_GRID_ROWS):
+        row = []
+        for c in range(cols):
+            screen = c // 16
+            col_in_screen = c % 16
+            row.append(rom[start + screen * 144 + r * 16 + col_in_screen])
+        grid.append(row)
+    return grid
+
+
+def find_start(grid):
+    """Find the START tile ($E5) position."""
+    for r in range(len(grid)):
+        for c in range(len(grid[0])):
+            if grid[r][c] == TILE_START:
+                return (r, c)
+    return None
+
+
+def entry_grid_position(rom, world_idx, entry_idx):
+    """Get (grid_row, grid_col) for a pointer table entry."""
+    world = WORLDS[world_idx]
+    n = world["entry_count"]
+    rt_off = world["rowtype_offset"]
+    sc_off = rt_off + n
+    row_nib = (rom[rt_off + entry_idx] >> 4) & 0x0F
+    scrcol = rom[sc_off + entry_idx]
+    screen = (scrcol >> 4) & 0x0F
+    col = scrcol & 0x0F
+    return (row_nib - 2, screen * 16 + col)
+
+
+def read_pipe_pairs(rom):
+    """Read pipe pairs from destination tables. Returns dict: world_idx -> list of (pos_a, pos_b)."""
+    pipes_by_world = {i: [] for i in range(8)}
+    for dest in range(0x18):
+        if dest not in DEST_TO_WORLD:
+            continue
+        world_idx = DEST_TO_WORLD[dest]
+        xhi = rom[PIPE_MAP_XHI + dest]
+        x   = rom[PIPE_MAP_X + dest]
+        y   = rom[PIPE_MAP_Y + dest]
+        a_scr = (xhi >> 4) & 0x0F
+        b_scr = xhi & 0x0F
+        a_col = (x >> 4) & 0x0F
+        b_col = x & 0x0F
+        a_row = (y >> 4) & 0x0F
+        b_row = y & 0x0F
+        pipes_by_world[world_idx].append(
+            ((a_row - 2, a_scr * 16 + a_col), (b_row - 2, b_scr * 16 + b_col))
+        )
+    # Add special transitions (e.g. W5 spiral castle -> screen 1 pipe)
+    for world_idx, from_idx, to_idx in SPECIAL_TRANSITIONS:
+        pos_a = entry_grid_position(rom, world_idx, from_idx)
+        pos_b = entry_grid_position(rom, world_idx, to_idx)
+        pipes_by_world[world_idx].append((pos_a, pos_b))
+
+    return pipes_by_world
+
+
+def read_fx_slots(rom):
+    """Read all 17 FX slots — grid position and replacement tile."""
+    slots = []
+    for i in range(17):
+        loc_row = rom[FX_MAP_LOC_ROW + i]
+        loc = rom[FX_MAP_LOC + i]
+        grid_row = (loc_row >> 4) - 2
+        col_in_screen = (loc >> 4) & 0x0F
+        screen = loc & 0x0F
+        slots.append({
+            "grid_row": grid_row,
+            "grid_col": screen * 16 + col_in_screen,
+            "replace_tile": rom[FX_MAP_TILE_REPLACE + i],
+        })
+    return slots
+
+
+def read_world_fx_assignments(rom):
+    """Read per-world FX slot assignments. Returns dict: world_idx -> list of slot indices."""
+    assignments = {}
+    for wi in range(8):
+        fort_count = sum(1 for w, _ in FORTRESS_ENTRIES if w == wi)
+        base = FX_WORLD_TABLE + wi * 4
+        assignments[wi] = [rom[base + i] for i in range(min(fort_count, 4))]
+    return assignments
+
+
+def read_fortress_positions(rom):
+    """Grid positions of fortress entries. Returns dict: world_idx -> list of (row, col)."""
+    by_world = {}
+    for wi, ei in sorted(FORTRESS_ENTRIES):
+        by_world.setdefault(wi, []).append(ei)
+    positions = {}
+    for wi, entries in by_world.items():
+        positions[wi] = [entry_grid_position(rom, wi, ei) for ei in entries]
+    return positions
+
+
+def walk_map(grid, pipe_pairs, start_pos=None):
+    """BFS walk using SMB3's 2-tile movement model.
+
+    Returns (nodes, edges, path_tiles, bfs_order) where bfs_order is a list
+    of (row, col) in the order they were first discovered.
+    """
+    rows = len(grid)
+    cols = len(grid[0])
+    start = start_pos if start_pos is not None else find_start(grid)
+    if start is None:
+        return set(), {}, set(), []
+
+    pipe_lookup = {}
+    for a, b in pipe_pairs:
+        pipe_lookup.setdefault(a, []).append(b)
+        pipe_lookup.setdefault(b, []).append(a)
+
+    nodes = set()
+    edges = {}
+    path_tiles = set()
+    bfs_order = []
+    queue = deque([start])
+    nodes.add(start)
+    bfs_order.append(start)
+
+    while queue:
+        r, c = queue.popleft()
+        if (r, c) not in edges:
+            edges[(r, c)] = []
+
+        for dr, dc, valid_set in DIRECTIONS:
+            pr, pc = r + dr, c + dc
+            if pr < 0 or pr >= rows or pc < 0 or pc >= cols:
+                continue
+            if grid[pr][pc] not in valid_set:
+                continue
+            nr, nc = r + 2 * dr, c + 2 * dc
+            if nr < 0 or nr >= rows or nc < 0 or nc >= cols:
+                continue
+            if grid[nr][nc] in BACKGROUND_TILES:
+                continue
+            path_tiles.add((pr, pc))
+            edges[(r, c)].append(((nr, nc), (pr, pc), grid[pr][pc]))
+            if (nr, nc) not in nodes:
+                nodes.add((nr, nc))
+                bfs_order.append((nr, nc))
+                queue.append((nr, nc))
+
+        if (r, c) in pipe_lookup:
+            for dest in pipe_lookup[(r, c)]:
+                if dest not in nodes:
+                    nodes.add(dest)
+                    bfs_order.append(dest)
+                    queue.append(dest)
+                edges[(r, c)].append((dest, None, "pipe"))
+
+    return nodes, edges, path_tiles, bfs_order
+
+
+def simulate_progression(rom, world_idx, pipe_pairs):
+    """Simulate fortress progression: walk, beat forts, open locks, re-walk.
+
+    Returns list of steps. Each step has:
+        fort_idx, fort_pos, fx_pos, fx_old_tile, fx_new_tile,
+        nodes, path_tiles, bfs_order, grid (snapshot)
+    """
+    grid = read_tile_grid(rom, world_idx)
+    fx_slots = read_fx_slots(rom)
+    fx_assignments = read_world_fx_assignments(rom)
+    fort_positions = read_fortress_positions(rom)
+
+    world_fx = fx_assignments.get(world_idx, [])
+    world_forts = fort_positions.get(world_idx, [])
+    beaten = set()
+    steps = []
+
+    nodes, edges, path_tiles, bfs_order = walk_map(grid, pipe_pairs)
+    steps.append({
+        "fort_idx": None, "fort_pos": None,
+        "fx_pos": None, "fx_old_tile": None, "fx_new_tile": None,
+        "nodes": set(nodes), "path_tiles": set(path_tiles),
+        "bfs_order": list(bfs_order),
+        "grid": [row[:] for row in grid],
+    })
+
+    while True:
+        reachable = [i for i, pos in enumerate(world_forts)
+                     if i not in beaten and pos in nodes]
+        if not reachable:
+            break
+        fi = reachable[0]
+        beaten.add(fi)
+        fx_pos = fx_old = fx_new = None
+        if fi < len(world_fx):
+            si = world_fx[fi]
+            slot = fx_slots[si]
+            fr, fc = slot["grid_row"], slot["grid_col"]
+            fx_old = grid[fr][fc]
+            fx_new = slot["replace_tile"]
+            grid[fr][fc] = fx_new
+            fx_pos = (fr, fc)
+
+        nodes, edges, path_tiles, bfs_order = walk_map(grid, pipe_pairs)
+        steps.append({
+            "fort_idx": fi, "fort_pos": world_forts[fi],
+            "fx_pos": fx_pos, "fx_old_tile": fx_old, "fx_new_tile": fx_new,
+            "nodes": set(nodes), "path_tiles": set(path_tiles),
+            "bfs_order": list(bfs_order),
+            "grid": [row[:] for row in grid],
+        })
+
+    return steps
+
+
+def find_chokepoints(nodes, edges):
+    """Find path tiles whose removal disconnects the node graph."""
+    if not nodes:
+        return set()
+    adj = {n: [] for n in nodes}
+    for node, nbrs in edges.items():
+        for dest, path_pos, _ in nbrs:
+            adj[node].append((dest, path_pos))
+    path_positions = set()
+    for node, nbrs in edges.items():
+        for _, path_pos, _ in nbrs:
+            if path_pos is not None:
+                path_positions.add(path_pos)
+    chokepoints = set()
+    start = next(iter(nodes))
+    for pp in path_positions:
+        visited = {start}
+        q = deque([start])
+        while q:
+            n = q.popleft()
+            for dest, p in adj[n]:
+                if p == pp:
+                    continue
+                if dest not in visited:
+                    visited.add(dest)
+                    q.append(dest)
+        if len(visited) < len(nodes):
+            chokepoints.add(pp)
+    return chokepoints
+
+
+# --------------------------------------------------------------------------
+# Map visualization: entry lookup, BFS-numbered rendering
+# --------------------------------------------------------------------------
+
+def build_entry_lookup(rom, world_idx):
+    """Build (grid_row, grid_col) -> entry info dict for a world's pointer table.
+
+    Detects hammer bros via duplicate (obj, lay) pairs.
+    """
+    world = WORLDS[world_idx]
+    grid = read_tile_grid(rom, world_idx)
+    n = world["entry_count"]
+    rt_off = world["rowtype_offset"]
+    sc_off = rt_off + n
+    obj_off = sc_off + n
+    lay_off = obj_off + n * 2
+
+    entries = []
+    for i in range(n):
+        rowtype = rom[rt_off + i]
+        scrcol = rom[sc_off + i]
+        obj_ptr = read_word(rom, obj_off + i * 2)
+        lay_ptr = read_word(rom, lay_off + i * 2)
+        tileset = rowtype & 0x0F
+        row_nib = (rowtype >> 4) & 0x0F
+        screen = (scrcol >> 4) & 0x0F
+        col = scrcol & 0x0F
+        grid_row = row_nib - 2
+        grid_col = screen * 16 + col
+
+        entry_type = classify_entry(world_idx, i, obj_ptr, lay_ptr, tileset, rom)
+        # Check if this is the start tile
+        if (0 <= grid_row < len(grid) and 0 <= grid_col < len(grid[0])
+                and grid[grid_row][grid_col] == TILE_START):
+            entry_type = "start"
+        entries.append({
+            "index": i, "type": entry_type, "tileset": tileset,
+            "obj_ptr": obj_ptr, "lay_ptr": lay_ptr,
+            "grid_row": grid_row, "grid_col": grid_col,
+        })
+
+    # Detect hammer bros: duplicate (obj, lay) pairs among levels
+    pair_counts = defaultdict(int)
+    for e in entries:
+        if e["type"] == "level":
+            pair_counts[(e["obj_ptr"], e["lay_ptr"])] += 1
+    for e in entries:
+        if e["type"] == "level" and pair_counts[(e["obj_ptr"], e["lay_ptr"])] > 1:
+            e["type"] = "hammer_bro"
+
+    # Second pass: levels sharing obj_ptr with known hammer bros are also hammer bros
+    hammer_objs = {e["obj_ptr"] for e in entries if e["type"] == "hammer_bro"}
+    for e in entries:
+        if e["type"] == "level" and e["obj_ptr"] in hammer_objs:
+            e["type"] = "hammer_bro"
+
+    lookup = {}
+    for e in entries:
+        lookup[(e["grid_row"], e["grid_col"])] = e
+
+    return entries, lookup
+
+
+# Short type labels for the numbered map legend
+TYPE_LABEL = {
+    "level": "level", "fortress": "fort", "airship": "airship",
+    "toad_house": "toad", "bonus_game": "spade", "bowser": "bowser",
+    "hammer_bro": "hammer", "special": "special", "pipe": "pipe",
+    "transition": "trans", "start": "start", "unknown": "???",
+}
+
+# Single-char symbols for grid rendering when no BFS number
+TYPE_CHAR = {
+    "level": "L", "fortress": "F", "airship": "A", "toad_house": "T",
+    "bonus_game": "$", "bowser": "W", "hammer_bro": "H", "special": "!",
+    "pipe": "P", "transition": "^", "start": "S", "unknown": "?",
+}
+
+# ANSI color per type
+TYPE_COLOR = {
+    "level": WHITE, "fortress": RED, "airship": YELLOW, "toad_house": CYAN,
+    "bonus_game": CYAN, "bowser": RED, "hammer_bro": MAGENTA,
+    "special": DIM, "pipe": MAGENTA, "transition": BLUE, "start": GREEN,
+    "unknown": DIM,
+}
+
+
+def render_numbered_map(rom, world_idx, pipe_pairs):
+    """Render a world map with BFS-ordered numbers at each node.
+
+    Uses fortress progression to open locks, so nodes behind locks get
+    numbered after the fortress is beaten. Returns a string.
+    """
+    steps = simulate_progression(rom, world_idx, pipe_pairs)
+    _, entry_lookup = build_entry_lookup(rom, world_idx)
+
+    # Merge all BFS orders across progression steps.
+    # Nodes from later steps (after locks open) continue the numbering.
+    seen = set()
+    ordered_nodes = []
+    for step in steps:
+        for pos in step["bfs_order"]:
+            if pos not in seen:
+                seen.add(pos)
+                ordered_nodes.append(pos)
+
+    # Assign BFS numbers only to nodes that have a pointer table entry
+    node_number = {}  # pos -> (bfs_num, entry)
+    num = 1
+    for pos in ordered_nodes:
+        if pos in entry_lookup:
+            node_number[pos] = (num, entry_lookup[pos])
+            num += 1
+
+    # Get final grid state (all locks opened)
+    final_grid = steps[-1]["grid"]
+
+    # Derive level names from tiles, with fortress numbering
+    grid_for_tiles = read_tile_grid(rom, world_idx)
+    # Count forts that will get default "NF" name (not overridden)
+    total_forts = sum(1 for pos in ordered_nodes
+                      if pos in node_number
+                      and node_number[pos][1]["type"] == "fortress"
+                      and (world_idx, node_number[pos][1]["index"])
+                          not in LEVEL_NAME_OVERRIDES)
+    entry_names = {}  # pos -> name string
+    fort_count = 0
+    for pos in ordered_nodes:
+        if pos not in node_number:
+            continue
+        _, entry = node_number[pos]
+        r, c = pos
+        tile = grid_for_tiles[r][c] if 0 <= r < len(grid_for_tiles) and 0 <= c < len(grid_for_tiles[0]) else 0
+        name = derive_level_name(world_idx, entry["index"], entry["type"], tile)
+        # Number fortresses: NF if single, NF1/NF2/... if multiple
+        if name and name.endswith("F") and len(name) <= 2:
+            fort_count += 1
+            if total_forts > 1:
+                name = f"{name}{fort_count}"
+        entry_names[pos] = name
+    final_nodes = steps[-1]["nodes"]
+    final_paths = steps[-1]["path_tiles"]
+    cols = len(final_grid[0])
+
+    # Collect pipe positions
+    pipe_pos = set()
+    for a, b in pipe_pairs:
+        pipe_pos.add(a)
+        pipe_pos.add(b)
+
+    lines = []
+    w_name = MAP_TILE_GRIDS[world_idx]["name"]
+    lines.append(f"\n{WHITE}=== {w_name} ==={RESET}")
+
+    # Column ruler
+    ruler = "      "
+    for c in range(cols):
+        ruler += f"{c % 10:<3d}" if c % 10 == 0 else "   " if c % 5 == 0 else "  ."
+    # Simpler: just print col numbers every cell, 3-wide
+    ruler = "      "
+    for c in range(cols):
+        if c % 16 == 0:
+            ruler += f"{GREEN}|{RESET}"
+        else:
+            ruler += " "
+    lines.append(ruler)
+
+    # Grid rows (3 chars per cell: number or symbol)
+    for r in range(MAP_TILE_GRID_ROWS):
+        row_str = f"  {r}: "
+        for c in range(cols):
+            pos = (r, c)
+            tile = final_grid[r][c]
+
+            if c % 16 == 0 and c > 0:
+                row_str += f"{DIM}|{RESET}"
+
+            if pos in node_number:
+                bfs_n, entry = node_number[pos]
+                color = TYPE_COLOR.get(entry["type"], WHITE)
+                row_str += f"{color}{bfs_n:>2d}{RESET}"
+            elif pos in final_paths:
+                if tile in VALID_HORZ:
+                    row_str += f"{DIM}--{RESET}"
+                else:
+                    row_str += f"{DIM} |{RESET}"
+            elif pos in final_nodes:
+                # Node without a pointer table entry (decoration, dead end)
+                row_str += f"{DIM} *{RESET}"
+            elif tile in BACKGROUND_TILES:
+                row_str += f"{DIM} .{RESET}"
+            else:
+                row_str += f"{DIM} ~{RESET}"
+        lines.append(row_str)
+
+    # Legend
+    lines.append("")
+    lines.append(f"  {'#':>3s}  {'name':>5s}  {'pos':>7s}  {'idx':>3s}  {'type':>8s}  {'ts':>2s}  {'obj':>6s}  {'lay':>6s}")
+    lines.append(f"  {'---':>3s}  {'-----':>5s}  {'-------':>7s}  {'---':>3s}  {'--------':>8s}  {'--':>2s}  {'------':>6s}  {'------':>6s}")
+
+    for pos in ordered_nodes:
+        if pos not in node_number:
+            continue
+        bfs_n, entry = node_number[pos]
+        r, c = pos
+        color = TYPE_COLOR.get(entry["type"], WHITE)
+        label = TYPE_LABEL.get(entry["type"], entry["type"])
+        name = entry_names.get(pos, "")
+        lines.append(
+            f"  {color}{bfs_n:>3d}{RESET}  {name:>5s}  ({r},{c:>2d})  {entry['index']:>3d}  "
+            f"{color}{label:>8s}{RESET}  {entry['tileset']:>2d}  "
+            f"0x{entry['obj_ptr']:04X}  0x{entry['lay_ptr']:04X}"
+        )
+
+    # Also list any entries NOT reached by BFS
+    unreached = []
+    for e in entry_lookup.values():
+        pos = (e["grid_row"], e["grid_col"])
+        if pos not in node_number:
+            unreached.append(e)
+    if unreached:
+        lines.append(f"\n  {YELLOW}Entries not reached by BFS:{RESET}")
+        for e in unreached:
+            label = TYPE_LABEL.get(e["type"], e["type"])
+            lines.append(
+                f"  {'':>3s}  ({e['grid_row']},{e['grid_col']:>2d})  {e['index']:>3d}  "
+                f"{label:>8s}  {e['tileset']:>2d}  "
+                f"0x{e['obj_ptr']:04X}  0x{e['lay_ptr']:04X}"
+            )
+
+    return "\n".join(lines)
+
+
+def render_walk_map(rom, world_idx, pipe_pairs, show_progression=False):
+    """Render a colored BFS walk of a world map. Returns a string."""
+    fort_positions = read_fortress_positions(rom)
+    world_forts = fort_positions.get(world_idx, [])
+
+    if show_progression:
+        steps = simulate_progression(rom, world_idx, pipe_pairs)
+        parts = []
+        opened = set()
+        for step_num, step in enumerate(steps):
+            if step["fort_idx"] is None:
+                header = f"  Step {step_num}: Initial state"
+            else:
+                fr, fc = step["fort_pos"]
+                header = f"  Step {step_num}: Beat fortress #{step['fort_idx']+1} at ({fr},{fc})"
+                if step["fx_pos"]:
+                    fxr, fxc = step["fx_pos"]
+                    header += f" -> opened ({fxr},{fxc}) [0x{step['fx_old_tile']:02X} -> 0x{step['fx_new_tile']:02X}]"
+                    opened.add(step["fx_pos"])
+
+            grid = step["grid"]
+            nodes = step["nodes"]
+            _, edges, path_tiles, _ = walk_map(grid, pipe_pairs)
+            chokes = find_chokepoints(nodes, edges)
+
+            part = _render_walk_grid(grid, nodes, path_tiles, chokes,
+                                     pipe_pairs, world_forts, opened)
+            parts.append(f"{header}\n  Reachable: {len(nodes)} nodes\n{part}")
+        return "\n\n".join(parts)
+    else:
+        grid = read_tile_grid(rom, world_idx)
+        nodes, edges, path_tiles, _ = walk_map(grid, pipe_pairs)
+        chokes = find_chokepoints(nodes, edges)
+        header = (f"  Start: {find_start(grid)}  "
+                  f"Pipes: {len(pipe_pairs)}  "
+                  f"Forts: {len(world_forts)}  "
+                  f"Reachable: {len(nodes)}  "
+                  f"Chokes: {len(chokes)}")
+        return header + "\n" + _render_walk_grid(
+            grid, nodes, path_tiles, chokes, pipe_pairs, world_forts, set())
+
+
+def _render_walk_grid(grid, nodes, path_tiles, chokepoints,
+                      pipe_pairs, fortress_positions, opened_positions):
+    """Internal: render a colored walk grid."""
+    cols = len(grid[0])
+    fort_set = set(fortress_positions) if fortress_positions else set()
+    pipe_pos = set()
+    for a, b in pipe_pairs:
+        pipe_pos.add(a)
+        pipe_pos.add(b)
+
+    lines = []
+    for r in range(MAP_TILE_GRID_ROWS):
+        row_str = f"  {r}: "
+        for c in range(cols):
+            tile = grid[r][c]
+            pos = (r, c)
+            if pos in opened_positions:
+                row_str += f"{BLUE}O{RESET}"
+            elif pos in fort_set and pos in nodes:
+                row_str += f"{WHITE}F{RESET}"
+            elif pos in fort_set:
+                row_str += f"{YELLOW}F{RESET}"
+            elif pos in chokepoints:
+                row_str += f"{RED}X{RESET}"
+            elif pos in pipe_pos and pos in nodes:
+                row_str += f"{MAGENTA}P{RESET}"
+            elif pos in nodes:
+                row_str += f"{GREEN}*{RESET}"
+            elif pos in path_tiles:
+                ch = "-" if tile in VALID_HORZ else "|"
+                row_str += f"{CYAN}{ch}{RESET}"
+            elif tile in BACKGROUND_TILES:
+                row_str += f"{DIM}.{RESET}"
+            else:
+                row_str += f"{YELLOW}~{RESET}"
+        lines.append(row_str)
+
+    lines.append(f"  {GREEN}*{RESET}=node  {RED}X{RESET}=choke  "
+                 f"{CYAN}-|{RESET}=path  {MAGENTA}P{RESET}=pipe  "
+                 f"{WHITE}F{RESET}=fort  {BLUE}O{RESET}=opened  "
+                 f"{YELLOW}~{RESET}=blocked  {DIM}.{RESET}=void")
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# Main
+# --------------------------------------------------------------------------
+
 def main():
     rom_path = "Super Mario Bros. 3 (USA) (Rev 1).nes"
     output_path = "tools/rom_map.json"
+    mode = "json"  # default: generate JSON
+    world_filter = None
 
     args = sys.argv[1:]
     i = 0
@@ -1182,13 +1885,34 @@ def main():
         if args[i] == "--json" and i + 1 < len(args):
             output_path = args[i + 1]
             i += 2
-        else:
+        elif args[i] == "--walk":
+            mode = "walk"
+            i += 1
+        elif args[i] == "--progression":
+            mode = "progression"
+            i += 1
+        elif args[i] == "--numbered":
+            mode = "numbered"
+            i += 1
+        elif args[i] == "--viz":
+            mode = "viz"
+            i += 1
+        elif args[i] == "--world" and i + 1 < len(args):
+            world_filter = int(args[i + 1]) - 1  # 1-indexed input
+            i += 2
+        elif args[i] in ("--help", "-h"):
+            print(__doc__)
+            sys.exit(0)
+        elif not args[i].startswith("-"):
             rom_path = args[i]
             i += 1
+        else:
+            print(f"Unknown option: {args[i]}")
+            sys.exit(1)
 
     if not os.path.exists(rom_path):
         print(f"Error: ROM file not found: {rom_path}")
-        print("Usage: python3 tools/rom_map.py [rom_path] [--json output.json]")
+        print(__doc__)
         sys.exit(1)
 
     with open(rom_path, "rb") as f:
@@ -1197,22 +1921,37 @@ def main():
     if len(rom) != ROM_SIZE:
         print(f"Warning: ROM size {len(rom)} != expected {ROM_SIZE}")
 
-    print(f"Reading ROM: {rom_path} ({len(rom)} bytes)")
-    rom_map = generate_rom_map(rom)
+    worlds = [world_filter] if world_filter is not None else list(range(8))
 
-    print_summary(rom_map)
+    if mode == "json":
+        print(f"Reading ROM: {rom_path} ({len(rom)} bytes)")
+        rom_map = generate_rom_map(rom)
+        print_summary(rom_map)
+        with open(output_path, "w") as f:
+            json.dump(rom_map, f, indent=2)
+        print(f"ROM map written to: {output_path}")
+        file_size = os.path.getsize(output_path)
+        if file_size > 1024 * 1024:
+            print(f"  Size: {file_size / 1024 / 1024:.1f} MB")
+        else:
+            print(f"  Size: {file_size / 1024:.1f} KB")
 
-    with open(output_path, "w") as f:
-        json.dump(rom_map, f, indent=2)
+    elif mode in ("walk", "progression"):
+        pipes_by_world = read_pipe_pairs(rom)
+        for wi in worlds:
+            info = MAP_TILE_GRIDS[wi]
+            print(f"=== {info['name']} ===")
+            output = render_walk_map(rom, wi, pipes_by_world[wi],
+                                     show_progression=(mode == "progression"))
+            print(output)
+            print()
 
-    print(f"ROM map written to: {output_path}")
-
-    # Print file size
-    file_size = os.path.getsize(output_path)
-    if file_size > 1024 * 1024:
-        print(f"  Size: {file_size / 1024 / 1024:.1f} MB")
-    else:
-        print(f"  Size: {file_size / 1024:.1f} KB")
+    elif mode == "numbered":
+        pipes_by_world = read_pipe_pairs(rom)
+        for wi in worlds:
+            output = render_numbered_map(rom, wi, pipes_by_world[wi])
+            print(output)
+            print()
 
 
 if __name__ == "__main__":
