@@ -1,13 +1,14 @@
 use rand::Rng;
-use rand::seq::SliceRandom;
 
 use crate::rom::Rom;
 
+use super::level_helpers;
 use super::rom_data::{
-    self, AIRSHIP_ENTRIES, FORTRESS_ENTRIES, MAP_TRANSITIONS, TILE_SPIRAL, WORLDS,
-    LevelEntry, WorldTables,
+    self, AIRSHIP_ENTRIES, BOOMBOOM_Y_OFFSETS, FORTRESS_ENTRIES, MAP_TRANSITIONS,
+    TILE_SPIRAL, WORLDS,
+    WorldTables,
     entry_grid_position, is_level_pointer, layout_file_offset, level_screen_count,
-    map_tile_offset, read_entry, read_word, write_entry,
+    map_tile_offset, read_entry, read_word,
 };
 
 /// Collect the indices of entries that are real action levels for a given world.
@@ -84,24 +85,6 @@ fn collect_shuffleable(rom: &Rom, world_idx: usize, world: &WorldTables) -> Vec<
     indices
 }
 
-/// Shuffle a group of entries identified by (world_idx, entry_idx) pairs.
-fn shuffle_group<R: Rng>(rom: &mut Rom, rng: &mut R, indices: &[(usize, usize)]) {
-    if indices.len() <= 1 {
-        return;
-    }
-
-    let mut entries: Vec<LevelEntry> = indices
-        .iter()
-        .map(|&(w, i)| read_entry(rom, &WORLDS[w], i))
-        .collect();
-
-    entries.as_mut_slice().shuffle(rng);
-
-    for (slot, &(w, idx)) in indices.iter().enumerate() {
-        write_entry(rom, &WORLDS[w], idx, &entries[slot]);
-    }
-}
-
 /// Shuffle levels within each world independently.
 /// All shuffleable levels within a world are shuffled together regardless
 /// of tileset — the ByRowType byte (which contains the tileset) is swapped
@@ -110,7 +93,7 @@ pub fn randomize_intra<R: Rng>(rom: &mut Rom, rng: &mut R) {
     for (w, world) in WORLDS.iter().enumerate() {
         let shuffleable = collect_shuffleable(rom, w, world);
         let indices: Vec<(usize, usize)> = shuffleable.iter().map(|&i| (w, i)).collect();
-        shuffle_group(rom, rng, &indices);
+        level_helpers::shuffle_entries(rom, rng, &indices);
     }
 }
 
@@ -128,7 +111,7 @@ pub fn randomize_cross<R: Rng>(rom: &mut Rom, rng: &mut R) {
         }
     }
 
-    shuffle_group(rom, rng, &all_indices);
+    level_helpers::shuffle_entries(rom, rng, &all_indices);
 }
 
 /// Collect fortress entries: all 17 levels containing Boom-Boom boss fights.
@@ -137,30 +120,6 @@ pub fn randomize_cross<R: Rng>(rom: &mut Rom, rng: &mut R) {
 fn collect_fortresses(_rom: &Rom) -> Vec<(usize, usize)> {
     FORTRESS_ENTRIES.to_vec()
 }
-
-/// ROM file offset of the Boom-Boom Y-byte for each fortress (ordered same
-/// as FORTRESS_ENTRIES). The Y-byte's upper nibble encodes the fortress
-/// ordinal (1-based) used as Map_DoFortressFX, and the lower nibble is
-/// Boom-Boom's spawn Y position. All offsets are in PRG006 enemy data.
-const BOOMBOOM_Y_OFFSETS: [usize; 17] = [
-    0x0D35F, // W1[11]  Y=$17
-    0x0D262, // W2[13]  Y=$18
-    0x0D3D3, // W3[13]  Y=$17
-    0x0D3A1, // W3[34]  Y=$28
-    0x0D536, // W4[ 9]  Y=$27
-    0x0D55F, // W4[16]  Y=$17
-    0x0D40F, // W5[12]  Y=$17
-    0x0D2C7, // W5[31]  Y=$27
-    0x0D4E1, // W6[ 9]  Y=$17
-    0x0CAE1, // W6[27]  Y=$24
-    0x0D4B0, // W6[48]  Y=$37
-    0x0D4FA, // W7[ 5]  Y=$17
-    0x0D47E, // W7[40]  Y=$27
-    0x0DA32, // W8[ 7]  Y=$17
-    0x0DA37, // W8[10]  Y=$27
-    0x0D597, // W8[26]  Y=$38
-    0x0DA2D, // W8[36]  Y=$47
-];
 
 /// Original fortress ordinal (Map_DoFortressFX value) for each position
 /// in FORTRESS_ENTRIES. Extracted from the original Y-byte upper nibbles.
@@ -197,7 +156,7 @@ pub fn randomize_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
         })
         .collect();
 
-    shuffle_group(rom, rng, &indices);
+    level_helpers::shuffle_entries(rom, rng, &indices);
 
     // For each fortress position, find which original fortress landed
     // there (by matching obj_ptr) and patch its Boom-Boom Y-byte.
@@ -231,7 +190,7 @@ pub fn randomize_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
 /// when autoscroll is kept enabled.
 pub fn randomize_airships<R: Rng>(rom: &mut Rom, rng: &mut R) {
     let indices: Vec<(usize, usize)> = AIRSHIP_ENTRIES.to_vec();
-    shuffle_group(rom, rng, &indices);
+    level_helpers::shuffle_entries(rom, rng, &indices);
 }
 
 

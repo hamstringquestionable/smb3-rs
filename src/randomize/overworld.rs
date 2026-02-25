@@ -18,7 +18,7 @@ use super::overworld_helpers::{
     self, FortressPlacement, DisplacedLevel, LOCKABLE_TILES,
 };
 use super::rom_data::{
-    self, AIRSHIP_ENTRIES, Grid, MAP_TRANSITIONS, WORLDS,
+    self, AIRSHIP_ENTRIES, FORTRESS_ENTRIES, Grid, MAP_TRANSITIONS, WORLDS,
     LevelEntry,
 };
 
@@ -42,52 +42,6 @@ impl Default for FortressShuffle {
 }
 
 // ---------------------------------------------------------------------------
-// Module-specific constants
-// ---------------------------------------------------------------------------
-
-/// Vanilla fortress entries (world_idx, entry_idx) — W1-7 only.
-const FORTRESS_ENTRIES_W1_7: [(usize, usize); 13] = [
-    (0, 11),          // W1
-    (1, 13),          // W2
-    (2, 13), (2, 34), // W3
-    (3, 9), (3, 16),  // W4
-    (4, 12), (4, 31), // W5
-    (5, 9), (5, 27), (5, 48), // W6
-    (6, 5), (6, 40),  // W7
-];
-
-/// ROM file offset of the Boom-Boom Y-byte for each W1-7 fortress
-/// (same order as FORTRESS_ENTRIES_W1_7).
-const BOOMBOOM_Y_OFFSETS_W1_7: [usize; 13] = [
-    0x0D35F, // W1[11]
-    0x0D262, // W2[13]
-    0x0D3D3, // W3[13]
-    0x0D3A1, // W3[34]
-    0x0D536, // W4[ 9]
-    0x0D55F, // W4[16]
-    0x0D40F, // W5[12]
-    0x0D2C7, // W5[31]
-    0x0D4E1, // W6[ 9]
-    0x0CAE1, // W6[27]
-    0x0D4B0, // W6[48]
-    0x0D4FA, // W7[ 5]
-    0x0D47E, // W7[40]
-];
-
-/// W8 fortress entries (world_idx, entry_idx).
-const FORTRESS_ENTRIES_W8: [(usize, usize); 4] = [
-    (7, 7), (7, 10), (7, 26), (7, 36),
-];
-
-/// ROM file offset of the Boom-Boom Y-byte for each W8 fortress.
-const BOOMBOOM_Y_OFFSETS_W8: [usize; 4] = [
-    0x0DA32, // W8[ 7]
-    0x0DA37, // W8[10]
-    0x0D597, // W8[26]
-    0x0DA2D, // W8[36]
-];
-
-// ---------------------------------------------------------------------------
 // Internal fortress data (collected from ROM before any writes)
 // ---------------------------------------------------------------------------
 
@@ -98,29 +52,39 @@ struct FortressData {
     fort_tile: u8,
 }
 
+/// Collect fortress data from ROM for entries matching a world filter.
+/// Looks up Y-byte offset by obj_ptr so it works correctly even after
+/// level shuffle has rearranged which fortress is at each slot.
+fn collect_fortresses_filtered(rom: &Rom, world_filter: impl Fn(usize) -> bool) -> Vec<(usize, usize, FortressData)> {
+    FORTRESS_ENTRIES
+        .iter()
+        .filter(|&&(w, _)| world_filter(w))
+        .map(|&(w, i)| {
+            let entry = rom_data::read_entry(rom, &WORLDS[w], i);
+            let obj_ptr = u16::from_le_bytes([entry.obj_lo, entry.obj_hi]);
+            (w, i, FortressData {
+                level_entry: entry,
+                boomboom_y_offset: rom_data::boomboom_y_offset_for_obj(obj_ptr)
+                    .expect("fortress slot must contain a known fortress"),
+                fort_tile: overworld_helpers::entry_tile(rom, w, i),
+            })
+        })
+        .collect()
+}
+
 /// Collect all W1-7 fortress data from ROM.
 fn collect_w17_fortresses(rom: &Rom) -> Vec<FortressData> {
-    FORTRESS_ENTRIES_W1_7
-        .iter()
-        .zip(BOOMBOOM_Y_OFFSETS_W1_7.iter())
-        .map(|(&(w, i), &y_off)| FortressData {
-            level_entry: rom_data::read_entry(rom, &WORLDS[w], i),
-            boomboom_y_offset: y_off,
-            fort_tile: overworld_helpers::entry_tile(rom, w, i),
-        })
+    collect_fortresses_filtered(rom, |w| w < 7)
+        .into_iter()
+        .map(|(_, _, data)| data)
         .collect()
 }
 
 /// Collect W8 fortress data from ROM.
 fn collect_w8_fortresses(rom: &Rom) -> Vec<FortressData> {
-    FORTRESS_ENTRIES_W8
-        .iter()
-        .zip(BOOMBOOM_Y_OFFSETS_W8.iter())
-        .map(|(&(w, i), &y_off)| FortressData {
-            level_entry: rom_data::read_entry(rom, &WORLDS[w], i),
-            boomboom_y_offset: y_off,
-            fort_tile: overworld_helpers::entry_tile(rom, w, i),
-        })
+    collect_fortresses_filtered(rom, |w| w == 7)
+        .into_iter()
+        .map(|(_, _, data)| data)
         .collect()
 }
 
@@ -161,10 +125,7 @@ fn collect_action_levels(rom: &Rom, world_idx: usize) -> Vec<usize> {
         if pair_counts[&(obj_ptr, lay_ptr)] > 1 {
             continue; // hammer bros
         }
-        if FORTRESS_ENTRIES_W1_7.contains(&(world_idx, i)) {
-            continue;
-        }
-        if FORTRESS_ENTRIES_W8.contains(&(world_idx, i)) {
+        if FORTRESS_ENTRIES.contains(&(world_idx, i)) {
             continue;
         }
         if (world_idx, i) == rom_data::BOWSER_ENTRY {
@@ -374,9 +335,10 @@ fn randomize_intra<R: Rng>(rom: &mut Rom, rng: &mut R) {
         overworld_helpers::pre_open_fx_for_world(rom, world_idx, &fx_slots_snapshot);
 
         // Collect this world's fortresses (they stay in place)
-        let world_forts: Vec<&(usize, usize)> = FORTRESS_ENTRIES_W1_7
+        let world_forts: Vec<(usize, usize)> = FORTRESS_ENTRIES
             .iter()
             .filter(|&&(w, _)| w == world_idx)
+            .copied()
             .collect();
         let fort_count = world_forts.len();
 
@@ -387,7 +349,7 @@ fn randomize_intra<R: Rng>(rom: &mut Rom, rng: &mut R) {
         // Get fortress grid positions (explicit data, not scanned)
         let fort_positions: Vec<(usize, usize)> = world_forts
             .iter()
-            .map(|&&(w, i)| rom_data::entry_grid_position(rom, &WORLDS[w], i))
+            .map(|&(w, i)| rom_data::entry_grid_position(rom, &WORLDS[w], i))
             .collect();
 
         // Read clean grid and determine beat order
@@ -403,16 +365,15 @@ fn randomize_intra<R: Rng>(rom: &mut Rom, rng: &mut R) {
         // Build FortressPlacement instructions
         let mut placements = Vec::new();
         for (ord, &fort_idx) in beat_order.iter().enumerate() {
-            let &(w, entry_idx) = world_forts[fort_idx];
-            let y_off_idx = FORTRESS_ENTRIES_W1_7
-                .iter()
-                .position(|&(fw, fi)| fw == w && fi == entry_idx)
-                .unwrap();
+            let (w, entry_idx) = world_forts[fort_idx];
+            let entry = rom_data::read_entry(rom, &WORLDS[w], entry_idx);
+            let obj_ptr = u16::from_le_bytes([entry.obj_lo, entry.obj_hi]);
 
             if let Some(Some(obstacle_pos)) = lock_choices.get(ord) {
                 placements.push(FortressPlacement {
-                    level_entry: rom_data::read_entry(rom, &WORLDS[w], entry_idx),
-                    boomboom_y_offset: BOOMBOOM_Y_OFFSETS_W1_7[y_off_idx],
+                    level_entry: entry,
+                    boomboom_y_offset: rom_data::boomboom_y_offset_for_obj(obj_ptr)
+                        .expect("fortress slot must contain a known fortress"),
                     fort_tile: overworld_helpers::entry_tile(rom, w, entry_idx),
                     dest_world: world_idx,
                     dest_slot: entry_idx,
@@ -432,7 +393,13 @@ fn randomize_intra<R: Rng>(rom: &mut Rom, rng: &mut R) {
         let pipes = all_pipes.get(&world_idx).cloned().unwrap_or_default();
         overworld_helpers::pre_open_fx_for_world(rom, world_idx, &fx_slots_snapshot);
 
-        let fort_positions: Vec<(usize, usize)> = FORTRESS_ENTRIES_W8
+        let w8_forts: Vec<(usize, usize)> = FORTRESS_ENTRIES
+            .iter()
+            .filter(|&&(w, _)| w == 7)
+            .copied()
+            .collect();
+
+        let fort_positions: Vec<(usize, usize)> = w8_forts
             .iter()
             .map(|&(w, i)| rom_data::entry_grid_position(rom, &WORLDS[w], i))
             .collect();
@@ -447,12 +414,15 @@ fn randomize_intra<R: Rng>(rom: &mut Rom, rng: &mut R) {
 
         let mut placements = Vec::new();
         for (ord, &fort_idx) in beat_order.iter().enumerate() {
-            let &(w, entry_idx) = &FORTRESS_ENTRIES_W8[fort_idx];
+            let (w, entry_idx) = w8_forts[fort_idx];
+            let entry = rom_data::read_entry(rom, &WORLDS[w], entry_idx);
+            let obj_ptr = u16::from_le_bytes([entry.obj_lo, entry.obj_hi]);
 
             if let Some(Some(obstacle_pos)) = lock_choices.get(ord) {
                 placements.push(FortressPlacement {
-                    level_entry: rom_data::read_entry(rom, &WORLDS[w], entry_idx),
-                    boomboom_y_offset: BOOMBOOM_Y_OFFSETS_W8[fort_idx],
+                    level_entry: entry,
+                    boomboom_y_offset: rom_data::boomboom_y_offset_for_obj(obj_ptr)
+                        .expect("fortress slot must contain a known fortress"),
                     fort_tile: overworld_helpers::entry_tile(rom, w, entry_idx),
                     dest_world: world_idx,
                     dest_slot: entry_idx,
@@ -506,7 +476,7 @@ fn randomize_cross<R: Rng>(rom: &mut Rom, rng: &mut R) {
     for world_idx in 0..7 {
         let target_count = new_counts[world_idx];
 
-        let current_fort_slots: Vec<usize> = FORTRESS_ENTRIES_W1_7
+        let current_fort_slots: Vec<usize> = FORTRESS_ENTRIES
             .iter()
             .filter(|&&(w, _)| w == world_idx)
             .map(|&(_, i)| i)
@@ -671,10 +641,12 @@ fn shuffle_w8_fortresses<R: Rng>(
     let mut w8_forts = collect_w8_fortresses(rom);
 
     // Collect candidate slots: current fortress slots + action level slots
-    let mut candidate_slots: Vec<usize> = FORTRESS_ENTRIES_W8
+    let w8_fort_slots: Vec<usize> = FORTRESS_ENTRIES
         .iter()
+        .filter(|&&(w, _)| w == 7)
         .map(|&(_, i)| i)
         .collect();
+    let mut candidate_slots: Vec<usize> = w8_fort_slots.clone();
     let action_levels = collect_action_levels(rom, world_idx);
     candidate_slots.extend_from_slice(&action_levels);
     candidate_slots.sort();
@@ -693,7 +665,7 @@ fn shuffle_w8_fortresses<R: Rng>(
     // Collect displaced action levels
     let mut displaced_data: Vec<(LevelEntry, u8)> = Vec::new();
     for &slot in &chosen_slots {
-        if !FORTRESS_ENTRIES_W8.iter().any(|&(_, i)| i == slot) {
+        if !w8_fort_slots.contains(&slot) {
             let entry = rom_data::read_entry(rom, &WORLDS[world_idx], slot);
             let tile = overworld_helpers::entry_tile(rom, world_idx, slot);
             displaced_data.push((entry, tile));
@@ -702,7 +674,7 @@ fn shuffle_w8_fortresses<R: Rng>(
 
     // Freed fortress slots
     let mut freed: Vec<usize> = Vec::new();
-    for &(_, i) in &FORTRESS_ENTRIES_W8 {
+    for &i in &w8_fort_slots {
         if !chosen_slots.contains(&i) {
             freed.push(i);
         }
@@ -853,7 +825,7 @@ mod tests {
         }
 
         // Check Y-bytes
-        for &off in &BOOMBOOM_Y_OFFSETS_W1_7 {
+        for &off in &rom_data::BOOMBOOM_Y_OFFSETS {
             assert_eq!(rom1.read_byte(off), rom2.read_byte(off));
         }
     }
@@ -968,6 +940,56 @@ mod tests {
             let pipes = all_pipes.get(&wi).cloned().unwrap_or_default();
             let output = map_walker::render_progression(&rom, wi, &pipes);
             print!("{output}");
+        }
+    }
+
+    /// Verify that when both level shuffle (shuffle_fortresses) and lock
+    /// shuffle (fortress_shuffle) are enabled, each Boom-Boom Y-byte's
+    /// upper nibble matches the expected ordinal for its current map
+    /// position — not the vanilla position it was shuffled from.
+    #[test]
+    fn test_level_plus_lock_shuffle_ybytes_correct() {
+        let rom_data = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        if rom_data.is_err() {
+            return;
+        }
+
+        for seed in [42, 123, 999, 31337, 65536] {
+            for mode in [FortressShuffle::IntraWorld, FortressShuffle::CrossWorld] {
+                let mut rom = Rom::from_bytes(&rom_data.as_ref().unwrap()).unwrap();
+
+                let mut options = crate::randomizer::Options::default();
+                options.shuffle_fortresses = true;
+                options.fortress_shuffle = mode.clone();
+                crate::randomizer::randomize(&mut rom, seed, &options);
+
+                // For each fortress slot, the Boom-Boom Y-byte that belongs
+                // to the level at that slot must have the correct ordinal.
+                // The overworld module writes FX_WORLD_TABLE with sequential
+                // slot indices in beat order, and patches Y-bytes with
+                // ordinals 1..N. Verify the Y-byte matches.
+                for &(w, i) in rom_data::FORTRESS_ENTRIES.iter() {
+                    let entry = rom_data::read_entry(&rom, &WORLDS[w], i);
+                    let obj_ptr = u16::from_le_bytes([entry.obj_lo, entry.obj_hi]);
+
+                    // Find the Y-byte for whatever fortress is at this slot
+                    let y_off = rom_data::boomboom_y_offset_for_obj(obj_ptr);
+                    if y_off.is_none() {
+                        // Slot may have been replaced by an action level in
+                        // CrossWorld mode — not a fortress anymore
+                        continue;
+                    }
+                    let y_byte = rom.read_byte(y_off.unwrap());
+                    let ordinal = y_byte >> 4;
+
+                    // Ordinal must be 1-4 (valid fortress ordinals)
+                    assert!(
+                        ordinal >= 1 && ordinal <= 4,
+                        "Seed {seed} {:?} W{}[{}]: Y-byte 0x{:02X} has invalid ordinal {}",
+                        mode, w + 1, i, y_byte, ordinal,
+                    );
+                }
+            }
         }
     }
 }

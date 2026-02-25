@@ -113,6 +113,63 @@ pub(super) const FORTRESS_ENTRIES: &[(usize, usize)] = &[
     (7, 7), (7, 10), (7, 26), (7, 36),
 ];
 
+/// ROM file offset of the Boom-Boom Y-byte for each fortress (same order as
+/// FORTRESS_ENTRIES). The Y-byte upper nibble encodes the fortress ordinal
+/// (1-based Map_DoFortressFX value); the lower nibble is spawn Y position.
+pub(super) const BOOMBOOM_Y_OFFSETS: [usize; 17] = [
+    0x0D35F, // W1[11]
+    0x0D262, // W2[13]
+    0x0D3D3, // W3[13]
+    0x0D3A1, // W3[34]
+    0x0D536, // W4[ 9]
+    0x0D55F, // W4[16]
+    0x0D40F, // W5[12]
+    0x0D2C7, // W5[31]
+    0x0D4E1, // W6[ 9]
+    0x0CAE1, // W6[27]
+    0x0D4B0, // W6[48]
+    0x0D4FA, // W7[ 5]
+    0x0D47E, // W7[40]
+    0x0DA32, // W8[ 7]
+    0x0DA37, // W8[10]
+    0x0D597, // W8[26]
+    0x0DA2D, // W8[36]
+];
+
+/// Vanilla fortress obj_ptrs (same order as FORTRESS_ENTRIES).
+/// The obj_ptr identifies the fortress level's enemy data stream in PRG006.
+/// After level shuffle, the obj_ptr at a slot still points to the same enemy
+/// data — only the pointer table entries move, not the data itself.
+pub(super) const VANILLA_FORTRESS_OBJ_PTRS: [u16; 17] = [
+    0xD32B, // W1[11]
+    0xD222, // W2[13]
+    0xD393, // W3[13]
+    0xD362, // W3[34]
+    0xD508, // W4[ 9]
+    0xD528, // W4[16]
+    0xD3D0, // W5[12]
+    0xD2B4, // W5[31]
+    0xD4B0, // W6[ 9]
+    0xCAAB, // W6[27]
+    0xD470, // W6[48]
+    0xD4E4, // W7[ 5]
+    0xD41B, // W7[40]
+    0xD8CC, // W8[ 7]
+    0xD867, // W8[10]
+    0xD551, // W8[26]
+    0xD91C, // W8[36]
+];
+
+/// Given an obj_ptr found at a fortress slot, return the Boom-Boom Y-byte
+/// ROM file offset for that fortress's enemy data.
+pub(super) fn boomboom_y_offset_for_obj(obj_ptr: u16) -> Option<usize> {
+    VANILLA_FORTRESS_OBJ_PTRS
+        .iter()
+        .zip(BOOMBOOM_Y_OFFSETS.iter())
+        .find(|&(&op, _)| op == obj_ptr)
+        .map(|(_, &y)| y)
+}
+
 /// Known airship entries (world_idx, entry_idx).
 pub(super) const AIRSHIP_ENTRIES: &[(usize, usize)] = &[
     (0, 17), (1, 36), (2, 49), (3, 6), (4, 35), (5, 53), (6, 43),

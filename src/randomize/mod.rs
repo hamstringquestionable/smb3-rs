@@ -1,6 +1,7 @@
 pub mod autoscroll;
 pub mod enemies;
 pub mod items;
+pub mod level_helpers;
 pub mod levels;
 pub mod map_walker;
 pub mod overworld;
