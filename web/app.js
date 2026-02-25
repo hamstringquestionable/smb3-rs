@@ -16,6 +16,7 @@ const optEnemies = document.getElementById("opt-enemies");
 const optWorldOrder = document.getElementById("opt-world-order");
 const optBigQBlocks = document.getElementById("opt-big-q-blocks");
 const optLevelShuffle = document.getElementById("opt-level-shuffle");
+const optShufflePipes = document.getElementById("opt-shuffle-pipes");
 const optChestItems = document.getElementById("opt-chest-items");
 const optRemoveWhistles = document.getElementById("opt-remove-whistles");
 const optShuffleFortresses = document.getElementById("opt-shuffle-fortresses");
@@ -87,6 +88,7 @@ generateBtn.addEventListener("click", () => {
 		world_order: optWorldOrder.checked,
 		big_q_blocks: optBigQBlocks.checked,
 		level_shuffle: optLevelShuffle.value,
+		shuffle_pipes: optShufflePipes.checked,
 		chest_items: optChestItems.checked,
 		remove_whistles: optRemoveWhistles.checked,
 		shuffle_fortresses: optShuffleFortresses.checked,
