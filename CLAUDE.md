@@ -16,6 +16,22 @@ cargo build --release                        # optimized binary -> target/releas
 wasm-pack build --target web --out-dir pkg   # WASM module -> pkg/
 ```
 
+## Architecture: Separate Randomization from ROM Writes
+
+Randomization modules follow a **decide then write** pattern. Each feature area has two layers:
+
+1. **Randomization modules** (`pipes.rs`, `overworld.rs`, `levels.rs`, etc.) — contain the algorithms that decide *what* to change (BFS placement, shuffle logic, constraint solving). They consume RNG and produce descriptions of changes (new positions, new assignments, etc.).
+
+2. **Helper modules** (`pipe_helpers.rs`, and future `overworld_helpers.rs`) — contain the mechanical ROM write operations that execute those decisions. These are pure functions that take explicit inputs (positions, indices, tile values) and write to the ROM. They have no randomization logic or decision-making.
+
+**Why this matters:** Multiple randomization modules may need to perform the same ROM operations (e.g., swapping pointer table entries, updating pipe destination tables, re-sorting the pointer table). Centralizing these writes in helper modules avoids duplication and ensures consistent behavior. When adding new randomization features, check the helper modules first — the write operation you need may already exist.
+
+**Current helpers:**
+- `pipe_helpers.rs` — entry position swaps, pipe destination table writes, pointer table re-sorting
+
+**Planned helpers (not yet extracted):**
+- Fortress/lock/FX table helpers (currently inline in `overworld.rs`)
+
 ## Project Structure
 
 ```
@@ -28,10 +44,19 @@ src/
   wasm.rs            # wasm-bindgen glue (only compiled for wasm32)
   randomize/
     mod.rs
+    rom_data.rs      # Shared ROM constants, data structures, read helpers
+    pipe_helpers.rs  # ROM write helpers for pipe movement operations
+    pipes.rs         # Pipe shuffle randomization (BFS placement algorithm)
+    overworld.rs     # Fortress redistribution, lock shuffle
+    levels.rs        # Level shuffle (intra/cross-world), fortress/airship shuffle
     powerups.rs      # ? block item randomization (0x02611–0x0262A)
     palettes.rs      # Character/lava/Bowser color randomization
     enemies.rs       # Enemy type swapping within class (0x0BFD8–0x0E00D)
     world_order.rs   # Shuffle world progression order (patches INC World_Num at 0x3D0A1)
+    map_walker.rs    # BFS map walker for overworld connectivity analysis
+    items.rs         # Chest/reward item randomization
+    qol.rs           # Quality-of-life patches (lives, drawbridges, W2 rock)
+    autoscroll.rs    # Autoscroll removal
 web/
   index.html         # Browser frontend
   style.css
