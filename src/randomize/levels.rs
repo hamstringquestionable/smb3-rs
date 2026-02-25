@@ -3,11 +3,11 @@ use rand::seq::SliceRandom;
 
 use crate::rom::Rom;
 
-use super::map_walker::{
-    self, AIRSHIP_ENTRIES, FORTRESS_ENTRIES, MAP_TRANSITIONS, WORLDS,
-    LevelEntry, PAGE_A000_BY_TILESET, WorldTables,
-    is_level_pointer, layout_file_offset, level_screen_count,
-    read_entry, read_word, write_entry,
+use super::rom_data::{
+    self, AIRSHIP_ENTRIES, FORTRESS_ENTRIES, MAP_TRANSITIONS, TILE_SPIRAL, WORLDS,
+    LevelEntry, WorldTables,
+    entry_grid_position, is_level_pointer, layout_file_offset, level_screen_count,
+    map_tile_offset, read_entry, read_word, write_entry,
 };
 
 /// Collect the indices of entries that are real action levels for a given world.
@@ -22,7 +22,7 @@ use super::map_walker::{
 /// 5. It is not an airship entry (autoscroll patch overwrites these slots)
 /// 6. It is not a map transition entry (structural map region transition)
 fn collect_shuffleable(rom: &Rom, world_idx: usize, world: &WorldTables) -> Vec<usize> {
-    let (_scrcol, objsets, layouts) = map_walker::table_offsets(world);
+    let (_scrcol, objsets, layouts) = rom_data::table_offsets(world);
 
     // First pass: count (obj, lay) pair occurrences to detect duplicates
     let mut pair_counts = std::collections::HashMap::new();
@@ -50,6 +50,12 @@ fn collect_shuffleable(rom: &Rom, world_idx: usize, world: &WorldTables) -> Vec<
 
         // Exclude map transition entries (structural map region transitions)
         if MAP_TRANSITIONS.contains(&(world_idx, i)) {
+            continue;
+        }
+
+        // Exclude spiral castle (W5 screen connector, not a playable level)
+        let (row, col) = entry_grid_position(rom, world, i);
+        if rom.read_byte(map_tile_offset(world_idx, row, col)) == TILE_SPIRAL {
             continue;
         }
 
@@ -232,6 +238,7 @@ pub fn randomize_airships<R: Rng>(rom: &mut Rom, rng: &mut R) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::randomize::rom_data::PAGE_A000_BY_TILESET;
     use rand_chacha::ChaCha8Rng;
     use rand::SeedableRng;
 
@@ -253,7 +260,7 @@ mod tests {
         // Populate World 1 tables with test data
         let w = &WORLDS[0];
         let n = w.entry_count;
-        let (_scrcol, objsets, layouts) = map_walker::table_offsets(w);
+        let (_scrcol, objsets, layouts) = rom_data::table_offsets(w);
 
         // Set ByRowType: tileset=1 (Plains), upper nibble=2
         // Tileset 1 -> PAGE_A000_BY_TILESET[1] = bank 15
@@ -310,7 +317,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(42);
 
         let w = &WORLDS[0];
-        let (_scrcol, objsets, layouts) = map_walker::table_offsets(w);
+        let (_scrcol, objsets, layouts) = rom_data::table_offsets(w);
 
         // Record non-shuffleable entries
         let toad_obj = read_word(&rom, objsets + 9 * 2);
@@ -335,7 +342,7 @@ mod tests {
     fn test_hammer_bros_excluded() {
         let mut rom = make_test_rom();
         let w = &WORLDS[0];
-        let (_scrcol, objsets, layouts) = map_walker::table_offsets(w);
+        let (_scrcol, objsets, layouts) = rom_data::table_offsets(w);
 
         // Make entries 13 and 14 share the same (obj, lay) pair = hammer bros
         let obj_off13 = objsets + 13 * 2;
@@ -357,7 +364,7 @@ mod tests {
     fn test_pipe_connectors_excluded() {
         let mut rom = make_test_rom();
         let w = &WORLDS[0];
-        let (_scrcol, _objsets, layouts) = map_walker::table_offsets(w);
+        let (_scrcol, _objsets, layouts) = rom_data::table_offsets(w);
 
         // Make entry 15 a 1-screen level (pipe connector)
         let lay_val = read_word(&rom, layouts + 15 * 2);
@@ -377,7 +384,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(42);
 
         let w = &WORLDS[0];
-        let (_scrcol, objsets, _layouts) = map_walker::table_offsets(w);
+        let (_scrcol, objsets, _layouts) = rom_data::table_offsets(w);
 
         // Record original shuffleable entries
         let original: Vec<u16> = (0..w.entry_count)
@@ -409,7 +416,7 @@ mod tests {
         randomize_intra(&mut rom2, &mut rng2);
 
         let w = &WORLDS[0];
-        let (_scrcol, objsets, layouts_off) = map_walker::table_offsets(w);
+        let (_scrcol, objsets, layouts_off) = rom_data::table_offsets(w);
         let len = w.entry_count * 2;
         assert_eq!(rom1.read_range(objsets, len), rom2.read_range(objsets, len));
         assert_eq!(rom1.read_range(layouts_off, len), rom2.read_range(layouts_off, len));
@@ -419,7 +426,7 @@ mod tests {
     fn test_byrowtype_upper_nibble_preserved_and_tileset_travels() {
         let mut rom = make_test_rom();
         let w = &WORLDS[0];
-        let (_scrcol, objsets, layouts) = map_walker::table_offsets(w);
+        let (_scrcol, objsets, layouts) = rom_data::table_offsets(w);
 
         // Give entries 0-4 tileset 1 with varying upper nibbles,
         // entries 5-7 tileset 3 with varying upper nibbles
@@ -479,7 +486,7 @@ mod tests {
     fn test_cross_tileset_shuffle_allowed() {
         let mut rom = make_test_rom();
         let w = &WORLDS[0];
-        let (_scrcol, _objsets, layouts) = map_walker::table_offsets(w);
+        let (_scrcol, _objsets, layouts) = rom_data::table_offsets(w);
 
         // Give entries 0-4 tileset 1, entries 5-7 tileset 3
         for i in 0..5 {
@@ -652,7 +659,7 @@ mod tests {
         // Record original obj pointers and Y-byte lower nibbles
         let original_objs: Vec<u16> = fortresses.iter().map(|&(w, i)| {
             let world = &WORLDS[w];
-            let (_scrcol, objsets, _layouts) = map_walker::table_offsets(world);
+            let (_scrcol, objsets, _layouts) = rom_data::table_offsets(world);
             read_word(&rom, objsets + i * 2)
         }).collect();
         let original_y_lowers: Vec<u8> = BOOMBOOM_Y_OFFSETS.iter()
@@ -661,7 +668,7 @@ mod tests {
 
         // Record Bowser's original data
         let bowser_w = &WORLDS[BOWSER_CASTLE.0];
-        let (_sc, bowser_objsets, bowser_layouts) = map_walker::table_offsets(bowser_w);
+        let (_sc, bowser_objsets, bowser_layouts) = rom_data::table_offsets(bowser_w);
         let bowser_obj = read_word(&rom, bowser_objsets + BOWSER_CASTLE.1 * 2);
         let bowser_lay = read_word(&rom, bowser_layouts + BOWSER_CASTLE.1 * 2);
 
@@ -674,7 +681,7 @@ mod tests {
         // Fortress entries should still contain the same set of obj pointers (just shuffled)
         let mut shuffled: Vec<u16> = fortresses.iter().map(|&(w, i)| {
             let world = &WORLDS[w];
-            let (_scrcol, objsets, _layouts) = map_walker::table_offsets(world);
+            let (_scrcol, objsets, _layouts) = rom_data::table_offsets(world);
             read_word(&rom, objsets + i * 2)
         }).collect();
         let mut orig_sorted = original_objs.clone();
@@ -686,7 +693,7 @@ mod tests {
         // nibble must match its ordinal within the destination world.
         for (position_idx, &(w, i)) in fortresses.iter().enumerate() {
             let world = &WORLDS[w];
-            let (_scrcol, objsets, _layouts) = map_walker::table_offsets(world);
+            let (_scrcol, objsets, _layouts) = rom_data::table_offsets(world);
             let shuffled_obj = read_word(&rom, objsets + i * 2);
 
             // Find which original fortress landed here
@@ -719,7 +726,7 @@ mod tests {
         // Record original lay pointers for airships
         let original_lays: Vec<u16> = AIRSHIP_ENTRIES.iter().map(|&(w, i)| {
             let world = &WORLDS[w];
-            let (_scrcol, _objsets, layouts) = map_walker::table_offsets(world);
+            let (_scrcol, _objsets, layouts) = rom_data::table_offsets(world);
             read_word(&rom, layouts + i * 2)
         }).collect();
 
@@ -727,7 +734,7 @@ mod tests {
 
         let shuffled_lays: Vec<u16> = AIRSHIP_ENTRIES.iter().map(|&(w, i)| {
             let world = &WORLDS[w];
-            let (_scrcol, _objsets, layouts) = map_walker::table_offsets(world);
+            let (_scrcol, _objsets, layouts) = rom_data::table_offsets(world);
             read_word(&rom, layouts + i * 2)
         }).collect();
 
@@ -751,7 +758,7 @@ mod tests {
 
         for &(w, i) in collect_fortresses(&make_fortress_test_rom()).iter() {
             let world = &WORLDS[w];
-            let (_scrcol, objsets, layouts) = map_walker::table_offsets(world);
+            let (_scrcol, objsets, layouts) = rom_data::table_offsets(world);
             assert_eq!(
                 read_word(&rom1, objsets + i * 2),
                 read_word(&rom2, objsets + i * 2),

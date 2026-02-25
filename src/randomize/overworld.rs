@@ -12,8 +12,9 @@ use rand::seq::SliceRandom;
 
 use crate::rom::Rom;
 
-use super::map_walker::{
-    self, AIRSHIP_ENTRIES, MAP_TRANSITIONS, WORLDS,
+use super::map_walker;
+use super::rom_data::{
+    self, AIRSHIP_ENTRIES, FxSlot, Grid, MAP_TRANSITIONS, WORLDS,
     FX_WORLD_TABLE, FX_MAP_LOC_ROW, FX_MAP_LOC, FX_MAP_TILE_REPLACE,
     LevelEntry,
 };
@@ -96,23 +97,23 @@ fn random_partition<R: Rng>(rng: &mut R, total: usize, buckets: usize, min: usiz
 /// Same filters as collect_shuffleable in levels.rs, but also excludes current fortresses.
 fn collect_action_levels(rom: &Rom, world_idx: usize) -> Vec<usize> {
     let world = &WORLDS[world_idx];
-    let (_scrcol, objsets, layouts) = map_walker::table_offsets(world);
+    let (_scrcol, objsets, layouts) = rom_data::table_offsets(world);
 
     // Count (obj, lay) pairs to detect hammer bros duplicates
     let mut pair_counts = std::collections::HashMap::new();
     for i in 0..world.entry_count {
-        let obj_ptr = map_walker::read_word(rom, objsets + i * 2);
-        let lay_ptr = map_walker::read_word(rom, layouts + i * 2);
-        if map_walker::is_level_pointer(obj_ptr, lay_ptr) {
+        let obj_ptr = rom_data::read_word(rom, objsets + i * 2);
+        let lay_ptr = rom_data::read_word(rom, layouts + i * 2);
+        if rom_data::is_level_pointer(obj_ptr, lay_ptr) {
             *pair_counts.entry((obj_ptr, lay_ptr)).or_insert(0u32) += 1;
         }
     }
 
     let mut indices = Vec::new();
     for i in 0..world.entry_count {
-        let obj_ptr = map_walker::read_word(rom, objsets + i * 2);
-        let lay_ptr = map_walker::read_word(rom, layouts + i * 2);
-        if !map_walker::is_level_pointer(obj_ptr, lay_ptr) {
+        let obj_ptr = rom_data::read_word(rom, objsets + i * 2);
+        let lay_ptr = rom_data::read_word(rom, layouts + i * 2);
+        if !rom_data::is_level_pointer(obj_ptr, lay_ptr) {
             continue;
         }
         if AIRSHIP_ENTRIES.contains(&(world_idx, i)) {
@@ -131,13 +132,13 @@ fn collect_action_levels(rom: &Rom, world_idx: usize) -> Vec<usize> {
         if FORTRESS_ENTRIES_W8.contains(&(world_idx, i)) {
             continue;
         }
-        if (world_idx, i) == map_walker::BOWSER_ENTRY {
+        if (world_idx, i) == rom_data::BOWSER_ENTRY {
             continue;
         }
         // Exclude short levels (pipe connectors)
         let tileset = rom.read_byte(world.rowtype_offset + i) & 0x0F;
-        if let Some(lay_offset) = map_walker::layout_file_offset(lay_ptr, tileset) {
-            if map_walker::level_screen_count(rom, lay_offset) < 3 {
+        if let Some(lay_offset) = rom_data::layout_file_offset(lay_ptr, tileset) {
+            if rom_data::level_screen_count(rom, lay_offset) < 3 {
                 continue;
             }
         } else {
@@ -146,9 +147,10 @@ fn collect_action_levels(rom: &Rom, world_idx: usize) -> Vec<usize> {
         // Only include entries on level panel tiles (0x03-0x0C).
         // Entries on path tiles (0x47, 0x4A, etc.) are roaming enemies
         // like piranha plants that shouldn't be converted to fortresses.
-        let (row, col) = map_walker::entry_grid_position(rom, world, i);
-        let tile_off = map_walker::map_tile_offset(world_idx, row, col);
+        let (row, col) = rom_data::entry_grid_position(rom, world, i);
+        let tile_off = rom_data::map_tile_offset(world_idx, row, col);
         let tile = rom.read_byte(tile_off);
+        // Note: this also excludes W5 spiral castle (tile 0x5F)
         if !(0x03..=0x0C).contains(&tile) {
             continue;
         }
@@ -159,15 +161,15 @@ fn collect_action_levels(rom: &Rom, world_idx: usize) -> Vec<usize> {
 
 /// Read the map tile at an entry's grid position.
 fn entry_tile(rom: &Rom, world_idx: usize, entry_idx: usize) -> u8 {
-    let (row, col) = map_walker::entry_grid_position(rom, &WORLDS[world_idx], entry_idx);
-    let off = map_walker::map_tile_offset(world_idx, row, col);
+    let (row, col) = rom_data::entry_grid_position(rom, &WORLDS[world_idx], entry_idx);
+    let off = rom_data::map_tile_offset(world_idx, row, col);
     rom.read_byte(off)
 }
 
 /// Write a map tile at an entry's grid position.
 fn set_entry_tile(rom: &mut Rom, world_idx: usize, entry_idx: usize, tile: u8) {
-    let (row, col) = map_walker::entry_grid_position(rom, &WORLDS[world_idx], entry_idx);
-    let off = map_walker::map_tile_offset(world_idx, row, col);
+    let (row, col) = rom_data::entry_grid_position(rom, &WORLDS[world_idx], entry_idx);
+    let off = rom_data::map_tile_offset(world_idx, row, col);
     rom.write_byte(off, tile);
 }
 
@@ -190,7 +192,7 @@ pub fn redistribute_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
         .iter()
         .zip(BOOMBOOM_Y_OFFSETS_W1_7.iter())
         .map(|(&(w, i), &y_off)| {
-            let entry = map_walker::read_entry(rom, &WORLDS[w], i);
+            let entry = rom_data::read_entry(rom, &WORLDS[w], i);
             let tile = entry_tile(rom, w, i);
             (entry, y_off, tile)
         })
@@ -233,7 +235,7 @@ pub fn redistribute_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
 
             // Save displaced action levels (entry + tile)
             for &slot_idx in &slots_to_convert {
-                let level_entry = map_walker::read_entry(rom, &WORLDS[world_idx], slot_idx);
+                let level_entry = rom_data::read_entry(rom, &WORLDS[world_idx], slot_idx);
                 let tile = entry_tile(rom, world_idx, slot_idx);
                 displaced_levels.push((level_entry, tile));
             }
@@ -247,7 +249,7 @@ pub fn redistribute_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
 
             for &slot_idx in &all_fort_slots {
                 let (ref fort_entry, _y_off, fort_tile) = fortress_pool[fortress_pool_idx];
-                map_walker::write_entry(rom, &WORLDS[world_idx], slot_idx, fort_entry);
+                rom_data::write_entry(rom, &WORLDS[world_idx], slot_idx, fort_entry);
                 set_entry_tile(rom, world_idx, slot_idx, fort_tile);
                 fortress_pool_idx += 1;
             }
@@ -257,7 +259,7 @@ pub fn redistribute_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
 
             for &slot_idx in keep_slots {
                 let (ref fort_entry, _y_off, fort_tile) = fortress_pool[fortress_pool_idx];
-                map_walker::write_entry(rom, &WORLDS[world_idx], slot_idx, fort_entry);
+                rom_data::write_entry(rom, &WORLDS[world_idx], slot_idx, fort_entry);
                 set_entry_tile(rom, world_idx, slot_idx, fort_tile);
                 fortress_pool_idx += 1;
             }
@@ -269,7 +271,7 @@ pub fn redistribute_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
             // Same count — assign fortress data + tiles to existing slots
             for &slot_idx in &current_fort_slots {
                 let (ref fort_entry, _y_off, fort_tile) = fortress_pool[fortress_pool_idx];
-                map_walker::write_entry(rom, &WORLDS[world_idx], slot_idx, fort_entry);
+                rom_data::write_entry(rom, &WORLDS[world_idx], slot_idx, fort_entry);
                 set_entry_tile(rom, world_idx, slot_idx, fort_tile);
                 fortress_pool_idx += 1;
             }
@@ -287,7 +289,7 @@ pub fn redistribute_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
     );
 
     for ((level_entry, level_tile), &(w, i)) in displaced_levels.iter().zip(freed_slots.iter()) {
-        map_walker::write_entry(rom, &WORLDS[w], i, level_entry);
+        rom_data::write_entry(rom, &WORLDS[w], i, level_entry);
         set_entry_tile(rom, w, i, *level_tile);
     }
 
@@ -336,7 +338,7 @@ fn shuffle_w8_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
         .iter()
         .zip(BOOMBOOM_Y_OFFSETS_W8.iter())
         .map(|(&(_w, i), &y_off)| {
-            let entry = map_walker::read_entry(rom, world, i);
+            let entry = rom_data::read_entry(rom, world, i);
             let tile = entry_tile(rom, world_idx, i);
             (entry, y_off, tile)
         })
@@ -370,7 +372,7 @@ fn shuffle_w8_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
     for &slot in &chosen_slots {
         if !FORTRESS_ENTRIES_W8.iter().any(|&(_, i)| i == slot) {
             // This is an action level being displaced
-            let entry = map_walker::read_entry(rom, world, slot);
+            let entry = rom_data::read_entry(rom, world, slot);
             let tile = entry_tile(rom, world_idx, slot);
             displaced.push((slot, entry, tile));
         }
@@ -393,14 +395,14 @@ fn shuffle_w8_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // Write fortresses to chosen slots with their tiles
     for (fort_idx, &slot) in chosen_slots.iter().enumerate() {
         let (ref fort_entry, _y_off, fort_tile) = w8_forts[fort_idx];
-        map_walker::write_entry(rom, world, slot, fort_entry);
+        rom_data::write_entry(rom, world, slot, fort_entry);
         set_entry_tile(rom, world_idx, slot, fort_tile);
     }
 
     // Write displaced levels to freed slots with their tiles
     displaced.as_mut_slice().shuffle(rng);
     for ((_, level_entry, level_tile), &freed_slot) in displaced.iter().zip(freed.iter()) {
-        map_walker::write_entry(rom, world, freed_slot, level_entry);
+        rom_data::write_entry(rom, world, freed_slot, level_entry);
         set_entry_tile(rom, world_idx, freed_slot, *level_tile);
     }
 
@@ -520,7 +522,7 @@ fn fx_comp_idx(grid_row: usize, screen: usize, col_in_screen: usize) -> (u8, u8)
 /// Place a lock tile at a grid position, saving the original tile.
 /// Returns the original tile that was at that position (for FortressFX_MapTileReplace).
 fn place_lock(rom: &mut Rom, world_idx: usize, grid_row: usize, grid_col: usize) -> u8 {
-    let offset = map_walker::map_tile_offset(world_idx, grid_row, grid_col);
+    let offset = rom_data::map_tile_offset(world_idx, grid_row, grid_col);
     let orig = rom.read_byte(offset);
     rom.write_byte(offset, TILE_LOCK);
     orig
@@ -529,7 +531,7 @@ fn place_lock(rom: &mut Rom, world_idx: usize, grid_row: usize, grid_col: usize)
 /// Place a gap tile (bridge/water/sky) at a grid position, saving the original tile.
 /// Returns the original tile (used as the FX replacement tile when the gap is cleared).
 fn place_gap(rom: &mut Rom, world_idx: usize, grid_row: usize, grid_col: usize, fx_type: FxType) -> u8 {
-    let offset = map_walker::map_tile_offset(world_idx, grid_row, grid_col);
+    let offset = rom_data::map_tile_offset(world_idx, grid_row, grid_col);
     let orig = rom.read_byte(offset);
     rom.write_byte(offset, fx_type.gap_tile());
     orig
@@ -537,7 +539,7 @@ fn place_gap(rom: &mut Rom, world_idx: usize, grid_row: usize, grid_col: usize, 
 
 /// Remove a lock tile, restoring the given path tile.
 fn remove_lock(rom: &mut Rom, world_idx: usize, grid_row: usize, grid_col: usize, restore_tile: u8) {
-    let offset = map_walker::map_tile_offset(world_idx, grid_row, grid_col);
+    let offset = rom_data::map_tile_offset(world_idx, grid_row, grid_col);
     rom.write_byte(offset, restore_tile);
 }
 
@@ -588,7 +590,7 @@ const TILE_BOWSER: u8 = 0xCC;
 /// Scans the map tile grid for the target tile to handle post-resort state
 /// where entry indices may have changed.
 fn world_target_position(rom: &Rom, world_idx: usize) -> Option<(usize, usize)> {
-    let grid = map_walker::read_tile_grid(rom, world_idx);
+    let grid = rom_data::read_tile_grid(rom, world_idx);
     let target_tile = if world_idx == 7 { TILE_BOWSER } else { TILE_AIRSHIP };
     for r in 0..grid.rows {
         for c in 0..grid.cols {
@@ -609,9 +611,9 @@ fn world_target_position(rom: &Rom, world_idx: usize) -> Option<(usize, usize)> 
 fn pre_open_fx_for_world(
     rom: &mut Rom,
     world_idx: usize,
-    fx_slots_snapshot: &[map_walker::FxSlot],
+    fx_slots_snapshot: &[FxSlot],
 ) {
-    let grid = map_walker::read_tile_grid(rom, world_idx);
+    let grid = rom_data::read_tile_grid(rom, world_idx);
 
     for r in 0..grid.rows {
         for c in 0..grid.cols {
@@ -623,7 +625,7 @@ fn pre_open_fx_for_world(
             }
             // Find an FX slot that matches this position
             if let Some(slot) = fx_slots_snapshot.iter().find(|s| s.grid_row == r && s.grid_col == c) {
-                let offset = map_walker::map_tile_offset(world_idx, r, c);
+                let offset = rom_data::map_tile_offset(world_idx, r, c);
                 rom.write_byte(offset, slot.replace_tile);
             }
         }
@@ -634,22 +636,22 @@ fn pre_open_fx_for_world(
 /// Returns grid positions of all fortresses (excluding airships and Bowser).
 fn find_fortress_entry_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
     let world = &WORLDS[world_idx];
-    let (_scrcol, objsets, layouts) = map_walker::table_offsets(world);
+    let (_scrcol, objsets, layouts) = rom_data::table_offsets(world);
     let mut positions = Vec::new();
     for i in 0..world.entry_count {
         let tileset = rom.read_byte(world.rowtype_offset + i) & 0x0F;
-        let obj_ptr = map_walker::read_word(rom, objsets + i * 2);
-        let lay_ptr = map_walker::read_word(rom, layouts + i * 2);
+        let obj_ptr = rom_data::read_word(rom, objsets + i * 2);
+        let lay_ptr = rom_data::read_word(rom, layouts + i * 2);
         if tileset != 2 || obj_ptr < 0xC000 || lay_ptr == 0x0000 {
             continue;
         }
         if AIRSHIP_ENTRIES.contains(&(world_idx, i)) {
             continue;
         }
-        if (world_idx, i) == map_walker::BOWSER_ENTRY {
+        if (world_idx, i) == rom_data::BOWSER_ENTRY {
             continue;
         }
-        let (row, col) = map_walker::entry_grid_position(rom, world, i);
+        let (row, col) = rom_data::entry_grid_position(rom, world, i);
         positions.push((row, col));
     }
     positions.sort();
@@ -662,11 +664,11 @@ fn find_fortress_entry_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usi
 /// via BFS progression, then places new locks at random valid path tiles using
 /// greedy forward placement. Each lock is validated to not block its own fortress.
 pub fn shuffle_locks<R: Rng>(rom: &mut Rom, rng: &mut R) {
-    let all_pipes = map_walker::read_pipe_pairs(rom);
+    let all_pipes = rom_data::read_pipe_pairs(rom);
     // Snapshot FX slot data ONCE before any repointing. As we process worlds
     // sequentially, repointing W1's slots would corrupt the position data
     // that W2+ needs for pre-opening their vanilla blocking tiles.
-    let fx_slots_snapshot = map_walker::read_fx_slots(rom);
+    let fx_slots_snapshot = rom_data::read_fx_slots(rom);
 
     for world_idx in 0..8 {
         let pipes = all_pipes.get(&world_idx).cloned().unwrap_or_default();
@@ -699,7 +701,7 @@ pub fn shuffle_locks<R: Rng>(rom: &mut Rom, rng: &mut R) {
         let fort_positions: Vec<(usize, usize)> = fort_positions.into_iter().take(fort_count).collect();
 
         // Read the clean grid (all locks/bridges opened)
-        let grid = map_walker::read_tile_grid(rom, world_idx);
+        let grid = rom_data::read_tile_grid(rom, world_idx);
 
         // Determine beat order by simulating progression on the clean grid
         let beat_order = determine_beat_order(&grid, &pipes, &fort_positions);
@@ -764,7 +766,7 @@ fn place_locks_for_world<R: Rng>(
     rom: &Rom,
     rng: &mut R,
     world_idx: usize,
-    grid: &map_walker::Grid,
+    grid: &Grid,
     pipes: &[((usize, usize), (usize, usize))],
     fort_positions: &[(usize, usize)],
     beat_order: &[usize],
@@ -805,7 +807,7 @@ fn place_locks_for_world<R: Rng>(
         if validate_lock_placement(grid, pipes, fort_positions, beat_order, &choices, target_pos) {
             // Convert to placed_locks format
             return choices.iter().map(|&(r, c)| {
-                let tile_offset = map_walker::map_tile_offset(world_idx, r, c);
+                let tile_offset = rom_data::map_tile_offset(world_idx, r, c);
                 let replace_tile = rom.read_byte(tile_offset);
                 Some((r, c, replace_tile))
             }).collect();
@@ -822,7 +824,7 @@ fn place_locks_for_world<R: Rng>(
 /// opens that fort's lock), verify each fort is reachable at its turn,
 /// and the target is reachable after all forts beaten.
 fn validate_lock_placement(
-    grid: &map_walker::Grid,
+    grid: &Grid,
     pipes: &[((usize, usize), (usize, usize))],
     fort_positions: &[(usize, usize)],
     beat_order: &[usize],
@@ -867,7 +869,7 @@ fn validate_lock_placement(
 /// Determine the order fortresses are beaten by simulating progression.
 /// Returns indices into fort_positions in the order they'd be reached.
 fn determine_beat_order(
-    grid: &map_walker::Grid,
+    grid: &Grid,
     pipes: &[((usize, usize), (usize, usize))],
     fort_positions: &[(usize, usize)],
 ) -> Vec<usize> {
@@ -929,18 +931,18 @@ mod tests {
         let mut rom = Rom::from_bytes(&rom_data.unwrap()).unwrap();
 
         // --- Read W1 fortress (entry 11) and W2 fortress (entry 13) ---
-        let w1_fort = map_walker::read_entry(&rom, &WORLDS[0], 11);
-        let w2_fort = map_walker::read_entry(&rom, &WORLDS[1], 13);
+        let w1_fort = rom_data::read_entry(&rom, &WORLDS[0], 11);
+        let w2_fort = rom_data::read_entry(&rom, &WORLDS[1], 13);
 
         // --- Write fortresses into entries [0] and [2] (1-1 and 1-3) ---
-        map_walker::write_entry(&mut rom, &WORLDS[0], 0, &w1_fort);
-        map_walker::write_entry(&mut rom, &WORLDS[0], 2, &w2_fort);
+        rom_data::write_entry(&mut rom, &WORLDS[0], 0, &w1_fort);
+        rom_data::write_entry(&mut rom, &WORLDS[0], 2, &w2_fort);
 
         // Put fortress tiles on the map for entries [0] and [2]
-        let (row0, col0) = map_walker::entry_grid_position(&rom, &WORLDS[0], 0); // row 0, col 4
-        let (row2, col2) = map_walker::entry_grid_position(&rom, &WORLDS[0], 2); // row 0, col 8
-        let off0 = map_walker::map_tile_offset(0, row0, col0);
-        let off2 = map_walker::map_tile_offset(0, row2, col2);
+        let (row0, col0) = rom_data::entry_grid_position(&rom, &WORLDS[0], 0); // row 0, col 4
+        let (row2, col2) = rom_data::entry_grid_position(&rom, &WORLDS[0], 2); // row 0, col 8
+        let off0 = rom_data::map_tile_offset(0, row0, col0);
+        let off2 = rom_data::map_tile_offset(0, row2, col2);
         rom.write_byte(off0, TILE_FORTRESS);
         rom.write_byte(off2, TILE_FORTRESS);
 
@@ -983,7 +985,7 @@ mod tests {
         rom.write_byte(FX_WORLD_TABLE + 3, 0x00);
 
         // --- Verify the map tile was replaced ---
-        let gap_tile = rom.read_byte(map_walker::map_tile_offset(0, 6, 9));
+        let gap_tile = rom.read_byte(rom_data::map_tile_offset(0, 6, 9));
         assert_eq!(gap_tile, TILE_WATER_GAP);
 
         // --- Write patched ROM for manual testing ---
@@ -1069,7 +1071,7 @@ mod tests {
 
         // Check map tile grids match for all worlds
         for wi in 0..8 {
-            let info = &map_walker::MAP_TILE_GRIDS[wi];
+            let info = &rom_data::MAP_TILE_GRIDS[wi];
             let size = info.screens * 144;
             for off in info.file_offset..info.file_offset + size {
                 assert_eq!(
@@ -1093,7 +1095,7 @@ mod tests {
 
         // Check no lock tiles at row 8 in any world
         for wi in 0..8 {
-            let grid = map_walker::read_tile_grid(&rom, wi);
+            let grid = rom_data::read_tile_grid(&rom, wi);
             for c in 0..grid.cols {
                 assert_ne!(
                     grid.get(8, c), TILE_LOCK,
@@ -1116,11 +1118,11 @@ mod tests {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             shuffle_locks(&mut rom, &mut rng);
 
-            let all_pipes = map_walker::read_pipe_pairs(&rom);
+            let all_pipes = rom_data::read_pipe_pairs(&rom);
 
             for wi in 0..8 {
                 let pipes = all_pipes.get(&wi).cloned().unwrap_or_default();
-                let fort_positions = map_walker::read_fortress_positions(&rom, wi);
+                let fort_positions = rom_data::read_fortress_positions(&rom, wi);
                 if fort_positions.is_empty() {
                     continue;
                 }
@@ -1179,15 +1181,15 @@ mod tests {
             crate::randomizer::randomize(&mut rom_after, seed, &options_with_locks);
 
             // For each world, verify lock shuffle didn't reduce reachability
-            let pipes_before = map_walker::read_pipe_pairs(&rom_before);
-            let pipes_after = map_walker::read_pipe_pairs(&rom_after);
+            let pipes_before = rom_data::read_pipe_pairs(&rom_before);
+            let pipes_after = rom_data::read_pipe_pairs(&rom_after);
 
             for wi in 0..8 {
                 let pb = pipes_before.get(&wi).cloned().unwrap_or_default();
                 let pa = pipes_after.get(&wi).cloned().unwrap_or_default();
 
-                let grid_before = map_walker::read_tile_grid(&rom_before, wi);
-                let grid_after = map_walker::read_tile_grid(&rom_after, wi);
+                let grid_before = rom_data::read_tile_grid(&rom_before, wi);
+                let grid_after = rom_data::read_tile_grid(&rom_after, wi);
 
                 let walk_before = map_walker::walk_map(&grid_before, &pb, None);
                 let walk_after = map_walker::walk_map(&grid_after, &pa, None);
@@ -1237,7 +1239,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         shuffle_locks(&mut rom, &mut rng);
 
-        let all_pipes = map_walker::read_pipe_pairs(&rom);
+        let all_pipes = rom_data::read_pipe_pairs(&rom);
 
         println!("\n\x1b[1;33m=== Lock Shuffle (seed 42) ===\x1b[0m\n");
         for wi in 0..8 {

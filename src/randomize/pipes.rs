@@ -16,10 +16,11 @@ use rand::seq::SliceRandom;
 
 use crate::rom::Rom;
 
-use super::map_walker::{
-    self, AIRSHIP_ENTRIES, BOWSER_ENTRY, FORTRESS_ENTRIES, MAP_TILE_GRIDS,
+use super::map_walker;
+use super::rom_data::{
+    self, AIRSHIP_ENTRIES, BOWSER_ENTRY, FORTRESS_ENTRIES, Grid, MAP_TILE_GRIDS,
     MAP_TRANSITIONS, PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, ROWS, TILE_PIPE,
-    TILE_SPIRAL, WORLDS, Grid,
+    WORLDS,
 };
 
 // ---------------------------------------------------------------------------
@@ -85,7 +86,7 @@ struct SwappablePos {
 /// Read all pointer table entries for a world.
 fn read_all_entries(rom: &Rom, world_idx: usize) -> Vec<PipeEntry> {
     let world = &WORLDS[world_idx];
-    let (sc, obj, lay) = map_walker::table_offsets(world);
+    let (sc, obj, lay) = rom_data::table_offsets(world);
     let n = world.entry_count;
 
     let mut entries = Vec::with_capacity(n);
@@ -96,8 +97,8 @@ fn read_all_entries(rom: &Rom, world_idx: usize) -> Vec<PipeEntry> {
         let tileset = rowtype & 0x0F;
         let screen = (scrcol >> 4) & 0x0F;
         let col = scrcol & 0x0F;
-        let obj_ptr = map_walker::read_word(rom, obj + i * 2);
-        let lay_ptr = map_walker::read_word(rom, lay + i * 2);
+        let obj_ptr = rom_data::read_word(rom, obj + i * 2);
+        let lay_ptr = rom_data::read_word(rom, lay + i * 2);
 
         entries.push(PipeEntry {
             index: i,
@@ -262,8 +263,8 @@ fn get_must_reach(rom: &Rom, world_idx: usize) -> HashSet<Pos> {
 /// replacement tile. This is more precise than scanning for tile IDs, which
 /// could false-positive on decorative uses of the same tile values.
 fn open_gaps(rom: &Rom, world_idx: usize, grid: &mut Grid) {
-    let fx_slots = map_walker::read_fx_slots(rom);
-    let fx_assignments = map_walker::read_world_fx_assignments(rom);
+    let fx_slots = rom_data::read_fx_slots(rom);
+    let fx_assignments = rom_data::read_world_fx_assignments(rom);
     let world_fx = &fx_assignments[world_idx];
 
     for &slot_idx in world_fx {
@@ -322,11 +323,11 @@ fn place_pipes_progressive<R: Rng>(
     world_idx: usize,
     rng: &mut R,
 ) -> (Grid, Vec<(Pos, Pos)>) {
-    let mut grid = map_walker::read_tile_grid(rom, world_idx);
+    let mut grid = rom_data::read_tile_grid(rom, world_idx);
     let pipe_pairs_data = get_pipe_pairs(rom, world_idx);
-    let start_pos = map_walker::find_start(&grid);
+    let start_pos = rom_data::find_start(&grid);
     let positions = get_swappable_positions(rom, world_idx, start_pos);
-    let dest_indices = map_walker::dest_indices_for_world(world_idx);
+    let dest_indices = rom_data::dest_indices_for_world(world_idx);
 
     if pipe_pairs_data.is_empty() || dest_indices.is_empty() {
         return (grid, Vec::new());
@@ -455,7 +456,7 @@ fn match_pairs_to_dests(
 ) -> Vec<(usize, usize, usize)> {
     // Returns Vec of (dest_idx, pair_a_entry_index, pair_b_entry_index)
     // where A = upper nibble endpoint, B = lower nibble endpoint.
-    let dests = map_walker::dest_indices_for_world(world_idx);
+    let dests = rom_data::dest_indices_for_world(world_idx);
     let mut matches = Vec::new();
 
     for d in &dests {
@@ -635,7 +636,7 @@ fn resort_pointer_table(rom: &mut Rom, world_idx: usize) {
     let lay = obj + n * 2;
 
     // InitIndex file offset for this world
-    let init_ptr = map_walker::read_word(rom, INIT_INDEX_MASTER + world_idx * 2);
+    let init_ptr = rom_data::read_word(rom, INIT_INDEX_MASTER + world_idx * 2);
     let init_file = 0x18010 + (init_ptr as usize - 0x8000);
 
     let num_screens = MAP_TILE_GRIDS[world_idx].screens;
@@ -866,8 +867,8 @@ mod tests {
                     (
                         test_rom.read_byte(rt + i),
                         test_rom.read_byte(sc + i),
-                        map_walker::read_word(&test_rom, obj + i * 2),
-                        map_walker::read_word(&test_rom, lay + i * 2),
+                        rom_data::read_word(&test_rom, obj + i * 2),
+                        rom_data::read_word(&test_rom, lay + i * 2),
                     )
                 })
                 .collect();
@@ -879,8 +880,8 @@ mod tests {
                     (
                         test_rom.read_byte(rt + i),
                         test_rom.read_byte(sc + i),
-                        map_walker::read_word(&test_rom, obj + i * 2),
-                        map_walker::read_word(&test_rom, lay + i * 2),
+                        rom_data::read_word(&test_rom, obj + i * 2),
+                        rom_data::read_word(&test_rom, lay + i * 2),
                     )
                 })
                 .collect();

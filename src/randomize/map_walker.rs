@@ -1,41 +1,21 @@
-/// Shared map walker for overworld connectivity analysis.
+/// BFS map walker for overworld connectivity analysis.
 ///
-/// BFS-based walker that traverses SMB3 overworld maps using the game's
-/// 2-tile movement model (node → path tile → node). Supports pipe teleport
-/// edges, chokepoint detection, and fortress progression simulation.
+/// Traverses SMB3 overworld maps using the game's 2-tile movement model
+/// (node → path tile → node). Supports pipe teleport edges, chokepoint
+/// detection, and fortress progression simulation.
 ///
-/// Used by `pipes.rs` for pipe shuffle and will be used by future
-/// lock/bridge shuffle.
-
+/// Shared ROM constants, data structures, and helpers live in `rom_data.rs`.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::rom::Rom;
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
+use super::rom_data::{
+    self, BACKGROUND_TILES, FX_WORLD_TABLE, TILE_START, VALID_HORZ, VALID_VERT,
+    Grid,
+};
 
-/// Valid horizontal path tiles (Map_Object_Valid_Left/Right in PRG010).
-pub(super) const VALID_HORZ: &[u8] = &[0x45, 0xB2, 0xB3, 0xAC, 0xB7, 0xB8, 0xDA, 0xB9, 0xE6];
 
-/// Valid vertical path tiles (Map_Object_Valid_Down/Up in PRG010).
-pub(super) const VALID_VERT: &[u8] = &[0x46, 0xB1, 0xAA, 0xAB, 0xB0, 0xDB, 0xBA];
-
-/// Background / non-walkable tiles.
-pub(super) const BACKGROUND_TILES: &[u8] = &[0xB4, 0xFF, 0x02];
-
-/// Start tile ID.
-pub(super) const TILE_START: u8 = 0xE5;
-
-/// Pipe tile ID.
-pub(super) const TILE_PIPE: u8 = 0xBC;
-
-/// W5 Spiral Tower tile ID (functionally a pipe connecting screen 0 ↔ screen 1).
-pub(super) const TILE_SPIRAL: u8 = 0x5F;
-
-/// Number of rows in every overworld map.
-pub(super) const ROWS: usize = 9;
 
 /// Movement directions: (delta_row, delta_col, is_horizontal).
 const DIRECTIONS: [(i8, i8, bool); 4] = [
@@ -45,118 +25,9 @@ const DIRECTIONS: [(i8, i8, bool); 4] = [
     (-1, 0, false), // up
 ];
 
-// Pipe destination tables (PRG002)
-pub(super) const PIPE_MAP_XHI: usize = 0x046AA;
-pub(super) const PIPE_MAP_X: usize = 0x046C2;
-pub(super) const PIPE_MAP_Y: usize = 0x046DA;
-pub(super) const PIPE_MAP_SCRL_XHI: usize = 0x046F2;
-
-/// Destination byte → world index (0-based). Only paired pipe destinations.
-const DEST_TO_WORLD: &[(u8, usize)] = &[
-    (0x00, 4),  // W5 (spiral tower)
-    (0x01, 1),  // W2
-    (0x02, 5), (0x03, 5),  // W6
-    (0x04, 6), (0x05, 6), (0x06, 6), (0x07, 6),  // W7
-    (0x08, 6), (0x09, 6), (0x0A, 6), (0x0B, 6),  // W7
-    (0x0C, 7), (0x0D, 7), (0x0E, 7), (0x0F, 7), (0x10, 7), (0x11, 7),  // W8
-    (0x12, 2), (0x13, 2), (0x14, 2),  // W3
-    (0x15, 3), (0x16, 3),  // W4
-    (0x17, 4),  // W5
-];
-
-/// Per-world map tile grid info.
-pub(super) struct MapGridInfo {
-    pub file_offset: usize,
-    pub columns: usize,
-    pub screens: usize,
-}
-
-pub(super) const MAP_TILE_GRIDS: [MapGridInfo; 8] = [
-    MapGridInfo { file_offset: 0x185BA, columns: 16, screens: 1 },  // W1
-    MapGridInfo { file_offset: 0x1864B, columns: 32, screens: 2 },  // W2
-    MapGridInfo { file_offset: 0x1876C, columns: 48, screens: 3 },  // W3
-    MapGridInfo { file_offset: 0x1891D, columns: 32, screens: 2 },  // W4
-    MapGridInfo { file_offset: 0x18A3E, columns: 32, screens: 2 },  // W5
-    MapGridInfo { file_offset: 0x18B5F, columns: 48, screens: 3 },  // W6
-    MapGridInfo { file_offset: 0x18D10, columns: 32, screens: 2 },  // W7
-    MapGridInfo { file_offset: 0x18E31, columns: 64, screens: 4 },  // W8
-];
-
-/// Pointer table locations per world.
-pub(super) struct WorldTables {
-    pub rowtype_offset: usize,
-    pub entry_count: usize,
-}
-
-pub(super) const WORLDS: [WorldTables; 8] = [
-    WorldTables { rowtype_offset: 0x19438, entry_count: 21 },
-    WorldTables { rowtype_offset: 0x194BA, entry_count: 47 },
-    WorldTables { rowtype_offset: 0x195D8, entry_count: 52 },
-    WorldTables { rowtype_offset: 0x19714, entry_count: 34 },
-    WorldTables { rowtype_offset: 0x197E4, entry_count: 42 },
-    WorldTables { rowtype_offset: 0x198E4, entry_count: 57 },
-    WorldTables { rowtype_offset: 0x19A3E, entry_count: 46 },
-    WorldTables { rowtype_offset: 0x19B56, entry_count: 41 },
-];
-
-/// Known fortress entries (world_idx, entry_idx).
-pub(super) const FORTRESS_ENTRIES: &[(usize, usize)] = &[
-    (0, 11),
-    (1, 13),
-    (2, 13), (2, 34),
-    (3, 9), (3, 16),
-    (4, 12), (4, 31),
-    (5, 9), (5, 27), (5, 48),
-    (6, 5), (6, 40),
-    (7, 7), (7, 10), (7, 26), (7, 36),
-];
-
-/// Known airship entries (world_idx, entry_idx).
-pub(super) const AIRSHIP_ENTRIES: &[(usize, usize)] = &[
-    (0, 17), (1, 36), (2, 49), (3, 6), (4, 35), (5, 53), (6, 43),
-];
-
-/// Bowser's castle entry.
-pub(super) const BOWSER_ENTRY: (usize, usize) = (7, 40);
-
-/// Map transition entries.
-pub(super) const MAP_TRANSITIONS: &[(usize, usize)] = &[];
-
-// FX table offsets (17 slots)
-pub(super) const FX_MAP_LOC_ROW: usize = 0x14855;
-pub(super) const FX_MAP_LOC: usize = 0x14866;
-pub(super) const FX_MAP_TILE_REPLACE: usize = 0x14877;
-pub(super) const FX_WORLD_TABLE: usize = 0x14888;
-
 // ---------------------------------------------------------------------------
-// Data structures
+// Data structures (walker-specific)
 // ---------------------------------------------------------------------------
-
-/// Mutable overworld tile grid.
-pub(super) struct Grid {
-    pub tiles: Vec<Vec<u8>>,
-    pub rows: usize,
-    pub cols: usize,
-}
-
-impl Grid {
-    pub fn get(&self, row: usize, col: usize) -> u8 {
-        self.tiles[row][col]
-    }
-
-    pub fn set(&mut self, row: usize, col: usize, tile: u8) {
-        self.tiles[row][col] = tile;
-    }
-
-    /// Deep copy of the grid for testing lock placement scenarios.
-    pub fn clone_grid(&self) -> Grid {
-        Grid {
-            tiles: self.tiles.clone(),
-            rows: self.rows,
-            cols: self.cols,
-        }
-    }
-}
 
 /// An edge in the walk graph.
 pub(super) struct Edge {
@@ -174,13 +45,6 @@ pub(super) struct WalkResult {
     pub path_tiles: HashSet<(usize, usize)>,
 }
 
-/// An FX slot (lock/bridge position and replacement tile).
-pub(super) struct FxSlot {
-    pub grid_row: usize,
-    pub grid_col: usize,
-    pub replace_tile: u8,
-}
-
 /// A step in fortress progression simulation.
 #[allow(dead_code)]
 pub(super) struct ProgressionStep {
@@ -190,195 +54,6 @@ pub(super) struct ProgressionStep {
     pub fx_old_tile: Option<u8>,
     pub fx_new_tile: Option<u8>,
     pub nodes: HashSet<(usize, usize)>,
-}
-
-// ---------------------------------------------------------------------------
-// ROM helpers
-// ---------------------------------------------------------------------------
-
-/// Read a 16-bit little-endian word from ROM.
-pub(super) fn read_word(rom: &Rom, offset: usize) -> u16 {
-    let lo = rom.read_byte(offset) as u16;
-    let hi = rom.read_byte(offset + 1) as u16;
-    (hi << 8) | lo
-}
-
-/// Compute sub-table file offsets for a world's pointer tables.
-/// Returns (scrcol_offset, objsets_offset, layouts_offset).
-pub(super) fn table_offsets(world: &WorldTables) -> (usize, usize, usize) {
-    let n = world.entry_count;
-    let scrcol = world.rowtype_offset + n;
-    let objsets = scrcol + n;
-    let layouts = objsets + n * 2;
-    (scrcol, objsets, layouts)
-}
-
-/// Get the (grid_row, grid_col) for a pointer table entry.
-pub(super) fn entry_grid_position(rom: &Rom, world: &WorldTables, idx: usize) -> (usize, usize) {
-    let row_nibble = (rom.read_byte(world.rowtype_offset + idx) >> 4) & 0x0F;
-    let scrcol = rom.read_byte(world.rowtype_offset + world.entry_count + idx);
-    let screen = (scrcol >> 4) & 0x0F;
-    let column = scrcol & 0x0F;
-    let grid_row = (row_nibble as usize).wrapping_sub(2);
-    let grid_col = screen as usize * 16 + column as usize;
-    (grid_row, grid_col)
-}
-
-/// Compute the ROM file offset of a map tile at (row, col).
-pub(super) fn map_tile_offset(world_idx: usize, row: usize, col: usize) -> usize {
-    let info = &MAP_TILE_GRIDS[world_idx];
-    let screen = col / 16;
-    let col_in_screen = col % 16;
-    info.file_offset + screen * 144 + row * 16 + col_in_screen
-}
-
-// ---------------------------------------------------------------------------
-// Level entry helpers
-// ---------------------------------------------------------------------------
-
-/// PRG bank loaded at CPU $A000-$BFFF for each tileset (0-18).
-pub(super) const PAGE_A000_BY_TILESET: [usize; 19] = [
-    11, 15, 21, 16, 17, 19, 18, 18, 18, 20, 23, 19, 17, 19, 13, 26, 26, 26, 9,
-];
-
-/// Data that travels with a level when shuffled.
-#[derive(Clone, Debug)]
-pub(super) struct LevelEntry {
-    pub tileset: u8,
-    pub obj_lo: u8,
-    pub obj_hi: u8,
-    pub lay_lo: u8,
-    pub lay_hi: u8,
-}
-
-/// Returns true if this map entry has a real level pointer (not a toad house,
-/// bonus game, hand trap, or pipe junction).
-pub(super) fn is_level_pointer(obj_ptr: u16, lay_ptr: u16) -> bool {
-    obj_ptr >= 0xC000 && lay_ptr != 0x0000
-}
-
-/// Convert a layout CPU address ($A000-$BFFF) + tileset to a ROM file offset.
-pub(super) fn layout_file_offset(cpu_addr: u16, tileset: u8) -> Option<usize> {
-    if tileset as usize >= PAGE_A000_BY_TILESET.len() || cpu_addr < 0xA000 {
-        return None;
-    }
-    let bank = PAGE_A000_BY_TILESET[tileset as usize];
-    Some(bank * 0x2000 + 0x10 + (cpu_addr as usize - 0xA000))
-}
-
-/// Read the screen count from a level's 9-byte header.
-/// Header byte 4, bits 3-0 = (num_screens - 1).
-pub(super) fn level_screen_count(rom: &Rom, layout_offset: usize) -> u8 {
-    (rom.read_byte(layout_offset + 4) & 0x0F) + 1
-}
-
-/// Read a LevelEntry from ROM for a given world and entry index.
-pub(super) fn read_entry(rom: &Rom, world: &WorldTables, idx: usize) -> LevelEntry {
-    let (_scrcol, objsets, layouts) = table_offsets(world);
-    let obj_off = objsets + idx * 2;
-    let lay_off = layouts + idx * 2;
-
-    LevelEntry {
-        tileset: rom.read_byte(world.rowtype_offset + idx) & 0x0F,
-        obj_lo: rom.read_byte(obj_off),
-        obj_hi: rom.read_byte(obj_off + 1),
-        lay_lo: rom.read_byte(lay_off),
-        lay_hi: rom.read_byte(lay_off + 1),
-    }
-}
-
-/// Write a LevelEntry back to ROM for a given world and entry index.
-/// Only the tileset (lower nibble of ByRowType) is updated — the upper
-/// nibble (map row position) is preserved.
-pub(super) fn write_entry(rom: &mut Rom, world: &WorldTables, idx: usize, entry: &LevelEntry) {
-    let (_scrcol, objsets, layouts) = table_offsets(world);
-    let obj_off = objsets + idx * 2;
-    let lay_off = layouts + idx * 2;
-
-    let old_brt = rom.read_byte(world.rowtype_offset + idx);
-    let new_brt = (old_brt & 0xF0) | (entry.tileset & 0x0F);
-    rom.write_byte(world.rowtype_offset + idx, new_brt);
-
-    rom.write_byte(obj_off, entry.obj_lo);
-    rom.write_byte(obj_off + 1, entry.obj_hi);
-    rom.write_byte(lay_off, entry.lay_lo);
-    rom.write_byte(lay_off + 1, entry.lay_hi);
-}
-
-// ---------------------------------------------------------------------------
-// Grid reading
-// ---------------------------------------------------------------------------
-
-/// Read a world's tile grid from ROM as a mutable Grid.
-pub(super) fn read_tile_grid(rom: &Rom, world_idx: usize) -> Grid {
-    let info = &MAP_TILE_GRIDS[world_idx];
-    let cols = info.columns;
-
-    let mut tiles = Vec::with_capacity(ROWS);
-    for r in 0..ROWS {
-        let mut row = Vec::with_capacity(cols);
-        for c in 0..cols {
-            let screen = c / 16;
-            let col_in_screen = c % 16;
-            let offset = info.file_offset + screen * 144 + r * 16 + col_in_screen;
-            row.push(rom.read_byte(offset));
-        }
-        tiles.push(row);
-    }
-
-    Grid { tiles, rows: ROWS, cols }
-}
-
-/// Find the START tile position in a grid.
-pub(super) fn find_start(grid: &Grid) -> Option<(usize, usize)> {
-    for r in 0..grid.rows {
-        for c in 0..grid.cols {
-            if grid.get(r, c) == TILE_START {
-                return Some((r, c));
-            }
-        }
-    }
-    None
-}
-
-// ---------------------------------------------------------------------------
-// Pipe data reading
-// ---------------------------------------------------------------------------
-
-/// Get destination table indices that belong to a given world.
-pub(super) fn dest_indices_for_world(world_idx: usize) -> Vec<usize> {
-    DEST_TO_WORLD
-        .iter()
-        .filter(|&&(_, w)| w == world_idx)
-        .map(|&(d, _)| d as usize)
-        .collect()
-}
-
-/// Read all pipe pairs from ROM destination tables, grouped by world.
-/// Returns a map: world_idx → Vec of ((row_a, col_a), (row_b, col_b)).
-pub(super) fn read_pipe_pairs(rom: &Rom) -> HashMap<usize, Vec<((usize, usize), (usize, usize))>> {
-    let mut pipes_by_world: HashMap<usize, Vec<_>> = HashMap::new();
-
-    for &(dest, world_idx) in DEST_TO_WORLD {
-        let d = dest as usize;
-        let xhi = rom.read_byte(PIPE_MAP_XHI + d);
-        let x = rom.read_byte(PIPE_MAP_X + d);
-        let y = rom.read_byte(PIPE_MAP_Y + d);
-
-        let a_scr = ((xhi >> 4) & 0x0F) as usize;
-        let b_scr = (xhi & 0x0F) as usize;
-        let a_col = ((x >> 4) & 0x0F) as usize;
-        let b_col = (x & 0x0F) as usize;
-        let a_row_nib = ((y >> 4) & 0x0F) as usize;
-        let b_row_nib = (y & 0x0F) as usize;
-
-        let a_pos = (a_row_nib.wrapping_sub(2), a_scr * 16 + a_col);
-        let b_pos = (b_row_nib.wrapping_sub(2), b_scr * 16 + b_col);
-
-        pipes_by_world.entry(world_idx).or_default().push((a_pos, b_pos));
-    }
-
-    pipes_by_world
 }
 
 // ---------------------------------------------------------------------------
@@ -395,7 +70,7 @@ pub(super) fn walk_map(
     pipe_pairs: &[((usize, usize), (usize, usize))],
     start_pos: Option<(usize, usize)>,
 ) -> WalkResult {
-    let start = match start_pos.or_else(|| find_start(grid)) {
+    let start = match start_pos.or_else(|| rom_data::find_start(grid)) {
         Some(s) => s,
         None => {
             return WalkResult {
@@ -645,8 +320,8 @@ pub(super) fn render_progression(
     world_idx: usize,
     pipe_pairs: &[((usize, usize), (usize, usize))],
 ) -> String {
-    let mut grid = read_tile_grid(rom, world_idx);
-    let fx_slots = read_fx_slots(rom);
+    let mut grid = rom_data::read_tile_grid(rom, world_idx);
+    let fx_slots = rom_data::read_fx_slots(rom);
 
     // Scan map for fortress tiles ($67) to handle post-redistribution state
     let world_forts = find_fortress_tiles(&grid);
@@ -723,55 +398,6 @@ pub(super) fn render_progression(
 // Fortress progression simulation
 // ---------------------------------------------------------------------------
 
-/// Read all 17 FX slots from ROM.
-pub(super) fn read_fx_slots(rom: &Rom) -> Vec<FxSlot> {
-    let mut slots = Vec::with_capacity(17);
-    for i in 0..17 {
-        let loc_row = rom.read_byte(FX_MAP_LOC_ROW + i);
-        let loc = rom.read_byte(FX_MAP_LOC + i);
-        let replace_tile = rom.read_byte(FX_MAP_TILE_REPLACE + i);
-
-        let grid_row = ((loc_row >> 4) as usize).wrapping_sub(2);
-        let col_in_screen = ((loc >> 4) & 0x0F) as usize;
-        let screen = (loc & 0x0F) as usize;
-
-        slots.push(FxSlot {
-            grid_row,
-            grid_col: screen * 16 + col_in_screen,
-            replace_tile,
-        });
-    }
-    slots
-}
-
-/// Read FortressFX_W1-W8: which FX slots each world uses.
-/// Returns array of 8 Vecs, one per world.
-///
-/// Each world has 4 bytes in the table, but only the first N are meaningful
-/// where N = number of fortresses in that world. The rest are zero-padded.
-/// We use the fortress count from FORTRESS_ENTRIES to know how many to read.
-pub(super) fn read_world_fx_assignments(rom: &Rom) -> [Vec<u8>; 8] {
-    let mut assignments: [Vec<u8>; 8] = Default::default();
-    for wi in 0..8 {
-        let fort_count = FORTRESS_ENTRIES.iter().filter(|&&(w, _)| w == wi).count();
-        let base = FX_WORLD_TABLE + wi * 4;
-        for i in 0..fort_count.min(4) {
-            assignments[wi].push(rom.read_byte(base + i));
-        }
-    }
-    assignments
-}
-
-/// Read grid positions of fortress entries for a world.
-pub(super) fn read_fortress_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
-    let world = &WORLDS[world_idx];
-    FORTRESS_ENTRIES
-        .iter()
-        .filter(|&&(w, _)| w == world_idx)
-        .map(|&(_, ei)| entry_grid_position(rom, world, ei))
-        .collect()
-}
-
 /// Simulate fortress progression for a world.
 ///
 /// Iteratively walks the map, beats the lowest-ordinal reachable fortress,
@@ -783,8 +409,8 @@ pub(super) fn simulate_progression(
     world_idx: usize,
     pipe_pairs: &[((usize, usize), (usize, usize))],
 ) -> Vec<ProgressionStep> {
-    let world_forts = read_fortress_positions(rom, world_idx);
-    let fx_assignments = read_world_fx_assignments(rom);
+    let world_forts = rom_data::read_fortress_positions(rom, world_idx);
+    let fx_assignments = rom_data::read_world_fx_assignments(rom);
     let world_fx = fx_assignments[world_idx].clone();
     simulate_progression_with(rom, world_idx, pipe_pairs, &world_forts, &world_fx)
 }
@@ -799,8 +425,8 @@ pub(super) fn simulate_progression_with(
     world_forts: &[(usize, usize)],
     world_fx: &[u8],
 ) -> Vec<ProgressionStep> {
-    let mut grid = read_tile_grid(rom, world_idx);
-    let fx_slots = read_fx_slots(rom);
+    let mut grid = rom_data::read_tile_grid(rom, world_idx);
+    let fx_slots = rom_data::read_fx_slots(rom);
 
     let mut beaten: HashSet<usize> = HashSet::new();
     let mut steps = Vec::new();
@@ -867,18 +493,19 @@ pub(super) fn simulate_progression_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::rom_data;
 
     #[test]
     fn test_find_start_all_worlds() {
-        let rom_data = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
-        if rom_data.is_err() {
+        let rom_data_bytes = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        if rom_data_bytes.is_err() {
             return;
         }
-        let rom = Rom::from_bytes(&rom_data.unwrap()).unwrap();
+        let rom = Rom::from_bytes(&rom_data_bytes.unwrap()).unwrap();
 
         for wi in 0..8 {
-            let grid = read_tile_grid(&rom, wi);
-            let start = find_start(&grid);
+            let grid = rom_data::read_tile_grid(&rom, wi);
+            let start = rom_data::find_start(&grid);
             assert!(
                 start.is_some(),
                 "World {} should have a START tile",
@@ -889,14 +516,14 @@ mod tests {
 
     #[test]
     fn test_walk_w1_reachable() {
-        let rom_data = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
-        if rom_data.is_err() {
+        let rom_data_bytes = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        if rom_data_bytes.is_err() {
             return;
         }
-        let rom = Rom::from_bytes(&rom_data.unwrap()).unwrap();
+        let rom = Rom::from_bytes(&rom_data_bytes.unwrap()).unwrap();
 
-        let grid = read_tile_grid(&rom, 0);
-        let pipes = read_pipe_pairs(&rom);
+        let grid = rom_data::read_tile_grid(&rom, 0);
+        let pipes = rom_data::read_pipe_pairs(&rom);
         let w1_pipes = pipes.get(&0).cloned().unwrap_or_default();
         let result = walk_map(&grid, &w1_pipes, None);
 
@@ -910,19 +537,19 @@ mod tests {
 
     #[test]
     fn test_walk_w7_needs_pipes() {
-        let rom_data = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
-        if rom_data.is_err() {
+        let rom_data_bytes = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        if rom_data_bytes.is_err() {
             return;
         }
-        let rom = Rom::from_bytes(&rom_data.unwrap()).unwrap();
+        let rom = Rom::from_bytes(&rom_data_bytes.unwrap()).unwrap();
 
-        let grid = read_tile_grid(&rom, 6);
+        let grid = rom_data::read_tile_grid(&rom, 6);
 
         // Walk without pipes — should be very limited
         let result_no_pipes = walk_map(&grid, &[], None);
 
         // Walk with pipes — should reach many more
-        let pipes = read_pipe_pairs(&rom);
+        let pipes = rom_data::read_pipe_pairs(&rom);
         let w7_pipes = pipes.get(&6).cloned().unwrap_or_default();
         let result_with_pipes = walk_map(&grid, &w7_pipes, None);
 
@@ -936,22 +563,22 @@ mod tests {
 
     #[test]
     fn test_dest_indices_for_world() {
-        assert_eq!(dest_indices_for_world(0).len(), 0); // W1: no pipes
-        assert_eq!(dest_indices_for_world(1).len(), 1); // W2: 1 pair
-        assert_eq!(dest_indices_for_world(4).len(), 2); // W5: 1 regular + 1 spiral tower
-        assert_eq!(dest_indices_for_world(6).len(), 8); // W7: 8 pairs
-        assert_eq!(dest_indices_for_world(7).len(), 6); // W8: 6 pairs
+        assert_eq!(rom_data::dest_indices_for_world(0).len(), 0); // W1: no pipes
+        assert_eq!(rom_data::dest_indices_for_world(1).len(), 1); // W2: 1 pair
+        assert_eq!(rom_data::dest_indices_for_world(4).len(), 2); // W5: 1 regular + 1 spiral tower
+        assert_eq!(rom_data::dest_indices_for_world(6).len(), 8); // W7: 8 pairs
+        assert_eq!(rom_data::dest_indices_for_world(7).len(), 6); // W8: 6 pairs
     }
 
     #[test]
     fn test_chokepoints_w1() {
-        let rom_data = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
-        if rom_data.is_err() {
+        let rom_data_bytes = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        if rom_data_bytes.is_err() {
             return;
         }
-        let rom = Rom::from_bytes(&rom_data.unwrap()).unwrap();
+        let rom = Rom::from_bytes(&rom_data_bytes.unwrap()).unwrap();
 
-        let grid = read_tile_grid(&rom, 0);
+        let grid = rom_data::read_tile_grid(&rom, 0);
         let result = walk_map(&grid, &[], None);
         let chokepoints = find_chokepoints(&result);
 
@@ -964,15 +591,15 @@ mod tests {
 
     #[test]
     fn test_render_debug_visual() {
-        let rom_data = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
-        if rom_data.is_err() {
+        let rom_data_bytes = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        if rom_data_bytes.is_err() {
             return;
         }
-        let rom = Rom::from_bytes(&rom_data.unwrap()).unwrap();
-        let all_pipes = read_pipe_pairs(&rom);
+        let rom = Rom::from_bytes(&rom_data_bytes.unwrap()).unwrap();
+        let all_pipes = rom_data::read_pipe_pairs(&rom);
 
         for wi in 0..8 {
-            let grid = read_tile_grid(&rom, wi);
+            let grid = rom_data::read_tile_grid(&rom, wi);
             let pipes = all_pipes.get(&wi).cloned().unwrap_or_default();
             let result = walk_map(&grid, &pipes, None);
             let chokes = find_chokepoints(&result);
@@ -991,12 +618,12 @@ mod tests {
 
     #[test]
     fn test_render_progression_w6() {
-        let rom_data = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
-        if rom_data.is_err() {
+        let rom_data_bytes = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        if rom_data_bytes.is_err() {
             return;
         }
-        let rom = Rom::from_bytes(&rom_data.unwrap()).unwrap();
-        let all_pipes = read_pipe_pairs(&rom);
+        let rom = Rom::from_bytes(&rom_data_bytes.unwrap()).unwrap();
+        let all_pipes = rom_data::read_pipe_pairs(&rom);
         let pipes = all_pipes.get(&5).cloned().unwrap_or_default();
 
         let output = render_progression(&rom, 5, &pipes);
@@ -1005,11 +632,11 @@ mod tests {
 
     #[test]
     fn test_render_randomized_seed() {
-        let rom_data = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
-        if rom_data.is_err() {
+        let rom_data_bytes = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        if rom_data_bytes.is_err() {
             return;
         }
-        let mut rom = Rom::from_bytes(&rom_data.unwrap()).unwrap();
+        let mut rom = Rom::from_bytes(&rom_data_bytes.unwrap()).unwrap();
 
         let mut options = crate::randomizer::Options::default();
         options.shuffle_fortresses = true;
@@ -1018,13 +645,13 @@ mod tests {
         let seed = 42;
         crate::randomizer::randomize(&mut rom, seed, &options);
 
-        let all_pipes = read_pipe_pairs(&rom);
+        let all_pipes = rom_data::read_pipe_pairs(&rom);
 
         println!("\n\x1b[1;33m=== Randomized seed {seed} (fortresses + pipes) ===\x1b[0m\n");
 
         // Debug view of all 8 worlds
         for wi in 0..8 {
-            let grid = read_tile_grid(&rom, wi);
+            let grid = rom_data::read_tile_grid(&rom, wi);
             let pipes = all_pipes.get(&wi).cloned().unwrap_or_default();
             let result = walk_map(&grid, &pipes, None);
             let chokes = find_chokepoints(&result);

@@ -8,4 +8,5 @@ pub mod palettes;
 pub mod pipes;
 pub mod powerups;
 pub mod qol;
+pub mod rom_data;
 pub mod world_order;
