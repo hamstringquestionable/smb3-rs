@@ -131,10 +131,13 @@ const LEVEL_HEADER_SIZE: usize = 9;
 
 /// File offsets of byte2 values that must not be randomized.
 ///
+/// 6-5 (Ice level): single Q-leaf block — leaf is required for flight.
+///
 /// 7-7 (Muncher level): four Q-star blocks that must stay star — stars are
 /// required to cross muncher fields. Found by brute-scanning the sub-area
 /// at 0x23D48–0x23F1F for group 1 fixed-size byte2=0x02 patterns.
 const PROTECTED_OFFSETS: &[usize] = &[
+    0x22D74, // 6-5 Q-leaf byte2 — leaf required for flight in ice level
     0x23D7F, // 7-7 Q-star byte2 (screen 1)
     0x23DB0, // 7-7 Q-star byte2 (screen 2)
     0x23E1F, // 7-7 Q-star byte2 (screen 5)
