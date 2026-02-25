@@ -10,8 +10,8 @@ const W3_BRIDGE_H2: usize = 0x18779;
 const W3_BRIDGE_V1: usize = 0x1880C;
 const W3_BRIDGE_V2: usize = 0x188F3;
 
-// Toggle code: LDA $07BB; EOR #$01; STA $07BB (8 bytes at 0x14A6B)
-const W3_TOGGLE_OFFSET: usize = 0x14A6B;
+// Toggle code: LDA $07BB; EOR #$01; STA $07BB (8 bytes at 0x14A68)
+const W3_TOGGLE_OFFSET: usize = 0x14A68;
 const W3_TOGGLE_LEN: usize = 8;
 
 // W2 rock blocking secret path (screen 1, row 0, col 5) — $51 → $45
