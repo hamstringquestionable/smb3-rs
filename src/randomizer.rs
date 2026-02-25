@@ -146,13 +146,8 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         }
     }
     if options.shuffle_fortresses {
-        // Skip fortress shuffle when fortress_redistribute is active — it does
-        // its own fortress placement and would overwrite everything here
-        // (pointer entries, map tiles, FX tables, Boom-Boom Y-bytes).
-        if options.fortress_redistribute == FortressRedistribute::Off {
-            rom.set_tag("levels/fortresses");
-            randomize::levels::randomize_fortresses(rom, &mut rng);
-        }
+        rom.set_tag("levels/fortresses");
+        randomize::levels::randomize_fortresses(rom, &mut rng);
         rom.set_tag("levels/airships");
         randomize::levels::randomize_airships(rom, &mut rng);
     }
