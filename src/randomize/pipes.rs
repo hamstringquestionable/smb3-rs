@@ -562,6 +562,9 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
 
         if !placed_pairs.is_empty() {
             apply_pipe_shuffle(rom, world_idx, &pipe_pairs_data, &placed_pairs);
+            // Sync floating overworld sprites (W7 piranha plants) to their
+            // new pointer table positions after entry swaps.
+            rom_data::sync_map_object_positions(rom, world_idx);
         }
     }
 }

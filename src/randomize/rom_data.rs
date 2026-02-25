@@ -182,6 +182,26 @@ pub(super) const BOWSER_ENTRY: (usize, usize) = (7, 40);
 pub(super) const MAP_TRANSITIONS: &[(usize, usize)] = &[];
 
 // ---------------------------------------------------------------------------
+// Overworld map object tables (PRG011)
+// ---------------------------------------------------------------------------
+
+/// Master pointer table for Map_List_Object_Ys (8 words, one per world).
+const MAP_OBJ_YS_MASTER: usize = 0x16020;
+/// Master pointer table for Map_List_Object_XHis.
+const MAP_OBJ_XHIS_MASTER: usize = 0x16030;
+/// Master pointer table for Map_List_Object_XLos.
+const MAP_OBJ_XLOS_MASTER: usize = 0x16040;
+
+/// Map object → pointer table entry linkage.
+/// (world_idx, object_slot, pointer_table_entry_idx)
+/// W7 piranha plants: stationary overworld sprites whose positions must
+/// stay in sync with their pointer table entries after pipe shuffling.
+pub(super) const MAP_OBJ_ENTRY_LINKS: &[(usize, usize, usize)] = &[
+    (6, 2, 11), // W7 piranha plant 1
+    (6, 3, 45), // W7 piranha plant 2
+];
+
+// ---------------------------------------------------------------------------
 // Data structures
 // ---------------------------------------------------------------------------
 
@@ -459,4 +479,46 @@ pub(super) fn read_fortress_positions(rom: &Rom, world_idx: usize) -> Vec<(usize
         .filter(|&&(w, _)| w == world_idx)
         .map(|&(_, ei)| entry_grid_position(rom, world, ei))
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Map object position sync
+// ---------------------------------------------------------------------------
+
+/// Resolve a master pointer table entry to a ROM file offset for a given slot.
+/// The master table holds 8 CPU-address words ($A010 bank); each points to a
+/// 9-byte per-world sub-table.
+fn map_obj_slot_offset(rom: &Rom, master_table: usize, world_idx: usize, slot: usize) -> usize {
+    let cpu = read_word(rom, master_table + world_idx * 2) as usize;
+    // PRG011 is bank 11 → file offset = 11 * 0x2000 + 0x10 + (cpu - 0xA000)
+    0x16010 + (cpu - 0xA000) + slot
+}
+
+/// Sync overworld map object sprite positions to their pointer table entries.
+///
+/// After pipe shuffling moves pointer table entries around, floating sprites
+/// (like W7 piranha plants) still sit at their original pixel positions.
+/// This reads each linked entry's current grid position from the pointer table
+/// and writes the corresponding pixel coordinates into the map object tables.
+pub(super) fn sync_map_object_positions(rom: &mut Rom, world_idx: usize) {
+    let world = &WORLDS[world_idx];
+
+    for &(wi, slot, entry_idx) in MAP_OBJ_ENTRY_LINKS {
+        if wi != world_idx {
+            continue;
+        }
+        let (grid_row, grid_col) = entry_grid_position(rom, world, entry_idx);
+
+        let y = ((grid_row + 2) * 16) as u8;
+        let xhi = (grid_col / 16) as u8;
+        let xlo = ((grid_col % 16) * 16) as u8;
+
+        let y_off = map_obj_slot_offset(rom, MAP_OBJ_YS_MASTER, world_idx, slot);
+        let xhi_off = map_obj_slot_offset(rom, MAP_OBJ_XHIS_MASTER, world_idx, slot);
+        let xlo_off = map_obj_slot_offset(rom, MAP_OBJ_XLOS_MASTER, world_idx, slot);
+
+        rom.write_byte(y_off, y);
+        rom.write_byte(xhi_off, xhi);
+        rom.write_byte(xlo_off, xlo);
+    }
 }
