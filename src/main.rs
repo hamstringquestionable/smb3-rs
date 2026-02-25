@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use smb3r::{LevelShuffle, Options};
+use smb3r::{FortressShuffle, LevelShuffle, Options};
 
 #[derive(Parser)]
 #[command(name = "smb3r", about = "Super Mario Bros. 3 Randomizer")]
@@ -63,17 +63,13 @@ struct Cli {
     #[arg(long)]
     shuffle_fortresses: bool,
 
-    /// Redistribute fortresses across worlds (1-3 per world)
-    #[arg(long)]
-    redistribute_fortresses: bool,
+    /// Fortress shuffle: off, intra-world (lock shuffle), or cross-world (redistribute)
+    #[arg(long, default_value = "off")]
+    fortress_shuffle: String,
 
     /// Shuffle pipe endpoint positions on overworld maps
     #[arg(long)]
     shuffle_pipes: bool,
-
-    /// Shuffle lock positions on overworld maps
-    #[arg(long)]
-    shuffle_locks: bool,
 
     /// Keep W3 drawbridges toggling (they are fixed open by default)
     #[arg(long)]
@@ -116,6 +112,17 @@ fn main() {
         }
     };
 
+    let fortress_shuffle = match cli.fortress_shuffle.as_str() {
+        "off" => FortressShuffle::Off,
+        "intra" | "intra-world" | "intra_world" => FortressShuffle::IntraWorld,
+        "cross" | "cross-world" | "cross_world" => FortressShuffle::CrossWorld,
+        other => {
+            eprintln!("Invalid --fortress-shuffle value: {other}");
+            eprintln!("Valid values: off, intra-world, cross-world");
+            process::exit(1);
+        }
+    };
+
     let options = Options {
         powerups: !cli.no_powerups,
         palettes: !cli.no_palettes,
@@ -127,9 +134,8 @@ fn main() {
         chest_items: !cli.no_chest_items,
         remove_whistles: !cli.keep_whistles,
         shuffle_fortresses: cli.shuffle_fortresses,
-        redistribute_fortresses: cli.redistribute_fortresses,
+        fortress_shuffle,
         shuffle_pipes: cli.shuffle_pipes,
-        shuffle_locks: cli.shuffle_locks,
         fix_drawbridges: !cli.keep_drawbridges,
         remove_w2_rock: !cli.keep_w2_rock,
         airship_lock: !cli.no_airship_lock,
@@ -155,9 +161,12 @@ fn main() {
         LevelShuffle::CrossWorld => "cross-world",
     });
     eprintln!("  Fortress/airship shuffle: {}", if options.shuffle_fortresses { "on" } else { "off" });
-    eprintln!("  Fortress redistribution: {}", if options.redistribute_fortresses { "on" } else { "off" });
+    eprintln!("  Fortress shuffle: {}", match &options.fortress_shuffle {
+        FortressShuffle::Off => "off",
+        FortressShuffle::IntraWorld => "intra-world",
+        FortressShuffle::CrossWorld => "cross-world",
+    });
     eprintln!("  Pipe shuffle: {}", if options.shuffle_pipes { "on" } else { "off" });
-    eprintln!("  Lock shuffle: {}", if options.shuffle_locks { "on" } else { "off" });
     eprintln!("  Autoscroll: {}", if options.disable_autoscroll { "disabled" } else { "enabled" });
     eprintln!("  Chest items: {}", if options.chest_items { "on" } else { "off" });
     eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });

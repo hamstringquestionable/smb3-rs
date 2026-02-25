@@ -22,6 +22,9 @@ impl Default for LevelShuffle {
     }
 }
 
+// Re-export FortressShuffle from overworld module
+pub use crate::randomize::overworld::FortressShuffle;
+
 /// Options controlling which randomizations to apply.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Options {
@@ -50,15 +53,12 @@ pub struct Options {
     /// Shuffle fortresses and airships across worlds.
     #[serde(default = "default_false")]
     pub shuffle_fortresses: bool,
-    /// Redistribute fortresses across worlds (cross-world overworld shuffle).
-    #[serde(default = "default_false")]
-    pub redistribute_fortresses: bool,
+    /// Fortress shuffle mode: off, intra-world (lock shuffle), or cross-world (redistribute).
+    #[serde(default)]
+    pub fortress_shuffle: FortressShuffle,
     /// Shuffle pipe endpoint positions on overworld maps.
     #[serde(default = "default_false")]
     pub shuffle_pipes: bool,
-    /// Shuffle lock positions on overworld maps.
-    #[serde(default = "default_false")]
-    pub shuffle_locks: bool,
     /// Fix W3 drawbridges so all paths are always passable.
     #[serde(default = "default_true")]
     pub fix_drawbridges: bool,
@@ -89,9 +89,8 @@ impl Default for Options {
             chest_items: true,
             remove_whistles: true,
             shuffle_fortresses: false,
-            redistribute_fortresses: false,
+            fortress_shuffle: FortressShuffle::Off,
             shuffle_pipes: false,
-            shuffle_locks: false,
             fix_drawbridges: true,
             remove_w2_rock: true,
             starting_lives: default_starting_lives(),
@@ -137,14 +136,11 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::levels::randomize_fortresses(rom, &mut rng);
         randomize::levels::randomize_airships(rom, &mut rng);
     }
-    if options.redistribute_fortresses {
-        randomize::overworld::redistribute_fortresses(rom, &mut rng);
+    if options.fortress_shuffle != FortressShuffle::Off {
+        randomize::overworld::randomize_fortresses(rom, &mut rng, &options.fortress_shuffle);
     }
     if options.shuffle_pipes {
         randomize::pipes::randomize(rom, &mut rng);
-    }
-    if options.shuffle_locks {
-        randomize::overworld::shuffle_locks(rom, &mut rng);
     }
     if options.chest_items {
         randomize::items::randomize(rom, &mut rng, options.remove_whistles);

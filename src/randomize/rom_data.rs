@@ -394,6 +394,7 @@ pub(super) fn read_world_fx_assignments(rom: &Rom) -> [Vec<u8>; 8] {
 }
 
 /// Read grid positions of fortress entries for a world.
+#[cfg(test)]
 pub(super) fn read_fortress_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
     let world = &WORLDS[world_idx];
     FORTRESS_ENTRIES

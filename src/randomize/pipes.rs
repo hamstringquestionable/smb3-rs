@@ -42,7 +42,6 @@ type Pos = (usize, usize);
 
 /// A pointer table entry with position and level data.
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 struct PipeEntry {
     index: usize,
     grid_row: usize,
@@ -50,9 +49,6 @@ struct PipeEntry {
     obj_ptr: u16,
     lay_ptr: u16,
     tileset: u8,
-    row_nib: u8,
-    screen: u8,
-    col: u8,
 }
 
 /// Entry classification.
@@ -69,12 +65,9 @@ enum EntryType {
 }
 
 /// A map position eligible for pipe placement.
-#[allow(dead_code)]
 struct SwappablePos {
     grid_row: usize,
     grid_col: usize,
-    entry_index: usize,
-    entry_type: EntryType,
 }
 
 // ---------------------------------------------------------------------------
@@ -105,9 +98,6 @@ fn read_all_entries(rom: &Rom, world_idx: usize) -> Vec<PipeEntry> {
             obj_ptr,
             lay_ptr,
             tileset,
-            row_nib,
-            screen,
-            col,
         });
     }
     entries
@@ -227,8 +217,6 @@ fn get_swappable_positions(rom: &Rom, world_idx: usize, start_pos: Option<Pos>) 
         positions.push(SwappablePos {
             grid_row: e.grid_row,
             grid_col: e.grid_col,
-            entry_index: e.index,
-            entry_type: etype,
         });
     }
     positions

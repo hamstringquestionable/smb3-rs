@@ -76,9 +76,13 @@
                 <input type="checkbox" id="opt-shuffle-fortresses">
                 Shuffle Fortresses & Airships
             </label>
-            <label class="checkbox-label">
-                <input type="checkbox" id="opt-shuffle-locks">
-                Shuffle Locks <span class="tag">Randomize lock positions on overworld</span>
+            <label class="select-label">
+                Fortress Shuffle
+                <select id="opt-fortress-shuffle">
+                    <option value="off" selected>Off</option>
+                    <option value="intra_world">Within World</option>
+                    <option value="cross_world">Cross World</option>
+                </select>
             </label>
             <label class="checkbox-label">
                 <input type="checkbox" id="opt-airship-lock" checked>

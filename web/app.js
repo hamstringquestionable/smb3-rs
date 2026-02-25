@@ -19,7 +19,7 @@ const optLevelShuffle = document.getElementById("opt-level-shuffle");
 const optChestItems = document.getElementById("opt-chest-items");
 const optRemoveWhistles = document.getElementById("opt-remove-whistles");
 const optShuffleFortresses = document.getElementById("opt-shuffle-fortresses");
-const optShuffleLocks = document.getElementById("opt-shuffle-locks");
+const optFortressShuffle = document.getElementById("opt-fortress-shuffle");
 const optAirshipLock = document.getElementById("opt-airship-lock");
 const optFixDrawbridges = document.getElementById("opt-fix-drawbridges");
 const optRemoveW2Rock = document.getElementById("opt-remove-w2-rock");
@@ -90,7 +90,7 @@ generateBtn.addEventListener("click", () => {
 		chest_items: optChestItems.checked,
 		remove_whistles: optRemoveWhistles.checked,
 		shuffle_fortresses: optShuffleFortresses.checked,
-		shuffle_locks: optShuffleLocks.checked,
+		fortress_shuffle: optFortressShuffle.value,
 		airship_lock: optAirshipLock.checked,
 		fix_drawbridges: optFixDrawbridges.checked,
 		remove_w2_rock: optRemoveW2Rock.checked,

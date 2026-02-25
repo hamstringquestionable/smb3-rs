@@ -8,12 +8,16 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+#[cfg(test)]
 use crate::rom::Rom;
 
 use super::rom_data::{
-    self, BACKGROUND_TILES, FX_WORLD_TABLE, TILE_START, VALID_HORZ, VALID_VERT,
+    self, BACKGROUND_TILES, VALID_HORZ, VALID_VERT,
     Grid,
 };
+
+#[cfg(test)]
+use super::rom_data::{FX_WORLD_TABLE, TILE_START};
 
 
 
@@ -30,22 +34,26 @@ const DIRECTIONS: [(i8, i8, bool); 4] = [
 // ---------------------------------------------------------------------------
 
 /// An edge in the walk graph.
+/// Fields are populated during BFS and consumed by test-only visualization/analysis.
+#[allow(dead_code)]
 pub(super) struct Edge {
     pub dest: (usize, usize),
     /// Path tile position (None for pipe teleport edges).
     pub path_pos: Option<(usize, usize)>,
-    /// Path tile ID (0 for pipe edges).
-    pub path_tile: u8,
 }
 
 /// Result of a BFS map walk.
 pub(super) struct WalkResult {
     pub nodes: HashSet<(usize, usize)>,
+    /// Edge graph — populated during BFS, consumed by test-only chokepoint analysis.
+    #[allow(dead_code)]
     pub edges: HashMap<(usize, usize), Vec<Edge>>,
     pub path_tiles: HashSet<(usize, usize)>,
 }
 
 /// A step in fortress progression simulation.
+/// Fields beyond `nodes` exist for debugging inspection via `--nocapture`.
+#[cfg(test)]
 #[allow(dead_code)]
 pub(super) struct ProgressionStep {
     pub fort_idx: Option<usize>,
@@ -130,7 +138,6 @@ pub(super) fn walk_map(
             edges.entry((r, c)).or_default().push(Edge {
                 dest: (nr, nc),
                 path_pos: Some((pr, pc)),
-                path_tile,
             });
 
             if !nodes.contains(&(nr, nc)) {
@@ -145,7 +152,6 @@ pub(super) fn walk_map(
                 edges.entry((r, c)).or_default().push(Edge {
                     dest,
                     path_pos: None,
-                    path_tile: 0,
                 });
                 if !nodes.contains(&dest) {
                     nodes.insert(dest);
@@ -165,6 +171,7 @@ pub(super) fn walk_map(
 /// Find path tiles whose removal disconnects the node graph (articulation points).
 ///
 /// Tests each path tile by removing it and checking if BFS still reaches all nodes.
+#[cfg(test)]
 pub(super) fn find_chokepoints(result: &WalkResult) -> HashSet<(usize, usize)> {
     if result.nodes.is_empty() {
         return HashSet::new();
@@ -215,21 +222,27 @@ pub(super) fn find_chokepoints(result: &WalkResult) -> HashSet<(usize, usize)> {
 // Debug visualization
 // ---------------------------------------------------------------------------
 
-// ANSI color codes
+// ANSI color codes (test-only visualization)
+#[cfg(test)]
 const RESET: &str = "\x1b[0m";
+#[cfg(test)]
 const DIM: &str = "\x1b[2m";
+#[cfg(test)]
 const BRIGHT_GREEN: &str = "\x1b[1;32m";
+#[cfg(test)]
 const BRIGHT_RED: &str = "\x1b[1;31m";
+#[cfg(test)]
 const BRIGHT_CYAN: &str = "\x1b[1;36m";
+#[cfg(test)]
 const YELLOW: &str = "\x1b[33m";
+#[cfg(test)]
 const BRIGHT_WHITE: &str = "\x1b[1;37m";
-const _MAGENTA: &str = "\x1b[35m";
 
 /// Render a colored ASCII debug visualization of a world's overworld grid.
 ///
 /// Shows reachable nodes, walked paths, chokepoints, and pipe positions
 /// using ANSI terminal colors.
-#[allow(dead_code)]
+#[cfg(test)]
 pub(super) fn render_debug(
     grid: &Grid,
     walk: Option<&WalkResult>,
@@ -293,10 +306,12 @@ pub(super) fn render_debug(
 }
 
 /// Fortress map tile ID.
+#[cfg(test)]
 const TILE_FORTRESS: u8 = 0x67;
 
 /// Find fortress positions by scanning the tile grid for fortress tiles ($67).
 /// Returns sorted positions in row-major order (deterministic).
+#[cfg(test)]
 fn find_fortress_tiles(grid: &Grid) -> Vec<(usize, usize)> {
     let mut positions = Vec::new();
     for r in 0..grid.rows {
@@ -314,7 +329,7 @@ fn find_fortress_tiles(grid: &Grid) -> Vec<(usize, usize)> {
 ///
 /// Beats each reachable fortress in order, opens its lock/bridge via the FX
 /// table, re-walks, and renders the grid at each step.
-#[allow(dead_code)]
+#[cfg(test)]
 pub(super) fn render_progression(
     rom: &Rom,
     world_idx: usize,
@@ -404,6 +419,7 @@ pub(super) fn render_progression(
 /// opens its FX slot (replacing the lock/bridge tile), and re-walks.
 /// Uses hardcoded FORTRESS_ENTRIES — for post-redistribution use, call
 /// `simulate_progression_with` and pass explicit fortress positions.
+#[cfg(test)]
 pub(super) fn simulate_progression(
     rom: &Rom,
     world_idx: usize,
@@ -418,6 +434,7 @@ pub(super) fn simulate_progression(
 /// Simulate fortress progression with explicit fortress positions and FX assignments.
 ///
 /// Use this after redistribution when FORTRESS_ENTRIES no longer reflects reality.
+#[cfg(test)]
 pub(super) fn simulate_progression_with(
     rom: &Rom,
     world_idx: usize,
@@ -640,7 +657,7 @@ mod tests {
 
         let mut options = crate::randomizer::Options::default();
         options.shuffle_fortresses = true;
-        options.redistribute_fortresses = true;
+        options.fortress_shuffle = crate::randomizer::FortressShuffle::CrossWorld;
         options.shuffle_pipes = true;
         let seed = 42;
         crate::randomizer::randomize(&mut rom, seed, &options);

@@ -4,6 +4,7 @@ pub mod items;
 pub mod levels;
 pub mod map_walker;
 pub mod overworld;
+pub mod overworld_helpers;
 pub mod palettes;
 pub mod pipe_helpers;
 pub mod pipes;
