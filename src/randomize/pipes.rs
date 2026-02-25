@@ -17,9 +17,10 @@ use rand::seq::SliceRandom;
 use crate::rom::Rom;
 
 use super::map_walker;
+use super::pipe_helpers;
 use super::rom_data::{
-    self, AIRSHIP_ENTRIES, BOWSER_ENTRY, FORTRESS_ENTRIES, Grid, MAP_TILE_GRIDS,
-    MAP_TRANSITIONS, PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, ROWS, TILE_PIPE,
+    self, AIRSHIP_ENTRIES, BOWSER_ENTRY, FORTRESS_ENTRIES, Grid,
+    MAP_TRANSITIONS, PIPE_MAP_XHI, PIPE_MAP_X, PIPE_MAP_Y, ROWS, TILE_PIPE,
     WORLDS,
 };
 
@@ -32,9 +33,6 @@ const TILE_REPLACEMENT: u8 = 0x47;
 
 /// W5 Spiral Tower entries (functionally a pipe pair using dest index 0).
 const W5_SPIRAL_ENTRIES: &[(usize, usize)] = &[(4, 10), (4, 21)];
-
-/// InitIndex master table offset (9 word pointers, one per world + warp zone).
-const INIT_INDEX_MASTER: usize = 0x193DA;
 
 // ---------------------------------------------------------------------------
 // Data structures
@@ -439,15 +437,6 @@ fn place_pipes_progressive<R: Rng>(
 // ROM patching
 // ---------------------------------------------------------------------------
 
-/// Convert grid position to pipe destination table nibble values.
-/// Returns (screen_nib, col_nib, row_nib).
-fn grid_pos_to_dest_nibbles(grid_row: usize, grid_col: usize) -> (u8, u8, u8) {
-    let row_nib = (grid_row + 2) as u8;
-    let screen = (grid_col / 16) as u8;
-    let col = (grid_col % 16) as u8;
-    (screen, col, row_nib)
-}
-
 /// Match pipe pair entries to destination table indices by comparing positions.
 fn match_pairs_to_dests(
     rom: &Rom,
@@ -487,53 +476,6 @@ fn match_pairs_to_dests(
     }
 
     matches
-}
-
-/// Swap the map positions of two pointer table entries.
-///
-/// Swaps ByRowType (preserving each entry's tileset) and ByScrCol,
-/// plus the tile grid tiles at their positions.
-fn swap_entry_positions(rom: &mut Rom, world_idx: usize, idx_a: usize, idx_b: usize) {
-    let world = &WORLDS[world_idx];
-    let n = world.entry_count;
-    let rt = world.rowtype_offset;
-    let sc = rt + n;
-    let grid_offset = MAP_TILE_GRIDS[world_idx].file_offset;
-
-    // Read current values
-    let a_rowtype = rom.read_byte(rt + idx_a);
-    let a_scrcol = rom.read_byte(sc + idx_a);
-    let b_rowtype = rom.read_byte(rt + idx_b);
-    let b_scrcol = rom.read_byte(sc + idx_b);
-
-    // Extract row and tileset separately
-    let a_row_nib = (a_rowtype >> 4) & 0x0F;
-    let a_tileset = a_rowtype & 0x0F;
-    let b_row_nib = (b_rowtype >> 4) & 0x0F;
-    let b_tileset = b_rowtype & 0x0F;
-
-    // Swap: A gets B's position (keeps A's tileset), B gets A's position
-    rom.write_byte(rt + idx_a, (b_row_nib << 4) | a_tileset);
-    rom.write_byte(sc + idx_a, b_scrcol);
-    rom.write_byte(rt + idx_b, (a_row_nib << 4) | b_tileset);
-    rom.write_byte(sc + idx_b, a_scrcol);
-
-    // Swap tiles in the grid (per-screen addressing)
-    let a_screen = ((a_scrcol >> 4) & 0x0F) as usize;
-    let a_col = (a_scrcol & 0x0F) as usize;
-    let a_grid_row = (a_row_nib as usize).wrapping_sub(2);
-
-    let b_screen = ((b_scrcol >> 4) & 0x0F) as usize;
-    let b_col = (b_scrcol & 0x0F) as usize;
-    let b_grid_row = (b_row_nib as usize).wrapping_sub(2);
-
-    let a_rom_off = grid_offset + a_screen * 144 + a_grid_row * 16 + a_col;
-    let b_rom_off = grid_offset + b_screen * 144 + b_grid_row * 16 + b_col;
-
-    let a_tile = rom.read_byte(a_rom_off);
-    let b_tile = rom.read_byte(b_rom_off);
-    rom.write_byte(a_rom_off, b_tile);
-    rom.write_byte(b_rom_off, a_tile);
 }
 
 /// Apply pipe shuffle to ROM: swap entries, update dest tables, re-sort.
@@ -585,7 +527,7 @@ fn apply_pipe_shuffle(
         // Swap pipe A to new position
         if cur_a_pos != new_a_pos {
             if let Some(&target_idx) = pos_to_entry.get(&new_a_pos) {
-                swap_entry_positions(rom, world_idx, pipe_a_idx, target_idx);
+                pipe_helpers::swap_entry_positions(rom, world_idx, pipe_a_idx, target_idx);
                 pos_to_entry.insert(new_a_pos, pipe_a_idx);
                 pos_to_entry.insert(cur_a_pos, target_idx);
             }
@@ -602,97 +544,18 @@ fn apply_pipe_shuffle(
         // Swap pipe B to new position
         if cur_b_pos != new_b_pos {
             if let Some(&target_idx) = pos_to_entry.get(&new_b_pos) {
-                swap_entry_positions(rom, world_idx, pipe_b_idx, target_idx);
+                pipe_helpers::swap_entry_positions(rom, world_idx, pipe_b_idx, target_idx);
                 pos_to_entry.insert(new_b_pos, pipe_b_idx);
                 pos_to_entry.insert(cur_b_pos, target_idx);
             }
         }
 
         // Update pipe destination tables
-        let (a_xhi, a_x, a_y) = grid_pos_to_dest_nibbles(new_a_pos.0, new_a_pos.1);
-        let (b_xhi, b_x, b_y) = grid_pos_to_dest_nibbles(new_b_pos.0, new_b_pos.1);
-
-        let d = *dest_idx;
-        rom.write_byte(PIPE_MAP_XHI + d, (a_xhi << 4) | b_xhi);
-        rom.write_byte(PIPE_MAP_X + d, (a_x << 4) | b_x);
-        rom.write_byte(PIPE_MAP_Y + d, (a_y << 4) | b_y);
-        rom.write_byte(PIPE_MAP_SCRL_XHI + d, (a_xhi << 4) | b_xhi);
+        pipe_helpers::write_pipe_dest(rom, *dest_idx, new_a_pos, new_b_pos);
     }
 
     // Re-sort the entire pointer table
-    resort_pointer_table(rom, world_idx);
-}
-
-/// Re-sort all pointer table entries by (screen, row_nib, col) and rebuild InitIndex.
-///
-/// The game scans entries per-screen from InitIndex[screen], matching row first
-/// then column. Entries must be sorted for the lookup to work correctly.
-fn resort_pointer_table(rom: &mut Rom, world_idx: usize) {
-    let world = &WORLDS[world_idx];
-    let n = world.entry_count;
-    let rt = world.rowtype_offset;
-    let sc = rt + n;
-    let obj = sc + n;
-    let lay = obj + n * 2;
-
-    // InitIndex file offset for this world
-    let init_ptr = rom_data::read_word(rom, INIT_INDEX_MASTER + world_idx * 2);
-    let init_file = 0x18010 + (init_ptr as usize - 0x8000);
-
-    let num_screens = MAP_TILE_GRIDS[world_idx].screens;
-
-    // Read all entries
-    struct SortEntry {
-        rowtype: u8,
-        scrcol: u8,
-        obj_lo: u8,
-        obj_hi: u8,
-        lay_lo: u8,
-        lay_hi: u8,
-        screen: u8,
-        row_nib: u8,
-        col: u8,
-    }
-
-    let mut entries: Vec<SortEntry> = (0..n)
-        .map(|i| {
-            let rowtype = rom.read_byte(rt + i);
-            let scrcol = rom.read_byte(sc + i);
-            SortEntry {
-                rowtype,
-                scrcol,
-                obj_lo: rom.read_byte(obj + i * 2),
-                obj_hi: rom.read_byte(obj + i * 2 + 1),
-                lay_lo: rom.read_byte(lay + i * 2),
-                lay_hi: rom.read_byte(lay + i * 2 + 1),
-                screen: (scrcol >> 4) & 0x0F,
-                row_nib: (rowtype >> 4) & 0x0F,
-                col: scrcol & 0x0F,
-            }
-        })
-        .collect();
-
-    // Sort by (screen, row_nib, col)
-    entries.sort_by_key(|e| (e.screen, e.row_nib, e.col));
-
-    // Write back sorted entries
-    for (i, e) in entries.iter().enumerate() {
-        rom.write_byte(rt + i, e.rowtype);
-        rom.write_byte(sc + i, e.scrcol);
-        rom.write_byte(obj + i * 2, e.obj_lo);
-        rom.write_byte(obj + i * 2 + 1, e.obj_hi);
-        rom.write_byte(lay + i * 2, e.lay_lo);
-        rom.write_byte(lay + i * 2 + 1, e.lay_hi);
-    }
-
-    // Rebuild InitIndex: one byte per screen = offset of first entry on that screen
-    for s in 0..num_screens {
-        let offset = entries
-            .iter()
-            .position(|e| e.screen == s as u8)
-            .unwrap_or(0);
-        rom.write_byte(init_file + s, offset as u8);
-    }
+    pipe_helpers::resort_pointer_table(rom, world_idx);
 }
 
 // ---------------------------------------------------------------------------
@@ -873,7 +736,7 @@ mod tests {
                 })
                 .collect();
 
-            resort_pointer_table(&mut test_rom, world_idx);
+            pipe_helpers::resort_pointer_table(&mut test_rom, world_idx);
 
             let mut sorted: Vec<(u8, u8, u16, u16)> = (0..n)
                 .map(|i| {
@@ -912,7 +775,7 @@ mod tests {
         let ts_0 = test_rom.read_byte(rt) & 0x0F;
         let ts_1 = test_rom.read_byte(rt + 1) & 0x0F;
 
-        swap_entry_positions(&mut test_rom, 1, 0, 1);
+        pipe_helpers::swap_entry_positions(&mut test_rom, 1, 0, 1);
 
         // Tilesets should stay with their original entry (not swap)
         let new_ts_0 = test_rom.read_byte(rt) & 0x0F;

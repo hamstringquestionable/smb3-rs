@@ -5,6 +5,7 @@ pub mod levels;
 pub mod map_walker;
 pub mod overworld;
 pub mod palettes;
+pub mod pipe_helpers;
 pub mod pipes;
 pub mod powerups;
 pub mod qol;
