@@ -40,6 +40,16 @@ impl fmt::Display for RomError {
     }
 }
 
+/// A single recorded ROM write operation.
+#[derive(Clone, Debug)]
+pub struct WriteRecord {
+    pub offset: usize,
+    pub len: usize,
+    pub old_bytes: Vec<u8>,
+    pub new_bytes: Vec<u8>,
+    pub tag: String,
+}
+
 /// Parsed iNES header info.
 #[derive(Debug, Clone)]
 pub struct Header {
@@ -55,6 +65,8 @@ pub struct Rom {
     pub original: Vec<u8>,
     pub data: Vec<u8>,
     pub header: Header,
+    tag_stack: Vec<&'static str>,
+    write_log: Vec<WriteRecord>,
 }
 
 impl Rom {
@@ -112,6 +124,8 @@ impl Rom {
             original: bytes.to_vec(),
             data: bytes.to_vec(),
             header,
+            tag_stack: Vec::new(),
+            write_log: Vec::new(),
         })
     }
 
@@ -120,7 +134,18 @@ impl Rom {
     }
 
     pub fn write_byte(&mut self, offset: usize, val: u8) {
-        self.data[offset] = val;
+        let old = self.data[offset];
+        if old != val {
+            let tag = self.current_tag();
+            self.write_log.push(WriteRecord {
+                offset,
+                len: 1,
+                old_bytes: vec![old],
+                new_bytes: vec![val],
+                tag,
+            });
+            self.data[offset] = val;
+        }
     }
 
     pub fn read_range(&self, start: usize, len: usize) -> &[u8] {
@@ -128,7 +153,83 @@ impl Rom {
     }
 
     pub fn write_range(&mut self, start: usize, data: &[u8]) {
-        self.data[start..start + data.len()].copy_from_slice(data);
+        let old = self.data[start..start + data.len()].to_vec();
+        if old != data {
+            let tag = self.current_tag();
+            self.write_log.push(WriteRecord {
+                offset: start,
+                len: data.len(),
+                old_bytes: old,
+                new_bytes: data.to_vec(),
+                tag,
+            });
+            self.data[start..start + data.len()].copy_from_slice(data);
+        }
+    }
+
+    // --- Tag management ---
+
+    /// Replace the tag stack with a single tag. Used by the orchestrator
+    /// before each module call.
+    pub fn set_tag(&mut self, tag: &'static str) {
+        self.tag_stack.clear();
+        self.tag_stack.push(tag);
+    }
+
+    /// Push a sub-tag onto the stack for hierarchical tagging within a module.
+    pub fn push_tag(&mut self, tag: &'static str) {
+        self.tag_stack.push(tag);
+    }
+
+    /// Pop the most recent sub-tag from the stack.
+    pub fn pop_tag(&mut self) {
+        self.tag_stack.pop();
+    }
+
+    fn current_tag(&self) -> String {
+        if self.tag_stack.is_empty() {
+            "untagged".to_string()
+        } else {
+            self.tag_stack.join("/")
+        }
+    }
+
+    // --- Write log queries ---
+
+    /// Returns the full ordered write log.
+    pub fn write_log(&self) -> &[WriteRecord] {
+        &self.write_log
+    }
+
+    /// Returns all write records overlapping the byte range `[start, end)`.
+    pub fn writes_in_range(&self, start: usize, end: usize) -> Vec<&WriteRecord> {
+        self.write_log
+            .iter()
+            .filter(|r| r.offset < end && r.offset + r.len > start)
+            .collect()
+    }
+
+    /// Returns all write records whose tag starts with `prefix`.
+    pub fn writes_by_tag(&self, prefix: &str) -> Vec<&WriteRecord> {
+        self.write_log
+            .iter()
+            .filter(|r| r.tag.starts_with(prefix))
+            .collect()
+    }
+
+    /// Returns all write records covering a specific byte offset.
+    pub fn writes_at(&self, offset: usize) -> Vec<&WriteRecord> {
+        self.write_log
+            .iter()
+            .filter(|r| offset >= r.offset && offset < r.offset + r.len)
+            .collect()
+    }
+
+    /// Returns true if any write record overlaps the byte range `[start, end)`.
+    pub fn has_writes_in_range(&self, start: usize, end: usize) -> bool {
+        self.write_log
+            .iter()
+            .any(|r| r.offset < end && r.offset + r.len > start)
     }
 }
 
@@ -201,5 +302,141 @@ mod tests {
 
         rom.write_range(100, &[1, 2, 3]);
         assert_eq!(rom.read_range(100, 3), &[1, 2, 3]);
+    }
+
+    #[test]
+    fn write_byte_logs_with_tag() {
+        let data = make_valid_rom();
+        let mut rom = Rom::from_bytes(&data).unwrap();
+        rom.set_tag("test_module");
+        rom.write_byte(20, 0xAB);
+
+        let log = rom.write_log();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].offset, 20);
+        assert_eq!(log[0].len, 1);
+        assert_eq!(log[0].old_bytes, vec![0x00]);
+        assert_eq!(log[0].new_bytes, vec![0xAB]);
+        assert_eq!(log[0].tag, "test_module");
+    }
+
+    #[test]
+    fn write_range_logs_with_tag() {
+        let data = make_valid_rom();
+        let mut rom = Rom::from_bytes(&data).unwrap();
+        rom.set_tag("palettes");
+        rom.write_range(100, &[1, 2, 3]);
+
+        let log = rom.write_log();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].offset, 100);
+        assert_eq!(log[0].len, 3);
+        assert_eq!(log[0].old_bytes, vec![0, 0, 0]);
+        assert_eq!(log[0].new_bytes, vec![1, 2, 3]);
+        assert_eq!(log[0].tag, "palettes");
+    }
+
+    #[test]
+    fn noop_write_byte_not_logged() {
+        let data = make_valid_rom();
+        let mut rom = Rom::from_bytes(&data).unwrap();
+        rom.set_tag("test");
+        rom.write_byte(20, 0x00); // same as existing value
+        assert!(rom.write_log().is_empty());
+    }
+
+    #[test]
+    fn noop_write_range_not_logged() {
+        let data = make_valid_rom();
+        let mut rom = Rom::from_bytes(&data).unwrap();
+        rom.set_tag("test");
+        rom.write_range(20, &[0x00, 0x00, 0x00]); // same as existing
+        assert!(rom.write_log().is_empty());
+    }
+
+    #[test]
+    fn untagged_writes_get_untagged_label() {
+        let data = make_valid_rom();
+        let mut rom = Rom::from_bytes(&data).unwrap();
+        rom.write_byte(20, 0xFF);
+        assert_eq!(rom.write_log()[0].tag, "untagged");
+    }
+
+    #[test]
+    fn hierarchical_tags() {
+        let data = make_valid_rom();
+        let mut rom = Rom::from_bytes(&data).unwrap();
+        rom.set_tag("overworld");
+        rom.push_tag("fortress");
+        rom.push_tag("fx_table");
+        rom.write_byte(20, 0xFF);
+        assert_eq!(rom.write_log()[0].tag, "overworld/fortress/fx_table");
+
+        rom.pop_tag();
+        rom.write_byte(21, 0xFE);
+        assert_eq!(rom.write_log()[1].tag, "overworld/fortress");
+    }
+
+    #[test]
+    fn query_writes_in_range() {
+        let data = make_valid_rom();
+        let mut rom = Rom::from_bytes(&data).unwrap();
+        rom.set_tag("a");
+        rom.write_byte(100, 0x01);
+        rom.set_tag("b");
+        rom.write_range(200, &[1, 2, 3]);
+        rom.set_tag("c");
+        rom.write_byte(300, 0x02);
+
+        let hits = rom.writes_in_range(150, 250);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].tag, "b");
+
+        // Range overlapping the write_range at 200..203
+        let hits = rom.writes_in_range(202, 400);
+        assert_eq!(hits.len(), 2); // b (200..203) and c (300)
+    }
+
+    #[test]
+    fn query_writes_by_tag() {
+        let data = make_valid_rom();
+        let mut rom = Rom::from_bytes(&data).unwrap();
+        rom.set_tag("qol/drawbridges");
+        rom.write_byte(20, 0x01);
+        rom.set_tag("qol/w2_rock");
+        rom.write_byte(21, 0x02);
+        rom.set_tag("powerups");
+        rom.write_byte(22, 0x03);
+
+        let qol = rom.writes_by_tag("qol");
+        assert_eq!(qol.len(), 2);
+        let powerups = rom.writes_by_tag("powerups");
+        assert_eq!(powerups.len(), 1);
+    }
+
+    #[test]
+    fn query_writes_at() {
+        let data = make_valid_rom();
+        let mut rom = Rom::from_bytes(&data).unwrap();
+        rom.set_tag("a");
+        rom.write_range(100, &[1, 2, 3]);
+
+        assert_eq!(rom.writes_at(99).len(), 0);
+        assert_eq!(rom.writes_at(100).len(), 1);
+        assert_eq!(rom.writes_at(102).len(), 1);
+        assert_eq!(rom.writes_at(103).len(), 0);
+    }
+
+    #[test]
+    fn query_has_writes_in_range() {
+        let data = make_valid_rom();
+        let mut rom = Rom::from_bytes(&data).unwrap();
+        rom.set_tag("test");
+        rom.write_byte(100, 0x01);
+
+        assert!(rom.has_writes_in_range(100, 101));
+        assert!(rom.has_writes_in_range(50, 101));
+        assert!(!rom.has_writes_in_range(101, 200));
+        assert!(!rom.has_writes_in_range(50, 100));
     }
 }

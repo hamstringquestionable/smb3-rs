@@ -106,60 +106,83 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     // (fortress redistribution, pipe shuffle, lock shuffle) see the final
     // map connectivity and store correct replacement tiles.
     if options.fix_drawbridges {
+        rom.set_tag("qol/drawbridges");
         randomize::qol::fix_w3_drawbridges(rom);
     }
     if options.remove_w2_rock {
+        rom.set_tag("qol/w2_rock");
         randomize::qol::remove_w2_rock(rom);
     }
 
     if options.powerups {
+        rom.set_tag("powerups");
         randomize::powerups::randomize(rom, &mut rng);
     }
     if options.palettes {
+        rom.set_tag("palettes");
         randomize::palettes::randomize(rom, &mut rng);
     }
     if options.enemies {
+        rom.set_tag("enemies");
         randomize::enemies::randomize(rom, &mut rng);
     }
     if options.world_order {
+        rom.set_tag("world_order");
         randomize::world_order::randomize(rom, &mut rng);
     }
     if options.big_q_blocks {
+        rom.set_tag("enemies/big_q_blocks");
         randomize::enemies::randomize_big_q_blocks(rom, &mut rng);
     }
     match options.level_shuffle {
         LevelShuffle::Off => {}
-        LevelShuffle::IntraWorld => randomize::levels::randomize_intra(rom, &mut rng),
-        LevelShuffle::CrossWorld => randomize::levels::randomize_cross(rom, &mut rng),
+        LevelShuffle::IntraWorld => {
+            rom.set_tag("levels");
+            randomize::levels::randomize_intra(rom, &mut rng);
+        }
+        LevelShuffle::CrossWorld => {
+            rom.set_tag("levels");
+            randomize::levels::randomize_cross(rom, &mut rng);
+        }
     }
     if options.shuffle_fortresses {
+        rom.set_tag("levels/fortresses");
         randomize::levels::randomize_fortresses(rom, &mut rng);
+        rom.set_tag("levels/airships");
         randomize::levels::randomize_airships(rom, &mut rng);
     }
     if options.fortress_shuffle != FortressShuffle::Off {
+        rom.set_tag("overworld/fortress");
         randomize::overworld::randomize_fortresses(rom, &mut rng, &options.fortress_shuffle);
     }
     if options.shuffle_pipes {
+        rom.set_tag("pipes");
         randomize::pipes::randomize(rom, &mut rng);
     }
     if options.chest_items {
+        rom.set_tag("items");
         randomize::items::randomize(rom, &mut rng, options.remove_whistles);
     } else if options.remove_whistles {
+        rom.set_tag("items/whistles");
         randomize::items::remove_whistles_only(rom, &mut rng);
     }
     if options.disable_autoscroll {
+        rom.set_tag("autoscroll");
         randomize::autoscroll::disable_autoscroll(rom);
     }
 
     // Set starting lives (default 4; user/configurable)
+    rom.set_tag("qol/starting_lives");
     randomize::qol::set_starting_lives(rom, options.starting_lives);
 
     // Airship lock (anchor effect always on): patch at 0x1FABC ("KXUUXZVG" / Game Genie)
     if options.airship_lock {
+        rom.set_tag("airship_lock");
         // A9 01 EA = LDA #$01; NOP (forces anchor flag always set)
         rom.write_range(0x1FABC, &[0xA9, 0x01, 0xEA]);
         // Anchors are now useless — replace all anchor items in item tables
         // with a single randomly chosen powerup for this seed.
+        rom.set_tag("items/anchors");
         randomize::items::replace_anchors(rom, &mut rng);
     }
 }
@@ -258,5 +281,45 @@ mod tests {
             ANCHOR,
             "Anchor should be preserved when airship_lock is off"
         );
+    }
+
+    #[test]
+    fn write_log_populated_after_randomize() {
+        let mut rom = make_test_rom();
+        let options = Options::default();
+        randomize(&mut rom, 0x12345678, &options);
+
+        let log = rom.write_log();
+        assert!(!log.is_empty(), "Write log should be non-empty after randomize");
+
+        // Every write should have a proper tag (not "untagged")
+        for record in log {
+            assert_ne!(
+                record.tag, "untagged",
+                "Write at offset 0x{:05X} has no tag",
+                record.offset
+            );
+        }
+    }
+
+    #[test]
+    fn write_log_tags_match_enabled_modules() {
+        let mut rom = make_test_rom();
+        let mut options = Options::default();
+        // Disable optional modules we can check for absence
+        options.enemies = false;
+        options.world_order = false;
+        // Keep these on — they write to known offsets even on a zeroed ROM
+        options.disable_autoscroll = true;
+        options.airship_lock = true;
+        randomize(&mut rom, 42, &options);
+
+        let tags: Vec<&str> = rom.write_log().iter().map(|r| r.tag.as_str()).collect();
+        // These modules write to fixed offsets that differ from zero
+        assert!(tags.iter().any(|t| t.starts_with("autoscroll")));
+        assert!(tags.iter().any(|t| t.starts_with("airship_lock")));
+        // Disabled modules should not appear
+        assert!(!tags.iter().any(|t| t.starts_with("enemies")));
+        assert!(!tags.iter().any(|t| t.starts_with("world_order")));
     }
 }
