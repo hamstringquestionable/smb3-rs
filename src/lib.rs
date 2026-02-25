@@ -8,7 +8,7 @@ pub mod wasm;
 
 use rom::Rom;
 
-pub use randomizer::{FortressShuffle, LevelShuffle, Options};
+pub use randomizer::{FortressRedistribute, LevelShuffle, Options};
 
 /// Generate an IPS patch from a ROM with the given seed and options.
 /// Returns the IPS patch bytes.

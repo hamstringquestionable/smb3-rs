@@ -22,8 +22,8 @@ impl Default for LevelShuffle {
     }
 }
 
-// Re-export FortressShuffle from overworld module
-pub use crate::randomize::overworld::FortressShuffle;
+// Re-export FortressRedistribute from overworld module
+pub use crate::randomize::overworld::FortressRedistribute;
 
 /// Options controlling which randomizations to apply.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -53,9 +53,9 @@ pub struct Options {
     /// Shuffle fortresses and airships across worlds.
     #[serde(default = "default_false")]
     pub shuffle_fortresses: bool,
-    /// Fortress shuffle mode: off, intra-world (lock shuffle), or cross-world (redistribute).
+    /// Fortress redistribute mode: off, intra-world (lock shuffle), or cross-world (redistribute).
     #[serde(default)]
-    pub fortress_shuffle: FortressShuffle,
+    pub fortress_redistribute: FortressRedistribute,
     /// Shuffle pipe endpoint positions on overworld maps.
     #[serde(default = "default_false")]
     pub shuffle_pipes: bool,
@@ -89,7 +89,7 @@ impl Default for Options {
             chest_items: true,
             remove_whistles: true,
             shuffle_fortresses: false,
-            fortress_shuffle: FortressShuffle::Off,
+            fortress_redistribute: FortressRedistribute::Off,
             shuffle_pipes: false,
             fix_drawbridges: true,
             remove_w2_rock: true,
@@ -151,9 +151,9 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         rom.set_tag("levels/airships");
         randomize::levels::randomize_airships(rom, &mut rng);
     }
-    if options.fortress_shuffle != FortressShuffle::Off {
+    if options.fortress_redistribute != FortressRedistribute::Off {
         rom.set_tag("overworld/fortress");
-        randomize::overworld::randomize_fortresses(rom, &mut rng, &options.fortress_shuffle);
+        randomize::overworld::randomize_fortresses(rom, &mut rng, &options.fortress_redistribute);
     }
     if options.shuffle_pipes {
         rom.set_tag("pipes");

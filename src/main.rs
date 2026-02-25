@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use smb3r::{FortressShuffle, LevelShuffle, Options};
+use smb3r::{FortressRedistribute, LevelShuffle, Options};
 
 #[derive(Parser)]
 #[command(name = "smb3r", about = "Super Mario Bros. 3 Randomizer")]
@@ -63,9 +63,9 @@ struct Cli {
     #[arg(long)]
     shuffle_fortresses: bool,
 
-    /// Fortress shuffle: off, intra-world (lock shuffle), or cross-world (redistribute)
+    /// Fortress redistribute: off, intra-world (lock shuffle), or cross-world (redistribute)
     #[arg(long, default_value = "off")]
-    fortress_shuffle: String,
+    fortress_redistribute: String,
 
     /// Shuffle pipe endpoint positions on overworld maps
     #[arg(long)]
@@ -112,12 +112,12 @@ fn main() {
         }
     };
 
-    let fortress_shuffle = match cli.fortress_shuffle.as_str() {
-        "off" => FortressShuffle::Off,
-        "intra" | "intra-world" | "intra_world" => FortressShuffle::IntraWorld,
-        "cross" | "cross-world" | "cross_world" => FortressShuffle::CrossWorld,
+    let fortress_redistribute = match cli.fortress_redistribute.as_str() {
+        "off" => FortressRedistribute::Off,
+        "intra" | "intra-world" | "intra_world" => FortressRedistribute::IntraWorld,
+        "cross" | "cross-world" | "cross_world" => FortressRedistribute::CrossWorld,
         other => {
-            eprintln!("Invalid --fortress-shuffle value: {other}");
+            eprintln!("Invalid --fortress-redistribute value: {other}");
             eprintln!("Valid values: off, intra-world, cross-world");
             process::exit(1);
         }
@@ -134,7 +134,7 @@ fn main() {
         chest_items: !cli.no_chest_items,
         remove_whistles: !cli.keep_whistles,
         shuffle_fortresses: cli.shuffle_fortresses,
-        fortress_shuffle,
+        fortress_redistribute,
         shuffle_pipes: cli.shuffle_pipes,
         fix_drawbridges: !cli.keep_drawbridges,
         remove_w2_rock: !cli.keep_w2_rock,
@@ -161,10 +161,10 @@ fn main() {
         LevelShuffle::CrossWorld => "cross-world",
     });
     eprintln!("  Fortress/airship shuffle: {}", if options.shuffle_fortresses { "on" } else { "off" });
-    eprintln!("  Fortress shuffle: {}", match &options.fortress_shuffle {
-        FortressShuffle::Off => "off",
-        FortressShuffle::IntraWorld => "intra-world",
-        FortressShuffle::CrossWorld => "cross-world",
+    eprintln!("  Fortress redistribute: {}", match &options.fortress_redistribute {
+        FortressRedistribute::Off => "off",
+        FortressRedistribute::IntraWorld => "intra-world",
+        FortressRedistribute::CrossWorld => "cross-world",
     });
     eprintln!("  Pipe shuffle: {}", if options.shuffle_pipes { "on" } else { "off" });
     eprintln!("  Autoscroll: {}", if options.disable_autoscroll { "disabled" } else { "enabled" });

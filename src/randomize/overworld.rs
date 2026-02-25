@@ -26,18 +26,18 @@ use super::rom_data::{
 // Public types
 // ---------------------------------------------------------------------------
 
-/// Fortress shuffle mode.
+/// Fortress redistribute mode.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum FortressShuffle {
+pub enum FortressRedistribute {
     Off,
     IntraWorld,
     CrossWorld,
 }
 
-impl Default for FortressShuffle {
+impl Default for FortressRedistribute {
     fn default() -> Self {
-        FortressShuffle::Off
+        FortressRedistribute::Off
     }
 }
 
@@ -309,11 +309,11 @@ fn pick_lock_positions<R: Rng>(
 ///
 /// - IntraWorld: fortresses stay in their home world, lock positions randomized
 /// - CrossWorld: fortresses redistribute across worlds (1-3 per world)
-pub fn randomize_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R, mode: &FortressShuffle) {
+pub fn randomize_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R, mode: &FortressRedistribute) {
     match mode {
-        FortressShuffle::Off => {}
-        FortressShuffle::IntraWorld => randomize_intra(rom, rng),
-        FortressShuffle::CrossWorld => randomize_cross(rom, rng),
+        FortressRedistribute::Off => {}
+        FortressRedistribute::IntraWorld => randomize_intra(rom, rng),
+        FortressRedistribute::CrossWorld => randomize_cross(rom, rng),
     }
 }
 
@@ -768,8 +768,8 @@ mod tests {
         let mut rng1 = ChaCha8Rng::seed_from_u64(777);
         let mut rng2 = ChaCha8Rng::seed_from_u64(777);
 
-        randomize_fortresses(&mut rom1, &mut rng1, &FortressShuffle::IntraWorld);
-        randomize_fortresses(&mut rom2, &mut rng2, &FortressShuffle::IntraWorld);
+        randomize_fortresses(&mut rom1, &mut rng1, &FortressRedistribute::IntraWorld);
+        randomize_fortresses(&mut rom2, &mut rng2, &FortressRedistribute::IntraWorld);
 
         // Check FX table data matches
         for off in 0x147CD..0x148B8 {
@@ -803,8 +803,8 @@ mod tests {
         let mut rng1 = ChaCha8Rng::seed_from_u64(12345);
         let mut rng2 = ChaCha8Rng::seed_from_u64(12345);
 
-        randomize_fortresses(&mut rom1, &mut rng1, &FortressShuffle::CrossWorld);
-        randomize_fortresses(&mut rom2, &mut rng2, &FortressShuffle::CrossWorld);
+        randomize_fortresses(&mut rom1, &mut rng1, &FortressRedistribute::CrossWorld);
+        randomize_fortresses(&mut rom2, &mut rng2, &FortressRedistribute::CrossWorld);
 
         // Check pointer table data matches
         for world in &WORLDS {
@@ -839,7 +839,7 @@ mod tests {
 
         let mut rom = Rom::from_bytes(&rom_data.unwrap()).unwrap();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize_fortresses(&mut rom, &mut rng, &FortressShuffle::IntraWorld);
+        randomize_fortresses(&mut rom, &mut rng, &FortressRedistribute::IntraWorld);
 
         for wi in 0..8 {
             let grid = rom_data::read_tile_grid(&rom, wi);
@@ -862,7 +862,7 @@ mod tests {
         for seed in [42, 123, 999, 31337, 65536] {
             let mut rom = Rom::from_bytes(&rom_data.as_ref().unwrap()).unwrap();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize_fortresses(&mut rom, &mut rng, &FortressShuffle::IntraWorld);
+            randomize_fortresses(&mut rom, &mut rng, &FortressRedistribute::IntraWorld);
 
             let all_pipes = rom_data::read_pipe_pairs(&rom);
 
@@ -895,12 +895,12 @@ mod tests {
         }
 
         for seed in [42, 123, 999, 31337] {
-            for mode in [FortressShuffle::IntraWorld, FortressShuffle::CrossWorld] {
+            for mode in [FortressRedistribute::IntraWorld, FortressRedistribute::CrossWorld] {
                 let mut rom = Rom::from_bytes(&rom_data.as_ref().unwrap()).unwrap();
 
                 let mut options = crate::randomizer::Options::default();
                 options.shuffle_fortresses = true;
-                options.fortress_shuffle = mode.clone();
+                options.fortress_redistribute = mode.clone();
                 options.shuffle_pipes = true;
                 options.fix_drawbridges = true;
                 options.remove_w2_rock = true;
@@ -931,7 +931,7 @@ mod tests {
 
         let mut rom = Rom::from_bytes(&rom_data.unwrap()).unwrap();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize_fortresses(&mut rom, &mut rng, &FortressShuffle::IntraWorld);
+        randomize_fortresses(&mut rom, &mut rng, &FortressRedistribute::IntraWorld);
 
         let all_pipes = rom_data::read_pipe_pairs(&rom);
 
@@ -943,8 +943,8 @@ mod tests {
         }
     }
 
-    /// Verify that when both level shuffle (shuffle_fortresses) and lock
-    /// shuffle (fortress_shuffle) are enabled, each Boom-Boom Y-byte's
+    /// Verify that when both level shuffle (shuffle_fortresses) and
+    /// fortress redistribute (fortress_redistribute) are enabled, each Boom-Boom Y-byte's
     /// upper nibble matches the expected ordinal for its current map
     /// position — not the vanilla position it was shuffled from.
     #[test]
@@ -955,12 +955,12 @@ mod tests {
         }
 
         for seed in [42, 123, 999, 31337, 65536] {
-            for mode in [FortressShuffle::IntraWorld, FortressShuffle::CrossWorld] {
+            for mode in [FortressRedistribute::IntraWorld, FortressRedistribute::CrossWorld] {
                 let mut rom = Rom::from_bytes(&rom_data.as_ref().unwrap()).unwrap();
 
                 let mut options = crate::randomizer::Options::default();
                 options.shuffle_fortresses = true;
-                options.fortress_shuffle = mode.clone();
+                options.fortress_redistribute = mode.clone();
                 crate::randomizer::randomize(&mut rom, seed, &options);
 
                 // For each fortress slot, the Boom-Boom Y-byte that belongs
