@@ -456,6 +456,12 @@ is consistent with the existing `AIRSHIP_ENTRIES` and `BOWSER_CASTLE` patterns.
 The values were derived from `rom_map.py`'s `build_level_groups()` analysis and
 manually verified against known gameplay.
 
+**Bowser's castle exclusion:** W8[40] (`BOWSER_CASTLE` constant, `(7, 40)`) is
+explicitly excluded from level shuffle in `collect_shuffleable()`. The game ending
+sequence is hardcoded to trigger from this specific level — shuffling it to another
+map slot would make the game unwinnable. This exclusion is separate from the
+`FORTRESS_ENTRIES` filter (which also excludes W8[40] as a Boom-Boom group member).
+
 If dynamic detection is ever needed (e.g., for ROM hacks with modified fortress
 placement), Approach 4 is the correct foundation — but it requires the full
 level-group analysis that `rom_map.py` provides, not the simplified forward
@@ -1433,6 +1439,30 @@ The code runs after the king's room cinematic (wand return) when a world boss is
 
 World BGM table (PRG030): file offset **0x3C424**, 9 bytes (worlds 1-8 + warp whistle): `01 02 03 04 05 06 07 08 0B`
 
+#### World Order Debug Flag Fix
+
+The world-init routine at ROM **0x30CC0** (PRG024) initializes both `World_Num` ($0727)
+and `Debug_Flag` ($0160) from the same `LDA #$00` operand at **0x30CC3**:
+
+```
+0x30CC0:  A9 00        LDA #$00
+0x30CC2:  --           (operand byte at 0x30CC3)
+0x30CC4:  8D 27 07     STA $0727    ; World_Num
+0x30CC7:  8D 60 01     STA $0160    ; Debug_Flag
+```
+
+When world order randomization patches the `LDA #$00` operand to the starting world
+number (e.g., `LDA #$05`), the same value leaks into `Debug_Flag`. A non-zero debug
+flag enables debug mode, which breaks normal gameplay.
+
+**Fix:** NOP out the `STA $0160` instruction (3 bytes at **0x30CC7** replaced with
+`EA EA EA`). The reset handler already clears $0160 to zero on power-on, so skipping
+this redundant write is safe.
+
+**Note:** An earlier approach used a JMP-to-free-space trampoline to split the two
+STA instructions with separate LDA operands. This caused a 2-player switching bug
+and was abandoned in favor of the simpler NOP approach.
+
 ### Per-World Specific Offsets
 
 | File Offset | Size | Description |
@@ -1817,6 +1847,89 @@ The game moves the player 2 tiles at a time on the overworld: from a **node** ti
 Background tiles `{$B4, $FF, $02}` block movement to the destination node.
 
 Pipes create **bidirectional teleport edges** between two node positions, bypassing the path tile check.
+
+---
+
+## Big ? Block Bonus Rooms
+
+### Vanilla Behavior
+
+When Mario hits a Big ? Block (objects 0x94–0x9A), the game transfers to a bonus room
+via `LevelJct_BigQuestionBlock` at ROM **0x349F9** (PRG026, CPU $A9E9). This routine
+uses `LDY World_Num` to select from per-world bonus room pointer tables.
+
+**Per-world bonus room tables (PRG026, 8 entries each, indexed by World_Num 0–7):**
+
+| Table | ROM Offset | Contents |
+|-------|-----------|----------|
+| Layout pointers | 0x3491B | 8 words: level layout CPU addresses per world |
+| Enemy pointers | 0x3492B | 8 words: enemy data CPU addresses per world |
+| Tileset IDs | 0x3493B | 8 bytes: tileset for each world's bonus room |
+
+### Problem with Level Shuffle
+
+When levels are shuffled across worlds, the Big ? Block bonus room selection breaks.
+A level originally from W3 that gets shuffled into W6 will load W6's bonus room instead
+of W3's, because the game indexes by the current `World_Num` ($0727), not by the level's
+identity.
+
+An additional complication: `Level_ObjPtrOrig` ($7EBB/$7EBC), which normally holds the
+entry-point object pointer, gets overwritten by `Level_JctInit` during sub-area junction
+processing. By the time `LevelJct_BigQuestionBlock` runs, the original entry obj_ptr is
+gone — it now holds the sub-area's obj_ptr instead.
+
+### Two-Part Patch
+
+**Part A — Save entry obj_ptr to scratch RAM (PRG012)**
+
+At the end of `Map_PrepareLevel`, before any junctions can fire, save the entry-point
+`Level_ObjPtrOrig` to scratch RAM at $7EB4/$7EB5.
+
+Hook point: ROM **0x1920B** — replaces `LDA #$03; STA World_EnterState; RTS` (6 bytes)
+with `JMP $BDC0` (3 bytes) + 3 NOPs.
+
+Trampoline at ROM **0x19DD0** (PRG012 free space, CPU $BDC0), 18 bytes:
+
+```
+LDA $7EBB          ; Level_ObjPtrOrig_AddrL
+STA $7EB4          ; scratch: saved entry obj_lo
+LDA $7EBC          ; Level_ObjPtrOrig_AddrH
+STA $7EB5          ; scratch: saved entry obj_hi
+LDA #$03           ; (displaced original code)
+STA $0728          ; World_EnterState
+RTS
+```
+
+**Part B — Lookup routine replaces World_Num indexing (PRG026)**
+
+Hook point: ROM **0x349F9** — replaces `LDY $0727` (3 bytes) with `JSR $B520`.
+
+Lookup routine at ROM **0x35530** (PRG026 free space, CPU $B520), 66 bytes:
+
+The routine reads the saved entry obj_ptr from $7EB4/$7EB5 (not $7EBB/$7EBC which may
+have been overwritten by junctions). It searches an 11-entry table of obj_ptr values.
+On match, it loads the corresponding room index into Y and returns. On no match (levels
+that don't use Big ? Blocks, like W1/W2 levels), it falls back to `LDY $0727`
+(World_Num).
+
+**Obj_ptr → room index mapping table (11 levels that use Big ? Blocks):**
+
+| Level | Obj Hi | Obj Lo | Room Index | Vanilla World |
+|-------|--------|--------|------------|---------------|
+| 3-5 | $CD | $EB | 2 | W3 |
+| 3-9 | $C3 | $8F | 2 | W3 |
+| 4-F2 | $D5 | $08 | 3 | W4 |
+| 5-2 | $C8 | $BE | 4 | W5 |
+| 5-5 | $CB | $0A | 4 | W5 |
+| 6-3 | $CA | $8E | 5 | W6 |
+| 6-9 | $CD | $2D | 5 | W6 |
+| 6-10 | $CC | $E8 | 5 | W6 |
+| 7-F1 | $D4 | $E4 | 6 | W7 |
+| 7-8 | $C3 | $2D | 6 | W7 |
+| 8-1 | $C4 | $24 | 7 | W8 |
+
+Room indices are 0-indexed (matching World_Num values 0–7). W1 and W2 have no levels
+with Big ? Blocks, so they are not in the table and use the World_Num fallback.
 
 ---
 
