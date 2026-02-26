@@ -114,6 +114,12 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::qol::remove_w2_rock(rom);
     }
 
+    // Fix Big ? Block bonus rooms so they follow the level, not the world slot.
+    // Always applied — needed whenever world_order or cross-world shuffle is active,
+    // and harmless (identity mapping) when worlds aren't shuffled.
+    rom.set_tag("qol/big_q_blocks");
+    randomize::qol::fix_big_q_block_rooms(rom);
+
     if options.powerups {
         rom.set_tag("powerups");
         randomize::powerups::randomize(rom, &mut rng);

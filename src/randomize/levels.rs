@@ -11,9 +11,12 @@ use super::rom_data::{
     map_tile_offset, read_entry, read_word,
 };
 
+/// Bowser's castle: must never be shuffled (game ending is tied to this level).
+const BOWSER_CASTLE: (usize, usize) = (7, 40);
+
 /// Collect the indices of entries that are real action levels for a given world.
 /// Excludes fortresses, boss levels, toad houses, bonus games, hammer bros,
-/// pipe connectors, airships, etc.
+/// pipe connectors, airships, Bowser's castle, etc.
 ///
 /// An entry is a real action level if:
 /// 1. Its obj pointer >= $C000 and layout pointer is non-zero
@@ -51,6 +54,11 @@ fn collect_shuffleable(rom: &Rom, world_idx: usize, world: &WorldTables) -> Vec<
 
         // Exclude map transition entries (structural map region transitions)
         if MAP_TRANSITIONS.contains(&(world_idx, i)) {
+            continue;
+        }
+
+        // Exclude Bowser's castle (game ending is tied to this level)
+        if (world_idx, i) == BOWSER_CASTLE {
             continue;
         }
 

@@ -7,10 +7,16 @@ use crate::rom::Rom;
 /// Original bytes: EE 27 07 4C A0 84
 const WORLD_INC_OFFSET: usize = 0x3D0A1;
 
-/// File offset of the world-init routine (11 bytes: INC $DE; LDA #$00; STA $0727; STA $0160; RTS).
-/// The original `LDA #$00` is shared by both STA targets — we must split them so that patching
-/// World_Num doesn't also corrupt the debug flag at $0160.
-const WORLD_INIT_OFFSET: usize = 0x30CC0;
+/// File offset of the `LDA #$00` operand that initializes World_Num at game start.
+/// Original: `LDA #$00; STA $0727; STA $0160`. We patch the #$00 to the starting world
+/// and NOP out the `STA $0160` so the debug flag isn't set to the world number.
+const WORLD_INIT_OPERAND: usize = 0x30CC3;
+
+/// File offset of the `STA $0160` (Debug_Flag) instruction (3 bytes).
+/// We NOP this out because patching the LDA operand above would otherwise
+/// set the debug flag to the starting world number.  The reset handler
+/// clears $0160 to zero on power-on, so it's safe to skip this write.
+const DEBUG_FLAG_STA_OFFSET: usize = 0x30CC7;
 
 /// Free space in PRG030 for our lookup routine + table.
 /// File offset 0x3DF20 = CPU $9F10 (PRG030 mapped at $8000).
@@ -19,15 +25,8 @@ const ROUTINE_OFFSET: usize = 0x3DF20;
 /// CPU address of the routine in free space.
 const ROUTINE_CPU: u16 = 0x9F10;
 
-/// CPU address of the lookup table (routine + 11 bytes).
-const TABLE_CPU: u16 = ROUTINE_CPU + 11;
-
-/// Free space for the init tail (clears $0160 and returns).
-/// Placed after the lookup routine + 8-byte table = offset + 20.
-const INIT_TAIL_OFFSET: usize = ROUTINE_OFFSET + 20;
-
-/// CPU address of the init tail.
-const INIT_TAIL_CPU: u16 = ROUTINE_CPU + 20;
+/// CPU address of the lookup table (routine + 12 bytes).
+const TABLE_CPU: u16 = ROUTINE_CPU + 12;
 
 /// Randomize the world progression order.
 ///
@@ -43,36 +42,11 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
     worlds.as_mut_slice().shuffle(rng);
     worlds.push(7);
 
-    // Rewrite the world-init routine to split the shared LDA #$00.
-    // Original (11 bytes at 0x30CC0):
-    //   E6 DE        INC $DE
-    //   A9 00        LDA #$00
-    //   8D 27 07     STA $0727   ; World_Num
-    //   8D 60 01     STA $0160   ; debug flag (must stay 0!)
-    //   60           RTS
-    //
-    // Patched in-place (11 bytes, tail jumps to free space):
-    //   E6 DE        INC $DE
-    //   A9 XX        LDA #starting_world
-    //   8D 27 07     STA $0727
-    //   4C XX XX     JMP init_tail
-    //   EA           NOP (pad)
-    let tail_lo = (INIT_TAIL_CPU & 0xFF) as u8;
-    let tail_hi = ((INIT_TAIL_CPU >> 8) & 0xFF) as u8;
-    rom.write_range(WORLD_INIT_OFFSET, &[
-        0xE6, 0xDE,                         // INC $DE
-        0xA9, worlds[0],                     // LDA #starting_world
-        0x8D, 0x27, 0x07,                   // STA $0727
-        0x4C, tail_lo, tail_hi,              // JMP init_tail
-        0xEA,                                // NOP (pad to 11 bytes)
-    ]);
-
-    // Init tail in free space: clear debug flag and return.
-    rom.write_range(INIT_TAIL_OFFSET, &[
-        0xA9, 0x00,              // LDA #$00
-        0x8D, 0x60, 0x01,       // STA $0160
-        0x60,                    // RTS
-    ]);
+    // Patch the starting world: change `LDA #$00` operand to starting world.
+    rom.write_byte(WORLD_INIT_OPERAND, worlds[0]);
+    // NOP out `STA $0160` (Debug_Flag) so it doesn't get the world number.
+    // The reset handler clears $0160 to zero, so skipping this write is safe.
+    rom.write_range(DEBUG_FLAG_STA_OFFSET, &[0xEA, 0xEA, 0xEA]);
 
     // Build the "next world" lookup table.
     // For each position i in the shuffled order, the next world is worlds[i+1].
@@ -120,14 +94,10 @@ mod tests {
         data[4] = 16;
         data[5] = 16;
         data[6] = 0x40;
-        // Write original world-init routine (11 bytes)
-        data[WORLD_INIT_OFFSET..WORLD_INIT_OFFSET + 11].copy_from_slice(&[
-            0xE6, 0xDE,       // INC $DE
-            0xA9, 0x00,       // LDA #$00
-            0x8D, 0x27, 0x07, // STA $0727
-            0x8D, 0x60, 0x01, // STA $0160
-            0x60,             // RTS
-        ]);
+        // Write original world-init: LDA #$00 operand and STA $0160
+        data[WORLD_INIT_OPERAND] = 0x00;
+        data[DEBUG_FLAG_STA_OFFSET..DEBUG_FLAG_STA_OFFSET + 3]
+            .copy_from_slice(&[0x8D, 0x60, 0x01]);
         // Write original INC World_Num bytes
         data[WORLD_INC_OFFSET..WORLD_INC_OFFSET + 6]
             .copy_from_slice(&[0xEE, 0x27, 0x07, 0x4C, 0xA0, 0x84]);
@@ -194,8 +164,8 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         randomize(&mut rom, &mut rng);
 
-        // Starting world is the operand of `LDA #XX` at WORLD_INIT_OFFSET + 3
-        let start_world = rom.read_byte(WORLD_INIT_OFFSET + 3);
+        // Starting world is the operand of `LDA #XX` at WORLD_INIT_OPERAND
+        let start_world = rom.read_byte(WORLD_INIT_OPERAND);
         assert_ne!(start_world, 0, "Starting world should usually not be 0 after shuffle");
         assert!(start_world <= 6, "Starting world should be 0-6 (not Dark Land)");
 
@@ -212,19 +182,17 @@ mod tests {
     }
 
     #[test]
-    fn test_debug_flag_cleared() {
+    fn test_debug_flag_nopped() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         randomize(&mut rom, &mut rng);
 
-        // The init tail should write LDA #$00; STA $0160
-        let tail = rom.read_range(INIT_TAIL_OFFSET, 6);
-        assert_eq!(&tail[0..2], &[0xA9, 0x00], "Init tail should LDA #$00");
-        assert_eq!(&tail[2..5], &[0x8D, 0x60, 0x01], "Init tail should STA $0160");
-        assert_eq!(tail[5], 0x60, "Init tail should end with RTS");
-
-        // The in-place routine should JMP to the tail (not STA $0160 directly)
-        assert_eq!(rom.read_byte(WORLD_INIT_OFFSET + 7), 0x4C, "Should JMP to init tail");
+        // STA $0160 (Debug_Flag) should be NOPed out
+        assert_eq!(
+            rom.read_range(DEBUG_FLAG_STA_OFFSET, 3),
+            &[0xEA, 0xEA, 0xEA],
+            "STA Debug_Flag should be NOPed out"
+        );
     }
 
     #[test]
@@ -238,8 +206,8 @@ mod tests {
         randomize(&mut rom2, &mut rng2);
 
         assert_eq!(
-            rom1.read_range(ROUTINE_OFFSET, 26),
-            rom2.read_range(ROUTINE_OFFSET, 26),
+            rom1.read_range(ROUTINE_OFFSET, 20),
+            rom2.read_range(ROUTINE_OFFSET, 20),
         );
     }
 

@@ -17,6 +17,83 @@ const W3_TOGGLE_LEN: usize = 8;
 // W2 rock blocking secret path (screen 1, row 0, col 5) — $51 → $45
 const W2_SECRET_ROCK: usize = 0x186E0;
 
+// Big ? Block bonus room patch: decouple room selection from World_Num.
+//
+// Two-part patch:
+// Part A — PRG012: At the end of Map_PrepareLevel, save the entry-point obj_ptr
+//   to scratch RAM ($7EB4/$7EB5) before any junctions can overwrite ObjPtrOrig.
+// Part B — PRG026: Replace `LDY World_Num` in LevelJct_BigQuestionBlock with a
+//   JSR to a lookup routine that reads the saved obj_ptr from scratch RAM and
+//   maps it to the correct per-world bonus room index.
+
+// Part A: PRG012 trampoline to save entry-point obj_ptr.
+// Replaces `LDA #$03; STA World_EnterState; RTS` (6 bytes) with `JMP $BDC0` + NOPs.
+const BIG_Q_SAVE_HOOK: usize = 0x1920B;
+const BIG_Q_SAVE_JMP: [u8; 6] = [0x4C, 0xC0, 0xBD, 0xEA, 0xEA, 0xEA];
+// Trampoline in PRG012 free space (CPU $BDC0 = file 0x19DD0).
+const BIG_Q_SAVE_OFFSET: usize = 0x19DD0;
+const BIG_Q_SAVE_ROUTINE: [u8; 18] = [
+    0xAD, 0xBB, 0x7E, // LDA Level_ObjPtrOrig_AddrL
+    0x8D, 0xB4, 0x7E, // STA $7EB4  (scratch: entry obj_lo)
+    0xAD, 0xBC, 0x7E, // LDA Level_ObjPtrOrig_AddrH
+    0x8D, 0xB5, 0x7E, // STA $7EB5  (scratch: entry obj_hi)
+    0xA9, 0x03,        // LDA #$03   (original displaced code)
+    0x8D, 0x28, 0x07,  // STA World_EnterState ($0728)
+    0x60,              // RTS
+];
+
+// Part B: PRG026 lookup routine.
+// Hook point: replace `LDY $0727` with `JSR $B520` in LevelJct_BigQuestionBlock.
+const BIG_Q_HOOK_OFFSET: usize = 0x349F9;
+const BIG_Q_JSR: [u8; 3] = [0x20, 0x20, 0xB5];
+// Lookup routine in PRG026 free space (CPU $B520 = file 0x35530).
+const BIG_Q_ROUTINE_OFFSET: usize = 0x35530;
+// Reads saved entry-point obj_ptr from $7EB4/$7EB5 (not ObjPtrOrig which
+// gets overwritten by sub-area junctions). Falls back to World_Num for
+// levels not in the table (W1/W2 levels don't use Big ? Blocks).
+const BIG_Q_ROUTINE: [u8; 66] = [
+    // LDA $7EB5 (saved entry obj_hi)
+    0xAD, 0xB5, 0x7E,
+    // LDX #10
+    0xA2, 0x0A,
+    // .loop: CMP $B541,X (obj_hi table)
+    0xDD, 0x41, 0xB5,
+    // BNE .next (+16)
+    0xD0, 0x10,
+    // PHA
+    0x48,
+    // LDA $7EB4 (saved entry obj_lo)
+    0xAD, 0xB4, 0x7E,
+    // CMP $B54C,X (obj_lo table)
+    0xDD, 0x4C, 0xB5,
+    // BNE .no_match (+6)
+    0xD0, 0x06,
+    // PLA
+    0x68,
+    // LDA $B557,X (room index table)
+    0xBD, 0x57, 0xB5,
+    // TAY
+    0xA8,
+    // RTS
+    0x60,
+    // .no_match: PLA
+    0x68,
+    // .next: DEX
+    0xCA,
+    // BPL .loop (-24)
+    0x10, 0xE8,
+    // fallback: LDY $0727
+    0xAC, 0x27, 0x07,
+    // RTS
+    0x60,
+    // obj_hi table (11 entries): 3-5,3-9,4-F2,5-2,5-5,6-3,6-9,6-10,7-F1,7-8,8-1
+    0xCD, 0xC3, 0xD5, 0xC8, 0xCB, 0xCA, 0xCD, 0xCC, 0xD4, 0xC3, 0xC4,
+    // obj_lo table (11 entries)
+    0xEB, 0x8F, 0x08, 0xBE, 0x0A, 0x8E, 0x2D, 0xE8, 0xE4, 0x2D, 0x24,
+    // room index table (11 entries): vanilla world indices (0-indexed)
+    0x02, 0x02, 0x03, 0x04, 0x04, 0x05, 0x05, 0x05, 0x06, 0x06, 0x07,
+];
+
 /// Set starting lives for both Mario and Luigi (1–99).
 pub fn set_starting_lives(rom: &mut Rom, lives: u8) {
     let clamped = lives.min(99).max(1);
@@ -26,6 +103,23 @@ pub fn set_starting_lives(rom: &mut Rom, lives: u8) {
 /// Remove the W2 rock blocking the secret path, replacing it with horizontal path.
 pub fn remove_w2_rock(rom: &mut Rom) {
     rom.write_byte(W2_SECRET_ROCK, 0x45);
+}
+
+/// Patch Big ? Block bonus room selection to use level identity instead of World_Num.
+///
+/// Part A: Saves the entry-point obj_ptr to scratch RAM ($7EB4/$7EB5) at the end of
+/// Map_PrepareLevel, before any sub-area junctions can overwrite Level_ObjPtrOrig.
+///
+/// Part B: Installs a lookup routine in PRG026 free space that reads the saved obj_ptr
+/// and maps it to the correct per-world bonus room index. Falls back to World_Num for
+/// levels not in the table (W1/W2 levels don't use Big ? Blocks).
+pub fn fix_big_q_block_rooms(rom: &mut Rom) {
+    // Part A: PRG012 save trampoline
+    rom.write_range(BIG_Q_SAVE_HOOK, &BIG_Q_SAVE_JMP);
+    rom.write_range(BIG_Q_SAVE_OFFSET, &BIG_Q_SAVE_ROUTINE);
+    // Part B: PRG026 lookup routine
+    rom.write_range(BIG_Q_HOOK_OFFSET, &BIG_Q_JSR);
+    rom.write_range(BIG_Q_ROUTINE_OFFSET, &BIG_Q_ROUTINE);
 }
 
 /// Replace W3 drawbridge tiles with normal path tiles and NOP the toggle code.
@@ -69,6 +163,36 @@ mod tests {
         assert_eq!(rom.read_byte(STARTING_LIVES_OFFSET), 99);
         set_starting_lives(&mut rom, 0);
         assert_eq!(rom.read_byte(STARTING_LIVES_OFFSET), 1);
+    }
+
+    #[test]
+    fn test_fix_big_q_block_rooms() {
+        let mut rom = make_test_rom();
+        // Place original bytes at hook points
+        rom.write_range(BIG_Q_HOOK_OFFSET, &[0xAC, 0x27, 0x07]);
+        rom.write_range(BIG_Q_SAVE_HOOK, &[0xA9, 0x03, 0x8D, 0x28, 0x07, 0x60]);
+
+        fix_big_q_block_rooms(&mut rom);
+
+        // Part A: PRG012 save trampoline
+        assert_eq!(rom.read_range(BIG_Q_SAVE_HOOK, 6), &BIG_Q_SAVE_JMP);
+        assert_eq!(
+            rom.read_range(BIG_Q_SAVE_OFFSET, BIG_Q_SAVE_ROUTINE.len()),
+            &BIG_Q_SAVE_ROUTINE
+        );
+
+        // Part B: PRG026 lookup routine
+        assert_eq!(rom.read_range(BIG_Q_HOOK_OFFSET, 3), &BIG_Q_JSR);
+        assert_eq!(
+            rom.read_range(BIG_Q_ROUTINE_OFFSET, BIG_Q_ROUTINE.len()),
+            &BIG_Q_ROUTINE
+        );
+        // Spot-check: routine reads $7EB5 (not $7EBC)
+        assert_eq!(rom.read_byte(BIG_Q_ROUTINE_OFFSET + 1), 0xB5);
+        assert_eq!(rom.read_byte(BIG_Q_ROUTINE_OFFSET + 2), 0x7E);
+        // Spot-check: first obj_hi entry is $CD (3-5), last room index is $07 (8-1)
+        assert_eq!(rom.read_byte(BIG_Q_ROUTINE_OFFSET + 33), 0xCD);
+        assert_eq!(rom.read_byte(BIG_Q_ROUTINE_OFFSET + 65), 0x07);
     }
 
     #[test]
