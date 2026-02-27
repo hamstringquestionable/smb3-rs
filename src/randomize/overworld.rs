@@ -378,6 +378,7 @@ fn randomize_intra<R: Rng>(rom: &mut Rom, rng: &mut R) {
                     dest_world: world_idx,
                     dest_slot: entry_idx,
                     ordinal: (ord + 1) as u8,
+                    fortress_pos: fort_positions[fort_idx],
                     obstacle_pos: *obstacle_pos,
                 });
             }
@@ -427,6 +428,7 @@ fn randomize_intra<R: Rng>(rom: &mut Rom, rng: &mut R) {
                     dest_world: world_idx,
                     dest_slot: entry_idx,
                     ordinal: (ord + 1) as u8,
+                    fortress_pos: fort_positions[fort_idx],
                     obstacle_pos: *obstacle_pos,
                 });
             }
@@ -583,6 +585,7 @@ fn randomize_cross<R: Rng>(rom: &mut Rom, rng: &mut R) {
                     dest_world: world_idx,
                     dest_slot: slot,
                     ordinal: (ord + 1) as u8,
+                    fortress_pos: fort_positions[fort_idx],
                     obstacle_pos: *obstacle_pos,
                 });
             }
@@ -714,6 +717,7 @@ fn shuffle_w8_fortresses<R: Rng>(
                 dest_world: world_idx,
                 dest_slot: slot,
                 ordinal: (ord + 1) as u8,
+                fortress_pos: fort_positions[fort_idx],
                 obstacle_pos: *obstacle_pos,
             });
         }

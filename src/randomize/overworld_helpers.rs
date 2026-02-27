@@ -77,11 +77,16 @@ const MAP_COMPLETE_BITS: [u8; 8] = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x
 
 /// FX type determines the pattern bytes and gap tile used.
 /// Derived automatically from the tile at the obstacle position.
+///
+/// Lock vs BridgeGap distinction is critical: the game's hardcoded
+/// `Map_RemoveTo_Tiles` table maps $54 (lock) → $46 (vertical path) and
+/// $56 (bridge gap) → $45 (horizontal path). Using the wrong gap tile
+/// causes vertical/horizontal path corruption on map reload.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[allow(dead_code)]
 enum FxType {
-    Lock,        // FE C0 FE C0 (vertical) or FE FE E1 E1 (horizontal) — gap tile $54
-    Bridge,      // FE FE E1 E1 — gap tile $56
+    Lock,        // FE C0 FE C0 — gap tile $54, replaced with $46 (vertical path)
+    BridgeGap,   // FE FE E1 E1 — gap tile $56, replaced with $45 (horizontal path)
     WaterBridge, // D4 D6 D5 D7 — gap tile $9D
     SkyBridge,   // FE FE E1 E1 — gap tile $E4
 }
@@ -90,7 +95,7 @@ impl FxType {
     fn gap_tile(self) -> u8 {
         match self {
             FxType::Lock => TILE_LOCK,
-            FxType::Bridge => TILE_BRIDGE_GAP,
+            FxType::BridgeGap => TILE_BRIDGE_GAP,
             FxType::WaterBridge => TILE_WATER_GAP,
             FxType::SkyBridge => TILE_SKY_GAP,
         }
@@ -99,17 +104,20 @@ impl FxType {
 
 /// Determine the FX type and pattern bytes from the tile at the obstacle position.
 /// Returns (FxType, pattern_bytes).
+///
+/// Vertical path tiles get FxType::Lock ($54 → $46 on reload).
+/// Horizontal path tiles get FxType::BridgeGap ($56 → $45 on reload).
 fn fx_type_for_tile(tile: u8) -> (FxType, [u8; 4]) {
     match tile {
         // Water bridge → water pattern
         0xB3 => (FxType::WaterBridge, [0xD4, 0xD6, 0xD5, 0xD7]),
         // Sky bridge → sky gap with horizontal pattern
         0xDA => (FxType::SkyBridge, [0xFE, 0xFE, 0xE1, 0xE1]),
-        // Vertical path tiles → lock with vertical pattern
+        // Vertical path tiles → lock (gap $54, replaced with $46 vertical)
         0x46 | 0xAA | 0xAB | 0xB0 | 0xB1 | 0xDB | 0xBA =>
             (FxType::Lock, [0xFE, 0xC0, 0xFE, 0xC0]),
-        // Everything else (horizontal paths, drawbridges) → lock with horizontal pattern
-        _ => (FxType::Lock, [0xFE, 0xFE, 0xE1, 0xE1]),
+        // Horizontal path tiles → bridge gap (gap $56, replaced with $45 horizontal)
+        _ => (FxType::BridgeGap, [0xFE, 0xFE, 0xE1, 0xE1]),
     }
 }
 
@@ -133,9 +141,11 @@ fn fx_map_location_row(grid_row: usize) -> u8 {
 }
 
 /// Compute the Map_Completions (column, bit) pair for a position.
+/// The game's Map_Complete_Bits LUT has 8 entries (rows 0-7);
+/// row 8 is clamped to 7 as a safety measure.
 fn fx_comp_idx(grid_row: usize, screen: usize, col_in_screen: usize) -> (u8, u8) {
     let col = (screen * 16 + col_in_screen) as u8;
-    let bit = MAP_COMPLETE_BITS[grid_row];
+    let bit = MAP_COMPLETE_BITS[grid_row.min(7)];
     (col, bit)
 }
 
@@ -159,6 +169,9 @@ pub(super) struct FortressPlacement {
     /// 1-based ordinal within destination world (for Y-byte and FX table)
     pub ordinal: u8,
 
+    /// Grid position (row, col) of the fortress tile in destination world.
+    /// Used for Map_Completions persistence (FortressFX_MapCompIdx).
+    pub fortress_pos: (usize, usize),
     /// Grid position (row, col) for the obstacle (lock/gap) in destination world
     pub obstacle_pos: (usize, usize),
 }
@@ -244,8 +257,11 @@ pub(super) fn execute_world_placements(
         rom.write_byte(FX_MAP_LOC + slot_idx, fx_map_location(screen, col_in_screen));
         rom.write_byte(FX_MAP_TILE_REPLACE + slot_idx, original_tile);
 
-        // Map_Completions persistence
-        let (comp_col, comp_bit) = fx_comp_idx(ob_row, screen, col_in_screen);
+        // Map_Completions persistence — encodes the FORTRESS position, not the obstacle
+        let (fort_row, fort_col) = p.fortress_pos;
+        let fort_screen = fort_col / 16;
+        let fort_col_in_screen = fort_col % 16;
+        let (comp_col, comp_bit) = fx_comp_idx(fort_row, fort_screen, fort_col_in_screen);
         rom.write_byte(FX_MAP_COMP_IDX + slot_idx * 2, comp_col);
         rom.write_byte(FX_MAP_COMP_IDX + slot_idx * 2 + 1, comp_bit);
 
@@ -384,6 +400,7 @@ mod tests {
                 dest_world: 0,
                 dest_slot: 0,
                 ordinal: 1,
+                fortress_pos: (row0, col0),
                 obstacle_pos: (3, 4), // existing lock position
             },
             FortressPlacement {
@@ -393,6 +410,7 @@ mod tests {
                 dest_world: 0,
                 dest_slot: 2,
                 ordinal: 2,
+                fortress_pos: (row2, col2),
                 obstacle_pos: (6, 9), // water bridge position
             },
         ];

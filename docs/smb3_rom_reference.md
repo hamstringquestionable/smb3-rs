@@ -978,7 +978,7 @@ Four 24-byte tables control where Mario appears on the overworld map after exiti
 | `PipewayCtlr_MapXHi` | 0x046AA | Screen number for each endpoint (packed nibbles) |
 | `PipewayCtlr_MapX` | 0x046C2 | Column position for each endpoint (packed nibbles) |
 | `PipewayCtlr_MapY` | 0x046DA | Row nibble for each endpoint (packed nibbles) |
-| `PipewayCtlr_MapScrlXHi` | 0x046F2 | Map scroll position; bit 7 = center ($80) alignment |
+| `PipewayCtlr_MapScrlXHi` | 0x046F2 | Scroll screen; bit 3 = center flag (adds 128px camera offset). Vanilla: A=0, B=1 always. Pipe shuffle sets equal to MapXHi (no center) to avoid camera misalignment at screen boundaries |
 
 **Dest byte assignments** (from pipe transit level enemy data `01 25 02 XX FF`):
 
@@ -1262,21 +1262,28 @@ Example: lock at grid (3, 4) on screen 0 → col=0x04, bit=0x10 (vanilla W1 lock
 **Map_Removable_Tiles (PRG012):** The game also has a separate `Map_Removable_Tiles`
 table that lists tile IDs eligible for removal during map completion processing:
 `TILE_ROCKBREAKH, TILE_ROCKBREAKV, TILE_LOCKVERT ($54), TILE_FORT ($67),
-TILE_ALTFORT, TILE_ALTLOCK, TILE_LOCKHORZ, TILE_RIVERVERT`. These tiles are checked
+TILE_ALTFORT, TILE_ALTLOCK, TILE_LOCKHORZ ($56), TILE_RIVERVERT`. These tiles are checked
 during `Map_Reload_with_Completions` and replaced with their `Map_RemoveTo_Tiles`
 counterparts when the corresponding completion bit is set.
+
+**CRITICAL — Gap tile selection must match path orientation:**
+The `Map_RemoveTo_Tiles` replacements are hardcoded: `$54` → `$46` (vertical path),
+`$56` → `$45` (horizontal path). When placing an obstacle on the map, the gap tile
+must match the underlying path direction: use `$54` (lock) on vertical paths and
+`$56` (bridge gap) on horizontal paths. Using the wrong gap tile causes the path
+to change orientation on map reload (e.g., horizontal path turns vertical).
 
 **Complete procedure for repointing a lock to a new position:**
 
 1. Read the current tile at the new position (this becomes `FortressFX_MapTileReplace`)
-2. Write lock tile $54 at the new position in the map tile grid
+2. Write the appropriate gap tile at the new position: $54 for vertical paths, $56 for horizontal paths
 3. Restore the old lock position to its original path tile (e.g., $46)
 4. Update FX slot tables:
    - `FortressFX_VAddrH/L` = `0x2880 + grid_row * 64 + col_in_screen * 2`
    - `FortressFX_MapLocationRow` = `(grid_row + 2) << 4`
    - `FortressFX_MapLocation` = `(col_in_screen << 4) | screen`
    - `FortressFX_MapTileReplace` = saved original tile
-   - `FortressFX_MapCompIdx` = `(screen * 16 + col_in_screen, 0x80 >> grid_row)`
+   - `FortressFX_MapCompIdx` = `(screen * 16 + col_in_screen, 0x80 >> grid_row)` — **encodes the FORTRESS position, not the lock/obstacle position** (verified across all 14 vanilla slots)
    - `FortressFX_Patterns` = 4 bytes per type (see table above)
 5. If the fortress moved to a different world, update:
    - `FortressFX_W1–W8` slot assignments for source and destination worlds
@@ -1776,7 +1783,7 @@ Four parallel tables of 24 bytes each, used by `OBJ_PIPEWAYCONTROLLER` (enemy ob
 | MapXHi | `0x046AA` | Screen number (packed nibbles) |
 | MapX | `0x046C2` | Column within screen (packed nibbles) |
 | MapY | `0x046DA` | Row nibble = grid_row + 2 (packed nibbles) |
-| MapScrlXHi | `0x046F2` | Scroll screen (packed nibbles, mirrors MapXHi) |
+| MapScrlXHi | `0x046F2` | Scroll screen (packed nibbles); bit 3 = center flag (adds 128px to `Horz_Scroll`). Vanilla: A=0, B=1 always. Pipe shuffle sets equal to MapXHi (no center) — the 128px offset assumes hand-tuned positions and causes camera misalignment when pipes land at screen boundaries |
 
 Each byte packs **two** endpoint values as nibbles:
 - **Upper nibble** = "A" endpoint (left pipe in transit level)

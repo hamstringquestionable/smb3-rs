@@ -94,14 +94,29 @@ pub(super) fn swap_entry_positions(rom: &mut Rom, world_idx: usize, idx_a: usize
 /// Write all 4 pipe destination tables for one dest index.
 ///
 /// Each table byte packs two nibble values: upper = endpoint A, lower = endpoint B.
-/// Tables: MapXHi (screen), MapX (column), MapY (row_nib), MapScrlXHi (= MapXHi).
-pub(super) fn write_pipe_dest(rom: &mut Rom, dest_idx: usize, a_pos: Pos, b_pos: Pos) {
+/// Tables: MapXHi (screen), MapX (column), MapY (row_nib), MapScrlXHi.
+///
+/// MapScrlXHi controls the camera scroll-to screen after exiting a pipe.
+/// We set it equal to MapXHi (no center flag) so the camera aligns to the
+/// correct screen edge.  Vanilla sets bit 3 on B-endpoint nibbles to add
+/// a 128 px offset, but that assumes hand-tuned positions and breaks when
+/// pipes are shuffled to screen boundaries.
+pub(super) fn write_pipe_dest(
+    rom: &mut Rom,
+    dest_idx: usize,
+    a_pos: Pos,
+    b_pos: Pos,
+) {
     let (a_xhi, a_x, a_y) = grid_pos_to_dest_nibbles(a_pos.0, a_pos.1);
     let (b_xhi, b_x, b_y) = grid_pos_to_dest_nibbles(b_pos.0, b_pos.1);
 
     rom.write_byte(PIPE_MAP_XHI + dest_idx, (a_xhi << 4) | b_xhi);
     rom.write_byte(PIPE_MAP_X + dest_idx, (a_x << 4) | b_x);
     rom.write_byte(PIPE_MAP_Y + dest_idx, (a_y << 4) | b_y);
+
+    // MapScrlXHi = same as MapXHi (no center flag).  Vanilla sets bit 3 on B
+    // endpoints to shift the camera 128 px, but that assumes hand-tuned
+    // positions.  For shuffled pipes the offset can push the camera off-screen.
     rom.write_byte(PIPE_MAP_SCRL_XHI + dest_idx, (a_xhi << 4) | b_xhi);
 }
 
