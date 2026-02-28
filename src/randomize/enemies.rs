@@ -79,12 +79,15 @@ const BRO_ENEMIES: &[u8] = &[
 /// Piranha plant variants — swap among themselves.
 const PIRANHAS: &[u8] = &[
     0xA0, // OBJ_GREENPIRANHA
-    0xA1, // OBJ_GREENPIRANHA_FLIPPED
     0xA2, // OBJ_REDPIRANHA
-    0xA3, // OBJ_REDPIRANHA_FLIPPED
     0xA4, // OBJ_GREENPIRANHA_FIRE
-    0xA5, // OBJ_GREENPIRANHA_FIREC
     0xA6, // OBJ_VENUSFIRETRAP
+];
+/// Piranha Ceiling / Flipped variants
+const PIRANHASC: &[u8] = &[
+    0xA1, // OBJ_GREENPIRANHA_FLIPPED
+    0xA3, // OBJ_REDPIRANHA_FLIPPED
+    0xA5, // OBJ_GREENPIRANHA_FIREC
     0xA7, // OBJ_VENUSFIRETRAP_CEIL
 ];
 
@@ -119,6 +122,7 @@ const ALL_CLASSES: &[&[u8]] = &[
     WATER_ENEMIES,
     BRO_ENEMIES,
     PIRANHAS,
+    PIRANHASC,
     CHEEPS,
 ];
 
