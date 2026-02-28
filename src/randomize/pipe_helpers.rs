@@ -91,16 +91,32 @@ pub(super) fn swap_entry_positions(rom: &mut Rom, world_idx: usize, idx_a: usize
 // Pipe destination table writes
 // ---------------------------------------------------------------------------
 
+/// Compute the MapScrlXHi nibble for a pipe endpoint so the camera snaps
+/// without triggering a pan.
+///
+/// The nibble encodes: bits 2-0 = scroll screen, bit 3 = center flag (+128 px).
+/// On-screen player position = screen*256 + col*16 - scroll_px.
+/// Pan triggers at <33 (left) or >208 (right).  This picks the scroll value
+/// that keeps the player in [33, 208].
+fn scroll_nibble(screen: u8, col_in_screen: u8) -> u8 {
+    let px = col_in_screen as u16 * 16;
+    if px < 33 && screen > 0 {
+        (screen - 1) | 0x8
+    } else if px > 208 {
+        screen | 0x8
+    } else {
+        screen
+    }
+}
+
 /// Write all 4 pipe destination tables for one dest index.
 ///
 /// Each table byte packs two nibble values: upper = endpoint A, lower = endpoint B.
 /// Tables: MapXHi (screen), MapX (column), MapY (row_nib), MapScrlXHi.
 ///
-/// MapScrlXHi controls the camera scroll-to screen after exiting a pipe.
-/// We set it equal to MapXHi (no center flag) so the camera aligns to the
-/// correct screen edge.  Vanilla sets bit 3 on B-endpoint nibbles to add
-/// a 128 px offset, but that assumes hand-tuned positions and breaks when
-/// pipes are shuffled to screen boundaries.
+/// MapScrlXHi controls the camera scroll position after exiting a pipe.
+/// Each nibble is computed by `scroll_nibble()` to keep the player's on-screen
+/// position in [33, 208], avoiding pan-left (<33) and pan-right (>208) triggers.
 pub(super) fn write_pipe_dest(
     rom: &mut Rom,
     dest_idx: usize,
@@ -114,10 +130,9 @@ pub(super) fn write_pipe_dest(
     rom.write_byte(PIPE_MAP_X + dest_idx, (a_x << 4) | b_x);
     rom.write_byte(PIPE_MAP_Y + dest_idx, (a_y << 4) | b_y);
 
-    // MapScrlXHi = same as MapXHi (no center flag).  Vanilla sets bit 3 on B
-    // endpoints to shift the camera 128 px, but that assumes hand-tuned
-    // positions.  For shuffled pipes the offset can push the camera off-screen.
-    rom.write_byte(PIPE_MAP_SCRL_XHI + dest_idx, (a_xhi << 4) | b_xhi);
+    let a_scrl = scroll_nibble(a_xhi, a_x);
+    let b_scrl = scroll_nibble(b_xhi, b_x);
+    rom.write_byte(PIPE_MAP_SCRL_XHI + dest_idx, (a_scrl << 4) | b_scrl);
 }
 
 // ---------------------------------------------------------------------------
