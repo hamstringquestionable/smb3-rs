@@ -97,6 +97,76 @@ const CHEEPS: &[u8] = &[
     0x88, // OBJ_ORANGECHEEP
 ];
 
+// ---------------------------------------------------------------------------
+// CHR sprite bank data (from Southbird disassembly ObjectGroup PatTableSel)
+// ---------------------------------------------------------------------------
+//
+// Each enemy requests a 1KB CHR page be loaded into one of two sprite bank
+// slots: PatTable_BankSel+4 (PPU $1800-$1BFF) or +5 (PPU $1C00-$1FFF).
+// If two on-screen enemies request different CHR pages for the same slot,
+// one renders with garbled sprites (the last one rendered wins).
+//
+// We track CHR page commitments per enemy data segment (= one level area)
+// and only allow swaps that are compatible with already-committed pages.
+
+/// CHR sprite bank requirement for an enemy.
+struct SpriteBank {
+    chr_page: u8, // CHR ROM page number
+    slot: u8,     // 4 or 5 (PatTable_BankSel index)
+}
+
+/// Look up the CHR sprite bank requirement for a swappable enemy.
+/// Returns `None` for enemies that use NOCHANGE (no bank switch).
+fn sprite_bank(id: u8) -> Option<SpriteBank> {
+    match id {
+        // GROUND — page $0A, slot +4
+        0x29 | 0x2A | 0x33 | 0x39 | 0x40 | 0x55 =>
+            Some(SpriteBank { chr_page: 0x0A, slot: 4 }),
+        // GROUND — page $0B, slot +4 (Spiny)
+        0x71 => Some(SpriteBank { chr_page: 0x0B, slot: 4 }),
+        // GROUND — page $13, slot +5 (Dry Bones)
+        0x3F => Some(SpriteBank { chr_page: 0x13, slot: 5 }),
+        // GROUND — page $4F, slot +5 (Goomba, Piledriver)
+        0x6B | 0x72 => Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
+        // SHELL — page $0B, slot +4 (Buzzy Beetle)
+        0x70 => Some(SpriteBank { chr_page: 0x0B, slot: 4 }),
+        // SHELL — page $4F, slot +5 (Koopas)
+        0x6C | 0x6D => Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
+        // BIG — all page $3D, slot +4
+        0x7A | 0x7B | 0x7C | 0x7E =>
+            Some(SpriteBank { chr_page: 0x3D, slot: 4 }),
+        // FLYING — all page $4F, slot +5
+        0x6E | 0x6F | 0x73 | 0x74 | 0x80 =>
+            Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
+        // WATER — page $1A, slot +4 (Bloopers, Big Bertha)
+        0x61 | 0x62 | 0x63 | 0x6A =>
+            Some(SpriteBank { chr_page: 0x1A, slot: 4 }),
+        // WATER — page $4F, slot +5 (CheepCheep Hopper)
+        0x64 => Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
+        // BRO — all page $4E, slot +4
+        0x81 | 0x82 | 0x86 | 0x87 =>
+            Some(SpriteBank { chr_page: 0x4E, slot: 4 }),
+        // PIRANHAS — all page $4F, slot +5
+        0xA0..=0xA7 => Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
+        // CHEEPS — Orange is $4F/+5, Green is NOCHANGE
+        0x88 => Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
+        // 0x77 (Green Cheep) = NOCHANGE, falls through to None
+        _ => None,
+    }
+}
+
+/// Check whether an enemy is compatible with the current CHR page commitments.
+fn is_chr_compatible(id: u8, slot4: Option<u8>, slot5: Option<u8>) -> bool {
+    match sprite_bank(id) {
+        None => true, // NOCHANGE — always compatible
+        Some(sb) => match sb.slot {
+            4 => slot4.is_none() || slot4 == Some(sb.chr_page),
+            5 => slot5.is_none() || slot5 == Some(sb.chr_page),
+            _ => true,
+        },
+    }
+}
+
 /// Big ? Block IDs — these can be swapped with each other to randomize
 /// which suit/powerup the player gets from Big ? Blocks.
 const BIG_Q_BLOCKS: &[u8] = &[
@@ -151,14 +221,31 @@ pub fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
     randomize_object_data(rom, rng, true);
 }
 
+/// Record a CHR page commitment for the chosen enemy's bank slot.
+fn commit_chr_page(id: u8, slot4: &mut Option<u8>, slot5: &mut Option<u8>) {
+    if let Some(sb) = sprite_bank(id) {
+        match sb.slot {
+            4 => *slot4 = Some(sb.chr_page),
+            5 => *slot5 = Some(sb.chr_page),
+            _ => {}
+        }
+    }
+}
+
 fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool) {
     let len = ENEMY_DATA_END - ENEMY_DATA_START;
     let mut data = rom.read_range(ENEMY_DATA_START, len).to_vec();
 
+    // Per-segment CHR page commitments. Reset at each 0xFF boundary.
+    let mut committed_slot4: Option<u8> = None;
+    let mut committed_slot5: Option<u8> = None;
+
     let mut i = 0;
     while i < data.len() {
-        // Skip 0xFF terminators
+        // 0xFF = segment boundary — reset CHR commitments
         if data[i] == 0xFF {
+            committed_slot4 = None;
+            committed_slot5 = None;
             i += 1;
             continue;
         }
@@ -177,11 +264,24 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool) {
                 if BIG_Q_BLOCKS.contains(&obj_id) && file_offset != W7F1_TANOOKI_OFFSET {
                     data[i] = *BIG_Q_BLOCKS.choose(rng).unwrap();
                 }
-            } else {
-                // Only swap if this ID belongs to a known enemy class
-                if let Some(class) = find_class(obj_id) {
-                    data[i] = *class.choose(rng).unwrap();
+            } else if let Some(class) = find_class(obj_id) {
+                // Filter class to CHR-compatible candidates
+                let compatible: Vec<u8> = class
+                    .iter()
+                    .copied()
+                    .filter(|&c| is_chr_compatible(c, committed_slot4, committed_slot5))
+                    .collect();
+
+                if !compatible.is_empty() {
+                    let chosen = *compatible.choose(rng).unwrap();
+                    data[i] = chosen;
+                    commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                 }
+                // else: no compatible candidates, keep original (safe fallback)
+            } else {
+                // Non-swappable enemy — still track its CHR commitment so
+                // later randomized enemies in this segment respect it.
+                commit_chr_page(obj_id, &mut committed_slot4, &mut committed_slot5);
             }
 
             // Advance past the 3-byte entry (id, x, y)
@@ -344,6 +444,135 @@ mod tests {
         );
         // End level card must not change
         assert_eq!(result[6], 0x41);
+    }
+
+    #[test]
+    fn test_chr_compatibility_enforced() {
+        // Place a Goomba ($4F/+5) and Dry Bones ($13/+5) in the same segment.
+        // After randomization, both must use compatible CHR pages on slot +5.
+        let mut data = vec![0u8; 393232];
+        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
+        data[4] = 16;
+        data[5] = 16;
+        data[6] = 0x40;
+
+        let seg = &[
+            0xFF,
+            0x01, // page flag
+            0x72, 0x10, 0x19, // Goomba (slot +5, page $4F)
+            0x3F, 0x20, 0x19, // Dry Bones (slot +5, page $13)
+            0x29, 0x30, 0x19, // Spike (slot +4, page $0A)
+            0x71, 0x40, 0x19, // Spiny (slot +4, page $0B)
+            0xFF,
+        ];
+        let start = ENEMY_DATA_START;
+        data[start..start + seg.len()].copy_from_slice(seg);
+        let rom = Rom::from_bytes(&data).unwrap();
+
+        // Run many times to exercise different random paths
+        for seed in 0..200u64 {
+            let mut rom_copy = rom.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_copy, &mut rng);
+
+            let base = ENEMY_DATA_START + 2;
+            let result = rom_copy.read_range(base, 12);
+            let enemy1 = result[0]; // was Goomba
+            let enemy2 = result[3]; // was Dry Bones
+            let enemy3 = result[6]; // was Spike
+            let enemy4 = result[9]; // was Spiny
+
+            // All must still be ground enemies
+            assert!(GROUND_ENEMIES.contains(&enemy1), "seed {seed}: enemy1 0x{enemy1:02X}");
+            assert!(GROUND_ENEMIES.contains(&enemy2), "seed {seed}: enemy2 0x{enemy2:02X}");
+            assert!(GROUND_ENEMIES.contains(&enemy3), "seed {seed}: enemy3 0x{enemy3:02X}");
+            assert!(GROUND_ENEMIES.contains(&enemy4), "seed {seed}: enemy4 0x{enemy4:02X}");
+
+            // Check CHR compatibility: no two enemies in the same segment
+            // should request different CHR pages for the same bank slot.
+            let enemies = [enemy1, enemy2, enemy3, enemy4];
+            let mut seen_slot4: Option<u8> = None;
+            let mut seen_slot5: Option<u8> = None;
+            for &e in &enemies {
+                if let Some(sb) = sprite_bank(e) {
+                    match sb.slot {
+                        4 => {
+                            if let Some(prev) = seen_slot4 {
+                                assert_eq!(
+                                    prev, sb.chr_page,
+                                    "seed {seed}: slot +4 conflict: 0x{prev:02X} vs 0x{:02X} (enemy 0x{e:02X})",
+                                    sb.chr_page
+                                );
+                            }
+                            seen_slot4 = Some(sb.chr_page);
+                        }
+                        5 => {
+                            if let Some(prev) = seen_slot5 {
+                                assert_eq!(
+                                    prev, sb.chr_page,
+                                    "seed {seed}: slot +5 conflict: 0x{prev:02X} vs 0x{:02X} (enemy 0x{e:02X})",
+                                    sb.chr_page
+                                );
+                            }
+                            seen_slot5 = Some(sb.chr_page);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_chr_resets_across_segments() {
+        // Two segments: first has a Goomba ($4F/+5), second has a Dry Bones ($13/+5).
+        // They should be able to choose independently since they're in different segments.
+        let mut data = vec![0u8; 393232];
+        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
+        data[4] = 16;
+        data[5] = 16;
+        data[6] = 0x40;
+
+        let seg = &[
+            0xFF,
+            0x01,             // page flag
+            0x72, 0x10, 0x19, // Goomba (slot +5, page $4F)
+            0xFF,             // segment boundary
+            0x01,             // page flag
+            0x3F, 0x20, 0x19, // Dry Bones (slot +5, page $13)
+            0xFF,
+        ];
+        let start = ENEMY_DATA_START;
+        data[start..start + seg.len()].copy_from_slice(seg);
+        let rom = Rom::from_bytes(&data).unwrap();
+
+        // Run many times — Dry Bones in second segment should freely choose
+        // any ground enemy, not be constrained by first segment's Goomba.
+        let mut saw_slot5_4f_in_seg2 = false;
+        let mut saw_slot5_13_in_seg2 = false;
+        for seed in 0..200u64 {
+            let mut rom_copy = rom.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_copy, &mut rng);
+
+            // Second segment's enemy is at offset: FF(1) + page(1) + entry(3) + FF(1) + page(1) = 7
+            let enemy2 = rom_copy.read_byte(ENEMY_DATA_START + 7);
+            assert!(GROUND_ENEMIES.contains(&enemy2), "seed {seed}: 0x{enemy2:02X}");
+
+            if let Some(sb) = sprite_bank(enemy2) {
+                if sb.slot == 5 && sb.chr_page == 0x4F {
+                    saw_slot5_4f_in_seg2 = true;
+                }
+                if sb.slot == 5 && sb.chr_page == 0x13 {
+                    saw_slot5_13_in_seg2 = true;
+                }
+            }
+        }
+        // Over 200 seeds, we should see both CHR page variants in segment 2
+        assert!(
+            saw_slot5_4f_in_seg2 && saw_slot5_13_in_seg2,
+            "Segment 2 should not be constrained by segment 1's CHR choice"
+        );
     }
 
     #[test]
