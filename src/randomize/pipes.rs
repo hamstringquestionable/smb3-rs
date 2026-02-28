@@ -195,6 +195,13 @@ fn get_swappable_positions(rom: &Rom, world_idx: usize, start_pos: Option<Pos>) 
         .map(|(k, _)| k)
         .collect();
 
+    // Collect map-object-linked entries (e.g. W7 piranha plants) for this world
+    let map_obj_entries: HashSet<usize> = rom_data::MAP_OBJ_ENTRY_LINKS
+        .iter()
+        .filter(|&&(w, _, _)| w == world_idx)
+        .map(|&(_, _, entry_idx)| entry_idx)
+        .collect();
+
     let mut positions = Vec::new();
     for e in &entries {
         let etype = classify_entry(world_idx, e);
@@ -202,6 +209,9 @@ fn get_swappable_positions(rom: &Rom, world_idx: usize, start_pos: Option<Pos>) 
             continue;
         }
         if hammer_pairs.contains(&(e.obj_ptr, e.lay_ptr)) {
+            continue;
+        }
+        if map_obj_entries.contains(&e.index) {
             continue;
         }
         if e.grid_row >= ROWS {
