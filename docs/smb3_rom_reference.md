@@ -1510,6 +1510,71 @@ and was abandoned in favor of the simpler NOP approach.
 | 0x3AC61–0x3AE46 | ~485 bytes | Mario/Luigi sprite raw data |
 | 0x3AE47–0x3AE97 | ~80 bytes | Mario/Luigi sprite tile set |
 
+### Enemy Sprite CHR Bank Switching (PatTable_BankSel)
+
+SMB3 uses a 6-byte RAM array at **$0719–$071E** (`PatTable_BankSel`) to control
+which 1KB CHR ROM pages are mapped into the NES PPU's pattern tables via MMC3:
+
+| Index | PPU Address | Size | MMC3 Reg | Purpose |
+|-------|------------|------|----------|---------|
+| +0 | $0000–$07FF | 2KB | R0 | BG tiles first half |
+| +1 | $0800–$0FFF | 2KB | R1 | BG tiles second half |
+| +2 | $1000–$13FF | 1KB | R2 | Player sprites (base) |
+| +3 | $1400–$17FF | 1KB | R3 | Player sprites (anim) |
+| +4 | $1800–$1BFF | 1KB | R4 | Enemy sprite bank A |
+| +5 | $1C00–$1FFF | 1KB | R5 | Enemy sprite bank B |
+
+Each enemy has a `PatTableSel` entry in its object group's dispatch table
+(PRG000–PRG005). The encoding:
+- `$00` (OPTS_NOCHANGE): no bank switch, uses whatever is loaded
+- `$01–$7F` (bit 7 clear): load value into `PatTable_BankSel+4` (slot +4)
+- `$80–$FF` (bit 7 set): load `value & $7F` into `PatTable_BankSel+5` (slot +5)
+
+**Conflict rule:** Only one CHR page can be active per slot at a time. If two
+on-screen enemies both write to the same slot with different pages, the last
+one rendered wins and the other draws garbled sprites.
+
+#### CHR Pages for Randomizable Enemies
+
+| Enemy ID | Name | CHR Page | Slot |
+|----------|------|----------|------|
+| 0x29 | Spike | $0A | +4 |
+| 0x2A | Patooie | $0A | +4 |
+| 0x33 | Nipper | $0A | +4 |
+| 0x39 | NipperHopping | $0A | +4 |
+| 0x3F | Dry Bones | $13 | +5 |
+| 0x40 | Buster Beetle | $0A | +4 |
+| 0x55 | Bob-omb | $0A | +4 |
+| 0x61 | Blooper w/ Kids | $1A | +4 |
+| 0x62 | Blooper | $1A | +4 |
+| 0x63 | Big Bertha | $1A | +4 |
+| 0x64 | CheepCheep Hopper | $4F | +5 |
+| 0x6A | Blooper Child Shoot | $1A | +4 |
+| 0x6B | Piledriver | $4F | +5 |
+| 0x6C | Green Troopa | $4F | +5 |
+| 0x6D | Red Troopa | $4F | +5 |
+| 0x6E | Paratroopa Green Hop | $4F | +5 |
+| 0x6F | Flying Red Paratroopa | $4F | +5 |
+| 0x70 | Buzzy Beetle | $0B | +4 |
+| 0x71 | Spiny | $0B | +4 |
+| 0x72 | Goomba | $4F | +5 |
+| 0x73 | Para-Goomba | $4F | +5 |
+| 0x74 | Para-Goomba w/ Micros | $4F | +5 |
+| 0x77 | Green Cheep | — | NOCHANGE |
+| 0x7A | Big Green Troopa | $3D | +4 |
+| 0x7B | Big Red Troopa | $3D | +4 |
+| 0x7C | Big Goomba | $3D | +4 |
+| 0x7E | Big Green Hopper | $3D | +4 |
+| 0x80 | Flying Green Paratroopa | $4F | +5 |
+| 0x81 | Hammer Bro | $4E | +4 |
+| 0x82 | Boomerang Bro | $4E | +4 |
+| 0x86 | Heavy Bro | $4E | +4 |
+| 0x87 | Fire Bro | $4E | +4 |
+| 0x88 | Orange Cheep | $4F | +5 |
+| 0xA0–0xA7 | Piranha variants | $4F | +5 |
+
+Source: Southbird disassembly `ObjectGroupNN_PatTableSel` tables.
+
 ---
 
 ## Gameplay Mechanics (ROM Offsets)
