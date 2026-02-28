@@ -325,6 +325,7 @@ pub fn randomize_fortresses<R: Rng>(rom: &mut Rom, rng: &mut R, mode: &FortressR
 fn randomize_intra<R: Rng>(rom: &mut Rom, rng: &mut R) {
     let all_pipes = rom_data::read_pipe_pairs(rom);
     let fx_slots_snapshot = rom_data::read_fx_slots(rom);
+    let fx_assignments = rom_data::read_world_fx_assignments(rom);
 
     // Process W1-7
     let mut fx_slot = 0usize;
@@ -332,7 +333,7 @@ fn randomize_intra<R: Rng>(rom: &mut Rom, rng: &mut R) {
         let pipes = all_pipes.get(&world_idx).cloned().unwrap_or_default();
 
         // Pre-open vanilla locks
-        overworld_helpers::pre_open_fx_for_world(rom, world_idx, &fx_slots_snapshot);
+        overworld_helpers::pre_open_fx_for_world(rom, world_idx, &fx_slots_snapshot, &fx_assignments[world_idx]);
 
         // Collect this world's fortresses (they stay in place)
         let world_forts: Vec<(usize, usize)> = FORTRESS_ENTRIES
@@ -392,7 +393,7 @@ fn randomize_intra<R: Rng>(rom: &mut Rom, rng: &mut R) {
     {
         let world_idx = 7;
         let pipes = all_pipes.get(&world_idx).cloned().unwrap_or_default();
-        overworld_helpers::pre_open_fx_for_world(rom, world_idx, &fx_slots_snapshot);
+        overworld_helpers::pre_open_fx_for_world(rom, world_idx, &fx_slots_snapshot, &fx_assignments[world_idx]);
 
         let w8_forts: Vec<(usize, usize)> = FORTRESS_ENTRIES
             .iter()
@@ -446,6 +447,7 @@ fn randomize_intra<R: Rng>(rom: &mut Rom, rng: &mut R) {
 fn randomize_cross<R: Rng>(rom: &mut Rom, rng: &mut R) {
     let all_pipes = rom_data::read_pipe_pairs(rom);
     let fx_slots_snapshot = rom_data::read_fx_slots(rom);
+    let fx_assignments = rom_data::read_world_fx_assignments(rom);
 
     // -----------------------------------------------------------------------
     // Part A: W1-7 cross-world redistribution
@@ -540,7 +542,7 @@ fn randomize_cross<R: Rng>(rom: &mut Rom, rng: &mut R) {
         let pipes = all_pipes.get(&world_idx).cloned().unwrap_or_default();
 
         // Pre-open vanilla locks
-        overworld_helpers::pre_open_fx_for_world(rom, world_idx, &fx_slots_snapshot);
+        overworld_helpers::pre_open_fx_for_world(rom, world_idx, &fx_slots_snapshot, &fx_assignments[world_idx]);
 
         let assignment = &assignments[world_idx];
         let fort_count = assignment.fortress_data_indices.len();
@@ -624,7 +626,7 @@ fn randomize_cross<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // -----------------------------------------------------------------------
     // Part B: W8 intra-world fortress position shuffle + locks
     // -----------------------------------------------------------------------
-    shuffle_w8_fortresses(rom, rng, &all_pipes, &fx_slots_snapshot, fx_slot);
+    shuffle_w8_fortresses(rom, rng, &all_pipes, &fx_slots_snapshot, &fx_assignments[7], fx_slot);
 }
 
 /// Shuffle W8 fortress positions among available level slots within W8,
@@ -634,12 +636,13 @@ fn shuffle_w8_fortresses<R: Rng>(
     rng: &mut R,
     all_pipes: &std::collections::HashMap<usize, Vec<((usize, usize), (usize, usize))>>,
     fx_slots_snapshot: &[rom_data::FxSlot],
+    world_fx_indices: &[u8],
     fx_slot_base: usize,
 ) {
     let world_idx = 7;
 
     // Pre-open vanilla locks
-    overworld_helpers::pre_open_fx_for_world(rom, world_idx, fx_slots_snapshot);
+    overworld_helpers::pre_open_fx_for_world(rom, world_idx, fx_slots_snapshot, world_fx_indices);
 
     let mut w8_forts = collect_w8_fortresses(rom);
 

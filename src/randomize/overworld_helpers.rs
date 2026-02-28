@@ -288,11 +288,15 @@ pub(super) fn execute_world_placements(
 /// from the FX slot snapshot.
 ///
 /// Must be called before placing new obstacles. Uses a snapshot taken before
-/// any writes to avoid reading stale FX data.
+/// any writes to avoid reading stale FX data. Only considers FX slots that
+/// belong to the specified world (via `world_fx_indices`) to avoid
+/// accidentally opening gap tiles on other worlds' maps that happen to share
+/// the same grid coordinates as an unrelated FX slot.
 pub(super) fn pre_open_fx_for_world(
     rom: &mut Rom,
     world_idx: usize,
     fx_slots_snapshot: &[FxSlot],
+    world_fx_indices: &[u8],
 ) {
     let grid = rom_data::read_tile_grid(rom, world_idx);
 
@@ -304,7 +308,13 @@ pub(super) fn pre_open_fx_for_world(
             {
                 continue;
             }
-            if let Some(slot) = fx_slots_snapshot.iter().find(|s| s.grid_row == r && s.grid_col == c) {
+            if let Some(slot) = fx_slots_snapshot
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| world_fx_indices.contains(&(*i as u8)))
+                .map(|(_, s)| s)
+                .find(|s| s.grid_row == r && s.grid_col == c)
+            {
                 let offset = rom_data::map_tile_offset(world_idx, r, c);
                 rom.write_byte(offset, slot.replace_tile);
             }
