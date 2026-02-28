@@ -312,6 +312,34 @@ pub(super) fn layout_file_offset(cpu_addr: u16, tileset: u8) -> Option<usize> {
     Some(bank * 0x2000 + 0x10 + (cpu_addr as usize - 0xA000))
 }
 
+/// ROM file offset of PRG006 enemy/object data base (CPU $C000).
+const ENEMY_DATA_FILE_BASE: usize = 0x0C010;
+
+/// Check whether the first enemy data segment at `obj_ptr` contains `target_id`.
+///
+/// Enemy data format: 1-byte page flag, then 3-byte entries `[id, x, y]`,
+/// terminated by `0xFF`. Only the first segment is scanned.
+pub(super) fn has_enemy_id(rom: &Rom, obj_ptr: u16, target_id: u8) -> bool {
+    if obj_ptr < 0xC000 {
+        return false;
+    }
+    let file_off = ENEMY_DATA_FILE_BASE + (obj_ptr as usize - 0xC000);
+    if file_off + 1 >= rom.data.len() {
+        return false;
+    }
+    let mut pos = file_off + 1; // skip page flag byte
+    while pos + 2 < rom.data.len() {
+        if rom.data[pos] == 0xFF {
+            break;
+        }
+        if rom.data[pos] == target_id {
+            return true;
+        }
+        pos += 3;
+    }
+    false
+}
+
 /// Read the screen count from a level's 9-byte header.
 /// Header byte 4, bits 3-0 = (num_screens - 1).
 pub(super) fn level_screen_count(rom: &Rom, layout_offset: usize) -> u8 {

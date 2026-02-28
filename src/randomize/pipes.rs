@@ -48,7 +48,6 @@ struct PipeEntry {
     grid_col: usize,
     obj_ptr: u16,
     lay_ptr: u16,
-    tileset: u8,
 }
 
 /// Entry classification.
@@ -85,7 +84,6 @@ fn read_all_entries(rom: &Rom, world_idx: usize) -> Vec<PipeEntry> {
         let rowtype = rom.read_byte(world.rowtype_offset + i);
         let scrcol = rom.read_byte(sc + i);
         let row_nib = (rowtype >> 4) & 0x0F;
-        let tileset = rowtype & 0x0F;
         let screen = (scrcol >> 4) & 0x0F;
         let col = scrcol & 0x0F;
         let obj_ptr = rom_data::read_word(rom, obj + i * 2);
@@ -97,14 +95,13 @@ fn read_all_entries(rom: &Rom, world_idx: usize) -> Vec<PipeEntry> {
             grid_col: screen as usize * 16 + col as usize,
             obj_ptr,
             lay_ptr,
-            tileset,
         });
     }
     entries
 }
 
 /// Classify a pointer table entry.
-fn classify_entry(world_idx: usize, entry: &PipeEntry) -> EntryType {
+fn classify_entry(rom: &Rom, world_idx: usize, entry: &PipeEntry) -> EntryType {
     let i = entry.index;
 
     if FORTRESS_ENTRIES.contains(&(world_idx, i)) {
@@ -125,7 +122,7 @@ fn classify_entry(world_idx: usize, entry: &PipeEntry) -> EntryType {
     if W5_SPIRAL_ENTRIES.contains(&(world_idx, i)) {
         return EntryType::Pipe;
     }
-    if entry.tileset == 14 {
+    if rom_data::has_enemy_id(rom, entry.obj_ptr, 0x25) {
         return EntryType::Pipe;
     }
     if entry.obj_ptr >= 0xC000 && entry.lay_ptr != 0x0000 {
@@ -139,7 +136,7 @@ fn get_pipe_pairs(rom: &Rom, world_idx: usize) -> Vec<(PipeEntry, PipeEntry)> {
     let entries = read_all_entries(rom, world_idx);
     let pipe_entries: Vec<PipeEntry> = entries
         .into_iter()
-        .filter(|e| classify_entry(world_idx, e) == EntryType::Pipe)
+        .filter(|e| classify_entry(rom, world_idx, e) == EntryType::Pipe)
         .collect();
 
     // Group by obj_ptr
@@ -204,7 +201,7 @@ fn get_swappable_positions(rom: &Rom, world_idx: usize, start_pos: Option<Pos>) 
 
     let mut positions = Vec::new();
     for e in &entries {
-        let etype = classify_entry(world_idx, e);
+        let etype = classify_entry(rom, world_idx, e);
         if matches!(etype, EntryType::Airship | EntryType::Transition | EntryType::Bonus | EntryType::Other) {
             continue;
         }
