@@ -273,6 +273,74 @@ fn open_gaps(rom: &Rom, world_idx: usize, grid: &mut Grid) {
 }
 
 // ---------------------------------------------------------------------------
+// Fortress gate segment computation
+// ---------------------------------------------------------------------------
+
+/// Divide map nodes into segments separated by fortress-gated obstacles.
+///
+/// Iteratively opens FX obstacles (locks/bridges) and assigns each newly
+/// reachable node a segment index. Segment 0 = reachable with all obstacles
+/// active (the start region). Segment k = newly reachable after opening
+/// obstacle k-1.
+///
+/// Nodes that remain unreachable even after opening all obstacles are assigned
+/// to the highest segment (they'll be connected by pipe placement later).
+fn compute_segments(
+    rom: &Rom,
+    world_idx: usize,
+    grid: &Grid,
+    all_nodes: &HashSet<Pos>,
+) -> HashMap<Pos, usize> {
+    let fx_slots = rom_data::read_fx_slots(rom);
+    let fx_assignments = rom_data::read_world_fx_assignments(rom);
+    let world_fx = &fx_assignments[world_idx];
+
+    // Collect obstacle info: (grid_row, grid_col, replacement_tile)
+    let mut obstacles: Vec<(usize, usize, u8)> = Vec::new();
+    for &slot_idx in world_fx {
+        let slot_idx = slot_idx as usize;
+        if slot_idx >= fx_slots.len() {
+            continue;
+        }
+        let slot = &fx_slots[slot_idx];
+        if slot.grid_row < grid.rows && slot.grid_col < grid.cols {
+            obstacles.push((slot.grid_row, slot.grid_col, slot.replace_tile));
+        }
+    }
+
+    let mut segments: HashMap<Pos, usize> = HashMap::new();
+    let mut work_grid = grid.clone();
+    let mut seg_idx = 0;
+
+    // Walk with all obstacles in place → segment 0
+    let result = map_walker::walk_map(&work_grid, &[], None);
+    for &pos in all_nodes {
+        if result.nodes.contains(&pos) {
+            segments.insert(pos, seg_idx);
+        }
+    }
+
+    // Iteratively open each obstacle → new segments
+    for &(obs_r, obs_c, replace_tile) in &obstacles {
+        seg_idx += 1;
+        work_grid.set(obs_r, obs_c, replace_tile);
+        let result = map_walker::walk_map(&work_grid, &[], None);
+        for &pos in all_nodes {
+            if result.nodes.contains(&pos) && !segments.contains_key(&pos) {
+                segments.insert(pos, seg_idx);
+            }
+        }
+    }
+
+    // Any remaining unassigned nodes get the highest segment
+    for &pos in all_nodes {
+        segments.entry(pos).or_insert(seg_idx);
+    }
+
+    segments
+}
+
+// ---------------------------------------------------------------------------
 // Progressive pipe placement
 // ---------------------------------------------------------------------------
 
@@ -326,10 +394,7 @@ fn place_pipes_progressive<R: Rng>(
         return (grid, Vec::new());
     }
 
-    // Step 0: Open fortress-gated gaps using the FX table
-    open_gaps(rom, world_idx, &mut grid);
-
-    // Step 1: Remove all pipe/spiral tiles from grid
+    // Step 0: Remove all pipe/spiral tiles from grid (before segment computation)
     for pa_pb in &pipe_pairs_data {
         for p in [&pa_pb.0, &pa_pb.1] {
             grid.set(p.grid_row, p.grid_col, TILE_REPLACEMENT);
@@ -339,19 +404,45 @@ fn place_pipes_progressive<R: Rng>(
     // Collect all node positions
     let all_nodes: HashSet<Pos> = positions.iter().map(|p| (p.grid_row, p.grid_col)).collect();
 
-    // Get must-reach positions
-    let must_reach = get_must_reach(rom, world_idx);
+    // Step 1: Compute fortress gate segments (obstacles still in place)
+    let segments = compute_segments(rom, world_idx, &grid, &all_nodes);
 
-    // Step 2: Walk with no pipes
+    // Identify the goal segment (segment containing the airship or Bowser)
+    let must_reach = get_must_reach(rom, world_idx);
+    let goal_seg = must_reach
+        .iter()
+        .filter_map(|p| segments.get(p).copied())
+        .max();
+
+    // Step 2: Open fortress-gated gaps using the FX table
+    open_gaps(rom, world_idx, &mut grid);
+
+    // Step 3: Walk with no pipes (gaps now open)
     let result = map_walker::walk_map(&grid, &[], None);
     let mut reachable = result.nodes.clone();
 
-    // Step 3: Progressively place pipe pairs
+    // Step 4: Progressively place pipe pairs
     let mut placed_pairs = Vec::new();
     let mut remaining: Vec<usize> = (0..pipe_pairs_data.len()).collect();
     remaining.as_mut_slice().shuffle(rng);
 
     let mut used_positions: HashSet<Pos> = HashSet::new();
+
+    // Constraint: no pipe may directly connect segment 0 to the goal segment
+    // (prevents piping straight from start area to the airship/Bowser).
+    // Only applies when there are multiple segments (i.e., fortress gates exist).
+    let is_forbidden_pair = |a: Pos, b: Pos| -> bool {
+        if let Some(gs) = goal_seg {
+            if gs == 0 {
+                return false; // Only 1 segment, no restriction
+            }
+            let sa = segments.get(&a).copied().unwrap_or(0);
+            let sb = segments.get(&b).copied().unwrap_or(0);
+            (sa == 0 && sb == gs) || (sb == 0 && sa == gs)
+        } else {
+            false
+        }
+    };
 
     for _pair_idx in remaining {
         let available = &all_nodes - &used_positions;
@@ -359,18 +450,39 @@ fn place_pipes_progressive<R: Rng>(
         let reachable_available: HashSet<Pos> = &available & &reachable;
 
         if unreachable_nodes.is_empty() {
-            // All reachable — place randomly
+            // All reachable — place randomly, respecting the forbidden-pair rule
             let mut candidates: Vec<Pos> = reachable_available.into_iter().collect();
             candidates.sort();
+            candidates.as_mut_slice().shuffle(rng);
+
             if candidates.len() >= 2 {
-                candidates.as_mut_slice().shuffle(rng);
-                let a_pos = candidates[0];
-                let b_pos = candidates[1];
-                placed_pairs.push((a_pos, b_pos));
-                used_positions.insert(a_pos);
-                used_positions.insert(b_pos);
-                grid.set(a_pos.0, a_pos.1, TILE_PIPE);
-                grid.set(b_pos.0, b_pos.1, TILE_PIPE);
+                // Try to find a non-forbidden pair
+                let mut placed = false;
+                'outer: for i in 0..candidates.len() {
+                    for j in (i + 1)..candidates.len() {
+                        if !is_forbidden_pair(candidates[i], candidates[j]) {
+                            let a_pos = candidates[i];
+                            let b_pos = candidates[j];
+                            placed_pairs.push((a_pos, b_pos));
+                            used_positions.insert(a_pos);
+                            used_positions.insert(b_pos);
+                            grid.set(a_pos.0, a_pos.1, TILE_PIPE);
+                            grid.set(b_pos.0, b_pos.1, TILE_PIPE);
+                            placed = true;
+                            break 'outer;
+                        }
+                    }
+                }
+                // Fallback: if every pair is forbidden, place anyway
+                if !placed {
+                    let a_pos = candidates[0];
+                    let b_pos = candidates[1];
+                    placed_pairs.push((a_pos, b_pos));
+                    used_positions.insert(a_pos);
+                    used_positions.insert(b_pos);
+                    grid.set(a_pos.0, a_pos.1, TILE_PIPE);
+                    grid.set(b_pos.0, b_pos.1, TILE_PIPE);
+                }
             }
             continue;
         }
@@ -411,8 +523,17 @@ fn place_pipes_progressive<R: Rng>(
         reachable_candidates.as_mut_slice().shuffle(rng);
         unreachable_cands.as_mut_slice().shuffle(rng);
 
-        let a_pos = reachable_candidates[0];
+        // Try to pick a non-forbidden pair; fall back to first choices if all forbidden
+        let mut a_pos = reachable_candidates[0];
         let b_pos = unreachable_cands[0];
+        if is_forbidden_pair(a_pos, b_pos) {
+            if let Some(&alt) = reachable_candidates
+                .iter()
+                .find(|&&p| !is_forbidden_pair(p, b_pos))
+            {
+                a_pos = alt;
+            }
+        }
 
         placed_pairs.push((a_pos, b_pos));
         used_positions.insert(a_pos);
@@ -788,5 +909,104 @@ mod tests {
         let new_row_1 = (test_rom.read_byte(rt + 1) >> 4) & 0x0F;
         assert_eq!(new_row_0, orig_row_1, "Entry 0 should have entry 1's row");
         assert_eq!(new_row_1, orig_row_0, "Entry 1 should have entry 0's row");
+    }
+
+    #[test]
+    fn test_segment_computation_w6() {
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+
+        // W6 (Ice Land) has 3 fortresses → expect 4 segments (0..3)
+        let mut grid = rom_data::read_tile_grid(&rom, 5);
+        let start_pos = rom_data::find_start(&grid);
+        let positions = get_swappable_positions(&rom, 5, start_pos);
+        let pipe_pairs_data = get_pipe_pairs(&rom, 5);
+
+        // Remove pipe tiles (same as placement algorithm)
+        for pa_pb in &pipe_pairs_data {
+            for p in [&pa_pb.0, &pa_pb.1] {
+                grid.set(p.grid_row, p.grid_col, TILE_REPLACEMENT);
+            }
+        }
+
+        let all_nodes: HashSet<Pos> = positions.iter().map(|p| (p.grid_row, p.grid_col)).collect();
+        let segments = compute_segments(&rom, 5, &grid, &all_nodes);
+
+        // Every candidate node should have a segment assignment
+        for pos in &all_nodes {
+            assert!(
+                segments.contains_key(pos),
+                "W6 node {:?} has no segment",
+                pos,
+            );
+        }
+
+        // Should have multiple segments (W6 has 3 fortresses with locks)
+        let max_seg = segments.values().copied().max().unwrap_or(0);
+        assert!(
+            max_seg >= 1,
+            "W6 should have at least 2 segments (got max_seg={})",
+            max_seg,
+        );
+    }
+
+    #[test]
+    fn test_no_pipe_bridges_start_to_goal() {
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+
+        for seed in [42u64, 1, 99, 777, 12345] {
+            for world_idx in 0..8 {
+                let pipe_pairs_data = get_pipe_pairs(&rom, world_idx);
+                if pipe_pairs_data.is_empty() {
+                    continue;
+                }
+
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                let (_grid, placed_pairs) = place_pipes_progressive(&rom, world_idx, &mut rng);
+
+                // Compute segments to verify placement
+                let mut grid = rom_data::read_tile_grid(&rom, world_idx);
+                let start_pos = rom_data::find_start(&grid);
+                let positions = get_swappable_positions(&rom, world_idx, start_pos);
+                for pa_pb in &pipe_pairs_data {
+                    for p in [&pa_pb.0, &pa_pb.1] {
+                        grid.set(p.grid_row, p.grid_col, TILE_REPLACEMENT);
+                    }
+                }
+                let all_nodes: HashSet<Pos> =
+                    positions.iter().map(|p| (p.grid_row, p.grid_col)).collect();
+                let segments = compute_segments(&rom, world_idx, &grid, &all_nodes);
+
+                // Find the goal segment (airship/Bowser)
+                let must_reach = get_must_reach(&rom, world_idx);
+                let goal_seg = must_reach
+                    .iter()
+                    .filter_map(|p| segments.get(p).copied())
+                    .max();
+
+                if let Some(gs) = goal_seg {
+                    if gs == 0 {
+                        continue; // Only 1 segment, no restriction
+                    }
+                    for &(a_pos, b_pos) in &placed_pairs {
+                        let seg_a = segments.get(&a_pos).copied().unwrap_or(0);
+                        let seg_b = segments.get(&b_pos).copied().unwrap_or(0);
+                        let bridges_start_to_goal =
+                            (seg_a == 0 && seg_b == gs) || (seg_b == 0 && seg_a == gs);
+                        assert!(
+                            !bridges_start_to_goal,
+                            "Seed {}: W{} pipe ({:?},{:?}) bridges segment 0 to goal segment {} — \
+                             this allows skipping all intermediate content",
+                            seed, world_idx + 1, a_pos, b_pos, gs,
+                        );
+                    }
+                }
+            }
+        }
     }
 }
