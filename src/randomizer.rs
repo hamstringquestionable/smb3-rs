@@ -22,8 +22,8 @@ impl Default for LevelShuffle {
     }
 }
 
-// Re-export FortressRedistribute from overworld module
-pub use crate::randomize::overworld::FortressRedistribute;
+// Re-export FortressRedistribute from rom_data module
+pub use crate::randomize::rom_data::FortressRedistribute;
 
 /// Options controlling which randomizations to apply.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

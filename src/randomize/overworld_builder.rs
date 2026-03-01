@@ -1,7 +1,9 @@
-/// Overworld map builder: pick up tiles, build new maps, write to ROM.
+/// Overworld map builder: unified pick-up / build / write pipeline.
 ///
-/// Phase 1 (this file so far): read all overworld maps and classify every
-/// pointer table entry into a structured `PickedTile` inventory.
+/// Three phases:
+/// 1. **Pick up** — read overworld maps, classify every pointer table entry
+/// 2. **Build** — transform: place fortress locks, relocate pipes, redistribute tiles
+/// 3. **Write** — apply placement decisions to ROM (tiles, FX, pointer tables)
 
 use std::collections::{HashMap, HashSet};
 
@@ -14,9 +16,11 @@ use super::map_walker;
 use super::overworld_helpers::LOCKABLE_TILES;
 use super::pipe_helpers;
 use super::rom_data::{
-    self, AIRSHIP_ENTRIES, BOWSER_ENTRY, FORTRESS_ENTRIES, Grid, LevelEntry,
-    MAP_OBJ_ENTRY_LINKS, MAP_TRANSITIONS, TILE_PIPE, TILE_START,
-    WORLDS,
+    self, AIRSHIP_ENTRIES, BOWSER_ENTRY, FORTRESS_ENTRIES,
+    FX_MAP_COMP_IDX, FX_PATTERNS, FX_VADDR_H, FX_VADDR_L,
+    Grid, LevelEntry, MAP_COMPLETE_BITS, MAP_OBJ_ENTRY_LINKS,
+    MAP_TRANSITIONS, TILE_AIRSHIP, TILE_BOWSER, TILE_EMPTY_NODE,
+    TILE_LOCK, TILE_PIPE, TILE_START, WORLDS,
 };
 
 // ---------------------------------------------------------------------------
@@ -146,8 +150,8 @@ const W5_SPIRAL_ENTRIES: &[(usize, usize)] = &[(4, 10), (4, 21)];
 // Pick-up implementation
 // ---------------------------------------------------------------------------
 
-/// Placeholder tile for positions where a node was removed.
-const EMPTY_NODE: u8 = 0x47;
+/// Alias for readability within this module.
+const EMPTY_NODE: u8 = TILE_EMPTY_NODE;
 
 /// Read a world's overworld map and classify every pointer table entry.
 ///
@@ -463,13 +467,6 @@ fn classify_and_pick(
 }
 
 // ---------------------------------------------------------------------------
-// Tile constants for write
-// ---------------------------------------------------------------------------
-
-const TILE_AIRSHIP: u8 = 0xC9;
-const TILE_BOWSER: u8 = 0xCC;
-
-// ---------------------------------------------------------------------------
 // Placed world (output of build phase)
 // ---------------------------------------------------------------------------
 
@@ -716,8 +713,6 @@ fn validate_lock_placement(
     lock_positions: &[(usize, usize)],
     target_pos: Option<(usize, usize)>,
 ) -> bool {
-    const TILE_LOCK: u8 = 0x54;
-
     let mut sim_grid = grid.clone_grid();
     for &(r, c) in lock_positions {
         sim_grid.set(r, c, TILE_LOCK);
@@ -812,12 +807,6 @@ fn gap_tile_for(tile: u8) -> u8 {
 // Write: fortress FX
 // ---------------------------------------------------------------------------
 
-// FX table ROM offsets
-const FX_VADDR_H: usize = 0x147CD;
-const FX_VADDR_L: usize = 0x147DE;
-const FX_MAP_COMP_IDX: usize = 0x147EF;
-const FX_PATTERNS: usize = 0x14811;
-
 /// Pattern bytes for each FX type.
 fn fx_patterns_for(tile: u8) -> [u8; 4] {
     match tile {
@@ -827,9 +816,6 @@ fn fx_patterns_for(tile: u8) -> [u8; 4] {
         _ => [0xFE, 0xFE, 0xE1, 0xE1],                        // bridge gap / sky
     }
 }
-
-/// Map_Complete_Bits LUT: row → completion bit.
-const MAP_COMPLETE_BITS: [u8; 8] = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
 
 /// Write fortress-specific FX data for a placed world.
 ///
@@ -1357,10 +1343,10 @@ fn redistribute_tiles<R: Rng>(
 
 /// Randomize overworld maps using the builder pipeline.
 ///
-/// Replaces `overworld::randomize_fortresses()` (lock shuffle) and
-/// `pipes::randomize()` (pipe shuffle) with a unified pick-up → build → write
-/// flow. When `shuffle_levels_cross` or `shuffle_fortresses_cross` is set,
-/// tiles are redistributed across worlds before building.
+/// Unified pick-up → build → write flow for lock shuffle, pipe shuffle,
+/// and cross-world tile redistribution. When `shuffle_levels_cross` or
+/// `shuffle_fortresses_cross` is set, tiles are redistributed across
+/// worlds before building.
 pub fn randomize<R: Rng>(
     rom: &mut Rom,
     rng: &mut R,

@@ -9,6 +9,25 @@ use std::collections::HashMap;
 use crate::rom::Rom;
 
 // ---------------------------------------------------------------------------
+// Public types (re-exported by randomizer.rs)
+// ---------------------------------------------------------------------------
+
+/// Fortress redistribute mode.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FortressRedistribute {
+    Off,
+    IntraWorld,
+    CrossWorld,
+}
+
+impl Default for FortressRedistribute {
+    fn default() -> Self {
+        FortressRedistribute::Off
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tile constants
 // ---------------------------------------------------------------------------
 
@@ -30,6 +49,34 @@ pub(super) const TILE_PIPE: u8 = 0xBC;
 /// W5 Spiral Tower tile ID (functionally a pipe connecting screen 0 ↔ screen 1).
 pub(super) const TILE_SPIRAL: u8 = 0x5F;
 
+/// Fortress map tile ID (used in test code across multiple modules).
+#[allow(dead_code)]
+pub(super) const TILE_FORTRESS: u8 = 0x67;
+
+/// Airship dock tile ID.
+pub(super) const TILE_AIRSHIP: u8 = 0xC9;
+
+/// Bowser's castle tile ID.
+pub(super) const TILE_BOWSER: u8 = 0xCC;
+
+/// Lock tile ID on the overworld map.
+pub(super) const TILE_LOCK: u8 = 0x54;
+
+/// Bridge gap tile ID (horizontal path obstacle).
+#[allow(dead_code)]
+pub(super) const TILE_BRIDGE_GAP: u8 = 0x56;
+
+/// Water gap tile ID.
+#[allow(dead_code)]
+pub(super) const TILE_WATER_GAP: u8 = 0x9D;
+
+/// Sky gap tile ID.
+#[allow(dead_code)]
+pub(super) const TILE_SKY_GAP: u8 = 0xE4;
+
+/// Empty node placeholder (replaces removed node tiles on grid).
+pub(super) const TILE_EMPTY_NODE: u8 = 0x47;
+
 /// Number of rows in every overworld map.
 pub(super) const ROWS: usize = 9;
 
@@ -44,10 +91,18 @@ pub(super) const PIPE_MAP_Y: usize = 0x046DA;
 pub(super) const PIPE_MAP_SCRL_XHI: usize = 0x046F2;
 
 // FX table offsets (17 slots)
+pub(super) const FX_VADDR_H: usize = 0x147CD;
+pub(super) const FX_VADDR_L: usize = 0x147DE;
+pub(super) const FX_MAP_COMP_IDX: usize = 0x147EF; // 17 x 2 bytes
+pub(super) const FX_PATTERNS: usize = 0x14811;     // 17 x 4 bytes
 pub(super) const FX_MAP_LOC_ROW: usize = 0x14855;
 pub(super) const FX_MAP_LOC: usize = 0x14866;
 pub(super) const FX_MAP_TILE_REPLACE: usize = 0x14877;
 pub(super) const FX_WORLD_TABLE: usize = 0x14888;
+
+/// Map_Complete_Bits lookup table: maps grid row to completion bit.
+/// Row 0 = $80, row 1 = $40, ..., row 7 = $01.
+pub(super) const MAP_COMPLETE_BITS: [u8; 8] = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
 
 // ---------------------------------------------------------------------------
 // Entry lookup tables

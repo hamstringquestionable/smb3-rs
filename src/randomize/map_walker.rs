@@ -17,7 +17,7 @@ use super::rom_data::{
 };
 
 #[cfg(test)]
-use super::rom_data::{FX_WORLD_TABLE, TILE_START};
+use super::rom_data::{FX_WORLD_TABLE, TILE_FORTRESS, TILE_START};
 
 
 
@@ -304,10 +304,6 @@ pub(super) fn render_debug(
 
     out
 }
-
-/// Fortress map tile ID.
-#[cfg(test)]
-const TILE_FORTRESS: u8 = 0x67;
 
 /// Find fortress positions by scanning the tile grid for fortress tiles ($67).
 /// Returns sorted positions in row-major order (deterministic).
