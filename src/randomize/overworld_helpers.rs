@@ -257,11 +257,11 @@ pub(super) fn execute_world_placements(
         rom.write_byte(FX_MAP_LOC + slot_idx, fx_map_location(screen, col_in_screen));
         rom.write_byte(FX_MAP_TILE_REPLACE + slot_idx, original_tile);
 
-        // Map_Completions persistence — encodes the FORTRESS position, not the obstacle
-        let (fort_row, fort_col) = p.fortress_pos;
-        let fort_screen = fort_col / 16;
-        let fort_col_in_screen = fort_col % 16;
-        let (comp_col, comp_bit) = fx_comp_idx(fort_row, fort_screen, fort_col_in_screen);
+        // Map_Completions persistence — encodes the OBSTACLE (lock) position
+        let (ob_comp_row, ob_comp_col) = p.obstacle_pos;
+        let ob_comp_screen = ob_comp_col / 16;
+        let ob_comp_col_in_screen = ob_comp_col % 16;
+        let (comp_col, comp_bit) = fx_comp_idx(ob_comp_row, ob_comp_screen, ob_comp_col_in_screen);
         rom.write_byte(FX_MAP_COMP_IDX + slot_idx * 2, comp_col);
         rom.write_byte(FX_MAP_COMP_IDX + slot_idx * 2 + 1, comp_bit);
 

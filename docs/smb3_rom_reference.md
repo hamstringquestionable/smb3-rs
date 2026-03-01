@@ -1283,7 +1283,7 @@ to change orientation on map reload (e.g., horizontal path turns vertical).
    - `FortressFX_MapLocationRow` = `(grid_row + 2) << 4`
    - `FortressFX_MapLocation` = `(col_in_screen << 4) | screen`
    - `FortressFX_MapTileReplace` = saved original tile
-   - `FortressFX_MapCompIdx` = `(screen * 16 + col_in_screen, 0x80 >> grid_row)` — **encodes the FORTRESS position, not the lock/obstacle position** (verified across all 14 vanilla slots)
+   - `FortressFX_MapCompIdx` = `(screen * 16 + col_in_screen, 0x80 >> grid_row)` — **encodes the LOCK/OBSTACLE position, not the fortress position** (verified across all 17 vanilla slots)
    - `FortressFX_Patterns` = 4 bytes per type (see table above)
 5. If the fortress moved to a different world, update:
    - `FortressFX_W1–W8` slot assignments for source and destination worlds

@@ -140,30 +140,30 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         rom.set_tag("enemies/big_q_blocks");
         randomize::enemies::randomize_big_q_blocks(rom, &mut rng);
     }
-    match options.level_shuffle {
-        LevelShuffle::Off => {}
-        LevelShuffle::IntraWorld => {
-            rom.set_tag("levels");
-            randomize::levels::randomize_intra(rom, &mut rng);
-        }
-        LevelShuffle::CrossWorld => {
-            rom.set_tag("levels");
-            randomize::levels::randomize_cross(rom, &mut rng);
-        }
+    // Intra-world level shuffle (handled by levels.rs, independent of builder)
+    if options.level_shuffle == LevelShuffle::IntraWorld {
+        rom.set_tag("levels");
+        randomize::levels::randomize_intra(rom, &mut rng);
     }
+    // Airship shuffle (stays in levels.rs — airships aren't part of builder redistribution)
     if options.shuffle_fortresses {
-        rom.set_tag("levels/fortresses");
-        randomize::levels::randomize_fortresses(rom, &mut rng);
         rom.set_tag("levels/airships");
         randomize::levels::randomize_airships(rom, &mut rng);
     }
-    if options.fortress_redistribute != FortressRedistribute::Off {
-        rom.set_tag("overworld/fortress");
-        randomize::overworld::randomize_fortresses(rom, &mut rng, &options.fortress_redistribute);
-    }
-    if options.shuffle_pipes {
-        rom.set_tag("pipes");
-        randomize::pipes::randomize(rom, &mut rng);
+    // Overworld builder: unified lock shuffle, pipe shuffle, and cross-world redistribution.
+    // Cross-world level/fortress shuffle is handled here (replaces levels::randomize_cross
+    // and levels::randomize_fortresses when active).
+    let shuffle_locks = options.fortress_redistribute != FortressRedistribute::Off;
+    let shuffle_pipes = options.shuffle_pipes;
+    let shuffle_levels_cross = options.level_shuffle == LevelShuffle::CrossWorld;
+    let shuffle_fortresses_cross = options.shuffle_fortresses;
+    if shuffle_locks || shuffle_pipes || shuffle_levels_cross || shuffle_fortresses_cross {
+        rom.set_tag("overworld/builder");
+        randomize::overworld_builder::randomize(
+            rom, &mut rng,
+            shuffle_locks, shuffle_pipes,
+            shuffle_levels_cross, shuffle_fortresses_cross,
+        );
     }
     if options.chest_items {
         rom.set_tag("items");
