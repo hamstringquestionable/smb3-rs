@@ -13,119 +13,57 @@ use rand::seq::SliceRandom;
 use crate::rom::Rom;
 
 use super::map_walker;
-use super::overworld_helpers::LOCKABLE_TILES;
+use super::overworld_helpers::{self, LOCKABLE_TILES};
 use super::pipe_helpers;
 use super::rom_data::{
     self, AIRSHIP_ENTRIES, BOWSER_ENTRY, FORTRESS_ENTRIES,
     FX_MAP_COMP_IDX, FX_PATTERNS, FX_VADDR_H, FX_VADDR_L,
     Grid, LevelEntry, MAP_COMPLETE_BITS, MAP_OBJ_ENTRY_LINKS,
-    MAP_TRANSITIONS, TILE_AIRSHIP, TILE_BOWSER, TILE_EMPTY_NODE,
+    MAP_TRANSITIONS, TILE_EMPTY_NODE,
     TILE_LOCK, TILE_PIPE, TILE_START, WORLDS,
 };
 
 // ---------------------------------------------------------------------------
-// Tile inventory types
+// Tile types
 // ---------------------------------------------------------------------------
 
-/// A pipe pair partner — where the other endpoint lives.
+/// What kind of tile this is — variant-specific data only.
 #[derive(Clone, Debug)]
-pub(super) struct PipePartner {
-    pub entry_idx: usize,
-    pub world_idx: usize,
+pub(super) enum TileKind {
+    /// Numbered action level.
+    Level,
+    /// Fortress (carries Boom-Boom Y-byte offset for patching).
+    Fortress { boomboom_y_offset: usize },
+    /// One endpoint of a pipe pair.
+    Pipe { dest_idx: usize },
+    /// Airship dock.
+    Airship,
+    /// Bowser's castle (W8 only, never shuffled).
+    Bowser,
+    /// Start tile — fixed position, never moves.
+    Start,
+    /// Toad house, bonus game, hammer bro, map-object-linked, or other
+    /// non-shuffleable entry.
+    Fixed,
 }
 
 /// A tile picked up from an overworld map position.
 #[derive(Clone, Debug)]
-pub(super) enum PickedTile {
-    /// Numbered action level.
-    Level {
-        entry_idx: usize,
-        world_idx: usize,
-        level_entry: LevelEntry,
-        tile: u8,
-    },
-    /// Fortress (carries Boom-Boom Y-byte offset for patching).
-    Fortress {
-        entry_idx: usize,
-        world_idx: usize,
-        level_entry: LevelEntry,
-        boomboom_y_offset: usize,
-        tile: u8,
-    },
-    /// One endpoint of a pipe pair.
-    Pipe {
-        entry_idx: usize,
-        world_idx: usize,
-        level_entry: LevelEntry,
-        dest_idx: usize,
-        partner: PipePartner,
-        tile: u8,
-    },
-    /// Airship dock.
-    Airship {
-        entry_idx: usize,
-        world_idx: usize,
-        level_entry: LevelEntry,
-    },
-    /// Bowser's castle (W8 only, never shuffled).
-    Bowser {
-        entry_idx: usize,
-        world_idx: usize,
-        level_entry: LevelEntry,
-    },
-    /// Start tile — fixed position, never moves.
-    Start {
-        entry_idx: usize,
-        world_idx: usize,
-    },
-    /// Toad house, bonus game, hammer bro, map-object-linked entry, or other
-    /// non-shuffleable entry. Stays at its original position.
-    Fixed {
-        entry_idx: usize,
-        world_idx: usize,
-        tile: u8,
-    },
+pub(super) struct PickedTile {
+    pub kind: TileKind,
+    pub entry_idx: usize,
+    pub world_idx: usize,
+    /// Map tile at this position (0 for Start).
+    pub tile: u8,
+    /// Level entry data. None for Start and Fixed tiles.
+    pub level_entry: Option<LevelEntry>,
 }
 
 impl PickedTile {
-    pub fn entry_idx(&self) -> usize {
-        match self {
-            PickedTile::Level { entry_idx, .. }
-            | PickedTile::Fortress { entry_idx, .. }
-            | PickedTile::Pipe { entry_idx, .. }
-            | PickedTile::Airship { entry_idx, .. }
-            | PickedTile::Bowser { entry_idx, .. }
-            | PickedTile::Start { entry_idx, .. }
-            | PickedTile::Fixed { entry_idx, .. } => *entry_idx,
-        }
-    }
-
-    pub fn world_idx(&self) -> usize {
-        match self {
-            PickedTile::Level { world_idx, .. }
-            | PickedTile::Fortress { world_idx, .. }
-            | PickedTile::Pipe { world_idx, .. }
-            | PickedTile::Airship { world_idx, .. }
-            | PickedTile::Bowser { world_idx, .. }
-            | PickedTile::Start { world_idx, .. }
-            | PickedTile::Fixed { world_idx, .. } => *world_idx,
-        }
-    }
-
-    /// Update the entry_idx and world_idx when a tile moves to a new slot.
-    fn set_slot(&mut self, new_world: usize, new_entry: usize) {
-        match self {
-            PickedTile::Level { entry_idx, world_idx, .. }
-            | PickedTile::Fortress { entry_idx, world_idx, .. }
-            | PickedTile::Pipe { entry_idx, world_idx, .. }
-            | PickedTile::Airship { entry_idx, world_idx, .. }
-            | PickedTile::Bowser { entry_idx, world_idx, .. }
-            | PickedTile::Start { entry_idx, world_idx, .. }
-            | PickedTile::Fixed { entry_idx, world_idx, .. } => {
-                *entry_idx = new_entry;
-                *world_idx = new_world;
-            }
-        }
+    /// Whether this tile gets picked up from the grid and needs placement.
+    /// Start and Fixed tiles stay on the grid — everything else moves.
+    fn is_placeable(&self) -> bool {
+        !matches!(self.kind, TileKind::Start | TileKind::Fixed)
     }
 }
 
@@ -228,15 +166,8 @@ pub(super) fn pick_up_world(rom: &Rom, world_idx: usize) -> PickedWorld {
         );
 
         // Track which grid positions had nodes picked up
-        if row < grid.rows && col < grid.cols {
-            match &tile {
-                PickedTile::Fixed { .. } | PickedTile::Start { .. } => {
-                    // Fixed and Start tiles stay on the grid
-                }
-                _ => {
-                    picked_positions.insert((row, col));
-                }
-            }
+        if row < grid.rows && col < grid.cols && tile.is_placeable() {
+            picked_positions.insert((row, col));
         }
 
         tiles.push(tile);
@@ -244,8 +175,6 @@ pub(super) fn pick_up_world(rom: &Rom, world_idx: usize) -> PickedWorld {
     }
 
     // Pre-open vanilla FX gap tiles so the grid is clean for placement.
-    // Gap tiles (locks, bridges, water/sky gaps) are artifacts of the vanilla
-    // fortress FX system — we need them cleared before placing new locks.
     let fx_slots = rom_data::read_fx_slots(rom);
     let fx_assignments = rom_data::read_world_fx_assignments(rom);
     let world_fx = &fx_assignments[world_idx];
@@ -256,7 +185,6 @@ pub(super) fn pick_up_world(rom: &Rom, world_idx: usize) -> PickedWorld {
             if tile != 0x54 && tile != 0x56 && tile != 0x9D && tile != 0xE4 {
                 continue;
             }
-            // Check if this gap tile belongs to an FX slot for this world
             if let Some(slot) = fx_slots
                 .iter()
                 .enumerate()
@@ -281,11 +209,9 @@ pub(super) fn pick_up_world(rom: &Rom, world_idx: usize) -> PickedWorld {
 // Pipe pair matching
 // ---------------------------------------------------------------------------
 
-/// Info about a pipe entry's pair and dest index.
-#[derive(Clone, Debug)]
+/// Info about a pipe entry's dest index (used only during pick-up).
 struct PipePairInfo {
     dest_idx: usize,
-    partner_entry_idx: usize,
 }
 
 /// Build a map from entry_idx → PipePairInfo by matching pipe entries to
@@ -328,8 +254,8 @@ fn build_pipe_pair_map(
         for &d in dest_indices {
             let (da, db) = read_dest_positions(rom, d);
             if (ea_pos == da && eb_pos == db) || (ea_pos == db && eb_pos == da) {
-                result.insert(ea, PipePairInfo { dest_idx: d, partner_entry_idx: eb });
-                result.insert(eb, PipePairInfo { dest_idx: d, partner_entry_idx: ea });
+                result.insert(ea, PipePairInfo { dest_idx: d });
+                result.insert(eb, PipePairInfo { dest_idx: d });
                 break;
             }
         }
@@ -374,24 +300,27 @@ fn classify_and_pick(
 
     // Start tile — never moves
     if map_tile == TILE_START {
-        return PickedTile::Start { entry_idx, world_idx };
+        return PickedTile {
+            kind: TileKind::Start,
+            entry_idx, world_idx, tile: map_tile, level_entry: None,
+        };
     }
 
     // Bowser's castle — never shuffled
     if (world_idx, entry_idx) == BOWSER_ENTRY {
-        return PickedTile::Bowser {
-            entry_idx,
-            world_idx,
-            level_entry: rom_data::read_entry(rom, world, entry_idx),
+        return PickedTile {
+            kind: TileKind::Bowser,
+            entry_idx, world_idx, tile: map_tile,
+            level_entry: Some(rom_data::read_entry(rom, world, entry_idx)),
         };
     }
 
     // Airship
     if AIRSHIP_ENTRIES.contains(&(world_idx, entry_idx)) {
-        return PickedTile::Airship {
-            entry_idx,
-            world_idx,
-            level_entry: rom_data::read_entry(rom, world, entry_idx),
+        return PickedTile {
+            kind: TileKind::Airship,
+            entry_idx, world_idx, tile: map_tile,
+            level_entry: Some(rom_data::read_entry(rom, world, entry_idx)),
         };
     }
 
@@ -401,27 +330,19 @@ fn classify_and_pick(
         let obj_ptr = (level_entry.obj_hi as u16) << 8 | level_entry.obj_lo as u16;
         let boomboom_y_offset = rom_data::boomboom_y_offset_for_obj(obj_ptr)
             .unwrap_or(0);
-        return PickedTile::Fortress {
-            entry_idx,
-            world_idx,
-            level_entry,
-            boomboom_y_offset,
-            tile: map_tile,
+        return PickedTile {
+            kind: TileKind::Fortress { boomboom_y_offset },
+            entry_idx, world_idx, tile: map_tile,
+            level_entry: Some(level_entry),
         };
     }
 
     // Pipe (detected by PIPEWAYCONTROLLER enemy or W5 spiral)
     if let Some(info) = pipe_pair_map.get(&entry_idx) {
-        return PickedTile::Pipe {
-            entry_idx,
-            world_idx,
-            level_entry: rom_data::read_entry(rom, world, entry_idx),
-            dest_idx: info.dest_idx,
-            partner: PipePartner {
-                entry_idx: info.partner_entry_idx,
-                world_idx,
-            },
-            tile: map_tile,
+        return PickedTile {
+            kind: TileKind::Pipe { dest_idx: info.dest_idx },
+            entry_idx, world_idx, tile: map_tile,
+            level_entry: Some(rom_data::read_entry(rom, world, entry_idx)),
         };
     }
 
@@ -429,40 +350,25 @@ fn classify_and_pick(
     // map transitions, non-level pointers, out-of-bounds rows
     let (row, _col) = rom_data::entry_grid_position(rom, world, entry_idx);
 
-    if obj == 0x0700 {
-        // Toad house
-        return PickedTile::Fixed { entry_idx, world_idx, tile: map_tile };
-    }
-    if obj == 0x0001 && lay == 0x0000 {
-        // Bonus game
-        return PickedTile::Fixed { entry_idx, world_idx, tile: map_tile };
-    }
-    if MAP_TRANSITIONS.contains(&(world_idx, entry_idx)) {
-        return PickedTile::Fixed { entry_idx, world_idx, tile: map_tile };
-    }
-    if map_obj_entries.contains(&entry_idx) {
-        // Map-object-linked (W7 piranha plants)
-        return PickedTile::Fixed { entry_idx, world_idx, tile: map_tile };
-    }
-    if hammer_pairs.contains(&(obj, lay)) {
-        // Hammer bro (duplicate obj+lay)
-        return PickedTile::Fixed { entry_idx, world_idx, tile: map_tile };
-    }
-    if row >= rom_data::ROWS {
-        // Out of bounds
-        return PickedTile::Fixed { entry_idx, world_idx, tile: map_tile };
-    }
-    if !rom_data::is_level_pointer(obj, lay) {
-        // Not a real level
-        return PickedTile::Fixed { entry_idx, world_idx, tile: map_tile };
+    if obj == 0x0700
+        || (obj == 0x0001 && lay == 0x0000)
+        || MAP_TRANSITIONS.contains(&(world_idx, entry_idx))
+        || map_obj_entries.contains(&entry_idx)
+        || hammer_pairs.contains(&(obj, lay))
+        || row >= rom_data::ROWS
+        || !rom_data::is_level_pointer(obj, lay)
+    {
+        return PickedTile {
+            kind: TileKind::Fixed,
+            entry_idx, world_idx, tile: map_tile, level_entry: None,
+        };
     }
 
     // Regular action level
-    PickedTile::Level {
-        entry_idx,
-        world_idx,
-        level_entry: rom_data::read_entry(rom, world, entry_idx),
-        tile: map_tile,
+    PickedTile {
+        kind: TileKind::Level,
+        entry_idx, world_idx, tile: map_tile,
+        level_entry: Some(rom_data::read_entry(rom, world, entry_idx)),
     }
 }
 
@@ -498,31 +404,17 @@ pub(super) struct PlacedWorld {
 // ---------------------------------------------------------------------------
 
 /// Build an identity placement: every tile goes back to its original position.
-///
-/// This is the trivial case — no shuffling, no randomization. Used to verify
-/// the pick-up → build → write round-trip produces an unchanged ROM.
 pub(super) fn build_identity(picked: &PickedWorld) -> PlacedWorld {
     let mut grid = picked.grid.clone_grid();
     let mut placements = Vec::new();
 
     for (tile, &(row, col)) in picked.tiles.iter().zip(picked.positions.iter()) {
-        // Restore the map tile on the grid
-        let map_tile = match tile {
-            PickedTile::Level { tile, .. } => *tile,
-            PickedTile::Fortress { tile, .. } => *tile,
-            PickedTile::Pipe { tile, .. } => *tile,
-            PickedTile::Airship { .. } => TILE_AIRSHIP,
-            PickedTile::Bowser { .. } => TILE_BOWSER,
-            PickedTile::Start { .. } | PickedTile::Fixed { .. } => {
-                // These never left the grid — no placement needed
-                continue;
-            }
-        };
-
-        if row < grid.rows && col < grid.cols {
-            grid.set(row, col, map_tile);
+        if !tile.is_placeable() {
+            continue;
         }
-
+        if row < grid.rows && col < grid.cols {
+            grid.set(row, col, tile.tile);
+        }
         placements.push(Placement {
             tile: tile.clone(),
             pos: (row, col),
@@ -531,11 +423,7 @@ pub(super) fn build_identity(picked: &PickedWorld) -> PlacedWorld {
         });
     }
 
-    PlacedWorld {
-        world_idx: picked.world_idx,
-        grid,
-        placements,
-    }
+    PlacedWorld { world_idx: picked.world_idx, grid, placements }
 }
 
 // ---------------------------------------------------------------------------
@@ -543,31 +431,15 @@ pub(super) fn build_identity(picked: &PickedWorld) -> PlacedWorld {
 // ---------------------------------------------------------------------------
 
 /// Write a placed world to ROM: tile grid + level entries.
-///
-/// Writes the full tile grid and all level entry data (tileset + obj/lay
-/// pointers) for placed tiles. Fixed and Start tiles are skipped since their
-/// entry data was never picked up.
 pub(super) fn write_world(rom: &mut Rom, placed: &PlacedWorld) {
     let world_idx = placed.world_idx;
-
-    // Write the full tile grid
     write_tile_grid(rom, world_idx, &placed.grid);
 
-    // Write level entries for each placement
     let world = &WORLDS[world_idx];
     for p in &placed.placements {
-        let entry_idx = p.tile.entry_idx();
-        let level_entry = match &p.tile {
-            PickedTile::Level { level_entry, .. }
-            | PickedTile::Fortress { level_entry, .. }
-            | PickedTile::Pipe { level_entry, .. }
-            | PickedTile::Airship { level_entry, .. }
-            | PickedTile::Bowser { level_entry, .. } => level_entry,
-            PickedTile::Start { .. } | PickedTile::Fixed { .. } => {
-                unreachable!("Start/Fixed should not appear in placements");
-            }
-        };
-        rom_data::write_entry(rom, world, entry_idx, level_entry);
+        let level_entry = p.tile.level_entry.as_ref()
+            .expect("placed tile must have level_entry");
+        rom_data::write_entry(rom, world, p.tile.entry_idx, level_entry);
     }
 }
 
@@ -576,9 +448,6 @@ pub(super) fn write_world(rom: &mut Rom, placed: &PlacedWorld) {
 // ---------------------------------------------------------------------------
 
 /// Build a world with randomized fortress lock positions.
-///
-/// Puts all tiles back at their original positions (like identity), but also
-/// picks lock positions for each fortress using BFS-validated random selection.
 pub(super) fn build_with_fortress_locks<R: Rng>(
     picked: &PickedWorld,
     rng: &mut R,
@@ -587,23 +456,18 @@ pub(super) fn build_with_fortress_locks<R: Rng>(
     let mut grid = picked.grid.clone_grid();
     let mut placements = Vec::new();
 
-    // First pass: restore all non-fortress tiles and collect fortress info
+    // First pass: restore all non-fortress tiles and collect fortress indices
     let mut fortress_indices = Vec::new();
     for (idx, (tile, &(row, col))) in picked.tiles.iter().zip(picked.positions.iter()).enumerate() {
-        let map_tile = match tile {
-            PickedTile::Level { tile, .. } => *tile,
-            PickedTile::Pipe { tile, .. } => *tile,
-            PickedTile::Airship { .. } => TILE_AIRSHIP,
-            PickedTile::Bowser { .. } => TILE_BOWSER,
-            PickedTile::Fortress { .. } => {
-                fortress_indices.push(idx);
-                continue; // Handle fortresses after BFS
-            }
-            PickedTile::Start { .. } | PickedTile::Fixed { .. } => continue,
-        };
-
+        if !tile.is_placeable() {
+            continue;
+        }
+        if matches!(tile.kind, TileKind::Fortress { .. }) {
+            fortress_indices.push(idx);
+            continue; // Handle fortresses after BFS
+        }
         if row < grid.rows && col < grid.cols {
-            grid.set(row, col, map_tile);
+            grid.set(row, col, tile.tile);
         }
         placements.push(Placement {
             tile: tile.clone(),
@@ -617,27 +481,21 @@ pub(super) fn build_with_fortress_locks<R: Rng>(
     let mut fort_positions = Vec::new();
     for &idx in &fortress_indices {
         let (row, col) = picked.positions[idx];
-        if let PickedTile::Fortress { tile, .. } = &picked.tiles[idx] {
-            if row < grid.rows && col < grid.cols {
-                grid.set(row, col, *tile);
-            }
-            fort_positions.push((row, col));
+        if row < grid.rows && col < grid.cols {
+            grid.set(row, col, picked.tiles[idx].tile);
         }
+        fort_positions.push((row, col));
     }
 
     if fortress_indices.is_empty() {
-        return PlacedWorld {
-            world_idx: picked.world_idx,
-            grid,
-            placements,
-        };
+        return PlacedWorld { world_idx: picked.world_idx, grid, placements };
     }
 
     // Determine beat order via BFS
     let beat_order = determine_beat_order(&grid, pipe_pairs, &fort_positions);
 
     // Find the target (airship or Bowser)
-    let target_pos = find_target(&grid, picked.world_idx);
+    let target_pos = overworld_helpers::find_target(&grid, picked.world_idx);
 
     // Pick lock positions
     let lock_choices = pick_lock_positions(
@@ -650,11 +508,9 @@ pub(super) fn build_with_fortress_locks<R: Rng>(
         let (row, col) = picked.positions[tile_idx];
         let lock_pos = lock_choices.get(ord).copied().flatten();
 
-        // Place gap tile on grid if we have a lock position
         let lock_replace_tile = if let Some((lr, lc)) = lock_pos {
             let original_tile = grid.get(lr, lc);
-            let gap_tile = gap_tile_for(original_tile);
-            grid.set(lr, lc, gap_tile);
+            grid.set(lr, lc, overworld_helpers::gap_tile_for(original_tile));
             Some(original_tile)
         } else {
             None
@@ -668,15 +524,10 @@ pub(super) fn build_with_fortress_locks<R: Rng>(
         });
     }
 
-    PlacedWorld {
-        world_idx: picked.world_idx,
-        grid,
-        placements,
-    }
+    PlacedWorld { world_idx: picked.world_idx, grid, placements }
 }
 
 /// Determine fortress beat order by simulating BFS progression.
-/// Returns indices into `fort_positions` in the order they'd be reached.
 fn determine_beat_order(
     grid: &Grid,
     pipes: &[((usize, usize), (usize, usize))],
@@ -740,8 +591,7 @@ fn validate_lock_placement(
     true
 }
 
-/// Pick lock positions with BFS validation. Returns one Option per fortress
-/// in beat order. Falls back to None (no locks) if validation fails.
+/// Pick lock positions with BFS validation. Falls back to None if validation fails.
 fn pick_lock_positions<R: Rng>(
     rng: &mut R,
     grid: &Grid,
@@ -752,7 +602,6 @@ fn pick_lock_positions<R: Rng>(
 ) -> Vec<Option<(usize, usize)>> {
     let n = beat_order.len();
 
-    // Collect eligible path tiles (reachable, lockable, row < 8)
     let result = map_walker::walk_map(grid, pipes, None);
     let mut candidates: Vec<(usize, usize)> = result.path_tiles
         .iter()
@@ -776,52 +625,14 @@ fn pick_lock_positions<R: Rng>(
         }
     }
 
-    // Fallback: no locks
     vec![None; n]
-}
-
-/// Find the airship or Bowser's castle position on the grid.
-fn find_target(grid: &Grid, world_idx: usize) -> Option<(usize, usize)> {
-    let target_tile = if world_idx == 7 { TILE_BOWSER } else { TILE_AIRSHIP };
-    for r in 0..grid.rows {
-        for c in 0..grid.cols {
-            if grid.get(r, c) == target_tile {
-                return Some((r, c));
-            }
-        }
-    }
-    None
-}
-
-/// Determine the gap tile for a given path tile.
-fn gap_tile_for(tile: u8) -> u8 {
-    match tile {
-        0xB3 => 0x9D,                                          // water → water gap
-        0xDA => 0xE4,                                          // sky → sky gap
-        0x46 | 0xAA | 0xAB | 0xB0 | 0xB1 | 0xDB | 0xBA => 0x54, // vertical → lock
-        _ => 0x56,                                              // horizontal → bridge gap
-    }
 }
 
 // ---------------------------------------------------------------------------
 // Write: fortress FX
 // ---------------------------------------------------------------------------
 
-/// Pattern bytes for each FX type.
-fn fx_patterns_for(tile: u8) -> [u8; 4] {
-    match tile {
-        0xB3 => [0xD4, 0xD6, 0xD5, 0xD7],                    // water bridge
-        0x46 | 0xAA | 0xAB | 0xB0 | 0xB1 | 0xDB | 0xBA =>
-            [0xFE, 0xC0, 0xFE, 0xC0],                          // lock (vertical)
-        _ => [0xFE, 0xFE, 0xE1, 0xE1],                        // bridge gap / sky
-    }
-}
-
 /// Write fortress-specific FX data for a placed world.
-///
-/// Handles: Boom-Boom Y-byte patching, FX slot allocation, FX world table.
-/// Vanilla locks are already cleared during pick_up_world (grid pre-opening),
-/// so no pre_open_fx_for_world call is needed.
 pub(super) fn write_fortress_fx(
     rom: &mut Rom,
     placed: &PlacedWorld,
@@ -829,10 +640,9 @@ pub(super) fn write_fortress_fx(
 ) {
     let world_idx = placed.world_idx;
 
-    // Collect fortress placements that have locks
     let fortress_placements: Vec<&Placement> = placed.placements
         .iter()
-        .filter(|p| matches!(p.tile, PickedTile::Fortress { .. }) && p.lock_pos.is_some())
+        .filter(|p| matches!(p.tile.kind, TileKind::Fortress { .. }) && p.lock_pos.is_some())
         .collect();
 
     // Write FX world table
@@ -849,18 +659,17 @@ pub(super) fn write_fortress_fx(
     for (i, p) in fortress_placements.iter().enumerate() {
         let slot_idx = fx_slot_base + i;
         let ordinal = (i + 1) as u8;
-        let (fort_row, fort_col) = p.pos;
         let (ob_row, ob_col) = p.lock_pos.unwrap();
         let replace_tile = p.lock_replace_tile.unwrap();
 
         // Patch Boom-Boom Y-byte
-        if let PickedTile::Fortress { boomboom_y_offset, .. } = &p.tile {
+        if let TileKind::Fortress { boomboom_y_offset } = &p.tile.kind {
             let old_y = rom.read_byte(*boomboom_y_offset);
             let new_y = (ordinal << 4) | (old_y & 0x0F);
             rom.write_byte(*boomboom_y_offset, new_y);
         }
 
-        let patterns = fx_patterns_for(replace_tile);
+        let patterns = overworld_helpers::fx_patterns_for(replace_tile);
 
         // VRAM address
         let col_in_screen = ob_col % 16;
@@ -896,30 +705,16 @@ pub(super) fn write_fortress_fx(
 // Build: pipe placement
 // ---------------------------------------------------------------------------
 
-/// Collect all node positions from a PlacedWorld (positions eligible for pipe swap).
-///
-/// Includes levels, fortresses, and existing pipe positions. Excludes Start,
-/// Fixed, Airship, and Bowser.
+/// Collect all node positions eligible for pipe swap.
 fn collect_swappable_nodes(placed: &PlacedWorld) -> HashSet<(usize, usize)> {
-    let mut nodes = HashSet::new();
-    for p in &placed.placements {
-        match &p.tile {
-            PickedTile::Level { .. }
-            | PickedTile::Fortress { .. }
-            | PickedTile::Pipe { .. } => {
-                nodes.insert(p.pos);
-            }
-            _ => {}
-        }
-    }
-    nodes
+    placed.placements
+        .iter()
+        .filter(|p| matches!(p.tile.kind, TileKind::Level | TileKind::Fortress { .. } | TileKind::Pipe { .. }))
+        .map(|p| p.pos)
+        .collect()
 }
 
 /// Compute fortress gate segments from the placed grid.
-///
-/// The grid already has gap tiles (locks/bridges) placed by fortress lock
-/// placement. This iteratively opens each gap tile and assigns newly
-/// reachable nodes to successive segments.
 fn compute_segments_from_grid(
     grid: &Grid,
     all_nodes: &HashSet<(usize, usize)>,
@@ -960,20 +755,14 @@ fn compute_segments_from_grid(
 }
 
 /// Build a world with pipe endpoints placed using progressive BFS.
-///
-/// Takes a PlacedWorld (from fortress lock placement) and relocates pipe
-/// endpoints to new positions. Pipes connect disconnected areas, prioritizing
-/// components containing must-reach targets (airship/Bowser). A forbidden-pair
-/// constraint prevents piping directly from segment 0 to the goal segment.
 pub(super) fn build_with_pipes<R: Rng>(
     placed: &mut PlacedWorld,
     rng: &mut R,
 ) {
-    // Collect pipe placements and their indices
     let pipe_indices: Vec<usize> = placed.placements
         .iter()
         .enumerate()
-        .filter(|(_, p)| matches!(p.tile, PickedTile::Pipe { .. }))
+        .filter(|(_, p)| matches!(p.tile.kind, TileKind::Pipe { .. }))
         .map(|(i, _)| i)
         .collect();
 
@@ -991,19 +780,18 @@ pub(super) fn build_with_pipes<R: Rng>(
         }
     }
 
-    // Compute fortress gate segments (locks already on the grid)
+    // Compute fortress gate segments
     let fortress_placements: Vec<&Placement> = placed.placements
         .iter()
-        .filter(|p| matches!(p.tile, PickedTile::Fortress { .. }) && p.lock_pos.is_some())
+        .filter(|p| matches!(p.tile.kind, TileKind::Fortress { .. }) && p.lock_pos.is_some())
         .collect();
     let segments = compute_segments_from_grid(&placed.grid, &all_nodes, &fortress_placements);
 
-    // Find goal segment (airship or Bowser)
-    let target_pos = find_target(&placed.grid, placed.world_idx);
-    let goal_seg = target_pos
-        .and_then(|p| segments.get(&p).copied());
+    // Find goal segment
+    let target_pos = overworld_helpers::find_target(&placed.grid, placed.world_idx);
+    let goal_seg = target_pos.and_then(|p| segments.get(&p).copied());
 
-    // Open fortress gaps for the walk (simulate post-fortress state)
+    // Open fortress gaps for the walk
     for fp in &fortress_placements {
         if let (Some((lr, lc)), Some(replace_tile)) = (fp.lock_pos, fp.lock_replace_tile) {
             placed.grid.set(lr, lc, replace_tile);
@@ -1014,15 +802,15 @@ pub(super) fn build_with_pipes<R: Rng>(
     let result = map_walker::walk_map(&placed.grid, &[], None);
     let mut reachable = result.nodes.clone();
 
-    // Restore fortress gap tiles on the grid
+    // Restore fortress gap tiles
     for fp in &fortress_placements {
         if let (Some((lr, lc)), Some(_)) = (fp.lock_pos, fp.lock_replace_tile) {
-            let gap_tile = gap_tile_for(placed.grid.get(lr, lc));
+            let gap_tile = overworld_helpers::gap_tile_for(placed.grid.get(lr, lc));
             placed.grid.set(lr, lc, gap_tile);
         }
     }
 
-    // Forbidden pair check: no pipe may directly bridge segment 0 to goal
+    // Forbidden pair: no pipe may directly bridge segment 0 to goal
     let is_forbidden_pair = |a: (usize, usize), b: (usize, usize)| -> bool {
         if let Some(gs) = goal_seg {
             if gs == 0 { return false; }
@@ -1037,7 +825,7 @@ pub(super) fn build_with_pipes<R: Rng>(
     // Must-reach positions (airship, Bowser)
     let must_reach: HashSet<(usize, usize)> = placed.placements
         .iter()
-        .filter(|p| matches!(p.tile, PickedTile::Airship { .. } | PickedTile::Bowser { .. }))
+        .filter(|p| matches!(p.tile.kind, TileKind::Airship | TileKind::Bowser))
         .map(|p| p.pos)
         .collect();
 
@@ -1077,7 +865,6 @@ pub(super) fn build_with_pipes<R: Rng>(
                     }
                 }
                 if !placed_ok {
-                    // Fallback: place anyway
                     let a = candidates[0];
                     let b = candidates[1];
                     placed_pairs.push((a, b));
@@ -1126,7 +913,6 @@ pub(super) fn build_with_pipes<R: Rng>(
         let mut unreachable_cands = unreachable_cands;
         unreachable_cands.as_mut_slice().shuffle(rng);
 
-        // Pick a non-forbidden pair
         let b_pos = unreachable_cands[0];
         let mut a_pos = reachable_cands[0];
         if is_forbidden_pair(a_pos, b_pos) {
@@ -1146,8 +932,7 @@ pub(super) fn build_with_pipes<R: Rng>(
         reachable = result.nodes;
     }
 
-    // Update pipe placement positions — pair pipe_indices[2*i] and [2*i+1]
-    // with placed_pairs[i]
+    // Update pipe placement positions
     for (i, &(a_pos, b_pos)) in placed_pairs.iter().enumerate() {
         let idx_a = pipe_indices[i * 2];
         let idx_b = pipe_indices[i * 2 + 1];
@@ -1188,19 +973,15 @@ fn find_unreachable_components(
 // ---------------------------------------------------------------------------
 
 /// Write pipe placement changes to ROM.
-///
-/// For each pipe pair: swaps pointer table entries to new positions, updates
-/// destination tables, then re-sorts the pointer table and syncs map objects.
 pub(super) fn write_pipe_placements(
     rom: &mut Rom,
     placed: &PlacedWorld,
 ) {
     let world_idx = placed.world_idx;
 
-    // Collect pipe placements in pair order (consecutive pairs from pick_up)
     let pipe_placements: Vec<&Placement> = placed.placements
         .iter()
-        .filter(|p| matches!(p.tile, PickedTile::Pipe { .. }))
+        .filter(|p| matches!(p.tile.kind, TileKind::Pipe { .. }))
         .collect();
 
     if pipe_placements.is_empty() {
@@ -1233,8 +1014,8 @@ pub(super) fn write_pipe_placements(
         let pa = pair[0];
         let pb = pair[1];
 
-        let entry_idx_a = pa.tile.entry_idx();
-        let entry_idx_b = pb.tile.entry_idx();
+        let entry_idx_a = pa.tile.entry_idx;
+        let entry_idx_b = pb.tile.entry_idx;
         let new_a_pos = pa.pos;
         let new_b_pos = pb.pos;
 
@@ -1269,7 +1050,7 @@ pub(super) fn write_pipe_placements(
         }
 
         // Update destination table
-        if let PickedTile::Pipe { dest_idx, .. } = &pa.tile {
+        if let TileKind::Pipe { dest_idx } = &pa.tile.kind {
             pipe_helpers::write_pipe_dest(rom, *dest_idx, new_a_pos, new_b_pos);
         }
     }
@@ -1284,31 +1065,23 @@ pub(super) fn write_pipe_placements(
 // ---------------------------------------------------------------------------
 
 /// Redistribute Level and Fortress tiles across worlds.
-///
-/// Levels shuffle among Level slots and Fortresses shuffle among Fortress
-/// slots — each type stays within its own kind so the per-world count of
-/// each tile type is preserved. The `entry_idx` and `world_idx` on each
-/// tile are updated to reflect their new slot.
-///
-/// Pipes, Airships, Bowser, Start, and Fixed tiles stay in their original world.
 fn redistribute_tiles<R: Rng>(
     worlds: &mut [PickedWorld; 8],
     rng: &mut R,
     shuffle_levels: bool,
     shuffle_fortresses: bool,
 ) {
-    // Helper: shuffle one tile type across all worlds
     fn shuffle_type<R2: Rng>(
         worlds: &mut [PickedWorld; 8],
         rng: &mut R2,
-        is_target: fn(&PickedTile) -> bool,
+        is_target: fn(&TileKind) -> bool,
     ) {
         let mut slots: Vec<(usize, usize)> = Vec::new();
         let mut pool: Vec<PickedTile> = Vec::new();
 
         for (wi, picked) in worlds.iter().enumerate() {
             for (ti, tile) in picked.tiles.iter().enumerate() {
-                if is_target(tile) {
+                if is_target(&tile.kind) {
                     slots.push((wi, ti));
                     pool.push(tile.clone());
                 }
@@ -1323,17 +1096,18 @@ fn redistribute_tiles<R: Rng>(
 
         for (i, &(wi, ti)) in slots.iter().enumerate() {
             let mut tile = pool[i].clone();
-            let dest_entry_idx = worlds[wi].tiles[ti].entry_idx();
-            tile.set_slot(wi, dest_entry_idx);
+            let dest_entry_idx = worlds[wi].tiles[ti].entry_idx;
+            tile.entry_idx = dest_entry_idx;
+            tile.world_idx = wi;
             worlds[wi].tiles[ti] = tile;
         }
     }
 
     if shuffle_levels {
-        shuffle_type(worlds, rng, |t| matches!(t, PickedTile::Level { .. }));
+        shuffle_type(worlds, rng, |k| matches!(k, TileKind::Level));
     }
     if shuffle_fortresses {
-        shuffle_type(worlds, rng, |t| matches!(t, PickedTile::Fortress { .. }));
+        shuffle_type(worlds, rng, |k| matches!(k, TileKind::Fortress { .. }));
     }
 }
 
@@ -1342,11 +1116,6 @@ fn redistribute_tiles<R: Rng>(
 // ---------------------------------------------------------------------------
 
 /// Randomize overworld maps using the builder pipeline.
-///
-/// Unified pick-up → build → write flow for lock shuffle, pipe shuffle,
-/// and cross-world tile redistribution. When `shuffle_levels_cross` or
-/// `shuffle_fortresses_cross` is set, tiles are redistributed across
-/// worlds before building.
 pub fn randomize<R: Rng>(
     rom: &mut Rom,
     rng: &mut R,
@@ -1390,7 +1159,7 @@ pub fn randomize<R: Rng>(
         }
 
         let fort_count = placed.placements.iter()
-            .filter(|p| matches!(p.tile, PickedTile::Fortress { .. }) && p.lock_pos.is_some())
+            .filter(|p| matches!(p.tile.kind, TileKind::Fortress { .. }) && p.lock_pos.is_some())
             .count();
 
         if shuffle_locks {
@@ -1429,6 +1198,13 @@ mod tests {
         Rom::from_bytes(&data).ok()
     }
 
+    /// Helper: count fortresses with locks in a PlacedWorld.
+    fn count_locked_fortresses(placed: &PlacedWorld) -> usize {
+        placed.placements.iter()
+            .filter(|p| matches!(p.tile.kind, TileKind::Fortress { .. }) && p.lock_pos.is_some())
+            .count()
+    }
+
     /// Generate a playable ROM using the builder pipeline.
     /// Run with: cargo test --lib generate_builder_rom -- --ignored --nocapture
     #[test]
@@ -1439,26 +1215,20 @@ mod tests {
         let seed = 1u64;
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
-        // QoL patches first (same as randomizer.rs)
         crate::randomize::qol::fix_w3_drawbridges(&mut out);
         crate::randomize::qol::remove_w2_rock(&mut out);
         crate::randomize::qol::fix_big_q_block_rooms(&mut out);
 
-        // Pick up all worlds, redistribute cross-world, build, write
         let mut picked: [PickedWorld; 8] =
             std::array::from_fn(|wi| pick_up_world(&out, wi));
         redistribute_tiles(&mut picked, &mut rng, true, true);
 
         let mut fx_slot = 0usize;
         for wi in 0..8 {
-            // Don't use pipe positions for lock validation — pipes will move
             let mut placed = build_with_fortress_locks(&picked[wi], &mut rng, &[]);
             build_with_pipes(&mut placed, &mut rng);
 
-            let fort_count = placed.placements.iter()
-                .filter(|p| matches!(p.tile, PickedTile::Fortress { .. }) && p.lock_pos.is_some())
-                .count();
-
+            let fort_count = count_locked_fortresses(&placed);
             write_fortress_fx(&mut out, &placed, fx_slot);
             write_world(&mut out, &placed);
             write_pipe_placements(&mut out, &placed);
@@ -1489,17 +1259,11 @@ mod tests {
                 let pipes = all_pipes.get(&wi).cloned().unwrap_or_default();
                 let placed = build_with_fortress_locks(&picked, &mut rng, &pipes);
 
-                // Count fortresses with locks
-                let fort_count = placed.placements.iter()
-                    .filter(|p| matches!(p.tile, PickedTile::Fortress { .. }) && p.lock_pos.is_some())
-                    .count();
-
-                // Write FX first, then grid+entries
+                let fort_count = count_locked_fortresses(&placed);
                 write_fortress_fx(&mut test_rom, &placed, fx_slot);
                 write_world(&mut test_rom, &placed);
                 fx_slot += fort_count;
 
-                // Verify no locks at row 8
                 for c in 0..placed.grid.cols {
                     assert_ne!(
                         placed.grid.get(8, c), 0x54,
@@ -1508,13 +1272,14 @@ mod tests {
                 }
             }
 
-            // Verify progression: simulate fortress FX and check target reachable
             let all_pipes = rom_data::read_pipe_pairs(&test_rom);
             for wi in 0..8 {
                 let pipes = all_pipes.get(&wi).cloned().unwrap_or_default();
                 let steps = map_walker::simulate_progression(&test_rom, wi, &pipes);
 
-                if let Some(target) = crate::randomize::overworld_helpers::world_target_position(&test_rom, wi) {
+                if let Some(target) = overworld_helpers::find_target(
+                    &rom_data::read_tile_grid(&test_rom, wi), wi,
+                ) {
                     let final_nodes = &steps.last().unwrap().nodes;
                     assert!(
                         final_nodes.contains(&target),
@@ -1534,7 +1299,6 @@ mod tests {
         };
 
         let all_pipes = rom_data::read_pipe_pairs(&rom);
-
         let mut rom1 = rom.clone();
         let mut rom2 = rom.clone();
 
@@ -1548,39 +1312,27 @@ mod tests {
                 let pipes = all_pipes.get(&wi).cloned().unwrap_or_default();
                 let placed = build_with_fortress_locks(&picked, &mut rng, &pipes);
 
-                let fort_count = placed.placements.iter()
-                    .filter(|p| matches!(p.tile, PickedTile::Fortress { .. }) && p.lock_pos.is_some())
-                    .count();
-
+                let fort_count = count_locked_fortresses(&placed);
                 write_fortress_fx(target_rom, &placed, fx_slot);
                 write_world(target_rom, &placed);
                 fx_slot += fort_count;
             }
         }
 
-        // Compare FX table
         for off in 0x147CD..0x148B8 {
-            assert_eq!(
-                rom1.read_byte(off), rom2.read_byte(off),
-                "FX table mismatch at 0x{:05X}", off,
-            );
+            assert_eq!(rom1.read_byte(off), rom2.read_byte(off),
+                "FX table mismatch at 0x{:05X}", off);
         }
-
-        // Compare tile grids
         for wi in 0..8 {
             let info = &rom_data::MAP_TILE_GRIDS[wi];
             for r in 0..rom_data::ROWS {
                 for c in 0..info.columns {
                     let off = rom_data::map_tile_offset(wi, r, c);
-                    assert_eq!(
-                        rom1.read_byte(off), rom2.read_byte(off),
-                        "W{} tile mismatch at ({},{})", wi + 1, r, c,
-                    );
+                    assert_eq!(rom1.read_byte(off), rom2.read_byte(off),
+                        "W{} tile mismatch at ({},{})", wi + 1, r, c);
                 }
             }
         }
-
-        // Compare Y-bytes
         for &off in &rom_data::BOOMBOOM_Y_OFFSETS {
             assert_eq!(rom1.read_byte(off), rom2.read_byte(off));
         }
@@ -1598,7 +1350,7 @@ mod tests {
         // Collect vanilla FX gap positions (these get pre-opened during pick_up)
         let fx_slots = rom_data::read_fx_slots(&rom);
         let fx_assignments = rom_data::read_world_fx_assignments(&rom);
-        let mut gap_positions: HashSet<(usize, usize, usize)> = HashSet::new(); // (world, row, col)
+        let mut gap_positions: HashSet<(usize, usize, usize)> = HashSet::new();
         for wi in 0..8 {
             let grid = rom_data::read_tile_grid(&rom, wi);
             for &slot_idx in &fx_assignments[wi] {
@@ -1613,82 +1365,54 @@ mod tests {
             }
         }
 
-        // Pick up all 8 worlds, build identity, write back
         for wi in 0..8 {
             let picked = pick_up_world(&rom, wi);
             let placed = build_identity(&picked);
             write_world(&mut test_rom, &placed);
         }
 
-        // Compare tile grid regions — should be identical except at pre-opened
-        // FX gap positions (identity transform doesn't place locks)
         for wi in 0..8 {
             let info = &rom_data::MAP_TILE_GRIDS[wi];
             for r in 0..rom_data::ROWS {
                 for c in 0..info.columns {
                     if gap_positions.contains(&(wi, r, c)) {
-                        continue; // Skip pre-opened gap tiles
+                        continue;
                     }
                     let offset = rom_data::map_tile_offset(wi, r, c);
                     let orig = rom.read_byte(offset);
                     let after = test_rom.read_byte(offset);
-                    assert_eq!(
-                        orig, after,
+                    assert_eq!(orig, after,
                         "W{} tile grid mismatch at ({},{}): 0x{:02X} -> 0x{:02X} (offset 0x{:05X})",
-                        wi + 1, r, c, orig, after, offset,
-                    );
+                        wi + 1, r, c, orig, after, offset);
                 }
             }
         }
 
-        // Compare pointer table regions — tileset nibble + obj/lay words
         for wi in 0..8 {
             let world = &WORLDS[wi];
             let n = world.entry_count;
             let (scrcol, objsets, layouts) = rom_data::table_offsets(world);
 
             for i in 0..n {
-                // ByRowType (full byte — upper nibble is row, lower is tileset)
                 let rt_off = world.rowtype_offset + i;
-                assert_eq!(
-                    rom.read_byte(rt_off), test_rom.read_byte(rt_off),
-                    "W{} entry {} ByRowType mismatch at 0x{:05X}",
-                    wi + 1, i, rt_off,
-                );
+                assert_eq!(rom.read_byte(rt_off), test_rom.read_byte(rt_off),
+                    "W{} entry {} ByRowType mismatch at 0x{:05X}", wi + 1, i, rt_off);
 
-                // ByScrCol (should be unchanged — identity doesn't move entries)
                 let sc_off = scrcol + i;
-                assert_eq!(
-                    rom.read_byte(sc_off), test_rom.read_byte(sc_off),
-                    "W{} entry {} ByScrCol mismatch at 0x{:05X}",
-                    wi + 1, i, sc_off,
-                );
+                assert_eq!(rom.read_byte(sc_off), test_rom.read_byte(sc_off),
+                    "W{} entry {} ByScrCol mismatch at 0x{:05X}", wi + 1, i, sc_off);
 
-                // ObjSets word
                 let obj_off = objsets + i * 2;
-                assert_eq!(
-                    rom.read_byte(obj_off), test_rom.read_byte(obj_off),
-                    "W{} entry {} ObjSets lo mismatch at 0x{:05X}",
-                    wi + 1, i, obj_off,
-                );
-                assert_eq!(
-                    rom.read_byte(obj_off + 1), test_rom.read_byte(obj_off + 1),
-                    "W{} entry {} ObjSets hi mismatch at 0x{:05X}",
-                    wi + 1, i, obj_off + 1,
-                );
+                assert_eq!(rom.read_byte(obj_off), test_rom.read_byte(obj_off),
+                    "W{} entry {} ObjSets lo mismatch at 0x{:05X}", wi + 1, i, obj_off);
+                assert_eq!(rom.read_byte(obj_off + 1), test_rom.read_byte(obj_off + 1),
+                    "W{} entry {} ObjSets hi mismatch at 0x{:05X}", wi + 1, i, obj_off + 1);
 
-                // LevelLayouts word
                 let lay_off = layouts + i * 2;
-                assert_eq!(
-                    rom.read_byte(lay_off), test_rom.read_byte(lay_off),
-                    "W{} entry {} Layouts lo mismatch at 0x{:05X}",
-                    wi + 1, i, lay_off,
-                );
-                assert_eq!(
-                    rom.read_byte(lay_off + 1), test_rom.read_byte(lay_off + 1),
-                    "W{} entry {} Layouts hi mismatch at 0x{:05X}",
-                    wi + 1, i, lay_off + 1,
-                );
+                assert_eq!(rom.read_byte(lay_off), test_rom.read_byte(lay_off),
+                    "W{} entry {} Layouts lo mismatch at 0x{:05X}", wi + 1, i, lay_off);
+                assert_eq!(rom.read_byte(lay_off + 1), test_rom.read_byte(lay_off + 1),
+                    "W{} entry {} Layouts hi mismatch at 0x{:05X}", wi + 1, i, lay_off + 1);
             }
         }
     }
@@ -1712,27 +1436,21 @@ mod tests {
             let picked = pick_up_world(&rom, wi);
             assert_eq!(picked.world_idx, wi);
 
-            let mut w_levels = 0;
-            let mut w_forts = 0;
-            let mut w_pipes = 0;
-            let mut w_airships = 0;
-            let mut w_fixed = 0;
-            let mut w_starts = 0;
-            let mut w_bowser = 0;
+            let (mut w_levels, mut w_forts, mut w_pipes, mut w_airships) = (0, 0, 0, 0);
+            let (mut w_fixed, mut w_starts, mut w_bowser) = (0, 0, 0);
 
             for tile in &picked.tiles {
-                match tile {
-                    PickedTile::Level { .. } => w_levels += 1,
-                    PickedTile::Fortress { .. } => w_forts += 1,
-                    PickedTile::Pipe { .. } => w_pipes += 1,
-                    PickedTile::Airship { .. } => w_airships += 1,
-                    PickedTile::Fixed { .. } => w_fixed += 1,
-                    PickedTile::Start { .. } => w_starts += 1,
-                    PickedTile::Bowser { .. } => w_bowser += 1,
+                match tile.kind {
+                    TileKind::Level => w_levels += 1,
+                    TileKind::Fortress { .. } => w_forts += 1,
+                    TileKind::Pipe { .. } => w_pipes += 1,
+                    TileKind::Airship => w_airships += 1,
+                    TileKind::Fixed => w_fixed += 1,
+                    TileKind::Start => w_starts += 1,
+                    TileKind::Bowser => w_bowser += 1,
                 }
             }
 
-            // Every world has exactly 1 start tile
             assert_eq!(w_starts, 1, "W{} should have 1 start tile", wi + 1);
 
             total_levels += w_levels;
@@ -1750,17 +1468,11 @@ mod tests {
             );
         }
 
-        // 17 fortresses total (from FORTRESS_ENTRIES)
         assert_eq!(total_fortresses, 17, "expected 17 fortresses");
-        // 7 airships (W1-W7)
         assert_eq!(total_airships, 7, "expected 7 airships");
-        // 1 Bowser
         assert_eq!(total_bowser, 1, "expected 1 Bowser");
-        // 8 starts
         assert_eq!(total_starts, 8, "expected 8 start tiles");
-        // Pipe entries come in pairs (each endpoint counted separately)
         assert_eq!(total_pipes % 2, 0, "pipe entries should be even");
-        // 24 dest entries = 24 pipe pairs = 48 pipe endpoints
         assert_eq!(total_pipes, 48, "expected 48 pipe endpoints (24 pairs)");
 
         let grand_total = total_levels + total_fortresses + total_pipes
@@ -1776,14 +1488,10 @@ mod tests {
             None => return,
         };
 
-        // Verify that path tiles WITHOUT entries are NOT replaced with EMPTY_NODE.
-        // Some path-like tiles (e.g. 0xE6 = hand trap in W8) have entries on them
-        // and get legitimately picked up.
         for wi in 0..8 {
             let original = rom_data::read_tile_grid(&rom, wi);
             let picked = pick_up_world(&rom, wi);
 
-            // Collect positions that have entries
             let world = &WORLDS[wi];
             let mut entry_positions = HashSet::new();
             for i in 0..world.entry_count {
@@ -1798,11 +1506,9 @@ mod tests {
                     let is_path = rom_data::VALID_HORZ.contains(&orig)
                         || rom_data::VALID_VERT.contains(&orig);
                     if is_path && !entry_positions.contains(&(r, c)) {
-                        assert_eq!(
-                            after, orig,
+                        assert_eq!(after, orig,
                             "W{} path tile at ({},{}) was modified: 0x{:02X} -> 0x{:02X}",
-                            wi + 1, r, c, orig, after,
-                        );
+                            wi + 1, r, c, orig, after);
                     }
                 }
             }
@@ -1819,17 +1525,13 @@ mod tests {
         for wi in 0..8 {
             let picked = pick_up_world(&rom, wi);
             for tile in &picked.tiles {
-                if let PickedTile::Fortress { boomboom_y_offset, entry_idx, .. } = tile {
-                    assert_ne!(
-                        *boomboom_y_offset, 0,
+                if let TileKind::Fortress { boomboom_y_offset } = &tile.kind {
+                    assert_ne!(*boomboom_y_offset, 0,
                         "W{} fortress entry {} has zero boomboom_y_offset",
-                        wi + 1, entry_idx,
-                    );
-                    assert!(
-                        *boomboom_y_offset < rom.data.len(),
+                        wi + 1, tile.entry_idx);
+                    assert!(*boomboom_y_offset < rom.data.len(),
                         "W{} fortress entry {} boomboom_y_offset out of range",
-                        wi + 1, entry_idx,
-                    );
+                        wi + 1, tile.entry_idx);
                 }
             }
         }
@@ -1844,26 +1546,18 @@ mod tests {
 
         for wi in 0..8 {
             let picked = pick_up_world(&rom, wi);
-            let pipes: Vec<&PickedTile> = picked.tiles.iter()
-                .filter(|t| matches!(t, PickedTile::Pipe { .. }))
-                .collect();
 
-            // Every pipe's partner should also be in the picked tiles
-            for p in &pipes {
-                if let PickedTile::Pipe { entry_idx, dest_idx, partner, .. } = p {
-                    let partner_found = pipes.iter().any(|q| {
-                        if let PickedTile::Pipe { entry_idx: qi, dest_idx: qd, .. } = q {
-                            *qi == partner.entry_idx && *qd == *dest_idx
-                        } else {
-                            false
-                        }
-                    });
-                    assert!(
-                        partner_found,
-                        "W{} pipe entry {} (dest {}) partner entry {} not found",
-                        wi + 1, entry_idx, dest_idx, partner.entry_idx,
-                    );
+            // Every dest_idx should appear exactly twice (one per endpoint)
+            let mut dest_counts: HashMap<usize, usize> = HashMap::new();
+            for tile in &picked.tiles {
+                if let TileKind::Pipe { dest_idx } = &tile.kind {
+                    *dest_counts.entry(*dest_idx).or_insert(0) += 1;
                 }
+            }
+            for (&dest, &count) in &dest_counts {
+                assert_eq!(count, 2,
+                    "W{} dest_idx {} has {} entries (expected 2)",
+                    wi + 1, dest, count);
             }
         }
     }
@@ -1884,25 +1578,20 @@ mod tests {
                 let pipes = all_pipes.get(&wi).cloned().unwrap_or_default();
                 let mut placed = build_with_fortress_locks(&picked, &mut rng, &pipes);
 
-                // Count pipes before
                 let pipe_count_before = placed.placements.iter()
-                    .filter(|p| matches!(p.tile, PickedTile::Pipe { .. }))
+                    .filter(|p| matches!(p.tile.kind, TileKind::Pipe { .. }))
                     .count();
 
                 build_with_pipes(&mut placed, &mut rng);
 
-                // Count pipes after — should be unchanged
                 let pipe_count_after = placed.placements.iter()
-                    .filter(|p| matches!(p.tile, PickedTile::Pipe { .. }))
+                    .filter(|p| matches!(p.tile.kind, TileKind::Pipe { .. }))
                     .count();
-                assert_eq!(
-                    pipe_count_before, pipe_count_after,
-                    "Seed {seed} W{}: pipe count changed", wi + 1,
-                );
+                assert_eq!(pipe_count_before, pipe_count_after,
+                    "Seed {seed} W{}: pipe count changed", wi + 1);
 
-                // Collect placed pipe pairs from the grid
                 let pipe_positions: Vec<(usize, usize)> = placed.placements.iter()
-                    .filter(|p| matches!(p.tile, PickedTile::Pipe { .. }))
+                    .filter(|p| matches!(p.tile.kind, TileKind::Pipe { .. }))
                     .map(|p| p.pos)
                     .collect();
                 let mut pipe_pairs = Vec::new();
@@ -1912,7 +1601,6 @@ mod tests {
                     }
                 }
 
-                // Open fortress gaps for BFS
                 let mut check_grid = placed.grid.clone_grid();
                 for p in &placed.placements {
                     if let (Some((lr, lc)), Some(rt)) = (p.lock_pos, p.lock_replace_tile) {
@@ -1920,15 +1608,12 @@ mod tests {
                     }
                 }
 
-                // Walk with pipes and opened gaps — must-reach should be reachable
                 let result = map_walker::walk_map(&check_grid, &pipe_pairs, None);
 
-                if let Some(target) = find_target(&placed.grid, wi) {
-                    assert!(
-                        result.nodes.contains(&target),
+                if let Some(target) = overworld_helpers::find_target(&placed.grid, wi) {
+                    assert!(result.nodes.contains(&target),
                         "Seed {seed} W{}: target {:?} unreachable after pipe placement",
-                        wi + 1, target,
-                    );
+                        wi + 1, target);
                 }
             }
         }
@@ -1942,7 +1627,6 @@ mod tests {
         };
 
         let all_pipes = rom_data::read_pipe_pairs(&rom);
-
         let mut rom1 = rom.clone();
         let mut rom2 = rom.clone();
 
@@ -1957,10 +1641,7 @@ mod tests {
                 let mut placed = build_with_fortress_locks(&picked, &mut rng, &pipes);
                 build_with_pipes(&mut placed, &mut rng);
 
-                let fort_count = placed.placements.iter()
-                    .filter(|p| matches!(p.tile, PickedTile::Fortress { .. }) && p.lock_pos.is_some())
-                    .count();
-
+                let fort_count = count_locked_fortresses(&placed);
                 write_fortress_fx(target_rom, &placed, fx_slot);
                 write_world(target_rom, &placed);
                 write_pipe_placements(target_rom, &placed);
@@ -1968,34 +1649,25 @@ mod tests {
             }
         }
 
-        // Compare tile grids
         for wi in 0..8 {
             let info = &rom_data::MAP_TILE_GRIDS[wi];
             for r in 0..rom_data::ROWS {
                 for c in 0..info.columns {
                     let off = rom_data::map_tile_offset(wi, r, c);
-                    assert_eq!(
-                        rom1.read_byte(off), rom2.read_byte(off),
-                        "W{} tile mismatch at ({},{})", wi + 1, r, c,
-                    );
+                    assert_eq!(rom1.read_byte(off), rom2.read_byte(off),
+                        "W{} tile mismatch at ({},{})", wi + 1, r, c);
                 }
             }
         }
-
-        // Compare pointer tables
         for world in &WORLDS {
             let n = world.entry_count;
             let start = world.rowtype_offset;
             let end = start + n * 6;
             for off in start..end {
-                assert_eq!(
-                    rom1.read_byte(off), rom2.read_byte(off),
-                    "Pointer table mismatch at 0x{:05X}", off,
-                );
+                assert_eq!(rom1.read_byte(off), rom2.read_byte(off),
+                    "Pointer table mismatch at 0x{:05X}", off);
             }
         }
-
-        // Compare dest tables
         for off in rom_data::PIPE_MAP_XHI..rom_data::PIPE_MAP_XHI + 24 {
             assert_eq!(rom1.read_byte(off), rom2.read_byte(off));
         }
@@ -2024,37 +1696,26 @@ mod tests {
                 let mut placed = build_with_fortress_locks(&picked, &mut rng, &pipes);
                 build_with_pipes(&mut placed, &mut rng);
 
-                // Re-derive segments from the placed grid (before pipe placement
-                // modified it) — we can't easily get the pre-pipe grid here, so
-                // just verify no pipe tile directly connects a segment-0 node
-                // to an airship/Bowser node without intermediate content.
-                // This is a lighter check: verify airship/Bowser is NOT pipe-adjacent
-                // to start in BFS terms (walk with no pipes should not reach target).
                 let pipe_placements: Vec<&Placement> = placed.placements.iter()
-                    .filter(|p| matches!(p.tile, PickedTile::Pipe { .. }))
+                    .filter(|p| matches!(p.tile.kind, TileKind::Pipe { .. }))
                     .collect();
 
                 if pipe_placements.is_empty() {
                     continue;
                 }
 
-                // Collect pipe pairs
                 let pipe_pairs: Vec<((usize, usize), (usize, usize))> = pipe_placements
                     .chunks(2)
                     .filter(|c| c.len() == 2)
                     .map(|c| (c[0].pos, c[1].pos))
                     .collect();
 
-                // Verify: for each pipe pair, the two endpoints shouldn't both be
-                // the start area and goal area (by checking segment assignments).
-                // Since segments were computed before pipe placement, we reconstruct.
                 let fortress_locks: Vec<&Placement> = placed.placements.iter()
-                    .filter(|p| matches!(p.tile, PickedTile::Fortress { .. }) && p.lock_pos.is_some())
+                    .filter(|p| matches!(p.tile.kind, TileKind::Fortress { .. }) && p.lock_pos.is_some())
                     .collect();
 
                 let all_nodes = collect_swappable_nodes(&placed);
 
-                // Recompute segments: strip pipe tiles from grid first
                 let mut seg_grid = placed.grid.clone_grid();
                 for pp in &pipe_placements {
                     let (r, c) = pp.pos;
@@ -2064,7 +1725,7 @@ mod tests {
                 }
                 let segments = compute_segments_from_grid(&seg_grid, &all_nodes, &fortress_locks);
 
-                let target_pos = find_target(&placed.grid, wi);
+                let target_pos = overworld_helpers::find_target(&placed.grid, wi);
                 let goal_seg = target_pos.and_then(|p| segments.get(&p).copied());
 
                 if let Some(gs) = goal_seg {
@@ -2093,56 +1754,33 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         let mut picked: [PickedWorld; 8] = std::array::from_fn(|wi| pick_up_world(&rom, wi));
 
-        // Count levels per world before
         let levels_before: Vec<usize> = picked.iter()
-            .map(|p| p.tiles.iter().filter(|t| matches!(t, PickedTile::Level { .. })).count())
+            .map(|p| p.tiles.iter().filter(|t| matches!(t.kind, TileKind::Level)).count())
             .collect();
         let total_levels: usize = levels_before.iter().sum();
 
         redistribute_tiles(&mut picked, &mut rng, true, false);
 
-        // Each world should still have the same number of level slots
         let levels_after: Vec<usize> = picked.iter()
-            .map(|p| p.tiles.iter().filter(|t| matches!(t, PickedTile::Level { .. })).count())
+            .map(|p| p.tiles.iter().filter(|t| matches!(t.kind, TileKind::Level)).count())
             .collect();
         assert_eq!(levels_before, levels_after, "level counts per world should be preserved");
 
-        // Total levels unchanged
         let total_after: usize = levels_after.iter().sum();
         assert_eq!(total_levels, total_after);
 
-        // At least some levels should have moved cross-world
-        let mut cross_world_moves = 0;
-        for (wi, p) in picked.iter().enumerate() {
-            for tile in &p.tiles {
-                if let PickedTile::Level { level_entry, world_idx, .. } = tile {
-                    // world_idx was updated to the destination world
-                    // but level_entry carries the original data — we can check
-                    // if the entry_idx refers to a slot in a different world
-                    // than where the data originally came from
-                    let _ = (level_entry, world_idx);
-                }
-            }
-        }
-        // A weaker check: verify the LevelEntry data has been shuffled
-        // by checking that at least one world has a different set of obj_ptrs
         let original: [PickedWorld; 8] = std::array::from_fn(|wi| pick_up_world(&rom, wi));
+        let mut cross_world_moves = 0;
         for wi in 0..8 {
             let orig_objs: Vec<u16> = original[wi].tiles.iter()
-                .filter_map(|t| match t {
-                    PickedTile::Level { level_entry, .. } => {
-                        Some((level_entry.obj_hi as u16) << 8 | level_entry.obj_lo as u16)
-                    }
-                    _ => None,
-                })
+                .filter(|t| matches!(t.kind, TileKind::Level))
+                .filter_map(|t| t.level_entry.as_ref())
+                .map(|le| (le.obj_hi as u16) << 8 | le.obj_lo as u16)
                 .collect();
             let new_objs: Vec<u16> = picked[wi].tiles.iter()
-                .filter_map(|t| match t {
-                    PickedTile::Level { level_entry, .. } => {
-                        Some((level_entry.obj_hi as u16) << 8 | level_entry.obj_lo as u16)
-                    }
-                    _ => None,
-                })
+                .filter(|t| matches!(t.kind, TileKind::Level))
+                .filter_map(|t| t.level_entry.as_ref())
+                .map(|le| (le.obj_hi as u16) << 8 | le.obj_lo as u16)
                 .collect();
             if orig_objs != new_objs {
                 cross_world_moves += 1;
@@ -2161,25 +1799,22 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         let mut picked: [PickedWorld; 8] = std::array::from_fn(|wi| pick_up_world(&rom, wi));
 
-        // Count fortresses per world before
         let forts_before: Vec<usize> = picked.iter()
-            .map(|p| p.tiles.iter().filter(|t| matches!(t, PickedTile::Fortress { .. })).count())
+            .map(|p| p.tiles.iter().filter(|t| matches!(t.kind, TileKind::Fortress { .. })).count())
             .collect();
         let total_forts: usize = forts_before.iter().sum();
         assert_eq!(total_forts, 17);
 
         redistribute_tiles(&mut picked, &mut rng, false, true);
 
-        // Each world should still have the same number of fortress slots
         let forts_after: Vec<usize> = picked.iter()
-            .map(|p| p.tiles.iter().filter(|t| matches!(t, PickedTile::Fortress { .. })).count())
+            .map(|p| p.tiles.iter().filter(|t| matches!(t.kind, TileKind::Fortress { .. })).count())
             .collect();
         assert_eq!(forts_before, forts_after, "fortress counts per world should be preserved");
 
-        // Verify fortress data (boomboom_y_offset) is non-zero and in range
         for p in &picked {
             for tile in &p.tiles {
-                if let PickedTile::Fortress { boomboom_y_offset, .. } = tile {
+                if let TileKind::Fortress { boomboom_y_offset } = &tile.kind {
                     assert_ne!(*boomboom_y_offset, 0);
                     assert!(*boomboom_y_offset < rom.data.len());
                 }
@@ -2200,48 +1835,34 @@ mod tests {
 
         redistribute_tiles(&mut picked, &mut rng, true, true);
 
-        // Pipes, Airships, Bowser, Start, Fixed should be unchanged
         for wi in 0..8 {
             for (ti, tile) in picked[wi].tiles.iter().enumerate() {
-                match tile {
-                    PickedTile::Pipe { entry_idx, dest_idx, .. } => {
-                        if let PickedTile::Pipe { entry_idx: oe, dest_idx: od, .. } = &original[wi].tiles[ti] {
-                            assert_eq!(*entry_idx, *oe, "W{} pipe entry_idx changed", wi + 1);
-                            assert_eq!(*dest_idx, *od, "W{} pipe dest_idx changed", wi + 1);
-                        } else {
-                            panic!("W{} tile {} type changed from non-pipe to pipe", wi + 1, ti);
-                        }
+                let orig = &original[wi].tiles[ti];
+                match (&tile.kind, &orig.kind) {
+                    (TileKind::Pipe { dest_idx }, TileKind::Pipe { dest_idx: od }) => {
+                        assert_eq!(tile.entry_idx, orig.entry_idx, "W{} pipe entry_idx changed", wi + 1);
+                        assert_eq!(dest_idx, od, "W{} pipe dest_idx changed", wi + 1);
                     }
-                    PickedTile::Airship { entry_idx, .. } => {
-                        if let PickedTile::Airship { entry_idx: oe, .. } = &original[wi].tiles[ti] {
-                            assert_eq!(*entry_idx, *oe);
-                        } else {
-                            panic!("W{} tile {} type changed", wi + 1, ti);
-                        }
+                    (TileKind::Airship, TileKind::Airship) => {
+                        assert_eq!(tile.entry_idx, orig.entry_idx);
                     }
-                    PickedTile::Bowser { entry_idx, .. } => {
-                        if let PickedTile::Bowser { entry_idx: oe, .. } = &original[wi].tiles[ti] {
-                            assert_eq!(*entry_idx, *oe);
-                        } else {
-                            panic!("W{} tile {} type changed", wi + 1, ti);
-                        }
+                    (TileKind::Bowser, TileKind::Bowser) => {
+                        assert_eq!(tile.entry_idx, orig.entry_idx);
                     }
-                    PickedTile::Start { entry_idx, .. } => {
-                        if let PickedTile::Start { entry_idx: oe, .. } = &original[wi].tiles[ti] {
-                            assert_eq!(*entry_idx, *oe);
-                        } else {
-                            panic!("W{} tile {} type changed", wi + 1, ti);
-                        }
+                    (TileKind::Start, TileKind::Start) => {
+                        assert_eq!(tile.entry_idx, orig.entry_idx);
                     }
-                    PickedTile::Fixed { entry_idx, tile: t, .. } => {
-                        if let PickedTile::Fixed { entry_idx: oe, tile: ot, .. } = &original[wi].tiles[ti] {
-                            assert_eq!(*entry_idx, *oe);
-                            assert_eq!(*t, *ot);
-                        } else {
-                            panic!("W{} tile {} type changed", wi + 1, ti);
-                        }
+                    (TileKind::Fixed, TileKind::Fixed) => {
+                        assert_eq!(tile.entry_idx, orig.entry_idx);
+                        assert_eq!(tile.tile, orig.tile);
                     }
-                    _ => {} // Level and Fortress can change — that's the point
+                    (TileKind::Level, _) | (TileKind::Fortress { .. }, _) => {
+                        // These can change — that's the point
+                    }
+                    _ => {
+                        panic!("W{} tile {} type changed from {:?} to {:?}",
+                            wi + 1, ti, orig.kind, tile.kind);
+                    }
                 }
             }
         }
@@ -2258,56 +1879,47 @@ mod tests {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let mut test_rom = rom.clone();
 
-            // QoL patches first
             crate::randomize::qol::fix_w3_drawbridges(&mut test_rom);
             crate::randomize::qol::remove_w2_rock(&mut test_rom);
             crate::randomize::qol::fix_big_q_block_rooms(&mut test_rom);
 
-            // Pick up, redistribute, build, write
             let mut picked: [PickedWorld; 8] =
                 std::array::from_fn(|wi| pick_up_world(&test_rom, wi));
             redistribute_tiles(&mut picked, &mut rng, true, true);
 
             let mut fx_slot = 0usize;
             for wi in 0..8 {
-                // Don't use pipe positions for lock validation — pipes will move
                 let mut placed = build_with_fortress_locks(&picked[wi], &mut rng, &[]);
                 build_with_pipes(&mut placed, &mut rng);
 
-                let fort_count = placed.placements.iter()
-                    .filter(|p| matches!(p.tile, PickedTile::Fortress { .. }) && p.lock_pos.is_some())
-                    .count();
-
+                let fort_count = count_locked_fortresses(&placed);
                 write_fortress_fx(&mut test_rom, &placed, fx_slot);
                 write_world(&mut test_rom, &placed);
                 write_pipe_placements(&mut test_rom, &placed);
                 fx_slot += fort_count;
             }
 
-            // Verify fortress progression after writing
             let written_pipes = rom_data::read_pipe_pairs(&test_rom);
             for wi in 0..8 {
                 let pipes = written_pipes.get(&wi).cloned().unwrap_or_default();
                 let steps = map_walker::simulate_progression(&test_rom, wi, &pipes);
 
-                if let Some(target) = crate::randomize::overworld_helpers::world_target_position(&test_rom, wi) {
+                if let Some(target) = overworld_helpers::find_target(
+                    &rom_data::read_tile_grid(&test_rom, wi), wi,
+                ) {
                     let final_nodes = &steps.last().unwrap().nodes;
-                    assert!(
-                        final_nodes.contains(&target),
+                    assert!(final_nodes.contains(&target),
                         "Seed {seed} W{}: target ({},{}) unreachable after cross-world shuffle",
-                        wi + 1, target.0, target.1,
-                    );
+                        wi + 1, target.0, target.1);
                 }
             }
 
-            // Verify all entry data is valid (obj_ptr >= 0xC000 for levels/fortresses)
             for wi in 0..8 {
                 let world = &WORLDS[wi];
                 let (_sc, objsets, layouts) = rom_data::table_offsets(world);
                 for i in 0..world.entry_count {
                     let obj = rom_data::read_word(&test_rom, objsets + i * 2);
                     let lay = rom_data::read_word(&test_rom, layouts + i * 2);
-                    // Basic sanity: if it was a level before, it should still be valid
                     if rom_data::is_level_pointer(obj, lay) {
                         assert!(obj >= 0xC000, "W{} entry {}: obj 0x{:04X} invalid", wi + 1, i, obj);
                     }
@@ -2339,10 +1951,7 @@ mod tests {
                 let mut placed = build_with_fortress_locks(&picked[wi], &mut rng, &[]);
                 build_with_pipes(&mut placed, &mut rng);
 
-                let fort_count = placed.placements.iter()
-                    .filter(|p| matches!(p.tile, PickedTile::Fortress { .. }) && p.lock_pos.is_some())
-                    .count();
-
+                let fort_count = count_locked_fortresses(&placed);
                 write_fortress_fx(target_rom, &placed, fx_slot);
                 write_world(target_rom, &placed);
                 write_pipe_placements(target_rom, &placed);
@@ -2350,39 +1959,28 @@ mod tests {
             }
         }
 
-        // Compare tile grids
         for wi in 0..8 {
             let info = &rom_data::MAP_TILE_GRIDS[wi];
             for r in 0..rom_data::ROWS {
                 for c in 0..info.columns {
                     let off = rom_data::map_tile_offset(wi, r, c);
-                    assert_eq!(
-                        rom1.read_byte(off), rom2.read_byte(off),
-                        "W{} tile mismatch at ({},{})", wi + 1, r, c,
-                    );
+                    assert_eq!(rom1.read_byte(off), rom2.read_byte(off),
+                        "W{} tile mismatch at ({},{})", wi + 1, r, c);
                 }
             }
         }
-
-        // Compare pointer tables
         for world in &WORLDS {
             let n = world.entry_count;
             let start = world.rowtype_offset;
             let end = start + n * 6;
             for off in start..end {
-                assert_eq!(
-                    rom1.read_byte(off), rom2.read_byte(off),
-                    "Pointer table mismatch at 0x{:05X}", off,
-                );
+                assert_eq!(rom1.read_byte(off), rom2.read_byte(off),
+                    "Pointer table mismatch at 0x{:05X}", off);
             }
         }
-
-        // Compare FX tables
         for off in 0x147CD..0x148B8 {
             assert_eq!(rom1.read_byte(off), rom2.read_byte(off));
         }
-
-        // Compare Y-bytes
         for &off in &rom_data::BOOMBOOM_Y_OFFSETS {
             assert_eq!(rom1.read_byte(off), rom2.read_byte(off));
         }

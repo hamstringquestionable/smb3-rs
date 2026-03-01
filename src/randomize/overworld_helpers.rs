@@ -1,12 +1,9 @@
-/// Overworld helpers: shared constants and read-only scan helpers.
+/// Overworld helpers: shared constants and pure lookup functions.
 ///
-/// The mechanical ROM write operations for fortress/lock/pipe placement
-/// now live directly in `overworld_builder.rs`. This module provides
-/// shared constants and utility functions used across overworld modules.
+/// These are stateless helpers used by `overworld_builder.rs` for tile
+/// classification, gap placement, and FX pattern lookup.
 
-use crate::rom::Rom;
-
-use super::rom_data::{self, TILE_AIRSHIP, TILE_BOWSER};
+use super::rom_data::{Grid, TILE_AIRSHIP, TILE_BOWSER};
 
 /// All path tiles that a lock/gap can be placed on.
 pub(super) const LOCKABLE_TILES: &[u8] = &[
@@ -28,11 +25,8 @@ pub(super) const LOCKABLE_TILES: &[u8] = &[
     0xBA, // vertical path variant
 ];
 
-/// Get the airship or Bowser's castle grid position for a world.
-/// Scans the map tile grid for the target tile.
-#[allow(dead_code)]
-pub(super) fn world_target_position(rom: &Rom, world_idx: usize) -> Option<(usize, usize)> {
-    let grid = rom_data::read_tile_grid(rom, world_idx);
+/// Find the airship or Bowser's castle position on the grid.
+pub(super) fn find_target(grid: &Grid, world_idx: usize) -> Option<(usize, usize)> {
     let target_tile = if world_idx == 7 { TILE_BOWSER } else { TILE_AIRSHIP };
     for r in 0..grid.rows {
         for c in 0..grid.cols {
@@ -42,4 +36,24 @@ pub(super) fn world_target_position(rom: &Rom, world_idx: usize) -> Option<(usiz
         }
     }
     None
+}
+
+/// Determine the gap tile for a given path tile.
+pub(super) fn gap_tile_for(tile: u8) -> u8 {
+    match tile {
+        0xB3 => 0x9D,                                          // water → water gap
+        0xDA => 0xE4,                                          // sky → sky gap
+        0x46 | 0xAA | 0xAB | 0xB0 | 0xB1 | 0xDB | 0xBA => 0x54, // vertical → lock
+        _ => 0x56,                                              // horizontal → bridge gap
+    }
+}
+
+/// Pattern bytes for each FX type (keyed by the original path tile).
+pub(super) fn fx_patterns_for(tile: u8) -> [u8; 4] {
+    match tile {
+        0xB3 => [0xD4, 0xD6, 0xD5, 0xD7],                    // water bridge
+        0x46 | 0xAA | 0xAB | 0xB0 | 0xB1 | 0xDB | 0xBA =>
+            [0xFE, 0xC0, 0xFE, 0xC0],                          // lock (vertical)
+        _ => [0xFE, 0xFE, 0xE1, 0xE1],                        // bridge gap / sky
+    }
 }
