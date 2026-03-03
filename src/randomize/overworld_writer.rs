@@ -4,8 +4,6 @@
 /// made by `overworld_builder`. It has no RNG and no decision logic — just
 /// explicit data in, ROM bytes out.
 
-use std::collections::HashMap;
-
 use crate::rom::Rom;
 
 use super::overworld_builder::{Placement, PlacedWorld, TileKind};
@@ -20,16 +18,29 @@ use super::rom_data::{
 // Write: apply a PlacedWorld to ROM
 // ---------------------------------------------------------------------------
 
-/// Write a placed world to ROM: tile grid + level entries.
+/// Write a placed world to ROM: tile grid, level entries, and positions.
 pub(super) fn write_world(rom: &mut Rom, placed: &PlacedWorld) {
     let world_idx = placed.world_idx;
     write_tile_grid(rom, world_idx, &placed.grid);
 
     let world = &WORLDS[world_idx];
+    let n = world.entry_count;
+    let rt = world.rowtype_offset;
+    let sc = rt + n;
+
     for p in &placed.placements {
         let level_entry = p.tile.level_entry.as_ref()
             .expect("placed tile must have level_entry");
         rom_data::write_entry(rom, world, p.tile.entry_idx, level_entry);
+
+        // Write position into pointer table so entry sits at placement.pos
+        let (row, col) = p.pos;
+        let row_nib = (row + 2) as u8;
+        let screen = (col / 16) as u8;
+        let col_in_screen = (col % 16) as u8;
+        let brt = rom.read_byte(rt + p.tile.entry_idx);
+        rom.write_byte(rt + p.tile.entry_idx, (row_nib << 4) | (brt & 0x0F));
+        rom.write_byte(sc + p.tile.entry_idx, (screen << 4) | col_in_screen);
     }
 }
 
@@ -117,11 +128,14 @@ pub(super) fn write_fortress_fx(
 }
 
 // ---------------------------------------------------------------------------
-// Write: pipe placements
+// Write: pipe destinations
 // ---------------------------------------------------------------------------
 
-/// Write pipe placement changes to ROM.
-pub(super) fn write_pipe_placements(
+/// Write pipe destination tables and re-sort the pointer table.
+///
+/// Positions are already written by `write_world` — this only updates the
+/// pipe destination tables (MapXHi/MapX/MapY/MapScrlXHi) and re-sorts.
+pub(super) fn write_pipe_destinations(
     rom: &mut Rom,
     placed: &PlacedWorld,
 ) {
@@ -132,74 +146,13 @@ pub(super) fn write_pipe_placements(
         .filter(|p| matches!(p.tile.kind, TileKind::Pipe { .. }))
         .collect();
 
-    if pipe_placements.is_empty() {
-        return;
-    }
-
-    let world = &WORLDS[world_idx];
-    let n = world.entry_count;
-    let rt = world.rowtype_offset;
-    let sc = rt + n;
-
-    // Build live position → entry index lookup from current ROM state
-    let mut pos_to_entry: HashMap<(usize, usize), usize> = HashMap::new();
-    for i in 0..n {
-        let rowtype = rom.read_byte(rt + i);
-        let scrcol = rom.read_byte(sc + i);
-        let row_nib = (rowtype >> 4) & 0x0F;
-        let screen = (scrcol >> 4) & 0x0F;
-        let col = scrcol & 0x0F;
-        let grid_row = (row_nib as usize).wrapping_sub(2);
-        let grid_col = screen as usize * 16 + col as usize;
-        pos_to_entry.insert((grid_row, grid_col), i);
-    }
-
-    // Process pipe pairs (consecutive placements)
+    // Update destination tables for each pipe pair
     for pair in pipe_placements.chunks(2) {
         if pair.len() < 2 {
             break;
         }
-        let pa = pair[0];
-        let pb = pair[1];
-
-        let entry_idx_a = pa.tile.entry_idx;
-        let entry_idx_b = pb.tile.entry_idx;
-        let new_a_pos = pa.pos;
-        let new_b_pos = pb.pos;
-
-        // Swap entry A to its new position
-        let cur_a_rt = rom.read_byte(rt + entry_idx_a);
-        let cur_a_sc = rom.read_byte(sc + entry_idx_a);
-        let cur_a_row = ((cur_a_rt >> 4) as usize).wrapping_sub(2);
-        let cur_a_col = ((cur_a_sc >> 4) as usize & 0x0F) * 16 + (cur_a_sc as usize & 0x0F);
-        let cur_a_pos = (cur_a_row, cur_a_col);
-
-        if cur_a_pos != new_a_pos {
-            if let Some(&target_idx) = pos_to_entry.get(&new_a_pos) {
-                pipe_helpers::swap_entry_positions(rom, world_idx, entry_idx_a, target_idx);
-                pos_to_entry.insert(new_a_pos, entry_idx_a);
-                pos_to_entry.insert(cur_a_pos, target_idx);
-            }
-        }
-
-        // Swap entry B to its new position
-        let cur_b_rt = rom.read_byte(rt + entry_idx_b);
-        let cur_b_sc = rom.read_byte(sc + entry_idx_b);
-        let cur_b_row = ((cur_b_rt >> 4) as usize).wrapping_sub(2);
-        let cur_b_col = ((cur_b_sc >> 4) as usize & 0x0F) * 16 + (cur_b_sc as usize & 0x0F);
-        let cur_b_pos = (cur_b_row, cur_b_col);
-
-        if cur_b_pos != new_b_pos {
-            if let Some(&target_idx) = pos_to_entry.get(&new_b_pos) {
-                pipe_helpers::swap_entry_positions(rom, world_idx, entry_idx_b, target_idx);
-                pos_to_entry.insert(new_b_pos, entry_idx_b);
-                pos_to_entry.insert(cur_b_pos, target_idx);
-            }
-        }
-
-        // Update destination table
-        if let TileKind::Pipe { dest_idx } = &pa.tile.kind {
-            pipe_helpers::write_pipe_dest(rom, *dest_idx, new_a_pos, new_b_pos);
+        if let TileKind::Pipe { dest_idx } = &pair[0].tile.kind {
+            pipe_helpers::write_pipe_dest(rom, *dest_idx, pair[0].pos, pair[1].pos);
         }
     }
 

@@ -740,13 +740,15 @@ pub(super) fn build_with_pipes<R: Rng>(
         .collect();
 
     // Progressive placement
-    let mut placed_pairs: Vec<((usize, usize), (usize, usize))> = Vec::new();
+    // Each entry: (a_pos, b_pos, pipe_pair_index) where pipe_pair_index
+    // maps back to pipe_indices[pair*2] and pipe_indices[pair*2+1].
+    let mut placed_pairs: Vec<((usize, usize), (usize, usize), usize)> = Vec::new();
     let mut used_positions: HashSet<(usize, usize)> = HashSet::new();
     let num_pairs = pipe_indices.len() / 2;
     let mut pair_order: Vec<usize> = (0..num_pairs).collect();
     pair_order.as_mut_slice().shuffle(rng);
 
-    for _pair in pair_order {
+    for pair_idx in pair_order {
         let available: HashSet<(usize, usize)> = &all_nodes - &used_positions;
         let unreachable_nodes: HashSet<(usize, usize)> = &available - &reachable;
         let reachable_available: HashSet<(usize, usize)> = &available & &reachable;
@@ -764,7 +766,7 @@ pub(super) fn build_with_pipes<R: Rng>(
                         if !is_forbidden_pair(candidates[i], candidates[j]) {
                             let a = candidates[i];
                             let b = candidates[j];
-                            placed_pairs.push((a, b));
+                            placed_pairs.push((a, b, pair_idx));
                             used_positions.insert(a);
                             used_positions.insert(b);
                             placed.grid.set(a.0, a.1, TILE_PIPE);
@@ -777,7 +779,7 @@ pub(super) fn build_with_pipes<R: Rng>(
                 if !placed_ok {
                     let a = candidates[0];
                     let b = candidates[1];
-                    placed_pairs.push((a, b));
+                    placed_pairs.push((a, b, pair_idx));
                     used_positions.insert(a);
                     used_positions.insert(b);
                     placed.grid.set(a.0, a.1, TILE_PIPE);
@@ -831,24 +833,79 @@ pub(super) fn build_with_pipes<R: Rng>(
             }
         }
 
-        placed_pairs.push((a_pos, b_pos));
+        placed_pairs.push((a_pos, b_pos, pair_idx));
         used_positions.insert(a_pos);
         used_positions.insert(b_pos);
         placed.grid.set(a_pos.0, a_pos.1, TILE_PIPE);
         placed.grid.set(b_pos.0, b_pos.1, TILE_PIPE);
 
         // Re-walk with new pipe pair
-        let result = map_walker::walk_map(&placed.grid, &placed_pairs, None);
+        let walk_pairs: Vec<_> = placed_pairs.iter().map(|&(a, b, _)| (a, b)).collect();
+        let result = map_walker::walk_map(&placed.grid, &walk_pairs, None);
         reachable = result.nodes;
     }
 
-    // Update pipe placement positions
-    for (i, &(a_pos, b_pos)) in placed_pairs.iter().enumerate() {
-        let idx_a = pipe_indices[i * 2];
-        let idx_b = pipe_indices[i * 2 + 1];
+    // Build position → placement index lookup for non-pipe entries only.
+    // Pipes get their positions set directly below; only levels/fortresses
+    // need displacement when a pipe takes their position.
+    let pipe_idx_set: HashSet<usize> = pipe_indices.iter().copied().collect();
+    let mut pos_to_placement: HashMap<(usize, usize), usize> = HashMap::new();
+    for (i, p) in placed.placements.iter().enumerate() {
+        if p.tile.is_placeable() && !pipe_idx_set.contains(&i) {
+            pos_to_placement.insert(p.pos, i);
+        }
+    }
+
+    // Update pipe positions and displace non-pipe entries that were at those positions
+    for &(a_pos, b_pos, pair_idx) in &placed_pairs {
+        let idx_a = pipe_indices[pair_idx * 2];
+        let idx_b = pipe_indices[pair_idx * 2 + 1];
+
+        // Displace non-pipe entry at a_pos
+        if let Some(&displaced_idx) = pos_to_placement.get(&a_pos) {
+            // Find a free node position (one not used by any pipe or other entry)
+            let free_pos = find_free_node(&placed.grid, &pos_to_placement, &used_positions);
+            if let Some(fp) = free_pos {
+                placed.placements[displaced_idx].pos = fp;
+                placed.grid.set(fp.0, fp.1, placed.placements[displaced_idx].tile.tile);
+                pos_to_placement.remove(&a_pos);
+                pos_to_placement.insert(fp, displaced_idx);
+            }
+        }
+
+        // Displace non-pipe entry at b_pos
+        if let Some(&displaced_idx) = pos_to_placement.get(&b_pos) {
+            let free_pos = find_free_node(&placed.grid, &pos_to_placement, &used_positions);
+            if let Some(fp) = free_pos {
+                placed.placements[displaced_idx].pos = fp;
+                placed.grid.set(fp.0, fp.1, placed.placements[displaced_idx].tile.tile);
+                pos_to_placement.remove(&b_pos);
+                pos_to_placement.insert(fp, displaced_idx);
+            }
+        }
+
         placed.placements[idx_a].pos = a_pos;
         placed.placements[idx_b].pos = b_pos;
     }
+}
+
+/// Find a grid position with EMPTY_NODE that's not claimed by any pipe or entry.
+fn find_free_node(
+    grid: &Grid,
+    occupied: &HashMap<(usize, usize), usize>,
+    pipe_positions: &HashSet<(usize, usize)>,
+) -> Option<(usize, usize)> {
+    for r in 0..grid.rows {
+        for c in 0..grid.cols {
+            if grid.get(r, c) == EMPTY_NODE
+                && !occupied.contains_key(&(r, c))
+                && !pipe_positions.contains(&(r, c))
+            {
+                return Some((r, c));
+            }
+        }
+    }
+    None
 }
 
 /// Find connected components among unreachable nodes.
@@ -987,7 +1044,7 @@ pub fn randomize<R: Rng>(
         }
         overworld_writer::write_world(rom, &placed);
         if shuffle_pipes {
-            overworld_writer::write_pipe_placements(rom, &placed);
+            overworld_writer::write_pipe_destinations(rom, &placed);
         }
         fx_slot += fort_count;
     }
@@ -1041,7 +1098,7 @@ mod tests {
             let fort_count = count_locked_fortresses(&placed);
             overworld_writer::write_fortress_fx(&mut out, &placed, fx_slot);
             overworld_writer::write_world(&mut out, &placed);
-            overworld_writer::write_pipe_placements(&mut out, &placed);
+            overworld_writer::write_pipe_destinations(&mut out, &placed);
             fx_slot += fort_count;
         }
 
@@ -1454,7 +1511,7 @@ mod tests {
                 let fort_count = count_locked_fortresses(&placed);
                 overworld_writer::write_fortress_fx(target_rom, &placed, fx_slot);
                 overworld_writer::write_world(target_rom, &placed);
-                overworld_writer::write_pipe_placements(target_rom, &placed);
+                overworld_writer::write_pipe_destinations(target_rom, &placed);
                 fx_slot += fort_count;
             }
         }
@@ -1705,7 +1762,7 @@ mod tests {
                 let fort_count = count_locked_fortresses(&placed);
                 overworld_writer::write_fortress_fx(&mut test_rom, &placed, fx_slot);
                 overworld_writer::write_world(&mut test_rom, &placed);
-                overworld_writer::write_pipe_placements(&mut test_rom, &placed);
+                overworld_writer::write_pipe_destinations(&mut test_rom, &placed);
                 fx_slot += fort_count;
             }
 
@@ -1764,7 +1821,7 @@ mod tests {
                 let fort_count = count_locked_fortresses(&placed);
                 overworld_writer::write_fortress_fx(target_rom, &placed, fx_slot);
                 overworld_writer::write_world(target_rom, &placed);
-                overworld_writer::write_pipe_placements(target_rom, &placed);
+                overworld_writer::write_pipe_destinations(target_rom, &placed);
                 fx_slot += fort_count;
             }
         }

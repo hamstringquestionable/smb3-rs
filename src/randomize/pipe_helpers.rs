@@ -37,57 +37,6 @@ pub(super) fn grid_pos_to_dest_nibbles(grid_row: usize, grid_col: usize) -> (u8,
 }
 
 // ---------------------------------------------------------------------------
-// Entry position swapping
-// ---------------------------------------------------------------------------
-
-/// Swap the map positions of two pointer table entries.
-///
-/// Swaps ByRowType (preserving each entry's tileset in the lower nibble)
-/// and ByScrCol, plus the tile grid tiles at their positions.
-pub(super) fn swap_entry_positions(rom: &mut Rom, world_idx: usize, idx_a: usize, idx_b: usize) {
-    let world = &WORLDS[world_idx];
-    let n = world.entry_count;
-    let rt = world.rowtype_offset;
-    let sc = rt + n;
-    let grid_offset = MAP_TILE_GRIDS[world_idx].file_offset;
-
-    // Read current values
-    let a_rowtype = rom.read_byte(rt + idx_a);
-    let a_scrcol = rom.read_byte(sc + idx_a);
-    let b_rowtype = rom.read_byte(rt + idx_b);
-    let b_scrcol = rom.read_byte(sc + idx_b);
-
-    // Extract row and tileset separately
-    let a_row_nib = (a_rowtype >> 4) & 0x0F;
-    let a_tileset = a_rowtype & 0x0F;
-    let b_row_nib = (b_rowtype >> 4) & 0x0F;
-    let b_tileset = b_rowtype & 0x0F;
-
-    // Swap: A gets B's position (keeps A's tileset), B gets A's position
-    rom.write_byte(rt + idx_a, (b_row_nib << 4) | a_tileset);
-    rom.write_byte(sc + idx_a, b_scrcol);
-    rom.write_byte(rt + idx_b, (a_row_nib << 4) | b_tileset);
-    rom.write_byte(sc + idx_b, a_scrcol);
-
-    // Swap tiles in the grid (per-screen addressing)
-    let a_screen = ((a_scrcol >> 4) & 0x0F) as usize;
-    let a_col = (a_scrcol & 0x0F) as usize;
-    let a_grid_row = (a_row_nib as usize).wrapping_sub(2);
-
-    let b_screen = ((b_scrcol >> 4) & 0x0F) as usize;
-    let b_col = (b_scrcol & 0x0F) as usize;
-    let b_grid_row = (b_row_nib as usize).wrapping_sub(2);
-
-    let a_rom_off = grid_offset + a_screen * 144 + a_grid_row * 16 + a_col;
-    let b_rom_off = grid_offset + b_screen * 144 + b_grid_row * 16 + b_col;
-
-    let a_tile = rom.read_byte(a_rom_off);
-    let b_tile = rom.read_byte(b_rom_off);
-    rom.write_byte(a_rom_off, b_tile);
-    rom.write_byte(b_rom_off, a_tile);
-}
-
-// ---------------------------------------------------------------------------
 // Pipe destination table writes
 // ---------------------------------------------------------------------------
 

@@ -4,6 +4,8 @@ pub mod items;
 pub mod level_helpers;
 pub mod levels;
 pub mod map_walker;
+pub mod node_catalog;
+#[path = "overworld_builder_old.rs"]
 pub mod overworld_builder;
 pub mod overworld_helpers;
 pub mod overworld_writer;
