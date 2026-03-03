@@ -8,6 +8,7 @@ pub mod node_catalog;
 #[path = "overworld_builder_old.rs"]
 pub mod overworld_builder;
 pub mod overworld_helpers;
+pub mod overworld_pickup;
 pub mod overworld_writer;
 pub mod palettes;
 pub mod pipe_helpers;
