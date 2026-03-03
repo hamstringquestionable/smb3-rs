@@ -261,7 +261,7 @@ pub(super) const MAP_OBJ_ENTRY_LINKS: &[(usize, usize, usize)] = &[
 // ---------------------------------------------------------------------------
 
 /// Mutable overworld tile grid.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) struct Grid {
     pub tiles: Vec<Vec<u8>>,
     pub rows: usize,
@@ -605,4 +605,42 @@ pub(super) fn sync_map_object_positions(rom: &mut Rom, world_idx: usize) {
         rom.write_byte(xhi_off, xhi);
         rom.write_byte(xlo_off, xlo);
     }
+}
+
+/// Read the grid positions of all active floating sprites for a world.
+///
+/// Each world has up to 9 map object slots. A slot with ID $FF is unused.
+/// For active slots, we convert pixel coordinates back to grid positions.
+/// These are the positions where floating sprites sit (hammer bros, piranhas,
+/// W8 hand traps, etc.) and should not have level/fort tiles placed under them.
+pub(super) fn read_map_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
+    const MAP_OBJ_IDS_MASTER: usize = 0x16050;
+    let mut positions = Vec::new();
+
+    for slot in 0..9 {
+        let id_off = map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot);
+        let id = rom.read_byte(id_off);
+        if id == 0xFF {
+            continue; // unused slot
+        }
+
+        let y_off = map_obj_slot_offset(rom, MAP_OBJ_YS_MASTER, world_idx, slot);
+        let xhi_off = map_obj_slot_offset(rom, MAP_OBJ_XHIS_MASTER, world_idx, slot);
+        let xlo_off = map_obj_slot_offset(rom, MAP_OBJ_XLOS_MASTER, world_idx, slot);
+
+        let y = rom.read_byte(y_off) as usize;
+        let xhi = rom.read_byte(xhi_off) as usize;
+        let xlo = rom.read_byte(xlo_off) as usize;
+
+        // Reverse of Grid→pixel: Y=(row+2)*16, XHi=col/16, XLo=(col%16)*16
+        if y < 32 {
+            continue; // invalid (row would be negative)
+        }
+        let row = (y / 16).saturating_sub(2);
+        let col = xhi * 16 + xlo / 16;
+
+        positions.push((row, col));
+    }
+
+    positions
 }
