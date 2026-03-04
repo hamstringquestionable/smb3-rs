@@ -140,30 +140,36 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         rom.set_tag("enemies/big_q_blocks");
         randomize::enemies::randomize_big_q_blocks(rom, &mut rng);
     }
-    // Intra-world level shuffle (handled by levels.rs, independent of builder)
-    if options.level_shuffle == LevelShuffle::IntraWorld {
-        rom.set_tag("levels");
-        randomize::levels::randomize_intra(rom, &mut rng);
-    }
-    // Airship shuffle (stays in levels.rs — airships aren't part of builder redistribution)
-    if options.shuffle_fortresses {
-        rom.set_tag("levels/airships");
-        randomize::levels::randomize_airships(rom, &mut rng);
-    }
-    // Overworld builder: unified lock shuffle, pipe shuffle, and cross-world redistribution.
-    // Cross-world level/fortress shuffle is handled here (replaces levels::randomize_cross
-    // and levels::randomize_fortresses when active).
+    // Overworld builder: unified lock shuffle, pipe shuffle, level/fortress
+    // redistribution, and overworld map rewriting. When active, it handles
+    // all level, fortress, airship, and pipe shuffling — bypassing levels.rs.
     let shuffle_locks = options.fortress_redistribute != FortressRedistribute::Off;
     let shuffle_pipes = options.shuffle_pipes;
     let shuffle_levels_cross = options.level_shuffle == LevelShuffle::CrossWorld;
     let shuffle_fortresses_cross = options.shuffle_fortresses;
-    if shuffle_locks || shuffle_pipes || shuffle_levels_cross || shuffle_fortresses_cross {
+    let overworld_active = shuffle_locks || shuffle_pipes
+        || shuffle_levels_cross || shuffle_fortresses_cross;
+
+    if overworld_active {
         rom.set_tag("overworld/builder");
-        randomize::overworld_builder::randomize(
-            rom, &mut rng,
-            shuffle_locks, shuffle_pipes,
-            shuffle_levels_cross, shuffle_fortresses_cross,
+        let cross_world = shuffle_levels_cross || shuffle_fortresses_cross;
+        let catalog = randomize::node_catalog::NodeCatalog::build(rom);
+        let pickup = randomize::overworld_pickup::pick_up(rom, &catalog);
+        let build = randomize::overworld_build::build(rom, &pickup, &catalog, &mut rng);
+        randomize::overworld_writer_new::write_overworld(
+            rom, &build, &pickup, &catalog, &mut rng, cross_world,
         );
+    } else {
+        // Intra-world level shuffle (no overworld rebuild needed)
+        if options.level_shuffle == LevelShuffle::IntraWorld {
+            rom.set_tag("levels");
+            randomize::levels::randomize_intra(rom, &mut rng);
+        }
+        // Airship shuffle (standalone, no overworld rebuild)
+        if options.shuffle_fortresses {
+            rom.set_tag("levels/airships");
+            randomize::levels::randomize_airships(rom, &mut rng);
+        }
     }
     if options.chest_items {
         rom.set_tag("items");

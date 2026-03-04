@@ -288,7 +288,7 @@ impl Grid {
 }
 
 /// Data that travels with a level when shuffled.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct LevelEntry {
     pub tileset: u8,
     pub obj_lo: u8,
@@ -605,6 +605,30 @@ pub(super) fn sync_map_object_positions(rom: &mut Rom, world_idx: usize) {
         rom.write_byte(xhi_off, xhi);
         rom.write_byte(xlo_off, xlo);
     }
+}
+
+/// Write a map object sprite's position to the map object tables.
+///
+/// Converts a grid position to pixel coordinates and writes to the Y/XHi/XLo
+/// tables for the given world and slot.
+pub(super) fn write_map_sprite_position(
+    rom: &mut Rom,
+    world_idx: usize,
+    slot: usize,
+    grid_row: usize,
+    grid_col: usize,
+) {
+    let y = ((grid_row + 2) * 16) as u8;
+    let xhi = (grid_col / 16) as u8;
+    let xlo = ((grid_col % 16) * 16) as u8;
+
+    let y_off = map_obj_slot_offset(rom, MAP_OBJ_YS_MASTER, world_idx, slot);
+    let xhi_off = map_obj_slot_offset(rom, MAP_OBJ_XHIS_MASTER, world_idx, slot);
+    let xlo_off = map_obj_slot_offset(rom, MAP_OBJ_XLOS_MASTER, world_idx, slot);
+
+    rom.write_byte(y_off, y);
+    rom.write_byte(xhi_off, xhi);
+    rom.write_byte(xlo_off, xlo);
 }
 
 /// Read the grid positions of all active floating sprites for a world.

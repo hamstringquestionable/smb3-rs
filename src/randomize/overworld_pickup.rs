@@ -11,7 +11,7 @@
 
 use crate::rom::Rom;
 
-use super::node_catalog::{NodeCatalog, NodeKind};
+use super::node_catalog::{CatalogEntry, NodeCatalog, NodeKind};
 use super::rom_data::{self, Grid, VALID_HORZ, VALID_VERT};
 
 // ---------------------------------------------------------------------------
@@ -24,7 +24,7 @@ use super::rom_data::{self, Grid, VALID_HORZ, VALID_VERT};
 /// level_entry). Carries mutable routing fields that the Build phase can update
 /// during cross-world redistribution.
 #[derive(Clone, Debug)]
-pub(super) struct PoolEntry {
+pub struct PoolEntry {
     /// Index into `NodeCatalog.entries`.
     pub catalog_idx: usize,
     /// Current destination world (may change during redistribution).
@@ -35,7 +35,7 @@ pub(super) struct PoolEntry {
 
 /// One world's cleared grid plus tracking info for the Build phase.
 #[derive(Clone)]
-pub(super) struct ClearedWorld {
+pub struct ClearedWorld {
     pub world_idx: usize,
     /// Grid with FX gaps pre-opened and pool entries blanked to `TILE_EMPTY_NODE`.
     pub grid: Grid,
@@ -46,7 +46,7 @@ pub(super) struct ClearedWorld {
 }
 
 /// Complete Phase 2 output: cleared grids + global shuffle pool.
-pub(super) struct PickupResult {
+pub struct PickupResult {
     /// Per-world cleared grids (indexed 0..8).
     pub worlds: Vec<ClearedWorld>,
     /// Global pool of all level-like entries across all worlds.
@@ -59,15 +59,28 @@ pub(super) struct PickupResult {
 
 /// Execute Phase 2: read grids, open FX gaps, collect the shuffle pool, blank
 /// picked-up positions.
-pub(super) fn pick_up(rom: &Rom, catalog: &NodeCatalog) -> PickupResult {
-    pick_up_filtered(rom, catalog, |k| k.is_level_like())
+pub fn pick_up(rom: &Rom, catalog: &NodeCatalog) -> PickupResult {
+    pick_up_filtered(rom, catalog, |entry| {
+        if entry.kind.is_level_like() {
+            return true;
+        }
+        // Pick up real hammer bro entries (obj >= 0xC000) but not toad
+        // house / bonus game entries that share duplicate pointer patterns.
+        if matches!(entry.kind, NodeKind::HammerBro) {
+            if let Some(le) = &entry.level_entry {
+                let obj = (le.obj_hi as u16) << 8 | le.obj_lo as u16;
+                return obj >= 0xC000;
+            }
+        }
+        false
+    })
 }
 
-/// Like `pick_up`, but only collects entries whose `NodeKind` satisfies `pred`.
+/// Like `pick_up`, but only collects entries whose `CatalogEntry` satisfies `pred`.
 pub(super) fn pick_up_filtered(
     rom: &Rom,
     catalog: &NodeCatalog,
-    pred: fn(&NodeKind) -> bool,
+    pred: fn(&CatalogEntry) -> bool,
 ) -> PickupResult {
     let mut pool: Vec<PoolEntry> = Vec::new();
     let mut worlds = Vec::with_capacity(8);
@@ -88,7 +101,7 @@ fn pick_up_world(
     catalog: &NodeCatalog,
     world_idx: usize,
     pool: &mut Vec<PoolEntry>,
-    pred: fn(&NodeKind) -> bool,
+    pred: fn(&CatalogEntry) -> bool,
 ) -> ClearedWorld {
     let mut grid = rom_data::read_tile_grid(rom, world_idx);
 
@@ -99,7 +112,7 @@ fn pick_up_world(
     let mut pool_indices = Vec::new();
 
     for (ci, entry) in catalog.entries.iter().enumerate() {
-        if entry.world_idx != world_idx || !pred(&entry.kind) {
+        if entry.world_idx != world_idx || !pred(entry) {
             continue;
         }
 
@@ -145,9 +158,9 @@ const SCREEN_THEMES: &[&[(u8, u8, u8, u8)]] = &[
     // W2: 2 screens
     &[(0x47, 0x48, 0x4A, 0x44), (0x47, 0x48, 0x4A, 0x44)],
     // W3: 3 screens (island theme on screen 0)
-    &[(0x47, 0xB5, 0x47, 0x44), (0x47, 0x48, 0x47, 0x44), (0x47, 0x48, 0x4A, 0x44)],
+    &[(0x47, 0xB5, 0x4A, 0x44), (0x47, 0x48, 0x47, 0x44), (0x47, 0x48, 0x4A, 0x44)],
     // W4: 2 screens (island theme on screen 0)
-    &[(0x47, 0xB5, 0x47, 0x44), (0x47, 0x48, 0x47, 0x44)],
+    &[(0x47, 0xB5, 0x4A, 0x44), (0x47, 0x48, 0x4A, 0x44)],
     // W5: 2 screens (sky theme on screen 1)
     &[(0x47, 0x48, 0x44, 0x44), (0xDC, 0xD9, 0xDE, 0xD9)],
     // W6: 3 screens
@@ -156,9 +169,9 @@ const SCREEN_THEMES: &[&[(u8, u8, u8, u8)]] = &[
     &[(0x47, 0x44, 0x47, 0x44), (0x47, 0x48, 0x47, 0x44)],
     // W8: 4 screens
     &[
-        (0x47, 0x44, 0x48, 0x44),
+        (0x47, 0x44, 0x4A, 0x44),
         (0x47, 0x44, 0x47, 0x44),
-        (0x47, 0x48, 0x47, 0x44),
+        (0x47, 0x48, 0x4A, 0x44),
         (0x47, 0x48, 0x4A, 0x44),
     ],
 ];
@@ -171,27 +184,42 @@ const BLANK_TILE_OVERRIDES: &[(usize, usize, usize, u8)] = &[
     (0, 0,  4, 0x44), (0, 8,  4, 0x48), (0, 8,  8, 0x4A),
     (1, 0,  8, 0x47), (1, 2, 12, 0x48), (1, 4,  8, 0x48),
     (1, 4, 18, 0x44), (1, 6,  8, 0x47),
-    (2, 2, 12, 0x48), (2, 2, 16, 0x48), (2, 2, 22, 0x4A),
+    (2, 2, 12, 0x48), (2, 2, 16, 0x48), (2, 2, 20, 0x47), (2, 2, 22, 0x4A),
     (2, 4,  8, 0x4A), (2, 4, 20, 0xAE), (2, 6, 12, 0xB5),
-    (3, 2, 18, 0x44), (3, 4,  8, 0x44), (3, 6,  2, 0x48),
-    (3, 6, 20, 0xAF), (3, 6, 28, 0x4A),
+    (3, 2, 18, 0x44), (3, 2, 28, 0x47), (3, 4,  8, 0x44),
+    (3, 6,  2, 0x48), (3, 6, 20, 0xAF), (3, 6, 28, 0x4A),
     (4, 0,  4, 0x47), (4, 4,  4, 0x47), (4, 6, 24, 0xDC),
     (4, 8, 18, 0xD9),
     (5, 0, 22, 0x44), (5, 2, 14, 0x47), (5, 2, 32, 0x44),
     (5, 4, 24, 0x48), (5, 4, 28, 0x48), (5, 4, 34, 0x44),
     (5, 6, 28, 0x47),
-    (6, 1, 22, 0x44), (6, 3,  2, 0x48), (6, 3,  6, 0x48),
+    (6, 1, 15, 0x44), (6, 1, 22, 0x44), (6, 3,  2, 0x48), (6, 3,  6, 0x48),
     (6, 3, 11, 0xB6), (6, 3, 26, 0x4A), (6, 5,  3, 0x44),
     (6, 5, 10, 0xAE), (6, 5, 22, 0xB6), (6, 7,  3, 0x48),
     (6, 7,  8, 0x48), (6, 7, 14, 0x48), (6, 7, 24, 0x44),
     (7, 3, 18, 0x44), (7, 3, 24, 0x44), (7, 3, 34, 0x44),
-    (7, 5,  8, 0x47), (7, 5, 36, 0x48), (7, 5, 50, 0x44),
+    (7, 5,  8, 0xAF), (7, 5, 36, 0x48), (7, 5, 50, 0x44),
     (7, 7, 34, 0x48),
 ];
 
+/// All valid blank/path node tiles. If a position already has one of these,
+/// `blank_tile_for` leaves it unchanged.
+const VALID_BLANK_TILES: &[u8] = &[
+    0x44, 0x47, 0x48, 0x4A, 0x4B, // standard
+    0xAE, 0xAF, 0xB5, 0xB6,       // island
+    0xD9, 0xDC, 0xDE,             // sky
+];
+
 /// Pick the right blank node tile based on neighboring path directions and
-/// the world/screen visual theme.
-fn blank_tile_for(grid: &Grid, world_idx: usize, row: usize, col: usize) -> u8 {
+/// the world/screen visual theme. If the tile is already a valid blank, it
+/// is returned unchanged to preserve the vanilla path connectivity.
+pub(super) fn blank_tile_for(grid: &Grid, world_idx: usize, row: usize, col: usize) -> u8 {
+    // If the tile is already a valid blank, keep it as-is.
+    let current = grid.get(row, col);
+    if VALID_BLANK_TILES.contains(&current) {
+        return current;
+    }
+
     // Check position-specific overrides first.
     if let Some(&(_, _, _, tile)) = BLANK_TILE_OVERRIDES
         .iter()
@@ -200,6 +228,16 @@ fn blank_tile_for(grid: &Grid, world_idx: usize, row: usize, col: usize) -> u8 {
         return tile;
     }
 
+    blank_tile_from_neighbors(grid, world_idx, row, col)
+}
+
+/// Like `blank_tile_for` but skips position overrides. Used for dynamic
+/// positions (e.g. W8 army sprites) that aren't at vanilla fixed spots.
+pub(super) fn blank_tile_for_dynamic(grid: &Grid, world_idx: usize, row: usize, col: usize) -> u8 {
+    blank_tile_from_neighbors(grid, world_idx, row, col)
+}
+
+fn blank_tile_from_neighbors(grid: &Grid, world_idx: usize, row: usize, col: usize) -> u8 {
     let has_h = (col > 0 && VALID_HORZ.contains(&grid.get(row, col - 1)))
         || (col + 1 < grid.cols && VALID_HORZ.contains(&grid.get(row, col + 1)));
     let has_v = (row > 0 && VALID_VERT.contains(&grid.get(row - 1, col)))
@@ -268,8 +306,9 @@ mod tests {
         let catalog = NodeCatalog::build(&rom);
         let result = pick_up(&rom, &catalog);
 
-        // 62 levels + 17 fortresses + 48 pipes + 7 airships + 1 bowser = 135
-        assert_eq!(result.pool.len(), 135, "pool should have 135 level-like entries");
+        // 62 levels + 17 fortresses + 48 pipes + 7 airships + 1 bowser + 154 hammer bros = 289
+        // (166 HammerBro catalog entries minus 12 with non-level pointers like toad house/bonus game)
+        assert_eq!(result.pool.len(), 289, "pool should have 289 entries (level-like + real hammer bros)");
     }
 
     #[test]
@@ -288,13 +327,7 @@ mod tests {
 
             if row < cw.grid.rows && col < cw.grid.cols {
                 let tile = cw.grid.get(row, col);
-                // Blank tiles vary by world theme: standard ($47/$48/$4A/$44),
-                // island ($AE/$AF/$B5/$B6), sky ($D9/$DC/$DE).
-                let valid_blank = matches!(
-                    tile,
-                    0x44 | 0x47 | 0x48 | 0x4A | 0xAE | 0xAF | 0xB5 | 0xB6
-                        | 0xD9 | 0xDC | 0xDE
-                );
+                let valid_blank = VALID_BLANK_TILES.contains(&tile);
                 assert!(
                     valid_blank,
                     "pool[{pi}] ({}) at ({row},{col}) should be blanked, got ${tile:02X}",
@@ -432,7 +465,7 @@ mod tests {
     }
 
     /// Helper: write cleared grids into a ROM copy and save to disk.
-    fn dump_filtered_rom(rom: &Rom, catalog: &NodeCatalog, pred: fn(&NodeKind) -> bool, filename: &str) {
+    fn dump_filtered_rom(rom: &Rom, catalog: &NodeCatalog, pred: fn(&CatalogEntry) -> bool, filename: &str) {
         let result = pick_up_filtered(rom, catalog, pred);
         let mut data = rom.data.clone();
         for cw in &result.worlds {
@@ -456,9 +489,9 @@ mod tests {
         };
         let catalog = NodeCatalog::build(&rom);
 
-        dump_filtered_rom(&rom, &catalog, |k| k.is_level_like(), "cleared_all.nes");
-        dump_filtered_rom(&rom, &catalog, |k| matches!(k, NodeKind::Level), "cleared_levels.nes");
-        dump_filtered_rom(&rom, &catalog, |k| matches!(k, NodeKind::Fortress { .. }), "cleared_fortresses.nes");
-        dump_filtered_rom(&rom, &catalog, |k| matches!(k, NodeKind::Pipe { .. }), "cleared_pipes.nes");
+        dump_filtered_rom(&rom, &catalog, |e| e.kind.is_level_like(), "cleared_all.nes");
+        dump_filtered_rom(&rom, &catalog, |e| matches!(e.kind, NodeKind::Level), "cleared_levels.nes");
+        dump_filtered_rom(&rom, &catalog, |e| matches!(e.kind, NodeKind::Fortress { .. }), "cleared_fortresses.nes");
+        dump_filtered_rom(&rom, &catalog, |e| matches!(e.kind, NodeKind::Pipe { .. }), "cleared_pipes.nes");
     }
 }

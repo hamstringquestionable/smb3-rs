@@ -11,6 +11,7 @@ pub mod overworld_builder;
 pub mod overworld_helpers;
 pub mod overworld_pickup;
 pub mod overworld_writer;
+pub mod overworld_writer_new;
 pub mod palettes;
 pub mod pipe_helpers;
 pub mod powerups;

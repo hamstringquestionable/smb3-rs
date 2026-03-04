@@ -32,15 +32,16 @@ use super::rom_data::{
 
 /// What kind of node occupies a grid slot.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum SlotKind {
+pub enum SlotKind {
     Level,
     Fortress,
     Pipe,
+    HammerBro,
 }
 
 /// A single slot assignment on the grid.
 #[derive(Clone, Debug)]
-pub(super) struct SlotAssignment {
+pub struct SlotAssignment {
     pub pos: (usize, usize),
     pub kind: SlotKind,
     /// Which section (0-based) this slot belongs to.
@@ -49,7 +50,7 @@ pub(super) struct SlotAssignment {
 
 /// A lock/bridge placed on a path tile.
 #[derive(Clone, Debug)]
-pub(super) struct LockAssignment {
+pub struct LockAssignment {
     /// Path tile position where the lock goes.
     pub pos: (usize, usize),
     /// The gap tile to write (0x54 lock, 0x56 bridge, 0x9D water, 0xE4 sky).
@@ -62,7 +63,7 @@ pub(super) struct LockAssignment {
 
 /// Complete build result for one world.
 #[derive(Clone, Debug)]
-pub(super) struct BuiltWorld {
+pub struct BuiltWorld {
     pub world_idx: usize,
     /// The grid with pipes placed (but no forts/levels/locks stamped yet).
     pub grid: Grid,
@@ -77,7 +78,7 @@ pub(super) struct BuiltWorld {
 }
 
 /// Complete Phase 3 output.
-pub(super) struct BuildResult {
+pub struct BuildResult {
     pub worlds: Vec<BuiltWorld>,
     /// Fortress counts per world (decided in Step 0).
     pub fort_counts: [usize; 8],
@@ -105,15 +106,15 @@ const FIXED_PIPE_ENDPOINTS: &[(usize, (usize, usize))] = &[
     (2, (6, 45)), // W3 rightmost node — always a pipe, partner randomized
 ];
 
-/// Total vanilla levels across all worlds.
-const VANILLA_LEVEL_COUNT: usize = 63;
+/// Total vanilla levels across all worlds (62 Level entries in the catalog).
+const VANILLA_LEVEL_COUNT: usize = 62;
 
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
 /// Execute Phase 3: build slot assignments for all 8 worlds.
-pub(super) fn build<R: Rng>(
+pub fn build<R: Rng>(
     rom: &Rom,
     pickup: &PickupResult,
     catalog: &NodeCatalog,
@@ -414,7 +415,7 @@ fn find_blank_slots(
     fixed_positions: &HashSet<(usize, usize)>,
 ) -> Vec<(usize, usize)> {
     let blank_tiles: &[u8] = &[
-        0x44, 0x47, 0x48, 0x4A,       // standard
+        0x44, 0x47, 0x48, 0x4A, 0x4B, // standard
         0xAE, 0xAF, 0xB5, 0xB6,       // island
         0xD9, 0xDC, 0xDE,             // sky
     ];
@@ -435,7 +436,7 @@ fn find_blank_slots(
 }
 
 /// BFS from start, returning nodes in visit order with their distances.
-fn bfs_ordered(
+pub(super) fn bfs_ordered(
     grid: &Grid,
     pipe_pairs: &[((usize, usize), (usize, usize))],
     start_pos: Option<(usize, usize)>,
@@ -782,8 +783,13 @@ fn populate_sections<R: Rng>(
                     kind: SlotKind::Level,
                     section: si,
                 });
+            } else {
+                slots.push(SlotAssignment {
+                    pos,
+                    kind: SlotKind::HammerBro,
+                    section: si,
+                });
             }
-            // else: slot stays blank (no assignment)
         }
         levels_remaining = levels_remaining.saturating_sub(actual_levels);
     }
@@ -821,6 +827,7 @@ fn place_locks<R: Rng>(
                 }
             }
             SlotKind::Pipe => {} // already stamped on grid
+            SlotKind::HammerBro => {} // blank path tile, no stamp needed
         }
     }
 
@@ -1010,6 +1017,7 @@ pub(super) fn debug_stamp_rom(rom: &mut crate::rom::Rom, result: &BuildResult) {
                 }
                 SlotKind::Fortress => TILE_FORTRESS,
                 SlotKind::Pipe => TILE_PIPE,
+                SlotKind::HammerBro => continue, // keep existing blank path tile
             };
             let offset = rom_data::map_tile_offset(wi, slot.pos.0, slot.pos.1);
             rom.data[offset] = tile;
@@ -1114,8 +1122,7 @@ mod tests {
                 for slot in &built.slots {
                     match slot.kind {
                         SlotKind::Fortress => test_grid.set(slot.pos.0, slot.pos.1, TILE_FORTRESS),
-                        SlotKind::Level => {}
-                        SlotKind::Pipe => {}
+                        SlotKind::Level | SlotKind::Pipe | SlotKind::HammerBro => {}
                     }
                 }
 

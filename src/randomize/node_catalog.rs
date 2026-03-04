@@ -91,7 +91,7 @@ pub(super) struct CatalogEntry {
 // ---------------------------------------------------------------------------
 
 /// Complete catalog of all pointer table entries across all 8 worlds.
-pub(super) struct NodeCatalog {
+pub struct NodeCatalog {
     pub entries: Vec<CatalogEntry>,
 }
 
@@ -134,6 +134,25 @@ impl NodeCatalog {
     /// Iterate entries matching a kind predicate.
     pub fn by_kind(&self, pred: fn(&NodeKind) -> bool) -> impl Iterator<Item = &CatalogEntry> {
         self.entries.iter().filter(move |e| pred(&e.kind))
+    }
+
+    /// Collect unique real HammerBro levels (obj >= 0xC000).
+    /// Excludes toad house / bonus game pointer formats.
+    pub fn unique_hammer_bro_levels(&self) -> Vec<rom_data::LevelEntry> {
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        for e in &self.entries {
+            if !matches!(e.kind, NodeKind::HammerBro) {
+                continue;
+            }
+            if let Some(le) = &e.level_entry {
+                let obj = (le.obj_hi as u16) << 8 | le.obj_lo as u16;
+                if obj >= 0xC000 && seen.insert(le.clone()) {
+                    result.push(le.clone());
+                }
+            }
+        }
+        result
     }
 }
 
