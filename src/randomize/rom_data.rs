@@ -59,18 +59,6 @@ pub(super) const TILE_AIRSHIP: u8 = 0xC9;
 pub(super) const TILE_BOWSER: u8 = 0xCC;
 
 
-/// Bridge gap tile ID (horizontal path obstacle).
-#[allow(dead_code)]
-pub(super) const TILE_BRIDGE_GAP: u8 = 0x56;
-
-/// Water gap tile ID.
-#[allow(dead_code)]
-pub(super) const TILE_WATER_GAP: u8 = 0x9D;
-
-/// Sky gap tile ID.
-#[allow(dead_code)]
-pub(super) const TILE_SKY_GAP: u8 = 0xE4;
-
 
 /// Number of rows in every overworld map.
 pub(super) const ROWS: usize = 9;

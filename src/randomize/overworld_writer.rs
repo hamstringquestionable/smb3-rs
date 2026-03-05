@@ -5,12 +5,10 @@
 /// ROM data: tile grids, pointer tables, FX tables, pipe destinations, and
 /// W8 army sprite positions.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rand::Rng;
 use rand::seq::SliceRandom;
-
-use std::collections::HashSet;
 
 use crate::rom::Rom;
 
@@ -106,7 +104,7 @@ pub(crate) fn write_overworld<R: Rng>(
     let assignments = assign_pool(rom, build, pickup, catalog, rng, cross_world);
 
     // Compute W8 army sprite target positions before writing tiles,
-    // so write_tile_grid can stamp path nodes ($47) under the sprites.
+    // so write_tile_grid can stamp connectivity-aware blank tiles under the sprites.
     let w8_sprite_positions = pick_w8_sprite_positions(&assignments[7], rng);
     let w8_sprite_pos_set: HashSet<(usize, usize)> =
         w8_sprite_positions.iter().map(|&(_, pos)| pos).collect();

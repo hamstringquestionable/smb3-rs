@@ -64,7 +64,7 @@ pub(crate) struct LockAssignment {
 /// Complete build result for one world.
 #[derive(Clone, Debug)]
 pub(crate) struct BuiltWorld {
-    #[allow(dead_code)] // read in tests and debug_stamp_rom
+    #[allow(dead_code)] // read in tests
     pub world_idx: usize,
     /// The grid with pipes placed (but no forts/levels/locks stamped yet).
     pub grid: Grid,
@@ -357,7 +357,6 @@ fn build_world<R: Rng>(
     let pipe_pairs = place_pipes(
         &mut grid,
         &blank_positions,
-        &fixed_positions,
         start_pos,
         target_pos,
         pipe_pair_count,
@@ -519,7 +518,6 @@ pub(super) fn bfs_ordered(
 fn place_pipes<R: Rng>(
     grid: &mut Grid,
     blank_positions: &[(usize, usize)],
-    _fixed_positions: &HashSet<(usize, usize)>,
     start_pos: Option<(usize, usize)>,
     target_pos: Option<(usize, usize)>,
     pair_count: usize,

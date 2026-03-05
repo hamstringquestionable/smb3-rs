@@ -102,7 +102,6 @@ impl NodeCatalog {
 
         // First pass: classify all entries (names assigned in second pass)
         for wi in 0..8 {
-            let world = &WORLDS[wi];
             let grid = rom_data::read_tile_grid(rom, wi);
             let world_entries = classify_world(rom, wi, &grid);
 
@@ -116,7 +115,6 @@ impl NodeCatalog {
                     tile,
                     level_entry,
                 });
-                let _ = world; // used implicitly via classify_world
             }
         }
 
@@ -669,32 +667,8 @@ mod tests {
         };
         let catalog = NodeCatalog::build(&rom);
 
-        // The old builder classified entries into: Level, Fortress, Pipe, Airship,
-        // Bowser, Start, Fixed. Our new kinds map back as:
-        // ToadHouse/BonusGame/HammerBro/MapObject → Fixed
-        // Everything else → same name
-
-        for e in &catalog.entries {
-            let old_kind = match &e.kind {
-                NodeKind::Level => "Level",
-                NodeKind::Fortress { .. } => "Fortress",
-                NodeKind::Pipe { .. } => "Pipe",
-                NodeKind::Airship => "Airship",
-                NodeKind::Bowser => "Bowser",
-                NodeKind::Start => "Start",
-                NodeKind::ToadHouse
-                | NodeKind::BonusGame
-                | NodeKind::HammerBro
-                | NodeKind::MapObject => "Fixed",
-            };
-
-            // Verify no Level/Fortress/Pipe/Airship/Bowser got misclassified as Fixed
-            // and vice versa. The old code's exact counts are known:
-            // 17 fortresses, 7 airships, 1 bowser, 48 pipes, 8 starts
-            let _ = old_kind; // used for debugging if assertion fails
-        }
-
-        // Verify aggregate counts match old builder's known results
+        // Verify aggregate counts match known vanilla totals:
+        // 17 fortresses, 7 airships, 1 bowser, 48 pipes, 8 starts
         let levels: usize = catalog.entries.iter()
             .filter(|e| matches!(e.kind, NodeKind::Level))
             .count();
@@ -705,7 +679,6 @@ mod tests {
             ))
             .count();
 
-        // Total must equal 340
         let total = levels + 17 + 48 + 7 + 1 + 8 + fixed;
         assert_eq!(total, 340, "total should be 340, got {total}");
     }

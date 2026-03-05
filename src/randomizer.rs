@@ -159,17 +159,10 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::overworld_writer::write_overworld(
             rom, &build, &pickup, &catalog, &mut rng, cross_world,
         );
-    } else {
+    } else if options.level_shuffle == LevelShuffle::IntraWorld {
         // Intra-world level shuffle (no overworld rebuild needed)
-        if options.level_shuffle == LevelShuffle::IntraWorld {
-            rom.set_tag("levels");
-            randomize::levels::randomize_intra(rom, &mut rng);
-        }
-        // Airship shuffle (standalone, no overworld rebuild)
-        if options.shuffle_fortresses {
-            rom.set_tag("levels/airships");
-            randomize::levels::randomize_airships(rom, &mut rng);
-        }
+        rom.set_tag("levels");
+        randomize::levels::randomize_intra(rom, &mut rng);
     }
     if options.chest_items {
         rom.set_tag("items");
