@@ -24,10 +24,11 @@ use super::rom_data::{self, Grid, VALID_HORZ, VALID_VERT};
 /// level_entry). Carries mutable routing fields that the Build phase can update
 /// during cross-world redistribution.
 #[derive(Clone, Debug)]
-pub struct PoolEntry {
+pub(crate) struct PoolEntry {
     /// Index into `NodeCatalog.entries`.
     pub catalog_idx: usize,
     /// Current destination world (may change during redistribution).
+    #[allow(dead_code)] // read in tests
     pub world_idx: usize,
     /// Current pointer table slot in the destination world.
     pub entry_idx: usize,
@@ -35,18 +36,20 @@ pub struct PoolEntry {
 
 /// One world's cleared grid plus tracking info for the Build phase.
 #[derive(Clone)]
-pub struct ClearedWorld {
+pub(crate) struct ClearedWorld {
+    #[allow(dead_code)] // read in tests
     pub world_idx: usize,
     /// Grid with FX gaps pre-opened and pool entries blanked to `TILE_EMPTY_NODE`.
     pub grid: Grid,
     /// Vanilla grid positions of the entries that were picked up (parallel to `pool_indices`).
+    #[allow(dead_code)] // read in tests
     pub pickup_positions: Vec<(usize, usize)>,
     /// Indices into `PickupResult.pool` for this world's picked-up entries.
     pub pool_indices: Vec<usize>,
 }
 
 /// Complete Phase 2 output: cleared grids + global shuffle pool.
-pub struct PickupResult {
+pub(crate) struct PickupResult {
     /// Per-world cleared grids (indexed 0..8).
     pub worlds: Vec<ClearedWorld>,
     /// Global pool of all level-like entries across all worlds.
@@ -59,7 +62,7 @@ pub struct PickupResult {
 
 /// Execute Phase 2: read grids, open FX gaps, collect the shuffle pool, blank
 /// picked-up positions.
-pub fn pick_up(rom: &Rom, catalog: &NodeCatalog) -> PickupResult {
+pub(crate) fn pick_up(rom: &Rom, catalog: &NodeCatalog) -> PickupResult {
     pick_up_filtered(rom, catalog, |entry| {
         if entry.kind.is_level_like() {
             return true;

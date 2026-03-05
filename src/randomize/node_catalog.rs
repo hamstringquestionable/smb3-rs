@@ -91,13 +91,13 @@ pub(super) struct CatalogEntry {
 // ---------------------------------------------------------------------------
 
 /// Complete catalog of all pointer table entries across all 8 worlds.
-pub struct NodeCatalog {
-    pub entries: Vec<CatalogEntry>,
+pub(crate) struct NodeCatalog {
+    pub(super) entries: Vec<CatalogEntry>,
 }
 
 impl NodeCatalog {
     /// Build the catalog by reading and classifying every entry from the ROM.
-    pub fn build(rom: &Rom) -> Self {
+    pub(crate) fn build(rom: &Rom) -> Self {
         let mut entries = Vec::with_capacity(340);
 
         // First pass: classify all entries (names assigned in second pass)
@@ -127,18 +127,20 @@ impl NodeCatalog {
     }
 
     /// Iterate entries for a specific world.
-    pub fn world(&self, world_idx: usize) -> impl Iterator<Item = &CatalogEntry> {
+    #[allow(dead_code)] // used in tests
+    pub(super) fn world(&self, world_idx: usize) -> impl Iterator<Item = &CatalogEntry> {
         self.entries.iter().filter(move |e| e.world_idx == world_idx)
     }
 
     /// Iterate entries matching a kind predicate.
-    pub fn by_kind(&self, pred: fn(&NodeKind) -> bool) -> impl Iterator<Item = &CatalogEntry> {
+    #[allow(dead_code)] // used in tests
+    pub(super) fn by_kind(&self, pred: fn(&NodeKind) -> bool) -> impl Iterator<Item = &CatalogEntry> {
         self.entries.iter().filter(move |e| pred(&e.kind))
     }
 
     /// Collect unique real HammerBro levels (obj >= 0xC000).
     /// Excludes toad house / bonus game pointer formats.
-    pub fn unique_hammer_bro_levels(&self) -> Vec<rom_data::LevelEntry> {
+    pub(super) fn unique_hammer_bro_levels(&self) -> Vec<rom_data::LevelEntry> {
         let mut seen = std::collections::HashSet::new();
         let mut result = Vec::new();
         for e in &self.entries {

@@ -50,7 +50,7 @@ pub struct SlotAssignment {
 
 /// A lock/bridge placed on a path tile.
 #[derive(Clone, Debug)]
-pub struct LockAssignment {
+pub(crate) struct LockAssignment {
     /// Path tile position where the lock goes.
     pub pos: (usize, usize),
     /// The gap tile to write (0x54 lock, 0x56 bridge, 0x9D water, 0xE4 sky).
@@ -63,7 +63,8 @@ pub struct LockAssignment {
 
 /// Complete build result for one world.
 #[derive(Clone, Debug)]
-pub struct BuiltWorld {
+pub(crate) struct BuiltWorld {
+    #[allow(dead_code)] // read in tests and debug_stamp_rom
     pub world_idx: usize,
     /// The grid with pipes placed (but no forts/levels/locks stamped yet).
     pub grid: Grid,
@@ -78,9 +79,10 @@ pub struct BuiltWorld {
 }
 
 /// Complete Phase 3 output.
-pub struct BuildResult {
+pub(crate) struct BuildResult {
     pub worlds: Vec<BuiltWorld>,
     /// Fortress counts per world (decided in Step 0).
+    #[allow(dead_code)] // read in tests
     pub fort_counts: [usize; 8],
 }
 
@@ -114,7 +116,7 @@ const VANILLA_LEVEL_COUNT: usize = 62;
 // ---------------------------------------------------------------------------
 
 /// Execute Phase 3: build slot assignments for all 8 worlds.
-pub fn build<R: Rng>(
+pub(crate) fn build<R: Rng>(
     rom: &Rom,
     pickup: &PickupResult,
     catalog: &NodeCatalog,
@@ -993,6 +995,7 @@ fn place_locks<R: Rng>(
 ///
 /// Writes generic tiles for each slot type so the overworld maps can be
 /// viewed in an emulator. The game will crash if you enter any level.
+#[allow(dead_code)]
 pub(super) fn debug_stamp_rom(rom: &mut crate::rom::Rom, result: &BuildResult) {
     for built in &result.worlds {
         let wi = built.world_idx;

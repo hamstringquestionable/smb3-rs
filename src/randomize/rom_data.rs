@@ -262,7 +262,7 @@ pub(super) const MAP_OBJ_ENTRY_LINKS: &[(usize, usize, usize)] = &[
 
 /// Mutable overworld tile grid.
 #[derive(Clone, Debug)]
-pub(super) struct Grid {
+pub(crate) struct Grid {
     pub tiles: Vec<Vec<u8>>,
     pub rows: usize,
     pub cols: usize,

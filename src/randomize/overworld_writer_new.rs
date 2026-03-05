@@ -66,6 +66,7 @@ struct PipeAssignment {
 #[derive(Clone, Debug)]
 struct HammerBroAssignment {
     /// Index into `pickup.pool` (provides entry_idx for the pointer table slot).
+    #[allow(dead_code)] // read in tests
     pool_idx: usize,
     /// Target grid position.
     pos: (usize, usize),
@@ -94,7 +95,7 @@ struct WorldAssignments {
 // ---------------------------------------------------------------------------
 
 /// Execute Phase 4: assign pool entries to slots and write all ROM data.
-pub fn write_overworld<R: Rng>(
+pub(crate) fn write_overworld<R: Rng>(
     rom: &mut Rom,
     build: &BuildResult,
     pickup: &PickupResult,
