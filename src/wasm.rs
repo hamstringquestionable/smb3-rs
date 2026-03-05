@@ -17,3 +17,15 @@ pub fn generate_patched_rom(rom: &[u8], seed: u64, options_json: &str) -> Result
 fn parse_options(json: &str) -> Result<Options, JsError> {
     serde_json::from_str(json).map_err(|e| JsError::new(&format!("Invalid options: {e}")))
 }
+
+#[wasm_bindgen]
+pub fn encode_flag_key(options_json: &str) -> Result<String, JsError> {
+    let options: Options = parse_options(options_json)?;
+    Ok(options.to_flag_key())
+}
+
+#[wasm_bindgen]
+pub fn decode_flag_key(key: &str) -> Result<String, JsError> {
+    let options = Options::from_flag_key(key).map_err(|e| JsError::new(&e))?;
+    serde_json::to_string(&options).map_err(|e| JsError::new(&format!("Serialize error: {e}")))
+}

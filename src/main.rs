@@ -86,6 +86,9 @@ struct Cli {
     #[arg(long, default_value_t = 4)]
     starting_lives: u8,
 
+    /// Apply options from a flag key (e.g. SMB3R-01C79804). Overrides all other flag options.
+    #[arg(long)]
+    flags: Option<String>,
 }
 
 fn main() {
@@ -123,23 +126,33 @@ fn main() {
         }
     };
 
-    let options = Options {
-        powerups: !cli.no_powerups,
-        palettes: !cli.no_palettes,
-        enemies: cli.enemies,
-        world_order: cli.world_order,
-        big_q_blocks: cli.big_q_blocks,
-        level_shuffle,
-        disable_autoscroll: !cli.keep_autoscroll,
-        chest_items: !cli.no_chest_items,
-        remove_whistles: !cli.keep_whistles,
-        shuffle_fortresses: cli.shuffle_fortresses,
-        fortress_redistribute,
-        shuffle_pipes: cli.shuffle_pipes,
-        fix_drawbridges: !cli.keep_drawbridges,
-        remove_w2_rock: !cli.keep_w2_rock,
-        airship_lock: !cli.no_airship_lock,
-        starting_lives: cli.starting_lives,
+    let options = if let Some(ref flag_key) = cli.flags {
+        match Options::from_flag_key(flag_key) {
+            Ok(opts) => opts,
+            Err(e) => {
+                eprintln!("Invalid --flags value: {e}");
+                process::exit(1);
+            }
+        }
+    } else {
+        Options {
+            powerups: !cli.no_powerups,
+            palettes: !cli.no_palettes,
+            enemies: cli.enemies,
+            world_order: cli.world_order,
+            big_q_blocks: cli.big_q_blocks,
+            level_shuffle,
+            disable_autoscroll: !cli.keep_autoscroll,
+            chest_items: !cli.no_chest_items,
+            remove_whistles: !cli.keep_whistles,
+            shuffle_fortresses: cli.shuffle_fortresses,
+            fortress_redistribute,
+            shuffle_pipes: cli.shuffle_pipes,
+            fix_drawbridges: !cli.keep_drawbridges,
+            remove_w2_rock: !cli.keep_w2_rock,
+            airship_lock: !cli.no_airship_lock,
+            starting_lives: cli.starting_lives,
+        }
     };
 
     let ext = if cli.patched_rom { "nes" } else { "ips" };
@@ -149,6 +162,7 @@ fn main() {
 
     eprintln!("SMB3 Randomizer");
     eprintln!("  Seed: {seed}");
+    eprintln!("  Flags: {}", options.to_flag_key());
     eprintln!("  Powerups: {}", if options.powerups { "on" } else { "off" });
     eprintln!("  Palettes: {}", if options.palettes { "on" } else { "off" });
     eprintln!("  Enemies:  {}", if options.enemies { "on" } else { "off" });

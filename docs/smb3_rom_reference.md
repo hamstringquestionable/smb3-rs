@@ -1032,6 +1032,21 @@ Pointer tables indexed by World_Num (8 entries each):
 | `MAT_Y_W[1-8][A-C]` | Y destinations: 3 sets x 6 values per world |
 | `MAT_X_W[1-8][A-C]` | X destinations: packed (lo=screen, hi=X pos) |
 
+### Free Space (PRG012)
+
+**0x19101–0x193D9** (729 bytes): Gap between overworld tile grid data (ends at 0x19100 with 0xFF terminator) and the InitIndex master pointer table (starts at 0x193DA). The randomizer stamps a 16-byte identification block at **0x19101**:
+
+| Offset | Size | Content |
+|--------|------|---------|
+| +0 | 3 | `S3R` magic bytes |
+| +3 | 1 | Version (0x01) |
+| +4 | 4 | Flag key bytes (encoded Options) |
+| +8 | 8 | Seed (little-endian u64) |
+
+**0x19DD0–0x19DE7** (24 bytes): Used by Big ? Block trampoline (see below).
+
+**0x35530–0x35592** (99 bytes): Used by Big ? Block lookup routine (PRG026).
+
 ### Level Pointer Tables (PRG012: 0x18010–0x1A00F)
 
 `Map_PrepareLevel` uses the player's world map position to look up level data via

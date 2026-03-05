@@ -75,6 +75,121 @@ fn default_true() -> bool {
     true
 }
 
+const FLAG_KEY_VERSION: u8 = 1;
+const FLAG_KEY_PREFIX: &str = "SMB3R-";
+/// Free space in PRG012 between overworld tile data and master pointer tables.
+const STAMP_OFFSET: usize = 0x19101;
+
+impl Options {
+    /// Encode options into 4 raw bytes.
+    pub fn to_flag_bytes(&self) -> [u8; 4] {
+        let level_shuffle_val = match self.level_shuffle {
+            LevelShuffle::Off => 0u8,
+            LevelShuffle::IntraWorld => 1,
+            LevelShuffle::CrossWorld => 2,
+        };
+        let fortress_val = match self.fortress_redistribute {
+            FortressRedistribute::Off => 0u8,
+            FortressRedistribute::IntraWorld => 1,
+            FortressRedistribute::CrossWorld => 2,
+        };
+
+        let b0 = FLAG_KEY_VERSION;
+
+        let b1 = (self.powerups as u8) << 7
+            | (self.palettes as u8) << 6
+            | (self.enemies as u8) << 5
+            | (self.world_order as u8) << 4
+            | (self.big_q_blocks as u8) << 3
+            | (self.disable_autoscroll as u8) << 2
+            | (self.airship_lock as u8) << 1
+            | (self.chest_items as u8);
+
+        let b2 = (self.remove_whistles as u8) << 7
+            | (self.shuffle_fortresses as u8) << 6
+            | (self.shuffle_pipes as u8) << 5
+            | (self.fix_drawbridges as u8) << 4
+            | (self.remove_w2_rock as u8) << 3
+            | (level_shuffle_val & 0x03) << 1
+            | ((fortress_val >> 1) & 0x01);
+
+        let b3 = ((fortress_val & 0x01) << 7)
+            | (self.starting_lives.min(99).max(1) & 0x7F);
+
+        [b0, b1, b2, b3]
+    }
+
+    /// Encode options into a compact hex flag key (e.g. "SMB3R-01E38804").
+    pub fn to_flag_key(&self) -> String {
+        let [b0, b1, b2, b3] = self.to_flag_bytes();
+        format!("{FLAG_KEY_PREFIX}{b0:02X}{b1:02X}{b2:02X}{b3:02X}")
+    }
+
+    /// Decode a flag key string (e.g. "SMB3R-01E38804") into Options.
+    pub fn from_flag_key(key: &str) -> Result<Options, String> {
+        let hex = key.strip_prefix(FLAG_KEY_PREFIX)
+            .or_else(|| key.strip_prefix("smb3r-"))
+            .unwrap_or(key);
+
+        if hex.len() != 8 {
+            return Err(format!("Flag key must be 8 hex digits (got {})", hex.len()));
+        }
+
+        let bytes: Vec<u8> = (0..4)
+            .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Invalid hex in flag key: {e}"))?;
+
+        let version = bytes[0];
+        if version != FLAG_KEY_VERSION {
+            return Err(format!("Unsupported flag key version {version} (expected {FLAG_KEY_VERSION})"));
+        }
+
+        let b1 = bytes[1];
+        let b2 = bytes[2];
+        let b3 = bytes[3];
+
+        let level_shuffle_val = (b2 >> 1) & 0x03;
+        let fortress_val = ((b2 & 0x01) << 1) | ((b3 >> 7) & 0x01);
+
+        let level_shuffle = match level_shuffle_val {
+            0 => LevelShuffle::Off,
+            1 => LevelShuffle::IntraWorld,
+            2 => LevelShuffle::CrossWorld,
+            _ => return Err(format!("Invalid level_shuffle value {level_shuffle_val}")),
+        };
+
+        let fortress_redistribute = match fortress_val {
+            0 => FortressRedistribute::Off,
+            1 => FortressRedistribute::IntraWorld,
+            2 => FortressRedistribute::CrossWorld,
+            _ => return Err(format!("Invalid fortress_redistribute value {fortress_val}")),
+        };
+
+        let starting_lives = b3 & 0x7F;
+        let starting_lives = if starting_lives == 0 { 1 } else { starting_lives };
+
+        Ok(Options {
+            powerups: (b1 >> 7) & 1 != 0,
+            palettes: (b1 >> 6) & 1 != 0,
+            enemies: (b1 >> 5) & 1 != 0,
+            world_order: (b1 >> 4) & 1 != 0,
+            big_q_blocks: (b1 >> 3) & 1 != 0,
+            disable_autoscroll: (b1 >> 2) & 1 != 0,
+            airship_lock: (b1 >> 1) & 1 != 0,
+            chest_items: b1 & 1 != 0,
+            remove_whistles: (b2 >> 7) & 1 != 0,
+            shuffle_fortresses: (b2 >> 6) & 1 != 0,
+            shuffle_pipes: (b2 >> 5) & 1 != 0,
+            fix_drawbridges: (b2 >> 4) & 1 != 0,
+            remove_w2_rock: (b2 >> 3) & 1 != 0,
+            level_shuffle,
+            fortress_redistribute,
+            starting_lives,
+        })
+    }
+}
+
 impl Default for Options {
     fn default() -> Self {
         Options {
@@ -190,6 +305,20 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         rom.set_tag("items/anchors");
         randomize::items::replace_anchors(rom, &mut rng);
     }
+
+    // Stamp flag key + seed into free space at 0x19101 (PRG012, between
+    // overworld tile data and master pointer tables). 16 bytes total:
+    //   [0..4]  "S3R\x01" magic + version
+    //   [4..8]  flag key bytes (encoding of Options)
+    //   [8..16] seed (little-endian u64)
+    rom.set_tag("stamp");
+    let flag_bytes = options.to_flag_bytes();
+    let mut stamp = [0u8; 16];
+    stamp[0..3].copy_from_slice(b"S3R");
+    stamp[3] = FLAG_KEY_VERSION;
+    stamp[4..8].copy_from_slice(&flag_bytes);
+    stamp[8..16].copy_from_slice(&seed.to_le_bytes());
+    rom.write_range(STAMP_OFFSET, &stamp);
 }
 
 #[cfg(test)]
@@ -305,6 +434,123 @@ mod tests {
                 record.offset
             );
         }
+    }
+
+    #[test]
+    fn flag_key_round_trip_defaults() {
+        let opts = Options::default();
+        let key = opts.to_flag_key();
+        assert!(key.starts_with("SMB3R-"));
+        assert_eq!(key.len(), 14); // "SMB3R-" + 8 hex
+        let decoded = Options::from_flag_key(&key).unwrap();
+        assert_eq!(opts.powerups, decoded.powerups);
+        assert_eq!(opts.palettes, decoded.palettes);
+        assert_eq!(opts.enemies, decoded.enemies);
+        assert_eq!(opts.world_order, decoded.world_order);
+        assert_eq!(opts.big_q_blocks, decoded.big_q_blocks);
+        assert_eq!(opts.disable_autoscroll, decoded.disable_autoscroll);
+        assert_eq!(opts.airship_lock, decoded.airship_lock);
+        assert_eq!(opts.chest_items, decoded.chest_items);
+        assert_eq!(opts.remove_whistles, decoded.remove_whistles);
+        assert_eq!(opts.shuffle_fortresses, decoded.shuffle_fortresses);
+        assert_eq!(opts.shuffle_pipes, decoded.shuffle_pipes);
+        assert_eq!(opts.fix_drawbridges, decoded.fix_drawbridges);
+        assert_eq!(opts.remove_w2_rock, decoded.remove_w2_rock);
+        assert_eq!(opts.level_shuffle, decoded.level_shuffle);
+        assert_eq!(opts.fortress_redistribute, decoded.fortress_redistribute);
+        assert_eq!(opts.starting_lives, decoded.starting_lives);
+    }
+
+    #[test]
+    fn flag_key_round_trip_all_on() {
+        let opts = Options {
+            powerups: true,
+            palettes: true,
+            enemies: true,
+            world_order: true,
+            big_q_blocks: true,
+            level_shuffle: LevelShuffle::CrossWorld,
+            disable_autoscroll: true,
+            airship_lock: true,
+            chest_items: true,
+            remove_whistles: true,
+            shuffle_fortresses: true,
+            shuffle_pipes: true,
+            fix_drawbridges: true,
+            remove_w2_rock: true,
+            fortress_redistribute: FortressRedistribute::CrossWorld,
+            starting_lives: 99,
+        };
+        let key = opts.to_flag_key();
+        let decoded = Options::from_flag_key(&key).unwrap();
+        assert_eq!(opts.enemies, decoded.enemies);
+        assert_eq!(opts.world_order, decoded.world_order);
+        assert_eq!(opts.level_shuffle, decoded.level_shuffle);
+        assert_eq!(opts.fortress_redistribute, decoded.fortress_redistribute);
+        assert_eq!(opts.starting_lives, decoded.starting_lives);
+        assert_eq!(opts.shuffle_pipes, decoded.shuffle_pipes);
+        assert_eq!(opts.shuffle_fortresses, decoded.shuffle_fortresses);
+    }
+
+    #[test]
+    fn flag_key_round_trip_all_off() {
+        let opts = Options {
+            powerups: false,
+            palettes: false,
+            enemies: false,
+            world_order: false,
+            big_q_blocks: false,
+            level_shuffle: LevelShuffle::Off,
+            disable_autoscroll: false,
+            airship_lock: false,
+            chest_items: false,
+            remove_whistles: false,
+            shuffle_fortresses: false,
+            shuffle_pipes: false,
+            fix_drawbridges: false,
+            remove_w2_rock: false,
+            fortress_redistribute: FortressRedistribute::Off,
+            starting_lives: 1,
+        };
+        let key = opts.to_flag_key();
+        let decoded = Options::from_flag_key(&key).unwrap();
+        assert!(!decoded.powerups);
+        assert!(!decoded.palettes);
+        assert!(!decoded.enemies);
+        assert!(!decoded.disable_autoscroll);
+        assert_eq!(decoded.starting_lives, 1);
+        assert_eq!(decoded.level_shuffle, LevelShuffle::Off);
+        assert_eq!(decoded.fortress_redistribute, FortressRedistribute::Off);
+    }
+
+    #[test]
+    fn flag_key_case_insensitive_prefix() {
+        let opts = Options::default();
+        let key = opts.to_flag_key();
+        let lower = key.to_lowercase();
+        let decoded = Options::from_flag_key(&lower).unwrap();
+        assert_eq!(opts.powerups, decoded.powerups);
+    }
+
+    #[test]
+    fn flag_key_without_prefix() {
+        let opts = Options::default();
+        let key = opts.to_flag_key();
+        let hex = key.strip_prefix("SMB3R-").unwrap();
+        let decoded = Options::from_flag_key(hex).unwrap();
+        assert_eq!(opts.powerups, decoded.powerups);
+    }
+
+    #[test]
+    fn flag_key_invalid_version() {
+        let result = Options::from_flag_key("FF000000");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn flag_key_invalid_hex() {
+        let result = Options::from_flag_key("ZZZZZZZZ");
+        assert!(result.is_err());
     }
 
     #[test]
