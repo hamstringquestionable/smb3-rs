@@ -1003,6 +1003,10 @@ Four 24-byte tables control where Mario appears on the overworld map after exiti
 - Both endpoints have tileset 14, 1-screen layout, and are classified as `too_short` in level shuffle
 - The two endpoints have different `lay_ptr` values but their layout data is chained: entry A's area 2 = entry B's area 1 (via junction at 0xFF terminator)
 - Layout header byte 5 differs: `0x04` vs `0x44` (bit 6 controls pipe direction / vertical scroll mode)
+- **A-side entry** has byte5 bit 6 = 0 (`0x04`): player enters from the left, exits right. The game reads the **lower nibble** (B position) as the exit destination.
+- **B-side entry** has byte5 bit 6 = 1 (`0x44`): player enters from the right, exits left. The game reads the **upper nibble** (A position) as the exit destination.
+
+**Critical**: When assigning pipe pool entries to positions, the A-side entry (byte5 bit 6 = 0) **must** be placed at `pos_a` (upper nibble) and the B-side entry (byte5 bit 6 = 1) at `pos_b` (lower nibble). If swapped, the exit nibble points back to the entry position, creating a self-referencing pipe.
 
 **When moving a pipe endpoint**, update the corresponding nibble (upper or lower) in all four tables to match the new map position. The nibble assignment (upper vs lower) corresponds to which side of the pipe transit level that endpoint enters from.
 

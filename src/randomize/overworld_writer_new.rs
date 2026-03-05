@@ -102,7 +102,7 @@ pub fn write_overworld<R: Rng>(
     rng: &mut R,
     cross_world: bool,
 ) {
-    let assignments = assign_pool(build, pickup, catalog, rng, cross_world);
+    let assignments = assign_pool(rom, build, pickup, catalog, rng, cross_world);
 
     // Compute W8 army sprite target positions before writing tiles,
     // so write_tile_grid can stamp path nodes ($47) under the sprites.
@@ -132,6 +132,7 @@ pub fn write_overworld<R: Rng>(
 // ---------------------------------------------------------------------------
 
 fn assign_pool<R: Rng>(
+    rom: &Rom,
     build: &BuildResult,
     pickup: &PickupResult,
     catalog: &NodeCatalog,
@@ -238,6 +239,11 @@ fn assign_pool<R: Rng>(
         }
 
         // --- Pipe assignments ---
+        // Each dest_idx has two pool entries: the A-side (left pipe in transit
+        // level, layout byte5 bit 6 = 0) and the B-side (right pipe, bit 6 = 1).
+        // The dest table upper nibble = A position, lower = B position.  The
+        // game picks the nibble based on Mario's exit side in the transit level,
+        // so pool_idx_a/pos_a must be the A-side entry or the pipe self-references.
         let mut pipes = Vec::new();
         if let Some(world_pipes) = pipe_groups.get_mut(&wi) {
             let mut groups: Vec<(usize, Vec<usize>)> = world_pipes.drain().collect();
@@ -249,9 +255,13 @@ fn assign_pool<R: Rng>(
                     break;
                 }
                 let (pos_a, pos_b) = built.pipe_pairs[pair_idx];
+
+                // Determine which group entry is the A-side by reading layout
+                // byte5 bit 6 from the ROM.  A-side has bit 6 = 0.
+                let (idx_a, idx_b) = pipe_ab_order(&group, pickup, catalog, rom);
                 pipes.push(PipeAssignment {
-                    pool_idx_a: group[0],
-                    pool_idx_b: group[1],
+                    pool_idx_a: idx_a,
+                    pool_idx_b: idx_b,
                     dest_idx,
                     pos_a,
                     pos_b,
@@ -610,6 +620,42 @@ fn write_fortress_fx(
 }
 
 // ---------------------------------------------------------------------------
+// Pipe A/B side detection
+// ---------------------------------------------------------------------------
+
+/// Given the two pool indices for a pipe dest_idx, return (A-side, B-side).
+/// The A-side entry has layout byte5 bit 6 = 0 (left-to-right transit level).
+/// Falls back to original order if the layout can't be read.
+fn pipe_ab_order(
+    group: &[usize],
+    pickup: &PickupResult,
+    catalog: &NodeCatalog,
+    rom: &Rom,
+) -> (usize, usize) {
+    let idx0 = group[0];
+    let idx1 = group[1];
+
+    // Read layout byte5 for group[0] to check bit 6.
+    let pe = &pickup.pool[idx0];
+    let ce = &catalog.entries[pe.catalog_idx];
+    if let Some(le) = &ce.level_entry {
+        let lay_ptr = u16::from_le_bytes([le.lay_lo, le.lay_hi]);
+        if let Some(file_off) = rom_data::layout_file_offset(lay_ptr, le.tileset) {
+            let byte5 = rom.read_byte(file_off + 5);
+            if byte5 & 0x40 == 0 {
+                // group[0] is A-side
+                return (idx0, idx1);
+            } else {
+                // group[0] is B-side, swap
+                return (idx1, idx0);
+            }
+        }
+    }
+    // Fallback: preserve original order
+    (idx0, idx1)
+}
+
+// ---------------------------------------------------------------------------
 // Step 5: Write pipe destination tables
 // ---------------------------------------------------------------------------
 
@@ -694,7 +740,7 @@ mod tests {
         let build = super::super::overworld_build::build(&rom, &pickup, &catalog, &mut rng);
 
         let mut rng2 = ChaCha8Rng::seed_from_u64(99);
-        let assignments = assign_pool(&build, &pickup, &catalog, &mut rng2, true);
+        let assignments = assign_pool(&rom, &build, &pickup, &catalog, &mut rng2, true);
 
         // Collect all assigned pool indices.
         let mut used: Vec<usize> = Vec::new();
