@@ -241,10 +241,8 @@ pub(super) fn blank_tile_for_dynamic(grid: &Grid, world_idx: usize, row: usize, 
 }
 
 fn blank_tile_from_neighbors(grid: &Grid, world_idx: usize, row: usize, col: usize) -> u8 {
-    let has_h = (col > 0 && VALID_HORZ.contains(&grid.get(row, col - 1)))
-        || (col + 1 < grid.cols && VALID_HORZ.contains(&grid.get(row, col + 1)));
-    let has_v = (row > 0 && VALID_VERT.contains(&grid.get(row - 1, col)))
-        || (row + 1 < grid.rows && VALID_VERT.contains(&grid.get(row + 1, col)));
+    let has_h = col > 0 && VALID_HORZ.contains(&grid.get(row, col - 1));
+    let has_v = row > 0 && VALID_VERT.contains(&grid.get(row - 1, col));
 
     let screen = col / 16;
     let (h, v, hv, none) = SCREEN_THEMES[world_idx][screen];
