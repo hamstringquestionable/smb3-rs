@@ -4,7 +4,6 @@
 /// lookup tables, data structures, and low-level read/write helpers — used by
 /// multiple randomization modules. The BFS map walker lives in `map_walker.rs`.
 
-use std::collections::HashMap;
 
 use crate::rom::Rom;
 
@@ -59,8 +58,6 @@ pub(super) const TILE_AIRSHIP: u8 = 0xC9;
 /// Bowser's castle tile ID.
 pub(super) const TILE_BOWSER: u8 = 0xCC;
 
-/// Lock tile ID on the overworld map.
-pub(super) const TILE_LOCK: u8 = 0x54;
 
 /// Bridge gap tile ID (horizontal path obstacle).
 #[allow(dead_code)]
@@ -74,8 +71,6 @@ pub(super) const TILE_WATER_GAP: u8 = 0x9D;
 #[allow(dead_code)]
 pub(super) const TILE_SKY_GAP: u8 = 0xE4;
 
-/// Empty node placeholder (replaces removed node tiles on grid).
-pub(super) const TILE_EMPTY_NODE: u8 = 0x47;
 
 /// Number of rows in every overworld map.
 pub(super) const ROWS: usize = 9;
@@ -277,14 +272,6 @@ impl Grid {
         self.tiles[row][col] = tile;
     }
 
-    /// Deep copy of the grid for testing lock placement scenarios.
-    pub fn clone_grid(&self) -> Grid {
-        Grid {
-            tiles: self.tiles.clone(),
-            rows: self.rows,
-            cols: self.cols,
-        }
-    }
 }
 
 /// Data that travels with a level when shuffled.
@@ -484,10 +471,12 @@ pub(super) fn dest_indices_for_world(world_idx: usize) -> Vec<usize> {
         .collect()
 }
 
+
 /// Read all pipe pairs from ROM destination tables, grouped by world.
 /// Returns a map: world_idx → Vec of ((row_a, col_a), (row_b, col_b)).
-pub(super) fn read_pipe_pairs(rom: &Rom) -> HashMap<usize, Vec<((usize, usize), (usize, usize))>> {
-    let mut pipes_by_world: HashMap<usize, Vec<_>> = HashMap::new();
+#[cfg(test)]
+pub(super) fn read_pipe_pairs(rom: &Rom) -> std::collections::HashMap<usize, Vec<((usize, usize), (usize, usize))>> {
+    let mut pipes_by_world: std::collections::HashMap<usize, Vec<_>> = std::collections::HashMap::new();
 
     for &(dest, world_idx) in DEST_TO_WORLD {
         let d = dest as usize;

@@ -6,12 +6,9 @@ pub mod levels;
 pub mod map_walker;
 pub mod node_catalog;
 pub mod overworld_build;
-#[path = "overworld_builder_old.rs"]
-pub mod overworld_builder;
 pub mod overworld_helpers;
 pub mod overworld_pickup;
 pub mod overworld_writer;
-pub mod overworld_writer_new;
 pub mod palettes;
 pub mod pipe_helpers;
 pub mod powerups;

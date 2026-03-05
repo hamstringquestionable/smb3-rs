@@ -156,7 +156,7 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         let catalog = randomize::node_catalog::NodeCatalog::build(rom);
         let pickup = randomize::overworld_pickup::pick_up(rom, &catalog);
         let build = randomize::overworld_build::build(rom, &pickup, &catalog, &mut rng);
-        randomize::overworld_writer_new::write_overworld(
+        randomize::overworld_writer::write_overworld(
             rom, &build, &pickup, &catalog, &mut rng, cross_world,
         );
     } else {

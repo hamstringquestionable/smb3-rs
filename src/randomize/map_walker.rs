@@ -48,6 +48,7 @@ pub(super) struct WalkResult {
     /// Edge graph — populated during BFS, consumed by test-only chokepoint analysis.
     #[allow(dead_code)]
     pub edges: HashMap<(usize, usize), Vec<Edge>>,
+    #[allow(dead_code)]
     pub path_tiles: HashSet<(usize, usize)>,
 }
 

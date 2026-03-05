@@ -1,6 +1,6 @@
 /// Overworld helpers: shared constants and pure lookup functions.
 ///
-/// These are stateless helpers used by `overworld_builder.rs` for tile
+/// These are stateless helpers used by the overworld builder pipeline for tile
 /// classification, gap placement, and FX pattern lookup.
 
 use super::rom_data::{Grid, TILE_AIRSHIP, TILE_BOWSER};
