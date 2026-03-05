@@ -183,6 +183,18 @@ const BIG_Q_BLOCKS: &[u8] = &[
 /// This block must NOT be randomized — flying/Tanooki is required to beat the level.
 const W7F1_TANOOKI_OFFSET: usize = 0x0C336;
 
+/// Bonus room enemy/object data range (file offsets).
+///
+/// The 8 per-world Big ? Block bonus rooms store their enemy data inside the
+/// main enemy data region (PRG006). Each bonus room contains Big ? Block enemy
+/// IDs (0x94–0x9A) that determine what powerup the player receives. These must
+/// NOT be randomized, or the bonus room powerups become scrambled.
+///
+/// The bonus room pointers (PRG026, 0x3492B) index into this contiguous block.
+/// W1 starts at file 0x0C988, W8 ends at file 0x0C9C2 (FF terminator).
+const BONUS_ROOM_DATA_START: usize = 0x0C986;
+const BONUS_ROOM_DATA_END: usize = 0x0C9C3;
+
 /// All swap classes collected for lookup.
 const ALL_CLASSES: &[&[u8]] = &[
     GROUND_ENEMIES,
@@ -260,8 +272,17 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool) {
             let file_offset = ENEMY_DATA_START + i;
 
             if big_q_only {
-                // Only randomize Big ? Blocks, skip 7-F1 Tanooki
-                if BIG_Q_BLOCKS.contains(&obj_id) && file_offset != W7F1_TANOOKI_OFFSET {
+                // Only randomize Big ? Blocks. Skip the 7-F1 Tanooki (flight
+                // required) and the bonus room data region (the bonus rooms
+                // store their own Big ? Block IDs that determine what powerup
+                // each world's bonus room gives — randomizing them scrambles
+                // the powerup the player receives).
+                let in_bonus_room =
+                    file_offset >= BONUS_ROOM_DATA_START && file_offset < BONUS_ROOM_DATA_END;
+                if BIG_Q_BLOCKS.contains(&obj_id)
+                    && file_offset != W7F1_TANOOKI_OFFSET
+                    && !in_bonus_room
+                {
                     data[i] = *BIG_Q_BLOCKS.choose(rng).unwrap();
                 }
             } else if let Some(class) = find_class(obj_id) {

@@ -2003,6 +2003,35 @@ that don't use Big ? Blocks, like W1/W2 levels), it falls back to `LDY $0727`
 Room indices are 0-indexed (matching World_Num values 0–7). W1 and W2 have no levels
 with Big ? Blocks, so they are not in the table and use the World_Num fallback.
 
+### Bonus Room Enemy Data (PRG006)
+
+The 8 per-world bonus room enemy/object data segments are stored **inside** the main
+enemy data region (PRG006, file offsets 0x0BFD8–0x0E00D). The enemy pointer table at
+0x3492B contains CPU addresses in the $C9xx range (PRG006, CPU $C000–$DFFF), which map
+to file offsets in the 0x0C9xx range.
+
+**Per-world bonus room enemy data offsets:**
+
+| World | CPU Addr | File Offset | Notes |
+|-------|----------|-------------|-------|
+| W1 | $C976 | 0x0C986 | |
+| W2 | $C978 | 0x0C988 | |
+| W3 | $C97D | 0x0C98D | |
+| W4 | $C988 | 0x0C998 | |
+| W5 | $C990 | 0x0C9A0 | |
+| W6 | $C998 | 0x0C9A8 | |
+| W7 | $C9A3 | 0x0C9B3 | |
+| W8 | $C9AB | 0x0C9BB | |
+
+Each bonus room's enemy data contains Big ? Block IDs (0x94–0x9A) that determine the
+powerup the player receives. The visual block ID placed in the level is cosmetic only —
+the actual powerup comes from this bonus room data.
+
+**Critical**: The entire range 0x0C986–0x0C9C2 must be excluded from Big ? Block
+randomization. If the randomizer scans the enemy data range for Big ? Block IDs to
+shuffle, it will find and corrupt these bonus room entries, scrambling which powerup
+each world's bonus room gives.
+
 ---
 
 ## Sources
