@@ -255,6 +255,16 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         rom.set_tag("enemies/big_q_blocks");
         randomize::enemies::randomize_big_q_blocks(rom, &mut rng);
     }
+    // Autoscroll must run BEFORE the overworld builder: the autoscroll patch
+    // writes airship pointer table redirects to hardcoded vanilla offsets.
+    // The overworld builder's resort_pointer_table() rearranges entries,
+    // displacing airships from their vanilla indices. Running autoscroll first
+    // ensures it writes to the correct entries, then the resort re-sorts
+    // everything (including the patched airship entries) into the right order.
+    if options.disable_autoscroll {
+        rom.set_tag("autoscroll");
+        randomize::autoscroll::disable_autoscroll(rom);
+    }
     // Overworld builder: unified lock shuffle, pipe shuffle, level/fortress
     // redistribution, and overworld map rewriting. When active, it handles
     // all level, fortress, airship, and pipe shuffling — bypassing levels.rs.
@@ -285,10 +295,6 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     } else if options.remove_whistles {
         rom.set_tag("items/whistles");
         randomize::items::remove_whistles_only(rom, &mut rng);
-    }
-    if options.disable_autoscroll {
-        rom.set_tag("autoscroll");
-        randomize::autoscroll::disable_autoscroll(rom);
     }
 
     // Set starting lives (default 4; user/configurable)
