@@ -64,6 +64,13 @@ pub(crate) struct PickupResult {
 /// picked-up positions.
 pub(crate) fn pick_up(rom: &Rom, catalog: &NodeCatalog) -> PickupResult {
     pick_up_filtered(rom, catalog, |entry| {
+        // Airships and Bowser stay at vanilla pointer table entries.
+        // The autoscroll patch targets their hardcoded entry_idx offsets,
+        // and blanking their grid positions would create extra build-phase
+        // slots without matching available_slots in the writer.
+        if matches!(entry.kind, NodeKind::Airship | NodeKind::Bowser) {
+            return false;
+        }
         if entry.kind.is_level_like() {
             return true;
         }
@@ -307,9 +314,11 @@ mod tests {
         let catalog = NodeCatalog::build(&rom);
         let result = pick_up(&rom, &catalog);
 
-        // 62 levels + 17 fortresses + 48 pipes + 7 airships + 1 bowser + 154 hammer bros = 289
+        // 62 levels + 17 fortresses + 48 pipes + 154 hammer bros = 281
+        // (Airships and Bowser excluded — their pointer table entries stay vanilla
+        // so the autoscroll patch's hardcoded offsets remain valid.)
         // (166 HammerBro catalog entries minus 12 with non-level pointers like toad house/bonus game)
-        assert_eq!(result.pool.len(), 289, "pool should have 289 entries (level-like + real hammer bros)");
+        assert_eq!(result.pool.len(), 281, "pool should have 281 entries (level-like + real hammer bros, no airship/bowser)");
     }
 
     #[test]

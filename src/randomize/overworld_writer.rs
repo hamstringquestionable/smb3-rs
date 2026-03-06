@@ -470,16 +470,12 @@ fn write_pointer_entries(
         all.push((pa.pool_idx_a, pa.pos_a));
         all.push((pa.pool_idx_b, pa.pos_b));
     }
-    if let Some(a) = &wa.airship {
-        all.push((a.pool_idx, a.pos));
-    }
-    if let Some(a) = &wa.bowser {
-        all.push((a.pool_idx, a.pos));
-    }
+    // Airship and bowser are not picked up — their pointer table entries
+    // stay vanilla so the autoscroll patch's hardcoded offsets remain valid.
 
     let mut slot_i = 0;
 
-    // Write level-like entries (fortress, level, pipe, airship, bowser).
+    // Write level-like entries (fortress, level, pipe).
     for &(pool_idx, pos) in &all {
         if slot_i >= available_slots.len() {
             break;
