@@ -100,11 +100,15 @@ pub(super) fn resort_pointer_table(rom: &mut Rom, world_idx: usize) {
     let obj = sc + n;
     let lay = obj + n * 2;
 
-    // InitIndex file offset for this world
+    // InitIndex file offset for this world.
+    // PRG012 is loaded at CPU $A000-$BFFF during the map screen, so the
+    // CPU addresses in the master table are in the $A000+ range.
     let init_ptr = rom_data::read_word(rom, INIT_INDEX_MASTER + world_idx * 2);
-    let init_file = 0x18010 + (init_ptr as usize - 0x8000);
+    let init_file = 0x18010 + (init_ptr as usize - 0xA000);
 
-    let num_screens = MAP_TILE_GRIDS[world_idx].screens;
+    // All worlds allocate 4 InitIndex bytes (gap between InitIndex and
+    // ByRowType pointers is always 4), regardless of actual screen count.
+    let num_screens = 4;
 
     // Read all entries
     struct SortEntry {
@@ -150,12 +154,13 @@ pub(super) fn resort_pointer_table(rom: &mut Rom, world_idx: usize) {
         rom.write_byte(lay + i * 2 + 1, e.lay_hi);
     }
 
-    // Rebuild InitIndex: one byte per screen = offset of first entry on that screen
+    // Rebuild InitIndex: one byte per screen = offset of first entry on that screen.
+    // Screens with no entries point past the end (= n) matching vanilla convention.
     for s in 0..num_screens {
         let offset = entries
             .iter()
             .position(|e| e.screen == s as u8)
-            .unwrap_or(0);
+            .unwrap_or(n);
         rom.write_byte(init_file + s, offset as u8);
     }
 }

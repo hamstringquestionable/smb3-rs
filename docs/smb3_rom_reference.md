@@ -1065,10 +1065,10 @@ Each master table entry is a 16-bit CPU address pointing to the per-world sub-ta
 in PRG012. Per-world sub-tables are contiguous: ByRowType (N bytes), ByScrCol (N bytes),
 ObjSets (N words), LevelLayouts (N words).
 
-**InitIndex sub-table structure:** Each world's `Map_ByXHi_InitIndex` sub-table has 1 byte per screen, located immediately before the `ByRowType` sub-table. Each byte is the entry index to start searching from for that screen (optimization so the game doesn't scan the entire table). Must be recomputed if entries are reordered within a world.
+**InitIndex sub-table structure:** Each world's `Map_ByXHi_InitIndex` sub-table is **always 4 bytes** (the gap between InitIndex and ByRowType CPU pointers is always 4), located immediately before the `ByRowType` sub-table. Each byte is the entry index to start searching from for that screen (optimization so the game doesn't scan the entire table). Screens beyond the world's actual screen count use the entry count N as a sentinel (= "no entries"). Must be recomputed if entries are reordered within a world.
 
-Example — W1 InitIndex (2 screens): `00 15` (screen 0 starts at entry 0, screen 1 at entry 21).
-Example — W3 InitIndex (4 screens): `00 1B 2F 34` (screens 0–3 start at entries 0, 27, 47, 52).
+Example — W1 InitIndex (1 screen, 4 bytes): `00 15 15 15` (screen 0 at entry 0, screens 1-3 sentinel=21).
+Example — W3 InitIndex (3 screens, 4 bytes): `00 1B 2F 34` (screens 0–2 at entries 0, 27, 47; screen 3 sentinel=52).
 
 **Per-world sub-table locations:**
 
@@ -1464,6 +1464,23 @@ The code runs after the king's room cinematic (wand return) when a world boss is
 **Free space for patches:** PRG030 has unused space at **0x3DF20–0x3DF4F** (CPU $9F10–$9F3F), 48 bytes of $FF.
 
 World BGM table (PRG030): file offset **0x3C424**, 9 bytes (worlds 1-8 + warp whistle): `01 02 03 04 05 06 07 08 0B`
+
+#### Autoscroll / Pointer Table Resort Ordering
+
+The autoscroll patch writes airship pointer table redirects (ByRowType, ObjSets,
+LevelLayouts) to **hardcoded vanilla offsets** for each world's airship entry. The
+overworld builder's `resort_pointer_table()` rearranges pointer table entries by sort
+key `(screen, row_nib, col)`, which can displace airship entries from their vanilla
+indices.
+
+**Critical ordering requirement:** The autoscroll patch must run **before** the
+overworld builder. If it runs after, the resort may have moved airship entries to
+different indices, and the autoscroll patch overwrites the wrong entries — corrupting
+non-airship levels and leaving actual airship entries unpatched. This causes crashes
+(reset to title screen) after beating airships.
+
+Running autoscroll first writes to the correct vanilla offsets, then the resort
+correctly re-sorts everything (including the patched airship entries) into sort order.
 
 #### World Order Debug Flag Fix
 
@@ -1925,8 +1942,10 @@ The InitIndex master table at `0x193DA` contains 9 word pointers (8 worlds + war
 To compute the InitIndex file offset for a world:
 ```
 init_ptr = read_word(rom, 0x193DA + world_idx * 2)
-init_file = 0x18010 + (init_ptr - 0x8000)
+init_file = 0x18010 + (init_ptr - 0xA000)
 ```
+
+**Important:** PRG012 is loaded at CPU `$A000-$BFFF` during the map screen, so the CPU addresses in the master table are in the `$A000+` range. The file offset formula uses `- 0xA000`, NOT `- 0x8000`. Each sub-table is always 4 bytes; unused screens (beyond the world's actual screen count) should be set to N (entry count) as a sentinel.
 
 ### Map Walker Movement Model
 

@@ -291,12 +291,22 @@ fn assign_pool<R: Rng>(
         };
 
         // --- Hammer bro assignments (remaining blank slots) ---
+        //
+        // Budget: total pointer table entries used (fort + level + pipe*2 + HB)
+        // must not exceed available pointer table slots from pickup.
+        let level_like_count = fortress.len() + level.len() + pipes.len() * 2;
+        let available_ptr_slots = pickup.worlds[wi].pool_indices.len();
+        let hb_budget = available_ptr_slots.saturating_sub(level_like_count);
+
         let mut hammer_bro = Vec::new();
         let mut hb_world_pool = hb_pool_by_world.remove(&wi).unwrap_or_default();
         hb_world_pool.as_mut_slice().shuffle(rng);
         let mut hb_iter = hb_world_pool.into_iter();
 
         for slot in &built.slots {
+            if hammer_bro.len() >= hb_budget {
+                break;
+            }
             if slot.kind != SlotKind::HammerBro {
                 continue;
             }
@@ -311,9 +321,12 @@ fn assign_pool<R: Rng>(
         }
 
         // Any remaining HB pool entries that didn't get a slot (e.g., BFS
-        // unreachable positions) still need pointer table assignments. Place
-        // them at their vanilla grid positions.
+        // unreachable positions) still need pointer table assignments, but
+        // only if we have budget remaining.
         for pi in hb_iter {
+            if hammer_bro.len() >= hb_budget {
+                break;
+            }
             let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
             let le = hb_level_iter.next().unwrap();
             hammer_bro.push(HammerBroAssignment {
@@ -473,6 +486,14 @@ fn write_pointer_entries(
     // Airship and bowser are not picked up — their pointer table entries
     // stay vanilla so the autoscroll patch's hardcoded offsets remain valid.
 
+    debug_assert!(
+        all.len() + wa.hammer_bro.len() <= available_slots.len(),
+        "W{}: slot overflow: need {} but only {} available",
+        world_idx + 1,
+        all.len() + wa.hammer_bro.len(),
+        available_slots.len(),
+    );
+
     let mut slot_i = 0;
 
     // Write level-like entries (fortress, level, pipe).
@@ -518,6 +539,18 @@ fn write_pointer_entries(
 
         rom.write_byte(rt + entry_idx, (row_nib << 4) | (hb.level_entry.tileset & 0x0F));
         rom.write_byte(sc + entry_idx, (screen << 4) | col_in_screen);
+    }
+
+    // Clear any remaining unused pointer table slots. These are entries that
+    // were picked up (vacating a slot) but not reassigned because the world
+    // has more pointer table entries than placeable grid positions. Set their
+    // ByRowType row nibble to 0 (row -2, unreachable) so they can never
+    // match a player position after resort_pointer_table re-sorts them.
+    while slot_i < available_slots.len() {
+        let entry_idx = available_slots[slot_i];
+        slot_i += 1;
+        rom.write_byte(rt + entry_idx, 0x00);
+        rom.write_byte(sc + entry_idx, 0x00);
     }
 }
 
@@ -761,15 +794,27 @@ mod tests {
             }
         }
 
+        // No pool entry assigned more than once.
+        let total_used = used.len();
         used.sort();
         used.dedup();
         assert_eq!(
             used.len(),
-            pickup.pool.len(),
-            "every pool entry must be assigned exactly once: assigned {} of {}",
-            used.len(),
-            pickup.pool.len(),
+            total_used,
+            "duplicate pool assignments detected",
         );
+
+        // Per-world assignment count must not exceed available pointer table slots.
+        for (wi, wa) in assignments.iter().enumerate() {
+            let level_like = wa.fortress.len() + wa.level.len() + wa.pipes.len() * 2;
+            let total = level_like + wa.hammer_bro.len();
+            let available = pickup.worlds[wi].pool_indices.len();
+            assert!(
+                total <= available,
+                "W{}: {} assignments exceed {} available pointer table slots",
+                wi + 1, total, available,
+            );
+        }
     }
 
     #[test]

@@ -131,10 +131,12 @@ pub(crate) fn build<R: Rng>(
     // Step 0: redistribute fortresses
     let fort_counts = redistribute_fortresses(rng);
 
-    // Pre-compute available blank slots per world so we can distribute
-    // levels proportionally. Restore airship/Bowser tiles first (they were
-    // blanked in pickup) and exclude only toad houses + floating sprite
-    // positions — all other blank tiles are valid placement slots.
+    // Pre-compute available level slots per world. Two constraints apply:
+    // 1. Grid blanks: number of blank node tiles on the map (visual capacity).
+    // 2. Pointer table slots: entries vacated during pickup (ROM capacity).
+    // The tighter constraint wins — assigning more entries than pointer table
+    // slots causes blank screens because write_pointer_entries runs out of
+    // slots to write to.
     let mut capacities = [0usize; 8];
     for wi in 0..8 {
         let mut grid = patched_worlds[wi].grid.clone();
@@ -153,7 +155,13 @@ pub(crate) fn build<R: Rng>(
         let fixed = fixed_positions_for_world(rom, catalog, wi);
         let pipe_endpoints = VANILLA_PIPE_PAIRS[wi] * 2;
         let blanks = count_blank_tiles(&grid, &fixed);
-        capacities[wi] = blanks.saturating_sub(pipe_endpoints + fort_counts[wi]);
+        let grid_capacity = blanks.saturating_sub(pipe_endpoints + fort_counts[wi]);
+
+        // Cap by available pointer table slots from pickup.
+        let ptr_slots = pickup.worlds[wi].pool_indices.len();
+        let ptr_capacity = ptr_slots.saturating_sub(pipe_endpoints + fort_counts[wi]);
+
+        capacities[wi] = grid_capacity.min(ptr_capacity);
     }
 
     // Distribute VANILLA_LEVEL_COUNT levels across worlds proportionally to capacity.
@@ -161,6 +169,13 @@ pub(crate) fn build<R: Rng>(
 
     let mut worlds = Vec::with_capacity(8);
     for wi in 0..8 {
+        // Max non-pipe slots = pointer table slots minus pipe endpoints.
+        // This caps the total fort+level+HB entries to what the pointer table
+        // can actually hold. Excess blank tiles stay as path nodes.
+        let ptr_slots = pickup.worlds[wi].pool_indices.len();
+        let pipe_endpoints = VANILLA_PIPE_PAIRS[wi] * 2;
+        let max_non_pipe_slots = ptr_slots.saturating_sub(pipe_endpoints);
+
         let built = build_world(
             wi,
             rom,
@@ -169,6 +184,7 @@ pub(crate) fn build<R: Rng>(
             fort_counts[wi],
             level_counts[wi],
             VANILLA_PIPE_PAIRS[wi],
+            max_non_pipe_slots,
             rng,
         );
         worlds.push(built);
@@ -317,6 +333,7 @@ fn build_world<R: Rng>(
     fort_count: usize,
     level_count: usize,
     pipe_pair_count: usize,
+    max_non_pipe_slots: usize,
     rng: &mut R,
 ) -> BuiltWorld {
     let mut grid = cleared.grid.clone();
@@ -382,7 +399,27 @@ fn build_world<R: Rng>(
     );
 
     // Step 3: Populate sections
-    let slots = populate_sections(&sections, fort_count, level_count, &pipe_positions, rng);
+    let mut slots = populate_sections(&sections, fort_count, level_count, &pipe_positions, rng);
+
+    // Cap total slots to what the pointer table can hold. Forts and levels
+    // are already within budget (capped during capacity calculation); any
+    // excess is purely HammerBro slots from blank tiles that have no
+    // corresponding pointer table entry. Drop the farthest HB slots.
+    if slots.len() > max_non_pipe_slots {
+        // Keep all non-HB slots, then fill remaining budget with HB slots.
+        let mut kept: Vec<SlotAssignment> = Vec::with_capacity(max_non_pipe_slots);
+        let mut hb_slots: Vec<SlotAssignment> = Vec::new();
+        for s in slots {
+            if s.kind != SlotKind::HammerBro {
+                kept.push(s);
+            } else {
+                hb_slots.push(s);
+            }
+        }
+        let hb_budget = max_non_pipe_slots.saturating_sub(kept.len());
+        kept.extend(hb_slots.into_iter().take(hb_budget));
+        slots = kept;
+    }
 
     // Step 4: Lock placement
     let locks = place_locks(
