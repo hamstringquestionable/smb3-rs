@@ -894,7 +894,7 @@ Tileset index → PRG bank at $A000 (level data) and $C000 (tileset code).
 
 **Tile grid pointer table:** 9 × 2-byte little-endian CPU pointers at file offset **0x185A8** (CPU $A598, PRG012). Each points to a world's tile grid data. Entry 9 is the Warp Zone.
 
-**Storage format:** Row-major per screen (confirmed from `Map_Reload_with_Completions` in prg012.asm). Each screen is a 144-byte block of 9 rows × 16 columns, stored row-major (16 consecutive bytes per row). Multi-screen worlds have consecutive 144-byte blocks. A `0xFF` terminator byte follows each world's grid data. Total tile data spans **0x185BA–0x19101** (~2.9 KB).
+**Storage format:** Row-major per screen (confirmed from `Map_Reload_with_Completions` in prg012.asm). Each screen is a 144-byte block of 9 rows × 16 columns, stored row-major (16 consecutive bytes per row). Multi-screen worlds have consecutive 144-byte blocks. A `0xFF` terminator byte follows each world's grid data. Total tile data spans **0x185BA–0x19102** (~2.9 KB).
 
 The loading code copies each 144-byte screen block with a sequential `LDA [src],Y / STA [dst],Y` loop (Y = 0..143), then advances the destination pointer by $1B0 for the next screen (the gap accommodates unused vertical space in tile memory).
 
@@ -1034,7 +1034,9 @@ Pointer tables indexed by World_Num (8 entries each):
 
 ### Free Space (PRG012)
 
-**0x19101–0x193D9** (729 bytes): Gap between overworld tile grid data (ends at 0x19100 with 0xFF terminator) and the InitIndex master pointer table (starts at 0x193DA). The randomizer stamps a 16-byte identification block at **0x19101**:
+**0x19103–0x193D9**: Region between overworld tile grid data and the InitIndex master pointer table (starts at 0x193DA). **WARNING:** 0x19103–0x1910F contains a tile lookup table, and 0x19110+ contains active map screen code (level-entry logic: `ROL $07`, `LDA $073C,X`, etc.). This is NOT free space — writing here corrupts the map screen and crashes on level entry.
+
+**0x19DD0–0x19FFF** (560 bytes): Free space after overworld tile/code region. The Big ? Block trampoline uses 0x19DD0–0x19DE1 (18 bytes). The randomizer stamps a 16-byte identification block at **0x19DF0**:
 
 | Offset | Size | Content |
 |--------|------|---------|
@@ -1043,7 +1045,7 @@ Pointer tables indexed by World_Num (8 entries each):
 | +4 | 4 | Flag key bytes (encoded Options) |
 | +8 | 8 | Seed (little-endian u64) |
 
-**0x19DD0–0x19DE7** (24 bytes): Used by Big ? Block trampoline (see below).
+**Note:** The Big ? Block trampoline and flag stamp both live in this region.
 
 **0x35530–0x35592** (99 bytes): Used by Big ? Block lookup routine (PRG026).
 
