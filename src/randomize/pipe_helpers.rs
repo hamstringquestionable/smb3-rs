@@ -7,7 +7,7 @@
 use crate::rom::Rom;
 
 use super::rom_data::{
-    self, MAP_TILE_GRIDS, PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, WORLDS,
+    self, PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, WORLDS,
 };
 
 // ---------------------------------------------------------------------------

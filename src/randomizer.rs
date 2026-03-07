@@ -77,8 +77,9 @@ fn default_true() -> bool {
 
 const FLAG_KEY_VERSION: u8 = 1;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
-/// Free space in PRG012 between overworld tile data and master pointer tables.
-const STAMP_OFFSET: usize = 0x19101;
+/// Free space in PRG012 after the Big ? Block trampoline (0x19DD0 region).
+/// The trampoline uses 0x19DD0–0x19DE1; we place the 16-byte stamp at 0x19DF0.
+const STAMP_OFFSET: usize = 0x19DF0;
 
 impl Options {
     /// Encode options into 4 raw bytes.

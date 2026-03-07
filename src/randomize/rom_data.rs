@@ -108,6 +108,7 @@ pub(super) const DEST_TO_WORLD: &[(u8, usize)] = &[
 pub(super) struct MapGridInfo {
     pub file_offset: usize,
     pub columns: usize,
+    #[allow(dead_code)]
     pub screens: usize,
 }
 
