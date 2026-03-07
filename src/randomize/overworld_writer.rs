@@ -120,7 +120,10 @@ pub(crate) fn write_overworld<R: Rng>(
         write_fortress_fx(rom, wi, built, wa, pickup, catalog, &mut fx_slot);
         write_pipe_dests(rom, wa);
         pipe_helpers::resort_pointer_table(rom, wi);
-        rom_data::sync_map_object_positions(rom, wi);
+        // Do not sync map object sprite positions: the overworld builder never
+        // moves MapObject entries (W7 piranhas), so vanilla sprite positions are
+        // correct.  The sync function uses fixed indices that become invalid
+        // after resort_pointer_table, causing sprites to jump to wrong tiles.
     }
 
     write_w8_sprites(rom, &w8_sprite_positions);

@@ -556,34 +556,6 @@ fn map_obj_slot_offset(rom: &Rom, master_table: usize, world_idx: usize, slot: u
     0x16010 + (cpu - 0xA000) + slot
 }
 
-/// Sync overworld map object sprite positions to their pointer table entries.
-///
-/// After pipe shuffling moves pointer table entries around, floating sprites
-/// (like W7 piranha plants) still sit at their original pixel positions.
-/// This reads each linked entry's current grid position from the pointer table
-/// and writes the corresponding pixel coordinates into the map object tables.
-pub(super) fn sync_map_object_positions(rom: &mut Rom, world_idx: usize) {
-    let world = &WORLDS[world_idx];
-
-    for &(wi, slot, entry_idx) in MAP_OBJ_ENTRY_LINKS {
-        if wi != world_idx {
-            continue;
-        }
-        let (grid_row, grid_col) = entry_grid_position(rom, world, entry_idx);
-
-        let y = ((grid_row + 2) * 16) as u8;
-        let xhi = (grid_col / 16) as u8;
-        let xlo = ((grid_col % 16) * 16) as u8;
-
-        let y_off = map_obj_slot_offset(rom, MAP_OBJ_YS_MASTER, world_idx, slot);
-        let xhi_off = map_obj_slot_offset(rom, MAP_OBJ_XHIS_MASTER, world_idx, slot);
-        let xlo_off = map_obj_slot_offset(rom, MAP_OBJ_XLOS_MASTER, world_idx, slot);
-
-        rom.write_byte(y_off, y);
-        rom.write_byte(xhi_off, xhi);
-        rom.write_byte(xlo_off, xlo);
-    }
-}
 
 /// Write a map object sprite's position to the map object tables.
 ///
