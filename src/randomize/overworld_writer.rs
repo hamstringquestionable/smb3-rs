@@ -722,7 +722,31 @@ fn pipe_ab_order(
     let idx0 = group[0];
     let idx1 = group[1];
 
-    // Read layout byte5 for group[0] to check bit 6.
+    // Determine which entry has PIPEWAYCONTROLLER (enemy 0x25).
+    let has_pwc: Vec<bool> = group.iter().map(|&idx| {
+        let pe = &pickup.pool[idx];
+        let ce = &catalog.entries[pe.catalog_idx];
+        ce.level_entry.as_ref().is_some_and(|le| {
+            let obj_ptr = u16::from_le_bytes([le.obj_lo, le.obj_hi]);
+            rom_data::has_enemy_id(rom, obj_ptr, 0x25)
+        })
+    }).collect();
+
+    // Mixed pair (one has PWC, one doesn't) — e.g. W5 spiral castle.
+    // The PWC entry goes to pos_a (upper nibble).  When entering from
+    // the pipe tile, the transit level's sub-area 0 reads the lower
+    // nibble to exit to the non-PWC side.  From the non-PWC level,
+    // a junction enters a later sub-area that reads the upper nibble
+    // to exit back to the PWC side.
+    if has_pwc[0] && !has_pwc[1] {
+        return (idx0, idx1);
+    }
+    if has_pwc[1] && !has_pwc[0] {
+        return (idx1, idx0);
+    }
+
+    // Regular pipe pair (both share an obj_ptr and have PWC).
+    // Use layout byte5 bit 6: A-side (bit6=0) → pos_a (upper nibble).
     let pe = &pickup.pool[idx0];
     let ce = &catalog.entries[pe.catalog_idx];
     if let Some(le) = &ce.level_entry {
@@ -730,11 +754,9 @@ fn pipe_ab_order(
         if let Some(file_off) = rom_data::layout_file_offset(lay_ptr, le.tileset) {
             let byte5 = rom.read_byte(file_off + 5);
             if byte5 & 0x40 == 0 {
-                // group[0] is A-side
-                return (idx0, idx1);
+                return (idx0, idx1); // group[0] is A-side
             } else {
-                // group[0] is B-side, swap
-                return (idx1, idx0);
+                return (idx1, idx0); // group[0] is B-side, swap
             }
         }
     }
