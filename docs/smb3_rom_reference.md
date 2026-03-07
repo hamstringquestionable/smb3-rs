@@ -1252,6 +1252,63 @@ Where `grid_row = (FortressFX_MapLocationRow >> 4) - 2` and `col_in_screen = col
 The screen number does not factor into the VRAM address because the game only renders
 one screen at a time — the FX triggers on whichever screen is currently displayed.
 
+**Cross-screen FX animation bug (patched by randomizer):**
+
+In vanilla, each fortress and its lock/bridge are always on the same screen. When the
+player beats a fortress and returns to the map, the camera shows the fortress screen,
+which is also the lock screen, so the VRAM pattern write and poof sprites land on the
+correct tiles.
+
+When fortress/lock positions are shuffled, the lock can end up on a different screen.
+The `MO_DoFortressFX` routine (CPU $C8A9 in PRG010) does NOT scroll to the lock's
+screen before animating — it writes VRAM patterns and places sprites relative to the
+currently displayed screen. This causes two visual artifacts:
+
+1. VRAM patterns written to nametable tiles that belong to the fortress's screen, not
+   the lock's screen (wrong tile modified on screen).
+2. Poof sprites placed at the lock's `col_in_screen` position on the wrong screen.
+
+The map DATA update (replacement tile via screen pointer table + `Map_Completions`)
+is NOT screen-relative and always works correctly. So the correct tile IS placed at
+the lock position; the visual animation is what goes wrong.
+
+**Fix:** Hook 3 bytes at file 0x148F6 (CPU $C8E6) to `JMP $D544` (PRG010 free
+space at file 0x15554). Custom code compares the lock's screen number
+(`FortressFX_MapLocation & 0x0F`) with ZP $12 (current scroll screen high byte,
+updated alongside $FD in the map scroll routine at $C447/$C450). If they match,
+the full animation plays normally. If they differ, `$20` is set to 6 (last animation
+frame) and execution jumps to $C952 (Map_Completions update), skipping the VRAM
+write and abbreviating the poof to a single frame.
+
+**`MO_DoFortressFX` flow (CPU $C8A9, PRG010 bank at $C000):**
+
+1. If `$20` ≠ 0: jump to animation loop at $C9A4 (continue existing animation).
+2. If `$0745` (`Map_DoFortressFX`) = 0: nothing to do, exit.
+3. Init fortress crumble timer `$0711` = $20 (32 frames). Each frame calls $C9D6
+   which toggles CHR bank ($16 between $18/$19) and decrements $0711. No scrolling.
+4. When `$0711` reaches 0: decrement `$0745`, look up FX slot via
+   `FortressFXBase_ByWorld[World_Num] + $0745` → `FortressFX_W1[$slot]`.
+5. Set `$20` = 1 (animation start), then:
+   - $C8EA–$C94F: Write VRAM patterns to PPU buffer ($0300+) at FX_VAddr address.
+   - $C952–$C9A2: Update `Map_Completions`, write replacement tile to map data via
+     screen pointer table at $8000.
+   - $C9A4–$C9C6: Animation frame loop — every 4 game frames, INC `$20`. When
+     `$20` = 7, animation done. Poof sprites via `DoFortressFXPoof` ($ABCF).
+
+**Scroll state variables during map screen:**
+
+| Address | Name | Description |
+|---------|------|-------------|
+| $FD | Map_Scroll_X | PPU horizontal scroll (0–255), written to $2005 |
+| $12 | Map_Scroll_XHi | Scroll screen / page number (0–3), updated with $FD |
+| $FC | Map_Scroll_Y | PPU vertical scroll, written to $2005 (second write) |
+
+**PRG010 free space usage (file 0x15554 / CPU $D544):**
+
+| Offset | Size | Purpose |
+|--------|------|---------|
+| 0x15554 | 26 | FX screen-check patch (JMP target from $C8E6) |
+
 **`FortressFX_MapLocationRow` encoding:** `(grid_row + 2) << 4`
 
 **`FortressFX_MapLocation` encoding:** `(col_in_screen << 4) | screen`

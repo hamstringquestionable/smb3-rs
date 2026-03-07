@@ -124,6 +124,7 @@ pub(crate) fn write_overworld<R: Rng>(
     }
 
     write_w8_sprites(rom, &w8_sprite_positions);
+    patch_fortress_fx_screen_check(rom);
 }
 
 // ---------------------------------------------------------------------------
@@ -644,6 +645,61 @@ fn write_fortress_fx(
         for (j, &b) in patterns.iter().enumerate() {
             rom.write_byte(pat_off + j, b);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Step 4b: FX screen-check patch (6502)
+// ---------------------------------------------------------------------------
+
+/// Patches the MO_DoFortressFX engine routine so the lock-breaking visual
+/// animation (VRAM pattern write + poof sprites) is skipped when the lock is
+/// on a different screen than the currently displayed one.
+///
+/// In vanilla the fortress and its lock are always on the same screen, so the
+/// animation plays correctly.  When we shuffle fortress/lock positions, the
+/// lock can end up on a different screen.  Because the VRAM write and sprite
+/// positions are screen-relative, playing the animation on the wrong screen
+/// causes a visual glitch (tile placed at wrong spot + poof on wrong screen).
+///
+/// The map-data replacement (tile + Map_Completions) is NOT screen-relative
+/// and always works correctly, so we only need to skip the visual part.
+///
+/// Hook: replace 3 bytes at file 0x148F6 (CPU $C8E6):
+///   vanilla: A9 01 85  (LDA #$01 / STA $20[hi])
+///   patched: 4C 44 D5  (JMP $D544)
+///
+/// Custom code at file 0x15554 (CPU $D544, PRG010 free space):
+///   Check FortressFX_MapLocation[slot] screen vs ZP $12 (scroll screen).
+///   Same screen  → LDA #$01, STA $20, JMP $C8EA (normal animation).
+///   Diff screen  → LDA #$06, STA $20, JMP $C952 (skip animation, data-only).
+fn patch_fortress_fx_screen_check(rom: &mut Rom) {
+    // --- Hook at $C8E6 ---
+    const HOOK_OFFSET: usize = 0x148F6; // file offset of CPU $C8E6
+    rom.write_byte(HOOK_OFFSET, 0x4C);     // JMP
+    rom.write_byte(HOOK_OFFSET + 1, 0x44); // lo($D544)
+    rom.write_byte(HOOK_OFFSET + 2, 0xD5); // hi($D544)
+
+    // --- Custom code at $D544 (file 0x15554) ---
+    const CODE_OFFSET: usize = 0x15554;
+    #[rustfmt::skip]
+    let code: &[u8] = &[
+        0xAC, 0x45, 0x07,       // +0:  LDY $0745         ; FX slot
+        0xB9, 0x56, 0xC8,       // +3:  LDA $C856,Y       ; FortressFX_MapLocation
+        0x29, 0x0F,             // +6:  AND #$0F           ; screen number (0-3)
+        0xC5, 0x12,             // +8:  CMP $12            ; current scroll screen
+        0xF0, 0x07,             // +10: BEQ +7 (→ +19)     ; same screen → animate
+        // Different screen: skip visual animation, do data-only update.
+        0xA9, 0x06,             // +12: LDA #$06
+        0x85, 0x20,             // +14: STA $20
+        0x4C, 0x52, 0xC9,       // +16: JMP $C952          ; → Map_Completions update
+        // Same screen: play full animation.
+        0xA9, 0x01,             // +19: LDA #$01
+        0x85, 0x20,             // +21: STA $20
+        0x4C, 0xEA, 0xC8,       // +23: JMP $C8EA          ; → normal FX flow
+    ];
+    for (i, &b) in code.iter().enumerate() {
+        rom.write_byte(CODE_OFFSET + i, b);
     }
 }
 
