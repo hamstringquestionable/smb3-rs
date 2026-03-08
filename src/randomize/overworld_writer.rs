@@ -324,21 +324,11 @@ fn assign_pool<R: Rng>(
             }
         }
 
-        // Any remaining HB pool entries that didn't get a slot (e.g., BFS
-        // unreachable positions) still need pointer table assignments, but
-        // only if we have budget remaining.
-        for pi in hb_iter {
-            if hammer_bro.len() >= hb_budget {
-                break;
-            }
-            let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
-            let le = hb_level_iter.next().unwrap();
-            hammer_bro.push(HammerBroAssignment {
-                pool_idx: pi,
-                pos: ce.grid_pos,
-                level_entry: le,
-            });
-        }
+        // Remaining HB pool entries that didn't get a slot are NOT assigned.
+        // Their pointer table slots are cleared to unreachable positions by
+        // the "clear unused slots" code in write_pointer_entries.  Writing
+        // them at their original catalog positions would create duplicate
+        // entries when the builder has placed a new level at that position.
 
         assignments.push(WorldAssignments {
             fortress,

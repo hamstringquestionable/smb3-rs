@@ -1417,8 +1417,13 @@ collectively block ALL forts. Each lock scored in isolation may block one fort, 
 chosen locks still allows at least one fort to be reached, and that a valid beat→open
 progression exists.
 
-**MAP_COMPLETE_BITS coverage:** Only grid rows 0–7 have completion bits. Row 8 has no
-bit (`0x00`), so locks placed at row 8 won't persist across map reloads.
+**MAP_COMPLETE_BITS coverage:** The LUT has 8 entries mapping rows 0–7 to bits 7–0.
+Row 8 is clamped to row 7 via `.min(7)`, so both rows 7 and 8 map to bit 0 (`0x01`).
+In the game's `Map_Completions` encoding, bit 0 represents row 8 (row 7 is skipped).
+This means locks placed at row 7 set the same completion bit as row 8, falsely
+completing any level at row 8 in the same column. **The randomizer prevents lock
+placement at row 7 to avoid this collision.** Locks at row 8 work correctly because
+bit 0 genuinely represents row 8 in the game's encoding.
 
 **Vanilla FX positions:** Bridges ($56), water gaps ($9D), and sky gaps ($E4) should only
 appear at the 13 vanilla FX positions. Locks ($54) can be placed on any path tile.

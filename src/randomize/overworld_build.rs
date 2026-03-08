@@ -908,6 +908,12 @@ fn place_locks<R: Rng>(
             for c in 0..reference_grid.cols {
                 let tile = reference_grid.get(r, c);
                 if LOCKABLE_TILES.contains(&tile) && !locked_tiles.contains(&(r, c)) {
+                    // Row 7 shares its Map_Completions bit (0x01) with row 8.
+                    // A lock at row 7 would corrupt level completion at row 8
+                    // in the same column.  Skip row 7 entirely.
+                    if r == 7 {
+                        continue;
+                    }
                     candidates.push((r, c));
                 }
             }
