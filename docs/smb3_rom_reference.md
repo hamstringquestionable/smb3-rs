@@ -1273,12 +1273,16 @@ is NOT screen-relative and always works correctly. So the correct tile IS placed
 the lock position; the visual animation is what goes wrong.
 
 **Fix:** Hook 3 bytes at file 0x148F6 (CPU $C8E6) to `JMP $D544` (PRG010 free
-space at file 0x15554). Custom code compares the lock's screen number
-(`FortressFX_MapLocation & 0x0F`) with ZP $12 (current scroll screen high byte,
-updated alongside $FD in the map scroll routine at $C447/$C450). If they match,
-the full animation plays normally. If they differ, `$20` is set to 6 (last animation
-frame) and execution jumps to $C952 (Map_Completions update), skipping the VRAM
-write and abbreviating the poof to a single frame.
+space at file 0x15554, 39 bytes). Custom code checks whether the lock is on a
+visible screen by comparing `FortressFX_MapLocation[slot] & 0x0F` (lock screen)
+against the current viewport state. The map scrolls in 128-pixel half-screen
+steps: `$12` (Map_Scroll_XHi) is the scroll page and `$FD` (Map_Scroll_X) is
+either 0 or 128. When `$FD=128`, the viewport straddles two grid screens. The
+lock is considered visible if `lock_screen == $12`, OR if `lock_screen == $12+1`
+AND `$FD >= $80`. If visible, the full animation plays normally. If not visible,
+`$20` is set to 6 (last animation frame) and execution jumps to $C952
+(Map_Completions update), skipping the VRAM write and abbreviating the poof to
+a single frame.
 
 **`MO_DoFortressFX` flow (CPU $C8A9, PRG010 bank at $C000):**
 
@@ -1307,7 +1311,7 @@ write and abbreviating the poof to a single frame.
 
 | Offset | Size | Purpose |
 |--------|------|---------|
-| 0x15554 | 26 | FX screen-check patch (JMP target from $C8E6) |
+| 0x15554 | 39 | FX screen-check patch (JMP target from $C8E6) |
 
 **`FortressFX_MapLocationRow` encoding:** `(grid_row + 2) << 4`
 
