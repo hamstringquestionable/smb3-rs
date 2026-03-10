@@ -682,7 +682,8 @@ fn patch_fortress_fx_screen_check(rom: &mut Rom) {
 
     // --- Custom code at $D544 (file 0x15554) ---
     // Lock is visible if lock_screen == $12, OR if lock_screen == $12+1
-    // and $FD >= $80 (half-screen scroll straddles two grid screens).
+    // AND $FD >= $80 AND col_in_screen < 8 (only left half of next screen
+    // is visible when the viewport straddles two grid screens).
     const CODE_OFFSET: usize = 0x15554;
     #[rustfmt::skip]
     let code: &[u8] = &[
@@ -693,22 +694,27 @@ fn patch_fortress_fx_screen_check(rom: &mut Rom) {
         // Check: lock_screen == $12?
         0xC5, 0x12,             // +8:  CMP $12            ; current scroll page
         0xF0, 0x14,             // +10: BEQ +20 (→ +32)    ; match → animate
-        // Check: lock_screen == $12 + 1 AND $FD >= 128?
+        // Check: lock_screen == $12 + 1?
         0x38,                   // +12: SEC
         0xE5, 0x12,             // +13: SBC $12            ; A = lock_screen - $12
         0xC9, 0x01,             // +15: CMP #$01           ; exactly 1 screen ahead?
-        0xD0, 0x06,             // +17: BNE +6 (→ +25)     ; no → skip
+        0xD0, 0x14,             // +17: BNE +20 (→ +39)    ; no → skip
+        // Check: $FD >= 128? (half-screen offset active)
         0xA5, 0xFD,             // +19: LDA $FD            ; Map_Scroll_X
         0xC9, 0x80,             // +21: CMP #$80           ; >= 128?
-        0xB0, 0x07,             // +23: BCS +7 (→ +32)     ; yes → animate
-        // Skip: different screen, data-only update.
-        0xA9, 0x06,             // +25: LDA #$06           ; (also BNE +17 target)
-        0x85, 0x20,             // +27: STA $20
-        0x4C, 0x52, 0xC9,       // +29: JMP $C952          ; → Map_Completions update
+        0x90, 0x0E,             // +23: BCC +14 (→ +39)    ; no → skip
+        // Check: col_in_screen < 8? (only left half of next screen visible)
+        0xB9, 0x56, 0xC8,       // +25: LDA $C856,Y       ; reload FortressFX_MapLocation
+        0x29, 0x80,             // +28: AND #$80           ; bit 7 = col_in_screen >= 8
+        0xD0, 0x07,             // +30: BNE +7 (→ +39)     ; col >= 8 → off right edge → skip
         // Animate: play full animation.
-        0xA9, 0x01,             // +32: LDA #$01           ; (BEQ +10 / BCS +23 target)
+        0xA9, 0x01,             // +32: LDA #$01           ; (BEQ +10 target)
         0x85, 0x20,             // +34: STA $20
         0x4C, 0xEA, 0xC8,       // +36: JMP $C8EA          ; → normal FX flow
+        // Skip: different screen, data-only update.
+        0xA9, 0x06,             // +39: LDA #$06           ; (BNE/BCC targets)
+        0x85, 0x20,             // +41: STA $20
+        0x4C, 0x52, 0xC9,       // +43: JMP $C952          ; → Map_Completions update
     ];
     for (i, &b) in code.iter().enumerate() {
         rom.write_byte(CODE_OFFSET + i, b);
