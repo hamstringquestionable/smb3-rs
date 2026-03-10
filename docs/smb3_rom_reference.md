@@ -1311,7 +1311,7 @@ a single frame.
 
 | Offset | Size | Purpose |
 |--------|------|---------|
-| 0x15554 | 39 | FX screen-check patch (JMP target from $C8E6) |
+| 0x15554 | 46 | FX screen-check patch (JMP target from $C8E6) |
 
 **`FortressFX_MapLocationRow` encoding:** `(grid_row + 2) << 4`
 
