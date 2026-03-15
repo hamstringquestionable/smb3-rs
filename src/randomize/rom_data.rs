@@ -618,3 +618,38 @@ pub(super) fn read_map_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usi
 
     positions
 }
+
+/// Read grid positions of hammer bro sprites only (IDs 0x03–0x06).
+///
+/// These positions need HB level pointer entries even though they are excluded
+/// from level/fort/pipe placement by `fixed_positions`.
+pub(super) fn read_hb_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
+    const MAP_OBJ_IDS_MASTER: usize = 0x16050;
+    let mut positions = Vec::new();
+
+    for slot in 0..9 {
+        let id_off = map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot);
+        let id = rom.read_byte(id_off);
+        if !(0x03..=0x06).contains(&id) {
+            continue;
+        }
+
+        let y_off = map_obj_slot_offset(rom, MAP_OBJ_YS_MASTER, world_idx, slot);
+        let xhi_off = map_obj_slot_offset(rom, MAP_OBJ_XHIS_MASTER, world_idx, slot);
+        let xlo_off = map_obj_slot_offset(rom, MAP_OBJ_XLOS_MASTER, world_idx, slot);
+
+        let y = rom.read_byte(y_off) as usize;
+        let xhi = rom.read_byte(xhi_off) as usize;
+        let xlo = rom.read_byte(xlo_off) as usize;
+
+        if y < 32 {
+            continue;
+        }
+        let row = (y / 16).saturating_sub(2);
+        let col = xhi * 16 + xlo / 16;
+
+        positions.push((row, col));
+    }
+
+    positions
+}

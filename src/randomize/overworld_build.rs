@@ -399,18 +399,38 @@ fn build_world<R: Rng>(
     );
 
     // Step 3: Populate sections
-    let mut slots = populate_sections(&sections, fort_count, level_count, &pipe_positions, rng);
+    let mut slots = populate_sections(&grid, &sections, fort_count, level_count, &pipe_positions, rng);
+
+    // Add mandatory HammerBro slots for HB sprite starting positions.
+    // These were excluded from find_blank_slots (so levels/forts/pipes
+    // aren't placed under sprites) but still need pointer table entries —
+    // the sprite starts there and can be encountered immediately.
+    let hb_sprite_pos_list: Vec<(usize, usize)> = {
+        let existing: HashSet<(usize, usize)> = slots.iter().map(|s| s.pos).collect();
+        rom_data::read_hb_sprite_positions(rom, world_idx)
+            .into_iter()
+            .filter(|pos| !existing.contains(pos))
+            .collect()
+    };
+    let hb_sprite_positions: HashSet<(usize, usize)> = hb_sprite_pos_list.iter().copied().collect();
+    for pos in &hb_sprite_pos_list {
+        slots.push(SlotAssignment {
+            pos: *pos,
+            kind: SlotKind::HammerBro,
+            section: 0,
+        });
+    }
 
     // Cap total slots to what the pointer table can hold. Forts and levels
     // are already within budget (capped during capacity calculation); any
-    // excess is purely HammerBro slots from blank tiles that have no
-    // corresponding pointer table entry. Drop the farthest HB slots.
+    // excess is purely HammerBro slots from blank tiles. Drop the farthest
+    // regular HB slots but never drop HB sprite positions — those are
+    // mandatory.
     if slots.len() > max_non_pipe_slots {
-        // Keep all non-HB slots, then fill remaining budget with HB slots.
         let mut kept: Vec<SlotAssignment> = Vec::with_capacity(max_non_pipe_slots);
         let mut hb_slots: Vec<SlotAssignment> = Vec::new();
         for s in slots {
-            if s.kind != SlotKind::HammerBro {
+            if s.kind != SlotKind::HammerBro || hb_sprite_positions.contains(&s.pos) {
                 kept.push(s);
             } else {
                 hb_slots.push(s);
@@ -465,12 +485,49 @@ fn find_blank_slots(
             if fixed_positions.contains(&pos) {
                 continue;
             }
-            if blank_tiles.contains(&grid.get(r, c)) {
-                blanks.push(pos);
+            if !blank_tiles.contains(&grid.get(r, c)) {
+                continue;
             }
+            // Row 8 blanks: skip if the existing tile at row 7 (same column)
+            // is completion-unsafe.  The game's Map_Completions system handles
+            // row 8 by falling through from row 7's bit ($01).  If the row 7
+            // tile is "caught" by the completion/replacement checks, the
+            // fallthrough never reaches row 8 — the level tile reverts on
+            // map reload.
+            if r == 8 && c < grid.cols {
+                let above = grid.get(7, c);
+                if is_completion_unsafe(above) {
+                    continue;
+                }
+            }
+            blanks.push(pos);
         }
     }
     blanks
+}
+
+/// Returns true if a tile at row 7 would be "caught" by the game's
+/// `Map_Reload_with_Completions` routine, preventing the fallthrough
+/// check that handles row 8 levels.
+///
+/// The game checks (in order):
+/// 1. Special tiles: $50, $E8, $E6, $BD, $E0
+/// 2. Fortress: $67, $EB
+/// 3. Page threshold: page0 >= $03, page1 >= $67, page2 >= $BF, page3 >= $E9
+/// 4. Map_Removable_Tiles: $51, $52, $54, $67, $EB, $E4, $56, $9D
+fn is_completion_unsafe(tile: u8) -> bool {
+    const SPECIAL: [u8; 5] = [0x50, 0xE8, 0xE6, 0xBD, 0xE0];
+    const REMOVABLE: [u8; 8] = [0x51, 0x52, 0x54, 0x67, 0xEB, 0xE4, 0x56, 0x9D];
+    const THRESHOLDS: [u8; 4] = [0x03, 0x67, 0xBF, 0xE9];
+
+    if SPECIAL.contains(&tile) || tile == 0x67 || tile == 0xEB {
+        return true;
+    }
+    let page = (tile >> 6) as usize;
+    if tile >= THRESHOLDS[page] {
+        return true;
+    }
+    REMOVABLE.contains(&tile)
 }
 
 /// BFS from start, returning nodes in visit order with their distances.
@@ -743,6 +800,7 @@ fn bfs_section(
 // ---------------------------------------------------------------------------
 
 fn populate_sections<R: Rng>(
+    grid: &Grid,
     sections: &[Vec<(usize, usize)>],
     fort_count: usize,
     level_count: usize,
@@ -750,6 +808,23 @@ fn populate_sections<R: Rng>(
     rng: &mut R,
 ) -> Vec<SlotAssignment> {
     let mut slots = Vec::new();
+
+    // Track all positions that will have completable tiles (numbered level,
+    // fortress, or pipe).  When assigning a Level slot, we skip positions
+    // adjacent to any completable — this avoids numbered tiles touching and
+    // also prevents the row 7/8 Map_Completions bit collision.
+    let mut completable: HashSet<(usize, usize)> = pipe_positions.clone();
+
+    // Seed the completable set with existing completable tiles from the grid
+    // (vanilla pipes, fortresses, airships, etc. that weren't picked up).
+    for r in 0..grid.rows {
+        for c in 0..grid.cols {
+            let t = grid.get(r, c);
+            if matches!(t, 0x03..=0x0F | 0x67 | 0xEB | 0xBC | 0x5F | 0xC9 | 0xCC) {
+                completable.insert((r, c));
+            }
+        }
+    }
 
     // Add pipe slots (not in sections, but tracked)
     for &pos in pipe_positions {
@@ -773,7 +848,9 @@ fn populate_sections<R: Rng>(
         // Pick a random position for the fortress (if we still need one)
         let has_fort = si < fort_count;
         let fort_idx = if has_fort {
-            Some(rng.random_range(..section.len()))
+            let idx = rng.random_range(..section.len());
+            completable.insert(section[idx]);
+            Some(idx)
         } else {
             None
         };
@@ -791,21 +868,58 @@ fn populate_sections<R: Rng>(
             )
         };
 
-        // Build list of non-fort slot indices, then pick evenly spaced ones for levels.
+        // Build list of non-fort slot indices.
         let non_fort: Vec<usize> = (0..section.len())
             .filter(|&i| Some(i) != fort_idx)
             .collect();
 
-        // Choose which non-fort slots get levels using even spacing.
+        // Assign levels using even spacing as a preferred order, but skip
+        // positions adjacent to any existing completable tile.  Positions
+        // that are skipped stay as HammerBro (blank path tile, no numbered
+        // tile stamped).
         let mut level_slots: HashSet<usize> = HashSet::new();
-        let actual_levels = section_levels.min(non_fort.len());
-        if actual_levels > 0 && !non_fort.is_empty() {
-            let spacing = non_fort.len() as f64 / actual_levels as f64;
-            for k in 0..actual_levels {
+        let target = section_levels.min(non_fort.len());
+
+        if target > 0 && !non_fort.is_empty() {
+            // Generate evenly-spaced preferred candidates.
+            let spacing = non_fort.len() as f64 / target as f64;
+            let mut preferred: Vec<usize> = Vec::with_capacity(target);
+            for k in 0..target {
                 let idx = (k as f64 * spacing + spacing / 2.0).floor() as usize;
-                level_slots.insert(non_fort[idx.min(non_fort.len() - 1)]);
+                preferred.push(non_fort[idx.min(non_fort.len() - 1)]);
+            }
+
+            // First pass: try preferred positions.
+            for &idx in &preferred {
+                if level_slots.len() >= target {
+                    break;
+                }
+                let pos = section[idx];
+                if !is_adjacent_to_completable(pos, &completable) {
+                    level_slots.insert(idx);
+                    completable.insert(pos);
+                }
+            }
+
+            // Second pass: fill remaining from any non-fort slot.
+            if level_slots.len() < target {
+                for &idx in &non_fort {
+                    if level_slots.len() >= target {
+                        break;
+                    }
+                    if level_slots.contains(&idx) {
+                        continue;
+                    }
+                    let pos = section[idx];
+                    if !is_adjacent_to_completable(pos, &completable) {
+                        level_slots.insert(idx);
+                        completable.insert(pos);
+                    }
+                }
             }
         }
+
+        let assigned = level_slots.len();
 
         for (i, &pos) in section.iter().enumerate() {
             if Some(i) == fort_idx {
@@ -828,10 +942,25 @@ fn populate_sections<R: Rng>(
                 });
             }
         }
-        levels_remaining = levels_remaining.saturating_sub(actual_levels);
+        levels_remaining = levels_remaining.saturating_sub(assigned);
     }
 
     slots
+}
+
+/// Returns true if `pos` is orthogonally adjacent to any position in the set.
+fn is_adjacent_to_completable(
+    pos: (usize, usize),
+    completable: &HashSet<(usize, usize)>,
+) -> bool {
+    let (r, c) = pos;
+    let adjacent = [
+        (r.wrapping_sub(1), c),
+        (r + 1, c),
+        (r, c.wrapping_sub(1)),
+        (r, c + 1),
+    ];
+    adjacent.iter().any(|adj| completable.contains(adj))
 }
 
 // ---------------------------------------------------------------------------
