@@ -71,18 +71,12 @@ pub(crate) fn pick_up(rom: &Rom, catalog: &NodeCatalog) -> PickupResult {
         if matches!(entry.kind, NodeKind::Airship | NodeKind::Bowser) {
             return false;
         }
+        // Level, Fortress, Pipe — shufflable gameplay nodes
         if entry.kind.is_level_like() {
             return true;
         }
-        // Pick up real hammer bro entries (obj >= 0xC000) but not toad
-        // house / bonus game entries that share duplicate pointer patterns.
-        if matches!(entry.kind, NodeKind::HammerBro) {
-            if let Some(le) = &entry.level_entry {
-                let obj = (le.obj_hi as u16) << 8 | le.obj_lo as u16;
-                return obj >= 0xC000;
-            }
-        }
-        false
+        // HammerBro — roaming encounters that guard real levels
+        matches!(entry.kind, NodeKind::HammerBro)
     })
 }
 
