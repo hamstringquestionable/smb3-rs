@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use crate::rom::Rom;
 
 use super::rom_data::{
-    self, AIRSHIP_ENTRIES, BOWSER_ENTRY, FORTRESS_ENTRIES,
+    self, AIRSHIP_ENTRIES, BOWSER_ENTRY, FORTRESS_ENTRIES, HAMMER_BRO_OBJ_PTRS,
     LevelEntry, MAP_OBJ_ENTRY_LINKS,
     PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, TILE_START, WORLDS,
 };
@@ -173,24 +173,6 @@ fn classify_world(
 
     // -- Pre-compute sets for classification --
 
-    // Hammer bros: duplicate (obj_ptr, lay_ptr) pairs
-    let mut pair_counts: HashMap<(u16, u16), u32> = HashMap::new();
-    for i in 0..n {
-        let obj = rom_data::read_word(rom, objsets + i * 2);
-        let lay = rom_data::read_word(rom, layouts + i * 2);
-        if rom_data::is_level_pointer(obj, lay) {
-            *pair_counts.entry((obj, lay)).or_insert(0) += 1;
-        }
-    }
-    // First: pairs that appear more than once
-    let hammer_pairs: HashSet<(u16, u16)> = pair_counts
-        .iter()
-        .filter(|&(_, &count)| count > 1)
-        .map(|(&k, _)| k)
-        .collect();
-    // Second pass: obj_ptrs shared with known hammer bros
-    let hammer_objs: HashSet<u16> = hammer_pairs.iter().map(|&(obj, _)| obj).collect();
-
     // Map-object-linked entries
     let map_obj_entries: HashSet<usize> = MAP_OBJ_ENTRY_LINKS
         .iter()
@@ -229,7 +211,7 @@ fn classify_world(
 
         let kind = classify_entry(
             rom, world_idx, i, obj, lay, map_tile, row,
-            &hammer_pairs, &hammer_objs, &map_obj_entries, &pipe_map,
+            &map_obj_entries, &pipe_map,
         );
 
         let level_entry = if matches!(kind, NodeKind::Start) {
@@ -253,8 +235,6 @@ fn classify_entry(
     lay: u16,
     map_tile: u8,
     row: usize,
-    hammer_pairs: &HashSet<(u16, u16)>,
-    hammer_objs: &HashSet<u16>,
     map_obj_entries: &HashSet<usize>,
     pipe_map: &HashMap<usize, usize>,
 ) -> NodeKind {
@@ -301,10 +281,8 @@ fn classify_entry(
         return NodeKind::MapObject;
     }
 
-    // 9. Hammer bro (duplicate pairs + shared obj_ptr)
-    if rom_data::is_level_pointer(obj, lay)
-        && (hammer_pairs.contains(&(obj, lay)) || hammer_objs.contains(&obj))
-    {
+    // 9. Hammer bro (known hammer bro obj_ptrs)
+    if HAMMER_BRO_OBJ_PTRS.contains(&obj) {
         return NodeKind::HammerBro;
     }
 

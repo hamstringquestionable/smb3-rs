@@ -217,6 +217,18 @@ pub(super) const AIRSHIP_ENTRIES: &[(usize, usize)] = &[
 /// Bowser's castle entry.
 pub(super) const BOWSER_ENTRY: (usize, usize) = (7, 40);
 
+/// Known hammer bro level obj_ptrs. Each world's hammer bro encounters point
+/// to one of these 6 level object streams. Multiple pointer table entries
+/// share the same obj_ptr (with varying layouts/tilesets).
+pub(super) const HAMMER_BRO_OBJ_PTRS: &[u16] = &[
+    0xC72B, // W1
+    0xD14D, // W2
+    0xD142, // W2 (variant)
+    0xC640, // W3, W5, W6, W7
+    0xD0EA, // W4
+    0xC03D, // W8
+];
+
 /// Map transition entries.
 pub(super) const MAP_TRANSITIONS: &[(usize, usize)] = &[];
 
