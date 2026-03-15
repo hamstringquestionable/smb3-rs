@@ -13,7 +13,7 @@ use crate::rom::Rom;
 
 use super::rom_data::{
     self, AIRSHIP_ENTRIES, BOWSER_ENTRY, FORTRESS_ENTRIES, HAMMER_BRO_OBJ_PTRS,
-    LevelEntry, MAP_OBJ_ENTRY_LINKS,
+    LevelEntry, MAP_OBJ_ENTRY_LINKS, TOAD_HOUSE_OBJ_PTRS,
     PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, TILE_START, WORLDS,
 };
 
@@ -266,8 +266,8 @@ fn classify_entry(
         return NodeKind::Pipe { dest_idx };
     }
 
-    // 6. Toad house
-    if obj == 0x0700 {
+    // 6. Toad house (standard $0700 + variant reward formats)
+    if TOAD_HOUSE_OBJ_PTRS.contains(&obj) {
         return NodeKind::ToadHouse;
     }
 

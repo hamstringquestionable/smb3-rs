@@ -217,6 +217,13 @@ pub(super) const AIRSHIP_ENTRIES: &[(usize, usize)] = &[
 /// Bowser's castle entry.
 pub(super) const BOWSER_ENTRY: (usize, usize) = (7, 40);
 
+/// Known toad house obj_ptrs. The standard format is $0700; the variant
+/// formats ($0300-$0900) select different reward pools/game types but all
+/// load a toad house screen. All share lay=$AD60.
+pub(super) const TOAD_HOUSE_OBJ_PTRS: &[u16] = &[
+    0x0300, 0x0400, 0x0500, 0x0600, 0x0700, 0x0800, 0x0900,
+];
+
 /// Known hammer bro level obj_ptrs. Each world's hammer bro encounters point
 /// to one of these 6 level object streams. Multiple pointer table entries
 /// share the same obj_ptr (with varying layouts/tilesets).
