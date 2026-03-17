@@ -39,6 +39,15 @@ pub(super) const VALID_VERT: &[u8] = &[0x46, 0xB1, 0xAA, 0xAB, 0xB0, 0xDB, 0xBA]
 /// Background / non-walkable tiles.
 pub(super) const BACKGROUND_TILES: &[u8] = &[0xB4, 0xFF, 0x02];
 
+/// Valid blank node tiles — positions with these tiles are available for
+/// level/fort/pipe/HB placement. Used by both pickup (Phase 2) and build
+/// (Phase 3) to ensure consistent blank detection.
+pub(super) const VALID_BLANK_TILES: &[u8] = &[
+    0x44, 0x47, 0x48, 0x4A,        // standard
+    0xAE, 0xAF, 0xB5, 0xB6,        // island
+    0xD9, 0xDC, 0xDD, 0xDE,        // sky
+];
+
 /// Start tile ID.
 pub(super) const TILE_START: u8 = 0xE5;
 

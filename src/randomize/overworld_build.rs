@@ -159,7 +159,7 @@ pub(crate) fn build<R: Rng>(
     let mut capacities = [0usize; 8];
     for wi in 0..8 {
         let pipe_endpoints = VANILLA_PIPE_PAIRS[wi] * 2;
-        let blanks = count_blank_tiles(&patched_grids[wi], &fixed_positions[wi]);
+        let blanks = find_blank_slots(&patched_grids[wi], &fixed_positions[wi]).len();
         let grid_capacity = blanks.saturating_sub(pipe_endpoints + fort_counts[wi]);
 
         // Cap by available pointer table slots from pickup.
@@ -235,23 +235,6 @@ fn fixed_positions_for_world(
     fixed
 }
 
-/// Count blank tiles on a grid, excluding fixed positions.
-fn count_blank_tiles(grid: &Grid, fixed: &HashSet<(usize, usize)>) -> usize {
-    let blank_tiles: &[u8] = &[
-        0x44, 0x47, 0x48, 0x4A,
-        0xAE, 0xAF, 0xB5, 0xB6,
-        0xD9, 0xDC, 0xDE,
-    ];
-    let mut count = 0;
-    for r in 0..grid.rows {
-        for c in 0..grid.cols {
-            if !fixed.contains(&(r, c)) && blank_tiles.contains(&grid.get(r, c)) {
-                count += 1;
-            }
-        }
-    }
-    count
-}
 
 /// Distribute `total` levels across worlds proportional to capacity.
 /// Ensures every level is placed (sum of output == total).
@@ -444,12 +427,6 @@ fn find_blank_slots(
     grid: &Grid,
     fixed_positions: &HashSet<(usize, usize)>,
 ) -> Vec<(usize, usize)> {
-    let blank_tiles: &[u8] = &[
-        0x44, 0x47, 0x48, 0x4A, // standard
-        0xAE, 0xAF, 0xB5, 0xB6,       // island
-        0xD9, 0xDC, 0xDE,             // sky
-    ];
-
     let mut blanks = Vec::new();
     for r in 0..grid.rows {
         for c in 0..grid.cols {
@@ -457,7 +434,7 @@ fn find_blank_slots(
             if fixed_positions.contains(&pos) {
                 continue;
             }
-            if !blank_tiles.contains(&grid.get(r, c)) {
+            if !rom_data::VALID_BLANK_TILES.contains(&grid.get(r, c)) {
                 continue;
             }
             // Row 8 blanks: skip if the existing tile at row 7 (same column)

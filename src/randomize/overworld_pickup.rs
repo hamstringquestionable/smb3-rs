@@ -154,13 +154,7 @@ fn pick_up_world(
 /// `(world_idx, row, col, tile)`
 const BLANK_TILE_OVERRIDES: &[(usize, usize, usize, u8)] = &[];
 
-/// All valid blank/path node tiles. If a position already has one of these,
-/// `blank_tile_for` leaves it unchanged.
-const VALID_BLANK_TILES: &[u8] = &[
-    0x44, 0x47, 0x48, 0x4A, 0x4B, // standard
-    0xAE, 0xAF, 0xB5, 0xB6,       // island
-    0xD9, 0xDC, 0xDE,             // sky
-];
+use super::rom_data::VALID_BLANK_TILES;
 
 /// Pick the right blank node tile based on neighboring path directions and
 /// the world/screen visual theme. If the tile is already a valid blank, it
