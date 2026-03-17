@@ -862,6 +862,26 @@ fn populate_sections<R: Rng>(
                     }
                 }
             }
+
+            // Third pass: relax adjacency to avoid dropping levels, but
+            // still enforce the row 7/8 hard constraint (shared completion
+            // bit means adjacent completable tiles at rows 7 and 8 in the
+            // same column would cause map reload bugs).
+            if level_slots.len() < target {
+                for &idx in &non_fort {
+                    if level_slots.len() >= target {
+                        break;
+                    }
+                    if level_slots.contains(&idx) {
+                        continue;
+                    }
+                    let pos = section[idx];
+                    if !is_row78_conflict(pos, &completable) {
+                        level_slots.insert(idx);
+                        completable.insert(pos);
+                    }
+                }
+            }
         }
 
         let assigned = level_slots.len();
@@ -906,6 +926,23 @@ fn is_adjacent_to_completable(
         (r, c + 1),
     ];
     adjacent.iter().any(|adj| completable.contains(adj))
+}
+
+/// Returns true if placing a completable tile at `pos` would create a
+/// row 7/8 completion-bit collision. This is a hard game engine constraint
+/// (shared bit $01) that cannot be relaxed.
+fn is_row78_conflict(
+    pos: (usize, usize),
+    completable: &HashSet<(usize, usize)>,
+) -> bool {
+    let (r, c) = pos;
+    if r == 7 {
+        completable.contains(&(8, c))
+    } else if r == 8 {
+        completable.contains(&(7, c))
+    } else {
+        false
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1372,7 +1409,19 @@ mod tests {
                 .sum();
             if total_levels < VANILLA_LEVEL_COUNT {
                 level_shortfalls += 1;
-                eprintln!("Seed {seed}: {total_levels}/{VANILLA_LEVEL_COUNT} levels");
+                let deficit = VANILLA_LEVEL_COUNT - total_levels;
+                // Show per-world breakdown
+                let mut detail = String::new();
+                for built in &result.worlds {
+                    let levels = built.slots.iter().filter(|s| s.kind == SlotKind::Level).count();
+                    let section_sizes: Vec<usize> = (0..built.section_count)
+                        .map(|si| built.slots.iter().filter(|s| s.section == si).count())
+                        .collect();
+                    if levels < 3 {
+                        detail.push_str(&format!(" W{}={levels}(sections={section_sizes:?})", built.world_idx + 1));
+                    }
+                }
+                eprintln!("Seed {seed}: {total_levels}/{VANILLA_LEVEL_COUNT} (-{deficit}){detail}");
             }
 
             for built in &result.worlds {
