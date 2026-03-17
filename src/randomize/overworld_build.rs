@@ -19,7 +19,7 @@ use rand::seq::{IndexedRandom, SliceRandom};
 use super::map_walker::walk_map;
 use super::node_catalog::{NodeCatalog, NodeKind};
 use super::overworld_helpers::{find_target, gap_tile_for, LOCKABLE_TILES};
-use super::overworld_pickup::{ClearedWorld, PickupResult};
+use super::overworld_pickup::PickupResult;
 use crate::rom::Rom;
 use super::rom_data::{
     self, BACKGROUND_TILES, Grid, TILE_PIPE, TILE_FORTRESS,
@@ -122,25 +122,14 @@ pub(crate) fn build<R: Rng>(
     catalog: &NodeCatalog,
     rng: &mut R,
 ) -> BuildResult {
-    // Apply QoL map tile patches to the cleared grids so BFS sees the same
-    // connectivity the player will. These modify path tiles only (not nodes),
-    // so they don't affect blank slot counts.
-    let mut patched_worlds: Vec<ClearedWorld> = pickup.worlds.clone();
-    apply_qol_grid_patches(&mut patched_worlds);
-
     // Step 0: redistribute fortresses
     let fort_counts = redistribute_fortresses(rng);
 
-    // Pre-compute available level slots per world. Two constraints apply:
-    // 1. Grid blanks: number of blank node tiles on the map (visual capacity).
-    // 2. Pointer table slots: entries vacated during pickup (ROM capacity).
-    // The tighter constraint wins — assigning more entries than pointer table
-    // slots causes blank screens because write_pointer_entries runs out of
-    // slots to write to.
-    let mut capacities = [0usize; 8];
+    // Build patched grids once: clone pickup grids and restore airship/Bowser
+    // tiles (blanked during pickup but kept at vanilla positions).
+    let mut patched_grids: Vec<Grid> = Vec::with_capacity(8);
     for wi in 0..8 {
-        let mut grid = patched_worlds[wi].grid.clone();
-        // Restore airship/Bowser tiles
+        let mut grid = pickup.worlds[wi].grid.clone();
         for entry in &catalog.entries {
             if entry.world_idx != wi {
                 continue;
@@ -152,9 +141,20 @@ pub(crate) fn build<R: Rng>(
                 }
             }
         }
+        patched_grids.push(grid);
+    }
+
+    // Pre-compute available level slots per world. Two constraints apply:
+    // 1. Grid blanks: number of blank node tiles on the map (visual capacity).
+    // 2. Pointer table slots: entries vacated during pickup (ROM capacity).
+    // The tighter constraint wins — assigning more entries than pointer table
+    // slots causes blank screens because write_pointer_entries runs out of
+    // slots to write to.
+    let mut capacities = [0usize; 8];
+    for wi in 0..8 {
         let fixed = fixed_positions_for_world(rom, catalog, wi);
         let pipe_endpoints = VANILLA_PIPE_PAIRS[wi] * 2;
-        let blanks = count_blank_tiles(&grid, &fixed);
+        let blanks = count_blank_tiles(&patched_grids[wi], &fixed);
         let grid_capacity = blanks.saturating_sub(pipe_endpoints + fort_counts[wi]);
 
         // Cap by available pointer table slots from pickup.
@@ -179,7 +179,7 @@ pub(crate) fn build<R: Rng>(
         let built = build_world(
             wi,
             rom,
-            &patched_worlds[wi],
+            patched_grids[wi].clone(),
             catalog,
             fort_counts[wi],
             level_counts[wi],
@@ -191,18 +191,6 @@ pub(crate) fn build<R: Rng>(
     }
 
     BuildResult { worlds, fort_counts }
-}
-
-/// Apply QoL map tile patches that affect overworld connectivity.
-///
-/// These patches open paths that the player will always see (default-on QoL),
-/// so the build phase must account for them when computing BFS reachability.
-fn apply_qol_grid_patches(worlds: &mut [ClearedWorld]) {
-    // W2 rock at grid (0, 21): $51 → $45 (horizontal path)
-    let w2 = &mut worlds[1].grid;
-    if w2.cols > 21 && w2.get(0, 21) == 0x51 {
-        w2.set(0, 21, 0x45);
-    }
 }
 
 /// Collect positions that must not be overwritten by level/fort/pipe placement.
@@ -328,7 +316,7 @@ fn redistribute_fortresses<R: Rng>(rng: &mut R) -> [usize; 8] {
 fn build_world<R: Rng>(
     world_idx: usize,
     rom: &Rom,
-    cleared: &ClearedWorld,
+    mut grid: Grid,
     catalog: &NodeCatalog,
     fort_count: usize,
     level_count: usize,
@@ -336,22 +324,6 @@ fn build_world<R: Rng>(
     max_non_pipe_slots: usize,
     rng: &mut R,
 ) -> BuiltWorld {
-    let mut grid = cleared.grid.clone();
-
-    // Restore airship and Bowser tiles — they were blanked during pickup but
-    // stay at their vanilla positions.
-    for entry in &catalog.entries {
-        if entry.world_idx != world_idx {
-            continue;
-        }
-        if matches!(entry.kind, NodeKind::Airship | NodeKind::Bowser) {
-            let (r, c) = entry.grid_pos;
-            if r < grid.rows && c < grid.cols {
-                grid.set(r, c, entry.tile);
-            }
-        }
-    }
-
     let start_pos = rom_data::find_start(&grid);
     let target_pos = find_target(&grid, world_idx);
 
