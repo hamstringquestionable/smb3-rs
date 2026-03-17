@@ -757,7 +757,7 @@ fn bfs_section(
         })
         .collect();
 
-    if assignable.is_empty() || section_count == 0 {
+    if assignable.is_empty() {
         return vec![assignable];
     }
 
@@ -864,6 +864,19 @@ fn populate_sections<R: Rng>(
         let target = section_levels.min(non_fort.len());
 
         if target > 0 && !non_fort.is_empty() {
+            // Dead-end pass: prefer placing levels at path dead-ends so
+            // they don't visually terminate with a blank tile.
+            for &idx in &non_fort {
+                if level_slots.len() >= target {
+                    break;
+                }
+                let pos = section[idx];
+                if is_dead_end(grid, pos) && !is_adjacent_to_completable(pos, &completable) {
+                    level_slots.insert(idx);
+                    completable.insert(pos);
+                }
+            }
+
             // Generate evenly-spaced preferred candidates.
             let spacing = non_fort.len() as f64 / target as f64;
             let mut preferred: Vec<usize> = Vec::with_capacity(target);
@@ -876,6 +889,9 @@ fn populate_sections<R: Rng>(
             for &idx in &preferred {
                 if level_slots.len() >= target {
                     break;
+                }
+                if level_slots.contains(&idx) {
+                    continue;
                 }
                 let pos = section[idx];
                 if !is_adjacent_to_completable(pos, &completable) {
@@ -949,6 +965,18 @@ fn populate_sections<R: Rng>(
     }
 
     slots
+}
+
+/// Returns true if a node position has exactly one traversable exit direction.
+/// Dead-end positions look better with a level or fortress than as blank tiles.
+fn is_dead_end(grid: &Grid, pos: (usize, usize)) -> bool {
+    let (r, c) = pos;
+    let mut exits = 0;
+    if c >= 2 && VALID_HORZ.contains(&grid.get(r, c - 1)) { exits += 1; }
+    if c + 2 < grid.cols && VALID_HORZ.contains(&grid.get(r, c + 1)) { exits += 1; }
+    if r >= 2 && VALID_VERT.contains(&grid.get(r - 1, c)) { exits += 1; }
+    if r + 2 < grid.rows && VALID_VERT.contains(&grid.get(r + 1, c)) { exits += 1; }
+    exits == 1
 }
 
 /// Returns true if `pos` is orthogonally adjacent to any position in the set.
