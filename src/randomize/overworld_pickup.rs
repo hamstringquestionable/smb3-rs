@@ -149,62 +149,10 @@ fn pick_up_world(
 // Blank tile selection
 // ---------------------------------------------------------------------------
 
-/// Per-screen theme tiles: `(h_tile, v_tile, hv_tile, none_tile)`.
-///
-/// Different map regions use visually distinct node tiles to match the world
-/// theme. Derived from the vanilla ROM's existing hammer-bro / blank-node
-/// tile usage patterns.
-///
-/// Index = world_idx, inner index = screen number.
-const SCREEN_THEMES: &[&[(u8, u8, u8, u8)]] = &[
-    // W1: 1 screen
-    &[(0x47, 0x48, 0x47, 0x44)],
-    // W2: 2 screens
-    &[(0x47, 0x48, 0x4A, 0x44), (0x47, 0x48, 0x4A, 0x44)],
-    // W3: 3 screens (island theme on screen 0)
-    &[(0x47, 0xB5, 0x4A, 0x44), (0x47, 0x48, 0x47, 0x44), (0x47, 0x48, 0x4A, 0x44)],
-    // W4: 2 screens (island theme on screen 0)
-    &[(0x47, 0xB5, 0x4A, 0x44), (0x47, 0x48, 0x4A, 0x44)],
-    // W5: 2 screens (sky theme on screen 1)
-    &[(0x47, 0x48, 0x44, 0x44), (0xDC, 0xD9, 0xDE, 0xD9)],
-    // W6: 3 screens
-    &[(0x47, 0x48, 0x4A, 0x44), (0x47, 0x48, 0x4A, 0x44), (0x47, 0x48, 0x4A, 0x44)],
-    // W7: 2 screens
-    &[(0x47, 0x44, 0x47, 0x44), (0x47, 0x48, 0x47, 0x44)],
-    // W8: 4 screens
-    &[
-        (0x47, 0x44, 0x4A, 0x44),
-        (0x47, 0x44, 0x47, 0x44),
-        (0x47, 0x48, 0x4A, 0x44),
-        (0x47, 0x48, 0x4A, 0x44),
-    ],
-];
-
-/// Position-specific overrides for cases where the per-screen theme table
-/// does not match the vanilla map's visual style (e.g. one-off decorative
-/// tiles, direction ambiguity at junctions).
+/// Position-specific overrides where the neighbor-based heuristic picks the
+/// wrong tile. Currently empty — the heuristic handles all vanilla positions.
 /// `(world_idx, row, col, tile)`
-const BLANK_TILE_OVERRIDES: &[(usize, usize, usize, u8)] = &[
-    (0, 0,  4, 0x44), (0, 8,  4, 0x48), (0, 8,  8, 0x4A),
-    (1, 0,  8, 0x47), (1, 2, 12, 0x48), (1, 4,  8, 0x48),
-    (1, 4, 18, 0x44), (1, 6,  8, 0x47),
-    (2, 2, 12, 0x48), (2, 2, 16, 0x48), (2, 2, 20, 0x47), (2, 2, 22, 0x4A),
-    (2, 4,  8, 0x4A), (2, 4, 20, 0xAE), (2, 6, 12, 0xB5),
-    (3, 2, 18, 0x44), (3, 2, 28, 0x47), (3, 4,  8, 0x44),
-    (3, 6,  2, 0x48), (3, 6, 20, 0xAF), (3, 6, 28, 0x4A),
-    (4, 0,  4, 0x47), (4, 4,  4, 0x47), (4, 6, 24, 0xDC),
-    (4, 8, 18, 0xD9),
-    (5, 0, 22, 0x44), (5, 2, 14, 0x47), (5, 2, 32, 0x44),
-    (5, 4, 24, 0x48), (5, 4, 28, 0x48), (5, 4, 34, 0x44),
-    (5, 6, 28, 0x47),
-    (6, 1, 15, 0x44), (6, 1, 22, 0x44), (6, 3,  2, 0x48), (6, 3,  6, 0x48),
-    (6, 3, 11, 0xB6), (6, 3, 26, 0x4A), (6, 5,  3, 0x44),
-    (6, 5, 10, 0xAE), (6, 5, 22, 0xB6), (6, 7,  3, 0x48),
-    (6, 7,  8, 0x48), (6, 7, 14, 0x48), (6, 7, 24, 0x44),
-    (7, 3, 18, 0x44), (7, 3, 24, 0x44), (7, 3, 34, 0x44),
-    (7, 5,  8, 0xAF), (7, 5, 36, 0x48), (7, 5, 50, 0x44),
-    (7, 7, 34, 0x48),
-];
+const BLANK_TILE_OVERRIDES: &[(usize, usize, usize, u8)] = &[];
 
 /// All valid blank/path node tiles. If a position already has one of these,
 /// `blank_tile_for` leaves it unchanged.
@@ -241,12 +189,30 @@ pub(super) fn blank_tile_for_dynamic(grid: &Grid, world_idx: usize, row: usize, 
     blank_tile_from_neighbors(grid, world_idx, row, col)
 }
 
-fn blank_tile_from_neighbors(grid: &Grid, world_idx: usize, row: usize, col: usize) -> u8 {
-    let has_h = col > 0 && VALID_HORZ.contains(&grid.get(row, col - 1));
-    let has_v = row > 0 && VALID_VERT.contains(&grid.get(row - 1, col));
+/// Derive the visual theme from a neighbor path tile.
+fn theme_from_tile(tile: u8) -> (u8, u8, u8, u8) {
+    //           h     v     hv    none
+    match tile >> 4 {
+        0xA | 0xB => (0xAE, 0xB5, 0xAF, 0xB6), // island
+        0xD       => (0xDC, 0xD9, 0xDE, 0xD9),  // sky
+        _         => (0x47, 0x48, 0x4A, 0x44),  // standard
+    }
+}
 
-    let screen = col / 16;
-    let (h, v, hv, none) = SCREEN_THEMES[world_idx][screen];
+fn blank_tile_from_neighbors(grid: &Grid, _world_idx: usize, row: usize, col: usize) -> u8 {
+    let h_tile = if col > 0 { Some(grid.get(row, col - 1)) } else { None };
+    let v_tile = if row > 0 { Some(grid.get(row - 1, col)) } else { None };
+
+    let has_h = h_tile.is_some_and(|t| VALID_HORZ.contains(&t));
+    let has_v = v_tile.is_some_and(|t| VALID_VERT.contains(&t));
+
+    let (h, v, hv, none) = if let Some(t) = h_tile.filter(|_| has_h) {
+        theme_from_tile(t)
+    } else if let Some(t) = v_tile.filter(|_| has_v) {
+        theme_from_tile(t)
+    } else {
+        (0x47, 0x48, 0x4A, 0x44) // standard fallback
+    };
 
     match (has_h, has_v) {
         (true, true) => hv,
@@ -470,6 +436,38 @@ mod tests {
         }
         std::fs::write(filename, &data).unwrap();
         eprintln!("Wrote {filename} ({} bytes, {} picked up)", data.len(), result.pool.len());
+    }
+
+    #[test]
+    #[ignore]
+    fn test_compare_overrides_vs_heuristic() {
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+
+        let mut mismatches = 0;
+        for &(wi, row, col, override_tile) in BLANK_TILE_OVERRIDES {
+            let mut grid = rom_data::read_tile_grid(&rom, wi);
+            open_fx_gaps(&rom, &mut grid, wi);
+
+            let heuristic_tile = blank_tile_from_neighbors(&grid, wi, row, col);
+            let vanilla_tile = grid.get(row, col);
+
+            if override_tile == heuristic_tile {
+                eprintln!(
+                    "  SAME  W{} ({},{})  override=${:02X}  heuristic=${:02X}  vanilla=${:02X}",
+                    wi + 1, row, col, override_tile, heuristic_tile, vanilla_tile,
+                );
+            } else {
+                eprintln!(
+                    "  DIFF  W{} ({},{})  override=${:02X}  heuristic=${:02X}  vanilla=${:02X}",
+                    wi + 1, row, col, override_tile, heuristic_tile, vanilla_tile,
+                );
+                mismatches += 1;
+            }
+        }
+        eprintln!("\n{} overrides, {} differ from heuristic", BLANK_TILE_OVERRIDES.len(), mismatches);
     }
 
     #[test]
