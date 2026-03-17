@@ -260,28 +260,16 @@ fn blank_tile_from_neighbors(grid: &Grid, world_idx: usize, row: usize, col: usi
 // FX gap opener
 // ---------------------------------------------------------------------------
 
-/// Replace vanilla FX gap tiles ($54/$56/$9D/$E4) with their underlying path
-/// tiles, making the grid fully connected before placement.
+/// Replace vanilla FX gap tiles with their underlying path tiles, making the
+/// grid fully connected before placement.
 fn open_fx_gaps(rom: &Rom, grid: &mut Grid, world_idx: usize) {
     let fx_slots = rom_data::read_fx_slots(rom);
     let fx_assignments = rom_data::read_world_fx_assignments(rom);
-    let world_fx = &fx_assignments[world_idx];
 
-    for r in 0..grid.rows {
-        for c in 0..grid.cols {
-            let tile = grid.get(r, c);
-            if tile != 0x54 && tile != 0x56 && tile != 0x9D && tile != 0xE4 {
-                continue;
-            }
-            if let Some(slot) = fx_slots
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| world_fx.contains(&(*i as u8)))
-                .map(|(_, s)| s)
-                .find(|s| s.grid_row == r && s.grid_col == c)
-            {
-                grid.set(r, c, slot.replace_tile);
-            }
+    for &slot_idx in &fx_assignments[world_idx] {
+        let slot = &fx_slots[slot_idx as usize];
+        if slot.grid_row < grid.rows && slot.grid_col < grid.cols {
+            grid.set(slot.grid_row, slot.grid_col, slot.replace_tile);
         }
     }
 }
