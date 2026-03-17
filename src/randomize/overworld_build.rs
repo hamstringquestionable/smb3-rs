@@ -150,11 +150,16 @@ pub(crate) fn build<R: Rng>(
     // The tighter constraint wins — assigning more entries than pointer table
     // slots causes blank screens because write_pointer_entries runs out of
     // slots to write to.
+    // Pre-compute fixed positions once per world (used by both capacity
+    // calculation and build_world).
+    let fixed_positions: Vec<HashSet<(usize, usize)>> = (0..8)
+        .map(|wi| fixed_positions_for_world(rom, catalog, wi))
+        .collect();
+
     let mut capacities = [0usize; 8];
     for wi in 0..8 {
-        let fixed = fixed_positions_for_world(rom, catalog, wi);
         let pipe_endpoints = VANILLA_PIPE_PAIRS[wi] * 2;
-        let blanks = count_blank_tiles(&patched_grids[wi], &fixed);
+        let blanks = count_blank_tiles(&patched_grids[wi], &fixed_positions[wi]);
         let grid_capacity = blanks.saturating_sub(pipe_endpoints + fort_counts[wi]);
 
         // Cap by available pointer table slots from pickup.
@@ -180,7 +185,7 @@ pub(crate) fn build<R: Rng>(
             wi,
             rom,
             patched_grids[wi].clone(),
-            catalog,
+            &fixed_positions[wi],
             fort_counts[wi],
             level_counts[wi],
             VANILLA_PIPE_PAIRS[wi],
@@ -317,7 +322,7 @@ fn build_world<R: Rng>(
     world_idx: usize,
     rom: &Rom,
     mut grid: Grid,
-    catalog: &NodeCatalog,
+    fixed_positions: &HashSet<(usize, usize)>,
     fort_count: usize,
     level_count: usize,
     pipe_pair_count: usize,
@@ -327,13 +332,8 @@ fn build_world<R: Rng>(
     let start_pos = rom_data::find_start(&grid);
     let target_pos = find_target(&grid, world_idx);
 
-    // Fixed positions: airship, Bowser, toad houses, and floating sprite
-    // positions. HammerBro catalog entries are NOT excluded — those blank
-    // tiles are valid placement slots for levels/forts/pipes.
-    let fixed_positions = fixed_positions_for_world(rom, catalog, world_idx);
-
     // Collect all blank node positions (potential placement slots).
-    let blank_positions = find_blank_slots(&grid, &fixed_positions);
+    let blank_positions = find_blank_slots(&grid, fixed_positions);
 
     // Collect fixed pipe endpoints for this world.
     let fixed_pipe_eps: Vec<(usize, usize)> = FIXED_PIPE_ENDPOINTS
@@ -445,7 +445,7 @@ fn find_blank_slots(
     fixed_positions: &HashSet<(usize, usize)>,
 ) -> Vec<(usize, usize)> {
     let blank_tiles: &[u8] = &[
-        0x44, 0x47, 0x48, 0x4A, 0x4B, // standard
+        0x44, 0x47, 0x48, 0x4A, // standard
         0xAE, 0xAF, 0xB5, 0xB6,       // island
         0xD9, 0xDC, 0xDE,             // sky
     ];
