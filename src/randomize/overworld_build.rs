@@ -1153,14 +1153,14 @@ fn place_locks<R: Rng>(
 
             let mut score: i32 = 0;
 
-            // Soft goal 1: blocks next section
-            if section_idx + 1 < sections.len() {
-                let next_section_blocked = sections[section_idx + 1]
-                    .iter()
-                    .any(|p| !walk.nodes.contains(p));
-                if next_section_blocked {
-                    score += 100;
-                }
+            // Soft goal 1: blocks a later fortress
+            let blocks_later_fort = slots.iter().any(|s| {
+                s.kind == SlotKind::Fortress
+                    && s.section > section_idx
+                    && !walk.nodes.contains(&s.pos)
+            });
+            if blocks_later_fort {
+                score += 100;
             }
 
             // Soft goal 2: blocks target (airship/bowser)
@@ -1170,12 +1170,21 @@ fn place_locks<R: Rng>(
                 }
             }
 
-            // Soft goal 3: blocks anything compared to no lock
+            // Soft goal 3: longer detour to target = better lock.
+            // Compare BFS distance to target with vs without this lock.
+            // Only evaluated when goals 1+2 didn't fire, to avoid extra BFS.
             if score == 0 {
-                let open_grid = build_test_grid(None);
-                let walk_open = walk_map(&open_grid, pipe_pairs, start_pos);
-                if walk.nodes.len() < walk_open.nodes.len() {
-                    score += 25;
+                if let Some(tp) = target_pos {
+                    let locked_dist = walk.distances.get(&tp).copied();
+                    let open_grid = build_test_grid(None);
+                    let walk_open = walk_map(&open_grid, pipe_pairs, start_pos);
+                    let open_dist = walk_open.distances.get(&tp).copied();
+                    if let (Some(ld), Some(od)) = (locked_dist, open_dist) {
+                        let detour = ld as i32 - od as i32;
+                        if detour > 0 {
+                            score += detour;
+                        }
+                    }
                 }
             }
 
