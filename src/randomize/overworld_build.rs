@@ -176,6 +176,7 @@ pub(crate) fn build<R: Rng>(
     // Distribute VANILLA_LEVEL_COUNT levels across worlds proportionally to capacity.
     let level_counts = distribute_levels(&capacities, VANILLA_LEVEL_COUNT, rng);
 
+    let mut lock_counter: usize = 0;
     let mut worlds = Vec::with_capacity(8);
     for wi in 0..8 {
         // Max non-pipe slots = pointer table slots minus pipe endpoints.
@@ -194,22 +195,21 @@ pub(crate) fn build<R: Rng>(
             level_counts[wi],
             VANILLA_PIPE_PAIRS[wi],
             max_non_pipe_slots,
+            &mut lock_counter,
             rng,
         );
         worlds.push(built);
     }
 
-    // Ensure at least one lock across all worlds is secret-exit-safe
-    // (target reachable with lock closed). 1-F's secret exit doesn't
-    // trigger FX replacement, so its lock must not block progression.
+    // Ensure at least one lock across all worlds is secret-exit-safe.
+    // The 1-in-4 safe preference usually produces one, but if not,
+    // retry lock placement in a random world with counter forced to
+    // a safe slot.
     let has_safe = worlds.iter().any(|b| b.locks.iter().any(|l| l.secret_exit_safe));
     if !has_safe {
-        // Retry lock placement in shuffled world order until one produces a safe lock.
-        // Pass empty sections — scoring loses the "blocks next section" signal but
-        // hard rules and other soft goals still apply. Only ~4% of seeds need this.
         let mut retry_order: Vec<usize> = (0..8).collect();
         retry_order.shuffle(rng);
-        let empty_sections: Vec<Vec<(usize, usize)>> = Vec::new();
+        let mut retry_counter: usize = 3; // forces prefer_safe on first lock
         for &wi in &retry_order {
             let built = &worlds[wi];
             let start_pos = rom_data::find_start(&built.grid);
@@ -220,9 +220,8 @@ pub(crate) fn build<R: Rng>(
                 start_pos,
                 target_pos,
                 &built.slots,
-                &empty_sections,
-                true,
                 fort_counts[wi],
+                &mut retry_counter,
                 rng,
             );
             if new_locks.iter().any(|l| l.secret_exit_safe) {
@@ -353,6 +352,7 @@ fn build_world<R: Rng>(
     level_count: usize,
     pipe_pair_count: usize,
     max_non_pipe_slots: usize,
+    lock_counter: &mut usize,
     rng: &mut R,
 ) -> BuiltWorld {
     let start_pos = rom_data::find_start(&grid);
@@ -446,9 +446,8 @@ fn build_world<R: Rng>(
         start_pos,
         target_pos,
         &slots,
-        &sections,
-        false, // need_secret_exit_safe handled at build() level
         fort_count,
+        lock_counter,
         rng,
     );
 
@@ -1021,14 +1020,12 @@ fn place_locks<R: Rng>(
     start_pos: Option<(usize, usize)>,
     target_pos: Option<(usize, usize)>,
     slots: &[SlotAssignment],
-    sections: &[Vec<(usize, usize)>],
-    need_secret_exit_safe: bool,
     fort_count: usize,
+    lock_counter: &mut usize,
     rng: &mut R,
 ) -> Vec<LockAssignment> {
     let mut locks: Vec<LockAssignment> = Vec::new();
     let mut locked_tiles: HashSet<(usize, usize)> = HashSet::new();
-    let mut has_safe_lock = false;
 
     // Build a base grid with forts/levels stamped so BFS sees them as nodes.
     // This grid does NOT have any locks on it.
@@ -1108,7 +1105,9 @@ fn place_locks<R: Rng>(
 
         candidates.shuffle(rng);
 
+        let prefer_safe = *lock_counter % 4 == 3;
         let mut best: Option<((usize, usize), u8, u8, i32, bool)> = None;
+        let mut best_safe: Option<((usize, usize), u8, u8, i32)> = None;
 
         for &cand_pos in &candidates {
             let tile = reference_grid.get(cand_pos.0, cand_pos.1);
@@ -1163,11 +1162,22 @@ fn place_locks<R: Rng>(
                 score += 100;
             }
 
+            // Check if target is reachable with this lock closed (used for
+            // scoring and 1-F secret exit safety).
+            let target_reachable = target_pos
+                .map(|tp| walk.nodes.contains(&tp))
+                .unwrap_or(true);
+
+            // A "safe" lock blocks nothing important: all fortresses and
+            // the target remain reachable. Safe for 1-F secret exit since
+            // leaving it closed can never cause a softlock.
+            let safe = target_reachable && slots.iter().all(|s| {
+                s.kind != SlotKind::Fortress || walk.nodes.contains(&s.pos)
+            });
+
             // Soft goal 2: blocks target (airship/bowser)
-            if let Some(tp) = target_pos {
-                if !walk.nodes.contains(&tp) {
-                    score += 50;
-                }
+            if !target_reachable {
+                score += 50;
             }
 
             // Soft goal 3: longer detour to target = better lock.
@@ -1188,49 +1198,43 @@ fn place_locks<R: Rng>(
                 }
             }
 
-            // Check if target is reachable with this lock closed (safe for
-            // 1-F secret exit which doesn't trigger FX replacement).
-            let target_reachable = match target_pos {
-                Some(tp) => walk.nodes.contains(&tp),
-                None => true,
-            };
-
-            // When we need a secret-exit-safe lock and don't have one yet,
-            // prefer safe candidates over unsafe ones regardless of score.
+            // Track best overall and best safe separately.
             let dominated = match &best {
-                Some((_, _, _, best_score, best_safe)) => {
-                    if need_secret_exit_safe && !has_safe_lock {
-                        // Safe beats unsafe; among same safety, higher score wins
-                        match (target_reachable, *best_safe) {
-                            (true, false) => true,
-                            (false, true) => false,
-                            _ => score > *best_score,
-                        }
-                    } else {
-                        score > *best_score
-                    }
-                }
+                Some((_, _, _, best_score, _)) => score > *best_score,
                 None => true,
             };
-
             if dominated {
-                best = Some((cand_pos, gap, tile, score, target_reachable));
+                best = Some((cand_pos, gap, tile, score, safe));
+            }
+
+            if safe {
+                let safe_dominated = match &best_safe {
+                    Some((_, _, _, best_score)) => score > *best_score,
+                    None => true,
+                };
+                if safe_dominated {
+                    best_safe = Some((cand_pos, gap, tile, score));
+                }
             }
         }
 
-        // Place the best lock that passes the hard rule.
-        // If no candidate passes, skip this fort (no lock for it).
-        if let Some((pos, gap, replace, _score, target_reachable)) = best {
+        // Every 4th lock prefers the best safe candidate; fall back to best overall.
+        let chosen = if prefer_safe {
+            best_safe.map(|(pos, gap, replace, score)| (pos, gap, replace, score, true))
+                .or(best)
+        } else {
+            best
+        };
+
+        if let Some((pos, gap, replace, _score, safe)) = chosen {
             locked_tiles.insert(pos);
-            if target_reachable {
-                has_safe_lock = true;
-            }
+            *lock_counter += 1;
             locks.push(LockAssignment {
                 pos,
                 gap_tile: gap,
                 replace_tile: replace,
                 fort_section: section_idx,
-                secret_exit_safe: target_reachable,
+                secret_exit_safe: safe,
             });
         }
     }
