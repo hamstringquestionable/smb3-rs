@@ -1009,13 +1009,41 @@ fn place_locks<R: Rng>(
             let tile = reference_grid.get(cand_pos.0, cand_pos.1);
             let gap = gap_tile_for(tile);
 
-            // Hard rule: with this lock placed (and earlier locks opened),
-            // the fortress must still be reachable from start.
+            // Hard rule 1: with this lock placed (and earlier locks opened),
+            // the current fortress must still be reachable from start.
             let test_grid = build_test_grid(Some((cand_pos, gap)));
             let walk = walk_map(&test_grid, pipe_pairs, start_pos);
 
             if !walk.nodes.contains(&fort_pos) {
-                continue; // violates hard rule
+                continue;
+            }
+
+            // Hard rule 2: this lock must not block any earlier fortress.
+            // Check each earlier section's fort is reachable when its own
+            // lock (and all locks before it) are open but this new lock is closed.
+            let blocks_earlier = locks.iter().any(|prev_lock| {
+                let prev_fort = slots.iter()
+                    .find(|s| s.section == prev_lock.fort_section && s.kind == SlotKind::Fortress);
+                if let Some(pf) = prev_fort {
+                    // Build grid: open locks up to prev_lock's section, close the rest + candidate
+                    let mut g = base_grid.clone();
+                    for l in &locks {
+                        if l.fort_section < prev_lock.fort_section {
+                            g.set(l.pos.0, l.pos.1, l.replace_tile);
+                        } else {
+                            g.set(l.pos.0, l.pos.1, l.gap_tile);
+                        }
+                    }
+                    // Also place the candidate lock
+                    g.set(cand_pos.0, cand_pos.1, gap);
+                    let w = walk_map(&g, pipe_pairs, start_pos);
+                    !w.nodes.contains(&pf.pos)
+                } else {
+                    false
+                }
+            });
+            if blocks_earlier {
+                continue;
             }
 
             let mut score: i32 = 0;
@@ -1069,45 +1097,7 @@ fn place_locks<R: Rng>(
         }
     }
 
-    // Post-placement validation: a lock placed for section N might be
-    // invalidated by a lock placed later for section M > N. Remove any
-    // lock that blocks its own fortress in the final all-locks-placed state.
-    let mut valid_locks = Vec::new();
-    for lock in &locks {
-        let fort_pos = match slots
-            .iter()
-            .find(|s| s.section == lock.fort_section && s.kind == SlotKind::Fortress)
-        {
-            Some(s) => s.pos,
-            None => {
-                valid_locks.push(lock.clone());
-                continue;
-            }
-        };
-
-        // Build grid with all locks placed, but open this one and all earlier
-        let mut check_grid = base_grid.clone();
-        for l in &locks {
-            if l.fort_section < lock.fort_section {
-                // Earlier — beaten, lock open
-                check_grid.set(l.pos.0, l.pos.1, l.replace_tile);
-            } else if l.pos == lock.pos {
-                // This lock — also open (testing if fort is reachable to be beaten)
-                check_grid.set(l.pos.0, l.pos.1, l.replace_tile);
-            } else {
-                // Later or same section, different lock — closed
-                check_grid.set(l.pos.0, l.pos.1, l.gap_tile);
-            }
-        }
-
-        let walk = walk_map(&check_grid, pipe_pairs, start_pos);
-        if walk.nodes.contains(&fort_pos) {
-            valid_locks.push(lock.clone());
-        }
-        // If fort is unreachable, drop this lock entirely
-    }
-
-    valid_locks
+    locks
 }
 
 // ---------------------------------------------------------------------------
@@ -1357,5 +1347,55 @@ mod tests {
                 eprintln!("    Pair {i}: ({},{}) ↔ ({},{})", a.0, a.1, b.0, b.1);
             }
         }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_measure_shortfalls() {
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+        let catalog = NodeCatalog::build(&rom);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog);
+
+        let mut level_shortfalls = 0u32;
+        let mut lock_shortfalls = 0u32;
+        let seeds = 1000;
+
+        for seed in 0..seeds {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let result = build(&rom, &pickup, &catalog, &mut rng);
+
+            let total_levels: usize = result.worlds.iter()
+                .map(|b| b.slots.iter().filter(|s| s.kind == SlotKind::Level).count())
+                .sum();
+            if total_levels < VANILLA_LEVEL_COUNT {
+                level_shortfalls += 1;
+                eprintln!("Seed {seed}: {total_levels}/{VANILLA_LEVEL_COUNT} levels");
+            }
+
+            for built in &result.worlds {
+                let expected_locks = result.fort_counts[built.world_idx];
+                if built.locks.len() < expected_locks {
+                    lock_shortfalls += 1;
+                    // Find which section(s) are missing locks
+                    let placed: HashSet<usize> = built.locks.iter().map(|l| l.fort_section).collect();
+                    for si in 0..built.section_count {
+                        if !placed.contains(&si) {
+                            let section_size = built.slots.iter().filter(|s| s.section == si).count();
+                            let fort = built.slots.iter().find(|s| s.section == si && s.kind == SlotKind::Fortress);
+                            eprintln!("Seed {seed} W{} section {si}: NO LOCK, section_size={section_size}, fort={:?}, total_slots={}",
+                                built.world_idx + 1, fort.map(|f| f.pos),
+                                built.slots.len());
+                        }
+                    }
+                }
+            }
+        }
+
+        eprintln!("\n=== {seeds} seeds ===");
+        eprintln!("Level shortfalls: {level_shortfalls}/{seeds}");
+        eprintln!("Lock shortfalls:  {lock_shortfalls}/{seeds} (world-level)");
     }
 }
