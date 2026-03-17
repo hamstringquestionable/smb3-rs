@@ -59,6 +59,10 @@ pub(crate) struct LockAssignment {
     pub replace_tile: u8,
     /// Which fortress (section index) opens this lock.
     pub fort_section: usize,
+    /// True if the world's target (airship/Bowser) is still reachable with
+    /// this lock closed. These locks are safe for 1-F (secret exit doesn't
+    /// trigger FX replacement).
+    pub secret_exit_safe: bool,
 }
 
 /// Complete build result for one world.
@@ -193,6 +197,39 @@ pub(crate) fn build<R: Rng>(
             rng,
         );
         worlds.push(built);
+    }
+
+    // Ensure at least one lock across all worlds is secret-exit-safe
+    // (target reachable with lock closed). 1-F's secret exit doesn't
+    // trigger FX replacement, so its lock must not block progression.
+    let has_safe = worlds.iter().any(|b| b.locks.iter().any(|l| l.secret_exit_safe));
+    if !has_safe {
+        // Retry lock placement in shuffled world order until one produces a safe lock.
+        // Pass empty sections — scoring loses the "blocks next section" signal but
+        // hard rules and other soft goals still apply. Only ~4% of seeds need this.
+        let mut retry_order: Vec<usize> = (0..8).collect();
+        retry_order.shuffle(rng);
+        let empty_sections: Vec<Vec<(usize, usize)>> = Vec::new();
+        for &wi in &retry_order {
+            let built = &worlds[wi];
+            let start_pos = rom_data::find_start(&built.grid);
+            let target_pos = find_target(&built.grid, wi);
+            let new_locks = place_locks(
+                &built.grid,
+                &built.pipe_pairs,
+                start_pos,
+                target_pos,
+                &built.slots,
+                &empty_sections,
+                true,
+                fort_counts[wi],
+                rng,
+            );
+            if new_locks.iter().any(|l| l.secret_exit_safe) {
+                worlds[wi].locks = new_locks;
+                break;
+            }
+        }
     }
 
     BuildResult { worlds, fort_counts }
@@ -410,6 +447,7 @@ fn build_world<R: Rng>(
         target_pos,
         &slots,
         &sections,
+        false, // need_secret_exit_safe handled at build() level
         fort_count,
         rng,
     );
@@ -956,11 +994,13 @@ fn place_locks<R: Rng>(
     target_pos: Option<(usize, usize)>,
     slots: &[SlotAssignment],
     sections: &[Vec<(usize, usize)>],
+    need_secret_exit_safe: bool,
     fort_count: usize,
     rng: &mut R,
 ) -> Vec<LockAssignment> {
     let mut locks: Vec<LockAssignment> = Vec::new();
     let mut locked_tiles: HashSet<(usize, usize)> = HashSet::new();
+    let mut has_safe_lock = false;
 
     // Build a base grid with forts/levels stamped so BFS sees them as nodes.
     // This grid does NOT have any locks on it.
@@ -1040,7 +1080,7 @@ fn place_locks<R: Rng>(
 
         candidates.shuffle(rng);
 
-        let mut best: Option<((usize, usize), u8, u8, i32)> = None;
+        let mut best: Option<((usize, usize), u8, u8, i32, bool)> = None;
 
         for &cand_pos in &candidates {
             let tile = reference_grid.get(cand_pos.0, cand_pos.1);
@@ -1111,25 +1151,49 @@ fn place_locks<R: Rng>(
                 }
             }
 
+            // Check if target is reachable with this lock closed (safe for
+            // 1-F secret exit which doesn't trigger FX replacement).
+            let target_reachable = match target_pos {
+                Some(tp) => walk.nodes.contains(&tp),
+                None => true,
+            };
+
+            // When we need a secret-exit-safe lock and don't have one yet,
+            // prefer safe candidates over unsafe ones regardless of score.
             let dominated = match &best {
-                Some((_, _, _, best_score)) => score > *best_score,
+                Some((_, _, _, best_score, best_safe)) => {
+                    if need_secret_exit_safe && !has_safe_lock {
+                        // Safe beats unsafe; among same safety, higher score wins
+                        match (target_reachable, *best_safe) {
+                            (true, false) => true,
+                            (false, true) => false,
+                            _ => score > *best_score,
+                        }
+                    } else {
+                        score > *best_score
+                    }
+                }
                 None => true,
             };
 
             if dominated {
-                best = Some((cand_pos, gap, tile, score));
+                best = Some((cand_pos, gap, tile, score, target_reachable));
             }
         }
 
         // Place the best lock that passes the hard rule.
         // If no candidate passes, skip this fort (no lock for it).
-        if let Some((pos, gap, replace, _score)) = best {
+        if let Some((pos, gap, replace, _score, target_reachable)) = best {
             locked_tiles.insert(pos);
+            if target_reachable {
+                has_safe_lock = true;
+            }
             locks.push(LockAssignment {
                 pos,
                 gap_tile: gap,
                 replace_tile: replace,
                 fort_section: section_idx,
+                secret_exit_safe: target_reachable,
             });
         }
     }
@@ -1443,8 +1507,37 @@ mod tests {
             }
         }
 
+        // Count seeds with at least one secret_exit_safe lock and
+        // track which worlds have safe locks in failing seeds
+        let mut safe_count = 0u32;
+        let mut no_safe_details: Vec<(u64, [usize; 8])> = Vec::new();
+        for seed in 0..seeds {
+            let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
+            let result2 = build(&rom, &pickup, &catalog, &mut rng2);
+            let has_safe = result2.worlds.iter().any(|b| {
+                b.locks.iter().any(|l| l.secret_exit_safe)
+            });
+            if has_safe {
+                safe_count += 1;
+            } else {
+                // For failing seeds, count locks per world to see which have room
+                let mut lock_counts = [0usize; 8];
+                for b in &result2.worlds {
+                    lock_counts[b.world_idx] = b.locks.len();
+                }
+                no_safe_details.push((seed, lock_counts));
+            }
+        }
+
         eprintln!("\n=== {seeds} seeds ===");
         eprintln!("Level shortfalls: {level_shortfalls}/{seeds}");
         eprintln!("Lock shortfalls:  {lock_shortfalls}/{seeds} (world-level)");
+        eprintln!("Seeds with >=1 secret_exit_safe lock: {safe_count}/{seeds}");
+        if !no_safe_details.is_empty() {
+            eprintln!("No-safe seeds (first 10):");
+            for (seed, counts) in no_safe_details.iter().take(10) {
+                eprintln!("  Seed {seed}: locks per world = {counts:?}");
+            }
+        }
     }
 }
