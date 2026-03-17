@@ -1062,6 +1062,7 @@ mod tests {
             // Apply QoL patches that the builder expects.
             super::super::qol::fix_w3_drawbridges(&mut out);
             super::super::qol::remove_w2_rock(&mut out);
+            super::super::qol::remove_w3_boat_rock(&mut out);
             super::super::qol::fix_big_q_block_rooms(&mut out);
 
             write_overworld(&mut out, &build, &pickup, &catalog, &mut rng, true);

@@ -229,6 +229,10 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         rom.set_tag("qol/w2_rock");
         randomize::qol::remove_w2_rock(rom);
     }
+    // Always remove the W3 rock blocking the boat path — the boat can't
+    // navigate past it and the overworld builder needs the path open.
+    rom.set_tag("qol/w3_boat_rock");
+    randomize::qol::remove_w3_boat_rock(rom);
 
     // Fix Big ? Block bonus rooms so they follow the level, not the world slot.
     // Always applied — needed whenever world_order or cross-world shuffle is active,

@@ -71,6 +71,11 @@ pub(crate) fn pick_up(rom: &Rom, catalog: &NodeCatalog) -> PickupResult {
         if matches!(entry.kind, NodeKind::Airship | NodeKind::Bowser) {
             return false;
         }
+        // W3 boat dock tile ($4B) must stay — the boat docks here and
+        // replacing the tile (e.g. with a pipe) breaks boat boarding.
+        if entry.tile == 0x4B {
+            return false;
+        }
         // Level, Fortress, Pipe — shufflable gameplay nodes
         if entry.kind.is_level_like() {
             return true;
@@ -256,11 +261,12 @@ mod tests {
         let catalog = NodeCatalog::build(&rom);
         let result = pick_up(&rom, &catalog);
 
-        // 62 levels + 17 fortresses + 48 pipes + 154 hammer bros = 281
+        // 62 levels + 17 fortresses + 48 pipes + 151 hammer bros = 278
         // (Airships and Bowser excluded — their pointer table entries stay vanilla
         // so the autoscroll patch's hardcoded offsets remain valid.)
         // (166 HammerBro catalog entries minus 12 with non-level pointers like toad house/bonus game)
-        assert_eq!(result.pool.len(), 281, "pool should have 281 entries (level-like + real hammer bros, no airship/bowser)");
+        // (3 W3 HammerBro entries on tile $4B (boat dock) excluded — tile must stay for boat boarding)
+        assert_eq!(result.pool.len(), 278, "pool should have 278 entries (level-like + real hammer bros, no airship/bowser/boat-dock)");
     }
 
     #[test]
