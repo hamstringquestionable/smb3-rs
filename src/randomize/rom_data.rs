@@ -31,7 +31,7 @@ impl Default for FortressRedistribute {
 // ---------------------------------------------------------------------------
 
 /// Valid horizontal path tiles (Map_Object_Valid_Left/Right in PRG010).
-pub(super) const VALID_HORZ: &[u8] = &[0x45, 0xB2, 0xB3, 0xAC, 0xB7, 0xB8, 0xDA, 0xB9, 0xE6];
+pub(super) const VALID_HORZ: &[u8] = &[0x45, 0x49, 0xB2, 0xB3, 0xAC, 0xB7, 0xB8, 0xDA, 0xB9, 0xE6];
 
 /// Valid vertical path tiles (Map_Object_Valid_Down/Up in PRG010).
 pub(super) const VALID_VERT: &[u8] = &[0x46, 0xB1, 0xAA, 0xAB, 0xB0, 0xDB, 0xBA];

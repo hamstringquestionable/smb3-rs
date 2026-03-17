@@ -1422,12 +1422,31 @@ chosen locks still allows at least one fort to be reached, and that a valid beat
 progression exists.
 
 **MAP_COMPLETE_BITS coverage:** The LUT has 8 entries mapping rows 0–7 to bits 7–0.
-Row 8 is clamped to row 7 via `.min(7)`, so both rows 7 and 8 map to bit 0 (`0x01`).
-In the game's `Map_Completions` encoding, bit 0 represents row 8 (row 7 is skipped).
-This means locks placed at row 7 set the same completion bit as row 8, falsely
-completing any level at row 8 in the same column. **The randomizer prevents lock
-placement at row 7 to avoid this collision.** Locks at row 8 work correctly because
-bit 0 genuinely represents row 8 in the game's encoding.
+The `Map_Reload_with_Completions` loop (`$A508–$A512`) searches indices 7 down to 1
+via `DEX / BNE`; index 0 (`$80` = row 0) is handled by fallthrough when no match is
+found.  Bit 0 (`$01`, index 7) maps to row offset `$80` = **row 7**.
+
+**Row 8 fallthrough** (`$A55C–$A56D`): When the current bit is `$01` and the tile at
+row 7 was NOT caught by any completion/replacement check, the code adds `$10` to the
+tile offset (moving to row 8, offset `$90`) and re-checks.  This means row 8
+completion works **only if the row 7 tile in the same column is "safe"** — i.e. not
+matched by the special-tiles table (`$A447`), the page thresholds (`$A400`), or
+`Map_Removable_Tiles`.  If the row 7 tile IS caught, it gets replaced and the row 8
+tile is never reached.
+
+Tiles that block the row 8 fallthrough (completion-unsafe at row 7):
+- Special: `$50, $E8, $E6, $BD, $E0`
+- Fortress: `$67, $EB` (→ `Map_Removable_Tiles` path)
+- Page thresholds: page0 ≥ `$03`, page1 ≥ `$67`, page2 ≥ `$BF`, page3 ≥ `$E9`
+- Removable: `$51, $52, $54, $67, $EB, $E4, $56, $9D`
+
+**Randomizer constraints:**
+- `find_blank_slots` skips row 8 positions where the existing row 7 tile is
+  completion-unsafe (prevents the builder from placing a level there).
+- `populate_sections` enforces that no two completable tiles (Level, Fortress, Pipe)
+  are orthogonally adjacent — this prevents both the row 7/8 bit collision and
+  visually cluttered numbered tiles.
+- `place_locks` skips row 7 candidates to avoid the `$01` bit collision with row 8.
 
 **Vanilla FX positions:** Bridges ($56), water gaps ($9D), and sky gaps ($E4) should only
 appear at the 13 vanilla FX positions. Locks ($54) can be placed on any path tile.
