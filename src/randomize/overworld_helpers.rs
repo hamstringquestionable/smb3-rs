@@ -5,12 +5,14 @@
 
 use super::rom_data::{Grid, TILE_AIRSHIP, TILE_BOWSER};
 
-/// All path tiles that a lock/gap can be placed on.
+/// All path tiles eligible for lock/water-gap placement.
+/// Locks (0x54, 0x56, 0xE4) are visual variants — all block the path equally.
+/// Water gaps (0x9D) replace bridge tiles (0xB3) specifically.
 pub(super) const LOCKABLE_TILES: &[u8] = &[
     0x45, // horizontal path
     0x46, // vertical path
-    0xB3, // water bridge path
-    0xDA, // sky bridge path
+    0xB3, // bridge (water) — becomes water gap 0x9D
+    0xDA, // sky path — becomes sky lock 0xE4
     0xAC, // horizontal path variant
     0xB7, // horizontal path variant
     0xB8, // horizontal path variant
@@ -38,13 +40,14 @@ pub(super) fn find_target(grid: &Grid, world_idx: usize) -> Option<(usize, usize
     None
 }
 
-/// Determine the gap tile for a given path tile.
+/// Determine the lock/gap tile for a given path tile.
+/// 0x54 = vertical lock, 0x56 = horizontal lock, 0xE4 = sky lock, 0x9D = water gap.
 pub(super) fn gap_tile_for(tile: u8) -> u8 {
     match tile {
-        0xB3 => 0x9D,                                          // water → water gap
-        0xDA => 0xE4,                                          // sky → sky gap
-        0x46 | 0xAA | 0xAB | 0xB0 | 0xB1 | 0xDB | 0xBA => 0x54, // vertical → lock
-        _ => 0x56,                                              // horizontal → bridge gap
+        0xB3 => 0x9D,                                          // bridge → water gap
+        0xDA => 0xE4,                                          // sky path → sky lock
+        0x46 | 0xAA | 0xAB | 0xB0 | 0xB1 | 0xDB | 0xBA => 0x54, // vertical path → vertical lock
+        _ => 0x56,                                              // horizontal path → horizontal lock
     }
 }
 

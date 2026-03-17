@@ -67,7 +67,10 @@ pub(super) const TILE_AIRSHIP: u8 = 0xC9;
 /// Bowser's castle tile ID.
 pub(super) const TILE_BOWSER: u8 = 0xCC;
 
-
+/// Placeholder stamped on the BFS grid to mark a position as non-background.
+/// The actual value is irrelevant — it just needs to be outside BACKGROUND_TILES
+/// so walk_map treats the position as a reachable node.
+pub(super) const TILE_NODE: u8 = 0x47;
 
 /// Number of rows in every overworld map.
 pub(super) const ROWS: usize = 9;

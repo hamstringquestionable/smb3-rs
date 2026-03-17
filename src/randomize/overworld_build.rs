@@ -22,7 +22,7 @@ use super::overworld_helpers::{find_target, gap_tile_for, LOCKABLE_TILES};
 use super::overworld_pickup::PickupResult;
 use crate::rom::Rom;
 use super::rom_data::{
-    self, BACKGROUND_TILES, Grid, TILE_PIPE, TILE_FORTRESS,
+    self, BACKGROUND_TILES, Grid, TILE_NODE, TILE_PIPE, TILE_FORTRESS,
     VALID_HORZ, VALID_VERT,
 };
 
@@ -53,7 +53,7 @@ pub struct SlotAssignment {
 pub(crate) struct LockAssignment {
     /// Path tile position where the lock goes.
     pub pos: (usize, usize),
-    /// The gap tile to write (0x54 lock, 0x56 bridge, 0x9D water, 0xE4 sky).
+    /// The blocking tile to write (0x54 vert lock, 0x56 horiz lock, 0xE4 sky lock, 0x9D water gap).
     pub gap_tile: u8,
     /// The original path tile (for FX restore).
     pub replace_tile: u8,
@@ -1039,7 +1039,7 @@ fn place_locks<R: Rng>(
             SlotKind::Level => {
                 let tile = base_grid.get(slot.pos.0, slot.pos.1);
                 if BACKGROUND_TILES.contains(&tile) {
-                    base_grid.set(slot.pos.0, slot.pos.1, 0x47);
+                    base_grid.set(slot.pos.0, slot.pos.1, TILE_NODE);
                 }
             }
             SlotKind::Pipe => {} // already stamped on grid
