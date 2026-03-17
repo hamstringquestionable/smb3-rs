@@ -170,7 +170,7 @@ pub(crate) fn build<R: Rng>(
     }
 
     // Distribute VANILLA_LEVEL_COUNT levels across worlds proportionally to capacity.
-    let level_counts = distribute_levels(&capacities, VANILLA_LEVEL_COUNT);
+    let level_counts = distribute_levels(&capacities, VANILLA_LEVEL_COUNT, rng);
 
     let mut worlds = Vec::with_capacity(8);
     for wi in 0..8 {
@@ -238,7 +238,9 @@ fn fixed_positions_for_world(
 
 /// Distribute `total` levels across worlds proportional to capacity.
 /// Ensures every level is placed (sum of output == total).
-fn distribute_levels(capacities: &[usize; 8], total: usize) -> [usize; 8] {
+/// World processing order is shuffled to avoid front-loading bias from
+/// rounding.
+fn distribute_levels<R: Rng>(capacities: &[usize; 8], total: usize, rng: &mut R) -> [usize; 8] {
     let total_cap: usize = capacities.iter().sum();
     let mut counts = [0usize; 8];
 
@@ -246,16 +248,20 @@ fn distribute_levels(capacities: &[usize; 8], total: usize) -> [usize; 8] {
         return counts;
     }
 
+    // Shuffle world processing order to spread rounding bias randomly.
+    let mut order: Vec<usize> = (0..8).collect();
+    order.shuffle(rng);
+
     // Proportional allocation
     let mut remaining = total;
-    for wi in 0..8 {
+    for &wi in &order {
         let share = (capacities[wi] as f64 / total_cap as f64 * total as f64).round() as usize;
         counts[wi] = share.min(capacities[wi]).min(remaining);
         remaining -= counts[wi];
     }
 
     // Distribute any leftover (rounding errors) to worlds with spare capacity
-    for wi in 0..8 {
+    for &wi in &order {
         if remaining == 0 {
             break;
         }
