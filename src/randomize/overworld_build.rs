@@ -443,27 +443,15 @@ fn find_blank_slots(
             if !rom_data::VALID_BLANK_TILES.contains(&grid.get(r, c)) {
                 continue;
             }
-            // Row 8 blanks: skip if the existing tile at row 7 (same column)
-            // is completion-unsafe.  The game's Map_Completions system handles
-            // row 8 by falling through from row 7's bit ($01).  If the row 7
-            // tile is "caught" by the completion/replacement checks, the
-            // fallthrough never reaches row 8 — the level tile reverts on
-            // map reload.
-            if r == 8 && c < grid.cols {
-                let above = grid.get(7, c);
-                if is_completion_unsafe(above) {
-                    continue;
-                }
-            }
             blanks.push(pos);
         }
     }
     blanks
 }
 
-/// Returns true if a tile at row 7 would be "caught" by the game's
-/// `Map_Reload_with_Completions` routine, preventing the fallthrough
-/// check that handles row 8 levels.
+/// Returns true if a tile would be "caught" by the game's
+/// `Map_Reload_with_Completions` routine. Used to seed the completable set
+/// and to prevent lock placement at row 7 when row 8 has a level.
 ///
 /// The game checks (in order):
 /// 1. Special tiles: $50, $E8, $E6, $BD, $E0
@@ -770,12 +758,14 @@ fn populate_sections<R: Rng>(
     // also prevents the row 7/8 Map_Completions bit collision.
     let mut completable: HashSet<(usize, usize)> = pipe_positions.clone();
 
-    // Seed the completable set with existing completable tiles from the grid
-    // (vanilla pipes, fortresses, airships, etc. that weren't picked up).
+    // Seed the completable set with existing tiles on the grid that the
+    // game's Map_Reload_with_Completions routine would "catch". This
+    // includes numbered levels, fortresses, pipes, airships, and any tile
+    // that triggers the completion/replacement checks.
     for r in 0..grid.rows {
         for c in 0..grid.cols {
             let t = grid.get(r, c);
-            if matches!(t, 0x03..=0x0F | 0x67 | 0xEB | 0xBC | 0x5F | 0xC9 | 0xCC) {
+            if is_completion_unsafe(t) {
                 completable.insert((r, c));
             }
         }
@@ -992,11 +982,19 @@ fn place_locks<R: Rng>(
             for c in 0..reference_grid.cols {
                 let tile = reference_grid.get(r, c);
                 if LOCKABLE_TILES.contains(&tile) && !locked_tiles.contains(&(r, c)) {
-                    // Row 7 shares its Map_Completions bit (0x01) with row 8.
-                    // A lock at row 7 would corrupt level completion at row 8
-                    // in the same column.  Skip row 7 entirely.
-                    if r == 7 {
-                        continue;
+                    // Row 7 and row 8 share Map_Completions bit ($01).
+                    // A lock/bridge/gap is completion-unsafe — it would
+                    // prevent the fallthrough between rows 7 and 8.
+                    // Skip if the paired row has a completable slot.
+                    if r == 7 || r == 8 {
+                        let paired_row = if r == 7 { 8 } else { 7 };
+                        let pair_completable = slots.iter().any(|s| {
+                            s.pos == (paired_row, c)
+                                && matches!(s.kind, SlotKind::Level | SlotKind::Fortress | SlotKind::Pipe)
+                        });
+                        if pair_completable {
+                            continue;
+                        }
                     }
                     candidates.push((r, c));
                 }
