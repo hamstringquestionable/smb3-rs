@@ -424,16 +424,25 @@ fn write_tile_grid(
     let start_pos = rom_data::find_start(&grid);
     let bfs = bfs_ordered(&grid, &built.pipe_pairs, start_pos);
 
-    let mut level_num: u8 = 1;
+    // Level tile sequence: 1-9 use standard numbered tiles ($03-$0B),
+    // then $68 (quicksand) and $69 (pyramid) for 10-11, then the
+    // rougher-looking $0C-$15 as fallback for 12+.
+    const LEVEL_TILES: [u8; 19] = [
+        0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
+        0x68, 0x69,
+        0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13,
+    ];
+
+    let mut level_idx: usize = 0;
     let mut assigned: Vec<bool> = vec![false; wa.level.len()];
 
     for &(pos, _dist) in &bfs {
         if let Some(&la_idx) = level_pos_set.get(&pos) {
             if !assigned[la_idx] {
-                let tile = 0x02 + level_num.min(19);
+                let tile = LEVEL_TILES[level_idx.min(LEVEL_TILES.len() - 1)];
                 grid.set(pos.0, pos.1, tile);
                 assigned[la_idx] = true;
-                level_num += 1;
+                level_idx += 1;
             }
         }
     }
@@ -441,9 +450,9 @@ fn write_tile_grid(
     // Any level slots not reached by BFS (safety fallback).
     for (i, a) in wa.level.iter().enumerate() {
         if !assigned[i] {
-            let tile = 0x02 + level_num.min(19);
+            let tile = LEVEL_TILES[level_idx.min(LEVEL_TILES.len() - 1)];
             grid.set(a.pos.0, a.pos.1, tile);
-            level_num += 1;
+            level_idx += 1;
         }
     }
 
