@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 
 use rand::Rng;
-use rand::seq::SliceRandom;
+use rand::seq::{IndexedRandom, SliceRandom};
 
 use crate::rom::Rom;
 
@@ -18,7 +18,7 @@ use super::overworld_helpers;
 use super::overworld_pickup::PickupResult;
 use super::pipe_helpers;
 use super::rom_data::{
-    self, FX_MAP_COMP_IDX, FX_PATTERNS, FX_VADDR_H, FX_VADDR_L,
+    self, FORTRESS_1F_OBJ_PTR, FX_MAP_COMP_IDX, FX_PATTERNS, FX_VADDR_H, FX_VADDR_L,
     MAP_COMPLETE_BITS, TILE_FORTRESS, TILE_PIPE, WORLDS,
 };
 
@@ -101,7 +101,7 @@ pub(crate) fn write_overworld<R: Rng>(
     rng: &mut R,
     cross_world: bool,
 ) {
-    let assignments = assign_pool(rom, build, pickup, catalog, rng, cross_world);
+    let assignments = assign_pool(build, pickup, catalog, rng, cross_world);
 
     // Compute W8 army sprite target positions before writing tiles,
     // so write_tile_grid can stamp connectivity-aware blank tiles under the sprites.
@@ -135,7 +135,6 @@ pub(crate) fn write_overworld<R: Rng>(
 // ---------------------------------------------------------------------------
 
 fn assign_pool<R: Rng>(
-    rom: &Rom,
     build: &BuildResult,
     pickup: &PickupResult,
     catalog: &NodeCatalog,
@@ -147,7 +146,8 @@ fn assign_pool<R: Rng>(
     let mut level_pool: Vec<usize> = Vec::new();
     let mut airship_pool: Vec<usize> = Vec::new();
     let mut bowser_idx: Option<usize> = None;
-    let mut pipe_groups: HashMap<usize, HashMap<usize, Vec<usize>>> = HashMap::new();
+    // Pipe groups: world → dest_idx → Vec<(pool_idx, is_a_side)>.
+    let mut pipe_groups: HashMap<usize, HashMap<usize, Vec<(usize, bool)>>> = HashMap::new();
     let mut hb_pool_by_world: HashMap<usize, Vec<usize>> = HashMap::new();
 
     for (pi, pe) in pickup.pool.iter().enumerate() {
@@ -156,14 +156,17 @@ fn assign_pool<R: Rng>(
             NodeKind::Fortress { .. } => fort_pool.push(pi),
             NodeKind::Level => level_pool.push(pi),
             NodeKind::Airship => airship_pool.push(pi),
-            NodeKind::Bowser => bowser_idx = Some(pi),
-            NodeKind::Pipe { dest_idx } => {
+            NodeKind::Bowser => {
+                debug_assert!(bowser_idx.is_none(), "duplicate Bowser in pickup pool");
+                bowser_idx = Some(pi);
+            }
+            NodeKind::Pipe { dest_idx, is_a_side } => {
                 pipe_groups
                     .entry(entry.world_idx)
                     .or_default()
                     .entry(*dest_idx)
                     .or_default()
-                    .push(pi);
+                    .push((pi, *is_a_side));
             }
             NodeKind::HammerBro => {
                 hb_pool_by_world
@@ -180,6 +183,48 @@ fn assign_pool<R: Rng>(
     hb_levels.as_mut_slice().shuffle(rng);
     let mut hb_level_iter = hb_levels.iter().cycle().cloned();
 
+    // --- Pre-assign the 1-F fortress to a secret-exit-safe slot ---
+    //
+    // The 1-F fortress level has a secret exit that bypasses Boom-Boom
+    // (no crystal ball → no FX trigger → lock stays closed). It must
+    // land in a slot whose lock is marked secret_exit_safe to avoid
+    // softlocking the player.
+
+    // Find the 1-F pool entry.
+    let fort_1f_pos = fort_pool.iter().position(|&pi| {
+        let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
+        ce.level_entry.as_ref().is_some_and(|le| {
+            u16::from_le_bytes([le.obj_lo, le.obj_hi]) == FORTRESS_1F_OBJ_PTR
+        })
+    }).expect("1-F fortress not found in pool");
+    let fort_1f_pi = fort_pool.remove(fort_1f_pos);
+
+    // Collect all safe (world_idx, section) slots. In intra-world mode,
+    // 1-F can only go to a safe slot in its origin world.
+    let fort_1f_origin = catalog.entries[pickup.pool[fort_1f_pi].catalog_idx].world_idx;
+    let mut safe_slots: Vec<(usize, usize)> = Vec::new();
+    for wi in 0..8 {
+        if !cross_world && wi != fort_1f_origin {
+            continue;
+        }
+        for lock in &build.worlds[wi].locks {
+            if lock.secret_exit_safe {
+                safe_slots.push((wi, lock.fort_section));
+            }
+        }
+    }
+    // Pre-assign 1-F to a safe slot if one exists. In intra-world mode,
+    // W1 may have no safe lock — that's fine, the player must use the
+    // normal exit (beat Boom-Boom) to open the lock.
+    let mut preassigned_forts: HashMap<(usize, usize), usize> = HashMap::new();
+    if let Some(&(safe_wi, safe_section)) = safe_slots.choose(rng) {
+        preassigned_forts.insert((safe_wi, safe_section), fort_1f_pi);
+    } else {
+        // No safe slot available — return 1-F to the regular pool.
+        fort_pool.push(fort_1f_pi);
+    }
+
+    // Shuffle remaining fortress and level pools.
     fort_pool.as_mut_slice().shuffle(rng);
     level_pool.as_mut_slice().shuffle(rng);
     airship_pool.as_mut_slice().shuffle(rng);
@@ -212,7 +257,10 @@ fn assign_pool<R: Rng>(
             if let Some(slot) = built.slots.iter().find(|s| {
                 s.kind == SlotKind::Fortress && s.section == section
             }) {
-                let pi = if cross_world {
+                // Check if this slot was pre-assigned (1-F safe placement).
+                let pi = if let Some(pre) = preassigned_forts.remove(&(wi, section)) {
+                    pre
+                } else if cross_world {
                     fort_iter.next().expect("fortress pool exhausted")
                 } else {
                     fort_by_world
@@ -249,7 +297,7 @@ fn assign_pool<R: Rng>(
         // so pool_idx_a/pos_a must be the A-side entry or the pipe self-references.
         let mut pipes = Vec::new();
         if let Some(world_pipes) = pipe_groups.get_mut(&wi) {
-            let mut groups: Vec<(usize, Vec<usize>)> = world_pipes.drain().collect();
+            let mut groups: Vec<(usize, Vec<(usize, bool)>)> = world_pipes.drain().collect();
             groups.sort_by_key(|(dest_idx, _)| *dest_idx);
             groups.as_mut_slice().shuffle(rng);
 
@@ -259,9 +307,12 @@ fn assign_pool<R: Rng>(
                 }
                 let (pos_a, pos_b) = built.pipe_pairs[pair_idx];
 
-                // Determine which group entry is the A-side by reading layout
-                // byte5 bit 6 from the ROM.  A-side has bit 6 = 0.
-                let (idx_a, idx_b) = pipe_ab_order(&group, pickup, catalog, rom);
+                // Use the is_a_side flag precomputed during catalog building.
+                let (idx_a, idx_b) = if group[0].1 {
+                    (group[0].0, group[1].0)
+                } else {
+                    (group[1].0, group[0].0)
+                };
                 pipes.push(PipeAssignment {
                     pool_idx_a: idx_a,
                     pool_idx_b: idx_b,
@@ -722,64 +773,6 @@ fn patch_fortress_fx_screen_check(rom: &mut Rom) {
 }
 
 // ---------------------------------------------------------------------------
-// Pipe A/B side detection
-// ---------------------------------------------------------------------------
-
-/// Given the two pool indices for a pipe dest_idx, return (A-side, B-side).
-/// The A-side entry has layout byte5 bit 6 = 0 (left-to-right transit level).
-/// Falls back to original order if the layout can't be read.
-fn pipe_ab_order(
-    group: &[usize],
-    pickup: &PickupResult,
-    catalog: &NodeCatalog,
-    rom: &Rom,
-) -> (usize, usize) {
-    let idx0 = group[0];
-    let idx1 = group[1];
-
-    // Determine which entry has PIPEWAYCONTROLLER (enemy 0x25).
-    let has_pwc: Vec<bool> = group.iter().map(|&idx| {
-        let pe = &pickup.pool[idx];
-        let ce = &catalog.entries[pe.catalog_idx];
-        ce.level_entry.as_ref().is_some_and(|le| {
-            let obj_ptr = u16::from_le_bytes([le.obj_lo, le.obj_hi]);
-            rom_data::has_enemy_id(rom, obj_ptr, 0x25)
-        })
-    }).collect();
-
-    // Mixed pair (one has PWC, one doesn't) — e.g. W5 spiral castle.
-    // The PWC entry goes to pos_a (upper nibble).  When entering from
-    // the pipe tile, the transit level's sub-area 0 reads the lower
-    // nibble to exit to the non-PWC side.  From the non-PWC level,
-    // a junction enters a later sub-area that reads the upper nibble
-    // to exit back to the PWC side.
-    if has_pwc[0] && !has_pwc[1] {
-        return (idx0, idx1);
-    }
-    if has_pwc[1] && !has_pwc[0] {
-        return (idx1, idx0);
-    }
-
-    // Regular pipe pair (both share an obj_ptr and have PWC).
-    // Use layout byte5 bit 6: A-side (bit6=0) → pos_a (upper nibble).
-    let pe = &pickup.pool[idx0];
-    let ce = &catalog.entries[pe.catalog_idx];
-    if let Some(le) = &ce.level_entry {
-        let lay_ptr = u16::from_le_bytes([le.lay_lo, le.lay_hi]);
-        if let Some(file_off) = rom_data::layout_file_offset(lay_ptr, le.tileset) {
-            let byte5 = rom.read_byte(file_off + 5);
-            if byte5 & 0x40 == 0 {
-                return (idx0, idx1); // group[0] is A-side
-            } else {
-                return (idx1, idx0); // group[0] is B-side, swap
-            }
-        }
-    }
-    // Fallback: preserve original order
-    (idx0, idx1)
-}
-
-// ---------------------------------------------------------------------------
 // Step 5: Write pipe destination tables
 // ---------------------------------------------------------------------------
 
@@ -864,7 +857,7 @@ mod tests {
         let build = super::super::overworld_build::build(&rom, &pickup, &catalog, &mut rng);
 
         let mut rng2 = ChaCha8Rng::seed_from_u64(99);
-        let assignments = assign_pool(&rom, &build, &pickup, &catalog, &mut rng2, true);
+        let assignments = assign_pool(&build, &pickup, &catalog, &mut rng2, true);
 
         // Collect all assigned pool indices.
         let mut used: Vec<usize> = Vec::new();

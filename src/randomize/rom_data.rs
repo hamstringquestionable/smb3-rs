@@ -187,6 +187,11 @@ pub(super) const BOOMBOOM_Y_OFFSETS: [usize; 17] = [
     0x0DA2D, // W8[36]
 ];
 
+/// The 1-F fortress obj_ptr. This fortress level has a secret exit that
+/// bypasses the Boom-Boom boss (no crystal ball → no FX trigger → lock
+/// stays closed). Must be placed in a slot whose lock is secret_exit_safe.
+pub(super) const FORTRESS_1F_OBJ_PTR: u16 = 0xD32B;
+
 /// Vanilla fortress obj_ptrs (same order as FORTRESS_ENTRIES).
 /// The obj_ptr identifies the fortress level's enemy data stream in PRG006.
 /// After level shuffle, the obj_ptr at a slot still points to the same enemy

@@ -35,7 +35,8 @@ pub(super) enum NodeKind {
     /// Fortress (carries Boom-Boom Y-byte offset for patching).
     Fortress { boomboom_y_offset: usize },
     /// One endpoint of a pipe pair.
-    Pipe { dest_idx: usize },
+    /// `is_a_side`: true if this is the A endpoint (upper nibble in dest tables).
+    Pipe { dest_idx: usize, is_a_side: bool },
     /// Airship dock.
     Airship,
     /// Bowser's castle (W8 only).
@@ -236,7 +237,7 @@ fn classify_entry(
     map_tile: u8,
     row: usize,
     map_obj_entries: &HashSet<usize>,
-    pipe_map: &HashMap<usize, usize>,
+    pipe_map: &HashMap<usize, (usize, bool)>,
 ) -> NodeKind {
     // 1. Start tile
     if map_tile == TILE_START {
@@ -262,8 +263,8 @@ fn classify_entry(
     }
 
     // 5. Pipe (PIPEWAYCONTROLLER or W5 spiral)
-    if let Some(&dest_idx) = pipe_map.get(&entry_idx) {
-        return NodeKind::Pipe { dest_idx };
+    if let Some(&(dest_idx, is_a_side)) = pipe_map.get(&entry_idx) {
+        return NodeKind::Pipe { dest_idx, is_a_side };
     }
 
     // 6. Toad house (standard $0700 + variant reward formats)
@@ -299,16 +300,21 @@ fn classify_entry(
 // Pipe pair matching
 // ---------------------------------------------------------------------------
 
-/// Build a map from entry_idx → dest_idx for all pipe entries in a world.
+/// Build a map from entry_idx → (dest_idx, is_a_side) for all pipe entries.
+///
+/// The A-side is the entry whose dest table upper nibble encodes its position.
+/// For regular pipe pairs (both share an obj_ptr and have PIPEWAYCONTROLLER),
+/// A-side has layout byte5 bit 6 = 0.  For mixed pairs (one has PWC, one
+/// doesn't — e.g. W5 spiral castle), the PWC entry is the A-side.
 fn build_pipe_map(
     rom: &Rom,
     world_idx: usize,
     pipe_entries_by_obj: &HashMap<u16, Vec<usize>>,
     spiral_entries: &[usize],
     dest_indices: &[usize],
-) -> HashMap<usize, usize> {
+) -> HashMap<usize, (usize, bool)> {
     let world = &WORLDS[world_idx];
-    let mut result: HashMap<usize, usize> = HashMap::new();
+    let mut result: HashMap<usize, (usize, bool)> = HashMap::new();
 
     // Collect all pipe pairs: (entry_a, entry_b)
     let mut pairs: Vec<(usize, usize)> = Vec::new();
@@ -338,14 +344,53 @@ fn build_pipe_map(
         for &d in dest_indices {
             let (da, db) = read_dest_positions(rom, d);
             if (ea_pos == da && eb_pos == db) || (ea_pos == db && eb_pos == da) {
-                result.insert(ea, d);
-                result.insert(eb, d);
+                let (a_entry, b_entry) = classify_pipe_ab(rom, world, ea, eb);
+                result.insert(a_entry, (d, true));
+                result.insert(b_entry, (d, false));
                 break;
             }
         }
     }
 
     result
+}
+
+/// Determine which of two pipe entries is the A-side (upper nibble in dest tables).
+///
+/// Mixed pairs (one has PIPEWAYCONTROLLER, one doesn't): PWC entry → A-side.
+/// Regular pairs (both have PWC): layout byte5 bit 6 = 0 → A-side.
+/// Fallback: (ea, eb) order preserved.
+fn classify_pipe_ab(rom: &Rom, world: &rom_data::WorldTables, ea: usize, eb: usize) -> (usize, usize) {
+    let le_a = rom_data::read_entry(rom, world, ea);
+    let le_b = rom_data::read_entry(rom, world, eb);
+
+    let obj_a = u16::from_le_bytes([le_a.obj_lo, le_a.obj_hi]);
+    let obj_b = u16::from_le_bytes([le_b.obj_lo, le_b.obj_hi]);
+
+    let has_pwc_a = rom_data::has_enemy_id(rom, obj_a, 0x25);
+    let has_pwc_b = rom_data::has_enemy_id(rom, obj_b, 0x25);
+
+    // Mixed pair: PWC entry is A-side.
+    if has_pwc_a && !has_pwc_b {
+        return (ea, eb);
+    }
+    if has_pwc_b && !has_pwc_a {
+        return (eb, ea);
+    }
+
+    // Regular pair: use layout byte5 bit 6. A-side has bit 6 = 0.
+    let lay_ptr_a = u16::from_le_bytes([le_a.lay_lo, le_a.lay_hi]);
+    if let Some(file_off) = rom_data::layout_file_offset(lay_ptr_a, le_a.tileset) {
+        let byte5 = rom.read_byte(file_off + 5);
+        if byte5 & 0x40 == 0 {
+            return (ea, eb);
+        } else {
+            return (eb, ea);
+        }
+    }
+
+    // Fallback: preserve original order.
+    (ea, eb)
 }
 
 /// Read the A and B endpoint positions from the pipe destination tables.
@@ -548,7 +593,7 @@ mod tests {
         // Every dest_idx should appear exactly twice
         let mut dest_counts: HashMap<usize, usize> = HashMap::new();
         for e in &catalog.entries {
-            if let NodeKind::Pipe { dest_idx } = &e.kind {
+            if let NodeKind::Pipe { dest_idx, .. } = &e.kind {
                 *dest_counts.entry(*dest_idx).or_insert(0) += 1;
             }
         }
@@ -689,7 +734,7 @@ mod tests {
                 NodeKind::Level => "Level".to_string(),
                 NodeKind::Fortress { boomboom_y_offset } =>
                     format!("Fortress(bb=0x{boomboom_y_offset:05X})"),
-                NodeKind::Pipe { dest_idx } => format!("Pipe(dest={dest_idx})"),
+                NodeKind::Pipe { dest_idx, .. } => format!("Pipe(dest={dest_idx})"),
                 NodeKind::Airship => "Airship".to_string(),
                 NodeKind::Bowser => "Bowser".to_string(),
                 NodeKind::Start => "Start".to_string(),
