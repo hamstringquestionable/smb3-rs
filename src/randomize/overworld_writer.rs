@@ -106,6 +106,11 @@ pub(crate) fn write_overworld<R: Rng>(
     let w8_sprite_pos_set: HashSet<(usize, usize)> =
         w8_sprite_positions.iter().map(|&(_, pos)| pos).collect();
 
+    // Cycling HB level pool for fallback pointer table entries.
+    let mut hb_fallback_levels = catalog.unique_hammer_bro_levels();
+    hb_fallback_levels.sort_by_key(|le| u16::from_le_bytes([le.obj_lo, le.obj_hi]));
+    let mut hb_fallback_iter = hb_fallback_levels.iter().cycle().cloned();
+
     let mut fx_slot = 0usize;
     for wi in 0..8 {
         let built = &build.worlds[wi];
@@ -113,7 +118,7 @@ pub(crate) fn write_overworld<R: Rng>(
         let sprite_mask = if wi == 7 { &w8_sprite_pos_set } else { &HashSet::new() };
 
         write_tile_grid(rom, built, wa, pickup, catalog, sprite_mask);
-        write_pointer_entries(rom, wi, wa, pickup, catalog);
+        write_pointer_entries(rom, wi, wa, pickup, catalog, &mut hb_fallback_iter);
         write_fortress_fx(rom, wi, built, wa, pickup, catalog, &mut fx_slot);
         write_pipe_dests(rom, wa);
         pipe_helpers::resort_pointer_table(rom, wi);
@@ -475,6 +480,7 @@ fn write_pointer_entries(
     wa: &WorldAssignments,
     pickup: &PickupResult,
     catalog: &NodeCatalog,
+    hb_level_iter: &mut impl Iterator<Item = rom_data::LevelEntry>,
 ) {
     let world = &WORLDS[world_idx];
     let n = world.entry_count;
@@ -560,15 +566,16 @@ fn write_pointer_entries(
         rom.write_byte(sc + entry_idx, (screen << 4) | col_in_screen);
     }
 
-    // Clear any remaining unused pointer table slots. These are entries that
-    // were picked up (vacating a slot) but not reassigned because the world
-    // has more pointer table entries than placeable grid positions. Set their
-    // ByRowType row nibble to 0 (row -2, unreachable) so they can never
-    // match a player position after resort_pointer_table re-sorts them.
+    // Fill any remaining unused pointer table slots with valid HB levels
+    // at an unreachable position. This ensures every slot has loadable level
+    // data — zeroing slots risks crashes if a roaming HB sprite triggers a
+    // lookup on a cleared entry.
     while slot_i < available_slots.len() {
         let entry_idx = available_slots[slot_i];
         slot_i += 1;
-        rom.write_byte(rt + entry_idx, 0x00);
+        let le = hb_level_iter.next().unwrap();
+        rom_data::write_entry(rom, world, entry_idx, &le);
+        rom.write_byte(rt + entry_idx, (0x02 << 4) | (le.tileset & 0x0F));
         rom.write_byte(sc + entry_idx, 0x00);
     }
 }
