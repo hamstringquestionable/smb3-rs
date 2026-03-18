@@ -425,7 +425,7 @@ fn write_tile_grid(
     for &(pos, _dist) in &bfs {
         if let Some(&la_idx) = level_pos_set.get(&pos) {
             if !assigned[la_idx] {
-                let tile = 0x02 + level_num.min(13);
+                let tile = 0x02 + level_num.min(19);
                 grid.set(pos.0, pos.1, tile);
                 assigned[la_idx] = true;
                 level_num += 1;
@@ -436,7 +436,7 @@ fn write_tile_grid(
     // Any level slots not reached by BFS (safety fallback).
     for (i, a) in wa.level.iter().enumerate() {
         if !assigned[i] {
-            let tile = 0x02 + level_num.min(13);
+            let tile = 0x02 + level_num.min(19);
             grid.set(a.pos.0, a.pos.1, tile);
             level_num += 1;
         }
