@@ -63,9 +63,6 @@ struct PipeAssignment {
 /// Hammer bro assignment: carries its own LevelEntry from the cycling pool.
 #[derive(Clone, Debug)]
 struct HammerBroAssignment {
-    /// Index into `pickup.pool` (provides entry_idx for the pointer table slot).
-    #[allow(dead_code)] // read in tests
-    pool_idx: usize,
     /// Target grid position.
     pos: (usize, usize),
     /// Level data from the cycling hammer bro level pool.
@@ -148,8 +145,6 @@ fn assign_pool<R: Rng>(
     let mut bowser_idx: Option<usize> = None;
     // Pipe groups: world → dest_idx → Vec<(pool_idx, is_a_side)>.
     let mut pipe_groups: HashMap<usize, HashMap<usize, Vec<(usize, bool)>>> = HashMap::new();
-    let mut hb_pool_by_world: HashMap<usize, Vec<usize>> = HashMap::new();
-
     for (pi, pe) in pickup.pool.iter().enumerate() {
         let entry = &catalog.entries[pe.catalog_idx];
         match &entry.kind {
@@ -168,13 +163,7 @@ fn assign_pool<R: Rng>(
                     .or_default()
                     .push((pi, *is_a_side));
             }
-            NodeKind::HammerBro => {
-                hb_pool_by_world
-                    .entry(entry.world_idx)
-                    .or_default()
-                    .push(pi);
-            }
-            _ => {}
+            _ => {} // HammerBro entries don't need a pool — see HB assignment below
         }
     }
 
@@ -347,39 +336,24 @@ fn assign_pool<R: Rng>(
 
         // --- Hammer bro assignments (remaining blank slots) ---
         //
-        // Budget: total pointer table entries used (fort + level + pipe*2 + HB)
-        // must not exceed available pointer table slots from pickup.
+        // Every SlotKind::HammerBro position gets a cycling HB level, up to
+        // the remaining pointer table capacity after level-like assignments.
         let level_like_count = fortress.len() + level.len() + pipes.len() * 2;
-        let available_ptr_slots = pickup.worlds[wi].pool_indices.len();
-        let hb_budget = available_ptr_slots.saturating_sub(level_like_count);
+        let remaining_slots = pickup.worlds[wi].pool_indices.len().saturating_sub(level_like_count);
 
         let mut hammer_bro = Vec::new();
-        let mut hb_world_pool = hb_pool_by_world.remove(&wi).unwrap_or_default();
-        hb_world_pool.as_mut_slice().shuffle(rng);
-        let mut hb_iter = hb_world_pool.into_iter();
-
         for slot in &built.slots {
-            if hammer_bro.len() >= hb_budget {
+            if hammer_bro.len() >= remaining_slots {
                 break;
             }
             if slot.kind != SlotKind::HammerBro {
                 continue;
             }
-            if let Some(pi) = hb_iter.next() {
-                let le = hb_level_iter.next().unwrap();
-                hammer_bro.push(HammerBroAssignment {
-                    pool_idx: pi,
-                    pos: slot.pos,
-                    level_entry: le,
-                });
-            }
+            hammer_bro.push(HammerBroAssignment {
+                pos: slot.pos,
+                level_entry: hb_level_iter.next().unwrap(),
+            });
         }
-
-        // Remaining HB pool entries that didn't get a slot are NOT assigned.
-        // Their pointer table slots are cleared to unreachable positions by
-        // the "clear unused slots" code in write_pointer_entries.  Writing
-        // them at their original catalog positions would create duplicate
-        // entries when the builder has placed a new level at that position.
 
         assignments.push(WorldAssignments {
             fortress,
@@ -877,9 +851,6 @@ mod tests {
             }
             if let Some(a) = &wa.bowser {
                 used.push(a.pool_idx);
-            }
-            for hb in &wa.hammer_bro {
-                used.push(hb.pool_idx);
             }
         }
 
