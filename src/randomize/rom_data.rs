@@ -242,15 +242,16 @@ pub(super) const TOAD_HOUSE_OBJ_PTRS: &[u16] = &[
 ];
 
 /// Known hammer bro level obj_ptrs. Each world's hammer bro encounters point
-/// to one of these 6 level object streams. Multiple pointer table entries
-/// share the same obj_ptr (with varying layouts/tilesets).
+/// to one of these object streams. Multiple pointer table entries share the
+/// same obj_ptr (with varying layouts/tilesets).
+/// W8's 0xC03D is excluded — it uses a full action level layout (7-7), not
+/// a short HB battle.
 pub(super) const HAMMER_BRO_OBJ_PTRS: &[u16] = &[
     0xC72B, // W1
     0xD14D, // W2
     0xD142, // W2 (variant)
     0xC640, // W3, W5, W6, W7
     0xD0EA, // W4
-    0xC03D, // W8
 ];
 
 /// Map transition entries.
