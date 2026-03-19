@@ -584,7 +584,7 @@ fn write_pointer_entries(
         slot_i += 1;
         let le = hb_level_iter.next().unwrap();
         rom_data::write_entry(rom, world, entry_idx, &le);
-        rom.write_byte(rt + entry_idx, (0x02 << 4) | (le.tileset & 0x0F));
+        rom.write_byte(rt + entry_idx, le.tileset & 0x0F); // row_nib=0 → grid_row=-2 (unreachable)
         rom.write_byte(sc + entry_idx, 0x00);
     }
 }
