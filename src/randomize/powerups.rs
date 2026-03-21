@@ -5,18 +5,6 @@ use crate::rom::Rom;
 
 use super::rom_data::LEVEL_DATA_REGIONS;
 
-/// Tilesets where group 2 note/wood block powerups can be safely randomized.
-///
-/// Each note/wood variant produces a distinct tile ID (notes: 0x2F/0x30/0x31,
-/// wood: 0x73/0x74/0x75). In tilesets that have note/wood block graphics,
-/// all variants look the same (note block or wood block). But in tilesets
-/// like Dungeon (TS2), Desert (TS9), and Ship (TS10), these tile ID slots
-/// are reused for tileset-specific decorations, so swapping between variants
-/// changes the block's visual appearance (extra/missing tiles).
-///
-/// Regions where note/wood randomization is DISABLED are identified by their
-/// start offset (Dungeon 0x2A7F7, Desert 0x28F3F, Ship 0x2EC07).
-const NOTE_WOOD_DISABLED_REGIONS: &[usize] = &[0x28F3F, 0x2A7F7, 0x2EC07];
 
 /// Level generator command encoding:
 ///   byte0 (Temp_Var15): bits 7-5 = generator group, bits 4-0 = Y position
@@ -79,8 +67,6 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
     for region in LEVEL_DATA_REGIONS {
         let len = region.end - region.start;
         let mut data = rom.read_range(region.start, len).to_vec();
-        let note_wood_ok = !NOTE_WOOD_DISABLED_REGIONS.contains(&region.start);
-
         // Each region begins with a 9-byte level header, then generator
         // commands terminated by 0xFF. After each 0xFF the next level's
         // 9-byte header follows (unless we've reached the end of the region).
@@ -110,7 +96,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
                     } else if BRICK_SHAPES.contains(&shape) && !PROTECTED_OFFSETS.contains(&file_offset) {
                         data[i + 2] = *BRICK_SHAPES.choose(rng).unwrap();
                     }
-                } else if note_wood_ok && group == GEN_GROUP_EXTENDED {
+                } else if group == GEN_GROUP_EXTENDED {
                     if NOTE_SHAPES.contains(&shape) {
                         data[i + 2] = *NOTE_SHAPES.choose(rng).unwrap();
                     } else if WOOD_SHAPES.contains(&shape) {
