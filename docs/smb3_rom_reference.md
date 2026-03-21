@@ -212,15 +212,16 @@ an extra byte.
 
 **Tileset-specific extra-byte dispatches:**
 
-| Tileset | Extra-Byte Dispatches |
-|---------|----------------------|
-| TS1 (Plains) | 11, 12, 35-42 |
-| TS2 (Dungeon) | 35-42, 46, 47, 48 |
-| TS3 (Hilly) | 35-42, 60-71 |
-| TS4/12 (Ice/Sky) | 0, 35-42, 60, 112 |
-| TS7 (Pipe/Water) | 35-42, 57 |
-| TS9 (Desert) | 10-13, 35-42 |
-| TS10 (Ship) | 1, 2, 35-42, 48, 51 |
+| Tileset | Extra-Byte Dispatches | Source |
+|---------|----------------------|--------|
+| TS1 (Plains) | 11, 12, 35-42 | GroundRun, TopDecoBlocks |
+| TS2 (Dungeon) | 13, 14, 35-42, 46, 47, 48 | SolidBrick, BrightDiamondLong (LL21_InitLongRun), TopDecoBlocks, Background, Lava |
+| TS3 (Hilly) | 35-42, 60-71 | TopDecoBlocks, BGOrWater, DecoGround, DecoCeiling |
+| TS4/12 (Ice/Sky) | 0, 35-42, 54, 60, 112 | LongWoodBlock, TopDecoBlocks, Muncher17, Group4 var, Group7 var |
+| TS5/11/13 (Cloudy) | 13, 35-42, 45, 46, 48, 51 | DoubleCloud, TopDecoBlocks, CloudGoal, RoundCloudTop, CloudSpace, Lava |
+| TS7 (Pipe/Water) | 35-42, 49, 57 | TopDecoBlocks, OrangeBlock, WaterFill |
+| TS9 (Desert) | 10-13, 35-42 | DiagRect variants, TopDecoBlocks |
+| TS10 (Ship) | 1, 2, 35-42, 48, 49, 51 | WoodBodyLong, TopDecoBlocks, MetalPlate, Crate, DoubleTipBodyWood |
 
 **High-bit fallback rule (NOT universally reliable):**
 

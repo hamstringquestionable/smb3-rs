@@ -60,14 +60,14 @@ LEVEL_DATA_REGIONS = [
         "tileset_ids": [4, 12],
         "start": 0x227E0,
         "end": 0x24005,
-        "extra_byte_dispatches": {0, 35, 36, 37, 38, 39, 40, 41, 42, 60, 112},
+        "extra_byte_dispatches": {0, 35, 36, 37, 38, 39, 40, 41, 42, 54, 60, 112},  # +54 Muncher17
     },
     {
         "name": "Pipe/Water (TS7)",
         "tileset_ids": [7],
         "start": 0x24BA7,
         "end": 0x26005,
-        "extra_byte_dispatches": {35, 36, 37, 38, 39, 40, 41, 42, 57},
+        "extra_byte_dispatches": {35, 36, 37, 38, 39, 40, 41, 42, 49, 57},  # +49 OrangeBlock
     },
     {
         "name": "Cloudy/Giant/Plant (TS5/11/13)",
@@ -88,14 +88,14 @@ LEVEL_DATA_REGIONS = [
         "tileset_ids": [2],
         "start": 0x2A7F7,
         "end": 0x2C005,
-        "extra_byte_dispatches": {35, 36, 37, 38, 39, 40, 41, 42, 46, 47, 48},
+        "extra_byte_dispatches": {13, 14, 35, 36, 37, 38, 39, 40, 41, 42, 46, 47, 48},  # +13 SolidBrick +14 BrightDiamondLong
     },
     {
         "name": "Ship (TS10)",
         "tileset_ids": [10],
         "start": 0x2EC07,
         "end": 0x30005,
-        "extra_byte_dispatches": {1, 2, 35, 36, 37, 38, 39, 40, 41, 42, 48, 51},
+        "extra_byte_dispatches": {1, 2, 35, 36, 37, 38, 39, 40, 41, 42, 48, 49, 51},  # +49 Crate
     },
 ]
 

@@ -3,100 +3,20 @@ use rand::seq::IndexedRandom;
 
 use crate::rom::Rom;
 
-/// A level data region with its tileset-specific extra-byte dispatch indices.
-///
-/// Most generator commands are 3 bytes, but some variable-size routines read a
-/// 4th byte from the layout stream. The `extra_byte_dispatches` slice lists the
-/// variable-size dispatch indices that consume 4 bytes for this tileset.
-///
-/// Dispatch index = group * 15 + (byte2 >> 4) - 1, where group = (byte0 >> 5).
-struct LevelDataRegion {
-    start: usize,
-    end: usize,
-    extra_byte_dispatches: &'static [u8],
-}
+use super::rom_data::LEVEL_DATA_REGIONS;
 
-/// Level data regions by tileset (file offset ranges + extra-byte dispatch info).
-/// Extra-byte dispatches verified from Southbird SMB3 disassembly per-tileset
-/// dispatch tables.
-const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
-    LevelDataRegion { // Underground (TS14) — same dispatch table as TS3
-        start: 0x1A587, end: 0x1C005,
-        extra_byte_dispatches: &[
-            35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
-            60, 61, 62,                       // BGOrWater
-            63, 64, 65, 66, 67, 68,           // DecoGround
-            69, 70, 71,                       // DecoCeiling
-        ],
-    },
-    LevelDataRegion { // Plains (TS1)
-        start: 0x1E512, end: 0x20005,
-        extra_byte_dispatches: &[
-            11, 12,                            // GroundRun
-            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
-        ],
-    },
-    LevelDataRegion { // Hilly (TS3)
-        start: 0x20587, end: 0x22005,
-        extra_byte_dispatches: &[
-            35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
-            60, 61, 62,                       // BGOrWater
-            63, 64, 65, 66, 67, 68,           // DecoGround
-            69, 70, 71,                       // DecoCeiling
-        ],
-    },
-    LevelDataRegion { // Ice / Sky (TS4/12)
-        start: 0x227E0, end: 0x24005,
-        extra_byte_dispatches: &[
-            0,                                 // LongWoodBlock
-            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
-            60,                                // Group 4 variable
-            112,                               // Group 7 variable
-        ],
-    },
-    LevelDataRegion { // Pipe / Water (TS7)
-        start: 0x24BA7, end: 0x26005,
-        extra_byte_dispatches: &[
-            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
-            57,                                // WaterFill
-        ],
-    },
-    LevelDataRegion { // Cloudy / Giant / Plant (TS5/11/13)
-        start: 0x26A6F, end: 0x28C05,
-        extra_byte_dispatches: &[
-            13,                                // DoubleCloud
-            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
-            45,                                // CloudGoal
-            46,                                // RoundCloudTop
-            48,                                // CloudSpace
-            51,                                // Lava
-        ],
-    },
-    LevelDataRegion { // Desert (TS9)
-        start: 0x28F3F, end: 0x2A005,
-        extra_byte_dispatches: &[
-            10, 11, 12, 13,                    // DiagRect variants
-            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
-        ],
-    },
-    LevelDataRegion { // Dungeon (TS2)
-        start: 0x2A7F7, end: 0x2C005,
-        extra_byte_dispatches: &[
-            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
-            46, 47,                            // Background
-            48,                                // Lava
-        ],
-    },
-    LevelDataRegion { // Ship (TS10)
-        start: 0x2EC07, end: 0x30005,
-        extra_byte_dispatches: &[
-            1, 2,                              // WoodBodyLong
-            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
-            48,                                // MetalPlate
-            51,                                // DoubleTipBodyWood
-        ],
-    },
-];
+/// Tilesets where group 2 note/wood block powerups can be safely randomized.
+///
+/// Each note/wood variant produces a distinct tile ID (notes: 0x2F/0x30/0x31,
+/// wood: 0x73/0x74/0x75). In tilesets that have note/wood block graphics,
+/// all variants look the same (note block or wood block). But in tilesets
+/// like Dungeon (TS2), Desert (TS9), and Ship (TS10), these tile ID slots
+/// are reused for tileset-specific decorations, so swapping between variants
+/// changes the block's visual appearance (extra/missing tiles).
+///
+/// Regions where note/wood randomization is DISABLED are identified by their
+/// start offset (Dungeon 0x2A7F7, Desert 0x28F3F, Ship 0x2EC07).
+const NOTE_WOOD_DISABLED_REGIONS: &[usize] = &[0x28F3F, 0x2A7F7, 0x2EC07];
 
 /// Level generator command encoding:
 ///   byte0 (Temp_Var15): bits 7-5 = generator group, bits 4-0 = Y position
@@ -150,12 +70,16 @@ const PROTECTED_OFFSETS: &[usize] = &[
 ///
 /// Group 1 (0x20): ? blocks swap among {flower, leaf, star}, bricks swap among
 /// {flower, leaf, star, 1-up}. Group 2 (0x40): note blocks swap among
-/// {flower, leaf, star}, wood blocks swap among {flower, leaf, star}.
+/// {flower, leaf, star}, wood blocks swap among {flower, leaf, star} — but only
+/// in tileset regions where note/wood variants share the same visual appearance.
+/// In Dungeon/Desert/Ship tilesets the note/wood tile IDs render as different
+/// decorations, so swapping would corrupt the level visuals.
 /// Protected offsets (like 7-7's star blocks) are never modified.
 pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
     for region in LEVEL_DATA_REGIONS {
         let len = region.end - region.start;
         let mut data = rom.read_range(region.start, len).to_vec();
+        let note_wood_ok = !NOTE_WOOD_DISABLED_REGIONS.contains(&region.start);
 
         // Each region begins with a 9-byte level header, then generator
         // commands terminated by 0xFF. After each 0xFF the next level's
@@ -186,7 +110,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
                     } else if BRICK_SHAPES.contains(&shape) && !PROTECTED_OFFSETS.contains(&file_offset) {
                         data[i + 2] = *BRICK_SHAPES.choose(rng).unwrap();
                     }
-                } else if group == GEN_GROUP_EXTENDED {
+                } else if note_wood_ok && group == GEN_GROUP_EXTENDED {
                     if NOTE_SHAPES.contains(&shape) {
                         data[i + 2] = *NOTE_SHAPES.choose(rng).unwrap();
                     } else if WOOD_SHAPES.contains(&shape) {

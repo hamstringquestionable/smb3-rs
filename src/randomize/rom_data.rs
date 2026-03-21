@@ -51,6 +51,112 @@ pub(super) const VALID_BLANK_TILES: &[u8] = &[
 /// Start tile ID.
 pub(super) const TILE_START: u8 = 0xE5;
 
+// ---------------------------------------------------------------------------
+// Level data regions and tile generator dispatch tables
+// ---------------------------------------------------------------------------
+
+/// A level data region: file offset range + tileset-specific extra-byte dispatches.
+///
+/// Most tile generator commands are 3 bytes, but some variable-size routines
+/// read a 4th byte from the layout stream. `extra_byte_dispatches` lists the
+/// variable-size dispatch indices that consume 4 bytes for this tileset.
+///
+/// Dispatch index = group * 15 + (byte2 >> 4) - 1, where group = (byte0 >> 5).
+///
+/// Verified against the Southbird SMB3 disassembly per-tileset dispatch tables
+/// (LoadLevel_Generator_TSx in PRG013-023). Handlers that call
+/// LoadLevel_GetLayoutByte, LL_GetLayoutByte_AndBackup, LL21_InitLongRun,
+/// or equivalent are 4-byte.
+pub(super) struct LevelDataRegion {
+    pub start: usize,
+    pub end: usize,
+    pub extra_byte_dispatches: &'static [u8],
+}
+
+/// Level data regions by tileset (file offset ranges + extra-byte dispatch info).
+pub(super) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
+    LevelDataRegion { // Underground (TS14) — same dispatch table as TS3
+        start: 0x1A587, end: 0x1C005,
+        extra_byte_dispatches: &[
+            35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
+            60, 61, 62,                       // BGOrWater
+            63, 64, 65, 66, 67, 68,           // DecoGround
+            69, 70, 71,                       // DecoCeiling
+        ],
+    },
+    LevelDataRegion { // Plains (TS1)
+        start: 0x1E512, end: 0x20005,
+        extra_byte_dispatches: &[
+            11, 12,                            // GroundRun
+            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
+        ],
+    },
+    LevelDataRegion { // Hilly (TS3)
+        start: 0x20587, end: 0x22005,
+        extra_byte_dispatches: &[
+            35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
+            60, 61, 62,                       // BGOrWater
+            63, 64, 65, 66, 67, 68,           // DecoGround
+            69, 70, 71,                       // DecoCeiling
+        ],
+    },
+    LevelDataRegion { // Ice / Sky (TS4/12)
+        start: 0x227E0, end: 0x24005,
+        extra_byte_dispatches: &[
+            0,                                 // LongWoodBlock
+            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
+            54,                                // Muncher17
+            60,                                // Group 4 variable
+            112,                               // Group 7 variable
+        ],
+    },
+    LevelDataRegion { // Pipe / Water (TS7)
+        start: 0x24BA7, end: 0x26005,
+        extra_byte_dispatches: &[
+            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
+            49,                                // OrangeBlock
+            57,                                // WaterFill
+        ],
+    },
+    LevelDataRegion { // Cloudy / Giant / Plant (TS5/11/13)
+        start: 0x26A6F, end: 0x28C05,
+        extra_byte_dispatches: &[
+            13,                                // DoubleCloud
+            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
+            45,                                // CloudGoal
+            46,                                // RoundCloudTop
+            48,                                // CloudSpace
+            51,                                // Lava
+        ],
+    },
+    LevelDataRegion { // Desert (TS9)
+        start: 0x28F3F, end: 0x2A005,
+        extra_byte_dispatches: &[
+            10, 11, 12, 13,                    // DiagRect variants
+            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
+        ],
+    },
+    LevelDataRegion { // Dungeon (TS2)
+        start: 0x2A7F7, end: 0x2C005,
+        extra_byte_dispatches: &[
+            13, 14,                            // SolidBrick, BrightDiamondLong (LL21_InitLongRun)
+            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
+            46, 47,                            // Background (LoadLevel21_Background)
+            48,                                // Lava
+        ],
+    },
+    LevelDataRegion { // Ship (TS10)
+        start: 0x2EC07, end: 0x30005,
+        extra_byte_dispatches: &[
+            1, 2,                              // WoodBodyLong
+            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
+            48,                                // MetalPlate
+            49,                                // Crate
+            51,                                // DoubleTipBodyWood
+        ],
+    },
+];
+
 /// Pipe tile ID.
 pub(super) const TILE_PIPE: u8 = 0xBC;
 
