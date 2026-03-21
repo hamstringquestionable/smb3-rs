@@ -132,11 +132,12 @@ pub fn fix_big_q_block_rooms(rom: &mut Rom) {
 
 /// Replace W3 drawbridge tiles with normal path tiles and NOP the toggle code.
 pub fn fix_w3_drawbridges(rom: &mut Rom) {
-    // Replace drawbridge tiles with regular bridge ($B3, always passable, bridge graphic)
+    // Replace horizontal drawbridge tiles with bridge ($B3, horizontal path)
     rom.write_byte(W3_BRIDGE_H1, 0xB3);
     rom.write_byte(W3_BRIDGE_H2, 0xB3);
-    rom.write_byte(W3_BRIDGE_V1, 0xB3);
-    rom.write_byte(W3_BRIDGE_V2, 0xB3);
+    // Replace vertical drawbridge tiles with open path ($BA, vertical-compatible)
+    rom.write_byte(W3_BRIDGE_V1, 0xBA);
+    rom.write_byte(W3_BRIDGE_V2, 0xBA);
     // NOP out the toggle code (LDA $07BB; EOR #$01; STA $07BB)
     rom.write_range(W3_TOGGLE_OFFSET, &[0xEA; W3_TOGGLE_LEN]);
 }
@@ -234,8 +235,8 @@ mod tests {
 
         assert_eq!(rom.read_byte(W3_BRIDGE_H1), 0xB3);
         assert_eq!(rom.read_byte(W3_BRIDGE_H2), 0xB3);
-        assert_eq!(rom.read_byte(W3_BRIDGE_V1), 0xB3);
-        assert_eq!(rom.read_byte(W3_BRIDGE_V2), 0xB3);
+        assert_eq!(rom.read_byte(W3_BRIDGE_V1), 0xBA);
+        assert_eq!(rom.read_byte(W3_BRIDGE_V2), 0xBA);
         assert_eq!(rom.read_range(W3_TOGGLE_OFFSET, W3_TOGGLE_LEN), &[0xEA; 8]);
     }
 }
