@@ -96,7 +96,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
                     } else if BRICK_SHAPES.contains(&shape) && !PROTECTED_OFFSETS.contains(&file_offset) {
                         data[i + 2] = *BRICK_SHAPES.choose(rng).unwrap();
                     }
-                } else if group == GEN_GROUP_EXTENDED {
+                } else if group == GEN_GROUP_EXTENDED && region.randomize_note_wood {
                     if NOTE_SHAPES.contains(&shape) {
                         data[i + 2] = *NOTE_SHAPES.choose(rng).unwrap();
                     } else if WOOD_SHAPES.contains(&shape) {

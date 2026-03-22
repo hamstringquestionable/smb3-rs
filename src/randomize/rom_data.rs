@@ -71,6 +71,11 @@ pub(super) struct LevelDataRegion {
     pub start: usize,
     pub end: usize,
     pub extra_byte_dispatches: &'static [u8],
+    /// Whether group 2 fixed-size shapes 1-6 are note/wood powerups in this
+    /// tileset. In most tilesets they are, but in TS2 (Dungeon) shapes 1-2 map
+    /// to CCBridge and shapes 3-7 map to TopDecoBlocks — swapping them would
+    /// corrupt level geometry.
+    pub randomize_note_wood: bool,
 }
 
 /// Level data regions by tileset (file offset ranges + extra-byte dispatch info).
@@ -83,6 +88,7 @@ pub(super) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
             63, 64, 65, 66, 67, 68,           // DecoGround
             69, 70, 71,                       // DecoCeiling
         ],
+        randomize_note_wood: true,
     },
     LevelDataRegion { // Plains (TS1)
         start: 0x1E512, end: 0x20005,
@@ -90,6 +96,7 @@ pub(super) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
             11, 12,                            // GroundRun
             35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
         ],
+        randomize_note_wood: true,
     },
     LevelDataRegion { // Hilly (TS3)
         start: 0x20587, end: 0x22005,
@@ -99,6 +106,7 @@ pub(super) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
             63, 64, 65, 66, 67, 68,           // DecoGround
             69, 70, 71,                       // DecoCeiling
         ],
+        randomize_note_wood: true,
     },
     LevelDataRegion { // Ice / Sky (TS4/12)
         start: 0x227E0, end: 0x24005,
@@ -109,6 +117,7 @@ pub(super) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
             60,                                // Group 4 variable
             112,                               // Group 7 variable
         ],
+        randomize_note_wood: true,
     },
     LevelDataRegion { // Pipe / Water (TS7)
         start: 0x24BA7, end: 0x26005,
@@ -117,6 +126,7 @@ pub(super) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
             49,                                // OrangeBlock
             57,                                // WaterFill
         ],
+        randomize_note_wood: true,
     },
     LevelDataRegion { // Cloudy / Giant / Plant (TS5/11/13)
         start: 0x26A6F, end: 0x28C05,
@@ -128,6 +138,7 @@ pub(super) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
             48,                                // CloudSpace
             51,                                // Lava
         ],
+        randomize_note_wood: true,
     },
     LevelDataRegion { // Desert (TS9)
         start: 0x28F3F, end: 0x2A005,
@@ -135,6 +146,7 @@ pub(super) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
             10, 11, 12, 13,                    // DiagRect variants
             35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
         ],
+        randomize_note_wood: true,
     },
     LevelDataRegion { // Dungeon (TS2)
         start: 0x2A7F7, end: 0x2C005,
@@ -143,7 +155,10 @@ pub(super) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
             35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
             46, 47,                            // Background (LoadLevel21_Background)
             48,                                // Lava
+            57,                                // BrightDiamond (4-byte like BrightDiamondLong)
+            95, 96,                            // Group 6 handlers (empirically verified 4-byte)
         ],
+        randomize_note_wood: false, // shapes 1-2 = CCBridge, 3-7 = TopDecoBlocks in TS2
     },
     LevelDataRegion { // Ship (TS10)
         start: 0x2EC07, end: 0x30005,
@@ -154,6 +169,7 @@ pub(super) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
             49,                                // Crate
             51,                                // DoubleTipBodyWood
         ],
+        randomize_note_wood: true,
     },
 ];
 

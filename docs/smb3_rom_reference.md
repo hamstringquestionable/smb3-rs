@@ -215,7 +215,7 @@ an extra byte.
 | Tileset | Extra-Byte Dispatches | Source |
 |---------|----------------------|--------|
 | TS1 (Plains) | 11, 12, 35-42 | GroundRun, TopDecoBlocks |
-| TS2 (Dungeon) | 13, 14, 35-42, 46, 47, 48 | SolidBrick, BrightDiamondLong (LL21_InitLongRun), TopDecoBlocks, Background, Lava |
+| TS2 (Dungeon) | 13, 14, 35-42, 46, 47, 48, 57, 95, 96 | SolidBrick, BrightDiamondLong, TopDecoBlocks, Background, Lava, BrightDiamond, Group6 handlers |
 | TS3 (Hilly) | 35-42, 60-71 | TopDecoBlocks, BGOrWater, DecoGround, DecoCeiling |
 | TS4/12 (Ice/Sky) | 0, 35-42, 54, 60, 112 | LongWoodBlock, TopDecoBlocks, Muncher17, Group4 var, Group7 var |
 | TS5/11/13 (Cloudy) | 13, 35-42, 45, 46, 48, 51 | DoubleCloud, TopDecoBlocks, CloudGoal, RoundCloudTop, CloudSpace, Lava |

@@ -188,27 +188,27 @@ pub(super) fn blank_tile_for_dynamic(grid: &Grid, world_idx: usize, row: usize, 
     blank_tile_from_neighbors(grid, world_idx, row, col)
 }
 
-/// W3 positions that sit on narrow island strips and should use island-themed
-/// blank tiles.  Every other W3 position is interior land and uses standard
-/// 0x4* tiles even though its neighbors are 0xA*/0xB* coastline paths.
-const W3_ISLAND_POSITIONS: &[(usize, usize)] = &[
-    (2, 4),  // 3-2
-    (4, 4),  // hammer
-    (6, 4),  // 3-1
-    (4, 12), // hammer
-    (6, 12), // 3-5
+/// Positions that should use island-themed blank tiles (0xAE/0xAF/0xB5/0xB6).
+/// All other positions default to standard land tiles (0x44-0x4A), except sky
+/// positions which are auto-detected from neighbors (0xD* tiles).
+const ISLAND_POSITIONS: &[(usize, usize, usize)] = &[
+    // W3 — narrow island strips
+    (2, 2, 4),  // 3-2
+    (2, 4, 4),  // hammer
+    (2, 6, 4),  // 3-1
+    (2, 4, 12), // hammer
+    (2, 6, 12), // 3-5
 ];
 
 /// Derive the visual theme from a neighbor path tile.
-fn theme_from_tile(tile: u8, force_standard: bool) -> (u8, u8, u8, u8) {
+fn theme_from_tile(tile: u8, force_island: bool) -> (u8, u8, u8, u8) {
     //           h     v     hv    none
-    if force_standard {
-        return (0x47, 0x48, 0x4A, 0x44);
+    if force_island {
+        return (0xAE, 0xB5, 0xAF, 0xB6);
     }
     match tile >> 4 {
-        0xA | 0xB => (0xAE, 0xB5, 0xAF, 0xB6), // island
-        0xD       => (0xDC, 0xD9, 0xDE, 0xD9),  // sky
-        _         => (0x47, 0x48, 0x4A, 0x44),  // standard
+        0xD => (0xDC, 0xD9, 0xDE, 0xD9), // sky
+        _   => (0x47, 0x48, 0x4A, 0x44),  // standard
     }
 }
 
@@ -219,13 +219,14 @@ fn blank_tile_from_neighbors(grid: &Grid, world_idx: usize, row: usize, col: usi
     let has_h = h_tile.is_some_and(|t| VALID_HORZ.contains(&t));
     let has_v = v_tile.is_some_and(|t| VALID_VERT.contains(&t));
 
-    // W3 interior-island positions: force standard theme even with island neighbors.
-    let force_std = world_idx == 2 && !W3_ISLAND_POSITIONS.contains(&(row, col));
+    let force_island = ISLAND_POSITIONS.contains(&(world_idx, row, col));
 
     let (h, v, hv, none) = if let Some(t) = h_tile.filter(|_| has_h) {
-        theme_from_tile(t, force_std)
+        theme_from_tile(t, force_island)
     } else if let Some(t) = v_tile.filter(|_| has_v) {
-        theme_from_tile(t, force_std)
+        theme_from_tile(t, force_island)
+    } else if force_island {
+        (0xAE, 0xB5, 0xAF, 0xB6)
     } else {
         (0x47, 0x48, 0x4A, 0x44) // standard fallback
     };

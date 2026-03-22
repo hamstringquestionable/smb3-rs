@@ -88,7 +88,7 @@ LEVEL_DATA_REGIONS = [
         "tileset_ids": [2],
         "start": 0x2A7F7,
         "end": 0x2C005,
-        "extra_byte_dispatches": {13, 14, 35, 36, 37, 38, 39, 40, 41, 42, 46, 47, 48},  # +13 SolidBrick +14 BrightDiamondLong
+        "extra_byte_dispatches": {13, 14, 35, 36, 37, 38, 39, 40, 41, 42, 46, 47, 48, 57, 95, 96},  # +13 SolidBrick +14 BrightDiamondLong +57 BrightDiamond +95,96 Group6
     },
     {
         "name": "Ship (TS10)",
