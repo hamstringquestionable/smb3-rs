@@ -47,7 +47,16 @@ pub(super) fn grid_pos_to_dest_nibbles(grid_row: usize, grid_col: usize) -> (u8,
 /// On-screen player position = screen*256 + col*16 - scroll_px.
 /// Pan triggers at <33 (left) or >208 (right).  This picks the scroll value
 /// that keeps the player in [33, 208].
-fn scroll_nibble(screen: u8, col_in_screen: u8) -> u8 {
+///
+/// W5 and W8 have discrete single-screen map sections that don't smoothly
+/// scroll — the camera snaps to each screen boundary. The center flag must
+/// never be set for these worlds or it shifts the camera 128px right, cutting
+/// off half the visible screen. Vanilla confirms: no W5/W8 pipe scroll
+/// nibbles ever use the center flag.
+fn scroll_nibble(screen: u8, col_in_screen: u8, discrete_screens: bool) -> u8 {
+    if discrete_screens {
+        return screen;
+    }
     let px = col_in_screen as u16 * 16;
     if px < 33 && screen > 0 {
         (screen - 1) | 0x8
@@ -66,11 +75,13 @@ fn scroll_nibble(screen: u8, col_in_screen: u8) -> u8 {
 /// MapScrlXHi controls the camera scroll position after exiting a pipe.
 /// Each nibble is computed by `scroll_nibble()` to keep the player's on-screen
 /// position in [33, 208], avoiding pan-left (<33) and pan-right (>208) triggers.
+/// For worlds with discrete screens (W5, W8), the center flag is never set.
 pub(super) fn write_pipe_dest(
     rom: &mut Rom,
     dest_idx: usize,
     a_pos: Pos,
     b_pos: Pos,
+    world_idx: usize,
 ) {
     let (a_xhi, a_x, a_y) = grid_pos_to_dest_nibbles(a_pos.0, a_pos.1);
     let (b_xhi, b_x, b_y) = grid_pos_to_dest_nibbles(b_pos.0, b_pos.1);
@@ -79,8 +90,9 @@ pub(super) fn write_pipe_dest(
     rom.write_byte(PIPE_MAP_X + dest_idx, (a_x << 4) | b_x);
     rom.write_byte(PIPE_MAP_Y + dest_idx, (a_y << 4) | b_y);
 
-    let a_scrl = scroll_nibble(a_xhi, a_x);
-    let b_scrl = scroll_nibble(b_xhi, b_x);
+    let discrete = world_idx == 4 || world_idx == 7; // W5, W8
+    let a_scrl = scroll_nibble(a_xhi, a_x, discrete);
+    let b_scrl = scroll_nibble(b_xhi, b_x, discrete);
     rom.write_byte(PIPE_MAP_SCRL_XHI + dest_idx, (a_scrl << 4) | b_scrl);
 }
 

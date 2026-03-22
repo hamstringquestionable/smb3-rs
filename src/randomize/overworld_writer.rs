@@ -120,7 +120,7 @@ pub(crate) fn write_overworld<R: Rng>(
         write_tile_grid(rom, built, wa, pickup, catalog, sprite_mask);
         write_pointer_entries(rom, wi, wa, pickup, catalog, &mut hb_fallback_iter);
         write_fortress_fx(rom, wi, built, wa, pickup, catalog, &mut fx_slot);
-        write_pipe_dests(rom, wa);
+        write_pipe_dests(rom, wi, wa);
         pipe_helpers::resort_pointer_table(rom, wi);
         // Do not sync map object sprite positions: the overworld builder never
         // moves MapObject entries (W7 piranhas), so vanilla sprite positions are
@@ -766,9 +766,9 @@ fn patch_fortress_fx_screen_check(rom: &mut Rom) {
 // Step 5: Write pipe destination tables
 // ---------------------------------------------------------------------------
 
-fn write_pipe_dests(rom: &mut Rom, wa: &WorldAssignments) {
+fn write_pipe_dests(rom: &mut Rom, world_idx: usize, wa: &WorldAssignments) {
     for pa in &wa.pipes {
-        pipe_helpers::write_pipe_dest(rom, pa.dest_idx, pa.pos_a, pa.pos_b);
+        pipe_helpers::write_pipe_dest(rom, pa.dest_idx, pa.pos_a, pa.pos_b, world_idx);
     }
 }
 
