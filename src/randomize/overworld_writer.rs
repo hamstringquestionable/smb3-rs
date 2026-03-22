@@ -656,10 +656,12 @@ fn write_fortress_fx(
         rom.write_byte(FX_VADDR_L + slot, (vram & 0xFF) as u8);
 
         // Map location.
-        rom.write_byte(
-            rom_data::FX_MAP_LOC_ROW + slot,
-            ((ob_row + 2) as u8) << 4,
-        );
+        // Bit 0 of the row byte is the poof-only flag: when set, the screen
+        // check skips the VRAM tile write (so the tile doesn't appear over a
+        // blackout effect) but still plays poof sprites and updates map data.
+        let on_blackout = world_idx == 7 && screen == 2; // W8 screen 2
+        let row_byte = ((ob_row + 2) as u8) << 4 | (on_blackout as u8);
+        rom.write_byte(rom_data::FX_MAP_LOC_ROW + slot, row_byte);
         rom.write_byte(
             rom_data::FX_MAP_LOC + slot,
             ((col_in_screen as u8) << 4) | (screen as u8),
@@ -722,9 +724,17 @@ fn patch_fortress_fx_screen_check(rom: &mut Rom) {
     rom.write_byte(HOOK_OFFSET + 2, 0xD5); // hi($D544)
 
     // --- Custom code at $D544 (file 0x15554) ---
-    // Lock is visible if lock_screen == $12, OR if lock_screen == $12+1
-    // AND $FD >= $80 AND col_in_screen < 8 (only left half of next screen
-    // is visible when the viewport straddles two grid screens).
+    //
+    // Same screen (lock_screen == $12):
+    //   col_in_screen == 15 → skip (viewport border clips rightmost column)
+    //   else → animate
+    //
+    // Next screen (lock_screen == $12 + 1):
+    //   $FD < 128 → skip (no half-screen straddle, next screen not visible)
+    //   col_in_screen >= 8 → skip (right half of next screen not visible)
+    //   else → animate
+    //
+    // Other → skip
     const CODE_OFFSET: usize = 0x15554;
     #[rustfmt::skip]
     let code: &[u8] = &[
@@ -734,28 +744,38 @@ fn patch_fortress_fx_screen_check(rom: &mut Rom) {
         0x29, 0x0F,             // +6:  AND #$0F           ; lock screen (0-3)
         // Check: lock_screen == $12?
         0xC5, 0x12,             // +8:  CMP $12            ; current scroll page
-        0xF0, 0x14,             // +10: BEQ +20 (→ +32)    ; match → animate
+        0xF0, 0x16,             // +10: BEQ +22 (→ +34)    ; match → same-screen path
         // Check: lock_screen == $12 + 1?
         0x38,                   // +12: SEC
         0xE5, 0x12,             // +13: SBC $12            ; A = lock_screen - $12
         0xC9, 0x01,             // +15: CMP #$01           ; exactly 1 screen ahead?
-        0xD0, 0x14,             // +17: BNE +20 (→ +39)    ; no → skip
-        // Check: $FD >= 128? (half-screen offset active)
+        0xD0, 0x29,             // +17: BNE +41 (→ +60)    ; no → skip
+        // --- Next-screen path ---
         0xA5, 0xFD,             // +19: LDA $FD            ; Map_Scroll_X
-        0xC9, 0x80,             // +21: CMP #$80           ; >= 128?
-        0x90, 0x0E,             // +23: BCC +14 (→ +39)    ; no → skip
-        // Check: col_in_screen < 8? (only left half of next screen visible)
+        0xC9, 0x80,             // +21: CMP #$80           ; straddle? (>= 128)
+        0x90, 0x23,             // +23: BCC +35 (→ +60)    ; no → skip
         0xB9, 0x56, 0xC8,       // +25: LDA $C856,Y       ; reload FortressFX_MapLocation
         0x29, 0x80,             // +28: AND #$80           ; bit 7 = col_in_screen >= 8
-        0xD0, 0x07,             // +30: BNE +7 (→ +39)     ; col >= 8 → off right edge → skip
-        // Animate: play full animation.
-        0xA9, 0x01,             // +32: LDA #$01           ; (BEQ +10 target)
-        0x85, 0x20,             // +34: STA $20
-        0x4C, 0xEA, 0xC8,       // +36: JMP $C8EA          ; → normal FX flow
-        // Skip: different screen, data-only update.
-        0xA9, 0x06,             // +39: LDA #$06           ; (BNE/BCC targets)
-        0x85, 0x20,             // +41: STA $20
-        0x4C, 0x52, 0xC9,       // +43: JMP $C952          ; → Map_Completions update
+        0xD0, 0x1C,             // +30: BNE +28 (→ +60)    ; col >= 8 → off right edge → skip
+        0xF0, 0x09,             // +32: BEQ +9 (→ +43)     ; col < 8 → animate (Z set from AND)
+        // --- Same-screen path ---
+        0xB9, 0x56, 0xC8,       // +34: LDA $C856,Y       ; reload FortressFX_MapLocation
+        0x29, 0xF0,             // +37: AND #$F0           ; isolate col_in_screen << 4
+        0xC9, 0xF0,             // +39: CMP #$F0           ; col == 15?
+        0xF0, 0x11,             // +41: BEQ +17 (→ +60)    ; yes → border clips → skip
+        // --- Animate: check poof-only flag in FX_MAP_LOC_ROW bit 0 ---
+        0xA9, 0x01,             // +43: LDA #$01
+        0x85, 0x20,             // +45: STA $20
+        0xB9, 0x45, 0xC8,       // +47: LDA $C845,Y       ; FX_MAP_LOC_ROW
+        0x29, 0x01,             // +50: AND #$01           ; poof-only flag?
+        0xD0, 0x03,             // +52: BNE +3 (→ +57)     ; yes → poof only
+        0x4C, 0xEA, 0xC8,       // +54: JMP $C8EA          ; full animate (VRAM + data)
+        // --- Poof only: sprites + data, no VRAM tile write ---
+        0x4C, 0x52, 0xC9,       // +57: JMP $C952          ; data update ($20=1 → poof plays)
+        // --- Skip: data-only update, no animation ---
+        0xA9, 0x06,             // +60: LDA #$06
+        0x85, 0x20,             // +62: STA $20
+        0x4C, 0x52, 0xC9,       // +64: JMP $C952          ; → Map_Completions update
     ];
     for (i, &b) in code.iter().enumerate() {
         rom.write_byte(CODE_OFFSET + i, b);
