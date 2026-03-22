@@ -385,6 +385,14 @@ pub(super) const HB_EXCLUDE_OBJ_PTRS: &[u16] = &[
     0xC03D, // W8 — 7-7 layout
 ];
 
+/// Specific (obj_ptr, tileset) pairs to exclude from the HB cycling pool.
+/// W3[41] has lay=0xB3E7 with tileset 3, but the layout is designed for tileset 1
+/// (17 other entries with the same layout use tileset 1). Loading it with tileset 3
+/// causes garbled background graphics.
+pub(super) const HB_EXCLUDE_ENTRIES: &[(u16, u8)] = &[
+    (0xC640, 3), // W3[41] — tileset 3 is wrong for lay 0xB3E7
+];
+
 /// Map transition entries.
 pub(super) const MAP_TRANSITIONS: &[(usize, usize)] = &[];
 

@@ -150,6 +150,7 @@ impl NodeCatalog {
                 let obj = (le.obj_hi as u16) << 8 | le.obj_lo as u16;
                 if obj >= 0xC000
                     && !HB_EXCLUDE_OBJ_PTRS.contains(&obj)
+                    && !rom_data::HB_EXCLUDE_ENTRIES.contains(&(obj, le.tileset))
                     && seen.insert(le.clone())
                 {
                     result.push(le.clone());
