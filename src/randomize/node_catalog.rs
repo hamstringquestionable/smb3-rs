@@ -13,7 +13,7 @@ use crate::rom::Rom;
 
 use super::rom_data::{
     self, AIRSHIP_ENTRIES, BOWSER_ENTRY, FORTRESS_ENTRIES, HAMMER_BRO_OBJ_PTRS,
-    LevelEntry, MAP_OBJ_ENTRY_LINKS, TOAD_HOUSE_OBJ_PTRS,
+    HB_EXCLUDE_OBJ_PTRS, LevelEntry, MAP_OBJ_ENTRY_LINKS, TOAD_HOUSE_OBJ_PTRS,
     PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, TILE_START, WORLDS,
 };
 
@@ -148,7 +148,10 @@ impl NodeCatalog {
             }
             if let Some(le) = &e.level_entry {
                 let obj = (le.obj_hi as u16) << 8 | le.obj_lo as u16;
-                if obj >= 0xC000 && seen.insert(le.clone()) {
+                if obj >= 0xC000
+                    && !HB_EXCLUDE_OBJ_PTRS.contains(&obj)
+                    && seen.insert(le.clone())
+                {
                     result.push(le.clone());
                 }
             }

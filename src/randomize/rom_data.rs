@@ -366,14 +366,23 @@ pub(super) const TOAD_HOUSE_OBJ_PTRS: &[u16] = &[
 /// Known hammer bro level obj_ptrs. Each world's hammer bro encounters point
 /// to one of these object streams. Multiple pointer table entries share the
 /// same obj_ptr (with varying layouts/tilesets).
-/// W8's 0xC03D is excluded — it uses a full action level layout (7-7), not
-/// a short HB battle.
+/// W8's 0xC03D is included here despite using a full action level layout (7-7)
+/// so the entry is classified as HammerBro and excluded from the level pool
+/// (prevents 7-7 from appearing twice). It is filtered out of the HB cycling
+/// pool by `unique_hammer_bro_levels()` via `HB_EXCLUDE_OBJ_PTRS`.
 pub(super) const HAMMER_BRO_OBJ_PTRS: &[u16] = &[
     0xC72B, // W1
     0xD14D, // W2
     0xD142, // W2 (variant)
     0xC640, // W3, W5, W6, W7
     0xD0EA, // W4
+    0xC03D, // W8 (uses 7-7 layout — not a real HB battle)
+];
+
+/// Hammer bro obj_ptrs that should NOT appear in the HB cycling pool.
+/// These are full action levels reused by HB entries, not short battles.
+pub(super) const HB_EXCLUDE_OBJ_PTRS: &[u16] = &[
+    0xC03D, // W8 — 7-7 layout
 ];
 
 /// Map transition entries.
