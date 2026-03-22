@@ -270,9 +270,18 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         rom.set_tag("autoscroll");
         randomize::autoscroll::disable_autoscroll(rom);
     }
+    // Airship shuffle runs after autoscroll (which patches airship pointer
+    // entries at vanilla indices) and before the overworld builder (whose
+    // resort_pointer_table re-sorts everything). shuffle_entries only moves
+    // tileset + ObjSets + LevelLayouts, preserving row/col position, so
+    // patched data travels correctly to its new world.
+    if options.shuffle_fortresses {
+        rom.set_tag("levels/airships");
+        randomize::levels::randomize_airships(rom, &mut rng);
+    }
     // Overworld builder: unified lock shuffle, pipe shuffle, level/fortress
     // redistribution, and overworld map rewriting. When active, it handles
-    // all level, fortress, airship, and pipe shuffling — bypassing levels.rs.
+    // all level, fortress, and pipe shuffling — bypassing levels.rs.
     let shuffle_locks = options.fortress_redistribute != FortressRedistribute::Off;
     let shuffle_pipes = options.shuffle_pipes;
     let shuffle_levels_cross = options.level_shuffle == LevelShuffle::CrossWorld;
