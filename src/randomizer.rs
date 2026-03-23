@@ -336,6 +336,10 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::items::replace_anchors(rom, &mut rng);
     }
 
+    // Patch double-digit level tiles (11–19) to show a "1" tens digit
+    rom.set_tag("metatile/double_digit");
+    randomize::overworld_writer::patch_double_digit_metatiles(rom);
+
     // Randomize king quotes (always on — cosmetic flavor text)
     rom.set_tag("king_quotes");
     randomize::king_quotes::randomize(rom, &mut rng);
