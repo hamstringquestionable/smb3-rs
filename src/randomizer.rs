@@ -65,7 +65,7 @@ pub struct Options {
     /// Remove the W2 rock blocking the secret path.
     #[serde(default = "default_true")]
     pub remove_w2_rock: bool,
-    /// Clear cards instantly (no cutscene, +1 life) when collecting one of each type.
+    /// Clear cards instantly (no cutscene, no lives) when collecting one of each type.
     #[serde(default = "default_true")]
     pub card_speed_clear: bool,
 }
