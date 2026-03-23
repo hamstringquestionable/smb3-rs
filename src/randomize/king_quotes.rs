@@ -408,6 +408,14 @@ const HAMMER_QUOTES: &[[&str; 6]] = &[
         "much,did it?",
         "",
     ],
+    [
+        "The Dude is not in.",
+        "Leave a message",
+        "after the beep.",
+        "",
+        "It takes a minute",
+        "",
+    ],
 ];
 
 /// Fixed ROM offsets for the 3 suit-specific quote slots (120 bytes each).
