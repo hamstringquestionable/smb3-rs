@@ -62,9 +62,9 @@ pub struct Options {
     /// Fix W3 drawbridges so all paths are always passable.
     #[serde(default = "default_true")]
     pub fix_drawbridges: bool,
-    /// Remove the W2 rock blocking the secret path.
-    #[serde(default = "default_true")]
-    pub remove_w2_rock: bool,
+    /// Remove rocks blocking paths (W2 secret path, W3 boat dock).
+    #[serde(default = "default_true", alias = "remove_w2_rock")]
+    pub remove_rocks: bool,
     /// Clear cards instantly (no cutscene, no lives) when collecting one of each type.
     #[serde(default = "default_true")]
     pub card_speed_clear: bool,
@@ -113,7 +113,7 @@ impl Options {
             | (self.shuffle_fortresses as u8) << 6
             | (self.shuffle_pipes as u8) << 5
             | (self.fix_drawbridges as u8) << 4
-            | (self.remove_w2_rock as u8) << 3
+            | (self.remove_rocks as u8) << 3
             | (level_shuffle_val & 0x03) << 1
             | ((fortress_val >> 1) & 0x01);
 
@@ -191,7 +191,7 @@ impl Options {
             shuffle_fortresses: (b2 >> 6) & 1 != 0,
             shuffle_pipes: (b2 >> 5) & 1 != 0,
             fix_drawbridges: (b2 >> 4) & 1 != 0,
-            remove_w2_rock: (b2 >> 3) & 1 != 0,
+            remove_rocks: (b2 >> 3) & 1 != 0,
             level_shuffle,
             fortress_redistribute,
             starting_lives,
@@ -217,7 +217,7 @@ impl Default for Options {
             fortress_redistribute: FortressRedistribute::Off,
             shuffle_pipes: false,
             fix_drawbridges: true,
-            remove_w2_rock: true,
+            remove_rocks: true,
             card_speed_clear: true,
             starting_lives: default_starting_lives(),
         }
@@ -235,14 +235,12 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         rom.set_tag("qol/drawbridges");
         randomize::qol::fix_w3_drawbridges(rom);
     }
-    if options.remove_w2_rock {
+    if options.remove_rocks {
         rom.set_tag("qol/w2_rock");
         randomize::qol::remove_w2_rock(rom);
+        rom.set_tag("qol/w3_boat_rock");
+        randomize::qol::remove_w3_boat_rock(rom);
     }
-    // Always remove the W3 rock blocking the boat path — the boat can't
-    // navigate past it and the overworld builder needs the path open.
-    rom.set_tag("qol/w3_boat_rock");
-    randomize::qol::remove_w3_boat_rock(rom);
 
     // Fix Big ? Block bonus rooms so they follow the level, not the world slot.
     // Always applied — needed whenever world_order or cross-world shuffle is active,
@@ -498,7 +496,7 @@ mod tests {
         assert_eq!(opts.shuffle_fortresses, decoded.shuffle_fortresses);
         assert_eq!(opts.shuffle_pipes, decoded.shuffle_pipes);
         assert_eq!(opts.fix_drawbridges, decoded.fix_drawbridges);
-        assert_eq!(opts.remove_w2_rock, decoded.remove_w2_rock);
+        assert_eq!(opts.remove_rocks, decoded.remove_rocks);
         assert_eq!(opts.level_shuffle, decoded.level_shuffle);
         assert_eq!(opts.fortress_redistribute, decoded.fortress_redistribute);
         assert_eq!(opts.starting_lives, decoded.starting_lives);
@@ -521,7 +519,7 @@ mod tests {
             shuffle_fortresses: true,
             shuffle_pipes: true,
             fix_drawbridges: true,
-            remove_w2_rock: true,
+            remove_rocks: true,
             fortress_redistribute: FortressRedistribute::CrossWorld,
             starting_lives: 99,
             card_speed_clear: true,
@@ -553,7 +551,7 @@ mod tests {
             shuffle_fortresses: false,
             shuffle_pipes: false,
             fix_drawbridges: false,
-            remove_w2_rock: false,
+            remove_rocks: false,
             fortress_redistribute: FortressRedistribute::Off,
             starting_lives: 1,
             card_speed_clear: false,

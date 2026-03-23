@@ -8,120 +8,152 @@
 </head>
 <body>
     <div class="container">
-        <h1>SMB3 Randomizer</h1>
-        <p class="subtitle">Super Mario Bros. 3 Randomizer</p>
+        <header>
+            <h1>SMB3 Randomizer</h1>
+            <div class="pipe-divider">
+                <span class="pipe"></span>
+                <span class="pipe-label">Super Mario Bros. 3</span>
+                <span class="pipe"></span>
+            </div>
+        </header>
 
         <div class="section">
             <label for="rom-input" class="file-label" id="rom-label">
                 Select ROM file...
             </label>
             <input type="file" id="rom-input" accept=".nes" hidden>
-            <p class="note">You must provide your own SMB3 (USA Rev 1) ROM. It is never uploaded anywhere.</p>
+            <p class="note">Provide your own SMB3 (USA Rev 1) ROM. Nothing is uploaded.</p>
         </div>
 
         <div class="section">
             <label for="seed-input">Seed</label>
-            <div class="seed-row">
+            <div class="input-row">
                 <input type="text" id="seed-input" placeholder="Random">
-                <button id="random-seed-btn" type="button" title="Generate random seed">&#x1f3b2;</button>
+                <button id="random-seed-btn" type="button" title="Generate random seed">?</button>
             </div>
-        </div>
-
-        <div class="section">
-            <label for="opt-starting-lives">Starting Lives</label>
-            <select id="opt-starting-lives">
-                <!-- Options are dynamically generated: 4 to 99 -->
-            </select>
         </div>
 
         <fieldset class="section">
-            <legend>Randomization Options</legend>
-            <label class="checkbox-label">
+            <legend>Randomization</legend>
+            <label class="checkbox-label" title="Randomize ? block and brick block contents within each power-up class">
                 <input type="checkbox" id="opt-powerups" checked>
                 Power-ups
             </label>
-            <label class="checkbox-label">
+            <label class="checkbox-label" title="Randomize character, lava, and Bowser color palettes">
                 <input type="checkbox" id="opt-palettes" checked>
                 Palettes
             </label>
-            <label class="checkbox-label">
-                <input type="checkbox" id="opt-enemies">
-                Enemies <span class="tag">experimental</span>
-            </label>
-            <label class="checkbox-label">
-                <input type="checkbox" id="opt-world-order">
-                World Order
-            </label>
-            <label class="checkbox-label">
-                <input type="checkbox" id="opt-big-q-blocks">
-                Big ? Blocks
-            </label>
-            <label class="select-label">
-                Level Shuffle
-                <select id="opt-level-shuffle">
-                    <option value="off" selected>Off</option>
-                    <option value="intra_world">Within World</option>
-                    <option value="cross_world">Cross World</option>
-                </select>
-            </label>
-            <label class="checkbox-label">
-                <input type="checkbox" id="opt-shuffle-pipes">
-                Pipe Shuffle
-            </label>
-            <label class="checkbox-label">
+            <label class="checkbox-label" title="Randomize chest and Toad House reward items">
                 <input type="checkbox" id="opt-chest-items" checked>
                 Chest Items
             </label>
-            <label class="checkbox-label">
-                <input type="checkbox" id="opt-remove-whistles" checked>
-                Remove Warp Whistles
+            <label class="checkbox-label" title="Swap enemies with others in the same class (ground, air, water)">
+                <input type="checkbox" id="opt-enemies" checked>
+                Enemies
             </label>
-            <label class="checkbox-label">
-                <input type="checkbox" id="opt-shuffle-fortresses">
-                Shuffle Fortresses & Airships
+            <label class="checkbox-label" title="Randomize the contents of Big ? Blocks in bonus rooms">
+                <input type="checkbox" id="opt-big-q-blocks" checked>
+                Big ? Blocks
             </label>
-            <label class="select-label">
-                Fortress Redistribute
-                <select id="opt-fortress-redistribute">
-                    <option value="off" selected>Off</option>
-                    <option value="intra_world">Within World</option>
-                    <option value="cross_world">Cross World</option>
-                </select>
-            </label>
-            <label class="checkbox-label">
-                <input type="checkbox" id="opt-airship-lock" checked>
-                Airship Lock <span class="tag">Anchors always work, become powerups</span>
-            </label>
-            <label class="checkbox-label">
-                <input type="checkbox" id="opt-fix-drawbridges" checked>
-                Fix W3 Drawbridges <span class="tag">All paths always open</span>
-            </label>
-            <label class="checkbox-label">
-                <input type="checkbox" id="opt-remove-w2-rock" checked>
-                Remove W2 Rock <span class="tag">Opens secret path</span>
+            <label class="checkbox-label" title="Shuffle the order you progress through Worlds 1-8">
+                <input type="checkbox" id="opt-world-order" checked>
+                World Order
             </label>
         </fieldset>
 
-        <div class="section">
-            <label for="flag-key-input">Flag Key</label>
-            <div class="seed-row">
-                <input type="text" id="flag-key-input" placeholder="SMB3R-01C79804" spellcheck="false">
-                <button id="flag-key-copy-btn" type="button" title="Copy flag key">&#x1f4cb;</button>
+        <fieldset class="section">
+            <legend>Overworld</legend>
+
+            <div class="option-group" title="Shuffle level positions on the overworld map">
+                <div class="option-header">Level Shuffle</div>
+                <div class="radio-group-vertical" id="opt-level-shuffle-group">
+                    <label class="radio-label">
+                        <input type="radio" name="level-shuffle" value="off">
+                        Off
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="level-shuffle" value="intra_world">
+                        Within World <span class="option-desc">levels stay in their world</span>
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="level-shuffle" value="cross_world" checked>
+                        Cross World <span class="option-desc">levels mix between all worlds</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="option-group" title="Redistribute fortress count and lock positions per world">
+                <div class="option-header">Fortress Redistribute</div>
+                <div class="radio-group-vertical" id="opt-fortress-redistribute-group">
+                    <label class="radio-label">
+                        <input type="radio" name="fortress-redistribute" value="off">
+                        Off
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="fortress-redistribute" value="intra_world">
+                        Within World <span class="option-desc">shuffle lock positions</span>
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="fortress-redistribute" value="cross_world" checked>
+                        Cross World <span class="option-desc">move fortresses between worlds</span>
+                    </label>
+                </div>
+            </div>
+
+            <label class="checkbox-label" title="Shuffle fortress and airship levels between worlds">
+                <input type="checkbox" id="opt-shuffle-fortresses" checked>
+                Shuffle Fortresses & Airships
+            </label>
+            <label class="checkbox-label" title="Shuffle pipe endpoint positions on overworld maps">
+                <input type="checkbox" id="opt-shuffle-pipes" checked>
+                Pipe Shuffle
+            </label>
+        </fieldset>
+
+        <fieldset class="section">
+            <legend>Quality of Life</legend>
+            <label class="checkbox-label" title="Airships stay in place after losing. Anchors become random power-ups instead.">
+                <input type="checkbox" id="opt-airship-lock" checked>
+                Airship Lock
+            </label>
+            <label class="checkbox-label" title="Remove warp whistles so all worlds must be played">
+                <input type="checkbox" id="opt-remove-whistles" checked>
+                Remove Warp Whistles
+            </label>
+            <label class="checkbox-label" title="W3 drawbridges are always open so no paths are randomly blocked">
+                <input type="checkbox" id="opt-fix-drawbridges" checked>
+                Fix Drawbridges
+            </label>
+            <label class="checkbox-label" title="Remove rocks blocking paths in W2 (secret path) and W3 (boat dock)">
+                <input type="checkbox" id="opt-remove-rocks" checked>
+                Remove Rocks
+            </label>
+            <label class="select-label" title="Number of lives you start with">
+                Starting Lives
+                <select id="opt-starting-lives"></select>
+            </label>
+        </fieldset>
+
+        <fieldset class="section">
+            <legend>Flag Key</legend>
+            <div class="input-row">
+                <input type="text" id="flag-key-input" placeholder="SMB3R-..." spellcheck="false">
+                <button id="flag-key-copy-btn" type="button" title="Copy flag key">Copy</button>
                 <button id="flag-key-apply-btn" type="button" title="Apply flag key">Apply</button>
             </div>
-            <p class="note">Share this key to reproduce the same flag settings.</p>
-        </div>
+            <p class="note">Share this key to reproduce the same settings.</p>
+        </fieldset>
 
         <div class="section">
             <label>Output Format</label>
             <div class="radio-group">
                 <label class="radio-label">
-                    <input type="radio" name="output-format" value="ips" checked>
-                    IPS Patch (.ips)
+                    <input type="radio" name="output-format" value="ips">
+                    IPS Patch
                 </label>
                 <label class="radio-label">
-                    <input type="radio" name="output-format" value="rom">
-                    Patched ROM (.nes)
+                    <input type="radio" name="output-format" value="rom" checked>
+                    Patched ROM
                 </label>
             </div>
         </div>
@@ -129,6 +161,10 @@
         <button id="generate-btn" type="button" disabled>Generate</button>
 
         <div id="status" class="status" hidden></div>
+
+        <footer>
+            <p>ROM never leaves your browser. All randomization runs locally via WASM.</p>
+        </footer>
     </div>
 
     <script type="module" src="app.js"></script>

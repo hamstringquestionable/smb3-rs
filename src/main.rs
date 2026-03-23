@@ -75,9 +75,9 @@ struct Cli {
     #[arg(long)]
     keep_drawbridges: bool,
 
-    /// Keep W2 secret path rock (it is removed by default)
+    /// Keep path-blocking rocks (W2 secret path, W3 boat dock)
     #[arg(long)]
-    keep_w2_rock: bool,
+    keep_rocks: bool,
 
     /// Disable card speed clear (one-of-each skips cutscene, on by default)
     #[arg(long)]
@@ -157,7 +157,7 @@ fn main() {
             fortress_redistribute,
             shuffle_pipes: cli.shuffle_pipes,
             fix_drawbridges: !cli.keep_drawbridges,
-            remove_w2_rock: !cli.keep_w2_rock,
+            remove_rocks: !cli.keep_rocks,
             card_speed_clear: !cli.no_card_speed_clear,
             airship_lock: !cli.no_airship_lock,
             starting_lives: cli.starting_lives,
@@ -194,7 +194,7 @@ fn main() {
     eprintln!("  Chest items: {}", if options.chest_items { "on" } else { "off" });
     eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });
     eprintln!("  W3 drawbridges: {}", if options.fix_drawbridges { "fixed open" } else { "toggling" });
-    eprintln!("  W2 secret rock: {}", if options.remove_w2_rock { "removed" } else { "kept" });
+    eprintln!("  Remove rocks: {}", if options.remove_rocks { "on" } else { "off" });
     eprintln!("  Airship lock: {}", if options.airship_lock { "on" } else { "off" });
     eprintln!("  Output:   {}", output_path.display());
 

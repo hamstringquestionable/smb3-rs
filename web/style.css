@@ -6,37 +6,66 @@
 
 body {
     font-family: "Courier New", Courier, monospace;
-    background: #1a1a2e;
+    background: #0c0c1e;
+    background-image:
+        radial-gradient(circle at 20% 50%, rgba(92, 148, 252, 0.04) 0%, transparent 50%),
+        radial-gradient(circle at 80% 20%, rgba(228, 68, 52, 0.04) 0%, transparent 50%);
     color: #e0e0e0;
     min-height: 100vh;
     display: flex;
     justify-content: center;
-    align-items: center;
-    padding: 2rem;
+    align-items: flex-start;
+    padding: 2rem 1rem;
 }
 
 .container {
-    background: #16213e;
-    border: 2px solid #e94560;
-    border-radius: 8px;
+    background: #141428;
+    border: 3px solid #e44434;
+    border-radius: 12px;
     padding: 2rem;
-    max-width: 480px;
+    max-width: 500px;
     width: 100%;
+    box-shadow:
+        0 0 20px rgba(228, 68, 52, 0.15),
+        0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+/* --- Header --- */
+
+header {
+    text-align: center;
+    margin-bottom: 1.5rem;
 }
 
 h1 {
-    color: #e94560;
-    font-size: 1.5rem;
-    text-align: center;
-    margin-bottom: 0.25rem;
+    color: #e44434;
+    font-size: 1.6rem;
+    letter-spacing: 0.05em;
+    text-shadow: 2px 2px 0 #1a0a08;
 }
 
-.subtitle {
-    text-align: center;
-    color: #888;
-    font-size: 0.8rem;
-    margin-bottom: 1.5rem;
+.pipe-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
 }
+
+.pipe {
+    flex: 1;
+    height: 4px;
+    background: linear-gradient(180deg, #5c94fc, #3c6edc);
+    border-radius: 2px;
+}
+
+.pipe-label {
+    font-size: 0.75rem;
+    color: #5c94fc;
+    white-space: nowrap;
+    letter-spacing: 0.08em;
+}
+
+/* --- Sections --- */
 
 .section {
     margin-bottom: 1.25rem;
@@ -46,41 +75,47 @@ label {
     display: block;
     font-size: 0.85rem;
     margin-bottom: 0.4rem;
-    color: #aaa;
+    color: #9a9ab0;
 }
+
+/* --- File Input --- */
 
 .file-label {
     display: block;
     padding: 0.75rem 1rem;
-    border: 2px dashed #e94560;
-    border-radius: 4px;
+    border: 2px dashed #e44434;
+    border-radius: 6px;
     text-align: center;
     cursor: pointer;
-    color: #e94560;
-    transition: background 0.15s;
+    color: #e44434;
+    transition: all 0.2s;
+    font-weight: bold;
 }
 
 .file-label:hover {
-    background: rgba(233, 69, 96, 0.1);
+    background: rgba(228, 68, 52, 0.08);
+    border-color: #ff6a5a;
 }
 
 .file-label.loaded {
     border-style: solid;
-    color: #4ecca3;
-    border-color: #4ecca3;
+    color: #6dce56;
+    border-color: #6dce56;
 }
 
 .note {
     font-size: 0.7rem;
-    color: #666;
+    color: #555;
     margin-top: 0.4rem;
 }
 
+/* --- Text Inputs --- */
+
 input[type="text"] {
     width: 100%;
-    padding: 0.5rem;
-    background: #0f3460;
-    border: 1px solid #333;
+    padding: 0.5rem 0.6rem;
+    background: #1c1c38;
+    border: 1px solid #2a2a50;
     border-radius: 4px;
     color: #e0e0e0;
     font-family: inherit;
@@ -88,43 +123,58 @@ input[type="text"] {
 }
 
 input[type="text"]::placeholder {
-    color: #555;
+    color: #444;
 }
 
-.seed-row {
+input[type="text"]:focus {
+    outline: none;
+    border-color: #5c94fc;
+}
+
+.input-row {
     display: flex;
     gap: 0.5rem;
 }
 
-.seed-row input {
+.input-row input {
     flex: 1;
 }
 
-.seed-row button {
-    background: #0f3460;
-    border: 1px solid #333;
+.input-row button {
+    background: #1c1c38;
+    border: 1px solid #2a2a50;
     border-radius: 4px;
-    color: #e0e0e0;
+    color: #9a9ab0;
     cursor: pointer;
     padding: 0.5rem 0.75rem;
-    font-size: 0.85rem;
+    font-family: inherit;
+    font-size: 0.8rem;
+    transition: all 0.15s;
 }
 
-.seed-row button:hover {
-    background: #1a4a7a;
+.input-row button:hover {
+    background: #2a2a50;
+    color: #e0e0e0;
 }
+
+/* --- Fieldsets --- */
 
 fieldset {
-    border: 1px solid #333;
-    border-radius: 4px;
+    border: 1px solid #2a2a50;
+    border-radius: 6px;
     padding: 0.75rem 1rem;
+    margin-bottom: 1.25rem;
 }
 
 legend {
-    font-size: 0.85rem;
-    color: #aaa;
+    font-size: 0.8rem;
+    color: #5c94fc;
     padding: 0 0.5rem;
+    font-weight: bold;
+    letter-spacing: 0.04em;
 }
+
+/* --- Checkboxes & Radios --- */
 
 .checkbox-label,
 .radio-label {
@@ -143,6 +193,13 @@ legend {
     margin-bottom: 0;
 }
 
+input[type="checkbox"],
+input[type="radio"] {
+    accent-color: #e44434;
+}
+
+/* --- Select Labels --- */
+
 .select-label {
     display: flex;
     align-items: center;
@@ -153,8 +210,8 @@ legend {
 }
 
 .select-label select {
-    background: #0f3460;
-    border: 1px solid #333;
+    background: #1c1c38;
+    border: 1px solid #2a2a50;
     border-radius: 4px;
     color: #e0e0e0;
     font-family: inherit;
@@ -163,64 +220,128 @@ legend {
     margin-left: auto;
 }
 
+.select-label select:focus {
+    outline: none;
+    border-color: #5c94fc;
+}
+
+/* --- Tags --- */
+
 .tag {
     font-size: 0.65rem;
-    background: #e94560;
+    background: #e44434;
     color: #fff;
     padding: 0.1rem 0.4rem;
     border-radius: 3px;
 }
+
+/* --- Option Groups (radio sections) --- */
+
+.option-group {
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid #1e1e3a;
+}
+
+.option-group:last-of-type {
+    margin-bottom: 0.5rem;
+}
+
+.option-header {
+    font-size: 0.85rem;
+    color: #e0e0e0;
+    margin-bottom: 0.35rem;
+}
+
+.radio-group-vertical {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding-left: 0.5rem;
+}
+
+.option-desc {
+    font-size: 0.7rem;
+    color: #5c94fc;
+    margin-left: 0.25rem;
+}
+
+/* --- Radio Group (inline) --- */
 
 .radio-group {
     display: flex;
     gap: 1.5rem;
 }
 
+/* --- Generate Button --- */
+
 #generate-btn {
     display: block;
     width: 100%;
-    padding: 0.75rem;
-    background: #e94560;
+    padding: 0.85rem;
+    background: #e44434;
     color: #fff;
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
     font-family: inherit;
     font-size: 1rem;
     font-weight: bold;
     cursor: pointer;
-    transition: background 0.15s;
+    letter-spacing: 0.06em;
+    transition: all 0.15s;
+    text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.3);
 }
 
 #generate-btn:hover:not(:disabled) {
-    background: #c73652;
+    background: #ff5a4a;
+    box-shadow: 0 0 12px rgba(228, 68, 52, 0.3);
+}
+
+#generate-btn:active:not(:disabled) {
+    transform: translateY(1px);
 }
 
 #generate-btn:disabled {
-    background: #333;
-    color: #666;
+    background: #2a2a50;
+    color: #555;
     cursor: not-allowed;
+    text-shadow: none;
 }
+
+/* --- Status --- */
 
 .status {
     margin-top: 1rem;
     padding: 0.75rem;
-    border-radius: 4px;
+    border-radius: 6px;
     font-size: 0.8rem;
     text-align: center;
 }
 
 .status.success {
-    background: rgba(78, 204, 163, 0.15);
-    color: #4ecca3;
-    border: 1px solid #4ecca3;
+    background: rgba(109, 206, 86, 0.1);
+    color: #6dce56;
+    border: 1px solid rgba(109, 206, 86, 0.3);
 }
 
 .status.error {
-    background: rgba(233, 69, 96, 0.15);
-    color: #e94560;
-    border: 1px solid #e94560;
+    background: rgba(228, 68, 52, 0.1);
+    color: #e44434;
+    border: 1px solid rgba(228, 68, 52, 0.3);
 }
 
 .status.loading {
-    color: #aaa;
+    color: #9a9ab0;
+}
+
+/* --- Footer --- */
+
+footer {
+    margin-top: 1.25rem;
+    text-align: center;
+}
+
+footer p {
+    font-size: 0.65rem;
+    color: #444;
 }

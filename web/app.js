@@ -3,6 +3,36 @@ import init, { generate_patch, generate_patched_rom, encode_flag_key, decode_fla
 let wasmReady = false;
 let romBytes = null;
 
+// --- IndexedDB ROM persistence ---
+
+const DB_NAME = "smb3r";
+const DB_STORE = "rom";
+
+function openDb() {
+	return new Promise((resolve, reject) => {
+		const req = indexedDB.open(DB_NAME, 1);
+		req.onupgradeneeded = () => req.result.createObjectStore(DB_STORE);
+		req.onsuccess = () => resolve(req.result);
+		req.onerror = () => reject(req.error);
+	});
+}
+
+async function saveRom(bytes) {
+	const db = await openDb();
+	const tx = db.transaction(DB_STORE, "readwrite");
+	tx.objectStore(DB_STORE).put(bytes, "data");
+}
+
+async function loadRom() {
+	const db = await openDb();
+	return new Promise((resolve) => {
+		const tx = db.transaction(DB_STORE, "readonly");
+		const req = tx.objectStore(DB_STORE).get("data");
+		req.onsuccess = () => resolve(req.result || null);
+		req.onerror = () => resolve(null);
+	});
+}
+
 const romInput = document.getElementById("rom-input");
 const romLabel = document.getElementById("rom-label");
 const seedInput = document.getElementById("seed-input");
@@ -15,29 +45,40 @@ const optPalettes = document.getElementById("opt-palettes");
 const optEnemies = document.getElementById("opt-enemies");
 const optWorldOrder = document.getElementById("opt-world-order");
 const optBigQBlocks = document.getElementById("opt-big-q-blocks");
-const optLevelShuffle = document.getElementById("opt-level-shuffle");
 const optShufflePipes = document.getElementById("opt-shuffle-pipes");
 const optChestItems = document.getElementById("opt-chest-items");
 const optRemoveWhistles = document.getElementById("opt-remove-whistles");
 const optShuffleFortresses = document.getElementById("opt-shuffle-fortresses");
-const optFortressRedistribute = document.getElementById(
-	"opt-fortress-redistribute",
-);
 const optAirshipLock = document.getElementById("opt-airship-lock");
+
+function getLevelShuffle() {
+	return document.querySelector('input[name="level-shuffle"]:checked')?.value || "off";
+}
+function setLevelShuffle(val) {
+	const el = document.querySelector(`input[name="level-shuffle"][value="${val}"]`);
+	if (el) el.checked = true;
+}
+function getFortressRedistribute() {
+	return document.querySelector('input[name="fortress-redistribute"]:checked')?.value || "off";
+}
+function setFortressRedistribute(val) {
+	const el = document.querySelector(`input[name="fortress-redistribute"][value="${val}"]`);
+	if (el) el.checked = true;
+}
 const optFixDrawbridges = document.getElementById("opt-fix-drawbridges");
-const optRemoveW2Rock = document.getElementById("opt-remove-w2-rock");
+const optRemoveRocks = document.getElementById("opt-remove-rocks");
 const optStartingLives = document.getElementById("opt-starting-lives");
 const flagKeyInput = document.getElementById("flag-key-input");
 const flagKeyCopyBtn = document.getElementById("flag-key-copy-btn");
 const flagKeyApplyBtn = document.getElementById("flag-key-apply-btn");
 
-// Dynamically populate Starting Lives dropdown (4–99)
+// Dynamically populate Starting Lives dropdown (5, 10, 15, ... 99)
 if (optStartingLives) {
-	for (let i = 4; i <= 99; i++) {
+	for (let i = 5; i <= 99; i += 5) {
 		const option = document.createElement("option");
 		option.value = i;
 		option.textContent = i;
-		if (i === 4) option.selected = true;
+		if (i === 5) option.selected = true;
 		optStartingLives.appendChild(option);
 	}
 }
@@ -64,12 +105,23 @@ romInput.addEventListener("change", (e) => {
 		romLabel.textContent = file.name;
 		romLabel.classList.add("loaded");
 		updateGenerateButton();
+		saveRom(romBytes).catch(() => {});
 	};
 	reader.onerror = () => {
 		showStatus("Failed to read ROM file", "error");
 	};
 	reader.readAsArrayBuffer(file);
 });
+
+// Try to restore ROM from IndexedDB
+loadRom().then((bytes) => {
+	if (bytes) {
+		romBytes = bytes;
+		romLabel.textContent = "ROM loaded from cache";
+		romLabel.classList.add("loaded");
+		updateGenerateButton();
+	}
+}).catch(() => {});
 
 // Random seed button
 randomSeedBtn.addEventListener("click", () => {
@@ -87,23 +139,7 @@ generateBtn.addEventListener("click", () => {
 		? BigInt(seedStr)
 		: BigInt(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER));
 
-	const options = JSON.stringify({
-		powerups: optPowerups.checked,
-		palettes: optPalettes.checked,
-		enemies: optEnemies.checked,
-		world_order: optWorldOrder.checked,
-		big_q_blocks: optBigQBlocks.checked,
-		level_shuffle: optLevelShuffle.value,
-		shuffle_pipes: optShufflePipes.checked,
-		chest_items: optChestItems.checked,
-		remove_whistles: optRemoveWhistles.checked,
-		shuffle_fortresses: optShuffleFortresses.checked,
-		fortress_redistribute: optFortressRedistribute.value,
-		airship_lock: optAirshipLock.checked,
-		fix_drawbridges: optFixDrawbridges.checked,
-		remove_w2_rock: optRemoveW2Rock.checked,
-		starting_lives: Number(optStartingLives.value),
-	});
+	const options = getCurrentOptionsJson();
 
 	const outputFormat = document.querySelector(
 		'input[name="output-format"]:checked',
@@ -153,17 +189,18 @@ function getCurrentOptionsJson() {
 		enemies: optEnemies.checked,
 		world_order: optWorldOrder.checked,
 		big_q_blocks: optBigQBlocks.checked,
-		level_shuffle: optLevelShuffle.value,
+		level_shuffle: getLevelShuffle(),
 		shuffle_pipes: optShufflePipes.checked,
 		chest_items: optChestItems.checked,
 		remove_whistles: optRemoveWhistles.checked,
 		shuffle_fortresses: optShuffleFortresses.checked,
-		fortress_redistribute: optFortressRedistribute.value,
+		fortress_redistribute: getFortressRedistribute(),
 		airship_lock: optAirshipLock.checked,
 		fix_drawbridges: optFixDrawbridges.checked,
-		remove_w2_rock: optRemoveW2Rock.checked,
+		remove_rocks: optRemoveRocks.checked,
 		starting_lives: Number(optStartingLives.value),
-		disable_autoscroll: true, // always on in web UI
+		disable_autoscroll: true,
+		card_speed_clear: true,
 	});
 }
 
@@ -186,15 +223,15 @@ function applyFlagKey(key) {
 		optEnemies.checked = opts.enemies;
 		optWorldOrder.checked = opts.world_order;
 		optBigQBlocks.checked = opts.big_q_blocks;
-		optLevelShuffle.value = opts.level_shuffle;
+		setLevelShuffle(opts.level_shuffle);
 		optShufflePipes.checked = opts.shuffle_pipes;
 		optChestItems.checked = opts.chest_items;
 		optRemoveWhistles.checked = opts.remove_whistles;
 		optShuffleFortresses.checked = opts.shuffle_fortresses;
-		optFortressRedistribute.value = opts.fortress_redistribute;
+		setFortressRedistribute(opts.fortress_redistribute);
 		optAirshipLock.checked = opts.airship_lock;
 		optFixDrawbridges.checked = opts.fix_drawbridges;
-		optRemoveW2Rock.checked = opts.remove_w2_rock;
+		optRemoveRocks.checked = opts.remove_rocks;
 		if (opts.starting_lives) optStartingLives.value = opts.starting_lives;
 		showStatus("Flag key applied!", "success");
 	} catch (err) {
@@ -205,12 +242,18 @@ function applyFlagKey(key) {
 // Update flag key whenever any option changes
 const allOptionElements = [
 	optPowerups, optPalettes, optEnemies, optWorldOrder, optBigQBlocks,
-	optLevelShuffle, optShufflePipes, optChestItems, optRemoveWhistles,
-	optShuffleFortresses, optFortressRedistribute, optAirshipLock,
-	optFixDrawbridges, optRemoveW2Rock, optStartingLives,
+	optShufflePipes, optChestItems, optRemoveWhistles,
+	optShuffleFortresses, optAirshipLock,
+	optFixDrawbridges, optRemoveRocks, optStartingLives,
 ];
 for (const el of allOptionElements) {
 	el.addEventListener("change", updateFlagKey);
+}
+// Radio groups
+for (const name of ["level-shuffle", "fortress-redistribute"]) {
+	for (const radio of document.querySelectorAll(`input[name="${name}"]`)) {
+		radio.addEventListener("change", updateFlagKey);
+	}
 }
 
 flagKeyCopyBtn.addEventListener("click", () => {
