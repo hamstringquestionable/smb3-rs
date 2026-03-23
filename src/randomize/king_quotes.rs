@@ -333,14 +333,6 @@ const QUOTES: &[[&str; 6]] = &[
         "",
     ],
     [
-        "I used to be an",
-        "adventurer like",
-        "you. Then I took",
-        "a hammer in the",
-        "knee...",
-        "",
-    ],
-    [
         "What a horrible",
         "night to have",
         "a curse.",
@@ -361,7 +353,7 @@ const QUOTES: &[[&str; 6]] = &[
         "",
         "Mario?",
         "",
-        "NAAAAAAAARIOOO!!!",
+        "MAAAAAAAARIOOO!!!",
         "",
     ],
     [
@@ -514,7 +506,15 @@ const RACCOON_QUOTES: &[[&str; 6]] = &[
         "thing or a plumber",
         "thing?",
         "",
-        "Here is your letter.",
+        "",
+    ],
+    [
+        "What kind of car",
+        "does a raccoon",
+        "drive?",
+        "",
+        "A Furrari.",
+        "",
     ],
 ];
 
@@ -537,12 +537,12 @@ const HAMMER_QUOTES: &[[&str; 6]] = &[
         "",
     ],
     [
-        "Is that a hammer",
-        "suit? The wizard had",
-        "one of those.",
-        "Didn't help him",
-        "much,did it?",
-        "",
+        "I used to be a",
+        "plumber like",
+        "you. Then I took",
+        "a hammer in the",
+        "knee...",
+        "Now I'm King",
     ],
 ];
 
