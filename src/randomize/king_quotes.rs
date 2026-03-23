@@ -344,6 +344,14 @@ const FROG_QUOTES: &[[&str; 6]] = &[
         "",
         "Take this letter.",
     ],
+    [
+        "we got literally",
+        "every girls costume",
+        "in the entire",
+        "goddamn universe...",
+        "and frog",
+        "",
+    ],
 ];
 
 /// Suit-specific quotes: shown when Mario visits the king as raccoon/tanooki.
@@ -403,26 +411,29 @@ const HAMMER_QUOTES: &[[&str; 6]] = &[
 ];
 
 /// Fixed ROM offsets for the 3 suit-specific quote slots (120 bytes each).
+/// Vanilla table at $A494 already points forms 4/5/6 here — we just replace content.
 const FROG_QUOTE_OFFSET: usize = 0x3633C;
 const RACCOON_QUOTE_OFFSET: usize = 0x363B4;
 const HAMMER_QUOTE_OFFSET: usize = 0x3642C;
 
-/// Free space in PRG027 for king quote data.
+/// Free space in PRG027 for standard quote data + ASM hook.
 const KING_QUOTE_BASE: usize = 0x379D9;
 
-/// Pointer table: 8 low bytes at 0x364A4, high bytes at 0x364AC.
-const PTR_LO_OFFSET: usize = 0x364A4;
-const PTR_HI_OFFSET: usize = 0x364AC;
-
-/// CPU address for a message slot in PRG027 free space.
 /// PRG027 file offset 0x36010 maps to CPU $A000.
 fn cpu_addr(file_offset: usize) -> u16 {
     0xA000 + (file_offset - 0x36010) as u16
 }
 
+/// ROM offset of the vanilla quote selection code at CPU $A293.
+/// Vanilla: `LDY Player_Form; LDA $A494,Y; ...` — indexes by powerup only.
+/// We patch this to JMP to a hook that checks Player_Form first:
+///   Form >= 4 (suit) → fall through to vanilla table lookup (unchanged)
+///   Form < 4 (no suit) → index by World_Num for per-world quotes
+const QUOTE_SELECT_PATCH: usize = 0x362A3;
+
 /// Write randomized king quotes into the ROM.
 pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng) {
-    // Pick 7 unique standard quotes (one per world 1-7)
+    // --- 1. Write 7 unique standard quotes into free space ---
     let mut pool: Vec<usize> = (0..QUOTES.len()).collect();
     let mut chosen = Vec::with_capacity(7);
     for _ in 0..7 {
@@ -431,18 +442,17 @@ pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng) {
         chosen.push(idx);
     }
 
-    // Write 7 encoded quotes into free space and update pointer table
+    let mut std_addrs = Vec::with_capacity(7);
     for (world, &quote_idx) in chosen.iter().enumerate() {
         let encoded = encode_quote(&QUOTES[quote_idx]);
         let file_offset = KING_QUOTE_BASE + world * 120;
         rom.write_range(file_offset, &encoded);
-
-        let addr = cpu_addr(file_offset);
-        rom.write_byte(PTR_LO_OFFSET + world, addr as u8);
-        rom.write_byte(PTR_HI_OFFSET + world, (addr >> 8) as u8);
+        std_addrs.push(cpu_addr(file_offset));
     }
 
-    // Randomize suit-specific quotes (one pick each, shared across all worlds)
+    // --- 2. Write suit-specific quotes to vanilla slots ---
+    // The vanilla pointer table at $A494/$A49B already maps forms 4/5/6
+    // to these addresses, so we just replace the content.
     let frog_pick = FROG_QUOTES.choose(rng).unwrap();
     rom.write_range(FROG_QUOTE_OFFSET, &encode_quote(frog_pick));
 
@@ -451,6 +461,59 @@ pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng) {
 
     let hammer_pick = HAMMER_QUOTES.choose(rng).unwrap();
     rom.write_range(HAMMER_QUOTE_OFFSET, &encode_quote(hammer_pick));
+
+    // --- 3. Write ASM hook for per-world standard quotes ---
+    // Hook goes right after the 7 quote blocks in free space.
+    let hook_file = KING_QUOTE_BASE + 7 * 120;
+    let hook_cpu = cpu_addr(hook_file);
+    let std_lo_cpu = hook_cpu + 40;
+    let std_hi_cpu = hook_cpu + 47;
+
+    //  0: LDA $ED          ; Player_Form
+    //  2: CMP #$04
+    //  4: BCS +18          ; suit → offset 24
+    //  6: LDY $0727        ; World_Num (per-world path)
+    //  9: LDA std_lo,Y
+    // 12: STA $070D
+    // 15: LDA std_hi,Y
+    // 18: STA $7A04
+    // 21: JMP $A2A1
+    // 24: TAY              ; suit path — reuse vanilla table
+    // 25: LDA $A494,Y
+    // 28: STA $070D
+    // 31: LDA $A49B,Y
+    // 34: STA $7A04
+    // 37: JMP $A2A1
+    // 40: std_lo[7]        ; data
+    // 47: std_hi[7]        ; data
+    // Total: 54 bytes
+    let mut hook: Vec<u8> = Vec::with_capacity(54);
+    hook.extend_from_slice(&[0xA5, 0xED]);                          //  0: LDA $ED
+    hook.extend_from_slice(&[0xC9, 0x04]);                          //  2: CMP #$04
+    hook.extend_from_slice(&[0xB0, 18]);                            //  4: BCS +18 → offset 24
+    hook.extend_from_slice(&[0xAC, 0x27, 0x07]);                   //  6: LDY $0727
+    hook.extend_from_slice(&[0xB9, std_lo_cpu as u8, (std_lo_cpu >> 8) as u8]);
+    hook.extend_from_slice(&[0x8D, 0x0D, 0x07]);                   // 12: STA $070D
+    hook.extend_from_slice(&[0xB9, std_hi_cpu as u8, (std_hi_cpu >> 8) as u8]);
+    hook.extend_from_slice(&[0x8D, 0x04, 0x7A]);                   // 18: STA $7A04
+    hook.extend_from_slice(&[0x4C, 0xA1, 0xA2]);                   // 21: JMP $A2A1
+    hook.push(0xA8);                                                // 24: TAY
+    hook.extend_from_slice(&[0xB9, 0x94, 0xA4]);                   // 25: LDA $A494,Y
+    hook.extend_from_slice(&[0x8D, 0x0D, 0x07]);                   // 28: STA $070D
+    hook.extend_from_slice(&[0xB9, 0x9B, 0xA4]);                   // 31: LDA $A49B,Y
+    hook.extend_from_slice(&[0x8D, 0x04, 0x7A]);                   // 34: STA $7A04
+    hook.extend_from_slice(&[0x4C, 0xA1, 0xA2]);                   // 37: JMP $A2A1
+    for addr in &std_addrs { hook.push(*addr as u8); }             // 40: std_lo[7]
+    for addr in &std_addrs { hook.push((*addr >> 8) as u8); }     // 47: std_hi[7]
+
+    rom.write_range(hook_file, &hook);
+
+    // --- 4. Patch original site: JMP hook + NOP fill ---
+    let mut patch = [0xEA_u8; 14];
+    patch[0] = 0x4C;
+    patch[1] = hook_cpu as u8;
+    patch[2] = (hook_cpu >> 8) as u8;
+    rom.write_range(QUOTE_SELECT_PATCH, &patch);
 }
 
 #[cfg(test)]
