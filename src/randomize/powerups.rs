@@ -50,6 +50,7 @@ const PROTECTED_OFFSETS: &[usize] = &[
     0x23DB0, // 7-7 Q-star byte2 (screen 2)
     0x23E1F, // 7-7 Q-star byte2 (screen 5)
     0x23EA0, // 7-7 Q-star byte2 (screen 8)
+    0x2B0A2, // 8-F brick-flower — player must be big to break a block later
 ];
 
 /// Randomize per-level powerup block types by scanning all level data regions
