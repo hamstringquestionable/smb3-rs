@@ -56,10 +56,8 @@ const PATCHES: &[(usize, &[u8])] = &[
     // Airship W2 area: enemy data rewrite (7 bytes)
     (0x0CDE7, &[0x13, 0x6A, 0x63, 0x12, 0x6A, 0x69, 0x16]),
 
-    // Airship W3 area: enemy data rewrite with segment terminator (10 bytes)
-    (0x0CE9A, &[
-        0xD6, 0x2B, 0x07, 0x52, 0x2C, 0x16, 0xBA, 0x2D, 0x16, 0xFF,
-    ]),
+    // 3-7 coin heaven: D3 at 0x0CE9A left intact — autoscroll is intentional
+    // here (penalty for grabbing the treasure chest item).
 
     // D3 removal
     (0x0CF51, &[0x00]),
@@ -467,6 +465,6 @@ mod tests {
     #[test]
     fn test_patch_count() {
         // Reference IPS has 65 records — verify we have them all
-        assert_eq!(PATCHES.len(), 65, "Expected 65 patches from reference IPS");
+        assert_eq!(PATCHES.len(), 64, "Expected 64 patches from reference IPS");
     }
 }
