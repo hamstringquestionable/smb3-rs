@@ -17,7 +17,7 @@ use super::rom_data::{
 };
 
 #[cfg(test)]
-use super::rom_data::{FX_WORLD_TABLE, TILE_START};
+use super::rom_data::{FX_WORLD_TABLE, TILE_FORTRESS, TILE_START};
 
 
 
@@ -45,9 +45,12 @@ pub(super) struct Edge {
 /// Result of a BFS map walk.
 pub(super) struct WalkResult {
     pub nodes: HashSet<(usize, usize)>,
+    /// BFS distance (in hops) from start to each reachable node.
+    pub distances: HashMap<(usize, usize), usize>,
     /// Edge graph — populated during BFS, consumed by test-only chokepoint analysis.
     #[allow(dead_code)]
     pub edges: HashMap<(usize, usize), Vec<Edge>>,
+    #[allow(dead_code)]
     pub path_tiles: HashSet<(usize, usize)>,
 }
 
@@ -83,6 +86,7 @@ pub(super) fn walk_map(
         None => {
             return WalkResult {
                 nodes: HashSet::new(),
+                distances: HashMap::new(),
                 edges: HashMap::new(),
                 path_tiles: HashSet::new(),
             };
@@ -97,11 +101,13 @@ pub(super) fn walk_map(
     }
 
     let mut nodes = HashSet::new();
+    let mut distances: HashMap<(usize, usize), usize> = HashMap::new();
     let mut edges: HashMap<(usize, usize), Vec<Edge>> = HashMap::new();
     let mut path_tiles = HashSet::new();
     let mut queue = VecDeque::new();
 
     nodes.insert(start);
+    distances.insert(start, 0);
     queue.push_back(start);
 
     while let Some((r, c)) = queue.pop_front() {
@@ -142,6 +148,7 @@ pub(super) fn walk_map(
 
             if !nodes.contains(&(nr, nc)) {
                 nodes.insert((nr, nc));
+                distances.insert((nr, nc), distances[&(r, c)] + 1);
                 queue.push_back((nr, nc));
             }
         }
@@ -155,13 +162,14 @@ pub(super) fn walk_map(
                 });
                 if !nodes.contains(&dest) {
                     nodes.insert(dest);
+                    distances.insert(dest, distances[&(r, c)] + 1);
                     queue.push_back(dest);
                 }
             }
         }
     }
 
-    WalkResult { nodes, edges, path_tiles }
+    WalkResult { nodes, distances, edges, path_tiles }
 }
 
 // ---------------------------------------------------------------------------
@@ -304,10 +312,6 @@ pub(super) fn render_debug(
 
     out
 }
-
-/// Fortress map tile ID.
-#[cfg(test)]
-const TILE_FORTRESS: u8 = 0x67;
 
 /// Find fortress positions by scanning the tile grid for fortress tiles ($67).
 /// Returns sorted positions in row-major order (deterministic).

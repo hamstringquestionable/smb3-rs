@@ -4,16 +4,34 @@
 /// lookup tables, data structures, and low-level read/write helpers — used by
 /// multiple randomization modules. The BFS map walker lives in `map_walker.rs`.
 
-use std::collections::HashMap;
 
 use crate::rom::Rom;
+
+// ---------------------------------------------------------------------------
+// Public types (re-exported by randomizer.rs)
+// ---------------------------------------------------------------------------
+
+/// Fortress redistribute mode.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FortressRedistribute {
+    Off,
+    IntraWorld,
+    CrossWorld,
+}
+
+impl Default for FortressRedistribute {
+    fn default() -> Self {
+        FortressRedistribute::Off
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Tile constants
 // ---------------------------------------------------------------------------
 
 /// Valid horizontal path tiles (Map_Object_Valid_Left/Right in PRG010).
-pub(super) const VALID_HORZ: &[u8] = &[0x45, 0xB2, 0xB3, 0xAC, 0xB7, 0xB8, 0xDA, 0xB9, 0xE6];
+pub(super) const VALID_HORZ: &[u8] = &[0x45, 0x49, 0xB2, 0xB3, 0xAC, 0xB7, 0xB8, 0xDA, 0xB9, 0xE6];
 
 /// Valid vertical path tiles (Map_Object_Valid_Down/Up in PRG010).
 pub(super) const VALID_VERT: &[u8] = &[0x46, 0xB1, 0xAA, 0xAB, 0xB0, 0xDB, 0xBA];
@@ -21,14 +39,160 @@ pub(super) const VALID_VERT: &[u8] = &[0x46, 0xB1, 0xAA, 0xAB, 0xB0, 0xDB, 0xBA]
 /// Background / non-walkable tiles.
 pub(super) const BACKGROUND_TILES: &[u8] = &[0xB4, 0xFF, 0x02];
 
+/// Valid blank node tiles — positions with these tiles are available for
+/// level/fort/pipe/HB placement. Used by both pickup (Phase 2) and build
+/// (Phase 3) to ensure consistent blank detection.
+pub(super) const VALID_BLANK_TILES: &[u8] = &[
+    0x44, 0x47, 0x48, 0x4A,        // standard
+    0xAE, 0xAF, 0xB5, 0xB6,        // island
+    0xD9, 0xDC, 0xDD, 0xDE,        // sky
+];
+
 /// Start tile ID.
 pub(super) const TILE_START: u8 = 0xE5;
+
+// ---------------------------------------------------------------------------
+// Level data regions and tile generator dispatch tables
+// ---------------------------------------------------------------------------
+
+/// A level data region: file offset range + tileset-specific extra-byte dispatches.
+///
+/// Most tile generator commands are 3 bytes, but some variable-size routines
+/// read a 4th byte from the layout stream. `extra_byte_dispatches` lists the
+/// variable-size dispatch indices that consume 4 bytes for this tileset.
+///
+/// Dispatch index = group * 15 + (byte2 >> 4) - 1, where group = (byte0 >> 5).
+///
+/// Verified against the Southbird SMB3 disassembly per-tileset dispatch tables
+/// (LoadLevel_Generator_TSx in PRG013-023). Handlers that call
+/// LoadLevel_GetLayoutByte, LL_GetLayoutByte_AndBackup, LL21_InitLongRun,
+/// or equivalent are 4-byte.
+pub(super) struct LevelDataRegion {
+    pub start: usize,
+    pub end: usize,
+    pub extra_byte_dispatches: &'static [u8],
+    /// Whether group 2 fixed-size shapes 1-6 are note/wood powerups in this
+    /// tileset. In most tilesets they are, but in TS2 (Dungeon) shapes 1-2 map
+    /// to CCBridge and shapes 3-7 map to TopDecoBlocks — swapping them would
+    /// corrupt level geometry.
+    pub randomize_note_wood: bool,
+}
+
+/// Level data regions by tileset (file offset ranges + extra-byte dispatch info).
+pub(super) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
+    LevelDataRegion { // Underground (TS14) — same dispatch table as TS3
+        start: 0x1A587, end: 0x1C005,
+        extra_byte_dispatches: &[
+            35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
+            60, 61, 62,                       // BGOrWater
+            63, 64, 65, 66, 67, 68,           // DecoGround
+            69, 70, 71,                       // DecoCeiling
+        ],
+        randomize_note_wood: true,
+    },
+    LevelDataRegion { // Plains (TS1)
+        start: 0x1E512, end: 0x20005,
+        extra_byte_dispatches: &[
+            11, 12,                            // GroundRun
+            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
+        ],
+        randomize_note_wood: true,
+    },
+    LevelDataRegion { // Hilly (TS3)
+        start: 0x20587, end: 0x22005,
+        extra_byte_dispatches: &[
+            35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
+            60, 61, 62,                       // BGOrWater
+            63, 64, 65, 66, 67, 68,           // DecoGround
+            69, 70, 71,                       // DecoCeiling
+        ],
+        randomize_note_wood: true,
+    },
+    LevelDataRegion { // Ice / Sky (TS4/12)
+        start: 0x227E0, end: 0x24005,
+        extra_byte_dispatches: &[
+            0,                                 // LongWoodBlock
+            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
+            54,                                // Muncher17
+            60,                                // Group 4 variable
+            112,                               // Group 7 variable
+        ],
+        randomize_note_wood: true,
+    },
+    LevelDataRegion { // Pipe / Water (TS7)
+        start: 0x24BA7, end: 0x26005,
+        extra_byte_dispatches: &[
+            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
+            49,                                // OrangeBlock
+            57,                                // WaterFill
+        ],
+        randomize_note_wood: true,
+    },
+    LevelDataRegion { // Cloudy / Giant / Plant (TS5/11/13)
+        start: 0x26A6F, end: 0x28C05,
+        extra_byte_dispatches: &[
+            13,                                // DoubleCloud
+            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
+            45,                                // CloudGoal
+            46,                                // RoundCloudTop
+            48,                                // CloudSpace
+            51,                                // Lava
+        ],
+        randomize_note_wood: true,
+    },
+    LevelDataRegion { // Desert (TS9)
+        start: 0x28F3F, end: 0x2A005,
+        extra_byte_dispatches: &[
+            10, 11, 12, 13,                    // DiagRect variants
+            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
+        ],
+        randomize_note_wood: true,
+    },
+    LevelDataRegion { // Dungeon (TS2)
+        start: 0x2A7F7, end: 0x2C005,
+        extra_byte_dispatches: &[
+            13, 14,                            // SolidBrick, BrightDiamondLong (LL21_InitLongRun)
+            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
+            46, 47,                            // Background (LoadLevel21_Background)
+            48,                                // Lava
+            57,                                // BrightDiamond (4-byte like BrightDiamondLong)
+            95, 96,                            // Group 6 handlers (empirically verified 4-byte)
+        ],
+        randomize_note_wood: false, // shapes 1-2 = CCBridge, 3-7 = TopDecoBlocks in TS2
+    },
+    LevelDataRegion { // Ship (TS10)
+        start: 0x2EC07, end: 0x30005,
+        extra_byte_dispatches: &[
+            1, 2,                              // WoodBodyLong
+            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
+            48,                                // MetalPlate
+            49,                                // Crate
+            51,                                // DoubleTipBodyWood
+        ],
+        randomize_note_wood: true,
+    },
+];
 
 /// Pipe tile ID.
 pub(super) const TILE_PIPE: u8 = 0xBC;
 
 /// W5 Spiral Tower tile ID (functionally a pipe connecting screen 0 ↔ screen 1).
 pub(super) const TILE_SPIRAL: u8 = 0x5F;
+
+/// Fortress map tile ID (used in test code across multiple modules).
+#[allow(dead_code)]
+pub(super) const TILE_FORTRESS: u8 = 0x67;
+
+/// Airship dock tile ID.
+pub(super) const TILE_AIRSHIP: u8 = 0xC9;
+
+/// Bowser's castle tile ID.
+pub(super) const TILE_BOWSER: u8 = 0xCC;
+
+/// Placeholder stamped on the BFS grid to mark a position as non-background.
+/// The actual value is irrelevant — it just needs to be outside BACKGROUND_TILES
+/// so walk_map treats the position as a reachable node.
+pub(super) const TILE_NODE: u8 = 0x47;
 
 /// Number of rows in every overworld map.
 pub(super) const ROWS: usize = 9;
@@ -44,10 +208,18 @@ pub(super) const PIPE_MAP_Y: usize = 0x046DA;
 pub(super) const PIPE_MAP_SCRL_XHI: usize = 0x046F2;
 
 // FX table offsets (17 slots)
+pub(super) const FX_VADDR_H: usize = 0x147CD;
+pub(super) const FX_VADDR_L: usize = 0x147DE;
+pub(super) const FX_MAP_COMP_IDX: usize = 0x147EF; // 17 x 2 bytes
+pub(super) const FX_PATTERNS: usize = 0x14811;     // 17 x 4 bytes
 pub(super) const FX_MAP_LOC_ROW: usize = 0x14855;
 pub(super) const FX_MAP_LOC: usize = 0x14866;
 pub(super) const FX_MAP_TILE_REPLACE: usize = 0x14877;
 pub(super) const FX_WORLD_TABLE: usize = 0x14888;
+
+/// Map_Complete_Bits lookup table: maps grid row to completion bit.
+/// Row 0 = $80, row 1 = $40, ..., row 7 = $01.
+pub(super) const MAP_COMPLETE_BITS: [u8; 8] = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
 
 // ---------------------------------------------------------------------------
 // Entry lookup tables
@@ -70,6 +242,7 @@ pub(super) const DEST_TO_WORLD: &[(u8, usize)] = &[
 pub(super) struct MapGridInfo {
     pub file_offset: usize,
     pub columns: usize,
+    #[allow(dead_code)]
     pub screens: usize,
 }
 
@@ -136,6 +309,11 @@ pub(super) const BOOMBOOM_Y_OFFSETS: [usize; 17] = [
     0x0DA2D, // W8[36]
 ];
 
+/// The 1-F fortress obj_ptr. This fortress level has a secret exit that
+/// bypasses the Boom-Boom boss (no crystal ball → no FX trigger → lock
+/// stays closed). Must be placed in a slot whose lock is secret_exit_safe.
+pub(super) const FORTRESS_1F_OBJ_PTR: u16 = 0xD32B;
+
 /// Vanilla fortress obj_ptrs (same order as FORTRESS_ENTRIES).
 /// The obj_ptr identifies the fortress level's enemy data stream in PRG006.
 /// After level shuffle, the obj_ptr at a slot still points to the same enemy
@@ -178,6 +356,43 @@ pub(super) const AIRSHIP_ENTRIES: &[(usize, usize)] = &[
 /// Bowser's castle entry.
 pub(super) const BOWSER_ENTRY: (usize, usize) = (7, 40);
 
+/// Known toad house obj_ptrs. The standard format is $0700; the variant
+/// formats ($0300-$0900) select different reward pools/game types but all
+/// load a toad house screen. All share lay=$AD60.
+pub(super) const TOAD_HOUSE_OBJ_PTRS: &[u16] = &[
+    0x0300, 0x0400, 0x0500, 0x0600, 0x0700, 0x0800, 0x0900,
+];
+
+/// Known hammer bro level obj_ptrs. Each world's hammer bro encounters point
+/// to one of these object streams. Multiple pointer table entries share the
+/// same obj_ptr (with varying layouts/tilesets).
+/// W8's 0xC03D is included here despite using a full action level layout (7-7)
+/// so the entry is classified as HammerBro and excluded from the level pool
+/// (prevents 7-7 from appearing twice). It is filtered out of the HB cycling
+/// pool by `unique_hammer_bro_levels()` via `HB_EXCLUDE_OBJ_PTRS`.
+pub(super) const HAMMER_BRO_OBJ_PTRS: &[u16] = &[
+    0xC72B, // W1
+    0xD14D, // W2
+    0xD142, // W2 (variant)
+    0xC640, // W3, W5, W6, W7
+    0xD0EA, // W4
+    0xC03D, // W8 (uses 7-7 layout — not a real HB battle)
+];
+
+/// Hammer bro obj_ptrs that should NOT appear in the HB cycling pool.
+/// These are full action levels reused by HB entries, not short battles.
+pub(super) const HB_EXCLUDE_OBJ_PTRS: &[u16] = &[
+    0xC03D, // W8 — 7-7 layout
+];
+
+/// Specific (obj_ptr, tileset) pairs to exclude from the HB cycling pool.
+/// W3[41] has lay=0xB3E7 with tileset 3, but the layout is designed for tileset 1
+/// (17 other entries with the same layout use tileset 1). Loading it with tileset 3
+/// causes garbled background graphics.
+pub(super) const HB_EXCLUDE_ENTRIES: &[(u16, u8)] = &[
+    (0xC640, 3), // W3[41] — tileset 3 is wrong for lay 0xB3E7
+];
+
 /// Map transition entries.
 pub(super) const MAP_TRANSITIONS: &[(usize, usize)] = &[];
 
@@ -206,8 +421,8 @@ pub(super) const MAP_OBJ_ENTRY_LINKS: &[(usize, usize, usize)] = &[
 // ---------------------------------------------------------------------------
 
 /// Mutable overworld tile grid.
-#[derive(Clone)]
-pub(super) struct Grid {
+#[derive(Clone, Debug)]
+pub(crate) struct Grid {
     pub tiles: Vec<Vec<u8>>,
     pub rows: usize,
     pub cols: usize,
@@ -222,18 +437,10 @@ impl Grid {
         self.tiles[row][col] = tile;
     }
 
-    /// Deep copy of the grid for testing lock placement scenarios.
-    pub fn clone_grid(&self) -> Grid {
-        Grid {
-            tiles: self.tiles.clone(),
-            rows: self.rows,
-            cols: self.cols,
-        }
-    }
 }
 
 /// Data that travels with a level when shuffled.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct LevelEntry {
     pub tileset: u8,
     pub obj_lo: u8,
@@ -429,10 +636,12 @@ pub(super) fn dest_indices_for_world(world_idx: usize) -> Vec<usize> {
         .collect()
 }
 
+
 /// Read all pipe pairs from ROM destination tables, grouped by world.
 /// Returns a map: world_idx → Vec of ((row_a, col_a), (row_b, col_b)).
-pub(super) fn read_pipe_pairs(rom: &Rom) -> HashMap<usize, Vec<((usize, usize), (usize, usize))>> {
-    let mut pipes_by_world: HashMap<usize, Vec<_>> = HashMap::new();
+#[cfg(test)]
+pub(super) fn read_pipe_pairs(rom: &Rom) -> std::collections::HashMap<usize, Vec<((usize, usize), (usize, usize))>> {
+    let mut pipes_by_world: std::collections::HashMap<usize, Vec<_>> = std::collections::HashMap::new();
 
     for &(dest, world_idx) in DEST_TO_WORLD {
         let d = dest as usize;
@@ -523,31 +732,100 @@ fn map_obj_slot_offset(rom: &Rom, master_table: usize, world_idx: usize, slot: u
     0x16010 + (cpu - 0xA000) + slot
 }
 
-/// Sync overworld map object sprite positions to their pointer table entries.
+
+/// Write a map object sprite's position to the map object tables.
 ///
-/// After pipe shuffling moves pointer table entries around, floating sprites
-/// (like W7 piranha plants) still sit at their original pixel positions.
-/// This reads each linked entry's current grid position from the pointer table
-/// and writes the corresponding pixel coordinates into the map object tables.
-pub(super) fn sync_map_object_positions(rom: &mut Rom, world_idx: usize) {
-    let world = &WORLDS[world_idx];
+/// Converts a grid position to pixel coordinates and writes to the Y/XHi/XLo
+/// tables for the given world and slot.
+pub(super) fn write_map_sprite_position(
+    rom: &mut Rom,
+    world_idx: usize,
+    slot: usize,
+    grid_row: usize,
+    grid_col: usize,
+) {
+    let y = ((grid_row + 2) * 16) as u8;
+    let xhi = (grid_col / 16) as u8;
+    let xlo = ((grid_col % 16) * 16) as u8;
 
-    for &(wi, slot, entry_idx) in MAP_OBJ_ENTRY_LINKS {
-        if wi != world_idx {
-            continue;
+    let y_off = map_obj_slot_offset(rom, MAP_OBJ_YS_MASTER, world_idx, slot);
+    let xhi_off = map_obj_slot_offset(rom, MAP_OBJ_XHIS_MASTER, world_idx, slot);
+    let xlo_off = map_obj_slot_offset(rom, MAP_OBJ_XLOS_MASTER, world_idx, slot);
+
+    rom.write_byte(y_off, y);
+    rom.write_byte(xhi_off, xhi);
+    rom.write_byte(xlo_off, xlo);
+}
+
+/// Read the grid positions of all active floating sprites for a world.
+///
+/// Each world has up to 9 map object slots. A slot with ID $FF is unused.
+/// For active slots, we convert pixel coordinates back to grid positions.
+/// These are the positions where floating sprites sit (hammer bros, piranhas,
+/// W8 hand traps, etc.) and should not have level/fort tiles placed under them.
+pub(super) fn read_map_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
+    const MAP_OBJ_IDS_MASTER: usize = 0x16050;
+    let mut positions = Vec::new();
+
+    for slot in 0..9 {
+        let id_off = map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot);
+        let id = rom.read_byte(id_off);
+        if id == 0xFF {
+            continue; // unused slot
         }
-        let (grid_row, grid_col) = entry_grid_position(rom, world, entry_idx);
-
-        let y = ((grid_row + 2) * 16) as u8;
-        let xhi = (grid_col / 16) as u8;
-        let xlo = ((grid_col % 16) * 16) as u8;
 
         let y_off = map_obj_slot_offset(rom, MAP_OBJ_YS_MASTER, world_idx, slot);
         let xhi_off = map_obj_slot_offset(rom, MAP_OBJ_XHIS_MASTER, world_idx, slot);
         let xlo_off = map_obj_slot_offset(rom, MAP_OBJ_XLOS_MASTER, world_idx, slot);
 
-        rom.write_byte(y_off, y);
-        rom.write_byte(xhi_off, xhi);
-        rom.write_byte(xlo_off, xlo);
+        let y = rom.read_byte(y_off) as usize;
+        let xhi = rom.read_byte(xhi_off) as usize;
+        let xlo = rom.read_byte(xlo_off) as usize;
+
+        // Reverse of Grid→pixel: Y=(row+2)*16, XHi=col/16, XLo=(col%16)*16
+        if y < 32 {
+            continue; // invalid (row would be negative)
+        }
+        let row = (y / 16).saturating_sub(2);
+        let col = xhi * 16 + xlo / 16;
+
+        positions.push((row, col));
     }
+
+    positions
+}
+
+/// Read grid positions of hammer bro sprites only (IDs 0x03–0x06).
+///
+/// These positions need HB level pointer entries even though they are excluded
+/// from level/fort/pipe placement by `fixed_positions`.
+pub(super) fn read_hb_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
+    const MAP_OBJ_IDS_MASTER: usize = 0x16050;
+    let mut positions = Vec::new();
+
+    for slot in 0..9 {
+        let id_off = map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot);
+        let id = rom.read_byte(id_off);
+        if !(0x03..=0x06).contains(&id) {
+            continue;
+        }
+
+        let y_off = map_obj_slot_offset(rom, MAP_OBJ_YS_MASTER, world_idx, slot);
+        let xhi_off = map_obj_slot_offset(rom, MAP_OBJ_XHIS_MASTER, world_idx, slot);
+        let xlo_off = map_obj_slot_offset(rom, MAP_OBJ_XLOS_MASTER, world_idx, slot);
+
+        let y = rom.read_byte(y_off) as usize;
+        let xhi = rom.read_byte(xhi_off) as usize;
+        let xlo = rom.read_byte(xlo_off) as usize;
+
+        if y < 32 {
+            continue;
+        }
+        let row = (y / 16).saturating_sub(2);
+        let col = xhi * 16 + xlo / 16;
+
+        positions.push((row, col));
+    }
+
+    positions
 }

@@ -28,6 +28,20 @@ const ROUTINE_CPU: u16 = 0x9F10;
 /// CPU address of the lookup table (routine + 12 bytes).
 const TABLE_CPU: u16 = ROUTINE_CPU + 12;
 
+/// File offset of the display-number table (8 bytes, right after next-world table).
+/// PRG030 is always mapped at $8000–$9FFF (MMC3 fixed bank in mode 1), so CPU $9F24
+/// is accessible from any bank configuration.
+const DISPLAY_TABLE_OFFSET: usize = ROUTINE_OFFSET + 20; // 12 routine + 8 next-world
+const DISPLAY_TABLE_CPU: u16 = TABLE_CPU + 8; // $9F24
+
+/// Map screen "WORLD X" display site (PRG010).
+/// Original: LDY $0727; INY; TYA; ORA #$F0; STA $0304 (10 bytes at 0x14372).
+const MAP_DISPLAY_OFFSET: usize = 0x14372;
+
+/// Status bar "WORLD X" display site (PRG026).
+/// Original: LDX $0727; INX; TXA; ORA #$F0; STA $0304,Y (10 bytes at 0x350D7).
+const STATUS_DISPLAY_OFFSET: usize = 0x350D7;
+
 /// Randomize the world progression order.
 ///
 /// Patches the `INC World_Num` instruction to instead use a lookup table
@@ -80,6 +94,36 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
 
     // Write the lookup table immediately after the routine
     rom.write_range(ROUTINE_OFFSET + routine.len(), &next_world);
+
+    // Build the display-number table: internal world -> display tile ($F1–$F8).
+    // worlds[i] is the internal world at shuffled position i, so position i
+    // should display as "WORLD (i+1)".
+    let mut display_tile = [0u8; 8];
+    for (position, &internal) in worlds.iter().enumerate() {
+        display_tile[internal as usize] = 0xF0 | (position as u8 + 1);
+    }
+    rom.write_range(DISPLAY_TABLE_OFFSET, &display_tile);
+
+    let disp_lo = (DISPLAY_TABLE_CPU & 0xFF) as u8;
+    let disp_hi = ((DISPLAY_TABLE_CPU >> 8) & 0xFF) as u8;
+
+    // Patch map screen display (PRG010): replace LDY/INY/TYA/ORA/STA with table lookup.
+    // Original 10 bytes: AC 27 07 C8 98 09 F0 8D 04 03
+    rom.write_range(MAP_DISPLAY_OFFSET, &[
+        0xAE, 0x27, 0x07,             // LDX $0727  (World_Num)
+        0xBD, disp_lo, disp_hi,       // LDA $DF24,X (display tile)
+        0x8D, 0x04, 0x03,             // STA $0304
+        0xEA,                         // NOP (pad)
+    ]);
+
+    // Patch status bar display (PRG026): replace LDX/INX/TXA/ORA/STA with table lookup.
+    // Original 10 bytes: AE 27 07 E8 8A 09 F0 99 04 03
+    rom.write_range(STATUS_DISPLAY_OFFSET, &[
+        0xAE, 0x27, 0x07,             // LDX $0727  (World_Num)
+        0xBD, disp_lo, disp_hi,       // LDA $DF24,X (display tile)
+        0x99, 0x04, 0x03,             // STA $0304,Y
+        0xEA,                         // NOP (pad)
+    ]);
 }
 
 #[cfg(test)]
@@ -226,5 +270,59 @@ mod tests {
         assert_eq!(&routine[6..9], &[0x8D, 0x27, 0x07]);
         // JMP $84A0
         assert_eq!(&routine[9..12], &[0x4C, 0xA0, 0x84]);
+    }
+
+    #[test]
+    fn test_display_table_covers_all_worlds() {
+        let mut rom = make_test_rom();
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        randomize(&mut rom, &mut rng);
+
+        let display = rom.read_range(DISPLAY_TABLE_OFFSET, 8);
+
+        // Each entry should be a valid tile $F1–$F8
+        for &tile in display.iter() {
+            assert!(tile >= 0xF1 && tile <= 0xF8, "Bad display tile: {tile:#04X}");
+        }
+
+        // Every display number 1–8 should appear exactly once
+        let mut seen = [false; 9];
+        for &tile in display.iter() {
+            let num = (tile & 0x0F) as usize;
+            assert!(!seen[num], "Duplicate display number {num}");
+            seen[num] = true;
+        }
+
+        // World 7 (Dark Land, always last) should display as "8"
+        assert_eq!(display[7], 0xF8, "Dark Land should display as World 8");
+    }
+
+    #[test]
+    fn test_display_patches_applied() {
+        let mut rom = make_test_rom();
+        // Write original bytes at display sites so we can verify they get patched
+        rom.write_range(MAP_DISPLAY_OFFSET, &[
+            0xAC, 0x27, 0x07, 0xC8, 0x98, 0x09, 0xF0, 0x8D, 0x04, 0x03,
+        ]);
+        rom.write_range(STATUS_DISPLAY_OFFSET, &[
+            0xAE, 0x27, 0x07, 0xE8, 0x8A, 0x09, 0xF0, 0x99, 0x04, 0x03,
+        ]);
+
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        randomize(&mut rom, &mut rng);
+
+        // Map display: should now use LDX $0727; LDA $DF24,X; STA $0304; NOP
+        let map_patch = rom.read_range(MAP_DISPLAY_OFFSET, 10);
+        assert_eq!(&map_patch[0..3], &[0xAE, 0x27, 0x07]); // LDX $0727
+        assert_eq!(map_patch[3], 0xBD);                      // LDA abs,X
+        assert_eq!(&map_patch[6..9], &[0x8D, 0x04, 0x03]);  // STA $0304
+        assert_eq!(map_patch[9], 0xEA);                      // NOP
+
+        // Status bar: should now use LDX $0727; LDA $DF24,X; STA $0304,Y; NOP
+        let status_patch = rom.read_range(STATUS_DISPLAY_OFFSET, 10);
+        assert_eq!(&status_patch[0..3], &[0xAE, 0x27, 0x07]); // LDX $0727
+        assert_eq!(status_patch[3], 0xBD);                      // LDA abs,X
+        assert_eq!(&status_patch[6..9], &[0x99, 0x04, 0x03]);  // STA $0304,Y
+        assert_eq!(status_patch[9], 0xEA);                      // NOP
     }
 }

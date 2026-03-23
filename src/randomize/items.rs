@@ -16,6 +16,8 @@ const GOOD_ITEMS: &[u8] = &[
     0x07, // Jugem's Cloud
     0x08, // P-Wing
     0x09, // Starman
+    0x0B, // Hammer
+    0x0D, // Music Box
 ];
 
 /// Powerup-only pool for anchor replacement (excludes non-powerup items like
@@ -29,12 +31,26 @@ const POWERUP_ITEMS: &[u8] = &[
     0x06, // Hammer Suit
 ];
 
+/// Toad House pool — powerups and combat items only (no map consumables).
+const TOAD_HOUSE_ITEMS: &[u8] = &[
+    0x01, // Mushroom
+    0x02, // Fire Flower
+    0x03, // Leaf
+    0x04, // Frog Suit
+    0x05, // Tanooki Suit
+    0x06, // Hammer Suit
+    0x08, // P-Wing
+    0x09, // Starman
+];
+
 const WARP_WHISTLE: u8 = 0x0C;
 
 /// Full item pool including warp whistle (used when remove_whistles is false).
 const GOOD_ITEMS_WITH_WHISTLE: &[u8] = &[
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0C,
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0B, 0x0C, 0x0D,
 ];
+
+
 
 // Hammer Bros map items: 8 worlds x 9 object slots = 72 bytes.
 // Non-zero entries are item rewards from defeating Hammer Bros.
@@ -95,10 +111,10 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, remove_whistles: bool) {
     }
     rom.write_range(PRINCESS_REWARDS_OFFSET, &pr);
 
-    // Toad House chests: randomize all 21 bytes.
+    // Toad House chests: use restricted pool (no cloud/hammer/music box/whistle).
     let mut th = rom.read_range(TOAD_HOUSE_ITEMS_OFFSET, TOAD_HOUSE_ITEMS_LEN).to_vec();
     for byte in &mut th {
-        *byte = *pool.choose(rng).unwrap();
+        *byte = *TOAD_HOUSE_ITEMS.choose(rng).unwrap();
     }
     rom.write_range(TOAD_HOUSE_ITEMS_OFFSET, &th);
 
@@ -251,8 +267,8 @@ mod tests {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             randomize(&mut rom, &mut rng, false);
 
-            for i in 0..TOAD_HOUSE_ITEMS_LEN {
-                if rom.read_byte(TOAD_HOUSE_ITEMS_OFFSET + i) == WARP_WHISTLE {
+            for i in 0..HAMMER_BROS_ITEMS_LEN {
+                if rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + i) == WARP_WHISTLE {
                     found_whistle = true;
                     break;
                 }

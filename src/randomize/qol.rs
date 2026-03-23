@@ -17,6 +17,9 @@ const W3_TOGGLE_LEN: usize = 8;
 // W2 rock blocking secret path (screen 1, row 0, col 5) — $51 → $45
 const W2_SECRET_ROCK: usize = 0x186E0;
 
+// W3 rock blocking boat path (screen 0, row 6, col 15) — $51 → $45
+const W3_BOAT_ROCK: usize = 0x187DB;
+
 // Big ? Block bonus room patch: decouple room selection from World_Num.
 //
 // Two-part patch:
@@ -105,6 +108,11 @@ pub fn remove_w2_rock(rom: &mut Rom) {
     rom.write_byte(W2_SECRET_ROCK, 0x45);
 }
 
+/// Remove the W3 rock blocking the boat path, replacing it with horizontal path.
+pub fn remove_w3_boat_rock(rom: &mut Rom) {
+    rom.write_byte(W3_BOAT_ROCK, 0x45);
+}
+
 /// Patch Big ? Block bonus room selection to use level identity instead of World_Num.
 ///
 /// Part A: Saves the entry-point obj_ptr to scratch RAM ($7EB4/$7EB5) at the end of
@@ -124,11 +132,12 @@ pub fn fix_big_q_block_rooms(rom: &mut Rom) {
 
 /// Replace W3 drawbridge tiles with normal path tiles and NOP the toggle code.
 pub fn fix_w3_drawbridges(rom: &mut Rom) {
-    // Replace drawbridge tiles with regular bridge ($B3, always passable, bridge graphic)
+    // Replace horizontal drawbridge tiles with bridge ($B3, horizontal path)
     rom.write_byte(W3_BRIDGE_H1, 0xB3);
     rom.write_byte(W3_BRIDGE_H2, 0xB3);
-    rom.write_byte(W3_BRIDGE_V1, 0xB3);
-    rom.write_byte(W3_BRIDGE_V2, 0xB3);
+    // Replace vertical drawbridge tiles with open path ($BA, vertical-compatible)
+    rom.write_byte(W3_BRIDGE_V1, 0xBA);
+    rom.write_byte(W3_BRIDGE_V2, 0xBA);
     // NOP out the toggle code (LDA $07BB; EOR #$01; STA $07BB)
     rom.write_range(W3_TOGGLE_OFFSET, &[0xEA; W3_TOGGLE_LEN]);
 }
@@ -204,6 +213,14 @@ mod tests {
     }
 
     #[test]
+    fn test_remove_w3_boat_rock() {
+        let mut rom = make_test_rom();
+        rom.write_byte(W3_BOAT_ROCK, 0x51);
+        remove_w3_boat_rock(&mut rom);
+        assert_eq!(rom.read_byte(W3_BOAT_ROCK), 0x45);
+    }
+
+    #[test]
     fn test_fix_w3_drawbridges() {
         let mut rom = make_test_rom();
         // Place original drawbridge tiles
@@ -218,8 +235,8 @@ mod tests {
 
         assert_eq!(rom.read_byte(W3_BRIDGE_H1), 0xB3);
         assert_eq!(rom.read_byte(W3_BRIDGE_H2), 0xB3);
-        assert_eq!(rom.read_byte(W3_BRIDGE_V1), 0xB3);
-        assert_eq!(rom.read_byte(W3_BRIDGE_V2), 0xB3);
+        assert_eq!(rom.read_byte(W3_BRIDGE_V1), 0xBA);
+        assert_eq!(rom.read_byte(W3_BRIDGE_V2), 0xBA);
         assert_eq!(rom.read_range(W3_TOGGLE_OFFSET, W3_TOGGLE_LEN), &[0xEA; 8]);
     }
 }

@@ -212,15 +212,16 @@ an extra byte.
 
 **Tileset-specific extra-byte dispatches:**
 
-| Tileset | Extra-Byte Dispatches |
-|---------|----------------------|
-| TS1 (Plains) | 11, 12, 35-42 |
-| TS2 (Dungeon) | 35-42, 46, 47, 48 |
-| TS3 (Hilly) | 35-42, 60-71 |
-| TS4/12 (Ice/Sky) | 0, 35-42, 60, 112 |
-| TS7 (Pipe/Water) | 35-42, 57 |
-| TS9 (Desert) | 10-13, 35-42 |
-| TS10 (Ship) | 1, 2, 35-42, 48, 51 |
+| Tileset | Extra-Byte Dispatches | Source |
+|---------|----------------------|--------|
+| TS1 (Plains) | 11, 12, 35-42 | GroundRun, TopDecoBlocks |
+| TS2 (Dungeon) | 13, 14, 35-42, 46, 47, 48, 57, 95, 96 | SolidBrick, BrightDiamondLong, TopDecoBlocks, Background, Lava, BrightDiamond, Group6 handlers |
+| TS3 (Hilly) | 35-42, 60-71 | TopDecoBlocks, BGOrWater, DecoGround, DecoCeiling |
+| TS4/12 (Ice/Sky) | 0, 35-42, 54, 60, 112 | LongWoodBlock, TopDecoBlocks, Muncher17, Group4 var, Group7 var |
+| TS5/11/13 (Cloudy) | 13, 35-42, 45, 46, 48, 51 | DoubleCloud, TopDecoBlocks, CloudGoal, RoundCloudTop, CloudSpace, Lava |
+| TS7 (Pipe/Water) | 35-42, 49, 57 | TopDecoBlocks, OrangeBlock, WaterFill |
+| TS9 (Desert) | 10-13, 35-42 | DiagRect variants, TopDecoBlocks |
+| TS10 (Ship) | 1, 2, 35-42, 48, 49, 51 | WoodBodyLong, TopDecoBlocks, MetalPlate, Crate, DoubleTipBodyWood |
 
 **High-bit fallback rule (NOT universally reliable):**
 
@@ -894,7 +895,7 @@ Tileset index → PRG bank at $A000 (level data) and $C000 (tileset code).
 
 **Tile grid pointer table:** 9 × 2-byte little-endian CPU pointers at file offset **0x185A8** (CPU $A598, PRG012). Each points to a world's tile grid data. Entry 9 is the Warp Zone.
 
-**Storage format:** Row-major per screen (confirmed from `Map_Reload_with_Completions` in prg012.asm). Each screen is a 144-byte block of 9 rows × 16 columns, stored row-major (16 consecutive bytes per row). Multi-screen worlds have consecutive 144-byte blocks. A `0xFF` terminator byte follows each world's grid data. Total tile data spans **0x185BA–0x19101** (~2.9 KB).
+**Storage format:** Row-major per screen (confirmed from `Map_Reload_with_Completions` in prg012.asm). Each screen is a 144-byte block of 9 rows × 16 columns, stored row-major (16 consecutive bytes per row). Multi-screen worlds have consecutive 144-byte blocks. A `0xFF` terminator byte follows each world's grid data. Total tile data spans **0x185BA–0x19102** (~2.9 KB).
 
 The loading code copies each 144-byte screen block with a sequential `LDA [src],Y / STA [dst],Y` loop (Y = 0..143), then advances the destination pointer by $1B0 for the next screen (the gap accommodates unused vertical space in tile memory).
 
@@ -1003,6 +1004,10 @@ Four 24-byte tables control where Mario appears on the overworld map after exiti
 - Both endpoints have tileset 14, 1-screen layout, and are classified as `too_short` in level shuffle
 - The two endpoints have different `lay_ptr` values but their layout data is chained: entry A's area 2 = entry B's area 1 (via junction at 0xFF terminator)
 - Layout header byte 5 differs: `0x04` vs `0x44` (bit 6 controls pipe direction / vertical scroll mode)
+- **A-side entry** has byte5 bit 6 = 0 (`0x04`): player enters from the left, exits right. The game reads the **lower nibble** (B position) as the exit destination.
+- **B-side entry** has byte5 bit 6 = 1 (`0x44`): player enters from the right, exits left. The game reads the **upper nibble** (A position) as the exit destination.
+
+**Critical**: When assigning pipe pool entries to positions, the A-side entry (byte5 bit 6 = 0) **must** be placed at `pos_a` (upper nibble) and the B-side entry (byte5 bit 6 = 1) at `pos_b` (lower nibble). If swapped, the exit nibble points back to the entry position, creating a self-referencing pipe.
 
 **When moving a pipe endpoint**, update the corresponding nibble (upper or lower) in all four tables to match the new map position. The nibble assignment (upper vs lower) corresponds to which side of the pipe transit level that endpoint enters from.
 
@@ -1028,6 +1033,23 @@ Pointer tables indexed by World_Num (8 entries each):
 | `MAT_Y_W[1-8][A-C]` | Y destinations: 3 sets x 6 values per world |
 | `MAT_X_W[1-8][A-C]` | X destinations: packed (lo=screen, hi=X pos) |
 
+### Free Space (PRG012)
+
+**0x19103–0x193D9**: Region between overworld tile grid data and the InitIndex master pointer table (starts at 0x193DA). **WARNING:** 0x19103–0x1910F contains a tile lookup table, and 0x19110+ contains active map screen code (level-entry logic: `ROL $07`, `LDA $073C,X`, etc.). This is NOT free space — writing here corrupts the map screen and crashes on level entry.
+
+**0x19DD0–0x19FFF** (560 bytes): Free space after overworld tile/code region. The Big ? Block trampoline uses 0x19DD0–0x19DE1 (18 bytes). The randomizer stamps a 16-byte identification block at **0x19DF0**:
+
+| Offset | Size | Content |
+|--------|------|---------|
+| +0 | 3 | `S3R` magic bytes |
+| +3 | 1 | Version (0x01) |
+| +4 | 4 | Flag key bytes (encoded Options) |
+| +8 | 8 | Seed (little-endian u64) |
+
+**Note:** The Big ? Block trampoline and flag stamp both live in this region.
+
+**0x35530–0x35592** (99 bytes): Used by Big ? Block lookup routine (PRG026).
+
 ### Level Pointer Tables (PRG012: 0x18010–0x1A00F)
 
 `Map_PrepareLevel` uses the player's world map position to look up level data via
@@ -1046,10 +1068,10 @@ Each master table entry is a 16-bit CPU address pointing to the per-world sub-ta
 in PRG012. Per-world sub-tables are contiguous: ByRowType (N bytes), ByScrCol (N bytes),
 ObjSets (N words), LevelLayouts (N words).
 
-**InitIndex sub-table structure:** Each world's `Map_ByXHi_InitIndex` sub-table has 1 byte per screen, located immediately before the `ByRowType` sub-table. Each byte is the entry index to start searching from for that screen (optimization so the game doesn't scan the entire table). Must be recomputed if entries are reordered within a world.
+**InitIndex sub-table structure:** Each world's `Map_ByXHi_InitIndex` sub-table is **always 4 bytes** (the gap between InitIndex and ByRowType CPU pointers is always 4), located immediately before the `ByRowType` sub-table. Each byte is the entry index to start searching from for that screen (optimization so the game doesn't scan the entire table). Screens beyond the world's actual screen count use the entry count N as a sentinel (= "no entries"). Must be recomputed if entries are reordered within a world.
 
-Example — W1 InitIndex (2 screens): `00 15` (screen 0 starts at entry 0, screen 1 at entry 21).
-Example — W3 InitIndex (4 screens): `00 1B 2F 34` (screens 0–3 start at entries 0, 27, 47, 52).
+Example — W1 InitIndex (1 screen, 4 bytes): `00 15 15 15` (screen 0 at entry 0, screens 1-3 sentinel=21).
+Example — W3 InitIndex (3 screens, 4 bytes): `00 1B 2F 34` (screens 0–2 at entries 0, 27, 47; screen 3 sentinel=52).
 
 **Per-world sub-table locations:**
 
@@ -1231,6 +1253,67 @@ Where `grid_row = (FortressFX_MapLocationRow >> 4) - 2` and `col_in_screen = col
 The screen number does not factor into the VRAM address because the game only renders
 one screen at a time — the FX triggers on whichever screen is currently displayed.
 
+**Cross-screen FX animation bug (patched by randomizer):**
+
+In vanilla, each fortress and its lock/bridge are always on the same screen. When the
+player beats a fortress and returns to the map, the camera shows the fortress screen,
+which is also the lock screen, so the VRAM pattern write and poof sprites land on the
+correct tiles.
+
+When fortress/lock positions are shuffled, the lock can end up on a different screen.
+The `MO_DoFortressFX` routine (CPU $C8A9 in PRG010) does NOT scroll to the lock's
+screen before animating — it writes VRAM patterns and places sprites relative to the
+currently displayed screen. This causes two visual artifacts:
+
+1. VRAM patterns written to nametable tiles that belong to the fortress's screen, not
+   the lock's screen (wrong tile modified on screen).
+2. Poof sprites placed at the lock's `col_in_screen` position on the wrong screen.
+
+The map DATA update (replacement tile via screen pointer table + `Map_Completions`)
+is NOT screen-relative and always works correctly. So the correct tile IS placed at
+the lock position; the visual animation is what goes wrong.
+
+**Fix:** Hook 3 bytes at file 0x148F6 (CPU $C8E6) to `JMP $D544` (PRG010 free
+space at file 0x15554, 39 bytes). Custom code checks whether the lock is on a
+visible screen by comparing `FortressFX_MapLocation[slot] & 0x0F` (lock screen)
+against the current viewport state. The map scrolls in 128-pixel half-screen
+steps: `$12` (Map_Scroll_XHi) is the scroll page and `$FD` (Map_Scroll_X) is
+either 0 or 128. When `$FD=128`, the viewport straddles two grid screens. The
+lock is considered visible if `lock_screen == $12`, OR if `lock_screen == $12+1`
+AND `$FD >= $80`. If visible, the full animation plays normally. If not visible,
+`$20` is set to 6 (last animation frame) and execution jumps to $C952
+(Map_Completions update), skipping the VRAM write and abbreviating the poof to
+a single frame.
+
+**`MO_DoFortressFX` flow (CPU $C8A9, PRG010 bank at $C000):**
+
+1. If `$20` ≠ 0: jump to animation loop at $C9A4 (continue existing animation).
+2. If `$0745` (`Map_DoFortressFX`) = 0: nothing to do, exit.
+3. Init fortress crumble timer `$0711` = $20 (32 frames). Each frame calls $C9D6
+   which toggles CHR bank ($16 between $18/$19) and decrements $0711. No scrolling.
+4. When `$0711` reaches 0: decrement `$0745`, look up FX slot via
+   `FortressFXBase_ByWorld[World_Num] + $0745` → `FortressFX_W1[$slot]`.
+5. Set `$20` = 1 (animation start), then:
+   - $C8EA–$C94F: Write VRAM patterns to PPU buffer ($0300+) at FX_VAddr address.
+   - $C952–$C9A2: Update `Map_Completions`, write replacement tile to map data via
+     screen pointer table at $8000.
+   - $C9A4–$C9C6: Animation frame loop — every 4 game frames, INC `$20`. When
+     `$20` = 7, animation done. Poof sprites via `DoFortressFXPoof` ($ABCF).
+
+**Scroll state variables during map screen:**
+
+| Address | Name | Description |
+|---------|------|-------------|
+| $FD | Map_Scroll_X | PPU horizontal scroll (0–255), written to $2005 |
+| $12 | Map_Scroll_XHi | Scroll screen / page number (0–3), updated with $FD |
+| $FC | Map_Scroll_Y | PPU vertical scroll, written to $2005 (second write) |
+
+**PRG010 free space usage (file 0x15554 / CPU $D544):**
+
+| Offset | Size | Purpose |
+|--------|------|---------|
+| 0x15554 | 46 | FX screen-check patch (JMP target from $C8E6) |
+
 **`FortressFX_MapLocationRow` encoding:** `(grid_row + 2) << 4`
 
 **`FortressFX_MapLocation` encoding:** `(col_in_screen << 4) | screen`
@@ -1283,7 +1366,7 @@ to change orientation on map reload (e.g., horizontal path turns vertical).
    - `FortressFX_MapLocationRow` = `(grid_row + 2) << 4`
    - `FortressFX_MapLocation` = `(col_in_screen << 4) | screen`
    - `FortressFX_MapTileReplace` = saved original tile
-   - `FortressFX_MapCompIdx` = `(screen * 16 + col_in_screen, 0x80 >> grid_row)` — **encodes the FORTRESS position, not the lock/obstacle position** (verified across all 14 vanilla slots)
+   - `FortressFX_MapCompIdx` = `(screen * 16 + col_in_screen, 0x80 >> grid_row)` — **encodes the LOCK/OBSTACLE position, not the fortress position** (verified across all 17 vanilla slots)
    - `FortressFX_Patterns` = 4 bytes per type (see table above)
 5. If the fortress moved to a different world, update:
    - `FortressFX_W1–W8` slot assignments for source and destination worlds
@@ -1339,8 +1422,32 @@ collectively block ALL forts. Each lock scored in isolation may block one fort, 
 chosen locks still allows at least one fort to be reached, and that a valid beat→open
 progression exists.
 
-**MAP_COMPLETE_BITS coverage:** Only grid rows 0–7 have completion bits. Row 8 has no
-bit (`0x00`), so locks placed at row 8 won't persist across map reloads.
+**MAP_COMPLETE_BITS coverage:** The LUT has 8 entries mapping rows 0–7 to bits 7–0.
+The `Map_Reload_with_Completions` loop (`$A508–$A512`) searches indices 7 down to 1
+via `DEX / BNE`; index 0 (`$80` = row 0) is handled by fallthrough when no match is
+found.  Bit 0 (`$01`, index 7) maps to row offset `$80` = **row 7**.
+
+**Row 8 fallthrough** (`$A55C–$A56D`): When the current bit is `$01` and the tile at
+row 7 was NOT caught by any completion/replacement check, the code adds `$10` to the
+tile offset (moving to row 8, offset `$90`) and re-checks.  This means row 8
+completion works **only if the row 7 tile in the same column is "safe"** — i.e. not
+matched by the special-tiles table (`$A447`), the page thresholds (`$A400`), or
+`Map_Removable_Tiles`.  If the row 7 tile IS caught, it gets replaced and the row 8
+tile is never reached.
+
+Tiles that block the row 8 fallthrough (completion-unsafe at row 7):
+- Special: `$50, $E8, $E6, $BD, $E0`
+- Fortress: `$67, $EB` (→ `Map_Removable_Tiles` path)
+- Page thresholds: page0 ≥ `$03`, page1 ≥ `$67`, page2 ≥ `$BF`, page3 ≥ `$E9`
+- Removable: `$51, $52, $54, $67, $EB, $E4, $56, $9D`
+
+**Randomizer constraints:**
+- `find_blank_slots` skips row 8 positions where the existing row 7 tile is
+  completion-unsafe (prevents the builder from placing a level there).
+- `populate_sections` enforces that no two completable tiles (Level, Fortress, Pipe)
+  are orthogonally adjacent — this prevents both the row 7/8 bit collision and
+  visually cluttered numbered tiles.
+- `place_locks` skips row 7 candidates to avoid the `$01` bit collision with row 8.
 
 **Vanilla FX positions:** Bridges ($56), water gaps ($9D), and sky gaps ($E4) should only
 appear at the 13 vanilla FX positions. Locks ($54) can be placed on any path tile.
@@ -1445,6 +1552,23 @@ The code runs after the king's room cinematic (wand return) when a world boss is
 **Free space for patches:** PRG030 has unused space at **0x3DF20–0x3DF4F** (CPU $9F10–$9F3F), 48 bytes of $FF.
 
 World BGM table (PRG030): file offset **0x3C424**, 9 bytes (worlds 1-8 + warp whistle): `01 02 03 04 05 06 07 08 0B`
+
+#### Autoscroll / Pointer Table Resort Ordering
+
+The autoscroll patch writes airship pointer table redirects (ByRowType, ObjSets,
+LevelLayouts) to **hardcoded vanilla offsets** for each world's airship entry. The
+overworld builder's `resort_pointer_table()` rearranges pointer table entries by sort
+key `(screen, row_nib, col)`, which can displace airship entries from their vanilla
+indices.
+
+**Critical ordering requirement:** The autoscroll patch must run **before** the
+overworld builder. If it runs after, the resort may have moved airship entries to
+different indices, and the autoscroll patch overwrites the wrong entries — corrupting
+non-airship levels and leaving actual airship entries unpatched. This causes crashes
+(reset to title screen) after beating airships.
+
+Running autoscroll first writes to the correct vanilla offsets, then the resort
+correctly re-sorts everything (including the patched airship entries) into sort order.
 
 #### World Order Debug Flag Fix
 
@@ -1906,8 +2030,10 @@ The InitIndex master table at `0x193DA` contains 9 word pointers (8 worlds + war
 To compute the InitIndex file offset for a world:
 ```
 init_ptr = read_word(rom, 0x193DA + world_idx * 2)
-init_file = 0x18010 + (init_ptr - 0x8000)
+init_file = 0x18010 + (init_ptr - 0xA000)
 ```
+
+**Important:** PRG012 is loaded at CPU `$A000-$BFFF` during the map screen, so the CPU addresses in the master table are in the `$A000+` range. The file offset formula uses `- 0xA000`, NOT `- 0x8000`. Each sub-table is always 4 bytes; unused screens (beyond the world's actual screen count) should be set to N (entry count) as a sentinel.
 
 ### Map Walker Movement Model
 
@@ -2002,6 +2128,35 @@ that don't use Big ? Blocks, like W1/W2 levels), it falls back to `LDY $0727`
 
 Room indices are 0-indexed (matching World_Num values 0–7). W1 and W2 have no levels
 with Big ? Blocks, so they are not in the table and use the World_Num fallback.
+
+### Bonus Room Enemy Data (PRG006)
+
+The 8 per-world bonus room enemy/object data segments are stored **inside** the main
+enemy data region (PRG006, file offsets 0x0BFD8–0x0E00D). The enemy pointer table at
+0x3492B contains CPU addresses in the $C9xx range (PRG006, CPU $C000–$DFFF), which map
+to file offsets in the 0x0C9xx range.
+
+**Per-world bonus room enemy data offsets:**
+
+| World | CPU Addr | File Offset | Notes |
+|-------|----------|-------------|-------|
+| W1 | $C976 | 0x0C986 | |
+| W2 | $C978 | 0x0C988 | |
+| W3 | $C97D | 0x0C98D | |
+| W4 | $C988 | 0x0C998 | |
+| W5 | $C990 | 0x0C9A0 | |
+| W6 | $C998 | 0x0C9A8 | |
+| W7 | $C9A3 | 0x0C9B3 | |
+| W8 | $C9AB | 0x0C9BB | |
+
+Each bonus room's enemy data contains Big ? Block IDs (0x94–0x9A) that determine the
+powerup the player receives. The visual block ID placed in the level is cosmetic only —
+the actual powerup comes from this bonus room data.
+
+**Critical**: The entire range 0x0C986–0x0C9C2 must be excluded from Big ? Block
+randomization. If the randomizer scans the enemy data range for Big ? Block IDs to
+shuffle, it will find and corrupt these bonus room entries, scrambling which powerup
+each world's bonus room gives.
 
 ---
 

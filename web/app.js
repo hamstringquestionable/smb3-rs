@@ -1,4 +1,4 @@
-import init, { generate_patch, generate_patched_rom } from "../pkg/smb3r.js";
+import init, { generate_patch, generate_patched_rom, encode_flag_key, decode_flag_key } from "../pkg/smb3r.js";
 
 let wasmReady = false;
 let romBytes = null;
@@ -27,6 +27,9 @@ const optAirshipLock = document.getElementById("opt-airship-lock");
 const optFixDrawbridges = document.getElementById("opt-fix-drawbridges");
 const optRemoveW2Rock = document.getElementById("opt-remove-w2-rock");
 const optStartingLives = document.getElementById("opt-starting-lives");
+const flagKeyInput = document.getElementById("flag-key-input");
+const flagKeyCopyBtn = document.getElementById("flag-key-copy-btn");
+const flagKeyApplyBtn = document.getElementById("flag-key-apply-btn");
 
 // Dynamically populate Starting Lives dropdown (4–99)
 if (optStartingLives) {
@@ -44,6 +47,7 @@ init()
 	.then(() => {
 		wasmReady = true;
 		updateGenerateButton();
+		updateFlagKey();
 	})
 	.catch((err) => {
 		showStatus(`Failed to load WASM module: ${err}`, "error");
@@ -138,6 +142,86 @@ generateBtn.addEventListener("click", () => {
 	} catch (err) {
 		showStatus(`Error: ${err}`, "error");
 	}
+});
+
+// --- Flag Key ---
+
+function getCurrentOptionsJson() {
+	return JSON.stringify({
+		powerups: optPowerups.checked,
+		palettes: optPalettes.checked,
+		enemies: optEnemies.checked,
+		world_order: optWorldOrder.checked,
+		big_q_blocks: optBigQBlocks.checked,
+		level_shuffle: optLevelShuffle.value,
+		shuffle_pipes: optShufflePipes.checked,
+		chest_items: optChestItems.checked,
+		remove_whistles: optRemoveWhistles.checked,
+		shuffle_fortresses: optShuffleFortresses.checked,
+		fortress_redistribute: optFortressRedistribute.value,
+		airship_lock: optAirshipLock.checked,
+		fix_drawbridges: optFixDrawbridges.checked,
+		remove_w2_rock: optRemoveW2Rock.checked,
+		starting_lives: Number(optStartingLives.value),
+		disable_autoscroll: true, // always on in web UI
+	});
+}
+
+function updateFlagKey() {
+	if (!wasmReady) return;
+	try {
+		flagKeyInput.value = encode_flag_key(getCurrentOptionsJson());
+	} catch (_) {
+		// ignore before WASM ready
+	}
+}
+
+function applyFlagKey(key) {
+	if (!wasmReady) return;
+	try {
+		const json = decode_flag_key(key.trim());
+		const opts = JSON.parse(json);
+		optPowerups.checked = opts.powerups;
+		optPalettes.checked = opts.palettes;
+		optEnemies.checked = opts.enemies;
+		optWorldOrder.checked = opts.world_order;
+		optBigQBlocks.checked = opts.big_q_blocks;
+		optLevelShuffle.value = opts.level_shuffle;
+		optShufflePipes.checked = opts.shuffle_pipes;
+		optChestItems.checked = opts.chest_items;
+		optRemoveWhistles.checked = opts.remove_whistles;
+		optShuffleFortresses.checked = opts.shuffle_fortresses;
+		optFortressRedistribute.value = opts.fortress_redistribute;
+		optAirshipLock.checked = opts.airship_lock;
+		optFixDrawbridges.checked = opts.fix_drawbridges;
+		optRemoveW2Rock.checked = opts.remove_w2_rock;
+		if (opts.starting_lives) optStartingLives.value = opts.starting_lives;
+		showStatus("Flag key applied!", "success");
+	} catch (err) {
+		showStatus(`Invalid flag key: ${err}`, "error");
+	}
+}
+
+// Update flag key whenever any option changes
+const allOptionElements = [
+	optPowerups, optPalettes, optEnemies, optWorldOrder, optBigQBlocks,
+	optLevelShuffle, optShufflePipes, optChestItems, optRemoveWhistles,
+	optShuffleFortresses, optFortressRedistribute, optAirshipLock,
+	optFixDrawbridges, optRemoveW2Rock, optStartingLives,
+];
+for (const el of allOptionElements) {
+	el.addEventListener("change", updateFlagKey);
+}
+
+flagKeyCopyBtn.addEventListener("click", () => {
+	updateFlagKey();
+	navigator.clipboard.writeText(flagKeyInput.value).then(() => {
+		showStatus("Flag key copied!", "success");
+	});
+});
+
+flagKeyApplyBtn.addEventListener("click", () => {
+	applyFlagKey(flagKeyInput.value);
 });
 
 function updateGenerateButton() {
