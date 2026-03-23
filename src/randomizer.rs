@@ -326,6 +326,10 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::items::replace_anchors(rom, &mut rng);
     }
 
+    // Randomize king quotes (always on — cosmetic flavor text)
+    rom.set_tag("king_quotes");
+    randomize::king_quotes::randomize(rom, &mut rng);
+
     // Stamp flag key + seed into free space at 0x19101 (PRG012, between
     // overworld tile data and master pointer tables). 16 bytes total:
     //   [0..4]  "S3R\x01" magic + version
