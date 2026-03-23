@@ -1,4 +1,4 @@
-import init, { generate_patch, generate_patched_rom, encode_flag_key, decode_flag_key } from "../pkg/smb3r.js";
+import init, { generate_patch, generate_patched_rom, encode_flag_key, decode_flag_key } from "./pkg/smb3r.js";
 
 let wasmReady = false;
 let romBytes = null;
