@@ -198,6 +198,8 @@ const ISLAND_POSITIONS: &[(usize, usize, usize)] = &[
     (2, 6, 4),  // 3-1
     (2, 4, 12), // hammer
     (2, 6, 12), // 3-5
+    // W4 — island tile
+    (3, 6, 20), // 4-4
 ];
 
 /// Derive the visual theme from a neighbor path tile.
