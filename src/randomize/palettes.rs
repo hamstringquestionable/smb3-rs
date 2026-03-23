@@ -2,17 +2,16 @@ use rand::Rng;
 
 use crate::rom::Rom;
 
-/// Character palette offsets (4 bytes each: 3 colors + terminator byte 0x0F).
-/// Each group of 4 bytes is [color1, color2, color3, 0x0F].
-const PALETTE_RANGES: &[(usize, usize, &str)] = &[
-    (0x10539, 4, "Small/Big/Raccoon Mario"),
-    (0x1053D, 4, "Small/Big/Raccoon Luigi"),
-    (0x10541, 4, "Fire Mario/Luigi"),
-    (0x10549, 4, "Frog Mario/Luigi"),
-    (0x1054D, 4, "Tanooki Mario/Luigi"),
-    (0x10551, 4, "Hammer Mario/Luigi"),
-    (0x36DAA, 4, "Lava"),
-    (0x36DFE, 4, "Bowser"),
+/// Character sprite palette entries: [bg_mirror(0x00), body, highlight, outline(0x0F)].
+/// Byte 0 must stay 0x00 — it mirrors $3F00 (universal background color) via the PPU.
+/// Byte 3 is the outline/shadow color (0x0F). Only bytes 1-2 are randomized.
+const PALETTE_RANGES: &[(usize, &str)] = &[
+    (0x10539, "Small/Big/Raccoon Mario"),
+    (0x1053D, "Small/Big/Raccoon Luigi"),
+    (0x10541, "Fire Mario/Luigi"),
+    (0x10549, "Frog Mario/Luigi"),
+    (0x1054D, "Tanooki Mario/Luigi"),
+    (0x10551, "Hammer Mario/Luigi"),
 ];
 
 /// Valid NES colors that produce good visible results.
@@ -30,18 +29,13 @@ const SAFE_COLORS: &[u8] = &[
     0x38, 0x39, 0x3A, 0x3B, 0x3C,
 ];
 
-/// Randomize color palettes for characters, lava, and Bowser.
+/// Randomize character sprite palettes (Mario/Luigi power-up colors).
 pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
-    for &(offset, len, _name) in PALETTE_RANGES {
-        let mut palette = rom.read_range(offset, len).to_vec();
-
-        // Randomize each color byte (but preserve structure —
-        // last byte 0x0F in character palettes is the outline/shadow color)
-        for byte in &mut palette[..3.min(len)] {
-            *byte = SAFE_COLORS[rng.random_range(..SAFE_COLORS.len())];
+    for &(offset, _name) in PALETTE_RANGES {
+        // Randomize bytes 1-2 (body and highlight), preserve byte 0 (bg mirror) and 3 (outline)
+        for i in 1..3 {
+            rom.write_byte(offset + i, SAFE_COLORS[rng.random_range(..SAFE_COLORS.len())]);
         }
-
-        rom.write_range(offset, &palette);
     }
 }
 
@@ -63,18 +57,25 @@ mod tests {
     #[test]
     fn test_palettes_use_safe_colors() {
         let mut rom = make_test_rom();
+        // Set vanilla values
+        rom.write_range(0x10539, &[0x00, 0x16, 0x36, 0x0F]);
+
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         randomize(&mut rom, &mut rng);
 
-        for &(offset, len, name) in PALETTE_RANGES {
-            let palette = rom.read_range(offset, len);
-            for &byte in &palette[..3.min(len)] {
+        for &(offset, name) in PALETTE_RANGES {
+            for i in 1..3 {
+                let byte = rom.read_byte(offset + i);
                 assert!(
                     SAFE_COLORS.contains(&byte),
-                    "Palette '{name}' at {offset:#06x} has unsafe color: {byte:#04x}"
+                    "Palette '{name}' at {offset:#06x}+{i} has unsafe color: {byte:#04x}"
                 );
             }
         }
+
+        // Verify byte 0 (bg mirror) and byte 3 (outline) are preserved
+        assert_eq!(rom.read_byte(0x10539), 0x00, "Mario byte 0 must stay 0x00");
+        assert_eq!(rom.read_byte(0x1053C), 0x0F, "Mario outline must stay 0x0F");
     }
 
     #[test]
@@ -87,10 +88,10 @@ mod tests {
         randomize(&mut rom1, &mut rng1);
         randomize(&mut rom2, &mut rng2);
 
-        for &(offset, len, _) in PALETTE_RANGES {
+        for &(offset, _) in PALETTE_RANGES {
             assert_eq!(
-                rom1.read_range(offset, len),
-                rom2.read_range(offset, len),
+                rom1.read_range(offset, 4),
+                rom2.read_range(offset, 4),
             );
         }
     }
