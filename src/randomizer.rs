@@ -250,6 +250,16 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     rom.set_tag("qol/big_q_blocks");
     randomize::qol::fix_big_q_block_rooms(rom);
 
+    // Autoscroll must run BEFORE powerups and the overworld builder:
+    // it writes pre-baked replacement level data for airship levels, and
+    // powerups/enemies need to randomize on top of that patched data.
+    // It also writes airship pointer table redirects to hardcoded vanilla
+    // offsets — the overworld builder's resort_pointer_table() rearranges
+    // entries later, so autoscroll must go first.
+    if options.disable_autoscroll {
+        rom.set_tag("autoscroll");
+        randomize::autoscroll::disable_autoscroll(rom);
+    }
     if options.powerups {
         rom.set_tag("powerups");
         randomize::powerups::randomize(rom, &mut rng);
@@ -269,16 +279,6 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     if options.big_q_blocks {
         rom.set_tag("enemies/big_q_blocks");
         randomize::enemies::randomize_big_q_blocks(rom, &mut rng);
-    }
-    // Autoscroll must run BEFORE the overworld builder: the autoscroll patch
-    // writes airship pointer table redirects to hardcoded vanilla offsets.
-    // The overworld builder's resort_pointer_table() rearranges entries,
-    // displacing airships from their vanilla indices. Running autoscroll first
-    // ensures it writes to the correct entries, then the resort re-sorts
-    // everything (including the patched airship entries) into the right order.
-    if options.disable_autoscroll {
-        rom.set_tag("autoscroll");
-        randomize::autoscroll::disable_autoscroll(rom);
     }
     // Airship shuffle runs after autoscroll (which patches airship pointer
     // entries at vanilla indices) and before the overworld builder (whose

@@ -93,6 +93,10 @@ struct Cli {
     /// Apply options from a flag key (e.g. SMB3R-01C79804). Overrides all other flag options.
     #[arg(long)]
     flags: Option<String>,
+
+    /// Dump the write log to a file (shows every ROM byte changed, grouped by module)
+    #[arg(long)]
+    write_log: Option<PathBuf>,
 }
 
 fn main() {
@@ -194,23 +198,42 @@ fn main() {
     eprintln!("  Airship lock: {}", if options.airship_lock { "on" } else { "off" });
     eprintln!("  Output:   {}", output_path.display());
 
-    let result = if cli.patched_rom {
-        smb3r::generate_patched_rom(&rom_data, seed, &options)
-    } else {
-        smb3r::generate_patch(&rom_data, seed, &options)
-    };
-
-    match result {
-        Ok(output_data) => {
-            if let Err(e) = fs::write(&output_path, &output_data) {
-                eprintln!("Error writing output: {e}");
-                process::exit(1);
-            }
-            eprintln!("Done! Wrote {} bytes to {}", output_data.len(), output_path.display());
-        }
+    let rom = match smb3r::randomize_rom(&rom_data, seed, &options) {
+        Ok(r) => r,
         Err(e) => {
             eprintln!("Error: {e}");
             process::exit(1);
         }
+    };
+
+    // Dump write log and collision report if requested
+    if let Some(ref log_path) = cli.write_log {
+        let mut log = rom.format_write_log();
+
+        let collisions = rom.find_collisions();
+        if !collisions.is_empty() {
+            log.push_str(&format!("\n--- {} write collision(s) ---\n", collisions.len()));
+            for (off, tag1, tag2) in &collisions {
+                log.push_str(&format!("  0x{off:05X}: {tag1} vs {tag2}\n"));
+            }
+        }
+
+        if let Err(e) = fs::write(log_path, &log) {
+            eprintln!("Error writing log: {e}");
+        } else {
+            eprintln!("  Write log: {}", log_path.display());
+        }
     }
+
+    let output_data = if cli.patched_rom {
+        rom.output_bytes().to_vec()
+    } else {
+        smb3r::ips::build_ips_patch(rom.original_bytes(), rom.output_bytes())
+    };
+
+    if let Err(e) = fs::write(&output_path, &output_data) {
+        eprintln!("Error writing output: {e}");
+        process::exit(1);
+    }
+    eprintln!("Done! Wrote {} bytes to {}", output_data.len(), output_path.display());
 }

@@ -282,6 +282,68 @@ impl Rom {
             .iter()
             .any(|r| r.offset < end && r.offset + r.len > start)
     }
+
+    /// Find write collisions: offsets written by more than one top-level tag.
+    /// Returns a list of (offset, tag1, tag2) for each collision.
+    pub fn find_collisions(&self) -> Vec<(usize, String, String)> {
+        use std::collections::HashMap;
+        // Map each byte offset to the top-level tag that last wrote it.
+        let mut owner: HashMap<usize, &str> = HashMap::new();
+        let mut collisions: Vec<(usize, String, String)> = Vec::new();
+
+        for rec in &self.write_log {
+            let top_tag = rec.tag.split('/').next().unwrap_or(&rec.tag);
+            for off in rec.offset..rec.offset + rec.len {
+                if let Some(&prev) = owner.get(&off) {
+                    if prev != top_tag {
+                        collisions.push((off, prev.to_string(), top_tag.to_string()));
+                    }
+                }
+                owner.insert(off, top_tag);
+            }
+        }
+
+        collisions.sort_by_key(|(off, _, _)| *off);
+        collisions.dedup();
+        collisions
+    }
+
+    /// Format the write log as a human-readable string, grouped by tag.
+    pub fn format_write_log(&self) -> String {
+        use std::collections::BTreeMap;
+        use std::fmt::Write;
+
+        let mut by_tag: BTreeMap<&str, Vec<&WriteRecord>> = BTreeMap::new();
+        for rec in &self.write_log {
+            by_tag.entry(&rec.tag).or_default().push(rec);
+        }
+
+        let mut out = String::new();
+        for (tag, records) in &by_tag {
+            let total_bytes: usize = records.iter().map(|r| r.len).sum();
+            let _ = writeln!(out, "[{tag}] {total_bytes} bytes, {} writes", records.len());
+            for rec in records {
+                if rec.len <= 4 {
+                    let _ = writeln!(
+                        out,
+                        "  0x{:05X}  {} -> {}",
+                        rec.offset,
+                        rec.old_bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "),
+                        rec.new_bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "),
+                    );
+                } else {
+                    let _ = writeln!(
+                        out,
+                        "  0x{:05X}..0x{:05X}  ({} bytes)",
+                        rec.offset,
+                        rec.offset + rec.len - 1,
+                        rec.len,
+                    );
+                }
+            }
+        }
+        out
+    }
 }
 
 #[cfg(test)]
