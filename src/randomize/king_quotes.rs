@@ -276,7 +276,136 @@ const QUOTES: &[[&str; 6]] = &[
         "",
         "",
     ],
+    [
+        "Soylent Green",
+        "is...",
+        "Toads.",
+        "",
+        "",
+        "",
+    ],
+    [
+        "Luigi, I love you,",
+        "but sooner or later,",
+        "you're going to have",
+        "to face the fact",
+        "you're a goddamn",
+        "moron.",
+    ],
+    [
+        "Fireplants.",
+        "Lots of fireplants",
+        "",
+        "",
+        "",
+        "",
+    ],
+    [
+        "I'd rather not spend",
+        "the rest of this",
+        "seed",
+        "TIED TO THIS",
+        "F'ING THRONE!",
+        "",
+    ],
+    [
+        "Good night,Westley.",
+        "Good work.",
+        "Sleep well.",
+        "I'll most likely",
+        "kill you in the",
+        "morning.",
+    ],
 ];
+
+/// Suit-specific quotes: shown when Mario visits the king wearing frog suit.
+const FROG_QUOTES: &[[&str; 6]] = &[
+    [
+        "Is that a frog suit?",
+        "I was just turned",
+        "INTO a frog.",
+        "Read the room,",
+        "plumber.",
+        "",
+    ],
+    [
+        "Nice frog suit!",
+        "You know,I was a",
+        "frog once too.",
+        "Small world.",
+        "",
+        "Here is your letter.",
+    ],
+    [
+        "A frog! At last,",
+        "someone who",
+        "understands what",
+        "I've been through.",
+        "",
+        "Take this letter.",
+    ],
+];
+
+/// Suit-specific quotes: shown when Mario visits the king as raccoon/tanooki.
+const RACCOON_QUOTES: &[[&str; 6]] = &[
+    [
+        "Thank you,kind",
+        "raccoon.",
+        "",
+        "Please tell me your",
+        "name.",
+        "",
+    ],
+    [
+        "A flying raccoon!",
+        "Now I've seen",
+        "everything.",
+        "",
+        "Here is a letter",
+        "from the Princess.",
+    ],
+    [
+        "Nice tail!",
+        "Is that a raccoon",
+        "thing or a plumber",
+        "thing?",
+        "",
+        "Here is your letter.",
+    ],
+];
+
+/// Suit-specific quotes: shown when Mario visits the king in hammer suit.
+const HAMMER_QUOTES: &[[&str; 6]] = &[
+    [
+        "Hey,you!",
+        "How about lending me",
+        "your clothes?",
+        "No dice?!",
+        "What a drag.",
+        "",
+    ],
+    [
+        "Nice outfit!",
+        "Are those hammers?",
+        "Can you fix my",
+        "castle roof while",
+        "you're here?",
+        "",
+    ],
+    [
+        "Is that a hammer",
+        "suit? The wizard had",
+        "one of those.",
+        "Didn't help him",
+        "much,did it?",
+        "",
+    ],
+];
+
+/// Fixed ROM offsets for the 3 suit-specific quote slots (120 bytes each).
+const FROG_QUOTE_OFFSET: usize = 0x3633C;
+const RACCOON_QUOTE_OFFSET: usize = 0x363B4;
+const HAMMER_QUOTE_OFFSET: usize = 0x3642C;
 
 /// Free space in PRG027 for king quote data.
 const KING_QUOTE_BASE: usize = 0x379D9;
@@ -293,7 +422,7 @@ fn cpu_addr(file_offset: usize) -> u16 {
 
 /// Write randomized king quotes into the ROM.
 pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng) {
-    // Pick 7 unique quotes (one per world 1-7)
+    // Pick 7 unique standard quotes (one per world 1-7)
     let mut pool: Vec<usize> = (0..QUOTES.len()).collect();
     let mut chosen = Vec::with_capacity(7);
     for _ in 0..7 {
@@ -312,19 +441,28 @@ pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng) {
         rom.write_byte(PTR_LO_OFFSET + world, addr as u8);
         rom.write_byte(PTR_HI_OFFSET + world, (addr >> 8) as u8);
     }
+
+    // Randomize suit-specific quotes (one pick each, shared across all worlds)
+    let frog_pick = FROG_QUOTES.choose(rng).unwrap();
+    rom.write_range(FROG_QUOTE_OFFSET, &encode_quote(frog_pick));
+
+    let raccoon_pick = RACCOON_QUOTES.choose(rng).unwrap();
+    rom.write_range(RACCOON_QUOTE_OFFSET, &encode_quote(raccoon_pick));
+
+    let hammer_pick = HAMMER_QUOTES.choose(rng).unwrap();
+    rom.write_range(HAMMER_QUOTE_OFFSET, &encode_quote(hammer_pick));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn all_quotes_fit_constraints() {
-        for (i, quote) in QUOTES.iter().enumerate() {
+    fn validate_pool(name: &str, pool: &[[&str; 6]]) {
+        for (i, quote) in pool.iter().enumerate() {
             for (j, line) in quote.iter().enumerate() {
                 assert!(
                     line.len() <= 20,
-                    "Quote {i} line {j} is {} chars (max 20): \"{line}\"",
+                    "{name} quote {i} line {j} is {} chars (max 20): \"{line}\"",
                     line.len()
                 );
                 for c in line.chars() {
@@ -332,11 +470,19 @@ mod tests {
                         matches!(c,
                             'A'..='Z' | 'a'..='z' | ' ' | ',' | '.' | '\'' | '!' | '?'
                         ),
-                        "Quote {i} line {j} has invalid char '{c}'"
+                        "{name} quote {i} line {j} has invalid char '{c}'"
                     );
                 }
             }
         }
+    }
+
+    #[test]
+    fn all_quotes_fit_constraints() {
+        validate_pool("QUOTES", QUOTES);
+        validate_pool("FROG_QUOTES", FROG_QUOTES);
+        validate_pool("RACCOON_QUOTES", RACCOON_QUOTES);
+        validate_pool("HAMMER_QUOTES", HAMMER_QUOTES);
     }
 
     #[test]
