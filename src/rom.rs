@@ -65,6 +65,8 @@ pub struct Rom {
     pub original: Vec<u8>,
     pub data: Vec<u8>,
     pub header: Header,
+    /// True when a synthetic iNES header was prepended (unheadered input ROM).
+    pub header_synthesized: bool,
     tag_stack: Vec<&'static str>,
     write_log: Vec<WriteRecord>,
 }
@@ -72,7 +74,37 @@ pub struct Rom {
 impl Rom {
     /// Parse and validate a ROM from raw bytes.
     /// Validates it matches the expected SMB3 (USA Rev 1) layout.
+    /// Accepts both headered (iNES, 393,232 bytes) and unheadered (393,216 bytes) ROMs.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, RomError> {
+        // Detect unheadered ROM: exact raw PRG+CHR size with no iNES magic.
+        const UNHEADERED_SIZE: usize =
+            EXPECTED_PRG_PAGES as usize * PRG_PAGE_SIZE + EXPECTED_CHR_PAGES as usize * CHR_PAGE_SIZE;
+
+        let (bytes, header_synthesized) = if bytes.len() == UNHEADERED_SIZE {
+            let magic: [u8; 4] = bytes[0..4].try_into().unwrap();
+            if magic == INES_MAGIC {
+                // Unlikely: exactly UNHEADERED_SIZE but starts with NES magic — treat as corrupt
+                return Err(RomError::SizeMismatch {
+                    expected: HEADER_SIZE + UNHEADERED_SIZE,
+                    got: bytes.len(),
+                });
+            }
+            // Synthesize a standard iNES header and prepend it.
+            let mut headered = Vec::with_capacity(HEADER_SIZE + UNHEADERED_SIZE);
+            headered.extend_from_slice(&INES_MAGIC);
+            headered.push(EXPECTED_PRG_PAGES);
+            headered.push(EXPECTED_CHR_PAGES);
+            headered.push(0x40); // flags6: mapper 4 lower nibble, horizontal mirroring
+            headered.push(0x00); // flags7
+            headered.extend_from_slice(&[0u8; 8]); // flags8–15
+            headered.extend_from_slice(bytes);
+            (headered, true)
+        } else {
+            (bytes.to_vec(), false)
+        };
+
+        let bytes = &bytes;
+
         if bytes.len() < HEADER_SIZE {
             return Err(RomError::TooSmall(bytes.len()));
         }
@@ -124,9 +156,28 @@ impl Rom {
             original: bytes.to_vec(),
             data: bytes.to_vec(),
             header,
+            header_synthesized,
             tag_stack: Vec::new(),
             write_log: Vec::new(),
         })
+    }
+
+    /// Returns the output ROM bytes, stripping the synthetic header if one was added.
+    pub fn output_bytes(&self) -> &[u8] {
+        if self.header_synthesized {
+            &self.data[HEADER_SIZE..]
+        } else {
+            &self.data
+        }
+    }
+
+    /// Returns the original ROM bytes, stripping the synthetic header if one was added.
+    pub fn original_bytes(&self) -> &[u8] {
+        if self.header_synthesized {
+            &self.original[HEADER_SIZE..]
+        } else {
+            &self.original
+        }
     }
 
     pub fn read_byte(&self, offset: usize) -> u8 {

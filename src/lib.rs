@@ -15,7 +15,7 @@ pub use randomizer::{FortressRedistribute, LevelShuffle, Options};
 pub fn generate_patch(rom_data: &[u8], seed: u64, options: &Options) -> Result<Vec<u8>, String> {
     let mut rom = Rom::from_bytes(rom_data).map_err(|e| e.to_string())?;
     randomizer::randomize(&mut rom, seed, options);
-    Ok(ips::build_ips_patch(&rom.original, &rom.data))
+    Ok(ips::build_ips_patch(rom.original_bytes(), rom.output_bytes()))
 }
 
 /// Generate a patched ROM from a ROM with the given seed and options.
@@ -27,5 +27,5 @@ pub fn generate_patched_rom(
 ) -> Result<Vec<u8>, String> {
     let mut rom = Rom::from_bytes(rom_data).map_err(|e| e.to_string())?;
     randomizer::randomize(&mut rom, seed, options);
-    Ok(rom.data)
+    Ok(rom.output_bytes().to_vec())
 }
