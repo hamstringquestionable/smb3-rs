@@ -130,6 +130,21 @@ pub fn fix_big_q_block_rooms(rom: &mut Rom) {
     rom.write_range(BIG_Q_ROUTINE_OFFSET, &BIG_Q_ROUTINE);
 }
 
+// Card matching tables in PRG009 (mapped at CPU $A000).
+// Three 8-entry tables indexed by OR'd card type bitmask:
+//   bitmask: 1=mushroom, 2=flower, 4=star → one-of-each = 7
+// $A000: lives to award      $A008: cutscene flag (0x40)      $A010: match indicator
+const CARD_CUTSCENE_FLAG: usize = 0x1201F; // $A008[7] — cutscene trigger for one-of-each
+const CARD_MATCH_INDICATOR: usize = 0x12027; // $A010[7] — match display flag for one-of-each
+
+/// Patch one-of-each card collection to skip the cutscene.
+/// Awards +1 life and clears the cards, but the level ends immediately
+/// as if the player had fewer than 3 cards — a speed bonus.
+pub fn card_speed_clear(rom: &mut Rom) {
+    rom.write_byte(CARD_CUTSCENE_FLAG, 0x00); // don't set cutscene flag
+    rom.write_byte(CARD_MATCH_INDICATOR, 0x00); // no match indicator
+}
+
 /// Replace W3 drawbridge tiles with normal path tiles and NOP the toggle code.
 pub fn fix_w3_drawbridges(rom: &mut Rom) {
     // Replace horizontal drawbridge tiles with bridge ($B3, horizontal path)
@@ -238,5 +253,18 @@ mod tests {
         assert_eq!(rom.read_byte(W3_BRIDGE_V1), 0xBA);
         assert_eq!(rom.read_byte(W3_BRIDGE_V2), 0xBA);
         assert_eq!(rom.read_range(W3_TOGGLE_OFFSET, W3_TOGGLE_LEN), &[0xEA; 8]);
+    }
+
+    #[test]
+    fn test_card_speed_clear() {
+        let mut rom = make_test_rom();
+        // Place vanilla values
+        rom.write_byte(CARD_CUTSCENE_FLAG, 0x40);
+        rom.write_byte(CARD_MATCH_INDICATOR, 0x01);
+
+        card_speed_clear(&mut rom);
+
+        assert_eq!(rom.read_byte(CARD_CUTSCENE_FLAG), 0x00);
+        assert_eq!(rom.read_byte(CARD_MATCH_INDICATOR), 0x00);
     }
 }

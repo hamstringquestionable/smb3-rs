@@ -79,6 +79,10 @@ struct Cli {
     #[arg(long)]
     keep_w2_rock: bool,
 
+    /// Disable card speed clear (one-of-each skips cutscene, on by default)
+    #[arg(long)]
+    no_card_speed_clear: bool,
+
     /// Disable airship lock (anchor effect always on by default, use this flag to disable)
     #[arg(long)]
     no_airship_lock: bool,
@@ -150,6 +154,7 @@ fn main() {
             shuffle_pipes: cli.shuffle_pipes,
             fix_drawbridges: !cli.keep_drawbridges,
             remove_w2_rock: !cli.keep_w2_rock,
+            card_speed_clear: !cli.no_card_speed_clear,
             airship_lock: !cli.no_airship_lock,
             starting_lives: cli.starting_lives,
         }

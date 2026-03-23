@@ -65,6 +65,9 @@ pub struct Options {
     /// Remove the W2 rock blocking the secret path.
     #[serde(default = "default_true")]
     pub remove_w2_rock: bool,
+    /// Clear cards instantly (no cutscene, +1 life) when collecting one of each type.
+    #[serde(default = "default_true")]
+    pub card_speed_clear: bool,
 }
 
 fn default_false() -> bool {
@@ -75,15 +78,15 @@ fn default_true() -> bool {
     true
 }
 
-const FLAG_KEY_VERSION: u8 = 1;
+const FLAG_KEY_VERSION: u8 = 2;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
 /// Free space in PRG012 after the Big ? Block trampoline (0x19DD0 region).
 /// The trampoline uses 0x19DD0–0x19DE1; we place the 16-byte stamp at 0x19DF0.
 const STAMP_OFFSET: usize = 0x19DF0;
 
 impl Options {
-    /// Encode options into 4 raw bytes.
-    pub fn to_flag_bytes(&self) -> [u8; 4] {
+    /// Encode options into 5 raw bytes.
+    pub fn to_flag_bytes(&self) -> [u8; 5] {
         let level_shuffle_val = match self.level_shuffle {
             LevelShuffle::Off => 0u8,
             LevelShuffle::IntraWorld => 1,
@@ -117,38 +120,43 @@ impl Options {
         let b3 = ((fortress_val & 0x01) << 7)
             | (self.starting_lives.min(99).max(1) & 0x7F);
 
-        [b0, b1, b2, b3]
+        let b4 = (self.card_speed_clear as u8) << 7;
+
+        [b0, b1, b2, b3, b4]
     }
 
-    /// Encode options into a compact hex flag key (e.g. "SMB3R-01E38804").
+    /// Encode options into a compact hex flag key (e.g. "SMB3R-02E3880480").
     pub fn to_flag_key(&self) -> String {
-        let [b0, b1, b2, b3] = self.to_flag_bytes();
-        format!("{FLAG_KEY_PREFIX}{b0:02X}{b1:02X}{b2:02X}{b3:02X}")
+        let [b0, b1, b2, b3, b4] = self.to_flag_bytes();
+        format!("{FLAG_KEY_PREFIX}{b0:02X}{b1:02X}{b2:02X}{b3:02X}{b4:02X}")
     }
 
-    /// Decode a flag key string (e.g. "SMB3R-01E38804") into Options.
+    /// Decode a flag key string (e.g. "SMB3R-02E3880480") into Options.
+    /// Also accepts v1 keys (8 hex digits) with defaults for new fields.
     pub fn from_flag_key(key: &str) -> Result<Options, String> {
         let hex = key.strip_prefix(FLAG_KEY_PREFIX)
             .or_else(|| key.strip_prefix("smb3r-"))
             .unwrap_or(key);
 
-        if hex.len() != 8 {
-            return Err(format!("Flag key must be 8 hex digits (got {})", hex.len()));
+        if hex.len() != 8 && hex.len() != 10 {
+            return Err(format!("Flag key must be 8 or 10 hex digits (got {})", hex.len()));
         }
 
-        let bytes: Vec<u8> = (0..4)
+        let num_bytes = hex.len() / 2;
+        let bytes: Vec<u8> = (0..num_bytes)
             .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| format!("Invalid hex in flag key: {e}"))?;
 
         let version = bytes[0];
-        if version != FLAG_KEY_VERSION {
+        if version != 1 && version != FLAG_KEY_VERSION {
             return Err(format!("Unsupported flag key version {version} (expected {FLAG_KEY_VERSION})"));
         }
 
         let b1 = bytes[1];
         let b2 = bytes[2];
         let b3 = bytes[3];
+        let b4 = if bytes.len() > 4 { bytes[4] } else { 0x80 }; // v1 default: card_speed_clear on
 
         let level_shuffle_val = (b2 >> 1) & 0x03;
         let fortress_val = ((b2 & 0x01) << 1) | ((b3 >> 7) & 0x01);
@@ -187,6 +195,7 @@ impl Options {
             level_shuffle,
             fortress_redistribute,
             starting_lives,
+            card_speed_clear: (b4 >> 7) & 1 != 0,
         })
     }
 }
@@ -209,6 +218,7 @@ impl Default for Options {
             shuffle_pipes: false,
             fix_drawbridges: true,
             remove_w2_rock: true,
+            card_speed_clear: true,
             starting_lives: default_starting_lives(),
         }
     }
@@ -330,18 +340,23 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     rom.set_tag("king_quotes");
     randomize::king_quotes::randomize(rom, &mut rng);
 
-    // Stamp flag key + seed into free space at 0x19101 (PRG012, between
-    // overworld tile data and master pointer tables). 16 bytes total:
-    //   [0..4]  "S3R\x01" magic + version
-    //   [4..8]  flag key bytes (encoding of Options)
-    //   [8..16] seed (little-endian u64)
+    // Card speed clear: one-of-each clears cards with +1 life but no cutscene.
+    if options.card_speed_clear {
+        rom.set_tag("qol/card_speed_clear");
+        randomize::qol::card_speed_clear(rom);
+    }
+
+    // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 17 bytes:
+    //   [0..4]  "S3R\x02" magic + version
+    //   [4..9]  flag key bytes (encoding of Options)
+    //   [9..17] seed (little-endian u64)
     rom.set_tag("stamp");
     let flag_bytes = options.to_flag_bytes();
-    let mut stamp = [0u8; 16];
+    let mut stamp = [0u8; 17];
     stamp[0..3].copy_from_slice(b"S3R");
     stamp[3] = FLAG_KEY_VERSION;
-    stamp[4..8].copy_from_slice(&flag_bytes);
-    stamp[8..16].copy_from_slice(&seed.to_le_bytes());
+    stamp[4..9].copy_from_slice(&flag_bytes);
+    stamp[9..17].copy_from_slice(&seed.to_le_bytes());
     rom.write_range(STAMP_OFFSET, &stamp);
 }
 
@@ -465,7 +480,7 @@ mod tests {
         let opts = Options::default();
         let key = opts.to_flag_key();
         assert!(key.starts_with("SMB3R-"));
-        assert_eq!(key.len(), 14); // "SMB3R-" + 8 hex
+        assert_eq!(key.len(), 16); // "SMB3R-" + 10 hex
         let decoded = Options::from_flag_key(&key).unwrap();
         assert_eq!(opts.powerups, decoded.powerups);
         assert_eq!(opts.palettes, decoded.palettes);
@@ -483,6 +498,7 @@ mod tests {
         assert_eq!(opts.level_shuffle, decoded.level_shuffle);
         assert_eq!(opts.fortress_redistribute, decoded.fortress_redistribute);
         assert_eq!(opts.starting_lives, decoded.starting_lives);
+        assert_eq!(opts.card_speed_clear, decoded.card_speed_clear);
     }
 
     #[test]
@@ -504,6 +520,7 @@ mod tests {
             remove_w2_rock: true,
             fortress_redistribute: FortressRedistribute::CrossWorld,
             starting_lives: 99,
+            card_speed_clear: true,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
@@ -535,6 +552,7 @@ mod tests {
             remove_w2_rock: false,
             fortress_redistribute: FortressRedistribute::Off,
             starting_lives: 1,
+            card_speed_clear: false,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
