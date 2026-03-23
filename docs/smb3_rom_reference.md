@@ -1037,14 +1037,14 @@ Pointer tables indexed by World_Num (8 entries each):
 
 **0x19103–0x193D9**: Region between overworld tile grid data and the InitIndex master pointer table (starts at 0x193DA). **WARNING:** 0x19103–0x1910F contains a tile lookup table, and 0x19110+ contains active map screen code (level-entry logic: `ROL $07`, `LDA $073C,X`, etc.). This is NOT free space — writing here corrupts the map screen and crashes on level entry.
 
-**0x19DD0–0x19FFF** (560 bytes): Free space after overworld tile/code region. The Big ? Block trampoline uses 0x19DD0–0x19DE1 (18 bytes). The randomizer stamps a 16-byte identification block at **0x19DF0**:
+**0x19DD0–0x19FFF** (560 bytes): Free space after overworld tile/code region. The Big ? Block trampoline uses 0x19DD0–0x19DE1 (18 bytes). The randomizer stamps a 17-byte identification block at **0x19DF0**:
 
 | Offset | Size | Content |
 |--------|------|---------|
 | +0 | 3 | `S3R` magic bytes |
-| +3 | 1 | Version (0x01) |
-| +4 | 4 | Flag key bytes (encoded Options) |
-| +8 | 8 | Seed (little-endian u64) |
+| +3 | 1 | Version (0x02) |
+| +4 | 5 | Flag key bytes (encoded Options) |
+| +9 | 8 | Seed (little-endian u64) |
 
 **Note:** The Big ? Block trampoline and flag stamp both live in this region.
 
@@ -1550,6 +1550,8 @@ Original bytes: `EE 27 07 4C A0 84` (INC $0727; JMP $84A0)
 The code runs after the king's room cinematic (wand return) when a world boss is defeated. There is no "next world" lookup table in the original ROM — progression is always +1.
 
 **Free space for patches:** PRG030 has unused space at **0x3DF20–0x3DF4F** (CPU $9F10–$9F3F), 48 bytes of $FF.
+
+**Free space (PRG031):** **0x3FFF0–0x40009** (CPU $FFE0–$FFF9), 26 bytes. Originally 3 unused `$FF` bytes + "SUPER MARIO 3" ASCII string + dead padding before the interrupt vectors at $FFFA. Not referenced by any code. The card speed clear trampoline uses all 26 bytes (0x3FFF0–0x40009).
 
 World BGM table (PRG030): file offset **0x3C424**, 9 bytes (worlds 1-8 + warp whistle): `01 02 03 04 05 06 07 08 0B`
 

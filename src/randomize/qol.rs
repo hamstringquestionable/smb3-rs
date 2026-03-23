@@ -152,7 +152,7 @@ const CARD_HOOK: usize = 0x05CE8;
 
 // Trampoline in PRG031 dead space: CPU $FFE0 (file 0x3FFF0)
 // Overwrites 3 unused $FF bytes + "SUPER MARIO 3" string + dead padding.
-// 26 bytes available ($FFE0-$FFF9), routine uses 24.
+// 26 bytes available ($FFE0-$FFF9), routine uses 26.
 const CARD_TRAMPOLINE: usize = 0x3FFF0;
 
 // Bank 9 map-screen tables (belt-and-suspenders)
