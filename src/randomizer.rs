@@ -393,6 +393,10 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::qol::card_speed_clear(rom);
     }
 
+    // Title screen seed hash icons (always on — cosmetic verification).
+    rom.set_tag("title_screen");
+    randomize::title_screen::write_seed_hash(rom, seed, options);
+
     // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 17 bytes:
     //   [0..4]  "S3R\x02" magic + version
     //   [4..9]  flag key bytes (encoding of Options)
