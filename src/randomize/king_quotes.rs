@@ -45,12 +45,12 @@ fn encode_quote(lines: &[&str; 6]) -> [u8; 120] {
 /// Characters available: A-Z, a-z, space, comma, period, apostrophe, !, ?
 const QUOTES: &[[&str; 6]] = &[
     [
-        "Oh,thank heavens!",
-        "I'm back to my old",
-        "self again.",
-        "Thank you so much.",
-        "Here is a letter",
-        "from the Princess.",
+        "Hey, why don't I",
+        "just go eat some",
+        "hay, make things",
+        "out of clay, lay by",
+        "the bay? I just",
+        "may! What'd ya say?",
     ],
     [
         "I just saved a bunch",
@@ -443,6 +443,22 @@ const QUOTES: &[[&str; 6]] = &[
         "to you?",
         "",
         "",
+    ],
+    [
+        "I picked a hell",
+        "of a day to quit",
+        "drinkin'.",
+        "",
+        "",
+        "",
+    ],
+    [
+        "Ten years later, my",
+        "niece is getting",
+        "married.",
+        "My biological clock",
+        "is...",
+        "ticking",
     ],
 ];
 
