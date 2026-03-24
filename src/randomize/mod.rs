@@ -15,4 +15,5 @@ pub mod pipe_helpers;
 pub mod powerups;
 pub mod qol;
 pub mod rom_data;
+pub mod title_screen;
 pub mod world_order;

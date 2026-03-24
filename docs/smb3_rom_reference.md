@@ -853,6 +853,16 @@ Each palette entry is typically 3 color bytes + 1 shared background color.
 | 0x30ABA–0x30AC1 | Title screen "3" flashing color sequence |
 | 0x32AC2+ | Title screen background fade sequences |
 | 0x32AFE | Title screen background final color |
+| 0x317B1 | Sprite loop hook: vanilla `JSR $B7D6`, patched to `JMP $E914` for seed hash sprites |
+| 0x31976 | Sprite palette data (4 palettes × 4 bytes); palette 3 is modifiable here |
+| 0x3E924 | Free space in PRG031 (CPU $E914): seed hash sprite copy routine (25 bytes) |
+| 0x3E93D | Free space in PRG031 (CPU $E92D): seed hash sprite data table (40 bytes) |
+
+**Title screen seed hash sprites:** 5 icons displayed vertically in the top-left corner.
+Each icon is 16×16 (two 8×16 sprites side by side). Uses 8x16 sprite mode — odd tile IDs
+select PT1 ($1000–$1FFF). Tiles can be drawn from any CHR slot (R2–R5) since the slot is
+determined by tile ID, not a global setting. The ASM routine copies sprite data to OAM with
+stride (every 8th sprite slot) to avoid the 8-sprites-per-scanline hardware limit.
 
 ---
 
