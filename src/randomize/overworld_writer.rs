@@ -760,9 +760,7 @@ fn patch_fortress_fx_screen_check(rom: &mut Rom) {
 
     // --- Custom code at $D544 (file 0x15554) ---
     //
-    // Same screen (lock_screen == $12):
-    //   col_in_screen == 15 → skip (viewport border clips rightmost column)
-    //   else → animate
+    // Same screen (lock_screen == $12): → animate
     //
     // Next screen (lock_screen == $12 + 1):
     //   $FD < 128 → skip (no half-screen straddle, next screen not visible)
@@ -779,38 +777,33 @@ fn patch_fortress_fx_screen_check(rom: &mut Rom) {
         0x29, 0x0F,             // +6:  AND #$0F           ; lock screen (0-3)
         // Check: lock_screen == $12?
         0xC5, 0x12,             // +8:  CMP $12            ; current scroll page
-        0xF0, 0x16,             // +10: BEQ +22 (→ +34)    ; match → same-screen path
+        0xF0, 0x0E,             // +10: BEQ +14 (→ +26)    ; match → same-screen → animate
         // Check: lock_screen == $12 + 1?
         0x38,                   // +12: SEC
         0xE5, 0x12,             // +13: SBC $12            ; A = lock_screen - $12
         0xC9, 0x01,             // +15: CMP #$01           ; exactly 1 screen ahead?
-        0xD0, 0x29,             // +17: BNE +41 (→ +60)    ; no → skip
+        0xD0, 0x21,             // +17: BNE +33 (→ +52)    ; no → skip
         // --- Next-screen path ---
         0xA5, 0xFD,             // +19: LDA $FD            ; Map_Scroll_X
         0xC9, 0x80,             // +21: CMP #$80           ; straddle? (>= 128)
-        0x90, 0x23,             // +23: BCC +35 (→ +60)    ; no → skip
+        0x90, 0x1B,             // +23: BCC +27 (→ +52)    ; no → skip
         0xB9, 0x56, 0xC8,       // +25: LDA $C856,Y       ; reload FortressFX_MapLocation
         0x29, 0x80,             // +28: AND #$80           ; bit 7 = col_in_screen >= 8
-        0xD0, 0x1C,             // +30: BNE +28 (→ +60)    ; col >= 8 → off right edge → skip
-        0xF0, 0x09,             // +32: BEQ +9 (→ +43)     ; col < 8 → animate (Z set from AND)
-        // --- Same-screen path ---
-        0xB9, 0x56, 0xC8,       // +34: LDA $C856,Y       ; reload FortressFX_MapLocation
-        0x29, 0xF0,             // +37: AND #$F0           ; isolate col_in_screen << 4
-        0xC9, 0xF0,             // +39: CMP #$F0           ; col == 15?
-        0xF0, 0x11,             // +41: BEQ +17 (→ +60)    ; yes → border clips → skip
+        0xD0, 0x14,             // +30: BNE +20 (→ +52)    ; col >= 8 → off right edge → skip
+        0xF0, 0x01,             // +32: BEQ +1 (→ +35)     ; col < 8 → animate
         // --- Animate: check poof-only flag in FX_MAP_LOC_ROW bit 0 ---
-        0xA9, 0x01,             // +43: LDA #$01
-        0x85, 0x20,             // +45: STA $20
-        0xB9, 0x45, 0xC8,       // +47: LDA $C845,Y       ; FX_MAP_LOC_ROW
-        0x29, 0x01,             // +50: AND #$01           ; poof-only flag?
-        0xD0, 0x03,             // +52: BNE +3 (→ +57)     ; yes → poof only
-        0x4C, 0xEA, 0xC8,       // +54: JMP $C8EA          ; full animate (VRAM + data)
+        0xA9, 0x01,             // +35: LDA #$01
+        0x85, 0x20,             // +37: STA $20
+        0xB9, 0x45, 0xC8,       // +39: LDA $C845,Y       ; FX_MAP_LOC_ROW
+        0x29, 0x01,             // +42: AND #$01           ; poof-only flag?
+        0xD0, 0x03,             // +44: BNE +3 (→ +49)     ; yes → poof only
+        0x4C, 0xEA, 0xC8,       // +46: JMP $C8EA          ; full animate (VRAM + data)
         // --- Poof only: sprites + data, no VRAM tile write ---
-        0x4C, 0x52, 0xC9,       // +57: JMP $C952          ; data update ($20=1 → poof plays)
+        0x4C, 0x52, 0xC9,       // +49: JMP $C952          ; data update ($20=1 → poof plays)
         // --- Skip: data-only update, no animation ---
-        0xA9, 0x06,             // +60: LDA #$06
-        0x85, 0x20,             // +62: STA $20
-        0x4C, 0x52, 0xC9,       // +64: JMP $C952          ; → Map_Completions update
+        0xA9, 0x06,             // +52: LDA #$06
+        0x85, 0x20,             // +54: STA $20
+        0x4C, 0x52, 0xC9,       // +56: JMP $C952          ; → Map_Completions update
     ];
     for (i, &b) in code.iter().enumerate() {
         rom.write_byte(CODE_OFFSET + i, b);
