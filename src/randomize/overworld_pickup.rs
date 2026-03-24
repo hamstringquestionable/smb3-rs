@@ -200,6 +200,8 @@ const ISLAND_POSITIONS: &[(usize, usize, usize)] = &[
     (2, 6, 12), // 3-5
     // W4 — island tile
     (3, 6, 20), // 4-4
+    // W7 — island tile
+    (6, 5, 10), // 7-4
 ];
 
 /// Derive the visual theme from a neighbor path tile.
