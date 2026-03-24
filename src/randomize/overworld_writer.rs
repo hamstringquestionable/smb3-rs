@@ -426,10 +426,12 @@ fn write_tile_grid(
 
     // Level tile sequence: 1-9 use standard numbered tiles ($03-$0B),
     // $03-$0B = levels 1-9, $0C-$15 = levels 10-18 (double-digit tiles
-    // with custom "1" tens digit patched by patch_double_digit_metatiles).
-    const LEVEL_TILES: [u8; 19] = [
+    // with custom "1" tens digit patched by patch_double_digit_metatiles),
+    // $68-$69 = levels 19-20 (quicksand/pyramid tiles repurposed).
+    const LEVEL_TILES: [u8; 20] = [
         0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
-        0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
+        0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14,
+        0x68, 0x69,
     ];
 
     let mut level_idx: usize = 0;
@@ -718,27 +720,34 @@ fn write_fortress_fx(
 /// Patch metatile LL quadrant for double-digit level tiles (0x0D–0x15).
 ///
 /// Vanilla tiles 0x0D–0x15 have a blank LL (CHR 0xBE = solid fill). We write
-/// a custom CHR tile with a "1" tens digit into the unreferenced slot 0xF0,
-/// then point the LL quadrant of tiles 0x0D–0x15 at it.
+/// a custom CHR tile with a "1" tens digit into an unreferenced slot, then
+/// point the LL quadrant of tiles 0x0D–0x15 at it.
+///
+/// Repurpose CHR tile 0xCB (vanilla LR of metatile 0x15 = level "19") with
+/// our custom "1" tens digit. Since no world has 19 levels, tile 0x15 is
+/// unused and 0xCB is safe to overwrite. CHR page 0x17 is stable (no MMC3
+/// mid-frame bank swapping).
 pub(crate) fn patch_double_digit_metatiles(rom: &mut Rom) {
     // Metatile quadrant tables at 0x18010: UL(256) LL(256) UR(256) LR(256).
     const METATILE_LL_BASE: usize = 0x18010 + 256; // 0x18110
 
-    // Write a custom "1" digit into the unreferenced CHR slot 0xF0.
-    // CHR page 0x17 covers tile IDs 0xC0–0xFF; tile 0xF0 = index 0x30.
+    // Overwrite CHR tile 0xCB with our custom "1" digit.
+    // CHR page 0x17 covers tile IDs 0xC0–0xFF; tile 0xCB = index 0x0B.
     const CHR_START: usize = 0x40010;
     const CHR_PAGE_17: usize = CHR_START + 0x17 * 0x400;
-    const TILE_F0_OFFSET: usize = CHR_PAGE_17 + 0x30 * 16;
+    const TILE_CB_OFFSET: usize = CHR_PAGE_17 + 0x0B * 16;
     // Arrow shape (cols 2–5) + "1" serif (col 6 row 1) + right border (col 7 = color 2).
     #[rustfmt::skip]
     const DIGIT_1_LL: [u8; 16] = [
         0x7E, 0x7C, 0x7E, 0x7E, 0x7E, 0x7E, 0x7F, 0x00, // plane 0
         0xA1, 0xB3, 0xB9, 0xBD, 0xB9, 0xB1, 0x80, 0xFF, // plane 1
     ];
-    rom.write_range(TILE_F0_OFFSET, &DIGIT_1_LL);
+    rom.write_range(TILE_CB_OFFSET, &DIGIT_1_LL);
 
-    for tile_id in 0x0Du8..=0x15 {
-        rom.write_byte(METATILE_LL_BASE + tile_id as usize, 0xF0);
+    // Point LL of tiles 0x0D–0x14 (levels 10–17) at CHR tile 0xCB.
+    // Skip 0x15 (level 18) — its LR already IS 0xCB, so it would show "1" "1".
+    for tile_id in 0x0Du8..=0x14 {
+        rom.write_byte(METATILE_LL_BASE + tile_id as usize, 0xCB);
     }
 }
 
