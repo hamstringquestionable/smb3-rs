@@ -3,10 +3,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use smb3r::{FortressRedistribute, LevelShuffle, Options};
+use smb3_rs::{FortressRedistribute, LevelShuffle, Options};
 
 #[derive(Parser)]
-#[command(name = "smb3r", about = "Super Mario Bros. 3 Randomizer")]
+#[command(name = "smb3-rs", about = "Super Mario Bros. 3 Randomizer")]
 struct Cli {
     /// Path to the SMB3 ROM file (user must provide their own)
     rom: PathBuf,
@@ -15,7 +15,7 @@ struct Cli {
     #[arg(long)]
     seed: Option<u64>,
 
-    /// Output file path (default: smb3r_<seed>.ips or .nes)
+    /// Output file path (default: smb3-rs_<seed>.ips or .nes)
     #[arg(short, long)]
     output: Option<PathBuf>,
 
@@ -167,7 +167,7 @@ fn main() {
     let ext = if cli.patched_rom { "nes" } else { "ips" };
     let output_path = cli
         .output
-        .unwrap_or_else(|| PathBuf::from(format!("smb3r_{seed}.{ext}")));
+        .unwrap_or_else(|| PathBuf::from(format!("smb3-rs_{seed}.{ext}")));
 
     eprintln!("SMB3 Randomizer");
     eprintln!("  Seed: {seed}");
@@ -198,7 +198,7 @@ fn main() {
     eprintln!("  Airship lock: {}", if options.airship_lock { "on" } else { "off" });
     eprintln!("  Output:   {}", output_path.display());
 
-    let rom = match smb3r::randomize_rom(&rom_data, seed, &options) {
+    let rom = match smb3_rs::randomize_rom(&rom_data, seed, &options) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Error: {e}");
@@ -228,7 +228,7 @@ fn main() {
     let output_data = if cli.patched_rom {
         rom.output_bytes().to_vec()
     } else {
-        smb3r::ips::build_ips_patch(rom.original_bytes(), rom.output_bytes())
+        smb3_rs::ips::build_ips_patch(rom.original_bytes(), rom.output_bytes())
     };
 
     if let Err(e) = fs::write(&output_path, &output_data) {

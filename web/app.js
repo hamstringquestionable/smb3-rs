@@ -1,11 +1,11 @@
-import init, { generate_patch, generate_patched_rom, encode_flag_key, decode_flag_key } from "./pkg/smb3r.js";
+import init, { generate_patch, generate_patched_rom, encode_flag_key, decode_flag_key } from "./pkg/smb3_rs.js";
 
 let wasmReady = false;
 let romBytes = null;
 
 // --- IndexedDB ROM persistence ---
 
-const DB_NAME = "smb3r";
+const DB_NAME = "smb3-rs";
 const DB_STORE = "rom";
 
 function openDb() {
@@ -154,10 +154,10 @@ generateBtn.addEventListener("click", () => {
 
 		if (outputFormat === "rom") {
 			result = generate_patched_rom(romBytes, seed, options);
-			filename = `smb3r_${seed}.nes`;
+			filename = `smb3-rs_${seed}.nes`;
 		} else {
 			result = generate_patch(romBytes, seed, options);
-			filename = `smb3r_${seed}.ips`;
+			filename = `smb3-rs_${seed}.ips`;
 		}
 
 		// Trigger download

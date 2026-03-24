@@ -288,7 +288,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "smb3r"
+name = "smb3-rs"
 version = "0.1.0"
 dependencies = [
  "clap",

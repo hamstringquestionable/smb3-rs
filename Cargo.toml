@@ -1,15 +1,15 @@
 [package]
-name = "smb3r"
+name = "smb3-rs"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-name = "smb3r"
+name = "smb3_rs"
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "smb3r"
+name = "smb3-rs"
 path = "src/main.rs"
 
 [dependencies]
