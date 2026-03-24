@@ -68,6 +68,12 @@ pub struct Options {
     /// Clear cards instantly (no cutscene, no lives) when collecting one of each type.
     #[serde(default = "default_true")]
     pub card_speed_clear: bool,
+    /// Remove N-card (N-Spade) panels from the overworld map.
+    #[serde(default = "default_true")]
+    pub remove_n_cards: bool,
+    /// Skip the wand falling cutscene after defeating a Koopaling.
+    #[serde(default = "default_true")]
+    pub skip_wand_cutscene: bool,
 }
 
 fn default_false() -> bool {
@@ -120,7 +126,9 @@ impl Options {
         let b3 = ((fortress_val & 0x01) << 7)
             | (self.starting_lives.min(99).max(1) & 0x7F);
 
-        let b4 = (self.card_speed_clear as u8) << 7;
+        let b4 = (self.card_speed_clear as u8) << 7
+            | (self.remove_n_cards as u8) << 6
+            | (self.skip_wand_cutscene as u8) << 5;
 
         [b0, b1, b2, b3, b4]
     }
@@ -196,6 +204,8 @@ impl Options {
             fortress_redistribute,
             starting_lives,
             card_speed_clear: (b4 >> 7) & 1 != 0,
+            remove_n_cards: (b4 >> 6) & 1 != 0,
+            skip_wand_cutscene: (b4 >> 5) & 1 != 0,
         })
     }
 }
@@ -219,6 +229,8 @@ impl Default for Options {
             fix_drawbridges: true,
             remove_rocks: true,
             card_speed_clear: true,
+            remove_n_cards: true,
+            skip_wand_cutscene: true,
             starting_lives: default_starting_lives(),
         }
     }
@@ -341,6 +353,18 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     // Randomize king quotes (always on — cosmetic flavor text)
     rom.set_tag("king_quotes");
     randomize::king_quotes::randomize(rom, &mut rng);
+
+    // Skip the wand falling cutscene after defeating a Koopaling.
+    if options.skip_wand_cutscene {
+        rom.set_tag("qol/skip_wand_cutscene");
+        randomize::qol::skip_wand_cutscene(rom);
+    }
+
+    // Remove N-card (N-Spade) panels from the overworld map.
+    if options.remove_n_cards {
+        rom.set_tag("qol/remove_n_cards");
+        randomize::qol::remove_n_cards(rom);
+    }
 
     // Card speed clear: one-of-each clears cards with +1 life but no cutscene.
     if options.card_speed_clear {
@@ -501,6 +525,8 @@ mod tests {
         assert_eq!(opts.fortress_redistribute, decoded.fortress_redistribute);
         assert_eq!(opts.starting_lives, decoded.starting_lives);
         assert_eq!(opts.card_speed_clear, decoded.card_speed_clear);
+        assert_eq!(opts.remove_n_cards, decoded.remove_n_cards);
+        assert_eq!(opts.skip_wand_cutscene, decoded.skip_wand_cutscene);
     }
 
     #[test]
@@ -523,6 +549,8 @@ mod tests {
             fortress_redistribute: FortressRedistribute::CrossWorld,
             starting_lives: 99,
             card_speed_clear: true,
+            remove_n_cards: true,
+            skip_wand_cutscene: true,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
@@ -533,6 +561,8 @@ mod tests {
         assert_eq!(opts.starting_lives, decoded.starting_lives);
         assert_eq!(opts.shuffle_pipes, decoded.shuffle_pipes);
         assert_eq!(opts.shuffle_fortresses, decoded.shuffle_fortresses);
+        assert_eq!(opts.remove_n_cards, decoded.remove_n_cards);
+        assert_eq!(opts.skip_wand_cutscene, decoded.skip_wand_cutscene);
     }
 
     #[test]
@@ -555,6 +585,8 @@ mod tests {
             fortress_redistribute: FortressRedistribute::Off,
             starting_lives: 1,
             card_speed_clear: false,
+            remove_n_cards: false,
+            skip_wand_cutscene: false,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
