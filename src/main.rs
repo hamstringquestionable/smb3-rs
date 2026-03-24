@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use smb3_rs::{FortressRedistribute, LevelShuffle, Options};
+use smb3_rs::{LevelShuffle, Options};
 
 #[derive(Parser)]
 #[command(name = "smb3-rs", about = "Super Mario Bros. 3 Randomizer")]
@@ -59,17 +59,29 @@ struct Cli {
     #[arg(long)]
     keep_whistles: bool,
 
-    /// Shuffle fortresses and airships across worlds
+    /// Enable overworld map shuffle (rebuilds tile layout, overrides --level-shuffle)
     #[arg(long)]
-    shuffle_fortresses: bool,
+    map_shuffle: bool,
 
-    /// Fortress redistribute: off, intra-world (lock shuffle), or cross-world (redistribute)
-    #[arg(long, default_value = "off")]
-    fortress_redistribute: String,
+    /// Disable overworld map shuffle (on by default when no --flags provided... see defaults)
+    #[arg(long)]
+    no_map_shuffle: bool,
 
-    /// Shuffle pipe endpoint positions on overworld maps
+    /// Shuffle pipe endpoint positions (only with --map-shuffle)
     #[arg(long)]
     shuffle_pipes: bool,
+
+    /// Disable pipe shuffle (on by default)
+    #[arg(long)]
+    no_shuffle_pipes: bool,
+
+    /// Shuffle airship levels across worlds
+    #[arg(long)]
+    shuffle_airships: bool,
+
+    /// Disable airship shuffle (on by default)
+    #[arg(long)]
+    no_shuffle_airships: bool,
 
     /// Keep W3 drawbridges toggling (they are fixed open by default)
     #[arg(long)]
@@ -131,17 +143,6 @@ fn main() {
         }
     };
 
-    let fortress_redistribute = match cli.fortress_redistribute.as_str() {
-        "off" => FortressRedistribute::Off,
-        "intra" | "intra-world" | "intra_world" => FortressRedistribute::IntraWorld,
-        "cross" | "cross-world" | "cross_world" => FortressRedistribute::CrossWorld,
-        other => {
-            eprintln!("Invalid --fortress-redistribute value: {other}");
-            eprintln!("Valid values: off, intra-world, cross-world");
-            process::exit(1);
-        }
-    };
-
     let options = if let Some(ref flag_key) = cli.flags {
         match Options::from_flag_key(flag_key) {
             Ok(opts) => opts,
@@ -158,12 +159,12 @@ fn main() {
             world_order: cli.world_order,
             big_q_blocks: cli.big_q_blocks,
             level_shuffle,
+            map_shuffle: if cli.no_map_shuffle { false } else { true },
+            shuffle_pipes: if cli.no_shuffle_pipes { false } else { true },
+            shuffle_airships: if cli.no_shuffle_airships { false } else { true },
             disable_autoscroll: !cli.keep_autoscroll,
             chest_items: !cli.no_chest_items,
             remove_whistles: !cli.keep_whistles,
-            shuffle_fortresses: cli.shuffle_fortresses,
-            fortress_redistribute,
-            shuffle_pipes: cli.shuffle_pipes,
             fix_drawbridges: !cli.keep_drawbridges,
             remove_rocks: !cli.keep_rocks,
             card_speed_clear: !cli.no_card_speed_clear,
@@ -188,18 +189,16 @@ fn main() {
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
     eprintln!("  Big ? Blocks: {}", if options.big_q_blocks { "on" } else { "off" });
     eprintln!("  Starting Lives: {}", options.starting_lives);
-    eprintln!("  Level shuffle: {}", match &options.level_shuffle {
-        LevelShuffle::Off => "off",
-        LevelShuffle::IntraWorld => "intra-world",
-        LevelShuffle::CrossWorld => "cross-world",
-    });
-    eprintln!("  Fortress/airship shuffle: {}", if options.shuffle_fortresses { "on" } else { "off" });
-    eprintln!("  Fortress redistribute: {}", match &options.fortress_redistribute {
-        FortressRedistribute::Off => "off",
-        FortressRedistribute::IntraWorld => "intra-world",
-        FortressRedistribute::CrossWorld => "cross-world",
-    });
+    eprintln!("  Map shuffle: {}", if options.map_shuffle { "on" } else { "off" });
+    if !options.map_shuffle {
+        eprintln!("  Level shuffle: {}", match &options.level_shuffle {
+            LevelShuffle::Off => "off",
+            LevelShuffle::IntraWorld => "intra-world",
+            LevelShuffle::CrossWorld => "cross-world",
+        });
+    }
     eprintln!("  Pipe shuffle: {}", if options.shuffle_pipes { "on" } else { "off" });
+    eprintln!("  Airship shuffle: {}", if options.shuffle_airships { "on" } else { "off" });
     eprintln!("  Autoscroll: {}", if options.disable_autoscroll { "disabled" } else { "enabled" });
     eprintln!("  Chest items: {}", if options.chest_items { "on" } else { "off" });
     eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });

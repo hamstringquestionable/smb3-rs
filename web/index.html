@@ -64,49 +64,50 @@
         <fieldset class="section">
             <legend>Overworld</legend>
 
-            <div class="option-group" title="Shuffle level positions on the overworld map">
-                <div class="option-header">Level Shuffle</div>
-                <div class="radio-group-vertical" id="opt-level-shuffle-group">
-                    <label class="radio-label">
-                        <input type="radio" name="level-shuffle" value="off">
-                        Off
-                    </label>
-                    <label class="radio-label">
-                        <input type="radio" name="level-shuffle" value="intra_world">
-                        Within World <span class="option-desc">levels stay in their world</span>
-                    </label>
-                    <label class="radio-label">
-                        <input type="radio" name="level-shuffle" value="cross_world" checked>
-                        Cross World <span class="option-desc">levels mix between all worlds</span>
-                    </label>
+            <div class="overworld-columns">
+                <div class="overworld-col" id="col-vanilla">
+                    <div class="option-group">
+                        <label class="radio-label">
+                            <input type="radio" name="overworld-mode" value="vanilla">
+                            <span class="option-header">Vanilla Layout</span>
+                        </label>
+                        <p class="option-explain">Original map, shuffle level entries underneath</p>
+                        <div class="radio-group-vertical sub-options" id="vanilla-sub">
+                            <label class="radio-label">
+                                <input type="radio" name="level-shuffle" value="off">
+                                Off
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="level-shuffle" value="intra_world">
+                                Within World <span class="option-desc">levels stay in their world</span>
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="level-shuffle" value="cross_world">
+                                Cross World <span class="option-desc">levels mix between worlds</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="overworld-col" id="col-map-shuffle">
+                    <div class="option-group">
+                        <label class="radio-label">
+                            <input type="radio" name="overworld-mode" value="map_shuffle" checked>
+                            <span class="option-header">Map Shuffle</span>
+                        </label>
+                        <p class="option-explain">Rebuild the overworld — new tile positions, locks, and fortresses</p>
+                        <div class="sub-options" id="map-shuffle-sub">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="opt-shuffle-pipes" checked>
+                                Pipe Shuffle
+                            </label>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <div class="option-group" title="Redistribute fortress count and lock positions per world">
-                <div class="option-header">Fortress Redistribute</div>
-                <div class="radio-group-vertical" id="opt-fortress-redistribute-group">
-                    <label class="radio-label">
-                        <input type="radio" name="fortress-redistribute" value="off">
-                        Off
-                    </label>
-                    <label class="radio-label">
-                        <input type="radio" name="fortress-redistribute" value="intra_world">
-                        Within World <span class="option-desc">shuffle lock positions</span>
-                    </label>
-                    <label class="radio-label">
-                        <input type="radio" name="fortress-redistribute" value="cross_world" checked>
-                        Cross World <span class="option-desc">move fortresses between worlds</span>
-                    </label>
-                </div>
-            </div>
-
-            <label class="checkbox-label" title="Shuffle fortress and airship levels between worlds">
-                <input type="checkbox" id="opt-shuffle-fortresses" checked>
-                Shuffle Fortresses & Airships
-            </label>
-            <label class="checkbox-label" title="Shuffle pipe endpoint positions on overworld maps">
-                <input type="checkbox" id="opt-shuffle-pipes" checked>
-                Pipe Shuffle
+            <label class="checkbox-label" title="Shuffle airship levels across worlds 1-7">
+                <input type="checkbox" id="opt-shuffle-airships" checked>
+                Shuffle Airships
             </label>
         </fieldset>
 
