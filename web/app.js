@@ -46,25 +46,10 @@ const optEnemies = document.getElementById("opt-enemies");
 const optWorldOrder = document.getElementById("opt-world-order");
 const optBigQBlocks = document.getElementById("opt-big-q-blocks");
 const optShufflePipes = document.getElementById("opt-shuffle-pipes");
+const optShuffleAirships = document.getElementById("opt-shuffle-airships");
 const optChestItems = document.getElementById("opt-chest-items");
 const optRemoveWhistles = document.getElementById("opt-remove-whistles");
-const optShuffleFortresses = document.getElementById("opt-shuffle-fortresses");
 const optAirshipLock = document.getElementById("opt-airship-lock");
-
-function getLevelShuffle() {
-	return document.querySelector('input[name="level-shuffle"]:checked')?.value || "off";
-}
-function setLevelShuffle(val) {
-	const el = document.querySelector(`input[name="level-shuffle"][value="${val}"]`);
-	if (el) el.checked = true;
-}
-function getFortressRedistribute() {
-	return document.querySelector('input[name="fortress-redistribute"]:checked')?.value || "off";
-}
-function setFortressRedistribute(val) {
-	const el = document.querySelector(`input[name="fortress-redistribute"][value="${val}"]`);
-	if (el) el.checked = true;
-}
 const optFixDrawbridges = document.getElementById("opt-fix-drawbridges");
 const optRemoveRocks = document.getElementById("opt-remove-rocks");
 const optRemoveNCards = document.getElementById("opt-remove-n-cards");
@@ -73,6 +58,33 @@ const optStartingLives = document.getElementById("opt-starting-lives");
 const flagKeyInput = document.getElementById("flag-key-input");
 const flagKeyCopyBtn = document.getElementById("flag-key-copy-btn");
 const flagKeyApplyBtn = document.getElementById("flag-key-apply-btn");
+
+const colVanilla = document.getElementById("col-vanilla");
+const colMapShuffle = document.getElementById("col-map-shuffle");
+
+// --- Overworld mode helpers ---
+
+function getOverworldMode() {
+	return document.querySelector('input[name="overworld-mode"]:checked')?.value || "map_shuffle";
+}
+function setOverworldMode(val) {
+	const el = document.querySelector(`input[name="overworld-mode"][value="${val}"]`);
+	if (el) el.checked = true;
+	updateOverworldColumns();
+}
+function getLevelShuffle() {
+	return document.querySelector('input[name="level-shuffle"]:checked')?.value || "off";
+}
+function setLevelShuffle(val) {
+	const el = document.querySelector(`input[name="level-shuffle"][value="${val}"]`);
+	if (el) el.checked = true;
+}
+
+function updateOverworldColumns() {
+	const mode = getOverworldMode();
+	colVanilla.classList.toggle("disabled", mode !== "vanilla");
+	colMapShuffle.classList.toggle("disabled", mode !== "map_shuffle");
+}
 
 // Dynamically populate Starting Lives dropdown (5, 10, 15, ... 99)
 if (optStartingLives) {
@@ -90,6 +102,7 @@ init()
 	.then(() => {
 		wasmReady = true;
 		updateGenerateButton();
+		updateOverworldColumns();
 		updateFlagKey();
 	})
 	.catch((err) => {
@@ -185,18 +198,19 @@ generateBtn.addEventListener("click", () => {
 // --- Flag Key ---
 
 function getCurrentOptionsJson() {
+	const isMapShuffle = getOverworldMode() === "map_shuffle";
 	return JSON.stringify({
 		powerups: optPowerups.checked,
 		palettes: optPalettes.checked,
 		enemies: optEnemies.checked,
 		world_order: optWorldOrder.checked,
 		big_q_blocks: optBigQBlocks.checked,
-		level_shuffle: getLevelShuffle(),
+		map_shuffle: isMapShuffle,
+		level_shuffle: isMapShuffle ? "off" : getLevelShuffle(),
 		shuffle_pipes: optShufflePipes.checked,
+		shuffle_airships: optShuffleAirships.checked,
 		chest_items: optChestItems.checked,
 		remove_whistles: optRemoveWhistles.checked,
-		shuffle_fortresses: optShuffleFortresses.checked,
-		fortress_redistribute: getFortressRedistribute(),
 		airship_lock: optAirshipLock.checked,
 		fix_drawbridges: optFixDrawbridges.checked,
 		remove_rocks: optRemoveRocks.checked,
@@ -227,18 +241,19 @@ function applyFlagKey(key) {
 		optEnemies.checked = opts.enemies;
 		optWorldOrder.checked = opts.world_order;
 		optBigQBlocks.checked = opts.big_q_blocks;
+		setOverworldMode(opts.map_shuffle ? "map_shuffle" : "vanilla");
 		setLevelShuffle(opts.level_shuffle);
 		optShufflePipes.checked = opts.shuffle_pipes;
+		if (opts.shuffle_airships !== undefined) optShuffleAirships.checked = opts.shuffle_airships;
 		optChestItems.checked = opts.chest_items;
 		optRemoveWhistles.checked = opts.remove_whistles;
-		optShuffleFortresses.checked = opts.shuffle_fortresses;
-		setFortressRedistribute(opts.fortress_redistribute);
 		optAirshipLock.checked = opts.airship_lock;
 		optFixDrawbridges.checked = opts.fix_drawbridges;
 		optRemoveRocks.checked = opts.remove_rocks;
 		if (opts.remove_n_cards !== undefined) optRemoveNCards.checked = opts.remove_n_cards;
 		if (opts.skip_wand_cutscene !== undefined) optSkipWandCutscene.checked = opts.skip_wand_cutscene;
 		if (opts.starting_lives) optStartingLives.value = opts.starting_lives;
+		updateOverworldColumns();
 		showStatus("Flag key applied!", "success");
 	} catch (err) {
 		showStatus(`Invalid flag key: ${err}`, "error");
@@ -248,17 +263,20 @@ function applyFlagKey(key) {
 // Update flag key whenever any option changes
 const allOptionElements = [
 	optPowerups, optPalettes, optEnemies, optWorldOrder, optBigQBlocks,
-	optShufflePipes, optChestItems, optRemoveWhistles,
-	optShuffleFortresses, optAirshipLock,
+	optShufflePipes, optShuffleAirships, optChestItems, optRemoveWhistles,
+	optAirshipLock,
 	optFixDrawbridges, optRemoveRocks, optRemoveNCards, optSkipWandCutscene, optStartingLives,
 ];
 for (const el of allOptionElements) {
 	el.addEventListener("change", updateFlagKey);
 }
 // Radio groups
-for (const name of ["level-shuffle", "fortress-redistribute"]) {
+for (const name of ["overworld-mode", "level-shuffle"]) {
 	for (const radio of document.querySelectorAll(`input[name="${name}"]`)) {
-		radio.addEventListener("change", updateFlagKey);
+		radio.addEventListener("change", () => {
+			updateOverworldColumns();
+			updateFlagKey();
+		});
 	}
 }
 

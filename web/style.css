@@ -23,7 +23,7 @@ body {
     border: 3px solid #e44434;
     border-radius: 12px;
     padding: 2rem;
-    max-width: 500px;
+    max-width: 800px;
     width: 100%;
     box-shadow:
         0 0 20px rgba(228, 68, 52, 0.15),
@@ -233,6 +233,42 @@ input[type="radio"] {
     color: #fff;
     padding: 0.1rem 0.4rem;
     border-radius: 3px;
+}
+
+/* --- Overworld two-column layout --- */
+
+.overworld-columns {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.overworld-col {
+    flex: 1;
+    padding: 0.5rem;
+    border: 1px solid #2a2a50;
+    border-radius: 6px;
+    transition: opacity 0.2s;
+}
+
+.overworld-col.disabled {
+    opacity: 0.35;
+}
+
+.overworld-col.disabled .sub-options {
+    pointer-events: none;
+}
+
+.option-explain {
+    font-size: 0.65rem;
+    color: #5c94fc;
+    margin: 0.15rem 0 0.35rem 1.25rem;
+    line-height: 1.3;
+}
+
+.sub-options {
+    padding-left: 1.25rem;
+    margin-top: 0.25rem;
 }
 
 /* --- Option Groups (radio sections) --- */

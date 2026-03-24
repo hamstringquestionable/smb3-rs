@@ -7,24 +7,6 @@
 
 use crate::rom::Rom;
 
-// ---------------------------------------------------------------------------
-// Public types (re-exported by randomizer.rs)
-// ---------------------------------------------------------------------------
-
-/// Fortress redistribute mode.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FortressRedistribute {
-    Off,
-    IntraWorld,
-    CrossWorld,
-}
-
-impl Default for FortressRedistribute {
-    fn default() -> Self {
-        FortressRedistribute::Off
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Tile constants

@@ -104,6 +104,18 @@ pub fn randomize_intra<R: Rng>(rom: &mut Rom, rng: &mut R) {
     }
 }
 
+/// Shuffle levels across all worlds. All shuffleable levels from every world
+/// are pooled together and redistributed.
+pub fn randomize_cross<R: Rng>(rom: &mut Rom, rng: &mut R) {
+    let mut indices = Vec::new();
+    for (w, world) in WORLDS.iter().enumerate() {
+        for &i in &collect_shuffleable(rom, w, world) {
+            indices.push((w, i));
+        }
+    }
+    level_helpers::shuffle_entries(rom, rng, &indices);
+}
+
 /// Shuffle airships across worlds 1-7. Each world's airship map tile
 /// can load any of the 7 airship levels.
 ///

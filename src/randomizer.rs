@@ -22,9 +22,6 @@ impl Default for LevelShuffle {
     }
 }
 
-// Re-export FortressRedistribute from rom_data module
-pub use crate::randomize::rom_data::FortressRedistribute;
-
 /// Options controlling which randomizations to apply.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Options {
@@ -34,8 +31,20 @@ pub struct Options {
     pub world_order: bool,
     #[serde(default = "default_false")]
     pub big_q_blocks: bool,
+    /// Level shuffle under vanilla tile layout (off/intra/cross).
+    /// Ignored when map_shuffle is true.
     #[serde(default)]
     pub level_shuffle: LevelShuffle,
+    /// Enable overworld map shuffle (rebuilds tile layout, always cross-world).
+    /// Mutually exclusive with level_shuffle (overrides it).
+    #[serde(default = "default_true")]
+    pub map_shuffle: bool,
+    /// Shuffle pipe endpoint positions (only when map_shuffle is true).
+    #[serde(default = "default_true")]
+    pub shuffle_pipes: bool,
+    /// Shuffle airship levels across worlds 1-7.
+    #[serde(default = "default_true")]
+    pub shuffle_airships: bool,
     #[serde(default = "default_true")]
     pub disable_autoscroll: bool,
     /// Set starting lives for both Mario and Luigi (1–99).
@@ -50,15 +59,6 @@ pub struct Options {
     /// Remove warp whistles and replace with random items.
     #[serde(default = "default_true")]
     pub remove_whistles: bool,
-    /// Shuffle fortresses and airships across worlds.
-    #[serde(default = "default_false")]
-    pub shuffle_fortresses: bool,
-    /// Fortress redistribute mode: off, intra-world (lock shuffle), or cross-world (redistribute).
-    #[serde(default)]
-    pub fortress_redistribute: FortressRedistribute,
-    /// Shuffle pipe endpoint positions on overworld maps.
-    #[serde(default = "default_false")]
-    pub shuffle_pipes: bool,
     /// Fix W3 drawbridges so all paths are always passable.
     #[serde(default = "default_true")]
     pub fix_drawbridges: bool,
@@ -84,7 +84,7 @@ fn default_true() -> bool {
     true
 }
 
-const FLAG_KEY_VERSION: u8 = 2;
+const FLAG_KEY_VERSION: u8 = 3;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
 /// Free space in PRG012 after the Big ? Block trampoline (0x19DD0 region).
 /// The trampoline uses 0x19DD0–0x19DE1; we place the 16-byte stamp at 0x19DF0.
@@ -97,11 +97,6 @@ impl Options {
             LevelShuffle::Off => 0u8,
             LevelShuffle::IntraWorld => 1,
             LevelShuffle::CrossWorld => 2,
-        };
-        let fortress_val = match self.fortress_redistribute {
-            FortressRedistribute::Off => 0u8,
-            FortressRedistribute::IntraWorld => 1,
-            FortressRedistribute::CrossWorld => 2,
         };
 
         let b0 = FLAG_KEY_VERSION;
@@ -116,15 +111,14 @@ impl Options {
             | (self.chest_items as u8);
 
         let b2 = (self.remove_whistles as u8) << 7
-            | (self.shuffle_fortresses as u8) << 6
+            | (self.map_shuffle as u8) << 6
             | (self.shuffle_pipes as u8) << 5
             | (self.fix_drawbridges as u8) << 4
             | (self.remove_rocks as u8) << 3
             | (level_shuffle_val & 0x03) << 1
-            | ((fortress_val >> 1) & 0x01);
+            | (self.shuffle_airships as u8);
 
-        let b3 = ((fortress_val & 0x01) << 7)
-            | (self.starting_lives.min(99).max(1) & 0x7F);
+        let b3 = self.starting_lives.min(99).max(1) & 0x7F;
 
         let b4 = (self.card_speed_clear as u8) << 7
             | (self.remove_n_cards as u8) << 6
@@ -133,14 +127,14 @@ impl Options {
         [b0, b1, b2, b3, b4]
     }
 
-    /// Encode options into a compact hex flag key (e.g. "SMB3R-02E3880480").
+    /// Encode options into a compact hex flag key (e.g. "SMB3R-03E3B90580").
     pub fn to_flag_key(&self) -> String {
         let [b0, b1, b2, b3, b4] = self.to_flag_bytes();
         format!("{FLAG_KEY_PREFIX}{b0:02X}{b1:02X}{b2:02X}{b3:02X}{b4:02X}")
     }
 
-    /// Decode a flag key string (e.g. "SMB3R-02E3880480") into Options.
-    /// Also accepts v1 keys (8 hex digits) with defaults for new fields.
+    /// Decode a flag key string into Options.
+    /// Accepts v1 (8 hex), v2 (10 hex), and v3 (10 hex) keys.
     pub fn from_flag_key(key: &str) -> Result<Options, String> {
         let hex = key.strip_prefix(FLAG_KEY_PREFIX)
             .or_else(|| key.strip_prefix("smb3r-"))
@@ -157,7 +151,7 @@ impl Options {
             .map_err(|e| format!("Invalid hex in flag key: {e}"))?;
 
         let version = bytes[0];
-        if version != 1 && version != FLAG_KEY_VERSION {
+        if version != 1 && version != 2 && version != FLAG_KEY_VERSION {
             return Err(format!("Unsupported flag key version {version} (expected {FLAG_KEY_VERSION})"));
         }
 
@@ -166,23 +160,49 @@ impl Options {
         let b3 = bytes[3];
         let b4 = if bytes.len() > 4 { bytes[4] } else { 0x80 }; // v1 default: card_speed_clear on
 
-        let level_shuffle_val = (b2 >> 1) & 0x03;
-        let fortress_val = ((b2 & 0x01) << 1) | ((b3 >> 7) & 0x01);
+        // v2 compat: old shuffle_fortresses/fortress_redistribute → map_shuffle
+        if version <= 2 {
+            let old_shuffle_forts = (b2 >> 6) & 1 != 0;
+            let old_fort_val = ((b2 & 0x01) << 1) | ((b3 >> 7) & 0x01);
+            let level_shuffle_val = (b2 >> 1) & 0x03;
+            let level_shuffle = match level_shuffle_val {
+                1 => LevelShuffle::IntraWorld,
+                2 => LevelShuffle::CrossWorld,
+                _ => LevelShuffle::Off,
+            };
+            let map_shuffle = old_shuffle_forts || old_fort_val != 0
+                || level_shuffle_val == 2;
+            let starting_lives = b3 & 0x7F;
+            return Ok(Options {
+                powerups: (b1 >> 7) & 1 != 0,
+                palettes: (b1 >> 6) & 1 != 0,
+                enemies: (b1 >> 5) & 1 != 0,
+                world_order: (b1 >> 4) & 1 != 0,
+                big_q_blocks: (b1 >> 3) & 1 != 0,
+                disable_autoscroll: (b1 >> 2) & 1 != 0,
+                airship_lock: (b1 >> 1) & 1 != 0,
+                chest_items: b1 & 1 != 0,
+                remove_whistles: (b2 >> 7) & 1 != 0,
+                map_shuffle,
+                shuffle_pipes: (b2 >> 5) & 1 != 0,
+                shuffle_airships: old_shuffle_forts,
+                fix_drawbridges: (b2 >> 4) & 1 != 0,
+                remove_rocks: (b2 >> 3) & 1 != 0,
+                level_shuffle: if map_shuffle { LevelShuffle::Off } else { level_shuffle },
+                starting_lives: if starting_lives == 0 { 1 } else { starting_lives },
+                card_speed_clear: (b4 >> 7) & 1 != 0,
+                remove_n_cards: (b4 >> 6) & 1 != 0,
+                skip_wand_cutscene: (b4 >> 5) & 1 != 0,
+            });
+        }
 
+        // v3 decoding
+        let level_shuffle_val = (b2 >> 1) & 0x03;
         let level_shuffle = match level_shuffle_val {
-            0 => LevelShuffle::Off,
             1 => LevelShuffle::IntraWorld,
             2 => LevelShuffle::CrossWorld,
-            _ => return Err(format!("Invalid level_shuffle value {level_shuffle_val}")),
+            _ => LevelShuffle::Off,
         };
-
-        let fortress_redistribute = match fortress_val {
-            0 => FortressRedistribute::Off,
-            1 => FortressRedistribute::IntraWorld,
-            2 => FortressRedistribute::CrossWorld,
-            _ => return Err(format!("Invalid fortress_redistribute value {fortress_val}")),
-        };
-
         let starting_lives = b3 & 0x7F;
         let starting_lives = if starting_lives == 0 { 1 } else { starting_lives };
 
@@ -196,12 +216,12 @@ impl Options {
             airship_lock: (b1 >> 1) & 1 != 0,
             chest_items: b1 & 1 != 0,
             remove_whistles: (b2 >> 7) & 1 != 0,
-            shuffle_fortresses: (b2 >> 6) & 1 != 0,
+            map_shuffle: (b2 >> 6) & 1 != 0,
             shuffle_pipes: (b2 >> 5) & 1 != 0,
+            shuffle_airships: b2 & 1 != 0,
             fix_drawbridges: (b2 >> 4) & 1 != 0,
             remove_rocks: (b2 >> 3) & 1 != 0,
             level_shuffle,
-            fortress_redistribute,
             starting_lives,
             card_speed_clear: (b4 >> 7) & 1 != 0,
             remove_n_cards: (b4 >> 6) & 1 != 0,
@@ -219,13 +239,13 @@ impl Default for Options {
             world_order: false,
             big_q_blocks: false,
             level_shuffle: LevelShuffle::Off,
+            map_shuffle: true,
+            shuffle_pipes: true,
+            shuffle_airships: true,
             disable_autoscroll: true,
             airship_lock: true,
             chest_items: true,
             remove_whistles: true,
-            shuffle_fortresses: false,
-            fortress_redistribute: FortressRedistribute::Off,
-            shuffle_pipes: false,
             fix_drawbridges: true,
             remove_rocks: true,
             card_speed_clear: true,
@@ -295,33 +315,34 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     // resort_pointer_table re-sorts everything). shuffle_entries only moves
     // tileset + ObjSets + LevelLayouts, preserving row/col position, so
     // patched data travels correctly to its new world.
-    if options.shuffle_fortresses {
+    if options.shuffle_airships {
         rom.set_tag("levels/airships");
         randomize::levels::randomize_airships(rom, &mut rng);
     }
-    // Overworld builder: unified lock shuffle, pipe shuffle, level/fortress
-    // redistribution, and overworld map rewriting. When active, it handles
-    // all level, fortress, and pipe shuffling — bypassing levels.rs.
-    let shuffle_locks = options.fortress_redistribute != FortressRedistribute::Off;
-    let shuffle_pipes = options.shuffle_pipes;
-    let shuffle_levels_cross = options.level_shuffle == LevelShuffle::CrossWorld;
-    let shuffle_fortresses_cross = options.shuffle_fortresses;
-    let overworld_active = shuffle_locks || shuffle_pipes
-        || shuffle_levels_cross || shuffle_fortresses_cross;
 
-    if overworld_active {
+    // Two mutually exclusive modes:
+    // 1. Map Shuffle: overworld builder rebuilds the map (always cross-world).
+    // 2. Vanilla Layout: tiles stay in place, level entries shuffled underneath.
+    if options.map_shuffle {
         rom.set_tag("overworld/builder");
-        let cross_world = shuffle_levels_cross || shuffle_fortresses_cross;
         let catalog = randomize::node_catalog::NodeCatalog::build(rom);
         let pickup = randomize::overworld_pickup::pick_up(rom, &catalog);
         let build = randomize::overworld_build::build(rom, &pickup, &catalog, &mut rng);
         randomize::overworld_writer::write_overworld(
-            rom, &build, &pickup, &catalog, &mut rng, cross_world,
+            rom, &build, &pickup, &catalog, &mut rng, true,
         );
-    } else if options.level_shuffle == LevelShuffle::IntraWorld {
-        // Intra-world level shuffle (no overworld rebuild needed)
-        rom.set_tag("levels");
-        randomize::levels::randomize_intra(rom, &mut rng);
+    } else {
+        match options.level_shuffle {
+            LevelShuffle::IntraWorld => {
+                rom.set_tag("levels");
+                randomize::levels::randomize_intra(rom, &mut rng);
+            }
+            LevelShuffle::CrossWorld => {
+                rom.set_tag("levels");
+                randomize::levels::randomize_cross(rom, &mut rng);
+            }
+            LevelShuffle::Off => {}
+        }
     }
     if options.chest_items {
         rom.set_tag("items");
@@ -399,6 +420,14 @@ mod tests {
     const HAMMER_BROS_ITEMS_OFFSET: usize = 0x16190;
     const TOAD_HOUSE_ITEMS_OFFSET: usize = 0x3B14B;
 
+    /// Options safe for zeroed test ROMs (map_shuffle off — builder needs real ROM data).
+    fn test_options() -> Options {
+        let mut opts = Options::default();
+        opts.map_shuffle = false;
+        opts.shuffle_airships = false;
+        opts
+    }
+
     fn make_test_rom() -> Rom {
         let mut data = vec![0u8; 393232];
         // iNES header
@@ -413,7 +442,7 @@ mod tests {
     fn randomized_rom_has_anchor_lock_patch_by_default() {
         let mut rom = make_test_rom();
         let original_bytes = rom.read_range(ANCHOR_PATCH_OFFSET, 3).to_vec();
-        let options = Options::default();
+        let options = test_options();
         randomize(&mut rom, 0x12345678, &options);
 
         assert_eq!(
@@ -432,7 +461,7 @@ mod tests {
     fn anchor_lock_patch_can_be_disabled() {
         let mut rom = make_test_rom();
         let original_bytes = rom.read_range(ANCHOR_PATCH_OFFSET, 3).to_vec();
-        let mut options = Options::default();
+        let mut options = test_options();
         options.airship_lock = false;
         randomize(&mut rom, 0x12345678, &options);
 
@@ -450,7 +479,7 @@ mod tests {
         rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 2, ANCHOR);
         rom.write_byte(TOAD_HOUSE_ITEMS_OFFSET + 1, ANCHOR);
 
-        let mut options = Options::default();
+        let mut options = test_options();
         options.airship_lock = true;
         // Disable chest_items so our manually placed anchors survive to the replacement step
         options.chest_items = false;
@@ -469,7 +498,7 @@ mod tests {
         let mut rom = make_test_rom();
         rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 2, ANCHOR);
 
-        let mut options = Options::default();
+        let mut options = test_options();
         options.airship_lock = false;
         options.chest_items = false;
         options.remove_whistles = false;
@@ -485,7 +514,7 @@ mod tests {
     #[test]
     fn write_log_populated_after_randomize() {
         let mut rom = make_test_rom();
-        let options = Options::default();
+        let options = test_options();
         randomize(&mut rom, 0x12345678, &options);
 
         let log = rom.write_log();
@@ -517,12 +546,12 @@ mod tests {
         assert_eq!(opts.airship_lock, decoded.airship_lock);
         assert_eq!(opts.chest_items, decoded.chest_items);
         assert_eq!(opts.remove_whistles, decoded.remove_whistles);
-        assert_eq!(opts.shuffle_fortresses, decoded.shuffle_fortresses);
+        assert_eq!(opts.map_shuffle, decoded.map_shuffle);
         assert_eq!(opts.shuffle_pipes, decoded.shuffle_pipes);
+        assert_eq!(opts.shuffle_airships, decoded.shuffle_airships);
         assert_eq!(opts.fix_drawbridges, decoded.fix_drawbridges);
         assert_eq!(opts.remove_rocks, decoded.remove_rocks);
         assert_eq!(opts.level_shuffle, decoded.level_shuffle);
-        assert_eq!(opts.fortress_redistribute, decoded.fortress_redistribute);
         assert_eq!(opts.starting_lives, decoded.starting_lives);
         assert_eq!(opts.card_speed_clear, decoded.card_speed_clear);
         assert_eq!(opts.remove_n_cards, decoded.remove_n_cards);
@@ -538,15 +567,15 @@ mod tests {
             world_order: true,
             big_q_blocks: true,
             level_shuffle: LevelShuffle::CrossWorld,
+            map_shuffle: true,
+            shuffle_pipes: true,
+            shuffle_airships: true,
             disable_autoscroll: true,
             airship_lock: true,
             chest_items: true,
             remove_whistles: true,
-            shuffle_fortresses: true,
-            shuffle_pipes: true,
             fix_drawbridges: true,
             remove_rocks: true,
-            fortress_redistribute: FortressRedistribute::CrossWorld,
             starting_lives: 99,
             card_speed_clear: true,
             remove_n_cards: true,
@@ -557,10 +586,10 @@ mod tests {
         assert_eq!(opts.enemies, decoded.enemies);
         assert_eq!(opts.world_order, decoded.world_order);
         assert_eq!(opts.level_shuffle, decoded.level_shuffle);
-        assert_eq!(opts.fortress_redistribute, decoded.fortress_redistribute);
+        assert_eq!(opts.map_shuffle, decoded.map_shuffle);
         assert_eq!(opts.starting_lives, decoded.starting_lives);
         assert_eq!(opts.shuffle_pipes, decoded.shuffle_pipes);
-        assert_eq!(opts.shuffle_fortresses, decoded.shuffle_fortresses);
+        assert_eq!(opts.shuffle_airships, decoded.shuffle_airships);
         assert_eq!(opts.remove_n_cards, decoded.remove_n_cards);
         assert_eq!(opts.skip_wand_cutscene, decoded.skip_wand_cutscene);
     }
@@ -574,15 +603,15 @@ mod tests {
             world_order: false,
             big_q_blocks: false,
             level_shuffle: LevelShuffle::Off,
+            map_shuffle: false,
+            shuffle_pipes: false,
+            shuffle_airships: false,
             disable_autoscroll: false,
             airship_lock: false,
             chest_items: false,
             remove_whistles: false,
-            shuffle_fortresses: false,
-            shuffle_pipes: false,
             fix_drawbridges: false,
             remove_rocks: false,
-            fortress_redistribute: FortressRedistribute::Off,
             starting_lives: 1,
             card_speed_clear: false,
             remove_n_cards: false,
@@ -594,9 +623,10 @@ mod tests {
         assert!(!decoded.palettes);
         assert!(!decoded.enemies);
         assert!(!decoded.disable_autoscroll);
+        assert!(!decoded.map_shuffle);
+        assert!(!decoded.shuffle_airships);
         assert_eq!(decoded.starting_lives, 1);
         assert_eq!(decoded.level_shuffle, LevelShuffle::Off);
-        assert_eq!(decoded.fortress_redistribute, FortressRedistribute::Off);
     }
 
     #[test]
@@ -632,7 +662,7 @@ mod tests {
     #[test]
     fn write_log_tags_match_enabled_modules() {
         let mut rom = make_test_rom();
-        let mut options = Options::default();
+        let mut options = test_options();
         // Disable optional modules we can check for absence
         options.enemies = false;
         options.world_order = false;

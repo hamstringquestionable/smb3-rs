@@ -660,9 +660,9 @@ mod tests {
         let mut rom = Rom::from_bytes(&rom_data_bytes.unwrap()).unwrap();
 
         let mut options = crate::randomizer::Options::default();
-        options.shuffle_fortresses = true;
-        options.fortress_redistribute = crate::randomizer::FortressRedistribute::CrossWorld;
+        options.map_shuffle = true;
         options.shuffle_pipes = true;
+        options.shuffle_airships = true;
         let seed = 42;
         crate::randomizer::randomize(&mut rom, seed, &options);
 
