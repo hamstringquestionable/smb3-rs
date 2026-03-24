@@ -67,6 +67,8 @@ function setFortressRedistribute(val) {
 }
 const optFixDrawbridges = document.getElementById("opt-fix-drawbridges");
 const optRemoveRocks = document.getElementById("opt-remove-rocks");
+const optRemoveNCards = document.getElementById("opt-remove-n-cards");
+const optSkipWandCutscene = document.getElementById("opt-skip-wand-cutscene");
 const optStartingLives = document.getElementById("opt-starting-lives");
 const flagKeyInput = document.getElementById("flag-key-input");
 const flagKeyCopyBtn = document.getElementById("flag-key-copy-btn");
@@ -198,6 +200,8 @@ function getCurrentOptionsJson() {
 		airship_lock: optAirshipLock.checked,
 		fix_drawbridges: optFixDrawbridges.checked,
 		remove_rocks: optRemoveRocks.checked,
+		remove_n_cards: optRemoveNCards.checked,
+		skip_wand_cutscene: optSkipWandCutscene.checked,
 		starting_lives: Number(optStartingLives.value),
 		disable_autoscroll: true,
 		card_speed_clear: true,
@@ -232,6 +236,8 @@ function applyFlagKey(key) {
 		optAirshipLock.checked = opts.airship_lock;
 		optFixDrawbridges.checked = opts.fix_drawbridges;
 		optRemoveRocks.checked = opts.remove_rocks;
+		if (opts.remove_n_cards !== undefined) optRemoveNCards.checked = opts.remove_n_cards;
+		if (opts.skip_wand_cutscene !== undefined) optSkipWandCutscene.checked = opts.skip_wand_cutscene;
 		if (opts.starting_lives) optStartingLives.value = opts.starting_lives;
 		showStatus("Flag key applied!", "success");
 	} catch (err) {
@@ -244,7 +250,7 @@ const allOptionElements = [
 	optPowerups, optPalettes, optEnemies, optWorldOrder, optBigQBlocks,
 	optShufflePipes, optChestItems, optRemoveWhistles,
 	optShuffleFortresses, optAirshipLock,
-	optFixDrawbridges, optRemoveRocks, optStartingLives,
+	optFixDrawbridges, optRemoveRocks, optRemoveNCards, optSkipWandCutscene, optStartingLives,
 ];
 for (const el of allOptionElements) {
 	el.addEventListener("change", updateFlagKey);

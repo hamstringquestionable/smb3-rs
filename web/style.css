@@ -266,6 +266,16 @@ input[type="radio"] {
     margin-left: 0.25rem;
 }
 
+.option-flavor {
+    font-size: 0.65rem;
+    color: #0c0c1e;
+    background: #6dce56;
+    margin-left: 0.25rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-style: italic;
+}
+
 /* --- Radio Group (inline) --- */
 
 .radio-group {

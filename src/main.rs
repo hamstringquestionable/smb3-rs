@@ -83,6 +83,14 @@ struct Cli {
     #[arg(long)]
     no_card_speed_clear: bool,
 
+    /// Keep N-card (N-Spade) panels on the overworld map (removed by default)
+    #[arg(long)]
+    keep_n_cards: bool,
+
+    /// Keep the wand falling cutscene after defeating a Koopaling (skipped by default)
+    #[arg(long)]
+    keep_wand_cutscene: bool,
+
     /// Disable airship lock (anchor effect always on by default, use this flag to disable)
     #[arg(long)]
     no_airship_lock: bool,
@@ -159,6 +167,8 @@ fn main() {
             fix_drawbridges: !cli.keep_drawbridges,
             remove_rocks: !cli.keep_rocks,
             card_speed_clear: !cli.no_card_speed_clear,
+            remove_n_cards: !cli.keep_n_cards,
+            skip_wand_cutscene: !cli.keep_wand_cutscene,
             airship_lock: !cli.no_airship_lock,
             starting_lives: cli.starting_lives,
         }

@@ -203,6 +203,26 @@ pub fn card_speed_clear(rom: &mut Rom) {
     rom.write_range(CARD_CLEAR_GUARD, &[0xEA, 0xEA]);
 }
 
+/// Skip the wand falling cutscene after defeating a Koopaling.
+///
+/// Lets the player jump for the wand grab instead of watching the wand drop.
+/// Original IPS: 2 bytes at 0x002EF3.
+const SKIP_WAND_CUTSCENE_OFFSET: usize = 0x002EF3;
+
+pub fn skip_wand_cutscene(rom: &mut Rom) {
+    rom.write_range(SKIP_WAND_CUTSCENE_OFFSET, &[0x16, 0xB5]);
+}
+
+/// Remove N-card (N-Spade) panels from the overworld map.
+///
+/// Patches the map-screen code so N-Spade tiles never appear.
+/// Original IPS: 3 bytes at 0x016C90 → LDA #$07; NOP.
+const N_CARD_OFFSET: usize = 0x016C90;
+
+pub fn remove_n_cards(rom: &mut Rom) {
+    rom.write_range(N_CARD_OFFSET, &[0xA9, 0x07, 0xEA]);
+}
+
 /// Replace W3 drawbridge tiles with normal path tiles and NOP the toggle code.
 pub fn fix_w3_drawbridges(rom: &mut Rom) {
     // Replace horizontal drawbridge tiles with bridge ($B3, horizontal path)
@@ -291,6 +311,22 @@ mod tests {
         rom.write_byte(W3_BOAT_ROCK, 0x51);
         remove_w3_boat_rock(&mut rom);
         assert_eq!(rom.read_byte(W3_BOAT_ROCK), 0x45);
+    }
+
+    #[test]
+    fn test_skip_wand_cutscene() {
+        let mut rom = make_test_rom();
+        rom.write_range(SKIP_WAND_CUTSCENE_OFFSET, &[0x00, 0x00]);
+        skip_wand_cutscene(&mut rom);
+        assert_eq!(rom.read_range(SKIP_WAND_CUTSCENE_OFFSET, 2), &[0x16, 0xB5]);
+    }
+
+    #[test]
+    fn test_remove_n_cards() {
+        let mut rom = make_test_rom();
+        rom.write_range(N_CARD_OFFSET, &[0x00, 0x00, 0x00]);
+        remove_n_cards(&mut rom);
+        assert_eq!(rom.read_range(N_CARD_OFFSET, 3), &[0xA9, 0x07, 0xEA]);
     }
 
     #[test]
