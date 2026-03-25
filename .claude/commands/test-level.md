@@ -13,7 +13,7 @@ Examples:
 
 1. **Build** the release binary if needed: `nix-shell -p gcc --run 'export PATH="$HOME/.cargo/bin:$PATH" && cargo build --release'`
 
-2. **Generate** the ROM using the provided flags/seed (or defaults: `--no-enemies --no-palettes --no-chest-items --no-levels`, seed random). Always use `--patched-rom -o test_level.nes`.
+2. **Generate** the ROM using `target/release/smb3-rs` with the provided flags/seed (or defaults: `--no-enemies --no-palettes --no-chest-items --no-levels`, seed random). Always use `--patched-rom -o test_level.nes`.
 
 3. **Identify levels** by name. Use these mappings to find vanilla obj_ptr/lay_ptr/tileset:
    - Format: `W-F1` = World fortress 1 (e.g., `6-F1`), `BC` = Bowser Castle
