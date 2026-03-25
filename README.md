@@ -82,3 +82,11 @@ smb3r rom.nes --enemies --world-order --big-q-blocks --level-shuffle cross-world
 ## Web App
 
 Open `web/index.html` in a browser after building the WASM module. The web app loads the WASM from `pkg/` and lets users select a ROM file, configure options, and download the patched output.
+
+## Acknowledgments
+
+This project stands on the shoulders of giants:
+
+- **Fred (fcoughlin)** ([Twitch](https://www.twitch.tv/fcoughlin)) — for invaluable SMB3 ROM hacking knowledge and inspiration
+- **MaCobra52** ([GitHub](https://github.com/MaCobra52) | [Twitch](https://www.twitch.tv/macobra52)) — for groundwork on SMB3 randomization
+- **Captain Southbird** ([SMB3 Disassembly](https://github.com/captainsouthbird/smb3)) — the comprehensive SMB3 disassembly that made all of this possible

@@ -18,6 +18,12 @@ body {
     padding: 2rem 1rem;
 }
 
+.page-wrapper {
+    display: flex;
+    align-items: flex-end;
+    gap: 1rem;
+}
+
 .container {
     background: #141428;
     border: 3px solid #e44434;
@@ -385,6 +391,57 @@ input[type="radio"] {
 
 .status.loading {
     color: #9a9ab0;
+}
+
+/* --- Info Box (sidebar) --- */
+
+.info-box {
+    width: 220px;
+    flex-shrink: 0;
+    background: #141428;
+    border: 3px solid #e44434;
+    border-radius: 12px;
+    padding: 1rem;
+    font-size: 0.75rem;
+    color: #9a9ab0;
+    line-height: 1.5;
+    box-shadow:
+        0 0 20px rgba(228, 68, 52, 0.15),
+        0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.info-box-title {
+    font-size: 0.8rem;
+    font-weight: bold;
+    color: #e44434;
+    margin-bottom: 0.5rem;
+    letter-spacing: 0.04em;
+}
+
+.info-box p {
+    margin-bottom: 0.5rem;
+}
+
+.info-box p:last-child {
+    margin-bottom: 0;
+}
+
+.info-box a {
+    color: #5c94fc;
+    text-decoration: none;
+}
+
+.info-box a:hover {
+    text-decoration: underline;
+}
+
+@media (max-width: 1100px) {
+    .info-box {
+        display: none;
+    }
+    .page-wrapper {
+        display: block;
+    }
 }
 
 /* --- Footer --- */
