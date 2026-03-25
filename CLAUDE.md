@@ -10,9 +10,9 @@ All builds require `nix-shell` (or the equivalent packages: gcc, rustup, wasm-pa
 
 ```sh
 nix-shell                                    # enter dev shell
-cargo build                                  # native CLI binary -> target/debug/smb3r
+cargo build                                  # native CLI binary -> target/debug/smb3-rs
 cargo test                                   # run all tests (19 tests)
-cargo build --release                        # optimized binary -> target/release/smb3r
+cargo build --release                        # optimized binary -> target/release/smb3-rs
 wasm-pack build --target web --out-dir pkg   # WASM module -> pkg/
 ```
 
