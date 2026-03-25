@@ -203,6 +203,25 @@ pub fn card_speed_clear(rom: &mut Rom) {
     rom.write_range(CARD_CLEAR_GUARD, &[0xEA, 0xEA]);
 }
 
+/// Adjust hitboxes for Bowser and Koopalings so they're easier to hit.
+///
+/// Original IPS: "Adjust Hitboxes (Bowser and Koopalings).ips"
+/// 5 records total modifying sprite collision dimensions.
+const HITBOX_A_OFFSET: usize = 0x002D4;
+const HITBOX_A_DATA: [u8; 4] = [0x04, 0x14, 0x0A, 0x1C];
+const HITBOX_B_OFFSET: usize = 0x0031C;
+const HITBOX_C_OFFSET: usize = 0x0E681;
+const HITBOX_D_OFFSET: usize = 0x0E686;
+const HITBOX_E_OFFSET: usize = 0x0E691;
+
+pub fn adjust_boss_hitboxes(rom: &mut Rom) {
+    rom.write_range(HITBOX_A_OFFSET, &HITBOX_A_DATA);
+    rom.write_byte(HITBOX_B_OFFSET, 0x04);
+    rom.write_byte(HITBOX_C_OFFSET, 0x32);
+    rom.write_byte(HITBOX_D_OFFSET, 0x20);
+    rom.write_byte(HITBOX_E_OFFSET, 0x18);
+}
+
 /// Skip the wand falling cutscene after defeating a Koopaling.
 ///
 /// Lets the player jump for the wand grab instead of watching the wand drop.
@@ -375,5 +394,16 @@ mod tests {
         assert_eq!(rom.read_byte(CARD_CUTSCENE_FLAG), 0x00);
         assert_eq!(rom.read_byte(CARD_MATCH_INDICATOR), 0x00);
         assert_eq!(rom.read_range(CARD_CLEAR_GUARD, 2), &[0xEA, 0xEA]);
+    }
+
+    #[test]
+    fn test_adjust_boss_hitboxes() {
+        let mut rom = make_test_rom();
+        adjust_boss_hitboxes(&mut rom);
+        assert_eq!(rom.read_range(HITBOX_A_OFFSET, 4), &HITBOX_A_DATA);
+        assert_eq!(rom.read_byte(HITBOX_B_OFFSET), 0x04);
+        assert_eq!(rom.read_byte(HITBOX_C_OFFSET), 0x32);
+        assert_eq!(rom.read_byte(HITBOX_D_OFFSET), 0x20);
+        assert_eq!(rom.read_byte(HITBOX_E_OFFSET), 0x18);
     }
 }
