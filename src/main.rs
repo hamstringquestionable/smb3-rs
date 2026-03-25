@@ -103,6 +103,10 @@ struct Cli {
     #[arg(long)]
     keep_wand_cutscene: bool,
 
+    /// Keep vanilla boss hitboxes (adjusted by default for easier hits on Bowser/Koopalings)
+    #[arg(long)]
+    keep_boss_hitboxes: bool,
+
     /// Disable airship lock (anchor effect always on by default, use this flag to disable)
     #[arg(long)]
     no_airship_lock: bool,
@@ -170,6 +174,7 @@ fn main() {
             card_speed_clear: !cli.no_card_speed_clear,
             remove_n_cards: !cli.keep_n_cards,
             skip_wand_cutscene: !cli.keep_wand_cutscene,
+            adjust_boss_hitboxes: !cli.keep_boss_hitboxes,
             airship_lock: !cli.no_airship_lock,
             starting_lives: cli.starting_lives,
         }

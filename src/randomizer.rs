@@ -74,6 +74,9 @@ pub struct Options {
     /// Skip the wand falling cutscene after defeating a Koopaling.
     #[serde(default = "default_true")]
     pub skip_wand_cutscene: bool,
+    /// Adjust hitboxes for Bowser and Koopalings so they're easier to hit.
+    #[serde(default = "default_true")]
+    pub adjust_boss_hitboxes: bool,
 }
 
 fn default_false() -> bool {
@@ -122,7 +125,8 @@ impl Options {
 
         let b4 = (self.card_speed_clear as u8) << 7
             | (self.remove_n_cards as u8) << 6
-            | (self.skip_wand_cutscene as u8) << 5;
+            | (self.skip_wand_cutscene as u8) << 5
+            | (self.adjust_boss_hitboxes as u8) << 4;
 
         [b0, b1, b2, b3, b4]
     }
@@ -193,6 +197,7 @@ impl Options {
                 card_speed_clear: (b4 >> 7) & 1 != 0,
                 remove_n_cards: (b4 >> 6) & 1 != 0,
                 skip_wand_cutscene: (b4 >> 5) & 1 != 0,
+                adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
             });
         }
 
@@ -226,6 +231,7 @@ impl Options {
             card_speed_clear: (b4 >> 7) & 1 != 0,
             remove_n_cards: (b4 >> 6) & 1 != 0,
             skip_wand_cutscene: (b4 >> 5) & 1 != 0,
+            adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
         })
     }
 }
@@ -251,6 +257,7 @@ impl Default for Options {
             card_speed_clear: true,
             remove_n_cards: true,
             skip_wand_cutscene: true,
+            adjust_boss_hitboxes: true,
             starting_lives: default_starting_lives(),
         }
     }
@@ -385,6 +392,12 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     if options.remove_n_cards {
         rom.set_tag("qol/remove_n_cards");
         randomize::qol::remove_n_cards(rom);
+    }
+
+    // Adjust Bowser and Koopaling hitboxes.
+    if options.adjust_boss_hitboxes {
+        rom.set_tag("qol/adjust_boss_hitboxes");
+        randomize::qol::adjust_boss_hitboxes(rom);
     }
 
     // Card speed clear: one-of-each clears cards with +1 life but no cutscene.
@@ -560,6 +573,7 @@ mod tests {
         assert_eq!(opts.card_speed_clear, decoded.card_speed_clear);
         assert_eq!(opts.remove_n_cards, decoded.remove_n_cards);
         assert_eq!(opts.skip_wand_cutscene, decoded.skip_wand_cutscene);
+        assert_eq!(opts.adjust_boss_hitboxes, decoded.adjust_boss_hitboxes);
     }
 
     #[test]
@@ -584,6 +598,7 @@ mod tests {
             card_speed_clear: true,
             remove_n_cards: true,
             skip_wand_cutscene: true,
+            adjust_boss_hitboxes: true,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
@@ -620,6 +635,7 @@ mod tests {
             card_speed_clear: false,
             remove_n_cards: false,
             skip_wand_cutscene: false,
+            adjust_boss_hitboxes: false,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
