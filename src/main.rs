@@ -6,7 +6,7 @@ use std::process;
 use smb3_rs::{LevelShuffle, Options};
 
 #[derive(Parser)]
-#[command(name = "smb3-rs", about = "Super Mario Bros. 3 Randomizer")]
+#[command(name = "smb3-rs", version, about = "Super Mario Bros. 3 Randomizer")]
 struct Cli {
     /// Path to the SMB3 ROM file (user must provide their own)
     rom: PathBuf,
@@ -180,7 +180,7 @@ fn main() {
         .output
         .unwrap_or_else(|| PathBuf::from(format!("smb3-rs_{seed}.{ext}")));
 
-    eprintln!("SMB3 Randomizer");
+    eprintln!("SMB3 Randomizer v{}", env!("CARGO_PKG_VERSION"));
     eprintln!("  Seed: {seed}");
     eprintln!("  Flags: {}", options.to_flag_key());
     eprintln!("  Powerups: {}", if options.powerups { "on" } else { "off" });

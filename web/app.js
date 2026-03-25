@@ -1,4 +1,4 @@
-import init, { generate_patch, generate_patched_rom, encode_flag_key, decode_flag_key } from "./pkg/smb3_rs.js";
+import init, { generate_patch, generate_patched_rom, encode_flag_key, decode_flag_key, version } from "./pkg/smb3_rs.js";
 
 let wasmReady = false;
 let romBytes = null;
@@ -101,6 +101,8 @@ if (optStartingLives) {
 init()
 	.then(() => {
 		wasmReady = true;
+		const versionEl = document.getElementById("version");
+		if (versionEl) versionEl.textContent = `v${version()}`;
 		updateGenerateButton();
 		updateOverworldColumns();
 		updateFlagKey();
