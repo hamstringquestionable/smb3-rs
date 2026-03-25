@@ -3,6 +3,11 @@ use wasm_bindgen::prelude::*;
 use crate::Options;
 
 #[wasm_bindgen]
+pub fn version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[wasm_bindgen]
 pub fn generate_patch(rom: &[u8], seed: u64, options_json: &str) -> Result<Vec<u8>, JsError> {
     let options: Options = parse_options(options_json)?;
     crate::generate_patch(rom, seed, &options).map_err(|e| JsError::new(&e))

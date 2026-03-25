@@ -44,6 +44,13 @@ h1 {
     text-shadow: 2px 2px 0 #1a0a08;
 }
 
+.version {
+    font-size: 0.75rem;
+    color: #5c94fc;
+    vertical-align: super;
+    letter-spacing: 0;
+}
+
 .pipe-divider {
     display: flex;
     align-items: center;
