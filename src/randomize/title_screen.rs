@@ -39,6 +39,12 @@ const DATA_OFFSET: usize = 0x3E93D;
 const DATA_CPU_LO: u8 = 0x2D;
 const DATA_CPU_HI: u8 = 0xE9;
 
+/// Skip the title screen intro cutscene by setting Title_State = 6 (IntroSkip)
+/// during init, after the zero-page clear. Title_State is at zero-page $DE.
+/// We hook STA $0736 at file 0x308E2 → JSR $E955 (free space after sprite data).
+const INTRO_SKIP_HOOK_OFFSET: usize = 0x308E2;
+const INTRO_SKIP_ROUTINE_OFFSET: usize = 0x3E965; // CPU $E955
+
 /// Sprite positions: vertical column in top-left corner, inset from edge.
 const X_LEFT: u8 = 16;
 const X_RIGHT: u8 = 24;
@@ -136,6 +142,22 @@ pub fn write_seed_hash(rom: &mut Rom, seed: u64, options: &Options) {
 
     // Hook: replace JSR $B7D6 with JMP $E914 in the title screen sprite loop.
     rom.write_range(HOOK_OFFSET, &[0x4C, 0x14, 0xE9]);
+
+    // Skip intro cutscene: hook STA $0736 in title screen init to also set
+    // Title_State ($DE) = 6 (IntroSkip). This loads all graphics quickly and
+    // jumps straight to the 1P/2P menu, ensuring consistent CHR banks for our
+    // hash sprites.
+    //
+    // Replace: 8D 36 07 (STA $0736) → 20 55 E9 (JSR $E955)
+    // At $E955: STA $0736 / LDA #$06 / STA $DE / RTS
+    rom.write_range(INTRO_SKIP_HOOK_OFFSET, &[0x20, 0x55, 0xE9]);
+    #[rustfmt::skip]
+    rom.write_range(INTRO_SKIP_ROUTINE_OFFSET, &[
+        0x8D, 0x36, 0x07, // STA $0736  (original instruction)
+        0xA9, 0x06,       // LDA #$06
+        0x85, 0xDE,       // STA $DE    (Title_State = IntroSkip)
+        0x60,             // RTS
+    ]);
 }
 
 #[cfg(test)]
