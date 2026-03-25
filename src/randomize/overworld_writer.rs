@@ -777,36 +777,42 @@ fn patch_fortress_fx_screen_check(rom: &mut Rom) {
         0x29, 0x0F,             // +6:  AND #$0F           ; lock screen (0-3)
         // Check: lock_screen == $12?
         0xC5, 0x12,             // +8:  CMP $12            ; current scroll page
-        0xF0, 0x0E,             // +10: BEQ +14 (→ +26)    ; match → same-screen → animate
+        0xF0, 0x14,             // +10: BEQ +20 (→ +32)    ; match → same-screen → animate
         // Check: lock_screen == $12 + 1?
         0x38,                   // +12: SEC
         0xE5, 0x12,             // +13: SBC $12            ; A = lock_screen - $12
         0xC9, 0x01,             // +15: CMP #$01           ; exactly 1 screen ahead?
-        0xD0, 0x21,             // +17: BNE +33 (→ +52)    ; no → skip
+        0xD0, 0x1E,             // +17: BNE +30 (→ +49)    ; no → skip
         // --- Next-screen path ---
         0xA5, 0xFD,             // +19: LDA $FD            ; Map_Scroll_X
         0xC9, 0x80,             // +21: CMP #$80           ; straddle? (>= 128)
-        0x90, 0x1B,             // +23: BCC +27 (→ +52)    ; no → skip
+        0x90, 0x18,             // +23: BCC +24 (→ +49)    ; no → skip
         0xB9, 0x56, 0xC8,       // +25: LDA $C856,Y       ; reload FortressFX_MapLocation
         0x29, 0x80,             // +28: AND #$80           ; bit 7 = col_in_screen >= 8
-        0xD0, 0x14,             // +30: BNE +20 (→ +52)    ; col >= 8 → off right edge → skip
-        0xF0, 0x01,             // +32: BEQ +1 (→ +35)     ; col < 8 → animate
+        0xD0, 0x11,             // +30: BNE +17 (→ +49)    ; col >= 8 → off right edge → skip
+        // Falls through: col < 8 → animate
         // --- Animate: check poof-only flag in FX_MAP_LOC_ROW bit 0 ---
-        0xA9, 0x01,             // +35: LDA #$01
-        0x85, 0x20,             // +37: STA $20
-        0xB9, 0x45, 0xC8,       // +39: LDA $C845,Y       ; FX_MAP_LOC_ROW
-        0x29, 0x01,             // +42: AND #$01           ; poof-only flag?
-        0xD0, 0x03,             // +44: BNE +3 (→ +49)     ; yes → poof only
-        0x4C, 0xEA, 0xC8,       // +46: JMP $C8EA          ; full animate (VRAM + data)
+        // (also reached by BEQ at +10 for same-screen case)
+        0xA9, 0x01,             // +32: LDA #$01
+        0x85, 0x20,             // +34: STA $20
+        0xB9, 0x45, 0xC8,       // +36: LDA $C845,Y       ; FX_MAP_LOC_ROW
+        0x29, 0x01,             // +39: AND #$01           ; poof-only flag?
+        0xD0, 0x03,             // +41: BNE +3 (→ +46)     ; yes → poof only
+        0x4C, 0xEA, 0xC8,       // +43: JMP $C8EA          ; full animate (VRAM + data)
         // --- Poof only: sprites + data, no VRAM tile write ---
-        0x4C, 0x52, 0xC9,       // +49: JMP $C952          ; data update ($20=1 → poof plays)
+        0x4C, 0x52, 0xC9,       // +46: JMP $C952          ; data update ($20=1 → poof plays)
         // --- Skip: data-only update, no animation ---
-        0xA9, 0x06,             // +52: LDA #$06
-        0x85, 0x20,             // +54: STA $20
-        0x4C, 0x52, 0xC9,       // +56: JMP $C952          ; → Map_Completions update
+        0xA9, 0x06,             // +49: LDA #$06
+        0x85, 0x20,             // +51: STA $20
+        0x4C, 0x52, 0xC9,       // +53: JMP $C952          ; → Map_Completions update
     ];
     for (i, &b) in code.iter().enumerate() {
         rom.write_byte(CODE_OFFSET + i, b);
+    }
+    // NOP-pad remaining bytes from the previous (longer) version of this patch
+    // so stale opcodes can't execute if control somehow falls through.
+    for i in code.len()..67 {
+        rom.write_byte(CODE_OFFSET + i, 0xEA); // NOP
     }
 }
 
