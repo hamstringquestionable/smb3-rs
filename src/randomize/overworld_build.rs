@@ -855,84 +855,30 @@ fn populate_sections<R: Rng>(
             .filter(|&i| Some(i) != fort_idx)
             .collect();
 
-        // Assign levels using even spacing as a preferred order, but skip
-        // positions adjacent to any existing completable tile.  Positions
-        // that are skipped stay as HammerBro (blank path tile, no numbered
-        // tile stamped).
+        // Score-based level placement: pick the best candidate one at a
+        // time, updating scores after each pick. This naturally spreads
+        // levels across the grid instead of clumping them.
         let mut level_slots: HashSet<usize> = HashSet::new();
         let target = section_levels.min(non_fort.len());
 
         if target > 0 && !non_fort.is_empty() {
-            // Dead-end pass: prefer placing levels at path dead-ends so
-            // they don't visually terminate with a blank tile.
-            for &idx in &non_fort {
-                if level_slots.len() >= target {
-                    break;
-                }
-                let pos = section[idx];
-                if is_dead_end(grid, pos) && !is_adjacent_to_completable(pos, &completable) {
-                    level_slots.insert(idx);
-                    completable.insert(pos);
-                }
-            }
+            for _ in 0..target {
+                let best = non_fort
+                    .iter()
+                    .filter(|idx| !level_slots.contains(idx))
+                    .filter(|&&idx| !is_row78_conflict(section[idx], &completable))
+                    .max_by(|&&a, &&b| {
+                        let sa = score_candidate(grid, section[a], &completable);
+                        let sb = score_candidate(grid, section[b], &completable);
+                        sa.partial_cmp(&sb).unwrap_or(std::cmp::Ordering::Equal)
+                    });
 
-            // Generate evenly-spaced preferred candidates.
-            let spacing = non_fort.len() as f64 / target as f64;
-            let mut preferred: Vec<usize> = Vec::with_capacity(target);
-            for k in 0..target {
-                let idx = (k as f64 * spacing + spacing / 2.0).floor() as usize;
-                preferred.push(non_fort[idx.min(non_fort.len() - 1)]);
-            }
-
-            // First pass: try preferred positions.
-            for &idx in &preferred {
-                if level_slots.len() >= target {
-                    break;
-                }
-                if level_slots.contains(&idx) {
-                    continue;
-                }
-                let pos = section[idx];
-                if !is_adjacent_to_completable(pos, &completable) {
-                    level_slots.insert(idx);
-                    completable.insert(pos);
-                }
-            }
-
-            // Second pass: fill remaining from any non-fort slot.
-            if level_slots.len() < target {
-                for &idx in &non_fort {
-                    if level_slots.len() >= target {
-                        break;
-                    }
-                    if level_slots.contains(&idx) {
-                        continue;
-                    }
-                    let pos = section[idx];
-                    if !is_adjacent_to_completable(pos, &completable) {
+                match best {
+                    Some(&idx) => {
                         level_slots.insert(idx);
-                        completable.insert(pos);
+                        completable.insert(section[idx]);
                     }
-                }
-            }
-
-            // Third pass: relax adjacency to avoid dropping levels, but
-            // still enforce the row 7/8 hard constraint (shared completion
-            // bit means adjacent completable tiles at rows 7 and 8 in the
-            // same column would cause map reload bugs).
-            if level_slots.len() < target {
-                for &idx in &non_fort {
-                    if level_slots.len() >= target {
-                        break;
-                    }
-                    if level_slots.contains(&idx) {
-                        continue;
-                    }
-                    let pos = section[idx];
-                    if !is_row78_conflict(pos, &completable) {
-                        level_slots.insert(idx);
-                        completable.insert(pos);
-                    }
+                    None => break,
                 }
             }
         }
@@ -1008,6 +954,38 @@ fn is_row78_conflict(
     } else {
         false
     }
+}
+
+// ---------------------------------------------------------------------------
+// Level placement scoring
+// ---------------------------------------------------------------------------
+
+/// Score a candidate position for level placement. Higher = better.
+///
+/// Factors:
+/// - **Separation**: minimum Manhattan distance to any already-placed
+///   completable tile. This is the primary anti-clumping signal.
+/// - **Dead-end bonus**: path dead-ends look better with a level than as
+///   blank tiles, so they get a small boost.
+fn score_candidate(
+    grid: &Grid,
+    pos: (usize, usize),
+    completable: &HashSet<(usize, usize)>,
+) -> f64 {
+    let (r, c) = pos;
+
+    // Minimum Manhattan distance to any completable tile (capped for scale).
+    let min_dist = completable
+        .iter()
+        .map(|&(cr, cc)| r.abs_diff(cr) + c.abs_diff(cc))
+        .min()
+        .unwrap_or(usize::MAX);
+    let separation = (min_dist as f64).min(20.0);
+
+    // Dead-end bonus: +2 if this is a path dead-end.
+    let dead_end_bonus = if is_dead_end(grid, pos) { 2.0 } else { 0.0 };
+
+    separation + dead_end_bonus
 }
 
 // ---------------------------------------------------------------------------
