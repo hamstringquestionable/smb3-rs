@@ -118,7 +118,7 @@ pub(crate) fn write_overworld<R: Rng>(
         let sprite_mask = if wi == 7 { &w8_sprite_pos_set } else { &HashSet::new() };
 
         write_tile_grid(rom, built, wa, pickup, catalog, sprite_mask);
-        write_pointer_entries(rom, wi, wa, pickup, catalog, &mut hb_fallback_iter);
+        write_pointer_entries(rom, wi, built, wa, pickup, catalog, &mut hb_fallback_iter);
         write_fortress_fx(rom, wi, built, wa, pickup, catalog, &mut fx_slot);
         write_pipe_dests(rom, wi, wa);
         pipe_helpers::resort_pointer_table(rom, wi);
@@ -487,6 +487,7 @@ fn write_tile_grid(
 fn write_pointer_entries(
     rom: &mut Rom,
     world_idx: usize,
+    built: &BuiltWorld,
     wa: &WorldAssignments,
     pickup: &PickupResult,
     catalog: &NodeCatalog,
@@ -576,17 +577,53 @@ fn write_pointer_entries(
         rom.write_byte(sc + entry_idx, (screen << 4) | col_in_screen);
     }
 
-    // Fill any remaining unused pointer table slots with valid HB levels
-    // at an unreachable position. This ensures every slot has loadable level
-    // data — zeroing slots risks crashes if a roaming HB sprite triggers a
-    // lookup on a cleared entry.
-    while slot_i < available_slots.len() {
-        let entry_idx = available_slots[slot_i];
-        slot_i += 1;
-        let le = hb_level_iter.next().unwrap();
-        rom_data::write_entry(rom, world, entry_idx, &le);
-        rom.write_byte(rt + entry_idx, le.tileset & 0x0F); // row_nib=0 → grid_row=-2 (unreachable)
-        rom.write_byte(sc + entry_idx, 0x00);
+    // Fill any remaining unused pointer table slots with valid HB levels.
+    // These are blank node tiles on the grid that weren't assigned slots
+    // during the build phase (e.g., not BFS-reachable at build time).
+    // Place them at actual blank positions so the player doesn't walk onto
+    // a tile with no pointer entry (which crashes the game).
+    if slot_i < available_slots.len() {
+        // Collect positions already covered by assignments above.
+        let mut covered: HashSet<(usize, usize)> = HashSet::new();
+        for &(_, pos) in &all {
+            covered.insert(pos);
+        }
+        for hb in &wa.hammer_bro {
+            covered.insert(hb.pos);
+        }
+
+        // Find blank tile positions on the grid that have no entry.
+        let mut uncovered_blanks: Vec<(usize, usize)> = Vec::new();
+        for r in 0..built.grid.rows {
+            for c in 0..built.grid.cols {
+                if rom_data::VALID_BLANK_TILES.contains(&built.grid.get(r, c))
+                    && !covered.contains(&(r, c))
+                {
+                    uncovered_blanks.push((r, c));
+                }
+            }
+        }
+        let mut blank_iter = uncovered_blanks.into_iter();
+
+        while slot_i < available_slots.len() {
+            let entry_idx = available_slots[slot_i];
+            slot_i += 1;
+            let le = hb_level_iter.next().unwrap();
+            rom_data::write_entry(rom, world, entry_idx, &le);
+
+            if let Some((row, col)) = blank_iter.next() {
+                // Place at actual blank tile position.
+                let row_nib = (row + 2) as u8;
+                let screen = (col / 16) as u8;
+                let col_in_screen = (col % 16) as u8;
+                rom.write_byte(rt + entry_idx, (row_nib << 4) | (le.tileset & 0x0F));
+                rom.write_byte(sc + entry_idx, (screen << 4) | col_in_screen);
+            } else {
+                // No more blanks — park at unreachable position.
+                rom.write_byte(rt + entry_idx, le.tileset & 0x0F); // row_nib=0 → grid_row=-2
+                rom.write_byte(sc + entry_idx, 0x00);
+            }
+        }
     }
 }
 
