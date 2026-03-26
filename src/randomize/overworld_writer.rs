@@ -593,11 +593,22 @@ fn write_pointer_entries(
         }
 
         // Find blank tile positions on the grid that have no entry.
+        // Exclude positions of catalog entries that were never picked up
+        // (airship, Bowser, toad house, map objects like piranhas, start).
+        // These already have valid pointer table entries from vanilla, so
+        // filling them wastes a slot that should go to a real uncovered blank.
+        let already_has_entry: HashSet<(usize, usize)> = catalog.entries.iter()
+            .filter(|e| e.world_idx == world_idx && !matches!(e.kind,
+                NodeKind::Level | NodeKind::Fortress { .. }
+                | NodeKind::Pipe { .. } | NodeKind::HammerBro))
+            .map(|e| e.grid_pos)
+            .collect();
         let mut uncovered_blanks: Vec<(usize, usize)> = Vec::new();
         for r in 0..built.grid.rows {
             for c in 0..built.grid.cols {
                 if rom_data::VALID_BLANK_TILES.contains(&built.grid.get(r, c))
                     && !covered.contains(&(r, c))
+                    && !already_has_entry.contains(&(r, c))
                 {
                     uncovered_blanks.push((r, c));
                 }

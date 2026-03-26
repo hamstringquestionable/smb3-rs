@@ -1581,4 +1581,81 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    #[ignore]
+    fn test_dump_w7_blank_vs_bfs() {
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+        let catalog = NodeCatalog::build(&rom);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog);
+        let wi = 6; // W7
+
+        let cw = &pickup.worlds[wi];
+        eprintln!("\n=== W7 Pickup: {} pool entries ===", cw.pool_indices.len());
+
+        let fixed = fixed_positions_for_world(&rom, &catalog, wi);
+        eprintln!("Fixed positions: {} {:?}", fixed.len(), fixed);
+
+        let blank_positions = find_blank_slots(&cw.grid, &fixed);
+        eprintln!("Blank tiles on grid: {}", blank_positions.len());
+
+        // Run the actual build for several seeds and check coverage
+        for seed in 0..5u64 {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let result = build(&rom, &pickup, &catalog, &mut rng);
+            let built = &result.worlds[wi];
+
+            // All positions that got a slot assignment
+            let slot_positions: HashSet<(usize, usize)> = built.slots.iter().map(|s| s.pos).collect();
+            // Add pipe positions
+            let pipe_positions: HashSet<(usize, usize)> = built.pipe_pairs.iter()
+                .flat_map(|&(a, b)| vec![a, b]).collect();
+            let all_assigned: HashSet<(usize, usize)> = slot_positions.union(&pipe_positions).copied().collect();
+
+            // Blank tiles with no assignment
+            let uncovered: Vec<(usize, usize)> = blank_positions.iter()
+                .filter(|p| !all_assigned.contains(p))
+                .copied()
+                .collect();
+
+            let total_slots = built.slots.len() + pipe_positions.len();
+            eprintln!("\n--- Seed {seed} ---");
+            eprintln!("  Slots: {} (L={}, F={}, P={}, HB={})",
+                total_slots,
+                built.slots.iter().filter(|s| s.kind == SlotKind::Level).count(),
+                built.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count(),
+                pipe_positions.len(),
+                built.slots.iter().filter(|s| s.kind == SlotKind::HammerBro).count(),
+            );
+            eprintln!("  Pool entries (ptr slots): {}", cw.pool_indices.len());
+            eprintln!("  max_non_pipe_slots: {}", cw.pool_indices.len() - VANILLA_PIPE_PAIRS[wi] * 2);
+            eprintln!("  Blanks on grid: {}", blank_positions.len());
+            eprintln!("  Assigned positions: {}", all_assigned.len());
+            eprintln!("  Uncovered blanks: {}", uncovered.len());
+
+            if !uncovered.is_empty() {
+                for (r, c) in &uncovered {
+                    eprintln!("    UNCOVERED: ({},{}) tile=${:02X}", r, c, cw.grid.get(*r, *c));
+                    // Check if BFS can reach it with the placed pipes
+                    let bfs_all = bfs_ordered(&built.grid, &built.pipe_pairs, rom_data::find_start(&built.grid));
+                    let bfs_set: HashSet<(usize, usize)> = bfs_all.iter().map(|&(p, _)| p).collect();
+                    eprintln!("      BFS reachable: {}", bfs_set.contains(&(*r, *c)));
+                }
+            }
+
+            // Check for assignments NOT on blank tiles (double-covering or wrong pos)
+            let non_blank_assignments: Vec<_> = all_assigned.iter()
+                .filter(|p| !blank_positions.contains(p) && !pipe_positions.contains(p))
+                .collect();
+            if !non_blank_assignments.is_empty() {
+                eprintln!("  Assignments on non-blank tiles:");
+                for &&(r, c) in &non_blank_assignments {
+                    eprintln!("    ({},{}) tile=${:02X}", r, c, cw.grid.get(r, c));
+                }
+            }
+        }
+    }
 }
