@@ -2051,50 +2051,35 @@ def render_check_map(rom, world_idx, pipe_pairs, uncovered_set):
 
 
 def check_node_coverage(rom, world_idx, pipe_pairs):
-    """Check that every BFS-reachable node has a pointer table entry.
+    """Check that every reachable node has a pointer table entry.
 
-    Returns a list of (row, col, tile) for uncovered nodes.
+    Uses fortress progression to open locks step by step, so nodes behind
+    fortresses are included. Returns a list of (row, col, tile) for
+    uncovered nodes.
     """
     VALID_BLANK_TILES = {0x44, 0x47, 0x48, 0x4A, 0xAE, 0xAF, 0xB5, 0xB6,
                          0xD9, 0xDC, 0xDD, 0xDE}
-    # Tiles that are valid nodes (can be walked onto)
-    NODE_TILES = (VALID_BLANK_TILES |
-                  set(range(0x03, 0x10)) |  # numbered levels
-                  {0x67, 0xEB, 0xAF,        # fortress
-                   0xC9,                     # airship
-                   0xCC,                     # bowser
-                   0xBC,                     # pipe
-                   0xE5,                     # start
-                   0x5F,                     # spiral castle
-                   0x50,                     # spade
-                   0x4B,                     # boat dock
-                   0x68, 0x69,               # quicksand, pyramid
-                   0xE6,                     # hand trap
-                   0xBD, 0xE0,               # N-spade, white toad house
-                   })
 
-    grid = read_tile_grid(rom, world_idx)
-    # Open FX gaps so BFS can reach through them
-    fx_slots = read_fx_slots(rom)
-    fx_assignments = read_world_fx_assignments(rom)
-    for slot_idx in fx_assignments[world_idx]:
-        slot = fx_slots[slot_idx]
-        r, c = slot["grid_row"], slot["grid_col"]
-        if 0 <= r < len(grid) and 0 <= c < len(grid[0]):
-            grid[r][c] = slot["replace_tile"]
+    steps = simulate_progression(rom, world_idx, pipe_pairs)
 
-    nodes, _, _, _ = walk_map(grid, pipe_pairs)
+    # Collect all nodes reachable across all progression steps.
+    all_nodes = set()
+    for step in steps:
+        all_nodes |= step["nodes"]
+
+    # Use the final grid (all locks opened) for tile checks.
+    final_grid = steps[-1]["grid"]
 
     # Build set of positions that have pointer table entries
     _, entry_lookup = build_entry_lookup(rom, world_idx)
     covered_positions = set(entry_lookup.keys())
 
-    # Find uncovered nodes — BFS-reachable blank tiles with no entry
+    # Find uncovered nodes — reachable blank tiles with no entry
     uncovered = []
-    for (r, c) in sorted(nodes):
-        if r < 0 or r >= len(grid) or c < 0 or c >= len(grid[0]):
+    for (r, c) in sorted(all_nodes):
+        if r < 0 or r >= len(final_grid) or c < 0 or c >= len(final_grid[0]):
             continue
-        tile = grid[r][c]
+        tile = final_grid[r][c]
         if tile not in VALID_BLANK_TILES:
             continue  # non-blank nodes (levels, forts, etc.) already have entries
         if (r, c) not in covered_positions:
