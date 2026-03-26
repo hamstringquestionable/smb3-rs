@@ -18,23 +18,49 @@ pub enum RomError {
     SizeMismatch { expected: usize, got: usize },
 }
 
+const SUPPORTED_ROM_HELP: &str =
+    "This randomizer supports \"Super Mario Bros. 3 (USA)\" or \"Super Mario Bros. 3 (USA) (Rev 1)\" — \
+     the US release in iNES (.nes) format, with or without an iNES header.";
+
 impl fmt::Display for RomError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             RomError::TooSmall(size) => {
-                write!(f, "ROM too small: {size} bytes (need at least {HEADER_SIZE})")
+                write!(
+                    f,
+                    "This doesn't appear to be a valid NES ROM \
+                     (file is only {size} bytes). {SUPPORTED_ROM_HELP}"
+                )
             }
-            RomError::BadMagic(got) => {
-                write!(f, "Invalid iNES magic: got {got:02X?}, expected {INES_MAGIC:02X?}")
+            RomError::BadMagic(_) => {
+                write!(
+                    f,
+                    "This file is not a valid NES ROM \
+                     (missing iNES header). {SUPPORTED_ROM_HELP}"
+                )
             }
-            RomError::UnexpectedPrg { expected, got } => {
-                write!(f, "Unexpected PRG page count: got {got}, expected {expected}")
+            RomError::UnexpectedPrg { got, .. } => {
+                write!(
+                    f,
+                    "This ROM has {got} PRG pages, but SMB3 (USA) should have \
+                     {EXPECTED_PRG_PAGES}. You may have a different game or region. \
+                     {SUPPORTED_ROM_HELP}"
+                )
             }
-            RomError::UnexpectedChr { expected, got } => {
-                write!(f, "Unexpected CHR page count: got {got}, expected {expected}")
+            RomError::UnexpectedChr { got, .. } => {
+                write!(
+                    f,
+                    "This ROM has {got} CHR pages, but SMB3 (USA) should have \
+                     {EXPECTED_CHR_PAGES}. You may have a different game or region. \
+                     {SUPPORTED_ROM_HELP}"
+                )
             }
             RomError::SizeMismatch { expected, got } => {
-                write!(f, "ROM size mismatch: got {got} bytes, expected {expected}")
+                write!(
+                    f,
+                    "ROM size is {got} bytes, expected {expected}. \
+                     The file may be corrupt or a different version. {SUPPORTED_ROM_HELP}"
+                )
             }
         }
     }
