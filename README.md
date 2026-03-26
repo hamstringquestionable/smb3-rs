@@ -87,6 +87,6 @@ Open `web/index.html` in a browser after building the WASM module. The web app l
 
 This project stands on the shoulders of giants:
 
-- **Fred (fcoughlin)** ([Twitch](https://www.twitch.tv/fcoughlin)) — for invaluable SMB3 ROM hacking knowledge and inspiration
-- **MaCobra52** ([GitHub](https://github.com/MaCobra52) | [Twitch](https://www.twitch.tv/macobra52)) — for groundwork on SMB3 randomization
+- **Fred (fcoughlin)** ([Twitch](https://www.twitch.tv/fcoughlin)) — for the original SMB3R and inspiration
+- **MaCobra52** ([GitHub](https://github.com/MaCobra52) | [Twitch](https://www.twitch.tv/macobra52)) — for continuing the labour of love for SMB3R and for all the community efforts.
 - **Captain Southbird** ([SMB3 Disassembly](https://github.com/captainsouthbird/smb3)) — the comprehensive SMB3 disassembly that made all of this possible
