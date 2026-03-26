@@ -174,7 +174,27 @@ pub(crate) fn build<R: Rng>(
     }
 
     // Distribute VANILLA_LEVEL_COUNT levels across worlds proportionally to capacity.
-    let level_counts = distribute_levels(&capacities, VANILLA_LEVEL_COUNT, rng);
+    let mut level_counts = distribute_levels(&capacities, VANILLA_LEVEL_COUNT, rng);
+
+    // W6 (index 5): cap levels so levels + fortresses = vanilla total (13).
+    // W6's dense map topology clumps badly with too many levels.
+    let w6_max_levels = 13usize.saturating_sub(fort_counts[5]);
+    if level_counts[5] > w6_max_levels {
+        let surplus = level_counts[5] - w6_max_levels;
+        level_counts[5] = w6_max_levels;
+
+        // Redistribute surplus to other worlds with spare capacity.
+        let mut remaining = surplus;
+        let mut order: Vec<usize> = (0..8).filter(|&w| w != 5).collect();
+        order.shuffle(rng);
+        for &wi in &order {
+            if remaining == 0 { break; }
+            let spare = capacities[wi].saturating_sub(level_counts[wi]);
+            let give = spare.min(remaining);
+            level_counts[wi] += give;
+            remaining -= give;
+        }
+    }
 
     let mut lock_counter: usize = 0;
     let mut worlds = Vec::with_capacity(8);
@@ -396,8 +416,14 @@ fn build_world<R: Rng>(
         fort_count,
     );
 
+    // Build BFS distance map for scoring — reflects actual walkable distance.
+    let bfs_distances: std::collections::HashMap<(usize, usize), usize> =
+        bfs_ordered(&grid, &pipe_pairs, start_pos)
+            .into_iter()
+            .collect();
+
     // Step 3: Populate sections
-    let mut slots = populate_sections(&grid, &sections, fort_count, level_count, &pipe_positions, rng);
+    let mut slots = populate_sections(&grid, &sections, fort_count, level_count, &pipe_positions, &bfs_distances, rng);
 
     // Add mandatory HammerBro slots for HB sprite starting positions.
     // These were excluded from find_blank_slots (so levels/forts/pipes
@@ -785,20 +811,19 @@ fn populate_sections<R: Rng>(
     fort_count: usize,
     level_count: usize,
     pipe_positions: &HashSet<(usize, usize)>,
+    bfs_distances: &std::collections::HashMap<(usize, usize), usize>,
     rng: &mut R,
 ) -> Vec<SlotAssignment> {
     let mut slots = Vec::new();
 
-    // Track all positions that will have completable tiles (numbered level,
-    // fortress, or pipe).  When assigning a Level slot, we skip positions
-    // adjacent to any completable — this avoids numbered tiles touching and
-    // also prevents the row 7/8 Map_Completions bit collision.
-    let mut completable: HashSet<(usize, usize)> = pipe_positions.clone();
-
-    // Seed the completable set with existing tiles on the grid that the
-    // game's Map_Reload_with_Completions routine would "catch". This
-    // includes numbered levels, fortresses, pipes, airships, and any tile
-    // that triggers the completion/replacement checks.
+    // Two separate sets:
+    // 1. `completable` — all completion-unsafe tiles on the grid. Used for
+    //    the row 7/8 hard constraint (game engine bug). Includes spades,
+    //    airships, etc.
+    // 2. `scored` — only levels and fortresses we've placed. Used by the
+    //    scoring function to spread levels apart. Excludes spades, pipes,
+    //    and other non-clumping tiles.
+    let mut completable: HashSet<(usize, usize)> = HashSet::new();
     for r in 0..grid.rows {
         for c in 0..grid.cols {
             let t = grid.get(r, c);
@@ -807,6 +832,7 @@ fn populate_sections<R: Rng>(
             }
         }
     }
+    let mut scored: HashSet<(usize, usize)> = HashSet::new();
 
     // Add pipe slots (not in sections, but tracked)
     for &pos in pipe_positions {
@@ -817,82 +843,71 @@ fn populate_sections<R: Rng>(
         });
     }
 
-    // Distribute level_count levels across sections proportionally.
-    // Each section also gets 1 fort (if si < fort_count).
-    let total_section_slots: usize = sections.iter().map(|s| s.len()).sum();
-    let mut levels_remaining = level_count;
+    // Phase 1: Place one fortress per section.
+    // Track which positions are fortresses so we exclude them from level candidates.
+    let mut fort_positions: HashSet<(usize, usize)> = HashSet::new();
+    // Map (section_idx, slot_idx_in_section) for fort slots.
+    let mut fort_slots: Vec<(usize, usize)> = Vec::new();
 
     for (si, section) in sections.iter().enumerate() {
-        if section.is_empty() {
+        if section.is_empty() || si >= fort_count {
             continue;
         }
+        let idx = rng.random_range(..section.len());
+        let pos = section[idx];
+        completable.insert(pos);
+        scored.insert(pos);
+        fort_positions.insert(pos);
+        fort_slots.push((si, idx));
 
-        // Pick a random position for the fortress (if we still need one)
-        let has_fort = si < fort_count;
-        let fort_idx = if has_fort {
-            let idx = rng.random_range(..section.len());
-            completable.insert(section[idx]);
-            Some(idx)
-        } else {
-            None
-        };
+        slots.push(SlotAssignment {
+            pos,
+            kind: SlotKind::Fortress,
+            section: si,
+        });
+    }
 
-        // Compute how many levels this section gets (proportional to its size)
-        let section_levels = if si == sections.len() - 1 {
-            // Last section gets whatever remains
-            levels_remaining
-        } else {
-            let share = (section.len() as f64 / total_section_slots.max(1) as f64
-                * level_count as f64)
-                .round() as usize;
-            share.min(levels_remaining).min(
-                section.len() - if has_fort { 1 } else { 0 },
-            )
-        };
-
-        // Build list of non-fort slot indices.
-        let non_fort: Vec<usize> = (0..section.len())
-            .filter(|&i| Some(i) != fort_idx)
-            .collect();
-
-        // Score-based level placement: pick the best candidate one at a
-        // time, updating scores after each pick. This naturally spreads
-        // levels across the grid instead of clumping them.
-        let mut level_slots: HashSet<usize> = HashSet::new();
-        let target = section_levels.min(non_fort.len());
-
-        if target > 0 && !non_fort.is_empty() {
-            for _ in 0..target {
-                let best = non_fort
-                    .iter()
-                    .filter(|idx| !level_slots.contains(idx))
-                    .filter(|&&idx| !is_row78_conflict(section[idx], &completable))
-                    .max_by(|&&a, &&b| {
-                        let sa = score_candidate(grid, section[a], &completable);
-                        let sb = score_candidate(grid, section[b], &completable);
-                        sa.partial_cmp(&sb).unwrap_or(std::cmp::Ordering::Equal)
-                    });
-
-                match best {
-                    Some(&idx) => {
-                        level_slots.insert(idx);
-                        completable.insert(section[idx]);
-                    }
-                    None => break,
-                }
+    // Phase 2: Place levels globally across all sections using score-based
+    // picking. Candidates are all non-fortress positions from every section.
+    let mut global_candidates: Vec<((usize, usize), usize)> = Vec::new(); // (pos, section_idx)
+    for (si, section) in sections.iter().enumerate() {
+        for &pos in section {
+            if !fort_positions.contains(&pos) {
+                global_candidates.push((pos, si));
             }
         }
+    }
 
-        let assigned = level_slots.len();
+    let mut level_positions: HashSet<(usize, usize)> = HashSet::new();
 
-        for (i, &pos) in section.iter().enumerate() {
-            if Some(i) == fort_idx {
-                slots.push(SlotAssignment {
-                    pos,
-                    kind: SlotKind::Fortress,
-                    section: si,
-                });
-            } else if level_slots.contains(&i) {
+    for _ in 0..level_count {
+        let best = global_candidates
+            .iter()
+            .filter(|(pos, _)| !level_positions.contains(pos))
+            .filter(|(pos, _)| !is_row78_conflict(*pos, &completable))
+            .max_by(|(a, _), (b, _)| {
+                let sa = score_candidate(grid, *a, &scored, bfs_distances);
+                let sb = score_candidate(grid, *b, &scored, bfs_distances);
+                sa.partial_cmp(&sb).unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+        match best {
+            Some(&(pos, _)) => {
+                level_positions.insert(pos);
+                completable.insert(pos);
+                scored.insert(pos);
+            }
+            None => break,
+        }
+    }
+
+    // Phase 3: Emit remaining slots — levels and hammer bros.
+    for (si, section) in sections.iter().enumerate() {
+        for &pos in section {
+            if fort_positions.contains(&pos) {
+                continue; // already emitted in phase 1
+            }
+            if level_positions.contains(&pos) {
                 slots.push(SlotAssignment {
                     pos,
                     kind: SlotKind::Level,
@@ -906,7 +921,6 @@ fn populate_sections<R: Rng>(
                 });
             }
         }
-        levels_remaining = levels_remaining.saturating_sub(assigned);
     }
 
     slots
@@ -924,20 +938,6 @@ fn is_dead_end(grid: &Grid, pos: (usize, usize)) -> bool {
     exits == 1
 }
 
-/// Returns true if `pos` is orthogonally adjacent to any position in the set.
-fn is_adjacent_to_completable(
-    pos: (usize, usize),
-    completable: &HashSet<(usize, usize)>,
-) -> bool {
-    let (r, c) = pos;
-    let adjacent = [
-        (r.wrapping_sub(1), c),
-        (r + 1, c),
-        (r, c.wrapping_sub(1)),
-        (r, c + 1),
-    ];
-    adjacent.iter().any(|adj| completable.contains(adj))
-}
 
 /// Returns true if placing a completable tile at `pos` would create a
 /// row 7/8 completion-bit collision. This is a hard game engine constraint
@@ -963,29 +963,65 @@ fn is_row78_conflict(
 /// Score a candidate position for level placement. Higher = better.
 ///
 /// Factors:
-/// - **Separation**: minimum Manhattan distance to any already-placed
-///   completable tile. This is the primary anti-clumping signal.
+/// - **Separation**: combines Manhattan distance (visual spread) and BFS
+///   distance difference (traversal spread), taking the max. Neither metric
+///   alone is sufficient — Manhattan ignores topology, BFS diff conflates
+///   nodes on parallel branches.
+/// - **Density penalty**: count of nearby completable tiles, penalizing
+///   areas already crowded with levels/forts.
 /// - **Dead-end bonus**: path dead-ends look better with a level than as
 ///   blank tiles, so they get a small boost.
 fn score_candidate(
     grid: &Grid,
     pos: (usize, usize),
     completable: &HashSet<(usize, usize)>,
+    bfs_distances: &std::collections::HashMap<(usize, usize), usize>,
 ) -> f64 {
     let (r, c) = pos;
+    let my_bfs = bfs_distances.get(&pos).copied().unwrap_or(0);
 
-    // Minimum Manhattan distance to any completable tile (capped for scale).
-    let min_dist = completable
+    // Tunable weights for each scoring factor.
+    const W_MANHATTAN: f64 = 1.0;   // visual/spatial spread
+    const W_BFS: f64 = 1.5;         // traversal spread
+    const W_DENSITY: f64 = 3.0;     // per nearby completable
+    const DENSITY_RADIUS: usize = 4; // combined distance threshold
+    const SEP_CAP: f64 = 8.0;       // max separation contribution per metric
+
+    // Minimum Manhattan distance to any completable (visual spread).
+    let min_manhattan = completable
         .iter()
         .map(|&(cr, cc)| r.abs_diff(cr) + c.abs_diff(cc))
         .min()
         .unwrap_or(usize::MAX);
-    let separation = (min_dist as f64).min(20.0);
+    let manhattan_score = (min_manhattan as f64).min(SEP_CAP) * W_MANHATTAN;
+
+    // Minimum BFS distance diff to any completable (traversal spread).
+    let min_bfs_diff = completable
+        .iter()
+        .filter_map(|p| bfs_distances.get(p))
+        .map(|&d| my_bfs.abs_diff(d))
+        .min()
+        .unwrap_or(usize::MAX);
+    let bfs_score = (min_bfs_diff as f64).min(SEP_CAP) * W_BFS;
+
+    // Density penalty: count completables within combined distance.
+    let nearby = completable
+        .iter()
+        .filter(|&&(cr, cc)| {
+            let manhattan = r.abs_diff(cr) + c.abs_diff(cc);
+            let bfs_diff = bfs_distances
+                .get(&(cr, cc))
+                .map(|&d| my_bfs.abs_diff(d))
+                .unwrap_or(manhattan);
+            manhattan.max(bfs_diff) <= DENSITY_RADIUS
+        })
+        .count();
+    let density_penalty = nearby as f64 * W_DENSITY;
 
     // Dead-end bonus: +2 if this is a path dead-end.
     let dead_end_bonus = if is_dead_end(grid, pos) { 2.0 } else { 0.0 };
 
-    separation + dead_end_bonus
+    manhattan_score + bfs_score + dead_end_bonus - density_penalty
 }
 
 // ---------------------------------------------------------------------------
@@ -1556,6 +1592,84 @@ mod tests {
             eprintln!("No-safe seeds (first 10):");
             for (seed, counts) in no_safe_details.iter().take(10) {
                 eprintln!("  Seed {seed}: locks per world = {counts:?}");
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_w6_slot_distribution() {
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => {
+                eprintln!("ROM not found, skipping");
+                return;
+            }
+        };
+        let catalog = NodeCatalog::build(&rom);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog);
+
+        for seed in 0..6u64 {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let result = build(&rom, &pickup, &catalog, &mut rng);
+            let built = &result.worlds[5]; // W6 (0-indexed)
+
+            eprintln!("\n===== Seed {seed} — W6 =====");
+            eprintln!("level_count received: {} (from distribute_levels)",
+                built.slots.iter().filter(|s| s.kind == SlotKind::Level).count());
+            eprintln!("fort_count: {}", result.fort_counts[5]);
+            eprintln!("total slots: {}", built.slots.len());
+            eprintln!("section_count: {}", built.section_count);
+            eprintln!("pipe_pairs: {}", built.pipe_pairs.len());
+
+            // Group by kind
+            let mut fortresses = Vec::new();
+            let mut levels = Vec::new();
+            let mut hammer_bros = Vec::new();
+            let mut pipes = Vec::new();
+            for slot in &built.slots {
+                match slot.kind {
+                    SlotKind::Fortress => fortresses.push(slot),
+                    SlotKind::Level => levels.push(slot),
+                    SlotKind::HammerBro => hammer_bros.push(slot),
+                    SlotKind::Pipe => pipes.push(slot),
+                }
+            }
+
+            eprintln!("\nFortresses ({}):", fortresses.len());
+            for s in &fortresses {
+                eprintln!("  ({:2}, {:2})  section={}", s.pos.0, s.pos.1, s.section);
+            }
+
+            eprintln!("\nLevels ({}):", levels.len());
+            for s in &levels {
+                // Compute min Manhattan distance to nearest other Level slot
+                let min_dist = levels.iter()
+                    .filter(|o| o.pos != s.pos)
+                    .map(|o| {
+                        let dr = (s.pos.0 as isize - o.pos.0 as isize).unsigned_abs();
+                        let dc = (s.pos.1 as isize - o.pos.1 as isize).unsigned_abs();
+                        dr + dc
+                    })
+                    .min()
+                    .unwrap_or(0);
+                eprintln!("  ({:2}, {:2})  section={}  min_dist_to_level={}", s.pos.0, s.pos.1, s.section, min_dist);
+            }
+
+            eprintln!("\nHammerBros ({}):", hammer_bros.len());
+            for s in &hammer_bros {
+                eprintln!("  ({:2}, {:2})  section={}", s.pos.0, s.pos.1, s.section);
+            }
+
+            eprintln!("\nPipes ({}):", pipes.len());
+            for s in &pipes {
+                eprintln!("  ({:2}, {:2})  section={}", s.pos.0, s.pos.1, s.section);
+            }
+
+            eprintln!("\nLocks ({}):", built.locks.len());
+            for l in &built.locks {
+                eprintln!("  ({:2}, {:2})  gap=0x{:02X}  replace=0x{:02X}  fort_section={}  safe={}",
+                    l.pos.0, l.pos.1, l.gap_tile, l.replace_tile, l.fort_section, l.secret_exit_safe);
             }
         }
     }

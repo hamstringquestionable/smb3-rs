@@ -12,6 +12,7 @@ Modes:
   python3 tools/rom_map.py [rom] --numbered         # BFS-ordered level numbering
   python3 tools/rom_map.py [rom] --viz              # pointer entry overlay
   python3 tools/rom_map.py [rom] --viz --raw        # raw hex tile IDs
+  python3 tools/rom_map.py [rom] --check            # check for uncovered nodes
 
 Default ROM: "Super Mario Bros. 3 (USA) (Rev 1).nes"
 """
@@ -1897,6 +1898,9 @@ def main():
         elif args[i] == "--viz":
             mode = "viz"
             i += 1
+        elif args[i] == "--check":
+            mode = "check"
+            i += 1
         elif args[i] == "--world" and i + 1 < len(args):
             world_filter = int(args[i + 1]) - 1  # 1-indexed input
             i += 2
@@ -1952,6 +1956,151 @@ def main():
             output = render_numbered_map(rom, wi, pipes_by_world[wi])
             print(output)
             print()
+
+    elif mode == "check":
+        pipes_by_world = read_pipe_pairs(rom)
+        total_issues = 0
+        for wi in worlds:
+            uncovered = check_node_coverage(rom, wi, pipes_by_world[wi])
+            info = MAP_TILE_GRIDS[wi]
+            uncovered_set = {(r, c) for r, c, _ in uncovered}
+            output = render_check_map(rom, wi, pipes_by_world[wi], uncovered_set)
+            print(output)
+            if uncovered:
+                total_issues += len(uncovered)
+            print()
+        if total_issues:
+            print(f"\033[1;31m{total_issues} total uncovered node(s)\033[0m")
+        else:
+            print(f"\033[1;32mAll nodes covered.\033[0m")
+
+
+def render_check_map(rom, world_idx, pipe_pairs, uncovered_set):
+    """Render a world map highlighting uncovered blank nodes in red."""
+    steps = simulate_progression(rom, world_idx, pipe_pairs)
+    _, entry_lookup = build_entry_lookup(rom, world_idx)
+
+    seen = set()
+    ordered_nodes = []
+    for step in steps:
+        for pos in step["bfs_order"]:
+            if pos not in seen:
+                seen.add(pos)
+                ordered_nodes.append(pos)
+
+    node_number = {}
+    num = 1
+    for pos in ordered_nodes:
+        if pos in entry_lookup:
+            node_number[pos] = (num, entry_lookup[pos])
+            num += 1
+
+    final_grid = steps[-1]["grid"]
+    final_nodes = steps[-1]["nodes"]
+    final_paths = steps[-1]["path_tiles"]
+    cols = len(final_grid[0])
+
+    RED_BG = "\033[1;37;41m"
+
+    info = MAP_TILE_GRIDS[world_idx]
+    status = f"\033[1;31m{len(uncovered_set)} uncovered\033[0m" if uncovered_set else f"\033[1;32mOK\033[0m"
+    lines = [f"\n{WHITE}=== {info['name']} === {status}{RESET}"]
+
+    ruler = "      "
+    for c in range(cols):
+        if c % 16 == 0:
+            ruler += f"{GREEN}|{RESET}"
+        else:
+            ruler += " "
+    lines.append(ruler)
+
+    for r in range(MAP_TILE_GRID_ROWS):
+        row_str = f"  {r}: "
+        for c in range(cols):
+            pos = (r, c)
+            tile = final_grid[r][c]
+
+            if c % 16 == 0 and c > 0:
+                row_str += f"{DIM}|{RESET}"
+
+            if pos in uncovered_set:
+                row_str += f"{RED_BG}!!{RESET}"
+            elif pos in node_number:
+                bfs_n, entry = node_number[pos]
+                color = TYPE_COLOR.get(entry["type"], WHITE)
+                row_str += f"{color}{bfs_n:>2d}{RESET}"
+            elif pos in final_paths:
+                if tile in VALID_HORZ:
+                    row_str += f"{DIM}--{RESET}"
+                else:
+                    row_str += f"{DIM} |{RESET}"
+            elif pos in final_nodes:
+                row_str += f"{DIM} *{RESET}"
+            elif tile in BACKGROUND_TILES:
+                row_str += f"{DIM} .{RESET}"
+            else:
+                row_str += f"{DIM} ~{RESET}"
+        lines.append(row_str)
+
+    if uncovered_set:
+        lines.append(f"\n  {RED_BG}!!{RESET} = uncovered node (no pointer table entry)")
+        for r, c, tile in sorted((r, c, final_grid[r][c]) for r, c in uncovered_set):
+            lines.append(f"  ({r},{c:>2d}) tile=${tile:02X}")
+
+    return "\n".join(lines)
+
+
+def check_node_coverage(rom, world_idx, pipe_pairs):
+    """Check that every BFS-reachable node has a pointer table entry.
+
+    Returns a list of (row, col, tile) for uncovered nodes.
+    """
+    VALID_BLANK_TILES = {0x44, 0x47, 0x48, 0x4A, 0xAE, 0xAF, 0xB5, 0xB6,
+                         0xD9, 0xDC, 0xDD, 0xDE}
+    # Tiles that are valid nodes (can be walked onto)
+    NODE_TILES = (VALID_BLANK_TILES |
+                  set(range(0x03, 0x10)) |  # numbered levels
+                  {0x67, 0xEB, 0xAF,        # fortress
+                   0xC9,                     # airship
+                   0xCC,                     # bowser
+                   0xBC,                     # pipe
+                   0xE5,                     # start
+                   0x5F,                     # spiral castle
+                   0x50,                     # spade
+                   0x4B,                     # boat dock
+                   0x68, 0x69,               # quicksand, pyramid
+                   0xE6,                     # hand trap
+                   0xBD, 0xE0,               # N-spade, white toad house
+                   })
+
+    grid = read_tile_grid(rom, world_idx)
+    # Open FX gaps so BFS can reach through them
+    fx_slots = read_fx_slots(rom)
+    fx_assignments = read_world_fx_assignments(rom)
+    for slot_idx in fx_assignments[world_idx]:
+        slot = fx_slots[slot_idx]
+        r, c = slot["grid_row"], slot["grid_col"]
+        if 0 <= r < len(grid) and 0 <= c < len(grid[0]):
+            grid[r][c] = slot["replace_tile"]
+
+    nodes, _, _, _ = walk_map(grid, pipe_pairs)
+
+    # Build set of positions that have pointer table entries
+    _, entry_lookup = build_entry_lookup(rom, world_idx)
+    covered_positions = set(entry_lookup.keys())
+
+    # Find uncovered nodes — BFS-reachable blank tiles with no entry
+    uncovered = []
+    for (r, c) in sorted(nodes):
+        if r < 0 or r >= len(grid) or c < 0 or c >= len(grid[0]):
+            continue
+        tile = grid[r][c]
+        if tile not in VALID_BLANK_TILES:
+            continue  # non-blank nodes (levels, forts, etc.) already have entries
+        if (r, c) not in covered_positions:
+            uncovered.append((r, c, tile))
+
+    return uncovered
 
 
 if __name__ == "__main__":
