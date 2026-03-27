@@ -253,12 +253,12 @@ const QUOTES: &[[&str; 6]] = &[
         "Here is your letter.",
     ],
     [
-        "Oh,it's you!",
-        "The princess said",
-        "you'd come.",
-        "She also said you'd",
-        "be faster.",
-        "",
+        "It's a hundred six",
+        "miles to Bowser,",
+        "it's dark, and",
+        "we're wearing",
+        "overalls...",
+        "Hit it!",
     ],
     [
         "Do you know what",
