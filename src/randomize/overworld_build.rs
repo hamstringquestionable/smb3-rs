@@ -115,7 +115,7 @@ const FIXED_PIPE_ENDPOINTS: &[(usize, (usize, usize))] = &[
 /// Positions excluded from pipe placement. These are blank tiles that are
 /// unreachable (surrounded by rocks/walls) and should never get a pipe.
 const PIPE_EXCLUDED_POSITIONS: &[(usize, (usize, usize))] = &[
-    (2, (8, 6)), // W3 between two rocks near start — unreachable after spade removal
+    (2, (8, 6)), // W3 between two rocks near start — HB only, not a pipe slot
 ];
 
 /// Fortress score bonus positions per world. These isolated positions rarely
