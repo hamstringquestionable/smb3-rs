@@ -11,7 +11,7 @@
 /// 3. Populate sections (1 fort per section, rest are levels)
 /// 4. Lock placement (every fort gets 1 lock)
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use rand::Rng;
 use rand::seq::{IndexedRandom, SliceRandom};
@@ -308,7 +308,6 @@ fn fixed_positions_for_world(
     fixed
 }
 
-
 /// Distribute `total` levels across worlds proportional to capacity.
 /// Ensures every level is placed (sum of output == total).
 /// World processing order is shuffled to avoid front-loading bias from
@@ -446,7 +445,7 @@ fn build_world<R: Rng>(
     );
 
     // Build BFS distance map for scoring — reflects actual walkable distance.
-    let bfs_distances: std::collections::HashMap<(usize, usize), usize> =
+    let bfs_distances: HashMap<(usize, usize), usize> =
         bfs_ordered(&grid, &pipe_pairs, start_pos)
             .into_iter()
             .collect();
@@ -555,6 +554,8 @@ fn is_completion_unsafe(tile: u8) -> bool {
     const REMOVABLE: [u8; 8] = [0x51, 0x52, 0x54, 0x67, 0xEB, 0xE4, 0x56, 0x9D];
     const THRESHOLDS: [u8; 4] = [0x03, 0x67, 0xBF, 0xE9];
 
+    // 0x67/0xEB are also caught by the threshold check below, but kept
+    // explicit here for readability — fortress tiles are the primary case.
     if SPECIAL.contains(&tile) || tile == 0x67 || tile == 0xEB {
         return true;
     }
@@ -589,6 +590,28 @@ pub(super) fn bfs_ordered(
 // ---------------------------------------------------------------------------
 // Step 1: Pipe placement
 // ---------------------------------------------------------------------------
+
+/// Split blank positions into (reachable, unreachable) relative to BFS walk,
+/// excluding already-used positions.
+fn split_blanks_by_reachability(
+    blanks: &[(usize, usize)],
+    reachable: &HashSet<(usize, usize)>,
+    used: &HashSet<(usize, usize)>,
+) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+    let mut reach = Vec::new();
+    let mut unreach = Vec::new();
+    for &p in blanks {
+        if used.contains(&p) {
+            continue;
+        }
+        if reachable.contains(&p) {
+            reach.push(p);
+        } else {
+            unreach.push(p);
+        }
+    }
+    (reach, unreach)
+}
 
 fn place_pipes<R: Rng>(
     grid: &mut Grid,
@@ -628,7 +651,8 @@ fn place_pipes<R: Rng>(
         }
     }
 
-    // Phase A: connectivity pipes — connect unreachable areas until target is reachable
+    // Phase A+B: connect islands first (required for target reachability in A,
+    // best-effort in B), then fill remaining pairs in reachable area.
     let target_reachable = |g: &Grid, pairs: &[((usize, usize), (usize, usize))]| -> bool {
         if let Some(tp) = target_pos {
             let walk = walk_map(g, pairs, start_pos);
@@ -638,54 +662,19 @@ fn place_pipes<R: Rng>(
         }
     };
 
-    while placed_pairs.len() < pair_count && !target_reachable(grid, &placed_pairs) {
-        let walk = walk_map(grid, &placed_pairs, start_pos);
-        let reachable = &walk.nodes;
-
-        // Find blank slots split into reachable and unreachable
-        let reachable_blanks: Vec<(usize, usize)> = blank_positions
-            .iter()
-            .copied()
-            .filter(|p| reachable.contains(p) && !used_positions.contains(p))
-            .collect();
-        let unreachable_blanks: Vec<(usize, usize)> = blank_positions
-            .iter()
-            .copied()
-            .filter(|p| !reachable.contains(p) && !used_positions.contains(p))
-            .collect();
-
-        if reachable_blanks.is_empty() || unreachable_blanks.is_empty() {
-            break; // can't connect anything more
+    let mut must_connect_target = true;
+    while placed_pairs.len() < pair_count {
+        // In the must_connect_target phase, stop once target is reachable.
+        if must_connect_target && target_reachable(grid, &placed_pairs) {
+            must_connect_target = false;
         }
 
-        let &a = reachable_blanks.choose(rng).unwrap();
-        let &b = unreachable_blanks.choose(rng).unwrap();
-
-        grid.set(a.0, a.1, TILE_PIPE);
-        grid.set(b.0, b.1, TILE_PIPE);
-        used_positions.insert(a);
-        used_positions.insert(b);
-        placed_pairs.push((a, b));
-    }
-
-    // Phase B: remaining pipes — try to connect more unreachable islands
-    while placed_pairs.len() < pair_count {
         let walk = walk_map(grid, &placed_pairs, start_pos);
-        let reachable = &walk.nodes;
-
-        let reachable_blanks: Vec<(usize, usize)> = blank_positions
-            .iter()
-            .copied()
-            .filter(|p| reachable.contains(p) && !used_positions.contains(p))
-            .collect();
-        let unreachable_blanks: Vec<(usize, usize)> = blank_positions
-            .iter()
-            .copied()
-            .filter(|p| !reachable.contains(p) && !used_positions.contains(p))
-            .collect();
+        let (reachable_blanks, unreachable_blanks) =
+            split_blanks_by_reachability(blank_positions, &walk.nodes, &used_positions);
 
         if !unreachable_blanks.is_empty() && !reachable_blanks.is_empty() {
-            // Still islands to connect
+            // Connect an island: one reachable endpoint, one unreachable
             let &a = reachable_blanks.choose(rng).unwrap();
             let &b = unreachable_blanks.choose(rng).unwrap();
             grid.set(a.0, a.1, TILE_PIPE);
@@ -693,8 +682,10 @@ fn place_pipes<R: Rng>(
             used_positions.insert(a);
             used_positions.insert(b);
             placed_pairs.push((a, b));
+        } else if must_connect_target {
+            break; // can't connect anything more but target still unreachable
         } else {
-            // No more islands — place both endpoints in reachable area
+            // No more islands — place both endpoints in available area
             let available: Vec<(usize, usize)> = blank_positions
                 .iter()
                 .copied()
@@ -786,7 +777,7 @@ fn populate_sections<R: Rng>(
     fort_count: usize,
     level_count: usize,
     pipe_positions: &HashSet<(usize, usize)>,
-    bfs_distances: &std::collections::HashMap<(usize, usize), usize>,
+    bfs_distances: &HashMap<(usize, usize), usize>,
     world_idx: usize,
     rng: &mut R,
 ) -> Vec<SlotAssignment> {
@@ -822,8 +813,6 @@ fn populate_sections<R: Rng>(
     // Phase 1: Place one fortress per section.
     // Track which positions are fortresses so we exclude them from level candidates.
     let mut fort_positions: HashSet<(usize, usize)> = HashSet::new();
-    // Map (section_idx, slot_idx_in_section) for fort slots.
-    let mut fort_slots: Vec<(usize, usize)> = Vec::new();
 
     for (si, section) in sections.iter().enumerate() {
         if section.is_empty() || si >= fort_count {
@@ -843,32 +832,17 @@ fn populate_sections<R: Rng>(
         candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Pick randomly from top 5 (or fewer if section is small).
-        let top_n = candidates.len().min(5).max(1);
-        let pick = if candidates.is_empty() {
-            // Fallback: no candidates passed row78 filter, use original random.
-            let idx = rng.random_range(..section.len());
-            let pos = section[idx];
-            completable.insert(pos);
-            scored.insert(pos);
-            fort_positions.insert(pos);
-            fort_slots.push((si, idx));
-            slots.push(SlotAssignment {
-                pos,
-                kind: SlotKind::Fortress,
-                section: si,
-            });
-            continue;
+        // Fallback: if no candidates passed the row78 filter, pick any slot.
+        let pos = if candidates.is_empty() {
+            section[rng.random_range(..section.len())]
         } else {
-            rng.random_range(..top_n)
+            let top_n = candidates.len().min(5);
+            candidates[rng.random_range(..top_n)].0
         };
 
-        let pos = candidates[pick].0;
-        let idx = section.iter().position(|&p| p == pos).unwrap();
         completable.insert(pos);
         scored.insert(pos);
         fort_positions.insert(pos);
-        fort_slots.push((si, idx));
-
         slots.push(SlotAssignment {
             pos,
             kind: SlotKind::Fortress,
@@ -947,7 +921,6 @@ fn is_dead_end(grid: &Grid, pos: (usize, usize)) -> bool {
     exits == 1
 }
 
-
 /// Returns true if placing a completable tile at `pos` would create a
 /// row 7/8 completion-bit collision. This is a hard game engine constraint
 /// (shared bit $01) that cannot be relaxed.
@@ -974,17 +947,17 @@ fn score_with_weights(
     grid: &Grid,
     pos: (usize, usize),
     completable: &HashSet<(usize, usize)>,
-    bfs_distances: &std::collections::HashMap<(usize, usize), usize>,
+    bfs_distances: &HashMap<(usize, usize), usize>,
     dead_end_bonus_value: f64,
 ) -> f64 {
     let (r, c) = pos;
     let my_bfs = bfs_distances.get(&pos).copied().unwrap_or(0);
 
-    const W_MANHATTAN: f64 = 1.0;
-    const W_BFS: f64 = 1.5;
-    const W_DENSITY: f64 = 3.0;
-    const DENSITY_RADIUS: usize = 4;
-    const SEP_CAP: f64 = 8.0;
+    const W_MANHATTAN: f64 = 1.0;    // visual/spatial spread
+    const W_BFS: f64 = 1.5;          // traversal spread (weighted higher than grid distance)
+    const W_DENSITY: f64 = 3.0;      // penalty per nearby completable tile
+    const DENSITY_RADIUS: usize = 4; // combined manhattan+BFS distance threshold
+    const SEP_CAP: f64 = 8.0;        // max separation contribution per metric
 
     let min_manhattan = completable
         .iter()
@@ -1024,7 +997,7 @@ fn score_candidate(
     grid: &Grid,
     pos: (usize, usize),
     completable: &HashSet<(usize, usize)>,
-    bfs_distances: &std::collections::HashMap<(usize, usize), usize>,
+    bfs_distances: &HashMap<(usize, usize), usize>,
 ) -> f64 {
     score_with_weights(grid, pos, completable, bfs_distances, 2.0)
 }
@@ -1036,7 +1009,7 @@ fn score_fortress_candidate(
     grid: &Grid,
     pos: (usize, usize),
     completable: &HashSet<(usize, usize)>,
-    bfs_distances: &std::collections::HashMap<(usize, usize), usize>,
+    bfs_distances: &HashMap<(usize, usize), usize>,
     world_idx: usize,
 ) -> f64 {
     let base = score_with_weights(grid, pos, completable, bfs_distances, 5.0);
