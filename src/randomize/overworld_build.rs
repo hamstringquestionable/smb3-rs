@@ -112,6 +112,23 @@ const FIXED_PIPE_ENDPOINTS: &[(usize, (usize, usize))] = &[
     (2, (6, 45)), // W3 rightmost node — always a pipe, partner randomized
 ];
 
+/// Positions excluded from pipe placement. These are blank tiles that are
+/// unreachable (surrounded by rocks/walls) and should never get a pipe.
+const PIPE_EXCLUDED_POSITIONS: &[(usize, (usize, usize))] = &[
+    (2, (8, 6)), // W3 between two rocks near start — unreachable after spade removal
+];
+
+/// Fortress score bonus positions per world. These isolated positions rarely
+/// win fortress placement without a boost. Each entry is (world_idx, position).
+const FORTRESS_BONUS_POSITIONS: &[(usize, (usize, usize))] = &[
+    (2, (5, 26)), // W3 canoe island
+    (2, (0, 34)), // W3 canoe island (toad house in vanilla)
+    (2, (5, 28)), // W3 canoe island (spade in vanilla)
+    (2, (3, 26)), // W3 canoe island (spade in vanilla)
+    (2, (3, 28)), // W3 canoe island
+];
+const FORTRESS_BONUS: f64 = 0.5;
+
 /// Total vanilla levels across all worlds (62 Level entries in the catalog).
 const VANILLA_LEVEL_COUNT: usize = 62;
 
@@ -388,10 +405,22 @@ fn build_world<R: Rng>(
         .map(|(_, pos)| *pos)
         .collect();
 
+    // Exclude certain positions from pipe placement (unreachable blanks).
+    let pipe_excluded: HashSet<(usize, usize)> = PIPE_EXCLUDED_POSITIONS
+        .iter()
+        .filter(|(wi, _)| *wi == world_idx)
+        .map(|(_, pos)| *pos)
+        .collect();
+    let pipe_blanks: Vec<(usize, usize)> = blank_positions
+        .iter()
+        .copied()
+        .filter(|p| !pipe_excluded.contains(p))
+        .collect();
+
     // Step 1: Place pipes
     let pipe_pairs = place_pipes(
         &mut grid,
-        &blank_positions,
+        &pipe_blanks,
         start_pos,
         target_pos,
         pipe_pair_count,
@@ -423,7 +452,7 @@ fn build_world<R: Rng>(
             .collect();
 
     // Step 3: Populate sections
-    let mut slots = populate_sections(&grid, &sections, fort_count, level_count, &pipe_positions, &bfs_distances, rng);
+    let mut slots = populate_sections(&grid, &sections, fort_count, level_count, &pipe_positions, &bfs_distances, world_idx, rng);
 
     // Add mandatory HammerBro slots for HB sprite starting positions.
     // These were excluded from find_blank_slots (so levels/forts/pipes
@@ -758,6 +787,7 @@ fn populate_sections<R: Rng>(
     level_count: usize,
     pipe_positions: &HashSet<(usize, usize)>,
     bfs_distances: &std::collections::HashMap<(usize, usize), usize>,
+    world_idx: usize,
     rng: &mut R,
 ) -> Vec<SlotAssignment> {
     let mut slots = Vec::new();
@@ -799,8 +829,41 @@ fn populate_sections<R: Rng>(
         if section.is_empty() || si >= fort_count {
             continue;
         }
-        let idx = rng.random_range(..section.len());
-        let pos = section[idx];
+
+        // Score all candidates in this section, filtering row 7/8 conflicts.
+        let mut candidates: Vec<((usize, usize), f64)> = section
+            .iter()
+            .filter(|pos| !is_row78_conflict(**pos, &completable))
+            .map(|&pos| {
+                (pos, score_fortress_candidate(grid, pos, &scored, bfs_distances, world_idx))
+            })
+            .collect();
+
+        // Sort descending by score.
+        candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Pick randomly from top 5 (or fewer if section is small).
+        let top_n = candidates.len().min(5).max(1);
+        let pick = if candidates.is_empty() {
+            // Fallback: no candidates passed row78 filter, use original random.
+            let idx = rng.random_range(..section.len());
+            let pos = section[idx];
+            completable.insert(pos);
+            scored.insert(pos);
+            fort_positions.insert(pos);
+            fort_slots.push((si, idx));
+            slots.push(SlotAssignment {
+                pos,
+                kind: SlotKind::Fortress,
+                section: si,
+            });
+            continue;
+        } else {
+            rng.random_range(..top_n)
+        };
+
+        let pos = candidates[pick].0;
+        let idx = section.iter().position(|&p| p == pos).unwrap();
         completable.insert(pos);
         scored.insert(pos);
         fort_positions.insert(pos);
@@ -906,34 +969,23 @@ fn is_row78_conflict(
 // Level placement scoring
 // ---------------------------------------------------------------------------
 
-/// Score a candidate position for level placement. Higher = better.
-///
-/// Factors:
-/// - **Separation**: combines Manhattan distance (visual spread) and BFS
-///   distance difference (traversal spread), taking the max. Neither metric
-///   alone is sufficient — Manhattan ignores topology, BFS diff conflates
-///   nodes on parallel branches.
-/// - **Density penalty**: count of nearby completable tiles, penalizing
-///   areas already crowded with levels/forts.
-/// - **Dead-end bonus**: path dead-ends look better with a level than as
-///   blank tiles, so they get a small boost.
-fn score_candidate(
+/// Core scoring logic shared by level and fortress placement.
+fn score_with_weights(
     grid: &Grid,
     pos: (usize, usize),
     completable: &HashSet<(usize, usize)>,
     bfs_distances: &std::collections::HashMap<(usize, usize), usize>,
+    dead_end_bonus_value: f64,
 ) -> f64 {
     let (r, c) = pos;
     let my_bfs = bfs_distances.get(&pos).copied().unwrap_or(0);
 
-    // Tunable weights for each scoring factor.
-    const W_MANHATTAN: f64 = 1.0;   // visual/spatial spread
-    const W_BFS: f64 = 1.5;         // traversal spread
-    const W_DENSITY: f64 = 3.0;     // per nearby completable
-    const DENSITY_RADIUS: usize = 4; // combined distance threshold
-    const SEP_CAP: f64 = 8.0;       // max separation contribution per metric
+    const W_MANHATTAN: f64 = 1.0;
+    const W_BFS: f64 = 1.5;
+    const W_DENSITY: f64 = 3.0;
+    const DENSITY_RADIUS: usize = 4;
+    const SEP_CAP: f64 = 8.0;
 
-    // Minimum Manhattan distance to any completable (visual spread).
     let min_manhattan = completable
         .iter()
         .map(|&(cr, cc)| r.abs_diff(cr) + c.abs_diff(cc))
@@ -941,7 +993,6 @@ fn score_candidate(
         .unwrap_or(usize::MAX);
     let manhattan_score = (min_manhattan as f64).min(SEP_CAP) * W_MANHATTAN;
 
-    // Minimum BFS distance diff to any completable (traversal spread).
     let min_bfs_diff = completable
         .iter()
         .filter_map(|p| bfs_distances.get(p))
@@ -950,7 +1001,6 @@ fn score_candidate(
         .unwrap_or(usize::MAX);
     let bfs_score = (min_bfs_diff as f64).min(SEP_CAP) * W_BFS;
 
-    // Density penalty: count completables within combined distance.
     let nearby = completable
         .iter()
         .filter(|&&(cr, cc)| {
@@ -964,10 +1014,38 @@ fn score_candidate(
         .count();
     let density_penalty = nearby as f64 * W_DENSITY;
 
-    // Dead-end bonus: +2 if this is a path dead-end.
-    let dead_end_bonus = if is_dead_end(grid, pos) { 2.0 } else { 0.0 };
+    let dead_end_bonus = if is_dead_end(grid, pos) { dead_end_bonus_value } else { 0.0 };
 
     manhattan_score + bfs_score + dead_end_bonus - density_penalty
+}
+
+/// Score a candidate position for level placement. Higher = better.
+fn score_candidate(
+    grid: &Grid,
+    pos: (usize, usize),
+    completable: &HashSet<(usize, usize)>,
+    bfs_distances: &std::collections::HashMap<(usize, usize), usize>,
+) -> f64 {
+    score_with_weights(grid, pos, completable, bfs_distances, 2.0)
+}
+
+/// Score a candidate position for fortress placement. Higher = better.
+/// Fortresses get a larger dead-end bonus (+5.0) since they naturally
+/// belong at path termini, plus a bonus for designated island positions.
+fn score_fortress_candidate(
+    grid: &Grid,
+    pos: (usize, usize),
+    completable: &HashSet<(usize, usize)>,
+    bfs_distances: &std::collections::HashMap<(usize, usize), usize>,
+    world_idx: usize,
+) -> f64 {
+    let base = score_with_weights(grid, pos, completable, bfs_distances, 5.0);
+    let island_bonus = if FORTRESS_BONUS_POSITIONS.iter().any(|&(wi, p)| wi == world_idx && p == pos) {
+        FORTRESS_BONUS
+    } else {
+        0.0
+    };
+    base + island_bonus
 }
 
 // ---------------------------------------------------------------------------
@@ -1696,4 +1774,5 @@ mod tests {
             }
         }
     }
+
 }
