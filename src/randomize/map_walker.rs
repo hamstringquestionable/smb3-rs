@@ -100,6 +100,13 @@ pub(super) fn walk_map(
         pipe_lookup.entry(b).or_default().push(a);
     }
 
+    // Build canoe lookup from static dock edges
+    let mut canoe_lookup: HashMap<(usize, usize), Vec<(usize, usize)>> = HashMap::new();
+    for &(_, (a, b)) in rom_data::CANOE_EDGES {
+        canoe_lookup.entry(a).or_default().push(b);
+        canoe_lookup.entry(b).or_default().push(a);
+    }
+
     let mut nodes = HashSet::new();
     let mut distances: HashMap<(usize, usize), usize> = HashMap::new();
     let mut edges: HashMap<(usize, usize), Vec<Edge>> = HashMap::new();
@@ -155,6 +162,21 @@ pub(super) fn walk_map(
 
         // Pipe edges: direct teleport
         if let Some(dests) = pipe_lookup.get(&(r, c)) {
+            for &dest in dests {
+                edges.entry((r, c)).or_default().push(Edge {
+                    dest,
+                    path_pos: None,
+                });
+                if !nodes.contains(&dest) {
+                    nodes.insert(dest);
+                    distances.insert(dest, distances[&(r, c)] + 1);
+                    queue.push_back(dest);
+                }
+            }
+        }
+
+        // Canoe edges: static dock-to-dock teleports (always on)
+        if let Some(dests) = canoe_lookup.get(&(r, c)) {
             for &dest in dests {
                 edges.entry((r, c)).or_default().push(Edge {
                     dest,

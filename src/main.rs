@@ -107,6 +107,10 @@ struct Cli {
     #[arg(long)]
     keep_boss_hitboxes: bool,
 
+    /// Keep spade (card matching) games on the overworld (removed by default to free map slots)
+    #[arg(long)]
+    keep_spade_games: bool,
+
     /// Disable airship lock (anchor effect always on by default, use this flag to disable)
     #[arg(long)]
     no_airship_lock: bool,
@@ -175,6 +179,7 @@ fn main() {
             remove_n_cards: !cli.keep_n_cards,
             skip_wand_cutscene: !cli.keep_wand_cutscene,
             adjust_boss_hitboxes: !cli.keep_boss_hitboxes,
+            remove_spade_games: !cli.keep_spade_games,
             airship_lock: !cli.no_airship_lock,
             starting_lives: cli.starting_lives,
         }
