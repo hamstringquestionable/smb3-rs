@@ -1410,17 +1410,42 @@ def read_fortress_positions(rom):
     return positions
 
 
-def walk_map(grid, pipe_pairs, start_pos=None):
+def walk_map(grid, pipe_pairs, start_pos=None, traverse_rocks=False):
     """BFS walk using SMB3's 2-tile movement model.
 
     Returns (nodes, edges, path_tiles, bfs_order) where bfs_order is a list
     of (row, col) in the order they were first discovered.
+
+    If traverse_rocks is True, rock tiles ($50, $51) are treated as valid
+    horizontal path tiles (simulates using a hammer to clear them).
     """
     rows = len(grid)
     cols = len(grid[0])
     start = start_pos if start_pos is not None else find_start(grid)
     if start is None:
         return set(), {}, set(), []
+
+    ROCK_TILES = {0x50, 0x51}
+    if traverse_rocks:
+        extra_horz = VALID_HORZ | ROCK_TILES
+        extra_vert = VALID_VERT | ROCK_TILES
+        directions = [
+            (0, +1, extra_horz), (0, -1, extra_horz),
+            (+1, 0, extra_vert), (-1, 0, extra_vert),
+        ]
+    else:
+        directions = DIRECTIONS
+
+    # W3 canoe dock teleport edges (always on, like pipes)
+    CANOE_EDGES = [
+        ((6, 20), (5, 24)),   # mainland dock -> island 1
+        ((6, 20), (0, 32)),   # mainland dock -> island 2
+    ]
+
+    canoe_lookup = {}
+    for a, b in CANOE_EDGES:
+        canoe_lookup.setdefault(a, []).append(b)
+        canoe_lookup.setdefault(b, []).append(a)
 
     pipe_lookup = {}
     for a, b in pipe_pairs:
@@ -1440,7 +1465,7 @@ def walk_map(grid, pipe_pairs, start_pos=None):
         if (r, c) not in edges:
             edges[(r, c)] = []
 
-        for dr, dc, valid_set in DIRECTIONS:
+        for dr, dc, valid_set in directions:
             pr, pc = r + dr, c + dc
             if pr < 0 or pr >= rows or pc < 0 or pc >= cols:
                 continue
@@ -1466,10 +1491,18 @@ def walk_map(grid, pipe_pairs, start_pos=None):
                     queue.append(dest)
                 edges[(r, c)].append((dest, None, "pipe"))
 
+        if (r, c) in canoe_lookup:
+            for dest in canoe_lookup[(r, c)]:
+                if dest not in nodes:
+                    nodes.add(dest)
+                    bfs_order.append(dest)
+                    queue.append(dest)
+                edges[(r, c)].append((dest, None, "canoe"))
+
     return nodes, edges, path_tiles, bfs_order
 
 
-def simulate_progression(rom, world_idx, pipe_pairs):
+def simulate_progression(rom, world_idx, pipe_pairs, traverse_rocks=False):
     """Simulate fortress progression: walk, beat forts, open locks, re-walk.
 
     Returns list of steps. Each step has:
@@ -1486,7 +1519,7 @@ def simulate_progression(rom, world_idx, pipe_pairs):
     beaten = set()
     steps = []
 
-    nodes, edges, path_tiles, bfs_order = walk_map(grid, pipe_pairs)
+    nodes, edges, path_tiles, bfs_order = walk_map(grid, pipe_pairs, traverse_rocks=traverse_rocks)
     steps.append({
         "fort_idx": None, "fort_pos": None,
         "fx_pos": None, "fx_old_tile": None, "fx_new_tile": None,
@@ -1512,7 +1545,7 @@ def simulate_progression(rom, world_idx, pipe_pairs):
             grid[fr][fc] = fx_new
             fx_pos = (fr, fc)
 
-        nodes, edges, path_tiles, bfs_order = walk_map(grid, pipe_pairs)
+        nodes, edges, path_tiles, bfs_order = walk_map(grid, pipe_pairs, traverse_rocks=traverse_rocks)
         steps.append({
             "fort_idx": fi, "fort_pos": world_forts[fi],
             "fx_pos": fx_pos, "fx_old_tile": fx_old, "fx_new_tile": fx_new,
@@ -1642,13 +1675,13 @@ TYPE_COLOR = {
 }
 
 
-def render_numbered_map(rom, world_idx, pipe_pairs):
+def render_numbered_map(rom, world_idx, pipe_pairs, traverse_rocks=False):
     """Render a world map with BFS-ordered numbers at each node.
 
     Uses fortress progression to open locks, so nodes behind locks get
     numbered after the fortress is beaten. Returns a string.
     """
-    steps = simulate_progression(rom, world_idx, pipe_pairs)
+    steps = simulate_progression(rom, world_idx, pipe_pairs, traverse_rocks=traverse_rocks)
     _, entry_lookup = build_entry_lookup(rom, world_idx)
 
     # Merge all BFS orders across progression steps.
@@ -1788,13 +1821,13 @@ def render_numbered_map(rom, world_idx, pipe_pairs):
     return "\n".join(lines)
 
 
-def render_walk_map(rom, world_idx, pipe_pairs, show_progression=False):
+def render_walk_map(rom, world_idx, pipe_pairs, show_progression=False, traverse_rocks=False):
     """Render a colored BFS walk of a world map. Returns a string."""
     fort_positions = read_fortress_positions(rom)
     world_forts = fort_positions.get(world_idx, [])
 
     if show_progression:
-        steps = simulate_progression(rom, world_idx, pipe_pairs)
+        steps = simulate_progression(rom, world_idx, pipe_pairs, traverse_rocks=traverse_rocks)
         parts = []
         opened = set()
         for step_num, step in enumerate(steps):
@@ -1810,7 +1843,7 @@ def render_walk_map(rom, world_idx, pipe_pairs, show_progression=False):
 
             grid = step["grid"]
             nodes = step["nodes"]
-            _, edges, path_tiles, _ = walk_map(grid, pipe_pairs)
+            _, edges, path_tiles, _ = walk_map(grid, pipe_pairs, traverse_rocks=traverse_rocks)
             chokes = find_chokepoints(nodes, edges)
 
             part = _render_walk_grid(grid, nodes, path_tiles, chokes,
@@ -1819,7 +1852,7 @@ def render_walk_map(rom, world_idx, pipe_pairs, show_progression=False):
         return "\n\n".join(parts)
     else:
         grid = read_tile_grid(rom, world_idx)
-        nodes, edges, path_tiles, _ = walk_map(grid, pipe_pairs)
+        nodes, edges, path_tiles, _ = walk_map(grid, pipe_pairs, traverse_rocks=traverse_rocks)
         chokes = find_chokepoints(nodes, edges)
         header = (f"  Start: {find_start(grid)}  "
                   f"Pipes: {len(pipe_pairs)}  "
@@ -1884,6 +1917,7 @@ def main():
     mode = "json"  # default: generate JSON
     world_filter = None
     level_query = None
+    traverse_rocks = False
 
     args = sys.argv[1:]
     i = 0
@@ -1912,6 +1946,9 @@ def main():
             i += 2
         elif args[i] == "--check-dispatches":
             mode = "check_dispatches"
+            i += 1
+        elif args[i] == "--rocks":
+            traverse_rocks = True
             i += 1
         elif args[i] == "--world" and i + 1 < len(args):
             world_filter = int(args[i + 1]) - 1  # 1-indexed input
@@ -1958,14 +1995,15 @@ def main():
             info = MAP_TILE_GRIDS[wi]
             print(f"=== {info['name']} ===")
             output = render_walk_map(rom, wi, pipes_by_world[wi],
-                                     show_progression=(mode == "progression"))
+                                     show_progression=(mode == "progression"),
+                                     traverse_rocks=traverse_rocks)
             print(output)
             print()
 
     elif mode == "numbered":
         pipes_by_world = read_pipe_pairs(rom)
         for wi in worlds:
-            output = render_numbered_map(rom, wi, pipes_by_world[wi])
+            output = render_numbered_map(rom, wi, pipes_by_world[wi], traverse_rocks=traverse_rocks)
             print(output)
             print()
 
@@ -2405,7 +2443,7 @@ def render_level_lookup(rom, query):
 
 def render_check_map(rom, world_idx, pipe_pairs, uncovered_set):
     """Render a world map highlighting uncovered blank nodes in red."""
-    steps = simulate_progression(rom, world_idx, pipe_pairs)
+    steps = simulate_progression(rom, world_idx, pipe_pairs, traverse_rocks=traverse_rocks)
     _, entry_lookup = build_entry_lookup(rom, world_idx)
 
     seen = set()

@@ -77,6 +77,9 @@ pub struct Options {
     /// Adjust hitboxes for Bowser and Koopalings so they're easier to hit.
     #[serde(default = "default_true")]
     pub adjust_boss_hitboxes: bool,
+    /// Remove spade (card matching) games from the overworld, freeing map slots for levels.
+    #[serde(default = "default_true")]
+    pub remove_spade_games: bool,
 }
 
 fn default_false() -> bool {
@@ -126,7 +129,8 @@ impl Options {
         let b4 = (self.card_speed_clear as u8) << 7
             | (self.remove_n_cards as u8) << 6
             | (self.skip_wand_cutscene as u8) << 5
-            | (self.adjust_boss_hitboxes as u8) << 4;
+            | (self.adjust_boss_hitboxes as u8) << 4
+            | (self.remove_spade_games as u8) << 3;
 
         [b0, b1, b2, b3, b4]
     }
@@ -198,6 +202,7 @@ impl Options {
                 remove_n_cards: (b4 >> 6) & 1 != 0,
                 skip_wand_cutscene: (b4 >> 5) & 1 != 0,
                 adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
+                remove_spade_games: true, // default on for old flag keys
             });
         }
 
@@ -232,6 +237,7 @@ impl Options {
             remove_n_cards: (b4 >> 6) & 1 != 0,
             skip_wand_cutscene: (b4 >> 5) & 1 != 0,
             adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
+            remove_spade_games: (b4 >> 3) & 1 != 0,
         })
     }
 }
@@ -258,6 +264,7 @@ impl Default for Options {
             remove_n_cards: true,
             skip_wand_cutscene: true,
             adjust_boss_hitboxes: true,
+            remove_spade_games: true,
             starting_lives: default_starting_lives(),
         }
     }
@@ -333,7 +340,7 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     if options.map_shuffle {
         rom.set_tag("overworld/builder");
         let catalog = randomize::node_catalog::NodeCatalog::build(rom);
-        let pickup = randomize::overworld_pickup::pick_up(rom, &catalog);
+        let pickup = randomize::overworld_pickup::pick_up(rom, &catalog, options.remove_spade_games);
         let build = randomize::overworld_build::build(rom, &pickup, &catalog, &mut rng);
         randomize::overworld_writer::write_overworld(
             rom, &build, &pickup, &catalog, &mut rng, true,
@@ -392,6 +399,13 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     if options.remove_n_cards {
         rom.set_tag("qol/remove_n_cards");
         randomize::qol::remove_n_cards(rom);
+    }
+
+    // Fix W3 canoe softlocks (needed when spade games are removed, since levels
+    // can be placed on W3 island tiles that the canoe interacts with).
+    if options.remove_spade_games {
+        rom.set_tag("qol/fix_canoe_softlock");
+        randomize::qol::fix_canoe_softlock(rom);
     }
 
     // Adjust Bowser and Koopaling hitboxes.
@@ -599,6 +613,7 @@ mod tests {
             remove_n_cards: true,
             skip_wand_cutscene: true,
             adjust_boss_hitboxes: true,
+            remove_spade_games: true,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
@@ -611,6 +626,7 @@ mod tests {
         assert_eq!(opts.shuffle_airships, decoded.shuffle_airships);
         assert_eq!(opts.remove_n_cards, decoded.remove_n_cards);
         assert_eq!(opts.skip_wand_cutscene, decoded.skip_wand_cutscene);
+        assert_eq!(opts.remove_spade_games, decoded.remove_spade_games);
     }
 
     #[test]
@@ -636,6 +652,7 @@ mod tests {
             remove_n_cards: false,
             skip_wand_cutscene: false,
             adjust_boss_hitboxes: false,
+            remove_spade_games: false,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
@@ -645,6 +662,7 @@ mod tests {
         assert!(!decoded.disable_autoscroll);
         assert!(!decoded.map_shuffle);
         assert!(!decoded.shuffle_airships);
+        assert!(!decoded.remove_spade_games);
         assert_eq!(decoded.starting_lives, 1);
         assert_eq!(decoded.level_shuffle, LevelShuffle::Off);
     }
