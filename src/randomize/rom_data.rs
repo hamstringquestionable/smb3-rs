@@ -148,7 +148,7 @@ pub(super) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
             1, 2,                              // WoodBodyLong
             35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
             48,                                // MetalPlate
-            49,                                // Crate
+            // 49 (Crate) is 3-byte, NOT 4-byte — was causing W5 airship corruption
             51,                                // DoubleTipBodyWood
         ],
         randomize_note_wood: true,

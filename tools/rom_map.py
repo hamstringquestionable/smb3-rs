@@ -13,6 +13,10 @@ Modes:
   python3 tools/rom_map.py [rom] --viz              # pointer entry overlay
   python3 tools/rom_map.py [rom] --viz --raw        # raw hex tile IDs
   python3 tools/rom_map.py [rom] --check            # check for uncovered nodes
+  python3 tools/rom_map.py [rom] --level 3-2        # look up a level by name
+  python3 tools/rom_map.py [rom] --level 7F1        # fortress lookup
+  python3 tools/rom_map.py [rom] --level 8B         # Bowser Castle
+  python3 tools/rom_map.py [rom] --check-dispatches # validate 4-byte dispatch tables
 
 Default ROM: "Super Mario Bros. 3 (USA) (Rev 1).nes"
 """
@@ -96,7 +100,7 @@ LEVEL_DATA_REGIONS = [
         "tileset_ids": [10],
         "start": 0x2EC07,
         "end": 0x30005,
-        "extra_byte_dispatches": {1, 2, 35, 36, 37, 38, 39, 40, 41, 42, 48, 49, 51},  # +49 Crate
+        "extra_byte_dispatches": {1, 2, 35, 36, 37, 38, 39, 40, 41, 42, 48, 51},  # 49 (Crate) is 3-byte, NOT 4-byte
     },
 ]
 
@@ -1879,6 +1883,7 @@ def main():
     output_path = "tools/rom_map.json"
     mode = "json"  # default: generate JSON
     world_filter = None
+    level_query = None
 
     args = sys.argv[1:]
     i = 0
@@ -1900,6 +1905,13 @@ def main():
             i += 1
         elif args[i] == "--check":
             mode = "check"
+            i += 1
+        elif args[i] == "--level" and i + 1 < len(args):
+            mode = "level"
+            level_query = args[i + 1]
+            i += 2
+        elif args[i] == "--check-dispatches":
+            mode = "check_dispatches"
             i += 1
         elif args[i] == "--world" and i + 1 < len(args):
             world_filter = int(args[i + 1]) - 1  # 1-indexed input
@@ -1973,6 +1985,422 @@ def main():
             print(f"\033[1;31m{total_issues} total uncovered node(s)\033[0m")
         else:
             print(f"\033[1;32mAll nodes covered.\033[0m")
+
+    elif mode == "level":
+        print(render_level_lookup(rom, level_query))
+
+    elif mode == "check_dispatches":
+        check_dispatch_tables(rom)
+
+
+def check_dispatch_tables(rom):
+    """Validate extra_byte_dispatches by parsing all levels and checking alignment.
+
+    For each level region, parses every level and checks:
+    1. Each level ends exactly at an 0xFF terminator
+    2. Screen numbers are monotonically non-decreasing (within hi-bit pages)
+    3. No variable-size commands produce dispatch values that seem suspicious
+
+    Then probes: for each 3-byte variable command, what if it were 4-byte?
+    Would downstream alignment improve? This detects missing dispatches.
+    """
+    total_levels = 0
+    total_issues = 0
+    total_suspects = 0
+
+    for region in LEVEL_DATA_REGIONS:
+        region_name = region["name"]
+        dispatches = region["extra_byte_dispatches"]
+        levels = scan_level_data_region(rom, region)
+        issue_count = 0
+        suspect_dispatches = {}  # dispatch -> count of times it would fix alignment
+
+        for lv_idx, lv in enumerate(levels):
+            total_levels += 1
+            end_off = lv["end_offset"]
+            header_off = lv["header_offset"]
+
+            # Check 1: Does the level end at 0xFF?
+            if end_off >= len(rom):
+                print(f"  {RED}ISSUE{RESET}: Level {lv_idx} at 0x{header_off:05X} "
+                      f"runs past ROM end")
+                issue_count += 1
+                continue
+
+            if rom[end_off] != 0xFF:
+                print(f"  {RED}ISSUE{RESET}: Level {lv_idx} at 0x{header_off:05X} "
+                      f"ends at 0x{end_off:05X} = 0x{rom[end_off]:02X} (expected 0xFF)")
+                issue_count += 1
+
+            # Check 2: Screen monotonicity
+            # Commands should have non-decreasing screen values (with hi bit as page)
+            cmds_offset = header_off + 9
+            commands, _ = parse_level_commands(rom, cmds_offset, region)
+
+            prev_abs_screen = -1
+            screen_violations = []
+            for cmd in commands:
+                if cmd.get("type") == "junction":
+                    prev_abs_screen = -1  # junctions reset screen tracking
+                    continue
+                abs_screen = cmd["screen"] + (cmd["hi"] * 16)
+                if abs_screen < prev_abs_screen:
+                    screen_violations.append(cmd)
+                prev_abs_screen = abs_screen
+
+            if screen_violations:
+                print(f"  {YELLOW}SCREEN{RESET}: Level {lv_idx} at 0x{header_off:05X} "
+                      f"has {len(screen_violations)} screen-order violation(s):")
+                for cmd in screen_violations[:3]:
+                    d = cmd.get("dispatch", "?")
+                    print(f"    offset 0x{cmd['offset']:05X}: "
+                          f"scr={cmd['screen']} hi={cmd['hi']} "
+                          f"group={cmd['group']} dispatch={d} "
+                          f"bytes={[f'0x{b:02X}' for b in cmd['bytes']]}")
+                issue_count += len(screen_violations)
+
+        # Probe for missing dispatches:
+        # Re-parse each level, and for each 3-byte variable command whose dispatch
+        # is NOT in the set, try treating it as 4-byte and re-parse the rest.
+        # If the 4-byte version produces fewer issues, flag it as a suspect.
+        for lv_idx, lv in enumerate(levels):
+            cmds_offset = lv["header_offset"] + 9
+            commands, original_end = parse_level_commands(rom, cmds_offset, region)
+
+            for ci, cmd in enumerate(commands):
+                if cmd.get("type") != "variable":
+                    continue
+                dispatch = cmd.get("dispatch")
+                if dispatch is None or dispatch in dispatches:
+                    continue
+
+                # This is a 3-byte variable command not in the dispatch set.
+                # What if it should be 4-byte?
+                # Re-parse from this command's offset, treating it as 4-byte.
+                probe_offset = cmd["offset"] + 4  # skip 4 bytes instead of 3
+                probe_region = dict(region)
+                probe_dispatches = dispatches | {dispatch}
+                probe_region["extra_byte_dispatches"] = probe_dispatches
+                probe_cmds, probe_end = parse_level_commands(rom, probe_offset, probe_region)
+
+                # Check if probe alignment is better: does it land on 0xFF?
+                if (probe_end < len(rom) and rom[probe_end] == 0xFF
+                        and (original_end >= len(rom) or rom[original_end] != 0xFF)):
+                    # The 4-byte version fixed a broken level!
+                    suspect_dispatches[dispatch] = suspect_dispatches.get(dispatch, 0) + 1
+
+                # Also check: does original end on 0xFF but probe also does,
+                # AND probe has fewer screen violations?
+                elif (probe_end < len(rom) and rom[probe_end] == 0xFF
+                      and original_end < len(rom) and rom[original_end] == 0xFF):
+                    # Both end OK — check screen monotonicity improvement
+                    orig_violations = 0
+                    prev_s = -1
+                    for c in commands[ci:]:
+                        if c.get("type") == "junction":
+                            prev_s = -1
+                            continue
+                        s = c["screen"] + c["hi"] * 16
+                        if s < prev_s:
+                            orig_violations += 1
+                        prev_s = s
+
+                    probe_violations = 0
+                    prev_s = cmd["screen"] + cmd["hi"] * 16  # keep current cmd's screen
+                    for c in probe_cmds:
+                        if c.get("type") == "junction":
+                            prev_s = -1
+                            continue
+                        s = c["screen"] + c["hi"] * 16
+                        if s < prev_s:
+                            probe_violations += 1
+                        prev_s = s
+
+                    if orig_violations > 0 and probe_violations < orig_violations:
+                        suspect_dispatches[dispatch] = suspect_dispatches.get(dispatch, 0) + 1
+
+        # Report
+        print(f"\n{WHITE}=== {region_name} ==={RESET}")
+        print(f"  Levels parsed: {len(levels)}")
+        print(f"  Dispatches: {sorted(dispatches)}")
+
+        if issue_count:
+            print(f"  {RED}Issues: {issue_count}{RESET}")
+            total_issues += issue_count
+        else:
+            print(f"  {GREEN}No alignment issues{RESET}")
+
+        if suspect_dispatches:
+            print(f"  {YELLOW}Suspect missing dispatches:{RESET}")
+            for d, count in sorted(suspect_dispatches.items()):
+                group = 0
+                for g in range(8):
+                    if VAR_BASES[g] <= d < VAR_BASES[g] + 15:
+                        group = g
+                        break
+                var_type = d - VAR_BASES[group] + 1
+                print(f"    dispatch {d} (group {group}, var_type {var_type}): "
+                      f"would fix {count} level(s) if 4-byte")
+                total_suspects += 1
+        else:
+            print(f"  {GREEN}No suspect missing dispatches{RESET}")
+
+        total_levels += 0  # already counted above
+
+    print(f"\n{WHITE}=== Summary ==={RESET}")
+    print(f"  Total levels: {total_levels}")
+    if total_issues:
+        print(f"  {RED}Total issues: {total_issues}{RESET}")
+    else:
+        print(f"  {GREEN}No alignment issues found{RESET}")
+    if total_suspects:
+        print(f"  {YELLOW}Total suspect dispatches: {total_suspects}{RESET}")
+    else:
+        print(f"  {GREEN}No suspect missing dispatches{RESET}")
+
+
+def resolve_level_name(rom, query):
+    """Resolve a human level name to a list of (world_idx, entry) matches.
+
+    Accepted formats:
+      3-2, 3F, 3F1, 3F2, 3A, 8B, 8-Tank, 8-Navy, 2-QS, 2-Pyr, 5-SC, 7-P1, 7-P2
+    Returns list of (world_idx, entry_dict, canonical_name) tuples.
+    """
+    q = query.strip().upper().replace(" ", "")
+
+    # Build full name table across all worlds
+    all_names = []  # (canonical_name, world_idx, entry_dict)
+    for wi in range(8):
+        grid = read_tile_grid(rom, wi)
+        _, entry_lookup = build_entry_lookup(rom, wi)
+
+        # Collect entries with names, tracking fortress counts
+        world_entries = []
+        for pos in sorted(entry_lookup.keys()):
+            entry = entry_lookup[pos]
+            r, c = pos
+            tile = grid[r][c] if 0 <= r < len(grid) and 0 <= c < len(grid[0]) else 0
+            name = derive_level_name(wi, entry["index"], entry["type"], tile)
+            if name:
+                world_entries.append((name, entry, pos, tile))
+
+        # Number fortresses if multiple
+        fort_entries = [(n, e, p, t) for n, e, p, t in world_entries
+                        if n.endswith("F") and len(n) <= 2]
+        if len(fort_entries) > 1:
+            numbered = []
+            for idx, (n, e, p, t) in enumerate(world_entries):
+                if n.endswith("F") and len(n) <= 2:
+                    count = sum(1 for nn, _, _, _ in world_entries[:idx + 1]
+                                if nn.endswith("F") and len(nn) <= 2)
+                    numbered.append((f"{n}{count}", e, p, t))
+                else:
+                    numbered.append((n, e, p, t))
+            world_entries = numbered
+
+        for name, entry, pos, tile in world_entries:
+            all_names.append((name.upper(), wi, entry, name))
+
+    # Try exact match first
+    matches = [(wi, e, cn) for (n, wi, e, cn) in all_names if n == q]
+    if matches:
+        return matches
+
+    # Try with dash removed (e.g., "3F1" matches "3-F1" or "3F1")
+    q_nodash = q.replace("-", "")
+    matches = [(wi, e, cn) for (n, wi, e, cn) in all_names if n.replace("-", "") == q_nodash]
+    if matches:
+        return matches
+
+    # Try suffix match for override names (e.g., "TANK" matches "8-TANK")
+    matches = [(wi, e, cn) for (n, wi, e, cn) in all_names if q in n]
+    if matches:
+        return matches
+
+    return []
+
+
+def parse_enemy_entries(rom, obj_cpu_ptr):
+    """Parse all enemy/object entries from an enemy data segment.
+    Returns list of dicts with offset, obj_id, name, class, x, y, screen."""
+    if obj_cpu_ptr < 0xC000 or obj_cpu_ptr > 0xDFFF:
+        return []
+    file_off = obj_file_offset(obj_cpu_ptr)
+    if file_off is None or file_off >= len(rom):
+        return []
+
+    entries = []
+    page = rom[file_off]
+    pos = file_off + 1  # skip page flag byte
+    while pos + 2 < len(rom):
+        oid = rom[pos]
+        if oid == 0xFF:
+            break
+        x_byte = rom[pos + 1]
+        y_byte = rom[pos + 2]
+        screen = (x_byte >> 4) & 0x0F
+        x_col = x_byte & 0x0F
+        y_row = y_byte & 0x0F
+
+        entry = {
+            "offset": pos,
+            "obj_id": oid,
+            "x_col": x_col,
+            "y_row": y_row,
+            "screen": screen,
+            "page": page,
+        }
+        name = ENEMY_NAMES.get(oid)
+        if name:
+            entry["name"] = name
+        cls = find_enemy_class(oid)
+        if cls:
+            entry["class"] = cls
+        boss = BOSS_ENEMY_IDS.get(oid)
+        if boss:
+            entry["boss"] = boss
+        entries.append(entry)
+        pos += 3
+    return entries
+
+
+def render_level_lookup(rom, query):
+    """Look up a level by name and render its details."""
+    matches = resolve_level_name(rom, query)
+    if not matches:
+        return f"No level found matching '{query}'.\n" \
+               f"Examples: 1-1, 3-2, 3F1, 5A, 8B, 8-Tank, 2-QS, 7-P1"
+
+    # Build level groups for sub-area + powerup info
+    all_region_levels = []
+    for region in LEVEL_DATA_REGIONS:
+        levels = scan_level_data_region(rom, region)
+        all_region_levels.append({
+            "region": region["name"],
+            "tileset_ids": region["tileset_ids"],
+            "start": region["start"],
+            "end": region["end"],
+            "extra_byte_dispatches": sorted(region["extra_byte_dispatches"]),
+            "level_count": len(levels),
+            "levels": levels,
+        })
+
+    # Build worlds data for level group matching
+    worlds_data = []
+    for w_idx, w_info in enumerate(WORLDS):
+        worlds_data.append(parse_world_tables(rom, w_idx, w_info))
+
+    level_groups = build_level_groups(rom, all_region_levels, worlds_data)
+
+    lines = []
+    for wi, entry, cname in matches:
+        w = wi + 1
+        eidx = entry["index"]
+        obj = entry["obj_ptr"]
+        lay = entry["lay_ptr"]
+        ts = entry["tileset"]
+        etype = entry["type"]
+
+        lines.append(f"{YELLOW}{cname}{RESET}  (World {w}, entry {eidx}, type: {etype})")
+        lines.append(f"  Tileset: {ts}  Obj: 0x{obj:04X}  Lay: 0x{lay:04X}")
+        lines.append(f"  Grid: row={entry['grid_row']}, col={entry['grid_col']}")
+
+        # Find matching level group
+        group = None
+        for g in level_groups:
+            if (wi, eidx) in [(wr[0], wr[1]) for wr in g["world_refs"]]:
+                group = g
+                break
+
+        # Entry-point enemies
+        enemies = parse_enemy_entries(rom, obj)
+        lines.append(f"")
+        lines.append(f"  {WHITE}Enemies (obj 0x{obj:04X}, {len(enemies)} entries):{RESET}")
+        if enemies:
+            for e in enemies:
+                name = e.get("name", f"0x{e['obj_id']:02X}")
+                cls = e.get("class", "")
+                boss = e.get("boss", "")
+                tags = []
+                if cls:
+                    tags.append(f"class:{cls}")
+                if boss:
+                    tags.append(f"{RED}BOSS:{boss}{RESET}")
+                tag_str = f"  ({', '.join(tags)})" if tags else ""
+                lines.append(f"    0x{e['offset']:05X}: {name} "
+                             f"scr={e['screen']} col={e['x_col']} row={e['y_row']}"
+                             f"{tag_str}")
+        else:
+            lines.append(f"    (none)")
+
+        # Sub-areas from level group
+        if group and group["sub_area_count"] > 0:
+            for sa_idx, sa in enumerate(group["sub_areas"]):
+                if sa_idx == 0:
+                    # Entry-point powerups
+                    continue
+                ep = sa["enemy_ptr"]
+                sa_enemies = parse_enemy_entries(rom, ep) if ep and ep >= 0xC000 else []
+                lines.append(f"")
+                lines.append(f"  {WHITE}Sub-area {sa_idx} "
+                             f"(enemy_ptr 0x{ep:04X}, {sa['screens']} screens, "
+                             f"{sa['command_count']} cmds, {len(sa_enemies)} enemies):{RESET}")
+                for e in sa_enemies:
+                    name = e.get("name", f"0x{e['obj_id']:02X}")
+                    cls = e.get("class", "")
+                    boss = e.get("boss", "")
+                    tags = []
+                    if cls:
+                        tags.append(f"class:{cls}")
+                    if boss:
+                        tags.append(f"{RED}BOSS:{boss}{RESET}")
+                    tag_str = f"  ({', '.join(tags)})" if tags else ""
+                    lines.append(f"    0x{e['offset']:05X}: {name} "
+                                 f"scr={e['screen']} col={e['x_col']} row={e['y_row']}"
+                                 f"{tag_str}")
+
+        # Powerups from level group
+        if group:
+            all_powerups = []
+            for sa_idx, sa in enumerate(group["sub_areas"]):
+                # Find matching parsed level by header_offset
+                for region_data in all_region_levels:
+                    for lv in region_data["levels"]:
+                        if lv["header_offset"] == sa["header_offset"]:
+                            for p in lv["powerups"]:
+                                p_copy = dict(p)
+                                p_copy["sub_area"] = sa_idx
+                                all_powerups.append(p_copy)
+
+            lines.append(f"")
+            lines.append(f"  {WHITE}Items ({len(all_powerups)} powerup blocks):{RESET}")
+            if all_powerups:
+                for p in all_powerups:
+                    prot = f"  {RED}PROTECTED{RESET}" if p.get("protected") else ""
+                    rcls = f"  rand:{p['randomize_class']}" if p.get("randomize_class") else ""
+                    area = f"  [sub-area {p['sub_area']}]" if p["sub_area"] > 0 else ""
+                    lines.append(f"    0x{p['byte2_offset']:05X}: {p['name']} "
+                                 f"scr={p['screen']} row={p['row']} col={p['col']}"
+                                 f"{rcls}{prot}{area}")
+            else:
+                lines.append(f"    (none)")
+
+        # Boss summary
+        if group:
+            bosses = []
+            if group["has_boomboom"]:
+                bosses.append("Boom-Boom")
+            if group["has_koopaling"]:
+                bosses.append("Koopaling")
+            if group["has_bowser"]:
+                bosses.append("Bowser")
+            if bosses:
+                lines.append(f"")
+                lines.append(f"  {RED}Bosses: {', '.join(bosses)}{RESET}")
+
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 def render_check_map(rom, world_idx, pipe_pairs, uncovered_set):
