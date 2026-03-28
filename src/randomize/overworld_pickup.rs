@@ -164,9 +164,10 @@ fn pick_up_world(
 // ---------------------------------------------------------------------------
 
 /// Position-specific overrides where the neighbor-based heuristic picks the
-/// wrong tile. Currently empty — the heuristic handles all vanilla positions.
-/// `(world_idx, row, col, tile)`
-const BLANK_TILE_OVERRIDES: &[(usize, usize, usize, u8)] = &[];
+/// wrong tile. `(world_idx, row, col, tile)`
+const BLANK_TILE_OVERRIDES: &[(usize, usize, usize, u8)] = &[
+    (2, 8, 6, 0x47), // W3 spade near start — heuristic picks 0x44 (no neighbors), needs 0x47 for BFS
+];
 
 use super::rom_data::VALID_BLANK_TILES;
 
