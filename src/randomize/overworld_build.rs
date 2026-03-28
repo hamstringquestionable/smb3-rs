@@ -11,7 +11,7 @@
 /// 3. Populate sections (1 fort per section, rest are levels)
 /// 4. Lock placement (every fort gets 1 lock)
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 
 use rand::Rng;
 use rand::seq::{IndexedRandom, SliceRandom};
@@ -537,78 +537,24 @@ fn is_completion_unsafe(tile: u8) -> bool {
 }
 
 /// BFS from start, returning nodes in visit order with their distances.
+/// BFS-ordered list of (position, distance) using the canonical `walk_map`.
+///
+/// This is the single source of truth for map traversal — all BFS-dependent
+/// logic (sectioning, scoring, connectivity checks) must go through here or
+/// `walk_map` directly to stay in sync with canoe edges, pipe teleports, etc.
 pub(super) fn bfs_ordered(
     grid: &Grid,
     pipe_pairs: &[((usize, usize), (usize, usize))],
     start_pos: Option<(usize, usize)>,
 ) -> Vec<((usize, usize), usize)> {
-    let start = match start_pos {
-        Some(s) => s,
-        None => return Vec::new(),
-    };
-
-    let mut pipe_lookup: std::collections::HashMap<(usize, usize), Vec<(usize, usize)>> =
-        std::collections::HashMap::new();
-    for &(a, b) in pipe_pairs {
-        pipe_lookup.entry(a).or_default().push(b);
-        pipe_lookup.entry(b).or_default().push(a);
-    }
-
-    let mut visited = HashSet::new();
-    let mut queue = VecDeque::new();
-    let mut result = Vec::new();
-
-    visited.insert(start);
-    queue.push_back((start, 0usize));
-
-    while let Some(((r, c), dist)) = queue.pop_front() {
-        result.push(((r, c), dist));
-
-        // Orthogonal 2-tile movement
-        for &(dr, dc, is_horz) in &[(0i8, 1i8, true), (0, -1, true), (1, 0, false), (-1, 0, false)] {
-            let pr = r as i16 + dr as i16;
-            let pc = c as i16 + dc as i16;
-            if pr < 0 || pr >= grid.rows as i16 || pc < 0 || pc >= grid.cols as i16 {
-                continue;
-            }
-            let (pr, pc) = (pr as usize, pc as usize);
-
-            let path_tile = grid.get(pr, pc);
-            let valid = if is_horz { VALID_HORZ } else { VALID_VERT };
-            if !valid.contains(&path_tile) {
-                continue;
-            }
-
-            let nr = r as i16 + 2 * dr as i16;
-            let nc = c as i16 + 2 * dc as i16;
-            if nr < 0 || nr >= grid.rows as i16 || nc < 0 || nc >= grid.cols as i16 {
-                continue;
-            }
-            let (nr, nc) = (nr as usize, nc as usize);
-
-            let dest_tile = grid.get(nr, nc);
-            if BACKGROUND_TILES.contains(&dest_tile) {
-                continue;
-            }
-
-            if !visited.contains(&(nr, nc)) {
-                visited.insert((nr, nc));
-                queue.push_back(((nr, nc), dist + 1));
-            }
-        }
-
-        // Pipe teleport edges
-        if let Some(dests) = pipe_lookup.get(&(r, c)) {
-            for &dest in dests {
-                if !visited.contains(&dest) {
-                    visited.insert(dest);
-                    queue.push_back((dest, dist + 1));
-                }
-            }
-        }
-    }
-
-    result
+    let result = walk_map(grid, pipe_pairs, start_pos);
+    let mut ordered: Vec<((usize, usize), usize)> = result
+        .distances
+        .into_iter()
+        .collect();
+    // Sort by distance, then by position for determinism (HashMap has no order).
+    ordered.sort_by_key(|&((r, c), d)| (d, r, c));
+    ordered
 }
 
 // ---------------------------------------------------------------------------
@@ -1341,7 +1287,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
         let mut rng = ChaCha8Rng::seed_from_u64(42);
 
         let result = build(&rom, &pickup, &catalog, &mut rng);
@@ -1380,7 +1326,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
 
         for seed in 0..10 {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -1438,7 +1384,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
 
         for seed in [42, 123, 999] {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -1473,7 +1419,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
         let mut rng = ChaCha8Rng::seed_from_u64(42);
 
         let result = build(&rom, &pickup, &catalog, &mut rng);
@@ -1513,7 +1459,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
 
         let mut level_shortfalls = 0u32;
         let mut lock_shortfalls = 0u32;
@@ -1607,7 +1553,7 @@ mod tests {
             }
         };
         let catalog = NodeCatalog::build(&rom);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
 
         for seed in 0..6u64 {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -1682,7 +1628,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
         let wi = 6; // W7
 
         let cw = &pickup.worlds[wi];

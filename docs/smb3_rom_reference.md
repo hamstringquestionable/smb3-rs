@@ -1323,6 +1323,13 @@ a single frame.
 | Offset | Size | Purpose |
 |--------|------|---------|
 | 0x15554 | 46 | FX screen-check patch (JMP target from $C8E6) |
+| 0x15DF0 | 35 | Canoe softlock fix: save death respawn position (JSR target from $C6EA) |
+
+**PRG011 free space usage (file 0x17D00 / CPU $BCF0):**
+
+| Offset | Size | Purpose |
+|--------|------|---------|
+| 0x17D00 | 66 | Canoe softlock fix: backup/restore map tile data (JSR targets from $A22F and $C6EA) |
 
 **`FortressFX_MapLocationRow` encoding:** `(grid_row + 2) << 4`
 
