@@ -62,8 +62,8 @@ pub(crate) struct PickupResult {
 
 /// Execute Phase 2: read grids, open FX gaps, collect the shuffle pool, blank
 /// picked-up positions.
-pub(crate) fn pick_up(rom: &Rom, catalog: &NodeCatalog) -> PickupResult {
-    pick_up_filtered(rom, catalog, |entry| {
+pub(crate) fn pick_up(rom: &Rom, catalog: &NodeCatalog, remove_spade_games: bool) -> PickupResult {
+    pick_up_filtered(rom, catalog, remove_spade_games, |entry, remove_spades| {
         // Airships and Bowser stay at vanilla pointer table entries.
         // The autoscroll patch targets their hardcoded entry_idx offsets,
         // and blanking their grid positions would create extra build-phase
@@ -81,7 +81,14 @@ pub(crate) fn pick_up(rom: &Rom, catalog: &NodeCatalog) -> PickupResult {
             return true;
         }
         // HammerBro — roaming encounters that guard real levels
-        matches!(entry.kind, NodeKind::HammerBro)
+        if matches!(entry.kind, NodeKind::HammerBro) {
+            return true;
+        }
+        // BonusGame (spade card) — remove to free map slots for levels
+        if remove_spades && matches!(entry.kind, NodeKind::BonusGame) {
+            return true;
+        }
+        false
     })
 }
 
@@ -89,13 +96,14 @@ pub(crate) fn pick_up(rom: &Rom, catalog: &NodeCatalog) -> PickupResult {
 pub(super) fn pick_up_filtered(
     rom: &Rom,
     catalog: &NodeCatalog,
-    pred: fn(&CatalogEntry) -> bool,
+    remove_spade_games: bool,
+    pred: fn(&CatalogEntry, bool) -> bool,
 ) -> PickupResult {
     let mut pool: Vec<PoolEntry> = Vec::new();
     let mut worlds = Vec::with_capacity(8);
 
     for wi in 0..8 {
-        worlds.push(pick_up_world(rom, catalog, wi, &mut pool, pred));
+        worlds.push(pick_up_world(rom, catalog, wi, &mut pool, remove_spade_games, pred));
     }
 
     PickupResult { worlds, pool }
@@ -110,7 +118,8 @@ fn pick_up_world(
     catalog: &NodeCatalog,
     world_idx: usize,
     pool: &mut Vec<PoolEntry>,
-    pred: fn(&CatalogEntry) -> bool,
+    remove_spade_games: bool,
+    pred: fn(&CatalogEntry, bool) -> bool,
 ) -> ClearedWorld {
     let mut grid = rom_data::read_tile_grid(rom, world_idx);
 
@@ -121,7 +130,7 @@ fn pick_up_world(
     let mut pool_indices = Vec::new();
 
     for (ci, entry) in catalog.entries.iter().enumerate() {
-        if entry.world_idx != world_idx || !pred(entry) {
+        if entry.world_idx != world_idx || !pred(entry, remove_spade_games) {
             continue;
         }
 
@@ -281,14 +290,15 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom);
-        let result = pick_up(&rom, &catalog);
+        let result = pick_up(&rom, &catalog, true);
 
-        // 62 levels + 17 fortresses + 48 pipes + 151 hammer bros = 278
+        // 62 levels + 17 fortresses + 48 pipes + 151 hammer bros + 19 bonus games = 297
         // (Airships and Bowser excluded — their pointer table entries stay vanilla
         // so the autoscroll patch's hardcoded offsets remain valid.)
         // (166 HammerBro catalog entries minus 12 with non-level pointers like toad house/bonus game)
         // (3 W3 HammerBro entries on tile $4B (boat dock) excluded — tile must stay for boat boarding)
-        assert_eq!(result.pool.len(), 278, "pool should have 278 entries (level-like + real hammer bros, no airship/bowser/boat-dock)");
+        // (19 BonusGame entries picked up when remove_spade_games is true)
+        assert_eq!(result.pool.len(), 297, "pool should have 297 entries (level-like + hammer bros + bonus games, no airship/bowser/boat-dock)");
     }
 
     #[test]
@@ -298,7 +308,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom);
-        let result = pick_up(&rom, &catalog);
+        let result = pick_up(&rom, &catalog, true);
 
         for (pi, pe) in result.pool.iter().enumerate() {
             let entry = &catalog.entries[pe.catalog_idx];
@@ -324,7 +334,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom);
-        let result = pick_up(&rom, &catalog);
+        let result = pick_up(&rom, &catalog, true);
 
         let fx_slots = rom_data::read_fx_slots(&rom);
         let fx_assignments = rom_data::read_world_fx_assignments(&rom);
@@ -356,7 +366,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom);
-        let result = pick_up(&rom, &catalog);
+        let result = pick_up(&rom, &catalog, true);
 
         for entry in &catalog.entries {
             if !matches!(entry.kind, NodeKind::Start) {
@@ -380,7 +390,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom);
-        let result = pick_up(&rom, &catalog);
+        let result = pick_up(&rom, &catalog, true);
 
         for cw in &result.worlds {
             for &pi in &cw.pool_indices {
@@ -409,7 +419,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom);
-        let result = pick_up(&rom, &catalog);
+        let result = pick_up(&rom, &catalog, true);
 
         for cw in &result.worlds {
             eprintln!("\n=== World {} ({} picked up) ===", cw.world_idx + 1, cw.pool_indices.len());
@@ -445,8 +455,8 @@ mod tests {
     }
 
     /// Helper: write cleared grids into a ROM copy and save to disk.
-    fn dump_filtered_rom(rom: &Rom, catalog: &NodeCatalog, pred: fn(&CatalogEntry) -> bool, filename: &str) {
-        let result = pick_up_filtered(rom, catalog, pred);
+    fn dump_filtered_rom(rom: &Rom, catalog: &NodeCatalog, pred: fn(&CatalogEntry, bool) -> bool, filename: &str) {
+        let result = pick_up_filtered(rom, catalog, true, pred);
         let mut data = rom.data.clone();
         for cw in &result.worlds {
             for r in 0..cw.grid.rows {
@@ -501,9 +511,9 @@ mod tests {
         };
         let catalog = NodeCatalog::build(&rom);
 
-        dump_filtered_rom(&rom, &catalog, |e| e.kind.is_level_like(), "cleared_all.nes");
-        dump_filtered_rom(&rom, &catalog, |e| matches!(e.kind, NodeKind::Level), "cleared_levels.nes");
-        dump_filtered_rom(&rom, &catalog, |e| matches!(e.kind, NodeKind::Fortress { .. }), "cleared_fortresses.nes");
-        dump_filtered_rom(&rom, &catalog, |e| matches!(e.kind, NodeKind::Pipe { .. }), "cleared_pipes.nes");
+        dump_filtered_rom(&rom, &catalog, |e, _| e.kind.is_level_like(), "cleared_all.nes");
+        dump_filtered_rom(&rom, &catalog, |e, _| matches!(e.kind, NodeKind::Level), "cleared_levels.nes");
+        dump_filtered_rom(&rom, &catalog, |e, _| matches!(e.kind, NodeKind::Fortress { .. }), "cleared_fortresses.nes");
+        dump_filtered_rom(&rom, &catalog, |e, _| matches!(e.kind, NodeKind::Pipe { .. }), "cleared_pipes.nes");
     }
 }
