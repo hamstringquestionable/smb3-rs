@@ -209,7 +209,7 @@ ENEMY_NAMES = {
 
 # Protected offsets
 PROTECTED_POWERUP_OFFSETS = [0x23DB0, 0x23E1F, 0x23EA0]  # 7-7 Q-stars
-PROTECTED_ENEMY_OFFSET = 0x0C336  # 7-F1 Tanooki big Q block
+PROTECTED_ENEMY_OFFSET = 0x0C9B7  # W7 Big Q room Tanooki (required for 7-F1)
 
 # Key ROM tables
 KEY_TABLES = {

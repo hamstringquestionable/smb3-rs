@@ -505,6 +505,13 @@ pub(super) fn layout_file_offset(cpu_addr: u16, tileset: u8) -> Option<usize> {
 /// ROM file offset of PRG006 enemy/object data base (CPU $C000).
 const ENEMY_DATA_FILE_BASE: usize = 0x0C010;
 
+/// Enemy segments (by file offset of page flag byte) excluded from randomization.
+/// These levels rely on specific enemy types/counts for gameplay (e.g., enemies
+/// used as platforms in speedtech, where wrong types cause sprite overload).
+pub(super) const PROTECTED_ENEMY_SEGMENTS: &[usize] = &[
+    0x0CA33, // 3-2 (obj 0xCA23): enemies used as platforms, sprite overload risk
+];
+
 /// Check whether the first enemy data segment at `obj_ptr` contains `target_id`.
 ///
 /// Enemy data format: 1-byte page flag, then 3-byte entries `[id, x, y]`,

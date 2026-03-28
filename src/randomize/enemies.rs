@@ -179,9 +179,12 @@ const BIG_Q_BLOCKS: &[u8] = &[
     0x9A, // OBJ_BIGQBLOCK_HAMMER
 ];
 
-/// File offset of the Tanooki Big ? Block in World 7-F1.
-/// This block must NOT be randomized — flying/Tanooki is required to beat the level.
-const W7F1_TANOOKI_OFFSET: usize = 0x0C336;
+/// File offset of the Tanooki Big ? Block in the World 7 Big ? Block room.
+/// This block must NOT be randomized — flying/Tanooki is required to beat 7-F1.
+/// The W7 room is at enemy_ptr 0xC9A3; the Tanooki is the second entry.
+const W7F1_TANOOKI_OFFSET: usize = 0x0C9B7;
+
+use super::rom_data::PROTECTED_ENEMY_SEGMENTS;
 
 /// All swap classes collected for lookup.
 const ALL_CLASSES: &[&[u8]] = &[
@@ -253,6 +256,15 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool) {
         // First non-FF byte after a terminator is the page/flag byte
         let _page_flag = data[i];
         i += 1;
+
+        // Skip entire segment if it's in the protected list
+        let skip_segment = PROTECTED_ENEMY_SEGMENTS.contains(&(ENEMY_DATA_START + i - 1));
+        if skip_segment {
+            while i + 2 < data.len() && data[i] != 0xFF {
+                i += 3;
+            }
+            continue;
+        }
 
         // Now parse 3-byte entries until we hit 0xFF or end of data
         while i + 2 < data.len() && data[i] != 0xFF {
@@ -408,10 +420,10 @@ mod tests {
         ];
         data[seg1_start..seg1_start + seg1.len()].copy_from_slice(seg1);
 
-        // Place the protected 7-F1 Tanooki at its exact file offset
-        // W7F1_TANOOKI_OFFSET = 0x0C336, which is the ID byte of the entry.
+        // Place the protected W7 Big Q Tanooki at its exact file offset
+        // W7F1_TANOOKI_OFFSET = 0x0C9B7, which is the ID byte of the entry.
         // We need: [FF] [page] [0x98, x, y] [0x41, x, y] [FF]
-        // So page byte at 0x0C335, entry at 0x0C336
+        // So page byte at 0x0C9B6, entry at 0x0C9B7
         let w7f1_seg_start = W7F1_TANOOKI_OFFSET - 2; // FF + page byte before the entry
         data[w7f1_seg_start] = 0xFF;
         data[w7f1_seg_start + 1] = 0x01; // page flag
