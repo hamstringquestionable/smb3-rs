@@ -47,7 +47,7 @@ Examples:
    |from the Princess.  |
    ```
 
-6. **After user approval**, append the new entry to the `QUOTES` array in `src/randomize/king_quotes.rs` (before the closing `];`).
+6. **After user approval**, append the new entry to the **standard `QUOTES`** array (the first and largest `&[[&str; 6]]` constant, starting around line 46) in `src/randomize/king_quotes.rs`. Insert it as the last entry before that array's closing `];`. Do NOT add it to the suit-specific arrays (`FROG_QUOTES`, `RACCOON_QUOTES`, `HAMMER_QUOTES`).
 
 7. **Run the tests** to validate: `nix-shell -p gcc --run 'export PATH="$HOME/.cargo/bin:$PATH" && cargo test king_quotes'`
 
