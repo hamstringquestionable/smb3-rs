@@ -1047,7 +1047,7 @@ Pointer tables indexed by World_Num (8 entries each):
 
 **0x19103–0x193D9**: Region between overworld tile grid data and the InitIndex master pointer table (starts at 0x193DA). **WARNING:** 0x19103–0x1910F contains a tile lookup table, and 0x19110+ contains active map screen code (level-entry logic: `ROL $07`, `LDA $073C,X`, etc.). This is NOT free space — writing here corrupts the map screen and crashes on level entry.
 
-**0x19DD0–0x19FFF** (560 bytes): Free space after overworld tile/code region. The Big ? Block trampoline uses 0x19DD0–0x19DE1 (18 bytes). The randomizer stamps a 17-byte identification block at **0x19DF0**:
+**0x19DD0–0x19FFF** (560 bytes): Free space after overworld tile/code region. The randomizer stamps a 17-byte identification block at **0x19DF0**:
 
 | Offset | Size | Content |
 |--------|------|---------|
@@ -1566,7 +1566,7 @@ Original bytes: `EE 27 07 4C A0 84` (INC $0727; JMP $84A0)
 
 The code runs after the king's room cinematic (wand return) when a world boss is defeated. There is no "next world" lookup table in the original ROM — progression is always +1.
 
-**Free space for patches:** PRG030 has unused space at **0x3DF20–0x3DF4F** (CPU $9F10–$9F3F), 48 bytes of $FF.
+**Free space for patches:** PRG030 has unused space at **0x3DF20–0x3DF4F** (CPU $9F10–$9F3F), 48 bytes of $FF. The Big ? Block obj_ptr save trampoline uses 0x3DF20–0x3DF33 (20 bytes).
 
 **Free space (PRG031):** **0x3FFF0–0x40009** (CPU $FFE0–$FFF9), 26 bytes. Originally 3 unused `$FF` bytes + "SUPER MARIO 3" ASCII string + dead padding before the interrupt vectors at $FFFA. Not referenced by any code. The card speed clear trampoline uses all 26 bytes (0x3FFF0–0x40009).
 
@@ -2145,31 +2145,36 @@ A level originally from W3 that gets shuffled into W6 will load W6's bonus room 
 of W3's, because the game indexes by the current `World_Num` ($0727), not by the level's
 identity.
 
-An additional complication: `Level_ObjPtrOrig` ($7EBB/$7EBC), which normally holds the
-entry-point object pointer, gets overwritten by `Level_JctInit` during sub-area junction
-processing. By the time `LevelJct_BigQuestionBlock` runs, the original entry obj_ptr is
-gone — it now holds the sub-area's obj_ptr instead.
+Two complications:
+1. `Level_ObjPtrOrig` ($7EBB/$7EBC) gets overwritten by `Level_JctInit` during sub-area
+   junction processing. By the time `LevelJct_BigQuestionBlock` runs, the original entry
+   obj_ptr is gone.
+2. PRG030's level init at $8948 checks `CPY #$07` (W8) and for W8 specifically overwrites
+   `$65/$66` and `$7EBB/$7EBC` with a hardcoded `$C033`, destroying the real obj_ptr
+   before any bank-specific save code can run.
 
 ### Two-Part Patch
 
-**Part A — Save entry obj_ptr to scratch RAM (PRG012)**
+**Part A — Save entry obj_ptr to scratch RAM (PRG030, fixed bank)**
 
-At the end of `Map_PrepareLevel`, before any junctions can fire, save the entry-point
-`Level_ObjPtrOrig` to scratch RAM at $7EB4/$7EB5.
+During level init in PRG030 (always loaded), save the real obj_ptr from `$65/$66` to
+scratch RAM at $7EB4/$7EB5 before the W8-specific overwrite can destroy it. Using the
+fixed bank ensures this fires for ALL entry paths — normal tile entry, army sprite
+encounters, and any other mechanism.
 
-Hook point: ROM **0x1920B** — replaces `LDA #$03; STA World_EnterState; RTS` (6 bytes)
-with `JMP $BDC0` (3 bytes) + 3 NOPs.
+Hook point: ROM **0x3C958** — replaces `CPY #$07; BNE +$18` (4 bytes) with `JMP $9F10` + NOP.
 
-Trampoline at ROM **0x19DD0** (PRG012 free space, CPU $BDC0), 18 bytes:
+Trampoline at ROM **0x3DF20** (PRG030 free space, CPU $9F10), 20 bytes:
 
 ```
-LDA $7EBB          ; Level_ObjPtrOrig_AddrL
+LDA $65            ; real obj_lo (before W8 overwrite)
 STA $7EB4          ; scratch: saved entry obj_lo
-LDA $7EBC          ; Level_ObjPtrOrig_AddrH
+LDA $66            ; real obj_hi
 STA $7EB5          ; scratch: saved entry obj_hi
-LDA #$03           ; (displaced original code)
-STA $0728          ; World_EnterState
-RTS
+CPY #$07           ; (displaced: W8 check)
+BNE +3             ; non-W8: skip to JMP $8964
+JMP $894C          ; W8 path: continue with overwrite
+JMP $8964          ; non-W8 path: skip overwrite
 ```
 
 **Part B — Lookup routine replaces World_Num indexing (PRG026)**

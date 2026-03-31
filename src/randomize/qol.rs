@@ -23,26 +23,34 @@ const W3_BOAT_ROCK: usize = 0x187DB;
 // Big ? Block bonus room patch: decouple room selection from World_Num.
 //
 // Two-part patch:
-// Part A — PRG012: At the end of Map_PrepareLevel, save the entry-point obj_ptr
-//   to scratch RAM ($7EB4/$7EB5) before any junctions can overwrite ObjPtrOrig.
+// Part A — PRG030 (fixed bank): During level init, save the entry-point obj_ptr
+//   from $65/$66 to scratch RAM ($7EB4/$7EB5) before the W8-specific code at
+//   $894C can overwrite it with a hardcoded $C033. This hook is in the fixed
+//   bank so it fires for ALL entry paths (normal tile, army sprite, etc.).
+//   The old PRG012 hook was insufficient — it only covered Map_PrepareLevel
+//   (enter state #$03) but W8 army sprites use a different path (state #$08).
 // Part B — PRG026: Replace `LDY World_Num` in LevelJct_BigQuestionBlock with a
 //   JSR to a lookup routine that reads the saved obj_ptr from scratch RAM and
 //   maps it to the correct per-world bonus room index.
 
-// Part A: PRG012 trampoline to save entry-point obj_ptr.
-// Replaces `LDA #$03; STA World_EnterState; RTS` (6 bytes) with `JMP $BDC0` + NOPs.
-const BIG_Q_SAVE_HOOK: usize = 0x1920B;
-const BIG_Q_SAVE_JMP: [u8; 6] = [0x4C, 0xC0, 0xBD, 0xEA, 0xEA, 0xEA];
-// Trampoline in PRG012 free space (CPU $BDC0 = file 0x19DD0).
-const BIG_Q_SAVE_OFFSET: usize = 0x19DD0;
-const BIG_Q_SAVE_ROUTINE: [u8; 18] = [
-    0xAD, 0xBB, 0x7E, // LDA Level_ObjPtrOrig_AddrL
-    0x8D, 0xB4, 0x7E, // STA $7EB4  (scratch: entry obj_lo)
-    0xAD, 0xBC, 0x7E, // LDA Level_ObjPtrOrig_AddrH
-    0x8D, 0xB5, 0x7E, // STA $7EB5  (scratch: entry obj_hi)
-    0xA9, 0x03,        // LDA #$03   (original displaced code)
-    0x8D, 0x28, 0x07,  // STA World_EnterState ($0728)
-    0x60,              // RTS
+// Part A: PRG030 (fixed bank) trampoline for level init.
+// Saves the entry-point obj_ptr from $65/$66 to scratch RAM $7EB4/$7EB5.
+// Hooked in PRG030 (always loaded) so it fires for ALL entry paths — normal
+// tile entry, army sprite encounters, and any other mechanism.
+// Replaces `CPY #$07; BNE +$18` (4 bytes) with `JMP $9F10` + NOP.
+const BIG_Q_PRG030_HOOK: usize = 0x3C958;  // file offset of CPY #$07
+const BIG_Q_PRG030_JMP: [u8; 4] = [0x4C, 0x10, 0x9F, 0xEA];
+// Trampoline in PRG030 free space (CPU $9F10 = file 0x3DF20).
+const BIG_Q_PRG030_OFFSET: usize = 0x3DF20;
+const BIG_Q_PRG030_ROUTINE: [u8; 20] = [
+    0xA5, 0x65,        // LDA $65        (real obj_lo, before W8 overwrite)
+    0x8D, 0xB4, 0x7E,  // STA $7EB4
+    0xA5, 0x66,        // LDA $66        (real obj_hi)
+    0x8D, 0xB5, 0x7E,  // STA $7EB5
+    0xC0, 0x07,        // CPY #$07       (displaced: W8 check)
+    0xD0, 0x03,        // BNE +3         (skip JMP for non-W8)
+    0x4C, 0x4C, 0x89,  // JMP $894C      (W8 path: save + overwrite)
+    0x4C, 0x64, 0x89,  // JMP $8964      (non-W8 path: skip overwrite)
 ];
 
 // Part B: PRG026 lookup routine.
@@ -122,9 +130,9 @@ pub fn remove_w3_boat_rock(rom: &mut Rom) {
 /// and maps it to the correct per-world bonus room index. Falls back to World_Num for
 /// levels not in the table (W1/W2 levels don't use Big ? Blocks).
 pub fn fix_big_q_block_rooms(rom: &mut Rom) {
-    // Part A: PRG012 save trampoline
-    rom.write_range(BIG_Q_SAVE_HOOK, &BIG_Q_SAVE_JMP);
-    rom.write_range(BIG_Q_SAVE_OFFSET, &BIG_Q_SAVE_ROUTINE);
+    // Part A: PRG030 save trampoline (saves $65/$66 before W8 overwrite)
+    rom.write_range(BIG_Q_PRG030_HOOK, &BIG_Q_PRG030_JMP);
+    rom.write_range(BIG_Q_PRG030_OFFSET, &BIG_Q_PRG030_ROUTINE);
     // Part B: PRG026 lookup routine
     rom.write_range(BIG_Q_HOOK_OFFSET, &BIG_Q_JSR);
     rom.write_range(BIG_Q_ROUTINE_OFFSET, &BIG_Q_ROUTINE);
@@ -365,16 +373,19 @@ mod tests {
         let mut rom = make_test_rom();
         // Place original bytes at hook points
         rom.write_range(BIG_Q_HOOK_OFFSET, &[0xAC, 0x27, 0x07]);
-        rom.write_range(BIG_Q_SAVE_HOOK, &[0xA9, 0x03, 0x8D, 0x28, 0x07, 0x60]);
+        rom.write_range(BIG_Q_PRG030_HOOK, &[0xC0, 0x07, 0xD0, 0x18]);
 
         fix_big_q_block_rooms(&mut rom);
 
-        // Part A: PRG012 save trampoline
-        assert_eq!(rom.read_range(BIG_Q_SAVE_HOOK, 6), &BIG_Q_SAVE_JMP);
+        // Part A: PRG030 save trampoline
+        assert_eq!(rom.read_range(BIG_Q_PRG030_HOOK, 4), &BIG_Q_PRG030_JMP);
         assert_eq!(
-            rom.read_range(BIG_Q_SAVE_OFFSET, BIG_Q_SAVE_ROUTINE.len()),
-            &BIG_Q_SAVE_ROUTINE
+            rom.read_range(BIG_Q_PRG030_OFFSET, BIG_Q_PRG030_ROUTINE.len()),
+            &BIG_Q_PRG030_ROUTINE
         );
+        // Spot-check: trampoline reads $65 (zp obj_lo)
+        assert_eq!(rom.read_byte(BIG_Q_PRG030_OFFSET), 0xA5);
+        assert_eq!(rom.read_byte(BIG_Q_PRG030_OFFSET + 1), 0x65);
 
         // Part B: PRG026 lookup routine
         assert_eq!(rom.read_range(BIG_Q_HOOK_OFFSET, 3), &BIG_Q_JSR);
