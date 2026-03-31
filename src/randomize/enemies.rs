@@ -383,6 +383,15 @@ const BIG_Q_BLOCKS: &[u8] = &[
 /// The W7 room is at enemy_ptr 0xC9A3; the Tanooki is the second entry.
 const W7F1_TANOOKI_OFFSET: usize = 0x0C9B7;
 
+/// Individual enemy offsets excluded from randomization.
+/// These specific enemies are required for gameplay (e.g., needed as platforms
+/// to make jumps, or positioned to enable required routes).
+const PROTECTED_ENEMY_OFFSETS: &[usize] = &[
+    0x0C465, // 8-1 FlyingRedParatroopa (scr=6, col=14) — needed to reach upper platform
+    0x0CAB1, // 6-3 FlyingRedParatroopa (scr=6, col=13) — needed for jump
+    0x0CAB4, // 6-3 FlyingRedParatroopa (scr=7, col=1) — needed for jump
+];
+
 use super::rom_data::PROTECTED_ENEMY_SEGMENTS;
 
 /// All swap classes collected for lookup.
@@ -529,6 +538,9 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, f
                 {
                     data[entry.data_index] = *BIG_Q_BLOCKS.choose(rng).unwrap();
                 }
+            } else if PROTECTED_ENEMY_OFFSETS.contains(&file_offset) {
+                // Protected individual enemy — keep original but still commit its CHR
+                commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
             } else if let Some(class) = find_class(entry.obj_id, flags) {
                 let compatible: Vec<u8> = class
                     .iter()
