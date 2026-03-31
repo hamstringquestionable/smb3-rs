@@ -286,7 +286,7 @@ const allOptionElements = [
 	optShufflePipes, optShuffleAirships, optChestItems, optRemoveWhistles,
 	optAirshipLock,
 	optFixDrawbridges, optRemoveRocks, optRemoveNCards, optRemoveSpadeGames, optSkipWandCutscene, optAdjustBossHitboxes,
-	optCrazyThwomps, optCrazyCannons, optStartingLives,
+	optBulletBills, optWildThwomps, optWildCannons, optWildRotodiscs, optStartingLives,
 ];
 for (const el of allOptionElements) {
 	el.addEventListener("change", updateFlagKey);
