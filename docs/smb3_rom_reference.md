@@ -1681,13 +1681,17 @@ one rendered wins and the other draws garbled sprites.
 
 | Enemy ID | Name | CHR Page | Slot |
 |----------|------|----------|------|
+| 0x2B | Goomba in Shoe (Kuribo) | $0B | +4 |
 | 0x29 | Spike | $0A | +4 |
 | 0x2A | Patooie | $0A | +4 |
+| 0x2F | Boo (Boo Diddly) | $12 | +4 |
+| 0x30 | Hot Foot (shy) | $12 | +4 |
 | 0x33 | Nipper | $0A | +4 |
 | 0x39 | NipperHopping | $0A | +4 |
 | 0x3F | Dry Bones | $13 | +5 |
 | 0x40 | Buster Beetle | $0A | +4 |
-| 0x55 | Bob-omb | $0A | +4 |
+| 0x45 | Hot Foot | $12 | +4 |
+| 0x55 | Bob-omb | $0B | +4 |
 | 0x61 | Blooper w/ Kids | $1A | +4 |
 | 0x62 | Blooper | $1A | +4 |
 | 0x63 | Big Bertha | $1A | +4 |
@@ -1707,16 +1711,67 @@ one rendered wins and the other draws garbled sprites.
 | 0x7A | Big Green Troopa | $3D | +4 |
 | 0x7B | Big Red Troopa | $3D | +4 |
 | 0x7C | Big Goomba | $3D | +4 |
+| 0x7D | Big Green Piranha | $3D | +4 |
 | 0x7E | Big Green Hopper | $3D | +4 |
+| 0x7F | Big Red Piranha | $3D | +4 |
 | 0x80 | Flying Green Paratroopa | $4F | +5 |
 | 0x81 | Hammer Bro | $4E | +4 |
 | 0x82 | Boomerang Bro | $4E | +4 |
+| 0x83 | Lakitu | $0B | +4 |
 | 0x86 | Heavy Bro | $4E | +4 |
 | 0x87 | Fire Bro | $4E | +4 |
 | 0x88 | Orange Cheep | $4F | +5 |
+| 0x8A | Thwomp | $12 | +4 |
+| 0x8B | Thwomp Left Slide | $12 | +4 |
+| 0x8C | Thwomp Right Slide | $12 | +4 |
+| 0x8D | Thwomp Up/Down | $12 | +4 |
+| 0x8E | Thwomp Diagonal UL | $12 | +4 |
+| 0x8F | Thwomp Diagonal DL | $12 | +4 |
 | 0xA0–0xA7 | Piranha variants | $4F | +5 |
 
-Source: Southbird disassembly `ObjectGroupNN_PatTableSel` tables.
+#### CHR Pages for Non-Swappable Objects (used by two-pass pre-scan)
+
+| Object ID | Name | CHR Page | Slot |
+|-----------|------|----------|------|
+| 0x18 | Bowser | $3A | +4 |
+| 0x24 | Platform Drop | $0E | +4 |
+| 0x26–0x28 | Tilt/Seesaw/Circle Platform | $0E | +4 |
+| 0x2C | Chain Chomp | $0E | +4 |
+| 0x31–0x32 | Stretch Boo variants | $12 | +4 |
+| 0x36–0x38 | Scale/Waterfall Platforms | $0E | +4 |
+| 0x3C | Circle Platform | $0E | +4 |
+| 0x44 | Platform URLL | $0E | +4 |
+| 0x4A | Boom-Boom | $13 | +4 |
+| 0x4B–0x4C | Boom-Boom Fly/Split | $33 | +5 |
+| 0x51 | Rotodisc CW | $12 | +4 |
+| 0x53 | Podoboo | $12 | +4 |
+| 0x54 | Missile Bill | $0E | +4 |
+| 0x58 | Fire Chomp | $0E | +4 |
+| 0x5A–0x5B | Rotodisc CCW/CW2 | $12 | +4 |
+| 0x5E–0x60 | Rotodisc Fast/1.5 | $12 | +4 |
+| 0x90–0x93 | Moving Platforms | $4F | +5 |
+| 0x94–0x9A | Big ? Blocks | $4C | +4 |
+| 0x9D | Podoboo Fire Jet | $37 | +5 |
+| 0x9E | Podoboo Fire Jet 2 | $12 | +4 |
+| 0xA8 | Muncher | $5A | +4 |
+| 0xAC | Fire Jet Upward | $37 | +5 |
+| 0xB1–0xB2 | Fire Jet Down/Right | $37 | +5 |
+
+#### PatTableSel ROM Table Locations
+
+Each object group's PatTableSel table is at offset +0x144 within its PRG bank:
+
+| Group | PRG Bank | File Offset | Object ID Range |
+|-------|----------|-------------|-----------------|
+| 1 | PRG001 | 0x02154 | 0x00–0x23 |
+| 2 | PRG002 | 0x04154 | 0x24–0x47 |
+| 3 | PRG003 | 0x06154 | 0x48–0x6B |
+| 4 | PRG004 | 0x08154 | 0x6C–0x8F |
+| 5 | PRG005 | 0x0A154 | 0x90–0xB3 |
+
+Raw byte encoding: `$00` = NOCHANGE, `$01–$7F` = page for slot +4, `$80–$FF` = `(val & $7F)` for slot +5.
+
+Source: ROM PatTableSel tables, verified against Southbird disassembly.
 
 ---
 
