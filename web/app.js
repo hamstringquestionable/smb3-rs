@@ -56,6 +56,10 @@ const optRemoveNCards = document.getElementById("opt-remove-n-cards");
 const optRemoveSpadeGames = document.getElementById("opt-remove-spade-games");
 const optSkipWandCutscene = document.getElementById("opt-skip-wand-cutscene");
 const optAdjustBossHitboxes = document.getElementById("opt-adjust-boss-hitboxes");
+const optBulletBills = document.getElementById("opt-bullet-bills");
+const optWildThwomps = document.getElementById("opt-wild-thwomps");
+const optWildCannons = document.getElementById("opt-wild-cannons");
+const optWildRotodiscs = document.getElementById("opt-wild-rotodiscs");
 const optStartingLives = document.getElementById("opt-starting-lives");
 const flagKeyInput = document.getElementById("flag-key-input");
 const flagKeyCopyBtn = document.getElementById("flag-key-copy-btn");
@@ -222,6 +226,10 @@ function getCurrentOptionsJson() {
 		remove_spade_games: optRemoveSpadeGames.checked,
 		skip_wand_cutscene: optSkipWandCutscene.checked,
 		adjust_boss_hitboxes: optAdjustBossHitboxes.checked,
+		bullet_bills: optBulletBills.checked,
+		wild_thwomps: optWildThwomps.checked,
+		wild_cannons: optWildCannons.checked,
+		wild_rotodiscs: optWildRotodiscs.checked,
 		starting_lives: Number(optStartingLives.value),
 		disable_autoscroll: true,
 		card_speed_clear: true,
@@ -260,6 +268,10 @@ function applyFlagKey(key) {
 		if (opts.remove_spade_games !== undefined) optRemoveSpadeGames.checked = opts.remove_spade_games;
 		if (opts.skip_wand_cutscene !== undefined) optSkipWandCutscene.checked = opts.skip_wand_cutscene;
 		if (opts.adjust_boss_hitboxes !== undefined) optAdjustBossHitboxes.checked = opts.adjust_boss_hitboxes;
+		if (opts.bullet_bills !== undefined) optBulletBills.checked = opts.bullet_bills;
+		if (opts.wild_thwomps !== undefined) optWildThwomps.checked = opts.wild_thwomps;
+		if (opts.wild_cannons !== undefined) optWildCannons.checked = opts.wild_cannons;
+		if (opts.wild_rotodiscs !== undefined) optWildRotodiscs.checked = opts.wild_rotodiscs;
 		if (opts.starting_lives) optStartingLives.value = opts.starting_lives;
 		updateOverworldColumns();
 		showStatus("Flag key applied!", "success");
@@ -273,7 +285,8 @@ const allOptionElements = [
 	optPowerups, optPalettes, optEnemies, optWorldOrder, optBigQBlocks,
 	optShufflePipes, optShuffleAirships, optChestItems, optRemoveWhistles,
 	optAirshipLock,
-	optFixDrawbridges, optRemoveRocks, optRemoveNCards, optRemoveSpadeGames, optSkipWandCutscene, optAdjustBossHitboxes, optStartingLives,
+	optFixDrawbridges, optRemoveRocks, optRemoveNCards, optRemoveSpadeGames, optSkipWandCutscene, optAdjustBossHitboxes,
+	optCrazyThwomps, optCrazyCannons, optStartingLives,
 ];
 for (const el of allOptionElements) {
 	el.addEventListener("change", updateFlagKey);

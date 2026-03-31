@@ -111,6 +111,22 @@ struct Cli {
     #[arg(long)]
     keep_spade_games: bool,
 
+    /// Shuffle Bullet Bill variants: standard and homing (on by default)
+    #[arg(long)]
+    no_bullet_bills: bool,
+
+    /// Randomize Thwomp movement directions (off by default)
+    #[arg(long)]
+    wild_thwomps: bool,
+
+    /// Randomize cannon fire directions and types (off by default)
+    #[arg(long)]
+    wild_cannons: bool,
+
+    /// Randomize rotodisc rotation directions and variants (off by default)
+    #[arg(long)]
+    wild_rotodiscs: bool,
+
     /// Disable airship lock (anchor effect always on by default, use this flag to disable)
     #[arg(long)]
     no_airship_lock: bool,
@@ -181,6 +197,10 @@ fn main() {
             adjust_boss_hitboxes: !cli.keep_boss_hitboxes,
             remove_spade_games: !cli.keep_spade_games,
             airship_lock: !cli.no_airship_lock,
+            bullet_bills: !cli.no_bullet_bills,
+            wild_thwomps: cli.wild_thwomps,
+            wild_cannons: cli.wild_cannons,
+            wild_rotodiscs: cli.wild_rotodiscs,
             starting_lives: cli.starting_lives,
         }
     };

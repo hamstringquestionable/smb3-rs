@@ -80,6 +80,22 @@ pub struct Options {
     /// Remove spade (card matching) games from the overworld, freeing map slots for levels.
     #[serde(default = "default_true")]
     pub remove_spade_games: bool,
+    /// Shuffle Bullet Bill variants (standard ↔ homing).
+    /// On by default — both are airborne projectiles with similar placement.
+    #[serde(default = "default_true")]
+    pub bullet_bills: bool,
+    /// Randomize Thwomp movement directions (diagonal, sideways, etc.).
+    /// Off by default — random directions don't suit corridors designed for specific patterns.
+    #[serde(default, alias = "crazy_thwomps")]
+    pub wild_thwomps: bool,
+    /// Randomize cannon fire directions and types.
+    /// Off by default — swapped fire directions create chaotic gameplay.
+    #[serde(default, alias = "crazy_cannons")]
+    pub wild_cannons: bool,
+    /// Randomize rotodisc rotation directions and dual/single variants.
+    /// Off by default — rotation direction matters for designed fortress corridors.
+    #[serde(default)]
+    pub wild_rotodiscs: bool,
 }
 
 fn default_false() -> bool {
@@ -90,15 +106,15 @@ fn default_true() -> bool {
     true
 }
 
-const FLAG_KEY_VERSION: u8 = 3;
+const FLAG_KEY_VERSION: u8 = 5;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
 /// Free space in PRG012 after the Big ? Block trampoline (0x19DD0 region).
 /// The trampoline uses 0x19DD0–0x19DE1; we place the 16-byte stamp at 0x19DF0.
 const STAMP_OFFSET: usize = 0x19DF0;
 
 impl Options {
-    /// Encode options into 5 raw bytes.
-    pub fn to_flag_bytes(&self) -> [u8; 5] {
+    /// Encode options into 6 raw bytes.
+    pub fn to_flag_bytes(&self) -> [u8; 6] {
         let level_shuffle_val = match self.level_shuffle {
             LevelShuffle::Off => 0u8,
             LevelShuffle::IntraWorld => 1,
@@ -130,15 +146,20 @@ impl Options {
             | (self.remove_n_cards as u8) << 6
             | (self.skip_wand_cutscene as u8) << 5
             | (self.adjust_boss_hitboxes as u8) << 4
-            | (self.remove_spade_games as u8) << 3;
+            | (self.remove_spade_games as u8) << 3
+            | (self.wild_thwomps as u8) << 2
+            | (self.wild_cannons as u8) << 1;
 
-        [b0, b1, b2, b3, b4]
+        let b5 = (self.bullet_bills as u8) << 7
+            | (self.wild_rotodiscs as u8) << 6;
+
+        [b0, b1, b2, b3, b4, b5]
     }
 
-    /// Encode options into a compact hex flag key (e.g. "SMB3R-03E3B90580").
+    /// Encode options into a compact hex flag key (e.g. "SMB3R-05E3B9058080").
     pub fn to_flag_key(&self) -> String {
-        let [b0, b1, b2, b3, b4] = self.to_flag_bytes();
-        format!("{FLAG_KEY_PREFIX}{b0:02X}{b1:02X}{b2:02X}{b3:02X}{b4:02X}")
+        let [b0, b1, b2, b3, b4, b5] = self.to_flag_bytes();
+        format!("{FLAG_KEY_PREFIX}{b0:02X}{b1:02X}{b2:02X}{b3:02X}{b4:02X}{b5:02X}")
     }
 
     /// Decode a flag key string into Options.
@@ -148,8 +169,8 @@ impl Options {
             .or_else(|| key.strip_prefix("smb3r-"))
             .unwrap_or(key);
 
-        if hex.len() != 8 && hex.len() != 10 {
-            return Err(format!("Flag key must be 8 or 10 hex digits (got {})", hex.len()));
+        if hex.len() != 8 && hex.len() != 10 && hex.len() != 12 {
+            return Err(format!("Flag key must be 8, 10, or 12 hex digits (got {})", hex.len()));
         }
 
         let num_bytes = hex.len() / 2;
@@ -159,7 +180,7 @@ impl Options {
             .map_err(|e| format!("Invalid hex in flag key: {e}"))?;
 
         let version = bytes[0];
-        if version != 1 && version != 2 && version != FLAG_KEY_VERSION {
+        if version < 1 || version > FLAG_KEY_VERSION {
             return Err(format!("Unsupported flag key version {version} (expected {FLAG_KEY_VERSION})"));
         }
 
@@ -203,10 +224,94 @@ impl Options {
                 skip_wand_cutscene: (b4 >> 5) & 1 != 0,
                 adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
                 remove_spade_games: true, // default on for old flag keys
+                bullet_bills: true,
+                wild_thwomps: false,
+                wild_cannons: false,
+                wild_rotodiscs: false,
             });
         }
 
-        // v3 decoding
+        // v3 compat: wild flags default to off
+        if version == 3 {
+            let level_shuffle_val = (b2 >> 1) & 0x03;
+            let level_shuffle = match level_shuffle_val {
+                1 => LevelShuffle::IntraWorld,
+                2 => LevelShuffle::CrossWorld,
+                _ => LevelShuffle::Off,
+            };
+            let starting_lives = b3 & 0x7F;
+            let starting_lives = if starting_lives == 0 { 1 } else { starting_lives };
+            return Ok(Options {
+                powerups: (b1 >> 7) & 1 != 0,
+                palettes: (b1 >> 6) & 1 != 0,
+                enemies: (b1 >> 5) & 1 != 0,
+                world_order: (b1 >> 4) & 1 != 0,
+                big_q_blocks: (b1 >> 3) & 1 != 0,
+                disable_autoscroll: (b1 >> 2) & 1 != 0,
+                airship_lock: (b1 >> 1) & 1 != 0,
+                chest_items: b1 & 1 != 0,
+                remove_whistles: (b2 >> 7) & 1 != 0,
+                map_shuffle: (b2 >> 6) & 1 != 0,
+                shuffle_pipes: (b2 >> 5) & 1 != 0,
+                shuffle_airships: b2 & 1 != 0,
+                fix_drawbridges: (b2 >> 4) & 1 != 0,
+                remove_rocks: (b2 >> 3) & 1 != 0,
+                level_shuffle,
+                starting_lives,
+                card_speed_clear: (b4 >> 7) & 1 != 0,
+                remove_n_cards: (b4 >> 6) & 1 != 0,
+                skip_wand_cutscene: (b4 >> 5) & 1 != 0,
+                adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
+                remove_spade_games: (b4 >> 3) & 1 != 0,
+                bullet_bills: true,
+                wild_thwomps: false,
+                wild_cannons: false,
+                wild_rotodiscs: false,
+            });
+        }
+
+        // v4 compat: bullet_bills/wild_rotodiscs didn't exist
+        if version == 4 {
+            let level_shuffle_val = (b2 >> 1) & 0x03;
+            let level_shuffle = match level_shuffle_val {
+                1 => LevelShuffle::IntraWorld,
+                2 => LevelShuffle::CrossWorld,
+                _ => LevelShuffle::Off,
+            };
+            let starting_lives = b3 & 0x7F;
+            let starting_lives = if starting_lives == 0 { 1 } else { starting_lives };
+
+            return Ok(Options {
+                powerups: (b1 >> 7) & 1 != 0,
+                palettes: (b1 >> 6) & 1 != 0,
+                enemies: (b1 >> 5) & 1 != 0,
+                world_order: (b1 >> 4) & 1 != 0,
+                big_q_blocks: (b1 >> 3) & 1 != 0,
+                disable_autoscroll: (b1 >> 2) & 1 != 0,
+                airship_lock: (b1 >> 1) & 1 != 0,
+                chest_items: b1 & 1 != 0,
+                remove_whistles: (b2 >> 7) & 1 != 0,
+                map_shuffle: (b2 >> 6) & 1 != 0,
+                shuffle_pipes: (b2 >> 5) & 1 != 0,
+                shuffle_airships: b2 & 1 != 0,
+                fix_drawbridges: (b2 >> 4) & 1 != 0,
+                remove_rocks: (b2 >> 3) & 1 != 0,
+                level_shuffle,
+                starting_lives,
+                card_speed_clear: (b4 >> 7) & 1 != 0,
+                remove_n_cards: (b4 >> 6) & 1 != 0,
+                skip_wand_cutscene: (b4 >> 5) & 1 != 0,
+                adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
+                remove_spade_games: (b4 >> 3) & 1 != 0,
+                bullet_bills: true,
+                wild_thwomps: (b4 >> 2) & 1 != 0,
+                wild_cannons: (b4 >> 1) & 1 != 0,
+                wild_rotodiscs: false,
+            });
+        }
+
+        // v5 decoding
+        let b5 = if bytes.len() > 5 { bytes[5] } else { 0x80 }; // default: bullet_bills on
         let level_shuffle_val = (b2 >> 1) & 0x03;
         let level_shuffle = match level_shuffle_val {
             1 => LevelShuffle::IntraWorld,
@@ -238,6 +343,10 @@ impl Options {
             skip_wand_cutscene: (b4 >> 5) & 1 != 0,
             adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
             remove_spade_games: (b4 >> 3) & 1 != 0,
+            bullet_bills: (b5 >> 7) & 1 != 0,
+            wild_thwomps: (b4 >> 2) & 1 != 0,
+            wild_cannons: (b4 >> 1) & 1 != 0,
+            wild_rotodiscs: (b5 >> 6) & 1 != 0,
         })
     }
 }
@@ -265,6 +374,10 @@ impl Default for Options {
             skip_wand_cutscene: true,
             adjust_boss_hitboxes: true,
             remove_spade_games: true,
+            bullet_bills: true,
+            wild_thwomps: false,
+            wild_cannons: false,
+            wild_rotodiscs: false,
             starting_lives: default_starting_lives(),
         }
     }
@@ -312,9 +425,17 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         rom.set_tag("palettes");
         randomize::palettes::randomize(rom, &mut rng);
     }
-    if options.enemies {
+    if options.enemies || options.bullet_bills
+        || options.wild_thwomps || options.wild_cannons || options.wild_rotodiscs
+    {
         rom.set_tag("enemies");
-        randomize::enemies::randomize(rom, &mut rng);
+        randomize::enemies::randomize(rom, &mut rng, &randomize::enemies::EnemyFlags {
+            enemies: options.enemies,
+            bullet_bills: options.bullet_bills,
+            wild_thwomps: options.wild_thwomps,
+            wild_cannons: options.wild_cannons,
+            wild_rotodiscs: options.wild_rotodiscs,
+        });
     }
     if options.world_order {
         rom.set_tag("world_order");
@@ -426,15 +547,15 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
 
     // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 17 bytes:
     //   [0..4]  "S3R\x02" magic + version
-    //   [4..9]  flag key bytes (encoding of Options)
-    //   [9..17] seed (little-endian u64)
+    //   [4..10] flag key bytes (encoding of Options)
+    //   [10..18] seed (little-endian u64)
     rom.set_tag("stamp");
     let flag_bytes = options.to_flag_bytes();
-    let mut stamp = [0u8; 17];
+    let mut stamp = [0u8; 18];
     stamp[0..3].copy_from_slice(b"S3R");
     stamp[3] = FLAG_KEY_VERSION;
-    stamp[4..9].copy_from_slice(&flag_bytes);
-    stamp[9..17].copy_from_slice(&seed.to_le_bytes());
+    stamp[4..10].copy_from_slice(&flag_bytes);
+    stamp[10..18].copy_from_slice(&seed.to_le_bytes());
     rom.write_range(STAMP_OFFSET, &stamp);
 }
 
@@ -566,7 +687,7 @@ mod tests {
         let opts = Options::default();
         let key = opts.to_flag_key();
         assert!(key.starts_with("SMB3R-"));
-        assert_eq!(key.len(), 16); // "SMB3R-" + 10 hex
+        assert_eq!(key.len(), 18); // "SMB3R-" + 12 hex
         let decoded = Options::from_flag_key(&key).unwrap();
         assert_eq!(opts.powerups, decoded.powerups);
         assert_eq!(opts.palettes, decoded.palettes);
@@ -614,6 +735,10 @@ mod tests {
             skip_wand_cutscene: true,
             adjust_boss_hitboxes: true,
             remove_spade_games: true,
+            bullet_bills: true,
+            wild_thwomps: true,
+            wild_cannons: true,
+            wild_rotodiscs: true,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
@@ -627,6 +752,10 @@ mod tests {
         assert_eq!(opts.remove_n_cards, decoded.remove_n_cards);
         assert_eq!(opts.skip_wand_cutscene, decoded.skip_wand_cutscene);
         assert_eq!(opts.remove_spade_games, decoded.remove_spade_games);
+        assert_eq!(opts.bullet_bills, decoded.bullet_bills);
+        assert_eq!(opts.wild_thwomps, decoded.wild_thwomps);
+        assert_eq!(opts.wild_cannons, decoded.wild_cannons);
+        assert_eq!(opts.wild_rotodiscs, decoded.wild_rotodiscs);
     }
 
     #[test]
@@ -653,6 +782,10 @@ mod tests {
             skip_wand_cutscene: false,
             adjust_boss_hitboxes: false,
             remove_spade_games: false,
+            bullet_bills: false,
+            wild_thwomps: false,
+            wild_cannons: false,
+            wild_rotodiscs: false,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
@@ -663,6 +796,10 @@ mod tests {
         assert!(!decoded.map_shuffle);
         assert!(!decoded.shuffle_airships);
         assert!(!decoded.remove_spade_games);
+        assert!(!decoded.bullet_bills);
+        assert!(!decoded.wild_thwomps);
+        assert!(!decoded.wild_cannons);
+        assert!(!decoded.wild_rotodiscs);
         assert_eq!(decoded.starting_lives, 1);
         assert_eq!(decoded.level_shuffle, LevelShuffle::Off);
     }
