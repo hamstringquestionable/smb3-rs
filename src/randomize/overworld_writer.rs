@@ -600,7 +600,8 @@ fn write_pointer_entries(
         let already_has_entry: HashSet<(usize, usize)> = catalog.entries.iter()
             .filter(|e| e.world_idx == world_idx && !matches!(e.kind,
                 NodeKind::Level | NodeKind::Fortress { .. }
-                | NodeKind::Pipe { .. } | NodeKind::HammerBro))
+                | NodeKind::Pipe { .. } | NodeKind::HammerBro
+                | NodeKind::BonusGame))
             .map(|e| e.grid_pos)
             .collect();
         let mut uncovered_blanks: Vec<(usize, usize)> = Vec::new();
@@ -1117,6 +1118,67 @@ mod tests {
                     wi + 1, key.0, key.1, key.2, prev.0, prev.1, prev.2,
                 );
                 prev = key;
+            }
+        }
+    }
+
+    /// Every BFS-reachable blank tile must have a pointer table entry after
+    /// writing. Uncovered blanks crash the game when the player walks onto them.
+    #[test]
+    fn test_no_uncovered_blank_nodes() {
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+        let catalog = super::super::node_catalog::NodeCatalog::build(&rom);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+
+        for seed in [42u64, 123, 999, 7777, 31337] {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let build = super::super::overworld_build::build(&rom, &pickup, &catalog, &mut rng);
+
+            let mut test_rom = rom.clone();
+            super::super::qol::fix_w3_drawbridges(&mut test_rom);
+            super::super::qol::remove_w2_rock(&mut test_rom);
+            super::super::qol::remove_w3_boat_rock(&mut test_rom);
+            super::super::qol::fix_big_q_block_rooms(&mut test_rom);
+            write_overworld(&mut test_rom, &build, &pickup, &catalog, &mut rng, true);
+
+            let pipes_by_world = rom_data::read_pipe_pairs(&test_rom);
+
+            for wi in 0..8 {
+                let grid = rom_data::read_tile_grid(&test_rom, wi);
+                let pipe_pairs = pipes_by_world.get(&wi)
+                    .cloned()
+                    .unwrap_or_default();
+                let walk = super::super::map_walker::walk_map(&grid, &pipe_pairs, None);
+
+                // Collect positions that have pointer table entries.
+                let world = &WORLDS[wi];
+                let mut covered: HashSet<(usize, usize)> = HashSet::new();
+                for i in 0..world.entry_count {
+                    let pos = rom_data::entry_grid_position(&test_rom, world, i);
+                    if pos.0 < grid.rows {
+                        covered.insert(pos);
+                    }
+                }
+
+                // Every reachable blank tile must be covered.
+                for &node in &walk.nodes {
+                    let (r, c) = node;
+                    if r >= grid.rows || c >= grid.cols {
+                        continue;
+                    }
+                    let tile = grid.get(r, c);
+                    if !rom_data::VALID_BLANK_TILES.contains(&tile) {
+                        continue;
+                    }
+                    assert!(
+                        covered.contains(&node),
+                        "seed {seed} W{}: uncovered blank tile ${tile:02X} at ({r},{c})",
+                        wi + 1,
+                    );
+                }
             }
         }
     }

@@ -2460,7 +2460,7 @@ def render_level_lookup(rom, query):
 
 def render_check_map(rom, world_idx, pipe_pairs, uncovered_set):
     """Render a world map highlighting uncovered blank nodes in red."""
-    steps = simulate_progression(rom, world_idx, pipe_pairs, traverse_rocks=traverse_rocks)
+    steps = simulate_progression(rom, world_idx, pipe_pairs, traverse_rocks=True)
     _, entry_lookup = build_entry_lookup(rom, world_idx)
 
     seen = set()
