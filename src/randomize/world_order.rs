@@ -18,11 +18,9 @@ const WORLD_INIT_OPERAND: usize = 0x30CC3;
 /// clears $0160 to zero on power-on, so it's safe to skip this write.
 const DEBUG_FLAG_STA_OFFSET: usize = 0x30CC7;
 
-/// Free space in PRG030 for our lookup routine + table.
-/// File offset 0x3DF20 = CPU $9F10 (PRG030 mapped at $8000).
-/// Uses 28 bytes: 0x3DF20–0x3DF3B (12 routine + 8 next-world + 8 display).
-/// NOTE: qol.rs Big Q Block trampoline starts at 0x3DF3C — do not overlap!
-const ROUTINE_OFFSET: usize = 0x3DF20;
+/// Free space in PRG030 — offset from rom_data::FS_WORLD_ORDER.
+/// Uses 28 bytes: 12 routine + 8 next-world table + 8 display table.
+const ROUTINE_OFFSET: usize = super::rom_data::FS_WORLD_ORDER;
 
 /// CPU address of the routine in free space.
 const ROUTINE_CPU: u16 = 0x9F10;

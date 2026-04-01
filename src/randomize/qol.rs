@@ -40,9 +40,8 @@ const W3_BOAT_ROCK: usize = 0x187DB;
 // Replaces `CPY #$07; BNE +$18` (4 bytes) with `JMP $9F2C` + NOP.
 const BIG_Q_PRG030_HOOK: usize = 0x3C958;  // file offset of CPY #$07
 const BIG_Q_PRG030_JMP: [u8; 4] = [0x4C, 0x2C, 0x9F, 0xEA];
-// Trampoline in PRG030 free space (CPU $9F2C = file 0x3DF3C).
-// NOTE: 0x3DF20 ($9F10) is used by world_order.rs — do not overlap!
-const BIG_Q_PRG030_OFFSET: usize = 0x3DF3C;
+// Trampoline in PRG030 free space — offset from rom_data::FS_BIG_Q_SAVE.
+use super::rom_data::FS_BIG_Q_SAVE as BIG_Q_PRG030_OFFSET;
 const BIG_Q_PRG030_ROUTINE: [u8; 20] = [
     0xA5, 0x65,        // LDA $65        (real obj_lo, before W8 overwrite)
     0x8D, 0xB4, 0x7E,  // STA $7EB4
@@ -58,8 +57,8 @@ const BIG_Q_PRG030_ROUTINE: [u8; 20] = [
 // Hook point: replace `LDY $0727` with `JSR $B520` in LevelJct_BigQuestionBlock.
 const BIG_Q_HOOK_OFFSET: usize = 0x349F9;
 const BIG_Q_JSR: [u8; 3] = [0x20, 0x20, 0xB5];
-// Lookup routine in PRG026 free space (CPU $B520 = file 0x35530).
-const BIG_Q_ROUTINE_OFFSET: usize = 0x35530;
+// Lookup routine in PRG026 free space — offset from rom_data::FS_BIG_Q_LOOKUP.
+use super::rom_data::FS_BIG_Q_LOOKUP as BIG_Q_ROUTINE_OFFSET;
 // Reads saved entry-point obj_ptr from $7EB4/$7EB5 (not ObjPtrOrig which
 // gets overwritten by sub-area junctions). Falls back to World_Num for
 // levels not in the table (W1/W2 levels don't use Big ? Blocks).
@@ -159,10 +158,10 @@ pub fn fix_big_q_block_rooms(rom: &mut Rom) {
 // Original 5 bytes: LDA $7D9E,Y (B9 9E 7D); BEQ $BCFF (F0 22)
 const CARD_HOOK: usize = 0x05CE8;
 
-// Trampoline in PRG031 dead space: CPU $FFE0 (file 0x3FFF0)
+// Trampoline in PRG031 dead space — offset from rom_data::FS_CARD_CLEAR.
 // Overwrites 3 unused $FF bytes + "SUPER MARIO 3" string + dead padding.
 // 26 bytes available ($FFE0-$FFF9), routine uses 26.
-const CARD_TRAMPOLINE: usize = 0x3FFF0;
+use super::rom_data::FS_CARD_CLEAR as CARD_TRAMPOLINE;
 
 // Bank 9 map-screen tables (belt-and-suspenders)
 const CARD_LIVES_AWARD: usize = 0x12017; // $A000[7]
@@ -266,9 +265,9 @@ pub fn fix_canoe_softlock(rom: &mut Rom) {
     // Record 2: Boundary check adjustment at 0x14F23 (PRG010, CPU $CF13)
     rom.write_range(0x14F23, &[0xE0, 0xDD]);
 
-    // Record 3: New subroutine at 0x15DF0 (PRG010 free space, CPU $DDE0)
+    // Record 3: New subroutine in PRG010 free space (rom_data::FS_CANOE_RESPAWN)
     // Saves player map position as death respawn point when entering via canoe ($4B)
-    rom.write_range(0x15DF0, &[
+    rom.write_range(super::rom_data::FS_CANOE_RESPAWN, &[
         0x20, 0xFE, 0xD1, // JSR $D1FE  (original routine)
         0xC9, 0x4B,       // CMP #$4B   (canoe state?)
         0xD0, 0x1B,       // BNE +27    (skip if not canoe)
@@ -289,10 +288,10 @@ pub fn fix_canoe_softlock(rom: &mut Rom) {
     // Record 4: Hook at 0x1623F (PRG011, CPU $A22F) → JSR $BCF0 (canoe backup)
     rom.write_range(0x1623F, &[0x20, 0xF0, 0xBC, 0xEA, 0xEA]);
 
-    // Record 5: Canoe backup/restore subroutines at 0x17D00 (PRG011 free space, CPU $BCF0)
+    // Record 5: Canoe backup/restore subroutines in PRG011 free space (rom_data::FS_CANOE_BACKUP)
     // Part A ($BCF0): backs up 3 map data values before canoe overwrites them
     // Part B ($BD0C): restores backed-up values when canoe interaction ends
-    rom.write_range(0x17D00, &[
+    rom.write_range(super::rom_data::FS_CANOE_BACKUP, &[
         // Part A: backup on canoe load
         0xC9, 0x10,       // CMP #$10   (canoe obj ID)
         0xD0, 0x12,       // BNE +18    (skip if not canoe)

@@ -817,7 +817,7 @@ fn patch_fortress_fx_screen_check(rom: &mut Rom) {
     //   else → animate
     //
     // Other → skip
-    const CODE_OFFSET: usize = 0x15554;
+    const CODE_OFFSET: usize = rom_data::FS_FX_SCREEN_CHECK;
     #[rustfmt::skip]
     let code: &[u8] = &[
         // Load lock screen number.

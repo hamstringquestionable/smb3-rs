@@ -569,7 +569,7 @@ const RACCOON_QUOTE_OFFSET: usize = 0x363B4;
 const HAMMER_QUOTE_OFFSET: usize = 0x3642C;
 
 /// Free space in PRG027 for standard quote data + ASM hook.
-const KING_QUOTE_BASE: usize = 0x379D9;
+const KING_QUOTE_BASE: usize = super::rom_data::FS_KING_QUOTES;
 
 /// PRG027 file offset 0x36010 maps to CPU $A000.
 fn cpu_addr(file_offset: usize) -> u16 {
