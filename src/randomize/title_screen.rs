@@ -31,11 +31,11 @@ const PALETTES: [u8; 2] = [0x00, 0x02];
 /// Hook: replace JSR $B7D6 at CPU $97B1 with JMP $E914.
 const HOOK_OFFSET: usize = 0x317B1;
 
-/// PRG031 free space for the sprite copy routine (CPU $E914).
-const ROUTINE_OFFSET: usize = 0x3E924;
+/// PRG031 free space for the sprite copy routine — from rom_data::FS_SEED_HASH_ROUTINE.
+const ROUTINE_OFFSET: usize = super::rom_data::FS_SEED_HASH_ROUTINE;
 
-/// Sprite data table immediately after the routine (CPU $E92D).
-const DATA_OFFSET: usize = 0x3E93D;
+/// Sprite data table immediately after the routine — from rom_data::FS_SEED_HASH_DATA.
+const DATA_OFFSET: usize = super::rom_data::FS_SEED_HASH_DATA;
 const DATA_CPU_LO: u8 = 0x2D;
 const DATA_CPU_HI: u8 = 0xE9;
 
@@ -43,7 +43,7 @@ const DATA_CPU_HI: u8 = 0xE9;
 /// during init, after the zero-page clear. Title_State is at zero-page $DE.
 /// We hook STA $0736 at file 0x308E2 → JSR $E955 (free space after sprite data).
 const INTRO_SKIP_HOOK_OFFSET: usize = 0x308E2;
-const INTRO_SKIP_ROUTINE_OFFSET: usize = 0x3E965; // CPU $E955
+const INTRO_SKIP_ROUTINE_OFFSET: usize = super::rom_data::FS_INTRO_SKIP;
 
 /// Sprite positions: vertical column in top-left corner, inset from edge.
 const X_LEFT: u8 = 16;

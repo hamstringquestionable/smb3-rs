@@ -9,6 +9,68 @@ use crate::rom::Rom;
 
 
 // ---------------------------------------------------------------------------
+// Free space registry
+// ---------------------------------------------------------------------------
+//
+// Central registry of all free space allocations where we write assembled code
+// or data tables into the ROM. Every module that needs free space MUST define
+// its allocation here — never use a local constant for a free space offset.
+//
+// Before adding a new allocation:
+//   1. Check this list for the target bank
+//   2. Pick an address after the last allocation in that bank
+//   3. Run `cargo test` — the overlap test will catch mistakes
+
+/// Free space allocation: (file_offset, size_bytes, label).
+/// The overlap test checks that no two allocations in this list share any bytes.
+#[cfg(test)]
+const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
+    // PRG030 (fixed bank, always mapped $8000–$9FFF, file 0x3C010)
+    (0x3DF20, 28, "world_order: routine + tables"),
+    (0x3DF3C, 20, "big_q_block: save obj_ptr trampoline"),
+    // PRG031 (always mapped $E000–$FFFF, file 0x3E010)
+    (0x3E924, 25, "title_screen: sprite copy routine"),
+    (0x3E93D, 40, "title_screen: sprite data table"),
+    (0x3E965,  8, "title_screen: intro skip routine"),
+    (0x3FFF0, 26, "card_speed_clear: XOR trampoline"),
+    // PRG026 (file 0x34010, CPU $A000–$BFFF)
+    (0x35530, 66, "big_q_block: lookup routine + tables"),
+    // PRG027 (file 0x36010, CPU $A000–$BFFF)
+    (0x379D9, 894, "king_quotes: 7 quotes + hook (7×120 + 54)"),
+    // PRG010 (file 0x14010, CPU $A000–$BFFF during map)
+    (0x15554, 67, "fx_screen_check: cross-screen lock patch"),
+    (0x15DF0, 35, "canoe_fix: death respawn position save"),
+    // PRG011 (file 0x16010, CPU $A000–$BFFF during map)
+    (0x17D00, 59, "canoe_fix: backup/restore subroutines"),
+];
+
+// Individual constants for use by each module.
+
+// PRG030
+pub(super) const FS_WORLD_ORDER: usize       = 0x3DF20; // 28 bytes
+pub(super) const FS_BIG_Q_SAVE: usize        = 0x3DF3C; // 20 bytes
+
+// PRG031
+pub(super) const FS_SEED_HASH_ROUTINE: usize = 0x3E924; // 25 bytes
+pub(super) const FS_SEED_HASH_DATA: usize    = 0x3E93D; // 40 bytes
+pub(super) const FS_INTRO_SKIP: usize        = 0x3E965; //  8 bytes
+pub(super) const FS_CARD_CLEAR: usize        = 0x3FFF0; // 26 bytes
+
+// PRG026
+pub(super) const FS_BIG_Q_LOOKUP: usize      = 0x35530; // 66 bytes
+
+// PRG027
+pub(super) const FS_KING_QUOTES: usize       = 0x379D9; // 894 bytes
+
+// PRG010
+pub(super) const FS_FX_SCREEN_CHECK: usize   = 0x15554; // 67 bytes
+pub(super) const FS_CANOE_RESPAWN: usize     = 0x15DF0; // 35 bytes
+
+// PRG011
+pub(super) const FS_CANOE_BACKUP: usize      = 0x17D00; // 59 bytes
+
+
+// ---------------------------------------------------------------------------
 // Tile constants
 // ---------------------------------------------------------------------------
 
@@ -826,4 +888,44 @@ pub(super) fn read_hb_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usiz
     }
 
     positions
+}
+
+// ---------------------------------------------------------------------------
+// Free space overlap test
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod free_space_tests {
+    use super::*;
+
+    #[test]
+    fn test_free_space_no_overlap() {
+        for (i, &(a_off, a_sz, a_label)) in FREE_SPACE_ALLOCATIONS.iter().enumerate() {
+            let a_end = a_off + a_sz;
+            for &(b_off, b_sz, b_label) in &FREE_SPACE_ALLOCATIONS[i + 1..] {
+                let b_end = b_off + b_sz;
+                assert!(
+                    a_end <= b_off || b_end <= a_off,
+                    "free space overlap: '{}' (0x{:05X}..0x{:05X}) vs '{}' (0x{:05X}..0x{:05X})",
+                    a_label, a_off, a_end, b_label, b_off, b_end,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_free_space_constants_match_registry() {
+        let offsets: Vec<usize> = FREE_SPACE_ALLOCATIONS.iter().map(|&(o, _, _)| o).collect();
+        assert!(offsets.contains(&FS_WORLD_ORDER));
+        assert!(offsets.contains(&FS_BIG_Q_SAVE));
+        assert!(offsets.contains(&FS_SEED_HASH_ROUTINE));
+        assert!(offsets.contains(&FS_SEED_HASH_DATA));
+        assert!(offsets.contains(&FS_INTRO_SKIP));
+        assert!(offsets.contains(&FS_CARD_CLEAR));
+        assert!(offsets.contains(&FS_BIG_Q_LOOKUP));
+        assert!(offsets.contains(&FS_KING_QUOTES));
+        assert!(offsets.contains(&FS_FX_SCREEN_CHECK));
+        assert!(offsets.contains(&FS_CANOE_RESPAWN));
+        assert!(offsets.contains(&FS_CANOE_BACKUP));
+    }
 }
