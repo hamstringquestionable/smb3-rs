@@ -37,11 +37,12 @@ const W3_BOAT_ROCK: usize = 0x187DB;
 // Saves the entry-point obj_ptr from $65/$66 to scratch RAM $7EB4/$7EB5.
 // Hooked in PRG030 (always loaded) so it fires for ALL entry paths — normal
 // tile entry, army sprite encounters, and any other mechanism.
-// Replaces `CPY #$07; BNE +$18` (4 bytes) with `JMP $9F10` + NOP.
+// Replaces `CPY #$07; BNE +$18` (4 bytes) with `JMP $9F2C` + NOP.
 const BIG_Q_PRG030_HOOK: usize = 0x3C958;  // file offset of CPY #$07
-const BIG_Q_PRG030_JMP: [u8; 4] = [0x4C, 0x10, 0x9F, 0xEA];
-// Trampoline in PRG030 free space (CPU $9F10 = file 0x3DF20).
-const BIG_Q_PRG030_OFFSET: usize = 0x3DF20;
+const BIG_Q_PRG030_JMP: [u8; 4] = [0x4C, 0x2C, 0x9F, 0xEA];
+// Trampoline in PRG030 free space (CPU $9F2C = file 0x3DF3C).
+// NOTE: 0x3DF20 ($9F10) is used by world_order.rs — do not overlap!
+const BIG_Q_PRG030_OFFSET: usize = 0x3DF3C;
 const BIG_Q_PRG030_ROUTINE: [u8; 20] = [
     0xA5, 0x65,        // LDA $65        (real obj_lo, before W8 overwrite)
     0x8D, 0xB4, 0x7E,  // STA $7EB4
