@@ -135,13 +135,35 @@ const THWOMPS: &[u8] = &[
     0x8F, // OBJ_THWOMPDIAGONALDL
 ];
 
-/// Cannon fire variants (OBJ_CFIRE_*) — 21 types covering cannons, pipe launchers,
-/// and projectile emitters in various directions. Behind the `wild_cannons` flag
-/// (off by default) because swapping fire directions creates chaotic gameplay.
-const CANNONS: &[u8] = &[
-    0xBC, 0xBD, 0xBE, 0xBF, 0xC0, 0xC1, 0xC2, 0xC3,
-    0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB,
-    0xCC, 0xCD, 0xCE, 0xCF, 0xD0,
+/// Cannon-spawned Bullet Bill and Missile Bill. Separate from standalone
+/// BULLET_BILLS (0x78/0x79) because these require a cannon tile to spawn.
+const CFIRE_BILLS: &[u8] = &[
+    0xBC, // OBJ_CFIRE_BULLETBILL
+    0xBD, // OBJ_CFIRE_MISSILEBILL
+];
+
+/// Cannon fire that travels RIGHT. Behind `wild_cannons`.
+const CFIRE_RIGHT: &[u8] = &[
+    0xC3, // OBJ_CFIRE_HCANNON_R
+    0xCD, // OBJ_CFIRE_PPLANT_RIGHTFIRE
+];
+
+/// Cannon fire that travels LEFT. Behind `wild_cannons`.
+const CFIRE_LEFT: &[u8] = &[
+    0xC4, // OBJ_CFIRE_HCANNON_L
+    0xCC, // OBJ_CFIRE_PPLANT_LEFTFIRE
+];
+
+/// Cannon fire that travels UP. Behind `wild_cannons`.
+const CFIRE_UP: &[u8] = &[
+    0xC5, // OBJ_CFIRE_VCANNON_U
+    0xCA, // OBJ_CFIRE_PPLANT_UPFIRE
+];
+
+/// Cannon fire that travels DOWN. Behind `wild_cannons`.
+const CFIRE_DOWN: &[u8] = &[
+    0xC6, // OBJ_CFIRE_VCANNON_D
+    0xCB, // OBJ_CFIRE_PPLANT_DOWNFIRE
 ];
 
 /// Bullet Bill variants — standard and homing. Behind the `bullet_bills` flag
@@ -424,8 +446,12 @@ fn find_class(id: u8, flags: &EnemyFlags) -> Option<&'static [u8]> {
     if flags.wild_thwomps && THWOMPS.contains(&id) {
         return Some(THWOMPS);
     }
-    if flags.wild_cannons && CANNONS.contains(&id) {
-        return Some(CANNONS);
+    if flags.wild_cannons {
+        if CFIRE_BILLS.contains(&id) { return Some(CFIRE_BILLS); }
+        if CFIRE_RIGHT.contains(&id) { return Some(CFIRE_RIGHT); }
+        if CFIRE_LEFT.contains(&id)  { return Some(CFIRE_LEFT); }
+        if CFIRE_UP.contains(&id)    { return Some(CFIRE_UP); }
+        if CFIRE_DOWN.contains(&id)  { return Some(CFIRE_DOWN); }
     }
     if flags.wild_rotodiscs && ROTODISCS.contains(&id) {
         return Some(ROTODISCS);
