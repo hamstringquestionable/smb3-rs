@@ -1318,6 +1318,15 @@ a single frame.
 | $12 | Map_Scroll_XHi | Scroll screen / page number (0–3), updated with $FD |
 | $FC | Map_Scroll_Y | PPU vertical scroll, written to $2005 (second write) |
 
+**PRG030 free space usage (file 0x3DF20+ / CPU $9F10+):**
+
+PRG030 is the fixed bank, always mapped at $8000–$9FFF. Free space starts at 0x3DF20.
+
+| Offset | Size | CPU | Purpose |
+|--------|------|-----|---------|
+| 0x3DF20 | 28 | $9F10 | World order: lookup routine (12) + next-world table (8) + display table (8) |
+| 0x3DF3C | 20 | $9F2C | Big ? Block: save obj_ptr trampoline (level init hook) |
+
 **PRG010 free space usage (file 0x15554 / CPU $D544):**
 
 | Offset | Size | Purpose |
@@ -2162,9 +2171,9 @@ scratch RAM at $7EB4/$7EB5 before the W8-specific overwrite can destroy it. Usin
 fixed bank ensures this fires for ALL entry paths — normal tile entry, army sprite
 encounters, and any other mechanism.
 
-Hook point: ROM **0x3C958** — replaces `CPY #$07; BNE +$18` (4 bytes) with `JMP $9F10` + NOP.
+Hook point: ROM **0x3C958** — replaces `CPY #$07; BNE +$18` (4 bytes) with `JMP $9F2C` + NOP.
 
-Trampoline at ROM **0x3DF20** (PRG030 free space, CPU $9F10), 20 bytes:
+Trampoline at ROM **0x3DF3C** (PRG030 free space, CPU $9F2C), 20 bytes:
 
 ```
 LDA $65            ; real obj_lo (before W8 overwrite)
