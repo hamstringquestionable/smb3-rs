@@ -25,6 +25,55 @@ use super::rom_data::{
 
 
 // ---------------------------------------------------------------------------
+// Hammer bro pool interleaving
+// ---------------------------------------------------------------------------
+
+/// Reorder HB level entries so unique `obj_ptr` values are evenly interleaved.
+///
+/// Without this, the cycling pool is dominated by entries sharing `obj_ptr`
+/// 0xC640 (8 of 13 entries), causing most HB encounters to have identical
+/// enemies. Interleaving ensures each unique enemy set appears once before
+/// any repeats: round-robin through obj_ptr groups, picking a random layout
+/// variant from each group per round.
+fn interleave_hb_by_obj_ptr<R: Rng>(
+    levels: Vec<rom_data::LevelEntry>,
+    rng: &mut R,
+) -> Vec<rom_data::LevelEntry> {
+    if levels.is_empty() {
+        return levels;
+    }
+
+    // Group by obj_ptr using BTreeMap for deterministic iteration order.
+    let mut groups: std::collections::BTreeMap<u16, Vec<rom_data::LevelEntry>> =
+        std::collections::BTreeMap::new();
+    for le in levels {
+        let obj = u16::from_le_bytes([le.obj_lo, le.obj_hi]);
+        groups.entry(obj).or_default().push(le);
+    }
+
+    // Shuffle within each group and collect group keys in random order.
+    let mut keys: Vec<u16> = groups.keys().copied().collect();
+    keys.as_mut_slice().shuffle(rng);
+    for group in groups.values_mut() {
+        group.as_mut_slice().shuffle(rng);
+    }
+
+    // Round-robin: pick one from each group per round until all exhausted.
+    let max_len = groups.values().map(|g| g.len()).max().unwrap_or(0);
+    let mut result = Vec::new();
+    for round in 0..max_len {
+        for &key in &keys {
+            let group = groups.get(&key).unwrap();
+            if round < group.len() {
+                result.push(group[round].clone());
+            }
+        }
+    }
+
+    result
+}
+
+// ---------------------------------------------------------------------------
 // W8 army sprite slots
 // ---------------------------------------------------------------------------
 
@@ -98,7 +147,7 @@ pub(crate) fn write_overworld<R: Rng>(
     rng: &mut R,
     cross_world: bool,
 ) {
-    let assignments = assign_pool(build, pickup, catalog, rng, cross_world);
+    let assignments = assign_pool(rom, build, pickup, catalog, rng, cross_world);
 
     // Compute W8 army sprite target positions before writing tiles,
     // so write_tile_grid can stamp connectivity-aware blank tiles under the sprites.
@@ -106,9 +155,8 @@ pub(crate) fn write_overworld<R: Rng>(
     let w8_sprite_pos_set: HashSet<(usize, usize)> =
         w8_sprite_positions.iter().map(|&(_, pos)| pos).collect();
 
-    // Cycling HB level pool for fallback pointer table entries.
-    let mut hb_fallback_levels = catalog.unique_hammer_bro_levels();
-    hb_fallback_levels.sort_by_key(|le| u16::from_le_bytes([le.obj_lo, le.obj_hi]));
+    // Cycling HB level pool for fallback pointer table entries (same interleaving).
+    let hb_fallback_levels = interleave_hb_by_obj_ptr(catalog.unique_hammer_bro_levels(), rng);
     let mut hb_fallback_iter = hb_fallback_levels.iter().cycle().cloned();
 
     let mut fx_slot = 0usize;
@@ -137,6 +185,7 @@ pub(crate) fn write_overworld<R: Rng>(
 // ---------------------------------------------------------------------------
 
 fn assign_pool<R: Rng>(
+    rom: &Rom,
     build: &BuildResult,
     pickup: &PickupResult,
     catalog: &NodeCatalog,
@@ -172,10 +221,25 @@ fn assign_pool<R: Rng>(
         }
     }
 
-    // Build cycling hammer bro level pool (unique real levels, shuffled).
-    let mut hb_levels = catalog.unique_hammer_bro_levels();
-    hb_levels.as_mut_slice().shuffle(rng);
+    // Build cycling hammer bro level pool, interleaved by obj_ptr so each
+    // unique enemy set appears once before any repeats.
+    let hb_levels = interleave_hb_by_obj_ptr(catalog.unique_hammer_bro_levels(), rng);
     let mut hb_level_iter = hb_levels.iter().cycle().cloned();
+
+    // Build per-obj_ptr groups for sprite position round-robin assignment.
+    // This ensures each HB sprite encounter in a world gets a different
+    // enemy set (different obj_ptr = different enemies).
+    let mut hb_obj_groups: std::collections::BTreeMap<u16, Vec<rom_data::LevelEntry>> =
+        std::collections::BTreeMap::new();
+    for le in &hb_levels {
+        let obj = u16::from_le_bytes([le.obj_lo, le.obj_hi]);
+        hb_obj_groups.entry(obj).or_default().push(le.clone());
+    }
+    let mut hb_group_keys: Vec<u16> = hb_obj_groups.keys().copied().collect();
+    hb_group_keys.as_mut_slice().shuffle(rng);
+    for group in hb_obj_groups.values_mut() {
+        group.as_mut_slice().shuffle(rng);
+    }
 
     // --- Pre-assign the 1-F fortress to a secret-exit-safe slot ---
     //
@@ -343,19 +407,45 @@ fn assign_pool<R: Rng>(
         //
         // Every SlotKind::HammerBro position gets a cycling HB level, up to
         // the remaining pointer table capacity after level-like assignments.
+        //
+        // Sprite positions (actual encounters the player fights) get a
+        // dedicated per-obj_ptr round-robin so each encounter in a world
+        // has a different enemy set. Filler positions (blank tiles needing
+        // valid pointer entries) use the normal cycling pool.
         let level_like_count = fortress.len() + level.len() + pipes.len() * 2;
         let remaining_slots = pickup.worlds[wi].pool_indices.len().saturating_sub(level_like_count);
 
-        let mut hammer_bro = Vec::new();
+        let sprite_positions: HashSet<(usize, usize)> =
+            rom_data::read_hb_sprite_positions(rom, wi).into_iter().collect();
+
+        let mut sprite_slots = Vec::new();
+        let mut filler_slots = Vec::new();
         for slot in &built.slots {
-            if hammer_bro.len() >= remaining_slots {
-                break;
+            if slot.kind != SlotKind::HammerBro { continue; }
+            if sprite_positions.contains(&slot.pos) {
+                sprite_slots.push(slot.pos);
+            } else {
+                filler_slots.push(slot.pos);
             }
-            if slot.kind != SlotKind::HammerBro {
-                continue;
-            }
+        }
+
+        // Assign sprite slots from per-obj_ptr round-robin.
+        let mut hammer_bro = Vec::new();
+        let mut sprite_obj_idx = 0usize;
+        for pos in &sprite_slots {
+            if hammer_bro.len() >= remaining_slots { break; }
+            let key = hb_group_keys[sprite_obj_idx % hb_group_keys.len()];
+            let group = hb_obj_groups.get(&key).unwrap();
+            let le = group[sprite_obj_idx / hb_group_keys.len() % group.len()].clone();
+            sprite_obj_idx += 1;
+            hammer_bro.push(HammerBroAssignment { pos: *pos, level_entry: le });
+        }
+
+        // Assign filler slots from normal cycling pool.
+        for pos in &filler_slots {
+            if hammer_bro.len() >= remaining_slots { break; }
             hammer_bro.push(HammerBroAssignment {
-                pos: slot.pos,
+                pos: *pos,
                 level_entry: hb_level_iter.next().unwrap(),
             });
         }
@@ -950,7 +1040,7 @@ mod tests {
         let build = super::super::overworld_build::build(&rom, &pickup, &catalog, &mut rng);
 
         let mut rng2 = ChaCha8Rng::seed_from_u64(99);
-        let assignments = assign_pool(&build, &pickup, &catalog, &mut rng2, true);
+        let assignments = assign_pool(&rom, &build, &pickup, &catalog, &mut rng2, true);
 
         // Collect all assigned pool indices.
         let mut used: Vec<usize> = Vec::new();
