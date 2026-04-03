@@ -194,7 +194,7 @@ pub(super) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
         randomize_note_wood: true,
     },
     LevelDataRegion { // Desert (TS9)
-        start: 0x28F3F, end: 0x2A005,
+        start: 0x28F36, end: 0x2A005,
         extra_byte_dispatches: &[
             10, 11, 12, 13,                    // DiagRect variants
             35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
