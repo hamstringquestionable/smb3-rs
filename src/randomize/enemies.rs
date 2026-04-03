@@ -10,6 +10,7 @@ pub struct EnemyFlags {
     pub wild_thwomps: bool,
     pub wild_cannons: bool,
     pub wild_rotodiscs: bool,
+    pub wild_enemies: bool,
 }
 
 impl Default for EnemyFlags {
@@ -20,6 +21,7 @@ impl Default for EnemyFlags {
             wild_thwomps: false,
             wild_cannons: false,
             wild_rotodiscs: false,
+            wild_enemies: false,
         }
     }
 }
@@ -52,11 +54,13 @@ const GROUND_ENEMIES: &[u8] = &[
     0x2B, // OBJ_GOOMBA_SHOE (Kuribo's Shoe)
     0x29, // OBJ_SPIKE
     0x2A, // OBJ_PATOOIE
+    0x2C, // OBJ_CHAINCHOMP (roams freely without post tile)
     0x33, // OBJ_NIPPER (stationary)
     0x39, // OBJ_NIPPERHOPPING
     0x3F, // OBJ_DRYBONES
     0x40, // OBJ_BUSTERBEATLE
     0x55, // OBJ_BOBOMB
+    0x58, // OBJ_FIRECHOMP (floats and chases)
     0x6B, // OBJ_PILEDRIVER (micro goomba)
     0x71, // OBJ_SPINY
     0x72, // OBJ_GOOMBA
@@ -416,6 +420,45 @@ const PROTECTED_ENEMY_OFFSETS: &[usize] = &[
 
 use super::rom_data::PROTECTED_ENEMY_SEGMENTS;
 
+/// Wild General Tier — merges Ground + Shell + Flying + Bros + Cheeps + Bullet Bills
+/// when `wild_enemies` is active. Water, Piranha, and PiranhaC stay isolated.
+const WILD_GENERAL_TIER: &[u8] = &[
+    // Ground
+    0x2B, 0x29, 0x2A, 0x2C, 0x33, 0x39, 0x3F, 0x40, 0x55, 0x58, 0x6B, 0x71, 0x72, 0x7C,
+    // Shell
+    0x6C, 0x6D, 0x70, 0x7A, 0x7B,
+    // Flying
+    0x6E, 0x6F, 0x73, 0x74, 0x7E, 0x80,
+    // Bros
+    0x81, 0x82, 0x86, 0x87,
+    // Cheeps
+    0x77, 0x88,
+    // Bullet Bills
+    0x78, 0x79,
+];
+
+/// Wild Fortress Tier — merges Ghost + Thwomps + Rotodiscs when `wild_enemies` is active.
+const WILD_FORTRESS_TIER: &[u8] = &[
+    // Ghost
+    0x2F, 0x30, 0x45,
+    // Thwomps
+    0x8A, 0x8B, 0x8C, 0x8D, 0x8E, 0x8F,
+    // Rotodiscs
+    0x51, 0x5A, 0x5B, 0x5E, 0x5F, 0x60,
+];
+
+/// Injection candidates for wild_enemies mode: special enemies injected after normal swaps.
+/// Each tuple: (enemy ID, CHR page, CHR slot).
+const WILD_INJECTION_CANDIDATES: &[(u8, u8, u8)] = &[
+    (0x83, 0x0B, 4), // Lakitu
+    (0xAF, 0x32, 4), // Angry Sun
+    (0x63, 0x1A, 4), // Boss Bass (Big Bertha)
+];
+
+/// Probability (out of 256) that a segment will receive an injection when wild_enemies is on.
+/// ~15% chance per segment.
+const WILD_INJECTION_CHANCE: u8 = 38;
+
 /// All swap classes collected for lookup.
 const ALL_CLASSES: &[&[u8]] = &[
     GROUND_ENEMIES,
@@ -433,18 +476,36 @@ const ALL_CLASSES: &[&[u8]] = &[
 /// Core classes require the `enemies` flag. Bullet Bills, Thwomps, Cannons,
 /// and Rotodiscs have their own flags.
 fn find_class(id: u8, flags: &EnemyFlags) -> Option<&'static [u8]> {
-    if flags.enemies {
+    // When wild_enemies + enemies are both on, merge into behavior tiers first.
+    if flags.wild_enemies && flags.enemies {
+        if WILD_GENERAL_TIER.contains(&id) {
+            return Some(WILD_GENERAL_TIER);
+        }
+        if WILD_FORTRESS_TIER.contains(&id) {
+            return Some(WILD_FORTRESS_TIER);
+        }
+        // Fall through to Piranha/PiranhaC/Water (unchanged)
+        if PIRANHAS.contains(&id) { return Some(PIRANHAS); }
+        if PIRANHASC.contains(&id) { return Some(PIRANHASC); }
+        if WATER_ENEMIES.contains(&id) { return Some(WATER_ENEMIES); }
+        // Cannons still use their own flags
+    } else if flags.enemies {
         for class in ALL_CLASSES {
             if class.contains(&id) {
                 return Some(class);
             }
         }
     }
-    if flags.bullet_bills && BULLET_BILLS.contains(&id) {
+    // Bullet Bills are absorbed into wild general tier above; only check standalone when wild is off
+    if !flags.wild_enemies && flags.bullet_bills && BULLET_BILLS.contains(&id) {
         return Some(BULLET_BILLS);
     }
-    if flags.wild_thwomps && THWOMPS.contains(&id) {
+    // Thwomps/Rotodiscs absorbed into wild fortress tier above; standalone when wild is off
+    if !flags.wild_enemies && flags.wild_thwomps && THWOMPS.contains(&id) {
         return Some(THWOMPS);
+    }
+    if !flags.wild_enemies && flags.wild_rotodiscs && ROTODISCS.contains(&id) {
+        return Some(ROTODISCS);
     }
     if flags.wild_cannons {
         if CFIRE_BILLS.contains(&id) { return Some(CFIRE_BILLS); }
@@ -452,9 +513,6 @@ fn find_class(id: u8, flags: &EnemyFlags) -> Option<&'static [u8]> {
         if CFIRE_LEFT.contains(&id)  { return Some(CFIRE_LEFT); }
         if CFIRE_UP.contains(&id)    { return Some(CFIRE_UP); }
         if CFIRE_DOWN.contains(&id)  { return Some(CFIRE_DOWN); }
-    }
-    if flags.wild_rotodiscs && ROTODISCS.contains(&id) {
-        return Some(ROTODISCS);
     }
     None
 }
@@ -474,6 +532,7 @@ pub fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
     let no_flags = EnemyFlags {
         enemies: false, bullet_bills: false,
         wild_thwomps: false, wild_cannons: false, wild_rotodiscs: false,
+        wild_enemies: false,
     };
     randomize_object_data(rom, rng, true, &no_flags);
 }
@@ -582,6 +641,45 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, f
                 // else: no compatible candidates, keep original (safe fallback)
             }
             // Non-swappable entries already pre-committed in pass 1
+        }
+
+        // Pass 3 (wild_enemies only): injection of special enemies.
+        // After all normal swaps, attempt to inject Lakitu/Angry Sun/Boss Bass
+        // into a random swappable slot in this segment.
+        if flags.wild_enemies && flags.enemies && !big_q_only {
+            let roll: u8 = rng.random_range(..=255);
+            if roll < WILD_INJECTION_CHANCE {
+                // Collect indices of entries that belong to a swap class
+                let swappable_indices: Vec<usize> = entries.iter()
+                    .enumerate()
+                    .filter(|(_, e)| {
+                        let fo = ENEMY_DATA_START + e.data_index;
+                        !PROTECTED_ENEMY_OFFSETS.contains(&fo)
+                            && find_class(data[e.data_index], flags).is_some()
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+
+                if let Some(&target_idx) = swappable_indices.choose(rng) {
+                    // Filter injection candidates by CHR compatibility
+                    let compatible_injections: Vec<u8> = WILD_INJECTION_CANDIDATES.iter()
+                        .filter(|&&(_, chr_page, slot)| {
+                            match slot {
+                                4 => committed_slot4.is_compatible(chr_page),
+                                5 => committed_slot5.is_compatible(chr_page),
+                                _ => true,
+                            }
+                        })
+                        .map(|&(id, _, _)| id)
+                        .collect();
+
+                    if let Some(&chosen) = compatible_injections.choose(rng) {
+                        let di = entries[target_idx].data_index;
+                        data[di] = chosen;
+                        commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
+                    }
+                }
+            }
         }
     }
 
@@ -1107,5 +1205,185 @@ mod tests {
         // Verify 0x2B (Goomba in Shoe) is in the ground enemy class
         assert!(GROUND_ENEMIES.contains(&0x2B), "Kuribo's Shoe Goomba missing from ground class");
         assert!(find_class(0x2B, &EnemyFlags::default()) == Some(GROUND_ENEMIES));
+    }
+
+    #[test]
+    fn test_chain_chomp_fire_chomp_in_ground() {
+        // Chain Chomp (0x2C) and Fire Chomp (0x58) should be in GROUND_ENEMIES
+        assert!(GROUND_ENEMIES.contains(&0x2C), "Chain Chomp missing from ground class");
+        assert!(GROUND_ENEMIES.contains(&0x58), "Fire Chomp missing from ground class");
+        let flags = EnemyFlags::default();
+        assert_eq!(find_class(0x2C, &flags), Some(GROUND_ENEMIES as &[u8]));
+        assert_eq!(find_class(0x58, &flags), Some(GROUND_ENEMIES as &[u8]));
+    }
+
+    #[test]
+    fn test_wild_general_tier_merges() {
+        // With wild_enemies=true, ground/shell/flying/bros/cheeps/bills merge into one tier
+        let flags = EnemyFlags {
+            enemies: true,
+            wild_enemies: true,
+            bullet_bills: true,
+            wild_thwomps: false,
+            wild_cannons: false,
+            wild_rotodiscs: false,
+        };
+        // Ground → wild general
+        assert_eq!(find_class(0x72, &flags), Some(WILD_GENERAL_TIER as &[u8]));
+        // Shell → wild general
+        assert_eq!(find_class(0x6C, &flags), Some(WILD_GENERAL_TIER as &[u8]));
+        // Flying → wild general
+        assert_eq!(find_class(0x6E, &flags), Some(WILD_GENERAL_TIER as &[u8]));
+        // Bros → wild general
+        assert_eq!(find_class(0x81, &flags), Some(WILD_GENERAL_TIER as &[u8]));
+        // Bullet Bill → wild general
+        assert_eq!(find_class(0x78, &flags), Some(WILD_GENERAL_TIER as &[u8]));
+        // Piranha stays isolated
+        assert_eq!(find_class(0xA0, &flags), Some(PIRANHAS as &[u8]));
+        // Water stays isolated
+        assert_eq!(find_class(0x62, &flags), Some(WATER_ENEMIES as &[u8]));
+
+        // Run many seeds and confirm cross-class swaps happen
+        let mut data = vec![0u8; 393232];
+        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
+        data[4] = 16; data[5] = 16; data[6] = 0x40;
+        let seg = &[
+            0xFF, 0x01,
+            0x72, 0x10, 0x19, // Goomba (ground)
+            0xFF,
+        ];
+        let start = ENEMY_DATA_START;
+        data[start..start + seg.len()].copy_from_slice(seg);
+        let rom = Rom::from_bytes(&data).unwrap();
+
+        let injection_ids: &[u8] = &[0x83, 0xAF, 0x63];
+        let mut saw_non_ground = false;
+        for seed in 0..500u64 {
+            let mut rom_copy = rom.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_copy, &mut rng, &flags);
+            let result_id = rom_copy.read_byte(ENEMY_DATA_START + 2);
+            // Result must be in the wild general tier OR an injection candidate
+            assert!(
+                WILD_GENERAL_TIER.contains(&result_id) || injection_ids.contains(&result_id),
+                "seed {seed}: 0x{result_id:02X} not in wild tier or injection list"
+            );
+            if !GROUND_ENEMIES.contains(&result_id) {
+                saw_non_ground = true;
+            }
+        }
+        assert!(saw_non_ground, "500 seeds and never saw a cross-class swap (ground→other)");
+    }
+
+    #[test]
+    fn test_wild_fortress_tier_merges() {
+        // With wild_enemies=true, ghost/thwomps/rotodiscs merge into fortress tier
+        let flags = EnemyFlags {
+            enemies: true,
+            wild_enemies: true,
+            bullet_bills: true,
+            wild_thwomps: true,
+            wild_cannons: false,
+            wild_rotodiscs: true,
+        };
+        // Ghost → wild fortress
+        assert_eq!(find_class(0x2F, &flags), Some(WILD_FORTRESS_TIER as &[u8]));
+        // Thwomp → wild fortress
+        assert_eq!(find_class(0x8A, &flags), Some(WILD_FORTRESS_TIER as &[u8]));
+        // Rotodisc → wild fortress
+        assert_eq!(find_class(0x51, &flags), Some(WILD_FORTRESS_TIER as &[u8]));
+    }
+
+    #[test]
+    fn test_wild_injection_occurs() {
+        // Run many seeds with wild_enemies on, confirm at least one injection of
+        // Lakitu (0x83), Angry Sun (0xAF), or Boss Bass (0x63).
+        let flags = EnemyFlags {
+            enemies: true,
+            wild_enemies: true,
+            bullet_bills: true,
+            wild_thwomps: false,
+            wild_cannons: false,
+            wild_rotodiscs: false,
+        };
+        let mut data = vec![0u8; 393232];
+        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
+        data[4] = 16; data[5] = 16; data[6] = 0x40;
+        // Several entries to increase injection chance
+        let seg = &[
+            0xFF, 0x01,
+            0x72, 0x10, 0x19, // Goomba
+            0x72, 0x20, 0x19, // Goomba
+            0x72, 0x30, 0x19, // Goomba
+            0x72, 0x40, 0x19, // Goomba
+            0xFF,
+        ];
+        let start = ENEMY_DATA_START;
+        data[start..start + seg.len()].copy_from_slice(seg);
+        let rom = Rom::from_bytes(&data).unwrap();
+
+        let injection_ids: &[u8] = &[0x83, 0xAF, 0x63];
+        let mut saw_injection = false;
+        for seed in 0..2000u64 {
+            let mut rom_copy = rom.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_copy, &mut rng, &flags);
+            for off in [2, 5, 8, 11] {
+                let id = rom_copy.read_byte(ENEMY_DATA_START + off);
+                if injection_ids.contains(&id) {
+                    saw_injection = true;
+                    break;
+                }
+            }
+            if saw_injection { break; }
+        }
+        assert!(saw_injection, "2000 seeds and never saw an injection");
+    }
+
+    #[test]
+    fn test_wild_injection_respects_chr() {
+        // Pre-commit slot 4 to an incompatible page via a non-swappable object.
+        // Injection candidates all use slot 4, so none should be injected if
+        // the committed page differs.
+        let flags = EnemyFlags {
+            enemies: true,
+            wild_enemies: true,
+            bullet_bills: true,
+            wild_thwomps: false,
+            wild_cannons: false,
+            wild_rotodiscs: false,
+        };
+        let mut data = vec![0u8; 393232];
+        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
+        data[4] = 16; data[5] = 16; data[6] = 0x40;
+        // 0x18 = Bowser (slot 4, page 0x3A) — non-swappable, commits slot 4
+        // Then swappable goombas (slot 5 — won't conflict on slot 4)
+        let seg = &[
+            0xFF, 0x01,
+            0x18, 0x05, 0x10, // Bowser (slot 4, page 0x3A — incompatible with all injections)
+            0x72, 0x10, 0x19, // Goomba
+            0x72, 0x20, 0x19, // Goomba
+            0xFF,
+        ];
+        let start = ENEMY_DATA_START;
+        data[start..start + seg.len()].copy_from_slice(seg);
+        let rom = Rom::from_bytes(&data).unwrap();
+
+        let injection_ids: &[u8] = &[0x83, 0xAF, 0x63];
+        for seed in 0..500u64 {
+            let mut rom_copy = rom.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_copy, &mut rng, &flags);
+            // Bowser must not change
+            assert_eq!(rom_copy.read_byte(ENEMY_DATA_START + 2), 0x18);
+            // Goombas must not become injection candidates (CHR conflict on slot 4)
+            for off in [5, 8] {
+                let id = rom_copy.read_byte(ENEMY_DATA_START + off);
+                assert!(
+                    !injection_ids.contains(&id),
+                    "seed {seed}: injection 0x{id:02X} despite slot 4 conflict"
+                );
+            }
+        }
     }
 }
