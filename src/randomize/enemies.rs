@@ -1,30 +1,8 @@
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
+use crate::randomizer::Options;
 use crate::rom::Rom;
-
-/// Flags controlling which enemy classes are eligible for randomization.
-pub struct EnemyFlags {
-    pub enemies: bool,
-    pub bullet_bills: bool,
-    pub wild_thwomps: bool,
-    pub wild_cannons: bool,
-    pub wild_rotodiscs: bool,
-    pub wild_enemies: bool,
-}
-
-impl Default for EnemyFlags {
-    fn default() -> Self {
-        EnemyFlags {
-            enemies: true,
-            bullet_bills: true,
-            wild_thwomps: false,
-            wild_cannons: false,
-            wild_rotodiscs: false,
-            wild_enemies: false,
-        }
-    }
-}
 
 /// Enemy/object data block: 0x0BFD8–0x0E00D.
 ///
@@ -475,7 +453,7 @@ const ALL_CLASSES: &[&[u8]] = &[
 /// Find which class an enemy ID belongs to, if any.
 /// Core classes require the `enemies` flag. Bullet Bills, Thwomps, Cannons,
 /// and Rotodiscs have their own flags.
-fn find_class(id: u8, flags: &EnemyFlags) -> Option<&'static [u8]> {
+fn find_class(id: u8, flags: &Options) -> Option<&'static [u8]> {
     // When wild_enemies + enemies are both on, merge into behavior tiers first.
     if flags.wild_enemies && flags.enemies {
         if WILD_GENERAL_TIER.contains(&id) {
@@ -521,7 +499,7 @@ fn find_class(id: u8, flags: &EnemyFlags) -> Option<&'static [u8]> {
 /// object IDs that belong to a known enemy class. Position bytes and all
 /// special objects (end-level cards, pipes, platforms, bosses, powerups,
 /// autoscroll triggers, cannons, etc.) are never modified.
-pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, flags: &EnemyFlags) {
+pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, flags: &Options) {
     randomize_object_data(rom, rng, false, flags);
 }
 
@@ -529,11 +507,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, flags: &EnemyFlags) {
 /// types. The Tanooki block in World 7-F1 is protected because flying is
 /// required to beat that level.
 pub fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
-    let no_flags = EnemyFlags {
-        enemies: false, bullet_bills: false,
-        wild_thwomps: false, wild_cannons: false, wild_rotodiscs: false,
-        wild_enemies: false,
-    };
+    let no_flags = Options { enemies: false, bullet_bills: false, ..Options::default() };
     randomize_object_data(rom, rng, true, &no_flags);
 }
 
@@ -558,7 +532,7 @@ struct SegmentEntry {
     obj_id: u8,
 }
 
-fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, flags: &EnemyFlags) {
+fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, flags: &Options) {
     let len = ENEMY_DATA_END - ENEMY_DATA_START;
     let mut data = rom.read_range(ENEMY_DATA_START, len).to_vec();
 
@@ -692,6 +666,11 @@ mod tests {
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
+    /// Options with enemies enabled (matches the old EnemyFlags::default()).
+    fn enemy_opts() -> Options {
+        Options { enemies: true, ..Options::default() }
+    }
+
     fn make_test_rom() -> Rom {
         let mut data = vec![0u8; 393232];
         // iNES header
@@ -722,7 +701,7 @@ mod tests {
     fn test_enemies_stay_in_class() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng, &EnemyFlags::default());
+        randomize(&mut rom, &mut rng, &enemy_opts());
 
         // Read back the segment (skip FF + page flag = offset 2)
         let base = ENEMY_DATA_START + 2;
@@ -770,8 +749,8 @@ mod tests {
         let mut rng1 = ChaCha8Rng::seed_from_u64(77);
         let mut rng2 = ChaCha8Rng::seed_from_u64(77);
 
-        randomize(&mut rom1, &mut rng1, &EnemyFlags::default());
-        randomize(&mut rom2, &mut rng2, &EnemyFlags::default());
+        randomize(&mut rom1, &mut rng1, &enemy_opts());
+        randomize(&mut rom2, &mut rng2, &enemy_opts());
 
         let len = ENEMY_DATA_END - ENEMY_DATA_START;
         assert_eq!(
@@ -867,7 +846,7 @@ mod tests {
         for seed in 0..200u64 {
             let mut rom_copy = rom.clone();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom_copy, &mut rng, &EnemyFlags::default());
+            randomize(&mut rom_copy, &mut rng, &enemy_opts());
 
             let base = ENEMY_DATA_START + 2;
             let result = rom_copy.read_range(base, 12);
@@ -947,7 +926,7 @@ mod tests {
         for seed in 0..200u64 {
             let mut rom_copy = rom.clone();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom_copy, &mut rng, &EnemyFlags::default());
+            randomize(&mut rom_copy, &mut rng, &enemy_opts());
 
             // Second segment's enemy is at offset: FF(1) + page(1) + entry(3) + FF(1) + page(1) = 7
             let enemy2 = rom_copy.read_byte(ENEMY_DATA_START + 7);
@@ -1006,7 +985,7 @@ mod tests {
         for seed in 0..100u64 {
             let mut rom_copy = rom.clone();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom_copy, &mut rng, &EnemyFlags::default());
+            randomize(&mut rom_copy, &mut rng, &enemy_opts());
 
             let base = ENEMY_DATA_START + 2;
             let result = rom_copy.read_range(base, 6);
@@ -1040,7 +1019,7 @@ mod tests {
         for seed in 0..100u64 {
             let mut rom_copy = rom.clone();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom_copy, &mut rng, &EnemyFlags::default());
+            randomize(&mut rom_copy, &mut rng, &enemy_opts());
 
             let base = ENEMY_DATA_START + 2;
             let result = rom_copy.read_range(base, 9);
@@ -1077,7 +1056,7 @@ mod tests {
         for seed in 0..500u64 {
             let mut rom_copy = rom.clone();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom_copy, &mut rng, &EnemyFlags::default());
+            randomize(&mut rom_copy, &mut rng, &enemy_opts());
 
             let base = ENEMY_DATA_START + 2;
             let result = rom_copy.read_range(base, 6);
@@ -1127,7 +1106,7 @@ mod tests {
         for seed in 0..500u64 {
             let mut rom_copy = rom.clone();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom_copy, &mut rng, &EnemyFlags::default());
+            randomize(&mut rom_copy, &mut rng, &enemy_opts());
 
             let base = ENEMY_DATA_START + 2;
             let result = rom_copy.read_range(base, 6);
@@ -1176,7 +1155,7 @@ mod tests {
         for seed in 0..100u64 {
             let mut rom_copy = rom.clone();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom_copy, &mut rng, &EnemyFlags::default());
+            randomize(&mut rom_copy, &mut rng, &enemy_opts());
 
             let base = ENEMY_DATA_START + 2;
             let result = rom_copy.read_range(base, 9);
@@ -1204,7 +1183,7 @@ mod tests {
     fn test_kuribo_shoe_in_ground_class() {
         // Verify 0x2B (Goomba in Shoe) is in the ground enemy class
         assert!(GROUND_ENEMIES.contains(&0x2B), "Kuribo's Shoe Goomba missing from ground class");
-        assert!(find_class(0x2B, &EnemyFlags::default()) == Some(GROUND_ENEMIES));
+        assert!(find_class(0x2B, &enemy_opts()) == Some(GROUND_ENEMIES));
     }
 
     #[test]
@@ -1212,7 +1191,7 @@ mod tests {
         // Chain Chomp (0x2C) and Fire Chomp (0x58) should be in GROUND_ENEMIES
         assert!(GROUND_ENEMIES.contains(&0x2C), "Chain Chomp missing from ground class");
         assert!(GROUND_ENEMIES.contains(&0x58), "Fire Chomp missing from ground class");
-        let flags = EnemyFlags::default();
+        let flags = enemy_opts();
         assert_eq!(find_class(0x2C, &flags), Some(GROUND_ENEMIES as &[u8]));
         assert_eq!(find_class(0x58, &flags), Some(GROUND_ENEMIES as &[u8]));
     }
@@ -1220,13 +1199,10 @@ mod tests {
     #[test]
     fn test_wild_general_tier_merges() {
         // With wild_enemies=true, ground/shell/flying/bros/cheeps/bills merge into one tier
-        let flags = EnemyFlags {
+        let flags = Options {
             enemies: true,
             wild_enemies: true,
-            bullet_bills: true,
-            wild_thwomps: false,
-            wild_cannons: false,
-            wild_rotodiscs: false,
+            ..Options::default()
         };
         // Ground → wild general
         assert_eq!(find_class(0x72, &flags), Some(WILD_GENERAL_TIER as &[u8]));
@@ -1278,13 +1254,12 @@ mod tests {
     #[test]
     fn test_wild_fortress_tier_merges() {
         // With wild_enemies=true, ghost/thwomps/rotodiscs merge into fortress tier
-        let flags = EnemyFlags {
+        let flags = Options {
             enemies: true,
             wild_enemies: true,
-            bullet_bills: true,
             wild_thwomps: true,
-            wild_cannons: false,
             wild_rotodiscs: true,
+            ..Options::default()
         };
         // Ghost → wild fortress
         assert_eq!(find_class(0x2F, &flags), Some(WILD_FORTRESS_TIER as &[u8]));
@@ -1298,13 +1273,10 @@ mod tests {
     fn test_wild_injection_occurs() {
         // Run many seeds with wild_enemies on, confirm at least one injection of
         // Lakitu (0x83), Angry Sun (0xAF), or Boss Bass (0x63).
-        let flags = EnemyFlags {
+        let flags = Options {
             enemies: true,
             wild_enemies: true,
-            bullet_bills: true,
-            wild_thwomps: false,
-            wild_cannons: false,
-            wild_rotodiscs: false,
+            ..Options::default()
         };
         let mut data = vec![0u8; 393232];
         data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
@@ -1345,13 +1317,10 @@ mod tests {
         // Pre-commit slot 4 to an incompatible page via a non-swappable object.
         // Injection candidates all use slot 4, so none should be injected if
         // the committed page differs.
-        let flags = EnemyFlags {
+        let flags = Options {
             enemies: true,
             wild_enemies: true,
-            bullet_bills: true,
-            wild_thwomps: false,
-            wild_cannons: false,
-            wild_rotodiscs: false,
+            ..Options::default()
         };
         let mut data = vec![0u8; 393232];
         data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
