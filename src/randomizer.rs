@@ -440,14 +440,7 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         || options.wild_enemies
     {
         rom.set_tag("enemies");
-        randomize::enemies::randomize(rom, &mut rng, &randomize::enemies::EnemyFlags {
-            enemies: options.enemies,
-            bullet_bills: options.bullet_bills,
-            wild_thwomps: options.wild_thwomps,
-            wild_cannons: options.wild_cannons,
-            wild_rotodiscs: options.wild_rotodiscs,
-            wild_enemies: options.wild_enemies,
-        });
+        randomize::enemies::randomize(rom, &mut rng, options);
     }
     if options.world_order {
         rom.set_tag("world_order");
