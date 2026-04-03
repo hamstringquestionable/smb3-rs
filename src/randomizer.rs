@@ -96,6 +96,10 @@ pub struct Options {
     /// Off by default — rotation direction matters for designed fortress corridors.
     #[serde(default)]
     pub wild_rotodiscs: bool,
+    /// Merge enemy classes into large behavior tiers and inject special enemies
+    /// (Lakitu, Angry Sun, Boss Bass). Off by default — opt-in chaos mode.
+    #[serde(default)]
+    pub wild_enemies: bool,
 }
 
 fn default_false() -> bool {
@@ -151,7 +155,8 @@ impl Options {
             | (self.wild_cannons as u8) << 1;
 
         let b5 = (self.bullet_bills as u8) << 7
-            | (self.wild_rotodiscs as u8) << 6;
+            | (self.wild_rotodiscs as u8) << 6
+            | (self.wild_enemies as u8) << 5;
 
         [b0, b1, b2, b3, b4, b5]
     }
@@ -228,6 +233,7 @@ impl Options {
                 wild_thwomps: false,
                 wild_cannons: false,
                 wild_rotodiscs: false,
+                wild_enemies: false,
             });
         }
 
@@ -267,6 +273,7 @@ impl Options {
                 wild_thwomps: false,
                 wild_cannons: false,
                 wild_rotodiscs: false,
+                wild_enemies: false,
             });
         }
 
@@ -307,6 +314,7 @@ impl Options {
                 wild_thwomps: (b4 >> 2) & 1 != 0,
                 wild_cannons: (b4 >> 1) & 1 != 0,
                 wild_rotodiscs: false,
+                wild_enemies: false,
             });
         }
 
@@ -347,6 +355,7 @@ impl Options {
             wild_thwomps: (b4 >> 2) & 1 != 0,
             wild_cannons: (b4 >> 1) & 1 != 0,
             wild_rotodiscs: (b5 >> 6) & 1 != 0,
+            wild_enemies: (b5 >> 5) & 1 != 0,
         })
     }
 }
@@ -378,6 +387,7 @@ impl Default for Options {
             wild_thwomps: false,
             wild_cannons: false,
             wild_rotodiscs: false,
+            wild_enemies: false,
             starting_lives: default_starting_lives(),
         }
     }
@@ -427,6 +437,7 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     }
     if options.enemies || options.bullet_bills
         || options.wild_thwomps || options.wild_cannons || options.wild_rotodiscs
+        || options.wild_enemies
     {
         rom.set_tag("enemies");
         randomize::enemies::randomize(rom, &mut rng, &randomize::enemies::EnemyFlags {
@@ -435,6 +446,7 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
             wild_thwomps: options.wild_thwomps,
             wild_cannons: options.wild_cannons,
             wild_rotodiscs: options.wild_rotodiscs,
+            wild_enemies: options.wild_enemies,
         });
     }
     if options.world_order {
@@ -739,6 +751,7 @@ mod tests {
             wild_thwomps: true,
             wild_cannons: true,
             wild_rotodiscs: true,
+            wild_enemies: true,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
@@ -756,6 +769,7 @@ mod tests {
         assert_eq!(opts.wild_thwomps, decoded.wild_thwomps);
         assert_eq!(opts.wild_cannons, decoded.wild_cannons);
         assert_eq!(opts.wild_rotodiscs, decoded.wild_rotodiscs);
+        assert_eq!(opts.wild_enemies, decoded.wild_enemies);
     }
 
     #[test]
@@ -786,6 +800,7 @@ mod tests {
             wild_thwomps: false,
             wild_cannons: false,
             wild_rotodiscs: false,
+            wild_enemies: false,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
@@ -800,6 +815,7 @@ mod tests {
         assert!(!decoded.wild_thwomps);
         assert!(!decoded.wild_cannons);
         assert!(!decoded.wild_rotodiscs);
+        assert!(!decoded.wild_enemies);
         assert_eq!(decoded.starting_lives, 1);
         assert_eq!(decoded.level_shuffle, LevelShuffle::Off);
     }

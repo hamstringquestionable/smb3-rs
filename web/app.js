@@ -60,6 +60,7 @@ const optBulletBills = document.getElementById("opt-bullet-bills");
 const optWildThwomps = document.getElementById("opt-wild-thwomps");
 const optWildCannons = document.getElementById("opt-wild-cannons");
 const optWildRotodiscs = document.getElementById("opt-wild-rotodiscs");
+const optWildEnemies = document.getElementById("opt-wild-enemies");
 const optStartingLives = document.getElementById("opt-starting-lives");
 const flagKeyInput = document.getElementById("flag-key-input");
 const flagKeyCopyBtn = document.getElementById("flag-key-copy-btn");
@@ -230,6 +231,7 @@ function getCurrentOptionsJson() {
 		wild_thwomps: optWildThwomps.checked,
 		wild_cannons: optWildCannons.checked,
 		wild_rotodiscs: optWildRotodiscs.checked,
+		wild_enemies: optWildEnemies.checked,
 		starting_lives: Number(optStartingLives.value),
 		disable_autoscroll: true,
 		card_speed_clear: true,
@@ -272,6 +274,7 @@ function applyFlagKey(key) {
 		if (opts.wild_thwomps !== undefined) optWildThwomps.checked = opts.wild_thwomps;
 		if (opts.wild_cannons !== undefined) optWildCannons.checked = opts.wild_cannons;
 		if (opts.wild_rotodiscs !== undefined) optWildRotodiscs.checked = opts.wild_rotodiscs;
+		if (opts.wild_enemies !== undefined) optWildEnemies.checked = opts.wild_enemies;
 		if (opts.starting_lives) optStartingLives.value = opts.starting_lives;
 		updateOverworldColumns();
 		showStatus("Flag key applied!", "success");
@@ -286,7 +289,7 @@ const allOptionElements = [
 	optShufflePipes, optShuffleAirships, optChestItems, optRemoveWhistles,
 	optAirshipLock,
 	optFixDrawbridges, optRemoveRocks, optRemoveNCards, optRemoveSpadeGames, optSkipWandCutscene, optAdjustBossHitboxes,
-	optBulletBills, optWildThwomps, optWildCannons, optWildRotodiscs, optStartingLives,
+	optBulletBills, optWildThwomps, optWildCannons, optWildRotodiscs, optWildEnemies, optStartingLives,
 ];
 for (const el of allOptionElements) {
 	el.addEventListener("change", updateFlagKey);

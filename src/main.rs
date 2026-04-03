@@ -127,6 +127,10 @@ struct Cli {
     #[arg(long)]
     wild_rotodiscs: bool,
 
+    /// Merge enemy classes into large behavior tiers and inject special enemies (off by default)
+    #[arg(long)]
+    wild_enemies: bool,
+
     /// Disable airship lock (anchor effect always on by default, use this flag to disable)
     #[arg(long)]
     no_airship_lock: bool,
@@ -201,6 +205,7 @@ fn main() {
             wild_thwomps: cli.wild_thwomps,
             wild_cannons: cli.wild_cannons,
             wild_rotodiscs: cli.wild_rotodiscs,
+            wild_enemies: cli.wild_enemies,
             starting_lives: cli.starting_lives,
         }
     };
