@@ -84,7 +84,7 @@ LEVEL_DATA_REGIONS = [
     {
         "name": "Desert (TS9)",
         "tileset_ids": [9],
-        "start": 0x28F3F,
+        "start": 0x28F36,
         "end": 0x2A005,
         "extra_byte_dispatches": {10, 11, 12, 13, 35, 36, 37, 38, 39, 40, 41, 42},
     },
@@ -579,6 +579,9 @@ def parse_level_header(rom, offset):
         "obj_palette": (header[5] >> 3) & 0x03,
         "music": header[8] & 0x0F,
         "timer": (header[8] >> 6) & 0x03,
+        "alt_layout": header[0] | (header[1] << 8),
+        "alt_objects": header[2] | (header[3] << 8),
+        "alt_tileset": header[6] & 0x0F,
     }
 
 
@@ -640,6 +643,9 @@ def scan_level_data_region(rom, region):
             "header": header,
             "enemy_ptr": enemy_ptr,
             "layout_cpu": layout_cpu,
+            "alt_layout": header["alt_layout"],
+            "alt_objects": header["alt_objects"],
+            "alt_tileset": header["alt_tileset"],
             "command_count": len(commands),
             "junction_count": junction_count,
             "powerup_count": len(powerups),
@@ -663,134 +669,158 @@ def scan_level_data_region(rom, region):
 # Level grouping (entry point + sub-areas)
 # --------------------------------------------------------------------------
 
-def build_level_groups(rom, all_region_levels, worlds_data):
-    """For each pointer table entry, find all sub-area headers reachable
-    from its position in the layout data.
+def build_layout_index(all_region_levels):
+    """Build a lookup (tileset, layout_cpu) → level_dict across all regions.
 
-    Strategy: multiple pointer table entries can point into the same data
-    segment (a block of commands between two 0xFF terminators). All entries
-    within the same segment share the same sub-areas — the segments that
-    follow in the data stream. We group entries by which pre-parsed data
-    segment they fall into, then their sub-areas are the subsequent segments
-    until the next entry-containing segment.
+    Multiple tilesets can share a bank (e.g., TS4/TS12 both in Ice/Sky),
+    so we key by (tileset, cpu_addr) for each tileset the region covers."""
+    index = {}
+    for region_data in all_region_levels:
+        for lv in region_data["levels"]:
+            cpu = lv["layout_cpu"]
+            if cpu is None:
+                continue
+            for ts_id in region_data["tileset_ids"]:
+                index[(ts_id, cpu)] = lv
+    return index
+
+
+def trace_sub_areas(entry_level, layout_index):
+    """Follow the header chain from an entry point to find all sub-areas.
+
+    Each 9-byte layout header contains alt_layout/alt_tileset pointing to
+    the next sub-area. Only follow when junction_count > 0 (headers without
+    junctions have dead alt_layout pointers). Uses a visited set by
+    header_offset to prevent infinite loops (e.g., Pyramid has a two-way loop)."""
+    result = [entry_level]
+    visited = {entry_level["header_offset"]}
+    current = entry_level
+
+    while current["junction_count"] > 0:
+        alt_layout = current["alt_layout"]
+        alt_tileset = current["alt_tileset"]
+
+        if alt_layout == 0 or alt_layout < 0xA000:
+            break
+
+        found = layout_index.get((alt_tileset, alt_layout))
+        if found is None or found["header_offset"] in visited:
+            break
+
+        visited.add(found["header_offset"])
+        result.append(found)
+        current = found
+
+    return result
+
+
+def build_level_groups(rom, all_region_levels, worlds_data):
+    """For each pointer table entry, trace sub-areas via the header chain
+    (alt_layout/alt_tileset pointers) rather than contiguous segments.
 
     Returns a list of level groups, each containing:
       - entry_layout_cpu: CPU address of the entry-point level
       - entry_obj_ptr: enemy data pointer from the entry header
       - world_refs: list of (world, index) pointer table entries
-      - sub_areas: list of sub-area info dicts (entry segment + following)
+      - sub_areas: list of sub-area info dicts (entry + chain)
       - has_boomboom/has_koopaling/has_bowser: aggregate boss flags
     """
-    # Build region lookup: for each tileset, find the region info
-    ts_to_region = {}
-    for region in all_region_levels:
-        for ts_id in region["tileset_ids"]:
-            ts_to_region[ts_id] = region
+    layout_index = build_layout_index(all_region_levels)
+
+    # Collect all pointer table entries and group by entry-point header_offset
+    # entry_header_offset -> [(world, index, lay_ptr, obj_ptr)]
+    entry_groups = defaultdict(list)
+
+    for wd in worlds_data:
+        for entry in wd["entries"]:
+            lay = entry["lay_ptr"]
+            if lay == 0 or entry["type"] not in ("level", "fortress", "airship", "bowser", "pipe", "hammer_bro"):
+                continue
+            tileset = entry["tileset"]
+            lv = layout_index.get((tileset, lay))
+            if lv is None:
+                continue
+            entry_groups[lv["header_offset"]].append(
+                (wd["world"], entry["index"], lay, entry["obj_ptr"]))
 
     groups = []
 
-    for region_data in all_region_levels:
-        levels = region_data["levels"]
-        if not levels:
-            continue
-
-        # Build a sorted list of (file_offset_start, file_offset_end, level_dict)
-        # for each parsed level/segment in this region
-        segments = []
-        for lv in levels:
-            segments.append((lv["header_offset"], lv["end_offset"], lv))
-
-        # Collect all pointer table entries that point into this region
-        # Map each to the segment it falls within
-        # segment_idx -> [(world, index, lay_ptr, obj_ptr)]
-        seg_entries = defaultdict(list)
-
+    for header_off, refs in entry_groups.items():
+        # Find the entry-point level dict
+        _, _, lay_ptr, _ = refs[0]
+        tileset = None
         for wd in worlds_data:
             for entry in wd["entries"]:
-                lay = entry["lay_ptr"]
-                if lay == 0 or entry["type"] not in ("level", "fortress", "airship", "bowser", "pipe", "hammer_bro"):
-                    continue
-                tileset = entry["tileset"]
-                rgn = ts_to_region.get(tileset)
-                if rgn is None or rgn["region"] != region_data["region"]:
-                    continue
-                file_off = layout_file_offset(lay, tileset)
-                if file_off is None:
-                    continue
-                # Find which segment this falls within
-                for seg_idx, (seg_start, seg_end, _) in enumerate(segments):
-                    if seg_start <= file_off < seg_end:
-                        seg_entries[seg_idx].append(
-                            (wd["world"], entry["index"], lay, entry["obj_ptr"]))
-                        break
+                if entry["lay_ptr"] == lay_ptr:
+                    tileset = entry["tileset"]
+                    break
+            if tileset is not None:
+                break
 
-        # Identify which segments are entry-point segments (have pointer table refs)
-        entry_seg_indices = sorted(seg_entries.keys())
+        entry_level = layout_index.get((tileset, lay_ptr)) if tileset is not None else None
+        if entry_level is None:
+            continue
 
-        # For each entry-point segment, the sub-areas are the subsequent segments
-        # until the next entry-point segment
-        for i, seg_idx in enumerate(entry_seg_indices):
-            # Determine range of sub-area segments
-            if i + 1 < len(entry_seg_indices):
-                next_entry_seg = entry_seg_indices[i + 1]
+        # Trace sub-areas via header chain
+        chain = trace_sub_areas(entry_level, layout_index)
+
+        sub_areas = []
+        for ci, lv in enumerate(chain):
+            # enemy_ptr for display: sub-areas get their enemies from the
+            # previous level's alt_objects; the entry level (ci==0) keeps
+            # its own alt_objects (entry-point enemies come from the pointer
+            # table obj_ptr and are displayed separately)
+            if ci > 0:
+                ep = chain[ci - 1]["alt_objects"]
             else:
-                next_entry_seg = len(segments)
-
-            # Collect sub-area info from segments [seg_idx .. next_entry_seg)
-            # Stop at clearly invalid levels (garbage data past real level data)
-            sub_areas = []
-            for j in range(seg_idx, next_entry_seg):
-                _, _, lv = segments[j]
-                # Skip garbage: 0 commands with invalid enemy ptr
-                if j > seg_idx and lv["command_count"] == 0 and lv["enemy_ptr"] in (0x0000, 0xFFFF):
-                    continue
-                if lv["command_count"] > 700:
-                    break  # Past real data (largest valid is ~641 cmds)
-                sub_areas.append({
-                    "header_offset": lv["header_offset"],
-                    "layout_cpu": lv.get("layout_cpu"),
-                    "enemy_ptr": lv["enemy_ptr"],
-                    "screens": lv["header"]["screens"],
-                    "command_count": lv["command_count"],
-                    "junction_count": lv["junction_count"],
-                    "has_boomboom": lv["has_boomboom"],
-                    "has_koopaling": lv["has_koopaling"],
-                    "has_bowser": lv["has_bowser"],
-                })
-
-            refs = seg_entries[seg_idx]
-            world_refs = [(w, idx) for w, idx, _, _ in refs]
-            obj_ptrs = list(set(obj for _, _, _, obj in refs))
-            # Use the first ref's lay_ptr as the canonical entry
-            _, _, lay_ptr, _ = refs[0]
-            entry_enemy = sub_areas[0]["enemy_ptr"] if sub_areas else 0
-
-            # Boss flags: check BOTH layout header enemy ptrs AND pointer table obj_ptrs
-            # The obj_ptr is what the game uses for entry-point enemies;
-            # layout header bytes 2-3 are for sub-area enemy data
-            has_boomboom = any(sa["has_boomboom"] for sa in sub_areas)
-            has_koopaling = any(sa["has_koopaling"] for sa in sub_areas)
-            has_bowser = any(sa["has_bowser"] for sa in sub_areas)
-
-            for obj_ptr in obj_ptrs:
-                obj_boss = scan_enemy_segment_bosses(rom, obj_ptr)
-                has_boomboom = has_boomboom or obj_boss["has_boomboom"]
-                has_koopaling = has_koopaling or obj_boss["has_koopaling"]
-                has_bowser = has_bowser or obj_boss["has_bowser"]
-
-            groups.append({
-                "region": region_data["region"],
-                "entry_layout_cpu": lay_ptr,
-                "entry_obj_ptrs": sorted(obj_ptrs),
-                "entry_enemy_ptr": entry_enemy,
-                "world_refs": world_refs,
-                "level_count": len(sub_areas),
-                "sub_area_count": len(sub_areas) - 1,
-                "has_boomboom": has_boomboom,
-                "has_koopaling": has_koopaling,
-                "has_bowser": has_bowser,
-                "sub_areas": sub_areas,
+                ep = lv["enemy_ptr"]
+            # Boss flags for sub-areas should reflect the sub-area's OWN enemies
+            if ci > 0:
+                boss_info = scan_enemy_segment_bosses(rom, ep)
+            else:
+                boss_info = {"has_boomboom": lv["has_boomboom"],
+                             "has_koopaling": lv["has_koopaling"],
+                             "has_bowser": lv["has_bowser"]}
+            sub_areas.append({
+                "header_offset": lv["header_offset"],
+                "layout_cpu": lv.get("layout_cpu"),
+                "enemy_ptr": ep,
+                "screens": lv["header"]["screens"],
+                "command_count": lv["command_count"],
+                "junction_count": lv["junction_count"],
+                "has_boomboom": boss_info["has_boomboom"],
+                "has_koopaling": boss_info["has_koopaling"],
+                "has_bowser": boss_info["has_bowser"],
             })
+
+        world_refs = [(w, idx) for w, idx, _, _ in refs]
+        obj_ptrs = list(set(obj for _, _, _, obj in refs))
+        entry_enemy = sub_areas[0]["enemy_ptr"] if sub_areas else 0
+
+        # Boss flags: check BOTH layout header enemy ptrs AND pointer table obj_ptrs
+        has_boomboom = any(sa["has_boomboom"] for sa in sub_areas)
+        has_koopaling = any(sa["has_koopaling"] for sa in sub_areas)
+        has_bowser = any(sa["has_bowser"] for sa in sub_areas)
+
+        for obj_ptr in obj_ptrs:
+            obj_boss = scan_enemy_segment_bosses(rom, obj_ptr)
+            has_boomboom = has_boomboom or obj_boss["has_boomboom"]
+            has_koopaling = has_koopaling or obj_boss["has_koopaling"]
+            has_bowser = has_bowser or obj_boss["has_bowser"]
+
+        groups.append({
+            "region": chain[0]["region"],
+            "entry_layout_cpu": lay_ptr,
+            "entry_obj_ptrs": sorted(obj_ptrs),
+            "entry_enemy_ptr": entry_enemy,
+            "world_refs": world_refs,
+            "level_count": len(sub_areas),
+            "sub_area_count": len(sub_areas) - 1,
+            "has_boomboom": has_boomboom,
+            "has_koopaling": has_koopaling,
+            "has_bowser": has_bowser,
+            "sub_areas": sub_areas,
+        })
 
     return groups
 
@@ -2363,7 +2393,7 @@ def render_level_lookup(rom, query):
         # Find matching level group
         group = None
         for g in level_groups:
-            if (wi, eidx) in [(wr[0], wr[1]) for wr in g["world_refs"]]:
+            if (wi + 1, eidx) in [(wr[0], wr[1]) for wr in g["world_refs"]]:
                 group = g
                 break
 

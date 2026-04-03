@@ -77,7 +77,7 @@ Each range contains the level layout generators for that tileset/theme.
 | 0x227E0–0x24005 | ~6.2 KB | Ice / Sky |
 | 0x24BA7–0x26005 | ~5.2 KB | Pipe / Water |
 | 0x26A6F–0x28C05 | ~8.6 KB | Cloudy / Giant / Piranha Plant |
-| 0x28F3F–0x2A005 | ~4.3 KB | Desert |
+| 0x28F36–0x2A005 | ~4.3 KB | Desert |
 | 0x2A7F7–0x2C005 | ~6.1 KB | Dungeon |
 | 0x2EC07–0x30005 | ~5.1 KB | Ship |
 
@@ -281,14 +281,36 @@ This matches the MarioWiki count of 3 mushroom/leaf powerups (all QBLOCKLEAF).
 #### How Junctions Work
 
 Group 7 commands (`byte0 & 0xE0 == 0xE0`) are **level junctions** — they do not
-generate tiles. When the game encounters a junction during level loading, it advances
-to the **next 9-byte header** in the data stream and continues loading level data from
-there. This is how a single level can have multiple rooms (e.g., a fortress entry area
-followed by a Boom-Boom boss room).
+generate tiles. Junction byte2 encodes player spawn positions, NOT target addresses.
+The actual sub-area target is determined by the **header chain**: each 9-byte level
+header contains pointers to the next sub-area's layout and enemy data.
 
-Junction byte2 does NOT encode a target address or offset. The game simply reads past
-the 0xFF terminator of the current section and parses the next header inline. Multiple
-junctions in a level lead to sequential sub-areas in the data stream.
+#### Header Chain (How Sub-Areas Connect)
+
+Each 9-byte layout header contains three fields that point to the next sub-area:
+
+| Header Bytes | Field | Purpose |
+|-------------|-------|---------|
+| 0-1 | `alt_layout` | CPU address ($A000–$BFFF) of the sub-area's layout data |
+| 2-3 | `alt_objects` | CPU address ($C000–$DFFF) of the sub-area's enemy data |
+| 6, bits 0-3 | `alt_tileset` | Tileset for the sub-area |
+
+When a junction is encountered during gameplay, the game loads the sub-area layout
+from `alt_layout` (in the bank for `alt_tileset`) and enemies from `alt_objects`.
+This means sub-areas can be in **different tilesets and different PRG banks** than
+their entry point.
+
+**Example: W2 Pyramid** — entry is tileset 9 (Desert) at `0x28F36`, with
+`alt_layout=0xA577, alt_tileset=3, alt_objects=0xC5BC`. The interior sub-area
+lives in tileset 3 (Hilly) at `0x20587` — a completely different PRG bank.
+
+**Two-way loops**: Sub-area headers often point back to the entry level (the Pyramid
+interior's `alt_layout` points back to the exterior). A visited set by `header_offset`
+prevents infinite loops when tracing.
+
+**Dead pointers**: Headers WITHOUT junctions (`junction_count == 0`) still contain
+`alt_layout`/`alt_objects` values, but these are dead — they are never followed
+during gameplay. Only follow the header chain when `junction_count > 0`.
 
 #### Level Data Stream Structure
 
@@ -296,28 +318,28 @@ Each level data region contains a contiguous stream of level segments:
 
 ```
 [9-byte header A][commands...][0xFF]
-[9-byte header B][commands...][0xFF]   ← sub-area of A (reached via junction)
-[9-byte header C][commands...][0xFF]   ← sub-area of A (reached via 2nd junction)
-[9-byte header D][commands...][0xFF]   ← new entry point (different level)
-[9-byte header E][commands...][0xFF]   ← sub-area of D
+[9-byte header B][commands...][0xFF]   ← may or may not be a sub-area of A
+[9-byte header C][commands...][0xFF]   ← another segment
 ...
 ```
 
-There is no explicit delimiter between "entry point" and "sub-area" segments — the
-structure is only meaningful in context of what the pointer table references.
+**Important**: Contiguous position in the data stream does NOT imply a sub-area
+relationship. Sub-areas are determined by the header chain (`alt_layout`/`alt_tileset`),
+not by physical adjacency. A sub-area can be in an entirely different tileset region.
 
 #### Entry Points vs Sub-Areas
 
 - **Entry point**: A level segment whose layout CPU address is referenced by a world
   pointer table entry. When Mario steps on a map tile, the game looks up the
   `LevelLayouts` pointer to find the entry point.
-- **Sub-area**: A level segment that follows an entry point in the data stream. Reached
-  via junction commands during gameplay, never directly referenced by the pointer table.
+- **Sub-area**: A level segment reached by following the header chain from an entry
+  point. Sub-areas are identified by `alt_layout`/`alt_tileset` pointers, not by
+  position in the data stream.
 
 **Critical detail**: Multiple pointer table entries can point into the **same** data
 segment at different byte offsets. For example, W1[11] (`lay=0xA95D`) and W3[34]
 (`lay=0xAA79`) both point into the same 136-command Dungeon segment. They share the
-same sub-areas that follow in the data stream.
+same sub-areas (via header chain).
 
 #### Enemy Data Pointers: Entry vs Sub-Area
 
@@ -325,13 +347,13 @@ Each level has TWO sources of enemy data:
 
 1. **Pointer table `obj_ptr`** (ObjSets word): The enemy data used when entering the
    level from the world map. This is what the game loads first.
-2. **Layout header bytes 2-3** (`enemy_ptr`): The enemy data pointer embedded in each
-   9-byte level header. Sub-area headers use this to load enemies for their room.
+2. **Previous header's `alt_objects`** (bytes 2-3): When transitioning to a sub-area,
+   the game loads enemies from the parent header's `alt_objects` pointer.
 
 These are usually **different pointers**. A fortress entry might have `obj_ptr=0xD32B`
-(containing Boom-Boom) while its layout header has `enemy_ptr=0xD351` (containing
-regular enemies for the entry room). The Boom-Boom enemy is often in a sub-area's
-header enemy_ptr, not the entry point's.
+(containing Boom-Boom) while its layout header has `alt_objects=0xD351` (pointing to
+the sub-area's enemies). The Boom-Boom enemy is often in a sub-area reached via
+header chain, not in the entry point's `obj_ptr`.
 
 #### Fortress Detection via Sub-Area Tracing
 
@@ -342,8 +364,9 @@ To identify all fortress/boss levels, you must check for Boom-Boom enemies
 2. All sub-area headers' `enemy_ptr` enemy data reachable from the entry point
 
 The `tools/rom_map.py` `build_level_groups()` function implements this by:
-- Mapping each pointer table entry to the pre-parsed data segment it falls within
-- Collecting subsequent segments (until the next entry-containing segment) as sub-areas
+- Building a `(tileset, layout_cpu)` index across all parsed level regions
+- For each pointer table entry, finding its entry-point level via the index
+- Following the header chain (`alt_layout`/`alt_tileset`) to trace all sub-areas
 - Scanning all enemy pointers (both obj_ptr and sub-area enemy_ptrs) for boss IDs
 
 #### Boom-Boom Groups (13 total in unmodified ROM)
@@ -404,20 +427,11 @@ terminators to find sub-area headers and check their `enemy_ptr` fields for
 Boom-Boom. This was implemented in `levels.rs` with `has_boomboom_in_sub_areas()`.
 
 **Why it failed:** There is no reliable way to know where one level's sub-areas end
-and another level's data begins. Level data regions pack multiple levels contiguously:
-
-```
-[Level A header][commands...][0xFF]
-[Level A sub-area 1][commands...][0xFF]    ← belongs to A
-[Level B header][commands...][0xFF]        ← different level entirely
-[Level B sub-area 1][commands...][0xFF]    ← belongs to B
-```
-
-Forward scanning from Level A inevitably crosses into Level B's data, producing
-massive false positives. In testing, this identified **58 entries** as fortresses
-instead of the correct 17. The only way to know where A ends and B begins is to
-cross-reference against the pointer table — which is exactly what `rom_map.py`'s
-`build_level_groups()` does with full pre-parsed segment data.
+and another level's data begins. Level data regions pack multiple levels contiguously,
+and sub-areas can cross tilesets (e.g., W2 Pyramid exterior is tileset 9 but interior
+is tileset 3). Forward scanning within a single region inevitably crosses into other
+levels' data, producing massive false positives. In testing, this identified **58
+entries** as fortresses instead of the correct 17.
 
 **Approach 3b: Sub-area boundary detection heuristics**
 
@@ -432,14 +446,20 @@ Attempted to detect sub-area boundaries using:
 None of these heuristics reliably distinguish "sub-area of current level" from
 "start of next level."
 
-**Approach 4: Pre-computed level groups in rom_map.py (chosen for tooling)**
+**Approach 4: Header-chain tracing in rom_map.py (chosen for tooling)**
 
-The `build_level_groups()` function in `tools/rom_map.py` solves the boundary
-problem by using full knowledge of all pointer table entries and all pre-parsed
-level segments. It maps each pointer table entry to the data segment it falls
-within, then assigns subsequent segments as sub-areas until the next segment that
-contains a pointer table entry. This correctly identifies all 13 Boom-Boom groups
-(mapping to 17 pointer table entries).
+The `build_level_groups()` function in `tools/rom_map.py` follows the header chain:
+each 9-byte header has `alt_layout` (bytes 0-1), `alt_objects` (bytes 2-3), and
+`alt_tileset` (byte 6, bits 0-3) pointing to the next sub-area. The function:
+
+1. Builds a `(tileset, layout_cpu)` → level_dict index across all parsed regions
+2. For each pointer table entry, looks up its entry-point level in the index
+3. Follows the header chain (`alt_layout`/`alt_tileset`) until a dead end or loop
+4. Only follows when `junction_count > 0` (dead alt_layout pointers otherwise)
+5. Uses a visited set by `header_offset` to prevent infinite loops
+
+This correctly handles cross-tileset sub-areas (e.g., W2 Pyramid: tileset 9 →
+tileset 3) that the old contiguous-segment heuristic missed entirely.
 
 **Known false positive**: The W8 layout at `lay=0xB0F7` groups 5 entries
 (W8[8,17,18,28,35]) whose sub-area chain eventually reaches an enemy segment
@@ -487,17 +507,18 @@ boss in area 3.
 **What makes a sub-area shuffleable:**
 
 Not all sub-areas are interchangeable. Constraints include:
-1. **Tileset compatibility**: Sub-areas inherit the tileset of their entry point.
-   Swapping a dungeon sub-area into a ship level would produce garbled graphics.
-2. **Enemy data coupling**: Each sub-area header has its own enemy_ptr. The enemies
-   must make sense for the tileset and room geometry.
-3. **Entry/exit consistency**: Junction commands in the parent area advance to the
-   "next" header in the stream. If sub-areas are reordered, junction targets change.
-   The parent's junction count must match the number of sub-areas provided.
+1. **Tileset compatibility**: Sub-areas specify their own tileset via `alt_tileset`,
+   but the graphics (CHR banks) must be loaded for that tileset. Cross-tileset
+   sub-areas work because the game reloads the CHR bank during transition.
+2. **Enemy data coupling**: Each sub-area gets its enemies from the parent header's
+   `alt_objects`. The enemies must make sense for the tileset and room geometry.
+3. **Header chain consistency**: Sub-areas are linked by `alt_layout`/`alt_tileset`
+   in each header. Reordering sub-areas requires updating these pointers in the
+   parent headers. The parent's junction count must match the number of transitions.
 4. **Boss room preservation**: The final sub-area (boss room) must always contain
    a Boom-Boom enemy for the fortress to be completable.
-5. **Shared segments**: Multiple pointer table entries can share the same data
-   segment (e.g., W1[11] and W3[34]). Modifying shared data affects all entries
+5. **Shared segments**: Multiple pointer table entries can share the same entry-point
+   header (e.g., W1[11] and W3[34]). Modifying shared data affects all entries
    that reference it.
 
 **Data available for sub-area analysis:**
