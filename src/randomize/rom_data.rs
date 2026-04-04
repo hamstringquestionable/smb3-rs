@@ -481,16 +481,9 @@ pub(super) const STOMPABLE_ENEMIES: &[u8] = &[
     0x82, // BoomerangBro
     0x86, // HeavyBro
     0x87, // FireBro
-    // Cheeps
-    0x77, // GreenCheep
-    0x88, // OrangeCheep
     // Bullet Bills
     0x78, // BulletBill
     0x79, // BulletBillHoming
-    // Water (stompable subset)
-    0x61, // BlooperWithKids
-    0x62, // Blooper
-    0x64, // CheepCheepHopper
 ];
 
 /// Non-stompable enemies allowed in 2-enemy HB Wild segments only.
