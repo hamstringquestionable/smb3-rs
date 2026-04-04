@@ -8,7 +8,7 @@ pub mod wasm;
 
 use rom::Rom;
 
-pub use randomizer::{LevelShuffle, Options};
+pub use randomizer::{EnemyMode, LevelShuffle, Options};
 
 /// Parse, validate, randomize, and return the full Rom struct.
 pub fn randomize_rom(rom_data: &[u8], seed: u64, options: &Options) -> Result<Rom, String> {

@@ -183,9 +183,9 @@ mod tests {
     #[test]
     fn hash_differs_by_options() {
         let mut opts_a = Options::default();
-        opts_a.enemies = false;
+        opts_a.ground = crate::randomizer::EnemyMode::Off;
         let mut opts_b = Options::default();
-        opts_b.enemies = true;
+        opts_b.ground = crate::randomizer::EnemyMode::Wild;
         let a = compute_hash(42, &opts_a);
         let b = compute_hash(42, &opts_b);
         assert_ne!(a.0, b.0);
