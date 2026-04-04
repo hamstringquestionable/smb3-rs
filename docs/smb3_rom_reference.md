@@ -1823,6 +1823,36 @@ Source: ROM PatTableSel tables, verified against Southbird disassembly.
 | 0x080AE | Para-Goomba de-wing sprite |
 | 0x06EA9 | Boom-Boom drop sprite |
 
+### Enemy Stompability Classification
+
+Used by the randomizer for Hammer Bro encounter constraints. Enemies are classified
+by whether the player can defeat them by jumping on them (no powerups required).
+
+**Stompable** (safe for single-enemy HB encounters):
+Goomba (0x72), BigGoomba (0x7C), BobOmb (0x55), PileDriver (0x6B), GoombShoe (0x2B),
+BusterBeetle (0x40), DryBones (0x3F), FireChomp (0x58), Spike (0x29),
+GreenTroopa (0x6C), RedTroopa (0x6D), BuzzyBeetle (0x70), BigGreenTroopa (0x7A),
+BigRedTroopa (0x7B), ParatroopaGreenHop (0x6E), FlyingRedParatroopa (0x6F),
+Paragoomba (0x73), ParagoombaMicros (0x74), BigGreenHopper (0x7E),
+FlyingGreenParatroopa (0x80), HammerBro (0x81), BoomerangBro (0x82),
+HeavyBro (0x86), FireBro (0x87), BulletBill (0x78), BulletBillHoming (0x79).
+
+**Non-stompable, killable with shell** (allowed in 2-enemy HB encounters with a shell partner):
+Spiny (0x71), Patooie (0x2A), Nipper (0x33), NipperHopping (0x39), BigBertha (0x63).
+
+**Not used in HB encounters** (water/ghost/piranha/thwomp/rotodisc/cannon classes, Boo, etc.):
+These enemies are either unkillable by stomping, require specific level geometry (pipes),
+or have behavior unsuitable for the flat HB encounter arenas.
+
+### Shell-Protected Levels
+
+Some levels require shell enemies for progression (breaking bricks to access paths).
+Shell-class enemies at protected offsets always shuffle within the shell class regardless
+of wild mode settings. Current protected levels:
+- **2-Pyr** sub-area (0xC5BC): 11 Buzzy Beetles — shells needed to break brick barriers
+- **2-3** (0xD1F0): 2 GreenTroopas at end — shells needed to break bricks
+- **6-5** sub-area (0xC5EB): 1 GreenTroopa — shell needed for progression
+
 ### Player Physics
 
 | File Offset | Description |

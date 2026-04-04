@@ -658,8 +658,8 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                     data[entries[swappable[0]].data_index] = chosen;
                 }
             } else if swappable.len() == 2 {
-                // Roll whether this segment gets a non-stompable enemy (5/36 ≈ 14%)
-                let non_stompable_path = rng.random_range(..36u32) < 5;
+                // Roll whether this segment gets a non-stompable enemy (5/31 ≈ 16%)
+                let non_stompable_path = rng.random_range(..31u32) < 5;
 
                 if non_stompable_path {
                     // Pick non-stompable, then a shell partner
