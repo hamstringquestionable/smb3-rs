@@ -450,6 +450,60 @@ pub(super) const HAMMER_BRO_SEGMENT_OFFSETS: &[usize] = &[
     0x0C04D, // 0xC03D — W8 (uses 7-7 layout)
 ];
 
+/// Stompable enemies — safe for single-enemy HB Wild segments and the default
+/// pool for 2-enemy segments. The player can always defeat these by jumping.
+pub(super) const STOMPABLE_ENEMIES: &[u8] = &[
+    // Ground (stompable)
+    0x29, // Spike
+    0x2B, // GoombShoe (Kuribo)
+    0x3F, // DryBones
+    0x40, // BusterBeetle
+    0x55, // BobOmb
+    0x58, // FireChomp
+    0x6B, // PileDriver
+    0x72, // Goomba
+    0x7C, // BigGoomba
+    // Shell
+    0x6C, // GreenTroopa
+    0x6D, // RedTroopa
+    0x70, // BuzzyBeetle
+    0x7A, // BigGreenTroopa
+    0x7B, // BigRedTroopa
+    // Flying
+    0x6E, // ParatroopaGreenHop
+    0x6F, // FlyingRedParatroopa
+    0x73, // Paragoomba
+    0x74, // ParagoombaMicros
+    0x7E, // BigGreenHopper
+    0x80, // FlyingGreenParatroopa
+    // Bros
+    0x81, // HammerBro
+    0x82, // BoomerangBro
+    0x86, // HeavyBro
+    0x87, // FireBro
+    // Cheeps
+    0x77, // GreenCheep
+    0x88, // OrangeCheep
+    // Bullet Bills
+    0x78, // BulletBill
+    0x79, // BulletBillHoming
+    // Water (stompable subset)
+    0x61, // BlooperWithKids
+    0x62, // Blooper
+    0x64, // CheepCheepHopper
+];
+
+/// Non-stompable enemies allowed in 2-enemy HB Wild segments only.
+/// If one of these is picked, the other enemy MUST be a shell so the
+/// player can use it to kill the non-stompable.
+pub(super) const HB_NEEDS_SHELL_ENEMIES: &[u8] = &[
+    0x71, // Spiny
+    0x2A, // Patooie
+    0x33, // Nipper
+    0x39, // NipperHopping
+    0x63, // BigBertha
+];
+
 /// Specific (obj_ptr, tileset) pairs to exclude from the HB cycling pool.
 /// W3[41] has lay=0xB3E7 with tileset 3, but the layout is designed for tileset 1
 /// (17 other entries with the same layout use tileset 1). Loading it with tileset 3

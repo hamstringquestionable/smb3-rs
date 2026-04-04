@@ -387,7 +387,7 @@ const BIG_Q_BLOCKS: &[u8] = &[
 /// The W7 room is at enemy_ptr 0xC9A3; the Tanooki is the second entry.
 const W7F1_TANOOKI_OFFSET: usize = 0x0C9B7;
 
-use super::rom_data::{HAMMER_BRO_SEGMENT_OFFSETS, PROTECTED_ENEMY_OFFSETS, PROTECTED_ENEMY_SEGMENTS, SHELL_PROTECTED_OFFSETS};
+use super::rom_data::{HAMMER_BRO_SEGMENT_OFFSETS, HB_NEEDS_SHELL_ENEMIES, PROTECTED_ENEMY_OFFSETS, PROTECTED_ENEMY_SEGMENTS, SHELL_PROTECTED_OFFSETS, STOMPABLE_ENEMIES};
 
 /// Injection candidates for wild_injections mode: special enemies injected after normal swaps.
 /// Each tuple: (enemy ID, CHR page, CHR slot).
@@ -625,6 +625,95 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                 obj_id: data[i],
             });
             i += 3;
+        }
+
+        // HB Wild: batch-assign enemies with stompability constraints.
+        // 1-enemy segments: pick from STOMPABLE_ENEMIES only.
+        // 2-enemy segments: roll 5/36 chance for non-stompable path;
+        //   if non-stompable: one from HB_NEEDS_SHELL_ENEMIES, other from SHELL_ENEMIES;
+        //   if stompable: both from STOMPABLE_ENEMIES.
+        if is_hb_segment && opts.hb_encounters == EnemyMode::Wild && !big_q_only {
+            let swappable: Vec<usize> = entries.iter()
+                .enumerate()
+                .filter(|(_, e)| find_class_pool(e.obj_id, &hb_modes, &hb_wild_pool).is_some())
+                .map(|(idx, _)| idx)
+                .collect();
+
+            // Pre-commit CHR from non-swappable entries
+            let mut slot4 = ChrSlot::Free;
+            let mut slot5 = ChrSlot::Free;
+            for (idx, entry) in entries.iter().enumerate() {
+                if !swappable.contains(&idx) {
+                    commit_chr_page(entry.obj_id, &mut slot4, &mut slot5);
+                }
+            }
+
+            if swappable.len() == 1 {
+                let compatible: Vec<u8> = STOMPABLE_ENEMIES.iter()
+                    .copied()
+                    .filter(|&c| is_chr_compatible(c, slot4, slot5))
+                    .collect();
+                if !compatible.is_empty() {
+                    let chosen = *compatible.choose(rng).unwrap();
+                    data[entries[swappable[0]].data_index] = chosen;
+                }
+            } else if swappable.len() == 2 {
+                // Roll whether this segment gets a non-stompable enemy (5/36 ≈ 14%)
+                let non_stompable_path = rng.random_range(..36u32) < 5;
+
+                if non_stompable_path {
+                    // Pick non-stompable, then a shell partner
+                    let ns_compat: Vec<u8> = HB_NEEDS_SHELL_ENEMIES.iter()
+                        .copied()
+                        .filter(|&c| is_chr_compatible(c, slot4, slot5))
+                        .collect();
+                    if !ns_compat.is_empty() {
+                        let ns_chosen = *ns_compat.choose(rng).unwrap();
+                        // Commit the non-stompable's CHR before filtering shells
+                        let mut s4_after = slot4;
+                        let mut s5_after = slot5;
+                        commit_chr_page(ns_chosen, &mut s4_after, &mut s5_after);
+
+                        let shell_compat: Vec<u8> = SHELL_ENEMIES.iter()
+                            .copied()
+                            .filter(|&c| is_chr_compatible(c, s4_after, s5_after))
+                            .collect();
+                        if !shell_compat.is_empty() {
+                            let shell_chosen = *shell_compat.choose(rng).unwrap();
+                            // Randomly assign which slot gets which
+                            if rng.random_range(..2u32) == 0 {
+                                data[entries[swappable[0]].data_index] = ns_chosen;
+                                data[entries[swappable[1]].data_index] = shell_chosen;
+                            } else {
+                                data[entries[swappable[0]].data_index] = shell_chosen;
+                                data[entries[swappable[1]].data_index] = ns_chosen;
+                            }
+                        }
+                    }
+                } else {
+                    // Both from stompable pool
+                    let compat: Vec<u8> = STOMPABLE_ENEMIES.iter()
+                        .copied()
+                        .filter(|&c| is_chr_compatible(c, slot4, slot5))
+                        .collect();
+                    if !compat.is_empty() {
+                        let first = *compat.choose(rng).unwrap();
+                        let mut s4_after = slot4;
+                        let mut s5_after = slot5;
+                        commit_chr_page(first, &mut s4_after, &mut s5_after);
+
+                        let compat2: Vec<u8> = STOMPABLE_ENEMIES.iter()
+                            .copied()
+                            .filter(|&c| is_chr_compatible(c, s4_after, s5_after))
+                            .collect();
+                        data[entries[swappable[0]].data_index] = first;
+                        if !compat2.is_empty() {
+                            data[entries[swappable[1]].data_index] = *compat2.choose(rng).unwrap();
+                        }
+                    }
+                }
+            }
+            continue;
         }
 
         // Two-pass approach:
