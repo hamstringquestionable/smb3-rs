@@ -48,10 +48,6 @@
                 <input type="checkbox" id="opt-chest-items" checked>
                 Chest Items
             </label>
-            <label class="checkbox-label" title="Swap enemies with others in the same class (ground, air, water)">
-                <input type="checkbox" id="opt-enemies" checked>
-                Enemies
-            </label>
             <label class="checkbox-label" title="Randomize the contents of Big ? Blocks in bonus rooms">
                 <input type="checkbox" id="opt-big-q-blocks" checked>
                 Big ? Blocks
@@ -64,25 +60,152 @@
 
         <fieldset class="section">
             <legend>Enemies</legend>
-            <label class="checkbox-label" title="Shuffle Bullet Bill variants — standard and homing">
-                <input type="checkbox" id="opt-bullet-bills" checked>
+            <label class="select-label" title="Ground-walking enemies (Goomba, Spiny, Spike, etc.)">
+                Ground
+                <div class="pill-group">
+                    <input type="radio" name="opt-ground" id="opt-ground-off" value="off">
+                    <label for="opt-ground-off">Off</label>
+                    <input type="radio" name="opt-ground" id="opt-ground-shuffle" value="shuffle" checked>
+                    <label for="opt-ground-shuffle">Shuffle</label>
+                    <input type="radio" name="opt-ground" id="opt-ground-wild" value="wild">
+                    <label for="opt-ground-wild">Wild</label>
+                </div>
+            </label>
+            <label class="select-label" title="Shell-producing enemies (Koopa, Buzzy Beetle, etc.)">
+                Shell
+                <div class="pill-group">
+                    <input type="radio" name="opt-shell" id="opt-shell-off" value="off">
+                    <label for="opt-shell-off">Off</label>
+                    <input type="radio" name="opt-shell" id="opt-shell-shuffle" value="shuffle" checked>
+                    <label for="opt-shell-shuffle">Shuffle</label>
+                    <input type="radio" name="opt-shell" id="opt-shell-wild" value="wild">
+                    <label for="opt-shell-wild">Wild</label>
+                </div>
+            </label>
+            <label class="select-label" title="Flying/hopping enemies (Paratroopa, Paragoomba, etc.)">
+                Flying
+                <div class="pill-group">
+                    <input type="radio" name="opt-flying" id="opt-flying-off" value="off">
+                    <label for="opt-flying-off">Off</label>
+                    <input type="radio" name="opt-flying" id="opt-flying-shuffle" value="shuffle" checked>
+                    <label for="opt-flying-shuffle">Shuffle</label>
+                    <input type="radio" name="opt-flying" id="opt-flying-wild" value="wild">
+                    <label for="opt-flying-wild">Wild</label>
+                </div>
+            </label>
+            <label class="select-label" title="Cheep cheep overworld jumping variants">
+                Cheeps
+                <div class="pill-group">
+                    <input type="radio" name="opt-cheeps" id="opt-cheeps-off" value="off">
+                    <label for="opt-cheeps-off">Off</label>
+                    <input type="radio" name="opt-cheeps" id="opt-cheeps-shuffle" value="shuffle" checked>
+                    <label for="opt-cheeps-shuffle">Shuffle</label>
+                    <input type="radio" name="opt-cheeps" id="opt-cheeps-wild" value="wild">
+                    <label for="opt-cheeps-wild">Wild</label>
+                </div>
+            </label>
+            <label class="select-label" title="Bullet Bill variants — standard and homing">
                 Bullet Bills
+                <div class="pill-group">
+                    <input type="radio" name="opt-bullet-bills" id="opt-bullet-bills-off" value="off">
+                    <label for="opt-bullet-bills-off">Off</label>
+                    <input type="radio" name="opt-bullet-bills" id="opt-bullet-bills-shuffle" value="shuffle" checked>
+                    <label for="opt-bullet-bills-shuffle">Shuffle</label>
+                    <input type="radio" name="opt-bullet-bills" id="opt-bullet-bills-wild" value="wild">
+                    <label for="opt-bullet-bills-wild">Wild</label>
+                </div>
             </label>
-            <label class="checkbox-label" title="Randomize Thwomp movement directions — diagonal slides, sideways, up-down">
-                <input type="checkbox" id="opt-wild-thwomps">
-                Wild Thwomps
+            <label class="select-label" title="Piranha plant variants (upward and ceiling)">
+                Piranhas
+                <div class="pill-group">
+                    <input type="radio" name="opt-piranhas" id="opt-piranhas-off" value="off">
+                    <label for="opt-piranhas-off">Off</label>
+                    <input type="radio" name="opt-piranhas" id="opt-piranhas-shuffle" value="shuffle" checked>
+                    <label for="opt-piranhas-shuffle">Shuffle</label>
+                    <input type="radio" name="opt-piranhas" id="opt-piranhas-wild" value="wild">
+                    <label for="opt-piranhas-wild">Wild</label>
+                </div>
             </label>
-            <label class="checkbox-label" title="Randomize cannon fire directions and types">
-                <input type="checkbox" id="opt-wild-cannons">
-                Wild Cannons
+            <label class="select-label" title="Ghost house enemies (Boo, Hot Foot)">
+                Ghosts
+                <div class="pill-group">
+                    <input type="radio" name="opt-ghosts" id="opt-ghosts-off" value="off">
+                    <label for="opt-ghosts-off">Off</label>
+                    <input type="radio" name="opt-ghosts" id="opt-ghosts-shuffle" value="shuffle" checked>
+                    <label for="opt-ghosts-shuffle">Shuffle</label>
+                    <input type="radio" name="opt-ghosts" id="opt-ghosts-wild" value="wild">
+                    <label for="opt-ghosts-wild">Wild</label>
+                </div>
             </label>
-            <label class="checkbox-label" title="Randomize rotodisc rotation directions and single/dual variants">
-                <input type="checkbox" id="opt-wild-rotodiscs">
-                Wild Rotodiscs
+            <label class="select-label" title="Thwomp movement variants (diagonal slides, sideways, up-down)">
+                Thwomps
+                <div class="pill-group">
+                    <input type="radio" name="opt-thwomps" id="opt-thwomps-off" value="off" checked>
+                    <label for="opt-thwomps-off">Off</label>
+                    <input type="radio" name="opt-thwomps" id="opt-thwomps-shuffle" value="shuffle">
+                    <label for="opt-thwomps-shuffle">Shuffle</label>
+                    <input type="radio" name="opt-thwomps" id="opt-thwomps-wild" value="wild">
+                    <label for="opt-thwomps-wild">Wild</label>
+                </div>
             </label>
-            <label class="checkbox-label" title="Merge enemy classes into large behavior tiers and inject Lakitu, Angry Sun, Boss Bass">
-                <input type="checkbox" id="opt-wild-enemies">
-                Wild Enemies
+            <label class="select-label" title="Rotodisc rotation variants (single/dual, CW/CCW)">
+                Rotodiscs
+                <div class="pill-group">
+                    <input type="radio" name="opt-rotodiscs" id="opt-rotodiscs-off" value="off" checked>
+                    <label for="opt-rotodiscs-off">Off</label>
+                    <input type="radio" name="opt-rotodiscs" id="opt-rotodiscs-shuffle" value="shuffle">
+                    <label for="opt-rotodiscs-shuffle">Shuffle</label>
+                    <input type="radio" name="opt-rotodiscs" id="opt-rotodiscs-wild" value="wild">
+                    <label for="opt-rotodiscs-wild">Wild</label>
+                </div>
+            </label>
+            <label class="select-label" title="Cannon fire directions and types">
+                Cannons
+                <div class="pill-group">
+                    <input type="radio" name="opt-cannons" id="opt-cannons-off" value="off" checked>
+                    <label for="opt-cannons-off">Off</label>
+                    <input type="radio" name="opt-cannons" id="opt-cannons-shuffle" value="shuffle">
+                    <label for="opt-cannons-shuffle">Shuffle</label>
+                    <input type="radio" name="opt-cannons" id="opt-cannons-wild" value="wild">
+                    <label for="opt-cannons-wild">Wild</label>
+                </div>
+            </label>
+            <label class="select-label" title="Water enemies (Blooper, Big Bertha, etc.)">
+                Water
+                <div class="pill-group">
+                    <input type="radio" name="opt-water" id="opt-water-off" value="off">
+                    <label for="opt-water-off">Off</label>
+                    <input type="radio" name="opt-water" id="opt-water-shuffle" value="shuffle" checked>
+                    <label for="opt-water-shuffle">Shuffle</label>
+                    <input type="radio" name="opt-water" id="opt-water-wild" value="wild">
+                    <label for="opt-water-wild">Wild</label>
+                </div>
+            </label>
+            <label class="select-label" title="Hammer/Boomerang/Fire Bros (only in non-HB segments)">
+                Bros
+                <div class="pill-group">
+                    <input type="radio" name="opt-bros" id="opt-bros-off" value="off">
+                    <label for="opt-bros-off">Off</label>
+                    <input type="radio" name="opt-bros" id="opt-bros-shuffle" value="shuffle" checked>
+                    <label for="opt-bros-shuffle">Shuffle</label>
+                    <input type="radio" name="opt-bros" id="opt-bros-wild" value="wild">
+                    <label for="opt-bros-wild">Wild</label>
+                </div>
+            </label>
+            <label class="select-label" title="All enemies in Hammer Bro encounter segments">
+                HB Encounters
+                <div class="pill-group">
+                    <input type="radio" name="opt-hb-encounters" id="opt-hb-encounters-off" value="off" checked>
+                    <label for="opt-hb-encounters-off">Off</label>
+                    <input type="radio" name="opt-hb-encounters" id="opt-hb-encounters-shuffle" value="shuffle">
+                    <label for="opt-hb-encounters-shuffle">Shuffle</label>
+                    <input type="radio" name="opt-hb-encounters" id="opt-hb-encounters-wild" value="wild">
+                    <label for="opt-hb-encounters-wild">Wild</label>
+                </div>
+            </label>
+            <label class="checkbox-label" title="Inject Lakitu, Angry Sun, or Boss Bass into ~15% of enemy segments">
+                <input type="checkbox" id="opt-wild-injections">
+                Wild Injections
             </label>
         </fieldset>
 

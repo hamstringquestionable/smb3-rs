@@ -42,7 +42,6 @@ const statusDiv = document.getElementById("status");
 
 const optPowerups = document.getElementById("opt-powerups");
 const optPalettes = document.getElementById("opt-palettes");
-const optEnemies = document.getElementById("opt-enemies");
 const optWorldOrder = document.getElementById("opt-world-order");
 const optBigQBlocks = document.getElementById("opt-big-q-blocks");
 const optShufflePipes = document.getElementById("opt-shuffle-pipes");
@@ -56,11 +55,15 @@ const optRemoveNCards = document.getElementById("opt-remove-n-cards");
 const optRemoveSpadeGames = document.getElementById("opt-remove-spade-games");
 const optSkipWandCutscene = document.getElementById("opt-skip-wand-cutscene");
 const optAdjustBossHitboxes = document.getElementById("opt-adjust-boss-hitboxes");
-const optBulletBills = document.getElementById("opt-bullet-bills");
-const optWildThwomps = document.getElementById("opt-wild-thwomps");
-const optWildCannons = document.getElementById("opt-wild-cannons");
-const optWildRotodiscs = document.getElementById("opt-wild-rotodiscs");
-const optWildEnemies = document.getElementById("opt-wild-enemies");
+// Pill group helpers (tri-state radio buttons)
+function getPill(name) {
+	return document.querySelector(`input[name="${name}"]:checked`)?.value || "off";
+}
+function setPill(name, val) {
+	const el = document.querySelector(`input[name="${name}"][value="${val}"]`);
+	if (el) el.checked = true;
+}
+const optWildInjections = document.getElementById("opt-wild-injections");
 const optStartingLives = document.getElementById("opt-starting-lives");
 const flagKeyInput = document.getElementById("flag-key-input");
 const flagKeyCopyBtn = document.getElementById("flag-key-copy-btn");
@@ -211,7 +214,6 @@ function getCurrentOptionsJson() {
 	return JSON.stringify({
 		powerups: optPowerups.checked,
 		palettes: optPalettes.checked,
-		enemies: optEnemies.checked,
 		world_order: optWorldOrder.checked,
 		big_q_blocks: optBigQBlocks.checked,
 		map_shuffle: isMapShuffle,
@@ -227,11 +229,20 @@ function getCurrentOptionsJson() {
 		remove_spade_games: optRemoveSpadeGames.checked,
 		skip_wand_cutscene: optSkipWandCutscene.checked,
 		adjust_boss_hitboxes: optAdjustBossHitboxes.checked,
-		bullet_bills: optBulletBills.checked,
-		wild_thwomps: optWildThwomps.checked,
-		wild_cannons: optWildCannons.checked,
-		wild_rotodiscs: optWildRotodiscs.checked,
-		wild_enemies: optWildEnemies.checked,
+		ground: getPill("opt-ground"),
+		shell: getPill("opt-shell"),
+		flying: getPill("opt-flying"),
+		cheeps: getPill("opt-cheeps"),
+		bullet_bills: getPill("opt-bullet-bills"),
+		piranhas: getPill("opt-piranhas"),
+		ghosts: getPill("opt-ghosts"),
+		thwomps: getPill("opt-thwomps"),
+		rotodiscs: getPill("opt-rotodiscs"),
+		cannons: getPill("opt-cannons"),
+		water: getPill("opt-water"),
+		bros: getPill("opt-bros"),
+		hb_encounters: getPill("opt-hb-encounters"),
+		wild_injections: optWildInjections.checked,
 		starting_lives: Number(optStartingLives.value),
 		disable_autoscroll: true,
 		card_speed_clear: true,
@@ -254,7 +265,6 @@ function applyFlagKey(key) {
 		const opts = JSON.parse(json);
 		optPowerups.checked = opts.powerups;
 		optPalettes.checked = opts.palettes;
-		optEnemies.checked = opts.enemies;
 		optWorldOrder.checked = opts.world_order;
 		optBigQBlocks.checked = opts.big_q_blocks;
 		setOverworldMode(opts.map_shuffle ? "map_shuffle" : "vanilla");
@@ -270,11 +280,20 @@ function applyFlagKey(key) {
 		if (opts.remove_spade_games !== undefined) optRemoveSpadeGames.checked = opts.remove_spade_games;
 		if (opts.skip_wand_cutscene !== undefined) optSkipWandCutscene.checked = opts.skip_wand_cutscene;
 		if (opts.adjust_boss_hitboxes !== undefined) optAdjustBossHitboxes.checked = opts.adjust_boss_hitboxes;
-		if (opts.bullet_bills !== undefined) optBulletBills.checked = opts.bullet_bills;
-		if (opts.wild_thwomps !== undefined) optWildThwomps.checked = opts.wild_thwomps;
-		if (opts.wild_cannons !== undefined) optWildCannons.checked = opts.wild_cannons;
-		if (opts.wild_rotodiscs !== undefined) optWildRotodiscs.checked = opts.wild_rotodiscs;
-		if (opts.wild_enemies !== undefined) optWildEnemies.checked = opts.wild_enemies;
+		if (opts.ground !== undefined) setPill("opt-ground", opts.ground);
+		if (opts.shell !== undefined) setPill("opt-shell", opts.shell);
+		if (opts.flying !== undefined) setPill("opt-flying", opts.flying);
+		if (opts.cheeps !== undefined) setPill("opt-cheeps", opts.cheeps);
+		if (opts.bullet_bills !== undefined) setPill("opt-bullet-bills", opts.bullet_bills);
+		if (opts.piranhas !== undefined) setPill("opt-piranhas", opts.piranhas);
+		if (opts.ghosts !== undefined) setPill("opt-ghosts", opts.ghosts);
+		if (opts.thwomps !== undefined) setPill("opt-thwomps", opts.thwomps);
+		if (opts.rotodiscs !== undefined) setPill("opt-rotodiscs", opts.rotodiscs);
+		if (opts.cannons !== undefined) setPill("opt-cannons", opts.cannons);
+		if (opts.water !== undefined) setPill("opt-water", opts.water);
+		if (opts.bros !== undefined) setPill("opt-bros", opts.bros);
+		if (opts.hb_encounters !== undefined) setPill("opt-hb-encounters", opts.hb_encounters);
+		if (opts.wild_injections !== undefined) optWildInjections.checked = opts.wild_injections;
 		if (opts.starting_lives) optStartingLives.value = opts.starting_lives;
 		updateOverworldColumns();
 		showStatus("Flag key applied!", "success");
@@ -285,14 +304,19 @@ function applyFlagKey(key) {
 
 // Update flag key whenever any option changes
 const allOptionElements = [
-	optPowerups, optPalettes, optEnemies, optWorldOrder, optBigQBlocks,
+	optPowerups, optPalettes, optWorldOrder, optBigQBlocks,
 	optShufflePipes, optShuffleAirships, optChestItems, optRemoveWhistles,
 	optAirshipLock,
 	optFixDrawbridges, optRemoveRocks, optRemoveNCards, optRemoveSpadeGames, optSkipWandCutscene, optAdjustBossHitboxes,
-	optBulletBills, optWildThwomps, optWildCannons, optWildRotodiscs, optWildEnemies, optStartingLives,
+	optWildInjections,
+	optStartingLives,
 ];
 for (const el of allOptionElements) {
 	el.addEventListener("change", updateFlagKey);
+}
+// Pill group radios
+for (const radio of document.querySelectorAll('.pill-group input[type="radio"]')) {
+	radio.addEventListener("change", updateFlagKey);
 }
 // Radio groups
 for (const name of ["overworld-mode", "level-shuffle"]) {
