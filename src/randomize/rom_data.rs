@@ -438,6 +438,18 @@ pub(super) const HB_EXCLUDE_OBJ_PTRS: &[u16] = &[
     0xC03D, // W8 — 7-7 layout
 ];
 
+/// File offsets of the enemy data segments for each Hammer Bro encounter obj_ptr.
+/// Computed as: 0x0C010 + (obj_ptr - 0xC000).
+/// Used by the enemy randomizer to detect HB encounter segments.
+pub(super) const HAMMER_BRO_SEGMENT_OFFSETS: &[usize] = &[
+    0x0C73B, // 0xC72B — W1
+    0x0D15D, // 0xD14D — W2
+    0x0D152, // 0xD142 — W2 (variant)
+    0x0C650, // 0xC640 — W3, W5, W6, W7
+    0x0D0FA, // 0xD0EA — W4
+    0x0C04D, // 0xC03D — W8 (uses 7-7 layout)
+];
+
 /// Specific (obj_ptr, tileset) pairs to exclude from the HB cycling pool.
 /// W3[41] has lay=0xB3E7 with tileset 3, but the layout is designed for tileset 1
 /// (17 other entries with the same layout use tileset 1). Loading it with tileset 3
@@ -575,6 +587,38 @@ pub(super) fn layout_file_offset(cpu_addr: u16, tileset: u8) -> Option<usize> {
 
 /// ROM file offset of PRG006 enemy/object data base (CPU $C000).
 const ENEMY_DATA_FILE_BASE: usize = 0x0C010;
+
+/// Individual enemy offsets excluded from randomization.
+/// These specific enemies are required for gameplay (e.g., needed as platforms
+/// to make jumps, or positioned to enable required routes).
+pub(super) const PROTECTED_ENEMY_OFFSETS: &[usize] = &[
+    0x0C465, // 8-1 FlyingRedParatroopa (scr=6, col=14) — needed to reach upper platform
+    0x0CAB1, // 6-3 FlyingRedParatroopa (scr=6, col=13) — needed for jump
+    0x0CAB4, // 6-3 FlyingRedParatroopa (scr=7, col=1) — needed for jump
+];
+
+/// Shell-class enemies at these offsets are forced to shuffle within SHELL_ENEMIES
+/// regardless of the shell mode (Shuffle or Wild). When shell is Off, these are
+/// untouched. Levels where shells are required to break bricks for progression.
+pub(super) const SHELL_PROTECTED_OFFSETS: &[usize] = &[
+    // 2-Pyr sub-area (enemy_ptr 0xC5BC): 10 Buzzy Beetles + 1 extra
+    0x0C5CD, // BuzzyBeetle scr=1 col=0 row=15
+    0x0C5D0, // BuzzyBeetle scr=1 col=3 row=2
+    0x0C5D3, // BuzzyBeetle scr=2 col=3 row=15
+    0x0C5D6, // BuzzyBeetle scr=2 col=5 row=9
+    0x0C5DC, // BuzzyBeetle scr=3 col=2 row=10
+    0x0C5DF, // BuzzyBeetle scr=3 col=4 row=9
+    0x0C5E2, // BuzzyBeetle scr=3 col=11 row=4
+    0x0C5E5, // BuzzyBeetle scr=4 col=0 row=15
+    0x0C5E8, // BuzzyBeetle scr=4 col=11 row=3
+    0x0C5EB, // BuzzyBeetle scr=4 col=14 row=6
+    0x0C5F1, // BuzzyBeetle scr=6 col=7 row=15
+    // 2-3 (obj 0xD1F0): shells needed to break bricks at end
+    0x0D22B, // GreenTroopa scr=8 col=11 row=3
+    0x0D22E, // GreenTroopa scr=8 col=13 row=3
+    // 6-5 sub-area (enemy_ptr 0xC5EB): shell needed for progression
+    0x0C60E, // GreenTroopa scr=4 col=10 row=8
+];
 
 /// Enemy segments (by file offset of page flag byte) excluded from randomization.
 /// These levels rely on specific enemy types/counts for gameplay (e.g., enemies

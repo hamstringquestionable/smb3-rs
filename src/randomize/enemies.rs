@@ -1,7 +1,7 @@
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
-use crate::randomizer::Options;
+use crate::randomizer::{EnemyMode, Options};
 use crate::rom::Rom;
 
 /// Enemy/object data block: 0x0BFD8–0x0E00D.
@@ -387,45 +387,9 @@ const BIG_Q_BLOCKS: &[u8] = &[
 /// The W7 room is at enemy_ptr 0xC9A3; the Tanooki is the second entry.
 const W7F1_TANOOKI_OFFSET: usize = 0x0C9B7;
 
-/// Individual enemy offsets excluded from randomization.
-/// These specific enemies are required for gameplay (e.g., needed as platforms
-/// to make jumps, or positioned to enable required routes).
-const PROTECTED_ENEMY_OFFSETS: &[usize] = &[
-    0x0C465, // 8-1 FlyingRedParatroopa (scr=6, col=14) — needed to reach upper platform
-    0x0CAB1, // 6-3 FlyingRedParatroopa (scr=6, col=13) — needed for jump
-    0x0CAB4, // 6-3 FlyingRedParatroopa (scr=7, col=1) — needed for jump
-];
+use super::rom_data::{HAMMER_BRO_SEGMENT_OFFSETS, PROTECTED_ENEMY_OFFSETS, PROTECTED_ENEMY_SEGMENTS, SHELL_PROTECTED_OFFSETS};
 
-use super::rom_data::PROTECTED_ENEMY_SEGMENTS;
-
-/// Wild General Tier — merges Ground + Shell + Flying + Bros + Cheeps + Bullet Bills
-/// when `wild_enemies` is active. Water, Piranha, and PiranhaC stay isolated.
-const WILD_GENERAL_TIER: &[u8] = &[
-    // Ground
-    0x2B, 0x29, 0x2A, 0x2C, 0x33, 0x39, 0x3F, 0x40, 0x55, 0x58, 0x6B, 0x71, 0x72, 0x7C,
-    // Shell
-    0x6C, 0x6D, 0x70, 0x7A, 0x7B,
-    // Flying
-    0x6E, 0x6F, 0x73, 0x74, 0x7E, 0x80,
-    // Bros
-    0x81, 0x82, 0x86, 0x87,
-    // Cheeps
-    0x77, 0x88,
-    // Bullet Bills
-    0x78, 0x79,
-];
-
-/// Wild Fortress Tier — merges Ghost + Thwomps + Rotodiscs when `wild_enemies` is active.
-const WILD_FORTRESS_TIER: &[u8] = &[
-    // Ghost
-    0x2F, 0x30, 0x45,
-    // Thwomps
-    0x8A, 0x8B, 0x8C, 0x8D, 0x8E, 0x8F,
-    // Rotodiscs
-    0x51, 0x5A, 0x5B, 0x5E, 0x5F, 0x60,
-];
-
-/// Injection candidates for wild_enemies mode: special enemies injected after normal swaps.
+/// Injection candidates for wild_injections mode: special enemies injected after normal swaps.
 /// Each tuple: (enemy ID, CHR page, CHR slot).
 const WILD_INJECTION_CANDIDATES: &[(u8, u8, u8)] = &[
     (0x83, 0x0B, 4), // Lakitu
@@ -433,81 +397,162 @@ const WILD_INJECTION_CANDIDATES: &[(u8, u8, u8)] = &[
     (0x63, 0x1A, 4), // Boss Bass (Big Bertha)
 ];
 
-/// Probability (out of 256) that a segment will receive an injection when wild_enemies is on.
+/// Probability (out of 256) that a segment will receive an injection when wild_injections is on.
 /// ~15% chance per segment.
 const WILD_INJECTION_CHANCE: u8 = 38;
 
-/// All swap classes collected for lookup.
-const ALL_CLASSES: &[&[u8]] = &[
-    GROUND_ENEMIES,
-    SHELL_ENEMIES,
-    FLYING_ENEMIES,
-    WATER_ENEMIES,
-    BRO_ENEMIES,
-    PIRANHAS,
-    PIRANHASC,
-    CHEEPS,
-    GHOST_ENEMIES,
+/// All cannon sub-class IDs merged for Wild mode.
+const ALL_CANNONS: &[u8] = &[
+    0xBC, 0xBD, // CFIRE_BILLS
+    0xC3, 0xCD, // CFIRE_RIGHT
+    0xC4, 0xCC, // CFIRE_LEFT
+    0xC5, 0xCA, // CFIRE_UP
+    0xC6, 0xCB, // CFIRE_DOWN
 ];
 
-/// Find which class an enemy ID belongs to, if any.
-/// Core classes require the `enemies` flag. Bullet Bills, Thwomps, Cannons,
-/// and Rotodiscs have their own flags.
-fn find_class(id: u8, flags: &Options) -> Option<&'static [u8]> {
-    // When wild_enemies + enemies are both on, merge into behavior tiers first.
-    if flags.wild_enemies && flags.enemies {
-        if WILD_GENERAL_TIER.contains(&id) {
-            return Some(WILD_GENERAL_TIER);
+/// Class-to-mode mapping, built from Options at the start of randomization.
+struct ClassModes {
+    ground: EnemyMode,
+    shell: EnemyMode,
+    flying: EnemyMode,
+    cheeps: EnemyMode,
+    bullet_bills: EnemyMode,
+    piranhas: EnemyMode,
+    ghosts: EnemyMode,
+    thwomps: EnemyMode,
+    rotodiscs: EnemyMode,
+    cannons: EnemyMode,
+    water: EnemyMode,
+    bros: EnemyMode,
+}
+
+impl ClassModes {
+    fn from_options(opts: &Options) -> Self {
+        Self {
+            ground: opts.ground,
+            shell: opts.shell,
+            flying: opts.flying,
+            cheeps: opts.cheeps,
+            bullet_bills: opts.bullet_bills,
+            piranhas: opts.piranhas,
+            ghosts: opts.ghosts,
+            thwomps: opts.thwomps,
+            rotodiscs: opts.rotodiscs,
+            cannons: opts.cannons,
+            water: opts.water,
+            bros: opts.bros,
         }
-        if WILD_FORTRESS_TIER.contains(&id) {
-            return Some(WILD_FORTRESS_TIER);
+    }
+
+    /// Build the dynamic wild pool: collect all IDs from classes set to Wild.
+    fn build_wild_pool(&self) -> Vec<u8> {
+        let mut pool = Vec::new();
+        if self.ground == EnemyMode::Wild { pool.extend_from_slice(GROUND_ENEMIES); }
+        if self.shell == EnemyMode::Wild { pool.extend_from_slice(SHELL_ENEMIES); }
+        if self.flying == EnemyMode::Wild { pool.extend_from_slice(FLYING_ENEMIES); }
+        if self.cheeps == EnemyMode::Wild { pool.extend_from_slice(CHEEPS); }
+        if self.bullet_bills == EnemyMode::Wild { pool.extend_from_slice(BULLET_BILLS); }
+        if self.piranhas == EnemyMode::Wild {
+            pool.extend_from_slice(PIRANHAS);
+            pool.extend_from_slice(PIRANHASC);
         }
-        // Fall through to Piranha/PiranhaC/Water (unchanged)
-        if PIRANHAS.contains(&id) { return Some(PIRANHAS); }
-        if PIRANHASC.contains(&id) { return Some(PIRANHASC); }
-        if WATER_ENEMIES.contains(&id) { return Some(WATER_ENEMIES); }
-        // Cannons still use their own flags
-    } else if flags.enemies {
-        for class in ALL_CLASSES {
-            if class.contains(&id) {
-                return Some(class);
+        if self.ghosts == EnemyMode::Wild { pool.extend_from_slice(GHOST_ENEMIES); }
+        if self.thwomps == EnemyMode::Wild { pool.extend_from_slice(THWOMPS); }
+        if self.rotodiscs == EnemyMode::Wild { pool.extend_from_slice(ROTODISCS); }
+        if self.cannons == EnemyMode::Wild { pool.extend_from_slice(ALL_CANNONS); }
+        if self.water == EnemyMode::Wild { pool.extend_from_slice(WATER_ENEMIES); }
+        if self.bros == EnemyMode::Wild { pool.extend_from_slice(BRO_ENEMIES); }
+        pool
+    }
+}
+
+/// Identify which class an enemy ID belongs to, and return the swap pool
+/// based on that class's mode. Returns None if the class is Off or unknown.
+fn find_class_pool<'a>(
+    id: u8, modes: &ClassModes, wild_pool: &'a [u8],
+) -> Option<&'a [u8]> {
+    // Macro to check class membership and return appropriate pool
+    macro_rules! check {
+        ($ids:expr, $mode:expr) => {
+            if $ids.contains(&id) {
+                return match $mode {
+                    EnemyMode::Off => None,
+                    EnemyMode::Shuffle => Some($ids),
+                    EnemyMode::Wild => Some(wild_pool),
+                };
+            }
+        };
+    }
+    check!(GROUND_ENEMIES, modes.ground);
+    check!(SHELL_ENEMIES, modes.shell);
+    check!(FLYING_ENEMIES, modes.flying);
+    check!(CHEEPS, modes.cheeps);
+    check!(BULLET_BILLS, modes.bullet_bills);
+    check!(PIRANHAS, modes.piranhas);
+    check!(PIRANHASC, modes.piranhas); // ceiling piranhas share piranhas mode
+    check!(GHOST_ENEMIES, modes.ghosts);
+    check!(THWOMPS, modes.thwomps);
+    check!(ROTODISCS, modes.rotodiscs);
+    check!(WATER_ENEMIES, modes.water);
+    check!(BRO_ENEMIES, modes.bros);
+
+    // Cannons: 5 directional sub-classes
+    if modes.cannons != EnemyMode::Off {
+        for sub in [CFIRE_BILLS, CFIRE_RIGHT, CFIRE_LEFT, CFIRE_UP, CFIRE_DOWN] {
+            if sub.contains(&id) {
+                return match modes.cannons {
+                    EnemyMode::Off => None,
+                    EnemyMode::Shuffle => Some(sub), // stay within direction
+                    EnemyMode::Wild if !wild_pool.is_empty() => Some(wild_pool),
+                    EnemyMode::Wild => Some(ALL_CANNONS), // merge all cannon dirs
+                };
             }
         }
     }
-    // Bullet Bills are absorbed into wild general tier above; only check standalone when wild is off
-    if !flags.wild_enemies && flags.bullet_bills && BULLET_BILLS.contains(&id) {
-        return Some(BULLET_BILLS);
-    }
-    // Thwomps/Rotodiscs absorbed into wild fortress tier above; standalone when wild is off
-    if !flags.wild_enemies && flags.wild_thwomps && THWOMPS.contains(&id) {
-        return Some(THWOMPS);
-    }
-    if !flags.wild_enemies && flags.wild_rotodiscs && ROTODISCS.contains(&id) {
-        return Some(ROTODISCS);
-    }
-    if flags.wild_cannons {
-        if CFIRE_BILLS.contains(&id) { return Some(CFIRE_BILLS); }
-        if CFIRE_RIGHT.contains(&id) { return Some(CFIRE_RIGHT); }
-        if CFIRE_LEFT.contains(&id)  { return Some(CFIRE_LEFT); }
-        if CFIRE_UP.contains(&id)    { return Some(CFIRE_UP); }
-        if CFIRE_DOWN.contains(&id)  { return Some(CFIRE_DOWN); }
-    }
+
     None
+}
+
+/// Build a ClassModes for HB encounter segments.
+/// In HB segments, the `hb_encounters` mode is the sole authority.
+fn hb_class_modes(hb_mode: EnemyMode) -> ClassModes {
+    ClassModes {
+        ground: hb_mode,
+        shell: hb_mode,
+        flying: hb_mode,
+        cheeps: hb_mode,
+        bullet_bills: hb_mode,
+        piranhas: hb_mode,
+        ghosts: hb_mode,
+        thwomps: hb_mode,
+        rotodiscs: hb_mode,
+        cannons: hb_mode,
+        water: hb_mode,
+        bros: hb_mode,
+    }
 }
 
 /// Randomize enemies by parsing the structured object data and only swapping
 /// object IDs that belong to a known enemy class. Position bytes and all
 /// special objects (end-level cards, pipes, platforms, bosses, powerups,
 /// autoscroll triggers, cannons, etc.) are never modified.
-pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, flags: &Options) {
-    randomize_object_data(rom, rng, false, flags);
+pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options) {
+    randomize_object_data(rom, rng, false, opts);
 }
 
 /// Randomize Big ? Blocks by swapping their IDs among the set of Big ? Block
 /// types. The Tanooki block in World 7-F1 is protected because flying is
 /// required to beat that level.
 pub fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
-    let no_flags = Options { enemies: false, bullet_bills: false, ..Options::default() };
+    // All enemy classes off — only Big ? Blocks get randomized
+    let no_flags = Options {
+        ground: EnemyMode::Off, shell: EnemyMode::Off, flying: EnemyMode::Off,
+        cheeps: EnemyMode::Off, bullet_bills: EnemyMode::Off, piranhas: EnemyMode::Off,
+        ghosts: EnemyMode::Off, thwomps: EnemyMode::Off, rotodiscs: EnemyMode::Off,
+        cannons: EnemyMode::Off, water: EnemyMode::Off, bros: EnemyMode::Off,
+        hb_encounters: EnemyMode::Off, wild_injections: false,
+        ..Options::default()
+    };
     randomize_object_data(rom, rng, true, &no_flags);
 }
 
@@ -532,9 +577,15 @@ struct SegmentEntry {
     obj_id: u8,
 }
 
-fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, flags: &Options) {
+fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, opts: &Options) {
     let len = ENEMY_DATA_END - ENEMY_DATA_START;
     let mut data = rom.read_range(ENEMY_DATA_START, len).to_vec();
+
+    // Build class modes and wild pool
+    let normal_modes = ClassModes::from_options(opts);
+    let normal_wild_pool = normal_modes.build_wild_pool();
+    let hb_modes = hb_class_modes(opts.hb_encounters);
+    let hb_wild_pool = hb_modes.build_wild_pool();
 
     let mut i = 0;
     while i < data.len() {
@@ -546,16 +597,25 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, f
 
         // First non-FF byte after a terminator is the page/flag byte
         let seg_start = i;
+        let seg_file_offset = ENEMY_DATA_START + seg_start;
         i += 1;
 
         // Skip entire segment if it's in the protected list
-        let skip_segment = PROTECTED_ENEMY_SEGMENTS.contains(&(ENEMY_DATA_START + seg_start));
+        let skip_segment = PROTECTED_ENEMY_SEGMENTS.contains(&seg_file_offset);
         if skip_segment {
             while i + 2 < data.len() && data[i] != 0xFF {
                 i += 3;
             }
             continue;
         }
+
+        // Determine if this is an HB encounter segment
+        let is_hb_segment = HAMMER_BRO_SEGMENT_OFFSETS.contains(&seg_file_offset);
+        let (modes, wild_pool) = if is_hb_segment {
+            (&hb_modes, hb_wild_pool.as_slice())
+        } else {
+            (&normal_modes, normal_wild_pool.as_slice())
+        };
 
         // Collect all entries in this segment
         let mut entries: Vec<SegmentEntry> = Vec::new();
@@ -570,16 +630,14 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, f
         // Two-pass approach:
         // Pass 1: pre-commit CHR pages from non-swappable objects AND uniform-CHR
         // classes (all members share the same page/slot, so swapping can't change it).
-        // This prevents the ordering bug where a swappable enemy earlier in
-        // the segment commits a CHR page that conflicts with a later fixed object.
         let mut committed_slot4 = ChrSlot::Free;
         let mut committed_slot5 = ChrSlot::Free;
 
         if !big_q_only {
             for entry in &entries {
-                let should_precommit = match find_class(entry.obj_id, flags) {
-                    None => !BOOMBOOM_IDS.contains(&entry.obj_id), // non-swappable, but skip Boom-Boom
-                    Some(class) => is_uniform_chr_class(class),  // uniform: page invariant
+                let should_precommit = match find_class_pool(entry.obj_id, modes, wild_pool) {
+                    None => !BOOMBOOM_IDS.contains(&entry.obj_id),
+                    Some(class) => is_uniform_chr_class(class),
                 };
                 if should_precommit {
                     commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
@@ -598,10 +656,19 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, f
                     data[entry.data_index] = *BIG_Q_BLOCKS.choose(rng).unwrap();
                 }
             } else if PROTECTED_ENEMY_OFFSETS.contains(&file_offset) {
-                // Protected individual enemy — keep original but still commit its CHR
                 commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
-            } else if let Some(class) = find_class(entry.obj_id, flags) {
-                let compatible: Vec<u8> = class
+            } else if SHELL_PROTECTED_OFFSETS.contains(&file_offset) && modes.shell != EnemyMode::Off {
+                let compatible: Vec<u8> = SHELL_ENEMIES.iter()
+                    .copied()
+                    .filter(|&c| is_chr_compatible(c, committed_slot4, committed_slot5))
+                    .collect();
+                if !compatible.is_empty() {
+                    let chosen = *compatible.choose(rng).unwrap();
+                    data[entry.data_index] = chosen;
+                    commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
+                }
+            } else if let Some(pool) = find_class_pool(entry.obj_id, modes, wild_pool) {
+                let compatible: Vec<u8> = pool
                     .iter()
                     .copied()
                     .filter(|&c| is_chr_compatible(c, committed_slot4, committed_slot5))
@@ -612,30 +679,24 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, f
                     data[entry.data_index] = chosen;
                     commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                 }
-                // else: no compatible candidates, keep original (safe fallback)
             }
-            // Non-swappable entries already pre-committed in pass 1
         }
 
-        // Pass 3 (wild_enemies only): injection of special enemies.
-        // After all normal swaps, attempt to inject Lakitu/Angry Sun/Boss Bass
-        // into a random swappable slot in this segment.
-        if flags.wild_enemies && flags.enemies && !big_q_only {
+        // Pass 3 (wild_injections only): inject Lakitu/Angry Sun/Boss Bass.
+        if opts.wild_injections && !big_q_only {
             let roll: u8 = rng.random_range(..=255);
             if roll < WILD_INJECTION_CHANCE {
-                // Collect indices of entries that belong to a swap class
                 let swappable_indices: Vec<usize> = entries.iter()
                     .enumerate()
                     .filter(|(_, e)| {
                         let fo = ENEMY_DATA_START + e.data_index;
                         !PROTECTED_ENEMY_OFFSETS.contains(&fo)
-                            && find_class(data[e.data_index], flags).is_some()
+                            && find_class_pool(data[e.data_index], modes, wild_pool).is_some()
                     })
                     .map(|(i, _)| i)
                     .collect();
 
                 if let Some(&target_idx) = swappable_indices.choose(rng) {
-                    // Filter injection candidates by CHR compatibility
                     let compatible_injections: Vec<u8> = WILD_INJECTION_CANDIDATES.iter()
                         .filter(|&&(_, chr_page, slot)| {
                             match slot {
@@ -666,9 +727,9 @@ mod tests {
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
-    /// Options with enemies enabled (matches the old EnemyFlags::default()).
+    /// Options with all default enemy classes enabled (Shuffle mode).
     fn enemy_opts() -> Options {
-        Options { enemies: true, ..Options::default() }
+        Options::default()
     }
 
     fn make_test_rom() -> Rom {
@@ -1181,43 +1242,44 @@ mod tests {
 
     #[test]
     fn test_kuribo_shoe_in_ground_class() {
-        // Verify 0x2B (Goomba in Shoe) is in the ground enemy class
         assert!(GROUND_ENEMIES.contains(&0x2B), "Kuribo's Shoe Goomba missing from ground class");
-        assert!(find_class(0x2B, &enemy_opts()) == Some(GROUND_ENEMIES));
+        let modes = ClassModes::from_options(&enemy_opts());
+        let wild_pool = modes.build_wild_pool();
+        assert_eq!(find_class_pool(0x2B, &modes, &wild_pool), Some(GROUND_ENEMIES as &[u8]));
     }
 
     #[test]
     fn test_chain_chomp_fire_chomp_in_ground() {
-        // Chain Chomp (0x2C) and Fire Chomp (0x58) should be in GROUND_ENEMIES
         assert!(GROUND_ENEMIES.contains(&0x2C), "Chain Chomp missing from ground class");
         assert!(GROUND_ENEMIES.contains(&0x58), "Fire Chomp missing from ground class");
-        let flags = enemy_opts();
-        assert_eq!(find_class(0x2C, &flags), Some(GROUND_ENEMIES as &[u8]));
-        assert_eq!(find_class(0x58, &flags), Some(GROUND_ENEMIES as &[u8]));
+        let modes = ClassModes::from_options(&enemy_opts());
+        let wild_pool = modes.build_wild_pool();
+        assert_eq!(find_class_pool(0x2C, &modes, &wild_pool), Some(GROUND_ENEMIES as &[u8]));
+        assert_eq!(find_class_pool(0x58, &modes, &wild_pool), Some(GROUND_ENEMIES as &[u8]));
     }
 
     #[test]
-    fn test_wild_general_tier_merges() {
-        // With wild_enemies=true, ground/shell/flying/bros/cheeps/bills merge into one tier
+    fn test_wild_pool_merges_classes() {
+        // With ground=Wild, shell=Wild, others=Shuffle: ground↔shell swaps happen
         let flags = Options {
-            enemies: true,
-            wild_enemies: true,
+            ground: EnemyMode::Wild,
+            shell: EnemyMode::Wild,
+            flying: EnemyMode::Shuffle,
             ..Options::default()
         };
-        // Ground → wild general
-        assert_eq!(find_class(0x72, &flags), Some(WILD_GENERAL_TIER as &[u8]));
-        // Shell → wild general
-        assert_eq!(find_class(0x6C, &flags), Some(WILD_GENERAL_TIER as &[u8]));
-        // Flying → wild general
-        assert_eq!(find_class(0x6E, &flags), Some(WILD_GENERAL_TIER as &[u8]));
-        // Bros → wild general
-        assert_eq!(find_class(0x81, &flags), Some(WILD_GENERAL_TIER as &[u8]));
-        // Bullet Bill → wild general
-        assert_eq!(find_class(0x78, &flags), Some(WILD_GENERAL_TIER as &[u8]));
-        // Piranha stays isolated
-        assert_eq!(find_class(0xA0, &flags), Some(PIRANHAS as &[u8]));
-        // Water stays isolated
-        assert_eq!(find_class(0x62, &flags), Some(WATER_ENEMIES as &[u8]));
+        let modes = ClassModes::from_options(&flags);
+        let wild_pool = modes.build_wild_pool();
+        // Ground and shell IDs should be in the wild pool
+        assert!(wild_pool.contains(&0x72)); // Goomba
+        assert!(wild_pool.contains(&0x6C)); // GreenTroopa
+        // Flying should NOT be in wild pool (it's Shuffle, not Wild)
+        assert!(!wild_pool.contains(&0x6E)); // Paratroopa
+        // Ground enemy → returns wild pool
+        let pool = find_class_pool(0x72, &modes, &wild_pool).unwrap();
+        assert!(pool.contains(&0x6C), "wild pool should contain shell enemies");
+        // Flying → returns own class only
+        let fly_pool = find_class_pool(0x6E, &modes, &wild_pool).unwrap();
+        assert_eq!(fly_pool, FLYING_ENEMIES);
 
         // Run many seeds and confirm cross-class swaps happen
         let mut data = vec![0u8; 393232];
@@ -1232,56 +1294,88 @@ mod tests {
         data[start..start + seg.len()].copy_from_slice(seg);
         let rom = Rom::from_bytes(&data).unwrap();
 
-        let injection_ids: &[u8] = &[0x83, 0xAF, 0x63];
-        let mut saw_non_ground = false;
+        let mut saw_shell = false;
         for seed in 0..500u64 {
             let mut rom_copy = rom.clone();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             randomize(&mut rom_copy, &mut rng, &flags);
             let result_id = rom_copy.read_byte(ENEMY_DATA_START + 2);
-            // Result must be in the wild general tier OR an injection candidate
             assert!(
-                WILD_GENERAL_TIER.contains(&result_id) || injection_ids.contains(&result_id),
-                "seed {seed}: 0x{result_id:02X} not in wild tier or injection list"
+                wild_pool.contains(&result_id),
+                "seed {seed}: 0x{result_id:02X} not in wild pool"
             );
-            if !GROUND_ENEMIES.contains(&result_id) {
-                saw_non_ground = true;
+            if SHELL_ENEMIES.contains(&result_id) {
+                saw_shell = true;
             }
         }
-        assert!(saw_non_ground, "500 seeds and never saw a cross-class swap (ground→other)");
+        assert!(saw_shell, "500 seeds and never saw a ground→shell swap");
     }
 
     #[test]
-    fn test_wild_fortress_tier_merges() {
-        // With wild_enemies=true, ghost/thwomps/rotodiscs merge into fortress tier
+    fn test_off_mode_leaves_untouched() {
+        // With ground=Off, ground enemies should stay vanilla
         let flags = Options {
-            enemies: true,
-            wild_enemies: true,
-            wild_thwomps: true,
-            wild_rotodiscs: true,
-            ..Options::default()
-        };
-        // Ghost → wild fortress
-        assert_eq!(find_class(0x2F, &flags), Some(WILD_FORTRESS_TIER as &[u8]));
-        // Thwomp → wild fortress
-        assert_eq!(find_class(0x8A, &flags), Some(WILD_FORTRESS_TIER as &[u8]));
-        // Rotodisc → wild fortress
-        assert_eq!(find_class(0x51, &flags), Some(WILD_FORTRESS_TIER as &[u8]));
-    }
-
-    #[test]
-    fn test_wild_injection_occurs() {
-        // Run many seeds with wild_enemies on, confirm at least one injection of
-        // Lakitu (0x83), Angry Sun (0xAF), or Boss Bass (0x63).
-        let flags = Options {
-            enemies: true,
-            wild_enemies: true,
+            ground: EnemyMode::Off,
+            shell: EnemyMode::Shuffle,
             ..Options::default()
         };
         let mut data = vec![0u8; 393232];
         data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
         data[4] = 16; data[5] = 16; data[6] = 0x40;
-        // Several entries to increase injection chance
+        let seg = &[
+            0xFF, 0x01,
+            0x72, 0x10, 0x19, // Goomba (ground - Off)
+            0x6C, 0x20, 0x16, // GreenTroopa (shell - Shuffle)
+            0xFF,
+        ];
+        let start = ENEMY_DATA_START;
+        data[start..start + seg.len()].copy_from_slice(seg);
+        let rom = Rom::from_bytes(&data).unwrap();
+
+        for seed in 0..100u64 {
+            let mut rom_copy = rom.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_copy, &mut rng, &flags);
+            // Ground enemy stays vanilla (Off mode)
+            assert_eq!(rom_copy.read_byte(ENEMY_DATA_START + 2), 0x72,
+                "seed {seed}: ground enemy should stay vanilla in Off mode");
+            // Shell enemy can change
+            let shell = rom_copy.read_byte(ENEMY_DATA_START + 5);
+            assert!(SHELL_ENEMIES.contains(&shell), "seed {seed}: shell 0x{shell:02X}");
+        }
+    }
+
+    #[test]
+    fn test_wild_fortress_tier_merges() {
+        // With ghosts=Wild, thwomps=Wild, rotodiscs=Wild: they all share one pool
+        let flags = Options {
+            ghosts: EnemyMode::Wild,
+            thwomps: EnemyMode::Wild,
+            rotodiscs: EnemyMode::Wild,
+            ..Options::default()
+        };
+        let modes = ClassModes::from_options(&flags);
+        let wild_pool = modes.build_wild_pool();
+        // Ghost, thwomp, rotodisc IDs should all be in the wild pool
+        assert!(wild_pool.contains(&0x2F)); // Boo
+        assert!(wild_pool.contains(&0x8A)); // Thwomp
+        assert!(wild_pool.contains(&0x51)); // Rotodisc
+        // All return the same wild pool
+        assert_eq!(find_class_pool(0x2F, &modes, &wild_pool), Some(wild_pool.as_slice()));
+        assert_eq!(find_class_pool(0x8A, &modes, &wild_pool), Some(wild_pool.as_slice()));
+        assert_eq!(find_class_pool(0x51, &modes, &wild_pool), Some(wild_pool.as_slice()));
+    }
+
+    #[test]
+    fn test_wild_injection_occurs() {
+        // Run many seeds with wild_injections on, confirm at least one injection
+        let flags = Options {
+            wild_injections: true,
+            ..Options::default()
+        };
+        let mut data = vec![0u8; 393232];
+        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
+        data[4] = 16; data[5] = 16; data[6] = 0x40;
         let seg = &[
             0xFF, 0x01,
             0x72, 0x10, 0x19, // Goomba
@@ -1315,18 +1409,13 @@ mod tests {
     #[test]
     fn test_wild_injection_respects_chr() {
         // Pre-commit slot 4 to an incompatible page via a non-swappable object.
-        // Injection candidates all use slot 4, so none should be injected if
-        // the committed page differs.
         let flags = Options {
-            enemies: true,
-            wild_enemies: true,
+            wild_injections: true,
             ..Options::default()
         };
         let mut data = vec![0u8; 393232];
         data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
         data[4] = 16; data[5] = 16; data[6] = 0x40;
-        // 0x18 = Bowser (slot 4, page 0x3A) — non-swappable, commits slot 4
-        // Then swappable goombas (slot 5 — won't conflict on slot 4)
         let seg = &[
             0xFF, 0x01,
             0x18, 0x05, 0x10, // Bowser (slot 4, page 0x3A — incompatible with all injections)
@@ -1343,9 +1432,7 @@ mod tests {
             let mut rom_copy = rom.clone();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             randomize(&mut rom_copy, &mut rng, &flags);
-            // Bowser must not change
             assert_eq!(rom_copy.read_byte(ENEMY_DATA_START + 2), 0x18);
-            // Goombas must not become injection candidates (CHR conflict on slot 4)
             for off in [5, 8] {
                 let id = rom_copy.read_byte(ENEMY_DATA_START + off);
                 assert!(
