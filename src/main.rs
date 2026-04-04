@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use smb3_rs::{LevelShuffle, Options};
+use smb3_rs::{EnemyMode, LevelShuffle, Options};
 
 #[derive(Parser)]
 #[command(name = "smb3-rs", version, about = "Super Mario Bros. 3 Randomizer")]
@@ -30,10 +30,6 @@ struct Cli {
     /// Disable palette randomization
     #[arg(long)]
     no_palettes: bool,
-
-    /// Enable enemy randomization (experimental)
-    #[arg(long)]
-    enemies: bool,
 
     /// Enable world order randomization
     #[arg(long)]
@@ -111,25 +107,61 @@ struct Cli {
     #[arg(long)]
     keep_spade_games: bool,
 
-    /// Shuffle Bullet Bill variants: standard and homing (on by default)
-    #[arg(long)]
-    no_bullet_bills: bool,
+    /// Ground enemies: off, shuffle, or wild (default: shuffle)
+    #[arg(long, default_value = "shuffle")]
+    ground: String,
 
-    /// Randomize Thwomp movement directions (off by default)
-    #[arg(long)]
-    wild_thwomps: bool,
+    /// Shell enemies: off, shuffle, or wild (default: shuffle)
+    #[arg(long, default_value = "shuffle")]
+    shell: String,
 
-    /// Randomize cannon fire directions and types (off by default)
-    #[arg(long)]
-    wild_cannons: bool,
+    /// Flying enemies: off, shuffle, or wild (default: shuffle)
+    #[arg(long, default_value = "shuffle")]
+    flying: String,
 
-    /// Randomize rotodisc rotation directions and variants (off by default)
-    #[arg(long)]
-    wild_rotodiscs: bool,
+    /// Cheep cheep variants: off, shuffle, or wild (default: shuffle)
+    #[arg(long, default_value = "shuffle")]
+    cheeps: String,
 
-    /// Merge enemy classes into large behavior tiers and inject special enemies (off by default)
+    /// Bullet Bill variants: off, shuffle, or wild (default: shuffle)
+    #[arg(long, default_value = "shuffle")]
+    bullet_bills: String,
+
+    /// Piranha plant variants: off, shuffle, or wild (default: shuffle)
+    #[arg(long, default_value = "shuffle")]
+    piranhas: String,
+
+    /// Ghost house enemies: off, shuffle, or wild (default: shuffle)
+    #[arg(long, default_value = "shuffle")]
+    ghosts: String,
+
+    /// Thwomp variants: off, shuffle, or wild (default: off)
+    #[arg(long, default_value = "off")]
+    thwomps: String,
+
+    /// Rotodisc variants: off, shuffle, or wild (default: off)
+    #[arg(long, default_value = "off")]
+    rotodiscs: String,
+
+    /// Cannon fire variants: off, shuffle, or wild (default: off)
+    #[arg(long, default_value = "off")]
+    cannons: String,
+
+    /// Water enemies: off, shuffle, or wild (default: shuffle)
+    #[arg(long, default_value = "shuffle")]
+    water: String,
+
+    /// Hammer/Boomerang/Fire Bros: off, shuffle, or wild (default: shuffle)
+    #[arg(long, default_value = "shuffle")]
+    bros: String,
+
+    /// HB encounter segments: off, shuffle, or wild (default: off)
+    #[arg(long, default_value = "off")]
+    hb_encounters: String,
+
+    /// Inject Lakitu/Angry Sun/Boss Bass into ~15% of segments
     #[arg(long)]
-    wild_enemies: bool,
+    wild_injections: bool,
 
     /// Disable airship lock (anchor effect always on by default, use this flag to disable)
     #[arg(long)]
@@ -171,6 +203,19 @@ fn main() {
         }
     };
 
+    fn parse_enemy_mode(s: &str, name: &str) -> EnemyMode {
+        match s {
+            "off" => EnemyMode::Off,
+            "shuffle" => EnemyMode::Shuffle,
+            "wild" => EnemyMode::Wild,
+            other => {
+                eprintln!("Invalid --{name} value: {other}");
+                eprintln!("Valid values: off, shuffle, wild");
+                process::exit(1);
+            }
+        }
+    }
+
     let options = if let Some(ref flag_key) = cli.flags {
         match Options::from_flag_key(flag_key) {
             Ok(opts) => opts,
@@ -183,7 +228,6 @@ fn main() {
         Options {
             powerups: !cli.no_powerups,
             palettes: !cli.no_palettes,
-            enemies: cli.enemies,
             world_order: cli.world_order,
             big_q_blocks: cli.big_q_blocks,
             level_shuffle,
@@ -201,11 +245,20 @@ fn main() {
             adjust_boss_hitboxes: !cli.keep_boss_hitboxes,
             remove_spade_games: !cli.keep_spade_games,
             airship_lock: !cli.no_airship_lock,
-            bullet_bills: !cli.no_bullet_bills,
-            wild_thwomps: cli.wild_thwomps,
-            wild_cannons: cli.wild_cannons,
-            wild_rotodiscs: cli.wild_rotodiscs,
-            wild_enemies: cli.wild_enemies,
+            ground: parse_enemy_mode(&cli.ground, "ground"),
+            shell: parse_enemy_mode(&cli.shell, "shell"),
+            flying: parse_enemy_mode(&cli.flying, "flying"),
+            cheeps: parse_enemy_mode(&cli.cheeps, "cheeps"),
+            bullet_bills: parse_enemy_mode(&cli.bullet_bills, "bullet-bills"),
+            piranhas: parse_enemy_mode(&cli.piranhas, "piranhas"),
+            ghosts: parse_enemy_mode(&cli.ghosts, "ghosts"),
+            thwomps: parse_enemy_mode(&cli.thwomps, "thwomps"),
+            rotodiscs: parse_enemy_mode(&cli.rotodiscs, "rotodiscs"),
+            cannons: parse_enemy_mode(&cli.cannons, "cannons"),
+            water: parse_enemy_mode(&cli.water, "water"),
+            bros: parse_enemy_mode(&cli.bros, "bros"),
+            hb_encounters: parse_enemy_mode(&cli.hb_encounters, "hb-encounters"),
+            wild_injections: cli.wild_injections,
             starting_lives: cli.starting_lives,
         }
     };
@@ -220,7 +273,7 @@ fn main() {
     eprintln!("  Flags: {}", options.to_flag_key());
     eprintln!("  Powerups: {}", if options.powerups { "on" } else { "off" });
     eprintln!("  Palettes: {}", if options.palettes { "on" } else { "off" });
-    eprintln!("  Enemies:  {}", if options.enemies { "on" } else { "off" });
+    eprintln!("  Enemies:  {}", if options.any_enemies_active() { "on" } else { "off" });
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
     eprintln!("  Big ? Blocks: {}", if options.big_q_blocks { "on" } else { "off" });
     eprintln!("  Starting Lives: {}", options.starting_lives);

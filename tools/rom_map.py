@@ -541,7 +541,7 @@ def parse_level_commands(rom, offset, region):
                 # Classify for randomization
                 if byte2 in (0x00, 0x01, 0x02):
                     cmd["randomize_class"] = "qblock"
-                elif byte2 in (0x06, 0x07, 0x08):
+                elif byte2 in (0x06, 0x07, 0x08, 0x0B):
                     cmd["randomize_class"] = "brick"
         else:
             cmd["type"] = "variable"

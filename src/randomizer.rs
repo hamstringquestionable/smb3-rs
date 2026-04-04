@@ -22,12 +22,29 @@ impl Default for LevelShuffle {
     }
 }
 
+/// Per-class enemy randomization mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnemyMode {
+    Off,
+    Shuffle,
+    Wild,
+}
+
+impl Default for EnemyMode {
+    fn default() -> Self {
+        EnemyMode::Off
+    }
+}
+
+fn default_shuffle() -> EnemyMode { EnemyMode::Shuffle }
+fn default_off() -> EnemyMode { EnemyMode::Off }
+
 /// Options controlling which randomizations to apply.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Options {
     pub powerups: bool,
     pub palettes: bool,
-    pub enemies: bool,
     pub world_order: bool,
     #[serde(default = "default_false")]
     pub big_q_blocks: bool,
@@ -80,26 +97,50 @@ pub struct Options {
     /// Remove spade (card matching) games from the overworld, freeing map slots for levels.
     #[serde(default = "default_true")]
     pub remove_spade_games: bool,
-    /// Shuffle Bullet Bill variants (standard ↔ homing).
-    /// On by default — both are airborne projectiles with similar placement.
-    #[serde(default = "default_true")]
-    pub bullet_bills: bool,
-    /// Randomize Thwomp movement directions (diagonal, sideways, etc.).
-    /// Off by default — random directions don't suit corridors designed for specific patterns.
-    #[serde(default, alias = "crazy_thwomps")]
-    pub wild_thwomps: bool,
-    /// Randomize cannon fire directions and types.
-    /// Off by default — swapped fire directions create chaotic gameplay.
-    #[serde(default, alias = "crazy_cannons")]
-    pub wild_cannons: bool,
-    /// Randomize rotodisc rotation directions and dual/single variants.
-    /// Off by default — rotation direction matters for designed fortress corridors.
+
+    // --- Per-class enemy tri-state toggles ---
+    /// Ground-walking enemies (Goomba, Spiny, Spike, etc.)
+    #[serde(default = "default_shuffle")]
+    pub ground: EnemyMode,
+    /// Shell-producing enemies (Koopa, Buzzy Beetle, etc.)
+    #[serde(default = "default_shuffle")]
+    pub shell: EnemyMode,
+    /// Flying/hopping enemies (Paratroopa, Paragoomba, etc.)
+    #[serde(default = "default_shuffle")]
+    pub flying: EnemyMode,
+    /// Cheep cheep variants (overworld jumping types)
+    #[serde(default = "default_shuffle")]
+    pub cheeps: EnemyMode,
+    /// Bullet Bill variants (standard and homing)
+    #[serde(default = "default_shuffle")]
+    pub bullet_bills: EnemyMode,
+    /// Piranha plant variants (upward + ceiling)
+    #[serde(default = "default_shuffle")]
+    pub piranhas: EnemyMode,
+    /// Ghost house enemies (Boo, Hot Foot)
+    #[serde(default = "default_shuffle")]
+    pub ghosts: EnemyMode,
+    /// Thwomp movement variants
+    #[serde(default = "default_off")]
+    pub thwomps: EnemyMode,
+    /// Rotodisc rotation variants
+    #[serde(default = "default_off")]
+    pub rotodiscs: EnemyMode,
+    /// Cannon fire directions and types (5 sub-classes merge under Wild)
+    #[serde(default = "default_off")]
+    pub cannons: EnemyMode,
+    /// Water enemies (Blooper, Big Bertha, etc.)
+    #[serde(default = "default_shuffle")]
+    pub water: EnemyMode,
+    /// Hammer/Boomerang/Fire/Heavy Bros (only in non-HB segments)
+    #[serde(default = "default_shuffle")]
+    pub bros: EnemyMode,
+    /// All enemies in Hammer Bro encounter segments
+    #[serde(default = "default_off")]
+    pub hb_encounters: EnemyMode,
+    /// Inject Lakitu/Angry Sun/Boss Bass into ~15% of segments (CHR-compatible)
     #[serde(default)]
-    pub wild_rotodiscs: bool,
-    /// Merge enemy classes into large behavior tiers and inject special enemies
-    /// (Lakitu, Angry Sun, Boss Bass). Off by default — opt-in chaos mode.
-    #[serde(default)]
-    pub wild_enemies: bool,
+    pub wild_injections: bool,
 }
 
 fn default_false() -> bool {
@@ -110,15 +151,15 @@ fn default_true() -> bool {
     true
 }
 
-const FLAG_KEY_VERSION: u8 = 5;
+const FLAG_KEY_VERSION: u8 = 6;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
 /// Free space in PRG012 after the Big ? Block trampoline (0x19DD0 region).
 /// The trampoline uses 0x19DD0–0x19DE1; we place the 16-byte stamp at 0x19DF0.
 const STAMP_OFFSET: usize = 0x19DF0;
 
 impl Options {
-    /// Encode options into 6 raw bytes.
-    pub fn to_flag_bytes(&self) -> [u8; 6] {
+    /// Encode options into 8 raw bytes.
+    pub fn to_flag_bytes(&self) -> [u8; 8] {
         let level_shuffle_val = match self.level_shuffle {
             LevelShuffle::Off => 0u8,
             LevelShuffle::IntraWorld => 1,
@@ -127,9 +168,10 @@ impl Options {
 
         let b0 = FLAG_KEY_VERSION;
 
+        // b1: non-enemy flags (reclaimed bit 5 from old `enemies`)
         let b1 = (self.powerups as u8) << 7
             | (self.palettes as u8) << 6
-            | (self.enemies as u8) << 5
+            // bit 5 free (was `enemies`)
             | (self.world_order as u8) << 4
             | (self.big_q_blocks as u8) << 3
             | (self.disable_autoscroll as u8) << 2
@@ -150,32 +192,69 @@ impl Options {
             | (self.remove_n_cards as u8) << 6
             | (self.skip_wand_cutscene as u8) << 5
             | (self.adjust_boss_hitboxes as u8) << 4
-            | (self.remove_spade_games as u8) << 3
-            | (self.wild_thwomps as u8) << 2
-            | (self.wild_cannons as u8) << 1;
+            | (self.remove_spade_games as u8) << 3;
+            // bits 2-0 free (were wild_thwomps, wild_cannons)
 
-        let b5 = (self.bullet_bills as u8) << 7
-            | (self.wild_rotodiscs as u8) << 6
-            | (self.wild_enemies as u8) << 5;
+        // Helper to encode EnemyMode as 2 bits
+        fn em(m: EnemyMode) -> u8 {
+            match m {
+                EnemyMode::Off => 0,
+                EnemyMode::Shuffle => 1,
+                EnemyMode::Wild => 2,
+            }
+        }
 
-        [b0, b1, b2, b3, b4, b5]
+        // b5: ground(7-6) shell(5-4) flying(3-2) cheeps(1-0)
+        let b5 = em(self.ground) << 6
+            | em(self.shell) << 4
+            | em(self.flying) << 2
+            | em(self.cheeps);
+
+        // b6: bullet_bills(7-6) piranhas(5-4) ghosts(3-2) thwomps(1-0)
+        let b6 = em(self.bullet_bills) << 6
+            | em(self.piranhas) << 4
+            | em(self.ghosts) << 2
+            | em(self.thwomps);
+
+        // b7: rotodiscs(7-6) cannons(5-4) water(3-2) bros(1-0)
+        // But we also need hb_encounters(2 bits) and wild_injections(1 bit)
+        // = 5 tri-states (10 bits) + 1 bool = 11 bits. We have 16 bits (b7+overflow).
+        // Rearrange: put last 5 tri-states + injection across b7 and steal bits from b4.
+        //
+        // b7: rotodiscs(7-6) cannons(5-4) water(3-2) bros(1-0)
+        let b7 = em(self.rotodiscs) << 6
+            | em(self.cannons) << 4
+            | em(self.water) << 2
+            | em(self.bros);
+
+        // Use b4 bits 2-0 for hb_encounters(2 bits) + wild_injections(1 bit)
+        let b4 = b4
+            | (em(self.hb_encounters) << 1)
+            | (self.wild_injections as u8);
+
+        [b0, b1, b2, b3, b4, b5, b6, b7]
     }
 
-    /// Encode options into a compact hex flag key (e.g. "SMB3R-05E3B9058080").
+    /// Encode options into a compact hex flag key (e.g. "SMB3R-06...").
     pub fn to_flag_key(&self) -> String {
-        let [b0, b1, b2, b3, b4, b5] = self.to_flag_bytes();
-        format!("{FLAG_KEY_PREFIX}{b0:02X}{b1:02X}{b2:02X}{b3:02X}{b4:02X}{b5:02X}")
+        let bytes = self.to_flag_bytes();
+        let mut hex = String::with_capacity(6 + 16);
+        hex.push_str(FLAG_KEY_PREFIX);
+        for b in &bytes {
+            hex.push_str(&format!("{b:02X}"));
+        }
+        hex
     }
 
     /// Decode a flag key string into Options.
-    /// Accepts v1 (8 hex), v2 (10 hex), and v3 (10 hex) keys.
+    /// Accepts v1–v6 keys.
     pub fn from_flag_key(key: &str) -> Result<Options, String> {
         let hex = key.strip_prefix(FLAG_KEY_PREFIX)
             .or_else(|| key.strip_prefix("smb3r-"))
             .unwrap_or(key);
 
-        if hex.len() != 8 && hex.len() != 10 && hex.len() != 12 {
-            return Err(format!("Flag key must be 8, 10, or 12 hex digits (got {})", hex.len()));
+        if hex.len() % 2 != 0 || hex.len() < 8 || hex.len() > 16 {
+            return Err(format!("Flag key must be 8–16 hex digits (got {})", hex.len()));
         }
 
         let num_bytes = hex.len() / 2;
@@ -194,6 +273,46 @@ impl Options {
         let b3 = bytes[3];
         let b4 = if bytes.len() > 4 { bytes[4] } else { 0x80 }; // v1 default: card_speed_clear on
 
+        // Helper: convert old enemy booleans to new tri-state fields
+        fn legacy_enemy_opts(
+            enemies: bool, bullet_bills: bool, wild_thwomps: bool,
+            wild_cannons: bool, wild_rotodiscs: bool, wild_enemies: bool,
+        ) -> (EnemyMode, EnemyMode, EnemyMode, EnemyMode, EnemyMode, EnemyMode,
+              EnemyMode, EnemyMode, EnemyMode, EnemyMode, EnemyMode, EnemyMode,
+              EnemyMode, bool)
+        {
+            // Base mode for the 9 core classes gated by `enemies`
+            let base = if enemies { EnemyMode::Shuffle } else { EnemyMode::Off };
+            let mut ground = base;
+            let mut shell = base;
+            let mut flying = base;
+            let mut cheeps = base;
+            let mut piranhas = base;
+            let mut ghosts = base;
+            let mut water = base;
+            let mut bros = base;
+            let mut bills = if bullet_bills { EnemyMode::Shuffle } else { EnemyMode::Off };
+            let mut thwomps = if wild_thwomps { EnemyMode::Shuffle } else { EnemyMode::Off };
+            let mut cannons = if wild_cannons { EnemyMode::Shuffle } else { EnemyMode::Off };
+            let mut rotodiscs = if wild_rotodiscs { EnemyMode::Shuffle } else { EnemyMode::Off };
+            let mut wild_injections = false;
+
+            // wild_enemies: promote all currently-Shuffle classes to Wild + enable injections
+            if wild_enemies {
+                for m in [&mut ground, &mut shell, &mut flying, &mut cheeps,
+                           &mut piranhas, &mut ghosts, &mut water, &mut bros,
+                           &mut bills, &mut thwomps, &mut cannons, &mut rotodiscs] {
+                    if *m == EnemyMode::Shuffle {
+                        *m = EnemyMode::Wild;
+                    }
+                }
+                wild_injections = true;
+            }
+
+            (ground, shell, flying, cheeps, bills, piranhas, ghosts, thwomps,
+             rotodiscs, cannons, water, bros, EnemyMode::Off, wild_injections)
+        }
+
         // v2 compat: old shuffle_fortresses/fortress_redistribute → map_shuffle
         if version <= 2 {
             let old_shuffle_forts = (b2 >> 6) & 1 != 0;
@@ -207,10 +326,12 @@ impl Options {
             let map_shuffle = old_shuffle_forts || old_fort_val != 0
                 || level_shuffle_val == 2;
             let starting_lives = b3 & 0x7F;
+            let (ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
+                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections) =
+                legacy_enemy_opts((b1 >> 5) & 1 != 0, true, false, false, false, false);
             return Ok(Options {
                 powerups: (b1 >> 7) & 1 != 0,
                 palettes: (b1 >> 6) & 1 != 0,
-                enemies: (b1 >> 5) & 1 != 0,
                 world_order: (b1 >> 4) & 1 != 0,
                 big_q_blocks: (b1 >> 3) & 1 != 0,
                 disable_autoscroll: (b1 >> 2) & 1 != 0,
@@ -228,16 +349,13 @@ impl Options {
                 remove_n_cards: (b4 >> 6) & 1 != 0,
                 skip_wand_cutscene: (b4 >> 5) & 1 != 0,
                 adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
-                remove_spade_games: true, // default on for old flag keys
-                bullet_bills: true,
-                wild_thwomps: false,
-                wild_cannons: false,
-                wild_rotodiscs: false,
-                wild_enemies: false,
+                remove_spade_games: true,
+                ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
+                thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
             });
         }
 
-        // v3 compat: wild flags default to off
+        // v3 compat
         if version == 3 {
             let level_shuffle_val = (b2 >> 1) & 0x03;
             let level_shuffle = match level_shuffle_val {
@@ -247,10 +365,12 @@ impl Options {
             };
             let starting_lives = b3 & 0x7F;
             let starting_lives = if starting_lives == 0 { 1 } else { starting_lives };
+            let (ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
+                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections) =
+                legacy_enemy_opts((b1 >> 5) & 1 != 0, true, false, false, false, false);
             return Ok(Options {
                 powerups: (b1 >> 7) & 1 != 0,
                 palettes: (b1 >> 6) & 1 != 0,
-                enemies: (b1 >> 5) & 1 != 0,
                 world_order: (b1 >> 4) & 1 != 0,
                 big_q_blocks: (b1 >> 3) & 1 != 0,
                 disable_autoscroll: (b1 >> 2) & 1 != 0,
@@ -269,15 +389,12 @@ impl Options {
                 skip_wand_cutscene: (b4 >> 5) & 1 != 0,
                 adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
                 remove_spade_games: (b4 >> 3) & 1 != 0,
-                bullet_bills: true,
-                wild_thwomps: false,
-                wild_cannons: false,
-                wild_rotodiscs: false,
-                wild_enemies: false,
+                ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
+                thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
             });
         }
 
-        // v4 compat: bullet_bills/wild_rotodiscs didn't exist
+        // v4 compat
         if version == 4 {
             let level_shuffle_val = (b2 >> 1) & 0x03;
             let level_shuffle = match level_shuffle_val {
@@ -287,11 +404,16 @@ impl Options {
             };
             let starting_lives = b3 & 0x7F;
             let starting_lives = if starting_lives == 0 { 1 } else { starting_lives };
-
+            let (ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
+                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections) =
+                legacy_enemy_opts(
+                    (b1 >> 5) & 1 != 0, true,
+                    (b4 >> 2) & 1 != 0, (b4 >> 1) & 1 != 0,
+                    false, false,
+                );
             return Ok(Options {
                 powerups: (b1 >> 7) & 1 != 0,
                 palettes: (b1 >> 6) & 1 != 0,
-                enemies: (b1 >> 5) & 1 != 0,
                 world_order: (b1 >> 4) & 1 != 0,
                 big_q_blocks: (b1 >> 3) & 1 != 0,
                 disable_autoscroll: (b1 >> 2) & 1 != 0,
@@ -310,16 +432,63 @@ impl Options {
                 skip_wand_cutscene: (b4 >> 5) & 1 != 0,
                 adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
                 remove_spade_games: (b4 >> 3) & 1 != 0,
-                bullet_bills: true,
-                wild_thwomps: (b4 >> 2) & 1 != 0,
-                wild_cannons: (b4 >> 1) & 1 != 0,
-                wild_rotodiscs: false,
-                wild_enemies: false,
+                ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
+                thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
             });
         }
 
-        // v5 decoding
-        let b5 = if bytes.len() > 5 { bytes[5] } else { 0x80 }; // default: bullet_bills on
+        // v5 compat
+        if version == 5 {
+            let b5 = if bytes.len() > 5 { bytes[5] } else { 0x80 };
+            let level_shuffle_val = (b2 >> 1) & 0x03;
+            let level_shuffle = match level_shuffle_val {
+                1 => LevelShuffle::IntraWorld,
+                2 => LevelShuffle::CrossWorld,
+                _ => LevelShuffle::Off,
+            };
+            let starting_lives = b3 & 0x7F;
+            let starting_lives = if starting_lives == 0 { 1 } else { starting_lives };
+            let (ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
+                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections) =
+                legacy_enemy_opts(
+                    (b1 >> 5) & 1 != 0,
+                    (b5 >> 7) & 1 != 0,
+                    (b4 >> 2) & 1 != 0,
+                    (b4 >> 1) & 1 != 0,
+                    (b5 >> 6) & 1 != 0,
+                    (b5 >> 5) & 1 != 0,
+                );
+            return Ok(Options {
+                powerups: (b1 >> 7) & 1 != 0,
+                palettes: (b1 >> 6) & 1 != 0,
+                world_order: (b1 >> 4) & 1 != 0,
+                big_q_blocks: (b1 >> 3) & 1 != 0,
+                disable_autoscroll: (b1 >> 2) & 1 != 0,
+                airship_lock: (b1 >> 1) & 1 != 0,
+                chest_items: b1 & 1 != 0,
+                remove_whistles: (b2 >> 7) & 1 != 0,
+                map_shuffle: (b2 >> 6) & 1 != 0,
+                shuffle_pipes: (b2 >> 5) & 1 != 0,
+                shuffle_airships: b2 & 1 != 0,
+                fix_drawbridges: (b2 >> 4) & 1 != 0,
+                remove_rocks: (b2 >> 3) & 1 != 0,
+                level_shuffle,
+                starting_lives,
+                card_speed_clear: (b4 >> 7) & 1 != 0,
+                remove_n_cards: (b4 >> 6) & 1 != 0,
+                skip_wand_cutscene: (b4 >> 5) & 1 != 0,
+                adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
+                remove_spade_games: (b4 >> 3) & 1 != 0,
+                ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
+                thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
+            });
+        }
+
+        // v6 decoding
+        let b5 = bytes[5];
+        let b6 = bytes[6];
+        let b7 = bytes[7];
+
         let level_shuffle_val = (b2 >> 1) & 0x03;
         let level_shuffle = match level_shuffle_val {
             1 => LevelShuffle::IntraWorld,
@@ -329,10 +498,17 @@ impl Options {
         let starting_lives = b3 & 0x7F;
         let starting_lives = if starting_lives == 0 { 1 } else { starting_lives };
 
+        fn dem(bits: u8) -> EnemyMode {
+            match bits & 0x03 {
+                1 => EnemyMode::Shuffle,
+                2 => EnemyMode::Wild,
+                _ => EnemyMode::Off,
+            }
+        }
+
         Ok(Options {
             powerups: (b1 >> 7) & 1 != 0,
             palettes: (b1 >> 6) & 1 != 0,
-            enemies: (b1 >> 5) & 1 != 0,
             world_order: (b1 >> 4) & 1 != 0,
             big_q_blocks: (b1 >> 3) & 1 != 0,
             disable_autoscroll: (b1 >> 2) & 1 != 0,
@@ -351,12 +527,36 @@ impl Options {
             skip_wand_cutscene: (b4 >> 5) & 1 != 0,
             adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
             remove_spade_games: (b4 >> 3) & 1 != 0,
-            bullet_bills: (b5 >> 7) & 1 != 0,
-            wild_thwomps: (b4 >> 2) & 1 != 0,
-            wild_cannons: (b4 >> 1) & 1 != 0,
-            wild_rotodiscs: (b5 >> 6) & 1 != 0,
-            wild_enemies: (b5 >> 5) & 1 != 0,
+            // b5: ground(7-6) shell(5-4) flying(3-2) cheeps(1-0)
+            ground: dem(b5 >> 6),
+            shell: dem(b5 >> 4),
+            flying: dem(b5 >> 2),
+            cheeps: dem(b5),
+            // b6: bullet_bills(7-6) piranhas(5-4) ghosts(3-2) thwomps(1-0)
+            bullet_bills: dem(b6 >> 6),
+            piranhas: dem(b6 >> 4),
+            ghosts: dem(b6 >> 2),
+            thwomps: dem(b6),
+            // b7: rotodiscs(7-6) cannons(5-4) water(3-2) bros(1-0)
+            rotodiscs: dem(b7 >> 6),
+            cannons: dem(b7 >> 4),
+            water: dem(b7 >> 2),
+            bros: dem(b7),
+            // b4 bits 2-1: hb_encounters, bit 0: wild_injections
+            hb_encounters: dem(b4 >> 1),
+            wild_injections: b4 & 1 != 0,
         })
+    }
+
+    /// Returns true if any enemy class is enabled (not Off).
+    pub fn any_enemies_active(&self) -> bool {
+        self.ground != EnemyMode::Off || self.shell != EnemyMode::Off
+            || self.flying != EnemyMode::Off || self.cheeps != EnemyMode::Off
+            || self.bullet_bills != EnemyMode::Off || self.piranhas != EnemyMode::Off
+            || self.ghosts != EnemyMode::Off || self.thwomps != EnemyMode::Off
+            || self.rotodiscs != EnemyMode::Off || self.cannons != EnemyMode::Off
+            || self.water != EnemyMode::Off || self.bros != EnemyMode::Off
+            || self.hb_encounters != EnemyMode::Off || self.wild_injections
     }
 }
 
@@ -365,7 +565,6 @@ impl Default for Options {
         Options {
             powerups: true,
             palettes: true,
-            enemies: false,
             world_order: false,
             big_q_blocks: false,
             level_shuffle: LevelShuffle::Off,
@@ -383,11 +582,20 @@ impl Default for Options {
             skip_wand_cutscene: true,
             adjust_boss_hitboxes: true,
             remove_spade_games: true,
-            bullet_bills: true,
-            wild_thwomps: false,
-            wild_cannons: false,
-            wild_rotodiscs: false,
-            wild_enemies: false,
+            ground: EnemyMode::Shuffle,
+            shell: EnemyMode::Shuffle,
+            flying: EnemyMode::Shuffle,
+            cheeps: EnemyMode::Shuffle,
+            bullet_bills: EnemyMode::Shuffle,
+            piranhas: EnemyMode::Shuffle,
+            ghosts: EnemyMode::Shuffle,
+            thwomps: EnemyMode::Off,
+            rotodiscs: EnemyMode::Off,
+            cannons: EnemyMode::Off,
+            water: EnemyMode::Shuffle,
+            bros: EnemyMode::Shuffle,
+            hb_encounters: EnemyMode::Off,
+            wild_injections: false,
             starting_lives: default_starting_lives(),
         }
     }
@@ -435,10 +643,7 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         rom.set_tag("palettes");
         randomize::palettes::randomize(rom, &mut rng);
     }
-    if options.enemies || options.bullet_bills
-        || options.wild_thwomps || options.wild_cannons || options.wild_rotodiscs
-        || options.wild_enemies
-    {
+    if options.any_enemies_active() {
         rom.set_tag("enemies");
         randomize::enemies::randomize(rom, &mut rng, options);
     }
@@ -550,17 +755,17 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     rom.set_tag("title_screen");
     randomize::title_screen::write_seed_hash(rom, seed, options);
 
-    // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 17 bytes:
-    //   [0..4]  "S3R\x02" magic + version
-    //   [4..10] flag key bytes (encoding of Options)
-    //   [10..18] seed (little-endian u64)
+    // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 20 bytes:
+    //   [0..4]  "S3R\x06" magic + version
+    //   [4..12] flag key bytes (encoding of Options, 8 bytes in v6)
+    //   [12..20] seed (little-endian u64)
     rom.set_tag("stamp");
     let flag_bytes = options.to_flag_bytes();
-    let mut stamp = [0u8; 18];
+    let mut stamp = [0u8; 20];
     stamp[0..3].copy_from_slice(b"S3R");
     stamp[3] = FLAG_KEY_VERSION;
-    stamp[4..10].copy_from_slice(&flag_bytes);
-    stamp[10..18].copy_from_slice(&seed.to_le_bytes());
+    stamp[4..12].copy_from_slice(&flag_bytes);
+    stamp[12..20].copy_from_slice(&seed.to_le_bytes());
     rom.write_range(STAMP_OFFSET, &stamp);
 }
 
@@ -692,11 +897,10 @@ mod tests {
         let opts = Options::default();
         let key = opts.to_flag_key();
         assert!(key.starts_with("SMB3R-"));
-        assert_eq!(key.len(), 18); // "SMB3R-" + 12 hex
+        assert_eq!(key.len(), 22); // "SMB3R-" + 16 hex
         let decoded = Options::from_flag_key(&key).unwrap();
         assert_eq!(opts.powerups, decoded.powerups);
         assert_eq!(opts.palettes, decoded.palettes);
-        assert_eq!(opts.enemies, decoded.enemies);
         assert_eq!(opts.world_order, decoded.world_order);
         assert_eq!(opts.big_q_blocks, decoded.big_q_blocks);
         assert_eq!(opts.disable_autoscroll, decoded.disable_autoscroll);
@@ -714,14 +918,27 @@ mod tests {
         assert_eq!(opts.remove_n_cards, decoded.remove_n_cards);
         assert_eq!(opts.skip_wand_cutscene, decoded.skip_wand_cutscene);
         assert_eq!(opts.adjust_boss_hitboxes, decoded.adjust_boss_hitboxes);
+        assert_eq!(opts.ground, decoded.ground);
+        assert_eq!(opts.shell, decoded.shell);
+        assert_eq!(opts.flying, decoded.flying);
+        assert_eq!(opts.cheeps, decoded.cheeps);
+        assert_eq!(opts.bullet_bills, decoded.bullet_bills);
+        assert_eq!(opts.piranhas, decoded.piranhas);
+        assert_eq!(opts.ghosts, decoded.ghosts);
+        assert_eq!(opts.thwomps, decoded.thwomps);
+        assert_eq!(opts.rotodiscs, decoded.rotodiscs);
+        assert_eq!(opts.cannons, decoded.cannons);
+        assert_eq!(opts.water, decoded.water);
+        assert_eq!(opts.bros, decoded.bros);
+        assert_eq!(opts.hb_encounters, decoded.hb_encounters);
+        assert_eq!(opts.wild_injections, decoded.wild_injections);
     }
 
     #[test]
-    fn flag_key_round_trip_all_on() {
+    fn flag_key_round_trip_all_wild() {
         let opts = Options {
             powerups: true,
             palettes: true,
-            enemies: true,
             world_order: true,
             big_q_blocks: true,
             level_shuffle: LevelShuffle::CrossWorld,
@@ -740,29 +957,35 @@ mod tests {
             skip_wand_cutscene: true,
             adjust_boss_hitboxes: true,
             remove_spade_games: true,
-            bullet_bills: true,
-            wild_thwomps: true,
-            wild_cannons: true,
-            wild_rotodiscs: true,
-            wild_enemies: true,
+            ground: EnemyMode::Wild,
+            shell: EnemyMode::Wild,
+            flying: EnemyMode::Wild,
+            cheeps: EnemyMode::Wild,
+            bullet_bills: EnemyMode::Wild,
+            piranhas: EnemyMode::Wild,
+            ghosts: EnemyMode::Wild,
+            thwomps: EnemyMode::Wild,
+            rotodiscs: EnemyMode::Wild,
+            cannons: EnemyMode::Wild,
+            water: EnemyMode::Wild,
+            bros: EnemyMode::Wild,
+            hb_encounters: EnemyMode::Wild,
+            wild_injections: true,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
-        assert_eq!(opts.enemies, decoded.enemies);
         assert_eq!(opts.world_order, decoded.world_order);
         assert_eq!(opts.level_shuffle, decoded.level_shuffle);
         assert_eq!(opts.map_shuffle, decoded.map_shuffle);
         assert_eq!(opts.starting_lives, decoded.starting_lives);
-        assert_eq!(opts.shuffle_pipes, decoded.shuffle_pipes);
-        assert_eq!(opts.shuffle_airships, decoded.shuffle_airships);
-        assert_eq!(opts.remove_n_cards, decoded.remove_n_cards);
-        assert_eq!(opts.skip_wand_cutscene, decoded.skip_wand_cutscene);
-        assert_eq!(opts.remove_spade_games, decoded.remove_spade_games);
+        assert_eq!(opts.ground, decoded.ground);
+        assert_eq!(opts.shell, decoded.shell);
         assert_eq!(opts.bullet_bills, decoded.bullet_bills);
-        assert_eq!(opts.wild_thwomps, decoded.wild_thwomps);
-        assert_eq!(opts.wild_cannons, decoded.wild_cannons);
-        assert_eq!(opts.wild_rotodiscs, decoded.wild_rotodiscs);
-        assert_eq!(opts.wild_enemies, decoded.wild_enemies);
+        assert_eq!(opts.thwomps, decoded.thwomps);
+        assert_eq!(opts.rotodiscs, decoded.rotodiscs);
+        assert_eq!(opts.cannons, decoded.cannons);
+        assert_eq!(opts.hb_encounters, decoded.hb_encounters);
+        assert_eq!(opts.wild_injections, decoded.wild_injections);
     }
 
     #[test]
@@ -770,7 +993,6 @@ mod tests {
         let opts = Options {
             powerups: false,
             palettes: false,
-            enemies: false,
             world_order: false,
             big_q_blocks: false,
             level_shuffle: LevelShuffle::Off,
@@ -789,26 +1011,34 @@ mod tests {
             skip_wand_cutscene: false,
             adjust_boss_hitboxes: false,
             remove_spade_games: false,
-            bullet_bills: false,
-            wild_thwomps: false,
-            wild_cannons: false,
-            wild_rotodiscs: false,
-            wild_enemies: false,
+            ground: EnemyMode::Off,
+            shell: EnemyMode::Off,
+            flying: EnemyMode::Off,
+            cheeps: EnemyMode::Off,
+            bullet_bills: EnemyMode::Off,
+            piranhas: EnemyMode::Off,
+            ghosts: EnemyMode::Off,
+            thwomps: EnemyMode::Off,
+            rotodiscs: EnemyMode::Off,
+            cannons: EnemyMode::Off,
+            water: EnemyMode::Off,
+            bros: EnemyMode::Off,
+            hb_encounters: EnemyMode::Off,
+            wild_injections: false,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
         assert!(!decoded.powerups);
         assert!(!decoded.palettes);
-        assert!(!decoded.enemies);
         assert!(!decoded.disable_autoscroll);
         assert!(!decoded.map_shuffle);
         assert!(!decoded.shuffle_airships);
         assert!(!decoded.remove_spade_games);
-        assert!(!decoded.bullet_bills);
-        assert!(!decoded.wild_thwomps);
-        assert!(!decoded.wild_cannons);
-        assert!(!decoded.wild_rotodiscs);
-        assert!(!decoded.wild_enemies);
+        assert_eq!(decoded.ground, EnemyMode::Off);
+        assert_eq!(decoded.bullet_bills, EnemyMode::Off);
+        assert_eq!(decoded.thwomps, EnemyMode::Off);
+        assert_eq!(decoded.hb_encounters, EnemyMode::Off);
+        assert!(!decoded.wild_injections);
         assert_eq!(decoded.starting_lives, 1);
         assert_eq!(decoded.level_shuffle, LevelShuffle::Off);
     }
@@ -848,7 +1078,15 @@ mod tests {
         let mut rom = make_test_rom();
         let mut options = test_options();
         // Disable optional modules we can check for absence
-        options.enemies = false;
+        options.ground = EnemyMode::Off;
+        options.shell = EnemyMode::Off;
+        options.flying = EnemyMode::Off;
+        options.cheeps = EnemyMode::Off;
+        options.bullet_bills = EnemyMode::Off;
+        options.piranhas = EnemyMode::Off;
+        options.ghosts = EnemyMode::Off;
+        options.water = EnemyMode::Off;
+        options.bros = EnemyMode::Off;
         options.world_order = false;
         // Keep these on — they write to known offsets even on a zeroed ROM
         options.disable_autoscroll = true;
