@@ -238,6 +238,45 @@ input[type="radio"] {
     border-color: #5c94fc;
 }
 
+/* --- Pill Groups (tri-state segmented controls) --- */
+
+.pill-group {
+    display: inline-flex;
+    border: 1px solid #2a2a50;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-left: auto;
+}
+
+.pill-group input[type="radio"] {
+    display: none;
+}
+
+.pill-group label {
+    padding: 0.2rem 0.5rem;
+    font-size: 0.75rem;
+    color: #9a9ab0;
+    cursor: pointer;
+    border-right: 1px solid #2a2a50;
+    margin-bottom: 0;
+    transition: all 0.15s;
+    background: #1c1c38;
+}
+
+.pill-group label:last-of-type {
+    border-right: none;
+}
+
+.pill-group label:hover {
+    background: #2a2a50;
+    color: #e0e0e0;
+}
+
+.pill-group input[type="radio"]:checked + label {
+    background: #e44434;
+    color: #fff;
+}
+
 /* --- Tags --- */
 
 .tag {
