@@ -103,6 +103,10 @@ struct Cli {
     #[arg(long)]
     keep_boss_hitboxes: bool,
 
+    /// Keep vanilla Koopaling stomp counts (3 hits each; randomized 1–5 per Koopaling by default)
+    #[arg(long)]
+    keep_koopaling_stomps: bool,
+
     /// Keep spade (card matching) games on the overworld (removed by default to free map slots)
     #[arg(long)]
     keep_spade_games: bool,
@@ -243,6 +247,7 @@ fn main() {
             remove_n_cards: !cli.keep_n_cards,
             skip_wand_cutscene: !cli.keep_wand_cutscene,
             adjust_boss_hitboxes: !cli.keep_boss_hitboxes,
+            koopaling_hits: !cli.keep_koopaling_stomps,
             remove_spade_games: !cli.keep_spade_games,
             airship_lock: !cli.no_airship_lock,
             ground: parse_enemy_mode(&cli.ground, "ground"),

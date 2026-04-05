@@ -94,6 +94,9 @@ pub struct Options {
     /// Adjust hitboxes for Bowser and Koopalings so they're easier to hit.
     #[serde(default = "default_true")]
     pub adjust_boss_hitboxes: bool,
+    /// Randomize per-Koopaling stomp counts (each gets 1–5 hits independently).
+    #[serde(default = "default_true")]
+    pub koopaling_hits: bool,
     /// Remove spade (card matching) games from the overworld, freeing map slots for levels.
     #[serde(default = "default_true")]
     pub remove_spade_games: bool,
@@ -168,10 +171,10 @@ impl Options {
 
         let b0 = FLAG_KEY_VERSION;
 
-        // b1: non-enemy flags (reclaimed bit 5 from old `enemies`)
+        // b1: non-enemy flags (bit 5 reclaimed from old `enemies`, now koopaling_hits)
         let b1 = (self.powerups as u8) << 7
             | (self.palettes as u8) << 6
-            // bit 5 free (was `enemies`)
+            | (self.koopaling_hits as u8) << 5
             | (self.world_order as u8) << 4
             | (self.big_q_blocks as u8) << 3
             | (self.disable_autoscroll as u8) << 2
@@ -349,6 +352,7 @@ impl Options {
                 remove_n_cards: (b4 >> 6) & 1 != 0,
                 skip_wand_cutscene: (b4 >> 5) & 1 != 0,
                 adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
+                koopaling_hits: false,
                 remove_spade_games: true,
                 ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
@@ -388,6 +392,7 @@ impl Options {
                 remove_n_cards: (b4 >> 6) & 1 != 0,
                 skip_wand_cutscene: (b4 >> 5) & 1 != 0,
                 adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
+                koopaling_hits: false,
                 remove_spade_games: (b4 >> 3) & 1 != 0,
                 ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
@@ -431,6 +436,7 @@ impl Options {
                 remove_n_cards: (b4 >> 6) & 1 != 0,
                 skip_wand_cutscene: (b4 >> 5) & 1 != 0,
                 adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
+                koopaling_hits: false,
                 remove_spade_games: (b4 >> 3) & 1 != 0,
                 ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
@@ -478,6 +484,7 @@ impl Options {
                 remove_n_cards: (b4 >> 6) & 1 != 0,
                 skip_wand_cutscene: (b4 >> 5) & 1 != 0,
                 adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
+                koopaling_hits: false,
                 remove_spade_games: (b4 >> 3) & 1 != 0,
                 ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
@@ -509,6 +516,7 @@ impl Options {
         Ok(Options {
             powerups: (b1 >> 7) & 1 != 0,
             palettes: (b1 >> 6) & 1 != 0,
+            koopaling_hits: (b1 >> 5) & 1 != 0,
             world_order: (b1 >> 4) & 1 != 0,
             big_q_blocks: (b1 >> 3) & 1 != 0,
             disable_autoscroll: (b1 >> 2) & 1 != 0,
@@ -581,6 +589,7 @@ impl Default for Options {
             remove_n_cards: true,
             skip_wand_cutscene: true,
             adjust_boss_hitboxes: true,
+            koopaling_hits: true,
             remove_spade_games: true,
             ground: EnemyMode::Shuffle,
             shell: EnemyMode::Shuffle,
@@ -743,6 +752,12 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     if options.adjust_boss_hitboxes {
         rom.set_tag("qol/adjust_boss_hitboxes");
         randomize::qol::adjust_boss_hitboxes(rom);
+    }
+
+    // Per-Koopaling random stomp counts (1–5 hits each).
+    if options.koopaling_hits {
+        rom.set_tag("qol/koopaling_hits");
+        randomize::qol::randomize_koopaling_hits(rom, &mut rng);
     }
 
     // Card speed clear: one-of-each clears cards with +1 life but no cutscene.
@@ -956,6 +971,7 @@ mod tests {
             remove_n_cards: true,
             skip_wand_cutscene: true,
             adjust_boss_hitboxes: true,
+            koopaling_hits: true,
             remove_spade_games: true,
             ground: EnemyMode::Wild,
             shell: EnemyMode::Wild,
@@ -1010,6 +1026,7 @@ mod tests {
             remove_n_cards: false,
             skip_wand_cutscene: false,
             adjust_boss_hitboxes: false,
+            koopaling_hits: false,
             remove_spade_games: false,
             ground: EnemyMode::Off,
             shell: EnemyMode::Off,

@@ -1,4 +1,5 @@
 use crate::rom::Rom;
+use rand_chacha::ChaCha8Rng;
 
 /// Starting lives value byte (LDA #imm operand).
 /// Both Mario and Luigi are initialized from this single byte.
@@ -228,6 +229,79 @@ pub fn adjust_boss_hitboxes(rom: &mut Rom) {
     rom.write_byte(HITBOX_C_OFFSET, 0x32);
     rom.write_byte(HITBOX_D_OFFSET, 0x20);
     rom.write_byte(HITBOX_E_OFFSET, 0x18);
+}
+
+/// Randomize per-Koopaling stomp counts (1–5 hits each, independently).
+///
+/// The Koopaling stomp handler is `ObjHit_Koopaling` in PRG001 (southbird
+/// disassembly). The vanilla code at CPU $B187 does:
+///   LDA $7F,X    ; load Objects_Var4 (stomp counter)
+///   CMP #$03     ; 3 hits to kill
+///   BCS defeated
+///
+/// We replace `LDA $7F,X; CMP #$03` (3 bytes at file 0x03197) with
+/// `JMP subroutine` which loads the counter, looks up a per-world threshold
+/// table indexed by World_Num ($0727), and branches to the vanilla survive
+/// ($B18D) or defeat ($B193) paths.
+///
+/// Patch sites:
+///   - 0x03197: `LDA $7F,X; CMP #$03` → `JMP $B81A`
+///   - FS_KOOPA_HITS_SUB (0x0382A): 13-byte subroutine
+///   - FS_KOOPA_HITS_TABLE (0x03837): 7-byte per-world threshold table
+
+/// File offset of `LDA $7F,X; CMP #$03` in ObjHit_Koopaling (3 bytes).
+const KOOPA_PATCH_SITE: usize = 0x03197;
+/// CPU address of the vanilla "survive" path (sets timer, RTS).
+const KOOPA_SURVIVE_CPU: u16 = 0xB18D;
+/// CPU address of the vanilla "defeated" path.
+const KOOPA_DEFEAT_CPU: u16 = 0xB193;
+
+use super::rom_data::{KOOPA_HITS_SUB_CPU, KOOPA_HITS_TABLE_CPU};
+
+/// Subroutine machine code (13 bytes):
+/// ```asm
+///   LDA $7F,X              ; load stomp counter (original instruction)
+///   LDY $0727              ; Y = World_Num (0–6)
+///   CMP ($B827),Y          ; compare with per-world threshold
+///   BCS +3                 ; if >= threshold → defeated
+///   JMP $B18D              ; survive
+///   JMP $B193              ; defeated
+/// ```
+const KOOPA_HITS_CODE: [u8; 13] = [
+    0xB5, 0x7F,                                                  // LDA $7F,X
+    0xAC, 0x27, 0x07,                                            // LDY $0727
+    0xD9, KOOPA_HITS_TABLE_CPU as u8, (KOOPA_HITS_TABLE_CPU >> 8) as u8, // CMP table,Y
+    0xB0, 0x03,                                                  // BCS +3 (to JMP defeat)
+    0x4C, KOOPA_SURVIVE_CPU as u8, (KOOPA_SURVIVE_CPU >> 8) as u8, // JMP $B18D
+];
+// Note: defeat JMP ($B193) follows immediately after in the table area,
+// but we can just let BCS fall through to the table bytes — instead we
+// place the defeat JMP right after the code, before the table.
+// Total: 13 bytes code + 3 bytes JMP defeat + 7 bytes table = 23 bytes.
+
+pub fn randomize_koopaling_hits(rom: &mut Rom, rng: &mut ChaCha8Rng) {
+    use rand::Rng;
+
+    // Write subroutine into free space
+    rom.write_range(super::rom_data::FS_KOOPA_HITS_SUB, &KOOPA_HITS_CODE);
+
+    // Write JMP defeat right after the subroutine (at sub + 13)
+    let defeat_jmp_offset = super::rom_data::FS_KOOPA_HITS_SUB + 13;
+    rom.write_range(defeat_jmp_offset, &[
+        0x4C, KOOPA_DEFEAT_CPU as u8, (KOOPA_DEFEAT_CPU >> 8) as u8,
+    ]);
+
+    // Build per-world threshold table: worlds 0–6 get random 1–5
+    let mut table = [3u8; 7];
+    for entry in table.iter_mut() {
+        *entry = rng.random_range(1..=5);
+    }
+    rom.write_range(super::rom_data::FS_KOOPA_HITS_TABLE, &table);
+
+    // Patch call site: replace LDA $7F,X; CMP #$03 (3 bytes) with JMP subroutine
+    rom.write_range(KOOPA_PATCH_SITE, &[
+        0x4C, KOOPA_HITS_SUB_CPU as u8, (KOOPA_HITS_SUB_CPU >> 8) as u8,
+    ]);
 }
 
 /// Skip the wand falling cutscene after defeating a Koopaling.
@@ -490,5 +564,34 @@ mod tests {
         assert_eq!(rom.read_byte(HITBOX_C_OFFSET), 0x32);
         assert_eq!(rom.read_byte(HITBOX_D_OFFSET), 0x20);
         assert_eq!(rom.read_byte(HITBOX_E_OFFSET), 0x18);
+    }
+
+    #[test]
+    fn test_randomize_koopaling_hits() {
+        use rand::SeedableRng;
+
+        let mut rom = make_test_rom();
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        randomize_koopaling_hits(&mut rom, &mut rng);
+
+        // Patch site: JMP $B81A
+        assert_eq!(rom.read_range(KOOPA_PATCH_SITE, 3), &[
+            0x4C,
+            crate::randomize::rom_data::KOOPA_HITS_SUB_CPU as u8,
+            (crate::randomize::rom_data::KOOPA_HITS_SUB_CPU >> 8) as u8,
+        ]);
+        // Subroutine written
+        assert_eq!(
+            rom.read_range(crate::randomize::rom_data::FS_KOOPA_HITS_SUB, 13),
+            &KOOPA_HITS_CODE,
+        );
+        // Defeat JMP follows subroutine
+        let defeat_off = crate::randomize::rom_data::FS_KOOPA_HITS_SUB + 13;
+        assert_eq!(rom.read_range(defeat_off, 3), &[0x4C, 0x93, 0xB1]);
+        // Table: worlds 0–6 each in 1..=5
+        let table = rom.read_range(crate::randomize::rom_data::FS_KOOPA_HITS_TABLE, 7);
+        for &v in &table[..] {
+            assert!((1..=5).contains(&v), "threshold {v} out of range 1–5");
+        }
     }
 }

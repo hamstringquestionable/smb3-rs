@@ -42,6 +42,8 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x15DF0, 35, "canoe_fix: death respawn position save"),
     // PRG011 (file 0x16010, CPU $A000–$BFFF during map)
     (0x17D00, 59, "canoe_fix: backup/restore subroutines"),
+    // PRG001 (file 0x02010, CPU $A000–$BFFF)
+    (0x0382A, 23, "koopa_hits: subroutine + defeat JMP + threshold table"),
 ];
 
 // Individual constants for use by each module.
@@ -68,6 +70,15 @@ pub(super) const FS_CANOE_RESPAWN: usize     = 0x15DF0; // 35 bytes
 
 // PRG011
 pub(super) const FS_CANOE_BACKUP: usize      = 0x17D00; // 59 bytes
+
+// PRG001 (file 0x02010, CPU $A000–$BFFF)
+// Koopaling stomp handler is ObjHit_Koopaling in prg001.asm (southbird disassembly).
+pub(super) const FS_KOOPA_HITS_SUB: usize    = 0x0382A; // 13 code + 3 JMP + 7 table = 23 bytes
+pub(super) const FS_KOOPA_HITS_TABLE: usize  = 0x0383A; // 7 bytes (sub + 16)
+/// CPU address of the subroutine: $A000 + (0x0382A - 0x02010) = $B81A
+pub(super) const KOOPA_HITS_SUB_CPU: u16     = 0xB81A;
+/// CPU address of the threshold table: $A000 + (0x0383A - 0x02010) = $B82A
+pub(super) const KOOPA_HITS_TABLE_CPU: u16   = 0xB82A;
 
 
 // ---------------------------------------------------------------------------
@@ -1018,5 +1029,6 @@ mod free_space_tests {
         assert!(offsets.contains(&FS_FX_SCREEN_CHECK));
         assert!(offsets.contains(&FS_CANOE_RESPAWN));
         assert!(offsets.contains(&FS_CANOE_BACKUP));
+        assert!(offsets.contains(&FS_KOOPA_HITS_SUB));
     }
 }
