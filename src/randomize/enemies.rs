@@ -389,12 +389,12 @@ const W7F1_TANOOKI_OFFSET: usize = 0x0C9B7;
 
 use super::rom_data::{HAMMER_BRO_SEGMENT_OFFSETS, HB_NEEDS_SHELL_ENEMIES, PROTECTED_ENEMY_OFFSETS, PROTECTED_ENEMY_SEGMENTS, SHELL_PROTECTED_OFFSETS, STOMPABLE_ENEMIES};
 
-/// Injection candidates for wild_injections mode: special enemies injected after normal swaps.
-/// Each tuple: (enemy ID, CHR page, CHR slot).
-const WILD_INJECTION_CANDIDATES: &[(u8, u8, u8)] = &[
-    (0x83, 0x0B, 4), // Lakitu
-    (0xAF, 0x32, 4), // Angry Sun
-    (0x63, 0x1A, 4), // Boss Bass (Big Bertha)
+/// Injection candidates for wild_injections mode: special enemies injected after
+/// normal swaps. CHR compatibility checked via `sprite_bank()` at filter time.
+const WILD_INJECTION_IDS: &[u8] = &[
+    0x83, // Lakitu
+    0xAF, // Angry Sun
+    0x63, // Boss Bass (Big Bertha)
 ];
 
 /// Probability (out of 256) that a segment will receive an injection when wild_injections is on.
@@ -569,12 +569,88 @@ fn commit_chr_page(id: u8, slot4: &mut ChrSlot, slot5: &mut ChrSlot) {
     }
 }
 
+/// Pick a random CHR-compatible enemy from `pool`, or `None` if nothing fits.
+fn pick_compatible<R: Rng>(
+    pool: &[u8], slot4: ChrSlot, slot5: ChrSlot, rng: &mut R,
+) -> Option<u8> {
+    let compatible: Vec<u8> = pool
+        .iter()
+        .copied()
+        .filter(|&c| is_chr_compatible(c, slot4, slot5))
+        .collect();
+    compatible.choose(rng).copied()
+}
+
 /// A parsed 3-byte entry from the enemy data block.
 struct SegmentEntry {
     /// Index into the segment data buffer (points to the obj_id byte)
     data_index: usize,
     /// The object ID
     obj_id: u8,
+}
+
+/// HB Wild segment randomization with stompability constraints.
+/// 1-enemy segments: pick from STOMPABLE_ENEMIES only.
+/// 2-enemy segments: 5/31 chance for non-stompable path (one from
+/// HB_NEEDS_SHELL_ENEMIES + one from SHELL_ENEMIES), otherwise both stompable.
+fn randomize_hb_wild_segment<R: Rng>(
+    data: &mut [u8],
+    entries: &[SegmentEntry],
+    hb_modes: &ClassModes,
+    hb_wild_pool: &[u8],
+    rng: &mut R,
+) {
+    let swappable: Vec<usize> = entries.iter()
+        .enumerate()
+        .filter(|(_, e)| find_class_pool(e.obj_id, hb_modes, hb_wild_pool).is_some())
+        .map(|(idx, _)| idx)
+        .collect();
+
+    // Pre-commit CHR from non-swappable entries
+    let mut slot4 = ChrSlot::Free;
+    let mut slot5 = ChrSlot::Free;
+    for (idx, entry) in entries.iter().enumerate() {
+        if !swappable.contains(&idx) {
+            commit_chr_page(entry.obj_id, &mut slot4, &mut slot5);
+        }
+    }
+
+    if swappable.len() == 1 {
+        if let Some(chosen) = pick_compatible(STOMPABLE_ENEMIES, slot4, slot5, rng) {
+            data[entries[swappable[0]].data_index] = chosen;
+        }
+    } else if swappable.len() == 2 {
+        // Roll whether this segment gets a non-stompable enemy (5/31 ≈ 16%)
+        if rng.random_range(..31u32) < 5 {
+            // Pick non-stompable, then a shell partner
+            if let Some(ns) = pick_compatible(HB_NEEDS_SHELL_ENEMIES, slot4, slot5, rng) {
+                let mut s4 = slot4;
+                let mut s5 = slot5;
+                commit_chr_page(ns, &mut s4, &mut s5);
+                if let Some(shell) = pick_compatible(SHELL_ENEMIES, s4, s5, rng) {
+                    // Randomly assign which slot gets which
+                    if rng.random_range(..2u32) == 0 {
+                        data[entries[swappable[0]].data_index] = ns;
+                        data[entries[swappable[1]].data_index] = shell;
+                    } else {
+                        data[entries[swappable[0]].data_index] = shell;
+                        data[entries[swappable[1]].data_index] = ns;
+                    }
+                }
+            }
+        } else {
+            // Both from stompable pool
+            if let Some(first) = pick_compatible(STOMPABLE_ENEMIES, slot4, slot5, rng) {
+                data[entries[swappable[0]].data_index] = first;
+                let mut s4 = slot4;
+                let mut s5 = slot5;
+                commit_chr_page(first, &mut s4, &mut s5);
+                if let Some(second) = pick_compatible(STOMPABLE_ENEMIES, s4, s5, rng) {
+                    data[entries[swappable[1]].data_index] = second;
+                }
+            }
+        }
+    }
 }
 
 fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, opts: &Options) {
@@ -628,91 +704,8 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
         }
 
         // HB Wild: batch-assign enemies with stompability constraints.
-        // 1-enemy segments: pick from STOMPABLE_ENEMIES only.
-        // 2-enemy segments: roll 5/36 chance for non-stompable path;
-        //   if non-stompable: one from HB_NEEDS_SHELL_ENEMIES, other from SHELL_ENEMIES;
-        //   if stompable: both from STOMPABLE_ENEMIES.
         if is_hb_segment && opts.hb_encounters == EnemyMode::Wild && !big_q_only {
-            let swappable: Vec<usize> = entries.iter()
-                .enumerate()
-                .filter(|(_, e)| find_class_pool(e.obj_id, &hb_modes, &hb_wild_pool).is_some())
-                .map(|(idx, _)| idx)
-                .collect();
-
-            // Pre-commit CHR from non-swappable entries
-            let mut slot4 = ChrSlot::Free;
-            let mut slot5 = ChrSlot::Free;
-            for (idx, entry) in entries.iter().enumerate() {
-                if !swappable.contains(&idx) {
-                    commit_chr_page(entry.obj_id, &mut slot4, &mut slot5);
-                }
-            }
-
-            if swappable.len() == 1 {
-                let compatible: Vec<u8> = STOMPABLE_ENEMIES.iter()
-                    .copied()
-                    .filter(|&c| is_chr_compatible(c, slot4, slot5))
-                    .collect();
-                if !compatible.is_empty() {
-                    let chosen = *compatible.choose(rng).unwrap();
-                    data[entries[swappable[0]].data_index] = chosen;
-                }
-            } else if swappable.len() == 2 {
-                // Roll whether this segment gets a non-stompable enemy (5/31 ≈ 16%)
-                let non_stompable_path = rng.random_range(..31u32) < 5;
-
-                if non_stompable_path {
-                    // Pick non-stompable, then a shell partner
-                    let ns_compat: Vec<u8> = HB_NEEDS_SHELL_ENEMIES.iter()
-                        .copied()
-                        .filter(|&c| is_chr_compatible(c, slot4, slot5))
-                        .collect();
-                    if !ns_compat.is_empty() {
-                        let ns_chosen = *ns_compat.choose(rng).unwrap();
-                        // Commit the non-stompable's CHR before filtering shells
-                        let mut s4_after = slot4;
-                        let mut s5_after = slot5;
-                        commit_chr_page(ns_chosen, &mut s4_after, &mut s5_after);
-
-                        let shell_compat: Vec<u8> = SHELL_ENEMIES.iter()
-                            .copied()
-                            .filter(|&c| is_chr_compatible(c, s4_after, s5_after))
-                            .collect();
-                        if !shell_compat.is_empty() {
-                            let shell_chosen = *shell_compat.choose(rng).unwrap();
-                            // Randomly assign which slot gets which
-                            if rng.random_range(..2u32) == 0 {
-                                data[entries[swappable[0]].data_index] = ns_chosen;
-                                data[entries[swappable[1]].data_index] = shell_chosen;
-                            } else {
-                                data[entries[swappable[0]].data_index] = shell_chosen;
-                                data[entries[swappable[1]].data_index] = ns_chosen;
-                            }
-                        }
-                    }
-                } else {
-                    // Both from stompable pool
-                    let compat: Vec<u8> = STOMPABLE_ENEMIES.iter()
-                        .copied()
-                        .filter(|&c| is_chr_compatible(c, slot4, slot5))
-                        .collect();
-                    if !compat.is_empty() {
-                        let first = *compat.choose(rng).unwrap();
-                        let mut s4_after = slot4;
-                        let mut s5_after = slot5;
-                        commit_chr_page(first, &mut s4_after, &mut s5_after);
-
-                        let compat2: Vec<u8> = STOMPABLE_ENEMIES.iter()
-                            .copied()
-                            .filter(|&c| is_chr_compatible(c, s4_after, s5_after))
-                            .collect();
-                        data[entries[swappable[0]].data_index] = first;
-                        if !compat2.is_empty() {
-                            data[entries[swappable[1]].data_index] = *compat2.choose(rng).unwrap();
-                        }
-                    }
-                }
-            }
+            randomize_hb_wild_segment(&mut data, &entries, &hb_modes, &hb_wild_pool, rng);
             continue;
         }
 
@@ -747,24 +740,12 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
             } else if PROTECTED_ENEMY_OFFSETS.contains(&file_offset) {
                 commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
             } else if SHELL_PROTECTED_OFFSETS.contains(&file_offset) && modes.shell != EnemyMode::Off {
-                let compatible: Vec<u8> = SHELL_ENEMIES.iter()
-                    .copied()
-                    .filter(|&c| is_chr_compatible(c, committed_slot4, committed_slot5))
-                    .collect();
-                if !compatible.is_empty() {
-                    let chosen = *compatible.choose(rng).unwrap();
+                if let Some(chosen) = pick_compatible(SHELL_ENEMIES, committed_slot4, committed_slot5, rng) {
                     data[entry.data_index] = chosen;
                     commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                 }
             } else if let Some(pool) = find_class_pool(entry.obj_id, modes, wild_pool) {
-                let compatible: Vec<u8> = pool
-                    .iter()
-                    .copied()
-                    .filter(|&c| is_chr_compatible(c, committed_slot4, committed_slot5))
-                    .collect();
-
-                if !compatible.is_empty() {
-                    let chosen = *compatible.choose(rng).unwrap();
+                if let Some(chosen) = pick_compatible(pool, committed_slot4, committed_slot5, rng) {
                     data[entry.data_index] = chosen;
                     commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                 }
@@ -786,18 +767,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                     .collect();
 
                 if let Some(&target_idx) = swappable_indices.choose(rng) {
-                    let compatible_injections: Vec<u8> = WILD_INJECTION_CANDIDATES.iter()
-                        .filter(|&&(_, chr_page, slot)| {
-                            match slot {
-                                4 => committed_slot4.is_compatible(chr_page),
-                                5 => committed_slot5.is_compatible(chr_page),
-                                _ => true,
-                            }
-                        })
-                        .map(|&(id, _, _)| id)
-                        .collect();
-
-                    if let Some(&chosen) = compatible_injections.choose(rng) {
+                    if let Some(chosen) = pick_compatible(WILD_INJECTION_IDS, committed_slot4, committed_slot5, rng) {
                         let di = entries[target_idx].data_index;
                         data[di] = chosen;
                         commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
