@@ -178,6 +178,10 @@ struct Cli {
     #[arg(long)]
     flags: Option<String>,
 
+    /// Apply a sprite IPS patch to the ROM before randomizing
+    #[arg(long)]
+    sprite_patch: Option<PathBuf>,
+
     /// Dump the write log to a file (shows every ROM byte changed, grouped by module)
     #[arg(long)]
     write_log: Option<PathBuf>,
@@ -299,6 +303,29 @@ fn main() {
     eprintln!("  Remove rocks: {}", if options.remove_rocks { "on" } else { "off" });
     eprintln!("  Airship lock: {}", if options.airship_lock { "on" } else { "off" });
     eprintln!("  Output:   {}", output_path.display());
+
+    // Apply sprite patch before randomization so randomizer writes take priority
+    let rom_data = if let Some(ref patch_path) = cli.sprite_patch {
+        let patch_data = match fs::read(patch_path) {
+            Ok(data) => data,
+            Err(e) => {
+                eprintln!("Error reading sprite patch: {e}");
+                process::exit(1);
+            }
+        };
+        match smb3_rs::ips::apply_ips_patch(&rom_data, &patch_data) {
+            Ok(patched) => {
+                eprintln!("  Sprite patch: {}", patch_path.display());
+                patched
+            }
+            Err(e) => {
+                eprintln!("Error applying sprite patch: {e}");
+                process::exit(1);
+            }
+        }
+    } else {
+        rom_data
+    };
 
     let rom = match smb3_rs::randomize_rom(&rom_data, seed, &options) {
         Ok(r) => r,
