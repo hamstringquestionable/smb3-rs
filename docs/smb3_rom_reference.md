@@ -1823,6 +1823,37 @@ Source: ROM PatTableSel tables, verified against Southbird disassembly.
 | 0x080AE | Para-Goomba de-wing sprite |
 | 0x06EA9 | Boom-Boom drop sprite |
 
+### Koopaling Stomp Threshold (PRG001)
+
+The Koopalings (object ID `$0E`) use `Objects_Var4` (zero-page `$7F–$83`, indexed by
+object slot X) as a stomp counter. The handler `ObjHit_Koopaling` at CPU `$B185`
+increments the counter and checks against a hardcoded threshold of 3:
+
+```
+$B185: F6 7F       INC $7F,X        ; stomp counter++
+$B187: B5 7F       LDA $7F,X        ; A = new count
+$B189: C9 03       CMP #$03         ; >= 3?
+$B18B: B0 06       BCS $B193        ; yes → defeated
+$B18D: A9 80       LDA #$80         ; no → invulnerability timer
+$B18F: 9D 20 05    STA $0520,X
+$B192: 60          RTS              ; survive
+$B193: ...                          ; defeat sequence
+```
+
+| Item | Value |
+|------|-------|
+| PRG bank | PRG001 (file 0x02010–0x0400F, CPU $A000–$BFFF) |
+| Patch site | File **0x03197** (3 bytes: `B5 7F C9` = `LDA $7F,X; CMP #$03`) |
+| Threshold operand | File **0x03199** (single byte `$03`) |
+| Survive path | CPU **$B18D** (sets `Objects_Timer2`, RTS) |
+| Defeat path | CPU **$B193** (Koopaling death sequence) |
+| Free space | 0x0382A (102 bytes), 0x03FC0 (80 bytes) |
+
+Fireballs use a separate counter `Objects_HitCount` (`$7CF6–$7CFA`), initialized to
+10 (`$0A`) during `ObjInit_Koopaling`. When it reaches 0, the code sets `Objects_Var4`
+to 2 and jumps into the stomp-kill path, forcing defeat as if the third stomp landed.
+Bowser uses only `Objects_HitCount` (initialized to 34), no stomp counter.
+
 ### Enemy Stompability Classification
 
 Used by the randomizer for Hammer Bro encounter constraints. Enemies are classified
@@ -1938,6 +1969,15 @@ of wild mode settings. Current protected levels:
 | $797E–$797F | Death respawn map Y (Mario/Luigi) |
 | $7980–$7981 | Death respawn map X high (Mario/Luigi) |
 | $7982–$7983 | Death respawn map X low (Mario/Luigi) |
+
+### Enemy / Object State
+
+| Address | Description |
+|---------|-------------|
+| $007F–$0083 | `Objects_Var4` — per-slot variable (Koopaling stomp counter) |
+| $0428 | Current enemy slot index |
+| $0520–$0524 | `Objects_Timer2` — per-slot timer (Koopaling invulnerability) |
+| $7CF6–$7CFA | `Objects_HitCount` — per-slot fireball HP (Koopaling=10, Bowser=34) |
 
 ### Physics Constants (RAM-accessible)
 
