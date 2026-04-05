@@ -2,6 +2,7 @@ use rand::Rng;
 use rand::seq::IndexedRandom;
 
 use crate::rom::Rom;
+use super::rom_data::FS_MYSTERY_ANCHOR;
 
 const ANCHOR: u8 = 0x0A;
 
@@ -170,6 +171,54 @@ pub fn remove_whistles_only<R: Rng>(rom: &mut Rom, rng: &mut R) {
     }
 }
 
+/// Mystery anchor pool — all items that make sense when used from the map
+/// inventory. Anchor items stay as 0x0A in data tables but the item-use
+/// dispatch is patched so using an anchor triggers a random powerup effect.
+const MYSTERY_ANCHOR_POOL: &[u8] = &[
+    0x01, // Mushroom
+    0x02, // Fire Flower
+    0x03, // Super Leaf
+    0x04, // Frog Suit
+    0x05, // Tanooki Suit
+    0x06, // Hammer Suit
+    0x07, // Jugem's Cloud
+    0x08, // P-Wing
+    0x09, // Starman
+    0x0B, // Hammer (rock breaker)
+];
+
+/// Patch the item-use dispatch so anchors secretly function as a random
+/// powerup chosen at build time. The anchor sprite stays unchanged in the
+/// inventory — only the effect changes when the player uses it.
+///
+/// Writes a 15-byte trampoline at free space in PRG031 and redirects the
+/// anchor branch in the item dispatch to it.
+pub fn write_mystery_anchor<R: Rng>(rom: &mut Rom, rng: &mut R) {
+    let target = *MYSTERY_ANCHOR_POOL.choose(rng).unwrap();
+
+    // Trampoline at FS_MYSTERY_ANCHOR (CPU $E240):
+    //   A9 xx        LDA #<target_id>
+    //   8D F5 07     STA $07F5
+    //   C9 09        CMP #$09
+    //   F0 03        BEQ +3          ; starman needs special handler
+    //   4C 7B E3     JMP $E37B       ; normal item handler
+    //   4C 1B E5     JMP $E51B       ; star/anchor handler (sets invincibility)
+    let trampoline: [u8; 15] = [
+        0xA9, target,       // LDA #target
+        0x8D, 0xF5, 0x07,   // STA $07F5
+        0xC9, 0x09,          // CMP #$09
+        0xF0, 0x03,          // BEQ +3
+        0x4C, 0x7B, 0xE3,   // JMP $E37B
+        0x4C, 0x1B, 0xE5,   // JMP $E51B
+    ];
+    rom.write_range(FS_MYSTERY_ANCHOR, &trampoline);
+
+    // Patch dispatch at file 0x3E500 (CPU $E4F0):
+    // Original: C9 0A F0 27  (CMP #$0A; BEQ +$27)
+    // Patched:  4C 40 E2 EA  (JMP $E240; NOP)
+    rom.write_range(0x3E500, &[0x4C, 0x40, 0xE2, 0xEA]);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,61 +382,83 @@ mod tests {
     }
 
     #[test]
-    fn test_replace_anchors_replaces_all() {
+    fn test_mystery_anchor_trampoline_written() {
         let mut rom = make_test_rom();
-        // Place anchors in each item table
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        write_mystery_anchor(&mut rom, &mut rng);
+
+        // Trampoline starts with LDA #imm
+        assert_eq!(rom.read_byte(FS_MYSTERY_ANCHOR), 0xA9);
+        let target = rom.read_byte(FS_MYSTERY_ANCHOR + 1);
+        assert!(MYSTERY_ANCHOR_POOL.contains(&target),
+            "Target 0x{target:02X} not in mystery pool");
+
+        // STA $07F5
+        assert_eq!(rom.read_range(FS_MYSTERY_ANCHOR + 2, 3), &[0x8D, 0xF5, 0x07]);
+        // CMP #$09; BEQ +3
+        assert_eq!(rom.read_range(FS_MYSTERY_ANCHOR + 5, 4), &[0xC9, 0x09, 0xF0, 0x03]);
+        // JMP $E37B (normal handler)
+        assert_eq!(rom.read_range(FS_MYSTERY_ANCHOR + 9, 3), &[0x4C, 0x7B, 0xE3]);
+        // JMP $E51B (star handler)
+        assert_eq!(rom.read_range(FS_MYSTERY_ANCHOR + 12, 3), &[0x4C, 0x1B, 0xE5]);
+    }
+
+    #[test]
+    fn test_mystery_anchor_dispatch_patched() {
+        let mut rom = make_test_rom();
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        write_mystery_anchor(&mut rom, &mut rng);
+
+        // Dispatch at 0x3E500: JMP $E240; NOP
+        assert_eq!(rom.read_range(0x3E500, 4), &[0x4C, 0x40, 0xE2, 0xEA]);
+    }
+
+    #[test]
+    fn test_mystery_anchor_pool_coverage() {
+        use std::collections::HashSet;
+        let mut seen = HashSet::new();
+        for seed in 0..500u64 {
+            let mut rom = make_test_rom();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            write_mystery_anchor(&mut rom, &mut rng);
+            seen.insert(rom.read_byte(FS_MYSTERY_ANCHOR + 1));
+        }
+        for &item in MYSTERY_ANCHOR_POOL {
+            assert!(seen.contains(&item),
+                "Item 0x{item:02X} never appeared in 500 seeds");
+        }
+    }
+
+    #[test]
+    fn test_mystery_anchor_deterministic() {
+        let mut rom1 = make_test_rom();
+        let mut rom2 = make_test_rom();
+        let mut rng1 = ChaCha8Rng::seed_from_u64(77);
+        let mut rng2 = ChaCha8Rng::seed_from_u64(77);
+        write_mystery_anchor(&mut rom1, &mut rng1);
+        write_mystery_anchor(&mut rom2, &mut rng2);
+
+        assert_eq!(
+            rom1.read_range(FS_MYSTERY_ANCHOR, 15),
+            rom2.read_range(FS_MYSTERY_ANCHOR, 15),
+            "Same seed should produce identical trampoline"
+        );
+    }
+
+    #[test]
+    fn test_mystery_anchor_leaves_item_tables_intact() {
+        let mut rom = make_test_rom();
+        // Place anchors in item tables
         rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 2, ANCHOR);
-        rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 5, ANCHOR);
         rom.write_byte(PRINCESS_REWARDS_OFFSET, ANCHOR);
         rom.write_byte(TOAD_HOUSE_ITEMS_OFFSET + 1, ANCHOR);
 
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        replace_anchors(&mut rom, &mut rng);
+        write_mystery_anchor(&mut rom, &mut rng);
 
-        // All anchors should be replaced with the same powerup
-        let r1 = rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 2);
-        let r2 = rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 5);
-        let r3 = rom.read_byte(PRINCESS_REWARDS_OFFSET);
-        let r4 = rom.read_byte(TOAD_HOUSE_ITEMS_OFFSET + 1);
-
-        assert_ne!(r1, ANCHOR, "Anchor was not replaced in Hammer Bros");
-        assert!(POWERUP_ITEMS.contains(&r1), "Replacement 0x{r1:02X} not a valid powerup");
-        assert_eq!(r1, r2, "All anchors should become the same item");
-        assert_eq!(r1, r3, "All anchors should become the same item");
-        assert_eq!(r1, r4, "All anchors should become the same item");
-    }
-
-    #[test]
-    fn test_replace_anchors_leaves_non_anchors() {
-        let mut rom = make_test_rom();
-        // Place a non-anchor item
-        rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 2, 0x09); // Starman
-        // Place an anchor nearby
-        rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 3, ANCHOR);
-
-        let mut rng = ChaCha8Rng::seed_from_u64(42);
-        replace_anchors(&mut rom, &mut rng);
-
-        assert_eq!(rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 2), 0x09, "Non-anchor item was modified");
-        assert_ne!(rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 3), ANCHOR, "Anchor was not replaced");
-    }
-
-    #[test]
-    fn test_replace_anchors_deterministic() {
-        let mut rom1 = make_test_rom();
-        let mut rom2 = make_test_rom();
-        rom1.write_byte(HAMMER_BROS_ITEMS_OFFSET, ANCHOR);
-        rom2.write_byte(HAMMER_BROS_ITEMS_OFFSET, ANCHOR);
-
-        let mut rng1 = ChaCha8Rng::seed_from_u64(77);
-        let mut rng2 = ChaCha8Rng::seed_from_u64(77);
-        replace_anchors(&mut rom1, &mut rng1);
-        replace_anchors(&mut rom2, &mut rng2);
-
-        assert_eq!(
-            rom1.read_byte(HAMMER_BROS_ITEMS_OFFSET),
-            rom2.read_byte(HAMMER_BROS_ITEMS_OFFSET),
-            "Same seed should produce same replacement"
-        );
+        // Anchors should remain untouched in all tables
+        assert_eq!(rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 2), ANCHOR);
+        assert_eq!(rom.read_byte(PRINCESS_REWARDS_OFFSET), ANCHOR);
+        assert_eq!(rom.read_byte(TOAD_HOUSE_ITEMS_OFFSET + 1), ANCHOR);
     }
 }
