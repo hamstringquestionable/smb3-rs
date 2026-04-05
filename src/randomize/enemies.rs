@@ -387,7 +387,7 @@ const BIG_Q_BLOCKS: &[u8] = &[
 /// The W7 room is at enemy_ptr 0xC9A3; the Tanooki is the second entry.
 const W7F1_TANOOKI_OFFSET: usize = 0x0C9B7;
 
-use super::rom_data::{HAMMER_BRO_SEGMENT_OFFSETS, HB_NEEDS_SHELL_ENEMIES, PROTECTED_ENEMY_OFFSETS, PROTECTED_ENEMY_SEGMENTS, SHELL_PROTECTED_OFFSETS, STOMPABLE_ENEMIES};
+use super::rom_data::{HAMMER_BRO_SEGMENT_OFFSETS, HB_NEEDS_SHELL_ENEMIES, PROTECTED_ENEMY_OFFSETS, PROTECTED_ENEMY_SEGMENTS, SHELL_PROTECTED_OFFSETS, STOMPABLE_ENEMIES, TANK_BRO_POOL, TANK_BRO_PROTECTED_OFFSETS};
 
 /// Injection candidates for wild_injections mode: special enemies injected after
 /// normal swaps. CHR compatibility checked via `sprite_bank()` at filter time.
@@ -741,6 +741,11 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                 commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
             } else if SHELL_PROTECTED_OFFSETS.contains(&file_offset) && modes.shell != EnemyMode::Off {
                 if let Some(chosen) = pick_compatible(SHELL_ENEMIES, committed_slot4, committed_slot5, rng) {
+                    data[entry.data_index] = chosen;
+                    commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
+                }
+            } else if TANK_BRO_PROTECTED_OFFSETS.contains(&file_offset) && modes.bros != EnemyMode::Off {
+                if let Some(chosen) = pick_compatible(TANK_BRO_POOL, committed_slot4, committed_slot5, rng) {
                     data[entry.data_index] = chosen;
                     commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                 }

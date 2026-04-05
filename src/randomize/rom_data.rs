@@ -682,6 +682,20 @@ pub(super) const SHELL_PROTECTED_OFFSETS: &[usize] = &[
     0x0C60E, // GreenTroopa scr=4 col=10 row=8
 ];
 
+/// 8-Tank sub-area bro: HammerBro (0x81) doesn't spawn in tileset 10.
+/// Must always shuffle within the non-HammerBro bro pool (0x82/0x86/0x87).
+pub(super) const TANK_BRO_PROTECTED_OFFSETS: &[usize] = &[
+    0x0DA3A, // BoomerangBro scr=0 col=12 row=7 (8-Tank sub-area, enemy_ptr 0xDA29)
+];
+
+/// Bro enemies that work in tileset 10 (8-Tank sub-area).
+/// Excludes HammerBro (0x81) which fails to spawn in ts=10.
+pub(super) const TANK_BRO_POOL: &[u8] = &[
+    0x82, // OBJ_BOOMERANGBRO
+    0x86, // OBJ_HEAVYBRO
+    0x87, // OBJ_FIREBRO
+];
+
 /// Enemy segments (by file offset of page flag byte) excluded from randomization.
 /// These levels rely on specific enemy types/counts for gameplay (e.g., enemies
 /// used as platforms in speedtech, where wrong types cause sprite overload).
