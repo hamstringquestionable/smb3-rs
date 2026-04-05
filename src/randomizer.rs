@@ -715,10 +715,10 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         rom.set_tag("airship_lock");
         // A9 01 EA = LDA #$01; NOP (forces anchor flag always set)
         rom.write_range(0x1FABC, &[0xA9, 0x01, 0xEA]);
-        // Anchors are now useless — replace all anchor items in item tables
-        // with a single randomly chosen powerup for this seed.
-        rom.set_tag("items/anchors");
-        randomize::items::replace_anchors(rom, &mut rng);
+        // Anchors stay in inventory as mystery items — patch the item-use
+        // dispatch so using an anchor triggers a random powerup effect.
+        rom.set_tag("items/mystery_anchor");
+        randomize::items::write_mystery_anchor(rom, &mut rng);
     }
 
     // Patch double-digit level tiles (11–19) to show a "1" tens digit
@@ -850,28 +850,37 @@ mod tests {
     }
 
     #[test]
-    fn anchors_replaced_when_airship_lock_on() {
+    fn mystery_anchor_trampoline_when_airship_lock_on() {
         let mut rom = make_test_rom();
-        // Place anchors in item tables
+        // Place anchors in item tables — they should stay as 0x0A
         rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 2, ANCHOR);
         rom.write_byte(TOAD_HOUSE_ITEMS_OFFSET + 1, ANCHOR);
 
         let mut options = test_options();
         options.airship_lock = true;
-        // Disable chest_items so our manually placed anchors survive to the replacement step
         options.chest_items = false;
         options.remove_whistles = false;
         randomize(&mut rom, 0x12345678, &options);
 
-        let r1 = rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 2);
-        let r2 = rom.read_byte(TOAD_HOUSE_ITEMS_OFFSET + 1);
-        assert_ne!(r1, ANCHOR, "Anchor in Hammer Bros table was not replaced");
-        assert_ne!(r2, ANCHOR, "Anchor in Toad House table was not replaced");
-        assert_eq!(r1, r2, "All anchors should become the same powerup for a given seed");
+        // Anchor items should remain in data tables (mystery behavior)
+        assert_eq!(rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 2), ANCHOR,
+            "Anchor should stay in item table (mystery item)");
+        assert_eq!(rom.read_byte(TOAD_HOUSE_ITEMS_OFFSET + 1), ANCHOR,
+            "Anchor should stay in item table (mystery item)");
+
+        // Trampoline should be written at free space
+        const FS: usize = 0x3E250;
+        assert_eq!(rom.read_byte(FS), 0xA9, "Trampoline LDA opcode");
+        let target = rom.read_byte(FS + 1);
+        assert!(target >= 0x01 && target <= 0x0B && target != 0x0A,
+            "Trampoline target 0x{target:02X} should be a valid mystery pool item");
+
+        // Dispatch should be patched to JMP $E240 + NOP
+        assert_eq!(rom.read_range(0x3E500, 4), &[0x4C, 0x40, 0xE2, 0xEA]);
     }
 
     #[test]
-    fn anchors_kept_when_airship_lock_off() {
+    fn mystery_anchor_not_written_when_airship_lock_off() {
         let mut rom = make_test_rom();
         rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 2, ANCHOR);
 
@@ -881,11 +890,12 @@ mod tests {
         options.remove_whistles = false;
         randomize(&mut rom, 0x12345678, &options);
 
-        assert_eq!(
-            rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 2),
-            ANCHOR,
-            "Anchor should be preserved when airship_lock is off"
-        );
+        // Anchor should stay and no trampoline written
+        assert_eq!(rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 2), ANCHOR,
+            "Anchor should be preserved when airship_lock is off");
+        // Dispatch should not be patched
+        assert_ne!(rom.read_range(0x3E500, 3), &[0x4C, 0x40, 0xE2],
+            "Dispatch should NOT be patched when airship_lock is off");
     }
 
     #[test]
