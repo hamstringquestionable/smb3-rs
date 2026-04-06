@@ -32,7 +32,7 @@ const GROUND_ENEMIES: &[u8] = &[
     0x2B, // OBJ_GOOMBA_SHOE (Kuribo's Shoe)
     0x29, // OBJ_SPIKE
     0x2A, // OBJ_PATOOIE
-    0x2C, // OBJ_CHAINCHOMP (roams freely without post tile)
+    0x4F, // OBJ_CHAINCHOMPFREE (roams freely without post tile)
     0x33, // OBJ_NIPPER (stationary)
     0x39, // OBJ_NIPPERHOPPING
     0x3F, // OBJ_DRYBONES
@@ -230,9 +230,9 @@ fn sprite_bank(id: u8) -> Option<SpriteBank> {
             Some(SpriteBank { chr_page: 0x0A, slot: 4 }),
         // Goomba in Shoe
         0x2B => Some(SpriteBank { chr_page: 0x0B, slot: 4 }),
-        // Chain Chomp
+        // Cloud platform
         0x2C => Some(SpriteBank { chr_page: 0x0E, slot: 4 }),
-        // Chain Chomp (strained), Platform ULDR
+        // Chain Chomp (strained/staked), Platform ULDR
         0x2D | 0x3E => Some(SpriteBank { chr_page: 0x1A, slot: 4 }),
         // Wood block, Rocket sled
         0x2E | 0x3A => Some(SpriteBank { chr_page: 0x13, slot: 5 }),
@@ -253,6 +253,7 @@ fn sprite_bank(id: u8) -> Option<SpriteBank> {
         0x4A => Some(SpriteBank { chr_page: 0x13, slot: 4 }),
         // Boom-Boom fly/split
         0x4B | 0x4C => Some(SpriteBank { chr_page: 0x33, slot: 5 }),
+        // Chain Chomp (freed, roaming)
         0x4F => Some(SpriteBank { chr_page: 0x0A, slot: 4 }),
         // Rotodiscs, Podoboo
         0x51 | 0x53 | 0x5A | 0x5B | 0x5E | 0x5F | 0x60 =>
@@ -1314,11 +1315,12 @@ mod tests {
 
     #[test]
     fn test_chain_chomp_fire_chomp_in_ground() {
-        assert!(GROUND_ENEMIES.contains(&0x2C), "Chain Chomp missing from ground class");
+        assert!(GROUND_ENEMIES.contains(&0x4F), "Chain Chomp (freed) missing from ground class");
+        assert!(!GROUND_ENEMIES.contains(&0x2C), "0x2C (cloud platform) must NOT be in ground class");
         assert!(GROUND_ENEMIES.contains(&0x58), "Fire Chomp missing from ground class");
         let modes = ClassModes::from_options(&enemy_opts());
         let wild_pool = modes.build_wild_pool();
-        assert_eq!(find_class_pool(0x2C, &modes, &wild_pool), Some(GROUND_ENEMIES as &[u8]));
+        assert_eq!(find_class_pool(0x4F, &modes, &wild_pool), Some(GROUND_ENEMIES as &[u8]));
         assert_eq!(find_class_pool(0x58, &modes, &wild_pool), Some(GROUND_ENEMIES as &[u8]));
     }
 
