@@ -66,6 +66,11 @@ function setPill(name, val) {
 }
 const optWildInjections = document.getElementById("opt-wild-injections");
 const optStartingLives = document.getElementById("opt-starting-lives");
+const optStartItems = [
+	document.getElementById("opt-start-item-0"),
+	document.getElementById("opt-start-item-1"),
+	document.getElementById("opt-start-item-2"),
+];
 const flagKeyInput = document.getElementById("flag-key-input");
 const flagKeyCopyBtn = document.getElementById("flag-key-copy-btn");
 const flagKeyApplyBtn = document.getElementById("flag-key-apply-btn");
@@ -246,6 +251,7 @@ function getCurrentOptionsJson() {
 		hb_encounters: getPill("opt-hb-encounters"),
 		wild_injections: optWildInjections.checked,
 		starting_lives: Number(optStartingLives.value),
+		starting_items: optStartItems.map(s => Number(s.value)).filter(v => v > 0),
 		disable_autoscroll: true,
 		card_speed_clear: true,
 	});
@@ -298,6 +304,10 @@ function applyFlagKey(key) {
 		if (opts.hb_encounters !== undefined) setPill("opt-hb-encounters", opts.hb_encounters);
 		if (opts.wild_injections !== undefined) optWildInjections.checked = opts.wild_injections;
 		if (opts.starting_lives) optStartingLives.value = opts.starting_lives;
+		const items = opts.starting_items || [];
+		for (let i = 0; i < 3; i++) {
+			optStartItems[i].value = items[i] || 0;
+		}
 		updateOverworldColumns();
 		showStatus("Flag key applied!", "success");
 	} catch (err) {
@@ -313,6 +323,7 @@ const allOptionElements = [
 	optFixDrawbridges, optRemoveRocks, optRemoveNCards, optRemoveSpadeGames, optSkipWandCutscene, optAdjustBossHitboxes, optKoopalingHits,
 	optWildInjections,
 	optStartingLives,
+	...optStartItems,
 ];
 for (const el of allOptionElements) {
 	el.addEventListener("change", updateFlagKey);

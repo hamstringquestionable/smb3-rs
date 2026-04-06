@@ -174,6 +174,11 @@ struct Cli {
     #[arg(long, default_value_t = 4)]
     starting_lives: u8,
 
+    /// Start with up to 3 items in inventory (comma-separated names)
+    /// Valid: mushroom, fire, leaf, frog, tanooki, hammer-suit, cloud, p-wing, star, anchor, hammer, whistle, music-box
+    #[arg(long, value_delimiter = ',')]
+    starting_items: Vec<String>,
+
     /// Apply options from a flag key (e.g. SMB3R-01C79804). Overrides all other flag options.
     #[arg(long)]
     flags: Option<String>,
@@ -224,6 +229,33 @@ fn main() {
         }
     }
 
+    let starting_items: Vec<u8> = cli.starting_items.iter().map(|name| {
+        match name.to_lowercase().as_str() {
+            "mushroom" => 0x01,
+            "fire" | "fire-flower" | "fireflower" => 0x02,
+            "leaf" => 0x03,
+            "frog" | "frog-suit" => 0x04,
+            "tanooki" | "tanooki-suit" => 0x05,
+            "hammer-suit" | "hammersuit" => 0x06,
+            "cloud" => 0x07,
+            "p-wing" | "pwing" => 0x08,
+            "star" | "starman" => 0x09,
+            "anchor" => 0x0A,
+            "hammer" => 0x0B,
+            "whistle" => 0x0C,
+            "music-box" | "musicbox" => 0x0D,
+            other => {
+                eprintln!("Unknown item: {other}");
+                eprintln!("Valid: mushroom, fire, leaf, frog, tanooki, hammer-suit, cloud, p-wing, star, anchor, hammer, whistle, music-box");
+                process::exit(1);
+            }
+        }
+    }).collect();
+    if starting_items.len() > 3 {
+        eprintln!("At most 3 starting items allowed (got {})", starting_items.len());
+        process::exit(1);
+    }
+
     let options = if let Some(ref flag_key) = cli.flags {
         match Options::from_flag_key(flag_key) {
             Ok(opts) => opts,
@@ -269,6 +301,7 @@ fn main() {
             hb_encounters: parse_enemy_mode(&cli.hb_encounters, "hb-encounters"),
             wild_injections: cli.wild_injections,
             starting_lives: cli.starting_lives,
+            starting_items: starting_items.clone(),
         }
     };
 
@@ -302,6 +335,9 @@ fn main() {
     eprintln!("  W3 drawbridges: {}", if options.fix_drawbridges { "fixed open" } else { "toggling" });
     eprintln!("  Remove rocks: {}", if options.remove_rocks { "on" } else { "off" });
     eprintln!("  Airship lock: {}", if options.airship_lock { "on" } else { "off" });
+    if !options.starting_items.is_empty() {
+        eprintln!("  Starting items: {:?}", options.starting_items);
+    }
     eprintln!("  Output:   {}", output_path.display());
 
     // Apply sprite patch before randomization so randomizer writes take priority

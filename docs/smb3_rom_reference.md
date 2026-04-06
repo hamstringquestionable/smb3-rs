@@ -789,6 +789,39 @@ Source: `smb3.asm` from the [Southbird disassembly](https://github.com/captainso
 | 0x0C | Warp Whistle |
 | 0x0D | Music Box |
 
+### Inventory Item-Use Dispatch (PRG026)
+
+When the player uses an inventory item on the map, `Inv_UseItem` at CPU $A53A (file 0x3454A)
+loads the item ID from `$7D80,Y` and dispatches via a `DynJump` table at CPU $A540 (file 0x34550).
+
+**DynJump table (14 word entries, little-endian):**
+
+| Index | Item | Handler | CPU Addr | File Offset |
+|-------|------|---------|----------|-------------|
+| 1 | Mushroom | Inv_UseItem_Powerup | $A5B6 | 0x345C6 |
+| 2 | Fire Flower | Inv_UseItem_Powerup | $A5B6 | 0x345C6 |
+| 3 | Super Leaf | Inv_UseItem_Powerup | $A5B6 | 0x345C6 |
+| 4 | Frog Suit | Inv_UseItem_Powerup | $A5B6 | 0x345C6 |
+| 5 | Tanooki Suit | Inv_UseItem_Powerup | $A5B6 | 0x345C6 |
+| 6 | Hammer Suit | Inv_UseItem_Powerup | $A5B6 | 0x345C6 |
+| 7 | Cloud | Inv_UseItem_Powerup | $A5B6 | 0x345C6 |
+| 8 | P-Wing | Inv_UseItem_Powerup | $A5B6 | 0x345C6 |
+| 9 | Starman | Inv_UseItem_Starman | $A672 | 0x34682 |
+| 10 | Anchor | Inv_UseItem_Anchor | $A682 | 0x34692 |
+| 11 | Hammer | Inv_UseItem_Hammer | $A6BC | 0x346CC |
+| 12 | Whistle | Inv_UseItem_Whistle | $A705 | 0x34715 |
+| 13 | Music Box | Inv_UseItem_MusicBox | $A733 | 0x34743 |
+
+Items 1–8 all route to the shared `Inv_UseItem_Powerup` handler. Items 9+ have dedicated
+handlers with incompatible animation/state machine layouts.
+
+Inside `Inv_UseItem_Powerup`, the instruction `LDX $7D80,Y` at CPU $A5C8 (file 0x345D8)
+re-reads the item ID into X. This value drives the powerup animation state machine in
+PRG031 via `$07F5`. The handler also stores the item to `$07F5` at $A5D8.
+
+`Inv_UseItem_Anchor` ($A682) sets `Map_Anchored`, plays the anchor sound, removes the
+item from inventory, and returns — it never enters the powerup animation path.
+
 ### LATP_QBlocks — ? Block Item Table
 
 File offset: **0x1168D** (17 bytes, in PRG008)
