@@ -157,7 +157,7 @@ fn default_true() -> bool {
     true
 }
 
-const FLAG_KEY_VERSION: u8 = 7;
+const FLAG_KEY_VERSION: u8 = 8;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
 /// Free space in PRG012 after the Big ? Block trampoline (0x19DD0 region).
 /// The trampoline uses 0x19DD0–0x19DE1; we place the 16-byte stamp at 0x19DF0.
@@ -174,9 +174,8 @@ impl Options {
 
         let b0 = FLAG_KEY_VERSION;
 
-        // b1: non-enemy flags (bit 5 reclaimed from old `enemies`, now koopaling_hits)
+        // b1: non-enemy flags (bit 6 free — palettes decoupled from flag key in v8)
         let b1 = (self.powerups as u8) << 7
-            | (self.palettes as u8) << 6
             | (self.koopaling_hits as u8) << 5
             | (self.world_order as u8) << 4
             | (self.big_q_blocks as u8) << 3
@@ -259,7 +258,7 @@ impl Options {
     }
 
     /// Decode a flag key string into Options.
-    /// Accepts v1–v7 keys.
+    /// Accepts v1–v8 keys.
     pub fn from_flag_key(key: &str) -> Result<Options, String> {
         let hex = key.strip_prefix(FLAG_KEY_PREFIX)
             .or_else(|| key.strip_prefix("smb3r-"))
@@ -528,7 +527,7 @@ impl Options {
 
         Ok(Options {
             powerups: (b1 >> 7) & 1 != 0,
-            palettes: (b1 >> 6) & 1 != 0,
+            palettes: true, // cosmetic — not encoded in flag key since v8
             koopaling_hits: (b1 >> 5) & 1 != 0,
             world_order: (b1 >> 4) & 1 != 0,
             big_q_blocks: (b1 >> 3) & 1 != 0,
@@ -677,7 +676,8 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     }
     if options.palettes {
         rom.set_tag("palettes");
-        randomize::palettes::randomize(rom, &mut rng);
+        let mut palette_rng = ChaCha8Rng::from_os_rng();
+        randomize::palettes::randomize(rom, &mut palette_rng);
     }
     if options.any_enemies_active() {
         rom.set_tag("enemies");
@@ -807,8 +807,8 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     }
 
     // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 22 bytes:
-    //   [0..4]  "S3R\x07" magic + version
-    //   [4..14] flag key bytes (encoding of Options, 10 bytes in v7)
+    //   [0..4]  "S3R\x08" magic + version
+    //   [4..14] flag key bytes (encoding of Options, 10 bytes in v8)
     //   [14..22] seed (little-endian u64)
     rom.set_tag("stamp");
     let flag_bytes = options.to_flag_bytes();
@@ -1101,7 +1101,7 @@ mod tests {
         let decoded = Options::from_flag_key(&key).unwrap();
         assert!(decoded.starting_items.is_empty());
         assert!(!decoded.powerups);
-        assert!(!decoded.palettes);
+        assert!(decoded.palettes); // palettes always true from flag key (cosmetic, not encoded)
         assert!(!decoded.disable_autoscroll);
         assert!(!decoded.map_shuffle);
         assert!(!decoded.shuffle_airships);

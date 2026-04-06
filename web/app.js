@@ -272,7 +272,7 @@ function applyFlagKey(key) {
 		const json = decode_flag_key(key.trim());
 		const opts = JSON.parse(json);
 		optPowerups.checked = opts.powerups;
-		optPalettes.checked = opts.palettes;
+		// palettes is cosmetic — not controlled by flag key, leave user's choice
 		optWorldOrder.checked = opts.world_order;
 		optBigQBlocks.checked = opts.big_q_blocks;
 		setOverworldMode(opts.map_shuffle ? "map_shuffle" : "vanilla");
@@ -317,7 +317,7 @@ function applyFlagKey(key) {
 
 // Update flag key whenever any option changes
 const allOptionElements = [
-	optPowerups, optPalettes, optWorldOrder, optBigQBlocks,
+	optPowerups, optWorldOrder, optBigQBlocks,
 	optShufflePipes, optShuffleAirships, optChestItems, optRemoveWhistles,
 	optAirshipLock,
 	optFixDrawbridges, optRemoveRocks, optRemoveNCards, optRemoveSpadeGames, optSkipWandCutscene, optAdjustBossHitboxes, optKoopalingHits,
