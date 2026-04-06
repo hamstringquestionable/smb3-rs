@@ -1799,7 +1799,7 @@ one rendered wins and the other draws garbled sprites.
 | 0x18 | Bowser | $3A | +4 |
 | 0x24 | Platform Drop | $0E | +4 |
 | 0x26–0x28 | Tilt/Seesaw/Circle Platform | $0E | +4 |
-| 0x2C | Chain Chomp | $0E | +4 |
+| 0x2C | Cloud Platform | $0E | +4 |
 | 0x31–0x32 | Stretch Boo variants | $12 | +4 |
 | 0x36–0x38 | Scale/Waterfall Platforms | $0E | +4 |
 | 0x3C | Circle Platform | $0E | +4 |
