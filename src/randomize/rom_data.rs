@@ -31,7 +31,8 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     // PRG031 (always mapped $E000–$FFFF, file 0x3E010)
     (0x3E924, 25, "title_screen: sprite copy routine"),
     (0x3E93D, 40, "title_screen: sprite data table"),
-    (0x3E250, 15, "mystery_anchor: item redirect trampoline"),
+    (0x35572, 13, "mystery_anchor: item redirect trampoline"),
+    (0x3E260, 28, "starting_items: lives + intro skip + inventory init trampoline"),
     (0x3E965,  8, "title_screen: intro skip routine"),
     (0x3FFF0, 26, "card_speed_clear: XOR trampoline"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
@@ -72,8 +73,9 @@ pub(super) const FS_CANOE_RESPAWN: usize     = 0x15DF0; // 35 bytes
 // PRG011
 pub(super) const FS_CANOE_BACKUP: usize      = 0x17D00; // 59 bytes
 
-// PRG031 (cont.)
-pub(super) const FS_MYSTERY_ANCHOR: usize    = 0x3E250; // 15 bytes
+// PRG026 (cont.)
+pub(super) const FS_MYSTERY_ANCHOR: usize    = 0x35572; // 13 bytes
+pub(super) const FS_STARTING_ITEMS: usize    = 0x3E260; // 28 bytes
 
 // PRG001 (file 0x02010, CPU $A000–$BFFF)
 // Koopaling stomp handler is ObjHit_Koopaling in prg001.asm (southbird disassembly).
@@ -1048,5 +1050,7 @@ mod free_space_tests {
         assert!(offsets.contains(&FS_CANOE_RESPAWN));
         assert!(offsets.contains(&FS_CANOE_BACKUP));
         assert!(offsets.contains(&FS_KOOPA_HITS_SUB));
+        assert!(offsets.contains(&FS_STARTING_ITEMS));
+        assert!(offsets.contains(&FS_MYSTERY_ANCHOR));
     }
 }

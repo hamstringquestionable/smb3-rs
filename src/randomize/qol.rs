@@ -5,6 +5,11 @@ use rand_chacha::ChaCha8Rng;
 /// Both Mario and Luigi are initialized from this single byte.
 const STARTING_LIVES_OFFSET: usize = 0x308E1;
 
+/// Base of the 8-byte lives init code: LDA #lives; STA $0736; STA $0737.
+const LIVES_INIT_BASE: usize = 0x308E0;
+
+use super::rom_data::FS_STARTING_ITEMS;
+
 // W3 drawbridge map tile offsets (2× $B2 horizontal, 2× $B1 vertical)
 const W3_BRIDGE_H1: usize = 0x18777;
 const W3_BRIDGE_H2: usize = 0x18779;
@@ -110,6 +115,40 @@ const BIG_Q_ROUTINE: [u8; 66] = [
 pub fn set_starting_lives(rom: &mut Rom, lives: u8) {
     let clamped = lives.min(99).max(1);
     rom.write_byte(STARTING_LIVES_OFFSET, clamped);
+}
+
+/// Write starting items into Mario's inventory via a trampoline in PRG031.
+///
+/// Replaces the 8-byte lives init at 0x308E0 with `JSR $E250` into a
+/// routine that sets lives, does the intro skip, AND writes up to 3 items
+/// to inventory ($7D80+). Must run AFTER title_screen (which hooks the same
+/// region for intro skip) — this trampoline incorporates that behavior.
+pub fn write_starting_items(rom: &mut Rom, lives: u8, items: &[u8]) {
+    let lives = lives.min(99).max(1);
+    // Build trampoline: lives init + intro skip + item writes + RTS
+    // CPU $E250 = file FS_STARTING_ITEMS
+    let mut buf = Vec::with_capacity(24);
+    buf.extend_from_slice(&[
+        0xA9, lives,         // LDA #lives
+        0x8D, 0x36, 0x07,    // STA $0736
+        0x8D, 0x37, 0x07,    // STA $0737
+        0xA9, 0x06,          // LDA #$06       (Title_State = IntroSkip)
+        0x85, 0xDE,          // STA $DE
+    ]);
+    for (i, &item) in items.iter().take(3).enumerate() {
+        buf.extend_from_slice(&[
+            0xA9, item,                      // LDA #item
+            0x8D, (0x80 + i as u8), 0x7D,    // STA $7D80+i
+        ]);
+    }
+    buf.push(0x60); // RTS
+    rom.write_range(FS_STARTING_ITEMS, &buf);
+
+    // Patch lives init: JSR $E250 + NOP×5
+    rom.write_range(LIVES_INIT_BASE, &[
+        0x20, 0x50, 0xE2,                    // JSR $E250
+        0xEA, 0xEA, 0xEA, 0xEA, 0xEA,       // NOP ×5
+    ]);
 }
 
 /// Remove the W2 rock blocking the secret path, replacing it with horizontal path.

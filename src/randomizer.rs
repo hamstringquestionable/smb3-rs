@@ -67,6 +67,9 @@ pub struct Options {
     /// Set starting lives for both Mario and Luigi (1–99).
     #[serde(default = "default_starting_lives")]
     pub starting_lives: u8,
+    /// Up to 3 items to start with in inventory (item IDs, e.g. 0x03 = Leaf).
+    #[serde(default)]
+    pub starting_items: Vec<u8>,
     /// Enable always-on airship lock (anchor effect, disables airship movement on death)
     #[serde(default = "default_true")]
     pub airship_lock: bool,
@@ -154,7 +157,7 @@ fn default_true() -> bool {
     true
 }
 
-const FLAG_KEY_VERSION: u8 = 6;
+const FLAG_KEY_VERSION: u8 = 7;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
 /// Free space in PRG012 after the Big ? Block trampoline (0x19DD0 region).
 /// The trampoline uses 0x19DD0–0x19DE1; we place the 16-byte stamp at 0x19DF0.
@@ -162,7 +165,7 @@ const STAMP_OFFSET: usize = 0x19DF0;
 
 impl Options {
     /// Encode options into 8 raw bytes.
-    pub fn to_flag_bytes(&self) -> [u8; 8] {
+    pub fn to_flag_bytes(&self) -> [u8; 10] {
         let level_shuffle_val = match self.level_shuffle {
             LevelShuffle::Off => 0u8,
             LevelShuffle::IntraWorld => 1,
@@ -235,7 +238,13 @@ impl Options {
             | (em(self.hb_encounters) << 1)
             | (self.wild_injections as u8);
 
-        [b0, b1, b2, b3, b4, b5, b6, b7]
+        // b8-b9: starting items (3 nibbles, 0 = none)
+        let items = &self.starting_items;
+        let b8 = (items.first().copied().unwrap_or(0) << 4)
+            | items.get(1).copied().unwrap_or(0);
+        let b9 = items.get(2).copied().unwrap_or(0) << 4;
+
+        [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9]
     }
 
     /// Encode options into a compact hex flag key (e.g. "SMB3R-06...").
@@ -250,14 +259,14 @@ impl Options {
     }
 
     /// Decode a flag key string into Options.
-    /// Accepts v1–v6 keys.
+    /// Accepts v1–v7 keys.
     pub fn from_flag_key(key: &str) -> Result<Options, String> {
         let hex = key.strip_prefix(FLAG_KEY_PREFIX)
             .or_else(|| key.strip_prefix("smb3r-"))
             .unwrap_or(key);
 
-        if hex.len() % 2 != 0 || hex.len() < 8 || hex.len() > 16 {
-            return Err(format!("Flag key must be 8–16 hex digits (got {})", hex.len()));
+        if hex.len() % 2 != 0 || hex.len() < 8 || hex.len() > 20 {
+            return Err(format!("Flag key must be 8–20 hex digits (got {})", hex.len()));
         }
 
         let num_bytes = hex.len() / 2;
@@ -356,6 +365,7 @@ impl Options {
                 remove_spade_games: true,
                 ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
+                starting_items: vec![],
             });
         }
 
@@ -396,6 +406,7 @@ impl Options {
                 remove_spade_games: (b4 >> 3) & 1 != 0,
                 ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
+                starting_items: vec![],
             });
         }
 
@@ -440,6 +451,7 @@ impl Options {
                 remove_spade_games: (b4 >> 3) & 1 != 0,
                 ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
+                starting_items: vec![],
             });
         }
 
@@ -488,6 +500,7 @@ impl Options {
                 remove_spade_games: (b4 >> 3) & 1 != 0,
                 ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
+                starting_items: vec![],
             });
         }
 
@@ -553,6 +566,19 @@ impl Options {
             // b4 bits 2-1: hb_encounters, bit 0: wild_injections
             hb_encounters: dem(b4 >> 1),
             wild_injections: b4 & 1 != 0,
+            // b8-b9: starting items (3 nibbles, 0 = none). v6 keys have no b8/b9.
+            starting_items: {
+                let b8 = if bytes.len() > 8 { bytes[8] } else { 0 };
+                let b9 = if bytes.len() > 9 { bytes[9] } else { 0 };
+                let mut items = Vec::new();
+                let i0 = b8 >> 4;
+                let i1 = b8 & 0x0F;
+                let i2 = b9 >> 4;
+                if i0 != 0 { items.push(i0); }
+                if i1 != 0 { items.push(i1); }
+                if i2 != 0 { items.push(i2); }
+                items
+            },
         })
     }
 
@@ -606,6 +632,7 @@ impl Default for Options {
             hb_encounters: EnemyMode::Off,
             wild_injections: false,
             starting_lives: default_starting_lives(),
+            starting_items: Vec::new(),
         }
     }
 }
@@ -706,7 +733,7 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::items::remove_whistles_only(rom, &mut rng);
     }
 
-    // Set starting lives (default 4; user/configurable)
+    // Set starting lives (patched later by starting_items trampoline if items present)
     rom.set_tag("qol/starting_lives");
     randomize::qol::set_starting_lives(rom, options.starting_lives);
 
@@ -767,20 +794,29 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     }
 
     // Title screen seed hash icons (always on — cosmetic verification).
+    // This hooks STA $0736 at 0x308E2 for intro skip.
     rom.set_tag("title_screen");
     randomize::title_screen::write_seed_hash(rom, seed, options);
 
-    // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 20 bytes:
-    //   [0..4]  "S3R\x06" magic + version
-    //   [4..12] flag key bytes (encoding of Options, 8 bytes in v6)
-    //   [12..20] seed (little-endian u64)
+    // Starting items trampoline — must run AFTER title_screen because both
+    // write to the lives init region at 0x308E0. The trampoline incorporates
+    // the intro skip (LDA #$06; STA $DE) so the title_screen hook is preserved.
+    if !options.starting_items.is_empty() {
+        rom.set_tag("qol/starting_items");
+        randomize::qol::write_starting_items(rom, options.starting_lives, &options.starting_items);
+    }
+
+    // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 22 bytes:
+    //   [0..4]  "S3R\x07" magic + version
+    //   [4..14] flag key bytes (encoding of Options, 10 bytes in v7)
+    //   [14..22] seed (little-endian u64)
     rom.set_tag("stamp");
     let flag_bytes = options.to_flag_bytes();
-    let mut stamp = [0u8; 20];
+    let mut stamp = [0u8; 22];
     stamp[0..3].copy_from_slice(b"S3R");
     stamp[3] = FLAG_KEY_VERSION;
-    stamp[4..12].copy_from_slice(&flag_bytes);
-    stamp[12..20].copy_from_slice(&seed.to_le_bytes());
+    stamp[4..14].copy_from_slice(&flag_bytes);
+    stamp[14..22].copy_from_slice(&seed.to_le_bytes());
     rom.write_range(STAMP_OFFSET, &stamp);
 }
 
@@ -868,15 +904,19 @@ mod tests {
         assert_eq!(rom.read_byte(TOAD_HOUSE_ITEMS_OFFSET + 1), ANCHOR,
             "Anchor should stay in item table (mystery item)");
 
-        // Trampoline should be written at free space
-        const FS: usize = 0x3E250;
-        assert_eq!(rom.read_byte(FS), 0xA9, "Trampoline LDA opcode");
-        let target = rom.read_byte(FS + 1);
-        assert!(target >= 0x01 && target <= 0x0B && target != 0x0A,
-            "Trampoline target 0x{target:02X} should be a valid mystery pool item");
+        // Trampoline should be written at PRG026 free space
+        const FS: usize = 0x35572;
+        // Trampoline starts with LDX $7D80,Y (0xBE)
+        assert_eq!(rom.read_byte(FS), 0xBE, "Trampoline LDX abs,Y opcode");
+        // Target powerup is at offset +8 (LDX #imm operand)
+        let target = rom.read_byte(FS + 8);
+        assert!(target >= 0x01 && target <= 0x08,
+            "Trampoline target 0x{target:02X} should be a valid mystery pool item (1-8)");
 
-        // Dispatch should be patched to JMP $E240 + NOP
-        assert_eq!(rom.read_range(0x3E500, 4), &[0x4C, 0x40, 0xE2, 0xEA]);
+        // DynJump table entry at 0x34564: $A5B6 (Inv_UseItem_Powerup)
+        assert_eq!(rom.read_range(0x34564, 2), &[0xB6, 0xA5]);
+        // Hook at 0x345D8: JSR $B562
+        assert_eq!(rom.read_range(0x345D8, 3), &[0x20, 0x62, 0xB5]);
     }
 
     #[test]
@@ -922,7 +962,7 @@ mod tests {
         let opts = Options::default();
         let key = opts.to_flag_key();
         assert!(key.starts_with("SMB3R-"));
-        assert_eq!(key.len(), 22); // "SMB3R-" + 16 hex
+        assert_eq!(key.len(), 26); // "SMB3R-" + 20 hex
         let decoded = Options::from_flag_key(&key).unwrap();
         assert_eq!(opts.powerups, decoded.powerups);
         assert_eq!(opts.palettes, decoded.palettes);
@@ -957,6 +997,7 @@ mod tests {
         assert_eq!(opts.bros, decoded.bros);
         assert_eq!(opts.hb_encounters, decoded.hb_encounters);
         assert_eq!(opts.wild_injections, decoded.wild_injections);
+        assert_eq!(opts.starting_items, decoded.starting_items);
     }
 
     #[test]
@@ -997,9 +1038,11 @@ mod tests {
             bros: EnemyMode::Wild,
             hb_encounters: EnemyMode::Wild,
             wild_injections: true,
+            starting_items: vec![0x05, 0x09, 0x03],
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
+        assert_eq!(opts.starting_items, decoded.starting_items);
         assert_eq!(opts.world_order, decoded.world_order);
         assert_eq!(opts.level_shuffle, decoded.level_shuffle);
         assert_eq!(opts.map_shuffle, decoded.map_shuffle);
@@ -1052,9 +1095,11 @@ mod tests {
             bros: EnemyMode::Off,
             hb_encounters: EnemyMode::Off,
             wild_injections: false,
+            starting_items: vec![],
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
+        assert!(decoded.starting_items.is_empty());
         assert!(!decoded.powerups);
         assert!(!decoded.palettes);
         assert!(!decoded.disable_autoscroll);

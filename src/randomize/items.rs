@@ -171,9 +171,9 @@ pub fn remove_whistles_only<R: Rng>(rom: &mut Rom, rng: &mut R) {
     }
 }
 
-/// Mystery anchor pool — all items that make sense when used from the map
-/// inventory. Anchor items stay as 0x0A in data tables but the item-use
-/// dispatch is patched so using an anchor triggers a random powerup effect.
+/// Mystery anchor pool — items 1–8 share the Inv_UseItem_Powerup handler
+/// in the DynJump table. Items 9+ (Starman, Hammer, Whistle, etc.) have
+/// separate handlers with incompatible animation table layouts.
 const MYSTERY_ANCHOR_POOL: &[u8] = &[
     0x01, // Mushroom
     0x02, // Fire Flower
@@ -183,40 +183,46 @@ const MYSTERY_ANCHOR_POOL: &[u8] = &[
     0x06, // Hammer Suit
     0x07, // Jugem's Cloud
     0x08, // P-Wing
-    0x09, // Starman
-    0x0B, // Hammer (rock breaker)
 ];
 
 /// Patch the item-use dispatch so anchors secretly function as a random
 /// powerup chosen at build time. The anchor sprite stays unchanged in the
 /// inventory — only the effect changes when the player uses it.
 ///
-/// Writes a 15-byte trampoline at free space in PRG031 and redirects the
-/// anchor branch in the item dispatch to it.
+/// Three patches in PRG026:
+/// 1. DynJump table: redirect anchor entry to Inv_UseItem_Powerup
+/// 2. Hook inside powerup handler: replace LDX $7D80,Y with JSR to trampoline
+/// 3. Trampoline: displaced LDX + anchor check + item substitution + $07F5 fix
 pub fn write_mystery_anchor<R: Rng>(rom: &mut Rom, rng: &mut R) {
     let target = *MYSTERY_ANCHOR_POOL.choose(rng).unwrap();
 
-    // Trampoline at FS_MYSTERY_ANCHOR (CPU $E240):
-    //   A9 xx        LDA #<target_id>
-    //   8D F5 07     STA $07F5
-    //   C9 09        CMP #$09
-    //   F0 03        BEQ +3          ; starman needs special handler
-    //   4C 7B E3     JMP $E37B       ; normal item handler
-    //   4C 1B E5     JMP $E51B       ; star/anchor handler (sets invincibility)
-    let trampoline: [u8; 15] = [
-        0xA9, target,       // LDA #target
-        0x8D, 0xF5, 0x07,   // STA $07F5
-        0xC9, 0x09,          // CMP #$09
-        0xF0, 0x03,          // BEQ +3
-        0x4C, 0x7B, 0xE3,   // JMP $E37B
-        0x4C, 0x1B, 0xE5,   // JMP $E51B
+    // Patch 1: DynJump table at file 0x34550. Anchor is item 10; DynJump uses
+    // the raw item ID as index (ASL A → word offset 20), so entry is at 0x34564.
+    // Redirect from Inv_UseItem_Anchor ($A682) to Inv_UseItem_Powerup ($A5B6).
+    const ANCHOR_DISPATCH_ENTRY: usize = 0x34564;
+    rom.write_range(ANCHOR_DISPATCH_ENTRY, &[0xB6, 0xA5]); // $A5B6 little-endian
+
+    // Patch 2: Hook inside Inv_UseItem_Powerup. At file 0x345D8 (CPU $A5C8),
+    // replace `LDX $7D80,Y` (BE 80 7D) with `JSR $B562` (20 62 B5).
+    const POWERUP_INV_READ: usize = 0x345D8;
+    rom.write_range(POWERUP_INV_READ, &[0x20, 0x62, 0xB5]); // JSR $B562
+
+    // Patch 3: Trampoline at FS_MYSTERY_ANCHOR (file 0x35572, CPU $B562):
+    //   BE 80 7D     LDX $7D80,Y   — displaced instruction
+    //   E0 0A        CPX #$0A      — anchor?
+    //   D0 05        BNE +5        — skip if not anchor
+    //   A2 xx        LDX #<target> — load mystery powerup
+    //   8E F5 07     STX $07F5     — fix $07F5 for PRG031 animation state machine
+    //   60           RTS
+    let trampoline: [u8; 13] = [
+        0xBE, 0x80, 0x7D,   // LDX $7D80,Y
+        0xE0, 0x0A,          // CPX #$0A
+        0xD0, 0x05,          // BNE +5
+        0xA2, target,        // LDX #<target>
+        0x8E, 0xF5, 0x07,   // STX $07F5
+        0x60,                // RTS
     ];
     rom.write_range(FS_MYSTERY_ANCHOR, &trampoline);
-
-    // Patch dispatch at file 0x3E500 (CPU $E4F0):
-    // Original: C9 0A F0 27  (CMP #$0A; BEQ +$27)
-    // Patched:  4C 40 E2 EA  (JMP $E240; NOP)
-    rom.write_range(0x3E500, &[0x4C, 0x40, 0xE2, 0xEA]);
 }
 
 #[cfg(test)]
@@ -387,20 +393,21 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         write_mystery_anchor(&mut rom, &mut rng);
 
-        // Trampoline starts with LDA #imm
-        assert_eq!(rom.read_byte(FS_MYSTERY_ANCHOR), 0xA9);
-        let target = rom.read_byte(FS_MYSTERY_ANCHOR + 1);
+        // LDX $7D80,Y (displaced instruction)
+        assert_eq!(rom.read_range(FS_MYSTERY_ANCHOR, 3), &[0xBE, 0x80, 0x7D]);
+        // CPX #$0A
+        assert_eq!(rom.read_range(FS_MYSTERY_ANCHOR + 3, 2), &[0xE0, 0x0A]);
+        // BNE +5
+        assert_eq!(rom.read_range(FS_MYSTERY_ANCHOR + 5, 2), &[0xD0, 0x05]);
+        // LDX #<target>
+        assert_eq!(rom.read_byte(FS_MYSTERY_ANCHOR + 7), 0xA2);
+        let target = rom.read_byte(FS_MYSTERY_ANCHOR + 8);
         assert!(MYSTERY_ANCHOR_POOL.contains(&target),
             "Target 0x{target:02X} not in mystery pool");
-
-        // STA $07F5
-        assert_eq!(rom.read_range(FS_MYSTERY_ANCHOR + 2, 3), &[0x8D, 0xF5, 0x07]);
-        // CMP #$09; BEQ +3
-        assert_eq!(rom.read_range(FS_MYSTERY_ANCHOR + 5, 4), &[0xC9, 0x09, 0xF0, 0x03]);
-        // JMP $E37B (normal handler)
-        assert_eq!(rom.read_range(FS_MYSTERY_ANCHOR + 9, 3), &[0x4C, 0x7B, 0xE3]);
-        // JMP $E51B (star handler)
-        assert_eq!(rom.read_range(FS_MYSTERY_ANCHOR + 12, 3), &[0x4C, 0x1B, 0xE5]);
+        // STX $07F5
+        assert_eq!(rom.read_range(FS_MYSTERY_ANCHOR + 9, 3), &[0x8E, 0xF5, 0x07]);
+        // RTS
+        assert_eq!(rom.read_byte(FS_MYSTERY_ANCHOR + 12), 0x60);
     }
 
     #[test]
@@ -409,8 +416,13 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         write_mystery_anchor(&mut rom, &mut rng);
 
-        // Dispatch at 0x3E500: JMP $E240; NOP
-        assert_eq!(rom.read_range(0x3E500, 4), &[0x4C, 0x40, 0xE2, 0xEA]);
+        // DynJump table entry at 0x34564: $A5B6 (Inv_UseItem_Powerup)
+        assert_eq!(rom.read_range(0x34564, 2), &[0xB6, 0xA5]);
+        // Hook at 0x345D8: JSR $B562
+        assert_eq!(rom.read_range(0x345D8, 3), &[0x20, 0x62, 0xB5]);
+        // Old PRG031 hook at 0x3E4E0 should NOT be patched (test ROM default zeros)
+        assert_eq!(rom.read_range(0x3E4E0, 3), &[0x00, 0x00, 0x00],
+            "PRG031 should be untouched");
     }
 
     #[test]
@@ -421,7 +433,7 @@ mod tests {
             let mut rom = make_test_rom();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             write_mystery_anchor(&mut rom, &mut rng);
-            seen.insert(rom.read_byte(FS_MYSTERY_ANCHOR + 1));
+            seen.insert(rom.read_byte(FS_MYSTERY_ANCHOR + 8));
         }
         for &item in MYSTERY_ANCHOR_POOL {
             assert!(seen.contains(&item),
@@ -439,8 +451,8 @@ mod tests {
         write_mystery_anchor(&mut rom2, &mut rng2);
 
         assert_eq!(
-            rom1.read_range(FS_MYSTERY_ANCHOR, 15),
-            rom2.read_range(FS_MYSTERY_ANCHOR, 15),
+            rom1.read_range(FS_MYSTERY_ANCHOR, 13),
+            rom2.read_range(FS_MYSTERY_ANCHOR, 13),
             "Same seed should produce identical trampoline"
         );
     }
