@@ -1,7 +1,8 @@
-import init, { generate_patch, generate_patched_rom, encode_flag_key, decode_flag_key, version } from "./pkg/smb3_rs.js";
+import init, { generate_patch, generate_patched_rom, apply_visual_patch, encode_flag_key, decode_flag_key, version } from "./pkg/smb3_rs.js";
 
 let wasmReady = false;
 let romBytes = null;
+let visualPatchBytes = null;
 
 // --- IndexedDB ROM persistence ---
 
@@ -149,6 +150,36 @@ romInput.addEventListener("change", (e) => {
 	reader.readAsArrayBuffer(file);
 });
 
+// Visual patch file selection
+const visualPatchInput = document.getElementById("visual-patch-input");
+const visualPatchLabel = document.getElementById("visual-patch-label");
+const visualPatchClear = document.getElementById("visual-patch-clear");
+
+visualPatchInput.addEventListener("change", (e) => {
+	const file = e.target.files[0];
+	if (!file) return;
+
+	const reader = new FileReader();
+	reader.onload = () => {
+		visualPatchBytes = new Uint8Array(reader.result);
+		visualPatchLabel.textContent = file.name;
+		visualPatchLabel.classList.add("loaded");
+		visualPatchClear.hidden = false;
+	};
+	reader.onerror = () => {
+		showStatus("Failed to read visual patch file", "error");
+	};
+	reader.readAsArrayBuffer(file);
+});
+
+visualPatchClear.addEventListener("click", () => {
+	visualPatchBytes = null;
+	visualPatchInput.value = "";
+	visualPatchLabel.textContent = "Select IPS file...";
+	visualPatchLabel.classList.remove("loaded");
+	visualPatchClear.hidden = true;
+});
+
 // Try to restore ROM from IndexedDB
 loadRom().then((bytes) => {
 	if (bytes) {
@@ -190,6 +221,9 @@ generateBtn.addEventListener("click", () => {
 
 		if (outputFormat === "rom") {
 			result = generate_patched_rom(romBytes, seed, options);
+			if (visualPatchBytes) {
+				result = apply_visual_patch(result, visualPatchBytes);
+			}
 			filename = `smb3-rs_${seed}.nes`;
 		} else {
 			result = generate_patch(romBytes, seed, options);

@@ -389,6 +389,16 @@
             </div>
         </div>
 
+        <div class="section">
+            <label>Visual Patch <span class="option-desc">(Optional)</span></label>
+            <label for="visual-patch-input" class="file-label" id="visual-patch-label">
+                Select IPS file...
+            </label>
+            <input type="file" id="visual-patch-input" accept=".ips" hidden>
+            <button id="visual-patch-clear" type="button" class="link-btn" hidden>Clear</button>
+            <p class="note">Apply a sprite or graphics IPS patch on top of the randomized ROM. Use at your own risk — visual patches are not validated and may cause graphical issues. Only applied when output format is Patched ROM.</p>
+        </div>
+
         <button id="generate-btn" type="button" disabled>Generate</button>
 
         <div id="status" class="status" hidden></div>
