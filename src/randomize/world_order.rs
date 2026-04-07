@@ -50,10 +50,13 @@ const STATUS_DISPLAY_OFFSET: usize = 0x350D7;
 ///
 /// The 8 worlds (0-7) are shuffled, but world 7 (Dark Land) is always last
 /// since it contains Bowser and the game ending.
-pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
-    // Build shuffled world order: worlds 0-6 shuffled, world 7 always last
-    let mut worlds: Vec<u8> = (0..7).collect();
-    worlds.as_mut_slice().shuffle(rng);
+pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) {
+    let world_count = world_count.clamp(1, 7) as usize;
+
+    // Build shuffled world order: shuffle worlds 0-6, take first world_count, append world 7
+    let mut pool: Vec<u8> = (0..7).collect();
+    pool.as_mut_slice().shuffle(rng);
+    let mut worlds: Vec<u8> = pool[..world_count].to_vec();
     worlds.push(7);
 
     // Patch the starting world: change `LDA #$00` operand to starting world.
@@ -67,7 +70,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // We index by the *current* World_Num value.
     // If current world is worlds[i], next world should be worlds[i+1].
     let mut next_world = [0u8; 8];
-    for i in 0..7 {
+    for i in 0..world_count {
         next_world[worlds[i] as usize] = worlds[i + 1];
     }
     // World 7 (last) -> 7 (stays, game ends before this matters)
@@ -97,7 +100,8 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
 
     // Build the display-number table: internal world -> display tile ($F1–$F8).
     // worlds[i] is the internal world at shuffled position i, so position i
-    // should display as "WORLD (i+1)".
+    // should display as "WORLD (i+1)". With fewer worlds, Dark Land displays
+    // as world_count+1 (e.g. world_count=3 → Dark Land is "WORLD 4").
     let mut display_tile = [0u8; 8];
     for (position, &internal) in worlds.iter().enumerate() {
         display_tile[internal as usize] = 0xF0 | (position as u8 + 1);
@@ -156,7 +160,7 @@ mod tests {
     fn test_world_order_patches_inc() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng);
+        randomize(&mut rom, &mut rng, 7);
 
         // Original INC site should now be JMP + NOPs
         assert_eq!(rom.read_byte(WORLD_INC_OFFSET), 0x4C); // JMP
@@ -167,7 +171,7 @@ mod tests {
     fn test_world_order_table_valid() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng);
+        randomize(&mut rom, &mut rng, 7);
 
         // Read the lookup table
         let table = rom.read_range(ROUTINE_OFFSET + 12, 8);
@@ -206,7 +210,7 @@ mod tests {
     fn test_starting_world_patched() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng);
+        randomize(&mut rom, &mut rng, 7);
 
         // Starting world is the operand of `LDA #XX` at WORLD_INIT_OPERAND
         let start_world = rom.read_byte(WORLD_INIT_OPERAND);
@@ -229,7 +233,7 @@ mod tests {
     fn test_debug_flag_nopped() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng);
+        randomize(&mut rom, &mut rng, 7);
 
         // STA $0160 (Debug_Flag) should be NOPed out
         assert_eq!(
@@ -246,8 +250,8 @@ mod tests {
         let mut rng1 = ChaCha8Rng::seed_from_u64(99);
         let mut rng2 = ChaCha8Rng::seed_from_u64(99);
 
-        randomize(&mut rom1, &mut rng1);
-        randomize(&mut rom2, &mut rng2);
+        randomize(&mut rom1, &mut rng1, 7);
+        randomize(&mut rom2, &mut rng2, 7);
 
         assert_eq!(
             rom1.read_range(ROUTINE_OFFSET, 20),
@@ -259,7 +263,7 @@ mod tests {
     fn test_routine_structure() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng);
+        randomize(&mut rom, &mut rng, 7);
 
         let routine = rom.read_range(ROUTINE_OFFSET, 12);
         // LDX $0727
@@ -276,7 +280,7 @@ mod tests {
     fn test_display_table_covers_all_worlds() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng);
+        randomize(&mut rom, &mut rng, 7);
 
         let display = rom.read_range(DISPLAY_TABLE_OFFSET, 8);
 
@@ -309,7 +313,7 @@ mod tests {
         ]);
 
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng);
+        randomize(&mut rom, &mut rng, 7);
 
         // Map display: should now use LDX $0727; LDA $DF24,X; STA $0304; NOP
         let map_patch = rom.read_range(MAP_DISPLAY_OFFSET, 10);
@@ -324,5 +328,32 @@ mod tests {
         assert_eq!(status_patch[3], 0xBD);                      // LDA abs,X
         assert_eq!(&status_patch[6..9], &[0x99, 0x04, 0x03]);  // STA $0304,Y
         assert_eq!(status_patch[9], 0xEA);                      // NOP
+    }
+
+    #[test]
+    fn test_world_count_3() {
+        let mut rom = make_test_rom();
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        randomize(&mut rom, &mut rng, 3);
+
+        let table = rom.read_range(ROUTINE_OFFSET + 12, 8);
+
+        // Follow chain from starting world: should visit exactly 4 worlds (3 + Dark Land)
+        let start_world = rom.read_byte(WORLD_INIT_OPERAND);
+        assert!(start_world <= 6, "Starting world should be 0-6");
+
+        let mut visited = vec![false; 8];
+        let mut current = start_world;
+        for _ in 0..4 {
+            visited[current as usize] = true;
+            current = table[current as usize];
+        }
+        let count = visited.iter().filter(|&&v| v).count();
+        assert_eq!(count, 4, "Chain should visit exactly 4 worlds (3 + Dark Land), got {count}");
+        assert!(visited[7], "Dark Land (world 7) must be in the chain");
+
+        // Display table: Dark Land should show as "WORLD 4" ($F4)
+        let display = rom.read_range(DISPLAY_TABLE_OFFSET, 8);
+        assert_eq!(display[7], 0xF4, "Dark Land should display as World 4 with world_count=3");
     }
 }

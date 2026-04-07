@@ -35,6 +35,10 @@ struct Cli {
     #[arg(long)]
     world_order: bool,
 
+    /// Number of worlds before Dark Land (1-7, default 7; requires --world-order)
+    #[arg(long, default_value_t = 7, value_parser = clap::value_parser!(u8).range(1..=7))]
+    world_count: u8,
+
     /// Enable Big ? Block randomization
     #[arg(long)]
     big_q_blocks: bool,
@@ -269,6 +273,7 @@ fn main() {
             powerups: !cli.no_powerups,
             palettes: !cli.no_palettes,
             world_order: cli.world_order,
+            world_count: cli.world_count,
             big_q_blocks: cli.big_q_blocks,
             level_shuffle,
             map_shuffle: if cli.no_map_shuffle { false } else { true },
@@ -317,6 +322,9 @@ fn main() {
     eprintln!("  Palettes: {}", if options.palettes { "on" } else { "off" });
     eprintln!("  Enemies:  {}", if options.any_enemies_active() { "on" } else { "off" });
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
+    if options.world_order && options.world_count < 7 {
+        eprintln!("  World count: {}", options.world_count);
+    }
     eprintln!("  Big ? Blocks: {}", if options.big_q_blocks { "on" } else { "off" });
     eprintln!("  Starting Lives: {}", options.starting_lives);
     eprintln!("  Map shuffle: {}", if options.map_shuffle { "on" } else { "off" });
