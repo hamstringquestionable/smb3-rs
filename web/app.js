@@ -113,6 +113,9 @@ if (optStartingLives) {
 	}
 }
 
+// Restore saved settings (after dropdowns are populated, before WASM init)
+restoreSettings();
+
 // Initialize WASM
 init()
 	.then(() => {
@@ -213,6 +216,50 @@ generateBtn.addEventListener("click", () => {
 	}
 });
 
+// --- Settings persistence (localStorage) ---
+
+const SETTINGS_KEY = "smb3r-settings";
+
+function saveSettings() {
+	try {
+		const settings = {};
+		for (const el of document.querySelectorAll("fieldset.section input[type=checkbox][id], fieldset.section select[id]")) {
+			settings[el.id] = el.type === "checkbox" ? el.checked : el.value;
+		}
+		for (const name of new Set(
+			[...document.querySelectorAll("fieldset.section input[type=radio][name]")].map(r => r.name)
+		)) {
+			const checked = document.querySelector(`input[name="${name}"]:checked`);
+			if (checked) settings[`radio:${name}`] = checked.value;
+		}
+		// Output format lives outside fieldsets
+		const fmt = document.querySelector('input[name="output-format"]:checked');
+		if (fmt) settings["radio:output-format"] = fmt.value;
+		localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+	} catch (_) {}
+}
+
+function restoreSettings() {
+	try {
+		const raw = localStorage.getItem(SETTINGS_KEY);
+		if (!raw) return;
+		const settings = JSON.parse(raw);
+		for (const [key, val] of Object.entries(settings)) {
+			if (key.startsWith("radio:")) {
+				const name = key.slice(6);
+				const el = document.querySelector(`input[name="${name}"][value="${val}"]`);
+				if (el) el.checked = true;
+			} else {
+				const el = document.getElementById(key);
+				if (!el) continue;
+				if (el.type === "checkbox") el.checked = val;
+				else el.value = val;
+			}
+		}
+		updateOverworldColumns();
+	} catch (_) {}
+}
+
 // --- Flag Key ---
 
 function getCurrentOptionsJson() {
@@ -309,6 +356,7 @@ function applyFlagKey(key) {
 			optStartItems[i].value = items[i] || 0;
 		}
 		updateOverworldColumns();
+		saveSettings();
 		showStatus("Flag key applied!", "success");
 	} catch (err) {
 		showStatus(`Invalid flag key: ${err}`, "error");
@@ -326,11 +374,11 @@ const allOptionElements = [
 	...optStartItems,
 ];
 for (const el of allOptionElements) {
-	el.addEventListener("change", updateFlagKey);
+	el.addEventListener("change", () => { updateFlagKey(); saveSettings(); });
 }
 // Pill group radios
 for (const radio of document.querySelectorAll('.pill-group input[type="radio"]')) {
-	radio.addEventListener("change", updateFlagKey);
+	radio.addEventListener("change", () => { updateFlagKey(); saveSettings(); });
 }
 // Radio groups
 for (const name of ["overworld-mode", "level-shuffle"]) {
@@ -338,8 +386,13 @@ for (const name of ["overworld-mode", "level-shuffle"]) {
 		radio.addEventListener("change", () => {
 			updateOverworldColumns();
 			updateFlagKey();
+			saveSettings();
 		});
 	}
+}
+// Output format radios (outside fieldsets)
+for (const radio of document.querySelectorAll('input[name="output-format"]')) {
+	radio.addEventListener("change", saveSettings);
 }
 
 flagKeyCopyBtn.addEventListener("click", () => {
