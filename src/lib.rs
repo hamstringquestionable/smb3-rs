@@ -8,6 +8,7 @@ pub mod wasm;
 
 use rom::Rom;
 
+pub use ips::apply_ips_patch;
 pub use randomizer::{EnemyMode, LevelShuffle, Options};
 
 /// Parse, validate, randomize, and return the full Rom struct.

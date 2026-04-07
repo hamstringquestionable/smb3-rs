@@ -494,3 +494,18 @@ footer p {
     font-size: 0.65rem;
     color: #444;
 }
+
+.link-btn {
+    background: none;
+    border: none;
+    color: #e44434;
+    font-family: inherit;
+    font-size: 0.75rem;
+    cursor: pointer;
+    padding: 0.2rem 0;
+    text-decoration: underline;
+}
+
+.link-btn:hover {
+    color: #ff6b5b;
+}
