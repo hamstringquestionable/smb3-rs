@@ -45,6 +45,8 @@ const optPowerups = document.getElementById("opt-powerups");
 const optPalettes = document.getElementById("opt-palettes");
 const optWorldOrder = document.getElementById("opt-world-order");
 const optBigQBlocks = document.getElementById("opt-big-q-blocks");
+const optWorldCount = document.getElementById("opt-world-count");
+const worldCountLabel = document.getElementById("world-count-label");
 const optShufflePipes = document.getElementById("opt-shuffle-pipes");
 const optShuffleAirships = document.getElementById("opt-shuffle-airships");
 const optChestItems = document.getElementById("opt-chest-items");
@@ -103,6 +105,12 @@ function updateOverworldColumns() {
 	colMapShuffle.classList.toggle("disabled", mode !== "map_shuffle");
 }
 
+function updateWorldCountVisibility() {
+	const enabled = optWorldOrder.checked;
+	worldCountLabel.classList.toggle("disabled", !enabled);
+	optWorldCount.disabled = !enabled;
+}
+
 // Dynamically populate Starting Lives dropdown (5, 10, 15, ... 99)
 if (optStartingLives) {
 	for (let i = 5; i <= 99; i += 5) {
@@ -125,6 +133,7 @@ init()
 		if (versionEl) versionEl.textContent = `v${version()}`;
 		updateGenerateButton();
 		updateOverworldColumns();
+		updateWorldCountVisibility();
 		updateFlagKey();
 	})
 	.catch((err) => {
@@ -291,6 +300,7 @@ function restoreSettings() {
 			}
 		}
 		updateOverworldColumns();
+		updateWorldCountVisibility();
 	} catch (_) {}
 }
 
@@ -302,6 +312,7 @@ function getCurrentOptionsJson() {
 		powerups: optPowerups.checked,
 		palettes: optPalettes.checked,
 		world_order: optWorldOrder.checked,
+		world_count: Number(optWorldCount.value),
 		big_q_blocks: optBigQBlocks.checked,
 		map_shuffle: isMapShuffle,
 		level_shuffle: isMapShuffle ? "off" : getLevelShuffle(),
@@ -355,6 +366,7 @@ function applyFlagKey(key) {
 		optPowerups.checked = opts.powerups;
 		// palettes is cosmetic — not controlled by flag key, leave user's choice
 		optWorldOrder.checked = opts.world_order;
+		if (opts.world_count !== undefined) optWorldCount.value = opts.world_count;
 		optBigQBlocks.checked = opts.big_q_blocks;
 		setOverworldMode(opts.map_shuffle ? "map_shuffle" : "vanilla");
 		setLevelShuffle(opts.level_shuffle);
@@ -390,6 +402,7 @@ function applyFlagKey(key) {
 			optStartItems[i].value = items[i] || 0;
 		}
 		updateOverworldColumns();
+		updateWorldCountVisibility();
 		saveSettings();
 		showStatus("Flag key applied!", "success");
 	} catch (err) {
@@ -399,7 +412,7 @@ function applyFlagKey(key) {
 
 // Update flag key whenever any option changes
 const allOptionElements = [
-	optPowerups, optWorldOrder, optBigQBlocks,
+	optPowerups, optWorldOrder, optWorldCount, optBigQBlocks,
 	optShufflePipes, optShuffleAirships, optChestItems, optRemoveWhistles,
 	optAirshipLock,
 	optFixDrawbridges, optRemoveRocks, optRemoveNCards, optRemoveSpadeGames, optSkipWandCutscene, optAdjustBossHitboxes, optKoopalingHits,
@@ -410,6 +423,7 @@ const allOptionElements = [
 for (const el of allOptionElements) {
 	el.addEventListener("change", () => { updateFlagKey(); saveSettings(); });
 }
+optWorldOrder.addEventListener("change", updateWorldCountVisibility);
 // Pill group radios
 for (const radio of document.querySelectorAll('.pill-group input[type="radio"]')) {
 	radio.addEventListener("change", () => { updateFlagKey(); saveSettings(); });
