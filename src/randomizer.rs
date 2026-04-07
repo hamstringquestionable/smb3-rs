@@ -7,6 +7,9 @@ use crate::rom::Rom;
 /// Returns default starting lives (4).
 fn default_starting_lives() -> u8 { 4 }
 
+/// Returns default world count (7 — all worlds before Dark Land).
+fn default_world_count() -> u8 { 7 }
+
 /// Level shuffle mode.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -46,6 +49,9 @@ pub struct Options {
     pub powerups: bool,
     pub palettes: bool,
     pub world_order: bool,
+    /// Number of worlds before Dark Land (1–7, default 7).
+    #[serde(default = "default_world_count")]
+    pub world_count: u8,
     #[serde(default = "default_false")]
     pub big_q_blocks: bool,
     /// Level shuffle under vanilla tile layout (off/intra/cross).
@@ -157,7 +163,7 @@ fn default_true() -> bool {
     true
 }
 
-const FLAG_KEY_VERSION: u8 = 8;
+const FLAG_KEY_VERSION: u8 = 9;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
 /// Free space in PRG012 after the Big ? Block trampoline (0x19DD0 region).
 /// The trampoline uses 0x19DD0–0x19DE1; we place the 16-byte stamp at 0x19DF0.
@@ -241,7 +247,8 @@ impl Options {
         let items = &self.starting_items;
         let b8 = (items.first().copied().unwrap_or(0) << 4)
             | items.get(1).copied().unwrap_or(0);
-        let b9 = items.get(2).copied().unwrap_or(0) << 4;
+        let b9 = (items.get(2).copied().unwrap_or(0) << 4)
+            | (self.world_count.clamp(1, 7) & 0x0F);
 
         [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9]
     }
@@ -365,6 +372,7 @@ impl Options {
                 ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
                 starting_items: vec![],
+                world_count: 7,
             });
         }
 
@@ -406,6 +414,7 @@ impl Options {
                 ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
                 starting_items: vec![],
+                world_count: 7,
             });
         }
 
@@ -451,6 +460,7 @@ impl Options {
                 ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
                 starting_items: vec![],
+                world_count: 7,
             });
         }
 
@@ -500,6 +510,7 @@ impl Options {
                 ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
                 starting_items: vec![],
+                world_count: 7,
             });
         }
 
@@ -524,6 +535,9 @@ impl Options {
                 _ => EnemyMode::Off,
             }
         }
+
+        let b8 = if bytes.len() > 8 { bytes[8] } else { 0 };
+        let b9 = if bytes.len() > 9 { bytes[9] } else { 0 };
 
         Ok(Options {
             powerups: (b1 >> 7) & 1 != 0,
@@ -565,18 +579,22 @@ impl Options {
             // b4 bits 2-1: hb_encounters, bit 0: wild_injections
             hb_encounters: dem(b4 >> 1),
             wild_injections: b4 & 1 != 0,
-            // b8-b9: starting items (3 nibbles, 0 = none). v6 keys have no b8/b9.
+            // b8-b9: starting items (3 nibbles) + world_count (low nibble of b9).
+            // v6 keys have no b8/b9; default to 0.
             starting_items: {
-                let b8 = if bytes.len() > 8 { bytes[8] } else { 0 };
-                let b9 = if bytes.len() > 9 { bytes[9] } else { 0 };
-                let mut items = Vec::new();
                 let i0 = b8 >> 4;
                 let i1 = b8 & 0x0F;
                 let i2 = b9 >> 4;
+                let mut items = Vec::new();
                 if i0 != 0 { items.push(i0); }
                 if i1 != 0 { items.push(i1); }
                 if i2 != 0 { items.push(i2); }
                 items
+            },
+            // b9 lower nibble: world_count (v9+). Old keys have 0 → default 7.
+            world_count: {
+                let wc = b9 & 0x0F;
+                if wc == 0 { 7 } else { wc.clamp(1, 7) }
             },
         })
     }
@@ -599,6 +617,7 @@ impl Default for Options {
             powerups: true,
             palettes: true,
             world_order: false,
+            world_count: default_world_count(),
             big_q_blocks: false,
             level_shuffle: LevelShuffle::Off,
             map_shuffle: true,
@@ -685,7 +704,7 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     }
     if options.world_order {
         rom.set_tag("world_order");
-        randomize::world_order::randomize(rom, &mut rng);
+        randomize::world_order::randomize(rom, &mut rng, options.world_count);
     }
     if options.big_q_blocks {
         rom.set_tag("enemies/big_q_blocks");
@@ -834,10 +853,12 @@ mod tests {
     const TOAD_HOUSE_ITEMS_OFFSET: usize = 0x3B14B;
 
     /// Options safe for zeroed test ROMs (map_shuffle off — builder needs real ROM data).
+    /// Palettes disabled because they use OS entropy (cosmetic, decoupled from seed).
     fn test_options() -> Options {
         let mut opts = Options::default();
         opts.map_shuffle = false;
         opts.shuffle_airships = false;
+        opts.palettes = false;
         opts
     }
 
@@ -967,6 +988,7 @@ mod tests {
         assert_eq!(opts.powerups, decoded.powerups);
         assert_eq!(opts.palettes, decoded.palettes);
         assert_eq!(opts.world_order, decoded.world_order);
+        assert_eq!(opts.world_count, decoded.world_count);
         assert_eq!(opts.big_q_blocks, decoded.big_q_blocks);
         assert_eq!(opts.disable_autoscroll, decoded.disable_autoscroll);
         assert_eq!(opts.airship_lock, decoded.airship_lock);
@@ -1006,6 +1028,7 @@ mod tests {
             powerups: true,
             palettes: true,
             world_order: true,
+            world_count: 7,
             big_q_blocks: true,
             level_shuffle: LevelShuffle::CrossWorld,
             map_shuffle: true,
@@ -1044,6 +1067,7 @@ mod tests {
         let decoded = Options::from_flag_key(&key).unwrap();
         assert_eq!(opts.starting_items, decoded.starting_items);
         assert_eq!(opts.world_order, decoded.world_order);
+        assert_eq!(opts.world_count, decoded.world_count);
         assert_eq!(opts.level_shuffle, decoded.level_shuffle);
         assert_eq!(opts.map_shuffle, decoded.map_shuffle);
         assert_eq!(opts.starting_lives, decoded.starting_lives);
@@ -1063,6 +1087,7 @@ mod tests {
             powerups: false,
             palettes: false,
             world_order: false,
+            world_count: 7,
             big_q_blocks: false,
             level_shuffle: LevelShuffle::Off,
             map_shuffle: false,
@@ -1143,6 +1168,155 @@ mod tests {
     fn flag_key_invalid_hex() {
         let result = Options::from_flag_key("ZZZZZZZZ");
         assert!(result.is_err());
+    }
+
+    /// Inline FNV-1a hash — no external dependency needed.
+    fn fnv1a(data: &[u8]) -> u64 {
+        let mut h: u64 = 0xcbf29ce484222325;
+        for &b in data {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        h
+    }
+
+    /// Build an Options with everything disabled (exercises "skip everything" branches).
+    fn all_off_options() -> Options {
+        Options {
+            powerups: false,
+            palettes: false,
+            world_order: false,
+            world_count: 7,
+            big_q_blocks: false,
+            level_shuffle: LevelShuffle::Off,
+            map_shuffle: false,
+            shuffle_pipes: false,
+            shuffle_airships: false,
+            disable_autoscroll: false,
+            airship_lock: false,
+            chest_items: false,
+            remove_whistles: false,
+            fix_drawbridges: false,
+            remove_rocks: false,
+            starting_lives: 1,
+            card_speed_clear: false,
+            remove_n_cards: false,
+            skip_wand_cutscene: false,
+            adjust_boss_hitboxes: false,
+            koopaling_hits: false,
+            remove_spade_games: false,
+            ground: EnemyMode::Off,
+            shell: EnemyMode::Off,
+            flying: EnemyMode::Off,
+            cheeps: EnemyMode::Off,
+            bullet_bills: EnemyMode::Off,
+            piranhas: EnemyMode::Off,
+            ghosts: EnemyMode::Off,
+            thwomps: EnemyMode::Off,
+            rotodiscs: EnemyMode::Off,
+            cannons: EnemyMode::Off,
+            water: EnemyMode::Off,
+            bros: EnemyMode::Off,
+            hb_encounters: EnemyMode::Off,
+            wild_injections: false,
+            starting_items: vec![],
+        }
+    }
+
+    /// Build an Options with all features cranked to max.
+    /// Palettes disabled because they use OS entropy (cosmetic, decoupled from seed).
+    fn all_on_options() -> Options {
+        Options {
+            powerups: true,
+            palettes: false,
+            world_order: true,
+            world_count: 3,
+            big_q_blocks: true,
+            level_shuffle: LevelShuffle::CrossWorld,
+            map_shuffle: false, // needs real ROM data
+            shuffle_pipes: false,
+            shuffle_airships: true,
+            disable_autoscroll: true,
+            airship_lock: true,
+            chest_items: true,
+            remove_whistles: true,
+            fix_drawbridges: true,
+            remove_rocks: true,
+            starting_lives: 99,
+            card_speed_clear: true,
+            remove_n_cards: true,
+            skip_wand_cutscene: true,
+            adjust_boss_hitboxes: true,
+            koopaling_hits: true,
+            remove_spade_games: true,
+            ground: EnemyMode::Wild,
+            shell: EnemyMode::Wild,
+            flying: EnemyMode::Wild,
+            cheeps: EnemyMode::Wild,
+            bullet_bills: EnemyMode::Wild,
+            piranhas: EnemyMode::Wild,
+            ghosts: EnemyMode::Wild,
+            thwomps: EnemyMode::Wild,
+            rotodiscs: EnemyMode::Wild,
+            cannons: EnemyMode::Wild,
+            water: EnemyMode::Wild,
+            bros: EnemyMode::Wild,
+            hb_encounters: EnemyMode::Wild,
+            wild_injections: true,
+            starting_items: vec![0x05, 0x09, 0x03],
+        }
+    }
+
+    /// Build an Options testing world_order in isolation (no enemy RNG consumption).
+    fn world_order_only_options() -> Options {
+        let mut opts = all_off_options();
+        opts.world_order = true;
+        opts.world_count = 5;
+        opts
+    }
+
+    #[test]
+    fn test_full_determinism_pinned() {
+        let configs: Vec<(&str, Options, u64)> = vec![
+            ("defaults", test_options(), 0x2BC8F0A0A6499013),
+            ("all_on", all_on_options(), 0x62547C61A4F07008),
+            ("all_off", all_off_options(), 0x87CE722CFA4E8675),
+            ("world_order_only", world_order_only_options(), 0x542C9D82E5F6B235),
+        ];
+
+        let seed = 42u64;
+        for (name, options, expected_hash) in &configs {
+            // Run 1
+            let mut rom1 = make_test_rom();
+            randomize(&mut rom1, seed, options);
+
+            // Run 2 (same seed, same options)
+            let mut rom2 = make_test_rom();
+            randomize(&mut rom2, seed, options);
+
+            // Same-run determinism — find first differing byte for diagnostics
+            let b1 = rom1.output_bytes();
+            let b2 = rom2.output_bytes();
+            if b1 != b2 {
+                for i in 0..b1.len() {
+                    if b1[i] != b2[i] {
+                        panic!(
+                            "{name}: non-determinism at offset 0x{i:05X}: \
+                             run1=0x{:02X} run2=0x{:02X}",
+                            b1[i], b2[i]
+                        );
+                    }
+                }
+            }
+
+            // Pinned checksum
+            let hash = fnv1a(b1);
+            assert_eq!(
+                hash, *expected_hash,
+                "{name}: pinned hash mismatch (got 0x{hash:016X}) — \
+                 update expected value if this change is intentional"
+            );
+        }
     }
 
     #[test]
