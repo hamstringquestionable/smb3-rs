@@ -25,6 +25,9 @@ const GEN_GROUP_EXTENDED: u8 = 0x40; // group 2 (notes, wood blocks)
 /// ? block powerup shapes (flower=0, leaf=1, star=2).
 const QBLOCK_SHAPES: &[u8] = &[0x00, 0x01, 0x02];
 
+/// ? block powerup shapes without star (flower=0, leaf=1).
+const QBLOCK_SHAPES_NO_STAR: &[u8] = &[0x00, 0x01];
+
 /// Brick powerup shapes (flower=6, leaf=7, star=8, 1-up=11).
 const BRICK_SHAPES: &[u8] = &[0x06, 0x07, 0x08, 0x0B];
 
@@ -54,6 +57,21 @@ const PROTECTED_OFFSETS: &[usize] = &[
     0x2B900, // 8-F brick-flower (sub-area 2) — player must be big to break a block later
 ];
 
+/// Airship Q-block byte2 offsets (all 9 powerup blocks across W1-W7 airships).
+/// When hammer_vulnerable_koopalings is on, these draw from {flower, leaf} only
+/// (no star) to prevent trivializing Koopaling boss fights.
+const AIRSHIP_QBLOCK_OFFSETS: &[usize] = &[
+    0x2ED22, // W5 airship
+    0x2EE46, // W1 airship
+    0x2EF6D, // W2 airship
+    0x2F0C6, // W3 airship
+    0x2F208, // W4 airship (block 1)
+    0x2F2BB, // W4 airship (block 2)
+    0x2F3E7, // W6 airship
+    0x2F50D, // W7 airship (block 1)
+    0x2F572, // W7 airship (block 2)
+];
+
 /// Randomize per-level powerup block types by scanning all level data regions
 /// for generator commands that place powerup blocks, and swapping the shape
 /// index (byte2) to a random type within the same category.
@@ -65,7 +83,10 @@ const PROTECTED_OFFSETS: &[usize] = &[
 /// In Dungeon/Desert/Ship tilesets the note/wood tile IDs render as different
 /// decorations, so swapping would corrupt the level visuals.
 /// Protected offsets (like 7-7's star blocks) are never modified.
-pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
+///
+/// When `no_airship_stars` is true, airship Q-blocks draw from {flower, leaf}
+/// only (no star) to prevent trivializing Koopaling fights with star power.
+pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, no_airship_stars: bool) {
     for region in LEVEL_DATA_REGIONS {
         let len = region.end - region.start;
         let mut data = rom.read_range(region.start, len).to_vec();
@@ -94,7 +115,12 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
 
                 if group == GEN_GROUP_POWERBLOCK {
                     if QBLOCK_SHAPES.contains(&shape) && !PROTECTED_OFFSETS.contains(&file_offset) {
-                        data[i + 2] = *QBLOCK_SHAPES.choose(rng).unwrap();
+                        let pool = if no_airship_stars && AIRSHIP_QBLOCK_OFFSETS.contains(&file_offset) {
+                            QBLOCK_SHAPES_NO_STAR
+                        } else {
+                            QBLOCK_SHAPES
+                        };
+                        data[i + 2] = *pool.choose(rng).unwrap();
                     } else if BRICK_SHAPES.contains(&shape) && !PROTECTED_OFFSETS.contains(&file_offset) {
                         data[i + 2] = *BRICK_SHAPES.choose(rng).unwrap();
                     }
@@ -169,7 +195,7 @@ mod tests {
     fn test_qblocks_randomized_within_class() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng);
+        randomize(&mut rom, &mut rng, false);
 
         // Offsets: 9-byte header + command data
         let start = 0x1E512 + 9; // first command after header
@@ -187,7 +213,7 @@ mod tests {
     fn test_non_powerblock_untouched() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng);
+        randomize(&mut rom, &mut rng, false);
 
         // Offsets: 9-byte header + 3 powerup cmds (9 bytes) + non-powerup cmds
         let start = 0x1E512 + 9 + 9; // after header + 3 powerup commands
@@ -229,7 +255,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(99);
 
         for _ in 0..10 {
-            randomize(&mut rom, &mut rng);
+            randomize(&mut rom, &mut rng, false);
             assert_eq!(rom.read_byte(0x23DB0), 0x02, "7-7 Q-star was modified!");
         }
     }
@@ -266,7 +292,7 @@ mod tests {
         let leaf_offset = start + 15;
         assert_eq!(rom.read_byte(leaf_offset), 0x01, "precondition: byte2 is leaf");
 
-        randomize(&mut rom, &mut rng);
+        randomize(&mut rom, &mut rng, false);
 
         // After randomization, byte2 should be one of {0x00, 0x01, 0x02}
         let result = rom.read_byte(leaf_offset);
@@ -284,7 +310,7 @@ mod tests {
     fn test_wood_note_blocks_randomized() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng);
+        randomize(&mut rom, &mut rng, false);
 
         // Wood block leaf is at: header(9) + 3 grp1 cmds(9) + 3 non-power cmds(9) + 2 = byte2
         let wood_offset = 0x1E512 + 9 + 9 + 9 + 2;
@@ -304,8 +330,8 @@ mod tests {
         let mut rng1 = ChaCha8Rng::seed_from_u64(123);
         let mut rng2 = ChaCha8Rng::seed_from_u64(123);
 
-        randomize(&mut rom1, &mut rng1);
-        randomize(&mut rom2, &mut rng2);
+        randomize(&mut rom1, &mut rng1, false);
+        randomize(&mut rom2, &mut rng2, false);
 
         for region in LEVEL_DATA_REGIONS {
             let len = region.end - region.start;

@@ -1887,6 +1887,35 @@ Fireballs use a separate counter `Objects_HitCount` (`$7CF6–$7CFA`), initializ
 to 2 and jumps into the stomp-kill path, forcing defeat as if the third stomp landed.
 Bowser uses only `Objects_HitCount` (initialized to 34), no stomp counter.
 
+### Koopaling Softlock Fix (PRG001)
+
+When airship levels are shuffled across worlds, Koopalings can softlock due to an
+object init table value at file **0x02186** (CPU `$A176`). The vanilla byte `$05`
+specifies a behavior state that breaks when the Koopaling loads outside its native
+world. Changing it to `$09` prevents the softlock.
+
+| Item | Value |
+|------|-------|
+| PRG bank | PRG001 (file 0x02010–0x0400F, CPU $A000–$BFFF) |
+| Patch offset | File **0x02186** (CPU `$A176`) |
+| Vanilla value | `$05` |
+| Patched value | `$09` |
+| Source | "SMB3 - Koopaling Softlock Fix.ips" |
+
+### Hammer Vulnerable Koopalings (PRG000)
+
+Koopalings are normally invulnerable to thrown hammers. The object attribute byte at
+file **0x00312** (CPU `$8302`, PRG000) has bit 7 set (`$89`), which flags them as
+hammer-immune. Clearing bit 7 (`$09`) makes hammers damage them like any other enemy.
+
+| Item | Value |
+|------|-------|
+| PRG bank | PRG000 (file 0x00010–0x0200F, CPU $8000–$9FFF) |
+| Patch offset | File **0x00312** (CPU `$8302`) |
+| Vanilla value | `$89` (bit 7 = hammer invulnerable) |
+| Patched value | `$09` (bit 7 cleared) |
+| Source | "SMB3 - Koopaling Softlock Fix + Hammers Can Hit Koopalings.ips" |
+
 ### Enemy Stompability Classification
 
 Used by the randomizer for Hammer Bro encounter constraints. Enemies are classified

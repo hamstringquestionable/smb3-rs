@@ -59,6 +59,7 @@ const optRemoveSpadeGames = document.getElementById("opt-remove-spade-games");
 const optSkipWandCutscene = document.getElementById("opt-skip-wand-cutscene");
 const optAdjustBossHitboxes = document.getElementById("opt-adjust-boss-hitboxes");
 const optKoopalingHits = document.getElementById("opt-koopaling-hits");
+const optHammerVulnKoopalings = document.getElementById("opt-hammer-vuln-koopalings");
 // Pill group helpers (tri-state radio buttons)
 function getPill(name) {
 	return document.querySelector(`input[name="${name}"]:checked`)?.value || "off";
@@ -328,6 +329,7 @@ function getCurrentOptionsJson() {
 		skip_wand_cutscene: optSkipWandCutscene.checked,
 		adjust_boss_hitboxes: optAdjustBossHitboxes.checked,
 		koopaling_hits: optKoopalingHits.checked,
+		hammer_vulnerable_koopalings: optHammerVulnKoopalings.checked,
 		ground: getPill("opt-ground"),
 		shell: getPill("opt-shell"),
 		flying: getPill("opt-flying"),
@@ -382,6 +384,7 @@ function applyFlagKey(key) {
 		if (opts.skip_wand_cutscene !== undefined) optSkipWandCutscene.checked = opts.skip_wand_cutscene;
 		if (opts.adjust_boss_hitboxes !== undefined) optAdjustBossHitboxes.checked = opts.adjust_boss_hitboxes;
 		if (opts.koopaling_hits !== undefined) optKoopalingHits.checked = opts.koopaling_hits;
+		if (opts.hammer_vulnerable_koopalings !== undefined) optHammerVulnKoopalings.checked = opts.hammer_vulnerable_koopalings;
 		if (opts.ground !== undefined) setPill("opt-ground", opts.ground);
 		if (opts.shell !== undefined) setPill("opt-shell", opts.shell);
 		if (opts.flying !== undefined) setPill("opt-flying", opts.flying);
@@ -415,7 +418,7 @@ const allOptionElements = [
 	optPowerups, optWorldOrder, optWorldCount, optBigQBlocks,
 	optShufflePipes, optShuffleAirships, optChestItems, optRemoveWhistles,
 	optAirshipLock,
-	optFixDrawbridges, optRemoveRocks, optRemoveNCards, optRemoveSpadeGames, optSkipWandCutscene, optAdjustBossHitboxes, optKoopalingHits,
+	optFixDrawbridges, optRemoveRocks, optRemoveNCards, optRemoveSpadeGames, optSkipWandCutscene, optAdjustBossHitboxes, optKoopalingHits, optHammerVulnKoopalings,
 	optWildInjections,
 	optStartingLives,
 	...optStartItems,
