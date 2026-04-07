@@ -674,9 +674,45 @@ fn place_pipes<R: Rng>(
             split_blanks_by_reachability(blank_positions, &walk.nodes, &used_positions);
 
         if !unreachable_blanks.is_empty() && !reachable_blanks.is_empty() {
-            // Connect an island: one reachable endpoint, one unreachable
-            let &a = reachable_blanks.choose(rng).unwrap();
-            let &b = unreachable_blanks.choose(rng).unwrap();
+            // Connect an island: scored selection for both endpoints.
+            // Unreachable side: prefer nearer islands (manhattan from start)
+            // to create progressive chains rather than jumping to the end.
+            let start = start_pos.unwrap_or((0, 0));
+            let b = {
+                let mut scored: Vec<((usize, usize), f64)> = unreachable_blanks
+                    .iter()
+                    .map(|&pos| {
+                        let start_dist = (pos.0.abs_diff(start.0) + pos.1.abs_diff(start.1)) as f64;
+                        // Nearer to start = higher score (invert distance)
+                        let proximity_score = (TARGET_MAX_DIST - start_dist.min(TARGET_MAX_DIST)) / TARGET_MAX_DIST * 5.0;
+                        let target_pen = target_proximity_penalty(pos, target_pos);
+                        proximity_score - target_pen
+                    })
+                    .zip(unreachable_blanks.iter().copied())
+                    .map(|(score, pos)| (pos, score))
+                    .collect();
+                scored.sort_by(|x, y| y.1.partial_cmp(&x.1).unwrap_or(std::cmp::Ordering::Equal));
+                let top_n = scored.len().min(5);
+                scored[rng.random_range(..top_n)].0
+            };
+
+            // Reachable side: prefer positions far from start (BFS distance),
+            // spread from existing pipes, and away from target.
+            let a = {
+                let mut scored: Vec<((usize, usize), f64)> = reachable_blanks
+                    .iter()
+                    .map(|&pos| {
+                        let score = score_pipe_endpoint(
+                            grid, pos, &used_positions, &walk.distances, target_pos,
+                        );
+                        (pos, score)
+                    })
+                    .collect();
+                scored.sort_by(|x, y| y.1.partial_cmp(&x.1).unwrap_or(std::cmp::Ordering::Equal));
+                let top_n = scored.len().min(5);
+                scored[rng.random_range(..top_n)].0
+            };
+
             grid.set(a.0, a.1, TILE_PIPE);
             grid.set(b.0, b.1, TILE_PIPE);
             used_positions.insert(a);
@@ -685,7 +721,7 @@ fn place_pipes<R: Rng>(
         } else if must_connect_target {
             break; // can't connect anything more but target still unreachable
         } else {
-            // No more islands — place both endpoints in available area
+            // No more islands — score candidate pairs and pick from top 5
             let available: Vec<(usize, usize)> = blank_positions
                 .iter()
                 .copied()
@@ -696,10 +732,24 @@ fn place_pipes<R: Rng>(
                 break; // not enough slots
             }
 
-            let mut chosen: Vec<(usize, usize)> = available.clone();
-            chosen.shuffle(rng);
-            let a = chosen[0];
-            let b = chosen[1];
+            // Enumerate all candidate pairs and score them
+            let mut candidates: Vec<((usize, usize), (usize, usize), f64)> = Vec::new();
+            for i in 0..available.len() {
+                for j in (i + 1)..available.len() {
+                    let a = available[i];
+                    let b = available[j];
+                    let score = score_pipe_pair(
+                        grid, a, b, &used_positions, &walk.distances, target_pos,
+                    );
+                    candidates.push((a, b, score));
+                }
+            }
+
+            // Sort descending by score, pick randomly from top 5
+            candidates.sort_by(|x, y| y.2.partial_cmp(&x.2).unwrap_or(std::cmp::Ordering::Equal));
+            let top_n = candidates.len().min(5);
+            let pick = rng.random_range(..top_n);
+            let (a, b, _) = candidates[pick];
 
             grid.set(a.0, a.1, TILE_PIPE);
             grid.set(b.0, b.1, TILE_PIPE);
@@ -1019,6 +1069,58 @@ fn score_fortress_candidate(
         0.0
     };
     base + island_bonus
+}
+
+/// Target proximity penalty weight. Higher = more aggressively avoids placing
+/// pipes near the airship/Bowser. Tweakable for tuning.
+const W_TARGET_PROXIMITY: f64 = 5.0;
+/// Max manhattan distance for target penalty normalization.
+const TARGET_MAX_DIST: f64 = 20.0;
+/// Cap on spread contribution for pipe scoring. Positions beyond this
+/// effective spread all score the same, preventing far-away positions
+/// from always dominating and creating more varied placement.
+const PIPE_SPREAD_CAP: f64 = 8.0;
+
+/// Compute target proximity penalty for a position. Positions near the
+/// airship/Bowser get penalized; positions far away get no penalty.
+fn target_proximity_penalty(pos: (usize, usize), target_pos: Option<(usize, usize)>) -> f64 {
+    if let Some(tp) = target_pos {
+        let dist = (pos.0.abs_diff(tp.0) + pos.1.abs_diff(tp.1)) as f64;
+        W_TARGET_PROXIMITY * (TARGET_MAX_DIST - dist.min(TARGET_MAX_DIST)) / TARGET_MAX_DIST
+    } else {
+        0.0
+    }
+}
+
+/// Score a single pipe endpoint. Higher = better.
+/// Includes spread from existing pipes (capped), dead-end bonus, and target penalty.
+fn score_pipe_endpoint(
+    grid: &Grid,
+    pos: (usize, usize),
+    pipe_positions: &HashSet<(usize, usize)>,
+    bfs_distances: &HashMap<(usize, usize), usize>,
+    target_pos: Option<(usize, usize)>,
+) -> f64 {
+    let base = score_with_weights(grid, pos, pipe_positions, bfs_distances, 1.0);
+    let capped = base.min(PIPE_SPREAD_CAP);
+    capped - target_proximity_penalty(pos, target_pos)
+}
+
+/// Score a candidate pipe pair. Higher = better.
+/// Rewards spread from already-placed pipes, separation between endpoints,
+/// and penalizes proximity to the airship/Bowser target.
+fn score_pipe_pair(
+    grid: &Grid,
+    a: (usize, usize),
+    b: (usize, usize),
+    pipe_positions: &HashSet<(usize, usize)>,
+    bfs_distances: &HashMap<(usize, usize), usize>,
+    target_pos: Option<(usize, usize)>,
+) -> f64 {
+    let spread_a = score_pipe_endpoint(grid, a, pipe_positions, bfs_distances, target_pos);
+    let spread_b = score_pipe_endpoint(grid, b, pipe_positions, bfs_distances, target_pos);
+    let separation = ((a.0.abs_diff(b.0) + a.1.abs_diff(b.1)) as f64 * 0.5).min(10.0);
+    spread_a + spread_b + separation
 }
 
 // ---------------------------------------------------------------------------
