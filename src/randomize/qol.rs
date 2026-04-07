@@ -270,6 +270,32 @@ pub fn adjust_boss_hitboxes(rom: &mut Rom) {
     rom.write_byte(HITBOX_E_OFFSET, 0x18);
 }
 
+/// Fix Koopaling softlock when airships are shuffled across worlds.
+///
+/// Original IPS: "SMB3 - Koopaling Softlock Fix.ips"
+/// Single byte in a PRG001 object init table ($A176) controls Koopaling
+/// behavior state. Vanilla value 0x05 can softlock when a Koopaling loads
+/// in a non-native world (airship shuffle). Changing to 0x09 prevents it.
+///
+/// Applied when either `shuffle_airships` or `hammer_vulnerable_koopalings`
+/// is enabled (the combined IPS also writes this byte).
+const KOOPALING_SOFTLOCK_OFFSET: usize = 0x02186;
+
+pub fn fix_koopaling_softlock(rom: &mut Rom) {
+    rom.write_byte(KOOPALING_SOFTLOCK_OFFSET, 0x09);
+}
+
+/// Make Koopalings vulnerable to thrown hammers.
+///
+/// Original IPS: "SMB3 - Koopaling Softlock Fix + Hammers Can Hit Koopalings.ips"
+/// Clears bit 7 of an object attribute byte in PRG000 ($8302), removing the
+/// Koopaling hammer invulnerability flag. Vanilla 0x89 → 0x09.
+const KOOPALING_HAMMER_VULN_OFFSET: usize = 0x00312;
+
+pub fn hammer_vulnerable_koopalings(rom: &mut Rom) {
+    rom.write_byte(KOOPALING_HAMMER_VULN_OFFSET, 0x09);
+}
+
 /// Randomize per-Koopaling stomp counts (1–5 hits each, independently).
 ///
 /// The Koopaling stomp handler is `ObjHit_Koopaling` in PRG001 (southbird
@@ -592,6 +618,20 @@ mod tests {
         assert_eq!(rom.read_byte(CARD_CUTSCENE_FLAG), 0x00);
         assert_eq!(rom.read_byte(CARD_MATCH_INDICATOR), 0x00);
         assert_eq!(rom.read_range(CARD_CLEAR_GUARD, 2), &[0xEA, 0xEA]);
+    }
+
+    #[test]
+    fn test_fix_koopaling_softlock() {
+        let mut rom = make_test_rom();
+        fix_koopaling_softlock(&mut rom);
+        assert_eq!(rom.read_byte(KOOPALING_SOFTLOCK_OFFSET), 0x09);
+    }
+
+    #[test]
+    fn test_hammer_vulnerable_koopalings() {
+        let mut rom = make_test_rom();
+        hammer_vulnerable_koopalings(&mut rom);
+        assert_eq!(rom.read_byte(KOOPALING_HAMMER_VULN_OFFSET), 0x09);
     }
 
     #[test]
