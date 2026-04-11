@@ -450,6 +450,31 @@ pub fn hammer_vulnerable_koopalings(rom: &mut Rom) {
     rom.write_byte(KOOPALING_HAMMER_VULN_OFFSET, 0x09);
 }
 
+/// Randomize Koopaling identity per world via `Map_Unused7EEA` remap.
+/// Source: fcoughlin (Fred).
+/// See docs/smb3_rom_reference.md § "Map_Unused7EEA".
+const KOOPALING_REMAP_SITES: &[usize] = &[
+    0x02E30, 0x02ED4, 0x02F3B, 0x02FAE, 0x02FE5, 0x02FF6,
+    0x03020, 0x03181, 0x03372, 0x033E8, 0x03612,
+];
+const KOOPALING_REMAP_LUT: usize = 0x16018;
+
+pub fn random_koopalings(rom: &mut Rom, rng: &mut ChaCha8Rng) {
+    use rand::seq::SliceRandom;
+
+    let mut koopalings: [u8; 7] = [0, 1, 2, 3, 4, 5, 6];
+    koopalings.shuffle(rng);
+
+    let mut lut = [0u8; 8];
+    lut[..7].copy_from_slice(&koopalings);
+    lut[7] = 0x05; // W8 unchanged (Bowser)
+    rom.write_range(KOOPALING_REMAP_LUT, &lut);
+
+    for &site in KOOPALING_REMAP_SITES {
+        rom.write_range(site + 1, &[0xEA, 0x7E]);
+    }
+}
+
 /// Make the hammer item also break fortress lock tiles on the overworld map.
 ///
 /// The vanilla hammer routine at PRG026 (file 0x346D5, CPU $A6C5) uses a
@@ -941,6 +966,38 @@ mod tests {
         let table = rom.read_range(crate::randomize::rom_data::FS_KOOPA_HITS_TABLE, 7);
         for &v in &table[..] {
             assert!((1..=5).contains(&v), "threshold {v} out of range 1–5");
+        }
+    }
+
+    #[test]
+    fn test_random_koopalings() {
+        use rand::SeedableRng;
+
+        let mut rom = make_test_rom();
+        // Seed vanilla bytes at each patch site so the operand rewrite is visible.
+        for &site in KOOPALING_REMAP_SITES {
+            rom.write_range(site, &[0xAD, 0x27, 0x07]);
+        }
+
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        random_koopalings(&mut rom, &mut rng);
+
+        // LUT: W1–W7 permutation of 0..=6, W8 = 0x05
+        let lut = rom.read_range(KOOPALING_REMAP_LUT, 8);
+        let mut sorted: Vec<u8> = lut[..7].to_vec();
+        sorted.sort();
+        assert_eq!(sorted, vec![0, 1, 2, 3, 4, 5, 6]);
+        assert_eq!(lut[7], 0x05);
+
+        // All 11 sites have operand bytes rewritten to EA 7E
+        for &site in KOOPALING_REMAP_SITES {
+            assert_eq!(
+                rom.read_range(site + 1, 2),
+                &[0xEA, 0x7E],
+                "site 0x{site:05X} operand not patched"
+            );
+            // Opcode byte preserved
+            assert_eq!(rom.read_byte(site), 0xAD);
         }
     }
 }

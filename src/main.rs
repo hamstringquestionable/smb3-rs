@@ -115,6 +115,10 @@ struct Cli {
     #[arg(long)]
     hammer_vulnerable_koopalings: bool,
 
+    /// Randomize which Koopaling appears in each world (off by default)
+    #[arg(long)]
+    random_koopalings: bool,
+
     /// Hammer item also breaks fortress lock tiles on the overworld map (off by default)
     #[arg(long)]
     hammer_breaks_locks: bool,
@@ -302,6 +306,7 @@ fn main() {
             adjust_boss_hitboxes: !cli.keep_boss_hitboxes,
             koopaling_hits: !cli.keep_koopaling_stomps,
             hammer_vulnerable_koopalings: cli.hammer_vulnerable_koopalings,
+            random_koopalings: cli.random_koopalings,
             hammer_breaks_locks: cli.hammer_breaks_locks,
             hammer_breaks_bridges: cli.hammer_breaks_bridges,
             remove_spade_games: !cli.keep_spade_games,

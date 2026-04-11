@@ -109,6 +109,9 @@ pub struct Options {
     /// Make Koopalings vulnerable to thrown hammers (clears invulnerability flag).
     #[serde(default)]
     pub hammer_vulnerable_koopalings: bool,
+    /// Randomize which Koopaling appears in each world (shuffle boss identity).
+    #[serde(default)]
+    pub random_koopalings: bool,
     /// Hammer item also breaks fortress lock tiles on the overworld map.
     #[serde(default)]
     pub hammer_breaks_locks: bool,
@@ -172,15 +175,15 @@ fn default_true() -> bool {
     true
 }
 
-const FLAG_KEY_VERSION: u8 = 11;
+const FLAG_KEY_VERSION: u8 = 12;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
 /// Free space in PRG012 after the Big ? Block trampoline (0x19DD0 region).
 /// The trampoline uses 0x19DD0–0x19DE1; we place the 16-byte stamp at 0x19DF0.
 const STAMP_OFFSET: usize = 0x19DF0;
 
 impl Options {
-    /// Encode options into 8 raw bytes.
-    pub fn to_flag_bytes(&self) -> [u8; 10] {
+    /// Encode options into raw bytes.
+    pub fn to_flag_bytes(&self) -> [u8; 11] {
         let level_shuffle_val = match self.level_shuffle {
             LevelShuffle::Off => 0u8,
             LevelShuffle::IntraWorld => 1,
@@ -262,7 +265,10 @@ impl Options {
         let b9 = (items.get(2).copied().unwrap_or(0) << 4)
             | (self.world_count.clamp(1, 7) & 0x0F);
 
-        [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9]
+        // b10 (v12+): extra flags
+        let b10 = (self.random_koopalings as u8) << 7;
+
+        [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10]
     }
 
     /// Encode options into a compact hex flag key (e.g. "SMB3R-06...").
@@ -283,8 +289,8 @@ impl Options {
             .or_else(|| key.strip_prefix("smb3r-"))
             .unwrap_or(key);
 
-        if hex.len() % 2 != 0 || hex.len() < 8 || hex.len() > 20 {
-            return Err(format!("Flag key must be 8–20 hex digits (got {})", hex.len()));
+        if hex.len() % 2 != 0 || hex.len() < 8 || hex.len() > 22 {
+            return Err(format!("Flag key must be 8–22 hex digits (got {})", hex.len()));
         }
 
         let num_bytes = hex.len() / 2;
@@ -381,6 +387,7 @@ impl Options {
                 adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
                 koopaling_hits: false,
                 hammer_vulnerable_koopalings: false,
+                random_koopalings: false,
                 hammer_breaks_locks: false,
                 hammer_breaks_bridges: false,
                 remove_spade_games: true,
@@ -426,6 +433,7 @@ impl Options {
                 adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
                 koopaling_hits: false,
                 hammer_vulnerable_koopalings: false,
+                random_koopalings: false,
                 hammer_breaks_locks: false,
                 hammer_breaks_bridges: false,
                 remove_spade_games: (b4 >> 3) & 1 != 0,
@@ -475,6 +483,7 @@ impl Options {
                 adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
                 koopaling_hits: false,
                 hammer_vulnerable_koopalings: false,
+                random_koopalings: false,
                 hammer_breaks_locks: false,
                 hammer_breaks_bridges: false,
                 remove_spade_games: (b4 >> 3) & 1 != 0,
@@ -528,6 +537,7 @@ impl Options {
                 adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
                 koopaling_hits: false,
                 hammer_vulnerable_koopalings: false,
+                random_koopalings: false,
                 hammer_breaks_locks: false,
                 hammer_breaks_bridges: false,
                 remove_spade_games: (b4 >> 3) & 1 != 0,
@@ -562,6 +572,7 @@ impl Options {
 
         let b8 = if bytes.len() > 8 { bytes[8] } else { 0 };
         let b9 = if bytes.len() > 9 { bytes[9] } else { 0 };
+        let b10 = if bytes.len() > 10 { bytes[10] } else { 0 };
 
         Ok(Options {
             powerups: (b1 >> 7) & 1 != 0,
@@ -587,6 +598,7 @@ impl Options {
             adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
             remove_spade_games: (b4 >> 3) & 1 != 0,
             hammer_vulnerable_koopalings: (b4 >> 2) & 1 != 0,
+            random_koopalings: if version >= 12 { (b10 >> 7) & 1 != 0 } else { false },
             hammer_breaks_bridges: if version >= 11 { (b3 >> 7) & 1 != 0 } else { false },
             // b5: ground(7-6) shell(5-4) flying(3-2) cheeps(1-0)
             ground: dem(b5 >> 6),
@@ -662,6 +674,7 @@ impl Default for Options {
             adjust_boss_hitboxes: true,
             koopaling_hits: true,
             hammer_vulnerable_koopalings: false,
+            random_koopalings: false,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             remove_spade_games: true,
@@ -771,6 +784,12 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     if options.hammer_vulnerable_koopalings {
         rom.set_tag("qol/hammer_vulnerable_koopalings");
         randomize::qol::hammer_vulnerable_koopalings(rom);
+    }
+
+    // Random Koopaling identity remap (Fred's Map_Unused7EEA hijack).
+    if options.random_koopalings {
+        rom.set_tag("enemies/random_koopalings");
+        randomize::qol::random_koopalings(rom, &mut rng);
     }
 
     // Two mutually exclusive modes:
@@ -884,17 +903,17 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::qol::write_starting_items(rom, options.starting_lives, &options.starting_items);
     }
 
-    // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 22 bytes:
-    //   [0..4]  "S3R\x08" magic + version
-    //   [4..14] flag key bytes (encoding of Options, 10 bytes in v8)
-    //   [14..22] seed (little-endian u64)
+    // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 23 bytes:
+    //   [0..4]   "S3R\xNN" magic + version
+    //   [4..15]  flag key bytes (11 bytes in v12)
+    //   [15..23] seed (little-endian u64)
     rom.set_tag("stamp");
     let flag_bytes = options.to_flag_bytes();
-    let mut stamp = [0u8; 22];
+    let mut stamp = [0u8; 23];
     stamp[0..3].copy_from_slice(b"S3R");
     stamp[3] = FLAG_KEY_VERSION;
-    stamp[4..14].copy_from_slice(&flag_bytes);
-    stamp[14..22].copy_from_slice(&seed.to_le_bytes());
+    stamp[4..15].copy_from_slice(&flag_bytes);
+    stamp[15..23].copy_from_slice(&seed.to_le_bytes());
     rom.write_range(STAMP_OFFSET, &stamp);
 }
 
@@ -1042,7 +1061,7 @@ mod tests {
         let opts = Options::default();
         let key = opts.to_flag_key();
         assert!(key.starts_with("SMB3R-"));
-        assert_eq!(key.len(), 26); // "SMB3R-" + 20 hex
+        assert_eq!(key.len(), 28); // "SMB3R-" + 22 hex
         let decoded = Options::from_flag_key(&key).unwrap();
         assert_eq!(opts.powerups, decoded.powerups);
         assert_eq!(opts.palettes, decoded.palettes);
@@ -1108,6 +1127,7 @@ mod tests {
             adjust_boss_hitboxes: true,
             koopaling_hits: true,
             hammer_vulnerable_koopalings: true,
+            random_koopalings: true,
             hammer_breaks_locks: true,
             hammer_breaks_bridges: true,
             remove_spade_games: true,
@@ -1129,6 +1149,7 @@ mod tests {
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
+        assert_eq!(opts.random_koopalings, decoded.random_koopalings);
         assert_eq!(opts.starting_items, decoded.starting_items);
         assert_eq!(opts.hammer_breaks_locks, decoded.hammer_breaks_locks);
         assert_eq!(opts.hammer_breaks_bridges, decoded.hammer_breaks_bridges);
@@ -1172,6 +1193,7 @@ mod tests {
             adjust_boss_hitboxes: false,
             koopaling_hits: false,
             hammer_vulnerable_koopalings: false,
+            random_koopalings: false,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             remove_spade_games: false,
@@ -1276,6 +1298,7 @@ mod tests {
             adjust_boss_hitboxes: false,
             koopaling_hits: false,
             hammer_vulnerable_koopalings: false,
+            random_koopalings: false,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             remove_spade_games: false,
@@ -1323,6 +1346,7 @@ mod tests {
             adjust_boss_hitboxes: true,
             koopaling_hits: true,
             hammer_vulnerable_koopalings: true,
+            random_koopalings: true,
             hammer_breaks_locks: true,
             hammer_breaks_bridges: true,
             remove_spade_games: true,
