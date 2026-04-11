@@ -60,6 +60,8 @@ const optSkipWandCutscene = document.getElementById("opt-skip-wand-cutscene");
 const optAdjustBossHitboxes = document.getElementById("opt-adjust-boss-hitboxes");
 const optKoopalingHits = document.getElementById("opt-koopaling-hits");
 const optHammerVulnKoopalings = document.getElementById("opt-hammer-vuln-koopalings");
+const optHammerBreaksLocks = document.getElementById("opt-hammer-breaks-locks");
+const optHammerBreaksBridges = document.getElementById("opt-hammer-breaks-bridges");
 // Pill group helpers (tri-state radio buttons)
 function getPill(name) {
 	return document.querySelector(`input[name="${name}"]:checked`)?.value || "off";
@@ -330,6 +332,8 @@ function getCurrentOptionsJson() {
 		adjust_boss_hitboxes: optAdjustBossHitboxes.checked,
 		koopaling_hits: optKoopalingHits.checked,
 		hammer_vulnerable_koopalings: optHammerVulnKoopalings.checked,
+		hammer_breaks_locks: optHammerBreaksLocks.checked,
+		hammer_breaks_bridges: optHammerBreaksBridges.checked,
 		ground: getPill("opt-ground"),
 		shell: getPill("opt-shell"),
 		flying: getPill("opt-flying"),
@@ -385,6 +389,8 @@ function applyFlagKey(key) {
 		if (opts.adjust_boss_hitboxes !== undefined) optAdjustBossHitboxes.checked = opts.adjust_boss_hitboxes;
 		if (opts.koopaling_hits !== undefined) optKoopalingHits.checked = opts.koopaling_hits;
 		if (opts.hammer_vulnerable_koopalings !== undefined) optHammerVulnKoopalings.checked = opts.hammer_vulnerable_koopalings;
+		if (opts.hammer_breaks_locks !== undefined) optHammerBreaksLocks.checked = opts.hammer_breaks_locks;
+		if (opts.hammer_breaks_bridges !== undefined) optHammerBreaksBridges.checked = opts.hammer_breaks_bridges;
 		if (opts.ground !== undefined) setPill("opt-ground", opts.ground);
 		if (opts.shell !== undefined) setPill("opt-shell", opts.shell);
 		if (opts.flying !== undefined) setPill("opt-flying", opts.flying);
@@ -418,7 +424,7 @@ const allOptionElements = [
 	optPowerups, optWorldOrder, optWorldCount, optBigQBlocks,
 	optShufflePipes, optShuffleAirships, optChestItems, optRemoveWhistles,
 	optAirshipLock,
-	optFixDrawbridges, optRemoveRocks, optRemoveNCards, optRemoveSpadeGames, optSkipWandCutscene, optAdjustBossHitboxes, optKoopalingHits, optHammerVulnKoopalings,
+	optFixDrawbridges, optRemoveRocks, optRemoveNCards, optRemoveSpadeGames, optSkipWandCutscene, optAdjustBossHitboxes, optKoopalingHits, optHammerVulnKoopalings, optHammerBreaksLocks, optHammerBreaksBridges,
 	optWildInjections,
 	optStartingLives,
 	...optStartItems,

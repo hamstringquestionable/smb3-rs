@@ -109,6 +109,12 @@ pub struct Options {
     /// Make Koopalings vulnerable to thrown hammers (clears invulnerability flag).
     #[serde(default)]
     pub hammer_vulnerable_koopalings: bool,
+    /// Hammer item also breaks fortress lock tiles on the overworld map.
+    #[serde(default)]
+    pub hammer_breaks_locks: bool,
+    /// Hammer item also breaks water gap (bridge) tiles on the overworld map.
+    #[serde(default)]
+    pub hammer_breaks_bridges: bool,
     /// Remove spade (card matching) games from the overworld, freeing map slots for levels.
     #[serde(default = "default_true")]
     pub remove_spade_games: bool,
@@ -166,7 +172,7 @@ fn default_true() -> bool {
     true
 }
 
-const FLAG_KEY_VERSION: u8 = 9;
+const FLAG_KEY_VERSION: u8 = 11;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
 /// Free space in PRG012 after the Big ? Block trampoline (0x19DD0 region).
 /// The trampoline uses 0x19DD0–0x19DE1; we place the 16-byte stamp at 0x19DF0.
@@ -183,8 +189,9 @@ impl Options {
 
         let b0 = FLAG_KEY_VERSION;
 
-        // b1: non-enemy flags (bit 6 free — palettes decoupled from flag key in v8)
+        // b1: non-enemy flags
         let b1 = (self.powerups as u8) << 7
+            | (self.hammer_breaks_locks as u8) << 6
             | (self.koopaling_hits as u8) << 5
             | (self.world_order as u8) << 4
             | (self.big_q_blocks as u8) << 3
@@ -200,7 +207,8 @@ impl Options {
             | (level_shuffle_val & 0x03) << 1
             | (self.shuffle_airships as u8);
 
-        let b3 = self.starting_lives.min(99).max(1) & 0x7F;
+        let b3 = ((self.hammer_breaks_bridges as u8) << 7)
+            | (self.starting_lives.min(99).max(1) & 0x7F);
 
         let b4 = (self.card_speed_clear as u8) << 7
             | (self.remove_n_cards as u8) << 6
@@ -373,6 +381,8 @@ impl Options {
                 adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
                 koopaling_hits: false,
                 hammer_vulnerable_koopalings: false,
+                hammer_breaks_locks: false,
+                hammer_breaks_bridges: false,
                 remove_spade_games: true,
                 ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
@@ -416,6 +426,8 @@ impl Options {
                 adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
                 koopaling_hits: false,
                 hammer_vulnerable_koopalings: false,
+                hammer_breaks_locks: false,
+                hammer_breaks_bridges: false,
                 remove_spade_games: (b4 >> 3) & 1 != 0,
                 ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
@@ -463,6 +475,8 @@ impl Options {
                 adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
                 koopaling_hits: false,
                 hammer_vulnerable_koopalings: false,
+                hammer_breaks_locks: false,
+                hammer_breaks_bridges: false,
                 remove_spade_games: (b4 >> 3) & 1 != 0,
                 ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
@@ -514,6 +528,8 @@ impl Options {
                 adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
                 koopaling_hits: false,
                 hammer_vulnerable_koopalings: false,
+                hammer_breaks_locks: false,
+                hammer_breaks_bridges: false,
                 remove_spade_games: (b4 >> 3) & 1 != 0,
                 ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
@@ -550,6 +566,7 @@ impl Options {
         Ok(Options {
             powerups: (b1 >> 7) & 1 != 0,
             palettes: true, // cosmetic — not encoded in flag key since v8
+            hammer_breaks_locks: if version >= 11 { (b1 >> 6) & 1 != 0 } else { false },
             koopaling_hits: (b1 >> 5) & 1 != 0,
             world_order: (b1 >> 4) & 1 != 0,
             big_q_blocks: (b1 >> 3) & 1 != 0,
@@ -570,6 +587,7 @@ impl Options {
             adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
             remove_spade_games: (b4 >> 3) & 1 != 0,
             hammer_vulnerable_koopalings: (b4 >> 2) & 1 != 0,
+            hammer_breaks_bridges: if version >= 11 { (b3 >> 7) & 1 != 0 } else { false },
             // b5: ground(7-6) shell(5-4) flying(3-2) cheeps(1-0)
             ground: dem(b5 >> 6),
             shell: dem(b5 >> 4),
@@ -644,6 +662,8 @@ impl Default for Options {
             adjust_boss_hitboxes: true,
             koopaling_hits: true,
             hammer_vulnerable_koopalings: false,
+            hammer_breaks_locks: false,
+            hammer_breaks_bridges: false,
             remove_spade_games: true,
             ground: EnemyMode::Shuffle,
             shell: EnemyMode::Shuffle,
@@ -827,6 +847,12 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     if options.koopaling_hits {
         rom.set_tag("qol/koopaling_hits");
         randomize::qol::randomize_koopaling_hits(rom, &mut rng);
+    }
+
+    // Hammer breaks tiles on the overworld map (locks, bridges, or both).
+    if options.hammer_breaks_locks || options.hammer_breaks_bridges {
+        rom.set_tag("qol/hammer_breaks_tiles");
+        randomize::qol::hammer_breaks_tiles(rom, options.hammer_breaks_locks, options.hammer_breaks_bridges);
     }
 
     // Card speed clear: one-of-each clears cards with +1 life but no cutscene.
@@ -1043,6 +1069,8 @@ mod tests {
         assert_eq!(opts.hb_encounters, decoded.hb_encounters);
         assert_eq!(opts.wild_injections, decoded.wild_injections);
         assert_eq!(opts.starting_items, decoded.starting_items);
+        assert_eq!(opts.hammer_breaks_locks, decoded.hammer_breaks_locks);
+        assert_eq!(opts.hammer_breaks_bridges, decoded.hammer_breaks_bridges);
     }
 
     #[test]
@@ -1070,6 +1098,8 @@ mod tests {
             adjust_boss_hitboxes: true,
             koopaling_hits: true,
             hammer_vulnerable_koopalings: true,
+            hammer_breaks_locks: true,
+            hammer_breaks_bridges: true,
             remove_spade_games: true,
             ground: EnemyMode::Wild,
             shell: EnemyMode::Wild,
@@ -1090,6 +1120,8 @@ mod tests {
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
         assert_eq!(opts.starting_items, decoded.starting_items);
+        assert_eq!(opts.hammer_breaks_locks, decoded.hammer_breaks_locks);
+        assert_eq!(opts.hammer_breaks_bridges, decoded.hammer_breaks_bridges);
         assert_eq!(opts.world_order, decoded.world_order);
         assert_eq!(opts.world_count, decoded.world_count);
         assert_eq!(opts.level_shuffle, decoded.level_shuffle);
@@ -1130,6 +1162,8 @@ mod tests {
             adjust_boss_hitboxes: false,
             koopaling_hits: false,
             hammer_vulnerable_koopalings: false,
+            hammer_breaks_locks: false,
+            hammer_breaks_bridges: false,
             remove_spade_games: false,
             ground: EnemyMode::Off,
             shell: EnemyMode::Off,
@@ -1151,6 +1185,8 @@ mod tests {
         let decoded = Options::from_flag_key(&key).unwrap();
         assert!(decoded.starting_items.is_empty());
         assert!(!decoded.powerups);
+        assert!(!decoded.hammer_breaks_locks);
+        assert!(!decoded.hammer_breaks_bridges);
         assert!(decoded.palettes); // palettes always true from flag key (cosmetic, not encoded)
         assert!(!decoded.disable_autoscroll);
         assert!(!decoded.map_shuffle);
@@ -1230,6 +1266,8 @@ mod tests {
             adjust_boss_hitboxes: false,
             koopaling_hits: false,
             hammer_vulnerable_koopalings: false,
+            hammer_breaks_locks: false,
+            hammer_breaks_bridges: false,
             remove_spade_games: false,
             ground: EnemyMode::Off,
             shell: EnemyMode::Off,
@@ -1275,6 +1313,8 @@ mod tests {
             adjust_boss_hitboxes: true,
             koopaling_hits: true,
             hammer_vulnerable_koopalings: true,
+            hammer_breaks_locks: true,
+            hammer_breaks_bridges: true,
             remove_spade_games: true,
             ground: EnemyMode::Wild,
             shell: EnemyMode::Wild,
