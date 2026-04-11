@@ -47,6 +47,9 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x17D00, 59, "canoe_fix: backup/restore subroutines"),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     (0x0382A, 23, "koopa_hits: subroutine + defeat JMP + threshold table"),
+    (0x03841, 13, "koopa_collision_guard: skip collision bitmap during invuln"),
+    (0x0384E, 16, "koopa_vram_clear: clear VRAM buffer on defeat"),
+    (0x03FD0, 22, "koopa_y_clamp: clamp Koopaling Y position to screen"),
 ];
 
 // Individual constants for use by each module.
@@ -87,6 +90,22 @@ pub(super) const FS_KOOPA_HITS_TABLE: usize  = 0x0383A; // 7 bytes (sub + 16)
 pub(super) const KOOPA_HITS_SUB_CPU: u16     = 0xB81A;
 /// CPU address of the threshold table: $A000 + (0x0383A - 0x02010) = $B82A
 pub(super) const KOOPA_HITS_TABLE_CPU: u16   = 0xB82A;
+
+// Koopaling collision guard — skip collision bitmap update during invulnerability.
+// Source: Fred's Koopaling fixes.
+pub(super) const FS_KOOPA_COLLISION_GUARD: usize = 0x03841; // 13 bytes
+pub(super) const KOOPA_COLLISION_GUARD_CPU: u16  = 0xB831;  // $A000 + (0x03841 - 0x02010)
+
+// Koopaling defeat VRAM buffer clear — zero $0300/$0301 on defeat to prevent
+// stale PPU writes during wand/king transition in non-native worlds.
+// Source: Fred's Koopaling fixes.
+pub(super) const FS_KOOPA_VRAM_CLEAR: usize = 0x0384E; // 16 bytes
+pub(super) const KOOPA_VRAM_CLEAR_CPU: u16  = 0xB83E;  // $A000 + (0x0384E - 0x02010)
+
+// Koopaling Y-position clamp — keep bouncing Koopalings on screen in non-native rooms.
+// Source: Fred's Koopaling fixes.
+pub(super) const FS_KOOPA_Y_CLAMP: usize = 0x03FD0; // 22 bytes
+pub(super) const KOOPA_Y_CLAMP_CPU: u16  = 0xBFC0;  // $A000 + (0x03FD0 - 0x02010)
 
 
 // ---------------------------------------------------------------------------

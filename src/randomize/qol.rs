@@ -285,6 +285,160 @@ pub fn fix_koopaling_softlock(rom: &mut Rom) {
     rom.write_byte(KOOPALING_SOFTLOCK_OFFSET, 0x09);
 }
 
+/// Guard Koopaling collision bitmap during invulnerability frames.
+///
+/// Source: Fred's Koopaling fixes.
+///
+/// After a stomp (but before defeat), Objects_Timer2 ($0520,X) is set to ~$80.
+/// The vanilla code at CPU $B15D unconditionally jumps to the collision bitmap
+/// update ($D9D3), registering the Koopaling as hittable even during
+/// invulnerability. This can cause phantom double-stomps — especially impactful
+/// with randomized hit counts where a race-condition skip is more noticeable.
+///
+/// We change `JMP $D9D3` (3 bytes at file 0x0316D) to `JSR guard_routine`.
+/// The guard checks Objects_Timer2 >= $70; if so, RTS skips the collision
+/// update. Otherwise PLA;PLA;JMP $D9D3 restores vanilla behavior.
+///
+/// Patch site: file 0x0316D (CPU $B15D), 3 bytes.
+const KOOPA_COLLISION_PATCH_SITE: usize = 0x0316D;
+
+pub fn koopaling_collision_guard(rom: &mut Rom) {
+    use super::rom_data::{FS_KOOPA_COLLISION_GUARD, KOOPA_COLLISION_GUARD_CPU};
+
+    // Subroutine (13 bytes):
+    //   LDA $0520,X    ; Objects_Timer2
+    //   CMP #$70
+    //   BCS +5         ; timer >= $70 → skip (RTS)
+    //   PLA            ; pop JSR return address
+    //   PLA
+    //   JMP $D9D3      ; do vanilla collision bitmap update
+    //   RTS            ; skip path
+    #[rustfmt::skip]
+    let code: [u8; 13] = [
+        0xBD, 0x20, 0x05,   // LDA $0520,X
+        0xC9, 0x70,          // CMP #$70
+        0xB0, 0x05,          // BCS +5 → RTS
+        0x68,                // PLA
+        0x68,                // PLA
+        0x4C, 0xD3, 0xD9,   // JMP $D9D3
+        0x60,                // RTS
+    ];
+    rom.write_range(FS_KOOPA_COLLISION_GUARD, &code);
+
+    // Patch site: JMP $D9D3 → JSR guard_routine
+    let lo = (KOOPA_COLLISION_GUARD_CPU & 0xFF) as u8;
+    let hi = (KOOPA_COLLISION_GUARD_CPU >> 8) as u8;
+    rom.write_range(KOOPA_COLLISION_PATCH_SITE, &[0x20, lo, hi]); // JSR
+}
+
+/// Clear VRAM transfer buffer on Koopaling defeat.
+///
+/// Source: Fred's Koopaling fixes.
+///
+/// The fixed-bank cleanup at $F513 only clears $0300/$0301 (PPU VRAM buffer
+/// header) when Level_ExitTo ($005E) == 0. But the Koopaling defeat routine
+/// sets $005E = 6 *before* cleanup runs, so the conditional clear is skipped.
+/// Stale VRAM write commands persist and get processed by NMI during the
+/// wand-drop/king-rescue transition, causing garbled tiles — especially when
+/// airships are shuffled to non-native worlds with different CHR banks.
+///
+/// We hook the defeat finalization at $BFA8 (file 0x03FB8, 8 bytes) via
+/// JSR to a new routine that does the original work plus zeros $0300/$0301.
+///
+/// Patch site: file 0x03FB8 (CPU $BFA8), 8 bytes.
+const KOOPA_DEFEAT_PATCH_SITE: usize = 0x03FB8;
+
+pub fn koopaling_vram_clear(rom: &mut Rom) {
+    use super::rom_data::{FS_KOOPA_VRAM_CLEAR, KOOPA_VRAM_CLEAR_CPU};
+
+    // Subroutine (16 bytes):
+    //   LDA #$06       ; exit type = Koopaling wand
+    //   STA $005E      ; Level_ExitTo
+    //   LDX $CD        ; restore object slot index
+    //   LDA #$00
+    //   STA $0300      ; clear VRAM buffer byte 0
+    //   STA $0301      ; clear VRAM buffer byte 1
+    //   RTS
+    #[rustfmt::skip]
+    let code: [u8; 16] = [
+        0xA9, 0x06,          // LDA #$06
+        0x8D, 0x5E, 0x00,   // STA $005E
+        0xA6, 0xCD,          // LDX $CD
+        0xA9, 0x00,          // LDA #$00
+        0x8D, 0x00, 0x03,   // STA $0300
+        0x8D, 0x01, 0x03,   // STA $0301
+        0x60,                // RTS
+    ];
+    rom.write_range(FS_KOOPA_VRAM_CLEAR, &code);
+
+    // Patch site: replace 8-byte defeat finalization with JSR + NOPs + RTS
+    let lo = (KOOPA_VRAM_CLEAR_CPU & 0xFF) as u8;
+    let hi = (KOOPA_VRAM_CLEAR_CPU >> 8) as u8;
+    rom.write_range(KOOPA_DEFEAT_PATCH_SITE, &[
+        0x20, lo, hi,   // JSR vram_clear
+        0xEA, 0xEA,     // NOP; NOP
+        0xEA, 0xEA,     // NOP; NOP
+        0x60,            // RTS
+    ]);
+}
+
+/// Clamp Koopaling Y position to screen bounds ($08–$E7).
+///
+/// Source: Fred's Koopaling fixes.
+///
+/// Koopalings like Lemmy/Wendy bounce via velocity table deltas. In non-native
+/// boss rooms (airship shuffle), the floor height may differ, causing the
+/// accumulated Y to wrap around 0/255 — the Koopaling teleports off-screen
+/// and becomes unhittable (softlock).
+///
+/// Hooks the movement handler at $B3F4 (file 0x03404) by replacing
+/// `LDA $0679,X` with `JSR clamp_routine`. The displaced instruction
+/// executes inside the subroutine before RTS, so the caller sees the
+/// same accumulator value.
+///
+/// Patch site: file 0x03404 (CPU $B3F4), 3 bytes.
+const KOOPA_Y_CLAMP_PATCH_SITE: usize = 0x03404;
+
+pub fn koopaling_y_clamp(rom: &mut Rom) {
+    use super::rom_data::{FS_KOOPA_Y_CLAMP, KOOPA_Y_CLAMP_CPU};
+
+    // Subroutine (22 bytes):
+    //   LDA $91,X      ; Objects_Y
+    //   CMP #$08       ; below top bound?
+    //   BCC .low       ; if < 8, clamp low
+    //   CMP #$E8       ; above bottom bound?
+    //   BCC .store     ; if < 232, in range
+    //   LDA #$E8       ; clamp high
+    //   BCS .store     ; unconditional (carry set)
+    // .low:
+    //   LDA #$08       ; clamp low
+    // .store:
+    //   STA $91,X      ; write clamped Y
+    //   LDA $0679,X    ; displaced instruction from caller
+    //   RTS
+    #[rustfmt::skip]
+    let code: [u8; 22] = [
+        0xB5, 0x91,          // LDA $91,X
+        0xC9, 0x08,          // CMP #$08
+        0x90, 0x08,          // BCC .low (+8)
+        0xC9, 0xE8,          // CMP #$E8
+        0x90, 0x06,          // BCC .store (+6)
+        0xA9, 0xE8,          // LDA #$E8
+        0xB0, 0x02,          // BCS .store (+2)
+        0xA9, 0x08,          // LDA #$08
+        // .store:
+        0x95, 0x91,          // STA $91,X
+        0xBD, 0x79, 0x06,   // LDA $0679,X (displaced)
+        0x60,                // RTS
+    ];
+    rom.write_range(FS_KOOPA_Y_CLAMP, &code);
+
+    // Patch site: LDA $0679,X → JSR clamp_routine
+    let lo = (KOOPA_Y_CLAMP_CPU & 0xFF) as u8;
+    let hi = (KOOPA_Y_CLAMP_CPU >> 8) as u8;
+    rom.write_range(KOOPA_Y_CLAMP_PATCH_SITE, &[0x20, lo, hi]); // JSR
+}
+
 /// Make Koopalings vulnerable to thrown hammers.
 ///
 /// Original IPS: "SMB3 - Koopaling Softlock Fix + Hammers Can Hit Koopalings.ips"
