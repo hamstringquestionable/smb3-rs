@@ -763,15 +763,16 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::levels::randomize_airships(rom, &mut rng);
     }
 
-    // Fix Koopaling softlock (PRG001 $A176). Needed when airships are shuffled
-    // across worlds; also included in the hammer-vulnerable patch.
-    if options.shuffle_airships || options.hammer_vulnerable_koopalings {
+    // Koopaling stability patches — needed whenever Koopalings may load in a
+    // non-native world (airship shuffle, identity remap) or when the hammer
+    // vulnerability patch is applied. Covers the softlock fix plus Fred's
+    // three guards (phantom double-stomps, stale VRAM writes, Y wraparound).
+    let koopalings_may_travel = options.shuffle_airships
+        || options.hammer_vulnerable_koopalings
+        || options.random_koopalings;
+    if koopalings_may_travel {
         rom.set_tag("qol/fix_koopaling_softlock");
         randomize::qol::fix_koopaling_softlock(rom);
-
-        // Additional Koopaling stability patches (Fred's fixes) — guard against
-        // phantom double-stomps, stale VRAM writes, and Y-position wraparound
-        // that can occur when Koopalings load in non-native worlds.
         rom.set_tag("qol/koopaling_collision_guard");
         randomize::qol::koopaling_collision_guard(rom);
         rom.set_tag("qol/koopaling_vram_clear");
