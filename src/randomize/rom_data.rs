@@ -32,6 +32,7 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x3E924, 25, "title_screen: sprite copy routine"),
     (0x3E93D, 40, "title_screen: sprite data table"),
     (0x35572, 13, "mystery_anchor: item redirect trampoline"),
+    (0x3557F, 50, "hammer_locks: tile check subroutine + tables"),
     (0x3E260, 28, "starting_items: lives + intro skip + inventory init trampoline"),
     (0x3E965,  8, "title_screen: intro skip routine"),
     (0x3FFF0, 26, "card_speed_clear: XOR trampoline"),
@@ -75,6 +76,7 @@ pub(super) const FS_CANOE_BACKUP: usize      = 0x17D00; // 59 bytes
 
 // PRG026 (cont.)
 pub(super) const FS_MYSTERY_ANCHOR: usize    = 0x35572; // 13 bytes
+pub(super) const FS_HAMMER_LOCKS: usize      = 0x3557F; // 50 bytes
 pub(super) const FS_STARTING_ITEMS: usize    = 0x3E260; // 28 bytes
 
 // PRG001 (file 0x02010, CPU $A000–$BFFF)
@@ -216,7 +218,7 @@ pub(super) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
             10, 11, 12, 13,                    // DiagRect variants
             35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
         ],
-        randomize_note_wood: true,
+        randomize_note_wood: false, // shapes 1-5 = desert decorations (palms, cacti) in TS9
     },
     LevelDataRegion { // Dungeon (TS2)
         start: 0x2A7F7, end: 0x2C005,
@@ -1052,5 +1054,6 @@ mod free_space_tests {
         assert!(offsets.contains(&FS_KOOPA_HITS_SUB));
         assert!(offsets.contains(&FS_STARTING_ITEMS));
         assert!(offsets.contains(&FS_MYSTERY_ANCHOR));
+        assert!(offsets.contains(&FS_HAMMER_LOCKS));
     }
 }
