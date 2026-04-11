@@ -450,8 +450,15 @@ fn build_world<R: Rng>(
             .into_iter()
             .collect();
 
+    // Reverse BFS from target (airship/Bowser) — used to compute path relevance
+    // for level scoring. Positions on the main start→target trunk have low detour.
+    let reverse_bfs: HashMap<(usize, usize), usize> = target_pos
+        .map(|tp| walk_map(&grid, &pipe_pairs, Some(tp)).distances)
+        .unwrap_or_default();
+    let target_bfs_dist = target_pos.and_then(|tp| bfs_distances.get(&tp).copied());
+
     // Step 3: Populate sections
-    let mut slots = populate_sections(&grid, &sections, fort_count, level_count, &pipe_positions, &bfs_distances, world_idx, rng);
+    let mut slots = populate_sections(&grid, &sections, fort_count, level_count, &pipe_positions, &bfs_distances, &reverse_bfs, target_bfs_dist, world_idx, rng);
 
     // Add mandatory HammerBro slots for HB sprite starting positions.
     // These were excluded from find_blank_slots (so levels/forts/pipes
@@ -828,6 +835,8 @@ fn populate_sections<R: Rng>(
     level_count: usize,
     pipe_positions: &HashSet<(usize, usize)>,
     bfs_distances: &HashMap<(usize, usize), usize>,
+    reverse_bfs: &HashMap<(usize, usize), usize>,
+    target_bfs_dist: Option<usize>,
     world_idx: usize,
     rng: &mut R,
 ) -> Vec<SlotAssignment> {
@@ -919,8 +928,8 @@ fn populate_sections<R: Rng>(
             .filter(|(pos, _)| !level_positions.contains(pos))
             .filter(|(pos, _)| !is_row78_conflict(*pos, &completable))
             .max_by(|(a, _), (b, _)| {
-                let sa = score_candidate(grid, *a, &scored, bfs_distances);
-                let sb = score_candidate(grid, *b, &scored, bfs_distances);
+                let sa = score_candidate(grid, *a, &scored, bfs_distances, reverse_bfs, target_bfs_dist);
+                let sb = score_candidate(grid, *b, &scored, bfs_distances, reverse_bfs, target_bfs_dist);
                 sa.partial_cmp(&sb).unwrap_or(std::cmp::Ordering::Equal)
             });
 
@@ -1042,14 +1051,36 @@ fn score_with_weights(
     manhattan_score + bfs_score + dead_end_bonus - density_penalty
 }
 
+/// Path relevance: max detour (in BFS hops) that still earns a bonus.
+const PATH_DETOUR_CAP: f64 = 6.0;
+/// Path relevance weight. Max bonus = PATH_DETOUR_CAP * W_PATH = 3.0.
+const W_PATH: f64 = 0.5;
+
 /// Score a candidate position for level placement. Higher = better.
+/// Includes a path relevance bonus: positions on the main start→target
+/// route (low detour) score higher than side-branch positions.
 fn score_candidate(
     grid: &Grid,
     pos: (usize, usize),
     completable: &HashSet<(usize, usize)>,
     bfs_distances: &HashMap<(usize, usize), usize>,
+    reverse_bfs: &HashMap<(usize, usize), usize>,
+    target_bfs_dist: Option<usize>,
 ) -> f64 {
-    score_with_weights(grid, pos, completable, bfs_distances, 2.0)
+    let base = score_with_weights(grid, pos, completable, bfs_distances, 0.5);
+
+    // Path relevance: detour = dist(start→pos) + dist(pos→target) - dist(start→target).
+    // Zero detour = perfectly on the shortest path. Higher detour = side branch.
+    let path_bonus = match (target_bfs_dist, reverse_bfs.get(&pos)) {
+        (Some(target_dist), Some(&rev_d)) => {
+            let fwd_d = bfs_distances.get(&pos).copied().unwrap_or(0);
+            let detour = (fwd_d + rev_d).saturating_sub(target_dist);
+            (PATH_DETOUR_CAP - (detour as f64).min(PATH_DETOUR_CAP)) * W_PATH
+        }
+        _ => 0.0,
+    };
+
+    base + path_bonus
 }
 
 /// Score a candidate position for fortress placement. Higher = better.
