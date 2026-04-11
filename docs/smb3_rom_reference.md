@@ -1089,6 +1089,55 @@ Pointer tables indexed by World_Num (8 entries each):
 
 9 objects max per world (Hammer Bros, bonus objects, HELP bubble, Airship, etc.)
 
+### Map_Unused7EEA — Dead Code LUT (PRG011: 0x16018)
+
+An 8-byte LUT at PRG011 CPU `$A008` (file `0x16018`), labeled `Map_Unused7EEA_Vals` in
+southbird, indexed by `World_Num` (0–7). Loaded into `Map_Unused7EEA` at RAM `$7EEA`
+during `Map_Init` (PRG011 CPU `$A1E1`, file `0x161F1`) and **never read anywhere else in
+vanilla**. Southbird comment: *"Unused; Value retrieved from LUT at initialization of
+world, but never used otherwise."*
+
+Vanilla values: `02 04 03 FF 03 04 03 05`.
+
+**Hijack potential:** Safe to repurpose as a per-world indirected byte under full
+randomizer control — the vanilla engine writes it automatically at the right moment with
+zero side effects. Used by `qol::random_koopalings` (source: fcoughlin/Fred) as a
+"Koopaling identity remap": the LUT is overwritten with a fresh permutation of
+Koopaling original world indices (`0..=6`, W8 kept at `0x05` for Bowser), and 11 sites
+in PRG001's Koopaling handler are rewritten from `LDA $0727` → `LDA $7EEA`.
+
+Vanilla CMP constants at those sites match Koopaling original world indices
+(Wendy=W3=2, Roy=W5=4, Lemmy=W6=5, Ludwig=W7=6), so existing branches fire for the
+correct Koopaling identity without further rewrites.
+
+#### PRG001 Patch Sites (11 total)
+
+Each site is a 3-byte instruction; only the 2-byte operand is rewritten.
+
+| File Offset | CPU Addr | Opcode   | Vanilla Op | Enclosing Routine          | Controls |
+|-------------|----------|----------|------------|----------------------------|----------|
+| `0x02E30`   | `$AE20`  | `LDA`    | `$0727`    | `ObjInit_Koopaling`        | Palette base index (`* 4 → Koopaling_Palettes`) |
+| `0x02ED4`   | `$AEC4`  | `LDY`    | `$0727`    | `ObjNorm_Koopaling`        | CHR bank selection (`KoopalingPatSet4/5` → `PatTable_BankSel+4/5`) |
+| `0x02F3B`   | `$AF2B`  | `LDA`    | `$0727`    | `Koopaling_Normal`         | `CMP #$05` Lemmy AI replacement (→ `PRG001_B671` ball routine) |
+| `0x02FAE`   | `$AF9E`  | `LDA`    | `$0727`    | wand-fire branch           | `CMP #$02` Wendy ring projectile (vs vanilla wand blast) |
+| `0x02FE5`   | `$AFD5`  | `ADC`    | `$0727`    | jump-selection branch      | Jump table index (`hit_count*7 + world` into `Koopaling_JumpChanceMask` / `Koopaling_JumpYVels`) |
+| `0x02FF6`   | `$AFE6`  | `LDA`    | `$0727`    | idle/ready branch          | `CMP #$02` Wendy firing cadence (hit-count gate vs bitmask) |
+| `0x03020`   | `$B010`  | `LDY`    | `$0727`    | pre-fire setup             | `CPY #$02` Wendy straight aim (skip `Object_CalcHomingVels`) |
+| `0x03181`   | `$B171`  | `LDA`    | `$0727`    | stomp-response (`B15D`)    | `CMP #$05` Lemmy ball respawn on stomp |
+| `0x03372`   | `$B362`  | `LDY`    | `$0727`    | `Koopaling_DrawAndAnimate` | Sprite tile layout (`Koopaling_PatLookup`) |
+| `0x033E8`   | `$B3D8`  | `LDY`    | `$0727`    | `Draw_KoopalingWand`       | Wand sprite offset relative to hand |
+| `0x03612`   | `$B602`  | `LDA`    | `$0727`    | `Koopaling_DetectWorld`    | `CMP #$04`/`CMP #$06` Roy+Ludwig heavy physics (enhanced gravity, floor-shake, player paralysis) |
+
+Per-Koopaling uniqueness:
+- **Larry, Morton, Iggy** — fully generic (only differ via visual/jump tables)
+- **Wendy** — unique ring projectile + firing cadence + straight aim (3 sites)
+- **Roy, Ludwig** — share heavy-gravity branch (1 site)
+- **Lemmy** — most unique, entire AI replaced + ball respawn on stomp (2 sites)
+
+Not controlled by `$0727` (and therefore not remapped): hit count to defeat (hardcoded
+`#$0A` in `ObjInit_Koopaling`, then `#$03` in `PRG001_B185`), timer constants, and
+wand-state dispatch (`Level_GetWandState`).
+
 ### Airship Travel Data
 
 | Label | Description |
