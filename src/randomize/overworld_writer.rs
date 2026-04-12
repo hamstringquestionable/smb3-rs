@@ -1034,7 +1034,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = super::super::node_catalog::NodeCatalog::build(&rom);
+        let catalog = super::super::node_catalog::NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         let build = super::super::overworld_build::build(&rom, &pickup, &catalog, &mut rng);
@@ -1092,7 +1092,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = super::super::node_catalog::NodeCatalog::build(&rom);
+        let catalog = super::super::node_catalog::NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
 
         let mut rom1 = rom.clone();
@@ -1114,7 +1114,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = super::super::node_catalog::NodeCatalog::build(&rom);
+        let catalog = super::super::node_catalog::NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         let build = super::super::overworld_build::build(&rom, &pickup, &catalog, &mut rng);
@@ -1140,7 +1140,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = super::super::node_catalog::NodeCatalog::build(&rom);
+        let catalog = super::super::node_catalog::NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         let build = super::super::overworld_build::build(&rom, &pickup, &catalog, &mut rng);
@@ -1178,7 +1178,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = super::super::node_catalog::NodeCatalog::build(&rom);
+        let catalog = super::super::node_catalog::NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         let build = super::super::overworld_build::build(&rom, &pickup, &catalog, &mut rng);
@@ -1220,7 +1220,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = super::super::node_catalog::NodeCatalog::build(&rom);
+        let catalog = super::super::node_catalog::NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
 
         for seed in [42u64, 123, 999, 7777, 31337] {
@@ -1284,7 +1284,7 @@ mod tests {
                 return;
             }
         };
-        let catalog = super::super::node_catalog::NodeCatalog::build(&rom);
+        let catalog = super::super::node_catalog::NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
 
         for seed in [42u64, 123, 999] {

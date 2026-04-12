@@ -131,6 +131,10 @@ struct Cli {
     #[arg(long)]
     keep_spade_games: bool,
 
+    /// Include ~9 unreferenced beta levels in the overworld shuffle pool (off by default)
+    #[arg(long)]
+    include_beta_stages: bool,
+
     /// Ground enemies: off, shuffle, or wild (default: shuffle)
     #[arg(long, default_value = "shuffle")]
     ground: String,
@@ -310,6 +314,7 @@ fn main() {
             hammer_breaks_locks: cli.hammer_breaks_locks,
             hammer_breaks_bridges: cli.hammer_breaks_bridges,
             remove_spade_games: !cli.keep_spade_games,
+            include_beta_stages: cli.include_beta_stages,
             airship_lock: !cli.no_airship_lock,
             ground: parse_enemy_mode(&cli.ground, "ground"),
             shell: parse_enemy_mode(&cli.shell, "shell"),

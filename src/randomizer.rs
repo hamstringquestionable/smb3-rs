@@ -121,6 +121,9 @@ pub struct Options {
     /// Remove spade (card matching) games from the overworld, freeing map slots for levels.
     #[serde(default = "default_true")]
     pub remove_spade_games: bool,
+    /// Include ~9 unreferenced beta levels in the overworld shuffle pool.
+    #[serde(default)]
+    pub include_beta_stages: bool,
 
     // --- Per-class enemy tri-state toggles ---
     /// Ground-walking enemies (Goomba, Spiny, Spike, etc.)
@@ -175,7 +178,7 @@ fn default_true() -> bool {
     true
 }
 
-const FLAG_KEY_VERSION: u8 = 12;
+const FLAG_KEY_VERSION: u8 = 13;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
 /// Free space in PRG012 after the Big ? Block trampoline (0x19DD0 region).
 /// The trampoline uses 0x19DD0–0x19DE1; we place the 16-byte stamp at 0x19DF0.
@@ -266,7 +269,8 @@ impl Options {
             | (self.world_count.clamp(1, 7) & 0x0F);
 
         // b10 (v12+): extra flags
-        let b10 = (self.random_koopalings as u8) << 7;
+        let b10 = (self.random_koopalings as u8) << 7
+            | (self.include_beta_stages as u8) << 6;
 
         [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10]
     }
@@ -388,6 +392,7 @@ impl Options {
                 koopaling_hits: false,
                 hammer_vulnerable_koopalings: false,
                 random_koopalings: false,
+            include_beta_stages: false,
                 hammer_breaks_locks: false,
                 hammer_breaks_bridges: false,
                 remove_spade_games: true,
@@ -434,6 +439,7 @@ impl Options {
                 koopaling_hits: false,
                 hammer_vulnerable_koopalings: false,
                 random_koopalings: false,
+            include_beta_stages: false,
                 hammer_breaks_locks: false,
                 hammer_breaks_bridges: false,
                 remove_spade_games: (b4 >> 3) & 1 != 0,
@@ -484,6 +490,7 @@ impl Options {
                 koopaling_hits: false,
                 hammer_vulnerable_koopalings: false,
                 random_koopalings: false,
+            include_beta_stages: false,
                 hammer_breaks_locks: false,
                 hammer_breaks_bridges: false,
                 remove_spade_games: (b4 >> 3) & 1 != 0,
@@ -538,6 +545,7 @@ impl Options {
                 koopaling_hits: false,
                 hammer_vulnerable_koopalings: false,
                 random_koopalings: false,
+            include_beta_stages: false,
                 hammer_breaks_locks: false,
                 hammer_breaks_bridges: false,
                 remove_spade_games: (b4 >> 3) & 1 != 0,
@@ -599,6 +607,7 @@ impl Options {
             remove_spade_games: (b4 >> 3) & 1 != 0,
             hammer_vulnerable_koopalings: (b4 >> 2) & 1 != 0,
             random_koopalings: if version >= 12 { (b10 >> 7) & 1 != 0 } else { false },
+            include_beta_stages: if version >= 13 { (b10 >> 6) & 1 != 0 } else { false },
             hammer_breaks_bridges: if version >= 11 { (b3 >> 7) & 1 != 0 } else { false },
             // b5: ground(7-6) shell(5-4) flying(3-2) cheeps(1-0)
             ground: dem(b5 >> 6),
@@ -675,6 +684,7 @@ impl Default for Options {
             koopaling_hits: true,
             hammer_vulnerable_koopalings: false,
             random_koopalings: false,
+            include_beta_stages: false,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             remove_spade_games: true,
@@ -798,7 +808,12 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     // 2. Vanilla Layout: tiles stay in place, level entries shuffled underneath.
     if options.map_shuffle {
         rom.set_tag("overworld/builder");
-        let catalog = randomize::node_catalog::NodeCatalog::build(rom);
+
+        if options.include_beta_stages {
+            randomize::qol::fix_beta_stages(rom);
+        }
+
+        let catalog = randomize::node_catalog::NodeCatalog::build(rom, options.include_beta_stages);
         let pickup = randomize::overworld_pickup::pick_up(rom, &catalog, options.remove_spade_games);
         let build = randomize::overworld_build::build(rom, &pickup, &catalog, &mut rng);
         randomize::overworld_writer::write_overworld(
@@ -1129,6 +1144,7 @@ mod tests {
             koopaling_hits: true,
             hammer_vulnerable_koopalings: true,
             random_koopalings: true,
+            include_beta_stages: true,
             hammer_breaks_locks: true,
             hammer_breaks_bridges: true,
             remove_spade_games: true,
@@ -1151,6 +1167,7 @@ mod tests {
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
         assert_eq!(opts.random_koopalings, decoded.random_koopalings);
+        assert_eq!(opts.include_beta_stages, decoded.include_beta_stages);
         assert_eq!(opts.starting_items, decoded.starting_items);
         assert_eq!(opts.hammer_breaks_locks, decoded.hammer_breaks_locks);
         assert_eq!(opts.hammer_breaks_bridges, decoded.hammer_breaks_bridges);
@@ -1195,6 +1212,7 @@ mod tests {
             koopaling_hits: false,
             hammer_vulnerable_koopalings: false,
             random_koopalings: false,
+            include_beta_stages: false,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             remove_spade_games: false,
@@ -1300,6 +1318,7 @@ mod tests {
             koopaling_hits: false,
             hammer_vulnerable_koopalings: false,
             random_koopalings: false,
+            include_beta_stages: false,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             remove_spade_games: false,
@@ -1348,6 +1367,7 @@ mod tests {
             koopaling_hits: true,
             hammer_vulnerable_koopalings: true,
             random_koopalings: true,
+            include_beta_stages: false,
             hammer_breaks_locks: true,
             hammer_breaks_bridges: true,
             remove_spade_games: true,
