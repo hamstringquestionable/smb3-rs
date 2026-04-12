@@ -633,9 +633,11 @@ pub(super) const BETA_LEVELS: &[BetaLevel] = &[
 pub(super) const BETA_PATCHES: &[(usize, u8)] = &[
     // β1 (ts1 $A74C) — 3 patches
     (0x1E785, 0x48), (0x1E787, 0x05), (0x1E916, 0x08),
-    // β2 (ts1 $A9AC) — 8 patches (header: alt_layout/alt_objects redirect + command fixes)
+    // β2 (ts1 $A9AC) — 7 patches (header: alt_layout/alt_objects redirect + command fixes)
     (0x1E9BC, 0x48), (0x1E9BD, 0xBE), (0x1E9BE, 0x84),
-    (0x1E9E5, 0x71), (0x1E9E6, 0x80), (0x1EA02, 0x49),
+    (0x1E9E5, 0x71), (0x1E9E6, 0x80),
+    // NOTE: (0x1EA02, 0x49) removed — crashes; moves cmd 20 to screen 4 which is
+    // past course end page. Copied from a working ROM but crashes here for unknown reasons.
     (0x1EA6F, 0x0D), (0x1EB34, 0x06),
     // β3 (ts3 $B0DD) — 2 patches
     (0x2113F, 0x00), (0x212BA, 0x00),

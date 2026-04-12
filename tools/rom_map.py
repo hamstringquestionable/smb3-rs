@@ -363,9 +363,19 @@ def derive_level_name(world_idx, entry_idx, entry_type, tile):
     if entry_type == "bowser":
         return "8B"
 
-    # Numbered level tiles: 0x03 = level 1, 0x04 = level 2, ...
-    if 0x03 <= tile <= 0x0F:
+    # Numbered level tiles: 0x03 = level 1, ..., 0x0B = level 9
+    if 0x03 <= tile <= 0x0B:
         return f"{w}-{tile - 2}"
+
+    # Double-digit level tiles: 0x0C = level 10, ..., 0x14 = level 18
+    if 0x0C <= tile <= 0x14:
+        return f"{w}-{tile - 2}"
+
+    # Repurposed tiles for levels 19-20: 0x68 = 19, 0x69 = 20
+    if tile == 0x68:
+        return f"{w}-19"
+    if tile == 0x69:
+        return f"{w}-20"
 
     return ""
 
@@ -846,16 +856,37 @@ def has_pipeway_controller(rom, obj_ptr):
     return False
 
 
-def classify_entry(world_idx, entry_idx, obj_ptr, lay_ptr, tileset, rom=None):
-    """Classify a level pointer table entry by type."""
-    if (world_idx, entry_idx) in FORTRESS_ENTRIES:
-        return "fortress"
-    if (world_idx, entry_idx) in AIRSHIP_ENTRIES_SET:
-        return "airship"
-    if (world_idx, entry_idx) == BOWSER_ENTRY_PAIR:
-        return "bowser"
-    if (world_idx, entry_idx) in MAP_TRANSITIONS_SET:
-        return "transition"
+def classify_entry(world_idx, entry_idx, obj_ptr, lay_ptr, tileset, rom=None, map_tile=None):
+    """Classify a level pointer table entry by type.
+
+    When map_tile is provided (from the actual tile grid), it takes priority
+    for fortress/pipe/airship/bowser detection.  This is essential for shuffled
+    ROMs where entries have been redistributed across worlds.
+    """
+    # Tile-based classification (works on shuffled ROMs)
+    if map_tile is not None:
+        if map_tile == 0xE5:
+            return "start"
+        if map_tile == 0x67:
+            return "fortress"
+        if map_tile == 0xC9:
+            return "airship"
+        if map_tile == 0xCC:
+            return "bowser"
+        if map_tile in (0xBC, 0x5F):
+            return "pipe"
+
+    # Fallback: hardcoded lists (for vanilla ROM analysis or when no tile available)
+    if map_tile is None:
+        if (world_idx, entry_idx) in FORTRESS_ENTRIES:
+            return "fortress"
+        if (world_idx, entry_idx) in AIRSHIP_ENTRIES_SET:
+            return "airship"
+        if (world_idx, entry_idx) == BOWSER_ENTRY_PAIR:
+            return "bowser"
+        if (world_idx, entry_idx) in MAP_TRANSITIONS_SET:
+            return "transition"
+
     if obj_ptr == 0x0700:
         return "toad_house"
     if obj_ptr == 0x0001 and lay_ptr == 0x0000:
@@ -877,6 +908,8 @@ def parse_world_tables(rom, world_idx, world_info):
     obj_off = sc_off + n
     lay_off = obj_off + n * 2
 
+    grid = read_tile_grid(rom, world_idx)
+
     entries = []
     for i in range(n):
         rowtype = rom[rt_off + i]
@@ -891,7 +924,12 @@ def parse_world_tables(rom, world_idx, world_info):
         grid_row = row_nib - 2
         grid_col = screen * 16 + col
 
-        entry_type = classify_entry(world_idx, i, obj_ptr, lay_ptr, tileset, rom)
+        # Read the actual map tile at this entry's position
+        map_tile = None
+        if 0 <= grid_row < len(grid) and 0 <= grid_col < len(grid[0]):
+            map_tile = grid[grid_row][grid_col]
+
+        entry_type = classify_entry(world_idx, i, obj_ptr, lay_ptr, tileset, rom, map_tile)
 
         entry = {
             "index": i,
@@ -1436,24 +1474,39 @@ def read_fx_slots(rom):
     return slots
 
 
-def read_world_fx_assignments(rom):
-    """Read per-world FX slot assignments. Returns dict: world_idx -> list of slot indices."""
+def read_world_fx_assignments(rom, fort_positions=None):
+    """Read per-world FX slot assignments. Returns dict: world_idx -> list of slot indices.
+
+    Uses fort_positions (from read_fortress_positions) to determine how many
+    FX slots each world uses — essential for shuffled ROMs where fortress
+    counts per world change.
+    """
+    if fort_positions is None:
+        fort_positions = read_fortress_positions(rom)
     assignments = {}
     for wi in range(8):
-        fort_count = sum(1 for w, _ in FORTRESS_ENTRIES if w == wi)
+        fort_count = len(fort_positions.get(wi, []))
         base = FX_WORLD_TABLE + wi * 4
         assignments[wi] = [rom[base + i] for i in range(min(fort_count, 4))]
     return assignments
 
 
 def read_fortress_positions(rom):
-    """Grid positions of fortress entries. Returns dict: world_idx -> list of (row, col)."""
-    by_world = {}
-    for wi, ei in sorted(FORTRESS_ENTRIES):
-        by_world.setdefault(wi, []).append(ei)
+    """Grid positions of fortress tiles ($67). Scans the actual tile grid
+    so this works on both vanilla and shuffled ROMs.
+
+    Returns dict: world_idx -> list of (row, col), sorted in row-major order.
+    """
     positions = {}
-    for wi, entries in by_world.items():
-        positions[wi] = [entry_grid_position(rom, wi, ei) for ei in entries]
+    for wi in range(8):
+        grid = read_tile_grid(rom, wi)
+        forts = []
+        for r in range(len(grid)):
+            for c in range(len(grid[0])):
+                if grid[r][c] == 0x67:
+                    forts.append((r, c))
+        forts.sort()
+        positions[wi] = forts
     return positions
 
 
@@ -1552,18 +1605,23 @@ def walk_map(grid, pipe_pairs, start_pos=None, traverse_rocks=False):
 def simulate_progression(rom, world_idx, pipe_pairs, traverse_rocks=False):
     """Simulate fortress progression: walk, beat forts, open locks, re-walk.
 
+    Applies FX slots sequentially (slot 0, 1, 2, ...) since the builder writes
+    them in section order.  Each step fires the next FX slot when any reachable
+    fortress hasn't been beaten yet.
+
     Returns list of steps. Each step has:
         fort_idx, fort_pos, fx_pos, fx_old_tile, fx_new_tile,
         nodes, path_tiles, bfs_order, grid (snapshot)
     """
     grid = read_tile_grid(rom, world_idx)
     fx_slots = read_fx_slots(rom)
-    fx_assignments = read_world_fx_assignments(rom)
     fort_positions = read_fortress_positions(rom)
+    fx_assignments = read_world_fx_assignments(rom, fort_positions)
 
     world_fx = fx_assignments.get(world_idx, [])
     world_forts = fort_positions.get(world_idx, [])
     beaten = set()
+    next_fx = 0  # sequential FX slot counter
     steps = []
 
     nodes, edges, path_tiles, bfs_order = walk_map(grid, pipe_pairs, traverse_rocks=traverse_rocks)
@@ -1582,15 +1640,18 @@ def simulate_progression(rom, world_idx, pipe_pairs, traverse_rocks=False):
             break
         fi = reachable[0]
         beaten.add(fi)
+
+        # Apply the next FX slot in sequence (not indexed by fortress position).
         fx_pos = fx_old = fx_new = None
-        if fi < len(world_fx):
-            si = world_fx[fi]
+        if next_fx < len(world_fx):
+            si = world_fx[next_fx]
             slot = fx_slots[si]
             fr, fc = slot["grid_row"], slot["grid_col"]
             fx_old = grid[fr][fc]
             fx_new = slot["replace_tile"]
             grid[fr][fc] = fx_new
             fx_pos = (fr, fc)
+            next_fx += 1
 
         nodes, edges, path_tiles, bfs_order = walk_map(grid, pipe_pairs, traverse_rocks=traverse_rocks)
         steps.append({
@@ -1665,11 +1726,12 @@ def build_entry_lookup(rom, world_idx):
         grid_row = row_nib - 2
         grid_col = screen * 16 + col
 
-        entry_type = classify_entry(world_idx, i, obj_ptr, lay_ptr, tileset, rom)
-        # Check if this is the start tile
-        if (0 <= grid_row < len(grid) and 0 <= grid_col < len(grid[0])
-                and grid[grid_row][grid_col] == TILE_START):
-            entry_type = "start"
+        # Read the actual map tile for tile-based classification
+        map_tile = None
+        if 0 <= grid_row < len(grid) and 0 <= grid_col < len(grid[0]):
+            map_tile = grid[grid_row][grid_col]
+
+        entry_type = classify_entry(world_idx, i, obj_ptr, lay_ptr, tileset, rom, map_tile)
         entries.append({
             "index": i, "type": entry_type, "tileset": tileset,
             "obj_ptr": obj_ptr, "lay_ptr": lay_ptr,
