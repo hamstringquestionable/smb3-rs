@@ -106,6 +106,23 @@ pub(super) fn pick_up_filtered(
         worlds.push(pick_up_world(rom, catalog, wi, &mut pool, remove_spade_games, pred));
     }
 
+    // Synthetic beta entries (world_idx == usize::MAX) have no vanilla grid
+    // cell to blank. Push them directly into the pool so they're available
+    // for the build phase to place on any world's map.
+    for (ci, entry) in catalog.entries.iter().enumerate() {
+        if entry.world_idx != usize::MAX {
+            continue;
+        }
+        if !pred(entry, remove_spade_games) {
+            continue;
+        }
+        pool.push(PoolEntry {
+            catalog_idx: ci,
+            world_idx: usize::MAX,
+            entry_idx: usize::MAX,
+        });
+    }
+
     PickupResult { worlds, pool }
 }
 
@@ -290,7 +307,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
         let result = pick_up(&rom, &catalog, true);
 
         // 62 levels + 17 fortresses + 48 pipes + 151 hammer bros + 19 bonus games = 297
@@ -308,7 +325,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
         let result = pick_up(&rom, &catalog, true);
 
         for (pi, pe) in result.pool.iter().enumerate() {
@@ -334,7 +351,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
         let result = pick_up(&rom, &catalog, true);
 
         let fx_slots = rom_data::read_fx_slots(&rom);
@@ -366,7 +383,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
         let result = pick_up(&rom, &catalog, true);
 
         for entry in &catalog.entries {
@@ -390,7 +407,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
         let result = pick_up(&rom, &catalog, true);
 
         for cw in &result.worlds {
@@ -419,7 +436,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
         let result = pick_up(&rom, &catalog, true);
 
         for cw in &result.worlds {
@@ -510,7 +527,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
 
         dump_filtered_rom(&rom, &catalog, |e, _| e.kind.is_level_like(), "cleared_all.nes");
         dump_filtered_rom(&rom, &catalog, |e, _| matches!(e.kind, NodeKind::Level), "cleared_levels.nes");

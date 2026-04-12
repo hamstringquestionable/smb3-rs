@@ -12,9 +12,9 @@ use std::collections::{HashMap, HashSet};
 use crate::rom::Rom;
 
 use super::rom_data::{
-    self, AIRSHIP_ENTRIES, BOWSER_ENTRY, FORTRESS_ENTRIES, HAMMER_BRO_OBJ_PTRS,
-    HB_EXCLUDE_OBJ_PTRS, LevelEntry, MAP_OBJ_ENTRY_LINKS, TOAD_HOUSE_OBJ_PTRS,
-    PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, TILE_START, WORLDS,
+    self, AIRSHIP_ENTRIES, BETA_LEVELS, BOWSER_ENTRY, FORTRESS_ENTRIES,
+    HAMMER_BRO_OBJ_PTRS, HB_EXCLUDE_OBJ_PTRS, LevelEntry, MAP_OBJ_ENTRY_LINKS,
+    TOAD_HOUSE_OBJ_PTRS, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, TILE_START, WORLDS,
 };
 
 // ---------------------------------------------------------------------------
@@ -98,8 +98,13 @@ pub(crate) struct NodeCatalog {
 
 impl NodeCatalog {
     /// Build the catalog by reading and classifying every entry from the ROM.
-    pub(crate) fn build(rom: &Rom) -> Self {
-        let mut entries = Vec::with_capacity(340);
+    ///
+    /// When `include_beta_stages` is true, synthetic entries for the 9
+    /// unreferenced beta levels are appended after the 340 vanilla entries.
+    /// They use `world_idx = usize::MAX` and `entry_idx = usize::MAX` as
+    /// sentinels (no vanilla pointer table home).
+    pub(crate) fn build(rom: &Rom, include_beta_stages: bool) -> Self {
+        let mut entries = Vec::with_capacity(340 + if include_beta_stages { BETA_LEVELS.len() } else { 0 });
 
         // First pass: classify all entries (names assigned in second pass)
         for wi in 0..8 {
@@ -119,7 +124,28 @@ impl NodeCatalog {
             }
         }
 
-        // Second pass: assign names
+        // Append synthetic beta level entries (no vanilla home).
+        if include_beta_stages {
+            for beta in BETA_LEVELS {
+                entries.push(CatalogEntry {
+                    world_idx: usize::MAX,
+                    entry_idx: usize::MAX,
+                    kind: NodeKind::Level,
+                    name: beta.name.to_string(),
+                    grid_pos: (usize::MAX, usize::MAX),
+                    tile: 0,
+                    level_entry: Some(LevelEntry {
+                        tileset: beta.tileset,
+                        obj_lo: beta.obj_lo,
+                        obj_hi: beta.obj_hi,
+                        lay_lo: beta.lay_lo,
+                        lay_hi: beta.lay_hi,
+                    }),
+                });
+            }
+        }
+
+        // Second pass: assign names (beta entries already have names set)
         assign_names(&mut entries);
 
         NodeCatalog { entries }
@@ -448,6 +474,7 @@ fn assign_names(entries: &mut [CatalogEntry]) {
     let mut pipe_counts: [usize; 8] = [0; 8];
 
     for e in entries.iter() {
+        if e.world_idx == usize::MAX { continue; } // skip synthetic (beta) entries
         match e.kind {
             NodeKind::Fortress { .. } => fortress_counts[e.world_idx] += 1,
             NodeKind::ToadHouse => toad_counts[e.world_idx] += 1,
@@ -468,6 +495,10 @@ fn assign_names(entries: &mut [CatalogEntry]) {
     let mut pipe_ord: [usize; 8] = [0; 8];
 
     for e in entries.iter_mut() {
+        // Skip synthetic entries (betas) — they already have names.
+        if e.world_idx == usize::MAX {
+            continue;
+        }
         let w = e.world_idx;
         let w1 = w + 1; // 1-indexed for display
 
@@ -562,7 +593,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
         let expected: usize = WORLDS.iter().map(|w| w.entry_count).sum();
         assert_eq!(catalog.entries.len(), expected, "expected {expected} total entries");
     }
@@ -573,7 +604,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
 
         let count = |pred: fn(&NodeKind) -> bool| -> usize {
             catalog.entries.iter().filter(|e| pred(&e.kind)).count()
@@ -592,7 +623,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
 
         // Every dest_idx should appear exactly twice
         let mut dest_counts: HashMap<usize, usize> = HashMap::new();
@@ -614,7 +645,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
 
         for e in &catalog.entries {
             assert!(
@@ -631,7 +662,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
 
         for e in &catalog.entries {
             let (row, col) = e.grid_pos;
@@ -654,7 +685,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
 
         for e in &catalog.entries {
             if e.kind.is_level_like() {
@@ -673,7 +704,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
 
         for e in &catalog.entries {
             if let NodeKind::Fortress { boomboom_y_offset } = &e.kind {
@@ -692,7 +723,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
 
         // Verify aggregate counts match known vanilla totals:
         // 17 fortresses, 7 airships, 1 bowser, 48 pipes, 8 starts
@@ -722,7 +753,7 @@ mod tests {
                 return;
             }
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
 
         let mut current_world = usize::MAX;
         for e in &catalog.entries {

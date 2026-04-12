@@ -758,6 +758,17 @@ pub fn fix_canoe_softlock(rom: &mut Rom) {
     ]);
 }
 
+/// Apply deterministic layout fixes for the 9 beta stages.
+///
+/// The vanilla ROM has broken sub-area pointers, wrong start positions, and
+/// misaligned tile commands in the beta level data. These 44 byte patches
+/// repair the layouts so the stages are playable.
+pub fn fix_beta_stages(rom: &mut Rom) {
+    for &(offset, value) in super::rom_data::BETA_PATCHES {
+        rom.write_byte(offset, value);
+    }
+}
+
 /// Replace W3 drawbridge tiles with normal path tiles and NOP the toggle code.
 pub fn fix_w3_drawbridges(rom: &mut Rom) {
     // Replace horizontal drawbridge tiles with bridge ($B3, horizontal path)

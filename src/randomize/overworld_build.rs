@@ -1470,7 +1470,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
         let mut rng = ChaCha8Rng::seed_from_u64(42);
 
@@ -1509,7 +1509,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
 
         for seed in 0..10 {
@@ -1567,7 +1567,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
 
         for seed in [42, 123, 999] {
@@ -1602,7 +1602,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
         let mut rng = ChaCha8Rng::seed_from_u64(42);
 
@@ -1642,7 +1642,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
 
         let mut level_shortfalls = 0u32;
@@ -1736,7 +1736,7 @@ mod tests {
                 return;
             }
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
 
         for seed in 0..6u64 {
@@ -1811,7 +1811,7 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom);
+        let catalog = NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
         let wi = 6; // W7
 

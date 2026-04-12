@@ -63,6 +63,7 @@ const optHammerVulnKoopalings = document.getElementById("opt-hammer-vuln-koopali
 const optHammerBreaksLocks = document.getElementById("opt-hammer-breaks-locks");
 const optHammerBreaksBridges = document.getElementById("opt-hammer-breaks-bridges");
 const optRandomKoopalings = document.getElementById("opt-random-koopalings");
+const optIncludeBetaStages = document.getElementById("opt-include-beta-stages");
 // Pill group helpers (tri-state radio buttons)
 function getPill(name) {
 	return document.querySelector(`input[name="${name}"]:checked`)?.value || "off";
@@ -334,6 +335,7 @@ function getCurrentOptionsJson() {
 		koopaling_hits: optKoopalingHits.checked,
 		hammer_vulnerable_koopalings: optHammerVulnKoopalings.checked,
 		random_koopalings: optRandomKoopalings.checked,
+		include_beta_stages: optIncludeBetaStages.checked,
 		hammer_breaks_locks: optHammerBreaksLocks.checked,
 		hammer_breaks_bridges: optHammerBreaksBridges.checked,
 		ground: getPill("opt-ground"),
@@ -392,6 +394,7 @@ function applyFlagKey(key) {
 		if (opts.koopaling_hits !== undefined) optKoopalingHits.checked = opts.koopaling_hits;
 		if (opts.hammer_vulnerable_koopalings !== undefined) optHammerVulnKoopalings.checked = opts.hammer_vulnerable_koopalings;
 		if (opts.random_koopalings !== undefined) optRandomKoopalings.checked = opts.random_koopalings;
+		if (opts.include_beta_stages !== undefined) optIncludeBetaStages.checked = opts.include_beta_stages;
 		if (opts.hammer_breaks_locks !== undefined) optHammerBreaksLocks.checked = opts.hammer_breaks_locks;
 		if (opts.hammer_breaks_bridges !== undefined) optHammerBreaksBridges.checked = opts.hammer_breaks_bridges;
 		if (opts.ground !== undefined) setPill("opt-ground", opts.ground);
@@ -427,7 +430,7 @@ const allOptionElements = [
 	optPowerups, optWorldOrder, optWorldCount, optBigQBlocks,
 	optShufflePipes, optShuffleAirships, optChestItems, optRemoveWhistles,
 	optAirshipLock,
-	optFixDrawbridges, optRemoveRocks, optRemoveNCards, optRemoveSpadeGames, optSkipWandCutscene, optAdjustBossHitboxes, optKoopalingHits, optHammerVulnKoopalings, optRandomKoopalings, optHammerBreaksLocks, optHammerBreaksBridges,
+	optFixDrawbridges, optRemoveRocks, optRemoveNCards, optRemoveSpadeGames, optIncludeBetaStages, optSkipWandCutscene, optAdjustBossHitboxes, optKoopalingHits, optHammerVulnKoopalings, optRandomKoopalings, optHammerBreaksLocks, optHammerBreaksBridges,
 	optWildInjections,
 	optStartingLives,
 	...optStartItems,

@@ -599,6 +599,64 @@ pub(super) struct LevelEntry {
     pub lay_hi: u8,
 }
 
+/// A beta (unreferenced) level — layout data exists in the ROM but no vanilla
+/// pointer table entry references it. Injected into the shuffle pool when
+/// `include_beta_stages` is enabled. The `obj_ptr` is borrowed from a
+/// compatible vanilla level (beta layouts have no canonical enemy pairing).
+pub(super) struct BetaLevel {
+    pub tileset: u8,
+    pub obj_lo: u8,
+    pub obj_hi: u8,
+    pub lay_lo: u8,
+    pub lay_hi: u8,
+    pub name: &'static str,
+}
+
+/// Nine unreferenced beta levels found in the level data banks.
+pub(super) const BETA_LEVELS: &[BetaLevel] = &[
+    BetaLevel { tileset:  1, obj_lo: 0xAB, obj_hi: 0xC1, lay_lo: 0x4C, lay_hi: 0xA7, name: "\u{03B2}1" },
+    BetaLevel { tileset:  1, obj_lo: 0x21, obj_hi: 0xC2, lay_lo: 0xAC, lay_hi: 0xA9, name: "\u{03B2}2" },
+    BetaLevel { tileset:  3, obj_lo: 0xDC, obj_hi: 0xC6, lay_lo: 0xDD, lay_hi: 0xB0, name: "\u{03B2}3" },
+    BetaLevel { tileset:  3, obj_lo: 0x06, obj_hi: 0xC0, lay_lo: 0x42, lay_hi: 0xB4, name: "\u{03B2}4" },
+    BetaLevel { tileset:  4, obj_lo: 0xD8, obj_hi: 0xCA, lay_lo: 0xCD, lay_hi: 0xAD, name: "\u{03B2}5" },
+    BetaLevel { tileset:  8, obj_lo: 0x06, obj_hi: 0xC0, lay_lo: 0x18, lay_hi: 0xAF, name: "\u{03B2}6" },
+    BetaLevel { tileset: 12, obj_lo: 0xE5, obj_hi: 0xCB, lay_lo: 0xBF, lay_hi: 0xB2, name: "\u{03B2}7" },
+    BetaLevel { tileset: 12, obj_lo: 0xA0, obj_hi: 0xCC, lay_lo: 0xBA, lay_hi: 0xB7, name: "\u{03B2}8" },
+    BetaLevel { tileset: 13, obj_lo: 0xBD, obj_hi: 0xCE, lay_lo: 0xA9, lay_hi: 0xAC, name: "\u{03B2}9" },
+];
+
+/// Deterministic layout fixes for the 9 beta stages.
+///
+/// Each entry is `(file_offset, new_byte)`. These repair broken sub-area
+/// pointers, wrong start positions, and misaligned tile commands that would
+/// cause visual corruption or softlocks. β7 and β8 need no fixed patches.
+pub(super) const BETA_PATCHES: &[(usize, u8)] = &[
+    // β1 (ts1 $A74C) — 3 patches
+    (0x1E785, 0x48), (0x1E787, 0x05), (0x1E916, 0x08),
+    // β2 (ts1 $A9AC) — 8 patches (header: alt_layout/alt_objects redirect + command fixes)
+    (0x1E9BC, 0x48), (0x1E9BD, 0xBE), (0x1E9BE, 0x84),
+    (0x1E9E5, 0x71), (0x1E9E6, 0x80), (0x1EA02, 0x49),
+    (0x1EA6F, 0x0D), (0x1EB34, 0x06),
+    // β3 (ts3 $B0DD) — 2 patches
+    (0x2113F, 0x00), (0x212BA, 0x00),
+    // β4 (ts3 $B442) — 4 patches (header: byte5 X-start + command fixes)
+    (0x21457, 0x04), (0x214B2, 0x04),
+    (0x214CF, 0x2F), (0x214D0, 0x24),
+    // β5 (ts4 $ADCD) — 5 patches
+    (0x22F05, 0x1A), (0x22F08, 0x19), (0x22F0B, 0x1A),
+    (0x22F0F, 0x9F), (0x23004, 0x04),
+    // β6 (ts8 $AF18) — 20 patches (header: alt_layout/alt_objects/alt_tileset + commands)
+    (0x24F28, 0x32), (0x24F29, 0xB3), (0x24F2A, 0xD8),
+    (0x24F2B, 0xC3), (0x24F2E, 0xB1),
+    (0x25028, 0x00), (0x25029, 0x41), (0x2502B, 0x00),
+    (0x2502C, 0x41), (0x2502D, 0x23), (0x25031, 0x00),
+    (0x25032, 0x41), (0x2503A, 0x00), (0x2503B, 0x41),
+    (0x25046, 0x00), (0x25047, 0x41), (0x25063, 0x21),
+    (0x25067, 0x53), (0x25068, 0x32), (0x250D2, 0x01),
+    // β9 (ts13 $ACA9) — 2 patches
+    (0x26DB8, 0x63), (0x26DB9, 0x20),
+];
+
 /// An FX slot (lock/bridge position and replacement tile).
 pub(super) struct FxSlot {
     pub grid_row: usize,
