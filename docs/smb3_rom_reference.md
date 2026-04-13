@@ -1883,7 +1883,226 @@ Each object group's PatTableSel table is at offset +0x144 within its PRG bank:
 
 Raw byte encoding: `$00` = NOCHANGE, `$01–$7F` = page for slot +4, `$80–$FF` = `(val & $7F)` for slot +5.
 
+Raw byte encoding: each byte is read by the object init routine. `$00` means
+no bank switch (the object uses whatever CHR page is already loaded). For
+non-zero values, bit 7 selects which CHR slot to load: clear = slot +4,
+set = slot +5 (with the page number in bits 6–0).
+
 Source: ROM PatTableSel tables, verified against Southbird disassembly.
+
+#### Complete PatTableSel Dump (All 180 Object IDs)
+
+Verified byte-for-byte against ROM at the five table offsets above. 36 entries
+per group, one byte per object ID. This is the authoritative reference — the
+partial tables in the sections above are subsets of this data.
+
+**Group 1 — PRG001 (0x02154): IDs 0x00–0x23**
+
+| ID | Raw | Page | Slot | Name |
+|----|-----|------|------|------|
+| 0x00 | $00 | — | NOCHANGE | ObjectEntry |
+| 0x01 | $48 | $48 | +4 | MicroGoomba |
+| 0x02 | $4C | $4C | +4 | QuestionBlock |
+| 0x03 | $48 | $48 | +4 | Poof |
+| 0x04 | $48 | $48 | +4 | DVPlatform |
+| 0x05 | $48 | $48 | +4 | DVPlatform2 |
+| 0x06 | $00 | — | NOCHANGE | ObjectEntry06 |
+| 0x07 | $00 | — | NOCHANGE | ObjectEntry07 |
+| 0x08 | $93 | $13 | +5 | FireChomp Flame |
+| 0x09 | $B7 | $37 | +5 | FireChomp Flame2 |
+| 0x0A | $48 | $48 | +4 | MicroGoomba (alt) |
+| 0x0B | $00 | — | NOCHANGE | IceBlock |
+| 0x0C | $00 | — | NOCHANGE | FireChomp Fire |
+| 0x0D | $00 | — | NOCHANGE | ChainChompFree |
+| 0x0E | $00 | — | NOCHANGE | Koopaling |
+| 0x0F | $00 | — | NOCHANGE | EndLevelCard (unused) |
+| 0x10 | $00 | — | NOCHANGE | Podoboo Ceiling |
+| 0x11 | $00 | — | NOCHANGE | WoodenPlat FLR |
+| 0x12 | $00 | — | NOCHANGE | WoodenPlat FR |
+| 0x13 | $00 | — | NOCHANGE | PSwitchDoor |
+| 0x14 | $00 | — | NOCHANGE | GoldenCoin |
+| 0x15 | $00 | — | NOCHANGE | MovingCoin |
+| 0x16 | $48 | $48 | +4 | Poof (alt) |
+| 0x17 | $1A | $1A | +4 | Airship Propeller |
+| 0x18 | $3A | $3A | +4 | Bowser |
+| 0x19 | $00 | — | NOCHANGE | Bowser Fire |
+| 0x1A | $00 | — | NOCHANGE | RecBrickFloor |
+| 0x1B | $00 | — | NOCHANGE | TreasureBox |
+| 0x1C | $00 | — | NOCHANGE | DonutLift |
+| 0x1D | $48 | $48 | +4 | DVPlatform (alt) |
+| 0x1E | $00 | — | NOCHANGE | DVPlatform Drop |
+| 0x1F | $00 | — | NOCHANGE | DVPlatform3 |
+| 0x20 | $0A | $0A | +4 | DVPlatform Drop3 |
+| 0x21 | $00 | — | NOCHANGE | DVBigPlatform |
+| 0x22 | $00 | — | NOCHANGE | BoltPlatform |
+| 0x23 | $00 | — | NOCHANGE | AirLift |
+
+**Group 2 — PRG002 (0x04154): IDs 0x24–0x47**
+
+| ID | Raw | Page | Slot | Name |
+|----|-----|------|------|------|
+| 0x24 | $0E | $0E | +4 | PlatformDrop |
+| 0x25 | $00 | — | NOCHANGE | PipeWayController |
+| 0x26 | $0E | $0E | +4 | TiltPlatform |
+| 0x27 | $0E | $0E | +4 | Seesaw |
+| 0x28 | $0E | $0E | +4 | PlatformClockwise |
+| 0x29 | $0A | $0A | +4 | Spike |
+| 0x2A | $0A | $0A | +4 | Patooie |
+| 0x2B | $0B | $0B | +4 | Goomba in Shoe |
+| 0x2C | $0E | $0E | +4 | ChainChomp |
+| 0x2D | $1A | $1A | +4 | ChainChomp Strained |
+| 0x2E | $93 | $13 | +5 | WoodBlock |
+| 0x2F | $12 | $12 | +4 | Boo |
+| 0x30 | $12 | $12 | +4 | HotFoot (shy) |
+| 0x31 | $12 | $12 | +4 | Stretch Boo |
+| 0x32 | $12 | $12 | +4 | Stretch Boo Diagonal |
+| 0x33 | $0A | $0A | +4 | Nipper |
+| 0x34 | $05 | $05 | +4 | Boss Fireball |
+| 0x35 | $05 | $05 | +4 | Boss Fireball2 |
+| 0x36 | $0E | $0E | +4 | ScalePlatform |
+| 0x37 | $0E | $0E | +4 | PlatformWFalls |
+| 0x38 | $0E | $0E | +4 | PlatformWFalls2 |
+| 0x39 | $0A | $0A | +4 | NipperHopping |
+| 0x3A | $93 | $13 | +5 | RocketSled |
+| 0x3B | $CF | $4F | +5 | FireJet Left |
+| 0x3C | $0E | $0E | +4 | PlatformCircle |
+| 0x3D | $0A | $0A | +4 | Airship Anchor |
+| 0x3E | $1A | $1A | +4 | PlatformULDR |
+| 0x3F | $93 | $13 | +5 | Dry Bones |
+| 0x40 | $0A | $0A | +4 | Buster Beetle |
+| 0x41 | $00 | — | NOCHANGE | EndLevelCard |
+| 0x42 | $CF | $4F | +5 | ObjectEntry42 |
+| 0x43 | $CF | $4F | +5 | ObjectEntry43 |
+| 0x44 | $0E | $0E | +4 | PlatformURLL |
+| 0x45 | $12 | $12 | +4 | HotFoot |
+| 0x46 | $0A | $0A | +4 | WonderWing |
+| 0x47 | $00 | — | NOCHANGE | WaterCurrent Down |
+
+**Group 3 — PRG003 (0x06154): IDs 0x48–0x6B**
+
+| ID | Raw | Page | Slot | Name |
+|----|-----|------|------|------|
+| 0x48 | $1A | $1A | +4 | WaterCurrent Right |
+| 0x49 | $36 | $36 | +4 | WaterCurrent Left |
+| 0x4A | $13 | $13 | +4 | Boom-Boom |
+| 0x4B | $B3 | $33 | +5 | Boom-Boom Fly |
+| 0x4C | $B3 | $33 | +5 | Boom-Boom Split |
+| 0x4D | $00 | — | NOCHANGE | FakeFloor Drop |
+| 0x4E | $00 | — | NOCHANGE | ObjectEntry4E |
+| 0x4F | $0A | $0A | +4 | ChainChomp (freed) |
+| 0x50 | $36 | $36 | +4 | NipperSpawner |
+| 0x51 | $12 | $12 | +4 | Rotodisc CW |
+| 0x52 | $05 | $05 | +4 | NipperSunflower |
+| 0x53 | $12 | $12 | +4 | Podoboo |
+| 0x54 | $0E | $0E | +4 | Missile Bill |
+| 0x55 | $0B | $0B | +4 | Bob-omb |
+| 0x56 | $5A | $5A | +4 | ToadHouse Host |
+| 0x57 | $5A | $5A | +4 | ToadHouse Chest |
+| 0x58 | $0E | $0E | +4 | Fire Chomp |
+| 0x59 | $0E | $0E | +4 | Wandering Hammer |
+| 0x5A | $12 | $12 | +4 | Rotodisc CCW |
+| 0x5B | $12 | $12 | +4 | Rotodisc CW2 |
+| 0x5C | $CF | $4F | +5 | ObjectEntry5C |
+| 0x5D | $00 | — | NOCHANGE | ObjectEntry5D |
+| 0x5E | $12 | $12 | +4 | Rotodisc CW Fast |
+| 0x5F | $12 | $12 | +4 | Rotodisc CCW Fast |
+| 0x60 | $12 | $12 | +4 | Rotodisc CW 1.5 |
+| 0x61 | $1A | $1A | +4 | Blooper w/ Kids |
+| 0x62 | $1A | $1A | +4 | Blooper |
+| 0x63 | $1A | $1A | +4 | Big Bertha |
+| 0x64 | $CF | $4F | +5 | CheepCheep Hopper |
+| 0x65 | $00 | — | NOCHANGE | WaterCheep |
+| 0x66 | $00 | — | NOCHANGE | Jellyfish |
+| 0x67 | $9B | $1B | +5 | ObjectEntry67 |
+| 0x68 | $0B | $0B | +4 | Lava Flotsam Right |
+| 0x69 | $0B | $0B | +4 | Lava Flotsam Left |
+| 0x6A | $1A | $1A | +4 | Blooper Child Shoot |
+| 0x6B | $CF | $4F | +5 | Piledriver |
+
+**Group 4 — PRG004 (0x08154): IDs 0x6C–0x8F**
+
+| ID | Raw | Page | Slot | Name |
+|----|-----|------|------|------|
+| 0x6C | $CF | $4F | +5 | Green Troopa |
+| 0x6D | $CF | $4F | +5 | Red Troopa |
+| 0x6E | $CF | $4F | +5 | Paratroopa Green Hop |
+| 0x6F | $CF | $4F | +5 | Flying Red Paratroopa |
+| 0x70 | $0B | $0B | +4 | Buzzy Beetle |
+| 0x71 | $0B | $0B | +4 | Spiny |
+| 0x72 | $CF | $4F | +5 | Goomba |
+| 0x73 | $CF | $4F | +5 | Para-Goomba |
+| 0x74 | $CF | $4F | +5 | Para-Goomba w/ Micros |
+| 0x75 | $00 | — | NOCHANGE | Goomba Redirect |
+| 0x76 | $CF | $4F | +5 | ObjectEntry76 |
+| 0x77 | $00 | — | NOCHANGE | Green Cheep |
+| 0x78 | $CF | $4F | +5 | Bullet Bill |
+| 0x79 | $CF | $4F | +5 | Bullet Bill Homing |
+| 0x7A | $3D | $3D | +4 | Big Green Troopa |
+| 0x7B | $3D | $3D | +4 | Big Red Troopa |
+| 0x7C | $3D | $3D | +4 | Big Goomba |
+| 0x7D | $3D | $3D | +4 | Big Green Piranha |
+| 0x7E | $3D | $3D | +4 | Big Green Hopper |
+| 0x7F | $3D | $3D | +4 | Big Red Piranha |
+| 0x80 | $CF | $4F | +5 | Flying Green Paratroopa |
+| 0x81 | $4E | $4E | +4 | Hammer Bro |
+| 0x82 | $4E | $4E | +4 | Boomerang Bro |
+| 0x83 | $0B | $0B | +4 | Lakitu |
+| 0x84 | $0B | $0B | +4 | Spiny Egg |
+| 0x85 | $0B | $0B | +4 | ObjectEntry85 |
+| 0x86 | $4E | $4E | +4 | Heavy Bro |
+| 0x87 | $4E | $4E | +4 | Fire Bro |
+| 0x88 | $CF | $4F | +5 | Orange Cheep |
+| 0x89 | $0A | $0A | +4 | ObjectEntry89 |
+| 0x8A | $12 | $12 | +4 | Thwomp |
+| 0x8B | $12 | $12 | +4 | Thwomp Left Slide |
+| 0x8C | $12 | $12 | +4 | Thwomp Right Slide |
+| 0x8D | $12 | $12 | +4 | Thwomp Up/Down |
+| 0x8E | $12 | $12 | +4 | Thwomp Diagonal UL |
+| 0x8F | $12 | $12 | +4 | Thwomp Diagonal DL |
+
+**Group 5 — PRG005 (0x0A154): IDs 0x90–0xB3**
+
+| ID | Raw | Page | Slot | Name |
+|----|-----|------|------|------|
+| 0x90 | $CF | $4F | +5 | Moving Platform |
+| 0x91 | $CF | $4F | +5 | Moving Platform 2 |
+| 0x92 | $CF | $4F | +5 | Moving Platform 3 |
+| 0x93 | $CF | $4F | +5 | Moving Platform Fall |
+| 0x94 | $4C | $4C | +4 | Big ? Block 3-UP |
+| 0x95 | $4C | $4C | +4 | Big ? Block Mushroom |
+| 0x96 | $4C | $4C | +4 | Big ? Block Fire Flower |
+| 0x97 | $4C | $4C | +4 | Big ? Block Super Leaf |
+| 0x98 | $4C | $4C | +4 | Big ? Block Tanooki |
+| 0x99 | $4C | $4C | +4 | Big ? Block Frog |
+| 0x9A | $4C | $4C | +4 | Big ? Block Hammer |
+| 0x9B | $00 | — | NOCHANGE | ObjectEntry9B |
+| 0x9C | $00 | — | NOCHANGE | ObjectEntry9C |
+| 0x9D | $B7 | $37 | +5 | Podoboo Fire Jet |
+| 0x9E | $12 | $12 | +4 | Podoboo Fire Jet 2 |
+| 0x9F | $0E | $0E | +4 | ObjectEntry9F |
+| 0xA0 | $CF | $4F | +5 | Green Piranha |
+| 0xA1 | $CF | $4F | +5 | Green Piranha (flipped) |
+| 0xA2 | $CF | $4F | +5 | Red Piranha |
+| 0xA3 | $CF | $4F | +5 | Red Piranha (flipped) |
+| 0xA4 | $CF | $4F | +5 | Green Piranha Fire |
+| 0xA5 | $CF | $4F | +5 | Green Piranha Fire (ceil) |
+| 0xA6 | $CF | $4F | +5 | Venus Fire Trap |
+| 0xA7 | $CF | $4F | +5 | Venus Fire Trap (ceil) |
+| 0xA8 | $5A | $5A | +4 | Muncher |
+| 0xA9 | $5A | $5A | +4 | Muncher (alt) |
+| 0xAA | $36 | $36 | +4 | ObjectEntryAA |
+| 0xAB | $36 | $36 | +4 | ObjectEntryAB |
+| 0xAC | $B7 | $37 | +5 | Fire Jet Upward |
+| 0xAD | $36 | $36 | +4 | ObjectEntryAD |
+| 0xAE | $36 | $36 | +4 | ObjectEntryAE |
+| 0xAF | $32 | $32 | +4 | ObjectEntryAF |
+| 0xB0 | $36 | $36 | +4 | ObjectEntryB0 |
+| 0xB1 | $B7 | $37 | +5 | Fire Jet Down |
+| 0xB2 | $B7 | $37 | +5 | Fire Jet Right |
+| 0xB3 | $0B | $0B | +4 | ObjectEntryB3 |
+
+All 180 entries verified byte-for-byte against ROM (2025-04-13). Matches
+`sprite_bank()` in `enemies.rs` with zero discrepancies.
 
 ---
 
