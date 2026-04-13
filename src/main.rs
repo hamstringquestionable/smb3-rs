@@ -199,11 +199,11 @@ struct Cli {
     starting_lives: u8,
 
     /// Start with up to 3 items in inventory (comma-separated names)
-    /// Valid: mushroom, fire, leaf, frog, tanooki, hammer-suit, cloud, p-wing, star, anchor, hammer, whistle, music-box
+    /// Valid: mushroom, fire, leaf, frog, tanooki, hammer-suit, cloud, p-wing, star, anchor, hammer, whistle, music-box, random, random-no-whistle, random-suit-only
     #[arg(long, value_delimiter = ',')]
     starting_items: Vec<String>,
 
-    /// Apply options from a flag key (e.g. SMB3R-01C79804). Overrides all other flag options.
+    /// Apply options from a flag key (e.g. SMB3R-3GFR0P...). Overrides all other flag options.
     #[arg(long)]
     flags: Option<String>,
 
@@ -268,9 +268,12 @@ fn main() {
             "hammer" => 0x0B,
             "whistle" => 0x0C,
             "music-box" | "musicbox" => 0x0D,
+            "random" => 0x0E,
+            "random-no-whistle" => 0x0F,
+            "random-suit-only" | "random-suit" => 0x10,
             other => {
                 eprintln!("Unknown item: {other}");
-                eprintln!("Valid: mushroom, fire, leaf, frog, tanooki, hammer-suit, cloud, p-wing, star, anchor, hammer, whistle, music-box");
+                eprintln!("Valid: mushroom, fire, leaf, frog, tanooki, hammer-suit, cloud, p-wing, star, anchor, hammer, whistle, music-box, random, random-no-whistle, random-suit-only");
                 process::exit(1);
             }
         }
@@ -369,7 +372,15 @@ fn main() {
     eprintln!("  Remove rocks: {}", if options.remove_rocks { "on" } else { "off" });
     eprintln!("  Airship lock: {}", if options.airship_lock { "on" } else { "off" });
     if !options.starting_items.is_empty() {
-        eprintln!("  Starting items: {:?}", options.starting_items);
+        let item_names: Vec<&str> = options.starting_items.iter().map(|&id| match id {
+            0x01 => "Mushroom", 0x02 => "Fire Flower", 0x03 => "Super Leaf",
+            0x04 => "Frog Suit", 0x05 => "Tanooki Suit", 0x06 => "Hammer Suit",
+            0x07 => "Cloud", 0x08 => "P-Wing", 0x09 => "Starman",
+            0x0A => "Anchor", 0x0B => "Hammer", 0x0C => "Whistle", 0x0D => "Music Box",
+            0x0E => "Random", 0x0F => "Random (No Whistle)", 0x10 => "Random (Suit Only)",
+            _ => "?",
+        }).collect();
+        eprintln!("  Starting items: {}", item_names.join(", "));
     }
     eprintln!("  Output:   {}", output_path.display());
 

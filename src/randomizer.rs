@@ -1,8 +1,16 @@
 use rand::SeedableRng;
+use rand::seq::IndexedRandom;
 use rand_chacha::ChaCha8Rng;
 
 use crate::randomize;
 use crate::rom::Rom;
+
+/// Sentinel: resolve to any random item (1–13).
+pub const ITEM_RANDOM: u8 = 14;
+/// Sentinel: resolve to any random item except Whistle (1–11, 13).
+pub const ITEM_RANDOM_NO_WHISTLE: u8 = 15;
+/// Sentinel: resolve to a random suit/powerup (1–6).
+pub const ITEM_RANDOM_SUIT_ONLY: u8 = 16;
 
 /// Returns default starting lives (4).
 fn default_starting_lives() -> u8 { 4 }
@@ -178,11 +186,92 @@ fn default_true() -> bool {
     true
 }
 
-const FLAG_KEY_VERSION: u8 = 13;
+const FLAG_KEY_VERSION: u8 = 15;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
+
+/// Crockford Base-32 alphabet (excludes I, L, O, U to avoid ambiguity).
+const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/// Encode a byte slice into a Crockford Base-32 string.
+/// Pads the final group with zero bits as needed.
+fn base32_encode(data: &[u8]) -> String {
+    let bit_len = data.len() * 8;
+    let out_len = (bit_len + 4) / 5; // ceil(bits / 5)
+    let mut result = String::with_capacity(out_len);
+    let mut buf: u64 = 0;
+    let mut bits: u32 = 0;
+    for &byte in data {
+        buf = (buf << 8) | byte as u64;
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            result.push(CROCKFORD[((buf >> bits) & 0x1F) as usize] as char);
+        }
+    }
+    if bits > 0 {
+        result.push(CROCKFORD[((buf << (5 - bits)) & 0x1F) as usize] as char);
+    }
+    result
+}
+
+/// Decode a Crockford Base-32 string back into bytes.
+/// Accepts mixed case; normalizes I→1, L→1, O→0 per Crockford spec.
+fn base32_decode(s: &str, expected_bytes: usize) -> Result<Vec<u8>, String> {
+    let mut buf: u64 = 0;
+    let mut bits: u32 = 0;
+    let mut result = Vec::with_capacity(expected_bytes);
+    for ch in s.chars() {
+        let val = match ch.to_ascii_uppercase() {
+            '0' | 'O' => 0,
+            '1' | 'I' | 'L' => 1,
+            '2' => 2, '3' => 3, '4' => 4, '5' => 5, '6' => 6, '7' => 7,
+            '8' => 8, '9' => 9,
+            'A' => 10, 'B' => 11, 'C' => 12, 'D' => 13, 'E' => 14, 'F' => 15,
+            'G' => 16, 'H' => 17, 'J' => 18, 'K' => 19,
+            'M' => 20, 'N' => 21, 'P' => 22, 'Q' => 23,
+            'R' => 24, 'S' => 25, 'T' => 26, 'V' => 27,
+            'W' => 28, 'X' => 29, 'Y' => 30, 'Z' => 31,
+            c => return Err(format!("Invalid character in flag key: '{c}'")),
+        };
+        buf = (buf << 5) | val as u64;
+        bits += 5;
+        if bits >= 8 {
+            bits -= 8;
+            result.push((buf >> bits) as u8);
+        }
+    }
+    if result.len() < expected_bytes {
+        return Err(format!("Flag key too short (decoded {} bytes, expected {})", result.len(), expected_bytes));
+    }
+    result.truncate(expected_bytes);
+    Ok(result)
+}
 /// Free space in PRG012 after the Big ? Block trampoline (0x19DD0 region).
 /// The trampoline uses 0x19DD0–0x19DE1; we place the 16-byte stamp at 0x19DF0.
 const STAMP_OFFSET: usize = 0x19DF0;
+
+/// Resolve a starting item value: sentinels (14/15/16) become random concrete
+/// items; concrete values (0–13) pass through unchanged.
+pub fn resolve_starting_item(item: u8, rng: &mut ChaCha8Rng) -> u8 {
+    match item {
+        ITEM_RANDOM => {
+            // Any item 1–13
+            let pool: Vec<u8> = (1..=13).collect();
+            *pool.choose(rng).unwrap()
+        }
+        ITEM_RANDOM_NO_WHISTLE => {
+            // Any item 1–13 except whistle (0x0C)
+            let pool: Vec<u8> = (1..=13).filter(|&v| v != 0x0C).collect();
+            *pool.choose(rng).unwrap()
+        }
+        ITEM_RANDOM_SUIT_ONLY => {
+            // Suits only: mushroom(1) through hammer suit(6)
+            let pool: Vec<u8> = (1..=6).collect();
+            *pool.choose(rng).unwrap()
+        }
+        _ => item,
+    }
+}
 
 impl Options {
     /// Encode options into raw bytes.
@@ -262,304 +351,68 @@ impl Options {
             | (self.wild_injections as u8);
 
         // b8-b9: starting items (3 nibbles, 0 = none)
+        // For sentinel values (>=14), store 0 in the nibble and encode
+        // the random mode in b10 bits 5-0 instead.
         let items = &self.starting_items;
-        let b8 = (items.first().copied().unwrap_or(0) << 4)
-            | items.get(1).copied().unwrap_or(0);
-        let b9 = (items.get(2).copied().unwrap_or(0) << 4)
-            | (self.world_count.clamp(1, 7) & 0x0F);
+        fn item_nibble(item: u8) -> u8 {
+            if item >= ITEM_RANDOM { 0 } else { item }
+        }
+        fn item_mode(item: u8) -> u8 {
+            match item {
+                ITEM_RANDOM => 1,
+                ITEM_RANDOM_NO_WHISTLE => 2,
+                ITEM_RANDOM_SUIT_ONLY => 3,
+                _ => 0,
+            }
+        }
+        let i0 = items.first().copied().unwrap_or(0);
+        let i1 = items.get(1).copied().unwrap_or(0);
+        let i2 = items.get(2).copied().unwrap_or(0);
+        let b8 = (item_nibble(i0) << 4) | item_nibble(i1);
+        let b9 = (item_nibble(i2) << 4) | (self.world_count.clamp(1, 7) & 0x0F);
 
-        // b10 (v12+): extra flags
+        // b10: extra flags + per-slot random mode (2 bits each)
         let b10 = (self.random_koopalings as u8) << 7
-            | (self.include_beta_stages as u8) << 6;
+            | (self.include_beta_stages as u8) << 6
+            | (item_mode(i0) << 4)
+            | (item_mode(i1) << 2)
+            | item_mode(i2);
 
         [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10]
     }
 
-    /// Encode options into a compact hex flag key (e.g. "SMB3R-06...").
+    /// Encode options into a compact Crockford Base-32 flag key (e.g. "SMB3R-1S0G...").
     pub fn to_flag_key(&self) -> String {
         let bytes = self.to_flag_bytes();
-        let mut hex = String::with_capacity(6 + 16);
-        hex.push_str(FLAG_KEY_PREFIX);
-        for b in &bytes {
-            hex.push_str(&format!("{b:02X}"));
-        }
-        hex
+        let mut key = String::with_capacity(6 + 18);
+        key.push_str(FLAG_KEY_PREFIX);
+        key.push_str(&base32_encode(&bytes));
+        key
     }
 
-    /// Decode a flag key string into Options.
-    /// Accepts v1–v8 keys.
+    /// Decode a Crockford Base-32 flag key string into Options.
     pub fn from_flag_key(key: &str) -> Result<Options, String> {
-        let hex = key.strip_prefix(FLAG_KEY_PREFIX)
+        let encoded = key.strip_prefix(FLAG_KEY_PREFIX)
             .or_else(|| key.strip_prefix("smb3r-"))
             .unwrap_or(key);
 
-        if hex.len() % 2 != 0 || hex.len() < 8 || hex.len() > 22 {
-            return Err(format!("Flag key must be 8–22 hex digits (got {})", hex.len()));
-        }
-
-        let num_bytes = hex.len() / 2;
-        let bytes: Vec<u8> = (0..num_bytes)
-            .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("Invalid hex in flag key: {e}"))?;
+        let bytes = base32_decode(encoded, 11)?;
 
         let version = bytes[0];
-        if version < 1 || version > FLAG_KEY_VERSION {
+        if version != FLAG_KEY_VERSION {
             return Err(format!("Unsupported flag key version {version} (expected {FLAG_KEY_VERSION})"));
         }
 
         let b1 = bytes[1];
         let b2 = bytes[2];
         let b3 = bytes[3];
-        let b4 = if bytes.len() > 4 { bytes[4] } else { 0x80 }; // v1 default: card_speed_clear on
-
-        // Helper: convert old enemy booleans to new tri-state fields
-        fn legacy_enemy_opts(
-            enemies: bool, bullet_bills: bool, wild_thwomps: bool,
-            wild_cannons: bool, wild_rotodiscs: bool, wild_enemies: bool,
-        ) -> (EnemyMode, EnemyMode, EnemyMode, EnemyMode, EnemyMode, EnemyMode,
-              EnemyMode, EnemyMode, EnemyMode, EnemyMode, EnemyMode, EnemyMode,
-              EnemyMode, bool)
-        {
-            // Base mode for the 9 core classes gated by `enemies`
-            let base = if enemies { EnemyMode::Shuffle } else { EnemyMode::Off };
-            let mut ground = base;
-            let mut shell = base;
-            let mut flying = base;
-            let mut cheeps = base;
-            let mut piranhas = base;
-            let mut ghosts = base;
-            let mut water = base;
-            let mut bros = base;
-            let mut bills = if bullet_bills { EnemyMode::Shuffle } else { EnemyMode::Off };
-            let mut thwomps = if wild_thwomps { EnemyMode::Shuffle } else { EnemyMode::Off };
-            let mut cannons = if wild_cannons { EnemyMode::Shuffle } else { EnemyMode::Off };
-            let mut rotodiscs = if wild_rotodiscs { EnemyMode::Shuffle } else { EnemyMode::Off };
-            let mut wild_injections = false;
-
-            // wild_enemies: promote all currently-Shuffle classes to Wild + enable injections
-            if wild_enemies {
-                for m in [&mut ground, &mut shell, &mut flying, &mut cheeps,
-                           &mut piranhas, &mut ghosts, &mut water, &mut bros,
-                           &mut bills, &mut thwomps, &mut cannons, &mut rotodiscs] {
-                    if *m == EnemyMode::Shuffle {
-                        *m = EnemyMode::Wild;
-                    }
-                }
-                wild_injections = true;
-            }
-
-            (ground, shell, flying, cheeps, bills, piranhas, ghosts, thwomps,
-             rotodiscs, cannons, water, bros, EnemyMode::Off, wild_injections)
-        }
-
-        // v2 compat: old shuffle_fortresses/fortress_redistribute → map_shuffle
-        if version <= 2 {
-            let old_shuffle_forts = (b2 >> 6) & 1 != 0;
-            let old_fort_val = ((b2 & 0x01) << 1) | ((b3 >> 7) & 0x01);
-            let level_shuffle_val = (b2 >> 1) & 0x03;
-            let level_shuffle = match level_shuffle_val {
-                1 => LevelShuffle::IntraWorld,
-                2 => LevelShuffle::CrossWorld,
-                _ => LevelShuffle::Off,
-            };
-            let map_shuffle = old_shuffle_forts || old_fort_val != 0
-                || level_shuffle_val == 2;
-            let starting_lives = b3 & 0x7F;
-            let (ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
-                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections) =
-                legacy_enemy_opts((b1 >> 5) & 1 != 0, true, false, false, false, false);
-            return Ok(Options {
-                powerups: (b1 >> 7) & 1 != 0,
-                palettes: (b1 >> 6) & 1 != 0,
-                world_order: (b1 >> 4) & 1 != 0,
-                big_q_blocks: (b1 >> 3) & 1 != 0,
-                disable_autoscroll: (b1 >> 2) & 1 != 0,
-                airship_lock: (b1 >> 1) & 1 != 0,
-                chest_items: b1 & 1 != 0,
-                remove_whistles: (b2 >> 7) & 1 != 0,
-                map_shuffle,
-                shuffle_pipes: (b2 >> 5) & 1 != 0,
-                shuffle_airships: old_shuffle_forts,
-                fix_drawbridges: (b2 >> 4) & 1 != 0,
-                remove_rocks: (b2 >> 3) & 1 != 0,
-                level_shuffle: if map_shuffle { LevelShuffle::Off } else { level_shuffle },
-                starting_lives: if starting_lives == 0 { 1 } else { starting_lives },
-                card_speed_clear: (b4 >> 7) & 1 != 0,
-                remove_n_cards: (b4 >> 6) & 1 != 0,
-                skip_wand_cutscene: (b4 >> 5) & 1 != 0,
-                adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
-                koopaling_hits: false,
-                hammer_vulnerable_koopalings: false,
-                random_koopalings: false,
-            include_beta_stages: false,
-                hammer_breaks_locks: false,
-                hammer_breaks_bridges: false,
-                remove_spade_games: true,
-                ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
-                thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
-                starting_items: vec![],
-                world_count: 7,
-            });
-        }
-
-        // v3 compat
-        if version == 3 {
-            let level_shuffle_val = (b2 >> 1) & 0x03;
-            let level_shuffle = match level_shuffle_val {
-                1 => LevelShuffle::IntraWorld,
-                2 => LevelShuffle::CrossWorld,
-                _ => LevelShuffle::Off,
-            };
-            let starting_lives = b3 & 0x7F;
-            let starting_lives = if starting_lives == 0 { 1 } else { starting_lives };
-            let (ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
-                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections) =
-                legacy_enemy_opts((b1 >> 5) & 1 != 0, true, false, false, false, false);
-            return Ok(Options {
-                powerups: (b1 >> 7) & 1 != 0,
-                palettes: (b1 >> 6) & 1 != 0,
-                world_order: (b1 >> 4) & 1 != 0,
-                big_q_blocks: (b1 >> 3) & 1 != 0,
-                disable_autoscroll: (b1 >> 2) & 1 != 0,
-                airship_lock: (b1 >> 1) & 1 != 0,
-                chest_items: b1 & 1 != 0,
-                remove_whistles: (b2 >> 7) & 1 != 0,
-                map_shuffle: (b2 >> 6) & 1 != 0,
-                shuffle_pipes: (b2 >> 5) & 1 != 0,
-                shuffle_airships: b2 & 1 != 0,
-                fix_drawbridges: (b2 >> 4) & 1 != 0,
-                remove_rocks: (b2 >> 3) & 1 != 0,
-                level_shuffle,
-                starting_lives,
-                card_speed_clear: (b4 >> 7) & 1 != 0,
-                remove_n_cards: (b4 >> 6) & 1 != 0,
-                skip_wand_cutscene: (b4 >> 5) & 1 != 0,
-                adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
-                koopaling_hits: false,
-                hammer_vulnerable_koopalings: false,
-                random_koopalings: false,
-            include_beta_stages: false,
-                hammer_breaks_locks: false,
-                hammer_breaks_bridges: false,
-                remove_spade_games: (b4 >> 3) & 1 != 0,
-                ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
-                thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
-                starting_items: vec![],
-                world_count: 7,
-            });
-        }
-
-        // v4 compat
-        if version == 4 {
-            let level_shuffle_val = (b2 >> 1) & 0x03;
-            let level_shuffle = match level_shuffle_val {
-                1 => LevelShuffle::IntraWorld,
-                2 => LevelShuffle::CrossWorld,
-                _ => LevelShuffle::Off,
-            };
-            let starting_lives = b3 & 0x7F;
-            let starting_lives = if starting_lives == 0 { 1 } else { starting_lives };
-            let (ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
-                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections) =
-                legacy_enemy_opts(
-                    (b1 >> 5) & 1 != 0, true,
-                    (b4 >> 2) & 1 != 0, (b4 >> 1) & 1 != 0,
-                    false, false,
-                );
-            return Ok(Options {
-                powerups: (b1 >> 7) & 1 != 0,
-                palettes: (b1 >> 6) & 1 != 0,
-                world_order: (b1 >> 4) & 1 != 0,
-                big_q_blocks: (b1 >> 3) & 1 != 0,
-                disable_autoscroll: (b1 >> 2) & 1 != 0,
-                airship_lock: (b1 >> 1) & 1 != 0,
-                chest_items: b1 & 1 != 0,
-                remove_whistles: (b2 >> 7) & 1 != 0,
-                map_shuffle: (b2 >> 6) & 1 != 0,
-                shuffle_pipes: (b2 >> 5) & 1 != 0,
-                shuffle_airships: b2 & 1 != 0,
-                fix_drawbridges: (b2 >> 4) & 1 != 0,
-                remove_rocks: (b2 >> 3) & 1 != 0,
-                level_shuffle,
-                starting_lives,
-                card_speed_clear: (b4 >> 7) & 1 != 0,
-                remove_n_cards: (b4 >> 6) & 1 != 0,
-                skip_wand_cutscene: (b4 >> 5) & 1 != 0,
-                adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
-                koopaling_hits: false,
-                hammer_vulnerable_koopalings: false,
-                random_koopalings: false,
-            include_beta_stages: false,
-                hammer_breaks_locks: false,
-                hammer_breaks_bridges: false,
-                remove_spade_games: (b4 >> 3) & 1 != 0,
-                ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
-                thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
-                starting_items: vec![],
-                world_count: 7,
-            });
-        }
-
-        // v5 compat
-        if version == 5 {
-            let b5 = if bytes.len() > 5 { bytes[5] } else { 0x80 };
-            let level_shuffle_val = (b2 >> 1) & 0x03;
-            let level_shuffle = match level_shuffle_val {
-                1 => LevelShuffle::IntraWorld,
-                2 => LevelShuffle::CrossWorld,
-                _ => LevelShuffle::Off,
-            };
-            let starting_lives = b3 & 0x7F;
-            let starting_lives = if starting_lives == 0 { 1 } else { starting_lives };
-            let (ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
-                 thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections) =
-                legacy_enemy_opts(
-                    (b1 >> 5) & 1 != 0,
-                    (b5 >> 7) & 1 != 0,
-                    (b4 >> 2) & 1 != 0,
-                    (b4 >> 1) & 1 != 0,
-                    (b5 >> 6) & 1 != 0,
-                    (b5 >> 5) & 1 != 0,
-                );
-            return Ok(Options {
-                powerups: (b1 >> 7) & 1 != 0,
-                palettes: (b1 >> 6) & 1 != 0,
-                world_order: (b1 >> 4) & 1 != 0,
-                big_q_blocks: (b1 >> 3) & 1 != 0,
-                disable_autoscroll: (b1 >> 2) & 1 != 0,
-                airship_lock: (b1 >> 1) & 1 != 0,
-                chest_items: b1 & 1 != 0,
-                remove_whistles: (b2 >> 7) & 1 != 0,
-                map_shuffle: (b2 >> 6) & 1 != 0,
-                shuffle_pipes: (b2 >> 5) & 1 != 0,
-                shuffle_airships: b2 & 1 != 0,
-                fix_drawbridges: (b2 >> 4) & 1 != 0,
-                remove_rocks: (b2 >> 3) & 1 != 0,
-                level_shuffle,
-                starting_lives,
-                card_speed_clear: (b4 >> 7) & 1 != 0,
-                remove_n_cards: (b4 >> 6) & 1 != 0,
-                skip_wand_cutscene: (b4 >> 5) & 1 != 0,
-                adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
-                koopaling_hits: false,
-                hammer_vulnerable_koopalings: false,
-                random_koopalings: false,
-            include_beta_stages: false,
-                hammer_breaks_locks: false,
-                hammer_breaks_bridges: false,
-                remove_spade_games: (b4 >> 3) & 1 != 0,
-                ground, shell, flying, cheeps, bullet_bills, piranhas, ghosts,
-                thwomps, rotodiscs, cannons, water, bros, hb_encounters, wild_injections,
-                starting_items: vec![],
-                world_count: 7,
-            });
-        }
-
-        // v6 decoding
+        let b4 = bytes[4];
         let b5 = bytes[5];
         let b6 = bytes[6];
         let b7 = bytes[7];
+        let b8 = bytes[8];
+        let b9 = bytes[9];
+        let b10 = bytes[10];
 
         let level_shuffle_val = (b2 >> 1) & 0x03;
         let level_shuffle = match level_shuffle_val {
@@ -578,14 +431,10 @@ impl Options {
             }
         }
 
-        let b8 = if bytes.len() > 8 { bytes[8] } else { 0 };
-        let b9 = if bytes.len() > 9 { bytes[9] } else { 0 };
-        let b10 = if bytes.len() > 10 { bytes[10] } else { 0 };
-
         Ok(Options {
             powerups: (b1 >> 7) & 1 != 0,
-            palettes: true, // cosmetic — not encoded in flag key since v8
-            hammer_breaks_locks: if version >= 11 { (b1 >> 6) & 1 != 0 } else { false },
+            palettes: true, // cosmetic — not encoded in flag key
+            hammer_breaks_locks: (b1 >> 6) & 1 != 0,
             koopaling_hits: (b1 >> 5) & 1 != 0,
             world_order: (b1 >> 4) & 1 != 0,
             big_q_blocks: (b1 >> 3) & 1 != 0,
@@ -606,40 +455,42 @@ impl Options {
             adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
             remove_spade_games: (b4 >> 3) & 1 != 0,
             hammer_vulnerable_koopalings: (b4 >> 2) & 1 != 0,
-            random_koopalings: if version >= 12 { (b10 >> 7) & 1 != 0 } else { false },
-            include_beta_stages: if version >= 13 { (b10 >> 6) & 1 != 0 } else { false },
-            hammer_breaks_bridges: if version >= 11 { (b3 >> 7) & 1 != 0 } else { false },
-            // b5: ground(7-6) shell(5-4) flying(3-2) cheeps(1-0)
+            random_koopalings: (b10 >> 7) & 1 != 0,
+            include_beta_stages: (b10 >> 6) & 1 != 0,
+            hammer_breaks_bridges: (b3 >> 7) & 1 != 0,
             ground: dem(b5 >> 6),
             shell: dem(b5 >> 4),
             flying: dem(b5 >> 2),
             cheeps: dem(b5),
-            // b6: bullet_bills(7-6) piranhas(5-4) ghosts(3-2) thwomps(1-0)
             bullet_bills: dem(b6 >> 6),
             piranhas: dem(b6 >> 4),
             ghosts: dem(b6 >> 2),
             thwomps: dem(b6),
-            // b7: rotodiscs(7-6) cannons(5-4) water(3-2) bros(1-0)
             rotodiscs: dem(b7 >> 6),
             cannons: dem(b7 >> 4),
             water: dem(b7 >> 2),
             bros: dem(b7),
-            // b4 bits 2-1: hb_encounters, bit 0: wild_injections
             hb_encounters: dem(b4 >> 1),
             wild_injections: b4 & 1 != 0,
-            // b8-b9: starting items (3 nibbles) + world_count (low nibble of b9).
-            // v6 keys have no b8/b9; default to 0.
             starting_items: {
-                let i0 = b8 >> 4;
-                let i1 = b8 & 0x0F;
-                let i2 = b9 >> 4;
+                // Decode per-slot random mode from b10 bits 5-0
+                fn mode_to_sentinel(mode: u8, nibble: u8) -> u8 {
+                    match mode & 0x03 {
+                        1 => ITEM_RANDOM,
+                        2 => ITEM_RANDOM_NO_WHISTLE,
+                        3 => ITEM_RANDOM_SUIT_ONLY,
+                        _ => nibble,
+                    }
+                }
+                let i0 = mode_to_sentinel((b10 >> 4) & 0x03, b8 >> 4);
+                let i1 = mode_to_sentinel((b10 >> 2) & 0x03, b8 & 0x0F);
+                let i2 = mode_to_sentinel(b10 & 0x03, b9 >> 4);
                 let mut items = Vec::new();
                 if i0 != 0 { items.push(i0); }
                 if i1 != 0 { items.push(i1); }
                 if i2 != 0 { items.push(i2); }
                 items
             },
-            // b9 lower nibble: world_count (v9+). Old keys have 0 → default 7.
             world_count: {
                 let wc = b9 & 0x0F;
                 if wc == 0 { 7 } else { wc.clamp(1, 7) }
@@ -712,6 +563,11 @@ impl Default for Options {
 pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
+    // Resolve random starting items up front (deterministic from seed)
+    let resolved_items: Vec<u8> = options.starting_items.iter()
+        .map(|&item| resolve_starting_item(item, &mut rng))
+        .collect();
+
     // QoL map patches run first so all subsequent overworld operations
     // (fortress redistribution, pipe shuffle, lock shuffle) see the final
     // map connectivity and store correct replacement tiles.
@@ -781,26 +637,26 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         || options.hammer_vulnerable_koopalings
         || options.random_koopalings;
     if koopalings_may_travel {
-        rom.set_tag("qol/fix_koopaling_softlock");
-        randomize::qol::fix_koopaling_softlock(rom);
-        rom.set_tag("qol/koopaling_collision_guard");
-        randomize::qol::koopaling_collision_guard(rom);
-        rom.set_tag("qol/koopaling_vram_clear");
-        randomize::qol::koopaling_vram_clear(rom);
-        rom.set_tag("qol/koopaling_y_clamp");
-        randomize::qol::koopaling_y_clamp(rom);
+        rom.set_tag("koopalings/fix_softlock");
+        randomize::koopalings::fix_koopaling_softlock(rom);
+        rom.set_tag("koopalings/collision_guard");
+        randomize::koopalings::koopaling_collision_guard(rom);
+        rom.set_tag("koopalings/vram_clear");
+        randomize::koopalings::koopaling_vram_clear(rom);
+        rom.set_tag("koopalings/y_clamp");
+        randomize::koopalings::koopaling_y_clamp(rom);
     }
 
     // Make Koopalings vulnerable to thrown hammers (PRG000 $8302).
     if options.hammer_vulnerable_koopalings {
-        rom.set_tag("qol/hammer_vulnerable_koopalings");
-        randomize::qol::hammer_vulnerable_koopalings(rom);
+        rom.set_tag("koopalings/hammer_vulnerable");
+        randomize::koopalings::hammer_vulnerable_koopalings(rom);
     }
 
     // Random Koopaling identity remap (Fred's Map_Unused7EEA hijack).
     if options.random_koopalings {
-        rom.set_tag("enemies/random_koopalings");
-        randomize::qol::random_koopalings(rom, &mut rng);
+        rom.set_tag("koopalings/random_identity");
+        randomize::koopalings::random_koopalings(rom, &mut rng);
     }
 
     // Two mutually exclusive modes:
@@ -865,8 +721,8 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
 
     // Skip the wand falling cutscene after defeating a Koopaling.
     if options.skip_wand_cutscene {
-        rom.set_tag("qol/skip_wand_cutscene");
-        randomize::qol::skip_wand_cutscene(rom);
+        rom.set_tag("koopalings/skip_wand_cutscene");
+        randomize::koopalings::skip_wand_cutscene(rom);
     }
 
     // Remove N-card (N-Spade) panels from the overworld map.
@@ -884,14 +740,14 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
 
     // Adjust Bowser and Koopaling hitboxes.
     if options.adjust_boss_hitboxes {
-        rom.set_tag("qol/adjust_boss_hitboxes");
-        randomize::qol::adjust_boss_hitboxes(rom);
+        rom.set_tag("koopalings/adjust_boss_hitboxes");
+        randomize::koopalings::adjust_boss_hitboxes(rom);
     }
 
     // Per-Koopaling random stomp counts (1–5 hits each).
     if options.koopaling_hits {
-        rom.set_tag("qol/koopaling_hits");
-        randomize::qol::randomize_koopaling_hits(rom, &mut rng);
+        rom.set_tag("koopalings/random_hits");
+        randomize::koopalings::randomize_koopaling_hits(rom, &mut rng);
     }
 
     // Hammer breaks tiles on the overworld map (locks, bridges, or both).
@@ -916,7 +772,7 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     // the intro skip (LDA #$06; STA $DE) so the title_screen hook is preserved.
     if !options.starting_items.is_empty() {
         rom.set_tag("qol/starting_items");
-        randomize::qol::write_starting_items(rom, options.starting_lives, &options.starting_items);
+        randomize::qol::write_starting_items(rom, options.starting_lives, &resolved_items);
     }
 
     // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 23 bytes:
@@ -1077,7 +933,7 @@ mod tests {
         let opts = Options::default();
         let key = opts.to_flag_key();
         assert!(key.starts_with("SMB3R-"));
-        assert_eq!(key.len(), 28); // "SMB3R-" + 22 hex
+        assert_eq!(key.len(), 24); // "SMB3R-" + 18 base32
         let decoded = Options::from_flag_key(&key).unwrap();
         assert_eq!(opts.powerups, decoded.powerups);
         assert_eq!(opts.palettes, decoded.palettes);
@@ -1265,21 +1121,40 @@ mod tests {
     fn flag_key_without_prefix() {
         let opts = Options::default();
         let key = opts.to_flag_key();
-        let hex = key.strip_prefix("SMB3R-").unwrap();
-        let decoded = Options::from_flag_key(hex).unwrap();
+        let b32 = key.strip_prefix("SMB3R-").unwrap();
+        let decoded = Options::from_flag_key(b32).unwrap();
         assert_eq!(opts.powerups, decoded.powerups);
     }
 
     #[test]
     fn flag_key_invalid_version() {
-        let result = Options::from_flag_key("FF000000");
+        // Encode version 0xFF into base32 (first byte = 0xFF, rest zeros)
+        let mut bad_bytes = [0u8; 11];
+        bad_bytes[0] = 0xFF;
+        let key = format!("SMB3R-{}", base32_encode(&bad_bytes));
+        let result = Options::from_flag_key(&key);
         assert!(result.is_err());
     }
 
     #[test]
-    fn flag_key_invalid_hex() {
-        let result = Options::from_flag_key("ZZZZZZZZ");
+    fn flag_key_invalid_chars() {
+        let result = Options::from_flag_key("SMB3R-!!!!!!!!!!!!!!!!!!!");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn base32_round_trip() {
+        // Test with various byte patterns
+        for data in [
+            vec![0u8; 11],
+            vec![0xFF; 11],
+            vec![0x0E, 0xFF, 0xFE, 0x63, 0xFC, 0xAA, 0xAA, 0xAA, 0x59, 0x37, 0xC0],
+            (0..11).collect::<Vec<u8>>(),
+        ] {
+            let encoded = base32_encode(&data);
+            let decoded = base32_decode(&encoded, data.len()).unwrap();
+            assert_eq!(data, decoded, "round-trip failed for {data:?} (encoded: {encoded})");
+        }
     }
 
     /// Inline FNV-1a hash — no external dependency needed.
@@ -1468,5 +1343,59 @@ mod tests {
         // Disabled modules should not appear
         assert!(!tags.iter().any(|t| t.starts_with("enemies")));
         assert!(!tags.iter().any(|t| t.starts_with("world_order")));
+    }
+
+    #[test]
+    fn flag_key_round_trip_all_random_items() {
+        let mut opts = Options::default();
+        opts.starting_items = vec![ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY];
+        let key = opts.to_flag_key();
+        let decoded = Options::from_flag_key(&key).unwrap();
+        assert_eq!(decoded.starting_items, vec![ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY]);
+    }
+
+    #[test]
+    fn flag_key_round_trip_mixed_random_and_concrete() {
+        let mut opts = Options::default();
+        opts.starting_items = vec![ITEM_RANDOM, 3];
+        let key = opts.to_flag_key();
+        let decoded = Options::from_flag_key(&key).unwrap();
+        assert_eq!(decoded.starting_items, vec![ITEM_RANDOM, 3]);
+    }
+
+    #[test]
+    fn resolve_starting_item_deterministic() {
+        let mut rng1 = ChaCha8Rng::seed_from_u64(42);
+        let mut rng2 = ChaCha8Rng::seed_from_u64(42);
+        let a = resolve_starting_item(ITEM_RANDOM, &mut rng1);
+        let b = resolve_starting_item(ITEM_RANDOM, &mut rng2);
+        assert_eq!(a, b, "same seed must produce same item");
+    }
+
+    #[test]
+    fn resolve_suit_only_in_range() {
+        for seed in 0..100u64 {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let item = resolve_starting_item(ITEM_RANDOM_SUIT_ONLY, &mut rng);
+            assert!((1..=6).contains(&item), "suit-only produced {item}, expected 1-6");
+        }
+    }
+
+    #[test]
+    fn resolve_no_whistle_never_whistle() {
+        for seed in 0..100u64 {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let item = resolve_starting_item(ITEM_RANDOM_NO_WHISTLE, &mut rng);
+            assert_ne!(item, 0x0C, "no-whistle produced a whistle on seed {seed}");
+            assert!((1..=13).contains(&item), "no-whistle produced {item}, expected 1-13 (not 12)");
+        }
+    }
+
+    #[test]
+    fn resolve_concrete_passthrough() {
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
+        assert_eq!(resolve_starting_item(0, &mut rng), 0);
+        assert_eq!(resolve_starting_item(5, &mut rng), 5);
+        assert_eq!(resolve_starting_item(13, &mut rng), 13);
     }
 }
