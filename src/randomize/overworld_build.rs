@@ -1316,20 +1316,8 @@ fn place_locks<R: Rng>(
                 continue;
             }
 
-            let mut score: i32 = 0;
-
-            // Soft goal 1: blocks a later fortress
-            let blocks_later_fort = slots.iter().any(|s| {
-                s.kind == SlotKind::Fortress
-                    && s.section > section_idx
-                    && !walk.nodes.contains(&s.pos)
-            });
-            if blocks_later_fort {
-                score += 100;
-            }
-
             // Check if target is reachable with this lock closed (used for
-            // scoring and 1-F secret exit safety).
+            // secret exit safety).
             let target_reachable = target_pos
                 .map(|tp| walk.nodes.contains(&tp))
                 .unwrap_or(true);
@@ -1341,27 +1329,24 @@ fn place_locks<R: Rng>(
                 s.kind != SlotKind::Fortress || walk.nodes.contains(&s.pos)
             });
 
-            // Soft goal 2: blocks target (airship/bowser)
-            if !target_reachable {
-                score += 50;
-            }
+            // Score by gated node count: how many nodes become unreachable
+            // when this lock is closed? Prefers chokepoints that gate large
+            // portions of the map over locks adjacent to the airship (which
+            // only gate ~1 node).
+            let open_grid = build_test_grid(None);
+            let walk_open = walk_map(&open_grid, pipe_pairs, start_pos);
+            let gated = walk_open.nodes.len() as i32 - walk.nodes.len() as i32;
 
-            // Soft goal 3: longer detour to target = better lock.
-            // Compare BFS distance to target with vs without this lock.
-            // Only evaluated when goals 1+2 didn't fire, to avoid extra BFS.
-            if score == 0 {
-                if let Some(tp) = target_pos {
-                    let locked_dist = walk.distances.get(&tp).copied();
-                    let open_grid = build_test_grid(None);
-                    let walk_open = walk_map(&open_grid, pipe_pairs, start_pos);
-                    let open_dist = walk_open.distances.get(&tp).copied();
-                    if let (Some(ld), Some(od)) = (locked_dist, open_dist) {
-                        let detour = ld as i32 - od as i32;
-                        if detour > 0 {
-                            score += detour;
-                        }
-                    }
-                }
+            let mut score: i32 = gated;
+
+            // Bonus: blocks a later fortress (strong progression signal)
+            let blocks_later_fort = slots.iter().any(|s| {
+                s.kind == SlotKind::Fortress
+                    && s.section > section_idx
+                    && !walk.nodes.contains(&s.pos)
+            });
+            if blocks_later_fort {
+                score += 100;
             }
 
             // Track best overall and best safe separately.
@@ -1899,6 +1884,149 @@ mod tests {
                 for &&(r, c) in &non_blank_assignments {
                     eprintln!("    ({},{}) tile=${:02X}", r, c, cw.grid.get(r, c));
                 }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_lock_airship_distance() {
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => {
+                eprintln!("ROM not found, skipping");
+                return;
+            }
+        };
+        let catalog = NodeCatalog::build(&rom, false);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+
+        let seeds = 100u64;
+        // BFS distance histogram: index = distance, value = count
+        let mut histogram = [0u32; 30];
+        let mut total_locks = 0u32;
+        let mut no_target_locks = 0u32;
+        // Per-world stats: (sum_of_distances, count)
+        let mut per_world: [(u64, u32); 8] = [(0, 0); 8];
+        // Track locks at distance <= 2 per seed for flagging
+        let mut close_lock_seeds = 0u32;
+
+        for seed in 0..seeds {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let result = build(&rom, &pickup, &catalog, &mut rng);
+            let mut seed_has_close = false;
+
+            for built in &result.worlds {
+                let wi = built.world_idx;
+                let target_pos = find_target(&built.grid, wi);
+
+                if target_pos.is_none() {
+                    no_target_locks += built.locks.len() as u32;
+                    continue;
+                }
+                let tp = target_pos.unwrap();
+
+                // Build a fully-stamped grid with all locks open so BFS
+                // reflects the walkable map. walk_map uses node-to-node
+                // hops (nodes are 2 tiles apart), so lock path tiles
+                // won't appear in distances. Instead, BFS from the target
+                // and measure to the node(s) adjacent to each lock.
+                let mut stamped = built.grid.clone();
+                for slot in &built.slots {
+                    match slot.kind {
+                        SlotKind::Fortress => stamped.set(slot.pos.0, slot.pos.1, TILE_FORTRESS),
+                        SlotKind::Level => {
+                            if BACKGROUND_TILES.contains(&stamped.get(slot.pos.0, slot.pos.1)) {
+                                stamped.set(slot.pos.0, slot.pos.1, TILE_NODE);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                // BFS from target — distances to every reachable node
+                let walk_from_target = walk_map(&stamped, &built.pipe_pairs, Some(tp));
+
+                for lock in &built.locks {
+                    total_locks += 1;
+
+                    // Lock is on a path tile between two nodes. Find the
+                    // closest adjacent node (in BFS hops from target).
+                    let (lr, lc) = lock.pos;
+                    let adjacent_nodes: Vec<(usize, usize)> = [(-1i16, 0i16), (1, 0), (0, -1), (0, 1)]
+                        .iter()
+                        .filter_map(|&(dr, dc)| {
+                            let nr = lr as i16 + dr;
+                            let nc = lc as i16 + dc;
+                            if nr < 0 || nr >= stamped.rows as i16 || nc < 0 || nc >= stamped.cols as i16 {
+                                return None;
+                            }
+                            let pos = (nr as usize, nc as usize);
+                            // Only count positions that are actual BFS nodes
+                            if walk_from_target.distances.contains_key(&pos) {
+                                Some(pos)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    // Use the minimum distance among adjacent nodes
+                    // (the side closer to the target).
+                    let min_dist = adjacent_nodes.iter()
+                        .filter_map(|pos| walk_from_target.distances.get(pos))
+                        .min()
+                        .copied();
+
+                    if let Some(dist) = min_dist {
+                        let idx = (dist as usize).min(histogram.len() - 1);
+                        histogram[idx] += 1;
+                        per_world[wi].0 += dist as u64;
+                        per_world[wi].1 += 1;
+
+                        if dist <= 2 {
+                            seed_has_close = true;
+                        }
+                    } else {
+                        no_target_locks += 1;
+                    }
+                }
+            }
+            if seed_has_close {
+                close_lock_seeds += 1;
+            }
+        }
+
+        eprintln!("\n=== Lock-to-Airship BFS Distance ({seeds} seeds, {total_locks} locks) ===\n");
+
+        // Histogram
+        eprintln!("Distance | Count | Bar");
+        eprintln!("---------+-------+----");
+        let max_dist_with_data = histogram.iter().rposition(|&c| c > 0).unwrap_or(0);
+        for d in 0..=max_dist_with_data {
+            let bar = "#".repeat((histogram[d] as usize).min(60));
+            eprintln!("{d:>5}    | {:<5} | {bar}", histogram[d]);
+        }
+
+        // Summary stats
+        let total_dist: u64 = histogram.iter().enumerate().map(|(d, &c)| d as u64 * c as u64).sum();
+        let mean = total_dist as f64 / total_locks.max(1) as f64;
+        let close = histogram[0] + histogram[1] + histogram[2];
+        let close_pct = close as f64 / total_locks.max(1) as f64 * 100.0;
+
+        eprintln!("\nMean distance:         {mean:.1}");
+        eprintln!("Locks at dist <= 2:    {close}/{total_locks} ({close_pct:.1}%)");
+        eprintln!("Seeds with any <= 2:   {close_lock_seeds}/{seeds}");
+        if no_target_locks > 0 {
+            eprintln!("Locks without target:  {no_target_locks}");
+        }
+
+        eprintln!("\nPer-world averages:");
+        for wi in 0..8 {
+            let (sum, count) = per_world[wi];
+            if count > 0 {
+                let avg = sum as f64 / count as f64;
+                eprintln!("  W{}: {avg:.1} avg ({count} locks)", wi + 1);
             }
         }
     }
