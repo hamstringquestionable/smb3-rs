@@ -213,7 +213,6 @@ pub(crate) fn build<R: Rng>(
         }
     }
 
-    let mut lock_counter: usize = 0;
     let mut worlds = Vec::with_capacity(8);
     for wi in 0..8 {
         // Max non-pipe slots = pointer table slots minus pipe endpoints.
@@ -232,21 +231,20 @@ pub(crate) fn build<R: Rng>(
             level_counts[wi],
             VANILLA_PIPE_PAIRS[wi],
             max_non_pipe_slots,
-            &mut lock_counter,
+            false, // force_safe
             rng,
         );
         worlds.push(built);
     }
 
     // Ensure at least one lock across all worlds is secret-exit-safe.
-    // The 1-in-4 safe preference usually produces one, but if not,
-    // retry lock placement in a random world with counter forced to
-    // a safe slot.
+    // Ensure at least one lock across all worlds is secret-exit-safe.
+    // The score-based prefer_safe usually produces one (triggers when
+    // best_score < 5), but if not, retry with force_safe=true.
     let has_safe = worlds.iter().any(|b| b.locks.iter().any(|l| l.secret_exit_safe));
     if !has_safe {
         let mut retry_order: Vec<usize> = (0..8).collect();
         retry_order.shuffle(rng);
-        let mut retry_counter: usize = 3; // forces prefer_safe on first lock
         for &wi in &retry_order {
             let built = &worlds[wi];
             let start_pos = rom_data::find_start(&built.grid);
@@ -258,7 +256,7 @@ pub(crate) fn build<R: Rng>(
                 target_pos,
                 &built.slots,
                 fort_counts[wi],
-                &mut retry_counter,
+                true, // force_safe
                 rng,
             );
             if new_locks.iter().any(|l| l.secret_exit_safe) {
@@ -388,7 +386,7 @@ fn build_world<R: Rng>(
     level_count: usize,
     pipe_pair_count: usize,
     max_non_pipe_slots: usize,
-    lock_counter: &mut usize,
+    force_safe: bool,
     rng: &mut R,
 ) -> BuiltWorld {
     let start_pos = rom_data::find_start(&grid);
@@ -508,7 +506,7 @@ fn build_world<R: Rng>(
         target_pos,
         &slots,
         fort_count,
-        lock_counter,
+        force_safe,
         rng,
     );
 
@@ -1187,7 +1185,7 @@ fn place_locks<R: Rng>(
     target_pos: Option<(usize, usize)>,
     slots: &[SlotAssignment],
     fort_count: usize,
-    lock_counter: &mut usize,
+    force_safe: bool,
     rng: &mut R,
 ) -> Vec<LockAssignment> {
     let mut locks: Vec<LockAssignment> = Vec::new();
@@ -1271,9 +1269,16 @@ fn place_locks<R: Rng>(
 
         candidates.shuffle(rng);
 
-        let prefer_safe = *lock_counter % 4 == 3;
+        // Prefer safe when forced (retry path) or when the best candidate
+        // is weak anyway (score < 5) — don't sacrifice a high-scoring lock.
+        // Evaluated after scoring all candidates, see below.
         let mut best: Option<((usize, usize), u8, u8, i32, bool)> = None;
         let mut best_safe: Option<((usize, usize), u8, u8, i32)> = None;
+
+        // Open grid (no candidate lock) is constant for all candidates in this
+        // section — hoist the BFS to avoid redundant walks per candidate.
+        let open_grid = build_test_grid(None);
+        let open_node_count = walk_map(&open_grid, pipe_pairs, start_pos).nodes.len() as i32;
 
         for &cand_pos in &candidates {
             let tile = reference_grid.get(cand_pos.0, cand_pos.1);
@@ -1333,9 +1338,7 @@ fn place_locks<R: Rng>(
             // when this lock is closed? Prefers chokepoints that gate large
             // portions of the map over locks adjacent to the airship (which
             // only gate ~1 node).
-            let open_grid = build_test_grid(None);
-            let walk_open = walk_map(&open_grid, pipe_pairs, start_pos);
-            let gated = walk_open.nodes.len() as i32 - walk.nodes.len() as i32;
+            let gated = open_node_count - walk.nodes.len() as i32;
 
             let mut score: i32 = gated;
 
@@ -1347,6 +1350,17 @@ fn place_locks<R: Rng>(
             });
             if blocks_later_fort {
                 score += 100;
+            }
+
+            // Bonus: blocks the target (airship/bowser)
+            if !target_reachable {
+                score += 10;
+            }
+
+            // Slight preference for bridge tiles — water gaps look better
+            // than locks on regular path tiles.
+            if tile == 0xB3 {
+                score += 1;
             }
 
             // Track best overall and best safe separately.
@@ -1369,7 +1383,11 @@ fn place_locks<R: Rng>(
             }
         }
 
-        // Every 4th lock prefers the best safe candidate; fall back to best overall.
+        // Prefer safe when forced (retry) or when best score is low —
+        // no point picking an impactful lock if there are none.
+        let best_score = best.map(|(_, _, _, s, _)| s).unwrap_or(0);
+        let prefer_safe = force_safe || best_score < 5;
+
         let chosen = if prefer_safe {
             best_safe.map(|(pos, gap, replace, score)| (pos, gap, replace, score, true))
                 .or(best)
@@ -1379,7 +1397,6 @@ fn place_locks<R: Rng>(
 
         if let Some((pos, gap, replace, _score, safe)) = chosen {
             locked_tiles.insert(pos);
-            *lock_counter += 1;
             locks.push(LockAssignment {
                 pos,
                 gap_tile: gap,
@@ -1884,6 +1901,216 @@ mod tests {
                 for &&(r, c) in &non_blank_assignments {
                     eprintln!("    ({},{}) tile=${:02X}", r, c, cw.grid.get(r, c));
                 }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_lock_scoring_detail() {
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => {
+                eprintln!("ROM not found, skipping");
+                return;
+            }
+        };
+        let catalog = NodeCatalog::build(&rom, false);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+
+        for seed in [42u64, 123, 999] {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let result = build(&rom, &pickup, &catalog, &mut rng);
+
+            eprintln!("\n{}", "=".repeat(60));
+            eprintln!("=== Seed {seed} ===");
+
+            for built in &result.worlds {
+                let wi = built.world_idx;
+                let target_pos = find_target(&built.grid, wi);
+                let start_pos = rom_data::find_start(&built.grid);
+
+                let forts: Vec<_> = built.slots.iter()
+                    .filter(|s| s.kind == SlotKind::Fortress)
+                    .collect();
+                let levels: Vec<_> = built.slots.iter()
+                    .filter(|s| s.kind == SlotKind::Level)
+                    .collect();
+
+                eprintln!("\n  W{}: {} forts, {} levels, {} pipes, {} locks, target={:?}",
+                    wi + 1, forts.len(), levels.len(), built.pipe_pairs.len(),
+                    built.locks.len(), target_pos);
+
+                // Build stamped grid (forts + levels, no locks)
+                let mut base_grid = built.grid.clone();
+                for slot in &built.slots {
+                    match slot.kind {
+                        SlotKind::Fortress => base_grid.set(slot.pos.0, slot.pos.1, TILE_FORTRESS),
+                        SlotKind::Level => {
+                            if BACKGROUND_TILES.contains(&base_grid.get(slot.pos.0, slot.pos.1)) {
+                                base_grid.set(slot.pos.0, slot.pos.1, TILE_NODE);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                for lock in &built.locks {
+                    // Open grid: no locks
+                    let walk_open = walk_map(&base_grid, &built.pipe_pairs, start_pos);
+
+                    // Locked grid: this lock closed
+                    let mut locked_grid = base_grid.clone();
+                    locked_grid.set(lock.pos.0, lock.pos.1, lock.gap_tile);
+                    let walk_locked = walk_map(&locked_grid, &built.pipe_pairs, start_pos);
+
+                    let gated_count = walk_open.nodes.len() as i32 - walk_locked.nodes.len() as i32;
+
+                    // What specifically gets gated?
+                    let gated_forts: Vec<_> = forts.iter()
+                        .filter(|f| walk_open.nodes.contains(&f.pos) && !walk_locked.nodes.contains(&f.pos))
+                        .collect();
+                    let gated_levels: Vec<_> = levels.iter()
+                        .filter(|l| walk_open.nodes.contains(&l.pos) && !walk_locked.nodes.contains(&l.pos))
+                        .collect();
+                    let gates_target = target_pos
+                        .map(|tp| walk_open.nodes.contains(&tp) && !walk_locked.nodes.contains(&tp))
+                        .unwrap_or(false);
+
+                    // BFS distance from lock to target (via adjacent nodes)
+                    let target_dist = if let Some(tp) = target_pos {
+                        let walk_from_target = walk_map(&base_grid, &built.pipe_pairs, Some(tp));
+                        let (lr, lc) = lock.pos;
+                        [(-1i16, 0i16), (1, 0), (0, -1), (0, 1)].iter()
+                            .filter_map(|&(dr, dc)| {
+                                let nr = lr as i16 + dr;
+                                let nc = lc as i16 + dc;
+                                if nr < 0 || nc < 0 { return None; }
+                                walk_from_target.distances.get(&(nr as usize, nc as usize)).copied()
+                            })
+                            .min()
+                    } else {
+                        None
+                    };
+
+                    eprintln!("    Lock ({:2},{:2}) sect={} safe={:<5} gated={:<3} dist_to_target={:<4} gates: {} forts, {} levels{}",
+                        lock.pos.0, lock.pos.1,
+                        lock.fort_section,
+                        lock.secret_exit_safe,
+                        gated_count,
+                        target_dist.map(|d| d.to_string()).unwrap_or("-".into()),
+                        gated_forts.len(),
+                        gated_levels.len(),
+                        if gates_target { ", TARGET" } else { "" },
+                    );
+                }
+            }
+        }
+    }
+
+    /// Dump all lock candidates and their scores for a specific world.
+    /// Usage: change seed/target_wi below, then run with --nocapture.
+    #[test]
+    #[ignore]
+    fn test_lock_candidates_dump() {
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => { eprintln!("ROM not found"); return; }
+        };
+        let catalog = NodeCatalog::build(&rom, false);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+
+        let seed = 42u64;
+        let target_wi = 6; // 0-indexed: W7 = 6
+
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(&rom, &pickup, &catalog, &mut rng);
+        let built = &result.worlds[target_wi];
+
+        let start_pos = rom_data::find_start(&built.grid);
+        let target_pos = find_target(&built.grid, target_wi);
+
+        // Build base grid with forts/levels stamped (no locks)
+        let mut base_grid = built.grid.clone();
+        for slot in &built.slots {
+            match slot.kind {
+                SlotKind::Fortress => base_grid.set(slot.pos.0, slot.pos.1, TILE_FORTRESS),
+                SlotKind::Level => {
+                    if BACKGROUND_TILES.contains(&base_grid.get(slot.pos.0, slot.pos.1)) {
+                        base_grid.set(slot.pos.0, slot.pos.1, TILE_NODE);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        eprintln!("\n=== Seed {seed}, W{} — Lock Candidate Dump ===", target_wi + 1);
+        eprintln!("Target: {:?}, Start: {:?}", target_pos, start_pos);
+        eprintln!("Forts: {}, Sections: {}", result.fort_counts[target_wi], built.section_count);
+
+        // For each section, enumerate all lockable tiles and score them
+        for section_idx in 0..built.section_count {
+            let fort_pos = match built.slots.iter()
+                .find(|s| s.section == section_idx && s.kind == SlotKind::Fortress)
+            {
+                Some(s) => s.pos,
+                None => continue,
+            };
+
+            eprintln!("\n  Section {section_idx} (fort at {:?}):", fort_pos);
+
+            // Open grid for this section: earlier locks open, no current lock
+            let walk_open = walk_map(&base_grid, &built.pipe_pairs, start_pos);
+            let open_node_count = walk_open.nodes.len();
+
+            // Find all lockable path tiles
+            let mut candidates: Vec<((usize, usize), i32, bool, i32, bool, bool)> = Vec::new();
+            // (pos, gated, safe, score, blocks_later_fort, blocks_target)
+
+            for r in 0..base_grid.rows {
+                for c in 0..base_grid.cols {
+                    let tile = base_grid.get(r, c);
+                    if !LOCKABLE_TILES.contains(&tile) { continue; }
+
+                    let gap = gap_tile_for(tile);
+                    let mut test_grid = base_grid.clone();
+                    test_grid.set(r, c, gap);
+                    let walk = walk_map(&test_grid, &built.pipe_pairs, start_pos);
+
+                    // Hard rule: fort must be reachable
+                    if !walk.nodes.contains(&fort_pos) { continue; }
+
+                    let gated = open_node_count as i32 - walk.nodes.len() as i32;
+                    let target_reachable = target_pos
+                        .map(|tp| walk.nodes.contains(&tp))
+                        .unwrap_or(true);
+                    let safe = target_reachable && built.slots.iter().all(|s| {
+                        s.kind != SlotKind::Fortress || walk.nodes.contains(&s.pos)
+                    });
+                    let blocks_later_fort = built.slots.iter().any(|s| {
+                        s.kind == SlotKind::Fortress
+                            && s.section > section_idx
+                            && !walk.nodes.contains(&s.pos)
+                    });
+                    let mut score = gated;
+                    if blocks_later_fort { score += 100; }
+
+                    candidates.push(((r, c), gated, safe, score, blocks_later_fort, !target_reachable));
+                }
+            }
+
+            // Sort by score descending
+            candidates.sort_by(|a, b| b.3.cmp(&a.3));
+
+            let chosen = built.locks.iter().find(|l| l.fort_section == section_idx);
+            eprintln!("    {} candidates pass hard rules, chosen={:?}",
+                candidates.len(),
+                chosen.map(|l| l.pos));
+
+            for (pos, gated, safe, score, blf, bt) in &candidates {
+                let marker = if chosen.map(|l| l.pos == *pos).unwrap_or(false) { " <-- CHOSEN" } else { "" };
+                eprintln!("    ({:2},{:2}) gated={:<3} score={:<4} safe={:<5} blk_fort={:<5} blk_target={}{marker}",
+                    pos.0, pos.1, gated, score, safe, blf, bt);
             }
         }
     }
