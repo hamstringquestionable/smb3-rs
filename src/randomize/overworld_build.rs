@@ -636,7 +636,11 @@ fn place_pipes<R: Rng>(
     let mut placed_pairs: Vec<((usize, usize), (usize, usize))> = Vec::new();
     let mut used_positions: HashSet<(usize, usize)> = HashSet::new();
 
-    // Phase 0: fixed endpoints — place these first, partner chosen randomly
+    // Phase 0: fixed endpoints — place these first, partner on opposite side.
+    // The fixed endpoint is typically on an island (e.g. W3 rightmost node).
+    // The partner must be on the reachable mainland so the pipe actually
+    // bridges the gap. If both ends land on the same island the pipe is
+    // useless and the target becomes unreachable.
     for &fixed_pos in fixed_endpoints {
         if placed_pairs.len() >= pair_count {
             break;
@@ -644,14 +648,32 @@ fn place_pipes<R: Rng>(
         grid.set(fixed_pos.0, fixed_pos.1, TILE_PIPE);
         used_positions.insert(fixed_pos);
 
-        // Pick a random partner from available blank slots
+        // BFS to find which blanks are reachable from start.
+        let walk = walk_map(grid, &placed_pairs, start_pos);
+        let fixed_is_reachable = walk.nodes.contains(&fixed_pos);
+
+        // Pick partner from opposite side: if fixed is on an island,
+        // partner must be reachable (and vice versa).
         let available: Vec<(usize, usize)> = blank_positions
             .iter()
             .copied()
             .filter(|p| !used_positions.contains(p))
+            .filter(|p| walk.nodes.contains(p) != fixed_is_reachable)
             .collect();
 
-        if let Some(&partner) = available.choose(rng) {
+        // Fall back to any available blank if no opposite-side candidates.
+        let fallback: Vec<(usize, usize)> = if available.is_empty() {
+            blank_positions
+                .iter()
+                .copied()
+                .filter(|p| !used_positions.contains(p))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let candidates = if available.is_empty() { &fallback } else { &available };
+
+        if let Some(&partner) = candidates.choose(rng) {
             grid.set(partner.0, partner.1, TILE_PIPE);
             used_positions.insert(partner);
             placed_pairs.push((fixed_pos, partner));
