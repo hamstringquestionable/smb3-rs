@@ -117,6 +117,21 @@ const THWOMPS: &[u8] = &[
     0x8F, // OBJ_THWOMPDIAGONALDL
 ];
 
+/// Enemies whose sprites are taller than a standard 1-tile enemy.
+/// When one of these is the replacement in a swap, Y is decremented by 1
+/// to prevent the taller sprite from clipping into the floor.
+const TALL_ENEMIES: &[u8] = &[
+    0x3F, // OBJ_DRYBONES
+    0x7A, // OBJ_BIGGREENTROOPA
+    0x7B, // OBJ_BIGREDTROOPA
+    0x7C, // OBJ_BIGGOOMBA
+    0x7E, // OBJ_BIGGREENHOPPER
+    0x81, // OBJ_HAMMERBRO
+    0x82, // OBJ_BOOMERANGBRO
+    0x86, // OBJ_HEAVYBRO
+    0x87, // OBJ_FIREBRO
+];
+
 /// Cannon-spawned Bullet Bill and Missile Bill. Separate from standalone
 /// BULLET_BILLS (0x78/0x79) because these require a cannon tile to spawn.
 const CFIRE_BILLS: &[u8] = &[
@@ -570,6 +585,13 @@ fn commit_chr_page(id: u8, slot4: &mut ChrSlot, slot5: &mut ChrSlot) {
     }
 }
 
+/// If the new enemy is tall, nudge Y up by 1 tile to prevent floor clipping.
+fn adjust_y_for_tall(data: &mut [u8], id_index: usize, new_id: u8) {
+    if TALL_ENEMIES.contains(&new_id) {
+        data[id_index + 2] = data[id_index + 2].wrapping_sub(1);
+    }
+}
+
 /// Pick a random CHR-compatible enemy from `pool`, or `None` if nothing fits.
 fn pick_compatible<R: Rng>(
     pool: &[u8], slot4: ChrSlot, slot5: ChrSlot, rng: &mut R,
@@ -618,7 +640,9 @@ fn randomize_hb_wild_segment<R: Rng>(
 
     if swappable.len() == 1 {
         if let Some(chosen) = pick_compatible(STOMPABLE_ENEMIES, slot4, slot5, rng) {
-            data[entries[swappable[0]].data_index] = chosen;
+            let di = entries[swappable[0]].data_index;
+            data[di] = chosen;
+            adjust_y_for_tall(data, di, chosen);
         }
     } else if swappable.len() == 2 {
         // Roll whether this segment gets a non-stompable enemy (5/31 ≈ 16%)
@@ -630,24 +654,33 @@ fn randomize_hb_wild_segment<R: Rng>(
                 commit_chr_page(ns, &mut s4, &mut s5);
                 if let Some(shell) = pick_compatible(SHELL_ENEMIES, s4, s5, rng) {
                     // Randomly assign which slot gets which
+                    let (di0, di1) = (entries[swappable[0]].data_index, entries[swappable[1]].data_index);
                     if rng.random_range(..2u32) == 0 {
-                        data[entries[swappable[0]].data_index] = ns;
-                        data[entries[swappable[1]].data_index] = shell;
+                        data[di0] = ns;
+                        adjust_y_for_tall(data, di0, ns);
+                        data[di1] = shell;
+                        adjust_y_for_tall(data, di1, shell);
                     } else {
-                        data[entries[swappable[0]].data_index] = shell;
-                        data[entries[swappable[1]].data_index] = ns;
+                        data[di0] = shell;
+                        adjust_y_for_tall(data, di0, shell);
+                        data[di1] = ns;
+                        adjust_y_for_tall(data, di1, ns);
                     }
                 }
             }
         } else {
             // Both from stompable pool
             if let Some(first) = pick_compatible(STOMPABLE_ENEMIES, slot4, slot5, rng) {
-                data[entries[swappable[0]].data_index] = first;
+                let di0 = entries[swappable[0]].data_index;
+                data[di0] = first;
+                adjust_y_for_tall(data, di0, first);
                 let mut s4 = slot4;
                 let mut s5 = slot5;
                 commit_chr_page(first, &mut s4, &mut s5);
                 if let Some(second) = pick_compatible(STOMPABLE_ENEMIES, s4, s5, rng) {
-                    data[entries[swappable[1]].data_index] = second;
+                    let di1 = entries[swappable[1]].data_index;
+                    data[di1] = second;
+                    adjust_y_for_tall(data, di1, second);
                 }
             }
         }
@@ -743,16 +776,19 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
             } else if SHELL_PROTECTED_OFFSETS.contains(&file_offset) && modes.shell != EnemyMode::Off {
                 if let Some(chosen) = pick_compatible(SHELL_ENEMIES, committed_slot4, committed_slot5, rng) {
                     data[entry.data_index] = chosen;
+                    adjust_y_for_tall(&mut data, entry.data_index, chosen);
                     commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                 }
             } else if TANK_BRO_PROTECTED_OFFSETS.contains(&file_offset) && modes.bros != EnemyMode::Off {
                 if let Some(chosen) = pick_compatible(TANK_BRO_POOL, committed_slot4, committed_slot5, rng) {
                     data[entry.data_index] = chosen;
+                    adjust_y_for_tall(&mut data, entry.data_index, chosen);
                     commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                 }
             } else if let Some(pool) = find_class_pool(entry.obj_id, modes, wild_pool) {
                 if let Some(chosen) = pick_compatible(pool, committed_slot4, committed_slot5, rng) {
                     data[entry.data_index] = chosen;
+                    adjust_y_for_tall(&mut data, entry.data_index, chosen);
                     commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                 }
             }
@@ -776,6 +812,17 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                     if let Some(chosen) = pick_compatible(WILD_INJECTION_IDS, committed_slot4, committed_slot5, rng) {
                         let di = entries[target_idx].data_index;
                         data[di] = chosen;
+                        if chosen == 0xAF {
+                            // Angry Sun: fixed sky position
+                            data[di + 1] = 0x02;
+                            data[di + 2] = 0x11;
+                        } else if chosen == 0x83 {
+                            // Lakitu: fixed sky position
+                            data[di + 1] = 0x02;
+                            data[di + 2] = 0x12;
+                        } else {
+                            adjust_y_for_tall(&mut data, di, chosen);
+                        }
                         commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                     }
                 }
@@ -839,9 +886,12 @@ mod tests {
             "Goomba replaced with non-ground: 0x{:02X}",
             result[0]
         );
-        // Position bytes must be unchanged
+        // X must be unchanged; Y may be decremented by 1 for tall enemies
         assert_eq!(result[1], 0x0E);
-        assert_eq!(result[2], 0x19);
+        let expected_y = if TALL_ENEMIES.contains(&result[0]) { 0x18 } else { 0x19 };
+        assert_eq!(result[2], expected_y,
+            "Goomba slot Y: got 0x{:02X}, expected 0x{:02X} (replacement 0x{:02X})",
+            result[2], expected_y, result[0]);
 
         // Green Troopa should be replaced with a shell enemy
         assert!(
@@ -850,7 +900,10 @@ mod tests {
             result[3]
         );
         assert_eq!(result[4], 0x24);
-        assert_eq!(result[5], 0x16);
+        let expected_y = if TALL_ENEMIES.contains(&result[3]) { 0x15 } else { 0x16 };
+        assert_eq!(result[5], expected_y,
+            "Troopa slot Y: got 0x{:02X}, expected 0x{:02X} (replacement 0x{:02X})",
+            result[5], expected_y, result[3]);
 
         // Venus Fire Trap should be replaced with a piranha
         assert!(
