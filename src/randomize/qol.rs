@@ -25,6 +25,9 @@ const W2_SECRET_ROCK: usize = 0x186E0;
 // W3 rock blocking boat path (screen 0, row 6, col 15) — $51 → $45
 const W3_BOAT_ROCK: usize = 0x187DB;
 
+// W4 rock blocking pipe path (screen 1, row 6, col 25) — $51 → $45
+const W4_PIPE_ROCK: usize = 0x18A16;
+
 // Big ? Block bonus room patch: decouple room selection from World_Num.
 //
 // Two-part patch:
@@ -158,6 +161,11 @@ pub fn remove_w2_rock(rom: &mut Rom) {
 /// Remove the W3 rock blocking the boat path, replacing it with horizontal path.
 pub fn remove_w3_boat_rock(rom: &mut Rom) {
     rom.write_byte(W3_BOAT_ROCK, 0x45);
+}
+
+/// Remove the W4 rock blocking the pipe shortcut, replacing it with horizontal path.
+pub fn remove_w4_pipe_rock(rom: &mut Rom) {
+    rom.write_byte(W4_PIPE_ROCK, 0x45);
 }
 
 /// Patch Big ? Block bonus room selection to use level identity instead of World_Num.
@@ -552,6 +560,14 @@ mod tests {
         rom.write_byte(W3_BOAT_ROCK, 0x51);
         remove_w3_boat_rock(&mut rom);
         assert_eq!(rom.read_byte(W3_BOAT_ROCK), 0x45);
+    }
+
+    #[test]
+    fn test_remove_w4_pipe_rock() {
+        let mut rom = make_test_rom();
+        rom.write_byte(W4_PIPE_ROCK, 0x51);
+        remove_w4_pipe_rock(&mut rom);
+        assert_eq!(rom.read_byte(W4_PIPE_ROCK), 0x45);
     }
 
     #[test]
