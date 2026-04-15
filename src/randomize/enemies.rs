@@ -21,6 +21,10 @@ const ENEMY_DATA_END: usize = 0x0E00D;
 /// the same slot won't cause visible sprite garbling.
 const BOOMBOOM_IDS: &[u8] = &[0x4A, 0x4B, 0x4C];
 
+/// Boom-Boom variants that can be swapped with each other.
+/// 0x4A is excluded — it's the stationary variant used in specific contexts.
+const BOOMBOOM_SWAP: &[u8] = &[0x4B, 0x4C];
+
 // Object IDs from the Southbird SMB3 disassembly (smb3.asm).
 // Only IDs that are actual enemies safe to swap are included.
 // Special objects (end-level card, pipes, platforms, bosses, powerups,
@@ -771,6 +775,8 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                 {
                     data[entry.data_index] = *BIG_Q_BLOCKS.choose(rng).unwrap();
                 }
+            } else if !big_q_only && BOOMBOOM_SWAP.contains(&data[entry.data_index]) {
+                data[entry.data_index] = *BOOMBOOM_SWAP.choose(rng).unwrap();
             } else if PROTECTED_ENEMY_OFFSETS.contains(&file_offset) {
                 commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
             } else if SHELL_PROTECTED_OFFSETS.contains(&file_offset) && modes.shell != EnemyMode::Off {
