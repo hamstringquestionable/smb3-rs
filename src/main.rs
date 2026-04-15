@@ -87,7 +87,7 @@ struct Cli {
     #[arg(long)]
     keep_drawbridges: bool,
 
-    /// Keep path-blocking rocks (W2 secret path, W3 boat dock)
+    /// Keep path-blocking rocks (W2 secret path, W3 boat dock, W4 pipe shortcut)
     #[arg(long)]
     keep_rocks: bool,
 
