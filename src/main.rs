@@ -147,10 +147,6 @@ struct Cli {
     #[arg(long, default_value = "shuffle")]
     flying: String,
 
-    /// Cheep cheep variants: off, shuffle, or wild (default: shuffle)
-    #[arg(long, default_value = "shuffle")]
-    cheeps: String,
-
     /// Bullet Bill variants: off, shuffle, or wild (default: shuffle)
     #[arg(long, default_value = "shuffle")]
     bullet_bills: String,
@@ -322,7 +318,6 @@ fn main() {
             ground: parse_enemy_mode(&cli.ground, "ground"),
             shell: parse_enemy_mode(&cli.shell, "shell"),
             flying: parse_enemy_mode(&cli.flying, "flying"),
-            cheeps: parse_enemy_mode(&cli.cheeps, "cheeps"),
             bullet_bills: parse_enemy_mode(&cli.bullet_bills, "bullet-bills"),
             piranhas: parse_enemy_mode(&cli.piranhas, "piranhas"),
             ghosts: parse_enemy_mode(&cli.ghosts, "ghosts"),

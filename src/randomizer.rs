@@ -143,9 +143,6 @@ pub struct Options {
     /// Flying/hopping enemies (Paratroopa, Paragoomba, etc.)
     #[serde(default = "default_shuffle")]
     pub flying: EnemyMode,
-    /// Cheep cheep variants (overworld jumping types)
-    #[serde(default = "default_shuffle")]
-    pub cheeps: EnemyMode,
     /// Bullet Bill variants (standard and homing)
     #[serde(default = "default_shuffle")]
     pub bullet_bills: EnemyMode,
@@ -322,11 +319,10 @@ impl Options {
             }
         }
 
-        // b5: ground(7-6) shell(5-4) flying(3-2) cheeps(1-0)
+        // b5: ground(7-6) shell(5-4) flying(3-2) reserved(1-0)
         let b5 = em(self.ground) << 6
             | em(self.shell) << 4
-            | em(self.flying) << 2
-            | em(self.cheeps);
+            | em(self.flying) << 2;
 
         // b6: bullet_bills(7-6) piranhas(5-4) ghosts(3-2) thwomps(1-0)
         let b6 = em(self.bullet_bills) << 6
@@ -461,7 +457,7 @@ impl Options {
             ground: dem(b5 >> 6),
             shell: dem(b5 >> 4),
             flying: dem(b5 >> 2),
-            cheeps: dem(b5),
+            // b5 bits 1-0: formerly cheeps (now merged into water)
             bullet_bills: dem(b6 >> 6),
             piranhas: dem(b6 >> 4),
             ghosts: dem(b6 >> 2),
@@ -501,7 +497,7 @@ impl Options {
     /// Returns true if any enemy class is enabled (not Off).
     pub fn any_enemies_active(&self) -> bool {
         self.ground != EnemyMode::Off || self.shell != EnemyMode::Off
-            || self.flying != EnemyMode::Off || self.cheeps != EnemyMode::Off
+            || self.flying != EnemyMode::Off
             || self.bullet_bills != EnemyMode::Off || self.piranhas != EnemyMode::Off
             || self.ghosts != EnemyMode::Off || self.thwomps != EnemyMode::Off
             || self.rotodiscs != EnemyMode::Off || self.cannons != EnemyMode::Off
@@ -542,7 +538,6 @@ impl Default for Options {
             ground: EnemyMode::Shuffle,
             shell: EnemyMode::Shuffle,
             flying: EnemyMode::Shuffle,
-            cheeps: EnemyMode::Shuffle,
             bullet_bills: EnemyMode::Shuffle,
             piranhas: EnemyMode::Shuffle,
             ghosts: EnemyMode::Shuffle,
@@ -960,7 +955,6 @@ mod tests {
         assert_eq!(opts.ground, decoded.ground);
         assert_eq!(opts.shell, decoded.shell);
         assert_eq!(opts.flying, decoded.flying);
-        assert_eq!(opts.cheeps, decoded.cheeps);
         assert_eq!(opts.bullet_bills, decoded.bullet_bills);
         assert_eq!(opts.piranhas, decoded.piranhas);
         assert_eq!(opts.ghosts, decoded.ghosts);
@@ -1009,7 +1003,6 @@ mod tests {
             ground: EnemyMode::Wild,
             shell: EnemyMode::Wild,
             flying: EnemyMode::Wild,
-            cheeps: EnemyMode::Wild,
             bullet_bills: EnemyMode::Wild,
             piranhas: EnemyMode::Wild,
             ghosts: EnemyMode::Wild,
@@ -1077,7 +1070,6 @@ mod tests {
             ground: EnemyMode::Off,
             shell: EnemyMode::Off,
             flying: EnemyMode::Off,
-            cheeps: EnemyMode::Off,
             bullet_bills: EnemyMode::Off,
             piranhas: EnemyMode::Off,
             ghosts: EnemyMode::Off,
@@ -1202,7 +1194,6 @@ mod tests {
             ground: EnemyMode::Off,
             shell: EnemyMode::Off,
             flying: EnemyMode::Off,
-            cheeps: EnemyMode::Off,
             bullet_bills: EnemyMode::Off,
             piranhas: EnemyMode::Off,
             ghosts: EnemyMode::Off,
@@ -1251,7 +1242,6 @@ mod tests {
             ground: EnemyMode::Wild,
             shell: EnemyMode::Wild,
             flying: EnemyMode::Wild,
-            cheeps: EnemyMode::Wild,
             bullet_bills: EnemyMode::Wild,
             piranhas: EnemyMode::Wild,
             ghosts: EnemyMode::Wild,
@@ -1326,7 +1316,6 @@ mod tests {
         options.ground = EnemyMode::Off;
         options.shell = EnemyMode::Off;
         options.flying = EnemyMode::Off;
-        options.cheeps = EnemyMode::Off;
         options.bullet_bills = EnemyMode::Off;
         options.piranhas = EnemyMode::Off;
         options.ghosts = EnemyMode::Off;

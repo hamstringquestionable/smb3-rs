@@ -341,7 +341,6 @@ function getCurrentOptionsJson() {
 		ground: getPill("opt-ground"),
 		shell: getPill("opt-shell"),
 		flying: getPill("opt-flying"),
-		cheeps: getPill("opt-cheeps"),
 		bullet_bills: getPill("opt-bullet-bills"),
 		piranhas: getPill("opt-piranhas"),
 		ghosts: getPill("opt-ghosts"),
@@ -400,7 +399,7 @@ function applyFlagKey(key) {
 		if (opts.ground !== undefined) setPill("opt-ground", opts.ground);
 		if (opts.shell !== undefined) setPill("opt-shell", opts.shell);
 		if (opts.flying !== undefined) setPill("opt-flying", opts.flying);
-		if (opts.cheeps !== undefined) setPill("opt-cheeps", opts.cheeps);
+
 		if (opts.bullet_bills !== undefined) setPill("opt-bullet-bills", opts.bullet_bills);
 		if (opts.piranhas !== undefined) setPill("opt-piranhas", opts.piranhas);
 		if (opts.ghosts !== undefined) setPill("opt-ghosts", opts.ghosts);
