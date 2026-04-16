@@ -273,10 +273,26 @@ const KOOPA_HITS_CODE: [u8; 13] = [
 // place the defeat JMP right after the code, before the table.
 // Total: 13 bytes code + 3 bytes JMP defeat + 7 bytes table = 23 bytes.
 
+/// File offset of fireball→stomp handoff: `LDA #$02; STA $7F,X` (4 bytes).
+///
+/// When Objects_HitCount ($7CF6) reaches 0 from fireball hits, vanilla sets
+/// the stomp counter ($7F,X) to 2 and jumps into the stomp handler at $B17B,
+/// which does INC $7F,X → 3, then CMP #$03 → defeat. With random thresholds
+/// > 3, the hardcoded 2 never reaches defeat — permanent softlock.
+///
+/// We replace these 4 bytes with `JSR fire_preset; NOP`. The fire_preset
+/// subroutine loads the per-world threshold from our table, subtracts 1,
+/// and stores to $7F,X. After INC at $B185, the counter exactly equals the
+/// threshold, guaranteeing defeat.
+const KOOPA_FIRE_HANDOFF: usize = 0x03035;
+
 pub fn randomize_koopaling_hits(rom: &mut Rom, rng: &mut ChaCha8Rng) {
     use rand::Rng;
+    use super::rom_data::{
+        FS_KOOPA_FIRE_PRESET, KOOPA_FIRE_PRESET_CPU, KOOPA_HITS_TABLE_CPU,
+    };
 
-    // Write subroutine into free space
+    // Write stomp threshold subroutine into free space
     rom.write_range(super::rom_data::FS_KOOPA_HITS_SUB, &KOOPA_HITS_CODE);
 
     // Write JMP defeat right after the subroutine (at sub + 13)
@@ -289,10 +305,33 @@ pub fn randomize_koopaling_hits(rom: &mut Rom, rng: &mut ChaCha8Rng) {
     let table: [u8; 7] = std::array::from_fn(|_| rng.random_range(1..=5));
     rom.write_range(super::rom_data::FS_KOOPA_HITS_TABLE, &table);
 
-    // Patch call site: replace LDA $7F,X; CMP #$03 (3 bytes) with JMP subroutine
+    // Patch stomp call site: replace LDA $7F,X; CMP #$03 (3 bytes) with JMP subroutine
     rom.write_range(KOOPA_PATCH_SITE, &[
         0x4C, KOOPA_HITS_SUB_CPU as u8, (KOOPA_HITS_SUB_CPU >> 8) as u8,
     ]);
+
+    // Write fireball preset subroutine (12 bytes):
+    //   LDY $0727        ; World_Num
+    //   LDA table,Y      ; per-world threshold
+    //   SEC
+    //   SBC #$01         ; threshold - 1
+    //   STA $7F,X        ; store so INC at $B185 → exactly threshold
+    //   RTS
+    #[rustfmt::skip]
+    let fire_code: [u8; 12] = [
+        0xAC, 0x27, 0x07,                                              // LDY $0727
+        0xB9, KOOPA_HITS_TABLE_CPU as u8, (KOOPA_HITS_TABLE_CPU >> 8) as u8, // LDA table,Y
+        0x38,                                                           // SEC
+        0xE9, 0x01,                                                     // SBC #$01
+        0x95, 0x7F,                                                     // STA $7F,X
+        0x60,                                                           // RTS
+    ];
+    rom.write_range(FS_KOOPA_FIRE_PRESET, &fire_code);
+
+    // Patch fireball handoff: LDA #$02; STA $7F,X (4 bytes) → JSR fire_preset; NOP
+    let lo = (KOOPA_FIRE_PRESET_CPU & 0xFF) as u8;
+    let hi = (KOOPA_FIRE_PRESET_CPU >> 8) as u8;
+    rom.write_range(KOOPA_FIRE_HANDOFF, &[0x20, lo, hi, 0xEA]); // JSR + NOP
 }
 
 /// Skip the wand falling cutscene after defeating a Koopaling.
@@ -371,6 +410,15 @@ mod tests {
         for &v in &table[..] {
             assert!((1..=5).contains(&v), "threshold {v} out of range 1–5");
         }
+
+        // Fireball handoff: JSR fire_preset + NOP
+        assert_eq!(rom.read_byte(KOOPA_FIRE_HANDOFF), 0x20); // JSR opcode
+        assert_eq!(rom.read_byte(KOOPA_FIRE_HANDOFF + 3), 0xEA); // NOP
+
+        // Fire preset subroutine written
+        let fire = rom.read_range(crate::randomize::rom_data::FS_KOOPA_FIRE_PRESET, 12);
+        assert_eq!(fire[0], 0xAC); // LDY abs
+        assert_eq!(fire[11], 0x60); // RTS
     }
 
     #[test]
