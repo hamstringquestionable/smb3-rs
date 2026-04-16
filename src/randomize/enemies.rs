@@ -303,8 +303,8 @@ fn sprite_bank(id: u8) -> Option<SpriteBank> {
         0x6B => Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
 
         // === Group 4: PRG004 (IDs 0x6C–0x8F) ===
-        // Koopas, Paratroopas, Goomba, Paragoomba, FlyingParatroopa, OrangeCheep
-        0x6C | 0x6D | 0x6E | 0x6F | 0x72 | 0x73 | 0x74 | 0x76 | 0x78 | 0x79 | 0x80 | 0x88 =>
+        // Koopas, Paratroopas, Goomba, Paragoomba, FlyingParatroopa, Cheeps
+        0x6C | 0x6D | 0x6E | 0x6F | 0x72 | 0x73 | 0x74 | 0x76 | 0x77 | 0x78 | 0x79 | 0x80 | 0x88 =>
             Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
         // Buzzy Beetle, Spiny, Lakitu, Spiny Egg
         0x70 | 0x71 | 0x83 | 0x84 | 0x85 =>
@@ -436,6 +436,11 @@ const WILD_INJECTION_IDS: &[u8] = &[
 /// Probability (out of 256) that a segment will receive an injection when wild_injections is on.
 /// ~15% chance per segment.
 const WILD_INJECTION_CHANCE: u8 = 38;
+
+/// Maximum X-tile gap between consecutive enemies (sorted by X) before they
+/// are split into separate CHR groups. Enemies more than one screen apart
+/// can never be visible simultaneously, so they don't need compatible CHR pages.
+const CHR_GROUP_GAP: u8 = 16;
 
 /// All cannon sub-class IDs merged for Wild mode.
 const ALL_CANNONS: &[u8] = &[
@@ -623,12 +628,86 @@ fn pick_compatible<R: Rng>(
     compatible.choose(rng).copied()
 }
 
+/// Pre-built page buckets for page-first picking. Built once per segment,
+/// reused for every Wild enemy in that segment.
+struct PageBuckets {
+    /// Each entry is (slot, page, enemy_ids). No-bank enemies are appended to every bucket.
+    buckets: Vec<Vec<u8>>,
+}
+
+impl PageBuckets {
+    /// Build buckets from the wild pool. Groups enemies by (slot, chr_page);
+    /// no-bank enemies are added to every bucket so they don't get their own.
+    fn build(pool: &[u8]) -> Self {
+        let mut map: Vec<((u8, u8), Vec<u8>)> = Vec::new();
+        let mut no_bank: Vec<u8> = Vec::new();
+        for &id in pool {
+            match sprite_bank(id) {
+                Some(sb) => {
+                    let key = (sb.slot, sb.chr_page);
+                    if let Some(entry) = map.iter_mut().find(|(k, _)| *k == key) {
+                        entry.1.push(id);
+                    } else {
+                        map.push((key, vec![id]));
+                    }
+                }
+                None => no_bank.push(id),
+            }
+        }
+        if !no_bank.is_empty() {
+            for (_, bucket) in &mut map {
+                bucket.extend_from_slice(&no_bank);
+            }
+        }
+        PageBuckets { buckets: map.into_iter().map(|(_, v)| v).collect() }
+    }
+
+    /// Pick a page uniformly, then pick a CHR-compatible enemy from that page.
+    fn pick<R: Rng>(&self, slot4: ChrSlot, slot5: ChrSlot, rng: &mut R) -> Option<u8> {
+        // Filter to buckets that have at least one compatible enemy
+        let compatible: Vec<&Vec<u8>> = self.buckets.iter()
+            .filter(|b| b.iter().any(|&id| is_chr_compatible(id, slot4, slot5)))
+            .collect();
+        let bucket = *compatible.choose(rng)?;
+        let candidates: Vec<u8> = bucket.iter()
+            .copied()
+            .filter(|&id| is_chr_compatible(id, slot4, slot5))
+            .collect();
+        candidates.choose(rng).copied()
+    }
+}
+
 /// A parsed 3-byte entry from the enemy data block.
 struct SegmentEntry {
     /// Index into the segment data buffer (points to the obj_id byte)
     data_index: usize,
     /// The object ID
     obj_id: u8,
+    /// X tile position (byte 2 of the 3-byte entry)
+    x_pos: u8,
+}
+
+/// Split entries into proximity groups based on X-position gaps.
+/// Entries within `CHR_GROUP_GAP` tiles of their neighbors stay in the same group.
+/// Returns groups of entry indices (sorted by X within each group).
+fn chr_groups(entries: &[SegmentEntry]) -> Vec<Vec<usize>> {
+    if entries.is_empty() {
+        return Vec::new();
+    }
+    let mut sorted: Vec<usize> = (0..entries.len()).collect();
+    sorted.sort_by_key(|&i| entries[i].x_pos);
+
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut current: Vec<usize> = vec![sorted[0]];
+    for &idx in &sorted[1..] {
+        let last = *current.last().unwrap();
+        if entries[idx].x_pos.saturating_sub(entries[last].x_pos) > CHR_GROUP_GAP {
+            groups.push(std::mem::take(&mut current));
+        }
+        current.push(idx);
+    }
+    groups.push(current);
+    groups
 }
 
 /// HB Wild segment randomization with stompability constraints.
@@ -710,9 +789,10 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
     let len = ENEMY_DATA_END - ENEMY_DATA_START;
     let mut data = rom.read_range(ENEMY_DATA_START, len).to_vec();
 
-    // Build class modes and wild pool
+    // Build class modes, wild pool, and pre-bucketed page groups
     let normal_modes = ClassModes::from_options(opts);
     let normal_wild_pool = normal_modes.build_wild_pool();
+    let normal_page_buckets = PageBuckets::build(&normal_wild_pool);
     let hb_modes = hb_class_modes(opts.hb_encounters);
     let hb_wild_pool = hb_modes.build_wild_pool();
 
@@ -740,10 +820,10 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
 
         // Determine if this is an HB encounter segment
         let is_hb_segment = HAMMER_BRO_SEGMENT_OFFSETS.contains(&seg_file_offset);
-        let (modes, wild_pool) = if is_hb_segment {
-            (&hb_modes, hb_wild_pool.as_slice())
+        let (modes, wild_pool, page_buckets) = if is_hb_segment {
+            (&hb_modes, hb_wild_pool.as_slice(), &normal_page_buckets) // HB uses own wild path
         } else {
-            (&normal_modes, normal_wild_pool.as_slice())
+            (&normal_modes, normal_wild_pool.as_slice(), &normal_page_buckets)
         };
 
         // Collect all entries in this segment
@@ -752,6 +832,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
             entries.push(SegmentEntry {
                 data_index: i,
                 obj_id: data[i],
+                x_pos: data[i + 1],
             });
             i += 3;
         }
@@ -762,89 +843,104 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
             continue;
         }
 
-        // Two-pass approach:
-        // Pass 1: pre-commit CHR pages from non-swappable objects AND uniform-CHR
-        // classes (all members share the same page/slot, so swapping can't change it).
-        let mut committed_slot4 = ChrSlot::Free;
-        let mut committed_slot5 = ChrSlot::Free;
+        // Split entries into proximity groups by X-position. Each group gets
+        // independent CHR slot tracking — enemies more than CHR_GROUP_GAP tiles
+        // apart can never be on-screen together, so they don't need compatible
+        // CHR pages.
+        let groups = chr_groups(&entries);
 
-        if !big_q_only {
-            for entry in &entries {
-                let should_precommit = match find_class_pool(entry.obj_id, modes, wild_pool) {
-                    None => !BOOMBOOM_IDS.contains(&entry.obj_id),
-                    Some(class) => is_uniform_chr_class(class),
-                };
-                if should_precommit {
+        for group in &groups {
+            // Two-pass approach per CHR group:
+            // Pass 1: pre-commit CHR pages from non-swappable objects AND uniform-CHR
+            // classes (all members share the same page/slot, so swapping can't change it).
+            let mut committed_slot4 = ChrSlot::Free;
+            let mut committed_slot5 = ChrSlot::Free;
+
+            if !big_q_only {
+                for &idx in group {
+                    let entry = &entries[idx];
+                    let should_precommit = match find_class_pool(entry.obj_id, modes, wild_pool) {
+                        None => !BOOMBOOM_IDS.contains(&entry.obj_id),
+                        Some(pool) if std::ptr::eq(pool, wild_pool) => false,
+                        Some(class) => is_uniform_chr_class(class),
+                    };
+                    if should_precommit {
+                        commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
+                    }
+                }
+            }
+
+            // Pass 2: randomize swappable entries respecting pre-commitments
+            for &idx in group {
+                let entry = &entries[idx];
+                let file_offset = ENEMY_DATA_START + entry.data_index;
+
+                if big_q_only {
+                    if BIG_Q_BLOCKS.contains(&entry.obj_id)
+                        && file_offset != W7F1_TANOOKI_OFFSET
+                    {
+                        data[entry.data_index] = *BIG_Q_BLOCKS.choose(rng).unwrap();
+                    }
+                } else if BOOMBOOM_SWAP.contains(&data[entry.data_index]) {
+                    data[entry.data_index] = *BOOMBOOM_SWAP.choose(rng).unwrap();
+                } else if PROTECTED_ENEMY_OFFSETS.contains(&file_offset) {
                     commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
-                }
-            }
-        }
-
-        // Pass 2: randomize swappable entries respecting pre-commitments
-        for entry in &entries {
-            let file_offset = ENEMY_DATA_START + entry.data_index;
-
-            if big_q_only {
-                if BIG_Q_BLOCKS.contains(&entry.obj_id)
-                    && file_offset != W7F1_TANOOKI_OFFSET
-                {
-                    data[entry.data_index] = *BIG_Q_BLOCKS.choose(rng).unwrap();
-                }
-            } else if !big_q_only && BOOMBOOM_SWAP.contains(&data[entry.data_index]) {
-                data[entry.data_index] = *BOOMBOOM_SWAP.choose(rng).unwrap();
-            } else if PROTECTED_ENEMY_OFFSETS.contains(&file_offset) {
-                commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
-            } else if SHELL_PROTECTED_OFFSETS.contains(&file_offset) && modes.shell != EnemyMode::Off {
-                if let Some(chosen) = pick_compatible(SHELL_ENEMIES, committed_slot4, committed_slot5, rng) {
-                    data[entry.data_index] = chosen;
-                    adjust_y_for_tall(&mut data, entry.data_index, chosen);
-                    commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
-                }
-            } else if TANK_BRO_PROTECTED_OFFSETS.contains(&file_offset) && modes.bros != EnemyMode::Off {
-                if let Some(chosen) = pick_compatible(TANK_BRO_POOL, committed_slot4, committed_slot5, rng) {
-                    data[entry.data_index] = chosen;
-                    adjust_y_for_tall(&mut data, entry.data_index, chosen);
-                    commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
-                }
-            } else if let Some(pool) = find_class_pool(entry.obj_id, modes, wild_pool) {
-                if let Some(chosen) = pick_compatible(pool, committed_slot4, committed_slot5, rng) {
-                    data[entry.data_index] = chosen;
-                    adjust_y_for_tall(&mut data, entry.data_index, chosen);
-                    commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
-                }
-            }
-        }
-
-        // Pass 3 (wild_injections only): inject Lakitu/Angry Sun/Boss Bass.
-        if opts.wild_injections && !big_q_only {
-            let roll: u8 = rng.random_range(..=255);
-            if roll < WILD_INJECTION_CHANCE {
-                let swappable_indices: Vec<usize> = entries.iter()
-                    .enumerate()
-                    .filter(|(_, e)| {
-                        let fo = ENEMY_DATA_START + e.data_index;
-                        !PROTECTED_ENEMY_OFFSETS.contains(&fo)
-                            && find_class_pool(data[e.data_index], modes, wild_pool).is_some()
-                    })
-                    .map(|(i, _)| i)
-                    .collect();
-
-                if let Some(&target_idx) = swappable_indices.choose(rng) {
-                    if let Some(chosen) = pick_compatible(WILD_INJECTION_IDS, committed_slot4, committed_slot5, rng) {
-                        let di = entries[target_idx].data_index;
-                        data[di] = chosen;
-                        if chosen == 0xAF {
-                            // Angry Sun: fixed sky position
-                            data[di + 1] = 0x02;
-                            data[di + 2] = 0x11;
-                        } else if chosen == 0x83 {
-                            // Lakitu: fixed sky position
-                            data[di + 1] = 0x02;
-                            data[di + 2] = 0x12;
-                        } else {
-                            adjust_y_for_tall(&mut data, di, chosen);
-                        }
+                } else if SHELL_PROTECTED_OFFSETS.contains(&file_offset) && modes.shell != EnemyMode::Off {
+                    if let Some(chosen) = pick_compatible(SHELL_ENEMIES, committed_slot4, committed_slot5, rng) {
+                        data[entry.data_index] = chosen;
+                        adjust_y_for_tall(&mut data, entry.data_index, chosen);
                         commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
+                    }
+                } else if TANK_BRO_PROTECTED_OFFSETS.contains(&file_offset) && modes.bros != EnemyMode::Off {
+                    if let Some(chosen) = pick_compatible(TANK_BRO_POOL, committed_slot4, committed_slot5, rng) {
+                        data[entry.data_index] = chosen;
+                        adjust_y_for_tall(&mut data, entry.data_index, chosen);
+                        commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
+                    }
+                } else if let Some(pool) = find_class_pool(entry.obj_id, modes, wild_pool) {
+                    let chosen = if std::ptr::eq(pool, wild_pool) {
+                        page_buckets.pick(committed_slot4, committed_slot5, rng)
+                    } else {
+                        pick_compatible(pool, committed_slot4, committed_slot5, rng)
+                    };
+                    if let Some(chosen) = chosen {
+                        data[entry.data_index] = chosen;
+                        adjust_y_for_tall(&mut data, entry.data_index, chosen);
+                        commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
+                    }
+                }
+            }
+
+            // Pass 3 (wild_injections only): inject Lakitu/Angry Sun/Boss Bass.
+            if opts.wild_injections && !big_q_only {
+                let roll: u8 = rng.random_range(..=255);
+                if roll < WILD_INJECTION_CHANCE {
+                    let swappable_indices: Vec<usize> = group.iter()
+                        .copied()
+                        .filter(|&idx| {
+                            let fo = ENEMY_DATA_START + entries[idx].data_index;
+                            !PROTECTED_ENEMY_OFFSETS.contains(&fo)
+                                && find_class_pool(data[entries[idx].data_index], modes, wild_pool).is_some()
+                        })
+                        .collect();
+
+                    if let Some(&target_idx) = swappable_indices.choose(rng) {
+                        if let Some(chosen) = pick_compatible(WILD_INJECTION_IDS, committed_slot4, committed_slot5, rng) {
+                            let di = entries[target_idx].data_index;
+                            data[di] = chosen;
+                            if chosen == 0xAF {
+                                // Angry Sun: fixed sky position
+                                data[di + 1] = 0x02;
+                                data[di + 2] = 0x11;
+                            } else if chosen == 0x83 {
+                                // Lakitu: fixed sky position
+                                data[di + 1] = 0x02;
+                                data[di + 2] = 0x12;
+                            } else {
+                                adjust_y_for_tall(&mut data, di, chosen);
+                            }
+                            commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
+                        }
                     }
                 }
             }
@@ -1581,5 +1677,120 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_chr_groups_split_distant_enemies() {
+        // Two enemies far apart (screen 0 vs screen 5) should get independent
+        // CHR groups. A Boo ($12/+4) on screen 0 should NOT block a ground enemy
+        // on screen 5 from picking a non-$12 slot+4 page.
+        let mut data = vec![0u8; 393232];
+        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
+        data[4] = 16;
+        data[5] = 16;
+        data[6] = 0x40;
+
+        let seg = &[
+            0xFF,
+            0x01,
+            0x2F, 0x04, 0x08, // Boo ($12/+4) at x=4 (screen 0)
+            0x29, 0x50, 0x19, // Spike ($0A/+4) at x=80 (screen 5)
+            0xFF,
+        ];
+        let start = ENEMY_DATA_START;
+        data[start..start + seg.len()].copy_from_slice(seg);
+        let rom = Rom::from_bytes(&data).unwrap();
+
+        // Under segment-wide tracking, Spike would be locked to $12/+4 enemies only.
+        // Under distance-based grouping, Spike should freely pick any ground enemy.
+        let mut saw_non_12_slot4 = false;
+        for seed in 0..500u64 {
+            let mut rom_copy = rom.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_copy, &mut rng, &enemy_opts());
+
+            let ghost = rom_copy.read_byte(ENEMY_DATA_START + 2);
+            let ground = rom_copy.read_byte(ENEMY_DATA_START + 5);
+            assert!(GHOST_ENEMIES.contains(&ghost), "seed {seed}: ghost 0x{ghost:02X}");
+            assert!(GROUND_ENEMIES.contains(&ground), "seed {seed}: ground 0x{ground:02X}");
+
+            if let Some(sb) = sprite_bank(ground) {
+                if sb.slot == 4 && sb.chr_page != 0x12 {
+                    saw_non_12_slot4 = true;
+                }
+            }
+        }
+        assert!(saw_non_12_slot4,
+            "500 seeds: distant ground enemy never picked a non-$12 slot+4 page — grouping not working");
+    }
+
+    #[test]
+    fn test_chr_groups_keep_close_together() {
+        // Two enemies close together (10 tiles apart) should still share
+        // CHR constraints — same behavior as before grouping.
+        // Goomba ($4F/+5) won't conflict with Boo ($12/+4) on slot+4,
+        // so we can verify that any slot+4 ground enemy picked must be $12.
+        let mut data = vec![0u8; 393232];
+        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
+        data[4] = 16;
+        data[5] = 16;
+        data[6] = 0x40;
+
+        let seg = &[
+            0xFF,
+            0x01,
+            0x2F, 0x08, 0x08, // Boo ($12/+4) at x=8
+            0x72, 0x12, 0x19, // Goomba ($4F/+5) at x=18 (10 tiles away, same group)
+            0xFF,
+        ];
+        let start = ENEMY_DATA_START;
+        data[start..start + seg.len()].copy_from_slice(seg);
+        let rom = Rom::from_bytes(&data).unwrap();
+
+        // Boo pre-commits $12/+4 as uniform ghost class, so the ground enemy
+        // must be compatible — any slot+4 pick must be $12 (or use slot+5 only).
+        for seed in 0..500u64 {
+            let mut rom_copy = rom.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_copy, &mut rng, &enemy_opts());
+
+            let ground = rom_copy.read_byte(ENEMY_DATA_START + 5);
+            assert!(GROUND_ENEMIES.contains(&ground), "seed {seed}: ground 0x{ground:02X}");
+            if let Some(sb) = sprite_bank(ground) {
+                if sb.slot == 4 {
+                    assert_eq!(sb.chr_page, 0x12,
+                        "seed {seed}: close enemy 0x{ground:02X} has slot+4 page 0x{:02X}, \
+                         conflicts with Boo's $12", sb.chr_page);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_chr_groups_basic() {
+        // Verify the grouping function itself
+        let entries = vec![
+            SegmentEntry { data_index: 0, obj_id: 0x72, x_pos: 5 },
+            SegmentEntry { data_index: 3, obj_id: 0x72, x_pos: 10 },
+            SegmentEntry { data_index: 6, obj_id: 0x72, x_pos: 80 },
+            SegmentEntry { data_index: 9, obj_id: 0x72, x_pos: 85 },
+        ];
+        let groups = chr_groups(&entries);
+        assert_eq!(groups.len(), 2, "should split into 2 groups");
+        assert_eq!(groups[0].len(), 2, "first group: x=5, x=10");
+        assert_eq!(groups[1].len(), 2, "second group: x=80, x=85");
+    }
+
+    #[test]
+    fn test_chr_groups_single() {
+        // All entries close together — one group
+        let entries = vec![
+            SegmentEntry { data_index: 0, obj_id: 0x72, x_pos: 5 },
+            SegmentEntry { data_index: 3, obj_id: 0x72, x_pos: 10 },
+            SegmentEntry { data_index: 6, obj_id: 0x72, x_pos: 20 },
+        ];
+        let groups = chr_groups(&entries);
+        assert_eq!(groups.len(), 1, "all within gap — one group");
+        assert_eq!(groups[0].len(), 3);
     }
 }
