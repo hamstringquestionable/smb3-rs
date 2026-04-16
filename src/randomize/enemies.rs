@@ -36,13 +36,16 @@ const GROUND_ENEMIES: &[u8] = &[
     0x2B, // OBJ_GOOMBA_SHOE (Kuribo's Shoe)
     0x29, // OBJ_SPIKE
     0x2A, // OBJ_PATOOIE
+    0x2D, // OBJ_CHAINCHOMP (strained on post)
+    0x3D, // OBJ_CHAINCHOMPSTAKE (chained to stake, lunges)
     0x4F, // OBJ_CHAINCHOMPFREE (roams freely without post tile)
     0x33, // OBJ_NIPPER (stationary)
     0x39, // OBJ_NIPPERHOPPING
-    0x3F, // OBJ_DRYBONES
     0x40, // OBJ_BUSTERBEATLE
+    0x46, // OBJ_LAKITU (level-placed variant, CHR $0A/+4)
     0x55, // OBJ_BOBOMB
     0x58, // OBJ_FIRECHOMP (floats and chases)
+    0x59, // OBJ_FIRESNAKE
     0x6B, // OBJ_PILEDRIVER (micro goomba)
     0x71, // OBJ_SPINY
     0x72, // OBJ_GOOMBA
@@ -71,11 +74,15 @@ const FLYING_ENEMIES: &[u8] = &[
 
 /// Water enemies that can be swapped with each other.
 const WATER_ENEMIES: &[u8] = &[
+    0x48, // OBJ_BABYBLOOPER
     0x61, // OBJ_BLOOPERWITHKIDS
     0x62, // OBJ_BLOOPER
     0x63, // OBJ_BIGBERTHABIRTHER
     0x64, // OBJ_CHEEPCHEEPHOPPER
     0x6A, // OBJ_BLOOPERCHILDSHOOT
+    0x76, // OBJ_GREENCHEEP (jumping)
+    0x77, // OBJ_REDCHEEP
+    0x88, // OBJ_ORANGECHEEP
 ];
 
 /// Hammer/Boomerang/Fire Bros — swap among themselves.
@@ -101,12 +108,6 @@ const PIRANHASC: &[u8] = &[
     0xA3, // OBJ_REDPIRANHA_FLIPPED
     0xA5, // OBJ_GREENPIRANHA_FIREC
     0xA7, // OBJ_VENUSFIRETRAP_CEIL
-];
-
-/// Cheep cheep variants (overworld jumping types).
-const CHEEPS: &[u8] = &[
-    0x77, // OBJ_GREENCHEEP
-    0x88, // OBJ_ORANGECHEEP
 ];
 
 /// Thwomp variants — all use CHR page $12/+4 and differ only in movement pattern.
@@ -174,24 +175,30 @@ const BULLET_BILLS: &[u8] = &[
     0x79, // OBJ_BULLETBILLHOMING
 ];
 
-/// Rotodisc variants — single and dual, various rotation directions.
-/// Behind the `wild_rotodiscs` flag (off by default) because rotation
-/// direction matters for designed fortress corridors.
-/// Does NOT include Podoboo from ceiling (0x53) — different behavior entirely.
-const ROTODISCS: &[u8] = &[
-    0x51, // OBJ_ROTODISCDUAL (CW sync)
+/// Single rotodisc variants — swap rotation direction.
+/// Behind the `rotodiscs` flag (off by default).
+const ROTODISCS_SINGLE: &[u8] = &[
     0x5A, // OBJ_ROTODISCCLOCKWISE
     0x5B, // OBJ_ROTODISCCCLOCKWISE
+];
+
+/// Dual rotodisc variants — swap rotation pattern.
+/// Behind the `rotodiscs` flag (off by default).
+/// Does NOT include Podoboo from ceiling (0x53) — different behavior entirely.
+const ROTODISCS_DUAL: &[u8] = &[
+    0x51, // OBJ_ROTODISCDUAL (CW sync)
     0x5E, // OBJ_ROTODISCDUALOPPOSE (opposed H)
     0x5F, // OBJ_ROTODISCDUALOPPOSE2 (opposed V)
     0x60, // OBJ_ROTODISCDUALCCLOCK (CCW sync)
 ];
 
-/// Ghost house enemies — Boo and Hot Foot variants. All use CHR page $12/+4.
+/// Ghost house / fortress enemies. Boo and Hot Foot use CHR page $12/+4,
+/// Dry Bones uses $13/+5 (compatible with all slot 4 pages).
 /// NOT Stretch Boos (0x31/0x32) — attached to platforms, position-critical.
 const GHOST_ENEMIES: &[u8] = &[
     0x2F, // OBJ_BOO (Boo Diddly)
     0x30, // OBJ_HOTFOOT_SHY (Hot Foot, shy variant)
+    0x3F, // OBJ_DRYBONES
     0x45, // OBJ_HOTFOOT (Hot Foot, walks on floor)
 ];
 
@@ -244,7 +251,7 @@ fn sprite_bank(id: u8) -> Option<SpriteBank> {
         // Platforms (various)
         0x24 | 0x26 | 0x27 | 0x28 | 0x36 | 0x37 | 0x38 | 0x3C | 0x44 =>
             Some(SpriteBank { chr_page: 0x0E, slot: 4 }),
-        // Spike, Patooie, Nipper, NipperHopping, BusterBeetle, Airship anchor, WonderWing
+        // Spike, Patooie, Nipper, NipperHopping, ChainChompStake, BusterBeetle, Lakitu
         0x29 | 0x2A | 0x33 | 0x39 | 0x3D | 0x40 | 0x46 =>
             Some(SpriteBank { chr_page: 0x0A, slot: 4 }),
         // Goomba in Shoe
@@ -365,17 +372,26 @@ impl ChrSlot {
     }
 }
 
-/// Returns true if all members of a class share the same CHR page and slot.
-/// Uniform classes can be pre-committed in Pass 1 because swapping within the
-/// class can never change the CHR page.
+/// Returns true if swapping within this class can never change the CHR page
+/// on either slot. This means all slot-4 members share one page and all slot-5
+/// members share one page (they can be different pages on different slots).
+/// NOCHANGE members are always safe. Uniform classes can be pre-committed in
+/// Pass 1 because swapping can't introduce a new page conflict.
 fn is_uniform_chr_class(class: &[u8]) -> bool {
-    let first = match sprite_bank(class[0]) {
-        Some(sb) => (sb.chr_page, sb.slot),
-        None => return false,
-    };
-    class[1..].iter().all(|&id| {
-        sprite_bank(id).is_some_and(|sb| sb.chr_page == first.0 && sb.slot == first.1)
-    })
+    let mut page4: Option<u8> = None;
+    let mut page5: Option<u8> = None;
+    for &id in class {
+        if let Some(sb) = sprite_bank(id) {
+            let slot_page = if sb.slot == 4 { &mut page4 } else { &mut page5 };
+            match *slot_page {
+                None => *slot_page = Some(sb.chr_page),
+                Some(p) if p != sb.chr_page => return false,
+                _ => {}
+            }
+        }
+    }
+    // At least one member must have a bank requirement
+    page4.is_some() || page5.is_some()
 }
 
 /// Check whether an enemy is compatible with the current CHR page commitments.
@@ -412,7 +428,7 @@ use super::rom_data::{HAMMER_BRO_SEGMENT_OFFSETS, HB_NEEDS_SHELL_ENEMIES, PROTEC
 /// Injection candidates for wild_injections mode: special enemies injected after
 /// normal swaps. CHR compatibility checked via `sprite_bank()` at filter time.
 const WILD_INJECTION_IDS: &[u8] = &[
-    0x83, // Lakitu
+    0x83, // Lakitu (enemy-spawning variant, CHR $0B/+4)
     0xAF, // Angry Sun
     0x63, // Boss Bass (Big Bertha)
 ];
@@ -435,7 +451,6 @@ struct ClassModes {
     ground: EnemyMode,
     shell: EnemyMode,
     flying: EnemyMode,
-    cheeps: EnemyMode,
     bullet_bills: EnemyMode,
     piranhas: EnemyMode,
     ghosts: EnemyMode,
@@ -452,7 +467,6 @@ impl ClassModes {
             ground: opts.ground,
             shell: opts.shell,
             flying: opts.flying,
-            cheeps: opts.cheeps,
             bullet_bills: opts.bullet_bills,
             piranhas: opts.piranhas,
             ghosts: opts.ghosts,
@@ -470,7 +484,6 @@ impl ClassModes {
         if self.ground == EnemyMode::Wild { pool.extend_from_slice(GROUND_ENEMIES); }
         if self.shell == EnemyMode::Wild { pool.extend_from_slice(SHELL_ENEMIES); }
         if self.flying == EnemyMode::Wild { pool.extend_from_slice(FLYING_ENEMIES); }
-        if self.cheeps == EnemyMode::Wild { pool.extend_from_slice(CHEEPS); }
         if self.bullet_bills == EnemyMode::Wild { pool.extend_from_slice(BULLET_BILLS); }
         if self.piranhas == EnemyMode::Wild {
             pool.extend_from_slice(PIRANHAS);
@@ -478,7 +491,10 @@ impl ClassModes {
         }
         if self.ghosts == EnemyMode::Wild { pool.extend_from_slice(GHOST_ENEMIES); }
         if self.thwomps == EnemyMode::Wild { pool.extend_from_slice(THWOMPS); }
-        if self.rotodiscs == EnemyMode::Wild { pool.extend_from_slice(ROTODISCS); }
+        if self.rotodiscs == EnemyMode::Wild {
+            pool.extend_from_slice(ROTODISCS_SINGLE);
+            pool.extend_from_slice(ROTODISCS_DUAL);
+        }
         if self.cannons == EnemyMode::Wild { pool.extend_from_slice(ALL_CANNONS); }
         if self.water == EnemyMode::Wild { pool.extend_from_slice(WATER_ENEMIES); }
         if self.bros == EnemyMode::Wild { pool.extend_from_slice(BRO_ENEMIES); }
@@ -506,13 +522,13 @@ fn find_class_pool<'a>(
     check!(GROUND_ENEMIES, modes.ground);
     check!(SHELL_ENEMIES, modes.shell);
     check!(FLYING_ENEMIES, modes.flying);
-    check!(CHEEPS, modes.cheeps);
     check!(BULLET_BILLS, modes.bullet_bills);
     check!(PIRANHAS, modes.piranhas);
     check!(PIRANHASC, modes.piranhas); // ceiling piranhas share piranhas mode
     check!(GHOST_ENEMIES, modes.ghosts);
     check!(THWOMPS, modes.thwomps);
-    check!(ROTODISCS, modes.rotodiscs);
+    check!(ROTODISCS_SINGLE, modes.rotodiscs);
+    check!(ROTODISCS_DUAL, modes.rotodiscs);
     check!(WATER_ENEMIES, modes.water);
     check!(BRO_ENEMIES, modes.bros);
 
@@ -540,7 +556,6 @@ fn hb_class_modes(hb_mode: EnemyMode) -> ClassModes {
         ground: hb_mode,
         shell: hb_mode,
         flying: hb_mode,
-        cheeps: hb_mode,
         bullet_bills: hb_mode,
         piranhas: hb_mode,
         ghosts: hb_mode,
@@ -567,7 +582,7 @@ pub fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // All enemy classes off — only Big ? Blocks get randomized
     let no_flags = Options {
         ground: EnemyMode::Off, shell: EnemyMode::Off, flying: EnemyMode::Off,
-        cheeps: EnemyMode::Off, bullet_bills: EnemyMode::Off, piranhas: EnemyMode::Off,
+        bullet_bills: EnemyMode::Off, piranhas: EnemyMode::Off,
         ghosts: EnemyMode::Off, thwomps: EnemyMode::Off, rotodiscs: EnemyMode::Off,
         cannons: EnemyMode::Off, water: EnemyMode::Off, bros: EnemyMode::Off,
         hb_encounters: EnemyMode::Off, wild_injections: false,
@@ -1040,9 +1055,9 @@ mod tests {
             let enemy3 = result[6]; // was Spike
             let enemy4 = result[9]; // was Spiny
 
-            // All must still be ground enemies
+            // Each must stay in its class
             assert!(GROUND_ENEMIES.contains(&enemy1), "seed {seed}: enemy1 0x{enemy1:02X}");
-            assert!(GROUND_ENEMIES.contains(&enemy2), "seed {seed}: enemy2 0x{enemy2:02X}");
+            assert!(GHOST_ENEMIES.contains(&enemy2), "seed {seed}: enemy2 0x{enemy2:02X}");
             assert!(GROUND_ENEMIES.contains(&enemy3), "seed {seed}: enemy3 0x{enemy3:02X}");
             assert!(GROUND_ENEMIES.contains(&enemy4), "seed {seed}: enemy4 0x{enemy4:02X}");
 
@@ -1083,7 +1098,7 @@ mod tests {
 
     #[test]
     fn test_chr_resets_across_segments() {
-        // Two segments: first has a Goomba ($4F/+5), second has a Dry Bones ($13/+5).
+        // Two segments: first has a Spike ($0A/+4), second has a Spiny ($0B/+4).
         // They should be able to choose independently since they're in different segments.
         let mut data = vec![0u8; 393232];
         data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
@@ -1094,20 +1109,20 @@ mod tests {
         let seg = &[
             0xFF,
             0x01,             // page flag
-            0x72, 0x10, 0x19, // Goomba (slot +5, page $4F)
+            0x29, 0x10, 0x19, // Spike (slot +4, page $0A)
             0xFF,             // segment boundary
             0x01,             // page flag
-            0x3F, 0x20, 0x19, // Dry Bones (slot +5, page $13)
+            0x71, 0x20, 0x19, // Spiny (slot +4, page $0B)
             0xFF,
         ];
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
         let rom = Rom::from_bytes(&data).unwrap();
 
-        // Run many times — Dry Bones in second segment should freely choose
-        // any ground enemy, not be constrained by first segment's Goomba.
-        let mut saw_slot5_4f_in_seg2 = false;
-        let mut saw_slot5_13_in_seg2 = false;
+        // Run many times — Spiny in second segment should freely choose
+        // any ground enemy, not be constrained by first segment's Spike.
+        let mut saw_slot4_0a_in_seg2 = false;
+        let mut saw_slot4_0b_in_seg2 = false;
         for seed in 0..200u64 {
             let mut rom_copy = rom.clone();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -1118,17 +1133,17 @@ mod tests {
             assert!(GROUND_ENEMIES.contains(&enemy2), "seed {seed}: 0x{enemy2:02X}");
 
             if let Some(sb) = sprite_bank(enemy2) {
-                if sb.slot == 5 && sb.chr_page == 0x4F {
-                    saw_slot5_4f_in_seg2 = true;
+                if sb.slot == 4 && sb.chr_page == 0x0A {
+                    saw_slot4_0a_in_seg2 = true;
                 }
-                if sb.slot == 5 && sb.chr_page == 0x13 {
-                    saw_slot5_13_in_seg2 = true;
+                if sb.slot == 4 && sb.chr_page == 0x0B {
+                    saw_slot4_0b_in_seg2 = true;
                 }
             }
         }
         // Over 200 seeds, we should see both CHR page variants in segment 2
         assert!(
-            saw_slot5_4f_in_seg2 && saw_slot5_13_in_seg2,
+            saw_slot4_0a_in_seg2 && saw_slot4_0b_in_seg2,
             "Segment 2 should not be constrained by segment 1's CHR choice"
         );
     }
