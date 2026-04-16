@@ -772,6 +772,10 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::qol::write_starting_items(rom, options.starting_lives, &resolved_items);
     }
 
+    // MaCobra patches — always-on bugfixes and fairness tweaks.
+    rom.set_tag("qol/macobra");
+    randomize::qol::apply_macobra_patches(rom);
+
     // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 23 bytes:
     //   [0..4]   "S3R\xNN" magic + version
     //   [4..15]  flag key bytes (11 bytes in v12)

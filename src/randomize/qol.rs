@@ -481,6 +481,50 @@ pub fn fix_w3_drawbridges(rom: &mut Rom) {
     rom.write_range(W3_TOGGLE_OFFSET, &[0xEA; W3_TOGGLE_LEN]);
 }
 
+// ---------------------------------------------------------------------------
+// MaCobra patches — always-on bugfixes and fairness tweaks
+// ---------------------------------------------------------------------------
+
+// Forced hammer bro walk-over: NOPs `STA $053C,Y; RTS` in the map sprite
+// collision check (PRG011, CPU $AEF6). Prevents hammer bros from walking
+// onto the player to force a fight — player-initiated encounters still work.
+const FORCED_BRO_FIGHT: usize = 0x16F06;
+
+// Bowser upward kill glitch: changes a BNE ($D0) to BCC ($90) in PRG001
+// (CPU $BEC1) to fix a glitch where Bowser can be killed from below.
+const BOWSER_UPWARD_KILL: usize = 0x3ED1;
+
+// Fire bro bump detection: adjusts collision parameters in PRG004 to add
+// proper bump detection and make fire bros slightly more fair.
+const FIRE_BRO_BUMP_A: usize = 0x8911;
+const FIRE_BRO_BUMP_B: usize = 0x88C1;
+
+// Hammer suit slope slide: allows hammer suit to slide on slopes (PRG000).
+const HAMMER_SUIT_SLIDE: usize = 0x3F6;
+
+// Vertical pipe clip fix: prevents an inter-level softlock caused by
+// clipping through vertical pipes between areas (PRG029).
+const PIPE_CLIP_FIX: usize = 0x3B5B1;
+
+/// Apply MaCobra's always-on bugfixes and fairness patches.
+pub fn apply_macobra_patches(rom: &mut Rom) {
+    // Prevent forced hammer bro fights (4 NOPs)
+    rom.write_range(FORCED_BRO_FIGHT, &[0xEA; 4]);
+
+    // Fix Bowser upward kill glitch
+    rom.write_byte(BOWSER_UPWARD_KILL, 0x90);
+
+    // Add proper fire bro bump detection and make them more fair
+    rom.write_range(FIRE_BRO_BUMP_A, &[0x13, 0xAB]);
+    rom.write_byte(FIRE_BRO_BUMP_B, 0x40);
+
+    // Enable hammer suit to slide on slopes
+    rom.write_byte(HAMMER_SUIT_SLIDE, 0x00);
+
+    // Fix inter-level vertical pipe clip softlock
+    rom.write_byte(PIPE_CLIP_FIX, 0x00);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
