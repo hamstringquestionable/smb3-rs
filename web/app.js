@@ -255,6 +255,13 @@ generateBtn.addEventListener("click", () => {
 		document.body.removeChild(a);
 		URL.revokeObjectURL(url);
 
+		// Track generation event via GoatCounter
+		if (window.goatcounter?.count) {
+			const v = version();
+			const fk = flagKeyInput.value;
+			goatcounter.count({ path: `/generate/${v}/${fk}`, event: true });
+		}
+
 		showStatus(
 			`Generated ${filename} (${result.length} bytes, seed: ${seed})`,
 			"success",
