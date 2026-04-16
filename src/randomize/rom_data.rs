@@ -49,6 +49,7 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x0382A, 23, "koopa_hits: subroutine + defeat JMP + threshold table"),
     (0x03841, 13, "koopa_collision_guard: skip collision bitmap during invuln"),
     (0x0384E, 16, "koopa_vram_clear: clear VRAM buffer on defeat"),
+    (0x0385E, 12, "koopa_fire_preset: set stomp counter from threshold table for fireball defeat"),
     (0x03FD0, 22, "koopa_y_clamp: clamp Koopaling Y position to screen"),
 ];
 
@@ -106,6 +107,11 @@ pub(super) const KOOPA_VRAM_CLEAR_CPU: u16  = 0xB83E;  // $A000 + (0x0384E - 0x0
 // Source: Fred's Koopaling fixes.
 pub(super) const FS_KOOPA_Y_CLAMP: usize = 0x03FD0; // 22 bytes
 pub(super) const KOOPA_Y_CLAMP_CPU: u16  = 0xBFC0;  // $A000 + (0x03FD0 - 0x02010)
+
+// Fireball defeat preset — load per-world stomp threshold from table so the
+// fireball→stomp handoff always triggers defeat after INC.
+pub(super) const FS_KOOPA_FIRE_PRESET: usize = 0x0385E; // 12 bytes
+pub(super) const KOOPA_FIRE_PRESET_CPU: u16  = 0xB84E;  // $A000 + (0x0385E - 0x02010)
 
 
 // ---------------------------------------------------------------------------
