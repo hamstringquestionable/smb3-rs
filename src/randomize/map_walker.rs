@@ -322,14 +322,16 @@ pub(super) fn render_debug(
     out
 }
 
-/// Find fortress positions by scanning the tile grid for fortress tiles ($67).
+/// Find fortress positions by scanning the tile grid for fortress tiles
+/// ($67, $EB, or $6A — the game treats all three as fortresses).
 /// Returns sorted positions in row-major order (deterministic).
 #[cfg(test)]
 fn find_fortress_tiles(grid: &Grid) -> Vec<(usize, usize)> {
     let mut positions = Vec::new();
     for r in 0..grid.rows {
         for c in 0..grid.cols {
-            if grid.get(r, c) == TILE_FORTRESS {
+            let t = grid.get(r, c);
+            if t == TILE_FORTRESS || t == 0xEB || t == 0x6A {
                 positions.push((r, c));
             }
         }

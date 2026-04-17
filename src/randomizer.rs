@@ -712,6 +712,10 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     rom.set_tag("metatile/double_digit");
     randomize::overworld_writer::patch_double_digit_metatiles(rom);
 
+    // Freeze metatile 0x6A's CHR animation so it can serve as a static fortress tile.
+    rom.set_tag("metatile/6a_freeze");
+    randomize::overworld_writer::patch_metatile_6a_freeze(rom);
+
     // Randomize king quotes (always on — cosmetic flavor text)
     rom.set_tag("king_quotes");
     randomize::king_quotes::randomize(rom, &mut rng);

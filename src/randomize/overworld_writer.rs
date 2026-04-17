@@ -19,7 +19,7 @@ use super::overworld_pickup::PickupResult;
 use super::pipe_helpers;
 use super::rom_data::{
     self, FORTRESS_1F_OBJ_PTR, FX_MAP_COMP_IDX, FX_PATTERNS, FX_VADDR_H, FX_VADDR_L,
-    MAP_COMPLETE_BITS, TILE_FORTRESS, TILE_PIPE, WORLDS,
+    MAP_COMPLETE_BITS, TILE_PIPE, WORLDS,
 };
 
 
@@ -165,7 +165,7 @@ pub(crate) fn write_overworld<R: Rng>(
         let wa = &assignments[wi];
         let sprite_mask = if wi == 7 { &w8_sprite_pos_set } else { &HashSet::new() };
 
-        write_tile_grid(rom, built, wa, pickup, catalog, sprite_mask);
+        write_tile_grid(rom, built, wa, pickup, catalog, sprite_mask, rng);
         write_pointer_entries(rom, wi, built, wa, pickup, catalog, &mut hb_fallback_iter);
         write_fortress_fx(rom, wi, built, wa, pickup, catalog, &mut fx_slot);
         write_pipe_dests(rom, wi, wa);
@@ -467,20 +467,25 @@ fn assign_pool<R: Rng>(
 // Step 2: Write tile grids
 // ---------------------------------------------------------------------------
 
-fn write_tile_grid(
+fn write_tile_grid<R: Rng>(
     rom: &mut Rom,
     built: &BuiltWorld,
     wa: &WorldAssignments,
     pickup: &PickupResult,
     catalog: &NodeCatalog,
     sprite_mask: &HashSet<(usize, usize)>,
+    rng: &mut R,
 ) {
     let wi = built.world_idx;
     let mut grid = built.grid.clone();
 
-    // Stamp fortress tiles.
+    // Stamp fortress tiles. The game treats $67, $EB, and $6A as fortress
+    // tiles (Map_Removable_Tiles + completion-unsafe), so pick per-fortress.
+    // $6A's CHR animation is frozen by patch_metatile_6a_freeze.
+    const FORTRESS_TILES: [u8; 3] = [0x67, 0xEB, 0x6A];
     for a in &wa.fortress {
-        grid.set(a.pos.0, a.pos.1, TILE_FORTRESS);
+        let tile = FORTRESS_TILES[rng.random_range(..FORTRESS_TILES.len())];
+        grid.set(a.pos.0, a.pos.1, tile);
     }
 
     // Stamp pipe tiles (handle spiral castle $5F).
@@ -514,14 +519,14 @@ fn write_tile_grid(
     let start_pos = rom_data::find_start(&grid);
     let bfs = bfs_ordered(&grid, &built.pipe_pairs, start_pos);
 
-    // Level tile sequence: 1-9 use standard numbered tiles ($03-$0B),
-    // $03-$0B = levels 1-9, $0C-$15 = levels 10-18 (double-digit tiles
-    // with custom "1" tens digit patched by patch_double_digit_metatiles),
-    // $68-$69 = levels 19-20 (quicksand/pyramid tiles repurposed).
+    // Level tile sequence: $03-$0B = levels 1-9 (vanilla numbered tiles),
+    // $0C-$15 = levels 10-19 (double-digit tiles with custom "1" tens digit
+    // patched by patch_double_digit_metatiles). $69 (pyramid) is a level-20+
+    // fallback with no valid display.
     const LEVEL_TILES: [u8; 20] = [
-        0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x69,
+        0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
         0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14,
-        0x68, 0x69,
+        0x15, 0x69,
     ];
 
     let mut level_idx: usize = 0;
@@ -862,31 +867,56 @@ fn write_fortress_fx(
 /// a custom CHR tile with a "1" tens digit into an unreferenced slot, then
 /// point the LL quadrant of tiles 0x0D–0x15 at it.
 ///
-/// Repurpose CHR tile 0xCB (vanilla LR of metatile 0x15 = level "19") with
-/// our custom "1" tens digit. Since no world has 19 levels, tile 0x15 is
-/// unused and 0xCB is safe to overwrite. CHR page 0x17 is stable (no MMC3
-/// mid-frame bank swapping).
+/// CHR tile 0xCC is unreferenced by every overworld metatile (vanilla 0xCB
+/// was unsafe — it's the LR of metatile 0x0B, the vanilla "level 9" tile).
+/// CHR page 0x17 covers tile IDs 0xC0–0xFF and is stable (no MMC3 mid-frame
+/// bank swapping).
 pub(crate) fn patch_double_digit_metatiles(rom: &mut Rom) {
     // Metatile quadrant tables at 0x18010: UL(256) LL(256) UR(256) LR(256).
     const METATILE_LL_BASE: usize = 0x18010 + 256; // 0x18110
 
-    // Overwrite CHR tile 0xCB with our custom "1" digit.
-    // CHR page 0x17 covers tile IDs 0xC0–0xFF; tile 0xCB = index 0x0B.
+    // Overwrite CHR tile 0xCC with our custom "1" digit.
+    // CHR page 0x17 covers tile IDs 0xC0–0xFF; tile 0xCC = index 0x0C.
     const CHR_START: usize = 0x40010;
     const CHR_PAGE_17: usize = CHR_START + 0x17 * 0x400;
-    const TILE_CB_OFFSET: usize = CHR_PAGE_17 + 0x0B * 16;
+    const TILE_CC_OFFSET: usize = CHR_PAGE_17 + 0x0C * 16;
     // Arrow shape (cols 2–5) + "1" serif (col 6 row 1) + right border (col 7 = color 2).
     #[rustfmt::skip]
     const DIGIT_1_LL: [u8; 16] = [
         0x7E, 0x7C, 0x7E, 0x7E, 0x7E, 0x7E, 0x7F, 0x00, // plane 0
         0xA1, 0xB3, 0xB9, 0xBD, 0xB9, 0xB1, 0x80, 0xFF, // plane 1
     ];
-    rom.write_range(TILE_CB_OFFSET, &DIGIT_1_LL);
+    rom.write_range(TILE_CC_OFFSET, &DIGIT_1_LL);
 
-    // Point LL of tiles 0x0D–0x14 (levels 10–17) at CHR tile 0xCB.
-    // Skip 0x15 (level 18) — its LR already IS 0xCB, so it would show "1" "1".
-    for tile_id in 0x0Du8..=0x14 {
-        rom.write_byte(METATILE_LL_BASE + tile_id as usize, 0xCB);
+    // Point LL of tiles 0x0D–0x15 (levels 10–19) at CHR tile 0xCC.
+    for tile_id in 0x0Du8..=0x15 {
+        rom.write_byte(METATILE_LL_BASE + tile_id as usize, 0xCC);
+    }
+}
+
+/// Freeze metatile 0x6A's CHR animation so it can serve as a static fortress tile.
+///
+/// The overworld NMI handler rotates MMC3 R0 (2KB BG bank) through pages
+/// (0x14+0x15), (0x70+0x71), (0x72+0x73), (0x74+0x75) to animate tiles $00-$7F.
+/// Metatile 0x6A's quadrants (CHR 0x64-0x67) fall in this animated range, so
+/// it visibly swaps between frames.
+///
+/// Copy the base (page 0x15) pixel data for CHR tiles 0x64-0x67 into the
+/// same positions in pages 0x71, 0x73, 0x75 so every frame renders identically.
+/// Metatile 0x6A is the only metatile referencing CHR 0x64-0x67, so no other
+/// tile is affected.
+pub(crate) fn patch_metatile_6a_freeze(rom: &mut Rom) {
+    const CHR_BASE: usize = 0x40010;
+    const BASE_PAGE: usize = 0x15;
+    const ANIM_PAGES: [usize; 3] = [0x71, 0x73, 0x75];
+    // Tiles 0x64-0x67 live in page 0x15 at local indices 0x24-0x27.
+    for local_idx in 0x24..=0x27usize {
+        let base_off = CHR_BASE + BASE_PAGE * 0x400 + local_idx * 16;
+        let base_tile: [u8; 16] = core::array::from_fn(|i| rom.read_byte(base_off + i));
+        for page in ANIM_PAGES {
+            let off = CHR_BASE + page * 0x400 + local_idx * 16;
+            rom.write_range(off, &base_tile);
+        }
     }
 }
 
