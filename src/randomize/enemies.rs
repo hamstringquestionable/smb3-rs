@@ -1,19 +1,9 @@
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
+use crate::randomize::rom_data::{ENEMY_DATA_END, ENEMY_DATA_START};
 use crate::randomizer::{EnemyMode, Options};
 use crate::rom::Rom;
-
-/// Enemy/object data block: 0x0BFD8–0x0E00D.
-///
-/// Format: each level's enemy set is a sequence of segments separated by 0xFF.
-/// Each segment starts with a 1-byte page flag, then zero or more 3-byte
-/// entries: [object_id, x_pos, y_pos], terminated by 0xFF.
-///
-/// We parse this structure properly and only randomize the object_id byte
-/// of entries whose ID is in our explicit allowlist of swappable enemies.
-const ENEMY_DATA_START: usize = 0x0BFD8;
-const ENEMY_DATA_END: usize = 0x0E00D;
 
 /// Boom-Boom boss IDs — excluded from CHR pre-commit because they occupy
 /// far-right boss rooms, screens away from corridor enemies. The player
@@ -218,9 +208,9 @@ const GHOST_ENEMIES: &[u8] = &[
 // before randomizing swappable enemies, preventing ordering-dependent bugs.
 
 /// CHR sprite bank requirement for an object.
-struct SpriteBank {
-    chr_page: u8, // CHR ROM page number
-    slot: u8,     // 4 or 5 (PatTable_BankSel index)
+pub struct SpriteBank {
+    pub chr_page: u8, // CHR ROM page number
+    pub slot: u8,     // 4 or 5 (PatTable_BankSel index)
 }
 
 /// Look up the CHR sprite bank requirement for any object ID.
@@ -228,7 +218,7 @@ struct SpriteBank {
 /// Covers ALL object IDs 0x00–0xB3 (from ROM PatTableSel tables) so that
 /// the two-pass pre-scan can correctly pre-commit CHR pages from non-swappable
 /// objects (platforms, rotodiscs, bosses, fire jets, etc.).
-fn sprite_bank(id: u8) -> Option<SpriteBank> {
+pub fn sprite_bank(id: u8) -> Option<SpriteBank> {
     match id {
         // === Group 1: PRG001 (IDs 0x00–0x23) ===
         // Boss fireball

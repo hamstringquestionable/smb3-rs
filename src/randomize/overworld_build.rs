@@ -90,6 +90,21 @@ pub(crate) struct BuildResult {
     pub fort_counts: [usize; 8],
 }
 
+/// Sort `candidates` descending by score and pick uniformly at random from the
+/// top `n` (or fewer if the list is shorter). Returns `None` if empty.
+fn pick_top_n_by_score<T, R: Rng>(
+    mut candidates: Vec<(T, f64)>,
+    n: usize,
+    rng: &mut R,
+) -> Option<T> {
+    if candidates.is_empty() {
+        return None;
+    }
+    candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let top = candidates.len().min(n);
+    Some(candidates.swap_remove(rng.random_range(..top)).0)
+}
+
 // ---------------------------------------------------------------------------
 // Vanilla pipe pair counts per world
 // ---------------------------------------------------------------------------
@@ -237,7 +252,6 @@ pub(crate) fn build<R: Rng>(
         worlds.push(built);
     }
 
-    // Ensure at least one lock across all worlds is secret-exit-safe.
     // Ensure at least one lock across all worlds is secret-exit-safe.
     // The score-based prefer_safe usually produces one (triggers when
     // best_score < 5), but if not, retry with force_safe=true.
@@ -705,40 +719,30 @@ fn place_pipes<R: Rng>(
             // Unreachable side: prefer nearer islands (manhattan from start)
             // to create progressive chains rather than jumping to the end.
             let start = start_pos.unwrap_or((0, 0));
-            let b = {
-                let mut scored: Vec<((usize, usize), f64)> = unreachable_blanks
-                    .iter()
-                    .map(|&pos| {
-                        let start_dist = (pos.0.abs_diff(start.0) + pos.1.abs_diff(start.1)) as f64;
-                        // Nearer to start = higher score (invert distance)
-                        let proximity_score = (TARGET_MAX_DIST - start_dist.min(TARGET_MAX_DIST)) / TARGET_MAX_DIST * 5.0;
-                        let target_pen = target_proximity_penalty(pos, target_pos);
-                        proximity_score - target_pen
-                    })
-                    .zip(unreachable_blanks.iter().copied())
-                    .map(|(score, pos)| (pos, score))
-                    .collect();
-                scored.sort_by(|x, y| y.1.partial_cmp(&x.1).unwrap_or(std::cmp::Ordering::Equal));
-                let top_n = scored.len().min(5);
-                scored[rng.random_range(..top_n)].0
-            };
+            let b_scored: Vec<((usize, usize), f64)> = unreachable_blanks
+                .iter()
+                .map(|&pos| {
+                    let start_dist = (pos.0.abs_diff(start.0) + pos.1.abs_diff(start.1)) as f64;
+                    // Nearer to start = higher score (invert distance)
+                    let proximity_score = (TARGET_MAX_DIST - start_dist.min(TARGET_MAX_DIST)) / TARGET_MAX_DIST * 5.0;
+                    let target_pen = target_proximity_penalty(pos, target_pos);
+                    (pos, proximity_score - target_pen)
+                })
+                .collect();
+            let b = pick_top_n_by_score(b_scored, 5, rng).unwrap();
 
             // Reachable side: prefer positions far from start (BFS distance),
             // spread from existing pipes, and away from target.
-            let a = {
-                let mut scored: Vec<((usize, usize), f64)> = reachable_blanks
-                    .iter()
-                    .map(|&pos| {
-                        let score = score_pipe_endpoint(
-                            grid, pos, &used_positions, &walk.distances, target_pos,
-                        );
-                        (pos, score)
-                    })
-                    .collect();
-                scored.sort_by(|x, y| y.1.partial_cmp(&x.1).unwrap_or(std::cmp::Ordering::Equal));
-                let top_n = scored.len().min(5);
-                scored[rng.random_range(..top_n)].0
-            };
+            let a_scored: Vec<((usize, usize), f64)> = reachable_blanks
+                .iter()
+                .map(|&pos| {
+                    let score = score_pipe_endpoint(
+                        grid, pos, &used_positions, &walk.distances, target_pos,
+                    );
+                    (pos, score)
+                })
+                .collect();
+            let a = pick_top_n_by_score(a_scored, 5, rng).unwrap();
 
             grid.set(a.0, a.1, TILE_PIPE);
             grid.set(b.0, b.1, TILE_PIPE);
@@ -760,7 +764,7 @@ fn place_pipes<R: Rng>(
             }
 
             // Enumerate all candidate pairs and score them
-            let mut candidates: Vec<((usize, usize), (usize, usize), f64)> = Vec::new();
+            let mut candidates: Vec<(((usize, usize), (usize, usize)), f64)> = Vec::new();
             for i in 0..available.len() {
                 for j in (i + 1)..available.len() {
                     let a = available[i];
@@ -768,15 +772,11 @@ fn place_pipes<R: Rng>(
                     let score = score_pipe_pair(
                         grid, a, b, &used_positions, &walk.distances, target_pos,
                     );
-                    candidates.push((a, b, score));
+                    candidates.push(((a, b), score));
                 }
             }
 
-            // Sort descending by score, pick randomly from top 5
-            candidates.sort_by(|x, y| y.2.partial_cmp(&x.2).unwrap_or(std::cmp::Ordering::Equal));
-            let top_n = candidates.len().min(5);
-            let pick = rng.random_range(..top_n);
-            let (a, b, _) = candidates[pick];
+            let (a, b) = pick_top_n_by_score(candidates, 5, rng).unwrap();
 
             grid.set(a.0, a.1, TILE_PIPE);
             grid.set(b.0, b.1, TILE_PIPE);
@@ -866,9 +866,9 @@ fn populate_sections<R: Rng>(
     // 1. `completable` — all completion-unsafe tiles on the grid. Used for
     //    the row 7/8 hard constraint (game engine bug). Includes spades,
     //    airships, etc.
-    // 2. `scored` — only levels and fortresses we've placed. Used by the
-    //    scoring function to spread levels apart. Excludes spades, pipes,
-    //    and other non-clumping tiles.
+    // 2. `placed_levels_and_forts` — only levels and fortresses we've placed.
+    //    Used by the scoring function to spread levels apart. Excludes spades,
+    //    pipes, and other non-clumping tiles.
     let mut completable: HashSet<(usize, usize)> = HashSet::new();
     for r in 0..grid.rows {
         for c in 0..grid.cols {
@@ -878,7 +878,7 @@ fn populate_sections<R: Rng>(
             }
         }
     }
-    let mut scored: HashSet<(usize, usize)> = HashSet::new();
+    let mut placed_levels_and_forts: HashSet<(usize, usize)> = HashSet::new();
 
     // Add pipe slots (not in sections, but tracked)
     for &pos in pipe_positions {
@@ -899,28 +899,20 @@ fn populate_sections<R: Rng>(
         }
 
         // Score all candidates in this section, filtering row 7/8 conflicts.
-        let mut candidates: Vec<((usize, usize), f64)> = section
+        let candidates: Vec<((usize, usize), f64)> = section
             .iter()
             .filter(|pos| !is_row78_conflict(**pos, &completable))
             .map(|&pos| {
-                (pos, score_fortress_candidate(grid, pos, &scored, bfs_distances, world_idx))
+                (pos, score_fortress_candidate(grid, pos, &placed_levels_and_forts, bfs_distances, world_idx))
             })
             .collect();
 
-        // Sort descending by score.
-        candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        // Pick randomly from top 5 (or fewer if section is small).
-        // Fallback: if no candidates passed the row78 filter, pick any slot.
-        let pos = if candidates.is_empty() {
-            section[rng.random_range(..section.len())]
-        } else {
-            let top_n = candidates.len().min(5);
-            candidates[rng.random_range(..top_n)].0
-        };
+        // Pick from top 5; fallback to any section slot if none passed the row78 filter.
+        let pos = pick_top_n_by_score(candidates, 5, rng)
+            .unwrap_or_else(|| section[rng.random_range(..section.len())]);
 
         completable.insert(pos);
-        scored.insert(pos);
+        placed_levels_and_forts.insert(pos);
         fort_positions.insert(pos);
         slots.push(SlotAssignment {
             pos,
@@ -948,8 +940,8 @@ fn populate_sections<R: Rng>(
             .filter(|(pos, _)| !level_positions.contains(pos))
             .filter(|(pos, _)| !is_row78_conflict(*pos, &completable))
             .max_by(|(a, _), (b, _)| {
-                let sa = score_candidate(grid, *a, &scored, bfs_distances, reverse_bfs, target_bfs_dist);
-                let sb = score_candidate(grid, *b, &scored, bfs_distances, reverse_bfs, target_bfs_dist);
+                let sa = score_candidate(grid, *a, &placed_levels_and_forts, bfs_distances, reverse_bfs, target_bfs_dist);
+                let sb = score_candidate(grid, *b, &placed_levels_and_forts, bfs_distances, reverse_bfs, target_bfs_dist);
                 sa.partial_cmp(&sb).unwrap_or(std::cmp::Ordering::Equal)
             });
 
@@ -957,7 +949,7 @@ fn populate_sections<R: Rng>(
             Some(&(pos, _)) => {
                 level_positions.insert(pos);
                 completable.insert(pos);
-                scored.insert(pos);
+                placed_levels_and_forts.insert(pos);
             }
             None => break,
         }

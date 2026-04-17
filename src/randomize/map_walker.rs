@@ -54,19 +54,6 @@ pub(super) struct WalkResult {
     pub path_tiles: HashSet<(usize, usize)>,
 }
 
-/// A step in fortress progression simulation.
-/// Fields beyond `nodes` exist for debugging inspection via `--nocapture`.
-#[cfg(test)]
-#[allow(dead_code)]
-pub(super) struct ProgressionStep {
-    pub fort_idx: Option<usize>,
-    pub fort_pos: Option<(usize, usize)>,
-    pub fx_pos: Option<(usize, usize)>,
-    pub fx_old_tile: Option<u8>,
-    pub fx_new_tile: Option<u8>,
-    pub nodes: HashSet<(usize, usize)>,
-}
-
 // ---------------------------------------------------------------------------
 // BFS map walker
 // ---------------------------------------------------------------------------
@@ -433,104 +420,6 @@ pub(super) fn render_progression(
     }
 
     out
-}
-
-// ---------------------------------------------------------------------------
-// Fortress progression simulation
-// ---------------------------------------------------------------------------
-
-/// Simulate fortress progression for a world.
-///
-/// Iteratively walks the map, beats the lowest-ordinal reachable fortress,
-/// opens its FX slot (replacing the lock/bridge tile), and re-walks.
-/// Uses hardcoded FORTRESS_ENTRIES — for post-redistribution use, call
-/// `simulate_progression_with` and pass explicit fortress positions.
-#[cfg(test)]
-pub(super) fn simulate_progression(
-    rom: &Rom,
-    world_idx: usize,
-    pipe_pairs: &[((usize, usize), (usize, usize))],
-) -> Vec<ProgressionStep> {
-    let world_forts = rom_data::read_fortress_positions(rom, world_idx);
-    let fx_assignments = rom_data::read_world_fx_assignments(rom);
-    let world_fx = fx_assignments[world_idx].clone();
-    simulate_progression_with(rom, world_idx, pipe_pairs, &world_forts, &world_fx)
-}
-
-/// Simulate fortress progression with explicit fortress positions and FX assignments.
-///
-/// Use this after redistribution when FORTRESS_ENTRIES no longer reflects reality.
-#[cfg(test)]
-pub(super) fn simulate_progression_with(
-    rom: &Rom,
-    world_idx: usize,
-    pipe_pairs: &[((usize, usize), (usize, usize))],
-    world_forts: &[(usize, usize)],
-    world_fx: &[u8],
-) -> Vec<ProgressionStep> {
-    let mut grid = rom_data::read_tile_grid(rom, world_idx);
-    let fx_slots = rom_data::read_fx_slots(rom);
-
-    let mut beaten: HashSet<usize> = HashSet::new();
-    let mut steps = Vec::new();
-
-    // Initial walk
-    let result = walk_map(&grid, pipe_pairs, None);
-    steps.push(ProgressionStep {
-        fort_idx: None,
-        fort_pos: None,
-        fx_pos: None,
-        fx_old_tile: None,
-        fx_new_tile: None,
-        nodes: result.nodes.clone(),
-    });
-
-    loop {
-        // Find reachable fortresses not yet beaten (use latest step's nodes)
-        let current_nodes = &steps.last().unwrap().nodes;
-        let reachable_forts: Vec<usize> = world_forts
-            .iter()
-            .enumerate()
-            .filter(|(i, pos)| !beaten.contains(i) && current_nodes.contains(pos))
-            .map(|(i, _)| i)
-            .collect();
-
-        if reachable_forts.is_empty() {
-            break;
-        }
-
-        let fort_idx = reachable_forts[0];
-        let fort_pos = world_forts[fort_idx];
-        beaten.insert(fort_idx);
-
-        let mut fx_pos = None;
-        let mut fx_old = None;
-        let mut fx_new = None;
-
-        if fort_idx < world_fx.len() {
-            let slot_idx = world_fx[fort_idx] as usize;
-            if slot_idx < fx_slots.len() {
-                let slot = &fx_slots[slot_idx];
-                let (fx_r, fx_c) = (slot.grid_row, slot.grid_col);
-                fx_old = Some(grid.get(fx_r, fx_c));
-                fx_new = Some(slot.replace_tile);
-                grid.set(fx_r, fx_c, slot.replace_tile);
-                fx_pos = Some((fx_r, fx_c));
-            }
-        }
-
-        let result = walk_map(&grid, pipe_pairs, None);
-        steps.push(ProgressionStep {
-            fort_idx: Some(fort_idx),
-            fort_pos: Some(fort_pos),
-            fx_pos,
-            fx_old_tile: fx_old,
-            fx_new_tile: fx_new,
-            nodes: result.nodes,
-        });
-    }
-
-    steps
 }
 
 #[cfg(test)]
