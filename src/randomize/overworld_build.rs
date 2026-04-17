@@ -577,9 +577,9 @@ fn is_completion_unsafe(tile: u8) -> bool {
     const REMOVABLE: [u8; 8] = [0x51, 0x52, 0x54, 0x67, 0xEB, 0xE4, 0x56, 0x9D];
     const THRESHOLDS: [u8; 4] = [0x03, 0x67, 0xBF, 0xE9];
 
-    // 0x67/0xEB are also caught by the threshold check below, but kept
+    // 0x67/0xEB/0x6A are also caught by the threshold check below, but kept
     // explicit here for readability — fortress tiles are the primary case.
-    if SPECIAL.contains(&tile) || tile == 0x67 || tile == 0xEB {
+    if SPECIAL.contains(&tile) || tile == 0x67 || tile == 0xEB || tile == 0x6A {
         return true;
     }
     let page = (tile >> 6) as usize;
