@@ -63,6 +63,10 @@ pub(crate) struct LockAssignment {
     /// this lock closed. These locks are safe for 1-F (secret exit doesn't
     /// trigger FX replacement).
     pub secret_exit_safe: bool,
+    /// True if this lock makes the target unreachable when closed. Used to
+    /// suppress redundant target-blocking bonuses for subsequent locks in
+    /// the same world (avoids piling multiple locks against the airship).
+    pub blocks_target: bool,
 }
 
 /// Complete build result for one world.
@@ -1264,13 +1268,18 @@ fn place_locks<R: Rng>(
         // Prefer safe when forced (retry path) or when the best candidate
         // is weak anyway (score < 5) — don't sacrifice a high-scoring lock.
         // Evaluated after scoring all candidates, see below.
-        let mut best: Option<((usize, usize), u8, u8, i32, bool)> = None;
+        let mut best: Option<((usize, usize), u8, u8, i32, bool, bool)> = None;
         let mut best_safe: Option<((usize, usize), u8, u8, i32)> = None;
 
         // Open grid (no candidate lock) is constant for all candidates in this
         // section — hoist the BFS to avoid redundant walks per candidate.
         let open_grid = build_test_grid(None);
         let open_node_count = walk_map(&open_grid, pipe_pairs, start_pos).nodes.len() as i32;
+
+        // If a previous lock in this world already blocks the target, suppress
+        // the target-blocking bonus to avoid stacking multiple locks against
+        // the airship/Bowser.
+        let target_already_locked = locks.iter().any(|l| l.blocks_target);
 
         for &cand_pos in &candidates {
             let tile = reference_grid.get(cand_pos.0, cand_pos.1);
@@ -1344,9 +1353,22 @@ fn place_locks<R: Rng>(
                 score += 100;
             }
 
-            // Bonus: blocks the target (airship/bowser)
-            if !target_reachable {
+            // Bonus: blocks the target (airship/bowser) — only credited to
+            // the first such lock in the world; subsequent target-blockers
+            // would just pile up next to the airship.
+            if !target_reachable && !target_already_locked {
                 score += 10;
+            }
+
+            // Spread penalty: discourage placing this lock close to any
+            // already-placed lock in the world. Falls off linearly with
+            // Manhattan distance, zero past 8 tiles.
+            if let Some(min_dist) = locks
+                .iter()
+                .map(|l| cand_pos.0.abs_diff(l.pos.0) + cand_pos.1.abs_diff(l.pos.1))
+                .min()
+            {
+                score -= (8i32 - min_dist as i32).max(0) * 2;
             }
 
             // Slight preference for bridge tiles — water gaps look better
@@ -1357,11 +1379,11 @@ fn place_locks<R: Rng>(
 
             // Track best overall and best safe separately.
             let dominated = match &best {
-                Some((_, _, _, best_score, _)) => score > *best_score,
+                Some((_, _, _, best_score, _, _)) => score > *best_score,
                 None => true,
             };
             if dominated {
-                best = Some((cand_pos, gap, tile, score, safe));
+                best = Some((cand_pos, gap, tile, score, safe, !target_reachable));
             }
 
             if safe {
@@ -1377,17 +1399,17 @@ fn place_locks<R: Rng>(
 
         // Prefer safe when forced (retry) or when best score is low —
         // no point picking an impactful lock if there are none.
-        let best_score = best.map(|(_, _, _, s, _)| s).unwrap_or(0);
+        let best_score = best.map(|(_, _, _, s, _, _)| s).unwrap_or(0);
         let prefer_safe = force_safe || best_score < 5;
 
         let chosen = if prefer_safe {
-            best_safe.map(|(pos, gap, replace, score)| (pos, gap, replace, score, true))
+            best_safe.map(|(pos, gap, replace, score)| (pos, gap, replace, score, true, false))
                 .or(best)
         } else {
             best
         };
 
-        if let Some((pos, gap, replace, _score, safe)) = chosen {
+        if let Some((pos, gap, replace, _score, safe, blocks_target)) = chosen {
             locked_tiles.insert(pos);
             locks.push(LockAssignment {
                 pos,
@@ -1395,6 +1417,7 @@ fn place_locks<R: Rng>(
                 replace_tile: replace,
                 fort_section: section_idx,
                 secret_exit_safe: safe,
+                blocks_target,
             });
         }
     }
@@ -2129,15 +2152,40 @@ mod tests {
         let mut per_world: [(u64, u32); 8] = [(0, 0); 8];
         // Track locks at distance <= 2 per seed for flagging
         let mut close_lock_seeds = 0u32;
+        // Inter-lock Manhattan distance (only for worlds with 2+ locks)
+        let mut inter_hist = [0u32; 40];
+        let mut total_pairs = 0u32;
+        let mut per_world_pairs: [(u64, u32); 8] = [(0, 0); 8];
+        let mut close_pair_seeds = 0u32;
 
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let result = build(&rom, &pickup, &catalog, &mut rng);
             let mut seed_has_close = false;
+            let mut seed_has_close_pair = false;
 
             for built in &result.worlds {
                 let wi = built.world_idx;
                 let target_pos = find_target(&built.grid, wi);
+
+                // Inter-lock Manhattan distance (works regardless of target).
+                if built.locks.len() >= 2 {
+                    for i in 0..built.locks.len() {
+                        for j in (i + 1)..built.locks.len() {
+                            let (ar, ac) = built.locks[i].pos;
+                            let (br, bc) = built.locks[j].pos;
+                            let d = ar.abs_diff(br) + ac.abs_diff(bc);
+                            let idx = d.min(inter_hist.len() - 1);
+                            inter_hist[idx] += 1;
+                            total_pairs += 1;
+                            per_world_pairs[wi].0 += d as u64;
+                            per_world_pairs[wi].1 += 1;
+                            if d <= 3 {
+                                seed_has_close_pair = true;
+                            }
+                        }
+                    }
+                }
 
                 if target_pos.is_none() {
                     no_target_locks += built.locks.len() as u32;
@@ -2214,6 +2262,9 @@ mod tests {
             if seed_has_close {
                 close_lock_seeds += 1;
             }
+            if seed_has_close_pair {
+                close_pair_seeds += 1;
+            }
         }
 
         eprintln!("\n=== Lock-to-Airship BFS Distance ({seeds} seeds, {total_locks} locks) ===\n");
@@ -2246,6 +2297,30 @@ mod tests {
             if count > 0 {
                 let avg = sum as f64 / count as f64;
                 eprintln!("  W{}: {avg:.1} avg ({count} locks)", wi + 1);
+            }
+        }
+
+        eprintln!("\n=== Inter-Lock Manhattan Distance ({total_pairs} pairs) ===\n");
+        eprintln!("Distance | Count | Bar");
+        eprintln!("---------+-------+----");
+        let max_inter = inter_hist.iter().rposition(|&c| c > 0).unwrap_or(0);
+        for d in 0..=max_inter {
+            let bar = "#".repeat((inter_hist[d] as usize).min(60));
+            eprintln!("{d:>5}    | {:<5} | {bar}", inter_hist[d]);
+        }
+        let inter_total: u64 = inter_hist.iter().enumerate().map(|(d, &c)| d as u64 * c as u64).sum();
+        let inter_mean = inter_total as f64 / total_pairs.max(1) as f64;
+        let close_pairs: u32 = inter_hist[..=3].iter().sum();
+        let close_pair_pct = close_pairs as f64 / total_pairs.max(1) as f64 * 100.0;
+        eprintln!("\nMean pair distance:    {inter_mean:.1}");
+        eprintln!("Pairs at dist <= 3:    {close_pairs}/{total_pairs} ({close_pair_pct:.1}%)");
+        eprintln!("Seeds with any pair <=3: {close_pair_seeds}/{seeds}");
+        eprintln!("\nPer-world pair averages:");
+        for wi in 0..8 {
+            let (sum, count) = per_world_pairs[wi];
+            if count > 0 {
+                let avg = sum as f64 / count as f64;
+                eprintln!("  W{}: {avg:.1} avg ({count} pairs)", wi + 1);
             }
         }
     }
