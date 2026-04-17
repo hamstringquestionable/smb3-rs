@@ -739,6 +739,13 @@ pub(super) fn layout_file_offset(cpu_addr: u16, tileset: u8) -> Option<usize> {
 /// ROM file offset of PRG006 enemy/object data base (CPU $C000).
 const ENEMY_DATA_FILE_BASE: usize = 0x0C010;
 
+/// Enemy/object data block: 0x0BFD8..0x0E00D (exclusive end).
+/// Each level's enemy set is a sequence of segments separated by 0xFF.
+/// Each segment starts with a 1-byte page flag, then zero or more 3-byte
+/// entries [object_id, x_pos, y_pos], terminated by 0xFF.
+pub const ENEMY_DATA_START: usize = 0x0BFD8;
+pub const ENEMY_DATA_END: usize = 0x0E00D;
+
 /// Individual enemy offsets excluded from randomization.
 /// These specific enemies are required for gameplay (e.g., needed as platforms
 /// to make jumps, or positioned to enable required routes).
@@ -975,17 +982,6 @@ pub(super) fn read_world_fx_assignments(rom: &Rom) -> [Vec<u8>; 8] {
         }
     }
     assignments
-}
-
-/// Read grid positions of fortress entries for a world.
-#[cfg(test)]
-pub(super) fn read_fortress_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
-    let world = &WORLDS[world_idx];
-    FORTRESS_ENTRIES
-        .iter()
-        .filter(|&&(w, _)| w == world_idx)
-        .map(|&(_, ei)| entry_grid_position(rom, world, ei))
-        .collect()
 }
 
 // ---------------------------------------------------------------------------
