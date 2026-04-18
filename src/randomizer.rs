@@ -595,6 +595,13 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         rom.set_tag("autoscroll");
         randomize::autoscroll::disable_autoscroll(rom);
     }
+    // Beta stage layout fixes must run before powerups/enemies so the
+    // randomization passes see the patched bytes (some patches reshape
+    // commands or convert hidden powerblocks into randomizable shapes).
+    if options.include_beta_stages {
+        rom.set_tag("qol/beta_stages");
+        randomize::qol::fix_beta_stages(rom);
+    }
     if options.powerups {
         rom.set_tag("powerups");
         randomize::powerups::randomize(rom, &mut rng, options.hammer_vulnerable_koopalings);
@@ -661,10 +668,6 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     // 2. Vanilla Layout: tiles stay in place, level entries shuffled underneath.
     if options.map_shuffle {
         rom.set_tag("overworld/builder");
-
-        if options.include_beta_stages {
-            randomize::qol::fix_beta_stages(rom);
-        }
 
         let catalog = randomize::node_catalog::NodeCatalog::build(rom, options.include_beta_stages);
         let pickup = randomize::overworld_pickup::pick_up(rom, &catalog, options.remove_spade_games);
