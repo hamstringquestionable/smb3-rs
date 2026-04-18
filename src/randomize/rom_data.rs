@@ -650,9 +650,10 @@ pub(super) const BETA_PATCHES: &[(usize, u8)] = &[
     (0x1EA6F, 0x0D), (0x1EB34, 0x06),
     // β3 (ts3 $B0DD) — 2 patches
     (0x2113F, 0x00), (0x212BA, 0x00),
-    // β4 (ts3 $B442) — 4 patches (header: byte5 X-start + command fixes)
+    // β4 (ts3 $B442) — 5 patches (header: byte5 X-start + command fixes,
+    // and convert hidden 1-up brick to Q-block star so the powerup randomizer reaches it).
     (0x21457, 0x04), (0x214B2, 0x04),
-    (0x214CF, 0x2F), (0x214D0, 0x24),
+    (0x214CF, 0x2F), (0x214D0, 0x24), (0x214D1, 0x02),
     // β5 (ts4 $ADCD) — 5 patches
     (0x22F05, 0x1A), (0x22F08, 0x19), (0x22F0B, 0x1A),
     (0x22F0F, 0x9F), (0x23004, 0x04),
