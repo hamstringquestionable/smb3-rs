@@ -572,6 +572,31 @@ Each entry is exactly **3 bytes**: object ID, X position, Y position.
 The leading `0xFF` bytes at the start of the block are empty/unused segments.
 Per-level object files in the disassembly (e.g. `PRG/objects/1-1.asm`) confirm this format.
 
+### Position Byte Resolution
+
+The X and Y bytes are **tile-resolution** (1 unit = 16 pixels = 1 tile column/row).
+There is no sub-tile granularity in the data byte itself. To shift a sprite by
+less than one tile, the spawn code in PRG must be patched to bias the in-RAM
+pixel position after the data is read.
+
+### Per-ID Sprite Anchoring Quirks
+
+Some object sprites render with a hardcoded pixel offset from their data-byte
+anchor — meaning the sprite does not appear centered on the (X, Y) tile in the
+data. When randomization swaps an enemy whose anchor convention differs from
+the slot's original tenant, the replacement looks visually offset.
+
+Known cases:
+
+- **`OBJ_BIGREDPIRANHA` (0x7F)** — sprite renders approximately **8 pixels
+  (½ tile) right** of its data X. When BRP is randomized into a slot that
+  previously held a different piranha (e.g. `OBJ_VENUSFIRETRAP` 0xA6 in 1-1),
+  the BRP head visibly leans right of the pipe. Decrementing the data X by 1
+  overshoots in the opposite direction by the same ~½ tile (verified by
+  comparing X+0, X−1, X−2, X−3 test ROMs). A correct fix would require a
+  6502 patch in PRG004 (where IDs 0x6C–0x8F live) to add +8 to the sprite's
+  pixel X at spawn — not implemented; the cosmetic offset is left as-is.
+
 ### Complete Object ID List
 
 Source: `smb3.asm` from the [Southbird disassembly](https://github.com/captainsouthbird/smb3).
