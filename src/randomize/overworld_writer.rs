@@ -864,33 +864,50 @@ fn write_fortress_fx(
 /// Patch metatile LL quadrant for double-digit level tiles (0x0D–0x15).
 ///
 /// Vanilla tiles 0x0D–0x15 have a blank LL (CHR 0xBE = solid fill). We write
-/// a custom CHR tile with a "1" tens digit into an unreferenced slot, then
-/// point the LL quadrant of tiles 0x0D–0x15 at it.
+/// a custom CHR tile with a "1" tens digit into an unused slot, then point
+/// the LL quadrant of tiles 0x0D–0x15 at it.
 ///
-/// CHR tile 0xCC is unreferenced by every overworld metatile (vanilla 0xCB
-/// was unsafe — it's the LR of metatile 0x0B, the vanilla "level 9" tile).
+/// CHR tile 0xFD (page 0x17, local 0x3D) holds the letter 'Z' in vanilla.
+/// The only place 'Z' appears on the world map is the "Warp Zone" screen,
+/// which is reachable only by using a warp whistle. With the default
+/// `--no-whistles` configuration the Warp Zone is unreachable, so the 'Z'
+/// glyph never renders and we can safely repurpose its CHR slot.
+///
+/// Future improvement: rename the screen to "Warp World" (or any Z-free
+/// 4-letter alt like "Warp Land" / "Warp Pipe") and the 'Z' tile becomes
+/// permanently free, even with `--keep-whistles`. This requires locating
+/// the screen's text data first — neither ASCII "Zone" nor a linear-alphabet
+/// tile encoding [Z, O, N, E] = [0xFD, ?, ?, ?] was found by simple search,
+/// so the popup builds the string by code or uses an interleaved encoding.
+///
+/// Earlier picks failed: 0xCB is the LR of metatile 0x0B (vanilla "level 9"
+/// digit), and 0xCC is the vertical-bar tile used by the popup window border
+/// kit ("MARIO x N" / "WORLD N" overlay). Most other tiles in pages 0x16/0x17
+/// are popup-font letters/digits.
+///
 /// CHR page 0x17 covers tile IDs 0xC0–0xFF and is stable (no MMC3 mid-frame
-/// bank swapping).
+/// bank swapping); pages 0x16/0x17 are loaded only as the world-map BG bank
+/// (R1 = 0x16) and never as a sprite or level CHR source.
 pub(crate) fn patch_double_digit_metatiles(rom: &mut Rom) {
     // Metatile quadrant tables at 0x18010: UL(256) LL(256) UR(256) LR(256).
     const METATILE_LL_BASE: usize = 0x18010 + 256; // 0x18110
 
-    // Overwrite CHR tile 0xCC with our custom "1" digit.
-    // CHR page 0x17 covers tile IDs 0xC0–0xFF; tile 0xCC = index 0x0C.
+    // Overwrite CHR tile 0xFD with our custom "1" digit.
+    // CHR page 0x17 covers tile IDs 0xC0–0xFF; tile 0xFD = local index 0x3D.
     const CHR_START: usize = 0x40010;
     const CHR_PAGE_17: usize = CHR_START + 0x17 * 0x400;
-    const TILE_CC_OFFSET: usize = CHR_PAGE_17 + 0x0C * 16;
+    const TILE_FD_OFFSET: usize = CHR_PAGE_17 + 0x3D * 16;
     // Arrow shape (cols 2–5) + "1" serif (col 6 row 1) + right border (col 7 = color 2).
     #[rustfmt::skip]
     const DIGIT_1_LL: [u8; 16] = [
         0x7E, 0x7C, 0x7E, 0x7E, 0x7E, 0x7E, 0x7F, 0x00, // plane 0
         0xA1, 0xB3, 0xB9, 0xBD, 0xB9, 0xB1, 0x80, 0xFF, // plane 1
     ];
-    rom.write_range(TILE_CC_OFFSET, &DIGIT_1_LL);
+    rom.write_range(TILE_FD_OFFSET, &DIGIT_1_LL);
 
-    // Point LL of tiles 0x0D–0x15 (levels 10–19) at CHR tile 0xCC.
+    // Point LL of tiles 0x0D–0x15 (levels 10–19) at CHR tile 0xFD.
     for tile_id in 0x0Du8..=0x15 {
-        rom.write_byte(METATILE_LL_BASE + tile_id as usize, 0xCC);
+        rom.write_byte(METATILE_LL_BASE + tile_id as usize, 0xFD);
     }
 }
 
