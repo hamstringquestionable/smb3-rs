@@ -599,8 +599,14 @@ fn commit_chr_page(id: u8, slot4: &mut ChrSlot, slot5: &mut ChrSlot) {
     }
 }
 
-/// If the new enemy is tall, nudge Y up by 1 tile to prevent floor clipping.
-fn adjust_y_for_tall(data: &mut [u8], id_index: usize, new_id: u8) {
+/// Write `new_id` into the enemy slot at `id_index` and nudge X/Y so the
+/// replacement sprite lines up with the slot. Bundles the write + adjustment
+/// so call sites can't forget one. `_old_id` is captured for future pair-aware
+/// adjustments (e.g. piranha→ground Y shift); current rules only use `new_id`:
+/// - Tall replacements get Y−1 to avoid floor clipping.
+fn swap_enemy(data: &mut [u8], id_index: usize, new_id: u8) {
+    let _old_id = data[id_index];
+    data[id_index] = new_id;
     if TALL_ENEMIES.contains(&new_id) {
         data[id_index + 2] = data[id_index + 2].wrapping_sub(1);
     }
@@ -728,9 +734,7 @@ fn randomize_hb_wild_segment<R: Rng>(
 
     if swappable.len() == 1 {
         if let Some(chosen) = pick_compatible(STOMPABLE_ENEMIES, slot4, slot5, rng) {
-            let di = entries[swappable[0]].data_index;
-            data[di] = chosen;
-            adjust_y_for_tall(data, di, chosen);
+            swap_enemy(data, entries[swappable[0]].data_index, chosen);
         }
     } else if swappable.len() == 2 {
         // Roll whether this segment gets a non-stompable enemy (5/31 ≈ 16%)
@@ -744,31 +748,23 @@ fn randomize_hb_wild_segment<R: Rng>(
                     // Randomly assign which slot gets which
                     let (di0, di1) = (entries[swappable[0]].data_index, entries[swappable[1]].data_index);
                     if rng.random_range(..2u32) == 0 {
-                        data[di0] = ns;
-                        adjust_y_for_tall(data, di0, ns);
-                        data[di1] = shell;
-                        adjust_y_for_tall(data, di1, shell);
+                        swap_enemy(data, di0, ns);
+                        swap_enemy(data, di1, shell);
                     } else {
-                        data[di0] = shell;
-                        adjust_y_for_tall(data, di0, shell);
-                        data[di1] = ns;
-                        adjust_y_for_tall(data, di1, ns);
+                        swap_enemy(data, di0, shell);
+                        swap_enemy(data, di1, ns);
                     }
                 }
             }
         } else {
             // Both from stompable pool
             if let Some(first) = pick_compatible(STOMPABLE_ENEMIES, slot4, slot5, rng) {
-                let di0 = entries[swappable[0]].data_index;
-                data[di0] = first;
-                adjust_y_for_tall(data, di0, first);
+                swap_enemy(data, entries[swappable[0]].data_index, first);
                 let mut s4 = slot4;
                 let mut s5 = slot5;
                 commit_chr_page(first, &mut s4, &mut s5);
                 if let Some(second) = pick_compatible(STOMPABLE_ENEMIES, s4, s5, rng) {
-                    let di1 = entries[swappable[1]].data_index;
-                    data[di1] = second;
-                    adjust_y_for_tall(data, di1, second);
+                    swap_enemy(data, entries[swappable[1]].data_index, second);
                 }
             }
         }
@@ -877,14 +873,12 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                     commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
                 } else if SHELL_PROTECTED_OFFSETS.contains(&file_offset) && modes.shell != EnemyMode::Off {
                     if let Some(chosen) = pick_compatible(SHELL_ENEMIES, committed_slot4, committed_slot5, rng) {
-                        data[entry.data_index] = chosen;
-                        adjust_y_for_tall(&mut data, entry.data_index, chosen);
+                        swap_enemy(&mut data, entry.data_index, chosen);
                         commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                     }
                 } else if TANK_BRO_PROTECTED_OFFSETS.contains(&file_offset) && modes.bros != EnemyMode::Off {
                     if let Some(chosen) = pick_compatible(TANK_BRO_POOL, committed_slot4, committed_slot5, rng) {
-                        data[entry.data_index] = chosen;
-                        adjust_y_for_tall(&mut data, entry.data_index, chosen);
+                        swap_enemy(&mut data, entry.data_index, chosen);
                         commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                     }
                 } else if let Some(pool) = find_class_pool(entry.obj_id, modes, wild_pool) {
@@ -894,8 +888,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                         pick_compatible(pool, committed_slot4, committed_slot5, rng)
                     };
                     if let Some(chosen) = chosen {
-                        data[entry.data_index] = chosen;
-                        adjust_y_for_tall(&mut data, entry.data_index, chosen);
+                        swap_enemy(&mut data, entry.data_index, chosen);
                         commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                     }
                 }
@@ -917,17 +910,15 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                     if let Some(&target_idx) = swappable_indices.choose(rng) {
                         if let Some(chosen) = pick_compatible(WILD_INJECTION_IDS, committed_slot4, committed_slot5, rng) {
                             let di = entries[target_idx].data_index;
-                            data[di] = chosen;
+                            swap_enemy(&mut data, di, chosen);
                             if chosen == 0xAF {
-                                // Angry Sun: fixed sky position
+                                // Angry Sun: override to fixed sky position
                                 data[di + 1] = 0x02;
                                 data[di + 2] = 0x11;
                             } else if chosen == 0x83 {
-                                // Lakitu: fixed sky position
+                                // Lakitu: override to fixed sky position
                                 data[di + 1] = 0x02;
                                 data[di + 2] = 0x12;
-                            } else {
-                                adjust_y_for_tall(&mut data, di, chosen);
                             }
                             commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                         }
