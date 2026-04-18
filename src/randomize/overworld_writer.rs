@@ -19,7 +19,7 @@ use super::overworld_pickup::PickupResult;
 use super::pipe_helpers;
 use super::rom_data::{
     self, FORTRESS_1F_OBJ_PTR, FX_MAP_COMP_IDX, FX_PATTERNS, FX_VADDR_H, FX_VADDR_L,
-    MAP_COMPLETE_BITS, TILE_PIPE, WORLDS,
+    MAP_COMPLETE_BITS, TILE_BONUS_GAME, TILE_PIPE, WORLDS,
 };
 
 
@@ -130,6 +130,8 @@ struct WorldAssignments {
     airship: Option<Assignment>,
     /// Bowser assignment (W8 only).
     bowser: Option<Assignment>,
+    /// Bonus game (spade) assignments.
+    bonus: Vec<Assignment>,
     /// Hammer bro assignments (remaining blank slots).
     hammer_bro: Vec<HammerBroAssignment>,
 }
@@ -196,6 +198,7 @@ fn assign_pool<R: Rng>(
     let mut fort_pool: Vec<usize> = Vec::new();
     let mut level_pool: Vec<usize> = Vec::new();
     let mut airship_pool: Vec<usize> = Vec::new();
+    let mut bonus_pool: Vec<usize> = Vec::new();
     let mut bowser_idx: Option<usize> = None;
     // Pipe groups: world → dest_idx → Vec<(pool_idx, is_a_side)>.
     let mut pipe_groups: HashMap<usize, HashMap<usize, Vec<(usize, bool)>>> = HashMap::new();
@@ -217,9 +220,12 @@ fn assign_pool<R: Rng>(
                     .or_default()
                     .push((pi, *is_a_side));
             }
+            NodeKind::BonusGame => bonus_pool.push(pi),
             _ => {} // HammerBro entries don't need a pool — see HB assignment below
         }
     }
+    bonus_pool.as_mut_slice().shuffle(rng);
+    let mut bonus_iter = bonus_pool.into_iter();
 
     // Build cycling hammer bro level pool, interleaved by obj_ptr so each
     // unique enemy set appears once before any repeats.
@@ -403,6 +409,22 @@ fn assign_pool<R: Rng>(
             None
         };
 
+        // --- Bonus game (spade) assignments ---
+        //
+        // Each SlotKind::BonusGame position gets a picked-up BonusGame pool
+        // entry. All BonusGame entries are functionally identical (obj=$0001,
+        // lay=$0000), so any pool entry works for any slot.
+        let mut bonus = Vec::new();
+        for slot in &built.slots {
+            if slot.kind != SlotKind::BonusGame {
+                continue;
+            }
+            match bonus_iter.next() {
+                Some(pi) => bonus.push(Assignment { pool_idx: pi, pos: slot.pos }),
+                None => break, // pool exhausted (shouldn't happen — budget is capped)
+            }
+        }
+
         // --- Hammer bro assignments (remaining blank slots) ---
         //
         // Every SlotKind::HammerBro position gets a cycling HB level, up to
@@ -412,7 +434,7 @@ fn assign_pool<R: Rng>(
         // dedicated per-obj_ptr round-robin so each encounter in a world
         // has a different enemy set. Filler positions (blank tiles needing
         // valid pointer entries) use the normal cycling pool.
-        let level_like_count = fortress.len() + level.len() + pipes.len() * 2;
+        let level_like_count = fortress.len() + level.len() + pipes.len() * 2 + bonus.len();
         let remaining_slots = pickup.worlds[wi].pool_indices.len().saturating_sub(level_like_count);
 
         let sprite_positions: HashSet<(usize, usize)> =
@@ -456,6 +478,7 @@ fn assign_pool<R: Rng>(
             pipes,
             airship,
             bowser,
+            bonus,
             hammer_bro,
         });
     }
@@ -506,6 +529,11 @@ fn write_tile_grid<R: Rng>(
     if let Some(a) = &wa.bowser {
         let tile = catalog.entries[pickup.pool[a.pool_idx].catalog_idx].tile;
         grid.set(a.pos.0, a.pos.1, tile);
+    }
+
+    // Stamp bonus game (spade) tiles.
+    for a in &wa.bonus {
+        grid.set(a.pos.0, a.pos.1, TILE_BONUS_GAME);
     }
 
     // Stamp level tiles in BFS order from start.
@@ -613,6 +641,9 @@ fn write_pointer_entries(
     for pa in &wa.pipes {
         all.push((pa.pool_idx_a, pa.pos_a));
         all.push((pa.pool_idx_b, pa.pos_b));
+    }
+    for a in &wa.bonus {
+        all.push((a.pool_idx, a.pos));
     }
     // Airship and bowser are not picked up — their pointer table entries
     // stay vanilla so the autoscroll patch's hardcoded offsets remain valid.
@@ -879,6 +910,7 @@ fn write_fortress_fx(
 /// the screen's text data first — neither ASCII "Zone" nor a linear-alphabet
 /// tile encoding [Z, O, N, E] = [0xFD, ?, ?, ?] was found by simple search,
 /// so the popup builds the string by code or uses an interleaved encoding.
+/// See memory/double_digit_chr_tile.md for the full investigation log.
 ///
 /// Earlier picks failed: 0xCB is the LR of metatile 0x0B (vanilla "level 9"
 /// digit), and 0xCC is the vertical-bar tile used by the popup window border
@@ -1108,6 +1140,9 @@ mod tests {
             if let Some(a) = &wa.bowser {
                 used.push(a.pool_idx);
             }
+            for a in &wa.bonus {
+                used.push(a.pool_idx);
+            }
         }
 
         // No pool entry assigned more than once.
@@ -1122,7 +1157,7 @@ mod tests {
 
         // Per-world assignment count must not exceed available pointer table slots.
         for (wi, wa) in assignments.iter().enumerate() {
-            let level_like = wa.fortress.len() + wa.level.len() + wa.pipes.len() * 2;
+            let level_like = wa.fortress.len() + wa.level.len() + wa.pipes.len() * 2 + wa.bonus.len();
             let total = level_like + wa.hammer_bro.len();
             let available = pickup.worlds[wi].pool_indices.len();
             assert!(
