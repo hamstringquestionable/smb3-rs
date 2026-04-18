@@ -803,6 +803,51 @@ pub(super) const PROTECTED_ENEMY_SEGMENTS: &[usize] = &[
     0x0CA33, // 3-2 (obj 0xCA23): enemies used as platforms, sprite overload risk
 ];
 
+/// One gauntlet of memorizable projectile enemies whose positions get
+/// per-seed X/Y jitter when `jitter_enemy_positions` is enabled.
+///
+/// Each entry describes an enemy-data segment and which obj_ids within it
+/// should be jittered. Non-matching entries in the segment are skipped so
+/// level-critical non-projectile enemies (DryBones, Boos) stay put.
+///
+/// Y byte encoding: low nibble = row within the current vertical page
+/// (0–15), high nibble = vertical page/flags. Jitter preserves the high
+/// nibble so podoboos stay on the same page. X byte is the global tile
+/// column across all screens.
+pub(super) struct JitterSegment {
+    /// File offset of the first 3-byte entry (after the page-flag byte).
+    pub file_offset: usize,
+    /// Number of 3-byte entries to scan in this segment.
+    pub count: usize,
+    /// Only entries whose obj_id is in this list get jittered.
+    pub ids: &'static [u8],
+    /// Inclusive max for the X byte (clamps jitter to stay within screen count).
+    pub max_x: u8,
+}
+
+/// Gauntlets that get per-seed X/Y jitter when `jitter_enemy_positions` is on.
+/// Extending the feature to more levels = adding a row here, no code changes.
+pub(super) const JITTER_SEGMENTS: &[JitterSegment] = &[
+    // 5F-2 sub-area 1 (CPU 0xD2B9, page flag at 0x0D2C9). 26 entries:
+    // 16× 0x9E (Podoboo fire jet) + 6× 0x53 (ceiling podoboo) + 2× DryBones
+    // + 2× Boo. Sub-area is 8 screens => max_x = 8*16 - 1 = 0x7F.
+    JitterSegment {
+        file_offset: 0x0D2CA,
+        count: 26,
+        ids: &[0x9E, 0x53],
+        max_x: 0x7F,
+    },
+    // 8B sub-area 1 (CPU 0xD60B, page flag at 0x0D61B). 14 entries total,
+    // including 9× 0x75 (OBJ_BOSSATTACK) fireballs in the pre-Bowser
+    // corridor. Sub-area is 15 screens => max_x = 15*16 - 1 = 0xEF.
+    JitterSegment {
+        file_offset: 0x0D61C,
+        count: 14,
+        ids: &[0x75],
+        max_x: 0xEF,
+    },
+];
+
 /// Check whether the first enemy data segment at `obj_ptr` contains `target_id`.
 ///
 /// Enemy data format: 1-byte page flag, then 3-byte entries `[id, x, y]`,

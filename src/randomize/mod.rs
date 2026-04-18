@@ -1,5 +1,6 @@
 pub mod autoscroll;
 pub mod enemies;
+pub mod enemy_jitter;
 pub mod items;
 pub mod king_quotes;
 pub mod koopalings;
