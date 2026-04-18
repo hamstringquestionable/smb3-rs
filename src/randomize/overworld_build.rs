@@ -22,7 +22,7 @@ use super::overworld_helpers::{find_target, gap_tile_for, LOCKABLE_TILES};
 use super::overworld_pickup::PickupResult;
 use crate::rom::Rom;
 use super::rom_data::{
-    self, BACKGROUND_TILES, Grid, TILE_NODE, TILE_PIPE, TILE_FORTRESS,
+    self, BACKGROUND_TILES, Grid, TILE_BONUS_GAME, TILE_FORTRESS, TILE_NODE, TILE_PIPE,
     VALID_HORZ, VALID_VERT,
 };
 
@@ -37,6 +37,7 @@ pub enum SlotKind {
     Fortress,
     Pipe,
     HammerBro,
+    BonusGame,
 }
 
 /// A single slot assignment on the grid.
@@ -284,7 +285,109 @@ pub(crate) fn build<R: Rng>(
         }
     }
 
+    place_bonus_games(rom, &mut worlds, pickup, catalog, rng);
+
     BuildResult { worlds, fort_counts }
+}
+
+// ---------------------------------------------------------------------------
+// Step 5: Bonus game (spade) placement
+// ---------------------------------------------------------------------------
+
+const SPADE_BUDGET: usize = 19;
+
+/// Promote HammerBro slots to BonusGame slots, distributing a spade budget
+/// across worlds in proportion to each world's available HammerBro slot count.
+///
+/// Runs after lock placement so reachability constraints are already satisfied;
+/// no-ops when the pickup pool contains no BonusGame entries.
+fn place_bonus_games<R: Rng>(
+    rom: &Rom,
+    worlds: &mut [BuiltWorld],
+    pickup: &PickupResult,
+    catalog: &NodeCatalog,
+    rng: &mut R,
+) {
+    let bonus_count = pickup
+        .pool
+        .iter()
+        .filter(|pe| matches!(catalog.entries[pe.catalog_idx].kind, NodeKind::BonusGame))
+        .count()
+        .min(SPADE_BUDGET);
+    if bonus_count == 0 {
+        return;
+    }
+
+    let mut candidates_by_world: Vec<Vec<(usize, usize)>> = Vec::with_capacity(worlds.len());
+    for (wi, w) in worlds.iter().enumerate() {
+        let sprite_positions: HashSet<(usize, usize)> = rom_data::read_hb_sprite_positions(rom, wi)
+            .into_iter()
+            .collect();
+
+        let completable = completable_positions(&w.grid, &w.slots);
+
+        let mut cands: Vec<(usize, usize)> = w
+            .slots
+            .iter()
+            .filter(|s| s.kind == SlotKind::HammerBro)
+            .map(|s| s.pos)
+            .filter(|p| !sprite_positions.contains(p))
+            .filter(|p| !is_row78_conflict(*p, &completable))
+            .collect();
+        cands.shuffle(rng);
+        candidates_by_world.push(cands);
+    }
+
+    let total_cands: usize = candidates_by_world.iter().map(|c| c.len()).sum();
+    if total_cands == 0 {
+        return;
+    }
+
+    let target = bonus_count.min(total_cands);
+    let mut budget = vec![0usize; worlds.len()];
+    for wi in 0..worlds.len() {
+        let frac = candidates_by_world[wi].len() as f64 / total_cands as f64;
+        budget[wi] = ((frac * target as f64).round() as usize).min(candidates_by_world[wi].len());
+    }
+
+    // Rounding may leave us over/under. Trim or pad until we match `target`.
+    let mut allocated: usize = budget.iter().sum();
+    while allocated > target {
+        let wi = budget
+            .iter()
+            .enumerate()
+            .filter(|&(_, b)| *b > 0)
+            .max_by_key(|&(_, b)| *b)
+            .map(|(i, _)| i)
+            .unwrap();
+        budget[wi] -= 1;
+        allocated -= 1;
+    }
+    while allocated < target {
+        let wi = (0..worlds.len())
+            .filter(|&i| candidates_by_world[i].len() > budget[i])
+            .max_by_key(|&i| candidates_by_world[i].len() - budget[i]);
+        match wi {
+            Some(wi) => {
+                budget[wi] += 1;
+                allocated += 1;
+            }
+            None => break,
+        }
+    }
+
+    for (wi, w) in worlds.iter_mut().enumerate() {
+        let chosen: HashSet<(usize, usize)> = candidates_by_world[wi]
+            .iter()
+            .take(budget[wi])
+            .copied()
+            .collect();
+        for slot in w.slots.iter_mut() {
+            if slot.kind == SlotKind::HammerBro && chosen.contains(&slot.pos) {
+                slot.kind = SlotKind::BonusGame;
+            }
+        }
+    }
 }
 
 /// Collect positions that must not be overwritten by level/fort/pipe placement.
@@ -589,6 +692,30 @@ fn is_completion_unsafe(tile: u8) -> bool {
     REMOVABLE.contains(&tile)
 }
 
+/// Collect positions whose tile/slot would be "caught" by the game's
+/// completion-check routine — the input to `is_row78_conflict`. This covers
+/// both completion-unsafe grid tiles and placed Level/Fortress/BonusGame slots
+/// (which will be stamped as completion-unsafe tiles by the writer).
+fn completable_positions(grid: &Grid, slots: &[SlotAssignment]) -> HashSet<(usize, usize)> {
+    let mut set: HashSet<(usize, usize)> = HashSet::new();
+    for r in 0..grid.rows {
+        for c in 0..grid.cols {
+            if is_completion_unsafe(grid.get(r, c)) {
+                set.insert((r, c));
+            }
+        }
+    }
+    for s in slots {
+        if matches!(
+            s.kind,
+            SlotKind::Level | SlotKind::Fortress | SlotKind::BonusGame
+        ) {
+            set.insert(s.pos);
+        }
+    }
+    set
+}
+
 /// BFS from start, returning nodes in visit order with their distances.
 /// BFS-ordered list of (position, distance) using the canonical `walk_map`.
 ///
@@ -873,15 +1000,7 @@ fn populate_sections<R: Rng>(
     // 2. `placed_levels_and_forts` — only levels and fortresses we've placed.
     //    Used by the scoring function to spread levels apart. Excludes spades,
     //    pipes, and other non-clumping tiles.
-    let mut completable: HashSet<(usize, usize)> = HashSet::new();
-    for r in 0..grid.rows {
-        for c in 0..grid.cols {
-            let t = grid.get(r, c);
-            if is_completion_unsafe(t) {
-                completable.insert((r, c));
-            }
-        }
-    }
+    let mut completable = completable_positions(grid, &[]);
     let mut placed_levels_and_forts: HashSet<(usize, usize)> = HashSet::new();
 
     // Add pipe slots (not in sections, but tracked)
@@ -1201,6 +1320,7 @@ fn place_locks<R: Rng>(
             }
             SlotKind::Pipe => {} // already stamped on grid
             SlotKind::HammerBro => {} // blank path tile, no stamp needed
+            SlotKind::BonusGame => base_grid.set(slot.pos.0, slot.pos.1, TILE_BONUS_GAME),
         }
     }
 
@@ -1252,7 +1372,7 @@ fn place_locks<R: Rng>(
                         let paired_row = if r == 7 { 8 } else { 7 };
                         let pair_completable = slots.iter().any(|s| {
                             s.pos == (paired_row, c)
-                                && matches!(s.kind, SlotKind::Level | SlotKind::Fortress | SlotKind::Pipe)
+                                && matches!(s.kind, SlotKind::Level | SlotKind::Fortress | SlotKind::Pipe | SlotKind::BonusGame)
                         });
                         if pair_completable {
                             continue;
@@ -1458,6 +1578,7 @@ pub(super) fn debug_stamp_rom(rom: &mut crate::rom::Rom, result: &BuildResult) {
                 }
                 SlotKind::Fortress => TILE_FORTRESS,
                 SlotKind::Pipe => TILE_PIPE,
+                SlotKind::BonusGame => TILE_BONUS_GAME,
                 SlotKind::HammerBro => continue, // keep existing blank path tile
             };
             let offset = rom_data::map_tile_offset(wi, slot.pos.0, slot.pos.1);
@@ -1563,6 +1684,7 @@ mod tests {
                 for slot in &built.slots {
                     match slot.kind {
                         SlotKind::Fortress => test_grid.set(slot.pos.0, slot.pos.1, TILE_FORTRESS),
+                        SlotKind::BonusGame => test_grid.set(slot.pos.0, slot.pos.1, TILE_BONUS_GAME),
                         SlotKind::Level | SlotKind::Pipe | SlotKind::HammerBro => {}
                     }
                 }
@@ -1796,12 +1918,14 @@ mod tests {
             let mut levels = Vec::new();
             let mut hammer_bros = Vec::new();
             let mut pipes = Vec::new();
+            let mut bonus_games = Vec::new();
             for slot in &built.slots {
                 match slot.kind {
                     SlotKind::Fortress => fortresses.push(slot),
                     SlotKind::Level => levels.push(slot),
                     SlotKind::HammerBro => hammer_bros.push(slot),
                     SlotKind::Pipe => pipes.push(slot),
+                    SlotKind::BonusGame => bonus_games.push(slot),
                 }
             }
 
