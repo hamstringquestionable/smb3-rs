@@ -1239,13 +1239,13 @@ fn score_fortress_candidate(
 
 /// Target proximity penalty weight. Higher = more aggressively avoids placing
 /// pipes near the airship/Bowser. Tweakable for tuning.
-const W_TARGET_PROXIMITY: f64 = 5.0;
+const W_TARGET_PROXIMITY: f64 = 4.0;
 /// Max manhattan distance for target penalty normalization.
 const TARGET_MAX_DIST: f64 = 20.0;
 /// Cap on spread contribution for pipe scoring. Positions beyond this
 /// effective spread all score the same, preventing far-away positions
 /// from always dominating and creating more varied placement.
-const PIPE_SPREAD_CAP: f64 = 8.0;
+const PIPE_SPREAD_CAP: f64 = 7.0;
 
 /// Compute target proximity penalty for a position. Positions near the
 /// airship/Bowser get penalized; positions far away get no penalty.
