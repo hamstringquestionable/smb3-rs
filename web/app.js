@@ -73,6 +73,7 @@ function setPill(name, val) {
 	if (el) el.checked = true;
 }
 const optWildInjections = document.getElementById("opt-wild-injections");
+const optJitterEnemyPositions = document.getElementById("opt-jitter-enemy-positions");
 const optStartingLives = document.getElementById("opt-starting-lives");
 const optStartItems = [
 	document.getElementById("opt-start-item-0"),
@@ -358,6 +359,7 @@ function getCurrentOptionsJson() {
 		bros: getPill("opt-bros"),
 		hb_encounters: getPill("opt-hb-encounters"),
 		wild_injections: optWildInjections.checked,
+		jitter_enemy_positions: optJitterEnemyPositions.checked,
 		starting_lives: Number(optStartingLives.value),
 		starting_items: optStartItems.map(s => Number(s.value)).filter(v => v > 0),
 		disable_autoscroll: true,
@@ -417,6 +419,7 @@ function applyFlagKey(key) {
 		if (opts.bros !== undefined) setPill("opt-bros", opts.bros);
 		if (opts.hb_encounters !== undefined) setPill("opt-hb-encounters", opts.hb_encounters);
 		if (opts.wild_injections !== undefined) optWildInjections.checked = opts.wild_injections;
+		if (opts.jitter_enemy_positions !== undefined) optJitterEnemyPositions.checked = opts.jitter_enemy_positions;
 		if (opts.starting_lives) optStartingLives.value = opts.starting_lives;
 		const items = opts.starting_items || [];
 		for (let i = 0; i < 3; i++) {
@@ -438,6 +441,7 @@ const allOptionElements = [
 	optAirshipLock,
 	optFixDrawbridges, optRemoveRocks, optRemoveNCards, optRemoveSpadeGames, optIncludeBetaStages, optSkipWandCutscene, optAdjustBossHitboxes, optKoopalingHits, optHammerVulnKoopalings, optRandomKoopalings, optHammerBreaksLocks, optHammerBreaksBridges,
 	optWildInjections,
+	optJitterEnemyPositions,
 	optStartingLives,
 	...optStartItems,
 ];
