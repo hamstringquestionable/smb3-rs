@@ -23,8 +23,48 @@ Default ROM: "Super Mario Bros. 3 (USA) (Rev 1).nes"
 
 import json
 import os
+import re
 import sys
 from collections import defaultdict, deque
+
+# --------------------------------------------------------------------------
+# Single source of truth: parse classification sets from rom_data.rs so the
+# Python tooling cannot drift from the Rust randomizer. The randomizer's lists
+# are the authoritative source — when a fortress/airship moves or is added,
+# only rom_data.rs needs to change.
+# --------------------------------------------------------------------------
+
+_ROM_DATA_RS = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..", "src", "randomize", "rom_data.rs",
+)
+
+
+def _parse_tuple_list(rs_src, name):
+    """Parse `pub(super) const NAME: &[(usize, usize)] = &[ (a, b), ... ];`."""
+    m = re.search(
+        rf"const\s+{name}\s*:\s*&\[\(usize,\s*usize\)\]\s*=\s*&\[(.*?)\];",
+        rs_src,
+        re.DOTALL,
+    )
+    if not m:
+        raise RuntimeError(f"Could not parse {name} from rom_data.rs")
+    return {(int(a), int(b)) for a, b in re.findall(r"\((\d+)\s*,\s*(\d+)\)", m.group(1))}
+
+
+def _parse_tuple(rs_src, name):
+    """Parse `pub(super) const NAME: (usize, usize) = (a, b);`."""
+    m = re.search(
+        rf"const\s+{name}\s*:\s*\(usize,\s*usize\)\s*=\s*\((\d+)\s*,\s*(\d+)\);",
+        rs_src,
+    )
+    if not m:
+        raise RuntimeError(f"Could not parse {name} from rom_data.rs")
+    return (int(m.group(1)), int(m.group(2)))
+
+
+with open(_ROM_DATA_RS) as _f:
+    _RS_SRC = _f.read()
 
 # --------------------------------------------------------------------------
 # Constants
@@ -283,25 +323,10 @@ DEST_TO_WORLD = {
     0x17: 4,  # W5
 }
 
-# Known fortress entries (world_idx, entry_idx) — detected by Boom-Boom enemies
-FORTRESS_ENTRIES = {
-    (0, 11),
-    (1, 13),
-    (2, 13), (2, 34),
-    (3, 9), (3, 16),
-    (4, 12), (4, 31),
-    (5, 9), (5, 27), (5, 48),
-    (6, 5), (6, 40),
-    (7, 7), (7, 10), (7, 26), (7, 36),
-}
-
-# Known airship entries (world_idx, entry_idx)
-AIRSHIP_ENTRIES_SET = {
-    (0, 17), (1, 36), (2, 49), (3, 6), (4, 35), (5, 53), (6, 43),
-}
-
-# Bowser's castle
-BOWSER_ENTRY_PAIR = (7, 40)
+# Classification entries — parsed from rom_data.rs. Update Rust, not here.
+FORTRESS_ENTRIES = _parse_tuple_list(_RS_SRC, "FORTRESS_ENTRIES")
+AIRSHIP_ENTRIES_SET = _parse_tuple_list(_RS_SRC, "AIRSHIP_ENTRIES")
+BOWSER_ENTRY_PAIR = _parse_tuple(_RS_SRC, "BOWSER_ENTRY")
 
 # Map transition entries
 MAP_TRANSITIONS_SET = set()
@@ -863,7 +888,8 @@ def classify_entry(world_idx, entry_idx, obj_ptr, lay_ptr, tileset, rom=None, ma
     for fortress/pipe/airship/bowser detection.  This is essential for shuffled
     ROMs where entries have been redistributed across worlds.
     """
-    # Tile-based classification (works on shuffled ROMs)
+    # Tile-based classification (works on shuffled ROMs where entries have
+    # been redistributed across worlds — the tile moves with the entry).
     if map_tile is not None:
         if map_tile == 0xE5:
             return "start"
@@ -876,16 +902,18 @@ def classify_entry(world_idx, entry_idx, obj_ptr, lay_ptr, tileset, rom=None, ma
         if map_tile in (0xBC, 0x5F):
             return "pipe"
 
-    # Fallback: hardcoded lists (for vanilla ROM analysis or when no tile available)
-    if map_tile is None:
-        if (world_idx, entry_idx) in FORTRESS_ENTRIES:
-            return "fortress"
-        if (world_idx, entry_idx) in AIRSHIP_ENTRIES_SET:
-            return "airship"
-        if (world_idx, entry_idx) == BOWSER_ENTRY_PAIR:
-            return "bowser"
-        if (world_idx, entry_idx) in MAP_TRANSITIONS_SET:
-            return "transition"
+    # Entry-set fallback (always runs): catches vanilla cases where the map
+    # tile is unique/unrecognized — e.g. W5 5F-2 (tile 0xEB) and W8 fortresses
+    # on tiles 0xAF/0x47. These sets are parsed from rom_data.rs so they stay
+    # in sync with the randomizer.
+    if (world_idx, entry_idx) in FORTRESS_ENTRIES:
+        return "fortress"
+    if (world_idx, entry_idx) in AIRSHIP_ENTRIES_SET:
+        return "airship"
+    if (world_idx, entry_idx) == BOWSER_ENTRY_PAIR:
+        return "bowser"
+    if (world_idx, entry_idx) in MAP_TRANSITIONS_SET:
+        return "transition"
 
     if obj_ptr == 0x0700:
         return "toad_house"
