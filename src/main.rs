@@ -31,6 +31,11 @@ struct Cli {
     #[arg(long)]
     no_palettes: bool,
 
+    /// Use themed per-tileset palette randomization instead of character-only mode.
+    /// Cosmetic; does not affect ROM content and is not encoded in the flag key.
+    #[arg(long)]
+    themed_palettes: bool,
+
     /// Enable world order randomization
     #[arg(long)]
     world_order: bool,
@@ -295,6 +300,7 @@ fn main() {
         Options {
             powerups: !cli.no_powerups,
             palettes: !cli.no_palettes,
+            palette_themed: cli.themed_palettes,
             world_order: cli.world_order,
             world_count: cli.world_count,
             big_q_blocks: cli.big_q_blocks,
@@ -347,7 +353,11 @@ fn main() {
     eprintln!("  Seed: {seed}");
     eprintln!("  Flags: {}", options.to_flag_key());
     eprintln!("  Powerups: {}", if options.powerups { "on" } else { "off" });
-    eprintln!("  Palettes: {}", if options.palettes { "on" } else { "off" });
+    eprintln!("  Palettes: {}", match (options.palettes, options.palette_themed) {
+        (false, _)   => "off",
+        (true, false) => "characters",
+        (true, true)  => "themed",
+    });
     eprintln!("  Enemies:  {}", if options.any_enemies_active() { "on" } else { "off" });
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
     if options.world_order && options.world_count < 7 {

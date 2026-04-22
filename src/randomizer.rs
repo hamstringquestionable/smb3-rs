@@ -56,6 +56,10 @@ fn default_off() -> EnemyMode { EnemyMode::Off }
 pub struct Options {
     pub powerups: bool,
     pub palettes: bool,
+    /// Use themed per-tileset palette randomization instead of the character-only mode.
+    /// Cosmetic — not encoded in the flag key, so flipping this never changes level content.
+    #[serde(default)]
+    pub palette_themed: bool,
     pub world_order: bool,
     /// Number of worlds before Dark Land (1–7, default 7).
     #[serde(default = "default_world_count")]
@@ -435,7 +439,8 @@ impl Options {
 
         Ok(Options {
             powerups: (b1 >> 7) & 1 != 0,
-            palettes: true, // cosmetic — not encoded in flag key
+            palettes: true,
+            palette_themed: false, // cosmetic — not encoded in flag key
             hammer_breaks_locks: (b1 >> 6) & 1 != 0,
             koopaling_hits: (b1 >> 5) & 1 != 0,
             world_order: (b1 >> 4) & 1 != 0,
@@ -518,6 +523,7 @@ impl Default for Options {
         Options {
             powerups: true,
             palettes: true,
+            palette_themed: false,
             world_order: false,
             world_count: default_world_count(),
             big_q_blocks: false,
@@ -617,7 +623,11 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     if options.palettes {
         rom.set_tag("palettes");
         let mut palette_rng = ChaCha8Rng::from_os_rng();
-        randomize::palettes::randomize(rom, &mut palette_rng);
+        if options.palette_themed {
+            randomize::palettes::randomize_themed(rom, &mut palette_rng);
+        } else {
+            randomize::palettes::randomize(rom, &mut palette_rng);
+        }
     }
     if options.any_enemies_active() {
         rom.set_tag("enemies");
@@ -998,6 +1008,7 @@ mod tests {
         let opts = Options {
             powerups: true,
             palettes: true,
+            palette_themed: false,
             world_order: true,
             world_count: 7,
             big_q_blocks: true,
@@ -1067,6 +1078,7 @@ mod tests {
         let opts = Options {
             powerups: false,
             palettes: false,
+            palette_themed: false,
             world_order: false,
             world_count: 7,
             big_q_blocks: false,
@@ -1193,6 +1205,7 @@ mod tests {
         Options {
             powerups: false,
             palettes: false,
+            palette_themed: false,
             world_order: false,
             world_count: 7,
             big_q_blocks: false,
@@ -1242,6 +1255,7 @@ mod tests {
         Options {
             powerups: true,
             palettes: false,
+            palette_themed: false,
             world_order: true,
             world_count: 3,
             big_q_blocks: true,
