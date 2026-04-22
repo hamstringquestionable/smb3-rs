@@ -2,7 +2,10 @@ use rand::seq::IndexedRandom;
 use rand::Rng;
 
 use crate::randomize::palette_variants::{
-    VariantGroup, PLAINS_SLICE4_VARIANTS, PLAINS_SLOT3_VARIANTS,
+    VariantGroup,
+    PLAINS_SLOT3_VARIANTS, SLOT2_VARIANTS, SLOT4_VARIANTS, SLOT5_VARIANTS,
+    SLOT6_VARIANTS, SLOT7_VARIANTS, SLICE1_WATER_VARIANTS, SLICE2_VARIANTS,
+    SLICE3_GIANT_VARIANTS, SLICE4_HEAD_VARIANTS, SLICE4_TAIL_VARIANTS,
 };
 use crate::rom::Rom;
 
@@ -43,7 +46,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
     }
 }
 
-/// Themed palette randomization (MVP: plains-tileset levels only).
+/// Themed palette randomization across all tilesets.
 ///
 /// Uses palette-group SWAP randomization: for each curated quartet position,
 /// the randomizer picks ONE whole 4-byte variant from a list of pre-validated
@@ -51,19 +54,30 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
 /// designed as a coherent unit — no flat color-pool mixing, no independent
 /// byte picks, no risk of cross-palette clash.
 ///
-/// For plains we currently have two variants per position (vanilla, Recolored),
-/// so variety scales as 2^(changed positions) ≈ 256 combinations. Additional
-/// variants per position (hand-curated or from other palette hacks) can be
-/// added to `palette_variants.rs` without touching this code path.
+/// Coverage: every quartet Recolored changed across the themed-slot table
+/// (slots 2-7) and master-pool slices 1-4 (skipping the level-layout pointer
+/// table at 0x377E0-0x37807). With two variants per position (vanilla,
+/// Recolored), variety scales as 2^(changed positions). Additional variants
+/// per position (hand-curated or from other palette hacks) can be appended to
+/// each `VariantGroup`'s `variants` list without touching this code path.
 ///
-/// Positions that Recolored didn't change are omitted from the variants table —
+/// Positions that Recolored didn't change are omitted from the variants tables —
 /// they stay vanilla always.
 pub fn randomize_themed<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // Character palettes stay randomized too — independent of tileset palettes.
     randomize(rom, rng);
 
+    apply_variant_groups(rom, SLOT2_VARIANTS, rng);
     apply_variant_groups(rom, PLAINS_SLOT3_VARIANTS, rng);
-    apply_variant_groups(rom, PLAINS_SLICE4_VARIANTS, rng);
+    apply_variant_groups(rom, SLOT4_VARIANTS, rng);
+    apply_variant_groups(rom, SLOT5_VARIANTS, rng);
+    apply_variant_groups(rom, SLOT6_VARIANTS, rng);
+    apply_variant_groups(rom, SLOT7_VARIANTS, rng);
+    apply_variant_groups(rom, SLICE1_WATER_VARIANTS, rng);
+    apply_variant_groups(rom, SLICE2_VARIANTS, rng);
+    apply_variant_groups(rom, SLICE3_GIANT_VARIANTS, rng);
+    apply_variant_groups(rom, SLICE4_HEAD_VARIANTS, rng);
+    apply_variant_groups(rom, SLICE4_TAIL_VARIANTS, rng);
 }
 
 /// For each curated position, pick one 4-byte variant at random and write it.
@@ -131,16 +145,30 @@ mod tests {
         }
     }
 
+    /// All variant constants applied by `randomize_themed` (except character
+    /// palettes, which have their own test).
+    fn all_variant_groups() -> Vec<&'static VariantGroup> {
+        use crate::randomize::palette_variants::*;
+        let mut v: Vec<&'static VariantGroup> = Vec::new();
+        for slice in [
+            SLOT2_VARIANTS, PLAINS_SLOT3_VARIANTS, SLOT4_VARIANTS, SLOT5_VARIANTS,
+            SLOT6_VARIANTS, SLOT7_VARIANTS, SLICE1_WATER_VARIANTS, SLICE2_VARIANTS,
+            SLICE3_GIANT_VARIANTS, SLICE4_HEAD_VARIANTS, SLICE4_TAIL_VARIANTS,
+        ] {
+            v.extend(slice.iter());
+        }
+        v
+    }
+
     #[test]
     fn themed_emits_curated_variants_only() {
         // Every 4-byte write at a curated position must exactly match one of the
         // pre-registered variants — no random pool fallback, no free-byte picks.
-        use crate::randomize::palette_variants::{PLAINS_SLICE4_VARIANTS, PLAINS_SLOT3_VARIANTS};
         for seed in [1u64, 42, 99, 777, 12345] {
             let mut rom = make_test_rom();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             randomize_themed(&mut rom, &mut rng);
-            for group in PLAINS_SLOT3_VARIANTS.iter().chain(PLAINS_SLICE4_VARIANTS.iter()) {
+            for group in all_variant_groups() {
                 let written = rom.read_range(group.offset, 4);
                 let matched = group.variants.iter().any(|v| v == written);
                 assert!(
@@ -154,37 +182,52 @@ mod tests {
 
     #[test]
     fn themed_does_not_touch_uncurated_positions() {
-        // Any offset in plains slot 3 / slice 4 band 3 that ISN'T in the variants
-        // table should keep vanilla bytes untouched.
-        use crate::randomize::palette_variants::{PLAINS_SLICE4_VARIANTS, PLAINS_SLOT3_VARIANTS};
+        // For every region covered, offsets not in any VariantGroup must stay
+        // untouched. We stamp recognizable canary bytes in each covered range
+        // and check them after running the randomizer.
+        const REGIONS: &[(usize, usize, u8)] = &[
+            (0x36C54, 0x36C8C, 0xA0),  // slot 2
+            (0x36C8C, 0x36CC4, 0xC0),  // slot 3
+            (0x36CC4, 0x36CFC, 0xD0),  // slot 4
+            (0x36CFC, 0x36D34, 0xE0),  // slot 5
+            (0x36D34, 0x36D6C, 0x90),  // slot 6
+            (0x36D6C, 0x36DA6, 0x80),  // slot 7
+            (0x37000, 0x37200, 0x70),  // slice 1
+            (0x37200, 0x37400, 0x60),  // slice 2
+            (0x37400, 0x37600, 0x50),  // slice 3
+            (0x37600, 0x377E0, 0xB0),  // slice 4 head
+            (0x37808, 0x37846, 0xC0),  // slice 4 tail
+        ];
+
         let mut rom = make_test_rom();
-        // Stamp recognizable canary bytes across the plains ranges.
-        let canary: Vec<u8> = (0..(0x36CC4 - 0x36C8C)).map(|i| 0xC0 | (i as u8 & 0x0F)).collect();
-        rom.write_range(0x36C8C, &canary);
-        let canary2: Vec<u8> = (0..(0x37720 - 0x376D8)).map(|i| 0xB0 | (i as u8 & 0x0F)).collect();
-        rom.write_range(0x376D8, &canary2);
+        for &(start, end, base) in REGIONS {
+            let canary: Vec<u8> =
+                (0..(end - start)).map(|i| base | (i as u8 & 0x0F)).collect();
+            rom.write_range(start, &canary);
+        }
 
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         randomize_themed(&mut rom, &mut rng);
 
-        let curated_offsets: std::collections::HashSet<usize> =
-            PLAINS_SLOT3_VARIANTS.iter().chain(PLAINS_SLICE4_VARIANTS.iter())
-                .flat_map(|g| (0..4).map(move |k| g.offset + k))
-                .collect();
+        let curated_offsets: std::collections::HashSet<usize> = all_variant_groups()
+            .iter()
+            .flat_map(|g| (0..4).map(move |k| g.offset + k))
+            .collect();
 
-        for off in 0x36C8C..0x36CC4 {
-            if curated_offsets.contains(&off) { continue; }
-            assert_eq!(
-                rom.read_byte(off), 0xC0 | ((off - 0x36C8C) as u8 & 0x0F),
-                "uncurated offset {:#08x} was modified", off
-            );
-        }
-        for off in 0x376D8..0x37720 {
-            if curated_offsets.contains(&off) { continue; }
-            assert_eq!(
-                rom.read_byte(off), 0xB0 | ((off - 0x376D8) as u8 & 0x0F),
-                "uncurated offset {:#08x} was modified", off
-            );
+        for &(start, end, base) in REGIONS {
+            for off in start..end {
+                if curated_offsets.contains(&off) {
+                    continue;
+                }
+                assert_eq!(
+                    rom.read_byte(off),
+                    base | ((off - start) as u8 & 0x0F),
+                    "uncurated offset {:#08x} (region {:#08x}-{:#08x}) was modified",
+                    off,
+                    start,
+                    end,
+                );
+            }
         }
     }
 
@@ -204,5 +247,22 @@ mod tests {
             &vanilla[..],
             "pointer table 0x377E0-0x37807 must not be modified"
         );
+    }
+
+    #[test]
+    fn no_variant_group_overlaps_pointer_table() {
+        // Static sanity: no curated offset can fall inside the pointer-table
+        // crash trap, even transitively (offset + 3 still < 0x377E0, or
+        // offset >= 0x37808).
+        for group in all_variant_groups() {
+            let start = group.offset;
+            let end = group.offset + 4;
+            let overlaps = end > 0x377E0 && start < 0x37808;
+            assert!(
+                !overlaps,
+                "VariantGroup at {:#08x} overlaps pointer table 0x377E0-0x37807",
+                group.offset
+            );
+        }
     }
 }

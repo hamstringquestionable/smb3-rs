@@ -323,6 +323,11 @@ input[type="radio"] {
     margin-top: 0.25rem;
 }
 
+.sub-options.disabled {
+    opacity: 0.35;
+    pointer-events: none;
+}
+
 /* --- Option Groups (radio sections) --- */
 
 .option-group {
