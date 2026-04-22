@@ -67,10 +67,15 @@ const TOAD_HOUSE_ITEMS_OFFSET: usize = 0x3B14B;
 const TOAD_HOUSE_ITEMS_LEN: usize = 21;
 
 // In-level treasure chest item offsets (D6 OBJ_TREASURESET Y-byte).
+// The three 8-Hnd entries share a single layout but are given independent
+// enemy streams by `hand_rooms::patch_clone_hand_rooms`, so each rolls
+// independently here.
 const TREASURE_CHEST_OFFSETS: &[usize] = &[
     0x0C427, // Music Box chest
     0x0CE9F, // Cloud chest
-    0x0D0E2, // Leaf chest
+    0x0D0E2, // 8-Hnd1 chest (vanilla shared sub-area)
+    super::hand_rooms::HAND_ROOM_CLONE_A_ITEM, // 8-Hnd2 chest (clone A)
+    super::hand_rooms::HAND_ROOM_CLONE_B_ITEM, // 8-Hnd3 chest (clone B)
     0x0D36A, // Warp Whistle chest
     0x0DA3F, // Star chest
 ];

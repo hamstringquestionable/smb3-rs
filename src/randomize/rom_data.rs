@@ -51,6 +51,8 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x0384E, 16, "koopa_vram_clear: clear VRAM buffer on defeat"),
     (0x0385E, 12, "koopa_fire_preset: set stomp counter from threshold table for fireball defeat"),
     (0x03FD0, 22, "koopa_y_clamp: clamp Koopaling Y position to screen"),
+    // PRG006 (file 0x0C010, CPU $C000–$DFFF) — level enemy data bank
+    (0x0DA74, 22, "hand_rooms: 2 cloned enemy streams for unique 8-Hnd treasure rooms"),
 ];
 
 // Individual constants for use by each module.
@@ -112,6 +114,11 @@ pub(super) const KOOPA_Y_CLAMP_CPU: u16  = 0xBFC0;  // $A000 + (0x03FD0 - 0x0201
 // fireball→stomp handoff always triggers defeat after INC.
 pub(super) const FS_KOOPA_FIRE_PRESET: usize = 0x0385E; // 12 bytes
 pub(super) const KOOPA_FIRE_PRESET_CPU: u16  = 0xB84E;  // $A000 + (0x0385E - 0x02010)
+
+// PRG006 — duplicated enemy streams for the W8 Hand sub-areas. Each clone is
+// 11 bytes (page byte + 3 enemy entries + 0xFF terminator); two clones give
+// the three Hand levels independent OBJ_TREASURESET item bytes.
+pub(super) const FS_HAND_ROOMS: usize = 0x0DA74; // 22 bytes (2 × 11)
 
 
 // ---------------------------------------------------------------------------
