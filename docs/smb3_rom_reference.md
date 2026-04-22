@@ -341,6 +341,91 @@ segment at different byte offsets. For example, W1[11] (`lay=0xA95D`) and W3[34]
 (`lay=0xAA79`) both point into the same 136-command Dungeon segment. They share the
 same sub-areas (via header chain).
 
+#### Chain Traversal: Junctions Hop Header-to-Header
+
+**Each sub-area has its own 9-byte header.** When a junction fires from inside a
+sub-area, the game uses **that sub-area's own** `alt_layout` / `alt_objects` /
+`alt_tileset` — not the entry point's. This is how a player experiences "two pipes
+in sequence":
+
+1. Entry level header points at sub-area A.
+2. Player triggers a junction inside sub-area A.
+3. Game loads sub-area A's header and follows *its* `alt_layout` to reach sub-area B.
+
+To redirect the player directly to sub-area B, rewrite the entry header's pointers
+to sub-area B's values (skipping the visit to A entirely). To trace the full chain,
+walk from the entry header through successive sub-area headers, using a visited-set
+keyed on `header_offset` to stop on loops (see "Two-way loops" note above).
+
+#### Redirecting a Junction Destination
+
+To change where a header's junction leads, overwrite these 4 bytes plus one nibble:
+
+| Target Bytes | Source Value |
+|-------------|--------------|
+| header + 0..=1 | new `alt_layout` (little-endian, `$A000–$BFFF`) |
+| header + 2..=3 | new `alt_objects` (little-endian, `$C000–$DFFF`) |
+| header + 6, bits 0-3 | new `alt_tileset` |
+
+**Byte 6 caveat**: bits 4-7 carry unrelated state (scroll lock flag, etc.).
+Read-modify-write: `byte6 = (byte6 & 0xF0) | new_tileset`.
+
+**File offset of a header**: the entry-point header sits at the file offset of the
+level's `lay_ptr`, i.e. `layout_file_offset(lay_ptr, tileset)` from
+`tools/rom_map.py` (uses `PAGE_A000_BY_TILESET[tileset]`). For nested sub-areas,
+resolve each `alt_layout` through its own `alt_tileset` before indexing.
+
+**Working example** (W8 Hand → 3-7 coin heaven, from `hand_rooms.rs`):
+- 8-Hnd1 main header at file `0x27D50`, vanilla bytes `17 BE CF D0 63 0B CB 0B 81`.
+- Overwrite bytes 0..=3 with `4F AB 89 CE` (`alt_layout=$AB4F`, `alt_objects=$CE89`).
+- Overwrite byte 6 low nibble: `0x0B` (preserves upper nibble = 0).
+- Result: entering 8-Hnd1 and triggering its junction lands directly in the
+  cloud-tileset coin-heaven room at `$AB4F` / `$CE89` / ts=11 in PRG019.
+
+#### OBJ_TREASURESET (0xD6) — Treasure Box Items
+
+A `0xD6` entry in an enemy data stream sets the contents of the next
+`OBJ_TREASUREBOX` (`0x52`) that spawns. The 3-byte layout is the same as any enemy
+entry, but the Y-byte encodes the **item ID**, not a row position:
+
+| Byte | Meaning |
+|------|---------|
+| 0 | `0xD6` (object ID) |
+| 1 | `(screen << 4) \| col` (position X-byte) |
+| 2 | Item ID (vanilla uses mushroom=0x01, flower=0x02, leaf=0x03, etc.) |
+
+A complete treasure room is a 3-entry enemy stream:
+```
+D6 <xy> <item>   ; item setter
+52 <xy> <xy>     ; OBJ_TREASUREBOX sprite
+BA <xy> <xy>     ; OBJ_TREASUREBOXAPPEAR event
+FF               ; terminator
+```
+
+**All 5 `OBJ_TREASURESET` chests in the vanilla ROM** (item byte offsets,
+randomized by `items::randomize` via a hardcoded `TREASURE_CHEST_OFFSETS` list in
+`src/randomize/items.rs` — no auto-discovery):
+
+| Y-byte offset | Sub-area enemy_ptr | Vanilla item | Where |
+|--------------|-------------------|--------------|-------|
+| `0x0C427` | `$C414` | MusicBox (0x0D) | Princess cutscene chest |
+| `0x0CE9F` | `$CE89` | Cloud (0x07) | 3-7 coin-heaven sub-area |
+| `0x0D0E2` | `$D0CF` | Leaf (0x03) | Shared 8-Hnd1/2/3 treasure room |
+| `0x0D36A` | `$D351` | Whistle (0x0C) | Hidden warp-whistle chest |
+| `0x0DA3F` | `$DA29` | Star (0x09) | Star chest |
+
+Any new chest (e.g. via cloning an enemy stream or redirecting a junction) must
+have its new Y-byte offset appended to `TREASURE_CHEST_OFFSETS` or it will stay
+stuck on its vanilla value across every seed.
+
+#### Reusable Sub-Area Destinations
+
+Known sub-areas that work cleanly as redirect targets (verified playable):
+
+| Destination | Target | Notes |
+|-------------|--------|-------|
+| 3-7 Coin Heaven | `alt_layout=$AB4F`, `alt_objects=$CE89`, `ts=11` | Vanilla D3 autoscroll at file `0x0CE9A` — NOP to disable (done by `autoscroll::disable_autoscroll`). Contains the Cloud chest at `0x0CE9F`. |
+
 #### Enemy Data Pointers: Entry vs Sub-Area
 
 Each level has TWO sources of enemy data:
