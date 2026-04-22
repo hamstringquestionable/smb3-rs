@@ -56,8 +56,10 @@ const PATCHES: &[(usize, &[u8])] = &[
     // Airship W2 area: enemy data rewrite (7 bytes)
     (0x0CDE7, &[0x13, 0x6A, 0x63, 0x12, 0x6A, 0x69, 0x16]),
 
-    // 3-7 coin heaven: D3 at 0x0CE9A left intact — autoscroll is intentional
-    // here (penalty for grabbing the treasure chest item).
+    // 3-7 coin heaven: D3 removed so the sub-area is free-scroll. Vanilla uses
+    // autoscroll as a penalty for grabbing the chest, but free-scroll is more
+    // enjoyable when hand_rooms redirects a W8 Hand here as an alternate ending.
+    (0x0CE9A, &[0x00]),
 
     // D3 removal
     (0x0CF51, &[0x00]),
@@ -464,7 +466,8 @@ mod tests {
 
     #[test]
     fn test_patch_count() {
-        // Reference IPS has 65 records — verify we have them all
-        assert_eq!(PATCHES.len(), 64, "Expected 64 patches from reference IPS");
+        // 64 from the reference IPS + 1 local addition for the 3-7 coin
+        // heaven (deliberately left intact by the reference).
+        assert_eq!(PATCHES.len(), 65);
     }
 }
