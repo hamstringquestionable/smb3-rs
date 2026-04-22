@@ -43,6 +43,8 @@ const statusDiv = document.getElementById("status");
 
 const optPowerups = document.getElementById("opt-powerups");
 const optPalettes = document.getElementById("opt-palettes");
+const optPaletteThemed = document.getElementById("opt-palette-themed");
+const paletteThemedSub = document.getElementById("palette-themed-sub");
 const optWorldOrder = document.getElementById("opt-world-order");
 const optBigQBlocks = document.getElementById("opt-big-q-blocks");
 const optWorldCount = document.getElementById("opt-world-count");
@@ -117,6 +119,12 @@ function updateWorldCountVisibility() {
 	optWorldCount.disabled = !enabled;
 }
 
+function updatePaletteThemedVisibility() {
+	const enabled = optPalettes.checked;
+	paletteThemedSub.classList.toggle("disabled", !enabled);
+	optPaletteThemed.disabled = !enabled;
+}
+
 // Dynamically populate Starting Lives dropdown (5, 10, 15, ... 99)
 if (optStartingLives) {
 	for (let i = 5; i <= 99; i += 5) {
@@ -140,6 +148,7 @@ init()
 		updateGenerateButton();
 		updateOverworldColumns();
 		updateWorldCountVisibility();
+		updatePaletteThemedVisibility();
 		updateFlagKey();
 	})
 	.catch((err) => {
@@ -314,6 +323,7 @@ function restoreSettings() {
 		}
 		updateOverworldColumns();
 		updateWorldCountVisibility();
+		updatePaletteThemedVisibility();
 	} catch (_) {}
 }
 
@@ -324,6 +334,7 @@ function getCurrentOptionsJson() {
 	return JSON.stringify({
 		powerups: optPowerups.checked,
 		palettes: optPalettes.checked,
+		palette_themed: optPaletteThemed.checked,
 		world_order: optWorldOrder.checked,
 		world_count: Number(optWorldCount.value),
 		big_q_blocks: optBigQBlocks.checked,
@@ -449,6 +460,14 @@ for (const el of allOptionElements) {
 	el.addEventListener("change", () => { updateFlagKey(); saveSettings(); });
 }
 optWorldOrder.addEventListener("change", updateWorldCountVisibility);
+// Palettes + palette_themed are cosmetic (not encoded in the flag key). Wire
+// listeners manually so toggling them still persists to localStorage and
+// updates the sub-option enabled state.
+optPalettes.addEventListener("change", () => {
+	updatePaletteThemedVisibility();
+	saveSettings();
+});
+optPaletteThemed.addEventListener("change", saveSettings);
 // Pill group radios
 for (const radio of document.querySelectorAll('.pill-group input[type="radio"]')) {
 	radio.addEventListener("change", () => { updateFlagKey(); saveSettings(); });
