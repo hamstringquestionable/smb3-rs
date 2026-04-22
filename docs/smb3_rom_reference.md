@@ -925,6 +925,124 @@ Each palette entry is typically 3 color bytes + 1 shared background color.
 | 0x36DAA–0x36DAD | 4 bytes | Lava / Rotodisc palette |
 | 0x36DFE–0x36E01 | 4 bytes | Bowser / Donut Lift palette |
 
+### Per-Level Palette Selection
+
+Each level header byte 5 (`_abbccddd`) embeds a `c` field (object palette, 2 bits)
+and a `d` field (BG palette, 3 bits) — see *Level Header Format*. The values index
+into per-tileset palette tables loaded by the level loader. The same value can mean
+different colors in different tilesets (e.g., BG palette index 2 in plains is greens,
+but in fortress it is grays).
+
+### Per-Tileset / Per-Area Palette Tables (PRG012–PRG013)
+
+These are PPU-upload "scripts" — sequences of `00 3F xx LL <LL bytes>` blocks that
+the SMB3 PPU upload routine streams directly to PPU `$2007`. The leading `00 3F xx`
+is the destination VRAM address (palette area starts at `$3F00`); `LL` is the byte
+count; the body is raw NES color bytes. Identified by reverse-engineering the
+"Super Mario Bros. 3 Recolored v1.0" IPS — every cluster below is wholly rewritten
+by Recolored, proving these are the master per-tileset/area palette tables.
+
+| File Offset | Size | Pattern | Likely Purpose |
+|-------------|------|---------|----------------|
+| 0x33046–0x331A2 | 349 B | 8 × `00 3F 00 20 0F 0F …32 colors…` (32-byte full BG+sprite palette set) | **Per-tileset full-palette upload table** — 8 entries; one per BG palette index used by level loader |
+| 0x331BB–0x331DE | 35 B  | dense ≤0x3F bytes | Adjunct palette set (FG vs BG?) |
+| 0x331EE–0x331F8 | 11 B  | dense ≤0x3F bytes | Small palette block (3 entries × ≈4 B) |
+| 0x33201–0x3320B | 11 B  | dense ≤0x3F bytes | Small palette block |
+| 0x33214–0x33277 | 100 B | mixed (palette bytes + 6502 code patterns `bd 03 ff`/`2a`) | Palette upload **routine** (FG draw helper) |
+| 0x332A5–0x3338E | 234 B | 8 × `00 3F 1x` mini-uploads + interspersed code | Sprite-palette dispatch routine |
+| 0x333A7–0x333B1 | 11 B  | dense ≤0x3F bytes | Small palette block |
+| 0x333CA–0x333D4 | 11 B  | dense ≤0x3F bytes | Small palette block |
+| 0x333ED–0x333F7 | 11 B  | dense ≤0x3F bytes | Small palette block |
+| 0x33410–0x33496 | 135 B | 4 × `00 3F 00 20 0F 0F …16 bytes…` | **Per-area BG palette set** — 4 entries (likely sky/forest/water/dark) |
+| 0x3349D–0x334AB | 15 B  | dense ≤0x3F bytes | Small palette block |
+| 0x334C4–0x33530 | 109 B | 5 × `00 3F 10 10 0F 0F …16 bytes…` (sprite palettes only) | **Per-area sprite palette set** — 5 entries; loads only `$3F10–$3F1F` |
+| 0x36BE4–0x36DA5 | ~450 B | per-palette-slot sub-tables of ~56 B each | **Themed palette slot table** — bands likely correspond to BG palette indices (`d` field of level header byte 5); levels share slots across tilesets. Rainbow probe confirmed: |
+| 0x36BE4–0x36C1C | 56 B  |  | (band 0, red) **Used by W6 sky overworld map + map HUD** |
+| 0x36C1C–0x36C54 | 56 B  |  | (band 1, orange) **Used by W7 (pipe) overworld map** |
+| 0x36C54–0x36C8C | 56 B  |  | (band 2, yellow) **Used by hammer bro overworld sprites + "HELP" message text + world-label sprites** |
+| 0x36C8C–0x36CC4 | 56 B  |  | (band 3, green) **Used by plains 1-1 BG + HUD** (confirmed via targeted single-band probe). Writes $3F00 universal BG + likely sprite palette 0. |
+| 0x36CC4–0x36CFC | 56 B  |  | (band 4, cyan) **Used by giant tileset (W4)** |
+| 0x36CFC–0x36D34 | 56 B  |  | (band 5, blue) **Used by plains enemies AND W7-5 sub-area BG** (shared slot) |
+| 0x36D34–0x36D6C | 56 B  |  | (band 6, purple) **Used by W4-F1 and W8 fortress HUD** + some W8 brick/door tiles |
+| 0x36D6C–0x36DA6 | 56 B  |  | (band 7, magenta) **Used by fortress BG (windows, bricks) AND W7-5 sub-area enemies AND most of W4-F1** (shared slot) |
+|                 |        |  | **Coverage caveat**: rainbow probe affected overworld + specific fortress/sub-area levels but NOT the majority of regular levels — those load palettes from a *different* table (most likely 0x33046 et al., still untested). |
+|                 |        |  | **Note**: opening inventory triggers a palette re-upload that reverts level-screen palettes to vanilla mid-frame, then restores them on close |
+| 0x36DAA–0x36DAD | 4 B   | (pre-existing) Lava/Rotodisc | (already known) |
+| 0x36DFE–0x36E01 | 4 B   | (pre-existing) Bowser/Donut | (already known) |
+| 0x36E20–0x36EBD | 158 B | 4-byte palette quartets ending in `0f` | Per-tileset palette quartet table (~40 palettes); not yet confirmed empirically |
+| 0x36EE2–0x37000 | 286 B | mixed alignment, ~36-byte sub-tables | Confirmed sub-regions (W6 sky and water tested across 5 tilesets): |
+| 0x36F00–0x36F05 | 5 B   |  | Drives a water-context sprite palette (circular underwater sprites) |
+| 0x36F4B–0x36F6E | 35 B  |  | Drives sky-tileset enemies + animated note-block frames (W6 sky only) |
+| 0x36EE2–0x36F05 (rest) | 30 B | | Subtle effects only at fine granularity; previous "HUD red" reading was a $3F00 universal-background mirror artifact when entire range was one color |
+| 0x36F05–0x36F4B,0x36F6E–0x37000 | rest | | Untested across all tilesets; band-per-tileset hypothesis unverified |
+| 0x37000–0x37200 | 512 B  | 8 × ~64 B sub-tables | **Water-tileset palette pool** (CONFIRMED): |
+|                 |        |                      | • band 1 (0x37040–0x37080) = underwater BG (W2-1) |
+|                 |        |                      | • band 3 (0x370C0–0x37100) = water-level enemies (W2-1) |
+|                 |        |                      | • other bands had no visible effect on plains/sky/desert/underground/fortress, so this slice appears to be water-specific |
+| 0x37200–0x37400 | 512 B  | 8 × ~64 B sub-tables | **Desert + fortress + airship palette pool** (CONFIRMED): |
+|                 |        |                      | • band 2 (0x37280–0x372C0) = desert BG (2-1) |
+|                 |        |                      | • band 3 (0x372C0–0x37300) = fortress HUD + highlights (2-F) |
+|                 |        |                      | • band 4 (0x37300–0x37340) = desert enemies (2-1) |
+|                 |        |                      | • band 5 (0x37340–0x37380) = airship BG/HUD + fortress enemies (2-F, 1-airship, 2-airship) |
+|                 |        |                      | • band 6 (0x37380–0x373C0) = airship foreground variants (2-airship, 3-airship) |
+|                 |        |                      | • band 7 (0x373C0–0x37400) = airship enemies (1/2/3 airships) |
+|                 |        |                      | • bands 0/1 untested (likely additional fortress variants) |
+| 0x37400–0x37600 | 512 B  | 8 × ~64 B sub-tables | **Giant tileset + water pipe/decoration palettes** (CONFIRMED): |
+|                 |        |                      | • band 0 (0x37400–0x37440) = giant BG (W4-1) |
+|                 |        |                      | • band 2 (0x37480–0x374C0) = giant enemies (W4-1) |
+|                 |        |                      | • band 5 (0x37540–0x37580) = water-tileset pipe accents (W3-1) |
+|                 |        |                      | • band 7 (0x375C0–0x37600) = water decoration (W3-1) |
+|                 |        |                      | • other bands did not light up in plains/sky/underground/fortress |
+| 0x37600–0x377DF | 480 B  | palette data (8 × ~60 B bands) | Slice 4 — partial: |
+|                 |        |                      | • band 0 (0x37600–0x3763C) = Sky-Land (W5) enemy palette (observed in 5-7, 5-8) |
+|                 |        |                      | • band 3 (0x376B4–0x376F0 safe / 0x376D8–0x37720 full) = Plains 1-1 BG palette variant (observed under full slice 4 probe) |
+|                 |        |                      | • band 5 (0x37540–0x37580 safe / 0x37768–0x377B0 full) = Plains 1-1 enemy palette |
+|                 |        |                      | • other bands untested in sky-bg/underground/ice/hilly |
+| 0x377E0–0x37807 | ~40 B  | **level layout CPU pointer table** (pointers in `$ABD2-$B412` range) | **DO NOT PAINT — painting crashes level loading.** Pointer table used by the level loader to resolve layout/enemy references. |
+| 0x37808–0x37846 | ~60 B  | palette data | Slice 4-B — separate paint probe if needed |
+|                 |        |  | **Lesson**: the "master pool" 0x36EE2-0x37846 is NOT pure palette data. Interleaved pointer tables / lookup tables must be preserved. Any randomizer needs per-sub-region byte maps to know what's safe to touch. |
+
+> **Empirical confirmations** are from `tools/gen_palette_probes.py` runs in an emulator
+> (paint each table to NES `0x24` hot magenta, observe which graphics turn pink).
+> Probes apply `smb3practice_SE.ips` for warp whistles + level select + open movement
+> so all worlds are reachable. Filenames: `test_roms/palette_probe_<name>_wN.nes`.
+
+> **Quartet alignment varies** across these tables — outline `0F` is at byte 2 in
+> 0x36BE4 but at byte 1 in 0x36EE2. Hardcoding "outline at byte 3" is unsafe; either
+> probe each table for its alignment, or paint every byte that isn't `0x00` or `0x0F`
+> (the `raw` painter strategy in `gen_palette_probes.py`).
+
+> **Note**: Specific table semantics (tileset assignment, index mapping) are inferred from
+> structural patterns and the Recolored IPS, not yet verified against the SMB3 disassembly.
+> Confirm with disassembly cross-reference before basing critical writes on these offsets.
+>
+> Diagnostic tool: `nix-shell -p python3 --run 'python3 tools/palette_inspect.py'` dumps
+> every Recolored cluster, classifies it, and shows vanilla vs. recolored hex side-by-side.
+
+### Jump Engine — `$FE99` (Fixed Bank, NOT Palette-Specific)
+
+`$FE99` (file 0x3FEA9) is the SMB3 **inline-table jump engine** (often labeled
+`Jump_Engine` / `JE` in disassemblies):
+
+```
+$FE99: 0A          ASL A          ; index *= 2
+       A8          TAY
+       68 85 00    PLA; STA $00   ; pull return-addr lo
+       68 85 01    PLA; STA $01   ; pull return-addr hi → $0000/$0001 = base of inline table
+       C8 B1 00    INY; LDA ($00),Y
+       85 02       STA $02
+       C8 B1 00    INY; LDA ($00),Y
+       85 03       STA $03
+       6C 02 00    JMP ($0002)    ; indirect-jump to selected handler
+```
+
+Calling convention: `JSR $FE99 / .DW handler0, handler1, …` with the index in `A`.
+Used by ~105 callsites across all 16 PRG banks for general state-machine dispatch
+(not exclusively palette code). Anything that wants to wholesale replace SMB3
+behavior often hooks here — the Recolored IPS, for example, relocates this routine
+to `$FE92` and rewrites every `JSR $FE99` to `JSR $FE92` so it can wedge custom
+logic into the engine without rebuilding callers.
+
 ### Title Screen
 
 | File Offset | Description |

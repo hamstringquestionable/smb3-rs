@@ -1,5 +1,9 @@
+use rand::seq::IndexedRandom;
 use rand::Rng;
 
+use crate::randomize::palette_variants::{
+    VariantGroup, PLAINS_SLICE4_VARIANTS, PLAINS_SLOT3_VARIANTS,
+};
 use crate::rom::Rom;
 
 /// Character sprite palette entries: [bg_mirror(0x00), body, highlight, outline(0x0F)].
@@ -36,6 +40,37 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
         for i in 1..3 {
             rom.write_byte(offset + i, SAFE_COLORS[rng.random_range(..SAFE_COLORS.len())]);
         }
+    }
+}
+
+/// Themed palette randomization (MVP: plains-tileset levels only).
+///
+/// Uses palette-group SWAP randomization: for each curated quartet position,
+/// the randomizer picks ONE whole 4-byte variant from a list of pre-validated
+/// options (vanilla + Recolored). This guarantees every emitted palette was
+/// designed as a coherent unit — no flat color-pool mixing, no independent
+/// byte picks, no risk of cross-palette clash.
+///
+/// For plains we currently have two variants per position (vanilla, Recolored),
+/// so variety scales as 2^(changed positions) ≈ 256 combinations. Additional
+/// variants per position (hand-curated or from other palette hacks) can be
+/// added to `palette_variants.rs` without touching this code path.
+///
+/// Positions that Recolored didn't change are omitted from the variants table —
+/// they stay vanilla always.
+pub fn randomize_themed<R: Rng>(rom: &mut Rom, rng: &mut R) {
+    // Character palettes stay randomized too — independent of tileset palettes.
+    randomize(rom, rng);
+
+    apply_variant_groups(rom, PLAINS_SLOT3_VARIANTS, rng);
+    apply_variant_groups(rom, PLAINS_SLICE4_VARIANTS, rng);
+}
+
+/// For each curated position, pick one 4-byte variant at random and write it.
+fn apply_variant_groups<R: Rng>(rom: &mut Rom, groups: &[VariantGroup], rng: &mut R) {
+    for group in groups {
+        let picked = group.variants.choose(rng).unwrap();
+        rom.write_range(group.offset, picked);
     }
 }
 
@@ -94,5 +129,80 @@ mod tests {
                 rom2.read_range(offset, 4),
             );
         }
+    }
+
+    #[test]
+    fn themed_emits_curated_variants_only() {
+        // Every 4-byte write at a curated position must exactly match one of the
+        // pre-registered variants — no random pool fallback, no free-byte picks.
+        use crate::randomize::palette_variants::{PLAINS_SLICE4_VARIANTS, PLAINS_SLOT3_VARIANTS};
+        for seed in [1u64, 42, 99, 777, 12345] {
+            let mut rom = make_test_rom();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize_themed(&mut rom, &mut rng);
+            for group in PLAINS_SLOT3_VARIANTS.iter().chain(PLAINS_SLICE4_VARIANTS.iter()) {
+                let written = rom.read_range(group.offset, 4);
+                let matched = group.variants.iter().any(|v| v == written);
+                assert!(
+                    matched,
+                    "seed {seed} at {:#08x}: wrote {:02x?}, must match one curated variant",
+                    group.offset, written
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn themed_does_not_touch_uncurated_positions() {
+        // Any offset in plains slot 3 / slice 4 band 3 that ISN'T in the variants
+        // table should keep vanilla bytes untouched.
+        use crate::randomize::palette_variants::{PLAINS_SLICE4_VARIANTS, PLAINS_SLOT3_VARIANTS};
+        let mut rom = make_test_rom();
+        // Stamp recognizable canary bytes across the plains ranges.
+        let canary: Vec<u8> = (0..(0x36CC4 - 0x36C8C)).map(|i| 0xC0 | (i as u8 & 0x0F)).collect();
+        rom.write_range(0x36C8C, &canary);
+        let canary2: Vec<u8> = (0..(0x37720 - 0x376D8)).map(|i| 0xB0 | (i as u8 & 0x0F)).collect();
+        rom.write_range(0x376D8, &canary2);
+
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        randomize_themed(&mut rom, &mut rng);
+
+        let curated_offsets: std::collections::HashSet<usize> =
+            PLAINS_SLOT3_VARIANTS.iter().chain(PLAINS_SLICE4_VARIANTS.iter())
+                .flat_map(|g| (0..4).map(move |k| g.offset + k))
+                .collect();
+
+        for off in 0x36C8C..0x36CC4 {
+            if curated_offsets.contains(&off) { continue; }
+            assert_eq!(
+                rom.read_byte(off), 0xC0 | ((off - 0x36C8C) as u8 & 0x0F),
+                "uncurated offset {:#08x} was modified", off
+            );
+        }
+        for off in 0x376D8..0x37720 {
+            if curated_offsets.contains(&off) { continue; }
+            assert_eq!(
+                rom.read_byte(off), 0xB0 | ((off - 0x376D8) as u8 & 0x0F),
+                "uncurated offset {:#08x} was modified", off
+            );
+        }
+    }
+
+    #[test]
+    fn themed_does_not_touch_pointer_table() {
+        // The 40-byte region 0x377E0-0x37807 is a level-layout pointer table;
+        // painting it crashes the game. Themed randomizer must leave it alone.
+        let mut rom = make_test_rom();
+        let vanilla: Vec<u8> = (0..0x28).map(|i| 0xAB + (i as u8 & 0x0F)).collect();
+        rom.write_range(0x377E0, &vanilla);
+
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        randomize_themed(&mut rom, &mut rng);
+
+        assert_eq!(
+            rom.read_range(0x377E0, 0x28),
+            &vanilla[..],
+            "pointer table 0x377E0-0x37807 must not be modified"
+        );
     }
 }
