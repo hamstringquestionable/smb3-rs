@@ -710,6 +710,12 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
             LevelShuffle::Off => {}
         }
     }
+    // Give each W8 Hand its own treasure-room enemy stream so the chest
+    // randomizer can roll a unique item per Hand. Structural patch — runs
+    // before items::randomize regardless of other options.
+    rom.set_tag("hand_rooms");
+    randomize::hand_rooms::patch_clone_hand_rooms(rom);
+
     if options.chest_items {
         rom.set_tag("items");
         randomize::items::randomize(rom, &mut rng, options.remove_whistles);
