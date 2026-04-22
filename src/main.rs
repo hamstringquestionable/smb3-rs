@@ -290,7 +290,14 @@ fn main() {
 
     let options = if let Some(ref flag_key) = cli.flags {
         match Options::from_flag_key(flag_key) {
-            Ok(opts) => opts,
+            Ok(mut opts) => {
+                // palette_themed is cosmetic and deliberately not encoded in the
+                // flag key, so --themed-palettes must overlay on top of a decoded key.
+                if cli.themed_palettes {
+                    opts.palette_themed = true;
+                }
+                opts
+            }
             Err(e) => {
                 eprintln!("Invalid --flags value: {e}");
                 process::exit(1);
