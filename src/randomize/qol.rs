@@ -506,6 +506,11 @@ const HAMMER_SUIT_SLIDE: usize = 0x3F6;
 // clipping through vertical pipes between areas (PRG029).
 const PIPE_CLIP_FIX: usize = 0x3B5B1;
 
+// Move after orb grab: NOPs `STY/STA $7CF4` in PRG003 (CPU $A8ED, $A903) so
+// the player-input-lock flag isn't set when grabbing the fortress magic ball.
+// 6 bytes total (2 × 3-byte absolute stores → NOPs).
+const MOVE_AFTER_ORB: [usize; 6] = [0x068FD, 0x068FE, 0x068FF, 0x06913, 0x06914, 0x06915];
+
 /// Apply MaCobra's always-on bugfixes and fairness patches.
 pub fn apply_macobra_patches(rom: &mut Rom) {
     // Prevent forced hammer bro fights (4 NOPs)
@@ -523,6 +528,11 @@ pub fn apply_macobra_patches(rom: &mut Rom) {
 
     // Fix inter-level vertical pipe clip softlock
     rom.write_byte(PIPE_CLIP_FIX, 0x00);
+
+    // Allow Mario to keep moving after grabbing the fortress orb / magic ball.
+    for offset in MOVE_AFTER_ORB {
+        rom.write_byte(offset, 0xEA);
+    }
 }
 
 #[cfg(test)]
