@@ -460,6 +460,14 @@ const QUOTES: &[[&str; 6]] = &[
         "is...",
         "ticking",
     ],
+    [
+        "Oh, DannyP,",
+        "the pipes, the pipes",
+        "are calling.",
+        "",
+        "",
+        "",
+    ],
 ];
 
 /// Suit-specific quotes: shown when Mario visits the king wearing frog suit.
