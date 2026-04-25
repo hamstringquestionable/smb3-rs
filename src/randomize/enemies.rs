@@ -829,6 +829,49 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
             continue;
         }
 
+        // Wild injection: replace the segment's first entry with Lakitu/AngrySun/BossBass.
+        // SMB3 only spawns these correctly when they are the segment's first entry —
+        // otherwise the sprite slot they reserve collides with later objects (e.g.
+        // the end-level card), preventing those from spawning.
+        if opts.wild_injections && !big_q_only && !entries.is_empty() {
+            let roll: u8 = rng.random_range(..=255);
+            if roll < WILD_INJECTION_CHANCE {
+                let entry = &entries[0];
+                let fo = ENEMY_DATA_START + entry.data_index;
+                let swappable = !PROTECTED_ENEMY_OFFSETS.contains(&fo)
+                    && find_class_pool(entry.obj_id, modes, wild_pool).is_some();
+                if swappable {
+                    // Pre-commit CHR pages for the rest of the segment so the
+                    // injected enemy is chosen compatible with what stays.
+                    let mut s4 = ChrSlot::Free;
+                    let mut s5 = ChrSlot::Free;
+                    for e in &entries[1..] {
+                        let should_precommit = match find_class_pool(e.obj_id, modes, wild_pool) {
+                            None => !BOOMBOOM_IDS.contains(&e.obj_id),
+                            Some(pool) if std::ptr::eq(pool, wild_pool) => false,
+                            Some(class) => is_uniform_chr_class(class),
+                        };
+                        if should_precommit {
+                            commit_chr_page(e.obj_id, &mut s4, &mut s5);
+                        }
+                    }
+                    if let Some(chosen) = pick_compatible(WILD_INJECTION_IDS, s4, s5, rng) {
+                        let di = entry.data_index;
+                        swap_enemy(&mut data, di, chosen);
+                        if chosen == 0xAF {
+                            data[di + 1] = 0x02;
+                            data[di + 2] = 0x11;
+                        } else if chosen == 0x83 {
+                            data[di + 1] = 0x02;
+                            data[di + 2] = 0x12;
+                        }
+                        entries[0].obj_id = chosen;
+                        entries[0].x_pos = data[di + 1];
+                    }
+                }
+            }
+        }
+
         // Split entries into proximity groups by X-position. Each group gets
         // independent CHR slot tracking — enemies more than CHR_GROUP_GAP tiles
         // apart can never be on-screen together, so they don't need compatible
@@ -894,37 +937,6 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                 }
             }
 
-            // Pass 3 (wild_injections only): inject Lakitu/Angry Sun/Boss Bass.
-            if opts.wild_injections && !big_q_only {
-                let roll: u8 = rng.random_range(..=255);
-                if roll < WILD_INJECTION_CHANCE {
-                    let swappable_indices: Vec<usize> = group.iter()
-                        .copied()
-                        .filter(|&idx| {
-                            let fo = ENEMY_DATA_START + entries[idx].data_index;
-                            !PROTECTED_ENEMY_OFFSETS.contains(&fo)
-                                && find_class_pool(data[entries[idx].data_index], modes, wild_pool).is_some()
-                        })
-                        .collect();
-
-                    if let Some(&target_idx) = swappable_indices.choose(rng) {
-                        if let Some(chosen) = pick_compatible(WILD_INJECTION_IDS, committed_slot4, committed_slot5, rng) {
-                            let di = entries[target_idx].data_index;
-                            swap_enemy(&mut data, di, chosen);
-                            if chosen == 0xAF {
-                                // Angry Sun: override to fixed sky position
-                                data[di + 1] = 0x02;
-                                data[di + 2] = 0x11;
-                            } else if chosen == 0x83 {
-                                // Lakitu: override to fixed sky position
-                                data[di + 1] = 0x02;
-                                data[di + 2] = 0x12;
-                            }
-                            commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
-                        }
-                    }
-                }
-            }
         }
     }
 
