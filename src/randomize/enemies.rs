@@ -845,7 +845,9 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
         // SMB3 only spawns these correctly when they are the segment's first entry —
         // otherwise the sprite slot they reserve collides with later objects (e.g.
         // the end-level card), preventing those from spawning.
-        if opts.wild_injections && !big_q_only && !entries.is_empty() {
+        // HB encounter segments are excluded — they're tiny rooms where an injected
+        // Lakitu/Sun/Bertha doesn't fit the encounter design.
+        if opts.wild_injections && !big_q_only && !entries.is_empty() && !is_hb_segment {
             let roll: u8 = rng.random_range(..=255);
             if roll < WILD_INJECTION_CHANCE {
                 let entry = &entries[0];
