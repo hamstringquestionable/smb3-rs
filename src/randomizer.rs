@@ -315,9 +315,8 @@ impl Options {
             | (self.remove_n_cards as u8) << 6
             | (self.skip_wand_cutscene as u8) << 5
             | (self.adjust_boss_hitboxes as u8) << 4
-            | (self.remove_spade_games as u8) << 3
-            | (self.hammer_vulnerable_koopalings as u8) << 2;
-            // bits 1-0 free
+            | (self.remove_spade_games as u8) << 3;
+            // bits 2-0 used by hb_encounters and wild_injections below
 
         // Helper to encode EnemyMode as 2 bits
         fn em(m: EnemyMode) -> u8 {
@@ -328,10 +327,11 @@ impl Options {
             }
         }
 
-        // b5: ground(7-6) shell(5-4) flying(3-2) reserved(1) jitter_enemy_positions(0)
+        // b5: ground(7-6) shell(5-4) flying(3-2) hammer_vulnerable_koopalings(1) jitter_enemy_positions(0)
         let b5 = em(self.ground) << 6
             | em(self.shell) << 4
             | em(self.flying) << 2
+            | (self.hammer_vulnerable_koopalings as u8) << 1
             | (self.jitter_enemy_positions as u8);
 
         // b6: bullet_bills(7-6) piranhas(5-4) ghosts(3-2) thwomps(1-0)
@@ -461,14 +461,14 @@ impl Options {
             skip_wand_cutscene: (b4 >> 5) & 1 != 0,
             adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
             remove_spade_games: (b4 >> 3) & 1 != 0,
-            hammer_vulnerable_koopalings: (b4 >> 2) & 1 != 0,
+            hammer_vulnerable_koopalings: (b5 >> 1) & 1 != 0,
             random_koopalings: (b10 >> 7) & 1 != 0,
             include_beta_stages: (b10 >> 6) & 1 != 0,
             hammer_breaks_bridges: (b3 >> 7) & 1 != 0,
             ground: dem(b5 >> 6),
             shell: dem(b5 >> 4),
             flying: dem(b5 >> 2),
-            // b5 bit 1 reserved; bit 0 = jitter_enemy_positions
+            // b5 bit 1 = hammer_vulnerable_koopalings (decoded above); bit 0 = jitter_enemy_positions
             jitter_enemy_positions: b5 & 1 != 0,
             bullet_bills: dem(b6 >> 6),
             piranhas: dem(b6 >> 4),
@@ -1180,6 +1180,30 @@ mod tests {
     fn flag_key_invalid_chars() {
         let result = Options::from_flag_key("SMB3R-!!!!!!!!!!!!!!!!!!!");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn flag_key_hammer_vuln_koopalings_distinct_from_hb_encounters() {
+        // Regression: hammer_vulnerable_koopalings used to share bit 2 of b4
+        // with the high bit of hb_encounters (a tri-state at bits 2-1).
+        // When hb_encounters=Wild (em=2), bit 2 was already set, so toggling
+        // hammer_vulnerable_koopalings produced no change in the flag key.
+        let mut a = Options::default();
+        a.hb_encounters = EnemyMode::Wild;
+        a.hammer_vulnerable_koopalings = false;
+
+        let mut b = a.clone();
+        b.hammer_vulnerable_koopalings = true;
+
+        assert_ne!(a.to_flag_key(), b.to_flag_key(),
+            "toggling hammer_vulnerable_koopalings must change the flag key");
+
+        let dec_a = Options::from_flag_key(&a.to_flag_key()).unwrap();
+        let dec_b = Options::from_flag_key(&b.to_flag_key()).unwrap();
+        assert!(!dec_a.hammer_vulnerable_koopalings);
+        assert!(dec_b.hammer_vulnerable_koopalings);
+        assert_eq!(dec_a.hb_encounters, EnemyMode::Wild);
+        assert_eq!(dec_b.hb_encounters, EnemyMode::Wild);
     }
 
     #[test]
