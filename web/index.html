@@ -405,16 +405,6 @@
             </label>
         </fieldset>
 
-        <fieldset class="section">
-            <legend>Flag Key</legend>
-            <div class="input-row">
-                <input type="text" id="flag-key-input" placeholder="SMB3R-..." spellcheck="false">
-                <button id="flag-key-copy-btn" type="button" title="Copy flag key">Copy</button>
-                <button id="flag-key-apply-btn" type="button" title="Apply flag key">Apply</button>
-            </div>
-            <p class="note">Share this key to reproduce the same settings.</p>
-        </fieldset>
-
         <div class="section">
             <label>Output Format</label>
             <div class="radio-group">
@@ -440,6 +430,7 @@
         </div>
 
         <button id="generate-btn" type="button" disabled>Generate</button>
+        <p class="early-access-note"><em>Early access — you may encounter bugs. Report issues on <a href="https://github.com/hamstringquestionable/smb3-rs/issues" target="_blank" rel="noopener">GitHub</a>.</em></p>
 
         <div id="status" class="status" hidden></div>
 
@@ -448,10 +439,14 @@
         </footer>
     </div>
 
-    <aside class="info-box">
-        <div class="info-box-title">Early Access</div>
-        <p>This project is in early development. You may encounter bugs or unexpected behavior.</p>
-        <p>Found an issue? Please report it on <a href="https://github.com/hamstringquestionable/smb3-rs/issues" target="_blank" rel="noopener">GitHub Issues</a>.</p>
+    <aside class="flag-key-box">
+        <div class="flag-key-box-title">Flag Key</div>
+        <input type="text" id="flag-key-input" placeholder="SMB3R-..." spellcheck="false">
+        <div class="flag-key-buttons">
+            <button id="flag-key-copy-btn" type="button" title="Copy flag key">Copy</button>
+            <button id="flag-key-apply-btn" type="button" title="Apply flag key">Apply</button>
+        </div>
+        <p class="note">Share this key to reproduce the same settings.</p>
     </aside>
     </div>
 

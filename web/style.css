@@ -20,7 +20,7 @@ body {
 
 .page-wrapper {
     display: flex;
-    align-items: flex-end;
+    align-items: flex-start;
     gap: 1rem;
 }
 
@@ -437,24 +437,24 @@ input[type="radio"] {
     color: #9a9ab0;
 }
 
-/* --- Info Box (sidebar) --- */
+/* --- Flag Key Box (sidebar) --- */
 
-.info-box {
-    width: 220px;
+.flag-key-box {
+    width: 240px;
     flex-shrink: 0;
+    position: sticky;
+    top: 2rem;
     background: #141428;
     border: 3px solid #e44434;
     border-radius: 12px;
     padding: 1rem;
-    font-size: 0.75rem;
     color: #9a9ab0;
-    line-height: 1.5;
     box-shadow:
         0 0 20px rgba(228, 68, 52, 0.15),
         0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
-.info-box-title {
+.flag-key-box-title {
     font-size: 0.8rem;
     font-weight: bold;
     color: #e44434;
@@ -462,29 +462,57 @@ input[type="radio"] {
     letter-spacing: 0.04em;
 }
 
-.info-box p {
+.flag-key-box input[type="text"] {
     margin-bottom: 0.5rem;
 }
 
-.info-box p:last-child {
-    margin-bottom: 0;
+.flag-key-buttons {
+    display: flex;
+    gap: 0.5rem;
 }
 
-.info-box a {
+.flag-key-buttons button {
+    flex: 1;
+    background: #1c1c38;
+    border: 1px solid #2a2a50;
+    border-radius: 4px;
+    color: #9a9ab0;
+    cursor: pointer;
+    padding: 0.4rem 0.6rem;
+    font-family: inherit;
+    font-size: 0.8rem;
+    transition: all 0.15s;
+}
+
+.flag-key-buttons button:hover {
+    background: #2a2a50;
+    color: #e0e0e0;
+}
+
+.early-access-note {
+    margin-top: 0.6rem;
+    text-align: center;
+    font-size: 0.7rem;
+    color: #777;
+    line-height: 1.4;
+}
+
+.early-access-note a {
     color: #5c94fc;
     text-decoration: none;
 }
 
-.info-box a:hover {
+.early-access-note a:hover {
     text-decoration: underline;
 }
 
 @media (max-width: 1100px) {
-    .info-box {
-        display: none;
-    }
     .page-wrapper {
         display: block;
+    }
+    .flag-key-box {
+        width: 100%;
+        margin-top: 1rem;
     }
 }
 
