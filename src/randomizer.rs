@@ -52,7 +52,7 @@ fn default_shuffle() -> EnemyMode { EnemyMode::Shuffle }
 fn default_off() -> EnemyMode { EnemyMode::Off }
 
 /// Options controlling which randomizations to apply.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Options {
     pub powerups: bool,
     pub palettes: bool,
@@ -1180,6 +1180,231 @@ mod tests {
     fn flag_key_invalid_chars() {
         let result = Options::from_flag_key("SMB3R-!!!!!!!!!!!!!!!!!!!");
         assert!(result.is_err());
+    }
+
+    /// Holistic flag-key check: every encoded option must (a) change the flag
+    /// key when toggled away from defaults, and (b) round-trip exactly through
+    /// encode→decode. Catches bit-collision bugs where two fields share a bit.
+    ///
+    /// `palettes` and `palette_themed` are cosmetic — they intentionally do not
+    /// change the flag key, so they're tested in the `cosmetic` table.
+    #[test]
+    fn flag_key_per_option_round_trip() {
+        // Helper: clone defaults, apply mutator, encode/decode, return both.
+        fn check_round_trip(
+            label: &str,
+            mutate: impl Fn(&mut Options),
+            change_key: bool,
+        ) {
+            let default_opts = Options::default();
+            let default_key = default_opts.to_flag_key();
+
+            let mut mutated = default_opts.clone();
+            mutate(&mut mutated);
+
+            let mutated_key = mutated.to_flag_key();
+            if change_key {
+                assert_ne!(
+                    default_key, mutated_key,
+                    "{label}: mutating did not change the flag key (bit collision?)",
+                );
+            } else {
+                assert_eq!(
+                    default_key, mutated_key,
+                    "{label}: cosmetic field unexpectedly changed the flag key",
+                );
+            }
+
+            // Decode round-trip. Cosmetic fields are not encoded, so the
+            // decoder always returns palettes=true, palette_themed=false;
+            // normalize the expected value to match before comparing.
+            let mut expected = mutated.clone();
+            expected.palettes = true;
+            expected.palette_themed = false;
+
+            let recovered = Options::from_flag_key(&mutated_key)
+                .unwrap_or_else(|e| panic!("{label}: failed to decode key '{mutated_key}': {e}"));
+            assert_eq!(
+                recovered, expected,
+                "{label}: round-trip mismatch\n  encoded: {mutated:?}\n  decoded: {recovered:?}",
+            );
+        }
+
+        // Cosmetic: must NOT change the flag key.
+        let cosmetic: Vec<(&str, Box<dyn Fn(&mut Options)>)> = vec![
+            ("palettes",       Box::new(|o| o.palettes = !o.palettes)),
+            ("palette_themed", Box::new(|o| o.palette_themed = !o.palette_themed)),
+        ];
+        for (label, mutate) in cosmetic {
+            check_round_trip(label, mutate, false);
+        }
+
+        // Encoded booleans: toggling must change the flag key.
+        let bools: Vec<(&str, Box<dyn Fn(&mut Options)>)> = vec![
+            ("powerups",                     Box::new(|o| o.powerups = !o.powerups)),
+            ("world_order",                  Box::new(|o| o.world_order = !o.world_order)),
+            ("big_q_blocks",                 Box::new(|o| o.big_q_blocks = !o.big_q_blocks)),
+            ("map_shuffle",                  Box::new(|o| o.map_shuffle = !o.map_shuffle)),
+            ("shuffle_pipes",                Box::new(|o| o.shuffle_pipes = !o.shuffle_pipes)),
+            ("shuffle_airships",             Box::new(|o| o.shuffle_airships = !o.shuffle_airships)),
+            ("disable_autoscroll",           Box::new(|o| o.disable_autoscroll = !o.disable_autoscroll)),
+            ("airship_lock",                 Box::new(|o| o.airship_lock = !o.airship_lock)),
+            ("chest_items",                  Box::new(|o| o.chest_items = !o.chest_items)),
+            ("remove_whistles",              Box::new(|o| o.remove_whistles = !o.remove_whistles)),
+            ("fix_drawbridges",              Box::new(|o| o.fix_drawbridges = !o.fix_drawbridges)),
+            ("remove_rocks",                 Box::new(|o| o.remove_rocks = !o.remove_rocks)),
+            ("card_speed_clear",             Box::new(|o| o.card_speed_clear = !o.card_speed_clear)),
+            ("remove_n_cards",               Box::new(|o| o.remove_n_cards = !o.remove_n_cards)),
+            ("skip_wand_cutscene",           Box::new(|o| o.skip_wand_cutscene = !o.skip_wand_cutscene)),
+            ("adjust_boss_hitboxes",         Box::new(|o| o.adjust_boss_hitboxes = !o.adjust_boss_hitboxes)),
+            ("koopaling_hits",               Box::new(|o| o.koopaling_hits = !o.koopaling_hits)),
+            ("hammer_vulnerable_koopalings", Box::new(|o| o.hammer_vulnerable_koopalings = !o.hammer_vulnerable_koopalings)),
+            ("random_koopalings",            Box::new(|o| o.random_koopalings = !o.random_koopalings)),
+            ("include_beta_stages",          Box::new(|o| o.include_beta_stages = !o.include_beta_stages)),
+            ("hammer_breaks_locks",          Box::new(|o| o.hammer_breaks_locks = !o.hammer_breaks_locks)),
+            ("hammer_breaks_bridges",        Box::new(|o| o.hammer_breaks_bridges = !o.hammer_breaks_bridges)),
+            ("remove_spade_games",           Box::new(|o| o.remove_spade_games = !o.remove_spade_games)),
+            ("wild_injections",              Box::new(|o| o.wild_injections = !o.wild_injections)),
+            ("jitter_enemy_positions",       Box::new(|o| o.jitter_enemy_positions = !o.jitter_enemy_positions)),
+        ];
+        for (label, mutate) in bools {
+            check_round_trip(label, mutate, true);
+        }
+
+        // Tri-state enemy modes: cycle through every value so each non-default
+        // mode is exercised. Defaults differ per class, so test all three modes.
+        type TriSetter = Box<dyn Fn(&mut Options, EnemyMode)>;
+        let tristates: Vec<(&str, TriSetter)> = vec![
+            ("ground",        Box::new(|o, m| o.ground = m)),
+            ("shell",         Box::new(|o, m| o.shell = m)),
+            ("flying",        Box::new(|o, m| o.flying = m)),
+            ("bullet_bills",  Box::new(|o, m| o.bullet_bills = m)),
+            ("piranhas",      Box::new(|o, m| o.piranhas = m)),
+            ("ghosts",        Box::new(|o, m| o.ghosts = m)),
+            ("thwomps",       Box::new(|o, m| o.thwomps = m)),
+            ("rotodiscs",     Box::new(|o, m| o.rotodiscs = m)),
+            ("cannons",       Box::new(|o, m| o.cannons = m)),
+            ("water",         Box::new(|o, m| o.water = m)),
+            ("bros",          Box::new(|o, m| o.bros = m)),
+            ("hb_encounters", Box::new(|o, m| o.hb_encounters = m)),
+        ];
+        for (label, set) in tristates {
+            for &mode in &[EnemyMode::Off, EnemyMode::Shuffle, EnemyMode::Wild] {
+                let default_opts = Options::default();
+                let mut mutated = default_opts.clone();
+                set(&mut mutated, mode);
+                let mut expected = mutated.clone();
+                expected.palettes = true;
+                expected.palette_themed = false;
+                let recovered = Options::from_flag_key(&mutated.to_flag_key()).unwrap();
+                assert_eq!(
+                    recovered, expected,
+                    "{label}={mode:?}: round-trip mismatch",
+                );
+            }
+        }
+
+        // LevelShuffle round-trips through every value.
+        for val in [LevelShuffle::Off, LevelShuffle::IntraWorld, LevelShuffle::CrossWorld] {
+            let mut opts = Options::default();
+            opts.level_shuffle = val.clone();
+            let mut expected = opts.clone();
+            expected.palettes = true;
+            expected.palette_themed = false;
+            let recovered = Options::from_flag_key(&opts.to_flag_key()).unwrap();
+            assert_eq!(recovered, expected, "level_shuffle={val:?}: round-trip mismatch");
+        }
+
+        // Numeric ranges (boundaries + a middle value).
+        for lives in [1u8, 2, 50, 99] {
+            let mut opts = Options::default();
+            opts.starting_lives = lives;
+            let mut expected = opts.clone();
+            expected.palettes = true;
+            expected.palette_themed = false;
+            let recovered = Options::from_flag_key(&opts.to_flag_key()).unwrap();
+            assert_eq!(recovered.starting_lives, lives, "starting_lives={lives}: round-trip mismatch");
+            assert_eq!(recovered, expected, "starting_lives={lives}: full struct mismatch");
+        }
+        for wc in 1u8..=7 {
+            let mut opts = Options::default();
+            opts.world_count = wc;
+            let mut expected = opts.clone();
+            expected.palettes = true;
+            expected.palette_themed = false;
+            let recovered = Options::from_flag_key(&opts.to_flag_key()).unwrap();
+            assert_eq!(recovered.world_count, wc, "world_count={wc}: round-trip mismatch");
+            assert_eq!(recovered, expected, "world_count={wc}: full struct mismatch");
+        }
+
+        // starting_items: empty, singles, multi, sentinels (random modes).
+        for items in [
+            vec![],
+            vec![3u8],
+            vec![3, 6, 9],
+            vec![ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY],
+        ] {
+            let mut opts = Options::default();
+            opts.starting_items = items.clone();
+            let mut expected = opts.clone();
+            expected.palettes = true;
+            expected.palette_themed = false;
+            let recovered = Options::from_flag_key(&opts.to_flag_key()).unwrap();
+            assert_eq!(recovered.starting_items, items, "starting_items={items:?}: round-trip mismatch");
+            assert_eq!(recovered, expected, "starting_items={items:?}: full struct mismatch");
+        }
+
+        // Combination: every encoded boolean flipped from default, all
+        // tri-states set to Wild, level shuffle on, beta stages, items.
+        // Catches bit-collision bugs that only manifest when many fields
+        // share their non-default values.
+        let mut everything = Options::default();
+        everything.powerups = !everything.powerups;
+        everything.world_order = !everything.world_order;
+        everything.big_q_blocks = !everything.big_q_blocks;
+        everything.map_shuffle = !everything.map_shuffle;
+        everything.shuffle_pipes = !everything.shuffle_pipes;
+        everything.shuffle_airships = !everything.shuffle_airships;
+        everything.disable_autoscroll = !everything.disable_autoscroll;
+        everything.airship_lock = !everything.airship_lock;
+        everything.chest_items = !everything.chest_items;
+        everything.remove_whistles = !everything.remove_whistles;
+        everything.fix_drawbridges = !everything.fix_drawbridges;
+        everything.remove_rocks = !everything.remove_rocks;
+        everything.card_speed_clear = !everything.card_speed_clear;
+        everything.remove_n_cards = !everything.remove_n_cards;
+        everything.skip_wand_cutscene = !everything.skip_wand_cutscene;
+        everything.adjust_boss_hitboxes = !everything.adjust_boss_hitboxes;
+        everything.koopaling_hits = !everything.koopaling_hits;
+        everything.hammer_vulnerable_koopalings = true;
+        everything.random_koopalings = true;
+        everything.include_beta_stages = true;
+        everything.hammer_breaks_locks = true;
+        everything.hammer_breaks_bridges = true;
+        everything.remove_spade_games = !everything.remove_spade_games;
+        everything.wild_injections = true;
+        everything.jitter_enemy_positions = true;
+        everything.ground = EnemyMode::Wild;
+        everything.shell = EnemyMode::Wild;
+        everything.flying = EnemyMode::Wild;
+        everything.bullet_bills = EnemyMode::Wild;
+        everything.piranhas = EnemyMode::Wild;
+        everything.ghosts = EnemyMode::Wild;
+        everything.thwomps = EnemyMode::Wild;
+        everything.rotodiscs = EnemyMode::Wild;
+        everything.cannons = EnemyMode::Wild;
+        everything.water = EnemyMode::Wild;
+        everything.bros = EnemyMode::Wild;
+        everything.hb_encounters = EnemyMode::Wild;
+        everything.level_shuffle = LevelShuffle::CrossWorld;
+        everything.starting_lives = 99;
+        everything.world_count = 1;
+        everything.starting_items = vec![ITEM_RANDOM, 5, ITEM_RANDOM_SUIT_ONLY];
+        let mut expected = everything.clone();
+        expected.palettes = true;
+        expected.palette_themed = false;
+        let recovered = Options::from_flag_key(&everything.to_flag_key()).unwrap();
+        assert_eq!(recovered, expected, "all-fields-flipped: round-trip mismatch");
     }
 
     #[test]
