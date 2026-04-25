@@ -427,6 +427,12 @@ const WILD_INJECTION_IDS: &[u8] = &[
 /// ~15% chance per segment.
 const WILD_INJECTION_CHANCE: u8 = 38;
 
+/// Maximum number of Boss Bass (0x63) allowed in a single enemy segment
+/// (= one obj_ptr / sub-area). More than this causes sprite slot exhaustion
+/// that can prevent other objects (e.g. white blocks) from spawning — this
+/// was observed in 3-9 where the white block became unreachable.
+const MAX_BERTHA_PER_SEGMENT: u8 = 2;
+
 /// Maximum X-tile gap between consecutive enemies (sorted by X) before they
 /// are split into separate CHR groups. Enemies more than one screen apart
 /// can never be visible simultaneously, so they don't need compatible CHR pages.
@@ -829,6 +835,12 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
             continue;
         }
 
+        // Track Boss Bass count for this segment so we can cap it across both
+        // wild injection and class randomization.
+        let mut bertha_count: u8 = entries.iter()
+            .filter(|e| e.obj_id == 0x63)
+            .count() as u8;
+
         // Wild injection: replace the segment's first entry with Lakitu/AngrySun/BossBass.
         // SMB3 only spawns these correctly when they are the segment's first entry —
         // otherwise the sprite slot they reserve collides with later objects (e.g.
@@ -856,17 +868,23 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                         }
                     }
                     if let Some(chosen) = pick_compatible(WILD_INJECTION_IDS, s4, s5, rng) {
-                        let di = entry.data_index;
-                        swap_enemy(&mut data, di, chosen);
-                        if chosen == 0xAF {
-                            data[di + 1] = 0x02;
-                            data[di + 2] = 0x11;
-                        } else if chosen == 0x83 {
-                            data[di + 1] = 0x02;
-                            data[di + 2] = 0x12;
+                        let was_bertha = entries[0].obj_id == 0x63;
+                        let post_count = bertha_count - (was_bertha as u8) + (chosen == 0x63) as u8;
+                        // If injecting Boss Bass would exceed the cap, skip injection entirely.
+                        if !(chosen == 0x63 && post_count > MAX_BERTHA_PER_SEGMENT) {
+                            let di = entry.data_index;
+                            swap_enemy(&mut data, di, chosen);
+                            if chosen == 0xAF {
+                                data[di + 1] = 0x02;
+                                data[di + 2] = 0x11;
+                            } else if chosen == 0x83 {
+                                data[di + 1] = 0x02;
+                                data[di + 2] = 0x12;
+                            }
+                            entries[0].obj_id = chosen;
+                            entries[0].x_pos = data[di + 1];
+                            bertha_count = post_count;
                         }
-                        entries[0].obj_id = chosen;
-                        entries[0].x_pos = data[di + 1];
                     }
                 }
             }
@@ -930,7 +948,27 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                     } else {
                         pick_compatible(pool, committed_slot4, committed_slot5, rng)
                     };
+                    // Enforce Boss Bass cap: if picked 0x63 would push the
+                    // segment over MAX_BERTHA_PER_SEGMENT, re-pick from the
+                    // same pool with 0x63 filtered out.
+                    let was_bertha = data[entry.data_index] == 0x63;
+                    let cap_full = bertha_count.saturating_sub(was_bertha as u8)
+                        >= MAX_BERTHA_PER_SEGMENT;
+                    let chosen = if matches!(chosen, Some(0x63)) && cap_full {
+                        let filtered: Vec<u8> = pool.iter()
+                            .copied()
+                            .filter(|&id| id != 0x63)
+                            .collect();
+                        pick_compatible(&filtered, committed_slot4, committed_slot5, rng)
+                    } else {
+                        chosen
+                    };
                     if let Some(chosen) = chosen {
+                        if was_bertha && chosen != 0x63 {
+                            bertha_count = bertha_count.saturating_sub(1);
+                        } else if !was_bertha && chosen == 0x63 {
+                            bertha_count = bertha_count.saturating_add(1);
+                        }
                         swap_enemy(&mut data, entry.data_index, chosen);
                         commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                     }
@@ -1785,5 +1823,49 @@ mod tests {
         let groups = chr_groups(&entries);
         assert_eq!(groups.len(), 1, "all within gap — one group");
         assert_eq!(groups[0].len(), 3);
+    }
+
+    #[test]
+    fn test_boss_bass_capped_per_segment() {
+        // Build a segment full of water enemies. With water=Wild and
+        // wild_injections on, the segment should never end up with more
+        // than MAX_BERTHA_PER_SEGMENT (2) Boss Bass across all sources.
+        let flags = Options {
+            water: EnemyMode::Wild,
+            wild_injections: true,
+            ..Options::default()
+        };
+        let mut data = vec![0u8; 393232];
+        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
+        data[4] = 16; data[5] = 16; data[6] = 0x40;
+        // 6 water enemies clustered close together (so they share one CHR group)
+        let seg = &[
+            0xFF, 0x01,
+            0x62, 0x02, 0x10, // Blooper
+            0x62, 0x04, 0x10, // Blooper
+            0x62, 0x06, 0x10, // Blooper
+            0x62, 0x08, 0x10, // Blooper
+            0x62, 0x0A, 0x10, // Blooper
+            0x62, 0x0C, 0x10, // Blooper
+            0xFF,
+        ];
+        let start = ENEMY_DATA_START;
+        data[start..start + seg.len()].copy_from_slice(seg);
+        let rom = Rom::from_bytes(&data).unwrap();
+
+        let entry_offsets = [2usize, 5, 8, 11, 14, 17];
+        for seed in 0..2000u64 {
+            let mut rom_copy = rom.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_copy, &mut rng, &flags);
+            let bertha_count = entry_offsets.iter()
+                .filter(|&&off| rom_copy.read_byte(ENEMY_DATA_START + off) == 0x63)
+                .count();
+            assert!(
+                bertha_count <= MAX_BERTHA_PER_SEGMENT as usize,
+                "seed {seed}: {bertha_count} Boss Bass in segment, cap is {}",
+                MAX_BERTHA_PER_SEGMENT
+            );
+        }
     }
 }
