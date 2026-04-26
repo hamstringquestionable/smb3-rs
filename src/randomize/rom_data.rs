@@ -761,6 +761,7 @@ pub const ENEMY_DATA_END: usize = 0x0E00D;
 /// These specific enemies are required for gameplay (e.g., needed as platforms
 /// to make jumps, or positioned to enable required routes).
 pub(super) const PROTECTED_ENEMY_OFFSETS: &[usize] = &[
+    0x0C456, // 8-1 Boo (scr=5, col=1) — spawns on player; any non-passable swap forces a hit
     0x0C465, // 8-1 FlyingRedParatroopa (scr=6, col=14) — needed to reach upper platform
     0x0CAB1, // 6-3 FlyingRedParatroopa (scr=6, col=13) — needed for jump
     0x0CAB4, // 6-3 FlyingRedParatroopa (scr=7, col=1) — needed for jump
@@ -793,6 +794,17 @@ pub(super) const SHELL_PROTECTED_OFFSETS: &[usize] = &[
 /// Must always shuffle within the non-HammerBro bro pool (0x82/0x86/0x87).
 pub(super) const TANK_BRO_PROTECTED_OFFSETS: &[usize] = &[
     0x0DA3A, // BoomerangBro scr=0 col=12 row=7 (8-Tank sub-area, enemy_ptr 0xDA29)
+];
+
+/// Enemies at these offsets must remain stompable: the chosen replacement
+/// is the intersection of the enemy's normal pool (per current mode) with
+/// STOMPABLE_ENEMIES. Used at floor positions where a non-stompable swap
+/// would corner the player with no way to defeat the enemy.
+pub(super) const STOMPABLE_PROTECTED_OFFSETS: &[usize] = &[
+    // 6-6 sub-area (enemy_ptr 0xC64B): 3 spikes on the floor of screen 10
+    0x0C6A7, // Spike scr=10 col=0 row=15
+    0x0C6AA, // Spike scr=10 col=6 row=15
+    0x0C6AD, // Spike scr=10 col=4 row=15
 ];
 
 /// Bro enemies that work in tileset 10 (8-Tank sub-area).
