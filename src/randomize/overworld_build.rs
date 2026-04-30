@@ -95,19 +95,36 @@ pub(crate) struct BuildResult {
     pub fort_counts: [usize; 8],
 }
 
-/// Sort `candidates` descending by score and pick uniformly at random from the
-/// top `n` (or fewer if the list is shorter). Returns `None` if empty.
-fn pick_top_n_by_score<T, R: Rng>(
-    mut candidates: Vec<(T, f64)>,
-    n: usize,
+/// Sample a candidate weighted by softmax(score / temperature). Higher
+/// temperature flattens the distribution (more random); lower temperature
+/// concentrates probability on top-scoring candidates. Returns `None` if empty.
+fn pick_softmax_by_score<T, R: Rng>(
+    candidates: Vec<(T, f64)>,
+    temperature: f64,
     rng: &mut R,
 ) -> Option<T> {
     if candidates.is_empty() {
         return None;
     }
-    candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-    let top = candidates.len().min(n);
-    Some(candidates.swap_remove(rng.random_range(..top)).0)
+    // Subtract max for numerical stability.
+    let max_score = candidates
+        .iter()
+        .map(|(_, s)| *s)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let weights: Vec<f64> = candidates
+        .iter()
+        .map(|(_, s)| ((s - max_score) / temperature).exp())
+        .collect();
+    let total: f64 = weights.iter().sum();
+    let mut roll = rng.random_range(0.0..total);
+    for (i, w) in weights.iter().enumerate() {
+        roll -= w;
+        if roll <= 0.0 {
+            return Some(candidates.into_iter().nth(i).unwrap().0);
+        }
+    }
+    // Floating point edge case — return last.
+    Some(candidates.into_iter().last().unwrap().0)
 }
 
 // ---------------------------------------------------------------------------
@@ -860,7 +877,7 @@ fn place_pipes<R: Rng>(
                     (pos, proximity_score - target_pen)
                 })
                 .collect();
-            let b = pick_top_n_by_score(b_scored, 5, rng).unwrap();
+            let b = pick_softmax_by_score(b_scored, PIPE_SOFTMAX_T, rng).unwrap();
 
             // Reachable side: prefer positions far from start (BFS distance),
             // spread from existing pipes, and away from target.
@@ -873,7 +890,7 @@ fn place_pipes<R: Rng>(
                     (pos, score)
                 })
                 .collect();
-            let a = pick_top_n_by_score(a_scored, 5, rng).unwrap();
+            let a = pick_softmax_by_score(a_scored, PIPE_SOFTMAX_T, rng).unwrap();
 
             grid.set(a.0, a.1, TILE_PIPE);
             grid.set(b.0, b.1, TILE_PIPE);
@@ -883,7 +900,7 @@ fn place_pipes<R: Rng>(
         } else if must_connect_target {
             break; // can't connect anything more but target still unreachable
         } else {
-            // No more islands — score candidate pairs and pick from top 5
+            // No more islands — score candidate pairs and pick from top N
             let available: Vec<(usize, usize)> = blank_positions
                 .iter()
                 .copied()
@@ -907,7 +924,7 @@ fn place_pipes<R: Rng>(
                 }
             }
 
-            let (a, b) = pick_top_n_by_score(candidates, 5, rng).unwrap();
+            let (a, b) = pick_softmax_by_score(candidates, PIPE_SOFTMAX_T, rng).unwrap();
 
             grid.set(a.0, a.1, TILE_PIPE);
             grid.set(b.0, b.1, TILE_PIPE);
@@ -1030,8 +1047,8 @@ fn populate_sections<R: Rng>(
             })
             .collect();
 
-        // Pick from top 5; fallback to any section slot if none passed the row78 filter.
-        let pos = pick_top_n_by_score(candidates, 5, rng)
+        // Sample by softmax; fallback to any section slot if none passed the row78 filter.
+        let pos = pick_softmax_by_score(candidates, FORTRESS_SOFTMAX_T, rng)
             .unwrap_or_else(|| section[rng.random_range(..section.len())]);
 
         completable.insert(pos);
@@ -1242,10 +1259,20 @@ fn score_fortress_candidate(
 const W_TARGET_PROXIMITY: f64 = 4.0;
 /// Max manhattan distance for target penalty normalization.
 const TARGET_MAX_DIST: f64 = 20.0;
-/// Cap on spread contribution for pipe scoring. Positions beyond this
-/// effective spread all score the same, preventing far-away positions
-/// from always dominating and creating more varied placement.
+/// Cap on the manhattan + BFS spread reward for pipe scoring. Positions
+/// beyond this effective spread all score the same, preventing very-far
+/// positions from always dominating. Applied to the spread term only —
+/// dead-end bonus and density penalty bypass the cap so they always count.
 const PIPE_SPREAD_CAP: f64 = 7.0;
+
+/// Softmax temperature for pipe placement. Higher = more random, lower =
+/// more concentrated on top-scoring candidates. Tuned for typical pipe
+/// score range of ~[-8, +12].
+const PIPE_SOFTMAX_T: f64 = 4.0;
+
+/// Softmax temperature for fortress placement. Score range is similar to
+/// pipes (~[-12, +15] including the +5 dead-end bonus).
+const FORTRESS_SOFTMAX_T: f64 = 4.0;
 
 /// Compute target proximity penalty for a position. Positions near the
 /// airship/Bowser get penalized; positions far away get no penalty.
@@ -1259,7 +1286,13 @@ fn target_proximity_penalty(pos: (usize, usize), target_pos: Option<(usize, usiz
 }
 
 /// Score a single pipe endpoint. Higher = better.
-/// Includes spread from existing pipes (capped), dead-end bonus, and target penalty.
+///
+/// Spread reward (distance from nearest existing pipe) is capped at
+/// PIPE_SPREAD_CAP. Dead-end bonus, density penalty, and target penalty
+/// are applied outside the cap so they always influence the score.
+///
+/// When `pipe_positions` is empty (first pair) the spread term is 0 — every
+/// candidate ties on spread, so picking is driven by dead-end + target only.
 fn score_pipe_endpoint(
     grid: &Grid,
     pos: (usize, usize),
@@ -1267,9 +1300,51 @@ fn score_pipe_endpoint(
     bfs_distances: &HashMap<(usize, usize), usize>,
     target_pos: Option<(usize, usize)>,
 ) -> f64 {
-    let base = score_with_weights(grid, pos, pipe_positions, bfs_distances, 1.0);
-    let capped = base.min(PIPE_SPREAD_CAP);
-    capped - target_proximity_penalty(pos, target_pos)
+    const W_MANHATTAN: f64 = 1.0;
+    const W_BFS: f64 = 1.5;
+    const W_DENSITY: f64 = 3.0;
+    const DENSITY_RADIUS: usize = 4;
+    const SEP_CAP: f64 = 8.0;
+    const DEAD_END_BONUS: f64 = 1.0;
+
+    let (r, c) = pos;
+    let my_bfs = bfs_distances.get(&pos).copied().unwrap_or(0);
+
+    let spread = if pipe_positions.is_empty() {
+        0.0
+    } else {
+        let min_manhattan = pipe_positions
+            .iter()
+            .map(|&(cr, cc)| r.abs_diff(cr) + c.abs_diff(cc))
+            .min()
+            .unwrap();
+        let min_bfs_diff = pipe_positions
+            .iter()
+            .filter_map(|p| bfs_distances.get(p))
+            .map(|&d| my_bfs.abs_diff(d))
+            .min()
+            .unwrap_or(min_manhattan);
+        let m = (min_manhattan as f64).min(SEP_CAP) * W_MANHATTAN;
+        let b = (min_bfs_diff as f64).min(SEP_CAP) * W_BFS;
+        (m + b).min(PIPE_SPREAD_CAP)
+    };
+
+    let nearby = pipe_positions
+        .iter()
+        .filter(|&&(cr, cc)| {
+            let manhattan = r.abs_diff(cr) + c.abs_diff(cc);
+            let bfs_diff = bfs_distances
+                .get(&(cr, cc))
+                .map(|&d| my_bfs.abs_diff(d))
+                .unwrap_or(manhattan);
+            manhattan.max(bfs_diff) <= DENSITY_RADIUS
+        })
+        .count();
+    let density_penalty = nearby as f64 * W_DENSITY;
+
+    let dead_end_bonus = if is_dead_end(grid, pos) { DEAD_END_BONUS } else { 0.0 };
+
+    spread + dead_end_bonus - density_penalty - target_proximity_penalty(pos, target_pos)
 }
 
 /// Score a candidate pipe pair. Higher = better.
@@ -2447,6 +2522,328 @@ mod tests {
                 eprintln!("  W{}: {avg:.1} avg ({count} pairs)", wi + 1);
             }
         }
+    }
+
+    /// Distribution analyzer for pipe placement.
+    ///
+    /// Runs the builder for N seeds and reports, per world:
+    ///   - endpoint frequency (how often each position appears as a pipe end)
+    ///   - unordered-pair frequency
+    ///   - Shannon entropy of the endpoint distribution (bits)
+    ///   - top-5 most-picked endpoints and pairs
+    ///
+    /// Use the entropy number to compare scoring tweaks: higher = more variety.
+    /// Run with: cargo test --release test_pipe_distribution -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_pipe_distribution() {
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => {
+                eprintln!("ROM not found, skipping");
+                return;
+            }
+        };
+        let catalog = NodeCatalog::build(&rom, false);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+
+        let seeds: u64 = std::env::var("PIPE_SEEDS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1000);
+
+        // Per-world tallies
+        let mut endpoint_counts: [HashMap<(usize, usize), u32>; 8] = Default::default();
+        let mut pair_counts: [HashMap<((usize, usize), (usize, usize)), u32>; 8] = Default::default();
+        let mut total_endpoints = [0u32; 8];
+        let mut total_pairs = [0u32; 8];
+
+        for seed in 0..seeds {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let result = build(&rom, &pickup, &catalog, &mut rng);
+
+            for built in &result.worlds {
+                let wi = built.world_idx;
+                for &(a, b) in &built.pipe_pairs {
+                    *endpoint_counts[wi].entry(a).or_insert(0) += 1;
+                    *endpoint_counts[wi].entry(b).or_insert(0) += 1;
+                    total_endpoints[wi] += 2;
+
+                    // Normalize unordered pair (smaller first)
+                    let pair = if a <= b { (a, b) } else { (b, a) };
+                    *pair_counts[wi].entry(pair).or_insert(0) += 1;
+                    total_pairs[wi] += 1;
+                }
+            }
+        }
+
+        eprintln!("\n=== Pipe Distribution over {seeds} seeds ===");
+
+        for wi in 0..8 {
+            let expected_pairs = VANILLA_PIPE_PAIRS[wi];
+            if expected_pairs == 0 {
+                continue;
+            }
+
+            let endpoints = &endpoint_counts[wi];
+            let pairs = &pair_counts[wi];
+            let total_ep = total_endpoints[wi] as f64;
+            let total_pr = total_pairs[wi] as f64;
+
+            // Shannon entropy (bits) over endpoint distribution
+            let entropy: f64 = endpoints
+                .values()
+                .map(|&c| {
+                    let p = c as f64 / total_ep;
+                    -p * p.log2()
+                })
+                .sum();
+            // Max entropy if uniform over all observed endpoints
+            let max_entropy = (endpoints.len() as f64).log2();
+
+            // Same for pairs
+            let pair_entropy: f64 = pairs
+                .values()
+                .map(|&c| {
+                    let p = c as f64 / total_pr;
+                    -p * p.log2()
+                })
+                .sum();
+            let pair_max_entropy = (pairs.len() as f64).log2();
+
+            eprintln!(
+                "\n--- W{} ({} pair{}/seed) ---",
+                wi + 1,
+                expected_pairs,
+                if expected_pairs == 1 { "" } else { "s" },
+            );
+            eprintln!(
+                "  Endpoints: {} unique  |  entropy {:.2} / {:.2} bits ({:.0}%)",
+                endpoints.len(),
+                entropy,
+                max_entropy,
+                if max_entropy > 0.0 { entropy / max_entropy * 100.0 } else { 0.0 },
+            );
+            eprintln!(
+                "  Pairs:     {} unique  |  entropy {:.2} / {:.2} bits ({:.0}%)",
+                pairs.len(),
+                pair_entropy,
+                pair_max_entropy,
+                if pair_max_entropy > 0.0 { pair_entropy / pair_max_entropy * 100.0 } else { 0.0 },
+            );
+
+            let mut ep_sorted: Vec<_> = endpoints.iter().collect();
+            ep_sorted.sort_by(|a, b| b.1.cmp(a.1));
+            eprintln!("  Top endpoints:");
+            for (pos, count) in ep_sorted.iter().take(5) {
+                let count = **count;
+                let pct = count as f64 / total_ep * 100.0;
+                let bar = "#".repeat((pct as usize).min(40));
+                eprintln!(
+                    "    ({:2},{:2})  {:>5} ({:5.1}%)  {bar}",
+                    pos.0, pos.1, count, pct,
+                );
+            }
+
+            let mut pr_sorted: Vec<_> = pairs.iter().collect();
+            pr_sorted.sort_by(|a, b| b.1.cmp(a.1));
+            eprintln!("  Top pairs:");
+            for (pair, count) in pr_sorted.iter().take(5) {
+                let count = **count;
+                let pct = count as f64 / total_pr * 100.0;
+                let bar = "#".repeat((pct as usize).min(40));
+                eprintln!(
+                    "    ({:2},{:2}) <-> ({:2},{:2})  {:>5} ({:5.1}%)  {bar}",
+                    pair.0.0, pair.0.1, pair.1.0, pair.1.1, count, pct,
+                );
+            }
+        }
+
+        // One-line summary line for easy before/after diffing
+        eprintln!("\n=== Endpoint entropy summary (bits) ===");
+        let summary: Vec<String> = (0..8)
+            .filter(|&wi| VANILLA_PIPE_PAIRS[wi] > 0)
+            .map(|wi| {
+                let total_ep = total_endpoints[wi] as f64;
+                let entropy: f64 = endpoint_counts[wi]
+                    .values()
+                    .map(|&c| {
+                        let p = c as f64 / total_ep;
+                        -p * p.log2()
+                    })
+                    .sum();
+                format!("W{}={entropy:.2}", wi + 1)
+            })
+            .collect();
+        eprintln!("  {}", summary.join("  "));
+    }
+
+    /// Distribution analyzer for fortress placement.
+    ///
+    /// Runs the builder for N seeds and reports, per world:
+    ///   - unique fortress positions and Shannon entropy (bits)
+    ///   - top-5 most-picked positions
+    ///   - per-section breakdown (each section places exactly one fortress)
+    ///
+    /// Use the entropy number to compare scoring tweaks: higher = more variety.
+    /// Run with: cargo test --release test_fortress_distribution -- --ignored --nocapture
+    /// Override seed count with FORT_SEEDS=N.
+    #[test]
+    #[ignore]
+    fn test_fortress_distribution() {
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => {
+                eprintln!("ROM not found, skipping");
+                return;
+            }
+        };
+        let catalog = NodeCatalog::build(&rom, false);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+
+        let seeds: u64 = std::env::var("FORT_SEEDS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1000);
+
+        // Per-world tallies
+        let mut world_counts: [HashMap<(usize, usize), u32>; 8] = Default::default();
+        let mut world_total = [0u32; 8];
+        // Per-section tallies: [world][section] -> position frequency
+        let mut section_counts: [Vec<HashMap<(usize, usize), u32>>; 8] = Default::default();
+        let mut section_total: [Vec<u32>; 8] = Default::default();
+
+        for seed in 0..seeds {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let result = build(&rom, &pickup, &catalog, &mut rng);
+
+            for built in &result.worlds {
+                let wi = built.world_idx;
+
+                // Grow per-section storage to match observed section_count.
+                if section_counts[wi].len() < built.section_count {
+                    section_counts[wi].resize(built.section_count, HashMap::new());
+                    section_total[wi].resize(built.section_count, 0);
+                }
+
+                for slot in &built.slots {
+                    if slot.kind != SlotKind::Fortress {
+                        continue;
+                    }
+                    *world_counts[wi].entry(slot.pos).or_insert(0) += 1;
+                    world_total[wi] += 1;
+
+                    if slot.section < section_counts[wi].len() {
+                        *section_counts[wi][slot.section].entry(slot.pos).or_insert(0) += 1;
+                        section_total[wi][slot.section] += 1;
+                    }
+                }
+            }
+        }
+
+        eprintln!("\n=== Fortress Distribution over {seeds} seeds ===");
+
+        for wi in 0..8 {
+            let counts = &world_counts[wi];
+            let total = world_total[wi];
+            if total == 0 {
+                continue;
+            }
+            let total_f = total as f64;
+
+            let entropy: f64 = counts
+                .values()
+                .map(|&c| {
+                    let p = c as f64 / total_f;
+                    -p * p.log2()
+                })
+                .sum();
+            let max_entropy = (counts.len() as f64).log2();
+            let forts_per_seed = total as f64 / seeds as f64;
+
+            eprintln!(
+                "\n--- W{} ({:.0} fort{}/seed) ---",
+                wi + 1,
+                forts_per_seed,
+                if forts_per_seed == 1.0 { "" } else { "s" },
+            );
+            eprintln!(
+                "  Positions: {} unique  |  entropy {:.2} / {:.2} bits ({:.0}%)",
+                counts.len(),
+                entropy,
+                max_entropy,
+                if max_entropy > 0.0 { entropy / max_entropy * 100.0 } else { 0.0 },
+            );
+
+            let mut sorted: Vec<_> = counts.iter().collect();
+            sorted.sort_by(|a, b| b.1.cmp(a.1));
+            eprintln!("  Top positions:");
+            for (pos, count) in sorted.iter().take(5) {
+                let count = **count;
+                let pct = count as f64 / total_f * 100.0;
+                let bar = "#".repeat((pct as usize).min(40));
+                eprintln!(
+                    "    ({:2},{:2})  {:>5} ({:5.1}%)  {bar}",
+                    pos.0, pos.1, count, pct,
+                );
+            }
+
+            // Per-section breakdown
+            for (si, sec_counts) in section_counts[wi].iter().enumerate() {
+                if sec_counts.is_empty() {
+                    continue;
+                }
+                let sec_total = section_total[wi][si] as f64;
+                let sec_entropy: f64 = sec_counts
+                    .values()
+                    .map(|&c| {
+                        let p = c as f64 / sec_total;
+                        -p * p.log2()
+                    })
+                    .sum();
+                let sec_max = (sec_counts.len() as f64).log2();
+                let mut sec_sorted: Vec<_> = sec_counts.iter().collect();
+                sec_sorted.sort_by(|a, b| b.1.cmp(a.1));
+                let top: Vec<String> = sec_sorted
+                    .iter()
+                    .take(3)
+                    .map(|(p, c)| {
+                        let pct = **c as f64 / sec_total * 100.0;
+                        format!("({},{})={:.0}%", p.0, p.1, pct)
+                    })
+                    .collect();
+                eprintln!(
+                    "    Section {si}: {} unique, entropy {:.2}/{:.2} bits, top: {}",
+                    sec_counts.len(),
+                    sec_entropy,
+                    sec_max,
+                    top.join("  "),
+                );
+            }
+        }
+
+        eprintln!("\n=== Fortress entropy summary (bits) ===");
+        let summary: Vec<String> = (0..8)
+            .filter(|&wi| world_total[wi] > 0)
+            .map(|wi| {
+                let total_f = world_total[wi] as f64;
+                let entropy: f64 = world_counts[wi]
+                    .values()
+                    .map(|&c| {
+                        let p = c as f64 / total_f;
+                        -p * p.log2()
+                    })
+                    .sum();
+                format!("W{}={entropy:.2}", wi + 1)
+            })
+            .collect();
+        eprintln!("  {}", summary.join("  "));
+
+        // Sanity: 17 fortresses per seed total
+        let grand_total: u32 = world_total.iter().sum();
+        let expected = 17 * seeds as u32;
+        eprintln!("\nGrand total: {grand_total} fortresses across {seeds} seeds (expected {expected})");
+        assert_eq!(grand_total, expected, "fortress count invariant broken");
     }
 
 }
