@@ -219,6 +219,12 @@ struct Cli {
     /// Dump the write log to a file (shows every ROM byte changed, grouped by module)
     #[arg(long)]
     write_log: Option<PathBuf>,
+
+    /// Skip the SMB3 (USA) header / page-count / size checks so modded or
+    /// translated ROMs can be loaded. The title-screen seed hash is also
+    /// skipped, since its hooks assume the vanilla ROM layout.
+    #[arg(long)]
+    skip_rom_validation: bool,
 }
 
 fn main() {
@@ -296,6 +302,10 @@ fn main() {
                 if cli.themed_palettes {
                     opts.palette_themed = true;
                 }
+                // Same for skip_rom_validation — a property of the input ROM.
+                if cli.skip_rom_validation {
+                    opts.skip_rom_validation = true;
+                }
                 opts
             }
             Err(e) => {
@@ -348,6 +358,7 @@ fn main() {
             jitter_enemy_positions: cli.jitter_enemy_positions,
             starting_lives: cli.starting_lives,
             starting_items: starting_items.clone(),
+            skip_rom_validation: cli.skip_rom_validation,
         }
     };
 

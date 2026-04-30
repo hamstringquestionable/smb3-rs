@@ -66,6 +66,8 @@ const optHammerBreaksLocks = document.getElementById("opt-hammer-breaks-locks");
 const optHammerBreaksBridges = document.getElementById("opt-hammer-breaks-bridges");
 const optRandomKoopalings = document.getElementById("opt-random-koopalings");
 const optIncludeBetaStages = document.getElementById("opt-include-beta-stages");
+const optSkipRomValidation = document.getElementById("opt-skip-rom-validation");
+const skipValidationWarning = document.getElementById("skip-validation-warning");
 // Pill group helpers (tri-state radio buttons)
 function getPill(name) {
 	return document.querySelector(`input[name="${name}"]:checked`)?.value || "off";
@@ -290,7 +292,7 @@ const SETTINGS_KEY = "smb3r-settings";
 function saveSettings() {
 	try {
 		const settings = {};
-		for (const el of document.querySelectorAll("fieldset.section input[type=checkbox][id], fieldset.section select[id]")) {
+		for (const el of document.querySelectorAll(".section input[type=checkbox][id], .section select[id]")) {
 			settings[el.id] = el.type === "checkbox" ? el.checked : el.value;
 		}
 		for (const name of new Set(
@@ -377,6 +379,7 @@ function getCurrentOptionsJson() {
 		starting_items: optStartItems.map(s => Number(s.value)).filter(v => v > 0),
 		disable_autoscroll: true,
 		card_speed_clear: true,
+		skip_rom_validation: optSkipRomValidation.checked,
 	});
 }
 
@@ -470,6 +473,16 @@ optPalettes.addEventListener("change", () => {
 	saveSettings();
 });
 optPaletteThemed.addEventListener("change", saveSettings);
+// Skip-ROM-validation is a property of the input ROM, not encoded in the
+// flag key. Wire manually so it persists and the warning shows live.
+function updateSkipValidationWarning() {
+	skipValidationWarning.hidden = !optSkipRomValidation.checked;
+}
+optSkipRomValidation.addEventListener("change", () => {
+	updateSkipValidationWarning();
+	saveSettings();
+});
+updateSkipValidationWarning();
 // Pill group radios
 for (const radio of document.querySelectorAll('.pill-group input[type="radio"]')) {
 	radio.addEventListener("change", () => { updateFlagKey(); saveSettings(); });

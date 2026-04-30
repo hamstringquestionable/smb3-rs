@@ -16,7 +16,8 @@ pub use randomizer::{
 
 /// Parse, validate, randomize, and return the full Rom struct.
 pub fn randomize_rom(rom_data: &[u8], seed: u64, options: &Options) -> Result<Rom, String> {
-    let mut rom = Rom::from_bytes(rom_data).map_err(|e| e.to_string())?;
+    let mut rom = Rom::from_bytes_lax(rom_data, options.skip_rom_validation)
+        .map_err(|e| e.to_string())?;
     randomizer::randomize(&mut rom, seed, options);
     Ok(rom)
 }

@@ -24,6 +24,13 @@
             </label>
             <input type="file" id="rom-input" accept=".nes" hidden>
             <p class="note">Provide your own SMB3 (USA Rev 1) ROM. Nothing is uploaded.</p>
+            <label class="checkbox-label" title="Skip the SMB3 (USA) header/size checks so modded or translated ROMs can be loaded. The racing hash on the title screen will be disabled, since its hooks assume the vanilla ROM layout.">
+                <input type="checkbox" id="opt-skip-rom-validation">
+                Skip ROM validation (advanced)
+            </label>
+            <p class="note skip-validation-warning" id="skip-validation-warning" hidden>
+                ROM validation is disabled. The racing hash on the title screen will not be applied.
+            </p>
         </div>
 
         <fieldset class="section">
