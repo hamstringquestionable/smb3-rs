@@ -102,6 +102,19 @@ impl Rom {
     /// Validates it matches the expected SMB3 (USA Rev 1) layout.
     /// Accepts both headered (iNES, 393,232 bytes) and unheadered (393,216 bytes) ROMs.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, RomError> {
+        Self::from_bytes_lax(bytes, false)
+    }
+
+    /// Like [`from_bytes`], but optionally skips the SMB3 (USA Rev 1) layout
+    /// checks (iNES magic, PRG/CHR page counts, exact size).
+    ///
+    /// The minimum-size check (16 bytes for the iNES header) is always
+    /// enforced — without it the parser would index out of bounds while
+    /// reading flag bytes. When `skip_validation` is true, the unheadered
+    /// auto-detection still runs (so 393,216-byte raw ROMs are accepted),
+    /// but any other shape is taken as-is and `Header` is filled in from
+    /// whatever the file claims.
+    pub fn from_bytes_lax(bytes: &[u8], skip_validation: bool) -> Result<Self, RomError> {
         // Detect unheadered ROM: exact raw PRG+CHR size with no iNES magic.
         const UNHEADERED_SIZE: usize =
             EXPECTED_PRG_PAGES as usize * PRG_PAGE_SIZE + EXPECTED_CHR_PAGES as usize * CHR_PAGE_SIZE;
@@ -109,22 +122,27 @@ impl Rom {
         let (bytes, header_synthesized) = if bytes.len() == UNHEADERED_SIZE {
             let magic: [u8; 4] = bytes[0..4].try_into().unwrap();
             if magic == INES_MAGIC {
-                // Unlikely: exactly UNHEADERED_SIZE but starts with NES magic — treat as corrupt
-                return Err(RomError::SizeMismatch {
-                    expected: HEADER_SIZE + UNHEADERED_SIZE,
-                    got: bytes.len(),
-                });
+                if !skip_validation {
+                    // Unlikely: exactly UNHEADERED_SIZE but starts with NES magic — treat as corrupt
+                    return Err(RomError::SizeMismatch {
+                        expected: HEADER_SIZE + UNHEADERED_SIZE,
+                        got: bytes.len(),
+                    });
+                }
+                // In lax mode, fall through and accept the bytes verbatim.
+                (bytes.to_vec(), false)
+            } else {
+                // Synthesize a standard iNES header and prepend it.
+                let mut headered = Vec::with_capacity(HEADER_SIZE + UNHEADERED_SIZE);
+                headered.extend_from_slice(&INES_MAGIC);
+                headered.push(EXPECTED_PRG_PAGES);
+                headered.push(EXPECTED_CHR_PAGES);
+                headered.push(0x40); // flags6: mapper 4 lower nibble, horizontal mirroring
+                headered.push(0x00); // flags7
+                headered.extend_from_slice(&[0u8; 8]); // flags8–15
+                headered.extend_from_slice(bytes);
+                (headered, true)
             }
-            // Synthesize a standard iNES header and prepend it.
-            let mut headered = Vec::with_capacity(HEADER_SIZE + UNHEADERED_SIZE);
-            headered.extend_from_slice(&INES_MAGIC);
-            headered.push(EXPECTED_PRG_PAGES);
-            headered.push(EXPECTED_CHR_PAGES);
-            headered.push(0x40); // flags6: mapper 4 lower nibble, horizontal mirroring
-            headered.push(0x00); // flags7
-            headered.extend_from_slice(&[0u8; 8]); // flags8–15
-            headered.extend_from_slice(bytes);
-            (headered, true)
         } else {
             (bytes.to_vec(), false)
         };
@@ -136,7 +154,7 @@ impl Rom {
         }
 
         let magic: [u8; 4] = bytes[0..4].try_into().unwrap();
-        if magic != INES_MAGIC {
+        if !skip_validation && magic != INES_MAGIC {
             return Err(RomError::BadMagic(magic));
         }
 
@@ -145,27 +163,30 @@ impl Rom {
         let flags6 = bytes[6];
         let flags7 = bytes[7];
 
-        if prg_pages != EXPECTED_PRG_PAGES {
-            return Err(RomError::UnexpectedPrg {
-                expected: EXPECTED_PRG_PAGES,
-                got: prg_pages,
-            });
-        }
+        if !skip_validation {
+            if prg_pages != EXPECTED_PRG_PAGES {
+                return Err(RomError::UnexpectedPrg {
+                    expected: EXPECTED_PRG_PAGES,
+                    got: prg_pages,
+                });
+            }
 
-        if chr_pages != EXPECTED_CHR_PAGES {
-            return Err(RomError::UnexpectedChr {
-                expected: EXPECTED_CHR_PAGES,
-                got: chr_pages,
-            });
-        }
+            if chr_pages != EXPECTED_CHR_PAGES {
+                return Err(RomError::UnexpectedChr {
+                    expected: EXPECTED_CHR_PAGES,
+                    got: chr_pages,
+                });
+            }
 
-        let expected_size =
-            HEADER_SIZE + (prg_pages as usize * PRG_PAGE_SIZE) + (chr_pages as usize * CHR_PAGE_SIZE);
-        if bytes.len() != expected_size {
-            return Err(RomError::SizeMismatch {
-                expected: expected_size,
-                got: bytes.len(),
-            });
+            let expected_size = HEADER_SIZE
+                + (prg_pages as usize * PRG_PAGE_SIZE)
+                + (chr_pages as usize * CHR_PAGE_SIZE);
+            if bytes.len() != expected_size {
+                return Err(RomError::SizeMismatch {
+                    expected: expected_size,
+                    got: bytes.len(),
+                });
+            }
         }
 
         let mapper = (flags6 >> 4) | (flags7 & 0xF0);

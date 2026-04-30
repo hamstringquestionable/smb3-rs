@@ -122,6 +122,10 @@ label {
     margin-top: 0.4rem;
 }
 
+.skip-validation-warning {
+    color: #d4a14e;
+}
+
 /* --- Text Inputs --- */
 
 input[type="text"] {

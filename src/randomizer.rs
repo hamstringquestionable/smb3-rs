@@ -182,6 +182,13 @@ pub struct Options {
     /// memorization without changing difficulty.
     #[serde(default)]
     pub jitter_enemy_positions: bool,
+    /// Skip the SMB3 (USA) iNES header / page-count / size checks so that
+    /// modded or translated ROMs can be loaded. When true, the title-screen
+    /// seed hash is also skipped because its hooks rely on vanilla offsets.
+    /// Not encoded in the flag key — a property of the input ROM, not the
+    /// randomization seed.
+    #[serde(default)]
+    pub skip_rom_validation: bool,
 }
 
 fn default_false() -> bool {
@@ -503,6 +510,7 @@ impl Options {
                 let wc = b9 & 0x0F;
                 if wc == 0 { 7 } else { wc.clamp(1, 7) }
             },
+            skip_rom_validation: false,
         })
     }
 
@@ -564,6 +572,7 @@ impl Default for Options {
             jitter_enemy_positions: false,
             starting_lives: default_starting_lives(),
             starting_items: Vec::new(),
+            skip_rom_validation: false,
         }
     }
 }
@@ -795,10 +804,14 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::qol::card_speed_clear(rom);
     }
 
-    // Title screen seed hash icons (always on — cosmetic verification).
+    // Title screen seed hash icons (cosmetic verification).
     // This hooks STA $0736 at 0x308E2 for intro skip.
-    rom.set_tag("title_screen");
-    randomize::title_screen::write_seed_hash(rom, seed, options);
+    // Skipped when the user opted out of ROM validation, since the hooks
+    // assume vanilla offsets in PRG031 that may have been changed by a mod.
+    if !options.skip_rom_validation {
+        rom.set_tag("title_screen");
+        randomize::title_screen::write_seed_hash(rom, seed, options);
+    }
 
     // Starting items trampoline — must run AFTER title_screen because both
     // write to the lives init region at 0x308E0. The trampoline incorporates
@@ -1056,6 +1069,7 @@ mod tests {
             wild_injections: true,
             jitter_enemy_positions: true,
             starting_items: vec![0x05, 0x09, 0x03],
+            skip_rom_validation: false,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
@@ -1126,6 +1140,7 @@ mod tests {
             wild_injections: false,
             jitter_enemy_positions: false,
             starting_items: vec![],
+            skip_rom_validation: false,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
@@ -1502,6 +1517,7 @@ mod tests {
             wild_injections: false,
             jitter_enemy_positions: false,
             starting_items: vec![],
+            skip_rom_validation: false,
         }
     }
 
@@ -1552,6 +1568,7 @@ mod tests {
             wild_injections: true,
             jitter_enemy_positions: true,
             starting_items: vec![0x05, 0x09, 0x03],
+            skip_rom_validation: false,
         }
     }
 
