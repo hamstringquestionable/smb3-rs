@@ -1205,8 +1205,12 @@ fn score_with_weights(
 
 /// Path relevance: max detour (in BFS hops) that still earns a bonus.
 const PATH_DETOUR_CAP: f64 = 6.0;
-/// Path relevance weight. Max bonus = PATH_DETOUR_CAP * W_PATH = 3.0.
-const W_PATH: f64 = 0.5;
+/// Path relevance weight. Max bonus = PATH_DETOUR_CAP * W_PATH = 9.0.
+/// Tuned via test_level_placement_quality: 0.5 was decorative (no bias);
+/// 3.0 dominated and clumped levels on the route at the expense of spread
+/// and dead-ends. 1.5 produces a meaningful route bias without breaking
+/// the spread or density terms.
+const W_PATH: f64 = 1.5;
 
 /// Score a candidate position for level placement. Higher = better.
 /// Includes a path relevance bonus: positions on the main start→target
@@ -2844,6 +2848,227 @@ mod tests {
         let expected = 17 * seeds as u32;
         eprintln!("\nGrand total: {grand_total} fortresses across {seeds} seeds (expected {expected})");
         assert_eq!(grand_total, expected, "fortress count invariant broken");
+    }
+
+    /// Quality analyzer for level placement.
+    ///
+    /// Level placement is deterministic given pipes+forts, so a position-entropy
+    /// test would mostly just measure upstream randomness. Instead, this measures
+    /// whether the scoring achieves its stated goals:
+    ///
+    ///   - Spread: avg pairwise distance between placed levels, density-rule
+    ///     violations (pairs within combined radius 4). Anti-clumping is the
+    ///     primary anti-degeneracy signal.
+    ///   - Path bonus: avg detour from start→target shortest path for placed
+    ///     levels vs all candidates. Negative bias = levels biased toward main
+    ///     route, the intended design goal.
+    ///   - Dead-end bonus: % of dead-end candidates that became levels vs the
+    ///     random baseline. Treated as a tiebreaker — it should win where it
+    ///     doesn't conflict with path bias, but not override it.
+    ///
+    /// Run with: cargo test --release test_level_placement_quality -- --ignored --nocapture
+    /// Override seed count with LEVEL_SEEDS=N.
+    #[test]
+    #[ignore]
+    fn test_level_placement_quality() {
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => {
+                eprintln!("ROM not found, skipping");
+                return;
+            }
+        };
+        let catalog = NodeCatalog::build(&rom, false);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+
+        let seeds: u64 = std::env::var("LEVEL_SEEDS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1000);
+
+        // Per-world aggregates
+        let mut total_pairwise_dist = [0u64; 8];
+        let mut total_pairs = [0u64; 8];
+        let mut density_violations = [0u64; 8];
+        let mut dead_ends_picked = [0u64; 8];
+        let mut total_dead_end_candidates = [0u64; 8];
+        let mut levels_picked = [0u64; 8];
+        let mut total_candidates = [0u64; 8];
+        let mut total_level_detour = [0u64; 8];
+        let mut total_levels_for_detour = [0u64; 8];
+        let mut total_candidate_detour = [0u64; 8];
+        let mut total_candidates_for_detour = [0u64; 8];
+
+        for seed in 0..seeds {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let result = build(&rom, &pickup, &catalog, &mut rng);
+
+            for built in &result.worlds {
+                let wi = built.world_idx;
+                let start_pos = rom_data::find_start(&built.grid);
+                let target_pos = find_target(&built.grid, wi);
+
+                let levels: Vec<(usize, usize)> = built.slots.iter()
+                    .filter(|s| s.kind == SlotKind::Level)
+                    .map(|s| s.pos)
+                    .collect();
+
+                // Candidate pool seen by level placement: all non-fort, non-pipe
+                // section positions. In the final state, these became Level or
+                // HammerBro slots.
+                let candidates: Vec<(usize, usize)> = built.slots.iter()
+                    .filter(|s| matches!(s.kind, SlotKind::Level | SlotKind::HammerBro))
+                    .map(|s| s.pos)
+                    .collect();
+
+                // BFS from start (matches what scoring used).
+                let walk = walk_map(&built.grid, &built.pipe_pairs, start_pos);
+                let bfs_distances = &walk.distances;
+
+                // === Spread: avg pairwise distance between placed levels ===
+                for i in 0..levels.len() {
+                    for j in (i + 1)..levels.len() {
+                        let manhattan = levels[i].0.abs_diff(levels[j].0)
+                            + levels[i].1.abs_diff(levels[j].1);
+                        total_pairwise_dist[wi] += manhattan as u64;
+                        total_pairs[wi] += 1;
+
+                        // Density rule: max(manhattan, |bfs_diff|) <= 4
+                        let bfs_diff = match (bfs_distances.get(&levels[i]), bfs_distances.get(&levels[j])) {
+                            (Some(&a), Some(&b)) => a.abs_diff(b),
+                            _ => manhattan,
+                        };
+                        if manhattan.max(bfs_diff) <= 4 {
+                            density_violations[wi] += 1;
+                        }
+                    }
+                }
+
+                // === Dead-end utilization ===
+                for &pos in &candidates {
+                    if is_dead_end(&built.grid, pos) {
+                        total_dead_end_candidates[wi] += 1;
+                        if levels.contains(&pos) {
+                            dead_ends_picked[wi] += 1;
+                        }
+                    }
+                }
+                levels_picked[wi] += levels.len() as u64;
+                total_candidates[wi] += candidates.len() as u64;
+
+                // === Path detour: levels vs candidate baseline ===
+                // Only positions reachable in BOTH directions count — unreachable
+                // positions can't have a meaningful detour relative to a route
+                // they're not on.
+                if let Some(tp) = target_pos {
+                    let reverse_walk = walk_map(&built.grid, &built.pipe_pairs, Some(tp));
+                    if let Some(&td) = bfs_distances.get(&tp) {
+                        for &pos in &levels {
+                            if let (Some(&fwd), Some(&rev)) = (
+                                bfs_distances.get(&pos),
+                                reverse_walk.distances.get(&pos),
+                            ) {
+                                let detour = (fwd + rev).saturating_sub(td);
+                                total_level_detour[wi] += detour as u64;
+                                total_levels_for_detour[wi] += 1;
+                            }
+                        }
+                        for &pos in &candidates {
+                            if let (Some(&fwd), Some(&rev)) = (
+                                bfs_distances.get(&pos),
+                                reverse_walk.distances.get(&pos),
+                            ) {
+                                let detour = (fwd + rev).saturating_sub(td);
+                                total_candidate_detour[wi] += detour as u64;
+                                total_candidates_for_detour[wi] += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        eprintln!("\n=== Level Placement Quality over {seeds} seeds ===");
+
+        for wi in 0..8 {
+            if total_candidates[wi] == 0 {
+                continue;
+            }
+
+            eprintln!("\n--- W{} ---", wi + 1);
+
+            // Spread
+            if total_pairs[wi] > 0 {
+                let avg_pair = total_pairwise_dist[wi] as f64 / total_pairs[wi] as f64;
+                let dens_pct = density_violations[wi] as f64 / total_pairs[wi] as f64 * 100.0;
+                eprintln!("  Spread:");
+                eprintln!("    Avg pairwise level distance: {avg_pair:.1} tiles");
+                eprintln!(
+                    "    Density violations (combined radius <=4): {} / {} pairs ({:.1}%)",
+                    density_violations[wi], total_pairs[wi], dens_pct,
+                );
+            }
+
+            // Dead-end bonus
+            let dead_end_util = if total_dead_end_candidates[wi] > 0 {
+                dead_ends_picked[wi] as f64 / total_dead_end_candidates[wi] as f64 * 100.0
+            } else { 0.0 };
+            let random_baseline = levels_picked[wi] as f64 / total_candidates[wi] as f64 * 100.0;
+            let lift = dead_end_util - random_baseline;
+            eprintln!("  Dead-end bonus (+0.5):");
+            eprintln!(
+                "    Dead-end candidates: {} ({:.1}% of all candidates)",
+                total_dead_end_candidates[wi],
+                total_dead_end_candidates[wi] as f64 / total_candidates[wi] as f64 * 100.0,
+            );
+            eprintln!("    Picked as level:     {dead_end_util:.1}%");
+            eprintln!("    Random baseline:     {random_baseline:.1}%");
+            eprintln!(
+                "    Lift: {lift:+.1} pp  ({})",
+                if lift.abs() < 2.0 { "negligible" }
+                else if lift > 0.0 { "bias toward dead-ends" }
+                else { "bias against dead-ends" },
+            );
+
+            // Path bonus
+            if total_levels_for_detour[wi] > 0 && total_candidates_for_detour[wi] > 0 {
+                let avg_lvl = total_level_detour[wi] as f64 / total_levels_for_detour[wi] as f64;
+                let avg_cand = total_candidate_detour[wi] as f64 / total_candidates_for_detour[wi] as f64;
+                let bias = avg_lvl - avg_cand;
+                eprintln!("  Path bonus (max = PATH_DETOUR_CAP * W_PATH):");
+                eprintln!("    Avg detour for placed levels: {avg_lvl:.2} hops");
+                eprintln!("    Avg detour for all candidates: {avg_cand:.2} hops");
+                eprintln!(
+                    "    Bias: {bias:+.2} hops  ({})",
+                    if bias.abs() < 0.3 { "negligible" }
+                    else if bias < 0.0 { "toward main route" }
+                    else { "off main route" },
+                );
+            }
+        }
+
+        // One-line summary for diffing
+        eprintln!("\n=== Summary (avg pairwise distance / dead-end lift / path bias) ===");
+        for wi in 0..8 {
+            if total_candidates[wi] == 0 { continue; }
+            let avg_pair = if total_pairs[wi] > 0 {
+                total_pairwise_dist[wi] as f64 / total_pairs[wi] as f64
+            } else { 0.0 };
+            let dead_end_util = if total_dead_end_candidates[wi] > 0 {
+                dead_ends_picked[wi] as f64 / total_dead_end_candidates[wi] as f64 * 100.0
+            } else { 0.0 };
+            let random_baseline = levels_picked[wi] as f64 / total_candidates[wi] as f64 * 100.0;
+            let lift = dead_end_util - random_baseline;
+            let path_bias = if total_levels_for_detour[wi] > 0 && total_candidates_for_detour[wi] > 0 {
+                let avg_lvl = total_level_detour[wi] as f64 / total_levels_for_detour[wi] as f64;
+                let avg_cand = total_candidate_detour[wi] as f64 / total_candidates_for_detour[wi] as f64;
+                avg_lvl - avg_cand
+            } else { 0.0 };
+            eprintln!(
+                "  W{}: dist={avg_pair:5.1}  dead-end-lift={lift:+5.1}pp  path-bias={path_bias:+5.2}",
+                wi + 1,
+            );
+        }
     }
 
 }
