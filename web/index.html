@@ -26,14 +26,6 @@
             <p class="note">Provide your own SMB3 (USA Rev 1) ROM. Nothing is uploaded.</p>
         </div>
 
-        <div class="section">
-            <label for="seed-input">Seed</label>
-            <div class="input-row">
-                <input type="text" id="seed-input" placeholder="Random">
-                <button id="random-seed-btn" type="button" title="Generate random seed">?</button>
-            </div>
-        </div>
-
         <fieldset class="section">
             <legend>Randomization</legend>
             <label class="checkbox-label" title="Randomize ? block and brick block contents within each power-up class">
@@ -429,24 +421,36 @@
             <p class="note">Apply a sprite or graphics IPS patch on top of the randomized ROM. Use at your own risk — visual patches are not validated and may cause graphical issues. Only applied when output format is Patched ROM.</p>
         </div>
 
-        <button id="generate-btn" type="button" disabled>Generate</button>
-        <p class="early-access-note"><em>Early access — you may encounter bugs. Report issues on <a href="https://github.com/hamstringquestionable/smb3-rs/issues" target="_blank" rel="noopener">GitHub</a>.</em></p>
-
-        <div id="status" class="status" hidden></div>
-
         <footer>
             <p>ROM never leaves your browser. All randomization runs locally via WASM.</p>
         </footer>
     </div>
 
-    <aside class="flag-key-box">
-        <div class="flag-key-box-title">Flag Key</div>
-        <input type="text" id="flag-key-input" placeholder="SMB3R-..." spellcheck="false">
-        <div class="flag-key-buttons">
-            <button id="flag-key-copy-btn" type="button" title="Copy flag key">Copy</button>
-            <button id="flag-key-apply-btn" type="button" title="Apply flag key">Apply</button>
+    <aside class="control-panel">
+        <div class="control-panel-section">
+            <label for="seed-input" class="control-panel-title">Seed</label>
+            <div class="input-row">
+                <input type="text" id="seed-input" placeholder="Random">
+                <button id="random-seed-btn" type="button" title="Generate random seed">?</button>
+            </div>
         </div>
-        <p class="note">Share this key to reproduce the same settings.</p>
+
+        <div class="control-panel-section">
+            <div class="control-panel-title">Flag Key</div>
+            <input type="text" id="flag-key-input" placeholder="SMB3R-..." spellcheck="false">
+            <div class="flag-key-buttons">
+                <button id="flag-key-copy-btn" type="button" title="Copy flag key">Copy</button>
+                <button id="flag-key-apply-btn" type="button" title="Apply flag key">Apply</button>
+                <button id="share-url-btn" type="button" title="Copy a shareable URL with the current seed and flags">Share</button>
+            </div>
+            <p class="note">Share the key or URL to reproduce these settings.</p>
+        </div>
+
+        <div class="control-panel-section">
+            <button id="generate-btn" type="button" disabled>Generate</button>
+            <p class="early-access-note"><em>Early access — you may encounter bugs. Report issues on <a href="https://github.com/hamstringquestionable/smb3-rs/issues" target="_blank" rel="noopener">GitHub</a>.</em></p>
+            <div id="status" class="status" hidden></div>
+        </div>
     </aside>
     </div>
 

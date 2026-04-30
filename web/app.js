@@ -85,6 +85,7 @@ const optStartItems = [
 const flagKeyInput = document.getElementById("flag-key-input");
 const flagKeyCopyBtn = document.getElementById("flag-key-copy-btn");
 const flagKeyApplyBtn = document.getElementById("flag-key-apply-btn");
+const shareUrlBtn = document.getElementById("share-url-btn");
 
 const colVanilla = document.getElementById("col-vanilla");
 const colMapShuffle = document.getElementById("col-map-shuffle");
@@ -150,6 +151,7 @@ init()
 		updateWorldCountVisibility();
 		updatePaletteThemedVisibility();
 		updateFlagKey();
+		applyUrlParams();
 	})
 	.catch((err) => {
 		showStatus(`Failed to load WASM module: ${err}`, "error");
@@ -497,6 +499,29 @@ flagKeyCopyBtn.addEventListener("click", () => {
 flagKeyApplyBtn.addEventListener("click", () => {
 	applyFlagKey(flagKeyInput.value);
 });
+
+shareUrlBtn.addEventListener("click", () => {
+	updateFlagKey();
+	const params = new URLSearchParams();
+	const seedStr = seedInput.value.trim();
+	if (seedStr) params.set("seed", seedStr);
+	if (flagKeyInput.value) params.set("flags", flagKeyInput.value);
+	const url = `${location.origin}${location.pathname}?${params.toString()}`;
+	navigator.clipboard.writeText(url).then(() => {
+		showStatus("Share URL copied!", "success");
+	});
+});
+
+function applyUrlParams() {
+	const params = new URLSearchParams(location.search);
+	const seed = params.get("seed");
+	const flags = params.get("flags");
+	if (seed) seedInput.value = seed;
+	if (flags) {
+		flagKeyInput.value = flags;
+		applyFlagKey(flags);
+	}
+}
 
 function updateGenerateButton() {
 	generateBtn.disabled = !(wasmReady && romBytes);

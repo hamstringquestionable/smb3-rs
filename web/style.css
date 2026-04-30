@@ -437,9 +437,9 @@ input[type="radio"] {
     color: #9a9ab0;
 }
 
-/* --- Flag Key Box (sidebar) --- */
+/* --- Control Panel (sidebar: seed / flag key / generate) --- */
 
-.flag-key-box {
+.control-panel {
     width: 240px;
     flex-shrink: 0;
     position: sticky;
@@ -454,7 +454,20 @@ input[type="radio"] {
         0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
-.flag-key-box-title {
+.control-panel-section {
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #2a2a50;
+}
+
+.control-panel-section:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.control-panel-title {
+    display: block;
     font-size: 0.8rem;
     font-weight: bold;
     color: #e44434;
@@ -462,7 +475,7 @@ input[type="radio"] {
     letter-spacing: 0.04em;
 }
 
-.flag-key-box input[type="text"] {
+.control-panel input[type="text"] {
     margin-bottom: 0.5rem;
 }
 
@@ -510,7 +523,7 @@ input[type="radio"] {
     .page-wrapper {
         display: block;
     }
-    .flag-key-box {
+    .control-panel {
         width: 100%;
         margin-top: 1rem;
     }
