@@ -495,6 +495,12 @@ pub(super) const HB_EXCLUDE_OBJ_PTRS: &[u16] = &[
 /// File offsets of the enemy data segments for each Hammer Bro encounter obj_ptr.
 /// Computed as: 0x0C010 + (obj_ptr - 0xC000).
 /// Used by the enemy randomizer to detect HB encounter segments.
+///
+/// Includes the Coin Ship sub-area at 0xDA0F: when a wandering Hammer Bro
+/// transforms into a Coin Ship sprite, entering it loads an autoscroll ship
+/// level whose end-pipe junction targets this 2-BoomerangBro fight room.
+/// The room has no world pointer table entry — it's reached only via the
+/// junction in PRG023 — so it must be protected here, not via OBJ_PTRS.
 pub(super) const HAMMER_BRO_SEGMENT_OFFSETS: &[usize] = &[
     0x0C73B, // 0xC72B — W1
     0x0D15D, // 0xD14D — W2
@@ -502,6 +508,7 @@ pub(super) const HAMMER_BRO_SEGMENT_OFFSETS: &[usize] = &[
     0x0C650, // 0xC640 — W3, W5, W6, W7
     0x0D0FA, // 0xD0EA — W4
     0x0C04D, // 0xC03D — W8 (uses 7-7 layout)
+    0x0DA1F, // 0xDA0F — Coin Ship end-pipe 2-BoomerangBro fight
 ];
 
 /// Stompable enemies — safe for single-enemy HB Wild segments and the default

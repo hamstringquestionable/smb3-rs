@@ -2412,6 +2412,26 @@ hammer-immune. Clearing bit 7 (`$09`) makes hammers damage them like any other e
 | Patched value | `$09` (bit 7 cleared) |
 | Source | "SMB3 - Koopaling Softlock Fix + Hammers Can Hit Koopalings.ips" |
 
+### Coin Ship End-Pipe Bro Fight
+
+When a wandering Hammer Bro overworld sprite transforms into a Coin Ship sprite
+(triggered by specific coin/score conditions in `OBJ_BONUSCONTROLLER`, ID `0xD4`),
+walking into the Coin Ship loads an autoscroll ship level in the Ship tileset
+(PRG023). The end of that level contains a pipe junction whose destination is a
+small sub-area with **two BoomerangBros** as the fight reward.
+
+| Item | Value |
+|------|-------|
+| Sub-area enemy pointer | CPU `$DA0F` (file `0x0DA1F`) |
+| Junction reference | File `0x2FC27` in PRG023 (Ship tileset) — bytes `BC 0F DA` |
+| Enemy contents | 2× `0x82` (BoomerangBro) + `0xBA` terminator (3 entries) |
+
+The sub-area has no world pointer table entry — it's reached only via the
+in-layout junction — so the randomizer protects it via
+`HAMMER_BRO_SEGMENT_OFFSETS` (file offset `0x0DA1F`) rather than via
+`HAMMER_BRO_OBJ_PTRS`. This routes its enemy randomization through the HB-wild
+path (stompable-only pool, optionally one shell-killable + one shell partner).
+
 ### Enemy Stompability Classification
 
 Used by the randomizer for Hammer Bro encounter constraints. Enemies are classified
