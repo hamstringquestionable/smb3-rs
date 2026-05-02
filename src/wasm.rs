@@ -28,6 +28,15 @@ fn parse_options(json: &str) -> Result<Options, JsError> {
     serde_json::from_str(json).map_err(|e| JsError::new(&format!("Invalid options: {e}")))
 }
 
+/// Serialize the canonical Options::default() as JSON so the JS layer can
+/// assert its schema covers every field (and only the fields) the Rust
+/// source of truth knows about. Drift is reported on page load.
+#[wasm_bindgen]
+pub fn default_options_json() -> Result<String, JsError> {
+    serde_json::to_string(&Options::default())
+        .map_err(|e| JsError::new(&format!("Serialize error: {e}")))
+}
+
 #[wasm_bindgen]
 pub fn encode_flag_key(options_json: &str) -> Result<String, JsError> {
     let options: Options = parse_options(options_json)?;
