@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'refactor/**']
   workflow_dispatch:
 
 permissions:
@@ -18,8 +18,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -28,14 +26,39 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Build WASM
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          path: main-src
+
+      - name: Build main
+        working-directory: main-src
         run: wasm-pack build --target web --out-dir pkg
 
-      - name: Prepare site
+      - name: Stage main into _site/
         run: |
           mkdir -p _site
-          cp web/index.html web/style.css web/app.js _site/
-          cp -r pkg _site/pkg
+          cp -r main-src/web/. _site/
+          cp -r main-src/pkg _site/pkg
+
+      - name: Checkout trigger ref
+        if: github.ref != 'refs/heads/main'
+        uses: actions/checkout@v5
+        with:
+          path: branch-src
+
+      - name: Build trigger branch
+        if: github.ref != 'refs/heads/main'
+        working-directory: branch-src
+        run: wasm-pack build --target web --out-dir pkg
+
+      - name: Stage trigger branch into _site/beta/
+        if: github.ref != 'refs/heads/main'
+        run: |
+          mkdir -p _site/beta
+          cp -r branch-src/web/. _site/beta/
+          cp -r branch-src/pkg _site/beta/pkg
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4
