@@ -54,12 +54,15 @@ fn default_off() -> EnemyMode { EnemyMode::Off }
 /// Options controlling which randomizations to apply.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Options {
+    #[serde(default = "default_true")]
     pub powerups: bool,
+    #[serde(default = "default_true")]
     pub palettes: bool,
     /// Use themed per-tileset palette randomization instead of the character-only mode.
     /// Cosmetic — not encoded in the flag key, so flipping this never changes level content.
     #[serde(default)]
     pub palette_themed: bool,
+    #[serde(default)]
     pub world_order: bool,
     /// Number of worlds before Dark Land (1–7, default 7).
     #[serde(default = "default_world_count")]
@@ -976,6 +979,18 @@ mod tests {
                 record.offset
             );
         }
+    }
+
+    #[test]
+    fn default_matches_serde_empty_object() {
+        // Guard against drift between the manual Default impl and the
+        // #[serde(default = ...)] attributes. Adding a field to Options
+        // requires both to agree, or this test fails. Critical because
+        // the WASM `default_options_json()` export ships these defaults
+        // to the JS layer for parity-checking the schema.
+        let from_default = Options::default();
+        let from_empty: Options = serde_json::from_str("{}").unwrap();
+        assert_eq!(from_default, from_empty);
     }
 
     #[test]
