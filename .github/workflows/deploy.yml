@@ -32,6 +32,10 @@ jobs:
           ref: main
           path: main-src
 
+      - name: Test main
+        working-directory: main-src
+        run: cargo test --lib
+
       - name: Build main
         working-directory: main-src
         run: wasm-pack build --target web --out-dir pkg
@@ -47,6 +51,11 @@ jobs:
         uses: actions/checkout@v5
         with:
           path: branch-src
+
+      - name: Test trigger branch
+        if: github.ref != 'refs/heads/main'
+        working-directory: branch-src
+        run: cargo test --lib
 
       - name: Build trigger branch
         if: github.ref != 'refs/heads/main'
