@@ -36,6 +36,13 @@ const VISUAL_PATCHES = [
 		author: "Mario_GMD",
 		url: "https://www.romhacking.net/hacks/5328/",
 	},
+	{
+		id: "super_princess_peach",
+		label: "Super Princess Peach",
+		path: "./visual-patches/super-princess-peach.ips",
+		author: "Zynk Oxhyde",
+		url: "https://www.romhacking.net/hacks/6284/",
+	},
 ];
 
 const visualPatchCache = new Map(); // id → Promise<Uint8Array>
