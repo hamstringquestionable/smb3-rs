@@ -2,6 +2,7 @@ import init, {
 	generate_patch,
 	generate_patched_rom,
 	apply_visual_patch,
+	validate_visual_patch,
 	encode_flag_key,
 	decode_flag_key,
 	default_options_json,
@@ -53,6 +54,28 @@ async function loadRom() {
 		req.onsuccess = () => resolve(req.result || null);
 		req.onerror = () => resolve(null);
 	});
+}
+
+async function saveVisualPatch(name, bytes) {
+	const db = await openDb();
+	const tx = db.transaction(DB_STORE, "readwrite");
+	tx.objectStore(DB_STORE).put({ name, bytes }, "visual_patch");
+}
+
+async function loadVisualPatch() {
+	const db = await openDb();
+	return new Promise((resolve) => {
+		const tx = db.transaction(DB_STORE, "readonly");
+		const req = tx.objectStore(DB_STORE).get("visual_patch");
+		req.onsuccess = () => resolve(req.result || null);
+		req.onerror = () => resolve(null);
+	});
+}
+
+async function clearVisualPatch() {
+	const db = await openDb();
+	const tx = db.transaction(DB_STORE, "readwrite");
+	tx.objectStore(DB_STORE).delete("visual_patch");
 }
 
 // --- DOM lookups (static, non-schema elements) ---
@@ -149,20 +172,40 @@ loadRom().then((bytes) => {
 
 // --- Visual patch ---
 
+function setVisualPatch(name, bytes) {
+	visualPatchBytes = bytes;
+	visualPatchLabel.textContent = name;
+	visualPatchLabel.classList.add("loaded");
+	visualPatchClear.hidden = false;
+}
+
 visualPatchInput.addEventListener("change", (e) => {
 	const file = e.target.files[0];
 	if (!file) return;
 
 	const reader = new FileReader();
 	reader.onload = () => {
-		visualPatchBytes = new Uint8Array(reader.result);
-		visualPatchLabel.textContent = file.name;
-		visualPatchLabel.classList.add("loaded");
-		visualPatchClear.hidden = false;
+		const bytes = new Uint8Array(reader.result);
+		try {
+			validate_visual_patch(bytes);
+		} catch (err) {
+			showStatus(`Visual patch rejected: ${err}`, "error");
+			visualPatchInput.value = "";
+			return;
+		}
+		setVisualPatch(file.name, bytes);
+		saveVisualPatch(file.name, bytes).catch(() => {});
+		showStatus(`Visual patch loaded: ${file.name}`, "success");
 	};
 	reader.onerror = () => showStatus("Failed to read visual patch file", "error");
 	reader.readAsArrayBuffer(file);
 });
+
+loadVisualPatch().then((data) => {
+	if (data && data.bytes) {
+		setVisualPatch(`${data.name} (cached)`, data.bytes);
+	}
+}).catch(() => {});
 
 visualPatchClear.addEventListener("click", () => {
 	visualPatchBytes = null;
@@ -170,6 +213,7 @@ visualPatchClear.addEventListener("click", () => {
 	visualPatchLabel.textContent = "Select IPS file...";
 	visualPatchLabel.classList.remove("loaded");
 	visualPatchClear.hidden = true;
+	clearVisualPatch().catch(() => {});
 });
 
 // --- Seed + generate ---
