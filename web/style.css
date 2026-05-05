@@ -281,6 +281,60 @@ input[type="radio"] {
     color: #fff;
 }
 
+/* --- Tip Button + Block --- */
+
+.tip-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    background: #2a2a50;
+    border: none;
+    border-radius: 50%;
+    color: #9a9ab0;
+    font-size: 0.7rem;
+    font-weight: bold;
+    font-family: inherit;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.15s;
+    padding: 0;
+    line-height: 1;
+    vertical-align: middle;
+}
+
+.option-header > .tip-btn {
+    margin-left: 0.4rem;
+}
+
+.tip-btn:hover,
+.tip-btn:focus-visible {
+    background: #5c94fc;
+    color: #fff;
+    outline: none;
+}
+
+.tip-btn[aria-expanded="true"] {
+    background: #5c94fc;
+    color: #fff;
+}
+
+.option-tip {
+    font-size: 0.75rem;
+    color: #9a9ab0;
+    background: #1c1c38;
+    padding: 0.5rem 0.75rem;
+    border-left: 2px solid #5c94fc;
+    border-radius: 4px;
+    margin: 0.25rem 0 0.5rem 0;
+    line-height: 1.45;
+}
+
+.sub-options + .option-tip {
+    margin-left: 1.25rem;
+}
+
 /* --- Tags --- */
 
 .tag {
