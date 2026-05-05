@@ -122,6 +122,15 @@ label {
     margin-top: 0.4rem;
 }
 
+.note a {
+    color: #5c94fc;
+    text-decoration: none;
+}
+
+.note a:hover {
+    text-decoration: underline;
+}
+
 .skip-validation-warning {
     color: #d4a14e;
 }
