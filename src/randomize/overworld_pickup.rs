@@ -62,8 +62,8 @@ pub(crate) struct PickupResult {
 
 /// Execute Phase 2: read grids, open FX gaps, collect the shuffle pool, blank
 /// picked-up positions.
-pub(crate) fn pick_up(rom: &Rom, catalog: &NodeCatalog, remove_spade_games: bool) -> PickupResult {
-    pick_up_filtered(rom, catalog, remove_spade_games, |entry, remove_spades| {
+pub(crate) fn pick_up(rom: &Rom, catalog: &NodeCatalog, shuffle_spade_games: bool) -> PickupResult {
+    pick_up_filtered(rom, catalog, shuffle_spade_games, |entry, shuffle_spades| {
         // Airships and Bowser stay at vanilla pointer table entries.
         // The autoscroll patch targets their hardcoded entry_idx offsets,
         // and blanking their grid positions would create extra build-phase
@@ -84,8 +84,9 @@ pub(crate) fn pick_up(rom: &Rom, catalog: &NodeCatalog, remove_spade_games: bool
         if matches!(entry.kind, NodeKind::HammerBro) {
             return true;
         }
-        // BonusGame (spade card) — remove to free map slots for levels
-        if remove_spades && matches!(entry.kind, NodeKind::BonusGame) {
+        // BonusGame (spade card) — pick up so the builder can re-place at a
+        // HammerBro slot, freeing the vanilla position for a level.
+        if shuffle_spades && matches!(entry.kind, NodeKind::BonusGame) {
             return true;
         }
         false
@@ -96,14 +97,14 @@ pub(crate) fn pick_up(rom: &Rom, catalog: &NodeCatalog, remove_spade_games: bool
 pub(super) fn pick_up_filtered(
     rom: &Rom,
     catalog: &NodeCatalog,
-    remove_spade_games: bool,
+    shuffle_spade_games: bool,
     pred: fn(&CatalogEntry, bool) -> bool,
 ) -> PickupResult {
     let mut pool: Vec<PoolEntry> = Vec::new();
     let mut worlds = Vec::with_capacity(8);
 
     for wi in 0..8 {
-        worlds.push(pick_up_world(rom, catalog, wi, &mut pool, remove_spade_games, pred));
+        worlds.push(pick_up_world(rom, catalog, wi, &mut pool, shuffle_spade_games, pred));
     }
 
     // Synthetic beta entries (world_idx == usize::MAX) have no vanilla grid
@@ -113,7 +114,7 @@ pub(super) fn pick_up_filtered(
         if entry.world_idx != usize::MAX {
             continue;
         }
-        if !pred(entry, remove_spade_games) {
+        if !pred(entry, shuffle_spade_games) {
             continue;
         }
         pool.push(PoolEntry {
@@ -135,7 +136,7 @@ fn pick_up_world(
     catalog: &NodeCatalog,
     world_idx: usize,
     pool: &mut Vec<PoolEntry>,
-    remove_spade_games: bool,
+    shuffle_spade_games: bool,
     pred: fn(&CatalogEntry, bool) -> bool,
 ) -> ClearedWorld {
     let mut grid = rom_data::read_tile_grid(rom, world_idx);
@@ -147,7 +148,7 @@ fn pick_up_world(
     let mut pool_indices = Vec::new();
 
     for (ci, entry) in catalog.entries.iter().enumerate() {
-        if entry.world_idx != world_idx || !pred(entry, remove_spade_games) {
+        if entry.world_idx != world_idx || !pred(entry, shuffle_spade_games) {
             continue;
         }
 
@@ -315,7 +316,7 @@ mod tests {
         // so the autoscroll patch's hardcoded offsets remain valid.)
         // (166 HammerBro catalog entries minus 12 with non-level pointers like toad house/bonus game)
         // (3 W3 HammerBro entries on tile $4B (boat dock) excluded — tile must stay for boat boarding)
-        // (19 BonusGame entries picked up when remove_spade_games is true)
+        // (19 BonusGame entries picked up when shuffle_spade_games is true)
         assert_eq!(result.pool.len(), 297, "pool should have 297 entries (level-like + hammer bros + bonus games, no airship/bowser/boat-dock)");
     }
 

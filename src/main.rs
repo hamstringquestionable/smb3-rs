@@ -120,9 +120,9 @@ struct Cli {
     #[arg(long)]
     hammer_breaks_bridges: bool,
 
-    /// Keep spade (card matching) games on the overworld (removed by default to free map slots)
+    /// Disable spade-game shuffle (on by default; off keeps vanilla spade positions)
     #[arg(long)]
-    keep_spade_games: bool,
+    no_shuffle_spade_games: bool,
 
     /// Include ~9 unreferenced beta levels in the overworld shuffle pool (off by default)
     #[arg(long)]
@@ -314,7 +314,7 @@ fn main() {
             random_koopalings: cli.random_koopalings,
             hammer_breaks_locks: cli.hammer_breaks_locks,
             hammer_breaks_bridges: cli.hammer_breaks_bridges,
-            remove_spade_games: !cli.keep_spade_games,
+            shuffle_spade_games: !cli.no_shuffle_spade_games,
             include_beta_stages: cli.include_beta_stages,
             airship_lock: !cli.no_airship_lock,
             ground: parse_enemy_mode(&cli.ground, "ground"),
