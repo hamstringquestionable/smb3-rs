@@ -287,21 +287,52 @@ function el(tag, attrs = {}, ...children) {
 	return node;
 }
 
+// --- Tip helpers ---
+
+function tipBtn(entry) {
+	if (!entry.tip) return null;
+	return el("button", {
+		type: "button",
+		class: "tip-btn",
+		"aria-label": "Show description",
+		"aria-expanded": "false",
+		"aria-controls": `tip-${entry.id}`,
+		onclick: (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			const tip = document.getElementById(`tip-${entry.id}`);
+			const target = e.currentTarget;
+			const expanded = target.getAttribute("aria-expanded") === "true";
+			target.setAttribute("aria-expanded", expanded ? "false" : "true");
+			if (tip) tip.hidden = expanded;
+		},
+	}, "?");
+}
+
+function tipBlock(entry) {
+	if (!entry.tip) return null;
+	return el("div", { id: `tip-${entry.id}`, class: "option-tip", hidden: true }, entry.tip);
+}
+
 // --- Renderers per type ---
 
 function renderBool(entry) {
-	const wrap = el("label", { class: "checkbox-label" + (entry.indent ? " sub-options" : ""), title: entry.tip });
+	const wrap = el("label", { class: "checkbox-label" + (entry.indent ? " sub-options" : "") });
 	wrap.appendChild(el("input", { type: "checkbox", id: domId(entry.id), checked: entry.default }));
 	wrap.appendChild(document.createTextNode(" " + entry.label));
 	if (entry.flavor) {
 		wrap.appendChild(el("span", { class: "option-flavor" }, entry.flavor));
 	}
+	const btn = tipBtn(entry);
+	if (btn) wrap.appendChild(btn);
 	return wrap;
 }
 
 function renderTri(entry) {
-	const wrap = el("label", { class: "select-label", title: entry.tip });
+	const wrap = el("label", { class: "select-label" });
 	wrap.appendChild(document.createTextNode(entry.label));
+	const btn = tipBtn(entry);
+	if (btn) wrap.appendChild(btn);
 	const group = el("div", { class: "pill-group" });
 	for (const opt of entry.options) {
 		const inputId = `${domId(entry.id)}-${opt.value}`;
@@ -318,9 +349,11 @@ function renderTri(entry) {
 function renderSelect(entry) {
 	const wrap = el("label", {
 		class: "select-label" + (entry.indent ? " sub-options" : ""),
-		title: entry.tip, id: `${domId(entry.id)}-label`,
+		id: `${domId(entry.id)}-label`,
 	});
 	wrap.appendChild(document.createTextNode(entry.label));
+	const btn = tipBtn(entry);
+	if (btn) wrap.appendChild(btn);
 	const select = el("select", { id: domId(entry.id) });
 	for (const opt of entry.options) {
 		select.appendChild(el("option", {
@@ -333,9 +366,12 @@ function renderSelect(entry) {
 }
 
 function renderRadio(entry) {
-	const wrap = el("div", { class: "radio-group-vertical" + (entry.indent ? " sub-options" : ""), title: entry.tip });
+	const wrap = el("div", { class: "radio-group-vertical" + (entry.indent ? " sub-options" : "") });
 	if (entry.label) {
-		wrap.appendChild(el("div", { class: "option-header" }, entry.label));
+		const header = el("div", { class: "option-header" }, entry.label);
+		const btn = tipBtn(entry);
+		if (btn) header.appendChild(btn);
+		wrap.appendChild(header);
 	}
 	for (const opt of entry.options) {
 		const inputId = `${domId(entry.id)}-${opt.value}`;
@@ -382,7 +418,13 @@ const RENDERERS = {
 function renderEntry(entry) {
 	const r = RENDERERS[entry.type];
 	if (!r) throw new Error(`Unknown schema type: ${entry.type}`);
-	return r(entry);
+	const node = r(entry);
+	const block = tipBlock(entry);
+	if (!block) return node;
+	const frag = document.createDocumentFragment();
+	frag.appendChild(node);
+	frag.appendChild(block);
+	return frag;
 }
 
 // --- Public API ---
