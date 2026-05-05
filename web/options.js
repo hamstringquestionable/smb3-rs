@@ -630,9 +630,11 @@ export function saveSettings() {
 				settings[domId(entry.id)] = entry.type === "bool" ? !!v : String(v);
 			}
 		}
-		// Output format radio (lives outside schema, in static HTML)
-		const fmt = document.querySelector('input[name="output-format"]:checked');
-		if (fmt) settings["radio:output-format"] = fmt.value;
+		// Static radios that live outside the schema (rendered/managed by app.js).
+		for (const name of ["output-format", "visual-patch"]) {
+			const el = document.querySelector(`input[name="${name}"]:checked`);
+			if (el) settings[`radio:${name}`] = el.value;
+		}
 		localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 	} catch (_) {}
 }

@@ -19,28 +19,9 @@ pub fn generate_patched_rom(rom: &[u8], seed: u64, options_json: &str) -> Result
     crate::generate_patched_rom(rom, seed, &options).map_err(|e| JsError::new(&e))
 }
 
-/// SMB3 USA Rev 1 layout. CHR region holds the tile graphics; the rest is
-/// PRG, where the validator only admits writes whose bytes are valid NES
-/// color values (<= 0x3F), i.e. palette data.
-const CHR_RANGE: (usize, usize) = (0x40010, 0x60010);
-
-/// Always-rejected ranges, even when their vanilla bytes happen to be <=0x3F.
-const FORBIDDEN: &[(usize, usize)] = &[
-    (0x00000, 0x00010), // iNES header — changing it alters ROM identity / mapper
-    (0x377E0, 0x37808), // level layout pointer table — rewriting crashes level loading
-];
-
 #[wasm_bindgen]
 pub fn apply_visual_patch(rom: &[u8], patch: &[u8]) -> Result<Vec<u8>, JsError> {
-    crate::ips::validate_visual_only(patch, CHR_RANGE, FORBIDDEN).map_err(|e| JsError::new(&e))?;
     crate::apply_ips_patch(rom, patch).map_err(|e| JsError::new(&e))
-}
-
-/// Standalone validation, separate from apply, so the JS layer can give the
-/// user instant feedback at file-select time.
-#[wasm_bindgen]
-pub fn validate_visual_patch(patch: &[u8]) -> Result<(), JsError> {
-    crate::ips::validate_visual_only(patch, CHR_RANGE, FORBIDDEN).map_err(|e| JsError::new(&e))
 }
 
 fn parse_options(json: &str) -> Result<Options, JsError> {
