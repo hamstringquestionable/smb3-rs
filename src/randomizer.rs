@@ -110,9 +110,12 @@ pub struct Options {
     /// Hammer item also breaks water gap (bridge) tiles on the overworld map.
     #[serde(default)]
     pub hammer_breaks_bridges: bool,
-    /// Remove spade (card matching) games from the overworld, freeing map slots for levels.
+    /// When true, the 19 vanilla spade-game tiles are picked up by the overworld
+    /// builder and re-placed at random HammerBro slots, freeing their original
+    /// positions for level placement. When false, spade games stay at vanilla
+    /// positions (and the overworld builder leaves those tiles untouched).
     #[serde(default = "default_true")]
-    pub remove_spade_games: bool,
+    pub shuffle_spade_games: bool,
     /// Include ~9 unreferenced beta levels in the overworld shuffle pool.
     #[serde(default)]
     pub include_beta_stages: bool,
@@ -294,7 +297,7 @@ impl Options {
             | (self.remove_n_cards as u8) << 6
             | (self.skip_wand_cutscene as u8) << 5
             | (self.adjust_boss_hitboxes as u8) << 4
-            | (self.remove_spade_games as u8) << 3;
+            | (self.shuffle_spade_games as u8) << 3;
             // bits 2-0 used by hb_encounters and wild_injections below
 
         // Helper to encode EnemyMode as 2 bits
@@ -431,7 +434,7 @@ impl Options {
             remove_n_cards: (b4 >> 6) & 1 != 0,
             skip_wand_cutscene: (b4 >> 5) & 1 != 0,
             adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
-            remove_spade_games: (b4 >> 3) & 1 != 0,
+            shuffle_spade_games: (b4 >> 3) & 1 != 0,
             hammer_vulnerable_koopalings: (b5 >> 1) & 1 != 0,
             random_koopalings: (b10 >> 7) & 1 != 0,
             include_beta_stages: (b10 >> 6) & 1 != 0,
@@ -517,7 +520,7 @@ impl Default for Options {
             include_beta_stages: false,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
-            remove_spade_games: true,
+            shuffle_spade_games: true,
             ground: EnemyMode::Shuffle,
             shell: EnemyMode::Shuffle,
             flying: EnemyMode::Shuffle,
@@ -658,7 +661,7 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
 
     rom.set_tag("overworld/builder");
     let catalog = randomize::node_catalog::NodeCatalog::build(rom, options.include_beta_stages);
-    let pickup = randomize::overworld_pickup::pick_up(rom, &catalog, options.remove_spade_games);
+    let pickup = randomize::overworld_pickup::pick_up(rom, &catalog, options.shuffle_spade_games);
     let build = randomize::overworld_build::build(rom, &pickup, &catalog, &mut rng);
     randomize::overworld_writer::write_overworld(
         rom, &build, &pickup, &catalog, &mut rng, true,
@@ -717,9 +720,9 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::qol::remove_n_cards(rom);
     }
 
-    // Fix W3 canoe softlocks (needed when spade games are removed, since levels
-    // can be placed on W3 island tiles that the canoe interacts with).
-    if options.remove_spade_games {
+    // Fix W3 canoe softlocks (needed when spade games are shuffled, since their
+    // original W3 island tiles can then host levels that the canoe interacts with).
+    if options.shuffle_spade_games {
         rom.set_tag("qol/fix_canoe_softlock");
         randomize::qol::fix_canoe_softlock(rom);
     }
@@ -1004,7 +1007,7 @@ mod tests {
             include_beta_stages: true,
             hammer_breaks_locks: true,
             hammer_breaks_bridges: true,
-            remove_spade_games: true,
+            shuffle_spade_games: true,
             ground: EnemyMode::Wild,
             shell: EnemyMode::Wild,
             flying: EnemyMode::Wild,
@@ -1071,7 +1074,7 @@ mod tests {
             include_beta_stages: false,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
-            remove_spade_games: false,
+            shuffle_spade_games: false,
             ground: EnemyMode::Off,
             shell: EnemyMode::Off,
             flying: EnemyMode::Off,
@@ -1099,7 +1102,7 @@ mod tests {
         assert!(decoded.palettes); // palettes always true from flag key (cosmetic, not encoded)
         assert!(!decoded.disable_autoscroll);
         assert!(!decoded.shuffle_airships);
-        assert!(!decoded.remove_spade_games);
+        assert!(!decoded.shuffle_spade_games);
         assert_eq!(decoded.ground, EnemyMode::Off);
         assert_eq!(decoded.bullet_bills, EnemyMode::Off);
         assert_eq!(decoded.thwomps, EnemyMode::Off);
@@ -1222,7 +1225,7 @@ mod tests {
             ("include_beta_stages",          Box::new(|o| o.include_beta_stages = !o.include_beta_stages)),
             ("hammer_breaks_locks",          Box::new(|o| o.hammer_breaks_locks = !o.hammer_breaks_locks)),
             ("hammer_breaks_bridges",        Box::new(|o| o.hammer_breaks_bridges = !o.hammer_breaks_bridges)),
-            ("remove_spade_games",           Box::new(|o| o.remove_spade_games = !o.remove_spade_games)),
+            ("shuffle_spade_games",           Box::new(|o| o.shuffle_spade_games = !o.shuffle_spade_games)),
             ("wild_injections",              Box::new(|o| o.wild_injections = !o.wild_injections)),
             ("jitter_enemy_positions",       Box::new(|o| o.jitter_enemy_positions = !o.jitter_enemy_positions)),
         ];
@@ -1328,7 +1331,7 @@ mod tests {
         everything.include_beta_stages = true;
         everything.hammer_breaks_locks = true;
         everything.hammer_breaks_bridges = true;
-        everything.remove_spade_games = !everything.remove_spade_games;
+        everything.shuffle_spade_games = !everything.shuffle_spade_games;
         everything.wild_injections = true;
         everything.jitter_enemy_positions = true;
         everything.ground = EnemyMode::Wild;
@@ -1430,7 +1433,7 @@ mod tests {
             include_beta_stages: false,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
-            remove_spade_games: false,
+            shuffle_spade_games: false,
             ground: EnemyMode::Off,
             shell: EnemyMode::Off,
             flying: EnemyMode::Off,
@@ -1479,7 +1482,7 @@ mod tests {
             include_beta_stages: false,
             hammer_breaks_locks: true,
             hammer_breaks_bridges: true,
-            remove_spade_games: true,
+            shuffle_spade_games: true,
             ground: EnemyMode::Wild,
             shell: EnemyMode::Wild,
             flying: EnemyMode::Wild,
