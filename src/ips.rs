@@ -107,15 +107,31 @@ fn write_rle_record(patch: &mut Vec<u8>, offset: usize, count: usize, value: u8)
     patch.push(value);
 }
 
-/// Walk every record in an IPS patch and reject any that writes to a file
-/// offset outside `[allowed_start, allowed_end)`. Used to enforce that a
-/// user-supplied "visual" IPS patch only touches CHR-ROM tile data, not PRG
-/// code or the iNES header.
+/// Validate that an IPS patch only modifies "visual" data.
 ///
-/// Note: IPS records support extending the file. We treat any write whose
-/// end exceeds `allowed_end` as out-of-region too, so a visual patch can't
-/// silently grow the ROM with arbitrary trailing data.
-pub fn validate_region(patch: &[u8], allowed_start: usize, allowed_end: usize) -> Result<(), String> {
+/// Policy:
+/// - **CHR writes** (entirely within `chr_range`) are accepted unconditionally —
+///   that region is graphics tiles, full byte range.
+/// - **PRG writes** (outside CHR) are accepted only when every byte being
+///   written is `<= 0x3F`, the NES color value range. This admits palette
+///   mods (the most common reason a "visual" patch touches PRG) without
+///   opening the door to arbitrary code rewrites: useful 6502 opcodes like
+///   JMP ($4C), JSR ($20 alone is ≤0x3F but its target bytes typically aren't),
+///   RTS ($60), LDA-imm ($A9), and most branches (BNE $D0, BEQ $F0) live
+///   above 0x3F.
+/// - **Forbidden zones** in `forbidden` are always rejected, even when their
+///   vanilla bytes happen to be `<= 0x3F`. The iNES header and the level-
+///   layout pointer table at `0x377E0..0x37807` belong here — rewriting them
+///   would change ROM identity or crash the game.
+///
+/// Note: IPS records can extend the file. Writes that end past `chr_range.1`
+/// are treated as "outside CHR" and fall to the byte check, so a visual
+/// patch can't silently append arbitrary trailing data.
+pub fn validate_visual_only(
+    patch: &[u8],
+    chr_range: (usize, usize),
+    forbidden: &[(usize, usize)],
+) -> Result<(), String> {
     if patch.len() < 8 {
         return Err("Patch too small".to_string());
     }
@@ -124,7 +140,7 @@ pub fn validate_region(patch: &[u8], allowed_start: usize, allowed_end: usize) -
     }
 
     let mut pos = 5;
-    let mut bad: Vec<(usize, usize)> = Vec::new();
+    let mut bad: Vec<String> = Vec::new();
 
     loop {
         if pos + 3 > patch.len() {
@@ -145,40 +161,52 @@ pub fn validate_region(patch: &[u8], allowed_start: usize, allowed_end: usize) -
         let size = ((patch[pos] as usize) << 8) | (patch[pos + 1] as usize);
         pos += 2;
 
-        let write_len = if size == 0 {
+        let (write_len, all_palette_bytes) = if size == 0 {
+            // RLE record: 2-byte count + 1-byte value
             if pos + 3 > patch.len() {
                 return Err("Unexpected end of patch reading RLE data".to_string());
             }
             let rle_count = ((patch[pos] as usize) << 8) | (patch[pos + 1] as usize);
+            let rle_value = patch[pos + 2];
             pos += 3;
-            rle_count
+            (rle_count, rle_value <= 0x3F)
         } else {
             if pos + size > patch.len() {
                 return Err("Unexpected end of patch reading payload".to_string());
             }
+            let all = patch[pos..pos + size].iter().all(|&b| b <= 0x3F);
             pos += size;
-            size
+            (size, all)
         };
 
         let end = offset + write_len;
-        if offset < allowed_start || end > allowed_end {
-            bad.push((offset, end));
+
+        // Forbidden zones are absolute — overlap rejects regardless of bytes.
+        if forbidden.iter().any(|&(s, e)| offset < e && end > s) {
+            bad.push(format!("0x{offset:05X}-0x{end:05X} (forbidden zone)"));
+            continue;
+        }
+
+        // CHR writes are always OK.
+        if offset >= chr_range.0 && end <= chr_range.1 {
+            continue;
+        }
+
+        // Outside CHR: must look like palette data (every byte <= 0x3F).
+        if !all_palette_bytes {
+            bad.push(format!("0x{offset:05X}-0x{end:05X} (PRG, contains non-palette bytes)"));
         }
     }
 
     if !bad.is_empty() {
-        let shown: Vec<String> = bad
-            .iter()
-            .take(5)
-            .map(|(s, e)| format!("0x{s:05X}-0x{e:05X}"))
-            .collect();
+        let shown: Vec<&str> = bad.iter().take(5).map(String::as_str).collect();
         let extra = if bad.len() > 5 {
             format!(" (+{} more)", bad.len() - 5)
         } else {
             String::new()
         };
         return Err(format!(
-            "Visual patch writes outside CHR region (allowed 0x{allowed_start:05X}-0x{allowed_end:05X}): {}{}",
+            "Visual patch rejected: {}{}",
             shown.join(", "),
             extra
         ));
@@ -346,41 +374,77 @@ mod tests {
     }
 
     // SMB3 USA Rev 1 layout used by the visual-patch validator.
-    const CHR_START: usize = 0x40010;
+    const CHR: (usize, usize) = (0x40010, 0x60010);
+    const FORBIDDEN: &[(usize, usize)] = &[
+        (0x00000, 0x00010), // iNES header
+        (0x377E0, 0x37808), // level layout pointer table
+    ];
     const ROM_END: usize = 0x60010;
 
     #[test]
-    fn validate_region_accepts_chr_only_patch() {
+    fn validate_visual_accepts_chr_only_patch() {
         let original = vec![0u8; ROM_END];
         let mut modified = original.clone();
-        modified[CHR_START + 100] = 0xAA;
-        modified[CHR_START + 1024] = 0xBB;
+        modified[CHR.0 + 100] = 0xAA;
+        modified[CHR.0 + 1024] = 0xBB; // arbitrary CHR bytes including >0x3F
         let patch = build_ips_patch(&original, &modified);
-        validate_region(&patch, CHR_START, ROM_END).expect("CHR-only patch should validate");
+        validate_visual_only(&patch, CHR, FORBIDDEN).expect("CHR-only patch should validate");
     }
 
     #[test]
-    fn validate_region_rejects_prg_write() {
+    fn validate_visual_accepts_palette_only_prg_patch() {
         let original = vec![0u8; ROM_END];
         let mut modified = original.clone();
-        modified[0x10000] = 0xAA; // PRG region
+        // Write a 4-byte palette quartet (all bytes <= 0x3F) at a PRG location.
+        modified[0x10539] = 0x00;
+        modified[0x1053A] = 0x16;
+        modified[0x1053B] = 0x36;
+        modified[0x1053C] = 0x0F;
         let patch = build_ips_patch(&original, &modified);
-        let err = validate_region(&patch, CHR_START, ROM_END).unwrap_err();
-        assert!(err.contains("0x10000"), "error should name the bad offset: {err}");
+        validate_visual_only(&patch, CHR, FORBIDDEN).expect("palette-only PRG patch should validate");
     }
 
     #[test]
-    fn validate_region_rejects_header_write() {
+    fn validate_visual_rejects_code_like_prg_write() {
         let original = vec![0u8; ROM_END];
         let mut modified = original.clone();
-        modified[4] = 0xFF; // iNES header byte
+        // 6502 'JMP $C000' = $4C $00 $C0 — has bytes > 0x3F.
+        modified[0x10000] = 0x4C;
+        modified[0x10001] = 0x00;
+        modified[0x10002] = 0xC0;
         let patch = build_ips_patch(&original, &modified);
-        assert!(validate_region(&patch, CHR_START, ROM_END).is_err());
+        let err = validate_visual_only(&patch, CHR, FORBIDDEN).unwrap_err();
+        assert!(err.contains("non-palette"), "error should call out non-palette bytes: {err}");
     }
 
     #[test]
-    fn validate_region_rejects_extension_past_rom_end() {
-        // Hand-craft a patch that writes a single byte at ROM_END (extends file).
+    fn validate_visual_rejects_header_write_even_when_bytes_are_low() {
+        let original = vec![0u8; ROM_END];
+        let mut modified = original.clone();
+        // iNES header byte 4 = PRG bank count. Setting to 0x10 (16) is <=0x3F
+        // but still must be rejected — it changes ROM identity.
+        modified[4] = 0x10;
+        let patch = build_ips_patch(&original, &modified);
+        let err = validate_visual_only(&patch, CHR, FORBIDDEN).unwrap_err();
+        assert!(err.contains("forbidden zone"), "error should call out forbidden zone: {err}");
+    }
+
+    #[test]
+    fn validate_visual_rejects_pointer_table_write() {
+        let original = vec![0u8; ROM_END];
+        let mut modified = original.clone();
+        // Write into the level-layout pointer table — these bytes <=0x3F in vanilla
+        // but rewriting them crashes level loading.
+        modified[0x377E0] = 0x00;
+        modified[0x377E1] = 0x10;
+        let patch = build_ips_patch(&original, &modified);
+        let err = validate_visual_only(&patch, CHR, FORBIDDEN).unwrap_err();
+        assert!(err.contains("forbidden zone"), "error should call out forbidden zone: {err}");
+    }
+
+    #[test]
+    fn validate_visual_rejects_extension_past_rom_end() {
+        // Hand-craft a patch that writes a non-palette byte at ROM_END (extends file).
         let mut patch = b"PATCH".to_vec();
         let off = ROM_END;
         patch.push(((off >> 16) & 0xFF) as u8);
@@ -390,14 +454,14 @@ mod tests {
         patch.push(0x01);
         patch.push(0xCC);
         patch.extend_from_slice(b"EOF");
-        assert!(validate_region(&patch, CHR_START, ROM_END).is_err());
+        assert!(validate_visual_only(&patch, CHR, FORBIDDEN).is_err());
     }
 
     #[test]
-    fn validate_region_rejects_rle_into_prg() {
-        // RLE record covering PRG bytes.
+    fn validate_visual_rle_palette_into_prg_ok() {
+        // RLE writing 16 bytes of value 0x16 (NES color) into PRG palette region.
         let mut patch = b"PATCH".to_vec();
-        let off = 0x10000;
+        let off = 0x36C54;
         patch.push(((off >> 16) & 0xFF) as u8);
         patch.push(((off >> 8) & 0xFF) as u8);
         patch.push((off & 0xFF) as u8);
@@ -405,8 +469,25 @@ mod tests {
         patch.push(0x00);
         patch.push(0x00); // count high
         patch.push(0x10); // count low (16 bytes)
-        patch.push(0xCC); // value
+        patch.push(0x16); // value (palette byte)
         patch.extend_from_slice(b"EOF");
-        assert!(validate_region(&patch, CHR_START, ROM_END).is_err());
+        validate_visual_only(&patch, CHR, FORBIDDEN).expect("palette RLE in PRG should validate");
+    }
+
+    #[test]
+    fn validate_visual_rle_rejects_code_byte_into_prg() {
+        // RLE filling PRG with 0xEA (NOP opcode) — not a palette byte.
+        let mut patch = b"PATCH".to_vec();
+        let off = 0x10000;
+        patch.push(((off >> 16) & 0xFF) as u8);
+        patch.push(((off >> 8) & 0xFF) as u8);
+        patch.push((off & 0xFF) as u8);
+        patch.push(0x00);
+        patch.push(0x00);
+        patch.push(0x00);
+        patch.push(0x10);
+        patch.push(0xEA); // NOP — not a palette byte
+        patch.extend_from_slice(b"EOF");
+        assert!(validate_visual_only(&patch, CHR, FORBIDDEN).is_err());
     }
 }
