@@ -33,6 +33,8 @@ const VISUAL_PATCHES = [
 		id: "super_luigi_35th",
 		label: "Super Luigi Bros. 3",
 		path: "./visual-patches/super-luigi-35th.ips",
+		author: "Mario_GMD",
+		url: "https://www.romhacking.net/hacks/5328/",
 	},
 ];
 
@@ -92,6 +94,7 @@ const flagKeyCopyBtn = document.getElementById("flag-key-copy-btn");
 const flagKeyApplyBtn = document.getElementById("flag-key-apply-btn");
 const shareUrlBtn = document.getElementById("share-url-btn");
 const visualPatchPills = document.getElementById("visual-patch-pills");
+const visualPatchCredit = document.getElementById("visual-patch-credit");
 const skipValidationWarning = document.getElementById("skip-validation-warning");
 const changesSummaryToggle = document.getElementById("changes-summary-toggle");
 const changesSummaryText = document.getElementById("changes-summary-text");
@@ -181,7 +184,10 @@ function renderVisualPatchPills() {
 		input.id = inputId;
 		input.value = opt.id;
 		if (opt.id === "") input.checked = true; // default to None
-		input.addEventListener("change", saveSettings);
+		input.addEventListener("change", () => {
+			saveSettings();
+			updateVisualPatchCredit();
+		});
 		const label = document.createElement("label");
 		label.htmlFor = inputId;
 		label.textContent = opt.label;
@@ -192,6 +198,27 @@ function renderVisualPatchPills() {
 function selectedVisualPatchId() {
 	const checked = document.querySelector('input[name="visual-patch"]:checked');
 	return checked?.value || "";
+}
+
+function updateVisualPatchCredit() {
+	const id = selectedVisualPatchId();
+	const entry = id ? VISUAL_PATCHES.find((p) => p.id === id) : null;
+	if (!entry || (!entry.author && !entry.url)) {
+		visualPatchCredit.hidden = true;
+		visualPatchCredit.replaceChildren();
+		return;
+	}
+	visualPatchCredit.replaceChildren();
+	visualPatchCredit.append(`${entry.label} by ${entry.author ?? "unknown"} — `);
+	if (entry.url) {
+		const a = document.createElement("a");
+		a.href = entry.url;
+		a.target = "_blank";
+		a.rel = "noopener";
+		a.textContent = entry.url;
+		visualPatchCredit.append(a);
+	}
+	visualPatchCredit.hidden = false;
 }
 
 function fetchVisualPatch(id) {
@@ -206,6 +233,7 @@ function fetchVisualPatch(id) {
 	return promise;
 }
 
+updateVisualPatchCredit();
 cleanupOrphanVisualPatch().catch(() => {});
 
 // --- Seed + generate ---
