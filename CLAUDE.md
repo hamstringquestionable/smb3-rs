@@ -55,7 +55,7 @@ src/
     level_helpers.rs   # Shared shuffle_entries() for level entry shuffling
     # --- Feature modules ---
     map_walker.rs      # BFS map walker for overworld connectivity analysis
-    levels.rs          # Cross-world level shuffle, fortress/airship shuffle
+    levels.rs          # Airship shuffle (the one cross-world level shuffle that's still independent of the overworld builder)
     powerups.rs        # ? block item randomization
     palettes.rs        # Character/lava/Bowser color randomization
     enemies.rs         # Enemy type swapping within class

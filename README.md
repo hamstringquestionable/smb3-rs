@@ -50,10 +50,8 @@ smb3r <rom> [options]
 | `--enemies` | Enable enemy randomization (experimental) |
 | `--world-order` | Enable world order randomization |
 | `--big-q-blocks` | Enable Big ? Block randomization |
-| `--level-shuffle <mode>` | Shuffle levels: `off`, `intra-world`, `cross-world` |
-| `--shuffle-fortresses` | Shuffle fortresses and airships across worlds |
-| `--fortress-redistribute <mode>` | Redistribute fortresses: `off`, `intra-world`, `cross-world` |
-| `--shuffle-pipes` | Shuffle pipe endpoint positions on overworld maps |
+| `--no-shuffle-pipes` | Disable pipe endpoint shuffle during overworld rebuild (on by default) |
+| `--no-shuffle-airships` | Disable airship shuffle across worlds (on by default) |
 | `--keep-autoscroll` | Keep autoscrollers enabled (disabled by default) |
 | `--no-chest-items` | Disable chest/reward item randomization |
 | `--keep-whistles` | Keep warp whistles (removed by default) |
@@ -76,7 +74,7 @@ smb3r rom.nes --seed 12345 --patched-rom
 smb3r rom.nes --flag-key SMB3R-02E3880480
 
 # Full randomization
-smb3r rom.nes --enemies --world-order --big-q-blocks --level-shuffle cross-world --shuffle-fortresses --shuffle-pipes --fortress-redistribute cross-world
+smb3r rom.nes --world-order --big-q-blocks
 ```
 
 ## Web App

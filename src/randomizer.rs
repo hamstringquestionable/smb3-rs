@@ -18,21 +18,6 @@ fn default_starting_lives() -> u8 { 4 }
 /// Returns default world count (7 — all worlds before Dark Land).
 fn default_world_count() -> u8 { 7 }
 
-/// Level shuffle mode.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LevelShuffle {
-    Off,
-    IntraWorld,
-    CrossWorld,
-}
-
-impl Default for LevelShuffle {
-    fn default() -> Self {
-        LevelShuffle::Off
-    }
-}
-
 /// Per-class enemy randomization mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -69,15 +54,7 @@ pub struct Options {
     pub world_count: u8,
     #[serde(default = "default_false")]
     pub big_q_blocks: bool,
-    /// Level shuffle under vanilla tile layout (off/intra/cross).
-    /// Ignored when map_shuffle is true.
-    #[serde(default)]
-    pub level_shuffle: LevelShuffle,
-    /// Enable overworld map shuffle (rebuilds tile layout, always cross-world).
-    /// Mutually exclusive with level_shuffle (overrides it).
-    #[serde(default = "default_true")]
-    pub map_shuffle: bool,
-    /// Shuffle pipe endpoint positions (only when map_shuffle is true).
+    /// Shuffle pipe endpoint positions during the overworld rebuild.
     #[serde(default = "default_true")]
     pub shuffle_pipes: bool,
     /// Shuffle airship levels across worlds 1-7.
@@ -202,7 +179,7 @@ fn default_true() -> bool {
     true
 }
 
-const FLAG_KEY_VERSION: u8 = 15;
+const FLAG_KEY_VERSION: u8 = 16;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
 
 /// Crockford Base-32 alphabet (excludes I, L, O, U to avoid ambiguity).
@@ -292,12 +269,6 @@ pub fn resolve_starting_item(item: u8, rng: &mut ChaCha8Rng) -> u8 {
 impl Options {
     /// Encode options into raw bytes.
     pub fn to_flag_bytes(&self) -> [u8; 11] {
-        let level_shuffle_val = match self.level_shuffle {
-            LevelShuffle::Off => 0u8,
-            LevelShuffle::IntraWorld => 1,
-            LevelShuffle::CrossWorld => 2,
-        };
-
         let b0 = FLAG_KEY_VERSION;
 
         // b1: non-enemy flags
@@ -311,11 +282,9 @@ impl Options {
             | (self.chest_items as u8);
 
         let b2 = (self.remove_whistles as u8) << 7
-            | (self.map_shuffle as u8) << 6
             | (self.shuffle_pipes as u8) << 5
             | (self.fix_drawbridges as u8) << 4
             | (self.remove_rocks as u8) << 3
-            | (level_shuffle_val & 0x03) << 1
             | (self.shuffle_airships as u8);
 
         let b3 = ((self.hammer_breaks_bridges as u8) << 7)
@@ -430,12 +399,6 @@ impl Options {
         let b9 = bytes[9];
         let b10 = bytes[10];
 
-        let level_shuffle_val = (b2 >> 1) & 0x03;
-        let level_shuffle = match level_shuffle_val {
-            1 => LevelShuffle::IntraWorld,
-            2 => LevelShuffle::CrossWorld,
-            _ => LevelShuffle::Off,
-        };
         let starting_lives = b3 & 0x7F;
         let starting_lives = if starting_lives == 0 { 1 } else { starting_lives };
 
@@ -459,12 +422,10 @@ impl Options {
             airship_lock: (b1 >> 1) & 1 != 0,
             chest_items: b1 & 1 != 0,
             remove_whistles: (b2 >> 7) & 1 != 0,
-            map_shuffle: (b2 >> 6) & 1 != 0,
             shuffle_pipes: (b2 >> 5) & 1 != 0,
             shuffle_airships: b2 & 1 != 0,
             fix_drawbridges: (b2 >> 4) & 1 != 0,
             remove_rocks: (b2 >> 3) & 1 != 0,
-            level_shuffle,
             starting_lives,
             card_speed_clear: (b4 >> 7) & 1 != 0,
             remove_n_cards: (b4 >> 6) & 1 != 0,
@@ -538,8 +499,6 @@ impl Default for Options {
             world_order: false,
             world_count: default_world_count(),
             big_q_blocks: false,
-            level_shuffle: LevelShuffle::Off,
-            map_shuffle: true,
             shuffle_pipes: true,
             shuffle_airships: true,
             disable_autoscroll: true,
@@ -697,31 +656,13 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::koopalings::random_koopalings(rom, &mut rng);
     }
 
-    // Two mutually exclusive modes:
-    // 1. Map Shuffle: overworld builder rebuilds the map (always cross-world).
-    // 2. Vanilla Layout: tiles stay in place, level entries shuffled underneath.
-    if options.map_shuffle {
-        rom.set_tag("overworld/builder");
-
-        let catalog = randomize::node_catalog::NodeCatalog::build(rom, options.include_beta_stages);
-        let pickup = randomize::overworld_pickup::pick_up(rom, &catalog, options.remove_spade_games);
-        let build = randomize::overworld_build::build(rom, &pickup, &catalog, &mut rng);
-        randomize::overworld_writer::write_overworld(
-            rom, &build, &pickup, &catalog, &mut rng, true,
-        );
-    } else {
-        match options.level_shuffle {
-            LevelShuffle::IntraWorld => {
-                rom.set_tag("levels");
-                randomize::levels::randomize_intra(rom, &mut rng);
-            }
-            LevelShuffle::CrossWorld => {
-                rom.set_tag("levels");
-                randomize::levels::randomize_cross(rom, &mut rng);
-            }
-            LevelShuffle::Off => {}
-        }
-    }
+    rom.set_tag("overworld/builder");
+    let catalog = randomize::node_catalog::NodeCatalog::build(rom, options.include_beta_stages);
+    let pickup = randomize::overworld_pickup::pick_up(rom, &catalog, options.remove_spade_games);
+    let build = randomize::overworld_build::build(rom, &pickup, &catalog, &mut rng);
+    randomize::overworld_writer::write_overworld(
+        rom, &build, &pickup, &catalog, &mut rng, true,
+    );
     // Give each W8 Hand its own treasure-room enemy stream so the chest
     // randomizer can roll a unique item per Hand, and with a random chance
     // redirect one Hand to the 3-7 coin heaven. Runs before items::randomize
@@ -855,29 +796,28 @@ mod tests {
     const HAMMER_BROS_ITEMS_OFFSET: usize = 0x16190;
     const TOAD_HOUSE_ITEMS_OFFSET: usize = 0x3B14B;
 
-    /// Options safe for zeroed test ROMs (map_shuffle off — builder needs real ROM data).
+    /// Options safe for zeroed test ROMs.
     /// Palettes disabled because they use OS entropy (cosmetic, decoupled from seed).
     fn test_options() -> Options {
         let mut opts = Options::default();
-        opts.map_shuffle = false;
         opts.shuffle_airships = false;
         opts.palettes = false;
         opts
     }
 
-    fn make_test_rom() -> Rom {
-        let mut data = vec![0u8; 393232];
-        // iNES header
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16;
-        data[5] = 16;
-        data[6] = 0x40;
-        Rom::from_bytes(&data).unwrap()
+    /// Load the real SMB3 ROM. Tests that drive the full `randomize()`
+    /// pipeline need it — the overworld builder reads real pointer
+    /// tables and panics on synthetic data. Returns `None` (caller
+    /// silently skips) when the ROM isn't in the project root, mirroring
+    /// `map_walker::tests::test_render_randomized_seed`.
+    fn make_test_rom() -> Option<Rom> {
+        let bytes = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
+        Rom::from_bytes(&bytes).ok()
     }
 
     #[test]
     fn randomized_rom_has_anchor_lock_patch_by_default() {
-        let mut rom = make_test_rom();
+        let Some(mut rom) = make_test_rom() else { return };
         let original_bytes = rom.read_range(ANCHOR_PATCH_OFFSET, 3).to_vec();
         let options = test_options();
         randomize(&mut rom, 0x12345678, &options);
@@ -896,7 +836,7 @@ mod tests {
 
     #[test]
     fn anchor_lock_patch_can_be_disabled() {
-        let mut rom = make_test_rom();
+        let Some(mut rom) = make_test_rom() else { return };
         let original_bytes = rom.read_range(ANCHOR_PATCH_OFFSET, 3).to_vec();
         let mut options = test_options();
         options.airship_lock = false;
@@ -911,7 +851,7 @@ mod tests {
 
     #[test]
     fn mystery_anchor_trampoline_when_airship_lock_on() {
-        let mut rom = make_test_rom();
+        let Some(mut rom) = make_test_rom() else { return };
         // Place anchors in item tables — they should stay as 0x0A
         rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 2, ANCHOR);
         rom.write_byte(TOAD_HOUSE_ITEMS_OFFSET + 1, ANCHOR);
@@ -945,7 +885,7 @@ mod tests {
 
     #[test]
     fn mystery_anchor_not_written_when_airship_lock_off() {
-        let mut rom = make_test_rom();
+        let Some(mut rom) = make_test_rom() else { return };
         rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 2, ANCHOR);
 
         let mut options = test_options();
@@ -964,7 +904,7 @@ mod tests {
 
     #[test]
     fn write_log_populated_after_randomize() {
-        let mut rom = make_test_rom();
+        let Some(mut rom) = make_test_rom() else { return };
         let options = test_options();
         randomize(&mut rom, 0x12345678, &options);
 
@@ -1009,12 +949,10 @@ mod tests {
         assert_eq!(opts.airship_lock, decoded.airship_lock);
         assert_eq!(opts.chest_items, decoded.chest_items);
         assert_eq!(opts.remove_whistles, decoded.remove_whistles);
-        assert_eq!(opts.map_shuffle, decoded.map_shuffle);
         assert_eq!(opts.shuffle_pipes, decoded.shuffle_pipes);
         assert_eq!(opts.shuffle_airships, decoded.shuffle_airships);
         assert_eq!(opts.fix_drawbridges, decoded.fix_drawbridges);
         assert_eq!(opts.remove_rocks, decoded.remove_rocks);
-        assert_eq!(opts.level_shuffle, decoded.level_shuffle);
         assert_eq!(opts.starting_lives, decoded.starting_lives);
         assert_eq!(opts.card_speed_clear, decoded.card_speed_clear);
         assert_eq!(opts.remove_n_cards, decoded.remove_n_cards);
@@ -1047,8 +985,6 @@ mod tests {
             world_order: true,
             world_count: 7,
             big_q_blocks: true,
-            level_shuffle: LevelShuffle::CrossWorld,
-            map_shuffle: true,
             shuffle_pipes: true,
             shuffle_airships: true,
             disable_autoscroll: true,
@@ -1096,8 +1032,6 @@ mod tests {
         assert_eq!(opts.hammer_breaks_bridges, decoded.hammer_breaks_bridges);
         assert_eq!(opts.world_order, decoded.world_order);
         assert_eq!(opts.world_count, decoded.world_count);
-        assert_eq!(opts.level_shuffle, decoded.level_shuffle);
-        assert_eq!(opts.map_shuffle, decoded.map_shuffle);
         assert_eq!(opts.starting_lives, decoded.starting_lives);
         assert_eq!(opts.ground, decoded.ground);
         assert_eq!(opts.shell, decoded.shell);
@@ -1118,8 +1052,6 @@ mod tests {
             world_order: false,
             world_count: 7,
             big_q_blocks: false,
-            level_shuffle: LevelShuffle::Off,
-            map_shuffle: false,
             shuffle_pipes: false,
             shuffle_airships: false,
             disable_autoscroll: false,
@@ -1166,7 +1098,6 @@ mod tests {
         assert!(!decoded.hammer_breaks_bridges);
         assert!(decoded.palettes); // palettes always true from flag key (cosmetic, not encoded)
         assert!(!decoded.disable_autoscroll);
-        assert!(!decoded.map_shuffle);
         assert!(!decoded.shuffle_airships);
         assert!(!decoded.remove_spade_games);
         assert_eq!(decoded.ground, EnemyMode::Off);
@@ -1175,7 +1106,6 @@ mod tests {
         assert_eq!(decoded.hb_encounters, EnemyMode::Off);
         assert!(!decoded.wild_injections);
         assert_eq!(decoded.starting_lives, 1);
-        assert_eq!(decoded.level_shuffle, LevelShuffle::Off);
     }
 
     #[test]
@@ -1274,7 +1204,6 @@ mod tests {
             ("powerups",                     Box::new(|o| o.powerups = !o.powerups)),
             ("world_order",                  Box::new(|o| o.world_order = !o.world_order)),
             ("big_q_blocks",                 Box::new(|o| o.big_q_blocks = !o.big_q_blocks)),
-            ("map_shuffle",                  Box::new(|o| o.map_shuffle = !o.map_shuffle)),
             ("shuffle_pipes",                Box::new(|o| o.shuffle_pipes = !o.shuffle_pipes)),
             ("shuffle_airships",             Box::new(|o| o.shuffle_airships = !o.shuffle_airships)),
             ("disable_autoscroll",           Box::new(|o| o.disable_autoscroll = !o.disable_autoscroll)),
@@ -1334,17 +1263,6 @@ mod tests {
             }
         }
 
-        // LevelShuffle round-trips through every value.
-        for val in [LevelShuffle::Off, LevelShuffle::IntraWorld, LevelShuffle::CrossWorld] {
-            let mut opts = Options::default();
-            opts.level_shuffle = val.clone();
-            let mut expected = opts.clone();
-            expected.palettes = true;
-            expected.palette_themed = false;
-            let recovered = Options::from_flag_key(&opts.to_flag_key()).unwrap();
-            assert_eq!(recovered, expected, "level_shuffle={val:?}: round-trip mismatch");
-        }
-
         // Numeric ranges (boundaries + a middle value).
         for lives in [1u8, 2, 50, 99] {
             let mut opts = Options::default();
@@ -1392,7 +1310,6 @@ mod tests {
         everything.powerups = !everything.powerups;
         everything.world_order = !everything.world_order;
         everything.big_q_blocks = !everything.big_q_blocks;
-        everything.map_shuffle = !everything.map_shuffle;
         everything.shuffle_pipes = !everything.shuffle_pipes;
         everything.shuffle_airships = !everything.shuffle_airships;
         everything.disable_autoscroll = !everything.disable_autoscroll;
@@ -1426,7 +1343,6 @@ mod tests {
         everything.water = EnemyMode::Wild;
         everything.bros = EnemyMode::Wild;
         everything.hb_encounters = EnemyMode::Wild;
-        everything.level_shuffle = LevelShuffle::CrossWorld;
         everything.starting_lives = 99;
         everything.world_count = 1;
         everything.starting_items = vec![ITEM_RANDOM, 5, ITEM_RANDOM_SUIT_ONLY];
@@ -1495,8 +1411,6 @@ mod tests {
             world_order: false,
             world_count: 7,
             big_q_blocks: false,
-            level_shuffle: LevelShuffle::Off,
-            map_shuffle: false,
             shuffle_pipes: false,
             shuffle_airships: false,
             disable_autoscroll: false,
@@ -1546,8 +1460,6 @@ mod tests {
             world_order: true,
             world_count: 3,
             big_q_blocks: true,
-            level_shuffle: LevelShuffle::CrossWorld,
-            map_shuffle: false, // needs real ROM data
             shuffle_pipes: false,
             shuffle_airships: true,
             disable_autoscroll: true,
@@ -1607,11 +1519,11 @@ mod tests {
         let seed = 42u64;
         for (name, options) in &configs {
             // Run 1
-            let mut rom1 = make_test_rom();
+            let Some(mut rom1) = make_test_rom() else { return };
             randomize(&mut rom1, seed, options);
 
             // Run 2 (same seed, same options)
-            let mut rom2 = make_test_rom();
+            let Some(mut rom2) = make_test_rom() else { return };
             randomize(&mut rom2, seed, options);
 
             // Same-run determinism — find first differing byte for diagnostics
@@ -1641,7 +1553,7 @@ mod tests {
 
     #[test]
     fn write_log_tags_match_enabled_modules() {
-        let mut rom = make_test_rom();
+        let Some(mut rom) = make_test_rom() else { return };
         let mut options = test_options();
         // Disable optional modules we can check for absence
         options.ground = EnemyMode::Off;

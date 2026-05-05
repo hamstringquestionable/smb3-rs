@@ -280,9 +280,6 @@ pub(super) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
 /// Pipe tile ID.
 pub(super) const TILE_PIPE: u8 = 0xBC;
 
-/// W5 Spiral Tower tile ID (functionally a pipe connecting screen 0 ↔ screen 1).
-pub(super) const TILE_SPIRAL: u8 = 0x5F;
-
 /// Fortress map tile ID (used in test code across multiple modules).
 #[allow(dead_code)]
 pub(super) const TILE_FORTRESS: u8 = 0x67;
@@ -565,9 +562,6 @@ pub(super) const HB_NEEDS_SHELL_ENEMIES: &[u8] = &[
 pub(super) const HB_EXCLUDE_ENTRIES: &[(u16, u8)] = &[
     (0xC640, 3), // W3[41] — tileset 3 is wrong for lay 0xB3E7
 ];
-
-/// Map transition entries.
-pub(super) const MAP_TRANSITIONS: &[(usize, usize)] = &[];
 
 // ---------------------------------------------------------------------------
 // Overworld map object tables (PRG011)
@@ -897,12 +891,6 @@ pub(super) fn has_enemy_id(rom: &Rom, obj_ptr: u16, target_id: u8) -> bool {
         pos += 3;
     }
     false
-}
-
-/// Read the screen count from a level's 9-byte header.
-/// Header byte 4, bits 3-0 = (num_screens - 1).
-pub(super) fn level_screen_count(rom: &Rom, layout_offset: usize) -> u8 {
-    (rom.read_byte(layout_offset + 4) & 0x0F) + 1
 }
 
 /// Read a LevelEntry from ROM for a given world and entry index.
