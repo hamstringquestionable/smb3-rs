@@ -286,7 +286,7 @@ input[type="radio"] {
 }
 
 .pill-group input[type="radio"]:checked + label {
-    background: #e44434;
+    background: var(--pill-active, #e44434);
     color: #fff;
 }
 
