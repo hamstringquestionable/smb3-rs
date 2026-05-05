@@ -35,6 +35,7 @@ const VISUAL_PATCHES = [
 		path: "./visual-patches/super-luigi-35th.ips",
 		author: "Mario_GMD",
 		url: "https://www.romhacking.net/hacks/5328/",
+		color: "#6dce56", // Luigi green
 	},
 	{
 		id: "super_princess_peach",
@@ -42,6 +43,7 @@ const VISUAL_PATCHES = [
 		path: "./visual-patches/super-princess-peach.ips",
 		author: "Zynk Oxhyde",
 		url: "https://www.romhacking.net/hacks/6284/",
+		color: "#e07db4", // Peach pink
 	},
 ];
 
@@ -193,6 +195,7 @@ function renderVisualPatchPills() {
 		if (opt.id === "") input.checked = true; // default to None
 		input.addEventListener("change", () => {
 			saveSettings();
+			updateVisualPatchAccent();
 			updateVisualPatchCredit();
 		});
 		const label = document.createElement("label");
@@ -205,6 +208,16 @@ function renderVisualPatchPills() {
 function selectedVisualPatchId() {
 	const checked = document.querySelector('input[name="visual-patch"]:checked');
 	return checked?.value || "";
+}
+
+function updateVisualPatchAccent() {
+	const id = selectedVisualPatchId();
+	const entry = id ? VISUAL_PATCHES.find((p) => p.id === id) : null;
+	if (entry?.color) {
+		visualPatchPills.style.setProperty("--pill-active", entry.color);
+	} else {
+		visualPatchPills.style.removeProperty("--pill-active");
+	}
 }
 
 function updateVisualPatchCredit() {
@@ -240,6 +253,7 @@ function fetchVisualPatch(id) {
 	return promise;
 }
 
+updateVisualPatchAccent();
 updateVisualPatchCredit();
 cleanupOrphanVisualPatch().catch(() => {});
 
