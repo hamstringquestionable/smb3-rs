@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use smb3_rs::{EnemyMode, LevelShuffle, Options};
+use smb3_rs::{EnemyMode, Options};
 
 #[derive(Parser)]
 #[command(name = "smb3-rs", version, about = "Super Mario Bros. 3 Randomizer")]
@@ -48,10 +48,6 @@ struct Cli {
     #[arg(long)]
     big_q_blocks: bool,
 
-    /// Shuffle levels: off, intra-world, or cross-world
-    #[arg(long, default_value = "off")]
-    level_shuffle: String,
-
     /// Keep autoscrollers enabled (they are disabled by default)
     #[arg(long)]
     keep_autoscroll: bool,
@@ -64,15 +60,7 @@ struct Cli {
     #[arg(long)]
     keep_whistles: bool,
 
-    /// Enable overworld map shuffle (rebuilds tile layout, overrides --level-shuffle)
-    #[arg(long)]
-    map_shuffle: bool,
-
-    /// Disable overworld map shuffle (on by default when no --flags provided... see defaults)
-    #[arg(long)]
-    no_map_shuffle: bool,
-
-    /// Shuffle pipe endpoint positions (only with --map-shuffle)
+    /// Shuffle pipe endpoint positions during the overworld rebuild
     #[arg(long)]
     shuffle_pipes: bool,
 
@@ -240,17 +228,6 @@ fn main() {
 
     let seed = cli.seed.unwrap_or_else(|| rand::random());
 
-    let level_shuffle = match cli.level_shuffle.as_str() {
-        "off" => LevelShuffle::Off,
-        "intra" | "intra-world" | "intra_world" => LevelShuffle::IntraWorld,
-        "cross" | "cross-world" | "cross_world" => LevelShuffle::CrossWorld,
-        other => {
-            eprintln!("Invalid --level-shuffle value: {other}");
-            eprintln!("Valid values: off, intra-world, cross-world");
-            process::exit(1);
-        }
-    };
-
     fn parse_enemy_mode(s: &str, name: &str) -> EnemyMode {
         match s {
             "off" => EnemyMode::Off,
@@ -321,8 +298,6 @@ fn main() {
             world_order: cli.world_order,
             world_count: cli.world_count,
             big_q_blocks: cli.big_q_blocks,
-            level_shuffle,
-            map_shuffle: if cli.no_map_shuffle { false } else { true },
             shuffle_pipes: if cli.no_shuffle_pipes { false } else { true },
             shuffle_airships: if cli.no_shuffle_airships { false } else { true },
             disable_autoscroll: !cli.keep_autoscroll,
@@ -383,14 +358,6 @@ fn main() {
     }
     eprintln!("  Big ? Blocks: {}", if options.big_q_blocks { "on" } else { "off" });
     eprintln!("  Starting Lives: {}", options.starting_lives);
-    eprintln!("  Map shuffle: {}", if options.map_shuffle { "on" } else { "off" });
-    if !options.map_shuffle {
-        eprintln!("  Level shuffle: {}", match &options.level_shuffle {
-            LevelShuffle::Off => "off",
-            LevelShuffle::IntraWorld => "intra-world",
-            LevelShuffle::CrossWorld => "cross-world",
-        });
-    }
     eprintln!("  Pipe shuffle: {}", if options.shuffle_pipes { "on" } else { "off" });
     eprintln!("  Airship shuffle: {}", if options.shuffle_airships { "on" } else { "off" });
     eprintln!("  Autoscroll: {}", if options.disable_autoscroll { "disabled" } else { "enabled" });
