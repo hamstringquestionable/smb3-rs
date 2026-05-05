@@ -3,5 +3,6 @@
 /web/pkg
 *.nes
 *.ips
+!web/visual-patches/*.ips
 tools/rom_map.json
 __pycache__/

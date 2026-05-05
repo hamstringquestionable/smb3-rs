@@ -2,7 +2,6 @@ import init, {
 	generate_patch,
 	generate_patched_rom,
 	apply_visual_patch,
-	validate_visual_patch,
 	encode_flag_key,
 	decode_flag_key,
 	default_options_json,
@@ -24,7 +23,20 @@ import {
 
 let wasmReady = false;
 let romBytes = null;
-let visualPatchBytes = null;
+
+// Curated, hand-vetted visual IPS patches shipped with the app. To add one:
+// drop the file in web/visual-patches/ and add an entry here. The patch is
+// fetched lazily at generate time and only applied when output is a Patched
+// ROM (IPS output is the diff of the randomization itself).
+const VISUAL_PATCHES = [
+	{
+		id: "super_luigi_35th",
+		label: "Super Luigi Bros. 3",
+		path: "./visual-patches/super-luigi-35th.ips",
+	},
+];
+
+const visualPatchCache = new Map(); // id → Promise<Uint8Array>
 
 // --- IndexedDB ROM persistence ---
 
@@ -56,23 +68,10 @@ async function loadRom() {
 	});
 }
 
-async function saveVisualPatch(name, bytes) {
-	const db = await openDb();
-	const tx = db.transaction(DB_STORE, "readwrite");
-	tx.objectStore(DB_STORE).put({ name, bytes }, "visual_patch");
-}
-
-async function loadVisualPatch() {
-	const db = await openDb();
-	return new Promise((resolve) => {
-		const tx = db.transaction(DB_STORE, "readonly");
-		const req = tx.objectStore(DB_STORE).get("visual_patch");
-		req.onsuccess = () => resolve(req.result || null);
-		req.onerror = () => resolve(null);
-	});
-}
-
-async function clearVisualPatch() {
+// One-time cleanup: earlier versions cached uploaded visual-patch bytes
+// in IndexedDB. Selection is now persisted via localStorage instead, so
+// drop the orphan key on first run after upgrade.
+async function cleanupOrphanVisualPatch() {
 	const db = await openDb();
 	const tx = db.transaction(DB_STORE, "readwrite");
 	tx.objectStore(DB_STORE).delete("visual_patch");
@@ -92,9 +91,7 @@ const flagKeyInput = document.getElementById("flag-key-input");
 const flagKeyCopyBtn = document.getElementById("flag-key-copy-btn");
 const flagKeyApplyBtn = document.getElementById("flag-key-apply-btn");
 const shareUrlBtn = document.getElementById("share-url-btn");
-const visualPatchInput = document.getElementById("visual-patch-input");
-const visualPatchLabel = document.getElementById("visual-patch-label");
-const visualPatchClear = document.getElementById("visual-patch-clear");
+const visualPatchPills = document.getElementById("visual-patch-pills");
 const skipValidationWarning = document.getElementById("skip-validation-warning");
 const changesSummaryToggle = document.getElementById("changes-summary-toggle");
 const changesSummaryText = document.getElementById("changes-summary-text");
@@ -103,6 +100,7 @@ const changesSummaryList = document.getElementById("changes-summary-list");
 // --- Options form: render schema, restore, wire listeners ---
 
 renderOptions(optionsRoot, { "rom-extras": romExtras });
+renderVisualPatchPills();
 restoreSettings();
 applyEnabledWhen();
 updateSkipValidationWarning();
@@ -170,51 +168,45 @@ loadRom().then((bytes) => {
 	}
 }).catch(() => {});
 
-// --- Visual patch ---
+// --- Visual patch (curated catalog rendered as a pill group) ---
 
-function setVisualPatch(name, bytes) {
-	visualPatchBytes = bytes;
-	visualPatchLabel.textContent = name;
-	visualPatchLabel.classList.add("loaded");
-	visualPatchClear.hidden = false;
+function renderVisualPatchPills() {
+	const opts = [{ id: "", label: "None" }, ...VISUAL_PATCHES];
+	visualPatchPills.replaceChildren();
+	for (const opt of opts) {
+		const inputId = `vp-${opt.id || "none"}`;
+		const input = document.createElement("input");
+		input.type = "radio";
+		input.name = "visual-patch";
+		input.id = inputId;
+		input.value = opt.id;
+		if (opt.id === "") input.checked = true; // default to None
+		input.addEventListener("change", saveSettings);
+		const label = document.createElement("label");
+		label.htmlFor = inputId;
+		label.textContent = opt.label;
+		visualPatchPills.append(input, label);
+	}
 }
 
-visualPatchInput.addEventListener("change", (e) => {
-	const file = e.target.files[0];
-	if (!file) return;
+function selectedVisualPatchId() {
+	const checked = document.querySelector('input[name="visual-patch"]:checked');
+	return checked?.value || "";
+}
 
-	const reader = new FileReader();
-	reader.onload = () => {
-		const bytes = new Uint8Array(reader.result);
-		try {
-			validate_visual_patch(bytes);
-		} catch (err) {
-			showStatus(`Visual patch rejected: ${err}`, "error");
-			visualPatchInput.value = "";
-			return;
-		}
-		setVisualPatch(file.name, bytes);
-		saveVisualPatch(file.name, bytes).catch(() => {});
-		showStatus(`Visual patch loaded: ${file.name}`, "success");
-	};
-	reader.onerror = () => showStatus("Failed to read visual patch file", "error");
-	reader.readAsArrayBuffer(file);
-});
+function fetchVisualPatch(id) {
+	if (visualPatchCache.has(id)) return visualPatchCache.get(id);
+	const entry = VISUAL_PATCHES.find((p) => p.id === id);
+	if (!entry) return Promise.reject(new Error(`unknown visual patch: ${id}`));
+	const promise = fetch(entry.path).then((r) => {
+		if (!r.ok) throw new Error(`HTTP ${r.status}`);
+		return r.arrayBuffer().then((buf) => new Uint8Array(buf));
+	});
+	visualPatchCache.set(id, promise);
+	return promise;
+}
 
-loadVisualPatch().then((data) => {
-	if (data && data.bytes) {
-		setVisualPatch(`${data.name} (cached)`, data.bytes);
-	}
-}).catch(() => {});
-
-visualPatchClear.addEventListener("click", () => {
-	visualPatchBytes = null;
-	visualPatchInput.value = "";
-	visualPatchLabel.textContent = "Select IPS file...";
-	visualPatchLabel.classList.remove("loaded");
-	visualPatchClear.hidden = true;
-	clearVisualPatch().catch(() => {});
-});
+cleanupOrphanVisualPatch().catch(() => {});
 
 // --- Seed + generate ---
 
@@ -222,7 +214,7 @@ randomSeedBtn.addEventListener("click", () => {
 	seedInput.value = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER).toString();
 });
 
-generateBtn.addEventListener("click", () => {
+generateBtn.addEventListener("click", async () => {
 	if (!wasmReady || !romBytes) return;
 
 	const seedStr = seedInput.value.trim();
@@ -232,16 +224,28 @@ generateBtn.addEventListener("click", () => {
 
 	const options = getOptionsJson();
 	const outputFormat = document.querySelector('input[name="output-format"]:checked').value;
+	const visualPatchId = selectedVisualPatchId();
 
 	showStatus("Generating...", "loading");
 
 	try {
 		let result, filename;
 		const mimeType = "application/octet-stream";
+		let visualLabel = "";
 
 		if (outputFormat === "rom") {
 			result = generate_patched_rom(romBytes, seed, options);
-			if (visualPatchBytes) result = apply_visual_patch(result, visualPatchBytes);
+			if (visualPatchId) {
+				const entry = VISUAL_PATCHES.find((p) => p.id === visualPatchId);
+				try {
+					const patch = await fetchVisualPatch(visualPatchId);
+					result = apply_visual_patch(result, patch);
+					visualLabel = entry?.label ?? visualPatchId;
+				} catch (err) {
+					showStatus(`Visual patch '${entry?.label ?? visualPatchId}' failed to load: ${err}`, "error");
+					return;
+				}
+			}
 			filename = `smb3-rs_${seed}.nes`;
 		} else {
 			result = generate_patch(romBytes, seed, options);
@@ -264,7 +268,8 @@ generateBtn.addEventListener("click", () => {
 			goatcounter.count({ path: `/generate/${v}/${fk}`, event: true });
 		}
 
-		showStatus(`Generated ${filename} (${result.length} bytes, seed: ${seed})`, "success");
+		const visualSuffix = visualLabel ? ` + visual: ${visualLabel}` : "";
+		showStatus(`Generated ${filename} (${result.length} bytes, seed: ${seed})${visualSuffix}`, "success");
 	} catch (err) {
 		showStatus(`Error: ${err}`, "error");
 	}
