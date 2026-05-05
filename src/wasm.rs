@@ -19,9 +19,22 @@ pub fn generate_patched_rom(rom: &[u8], seed: u64, options_json: &str) -> Result
     crate::generate_patched_rom(rom, seed, &options).map_err(|e| JsError::new(&e))
 }
 
+/// SMB3 USA Rev 1 CHR ROM region: file offset range that holds tile graphics.
+/// 16-byte iNES header + 256 KB PRG + 128 KB CHR = 393,232 bytes total.
+const CHR_START: usize = 0x40010;
+const ROM_END: usize = 0x60010;
+
 #[wasm_bindgen]
 pub fn apply_visual_patch(rom: &[u8], patch: &[u8]) -> Result<Vec<u8>, JsError> {
+    crate::ips::validate_region(patch, CHR_START, ROM_END).map_err(|e| JsError::new(&e))?;
     crate::apply_ips_patch(rom, patch).map_err(|e| JsError::new(&e))
+}
+
+/// Standalone CHR-region validation, separate from apply, so the JS layer
+/// can give the user instant feedback at file-select time.
+#[wasm_bindgen]
+pub fn validate_visual_patch(patch: &[u8]) -> Result<(), JsError> {
+    crate::ips::validate_region(patch, CHR_START, ROM_END).map_err(|e| JsError::new(&e))
 }
 
 fn parse_options(json: &str) -> Result<Options, JsError> {

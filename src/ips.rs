@@ -107,6 +107,86 @@ fn write_rle_record(patch: &mut Vec<u8>, offset: usize, count: usize, value: u8)
     patch.push(value);
 }
 
+/// Walk every record in an IPS patch and reject any that writes to a file
+/// offset outside `[allowed_start, allowed_end)`. Used to enforce that a
+/// user-supplied "visual" IPS patch only touches CHR-ROM tile data, not PRG
+/// code or the iNES header.
+///
+/// Note: IPS records support extending the file. We treat any write whose
+/// end exceeds `allowed_end` as out-of-region too, so a visual patch can't
+/// silently grow the ROM with arbitrary trailing data.
+pub fn validate_region(patch: &[u8], allowed_start: usize, allowed_end: usize) -> Result<(), String> {
+    if patch.len() < 8 {
+        return Err("Patch too small".to_string());
+    }
+    if &patch[0..5] != HEADER {
+        return Err("Invalid IPS header".to_string());
+    }
+
+    let mut pos = 5;
+    let mut bad: Vec<(usize, usize)> = Vec::new();
+
+    loop {
+        if pos + 3 > patch.len() {
+            return Err("Unexpected end of patch".to_string());
+        }
+        if &patch[pos..pos + 3] == FOOTER {
+            break;
+        }
+
+        let offset = ((patch[pos] as usize) << 16)
+            | ((patch[pos + 1] as usize) << 8)
+            | (patch[pos + 2] as usize);
+        pos += 3;
+
+        if pos + 2 > patch.len() {
+            return Err("Unexpected end of patch reading size".to_string());
+        }
+        let size = ((patch[pos] as usize) << 8) | (patch[pos + 1] as usize);
+        pos += 2;
+
+        let write_len = if size == 0 {
+            if pos + 3 > patch.len() {
+                return Err("Unexpected end of patch reading RLE data".to_string());
+            }
+            let rle_count = ((patch[pos] as usize) << 8) | (patch[pos + 1] as usize);
+            pos += 3;
+            rle_count
+        } else {
+            if pos + size > patch.len() {
+                return Err("Unexpected end of patch reading payload".to_string());
+            }
+            pos += size;
+            size
+        };
+
+        let end = offset + write_len;
+        if offset < allowed_start || end > allowed_end {
+            bad.push((offset, end));
+        }
+    }
+
+    if !bad.is_empty() {
+        let shown: Vec<String> = bad
+            .iter()
+            .take(5)
+            .map(|(s, e)| format!("0x{s:05X}-0x{e:05X}"))
+            .collect();
+        let extra = if bad.len() > 5 {
+            format!(" (+{} more)", bad.len() - 5)
+        } else {
+            String::new()
+        };
+        return Err(format!(
+            "Visual patch writes outside CHR region (allowed 0x{allowed_start:05X}-0x{allowed_end:05X}): {}{}",
+            shown.join(", "),
+            extra
+        ));
+    }
+
+    Ok(())
+}
+
 /// Apply an IPS patch to a ROM, returning the patched bytes.
 pub fn apply_ips_patch(rom: &[u8], patch: &[u8]) -> Result<Vec<u8>, String> {
     if patch.len() < 8 {
@@ -263,5 +343,70 @@ mod tests {
         let rom = vec![0u8; 100];
         assert!(apply_ips_patch(&rom, b"GARBAGE").is_err());
         assert!(apply_ips_patch(&rom, b"PAT").is_err());
+    }
+
+    // SMB3 USA Rev 1 layout used by the visual-patch validator.
+    const CHR_START: usize = 0x40010;
+    const ROM_END: usize = 0x60010;
+
+    #[test]
+    fn validate_region_accepts_chr_only_patch() {
+        let original = vec![0u8; ROM_END];
+        let mut modified = original.clone();
+        modified[CHR_START + 100] = 0xAA;
+        modified[CHR_START + 1024] = 0xBB;
+        let patch = build_ips_patch(&original, &modified);
+        validate_region(&patch, CHR_START, ROM_END).expect("CHR-only patch should validate");
+    }
+
+    #[test]
+    fn validate_region_rejects_prg_write() {
+        let original = vec![0u8; ROM_END];
+        let mut modified = original.clone();
+        modified[0x10000] = 0xAA; // PRG region
+        let patch = build_ips_patch(&original, &modified);
+        let err = validate_region(&patch, CHR_START, ROM_END).unwrap_err();
+        assert!(err.contains("0x10000"), "error should name the bad offset: {err}");
+    }
+
+    #[test]
+    fn validate_region_rejects_header_write() {
+        let original = vec![0u8; ROM_END];
+        let mut modified = original.clone();
+        modified[4] = 0xFF; // iNES header byte
+        let patch = build_ips_patch(&original, &modified);
+        assert!(validate_region(&patch, CHR_START, ROM_END).is_err());
+    }
+
+    #[test]
+    fn validate_region_rejects_extension_past_rom_end() {
+        // Hand-craft a patch that writes a single byte at ROM_END (extends file).
+        let mut patch = b"PATCH".to_vec();
+        let off = ROM_END;
+        patch.push(((off >> 16) & 0xFF) as u8);
+        patch.push(((off >> 8) & 0xFF) as u8);
+        patch.push((off & 0xFF) as u8);
+        patch.push(0x00);
+        patch.push(0x01);
+        patch.push(0xCC);
+        patch.extend_from_slice(b"EOF");
+        assert!(validate_region(&patch, CHR_START, ROM_END).is_err());
+    }
+
+    #[test]
+    fn validate_region_rejects_rle_into_prg() {
+        // RLE record covering PRG bytes.
+        let mut patch = b"PATCH".to_vec();
+        let off = 0x10000;
+        patch.push(((off >> 16) & 0xFF) as u8);
+        patch.push(((off >> 8) & 0xFF) as u8);
+        patch.push((off & 0xFF) as u8);
+        patch.push(0x00); // size=0 → RLE
+        patch.push(0x00);
+        patch.push(0x00); // count high
+        patch.push(0x10); // count low (16 bytes)
+        patch.push(0xCC); // value
+        patch.extend_from_slice(b"EOF");
+        assert!(validate_region(&patch, CHR_START, ROM_END).is_err());
     }
 }
