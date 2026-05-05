@@ -54,7 +54,7 @@
             </label>
             <input type="file" id="visual-patch-input" accept=".ips" hidden>
             <button id="visual-patch-clear" type="button" class="link-btn" hidden>Clear</button>
-            <p class="note">Apply a sprite or graphics IPS patch on top of the randomized ROM. Patches are checked to only modify CHR (graphics) data — any patch that touches code or palette tables in PRG is rejected. Only applied when output format is Patched ROM.</p>
+            <p class="note">Apply a sprite, graphics, or palette IPS patch on top of the randomized ROM. Patches are checked to only modify CHR (graphics) tiles or palette data (NES color values) — any patch that includes code bytes or touches the iNES header / level pointer tables is rejected. Only applied when output format is Patched ROM.</p>
         </div>
 
         <footer>
