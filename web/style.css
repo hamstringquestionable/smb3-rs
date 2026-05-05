@@ -560,6 +560,84 @@ input[type="radio"] {
     color: #e0e0e0;
 }
 
+.changes-summary-toggle {
+    width: 100%;
+    background: #1c1c38;
+    border: 1px solid #2a2a50;
+    border-radius: 4px;
+    color: #9a9ab0;
+    cursor: pointer;
+    padding: 0.4rem 0.6rem;
+    font-family: inherit;
+    font-size: 0.75rem;
+    text-align: left;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: all 0.15s;
+    margin-bottom: 0.5rem;
+}
+
+.changes-summary-toggle:hover:not(:disabled) {
+    background: #2a2a50;
+    color: #e0e0e0;
+}
+
+.changes-summary-toggle:disabled {
+    cursor: default;
+    opacity: 0.7;
+}
+
+.changes-summary-toggle::after {
+    content: "▸";
+    font-size: 0.7rem;
+    transition: transform 0.15s;
+    margin-left: 0.5rem;
+}
+
+.changes-summary-toggle[aria-expanded="true"]::after {
+    transform: rotate(90deg);
+}
+
+.changes-summary-toggle:disabled::after {
+    visibility: hidden;
+}
+
+.changes-summary-list {
+    margin-bottom: 0.5rem;
+    max-height: 250px;
+    overflow-y: auto;
+    background: #0e0e1c;
+    border: 1px solid #2a2a50;
+    border-radius: 4px;
+    padding: 0.4rem 0.5rem;
+}
+
+.change-row {
+    font-size: 0.7rem;
+    color: #e0e0e0;
+    padding: 0.25rem 0;
+    line-height: 1.4;
+}
+
+.change-row + .change-row {
+    border-top: 1px solid #1e1e3a;
+}
+
+.change-row .change-label {
+    color: #9a9ab0;
+}
+
+.change-row .change-value {
+    color: #e0e0e0;
+    font-weight: bold;
+}
+
+.change-row .change-default {
+    color: #555;
+    margin-left: 0.25rem;
+}
+
 .early-access-note {
     margin-top: 0.6rem;
     text-align: center;

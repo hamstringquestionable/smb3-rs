@@ -12,6 +12,8 @@ import {
 	wireListeners,
 	applyEnabledWhen,
 	getOptionsJson,
+	getChangedFields,
+	formatValue,
 	applyOptions,
 	saveSettings,
 	restoreSettings,
@@ -71,6 +73,9 @@ const visualPatchInput = document.getElementById("visual-patch-input");
 const visualPatchLabel = document.getElementById("visual-patch-label");
 const visualPatchClear = document.getElementById("visual-patch-clear");
 const skipValidationWarning = document.getElementById("skip-validation-warning");
+const changesSummaryToggle = document.getElementById("changes-summary-toggle");
+const changesSummaryText = document.getElementById("changes-summary-text");
+const changesSummaryList = document.getElementById("changes-summary-list");
 
 // --- Options form: render schema, restore, wire listeners ---
 
@@ -78,10 +83,19 @@ renderOptions(optionsRoot, { "rom-extras": romExtras });
 restoreSettings();
 applyEnabledWhen();
 updateSkipValidationWarning();
+updateChangesSummary();
 wireListeners(() => {
 	updateFlagKey();
 	saveSettings();
 	updateSkipValidationWarning();
+	updateChangesSummary();
+});
+
+changesSummaryToggle.addEventListener("click", () => {
+	if (changesSummaryToggle.disabled) return;
+	const expanded = changesSummaryToggle.getAttribute("aria-expanded") === "true";
+	changesSummaryToggle.setAttribute("aria-expanded", expanded ? "false" : "true");
+	changesSummaryList.hidden = expanded;
 });
 
 // Output-format radios live in static HTML, outside the schema.
@@ -283,5 +297,34 @@ function updateSkipValidationWarning() {
 	const skip = document.getElementById("opt-skip-rom-validation");
 	if (skipValidationWarning && skip) {
 		skipValidationWarning.hidden = !skip.checked;
+	}
+}
+
+function updateChangesSummary() {
+	const changes = getChangedFields();
+	const n = changes.length;
+	changesSummaryText.textContent = n === 0
+		? "All defaults"
+		: n === 1 ? "1 change from defaults" : `${n} changes from defaults`;
+	changesSummaryToggle.disabled = n === 0;
+	if (n === 0) {
+		changesSummaryList.hidden = true;
+		changesSummaryToggle.setAttribute("aria-expanded", "false");
+	}
+	changesSummaryList.replaceChildren();
+	for (const { entry, current } of changes) {
+		const row = document.createElement("div");
+		row.className = "change-row";
+		const labelSpan = document.createElement("span");
+		labelSpan.className = "change-label";
+		labelSpan.textContent = entry.label;
+		const valueSpan = document.createElement("strong");
+		valueSpan.className = "change-value";
+		valueSpan.textContent = formatValue(entry, current);
+		const defaultSpan = document.createElement("span");
+		defaultSpan.className = "change-default";
+		defaultSpan.textContent = `(default ${formatValue(entry, entry.default)})`;
+		row.append(labelSpan, ": ", valueSpan, " ", defaultSpan);
+		changesSummaryList.appendChild(row);
 	}
 }

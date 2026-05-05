@@ -513,6 +513,47 @@ export function getOptions() {
 	return out;
 }
 
+// Walk the schema, return the entries whose current value differs from
+// the schema default. Used by the changes-summary UI in the control panel.
+export function getChangedFields() {
+	const changed = [];
+	for (const entry of SCHEMA) {
+		const current = readValue(entry);
+		if (!valuesEqual(current, entry.default)) {
+			changed.push({ entry, current });
+		}
+	}
+	return changed;
+}
+
+function valuesEqual(a, b) {
+	if (Array.isArray(a) && Array.isArray(b)) {
+		return a.length === b.length && a.every((v, i) => v === b[i]);
+	}
+	return a === b;
+}
+
+// Human-readable rendering of a field value for the changes summary.
+export function formatValue(entry, value) {
+	switch (entry.type) {
+		case "bool": return value ? "ON" : "OFF";
+		case "tri":
+		case "radio":
+		case "select": {
+			const opt = entry.options.find(o => o.value === value);
+			return opt ? opt.label : String(value);
+		}
+		case "items": {
+			if (!Array.isArray(value) || value.length === 0) return "(none)";
+			return value.map(v => {
+				const opt = entry.items.find(o => o.value === v);
+				return opt ? opt.label : String(v);
+			}).join(", ");
+		}
+		default: return String(value);
+	}
+}
+
 export function getOptionsJson() {
 	return JSON.stringify(getOptions());
 }
