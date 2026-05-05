@@ -83,6 +83,15 @@
         </div>
 
         <div class="control-panel-section">
+            <button id="changes-summary-toggle" type="button"
+                    class="changes-summary-toggle"
+                    aria-expanded="false"
+                    aria-controls="changes-summary-list"
+                    title="Show options that differ from defaults"
+                    disabled>
+                <span id="changes-summary-text">All defaults</span>
+            </button>
+            <div id="changes-summary-list" class="changes-summary-list" hidden></div>
             <button id="generate-btn" type="button" disabled>Generate</button>
             <p class="early-access-note"><em>Early access — you may encounter bugs. Report issues on <a href="https://github.com/hamstringquestionable/smb3-rs/issues" target="_blank" rel="noopener">GitHub</a>.</em></p>
             <div id="status" class="status" hidden></div>
