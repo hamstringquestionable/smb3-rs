@@ -1270,8 +1270,8 @@ identity is the union of its registry memberships, plus its CHR pattern + palett
 
 | Registry | File offset | Size | Effect |
 |---|---|---|---|
-| Map_EnterSpecialTiles | `0x14DBF` | 11 bytes | Stepping on tile fires a special-entry handler |
-| Special-entry dispatch (parallel) | `0x14DCA` | 11 bytes | Op-code per entry — picks the handler |
+| Map_EnterSpecialTiles | `0x14DBF` | 11 bytes | Pressing A on tile triggers the uniform "enter level" path (see below) |
+| Parallel byte block (unused for dispatch) | `0x14DCA` | 11 bytes | Looks like an op-code table but is **not consumed** by special-entry dispatch — see "Special-entry dispatch is uniform" below |
 | Walk LEFT  | `0x15258` | 9 bytes | Tile is walkable leftward |
 | Walk RIGHT | `0x15261` | 9 bytes | Walkable rightward |
 | Walk DOWN  | `0x1526A` | 9 bytes | Walkable downward |
@@ -1281,9 +1281,10 @@ identity is the union of its registry memberships, plus its CHR pattern + palett
 | Page thresholds | `0x18410` | 8 bytes | Universal level-gate thresholds per palette page (`03 67 BF E9` duplicated). All worlds use the same values via tileset `0x0E`. See "World-Map Level Gating" below. |
 | Background (hardcoded) | — | — | `0x02 0xB4 0xFF` non-walkable |
 
-**Map_EnterSpecialTiles entries** (tile byte → name → dispatch op-code):
+**Map_EnterSpecialTiles entries** (tile byte → name; the third column is the byte at the
+parallel offset `0x14DCA`, kept here for reference but not used for dispatch):
 
-| idx | tile | name | dispatch op |
+| idx | tile | name | parallel byte |
 |---|---|---|---|
 | 0 | `0x50` | TOADHOUSE      | `0x16` |
 | 1 | `0xE8` | SPADEBONUS     | `0x16` |
@@ -1297,9 +1298,47 @@ identity is the union of its registry memberships, plus its CHR pattern + palett
 | 9 | `0xE6` | HANDTRAP       | `0x0F` |
 | 10 | `0xCC` | BOWSERCASTLELL | `0x0F` |
 
-Multiple tile types share the same dispatch op — the per-tile *visual* (metatile pattern)
-gives them their distinct appearance and the op-code groups them by handler. Op `0x16` is
-the generic toad-house-style entry; `0x0F` is shared by HANDTRAP and BOWSERCASTLELL.
+Per-tile visual differences come from the metatile pattern bank (PRG012 bank 0x0C) and
+the palette page encoded in the high 2 bits of the tile byte — not from any per-tile
+handler dispatch.
+
+#### Special-entry dispatch is uniform
+
+A common misreading of the table at `0x14DCA` is that it acts as a parallel jump-target
+table — that pressing A on `0xBC` (PIPE) dispatches to handler `0x27`, on `0xE6`
+(HANDTRAP) to handler `0x0F`, etc. This is **wrong**. Tracing the PRG010 search loop:
+
+```
+$CEC9: CMP $CDAF,Y              ; search Map_EnterSpecialTiles (Y from $1A down)
+       BEQ $CEA7                ; on match — Y is the matched index
+       ...
+$CEA7: LDA #$10                 ; ALL matches set the same Map_Operation
+       STA $0729                ; → "begin enter level" effect
+       ...
+       JMP $CF29                ; continue into pre-level-load setup
+```
+
+Y (the matched index) is **never used** to look up the parallel byte. Every special-entry
+match — TOADHOUSE, PIPE, HANDTRAP, BOWSERCASTLELL, etc. — runs the same handler at
+`$CEA7` and enters the slot's pointer-table-entry as a regular level. This is the same
+path taken when Mario presses A on a level number tile (which falls into `$CEA7` via the
+gate-threshold check at `$CDF8` rather than via the special-entry search).
+
+What about HANDTRAP's grab and PIPE's transit-pipe behavior?
+
+- **HANDTRAP** is a **separate** post-walk-arrival check at `$CF15` (`CMP #$E6 / BNE skip
+  / ... / INC $0729` to bump `Map_Operation` from `$10` to `$11` = grab). It fires while
+  Mario is walking onto the tile, not on A-press, and is keyed on the tile byte directly.
+- **PIPE transit** is not driven by op `0x27` either. The "where does this pipe go"
+  lookup is a property of the slot's pointer-table-entry (a PipeTransit-type entry that
+  loads a transit level whose `OBJ_PIPEWAYCONTROLLER` reads the pipe-destination tables
+  in PRG002). On a regular-level slot, stamping `0xBC` produces a pipe-look tile that
+  enters the underlying regular level on A — no transit, no destination lookup. This is
+  exactly what `troll_pipes` exploits (`src/randomize/troll_pipes.rs`).
+
+The 11 parallel bytes at `0x14DCA` may be vestigial dev-time data, may be consumed by
+some other code path entirely, or may have been a planned-but-cut dispatch mechanism.
+Whatever they are, the special-entry path doesn't read them.
 
 ### World-Map Metatile Pattern Bank (PRG012 bank 0x0C)
 
