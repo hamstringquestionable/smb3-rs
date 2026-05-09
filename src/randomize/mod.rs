@@ -21,4 +21,5 @@ pub mod powerups;
 pub mod qol;
 pub mod rom_data;
 pub mod title_screen;
+pub mod troll_pipes;
 pub mod world_order;

@@ -50,6 +50,12 @@ pub struct SlotAssignment {
     /// When true, the writer stamps a HANDTRAP tile (0xE6) at this slot
     /// instead of a level-number tile. Only set on `SlotKind::Level` slots.
     pub is_hand_trap: bool,
+    /// When true, the writer stamps a PIPE tile (0xBC) at this slot instead
+    /// of a level-number tile. Only set on `SlotKind::Level` slots. The
+    /// slot's level pointer entry is unchanged; pressing A on the pipe-look
+    /// tile drops the player into the underlying level (uniform Map_Op = $10
+    /// dispatch — no pipe-transit state).
+    pub is_troll_pipe: bool,
 }
 
 /// A lock/bridge placed on a path tile.
@@ -617,6 +623,7 @@ fn build_world<R: Rng>(
             kind: SlotKind::HammerBro,
             section: 0,
             is_hand_trap: false,
+            is_troll_pipe: false,
         });
     }
 
@@ -1031,6 +1038,7 @@ fn populate_sections<R: Rng>(
             kind: SlotKind::Pipe,
             section: 0, // pipes don't really belong to a section
             is_hand_trap: false,
+            is_troll_pipe: false,
         });
     }
 
@@ -1064,6 +1072,7 @@ fn populate_sections<R: Rng>(
             kind: SlotKind::Fortress,
             section: si,
             is_hand_trap: false,
+            is_troll_pipe: false,
         });
     }
 
@@ -1113,6 +1122,7 @@ fn populate_sections<R: Rng>(
                     kind: SlotKind::Level,
                     section: si,
                     is_hand_trap: false,
+                    is_troll_pipe: false,
                 });
             } else {
                 slots.push(SlotAssignment {
@@ -1120,6 +1130,7 @@ fn populate_sections<R: Rng>(
                     kind: SlotKind::HammerBro,
                     section: si,
                     is_hand_trap: false,
+                    is_troll_pipe: false,
                 });
             }
         }

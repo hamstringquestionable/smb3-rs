@@ -122,6 +122,13 @@ pub struct Options {
     /// checkmark so subsequent visits don't re-grab.
     #[serde(default = "default_true")]
     pub hands_levels: bool,
+    /// Disguise exactly one regular-level slot per world W2-W8 as a pipe
+    /// (tile 0xBC). The player walks freely past the pipe; pressing A on
+    /// it loads the underlying level (no pipe-transit, no destination
+    /// table — uniform world-map dispatch enters the slot's pointer entry
+    /// like any level number tile).
+    #[serde(default = "default_true")]
+    pub troll_pipes: bool,
     /// Include ~9 unreferenced beta levels in the overworld shuffle pool.
     #[serde(default)]
     pub include_beta_stages: bool,
@@ -295,6 +302,7 @@ impl Options {
             | (self.shuffle_pipes as u8) << 5
             | (self.fix_drawbridges as u8) << 4
             | (self.remove_rocks as u8) << 3
+            | (self.troll_pipes as u8) << 2
             | (self.shuffle_airships as u8);
 
         let b3 = ((self.hammer_breaks_bridges as u8) << 7)
@@ -437,6 +445,7 @@ impl Options {
             shuffle_airships: b2 & 1 != 0,
             fix_drawbridges: (b2 >> 4) & 1 != 0,
             remove_rocks: (b2 >> 3) & 1 != 0,
+            troll_pipes: (b2 >> 2) & 1 != 0,
             starting_lives,
             card_speed_clear: (b4 >> 7) & 1 != 0,
             remove_n_cards: (b4 >> 6) & 1 != 0,
@@ -530,6 +539,7 @@ impl Default for Options {
             hammer_breaks_bridges: false,
             shuffle_spade_games: true,
             hands_levels: true,
+            troll_pipes: true,
             ground: EnemyMode::Shuffle,
             shell: EnemyMode::Shuffle,
             flying: EnemyMode::Shuffle,
@@ -676,6 +686,10 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         rom.set_tag("hands_levels");
         randomize::hands_levels::mark_hand_traps(&mut build, &mut rng);
         randomize::hands_levels::install_full_grab(rom);
+    }
+    if options.troll_pipes {
+        rom.set_tag("troll_pipes");
+        randomize::troll_pipes::mark_troll_pipes(&mut build, &mut rng);
     }
     randomize::overworld_writer::write_overworld(
         rom, &build, &pickup, &catalog, &mut rng, true,
@@ -1023,6 +1037,7 @@ mod tests {
             hammer_breaks_bridges: true,
             shuffle_spade_games: true,
             hands_levels: true,
+            troll_pipes: true,
             ground: EnemyMode::Wild,
             shell: EnemyMode::Wild,
             flying: EnemyMode::Wild,
@@ -1091,6 +1106,7 @@ mod tests {
             hammer_breaks_bridges: false,
             shuffle_spade_games: false,
             hands_levels: false,
+            troll_pipes: false,
             ground: EnemyMode::Off,
             shell: EnemyMode::Off,
             flying: EnemyMode::Off,
@@ -1451,6 +1467,7 @@ mod tests {
             hammer_breaks_bridges: false,
             shuffle_spade_games: false,
             hands_levels: false,
+            troll_pipes: false,
             ground: EnemyMode::Off,
             shell: EnemyMode::Off,
             flying: EnemyMode::Off,
@@ -1501,6 +1518,7 @@ mod tests {
             hammer_breaks_bridges: true,
             shuffle_spade_games: true,
             hands_levels: true,
+            troll_pipes: true,
             ground: EnemyMode::Wild,
             shell: EnemyMode::Wild,
             flying: EnemyMode::Wild,
