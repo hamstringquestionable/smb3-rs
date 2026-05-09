@@ -40,7 +40,7 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x35530, 66, "big_q_block: lookup routine + tables"),
     // PRG027 (file 0x36010, CPU $A000–$BFFF)
     (0x379D9, 894, "king_quotes: 7 quotes + hook (7×120 + 54)"),
-    // PRG010 (file 0x14010, CPU $A000–$BFFF during map)
+    // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
     (0x15554, 67, "fx_screen_check: cross-screen lock patch"),
     (0x15DF0, 35, "canoe_fix: death respawn position save"),
     // PRG011 (file 0x16010, CPU $A000–$BFFF during map)
