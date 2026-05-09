@@ -212,6 +212,11 @@ struct Cli {
     #[arg(long)]
     sprite_patch: Option<PathBuf>,
 
+    /// Apply the bundled Super Toad (Blue) sprite swap by JosueCr4ft.
+    /// Source: https://mfgg.net/index.php?act=resdb&param=02&c=7&id=38435
+    #[arg(long)]
+    toad: bool,
+
     /// Dump the write log to a file (shows every ROM byte changed, grouped by module)
     #[arg(long)]
     write_log: Option<PathBuf>,
@@ -389,7 +394,28 @@ fn main() {
     }
     eprintln!("  Output:   {}", output_path.display());
 
-    // Apply sprite patch before randomization so randomizer writes take priority
+    // Apply sprite patch before randomization so randomizer writes take priority.
+    // --toad applies a bundled IPS first; --sprite-patch layers on top of that.
+    // Keep the pristine input bytes so the final IPS diff includes the visual
+    // swap (otherwise the .ips file would only contain the randomization delta
+    // relative to a visual-patched ROM).
+    let pristine_input = rom_data.clone();
+    const TOAD_IPS: &[u8] = include_bytes!("../web/visual-patches/super-toad-josuecr4ft.ips");
+    let rom_data = if cli.toad {
+        match smb3_rs::ips::apply_ips_patch(&rom_data, TOAD_IPS) {
+            Ok(patched) => {
+                eprintln!("  Sprite swap: Super Toad (Blue) by JosueCr4ft");
+                eprintln!("               https://mfgg.net/index.php?act=resdb&param=02&c=7&id=38435");
+                patched
+            }
+            Err(e) => {
+                eprintln!("Error applying bundled Toad swap: {e}");
+                process::exit(1);
+            }
+        }
+    } else {
+        rom_data
+    };
     let rom_data = if let Some(ref patch_path) = cli.sprite_patch {
         let patch_data = match fs::read(patch_path) {
             Ok(data) => data,
@@ -442,7 +468,10 @@ fn main() {
     let output_data = if cli.patched_rom {
         rom.output_bytes().to_vec()
     } else {
-        smb3_rs::ips::build_ips_patch(rom.original_bytes(), rom.output_bytes())
+        // Diff against the pristine input (pre-visual-patch) so the IPS
+        // is self-contained. When the input is unheadered, output_bytes()
+        // strips the synthetic header back off, matching pristine_input.
+        smb3_rs::ips::build_ips_patch(&pristine_input, rom.output_bytes())
     };
 
     if let Err(e) = fs::write(&output_path, &output_data) {
