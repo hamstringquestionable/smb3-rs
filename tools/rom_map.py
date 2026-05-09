@@ -16,6 +16,8 @@ Modes:
   python3 tools/rom_map.py [rom] --level 3-2        # look up a level by name
   python3 tools/rom_map.py [rom] --level 7F1        # fortress lookup
   python3 tools/rom_map.py [rom] --level 8B         # Bowser Castle
+  python3 tools/rom_map.py [rom] --tile 0xE6        # look up a world-map tile byte
+  python3 tools/rom_map.py [rom] --tile 45          # CHR pattern, behavior, palette
   python3 tools/rom_map.py [rom] --check-dispatches # validate 4-byte dispatch tables
 
 Default ROM: "Super Mario Bros. 3 (USA) (Rev 1).nes"
@@ -2054,6 +2056,7 @@ def main():
     mode = "json"  # default: generate JSON
     world_filter = None
     level_query = None
+    tile_query = None
     traverse_rocks = False
 
     args = sys.argv[1:]
@@ -2080,6 +2083,10 @@ def main():
         elif args[i] == "--level" and i + 1 < len(args):
             mode = "level"
             level_query = args[i + 1]
+            i += 2
+        elif args[i] == "--tile" and i + 1 < len(args):
+            mode = "tile"
+            tile_query = args[i + 1]
             i += 2
         elif args[i] == "--check-dispatches":
             mode = "check_dispatches"
@@ -2163,6 +2170,9 @@ def main():
 
     elif mode == "level":
         print(render_level_lookup(rom, level_query))
+
+    elif mode == "tile":
+        print(render_tile_lookup(rom, tile_query))
 
     elif mode == "check_dispatches":
         check_dispatch_tables(rom)
@@ -2576,6 +2586,204 @@ def render_level_lookup(rom, query):
         lines.append("")
 
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# World-map tile byte lookup
+# --------------------------------------------------------------------------
+#
+# A world-map tile byte (0x00..0xFF) is fully described by:
+#   1. Its CHR pattern — 4 quadrant CHR indices in metatile bank 0x0C
+#      (file 0x18010..0x18410, four parallel 256-byte tables)
+#   2. Its palette — encoded in the high 2 bits of the tile byte itself
+#      (per southbird disasm: "palette is determined by the upper 2 bits
+#      of a TILE"). See PALETTE_PAGES below.
+#   3. Behavioral classification — which of the small registries below
+#      it appears in. Each registry adds a behavior to a tile.
+
+# Metatile pattern bank (PRG012 / bank 0x0C).
+TILE_BANK_NW = 0x18010   # 256 bytes: NW (top-left) CHR index per tile
+TILE_BANK_NE = 0x18110   # 256 bytes: NE
+TILE_BANK_SW = 0x18210   # 256 bytes: SW
+TILE_BANK_SE = 0x18310   # 256 bytes: SE
+
+# Direction-walk tables (PRG010). Each is 9 bytes — listing tile bytes
+# walkable in that direction. Padded with duplicates if fewer than 9.
+WALK_LEFT  = 0x15258
+WALK_RIGHT = 0x15261
+WALK_DOWN  = 0x1526A
+WALK_UP    = 0x15273
+
+# Special-entry tile list + parallel dispatch op-code (PRG010). 11 entries.
+# Stepping on a tile in the list fires the handler keyed by its op-code.
+# The CPU loop reads up to index $1A (bug) — entries 11..26 still match
+# but dispatch to garbage handlers.
+ENTER_TILES_OFF    = 0x14DBF
+ENTER_DISPATCH_OFF = 0x14DCA
+ENTER_NAMES = [
+    "TOADHOUSE", "SPADEBONUS", "PIPE", "ALTTOADHOUSE", "CASTLEBOTTOM",
+    "SPIRAL", "ALTSPIRAL", "PATHANDNUB", "DANCINGFLOWER", "HANDTRAP",
+    "BOWSERCASTLELL",
+]
+
+# Removable obstacles (8 bytes) — locks/rocks/water cleared after fortress.
+REMOVABLE_OFF = 0x18447
+# Special-completion (5 bytes) — one-shot tiles tracked in Map_Completions.
+SPECIAL_COMPL_OFF = 0x18457
+# Per-page completion thresholds (4 bytes) — tiles >= threshold for their
+# palette page are completion-tracked. Page = high 2 bits of tile byte.
+THRESHOLDS_OFF = 0x18410
+
+# Background / void tiles — non-walkable visual fill.
+BACKGROUND_TILES = {0x02, 0xB4, 0xFF}
+
+
+def _parse_tile_query(query):
+    """Parse a tile byte from various string forms: 0xE6, E6, 230."""
+    q = query.strip().lower()
+    if q.startswith("0x"):
+        return int(q, 16)
+    # Try hex first if it has hex chars, else decimal
+    try:
+        if any(c in "abcdef" for c in q) or len(q) <= 2:
+            return int(q, 16)
+        return int(q)
+    except ValueError:
+        return int(q, 16)
+
+
+def render_tile_lookup(rom, query):
+    """Look up a world-map tile byte: visual pattern, palette, behavior."""
+    try:
+        tile = _parse_tile_query(query)
+    except ValueError:
+        return f"Could not parse tile byte: '{query}'. Try '0xE6' or 'E6'."
+    if not (0 <= tile <= 0xFF):
+        return f"Tile byte must be 0x00..0xFF (got 0x{tile:X})"
+
+    nw = rom[TILE_BANK_NW + tile]
+    ne = rom[TILE_BANK_NE + tile]
+    sw = rom[TILE_BANK_SW + tile]
+    se = rom[TILE_BANK_SE + tile]
+    palette_page = tile >> 6  # high 2 bits
+
+    enter_tiles = list(rom[ENTER_TILES_OFF:ENTER_TILES_OFF + 11])
+    enter_disp  = list(rom[ENTER_DISPATCH_OFF:ENTER_DISPATCH_OFF + 11])
+    walk_left   = set(rom[WALK_LEFT:WALK_LEFT + 9])
+    walk_right  = set(rom[WALK_RIGHT:WALK_RIGHT + 9])
+    walk_down   = set(rom[WALK_DOWN:WALK_DOWN + 9])
+    walk_up     = set(rom[WALK_UP:WALK_UP + 9])
+    removable   = set(rom[REMOVABLE_OFF:REMOVABLE_OFF + 8])
+    spec_compl  = set(rom[SPECIAL_COMPL_OFF:SPECIAL_COMPL_OFF + 5])
+    thresholds  = list(rom[THRESHOLDS_OFF:THRESHOLDS_OFF + 4])
+    page_thresh = thresholds[palette_page]
+
+    # Find usage in vanilla world grids
+    usage = []  # list of (world_idx, [(row, col), ...])
+    for wi, info in enumerate(MAP_TILE_GRIDS[:8]):
+        positions = []
+        cols = info["columns"]
+        screens = info["screens"]
+        base = info["file_offset"]
+        for s in range(screens):
+            for r in range(9):
+                for c in range(16):
+                    if rom[base + s*144 + r*16 + c] == tile:
+                        positions.append((r, s*16 + c))
+        if positions:
+            usage.append((wi, positions))
+
+    # Find visually identical siblings (same NW/NE/SW/SE pattern)
+    siblings = []
+    for other in range(256):
+        if other == tile:
+            continue
+        if (rom[TILE_BANK_NW + other] == nw and
+            rom[TILE_BANK_NE + other] == ne and
+            rom[TILE_BANK_SW + other] == sw and
+            rom[TILE_BANK_SE + other] == se):
+            siblings.append(other)
+
+    L = []
+    L.append(f"{YELLOW}Tile 0x{tile:02X}{RESET}")
+
+    # Special-entry classification — find name if any
+    enter_name = None
+    enter_idx = None
+    enter_op = None
+    if tile in enter_tiles[:11]:
+        enter_idx = enter_tiles.index(tile)
+        enter_name = ENTER_NAMES[enter_idx]
+        enter_op = enter_disp[enter_idx]
+        L.append(f"  Special-entry: {WHITE}{enter_name}{RESET}  "
+                 f"(idx {enter_idx} in Map_EnterSpecialTiles, dispatch op 0x{enter_op:02X})")
+
+    # Palette
+    L.append(f"")
+    L.append(f"  {WHITE}Palette page:{RESET} {palette_page} "
+             f"(high 2 bits = 0b{(tile >> 6):02b})")
+    L.append(f"    palette index {palette_page} of the current world's "
+             f"Map_Tile_ColorSet")
+    L.append(f"    page range:   0x{palette_page << 6:02X}..0x{(palette_page << 6) | 0x3F:02X}")
+    L.append(f"    completion threshold for this page: 0x{page_thresh:02X} "
+             f"(tile {'>=' if tile >= page_thresh else '<'} threshold "
+             f"-> {'completion-tracked' if tile >= page_thresh else 'not tracked'})")
+
+    # Visual pattern
+    L.append(f"")
+    L.append(f"  {WHITE}Visual (metatile bank 0x0C):{RESET}")
+    L.append(f"    NW=0x{nw:02X}  NE=0x{ne:02X}")
+    L.append(f"    SW=0x{sw:02X}  SE=0x{se:02X}")
+    L.append(f"    file offsets: 0x{TILE_BANK_NW + tile:05X} 0x{TILE_BANK_NE + tile:05X} "
+             f"0x{TILE_BANK_SW + tile:05X} 0x{TILE_BANK_SE + tile:05X}")
+    if siblings:
+        L.append(f"    visually identical to: " +
+                 ", ".join(f"0x{b:02X}" for b in siblings) +
+                 "  (same CHR; differs only by palette page)")
+
+    # Behavior registries
+    L.append(f"")
+    L.append(f"  {WHITE}Behavior:{RESET}")
+    dirs = []
+    if tile in walk_left:  dirs.append("LEFT")
+    if tile in walk_right: dirs.append("RIGHT")
+    if tile in walk_down:  dirs.append("DOWN")
+    if tile in walk_up:    dirs.append("UP")
+    L.append(f"    Movement       : {', '.join(dirs) if dirs else '(blocks all directions)'}")
+    if enter_name:
+        L.append(f"    Special-entry  : {enter_name} (op 0x{enter_op:02X})")
+    else:
+        L.append(f"    Special-entry  : -")
+    L.append(f"    Removable      : {'yes (cleared after fortress)' if tile in removable else '-'}")
+    L.append(f"    Special-compl. : {'yes (one-shot, tracked)' if tile in spec_compl else '-'}")
+    L.append(f"    Background     : {'yes (non-walkable)' if tile in BACKGROUND_TILES else '-'}")
+
+    # Vanilla usage
+    L.append(f"")
+    L.append(f"  {WHITE}Vanilla usage:{RESET}")
+    if not usage:
+        L.append(f"    (not used in any world's tile grid)")
+    else:
+        for wi, positions in usage:
+            wname = MAP_TILE_GRIDS[wi]["name"]
+            preview = positions[:8]
+            extra = "" if len(positions) <= 8 else f" ... +{len(positions)-8} more"
+            L.append(f"    {wname}: " +
+                     ", ".join(f"({r},{c})" for r, c in preview) + extra)
+
+    # Footer: registries reference
+    L.append(f"")
+    L.append(f"  {DIM}Behavior tables (file offsets):{RESET}")
+    L.append(f"  {DIM}  Map_EnterSpecialTiles  0x{ENTER_TILES_OFF:05X} (11 bytes){RESET}")
+    L.append(f"  {DIM}  Special-entry dispatch 0x{ENTER_DISPATCH_OFF:05X} (11 bytes){RESET}")
+    L.append(f"  {DIM}  Walk LEFT  0x{WALK_LEFT:05X} (9 bytes){RESET}")
+    L.append(f"  {DIM}  Walk RIGHT 0x{WALK_RIGHT:05X} (9 bytes){RESET}")
+    L.append(f"  {DIM}  Walk DOWN  0x{WALK_DOWN:05X} (9 bytes){RESET}")
+    L.append(f"  {DIM}  Walk UP    0x{WALK_UP:05X} (9 bytes){RESET}")
+    L.append(f"  {DIM}  Removable  0x{REMOVABLE_OFF:05X} (8 bytes){RESET}")
+    L.append(f"  {DIM}  Special-completion 0x{SPECIAL_COMPL_OFF:05X} (5 bytes){RESET}")
+    L.append(f"  {DIM}  Page thresholds    0x{THRESHOLDS_OFF:05X} (4 bytes){RESET}")
+    return "\n".join(L)
 
 
 def render_check_map(rom, world_idx, pipe_pairs, uncovered_set):
