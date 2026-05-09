@@ -2,6 +2,7 @@ import init, {
 	generate_patch,
 	generate_patched_rom,
 	apply_visual_patch,
+	build_ips_patch,
 	encode_flag_key,
 	decode_flag_key,
 	default_options_json,
@@ -44,6 +45,14 @@ const VISUAL_PATCHES = [
 		author: "Zynk Oxhyde",
 		url: "https://www.romhacking.net/hacks/6284/",
 		color: "#e07db4", // Peach pink
+	},
+	{
+		id: "super_toad",
+		label: "Super Toad (Blue)",
+		path: "./visual-patches/super-toad-josuecr4ft.ips",
+		author: "JosueCr4ft",
+		url: "https://mfgg.net/index.php?act=resdb&param=02&c=7&id=38435",
+		color: "#3a3aff", // Toad blue
 	},
 ];
 
@@ -282,22 +291,30 @@ generateBtn.addEventListener("click", async () => {
 		const mimeType = "application/octet-stream";
 		let visualLabel = "";
 
-		if (outputFormat === "rom") {
-			result = generate_patched_rom(romBytes, seed, options);
-			if (visualPatchId) {
-				const entry = VISUAL_PATCHES.find((p) => p.id === visualPatchId);
-				try {
-					const patch = await fetchVisualPatch(visualPatchId);
-					result = apply_visual_patch(result, patch);
-					visualLabel = entry?.label ?? visualPatchId;
-				} catch (err) {
-					showStatus(`Visual patch '${entry?.label ?? visualPatchId}' failed to load: ${err}`, "error");
-					return;
-				}
+		// Apply visual IPS to the input ROM first so randomization layers on top
+		// (matches CLI ordering). For IPS output, diff against the *original*
+		// vanilla input so the resulting .ips contains both the visual swap and
+		// the randomization changes — applying it to a fresh ROM gives the same
+		// result as the .nes output.
+		let inputBytes = romBytes;
+		if (visualPatchId) {
+			const entry = VISUAL_PATCHES.find((p) => p.id === visualPatchId);
+			try {
+				const patch = await fetchVisualPatch(visualPatchId);
+				inputBytes = apply_visual_patch(romBytes, patch);
+				visualLabel = entry?.label ?? visualPatchId;
+			} catch (err) {
+				showStatus(`Visual patch '${entry?.label ?? visualPatchId}' failed to load: ${err}`, "error");
+				return;
 			}
+		}
+
+		if (outputFormat === "rom") {
+			result = generate_patched_rom(inputBytes, seed, options);
 			filename = `smb3-rs_${seed}.nes`;
 		} else {
-			result = generate_patch(romBytes, seed, options);
+			const finalBytes = generate_patched_rom(inputBytes, seed, options);
+			result = build_ips_patch(romBytes, finalBytes);
 			filename = `smb3-rs_${seed}.ips`;
 		}
 

@@ -24,6 +24,14 @@ pub fn apply_visual_patch(rom: &[u8], patch: &[u8]) -> Result<Vec<u8>, JsError> 
     crate::apply_ips_patch(rom, patch).map_err(|e| JsError::new(&e))
 }
 
+#[wasm_bindgen]
+pub fn build_ips_patch(original: &[u8], modified: &[u8]) -> Result<Vec<u8>, JsError> {
+    if original.len() != modified.len() {
+        return Err(JsError::new("ROM sizes must match for diffing"));
+    }
+    Ok(crate::ips::build_ips_patch(original, modified))
+}
+
 fn parse_options(json: &str) -> Result<Options, JsError> {
     serde_json::from_str(json).map_err(|e| JsError::new(&format!("Invalid options: {e}")))
 }
