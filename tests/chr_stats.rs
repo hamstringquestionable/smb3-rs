@@ -9,7 +9,7 @@ use smb3_rs::randomizer::{self, Options};
 use smb3_rs::rom::Rom;
 
 const NUM_SEEDS: u64 = 200;
-const FLAG_KEY: &str = "SMB3R-1ZZZJ1FXN2M4J007R0";
+const FLAG_KEY: &str = "SMB3R-22KVJ17RAHA0A00700";
 
 type PageCounts = BTreeMap<u8, u64>;
 

@@ -116,6 +116,12 @@ pub struct Options {
     /// positions (and the overworld builder leaves those tiles untouched).
     #[serde(default = "default_true")]
     pub shuffle_spade_games: bool,
+    /// Replace ~10% of regular-level slots with visible hand-trap tiles (0xE6).
+    /// On arrival the player is grabbed (100%, no 50/50 roll) and pulled into
+    /// the underlying level. After completion, vanilla rewrites the tile to a
+    /// checkmark so subsequent visits don't re-grab.
+    #[serde(default = "default_true")]
+    pub hands_levels: bool,
     /// Include ~9 unreferenced beta levels in the overworld shuffle pool.
     #[serde(default)]
     pub include_beta_stages: bool,
@@ -285,6 +291,7 @@ impl Options {
             | (self.chest_items as u8);
 
         let b2 = (self.remove_whistles as u8) << 7
+            | (self.hands_levels as u8) << 6
             | (self.shuffle_pipes as u8) << 5
             | (self.fix_drawbridges as u8) << 4
             | (self.remove_rocks as u8) << 3
@@ -425,6 +432,7 @@ impl Options {
             airship_lock: (b1 >> 1) & 1 != 0,
             chest_items: b1 & 1 != 0,
             remove_whistles: (b2 >> 7) & 1 != 0,
+            hands_levels: (b2 >> 6) & 1 != 0,
             shuffle_pipes: (b2 >> 5) & 1 != 0,
             shuffle_airships: b2 & 1 != 0,
             fix_drawbridges: (b2 >> 4) & 1 != 0,
@@ -521,6 +529,7 @@ impl Default for Options {
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             shuffle_spade_games: true,
+            hands_levels: true,
             ground: EnemyMode::Shuffle,
             shell: EnemyMode::Shuffle,
             flying: EnemyMode::Shuffle,
@@ -662,7 +671,12 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     rom.set_tag("overworld/builder");
     let catalog = randomize::node_catalog::NodeCatalog::build(rom, options.include_beta_stages);
     let pickup = randomize::overworld_pickup::pick_up(rom, &catalog, options.shuffle_spade_games);
-    let build = randomize::overworld_build::build(rom, &pickup, &catalog, &mut rng);
+    let mut build = randomize::overworld_build::build(rom, &pickup, &catalog, &mut rng);
+    if options.hands_levels {
+        rom.set_tag("hands_levels");
+        randomize::hands_levels::mark_hand_traps(&mut build, &mut rng);
+        randomize::hands_levels::install_full_grab(rom);
+    }
     randomize::overworld_writer::write_overworld(
         rom, &build, &pickup, &catalog, &mut rng, true,
     );
@@ -1008,6 +1022,7 @@ mod tests {
             hammer_breaks_locks: true,
             hammer_breaks_bridges: true,
             shuffle_spade_games: true,
+            hands_levels: true,
             ground: EnemyMode::Wild,
             shell: EnemyMode::Wild,
             flying: EnemyMode::Wild,
@@ -1075,6 +1090,7 @@ mod tests {
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             shuffle_spade_games: false,
+            hands_levels: false,
             ground: EnemyMode::Off,
             shell: EnemyMode::Off,
             flying: EnemyMode::Off,
@@ -1434,6 +1450,7 @@ mod tests {
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             shuffle_spade_games: false,
+            hands_levels: false,
             ground: EnemyMode::Off,
             shell: EnemyMode::Off,
             flying: EnemyMode::Off,
@@ -1483,6 +1500,7 @@ mod tests {
             hammer_breaks_locks: true,
             hammer_breaks_bridges: true,
             shuffle_spade_games: true,
+            hands_levels: true,
             ground: EnemyMode::Wild,
             shell: EnemyMode::Wild,
             flying: EnemyMode::Wild,
