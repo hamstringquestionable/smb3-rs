@@ -47,6 +47,9 @@ pub struct SlotAssignment {
     pub kind: SlotKind,
     /// Which section (0-based) this slot belongs to.
     pub section: usize,
+    /// When true, the writer stamps a HANDTRAP tile (0xE6) at this slot
+    /// instead of a level-number tile. Only set on `SlotKind::Level` slots.
+    pub is_hand_trap: bool,
 }
 
 /// A lock/bridge placed on a path tile.
@@ -613,6 +616,7 @@ fn build_world<R: Rng>(
             pos: *pos,
             kind: SlotKind::HammerBro,
             section: 0,
+            is_hand_trap: false,
         });
     }
 
@@ -1026,6 +1030,7 @@ fn populate_sections<R: Rng>(
             pos,
             kind: SlotKind::Pipe,
             section: 0, // pipes don't really belong to a section
+            is_hand_trap: false,
         });
     }
 
@@ -1058,6 +1063,7 @@ fn populate_sections<R: Rng>(
             pos,
             kind: SlotKind::Fortress,
             section: si,
+            is_hand_trap: false,
         });
     }
 
@@ -1106,12 +1112,14 @@ fn populate_sections<R: Rng>(
                     pos,
                     kind: SlotKind::Level,
                     section: si,
+                    is_hand_trap: false,
                 });
             } else {
                 slots.push(SlotAssignment {
                     pos,
                     kind: SlotKind::HammerBro,
                     section: si,
+                    is_hand_trap: false,
                 });
             }
         }

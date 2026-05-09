@@ -124,6 +124,10 @@ struct Cli {
     #[arg(long)]
     no_shuffle_spade_games: bool,
 
+    /// Disable hand-trap level slots (on by default; ~10% of levels become visible 0xE6 hand-traps that grab the player on arrival)
+    #[arg(long)]
+    no_hands_levels: bool,
+
     /// Include ~9 unreferenced beta levels in the overworld shuffle pool (off by default)
     #[arg(long)]
     include_beta_stages: bool,
@@ -315,6 +319,7 @@ fn main() {
             hammer_breaks_locks: cli.hammer_breaks_locks,
             hammer_breaks_bridges: cli.hammer_breaks_bridges,
             shuffle_spade_games: !cli.no_shuffle_spade_games,
+            hands_levels: !cli.no_hands_levels,
             include_beta_stages: cli.include_beta_stages,
             airship_lock: !cli.no_airship_lock,
             ground: parse_enemy_mode(&cli.ground, "ground"),

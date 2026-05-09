@@ -2,6 +2,7 @@ pub mod autoscroll;
 pub mod enemies;
 pub mod enemy_jitter;
 pub mod hand_rooms;
+pub mod hands_levels;
 pub mod items;
 pub mod king_quotes;
 pub mod koopalings;

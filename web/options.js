@@ -174,6 +174,10 @@ export const SCHEMA = [
 		label: "Shuffle Airships",
 		tip: "Shuffle airship levels across worlds 1-7",
 		group: "overworld", inFlagKey: true },
+	{ id: "hands_levels", type: "bool", default: true,
+		label: "Hand-Trap Levels", flavor: "It's a trap!",
+		tip: "Replace ~10% of regular level slots with visible hand-trap tiles. Walking onto one always grabs the player and pulls them into the underlying level.",
+		group: "overworld", inFlagKey: true },
 
 	// --- Quality of Life ---
 	{ id: "airship_lock", type: "bool", default: true,

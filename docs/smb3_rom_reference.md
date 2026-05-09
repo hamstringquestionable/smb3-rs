@@ -1262,6 +1262,189 @@ SPIRAL, ALTSPIRAL, PATHANDNUB, DANCINGFLOWER, HANDTRAP, BOWSERCASTLELL
 **Known bug:** The tile entry check loop iterates up to index $1A instead of $0A,
 causing subsequent palette data bytes to be incorrectly treated as enterable tile types.
 
+### World-Map Tile Behavior
+
+The behavior of any world-map tile byte (0x00–0xFF) is determined by which of these
+small registries it appears in. Each registry adds one behavior; the tile's full
+identity is the union of its registry memberships, plus its CHR pattern + palette page.
+
+| Registry | File offset | Size | Effect |
+|---|---|---|---|
+| Map_EnterSpecialTiles | `0x14DBF` | 11 bytes | Stepping on tile fires a special-entry handler |
+| Special-entry dispatch (parallel) | `0x14DCA` | 11 bytes | Op-code per entry — picks the handler |
+| Walk LEFT  | `0x15258` | 9 bytes | Tile is walkable leftward |
+| Walk RIGHT | `0x15261` | 9 bytes | Walkable rightward |
+| Walk DOWN  | `0x1526A` | 9 bytes | Walkable downward |
+| Walk UP    | `0x15273` | 9 bytes | Walkable upward |
+| Removable obstacles | `0x18447` | 8 bytes | Cleared after fortress beat (locks/rocks/water) |
+| Special-completion | `0x18457` | 5 bytes | One-shot tracked in Map_Completions |
+| Page thresholds | `0x18410` | 8 bytes | Universal level-gate thresholds per palette page (`03 67 BF E9` duplicated). All worlds use the same values via tileset `0x0E`. See "World-Map Level Gating" below. |
+| Background (hardcoded) | — | — | `0x02 0xB4 0xFF` non-walkable |
+
+**Map_EnterSpecialTiles entries** (tile byte → name → dispatch op-code):
+
+| idx | tile | name | dispatch op |
+|---|---|---|---|
+| 0 | `0x50` | TOADHOUSE      | `0x16` |
+| 1 | `0xE8` | SPADEBONUS     | `0x16` |
+| 2 | `0xBC` | PIPE           | `0x27` |
+| 3 | `0xE0` | ALTTOADHOUSE   | `0x16` |
+| 4 | `0xC9` | CASTLEBOTTOM   | `0x2A` |
+| 5 | `0x5F` | SPIRAL         | `0x17` |
+| 6 | `0xDF` | ALTSPIRAL      | `0x30` |
+| 7 | `0x66` | PATHANDNUB     | `0x16` |
+| 8 | `0xBD` | DANCINGFLOWER  | `0x1A` |
+| 9 | `0xE6` | HANDTRAP       | `0x0F` |
+| 10 | `0xCC` | BOWSERCASTLELL | `0x0F` |
+
+Multiple tile types share the same dispatch op — the per-tile *visual* (metatile pattern)
+gives them their distinct appearance and the op-code groups them by handler. Op `0x16` is
+the generic toad-house-style entry; `0x0F` is shared by HANDTRAP and BOWSERCASTLELL.
+
+### World-Map Metatile Pattern Bank (PRG012 bank 0x0C)
+
+Each tile byte is rendered as 4 CHR pattern indices forming a 2×2 metatile (16×16 px).
+The bank is **shared across all 8 worlds** — re-skinning a tile changes its appearance in
+every world.
+
+| Quadrant | File offset | Size |
+|---|---|---|
+| NW | `0x18010 + tile` | 256 bytes |
+| NE | `0x18110 + tile` | 256 bytes |
+| SW | `0x18210 + tile` | 256 bytes |
+| SE | `0x18310 + tile` | 256 bytes |
+
+Total: 4 × 256 = 1024 bytes (matches the doc's "1024-byte maps" per metatile bank).
+
+### World-Map Palette Rule
+
+**Palette is encoded in the upper 2 bits of the tile byte itself** — there is no per-tile
+palette lookup table (per southbird disasm comment in PRG013: *"Remember that palette is
+determined by the upper 2 bits of a TILE (not the PATTERN)"*).
+
+| Range | High 2 bits | Palette code |
+|---|---|---|
+| `0x00–0x3F` | `00` | 0 |
+| `0x40–0x7F` | `01` | 1 |
+| `0x80–0xBF` | `10` | 2 |
+| `0xC0–0xFF` | `11` | 3 |
+
+Each world picks one of 9 ColorSets via `Map_Tile_ColorSets`
+(`.byte $00, $01, $00, $03, $04, $05, $06, $07, $02` — W1 and W3 share ColorSet 0).
+The 4 palettes within a ColorSet define what the 4 pages look like in that world.
+
+This is also why `Tile_Attributes_TS0` / THRESHOLDS at `0x18410` is 4 bytes (`03 67 BF E9`)
+— one per palette page.
+
+**Practical consequence**: two tile bytes with the same CHR pattern but different palette
+pages render as visually-different tiles (e.g. `0x44` and `0xD9` share CHR `FE FE FE CD`
+but `0x44` uses palette 1 and `0xD9` uses palette 3). To clone a tile's full visual,
+choose the destination byte in the same palette page as the source.
+
+### Tile-Byte Lookup Tool
+
+Use `tools/rom_map.py --tile <byte>` (or the `/tile` slash command) to inspect any tile
+byte: CHR pattern, palette page, behavior registry membership, vanilla usage, and visually
+identical siblings (same CHR; differs only by palette).
+
+### World-Map Level Gating
+
+The "you can only back out of a level slot" rule that lets the player walk freely along
+paths but blocks them from crossing through level/fortress slots is implemented purely as
+a **per-palette-page byte-value threshold**, not a per-tile flag table. This is the
+level-gate mechanism.
+
+**Routine** — `MO_NormalMoveEnter` at PRG010 `$CDDC`. When Mario stands on a tile with a
+pointer-table entry and presses a direction:
+
+```
+LDA <World_Map_Tile          ; A = current tile byte ($E5)
+AND #$C0 / ROL ROL ROL / TAY ; Y = palette page of current tile (0..3)
+LDA <World_Map_Tile
+CMP $7E98,Y                  ; threshold for that palette page
+BCS $CEA7                    ; gate fires → reverse-direction-only handler
+                             ; (else fall through to normal move)
+```
+
+The gate applies to the **current** tile (the one Mario is standing on). When it fires,
+operation `0x10` is dispatched, which restricts Mario to backing out the way he came.
+
+**Rule:** a tile byte is gated if `byte >= threshold[byte's palette page]`. Bytes
+**below** the threshold pass freely; bytes **at or above** trigger the reverse-only gate.
+
+**Thresholds are universal across all 8 worlds.** A common misreading is to expect a
+per-world threshold table, but the load chain is:
+
+1. World init runs `LDY $0727 / LDA $A92B,Y / STA $070A` (at file `0x349FF`). The table
+   at `$A92B` (file `0x3493B`) maps `World_Num → tileset` and contains
+   `0E 0E 0E 0E 0E 0E 0E 0E` — i.e. **all 8 worlds resolve to tileset `0x0E` (14)** for
+   the world-map renderer.
+2. The `$F52E` STA loop reads `$070A`, doubles it as Y, fetches a 16-bit pointer from
+   `$94F1,Y / $94F2,Y` (a 16-entry tileset → data-pointer table at file `0x3D501`), then
+   copies 8 bytes from that pointer into `$7E94..$7E9B`.
+3. The pointer table has tilesets 0–14 all pointing to `$A400` (with PRG006 mapped at
+   `$A000–$BFFF`, that's file `0x18410`). Tileset 15 points elsewhere and is unused for
+   world maps.
+4. The 8 bytes at file `0x18410` are `03 67 BF E9 03 67 BF E9` — duplicated (only the
+   second half at `$7E98–$7E9B` is used by the level-gate `CMP $7E98,Y`; what `$7E94–
+   $7E97` is consumed by, if anything, isn't documented here).
+
+So **all worlds use the same thresholds**:
+
+| Page | Range       | Threshold | Gated bytes (≥ threshold)       |
+|------|-------------|-----------|---------------------------------|
+| 0    | `0x00–0x3F` | `0x03`    | `0x03–0x3F` (level numbers)     |
+| 1    | `0x40–0x7F` | `0x67`    | `0x67–0x7F`                     |
+| 2    | `0x80–0xBF` | `0xBF`    | only `0xBF`                     |
+| 3    | `0xC0–0xFF` | `0xE9`    | `0xE9–0xFF`                     |
+
+To change thresholds for a world, two routes:
+
+- **Edit the shared table at `0x18410`** — affects every world identically.
+- **Hijack `$070A`** — write a non-`0x0E` value before world load and add a new entry to
+  the pointer table at `$94F1` pointing to a custom 8-byte block. The single unused entry
+  is tileset 15 (currently `$9517`).
+
+**Design rationale.** Vanilla didn't need a separate "is level slot" flag table because
+the tileset's byte-to-visual mapping was chosen so that level tiles land in the high
+range of each palette page and walkable nodes (paths, HB, toad-houses, pipes, spades,
+hand-traps, dancing flowers) land in the low range. The 4-byte threshold draws the
+dividing line per page. Examples:
+
+| Tile  | Page | Byte | vs threshold       | Gated? |
+|-------|------|------|--------------------|--------|
+| `0x03` (level "1")     | 0 | `0x03` | `>= 0x03`            | ✓ (gates in every world) |
+| `0x44` (grass path)    | 1 | `0x44` | `< 0x67`             | — |
+| `0x50` (toad house)    | 1 | `0x50` | `< 0x67`             | — |
+| `0x66` (path-and-nub)  | 1 | `0x66` | `< 0x67`             | — |
+| `0x6D` (high page-1)   | 1 | `0x6D` | `>= 0x67`            | ✓ |
+| `0xBC` (pipe)          | 2 | `0xBC` | `< 0xBF`             | — |
+| `0xE6` (HANDTRAP)      | 3 | `0xE6` | `< 0xE9`             | — |
+| `0xE8` (spade)         | 3 | `0xE8` | `< 0xE9`             | — |
+
+`0xE6` and `0xE8` are **deliberately** placed just below the threshold so they walk
+freely. There is **no per-tile CMP or exemption hook** — exemption is purely a function
+of the byte being below the line.
+
+**Relationship to walk tables.** The level gate decides "can Mario *leave* this tile?"
+(checked when standing-and-pressing-direction). Walk tables (`0x15258 / 0x15261 / 0x1526A
+/ 0x15273`, one per direction) decide "can Mario *step onto* the destination tile?"
+(checked during pre-move validation). Both must pass for movement to proceed. They are
+independent — a tile can be in walk tables but still gated (e.g., level tiles), or
+below-threshold but not in walk tables (rare; usually background).
+
+**Hooking the gate.** The actual `CMP $7E98,Y / BCS gate` instruction sequence sits at
+file offset `0x14E08–0x14E0C` (CPU `$CDF8`, 5 bytes). Replace with `JMP custom + 2 NOP`
+to install a tile-aware bypass for selected new tile bytes (used by the hidden-hand POC
+`/tmp/poc_hidden_hand_1_1.py`).
+
+**Connection to row 8 completion bits.** The same threshold table also acts as a
+completion-unsafe heuristic in `Map_Reload_with_Completions` (see "MAP_COMPLETE_BITS
+coverage" below). A row-7 byte that is at-or-above its page threshold counts as
+completion-unsafe and blocks the row-8 fallthrough. This is the same data doing double
+duty — original purpose is movement gating; the completion path reuses it as a "this
+position is a level/special tile, don't touch" filter.
+
 ### Pipe Destination Tables (PRG002: 0x046AA–0x0470D)
 
 Four 24-byte tables control where Mario appears on the overworld map after exiting a pipe transit level. Each table is indexed by the **dest byte** from the `OBJ_PIPEWAYCONTROLLER` (object 0x25) in the pipe transit level's enemy data. Each byte packs **two nibble values**: upper nibble = "left" pipe endpoint, lower nibble = "right" pipe endpoint. The game selects which nibble based on Mario's position within the pipe transit level (left/upper vs right/lower half).
