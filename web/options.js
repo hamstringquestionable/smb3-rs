@@ -178,6 +178,10 @@ export const SCHEMA = [
 		label: "Hand-Trap Levels", flavor: "It's a trap!",
 		tip: "Replace ~10% of regular level slots with visible hand-trap tiles. Walking onto one always grabs the player and pulls them into the underlying level.",
 		group: "overworld", inFlagKey: true },
+	{ id: "troll_pipes", type: "bool", default: true,
+		label: "Troll Pipes", flavor: "Looks like a pipe…",
+		tip: "Disguise one regular level per world (W2-W8) as a pipe tile. The player can walk past freely, but pressing A loads the underlying level — no pipe transit, just a regular level you have to beat or die in.",
+		group: "overworld", inFlagKey: true },
 
 	// --- Quality of Life ---
 	{ id: "airship_lock", type: "bool", default: true,

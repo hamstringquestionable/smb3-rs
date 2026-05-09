@@ -563,26 +563,44 @@ fn write_tile_grid<R: Rng>(
     // hands_levels::install_full_grab); the slot's level pointer entry is
     // unchanged so the player drops into the underlying level.
     const TILE_HAND_TRAP: u8 = 0xE6;
+    // 0xBC (PIPE) — visible pipe tile. Stamped instead of a level number
+    // when the build has flagged this slot as a troll pipe. Pressing A on
+    // the pipe matches Map_EnterSpecialTiles and falls through to the same
+    // Map_Operation = $10 "enter level" path used by level number tiles, so
+    // the slot's level pointer entry loads as a regular level.
+    const TILE_TROLL_PIPE: u8 = 0xBC;
     let hand_trap_positions: HashSet<(usize, usize)> = built
         .slots
         .iter()
         .filter(|s| s.is_hand_trap)
         .map(|s| s.pos)
         .collect();
+    let troll_pipe_positions: HashSet<(usize, usize)> = built
+        .slots
+        .iter()
+        .filter(|s| s.is_troll_pipe)
+        .map(|s| s.pos)
+        .collect();
 
     let mut level_idx: usize = 0;
     let mut assigned: Vec<bool> = vec![false; wa.level.len()];
 
+    let pick_level_tile = |pos: (usize, usize), level_idx: &mut usize| -> u8 {
+        if hand_trap_positions.contains(&pos) {
+            TILE_HAND_TRAP
+        } else if troll_pipe_positions.contains(&pos) {
+            TILE_TROLL_PIPE
+        } else {
+            let t = LEVEL_TILES[(*level_idx).min(LEVEL_TILES.len() - 1)];
+            *level_idx += 1;
+            t
+        }
+    };
+
     for &(pos, _dist) in &bfs {
         if let Some(&la_idx) = level_pos_set.get(&pos) {
             if !assigned[la_idx] {
-                let tile = if hand_trap_positions.contains(&pos) {
-                    TILE_HAND_TRAP
-                } else {
-                    let t = LEVEL_TILES[level_idx.min(LEVEL_TILES.len() - 1)];
-                    level_idx += 1;
-                    t
-                };
+                let tile = pick_level_tile(pos, &mut level_idx);
                 grid.set(pos.0, pos.1, tile);
                 assigned[la_idx] = true;
             }
@@ -592,13 +610,7 @@ fn write_tile_grid<R: Rng>(
     // Any level slots not reached by BFS (safety fallback).
     for (i, a) in wa.level.iter().enumerate() {
         if !assigned[i] {
-            let tile = if hand_trap_positions.contains(&a.pos) {
-                TILE_HAND_TRAP
-            } else {
-                let t = LEVEL_TILES[level_idx.min(LEVEL_TILES.len() - 1)];
-                level_idx += 1;
-                t
-            };
+            let tile = pick_level_tile(a.pos, &mut level_idx);
             grid.set(a.pos.0, a.pos.1, tile);
         }
     }
