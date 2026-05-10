@@ -22,7 +22,7 @@ import {
 	selfTestRoundTrip,
 	SCHEMA,
 } from "./options.js";
-import { renderIcon } from "./chr.js";
+import { ensureSheet, drawSpriteFromSheet } from "./sprites.js";
 
 let wasmReady = false;
 let romBytes = null;
@@ -188,7 +188,6 @@ romInput.addEventListener("change", (e) => {
 		romLabel.textContent = file.name;
 		romLabel.classList.add("loaded");
 		updateGenerateButton();
-		renderAllIcons();
 		saveRom(romBytes).catch(() => {});
 	};
 	reader.onerror = () => showStatus("Failed to read ROM file", "error");
@@ -201,33 +200,32 @@ loadRom().then((bytes) => {
 		romLabel.textContent = "ROM loaded from cache";
 		romLabel.classList.add("loaded");
 		updateGenerateButton();
-		renderAllIcons();
 	}
 }).catch(() => {});
 
 // --- Icon rendering ---
 //
-// After ROM bytes are available, paint every schema entry with an icon spec.
-// Visual patches modify CHR bytes — when one is selected, we re-apply the
-// patch to a working ROM copy and re-render so icons reskin to match.
+// Paint every schema entry with an icon spec from the bundled sprite sheet.
+// Sheet loads independently of the user's ROM, so icons render on the empty
+// state too. Called once at init.
 async function renderAllIcons() {
-	if (!romBytes) return;
-	let bytes = romBytes;
-	const visualId = selectedVisualPatchId();
-	if (visualId) {
-		try {
-			const patch = await fetchVisualPatch(visualId);
-			bytes = apply_visual_patch(romBytes, patch);
-		} catch (_) {
-			// Fall back to vanilla CHR if the visual patch fails to load.
-		}
+	let sheet;
+	try {
+		sheet = await ensureSheet();
+	} catch (e) {
+		console.warn("Sprite sheet failed to load; icons will be blank.", e);
+		return;
 	}
 	for (const entry of SCHEMA) {
 		if (!entry.icon) continue;
 		const canvas = document.getElementById(`icon-${entry.id}`);
-		renderIcon(canvas, bytes, entry.icon);
+		const spec = Array.isArray(entry.icon)
+			? entry.icon[Math.floor(Math.random() * entry.icon.length)]
+			: entry.icon;
+		drawSpriteFromSheet(canvas, sheet, spec);
 	}
 }
+renderAllIcons();
 
 // --- Visual patch (curated catalog rendered as a pill group) ---
 
@@ -246,7 +244,6 @@ function renderVisualPatchPills() {
 			saveSettings();
 			updateVisualPatchAccent();
 			updateVisualPatchCredit();
-			renderAllIcons();
 		});
 		const label = document.createElement("label");
 		label.htmlFor = inputId;
