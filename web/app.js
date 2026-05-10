@@ -365,8 +365,7 @@ function updateFlagKey() {
 function applyFlagKey(key) {
 	if (!wasmReady) return;
 	try {
-		// Strip any whitespace (newlines from wrapped paste, etc.) before decoding.
-		const json = decode_flag_key(key.replace(/\s+/g, ""));
+		const json = decode_flag_key(key.trim());
 		applyOptions(JSON.parse(json));
 		applyEnabledWhen();
 		saveSettings();
