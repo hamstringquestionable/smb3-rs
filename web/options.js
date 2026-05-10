@@ -68,17 +68,27 @@ export const SCHEMA = [
 		group: "rom-extras", host: "rom-extras", inFlagKey: false },
 
 	// --- Map ---
+	// World-map tile icons render the actual overworld metatile (4 CHR
+	// quadrants from BG-bank-2 = MMC3 banks 0x16/0x17). Tile IDs below are
+	// flat-tile indices into CHR-ROM (16-bit, 0x0000-0x1FFF). Computed via
+	// metatile bank 0x0C (file offset 0x18010 + tile_byte) per the /tile skill.
 	{ id: "shuffle_pipes", type: "bool", default: true,
 		label: "Pipe Shuffle",
 		tip: "Shuffle pipe endpoint positions during the overworld rebuild",
+		// 0xBC PIPE quads = E0/E2/EF/FA (bank 0x17)
+		icon: { tiles: [0x5E0, 0x5E2, 0x5EF, 0x5FA], palette: [0x22, 0x27, 0x16, 0x0F] },
 		group: "map", inFlagKey: true },
 	{ id: "shuffle_spade_games", type: "bool", default: true,
 		label: "Shuffle Spade Games",
 		tip: "When on, the 19 vanilla spade (card-matching) games are relocated to random overworld slots, freeing their original positions for levels. When off, spade games stay at their vanilla locations.",
+		// 0xE8 SPADEBONUS quads = A8/A9/AA/AB (bank 0x16)
+		icon: { tiles: [0x5A8, 0x5A9, 0x5AA, 0x5AB], palette: [0x22, 0x30, 0x16, 0x0F] },
 		group: "map", inFlagKey: true },
 	{ id: "shuffle_airships", type: "bool", default: true,
 		label: "Shuffle Airships",
 		tip: "Shuffle airship levels across worlds 1-7",
+		// 0xC9 CASTLEBOTTOM quads = B1/B2/B4/B5 (bank 0x16)
+		icon: { tiles: [0x5B1, 0x5B2, 0x5B4, 0x5B5], palette: [0x22, 0x37, 0x17, 0x0F] },
 		group: "map", inFlagKey: true },
 	{ id: "hands_levels", type: "bool", default: true,
 		label: "Hand-Trap Levels", flavor: "It's a trap!",
@@ -87,6 +97,8 @@ export const SCHEMA = [
 	{ id: "troll_pipes", type: "bool", default: true,
 		label: "Troll Pipes", flavor: "Looks like a pipe…",
 		tip: "Disguise one regular level per world (W2-W8) as a pipe tile. The player can walk past freely, but pressing A loads the underlying level — no pipe transit, just a regular level you have to beat or die in.",
+		// Same PIPE tile as shuffle_pipes, different palette to hint "fake"
+		icon: { tiles: [0x5E0, 0x5E2, 0x5EF, 0x5FA], palette: [0x22, 0x16, 0x06, 0x0F] },
 		group: "map", inFlagKey: true },
 	{ id: "include_beta_stages", type: "bool", default: false,
 		label: "Include Beta Stages",
@@ -197,11 +209,11 @@ export const SCHEMA = [
 		group: "bosses", inFlagKey: true },
 
 	// --- Items & Pickups ---
+	// (sprite curation deferred — sprite CHR uses dynamic banking that requires
+	//  per-object disassembly chasing. Map tiles below have known static banks.)
 	{ id: "powerups", type: "bool", default: true,
 		label: "Power-ups",
 		tip: "Randomize ? block and brick block contents within each power-up class",
-		// PLACEHOLDER tile IDs — to be replaced via chr-viewer.html
-		icon: { tiles: [0x0CA, 0x0CB, 0x0DA, 0x0DB], palette: [0x0F, 0x36, 0x16, 0x27] },
 		group: "items", inFlagKey: true },
 	{ id: "chest_items", type: "bool", default: true,
 		label: "Chest Items",
