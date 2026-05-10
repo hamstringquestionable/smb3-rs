@@ -92,17 +92,6 @@ export const SCHEMA = [
 		label: "Include Beta Stages",
 		tip: "Add ~9 unreferenced beta stages from the original ROM into the level shuffle pool. These may behave oddly or be unbeatable — recommended with infinite lives on.",
 		group: "map", inFlagKey: true },
-	{ id: "world_order", type: "bool", default: false,
-		label: "World Order",
-		tip: "Shuffle the order you progress through Worlds 1-8",
-		group: "map", inFlagKey: true },
-	{ id: "world_count", type: "select", numeric: true,
-		options: [1,2,3,4,5,6,7].map(n => ({ value: n, label: String(n) })),
-		default: 7,
-		label: "World Count",
-		tip: "Number of worlds before Dark Land (fewer = shorter game)",
-		group: "map", inFlagKey: true,
-		enabledWhen: { world_order: true } },
 	{ id: "fix_drawbridges", type: "bool", default: true,
 		label: "Fix Drawbridges",
 		tip: "W3 drawbridges are always open so no paths are randomly blocked",
@@ -115,6 +104,17 @@ export const SCHEMA = [
 		label: "Remove N-Cards",
 		tip: "Remove N-card (N-Spade) matching game panels from the overworld map",
 		group: "map", inFlagKey: true },
+	{ id: "world_order", type: "bool", default: false,
+		label: "World Order",
+		tip: "Shuffle the order you progress through Worlds 1-8",
+		group: "map", inFlagKey: true },
+	{ id: "world_count", type: "tri", numeric: true,
+		options: [1,2,3,4,5,6,7].map(n => ({ value: n, label: String(n) })),
+		default: 7,
+		label: "World Count",
+		tip: "Number of worlds before Dark Land (fewer = shorter game)",
+		group: "map", inFlagKey: true,
+		enabledWhen: { world_order: true } },
 
 	// --- Enemies ---
 	{ id: "ground", type: "tri", options: TRI, default: "shuffle",
@@ -458,7 +458,8 @@ export function readValue(entry) {
 		case "tri":
 		case "radio": {
 			const checked = document.querySelector(`input[name="${radioName(entry.id)}"]:checked`);
-			return checked?.value ?? entry.default;
+			const v = checked?.value ?? entry.default;
+			return entry.numeric ? Number(v) : v;
 		}
 		case "select": {
 			const v = document.getElementById(domId(entry.id))?.value ?? entry.default;
