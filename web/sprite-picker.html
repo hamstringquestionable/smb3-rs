@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SMB3 Sprite Picker (debug)</title>
+<style>
+body { background: #141428; color: #e0e0e0; font-family: ui-monospace, Menlo, monospace; padding: 1rem; margin: 0; }
+h1 { color: #5c94fc; margin: 0 0 0.5rem; font-size: 1rem; }
+h1 small { color: #9a9ab0; font-weight: normal; }
+.panel { position: fixed; top: 1rem; right: 1rem; width: 280px; background: #1c1c38; border: 1px solid #2a2a50; padding: 0.75rem; font-size: 0.75rem; max-height: 95vh; overflow-y: auto; }
+.panel h2 { color: #e44434; font-size: 0.85rem; margin: 0.4rem 0 0.3rem; }
+.panel .pick { color: #6dce56; }
+canvas#sheet { image-rendering: pixelated; cursor: crosshair; background: #0a0a1a; border: 1px solid #2a2a50; display: block; }
+.recent { font-size: 0.7rem; color: #c0c0d0; }
+.recent .row { display: flex; align-items: center; gap: 0.5rem; padding: 0.2rem 0; border-bottom: 1px solid #2a2a50; }
+.recent canvas { image-rendering: pixelated; background: #0a0a1a; border: 1px solid #2a2a50; }
+.recent .meta { flex: 1; font-size: 0.7rem; }
+.recent button.del { padding: 0.1rem 0.3rem; }
+button { background: #1c1c38; border: 1px solid #2a2a50; color: #e0e0e0; padding: 0.25rem 0.5rem; cursor: pointer; font-family: inherit; font-size: 0.75rem; }
+input[type=text], input[type=number] { background: #0a0a1a; border: 1px solid #2a2a50; color: #e0e0e0; padding: 0.2rem; font-family: inherit; font-size: 0.75rem; }
+.row { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.4rem; }
+.coord { color: #ffd; }
+</style>
+</head>
+<body>
+<h1>SMB3 Sprite Picker <small>— click-and-drag a rectangle around a sprite. Live cursor coords shown in the panel.</small></h1>
+<canvas id="sheet"></canvas>
+<div class="panel">
+  <h2>Cursor</h2>
+  <div id="cursor" class="coord">(—, —)</div>
+  <h2>Last pick</h2>
+  <div id="last" class="pick">—</div>
+  <h2>Display scale</h2>
+  <div class="row">
+    <input type="range" id="scale" min="2" max="8" value="4">
+    <span id="scaleval">4×</span>
+  </div>
+  <h2>Grid overlay</h2>
+  <div class="row">
+    <label><input type="checkbox" id="gridOn"> show grid</label>
+    <label>step <input type="number" id="gridStep" value="16" min="1" max="64" style="width:48px"></label>
+  </div>
+  <h2>Picks <span id="pickCount" style="color:#9a9ab0">(0)</span></h2>
+  <div id="recent" class="recent"></div>
+  <div style="margin-top:0.5rem">
+    <button id="copy">Copy as JSON</button> <button id="clear">Clear</button>
+  </div>
+</div>
+
+<script>
+const cv = document.getElementById('sheet');
+const ctx = cv.getContext('2d');
+const lastEl = document.getElementById('last');
+const cursorEl = document.getElementById('cursor');
+const recentEl = document.getElementById('recent');
+const pickCountEl = document.getElementById('pickCount');
+const scaleEl = document.getElementById('scale');
+const scaleval = document.getElementById('scaleval');
+const gridOnEl = document.getElementById('gridOn');
+const gridStepEl = document.getElementById('gridStep');
+const sheet = new Image();
+let scale = 4;
+const picks = [];
+let drag = null; // { x0, y0, x1, y1 } in image-pixel coords
+
+sheet.onload = () => { rerender(); };
+sheet.src = './assets/sprites.png';
+
+function rerender() {
+  scale = +scaleEl.value;
+  scaleval.textContent = scale + '×';
+  cv.width = sheet.width * scale;
+  cv.height = sheet.height * scale;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(sheet, 0, 0, cv.width, cv.height);
+  if (gridOnEl.checked) {
+    const step = +gridStepEl.value || 16;
+    ctx.strokeStyle = 'rgba(255,255,0,0.3)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x <= sheet.width; x += step) {
+      ctx.beginPath();
+      ctx.moveTo(x * scale + 0.5, 0);
+      ctx.lineTo(x * scale + 0.5, cv.height);
+      ctx.stroke();
+    }
+    for (let y = 0; y <= sheet.height; y += step) {
+      ctx.beginPath();
+      ctx.moveTo(0, y * scale + 0.5);
+      ctx.lineTo(cv.width, y * scale + 0.5);
+      ctx.stroke();
+    }
+  }
+  // Highlight saved picks
+  ctx.strokeStyle = 'rgba(255,68,68,0.9)';
+  ctx.lineWidth = 2;
+  for (const p of picks) {
+    ctx.strokeRect(p.x * scale, p.y * scale, p.w * scale, p.h * scale);
+  }
+  // Highlight live drag
+  if (drag) {
+    const r = normRect(drag);
+    ctx.strokeStyle = 'rgba(108,206,86,0.95)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(r.x * scale, r.y * scale, r.w * scale, r.h * scale);
+  }
+}
+
+function pxFromEvent(e) {
+  const rect = cv.getBoundingClientRect();
+  return {
+    x: Math.floor((e.clientX - rect.left) / scale),
+    y: Math.floor((e.clientY - rect.top) / scale),
+  };
+}
+
+function normRect(d) {
+  const x = Math.min(d.x0, d.x1);
+  const y = Math.min(d.y0, d.y1);
+  const w = Math.abs(d.x1 - d.x0) + 1;
+  const h = Math.abs(d.y1 - d.y0) + 1;
+  return { x, y, w, h };
+}
+
+cv.addEventListener('mousemove', (e) => {
+  const p = pxFromEvent(e);
+  cursorEl.textContent = `(${p.x}, ${p.y})`;
+  if (drag) {
+    drag.x1 = p.x; drag.y1 = p.y;
+    rerender();
+  }
+});
+
+cv.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  const p = pxFromEvent(e);
+  drag = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
+  rerender();
+});
+
+cv.addEventListener('mouseup', (e) => {
+  if (!drag) return;
+  const p = pxFromEvent(e);
+  drag.x1 = p.x; drag.y1 = p.y;
+  const r = normRect(drag);
+  drag = null;
+  picks.push(r);
+  lastEl.textContent = `{ x: ${r.x}, y: ${r.y}, w: ${r.w}, h: ${r.h} }`;
+  refreshRecent();
+  rerender();
+});
+
+cv.addEventListener('mouseleave', () => {
+  if (drag) { drag = null; rerender(); }
+});
+
+function refreshRecent() {
+  pickCountEl.textContent = `(${picks.length})`;
+  recentEl.innerHTML = '';
+  for (let i = picks.length - 1; i >= Math.max(0, picks.length - 30); i--) {
+    const p = picks[i];
+    const row = document.createElement('div');
+    row.className = 'row';
+    const prev = document.createElement('canvas');
+    prev.width = p.w; prev.height = p.h;
+    prev.style.width = (p.w * 2) + 'px';
+    prev.style.height = (p.h * 2) + 'px';
+    const pctx = prev.getContext('2d');
+    pctx.imageSmoothingEnabled = false;
+    pctx.drawImage(sheet, p.x, p.y, p.w, p.h, 0, 0, p.w, p.h);
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = `${i}: x:${p.x} y:${p.y} ${p.w}×${p.h}`;
+    const del = document.createElement('button');
+    del.className = 'del';
+    del.textContent = '×';
+    del.addEventListener('click', () => {
+      picks.splice(i, 1);
+      refreshRecent();
+      rerender();
+    });
+    row.append(prev, meta, del);
+    recentEl.appendChild(row);
+  }
+}
+
+document.getElementById('copy').addEventListener('click', () => {
+  navigator.clipboard.writeText(JSON.stringify(picks, null, 2));
+});
+document.getElementById('clear').addEventListener('click', () => {
+  picks.length = 0;
+  lastEl.textContent = '—';
+  refreshRecent();
+  rerender();
+});
+[scaleEl, gridOnEl, gridStepEl].forEach(el => el.addEventListener('input', rerender));
+</script>
+</body>
+</html>

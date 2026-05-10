@@ -68,27 +68,19 @@ export const SCHEMA = [
 		group: "rom-extras", host: "rom-extras", inFlagKey: false },
 
 	// --- Map ---
-	// World-map tile icons render the actual overworld metatile (4 CHR
-	// quadrants from BG-bank-2 = MMC3 banks 0x16/0x17). Tile IDs below are
-	// flat-tile indices into CHR-ROM (16-bit, 0x0000-0x1FFF). Computed via
-	// metatile bank 0x0C (file offset 0x18010 + tile_byte) per the /tile skill.
+	// Icons are clipped from web/assets/sprites.png. Coordinates picked via
+	// web/sprite-picker.html. Format: { x, y, w, h } in sprite-sheet pixels.
 	{ id: "shuffle_pipes", type: "bool", default: true,
 		label: "Pipe Shuffle",
 		tip: "Shuffle pipe endpoint positions during the overworld rebuild",
-		// 0xBC PIPE quads = E0/E2/EF/FA (bank 0x17)
-		icon: { tiles: [0x5E0, 0x5E2, 0x5EF, 0x5FA], palette: [0x22, 0x27, 0x16, 0x0F] },
 		group: "map", inFlagKey: true },
 	{ id: "shuffle_spade_games", type: "bool", default: true,
 		label: "Shuffle Spade Games",
 		tip: "When on, the 19 vanilla spade (card-matching) games are relocated to random overworld slots, freeing their original positions for levels. When off, spade games stay at their vanilla locations.",
-		// 0xE8 SPADEBONUS quads = A8/A9/AA/AB (bank 0x16)
-		icon: { tiles: [0x5A8, 0x5A9, 0x5AA, 0x5AB], palette: [0x22, 0x30, 0x16, 0x0F] },
 		group: "map", inFlagKey: true },
 	{ id: "shuffle_airships", type: "bool", default: true,
 		label: "Shuffle Airships",
 		tip: "Shuffle airship levels across worlds 1-7",
-		// 0xC9 CASTLEBOTTOM quads = B1/B2/B4/B5 (bank 0x16)
-		icon: { tiles: [0x5B1, 0x5B2, 0x5B4, 0x5B5], palette: [0x22, 0x37, 0x17, 0x0F] },
 		group: "map", inFlagKey: true },
 	{ id: "hands_levels", type: "bool", default: true,
 		label: "Hand-Trap Levels", flavor: "It's a trap!",
@@ -97,8 +89,6 @@ export const SCHEMA = [
 	{ id: "troll_pipes", type: "bool", default: true,
 		label: "Troll Pipes", flavor: "Looks like a pipe…",
 		tip: "Disguise one regular level per world (W2-W8) as a pipe tile. The player can walk past freely, but pressing A loads the underlying level — no pipe transit, just a regular level you have to beat or die in.",
-		// Same PIPE tile as shuffle_pipes, different palette to hint "fake"
-		icon: { tiles: [0x5E0, 0x5E2, 0x5EF, 0x5FA], palette: [0x22, 0x16, 0x06, 0x0F] },
 		group: "map", inFlagKey: true },
 	{ id: "include_beta_stages", type: "bool", default: false,
 		label: "Include Beta Stages",
@@ -198,6 +188,7 @@ export const SCHEMA = [
 	{ id: "hammer_vulnerable_koopalings", type: "bool", default: false,
 		label: "Hammer Vulnerable Koopalings",
 		tip: "Koopalings can be damaged by thrown hammers (vanilla: hammers pass through them)",
+		icon: { x: 543, y: 364, w: 16, h: 16 },
 		group: "bosses", inFlagKey: true },
 	{ id: "adjust_boss_hitboxes", type: "bool", default: true,
 		label: "Adjust Boss Hitboxes",
@@ -206,6 +197,7 @@ export const SCHEMA = [
 	{ id: "skip_wand_cutscene", type: "bool", default: true,
 		label: "Skip Wand Cutscene", flavor: "Jump Up, Super Star!",
 		tip: "Skip the wand falling cutscene after defeating a Koopaling — jump to grab the wand instead",
+		icon: { x: 435, y: 328, w: 16, h: 16 },
 		group: "bosses", inFlagKey: true },
 
 	// --- Items & Pickups ---
@@ -214,30 +206,46 @@ export const SCHEMA = [
 	{ id: "powerups", type: "bool", default: true,
 		label: "Power-ups",
 		tip: "Randomize ? block and brick block contents within each power-up class",
+		// Random pick on each page load — flavor for "what will you get?"
+		icon: [
+			{ x: 435, y: 364, w: 16, h: 16 }, // mushroom
+			{ x: 453, y: 364, w: 16, h: 16 }, // fire flower
+			{ x: 471, y: 364, w: 16, h: 16 }, // super leaf
+			{ x: 489, y: 364, w: 16, h: 16 }, // star
+			{ x: 507, y: 364, w: 16, h: 16 }, // frog suit
+			{ x: 525, y: 364, w: 16, h: 16 }, // tanooki suit
+			{ x: 543, y: 364, w: 16, h: 16 }, // hammer suit
+		],
 		group: "items", inFlagKey: true },
 	{ id: "chest_items", type: "bool", default: true,
 		label: "Chest Items",
 		tip: "Randomize chest and Toad House reward items",
+		icon: { x: 525, y: 292, w: 16, h: 16 },
 		group: "items", inFlagKey: true },
 	{ id: "big_q_blocks", type: "bool", default: false,
 		label: "Big ? Blocks",
 		tip: "Randomize the contents of Big ? Blocks in bonus rooms",
+		icon: { x: 435, y: 170, w: 32, h: 32 },
 		group: "items", inFlagKey: true },
 	{ id: "airship_lock", type: "bool", default: true,
 		label: "Remove Anchor",
 		tip: "Anchors become random power-ups, and airships stay in place after losing instead of moving to a new map slot.",
+		icon: { x: 651, y: 364, w: 16, h: 16 },
 		group: "items", inFlagKey: true },
 	{ id: "remove_whistles", type: "bool", default: true,
 		label: "Remove Warp Whistles",
 		tip: "Remove warp whistles so all worlds must be played",
+		icon: { x: 561, y: 364, w: 16, h: 16 },
 		group: "items", inFlagKey: true },
 	{ id: "hammer_breaks_locks", type: "bool", default: false,
 		label: "Hammer Breaks Locks",
 		tip: "Hammer item also breaks fortress lock tiles on the overworld map",
+		icon: { x: 615, y: 364, w: 16, h: 16 },
 		group: "items", inFlagKey: true },
 	{ id: "hammer_breaks_bridges", type: "bool", default: false,
 		label: "Hammer Breaks Bridges",
 		tip: "Hammer item also breaks water gap (bridge) tiles on the overworld map",
+		icon: { x: 615, y: 364, w: 16, h: 16 },
 		group: "items", inFlagKey: true },
 
 	// --- Player ---
@@ -330,11 +338,13 @@ function tipBlock(entry) {
 // is unset, returns null and the caller skips the slot.
 function iconCanvas(entry) {
 	if (!entry.icon) return null;
+	const first = Array.isArray(entry.icon) ? entry.icon[0] : entry.icon;
 	return el("canvas", {
 		class: "opt-icon",
 		id: `icon-${entry.id}`,
 		"data-icon": entry.id,
-		width: 16, height: 16,
+		width: first.w ?? 16,
+		height: first.h ?? 16,
 	});
 }
 
