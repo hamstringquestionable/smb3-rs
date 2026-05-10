@@ -121,6 +121,18 @@ const changesSummaryList = document.getElementById("changes-summary-list");
 // --- Options form: render schema, restore, wire listeners ---
 
 renderOptions(optionsRoot, { "rom-extras": romExtras });
+
+// Move the static Visual Patch block into the Cosmetic fieldset so palettes
+// + visual swap live together. Markup stays in index.html (so app.js can
+// target #visual-patch-pills / #visual-patch-credit by id) and is reparented
+// here once renderOptions has created #group-cosmetic.
+const visualPatchBlock = document.getElementById("visual-patch-block");
+const cosmeticFieldset = document.getElementById("group-cosmetic");
+if (visualPatchBlock && cosmeticFieldset) {
+	visualPatchBlock.hidden = false;
+	cosmeticFieldset.appendChild(visualPatchBlock);
+}
+
 renderVisualPatchPills();
 restoreSettings();
 applyEnabledWhen();

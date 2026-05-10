@@ -33,22 +33,11 @@
 
         <div id="options-root"></div>
 
-        <div class="section">
-            <label>Output Format</label>
-            <div class="radio-group">
-                <label class="radio-label">
-                    <input type="radio" name="output-format" value="ips">
-                    IPS Patch
-                </label>
-                <label class="radio-label">
-                    <input type="radio" name="output-format" value="rom" checked>
-                    Patched ROM
-                </label>
-            </div>
-        </div>
-
-        <div class="section">
-            <label>Visual Patch</label>
+        <!-- Visual Patch markup lives here in static HTML so app.js can target
+             #visual-patch-pills / #visual-patch-credit by id. After options
+             render, app.js relocates this block into the Cosmetic fieldset. -->
+        <div id="visual-patch-block" hidden>
+            <label class="visual-patch-label">Visual Patch</label>
             <div class="pill-group" id="visual-patch-pills"></div>
             <p class="note" id="visual-patch-credit" hidden></p>
             <p class="note">Optional cosmetic re-skin. Applied to the input ROM before randomization, so palette randomization can layer on top. Included in both Patched ROM and IPS output.</p>
@@ -77,6 +66,20 @@
                 <button id="share-url-btn" type="button" title="Copy a shareable URL with the current seed and flags">Share</button>
             </div>
             <p class="note">Share the key or URL to reproduce these settings.</p>
+        </div>
+
+        <div class="control-panel-section">
+            <div class="control-panel-title">Output Format</div>
+            <div class="radio-group">
+                <label class="radio-label">
+                    <input type="radio" name="output-format" value="ips">
+                    IPS Patch
+                </label>
+                <label class="radio-label">
+                    <input type="radio" name="output-format" value="rom" checked>
+                    Patched ROM
+                </label>
+            </div>
         </div>
 
         <div class="control-panel-section">
