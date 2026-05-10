@@ -213,6 +213,15 @@ legend {
 
 /* --- Checkboxes & Radios --- */
 
+.opt-icon {
+    width: 24px;
+    height: 24px;
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    flex-shrink: 0;
+    background: transparent;
+}
+
 .checkbox-label,
 .radio-label {
     display: flex;
