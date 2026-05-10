@@ -20,7 +20,9 @@ import {
 	restoreSettings,
 	assertSchemaParity,
 	selfTestRoundTrip,
+	SCHEMA,
 } from "./options.js";
+import { renderIcon } from "./chr.js";
 
 let wasmReady = false;
 let romBytes = null;
@@ -186,6 +188,7 @@ romInput.addEventListener("change", (e) => {
 		romLabel.textContent = file.name;
 		romLabel.classList.add("loaded");
 		updateGenerateButton();
+		renderAllIcons();
 		saveRom(romBytes).catch(() => {});
 	};
 	reader.onerror = () => showStatus("Failed to read ROM file", "error");
@@ -198,8 +201,33 @@ loadRom().then((bytes) => {
 		romLabel.textContent = "ROM loaded from cache";
 		romLabel.classList.add("loaded");
 		updateGenerateButton();
+		renderAllIcons();
 	}
 }).catch(() => {});
+
+// --- Icon rendering ---
+//
+// After ROM bytes are available, paint every schema entry with an icon spec.
+// Visual patches modify CHR bytes — when one is selected, we re-apply the
+// patch to a working ROM copy and re-render so icons reskin to match.
+async function renderAllIcons() {
+	if (!romBytes) return;
+	let bytes = romBytes;
+	const visualId = selectedVisualPatchId();
+	if (visualId) {
+		try {
+			const patch = await fetchVisualPatch(visualId);
+			bytes = apply_visual_patch(romBytes, patch);
+		} catch (_) {
+			// Fall back to vanilla CHR if the visual patch fails to load.
+		}
+	}
+	for (const entry of SCHEMA) {
+		if (!entry.icon) continue;
+		const canvas = document.getElementById(`icon-${entry.id}`);
+		renderIcon(canvas, bytes, entry.icon);
+	}
+}
 
 // --- Visual patch (curated catalog rendered as a pill group) ---
 
@@ -218,6 +246,7 @@ function renderVisualPatchPills() {
 			saveSettings();
 			updateVisualPatchAccent();
 			updateVisualPatchCredit();
+			renderAllIcons();
 		});
 		const label = document.createElement("label");
 		label.htmlFor = inputId;

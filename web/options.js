@@ -200,6 +200,8 @@ export const SCHEMA = [
 	{ id: "powerups", type: "bool", default: true,
 		label: "Power-ups",
 		tip: "Randomize ? block and brick block contents within each power-up class",
+		// PLACEHOLDER tile IDs — to be replaced via chr-viewer.html
+		icon: { tiles: [0x0CA, 0x0CB, 0x0DA, 0x0DB], palette: [0x0F, 0x36, 0x16, 0x27] },
 		group: "items", inFlagKey: true },
 	{ id: "chest_items", type: "bool", default: true,
 		label: "Chest Items",
@@ -311,11 +313,26 @@ function tipBlock(entry) {
 	return el("div", { id: `tip-${entry.id}`, class: "option-tip", hidden: true }, entry.tip);
 }
 
+// Optional CHR sprite icon next to an option. Returns a 32x32 canvas with a
+// known DOM id; app.js paints it once romBytes is available. If entry.icon
+// is unset, returns null and the caller skips the slot.
+function iconCanvas(entry) {
+	if (!entry.icon) return null;
+	return el("canvas", {
+		class: "opt-icon",
+		id: `icon-${entry.id}`,
+		"data-icon": entry.id,
+		width: 16, height: 16,
+	});
+}
+
 // --- Renderers per type ---
 
 function renderBool(entry) {
 	const wrap = el("label", { class: "checkbox-label" + (entry.indent ? " sub-options" : "") });
 	wrap.appendChild(el("input", { type: "checkbox", id: domId(entry.id), checked: entry.default }));
+	const icon = iconCanvas(entry);
+	if (icon) wrap.appendChild(icon);
 	wrap.appendChild(document.createTextNode(" " + entry.label));
 	if (entry.flavor) {
 		wrap.appendChild(el("span", { class: "option-flavor" }, entry.flavor));
@@ -327,6 +344,8 @@ function renderBool(entry) {
 
 function renderTri(entry) {
 	const wrap = el("label", { class: "select-label" });
+	const icon = iconCanvas(entry);
+	if (icon) wrap.appendChild(icon);
 	wrap.appendChild(document.createTextNode(entry.label));
 	const btn = tipBtn(entry);
 	if (btn) wrap.appendChild(btn);
