@@ -518,7 +518,7 @@ input[type="radio"] {
 /* --- Control Panel (sidebar: seed / flag key / generate) --- */
 
 .control-panel {
-    width: 240px;
+    width: 280px;
     flex-shrink: 0;
     position: sticky;
     top: 2rem;
@@ -558,30 +558,8 @@ input[type="radio"] {
 }
 
 #flag-key-input {
-    width: 100%;
-    padding: 0.5rem 0.6rem;
-    background: #1c1c38;
-    border: 1px solid #2a2a50;
-    border-radius: 4px;
-    color: #e0e0e0;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.78rem;
-    line-height: 1.35;
-    resize: vertical;
-    margin-bottom: 0.5rem;
-    box-sizing: border-box;
-    word-break: break-all;
-    overflow-wrap: anywhere;
-}
-
-#flag-key-input::placeholder {
-    color: #444;
-    font-family: inherit;
-}
-
-#flag-key-input:focus {
-    outline: none;
-    border-color: #5c94fc;
+    font-size: 0.8rem;
 }
 
 .flag-key-buttons {
