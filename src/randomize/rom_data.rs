@@ -293,6 +293,12 @@ pub(super) const TILE_BOWSER: u8 = 0xCC;
 /// Bonus game (spade/N-Spade) tile ID.
 pub(super) const TILE_BONUS_GAME: u8 = 0xE8;
 
+/// Toad House placeholder tile ID. Vanilla Toad Houses use either 0x50 or
+/// 0xE0; the build phase stamps this constant when a HammerBro slot is
+/// promoted to a Toad House. The writer later overwrites the cell with the
+/// per-entry vanilla tile from the catalog.
+pub(super) const TILE_TOAD_HOUSE: u8 = 0x50;
+
 /// Placeholder stamped on the BFS grid to mark a position as non-background.
 /// The actual value is irrelevant — it just needs to be outside BACKGROUND_TILES
 /// so walk_map treats the position as a reachable node.

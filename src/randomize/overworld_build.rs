@@ -23,6 +23,7 @@ use super::overworld_pickup::PickupResult;
 use crate::rom::Rom;
 use super::rom_data::{
     self, BACKGROUND_TILES, Grid, TILE_BONUS_GAME, TILE_FORTRESS, TILE_NODE, TILE_PIPE,
+    TILE_TOAD_HOUSE,
     VALID_HORZ, VALID_VERT,
 };
 
@@ -38,6 +39,7 @@ pub enum SlotKind {
     Pipe,
     HammerBro,
     BonusGame,
+    ToadHouse,
 }
 
 /// A single slot assignment on the grid.
@@ -188,6 +190,7 @@ pub(crate) fn build<R: Rng>(
     pickup: &PickupResult,
     catalog: &NodeCatalog,
     rng: &mut R,
+    shuffle_toad_houses: bool,
 ) -> BuildResult {
     // Step 0: redistribute fortresses
     let fort_counts = redistribute_fortresses(rng);
@@ -220,7 +223,7 @@ pub(crate) fn build<R: Rng>(
     // Pre-compute fixed positions once per world (used by both capacity
     // calculation and build_world).
     let fixed_positions: Vec<HashSet<(usize, usize)>> = (0..8)
-        .map(|wi| fixed_positions_for_world(rom, catalog, wi))
+        .map(|wi| fixed_positions_for_world(rom, catalog, wi, shuffle_toad_houses))
         .collect();
 
     let mut capacities = [0usize; 8];
@@ -311,36 +314,53 @@ pub(crate) fn build<R: Rng>(
         }
     }
 
-    place_bonus_games(rom, &mut worlds, pickup, catalog, rng);
+    // Toad houses promote first so the smaller, less flexible 22-entry budget
+    // lands before spades scramble for the remaining HammerBro slots.
+    promote_hb_slots(
+        rom, &mut worlds, pickup, catalog, rng,
+        |k| matches!(k, NodeKind::ToadHouse), SlotKind::ToadHouse, None,
+    );
+    promote_hb_slots(
+        rom, &mut worlds, pickup, catalog, rng,
+        |k| matches!(k, NodeKind::BonusGame), SlotKind::BonusGame, Some(SPADE_BUDGET),
+    );
 
     BuildResult { worlds, fort_counts }
 }
 
 // ---------------------------------------------------------------------------
-// Step 5: Bonus game (spade) placement
+// Step 5: HammerBro slot promotion (Toad Houses + spade games)
 // ---------------------------------------------------------------------------
 
 const SPADE_BUDGET: usize = 19;
 
-/// Promote HammerBro slots to BonusGame slots, distributing a spade budget
-/// across worlds in proportion to each world's available HammerBro slot count.
+/// Promote HammerBro slots to a target `SlotKind`, distributing picked-up pool
+/// entries of the matching `NodeKind` across worlds in proportion to each
+/// world's available HammerBro slot count.
 ///
 /// Runs after lock placement so reachability constraints are already satisfied;
-/// no-ops when the pickup pool contains no BonusGame entries.
-fn place_bonus_games<R: Rng>(
+/// no-ops when the pickup pool contains no matching entries. `budget_cap`
+/// limits how many entries are placed (spades cap at SPADE_BUDGET; toad houses
+/// place every entry).
+fn promote_hb_slots<R: Rng>(
     rom: &Rom,
     worlds: &mut [BuiltWorld],
     pickup: &PickupResult,
     catalog: &NodeCatalog,
     rng: &mut R,
+    matches_source: impl Fn(&NodeKind) -> bool,
+    target_kind: SlotKind,
+    budget_cap: Option<usize>,
 ) {
-    let bonus_count = pickup
+    let mut source_count = pickup
         .pool
         .iter()
-        .filter(|pe| matches!(catalog.entries[pe.catalog_idx].kind, NodeKind::BonusGame))
-        .count()
-        .min(SPADE_BUDGET);
-    if bonus_count == 0 {
+        .filter(|pe| matches_source(&catalog.entries[pe.catalog_idx].kind))
+        .count();
+    if let Some(cap) = budget_cap {
+        source_count = source_count.min(cap);
+    }
+    if source_count == 0 {
         return;
     }
 
@@ -369,7 +389,7 @@ fn place_bonus_games<R: Rng>(
         return;
     }
 
-    let target = bonus_count.min(total_cands);
+    let target = source_count.min(total_cands);
     let mut budget = vec![0usize; worlds.len()];
     for wi in 0..worlds.len() {
         let frac = candidates_by_world[wi].len() as f64 / total_cands as f64;
@@ -410,7 +430,7 @@ fn place_bonus_games<R: Rng>(
             .collect();
         for slot in w.slots.iter_mut() {
             if slot.kind == SlotKind::HammerBro && chosen.contains(&slot.pos) {
-                slot.kind = SlotKind::BonusGame;
+                slot.kind = target_kind.clone();
             }
         }
     }
@@ -429,16 +449,22 @@ fn fixed_positions_for_world(
     rom: &Rom,
     catalog: &NodeCatalog,
     world_idx: usize,
+    shuffle_toad_houses: bool,
 ) -> HashSet<(usize, usize)> {
     let mut fixed = HashSet::new();
 
-    // Airship, Bowser, toad house — stay at vanilla positions
+    // Airship, Bowser stay at vanilla positions unconditionally. Toad Houses
+    // stay pinned only when shuffle_toad_houses is off; when on, the build
+    // phase places them at promoted HammerBro slots.
     for entry in &catalog.entries {
         if entry.world_idx != world_idx {
             continue;
         }
         match entry.kind {
-            NodeKind::Airship | NodeKind::Bowser | NodeKind::ToadHouse => {
+            NodeKind::Airship | NodeKind::Bowser => {
+                fixed.insert(entry.grid_pos);
+            }
+            NodeKind::ToadHouse if !shuffle_toad_houses => {
                 fixed.insert(entry.grid_pos);
             }
             _ => {}
@@ -736,7 +762,7 @@ fn completable_positions(grid: &Grid, slots: &[SlotAssignment]) -> HashSet<(usiz
     for s in slots {
         if matches!(
             s.kind,
-            SlotKind::Level | SlotKind::Fortress | SlotKind::BonusGame
+            SlotKind::Level | SlotKind::Fortress | SlotKind::BonusGame | SlotKind::ToadHouse
         ) {
             set.insert(s.pos);
         }
@@ -1419,6 +1445,7 @@ fn place_locks<R: Rng>(
             SlotKind::Pipe => {} // already stamped on grid
             SlotKind::HammerBro => {} // blank path tile, no stamp needed
             SlotKind::BonusGame => base_grid.set(slot.pos.0, slot.pos.1, TILE_BONUS_GAME),
+            SlotKind::ToadHouse => base_grid.set(slot.pos.0, slot.pos.1, TILE_TOAD_HOUSE),
         }
     }
 
@@ -1470,7 +1497,7 @@ fn place_locks<R: Rng>(
                         let paired_row = if r == 7 { 8 } else { 7 };
                         let pair_completable = slots.iter().any(|s| {
                             s.pos == (paired_row, c)
-                                && matches!(s.kind, SlotKind::Level | SlotKind::Fortress | SlotKind::Pipe | SlotKind::BonusGame)
+                                && matches!(s.kind, SlotKind::Level | SlotKind::Fortress | SlotKind::Pipe | SlotKind::BonusGame | SlotKind::ToadHouse)
                         });
                         if pair_completable {
                             continue;
@@ -1677,6 +1704,7 @@ pub(super) fn debug_stamp_rom(rom: &mut crate::rom::Rom, result: &BuildResult) {
                 SlotKind::Fortress => TILE_FORTRESS,
                 SlotKind::Pipe => TILE_PIPE,
                 SlotKind::BonusGame => TILE_BONUS_GAME,
+                SlotKind::ToadHouse => TILE_TOAD_HOUSE,
                 SlotKind::HammerBro => continue, // keep existing blank path tile
             };
             let offset = rom_data::map_tile_offset(wi, slot.pos.0, slot.pos.1);
@@ -1729,10 +1757,10 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
         let mut rng = ChaCha8Rng::seed_from_u64(42);
 
-        let result = build(&rom, &pickup, &catalog, &mut rng);
+        let result = build(&rom, &pickup, &catalog, &mut rng, true);
 
         assert_eq!(result.worlds.len(), 8);
 
@@ -1768,11 +1796,11 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
 
         for seed in 0..10 {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &pickup, &catalog, &mut rng);
+            let result = build(&rom, &pickup, &catalog, &mut rng, true);
 
             for built in &result.worlds {
                 let start_pos = rom_data::find_start(&built.grid);
@@ -1783,6 +1811,7 @@ mod tests {
                     match slot.kind {
                         SlotKind::Fortress => test_grid.set(slot.pos.0, slot.pos.1, TILE_FORTRESS),
                         SlotKind::BonusGame => test_grid.set(slot.pos.0, slot.pos.1, TILE_BONUS_GAME),
+                        SlotKind::ToadHouse => test_grid.set(slot.pos.0, slot.pos.1, TILE_TOAD_HOUSE),
                         SlotKind::Level | SlotKind::Pipe | SlotKind::HammerBro => {}
                     }
                 }
@@ -1827,11 +1856,11 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
 
         for seed in [42, 123, 999] {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &pickup, &catalog, &mut rng);
+            let result = build(&rom, &pickup, &catalog, &mut rng, true);
 
             let mut rom_copy = Rom::from_bytes(&rom.data).unwrap();
             debug_stamp_rom(&mut rom_copy, &result);
@@ -1862,10 +1891,10 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
         let mut rng = ChaCha8Rng::seed_from_u64(42);
 
-        let result = build(&rom, &pickup, &catalog, &mut rng);
+        let result = build(&rom, &pickup, &catalog, &mut rng, true);
 
         for built in &result.worlds {
             eprintln!("\n=== World {} ({} sections) ===",
@@ -1902,7 +1931,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
 
         let mut level_shortfalls = 0u32;
         let mut lock_shortfalls = 0u32;
@@ -1910,7 +1939,7 @@ mod tests {
 
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &pickup, &catalog, &mut rng);
+            let result = build(&rom, &pickup, &catalog, &mut rng, true);
 
             let total_levels: usize = result.worlds.iter()
                 .map(|b| b.slots.iter().filter(|s| s.kind == SlotKind::Level).count())
@@ -1957,7 +1986,7 @@ mod tests {
         let mut no_safe_details: Vec<(u64, [usize; 8])> = Vec::new();
         for seed in 0..seeds {
             let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
-            let result2 = build(&rom, &pickup, &catalog, &mut rng2);
+            let result2 = build(&rom, &pickup, &catalog, &mut rng2, true);
             let has_safe = result2.worlds.iter().any(|b| {
                 b.locks.iter().any(|l| l.secret_exit_safe)
             });
@@ -1996,11 +2025,11 @@ mod tests {
             }
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
 
         for seed in 0..6u64 {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &pickup, &catalog, &mut rng);
+            let result = build(&rom, &pickup, &catalog, &mut rng, true);
             let built = &result.worlds[5]; // W6 (0-indexed)
 
             eprintln!("\n===== Seed {seed} — W6 =====");
@@ -2017,6 +2046,7 @@ mod tests {
             let mut hammer_bros = Vec::new();
             let mut pipes = Vec::new();
             let mut bonus_games = Vec::new();
+            let mut toad_houses = Vec::new();
             for slot in &built.slots {
                 match slot.kind {
                     SlotKind::Fortress => fortresses.push(slot),
@@ -2024,6 +2054,7 @@ mod tests {
                     SlotKind::HammerBro => hammer_bros.push(slot),
                     SlotKind::Pipe => pipes.push(slot),
                     SlotKind::BonusGame => bonus_games.push(slot),
+                    SlotKind::ToadHouse => toad_houses.push(slot),
                 }
             }
 
@@ -2057,6 +2088,16 @@ mod tests {
                 eprintln!("  ({:2}, {:2})  section={}", s.pos.0, s.pos.1, s.section);
             }
 
+            eprintln!("\nBonus Games ({}):", bonus_games.len());
+            for s in &bonus_games {
+                eprintln!("  ({:2}, {:2})  section={}", s.pos.0, s.pos.1, s.section);
+            }
+
+            eprintln!("\nToad Houses ({}):", toad_houses.len());
+            for s in &toad_houses {
+                eprintln!("  ({:2}, {:2})  section={}", s.pos.0, s.pos.1, s.section);
+            }
+
             eprintln!("\nLocks ({}):", built.locks.len());
             for l in &built.locks {
                 eprintln!("  ({:2}, {:2})  gap=0x{:02X}  replace=0x{:02X}  fort_section={}  safe={}",
@@ -2073,13 +2114,13 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
         let wi = 6; // W7
 
         let cw = &pickup.worlds[wi];
         eprintln!("\n=== W7 Pickup: {} pool entries ===", cw.pool_indices.len());
 
-        let fixed = fixed_positions_for_world(&rom, &catalog, wi);
+        let fixed = fixed_positions_for_world(&rom, &catalog, wi, true);
         eprintln!("Fixed positions: {} {:?}", fixed.len(), fixed);
 
         let blank_positions = find_blank_slots(&cw.grid, &fixed);
@@ -2088,7 +2129,7 @@ mod tests {
         // Run the actual build for several seeds and check coverage
         for seed in 0..5u64 {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &pickup, &catalog, &mut rng);
+            let result = build(&rom, &pickup, &catalog, &mut rng, true);
             let built = &result.worlds[wi];
 
             // All positions that got a slot assignment
@@ -2153,11 +2194,11 @@ mod tests {
             }
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
 
         for seed in [42u64, 123, 999] {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &pickup, &catalog, &mut rng);
+            let result = build(&rom, &pickup, &catalog, &mut rng, true);
 
             eprintln!("\n{}", "=".repeat(60));
             eprintln!("=== Seed {seed} ===");
@@ -2255,13 +2296,13 @@ mod tests {
             None => { eprintln!("ROM not found"); return; }
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
 
         let seed = 42u64;
         let target_wi = 6; // 0-indexed: W7 = 6
 
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let result = build(&rom, &pickup, &catalog, &mut rng);
+        let result = build(&rom, &pickup, &catalog, &mut rng, true);
         let built = &result.worlds[target_wi];
 
         let start_pos = rom_data::find_start(&built.grid);
@@ -2363,7 +2404,7 @@ mod tests {
             }
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
 
         let seeds = 100u64;
         // BFS distance histogram: index = distance, value = count
@@ -2382,7 +2423,7 @@ mod tests {
 
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &pickup, &catalog, &mut rng);
+            let result = build(&rom, &pickup, &catalog, &mut rng, true);
             let mut seed_has_close = false;
             let mut seed_has_close_pair = false;
 
@@ -2568,7 +2609,7 @@ mod tests {
             }
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
 
         let seeds: u64 = std::env::var("PIPE_SEEDS")
             .ok()
@@ -2583,7 +2624,7 @@ mod tests {
 
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &pickup, &catalog, &mut rng);
+            let result = build(&rom, &pickup, &catalog, &mut rng, true);
 
             for built in &result.worlds {
                 let wi = built.world_idx;
@@ -2722,7 +2763,7 @@ mod tests {
             }
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
 
         let seeds: u64 = std::env::var("FORT_SEEDS")
             .ok()
@@ -2738,7 +2779,7 @@ mod tests {
 
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &pickup, &catalog, &mut rng);
+            let result = build(&rom, &pickup, &catalog, &mut rng, true);
 
             for built in &result.worlds {
                 let wi = built.world_idx;
@@ -2898,7 +2939,7 @@ mod tests {
             }
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
 
         let seeds: u64 = std::env::var("LEVEL_SEEDS")
             .ok()
@@ -2920,7 +2961,7 @@ mod tests {
 
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &pickup, &catalog, &mut rng);
+            let result = build(&rom, &pickup, &catalog, &mut rng, true);
 
             for built in &result.worlds {
                 let wi = built.world_idx;

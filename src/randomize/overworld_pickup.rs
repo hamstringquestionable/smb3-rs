@@ -56,14 +56,23 @@ pub(crate) struct PickupResult {
     pub pool: Vec<PoolEntry>,
 }
 
+/// Per-feature flags controlling which catalog entry kinds the pickup phase
+/// pulls into the shuffle pool. Each flag corresponds to a pickup-time option;
+/// when false, those entries stay at their vanilla positions.
+#[derive(Copy, Clone)]
+pub(crate) struct PickupFlags {
+    pub shuffle_spade_games: bool,
+    pub shuffle_toad_houses: bool,
+}
+
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
 /// Execute Phase 2: read grids, open FX gaps, collect the shuffle pool, blank
 /// picked-up positions.
-pub(crate) fn pick_up(rom: &Rom, catalog: &NodeCatalog, shuffle_spade_games: bool) -> PickupResult {
-    pick_up_filtered(rom, catalog, shuffle_spade_games, |entry, shuffle_spades| {
+pub(crate) fn pick_up(rom: &Rom, catalog: &NodeCatalog, flags: PickupFlags) -> PickupResult {
+    pick_up_filtered(rom, catalog, flags, |entry, flags| {
         // Airships and Bowser stay at vanilla pointer table entries.
         // The autoscroll patch targets their hardcoded entry_idx offsets,
         // and blanking their grid positions would create extra build-phase
@@ -86,7 +95,13 @@ pub(crate) fn pick_up(rom: &Rom, catalog: &NodeCatalog, shuffle_spade_games: boo
         }
         // BonusGame (spade card) — pick up so the builder can re-place at a
         // HammerBro slot, freeing the vanilla position for a level.
-        if shuffle_spades && matches!(entry.kind, NodeKind::BonusGame) {
+        if flags.shuffle_spade_games && matches!(entry.kind, NodeKind::BonusGame) {
+            return true;
+        }
+        // ToadHouse — pick up so the builder can re-place at a HammerBro
+        // slot. Each entry preserves its vanilla obj_ptr (one of 7 reward
+        // pool variants), so the reward identity stays attached.
+        if flags.shuffle_toad_houses && matches!(entry.kind, NodeKind::ToadHouse) {
             return true;
         }
         false
@@ -97,14 +112,14 @@ pub(crate) fn pick_up(rom: &Rom, catalog: &NodeCatalog, shuffle_spade_games: boo
 pub(super) fn pick_up_filtered(
     rom: &Rom,
     catalog: &NodeCatalog,
-    shuffle_spade_games: bool,
-    pred: fn(&CatalogEntry, bool) -> bool,
+    flags: PickupFlags,
+    pred: fn(&CatalogEntry, PickupFlags) -> bool,
 ) -> PickupResult {
     let mut pool: Vec<PoolEntry> = Vec::new();
     let mut worlds = Vec::with_capacity(8);
 
     for wi in 0..8 {
-        worlds.push(pick_up_world(rom, catalog, wi, &mut pool, shuffle_spade_games, pred));
+        worlds.push(pick_up_world(rom, catalog, wi, &mut pool, flags, pred));
     }
 
     // Synthetic beta entries (world_idx == usize::MAX) have no vanilla grid
@@ -114,7 +129,7 @@ pub(super) fn pick_up_filtered(
         if entry.world_idx != usize::MAX {
             continue;
         }
-        if !pred(entry, shuffle_spade_games) {
+        if !pred(entry, flags) {
             continue;
         }
         pool.push(PoolEntry {
@@ -136,8 +151,8 @@ fn pick_up_world(
     catalog: &NodeCatalog,
     world_idx: usize,
     pool: &mut Vec<PoolEntry>,
-    shuffle_spade_games: bool,
-    pred: fn(&CatalogEntry, bool) -> bool,
+    flags: PickupFlags,
+    pred: fn(&CatalogEntry, PickupFlags) -> bool,
 ) -> ClearedWorld {
     let mut grid = rom_data::read_tile_grid(rom, world_idx);
 
@@ -148,7 +163,7 @@ fn pick_up_world(
     let mut pool_indices = Vec::new();
 
     for (ci, entry) in catalog.entries.iter().enumerate() {
-        if entry.world_idx != world_idx || !pred(entry, shuffle_spade_games) {
+        if entry.world_idx != world_idx || !pred(entry, flags) {
             continue;
         }
 
@@ -309,15 +324,16 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, true);
+        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
 
-        // 62 levels + 17 fortresses + 48 pipes + 151 hammer bros + 19 bonus games = 297
+        // 62 levels + 17 fortresses + 48 pipes + 151 hammer bros + 19 bonus games + 22 toad houses = 319
         // (Airships and Bowser excluded — their pointer table entries stay vanilla
         // so the autoscroll patch's hardcoded offsets remain valid.)
         // (166 HammerBro catalog entries minus 12 with non-level pointers like toad house/bonus game)
         // (3 W3 HammerBro entries on tile $4B (boat dock) excluded — tile must stay for boat boarding)
         // (19 BonusGame entries picked up when shuffle_spade_games is true)
-        assert_eq!(result.pool.len(), 297, "pool should have 297 entries (level-like + hammer bros + bonus games, no airship/bowser/boat-dock)");
+        // (22 ToadHouse entries picked up when shuffle_toad_houses is true)
+        assert_eq!(result.pool.len(), 319, "pool should have 319 entries (level-like + hammer bros + bonus games + toad houses, no airship/bowser/boat-dock)");
     }
 
     #[test]
@@ -327,7 +343,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, true);
+        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
 
         for (pi, pe) in result.pool.iter().enumerate() {
             let entry = &catalog.entries[pe.catalog_idx];
@@ -353,7 +369,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, true);
+        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
 
         let fx_slots = rom_data::read_fx_slots(&rom);
         let fx_assignments = rom_data::read_world_fx_assignments(&rom);
@@ -385,7 +401,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, true);
+        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
 
         for entry in &catalog.entries {
             if !matches!(entry.kind, NodeKind::Start) {
@@ -409,7 +425,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, true);
+        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
 
         for cw in &result.worlds {
             for &pi in &cw.pool_indices {
@@ -438,7 +454,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, true);
+        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
 
         for cw in &result.worlds {
             eprintln!("\n=== World {} ({} picked up) ===", cw.world_idx + 1, cw.pool_indices.len());
@@ -474,8 +490,8 @@ mod tests {
     }
 
     /// Helper: write cleared grids into a ROM copy and save to disk.
-    fn dump_filtered_rom(rom: &Rom, catalog: &NodeCatalog, pred: fn(&CatalogEntry, bool) -> bool, filename: &str) {
-        let result = pick_up_filtered(rom, catalog, true, pred);
+    fn dump_filtered_rom(rom: &Rom, catalog: &NodeCatalog, pred: fn(&CatalogEntry, PickupFlags) -> bool, filename: &str) {
+        let result = pick_up_filtered(rom, catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true }, pred);
         let mut data = rom.data.clone();
         for cw in &result.worlds {
             for r in 0..cw.grid.rows {

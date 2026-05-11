@@ -124,6 +124,10 @@ struct Cli {
     #[arg(long)]
     no_shuffle_spade_games: bool,
 
+    /// Disable Toad House shuffle (on by default; off keeps vanilla Toad House positions)
+    #[arg(long)]
+    no_shuffle_toad_houses: bool,
+
     /// Disable hand-trap level slots (on by default; ~10% of levels become visible 0xE6 hand-traps that grab the player on arrival)
     #[arg(long)]
     no_hands_levels: bool,
@@ -328,6 +332,7 @@ fn main() {
             hammer_breaks_locks: cli.hammer_breaks_locks,
             hammer_breaks_bridges: cli.hammer_breaks_bridges,
             shuffle_spade_games: !cli.no_shuffle_spade_games,
+            shuffle_toad_houses: !cli.no_shuffle_toad_houses,
             hands_levels: !cli.no_hands_levels,
             troll_pipes: !cli.no_troll_pipes,
             include_beta_stages: cli.include_beta_stages,

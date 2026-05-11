@@ -116,6 +116,13 @@ pub struct Options {
     /// positions (and the overworld builder leaves those tiles untouched).
     #[serde(default = "default_true")]
     pub shuffle_spade_games: bool,
+    /// When true, the 22 vanilla Toad Houses are picked up by the overworld
+    /// builder and re-placed at random HammerBro slots (cross-world, so W8
+    /// can receive one). Each entry preserves its vanilla obj_ptr, so reward
+    /// pool identity is unchanged. When false, Toad Houses stay at vanilla
+    /// positions.
+    #[serde(default = "default_true")]
+    pub shuffle_toad_houses: bool,
     /// Replace ~10% of regular-level slots with visible hand-trap tiles (0xE6).
     /// On arrival the player is grabbed (100%, no 50/50 roll) and pulled into
     /// the underlying level. After completion, vanilla rewrites the tile to a
@@ -303,6 +310,7 @@ impl Options {
             | (self.fix_drawbridges as u8) << 4
             | (self.remove_rocks as u8) << 3
             | (self.troll_pipes as u8) << 2
+            | (self.shuffle_toad_houses as u8) << 1
             | (self.shuffle_airships as u8);
 
         let b3 = ((self.hammer_breaks_bridges as u8) << 7)
@@ -443,6 +451,7 @@ impl Options {
             hands_levels: (b2 >> 6) & 1 != 0,
             shuffle_pipes: (b2 >> 5) & 1 != 0,
             shuffle_airships: b2 & 1 != 0,
+            shuffle_toad_houses: (b2 >> 1) & 1 != 0,
             fix_drawbridges: (b2 >> 4) & 1 != 0,
             remove_rocks: (b2 >> 3) & 1 != 0,
             troll_pipes: (b2 >> 2) & 1 != 0,
@@ -538,6 +547,7 @@ impl Default for Options {
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             shuffle_spade_games: true,
+            shuffle_toad_houses: true,
             hands_levels: true,
             troll_pipes: true,
             ground: EnemyMode::Shuffle,
@@ -680,8 +690,17 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
 
     rom.set_tag("overworld/builder");
     let catalog = randomize::node_catalog::NodeCatalog::build(rom, options.include_beta_stages);
-    let pickup = randomize::overworld_pickup::pick_up(rom, &catalog, options.shuffle_spade_games);
-    let mut build = randomize::overworld_build::build(rom, &pickup, &catalog, &mut rng);
+    let pickup = randomize::overworld_pickup::pick_up(
+        rom,
+        &catalog,
+        randomize::overworld_pickup::PickupFlags {
+            shuffle_spade_games: options.shuffle_spade_games,
+            shuffle_toad_houses: options.shuffle_toad_houses,
+        },
+    );
+    let mut build = randomize::overworld_build::build(
+        rom, &pickup, &catalog, &mut rng, options.shuffle_toad_houses,
+    );
     if options.hands_levels {
         rom.set_tag("hands_levels");
         randomize::hands_levels::mark_hand_traps(&mut build, &mut rng);
@@ -1036,6 +1055,7 @@ mod tests {
             hammer_breaks_locks: true,
             hammer_breaks_bridges: true,
             shuffle_spade_games: true,
+            shuffle_toad_houses: true,
             hands_levels: true,
             troll_pipes: true,
             ground: EnemyMode::Wild,
@@ -1105,6 +1125,7 @@ mod tests {
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             shuffle_spade_games: false,
+            shuffle_toad_houses: false,
             hands_levels: false,
             troll_pipes: false,
             ground: EnemyMode::Off,
@@ -1258,6 +1279,7 @@ mod tests {
             ("hammer_breaks_locks",          Box::new(|o| o.hammer_breaks_locks = !o.hammer_breaks_locks)),
             ("hammer_breaks_bridges",        Box::new(|o| o.hammer_breaks_bridges = !o.hammer_breaks_bridges)),
             ("shuffle_spade_games",           Box::new(|o| o.shuffle_spade_games = !o.shuffle_spade_games)),
+            ("shuffle_toad_houses",          Box::new(|o| o.shuffle_toad_houses = !o.shuffle_toad_houses)),
             ("wild_injections",              Box::new(|o| o.wild_injections = !o.wild_injections)),
             ("jitter_enemy_positions",       Box::new(|o| o.jitter_enemy_positions = !o.jitter_enemy_positions)),
         ];
@@ -1364,6 +1386,7 @@ mod tests {
         everything.hammer_breaks_locks = true;
         everything.hammer_breaks_bridges = true;
         everything.shuffle_spade_games = !everything.shuffle_spade_games;
+        everything.shuffle_toad_houses = !everything.shuffle_toad_houses;
         everything.wild_injections = true;
         everything.jitter_enemy_positions = true;
         everything.ground = EnemyMode::Wild;
@@ -1466,6 +1489,7 @@ mod tests {
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             shuffle_spade_games: false,
+            shuffle_toad_houses: false,
             hands_levels: false,
             troll_pipes: false,
             ground: EnemyMode::Off,
@@ -1517,6 +1541,7 @@ mod tests {
             hammer_breaks_locks: true,
             hammer_breaks_bridges: true,
             shuffle_spade_games: true,
+            shuffle_toad_houses: true,
             hands_levels: true,
             troll_pipes: true,
             ground: EnemyMode::Wild,
