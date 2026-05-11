@@ -333,9 +333,18 @@ function tipBlock(entry) {
 	return el("div", { id: `tip-${entry.id}`, class: "option-tip", hidden: true }, entry.tip);
 }
 
-// Optional CHR sprite icon next to an option. Returns a 32x32 canvas with a
-// known DOM id; app.js paints it once romBytes is available. If entry.icon
-// is unset, returns null and the caller skips the slot.
+// Optional sprite icon next to an option. Returns a canvas at the icon's
+// natural pixel size with a known DOM id; app.js paints it from the bundled
+// sprite sheet (web/assets/sprites.png) at startup. If entry.icon is unset,
+// returns null and the caller skips the slot.
+//
+// To add an icon to an option:
+//   1. Open web/sprite-picker.html in the browser.
+//   2. Click-and-drag a tight rectangle around the sprite you want.
+//   3. Click "Copy as JSON" and paste the {x,y,w,h} into the schema entry's
+//      `icon` field below.
+//   4. `icon` accepts either a single {x,y,w,h} object or an array of them
+//      (random pick at page load — used by Power-ups for variety).
 function iconCanvas(entry) {
 	if (!entry.icon) return null;
 	const first = Array.isArray(entry.icon) ? entry.icon[0] : entry.icon;
