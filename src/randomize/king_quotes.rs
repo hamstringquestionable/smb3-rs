@@ -476,6 +476,22 @@ const QUOTES: &[[&str; 6]] = &[
         "",
         "",
     ],
+    [
+        "Every plumber",
+        "reaches a warp zone",
+        "he can't come back",
+        "from.",
+        "",
+        "",
+    ],
+    [
+        "Nobody wants to win?",
+        "Nobody wants to win",
+        "this race?",
+        "Everyone's playing",
+        "to not lose...",
+        "",
+    ],
 ];
 
 /// Suit-specific quotes: shown when Mario visits the king wearing frog suit.
