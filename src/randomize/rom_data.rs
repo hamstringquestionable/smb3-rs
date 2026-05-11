@@ -126,10 +126,10 @@ pub(super) const FS_HAND_ROOMS: usize = 0x0DA74; // 22 bytes (2 × 11)
 // ---------------------------------------------------------------------------
 
 /// Valid horizontal path tiles (Map_Object_Valid_Left/Right in PRG010).
-pub(super) const VALID_HORZ: &[u8] = &[0x45, 0x49, 0xB2, 0xB3, 0xAC, 0xB7, 0xB8, 0xDA, 0xB9, 0xE6];
+pub(super) const VALID_HORZ: &[u8] = &[0x45, 0x49, 0xB2, 0xB3, 0xAC, 0xB7, 0xB8, 0xDA, 0xB9, 0xE6, 0xE8];
 
 /// Valid vertical path tiles (Map_Object_Valid_Down/Up in PRG010).
-pub(super) const VALID_VERT: &[u8] = &[0x46, 0xB1, 0xAA, 0xAB, 0xB0, 0xDB, 0xBA];
+pub(super) const VALID_VERT: &[u8] = &[0x46, 0xB1, 0xAA, 0xAB, 0xB0, 0xDB, 0xBA, 0xE8];
 
 /// Background / non-walkable tiles.
 pub(super) const BACKGROUND_TILES: &[u8] = &[0xB4, 0xFF, 0x02];

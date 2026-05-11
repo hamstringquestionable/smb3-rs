@@ -200,6 +200,7 @@ fn pick_up_world(
 /// wrong tile. `(world_idx, row, col, tile)`
 const BLANK_TILE_OVERRIDES: &[(usize, usize, usize, u8)] = &[
     (2, 8, 6, 0x47), // W3 spade near start — heuristic picks 0x44 (no neighbors), needs 0x47 for BFS
+    (4, 6, 20, 0xD9), // W5 spade in sky region — neighbors are non-path sky bg, heuristic falls to land
 ];
 
 use super::rom_data::VALID_BLANK_TILES;
@@ -254,7 +255,7 @@ fn theme_from_tile(tile: u8, force_island: bool) -> (u8, u8, u8, u8) {
         return (0xAE, 0xB5, 0xAF, 0xB6);
     }
     match tile >> 4 {
-        0xD => (0xDC, 0xD9, 0xDE, 0xD9), // sky
+        0xD => (0xDC, 0xDD, 0xDE, 0xD9), // sky
         _   => (0x47, 0x48, 0x4A, 0x44),  // standard
     }
 }
@@ -535,6 +536,26 @@ mod tests {
             }
         }
         eprintln!("\n{} overrides, {} differ from heuristic", BLANK_TILE_OVERRIDES.len(), mismatches);
+    }
+
+    #[test]
+    fn test_w5_spade_pickup_uses_sky_blanks() {
+        // After pickup, W5 spade positions in the sky region should get
+        // sky-palette blanks (not standard land 0x44). (4, 30) hits the V
+        // case via 0xE8 in VALID_VERT; (6, 20) has no path neighbors at all
+        // so an override pins it to the sky "none" tile.
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+        let catalog = NodeCatalog::build(&rom, false);
+        let result = pick_up(&rom, &catalog, PickupFlags {
+            shuffle_spade_games: true,
+            shuffle_toad_houses: true,
+        });
+        let w5 = &result.worlds[4];
+        assert_eq!(w5.grid.get(6, 20), 0xD9, "W5 (6,20) override should produce sky none-tile");
+        assert_eq!(w5.grid.get(4, 30), 0xDD, "W5 (4,30) should produce sky v-tile via 0xE8 in VALID_VERT");
     }
 
     #[test]
