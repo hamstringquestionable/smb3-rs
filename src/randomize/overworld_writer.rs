@@ -5,7 +5,7 @@
 /// ROM data: tile grids, pointer tables, FX tables, pipe destinations, and
 /// W8 army sprite positions.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use rand::Rng;
 use rand::seq::{IndexedRandom, SliceRandom};
@@ -308,7 +308,16 @@ fn assign_pool<R: Rng>(
     }
 
     let mut fort_iter = fort_pool.into_iter();
-    let mut level_iter = level_pool.into_iter();
+    let mut level_pool: VecDeque<usize> = level_pool.into();
+
+    // Troll pipes don't clear when beaten, so a slot stamped as a troll pipe
+    // can be replayed infinitely. The W8 Hand levels (8-Hnd1/2/3) are short
+    // bonus rooms that drop items, so we never assign them to troll-pipe slots
+    // — otherwise the player could farm items by re-entering the pipe.
+    let is_hand_level = |pi: usize| -> bool {
+        let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
+        ce.world_idx == 7 && matches!(ce.entry_idx, 14 | 15 | 16)
+    };
 
     let mut assignments: Vec<WorldAssignments> = Vec::with_capacity(8);
 
@@ -343,12 +352,24 @@ fn assign_pool<R: Rng>(
                 continue;
             }
             let pi = if cross_world {
-                level_iter.next().expect("level pool exhausted")
+                if slot.is_troll_pipe {
+                    let pos = level_pool.iter().position(|&pi| !is_hand_level(pi))
+                        .expect("level pool exhausted with no non-hand entries left");
+                    level_pool.remove(pos).unwrap()
+                } else {
+                    level_pool.pop_front().expect("level pool exhausted")
+                }
             } else {
-                level_by_world
+                let v = level_by_world
                     .get_mut(&wi)
-                    .and_then(|v| v.pop())
-                    .expect("intra-world level pool exhausted")
+                    .expect("intra-world level pool missing");
+                if slot.is_troll_pipe {
+                    let idx = v.iter().rposition(|&pi| !is_hand_level(pi))
+                        .expect("intra-world level pool exhausted with no non-hand entries left");
+                    v.remove(idx)
+                } else {
+                    v.pop().expect("intra-world level pool exhausted")
+                }
             };
             level.push(Assignment { pool_idx: pi, pos: slot.pos });
         }
@@ -1200,6 +1221,45 @@ mod tests {
                 "W{}: {} assignments exceed {} available pointer table slots",
                 wi + 1, total, available,
             );
+        }
+    }
+
+    #[test]
+    fn test_troll_pipes_never_assigned_hand_levels() {
+        // Troll pipes don't clear when beaten — a hand level (8-Hnd1/2/3)
+        // behind a troll pipe would be infinitely farmable for items. The
+        // level-assignment pass must skip hand levels for troll-pipe slots.
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+        let catalog = super::super::node_catalog::NodeCatalog::build(&rom, false);
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, true);
+
+        for seed in 0u64..32 {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let mut build = super::super::overworld_build::build(&rom, &pickup, &catalog, &mut rng);
+            super::super::troll_pipes::mark_troll_pipes(&mut build, &mut rng);
+
+            let troll_positions: HashSet<(usize, (usize, usize))> = build.worlds.iter()
+                .flat_map(|w| w.slots.iter()
+                    .filter(|s| s.is_troll_pipe)
+                    .map(move |s| (w.world_idx, s.pos)))
+                .collect();
+
+            let assignments = assign_pool(&rom, &build, &pickup, &catalog, &mut rng, true);
+
+            for (wi, wa) in assignments.iter().enumerate() {
+                for a in &wa.level {
+                    if !troll_positions.contains(&(wi, a.pos)) { continue; }
+                    let ce = &catalog.entries[pickup.pool[a.pool_idx].catalog_idx];
+                    assert!(
+                        !(ce.world_idx == 7 && matches!(ce.entry_idx, 14 | 15 | 16)),
+                        "seed {seed}: W{} troll pipe at {:?} got hand level (W{} entry {})",
+                        wi + 1, a.pos, ce.world_idx + 1, ce.entry_idx,
+                    );
+                }
+            }
         }
     }
 
