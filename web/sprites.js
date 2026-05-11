@@ -4,6 +4,11 @@
 // credited in the sheet itself (Fieepa, Rotodisco, ComputerBoi13,
 // LBlueTheSpriter, Docvon Schmeltwick).
 //
+// The bundled sprites.png has been preprocessed to make the per-cell blue
+// backgrounds transparent (RGBA colors (68,145,190), (35,50,62), (41,88,124)
+// → alpha 0). If you re-source the sheet, redo the knockout — otherwise icons
+// will render with a blue square around them on the dark site bg.
+//
 // Icon spec format on schema entries:
 //   icon: { x: 0, y: 48, w: 16, h: 16 }     // basic 16x16
 //   icon: { x: 0, y: 48 }                    // w/h default to 16
