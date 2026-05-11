@@ -209,20 +209,23 @@ loadRom().then((bytes) => {
 // Sheet loads independently of the user's ROM, so icons render on the empty
 // state too. Called once at init.
 async function renderAllIcons() {
-	let sheet;
-	try {
-		sheet = await ensureSheet();
-	} catch (e) {
-		console.warn("Sprite sheet failed to load; icons will be blank.", e);
-		return;
-	}
+	const sheets = {};
 	for (const entry of SCHEMA) {
 		if (!entry.icon) continue;
 		const canvas = document.getElementById(`icon-${entry.id}`);
 		const spec = Array.isArray(entry.icon)
 			? entry.icon[Math.floor(Math.random() * entry.icon.length)]
 			: entry.icon;
-		drawSpriteFromSheet(canvas, sheet, spec);
+		const sheetName = spec.sheet ?? "default";
+		if (!sheets[sheetName]) {
+			try {
+				sheets[sheetName] = await ensureSheet(sheetName);
+			} catch (e) {
+				console.warn(`Sprite sheet '${sheetName}' failed to load; icon blank.`, e);
+				continue;
+			}
+		}
+		drawSpriteFromSheet(canvas, sheets[sheetName], spec);
 	}
 }
 renderAllIcons();

@@ -14,22 +14,31 @@
 //   icon: { x: 0, y: 48 }                    // w/h default to 16
 //   icon: { x: 0, y: 48, w: 16, h: 32 }      // tall sprites (Mario etc.)
 
-const SHEET_PATH = "./assets/sprites.png";
+// Available sprite sheets. Add new entries here when bundling a new sheet —
+// the picker (sprite-picker.html) and schema icons (options.js `sheet:` field)
+// look up by the same key.
+export const SHEETS = {
+	default: "./assets/sprites.png",
+	bosses: "./assets/sprites-bosses.png",
+	enemies: "./assets/sprites-enemies.png",
+};
 
-let sheetPromise = null;
-function loadSheet() {
-	if (sheetPromise) return sheetPromise;
-	sheetPromise = new Promise((resolve, reject) => {
+const sheetPromises = {};
+function loadSheet(name = "default") {
+	const path = SHEETS[name];
+	if (!path) return Promise.reject(new Error(`unknown sprite sheet: ${name}`));
+	if (sheetPromises[name]) return sheetPromises[name];
+	sheetPromises[name] = new Promise((resolve, reject) => {
 		const img = new Image();
 		img.onload = () => resolve(img);
-		img.onerror = (e) => reject(new Error("failed to load sprite sheet: " + e));
-		img.src = SHEET_PATH;
+		img.onerror = (e) => reject(new Error(`failed to load sprite sheet ${name}: ${e}`));
+		img.src = path;
 	});
-	return sheetPromise;
+	return sheetPromises[name];
 }
 
-export async function ensureSheet() {
-	return loadSheet();
+export async function ensureSheet(name = "default") {
+	return loadSheet(name);
 }
 
 export function drawSpriteFromSheet(canvas, sheet, spec) {
