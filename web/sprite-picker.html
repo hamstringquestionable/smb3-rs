@@ -26,6 +26,14 @@ input[type=text], input[type=number] { background: #0a0a1a; border: 1px solid #2
 <h1>SMB3 Sprite Picker <small>— click-and-drag a rectangle around a sprite. Live cursor coords shown in the panel.</small></h1>
 <canvas id="sheet"></canvas>
 <div class="panel">
+  <h2>Sheet</h2>
+  <div class="row">
+    <select id="sheetSel">
+      <option value="default">sprites.png</option>
+      <option value="bosses">sprites-bosses.png</option>
+      <option value="enemies">sprites-enemies.png</option>
+    </select>
+  </div>
   <h2>Cursor</h2>
   <div id="cursor" class="coord">(—, —)</div>
   <h2>Last pick</h2>
@@ -48,6 +56,11 @@ input[type=text], input[type=number] { background: #0a0a1a; border: 1px solid #2
 </div>
 
 <script>
+const SHEET_PATHS = {
+  default: './assets/sprites.png',
+  bosses: './assets/sprites-bosses.png',
+  enemies: './assets/sprites-enemies.png',
+};
 const cv = document.getElementById('sheet');
 const ctx = cv.getContext('2d');
 const lastEl = document.getElementById('last');
@@ -58,13 +71,23 @@ const scaleEl = document.getElementById('scale');
 const scaleval = document.getElementById('scaleval');
 const gridOnEl = document.getElementById('gridOn');
 const gridStepEl = document.getElementById('gridStep');
+const sheetSelEl = document.getElementById('sheetSel');
 const sheet = new Image();
 let scale = 4;
+let sheetName = 'default';
 const picks = [];
 let drag = null; // { x0, y0, x1, y1 } in image-pixel coords
 
 sheet.onload = () => { rerender(); };
-sheet.src = './assets/sprites.png';
+sheet.src = SHEET_PATHS[sheetName];
+
+sheetSelEl.addEventListener('change', () => {
+  sheetName = sheetSelEl.value;
+  picks.length = 0;
+  lastEl.textContent = '—';
+  refreshRecent();
+  sheet.src = SHEET_PATHS[sheetName];
+});
 
 function rerender() {
   scale = +scaleEl.value;
@@ -143,8 +166,11 @@ cv.addEventListener('mouseup', (e) => {
   drag.x1 = p.x; drag.y1 = p.y;
   const r = normRect(drag);
   drag = null;
+  if (sheetName !== 'default') r.sheet = sheetName;
   picks.push(r);
-  lastEl.textContent = `{ x: ${r.x}, y: ${r.y}, w: ${r.w}, h: ${r.h} }`;
+  lastEl.textContent = r.sheet
+    ? `{ x: ${r.x}, y: ${r.y}, w: ${r.w}, h: ${r.h}, sheet: "${r.sheet}" }`
+    : `{ x: ${r.x}, y: ${r.y}, w: ${r.w}, h: ${r.h} }`;
   refreshRecent();
   rerender();
 });

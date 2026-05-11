@@ -54,6 +54,19 @@ export const GROUPS = [
 	{ id: "cosmetic", label: "Cosmetic", note: "Cosmetic — does not affect the seed or flag key." },
 ];
 
+// Reused icon sets — referenced from multiple SCHEMA entries.
+// All seven Koopalings; bound to every boss option that doesn't have a more
+// specific icon, randomized per-entry per-page-load for visual variety.
+const KOOPALINGS = [
+	{ x: 1, y: 273, w: 24, h: 32, sheet: "bosses" },
+	{ x: 1, y: 307, w: 24, h: 32, sheet: "bosses" },
+	{ x: 1, y: 341, w: 24, h: 32, sheet: "bosses" },
+	{ x: 1, y: 375, w: 24, h: 33, sheet: "bosses" },
+	{ x: 1, y: 409, w: 24, h: 32, sheet: "bosses" },
+	{ x: 1, y: 443, w: 24, h: 32, sheet: "bosses" },
+	{ x: 1, y: 477, w: 24, h: 32, sheet: "bosses" },
+];
+
 // Schema. Field names match the Rust Options struct; the load-time parity
 // check guarantees they stay aligned. inFlagKey is informational/UX only;
 // the Rust flag-key encoder is what actually decides what's persisted.
@@ -180,10 +193,12 @@ export const SCHEMA = [
 	{ id: "random_koopalings", type: "bool", default: false,
 		label: "Random Koopalings",
 		tip: "Shuffle which Koopaling appears in each world — each airship boss keeps its sprite, palette, jump pattern, and special abilities regardless of world. Thanks to fcoughlin (Fred) for the patch.",
+		icon: KOOPALINGS,
 		group: "bosses", inFlagKey: true },
 	{ id: "koopaling_hits", type: "bool", default: true,
 		label: "Random Koopaling Stomps",
 		tip: "Each Koopaling takes a random number of stomps (1–5) instead of the vanilla 3",
+		icon: KOOPALINGS,
 		group: "bosses", inFlagKey: true },
 	{ id: "hammer_vulnerable_koopalings", type: "bool", default: false,
 		label: "Hammer Vulnerable Koopalings",
@@ -193,6 +208,7 @@ export const SCHEMA = [
 	{ id: "adjust_boss_hitboxes", type: "bool", default: true,
 		label: "Adjust Boss Hitboxes",
 		tip: "Adjust Bowser and Koopaling hitboxes so they're easier to hit",
+		icon: { x: 171, y: 511, w: 32, h: 44, sheet: "bosses" }, // Bowser
 		group: "bosses", inFlagKey: true },
 	{ id: "skip_wand_cutscene", type: "bool", default: true,
 		label: "Skip Wand Cutscene", flavor: "Jump Up, Super Star!",
@@ -335,16 +351,21 @@ function tipBlock(entry) {
 
 // Optional sprite icon next to an option. Returns a canvas at the icon's
 // natural pixel size with a known DOM id; app.js paints it from the bundled
-// sprite sheet (web/assets/sprites.png) at startup. If entry.icon is unset,
-// returns null and the caller skips the slot.
+// sprite sheets at startup. If entry.icon is unset, returns null and the
+// caller skips the slot.
+//
+// Sheets are declared in web/sprites.js (see SHEETS). The default sheet is
+// web/assets/sprites.png — to use a different one, add `sheet: "bosses"` (or
+// "enemies") to the icon spec.
 //
 // To add an icon to an option:
 //   1. Open web/sprite-picker.html in the browser.
-//   2. Click-and-drag a tight rectangle around the sprite you want.
-//   3. Click "Copy as JSON" and paste the {x,y,w,h} into the schema entry's
-//      `icon` field below.
-//   4. `icon` accepts either a single {x,y,w,h} object or an array of them
-//      (random pick at page load — used by Power-ups for variety).
+//   2. Pick the sheet from the dropdown, then click-and-drag a tight
+//      rectangle around the sprite.
+//   3. Click "Copy as JSON" and paste the {x,y,w,h} (with `sheet` if not the
+//      default) into the schema entry's `icon` field below.
+//   4. `icon` accepts either a single {x,y,w,h[,sheet]} object or an array of
+//      them (random pick at page load — used by Power-ups for variety).
 function iconCanvas(entry) {
 	if (!entry.icon) return null;
 	const first = Array.isArray(entry.icon) ? entry.icon[0] : entry.icon;
