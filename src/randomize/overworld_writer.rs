@@ -584,9 +584,18 @@ fn write_tile_grid<R: Rng>(
         grid.set(a.pos.0, a.pos.1, TILE_BONUS_GAME);
     }
 
-    // Stamp toad house tiles from each entry's vanilla tile (0x50 or 0xE0).
+    // Stamp toad house tiles. 0x50 and 0xE0 each carry their own embedded
+    // background, and only in W5 do the two pages have different background
+    // graphics — page 0 matches 0x50, page 1 matches 0xE0 — so the byte
+    // choice has to follow position there. In every other world both
+    // variants render against the same world background, so the visual is
+    // identical either way and we just preserve the entry's vanilla tile.
     for a in &wa.toad {
-        let tile = catalog.entries[pickup.pool[a.pool_idx].catalog_idx].tile;
+        let tile = if wi == 4 {
+            if a.pos.1 >= 16 { 0xE0 } else { 0x50 }
+        } else {
+            catalog.entries[pickup.pool[a.pool_idx].catalog_idx].tile
+        };
         grid.set(a.pos.0, a.pos.1, tile);
     }
 
