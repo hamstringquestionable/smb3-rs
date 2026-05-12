@@ -266,7 +266,7 @@ mod tests {
         // Make the whistle chest actually a whistle
         data[0x0D36A] = WARP_WHISTLE;
 
-        Rom::from_bytes(&data).unwrap()
+        Rom::from_bytes_lax(&data, true).unwrap()
     }
 
     #[test]

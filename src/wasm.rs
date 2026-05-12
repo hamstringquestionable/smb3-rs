@@ -7,21 +7,36 @@ pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// Validate that `rom` is a recognized SMB3 (USA) (Rev 1) dump. Intended to be
+/// called from JS at upload time so the user sees errors immediately instead of
+/// after clicking Generate. `skip_validation` mirrors the user-facing flag.
 #[wasm_bindgen]
-pub fn generate_patch(rom: &[u8], seed: u64, options_json: &str) -> Result<Vec<u8>, JsError> {
-    let options: Options = parse_options(options_json)?;
-    crate::generate_patch(rom, seed, &options).map_err(|e| JsError::new(&e))
+pub fn validate_rom(rom: &[u8], skip_validation: bool) -> Result<(), JsError> {
+    crate::validate_rom_bytes(rom, skip_validation).map_err(|e| JsError::new(&e))
 }
 
 #[wasm_bindgen]
-pub fn generate_patched_rom(rom: &[u8], seed: u64, options_json: &str) -> Result<Vec<u8>, JsError> {
+pub fn generate_patch(
+    rom: &[u8],
+    seed: u64,
+    options_json: &str,
+    visual_patch: Option<Vec<u8>>,
+) -> Result<Vec<u8>, JsError> {
     let options: Options = parse_options(options_json)?;
-    crate::generate_patched_rom(rom, seed, &options).map_err(|e| JsError::new(&e))
+    crate::generate_patch(rom, seed, &options, visual_patch.as_deref())
+        .map_err(|e| JsError::new(&e))
 }
 
 #[wasm_bindgen]
-pub fn apply_visual_patch(rom: &[u8], patch: &[u8]) -> Result<Vec<u8>, JsError> {
-    crate::apply_ips_patch(rom, patch).map_err(|e| JsError::new(&e))
+pub fn generate_patched_rom(
+    rom: &[u8],
+    seed: u64,
+    options_json: &str,
+    visual_patch: Option<Vec<u8>>,
+) -> Result<Vec<u8>, JsError> {
+    let options: Options = parse_options(options_json)?;
+    crate::generate_patched_rom(rom, seed, &options, visual_patch.as_deref())
+        .map_err(|e| JsError::new(&e))
 }
 
 #[wasm_bindgen]

@@ -42,7 +42,7 @@ mod tests {
             data[lay_off + 1] = ((lay_val >> 8) & 0xFF) as u8;
         }
 
-        Rom::from_bytes(&data).unwrap()
+        Rom::from_bytes_lax(&data, true).unwrap()
     }
 
     #[test]

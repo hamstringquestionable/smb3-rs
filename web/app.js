@@ -1,8 +1,7 @@
 import init, {
 	generate_patch,
 	generate_patched_rom,
-	apply_visual_patch,
-	build_ips_patch,
+	validate_rom,
 	encode_flag_key,
 	decode_flag_key,
 	default_options_json,
@@ -145,6 +144,10 @@ wireListeners(() => {
 	saveSettings();
 	updateSkipValidationWarning();
 	updateChangesSummary();
+	// Re-validate the cached ROM if the skip-validation toggle changed (or any
+	// other option, cheap enough to just rerun). Lets users toggle skip and see
+	// the Generate button update without re-uploading the file.
+	validateLoadedRom();
 });
 
 changesSummaryToggle.addEventListener("click", () => {
@@ -166,17 +169,44 @@ init()
 		wasmReady = true;
 		const versionEl = document.getElementById("version");
 		if (versionEl) versionEl.textContent = `v${version()}`;
-		updateGenerateButton();
 		updateFlagKey();
 		assertSchemaParity(default_options_json());
 		selfTestRoundTrip(encode_flag_key, decode_flag_key);
 		applyUrlParams();
+		// If a cached ROM finished loading before WASM, validate it now.
+		validateLoadedRom();
 	})
 	.catch((err) => {
 		showStatus(`Failed to load WASM module: ${err}`, "error");
 	});
 
 // --- ROM file selection ---
+
+// Tracks whether the loaded ROM passed Rev 1 validation under the current
+// skip-validation setting. Generate is gated on this so users can't try to
+// randomize an invalid ROM without explicitly opting in.
+let romValid = false;
+
+function getSkipValidation() {
+	return !!document.getElementById("opt-skip-rom-validation")?.checked;
+}
+
+function validateLoadedRom() {
+	if (!wasmReady || !romBytes) {
+		romValid = false;
+		updateGenerateButton();
+		return;
+	}
+	try {
+		validate_rom(romBytes, getSkipValidation());
+		romValid = true;
+		statusDiv.hidden = true;
+	} catch (err) {
+		romValid = false;
+		showStatus(`${err.message ?? err}`, "error");
+	}
+	updateGenerateButton();
+}
 
 romInput.addEventListener("change", (e) => {
 	const file = e.target.files[0];
@@ -187,8 +217,8 @@ romInput.addEventListener("change", (e) => {
 		romBytes = new Uint8Array(reader.result);
 		romLabel.textContent = file.name;
 		romLabel.classList.add("loaded");
-		updateGenerateButton();
 		saveRom(romBytes).catch(() => {});
+		validateLoadedRom();
 	};
 	reader.onerror = () => showStatus("Failed to read ROM file", "error");
 	reader.readAsArrayBuffer(file);
@@ -199,7 +229,7 @@ loadRom().then((bytes) => {
 		romBytes = bytes;
 		romLabel.textContent = "ROM loaded from cache";
 		romLabel.classList.add("loaded");
-		updateGenerateButton();
+		validateLoadedRom();
 	}
 }).catch(() => {});
 
@@ -332,17 +362,14 @@ generateBtn.addEventListener("click", async () => {
 		const mimeType = "application/octet-stream";
 		let visualLabel = "";
 
-		// Apply visual IPS to the input ROM first so randomization layers on top
-		// (matches CLI ordering). For IPS output, diff against the *original*
-		// vanilla input so the resulting .ips contains both the visual swap and
-		// the randomization changes — applying it to a fresh ROM gives the same
-		// result as the .nes output.
-		let inputBytes = romBytes;
+		// Fetch the visual patch (if any) and let Rust apply it before
+		// randomization. The IPS-output path naturally captures both visual and
+		// randomization changes because the diff base is the unmodified input.
+		let visualPatchBytes = undefined;
 		if (visualPatchId) {
 			const entry = VISUAL_PATCHES.find((p) => p.id === visualPatchId);
 			try {
-				const patch = await fetchVisualPatch(visualPatchId);
-				inputBytes = apply_visual_patch(romBytes, patch);
+				visualPatchBytes = await fetchVisualPatch(visualPatchId);
 				visualLabel = entry?.label ?? visualPatchId;
 			} catch (err) {
 				showStatus(`Visual patch '${entry?.label ?? visualPatchId}' failed to load: ${err}`, "error");
@@ -351,11 +378,10 @@ generateBtn.addEventListener("click", async () => {
 		}
 
 		if (outputFormat === "rom") {
-			result = generate_patched_rom(inputBytes, seed, options);
+			result = generate_patched_rom(romBytes, seed, options, visualPatchBytes);
 			filename = `smb3-rs_${seed}.nes`;
 		} else {
-			const finalBytes = generate_patched_rom(inputBytes, seed, options);
-			result = build_ips_patch(romBytes, finalBytes);
+			result = generate_patch(romBytes, seed, options, visualPatchBytes);
 			filename = `smb3-rs_${seed}.ips`;
 		}
 
@@ -440,7 +466,7 @@ function applyUrlParams() {
 // --- Misc ---
 
 function updateGenerateButton() {
-	generateBtn.disabled = !(wasmReady && romBytes);
+	generateBtn.disabled = !(wasmReady && romBytes && romValid);
 }
 
 function showStatus(message, type) {

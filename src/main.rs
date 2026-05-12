@@ -443,7 +443,7 @@ fn main() {
         rom_data
     };
 
-    let rom = match smb3_rs::randomize_rom(&rom_data, seed, &options) {
+    let rom = match smb3_rs::randomize_rom(&rom_data, seed, &options, None) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Error: {e}");

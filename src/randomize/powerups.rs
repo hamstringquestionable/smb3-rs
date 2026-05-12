@@ -188,7 +188,7 @@ mod tests {
         ];
         data[start..start + level.len()].copy_from_slice(level);
 
-        Rom::from_bytes(&data).unwrap()
+        Rom::from_bytes_lax(&data, true).unwrap()
     }
 
     #[test]
@@ -251,7 +251,7 @@ mod tests {
         data[0x23DAF] = 0x2A; // scr=2, x=10
         data[0x23DB0] = 0x02; // Q-star
 
-        let mut rom = Rom::from_bytes(&data).unwrap();
+        let mut rom = Rom::from_bytes_lax(&data, true).unwrap();
         let mut rng = ChaCha8Rng::seed_from_u64(99);
 
         for _ in 0..10 {
@@ -285,7 +285,7 @@ mod tests {
         ];
         data[start..start + level.len()].copy_from_slice(level);
 
-        let mut rom = Rom::from_bytes(&data).unwrap();
+        let mut rom = Rom::from_bytes_lax(&data, true).unwrap();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
 
         // The QBLOCKLEAF byte2 is at start + 9 + 4 + 2 = start + 15
