@@ -218,9 +218,7 @@ mod tests {
         let original = vec![0u8; 100];
         let mut modified = original.clone();
         // Write 20 identical bytes — should trigger RLE
-        for i in 10..30 {
-            modified[i] = 0xAA;
-        }
+        modified[10..30].fill(0xAA);
 
         let patch = build_ips_patch(&original, &modified);
         let result = apply_ips_patch(&original, &patch).unwrap();

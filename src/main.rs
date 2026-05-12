@@ -243,7 +243,7 @@ fn main() {
         }
     };
 
-    let seed = cli.seed.unwrap_or_else(|| rand::random());
+    let seed = cli.seed.unwrap_or_else(rand::random);
 
     fn parse_enemy_mode(s: &str, name: &str) -> EnemyMode {
         match s {
@@ -315,8 +315,8 @@ fn main() {
             world_order: cli.world_order,
             world_count: cli.world_count,
             big_q_blocks: cli.big_q_blocks,
-            shuffle_pipes: if cli.no_shuffle_pipes { false } else { true },
-            shuffle_airships: if cli.no_shuffle_airships { false } else { true },
+            shuffle_pipes: !cli.no_shuffle_pipes,
+            shuffle_airships: !cli.no_shuffle_airships,
             disable_autoscroll: !cli.keep_autoscroll,
             chest_items: !cli.no_chest_items,
             remove_whistles: !cli.keep_whistles,

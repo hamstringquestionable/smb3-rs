@@ -1,9 +1,9 @@
-/// Phase 4 of the overworld builder rewrite: Write.
-///
-/// Takes `BuildResult` (Phase 3) + `PickupResult` (Phase 2) + `NodeCatalog`
-/// (Phase 1) + RNG, assigns concrete pool entries to slots, and writes all
-/// ROM data: tile grids, pointer tables, FX tables, pipe destinations, and
-/// W8 army sprite positions.
+//! Phase 4 of the overworld builder rewrite: Write.
+//!
+//! Takes `BuildResult` (Phase 3) + `PickupResult` (Phase 2) + `NodeCatalog`
+//! (Phase 1) + RNG, assigns concrete pool entries to slots, and writes all
+//! ROM data: tile grids, pointer tables, FX tables, pipe destinations, and
+//! W8 army sprite positions.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -164,9 +164,8 @@ pub(crate) fn write_overworld<R: Rng>(
     let mut hb_fallback_iter = hb_fallback_levels.iter().cycle().cloned();
 
     let mut fx_slot = 0usize;
-    for wi in 0..8 {
+    for (wi, wa) in assignments.iter().enumerate() {
         let built = &build.worlds[wi];
-        let wa = &assignments[wi];
         let sprite_mask = if wi == 7 { &w8_sprite_pos_set } else { &HashSet::new() };
 
         write_tile_grid(rom, built, wa, pickup, catalog, sprite_mask, rng);
@@ -325,7 +324,7 @@ fn assign_pool<R: Rng>(
     // — otherwise the player could farm items by re-entering the pipe.
     let is_hand_level = |pi: usize| -> bool {
         let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
-        ce.world_idx == 7 && matches!(ce.entry_idx, 14 | 15 | 16)
+        ce.world_idx == 7 && matches!(ce.entry_idx, 14..=16)
     };
 
     let mut assignments: Vec<WorldAssignments> = Vec::with_capacity(8);
@@ -500,13 +499,11 @@ fn assign_pool<R: Rng>(
 
         // Assign sprite slots from per-obj_ptr round-robin.
         let mut hammer_bro = Vec::new();
-        let mut sprite_obj_idx = 0usize;
-        for pos in &sprite_slots {
+        for (sprite_obj_idx, pos) in sprite_slots.iter().enumerate() {
             if hammer_bro.len() >= remaining_slots { break; }
             let key = hb_group_keys[sprite_obj_idx % hb_group_keys.len()];
             let group = hb_obj_groups.get(&key).unwrap();
             let le = group[sprite_obj_idx / hb_group_keys.len() % group.len()].clone();
-            sprite_obj_idx += 1;
             hammer_bro.push(HammerBroAssignment { pos: *pos, level_entry: le });
         }
 
@@ -661,12 +658,10 @@ fn write_tile_grid<R: Rng>(
     };
 
     for &(pos, _dist) in &bfs {
-        if let Some(&la_idx) = level_pos_set.get(&pos) {
-            if !assigned[la_idx] {
-                let tile = pick_level_tile(pos, &mut level_idx);
-                grid.set(pos.0, pos.1, tile);
-                assigned[la_idx] = true;
-            }
+        if let Some(&la_idx) = level_pos_set.get(&pos) && !assigned[la_idx] {
+            let tile = pick_level_tile(pos, &mut level_idx);
+            grid.set(pos.0, pos.1, tile);
+            assigned[la_idx] = true;
         }
     }
 
@@ -688,7 +683,7 @@ fn write_tile_grid<R: Rng>(
     // a plain path node, not a fortress/level tile. Skip BLANK_TILE_OVERRIDES
     // since sprite positions are dynamic (not the vanilla fixed positions).
     for &pos in sprite_mask {
-        let tile = super::overworld_pickup::blank_tile_for_dynamic(&grid, wi, pos.0, pos.1);
+        let tile = super::overworld_pickup::blank_tile_from_neighbors(&grid, wi, pos.0, pos.1);
         grid.set(pos.0, pos.1, tile);
     }
 
@@ -1302,7 +1297,7 @@ mod tests {
                     if !troll_positions.contains(&(wi, a.pos)) { continue; }
                     let ce = &catalog.entries[pickup.pool[a.pool_idx].catalog_idx];
                     assert!(
-                        !(ce.world_idx == 7 && matches!(ce.entry_idx, 14 | 15 | 16)),
+                        !(ce.world_idx == 7 && matches!(ce.entry_idx, 14..=16)),
                         "seed {seed}: W{} troll pipe at {:?} got hand level (W{} entry {})",
                         wi + 1, a.pos, ce.world_idx + 1, ce.entry_idx,
                     );
@@ -1382,7 +1377,7 @@ mod tests {
             let fx_base = rom_data::FX_WORLD_TABLE + wi * 4;
             for i in 0..4 {
                 let slot_idx = test_rom.read_byte(fx_base + i);
-                if slot_idx != 0 || (i == 0 && build.worlds[wi].locks.len() > 0) {
+                if slot_idx != 0 || (i == 0 && !build.worlds[wi].locks.is_empty()) {
                     // Slot 0 is valid (could be index 0), so check lock count.
                     if i < build.worlds[wi].locks.len() {
                         fx_count += 1;
@@ -1412,8 +1407,7 @@ mod tests {
         write_overworld(&mut test_rom, &build, &pickup, &catalog, &mut rng, true);
 
         // Verify each world's pointer table is sorted by (screen, row, col).
-        for wi in 0..8 {
-            let world = &WORLDS[wi];
+        for (wi, world) in WORLDS.iter().enumerate() {
             let n = world.entry_count;
             let rt = world.rowtype_offset;
             let sc = rt + n;
@@ -1461,7 +1455,7 @@ mod tests {
 
             let pipes_by_world = rom_data::read_pipe_pairs(&test_rom);
 
-            for wi in 0..8 {
+            for (wi, world) in WORLDS.iter().enumerate() {
                 let grid = rom_data::read_tile_grid(&test_rom, wi);
                 let pipe_pairs = pipes_by_world.get(&wi)
                     .cloned()
@@ -1469,7 +1463,6 @@ mod tests {
                 let walk = super::super::map_walker::walk_map(&grid, &pipe_pairs, None);
 
                 // Collect positions that have pointer table entries.
-                let world = &WORLDS[wi];
                 let mut covered: HashSet<(usize, usize)> = HashSet::new();
                 for i in 0..world.entry_count {
                     let pos = rom_data::entry_grid_position(&test_rom, world, i);

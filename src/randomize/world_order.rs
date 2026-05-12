@@ -150,9 +150,7 @@ mod tests {
         data[WORLD_INC_OFFSET..WORLD_INC_OFFSET + 6]
             .copy_from_slice(&[0xEE, 0x27, 0x07, 0x4C, 0xA0, 0x84]);
         // Fill free space with FF
-        for i in ROUTINE_OFFSET..ROUTINE_OFFSET + 32 {
-            data[i] = 0xFF;
-        }
+        data[ROUTINE_OFFSET..ROUTINE_OFFSET + 32].fill(0xFF);
         Rom::from_bytes(&data).unwrap()
     }
 
@@ -180,7 +178,7 @@ mod tests {
         // (except world 7 which maps to itself)
         // More importantly: following the chain from world[0] in shuffled order
         // should visit all 8 worlds
-        let mut visited = vec![false; 8];
+        let mut visited = [false; 8];
         // Find which world is first in the shuffled order (it's the one that
         // no other world points to, except itself if it's 7)
         // Actually, let's just verify: table[7] == 7 (world 7 is always last)
@@ -220,7 +218,7 @@ mod tests {
         // The starting world should match the first entry in the chain
         // Follow the chain from start_world and verify we visit all 8 worlds
         let table = rom.read_range(ROUTINE_OFFSET + 12, 8);
-        let mut visited = vec![false; 8];
+        let mut visited = [false; 8];
         let mut current = start_world;
         for _ in 0..8 {
             visited[current as usize] = true;
@@ -286,7 +284,7 @@ mod tests {
 
         // Each entry should be a valid tile $F1–$F8
         for &tile in display.iter() {
-            assert!(tile >= 0xF1 && tile <= 0xF8, "Bad display tile: {tile:#04X}");
+            assert!((0xF1..=0xF8).contains(&tile), "Bad display tile: {tile:#04X}");
         }
 
         // Every display number 1–8 should appear exactly once
@@ -342,7 +340,7 @@ mod tests {
         let start_world = rom.read_byte(WORLD_INIT_OPERAND);
         assert!(start_world <= 6, "Starting world should be 0-6");
 
-        let mut visited = vec![false; 8];
+        let mut visited = [false; 8];
         let mut current = start_world;
         for _ in 0..4 {
             visited[current as usize] = true;

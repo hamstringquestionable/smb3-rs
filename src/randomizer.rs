@@ -19,18 +19,13 @@ fn default_starting_lives() -> u8 { 4 }
 fn default_world_count() -> u8 { 7 }
 
 /// Per-class enemy randomization mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EnemyMode {
+    #[default]
     Off,
     Shuffle,
     Wild,
-}
-
-impl Default for EnemyMode {
-    fn default() -> Self {
-        EnemyMode::Off
-    }
 }
 
 fn default_shuffle() -> EnemyMode { EnemyMode::Shuffle }
@@ -212,7 +207,7 @@ const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 /// Pads the final group with zero bits as needed.
 fn base32_encode(data: &[u8]) -> String {
     let bit_len = data.len() * 8;
-    let out_len = (bit_len + 4) / 5; // ceil(bits / 5)
+    let out_len = bit_len.div_ceil(5);
     let mut result = String::with_capacity(out_len);
     let mut buf: u64 = 0;
     let mut bits: u32 = 0;
@@ -314,7 +309,7 @@ impl Options {
             | (self.shuffle_airships as u8);
 
         let b3 = ((self.hammer_breaks_bridges as u8) << 7)
-            | (self.starting_lives.min(99).max(1) & 0x7F);
+            | (self.starting_lives.clamp(1, 99) & 0x7F);
 
         let b4 = (self.card_speed_clear as u8) << 7
             | (self.remove_n_cards as u8) << 6
@@ -849,10 +844,11 @@ mod tests {
     /// Options safe for zeroed test ROMs.
     /// Palettes disabled because they use OS entropy (cosmetic, decoupled from seed).
     fn test_options() -> Options {
-        let mut opts = Options::default();
-        opts.shuffle_airships = false;
-        opts.palettes = false;
-        opts
+        Options {
+            shuffle_airships: false,
+            palettes: false,
+            ..Default::default()
+        }
     }
 
     /// Load the real SMB3 ROM. Tests that drive the full `randomize()`
@@ -924,7 +920,7 @@ mod tests {
         assert_eq!(rom.read_byte(FS), 0xBE, "Trampoline LDX abs,Y opcode");
         // Target powerup is at offset +8 (LDX #imm operand)
         let target = rom.read_byte(FS + 8);
-        assert!(target >= 0x01 && target <= 0x08,
+        assert!((0x01..=0x08).contains(&target),
             "Trampoline target 0x{target:02X} should be a valid mystery pool item (1-8)");
 
         // DynJump table entry at 0x34564: $A5B6 (Inv_UseItem_Powerup)
@@ -1246,8 +1242,11 @@ mod tests {
             );
         }
 
+        /// A label + a closure that flips one Options field.
+        type OptionTweak = (&'static str, Box<dyn Fn(&mut Options)>);
+
         // Cosmetic: must NOT change the flag key.
-        let cosmetic: Vec<(&str, Box<dyn Fn(&mut Options)>)> = vec![
+        let cosmetic: Vec<OptionTweak> = vec![
             ("palettes",       Box::new(|o| o.palettes = !o.palettes)),
             ("palette_themed", Box::new(|o| o.palette_themed = !o.palette_themed)),
         ];
@@ -1256,7 +1255,7 @@ mod tests {
         }
 
         // Encoded booleans: toggling must change the flag key.
-        let bools: Vec<(&str, Box<dyn Fn(&mut Options)>)> = vec![
+        let bools: Vec<OptionTweak> = vec![
             ("powerups",                     Box::new(|o| o.powerups = !o.powerups)),
             ("world_order",                  Box::new(|o| o.world_order = !o.world_order)),
             ("big_q_blocks",                 Box::new(|o| o.big_q_blocks = !o.big_q_blocks)),
@@ -1322,21 +1321,15 @@ mod tests {
 
         // Numeric ranges (boundaries + a middle value).
         for lives in [1u8, 2, 50, 99] {
-            let mut opts = Options::default();
-            opts.starting_lives = lives;
-            let mut expected = opts.clone();
-            expected.palettes = true;
-            expected.palette_themed = false;
+            let opts = Options { starting_lives: lives, ..Default::default() };
+            let expected = Options { palettes: true, palette_themed: false, ..opts.clone() };
             let recovered = Options::from_flag_key(&opts.to_flag_key()).unwrap();
             assert_eq!(recovered.starting_lives, lives, "starting_lives={lives}: round-trip mismatch");
             assert_eq!(recovered, expected, "starting_lives={lives}: full struct mismatch");
         }
         for wc in 1u8..=7 {
-            let mut opts = Options::default();
-            opts.world_count = wc;
-            let mut expected = opts.clone();
-            expected.palettes = true;
-            expected.palette_themed = false;
+            let opts = Options { world_count: wc, ..Default::default() };
+            let expected = Options { palettes: true, palette_themed: false, ..opts.clone() };
             let recovered = Options::from_flag_key(&opts.to_flag_key()).unwrap();
             assert_eq!(recovered.world_count, wc, "world_count={wc}: round-trip mismatch");
             assert_eq!(recovered, expected, "world_count={wc}: full struct mismatch");
@@ -1349,11 +1342,8 @@ mod tests {
             vec![3, 6, 9],
             vec![ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY],
         ] {
-            let mut opts = Options::default();
-            opts.starting_items = items.clone();
-            let mut expected = opts.clone();
-            expected.palettes = true;
-            expected.palette_themed = false;
+            let opts = Options { starting_items: items.clone(), ..Default::default() };
+            let expected = Options { palettes: true, palette_themed: false, ..opts.clone() };
             let recovered = Options::from_flag_key(&opts.to_flag_key()).unwrap();
             assert_eq!(recovered.starting_items, items, "starting_items={items:?}: round-trip mismatch");
             assert_eq!(recovered, expected, "starting_items={items:?}: full struct mismatch");
@@ -1417,12 +1407,13 @@ mod tests {
         // with the high bit of hb_encounters (a tri-state at bits 2-1).
         // When hb_encounters=Wild (em=2), bit 2 was already set, so toggling
         // hammer_vulnerable_koopalings produced no change in the flag key.
-        let mut a = Options::default();
-        a.hb_encounters = EnemyMode::Wild;
-        a.hammer_vulnerable_koopalings = false;
+        let a = Options {
+            hb_encounters: EnemyMode::Wild,
+            hammer_vulnerable_koopalings: false,
+            ..Default::default()
+        };
 
-        let mut b = a.clone();
-        b.hammer_vulnerable_koopalings = true;
+        let b = Options { hammer_vulnerable_koopalings: true, ..a.clone() };
 
         assert_ne!(a.to_flag_key(), b.to_flag_key(),
             "toggling hammer_vulnerable_koopalings must change the flag key");
@@ -1645,8 +1636,10 @@ mod tests {
 
     #[test]
     fn flag_key_round_trip_all_random_items() {
-        let mut opts = Options::default();
-        opts.starting_items = vec![ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY];
+        let opts = Options {
+            starting_items: vec![ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY],
+            ..Default::default()
+        };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
         assert_eq!(decoded.starting_items, vec![ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY]);
@@ -1654,8 +1647,10 @@ mod tests {
 
     #[test]
     fn flag_key_round_trip_mixed_random_and_concrete() {
-        let mut opts = Options::default();
-        opts.starting_items = vec![ITEM_RANDOM, 3];
+        let opts = Options {
+            starting_items: vec![ITEM_RANDOM, 3],
+            ..Default::default()
+        };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
         assert_eq!(decoded.starting_items, vec![ITEM_RANDOM, 3]);

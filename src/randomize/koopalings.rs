@@ -225,23 +225,23 @@ pub fn adjust_boss_hitboxes(rom: &mut Rom) {
     rom.write_byte(HITBOX_E_OFFSET, 0x18);
 }
 
-/// Randomize per-Koopaling stomp counts (1–5 hits each, independently).
-///
-/// The Koopaling stomp handler is `ObjHit_Koopaling` in PRG001 (southbird
-/// disassembly). The vanilla code at CPU $B187 does:
-///   LDA $7F,X    ; load Objects_Var4 (stomp counter)
-///   CMP #$03     ; 3 hits to kill
-///   BCS defeated
-///
-/// We replace `LDA $7F,X; CMP #$03` (3 bytes at file 0x03197) with
-/// `JMP subroutine` which loads the counter, looks up a per-world threshold
-/// table indexed by World_Num ($0727), and branches to the vanilla survive
-/// ($B18D) or defeat ($B193) paths.
-///
-/// Patch sites:
-///   - 0x03197: `LDA $7F,X; CMP #$03` → `JMP $B81A`
-///   - FS_KOOPA_HITS_SUB (0x0382A): 13-byte subroutine
-///   - FS_KOOPA_HITS_TABLE (0x03837): 7-byte per-world threshold table
+// Randomize per-Koopaling stomp counts (1–5 hits each, independently).
+//
+// The Koopaling stomp handler is `ObjHit_Koopaling` in PRG001 (southbird
+// disassembly). The vanilla code at CPU $B187 does:
+//   LDA $7F,X    ; load Objects_Var4 (stomp counter)
+//   CMP #$03     ; 3 hits to kill
+//   BCS defeated
+//
+// We replace `LDA $7F,X; CMP #$03` (3 bytes at file 0x03197) with
+// `JMP subroutine` which loads the counter, looks up a per-world threshold
+// table indexed by World_Num ($0727), and branches to the vanilla survive
+// ($B18D) or defeat ($B193) paths.
+//
+// Patch sites:
+//   - 0x03197: `LDA $7F,X; CMP #$03` → `JMP $B81A`
+//   - FS_KOOPA_HITS_SUB (0x0382A): 13-byte subroutine
+//   - FS_KOOPA_HITS_TABLE (0x03837): 7-byte per-world threshold table
 
 /// File offset of `LDA $7F,X; CMP #$03` in ObjHit_Koopaling (3 bytes).
 const KOOPA_PATCH_SITE: usize = 0x03197;
@@ -407,7 +407,7 @@ mod tests {
         assert_eq!(rom.read_range(defeat_off, 3), &[0x4C, 0x93, 0xB1]);
         // Table: worlds 0–6 each in 1..=5
         let table = rom.read_range(crate::randomize::rom_data::FS_KOOPA_HITS_TABLE, 7);
-        for &v in &table[..] {
+        for &v in table {
             assert!((1..=5).contains(&v), "threshold {v} out of range 1–5");
         }
 

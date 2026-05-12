@@ -1,15 +1,15 @@
-/// Phase 3 of the overworld builder rewrite: Build.
-///
-/// Takes `PickupResult` (Phase 2) + `NodeCatalog` (Phase 1) + RNG and produces
-/// slot assignments for each world. Does NOT assign specific pool entries or
-/// write to ROM — that's Phase 4 (writer).
-///
-/// Algorithm:
-/// 0. Redistribute fortresses across worlds (W8 keeps 4, W1-W7 get 1-3 each)
-/// 1. Place pipes (connectivity first, then remaining to connect islands)
-/// 2. BFS sectioning (order reachable blanks by distance, divide by fort count)
-/// 3. Populate sections (1 fort per section, rest are levels)
-/// 4. Lock placement (every fort gets 1 lock)
+//! Phase 3 of the overworld builder rewrite: Build.
+//!
+//! Takes `PickupResult` (Phase 2) + `NodeCatalog` (Phase 1) + RNG and produces
+//! slot assignments for each world. Does NOT assign specific pool entries or
+//! write to ROM — that's Phase 4 (writer).
+//!
+//! Algorithm:
+//! 0. Redistribute fortresses across worlds (W8 keeps 4, W1-W7 get 1-3 each)
+//! 1. Place pipes (connectivity first, then remaining to connect islands)
+//! 2. BFS sectioning (order reachable blanks by distance, divide by fort count)
+//! 3. Populate sections (1 fort per section, rest are levels)
+//! 4. Lock placement (every fort gets 1 lock)
 
 use std::collections::{HashMap, HashSet};
 
@@ -22,8 +22,8 @@ use super::overworld_helpers::{find_target, gap_tile_for, LOCKABLE_TILES};
 use super::overworld_pickup::PickupResult;
 use crate::rom::Rom;
 use super::rom_data::{
-    self, BACKGROUND_TILES, Grid, TILE_BONUS_GAME, TILE_FORTRESS, TILE_NODE, TILE_PIPE,
-    TILE_TOAD_HOUSE,
+    self, BACKGROUND_TILES, Grid, Pos, TILE_BONUS_GAME, TILE_FORTRESS, TILE_NODE, TILE_PIPE,
+    TILE_TOAD_HOUSE, TeleportEdge,
     VALID_HORZ, VALID_VERT,
 };
 
@@ -95,7 +95,7 @@ pub(crate) struct BuiltWorld {
     /// Number of sections (= number of fortresses in this world).
     pub section_count: usize,
     /// Pipe pair positions placed in this world: Vec of (endpoint_a, endpoint_b).
-    pub pipe_pairs: Vec<((usize, usize), (usize, usize))>,
+    pub pipe_pairs: Vec<TeleportEdge>,
 }
 
 /// Complete Phase 3 output.
@@ -342,6 +342,11 @@ const SPADE_BUDGET: usize = 19;
 /// no-ops when the pickup pool contains no matching entries. `budget_cap`
 /// limits how many entries are placed (spades cap at SPADE_BUDGET; toad houses
 /// place every entry).
+// Reason: (rom, pickup, catalog) is a candidate for a `BuildCtx` bundle —
+// pending a focused refactor across the build pipeline. Lint is silenced
+// here so the structural change can be done deliberately, not as a side
+// effect of lint cleanup.
+#[allow(clippy::too_many_arguments)]
 fn promote_hb_slots<R: Rng>(
     rom: &Rom,
     worlds: &mut [BuiltWorld],
@@ -550,6 +555,11 @@ fn redistribute_fortresses<R: Rng>(rng: &mut R) -> [usize; 8] {
 // Per-world build
 // ---------------------------------------------------------------------------
 
+// Reason: 5 of the args (fort_count, level_count, pipe_pair_count,
+// max_non_pipe_slots, force_safe) form a natural `WorldBudget` bundle.
+// Deferring to the pending BuildCtx refactor so the two structural
+// changes land together.
+#[allow(clippy::too_many_arguments)]
 fn build_world<R: Rng>(
     world_idx: usize,
     rom: &Rom,
@@ -611,7 +621,7 @@ fn build_world<R: Rng>(
         start_pos,
         &blank_positions,
         &pipe_positions,
-        &fixed_positions,
+        fixed_positions,
         fort_count,
     );
 
@@ -778,7 +788,7 @@ fn completable_positions(grid: &Grid, slots: &[SlotAssignment]) -> HashSet<(usiz
 /// `walk_map` directly to stay in sync with canoe edges, pipe teleports, etc.
 pub(super) fn bfs_ordered(
     grid: &Grid,
-    pipe_pairs: &[((usize, usize), (usize, usize))],
+    pipe_pairs: &[TeleportEdge],
     start_pos: Option<(usize, usize)>,
 ) -> Vec<((usize, usize), usize)> {
     let result = walk_map(grid, pipe_pairs, start_pos);
@@ -798,10 +808,10 @@ pub(super) fn bfs_ordered(
 /// Split blank positions into (reachable, unreachable) relative to BFS walk,
 /// excluding already-used positions.
 fn split_blanks_by_reachability(
-    blanks: &[(usize, usize)],
-    reachable: &HashSet<(usize, usize)>,
-    used: &HashSet<(usize, usize)>,
-) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+    blanks: &[Pos],
+    reachable: &HashSet<Pos>,
+    used: &HashSet<Pos>,
+) -> (Vec<Pos>, Vec<Pos>) {
     let mut reach = Vec::new();
     let mut unreach = Vec::new();
     for &p in blanks {
@@ -825,12 +835,12 @@ fn place_pipes<R: Rng>(
     pair_count: usize,
     fixed_endpoints: &[(usize, usize)],
     rng: &mut R,
-) -> Vec<((usize, usize), (usize, usize))> {
+) -> Vec<TeleportEdge> {
     if pair_count == 0 {
         return Vec::new();
     }
 
-    let mut placed_pairs: Vec<((usize, usize), (usize, usize))> = Vec::new();
+    let mut placed_pairs: Vec<TeleportEdge> = Vec::new();
     let mut used_positions: HashSet<(usize, usize)> = HashSet::new();
 
     // Phase 0: fixed endpoints — place these first, partner on opposite side.
@@ -879,7 +889,7 @@ fn place_pipes<R: Rng>(
 
     // Phase A+B: connect islands first (required for target reachability in A,
     // best-effort in B), then fill remaining pairs in reachable area.
-    let target_reachable = |g: &Grid, pairs: &[((usize, usize), (usize, usize))]| -> bool {
+    let target_reachable = |g: &Grid, pairs: &[TeleportEdge]| -> bool {
         if let Some(tp) = target_pos {
             let walk = walk_map(g, pairs, start_pos);
             walk.nodes.contains(&tp)
@@ -949,7 +959,7 @@ fn place_pipes<R: Rng>(
             }
 
             // Enumerate all candidate pairs and score them
-            let mut candidates: Vec<(((usize, usize), (usize, usize)), f64)> = Vec::new();
+            let mut candidates: Vec<(TeleportEdge, f64)> = Vec::new();
             for i in 0..available.len() {
                 for j in (i + 1)..available.len() {
                     let a = available[i];
@@ -981,7 +991,7 @@ fn place_pipes<R: Rng>(
 /// Divide reachable blank slots into N sections by BFS distance from start.
 fn bfs_section(
     grid: &Grid,
-    pipe_pairs: &[((usize, usize), (usize, usize))],
+    pipe_pairs: &[TeleportEdge],
     start_pos: Option<(usize, usize)>,
     blank_positions: &[(usize, usize)],
     pipe_positions: &HashSet<(usize, usize)>,
@@ -1033,6 +1043,10 @@ fn bfs_section(
 // Step 3: Populate sections
 // ---------------------------------------------------------------------------
 
+// Reason: candidate bundles exist (e.g. `BfsCtx` for the three distance-map
+// args) but none is clearly decisive. Revisiting if the pending BuildCtx
+// refactor surfaces a natural grouping.
+#[allow(clippy::too_many_arguments)]
 fn populate_sections<R: Rng>(
     grid: &Grid,
     sections: &[Vec<(usize, usize)>],
@@ -1417,9 +1431,14 @@ fn score_pipe_pair(
 // Step 4: Lock placement
 // ---------------------------------------------------------------------------
 
+// Reason: every argument represents a distinct, independent input to lock
+// placement (geometry, slot list, count, safety flag, RNG). No subset
+// clusters into a meaningful concept — bundling would be a clippy bandage,
+// not a real abstraction.
+#[allow(clippy::too_many_arguments)]
 fn place_locks<R: Rng>(
     grid: &Grid,
-    pipe_pairs: &[((usize, usize), (usize, usize))],
+    pipe_pairs: &[TeleportEdge],
     start_pos: Option<(usize, usize)>,
     target_pos: Option<(usize, usize)>,
     slots: &[SlotAssignment],
@@ -1513,8 +1532,13 @@ fn place_locks<R: Rng>(
         // Prefer safe when forced (retry path) or when the best candidate
         // is weak anyway (score < 5) — don't sacrifice a high-scoring lock.
         // Evaluated after scoring all candidates, see below.
-        let mut best: Option<((usize, usize), u8, u8, i32, bool, bool)> = None;
-        let mut best_safe: Option<((usize, usize), u8, u8, i32)> = None;
+        // (pos, gap_tile, replace_tile, score, safe, blocks_target)
+        type LockCandidate = (Pos, u8, u8, i32, bool, bool);
+        // Subset of LockCandidate without the safe/blocks_target flags.
+        type SafeLockCandidate = (Pos, u8, u8, i32);
+
+        let mut best: Option<LockCandidate> = None;
+        let mut best_safe: Option<SafeLockCandidate> = None;
 
         // Open grid (no candidate lock) is constant for all candidates in this
         // section — hoist the BFS to avoid redundant walks per candidate.
@@ -1743,9 +1767,9 @@ mod tests {
             let total: usize = counts.iter().sum();
             assert_eq!(total, 17, "total fortresses must be 17");
             assert_eq!(counts[7], 4, "W8 must keep 4");
-            for w in 0..7 {
-                assert!(counts[w] >= 1 && counts[w] <= 3,
-                    "W{} got {} forts, expected 1-3", w + 1, counts[w]);
+            for (w, &count) in counts[..7].iter().enumerate() {
+                assert!((1..=3).contains(&count),
+                    "W{} got {count} forts, expected 1-3", w + 1);
             }
         }
     }
@@ -2342,8 +2366,9 @@ mod tests {
             let open_node_count = walk_open.nodes.len();
 
             // Find all lockable path tiles
-            let mut candidates: Vec<((usize, usize), i32, bool, i32, bool, bool)> = Vec::new();
             // (pos, gated, safe, score, blocks_later_fort, blocks_target)
+            type LockDebugCandidate = (Pos, i32, bool, i32, bool, bool);
+            let mut candidates: Vec<LockDebugCandidate> = Vec::new();
 
             for r in 0..base_grid.rows {
                 for c in 0..base_grid.cols {
@@ -2509,7 +2534,7 @@ mod tests {
                         .copied();
 
                     if let Some(dist) = min_dist {
-                        let idx = (dist as usize).min(histogram.len() - 1);
+                        let idx = dist.min(histogram.len() - 1);
                         histogram[idx] += 1;
                         per_world[wi].0 += dist as u64;
                         per_world[wi].1 += 1;
@@ -2536,9 +2561,9 @@ mod tests {
         eprintln!("Distance | Count | Bar");
         eprintln!("---------+-------+----");
         let max_dist_with_data = histogram.iter().rposition(|&c| c > 0).unwrap_or(0);
-        for d in 0..=max_dist_with_data {
-            let bar = "#".repeat((histogram[d] as usize).min(60));
-            eprintln!("{d:>5}    | {:<5} | {bar}", histogram[d]);
+        for (d, &count) in histogram[..=max_dist_with_data].iter().enumerate() {
+            let bar = "#".repeat((count as usize).min(60));
+            eprintln!("{d:>5}    | {count:<5} | {bar}");
         }
 
         // Summary stats
@@ -2555,8 +2580,7 @@ mod tests {
         }
 
         eprintln!("\nPer-world averages:");
-        for wi in 0..8 {
-            let (sum, count) = per_world[wi];
+        for (wi, &(sum, count)) in per_world.iter().enumerate() {
             if count > 0 {
                 let avg = sum as f64 / count as f64;
                 eprintln!("  W{}: {avg:.1} avg ({count} locks)", wi + 1);
@@ -2567,9 +2591,9 @@ mod tests {
         eprintln!("Distance | Count | Bar");
         eprintln!("---------+-------+----");
         let max_inter = inter_hist.iter().rposition(|&c| c > 0).unwrap_or(0);
-        for d in 0..=max_inter {
-            let bar = "#".repeat((inter_hist[d] as usize).min(60));
-            eprintln!("{d:>5}    | {:<5} | {bar}", inter_hist[d]);
+        for (d, &count) in inter_hist[..=max_inter].iter().enumerate() {
+            let bar = "#".repeat((count as usize).min(60));
+            eprintln!("{d:>5}    | {count:<5} | {bar}");
         }
         let inter_total: u64 = inter_hist.iter().enumerate().map(|(d, &c)| d as u64 * c as u64).sum();
         let inter_mean = inter_total as f64 / total_pairs.max(1) as f64;
@@ -2579,8 +2603,7 @@ mod tests {
         eprintln!("Pairs at dist <= 3:    {close_pairs}/{total_pairs} ({close_pair_pct:.1}%)");
         eprintln!("Seeds with any pair <=3: {close_pair_seeds}/{seeds}");
         eprintln!("\nPer-world pair averages:");
-        for wi in 0..8 {
-            let (sum, count) = per_world_pairs[wi];
+        for (wi, &(sum, count)) in per_world_pairs.iter().enumerate() {
             if count > 0 {
                 let avg = sum as f64 / count as f64;
                 eprintln!("  W{}: {avg:.1} avg ({count} pairs)", wi + 1);
@@ -2618,7 +2641,7 @@ mod tests {
 
         // Per-world tallies
         let mut endpoint_counts: [HashMap<(usize, usize), u32>; 8] = Default::default();
-        let mut pair_counts: [HashMap<((usize, usize), (usize, usize)), u32>; 8] = Default::default();
+        let mut pair_counts: [HashMap<TeleportEdge, u32>; 8] = Default::default();
         let mut total_endpoints = [0u32; 8];
         let mut total_pairs = [0u32; 8];
 

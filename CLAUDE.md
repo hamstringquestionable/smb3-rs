@@ -16,6 +16,24 @@ cargo build --release                        # optimized binary -> target/releas
 wasm-pack build --target web --out-dir pkg   # WASM module -> pkg/
 ```
 
+## Lint Policy
+
+This project is **lint-clean**: `cargo clippy --all-targets` must produce zero warnings. CI (`.github/workflows/ci.yml`) enforces this by running `cargo clippy --all-targets -- -D warnings`, which converts any warning into a build failure.
+
+Before committing:
+
+```sh
+cargo clippy --all-targets   # must show no warnings
+cargo test                   # must pass
+```
+
+When clippy flags new code:
+
+1. **Idiom lints** (`needless_range_loop`, `manual_clamp`, `useless_vec`, etc.): apply the suggested fix. Clippy's lint pages link to docs explaining the *why*.
+2. **Judgment-call lints** (`too_many_arguments`, `type_complexity`): consider whether the suggested refactor reveals a real concept. If yes, do the refactor. If no, add `#[allow(clippy::<lint_name>)]` immediately above the item, prefixed with a `// Reason: ...` comment explaining the decision.
+
+Never silence a lint by deleting the warning text or globally disabling — the goal is "every warning was considered," not "no warnings emitted."
+
 ## Architecture: Separate Randomization from ROM Writes
 
 Randomization modules follow a **decide then write** pattern. Each feature area has two layers:

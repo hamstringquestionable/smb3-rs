@@ -182,10 +182,8 @@ mod tests {
 
     #[test]
     fn hash_differs_by_options() {
-        let mut opts_a = Options::default();
-        opts_a.ground = crate::randomizer::EnemyMode::Off;
-        let mut opts_b = Options::default();
-        opts_b.ground = crate::randomizer::EnemyMode::Wild;
+        let opts_a = Options { ground: crate::randomizer::EnemyMode::Off, ..Default::default() };
+        let opts_b = Options { ground: crate::randomizer::EnemyMode::Wild, ..Default::default() };
         let a = compute_hash(42, &opts_a);
         let b = compute_hash(42, &opts_b);
         assert_ne!(a.0, b.0);
