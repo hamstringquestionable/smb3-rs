@@ -2265,10 +2265,10 @@ mod tests {
                 for slot in &built.slots {
                     match slot.kind {
                         SlotKind::Fortress => base_grid.set(slot.pos.0, slot.pos.1, TILE_FORTRESS),
-                        SlotKind::Level => {
-                            if BACKGROUND_TILES.contains(&base_grid.get(slot.pos.0, slot.pos.1)) {
-                                base_grid.set(slot.pos.0, slot.pos.1, TILE_NODE);
-                            }
+                        SlotKind::Level
+                            if BACKGROUND_TILES.contains(&base_grid.get(slot.pos.0, slot.pos.1)) =>
+                        {
+                            base_grid.set(slot.pos.0, slot.pos.1, TILE_NODE);
                         }
                         _ => {}
                     }
@@ -2354,10 +2354,10 @@ mod tests {
         for slot in &built.slots {
             match slot.kind {
                 SlotKind::Fortress => base_grid.set(slot.pos.0, slot.pos.1, TILE_FORTRESS),
-                SlotKind::Level => {
-                    if BACKGROUND_TILES.contains(&base_grid.get(slot.pos.0, slot.pos.1)) {
-                        base_grid.set(slot.pos.0, slot.pos.1, TILE_NODE);
-                    }
+                SlotKind::Level
+                    if BACKGROUND_TILES.contains(&base_grid.get(slot.pos.0, slot.pos.1)) =>
+                {
+                    base_grid.set(slot.pos.0, slot.pos.1, TILE_NODE);
                 }
                 _ => {}
             }
@@ -2420,7 +2420,7 @@ mod tests {
             }
 
             // Sort by score descending
-            candidates.sort_by(|a, b| b.3.cmp(&a.3));
+            candidates.sort_by_key(|c| std::cmp::Reverse(c.3));
 
             let chosen = built.locks.iter().find(|l| l.fort_section == section_idx);
             eprintln!("    {} candidates pass hard rules, chosen={:?}",
@@ -2507,10 +2507,10 @@ mod tests {
                 for slot in &built.slots {
                     match slot.kind {
                         SlotKind::Fortress => stamped.set(slot.pos.0, slot.pos.1, TILE_FORTRESS),
-                        SlotKind::Level => {
-                            if BACKGROUND_TILES.contains(&stamped.get(slot.pos.0, slot.pos.1)) {
-                                stamped.set(slot.pos.0, slot.pos.1, TILE_NODE);
-                            }
+                        SlotKind::Level
+                            if BACKGROUND_TILES.contains(&stamped.get(slot.pos.0, slot.pos.1)) =>
+                        {
+                            stamped.set(slot.pos.0, slot.pos.1, TILE_NODE);
                         }
                         _ => {}
                     }
