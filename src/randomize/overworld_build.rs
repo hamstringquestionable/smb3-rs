@@ -1057,9 +1057,12 @@ fn bfs_section(
 // Step 3: Populate sections
 // ---------------------------------------------------------------------------
 
-// Reason: candidate bundles exist (e.g. `BfsCtx` for the three distance-map
-// args) but none is clearly decisive. Revisiting if the pending BuildCtx
-// refactor surfaces a natural grouping.
+// Reason: 10 args is over clippy's 7-arg default. Candidate bundles
+// investigated (`BfsCtx` for the 3 distance args, reusing `WorldSlotCounts`
+// for the 2 budget args) — none reveals a concept beyond what the inline
+// arg names already convey. Each arg is a distinct input (geometry,
+// sections, budgets, pipe positions, BFS data, world, RNG) and bundling
+// them would add indirection without clarity.
 #[allow(clippy::too_many_arguments)]
 fn populate_sections<R: Rng>(
     grid: &Grid,
