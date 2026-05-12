@@ -280,16 +280,19 @@ pub(crate) fn build<R: Rng>(
         let pipe_endpoints = VANILLA_PIPE_PAIRS[wi] * 2;
         let max_non_pipe_slots = ptr_slots.saturating_sub(pipe_endpoints);
 
+        let counts = WorldSlotCounts {
+            fort_count: fort_counts[wi],
+            level_count: level_counts[wi],
+            pipe_pair_count: VANILLA_PIPE_PAIRS[wi],
+            max_non_pipe_slots,
+            force_safe: false,
+        };
         let built = build_world(
             wi,
             rom,
             patched_grids[wi].clone(),
             &fixed_positions[wi],
-            fort_counts[wi],
-            level_counts[wi],
-            VANILLA_PIPE_PAIRS[wi],
-            max_non_pipe_slots,
-            false, // force_safe
+            &counts,
             rng,
         );
         worlds.push(built);
@@ -559,23 +562,30 @@ fn redistribute_fortresses<R: Rng>(rng: &mut R) -> [usize; 8] {
 // Per-world build
 // ---------------------------------------------------------------------------
 
-// Reason: 5 of the args (fort_count, level_count, pipe_pair_count,
-// max_non_pipe_slots, force_safe) form a natural `WorldBudget` bundle.
-// Deferring to the pending BuildCtx refactor so the two structural
-// changes land together.
-#[allow(clippy::too_many_arguments)]
-fn build_world<R: Rng>(
-    world_idx: usize,
-    rom: &Rom,
-    mut grid: Grid,
-    fixed_positions: &HashSet<(usize, usize)>,
+/// Per-world numeric budgets passed into `build_world`. All five fields are
+/// computed in `build()` from pickup capacity, vanilla pipe counts, and the
+/// redistributed fortress counts.
+struct WorldSlotCounts {
     fort_count: usize,
     level_count: usize,
     pipe_pair_count: usize,
     max_non_pipe_slots: usize,
     force_safe: bool,
+}
+
+fn build_world<R: Rng>(
+    world_idx: usize,
+    rom: &Rom,
+    mut grid: Grid,
+    fixed_positions: &HashSet<(usize, usize)>,
+    counts: &WorldSlotCounts,
     rng: &mut R,
 ) -> BuiltWorld {
+    let fort_count = counts.fort_count;
+    let level_count = counts.level_count;
+    let pipe_pair_count = counts.pipe_pair_count;
+    let max_non_pipe_slots = counts.max_non_pipe_slots;
+    let force_safe = counts.force_safe;
     let start_pos = rom_data::find_start(&grid);
     let target_pos = find_target(&grid, world_idx);
 
