@@ -693,8 +693,12 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
             shuffle_toad_houses: options.shuffle_toad_houses,
         },
     );
+    let data = randomize::overworld_build::OverworldData {
+        pickup: &pickup,
+        catalog: &catalog,
+    };
     let mut build = randomize::overworld_build::build(
-        rom, &pickup, &catalog, &mut rng, options.shuffle_toad_houses,
+        rom, &data, &mut rng, options.shuffle_toad_houses,
     );
     if options.hands_levels {
         rom.set_tag("hands_levels");
@@ -706,7 +710,7 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::troll_pipes::mark_troll_pipes(&mut build, &mut rng);
     }
     randomize::overworld_writer::write_overworld(
-        rom, &build, &pickup, &catalog, &mut rng, true,
+        rom, &build, &data, &mut rng, true,
     );
     // Give each W8 Hand its own treasure-room enemy stream so the chest
     // randomizer can roll a unique item per Hand, and with a random chance
