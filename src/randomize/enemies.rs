@@ -300,22 +300,22 @@ pub fn sprite_bank(id: u8) -> Option<SpriteBank> {
         0x70 | 0x71 | 0x83 | 0x84 | 0x85 =>
             Some(SpriteBank { chr_page: 0x0B, slot: 4 }),
         // Big enemies (all variants including Big Piranhas)
-        0x7A | 0x7B | 0x7C | 0x7D | 0x7E | 0x7F =>
+        0x7A..=0x7F =>
             Some(SpriteBank { chr_page: 0x3D, slot: 4 }),
         // Bros (Hammer, Boomerang, Heavy, Fire)
         0x81 | 0x82 | 0x86 | 0x87 =>
             Some(SpriteBank { chr_page: 0x4E, slot: 4 }),
         0x89 => Some(SpriteBank { chr_page: 0x0A, slot: 4 }),
         // Thwomps (all variants)
-        0x8A | 0x8B | 0x8C | 0x8D | 0x8E | 0x8F =>
+        0x8A..=0x8F =>
             Some(SpriteBank { chr_page: 0x12, slot: 4 }),
 
         // === Group 5: PRG005 (IDs 0x90–0xB3) ===
         // Moving platforms
-        0x90 | 0x91 | 0x92 | 0x93 =>
+        0x90..=0x93 =>
             Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
         // Big ? Blocks
-        0x94 | 0x95 | 0x96 | 0x97 | 0x98 | 0x99 | 0x9A =>
+        0x94..=0x9A =>
             Some(SpriteBank { chr_page: 0x4C, slot: 4 }),
         // Fire jets (Podoboo fire jet, upward, down, right)
         0x9D | 0xAC | 0xB1 | 0xB2 =>
@@ -1408,15 +1408,13 @@ mod tests {
 
             // The swapped ground enemy must be CHR-compatible with Boo's $12/+4.
             assert!(GROUND_ENEMIES.contains(&enemy), "seed {seed}: enemy 0x{enemy:02X}");
-            if let Some(sb) = sprite_bank(enemy) {
-                if sb.slot == 4 {
-                    assert_eq!(
-                        sb.chr_page, 0x12,
-                        "seed {seed}: enemy 0x{enemy:02X} has slot+4 page 0x{:02X}, \
-                         conflicts with Boo's $12",
-                        sb.chr_page
-                    );
-                }
+            if let Some(sb) = sprite_bank(enemy) && sb.slot == 4 {
+                assert_eq!(
+                    sb.chr_page, 0x12,
+                    "seed {seed}: enemy 0x{enemy:02X} has slot+4 page 0x{:02X}, \
+                     conflicts with Boo's $12",
+                    sb.chr_page
+                );
             }
         }
     }
@@ -1457,14 +1455,12 @@ mod tests {
             assert!(GHOST_ENEMIES.contains(&ghost), "seed {seed}: ghost 0x{ghost:02X}");
 
             // No slot+4 conflict: ground enemy's slot+4 must match Boo's $12 or not use slot+4
-            if let Some(sb) = sprite_bank(ground) {
-                if sb.slot == 4 {
-                    assert_eq!(
-                        sb.chr_page, 0x12,
-                        "seed {seed}: ground 0x{ground:02X} slot+4=0x{:02X} conflicts with Boo's $12",
-                        sb.chr_page
-                    );
-                }
+            if let Some(sb) = sprite_bank(ground) && sb.slot == 4 {
+                assert_eq!(
+                    sb.chr_page, 0x12,
+                    "seed {seed}: ground 0x{ground:02X} slot+4=0x{:02X} conflicts with Boo's $12",
+                    sb.chr_page
+                );
             }
         }
     }
@@ -1758,10 +1754,8 @@ mod tests {
             assert!(GHOST_ENEMIES.contains(&ghost), "seed {seed}: ghost 0x{ghost:02X}");
             assert!(GROUND_ENEMIES.contains(&ground), "seed {seed}: ground 0x{ground:02X}");
 
-            if let Some(sb) = sprite_bank(ground) {
-                if sb.slot == 4 && sb.chr_page != 0x12 {
-                    saw_non_12_slot4 = true;
-                }
+            if let Some(sb) = sprite_bank(ground) && sb.slot == 4 && sb.chr_page != 0x12 {
+                saw_non_12_slot4 = true;
             }
         }
         assert!(saw_non_12_slot4,
@@ -1800,12 +1794,10 @@ mod tests {
 
             let ground = rom_copy.read_byte(ENEMY_DATA_START + 5);
             assert!(GROUND_ENEMIES.contains(&ground), "seed {seed}: ground 0x{ground:02X}");
-            if let Some(sb) = sprite_bank(ground) {
-                if sb.slot == 4 {
-                    assert_eq!(sb.chr_page, 0x12,
-                        "seed {seed}: close enemy 0x{ground:02X} has slot+4 page 0x{:02X}, \
-                         conflicts with Boo's $12", sb.chr_page);
-                }
+            if let Some(sb) = sprite_bank(ground) && sb.slot == 4 {
+                assert_eq!(sb.chr_page, 0x12,
+                    "seed {seed}: close enemy 0x{ground:02X} has slot+4 page 0x{:02X}, \
+                     conflicts with Boo's $12", sb.chr_page);
             }
         }
     }

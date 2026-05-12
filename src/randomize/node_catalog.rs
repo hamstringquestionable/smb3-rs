@@ -1,11 +1,11 @@
-/// Static node catalog: classifies every pointer table entry across all 8 worlds.
-///
-/// This is a read-only data extraction pass — no RNG, no ROM writes. It produces
-/// a `NodeCatalog` containing a `CatalogEntry` for each of the 340 entries in the
-/// game, with classification, human-readable name, grid position, and level data.
-///
-/// Used by the overworld builder pipeline as the source of truth for what exists
-/// on each map before any shuffling occurs.
+//! Static node catalog: classifies every pointer table entry across all 8 worlds.
+//!
+//! This is a read-only data extraction pass — no RNG, no ROM writes. It produces
+//! a `NodeCatalog` containing a `CatalogEntry` for each of the 340 entries in the
+//! game, with classification, human-readable name, grid position, and level data.
+//!
+//! Used by the overworld builder pipeline as the source of truth for what exists
+//! on each map before any shuffling occurs.
 
 use std::collections::{HashMap, HashSet};
 
@@ -14,8 +14,12 @@ use crate::rom::Rom;
 use super::rom_data::{
     self, AIRSHIP_ENTRIES, BETA_LEVELS, BOWSER_ENTRY, FORTRESS_ENTRIES,
     HAMMER_BRO_OBJ_PTRS, HB_EXCLUDE_OBJ_PTRS, LevelEntry, MAP_OBJ_ENTRY_LINKS,
-    TOAD_HOUSE_OBJ_PTRS, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, TILE_START, WORLDS,
+    Pos, TOAD_HOUSE_OBJ_PTRS, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, TILE_START, WORLDS,
 };
+
+/// Raw fields produced for each pointer table entry by `classify_world`,
+/// before they're packaged into a full `CatalogEntry`.
+type RawClassifiedEntry = (usize, NodeKind, Pos, u8, Option<LevelEntry>);
 
 // ---------------------------------------------------------------------------
 // W5 Spiral Tower entries (functionally a pipe pair using dest index 0)
@@ -197,7 +201,7 @@ fn classify_world(
     rom: &Rom,
     world_idx: usize,
     grid: &rom_data::Grid,
-) -> Vec<(usize, NodeKind, (usize, usize), u8, Option<LevelEntry>)> {
+) -> Vec<RawClassifiedEntry> {
     let world = &WORLDS[world_idx];
     let n = world.entry_count;
     let (_scrcol, objsets, layouts) = rom_data::table_offsets(world);
@@ -258,6 +262,10 @@ fn classify_world(
 }
 
 /// Classify a single entry into a NodeKind.
+// Reason: the catalog builder threads these as individual locals during a
+// single pass over the pointer tables; bundling into a struct would add
+// construction friction at every call site without revealing a real concept.
+#[allow(clippy::too_many_arguments)]
 fn classify_entry(
     rom: &Rom,
     world_idx: usize,
@@ -796,7 +804,8 @@ mod tests {
 
         // Summary
         eprintln!("\n=== Summary ===");
-        let kind_names: &[(&str, fn(&NodeKind) -> bool)] = &[
+        type KindPredicate = (&'static str, fn(&NodeKind) -> bool);
+        let kind_names: &[KindPredicate] = &[
             ("Level", |k| matches!(k, NodeKind::Level)),
             ("Fortress", |k| matches!(k, NodeKind::Fortress { .. })),
             ("Pipe", |k| matches!(k, NodeKind::Pipe { .. })),

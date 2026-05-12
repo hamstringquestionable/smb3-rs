@@ -115,7 +115,7 @@ const BIG_Q_ROUTINE: [u8; 66] = [
 
 /// Set starting lives for both Mario and Luigi (1–99).
 pub fn set_starting_lives(rom: &mut Rom, lives: u8) {
-    let clamped = lives.min(99).max(1);
+    let clamped = lives.clamp(1, 99);
     rom.write_byte(STARTING_LIVES_OFFSET, clamped);
 }
 
@@ -126,7 +126,7 @@ pub fn set_starting_lives(rom: &mut Rom, lives: u8) {
 /// to inventory ($7D80+). Must run AFTER title_screen (which hooks the same
 /// region for intro skip) — this trampoline incorporates that behavior.
 pub fn write_starting_items(rom: &mut Rom, lives: u8, items: &[u8]) {
-    let lives = lives.min(99).max(1);
+    let lives = lives.clamp(1, 99);
     // Build trampoline: lives init + intro skip + item writes + RTS
     // CPU $E250 = file FS_STARTING_ITEMS
     let mut buf = Vec::with_capacity(24);
@@ -258,26 +258,26 @@ pub fn card_speed_clear(rom: &mut Rom) {
     rom.write_range(CARD_CLEAR_GUARD, &[0xEA, 0xEA]);
 }
 
-/// Make the hammer item also break fortress lock tiles on the overworld map.
-///
-/// The vanilla hammer routine at PRG026 (file 0x346D5, CPU $A6C5) uses a
-/// 7-byte range check: `SEC; SBC #$51; CMP #$02; BCC .found` which only
-/// matches rock tiles $51–$52. We replace this with a JSR to a table-driven
-/// subroutine in PRG026 free space that checks 5 tile IDs (2 rocks + 3 locks).
-///
-/// Patch site 1 — Range check (file 0x346D5, 7 bytes):
-///   `SEC; SBC #$51; CMP #$02; BCC .found` →
-///   `JSR HammerCheckTile; BCC .found; NOP; NOP`
-///
-/// Patch site 2 — Replacement tile load (file 0x346E9, 3 bytes):
-///   `LDA $A6B1,X` → `LDA $7EB6` (load from scratch RAM set by subroutine)
-///
-/// New subroutine at FS_HAMMER_LOCKS (0x3557F, CPU $B56F), 47 bytes:
-///   Table-driven check of breakable tiles, stores replacement tile in $7EB6,
-///   saves/restores X via $7EB7, returns carry clear if breakable.
-///
-/// Water gap locks (0x9D → 0xB3) are intentionally excluded — bridge tiles
-/// need more testing.
+// Make the hammer item also break fortress lock tiles on the overworld map.
+//
+// The vanilla hammer routine at PRG026 (file 0x346D5, CPU $A6C5) uses a
+// 7-byte range check: `SEC; SBC #$51; CMP #$02; BCC .found` which only
+// matches rock tiles $51–$52. We replace this with a JSR to a table-driven
+// subroutine in PRG026 free space that checks 5 tile IDs (2 rocks + 3 locks).
+//
+// Patch site 1 — Range check (file 0x346D5, 7 bytes):
+//   `SEC; SBC #$51; CMP #$02; BCC .found` →
+//   `JSR HammerCheckTile; BCC .found; NOP; NOP`
+//
+// Patch site 2 — Replacement tile load (file 0x346E9, 3 bytes):
+//   `LDA $A6B1,X` → `LDA $7EB6` (load from scratch RAM set by subroutine)
+//
+// New subroutine at FS_HAMMER_LOCKS (0x3557F, CPU $B56F), 47 bytes:
+//   Table-driven check of breakable tiles, stores replacement tile in $7EB6,
+//   saves/restores X via $7EB7, returns carry clear if breakable.
+//
+// Water gap locks (0x9D → 0xB3) are intentionally excluded — bridge tiles
+// need more testing.
 
 /// File offset of the 7-byte range check in the hammer routine ($A6C5).
 const HAMMER_RANGE_CHECK: usize = 0x346D5;

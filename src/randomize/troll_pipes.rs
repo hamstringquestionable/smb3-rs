@@ -3,6 +3,39 @@ use rand::seq::IndexedRandom;
 
 use super::overworld_build::{BuildResult, SlotKind};
 
+/// Mark exactly one regular-level slot per world W2-W8 as a troll pipe.
+/// W1 is excluded so the player has at least one safe world to learn the
+/// game's vanilla appearance before encountering disguised level slots.
+///
+/// The writer reads `slot.is_troll_pipe` and stamps `0xBC` (PIPE tile)
+/// instead of a level-number tile. The slot's level pointer entry is
+/// unchanged. When the player presses A on the pipe-look tile, the
+/// world-map dispatch matches `0xBC` in `Map_EnterSpecialTiles` at `$CDBF`
+/// and falls into the same `Map_Operation = $10` "enter level" path used
+/// by every level number tile — no pipe-transit state is set up. The
+/// player drops into the regular level pointed at by the slot.
+///
+/// Unlike `hands_levels`, troll_pipes needs **no ROM patches** beyond the
+/// tile stamp itself. Validated end-to-end by `poc_troll_pipe_1_1.nes`.
+pub(crate) fn mark_troll_pipes<R: Rng>(build: &mut BuildResult, rng: &mut R) {
+    for built in &mut build.worlds {
+        // Skip W1 (world_idx 0).
+        if built.world_idx == 0 {
+            continue;
+        }
+        let candidates: Vec<usize> = built
+            .slots
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.kind == SlotKind::Level && !s.is_hand_trap)
+            .map(|(i, _)| i)
+            .collect();
+        if let Some(&pick) = candidates.choose(rng) {
+            built.slots[pick].is_troll_pipe = true;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rand::SeedableRng;
@@ -35,41 +68,8 @@ mod tests {
             }
         }
         assert_eq!(counts[0], 0);
-        for w in 1..8 {
-            assert_eq!(counts[w], 16, "W{} should be marked 16 times across 16 seeds", w + 1);
-        }
-    }
-}
-
-/// Mark exactly one regular-level slot per world W2-W8 as a troll pipe.
-/// W1 is excluded so the player has at least one safe world to learn the
-/// game's vanilla appearance before encountering disguised level slots.
-///
-/// The writer reads `slot.is_troll_pipe` and stamps `0xBC` (PIPE tile)
-/// instead of a level-number tile. The slot's level pointer entry is
-/// unchanged. When the player presses A on the pipe-look tile, the
-/// world-map dispatch matches `0xBC` in `Map_EnterSpecialTiles` at `$CDBF`
-/// and falls into the same `Map_Operation = $10` "enter level" path used
-/// by every level number tile — no pipe-transit state is set up. The
-/// player drops into the regular level pointed at by the slot.
-///
-/// Unlike `hands_levels`, troll_pipes needs **no ROM patches** beyond the
-/// tile stamp itself. Validated end-to-end by `poc_troll_pipe_1_1.nes`.
-pub(crate) fn mark_troll_pipes<R: Rng>(build: &mut BuildResult, rng: &mut R) {
-    for built in &mut build.worlds {
-        // Skip W1 (world_idx 0).
-        if built.world_idx == 0 {
-            continue;
-        }
-        let candidates: Vec<usize> = built
-            .slots
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| s.kind == SlotKind::Level && !s.is_hand_trap)
-            .map(|(i, _)| i)
-            .collect();
-        if let Some(&pick) = candidates.choose(rng) {
-            built.slots[pick].is_troll_pipe = true;
+        for (w, &count) in counts.iter().enumerate().skip(1) {
+            assert_eq!(count, 16, "W{} should be marked 16 times across 16 seeds", w + 1);
         }
     }
 }

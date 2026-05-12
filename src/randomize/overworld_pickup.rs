@@ -1,18 +1,18 @@
-/// Phase 2 of the overworld builder rewrite: Clear/Pick-up.
-///
-/// Consumes a `NodeCatalog` (Phase 1) and produces cleared grids plus a shuffle
-/// pool of level-like entries. No RNG, no ROM writes — purely deterministic.
-///
-/// Steps per world:
-/// 1. Read the tile grid from ROM.
-/// 2. Pre-open vanilla FX gap tiles (making the grid fully connected).
-/// 3. Collect level-like catalog entries into the shuffle pool.
-/// 4. Blank their grid positions with theme-appropriate node tiles.
+//! Phase 2 of the overworld builder rewrite: Clear/Pick-up.
+//!
+//! Consumes a `NodeCatalog` (Phase 1) and produces cleared grids plus a shuffle
+//! pool of level-like entries. No RNG, no ROM writes — purely deterministic.
+//!
+//! Steps per world:
+//! 1. Read the tile grid from ROM.
+//! 2. Pre-open vanilla FX gap tiles (making the grid fully connected).
+//! 3. Collect level-like catalog entries into the shuffle pool.
+//! 4. Blank their grid positions with theme-appropriate node tiles.
 
 use crate::rom::Rom;
 
 use super::node_catalog::{CatalogEntry, NodeCatalog, NodeKind};
-use super::rom_data::{self, Grid, VALID_HORZ, VALID_VERT};
+use super::rom_data::{self, FxSlot, Grid, VALID_BLANK_TILES, VALID_HORZ, VALID_VERT};
 
 // ---------------------------------------------------------------------------
 // Output types
@@ -20,17 +20,16 @@ use super::rom_data::{self, Grid, VALID_HORZ, VALID_VERT};
 
 /// A node picked up from the grid, ready for the shuffle pool.
 ///
-/// References a `CatalogEntry` by index for immutable data (kind, name, tile,
-/// level_entry). Carries mutable routing fields that the Build phase can update
-/// during cross-world redistribution.
+/// References a `CatalogEntry` by index; other fields are snapshots of the
+/// catalog entry's vanilla routing for convenience.
 #[derive(Clone, Debug)]
 pub(crate) struct PoolEntry {
     /// Index into `NodeCatalog.entries`.
     pub catalog_idx: usize,
-    /// Current destination world (may change during redistribution).
+    /// Vanilla world_idx (or `usize::MAX` for synthetic beta entries).
     #[allow(dead_code)] // read in tests
     pub world_idx: usize,
-    /// Current pointer table slot in the destination world.
+    /// Vanilla pointer table slot.
     pub entry_idx: usize,
 }
 
@@ -72,40 +71,37 @@ pub(crate) struct PickupFlags {
 /// Execute Phase 2: read grids, open FX gaps, collect the shuffle pool, blank
 /// picked-up positions.
 pub(crate) fn pick_up(rom: &Rom, catalog: &NodeCatalog, flags: PickupFlags) -> PickupResult {
-    pick_up_filtered(rom, catalog, flags, |entry, flags| {
-        // Airships and Bowser stay at vanilla pointer table entries.
-        // The autoscroll patch targets their hardcoded entry_idx offsets,
-        // and blanking their grid positions would create extra build-phase
-        // slots without matching available_slots in the writer.
-        if matches!(entry.kind, NodeKind::Airship | NodeKind::Bowser) {
-            return false;
-        }
-        // W3 boat dock tile ($4B) must stay — the boat docks here and
-        // replacing the tile (e.g. with a pipe) breaks boat boarding.
-        if entry.tile == 0x4B {
-            return false;
-        }
-        // Level, Fortress, Pipe — shufflable gameplay nodes
-        if entry.kind.is_level_like() {
-            return true;
-        }
-        // HammerBro — roaming encounters that guard real levels
-        if matches!(entry.kind, NodeKind::HammerBro) {
-            return true;
-        }
-        // BonusGame (spade card) — pick up so the builder can re-place at a
-        // HammerBro slot, freeing the vanilla position for a level.
-        if flags.shuffle_spade_games && matches!(entry.kind, NodeKind::BonusGame) {
-            return true;
-        }
-        // ToadHouse — pick up so the builder can re-place at a HammerBro
-        // slot. Each entry preserves its vanilla obj_ptr (one of 7 reward
-        // pool variants), so the reward identity stays attached.
-        if flags.shuffle_toad_houses && matches!(entry.kind, NodeKind::ToadHouse) {
-            return true;
-        }
-        false
-    })
+    pick_up_filtered(rom, catalog, flags, default_pickup_pred)
+}
+
+/// Default pickup predicate: includes level-like nodes, hammer bros, and —
+/// per flag — bonus games and toad houses. Airships, Bowser, and the W3 boat
+/// dock tile are excluded.
+fn default_pickup_pred(entry: &CatalogEntry, flags: PickupFlags) -> bool {
+    // Airships and Bowser stay at vanilla pointer table entries — the
+    // autoscroll patch targets their hardcoded entry_idx offsets, and
+    // blanking their grid positions would create extra build-phase slots
+    // without matching available_slots in the writer.
+    if matches!(entry.kind, NodeKind::Airship | NodeKind::Bowser) {
+        return false;
+    }
+    // W3 boat dock tile ($4B) must stay — the boat docks here, and
+    // replacing the tile (e.g. with a pipe) breaks boat boarding.
+    if entry.tile == 0x4B {
+        return false;
+    }
+    if entry.kind.is_level_like() || matches!(entry.kind, NodeKind::HammerBro) {
+        return true;
+    }
+    if flags.shuffle_spade_games && matches!(entry.kind, NodeKind::BonusGame) {
+        return true;
+    }
+    // ToadHouse pickup preserves each entry's vanilla obj_ptr (one of 7
+    // reward variants), so the reward identity stays attached.
+    if flags.shuffle_toad_houses && matches!(entry.kind, NodeKind::ToadHouse) {
+        return true;
+    }
+    false
 }
 
 /// Like `pick_up`, but only collects entries whose `CatalogEntry` satisfies `pred`.
@@ -118,8 +114,13 @@ pub(super) fn pick_up_filtered(
     let mut pool: Vec<PoolEntry> = Vec::new();
     let mut worlds = Vec::with_capacity(8);
 
-    for wi in 0..8 {
-        worlds.push(pick_up_world(rom, catalog, wi, &mut pool, flags, pred));
+    let fx_slots = rom_data::read_fx_slots(rom);
+    let fx_assignments = rom_data::read_world_fx_assignments(rom);
+
+    for (wi, world_fx) in fx_assignments.iter().enumerate() {
+        worlds.push(pick_up_world(
+            rom, catalog, wi, &mut pool, flags, pred, &fx_slots, world_fx,
+        ));
     }
 
     // Synthetic beta entries (world_idx == usize::MAX) have no vanilla grid
@@ -146,6 +147,10 @@ pub(super) fn pick_up_filtered(
 // Per-world pick-up
 // ---------------------------------------------------------------------------
 
+// Reason: only `(fx_slots, world_fx)` bundle naturally, and at 2 fields a
+// struct adds more noise than it removes. The remaining args are
+// individually meaningful inputs to per-world pickup.
+#[allow(clippy::too_many_arguments)]
 fn pick_up_world(
     rom: &Rom,
     catalog: &NodeCatalog,
@@ -153,11 +158,13 @@ fn pick_up_world(
     pool: &mut Vec<PoolEntry>,
     flags: PickupFlags,
     pred: fn(&CatalogEntry, PickupFlags) -> bool,
+    fx_slots: &[FxSlot],
+    world_fx: &[u8],
 ) -> ClearedWorld {
     let mut grid = rom_data::read_tile_grid(rom, world_idx);
 
     // Pre-open all vanilla FX gap tiles so the grid is fully connected.
-    open_fx_gaps(rom, &mut grid, world_idx);
+    open_fx_gaps(&mut grid, fx_slots, world_fx);
 
     let mut pickup_positions = Vec::new();
     let mut pool_indices = Vec::new();
@@ -203,35 +210,6 @@ const BLANK_TILE_OVERRIDES: &[(usize, usize, usize, u8)] = &[
     (4, 6, 20, 0xD9), // W5 spade in sky region — neighbors are non-path sky bg, heuristic falls to land
 ];
 
-use super::rom_data::VALID_BLANK_TILES;
-
-/// Pick the right blank node tile based on neighboring path directions and
-/// the world/screen visual theme. If the tile is already a valid blank, it
-/// is returned unchanged to preserve the vanilla path connectivity.
-pub(super) fn blank_tile_for(grid: &Grid, world_idx: usize, row: usize, col: usize) -> u8 {
-    // If the tile is already a valid blank, keep it as-is.
-    let current = grid.get(row, col);
-    if VALID_BLANK_TILES.contains(&current) {
-        return current;
-    }
-
-    // Check position-specific overrides first.
-    if let Some(&(_, _, _, tile)) = BLANK_TILE_OVERRIDES
-        .iter()
-        .find(|&&(w, r, c, _)| w == world_idx && r == row && c == col)
-    {
-        return tile;
-    }
-
-    blank_tile_from_neighbors(grid, world_idx, row, col)
-}
-
-/// Like `blank_tile_for` but skips position overrides. Used for dynamic
-/// positions (e.g. W8 army sprites) that aren't at vanilla fixed spots.
-pub(super) fn blank_tile_for_dynamic(grid: &Grid, world_idx: usize, row: usize, col: usize) -> u8 {
-    blank_tile_from_neighbors(grid, world_idx, row, col)
-}
-
 /// Positions that should use island-themed blank tiles (0xAE/0xAF/0xB5/0xB6).
 /// All other positions default to standard land tiles (0x44-0x4A), except sky
 /// positions which are auto-detected from neighbors (0xD* tiles).
@@ -242,25 +220,39 @@ const ISLAND_POSITIONS: &[(usize, usize, usize)] = &[
     (2, 6, 4),  // 3-1
     (2, 4, 12), // hammer
     (2, 6, 12), // 3-5
-    // W4 — island tile
-    (3, 6, 20), // 4-4
-    // W7 — island tile
-    (6, 5, 10), // 7-4
+    (3, 6, 20), // W4 4-4
+    (6, 5, 10), // W7 7-4
 ];
 
-/// Derive the visual theme from a neighbor path tile.
-fn theme_from_tile(tile: u8, force_island: bool) -> (u8, u8, u8, u8) {
-    //           h     v     hv    none
-    if force_island {
-        return (0xAE, 0xB5, 0xAF, 0xB6);
+/// Blank-tile theme tuple: `(horiz, vert, both, none)` covering the four
+/// combinations of valid-path neighbors.
+const THEME_STANDARD: (u8, u8, u8, u8) = (0x47, 0x48, 0x4A, 0x44);
+const THEME_SKY: (u8, u8, u8, u8) = (0xDC, 0xDD, 0xDE, 0xD9);
+const THEME_ISLAND: (u8, u8, u8, u8) = (0xAE, 0xB5, 0xAF, 0xB6);
+
+/// Pick the right blank node tile based on neighboring path directions and
+/// the world/screen visual theme. If the tile is already a valid blank, it
+/// is returned unchanged to preserve the vanilla path connectivity.
+pub(super) fn blank_tile_for(grid: &Grid, world_idx: usize, row: usize, col: usize) -> u8 {
+    let current = grid.get(row, col);
+    if VALID_BLANK_TILES.contains(&current) {
+        return current;
     }
-    match tile >> 4 {
-        0xD => (0xDC, 0xDD, 0xDE, 0xD9), // sky
-        _   => (0x47, 0x48, 0x4A, 0x44),  // standard
+
+    if let Some(&(_, _, _, tile)) = BLANK_TILE_OVERRIDES
+        .iter()
+        .find(|&&(w, r, c, _)| w == world_idx && r == row && c == col)
+    {
+        return tile;
     }
+
+    blank_tile_from_neighbors(grid, world_idx, row, col)
 }
 
-fn blank_tile_from_neighbors(grid: &Grid, world_idx: usize, row: usize, col: usize) -> u8 {
+/// Pick a blank tile purely from neighbor analysis, ignoring per-position
+/// overrides. Used for dynamic positions (e.g. W8 army sprites) that aren't at
+/// vanilla fixed spots.
+pub(super) fn blank_tile_from_neighbors(grid: &Grid, world_idx: usize, row: usize, col: usize) -> u8 {
     let h_tile = if col > 0 { Some(grid.get(row, col - 1)) } else { None };
     let v_tile = if row > 0 { Some(grid.get(row - 1, col)) } else { None };
 
@@ -268,15 +260,15 @@ fn blank_tile_from_neighbors(grid: &Grid, world_idx: usize, row: usize, col: usi
     let has_v = v_tile.is_some_and(|t| VALID_VERT.contains(&t));
 
     let force_island = ISLAND_POSITIONS.contains(&(world_idx, row, col));
+    let neighbor = has_h.then(|| h_tile.unwrap()).or_else(|| has_v.then(|| v_tile.unwrap()));
 
-    let (h, v, hv, none) = if let Some(t) = h_tile.filter(|_| has_h) {
-        theme_from_tile(t, force_island)
-    } else if let Some(t) = v_tile.filter(|_| has_v) {
-        theme_from_tile(t, force_island)
-    } else if force_island {
-        (0xAE, 0xB5, 0xAF, 0xB6)
+    let (h, v, hv, none) = if force_island {
+        THEME_ISLAND
     } else {
-        (0x47, 0x48, 0x4A, 0x44) // standard fallback
+        match neighbor.map(|t| t >> 4) {
+            Some(0xD) => THEME_SKY,
+            _ => THEME_STANDARD,
+        }
     };
 
     match (has_h, has_v) {
@@ -293,11 +285,8 @@ fn blank_tile_from_neighbors(grid: &Grid, world_idx: usize, row: usize, col: usi
 
 /// Replace vanilla FX gap tiles with their underlying path tiles, making the
 /// grid fully connected before placement.
-fn open_fx_gaps(rom: &Rom, grid: &mut Grid, world_idx: usize) {
-    let fx_slots = rom_data::read_fx_slots(rom);
-    let fx_assignments = rom_data::read_world_fx_assignments(rom);
-
-    for &slot_idx in &fx_assignments[world_idx] {
+fn open_fx_gaps(grid: &mut Grid, fx_slots: &[FxSlot], world_fx: &[u8]) {
+    for &slot_idx in world_fx {
         let slot = &fx_slots[slot_idx as usize];
         if slot.grid_row < grid.rows && slot.grid_col < grid.cols {
             grid.set(slot.grid_row, slot.grid_col, slot.replace_tile);
@@ -375,8 +364,7 @@ mod tests {
         let fx_slots = rom_data::read_fx_slots(&rom);
         let fx_assignments = rom_data::read_world_fx_assignments(&rom);
 
-        for wi in 0..8 {
-            let world_fx = &fx_assignments[wi];
+        for (wi, world_fx) in fx_assignments.iter().enumerate() {
             let grid = &result.worlds[wi].grid;
 
             for (si, slot) in fx_slots.iter().enumerate() {
@@ -514,10 +502,12 @@ mod tests {
             None => return,
         };
 
+        let fx_slots = rom_data::read_fx_slots(&rom);
+        let fx_assignments = rom_data::read_world_fx_assignments(&rom);
         let mut mismatches = 0;
         for &(wi, row, col, override_tile) in BLANK_TILE_OVERRIDES {
             let mut grid = rom_data::read_tile_grid(&rom, wi);
-            open_fx_gaps(&rom, &mut grid, wi);
+            open_fx_gaps(&mut grid, &fx_slots, &fx_assignments[wi]);
 
             let heuristic_tile = blank_tile_from_neighbors(&grid, wi, row, col);
             let vanilla_tile = grid.get(row, col);

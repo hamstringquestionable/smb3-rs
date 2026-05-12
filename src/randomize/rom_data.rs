@@ -1,9 +1,8 @@
-/// Shared ROM constants, data structures, and helpers for SMB3 randomization.
-///
-/// This module holds all the shared knowledge about the ROM layout — constants,
-/// lookup tables, data structures, and low-level read/write helpers — used by
-/// multiple randomization modules. The BFS map walker lives in `map_walker.rs`.
-
+//! Shared ROM constants, data structures, and helpers for SMB3 randomization.
+//!
+//! This module holds all the shared knowledge about the ROM layout — constants,
+//! lookup tables, data structures, and low-level read/write helpers — used by
+//! multiple randomization modules. The BFS map walker lives in `map_walker.rs`.
 
 use crate::rom::Rom;
 
@@ -122,6 +121,19 @@ pub(super) const FS_HAND_ROOMS: usize = 0x0DA74; // 22 bytes (2 × 11)
 
 
 // ---------------------------------------------------------------------------
+// Shared type aliases
+// ---------------------------------------------------------------------------
+
+/// A grid coordinate on an overworld map, in `(row, col)` order.
+pub(super) type Pos = (usize, usize);
+
+/// An ordered pair of grid positions that BFS treats as a single edge —
+/// the path between them is skipped. Used for vanilla pipe pairs, W3
+/// canoe edges, and any future traversal feature that connects two
+/// positions without a walkable path between them.
+pub(super) type TeleportEdge = (Pos, Pos);
+
+// ---------------------------------------------------------------------------
 // Tile constants
 // ---------------------------------------------------------------------------
 
@@ -150,7 +162,7 @@ pub(super) const TILE_START: u8 = 0xE5;
 /// The canoe transports the player from the mainland dock at (6,20) to two
 /// island docks. These are bidirectional teleport edges in BFS, like pipes.
 /// The mainland dock is only reachable when rocks are cleared.
-pub(super) const CANOE_EDGES: &[(usize, ((usize, usize), (usize, usize)))] = &[
+pub(super) const CANOE_EDGES: &[(usize, TeleportEdge)] = &[
     (2, ((6, 20), (5, 24))),  // mainland dock → island 1
     (2, ((6, 20), (0, 32))),  // mainland dock → island 2
 ];
@@ -985,7 +997,7 @@ pub(super) fn dest_indices_for_world(world_idx: usize) -> Vec<usize> {
 /// Read all pipe pairs from ROM destination tables, grouped by world.
 /// Returns a map: world_idx → Vec of ((row_a, col_a), (row_b, col_b)).
 #[cfg(test)]
-pub(super) fn read_pipe_pairs(rom: &Rom) -> std::collections::HashMap<usize, Vec<((usize, usize), (usize, usize))>> {
+pub(super) fn read_pipe_pairs(rom: &Rom) -> std::collections::HashMap<usize, Vec<TeleportEdge>> {
     let mut pipes_by_world: std::collections::HashMap<usize, Vec<_>> = std::collections::HashMap::new();
 
     for &(dest, world_idx) in DEST_TO_WORLD {
@@ -1043,11 +1055,11 @@ pub(super) fn read_fx_slots(rom: &Rom) -> Vec<FxSlot> {
 /// We use the fortress count from FORTRESS_ENTRIES to know how many to read.
 pub(super) fn read_world_fx_assignments(rom: &Rom) -> [Vec<u8>; 8] {
     let mut assignments: [Vec<u8>; 8] = Default::default();
-    for wi in 0..8 {
+    for (wi, assignment) in assignments.iter_mut().enumerate() {
         let fort_count = FORTRESS_ENTRIES.iter().filter(|&&(w, _)| w == wi).count();
         let base = FX_WORLD_TABLE + wi * 4;
         for i in 0..fort_count.min(4) {
-            assignments[wi].push(rom.read_byte(base + i));
+            assignment.push(rom.read_byte(base + i));
         }
     }
     assignments

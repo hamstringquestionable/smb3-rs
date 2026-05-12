@@ -1,8 +1,8 @@
-/// Pipe movement helpers: low-level ROM patching for overworld pipe operations.
-///
-/// These helpers handle the mechanical ROM writes for moving pipe endpoints
-/// on the overworld map. The randomization logic (choosing WHERE pipes go)
-/// lives in `overworld_build.rs`; this module handles HOW to write those decisions.
+//! Pipe movement helpers: low-level ROM patching for overworld pipe operations.
+//!
+//! These helpers handle the mechanical ROM writes for moving pipe endpoints
+//! on the overworld map. The randomization logic (choosing WHERE pipes go)
+//! lives in `overworld_build.rs`; this module handles HOW to write those decisions.
 
 use crate::rom::Rom;
 

@@ -341,10 +341,8 @@ impl Rom {
         for rec in &self.write_log {
             let top_tag = rec.tag.split('/').next().unwrap_or(&rec.tag);
             for off in rec.offset..rec.offset + rec.len {
-                if let Some(&prev) = owner.get(&off) {
-                    if prev != top_tag {
-                        collisions.push((off, prev.to_string(), top_tag.to_string()));
-                    }
+                if let Some(&prev) = owner.get(&off) && prev != top_tag {
+                    collisions.push((off, prev.to_string(), top_tag.to_string()));
                 }
                 owner.insert(off, top_tag);
             }

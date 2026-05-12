@@ -1,10 +1,10 @@
-/// BFS map walker for overworld connectivity analysis.
-///
-/// Traverses SMB3 overworld maps using the game's 2-tile movement model
-/// (node → path tile → node). Supports pipe teleport edges, chokepoint
-/// detection, and fortress progression simulation.
-///
-/// Shared ROM constants, data structures, and helpers live in `rom_data.rs`.
+//! BFS map walker for overworld connectivity analysis.
+//!
+//! Traverses SMB3 overworld maps using the game's 2-tile movement model
+//! (node → path tile → node). Supports pipe teleport edges, chokepoint
+//! detection, and fortress progression simulation.
+//!
+//! Shared ROM constants, data structures, and helpers live in `rom_data.rs`.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -13,11 +13,11 @@ use crate::rom::Rom;
 
 use super::rom_data::{
     self, BACKGROUND_TILES, VALID_HORZ, VALID_VERT,
-    Grid,
+    Grid, TeleportEdge,
 };
 
 #[cfg(test)]
-use super::rom_data::{FX_WORLD_TABLE, TILE_FORTRESS, TILE_START};
+use super::rom_data::{FX_WORLD_TABLE, Pos, TILE_FORTRESS, TILE_START};
 
 
 
@@ -65,7 +65,7 @@ pub(super) struct WalkResult {
 /// teleport edges.
 pub(super) fn walk_map(
     grid: &Grid,
-    pipe_pairs: &[((usize, usize), (usize, usize))],
+    pipe_pairs: &[TeleportEdge],
     start_pos: Option<(usize, usize)>,
 ) -> WalkResult {
     let start = match start_pos.or_else(|| rom_data::find_start(grid)) {
@@ -195,8 +195,8 @@ pub(super) fn find_chokepoints(result: &WalkResult) -> HashSet<(usize, usize)> {
     }
 
     // Build adjacency: node → list of (neighbor, path_pos_or_none)
-    let mut adj: HashMap<(usize, usize), Vec<((usize, usize), Option<(usize, usize)>)>> =
-        HashMap::new();
+    type AdjacencyEdge = (Pos, Option<Pos>);
+    let mut adj: HashMap<Pos, Vec<AdjacencyEdge>> = HashMap::new();
     for (node, neighbors) in &result.edges {
         for edge in neighbors {
             adj.entry(*node).or_default().push((edge.dest, edge.path_pos));
@@ -348,7 +348,7 @@ fn find_fortress_tiles(grid: &Grid) -> Vec<(usize, usize)> {
 pub(super) fn render_progression(
     rom: &Rom,
     world_idx: usize,
-    pipe_pairs: &[((usize, usize), (usize, usize))],
+    pipe_pairs: &[TeleportEdge],
 ) -> String {
     let mut grid = rom_data::read_tile_grid(rom, world_idx);
     let fx_slots = rom_data::read_fx_slots(rom);
@@ -572,9 +572,11 @@ mod tests {
         }
         let mut rom = Rom::from_bytes(&rom_data_bytes.unwrap()).unwrap();
 
-        let mut options = crate::randomizer::Options::default();
-        options.shuffle_pipes = true;
-        options.shuffle_airships = true;
+        let options = crate::randomizer::Options {
+            shuffle_pipes: true,
+            shuffle_airships: true,
+            ..Default::default()
+        };
         let seed = 42;
         crate::randomizer::randomize(&mut rom, seed, &options);
 

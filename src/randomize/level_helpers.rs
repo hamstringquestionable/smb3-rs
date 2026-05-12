@@ -1,7 +1,7 @@
-/// Level helpers: shared write operations for level entry manipulation.
-///
-/// Parallels `pipe_helpers.rs` and `overworld_helpers.rs`. Contains
-/// mechanical ROM write operations used by multiple randomization modules.
+//! Level helpers: shared write operations for level entry manipulation.
+//!
+//! Parallels `pipe_helpers.rs` and `overworld_helpers.rs`. Contains
+//! mechanical ROM write operations used by multiple randomization modules.
 
 use rand::Rng;
 use rand::seq::SliceRandom;
