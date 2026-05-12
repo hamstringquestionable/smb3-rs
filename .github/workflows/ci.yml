@@ -1,13 +1,23 @@
-name: CI
+name: CI & Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'refactor/**', 'beta/**']
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
 
 jobs:
-  check:
+  ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -28,3 +38,67 @@ jobs:
 
       - name: Test
         run: cargo test
+
+  build:
+    needs: ci
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          path: main-src
+
+      - name: Build main
+        working-directory: main-src
+        run: wasm-pack build --target web --out-dir pkg
+
+      - name: Stage main into _site/
+        run: |
+          mkdir -p _site
+          cp -r main-src/web/. _site/
+          cp -r main-src/pkg _site/pkg
+
+      - name: Checkout trigger ref
+        if: github.ref != 'refs/heads/main'
+        uses: actions/checkout@v5
+        with:
+          path: branch-src
+
+      - name: Build trigger branch
+        if: github.ref != 'refs/heads/main'
+        working-directory: branch-src
+        run: wasm-pack build --target web --out-dir pkg
+
+      - name: Stage trigger branch into _site/beta/
+        if: github.ref != 'refs/heads/main'
+        run: |
+          mkdir -p _site/beta
+          cp -r branch-src/web/. _site/beta/
+          cp -r branch-src/pkg _site/beta/pkg
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
