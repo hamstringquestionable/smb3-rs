@@ -1,90 +1,64 @@
-# SMB3R - Super Mario Bros. 3 Randomizer
+# SMB3R — Super Mario Bros. 3 Randomizer
 
-A randomizer for Super Mario Bros. 3 (USA Rev 1) that outputs an IPS patch or patched ROM. Runs as a native CLI binary or in the browser via WebAssembly. Users must provide their own ROM.
+A randomizer for Super Mario Bros. 3 (USA Rev 1). Runs entirely in your
+browser — your ROM never leaves your machine.
 
-## Building
+## Use it
 
-Requires: gcc, rustup, wasm-pack, pkg-config, openssl
+**→ https://hamstringquestionable.github.io/smb3-rs/**
 
-On NixOS, use the included dev shell:
+Provide your own SMB3 (USA Rev 1) ROM. Choose options or paste a flag key
+to reproduce someone else's settings, then generate an IPS patch or
+patched ROM. All randomization runs locally via WebAssembly.
 
-```sh
-nix-shell
-```
+The deploy pipeline also publishes branch builds at `/beta/<branch>/` for
+testing in-progress changes.
 
-### Native CLI
+## Report a bug
 
-```sh
-cargo build                  # debug binary -> target/debug/smb3r
-cargo build --release        # optimized binary -> target/release/smb3r
-```
+File an issue at https://github.com/hamstringquestionable/smb3-rs/issues.
+Include the seed and flag key from the web app so the run is reproducible.
 
-### WebAssembly
+## Contributing
 
-```sh
-wasm-pack build --target web --out-dir pkg   # WASM module -> pkg/
-```
+### Build
 
-### Tests
-
-```sh
-cargo test
-```
-
-## Usage
+Requires Rust (edition 2024), `wasm-pack`, and the usual native toolchain
+(gcc, pkg-config, openssl). On NixOS, `nix-shell` provides everything.
 
 ```sh
-smb3r <rom> [options]
+cargo build                                  # native CLI
+cargo test                                   # run the test suite
+wasm-pack build --target web --out-dir pkg   # web app build
+cargo clippy --all-targets -- -D warnings    # lint check (CI enforces)
 ```
 
-### Options
+After a wasm build, open `web/index.html` from a local server to test
+the frontend.
 
-| Flag | Description |
-|------|-------------|
-| `--seed <N>` | Random seed (default: random) |
-| `-o, --output <path>` | Output file path |
-| `--patched-rom` | Output a patched ROM instead of an IPS patch |
-| `--flag-key <key>` | Apply options from a flag key (e.g. `SMB3R-02E3880480`). Overrides other flags |
-| `--no-powerups` | Disable power-up randomization |
-| `--no-palettes` | Disable palette randomization |
-| `--enemies` | Enable enemy randomization (experimental) |
-| `--world-order` | Enable world order randomization |
-| `--big-q-blocks` | Enable Big ? Block randomization |
-| `--no-shuffle-pipes` | Disable pipe endpoint shuffle during overworld rebuild (on by default) |
-| `--no-shuffle-airships` | Disable airship shuffle across worlds (on by default) |
-| `--keep-autoscroll` | Keep autoscrollers enabled (disabled by default) |
-| `--no-chest-items` | Disable chest/reward item randomization |
-| `--keep-whistles` | Keep warp whistles (removed by default) |
-| `--keep-drawbridges` | Keep W3 drawbridges toggling (fixed open by default) |
-| `--keep-w2-rock` | Keep W2 secret path rock (removed by default) |
-| `--no-card-speed-clear` | Disable card speed clear (one-of-each skips cutscene, on by default) |
-| `--no-airship-lock` | Disable airship lock (anchor effect, on by default) |
-| `--starting-lives <N>` | Set starting lives, 1-99 (default: 4) |
+### Project layout
 
-### Examples
+- `src/` — Rust source. Library + CLI + WASM glue (`src/wasm.rs`).
+- `src/randomize/` — per-feature randomization modules.
+- `web/` — frontend (HTML/CSS/JS, talks to the wasm module).
+- `tools/` — Python helpers for ROM analysis (`rom_map.py` is the big one).
+- `docs/smb3_rom_reference.md` — SMB3 ROM offsets, data structures, RAM
+  map. Update this when you discover new ROM details.
+- `CLAUDE.md` — orientation for working with the codebase (build commands,
+  lint policy, architecture conventions). Worth reading before submitting
+  changes.
+
+### CLI
+
+There's also a native CLI (`smb3-rs`) used for batch testing and
+debugging. Run with `--help` for the full flag list.
 
 ```sh
-# Generate an IPS patch with default settings
-smb3r rom.nes
-
-# Generate a patched ROM with a specific seed
-smb3r rom.nes --seed 12345 --patched-rom
-
-# Apply settings from a flag key
-smb3r rom.nes --flag-key SMB3R-02E3880480
-
-# Full randomization
-smb3r rom.nes --world-order --big-q-blocks
+smb3-rs <rom> --seed 12345 --patched-rom -o out.nes
 ```
-
-## Web App
-
-Open `web/index.html` in a browser after building the WASM module. The web app loads the WASM from `pkg/` and lets users select a ROM file, configure options, and download the patched output.
 
 ## Acknowledgments
 
-This project stands on the shoulders of giants:
-
-- **Fred (fcoughlin)** ([Twitch](https://www.twitch.tv/fcoughlin)) — for the original SMB3R and inspiration
-- **MaCobra52** ([GitHub](https://github.com/MaCobra52) | [Twitch](https://www.twitch.tv/macobra52)) — for continuing the labour of love for SMB3R and for all the community efforts.
+- **Fred (fcoughlin)** ([Twitch](https://www.twitch.tv/fcoughlin)) — original SMB3R and inspiration
+- **MaCobra52** ([GitHub](https://github.com/MaCobra52) | [Twitch](https://www.twitch.tv/macobra52)) — continuing the labour of love and the community work
 - **Captain Southbird** ([SMB3 Disassembly](https://github.com/captainsouthbird/smb3)) — the comprehensive SMB3 disassembly that made all of this possible
