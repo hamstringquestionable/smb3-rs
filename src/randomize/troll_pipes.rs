@@ -55,7 +55,8 @@ mod tests {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let catalog = node_catalog::NodeCatalog::build(&rom, false);
             let pickup = overworld_pickup::pick_up(&rom, &catalog, overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
-            let mut build = overworld_build::build(&rom, &pickup, &catalog, &mut rng, true);
+            let data = overworld_build::OverworldData { pickup: &pickup, catalog: &catalog };
+            let mut build = overworld_build::build(&rom, &data, &mut rng, true);
             troll_pipes::mark_troll_pipes(&mut build, &mut rng);
             for w in &build.worlds {
                 let n = w.slots.iter().filter(|s| s.is_troll_pipe).count();

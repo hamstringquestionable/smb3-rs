@@ -12,10 +12,9 @@ use rand::seq::{IndexedRandom, SliceRandom};
 
 use crate::rom::Rom;
 
-use super::node_catalog::{NodeCatalog, NodeKind};
-use super::overworld_build::{bfs_ordered, BuildResult, BuiltWorld, SlotKind};
+use super::node_catalog::NodeKind;
+use super::overworld_build::{bfs_ordered, BuildResult, BuiltWorld, OverworldData, SlotKind};
 use super::overworld_helpers;
-use super::overworld_pickup::PickupResult;
 use super::pipe_helpers;
 use super::rom_data::{
     self, FORTRESS_1F_OBJ_PTR, FX_MAP_COMP_IDX, FX_PATTERNS, FX_VADDR_H, FX_VADDR_L,
@@ -146,12 +145,11 @@ struct WorldAssignments {
 pub(crate) fn write_overworld<R: Rng>(
     rom: &mut Rom,
     build: &BuildResult,
-    pickup: &PickupResult,
-    catalog: &NodeCatalog,
+    data: &OverworldData,
     rng: &mut R,
     cross_world: bool,
 ) {
-    let assignments = assign_pool(rom, build, pickup, catalog, rng, cross_world);
+    let assignments = assign_pool(rom, build, data, rng, cross_world);
 
     // Compute W8 army sprite target positions before writing tiles,
     // so write_tile_grid can stamp connectivity-aware blank tiles under the sprites.
@@ -160,7 +158,7 @@ pub(crate) fn write_overworld<R: Rng>(
         w8_sprite_positions.iter().map(|&(_, pos)| pos).collect();
 
     // Cycling HB level pool for fallback pointer table entries (same interleaving).
-    let hb_fallback_levels = interleave_hb_by_obj_ptr(catalog.unique_hammer_bro_levels(), rng);
+    let hb_fallback_levels = interleave_hb_by_obj_ptr(data.catalog.unique_hammer_bro_levels(), rng);
     let mut hb_fallback_iter = hb_fallback_levels.iter().cycle().cloned();
 
     let mut fx_slot = 0usize;
@@ -168,9 +166,9 @@ pub(crate) fn write_overworld<R: Rng>(
         let built = &build.worlds[wi];
         let sprite_mask = if wi == 7 { &w8_sprite_pos_set } else { &HashSet::new() };
 
-        write_tile_grid(rom, built, wa, pickup, catalog, sprite_mask, rng);
-        write_pointer_entries(rom, wi, built, wa, pickup, catalog, &mut hb_fallback_iter);
-        write_fortress_fx(rom, wi, built, wa, pickup, catalog, &mut fx_slot);
+        write_tile_grid(rom, built, wa, data, sprite_mask, rng);
+        write_pointer_entries(rom, wi, built, wa, data, &mut hb_fallback_iter);
+        write_fortress_fx(rom, wi, built, wa, data, &mut fx_slot);
         write_pipe_dests(rom, wi, wa);
         pipe_helpers::resort_pointer_table(rom, wi);
         // Do not sync map object sprite positions: the overworld builder never
@@ -190,11 +188,12 @@ pub(crate) fn write_overworld<R: Rng>(
 fn assign_pool<R: Rng>(
     rom: &Rom,
     build: &BuildResult,
-    pickup: &PickupResult,
-    catalog: &NodeCatalog,
+    data: &OverworldData,
     rng: &mut R,
     cross_world: bool,
 ) -> Vec<WorldAssignments> {
+    let pickup = data.pickup;
+    let catalog = data.catalog;
     // Partition pool by kind.
     let mut fort_pool: Vec<usize> = Vec::new();
     let mut level_pool: Vec<usize> = Vec::new();
@@ -539,11 +538,12 @@ fn write_tile_grid<R: Rng>(
     rom: &mut Rom,
     built: &BuiltWorld,
     wa: &WorldAssignments,
-    pickup: &PickupResult,
-    catalog: &NodeCatalog,
+    data: &OverworldData,
     sprite_mask: &HashSet<(usize, usize)>,
     rng: &mut R,
 ) {
+    let pickup = data.pickup;
+    let catalog = data.catalog;
     let wi = built.world_idx;
     let mut grid = built.grid.clone();
 
@@ -705,10 +705,11 @@ fn write_pointer_entries(
     world_idx: usize,
     built: &BuiltWorld,
     wa: &WorldAssignments,
-    pickup: &PickupResult,
-    catalog: &NodeCatalog,
+    data: &OverworldData,
     hb_level_iter: &mut impl Iterator<Item = rom_data::LevelEntry>,
 ) {
+    let pickup = data.pickup;
+    let catalog = data.catalog;
     let world = &WORLDS[world_idx];
     let n = world.entry_count;
     let rt = world.rowtype_offset;
@@ -870,10 +871,11 @@ fn write_fortress_fx(
     world_idx: usize,
     built: &BuiltWorld,
     wa: &WorldAssignments,
-    pickup: &PickupResult,
-    catalog: &NodeCatalog,
+    data: &OverworldData,
     fx_slot: &mut usize,
 ) {
+    let pickup = data.pickup;
+    let catalog = data.catalog;
     // Pair each lock with its fortress assignment (matched by section).
     let locked_forts: Vec<_> = built
         .locks
@@ -1212,10 +1214,10 @@ mod tests {
         let catalog = super::super::node_catalog::NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        let build = super::super::overworld_build::build(&rom, &pickup, &catalog, &mut rng, true);
+        let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
 
         let mut rng2 = ChaCha8Rng::seed_from_u64(99);
-        let assignments = assign_pool(&rom, &build, &pickup, &catalog, &mut rng2, true);
+        let assignments = assign_pool(&rom, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng2, true);
 
         // Collect all assigned pool indices.
         let mut used: Vec<usize> = Vec::new();
@@ -1281,7 +1283,7 @@ mod tests {
 
         for seed in 0u64..32 {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let mut build = super::super::overworld_build::build(&rom, &pickup, &catalog, &mut rng, true);
+            let mut build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
             super::super::troll_pipes::mark_troll_pipes(&mut build, &mut rng);
 
             let troll_positions: HashSet<(usize, (usize, usize))> = build.worlds.iter()
@@ -1290,7 +1292,7 @@ mod tests {
                     .map(move |s| (w.world_idx, s.pos)))
                 .collect();
 
-            let assignments = assign_pool(&rom, &build, &pickup, &catalog, &mut rng, true);
+            let assignments = assign_pool(&rom, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
 
             for (wi, wa) in assignments.iter().enumerate() {
                 for a in &wa.level {
@@ -1321,8 +1323,8 @@ mod tests {
         for pass in 0..2 {
             let target = if pass == 0 { &mut rom1 } else { &mut rom2 };
             let mut rng = ChaCha8Rng::seed_from_u64(42);
-            let build = super::super::overworld_build::build(&rom, &pickup, &catalog, &mut rng, true);
-            write_overworld(target, &build, &pickup, &catalog, &mut rng, true);
+            let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+            write_overworld(target, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
         }
 
         assert_eq!(rom1.data, rom2.data, "same seed must produce identical output");
@@ -1337,10 +1339,10 @@ mod tests {
         let catalog = super::super::node_catalog::NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        let build = super::super::overworld_build::build(&rom, &pickup, &catalog, &mut rng, true);
+        let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
 
         let mut test_rom = rom.clone();
-        write_overworld(&mut test_rom, &build, &pickup, &catalog, &mut rng, true);
+        write_overworld(&mut test_rom, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
 
         // Read W8 sprite positions after write.
         let positions = rom_data::read_map_sprite_positions(&test_rom, 7);
@@ -1363,10 +1365,10 @@ mod tests {
         let catalog = super::super::node_catalog::NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        let build = super::super::overworld_build::build(&rom, &pickup, &catalog, &mut rng, true);
+        let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
 
         let mut test_rom = rom.clone();
-        write_overworld(&mut test_rom, &build, &pickup, &catalog, &mut rng, true);
+        write_overworld(&mut test_rom, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
 
         // Count total locked fortresses across all worlds.
         let total_locks: usize = build.worlds.iter().map(|b| b.locks.len()).sum();
@@ -1401,10 +1403,10 @@ mod tests {
         let catalog = super::super::node_catalog::NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        let build = super::super::overworld_build::build(&rom, &pickup, &catalog, &mut rng, true);
+        let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
 
         let mut test_rom = rom.clone();
-        write_overworld(&mut test_rom, &build, &pickup, &catalog, &mut rng, true);
+        write_overworld(&mut test_rom, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
 
         // Verify each world's pointer table is sorted by (screen, row, col).
         for (wi, world) in WORLDS.iter().enumerate() {
@@ -1444,14 +1446,14 @@ mod tests {
 
         for seed in [42u64, 123, 999, 7777, 31337] {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let build = super::super::overworld_build::build(&rom, &pickup, &catalog, &mut rng, true);
+            let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
 
             let mut test_rom = rom.clone();
             super::super::qol::fix_w3_drawbridges(&mut test_rom);
             super::super::qol::remove_w2_rock(&mut test_rom);
             super::super::qol::remove_w3_boat_rock(&mut test_rom);
             super::super::qol::fix_big_q_block_rooms(&mut test_rom);
-            write_overworld(&mut test_rom, &build, &pickup, &catalog, &mut rng, true);
+            write_overworld(&mut test_rom, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
 
             let pipes_by_world = rom_data::read_pipe_pairs(&test_rom);
 
@@ -1507,7 +1509,7 @@ mod tests {
 
         for seed in [42u64, 123, 999] {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let build = super::super::overworld_build::build(&rom, &pickup, &catalog, &mut rng, true);
+            let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
 
             let mut out = rom.clone();
 
@@ -1517,7 +1519,7 @@ mod tests {
             super::super::qol::remove_w3_boat_rock(&mut out);
             super::super::qol::fix_big_q_block_rooms(&mut out);
 
-            write_overworld(&mut out, &build, &pickup, &catalog, &mut rng, true);
+            write_overworld(&mut out, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
 
             let filename = format!("writer_test_seed{seed}.nes");
             std::fs::write(&filename, &out.data).unwrap();
