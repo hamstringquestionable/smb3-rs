@@ -103,7 +103,7 @@ mod tests {
             data[hdr + 6] = 0x0B;
         }
 
-        Rom::from_bytes(&data).unwrap()
+        Rom::from_bytes_lax(&data, true).unwrap()
     }
 
     fn hdr_bytes(rom: &Rom, off: usize) -> (u16, u16, u8) {

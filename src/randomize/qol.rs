@@ -601,7 +601,7 @@ mod tests {
         data[5] = 16;
         data[6] = 0x40;
         data[STARTING_LIVES_OFFSET] = 0x04;
-        Rom::from_bytes(&data).unwrap()
+        Rom::from_bytes_lax(&data, true).unwrap()
     }
 
     #[test]

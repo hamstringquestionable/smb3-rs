@@ -1028,7 +1028,7 @@ mod tests {
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
 
-        Rom::from_bytes(&data).unwrap()
+        Rom::from_bytes_lax(&data, true).unwrap()
     }
 
     #[test]
@@ -1133,7 +1133,7 @@ mod tests {
         data[W7F1_TANOOKI_OFFSET + 5] = 0x15;
         data[W7F1_TANOOKI_OFFSET + 6] = 0xFF;
 
-        Rom::from_bytes(&data).unwrap()
+        Rom::from_bytes_lax(&data, true).unwrap()
     }
 
     #[test]
@@ -1180,7 +1180,7 @@ mod tests {
         ];
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes(&data).unwrap();
+        let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
         // Run many times to exercise different random paths
         for seed in 0..200u64 {
@@ -1257,7 +1257,7 @@ mod tests {
         ];
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes(&data).unwrap();
+        let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
         // Run many times — Spiny in second segment should freely choose
         // any ground enemy, not be constrained by first segment's Spike.
@@ -1320,7 +1320,7 @@ mod tests {
         ];
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes(&data).unwrap();
+        let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
         for seed in 0..100u64 {
             let mut rom_copy = rom.clone();
@@ -1354,7 +1354,7 @@ mod tests {
         ];
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes(&data).unwrap();
+        let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
         for seed in 0..100u64 {
             let mut rom_copy = rom.clone();
@@ -1391,7 +1391,7 @@ mod tests {
         ];
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes(&data).unwrap();
+        let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
         for seed in 0..500u64 {
             let mut rom_copy = rom.clone();
@@ -1439,7 +1439,7 @@ mod tests {
         ];
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes(&data).unwrap();
+        let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
         for seed in 0..500u64 {
             let mut rom_copy = rom.clone();
@@ -1486,7 +1486,7 @@ mod tests {
         ];
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes(&data).unwrap();
+        let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
         for seed in 0..100u64 {
             let mut rom_copy = rom.clone();
@@ -1568,7 +1568,7 @@ mod tests {
         ];
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes(&data).unwrap();
+        let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
         let mut saw_shell = false;
         for seed in 0..500u64 {
@@ -1606,7 +1606,7 @@ mod tests {
         ];
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes(&data).unwrap();
+        let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
         for seed in 0..100u64 {
             let mut rom_copy = rom.clone();
@@ -1662,7 +1662,7 @@ mod tests {
         ];
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes(&data).unwrap();
+        let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
         let injection_ids: &[u8] = &[0x83, 0xAF, 0x63];
         let mut saw_injection = false;
@@ -1701,7 +1701,7 @@ mod tests {
         ];
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes(&data).unwrap();
+        let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
         let injection_ids: &[u8] = &[0x83, 0xAF, 0x63];
         for seed in 0..500u64 {
@@ -1739,7 +1739,7 @@ mod tests {
         ];
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes(&data).unwrap();
+        let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
         // Under segment-wide tracking, Spike would be locked to $12/+4 enemies only.
         // Under distance-based grouping, Spike should freely pick any ground enemy.
@@ -1783,7 +1783,7 @@ mod tests {
         ];
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes(&data).unwrap();
+        let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
         // Boo pre-commits $12/+4 as uniform ghost class, so the ground enemy
         // must be compatible — any slot+4 pick must be $12 (or use slot+5 only).
@@ -1856,7 +1856,7 @@ mod tests {
         ];
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes(&data).unwrap();
+        let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
         let entry_offsets = [2usize, 5, 8, 11, 14, 17];
         for seed in 0..2000u64 {

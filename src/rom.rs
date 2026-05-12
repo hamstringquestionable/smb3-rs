@@ -9,6 +9,36 @@ const EXPECTED_CHR_PAGES: u8 = 16; // 16 x 8KB = 128KB
 const PRG_PAGE_SIZE: usize = 16384; // 16KB
 const CHR_PAGE_SIZE: usize = 8192; // 8KB
 
+// CRC32 (IEEE) of the unheadered PRG+CHR payload (393,216 bytes).
+// Header-insensitive so it matches regardless of iNES flag variations or
+// whether the input came in headered or unheadered. The canonical no-intro
+// CRCs of the headered files are SMB3 (USA) = 0x85A79D9C and
+// SMB3 (USA) (Rev 1) = 0x0B742B33; we don't compute those because we already
+// strip/synthesize the header before this check.
+const PRG_REV0_PAYLOAD_CRC32: u32 = 0xA0B0_B742;
+const PRG_REV1_PAYLOAD_CRC32: u32 = 0x2E63_01ED;
+
+/// CRC-32/IEEE (zlib polynomial 0xEDB88320, reflected). Slow byte-by-byte loop,
+/// fine for a single 384 KiB pass at load time.
+fn crc32_ieee(data: &[u8]) -> u32 {
+    let mut crc: u32 = 0xFFFF_FFFF;
+    for &b in data {
+        crc ^= b as u32;
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+const SUPPORTED_ROM_HELP: &str =
+    "This randomizer requires \"Super Mario Bros. 3 (USA) (Rev 1)\" — the US Rev 1 release \
+     in iNES (.nes) format, with or without an iNES header. The original (Rev 0 / PRG0) release \
+     is not supported because it has bugs (e.g. the World 7-1 card-graphics glitch) that the \
+     randomizer's hooks rely on having been fixed. Pass --skip-rom-validation \
+     (or check the skip-validation box in the web UI) to bypass this check at your own risk.";
+
 #[derive(Debug)]
 pub enum RomError {
     TooSmall(usize),
@@ -16,11 +46,11 @@ pub enum RomError {
     UnexpectedPrg { expected: u8, got: u8 },
     UnexpectedChr { expected: u8, got: u8 },
     SizeMismatch { expected: usize, got: usize },
+    /// ROM payload CRC matches the older USA (Rev 0 / PRG0) release.
+    WrongRevisionPrg0,
+    /// ROM payload CRC matches neither Rev 0 nor Rev 1.
+    UnknownRevision { payload_crc32: u32 },
 }
-
-const SUPPORTED_ROM_HELP: &str =
-    "This randomizer supports \"Super Mario Bros. 3 (USA)\" or \"Super Mario Bros. 3 (USA) (Rev 1)\" — \
-     the US release in iNES (.nes) format, with or without an iNES header.";
 
 impl fmt::Display for RomError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -60,6 +90,22 @@ impl fmt::Display for RomError {
                     f,
                     "ROM size is {got} bytes, expected {expected}. \
                      The file may be corrupt or a different version. {SUPPORTED_ROM_HELP}"
+                )
+            }
+            RomError::WrongRevisionPrg0 => {
+                write!(
+                    f,
+                    "This is \"Super Mario Bros. 3 (USA)\" (Rev 0 / PRG0), the original 1990 \
+                     release. {SUPPORTED_ROM_HELP}"
+                )
+            }
+            RomError::UnknownRevision { payload_crc32 } => {
+                write!(
+                    f,
+                    "This ROM is not a recognized SMB3 (USA) dump \
+                     (unheadered payload CRC32 0x{payload_crc32:08X}, \
+                     expected 0x{PRG_REV1_PAYLOAD_CRC32:08X} for Rev 1). \
+                     {SUPPORTED_ROM_HELP}"
                 )
             }
         }
@@ -187,6 +233,16 @@ impl Rom {
                     got: bytes.len(),
                 });
             }
+
+            // Revision check: CRC32 the unheadered payload. Header bytes are
+            // skipped because dumpers/emulators tweak iNES flags freely; the
+            // payload is the actual ROM content.
+            let payload_crc = crc32_ieee(&bytes[HEADER_SIZE..]);
+            match payload_crc {
+                PRG_REV1_PAYLOAD_CRC32 => {}
+                PRG_REV0_PAYLOAD_CRC32 => return Err(RomError::WrongRevisionPrg0),
+                other => return Err(RomError::UnknownRevision { payload_crc32: other }),
+            }
         }
 
         let mapper = (flags6 >> 4) | (flags7 & 0xF0);
@@ -225,6 +281,27 @@ impl Rom {
         } else {
             &self.original
         }
+    }
+
+    /// Apply an IPS patch to the working data, leaving `original` untouched.
+    /// Used to layer visual patches before randomization so the final IPS diff
+    /// (original → data) captures both visual and randomization changes.
+    ///
+    /// The patch is applied against the user-visible bytes (synthetic header
+    /// stripped if present), matching how external IPS patches are authored.
+    pub fn apply_ips_patch(&mut self, patch: &[u8]) -> Result<(), String> {
+        let view = if self.header_synthesized {
+            &self.data[HEADER_SIZE..]
+        } else {
+            &self.data[..]
+        };
+        let patched = crate::ips::apply_ips_patch(view, patch)?;
+        if self.header_synthesized {
+            self.data[HEADER_SIZE..].copy_from_slice(&patched);
+        } else {
+            self.data.copy_from_slice(&patched);
+        }
+        Ok(())
     }
 
     pub fn read_byte(&self, offset: usize) -> u8 {
@@ -407,14 +484,50 @@ mod tests {
         rom
     }
 
+    /// Build a Rom from synthetic bytes for read/write/log tests, bypassing
+    /// the Rev 1 CRC check (the payload is all zeros and would otherwise be
+    /// rejected as UnknownRevision).
+    fn rom_from(data: &[u8]) -> Rom {
+        Rom::from_bytes_lax(data, true).unwrap()
+    }
+
     #[test]
-    fn test_valid_rom() {
+    fn test_valid_header_parses() {
+        // Lax mode: skip both layout and CRC checks, just verify header decoding.
         let data = make_valid_rom();
-        let rom = Rom::from_bytes(&data).unwrap();
+        let rom = Rom::from_bytes_lax(&data, true).unwrap();
         assert_eq!(rom.header.prg_pages, 16);
         assert_eq!(rom.header.chr_pages, 16);
         assert_eq!(rom.header.mapper, 4);
         assert!(rom.header.mirroring_horizontal);
+    }
+
+    #[test]
+    fn test_unknown_revision_rejected() {
+        // Valid iNES layout but all-zero payload → CRC doesn't match Rev 0 or Rev 1.
+        let data = make_valid_rom();
+        match Rom::from_bytes(&data) {
+            Err(RomError::UnknownRevision { payload_crc32 }) => {
+                assert_ne!(payload_crc32, PRG_REV1_PAYLOAD_CRC32);
+                assert_ne!(payload_crc32, PRG_REV0_PAYLOAD_CRC32);
+            }
+            Err(other) => panic!("expected UnknownRevision, got {other:?}"),
+            Ok(_) => panic!("expected UnknownRevision, got Ok"),
+        }
+    }
+
+    #[test]
+    fn test_skip_validation_bypasses_crc() {
+        // All-zero payload would fail strict CRC but passes in lax mode.
+        let data = make_valid_rom();
+        Rom::from_bytes_lax(&data, true).expect("lax mode must accept any layout");
+    }
+
+    #[test]
+    fn crc32_ieee_known_vectors() {
+        // Standard CRC-32/IEEE check value from RFC 3309 et al.
+        assert_eq!(crc32_ieee(b""), 0x0000_0000);
+        assert_eq!(crc32_ieee(b"123456789"), 0xCBF4_3926);
     }
 
     #[test]
@@ -453,7 +566,7 @@ mod tests {
     #[test]
     fn test_read_write() {
         let data = make_valid_rom();
-        let mut rom = Rom::from_bytes(&data).unwrap();
+        let mut rom = rom_from(&data);
         rom.write_byte(20, 0xAB);
         assert_eq!(rom.read_byte(20), 0xAB);
         assert_eq!(rom.original[20], 0x00); // original unchanged
@@ -465,7 +578,7 @@ mod tests {
     #[test]
     fn write_byte_logs_with_tag() {
         let data = make_valid_rom();
-        let mut rom = Rom::from_bytes(&data).unwrap();
+        let mut rom = rom_from(&data);
         rom.set_tag("test_module");
         rom.write_byte(20, 0xAB);
 
@@ -481,7 +594,7 @@ mod tests {
     #[test]
     fn write_range_logs_with_tag() {
         let data = make_valid_rom();
-        let mut rom = Rom::from_bytes(&data).unwrap();
+        let mut rom = rom_from(&data);
         rom.set_tag("palettes");
         rom.write_range(100, &[1, 2, 3]);
 
@@ -497,7 +610,7 @@ mod tests {
     #[test]
     fn noop_write_byte_not_logged() {
         let data = make_valid_rom();
-        let mut rom = Rom::from_bytes(&data).unwrap();
+        let mut rom = rom_from(&data);
         rom.set_tag("test");
         rom.write_byte(20, 0x00); // same as existing value
         assert!(rom.write_log().is_empty());
@@ -506,7 +619,7 @@ mod tests {
     #[test]
     fn noop_write_range_not_logged() {
         let data = make_valid_rom();
-        let mut rom = Rom::from_bytes(&data).unwrap();
+        let mut rom = rom_from(&data);
         rom.set_tag("test");
         rom.write_range(20, &[0x00, 0x00, 0x00]); // same as existing
         assert!(rom.write_log().is_empty());
@@ -515,7 +628,7 @@ mod tests {
     #[test]
     fn untagged_writes_get_untagged_label() {
         let data = make_valid_rom();
-        let mut rom = Rom::from_bytes(&data).unwrap();
+        let mut rom = rom_from(&data);
         rom.write_byte(20, 0xFF);
         assert_eq!(rom.write_log()[0].tag, "untagged");
     }
@@ -523,7 +636,7 @@ mod tests {
     #[test]
     fn hierarchical_tags() {
         let data = make_valid_rom();
-        let mut rom = Rom::from_bytes(&data).unwrap();
+        let mut rom = rom_from(&data);
         rom.set_tag("overworld");
         rom.push_tag("fortress");
         rom.push_tag("fx_table");
@@ -538,7 +651,7 @@ mod tests {
     #[test]
     fn query_writes_in_range() {
         let data = make_valid_rom();
-        let mut rom = Rom::from_bytes(&data).unwrap();
+        let mut rom = rom_from(&data);
         rom.set_tag("a");
         rom.write_byte(100, 0x01);
         rom.set_tag("b");
@@ -558,7 +671,7 @@ mod tests {
     #[test]
     fn query_writes_by_tag() {
         let data = make_valid_rom();
-        let mut rom = Rom::from_bytes(&data).unwrap();
+        let mut rom = rom_from(&data);
         rom.set_tag("qol/drawbridges");
         rom.write_byte(20, 0x01);
         rom.set_tag("qol/w2_rock");
@@ -575,7 +688,7 @@ mod tests {
     #[test]
     fn query_writes_at() {
         let data = make_valid_rom();
-        let mut rom = Rom::from_bytes(&data).unwrap();
+        let mut rom = rom_from(&data);
         rom.set_tag("a");
         rom.write_range(100, &[1, 2, 3]);
 
@@ -588,7 +701,7 @@ mod tests {
     #[test]
     fn query_has_writes_in_range() {
         let data = make_valid_rom();
-        let mut rom = Rom::from_bytes(&data).unwrap();
+        let mut rom = rom_from(&data);
         rom.set_tag("test");
         rom.write_byte(100, 0x01);
 

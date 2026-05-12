@@ -151,7 +151,7 @@ mod tests {
             .copy_from_slice(&[0xEE, 0x27, 0x07, 0x4C, 0xA0, 0x84]);
         // Fill free space with FF
         data[ROUTINE_OFFSET..ROUTINE_OFFSET + 32].fill(0xFF);
-        Rom::from_bytes(&data).unwrap()
+        Rom::from_bytes_lax(&data, true).unwrap()
     }
 
     #[test]

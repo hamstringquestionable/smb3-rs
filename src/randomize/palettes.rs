@@ -100,7 +100,7 @@ mod tests {
         data[4] = 16;
         data[5] = 16;
         data[6] = 0x40;
-        Rom::from_bytes(&data).unwrap()
+        Rom::from_bytes_lax(&data, true).unwrap()
     }
 
     #[test]

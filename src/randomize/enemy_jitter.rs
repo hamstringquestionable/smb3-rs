@@ -104,7 +104,7 @@ mod tests {
         ];
         data[0x0D61C..0x0D61C + w8b.len()].copy_from_slice(w8b);
 
-        Rom::from_bytes(&data).unwrap()
+        Rom::from_bytes_lax(&data, true).unwrap()
     }
 
     #[test]
