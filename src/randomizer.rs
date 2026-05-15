@@ -134,7 +134,6 @@ pub struct Options {
     /// Include ~9 unreferenced beta levels in the overworld shuffle pool.
     #[serde(default)]
     pub include_beta_stages: bool,
-
     // --- Per-class enemy tri-state toggles ---
     /// Ground-walking enemies (Goomba, Spiny, Spike, etc.)
     #[serde(default = "default_shuffle")]
@@ -175,11 +174,6 @@ pub struct Options {
     /// Inject Lakitu/Angry Sun/Boss Bass into ~15% of segments (CHR-compatible)
     #[serde(default)]
     pub wild_injections: bool,
-    /// Jitter fireball/podoboo positions ±2 tiles per seed in memorizable
-    /// gauntlets (5F-2 podoboos, 8B pre-Bowser fireballs). Breaks speedrun
-    /// memorization without changing difficulty.
-    #[serde(default)]
-    pub jitter_enemy_positions: bool,
     /// Skip the SMB3 (USA) iNES header / page-count / size checks so that
     /// modded or translated ROMs can be loaded. When true, the title-screen
     /// seed hash is also skipped because its hooks rely on vanilla offsets.
@@ -327,12 +321,11 @@ impl Options {
             }
         }
 
-        // b5: ground(7-6) shell(5-4) flying(3-2) hammer_vulnerable_koopalings(1) jitter_enemy_positions(0)
+        // b5: ground(7-6) shell(5-4) flying(3-2) hammer_vulnerable_koopalings(1) reserved(0)
         let b5 = em(self.ground) << 6
             | em(self.shell) << 4
             | em(self.flying) << 2
-            | (self.hammer_vulnerable_koopalings as u8) << 1
-            | (self.jitter_enemy_positions as u8);
+            | (self.hammer_vulnerable_koopalings as u8) << 1;
 
         // b6: bullet_bills(7-6) piranhas(5-4) ghosts(3-2) thwomps(1-0)
         let b6 = em(self.bullet_bills) << 6
@@ -375,7 +368,9 @@ impl Options {
         let i1 = items.get(1).copied().unwrap_or(0);
         let i2 = items.get(2).copied().unwrap_or(0);
         let b8 = (item_nibble(i0) << 4) | item_nibble(i1);
-        let b9 = (item_nibble(i2) << 4) | (self.world_count.clamp(1, 7) & 0x0F);
+        // b9: i2 nibble (7-4) | reserved (3) | world_count 1..7 (2-0)
+        let b9 = (item_nibble(i2) << 4)
+            | (self.world_count.clamp(1, 7) & 0x07);
 
         // b10: extra flags + per-slot random mode (2 bits each)
         let b10 = (self.random_koopalings as u8) << 7
@@ -463,8 +458,6 @@ impl Options {
             ground: dem(b5 >> 6),
             shell: dem(b5 >> 4),
             flying: dem(b5 >> 2),
-            // b5 bit 1 = hammer_vulnerable_koopalings (decoded above); bit 0 = jitter_enemy_positions
-            jitter_enemy_positions: b5 & 1 != 0,
             bullet_bills: dem(b6 >> 6),
             piranhas: dem(b6 >> 4),
             ghosts: dem(b6 >> 2),
@@ -495,7 +488,7 @@ impl Options {
                 items
             },
             world_count: {
-                let wc = b9 & 0x0F;
+                let wc = b9 & 0x07;
                 if wc == 0 { 7 } else { wc.clamp(1, 7) }
             },
             skip_rom_validation: false,
@@ -558,7 +551,6 @@ impl Default for Options {
             bros: EnemyMode::Shuffle,
             hb_encounters: EnemyMode::Off,
             wild_injections: false,
-            jitter_enemy_positions: false,
             starting_lives: default_starting_lives(),
             starting_items: Vec::new(),
             skip_rom_validation: false,
@@ -631,10 +623,8 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         rom.set_tag("enemies");
         randomize::enemies::randomize(rom, &mut rng, options);
     }
-    if options.jitter_enemy_positions {
-        rom.set_tag("enemies/jitter");
-        randomize::enemy_jitter::apply(rom, &mut rng);
-    }
+    randomize::bowser_castle::randomize(rom, &mut rng);
+    randomize::podoboo_gauntlet::randomize(rom, &mut rng);
     if options.world_order {
         rom.set_tag("world_order");
         randomize::world_order::randomize(rom, &mut rng, options.world_count);
@@ -1071,13 +1061,11 @@ mod tests {
             bros: EnemyMode::Wild,
             hb_encounters: EnemyMode::Wild,
             wild_injections: true,
-            jitter_enemy_positions: true,
             starting_items: vec![0x05, 0x09, 0x03],
             skip_rom_validation: false,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
-        assert_eq!(opts.jitter_enemy_positions, decoded.jitter_enemy_positions);
         assert_eq!(opts.random_koopalings, decoded.random_koopalings);
         assert_eq!(opts.include_beta_stages, decoded.include_beta_stages);
         assert_eq!(opts.starting_items, decoded.starting_items);
@@ -1141,13 +1129,11 @@ mod tests {
             bros: EnemyMode::Off,
             hb_encounters: EnemyMode::Off,
             wild_injections: false,
-            jitter_enemy_positions: false,
             starting_items: vec![],
             skip_rom_validation: false,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
-        assert!(!decoded.jitter_enemy_positions);
         assert!(decoded.starting_items.is_empty());
         assert!(!decoded.powerups);
         assert!(!decoded.hammer_breaks_locks);
@@ -1284,7 +1270,6 @@ mod tests {
             ("shuffle_spade_games",           Box::new(|o| o.shuffle_spade_games = !o.shuffle_spade_games)),
             ("shuffle_toad_houses",          Box::new(|o| o.shuffle_toad_houses = !o.shuffle_toad_houses)),
             ("wild_injections",              Box::new(|o| o.wild_injections = !o.wild_injections)),
-            ("jitter_enemy_positions",       Box::new(|o| o.jitter_enemy_positions = !o.jitter_enemy_positions)),
         ];
         for (label, mutate) in bools {
             check_round_trip(label, mutate, true);
@@ -1382,7 +1367,6 @@ mod tests {
         everything.shuffle_spade_games = !everything.shuffle_spade_games;
         everything.shuffle_toad_houses = !everything.shuffle_toad_houses;
         everything.wild_injections = true;
-        everything.jitter_enemy_positions = true;
         everything.ground = EnemyMode::Wild;
         everything.shell = EnemyMode::Wild;
         everything.flying = EnemyMode::Wild;
@@ -1500,7 +1484,6 @@ mod tests {
             bros: EnemyMode::Off,
             hb_encounters: EnemyMode::Off,
             wild_injections: false,
-            jitter_enemy_positions: false,
             starting_items: vec![],
             skip_rom_validation: false,
         }
@@ -1552,7 +1535,6 @@ mod tests {
             bros: EnemyMode::Wild,
             hb_encounters: EnemyMode::Wild,
             wild_injections: true,
-            jitter_enemy_positions: true,
             starting_items: vec![0x05, 0x09, 0x03],
             skip_rom_validation: false,
         }
