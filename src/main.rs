@@ -192,10 +192,6 @@ struct Cli {
     #[arg(long)]
     wild_injections: bool,
 
-    /// Jitter fireball/podoboo positions ±2 tiles per seed (5F-2 podoboos, 8B fireballs)
-    #[arg(long)]
-    jitter_enemy_positions: bool,
-
     /// Disable airship lock (anchor effect always on by default, use this flag to disable)
     #[arg(long)]
     no_airship_lock: bool,
@@ -350,7 +346,6 @@ fn main() {
             bros: parse_enemy_mode(&cli.bros, "bros"),
             hb_encounters: parse_enemy_mode(&cli.hb_encounters, "hb-encounters"),
             wild_injections: cli.wild_injections,
-            jitter_enemy_positions: cli.jitter_enemy_positions,
             starting_lives: cli.starting_lives,
             starting_items: starting_items.clone(),
             skip_rom_validation: cli.skip_rom_validation,

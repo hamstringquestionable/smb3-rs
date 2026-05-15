@@ -188,10 +188,6 @@ export const SCHEMA = [
 		label: "Wild Injections",
 		tip: "Inject Lakitu, Angry Sun, or Boss Bass into ~15% of enemy segments",
 		group: "enemies", inFlagKey: true },
-	{ id: "jitter_enemy_positions", type: "bool", default: false,
-		label: "Jitter Fireballs",
-		tip: "Jitter fireball/podoboo positions ±2 tiles per seed in memorizable gauntlets (5F-2 podoboos, 8B pre-Bowser fireballs). Breaks speedrun memorization without changing difficulty.",
-		group: "enemies", inFlagKey: true },
 
 	// --- Bosses ---
 	{ id: "random_koopalings", type: "bool", default: false,
