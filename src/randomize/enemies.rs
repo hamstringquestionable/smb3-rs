@@ -486,7 +486,14 @@ impl ClassModes {
         if self.ground == EnemyMode::Wild { pool.extend_from_slice(GROUND_ENEMIES); }
         if self.shell == EnemyMode::Wild { pool.extend_from_slice(SHELL_ENEMIES); }
         if self.flying == EnemyMode::Wild { pool.extend_from_slice(FLYING_ENEMIES); }
-        if self.bullet_bills == EnemyMode::Wild { pool.extend_from_slice(BULLET_BILLS); }
+        // BULLET_BILLS intentionally NOT added to the wild pool, even when
+        // bullet_bills=Wild. Bullet bill cannons (0xBC/0xBD) use NOCHANGE
+        // CHR, which makes PageBuckets's bucket-uniform pick weight them
+        // ~K× per draw — combined with other Wild classes the count can
+        // balloon to 4×+ vanilla. With BB out of the wild pool, the
+        // semantic for bullet_bills=Wild becomes asymmetric: BB cannons
+        // can still transform INTO other wild enemies, but other classes
+        // never swap TO bullet bills. Count stays ≤ vanilla.
         if self.piranhas == EnemyMode::Wild {
             pool.extend_from_slice(PIRANHAS);
             pool.extend_from_slice(PIRANHASC);
