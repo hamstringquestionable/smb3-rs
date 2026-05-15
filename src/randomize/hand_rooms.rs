@@ -12,6 +12,7 @@ use rand::Rng;
 
 use crate::rom::Rom;
 use super::rom_data::FS_HAND_ROOMS;
+use super::segment_writer::{self, SegmentSpec};
 
 /// File offset of the original Hand sub-area enemy stream (11 bytes:
 /// 1 page byte + 3 enemy entries × 3 bytes + 1 terminator). CPU $D0CF.
@@ -45,10 +46,27 @@ const COIN_HEAVEN_ALT_TILESET: u8  = 11;
 /// redirect one random Hand level to the 3-7 coin heaven. The coin heaven
 /// appears at most once per seed.
 pub fn patch_clone_hand_rooms<R: Rng>(rom: &mut Rom, rng: &mut R) {
-    // Unconditional: clone enemy data and re-point 8-Hnd2 / 8-Hnd3.
-    let src = rom.read_range(HAND_ROOM_SRC, HAND_ROOM_LEN).to_vec();
-    rom.write_range(FS_HAND_ROOMS, &src);
-    rom.write_range(FS_HAND_ROOMS + HAND_ROOM_LEN, &src);
+    rom.push_tag("hand_rooms");
+
+    // Clone the 3-entry source segment to both destinations. The segment
+    // layout is [page_byte][entry × 3][terminator]; segment_writer handles
+    // the entry bytes, the page byte + terminator are written directly so
+    // the destinations end up byte-identical to the source.
+    let page_byte = rom.read_byte(HAND_ROOM_SRC);
+    let src_entries = segment_writer::read_segment(rom, HAND_ROOM_SRC, 3);
+    for (dst, label) in [
+        (FS_HAND_ROOMS,                      "8-Hnd2 cloned treasure room"),
+        (FS_HAND_ROOMS + HAND_ROOM_LEN,      "8-Hnd3 cloned treasure room"),
+    ] {
+        rom.write_byte(dst, page_byte);
+        segment_writer::write_segment(rom, &SegmentSpec {
+            file_offset: dst,
+            original_count: 3,
+            entries: &src_entries,
+            label: Some(label),
+        }).expect("hand_rooms: clone write failed");
+        rom.write_byte(dst + HAND_ROOM_LEN - 1, 0xFF);
+    }
     rom.write_range(HND2_HDR + 2, &CLONE_A_CPU.to_le_bytes());
     rom.write_range(HND3_HDR + 2, &CLONE_B_CPU.to_le_bytes());
 
@@ -60,6 +78,8 @@ pub fn patch_clone_hand_rooms<R: Rng>(rom: &mut Rom, rng: &mut R) {
         3 => redirect_to_coin_heaven(rom, HND3_HDR),
         _ => unreachable!(),
     }
+
+    rom.pop_tag();
 }
 
 fn redirect_to_coin_heaven(rom: &mut Rom, header_offset: usize) {

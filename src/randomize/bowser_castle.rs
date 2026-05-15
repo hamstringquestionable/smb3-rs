@@ -103,6 +103,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
         file_offset: SEG_OFFSET,
         original_count: ENTRY_COUNT,
         entries: &entries,
+        label: Some("8-Bowser sub-area 1"),
     }).expect("bowser_castle: segment write failed");
 
     rom.pop_tag();
