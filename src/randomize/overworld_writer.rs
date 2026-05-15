@@ -135,6 +135,11 @@ struct WorldAssignments {
     toad: Vec<Assignment>,
     /// Hammer bro assignments (remaining blank slots).
     hammer_bro: Vec<HammerBroAssignment>,
+    /// Positions of slots that were marked as troll pipes in `build` but could
+    /// not be filled with a non-hand-level entry from the pool. They are
+    /// demoted to regular level tiles at tile-stamping time so the player
+    /// sees a normal level icon rather than a pipe leading to a hand-trap.
+    demoted_troll_pipes: HashSet<(usize, usize)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -353,16 +358,38 @@ fn assign_pool<R: Rng>(
         }
 
         // --- Level assignments ---
+        // Process troll-pipe slots before regular ones so the non-hand-level
+        // constraint (troll pipes must NOT be hand levels — those are reserved
+        // for the levels they front for) can always be satisfied while
+        // non-hand entries remain in the pool. Iterating in `built.slots`
+        // order would let regular slots drain non-hand levels first and then
+        // strand troll pipes with only hand levels left.
+        //
+        // If even processing troll-pipe slots first can't find a non-hand
+        // entry (pool genuinely under-supplies non-hand levels for the number
+        // of troll pipes marked), demote the slot to a regular level tile
+        // and track it in `demoted_troll_pipes`. The tile-stamping step
+        // consults that set so a demoted slot shows as a level icon rather
+        // than a pipe leading to the hand-trap behind it.
         let mut level = Vec::new();
-        for slot in &built.slots {
-            if slot.kind != SlotKind::Level {
-                continue;
-            }
+        let mut demoted_troll_pipes: HashSet<(usize, usize)> = HashSet::new();
+        let level_slots: Vec<&_> = built.slots.iter()
+            .filter(|s| s.kind == SlotKind::Level)
+            .collect();
+        let mut ordered: Vec<&_> = level_slots.iter().copied()
+            .filter(|s| s.is_troll_pipe)
+            .collect();
+        ordered.extend(level_slots.iter().copied().filter(|s| !s.is_troll_pipe));
+
+        for slot in ordered {
             let pi = if cross_world {
                 if slot.is_troll_pipe {
-                    let pos = level_pool.iter().position(|&pi| !is_hand_level(pi))
-                        .expect("level pool exhausted with no non-hand entries left");
-                    level_pool.remove(pos).unwrap()
+                    if let Some(pos) = level_pool.iter().position(|&pi| !is_hand_level(pi)) {
+                        level_pool.remove(pos).unwrap()
+                    } else {
+                        demoted_troll_pipes.insert(slot.pos);
+                        level_pool.pop_front().expect("level pool exhausted")
+                    }
                 } else {
                     level_pool.pop_front().expect("level pool exhausted")
                 }
@@ -371,9 +398,12 @@ fn assign_pool<R: Rng>(
                     .get_mut(&wi)
                     .expect("intra-world level pool missing");
                 if slot.is_troll_pipe {
-                    let idx = v.iter().rposition(|&pi| !is_hand_level(pi))
-                        .expect("intra-world level pool exhausted with no non-hand entries left");
-                    v.remove(idx)
+                    if let Some(idx) = v.iter().rposition(|&pi| !is_hand_level(pi)) {
+                        v.remove(idx)
+                    } else {
+                        demoted_troll_pipes.insert(slot.pos);
+                        v.pop().expect("intra-world level pool exhausted")
+                    }
                 } else {
                     v.pop().expect("intra-world level pool exhausted")
                 }
@@ -524,6 +554,7 @@ fn assign_pool<R: Rng>(
             bonus,
             toad,
             hammer_bro,
+            demoted_troll_pipes,
         });
     }
 
@@ -640,6 +671,7 @@ fn write_tile_grid<R: Rng>(
         .iter()
         .filter(|s| s.is_troll_pipe)
         .map(|s| s.pos)
+        .filter(|pos| !wa.demoted_troll_pipes.contains(pos))
         .collect();
 
     let mut level_idx: usize = 0;

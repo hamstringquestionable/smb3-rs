@@ -2666,7 +2666,12 @@ GreenTroopa (0x6C), RedTroopa (0x6D), BuzzyBeetle (0x70), BigGreenTroopa (0x7A),
 BigRedTroopa (0x7B), ParatroopaGreenHop (0x6E), FlyingRedParatroopa (0x6F),
 Paragoomba (0x73), ParagoombaMicros (0x74), BigGreenHopper (0x7E),
 FlyingGreenParatroopa (0x80), HammerBro (0x81), BoomerangBro (0x82),
-HeavyBro (0x86), FireBro (0x87), BulletBill (0x78), BulletBillHoming (0x79).
+HeavyBro (0x86), FireBro (0x87).
+
+Note: Bullet Bill projectiles (0x78/0x79) are NOT used as HB enemies — they
+are cannon-spawned objects whose movement state is only initialized by the
+cannon firing routine. The Bullet Bill **cannons** (0xBC/0xBD) are handled
+by the `bullet_bills` enemy class, which swaps regular ↔ homing in place.
 
 **Non-stompable, killable with shell** (allowed in 2-enemy HB encounters with a shell partner):
 Spiny (0x71), Patooie (0x2A), Nipper (0x33), NipperHopping (0x39), BigBertha (0x63).

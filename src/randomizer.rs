@@ -145,7 +145,7 @@ pub struct Options {
     /// Flying/hopping enemies (Paratroopa, Paragoomba, etc.)
     #[serde(default = "default_shuffle")]
     pub flying: EnemyMode,
-    /// Bullet Bill variants (standard and homing)
+    /// Bullet Bill cannons — swap between regular and homing (Missile Bill)
     #[serde(default = "default_shuffle")]
     pub bullet_bills: EnemyMode,
     /// Piranha plant variants (upward + ceiling)
