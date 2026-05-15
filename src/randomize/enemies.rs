@@ -127,13 +127,6 @@ const TALL_ENEMIES: &[u8] = &[
     0x87, // OBJ_FIREBRO
 ];
 
-/// Cannon-spawned Bullet Bill and Missile Bill. Separate from standalone
-/// BULLET_BILLS (0x78/0x79) because these require a cannon tile to spawn.
-const CFIRE_BILLS: &[u8] = &[
-    0xBC, // OBJ_CFIRE_BULLETBILL
-    0xBD, // OBJ_CFIRE_MISSILEBILL
-];
-
 /// Cannon fire that travels RIGHT. Behind `wild_cannons`.
 const CFIRE_RIGHT: &[u8] = &[
     0xC3, // OBJ_CFIRE_HCANNON_R
@@ -158,11 +151,16 @@ const CFIRE_DOWN: &[u8] = &[
     0xCB, // OBJ_CFIRE_PPLANT_DOWNFIRE
 ];
 
-/// Bullet Bill variants — standard and homing. Behind the `bullet_bills` flag
-/// (on by default) because both are airborne projectiles with similar placement.
+/// Bullet Bill cannons — regular and missile (homing). The `bullet_bills` flag
+/// controls swaps between these two cannon IDs so a cannon that fires Bullet
+/// Bills can be made to fire homing Missile Bills instead. The actual
+/// projectile objects (0x78/0x79) are spawned by the cannon at runtime via
+/// CFire_BulletBill, which sets up their XVel/Var3/Var4 — placing 0x78/0x79
+/// directly in level data leaves them uninitialized and motionless, so they
+/// are NOT included here.
 const BULLET_BILLS: &[u8] = &[
-    0x78, // OBJ_BULLETBILL
-    0x79, // OBJ_BULLETBILLHOMING
+    0xBC, // OBJ_CFIRE_BULLETBILL
+    0xBD, // OBJ_CFIRE_MISSILEBILL
 ];
 
 /// Single rotodisc variants — swap rotation direction.
@@ -438,9 +436,11 @@ const MAX_BERTHA_PER_SEGMENT: u8 = 2;
 /// can never be visible simultaneously, so they don't need compatible CHR pages.
 const CHR_GROUP_GAP: u8 = 16;
 
-/// All cannon sub-class IDs merged for Wild mode.
+/// All cannon sub-class IDs merged for Wild mode. Bullet Bill cannons
+/// (0xBC/0xBD) are NOT included — they are managed by the separate
+/// `bullet_bills` class so users can shuffle homing-vs-regular independently
+/// of directional cannon randomization.
 const ALL_CANNONS: &[u8] = &[
-    0xBC, 0xBD, // CFIRE_BILLS
     0xC3, 0xCD, // CFIRE_RIGHT
     0xC4, 0xCC, // CFIRE_LEFT
     0xC5, 0xCA, // CFIRE_UP
@@ -533,9 +533,9 @@ fn find_class_pool<'a>(
     check!(WATER_ENEMIES, modes.water);
     check!(BRO_ENEMIES, modes.bros);
 
-    // Cannons: 5 directional sub-classes
+    // Cannons: 4 directional sub-classes (Bullet Bill cannons live in BULLET_BILLS)
     if modes.cannons != EnemyMode::Off {
-        for sub in [CFIRE_BILLS, CFIRE_RIGHT, CFIRE_LEFT, CFIRE_UP, CFIRE_DOWN] {
+        for sub in [CFIRE_RIGHT, CFIRE_LEFT, CFIRE_UP, CFIRE_DOWN] {
             if sub.contains(&id) {
                 return match modes.cannons {
                     EnemyMode::Off => None,

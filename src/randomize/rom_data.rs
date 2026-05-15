@@ -557,9 +557,10 @@ pub(super) const STOMPABLE_ENEMIES: &[u8] = &[
     0x82, // BoomerangBro
     0x86, // HeavyBro
     0x87, // FireBro
-    // Bullet Bills
-    0x78, // BulletBill
-    0x79, // BulletBillHoming
+    // NOTE: Bullet Bills (0x78/0x79) intentionally excluded — they're
+    // cannon-spawned projectiles. Placed directly in level data their XVel
+    // stays 0 (standard) or they accelerate once and lock (homing). The
+    // `bullet_bills` class swaps the cannon IDs (0xBC/0xBD) instead.
 ];
 
 /// Non-stompable enemies allowed in 2-enemy HB Wild segments only.

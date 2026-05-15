@@ -152,7 +152,7 @@ struct Cli {
     #[arg(long, default_value = "shuffle")]
     flying: String,
 
-    /// Bullet Bill variants: off, shuffle, or wild (default: shuffle)
+    /// Bullet Bill cannons (regular/homing): off, shuffle, or wild (default: shuffle)
     #[arg(long, default_value = "shuffle")]
     bullet_bills: String,
 
