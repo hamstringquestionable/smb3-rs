@@ -682,6 +682,81 @@ Known cases:
   6502 patch in PRG004 (where IDs 0x6C–0x8F live) to add +8 to the sprite's
   pixel X at spawn — not implemented; the cosmetic offset is left as-is.
 
+- **`OBJ_BOSSATTACK` (0x75)** — these are the **Bowser-statue fireballs**
+  in 8-Bowser, NOT a generic boss attack despite the name. Per the
+  southbird disasm at `PRG/prg004.asm:455`:
+  > "NOTE: This initialization state is used ONLY for the in-level Bowser
+  > Fireballs (that you see just prior to Bowser himself), even though
+  > this object is actually intended for use by Bowser or the Koopalings
+  > as a respective attack."
+  >
+  At spawn, `ObjInit_BossAttack` (prg004.asm:453) sets XVel toward player
+  (±0x10), Var5 = Var4 = 2, and queues the flame sound. They arc toward
+  the player. There is no separate "statue" object — the statue head is
+  drawn by background art at the spawn position.
+
+### Enemy Data Segment Layout (8-Bowser, 5-F2)
+
+These two segments have known "shooter/projectile" layouts where the
+projectile origins line up with visible-art statue or podoboo positions.
+Documented here because randomization must respect the position pool,
+not just the obj_id, to keep the visuals coherent.
+
+#### 8-Bowser Sub-Area 1 (file offset `0xD61B`, 14 entries)
+
+The pre-Bowser corridor. Vanilla:
+
+| # | Offset | ID | X | Y | Role |
+|---|--------|----|----|----|------|
+| 0 | 0xD61C | 0x3F | 0x04 | 0x18 | DryBones |
+| 1 | 0xD61F | 0x3F | 0x0A | 0x18 | DryBones |
+| 2 | 0xD622 | 0x8C | 0x16 | 0x10 | ThwompRightSlide |
+| 3 | 0xD625 | 0xD0 | 0x40 | 0x15 | CFIRE_LASER (statue 1) |
+| 4–7 | … | 0x75 | 0x62–0x7E | 0x15–0x17 | Fireballs |
+| 8 | 0xD634 | 0xD0 | 0xA3 | 0x16 | CFIRE_LASER (statue 2) |
+| 9–13 | … | 0x75 | 0xD1–0xE5 | 0x14–0x17 | Fireballs |
+
+**9 known laser-capable statue positions** (empirically derived by
+diffing 21 fred-randomizer outputs — fred ships a curated table; we
+lifted these from observed laser placements):
+
+```
+(0x40, 0x15)   (0x45, 0x16)   (0x4C, 0x14)   (0x52, 0x15)
+(0x7C, 0x11)   (0xA3, 0x16)   (0xA9, 0x13)   (0xB0, 0x13)   (0xBC, 0x13)
+```
+
+Vanilla uses `(0x40, 0x15)` and `(0xA3, 0x16)`. The other 7 are
+"shootable but vanilla-decorative" — the level art has a statue head
+there but no `CFIRE_LASER` entry points at it. SMB3R's `bowser_castle`
+composer picks any 2 of the 9 and writes them at the two laser entry
+slots, coordinating fireball placement so the segment stays X-sorted.
+
+Fireball X spread in fred's data spans the whole segment
+(`0x18..0xEF`). Y values cluster in `0x11..0x17` (7-row band).
+
+#### 5-F2 Sub-Area 1 (file offset `0xD2C9`, 26 entries)
+
+Podoboo gauntlet — 16 Podoboo (0x9E) + 6 Ceiling Podoboo (0x53) + 2
+DryBones (0x3F) + 2 Boos (0x65). Y high nibble = vertical page (page
+0 for ceiling podoboos, page 1 for regular). The composer preserves
+the high nibble so a ceiling podoboo can't fall to a regular page or
+vice versa.
+
+Tight vanilla X gaps where naive ±2 jitter could break sort order:
+`0x0B↔0x0D` (gap 2), `0x2C↔0x2E` (gap 2), `0x78↔0x79` (gap 1).
+
+### Segment Writer Architecture
+
+Enemy data segments are the level loader's input — entries within a
+segment must stay in ascending X order or activation timing breaks.
+SMB3R routes all segment edits through `src/randomize/segment_writer.rs`
+which sorts by X, validates count and X-collision invariants, and
+writes back. Per-level "composer" modules (`bowser_castle.rs`,
+`podoboo_gauntlet.rs`, etc.) build a full proposed entry list and pass
+it through the writer rather than editing bytes directly. This avoids
+the class of bug where two independent randomizers touching the same
+segment produce sort-order violations or collisions.
+
 ### Complete Object ID List
 
 Source: `smb3.asm` from the [Southbird disassembly](https://github.com/captainsouthbird/smb3).
@@ -717,7 +792,7 @@ Source: `smb3.asm` from the [Southbird disassembly](https://github.com/captainso
 | 0x50 | OBJ_BOBOMBEXPLODE | Ready-to-explode Bob-Omb |
 | 0x52 | OBJ_TREASUREBOX | Treasure box |
 | 0x5C | OBJ_ICEBLOCK | Ice block (held item) |
-| 0x75 | OBJ_BOSSATTACK | Boss attack projectile |
+| 0x75 | OBJ_BOSSATTACK | Bowser-statue fireball (in-level use only) — see Per-ID Sprite Anchoring Quirks |
 | 0x84 | OBJ_SPINYEGG | Spiny egg (from Lakitu) |
 | 0x85 | OBJ_SPINYEGGDUD | Dud spiny egg |
 | 0x94 | OBJ_BIGQBLOCK_3UP | Big ? block (3 1-ups) |
