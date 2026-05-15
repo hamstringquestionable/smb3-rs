@@ -2,6 +2,7 @@ use rand::Rng;
 use rand::seq::IndexedRandom;
 
 use crate::randomize::rom_data::{ENEMY_DATA_END, ENEMY_DATA_START};
+use crate::randomize::segment_writer::{self, SegmentEntry as WriterEntry};
 use crate::randomizer::{EnemyMode, Options};
 use crate::rom::Rom;
 
@@ -991,7 +992,25 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
         }
     }
 
-    rom.write_range(ENEMY_DATA_START, &data);
+    // Route the final write through segment_writer per segment so each
+    // gets X-sort + X-collision validation. Page bytes, terminators, and
+    // leading 0xFF padding are never modified by the swap logic above, so
+    // we don't need to write them back — the ROM still holds vanilla for
+    // those bytes. Only entry triples (id, x, y) go through the writer.
+    let bounds = segment_writer::walk_segments(&data, 0, data.len());
+    for b in bounds {
+        let entries: Vec<WriterEntry> = (0..b.entry_count).map(|i| {
+            let off = b.file_offset + 1 + i * 3;
+            WriterEntry { obj_id: data[off], x: data[off + 1], y: data[off + 2] }
+        }).collect();
+        let rom_offset = ENEMY_DATA_START + b.file_offset;
+        segment_writer::write_segment(rom, &segment_writer::SegmentSpec {
+            file_offset: rom_offset,
+            original_count: b.entry_count,
+            entries: &entries,
+            label: None,
+        }).expect("enemies: segment write failed");
+    }
 }
 
 #[cfg(test)]
@@ -1014,15 +1033,17 @@ mod tests {
         data[6] = 0x40; // mapper flags
 
         // Set up a realistic enemy data segment at ENEMY_DATA_START:
-        // FF terminator, then a segment with page flag + entries + FF
+        // FF terminator, then a segment with page flag + entries + FF.
+        // Entries MUST be sorted by ascending X (real SMB3 format
+        // requirement, enforced by segment_writer).
         let seg = &[
             0xFF, // leading terminator
             0x01, // page flag
             0x72, 0x0E, 0x19, // Goomba at (0x0E, 0x19)
             0x6C, 0x24, 0x16, // Green Troopa at (0x24, 0x16)
-            0xA6, 0x16, 0x17, // Venus Fire Trap at (0x16, 0x17)
+            0xA6, 0x40, 0x17, // Venus Fire Trap at (0x40, 0x17)
             0x41, 0xA8, 0x15, // End Level Card at (0xA8, 0x15) — must not change
-            0xD3, 0x00, 0x50, // Autoscroll — must not change
+            0xD3, 0xC0, 0x50, // Autoscroll at (0xC0, 0x50) — must not change
             0xFF, // terminator
         ];
         let start = ENEMY_DATA_START;
@@ -1105,6 +1126,11 @@ mod tests {
         data[4] = 16;
         data[5] = 16;
         data[6] = 0x40;
+
+        // Pre-fill the enemy data region with 0xFF so gaps between fixture
+        // segments don't look like one giant collision-prone segment to
+        // segment_writer's walker.
+        data[ENEMY_DATA_START..ENEMY_DATA_END].fill(0xFF);
 
         // Segment with a regular Big ? Block (should be randomized)
         let seg1_start = ENEMY_DATA_START;
