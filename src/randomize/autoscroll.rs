@@ -1,4 +1,34 @@
+use core::ops::Range;
+
 use crate::rom::Rom;
+
+/// File-offset ranges (half-open) of enemy-data segments that
+/// `disable_autoscroll` rewrites into a form the level loader handles
+/// correctly but that confuses a block-wide segment walker.
+///
+/// The "Segment terminator insertion" / "Enemy data structure rewrite"
+/// patches below (`0x0CFE3`, `0x0D038`, `0x0D103`) overwrite an
+/// autoscroll obj_id with `$FF` mid-segment. A per-level loader entering
+/// that level at its obj_ptr sees the early `$FF`, treats the segment as
+/// empty, and stops — exactly the intended autoscroll-disable behavior.
+/// But a greedy walker that doesn't know obj_ptr boundaries will keep
+/// parsing past the `$FF`, swallow orphaned bytes plus the page byte +
+/// first entry of the *next* real segment, and emit a "ghost" segment
+/// that scrambles adjacent real data when written back sorted.
+///
+/// Block-wide walkers (currently `enemies.rs`'s randomization pass) must
+/// pass these ranges to [`segment_writer::walk_segments`] so the walker
+/// jumps past the spoiled bytes and resumes parsing at the next real
+/// segment.
+///
+/// Each range is conservative: it starts at the leading `$FF` (or page
+/// byte) of the affected level's data and ends at the byte just before
+/// the next real segment's page byte.
+pub const SPOILED_SEGMENT_RANGES: &[Range<usize>] = &[
+    0x0CFE2..0x0CFE7,
+    0x0D037..0x0D042,
+    0x0D102..0x0D107,
+];
 
 /// Disable all autoscrollers except 5-9 (parabeetle ride).
 ///

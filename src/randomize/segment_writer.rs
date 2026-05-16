@@ -128,14 +128,34 @@ pub fn write_segment(rom: &mut Rom, spec: &SegmentSpec) -> Result<(), WriteError
 /// followed immediately by 0xFF, or a page byte with no entries) are
 /// skipped — matching how the level loader walks the block.
 ///
+/// `skip_ranges` are half-open byte ranges (same frame of reference as
+/// `start`/`end`) that the walker jumps over entirely. Use this when an
+/// earlier pass has rewritten certain segments to a form the per-level
+/// loader handles fine but that would confuse the greedy block-wide
+/// walker — e.g. `disable_autoscroll` inserts `$FF` mid-segment, which
+/// without a skip range would create a "ghost" segment swallowing the
+/// next real segment's page byte. Pass `&[]` for no skipping.
+///
 /// The caller passes a byte slice rather than a `Rom` so this function
 /// can be used both against in-memory edit buffers (e.g. inside
 /// `enemies.rs` which composes changes in a local `Vec<u8>` before
 /// committing) and against ROM bytes.
-pub fn walk_segments(data: &[u8], start: usize, end: usize) -> Vec<SegmentBounds> {
+pub fn walk_segments(
+    data: &[u8],
+    start: usize,
+    end: usize,
+    skip_ranges: &[core::ops::Range<usize>],
+) -> Vec<SegmentBounds> {
+    let in_skip = |i: usize| -> Option<usize> {
+        skip_ranges.iter().find(|r| r.contains(&i)).map(|r| r.end)
+    };
     let mut bounds = Vec::new();
     let mut i = start;
     while i < end {
+        if let Some(skip_end) = in_skip(i) {
+            i = skip_end;
+            continue;
+        }
         if data[i] == 0xFF {
             i += 1;
             continue;
@@ -146,6 +166,14 @@ pub fn walk_segments(data: &[u8], start: usize, end: usize) -> Vec<SegmentBounds
         let mut count = 0;
         let mut terminated = false;
         while i < end {
+            // Treat entering a skip range mid-segment as if we hit the
+            // segment's terminator. The skip range starts on a boundary
+            // a level loader would also treat as a stop (it covers
+            // bytes a per-level loader would not read), so cutting the
+            // segment there matches loader semantics.
+            if in_skip(i).is_some() {
+                break;
+            }
             if data[i] == 0xFF {
                 terminated = true;
                 break;
@@ -177,7 +205,7 @@ pub fn walk_segments(data: &[u8], start: usize, end: usize) -> Vec<SegmentBounds
 /// [`walk_segments`] when the caller hasn't already snapshot the block
 /// into a `Vec<u8>`.
 pub fn walk_segments_rom(rom: &Rom, start: usize, end: usize) -> Vec<SegmentBounds> {
-    walk_segments(&rom.data[..end.min(rom.data.len())], start, end)
+    walk_segments(&rom.data[..end.min(rom.data.len())], start, end, &[])
 }
 
 #[cfg(test)]
@@ -289,7 +317,7 @@ mod tests {
             0x66, 0x70, 0x16,
             0xFF,
         ];
-        let bounds = walk_segments(&data, 0, data.len());
+        let bounds = walk_segments(&data, 0, data.len(), &[]);
         assert_eq!(bounds.len(), 3);
         assert_eq!(bounds[0], SegmentBounds { file_offset: 0, entry_count: 3 });
         assert_eq!(bounds[1].entry_count, 2);
@@ -302,8 +330,37 @@ mod tests {
             0xFF, 0xFF, 0xFF,  // skipped
             0x00, 0xAA, 0x10, 0x11, 0xFF,
         ];
-        let bounds = walk_segments(&data, 0, data.len());
+        let bounds = walk_segments(&data, 0, data.len(), &[]);
         assert_eq!(bounds.len(), 1);
         assert_eq!(bounds[0], SegmentBounds { file_offset: 3, entry_count: 1 });
+    }
+
+    #[test]
+    fn walk_segments_honors_skip_ranges() {
+        // Mimics the disable_autoscroll post-patch layout: an "autoscroll"
+        // segment was clobbered to [01 FF 00 10 FF], creating a ghost
+        // segment that swallows the page byte + first entry of the next
+        // real segment. With the spoiled range marked, the walker should
+        // skip the clobbered bytes and find ONLY the real segment.
+        let data = [
+            0x01, 0xFF, 0x00, 0x10, 0xFF, // clobbered "autoscroll" — skip range covers this
+            0x01, 0x25, 0x00, 0x80, 0xFF, // real segment with PIPEWAYCONTROLLER
+        ];
+        // Without skip ranges: ghost segment at index 2 swallows the real one
+        let no_skip = walk_segments(&data, 0, data.len(), &[]);
+        assert_ne!(
+            no_skip.iter().map(|b| b.file_offset).collect::<Vec<_>>(),
+            vec![5],
+            "baseline: walker should mis-identify segment bounds without skip",
+        );
+        // With the spoiled segment skipped: exactly one segment at index 5
+        // Reason: an explicit array literal of one Range is the most direct
+        // expression of intent here; clippy's suggestion to collect a Vec
+        // would mean something completely different.
+        #[allow(clippy::single_range_in_vec_init)]
+        let skip = [0..5];
+        let with_skip = walk_segments(&data, 0, data.len(), &skip);
+        assert_eq!(with_skip.len(), 1);
+        assert_eq!(with_skip[0], SegmentBounds { file_offset: 5, entry_count: 1 });
     }
 }
