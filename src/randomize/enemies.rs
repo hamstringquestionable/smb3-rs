@@ -797,6 +797,21 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
     let len = ENEMY_DATA_END - ENEMY_DATA_START;
     let mut data = rom.read_range(ENEMY_DATA_START, len).to_vec();
 
+    // Spoiled segments left by upstream passes (e.g. disable_autoscroll
+    // inserts $FF mid-segment to neutralize an autoscroll entry — the
+    // level loader for that obj_ptr stops at the early $FF and is happy,
+    // but a block-wide greedy walker mis-parses the orphaned bytes as a
+    // "ghost" segment that swallows the next real segment's page byte +
+    // first entry). Translated from ROM file offsets to local-buffer
+    // indices so the walker can jump past them.
+    let skip_ranges: Vec<core::ops::Range<usize>> = super::autoscroll::SPOILED_SEGMENT_RANGES
+        .iter()
+        .map(|r| (r.start - ENEMY_DATA_START)..(r.end - ENEMY_DATA_START))
+        .collect();
+    let in_skip_range = |idx: usize| -> Option<usize> {
+        skip_ranges.iter().find(|r| r.contains(&idx)).map(|r| r.end)
+    };
+
     // Build class modes, wild pool, and pre-bucketed page groups
     let normal_modes = ClassModes::from_options(opts);
     let normal_wild_pool = normal_modes.build_wild_pool();
@@ -806,6 +821,11 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
 
     let mut i = 0;
     while i < data.len() {
+        // Jump past spoiled byte ranges (see skip_ranges comment above).
+        if let Some(end) = in_skip_range(i) {
+            i = end;
+            continue;
+        }
         // 0xFF = segment boundary
         if data[i] == 0xFF {
             i += 1;
@@ -1008,11 +1028,10 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
     }
 
     // Route the final write through segment_writer per segment so each
-    // gets X-sort + X-collision validation. Page bytes, terminators, and
-    // leading 0xFF padding are never modified by the swap logic above, so
-    // we don't need to write them back — the ROM still holds vanilla for
-    // those bytes. Only entry triples (id, x, y) go through the writer.
-    let bounds = segment_writer::walk_segments(&data, 0, data.len());
+    // gets X-sort + X-collision validation. Spoiled-segment skip ranges
+    // are honored so the walker doesn't mis-parse autoscroll-clobbered
+    // bytes as ghost segments and scramble adjacent real data.
+    let bounds = segment_writer::walk_segments(&data, 0, data.len(), &skip_ranges);
     for b in bounds {
         let entries: Vec<WriterEntry> = (0..b.entry_count).map(|i| {
             let off = b.file_offset + 1 + i * 3;
@@ -1913,5 +1932,46 @@ mod tests {
                 MAX_BERTHA_PER_SEGMENT
             );
         }
+    }
+
+    /// Regression: at the exact ROM offsets where `disable_autoscroll`
+    /// inserts a mid-segment $FF (here `$0CFE3`), a block-wide walker
+    /// would treat the clobbered bytes as a "ghost" segment that
+    /// swallows the page byte + first entry of the next real segment.
+    /// The writeback's stable sort would then scramble those bytes —
+    /// in the wild, that corrupted the W5 spiral castle's
+    /// PIPEWAYCONTROLLER and broke its exit teleport on seed
+    /// 1642218906354586 (beta.3).
+    ///
+    /// With `autoscroll::SPOILED_SEGMENT_RANGES` honored by the
+    /// walker, the clobbered region is skipped and the trailing real
+    /// segment survives byte-for-byte.
+    #[test]
+    fn ghost_segment_does_not_corrupt_trailing_segment() {
+        let mut data = vec![0u8; 393232];
+        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
+        data[4] = 16; data[5] = 16; data[6] = 0x40;
+        data[ENEMY_DATA_START..ENEMY_DATA_END].fill(0xFF);
+
+        // Place the bug pattern at the real $0CFE2 (covered by a
+        // SPOILED_SEGMENT_RANGES entry). The "autoscroll" segment is
+        // clobbered exactly as disable_autoscroll leaves it; the
+        // trailing real segment carries a PIPEWAYCONTROLLER.
+        const PWC_SEG_START: usize = 0x0CFE7;
+        data[0x0CFE2..0x0CFE7].copy_from_slice(&[0x01, 0xFF, 0x00, 0x10, 0xFF]);
+        data[PWC_SEG_START..PWC_SEG_START + 5]
+            .copy_from_slice(&[0x01, 0x25, 0x00, 0x80, 0xFF]);
+        let pwc_before = data[PWC_SEG_START..PWC_SEG_START + 5].to_vec();
+
+        let mut rom = Rom::from_bytes_lax(&data, true).unwrap();
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        randomize(&mut rom, &mut rng, &enemy_opts());
+
+        let pwc_after = rom.read_range(PWC_SEG_START, 5).to_vec();
+        assert_eq!(
+            pwc_after, pwc_before,
+            "PIPEWAYCONTROLLER segment was corrupted by ghost-segment sort.\n  before: {:02X?}\n  after:  {:02X?}",
+            pwc_before, pwc_after,
+        );
     }
 }
