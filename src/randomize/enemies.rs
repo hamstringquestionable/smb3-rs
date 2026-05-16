@@ -70,6 +70,7 @@ const WATER_ENEMIES: &[u8] = &[
     0x62, // OBJ_BLOOPER
     0x63, // OBJ_BIGBERTHABIRTHER
     0x64, // OBJ_CHEEPCHEEPHOPPER
+    0x67, // OBJ_LAVALOTUS (southbird: "underwater lava plant")
     0x6A, // OBJ_BLOOPERCHILDSHOOT
     0x76, // OBJ_GREENCHEEP (jumping)
     0x77, // OBJ_REDCHEEP
