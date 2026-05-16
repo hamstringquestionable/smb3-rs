@@ -17,7 +17,7 @@
 use rand::Rng;
 
 use crate::rom::Rom;
-use super::segment_writer::{self, SegmentEntry, SegmentSpec};
+use super::segment_writer::{self, SegmentEntry, SegmentSpec, SortMode};
 
 const SEG_OFFSET: usize = 0xD2C9;
 const ENTRY_COUNT: usize = 26;
@@ -116,6 +116,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
         original_count: ENTRY_COUNT,
         entries: &out,
         label: Some("5-F2 sub-area 1"),
+        sort_mode: SortMode::SortByX,
     }).expect("podoboo_gauntlet: segment write failed");
 
     rom.pop_tag();

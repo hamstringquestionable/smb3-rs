@@ -17,7 +17,7 @@ use rand::Rng;
 use rand::seq::IndexedRandom;
 
 use crate::rom::Rom;
-use super::segment_writer::{self, SegmentEntry, SegmentSpec};
+use super::segment_writer::{self, SegmentEntry, SegmentSpec, SortMode};
 
 /// File offset of the segment's page/header byte (entries start at +1).
 const SEG_OFFSET: usize = 0xD61B;
@@ -104,6 +104,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
         original_count: ENTRY_COUNT,
         entries: &entries,
         label: Some("8-Bowser sub-area 1"),
+        sort_mode: SortMode::SortByX,
     }).expect("bowser_castle: segment write failed");
 
     rom.pop_tag();

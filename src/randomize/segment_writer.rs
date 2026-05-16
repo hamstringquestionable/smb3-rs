@@ -2,27 +2,29 @@
 //!
 //! Each enemy data segment is a packed stream of 3-byte entries
 //! `[obj_id, x, y]`, preceded by a single page/header byte and terminated
-//! by `0xFF`. The level loader walks entries sequentially as the screen
-//! scrolls right, so entries within a segment **must be sorted by ascending
-//! X**. Violating that breaks activation timing and can leave entries
-//! unparsed.
+//! by `0xFF`. The level loader walks entries sequentially as Mario's
+//! screen advances. For a logical level read by one `enemy_ptr`, entries
+//! are typically X-sorted so activation timing tracks screen progression.
 //!
-//! This module is the single throat for segment edits. A randomizer that
-//! wants to change entries in a segment reads them (via [`read_segment`]),
-//! produces a new entry list, and hands it to [`write_segment`]. The
-//! writer sorts, validates count and X-collision invariants, then writes
-//! back. Multiple randomizers operating on the same segment can produce
-//! their proposed entries independently — the final caller composes the
-//! lists and routes the result through this module.
+//! This module is the single throat for segment edits. Two use cases:
 //!
-//! What this module does NOT do: grow or shrink segments (count is fixed
-//! against the original), insert new obj_ids that the level loader can't
-//! handle, or coordinate writes across segments.
+//! * **Composers** ([`bowser_castle`], [`podoboo_gauntlet`], [`hand_rooms`]):
+//!   assemble a fresh entry list for one specific segment whose
+//!   `enemy_ptr` is known. These supply [`SortMode::SortByX`] so the
+//!   writer sorts before writing.
 //!
-//! Note on sort order: SMB3 segments require **non-decreasing** X (ties
-//! are allowed — entries at the same X column with different Y spawn
-//! together as stacked enemies). The writer uses a stable sort so callers
-//! that supply ties preserve their tie-breaking order in the output.
+//! * **In-place mutators** ([`enemies`]): walk the whole enemy data block
+//!   and mutate individual obj_ids without changing X/Y or count. A
+//!   walker-segment in the block-wide view often spans multiple logical
+//!   levels (different `enemy_ptr`s pointing at different positions),
+//!   each with its own X sequence — so a segment-wide X-sort is not just
+//!   wasted work, it can move entries across logical-level boundaries.
+//!   These supply [`SortMode::Preserve`] to keep vanilla byte order.
+//!
+//! Callers pass an entry list, a count, and a [`SortMode`]; the writer
+//! validates count and writes back. It does NOT grow or shrink segments,
+//! insert obj_ids the level loader can't handle, or coordinate writes
+//! across segments.
 
 use crate::rom::Rom;
 
@@ -33,19 +35,37 @@ pub struct SegmentEntry {
     pub y: u8,
 }
 
+/// How `write_segment` should treat the caller's entry order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SortMode {
+    /// Sort entries by ascending X before writing. Use when assembling a
+    /// segment from scratch (composers): you know the segment is one
+    /// logical level and want SMB3's expected X-sorted layout.
+    SortByX,
+    /// Write entries in the caller-supplied order, byte-for-byte. Use
+    /// when mutating in place over a region that may bridge multiple
+    /// logical levels (block-wide walker passes): preserving vanilla
+    /// byte order avoids reordering entries across level boundaries that
+    /// the walker can't see.
+    Preserve,
+}
+
 pub struct SegmentSpec<'a> {
     /// File offset of the segment's page/header byte. Entries start at
     /// `file_offset + 1`.
     pub file_offset: usize,
     /// Expected entry count (defends against accidental segment growth/shrink).
     pub original_count: usize,
-    /// Proposed entries, any order. The writer sorts by X.
+    /// Proposed entries. Treated per `sort_mode`.
     pub entries: &'a [SegmentEntry],
     /// Optional caller-supplied name (e.g. `"3-2 sub-area 0"`) that gets
     /// embedded in error messages alongside the file offset. Useful when a
     /// single pass writes many segments — knowing which segment failed is
     /// hard from offset alone.
     pub label: Option<&'a str>,
+    /// Whether the writer should sort entries by X (composers) or write
+    /// them in caller-supplied order (in-place mutators).
+    pub sort_mode: SortMode,
 }
 
 /// Bounds of one segment in the enemy data block. `file_offset` points at
@@ -91,9 +111,9 @@ pub fn read_segment(rom: &Rom, file_offset: usize, count: usize) -> Vec<SegmentE
     }).collect()
 }
 
-/// Sort `entries` by X, validate, and write back to the segment. Errors
-/// are returned rather than panicking so callers can decide whether a
-/// failure is recoverable.
+/// Validate `entries`, optionally sort by X per `spec.sort_mode`, and
+/// write back to the segment. Errors are returned rather than panicking
+/// so callers can decide whether a failure is recoverable.
 pub fn write_segment(rom: &mut Rom, spec: &SegmentSpec) -> Result<(), WriteError> {
     let label_owned = || spec.label.map(|s| s.to_string());
 
@@ -106,14 +126,21 @@ pub fn write_segment(rom: &mut Rom, spec: &SegmentSpec) -> Result<(), WriteError
         });
     }
 
-    let mut sorted: Vec<SegmentEntry> = spec.entries.to_vec();
-    // Stable sort: same-X entries preserve their caller-provided order
-    // (some vanilla SMB3 segments stack enemies at the same X column with
-    // different Y, and the tie-breaker order can matter for activation).
-    sorted.sort_by_key(|e| e.x);
+    let entries: Vec<SegmentEntry> = match spec.sort_mode {
+        SortMode::SortByX => {
+            // Stable sort: same-X entries preserve their caller-provided
+            // order (some vanilla SMB3 segments stack enemies at the same
+            // X column with different Y, and the tie-breaker order can
+            // matter for activation).
+            let mut s = spec.entries.to_vec();
+            s.sort_by_key(|e| e.x);
+            s
+        }
+        SortMode::Preserve => spec.entries.to_vec(),
+    };
 
     let base = spec.file_offset + 1;
-    for (i, entry) in sorted.iter().enumerate() {
+    for (i, entry) in entries.iter().enumerate() {
         let off = base + i * 3;
         rom.write_byte(off, entry.obj_id);
         rom.write_byte(off + 1, entry.x);
@@ -220,7 +247,23 @@ mod tests {
     }
 
     fn spec<'a>(file_offset: usize, count: usize, entries: &'a [SegmentEntry]) -> SegmentSpec<'a> {
-        SegmentSpec { file_offset, original_count: count, entries, label: None }
+        SegmentSpec {
+            file_offset,
+            original_count: count,
+            entries,
+            label: None,
+            sort_mode: SortMode::SortByX,
+        }
+    }
+
+    fn spec_preserve<'a>(file_offset: usize, count: usize, entries: &'a [SegmentEntry]) -> SegmentSpec<'a> {
+        SegmentSpec {
+            file_offset,
+            original_count: count,
+            entries,
+            label: None,
+            sort_mode: SortMode::Preserve,
+        }
     }
 
     #[test]
@@ -239,6 +282,25 @@ mod tests {
         assert_eq!(rom.read_byte(0x1005), 0x20);
         assert_eq!(rom.read_byte(0x1007), 0x9E);
         assert_eq!(rom.read_byte(0x1008), 0x30);
+    }
+
+    #[test]
+    fn preserve_mode_writes_entries_in_input_order() {
+        // SortByX would reorder these by ascending x; Preserve must not.
+        let mut rom = make_rom();
+        let entries = [
+            SegmentEntry { obj_id: 0x9E, x: 0x30, y: 0x14 },
+            SegmentEntry { obj_id: 0x53, x: 0x10, y: 0x0F },
+            SegmentEntry { obj_id: 0xA5, x: 0x20, y: 0x12 },
+        ];
+        write_segment(&mut rom, &spec_preserve(0x1000, 3, &entries)).unwrap();
+        // Byte-for-byte equal to input order — x values stay non-monotonic.
+        assert_eq!(rom.read_byte(0x1001), 0x9E);
+        assert_eq!(rom.read_byte(0x1002), 0x30);
+        assert_eq!(rom.read_byte(0x1004), 0x53);
+        assert_eq!(rom.read_byte(0x1005), 0x10);
+        assert_eq!(rom.read_byte(0x1007), 0xA5);
+        assert_eq!(rom.read_byte(0x1008), 0x20);
     }
 
     #[test]
@@ -288,6 +350,7 @@ mod tests {
             original_count: 3,
             entries: &entries,
             label: Some("test segment"),
+            sort_mode: SortMode::SortByX,
         };
         let err = write_segment(&mut rom, &spec_labeled).unwrap_err();
         let msg = format!("{err}");
