@@ -5,11 +5,30 @@ use std::collections::BTreeMap;
 
 use smb3_rs::randomize::enemies::sprite_bank;
 use smb3_rs::randomize::rom_data::{ENEMY_DATA_END, ENEMY_DATA_START};
-use smb3_rs::randomizer::{self, Options};
+use smb3_rs::randomizer::{self, EnemyMode, Options};
 use smb3_rs::rom::Rom;
 
 const NUM_SEEDS: u64 = 200;
-const FLAG_KEY: &str = "SMB3R-22KZT17RAHA0A00700";
+
+/// All enemy classes Wild + hb_encounters Wild + wild_injections — the most
+/// aggressive randomization config, used to surface CHR page imbalances.
+fn max_enemy_opts() -> Options {
+    Options {
+        ground: EnemyMode::Wild,
+        shell: EnemyMode::Wild,
+        flying: EnemyMode::Wild,
+        piranhas: EnemyMode::Wild,
+        ghosts: EnemyMode::Wild,
+        thwomps: EnemyMode::Wild,
+        rotodiscs: EnemyMode::Wild,
+        cannons: EnemyMode::Wild,
+        water: EnemyMode::Wild,
+        bros: EnemyMode::Wild,
+        hb_encounters: EnemyMode::Wild,
+        wild_injections: true,
+        ..Options::default()
+    }
+}
 
 type PageCounts = BTreeMap<u8, u64>;
 
@@ -103,7 +122,7 @@ fn chr_page_stats() {
         eprintln!("ROM file not present — skipping chr_page_stats (run locally with the ROM in repo root)");
         return;
     };
-    let opts = Options::from_flag_key(FLAG_KEY).unwrap();
+    let opts = max_enemy_opts();
 
     let vanilla = scan(rom.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START));
 
@@ -128,7 +147,7 @@ fn chr_page_stats() {
 
     println!("\n============================================================");
     println!("=== RANDOMIZED ({NUM_SEEDS} seeds) ===");
-    println!("Flags: {FLAG_KEY}");
+    println!("Flags: {}", opts.to_flag_key());
     println!("Unique enemy IDs seen: {}", rando.ids.len());
     println!("Total segments (avg): {:.0}\n", rando.total_segments as f64 / NUM_SEEDS as f64);
     print_slot("Slot 4", &rando.slot4);

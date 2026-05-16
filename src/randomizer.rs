@@ -144,9 +144,6 @@ pub struct Options {
     /// Flying/hopping enemies (Paratroopa, Paragoomba, etc.)
     #[serde(default = "default_shuffle")]
     pub flying: EnemyMode,
-    /// Bullet Bill cannons — swap between regular and homing (Missile Bill)
-    #[serde(default = "default_shuffle")]
-    pub bullet_bills: EnemyMode,
     /// Piranha plant variants (upward + ceiling)
     #[serde(default = "default_shuffle")]
     pub piranhas: EnemyMode,
@@ -159,7 +156,10 @@ pub struct Options {
     /// Rotodisc rotation variants
     #[serde(default = "default_off")]
     pub rotodiscs: EnemyMode,
-    /// Cannon fire directions and types (5 sub-classes merge under Wild)
+    /// Cannon fire — Shuffle stays within sub-class (LEFT-firing, RIGHT-firing,
+    /// or BILLS = regular/homing Bullet Bills). Wild merges all cfire IDs
+    /// (incl. goomba pipes and bob-omb launchers) so any cfire can become any
+    /// other; rocky wrench / 4-way / laser remain fixed.
     #[serde(default = "default_off")]
     pub cannons: EnemyMode,
     /// Water enemies (Blooper, Big Bertha, etc.)
@@ -191,7 +191,7 @@ fn default_true() -> bool {
     true
 }
 
-const FLAG_KEY_VERSION: u8 = 16;
+const FLAG_KEY_VERSION: u8 = 17;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
 
 /// Crockford Base-32 alphabet (excludes I, L, O, U to avoid ambiguity).
@@ -327,9 +327,11 @@ impl Options {
             | em(self.flying) << 2
             | (self.hammer_vulnerable_koopalings as u8) << 1;
 
-        // b6: bullet_bills(7-6) piranhas(5-4) ghosts(3-2) thwomps(1-0)
-        let b6 = em(self.bullet_bills) << 6
-            | em(self.piranhas) << 4
+        // b6: reserved(7-6) piranhas(5-4) ghosts(3-2) thwomps(1-0)
+        // Bits 7-6 were `bullet_bills` before v17 — that class folded into
+        // `cannons` as the BILLS sub-class. Bits left reserved (zero) so the
+        // layout doesn't shift.
+        let b6 = em(self.piranhas) << 4
             | em(self.ghosts) << 2
             | em(self.thwomps);
 
@@ -458,7 +460,6 @@ impl Options {
             ground: dem(b5 >> 6),
             shell: dem(b5 >> 4),
             flying: dem(b5 >> 2),
-            bullet_bills: dem(b6 >> 6),
             piranhas: dem(b6 >> 4),
             ghosts: dem(b6 >> 2),
             thwomps: dem(b6),
@@ -499,7 +500,7 @@ impl Options {
     pub fn any_enemies_active(&self) -> bool {
         self.ground != EnemyMode::Off || self.shell != EnemyMode::Off
             || self.flying != EnemyMode::Off
-            || self.bullet_bills != EnemyMode::Off || self.piranhas != EnemyMode::Off
+            || self.piranhas != EnemyMode::Off
             || self.ghosts != EnemyMode::Off || self.thwomps != EnemyMode::Off
             || self.rotodiscs != EnemyMode::Off || self.cannons != EnemyMode::Off
             || self.water != EnemyMode::Off || self.bros != EnemyMode::Off
@@ -541,7 +542,6 @@ impl Default for Options {
             ground: EnemyMode::Shuffle,
             shell: EnemyMode::Shuffle,
             flying: EnemyMode::Shuffle,
-            bullet_bills: EnemyMode::Shuffle,
             piranhas: EnemyMode::Shuffle,
             ghosts: EnemyMode::Shuffle,
             thwomps: EnemyMode::Off,
@@ -1001,7 +1001,6 @@ mod tests {
         assert_eq!(opts.ground, decoded.ground);
         assert_eq!(opts.shell, decoded.shell);
         assert_eq!(opts.flying, decoded.flying);
-        assert_eq!(opts.bullet_bills, decoded.bullet_bills);
         assert_eq!(opts.piranhas, decoded.piranhas);
         assert_eq!(opts.ghosts, decoded.ghosts);
         assert_eq!(opts.thwomps, decoded.thwomps);
@@ -1051,7 +1050,6 @@ mod tests {
             ground: EnemyMode::Wild,
             shell: EnemyMode::Wild,
             flying: EnemyMode::Wild,
-            bullet_bills: EnemyMode::Wild,
             piranhas: EnemyMode::Wild,
             ghosts: EnemyMode::Wild,
             thwomps: EnemyMode::Wild,
@@ -1076,7 +1074,6 @@ mod tests {
         assert_eq!(opts.starting_lives, decoded.starting_lives);
         assert_eq!(opts.ground, decoded.ground);
         assert_eq!(opts.shell, decoded.shell);
-        assert_eq!(opts.bullet_bills, decoded.bullet_bills);
         assert_eq!(opts.thwomps, decoded.thwomps);
         assert_eq!(opts.rotodiscs, decoded.rotodiscs);
         assert_eq!(opts.cannons, decoded.cannons);
@@ -1119,7 +1116,6 @@ mod tests {
             ground: EnemyMode::Off,
             shell: EnemyMode::Off,
             flying: EnemyMode::Off,
-            bullet_bills: EnemyMode::Off,
             piranhas: EnemyMode::Off,
             ghosts: EnemyMode::Off,
             thwomps: EnemyMode::Off,
@@ -1143,7 +1139,6 @@ mod tests {
         assert!(!decoded.shuffle_airships);
         assert!(!decoded.shuffle_spade_games);
         assert_eq!(decoded.ground, EnemyMode::Off);
-        assert_eq!(decoded.bullet_bills, EnemyMode::Off);
         assert_eq!(decoded.thwomps, EnemyMode::Off);
         assert_eq!(decoded.hb_encounters, EnemyMode::Off);
         assert!(!decoded.wild_injections);
@@ -1282,7 +1277,6 @@ mod tests {
             ("ground",        Box::new(|o, m| o.ground = m)),
             ("shell",         Box::new(|o, m| o.shell = m)),
             ("flying",        Box::new(|o, m| o.flying = m)),
-            ("bullet_bills",  Box::new(|o, m| o.bullet_bills = m)),
             ("piranhas",      Box::new(|o, m| o.piranhas = m)),
             ("ghosts",        Box::new(|o, m| o.ghosts = m)),
             ("thwomps",       Box::new(|o, m| o.thwomps = m)),
@@ -1370,7 +1364,6 @@ mod tests {
         everything.ground = EnemyMode::Wild;
         everything.shell = EnemyMode::Wild;
         everything.flying = EnemyMode::Wild;
-        everything.bullet_bills = EnemyMode::Wild;
         everything.piranhas = EnemyMode::Wild;
         everything.ghosts = EnemyMode::Wild;
         everything.thwomps = EnemyMode::Wild;
@@ -1474,7 +1467,6 @@ mod tests {
             ground: EnemyMode::Off,
             shell: EnemyMode::Off,
             flying: EnemyMode::Off,
-            bullet_bills: EnemyMode::Off,
             piranhas: EnemyMode::Off,
             ghosts: EnemyMode::Off,
             thwomps: EnemyMode::Off,
@@ -1525,7 +1517,6 @@ mod tests {
             ground: EnemyMode::Wild,
             shell: EnemyMode::Wild,
             flying: EnemyMode::Wild,
-            bullet_bills: EnemyMode::Wild,
             piranhas: EnemyMode::Wild,
             ghosts: EnemyMode::Wild,
             thwomps: EnemyMode::Wild,
@@ -1600,7 +1591,6 @@ mod tests {
         options.ground = EnemyMode::Off;
         options.shell = EnemyMode::Off;
         options.flying = EnemyMode::Off;
-        options.bullet_bills = EnemyMode::Off;
         options.piranhas = EnemyMode::Off;
         options.ghosts = EnemyMode::Off;
         options.water = EnemyMode::Off;

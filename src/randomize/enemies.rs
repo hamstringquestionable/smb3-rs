@@ -129,38 +129,46 @@ const TALL_ENEMIES: &[u8] = &[
     0x87, // OBJ_FIREBRO
 ];
 
-/// Cannon fire that travels RIGHT. Behind `wild_cannons`.
-const CFIRE_RIGHT: &[u8] = &[
-    0xC3, // OBJ_CFIRE_HCANNON_R
-    0xCD, // OBJ_CFIRE_PPLANT_RIGHTFIRE
-];
+// Cannon-fire object IDs sit in 0xBC..=0xD0 and are dispatched by the cannon
+// code in PRG007 via index = OBJ_ID - $BC + 1 (see prg007.asm:5485-5505 and
+// the CFIRE_* constants in smb3.asm:2539-2559 of the southbird disassembly).
+// Each ID's actual fire direction is read off the CannonPoof_XOffs /
+// CannonPoof_YOffs tables in prg007.asm:5858. The groupings below merge
+// diagonals into the corresponding horizontal direction (UL+LL → LEFT,
+// UR+LR → RIGHT) so a Shuffle within a sub-class never reverses a cannon.
 
-/// Cannon fire that travels LEFT. Behind `wild_cannons`.
+/// Cannon-fire IDs that fire LEFT-ward (horizontal left, diagonal upper-left,
+/// diagonal lower-left, goomba pipe left, bob-omb launcher left).
 const CFIRE_LEFT: &[u8] = &[
-    0xC4, // OBJ_CFIRE_HCANNON_L
-    0xCC, // OBJ_CFIRE_PPLANT_LEFTFIRE
+    0xC0, // OBJ_CFIRE_GOOMBAPIPE_L
+    0xC2, // OBJ_CFIRE_HLCANNON
+    0xC3, // OBJ_CFIRE_HLBIGCANNON
+    0xC4, // OBJ_CFIRE_ULCANNON
+    0xC6, // OBJ_CFIRE_LLCANNON
+    0xC8, // OBJ_CFIRE_HLCANNON2
+    0xC9, // OBJ_CFIRE_ULCANNON2
+    0xCB, // OBJ_CFIRE_LLCANNON2
+    0xCE, // OBJ_CFIRE_LBOBOMBS
 ];
 
-/// Cannon fire that travels UP. Behind `wild_cannons`.
-const CFIRE_UP: &[u8] = &[
-    0xC5, // OBJ_CFIRE_VCANNON_U
-    0xCA, // OBJ_CFIRE_PPLANT_UPFIRE
+/// Cannon-fire IDs that fire RIGHT-ward (horizontal right, diagonal upper-right,
+/// diagonal lower-right, goomba pipe right, bob-omb launcher right).
+const CFIRE_RIGHT: &[u8] = &[
+    0xC1, // OBJ_CFIRE_GOOMBAPIPE_R
+    0xC5, // OBJ_CFIRE_URCANNON
+    0xC7, // OBJ_CFIRE_LRCANNON
+    0xCA, // OBJ_CFIRE_URCANNON2
+    0xCC, // OBJ_CFIRE_HRCANNON
+    0xCD, // OBJ_CFIRE_HRBIGCANNON
+    0xCF, // OBJ_CFIRE_RBOBOMBS
 ];
 
-/// Cannon fire that travels DOWN. Behind `wild_cannons`.
-const CFIRE_DOWN: &[u8] = &[
-    0xC6, // OBJ_CFIRE_VCANNON_D
-    0xCB, // OBJ_CFIRE_PPLANT_DOWNFIRE
-];
-
-/// Bullet Bill cannons — regular and missile (homing). The `bullet_bills` flag
-/// controls swaps between these two cannon IDs so a cannon that fires Bullet
-/// Bills can be made to fire homing Missile Bills instead. The actual
-/// projectile objects (0x78/0x79) are spawned by the cannon at runtime via
-/// CFire_BulletBill, which sets up their XVel/Var3/Var4 — placing 0x78/0x79
-/// directly in level data leaves them uninitialized and motionless, so they
-/// are NOT included here.
-const BULLET_BILLS: &[u8] = &[
+/// Bullet Bill cannons — regular and missile (homing). Sub-class within
+/// `cannons`. The actual projectile objects (0x78/0x79) are spawned by the
+/// cannon at runtime via CFire_BulletBill, which sets up their XVel/Var3/Var4 —
+/// placing 0x78/0x79 directly in level data leaves them uninitialized and
+/// motionless, so they are NOT included here.
+const CFIRE_BILLS: &[u8] = &[
     0xBC, // OBJ_CFIRE_BULLETBILL
     0xBD, // OBJ_CFIRE_MISSILEBILL
 ];
@@ -438,15 +446,18 @@ const MAX_BERTHA_PER_SEGMENT: u8 = 2;
 /// can never be visible simultaneously, so they don't need compatible CHR pages.
 const CHR_GROUP_GAP: u8 = 16;
 
-/// All cannon sub-class IDs merged for Wild mode. Bullet Bill cannons
-/// (0xBC/0xBD) are NOT included — they are managed by the separate
-/// `bullet_bills` class so users can shuffle homing-vs-regular independently
-/// of directional cannon randomization.
+/// All cannon-fire IDs merged for Wild mode — every cfire ID can become every
+/// other cfire ID (incl. cross-direction and cross-type swaps). Excludes
+/// CFIRE_ROCKYWRENCH (0xBE), CFIRE_4WAY (0xBF), and CFIRE_LASER (0xD0)
+/// because their level-design role (spawner / multi-direction / fortress wall
+/// element) is too distinct to randomize generically.
 const ALL_CANNONS: &[u8] = &[
-    0xC3, 0xCD, // CFIRE_RIGHT
-    0xC4, 0xCC, // CFIRE_LEFT
-    0xC5, 0xCA, // CFIRE_UP
-    0xC6, 0xCB, // CFIRE_DOWN
+    // CFIRE_LEFT
+    0xC0, 0xC2, 0xC3, 0xC4, 0xC6, 0xC8, 0xC9, 0xCB, 0xCE,
+    // CFIRE_RIGHT
+    0xC1, 0xC5, 0xC7, 0xCA, 0xCC, 0xCD, 0xCF,
+    // CFIRE_BILLS
+    0xBC, 0xBD,
 ];
 
 /// Class-to-mode mapping, built from Options at the start of randomization.
@@ -454,7 +465,6 @@ struct ClassModes {
     ground: EnemyMode,
     shell: EnemyMode,
     flying: EnemyMode,
-    bullet_bills: EnemyMode,
     piranhas: EnemyMode,
     ghosts: EnemyMode,
     thwomps: EnemyMode,
@@ -470,7 +480,6 @@ impl ClassModes {
             ground: opts.ground,
             shell: opts.shell,
             flying: opts.flying,
-            bullet_bills: opts.bullet_bills,
             piranhas: opts.piranhas,
             ghosts: opts.ghosts,
             thwomps: opts.thwomps,
@@ -487,14 +496,6 @@ impl ClassModes {
         if self.ground == EnemyMode::Wild { pool.extend_from_slice(GROUND_ENEMIES); }
         if self.shell == EnemyMode::Wild { pool.extend_from_slice(SHELL_ENEMIES); }
         if self.flying == EnemyMode::Wild { pool.extend_from_slice(FLYING_ENEMIES); }
-        // BULLET_BILLS intentionally NOT added to the wild pool, even when
-        // bullet_bills=Wild. Bullet bill cannons (0xBC/0xBD) use NOCHANGE
-        // CHR, which makes PageBuckets's bucket-uniform pick weight them
-        // ~K× per draw — combined with other Wild classes the count can
-        // balloon to 4×+ vanilla. With BB out of the wild pool, the
-        // semantic for bullet_bills=Wild becomes asymmetric: BB cannons
-        // can still transform INTO other wild enemies, but other classes
-        // never swap TO bullet bills. Count stays ≤ vanilla.
         if self.piranhas == EnemyMode::Wild {
             pool.extend_from_slice(PIRANHAS);
             pool.extend_from_slice(PIRANHASC);
@@ -505,7 +506,14 @@ impl ClassModes {
             pool.extend_from_slice(ROTODISCS_SINGLE);
             pool.extend_from_slice(ROTODISCS_DUAL);
         }
-        if self.cannons == EnemyMode::Wild { pool.extend_from_slice(ALL_CANNONS); }
+        // ALL_CANNONS intentionally NOT added — cfire is self-contained in
+        // Wild mode. cfire IDs (0xBC..=0xCF range, NOCHANGE CHR) get
+        // per-bucket appended in PageBuckets, so merging them with the rest
+        // of the wild pool over-weights them ~K× per draw and floods every
+        // level (observed: 49→213 bullet bill cannons before the fix). With
+        // cfire out of the wild pool, the semantic is asymmetric: cfire can
+        // still transform INTO other wild enemies, but other classes never
+        // swap TO cfire — total cfire count stays ≤ vanilla.
         if self.water == EnemyMode::Wild { pool.extend_from_slice(WATER_ENEMIES); }
         if self.bros == EnemyMode::Wild { pool.extend_from_slice(BRO_ENEMIES); }
         pool
@@ -532,7 +540,6 @@ fn find_class_pool<'a>(
     check!(GROUND_ENEMIES, modes.ground);
     check!(SHELL_ENEMIES, modes.shell);
     check!(FLYING_ENEMIES, modes.flying);
-    check!(BULLET_BILLS, modes.bullet_bills);
     check!(PIRANHAS, modes.piranhas);
     check!(PIRANHASC, modes.piranhas); // ceiling piranhas share piranhas mode
     check!(GHOST_ENEMIES, modes.ghosts);
@@ -542,15 +549,16 @@ fn find_class_pool<'a>(
     check!(WATER_ENEMIES, modes.water);
     check!(BRO_ENEMIES, modes.bros);
 
-    // Cannons: 4 directional sub-classes (Bullet Bill cannons live in BULLET_BILLS)
+    // Cannons: 3 sub-classes (LEFT, RIGHT, BILLS). In Wild, all cfire merges
+    // into ALL_CANNONS — self-contained, never pulls from wild_pool so cfire
+    // count can't inflate (see build_wild_pool comment for why).
     if modes.cannons != EnemyMode::Off {
-        for sub in [CFIRE_RIGHT, CFIRE_LEFT, CFIRE_UP, CFIRE_DOWN] {
+        for sub in [CFIRE_LEFT, CFIRE_RIGHT, CFIRE_BILLS] {
             if sub.contains(&id) {
                 return match modes.cannons {
                     EnemyMode::Off => None,
-                    EnemyMode::Shuffle => Some(sub), // stay within direction
-                    EnemyMode::Wild if !wild_pool.is_empty() => Some(wild_pool),
-                    EnemyMode::Wild => Some(ALL_CANNONS), // merge all cannon dirs
+                    EnemyMode::Shuffle => Some(sub), // stay within sub-class
+                    EnemyMode::Wild => Some(ALL_CANNONS), // any cfire → any cfire
                 };
             }
         }
@@ -566,7 +574,6 @@ fn hb_class_modes(hb_mode: EnemyMode) -> ClassModes {
         ground: hb_mode,
         shell: hb_mode,
         flying: hb_mode,
-        bullet_bills: hb_mode,
         piranhas: hb_mode,
         ghosts: hb_mode,
         thwomps: hb_mode,
@@ -592,8 +599,8 @@ pub fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // All enemy classes off — only Big ? Blocks get randomized
     let no_flags = Options {
         ground: EnemyMode::Off, shell: EnemyMode::Off, flying: EnemyMode::Off,
-        bullet_bills: EnemyMode::Off, piranhas: EnemyMode::Off,
-        ghosts: EnemyMode::Off, thwomps: EnemyMode::Off, rotodiscs: EnemyMode::Off,
+        piranhas: EnemyMode::Off, ghosts: EnemyMode::Off,
+        thwomps: EnemyMode::Off, rotodiscs: EnemyMode::Off,
         cannons: EnemyMode::Off, water: EnemyMode::Off, bros: EnemyMode::Off,
         hb_encounters: EnemyMode::Off, wild_injections: false,
         ..Options::default()
