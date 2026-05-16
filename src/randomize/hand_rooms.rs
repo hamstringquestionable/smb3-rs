@@ -12,7 +12,7 @@ use rand::Rng;
 
 use crate::rom::Rom;
 use super::rom_data::FS_HAND_ROOMS;
-use super::segment_writer::{self, SegmentSpec};
+use super::segment_writer::{self, SegmentSpec, SortMode};
 
 /// File offset of the original Hand sub-area enemy stream (11 bytes:
 /// 1 page byte + 3 enemy entries × 3 bytes + 1 terminator). CPU $D0CF.
@@ -64,6 +64,7 @@ pub fn patch_clone_hand_rooms<R: Rng>(rom: &mut Rom, rng: &mut R) {
             original_count: 3,
             entries: &src_entries,
             label: Some(label),
+            sort_mode: SortMode::SortByX,
         }).expect("hand_rooms: clone write failed");
         rom.write_byte(dst + HAND_ROOM_LEN - 1, 0xFF);
     }

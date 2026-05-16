@@ -526,6 +526,19 @@ pub(super) const HAMMER_BRO_SEGMENT_OFFSETS: &[usize] = &[
     0x0DA1F, // 0xDA0F — Coin Ship end-pipe 2-BoomerangBro fight
 ];
 
+/// HB encounter enemy_ptr values — what level headers store, *not* the
+/// walker-segment offset. These mirror HAMMER_BRO_SEGMENT_OFFSETS but in
+/// the coordinate frame an entry-point-driven pass needs.
+pub(super) const HAMMER_BRO_ENEMY_PTRS: &[u16] = &[
+    0xC72B, // W1
+    0xD14D, // W2
+    0xD142, // W2 (variant)
+    0xC640, // W3, W5, W6, W7
+    0xD0EA, // W4
+    0xC03D, // W8 (uses 7-7 layout)
+    0xDA0F, // Coin Ship end-pipe 2-BoomerangBro fight
+];
+
 /// Stompable enemies — safe for single-enemy HB Wild segments and the default
 /// pool for 2-enemy segments. The player can always defeat these by jumping.
 pub(super) const STOMPABLE_ENEMIES: &[u8] = &[
@@ -841,6 +854,12 @@ pub(super) const TANK_BRO_POOL: &[u8] = &[
 /// used as platforms in speedtech, where wrong types cause sprite overload).
 pub(super) const PROTECTED_ENEMY_SEGMENTS: &[usize] = &[
     0x0CA33, // 3-2 (obj 0xCA23): enemies used as platforms, sprite overload risk
+];
+
+/// Protected enemy_ptr values — entry-point coordinate frame mirror of
+/// PROTECTED_ENEMY_SEGMENTS.
+pub(super) const PROTECTED_ENEMY_PTRS: &[u16] = &[
+    0xCA23, // 3-2
 ];
 
 /// Check whether the first enemy data segment at `obj_ptr` contains `target_id`.

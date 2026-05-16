@@ -2,7 +2,7 @@ use rand::Rng;
 use rand::seq::IndexedRandom;
 
 use crate::randomize::rom_data::{ENEMY_DATA_END, ENEMY_DATA_START};
-use crate::randomize::segment_writer::{self, SegmentEntry as WriterEntry};
+use crate::randomize::segment_writer::{self, SegmentEntry as WriterEntry, SortMode};
 use crate::randomizer::{EnemyMode, Options};
 use crate::rom::Rom;
 
@@ -421,7 +421,7 @@ const BIG_Q_BLOCKS: &[u8] = &[
 /// The W7 room is at enemy_ptr 0xC9A3; the Tanooki is the second entry.
 const W7F1_TANOOKI_OFFSET: usize = 0x0C9B7;
 
-use super::rom_data::{HAMMER_BRO_SEGMENT_OFFSETS, HB_NEEDS_SHELL_ENEMIES, PROTECTED_ENEMY_OFFSETS, PROTECTED_ENEMY_SEGMENTS, SHELL_PROTECTED_OFFSETS, STOMPABLE_ENEMIES, STOMPABLE_PROTECTED_OFFSETS, TANK_BRO_POOL, TANK_BRO_PROTECTED_OFFSETS};
+use super::rom_data::{HAMMER_BRO_ENEMY_PTRS, HAMMER_BRO_SEGMENT_OFFSETS, HB_NEEDS_SHELL_ENEMIES, LEVEL_DATA_REGIONS, PROTECTED_ENEMY_OFFSETS, PROTECTED_ENEMY_PTRS, PROTECTED_ENEMY_SEGMENTS, SHELL_PROTECTED_OFFSETS, STOMPABLE_ENEMIES, STOMPABLE_PROTECTED_OFFSETS, TANK_BRO_POOL, TANK_BRO_PROTECTED_OFFSETS};
 
 /// Injection candidates for wild_injections mode: special enemies injected after
 /// normal swaps. CHR compatibility checked via `sprite_bank()` at filter time.
@@ -793,6 +793,176 @@ fn randomize_hb_wild_segment<R: Rng>(
     }
 }
 
+/// Collect every `enemy_ptr` value (bytes 2-3 of every 9-byte level
+/// header) from every region in [`LEVEL_DATA_REGIONS`]. This is the
+/// authoritative set of file offsets where the SMB3 level loader actually
+/// begins reading enemy data — the level/sub-area entry points. Used by
+/// [`inject_at_entry_points`] so wild_injection writes only land where a
+/// level will actually read them.
+///
+/// Returned values are unique and in first-seen order.
+fn enemy_entry_points(rom: &Rom) -> Vec<u16> {
+    const LEVEL_HEADER_SIZE: usize = 9;
+    let mut pts: Vec<u16> = Vec::new();
+    let mut seen: std::collections::HashSet<u16> = std::collections::HashSet::new();
+    for region in LEVEL_DATA_REGIONS {
+        let len = region.end - region.start;
+        let data = rom.read_range(region.start, len);
+        let mut i = 0usize;
+        while i + LEVEL_HEADER_SIZE < data.len() {
+            // Header at data[i..i+9]; enemy_ptr is bytes 2-3 (little-endian).
+            let ep = (data[i + 2] as u16) | ((data[i + 3] as u16) << 8);
+            if seen.insert(ep) {
+                pts.push(ep);
+            }
+            i += LEVEL_HEADER_SIZE;
+            // Walk commands until the level's $FF terminator.
+            while i + 2 < data.len() {
+                if data[i] == 0xFF {
+                    i += 1;
+                    break;
+                }
+                let b0 = data[i];
+                let b2 = data[i + 2];
+                let is_fixed = (b2 & 0xF0) == 0;
+                let mut cmd_size = 3;
+                if !is_fixed {
+                    let grp = (b0 >> 5) as usize;
+                    let dispatch = grp * 15 + ((b2 >> 4) as usize) - 1;
+                    if region.extra_byte_dispatches.contains(&(dispatch as u8)) {
+                        cmd_size = 4;
+                    }
+                }
+                i += cmd_size;
+            }
+        }
+    }
+    pts
+}
+
+/// Wild-injection pass driven by *level entry points* rather than by
+/// `$FF`-bounded walker segments. For every `enemy_ptr` reported by
+/// [`enemy_entry_points`] that isn't an HB or protected segment, roll
+/// against `WILD_INJECTION_CHANCE` and — on success — replace the first
+/// entry the SMB3 level loader will actually read with a CHR-compatible
+/// Lakitu / Angry Sun / Boss Bass.
+///
+/// This replaces the in-walker injection block: the walker historically
+/// injected at `entries[0]` of every walker-segment, but most walker
+/// segments don't start at a level entry point (the level enters
+/// mid-segment). Driving the pass off `enemy_ptr` ensures injections are
+/// visible in-game.
+fn inject_at_entry_points<R: Rng>(
+    data: &mut [u8],
+    entry_ptrs: &[u16],
+    opts: &Options,
+    rng: &mut R,
+) {
+    let normal_modes = ClassModes::from_options(opts);
+    let normal_wild_pool = normal_modes.build_wild_pool();
+
+    for &ep_u16 in entry_ptrs {
+        let ep = ep_u16 as usize;
+        if !(ENEMY_DATA_START..ENEMY_DATA_END).contains(&ep) {
+            continue;
+        }
+        if PROTECTED_ENEMY_PTRS.contains(&ep_u16) {
+            continue;
+        }
+        if HAMMER_BRO_ENEMY_PTRS.contains(&ep_u16) {
+            continue;
+        }
+
+        let ep_local = ep - ENEMY_DATA_START;
+        if ep_local >= data.len() {
+            continue;
+        }
+
+        // SMB3 enemy data has two layout flavors at an entry point:
+        //   (a) page byte (0x00 or 0x01) then 3-byte entries
+        //   (b) entries-only (the entry_ptr lands directly on the first obj_id)
+        // Real obj_ids never overlap 0x00/0x01, so the byte value is the
+        // unambiguous discriminator the walker has always used.
+        let first_entry_idx = if matches!(data[ep_local], 0x00 | 0x01) {
+            ep_local + 1
+        } else {
+            ep_local
+        };
+        if first_entry_idx >= data.len() || data[first_entry_idx] == 0xFF {
+            continue; // empty level — no enemy entries to inject into
+        }
+
+        // Gather entries from this entry point up to its $FF terminator.
+        let mut entries: Vec<SegmentEntry> = Vec::new();
+        let mut j = first_entry_idx;
+        while j + 2 < data.len() && data[j] != 0xFF {
+            entries.push(SegmentEntry {
+                data_index: j,
+                obj_id: data[j],
+                x_pos: data[j + 1],
+            });
+            j += 3;
+        }
+        if entries.is_empty() {
+            continue;
+        }
+
+        let roll: u8 = rng.random_range(..=255);
+        if roll >= WILD_INJECTION_CHANCE {
+            continue;
+        }
+
+        let entry = &entries[0];
+        let fo = ENEMY_DATA_START + entry.data_index;
+        // Skip if this position is touched by any class-specific "protected"
+        // handler in the walker pass. Those handlers run after this pass and
+        // force a class-pool pick regardless of what's there (e.g. 6-5's
+        // entry at 0xC5EB *must* stay a shell enemy so the player can break
+        // bricks for progression). Without this guard we'd happily write
+        // Lakitu only to have it stomped back to a shell by the class-swap
+        // walker — visible as a 34-event silent revert in the head-to-head
+        // diff before this guard was added.
+        let class_protected = PROTECTED_ENEMY_OFFSETS.contains(&fo)
+            || SHELL_PROTECTED_OFFSETS.contains(&fo)
+            || STOMPABLE_PROTECTED_OFFSETS.contains(&fo)
+            || TANK_BRO_PROTECTED_OFFSETS.contains(&fo);
+        let swappable = !class_protected
+            && find_class_pool(entry.obj_id, &normal_modes, &normal_wild_pool).is_some();
+        if !swappable {
+            continue;
+        }
+
+        // Pre-commit CHR pages for the rest of the run so the injected
+        // enemy is chosen compatible with what stays.
+        let mut s4 = ChrSlot::Free;
+        let mut s5 = ChrSlot::Free;
+        for e in &entries[1..] {
+            let should_precommit = match find_class_pool(e.obj_id, &normal_modes, &normal_wild_pool) {
+                None => !BOOMBOOM_IDS.contains(&e.obj_id),
+                Some(pool) if std::ptr::eq(pool, normal_wild_pool.as_slice()) => false,
+                Some(class) => is_uniform_chr_class(class),
+            };
+            if should_precommit {
+                commit_chr_page(e.obj_id, &mut s4, &mut s5);
+            }
+        }
+
+        if let Some(chosen) = pick_compatible(WILD_INJECTION_IDS, s4, s5, rng) {
+            let bertha_count: u8 = entries.iter()
+                .filter(|e| e.obj_id == 0x63)
+                .count() as u8;
+            let was_bertha = entries[0].obj_id == 0x63;
+            let post_count = bertha_count
+                .saturating_sub(was_bertha as u8)
+                .saturating_add((chosen == 0x63) as u8);
+            if !(chosen == 0x63 && post_count > MAX_BERTHA_PER_SEGMENT) {
+                let di = entry.data_index;
+                swap_enemy(data, di, chosen);
+            }
+        }
+    }
+}
+
 fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, opts: &Options) {
     let len = ENEMY_DATA_END - ENEMY_DATA_START;
     let mut data = rom.read_range(ENEMY_DATA_START, len).to_vec();
@@ -818,6 +988,15 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
     let normal_page_buckets = PageBuckets::build(&normal_wild_pool);
     let hb_modes = hb_class_modes(opts.hb_encounters);
     let hb_wild_pool = hb_modes.build_wild_pool();
+
+    // Wild injection runs in its own pass driven by *level entry points*
+    // (header-pointed enemy_ptr values), not by walker-segments. This
+    // guarantees every injection lands on a byte the SMB3 level loader
+    // actually reads. See inject_at_entry_points doc for details.
+    if opts.wild_injections && !big_q_only {
+        let entry_ptrs = enemy_entry_points(rom);
+        inject_at_entry_points(&mut data, &entry_ptrs, opts, rng);
+    }
 
     let mut i = 0;
     while i < data.len() {
@@ -871,62 +1050,13 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
             continue;
         }
 
-        // Track Boss Bass count for this segment so we can cap it across both
-        // wild injection and class randomization.
+        // Track Boss Bass count for this segment so the per-segment cap is
+        // enforced during class swaps. If a wild injection (run earlier in
+        // its own pass) added a Bertha to this segment, that's already
+        // reflected here because we re-read obj_ids from `data`.
         let mut bertha_count: u8 = entries.iter()
             .filter(|e| e.obj_id == 0x63)
             .count() as u8;
-
-        // Wild injection: replace the segment's first entry with Lakitu/AngrySun/BossBass.
-        // SMB3 only spawns these correctly when they are the segment's first entry —
-        // otherwise the sprite slot they reserve collides with later objects (e.g.
-        // the end-level card), preventing those from spawning.
-        // HB encounter segments are excluded — they're tiny rooms where an injected
-        // Lakitu/Sun/Bertha doesn't fit the encounter design.
-        if opts.wild_injections && !big_q_only && !entries.is_empty() && !is_hb_segment {
-            let roll: u8 = rng.random_range(..=255);
-            if roll < WILD_INJECTION_CHANCE {
-                let entry = &entries[0];
-                let fo = ENEMY_DATA_START + entry.data_index;
-                let swappable = !PROTECTED_ENEMY_OFFSETS.contains(&fo)
-                    && find_class_pool(entry.obj_id, modes, wild_pool).is_some();
-                if swappable {
-                    // Pre-commit CHR pages for the rest of the segment so the
-                    // injected enemy is chosen compatible with what stays.
-                    let mut s4 = ChrSlot::Free;
-                    let mut s5 = ChrSlot::Free;
-                    for e in &entries[1..] {
-                        let should_precommit = match find_class_pool(e.obj_id, modes, wild_pool) {
-                            None => !BOOMBOOM_IDS.contains(&e.obj_id),
-                            Some(pool) if std::ptr::eq(pool, wild_pool) => false,
-                            Some(class) => is_uniform_chr_class(class),
-                        };
-                        if should_precommit {
-                            commit_chr_page(e.obj_id, &mut s4, &mut s5);
-                        }
-                    }
-                    if let Some(chosen) = pick_compatible(WILD_INJECTION_IDS, s4, s5, rng) {
-                        let was_bertha = entries[0].obj_id == 0x63;
-                        let post_count = bertha_count - (was_bertha as u8) + (chosen == 0x63) as u8;
-                        // If injecting Boss Bass would exceed the cap, skip injection entirely.
-                        if !(chosen == 0x63 && post_count > MAX_BERTHA_PER_SEGMENT) {
-                            let di = entry.data_index;
-                            swap_enemy(&mut data, di, chosen);
-                            if chosen == 0xAF {
-                                data[di + 1] = 0x02;
-                                data[di + 2] = 0x11;
-                            } else if chosen == 0x83 {
-                                data[di + 1] = 0x02;
-                                data[di + 2] = 0x12;
-                            }
-                            entries[0].obj_id = chosen;
-                            entries[0].x_pos = data[di + 1];
-                            bertha_count = post_count;
-                        }
-                    }
-                }
-            }
-        }
 
         // Split entries into proximity groups by X-position. Each group gets
         // independent CHR slot tracking — enemies more than CHR_GROUP_GAP tiles
@@ -1027,10 +1157,20 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
         }
     }
 
-    // Route the final write through segment_writer per segment so each
-    // gets X-sort + X-collision validation. Spoiled-segment skip ranges
-    // are honored so the walker doesn't mis-parse autoscroll-clobbered
-    // bytes as ghost segments and scramble adjacent real data.
+    // Route the final write through segment_writer per segment using
+    // SortMode::Preserve. Sorting would be wrong here: walker segments
+    // often span multiple logical levels (different enemy_ptrs pointing
+    // at different positions in the same $FF-bounded run), each with its
+    // own X sequence. A segment-wide X-sort can move entries across
+    // logical-level boundaries the walker can't see, displacing wild
+    // injections off their target ep and reordering vanilla bytes the
+    // class-swap pass didn't touch. Preserve mode writes byte-for-byte
+    // from the local `data` buffer, which already holds the desired
+    // post-injection + post-class-swap state.
+    //
+    // Spoiled-segment skip ranges are honored so the walker doesn't
+    // mis-parse autoscroll-clobbered bytes as ghost segments and
+    // scramble adjacent real data.
     let bounds = segment_writer::walk_segments(&data, 0, data.len(), &skip_ranges);
     for b in bounds {
         let entries: Vec<WriterEntry> = (0..b.entry_count).map(|i| {
@@ -1043,6 +1183,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
             original_count: b.entry_count,
             entries: &entries,
             label: None,
+            sort_mode: SortMode::Preserve,
         }).expect("enemies: segment write failed");
     }
 }
@@ -1056,6 +1197,24 @@ mod tests {
     /// Options with all default enemy classes enabled (Shuffle mode).
     fn enemy_opts() -> Options {
         Options::default()
+    }
+
+    /// Install a synthetic 9-byte level header at the start of the Plains
+    /// region whose `enemy_ptr` (header bytes 2-3) equals `ep`, followed
+    /// by an immediate `0xFF` terminator. Used by wild-injection tests so
+    /// the entry-point-driven injection pass treats `ep` as a real level
+    /// entry. Without this, the new injection pass has no entry points
+    /// pointing at the test segment and the test would never inject.
+    fn install_fake_entry_header(data: &mut [u8], ep: u16) {
+        let region_start = 0x1E512usize; // Plains (TS1) region start
+        data[region_start] = 0;
+        data[region_start + 1] = 0;
+        data[region_start + 2] = (ep & 0xFF) as u8;
+        data[region_start + 3] = ((ep >> 8) & 0xFF) as u8;
+        for k in 4..9 {
+            data[region_start + k] = 0;
+        }
+        data[region_start + 9] = 0xFF; // empty command stream
     }
 
     fn make_test_rom() -> Rom {
@@ -1722,6 +1881,9 @@ mod tests {
         ];
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
+        // Make our synthetic segment a real entry point so the new
+        // entry-point-driven injection pass sees it. Page byte at +1.
+        install_fake_entry_header(&mut data, (ENEMY_DATA_START + 1) as u16);
         let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
         let injection_ids: &[u8] = &[0x83, 0xAF, 0x63];
@@ -1761,6 +1923,7 @@ mod tests {
         ];
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
+        install_fake_entry_header(&mut data, (ENEMY_DATA_START + 1) as u16);
         let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
         let injection_ids: &[u8] = &[0x83, 0xAF, 0x63];
@@ -1916,6 +2079,7 @@ mod tests {
         ];
         let start = ENEMY_DATA_START;
         data[start..start + seg.len()].copy_from_slice(seg);
+        install_fake_entry_header(&mut data, (ENEMY_DATA_START + 1) as u16);
         let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
         let entry_offsets = [2usize, 5, 8, 11, 14, 17];
