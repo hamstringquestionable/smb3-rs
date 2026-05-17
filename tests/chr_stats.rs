@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use smb3_rs::randomize::autoscroll::SPOILED_SEGMENT_RANGES;
-use smb3_rs::randomize::enemies::{enemy_entry_points, sprite_bank};
+use smb3_rs::randomize::enemies::{enemy_entry_points, sprite_bank, wild_pool_for};
 use smb3_rs::randomize::rom_data::{ENEMY_DATA_END, ENEMY_DATA_START};
 use smb3_rs::randomizer::{self, EnemyMode, Options};
 use smb3_rs::rom::Rom;
@@ -14,6 +14,79 @@ use smb3_rs::rom::Rom;
 /// to come from `inject_at_entry_points`. (BossBass 0x63 is excluded
 /// because it's also in WATER_ENEMIES and ambiguous under Wild water mode.)
 const INJECTION_ONLY_IDS: &[u8] = &[0x83, 0xAF];
+
+/// Friendly name for an obj_id, sourced from enemies.rs comments,
+/// tools/rom_map.py's ENEMY_NAMES, and docs/smb3_rom_reference.md.
+/// Returns "?" for unknown / structural / control IDs.
+fn obj_name(id: u8) -> &'static str {
+    match id {
+        // Ground / stompable
+        0x29 => "Spike", 0x2A => "Patooie", 0x2B => "GoombaShoe",
+        0x2D => "ChainChomp", 0x3D => "ChainChompStake", 0x4F => "ChainChompFree",
+        0x33 => "Nipper", 0x39 => "NipperHopping", 0x40 => "BusterBeetle",
+        0x55 => "BobOmb", 0x58 => "FireChomp", 0x59 => "FireSnake",
+        0x6B => "PileDriver", 0x72 => "Goomba", 0x7C => "BigGoomba",
+        0x3F => "DryBones",
+        // Shell
+        0x6C => "GreenTroopa", 0x6D => "RedTroopa", 0x70 => "BuzzyBeetle",
+        0x71 => "Spiny", 0x7A => "BigGreenTroopa", 0x7B => "BigRedTroopa",
+        // Flying
+        0x46 => "Lakitu(LevelPlaced)",
+        0x6E => "ParaTroopaGreenHop", 0x6F => "FlyingRedParaTroopa",
+        0x73 => "ParaGoomba", 0x74 => "ParaGoombaMicros",
+        0x7E => "BigGreenHopper", 0x80 => "FlyingGreenParaTroopa",
+        // Water
+        0x48 => "BabyBlooper", 0x61 => "BlooperWithKids", 0x62 => "Blooper",
+        0x63 => "BigBertha", 0x64 => "CheepHopper", 0x67 => "LavaLotus",
+        0x6A => "BlooperChildShoot", 0x76 => "GreenCheep(jumping)",
+        0x77 => "RedCheep", 0x88 => "OrangeCheep",
+        // Bros
+        0x81 => "HammerBro", 0x82 => "BoomerangBro",
+        0x86 => "HeavyBro", 0x87 => "FireBro",
+        // Piranhas
+        0x7D => "BigGreenPiranha", 0x7F => "BigRedPiranha",
+        0xA0 => "GreenPiranha", 0xA1 => "GreenPiranhaFlipped",
+        0xA2 => "RedPiranha", 0xA3 => "RedPiranhaFlipped",
+        0xA4 => "GreenPiranhaFire", 0xA5 => "GreenPiranhaFireC",
+        0xA6 => "VenusFireTrap", 0xA7 => "VenusFireTrapCeil",
+        // Thwomps
+        0x8A => "Thwomp", 0x8B => "ThwompLeftSlide", 0x8C => "ThwompRightSlide",
+        0x8D => "ThwompUpDown", 0x8E => "ThwompDiagonalUL", 0x8F => "ThwompDiagonalDL",
+        // Ghosts / hotfoot
+        0x2F => "Boo", 0x30 => "HotFootShy", 0x45 => "HotFoot",
+        // Rotodiscs / podoboo
+        0x51 => "Rotodisc", 0x53 => "CeilingPodoboo", 0x9E => "Podoboo",
+        0x5A => "RotodiscCW", 0x5B => "RotodiscCCW", 0x5E => "RotodiscDualOpposedH",
+        0x5F => "RotodiscDualOpposedV", 0x60 => "RotodiscDualCCWSync",
+        // Cannon fire (NOCHANGE CHR)
+        0xBC => "CannonFire_BC", 0xBD => "CannonFire_BD",
+        0xBE => "CannonFire_BE", 0xBF => "CannonFire_BF",
+        0xC0 => "CannonFire_C0", 0xC1 => "CannonFire_C1",
+        0xC2 => "CannonFire_C2", 0xC3 => "CannonFire_C3",
+        0xC4 => "CannonFire_C4", 0xC5 => "CannonFire_C5",
+        0xC6 => "CannonFire_C6", 0xC7 => "CannonFire_C7",
+        0xC8 => "CannonFire_C8", 0xC9 => "CannonFire_C9",
+        0xCA => "CannonFire_CA", 0xCB => "CannonFire_CB",
+        0xCC => "CannonFire_CC", 0xCD => "CannonFire_CD",
+        0xCE => "CannonFire_CE", 0xCF => "CannonFire_CF", 0xD0 => "CannonFireLaser",
+        // Bosses + wild injection
+        0x0E => "Koopaling", 0x18 => "Bowser",
+        0x4A => "BoomBoomQBall", 0x4B => "BoomBoomJump", 0x4C => "BoomBoomFly",
+        0x83 => "Lakitu", 0xAF => "AngrySun",
+        // Structural / control
+        0x25 => "PipeWayController", 0x34 => "Toad", 0x41 => "EndLevelCard",
+        0x47 => "GiantBlockCtl", 0x50 => "BobOmbExplode", 0x52 => "TreasureBox",
+        0x75 => "BossAttack(fireball)", 0x84 => "SpinyEgg", 0x85 => "SpinyEggDud",
+        0xAD => "RockyWrench", 0xAE => "BoltLift", 0xB1 => "FireJetRight",
+        0x3C => "WoodenPlatformFall", 0xD3 => "Autoscroll",
+        0xB4 => "CheepCheepBeginEvent", 0xB5 => "GreenCheepBeginEvent",
+        0xB6 => "LakituFleeEvent",
+        // Powerups
+        0x0B => "PowerUp1Up", 0x0C => "PowerUpStarman", 0x0D => "PowerUpMushroom",
+        0x19 => "PowerUpFireFlower", 0x1E => "PowerUpSuperLeaf", 0x1F => "GrowingVine",
+        _ => "?",
+    }
+}
 
 /// Walk obj_id byte slots in the enemy data block, yielding
 /// `(file_offset, obj_id)` for each entry. Honors autoscroll spoiled
@@ -235,17 +308,49 @@ fn chr_page_stats() {
     }
 
     println!("\n============================================================");
-    println!("=== TOP 20 ENEMY IDS (rando, total across {NUM_SEEDS} seeds) ===\n");
-    let mut sorted_ids: Vec<_> = rando.ids.iter().collect();
-    sorted_ids.sort_by(|a, b| b.1.cmp(a.1));
+    println!("=== WILD POOL DISTRIBUTION (rando, total across {NUM_SEEDS} seeds) ===\n");
     let total_entries: u64 = rando.ids.values().sum();
-    println!("  ID    | Count  | Avg/seed | % of all | Vanilla count");
-    println!("  ------+--------+----------+----------+--------------");
-    for &(&id, &count) in sorted_ids.iter().take(20) {
+    // Build the set of wild-pool members for this Options config. With
+    // max_enemy_opts() every class is Wild, so this is the union of all
+    // class pools (minus cfire per the build_wild_pool workaround).
+    let wild_pool = wild_pool_for(&opts);
+    let wild_set: std::collections::BTreeSet<u8> = wild_pool.iter().copied().collect();
+    let mut wild_sorted: Vec<u8> = wild_set.iter().copied().collect();
+    // Sort by rando count descending; tie-break by id ascending for stability.
+    wild_sorted.sort_by(|a, b| {
+        let ca = rando.ids.get(a).copied().unwrap_or(0);
+        let cb = rando.ids.get(b).copied().unwrap_or(0);
+        cb.cmp(&ca).then(a.cmp(b))
+    });
+    println!("  ID    | Name                       | Count  | Avg/seed | % of all | Vanilla count");
+    println!("  ------+----------------------------+--------+----------+----------+--------------");
+    let mut zero_count = 0u32;
+    for id in &wild_sorted {
+        let count = rando.ids.get(id).copied().unwrap_or(0);
+        let avg = count as f64 / NUM_SEEDS as f64;
+        let pct = count as f64 / total_entries as f64 * 100.0;
+        let vcount = *vanilla.ids.get(id).unwrap_or(&0);
+        let name = obj_name(*id);
+        let marker = if count == 0 { " *" } else { "  " };
+        println!("  0x{id:02X}{marker}| {name:<26} | {count:>6} | {avg:>8.1} | {pct:>7.1}% | {vcount:>6}");
+        if count == 0 { zero_count += 1; }
+    }
+    println!("\n  Wild-pool size: {} ids   ({zero_count} dropped to zero, marked *)", wild_sorted.len());
+
+    // Also show any non-wild-pool IDs in the top 10 for context (these are
+    // structural/fixed: EndLevelCard, Boom-Boom variants, etc — not subject
+    // to the picker, but useful anchors when reading the wild-pool numbers).
+    let mut non_wild: Vec<(&u8, &u64)> = rando.ids.iter()
+        .filter(|(id, _)| !wild_set.contains(id))
+        .collect();
+    non_wild.sort_by(|a, b| b.1.cmp(a.1));
+    println!("\n  ── Top 10 non-wild-pool IDs (structural / fixed objects, picker doesn't touch) ──");
+    for &(&id, &count) in non_wild.iter().take(10) {
         let avg = count as f64 / NUM_SEEDS as f64;
         let pct = count as f64 / total_entries as f64 * 100.0;
         let vcount = *vanilla.ids.get(&id).unwrap_or(&0);
-        println!("  0x{id:02X}  | {count:>6} | {avg:>8.1} | {pct:>7.1}% | {vcount:>6}");
+        let name = obj_name(id);
+        println!("  0x{id:02X}  | {name:<26} | {count:>6} | {avg:>8.1} | {pct:>7.1}% | {vcount:>6}");
     }
 
     println!("\n============================================================");
