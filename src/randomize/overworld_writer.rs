@@ -1151,48 +1151,73 @@ fn patch_fortress_fx_screen_check(rom: &mut Rom) {
     const CODE_OFFSET: usize = rom_data::FS_FX_SCREEN_CHECK;
     #[rustfmt::skip]
     let code: &[u8] = &[
+        // ----- $0A = lock_half_index = 2*screen + (col>=8 ? 1 : 0) -----
+        //
+        // Fred's version of this block runs `LDA / ASL / LDA / AND #$03 /
+        // ADC $C856,Y / AND #$0F` (16 bytes after the LDY) to compute the
+        // same value via a more elaborate path. The shortcut here uses the
+        // fact that for valid inputs (screen 0..3, col 0..15) the bits we
+        // want are already present after a single ASL on the loc byte —
+        // (loc<<1)&$06 is exactly `2*(screen&3)`, and the carry that ASL
+        // dropped from bit 7 of loc is exactly `col>=8`. `ADC #$00` folds
+        // them. Saves 6 bytes vs Fred. Equivalent for all in-use loc
+        // values (verified by exhaustive enumeration of the 17 vanilla
+        // slots and chr_stats's randomized layouts).
         0xAC, 0x45, 0x07,    //  0: LDY $0745         ; Y = real FX slot
         0xB9, 0x56, 0xC8,    //  3: LDA $C856,Y       ; loc byte
-        0x0A,                //  6: ASL A             ; C = col bit 3 (col>=8)
-        0xB9, 0x56, 0xC8,    //  7: LDA $C856,Y       ; reload (ASL clobbered)
-        0x29, 0x03,          // 10: AND #$03          ; A = screen & 0x03
-        0x79, 0x56, 0xC8,    // 12: ADC $C856,Y       ; A += loc + C
-        0x29, 0x0F,          // 15: AND #$0F          ; mask to nibble
-        0x85, 0x0A,          // 17: STA $0A           ; → ZP temp
-        0xB9, 0x56, 0xC8,    // 19: LDA $C856,Y       ; reload loc
-        0x29, 0xF0,          // 22: AND #$F0          ; A = col<<4
-        0x45, 0xFD,          // 24: EOR $FD           ; A ^= Map_Scroll_X
-        0xC9, 0x10,          // 26: CMP #$10
-        0x90, 0x23,          // 28: BCC +35 → skip
-        0xC9, 0xE8,          // 30: CMP #$E8
-        0xB0, 0x1F,          // 32: BCS +31 → skip
-        0xA5, 0x79,          // 34: LDA $79
-        0x0A,                // 36: ASL A             ; C from bit 7 of $79
-        0xA5, 0x77,          // 37: LDA $77
-        0x65, 0x77,          // 39: ADC $77           ; A = 2*$77 + C
-        0x48,                // 41: PHA               ; save
-        0xC5, 0x0A,          // 42: CMP $0A
-        0xF0, 0x1A,          // 44: BEQ +26 → animate
-        0xA5, 0x79,          // 46: LDA $79
-        0x45, 0xFD,          // 48: EOR $FD
-        0x30, 0x04,          // 50: BMI +4 → adjust path B
-        0xC6, 0x0A,          // 52: DEC $0A
-        0xC6, 0x0A,          // 54: DEC $0A
-        0xE6, 0x0A,          // 56: INC $0A
-        0x68,                // 58: PLA               ; peek-via-pop
-        0x48,                // 59: PHA               ; re-push
-        0xC5, 0x0A,          // 60: CMP $0A
-        0xF0, 0x08,          // 62: BEQ +8 → animate
-        0x68,                // 64: PLA               ; discard
-        0xA9, 0x06,          // 65: LDA #$06          ; SKIP path
-        0x85, 0x20,          // 67: STA $20
-        0x4C, 0x52, 0xC9,    // 69: JMP $C952         ; → data update only
-        0x68,                // 72: PLA               ; discard
-        0xA9, 0x01,          // 73: LDA #$01          ; ANIMATE path
-        0x85, 0x20,          // 75: STA $20
-        0x4C, 0xEA, 0xC8,    // 77: JMP $C8EA         ; → full animate
+        0x0A,                //  6: ASL A             ; A=(loc<<1)&$FF; C = col>=8
+        0x29, 0x06,          //  7: AND #$06          ; A = (screen<<1)&$06 = 2*(screen&3)
+        0x69, 0x00,          //  9: ADC #$00          ; A += C  → 2*screen + (col>=8)
+        0x85, 0x0A,          // 11: STA $0A           ; lock_half_index (0..7)
+
+        // ----- Edge-tile filter (skip cols 0/15 at certain scrolls) -----
+        // Same as Fred's: (col<<4) EOR $FD, must be in [$10, $E8).
+        // Saves the lock-break animation from clipping across screen
+        // boundaries on edge tiles.
+        0xB9, 0x56, 0xC8,    // 13: LDA $C856,Y       ; reload loc
+        0x29, 0xF0,          // 16: AND #$F0          ; A = col<<4
+        0x45, 0xFD,          // 18: EOR $FD           ; A ^= Map_Scroll_X
+        0xC9, 0x10,          // 20: CMP #$10
+        0x90, 0x23,          // 22: BCC +35 → skip
+        0xC9, 0xE8,          // 24: CMP #$E8
+        0xB0, 0x1F,          // 26: BCS +31 → skip
+
+        // ----- mario_half_index = 2*$77 + bit7($79) ; first compare -----
+        0xA5, 0x79,          // 28: LDA $79           ; Mario X lo
+        0x0A,                // 30: ASL A             ; C = bit 7 of $79
+        0xA5, 0x77,          // 31: LDA $77           ; Mario X hi
+        0x65, 0x77,          // 33: ADC $77           ; A = 2*$77 + C  (= mario_half_index)
+        0x48,                // 35: PHA               ; stash mario_index
+        0xC5, 0x0A,          // 36: CMP $0A
+        0xF0, 0x1A,          // 38: BEQ +26 → animate ; same half-screen → visible
+
+        // ----- adjacency: adjust $0A by ±1 per scroll/mario alignment -----
+        // BMI path (B): $79 and $FD differ on bit 7 → INC $0A (+1)
+        // BPL path (A): they agree → DEC twice + INC (net -1)
+        0xA5, 0x79,          // 40: LDA $79
+        0x45, 0xFD,          // 42: EOR $FD
+        0x30, 0x04,          // 44: BMI +4 → path B
+        0xC6, 0x0A,          // 46: DEC $0A           ; path A start
+        0xC6, 0x0A,          // 48: DEC $0A
+        0xE6, 0x0A,          // 50: INC $0A           ; path B target (fall-through for A)
+        0x68,                // 52: PLA               ; peek mario_index
+        0x48,                // 53: PHA               ; re-push
+        0xC5, 0x0A,          // 54: CMP $0A
+        0xF0, 0x08,          // 56: BEQ +8 → animate
+
+        // ----- skip: data-only update, $20 = 6 -----
+        0x68,                // 58: PLA               ; discard stashed mario_index
+        0xA9, 0x06,          // 59: LDA #$06
+        0x85, 0x20,          // 61: STA $20
+        0x4C, 0x52, 0xC9,    // 63: JMP $C952
+
+        // ----- animate: full FX, $20 = 1 -----
+        0x68,                // 66: PLA               ; discard stashed mario_index
+        0xA9, 0x01,          // 67: LDA #$01
+        0x85, 0x20,          // 69: STA $20
+        0x4C, 0xEA, 0xC8,    // 71: JMP $C8EA
     ];
-    debug_assert!(code.len() == 80, "FX screen-check patch must be exactly 80 bytes (allocated)");
+    debug_assert!(code.len() == 74, "FX screen-check patch must be 74 bytes (allocation is 80, 6 reserved free)");
     for (i, &b) in code.iter().enumerate() {
         rom.write_byte(CODE_OFFSET + i, b);
     }
