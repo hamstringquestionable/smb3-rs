@@ -1,12 +1,42 @@
 //! Gather CHR page slot statistics across many seeds vs vanilla.
 //! Run with: cargo test --test chr_stats -- --nocapture
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
-use smb3_rs::randomize::enemies::sprite_bank;
+use smb3_rs::randomize::autoscroll::SPOILED_SEGMENT_RANGES;
+use smb3_rs::randomize::enemies::{enemy_entry_points, sprite_bank};
 use smb3_rs::randomize::rom_data::{ENEMY_DATA_END, ENEMY_DATA_START};
 use smb3_rs::randomizer::{self, EnemyMode, Options};
 use smb3_rs::rom::Rom;
+
+/// Wild_injection-only obj_ids. Neither is a member of any class swap pool,
+/// so any occurrence in a patched ROM where vanilla differed is guaranteed
+/// to come from `inject_at_entry_points`. (BossBass 0x63 is excluded
+/// because it's also in WATER_ENEMIES and ambiguous under Wild water mode.)
+const INJECTION_ONLY_IDS: &[u8] = &[0x83, 0xAF];
+
+/// Walk obj_id byte slots in the enemy data block, yielding
+/// `(file_offset, obj_id)` for each entry. Honors autoscroll spoiled
+/// ranges the same way `segment_writer::walk_segments` does so injection
+/// false-positives from autoscroll-clobbered bytes don't show up.
+fn for_each_obj_offset<F: FnMut(usize, u8)>(rom_data: &[u8], mut f: F) {
+    let mut i = ENEMY_DATA_START;
+    let in_spoiled = |idx: usize| -> Option<usize> {
+        SPOILED_SEGMENT_RANGES
+            .iter()
+            .find(|r| r.contains(&idx))
+            .map(|r| r.end)
+    };
+    while i < ENEMY_DATA_END {
+        if let Some(end) = in_spoiled(i) { i = end; continue; }
+        if rom_data[i] == 0xFF { i += 1; continue; }
+        i += 1; // skip page byte
+        while i + 2 < ENEMY_DATA_END && rom_data[i] != 0xFF && in_spoiled(i).is_none() {
+            f(i, rom_data[i]);
+            i += 3;
+        }
+    }
+}
 
 const NUM_SEEDS: u64 = 200;
 
@@ -134,6 +164,28 @@ fn chr_page_stats() {
     println!();
     print_slot("Slot 5", &vanilla.slot5);
 
+    // Authoritative set of level enemy_ptrs — what `inject_at_entry_points`
+    // uses to gate where it writes. For visibility scoring we accept either
+    // `pos == ep` (entries-only header form) or `pos - 1 == ep` (page-byte
+    // form where ep points at the 0x00/0x01 page byte and the first entry
+    // is at ep+1).
+    let entry_ptrs: HashSet<u16> = enemy_entry_points(&rom).into_iter().collect();
+    let pos_visible = |pos: usize| -> bool {
+        (pos as u16) <= u16::MAX
+            && (entry_ptrs.contains(&(pos as u16))
+                || (pos > 0 && entry_ptrs.contains(&((pos - 1) as u16))))
+    };
+
+    // Wild-injection visibility counters (across all NUM_SEEDS seeds).
+    let mut inj_visible: u64 = 0;
+    let mut inj_displaced: u64 = 0;
+    // Vanilla bytes at every obj_id slot — needed to filter for actual
+    // post-injection appearances of Lakitu/AngrySun (vs. vanilla already
+    // having one there, which doesn't count as an injection event).
+    let mut vanilla_at_slot: std::collections::HashMap<usize, u8> =
+        std::collections::HashMap::new();
+    for_each_obj_offset(&rom.data, |off, id| { vanilla_at_slot.insert(off, id); });
+
     let mut rando = ScanStats::default();
     for seed in 0..NUM_SEEDS {
         let mut rom_copy = rom.clone();
@@ -143,6 +195,13 @@ fn chr_page_stats() {
         for (&page, &count) in &s.slot5 { *rando.slot5.entry(page).or_insert(0) += count; }
         for (&id, &count) in &s.ids { *rando.ids.entry(id).or_insert(0) += count; }
         rando.total_segments += s.total_segments;
+
+        // Walk this seed's patched ROM for injection events.
+        for_each_obj_offset(&rom_copy.data, |off, id| {
+            if !INJECTION_ONLY_IDS.contains(&id) { return; }
+            if vanilla_at_slot.get(&off) == Some(&id) { return; } // unchanged → not an injection
+            if pos_visible(off) { inj_visible += 1; } else { inj_displaced += 1; }
+        });
     }
 
     println!("\n============================================================");
@@ -188,4 +247,20 @@ fn chr_page_stats() {
         let vcount = *vanilla.ids.get(&id).unwrap_or(&0);
         println!("  0x{id:02X}  | {count:>6} | {avg:>8.1} | {pct:>7.1}% | {vcount:>6}");
     }
+
+    println!("\n============================================================");
+    println!("=== WILD INJECTION VISIBILITY ({NUM_SEEDS} seeds) ===\n");
+    let inj_total = inj_visible + inj_displaced;
+    let visibility_pct = if inj_total > 0 {
+        inj_visible as f64 / inj_total as f64 * 100.0
+    } else { 0.0 };
+    println!("Lakitu (0x83) + AngrySun (0xAF) occurrences at obj_id slots,");
+    println!("excluding positions where vanilla already had that ID:");
+    println!("  At known level entry_ptr : {inj_visible:>5}  ({visibility_pct:>5.1}%)  ← visible in-game");
+    println!("  Not at entry_ptr         : {inj_displaced:>5}  ({:>5.1}%)  ← orphan / displaced", 100.0 - visibility_pct);
+    println!("  Total injection events   : {inj_total:>5}");
+    println!("  Avg per seed             : {:.1}", inj_total as f64 / NUM_SEEDS as f64);
+    println!();
+    println!("Post-entry_ptr refactor (0.5.12-beta.5) this should be ≈100% visible.");
+    println!("Pre-refactor baseline was ~3% — most injections landed on orphan-prefix bytes.");
 }

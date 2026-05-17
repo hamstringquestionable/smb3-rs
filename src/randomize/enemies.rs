@@ -801,7 +801,10 @@ fn randomize_hb_wild_segment<R: Rng>(
 /// level will actually read them.
 ///
 /// Returned values are unique and in first-seen order.
-fn enemy_entry_points(rom: &Rom) -> Vec<u16> {
+///
+/// Exposed `pub` so integration tests (`tests/chr_stats.rs`) can use the
+/// same authoritative set for distribution / visibility analysis.
+pub fn enemy_entry_points(rom: &Rom) -> Vec<u16> {
     const LEVEL_HEADER_SIZE: usize = 9;
     let mut pts: Vec<u16> = Vec::new();
     let mut seen: std::collections::HashSet<u16> = std::collections::HashSet::new();
