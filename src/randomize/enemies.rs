@@ -515,13 +515,29 @@ impl ClassModes {
             pool.extend_from_slice(ROTODISCS_DUAL);
         }
         // ALL_CANNONS intentionally NOT added — cfire is self-contained in
-        // Wild mode. cfire IDs (0xBC..=0xCF range, NOCHANGE CHR) get
-        // per-bucket appended in PageBuckets, so merging them with the rest
-        // of the wild pool over-weights them ~K× per draw and floods every
-        // level (observed: 49→213 bullet bill cannons before the fix). With
-        // cfire out of the wild pool, the semantic is asymmetric: cfire can
-        // still transform INTO other wild enemies, but other classes never
-        // swap TO cfire — total cfire count stays ≤ vanilla.
+        // Wild mode for TWO reasons, both load-bearing:
+        //
+        // 1. **Gameplay correctness (permanent).** cfire IDs are projectile
+        //    emitters (bullet bill cannons, laser turrets, etc.). They fire
+        //    blind across the screen from their X position. Spawning one
+        //    where a player expects a stompable ground enemy means hits
+        //    arrive out of nowhere with no telegraph — arguably unplayable.
+        //    cfire must never appear as the random output of a non-cfire
+        //    class swap.
+        //
+        // 2. **Distribution (legacy of the bucket-first picker).** cfire
+        //    IDs share the NOCHANGE CHR slot, so they got per-bucket
+        //    appended in PageBuckets; with the old bucket-first picker
+        //    that over-weighted them ~K× per draw and flooded every level
+        //    (observed: 49 → 213 bullet bill cannons before the fix).
+        //    `PageBuckets::pick` is now uniform-among-compatibles, so this
+        //    flooding mechanism no longer exists — but reason (1) alone
+        //    is enough to keep cfire out.
+        //
+        // Net semantic: cfire can still transform INTO other wild enemies,
+        // but other classes never swap TO cfire — total cfire count stays
+        // ≤ vanilla and projectile emitters only appear where Nintendo put
+        // them.
         if self.water == EnemyMode::Wild { pool.extend_from_slice(WATER_ENEMIES); }
         if self.bros == EnemyMode::Wild { pool.extend_from_slice(BRO_ENEMIES); }
         pool
