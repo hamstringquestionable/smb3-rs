@@ -474,6 +474,14 @@ struct ClassModes {
     bros: EnemyMode,
 }
 
+/// Return the wild swap pool that would be in effect for the given Options
+/// (union of class pools where the class is in Wild mode). Exposed `pub`
+/// so integration tests / analyzers can enumerate the pool to compute
+/// per-pool distribution metrics.
+pub fn wild_pool_for(opts: &Options) -> Vec<u8> {
+    ClassModes::from_options(opts).build_wild_pool()
+}
+
 impl ClassModes {
     fn from_options(opts: &Options) -> Self {
         Self {
@@ -680,15 +688,22 @@ impl PageBuckets {
         PageBuckets { buckets: map.into_iter().map(|(_, v)| v).collect() }
     }
 
-    /// Pick a page uniformly, then pick a CHR-compatible enemy from that page.
+    /// Pick a CHR-compatible enemy uniformly from the union of all buckets.
+    ///
+    /// Previously this picked a bucket uniformly *then* a member uniformly,
+    /// which gave any enemy alone in its (slot, chr_page) bucket a full
+    /// 1/N_buckets share of all draws — e.g. LavaLotus and DryBones each
+    /// occupied ~8% of the wild pool (chr_stats baseline at beta.5),
+    /// dominating every Wild seed.
+    ///
+    /// Flattening compatible members across all buckets and picking
+    /// uniformly gives each compatible enemy equal weight per draw.
+    /// Singletons drop to ~1/N_pool share. CHR-popular pages still see
+    /// more total picks (because more members live in them), but no one
+    /// enemy can outsize the pool.
     fn pick<R: Rng>(&self, slot4: ChrSlot, slot5: ChrSlot, rng: &mut R) -> Option<u8> {
-        // Filter to buckets that have at least one compatible enemy
-        let compatible: Vec<&Vec<u8>> = self.buckets.iter()
-            .filter(|b| b.iter().any(|&id| is_chr_compatible(id, slot4, slot5)))
-            .collect();
-        let bucket = *compatible.choose(rng)?;
-        let candidates: Vec<u8> = bucket.iter()
-            .copied()
+        let candidates: Vec<u8> = self.buckets.iter()
+            .flat_map(|b| b.iter().copied())
             .filter(|&id| is_chr_compatible(id, slot4, slot5))
             .collect();
         candidates.choose(rng).copied()
