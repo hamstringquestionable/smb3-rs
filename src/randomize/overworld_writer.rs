@@ -1106,87 +1106,93 @@ fn patch_fortress_fx_screen_check(rom: &mut Rom) {
     rom.write_byte(HOOK_OFFSET + 1, 0x44); // lo($D544)
     rom.write_byte(HOOK_OFFSET + 2, 0xD5); // hi($D544)
 
-    // --- Custom code at $D544 (file 0x15554) ---
+    // --- Custom code at $D544 (file 0x15554), 80 bytes ---
     //
-    // **$0745 holds the real FX slot at hook time.** The engine
-    // resolves it just before our hook: at $C8CD it DECs $0745 (the
-    // 1-based ordinal), at $C8D5-$C8E3 it computes
-    // `FortressFX_W1_W8[FortressFXBase_ByWorld[World_Num] + $0745]`
-    // and STA-stores the result back into $0745. So `LDY $0745` here
-    // gives the slot directly — no need to recompute.
+    // **Algorithm: compare lock's half-screen index to Mario's half-
+    // screen index, not the scroll's screen index.** Cross-checked
+    // against fcoughlin's SMB3 Randomizer (Fred): 21 Fred-generated
+    // ROMs in /fred all carry these exact 80 bytes. Three in-house
+    // attempts (beta.6/7/8) compared lock_screen to `$12` (scroll
+    // page) and missed cases like same-screen-while-straddling and
+    // mid-scroll transitions. Fred's insight is that **Mario's
+    // position** (`$77` = map obj X hi, `$79` = map obj X lo, per
+    // qol.rs:410) is the right reference — it's the *settled*
+    // viewport target, not the in-flight scroll.
     //
-    // **Visibility decision under half-screen straddle:**
+    // Half-screen indexing (0..7) packs both screen number and
+    // left/right half into one byte:
+    //   lock_index   = 2 * lock_screen + (col >= 8 ? 1 : 0)    [→ $0A]
+    //   mario_index  = 2 * $77 + (bit 7 of $79)                [computed inline]
     //
-    // The map viewport scrolls in 128-pixel half-screen steps. $12
-    // (Map_Scroll_XHi) is the *left* scroll page and $FD
-    // (Map_Scroll_X) is 0 or 128. When $FD=128, the viewport
-    // straddles two grid screens: the RIGHT half of $12 (cols 8-15)
-    // plus the LEFT half of $12+1 (cols 0-7).
+    // Same half-screen → animate. The PHA/PLA dance lets the patch
+    // re-check after adjusting `$0A` by ±1 to cover the adjacent
+    // half-screen that becomes visible during straddle. Whether to
+    // adjust +1 or -1 depends on whether Mario is on the same side
+    // as the scroll (`$79 EOR $FD` bit 7).
     //
-    // Lock visibility:
-    //   lock_screen == $12, $FD == 0          → visible (full screen)
-    //   lock_screen == $12, $FD == 128, col≥8 → visible (right half)
-    //   lock_screen == $12, $FD == 128, col<8 → NOT visible (left half hidden)
-    //   lock_screen == $12+1, $FD == 128, col<8 → visible (left half of next)
-    //   lock_screen == $12+1, $FD == 128, col≥8 → NOT visible
-    //   lock_screen == $12+1, $FD == 0          → NOT visible
-    //   any other lock_screen                   → NOT visible
+    // The `(col<<4) EOR $FD` range check at +24..+32 filters out
+    // cols 0 and 15 at certain scroll positions — those are edge
+    // tiles where the lock-break animation would clip across screen
+    // boundaries even when nominally "visible."
     //
-    // Earlier patch versions missed the "same-screen + straddle + col<8"
-    // case: they animated whenever lock_screen == $12 regardless of
-    // $FD, clobbering a non-lock tile on the player's visible right
-    // half. Symptom observed in W7 (and elsewhere) where a fortress
-    // beat near the right edge of screen N (so $FD=128) triggered an
-    // animation for a lock at col<8 of screen N — invisible left
-    // half, so the VRAM/poof landed on whatever real tile sat at
-    // that nametable position in the visible area.
+    // **What the patch reads:**
+    //   $0745    — resolved FX slot (engine stored it at $C8E3)
+    //   $C856,Y  — FortressFX_MapLocation[slot] = (col<<4)|screen
+    //   $77, $79 — Mario's map_obj X hi/lo (settled position)
+    //   $FD      — Map_Scroll_X
+    //   $0A      — temporary in zero page
     //
-    // Uses `ASL A` instead of `CMP #$80 / BCS` to test bit 7 of $FD
-    // (saves a byte each occurrence — total fits in 67-byte budget).
+    // Exit:
+    //   visible   → JMP $C8EA ($20=1, full animate)
+    //   invisible → JMP $C952 ($20=6, data-only update)
+    //
+    // 80 bytes; matches the FS_FX_SCREEN_CHECK allocation in
+    // rom_data.rs. debug_assert! locks the size.
     const CODE_OFFSET: usize = rom_data::FS_FX_SCREEN_CHECK;
     #[rustfmt::skip]
     let code: &[u8] = &[
-        // +0
-        0xAC, 0x45, 0x07,       //  0: LDY $0745         ; Y = real FX slot
-        0xB9, 0x56, 0xC8,       //  3: LDA $C856,Y       ; FortressFX_MapLocation
-        0x29, 0x0F,             //  6: AND #$0F           ; A = lock_screen
-        0xC5, 0x12,             //  8: CMP $12            ; current scroll page
-        0xD0, 0x13,             // 10: BNE +19 (→ +31)    ; ≠ → diff_screen
-        // --- same-screen path ---
-        0xA5, 0xFD,             // 12: LDA $FD            ; Map_Scroll_X
-        0x0A,                   // 14: ASL A              ; bit 7 → C ($FD>=128?)
-        0x90, 0x21,             // 15: BCC +33 (→ +50)    ; $FD<128 → animate (full screen)
-        0xB9, 0x56, 0xC8,       // 17: LDA $C856,Y       ; reload loc byte
-        0x29, 0x80,             // 20: AND #$80           ; col>=8?
-        0xD0, 0x1A,             // 22: BNE +26 (→ +50)    ; yes → right half visible → animate
-        // fall through to skip
-        // --- skip ---
-        0xA9, 0x06,             // 24: LDA #$06           ; (skip:) abbreviated end-state
-        0x85, 0x20,             // 26: STA $20
-        0x4C, 0x52, 0xC9,       // 28: JMP $C952          ; → data update only
-        // --- diff_screen path ---
-        0x38,                   // 31: SEC                ; (diff_screen:)
-        0xE5, 0x12,             // 32: SBC $12            ; A = lock_screen - $12
-        0xC9, 0x01,             // 34: CMP #$01           ; exactly 1 ahead?
-        0xD0, 0xF2,             // 36: BNE -14 (→ +24)    ; no → skip
-        0xA5, 0xFD,             // 38: LDA $FD            ; Map_Scroll_X
-        0x0A,                   // 40: ASL A              ; bit 7 → C
-        0x90, 0xED,             // 41: BCC -19 (→ +24)    ; $FD<128 → skip (no straddle)
-        0xB9, 0x56, 0xC8,       // 43: LDA $C856,Y       ; reload loc byte
-        0x29, 0x80,             // 46: AND #$80           ; col>=8?
-        0xD0, 0xE6,             // 48: BNE -26 (→ +24)    ; col>=8 → not in left half of next → skip
-        // fall through to animate
-        // --- animate ---
-        0xA9, 0x01,             // 50: LDA #$01           ; (animate:)
-        0x85, 0x20,             // 52: STA $20
-        0xB9, 0x45, 0xC8,       // 54: LDA $C845,Y       ; FX_MAP_LOC_ROW
-        0x29, 0x01,             // 57: AND #$01           ; poof-only flag (bit 0)?
-        0xD0, 0x03,             // 59: BNE +3 (→ +64)     ; yes → poof only
-        0x4C, 0xEA, 0xC8,       // 61: JMP $C8EA          ; full animate (VRAM + data)
-        // poof_only:
-        0x4C, 0x52, 0xC9,       // 64: JMP $C952          ; data + poof tick
+        0xAC, 0x45, 0x07,    //  0: LDY $0745         ; Y = real FX slot
+        0xB9, 0x56, 0xC8,    //  3: LDA $C856,Y       ; loc byte
+        0x0A,                //  6: ASL A             ; C = col bit 3 (col>=8)
+        0xB9, 0x56, 0xC8,    //  7: LDA $C856,Y       ; reload (ASL clobbered)
+        0x29, 0x03,          // 10: AND #$03          ; A = screen & 0x03
+        0x79, 0x56, 0xC8,    // 12: ADC $C856,Y       ; A += loc + C
+        0x29, 0x0F,          // 15: AND #$0F          ; mask to nibble
+        0x85, 0x0A,          // 17: STA $0A           ; → ZP temp
+        0xB9, 0x56, 0xC8,    // 19: LDA $C856,Y       ; reload loc
+        0x29, 0xF0,          // 22: AND #$F0          ; A = col<<4
+        0x45, 0xFD,          // 24: EOR $FD           ; A ^= Map_Scroll_X
+        0xC9, 0x10,          // 26: CMP #$10
+        0x90, 0x23,          // 28: BCC +35 → skip
+        0xC9, 0xE8,          // 30: CMP #$E8
+        0xB0, 0x1F,          // 32: BCS +31 → skip
+        0xA5, 0x79,          // 34: LDA $79
+        0x0A,                // 36: ASL A             ; C from bit 7 of $79
+        0xA5, 0x77,          // 37: LDA $77
+        0x65, 0x77,          // 39: ADC $77           ; A = 2*$77 + C
+        0x48,                // 41: PHA               ; save
+        0xC5, 0x0A,          // 42: CMP $0A
+        0xF0, 0x1A,          // 44: BEQ +26 → animate
+        0xA5, 0x79,          // 46: LDA $79
+        0x45, 0xFD,          // 48: EOR $FD
+        0x30, 0x04,          // 50: BMI +4 → adjust path B
+        0xC6, 0x0A,          // 52: DEC $0A
+        0xC6, 0x0A,          // 54: DEC $0A
+        0xE6, 0x0A,          // 56: INC $0A
+        0x68,                // 58: PLA               ; peek-via-pop
+        0x48,                // 59: PHA               ; re-push
+        0xC5, 0x0A,          // 60: CMP $0A
+        0xF0, 0x08,          // 62: BEQ +8 → animate
+        0x68,                // 64: PLA               ; discard
+        0xA9, 0x06,          // 65: LDA #$06          ; SKIP path
+        0x85, 0x20,          // 67: STA $20
+        0x4C, 0x52, 0xC9,    // 69: JMP $C952         ; → data update only
+        0x68,                // 72: PLA               ; discard
+        0xA9, 0x01,          // 73: LDA #$01          ; ANIMATE path
+        0x85, 0x20,          // 75: STA $20
+        0x4C, 0xEA, 0xC8,    // 77: JMP $C8EA         ; → full animate
     ];
-    debug_assert!(code.len() == 67, "FX screen-check patch must be exactly 67 bytes (allocated)");
+    debug_assert!(code.len() == 80, "FX screen-check patch must be exactly 80 bytes (allocated)");
     for (i, &b) in code.iter().enumerate() {
         rom.write_byte(CODE_OFFSET + i, b);
     }

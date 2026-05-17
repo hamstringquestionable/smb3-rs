@@ -40,7 +40,7 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     // PRG027 (file 0x36010, CPU $A000–$BFFF)
     (0x379D9, 894, "king_quotes: 7 quotes + hook (7×120 + 54)"),
     // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
-    (0x15554, 67, "fx_screen_check: cross-screen lock patch"),
+    (0x15554, 80, "fx_screen_check: cross-screen lock patch (Fred's algorithm verbatim)"),
     (0x15DF0, 35, "canoe_fix: death respawn position save"),
     // PRG011 (file 0x16010, CPU $A000–$BFFF during map)
     (0x17D00, 59, "canoe_fix: backup/restore subroutines"),
@@ -73,7 +73,7 @@ pub(super) const FS_BIG_Q_LOOKUP: usize      = 0x35530; // 66 bytes
 pub(super) const FS_KING_QUOTES: usize       = 0x379D9; // 894 bytes
 
 // PRG010
-pub(super) const FS_FX_SCREEN_CHECK: usize   = 0x15554; // 67 bytes
+pub(super) const FS_FX_SCREEN_CHECK: usize   = 0x15554; // 80 bytes (Fred's algorithm)
 pub(super) const FS_CANOE_RESPAWN: usize     = 0x15DF0; // 35 bytes
 
 // PRG011
