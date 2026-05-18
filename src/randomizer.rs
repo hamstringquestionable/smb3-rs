@@ -623,6 +623,9 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         rom.set_tag("enemies");
         randomize::enemies::randomize(rom, &mut rng, options);
     }
+    // Skip the HideInPipe state for piranhas if the wild pool can place them
+    // outside their original pipe slots — otherwise they spawn invisible.
+    randomize::piranha_visibility::apply(rom, options);
     randomize::bowser_castle::randomize(rom, &mut rng);
     randomize::podoboo_gauntlet::randomize(rom, &mut rng);
     if options.world_order {
