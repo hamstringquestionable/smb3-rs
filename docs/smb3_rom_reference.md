@@ -2649,6 +2649,50 @@ All 180 entries verified byte-for-byte against ROM (2025-04-13). Matches
 | 0x080AE | Para-Goomba de-wing sprite |
 | 0x06EA9 | Boom-Boom drop sprite |
 
+### Piranha Plant Visibility (PRG004 / PRG005)
+
+Piranha plants use `Objects_Var4` (zero-page `$7F`) as their state machine:
+`0=HideInPipe`, `1=Emerge`, `2=Attack`, `3=Retract`. Init routines do **not**
+write `Var4`, so it starts at 0 and the first frame of `ObjNorm_Piranha` skips
+the draw call entirely — the plant is invisible until a per-object timer +
+"Mario not too close" gate transitions it to state 1.
+
+That hide-on-spawn is correct for pipe-mounted piranhas (vanilla placement),
+but when wild-shuffle drops a piranha into a non-pipe slot the player sees
+nothing and the plant pops into view unfairly. The randomizer fixes this by
+priming `Var4 = 1` (Emerge) at the end of each piranha init via two small
+thunks. The fix is gated on `piranhas == Wild` **and** at least one other
+enemy class also Wild — outside that case the wild pool can't put piranhas
+into foreign slots, so vanilla hide-then-emerge is preserved.
+
+**Small piranhas (0xA0–0xA7) — PRG005:**
+
+All eight small-piranha init routines share a tail at CPU `$A63A`…`$A654` ending
+in `LDA <$91,X / CLC / ADC #$08 / STA <$91,X / RTS`. The patch replaces the
+last 3 bytes with a JMP to a 7-byte thunk in PRG005 free space.
+
+| Item | Value |
+|------|-------|
+| Patch site (file) | **0x0A662** (CPU `$A652`) — bytes `95 91 60` → `4C C6 BF` |
+| Thunk (file) | **0x0BFD6** (CPU `$BFC6`), 7 bytes: `95 91 A9 01 95 7F 60` |
+| Effect | Re-do displaced `STA <$91,X`, then `LDA #$01 / STA <$7F,X / RTS` |
+
+**Big piranhas (0x7D / 0x7F) — PRG004:**
+
+Both `ObjInit_GiantGreenPiranha` and `ObjInit_GiantRedPiranha` converge on a
+shared tail at CPU `$B75A`…`$B776` ending in `STA $0679,X / INC $7FF7,X / RTS`
+(the `Objects_IsGiant` flag bump). The patch replaces the last 4 bytes with a
+JMP + dead-byte filler so the timer reload table at `$B777` stays put.
+
+| Item | Value |
+|------|-------|
+| Patch site (file) | **0x09783** (CPU `$B773`) — bytes `FE F7 7F 60` → `4C 56 BE 60` |
+| Thunk (file) | **0x09E66** (CPU `$BE56`), 8 bytes: `FE F7 7F A9 01 95 7F 60` |
+| Effect | Re-do displaced `INC $7FF7,X`, then `LDA #$01 / STA <$7F,X / RTS` |
+
+In both cases `$7F` is `Objects_Var4` — confirmed by the dispatch instruction
+`LDA <$7F,X / AND #$03` at the top of `ObjNorm_Piranha` in both banks.
+
 ### Koopaling Stomp Threshold (PRG001)
 
 The Koopalings (object ID `$0E`) use `Objects_Var4` (zero-page `$7F–$83`, indexed by
