@@ -880,6 +880,17 @@ pub(super) const HAZARD_RESTRICTED_OFFSETS: &[usize] = &[
     0x0D473, // DryBones      scr=1 col=3  row=8
     0x0D476, // Rotodisc CW   scr=1 col=9  row=5
     0x0D479, // Thwomp        scr=1 col=10 row=15
+    // 7-5 sub-area (enemy_ptr 0xC171): horizontal open field; a Patooie/
+    // Lotus at floor level on the player's path covers walking ground
+    // with continuous upward fire and is unfair.
+    0x0C182, // ParatroopaGreenHop scr=0 col=12 row=9
+    0x0C185, // ParatroopaGreenHop scr=1 col=2  row=9
+    0x0C18E, // BobOmb             scr=2 col=5  row=9
+    0x0C191, // BobOmb             scr=2 col=7  row=9
+    0x0C194, // BobOmb             scr=2 col=9  row=9
+    0x0C1A0, // ParatroopaGreenHop scr=4 col=14 row=9
+    0x0C1A3, // ParatroopaGreenHop scr=5 col=1  row=9
+    0x0C1A6, // ParatroopaGreenHop scr=5 col=4  row=9
 ];
 
 /// Bro enemies that work in tileset 10 (8-Tank sub-area).
