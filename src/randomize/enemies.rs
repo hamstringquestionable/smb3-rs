@@ -647,13 +647,21 @@ fn commit_chr_page(id: u8, slot4: &mut ChrSlot, slot5: &mut ChrSlot) {
 
 /// Write `new_id` into the enemy slot at `id_index` and nudge X/Y so the
 /// replacement sprite lines up with the slot. Bundles the write + adjustment
-/// so call sites can't forget one. `_old_id` is captured for future pair-aware
-/// adjustments (e.g. piranha→ground Y shift); current rules only use `new_id`:
+/// so call sites can't forget one. Adjustments:
 /// - Tall replacements get Y−1 to avoid floor clipping.
+/// - Ground-piranha → non-piranha gets Y−1 so the replacement stands on the
+///   pipe lip instead of inside the pipe shaft (where the rising piranha
+///   normally hides).
 fn swap_enemy(data: &mut [u8], id_index: usize, new_id: u8) {
-    let _old_id = data[id_index];
+    let old_id = data[id_index];
     data[id_index] = new_id;
     if TALL_ENEMIES.contains(&new_id) {
+        data[id_index + 2] = data[id_index + 2].wrapping_sub(1);
+    }
+    if PIRANHAS.contains(&old_id)
+        && !PIRANHAS.contains(&new_id)
+        && !PIRANHASC.contains(&new_id)
+    {
         data[id_index + 2] = data[id_index + 2].wrapping_sub(1);
     }
 }

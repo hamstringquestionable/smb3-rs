@@ -51,9 +51,12 @@ const FIREBALL_Y_MAX: u8 = 0x17;
 /// stacking on each other or on a fixed anchor.
 const MIN_X_GAP: u8 = 2;
 
-/// X bounds for the segment span. Fireballs must stay strictly between
-/// these to avoid running off the segment's expected screen range.
-const SEG_X_MIN: u8 = 0x18;  // just past Thwomp at 0x16
+/// X bounds for fireball placement. The lower bound is a safety floor:
+/// vanilla's leftmost fireball sits at 0x62, and entries any further left
+/// spawn on top of the player walking in from the door at X≈0x02, so they
+/// can't be reacted to. Sit a little under vanilla to keep some variance
+/// without re-creating that no-win spawn.
+const SEG_X_MIN: u8 = 0x55;
 const SEG_X_MAX: u8 = 0xEF;  // a few past last vanilla fireball at 0xE5
 
 /// Vanilla fixed entries (DryBones + Thwomp) — hard-coded so the composer
