@@ -31,12 +31,14 @@ const ITEM_OPTIONS = [
 	{ value: 16, label: "Random - Suit Only" },
 ];
 
-// 5, 10, 15, ..., 95, 99
-const STARTING_LIVES_OPTIONS = (() => {
-	const out = [];
-	for (let i = 5; i <= 99; i += 5) out.push({ value: i, label: String(i) });
-	return out;
-})();
+// Starting-lives pill options — Mario power-up state names with the
+// actual life count in brackets. Encodes to 2 bits in the flag key.
+const STARTING_LIVES_OPTIONS = [
+	{ value: 1,  label: "Small [1]" },
+	{ value: 5,  label: "Super [5]" },
+	{ value: 20, label: "Fire [20]" },
+	{ value: 99, label: "Hammer [99]" },
+];
 
 const TRI = [
 	{ value: "off", label: "Off" },
@@ -94,6 +96,14 @@ export const SCHEMA = [
 	{ id: "shuffle_toad_houses", type: "bool", default: true,
 		label: "Shuffle Toad Houses",
 		tip: "When on, the 22 vanilla Toad Houses are relocated to random overworld slots across all worlds (including W8). Each preserves its vanilla reward pool; the items inside are still randomized. When off, Toad Houses stay at their vanilla locations.",
+		group: "map", inFlagKey: true },
+	{ id: "infinite_mushroom_houses", type: "bool", default: false,
+		label: "Infinite Mushroom Houses",
+		tip: "Toad / Mushroom Houses don't disappear after entering — visit them any number of times. Credit: MaCobra52.",
+		group: "map", inFlagKey: true },
+	{ id: "fast_mushroom_house", type: "bool", default: false,
+		label: "Fast Mushroom House",
+		tip: "Skip the entry input-lock and shorten the exit transition when using a Toad / Mushroom House. Credit: MaCobra52.",
 		group: "map", inFlagKey: true },
 	{ id: "shuffle_airships", type: "bool", default: true,
 		label: "Shuffle Airships",
@@ -184,6 +194,10 @@ export const SCHEMA = [
 		label: "Wild Injections",
 		tip: "Inject Lakitu, Angry Sun, or Boss Bass into ~15% of enemy segments",
 		group: "enemies", inFlagKey: true },
+	{ id: "early_sun", type: "bool", default: false,
+		label: "Early Sun",
+		tip: "Angry Sun begins swooping immediately on spawn instead of waiting for the vanilla pre-attack delay. Credit: MaCobra52.",
+		group: "enemies", inFlagKey: true },
 
 	// --- Bosses ---
 	{ id: "random_koopalings", type: "bool", default: false,
@@ -261,10 +275,14 @@ export const SCHEMA = [
 		group: "items", inFlagKey: true },
 
 	// --- Player ---
-	{ id: "starting_lives", type: "select", numeric: true,
+	{ id: "starting_lives", type: "tri", numeric: true,
 		options: STARTING_LIVES_OPTIONS, default: 5,
 		label: "Starting Lives",
-		tip: "Number of lives you start with",
+		tip: "Number of lives you start with. Mario power-up state names; actual count in brackets.",
+		group: "player", inFlagKey: true },
+	{ id: "japanese_damage", type: "bool", default: false,
+		label: "Japanese Damage System",
+		tip: "Taking damage drops you straight to Small Mario regardless of current power-up, instead of demoting one tier at a time. Credit: MaCobra52.",
 		group: "player", inFlagKey: true },
 	{ id: "starting_items", type: "items",
 		items: ITEM_OPTIONS, slots: 3,
