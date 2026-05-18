@@ -12,8 +12,29 @@ pub const ITEM_RANDOM_NO_WHISTLE: u8 = 15;
 /// Sentinel: resolve to a random suit/powerup (1–6).
 pub const ITEM_RANDOM_SUIT_ONLY: u8 = 16;
 
-/// Returns default starting lives (4).
-fn default_starting_lives() -> u8 { 4 }
+/// Returns default starting lives (5).
+fn default_starting_lives() -> u8 { 5 }
+
+/// The four valid starting-lives counts (matches the flag-key encoding
+/// and the WASM pill-toggle options).
+pub const STARTING_LIVES_VALUES: [u8; 4] = [1, 5, 20, 99];
+
+/// Map a 2-bit flag-key index to the corresponding lives count.
+fn idx_to_lives(idx: u8) -> u8 {
+    STARTING_LIVES_VALUES[(idx & 0x3) as usize]
+}
+
+/// Map a lives count to its 2-bit flag-key index. Non-canonical values
+/// are binned to the nearest canonical choice so CLI/JSON inputs that
+/// predate this layout still round-trip cleanly.
+fn lives_to_idx(lives: u8) -> u8 {
+    match lives {
+        n if n <= 2 => 0,   // → 1
+        n if n <= 12 => 1,  // → 5
+        n if n <= 59 => 2,  // → 20
+        _ => 3,             // → 99
+    }
+}
 
 /// Returns default world count (7 — all worlds before Dark Land).
 fn default_world_count() -> u8 { 7 }
@@ -105,6 +126,26 @@ pub struct Options {
     /// Hammer item also breaks water gap (bridge) tiles on the overworld map.
     #[serde(default)]
     pub hammer_breaks_bridges: bool,
+    /// Angry Sun begins swooping immediately on spawn instead of waiting
+    /// for the vanilla pre-attack delay. (MaCobra52's "Early Sun" patch.)
+    #[serde(default)]
+    pub early_sun: bool,
+    /// Damage drops the player straight to Small Mario regardless of
+    /// current power-up, instead of demoting tier-by-tier. (MaCobra52's
+    /// "Japanese damage system (fixed)" patch.)
+    #[serde(default)]
+    pub japanese_damage: bool,
+    /// Toad / Mushroom Houses stay on the map after entering and can be
+    /// visited any number of times. (MaCobra52's "Infinite use Mushroom
+    /// Houses" patch.)
+    #[serde(default)]
+    pub infinite_mushroom_houses: bool,
+    /// Skip the entry-input-lock and shorten the exit transition when
+    /// using a Toad / Mushroom House. Combines MaCobra52's "Move Sooner
+    /// in Mushroom House (Instant)" and "Exit Mushroom House Faster"
+    /// patches under a single flag.
+    #[serde(default)]
+    pub fast_mushroom_house: bool,
     /// When true, the 19 vanilla spade-game tiles are picked up by the overworld
     /// builder and re-placed at random HammerBro slots, freeing their original
     /// positions for level placement. When false, spade games stay at vanilla
@@ -302,8 +343,13 @@ impl Options {
             | (self.shuffle_toad_houses as u8) << 1
             | (self.shuffle_airships as u8);
 
+        // b3: hammer_breaks_bridges(7) starting_lives(6-5) fast_mushroom_house(4)
+        //     reserved(3-0)
+        // starting_lives shrank from a 7-bit clamped 1–99 to a 2-bit index
+        // into {1, 5, 20, 99}, freeing bits 4-0 for future toggles.
         let b3 = ((self.hammer_breaks_bridges as u8) << 7)
-            | (self.starting_lives.clamp(1, 99) & 0x7F);
+            | (lives_to_idx(self.starting_lives) << 5)
+            | ((self.fast_mushroom_house as u8) << 4);
 
         let b4 = (self.card_speed_clear as u8) << 7
             | (self.remove_n_cards as u8) << 6
@@ -321,17 +367,20 @@ impl Options {
             }
         }
 
-        // b5: ground(7-6) shell(5-4) flying(3-2) hammer_vulnerable_koopalings(1) reserved(0)
+        // b5: ground(7-6) shell(5-4) flying(3-2) hammer_vulnerable_koopalings(1) early_sun(0)
         let b5 = em(self.ground) << 6
             | em(self.shell) << 4
             | em(self.flying) << 2
-            | (self.hammer_vulnerable_koopalings as u8) << 1;
+            | (self.hammer_vulnerable_koopalings as u8) << 1
+            | (self.early_sun as u8);
 
-        // b6: reserved(7-6) piranhas(5-4) ghosts(3-2) thwomps(1-0)
-        // Bits 7-6 were `bullet_bills` before v17 — that class folded into
-        // `cannons` as the BILLS sub-class. Bits left reserved (zero) so the
-        // layout doesn't shift.
-        let b6 = em(self.piranhas) << 4
+        // b6: japanese_damage(7) infinite_mushroom_houses(6) piranhas(5-4)
+        //     ghosts(3-2) thwomps(1-0)
+        // Bits 7-6 were the two `bullet_bills` bits before v17; now reused
+        // for the two MaCobra52 player/map mechanic toggles.
+        let b6 = (self.japanese_damage as u8) << 7
+            | (self.infinite_mushroom_houses as u8) << 6
+            | em(self.piranhas) << 4
             | em(self.ghosts) << 2
             | em(self.thwomps);
 
@@ -417,8 +466,7 @@ impl Options {
         let b9 = bytes[9];
         let b10 = bytes[10];
 
-        let starting_lives = b3 & 0x7F;
-        let starting_lives = if starting_lives == 0 { 1 } else { starting_lives };
+        let starting_lives = idx_to_lives((b3 >> 5) & 0x3);
 
         fn dem(bits: u8) -> EnemyMode {
             match bits & 0x03 {
@@ -454,6 +502,10 @@ impl Options {
             adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
             shuffle_spade_games: (b4 >> 3) & 1 != 0,
             hammer_vulnerable_koopalings: (b5 >> 1) & 1 != 0,
+            early_sun: b5 & 1 != 0,
+            japanese_damage: (b6 >> 7) & 1 != 0,
+            infinite_mushroom_houses: (b6 >> 6) & 1 != 0,
+            fast_mushroom_house: (b3 >> 4) & 1 != 0,
             random_koopalings: (b10 >> 7) & 1 != 0,
             include_beta_stages: (b10 >> 6) & 1 != 0,
             hammer_breaks_bridges: (b3 >> 7) & 1 != 0,
@@ -535,6 +587,10 @@ impl Default for Options {
             include_beta_stages: false,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
+            early_sun: false,
+            japanese_damage: false,
+            infinite_mushroom_houses: false,
+            fast_mushroom_house: false,
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             hands_levels: true,
@@ -782,6 +838,32 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     if options.hammer_breaks_locks || options.hammer_breaks_bridges {
         rom.set_tag("qol/hammer_breaks_tiles");
         randomize::qol::hammer_breaks_tiles(rom, options.hammer_breaks_locks, options.hammer_breaks_bridges);
+    }
+
+    // MaCobra52's "Early Sun" — Angry Sun begins attacking immediately.
+    if options.early_sun {
+        rom.set_tag("qol/early_sun");
+        randomize::qol::apply_early_sun(rom);
+    }
+
+    // MaCobra52's "Japanese damage system" — damage drops straight to Small
+    // Mario (or kills from a suit) instead of tier-by-tier demotion.
+    if options.japanese_damage {
+        rom.set_tag("qol/japanese_damage");
+        randomize::qol::apply_japanese_damage(rom);
+    }
+
+    // MaCobra52's "Infinite use Mushroom Houses" — toad houses don't get
+    // removed from the map after entering, so they're reusable.
+    if options.infinite_mushroom_houses {
+        rom.set_tag("qol/infinite_mushroom_houses");
+        randomize::qol::apply_infinite_mushroom_houses(rom);
+    }
+
+    // MaCobra52's "Fast Mushroom House" — skip entry input-lock + faster exit.
+    if options.fast_mushroom_house {
+        rom.set_tag("qol/fast_mushroom_house");
+        randomize::qol::apply_fast_mushroom_house(rom);
     }
 
     // Card speed clear: one-of-each clears cards with +1 life but no cutscene.
@@ -1046,6 +1128,10 @@ mod tests {
             include_beta_stages: true,
             hammer_breaks_locks: true,
             hammer_breaks_bridges: true,
+            early_sun: true,
+            japanese_damage: true,
+            infinite_mushroom_houses: true,
+            fast_mushroom_house: true,
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             hands_levels: true,
@@ -1112,6 +1198,10 @@ mod tests {
             include_beta_stages: false,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
+            early_sun: false,
+            japanese_damage: false,
+            infinite_mushroom_houses: false,
+            fast_mushroom_house: false,
             shuffle_spade_games: false,
             shuffle_toad_houses: false,
             hands_levels: false,
@@ -1305,8 +1395,9 @@ mod tests {
             }
         }
 
-        // Numeric ranges (boundaries + a middle value).
-        for lives in [1u8, 2, 50, 99] {
+        // starting_lives is 2 bits indexing {1, 5, 20, 99} — only the four
+        // canonical values round-trip exactly.
+        for lives in STARTING_LIVES_VALUES {
             let opts = Options { starting_lives: lives, ..Default::default() };
             let expected = Options { palettes: true, palette_themed: false, ..opts.clone() };
             let recovered = Options::from_flag_key(&opts.to_flag_key()).unwrap();
@@ -1463,6 +1554,10 @@ mod tests {
             include_beta_stages: false,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
+            early_sun: false,
+            japanese_damage: false,
+            infinite_mushroom_houses: false,
+            fast_mushroom_house: false,
             shuffle_spade_games: false,
             shuffle_toad_houses: false,
             hands_levels: false,
@@ -1513,6 +1608,10 @@ mod tests {
             include_beta_stages: false,
             hammer_breaks_locks: true,
             hammer_breaks_bridges: true,
+            early_sun: true,
+            japanese_damage: true,
+            infinite_mushroom_houses: true,
+            fast_mushroom_house: true,
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             hands_levels: true,

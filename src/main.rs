@@ -3,7 +3,26 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use smb3_rs::{EnemyMode, Options};
+use smb3_rs::{EnemyMode, Options, STARTING_LIVES_VALUES};
+
+/// CLI validator for `--starting-lives` — only the four canonical values
+/// that map cleanly to the 2-bit flag-key encoding are accepted.
+fn parse_starting_lives(s: &str) -> Result<u8, String> {
+    let n: u8 = s.parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
+    if STARTING_LIVES_VALUES.contains(&n) {
+        Ok(n)
+    } else {
+        Err(format!(
+            "must be one of {} (got {})",
+            STARTING_LIVES_VALUES
+                .iter()
+                .map(u8::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+            n
+        ))
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "smb3-rs", version, about = "Super Mario Bros. 3 Randomizer")]
@@ -120,6 +139,22 @@ struct Cli {
     #[arg(long)]
     hammer_breaks_bridges: bool,
 
+    /// Angry Sun begins swooping immediately on spawn (MaCobra52's "Early Sun" patch)
+    #[arg(long)]
+    early_sun: bool,
+
+    /// Damage drops to Small Mario or kills outright instead of demoting tier-by-tier (MaCobra52's "Japanese damage system" patch)
+    #[arg(long)]
+    japanese_damage: bool,
+
+    /// Toad / Mushroom Houses can be visited any number of times (MaCobra52's "Infinite use Mushroom Houses" patch)
+    #[arg(long)]
+    infinite_mushroom_houses: bool,
+
+    /// Skip the entry-input-lock and shorten the exit transition for Toad / Mushroom Houses (MaCobra52)
+    #[arg(long)]
+    fast_mushroom_house: bool,
+
     /// Disable spade-game shuffle (on by default; off keeps vanilla spade positions)
     #[arg(long)]
     no_shuffle_spade_games: bool,
@@ -191,8 +226,8 @@ struct Cli {
     /// Disable airship lock (anchor effect always on by default, use this flag to disable)
     #[arg(long)]
     no_airship_lock: bool,
-    /// Set starting lives (1–99, default: 4)
-    #[arg(long, default_value_t = 4)]
+    /// Set starting lives. Must be one of 1, 5, 20, 99 (default: 5).
+    #[arg(long, default_value_t = 5, value_parser = parse_starting_lives)]
     starting_lives: u8,
 
     /// Start with up to 3 items in inventory (comma-separated names)
@@ -323,6 +358,10 @@ fn main() {
             random_koopalings: cli.random_koopalings,
             hammer_breaks_locks: cli.hammer_breaks_locks,
             hammer_breaks_bridges: cli.hammer_breaks_bridges,
+            early_sun: cli.early_sun,
+            japanese_damage: cli.japanese_damage,
+            infinite_mushroom_houses: cli.infinite_mushroom_houses,
+            fast_mushroom_house: cli.fast_mushroom_house,
             shuffle_spade_games: !cli.no_shuffle_spade_games,
             shuffle_toad_houses: !cli.no_shuffle_toad_houses,
             hands_levels: !cli.no_hands_levels,

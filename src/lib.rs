@@ -10,7 +10,7 @@ use rom::Rom;
 
 pub use ips::apply_ips_patch;
 pub use randomizer::{
-    EnemyMode, Options,
+    EnemyMode, Options, STARTING_LIVES_VALUES,
     ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY,
 };
 

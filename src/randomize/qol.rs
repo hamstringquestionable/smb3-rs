@@ -555,6 +555,75 @@ const HOTFOOT_TAIL_A: usize = 0x0413C;
 const HOTFOOT_TAIL_B: usize = 0x04151;
 const HOTFOOT_TAIL_C: usize = 0x0814D;
 
+// Early Sun (by MaCobra52) — drops the Angry Sun's pre-attack threshold
+// from 5 to 0 so it begins swooping immediately on spawn instead of after
+// the vanilla delay. Single byte: PRG005 CPU $AD71 = file 0xAD81, operand
+// of `CMP #$05` becomes `CMP #$00`. Source:
+// https://github.com/macobra52/smb3-hacks/blob/main/SMB3%20IPS/SMB3%20-%20Early%20Sun.ips
+const EARLY_SUN_OFFSET: usize = 0x0AD81;
+
+/// Apply MaCobra52's "Early Sun" patch — the Angry Sun starts attacking
+/// without its vanilla pre-attack delay.
+pub fn apply_early_sun(rom: &mut Rom) {
+    rom.write_byte(EARLY_SUN_OFFSET, 0x00);
+}
+
+// Japanese damage system (by MaCobra52) — NOPs the `JMP $DA15` at file
+// 0x019F9 so the vanilla "demote power-up by one tier" subroutine is
+// skipped. Control falls through into the path that drops the player
+// straight to Small Mario from any power-up state, matching the Famicom
+// SMB3 damage model. Source:
+// https://github.com/macobra52/smb3-hacks/blob/main/SMB3%20IPS/SMB3%20-%20Japanese%20damage%20system%20(fixed).ips
+const JP_DAMAGE_OFFSET: usize = 0x019F9;
+const JP_DAMAGE_BYTES: [u8; 3] = [0xEA, 0xEA, 0xEA];
+
+/// Apply MaCobra52's "Japanese damage system (fixed)" patch — taking damage
+/// from any power-up tier (Super, Fire, Raccoon, Frog, Tanooki, Hammer)
+/// drops the player straight to Small Mario instead of demoting one tier
+/// at a time.
+pub fn apply_japanese_damage(rom: &mut Rom) {
+    rom.write_range(JP_DAMAGE_OFFSET, &JP_DAMAGE_BYTES);
+}
+
+// Infinite use Mushroom Houses (by MaCobra52) — 5-byte rewrite at file
+// 0x0169E5 (PRG011, CPU $A9D5) that drops the TOADHOUSE tile ($50) out of
+// the "remove after use" tile list. The remaining list entries shift one
+// position earlier and two NOPs are appended so the reader stops there.
+// Effect: toad houses no longer disappear after entering them, so the
+// reward can be collected repeatedly. Source:
+// https://github.com/macobra52/smb3-hacks/blob/main/SMB3%20IPS/SMB3%20-%20Infinite%20use%20Mushroom%20Houses.ips
+const INF_MUSHROOM_HOUSES_OFFSET: usize = 0x0169E5;
+const INF_MUSHROOM_HOUSES_BYTES: [u8; 5] = [0xE8, 0xE6, 0xBD, 0xEA, 0xEA];
+
+/// Apply MaCobra52's "Infinite use Mushroom Houses" patch — toad houses
+/// stay on the map after entering and can be visited any number of times.
+pub fn apply_infinite_mushroom_houses(rom: &mut Rom) {
+    rom.write_range(INF_MUSHROOM_HOUSES_OFFSET, &INF_MUSHROOM_HOUSES_BYTES);
+}
+
+// Fast Mushroom House (by MaCobra52) — combination of two single-byte
+// timer tweaks:
+//   * "Move Sooner in Mushroom House (Instant)" — file 0x005234, the
+//     post-entry input-lock timer (0xFF → 0x00), so the player can move
+//     immediately on the chest-select screen instead of waiting for the
+//     vanilla intro animation.
+//   * "Exit Mushroom House Faster" — file 0x001E3F, the exit-transition
+//     timer (0xFF → 0x5F), so closing the house and returning to the map
+//     is roughly 60% shorter.
+// Sources:
+// https://github.com/macobra52/smb3-hacks/blob/main/SMB3%20IPS/SMB3%20-%20Move%20Sooner%20in%20Mushroom%20House%20(Instant).ips
+// https://github.com/macobra52/smb3-hacks/blob/main/SMB3%20IPS/SMB3%20-%20Exit%20Mushroom%20House%20Faster.ips
+const FAST_MUSH_MOVE_OFFSET: usize = 0x005234;
+const FAST_MUSH_EXIT_OFFSET: usize = 0x001E3F;
+
+/// Apply MaCobra52's "Fast Mushroom House" — combines the "Move Sooner"
+/// and "Exit Faster" timer tweaks: skip the entry-input-lock and shorten
+/// the exit transition.
+pub fn apply_fast_mushroom_house(rom: &mut Rom) {
+    rom.write_byte(FAST_MUSH_MOVE_OFFSET, 0x00);
+    rom.write_byte(FAST_MUSH_EXIT_OFFSET, 0x5F);
+}
+
 /// Apply MaCobra's always-on bugfixes and fairness patches.
 pub fn apply_macobra_patches(rom: &mut Rom) {
     // Prevent forced hammer bro fights (4 NOPs)
