@@ -146,6 +146,19 @@ pub struct Options {
     /// patches under a single flag.
     #[serde(default)]
     pub fast_mushroom_house: bool,
+    /// Reduce tail-swipe slowdown so the Raccoon / Tanooki tail is
+    /// quicker to use mid-run. Bundles two compensating tweaks so the
+    /// faster tail doesn't break level design: raccoon flight time is
+    /// trimmed slightly (cancels a known 8-1 cheese the faster tail
+    /// enables) and the 7-6 fly-strat wall is lowered so the intended
+    /// route still clears at the new flight duration. (MaCobra52's
+    /// "Faster Tail Speed" patch.)
+    #[serde(default)]
+    pub faster_tail_speed: bool,
+    /// Game Over no longer wipes reserve inventory, world map progress,
+    /// or card state. (MaCobra52's "No Game Over Penalty" patch.)
+    #[serde(default)]
+    pub no_game_over_penalty: bool,
     /// When true, the 19 vanilla spade-game tiles are picked up by the overworld
     /// builder and re-placed at random HammerBro slots, freeing their original
     /// positions for level placement. When false, spade games stay at vanilla
@@ -344,12 +357,14 @@ impl Options {
             | (self.shuffle_airships as u8);
 
         // b3: hammer_breaks_bridges(7) starting_lives(6-5) fast_mushroom_house(4)
-        //     reserved(3-0)
+        //     faster_tail_speed(3) no_game_over_penalty(2) reserved(1-0)
         // starting_lives shrank from a 7-bit clamped 1–99 to a 2-bit index
         // into {1, 5, 20, 99}, freeing bits 4-0 for future toggles.
         let b3 = ((self.hammer_breaks_bridges as u8) << 7)
             | (lives_to_idx(self.starting_lives) << 5)
-            | ((self.fast_mushroom_house as u8) << 4);
+            | ((self.fast_mushroom_house as u8) << 4)
+            | ((self.faster_tail_speed as u8) << 3)
+            | ((self.no_game_over_penalty as u8) << 2);
 
         let b4 = (self.card_speed_clear as u8) << 7
             | (self.remove_n_cards as u8) << 6
@@ -506,6 +521,8 @@ impl Options {
             japanese_damage: (b6 >> 7) & 1 != 0,
             infinite_mushroom_houses: (b6 >> 6) & 1 != 0,
             fast_mushroom_house: (b3 >> 4) & 1 != 0,
+            faster_tail_speed: (b3 >> 3) & 1 != 0,
+            no_game_over_penalty: (b3 >> 2) & 1 != 0,
             random_koopalings: (b10 >> 7) & 1 != 0,
             include_beta_stages: (b10 >> 6) & 1 != 0,
             hammer_breaks_bridges: (b3 >> 7) & 1 != 0,
@@ -591,6 +608,8 @@ impl Default for Options {
             japanese_damage: false,
             infinite_mushroom_houses: false,
             fast_mushroom_house: false,
+            faster_tail_speed: false,
+            no_game_over_penalty: false,
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             hands_levels: true,
@@ -866,6 +885,20 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::qol::apply_fast_mushroom_house(rom);
     }
 
+    // MaCobra52's "Faster Tail Speed" — reduced tail slowdown + balancing
+    // flight-time cut and 7-6 wall adjustment.
+    if options.faster_tail_speed {
+        rom.set_tag("qol/faster_tail_speed");
+        randomize::qol::apply_faster_tail_speed(rom);
+    }
+
+    // MaCobra52's "No Game Over Penalty" — keep reserve inventory and
+    // map progress after a Game Over.
+    if options.no_game_over_penalty {
+        rom.set_tag("qol/no_game_over_penalty");
+        randomize::qol::apply_no_game_over_penalty(rom);
+    }
+
     // Card speed clear: one-of-each clears cards with +1 life but no cutscene.
     if options.card_speed_clear {
         rom.set_tag("qol/card_speed_clear");
@@ -1132,6 +1165,8 @@ mod tests {
             japanese_damage: true,
             infinite_mushroom_houses: true,
             fast_mushroom_house: true,
+            faster_tail_speed: true,
+            no_game_over_penalty: true,
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             hands_levels: true,
@@ -1202,6 +1237,8 @@ mod tests {
             japanese_damage: false,
             infinite_mushroom_houses: false,
             fast_mushroom_house: false,
+            faster_tail_speed: false,
+            no_game_over_penalty: false,
             shuffle_spade_games: false,
             shuffle_toad_houses: false,
             hands_levels: false,
@@ -1558,6 +1595,8 @@ mod tests {
             japanese_damage: false,
             infinite_mushroom_houses: false,
             fast_mushroom_house: false,
+            faster_tail_speed: false,
+            no_game_over_penalty: false,
             shuffle_spade_games: false,
             shuffle_toad_houses: false,
             hands_levels: false,
@@ -1612,6 +1651,8 @@ mod tests {
             japanese_damage: true,
             infinite_mushroom_houses: true,
             fast_mushroom_house: true,
+            faster_tail_speed: true,
+            no_game_over_penalty: true,
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             hands_levels: true,

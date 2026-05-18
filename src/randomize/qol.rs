@@ -624,6 +624,77 @@ pub fn apply_fast_mushroom_house(rom: &mut Rom) {
     rom.write_byte(FAST_MUSH_EXIT_OFFSET, 0x5F);
 }
 
+// Faster Tail Speed (by MaCobra52) — bundles three writes:
+//
+//   1. Reduced tail slowdown. File 0x110A6 ← 0x29. Shortens the
+//      post-swipe slowdown frames so the tail attack is less punishing
+//      to use mid-run.
+//   2. Slightly reduced raccoon/Tanooki flight time. File 0x10CAA
+//      ← 0x78. The faster tail makes building meter cheaper, which
+//      otherwise opens a known cheese skip in 8-1 by flying over a
+//      large section of the level; trimming flight duration cancels
+//      the cheese without removing flight outright.
+//   3. Lower the 7-6 fly-strat wall. File 0x1F36A ← {0x42, 0x14, 0xBD}
+//      (3-byte tile payload). The shortened flight time from (2) would
+//      otherwise leave the intended 7-6 fly route unreachable; this
+//      retunes the wall height so the strat still clears at the new
+//      flight duration.
+//
+// Source: MaCobra52 (no public IPS link).
+const FASTER_TAIL_SLOWDOWN_OFFSET: usize = 0x110A6;
+const FASTER_TAIL_FLIGHT_OFFSET: usize = 0x10CAA;
+const FASTER_TAIL_W76_WALL_OFFSET: usize = 0x1F36A;
+const FASTER_TAIL_W76_WALL_BYTES: [u8; 3] = [0x42, 0x14, 0xBD];
+
+/// Apply MaCobra52's "Faster Tail Speed" — reduces tail-swipe slowdown,
+/// trims raccoon/Tanooki flight time to neutralize the 8-1 cheese the
+/// faster tail enables, and lowers the 7-6 wall so the intended fly
+/// strat still clears at the new flight duration.
+pub fn apply_faster_tail_speed(rom: &mut Rom) {
+    rom.write_byte(FASTER_TAIL_SLOWDOWN_OFFSET, 0x29);
+    rom.write_byte(FASTER_TAIL_FLIGHT_OFFSET, 0x78);
+    rom.write_range(FASTER_TAIL_W76_WALL_OFFSET, &FASTER_TAIL_W76_WALL_BYTES);
+}
+
+// No Game Over Penalty (by MaCobra52) — four writes verified byte-for-byte
+// against the upstream IPS at `SMB3 - No Game Over Penalty.ips` in this
+// repo. After a Game Over the player keeps their reserve inventory,
+// world map state, and card progress instead of having them wiped.
+//
+//   1. File 0x016A0F: 2 bytes — JSR operand redirected to the new
+//      subroutine at CPU $BD40.
+//   2. File 0x017A82: 8 bytes — `JSR $BD46` + 5 NOPs replacing the
+//      vanilla "reset on Game Over" call sequence.
+//   3. File 0x017D50: 26 bytes — new subroutine in PRG011 free space
+//      at $BD40-$BD59 that decides which state is allowed to reset
+//      (returns 0 to skip the wipe, 1 to allow it) based on the
+//      current map tile being checked against $50 / $E0 / $E8.
+//   4. File 0x03D314: 3 NOPs killing the vanilla decrement/clear
+//      instruction that ran unconditionally on Game Over.
+const NGO_HOOK_A_OFFSET: usize = 0x016A0F;
+const NGO_HOOK_A_BYTES: [u8; 2] = [0x40, 0xBD];
+const NGO_HOOK_B_OFFSET: usize = 0x017A82;
+const NGO_HOOK_B_BYTES: [u8; 8] = [0x20, 0x46, 0xBD, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA];
+const NGO_ROUTINE_OFFSET: usize = 0x017D50;
+#[rustfmt::skip]
+const NGO_ROUTINE: [u8; 26] = [
+    0x20, 0xFE, 0xD1, 0x85, 0xE6, 0x60, 0xA5, 0xE6, 0xC9, 0x50, 0xF0, 0x0B,
+    0xC9, 0xE0, 0xF0, 0x07, 0xC9, 0xE8, 0xF0, 0x03, 0xA9, 0x00, 0x60, 0xA9,
+    0x01, 0x60,
+];
+const NGO_NOP_OFFSET: usize = 0x03D314;
+const NGO_NOP_BYTES: [u8; 3] = [0xEA, 0xEA, 0xEA];
+
+/// Apply MaCobra52's "No Game Over Penalty" patch — Game Overs no longer
+/// wipe the player's reserve inventory, world map progress, or card
+/// state.
+pub fn apply_no_game_over_penalty(rom: &mut Rom) {
+    rom.write_range(NGO_HOOK_A_OFFSET, &NGO_HOOK_A_BYTES);
+    rom.write_range(NGO_HOOK_B_OFFSET, &NGO_HOOK_B_BYTES);
+    rom.write_range(NGO_ROUTINE_OFFSET, &NGO_ROUTINE);
+    rom.write_range(NGO_NOP_OFFSET, &NGO_NOP_BYTES);
+}
+
 /// Apply MaCobra's always-on bugfixes and fairness patches.
 pub fn apply_macobra_patches(rom: &mut Rom) {
     // Prevent forced hammer bro fights (4 NOPs)
@@ -824,5 +895,16 @@ mod tests {
         assert_eq!(rom.read_byte(HOTFOOT_TAIL_A), 0x00);
         assert_eq!(rom.read_byte(HOTFOOT_TAIL_B), 0x00);
         assert_eq!(rom.read_byte(HOTFOOT_TAIL_C), 0x25);
+    }
+
+    #[test]
+    fn test_macobra_no_game_over_penalty_writes() {
+        let mut rom = make_test_rom();
+        apply_no_game_over_penalty(&mut rom);
+
+        assert_eq!(rom.read_range(NGO_HOOK_A_OFFSET, NGO_HOOK_A_BYTES.len()), &NGO_HOOK_A_BYTES);
+        assert_eq!(rom.read_range(NGO_HOOK_B_OFFSET, NGO_HOOK_B_BYTES.len()), &NGO_HOOK_B_BYTES);
+        assert_eq!(rom.read_range(NGO_ROUTINE_OFFSET, NGO_ROUTINE.len()), &NGO_ROUTINE);
+        assert_eq!(rom.read_range(NGO_NOP_OFFSET, NGO_NOP_BYTES.len()), &NGO_NOP_BYTES);
     }
 }

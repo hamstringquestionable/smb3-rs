@@ -155,6 +155,14 @@ struct Cli {
     #[arg(long)]
     fast_mushroom_house: bool,
 
+    /// Reduce tail-swipe slowdown; bundles a slight flight-time cut and 7-6 wall adjustment so level design holds (MaCobra52)
+    #[arg(long)]
+    faster_tail_speed: bool,
+
+    /// Game Over no longer wipes reserve inventory, world map progress, or card state (MaCobra52)
+    #[arg(long)]
+    no_game_over_penalty: bool,
+
     /// Disable spade-game shuffle (on by default; off keeps vanilla spade positions)
     #[arg(long)]
     no_shuffle_spade_games: bool,
@@ -362,6 +370,8 @@ fn main() {
             japanese_damage: cli.japanese_damage,
             infinite_mushroom_houses: cli.infinite_mushroom_houses,
             fast_mushroom_house: cli.fast_mushroom_house,
+            faster_tail_speed: cli.faster_tail_speed,
+            no_game_over_penalty: cli.no_game_over_penalty,
             shuffle_spade_games: !cli.no_shuffle_spade_games,
             shuffle_toad_houses: !cli.no_shuffle_toad_houses,
             hands_levels: !cli.no_hands_levels,
