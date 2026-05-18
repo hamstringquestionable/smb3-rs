@@ -851,12 +851,24 @@ pub(super) const TANK_BRO_PROTECTED_OFFSETS: &[usize] = &[
 /// Enemies at these offsets must remain stompable: the chosen replacement
 /// is the intersection of the enemy's normal pool (per current mode) with
 /// STOMPABLE_ENEMIES. Used at floor positions where a non-stompable swap
-/// would corner the player with no way to defeat the enemy.
+/// would corner the player with no way to defeat the enemy, and in boss
+/// arenas where every non-boss enemy needs to be clearable so the player
+/// can reach the boss.
 pub(super) const STOMPABLE_PROTECTED_OFFSETS: &[usize] = &[
     // 6-6 sub-area (enemy_ptr 0xC64B): 3 spikes on the floor of screen 10
     0x0C6A7, // Spike scr=10 col=0 row=15
     0x0C6AA, // Spike scr=10 col=6 row=15
     0x0C6AD, // Spike scr=10 col=4 row=15
+    // 7-F2 Boom-Boom sub-area (enemy_ptr 0xD45C): keep the boss arena
+    // clearable. Boom-Boom itself (0x4B) is never randomized, so it isn't
+    // listed. In Wild modes the vanilla Rotodiscs/Thwomp will be swapped
+    // out for stompable enemies — in Shuffle/Off modes their class pools
+    // have no stompable members so they stay put.
+    0x0D46D, // Rotodisc CW   scr=1 col=0  row=5
+    0x0D470, // DryBones      scr=1 col=1  row=8
+    0x0D473, // DryBones      scr=1 col=3  row=8
+    0x0D476, // Rotodisc CW   scr=1 col=9  row=5
+    0x0D479, // Thwomp        scr=1 col=10 row=15
 ];
 
 /// Bro enemies that work in tileset 10 (8-Tank sub-area).
