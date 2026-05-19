@@ -1195,6 +1195,23 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                     } else {
                         chosen
                     };
+                    // A piranha slot is often a pipe that's the only way
+                    // through the level. Never replace one with an upward-
+                    // firing hazard (Ptooie / Lava Lotus) — they cover the
+                    // pipe lip with continuous fire and can't be stomped.
+                    let old_was_piranha = PIRANHAS.contains(&entry.obj_id)
+                        || PIRANHASC.contains(&entry.obj_id);
+                    let chosen = if old_was_piranha
+                        && chosen.is_some_and(|id| HAZARD_PROJECTILE_IDS.contains(&id))
+                    {
+                        let filtered: Vec<u8> = pool.iter()
+                            .copied()
+                            .filter(|id| !HAZARD_PROJECTILE_IDS.contains(id))
+                            .collect();
+                        pick_compatible(&filtered, committed_slot4, committed_slot5, rng)
+                    } else {
+                        chosen
+                    };
                     if let Some(chosen) = chosen {
                         if was_bertha && chosen != 0x63 {
                             bertha_count = bertha_count.saturating_sub(1);
