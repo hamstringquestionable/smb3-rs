@@ -488,9 +488,9 @@ const QUOTES: &[[&str; 6]] = &[
         "Nobody wants to win?",
         "Nobody wants to win",
         "this race?",
-        "Everyone's playing",
-        "to not lose...",
-        "",
+        "Everybody's",
+        "playing to",
+        "not lose...",
     ],
 ];
 

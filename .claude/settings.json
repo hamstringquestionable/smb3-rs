@@ -1,0 +1,17 @@
+{
+	"permissions": {
+		"allow": [
+			"Bash(nix-shell*)",
+			"Bash(cargo*)",
+			"Bash(xxd*)",
+			"Bash(git*)",
+			"Bash(ls*)",
+			"Bash(cat*)",
+			"Bash(wc*)",
+			"Bash(diff*)",
+			"Bash(head*)",
+			"Bash(tail*)",
+			"Bash(nix-shell -p* python3 --run*\"*)"
+		]
+	}
+}
