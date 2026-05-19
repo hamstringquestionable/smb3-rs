@@ -122,20 +122,24 @@ pub fn set_starting_lives(rom: &mut Rom, lives: u8) {
 /// Write starting items into Mario's inventory via a trampoline in PRG031.
 ///
 /// Replaces the 8-byte lives init at 0x308E0 with `JSR $E250` into a
-/// routine that sets lives, does the intro skip, AND writes up to 3 items
-/// to inventory ($7D80+). Must run AFTER title_screen (which hooks the same
-/// region for intro skip) — this trampoline incorporates that behavior.
-pub fn write_starting_items(rom: &mut Rom, lives: u8, items: &[u8]) {
+/// routine that sets lives, does the intro skip, queues the seeded menu
+/// music, AND writes up to 3 items to inventory ($7D80+). Must run AFTER
+/// title_screen (which hooks the same region for intro skip) — this
+/// trampoline incorporates that behavior.
+pub fn write_starting_items(rom: &mut Rom, seed: u64, lives: u8, items: &[u8]) {
     let lives = lives.clamp(1, 99);
-    // Build trampoline: lives init + intro skip + item writes + RTS
+    let music = super::title_screen::pick_menu_music(seed);
+    // Build trampoline: lives init + intro skip + menu music + item writes + RTS
     // CPU $E250 = file FS_STARTING_ITEMS
-    let mut buf = Vec::with_capacity(24);
+    let mut buf = Vec::with_capacity(33);
     buf.extend_from_slice(&[
         0xA9, lives,         // LDA #lives
         0x8D, 0x36, 0x07,    // STA $0736
         0x8D, 0x37, 0x07,    // STA $0737
         0xA9, 0x06,          // LDA #$06       (Title_State = IntroSkip)
         0x85, 0xDE,          // STA $DE
+        0xA9, music,         // LDA #music
+        0x8D, 0xF5, 0x04,    // STA $04F5      (queue menu music)
     ]);
     for (i, &item) in items.iter().take(3).enumerate() {
         buf.extend_from_slice(&[

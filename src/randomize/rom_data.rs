@@ -32,8 +32,8 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x3E93D, 40, "title_screen: sprite data table"),
     (0x35572, 13, "mystery_anchor: item redirect trampoline"),
     (0x3557F, 50, "hammer_locks: tile check subroutine + tables"),
-    (0x3E260, 28, "starting_items: lives + intro skip + inventory init trampoline"),
-    (0x3E965,  8, "title_screen: intro skip routine"),
+    (0x3E260, 33, "starting_items: lives + intro skip + menu music + inventory init trampoline"),
+    (0x3E965, 13, "title_screen: intro skip + menu music routine"),
     (0x3FFF0, 26, "card_speed_clear: XOR trampoline"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
     (0x35530, 66, "big_q_block: lookup routine + tables"),
@@ -68,7 +68,7 @@ pub(super) const FS_BIG_Q_SAVE: usize        = 0x3DF3C; // 20 bytes
 // PRG031
 pub(super) const FS_SEED_HASH_ROUTINE: usize = 0x3E924; // 25 bytes
 pub(super) const FS_SEED_HASH_DATA: usize    = 0x3E93D; // 40 bytes
-pub(super) const FS_INTRO_SKIP: usize        = 0x3E965; //  8 bytes
+pub(super) const FS_INTRO_SKIP: usize        = 0x3E965; // 13 bytes
 pub(super) const FS_CARD_CLEAR: usize        = 0x3FFF0; // 26 bytes
 
 // PRG026
@@ -87,7 +87,7 @@ pub(super) const FS_CANOE_BACKUP: usize      = 0x17D00; // 59 bytes
 // PRG026 (cont.)
 pub(super) const FS_MYSTERY_ANCHOR: usize    = 0x35572; // 13 bytes
 pub(super) const FS_HAMMER_LOCKS: usize      = 0x3557F; // 50 bytes
-pub(super) const FS_STARTING_ITEMS: usize    = 0x3E260; // 28 bytes
+pub(super) const FS_STARTING_ITEMS: usize    = 0x3E260; // 33 bytes
 
 // PRG001 (file 0x02010, CPU $A000–$BFFF)
 // Koopaling stomp handler is ObjHit_Koopaling in prg001.asm (southbird disassembly).

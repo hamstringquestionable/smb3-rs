@@ -3031,6 +3031,12 @@ Each entry represents a 16x16 metatile column on the world map.
 | 0xA0 | P-switch |
 | 0xB0 | Bowser fight |
 
+### Title Menu Music
+
+Vanilla SMB3 leaves the 1P/2P select menu silent (the only title-screen music is the brief intro cutscene snippet, which the seed-hash patch skips). To add menu music, the intro-skip routine in PRG031 free space appends `LDA #music / STA $04F5` after setting `Title_State = 6`. The music engine picks up the change on the next frame and loops the track for as long as the player stays on the menu; pressing Start advances to the world map, which queues its own music as normal.
+
+The track is chosen deterministically from the seed via a curated 16-entry table (world map themes 1–9, plus level themes 0x10/0x20/0x30/0x40/0x60/0x80/0x90). See `src/randomize/title_screen.rs::MENU_MUSIC_TRACKS` and `pick_menu_music`. When `starting_items` is active it overwrites the lives-init hook, so `qol::write_starting_items` mirrors the same `STA $04F5` inside its own trampoline.
+
 ---
 
 ## Autoscroll Disable

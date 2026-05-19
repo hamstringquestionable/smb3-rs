@@ -141,8 +141,8 @@ def inject_starting_items(rom: bytearray, lives: int = 5, items=(0x0C, 0x0C, 0x0
     for i, item in enumerate(items[:3]):
         buf += bytes([0xA9, item, 0x8D, 0x80 + i, 0x7D])  # STA $7D80+i
     buf += bytes([0x60])                      # RTS
-    if len(buf) > 28:
-        sys.exit(f"ERROR: trampoline {len(buf)} bytes exceeds FS_STARTING_ITEMS budget (28)")
+    if len(buf) > 33:
+        sys.exit(f"ERROR: trampoline {len(buf)} bytes exceeds FS_STARTING_ITEMS budget (33)")
     rom[FS_STARTING_ITEMS : FS_STARTING_ITEMS + len(buf)] = buf
     rom[LIVES_INIT_BASE : LIVES_INIT_BASE + 8] = bytes(
         [0x20, 0x50, 0xE2, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA]  # JSR $E250 + NOPx5

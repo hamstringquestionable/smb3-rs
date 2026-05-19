@@ -45,6 +45,32 @@ const DATA_CPU_HI: u8 = 0xE9;
 const INTRO_SKIP_HOOK_OFFSET: usize = 0x308E2;
 const INTRO_SKIP_ROUTINE_OFFSET: usize = super::rom_data::FS_INTRO_SKIP;
 
+/// Curated music tracks for the title menu. Values are written to the music
+/// change trigger at $04F5 — each one is a looping theme that fits a static
+/// menu screen (map themes 1–8 plus a handful of level / mushroom / hilly
+/// loops). See docs/smb3_rom_reference.md "Music Values ($04F5)".
+const MENU_MUSIC_TRACKS: [u8; 16] = [
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, // World 1–8 map themes
+    0x10, // Plains
+    0x20, // Underground
+    0x30, // Water
+    0x40, // Dungeon / Fortress
+    0x60, // Doomship
+    0x80, // Mushroom house
+    0x90, // Hilly theme
+    0x09, // World 9 / Coin Heaven
+];
+
+/// Pick a deterministic menu music track from the seed. Independent of
+/// `compute_hash` so changes to the music list don't shift seed-verification
+/// icons.
+pub(super) fn pick_menu_music(seed: u64) -> u8 {
+    let h = seed
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(0xBF58_476D_1CE4_E5B9);
+    MENU_MUSIC_TRACKS[(h % MENU_MUSIC_TRACKS.len() as u64) as usize]
+}
+
 /// Sprite positions: vertical column in top-left corner, inset from edge.
 const X_LEFT: u8 = 16;
 const X_RIGHT: u8 = 24;
@@ -146,16 +172,19 @@ pub fn write_seed_hash(rom: &mut Rom, seed: u64, options: &Options) {
     // Skip intro cutscene: hook STA $0736 in title screen init to also set
     // Title_State ($DE) = 6 (IntroSkip). This loads all graphics quickly and
     // jumps straight to the 1P/2P menu, ensuring consistent CHR banks for our
-    // hash sprites.
+    // hash sprites. Also queue a randomized menu music track via $04F5.
     //
     // Replace: 8D 36 07 (STA $0736) → 20 55 E9 (JSR $E955)
-    // At $E955: STA $0736 / LDA #$06 / STA $DE / RTS
+    // At $E955: STA $0736 / LDA #$06 / STA $DE / LDA #music / STA $04F5 / RTS
+    let music = pick_menu_music(seed);
     rom.write_range(INTRO_SKIP_HOOK_OFFSET, &[0x20, 0x55, 0xE9]);
     #[rustfmt::skip]
     rom.write_range(INTRO_SKIP_ROUTINE_OFFSET, &[
         0x8D, 0x36, 0x07, // STA $0736  (original instruction)
         0xA9, 0x06,       // LDA #$06
         0x85, 0xDE,       // STA $DE    (Title_State = IntroSkip)
+        0xA9, music,      // LDA #music
+        0x8D, 0xF5, 0x04, // STA $04F5  (queue menu music)
         0x60,             // RTS
     ]);
 }
@@ -232,6 +261,31 @@ mod tests {
 
         // Icon 4 is in group 0 (bytes 0-7), should have Y_START + 4*Y_SPACING
         assert_eq!(sprite_data[0], Y_START + 4 * Y_SPACING);
+    }
+
+    #[test]
+    fn menu_music_deterministic() {
+        assert_eq!(pick_menu_music(12345), pick_menu_music(12345));
+    }
+
+    #[test]
+    fn menu_music_in_table() {
+        for seed in 0..1000u64 {
+            assert!(MENU_MUSIC_TRACKS.contains(&pick_menu_music(seed)));
+        }
+    }
+
+    #[test]
+    fn menu_music_varies_across_seeds() {
+        let mut seen = std::collections::HashSet::new();
+        for seed in 0..1000u64 {
+            seen.insert(pick_menu_music(seed));
+        }
+        assert!(
+            seen.len() >= MENU_MUSIC_TRACKS.len() / 2,
+            "music selection too clumpy: only {} distinct tracks across 1000 seeds",
+            seen.len()
+        );
     }
 
     #[test]
