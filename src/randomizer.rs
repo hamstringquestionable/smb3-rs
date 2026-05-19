@@ -919,7 +919,7 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     // the intro skip (LDA #$06; STA $DE) so the title_screen hook is preserved.
     if !options.starting_items.is_empty() {
         rom.set_tag("qol/starting_items");
-        randomize::qol::write_starting_items(rom, options.starting_lives, &resolved_items);
+        randomize::qol::write_starting_items(rom, seed, options.starting_lives, &resolved_items);
     }
 
     // MaCobra patches — always-on bugfixes and fairness tweaks.
