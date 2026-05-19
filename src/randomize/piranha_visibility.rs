@@ -1,4 +1,5 @@
-//! Always-visible piranha plants when wild-shuffle mixes them with other classes.
+//! Wild-shuffled piranha plants: keep them visible at spawn, and drop their
+//! hitbox while they are invisible mid-cycle.
 //!
 //! Vanilla piranha plants spawn in state `Objects_Var4 = 0` (HideInPipe), which
 //! skips the draw call entirely until a timer + "Mario not too close" check
@@ -6,24 +7,26 @@
 //! piranhas — the hide phase lets Mario stand next to the pipe safely.
 //!
 //! In wild-shuffle mode, however, piranha IDs (`0xA0–0xA7`, `0x7D`, `0x7F`) can
-//! land in slots that previously held a ground enemy. The piranha keeps its
-//! invisible HideInPipe initial state, so the player sees nothing — and then
-//! the plant pops into view once they walk past, which feels unfair.
+//! land in slots that previously held a ground enemy. Two failure modes follow:
 //!
-//! This patch primes `Var4 = 1` (Emerge) at the end of the init routine so
-//! every piranha is visible from spawn. The proximity gate is bypassed; vanilla
-//! pipe placements still rise normally from the pipe-mouth Y, because Init
-//! places them at pipe-mouth Y regardless.
+//! 1. **Invisible spawn.** The piranha keeps its initial `Var4 = 0`, so the
+//!    player sees nothing — then the plant pops into view once the timer
+//!    expires, which feels unfair.
+//! 2. **Invisible hitbox.** Even after the patch above primes spawn to state 1,
+//!    the state machine cycles back to state 0 (Retract → HideInPipe) every
+//!    period. During that hide phase the sprite is skipped but the per-frame
+//!    `JSR Player_HitEnemy` keeps firing, so Mario can be damaged by an
+//!    invisible plant standing in mid-level (vanilla pipe placements hide the
+//!    hitbox inside the pipe geometry, so it never matters there).
 //!
-//! The patch is applied only when the seed actually permits a piranha→non-piranha
-//! cross (or vice versa): `opts.piranhas == Wild` **and** at least one other
-//! enemy class is also Wild. In all other configurations the wild pool either
-//! does not contain piranhas, or contains only piranhas, so the visibility bug
-//! cannot occur and vanilla behavior is preserved.
+//! Two pairs of bank-local thunks fix both issues. Both are gated on the same
+//! condition: `opts.piranhas == Wild` **and** at least one other enemy class
+//! is also Wild — outside that case the wild pool can't put piranhas into
+//! foreign slots, so vanilla behavior is preserved.
 //!
 //! ## Patch layout
 //!
-//! Two bank-local thunks, one per piranha bank:
+//! ### Visibility (init-time prime of `Var4 = 1`)
 //!
 //! - **PRG005** (`0xA0–0xA7`) — shared init tail at file `0x0A662..0x0A664`
 //!   ends with `STA <$91,X / RTS`. Replace those 3 bytes with `JMP $BFC6`.
@@ -36,13 +39,46 @@
 //!   The thunk at file `0x09E66` (cpu `$BE56`) re-does the displaced
 //!   `INC $7FF7,X`, writes `Var4 = 1`, and returns.
 //!
-//! `Objects_Var4` is zero-page `$7F` — verified from the dispatch instruction
-//! `LDA <$7F,X / AND #$03` at the top of `ObjNorm_Piranha` in both banks.
+//! ### Per-frame hitbox skip (distance-based gate around the hidden state)
+//!
+//! Only the small-piranha bank needs an extra thunk: `ObjNorm_BigPiranha`
+//! already short-circuits state 0 in vanilla (`AND #$03 / BNE main; LDA #$FF /
+//! STA SprHVis,X / JMP $B79D`), so its `JSR Player_HitEnemy` at `$B79A` is
+//! already unreachable from state 0.
+//!
+//! `ObjNorm_Piranha` (small piranhas) runs `JSR Player_HitEnemy` every frame
+//! regardless of orientation. We gate that call on the piranha's distance
+//! from its hidden-position Y (`Objects_Var5,X`): skip when `|Y - Var5| < 10`
+//! pixels. That covers the fully-hidden state itself **plus** a ~10 frame
+//! safety margin on either side of the transition (Retract end and Emerge
+//! start) — `Piranha_Retract` advances Y by +1 per frame.
+//!
+//! Using distance instead of state has two nice properties:
+//! - **Orientation-agnostic.** Upright vs ceiling piranhas use the same state
+//!   handlers, just running in different raw-`Var4` slots. Distance to Var5
+//!   is symmetric (Y < Var5 for upright, Y > Var5 for ceiling), and the
+//!   thunk uses a two-tail compare (`CMP #$0A` + `CMP #$F6`) to catch both.
+//! - **No FlipBits dispatch needed.** Vanilla emerge height is ~24 px (per
+//!   the Object_BoundBox entry for piranhas), so the fully-extended state
+//!   sits well outside the ±10 px window — no risk of unintended skipping
+//!   during the Attack state.
+//!
+//! - **PRG005** patch site: cpu `$A794` (file `0x0A7A4`), bytes `20 BA D1`
+//!   → `4C CD BF` (JMP `$BFCD`).
+//! - **PRG005** thunk: file `0x0BFDD` (cpu `$BFCD`), 18 bytes. Bias-and-range
+//!   form: `LDA Y / SEC / SBC Var5 / CLC / ADC #$0A / CMP #$15 / BCC skip` —
+//!   a single BCC catches both orientations after biasing `Y - Var5` into the
+//!   range `[0, 20]`.
+//!
+//! `Objects_Y` is zero-page `$A3`, `Objects_Var5` is `$9A` — verified from
+//! `Piranha_Retract` at `$A7C4` (`LDA $A3,X / ADD #$01 / ... / CMP $9A,X`).
 
 use crate::rom::Rom;
 use crate::randomizer::{EnemyMode, Options};
 use super::rom_data::{
+    FS_PIRANHA_HIT_SMALL,
     FS_PIRANHA_VIS_BIG, FS_PIRANHA_VIS_SMALL,
+    PIRANHA_HIT_SMALL_CPU,
     PIRANHA_VIS_BIG_CPU, PIRANHA_VIS_SMALL_CPU,
 };
 
@@ -52,8 +88,17 @@ const SMALL_PIRANHA_INIT_TAIL: usize = 0x0A662;
 /// File offset of the big-piranha init tail's last 4 bytes (`INC $7FF7,X / RTS`).
 const BIG_PIRANHA_INIT_TAIL: usize = 0x09783;
 
-/// Apply the visibility patch when wild-shuffle can mix piranhas with other
-/// classes. No-op otherwise.
+/// File offset of `JSR Player_HitEnemy` inside `ObjNorm_Piranha` (PRG005, cpu `$A794`).
+const SMALL_PIRANHA_HIT_CALL: usize = 0x0A7A4;
+
+/// CPU return address after the small-piranha hit-skip thunk: vanilla `INC Objects_Var3,X` at `$A797`.
+const SMALL_PIRANHA_HIT_RETURN_CPU: u16 = 0xA797;
+
+/// CPU address of `Player_HitEnemy`, mapped via `$C000` during gameplay banking.
+const PLAYER_HIT_ENEMY_CPU: u16 = 0xD1BA;
+
+/// Apply the visibility + hit-skip patches when wild-shuffle can mix piranhas
+/// with other classes. No-op otherwise.
 pub fn apply(rom: &mut Rom, opts: &Options) {
     if !should_apply(opts) {
         return;
@@ -61,6 +106,7 @@ pub fn apply(rom: &mut Rom, opts: &Options) {
     rom.push_tag("piranha_visibility");
     patch_small_piranha(rom);
     patch_big_piranha(rom);
+    patch_small_piranha_hit_skip(rom);
     rom.pop_tag();
 }
 
@@ -98,8 +144,7 @@ fn patch_small_piranha(rom: &mut Rom) {
     rom.write_range(FS_PIRANHA_VIS_SMALL, &thunk);
 
     // Patch site: replace `STA <$91,X / RTS` with `JMP thunk`.
-    let lo = (PIRANHA_VIS_SMALL_CPU & 0xFF) as u8;
-    let hi = (PIRANHA_VIS_SMALL_CPU >> 8) as u8;
+    let [lo, hi] = PIRANHA_VIS_SMALL_CPU.to_le_bytes();
     rom.write_range(SMALL_PIRANHA_INIT_TAIL, &[0x4C, lo, hi]);
 }
 
@@ -121,9 +166,38 @@ fn patch_big_piranha(rom: &mut Rom) {
 
     // Patch site: replace `INC $7FF7,X / RTS` (4 bytes) with `JMP thunk` (3 bytes)
     // + dead-code RTS filler so the timer table at $B777 stays put.
-    let lo = (PIRANHA_VIS_BIG_CPU & 0xFF) as u8;
-    let hi = (PIRANHA_VIS_BIG_CPU >> 8) as u8;
+    let [lo, hi] = PIRANHA_VIS_BIG_CPU.to_le_bytes();
     rom.write_range(BIG_PIRANHA_INIT_TAIL, &[0x4C, lo, hi, 0x60]);
+}
+
+/// Apply the small-piranha per-frame hit-skip thunk (see module docs).
+fn patch_small_piranha_hit_skip(rom: &mut Rom) {
+    debug_assert_eq!(
+        rom.read_range(SMALL_PIRANHA_HIT_CALL, 3),
+        &[0x20, 0xBA, 0xD1],
+        "small piranha JSR Player_HitEnemy site does not match — ROM mismatch?",
+    );
+
+    let [hit_lo, hit_hi] = PLAYER_HIT_ENEMY_CPU.to_le_bytes();
+    let [ret_lo, ret_hi] = SMALL_PIRANHA_HIT_RETURN_CPU.to_le_bytes();
+
+    // Bias-and-range check: A = (Y - Var5) + 10 maps the window [-10, +10]
+    // onto [0, 20], so a single BCC catches both orientations.
+    let thunk: [u8; 18] = [
+        0xB5, 0xA3,             // LDA Objects_Y,X
+        0x38,                   // SEC
+        0xF5, 0x9A,             // SBC Objects_Var5,X   ; A = Y - Var5 (mod 256)
+        0x18,                   // CLC
+        0x69, 0x0A,             // ADC #$0A             ; bias by +10
+        0xC9, 0x15,             // CMP #$15             ; < 21?
+        0x90, 0x03,             // BCC +3 → skip JSR    ; |Y - Var5| <= 10
+        0x20, hit_lo, hit_hi,   // JSR Player_HitEnemy
+        0x4C, ret_lo, ret_hi,   // JMP $A797
+    ];
+    rom.write_range(FS_PIRANHA_HIT_SMALL, &thunk);
+
+    let [lo, hi] = PIRANHA_HIT_SMALL_CPU.to_le_bytes();
+    rom.write_range(SMALL_PIRANHA_HIT_CALL, &[0x4C, lo, hi]);
 }
 
 #[cfg(test)]
@@ -167,5 +241,61 @@ mod tests {
         o.piranhas = EnemyMode::Wild;
         o.cannons = EnemyMode::Wild;
         assert!(!should_apply(&o));
+    }
+
+    fn synthetic_rom() -> crate::rom::Rom {
+        let mut data = vec![0u8; 393232];
+        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
+        data[4] = 16;
+        data[5] = 16;
+        data[6] = 0x40;
+        data[SMALL_PIRANHA_INIT_TAIL..SMALL_PIRANHA_INIT_TAIL + 3]
+            .copy_from_slice(&[0x95, 0x91, 0x60]);
+        data[BIG_PIRANHA_INIT_TAIL..BIG_PIRANHA_INIT_TAIL + 4]
+            .copy_from_slice(&[0xFE, 0xF7, 0x7F, 0x60]);
+        data[SMALL_PIRANHA_HIT_CALL..SMALL_PIRANHA_HIT_CALL + 3]
+            .copy_from_slice(&[0x20, 0xBA, 0xD1]);
+        crate::rom::Rom::from_bytes_lax(&data, true).unwrap()
+    }
+
+    #[test]
+    fn hit_skip_patch_rewrites_call_site_and_thunk() {
+        let mut rom = synthetic_rom();
+
+        let mut opts = opts_off();
+        opts.piranhas = EnemyMode::Wild;
+        opts.ground = EnemyMode::Wild;
+
+        apply(&mut rom, &opts);
+
+        let [jmp_lo, jmp_hi] = PIRANHA_HIT_SMALL_CPU.to_le_bytes();
+        assert_eq!(
+            rom.read_range(SMALL_PIRANHA_HIT_CALL, 3),
+            &[0x4C, jmp_lo, jmp_hi],
+        );
+
+        let [ret_lo, ret_hi] = SMALL_PIRANHA_HIT_RETURN_CPU.to_le_bytes();
+        assert_eq!(
+            rom.read_range(FS_PIRANHA_HIT_SMALL, 18),
+            &[
+                0xB5, 0xA3,             // LDA Y,X
+                0x38,                   // SEC
+                0xF5, 0x9A,             // SBC Var5,X
+                0x18,                   // CLC
+                0x69, 0x0A,             // ADC #$0A
+                0xC9, 0x15,             // CMP #$15
+                0x90, 0x03,             // BCC +3
+                0x20, 0xBA, 0xD1,       // JSR Player_HitEnemy
+                0x4C, ret_lo, ret_hi,   // JMP $A797
+            ],
+        );
+    }
+
+    #[test]
+    fn hit_skip_patch_is_gated() {
+        let mut rom = synthetic_rom();
+        let opts = opts_off();
+        apply(&mut rom, &opts);
+        assert_eq!(rom.read_range(SMALL_PIRANHA_HIT_CALL, 3), &[0x20, 0xBA, 0xD1]);
     }
 }

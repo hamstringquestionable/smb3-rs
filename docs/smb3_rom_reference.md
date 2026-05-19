@@ -2693,6 +2693,45 @@ JMP + dead-byte filler so the timer reload table at `$B777` stays put.
 In both cases `$7F` is `Objects_Var4` — confirmed by the dispatch instruction
 `LDA <$7F,X / AND #$03` at the top of `ObjNorm_Piranha` in both banks.
 
+**Per-frame hitbox skip (distance-based gate around the hidden state):**
+
+The visibility prime above fixes spawn, but the state machine cycles back to
+HideInPipe every period. During that hide phase the sprite is skipped but the
+per-frame `JSR Player_HitEnemy` keeps firing — for vanilla pipe placements
+the hitbox is inside the pipe geometry so it never matters, but a wild
+piranha in mid-level becomes an invisible damaging spot.
+
+`ObjNorm_BigPiranha` (PRG004, `$B77B`) already short-circuits state 0:
+`AND #$03 / BNE main / LDA #$FF / STA SprHVis,X / JMP $B79D`. The
+`JSR Player_HitEnemy` at `$B79A` is unreachable from state 0, so no patch is
+needed for `0x7D / 0x7F`.
+
+`ObjNorm_Piranha` (PRG005, `$A661`) runs `JSR Player_HitEnemy` every frame
+regardless of orientation or state. The thunk gates the call on the
+piranha's distance from its hidden-position Var5: skip when
+`|Objects_Y - Objects_Var5| < 10 px`. That window covers the fully-hidden
+state plus ~10 frames of safety at each transition (Retract end /
+Emerge start). `Piranha_Retract` (`$A7C4`) advances Y by `+1` per frame, so
+10 px ≈ 10 frames. The piranha's emerge height is ~24 px so the Attack
+state sits well outside the window — no risk of unintended skipping when
+fully extended.
+
+Distance is orientation-agnostic — upright piranhas have `Y < Var5` (large
+positive wrap, ≥ $F6), ceiling piranhas have `Y > Var5` (small positive,
+< $0A). The thunk uses a two-tail compare and needs no FlipBits dispatch.
+
+| Item | Value |
+|------|-------|
+| Patch site (file) | **0x0A7A4** (CPU `$A794`) — bytes `20 BA D1` → `4C CD BF` |
+| Thunk (file) | **0x0BFDD** (CPU `$BFCD`), 18 bytes: `B5 A3 38 F5 9A 18 69 0A C9 15 90 03 20 BA D1 4C 97 A7` |
+| Effect | `LDA Y,X / SEC / SBC Var5,X / CLC / ADC #$0A / CMP #$15 / BCC skip / JSR $D1BA / skip: JMP $A797` |
+| Math | Bias `Y - Var5` by `+10` so the window `[-10, +10]` maps onto `[0, 20]`; a single `BCC #$15` catches both upright (`Y < Var5`) and ceiling (`Y > Var5`) orientations. |
+
+`Objects_Y = $A3,X`, `Objects_Var5 = $9A,X` — verified from `Piranha_Retract`
+at `$A7C4` (`LDA $A3,X / ADD #$01 / ... / CMP $9A,X`).
+
+Same wild+other-wild gate as the visibility patch above.
+
 ### Koopaling Stomp Threshold (PRG001)
 
 The Koopalings (object ID `$0E`) use `Objects_Var4` (zero-page `$7F–$83`, indexed by
