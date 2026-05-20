@@ -714,8 +714,14 @@ pub(super) const BETA_LEVELS: &[BetaLevel] = &[
 /// pointers, wrong start positions, and misaligned tile commands that would
 /// cause visual corruption or softlocks. β7 and β8 need no fixed patches.
 pub(super) const BETA_PATCHES: &[(usize, u8)] = &[
-    // β1 (ts1 $A74C) — 3 patches
-    (0x1E785, 0x48), (0x1E787, 0x05), (0x1E916, 0x08),
+    // β1 (ts1 $A74C) — 4 patches
+    // Swap the row-7 wood block and row-8 wood-leaf in the 3-block stack at
+    // scr=1 col=13 so the powerup sits on top of the stack. Without the swap,
+    // a roll to flower spawns the flower trapped between two wood blocks.
+    // byte0 0x27→0x28 sinks the top wood block to row 8; byte0 0x47 (instead
+    // of 0x48) raises the leaf to row 7. fixed_idx stays 37 (wood-leaf, tile
+    // $74) since the row bits don't enter the dispatch math.
+    (0x1E782, 0x28), (0x1E785, 0x47), (0x1E787, 0x05), (0x1E916, 0x08),
     // β2 (ts1 $A9AC) — 9 patches (header: alt_layout/alt_objects redirect + command fixes)
     (0x1E9BC, 0x48), (0x1E9BD, 0xBE), (0x1E9BE, 0x84),
     (0x1E9E5, 0x71), (0x1E9E6, 0x80),
