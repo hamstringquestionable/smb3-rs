@@ -16,6 +16,8 @@ Modes:
   python3 tools/rom_map.py [rom] --level 3-2        # look up a level by name
   python3 tools/rom_map.py [rom] --level 7F1        # fortress lookup
   python3 tools/rom_map.py [rom] --level 8B         # Bowser Castle
+  python3 tools/rom_map.py [rom] --level β1         # beta (unreferenced) stage
+  python3 tools/rom_map.py [rom] --level beta-1     # ASCII alias for β1
   python3 tools/rom_map.py [rom] --tile 0xE6        # look up a world-map tile byte
   python3 tools/rom_map.py [rom] --tile 45          # CHR pattern, behavior, palette
   python3 tools/rom_map.py [rom] --check-dispatches # validate 4-byte dispatch tables
@@ -65,6 +67,71 @@ def _parse_tuple(rs_src, name):
     return (int(m.group(1)), int(m.group(2)))
 
 
+def _parse_beta_levels(rs_src):
+    """Parse `BETA_LEVELS: &[BetaLevel] = &[ BetaLevel { ... }, ... ];`.
+
+    Returns list of dicts with keys: tileset, obj_lo, obj_hi, lay_lo, lay_hi, name.
+    Field order matches the struct definition in rom_data.rs. `name` decodes
+    Rust's `\\u{HHHH}` escapes (e.g. β = U+03B2).
+    """
+    m = re.search(
+        r"const\s+BETA_LEVELS\s*:\s*&\[BetaLevel\]\s*=\s*&\[(.*?)\];",
+        rs_src,
+        re.DOTALL,
+    )
+    if not m:
+        raise RuntimeError("Could not parse BETA_LEVELS from rom_data.rs")
+    pattern = re.compile(
+        r"BetaLevel\s*\{\s*"
+        r"tileset:\s*(\d+)\s*,\s*"
+        r"obj_lo:\s*(0x[0-9A-Fa-f]+|\d+)\s*,\s*"
+        r"obj_hi:\s*(0x[0-9A-Fa-f]+|\d+)\s*,\s*"
+        r"lay_lo:\s*(0x[0-9A-Fa-f]+|\d+)\s*,\s*"
+        r"lay_hi:\s*(0x[0-9A-Fa-f]+|\d+)\s*,\s*"
+        r'name:\s*"([^"]+)"\s*,?\s*'
+        r"\}",
+        re.DOTALL,
+    )
+    entries = []
+    for ts, ol, oh, ll, lh, name_raw in pattern.findall(m.group(1)):
+        name = re.sub(
+            r"\\u\{([0-9A-Fa-f]+)\}",
+            lambda x: chr(int(x.group(1), 16)),
+            name_raw,
+        )
+        entries.append({
+            "tileset": int(ts, 0),
+            "obj_lo": int(ol, 0),
+            "obj_hi": int(oh, 0),
+            "lay_lo": int(ll, 0),
+            "lay_hi": int(lh, 0),
+            "name": name,
+        })
+    return entries
+
+
+def _parse_beta_patches(rs_src):
+    """Parse `BETA_PATCHES: &[(usize, u8)] = &[ (off, byte), ... ];` (hex literals OK).
+
+    Skips Rust line-comments so commented-out patch tuples are not picked up.
+    """
+    m = re.search(
+        r"const\s+BETA_PATCHES\s*:.*?=\s*&\[(.*?)\];",
+        rs_src,
+        re.DOTALL,
+    )
+    if not m:
+        raise RuntimeError("Could not parse BETA_PATCHES from rom_data.rs")
+    body = re.sub(r"//[^\n]*", "", m.group(1))
+    return [
+        (int(a, 0), int(b, 0))
+        for a, b in re.findall(
+            r"\(\s*(0x[0-9A-Fa-f]+|\d+)\s*,\s*(0x[0-9A-Fa-f]+|\d+)\s*\)",
+            body,
+        )
+    ]
+
+
 with open(_ROM_DATA_RS) as _f:
     _RS_SRC = _f.read()
 
@@ -79,7 +146,10 @@ PRG_BANK_SIZE = 0x2000  # 8 KB
 PRG_OFFSET = 0x10       # after 16-byte iNES header
 
 # Level data regions by tileset (file offset ranges + extra-byte dispatch info)
-# From powerups.rs
+# From powerups.rs / rom_data.rs::LEVEL_DATA_REGIONS.
+# `randomize_note_wood` mirrors the Rust struct field — in TS2 / TS9 the same
+# group-2 byte2 shapes map to bridge / desert decoration tiles instead of
+# note/wood powerups, so they must not be flagged or shuffled.
 LEVEL_DATA_REGIONS = [
     {
         "name": "Underground (TS14)",
@@ -87,6 +157,7 @@ LEVEL_DATA_REGIONS = [
         "start": 0x1A587,
         "end": 0x1C005,
         "extra_byte_dispatches": {35, 36, 37, 38, 39, 40, 41, 42, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71},
+        "randomize_note_wood": True,
     },
     {
         "name": "Plains (TS1)",
@@ -94,6 +165,7 @@ LEVEL_DATA_REGIONS = [
         "start": 0x1E512,
         "end": 0x20005,
         "extra_byte_dispatches": {11, 12, 35, 36, 37, 38, 39, 40, 41, 42},
+        "randomize_note_wood": True,
     },
     {
         "name": "Hilly (TS3)",
@@ -101,6 +173,7 @@ LEVEL_DATA_REGIONS = [
         "start": 0x20587,
         "end": 0x22005,
         "extra_byte_dispatches": {35, 36, 37, 38, 39, 40, 41, 42, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71},
+        "randomize_note_wood": True,
     },
     {
         "name": "Ice/Sky (TS4/12)",
@@ -108,6 +181,7 @@ LEVEL_DATA_REGIONS = [
         "start": 0x227E0,
         "end": 0x24005,
         "extra_byte_dispatches": {0, 35, 36, 37, 38, 39, 40, 41, 42, 54, 60, 112},  # +54 Muncher17
+        "randomize_note_wood": True,
     },
     {
         "name": "Pipe/Water (TS7)",
@@ -115,6 +189,7 @@ LEVEL_DATA_REGIONS = [
         "start": 0x24BA7,
         "end": 0x26005,
         "extra_byte_dispatches": {35, 36, 37, 38, 39, 40, 41, 42, 49, 57},  # +49 OrangeBlock
+        "randomize_note_wood": True,
     },
     {
         "name": "Cloudy/Giant/Plant (TS5/11/13)",
@@ -122,6 +197,7 @@ LEVEL_DATA_REGIONS = [
         "start": 0x26A6F,
         "end": 0x28C05,
         "extra_byte_dispatches": {13, 35, 36, 37, 38, 39, 40, 41, 42, 45, 46, 48, 51},
+        "randomize_note_wood": True,
     },
     {
         "name": "Desert (TS9)",
@@ -129,6 +205,7 @@ LEVEL_DATA_REGIONS = [
         "start": 0x28F36,
         "end": 0x2A005,
         "extra_byte_dispatches": {10, 11, 12, 13, 35, 36, 37, 38, 39, 40, 41, 42},
+        "randomize_note_wood": False,  # shapes 1-5 = palms/cacti in TS9
     },
     {
         "name": "Dungeon (TS2)",
@@ -136,6 +213,7 @@ LEVEL_DATA_REGIONS = [
         "start": 0x2A7F7,
         "end": 0x2C005,
         "extra_byte_dispatches": {13, 14, 35, 36, 37, 38, 39, 40, 41, 42, 46, 47, 48, 57, 95, 96},  # +13 SolidBrick +14 BrightDiamondLong +57 BrightDiamond +95,96 Group6
+        "randomize_note_wood": False,  # shapes 1-2 = CCBridge, 3-7 = TopDecoBlocks in TS2
     },
     {
         "name": "Ship (TS10)",
@@ -143,6 +221,7 @@ LEVEL_DATA_REGIONS = [
         "start": 0x2EC07,
         "end": 0x30005,
         "extra_byte_dispatches": {1, 2, 35, 36, 37, 38, 39, 40, 41, 42, 48, 51},  # 49 (Crate) is 3-byte, NOT 4-byte
+        "randomize_note_wood": True,
     },
 ]
 
@@ -329,6 +408,12 @@ DEST_TO_WORLD = {
 FORTRESS_ENTRIES = _parse_tuple_list(_RS_SRC, "FORTRESS_ENTRIES")
 AIRSHIP_ENTRIES_SET = _parse_tuple_list(_RS_SRC, "AIRSHIP_ENTRIES")
 BOWSER_ENTRY_PAIR = _parse_tuple(_RS_SRC, "BOWSER_ENTRY")
+
+# Beta (unreferenced) levels — parsed from rom_data.rs::BETA_LEVELS.
+# These have no pointer-table entry; the randomizer injects them when
+# `include_beta_stages` is enabled. obj_ptr is borrowed from a vanilla level.
+BETA_LEVELS = _parse_beta_levels(_RS_SRC)
+BETA_PATCHES = _parse_beta_patches(_RS_SRC)
 
 # Map transition entries
 MAP_TRANSITIONS_SET = set()
@@ -566,7 +651,12 @@ def parse_level_commands(rom, offset, region):
             fixed_idx = ((byte0 & 0xE0) >> 1) + byte2
             cmd["fixed_idx"] = fixed_idx
 
-            # Check if it's a powerup block (group 1, indices 16-39)
+            # Group 1 (0x20): byte2 0..15 encode Q-block / brick variants (and
+            # munchers / invis blocks) — see POWER_NAMES.
+            # Group 2 (0x40): byte2 1..3 = note blocks (flower/leaf/star),
+            # byte2 4..6 = wood blocks (flower/leaf/star). These are powerups
+            # *only* in regions where `randomize_note_wood` is true (in TS2/TS9
+            # the same shapes are bridges / desert decorations).
             if group == 1 and 16 <= fixed_idx < 16 + len(LL_POWER_BLOCKS):
                 power_idx = fixed_idx - 16
                 cmd["powerup"] = True
@@ -580,6 +670,20 @@ def parse_level_commands(rom, offset, region):
                     cmd["randomize_class"] = "qblock"
                 elif byte2 in (0x06, 0x07, 0x08, 0x0B):
                     cmd["randomize_class"] = "brick"
+            elif (group == 2 and 1 <= byte2 <= 6
+                  and region.get("randomize_note_wood", False)
+                  and 16 <= fixed_idx < 16 + len(LL_POWER_BLOCKS)):
+                power_idx = fixed_idx - 16
+                cmd["powerup"] = True
+                cmd["tile_id"] = LL_POWER_BLOCKS[power_idx]
+                cmd["byte2_offset"] = i + 2
+                cmd["protected"] = (i + 2) in PROTECTED_POWERUP_OFFSETS
+                if 1 <= byte2 <= 3:
+                    cmd["randomize_class"] = "note"
+                    cmd["power_name"] = ["NOTEFLOWER", "NOTELEAF", "NOTESTAR"][byte2 - 1]
+                else:
+                    cmd["randomize_class"] = "wood"
+                    cmd["power_name"] = ["WOODFLOWER", "WOODLEAF", "WOODSTAR"][byte2 - 4]
         else:
             cmd["type"] = "variable"
             var_type = byte2 >> 4
@@ -2344,12 +2448,71 @@ def check_dispatch_tables(rom):
         print(f"  {GREEN}No suspect missing dispatches{RESET}")
 
 
+def enumerate_beta_entries(rom):
+    """Synthesize entry dicts for the 9 beta (unreferenced) levels.
+
+    Beta levels have no pointer-table slot — they are injected by the
+    randomizer when `include_beta_stages` is enabled. The returned dicts
+    mirror the shape of vanilla entries enough for `render_level_lookup`,
+    but `type` is set to ``"beta"`` and grid/screen fields are placeholders.
+    """
+    out = []
+    for i, bl in enumerate(BETA_LEVELS):
+        obj_ptr = bl["obj_lo"] | (bl["obj_hi"] << 8)
+        lay_ptr = bl["lay_lo"] | (bl["lay_hi"] << 8)
+        entry = {
+            "index": i,
+            "obj_ptr": obj_ptr,
+            "lay_ptr": lay_ptr,
+            "tileset": bl["tileset"],
+            "type": "beta",
+            "grid_row": -1,
+            "grid_col": -1,
+            "screen": -1,
+            "col_in_screen": -1,
+            "row_nib": -1,
+        }
+        lay_file = layout_file_offset(lay_ptr, bl["tileset"])
+        if lay_file is not None:
+            entry["layout_file_offset"] = lay_file
+            if lay_file + 4 < len(rom):
+                entry["screens"] = (rom[lay_file + 4] & 0x0F) + 1
+        out.append((bl["name"], entry))
+    return out
+
+
+def beta_patches_for_entry(entry):
+    """Return BETA_PATCHES that fall within this beta level's layout range.
+
+    Range is [lay_file_offset, next_beta_lay_file_offset) where beta levels
+    are sorted by file offset (not by index — banks differ across tilesets).
+    """
+    lay_off = entry.get("layout_file_offset")
+    if lay_off is None:
+        return []
+    starts = []
+    for bl in BETA_LEVELS:
+        lp = bl["lay_lo"] | (bl["lay_hi"] << 8)
+        s = layout_file_offset(lp, bl["tileset"])
+        if s is not None:
+            starts.append(s)
+    starts = sorted(set(starts))
+    try:
+        idx = starts.index(lay_off)
+    except ValueError:
+        return []
+    end = starts[idx + 1] if idx + 1 < len(starts) else lay_off + 0x2000
+    return [(o, b) for o, b in BETA_PATCHES if lay_off <= o < end]
+
+
 def resolve_level_name(rom, query):
     """Resolve a human level name to a list of (world_idx, entry) matches.
 
     Accepted formats:
-      3-2, 3F, 3F1, 3F2, 3A, 8B, 8-Tank, 8-Navy, 2-QS, 2-Pyr, 5-SC, 7-P1, 7-P2
+      3-2, 3F, 3F1, 3F2, 3A, 8B, 8-Tank, 8-Navy, 2-QS, 2-Pyr, 5-SC, 7-P1, 7-P2,
+      β1..β9 (also accepted: beta1, beta-1)
     Returns list of (world_idx, entry_dict, canonical_name) tuples.
+    For beta levels world_idx is ``None``.
     """
     q = query.strip().upper().replace(" ", "")
 
@@ -2386,23 +2549,44 @@ def resolve_level_name(rom, query):
         for name, entry, pos, tile in world_entries:
             all_names.append((name.upper(), wi, entry, name))
 
+    # Beta levels (no world). Register each under canonical name plus
+    # ASCII aliases so `beta1`, `beta-1`, `B1`-via-Greek-Β1 all work.
+    for cname, entry in enumerate_beta_entries(rom):
+        n_idx = entry["index"] + 1
+        aliases = [cname, f"beta{n_idx}", f"beta-{n_idx}"]
+        for a in aliases:
+            all_names.append((a.upper(), None, entry, cname))
+
     # Try exact match first
     matches = [(wi, e, cn) for (n, wi, e, cn) in all_names if n == q]
     if matches:
-        return matches
+        return _dedupe_matches(matches)
 
     # Try with dash removed (e.g., "3F1" matches "3-F1" or "3F1")
     q_nodash = q.replace("-", "")
     matches = [(wi, e, cn) for (n, wi, e, cn) in all_names if n.replace("-", "") == q_nodash]
     if matches:
-        return matches
+        return _dedupe_matches(matches)
 
     # Try suffix match for override names (e.g., "TANK" matches "8-TANK")
     matches = [(wi, e, cn) for (n, wi, e, cn) in all_names if q in n]
     if matches:
-        return matches
+        return _dedupe_matches(matches)
 
     return []
+
+
+def _dedupe_matches(matches):
+    """Drop duplicate (wi, entry, cname) triples introduced by alias registration."""
+    seen = set()
+    out = []
+    for wi, e, cn in matches:
+        key = (wi, id(e), cn)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((wi, e, cn))
+    return out
 
 
 def parse_enemy_entries(rom, obj_cpu_ptr):
@@ -2449,12 +2633,92 @@ def parse_enemy_entries(rom, obj_cpu_ptr):
     return entries
 
 
+def _render_beta_entry(rom, cname, entry):
+    """Render the lookup output for a beta (unreferenced) level.
+
+    Beta levels lack a pointer-table slot, world position, sub-area trace,
+    and powerup index. We show identity, header, enemies (from the borrowed
+    obj_ptr), and any BETA_PATCHES that target this layout.
+    """
+    obj = entry["obj_ptr"]
+    lay = entry["lay_ptr"]
+    ts = entry["tileset"]
+    lay_off = entry.get("layout_file_offset")
+    screens = entry.get("screens")
+
+    lines = []
+    lines.append(f"{YELLOW}{cname}{RESET}  (beta stage, no pointer-table entry)")
+    extras = f"  Lay: 0x{lay:04X}"
+    if lay_off is not None:
+        extras += f" (file 0x{lay_off:05X})"
+    if screens is not None:
+        extras += f"  Screens: {screens}"
+    lines.append(f"  Tileset: {ts}  Obj: 0x{obj:04X}{extras}")
+    lines.append(f"  {DIM}obj_ptr is borrowed from a vanilla level — enemy "
+                 f"data isn't unique to this beta{RESET}")
+
+    # Header
+    if lay_off is not None:
+        try:
+            h = parse_level_header(rom, lay_off)
+            lines.append("")
+            lines.append(f"  {WHITE}Header (10 bytes @ 0x{lay_off:05X}):{RESET}")
+            lines.append(f"    bytes: {' '.join(f'{b:02X}' for b in h['bytes'])}")
+            lines.append(
+                f"    screens={h['screens']}  bg_pal={h['bg_palette']}  "
+                f"obj_pal={h['obj_palette']}  music={h['music']}  timer={h['timer']}"
+            )
+            lines.append(
+                f"    alt_layout=0x{h['alt_layout']:04X}  "
+                f"alt_objects=0x{h['alt_objects']:04X}  "
+                f"alt_tileset={h['alt_tileset']}"
+            )
+        except Exception:
+            pass
+
+    # Enemies
+    enemies = parse_enemy_entries(rom, obj)
+    lines.append("")
+    lines.append(f"  {WHITE}Enemies (obj 0x{obj:04X}, {len(enemies)} entries):{RESET}")
+    if enemies:
+        for e in enemies:
+            name = e.get("name", f"0x{e['obj_id']:02X}")
+            cls = e.get("class", "")
+            boss = e.get("boss", "")
+            tags = []
+            if cls:
+                tags.append(f"class:{cls}")
+            if boss:
+                tags.append(f"{RED}BOSS:{boss}{RESET}")
+            tag_str = f"  ({', '.join(tags)})" if tags else ""
+            lines.append(f"    0x{e['offset']:05X}: {name} "
+                         f"scr={e['screen']} col={e['x_col']} row={e['y_row']}"
+                         f"{tag_str}")
+    else:
+        lines.append("    (none)")
+
+    # BETA_PATCHES for this entry's layout range
+    patches = beta_patches_for_entry(entry)
+    if patches:
+        lines.append("")
+        lines.append(f"  {WHITE}Layout fixes applied (BETA_PATCHES, "
+                     f"{len(patches)} bytes):{RESET}")
+        for off, b in patches:
+            old = rom[off] if 0 <= off < len(rom) else 0
+            rel = off - lay_off if lay_off is not None else 0
+            lines.append(f"    0x{off:05X} (lay+0x{rel:03X}): "
+                         f"0x{old:02X} -> 0x{b:02X}")
+
+    lines.append("")
+    return lines
+
+
 def render_level_lookup(rom, query):
     """Look up a level by name and render its details."""
     matches = resolve_level_name(rom, query)
     if not matches:
         return f"No level found matching '{query}'.\n" \
-               f"Examples: 1-1, 3-2, 3F1, 5A, 8B, 8-Tank, 2-QS, 7-P1"
+               f"Examples: 1-1, 3-2, 3F1, 5A, 8B, 8-Tank, 2-QS, 7-P1, β1"
 
     # Build level groups for sub-area + powerup info
     all_region_levels = []
@@ -2479,13 +2743,17 @@ def render_level_lookup(rom, query):
 
     lines = []
     for wi, entry, cname in matches:
-        w = wi + 1
         eidx = entry["index"]
         obj = entry["obj_ptr"]
         lay = entry["lay_ptr"]
         ts = entry["tileset"]
         etype = entry["type"]
 
+        if etype == "beta":
+            lines.extend(_render_beta_entry(rom, cname, entry))
+            continue
+
+        w = wi + 1
         lines.append(f"{YELLOW}{cname}{RESET}  (World {w}, entry {eidx}, type: {etype})")
         lines.append(f"  Tileset: {ts}  Obj: 0x{obj:04X}  Lay: 0x{lay:04X}")
         lines.append(f"  Grid: row={entry['grid_row']}, col={entry['grid_col']}")

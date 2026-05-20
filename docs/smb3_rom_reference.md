@@ -171,6 +171,38 @@ ROM offset: `LL_PowerBlocks` table at **0x1CAD4** (24 bytes, PRG014).
 across all tilesets** — group 1 fixed-size generators always dispatch to the same handler
 regardless of tileset. This means byte2 values 0x00-0x0F have identical meaning in every level.
 
+##### Group 2 Fixed-Size: Note and Wood Powerup Blocks
+
+Group 2 fixed-size commands (`byte0 & 0xE0 == 0x40`) place specific tiles whose IDs
+appear in `LL_PowerBlocks` at indices 16-23, so the runtime "hit a powerup tile" check
+spawns an item just as it does for group 1. The same dispatch math applies
+(`fixed_idx = ((byte0 & 0xE0) >> 1) + byte2`), so group-2 byte2 in 0x00-0x07 maps to
+`fixed_idx` 32-39.
+
+In tilesets where shapes 1-6 resolve to note/wood block tiles (most tilesets — see
+`randomize_note_wood` per region in `rom_data.rs`), the layout is:
+
+| byte2 | fixed_idx | Tile ID | Visual | Item |
+|-------|-----------|---------|--------|------|
+| 0x01 | 33 | $2F | Note block | Mushroom/Flower |
+| 0x02 | 34 | $30 | Note block | Mushroom/Leaf |
+| 0x03 | 35 | $31 | Note block | Star |
+| 0x04 | 36 | $73 | Wood block (`?`) | Mushroom/Flower |
+| 0x05 | 37 | $74 | Wood block (`?`) | Mushroom/Leaf |
+| 0x06 | 38 | $75 | Wood block (`?`) | Star |
+
+The canonical example is 1-3's "wood-block-with-leaf" at file offset **0x1EE95**
+(`57 3C 05` → scr=3, col=12, row=7), which empirically produces the wood-textured
+`?` block that drops a leaf. The randomizer's `powerups.rs` shuffles these within
+`NOTE_SHAPES = {1, 2, 3}` and `WOOD_SHAPES = {4, 5, 6}`.
+
+**Exceptions** (`randomize_note_wood: false` regions):
+- **TS2 (Dungeon):** shapes 1-2 = `CCBridge`, shapes 3-7 = `TopDecoBlocks` decorations.
+- **TS9 (Desert):** shapes 1-5 = palms / cacti decorations.
+
+In these tilesets the dispatch produces non-powerup tiles, so swapping byte2 would
+corrupt level geometry.
+
 #### Variable-Size Generators
 
 Dispatch index = `base_table[group] + (byte2 >> 4) - 1`
