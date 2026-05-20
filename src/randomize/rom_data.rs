@@ -716,11 +716,16 @@ pub(super) const BETA_LEVELS: &[BetaLevel] = &[
 pub(super) const BETA_PATCHES: &[(usize, u8)] = &[
     // β1 (ts1 $A74C) — 3 patches
     (0x1E785, 0x48), (0x1E787, 0x05), (0x1E916, 0x08),
-    // β2 (ts1 $A9AC) — 7 patches (header: alt_layout/alt_objects redirect + command fixes)
+    // β2 (ts1 $A9AC) — 9 patches (header: alt_layout/alt_objects redirect + command fixes)
     (0x1E9BC, 0x48), (0x1E9BD, 0xBE), (0x1E9BE, 0x84),
     (0x1E9E5, 0x71), (0x1E9E6, 0x80),
-    // NOTE: (0x1EA02, 0x49) removed — crashes; moves cmd 20 to screen 4 which is
-    // past course end page. Copied from a working ROM but crashes here for unknown reasons.
+    // Convert the WOODBLOCKBOUNCE at scr=1 col=9 row=9 into a true wood-block
+    // powerup (group 2 fixed, byte2=0x05 = wood-leaf, tile $74). byte0 flips
+    // 0x29→0x49 (group 1→2, row=9 unchanged) and byte2 flips 0x70→0x05.
+    // The byte0 change alone was tried previously and crashed — leaving byte2
+    // at 0x70 reinterprets it as variable dispatch 36 in group 2, which is a
+    // 4-byte command in Plains, mis-aligning the rest of the level.
+    (0x1EA02, 0x49), (0x1EA04, 0x05),
     (0x1EA6F, 0x0D), (0x1EB34, 0x06),
     // β3 (ts3 $B0DD) — 2 patches
     (0x2113F, 0x00), (0x212BA, 0x00),
