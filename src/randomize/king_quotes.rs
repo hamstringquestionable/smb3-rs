@@ -492,6 +492,14 @@ const QUOTES: &[[&str; 6]] = &[
         "playing to",
         "not lose...",
     ],
+    [
+        "I bet you wish this",
+        "was a Varia Suit",
+        "...",
+        "oops wrong",
+        "randomizer!",
+        "",
+    ],
 ];
 
 /// Suit-specific quotes: shown when Mario visits the king wearing frog suit.
