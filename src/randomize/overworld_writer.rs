@@ -961,12 +961,11 @@ fn write_fortress_fx(
         rom.write_byte(FX_VADDR_H + slot, (vram >> 8) as u8);
         rom.write_byte(FX_VADDR_L + slot, (vram & 0xFF) as u8);
 
-        // Map location.
-        // Bit 0 of the row byte is the poof-only flag: when set, the screen
-        // check skips the VRAM tile write (so the tile doesn't appear over a
-        // blackout effect) but still plays poof sprites and updates map data.
-        let on_blackout = world_idx == 7 && screen == 2; // W8 screen 2
-        let row_byte = ((ob_row + 2) as u8) << 4 | (on_blackout as u8);
+        // Map location. The engine at $C99B does `ORA $C845,X` to fold this
+        // byte into the map-data write offset, so the low nibble MUST be 0 —
+        // anything in bits 0..3 corrupts the destination column and the
+        // replacement tile lands in the wrong cell.
+        let row_byte = ((ob_row + 2) as u8) << 4;
         rom.write_byte(rom_data::FX_MAP_LOC_ROW + slot, row_byte);
         rom.write_byte(
             rom_data::FX_MAP_LOC + slot,
