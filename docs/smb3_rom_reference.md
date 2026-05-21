@@ -2002,6 +2002,16 @@ PRG030 is the fixed bank, always mapped at $8000–$9FFF. Free space starts at 0
 
 **`FortressFX_MapLocationRow` encoding:** `(grid_row + 2) << 4`
 
+**CRITICAL — low nibble must remain 0.** The engine's map-data tile write at
+`$C99B` (file `0x149AB`) is `ORA $C845,X`: it ORs the whole row byte into the
+in-screen column index when computing the destination offset for the
+replacement tile. Any bit set in `FortressFX_MapLocationRow & 0x0F` corrupts
+the column — for even `col_in_screen` values with bit 0 set, the tile lands one
+column right of the lock, leaving the original lock tile in place. The
+animation plays, `Map_Completions` is updated correctly (separate table), so
+the symptom is "lock breaks visually but stays solid until the world is
+exited and re-entered." Do not stash side-channel flags in this byte.
+
 **`FortressFX_MapLocation` encoding:** `(col_in_screen << 4) | screen`
 
 **`FortressFX_MapCompIdx` (0x147EF):** Each FX slot has a 2-byte entry: the first byte is
