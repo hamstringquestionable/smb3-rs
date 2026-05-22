@@ -175,6 +175,10 @@ pub(crate) fn write_overworld<R: Rng>(
         write_pointer_entries(rom, wi, built, wa, data, &mut hb_fallback_iter);
         write_fortress_fx(rom, wi, built, wa, data, &mut fx_slot);
         write_pipe_dests(rom, wi, wa);
+        // For swapped worlds, rewrite the Airship + Start entry coordinates
+        // (the main writer pass leaves both untouched) before the resort so
+        // the engine's runtime lookup finds the right entry per tile.
+        super::start_airship_swap::write_swapped_world_entries(rom, wi, data.catalog);
         pipe_helpers::resort_pointer_table(rom, wi);
         // Do not sync map object sprite positions: the overworld builder never
         // moves MapObject entries (W7 piranhas), so vanilla sprite positions are
@@ -184,6 +188,12 @@ pub(crate) fn write_overworld<R: Rng>(
 
     write_w8_sprites(rom, &w8_sprite_positions);
     patch_fortress_fx_screen_check(rom);
+
+    // Apply engine-side scaffolding for the per-world start ↔ airship swap.
+    // No-op when the option was off (no worlds got flagged in pick_swaps).
+    if data.catalog.start_airship_swapped.iter().any(|&b| b) {
+        super::start_airship_swap::write_engine_scaffolding(rom, data.catalog);
+    }
 }
 
 // ---------------------------------------------------------------------------

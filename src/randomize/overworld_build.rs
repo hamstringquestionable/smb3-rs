@@ -204,8 +204,12 @@ pub(crate) fn build<R: Rng>(
     // Step 0: redistribute fortresses
     let fort_counts = redistribute_fortresses(rng);
 
-    // Build patched grids once: clone pickup grids and restore airship/Bowser
-    // tiles (blanked during pickup but kept at vanilla positions).
+    // Build patched grids once: clone pickup grids and restore Airship/Bowser
+    // tiles (blanked during pickup but kept at vanilla positions). The Start
+    // tile is also restored here so that worlds where the start ↔ airship
+    // swap fired have the two tiles in their new (swapped) positions before
+    // BFS/lock placement runs. For un-swapped worlds the Start restore is a
+    // no-op rewrite of the same byte at its vanilla position.
     let mut patched_grids: Vec<Grid> = Vec::with_capacity(8);
     for wi in 0..8 {
         let mut grid = pickup.worlds[wi].grid.clone();
@@ -213,13 +217,17 @@ pub(crate) fn build<R: Rng>(
             if entry.world_idx != wi {
                 continue;
             }
-            if matches!(entry.kind, NodeKind::Airship | NodeKind::Bowser) {
+            if matches!(
+                entry.kind,
+                NodeKind::Airship | NodeKind::Bowser | NodeKind::Start
+            ) {
                 let (r, c) = entry.grid_pos;
                 if r < grid.rows && c < grid.cols {
                     grid.set(r, c, entry.tile);
                 }
             }
         }
+        super::start_airship_swap::swap_tiles_above(&mut grid, wi, catalog);
         patched_grids.push(grid);
     }
 

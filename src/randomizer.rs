@@ -188,6 +188,12 @@ pub struct Options {
     /// Include ~9 unreferenced beta levels in the overworld shuffle pool.
     #[serde(default)]
     pub include_beta_stages: bool,
+    /// Per-world (W1-W7) coin flip: when on, each world independently rolls
+    /// to swap Mario's start tile with the airship/castle tile. Mario spawns
+    /// at the vanilla airship coords; the level objective lives at the
+    /// vanilla start coords. W8 (Bowser's castle) never swaps.
+    #[serde(default)]
+    pub swap_start_airship: bool,
     // --- Per-class enemy tri-state toggles ---
     /// Ground-walking enemies (Goomba, Spiny, Spike, etc.)
     #[serde(default = "default_shuffle")]
@@ -357,14 +363,15 @@ impl Options {
             | (self.shuffle_airships as u8);
 
         // b3: hammer_breaks_bridges(7) starting_lives(6-5) fast_mushroom_house(4)
-        //     faster_tail_speed(3) no_game_over_penalty(2) reserved(1-0)
+        //     faster_tail_speed(3) no_game_over_penalty(2) swap_start_airship(1) reserved(0)
         // starting_lives shrank from a 7-bit clamped 1–99 to a 2-bit index
         // into {1, 5, 20, 99}, freeing bits 4-0 for future toggles.
         let b3 = ((self.hammer_breaks_bridges as u8) << 7)
             | (lives_to_idx(self.starting_lives) << 5)
             | ((self.fast_mushroom_house as u8) << 4)
             | ((self.faster_tail_speed as u8) << 3)
-            | ((self.no_game_over_penalty as u8) << 2);
+            | ((self.no_game_over_penalty as u8) << 2)
+            | ((self.swap_start_airship as u8) << 1);
 
         let b4 = (self.card_speed_clear as u8) << 7
             | (self.remove_n_cards as u8) << 6
@@ -523,6 +530,7 @@ impl Options {
             fast_mushroom_house: (b3 >> 4) & 1 != 0,
             faster_tail_speed: (b3 >> 3) & 1 != 0,
             no_game_over_penalty: (b3 >> 2) & 1 != 0,
+            swap_start_airship: (b3 >> 1) & 1 != 0,
             random_koopalings: (b10 >> 7) & 1 != 0,
             include_beta_stages: (b10 >> 6) & 1 != 0,
             hammer_breaks_bridges: (b3 >> 7) & 1 != 0,
@@ -614,6 +622,7 @@ impl Default for Options {
             shuffle_toad_houses: true,
             hands_levels: true,
             troll_pipes: true,
+            swap_start_airship: false,
             ground: EnemyMode::Shuffle,
             shell: EnemyMode::Shuffle,
             flying: EnemyMode::Shuffle,
@@ -748,7 +757,10 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     }
 
     rom.set_tag("overworld/builder");
-    let catalog = randomize::node_catalog::NodeCatalog::build(rom, options.include_beta_stages);
+    let mut catalog = randomize::node_catalog::NodeCatalog::build(rom, options.include_beta_stages);
+    if options.swap_start_airship {
+        randomize::start_airship_swap::pick_swaps(&mut catalog, &mut rng);
+    }
     let pickup = randomize::overworld_pickup::pick_up(
         rom,
         &catalog,
@@ -1166,6 +1178,7 @@ mod tests {
             shuffle_toad_houses: true,
             hands_levels: true,
             troll_pipes: true,
+            swap_start_airship: false,
             ground: EnemyMode::Wild,
             shell: EnemyMode::Wild,
             flying: EnemyMode::Wild,
@@ -1238,6 +1251,7 @@ mod tests {
             shuffle_toad_houses: false,
             hands_levels: false,
             troll_pipes: false,
+            swap_start_airship: false,
             ground: EnemyMode::Off,
             shell: EnemyMode::Off,
             flying: EnemyMode::Off,
@@ -1596,6 +1610,7 @@ mod tests {
             shuffle_toad_houses: false,
             hands_levels: false,
             troll_pipes: false,
+            swap_start_airship: false,
             ground: EnemyMode::Off,
             shell: EnemyMode::Off,
             flying: EnemyMode::Off,
@@ -1652,6 +1667,7 @@ mod tests {
             shuffle_toad_houses: true,
             hands_levels: true,
             troll_pipes: true,
+            swap_start_airship: false,
             ground: EnemyMode::Wild,
             shell: EnemyMode::Wild,
             flying: EnemyMode::Wild,
