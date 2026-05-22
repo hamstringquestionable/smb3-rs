@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""POC: swap start tile ↔ airship tile per world, +autoscroll +practice IPS.
+"""POC: swap start tile ↔ airship tile per world, optionally +practice IPS.
 
-Output: SMB3R_POC.nes
+Default output: SMB3R_POC.nes (with practice IPS applied, for emulator testing)
 
-Steps:
-  1. Load vanilla "Super Mario Bros. 3 (USA) (Rev 1).nes"
-  2. Apply autoscroll patches (extracted from src/randomize/autoscroll.rs)
-  3. Apply start↔airship swap for W1-W7 (W8 has no airship)
-  4. Apply smb3practice_SE.ips on top
-  5. Save SMB3R_POC.nes
+Use `--no-practice` to skip the practice IPS, producing SMB3R_POC_swaponly.nes.
+That swap-only ROM is intended as input to the Rust randomizer for the
+integration smoke test (`autoscroll::disable_autoscroll` substitutes for
+practice IPS's airship pointer redirects).
 """
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -18,7 +17,8 @@ ROOT = Path(__file__).resolve().parent.parent
 VANILLA = ROOT / "Super Mario Bros. 3 (USA) (Rev 1).nes"
 PRACTICE_IPS = ROOT / "smb3practice_SE.ips"
 AUTOSCROLL_JSON = Path("/tmp/autoscroll_patches.json")
-OUT = ROOT / "SMB3R_POC.nes"
+OUT_DEFAULT = ROOT / "SMB3R_POC.nes"
+OUT_SWAPONLY = ROOT / "SMB3R_POC_swaponly.nes"
 
 # --- World map metadata (from rom_map.json / rom_data.rs) ---
 
@@ -443,21 +443,33 @@ def apply_ips(buf, ips_path):
 
 
 def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--no-practice", action="store_true",
+                    help="Skip practice IPS — produce swap-only ROM "
+                         "(intended as input to Rust randomizer for "
+                         "integration smoke test).")
+    args = ap.parse_args()
+
     buf = bytearray(open(VANILLA, "rb").read())
     print(f"Loaded {VANILLA.name} ({len(buf)} bytes)")
 
-    # Practice patch must come FIRST: it claims PRG030 free-space at the
-    # same offsets SMB3R uses, and rewrites the airship pointer redirects
-    # at the same bytes autoscroll uses. Our swap then runs on top, so its
-    # tile-byte writes and pointer-table position updates win.
-    print("Step 1: practice IPS (base)")
-    apply_ips(buf, PRACTICE_IPS)
+    if args.no_practice:
+        out = OUT_SWAPONLY
+        print("Step 1: SKIPPED practice IPS (--no-practice)")
+    else:
+        out = OUT_DEFAULT
+        # Practice patch must come FIRST: it claims PRG030 free-space at the
+        # same offsets SMB3R uses, and rewrites the airship pointer redirects
+        # at the same bytes autoscroll uses. Our swap then runs on top, so its
+        # tile-byte writes and pointer-table position updates win.
+        print("Step 1: practice IPS (base)")
+        apply_ips(buf, PRACTICE_IPS)
 
     print("Step 2: start ↔ airship swap")
     apply_start_airship_swap(buf)
 
-    open(OUT, "wb").write(buf)
-    print(f"\nWrote {OUT} ({len(buf)} bytes)")
+    open(out, "wb").write(buf)
+    print(f"\nWrote {out} ({len(buf)} bytes)")
 
 
 if __name__ == "__main__":
