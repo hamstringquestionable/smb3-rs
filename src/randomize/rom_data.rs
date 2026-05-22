@@ -376,6 +376,39 @@ pub(super) const FX_WORLD_TABLE: usize = 0x14888;
 /// Row 0 = $80, row 1 = $40, ..., row 7 = $01.
 pub(super) const MAP_COMPLETE_BITS: [u8; 8] = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
 
+/// Vanilla `(world_idx, entry_idx)` pairs identifying levels whose enemy
+/// stream contains an in-level treasure chest (`OBJ_TREASURESET`, ID `$D6`).
+/// Chests yield inventory items (Music Box, Cloud, Warp Whistle, Star,
+/// P-Wing, Anchor, Hammer) as opposed to form-changing power-ups, which
+/// makes them player-visible "rewards" rather than power-up rolls.
+///
+/// The chest sub-area travels with the level data when the level pool
+/// shuffles, so this list is keyed by vanilla position and remains valid
+/// after shuffling. `is_chest_level` resolves a `CatalogEntry`'s vanilla
+/// position to a yes/no.
+///
+/// Membership notes:
+/// - 1F is a fortress and 8-Hnd1..3 are hand levels — both already
+///   excluded from the regular-level pool by other mechanisms. They are
+///   listed here for completeness so future consumers can rely on the
+///   list being a full enumeration of chest-bearing levels.
+pub(super) const CHEST_LEVELS: &[(usize, usize, &str)] = &[
+    (0, 11, "1F (Warp Whistle)"),
+    (2, 29, "3-7 (Cloud)"),
+    (4, 5,  "5-1 (Music Box)"),
+    (7, 5,  "8-Tank (Star)"),
+    (7, 14, "8-Hnd1 (chest)"),
+    (7, 15, "8-Hnd2 (chest)"),
+    (7, 16, "8-Hnd3 (chest)"),
+];
+
+/// True if the given vanilla `(world_idx, entry_idx)` is in [`CHEST_LEVELS`].
+pub(super) fn is_chest_level(world_idx: usize, entry_idx: usize) -> bool {
+    CHEST_LEVELS
+        .iter()
+        .any(|&(w, e, _)| w == world_idx && e == entry_idx)
+}
+
 // ---------------------------------------------------------------------------
 // Entry lookup tables
 // ---------------------------------------------------------------------------

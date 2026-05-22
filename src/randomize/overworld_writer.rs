@@ -323,12 +323,21 @@ fn assign_pool<R: Rng>(
     let mut level_pool: VecDeque<usize> = level_pool.into();
 
     // Troll pipes don't clear when beaten, so a slot stamped as a troll pipe
-    // can be replayed infinitely. The W8 Hand levels (8-Hnd1/2/3) are short
-    // bonus rooms that drop items, so we never assign them to troll-pipe slots
-    // — otherwise the player could farm items by re-entering the pipe.
-    let is_hand_level = |pi: usize| -> bool {
+    // can be replayed infinitely. We exclude two families of levels from the
+    // troll-pipe assignment pool:
+    //
+    //  - W8 Hand levels (8-Hnd1/2/3): short bonus rooms that drop items, so
+    //    re-entering the pipe would let the player farm items.
+    //
+    //  - Chest levels (rom_data::CHEST_LEVELS): the player needs to find these
+    //    levels to collect the inventory item. Disguising them as pipes hides
+    //    them from players who skip pipe-look tiles. Includes 3-7 (Cloud),
+    //    5-1 (Music Box), 8-Tank (Star). 1F is also in the list but is a
+    //    fortress, never a regular-level slot.
+    let is_troll_pipe_ineligible = |pi: usize| -> bool {
         let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
-        ce.world_idx == 7 && matches!(ce.entry_idx, 14..=16)
+        (ce.world_idx == 7 && matches!(ce.entry_idx, 14..=16))
+            || rom_data::is_chest_level(ce.world_idx, ce.entry_idx)
     };
 
     let mut assignments: Vec<WorldAssignments> = Vec::with_capacity(8);
@@ -384,7 +393,7 @@ fn assign_pool<R: Rng>(
         for slot in ordered {
             let pi = if cross_world {
                 if slot.is_troll_pipe {
-                    if let Some(pos) = level_pool.iter().position(|&pi| !is_hand_level(pi)) {
+                    if let Some(pos) = level_pool.iter().position(|&pi| !is_troll_pipe_ineligible(pi)) {
                         level_pool.remove(pos).unwrap()
                     } else {
                         demoted_troll_pipes.insert(slot.pos);
@@ -398,7 +407,7 @@ fn assign_pool<R: Rng>(
                     .get_mut(&wi)
                     .expect("intra-world level pool missing");
                 if slot.is_troll_pipe {
-                    if let Some(idx) = v.iter().rposition(|&pi| !is_hand_level(pi)) {
+                    if let Some(idx) = v.iter().rposition(|&pi| !is_troll_pipe_ineligible(pi)) {
                         v.remove(idx)
                     } else {
                         demoted_troll_pipes.insert(slot.pos);
