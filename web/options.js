@@ -119,7 +119,7 @@ export const SCHEMA = [
 		group: "map", inFlagKey: true },
 	{ id: "swap_start_airship", type: "bool", default: false,
 		label: "Swap Start / Airship", flavor: "Beat the map backwards.",
-		tip: "Independently coin-flip each W1-W7: if heads, Mario spawns at the vanilla airship coordinates and the airship/level-objective sits at the vanilla start coordinates. W8 (Bowser's castle) is never swapped.",
+		tip: "Coin-flip each of Worlds 1-7 for a chance to traverse the overworld in reverse — Mario spawns where the airship usually parks, and the path back to the old start tile is the way out.",
 		group: "map", inFlagKey: true },
 	{ id: "include_beta_stages", type: "bool", default: false,
 		label: "Include Beta Stages",
