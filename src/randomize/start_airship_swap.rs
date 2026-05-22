@@ -91,10 +91,31 @@ pub(super) fn swap_tiles_above(grid: &mut Grid, world_idx: usize, catalog: &Node
     if sr == 0 || ar == 0 {
         return;
     }
+    // The tile directly above the vanilla airship (`0xC8`, the castle's top
+    // half) always travels with the airship — that's the "two tiles required
+    // for the castle." The tile above the vanilla START is a single-tile
+    // backdrop and for W4/W5/W7 it happens to be a water square. Carried
+    // verbatim to the new start position, that water square dangles above
+    // the relocated start tile in the middle of land/sky, which looks wrong.
+    // Substitute a per-world background tile in those cases.
     let above_old_airship = grid.get(ar - 1, ac);
-    let above_old_start = grid.get(sr - 1, sc);
-    grid.set(ar - 1, ac, above_old_start);
+    let above_for_new_start = match above_start_override(world_idx) {
+        Some(t) => t,
+        None => grid.get(sr - 1, sc),
+    };
+    grid.set(ar - 1, ac, above_for_new_start);
     grid.set(sr - 1, sc, above_old_airship);
+}
+
+/// World-specific replacement for the tile that ends up directly above the
+/// relocated start position. Worlds where the vanilla above-start tile is
+/// water override to a generic land/sky blank.
+fn above_start_override(world_idx: usize) -> Option<u8> {
+    match world_idx {
+        3 | 6 => Some(0x42), // W4 / W7 — land path blank
+        4 => Some(0xD7),     // W5 — sky blank
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
