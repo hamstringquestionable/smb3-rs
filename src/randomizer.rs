@@ -781,11 +781,10 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         rom, &build, &data, &mut rng, true,
     );
     // Give each W8 Hand its own treasure-room enemy stream so the chest
-    // randomizer can roll a unique item per Hand, and with a random chance
-    // redirect one Hand to the 3-7 coin heaven. Runs before items::randomize
+    // randomizer can roll a unique item per Hand. Runs before items::randomize
     // so the cloned Y-bytes are in place when chests roll.
     rom.set_tag("hand_rooms");
-    randomize::hand_rooms::patch_clone_hand_rooms(rom, &mut rng);
+    randomize::hand_rooms::patch_clone_hand_rooms(rom);
 
     if options.chest_items {
         rom.set_tag("items");
