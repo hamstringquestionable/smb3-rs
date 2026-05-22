@@ -1,14 +1,14 @@
 //! W8 Hand treasure-room variety:
-//! 1. Clone the shared Hand sub-area enemy stream so 8-Hnd1/2/3 have
-//!    independent OBJ_TREASURESET Y-bytes (randomized by `items::randomize`).
-//! 2. With a random chance, redirect one Hand to the 3-7 coin heaven
-//!    (`$AB4F` / `$CE89` / tileset 11) instead of a treasure room. Only
-//!    one Hand can point at the coin heaven per seed, and sometimes none do.
+//! clone the shared Hand sub-area enemy stream so 8-Hnd1/2/3 have
+//! independent `OBJ_TREASURESET` Y-bytes (randomized per-Hand by
+//! `items::randomize`).
 //!
-//! The coin heaven's vanilla autoscroll is disabled by `autoscroll.rs` when
-//! autoscroll is off — free-scroll makes the redirect more enjoyable.
-
-use rand::Rng;
+//! Earlier revisions also rolled a 3/4 chance to redirect one Hand to
+//! the 3-7 coin heaven, but that re-pointed at the same shared sub-area
+//! as 3-7 itself — same enemy stream, same chest item byte — so the
+//! Hand-redirect outcome was indistinguishable from beating 3-7 except
+//! for losing the autoscroll-as-risk gating on the chest. Removed in
+//! favour of making the coin heaven reachable only from 3-7.
 
 use crate::rom::Rom;
 use super::rom_data::FS_HAND_ROOMS;
@@ -20,9 +20,8 @@ const HAND_ROOM_SRC: usize = 0x0D0DF;
 const HAND_ROOM_LEN: usize = 11;
 
 /// File offsets of each Hand level's 9-byte main-level layout header in
-/// PRG019. We rewrite bytes 0-3 (`alt_layout` + `alt_objects`) and byte 6
-/// (`alt_tileset` nibble) to re-point its sub-area.
-const HND1_HDR: usize = 0x27D50;
+/// PRG019. Bytes 2-3 hold the `alt_objects` CPU pointer that selects the
+/// sub-area enemy stream.
 const HND2_HDR: usize = 0x27CEE;
 const HND3_HDR: usize = 0x27D9F;
 
@@ -36,16 +35,9 @@ const CLONE_B_CPU: u16 = 0xDA6F; // file 0x0DA7F
 pub(super) const HAND_ROOM_CLONE_A_ITEM: usize = 0x0DA74 + 3; // 0x0DA77
 pub(super) const HAND_ROOM_CLONE_B_ITEM: usize = 0x0DA7F + 3; // 0x0DA82
 
-/// 3-7 coin heaven sub-area target. Values taken from the vanilla header of
-/// the $BD88 intermediate room that β2 (and 3-7) both reach by pipe.
-const COIN_HEAVEN_ALT_LAYOUT:  u16 = 0xAB4F;
-const COIN_HEAVEN_ALT_OBJECTS: u16 = 0xCE89;
-const COIN_HEAVEN_ALT_TILESET: u8  = 11;
-
-/// Clone the shared Hand sub-area enemy stream and, with probability 3/4,
-/// redirect one random Hand level to the 3-7 coin heaven. The coin heaven
-/// appears at most once per seed.
-pub fn patch_clone_hand_rooms<R: Rng>(rom: &mut Rom, rng: &mut R) {
+/// Clone the shared Hand sub-area enemy stream so 8-Hnd2 and 8-Hnd3 each
+/// get an independent `OBJ_TREASURESET` Y-byte. 8-Hnd1 keeps the original.
+pub fn patch_clone_hand_rooms(rom: &mut Rom) {
     rom.push_tag("hand_rooms");
 
     // Clone the 3-entry source segment to both destinations. The segment
@@ -71,32 +63,12 @@ pub fn patch_clone_hand_rooms<R: Rng>(rom: &mut Rom, rng: &mut R) {
     rom.write_range(HND2_HDR + 2, &CLONE_A_CPU.to_le_bytes());
     rom.write_range(HND3_HDR + 2, &CLONE_B_CPU.to_le_bytes());
 
-    // Roll: 0 = no redirect, 1..=3 = redirect that Hand to the coin heaven.
-    match rng.random_range(..4u8) {
-        0 => {}
-        1 => redirect_to_coin_heaven(rom, HND1_HDR),
-        2 => redirect_to_coin_heaven(rom, HND2_HDR),
-        3 => redirect_to_coin_heaven(rom, HND3_HDR),
-        _ => unreachable!(),
-    }
-
     rom.pop_tag();
-}
-
-fn redirect_to_coin_heaven(rom: &mut Rom, header_offset: usize) {
-    let lay = COIN_HEAVEN_ALT_LAYOUT.to_le_bytes();
-    let obj = COIN_HEAVEN_ALT_OBJECTS.to_le_bytes();
-    rom.write_range(header_offset,     &lay);
-    rom.write_range(header_offset + 2, &obj);
-    let byte6 = rom.read_byte(header_offset + 6);
-    rom.write_byte(header_offset + 6, (byte6 & 0xF0) | COIN_HEAVEN_ALT_TILESET);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::SeedableRng;
-    use rand_chacha::ChaCha8Rng;
 
     fn make_test_rom() -> Rom {
         let mut data = vec![0u8; 393232];
@@ -116,7 +88,7 @@ mod tests {
 
         // Vanilla Hand headers: all three share alt_layout=$BE17,
         // alt_objects=$D0CF, alt_tileset=11.
-        for hdr in [HND1_HDR, HND2_HDR, HND3_HDR] {
+        for hdr in [HND2_HDR, HND3_HDR] {
             data[hdr]     = 0x17;
             data[hdr + 1] = 0xBE;
             data[hdr + 2] = 0xCF;
@@ -127,23 +99,15 @@ mod tests {
         Rom::from_bytes_lax(&data, true).unwrap()
     }
 
-    fn hdr_bytes(rom: &Rom, off: usize) -> (u16, u16, u8) {
-        let b = rom.read_range(off, 9);
-        let lay = u16::from_le_bytes([b[0], b[1]]);
-        let obj = u16::from_le_bytes([b[2], b[3]]);
-        let ts  = b[6] & 0x0F;
-        (lay, obj, ts)
-    }
-
-    fn is_coin_heaven(rom: &Rom, hdr: usize) -> bool {
-        hdr_bytes(rom, hdr) == (COIN_HEAVEN_ALT_LAYOUT, COIN_HEAVEN_ALT_OBJECTS, COIN_HEAVEN_ALT_TILESET)
+    fn hdr_obj_ptr(rom: &Rom, off: usize) -> u16 {
+        let b = rom.read_range(off, 4);
+        u16::from_le_bytes([b[2], b[3]])
     }
 
     #[test]
     fn test_clones_match_source() {
         let mut rom = make_test_rom();
-        let mut rng = ChaCha8Rng::seed_from_u64(0);
-        patch_clone_hand_rooms(&mut rom, &mut rng);
+        patch_clone_hand_rooms(&mut rom);
 
         let src = rom.read_range(HAND_ROOM_SRC, HAND_ROOM_LEN).to_vec();
         assert_eq!(rom.read_range(FS_HAND_ROOMS, HAND_ROOM_LEN).to_vec(), src);
@@ -153,8 +117,7 @@ mod tests {
     #[test]
     fn test_clone_item_byte_offsets_align_with_treasureset() {
         let mut rom = make_test_rom();
-        let mut rng = ChaCha8Rng::seed_from_u64(0);
-        patch_clone_hand_rooms(&mut rom, &mut rng);
+        patch_clone_hand_rooms(&mut rom);
 
         assert_eq!(rom.read_byte(HAND_ROOM_CLONE_A_ITEM - 2), 0xD6);
         assert_eq!(rom.read_byte(HAND_ROOM_CLONE_B_ITEM - 2), 0xD6);
@@ -163,67 +126,13 @@ mod tests {
     }
 
     #[test]
-    fn test_coin_heaven_appears_at_most_once_across_all_seeds() {
-        // Exhaustively confirm the invariant: either zero or exactly one
-        // Hand points at the coin heaven.
-        for seed in 0..2000u64 {
-            let mut rom = make_test_rom();
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            patch_clone_hand_rooms(&mut rom, &mut rng);
+    fn test_hnd2_hnd3_repointed_to_clones() {
+        // 8-Hnd2 should point at clone A, 8-Hnd3 at clone B. 8-Hnd1 keeps
+        // the vanilla pointer ($D0CF) so the source room still has a reader.
+        let mut rom = make_test_rom();
+        patch_clone_hand_rooms(&mut rom);
 
-            let ch_count = [HND1_HDR, HND2_HDR, HND3_HDR]
-                .iter()
-                .filter(|&&h| is_coin_heaven(&rom, h))
-                .count();
-            assert!(ch_count <= 1,
-                "seed {seed}: coin heaven appears {ch_count} times, expected 0 or 1");
-        }
-    }
-
-    #[test]
-    fn test_coin_heaven_outcomes_are_reachable() {
-        // Each of the 4 outcomes (none / H1 / H2 / H3) must occur across
-        // many seeds. Catches bugs where the roll is biased or wrong-sized.
-        let mut saw_none = false;
-        let mut saw_h1 = false;
-        let mut saw_h2 = false;
-        let mut saw_h3 = false;
-        for seed in 0..2000u64 {
-            let mut rom = make_test_rom();
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            patch_clone_hand_rooms(&mut rom, &mut rng);
-
-            let h1 = is_coin_heaven(&rom, HND1_HDR);
-            let h2 = is_coin_heaven(&rom, HND2_HDR);
-            let h3 = is_coin_heaven(&rom, HND3_HDR);
-            if !h1 && !h2 && !h3 { saw_none = true; }
-            if h1 { saw_h1 = true; }
-            if h2 { saw_h2 = true; }
-            if h3 { saw_h3 = true; }
-        }
-        assert!(saw_none && saw_h1 && saw_h2 && saw_h3,
-            "outcomes seen: none={saw_none} h1={saw_h1} h2={saw_h2} h3={saw_h3}");
-    }
-
-    #[test]
-    fn test_non_redirected_hands_keep_treasure_room_pointers() {
-        // Regardless of which hand (if any) is the coin heaven, the other
-        // two must still point at vanilla $D0CF / clone A / clone B.
-        for seed in 0..200u64 {
-            let mut rom = make_test_rom();
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            patch_clone_hand_rooms(&mut rom, &mut rng);
-
-            for (hdr, want_obj) in [
-                (HND1_HDR, 0xD0CFu16),
-                (HND2_HDR, CLONE_A_CPU),
-                (HND3_HDR, CLONE_B_CPU),
-            ] {
-                if is_coin_heaven(&rom, hdr) { continue; }
-                let (_, obj, _) = hdr_bytes(&rom, hdr);
-                assert_eq!(obj, want_obj,
-                    "seed {seed}: non-redirected Hand header 0x{hdr:05X} has obj=${obj:04X}, expected ${want_obj:04X}");
-            }
-        }
+        assert_eq!(hdr_obj_ptr(&rom, HND2_HDR), CLONE_A_CPU);
+        assert_eq!(hdr_obj_ptr(&rom, HND3_HDR), CLONE_B_CPU);
     }
 }

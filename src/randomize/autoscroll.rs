@@ -86,10 +86,12 @@ const PATCHES: &[(usize, &[u8])] = &[
     // Airship W2 area: enemy data rewrite (7 bytes)
     (0x0CDE7, &[0x13, 0x6A, 0x63, 0x12, 0x6A, 0x69, 0x16]),
 
-    // 3-7 coin heaven: D3 removed so the sub-area is free-scroll. Vanilla uses
-    // autoscroll as a penalty for grabbing the chest, but free-scroll is more
-    // enjoyable when hand_rooms redirects a W8 Hand here as an alternate ending.
-    (0x0CE9A, &[0x00]),
+    // 3-7 coin heaven autoscroll is INTENTIONALLY left intact (matches the
+    // reference IPS). Vanilla uses the autoscroll as a risk/reward penalty
+    // for going after the Cloud chest; removing it makes going for the chest
+    // always the correct play. When `hand_rooms` redirects a W8 Hand here,
+    // the autoscroll still plays — the alternate-ending experience just
+    // mirrors vanilla 3-7 instead of being free-scroll.
 
     // D3 removal
     (0x0CF51, &[0x00]),
@@ -496,8 +498,8 @@ mod tests {
 
     #[test]
     fn test_patch_count() {
-        // 64 from the reference IPS + 1 local addition for the 3-7 coin
-        // heaven (deliberately left intact by the reference).
-        assert_eq!(PATCHES.len(), 65);
+        // Matches the reference IPS exactly. The 3-7 coin heaven autoscroll
+        // is deliberately left intact (chest risk/reward).
+        assert_eq!(PATCHES.len(), 64);
     }
 }
