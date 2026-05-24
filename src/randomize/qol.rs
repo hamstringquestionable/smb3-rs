@@ -538,8 +538,9 @@ const PIPE_CLIP_FIX: usize = 0x3B5B1;
 
 // Move after orb grab: NOPs `STY/STA $7CF4` in PRG003 (CPU $A8ED, $A903) so
 // the player-input-lock flag isn't set when grabbing the fortress magic ball.
-// 6 bytes total (2 × 3-byte absolute stores → NOPs).
-const MOVE_AFTER_ORB: [usize; 6] = [0x068FD, 0x068FE, 0x068FF, 0x06913, 0x06914, 0x06915];
+// Two 3-byte absolute stores → NOPs.
+const MOVE_AFTER_ORB_STY: usize = 0x068FD; // STY $7CF4 at CPU $A8ED
+const MOVE_AFTER_ORB_STA: usize = 0x06913; // STA $7CF4 at CPU $A903
 
 // Tail attack while swimming (PRG008) — extends the swim subroutine so
 // Raccoon/Tanooki Mario can tail-swipe enemies underwater. Two 5-byte hooks
@@ -744,9 +745,8 @@ pub fn apply_macobra_patches(rom: &mut Rom) {
     rom.write_byte(PIPE_CLIP_FIX, 0x00);
 
     // Allow Mario to keep moving after grabbing the fortress orb / magic ball.
-    for offset in MOVE_AFTER_ORB {
-        rom.write_byte(offset, 0xEA);
-    }
+    rom.write_range(MOVE_AFTER_ORB_STY, &[0xEA; 3]);
+    rom.write_range(MOVE_AFTER_ORB_STA, &[0xEA; 3]);
 
     // Tail attack while swimming (Raccoon/Tanooki tail-swipes underwater).
     rom.write_range(TAIL_SWIM_HOOK_A, &TAIL_SWIM_HOOK_A_BYTES);
