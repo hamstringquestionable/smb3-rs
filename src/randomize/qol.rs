@@ -17,11 +17,15 @@ const STARTING_LIVES_OFFSET: usize = 0x308E1;
 /// Base of the 8-byte lives init code: LDA #lives; STA $0736; STA $0737.
 const LIVES_INIT_BASE: usize = 0x308E0;
 
-// W3 drawbridge map tile offsets (2× $B2 horizontal, 2× $B1 vertical)
-const W3_BRIDGE_H1: usize = 0x18777;
-const W3_BRIDGE_H2: usize = 0x18779;
-const W3_BRIDGE_V1: usize = 0x1880C;
-const W3_BRIDGE_V2: usize = 0x188F3;
+// W3 drawbridge map tile patches: (file offset, replacement tile).
+// Vanilla: 2× $B2 horizontal + 2× $B1 vertical. Replace with $B3
+// (horizontal bridge path) and $BA (vertical-compatible open path).
+const W3_DRAWBRIDGE_TILES: [(usize, u8); 4] = [
+    (0x18777, 0xB3), // H1
+    (0x18779, 0xB3), // H2
+    (0x1880C, 0xBA), // V1
+    (0x188F3, 0xBA), // V2
+];
 
 // Toggle code: LDA $07BB; EOR #$01; STA $07BB (8 bytes at 0x14A68)
 const W3_TOGGLE_OFFSET: usize = 0x14A68;
@@ -494,12 +498,9 @@ pub fn fix_beta_stages(rom: &mut Rom) {
 
 /// Replace W3 drawbridge tiles with normal path tiles and NOP the toggle code.
 pub fn fix_w3_drawbridges(rom: &mut Rom) {
-    // Replace horizontal drawbridge tiles with bridge ($B3, horizontal path)
-    rom.write_byte(W3_BRIDGE_H1, 0xB3);
-    rom.write_byte(W3_BRIDGE_H2, 0xB3);
-    // Replace vertical drawbridge tiles with open path ($BA, vertical-compatible)
-    rom.write_byte(W3_BRIDGE_V1, 0xBA);
-    rom.write_byte(W3_BRIDGE_V2, 0xBA);
+    for (offset, tile) in W3_DRAWBRIDGE_TILES {
+        rom.write_byte(offset, tile);
+    }
     // NOP out the toggle code (LDA $07BB; EOR #$01; STA $07BB)
     rom.write_range(W3_TOGGLE_OFFSET, &[0xEA; W3_TOGGLE_LEN]);
 }
@@ -849,20 +850,16 @@ mod tests {
     #[test]
     fn test_fix_w3_drawbridges() {
         let mut rom = make_test_rom();
-        // Place original drawbridge tiles
-        rom.write_byte(W3_BRIDGE_H1, 0xB2);
-        rom.write_byte(W3_BRIDGE_H2, 0xB2);
-        rom.write_byte(W3_BRIDGE_V1, 0xB1);
-        rom.write_byte(W3_BRIDGE_V2, 0xB1);
-        // Place original toggle code
+        for (offset, _) in W3_DRAWBRIDGE_TILES {
+            rom.write_byte(offset, 0x00);
+        }
         rom.write_range(W3_TOGGLE_OFFSET, &[0xAD, 0xBB, 0x07, 0x49, 0x01, 0x8D, 0xBB, 0x07]);
 
         fix_w3_drawbridges(&mut rom);
 
-        assert_eq!(rom.read_byte(W3_BRIDGE_H1), 0xB3);
-        assert_eq!(rom.read_byte(W3_BRIDGE_H2), 0xB3);
-        assert_eq!(rom.read_byte(W3_BRIDGE_V1), 0xBA);
-        assert_eq!(rom.read_byte(W3_BRIDGE_V2), 0xBA);
+        for (offset, tile) in W3_DRAWBRIDGE_TILES {
+            assert_eq!(rom.read_byte(offset), tile);
+        }
         assert_eq!(rom.read_range(W3_TOGGLE_OFFSET, W3_TOGGLE_LEN), &[0xEA; 8]);
     }
 
