@@ -1,4 +1,14 @@
 use crate::rom::Rom;
+use super::rom_data::{
+    BETA_PATCHES,
+    FS_BIG_Q_LOOKUP as BIG_Q_ROUTINE_OFFSET,
+    FS_BIG_Q_SAVE as BIG_Q_PRG030_OFFSET,
+    FS_CANOE_BACKUP,
+    FS_CANOE_RESPAWN,
+    FS_CARD_CLEAR as CARD_TRAMPOLINE,
+    FS_HAMMER_LOCKS,
+    FS_STARTING_ITEMS,
+};
 
 /// Starting lives value byte (LDA #imm operand).
 /// Both Mario and Luigi are initialized from this single byte.
@@ -6,8 +16,6 @@ const STARTING_LIVES_OFFSET: usize = 0x308E1;
 
 /// Base of the 8-byte lives init code: LDA #lives; STA $0736; STA $0737.
 const LIVES_INIT_BASE: usize = 0x308E0;
-
-use super::rom_data::{FS_STARTING_ITEMS, FS_HAMMER_LOCKS};
 
 // W3 drawbridge map tile offsets (2× $B2 horizontal, 2× $B1 vertical)
 const W3_BRIDGE_H1: usize = 0x18777;
@@ -48,8 +56,8 @@ const W4_PIPE_ROCK: usize = 0x18A16;
 // Replaces `CPY #$07; BNE +$18` (4 bytes) with `JMP $9F2C` + NOP.
 const BIG_Q_PRG030_HOOK: usize = 0x3C958;  // file offset of CPY #$07
 const BIG_Q_PRG030_JMP: [u8; 4] = [0x4C, 0x2C, 0x9F, 0xEA];
-// Trampoline in PRG030 free space — offset from rom_data::FS_BIG_Q_SAVE.
-use super::rom_data::FS_BIG_Q_SAVE as BIG_Q_PRG030_OFFSET;
+// Trampoline in PRG030 free space — offset from rom_data::FS_BIG_Q_SAVE
+// (imported as BIG_Q_PRG030_OFFSET at the top of the file).
 const BIG_Q_PRG030_ROUTINE: [u8; 20] = [
     0xA5, 0x65,        // LDA $65        (real obj_lo, before W8 overwrite)
     0x8D, 0xB4, 0x7E,  // STA $7EB4
@@ -65,8 +73,8 @@ const BIG_Q_PRG030_ROUTINE: [u8; 20] = [
 // Hook point: replace `LDY $0727` with `JSR $B520` in LevelJct_BigQuestionBlock.
 const BIG_Q_HOOK_OFFSET: usize = 0x349F9;
 const BIG_Q_JSR: [u8; 3] = [0x20, 0x20, 0xB5];
-// Lookup routine in PRG026 free space — offset from rom_data::FS_BIG_Q_LOOKUP.
-use super::rom_data::FS_BIG_Q_LOOKUP as BIG_Q_ROUTINE_OFFSET;
+// Lookup routine in PRG026 free space — offset from rom_data::FS_BIG_Q_LOOKUP
+// (imported as BIG_Q_ROUTINE_OFFSET at the top of the file).
 // Reads saved entry-point obj_ptr from $7EB4/$7EB5 (not ObjPtrOrig which
 // gets overwritten by sub-area junctions). Falls back to World_Num for
 // levels not in the table (W1/W2 levels don't use Big ? Blocks).
@@ -209,10 +217,10 @@ pub fn fix_big_q_block_rooms(rom: &mut Rom) {
 // Original 5 bytes: LDA $7D9E,Y (B9 9E 7D); BEQ $BCFF (F0 22)
 const CARD_HOOK: usize = 0x05CE8;
 
-// Trampoline in PRG031 dead space — offset from rom_data::FS_CARD_CLEAR.
+// Trampoline in PRG031 dead space — offset from rom_data::FS_CARD_CLEAR
+// (imported as CARD_TRAMPOLINE at the top of the file).
 // Overwrites 3 unused $FF bytes + "SUPER MARIO 3" string + dead padding.
 // 26 bytes available ($FFE0-$FFF9), routine uses 26.
-use super::rom_data::FS_CARD_CLEAR as CARD_TRAMPOLINE;
 
 // Bank 9 map-screen tables (belt-and-suspenders)
 const CARD_LIVES_AWARD: usize = 0x12017; // $A000[7]
@@ -405,7 +413,7 @@ pub fn fix_canoe_softlock(rom: &mut Rom) {
 
     // Record 3: New subroutine in PRG010 free space (rom_data::FS_CANOE_RESPAWN)
     // Saves player map position as death respawn point when entering via canoe ($4B)
-    rom.write_range(super::rom_data::FS_CANOE_RESPAWN, &[
+    rom.write_range(FS_CANOE_RESPAWN, &[
         0x20, 0xFE, 0xD1, // JSR $D1FE  (original routine)
         0xC9, 0x4B,       // CMP #$4B   (canoe state?)
         0xD0, 0x1B,       // BNE +27    (skip if not canoe)
@@ -429,7 +437,7 @@ pub fn fix_canoe_softlock(rom: &mut Rom) {
     // Record 5: Canoe backup/restore subroutines in PRG011 free space (rom_data::FS_CANOE_BACKUP)
     // Part A ($BCF0): backs up 3 map data values before canoe overwrites them
     // Part B ($BD0C): restores backed-up values when canoe interaction ends
-    rom.write_range(super::rom_data::FS_CANOE_BACKUP, &[
+    rom.write_range(FS_CANOE_BACKUP, &[
         // Part A: backup on canoe load
         0xC9, 0x10,       // CMP #$10   (canoe obj ID)
         0xD0, 0x12,       // BNE +18    (skip if not canoe)
@@ -468,7 +476,7 @@ pub fn fix_canoe_softlock(rom: &mut Rom) {
 /// misaligned tile commands in the beta level data. These 44 byte patches
 /// repair the layouts so the stages are playable.
 pub fn fix_beta_stages(rom: &mut Rom) {
-    for &(offset, value) in super::rom_data::BETA_PATCHES {
+    for &(offset, value) in BETA_PATCHES {
         rom.write_byte(offset, value);
     }
 }
