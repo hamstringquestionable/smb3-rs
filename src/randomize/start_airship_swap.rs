@@ -18,6 +18,7 @@ use rand::Rng;
 use crate::rom::Rom;
 
 use super::node_catalog::{NodeCatalog, NodeKind};
+use super::pipe_helpers::grid_pos_to_dest_nibbles;
 use super::rom_data::{
     self, AIRSHIP_OBJ_SLOT, FS_SAS_SCRH_TABLE, FS_SAS_SCRL_TABLE, FS_SAS_X_HELPER,
     FS_SAS_X_TABLE, FS_SAS_XHI_HELPER, FS_SAS_XHI_TABLE, Grid, MAP_INIT_SCROLL_SITE,
@@ -72,22 +73,18 @@ pub(super) fn swap_tiles_above(grid: &mut Grid, world_idx: usize, catalog: &Node
     if !catalog.start_airship_swapped[world_idx] {
         return;
     }
-    let (sr, sc) = match catalog
-        .entries
-        .iter()
-        .find(|e| e.world_idx == world_idx && matches!(e.kind, NodeKind::Airship))
-    {
-        Some(e) => e.grid_pos, // = OLD start position (catalog was mutated)
-        None => return,
-    };
-    let (ar, ac) = match catalog
-        .entries
-        .iter()
-        .find(|e| e.world_idx == world_idx && matches!(e.kind, NodeKind::Start))
-    {
-        Some(e) => e.grid_pos, // = OLD airship position
-        None => return,
-    };
+    // After `pick_swaps`, the Airship entry holds the OLD start position and
+    // the Start entry holds the OLD airship position.
+    let Some(airship_entry) = catalog
+        .world(world_idx)
+        .find(|e| matches!(e.kind, NodeKind::Airship))
+    else { return };
+    let Some(start_entry) = catalog
+        .world(world_idx)
+        .find(|e| matches!(e.kind, NodeKind::Start))
+    else { return };
+    let (sr, sc) = airship_entry.grid_pos;
+    let (ar, ac) = start_entry.grid_pos;
     if sr == 0 || ar == 0 {
         return;
     }
@@ -139,17 +136,12 @@ pub(super) fn write_swapped_world_entries(rom: &mut Rom, world_idx: usize, catal
     let rt_off = world.rowtype_offset;
     let sc_off = rt_off + world.entry_count;
 
-    for entry in &catalog.entries {
-        if entry.world_idx != world_idx {
-            continue;
-        }
-        if !matches!(entry.kind, NodeKind::Airship | NodeKind::Start) {
-            continue;
-        }
+    for entry in catalog
+        .world(world_idx)
+        .filter(|e| matches!(e.kind, NodeKind::Airship | NodeKind::Start))
+    {
         let (row, col) = entry.grid_pos;
-        let row_nib = ((row + 2) & 0x0F) as u8;
-        let screen = ((col / 16) & 0x0F) as u8;
-        let col_in_screen = (col % 16) as u8;
+        let (screen, col_in_screen, row_nib) = grid_pos_to_dest_nibbles(row, col);
 
         // Preserve the low nibble of the existing rowtype byte (tileset code).
         let old_rt = rom.read_byte(rt_off + entry.entry_idx);
@@ -182,14 +174,11 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
     let mut scrh_tbl = [0u8; 8];
 
     for wi in 0..8 {
-        let (sr, sc) = match catalog
-            .entries
-            .iter()
-            .find(|e| e.world_idx == wi && matches!(e.kind, NodeKind::Start))
-        {
-            Some(e) => e.grid_pos,
-            None => continue,
-        };
+        let Some(start_entry) = catalog
+            .world(wi)
+            .find(|e| matches!(e.kind, NodeKind::Start))
+        else { continue };
+        let (sr, sc) = start_entry.grid_pos;
         y_tbl[wi] = ((sr as u8) * 0x10).wrapping_add(0x20);
         x_tbl[wi] = ((sc % 16) as u8) * 0x10;
         xhi_tbl[wi] = (sc / 16) as u8;
@@ -256,12 +245,11 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
         if !catalog.start_airship_swapped[wi] {
             continue;
         }
-        let air_pos = catalog
-            .entries
-            .iter()
-            .find(|e| e.world_idx == wi && matches!(e.kind, NodeKind::Airship))
-            .map(|e| e.grid_pos);
-        if let Some((r, c)) = air_pos {
+        if let Some(air_entry) = catalog
+            .world(wi)
+            .find(|e| matches!(e.kind, NodeKind::Airship))
+        {
+            let (r, c) = air_entry.grid_pos;
             rom_data::write_map_sprite_position(rom, wi, AIRSHIP_OBJ_SLOT, r, c);
         }
     }

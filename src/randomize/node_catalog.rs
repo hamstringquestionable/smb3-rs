@@ -161,7 +161,6 @@ impl NodeCatalog {
     }
 
     /// Iterate entries for a specific world.
-    #[allow(dead_code)] // used in tests
     pub(super) fn world(&self, world_idx: usize) -> impl Iterator<Item = &CatalogEntry> {
         self.entries.iter().filter(move |e| e.world_idx == world_idx)
     }
