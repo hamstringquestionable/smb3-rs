@@ -1,10 +1,15 @@
 //! Per-world Start ↔ Airship swap.
 //!
-//! Flips a coin per W1-W7 (W8 has no airship sprite). On heads, Mario's start
-//! tile (0xE5) and the airship/objective tile (0xC9) trade places. The catalog
-//! is the source of truth — `pick_swaps` mutates the affected entries'
-//! `grid_pos` values so the rest of the overworld pipeline (build, writer) sees
-//! the swapped positions naturally.
+//! Flips a coin per W1-W4 and W6-W7. W5 is excluded because its vanilla start
+//! at (6, 2) is approached only from above via (5, 2) — relocating the airship
+//! there forces `swap_tiles_above` to stamp the castle-top `$C8` on that cell,
+//! severing the only walkable approach and starving the pipe-bridging phase
+//! (one pipe pair gets dropped, including potentially the spiral castle).
+//! W8 has no airship sprite to move. On heads, Mario's start tile (0xE5) and
+//! the airship/objective tile (0xC9) trade places. The catalog is the source
+//! of truth — `pick_swaps` mutates the affected entries' `grid_pos` values so
+//! the rest of the overworld pipeline (build, writer) sees the swapped
+//! positions naturally.
 //!
 //! The engine-side scaffolding (per-world camera + Mario-position tables, the
 //! two helper routines, Map_Init JSR patches, and Map_Object slot-1 sprite
@@ -29,13 +34,18 @@ use super::rom_data::{
 // Phase 1: catalog mutation
 // ---------------------------------------------------------------------------
 
-/// Per W1-W7 (W8 skipped), flip a coin. On heads, swap that world's Start
-/// and Airship entry `grid_pos` values in the catalog, and record the swap on
+/// Per W1-W4 and W6-W7, flip a coin. W5 and W8 are skipped (see module
+/// docstring). On heads, swap that world's Start and Airship entry `grid_pos`
+/// values in the catalog, and record the swap on
 /// `catalog.start_airship_swapped[wi]`. Downstream phases pick up the new
 /// positions automatically.
+///
+/// The coin is rolled for W5 too and the result discarded, so toggling the W5
+/// exclusion later won't shift the RNG sequence for W6/W7.
 pub(crate) fn pick_swaps<R: Rng>(catalog: &mut NodeCatalog, rng: &mut R) {
     for wi in 0..7 {
-        if !rng.random::<bool>() {
+        let heads = rng.random::<bool>();
+        if !heads || wi == 4 {
             continue;
         }
         let start_idx = catalog
@@ -209,9 +219,14 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
     let xhi_tbl_cpu = file_to_prg031_cpu(FS_SAS_XHI_TABLE);
     let scrl_tbl_cpu = file_to_prg031_cpu(FS_SAS_SCRL_TABLE);
     let scrh_tbl_cpu = file_to_prg031_cpu(FS_SAS_SCRH_TABLE);
+    // $7980,X is the death-respawn X-high (mirror of $7978,X). Vanilla Map_Init
+    // stamps it to 0 a few cycles earlier; without re-stamping it here, dying
+    // before saving in a swapped world whose new start is on screen ≥ 1 puts
+    // Mario back on screen 0 (off the path).
     let xhi_helper = [
         0xB9, (xhi_tbl_cpu & 0xFF) as u8, (xhi_tbl_cpu >> 8) as u8,   // LDA Map_XHi_Starts,Y
-        0x9D, 0x78, 0x79,                                             // STA Map_Entered_XHi,X
+        0x9D, 0x78, 0x79,                                             // STA Map_Entered_XHi,X     ($7978,X)
+        0x9D, 0x80, 0x79,                                             // STA Map_Respawn_XHi,X    ($7980,X)
         0xB9, (scrl_tbl_cpu & 0xFF) as u8, (scrl_tbl_cpu >> 8) as u8, // LDA Map_ScrL_Starts,Y
         0x9D, 0x22, 0x07,                                             // STA Map_Prev_XOff,X ($0722)
         0xB9, (scrh_tbl_cpu & 0xFF) as u8, (scrh_tbl_cpu >> 8) as u8, // LDA Map_ScrH_Starts,Y

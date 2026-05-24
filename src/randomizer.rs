@@ -188,10 +188,11 @@ pub struct Options {
     /// Include ~9 unreferenced beta levels in the overworld shuffle pool.
     #[serde(default)]
     pub include_beta_stages: bool,
-    /// Per-world (W1-W7) coin flip: when on, each world independently rolls
-    /// to swap Mario's start tile with the airship/castle tile. Mario spawns
-    /// at the vanilla airship coords; the level objective lives at the
-    /// vanilla start coords. W8 (Bowser's castle) never swaps.
+    /// Per-world coin flip: when on, each world independently rolls to swap
+    /// Mario's start tile with the airship/castle tile. Mario spawns at the
+    /// vanilla airship coords; the level objective lives at the vanilla start
+    /// coords. W5 and W8 never swap (W5's new-airship cell would block the
+    /// only walkable approach from above; W8 has no airship sprite to move).
     #[serde(default)]
     pub swap_start_airship: bool,
     // --- Per-class enemy tri-state toggles ---
