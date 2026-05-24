@@ -650,12 +650,8 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
         randomize::qol::fix_w3_drawbridges(rom);
     }
     if options.remove_rocks {
-        rom.set_tag("qol/w2_rock");
-        randomize::qol::remove_w2_rock(rom);
-        rom.set_tag("qol/w3_boat_rock");
-        randomize::qol::remove_w3_boat_rock(rom);
-        rom.set_tag("qol/w4_pipe_rock");
-        randomize::qol::remove_w4_pipe_rock(rom);
+        rom.set_tag("qol/rocks");
+        randomize::qol::remove_rocks(rom);
     }
 
     // Fix Big ? Block bonus rooms so they follow the level, not the world slot.
