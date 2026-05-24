@@ -165,19 +165,12 @@ pub fn write_starting_items(rom: &mut Rom, seed: u64, lives: u8, items: &[u8]) {
     ]);
 }
 
-/// Remove the W2 rock blocking the secret path, replacing it with horizontal path.
-pub fn remove_w2_rock(rom: &mut Rom) {
-    rom.write_byte(W2_SECRET_ROCK, 0x45);
-}
-
-/// Remove the W3 rock blocking the boat path, replacing it with horizontal path.
-pub fn remove_w3_boat_rock(rom: &mut Rom) {
-    rom.write_byte(W3_BOAT_ROCK, 0x45);
-}
-
-/// Remove the W4 rock blocking the pipe shortcut, replacing it with horizontal path.
-pub fn remove_w4_pipe_rock(rom: &mut Rom) {
-    rom.write_byte(W4_PIPE_ROCK, 0x45);
+/// Remove the W2 secret-path, W3 boat-path, and W4 pipe-shortcut rocks,
+/// replacing each with a horizontal path tile.
+pub fn remove_rocks(rom: &mut Rom) {
+    for offset in [W2_SECRET_ROCK, W3_BOAT_ROCK, W4_PIPE_ROCK] {
+        rom.write_byte(offset, 0x45);
+    }
 }
 
 /// Patch Big ? Block bonus room selection to use level identity instead of World_Num.
@@ -834,27 +827,15 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_w2_rock() {
+    fn test_remove_rocks() {
         let mut rom = make_test_rom();
-        rom.write_byte(W2_SECRET_ROCK, 0x51);
-        remove_w2_rock(&mut rom);
-        assert_eq!(rom.read_byte(W2_SECRET_ROCK), 0x45);
-    }
-
-    #[test]
-    fn test_remove_w3_boat_rock() {
-        let mut rom = make_test_rom();
-        rom.write_byte(W3_BOAT_ROCK, 0x51);
-        remove_w3_boat_rock(&mut rom);
-        assert_eq!(rom.read_byte(W3_BOAT_ROCK), 0x45);
-    }
-
-    #[test]
-    fn test_remove_w4_pipe_rock() {
-        let mut rom = make_test_rom();
-        rom.write_byte(W4_PIPE_ROCK, 0x51);
-        remove_w4_pipe_rock(&mut rom);
-        assert_eq!(rom.read_byte(W4_PIPE_ROCK), 0x45);
+        for offset in [W2_SECRET_ROCK, W3_BOAT_ROCK, W4_PIPE_ROCK] {
+            rom.write_byte(offset, 0x51);
+        }
+        remove_rocks(&mut rom);
+        for offset in [W2_SECRET_ROCK, W3_BOAT_ROCK, W4_PIPE_ROCK] {
+            assert_eq!(rom.read_byte(offset), 0x45);
+        }
     }
 
     #[test]
