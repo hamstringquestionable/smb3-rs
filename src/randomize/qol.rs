@@ -1,4 +1,14 @@
 use crate::rom::Rom;
+use super::rom_data::{
+    BETA_PATCHES,
+    FS_BIG_Q_LOOKUP as BIG_Q_ROUTINE_OFFSET,
+    FS_BIG_Q_SAVE as BIG_Q_PRG030_OFFSET,
+    FS_CANOE_BACKUP,
+    FS_CANOE_RESPAWN,
+    FS_CARD_CLEAR as CARD_TRAMPOLINE,
+    FS_HAMMER_LOCKS,
+    FS_STARTING_ITEMS,
+};
 
 /// Starting lives value byte (LDA #imm operand).
 /// Both Mario and Luigi are initialized from this single byte.
@@ -7,13 +17,15 @@ const STARTING_LIVES_OFFSET: usize = 0x308E1;
 /// Base of the 8-byte lives init code: LDA #lives; STA $0736; STA $0737.
 const LIVES_INIT_BASE: usize = 0x308E0;
 
-use super::rom_data::{FS_STARTING_ITEMS, FS_HAMMER_LOCKS};
-
-// W3 drawbridge map tile offsets (2× $B2 horizontal, 2× $B1 vertical)
-const W3_BRIDGE_H1: usize = 0x18777;
-const W3_BRIDGE_H2: usize = 0x18779;
-const W3_BRIDGE_V1: usize = 0x1880C;
-const W3_BRIDGE_V2: usize = 0x188F3;
+// W3 drawbridge map tile patches: (file offset, replacement tile).
+// Vanilla: 2× $B2 horizontal + 2× $B1 vertical. Replace with $B3
+// (horizontal bridge path) and $BA (vertical-compatible open path).
+const W3_DRAWBRIDGE_TILES: [(usize, u8); 4] = [
+    (0x18777, 0xB3), // H1
+    (0x18779, 0xB3), // H2
+    (0x1880C, 0xBA), // V1
+    (0x188F3, 0xBA), // V2
+];
 
 // Toggle code: LDA $07BB; EOR #$01; STA $07BB (8 bytes at 0x14A68)
 const W3_TOGGLE_OFFSET: usize = 0x14A68;
@@ -48,8 +60,8 @@ const W4_PIPE_ROCK: usize = 0x18A16;
 // Replaces `CPY #$07; BNE +$18` (4 bytes) with `JMP $9F2C` + NOP.
 const BIG_Q_PRG030_HOOK: usize = 0x3C958;  // file offset of CPY #$07
 const BIG_Q_PRG030_JMP: [u8; 4] = [0x4C, 0x2C, 0x9F, 0xEA];
-// Trampoline in PRG030 free space — offset from rom_data::FS_BIG_Q_SAVE.
-use super::rom_data::FS_BIG_Q_SAVE as BIG_Q_PRG030_OFFSET;
+// Trampoline in PRG030 free space — offset from rom_data::FS_BIG_Q_SAVE
+// (imported as BIG_Q_PRG030_OFFSET at the top of the file).
 const BIG_Q_PRG030_ROUTINE: [u8; 20] = [
     0xA5, 0x65,        // LDA $65        (real obj_lo, before W8 overwrite)
     0x8D, 0xB4, 0x7E,  // STA $7EB4
@@ -65,8 +77,8 @@ const BIG_Q_PRG030_ROUTINE: [u8; 20] = [
 // Hook point: replace `LDY $0727` with `JSR $B520` in LevelJct_BigQuestionBlock.
 const BIG_Q_HOOK_OFFSET: usize = 0x349F9;
 const BIG_Q_JSR: [u8; 3] = [0x20, 0x20, 0xB5];
-// Lookup routine in PRG026 free space — offset from rom_data::FS_BIG_Q_LOOKUP.
-use super::rom_data::FS_BIG_Q_LOOKUP as BIG_Q_ROUTINE_OFFSET;
+// Lookup routine in PRG026 free space — offset from rom_data::FS_BIG_Q_LOOKUP
+// (imported as BIG_Q_ROUTINE_OFFSET at the top of the file).
 // Reads saved entry-point obj_ptr from $7EB4/$7EB5 (not ObjPtrOrig which
 // gets overwritten by sub-area junctions). Falls back to World_Num for
 // levels not in the table (W1/W2 levels don't use Big ? Blocks).
@@ -157,19 +169,12 @@ pub fn write_starting_items(rom: &mut Rom, seed: u64, lives: u8, items: &[u8]) {
     ]);
 }
 
-/// Remove the W2 rock blocking the secret path, replacing it with horizontal path.
-pub fn remove_w2_rock(rom: &mut Rom) {
-    rom.write_byte(W2_SECRET_ROCK, 0x45);
-}
-
-/// Remove the W3 rock blocking the boat path, replacing it with horizontal path.
-pub fn remove_w3_boat_rock(rom: &mut Rom) {
-    rom.write_byte(W3_BOAT_ROCK, 0x45);
-}
-
-/// Remove the W4 rock blocking the pipe shortcut, replacing it with horizontal path.
-pub fn remove_w4_pipe_rock(rom: &mut Rom) {
-    rom.write_byte(W4_PIPE_ROCK, 0x45);
+/// Remove the W2 secret-path, W3 boat-path, and W4 pipe-shortcut rocks,
+/// replacing each with a horizontal path tile.
+pub fn remove_rocks(rom: &mut Rom) {
+    for offset in [W2_SECRET_ROCK, W3_BOAT_ROCK, W4_PIPE_ROCK] {
+        rom.write_byte(offset, 0x45);
+    }
 }
 
 /// Patch Big ? Block bonus room selection to use level identity instead of World_Num.
@@ -209,10 +214,10 @@ pub fn fix_big_q_block_rooms(rom: &mut Rom) {
 // Original 5 bytes: LDA $7D9E,Y (B9 9E 7D); BEQ $BCFF (F0 22)
 const CARD_HOOK: usize = 0x05CE8;
 
-// Trampoline in PRG031 dead space — offset from rom_data::FS_CARD_CLEAR.
+// Trampoline in PRG031 dead space — offset from rom_data::FS_CARD_CLEAR
+// (imported as CARD_TRAMPOLINE at the top of the file).
 // Overwrites 3 unused $FF bytes + "SUPER MARIO 3" string + dead padding.
 // 26 bytes available ($FFE0-$FFF9), routine uses 26.
-use super::rom_data::FS_CARD_CLEAR as CARD_TRAMPOLINE;
 
 // Bank 9 map-screen tables (belt-and-suspenders)
 const CARD_LIVES_AWARD: usize = 0x12017; // $A000[7]
@@ -388,6 +393,73 @@ pub fn remove_n_cards(rom: &mut Rom) {
     rom.write_range(N_CARD_OFFSET, &[0xA9, 0x07, 0xEA]);
 }
 
+// Canoe softlock fix — based on "SMB3 - Canoe Softlock Fixes (Open World
+// compatible).ips". Two hooks plus two free-space subroutines.
+
+// Hook at PRG010 CPU $C6EA → JSR FS_CANOE_RESPAWN (5 bytes incl. NOP NOP).
+const CANOE_RESPAWN_HOOK: usize = 0x146FA;
+// Boundary check adjustment at PRG010 CPU $CF13 (2 bytes).
+const CANOE_BOUNDARY_PATCH: usize = 0x14F23;
+// Hook at PRG011 CPU $A22F → JSR FS_CANOE_BACKUP (5 bytes incl. NOP NOP).
+const CANOE_BACKUP_HOOK: usize = 0x1623F;
+
+// Record 3: subroutine in PRG010 free space (FS_CANOE_RESPAWN).
+// Saves player map position as death respawn point when entering via canoe ($4B).
+#[rustfmt::skip]
+const CANOE_RESPAWN_ROUTINE: [u8; 35] = [
+    0x20, 0xFE, 0xD1, // JSR $D1FE  (original routine)
+    0xC9, 0x4B,       // CMP #$4B   (canoe state?)
+    0xD0, 0x1B,       // BNE +27    (skip if not canoe)
+    0xB5, 0x75,       // LDA $75,X  (map obj Y)
+    0x9D, 0x7E, 0x79, // STA $797E,X (death respawn Y)
+    0xB5, 0x77,       // LDA $77,X  (map obj X hi)
+    0x9D, 0x80, 0x79, // STA $7980,X (death respawn X hi)
+    0xB5, 0x79,       // LDA $79,X  (map obj X lo)
+    0x9D, 0x82, 0x79, // STA $7982,X (death respawn X lo)
+    0xA5, 0xFD,       // LDA $FD    (Map_Scroll_X)
+    0x9D, 0x86, 0x79, // STA $7986,X (death respawn scroll X)
+    0xA5, 0x12,       // LDA $12    (Map_Scroll_XHi)
+    0x9D, 0x88, 0x79, // STA $7988,X (death respawn scroll XHi)
+    0xA5, 0xE5,       // LDA $E5    (reload game state)
+    0x60,             // RTS
+];
+
+// Record 5: backup/restore subroutines in PRG011 free space (FS_CANOE_BACKUP).
+// Part A ($BCF0): backs up 3 map data values before canoe overwrites them.
+// Part B ($BD0C): restores backed-up values when canoe interaction ends.
+#[rustfmt::skip]
+const CANOE_BACKUP_ROUTINE: [u8; 66] = [
+    // Part A: backup on canoe load
+    0xC9, 0x10,       // CMP #$10   (canoe obj ID)
+    0xD0, 0x12,       // BNE +18    (skip if not canoe)
+    0xB9, 0xEB, 0x7E, // LDA $7EEB,Y
+    0x8D, 0xF3, 0x7A, // STA $7AF3
+    0xB9, 0x07, 0x7F, // LDA $7F07,Y
+    0x8D, 0xF1, 0x7A, // STA $7AF1
+    0xB9, 0xF9, 0x7E, // LDA $7EF9,Y
+    0x8D, 0xF2, 0x7A, // STA $7AF2
+    0xB1, 0x06,       // LDA ($06),Y (original instruction)
+    0x99, 0x56, 0x79, // STA $7956,Y (original instruction)
+    0x60,             // RTS
+    // Part B: restore on canoe cleanup
+    0xA0, 0x0D,       // LDY #$0D   (iterate backwards)
+    0xB9, 0x15, 0x7F, // LDA $7F15,Y (map obj ID)
+    0xC9, 0x10,       // CMP #$10   (canoe?)
+    0xD0, 0x14,       // BNE +20    (skip if not canoe)
+    0xAD, 0xF3, 0x7A, // LDA $7AF3
+    0x99, 0xEB, 0x7E, // STA $7EEB,Y (restore)
+    0xAD, 0xF1, 0x7A, // LDA $7AF1
+    0x99, 0x07, 0x7F, // STA $7F07,Y (restore)
+    0xAD, 0xF2, 0x7A, // LDA $7AF2
+    0x99, 0xF9, 0x7E, // STA $7EF9,Y (restore)
+    0xA0, 0x01,       // LDY #$01   (break loop)
+    0x88,             // DEY
+    0xD0, 0xE2,       // BNE -30    (loop)
+    0xA9, 0x00,       // LDA #$00
+    0x8D, 0x00, 0x05, // STA $0500  (clear game state flag)
+    0x60,             // RTS
+];
+
 /// Fix W3 canoe softlocks: save death respawn position when entering via canoe,
 /// and backup/restore the map tile data the canoe overwrites.
 ///
@@ -397,69 +469,20 @@ pub fn remove_n_cards(rom: &mut Rom) {
 ///
 /// Based on "SMB3 - Canoe Softlock Fixes (Open World compatible).ips".
 pub fn fix_canoe_softlock(rom: &mut Rom) {
-    // Record 1: Hook at 0x146FA (PRG010, CPU $C6EA) → JSR $BD0C (canoe cleanup)
-    rom.write_range(0x146FA, &[0x20, 0x0C, 0xBD, 0xEA, 0xEA]);
+    // Record 1: Hook at PRG010 CPU $C6EA → JSR $BD0C (canoe cleanup)
+    rom.write_range(CANOE_RESPAWN_HOOK, &[0x20, 0x0C, 0xBD, 0xEA, 0xEA]);
 
-    // Record 2: Boundary check adjustment at 0x14F23 (PRG010, CPU $CF13)
-    rom.write_range(0x14F23, &[0xE0, 0xDD]);
+    // Record 2: Boundary check adjustment at PRG010 CPU $CF13
+    rom.write_range(CANOE_BOUNDARY_PATCH, &[0xE0, 0xDD]);
 
-    // Record 3: New subroutine in PRG010 free space (rom_data::FS_CANOE_RESPAWN)
-    // Saves player map position as death respawn point when entering via canoe ($4B)
-    rom.write_range(super::rom_data::FS_CANOE_RESPAWN, &[
-        0x20, 0xFE, 0xD1, // JSR $D1FE  (original routine)
-        0xC9, 0x4B,       // CMP #$4B   (canoe state?)
-        0xD0, 0x1B,       // BNE +27    (skip if not canoe)
-        0xB5, 0x75,       // LDA $75,X  (map obj Y)
-        0x9D, 0x7E, 0x79, // STA $797E,X (death respawn Y)
-        0xB5, 0x77,       // LDA $77,X  (map obj X hi)
-        0x9D, 0x80, 0x79, // STA $7980,X (death respawn X hi)
-        0xB5, 0x79,       // LDA $79,X  (map obj X lo)
-        0x9D, 0x82, 0x79, // STA $7982,X (death respawn X lo)
-        0xA5, 0xFD,       // LDA $FD    (Map_Scroll_X)
-        0x9D, 0x86, 0x79, // STA $7986,X (death respawn scroll X)
-        0xA5, 0x12,       // LDA $12    (Map_Scroll_XHi)
-        0x9D, 0x88, 0x79, // STA $7988,X (death respawn scroll XHi)
-        0xA5, 0xE5,       // LDA $E5    (reload game state)
-        0x60,             // RTS
-    ]);
+    // Record 3: respawn-save subroutine
+    rom.write_range(FS_CANOE_RESPAWN, &CANOE_RESPAWN_ROUTINE);
 
-    // Record 4: Hook at 0x1623F (PRG011, CPU $A22F) → JSR $BCF0 (canoe backup)
-    rom.write_range(0x1623F, &[0x20, 0xF0, 0xBC, 0xEA, 0xEA]);
+    // Record 4: Hook at PRG011 CPU $A22F → JSR $BCF0 (canoe backup)
+    rom.write_range(CANOE_BACKUP_HOOK, &[0x20, 0xF0, 0xBC, 0xEA, 0xEA]);
 
-    // Record 5: Canoe backup/restore subroutines in PRG011 free space (rom_data::FS_CANOE_BACKUP)
-    // Part A ($BCF0): backs up 3 map data values before canoe overwrites them
-    // Part B ($BD0C): restores backed-up values when canoe interaction ends
-    rom.write_range(super::rom_data::FS_CANOE_BACKUP, &[
-        // Part A: backup on canoe load
-        0xC9, 0x10,       // CMP #$10   (canoe obj ID)
-        0xD0, 0x12,       // BNE +18    (skip if not canoe)
-        0xB9, 0xEB, 0x7E, // LDA $7EEB,Y
-        0x8D, 0xF3, 0x7A, // STA $7AF3
-        0xB9, 0x07, 0x7F, // LDA $7F07,Y
-        0x8D, 0xF1, 0x7A, // STA $7AF1
-        0xB9, 0xF9, 0x7E, // LDA $7EF9,Y
-        0x8D, 0xF2, 0x7A, // STA $7AF2
-        0xB1, 0x06,       // LDA ($06),Y (original instruction)
-        0x99, 0x56, 0x79, // STA $7956,Y (original instruction)
-        0x60,             // RTS
-        // Part B: restore on canoe cleanup
-        0xA0, 0x0D,       // LDY #$0D   (iterate backwards)
-        0xB9, 0x15, 0x7F, // LDA $7F15,Y (map obj ID)
-        0xC9, 0x10,       // CMP #$10   (canoe?)
-        0xD0, 0x14,       // BNE +20    (skip if not canoe)
-        0xAD, 0xF3, 0x7A, // LDA $7AF3
-        0x99, 0xEB, 0x7E, // STA $7EEB,Y (restore)
-        0xAD, 0xF1, 0x7A, // LDA $7AF1
-        0x99, 0x07, 0x7F, // STA $7F07,Y (restore)
-        0xAD, 0xF2, 0x7A, // LDA $7AF2
-        0x99, 0xF9, 0x7E, // STA $7EF9,Y (restore)
-        0xA0, 0x01,       // LDY #$01   (break loop)
-        0x88,             // DEY
-        0xD0, 0xE2,       // BNE -30    (loop)
-        0xA9, 0x00,       // LDA #$00
-        0x8D, 0x00, 0x05, // STA $0500  (clear game state flag)
-        0x60,             // RTS
-    ]);
+    // Record 5: backup/restore subroutines
+    rom.write_range(FS_CANOE_BACKUP, &CANOE_BACKUP_ROUTINE);
 }
 
 /// Apply deterministic layout fixes for the 9 beta stages.
@@ -468,25 +491,25 @@ pub fn fix_canoe_softlock(rom: &mut Rom) {
 /// misaligned tile commands in the beta level data. These 44 byte patches
 /// repair the layouts so the stages are playable.
 pub fn fix_beta_stages(rom: &mut Rom) {
-    for &(offset, value) in super::rom_data::BETA_PATCHES {
+    for &(offset, value) in BETA_PATCHES {
         rom.write_byte(offset, value);
     }
 }
 
 /// Replace W3 drawbridge tiles with normal path tiles and NOP the toggle code.
 pub fn fix_w3_drawbridges(rom: &mut Rom) {
-    // Replace horizontal drawbridge tiles with bridge ($B3, horizontal path)
-    rom.write_byte(W3_BRIDGE_H1, 0xB3);
-    rom.write_byte(W3_BRIDGE_H2, 0xB3);
-    // Replace vertical drawbridge tiles with open path ($BA, vertical-compatible)
-    rom.write_byte(W3_BRIDGE_V1, 0xBA);
-    rom.write_byte(W3_BRIDGE_V2, 0xBA);
+    for (offset, tile) in W3_DRAWBRIDGE_TILES {
+        rom.write_byte(offset, tile);
+    }
     // NOP out the toggle code (LDA $07BB; EOR #$01; STA $07BB)
     rom.write_range(W3_TOGGLE_OFFSET, &[0xEA; W3_TOGGLE_LEN]);
 }
 
 // ---------------------------------------------------------------------------
-// MaCobra patches — always-on bugfixes and fairness tweaks
+// MaCobra patches — always-on bundle
+// Consts in this section feed apply_macobra_patches() at the bottom of the
+// file; that bundle ships with every randomized ROM. Opt-in MaCobra patches
+// (gated by individual options) live in their own section further down.
 // ---------------------------------------------------------------------------
 
 // Forced hammer bro walk-over: NOPs `STA $053C,Y; RTS` in the map sprite
@@ -512,8 +535,9 @@ const PIPE_CLIP_FIX: usize = 0x3B5B1;
 
 // Move after orb grab: NOPs `STY/STA $7CF4` in PRG003 (CPU $A8ED, $A903) so
 // the player-input-lock flag isn't set when grabbing the fortress magic ball.
-// 6 bytes total (2 × 3-byte absolute stores → NOPs).
-const MOVE_AFTER_ORB: [usize; 6] = [0x068FD, 0x068FE, 0x068FF, 0x06913, 0x06914, 0x06915];
+// Two 3-byte absolute stores → NOPs.
+const MOVE_AFTER_ORB_STY: usize = 0x068FD; // STY $7CF4 at CPU $A8ED
+const MOVE_AFTER_ORB_STA: usize = 0x06913; // STA $7CF4 at CPU $A903
 
 // Tail attack while swimming (PRG008) — extends the swim subroutine so
 // Raccoon/Tanooki Mario can tail-swipe enemies underwater. Two 5-byte hooks
@@ -558,6 +582,12 @@ const TAIL_SWIM_ROUTINE: [u8; 285] = [
 const HOTFOOT_TAIL_A: usize = 0x0413C;
 const HOTFOOT_TAIL_B: usize = 0x04151;
 const HOTFOOT_TAIL_C: usize = 0x0814D;
+
+// ---------------------------------------------------------------------------
+// MaCobra patches — opt-in features
+// Each apply_* below is gated by an individual option in randomizer.rs;
+// none of these ship unless the corresponding flag is enabled.
+// ---------------------------------------------------------------------------
 
 // Early Sun (by MaCobra52) — drops the Angry Sun's pre-attack threshold
 // from 5 to 0 so it begins swooping immediately on spawn instead of after
@@ -718,9 +748,8 @@ pub fn apply_macobra_patches(rom: &mut Rom) {
     rom.write_byte(PIPE_CLIP_FIX, 0x00);
 
     // Allow Mario to keep moving after grabbing the fortress orb / magic ball.
-    for offset in MOVE_AFTER_ORB {
-        rom.write_byte(offset, 0xEA);
-    }
+    rom.write_range(MOVE_AFTER_ORB_STY, &[0xEA; 3]);
+    rom.write_range(MOVE_AFTER_ORB_STA, &[0xEA; 3]);
 
     // Tail attack while swimming (Raccoon/Tanooki tail-swipes underwater).
     rom.write_range(TAIL_SWIM_HOOK_A, &TAIL_SWIM_HOOK_A_BYTES);
@@ -799,27 +828,15 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_w2_rock() {
+    fn test_remove_rocks() {
         let mut rom = make_test_rom();
-        rom.write_byte(W2_SECRET_ROCK, 0x51);
-        remove_w2_rock(&mut rom);
-        assert_eq!(rom.read_byte(W2_SECRET_ROCK), 0x45);
-    }
-
-    #[test]
-    fn test_remove_w3_boat_rock() {
-        let mut rom = make_test_rom();
-        rom.write_byte(W3_BOAT_ROCK, 0x51);
-        remove_w3_boat_rock(&mut rom);
-        assert_eq!(rom.read_byte(W3_BOAT_ROCK), 0x45);
-    }
-
-    #[test]
-    fn test_remove_w4_pipe_rock() {
-        let mut rom = make_test_rom();
-        rom.write_byte(W4_PIPE_ROCK, 0x51);
-        remove_w4_pipe_rock(&mut rom);
-        assert_eq!(rom.read_byte(W4_PIPE_ROCK), 0x45);
+        for offset in [W2_SECRET_ROCK, W3_BOAT_ROCK, W4_PIPE_ROCK] {
+            rom.write_byte(offset, 0x51);
+        }
+        remove_rocks(&mut rom);
+        for offset in [W2_SECRET_ROCK, W3_BOAT_ROCK, W4_PIPE_ROCK] {
+            assert_eq!(rom.read_byte(offset), 0x45);
+        }
     }
 
     #[test]
@@ -833,20 +850,16 @@ mod tests {
     #[test]
     fn test_fix_w3_drawbridges() {
         let mut rom = make_test_rom();
-        // Place original drawbridge tiles
-        rom.write_byte(W3_BRIDGE_H1, 0xB2);
-        rom.write_byte(W3_BRIDGE_H2, 0xB2);
-        rom.write_byte(W3_BRIDGE_V1, 0xB1);
-        rom.write_byte(W3_BRIDGE_V2, 0xB1);
-        // Place original toggle code
+        for (offset, _) in W3_DRAWBRIDGE_TILES {
+            rom.write_byte(offset, 0x00);
+        }
         rom.write_range(W3_TOGGLE_OFFSET, &[0xAD, 0xBB, 0x07, 0x49, 0x01, 0x8D, 0xBB, 0x07]);
 
         fix_w3_drawbridges(&mut rom);
 
-        assert_eq!(rom.read_byte(W3_BRIDGE_H1), 0xB3);
-        assert_eq!(rom.read_byte(W3_BRIDGE_H2), 0xB3);
-        assert_eq!(rom.read_byte(W3_BRIDGE_V1), 0xBA);
-        assert_eq!(rom.read_byte(W3_BRIDGE_V2), 0xBA);
+        for (offset, tile) in W3_DRAWBRIDGE_TILES {
+            assert_eq!(rom.read_byte(offset), tile);
+        }
         assert_eq!(rom.read_range(W3_TOGGLE_OFFSET, W3_TOGGLE_LEN), &[0xEA; 8]);
     }
 
