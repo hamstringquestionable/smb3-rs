@@ -399,6 +399,13 @@ pub fn remove_n_cards(rom: &mut Rom) {
 // Canoe softlock fix — based on "SMB3 - Canoe Softlock Fixes (Open World
 // compatible).ips". Two hooks plus two free-space subroutines.
 
+// Hook at PRG010 CPU $C6EA → JSR FS_CANOE_RESPAWN (5 bytes incl. NOP NOP).
+const CANOE_RESPAWN_HOOK: usize = 0x146FA;
+// Boundary check adjustment at PRG010 CPU $CF13 (2 bytes).
+const CANOE_BOUNDARY_PATCH: usize = 0x14F23;
+// Hook at PRG011 CPU $A22F → JSR FS_CANOE_BACKUP (5 bytes incl. NOP NOP).
+const CANOE_BACKUP_HOOK: usize = 0x1623F;
+
 // Record 3: subroutine in PRG010 free space (FS_CANOE_RESPAWN).
 // Saves player map position as death respawn point when entering via canoe ($4B).
 #[rustfmt::skip]
@@ -465,17 +472,17 @@ const CANOE_BACKUP_ROUTINE: [u8; 66] = [
 ///
 /// Based on "SMB3 - Canoe Softlock Fixes (Open World compatible).ips".
 pub fn fix_canoe_softlock(rom: &mut Rom) {
-    // Record 1: Hook at 0x146FA (PRG010, CPU $C6EA) → JSR $BD0C (canoe cleanup)
-    rom.write_range(0x146FA, &[0x20, 0x0C, 0xBD, 0xEA, 0xEA]);
+    // Record 1: Hook at PRG010 CPU $C6EA → JSR $BD0C (canoe cleanup)
+    rom.write_range(CANOE_RESPAWN_HOOK, &[0x20, 0x0C, 0xBD, 0xEA, 0xEA]);
 
-    // Record 2: Boundary check adjustment at 0x14F23 (PRG010, CPU $CF13)
-    rom.write_range(0x14F23, &[0xE0, 0xDD]);
+    // Record 2: Boundary check adjustment at PRG010 CPU $CF13
+    rom.write_range(CANOE_BOUNDARY_PATCH, &[0xE0, 0xDD]);
 
     // Record 3: respawn-save subroutine
     rom.write_range(FS_CANOE_RESPAWN, &CANOE_RESPAWN_ROUTINE);
 
-    // Record 4: Hook at 0x1623F (PRG011, CPU $A22F) → JSR $BCF0 (canoe backup)
-    rom.write_range(0x1623F, &[0x20, 0xF0, 0xBC, 0xEA, 0xEA]);
+    // Record 4: Hook at PRG011 CPU $A22F → JSR $BCF0 (canoe backup)
+    rom.write_range(CANOE_BACKUP_HOOK, &[0x20, 0xF0, 0xBC, 0xEA, 0xEA]);
 
     // Record 5: backup/restore subroutines
     rom.write_range(FS_CANOE_BACKUP, &CANOE_BACKUP_ROUTINE);
