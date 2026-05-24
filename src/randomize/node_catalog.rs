@@ -98,6 +98,11 @@ pub(super) struct CatalogEntry {
 /// Complete catalog of all pointer table entries across all 8 worlds.
 pub(crate) struct NodeCatalog {
     pub(super) entries: Vec<CatalogEntry>,
+    /// Per-world flag: when true, the Start and Airship entries' `grid_pos`
+    /// have been swapped (Mario spawns at the airship coords, the airship/
+    /// objective lives at the start coords). Index 7 (W8) is always false —
+    /// Bowser's castle has no slot-1 airship sprite to move.
+    pub(super) start_airship_swapped: [bool; 8],
 }
 
 impl NodeCatalog {
@@ -152,11 +157,10 @@ impl NodeCatalog {
         // Second pass: assign names (beta entries already have names set)
         assign_names(&mut entries);
 
-        NodeCatalog { entries }
+        NodeCatalog { entries, start_airship_swapped: [false; 8] }
     }
 
     /// Iterate entries for a specific world.
-    #[allow(dead_code)] // used in tests
     pub(super) fn world(&self, world_idx: usize) -> impl Iterator<Item = &CatalogEntry> {
         self.entries.iter().filter(move |e| e.world_idx == world_idx)
     }

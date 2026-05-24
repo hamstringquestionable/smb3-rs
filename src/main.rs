@@ -183,6 +183,11 @@ struct Cli {
     #[arg(long)]
     include_beta_stages: bool,
 
+    /// For each W1-W7, independently coin-flip to swap Mario's start tile with
+    /// the airship tile. W8 is never swapped. Off by default.
+    #[arg(long)]
+    swap_start_airship: bool,
+
     /// Ground enemies: off, shuffle, or wild (default: shuffle)
     #[arg(long, default_value = "shuffle")]
     ground: String,
@@ -377,6 +382,7 @@ fn main() {
             hands_levels: !cli.no_hands_levels,
             troll_pipes: !cli.no_troll_pipes,
             include_beta_stages: cli.include_beta_stages,
+            swap_start_airship: cli.swap_start_airship,
             airship_lock: !cli.no_airship_lock,
             ground: parse_enemy_mode(&cli.ground, "ground"),
             shell: parse_enemy_mode(&cli.shell, "shell"),
