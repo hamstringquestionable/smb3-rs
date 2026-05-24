@@ -512,7 +512,10 @@ pub fn fix_w3_drawbridges(rom: &mut Rom) {
 }
 
 // ---------------------------------------------------------------------------
-// MaCobra patches — always-on bugfixes and fairness tweaks
+// MaCobra patches — always-on bundle
+// Consts in this section feed apply_macobra_patches() at the bottom of the
+// file; that bundle ships with every randomized ROM. Opt-in MaCobra patches
+// (gated by individual options) live in their own section further down.
 // ---------------------------------------------------------------------------
 
 // Forced hammer bro walk-over: NOPs `STA $053C,Y; RTS` in the map sprite
@@ -585,6 +588,12 @@ const TAIL_SWIM_ROUTINE: [u8; 285] = [
 const HOTFOOT_TAIL_A: usize = 0x0413C;
 const HOTFOOT_TAIL_B: usize = 0x04151;
 const HOTFOOT_TAIL_C: usize = 0x0814D;
+
+// ---------------------------------------------------------------------------
+// MaCobra patches — opt-in features
+// Each apply_* below is gated by an individual option in randomizer.rs;
+// none of these ship unless the corresponding flag is enabled.
+// ---------------------------------------------------------------------------
 
 // Early Sun (by MaCobra52) — drops the Angry Sun's pre-attack threshold
 // from 5 to 0 so it begins swooping immediately on spawn instead of after
