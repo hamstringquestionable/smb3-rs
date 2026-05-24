@@ -183,8 +183,8 @@ struct Cli {
     #[arg(long)]
     include_beta_stages: bool,
 
-    /// For each W1-W4 and W6-W7, independently coin-flip to swap Mario's start
-    /// tile with the airship tile. W5 and W8 are never swapped. Off by default.
+    /// For each W1-W7, independently coin-flip to swap Mario's start tile with
+    /// the airship tile. W8 is never swapped. Off by default.
     #[arg(long)]
     swap_start_airship: bool,
 

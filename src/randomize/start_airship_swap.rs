@@ -1,15 +1,17 @@
 //! Per-world Start ↔ Airship swap.
 //!
-//! Flips a coin per W1-W4 and W6-W7. W5 is excluded because its vanilla start
-//! at (6, 2) is approached only from above via (5, 2) — relocating the airship
-//! there forces `swap_tiles_above` to stamp the castle-top `$C8` on that cell,
-//! severing the only walkable approach and starving the pipe-bridging phase
-//! (one pipe pair gets dropped, including potentially the spiral castle).
-//! W8 has no airship sprite to move. On heads, Mario's start tile (0xE5) and
-//! the airship/objective tile (0xC9) trade places. The catalog is the source
-//! of truth — `pick_swaps` mutates the affected entries' `grid_pos` values so
-//! the rest of the overworld pipeline (build, writer) sees the swapped
-//! positions naturally.
+//! Flips a coin per W1-W7. W8 has no airship sprite to move. On heads, Mario's
+//! start tile (0xE5) and the airship/objective tile (0xC9) trade places. The
+//! catalog is the source of truth — `pick_swaps` mutates the affected entries'
+//! `grid_pos` values so the rest of the overworld pipeline (build, writer)
+//! sees the swapped positions naturally.
+//!
+//! W5 is the one world whose vanilla start is approached from *above* (path
+//! tile at (5, 2)), so the usual castle-top relocation would stamp the
+//! non-walkable `$C8` over that path cell and sever the only approach to the
+//! new airship. For W5 only, `swap_tiles_above` skips the castle-top write
+//! and leaves the path tile intact — the relocated airship loses its
+//! decorative top half, but the world stays playable.
 //!
 //! The engine-side scaffolding (per-world camera + Mario-position tables, the
 //! two helper routines, Map_Init JSR patches, and Map_Object slot-1 sprite
@@ -34,18 +36,13 @@ use super::rom_data::{
 // Phase 1: catalog mutation
 // ---------------------------------------------------------------------------
 
-/// Per W1-W4 and W6-W7, flip a coin. W5 and W8 are skipped (see module
-/// docstring). On heads, swap that world's Start and Airship entry `grid_pos`
-/// values in the catalog, and record the swap on
-/// `catalog.start_airship_swapped[wi]`. Downstream phases pick up the new
-/// positions automatically.
-///
-/// The coin is rolled for W5 too and the result discarded, so toggling the W5
-/// exclusion later won't shift the RNG sequence for W6/W7.
+/// Per W1-W7 (W8 skipped — no airship sprite), flip a coin. On heads, swap
+/// that world's Start and Airship entry `grid_pos` values in the catalog, and
+/// record the swap on `catalog.start_airship_swapped[wi]`. Downstream phases
+/// pick up the new positions automatically.
 pub(crate) fn pick_swaps<R: Rng>(catalog: &mut NodeCatalog, rng: &mut R) {
     for wi in 0..7 {
-        let heads = rng.random::<bool>();
-        if !heads || wi == 4 {
+        if !rng.random::<bool>() {
             continue;
         }
         let start_idx = catalog
@@ -99,19 +96,26 @@ pub(super) fn swap_tiles_above(grid: &mut Grid, world_idx: usize, catalog: &Node
         return;
     }
     // The tile directly above the vanilla airship (`0xC8`, the castle's top
-    // half) always travels with the airship — that's the "two tiles required
-    // for the castle." The tile above the vanilla START is a single-tile
-    // backdrop and for W4/W5/W7 it happens to be a water square. Carried
-    // verbatim to the new start position, that water square dangles above
-    // the relocated start tile in the middle of land/sky, which looks wrong.
-    // Substitute a per-world background tile in those cases.
+    // half) normally travels with the airship — the "two tiles required for
+    // the castle." For W5 the new airship lands at the vanilla start `(6, 2)`
+    // and the cell above it is a walkable path tile; stamping `$C8` there
+    // would block the only approach. Skip the castle-top write for W5 and
+    // accept the cosmetic loss (relocated airship is just the bottom half).
+    //
+    // The tile above the vanilla START is a single-tile backdrop and for
+    // W4/W5/W7 it happens to be a water square. Carried verbatim to the new
+    // start position, that water square dangles above the relocated start
+    // tile in the middle of land/sky, which looks wrong. Substitute a
+    // per-world background tile in those cases.
     let above_old_airship = grid.get(ar - 1, ac);
     let above_for_new_start = match above_start_override(world_idx) {
         Some(t) => t,
         None => grid.get(sr - 1, sc),
     };
     grid.set(ar - 1, ac, above_for_new_start);
-    grid.set(sr - 1, sc, above_old_airship);
+    if world_idx != 4 {
+        grid.set(sr - 1, sc, above_old_airship);
+    }
 }
 
 /// World-specific replacement for the tile that ends up directly above the
