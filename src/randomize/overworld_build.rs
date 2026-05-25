@@ -107,6 +107,7 @@ pub(crate) struct BuiltWorld {
 }
 
 /// Complete Phase 3 output.
+#[derive(Clone)]
 pub(crate) struct BuildResult {
     pub worlds: Vec<BuiltWorld>,
     /// Fortress counts per world (decided in Step 0).
@@ -1769,6 +1770,523 @@ pub(super) fn debug_stamp_rom(rom: &mut crate::rom::Rom, result: &BuildResult) {
 }
 
 // ---------------------------------------------------------------------------
+// Required-progression analyzer
+// ---------------------------------------------------------------------------
+//
+// Per-world question: how many distinct level + fortress entries must the
+// player clear to reach the airship (or W8's Bowser)?
+//
+// Movement model: level / fortress tiles are barriers — the player can stand
+// on one but cannot transit past it until they've cleared it. Pipes,
+// hammer-bros, toad houses, and bonus games are free transit. Locks on path
+// tiles are barriers until the fortress whose section opens them is cleared.
+// Pipes are free teleports (the player will always prefer the shortcut).
+//
+// Solved as minimum-vertex-weight shortest path on the state-augmented graph
+// `(position, opened_section_mask)`. Per-world section counts are small
+// (≤5), so the mask space stays tiny.
+//
+// Exposed via `analyze_required_progression` so the WASM single-seed dump can
+// reuse the same routine.
+
+/// What occupies a grid position visited along the required path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)] // variants are inspected only by the dump helper today.
+pub(crate) enum PathNodeKind {
+    Start,
+    Level,
+    Fortress { section: usize },
+    Pipe,
+    HammerBro,
+    ToadHouse,
+    BonusGame,
+    Target,
+    /// Position has no slot (e.g., a stray node tile). Should be rare.
+    Unclassified,
+}
+
+#[derive(Clone, Debug, Default)]
+#[allow(dead_code)] // read by tests today; consumed by the WASM single-seed dump later.
+pub(crate) struct RequiredProgression {
+    /// Distinct fortress slots the player must clear (excludes the objective
+    /// itself if it happens to live at a fortress tile).
+    pub forts_required: usize,
+    /// Distinct level slots the player must clear (excludes the objective).
+    pub levels_required: usize,
+    /// True when the airship/Bowser was reachable (always true on well-formed
+    /// maps — false here would indicate a builder bug).
+    pub reachable: bool,
+    /// Ordered list of (position, kind) starting at start, ending at target.
+    pub path: Vec<((usize, usize), PathNodeKind)>,
+    /// Locks crossed during traversal, in path order: (lock_path_tile, fort_section).
+    pub locks_crossed: Vec<((usize, usize), usize)>,
+    /// Which section's lock the hammer pre-opened, if any. `None` means the
+    /// hammer was not used (or the analysis was no-hammer).
+    pub hammer_broke_section: Option<usize>,
+}
+
+/// Compute the minimum number of fortress/level entries the player must clear
+/// to reach the world objective.
+///
+/// When `hammer` is true: the player has one hammer that can break exactly
+/// ONE overworld lock for free. We try every individual lock-break and pick
+/// the option that minimises total clears (including "don't use hammer").
+#[allow(dead_code)] // read by tests today; consumed by the WASM single-seed dump later.
+pub(crate) fn analyze_required_progression(
+    built: &BuiltWorld,
+    hammer: bool,
+) -> RequiredProgression {
+    if !hammer {
+        return analyze_with_pre_opened(built, None);
+    }
+    // Try (no break) ∪ {break each section}. Minimise total fort+level clears.
+    let mut best = analyze_with_pre_opened(built, None);
+    let mut best_cost = if best.reachable {
+        best.forts_required + best.levels_required
+    } else {
+        usize::MAX
+    };
+    for section in 0..built.section_count {
+        let mut candidate = analyze_with_pre_opened(built, Some(section));
+        if !candidate.reachable {
+            continue;
+        }
+        let cost = candidate.forts_required + candidate.levels_required;
+        if cost < best_cost {
+            best_cost = cost;
+            candidate.hammer_broke_section = Some(section);
+            best = candidate;
+        }
+    }
+    best
+}
+
+/// Inner Dijkstra: returns the minimum-cost progression with `hammered_section`
+/// pre-opened (if `Some`) or no locks pre-opened (`None`).
+#[allow(dead_code)]
+fn analyze_with_pre_opened(
+    built: &BuiltWorld,
+    hammered_section: Option<usize>,
+) -> RequiredProgression {
+    let initial_mask: u32 = match hammered_section {
+        Some(s) => 1u32 << s,
+        None => 0,
+    };
+    analyze_with_pre_opened_mask(built, initial_mask)
+}
+
+/// Same as `analyze_with_pre_opened` but takes an arbitrary opened-section
+/// mask. Useful for the all-locks-open sanity check in the dump.
+#[allow(dead_code)]
+fn analyze_with_pre_opened_mask(
+    built: &BuiltWorld,
+    initial_mask: u32,
+) -> RequiredProgression {
+    // 1. Stamp slots onto a working grid so walk_map sees them as nodes.
+    //    Skip locks — we model them as conditional edges instead.
+    let mut grid = built.grid.clone();
+    for slot in &built.slots {
+        match slot.kind {
+            SlotKind::Fortress => grid.set(slot.pos.0, slot.pos.1, TILE_FORTRESS),
+            SlotKind::Level
+                if BACKGROUND_TILES.contains(&grid.get(slot.pos.0, slot.pos.1)) =>
+            {
+                grid.set(slot.pos.0, slot.pos.1, TILE_NODE);
+            }
+            SlotKind::BonusGame => grid.set(slot.pos.0, slot.pos.1, TILE_BONUS_GAME),
+            SlotKind::ToadHouse => grid.set(slot.pos.0, slot.pos.1, TILE_TOAD_HOUSE),
+            _ => {}
+        }
+    }
+
+    let start = match rom_data::find_start(&grid) {
+        Some(s) => s,
+        None => return RequiredProgression::default(),
+    };
+    let target = match find_target(&grid, built.world_idx) {
+        Some(t) => t,
+        None => return RequiredProgression::default(),
+    };
+
+    let walk = walk_map(&grid, &built.pipe_pairs, Some(start));
+
+    // 2. Per-position slot info (skip the target; it's accounted for separately).
+    let mut kind_at: HashMap<(usize, usize), &SlotKind> = HashMap::new();
+    let mut section_at: HashMap<(usize, usize), usize> = HashMap::new();
+    for slot in &built.slots {
+        kind_at.insert(slot.pos, &slot.kind);
+        section_at.insert(slot.pos, slot.section);
+    }
+
+    // 3. Lock lookup keyed on path-tile position.
+    let mut lock_section: HashMap<(usize, usize), usize> = HashMap::new();
+    for lock in &built.locks {
+        lock_section.insert(lock.pos, lock.fort_section);
+    }
+
+    // 3b. Canoe edges for this world. There's one boat that starts at the
+    //     mainland dock (the `a` side of each `(a, b)` tuple — all share the
+    //     same mainland in vanilla). The boat moves WITH the player when they
+    //     ride it: a canoe edge (X, Y) is only usable when the boat sits at
+    //     X, and after the ride the boat is at Y. Walking/piping to an island
+    //     without the boat leaves you stranded (no canoe edge usable from
+    //     that island).
+    let canoe_edges: Vec<((usize, usize), (usize, usize))> = rom_data::CANOE_EDGES
+        .iter()
+        .filter(|&&(w, _)| w == built.world_idx)
+        .map(|&(_, edge)| edge)
+        .collect();
+    let canoe_pair_set: HashSet<((usize, usize), (usize, usize))> = canoe_edges
+        .iter()
+        .flat_map(|&(a, b)| [(a, b), (b, a)])
+        .collect();
+    let initial_boat: Option<(usize, usize)> = canoe_edges.first().map(|&(a, _)| a);
+
+    // 4. Dijkstra over (position, mask, boat_pos). Cost = node entries so far.
+    //    Entering a fortress flips its section bit in the mask; riding a
+    //    canoe moves the boat to the destination.
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+
+    /// (position, opened-section-mask, boat-position-or-None)
+    type SearchState = ((usize, usize), u32, Option<(usize, usize)>);
+    type HeapEntry = Reverse<(usize, (usize, usize), u32, Option<(usize, usize)>)>;
+
+    let mut dist: HashMap<SearchState, usize> = HashMap::new();
+    let mut prev: HashMap<SearchState, SearchState> = HashMap::new();
+    let mut heap: BinaryHeap<HeapEntry> = BinaryHeap::new();
+
+    let initial: SearchState = (start, initial_mask, initial_boat);
+    dist.insert(initial, 0);
+    heap.push(Reverse((0, start, initial_mask, initial_boat)));
+
+    let mut goal_state: Option<SearchState> = None;
+
+    let entry_cost = |dest: (usize, usize)| -> (usize, bool) {
+        // Returns (cost, is_fortress). is_fortress used by caller to update mask.
+        if dest == target {
+            return (1, false);
+        }
+        match kind_at.get(&dest) {
+            Some(SlotKind::Fortress) => (1, true),
+            Some(SlotKind::Level) => (1, false),
+            _ => (0, false),
+        }
+    };
+
+    while let Some(Reverse((cost, pos, mask, boat))) = heap.pop() {
+        let state = (pos, mask, boat);
+        if cost > *dist.get(&state).unwrap_or(&usize::MAX) {
+            continue;
+        }
+        if std::env::var("TRACE_DIJKSTRA").is_ok() {
+            eprintln!("    visit {pos:?} cost={cost} mask={mask:b} boat={boat:?}");
+        }
+        if pos == target {
+            goal_state = Some(state);
+            break;
+        }
+
+        // Walk / pipe edges from walk_map. Skip canoe edges — those are
+        // handled below with explicit boat-state tracking.
+        if let Some(edges) = walk.edges.get(&pos) {
+            for edge in edges {
+                if edge.path_pos.is_none() && canoe_pair_set.contains(&(pos, edge.dest)) {
+                    continue;
+                }
+                // Lock-bearing path tile? Requires its section to be open.
+                if let Some(path_pos) = edge.path_pos
+                    && let Some(&section) = lock_section.get(&path_pos)
+                    && mask & (1u32 << section) == 0
+                {
+                    continue;
+                }
+                let dest = edge.dest;
+                let (edge_cost, is_fort) = entry_cost(dest);
+                let new_mask = if is_fort {
+                    mask | (1u32 << section_at[&dest])
+                } else {
+                    mask
+                };
+                let key = (dest, new_mask, boat);
+                let new_cost = cost + edge_cost;
+                if new_cost < *dist.get(&key).unwrap_or(&usize::MAX) {
+                    dist.insert(key, new_cost);
+                    prev.insert(key, state);
+                    heap.push(Reverse((new_cost, dest, new_mask, boat)));
+                }
+            }
+        }
+
+        // Canoe edges: usable only if the boat sits at the current position.
+        if boat == Some(pos) {
+            for &(a, b) in &canoe_edges {
+                let dest = if a == pos {
+                    b
+                } else if b == pos {
+                    a
+                } else {
+                    continue;
+                };
+                let (edge_cost, is_fort) = entry_cost(dest);
+                let new_mask = if is_fort {
+                    mask | (1u32 << section_at[&dest])
+                } else {
+                    mask
+                };
+                let new_boat = Some(dest);
+                let key = (dest, new_mask, new_boat);
+                let new_cost = cost + edge_cost;
+                if new_cost < *dist.get(&key).unwrap_or(&usize::MAX) {
+                    dist.insert(key, new_cost);
+                    prev.insert(key, state);
+                    heap.push(Reverse((new_cost, dest, new_mask, new_boat)));
+                }
+            }
+        }
+    }
+
+    // 5. Reconstruct the path back from goal. Tally distinct fort/level
+    //    positions (start and target excluded from counts), and record which
+    //    locks were crossed (lookup edge.path_pos used per hop).
+    let Some(final_state) = goal_state else {
+        return RequiredProgression::default();
+    };
+
+    let kind_for = |pos: (usize, usize)| -> PathNodeKind {
+        if pos == start {
+            return PathNodeKind::Start;
+        }
+        if pos == target {
+            return PathNodeKind::Target;
+        }
+        match kind_at.get(&pos) {
+            Some(SlotKind::Fortress) => PathNodeKind::Fortress {
+                section: section_at[&pos],
+            },
+            Some(SlotKind::Level) => PathNodeKind::Level,
+            Some(SlotKind::Pipe) => PathNodeKind::Pipe,
+            Some(SlotKind::HammerBro) => PathNodeKind::HammerBro,
+            Some(SlotKind::ToadHouse) => PathNodeKind::ToadHouse,
+            Some(SlotKind::BonusGame) => PathNodeKind::BonusGame,
+            None => PathNodeKind::Unclassified,
+        }
+    };
+
+    let mut chain: Vec<SearchState> = vec![final_state];
+    let mut cur = final_state;
+    while let Some(&prev_state) = prev.get(&cur) {
+        chain.push(prev_state);
+        cur = prev_state;
+    }
+    chain.reverse();
+
+    let mut path: Vec<((usize, usize), PathNodeKind)> = Vec::with_capacity(chain.len());
+    let mut locks_crossed: Vec<((usize, usize), usize)> = Vec::new();
+    let mut forts: HashSet<(usize, usize)> = HashSet::new();
+    let mut levels: HashSet<(usize, usize)> = HashSet::new();
+
+    for (i, state) in chain.iter().enumerate() {
+        let pos = state.0;
+        path.push((pos, kind_for(pos)));
+        if i > 0 {
+            let prev_pos = chain[i - 1].0;
+            if let Some(edges) = walk.edges.get(&prev_pos)
+                && let Some(edge) = edges.iter().find(|e| e.dest == pos)
+                && let Some(path_pos) = edge.path_pos
+                && let Some(&section) = lock_section.get(&path_pos)
+            {
+                locks_crossed.push((path_pos, section));
+            }
+        }
+        if pos == start || pos == target {
+            continue;
+        }
+        match kind_at.get(&pos) {
+            Some(SlotKind::Fortress) => {
+                forts.insert(pos);
+            }
+            Some(SlotKind::Level) => {
+                levels.insert(pos);
+            }
+            _ => {}
+        }
+    }
+
+    RequiredProgression {
+        forts_required: forts.len(),
+        levels_required: levels.len(),
+        reachable: true,
+        path,
+        locks_crossed,
+        hammer_broke_section: None,
+    }
+}
+
+/// Pretty-print a `RequiredProgression` result for one world. Use for
+/// verification + as a reference for the WASM single-seed dump.
+#[allow(dead_code)]
+pub(crate) fn dump_required_progression(built: &BuiltWorld) {
+    let no_hammer = analyze_required_progression(built, false);
+    let with_hammer = analyze_required_progression(built, true);
+    // Sanity check: with EVERY lock pre-opened, is the target reachable?
+    // If not, the unreachability is a real builder/topology issue. If yes
+    // but the 1-lock-hammer path also fails, the issue is lock chain depth.
+    let all_open_mask = (1u32 << built.section_count).wrapping_sub(1);
+    let all_open = analyze_with_pre_opened_mask(built, all_open_mask);
+
+    let start = rom_data::find_start(&built.grid);
+    let target = find_target(&built.grid, built.world_idx);
+
+    let canoes: Vec<((usize, usize), (usize, usize))> = rom_data::CANOE_EDGES
+        .iter()
+        .filter(|&&(w, _)| w == built.world_idx)
+        .map(|&(_, edge)| edge)
+        .collect();
+
+    eprintln!("\n--- W{} ---", built.world_idx + 1);
+    eprintln!(
+        "  start={:?}  target={:?}  sections={}  locks={}  pipes={}{}",
+        start,
+        target,
+        built.section_count,
+        built.locks.len(),
+        built.pipe_pairs.len(),
+        if canoes.is_empty() {
+            String::new()
+        } else {
+            format!("  canoes={}", canoes.len())
+        },
+    );
+
+    // Inventory of fortress positions per section, so the lock annotations
+    // make sense to the reader.
+    let mut forts_by_section: Vec<(usize, (usize, usize))> = built
+        .slots
+        .iter()
+        .filter(|s| s.kind == SlotKind::Fortress)
+        .map(|s| (s.section, s.pos))
+        .collect();
+    forts_by_section.sort();
+    eprintln!("  fortresses:");
+    for (sec, pos) in &forts_by_section {
+        eprintln!("    section {sec}: ({}, {})", pos.0, pos.1);
+    }
+    eprintln!("  locks:");
+    for lock in &built.locks {
+        eprintln!(
+            "    ({}, {}) opened by section {}",
+            lock.pos.0, lock.pos.1, lock.fort_section,
+        );
+    }
+    eprintln!("  pipe pairs:");
+    for &(a, b) in &built.pipe_pairs {
+        eprintln!("    ({},{}) <-> ({},{})", a.0, a.1, b.0, b.1);
+    }
+    if !canoes.is_empty() {
+        eprintln!("  canoe routes (boat starts at the first endpoint):");
+        for (a, b) in &canoes {
+            eprintln!("    ({},{}) -> ({},{}) (and reverse, while boat is at far side)", a.0, a.1, b.0, b.1);
+        }
+    }
+
+    let pipe_set: EdgeSet = built.pipe_pairs
+        .iter()
+        .flat_map(|&(a, b)| [(a, b), (b, a)])
+        .collect();
+    let canoe_set: EdgeSet = canoes
+        .iter()
+        .flat_map(|&(a, b)| [(a, b), (b, a)])
+        .collect();
+
+    print_progression("Without hammer", &no_hammer, &pipe_set, &canoe_set);
+    print_progression("With hammer (1 lock max)", &with_hammer, &pipe_set, &canoe_set);
+    eprintln!(
+        "  [Sanity: all locks pre-opened]  reachable={}  forts={}  levels={}",
+        all_open.reachable, all_open.forts_required, all_open.levels_required,
+    );
+
+    match with_hammer.hammer_broke_section {
+        Some(s) => eprintln!("  Hammer used on: lock for section {s}"),
+        None => eprintln!("  Hammer used on: (nothing — hammer didn't help)"),
+    }
+    let fort_delta = no_hammer.forts_required as isize - with_hammer.forts_required as isize;
+    let level_delta = no_hammer.levels_required as isize - with_hammer.levels_required as isize;
+    let total_delta = fort_delta + level_delta;
+    eprintln!(
+        "  Hammer net: {fort_delta:+} fort(s), {level_delta:+} level(s)  =  {total_delta:+} total clears",
+    );
+}
+
+/// Set of directed teleport edges (pipe-pair / canoe-pair, both orientations).
+#[allow(dead_code)]
+type EdgeSet = HashSet<((usize, usize), (usize, usize))>;
+
+#[allow(dead_code)]
+fn print_progression(
+    label: &str,
+    p: &RequiredProgression,
+    pipe_set: &EdgeSet,
+    canoe_set: &EdgeSet,
+) {
+    eprintln!(
+        "\n  [{label}]  required: {} fort(s) + {} level(s)  (+ objective)",
+        p.forts_required, p.levels_required,
+    );
+    if !p.reachable {
+        eprintln!("    TARGET UNREACHABLE");
+        return;
+    }
+    let mut lock_iter = p.locks_crossed.iter().peekable();
+    for (i, (pos, kind)) in p.path.iter().enumerate() {
+        let tag = match kind {
+            PathNodeKind::Start => "START".to_string(),
+            PathNodeKind::Level => "LEVEL".to_string(),
+            PathNodeKind::Fortress { section } => format!("FORT (section {section})"),
+            PathNodeKind::Pipe => "PIPE (transit)".to_string(),
+            PathNodeKind::HammerBro => "HAMMERBRO (transit)".to_string(),
+            PathNodeKind::ToadHouse => "TOAD (transit)".to_string(),
+            PathNodeKind::BonusGame => "BONUS (transit)".to_string(),
+            PathNodeKind::Target => "TARGET (airship/Bowser)".to_string(),
+            PathNodeKind::Unclassified => "transit tile".to_string(),
+        };
+        // Classify the hop: pipe teleport, canoe, or walk.
+        let via = if i > 0 {
+            let prev = p.path[i - 1].0;
+            let edge = (prev, *pos);
+            if pipe_set.contains(&edge) {
+                " [via PIPE]"
+            } else if canoe_set.contains(&edge) {
+                " [via CANOE]"
+            } else {
+                ""
+            }
+        } else {
+            ""
+        };
+        eprintln!("    {i:2}. ({:2},{:2})  {tag}{via}", pos.0, pos.1);
+        // After printing the step, if the next lock_crossed entry came from
+        // this hop, surface it underneath.
+        if let Some(&&(lock_pos, sec)) = lock_iter.peek()
+            && i > 0
+        {
+            // The lock was on the edge into this node; print under this line.
+            let prev = p.path[i - 1].0;
+            // Path tile sits between prev and pos for a normal walk.
+            let between_r = (prev.0 + pos.0) / 2;
+            let between_c = (prev.1 + pos.1) / 2;
+            if (between_r, between_c) == lock_pos {
+                eprintln!(
+                    "         ↳ crossed lock at ({},{}) (opened by section {sec})",
+                    lock_pos.0, lock_pos.1,
+                );
+                lock_iter.next();
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1782,6 +2300,38 @@ mod tests {
     fn load_rom() -> Option<Rom> {
         let data = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
         Rom::from_bytes(&data).ok()
+    }
+
+    /// Apply the QoL patches that the real pipeline runs before the overworld
+    /// builder (`randomizer.rs` ~L657-670). These mutate the world-map grid —
+    /// rocks blocking pipe shortcuts, W3 drawbridge tiles, big-Q rooms — so
+    /// the catalog must see the post-patch state, not vanilla.
+    fn apply_qol_for_overworld(rom: &Rom) -> Rom {
+        let mut out = rom.clone();
+        super::super::qol::fix_w3_drawbridges(&mut out);
+        super::super::qol::remove_rocks(&mut out);
+        super::super::qol::fix_big_q_block_rooms(&mut out);
+        out
+    }
+
+    /// Build `(catalog, pickup)` for one seed. When the `SAS` env var is set,
+    /// applies per-seed start↔airship swap before pickup runs, matching the
+    /// real pipeline in `randomizer.rs` when `swap_start_airship` is on.
+    fn build_catalog_pickup(rom: &Rom, seed: u64) -> (NodeCatalog, PickupResult) {
+        let mut catalog = NodeCatalog::build(rom, false);
+        if std::env::var("SAS").is_ok() {
+            let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
+            super::super::start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
+        }
+        let pickup = super::super::overworld_pickup::pick_up(
+            rom,
+            &catalog,
+            super::super::overworld_pickup::PickupFlags {
+                shuffle_spade_games: true,
+                shuffle_toad_houses: true,
+            },
+        );
+        (catalog, pickup)
     }
 
     #[test]
@@ -2453,10 +3003,12 @@ mod tests {
                 return;
             }
         };
-        let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
+        let rom = apply_qol_for_overworld(&rom);
 
-        let seeds = 100u64;
+        let seeds: u64 = std::env::var("LOCK_SEEDS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(100);
         // BFS distance histogram: index = distance, value = count
         let mut histogram = [0u32; 30];
         let mut total_locks = 0u32;
@@ -2473,6 +3025,7 @@ mod tests {
 
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let (catalog, pickup) = build_catalog_pickup(&rom, seed);
             let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
             let mut seed_has_close = false;
             let mut seed_has_close_pair = false;
@@ -2656,8 +3209,7 @@ mod tests {
                 return;
             }
         };
-        let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
+        let rom = apply_qol_for_overworld(&rom);
 
         let seeds: u64 = std::env::var("PIPE_SEEDS")
             .ok()
@@ -2672,6 +3224,7 @@ mod tests {
 
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let (catalog, pickup) = build_catalog_pickup(&rom, seed);
             let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
 
             for built in &result.worlds {
@@ -2810,8 +3363,7 @@ mod tests {
                 return;
             }
         };
-        let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
+        let rom = apply_qol_for_overworld(&rom);
 
         let seeds: u64 = std::env::var("FORT_SEEDS")
             .ok()
@@ -2827,6 +3379,7 @@ mod tests {
 
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let (catalog, pickup) = build_catalog_pickup(&rom, seed);
             let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
 
             for built in &result.worlds {
@@ -2986,8 +3539,7 @@ mod tests {
                 return;
             }
         };
-        let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
+        let rom = apply_qol_for_overworld(&rom);
 
         let seeds: u64 = std::env::var("LEVEL_SEEDS")
             .ok()
@@ -3009,6 +3561,7 @@ mod tests {
 
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let (catalog, pickup) = build_catalog_pickup(&rom, seed);
             let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
 
             for built in &result.worlds {
@@ -3179,4 +3732,341 @@ mod tests {
         }
     }
 
+    /// Required-progression analyzer.
+    ///
+    /// Per world, computes the minimum number of fortress + level entries
+    /// the player must clear to reach the airship/Bowser. Locks block path
+    /// tiles until the fortress whose section opens them is cleared; pipes
+    /// are taken whenever they shorten the route. Also reports a "hammer
+    /// mode" where all locks start open, isolating fortresses that were
+    /// only required because of lock gating.
+    ///
+    /// Run with: cargo test --release test_required_progression -- --ignored --nocapture
+    /// Override seed count with PROG_SEEDS=N.
+    /// Toggle start↔airship swap with SAS=1.
+    #[test]
+    #[ignore]
+    fn test_required_progression() {
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => {
+                eprintln!("ROM not found, skipping");
+                return;
+            }
+        };
+        let rom = apply_qol_for_overworld(&rom);
+
+        let seeds: u64 = std::env::var("PROG_SEEDS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1000);
+
+        // Per-world tallies: sums for mean, plus min/max.
+        let mut sum_forts = [0u64; 8];
+        let mut sum_levels = [0u64; 8];
+        let mut sum_h_forts = [0u64; 8];
+        let mut sum_h_levels = [0u64; 8];
+        let mut min_forts = [usize::MAX; 8];
+        let mut max_forts = [0usize; 8];
+        let mut min_levels = [usize::MAX; 8];
+        let mut max_levels = [0usize; 8];
+        let mut min_h_forts = [usize::MAX; 8];
+        let mut max_h_forts = [0usize; 8];
+        let mut unreachable = [0u32; 8];
+        let mut unreachable_seeds: [Vec<u64>; 8] = Default::default();
+
+        for seed in 0..seeds {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let (catalog, pickup) = build_catalog_pickup(&rom, seed);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+
+            for built in &result.worlds {
+                let wi = built.world_idx;
+                let no_hammer = analyze_required_progression(built, false);
+                let with_hammer = analyze_required_progression(built, true);
+
+                if !no_hammer.reachable {
+                    unreachable[wi] += 1;
+                    if unreachable_seeds[wi].len() < 5 {
+                        unreachable_seeds[wi].push(seed);
+                    }
+                    continue;
+                }
+                sum_forts[wi] += no_hammer.forts_required as u64;
+                sum_levels[wi] += no_hammer.levels_required as u64;
+                sum_h_forts[wi] += with_hammer.forts_required as u64;
+                sum_h_levels[wi] += with_hammer.levels_required as u64;
+
+                min_forts[wi] = min_forts[wi].min(no_hammer.forts_required);
+                max_forts[wi] = max_forts[wi].max(no_hammer.forts_required);
+                min_levels[wi] = min_levels[wi].min(no_hammer.levels_required);
+                max_levels[wi] = max_levels[wi].max(no_hammer.levels_required);
+                min_h_forts[wi] = min_h_forts[wi].min(with_hammer.forts_required);
+                max_h_forts[wi] = max_h_forts[wi].max(with_hammer.forts_required);
+            }
+        }
+
+        let sas_label = if std::env::var("SAS").is_ok() { " [SAS=1]" } else { "" };
+        eprintln!("\n=== Required Progression to Airship ({seeds} seeds{sas_label}) ===");
+        eprintln!();
+        eprintln!(
+            "{:<4} {:>8} {:>8}  {:>8} {:>8}   {:>8} {:>8}  {:>8}",
+            "", "forts", "(range)", "levels", "(range)", "h-forts", "(range)", "saves",
+        );
+
+        let mut grand_forts = 0u64;
+        let mut grand_levels = 0u64;
+        let mut grand_h_forts = 0u64;
+        let mut grand_h_levels = 0u64;
+
+        for wi in 0..8 {
+            let seeds_ok = (seeds as u32 - unreachable[wi]) as f64;
+            if seeds_ok == 0.0 {
+                eprintln!("  W{}: (no reachable seeds)", wi + 1);
+                continue;
+            }
+            let avg_f = sum_forts[wi] as f64 / seeds_ok;
+            let avg_l = sum_levels[wi] as f64 / seeds_ok;
+            let avg_hf = sum_h_forts[wi] as f64 / seeds_ok;
+            let saves = avg_f - avg_hf;
+
+            grand_forts += sum_forts[wi];
+            grand_levels += sum_levels[wi];
+            grand_h_forts += sum_h_forts[wi];
+            grand_h_levels += sum_h_levels[wi];
+
+            eprintln!(
+                "  W{}  {:>6.2}   {}-{:<3}  {:>6.2}   {}-{:<3}    {:>6.2}   {}-{:<3}   {:>5.2}",
+                wi + 1,
+                avg_f, min_forts[wi], max_forts[wi],
+                avg_l, min_levels[wi], max_levels[wi],
+                avg_hf, min_h_forts[wi], max_h_forts[wi],
+                saves,
+            );
+        }
+
+        let avg_total_forts = grand_forts as f64 / seeds as f64;
+        let avg_total_levels = grand_levels as f64 / seeds as f64;
+        let avg_total_h_forts = grand_h_forts as f64 / seeds as f64;
+        let avg_total_h_levels = grand_h_levels as f64 / seeds as f64;
+        eprintln!();
+        eprintln!("  Per-seed totals (excludes the 8 objectives):");
+        eprintln!(
+            "    Without hammer: {:.2} forts + {:.2} levels  =  {:.2} clears",
+            avg_total_forts, avg_total_levels, avg_total_forts + avg_total_levels,
+        );
+        eprintln!(
+            "    With hammer:    {:.2} forts + {:.2} levels  =  {:.2} clears  (saves {:.2})",
+            avg_total_h_forts, avg_total_h_levels,
+            avg_total_h_forts + avg_total_h_levels,
+            (avg_total_forts + avg_total_levels) - (avg_total_h_forts + avg_total_h_levels),
+        );
+
+        let total_unreach: u32 = unreachable.iter().sum();
+        if total_unreach > 0 {
+            eprintln!("\n  WARNING: {total_unreach} unreachable-target case(s) — builder bug?");
+            for (wi, &count) in unreachable.iter().enumerate() {
+                if count > 0 {
+                    let pct = count as f64 / seeds as f64 * 100.0;
+                    let seed_examples: Vec<String> = unreachable_seeds[wi]
+                        .iter()
+                        .map(u64::to_string)
+                        .collect();
+                    eprintln!(
+                        "    W{}: {count}/{seeds} ({pct:.1}%)  example seeds: {}",
+                        wi + 1,
+                        seed_examples.join(", "),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Single-seed dump of the required-progression analysis. Intended for
+    /// verification by eye — prints the fortress/lock inventory and the
+    /// step-by-step path Dijkstra picked, both without and with hammer.
+    ///
+    /// Run with:
+    ///   DUMP_SEED=0 DUMP_WORLD=4 cargo test --release \
+    ///     test_dump_required_progression -- --ignored --nocapture
+    /// Omit DUMP_WORLD to print all 8 worlds.
+    #[test]
+    #[ignore]
+    fn test_dump_required_progression() {
+        use crate::Options;
+
+        let rom_bytes = match std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes") {
+            Ok(b) => b,
+            Err(_) => {
+                eprintln!("ROM not found, skipping");
+                return;
+            }
+        };
+
+        let seed: u64 = std::env::var("DUMP_SEED")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let world_filter: Option<usize> = std::env::var("DUMP_WORLD")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .map(|w| w.saturating_sub(1));
+
+        // PROBE=1: print the vanilla world grid (post-QoL) for the chosen
+        // DUMP_WORLD, then exit. Used to inspect map topology without any
+        // build randomization.
+        if std::env::var("PROBE").is_ok() {
+            let rom = Rom::from_bytes(&rom_bytes).unwrap();
+            let rom = apply_qol_for_overworld(&rom);
+            let wi = world_filter.unwrap_or(2); // default W3
+            let grid = rom_data::read_tile_grid(&rom, wi);
+            eprintln!("=== Vanilla W{} grid (post-QoL) ===", wi + 1);
+            for r in 0..grid.rows {
+                eprint!("  r{r:1}:");
+                for c in 0..grid.cols {
+                    eprint!(" {:02X}", grid.get(r, c));
+                }
+                eprintln!();
+            }
+            return;
+        }
+
+        // STANDALONE=1 bypasses the full pipeline and runs the builder
+        // directly off a fresh `seed_from_u64(seed)` RNG, matching what the
+        // distribution analyzer (test_required_progression) sees. Use this
+        // to reproduce unreachable-target findings reported by that test.
+        if std::env::var("STANDALONE").is_ok() {
+            let rom = match Rom::from_bytes(&rom_bytes) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("ROM parse failed: {e}");
+                    return;
+                }
+            };
+            let rom = apply_qol_for_overworld(&rom);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let (catalog, pickup) = build_catalog_pickup(&rom, seed);
+            let result = build(
+                &rom,
+                &OverworldData { pickup: &pickup, catalog: &catalog },
+                &mut rng,
+                true,
+            );
+            let sas_label = if std::env::var("SAS").is_ok() {
+                " [SAS=1]"
+            } else {
+                ""
+            };
+            eprintln!("=== Required Progression dump (seed={seed}{sas_label}, STANDALONE) ===");
+            for built in &result.worlds {
+                if let Some(w) = world_filter
+                    && built.world_idx != w
+                {
+                    continue;
+                }
+                dump_required_progression(built);
+                // GRID=1: also print the post-build grid for visual inspection.
+                if std::env::var("GRID").is_ok() {
+                    eprintln!("\n  Post-build grid:");
+                    for r in 0..built.grid.rows {
+                        eprint!("    r{r:1}:");
+                        for c in 0..built.grid.cols {
+                            eprint!(" {:02X}", built.grid.get(r, c));
+                        }
+                        eprintln!();
+                    }
+                    if let (Some(start), Some(target)) = (
+                        rom_data::find_start(&built.grid),
+                        find_target(&built.grid, built.world_idx),
+                    ) {
+                        let probe = |grid: &Grid, label: &str, pos: (usize, usize)| {
+                            let r = pos.0 as i32 - 1;
+                            let c = pos.1 as i32 - 1;
+                            let dirs = [
+                                ("N", r, pos.1 as i32),
+                                ("S", pos.0 as i32 + 1, pos.1 as i32),
+                                ("W", pos.0 as i32, c),
+                                ("E", pos.0 as i32, pos.1 as i32 + 1),
+                            ];
+                            eprintln!("  {label}={pos:?} tile=0x{:02X}", grid.get(pos.0, pos.1));
+                            for (d, rr, cc) in dirs {
+                                if rr < 0 || cc < 0 || rr as usize >= grid.rows || cc as usize >= grid.cols {
+                                    eprintln!("    {d} ({rr},{cc}): off-grid");
+                                } else {
+                                    eprintln!("    {d} ({rr},{cc}): 0x{:02X}", grid.get(rr as usize, cc as usize));
+                                }
+                            }
+                        };
+                        probe(&built.grid, "start", start);
+                        probe(&built.grid, "target", target);
+
+                        // What does walk_map see as reachable from start?
+                        let walk = walk_map(&built.grid, &built.pipe_pairs, Some(start));
+                        let mut reachable: Vec<(usize, usize)> = walk.nodes.iter().copied().collect();
+                        reachable.sort();
+                        eprintln!("\n  walk_map reachable from start ({} nodes):", reachable.len());
+                        for pos in &reachable {
+                            eprintln!("    {pos:?} tile=0x{:02X}", built.grid.get(pos.0, pos.1));
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
+        // Build Options from either a FLAGS=SMB3R-... key (preferred — covers
+        // every randomizer toggle) or fall back to `Options::default()` plus
+        // an `SAS=1` override. This matches what the user would pass to the
+        // CLI/web, so the RNG sequence reaching the overworld builder is the
+        // one a real playthrough sees.
+        let mut options = match std::env::var("FLAGS") {
+            Ok(key) => match crate::Options::from_flag_key(&key) {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!("Invalid FLAGS key: {e}");
+                    return;
+                }
+            },
+            Err(_) => Options::default(),
+        };
+        if std::env::var("SAS").is_ok() {
+            options.swap_start_airship = true;
+        }
+        // Palettes (both character-only and themed) use a fresh OS RNG, so
+        // they introduce noise that breaks reproducibility without affecting
+        // the topology this analyzer cares about. Force both off so identical
+        // (seed, flags) inputs produce identical ROM bytes.
+        options.palettes = false;
+        options.palette_themed = false;
+
+        let (rom, result) = match crate::randomize_rom_with_overworld_capture(
+            &rom_bytes, seed, &options, None,
+        ) {
+            Ok(pair) => pair,
+            Err(e) => {
+                eprintln!("randomize_rom_with_overworld_capture failed: {e}");
+                return;
+            }
+        };
+
+        let sas_label = if options.swap_start_airship { " [SAS=1]" } else { "" };
+        let flag_key = options.to_flag_key();
+        eprintln!("=== Required Progression dump (seed={seed}{sas_label}) ===");
+        eprintln!("Flags: {flag_key}");
+
+        for built in &result.worlds {
+            if let Some(w) = world_filter
+                && built.world_idx != w
+            {
+                continue;
+            }
+            dump_required_progression(built);
+        }
+
+        // Save the fully-randomized ROM (matches the real playthrough state).
+        let sas_tag = if options.swap_start_airship { "_sas" } else { "" };
+        let filename = format!("progression_seed{seed}{sas_tag}.nes");
+        std::fs::write(&filename, rom.output_bytes()).unwrap();
+        eprintln!("\nWrote {filename}");
+    }
 }

@@ -644,6 +644,30 @@ impl Default for Options {
 
 /// Apply all enabled randomizations to a ROM using the given seed.
 pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
+    randomize_inner(rom, seed, options, None);
+}
+
+/// Same as [`randomize`] but additionally captures a snapshot of the overworld
+/// `BuildResult` right before the writer stamps it onto the ROM. Used by
+/// internal analyzer tests (and the future WASM single-seed dump endpoint) to
+/// inspect the exact topology the player will see, while still consuming RNG
+/// in the same order as a real playthrough.
+#[allow(dead_code)] // consumed by overworld_build::tests::test_dump_required_progression.
+pub(crate) fn randomize_with_overworld_capture(
+    rom: &mut Rom,
+    seed: u64,
+    options: &Options,
+    capture: &mut Option<randomize::overworld_build::BuildResult>,
+) {
+    randomize_inner(rom, seed, options, Some(capture));
+}
+
+fn randomize_inner(
+    rom: &mut Rom,
+    seed: u64,
+    options: &Options,
+    overworld_capture: Option<&mut Option<randomize::overworld_build::BuildResult>>,
+) {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
     // Resolve random starting items up front (deterministic from seed)
@@ -784,6 +808,16 @@ pub fn randomize(rom: &mut Rom, seed: u64, options: &Options) {
     if options.troll_pipes {
         rom.set_tag("troll_pipes");
         randomize::troll_pipes::mark_troll_pipes(&mut build, &mut rng);
+    }
+    // --- OVERWORLD CAPTURE POINT ---
+    // Hand a clone of the finalized BuildResult (post hands/troll mutations,
+    // pre-writer) to any caller that asked for it. Used by the progression
+    // analyzer to inspect the topology the player will actually see, with
+    // RNG consumed exactly as in a real playthrough. Keep this immediately
+    // before `write_overworld` so future randomization steps inserted after
+    // the writer don't pollute the snapshot.
+    if let Some(slot) = overworld_capture {
+        *slot = Some(build.clone());
     }
     randomize::overworld_writer::write_overworld(
         rom, &build, &data, &mut rng, true,
