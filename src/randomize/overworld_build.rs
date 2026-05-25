@@ -863,6 +863,39 @@ fn place_pipes<R: Rng>(
         return Vec::new();
     }
 
+    // Hard exclusion: forbid pipe endpoints adjacent (≤1 walking hop) to
+    // start or target. Diagnostic on 1000-seed sweeps showed 100% of
+    // "trivial bypass" (0 forts + 0 levels) playthroughs were caused by
+    // pipes sitting next to start, next to target, or both — eliminating
+    // both ends of that pattern eliminates the failure mode. Fixed
+    // endpoints (W3 boat dock) are exempt: their position is dictated by
+    // ROM data, not chosen by the builder.
+    let no_pipe_zone: HashSet<(usize, usize)> = {
+        let mut zone: HashSet<(usize, usize)> = HashSet::new();
+        for anchor in [start_pos, target_pos].into_iter().flatten() {
+            let walk = walk_map(grid, &[], Some(anchor));
+            for (&pos, &d) in &walk.distances {
+                if d <= 1 {
+                    zone.insert(pos);
+                }
+            }
+        }
+        // Fixed endpoints stay placeable even inside the zone.
+        for &fp in fixed_endpoints {
+            zone.remove(&fp);
+        }
+        zone
+    };
+    // Shadow the parameter with the filtered set so every candidate site
+    // below (phase 0 partner, island connections, no-more-islands pairs)
+    // automatically respects the zone.
+    let blank_positions: Vec<(usize, usize)> = blank_positions
+        .iter()
+        .copied()
+        .filter(|p| !no_pipe_zone.contains(p))
+        .collect();
+    let blank_positions = blank_positions.as_slice();
+
     let mut placed_pairs: Vec<TeleportEdge> = Vec::new();
     let mut used_positions: HashSet<(usize, usize)> = HashSet::new();
 
@@ -3774,6 +3807,17 @@ mod tests {
         let mut max_h_forts = [0usize; 8];
         let mut unreachable = [0u32; 8];
         let mut unreachable_seeds: [Vec<u64>; 8] = Default::default();
+        // "Trivial bypass" = hammerless playthrough requires 0 forts AND 0
+        // levels (player walks/pipes straight to the airship). Tracked per
+        // world plus classified by whether the path uses a pipe right after
+        // start (pipe_start), right before target (pipe_target), both, or
+        // neither — diagnostic that pinpoints the failure mode.
+        let mut zero_zero = [0u32; 8];
+        let mut zero_zero_seeds: [Vec<u64>; 8] = Default::default();
+        let mut bypass_both = [0u32; 8];
+        let mut bypass_start = [0u32; 8];
+        let mut bypass_target = [0u32; 8];
+        let mut bypass_other = [0u32; 8];
 
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -3791,6 +3835,22 @@ mod tests {
                         unreachable_seeds[wi].push(seed);
                     }
                     continue;
+                }
+                if no_hammer.forts_required == 0 && no_hammer.levels_required == 0 {
+                    zero_zero[wi] += 1;
+                    if zero_zero_seeds[wi].len() < 5 {
+                        zero_zero_seeds[wi].push(seed);
+                    }
+                    let path = &no_hammer.path;
+                    let pipe_after_start = path.get(1).is_some_and(|(_, k)| matches!(k, PathNodeKind::Pipe));
+                    let pipe_before_target = path.len() >= 2
+                        && matches!(path[path.len() - 2].1, PathNodeKind::Pipe);
+                    match (pipe_after_start, pipe_before_target) {
+                        (true, true)  => bypass_both[wi]  += 1,
+                        (true, false) => bypass_start[wi] += 1,
+                        (false, true) => bypass_target[wi] += 1,
+                        (false, false)=> bypass_other[wi] += 1,
+                    }
                 }
                 sum_forts[wi] += no_hammer.forts_required as u64;
                 sum_levels[wi] += no_hammer.levels_required as u64;
@@ -3879,6 +3939,32 @@ mod tests {
                     );
                 }
             }
+        }
+
+        let total_zero_zero: u32 = zero_zero.iter().sum();
+        let total_world_seeds = seeds as u32 * 8;
+        let overall_pct = total_zero_zero as f64 / total_world_seeds as f64 * 100.0;
+        eprintln!(
+            "\n  Trivial-bypass (0 forts + 0 levels) — overall {total_zero_zero}/{total_world_seeds} ({overall_pct:.2}%):"
+        );
+        for (wi, &count) in zero_zero.iter().enumerate() {
+            let pct = count as f64 / seeds as f64 * 100.0;
+            let examples = if zero_zero_seeds[wi].is_empty() {
+                String::new()
+            } else {
+                let s: Vec<String> = zero_zero_seeds[wi].iter().map(u64::to_string).collect();
+                format!("  example seeds: {}", s.join(", "))
+            };
+            eprintln!("    W{}: {count}/{seeds} ({pct:.1}%){examples}", wi + 1);
+        }
+        let tb = bypass_both.iter().sum::<u32>();
+        let ts = bypass_start.iter().sum::<u32>();
+        let tt = bypass_target.iter().sum::<u32>();
+        let to_ = bypass_other.iter().sum::<u32>();
+        if total_zero_zero > 0 {
+            eprintln!(
+                "  Bypass classification — pipe-both: {tb}, pipe-start-only: {ts}, pipe-target-only: {tt}, neither: {to_}",
+            );
         }
     }
 
