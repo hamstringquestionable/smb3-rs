@@ -135,7 +135,7 @@ export const SCHEMA = [
 		group: "map", inFlagKey: true },
 	{ id: "w1_hammer_rock", type: "bool", default: false,
 		label: "W1 Hammer Rock",
-		tip: "Place a hammer-breakable rock between the two W1 hammer-bro / toad house tiles (becomes a horizontal path when broken, cleared by the hammer item, the Remove Rocks option, or completing the W1 fortress)",
+		tip: "Place a hammer-breakable rock next to the W1 toad house to provide a shortcut",
 		group: "map", inFlagKey: true },
 	{ id: "remove_n_cards", type: "bool", default: true,
 		label: "Remove N-Cards",
