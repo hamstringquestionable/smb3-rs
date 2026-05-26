@@ -95,10 +95,6 @@ struct Cli {
     #[arg(long)]
     no_shuffle_airships: bool,
 
-    /// Keep W3 drawbridges toggling (they are fixed open by default)
-    #[arg(long)]
-    keep_drawbridges: bool,
-
     /// Keep path-blocking rocks (W2 secret path, W3 boat dock, W4 pipe shortcut)
     #[arg(long)]
     keep_rocks: bool,
@@ -365,7 +361,6 @@ fn main() {
             disable_autoscroll: !cli.keep_autoscroll,
             chest_items: !cli.no_chest_items,
             remove_whistles: !cli.keep_whistles,
-            fix_drawbridges: !cli.keep_drawbridges,
             remove_rocks: !cli.keep_rocks,
             w1_hammer_rock: cli.w1_hammer_rock,
             card_speed_clear: !cli.no_card_speed_clear,
@@ -434,7 +429,6 @@ fn main() {
     eprintln!("  Autoscroll: {}", if options.disable_autoscroll { "disabled" } else { "enabled" });
     eprintln!("  Chest items: {}", if options.chest_items { "on" } else { "off" });
     eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });
-    eprintln!("  W3 drawbridges: {}", if options.fix_drawbridges { "fixed open" } else { "toggling" });
     eprintln!("  Remove rocks: {}", if options.remove_rocks { "on" } else { "off" });
     eprintln!("  W1 hammer rock: {}", if options.w1_hammer_rock { "on" } else { "off" });
     eprintln!("  Airship lock: {}", if options.airship_lock { "on" } else { "off" });

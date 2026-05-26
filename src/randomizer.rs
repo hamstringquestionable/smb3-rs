@@ -93,9 +93,6 @@ pub struct Options {
     /// Remove warp whistles and replace with random items.
     #[serde(default = "default_true")]
     pub remove_whistles: bool,
-    /// Fix W3 drawbridges so all paths are always passable.
-    #[serde(default = "default_true")]
-    pub fix_drawbridges: bool,
     /// Remove rocks blocking paths (W2 secret path, W3 boat dock).
     #[serde(default = "default_true", alias = "remove_w2_rock")]
     pub remove_rocks: bool,
@@ -359,10 +356,10 @@ impl Options {
             | (self.airship_lock as u8) << 1
             | (self.chest_items as u8);
 
+        // b2 bit 4 is unused (formerly fix_drawbridges, now always-on).
         let b2 = (self.remove_whistles as u8) << 7
             | (self.hands_levels as u8) << 6
             | (self.shuffle_pipes as u8) << 5
-            | (self.fix_drawbridges as u8) << 4
             | (self.remove_rocks as u8) << 3
             | (self.troll_pipes as u8) << 2
             | (self.shuffle_toad_houses as u8) << 1
@@ -522,7 +519,6 @@ impl Options {
             shuffle_pipes: (b2 >> 5) & 1 != 0,
             shuffle_airships: b2 & 1 != 0,
             shuffle_toad_houses: (b2 >> 1) & 1 != 0,
-            fix_drawbridges: (b2 >> 4) & 1 != 0,
             remove_rocks: (b2 >> 3) & 1 != 0,
             troll_pipes: (b2 >> 2) & 1 != 0,
             starting_lives,
@@ -609,7 +605,6 @@ impl Default for Options {
             airship_lock: true,
             chest_items: true,
             remove_whistles: true,
-            fix_drawbridges: true,
             remove_rocks: true,
             w1_hammer_rock: false,
             card_speed_clear: true,
@@ -688,10 +683,8 @@ fn randomize_inner(
     // QoL map patches run first so all subsequent overworld operations
     // (fortress redistribution, pipe shuffle, lock shuffle) see the final
     // map connectivity and store correct replacement tiles.
-    if options.fix_drawbridges {
-        rom.set_tag("qol/drawbridges");
-        randomize::qol::fix_w3_drawbridges(rom);
-    }
+    rom.set_tag("qol/drawbridges");
+    randomize::qol::fix_w3_drawbridges(rom);
     if options.remove_rocks {
         rom.set_tag("qol/rocks");
         randomize::qol::remove_rocks(rom);
@@ -1164,7 +1157,6 @@ mod tests {
         assert_eq!(opts.remove_whistles, decoded.remove_whistles);
         assert_eq!(opts.shuffle_pipes, decoded.shuffle_pipes);
         assert_eq!(opts.shuffle_airships, decoded.shuffle_airships);
-        assert_eq!(opts.fix_drawbridges, decoded.fix_drawbridges);
         assert_eq!(opts.remove_rocks, decoded.remove_rocks);
         assert_eq!(opts.w1_hammer_rock, decoded.w1_hammer_rock);
         assert_eq!(opts.starting_lives, decoded.starting_lives);
@@ -1204,7 +1196,6 @@ mod tests {
             airship_lock: true,
             chest_items: true,
             remove_whistles: true,
-            fix_drawbridges: true,
             remove_rocks: true,
             w1_hammer_rock: true,
             starting_lives: 99,
@@ -1278,7 +1269,6 @@ mod tests {
             airship_lock: false,
             chest_items: false,
             remove_whistles: false,
-            fix_drawbridges: false,
             remove_rocks: false,
             w1_hammer_rock: false,
             starting_lives: 1,
@@ -1440,7 +1430,6 @@ mod tests {
             ("airship_lock",                 Box::new(|o| o.airship_lock = !o.airship_lock)),
             ("chest_items",                  Box::new(|o| o.chest_items = !o.chest_items)),
             ("remove_whistles",              Box::new(|o| o.remove_whistles = !o.remove_whistles)),
-            ("fix_drawbridges",              Box::new(|o| o.fix_drawbridges = !o.fix_drawbridges)),
             ("remove_rocks",                 Box::new(|o| o.remove_rocks = !o.remove_rocks)),
             ("w1_hammer_rock",               Box::new(|o| o.w1_hammer_rock = !o.w1_hammer_rock)),
             ("card_speed_clear",             Box::new(|o| o.card_speed_clear = !o.card_speed_clear)),
@@ -1538,7 +1527,6 @@ mod tests {
         everything.airship_lock = !everything.airship_lock;
         everything.chest_items = !everything.chest_items;
         everything.remove_whistles = !everything.remove_whistles;
-        everything.fix_drawbridges = !everything.fix_drawbridges;
         everything.remove_rocks = !everything.remove_rocks;
         everything.w1_hammer_rock = !everything.w1_hammer_rock;
         everything.card_speed_clear = !everything.card_speed_clear;
@@ -1640,7 +1628,6 @@ mod tests {
             airship_lock: false,
             chest_items: false,
             remove_whistles: false,
-            fix_drawbridges: false,
             remove_rocks: false,
             w1_hammer_rock: false,
             starting_lives: 1,
@@ -1698,7 +1685,6 @@ mod tests {
             airship_lock: true,
             chest_items: true,
             remove_whistles: true,
-            fix_drawbridges: true,
             remove_rocks: true,
             w1_hammer_rock: true,
             starting_lives: 99,
