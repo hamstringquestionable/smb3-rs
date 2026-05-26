@@ -103,6 +103,11 @@ struct Cli {
     #[arg(long)]
     keep_rocks: bool,
 
+    /// Convert the W1 (6,5) blocking decoration into a hammer-breakable rock
+    /// that becomes a horizontal path when broken (off by default)
+    #[arg(long)]
+    w1_hammer_rock: bool,
+
     /// Disable card speed clear (one-of-each skips cutscene, on by default)
     #[arg(long)]
     no_card_speed_clear: bool,
@@ -362,6 +367,7 @@ fn main() {
             remove_whistles: !cli.keep_whistles,
             fix_drawbridges: !cli.keep_drawbridges,
             remove_rocks: !cli.keep_rocks,
+            w1_hammer_rock: cli.w1_hammer_rock,
             card_speed_clear: !cli.no_card_speed_clear,
             remove_n_cards: !cli.keep_n_cards,
             skip_wand_cutscene: !cli.keep_wand_cutscene,
@@ -430,6 +436,7 @@ fn main() {
     eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });
     eprintln!("  W3 drawbridges: {}", if options.fix_drawbridges { "fixed open" } else { "toggling" });
     eprintln!("  Remove rocks: {}", if options.remove_rocks { "on" } else { "off" });
+    eprintln!("  W1 hammer rock: {}", if options.w1_hammer_rock { "on" } else { "off" });
     eprintln!("  Airship lock: {}", if options.airship_lock { "on" } else { "off" });
     if !options.starting_items.is_empty() {
         let item_names: Vec<&str> = options.starting_items.iter().map(|&id| match id {

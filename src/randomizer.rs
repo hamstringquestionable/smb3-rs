@@ -99,6 +99,12 @@ pub struct Options {
     /// Remove rocks blocking paths (W2 secret path, W3 boat dock).
     #[serde(default = "default_true", alias = "remove_w2_rock")]
     pub remove_rocks: bool,
+    /// Convert the W1 (6,5) decoration tile (between hammer-bro 14 and
+    /// toad house 20) into a hammer-breakable rock that becomes a
+    /// horizontal path when broken/cleared. Off keeps the vanilla
+    /// non-removable rock.
+    #[serde(default)]
+    pub w1_hammer_rock: bool,
     /// Clear cards instantly (no cutscene, no lives) when collecting one of each type.
     #[serde(default = "default_true")]
     pub card_speed_clear: bool,
@@ -363,7 +369,8 @@ impl Options {
             | (self.shuffle_airships as u8);
 
         // b3: hammer_breaks_bridges(7) starting_lives(6-5) fast_mushroom_house(4)
-        //     faster_tail_speed(3) no_game_over_penalty(2) swap_start_airship(1) reserved(0)
+        //     faster_tail_speed(3) no_game_over_penalty(2) swap_start_airship(1)
+        //     w1_hammer_rock(0)
         // starting_lives shrank from a 7-bit clamped 1–99 to a 2-bit index
         // into {1, 5, 20, 99}, freeing bits 4-0 for future toggles.
         let b3 = ((self.hammer_breaks_bridges as u8) << 7)
@@ -371,7 +378,8 @@ impl Options {
             | ((self.fast_mushroom_house as u8) << 4)
             | ((self.faster_tail_speed as u8) << 3)
             | ((self.no_game_over_penalty as u8) << 2)
-            | ((self.swap_start_airship as u8) << 1);
+            | ((self.swap_start_airship as u8) << 1)
+            | (self.w1_hammer_rock as u8);
 
         let b4 = (self.card_speed_clear as u8) << 7
             | (self.remove_n_cards as u8) << 6
@@ -531,6 +539,7 @@ impl Options {
             faster_tail_speed: (b3 >> 3) & 1 != 0,
             no_game_over_penalty: (b3 >> 2) & 1 != 0,
             swap_start_airship: (b3 >> 1) & 1 != 0,
+            w1_hammer_rock: b3 & 1 != 0,
             random_koopalings: (b10 >> 7) & 1 != 0,
             include_beta_stages: (b10 >> 6) & 1 != 0,
             hammer_breaks_bridges: (b3 >> 7) & 1 != 0,
@@ -602,6 +611,7 @@ impl Default for Options {
             remove_whistles: true,
             fix_drawbridges: true,
             remove_rocks: true,
+            w1_hammer_rock: false,
             card_speed_clear: true,
             remove_n_cards: true,
             skip_wand_cutscene: true,
@@ -685,6 +695,10 @@ fn randomize_inner(
     if options.remove_rocks {
         rom.set_tag("qol/rocks");
         randomize::qol::remove_rocks(rom);
+    }
+    if options.w1_hammer_rock {
+        rom.set_tag("qol/w1_hammer_rock");
+        randomize::qol::make_w1_hammer_rock(rom);
     }
 
     // Fix Big ? Block bonus rooms so they follow the level, not the world slot.
@@ -1152,6 +1166,7 @@ mod tests {
         assert_eq!(opts.shuffle_airships, decoded.shuffle_airships);
         assert_eq!(opts.fix_drawbridges, decoded.fix_drawbridges);
         assert_eq!(opts.remove_rocks, decoded.remove_rocks);
+        assert_eq!(opts.w1_hammer_rock, decoded.w1_hammer_rock);
         assert_eq!(opts.starting_lives, decoded.starting_lives);
         assert_eq!(opts.card_speed_clear, decoded.card_speed_clear);
         assert_eq!(opts.remove_n_cards, decoded.remove_n_cards);
@@ -1191,6 +1206,7 @@ mod tests {
             remove_whistles: true,
             fix_drawbridges: true,
             remove_rocks: true,
+            w1_hammer_rock: true,
             starting_lives: 99,
             card_speed_clear: true,
             remove_n_cards: true,
@@ -1264,6 +1280,7 @@ mod tests {
             remove_whistles: false,
             fix_drawbridges: false,
             remove_rocks: false,
+            w1_hammer_rock: false,
             starting_lives: 1,
             card_speed_clear: false,
             remove_n_cards: false,
@@ -1425,6 +1442,7 @@ mod tests {
             ("remove_whistles",              Box::new(|o| o.remove_whistles = !o.remove_whistles)),
             ("fix_drawbridges",              Box::new(|o| o.fix_drawbridges = !o.fix_drawbridges)),
             ("remove_rocks",                 Box::new(|o| o.remove_rocks = !o.remove_rocks)),
+            ("w1_hammer_rock",               Box::new(|o| o.w1_hammer_rock = !o.w1_hammer_rock)),
             ("card_speed_clear",             Box::new(|o| o.card_speed_clear = !o.card_speed_clear)),
             ("remove_n_cards",               Box::new(|o| o.remove_n_cards = !o.remove_n_cards)),
             ("skip_wand_cutscene",           Box::new(|o| o.skip_wand_cutscene = !o.skip_wand_cutscene)),
@@ -1522,6 +1540,7 @@ mod tests {
         everything.remove_whistles = !everything.remove_whistles;
         everything.fix_drawbridges = !everything.fix_drawbridges;
         everything.remove_rocks = !everything.remove_rocks;
+        everything.w1_hammer_rock = !everything.w1_hammer_rock;
         everything.card_speed_clear = !everything.card_speed_clear;
         everything.remove_n_cards = !everything.remove_n_cards;
         everything.skip_wand_cutscene = !everything.skip_wand_cutscene;
@@ -1623,6 +1642,7 @@ mod tests {
             remove_whistles: false,
             fix_drawbridges: false,
             remove_rocks: false,
+            w1_hammer_rock: false,
             starting_lives: 1,
             card_speed_clear: false,
             remove_n_cards: false,
@@ -1680,6 +1700,7 @@ mod tests {
             remove_whistles: true,
             fix_drawbridges: true,
             remove_rocks: true,
+            w1_hammer_rock: true,
             starting_lives: 99,
             card_speed_clear: true,
             remove_n_cards: true,

@@ -40,6 +40,13 @@ const W3_BOAT_ROCK: usize = 0x187DB;
 // W4 rock blocking pipe path (screen 1, row 6, col 25) — $51 → $45
 const W4_PIPE_ROCK: usize = 0x18A16;
 
+// W1 (6,5) decoration tile between nodes 14 and 20 — vanilla 0x53 is
+// visually a rock but blocks all directions and is not registered as
+// removable. Writing 0x51 here turns it into a real hammer rock: it
+// becomes path 0x45 when broken (by `hammer_breaks_tiles`), cleared by
+// `remove_rocks`, and auto-cleared by vanilla after the W1 fortress.
+const W1_HAMMER_ROCK_OFFSET: usize = 0x1861F;
+
 // Big ? Block bonus room patch: decouple room selection from World_Num.
 //
 // Two-part patch:
@@ -175,6 +182,17 @@ pub fn remove_rocks(rom: &mut Rom) {
     for offset in [W2_SECRET_ROCK, W3_BOAT_ROCK, W4_PIPE_ROCK] {
         rom.write_byte(offset, 0x45);
     }
+}
+
+/// Turn the W1 (6,5) blocking decoration into a hammer-breakable rock.
+///
+/// Vanilla puts 0x53 (visually a rock, blocks all directions, not removable)
+/// at the gap between hammer-bro node 14 and toad house node 20. Writing 0x51
+/// keeps the same visual but registers the tile as a real "removable" rock,
+/// so it integrates with `hammer_breaks_tiles`, `remove_rocks`, and vanilla
+/// fortress-clear behavior just like the W2/W3/W4/W6 rocks.
+pub fn make_w1_hammer_rock(rom: &mut Rom) {
+    rom.write_byte(W1_HAMMER_ROCK_OFFSET, 0x51);
 }
 
 /// Patch Big ? Block bonus room selection to use level identity instead of World_Num.
@@ -837,6 +855,14 @@ mod tests {
         for offset in [W2_SECRET_ROCK, W3_BOAT_ROCK, W4_PIPE_ROCK] {
             assert_eq!(rom.read_byte(offset), 0x45);
         }
+    }
+
+    #[test]
+    fn test_make_w1_hammer_rock() {
+        let mut rom = make_test_rom();
+        rom.write_byte(W1_HAMMER_ROCK_OFFSET, 0x53);
+        make_w1_hammer_rock(&mut rom);
+        assert_eq!(rom.read_byte(W1_HAMMER_ROCK_OFFSET), 0x51);
     }
 
     #[test]
