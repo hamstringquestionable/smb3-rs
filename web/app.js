@@ -49,7 +49,7 @@ const VISUAL_PATCHES = [
 	},
 	{
 		id: "super_toad",
-		label: "Super Toad (Blue)",
+		label: "Super Toad",
 		path: "./visual-patches/super-toad-josuecr4ft.ips",
 		author: "JosueCr4ft",
 		url: "https://mfgg.net/index.php?act=resdb&param=02&c=7&id=38435",
