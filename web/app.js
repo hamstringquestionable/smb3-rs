@@ -55,6 +55,26 @@ const VISUAL_PATCHES = [
 		url: "https://mfgg.net/index.php?act=resdb&param=02&c=7&id=38435",
 		color: "#3a3aff", // Toad blue
 	},
+	{
+		id: "dr_mario",
+		label: "Dr. Mario",
+		path: "./visual-patches/dr-mario-bros-3-player-only.ips",
+		author: "Jon-Dat Flindo",
+		url: "https://www.twitch.tv/jondatflindo",
+		color: "#e8e8f0", // medical white
+		textColor: "#1c1c38",
+		creditLabel: "Dr. Mario Bros 3",
+	},
+	{
+		id: "dr_mario_viruses",
+		label: "+ Viruses",
+		path: "./visual-patches/dr-mario-bros-3.ips",
+		author: "Jon-Dat Flindo",
+		url: "https://www.twitch.tv/jondatflindo",
+		color: "#eab308", // virus yellow
+		textColor: "#1c1c38",
+		creditLabel: "Dr. Mario Bros 3",
+	},
 ];
 
 const visualPatchCache = new Map(); // id → Promise<Uint8Array>
@@ -295,8 +315,10 @@ function updateVisualPatchAccent() {
 	const entry = id ? VISUAL_PATCHES.find((p) => p.id === id) : null;
 	if (entry?.color) {
 		visualPatchPills.style.setProperty("--pill-active", entry.color);
+		visualPatchPills.style.setProperty("--pill-active-text", entry.textColor ?? "#fff");
 	} else {
 		visualPatchPills.style.removeProperty("--pill-active");
+		visualPatchPills.style.removeProperty("--pill-active-text");
 	}
 }
 
@@ -309,7 +331,7 @@ function updateVisualPatchCredit() {
 		return;
 	}
 	visualPatchCredit.replaceChildren();
-	visualPatchCredit.append(`${entry.label} by ${entry.author ?? "unknown"} — `);
+	visualPatchCredit.append(`${entry.creditLabel ?? entry.label} by ${entry.author ?? "unknown"} — `);
 	if (entry.url) {
 		const a = document.createElement("a");
 		a.href = entry.url;

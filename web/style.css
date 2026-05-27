@@ -307,7 +307,16 @@ input[type="radio"] {
 
 .pill-group input[type="radio"]:checked + label {
     background: var(--pill-active, #e44434);
-    color: #fff;
+    color: var(--pill-active-text, #fff);
+}
+
+/* When "+ Viruses" is the chosen visual patch, also light the Dr. Mario pill
+   so the player sees the relationship (viruses implies Dr. Mario). The base
+   pill keeps its own white background and dark text regardless of which
+   sibling is the actual radio selection. */
+.pill-group:has(input#vp-dr_mario_viruses:checked) label[for="vp-dr_mario"] {
+    background: #e8e8f0;
+    color: #1c1c38;
 }
 
 /* --- Tip Button + Block --- */
