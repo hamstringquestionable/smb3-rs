@@ -13,10 +13,10 @@
 //! and leaves the path tile intact — the relocated airship loses its
 //! decorative top half, but the world stays playable.
 //!
-//! The engine-side scaffolding (per-world camera + Mario-position tables, the
-//! two helper routines, Map_Init JSR patches, and Map_Object slot-1 sprite
-//! moves) is committed once at the tail of the writer via
-//! `write_engine_scaffolding`.
+//! The engine-side scaffolding (per-world camera + Mario-position tables,
+//! three helper routines, Map_Init + GameOver_TwirlToStart JSR patches, and
+//! Map_Object slot-1 sprite moves) is committed once at the tail of the
+//! writer via `write_engine_scaffolding`.
 //!
 //! Background and POC derivation: see `docs/start_airship_swap_findings.md`.
 
@@ -27,9 +27,10 @@ use crate::rom::Rom;
 use super::node_catalog::{NodeCatalog, NodeKind};
 use super::pipe_helpers::grid_pos_to_dest_nibbles;
 use super::rom_data::{
-    self, AIRSHIP_OBJ_SLOT, FS_SAS_SCRH_TABLE, FS_SAS_SCRL_TABLE, FS_SAS_X_HELPER,
-    FS_SAS_X_TABLE, FS_SAS_XHI_HELPER, FS_SAS_XHI_TABLE, Grid, MAP_INIT_SCROLL_SITE,
-    MAP_INIT_X_LOW_SITE, MAP_Y_STARTS_OFF, WORLDS,
+    self, AIRSHIP_OBJ_SLOT, FS_SAS_GAMEOVER_X_HELPER, FS_SAS_SCRH_TABLE, FS_SAS_SCRL_TABLE,
+    FS_SAS_X_HELPER, FS_SAS_X_TABLE, FS_SAS_XHI_HELPER, FS_SAS_XHI_TABLE,
+    GAMEOVER_TWIRL_X_SUB_SITE, Grid, MAP_INIT_SCROLL_SITE, MAP_INIT_X_LOW_SITE,
+    MAP_Y_STARTS_OFF, WORLDS,
 };
 
 // ---------------------------------------------------------------------------
@@ -177,8 +178,11 @@ pub(super) fn write_swapped_world_entries(rom: &mut Rom, world_idx: usize, catal
 /// Writes:
 ///   * `Map_Y_Starts` (vanilla 8-byte table at `MAP_Y_STARTS_OFF`)
 ///   * Four per-world tables in PRG031 free space (X, XHi, ScrL, ScrH)
-///   * Two helper subroutines (X-low setter, XHi + camera-scroll setter)
+///   * Three helper subroutines (X-low setter, XHi + camera-scroll setter,
+///     game-over-spiral X delta computer)
 ///   * `Map_Init` inline patches replaced with `JSR helper`
+///   * `GameOver_TwirlToStart` `SEC / SBC #$20` replaced with `JSR helper` so
+///     the spiral-back targets the per-world X instead of vanilla column 2
 ///   * Per-swapped-world `Map_Object` slot-1 sprite position move
 pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
     let mut y_tbl = [0u8; 8];
@@ -257,6 +261,25 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
     rom.write_range(
         MAP_INIT_SCROLL_SITE,
         &[0x20, (xhi_helper_cpu & 0xFF) as u8, (xhi_helper_cpu >> 8) as u8],
+    );
+
+    // GameOver_TwirlToStart computes the spiral-back X delta as
+    // `current_X - $20` (hardcoded column 2). In a swapped world the new
+    // start sits elsewhere, so the spiral lands Mario at column 2 of the
+    // right screen instead of the new start. Replace `SEC / SBC #$20`
+    // (3 bytes) with `JSR FS_SAS_GAMEOVER_X_HELPER`; the helper does
+    // `SEC / SBC FS_SAS_X_TABLE,Y / RTS` (Y is already World_Num here).
+    rom.set_tag("start_airship_swap/gameover_x");
+    let gameover_x_helper = [
+        0x38,                                                 // SEC
+        0xF9, (x_tbl_cpu & 0xFF) as u8, (x_tbl_cpu >> 8) as u8, // SBC FS_SAS_X_TABLE,Y
+        0x60,                                                 // RTS
+    ];
+    rom.write_range(FS_SAS_GAMEOVER_X_HELPER, &gameover_x_helper);
+    let gameover_helper_cpu = file_to_prg031_cpu(FS_SAS_GAMEOVER_X_HELPER);
+    rom.write_range(
+        GAMEOVER_TWIRL_X_SUB_SITE,
+        &[0x20, (gameover_helper_cpu & 0xFF) as u8, (gameover_helper_cpu >> 8) as u8],
     );
 
     rom.set_tag("start_airship_swap/slot1");

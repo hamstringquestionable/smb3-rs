@@ -33,7 +33,7 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x35572, 13, "mystery_anchor: item redirect trampoline"),
     (0x3557F, 50, "hammer_locks: tile check subroutine + tables"),
     (0x3E260, 33, "starting_items: lives + intro skip + menu music + inventory init trampoline"),
-    (0x3E281, 64, "start_airship_swap: 4 tables (X/XHi/ScrL/ScrH × 8) + X helper + XHi helper"),
+    (0x3E281, 69, "start_airship_swap: 4 tables (X/XHi/ScrL/ScrH × 8) + X helper + XHi helper + game-over X helper"),
     (0x3E965, 13, "title_screen: intro skip + menu music routine"),
     (0x3FFF0, 26, "card_speed_clear: XOR trampoline"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
@@ -73,16 +73,18 @@ pub(super) const FS_SEED_HASH_DATA: usize    = 0x3E93D; // 40 bytes
 pub(super) const FS_INTRO_SKIP: usize        = 0x3E965; // 13 bytes
 pub(super) const FS_CARD_CLEAR: usize        = 0x3FFF0; // 26 bytes
 
-// PRG031 — start_airship_swap engine scaffolding. One 64-byte block split into
-// 4 × 8-byte per-world tables followed by two assembled subroutines. PRG031 is
-// always-mapped at $E000-$FFFF so Map_Init (PRG011) can JSR into it directly.
-pub(super) const FS_SAS_BLOCK: usize       = 0x3E281;       // 64 bytes total
-pub(super) const FS_SAS_X_TABLE: usize     = FS_SAS_BLOCK;       // 8 bytes — Mario X-low pixel per world
-pub(super) const FS_SAS_XHI_TABLE: usize   = FS_SAS_BLOCK + 8;   // 8 bytes — Mario screen index per world
-pub(super) const FS_SAS_SCRL_TABLE: usize  = FS_SAS_BLOCK + 16;  // 8 bytes — camera scroll low per world ($0722)
-pub(super) const FS_SAS_SCRH_TABLE: usize  = FS_SAS_BLOCK + 24;  // 8 bytes — camera scroll high per world ($0724)
-pub(super) const FS_SAS_X_HELPER: usize    = FS_SAS_BLOCK + 32;  // 10 bytes — writes Map_Entered_X / $7982
-pub(super) const FS_SAS_XHI_HELPER: usize  = FS_SAS_BLOCK + 42;  // 22 bytes — writes Map_Entered_XHi + death-respawn XHi + scroll seeds
+// PRG031 — start_airship_swap engine scaffolding. One 69-byte block split into
+// 4 × 8-byte per-world tables followed by three assembled subroutines. PRG031
+// is always-mapped at $E000-$FFFF so Map_Init / GameOver_TwirlToStart (PRG011)
+// can JSR into it directly.
+pub(super) const FS_SAS_BLOCK: usize             = 0x3E281;       // 69 bytes total
+pub(super) const FS_SAS_X_TABLE: usize           = FS_SAS_BLOCK;       // 8 bytes — Mario X-low pixel per world
+pub(super) const FS_SAS_XHI_TABLE: usize         = FS_SAS_BLOCK + 8;   // 8 bytes — Mario screen index per world
+pub(super) const FS_SAS_SCRL_TABLE: usize        = FS_SAS_BLOCK + 16;  // 8 bytes — camera scroll low per world ($0722)
+pub(super) const FS_SAS_SCRH_TABLE: usize        = FS_SAS_BLOCK + 24;  // 8 bytes — camera scroll high per world ($0724)
+pub(super) const FS_SAS_X_HELPER: usize          = FS_SAS_BLOCK + 32;  // 10 bytes — writes Map_Entered_X / $7982
+pub(super) const FS_SAS_XHI_HELPER: usize        = FS_SAS_BLOCK + 42;  // 22 bytes — writes Map_Entered_XHi + death-respawn XHi + scroll seeds
+pub(super) const FS_SAS_GAMEOVER_X_HELPER: usize = FS_SAS_BLOCK + 64;  // 5 bytes — A := A - FS_SAS_X_TABLE[Y]; RTS
 
 // Vanilla 8-byte Map_Y_Starts table (per-world Mario spawn Y-pixel). Lives in
 // PRG030's world-enter routine. The start_airship_swap module rewrites this
@@ -95,6 +97,14 @@ pub(super) const MAP_Y_STARTS_OFF: usize  = 0x3C39A;
 // loads from the FS_SAS_* tables instead of the vanilla inline immediates.
 pub(super) const MAP_INIT_X_LOW_SITE: usize  = 0x16257;   // 8 bytes — `LDA #$20 / STA $797A,X / STA $7982,X`
 pub(super) const MAP_INIT_SCROLL_SITE: usize = 0x1627E;   // 3 bytes — `STA $0724,X`
+
+// GameOver_TwirlToStart inline patch site in PRG011 (CPU $A5F1). Vanilla
+// hardcodes the spiral-back-to-start X target as column 2 (`SEC / SBC #$20`).
+// SAS replaces these 3 bytes with `JSR FS_SAS_GAMEOVER_X_HELPER` so the
+// delta is computed against the per-world X start instead. Y is preloaded
+// with World_Num two instructions earlier (`LDY $0727`) and isn't modified
+// before this site, so the helper can use `SBC FS_SAS_X_TABLE,Y` directly.
+pub(super) const GAMEOVER_TWIRL_X_SUB_SITE: usize = 0x16601;  // 3 bytes — `SEC / SBC #$20`
 
 // Map_Object slot 1 == the airship sprite per southbird's disassembly:
 // "NOTE: Assumes Index 1 is the Airship!"
