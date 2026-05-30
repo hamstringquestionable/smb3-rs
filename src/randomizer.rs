@@ -197,6 +197,11 @@ pub struct Options {
     /// vanilla start coords. W8 (Bowser's castle) never swaps.
     #[serde(default)]
     pub swap_start_airship: bool,
+    /// Cosmetic: every inventory item displays as the Anchor sprite while
+    /// keeping its original behavior. Covers the world-map reserve grid,
+    /// Toad House chests, and in-level treasure boxes.
+    #[serde(default)]
+    pub anchor_visuals: bool,
     // --- Per-class enemy tri-state toggles ---
     /// Ground-walking enemies (Goomba, Spiny, Spike, etc.)
     #[serde(default = "default_shuffle")]
@@ -575,6 +580,7 @@ impl Options {
                 if wc == 0 { 7 } else { wc.clamp(1, 7) }
             },
             skip_rom_validation: false,
+            anchor_visuals: false,
         })
     }
 
@@ -628,6 +634,7 @@ impl Default for Options {
             hands_levels: true,
             troll_pipes: true,
             swap_start_airship: false,
+            anchor_visuals: false,
             ground: EnemyMode::Shuffle,
             shell: EnemyMode::Shuffle,
             flying: EnemyMode::Shuffle,
@@ -869,6 +876,13 @@ fn randomize_inner(
     // Randomize king quotes (always on — cosmetic flavor text)
     rom.set_tag("king_quotes");
     randomize::king_quotes::randomize(rom, &mut rng);
+
+    // Cosmetic: render every item visual (reserve grid, Toad House chests,
+    // in-level treasure boxes) as the Anchor sprite.
+    if options.anchor_visuals {
+        rom.set_tag("anchor_visuals");
+        randomize::anchor_visuals::apply(rom);
+    }
 
     // Skip the wand falling cutscene after defeating a Koopaling.
     if options.skip_wand_cutscene {
@@ -1234,6 +1248,7 @@ mod tests {
             wild_injections: true,
             starting_items: vec![0x05, 0x09, 0x03],
             skip_rom_validation: false,
+            anchor_visuals: false,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
@@ -1307,6 +1322,7 @@ mod tests {
             wild_injections: false,
             starting_items: vec![],
             skip_rom_validation: false,
+            anchor_visuals: false,
         };
         let key = opts.to_flag_key();
         let decoded = Options::from_flag_key(&key).unwrap();
@@ -1666,6 +1682,7 @@ mod tests {
             wild_injections: false,
             starting_items: vec![],
             skip_rom_validation: false,
+            anchor_visuals: false,
         }
     }
 
@@ -1723,6 +1740,7 @@ mod tests {
             wild_injections: true,
             starting_items: vec![0x05, 0x09, 0x03],
             skip_rom_validation: false,
+            anchor_visuals: true,
         }
     }
 

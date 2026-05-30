@@ -1039,6 +1039,95 @@ PRG031 via `$07F5`. The handler also stores the item to `$07F5` at $A5D8.
 `Inv_UseItem_Anchor` ($A682) sets `Map_Anchored`, plays the anchor sound, removes the
 item from inventory, and returns — it never enters the powerup animation path.
 
+### Inventory Item Draw (PRG026)
+
+`Inventory_DrawItemsOrCards` at CPU **$A366** (file **0x34376**) draws every non-empty
+reserve slot. Per slot it does:
+
+```
+LDY $0D                ; slot index 0-27
+LDA $7D80,Y            ; item ID (file 0x34378 = B9 80 7D)
+BEQ +0x1E              ; empty? skip past draw
+ASL A / ASL A / TAY    ; Y = item * 4 (file 0x3437D = 0A 0A A8)
+LDA $03E5 / AND #$07 / CMP #$04 / BEQ +4 / TYA / ORA #$02 / TAY  ; bottom-row select
+LDX $0C
+LDA ($0E),Y            ; fetch from InvItem_Tile_Layout
+STA $0301,X            ; -> sprite RAM
+...
+```
+
+`InvItem_Tile_Layout` is 14 rows × 4 bytes (one row per Global Item ID 0x00-0x0D); each
+row is a 2×2 grid of 8×8 CHR pattern IDs. The Anchor row (item 0x0A) is at table
+offset **0x28** and contains `02 03 12 13`.
+
+Palette is hardcoded `#$03` (no per-item attribute table; the routine STAs `#$03` to the
+two attribute slots of each sprite pair).
+
+**Patch site to force every drawn slot to a single item's tiles:** replace `0A 0A A8` at
+file `0x3437D` with `LDY #<offset>; NOP`. The `LDA $7D80,Y / BEQ` prologue is preserved
+so empty slots still skip; non-empty slots fetch from the chosen row.
+
+**Hilite (cursor-selected slot)** uses a separate routine `Inv_Display_Hilite` at CPU
+**$A86B** (file **0x3487B**) with its own table `InvItem_Hilite_Layout` at CPU **$A84C**
+(file **0x3485C**) — 14 rows × 2 bytes (left/right CHR pattern). The routine loads the
+hovered slot's item ID via `LDX $7D80,Y` at CPU $A88E (file 0x3489E) then computes the
+2-byte-stride index with `TXA; ASL A; TAX` at CPU $A899 (file **0x348A9** = `8A 0A AA`).
+**Patch:** `0x348A9` `8A 0A AA` → `A2 <id*2> EA` (`LDX #<idx>; NOP`). For the Anchor
+(`InvItem_Hilite_Layout` row offset `0x14` = `95 97`) the patch is `A2 14 EA`.
+
+**Hilite palette** is uploaded separately by `InvItem_SetColor` (called from
+`Inventory_DoHilites`). The vanilla per-item palette table `InvItem_Pal` at CPU **$A514**
+(file **0x34524**, 14 bytes) is read via `LDA InvItem_Pal,X` at CPU $A52A
+(file **0x3453A** = `BD 14 A5`); the value is then written to `Palette_Buffer+$1E`
+($07DF), which colors the highlighted slot's tiles. The routine early-exits when
+`Level_Tileset == 7` (Toad House interior) so it has no effect there.
+**Patch site to lock the hilite color to a single palette entry:** `0x3453A` `BD 14 A5` →
+`A9 <pal> EA`. For the Anchor (`InvItem_Pal[0x0A] = $07`) the patch is `A9 07 EA`.
+
+### Toad House Item Reveal (PRG002)
+
+Toad House chests are object **OBJ $35 / `OBJ_TOADHOUSEITEM`**, distinct from in-level
+treasure boxes (OBJ $52). The handler `ObjNorm_ToadHouseItem` lives in PRG002
+(southbird `PRG/prg002.asm` lines 4082-4240). It reads `Objects_Frame,X` (the actual
+item ID, RAM `$0669`) three times:
+
+| CPU | File | Role | Safe to redirect for visual-only? |
+|-----|------|------|-----------------------------------|
+| $B4F7 | 0x05507 | `LDY Objects_Frame,X` then `LDA ToadItem_PalPerItem,Y` — sets BG palette | yes |
+| $B55A | 0x0556A | `LDA Objects_Frame,X` then `STA Inventory_Items,Y` — gives item to player | **no** — patching changes the reward |
+| $B57A | 0x0558A | `LDA Objects_Frame,X` then `TAX; LDA ToadItem_PatternLeft-1,X; ...` — selects floating-item sprite tiles + attr | yes |
+
+**Patches to force the visual reveal to a fixed item without changing the reward:**
+- `0x05507` `BC 69 06` → `A0 <id> EA` (`LDY #<id>; NOP`) — for Anchor: `A0 0A EA`.
+- `0x0558A` `BD 69 06` → `A9 <id> EA` (`LDA #<id>; NOP`) — for Anchor: `A9 0A EA`.
+- Leave `0x0556A` alone so the player still receives the real item.
+
+### Treasure Box (In-Level Chest) Draw
+
+The Toad-House / fortress chest object is handled in PRG003:
+- `ObjInit_TreasureBox` at CPU **$A297** (file **0x62A7**)
+- `ObjNorm_TreasureBox` at CPU **$A2C6** (file **0x62D6**) with a per-item branch at
+  CPU **$A33A** (file **0x634A**)
+
+Both handlers read the chest's payload from **`Level_TreasureItem`** at RAM **`$7963`**
+via `LDA $7963` (3 bytes `AD 63 79`). Three reads total in PRG003:
+
+| CPU | File | Role | Safe to redirect for visual-only? |
+|-----|------|------|-----------------------------------|
+| $A297 | 0x62A7 | Init: seeds palette via `ToadItem_PalPerItem,Y` + stores `Objects_Var5,X` | yes |
+| $A321 | 0x6331 | Calls `Player_GetItem` — actually awards the item to the player | **no** — patching changes the reward |
+| $A33A | 0x634A | Sets `Objects_Frame,X` (sprite frame) + indexes `TBoxItem_MirrorFlags,Y` | yes |
+
+`TBoxItem_MirrorFlags` (PRG003, just before `ObjNorm_IceBlock`) is 14 bytes:
+`00 81 82 03 80 81 82 03 00 81 02 03 00 01` — item 0x0A (Anchor) = `02`.
+
+`ToadItem_PalPerItem` lives in PRG000 (CPU base $C000) around CPU $C400; full 14-byte
+table: `30 16 2A 2A 2A 17 27 36 27 30 07 36 27 27` (item 0x0A = `$07`).
+
+**Patch sites to force the visual reveal to a specific item without changing the
+reward:** replace `AD 63 79` at `0x62A7` and `0x634A` with `LDA #<id>; NOP`
+(`A9 <id> EA`). Leave `0x6331` alone so `Player_GetItem` still receives the real item.
+
 ### LATP_QBlocks — ? Block Item Table
 
 File offset: **0x1168D** (17 bytes, in PRG008)
