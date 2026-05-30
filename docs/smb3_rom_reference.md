@@ -1102,6 +1102,23 @@ item ID, RAM `$0669`) three times:
 - `0x0558A` `BD 69 06` → `A9 <id> EA` (`LDA #<id>; NOP`) — for Anchor: `A9 0A EA`.
 - Leave `0x0556A` alone so the player still receives the real item.
 
+### Princess Letter Cutscene Item (PRG027)
+
+The between-worlds Princess letter cutscene flashes the awarded item's sprite next to
+the letter text. The reward path and the visual path are separated:
+
+- **Give-item path** — `Letter_GiveIncludedItem` at CPU **$A1D9** reads from
+  `LetterItem_ByWorld` at file **0x360DE** (7 bytes, one per W1-W7, vanilla
+  `08 07 0D 08 07 08 00`), caches the picked ID into `CineKing_Var` at RAM `$9A`,
+  and stores it into `Inventory_Items`. **Must remain vanilla.**
+- **Per-frame visual path** — `TAndK_WaitForA` re-reads `$9A` each frame via
+  `LDY $9A` at CPU **$A18D** (file **0x3619D** = `A4 9A`) and uses Y to index four
+  tile/attr tables at $A0D4, $A0E1, $A0EE, … to render the floating item sprite.
+
+**Patch site to force the cutscene visual to a fixed item without changing the
+reward:** replace `A4 9A` at file `0x3619D` with `A0 <id>` (`LDY #<id>`). For the
+Anchor: `A0 0A`. The item stored into the player's inventory is unaffected.
+
 ### Treasure Box (In-Level Chest) Draw
 
 The Toad-House / fortress chest object is handled in PRG003:

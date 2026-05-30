@@ -199,7 +199,8 @@ pub struct Options {
     pub swap_start_airship: bool,
     /// Cosmetic: every inventory item displays as the Anchor sprite while
     /// keeping its original behavior. Covers the world-map reserve grid,
-    /// Toad House chests, and in-level treasure boxes.
+    /// Toad House chests, in-level treasure boxes, and the Princess letter
+    /// cutscene.
     #[serde(default)]
     pub anchor_visuals: bool,
     // --- Per-class enemy tri-state toggles ---

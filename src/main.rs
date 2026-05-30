@@ -191,7 +191,8 @@ struct Cli {
 
     /// Cosmetic: every inventory item displays as the Anchor sprite while
     /// keeping its original behavior. Covers the world-map reserve grid,
-    /// Toad House chests, and in-level treasure boxes.
+    /// Toad House chests, in-level treasure boxes, and the Princess letter
+    /// cutscene.
     #[arg(long)]
     anchor_visuals: bool,
 

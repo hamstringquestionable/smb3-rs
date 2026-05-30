@@ -57,6 +57,19 @@ const TOAD_HOUSE_PAL_PATCH: [u8; 3] = [0xA0, ANCHOR, 0xEA];
 const TOAD_HOUSE_TILE_OFFSET: usize = 0x0558A;
 const TOAD_HOUSE_TILE_PATCH: [u8; 3] = [0xA9, ANCHOR, 0xEA];
 
+// --- Princess letter cutscene item (PRG027 / TAndK_WaitForA) ---
+//
+// The between-worlds Princess letter cutscene flashes the awarded item's
+// sprite next to the letter. `Letter_GiveIncludedItem` (CPU $A1D9) caches
+// the world's reward into `CineKing_Var` ($9A) and into the player's
+// inventory; the per-frame draw at CPU $A18D then re-reads `$9A` via
+// `LDY $9A` (`A4 9A`) and uses Y to index four tile/attr tables at $A0D4,
+// $A0E1, $A0EE, … Replacing the load with `LDY #$0A` (`A0 0A`) forces
+// every table lookup to the Anchor's row without touching the inventory
+// write, so the player still receives the real reward.
+const PRINCESS_LETTER_INDEX_OFFSET: usize = 0x3619D;
+const PRINCESS_LETTER_INDEX_PATCH: [u8; 2] = [0xA0, ANCHOR];
+
 // --- In-level treasure box reveal (PRG003 / ObjInit & ObjNorm_TreasureBox) ---
 //
 // Both handlers do `LDA Level_TreasureItem` (`AD 63 79`) to drive visuals:
@@ -78,6 +91,7 @@ pub fn apply(rom: &mut Rom) {
     rom.write_range(TBOX_NORM_FRAME_OFFSET, &TBOX_LDA_ANCHOR_PATCH);
     rom.write_range(TOAD_HOUSE_PAL_OFFSET, &TOAD_HOUSE_PAL_PATCH);
     rom.write_range(TOAD_HOUSE_TILE_OFFSET, &TOAD_HOUSE_TILE_PATCH);
+    rom.write_range(PRINCESS_LETTER_INDEX_OFFSET, &PRINCESS_LETTER_INDEX_PATCH);
 }
 
 #[cfg(test)]
@@ -123,6 +137,7 @@ mod tests {
         assert_eq!(rom.read_range(TBOX_NORM_FRAME_OFFSET, 3), &TBOX_LDA_ANCHOR_PATCH);
         assert_eq!(rom.read_range(TOAD_HOUSE_PAL_OFFSET, 3), &TOAD_HOUSE_PAL_PATCH);
         assert_eq!(rom.read_range(TOAD_HOUSE_TILE_OFFSET, 3), &TOAD_HOUSE_TILE_PATCH);
+        assert_eq!(rom.read_range(PRINCESS_LETTER_INDEX_OFFSET, 2), &PRINCESS_LETTER_INDEX_PATCH);
 
         // Empty inventory slots must still take the BEQ skip after patching.
         assert_eq!(rom.read_range(INV_DRAW_PROLOGUE_OFFSET, 7), &VANILLA_INV_DRAW_PROLOGUE);
