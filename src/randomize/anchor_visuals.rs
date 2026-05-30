@@ -1,4 +1,5 @@
 use crate::rom::Rom;
+use super::rom_data::FS_ANCHOR_ITEM_GUARD;
 
 // Global Item ID for the Anchor — the visual we redirect every other item to.
 // Derived patch values: `ANCHOR * 2` indexes the 14×2-byte hilite tile table,
@@ -14,10 +15,42 @@ const ANCHOR: u8 = 0x0A;
 //   ASL A          ; item * 4 (one row = 4 bytes)
 //   TAY
 //
-// We keep LDA+BEQ so empty slots still skip, then replace ASL/ASL/TAY
-// (`0A 0A A8`) with `LDY #<ANCHOR*4>; NOP`.
+// `Inventory_DrawItemsOrCards` is shared between the 28 item slots (slot
+// indices 0..27 = $00..$1B) and the 3 goal cards (slot indices 28..30 =
+// $1C..$1E). The card-drawing pass sets `($0E)` to a different, shorter
+// tile table than the items pass; blindly forcing Y = $28 reads past
+// that table and garbles the cards.
+//
+// So instead of a literal `LDY #$28; NOP`, we replace `ASL A; ASL A; TAY`
+// with `JSR <FS_ANCHOR_ITEM_GUARD>`. The trampoline checks whether the
+// current slot index in Y is < $1C: items get Y = $28 (Anchor row in
+// items table); cards get the original `ASL A; ASL A; TAY` so their own
+// table is indexed correctly.
 const INV_DRAW_ITEM_INDEX_OFFSET: usize = 0x3437D;
-const INV_DRAW_ITEM_INDEX_PATCH: [u8; 3] = [0xA0, ANCHOR * 4, 0xEA];
+
+// File 0x355B1 = CPU $A000 + (0x355B1 - 0x34010) = $A000 + $15A1 = $B5A1.
+const ANCHOR_ITEM_GUARD_CPU_ADDR: u16 = 0xB5A1;
+const INV_DRAW_ITEM_INDEX_PATCH: [u8; 3] = [
+    0x20, // JSR abs
+    ANCHOR_ITEM_GUARD_CPU_ADDR as u8,
+    (ANCHOR_ITEM_GUARD_CPU_ADDR >> 8) as u8,
+];
+
+// Trampoline body for `FS_ANCHOR_ITEM_GUARD`:
+//   $B5A1: C0 1C        CPY #$1C       ; cards start at slot 28
+//   $B5A3: B0 03        BCS +3         ; if Y >= $1C, fall through to ASL path
+//   $B5A5: A0 28        LDY #$28       ; items: force Y to Anchor row
+//   $B5A7: 60           RTS
+//   $B5A8: 0A 0A A8     ASL A; ASL A; TAY  ; cards: original index compute
+//   $B5AB: 60           RTS
+const ANCHOR_ITEM_GUARD_BODY: [u8; 11] = [
+    0xC0, 0x1C,           // CPY #$1C
+    0xB0, 0x03,           // BCS +3
+    0xA0, ANCHOR * 4,     // LDY #$28
+    0x60,                 // RTS
+    0x0A, 0x0A, 0xA8,     // ASL A; ASL A; TAY
+    0x60,                 // RTS
+];
 
 // --- World-map inventory hilite (PRG026 / Inv_Display_Hilite) ---
 //
@@ -85,6 +118,7 @@ const TBOX_LDA_ANCHOR_PATCH: [u8; 3] = [0xA9, ANCHOR, 0xEA];
 
 pub fn apply(rom: &mut Rom) {
     rom.write_range(INV_DRAW_ITEM_INDEX_OFFSET, &INV_DRAW_ITEM_INDEX_PATCH);
+    rom.write_range(FS_ANCHOR_ITEM_GUARD, &ANCHOR_ITEM_GUARD_BODY);
     rom.write_range(INV_HILITE_INDEX_OFFSET, &INV_HILITE_INDEX_PATCH);
     rom.write_range(INV_HILITE_PAL_OFFSET, &INV_HILITE_PAL_PATCH);
     rom.write_range(TBOX_INIT_PALETTE_OFFSET, &TBOX_LDA_ANCHOR_PATCH);
@@ -131,6 +165,7 @@ mod tests {
         apply(&mut rom);
 
         assert_eq!(rom.read_range(INV_DRAW_ITEM_INDEX_OFFSET, 3), &INV_DRAW_ITEM_INDEX_PATCH);
+        assert_eq!(rom.read_range(FS_ANCHOR_ITEM_GUARD, ANCHOR_ITEM_GUARD_BODY.len()), &ANCHOR_ITEM_GUARD_BODY);
         assert_eq!(rom.read_range(INV_HILITE_INDEX_OFFSET, 3), &INV_HILITE_INDEX_PATCH);
         assert_eq!(rom.read_range(INV_HILITE_PAL_OFFSET, 3), &INV_HILITE_PAL_PATCH);
         assert_eq!(rom.read_range(TBOX_INIT_PALETTE_OFFSET, 3), &TBOX_LDA_ANCHOR_PATCH);
