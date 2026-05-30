@@ -4,5 +4,8 @@
 *.nes
 *.ips
 !web/visual-patches/*.ips
+*.zip
+*.cht
+/new
 tools/rom_map.json
 __pycache__/
