@@ -613,38 +613,6 @@ pub(super) const HB_EXCLUDE_OBJ_PTRS: &[u16] = &[
     0xC03D, // W8 — 7-7 layout
 ];
 
-/// File offsets of the enemy data segments for each Hammer Bro encounter obj_ptr.
-/// Computed as: 0x0C010 + (obj_ptr - 0xC000).
-/// Used by the enemy randomizer to detect HB encounter segments.
-///
-/// Includes the Coin Ship sub-area at 0xDA0F: when a wandering Hammer Bro
-/// transforms into a Coin Ship sprite, entering it loads an autoscroll ship
-/// level whose end-pipe junction targets this 2-BoomerangBro fight room.
-/// The room has no world pointer table entry — it's reached only via the
-/// junction in PRG023 — so it must be protected here, not via OBJ_PTRS.
-pub(super) const HAMMER_BRO_SEGMENT_OFFSETS: &[usize] = &[
-    0x0C73B, // 0xC72B — W1
-    0x0D15D, // 0xD14D — W2
-    0x0D152, // 0xD142 — W2 (variant)
-    0x0C650, // 0xC640 — W3, W5, W6, W7
-    0x0D0FA, // 0xD0EA — W4
-    0x0C04D, // 0xC03D — W8 (uses 7-7 layout)
-    0x0DA1F, // 0xDA0F — Coin Ship end-pipe 2-BoomerangBro fight
-];
-
-/// HB encounter enemy_ptr values — what level headers store, *not* the
-/// walker-segment offset. These mirror HAMMER_BRO_SEGMENT_OFFSETS but in
-/// the coordinate frame an entry-point-driven pass needs.
-pub(super) const HAMMER_BRO_ENEMY_PTRS: &[u16] = &[
-    0xC72B, // W1
-    0xD14D, // W2
-    0xD142, // W2 (variant)
-    0xC640, // W3, W5, W6, W7
-    0xD0EA, // W4
-    0xC03D, // W8 (uses 7-7 layout)
-    0xDA0F, // Coin Ship end-pipe 2-BoomerangBro fight
-];
-
 /// Stompable enemies — safe for single-enemy HB Wild segments and the default
 /// pool for 2-enemy segments. The player can always defeat these by jumping.
 pub(super) const STOMPABLE_ENEMIES: &[u8] = &[
@@ -899,7 +867,13 @@ pub(super) fn layout_file_offset(cpu_addr: u16, tileset: u8) -> Option<usize> {
 }
 
 /// ROM file offset of PRG006 enemy/object data base (CPU $C000).
-const ENEMY_DATA_FILE_BASE: usize = 0x0C010;
+pub(super) const ENEMY_DATA_FILE_BASE: usize = 0x0C010;
+
+/// Translate a CPU enemy-data pointer (`$C000..=$E00D`) to its absolute file
+/// offset.
+pub(super) fn enemy_ptr_to_file_offset(ep: u16) -> usize {
+    ENEMY_DATA_FILE_BASE + (ep as usize - 0xC000)
+}
 
 /// Enemy/object data block: 0x0BFD8..0x0E00D (exclusive end).
 /// Each level's enemy set is a sequence of segments separated by 0xFF.
@@ -908,88 +882,22 @@ const ENEMY_DATA_FILE_BASE: usize = 0x0C010;
 pub const ENEMY_DATA_START: usize = 0x0BFD8;
 pub const ENEMY_DATA_END: usize = 0x0E00D;
 
-/// Individual enemy offsets excluded from randomization.
-/// These specific enemies are required for gameplay (e.g., needed as platforms
-/// to make jumps, or positioned to enable required routes).
-pub(super) const PROTECTED_ENEMY_OFFSETS: &[usize] = &[
-    0x0C456, // 8-1 Boo (scr=5, col=1) — spawns on player; any non-passable swap forces a hit
-    0x0C465, // 8-1 FlyingRedParatroopa (scr=6, col=14) — needed to reach upper platform
-    0x0CAB1, // 6-3 FlyingRedParatroopa (scr=6, col=13) — needed for jump
-    0x0CAB4, // 6-3 FlyingRedParatroopa (scr=7, col=1) — needed for jump
-];
-
-/// Shell-class enemies at these offsets are forced to shuffle within SHELL_ENEMIES
-/// regardless of the shell mode (Shuffle or Wild). When shell is Off, these are
-/// untouched. Levels where shells are required to break bricks for progression.
-pub(super) const SHELL_PROTECTED_OFFSETS: &[usize] = &[
-    // 2-Pyr sub-area (enemy_ptr 0xC5BC): 10 Buzzy Beetles + 1 extra
-    0x0C5CD, // BuzzyBeetle scr=1 col=0 row=15
-    0x0C5D0, // BuzzyBeetle scr=1 col=3 row=2
-    0x0C5D3, // BuzzyBeetle scr=2 col=3 row=15
-    0x0C5D6, // BuzzyBeetle scr=2 col=5 row=9
-    0x0C5DC, // BuzzyBeetle scr=3 col=2 row=10
-    0x0C5DF, // BuzzyBeetle scr=3 col=4 row=9
-    0x0C5E2, // BuzzyBeetle scr=3 col=11 row=4
-    0x0C5E5, // BuzzyBeetle scr=4 col=0 row=15
-    0x0C5E8, // BuzzyBeetle scr=4 col=11 row=3
-    0x0C5EB, // BuzzyBeetle scr=4 col=14 row=6
-    0x0C5F1, // BuzzyBeetle scr=6 col=7 row=15
-    // 2-3 (obj 0xD1F0): shells needed to break bricks at end
-    0x0D22B, // GreenTroopa scr=8 col=11 row=3
-    0x0D22E, // GreenTroopa scr=8 col=13 row=3
-    // 6-5 sub-area (enemy_ptr 0xC5EB): shell needed for progression
-    0x0C60E, // GreenTroopa scr=4 col=10 row=8
-];
-
-/// 8-Tank sub-area bro: HammerBro (0x81) doesn't spawn in tileset 10.
-/// Must always shuffle within the non-HammerBro bro pool (0x82/0x86/0x87).
-pub(super) const TANK_BRO_PROTECTED_OFFSETS: &[usize] = &[
-    0x0DA3A, // BoomerangBro scr=0 col=12 row=7 (8-Tank sub-area, enemy_ptr 0xDA29)
-];
-
-/// Enemies at these offsets must remain stompable: the chosen replacement
-/// is the intersection of the enemy's normal pool (per current mode) with
-/// STOMPABLE_ENEMIES. Used at floor positions where a non-stompable swap
-/// would corner the player with no way to defeat the enemy.
-pub(super) const STOMPABLE_PROTECTED_OFFSETS: &[usize] = &[
-    // 6-6 sub-area (enemy_ptr 0xC64B): 3 spikes on the floor of screen 10
-    0x0C6A7, // Spike scr=10 col=0 row=15
-    0x0C6AA, // Spike scr=10 col=6 row=15
-    0x0C6AD, // Spike scr=10 col=4 row=15
-];
-
-/// Stationary upward-projectile hazards. In tight sub-areas (especially
-/// boss arenas) these create unfair encounters because they fire continuously
-/// with no telegraph and can't be stomped. The randomizer filters them out
-/// of the swap pool at `HAZARD_RESTRICTED_OFFSETS`, regardless of mode.
+/// Unstompable hazards that are unfair to introduce into tight sub-areas
+/// (especially boss arenas) or onto a player's walking path. Patooie/Lavalotus
+/// fire continuously with no telegraph; Thwomps drop or slide unpredictably
+/// when added on top of a designed encounter. The registry filters these
+/// out of the chosen swap pool at `EntryProtection::ExcludeHazards`
+/// positions, and they're also excluded from piranha-slot replacements
+/// (a pipe-lip swap to one of these covers or blocks the only way through).
 pub(super) const HAZARD_PROJECTILE_IDS: &[u8] = &[
     0x2A, // OBJ_PATOOIE (spits spikes upward)
     0x67, // OBJ_LAVALOTUS (spits fire in arcs)
-];
-
-/// Offsets where `HAZARD_PROJECTILE_IDS` must never land. The filter excludes
-/// those IDs from the chosen swap pool but otherwise leaves randomization
-/// alone — vanilla non-stompables (Thwomp, Rotodisc) stay put in Shuffle
-/// modes and only get swapped if their own class is Wild.
-pub(super) const HAZARD_RESTRICTED_OFFSETS: &[usize] = &[
-    // 7-F2 Boom-Boom sub-area (enemy_ptr 0xD45C): tight boss arena.
-    // Boom-Boom itself (0x4B) is never randomized, so not listed.
-    0x0D46D, // Rotodisc CW   scr=1 col=0  row=5
-    0x0D470, // DryBones      scr=1 col=1  row=8
-    0x0D473, // DryBones      scr=1 col=3  row=8
-    0x0D476, // Rotodisc CW   scr=1 col=9  row=5
-    0x0D479, // Thwomp        scr=1 col=10 row=15
-    // 7-5 sub-area (enemy_ptr 0xC171): horizontal open field; a Patooie/
-    // Lotus at floor level on the player's path covers walking ground
-    // with continuous upward fire and is unfair.
-    0x0C182, // ParatroopaGreenHop scr=0 col=12 row=9
-    0x0C185, // ParatroopaGreenHop scr=1 col=2  row=9
-    0x0C18E, // BobOmb             scr=2 col=5  row=9
-    0x0C191, // BobOmb             scr=2 col=7  row=9
-    0x0C194, // BobOmb             scr=2 col=9  row=9
-    0x0C1A0, // ParatroopaGreenHop scr=4 col=14 row=9
-    0x0C1A3, // ParatroopaGreenHop scr=5 col=1  row=9
-    0x0C1A6, // ParatroopaGreenHop scr=5 col=4  row=9
+    0x8A, // OBJ_THWOMP (standard drop)
+    0x8B, // OBJ_THWOMPLEFTSLIDE
+    0x8C, // OBJ_THWOMPRIGHTSLIDE
+    0x8D, // OBJ_THWOMPUPDOWN
+    0x8E, // OBJ_THWOMPDIAGONALUL
+    0x8F, // OBJ_THWOMPDIAGONALDL
 ];
 
 /// Bro enemies that work in tileset 10 (8-Tank sub-area).
@@ -1000,19 +908,6 @@ pub(super) const TANK_BRO_POOL: &[u8] = &[
     0x87, // OBJ_FIREBRO
 ];
 
-/// Enemy segments (by file offset of page flag byte) excluded from randomization.
-/// These levels rely on specific enemy types/counts for gameplay (e.g., enemies
-/// used as platforms in speedtech, where wrong types cause sprite overload).
-pub(super) const PROTECTED_ENEMY_SEGMENTS: &[usize] = &[
-    0x0CA33, // 3-2 (obj 0xCA23): enemies used as platforms, sprite overload risk
-];
-
-/// Protected enemy_ptr values — entry-point coordinate frame mirror of
-/// PROTECTED_ENEMY_SEGMENTS.
-pub(super) const PROTECTED_ENEMY_PTRS: &[u16] = &[
-    0xCA23, // 3-2
-];
-
 /// Check whether the first enemy data segment at `obj_ptr` contains `target_id`.
 ///
 /// Enemy data format: 1-byte page flag, then 3-byte entries `[id, x, y]`,
@@ -1021,7 +916,7 @@ pub(super) fn has_enemy_id(rom: &Rom, obj_ptr: u16, target_id: u8) -> bool {
     if obj_ptr < 0xC000 {
         return false;
     }
-    let file_off = ENEMY_DATA_FILE_BASE + (obj_ptr as usize - 0xC000);
+    let file_off = enemy_ptr_to_file_offset(obj_ptr);
     if file_off + 1 >= rom.data.len() {
         return false;
     }

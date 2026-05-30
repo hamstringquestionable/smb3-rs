@@ -2,6 +2,7 @@ pub mod anchor_visuals;
 pub mod autoscroll;
 pub mod bowser_castle;
 pub mod enemies;
+pub mod enemy_protections;
 pub mod hand_rooms;
 pub mod hands_levels;
 pub mod items;
