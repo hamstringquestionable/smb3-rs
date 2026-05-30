@@ -38,6 +38,7 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x3FFF0, 26, "card_speed_clear: XOR trampoline"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
     (0x35530, 66, "big_q_block: lookup routine + tables"),
+    (0x355B1, 12, "anchor_visuals: items-vs-cards index guard trampoline"),
     // PRG027 (file 0x36010, CPU $A000–$BFFF)
     (0x379D9, 894, "king_quotes: 7 quotes + hook (7×120 + 54)"),
     // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
@@ -115,6 +116,7 @@ pub(super) const FS_CANOE_BACKUP: usize      = 0x17D00; // 59 bytes
 // PRG026 (cont.)
 pub(super) const FS_MYSTERY_ANCHOR: usize    = 0x35572; // 13 bytes
 pub(super) const FS_HAMMER_LOCKS: usize      = 0x3557F; // 50 bytes
+pub(super) const FS_ANCHOR_ITEM_GUARD: usize = 0x355B1; // 12 bytes (CPU $B5A1)
 pub(super) const FS_STARTING_ITEMS: usize    = 0x3E260; // 33 bytes
 
 // PRG001 (file 0x02010, CPU $A000–$BFFF)

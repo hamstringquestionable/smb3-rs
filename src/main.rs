@@ -189,6 +189,13 @@ struct Cli {
     #[arg(long)]
     swap_start_airship: bool,
 
+    /// Cosmetic: every inventory item displays as the Anchor sprite while
+    /// keeping its original behavior. Covers the world-map reserve grid,
+    /// Toad House chests, in-level treasure boxes, and the Princess letter
+    /// cutscene.
+    #[arg(long)]
+    anchor_visuals: bool,
+
     /// Ground enemies: off, shuffle, or wild (default: shuffle)
     #[arg(long, default_value = "shuffle")]
     ground: String,
@@ -384,6 +391,7 @@ fn main() {
             troll_pipes: !cli.no_troll_pipes,
             include_beta_stages: cli.include_beta_stages,
             swap_start_airship: cli.swap_start_airship,
+            anchor_visuals: cli.anchor_visuals,
             airship_lock: !cli.no_airship_lock,
             ground: parse_enemy_mode(&cli.ground, "ground"),
             shell: parse_enemy_mode(&cli.shell, "shell"),

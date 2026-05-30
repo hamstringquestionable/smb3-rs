@@ -1,3 +1,4 @@
+pub mod anchor_visuals;
 pub mod autoscroll;
 pub mod bowser_castle;
 pub mod enemies;

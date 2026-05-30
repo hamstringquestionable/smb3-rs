@@ -13,7 +13,10 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  # Scope by event type so a `pull_request` sync run can't preempt the
+  # `push` run that actually does the deploy (the `build` and `deploy`
+  # jobs below are gated on `github.event_name == 'push'`).
+  group: pages-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
