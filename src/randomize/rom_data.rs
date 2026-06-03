@@ -55,11 +55,6 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x03FD0, 22, "koopa_y_clamp: clamp Koopaling Y position to screen"),
     // PRG006 (file 0x0C010, CPU $C000–$DFFF) — level enemy data bank
     (0x0DA74, 22, "hand_rooms: 2 cloned enemy streams for unique 8-Hnd treasure rooms"),
-    // PRG004 (file 0x08010, CPU $A000–$BFFF) — big piranha bank
-    (0x09E66,  8, "piranha_visibility: big piranha (0x7D/0x7F) init thunk"),
-    // PRG005 (file 0x0A010, CPU $A000–$BFFF) — small piranha bank
-    (0x0BFD6,  7, "piranha_visibility: small piranha (0xA0–0xA7) init thunk"),
-    (0x0BFDD, 18, "piranha_visibility: small piranha (0xA0–0xA7) hit-skip thunk"),
 ];
 
 // Individual constants for use by each module.
@@ -176,34 +171,12 @@ pub(super) const KOOPA_FIRE_PRESET_CPU: u16  = 0xB84E;  // $A000 + (0x0385E - 0x
 // the three Hand levels independent OBJ_TREASURESET item bytes.
 pub(super) const FS_HAND_ROOMS: usize = 0x0DA74; // 22 bytes (2 × 11)
 
-// PRG004 — big piranha (0x7D / 0x7F) visibility thunk. Patched into the shared
-// init tail so Var4 is primed to state 1 (Emerge) on spawn, skipping the
-// invisible HideInPipe state when a wild-shuffle drops one in a non-pipe slot.
-pub(super) const FS_PIRANHA_VIS_BIG: usize = 0x09E66; // 8 bytes
-/// CPU address of the big-piranha thunk: $A000 + (0x09E66 - 0x08010) = $BE56
-pub(super) const PIRANHA_VIS_BIG_CPU: u16  = 0xBE56;
-
-// PRG005 — small piranha (0xA0–0xA7) visibility thunk. Same purpose as the
-// big-piranha thunk but for the eight small-piranha IDs which share a single
-// init tail in PRG005.
-pub(super) const FS_PIRANHA_VIS_SMALL: usize = 0x0BFD6; // 7 bytes
-/// CPU address of the small-piranha thunk: $A000 + (0x0BFD6 - 0x0A010) = $BFC6
-pub(super) const PIRANHA_VIS_SMALL_CPU: u16  = 0xBFC6;
-
-// PRG005 — small piranha (0xA0–0xA7) per-frame hit-skip thunk. Replaces the
-// `JSR Player_HitEnemy` in `ObjNorm_Piranha` with a distance-based gate:
-// skip the call whenever the piranha's current Y is within ±10 px of its
-// hidden-position Var5. That covers the fully-hidden state and adds ~10
-// frames of safety on either side of the transition (Retract end and
-// Emerge start), and is orientation-agnostic — same metric works for both
-// upright and ceiling variants because Var5 is the spawn/hidden Y in both
-// cases. The big-piranha bank already short-circuits state 0 in
-// `ObjNorm_BigPiranha` (`JMP $B79D` past the JSR) so no equivalent thunk is
-// needed for 0x7D / 0x7F.
-pub(super) const FS_PIRANHA_HIT_SMALL: usize = 0x0BFDD; // 18 bytes
-/// CPU address of the small-piranha hit-skip thunk: $A000 + (0x0BFDD - 0x0A010) = $BFCD
-pub(super) const PIRANHA_HIT_SMALL_CPU: u16  = 0xBFCD;
-
+// NOTE: PRG004/PRG005 free space at 0x09E66, 0x0BFD6, 0x0BFDD previously held
+// the piranha-visibility / hitbox-skip thunks (the "decide then write" patch
+// that primed Var4=1 on spawn and gated Player_HitEnemy by distance). Those
+// patches were removed in the piranha-rework branch — see the "Piranha Plant
+// Visibility" section of docs/smb3_rom_reference.md for the full byte-level
+// writeup, kept in case the approach is needed again. The space is now free.
 
 // ---------------------------------------------------------------------------
 // Shared type aliases
@@ -1251,8 +1224,5 @@ mod free_space_tests {
         assert!(offsets.contains(&FS_STARTING_ITEMS));
         assert!(offsets.contains(&FS_MYSTERY_ANCHOR));
         assert!(offsets.contains(&FS_HAMMER_LOCKS));
-        assert!(offsets.contains(&FS_PIRANHA_VIS_BIG));
-        assert!(offsets.contains(&FS_PIRANHA_VIS_SMALL));
-        assert!(offsets.contains(&FS_PIRANHA_HIT_SMALL));
     }
 }

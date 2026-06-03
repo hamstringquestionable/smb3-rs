@@ -85,7 +85,8 @@ const BRO_ENEMIES: &[u8] = &[
     0x87, // OBJ_FIREBRO
 ];
 
-/// Piranha plant variants (including Giant World) — swap among themselves.
+/// Standard (non-ceiling) piranha plant variants (including Giant World) —
+/// the Shuffle-mode pool; they swap among themselves.
 const PIRANHAS: &[u8] = &[
     0x7D, // OBJ_BIGGREENPIRANHA
     0x7F, // OBJ_BIGREDPIRANHA
@@ -94,13 +95,43 @@ const PIRANHAS: &[u8] = &[
     0xA4, // OBJ_GREENPIRANHA_FIRE
     0xA6, // OBJ_VENUSFIRETRAP
 ];
-/// Piranha Ceiling / Flipped variants
+
+/// Rocky Wrench — the mole (`OBJ_ROCKYWRENCH`) that pops out of the ground and
+/// throws wrenches. NOT the flying-wrench cannon-fire variant (`0xBE`,
+/// `CFIRE_ROCKYWRENCH`), which is a projectile spawner and stays untouched.
+/// Carries CHR page `0x36`/slot 4, so it flows through the normal CHR-compat
+/// system like any other enemy (no garbled-tile risk).
+const ROCKY_WRENCH: u8 = 0xAD;
+
+/// Wild-mode standard pool: the standard piranhas plus Rocky Wrench. In Wild
+/// mode piranhas are *self-contained* (parallel to the cannons model) — they
+/// never merge into the global wild pool in either direction. Removing Rocky
+/// Wrench from the swap is a one-line edit: drop `ROCKY_WRENCH` from this list.
+const PIRANHAS_WILD: &[u8] = &[
+    0x7D, // OBJ_BIGGREENPIRANHA
+    0x7F, // OBJ_BIGREDPIRANHA
+    0xA0, // OBJ_GREENPIRANHA
+    0xA2, // OBJ_REDPIRANHA
+    0xA4, // OBJ_GREENPIRANHA_FIRE
+    0xA6, // OBJ_VENUSFIRETRAP
+    ROCKY_WRENCH, // 0xAD — the mole; see ROCKY_WRENCH doc
+];
+
+/// Piranha Ceiling / Flipped variants. Self-contained in both Shuffle and Wild
+/// (no Rocky Wrench, no crossover to the standard pool).
 const PIRANHASC: &[u8] = &[
     0xA1, // OBJ_GREENPIRANHA_FLIPPED
     0xA3, // OBJ_REDPIRANHA_FLIPPED
     0xA5, // OBJ_GREENPIRANHA_FIREC
     0xA7, // OBJ_VENUSFIRETRAP_CEIL
 ];
+
+/// Giant red piranha. Its hitbox is built off-center for *giant* pipes; placing
+/// one in a slot sized for a regular pipe leaves the hitbox outside the pipe
+/// (unfair). So `0x7F` may only be an output where a `0x7F` already was — never
+/// as a replacement for anything else. Enforced in both Shuffle and Wild.
+/// (Giant green `0x7D` was designed to fit regular pipes, so it's unconstrained.)
+const GIANT_RED_PIRANHA: u8 = 0x7F;
 
 /// Thwomp variants — all use CHR page $12/+4 and differ only in movement pattern.
 /// Behind the `wild_thwomps` flag (off by default) because random movement
@@ -505,10 +536,10 @@ impl ClassModes {
         if self.ground == EnemyMode::Wild { pool.extend_from_slice(GROUND_ENEMIES); }
         if self.shell == EnemyMode::Wild { pool.extend_from_slice(SHELL_ENEMIES); }
         if self.flying == EnemyMode::Wild { pool.extend_from_slice(FLYING_ENEMIES); }
-        if self.piranhas == EnemyMode::Wild {
-            pool.extend_from_slice(PIRANHAS);
-            pool.extend_from_slice(PIRANHASC);
-        }
+        // Piranhas are intentionally NOT added to the global wild pool. Like
+        // cfire, they are self-contained in Wild mode: a piranha slot swaps
+        // only within piranha-kind (standard + Rocky Wrench, or ceiling), and
+        // no other class can ever turn into a piranha. See find_class_pool.
         if self.ghosts == EnemyMode::Wild { pool.extend_from_slice(GHOST_ENEMIES); }
         if self.thwomps == EnemyMode::Wild { pool.extend_from_slice(THWOMPS); }
         if self.rotodiscs == EnemyMode::Wild {
@@ -565,8 +596,28 @@ fn find_class_pool<'a>(
     check!(GROUND_ENEMIES, modes.ground);
     check!(SHELL_ENEMIES, modes.shell);
     check!(FLYING_ENEMIES, modes.flying);
-    check!(PIRANHAS, modes.piranhas);
-    check!(PIRANHASC, modes.piranhas); // ceiling piranhas share piranhas mode
+
+    // Piranhas are self-contained (never the global wild pool, either direction).
+    // Standard plants + Rocky Wrench swap among each other; ceiling plants swap
+    // among themselves only. Rocky Wrench (0xAD) joins the standard pool ONLY in
+    // Wild mode — it belongs to no class otherwise, so in Shuffle/Off it's left
+    // untouched.
+    if PIRANHAS.contains(&id) || id == ROCKY_WRENCH {
+        return match modes.piranhas {
+            EnemyMode::Off => None,
+            EnemyMode::Shuffle => {
+                if id == ROCKY_WRENCH { None } else { Some(PIRANHAS) }
+            }
+            EnemyMode::Wild => Some(PIRANHAS_WILD),
+        };
+    }
+    if PIRANHASC.contains(&id) {
+        return match modes.piranhas {
+            EnemyMode::Off => None,
+            EnemyMode::Shuffle | EnemyMode::Wild => Some(PIRANHASC),
+        };
+    }
+
     check!(GHOST_ENEMIES, modes.ghosts);
     check!(THWOMPS, modes.thwomps);
     check!(ROTODISCS_SINGLE, modes.rotodiscs);
@@ -1214,6 +1265,22 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                     } else {
                         chosen
                     };
+                    // Giant red piranha (0x7F) may only land where a 0x7F
+                    // already was — its off-center hitbox is unfair in any
+                    // slot built for a regular pipe. If the original slot
+                    // wasn't 0x7F, re-pick with 0x7F filtered out. (No-op for
+                    // non-piranha entries, whose pools never contain 0x7F.)
+                    let chosen = if entry.obj_id != GIANT_RED_PIRANHA
+                        && chosen == Some(GIANT_RED_PIRANHA)
+                    {
+                        let filtered: Vec<u8> = pool.iter()
+                            .copied()
+                            .filter(|&id| id != GIANT_RED_PIRANHA)
+                            .collect();
+                        pick_compatible(&filtered, committed_slot4, committed_slot5, rng)
+                    } else {
+                        chosen
+                    };
                     if let Some(chosen) = chosen {
                         if was_bertha && chosen != 0x63 {
                             bertha_count = bertha_count.saturating_sub(1);
@@ -1657,6 +1724,89 @@ mod tests {
             assert!(SHELL_ENEMIES.contains(&result[0]), "seed {seed}: big troopa 0x{:02X}", result[0]);
             assert!(PIRANHAS.contains(&result[3]), "seed {seed}: big piranha1 0x{:02X}", result[3]);
             assert!(PIRANHAS.contains(&result[6]), "seed {seed}: big piranha2 0x{:02X}", result[6]);
+        }
+    }
+
+    /// Build the synthetic header + segment the giant-red test reuses, with two
+    /// far-apart piranha slots (separate CHR groups): a regular green piranha
+    /// (0xA0) and a giant red (0x7F).
+    fn giant_red_test_rom() -> Rom {
+        let mut data = vec![0u8; 393232];
+        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
+        data[4] = 16;
+        data[5] = 16;
+        data[6] = 0x40;
+        let seg = &[
+            0xFF,
+            0x01,
+            0xA0, 0x10, 0x17, // GreenPiranha — regular slot, X=0x10
+            0x7F, 0x60, 0x10, // BigRedPiranha — X=0x60 (separate CHR group)
+            0xFF,
+        ];
+        let start = ENEMY_DATA_START;
+        data[start..start + seg.len()].copy_from_slice(seg);
+        Rom::from_bytes_lax(&data, true).unwrap()
+    }
+
+    #[test]
+    fn rocky_wrench_joins_piranhas_only_in_wild() {
+        // Shuffle / Off: Rocky Wrench (0xAD) belongs to no class, so it's left
+        // untouched. Wild: it joins the standard piranha pool both directions.
+        let mut shuffle = ClassModes::from_options(&Options::default());
+        shuffle.piranhas = EnemyMode::Shuffle;
+        assert!(find_class_pool(ROCKY_WRENCH, &shuffle, &[]).is_none());
+
+        shuffle.piranhas = EnemyMode::Off;
+        assert!(find_class_pool(ROCKY_WRENCH, &shuffle, &[]).is_none());
+
+        let mut wild = ClassModes::from_options(&Options::default());
+        wild.piranhas = EnemyMode::Wild;
+        // Rocky Wrench can become a standard piranha…
+        let pool = find_class_pool(ROCKY_WRENCH, &wild, &[]).expect("wrench wild pool");
+        assert_eq!(pool, PIRANHAS_WILD);
+        // …and a standard piranha can become Rocky Wrench.
+        let pool = find_class_pool(0xA0, &wild, &[]).expect("piranha wild pool");
+        assert!(pool.contains(&ROCKY_WRENCH));
+        // Ceiling piranhas stay self-contained, no Rocky Wrench.
+        let cpool = find_class_pool(0xA1, &wild, &[]).expect("ceiling wild pool");
+        assert_eq!(cpool, PIRANHASC);
+        assert!(!cpool.contains(&ROCKY_WRENCH));
+    }
+
+    #[test]
+    fn piranhas_excluded_from_global_wild_pool() {
+        // With every class Wild, piranhas (and Rocky Wrench) must NOT appear in
+        // the shared wild pool — they're self-contained, so no other class can
+        // ever turn into a piranha.
+        let mut opts = Options::default();
+        for m in [
+            &mut opts.ground, &mut opts.shell, &mut opts.flying, &mut opts.piranhas,
+            &mut opts.ghosts, &mut opts.water, &mut opts.bros,
+        ] {
+            *m = EnemyMode::Wild;
+        }
+        let pool = wild_pool_for(&opts);
+        for id in PIRANHAS.iter().chain(PIRANHASC).chain(std::iter::once(&ROCKY_WRENCH)) {
+            assert!(!pool.contains(id), "piranha-kind 0x{id:02X} leaked into global wild pool");
+        }
+    }
+
+    #[test]
+    fn giant_red_never_replaces_non_giant_red() {
+        // A regular piranha slot must never become 0x7F (giant red), in both
+        // Shuffle and Wild. The 0x7F slot may stay 0x7F or change.
+        for piranha_mode in [EnemyMode::Shuffle, EnemyMode::Wild] {
+            let opts = Options { piranhas: piranha_mode, ..Default::default() };
+            for seed in 0..300u64 {
+                let mut rom = giant_red_test_rom();
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                randomize(&mut rom, &mut rng, &opts);
+                let result = rom.read_range(ENEMY_DATA_START + 2, 6);
+                assert_ne!(
+                    result[0], GIANT_RED_PIRANHA,
+                    "{piranha_mode:?} seed {seed}: regular piranha slot became giant red",
+                );
+            }
         }
     }
 

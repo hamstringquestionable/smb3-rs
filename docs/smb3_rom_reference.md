@@ -2797,7 +2797,15 @@ All 180 entries verified byte-for-byte against ROM (2025-04-13). Matches
 | 0x080AE | Para-Goomba de-wing sprite |
 | 0x06EA9 | Boom-Boom drop sprite |
 
-### Piranha Plant Visibility (PRG004 / PRG005)
+### Piranha Plant Visibility (PRG004 / PRG005) — REMOVED, kept for reference
+
+> **Status:** these patches were **removed** in the piranha-rework branch. The
+> piranha randomizer no longer dumps piranhas into the global wild pool (it
+> swaps within piranha-kind plus Rocky Wrench instead), so piranhas no longer
+> land in arbitrary non-pipe slots and the visibility/hitbox issues these
+> thunks addressed no longer arise. The byte-level writeup below is preserved
+> verbatim in case the approach is needed again; the free space it used
+> (`0x09E66`, `0x0BFD6`, `0x0BFDD`) is now available.
 
 Piranha plants use `Objects_Var4` (zero-page `$7F`) as their state machine:
 `0=HideInPipe`, `1=Emerge`, `2=Attack`, `3=Retract`. Init routines do **not**
