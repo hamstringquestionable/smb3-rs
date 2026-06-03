@@ -2955,10 +2955,11 @@ small sub-area with **two BoomerangBros** as the fight reward.
 | Enemy contents | 2× `0x82` (BoomerangBro) + `0xBA` terminator (3 entries) |
 
 The sub-area has no world pointer table entry — it's reached only via the
-in-layout junction — so the randomizer protects it via
-`HAMMER_BRO_SEGMENT_OFFSETS` (file offset `0x0DA1F`) rather than via
-`HAMMER_BRO_OBJ_PTRS`. This routes its enemy randomization through the HB-wild
-path (stompable-only pool, optionally one shell-killable + one shell partner).
+in-layout junction — so the randomizer protects it via a `LevelProtection`
+row in `LEVEL_PROTECTIONS` (enemy_ptr `0xDA0F`, `walker_segment:
+WalkerSegmentRule::HammerBro`). This routes its enemy randomization through
+the HB-wild path (stompable-only pool, optionally one shell-killable + one
+shell partner).
 
 ### Enemy Stompability Classification
 

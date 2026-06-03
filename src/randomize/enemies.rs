@@ -421,7 +421,8 @@ const BIG_Q_BLOCKS: &[u8] = &[
 /// The W7 room is at enemy_ptr 0xC9A3; the Tanooki is the second entry.
 const W7F1_TANOOKI_OFFSET: usize = 0x0C9B7;
 
-use super::rom_data::{HAMMER_BRO_ENEMY_PTRS, HAMMER_BRO_SEGMENT_OFFSETS, HAZARD_PROJECTILE_IDS, HAZARD_RESTRICTED_OFFSETS, HB_NEEDS_SHELL_ENEMIES, LEVEL_DATA_REGIONS, PROTECTED_ENEMY_OFFSETS, PROTECTED_ENEMY_PTRS, PROTECTED_ENEMY_SEGMENTS, SHELL_PROTECTED_OFFSETS, STOMPABLE_ENEMIES, STOMPABLE_PROTECTED_OFFSETS, TANK_BRO_POOL, TANK_BRO_PROTECTED_OFFSETS};
+use super::enemy_protections::{entry_protection_at, is_injection_blocked, walker_segment_rule_at, EntryProtection, WalkerSegmentRule};
+use super::rom_data::{HAZARD_PROJECTILE_IDS, HB_NEEDS_SHELL_ENEMIES, LEVEL_DATA_REGIONS, STOMPABLE_ENEMIES, TANK_BRO_POOL};
 
 /// Injection candidates for wild_injections mode: special enemies injected after
 /// normal swaps. CHR compatibility checked via `sprite_bank()` at filter time.
@@ -908,10 +909,7 @@ fn inject_at_entry_points<R: Rng>(
         if !(ENEMY_DATA_START..ENEMY_DATA_END).contains(&ep) {
             continue;
         }
-        if PROTECTED_ENEMY_PTRS.contains(&ep_u16) {
-            continue;
-        }
-        if HAMMER_BRO_ENEMY_PTRS.contains(&ep_u16) {
+        if is_injection_blocked(ep_u16) {
             continue;
         }
 
@@ -956,18 +954,19 @@ fn inject_at_entry_points<R: Rng>(
 
         let entry = &entries[0];
         let fo = ENEMY_DATA_START + entry.data_index;
-        // Skip if this position is touched by any class-specific "protected"
-        // handler in the walker pass. Those handlers run after this pass and
-        // force a class-pool pick regardless of what's there (e.g. 6-5's
-        // entry at 0xC5EB *must* stay a shell enemy so the player can break
-        // bricks for progression). Without this guard we'd happily write
-        // Lakitu only to have it stomped back to a shell by the class-swap
-        // walker — visible as a 34-event silent revert in the head-to-head
-        // diff before this guard was added.
-        let class_protected = PROTECTED_ENEMY_OFFSETS.contains(&fo)
-            || SHELL_PROTECTED_OFFSETS.contains(&fo)
-            || STOMPABLE_PROTECTED_OFFSETS.contains(&fo)
-            || TANK_BRO_PROTECTED_OFFSETS.contains(&fo);
+        // Skip if the walker pass would override or filter our pick: the four
+        // force-* rules silently replace the injected enemy with a class pool
+        // member (e.g. 6-5's shell at 0xC5EB must stay shell for brick-break
+        // progression), and ExcludeHazards would filter a Lakitu/Boss Bass
+        // back out (e.g. 7F2's Boom-Boom arena).
+        let class_protected = matches!(
+            entry_protection_at(fo),
+            Some(EntryProtection::SkipSwap
+                | EntryProtection::ForceShell
+                | EntryProtection::ForceStompable
+                | EntryProtection::ForceTankBro
+                | EntryProtection::ExcludeHazards)
+        );
         let swappable = !class_protected
             && find_class_pool(entry.obj_id, &normal_modes, &normal_wild_pool).is_some();
         if !swappable {
@@ -1058,17 +1057,17 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
         let seg_file_offset = ENEMY_DATA_START + seg_start;
         i += 1;
 
-        // Skip entire segment if it's in the protected list
-        let skip_segment = PROTECTED_ENEMY_SEGMENTS.contains(&seg_file_offset);
-        if skip_segment {
+        let segment_rule = walker_segment_rule_at(seg_file_offset);
+
+        // Skip entire segment if it's protected
+        if segment_rule == WalkerSegmentRule::Skip {
             while i + 2 < data.len() && data[i] != 0xFF {
                 i += 3;
             }
             continue;
         }
 
-        // Determine if this is an HB encounter segment
-        let is_hb_segment = HAMMER_BRO_SEGMENT_OFFSETS.contains(&seg_file_offset);
+        let is_hb_segment = segment_rule == WalkerSegmentRule::HammerBro;
         let (modes, wild_pool, page_buckets) = if is_hb_segment {
             (&hb_modes, hb_wild_pool.as_slice(), &normal_page_buckets) // HB uses own wild path
         } else {
@@ -1132,6 +1131,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                 let entry = &entries[idx];
                 let file_offset = ENEMY_DATA_START + entry.data_index;
 
+                let protection = entry_protection_at(file_offset);
                 if big_q_only {
                     if BIG_Q_BLOCKS.contains(&entry.obj_id)
                         && file_offset != W7F1_TANOOKI_OFFSET
@@ -1140,19 +1140,19 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                     }
                 } else if BOOMBOOM_SWAP.contains(&data[entry.data_index]) {
                     data[entry.data_index] = *BOOMBOOM_SWAP.choose(rng).unwrap();
-                } else if PROTECTED_ENEMY_OFFSETS.contains(&file_offset) {
+                } else if protection == Some(EntryProtection::SkipSwap) {
                     commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
-                } else if SHELL_PROTECTED_OFFSETS.contains(&file_offset) && modes.shell != EnemyMode::Off {
+                } else if protection == Some(EntryProtection::ForceShell) && modes.shell != EnemyMode::Off {
                     if let Some(chosen) = pick_compatible(SHELL_ENEMIES, committed_slot4, committed_slot5, rng) {
                         swap_enemy(&mut data, entry.data_index, chosen);
                         commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                     }
-                } else if TANK_BRO_PROTECTED_OFFSETS.contains(&file_offset) && modes.bros != EnemyMode::Off {
+                } else if protection == Some(EntryProtection::ForceTankBro) && modes.bros != EnemyMode::Off {
                     if let Some(chosen) = pick_compatible(TANK_BRO_POOL, committed_slot4, committed_slot5, rng) {
                         swap_enemy(&mut data, entry.data_index, chosen);
                         commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                     }
-                } else if STOMPABLE_PROTECTED_OFFSETS.contains(&file_offset) {
+                } else if protection == Some(EntryProtection::ForceStompable) {
                     if let Some(pool) = find_class_pool(entry.obj_id, modes, wild_pool) {
                         let stompable_pool: Vec<u8> = pool.iter()
                             .copied()
@@ -1163,7 +1163,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                             commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                         }
                     }
-                } else if HAZARD_RESTRICTED_OFFSETS.contains(&file_offset) {
+                } else if protection == Some(EntryProtection::ExcludeHazards) {
                     if let Some(pool) = find_class_pool(entry.obj_id, modes, wild_pool) {
                         let filtered_pool: Vec<u8> = pool.iter()
                             .copied()
@@ -1196,9 +1196,11 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                         chosen
                     };
                     // A piranha slot is often a pipe that's the only way
-                    // through the level. Never replace one with an upward-
-                    // firing hazard (Ptooie / Lava Lotus) — they cover the
-                    // pipe lip with continuous fire and can't be stomped.
+                    // through the level. Never replace one with a stationary
+                    // hazard (Ptooie / Lava Lotus / Thwomp) — Ptooie/Lotus
+                    // cover the pipe lip with continuous fire; a Thwomp drops
+                    // on the pipe entry/exit. Neither is fair at a forced
+                    // transit point, and none can be stomped.
                     let old_was_piranha = PIRANHAS.contains(&entry.obj_id)
                         || PIRANHASC.contains(&entry.obj_id);
                     let chosen = if old_was_piranha
