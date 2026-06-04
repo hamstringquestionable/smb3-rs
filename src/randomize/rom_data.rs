@@ -33,7 +33,7 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x35572, 13, "mystery_anchor: item redirect trampoline"),
     (0x3557F, 50, "hammer_locks: tile check subroutine + tables"),
     (0x3E260, 33, "starting_items: lives + intro skip + menu music + inventory init trampoline"),
-    (0x3E281, 69, "start_airship_swap: 4 tables (X/XHi/ScrL/ScrH × 8) + X helper + XHi helper + game-over X helper"),
+    (0x3E281, 64, "start_airship_swap: 4 tables (X/XHi/ScrL/ScrH × 8) + X helper + XHi helper"),
     (0x3E965, 13, "title_screen: intro skip + menu music routine"),
     (0x3FFF0, 26, "card_speed_clear: XOR trampoline"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
@@ -45,7 +45,8 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x15554, 80, "fx_screen_check: cross-screen lock patch (Fred's algorithm verbatim)"),
     (0x15DF0, 35, "canoe_fix: death respawn position save"),
     // PRG011 (file 0x16010, CPU $A000–$BFFF during map)
-    (0x17D00, 59, "canoe_fix: backup/restore subroutines"),
+    (0x17C87, 29, "start_airship_swap: game-over twirl finalize helper"),
+    (0x17D00, 66, "canoe_fix: backup/restore subroutines (CANOE_BACKUP_ROUTINE)"),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     (0x0382A, 23, "koopa_hits: subroutine + defeat JMP + threshold table"),
     (0x03841, 13, "koopa_collision_guard: skip collision bitmap during invuln"),
@@ -73,18 +74,24 @@ pub(super) const FS_SEED_HASH_DATA: usize    = 0x3E93D; // 40 bytes
 pub(super) const FS_INTRO_SKIP: usize        = 0x3E965; // 13 bytes
 pub(super) const FS_CARD_CLEAR: usize        = 0x3FFF0; // 26 bytes
 
-// PRG031 — start_airship_swap engine scaffolding. One 69-byte block split into
-// 4 × 8-byte per-world tables followed by three assembled subroutines. PRG031
-// is always-mapped at $E000-$FFFF so Map_Init / GameOver_TwirlToStart (PRG011)
-// can JSR into it directly.
-pub(super) const FS_SAS_BLOCK: usize             = 0x3E281;       // 69 bytes total
+// PRG031 — start_airship_swap engine scaffolding. One 64-byte block: 4 × 8-byte
+// per-world tables followed by two assembled subroutines. PRG031 is always-mapped
+// at $E000-$FFFF so Map_Init / GameOver_TwirlToStart (PRG011) can read the tables
+// regardless of which bank is at $A000. NOTE: the PRG031 free run at 0x3E281 ends
+// at 0x3E2D0 (real code follows) — only ~79 bytes; do not grow this block past 64.
+pub(super) const FS_SAS_BLOCK: usize             = 0x3E281;       // 64 bytes total
 pub(super) const FS_SAS_X_TABLE: usize           = FS_SAS_BLOCK;       // 8 bytes — Mario X-low pixel per world
 pub(super) const FS_SAS_XHI_TABLE: usize         = FS_SAS_BLOCK + 8;   // 8 bytes — Mario screen index per world
 pub(super) const FS_SAS_SCRL_TABLE: usize        = FS_SAS_BLOCK + 16;  // 8 bytes — camera scroll low per world ($0722)
 pub(super) const FS_SAS_SCRH_TABLE: usize        = FS_SAS_BLOCK + 24;  // 8 bytes — camera scroll high per world ($0724)
 pub(super) const FS_SAS_X_HELPER: usize          = FS_SAS_BLOCK + 32;  // 10 bytes — writes Map_Entered_X / $7982
 pub(super) const FS_SAS_XHI_HELPER: usize        = FS_SAS_BLOCK + 42;  // 22 bytes — writes Map_Entered_XHi + death-respawn XHi + scroll seeds
-pub(super) const FS_SAS_GAMEOVER_X_HELPER: usize = FS_SAS_BLOCK + 64;  // 5 bytes — A := A - FS_SAS_X_TABLE[Y]; RTS
+
+// The game-over twirl finalize helper lives in PRG011 free space (not FS_SAS_BLOCK
+// — that PRG031 run has no room for 29 more bytes). PRG011 is the hook's own bank,
+// so the JSR is bank-local; the helper still reads the FS_SAS_* tables in
+// always-resident PRG031.
+pub(super) const FS_SAS_GAMEOVER_FINALIZE: usize = 0x17C87;  // PRG011, 29 bytes — stamps World_Map_X/XHi + scroll at twirl finalize (clean gap before FS_CANOE_BACKUP)
 
 // Vanilla 8-byte Map_Y_Starts table (per-world Mario spawn Y-pixel). Lives in
 // PRG030's world-enter routine. The start_airship_swap module rewrites this
@@ -98,13 +105,18 @@ pub(super) const MAP_Y_STARTS_OFF: usize  = 0x3C39A;
 pub(super) const MAP_INIT_X_LOW_SITE: usize  = 0x16257;   // 8 bytes — `LDA #$20 / STA $797A,X / STA $7982,X`
 pub(super) const MAP_INIT_SCROLL_SITE: usize = 0x1627E;   // 3 bytes — `STA $0724,X`
 
-// GameOver_TwirlToStart inline patch site in PRG011 (CPU $A5F1). Vanilla
-// hardcodes the spiral-back-to-start X target as column 2 (`SEC / SBC #$20`).
-// SAS replaces these 3 bytes with `JSR FS_SAS_GAMEOVER_X_HELPER` so the
-// delta is computed against the per-world X start instead. Y is preloaded
-// with World_Num two instructions earlier (`LDY $0727`) and isn't modified
-// before this site, so the helper can use `SBC FS_SAS_X_TABLE,Y` directly.
-pub(super) const GAMEOVER_TWIRL_X_SUB_SITE: usize = 0x16601;  // 3 bytes — `SEC / SBC #$20`
+// GameOver_TwirlToStart finalize hook in PRG011 (CPU $A6AA). The twirl is a
+// delta-animation: it spirals Mario back to the start by a per-frame X/Y delta,
+// then at finalize copies World_Map_X/XHi/Y into Map_Previous_*. The delta is
+// low-byte/within-screen only and has a second hardcoded column-2 ($20) for the
+// skid direction, so a swapped start on a different column/screen is unreachable
+// by patching the delta. Instead we let the vanilla animation play and STAMP the
+// correct start position at finalize: replace `STA Map_Prev_XHi2,X` (the last
+// store before the World_Map → Map_Previous copies) with `JSR finalize helper`,
+// which overwrites World_Map_X ($79,X) / World_Map_XHi ($77,X) and the camera
+// scroll ($0722/$0724,X) from the FS_SAS_* tables. The subsequent vanilla copies
+// then propagate the corrected position into Map_Previous_X/XHi.
+pub(super) const GAMEOVER_FINALIZE_SITE: usize = 0x166BA;  // 3 bytes — `STA $7988,X` (Map_Prev_XHi2,X)
 
 // Map_Object slot 1 == the airship sprite per southbird's disassembly:
 // "NOTE: Assumes Index 1 is the Airship!"
