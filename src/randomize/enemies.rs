@@ -701,16 +701,21 @@ fn commit_chr_page(id: u8, slot4: &mut ChrSlot, slot5: &mut ChrSlot) {
 /// replacement sprite lines up with the slot. Bundles the write + adjustment
 /// so call sites can't forget one. Adjustments:
 /// - Tall replacements get Y−1 to avoid floor clipping.
-/// - Ground-piranha → non-piranha gets Y−1 so the replacement stands on the
-///   pipe lip instead of inside the pipe shaft (where the rising piranha
-///   normally hides).
+/// - Piranha → any non-piranha gets Y−1 so the replacement stands on the pipe
+///   lip instead of inside the pipe shaft (where the rising piranha hides).
+///   Rocky Wrench is the exception: the mole pops out of the ground and reads
+///   best dropped straight into the piranha's slot Y unchanged. (In the current
+///   self-contained pools Rocky Wrench is the *only* non-piranha output, so the
+///   Y−1 branch only matters under a future "async" model.)
 fn swap_enemy(data: &mut [u8], id_index: usize, new_id: u8) {
     let old_id = data[id_index];
     data[id_index] = new_id;
     if TALL_ENEMIES.contains(&new_id) {
         data[id_index + 2] = data[id_index + 2].wrapping_sub(1);
     }
-    if PIRANHAS.contains(&old_id)
+    let old_was_piranha = PIRANHAS.contains(&old_id) || PIRANHASC.contains(&old_id);
+    if old_was_piranha
+        && new_id != ROCKY_WRENCH
         && !PIRANHAS.contains(&new_id)
         && !PIRANHASC.contains(&new_id)
     {
