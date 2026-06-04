@@ -103,10 +103,26 @@ const PIRANHAS: &[u8] = &[
 /// system like any other enemy (no garbled-tile risk).
 const ROCKY_WRENCH: u8 = 0xAD;
 
-/// Wild-mode standard pool: the standard piranhas plus Rocky Wrench. In Wild
-/// mode piranhas are *self-contained* (parallel to the cannons model) — they
-/// never merge into the global wild pool in either direction. Removing Rocky
-/// Wrench from the swap is a one-line edit: drop `ROCKY_WRENCH` from this list.
+/// Upward-shooting fire jet (`OBJ_FIREJET_UPWARD`). Joins the *standard* piranha
+/// pool in Wild — its flame erupts upward like a piranha emerging from a pipe.
+/// CHR page `$37`/slot 5, so it rides the normal CHR-compat system.
+const FIREJET_UP: u8 = 0x9D;
+
+/// Downward-shooting fire jet (`OBJ_FIREJET_UPSIDEDOWN`). Joins the *ceiling*
+/// piranha pool in Wild — its flame shoots down like a ceiling piranha. Same
+/// CHR page `$37`/slot 5.
+const FIREJET_DOWN: u8 = 0xB2;
+
+/// Rows the upward fire jet is raised (Y−) when it replaces a standard piranha,
+/// and rows the downward jet is lowered (Y+) when it replaces a ceiling piranha.
+/// Playtest-tuned so the flame base lines up with the former pipe mouth.
+const FIREJET_UP_Y_RISE: u8 = 3;
+const FIREJET_DOWN_Y_DROP: u8 = 1;
+
+/// Wild-mode standard pool: the standard piranhas plus Rocky Wrench and the
+/// upward fire jet. In Wild mode piranhas are *self-contained* (parallel to the
+/// cannons model) — they never merge into the global wild pool in either
+/// direction. Removing an extra member is a one-line edit on this list.
 const PIRANHAS_WILD: &[u8] = &[
     0x7D, // OBJ_BIGGREENPIRANHA
     0x7F, // OBJ_BIGREDPIRANHA
@@ -115,15 +131,25 @@ const PIRANHAS_WILD: &[u8] = &[
     0xA4, // OBJ_GREENPIRANHA_FIRE
     0xA6, // OBJ_VENUSFIRETRAP
     ROCKY_WRENCH, // 0xAD — the mole; see ROCKY_WRENCH doc
+    FIREJET_UP,   // 0x9D — upward fire jet; see FIREJET_UP doc
 ];
 
-/// Piranha Ceiling / Flipped variants. Self-contained in both Shuffle and Wild
-/// (no Rocky Wrench, no crossover to the standard pool).
+/// Piranha Ceiling / Flipped variants — the Shuffle-mode ceiling pool.
 const PIRANHASC: &[u8] = &[
     0xA1, // OBJ_GREENPIRANHA_FLIPPED
     0xA3, // OBJ_REDPIRANHA_FLIPPED
     0xA5, // OBJ_GREENPIRANHA_FIREC
     0xA7, // OBJ_VENUSFIRETRAP_CEIL
+];
+
+/// Wild-mode ceiling pool: the ceiling piranhas plus the downward fire jet.
+/// Self-contained (no crossover to the standard pool).
+const PIRANHASC_WILD: &[u8] = &[
+    0xA1, // OBJ_GREENPIRANHA_FLIPPED
+    0xA3, // OBJ_REDPIRANHA_FLIPPED
+    0xA5, // OBJ_GREENPIRANHA_FIREC
+    0xA7, // OBJ_VENUSFIRETRAP_CEIL
+    FIREJET_DOWN, // 0xB2 — downward fire jet; see FIREJET_DOWN doc
 ];
 
 /// Giant red piranha. Its hitbox is built off-center for *giant* pipes; placing
@@ -598,23 +624,26 @@ fn find_class_pool<'a>(
     check!(FLYING_ENEMIES, modes.flying);
 
     // Piranhas are self-contained (never the global wild pool, either direction).
-    // Standard plants + Rocky Wrench swap among each other; ceiling plants swap
-    // among themselves only. Rocky Wrench (0xAD) joins the standard pool ONLY in
-    // Wild mode — it belongs to no class otherwise, so in Shuffle/Off it's left
-    // untouched.
-    if PIRANHAS.contains(&id) || id == ROCKY_WRENCH {
+    // Standard plants + Rocky Wrench + the upward fire jet swap among each other;
+    // ceiling plants + the downward fire jet swap among themselves. Rocky Wrench
+    // (0xAD) and the fire jets (0x9D up / 0xB2 down) join ONLY in Wild mode — they
+    // belong to no class otherwise, so in Shuffle/Off they're left untouched.
+    if PIRANHAS.contains(&id) || id == ROCKY_WRENCH || id == FIREJET_UP {
         return match modes.piranhas {
             EnemyMode::Off => None,
             EnemyMode::Shuffle => {
-                if id == ROCKY_WRENCH { None } else { Some(PIRANHAS) }
+                if PIRANHAS.contains(&id) { Some(PIRANHAS) } else { None }
             }
             EnemyMode::Wild => Some(PIRANHAS_WILD),
         };
     }
-    if PIRANHASC.contains(&id) {
+    if PIRANHASC.contains(&id) || id == FIREJET_DOWN {
         return match modes.piranhas {
             EnemyMode::Off => None,
-            EnemyMode::Shuffle | EnemyMode::Wild => Some(PIRANHASC),
+            EnemyMode::Shuffle => {
+                if PIRANHASC.contains(&id) { Some(PIRANHASC) } else { None }
+            }
+            EnemyMode::Wild => Some(PIRANHASC_WILD),
         };
     }
 
@@ -697,30 +726,36 @@ fn commit_chr_page(id: u8, slot4: &mut ChrSlot, slot5: &mut ChrSlot) {
     }
 }
 
-/// Write `new_id` into the enemy slot at `id_index` and nudge X/Y so the
-/// replacement sprite lines up with the slot. Bundles the write + adjustment
-/// so call sites can't forget one. Adjustments:
+/// Y offset (rows) that seats a piranha-pool member correctly relative to the
+/// piranha "reference" position. Piranhas and Rocky Wrench sit at the reference
+/// (0); fire jets self-position differently, so they carry an offset: the upward
+/// jet sits `FIREJET_UP_Y_RISE` rows higher (−), the downward jet
+/// `FIREJET_DOWN_Y_DROP` rows lower (+). See `swap_enemy`.
+fn piranha_pool_y_offset(id: u8) -> i8 {
+    match id {
+        FIREJET_UP => -(FIREJET_UP_Y_RISE as i8),
+        FIREJET_DOWN => FIREJET_DOWN_Y_DROP as i8,
+        _ => 0,
+    }
+}
+
+/// Write `new_id` into the enemy slot at `id_index` and nudge Y so the
+/// replacement lines up with the slot. Bundles the write + adjustment so call
+/// sites can't forget one. Adjustments:
 /// - Tall replacements get Y−1 to avoid floor clipping.
-/// - Piranha → any non-piranha gets Y−1 so the replacement stands on the pipe
-///   lip instead of inside the pipe shaft (where the rising piranha hides).
-///   Rocky Wrench is the exception: the mole pops out of the ground and reads
-///   best dropped straight into the piranha's slot Y unchanged. (In the current
-///   self-contained pools Rocky Wrench is the *only* non-piranha output, so the
-///   Y−1 branch only matters under a future "async" model.)
+/// - Fire jets self-position differently than a piranha/wrench, so Y shifts by
+///   `offset(new) − offset(old)` (see `piranha_pool_y_offset`). This is
+///   symmetric: a jet replacing a piranha/wrench rises/drops, and a piranha or
+///   wrench replacing a jet gets the exact reverse. Non-jet ↔ non-jet swaps
+///   (piranha↔piranha, piranha↔wrench, and every other class) shift nothing.
 fn swap_enemy(data: &mut [u8], id_index: usize, new_id: u8) {
     let old_id = data[id_index];
     data[id_index] = new_id;
     if TALL_ENEMIES.contains(&new_id) {
         data[id_index + 2] = data[id_index + 2].wrapping_sub(1);
     }
-    let old_was_piranha = PIRANHAS.contains(&old_id) || PIRANHASC.contains(&old_id);
-    if old_was_piranha
-        && new_id != ROCKY_WRENCH
-        && !PIRANHAS.contains(&new_id)
-        && !PIRANHASC.contains(&new_id)
-    {
-        data[id_index + 2] = data[id_index + 2].wrapping_sub(1);
-    }
+    let dy = piranha_pool_y_offset(new_id) - piranha_pool_y_offset(old_id);
+    data[id_index + 2] = data[id_index + 2].wrapping_add_signed(dy);
 }
 
 /// Pick a random CHR-compatible enemy from `pool`, or `None` if nothing fits.
@@ -1772,10 +1807,60 @@ mod tests {
         // …and a standard piranha can become Rocky Wrench.
         let pool = find_class_pool(0xA0, &wild, &[]).expect("piranha wild pool");
         assert!(pool.contains(&ROCKY_WRENCH));
-        // Ceiling piranhas stay self-contained, no Rocky Wrench.
+        // Ceiling piranhas stay self-contained (no Rocky Wrench, no upward jet).
         let cpool = find_class_pool(0xA1, &wild, &[]).expect("ceiling wild pool");
-        assert_eq!(cpool, PIRANHASC);
+        assert_eq!(cpool, PIRANHASC_WILD);
         assert!(!cpool.contains(&ROCKY_WRENCH));
+        assert!(!cpool.contains(&FIREJET_UP));
+    }
+
+    #[test]
+    fn firejets_join_piranha_pools_only_in_wild() {
+        // Shuffle / Off: the fire jets belong to no class → untouched.
+        let mut shuffle = ClassModes::from_options(&Options::default());
+        shuffle.piranhas = EnemyMode::Shuffle;
+        assert!(find_class_pool(FIREJET_UP, &shuffle, &[]).is_none());
+        assert!(find_class_pool(FIREJET_DOWN, &shuffle, &[]).is_none());
+        shuffle.piranhas = EnemyMode::Off;
+        assert!(find_class_pool(FIREJET_UP, &shuffle, &[]).is_none());
+        assert!(find_class_pool(FIREJET_DOWN, &shuffle, &[]).is_none());
+
+        let mut wild = ClassModes::from_options(&Options::default());
+        wild.piranhas = EnemyMode::Wild;
+        // Upward jet ↔ standard pool; downward jet ↔ ceiling pool.
+        assert_eq!(find_class_pool(FIREJET_UP, &wild, &[]).unwrap(), PIRANHAS_WILD);
+        assert_eq!(find_class_pool(FIREJET_DOWN, &wild, &[]).unwrap(), PIRANHASC_WILD);
+        // Standard piranha can become the upward jet; ceiling the downward jet.
+        assert!(find_class_pool(0xA0, &wild, &[]).unwrap().contains(&FIREJET_UP));
+        assert!(find_class_pool(0xA1, &wild, &[]).unwrap().contains(&FIREJET_DOWN));
+        // No crossover: up jet never in ceiling pool, down jet never in standard.
+        assert!(!find_class_pool(0xA0, &wild, &[]).unwrap().contains(&FIREJET_DOWN));
+        assert!(!find_class_pool(0xA1, &wild, &[]).unwrap().contains(&FIREJET_UP));
+    }
+
+    #[test]
+    fn firejet_y_offsets_are_symmetric() {
+        let rise = FIREJET_UP_Y_RISE;
+        let drop = FIREJET_DOWN_Y_DROP;
+        // helper: run swap_enemy on a single 3-byte entry, return new Y
+        let swap = |old: u8, new: u8| {
+            let mut d = [old, 0x20, 0x40];
+            swap_enemy(&mut d, 0, new);
+            assert_eq!(d[0], new);
+            d[2]
+        };
+        // Forward: jet replacing a piranha/wrench rises (up) / drops (down).
+        assert_eq!(swap(0xA0, FIREJET_UP), 0x40u8.wrapping_sub(rise));
+        assert_eq!(swap(ROCKY_WRENCH, FIREJET_UP), 0x40u8.wrapping_sub(rise));
+        assert_eq!(swap(0xA1, FIREJET_DOWN), 0x40u8.wrapping_add(drop));
+        // Reverse: piranha/wrench replacing a jet gets the exact opposite shift.
+        assert_eq!(swap(FIREJET_UP, 0xA0), 0x40u8.wrapping_add(rise));
+        assert_eq!(swap(FIREJET_UP, ROCKY_WRENCH), 0x40u8.wrapping_add(rise));
+        assert_eq!(swap(FIREJET_DOWN, 0xA1), 0x40u8.wrapping_sub(drop));
+        // No shift: jet→same-jet, piranha↔piranha, piranha↔wrench.
+        assert_eq!(swap(FIREJET_UP, FIREJET_UP), 0x40);
+        assert_eq!(swap(0xA0, 0xA2), 0x40);
+        assert_eq!(swap(0xA0, ROCKY_WRENCH), 0x40);
     }
 
     #[test]
