@@ -27,9 +27,9 @@ use crate::rom::Rom;
 use super::node_catalog::{NodeCatalog, NodeKind};
 use super::pipe_helpers::grid_pos_to_dest_nibbles;
 use super::rom_data::{
-    self, AIRSHIP_OBJ_SLOT, FS_SAS_GAMEOVER_X_HELPER, FS_SAS_SCRH_TABLE, FS_SAS_SCRL_TABLE,
+    self, AIRSHIP_OBJ_SLOT, FS_SAS_GAMEOVER_FINALIZE, FS_SAS_SCRH_TABLE, FS_SAS_SCRL_TABLE,
     FS_SAS_X_HELPER, FS_SAS_X_TABLE, FS_SAS_XHI_HELPER, FS_SAS_XHI_TABLE,
-    GAMEOVER_TWIRL_X_SUB_SITE, Grid, MAP_INIT_SCROLL_SITE, MAP_INIT_X_LOW_SITE,
+    GAMEOVER_FINALIZE_SITE, Grid, MAP_INIT_SCROLL_SITE, MAP_INIT_X_LOW_SITE,
     MAP_Y_STARTS_OFF, WORLDS,
 };
 
@@ -178,11 +178,11 @@ pub(super) fn write_swapped_world_entries(rom: &mut Rom, world_idx: usize, catal
 /// Writes:
 ///   * `Map_Y_Starts` (vanilla 8-byte table at `MAP_Y_STARTS_OFF`)
 ///   * Four per-world tables in PRG031 free space (X, XHi, ScrL, ScrH)
-///   * Three helper subroutines (X-low setter, XHi + camera-scroll setter,
-///     game-over-spiral X delta computer)
+///   * Two PRG031 helper subroutines (X-low setter, XHi + camera-scroll setter)
+///     plus a PRG011 game-over finalize helper (stamps World_Map_X/XHi + scroll)
 ///   * `Map_Init` inline patches replaced with `JSR helper`
-///   * `GameOver_TwirlToStart` `SEC / SBC #$20` replaced with `JSR helper` so
-///     the spiral-back targets the per-world X instead of vanilla column 2
+///   * `GameOver_TwirlToStart` finalize store replaced with `JSR finalize` so
+///     the spiral lands on the per-world start instead of vanilla column 2
 ///   * Per-swapped-world `Map_Object` slot-1 sprite position move
 pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
     let mut y_tbl = [0u8; 8];
@@ -263,23 +263,39 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
         &[0x20, (xhi_helper_cpu & 0xFF) as u8, (xhi_helper_cpu >> 8) as u8],
     );
 
-    // GameOver_TwirlToStart computes the spiral-back X delta as
-    // `current_X - $20` (hardcoded column 2). In a swapped world the new
-    // start sits elsewhere, so the spiral lands Mario at column 2 of the
-    // right screen instead of the new start. Replace `SEC / SBC #$20`
-    // (3 bytes) with `JSR FS_SAS_GAMEOVER_X_HELPER`; the helper does
-    // `SEC / SBC FS_SAS_X_TABLE,Y / RTS` (Y is already World_Num here).
-    rom.set_tag("start_airship_swap/gameover_x");
-    let gameover_x_helper = [
-        0x38,                                                 // SEC
-        0xF9, (x_tbl_cpu & 0xFF) as u8, (x_tbl_cpu >> 8) as u8, // SBC FS_SAS_X_TABLE,Y
-        0x60,                                                 // RTS
+    // GameOver_TwirlToStart spirals Mario back to the start via a per-frame X/Y
+    // delta, then at finalize copies World_Map_X/XHi/Y into Map_Previous_*. The
+    // delta is low-byte/within-screen only (and uses a second hardcoded column-2
+    // for the skid *direction*), so it can't be retargeted to a swapped start on
+    // a different column/screen by patching the delta. Instead we let the vanilla
+    // animation play and STAMP the correct position at finalize.
+    //
+    // Hook: replace `STA Map_Prev_XHi2,X` (the last store before the World_Map →
+    // Map_Previous copies; A = 0 there) with `JSR finalize`. The helper re-does
+    // the displaced store, then overwrites World_Map_X ($79,X) / World_Map_XHi
+    // ($77,X) and camera scroll ($0722/$0724,X) from the FS_SAS_* tables. The
+    // vanilla copies that follow then propagate the corrected X/XHi into
+    // Map_Previous_X/XHi, so the continue lands on the real start tile. Y is
+    // World_Num (re-loaded in the helper); X is Player_Current (live at the site).
+    rom.set_tag("start_airship_swap/gameover_finalize");
+    let finalize_helper = [
+        0x9D, 0x88, 0x79,                                            // STA $7988,X (displaced Map_Prev_XHi2,X, A=0)
+        0xAC, 0x27, 0x07,                                            // LDY World_Num ($0727)
+        0xB9, (x_tbl_cpu & 0xFF) as u8, (x_tbl_cpu >> 8) as u8,      // LDA FS_SAS_X_TABLE,Y
+        0x95, 0x79,                                                  // STA World_Map_X,X   ($79,X)
+        0xB9, (xhi_tbl_cpu & 0xFF) as u8, (xhi_tbl_cpu >> 8) as u8,  // LDA FS_SAS_XHI_TABLE,Y
+        0x95, 0x77,                                                  // STA World_Map_XHi,X ($77,X)
+        0xB9, (scrl_tbl_cpu & 0xFF) as u8, (scrl_tbl_cpu >> 8) as u8,// LDA FS_SAS_SCRL_TABLE,Y
+        0x9D, 0x22, 0x07,                                            // STA Map_Prev_XOff,X ($0722)
+        0xB9, (scrh_tbl_cpu & 0xFF) as u8, (scrh_tbl_cpu >> 8) as u8,// LDA FS_SAS_SCRH_TABLE,Y
+        0x9D, 0x24, 0x07,                                            // STA Map_Prev_XHi,X  ($0724)
+        0x60,                                                        // RTS
     ];
-    rom.write_range(FS_SAS_GAMEOVER_X_HELPER, &gameover_x_helper);
-    let gameover_helper_cpu = file_to_prg031_cpu(FS_SAS_GAMEOVER_X_HELPER);
+    rom.write_range(FS_SAS_GAMEOVER_FINALIZE, &finalize_helper);
+    let finalize_cpu = file_to_prg011_cpu(FS_SAS_GAMEOVER_FINALIZE);
     rom.write_range(
-        GAMEOVER_TWIRL_X_SUB_SITE,
-        &[0x20, (gameover_helper_cpu & 0xFF) as u8, (gameover_helper_cpu >> 8) as u8],
+        GAMEOVER_FINALIZE_SITE,
+        &[0x20, (finalize_cpu & 0xFF) as u8, (finalize_cpu >> 8) as u8],
     );
 
     rom.set_tag("start_airship_swap/slot1");
@@ -300,4 +316,11 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
 /// PRG031 file offset → CPU address. PRG031 is always mapped at $E000.
 fn file_to_prg031_cpu(file_off: usize) -> u16 {
     (0xE000 + (file_off - 0x3E010)) as u16
+}
+
+/// PRG011 file offset → CPU address. PRG011 is mapped at $A000 during the map
+/// (it owns Map_Init / GameOver_TwirlToStart), so a JSR from the game-over hook
+/// to a helper in the same bank is bank-local.
+fn file_to_prg011_cpu(file_off: usize) -> u16 {
+    (0xA000 + (file_off - 0x16010)) as u16
 }
