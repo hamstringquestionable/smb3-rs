@@ -2633,12 +2633,73 @@ def parse_enemy_entries(rom, obj_cpu_ptr):
     return entries
 
 
+def _render_enemy_lines(enemies):
+    """Format parsed enemies into indented display lines (offset, name, tags)."""
+    out = []
+    for e in enemies:
+        name = e.get("name", f"0x{e['obj_id']:02X}")
+        cls = e.get("class", "")
+        boss = e.get("boss", "")
+        tags = []
+        if cls:
+            tags.append(f"class:{cls}")
+        if boss:
+            tags.append(f"{RED}BOSS:{boss}{RESET}")
+        tag_str = f"  ({', '.join(tags)})" if tags else ""
+        out.append(f"    0x{e['offset']:05X}: {name} "
+                   f"scr={e['screen']} col={e['x_col']} row={e['y_row']}"
+                   f"{tag_str}")
+    return out
+
+
+def trace_beta_sub_areas(rom, main_lay_off):
+    """Follow a beta level's alt-area chain from its main header.
+
+    Each area's 9-byte header points (alt_layout/alt_objects/alt_tileset) at the
+    NEXT area, exactly as the engine loads a sub-area when Mario takes a pipe or
+    door. Area N's enemies come from area N-1's header `alt_objects`. We walk the
+    chain, seeding the visited set with the main layout offset so an alt pointer
+    that loops back to the main area (the common "no sub-area" encoding) stops
+    the trace. Returns a list of dicts for each sub-area (index >= 1):
+        {idx, lay_off, enemy_ptr, screens, tileset, enemies}
+    """
+    subs = []
+    if main_lay_off is None or main_lay_off + 9 > len(rom):
+        return subs
+    visited = {main_lay_off}
+    hdr = parse_level_header(rom, main_lay_off)
+    next_lay, next_obj, next_ts = hdr["alt_layout"], hdr["alt_objects"], hdr["alt_tileset"]
+    idx = 1
+    while idx <= 8:  # depth guard; real chains are 1-2 deep
+        if next_lay < 0xA000:
+            break
+        lay_off = layout_file_offset(next_lay, next_ts)
+        if lay_off is None or lay_off + 9 > len(rom) or lay_off in visited:
+            break
+        visited.add(lay_off)
+        sub_hdr = parse_level_header(rom, lay_off)
+        enemies = parse_enemy_entries(rom, next_obj) if next_obj >= 0xC000 else []
+        subs.append({
+            "idx": idx,
+            "lay_off": lay_off,
+            "enemy_ptr": next_obj,
+            "screens": sub_hdr["screens"],
+            "tileset": next_ts,
+            "enemies": enemies,
+        })
+        next_lay, next_obj, next_ts = (
+            sub_hdr["alt_layout"], sub_hdr["alt_objects"], sub_hdr["alt_tileset"])
+        idx += 1
+    return subs
+
+
 def _render_beta_entry(rom, cname, entry):
     """Render the lookup output for a beta (unreferenced) level.
 
-    Beta levels lack a pointer-table slot, world position, sub-area trace,
-    and powerup index. We show identity, header, enemies (from the borrowed
-    obj_ptr), and any BETA_PATCHES that target this layout.
+    Beta levels lack a pointer-table slot, world position, and powerup index.
+    We show identity, header, main-area enemies (from the borrowed obj_ptr),
+    sub-area enemies (traced through the header's alt_layout/alt_objects chain),
+    and any BETA_PATCHES that target this layout.
     """
     obj = entry["obj_ptr"]
     lay = entry["lay_ptr"]
@@ -2676,26 +2737,26 @@ def _render_beta_entry(rom, cname, entry):
         except Exception:
             pass
 
-    # Enemies
+    # Main-area enemies (from the borrowed pointer-table obj_ptr)
     enemies = parse_enemy_entries(rom, obj)
     lines.append("")
     lines.append(f"  {WHITE}Enemies (obj 0x{obj:04X}, {len(enemies)} entries):{RESET}")
     if enemies:
-        for e in enemies:
-            name = e.get("name", f"0x{e['obj_id']:02X}")
-            cls = e.get("class", "")
-            boss = e.get("boss", "")
-            tags = []
-            if cls:
-                tags.append(f"class:{cls}")
-            if boss:
-                tags.append(f"{RED}BOSS:{boss}{RESET}")
-            tag_str = f"  ({', '.join(tags)})" if tags else ""
-            lines.append(f"    0x{e['offset']:05X}: {name} "
-                         f"scr={e['screen']} col={e['x_col']} row={e['y_row']}"
-                         f"{tag_str}")
+        lines.extend(_render_enemy_lines(enemies))
     else:
         lines.append("    (none)")
+
+    # Sub-areas (trace the header's alt_layout/alt_objects chain, like the engine)
+    if lay_off is not None:
+        for sa in trace_beta_sub_areas(rom, lay_off):
+            lines.append("")
+            lines.append(f"  {WHITE}Sub-area {sa['idx']} "
+                         f"(enemy_ptr 0x{sa['enemy_ptr']:04X}, ts{sa['tileset']}, "
+                         f"{sa['screens']} screens, {len(sa['enemies'])} enemies):{RESET}")
+            if sa["enemies"]:
+                lines.extend(_render_enemy_lines(sa["enemies"]))
+            else:
+                lines.append("    (none)")
 
     # BETA_PATCHES for this entry's layout range
     patches = beta_patches_for_entry(entry)
