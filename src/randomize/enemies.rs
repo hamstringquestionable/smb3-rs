@@ -152,6 +152,21 @@ const PIRANHASC_WILD: &[u8] = &[
     FIREJET_DOWN, // 0xB2 — downward fire jet; see FIREJET_DOWN doc
 ];
 
+// --- Category buckets for bucket-first (category-equal) Wild picking ---
+// A Wild piranha slot picks a *category* uniformly (piranha / flame / wrench),
+// then a member, so the lone flame and the lone wrench each get a full category
+// share instead of being two members lost among the many piranhas. CHR still
+// applies — a bucket with no compatible member is skipped that draw. See
+// `pick_bucket_first` and the swap site.
+
+/// Standard piranhas excluding the giant red (0x7F): the piranha bucket for a
+/// slot that wasn't already a giant red (0x7F may only stay where one was).
+const PIRANHAS_NO_RED: &[u8] = &[0x7D, 0xA0, 0xA2, 0xA4, 0xA6];
+
+const BUCKET_UP_JET: &[u8] = &[FIREJET_UP];
+const BUCKET_DOWN_JET: &[u8] = &[FIREJET_DOWN];
+const BUCKET_WRENCH: &[u8] = &[ROCKY_WRENCH];
+
 /// Giant red piranha. Its hitbox is built off-center for *giant* pipes; placing
 /// one in a slot sized for a regular pipe leaves the hitbox outside the pipe
 /// (unfair). So `0x7F` may only be an output where a `0x7F` already was — never
@@ -770,6 +785,24 @@ fn pick_compatible<R: Rng>(
     compatible.choose(rng).copied()
 }
 
+/// Bucket-first pick: weight each bucket equally rather than each member. Choose
+/// uniformly among the buckets that have ≥1 CHR-compatible member, then a member
+/// uniformly from that bucket. Gives a lone-member bucket (e.g. a single flame or
+/// wrench) a full category share instead of `1/N_pool`. CHR is handled naturally:
+/// a bucket with no compatible member under the current slot commitments is
+/// skipped for this draw. Returns `None` only if no bucket has any fit.
+fn pick_bucket_first<R: Rng>(
+    buckets: &[&[u8]], slot4: ChrSlot, slot5: ChrSlot, rng: &mut R,
+) -> Option<u8> {
+    let eligible: Vec<&[u8]> = buckets
+        .iter()
+        .copied()
+        .filter(|b| b.iter().any(|&id| is_chr_compatible(id, slot4, slot5)))
+        .collect();
+    let &bucket = eligible.choose(rng)?;
+    pick_compatible(bucket, slot4, slot5, rng)
+}
+
 /// Pre-built page buckets for page-first picking. Built once per segment,
 /// reused for every Wild enemy in that segment.
 struct PageBuckets {
@@ -1268,6 +1301,25 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                 } else if let Some(pool) = find_class_pool(entry.obj_id, modes, wild_pool) {
                     let chosen = if std::ptr::eq(pool, wild_pool) {
                         page_buckets.pick(committed_slot4, committed_slot5, rng)
+                    } else if std::ptr::eq(pool, PIRANHAS_WILD) {
+                        // Category-equal: piranha / upward jet / wrench each get a
+                        // uniform turn. Giant red (0x7F) is excluded unless this
+                        // slot already held one (the post-filter covers Shuffle).
+                        let piranha_bucket: &[u8] = if entry.obj_id == GIANT_RED_PIRANHA {
+                            PIRANHAS
+                        } else {
+                            PIRANHAS_NO_RED
+                        };
+                        pick_bucket_first(
+                            &[piranha_bucket, BUCKET_UP_JET, BUCKET_WRENCH],
+                            committed_slot4, committed_slot5, rng,
+                        )
+                    } else if std::ptr::eq(pool, PIRANHASC_WILD) {
+                        // Category-equal: ceiling piranha / downward jet.
+                        pick_bucket_first(
+                            &[PIRANHASC, BUCKET_DOWN_JET],
+                            committed_slot4, committed_slot5, rng,
+                        )
                     } else {
                         pick_compatible(pool, committed_slot4, committed_slot5, rng)
                     };
@@ -1861,6 +1913,33 @@ mod tests {
         assert_eq!(swap(FIREJET_UP, FIREJET_UP), 0x40);
         assert_eq!(swap(0xA0, 0xA2), 0x40);
         assert_eq!(swap(0xA0, ROCKY_WRENCH), 0x40);
+    }
+
+    #[test]
+    fn bucket_first_weights_categories_and_respects_chr() {
+        use rand::SeedableRng;
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let buckets: &[&[u8]] = &[PIRANHAS_NO_RED, BUCKET_UP_JET, BUCKET_WRENCH];
+
+        // All slots free: each category should land ~1/3 (1000 of 3000).
+        let (mut npir, mut njet, mut nwr) = (0, 0, 0);
+        for _ in 0..3000 {
+            match pick_bucket_first(buckets, ChrSlot::Free, ChrSlot::Free, &mut rng).unwrap() {
+                FIREJET_UP => njet += 1,
+                ROCKY_WRENCH => nwr += 1,
+                _ => npir += 1,
+            }
+        }
+        assert!((800..1200).contains(&njet), "jet category share off: {njet}/3000");
+        assert!((800..1200).contains(&nwr), "wrench category share off: {nwr}/3000");
+        assert!((800..1200).contains(&npir), "piranha category share off: {npir}/3000");
+
+        // slot 5 committed to the small-piranha page (0x4F) makes the upward jet
+        // (page 0x37, slot 5) incompatible, so its bucket is skipped entirely.
+        for _ in 0..500 {
+            let pick = pick_bucket_first(buckets, ChrSlot::Free, ChrSlot::Page(0x4F), &mut rng).unwrap();
+            assert_ne!(pick, FIREJET_UP, "up-jet placed despite slot 5 = 0x4F");
+        }
     }
 
     #[test]
