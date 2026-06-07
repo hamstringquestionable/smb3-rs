@@ -184,6 +184,20 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
 
+    LevelProtection {
+        label: "β4 sub-area (narrow corridor — hazards on Buzzy Beetle path unfair)",
+        enemy_ptr: 0xC7A7,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0C7B8, rule: EntryProtection::ExcludeHazards }, // BuzzyBeatle scr=1 col=2
+            EntryRule { offset: 0x0C7BB, rule: EntryProtection::ExcludeHazards }, // BuzzyBeatle scr=1 col=5
+            EntryRule { offset: 0x0C7BE, rule: EntryProtection::ExcludeHazards }, // BuzzyBeatle scr=1 col=9
+            EntryRule { offset: 0x0C7CA, rule: EntryProtection::ExcludeHazards }, // BuzzyBeatle scr=2 col=11
+            EntryRule { offset: 0x0C7CD, rule: EntryProtection::ExcludeHazards }, // BuzzyBeatle scr=3 col=2
+            EntryRule { offset: 0x0C7D0, rule: EntryProtection::ExcludeHazards }, // BuzzyBeatle scr=3 col=4
+        ],
+    },
+
     // --- Hammer Bro encounters (walker uses HB modes; injection skips) ---
     LevelProtection {
         label: "W1 Hammer Bro",
