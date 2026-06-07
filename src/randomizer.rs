@@ -162,6 +162,11 @@ pub struct Options {
     /// or card state. (MaCobra52's "No Game Over Penalty" patch.)
     #[serde(default)]
     pub no_game_over_penalty: bool,
+    /// Speed up Frog-Suit swimming and running. ("SMB3 - Faster Frog
+    /// (tail attack while swimming compatible)" — layers on top of the
+    /// always-on tail-attack-while-swimming routine.)
+    #[serde(default)]
+    pub faster_frog: bool,
     /// When true, the 19 vanilla spade-game tiles are picked up by the overworld
     /// builder and re-placed at random HammerBro slots, freeing their original
     /// positions for level placement. When false, spade games stay at vanilla
@@ -362,10 +367,12 @@ impl Options {
             | (self.airship_lock as u8) << 1
             | (self.chest_items as u8);
 
-        // b2 bit 4 is unused (formerly fix_drawbridges, now always-on).
+        // b2 bit 4 = faster_frog (reuses the slot formerly fix_drawbridges,
+        // now always-on).
         let b2 = (self.remove_whistles as u8) << 7
             | (self.hands_levels as u8) << 6
             | (self.shuffle_pipes as u8) << 5
+            | (self.faster_frog as u8) << 4
             | (self.remove_rocks as u8) << 3
             | (self.troll_pipes as u8) << 2
             | (self.shuffle_toad_houses as u8) << 1
@@ -523,6 +530,7 @@ impl Options {
             remove_whistles: (b2 >> 7) & 1 != 0,
             hands_levels: (b2 >> 6) & 1 != 0,
             shuffle_pipes: (b2 >> 5) & 1 != 0,
+            faster_frog: (b2 >> 4) & 1 != 0,
             shuffle_airships: b2 & 1 != 0,
             shuffle_toad_houses: (b2 >> 1) & 1 != 0,
             remove_rocks: (b2 >> 3) & 1 != 0,
@@ -630,6 +638,7 @@ impl Default for Options {
             fast_mushroom_house: false,
             faster_tail_speed: false,
             no_game_over_penalty: false,
+            faster_frog: false,
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             hands_levels: true,
@@ -986,6 +995,14 @@ fn randomize_inner(
     rom.set_tag("qol/macobra");
     randomize::qol::apply_macobra_patches(rom);
 
+    // Faster Frog — speeds up Frog-Suit swimming. MUST run after
+    // apply_macobra_patches: two of its writes patch inside the tail-swim
+    // routine that macobra writes unconditionally, so it has to layer on top.
+    if options.faster_frog {
+        rom.set_tag("qol/faster_frog");
+        randomize::qol::apply_faster_frog(rom);
+    }
+
     // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 23 bytes:
     //   [0..4]   "S3R\xNN" magic + version
     //   [4..15]  flag key bytes (11 bytes in v12)
@@ -1227,6 +1244,7 @@ mod tests {
             fast_mushroom_house: true,
             faster_tail_speed: true,
             no_game_over_penalty: true,
+            faster_frog: true,
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             hands_levels: true,
@@ -1301,6 +1319,7 @@ mod tests {
             fast_mushroom_house: false,
             faster_tail_speed: false,
             no_game_over_penalty: false,
+            faster_frog: false,
             shuffle_spade_games: false,
             shuffle_toad_houses: false,
             hands_levels: false,
@@ -1661,6 +1680,7 @@ mod tests {
             fast_mushroom_house: false,
             faster_tail_speed: false,
             no_game_over_penalty: false,
+            faster_frog: false,
             shuffle_spade_games: false,
             shuffle_toad_houses: false,
             hands_levels: false,
@@ -1719,6 +1739,7 @@ mod tests {
             fast_mushroom_house: true,
             faster_tail_speed: true,
             no_game_over_penalty: true,
+            faster_frog: true,
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             hands_levels: true,

@@ -55,6 +55,8 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x03FD0, 22, "koopa_y_clamp: clamp Koopaling Y position to screen"),
     // PRG006 (file 0x0C010, CPU $C000–$DFFF) — level enemy data bank
     (0x0DA74, 22, "hand_rooms: 2 cloned enemy streams for unique 8-Hnd treasure rooms"),
+    // PRG029 (file 0x3A010, CPU $C000–$DFFF) — swim physics bank
+    (0x3A600, 24, "faster_frog: Frog-Suit swim-speed boost routine"),
 ];
 
 // Individual constants for use by each module.
@@ -170,6 +172,10 @@ pub(super) const KOOPA_FIRE_PRESET_CPU: u16  = 0xB84E;  // $A000 + (0x0385E - 0x
 // 11 bytes (page byte + 3 enemy entries + 0xFF terminator); two clones give
 // the three Hand levels independent OBJ_TREASURESET item bytes.
 pub(super) const FS_HAND_ROOMS: usize = 0x0DA74; // 22 bytes (2 × 11)
+
+// PRG029 (file 0x3A010, CPU $C000–$DFFF) — Frog-Suit swim-speed boost routine
+// reached by a bank-local JSR $C5F0 from the swim-physics code. 24 bytes.
+pub(super) const FS_FASTER_FROG: usize = 0x3A600; // CPU $C5F0
 
 // NOTE: PRG004/PRG005 free space at 0x09E66, 0x0BFD6, 0x0BFDD previously held
 // the piranha-visibility / hitbox-skip thunks (the "decide then write" patch
