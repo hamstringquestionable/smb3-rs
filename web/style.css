@@ -580,6 +580,31 @@ input[type="radio"] {
     font-size: 0.8rem;
 }
 
+.preset-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.preset-pill {
+    flex: 1 1 calc(50% - 0.25rem);
+    background: #1c1c38;
+    border: 1px solid #2a2a50;
+    border-radius: 4px;
+    color: #9a9ab0;
+    cursor: pointer;
+    padding: 0.4rem 0.6rem;
+    font-family: inherit;
+    font-size: 0.8rem;
+    transition: all 0.15s;
+}
+
+.preset-pill:hover {
+    background: #2a2a50;
+    color: #e0e0e0;
+}
+
 .flag-key-buttons {
     display: flex;
     gap: 0.5rem;

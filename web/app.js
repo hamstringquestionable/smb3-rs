@@ -20,6 +20,9 @@ import {
 	assertSchemaParity,
 	selfTestRoundTrip,
 	SCHEMA,
+	PRESETS,
+	applyPreset,
+	assertPresetParity,
 } from "./options.js";
 import { ensureSheet, drawSpriteFromSheet } from "./sprites.js";
 
@@ -128,6 +131,7 @@ const seedInput = document.getElementById("seed-input");
 const randomSeedBtn = document.getElementById("random-seed-btn");
 const generateBtn = document.getElementById("generate-btn");
 const statusDiv = document.getElementById("status");
+const presetPills = document.getElementById("preset-pills");
 const flagKeyInput = document.getElementById("flag-key-input");
 const flagKeyCopyBtn = document.getElementById("flag-key-copy-btn");
 const flagKeyApplyBtn = document.getElementById("flag-key-apply-btn");
@@ -155,6 +159,7 @@ if (visualPatchBlock && cosmeticFieldset) {
 }
 
 renderVisualPatchPills();
+renderPresetPills();
 restoreSettings();
 applyEnabledWhen();
 updateSkipValidationWarning();
@@ -191,6 +196,7 @@ init()
 		if (versionEl) versionEl.textContent = `v${version()}`;
 		updateFlagKey();
 		assertSchemaParity(default_options_json());
+		assertPresetParity();
 		selfTestRoundTrip(encode_flag_key, decode_flag_key);
 		applyUrlParams();
 		// If a cached ROM finished loading before WASM, validate it now.
@@ -429,6 +435,33 @@ generateBtn.addEventListener("click", async () => {
 		showStatus(`Error: ${err}`, "error");
 	}
 });
+
+// --- Presets ---
+//
+// One-shot buttons: clicking applies the preset's overrides on top of defaults,
+// then refreshes the flag key, summary, and persisted settings — same follow-up
+// as applyFlagKey. No persistent "selected" state; once you tweak an option the
+// settings simply no longer match any single preset.
+
+function renderPresetPills() {
+	presetPills.replaceChildren();
+	for (const preset of PRESETS) {
+		const btn = document.createElement("button");
+		btn.type = "button";
+		btn.className = "preset-pill";
+		btn.textContent = preset.label;
+		if (preset.tip) btn.title = preset.tip;
+		btn.addEventListener("click", () => {
+			applyPreset(preset.overrides);
+			updateFlagKey();
+			updateChangesSummary();
+			updateSkipValidationWarning();
+			validateLoadedRom();
+			showStatus(`Loaded preset: ${preset.label}`, "success");
+		});
+		presetPills.appendChild(btn);
+	}
+}
 
 // --- Flag Key ---
 
