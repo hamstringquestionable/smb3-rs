@@ -164,6 +164,10 @@ struct Cli {
     #[arg(long)]
     no_game_over_penalty: bool,
 
+    /// Speed up Frog-Suit swimming and running ("Faster Frog", tail-attack-while-swimming compatible)
+    #[arg(long)]
+    faster_frog: bool,
+
     /// Disable spade-game shuffle (on by default; off keeps vanilla spade positions)
     #[arg(long)]
     no_shuffle_spade_games: bool,
@@ -385,6 +389,7 @@ fn main() {
             fast_mushroom_house: cli.fast_mushroom_house,
             faster_tail_speed: cli.faster_tail_speed,
             no_game_over_penalty: cli.no_game_over_penalty,
+            faster_frog: cli.faster_frog,
             shuffle_spade_games: !cli.no_shuffle_spade_games,
             shuffle_toad_houses: !cli.no_shuffle_toad_houses,
             hands_levels: !cli.no_hands_levels,

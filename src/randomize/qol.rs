@@ -6,6 +6,7 @@ use super::rom_data::{
     FS_CANOE_BACKUP,
     FS_CANOE_RESPAWN,
     FS_CARD_CLEAR as CARD_TRAMPOLINE,
+    FS_FASTER_FROG,
     FS_HAMMER_LOCKS,
     FS_STARTING_ITEMS,
 };
@@ -708,6 +709,54 @@ pub fn apply_faster_tail_speed(rom: &mut Rom) {
     rom.write_range(FASTER_TAIL_W76_WALL_OFFSET, &FASTER_TAIL_W76_WALL_BYTES);
 }
 
+// Faster Frog ("SMB3 - Faster Frog (tail attack while swimming compatible)")
+// — speeds up Frog-Suit swimming and running. Four writes, in two groups:
+//
+//   Group A — two edits INSIDE the Tail-Attack-While-Swimming replacement
+//   routine (TAIL_SWIM_ROUTINE, written unconditionally by
+//   apply_macobra_patches). These bytes only exist once tail-swim is
+//   applied (vanilla holds 05 D0 / 01 02 here, not the tail-swim values),
+//   which is exactly why the upstream patch is named "...compatible": it
+//   patches the tail-swim version of the swim routine, not vanilla. Since
+//   tail-swim is always-on in our builds, the base is always present.
+//     1. 0x010A12 (TAIL_SWIM_ROUTINE +46) ← EA EA: NOP out a `STA $BD`.
+//     2. 0x010A3E (TAIL_SWIM_ROUTINE +90) ← 14 EC: retune two swim-speed
+//        table entries (vanilla-routine bytes 10 F0).
+//
+//   Group B — the standalone speed boost, independent of tail-swim:
+//     3. FS_FASTER_FROG (0x3A600, PRG029, CPU $C5F0) ← 24-byte routine.
+//        Checks the Frog-Suit power-up state ($ED == 4), remaps the swim
+//        index into a faster speed-table slot, then runs the displaced
+//        `LDA $CE37,X` and RTS (trampoline tail).
+//     4. 0x03AEB1 ← 20 F0 C5 (JSR $C5F0): bank-local hook into the swim
+//        physics that diverts through the new routine. Replaces the
+//        vanilla `LDA $CE37,X` (BD 37 CE) that the routine re-runs.
+//
+// Source: "SMB3 - Faster Frog (tail attack while swimming compatible).ips"
+// in the project root; bytes verified record-for-record against it.
+const FASTER_FROG_EDIT_A_OFFSET: usize = 0x010A12;
+const FASTER_FROG_EDIT_A_BYTES: [u8; 2] = [0xEA, 0xEA];
+const FASTER_FROG_EDIT_B_OFFSET: usize = 0x010A3E;
+const FASTER_FROG_EDIT_B_BYTES: [u8; 2] = [0x14, 0xEC];
+const FASTER_FROG_ROUTINE: [u8; 24] = [
+    0xA5, 0xED, 0xC9, 0x04, 0xD0, 0x0E, 0x8A, 0x38, 0xE9, 0x39, 0x30, 0x08, 0xC9, 0x03, 0x10, 0x04,
+    0x18, 0x69, 0x29, 0xAA, 0xBD, 0x37, 0xCE, 0x60,
+];
+const FASTER_FROG_HOOK_OFFSET: usize = 0x03AEB1;
+const FASTER_FROG_HOOK_BYTES: [u8; 3] = [0x20, 0xF0, 0xC5]; // JSR $C5F0
+
+/// Apply "Faster Frog" — speeds up Frog-Suit swimming and running. Depends on the
+/// always-on Tail-Attack-While-Swimming routine (two of its writes patch
+/// inside that routine), plus a standalone speed-boost routine + hook in
+/// PRG029. Must run AFTER apply_macobra_patches so the tail-swim base it
+/// edits is already in place.
+pub fn apply_faster_frog(rom: &mut Rom) {
+    rom.write_range(FASTER_FROG_EDIT_A_OFFSET, &FASTER_FROG_EDIT_A_BYTES);
+    rom.write_range(FASTER_FROG_EDIT_B_OFFSET, &FASTER_FROG_EDIT_B_BYTES);
+    rom.write_range(FS_FASTER_FROG, &FASTER_FROG_ROUTINE);
+    rom.write_range(FASTER_FROG_HOOK_OFFSET, &FASTER_FROG_HOOK_BYTES);
+}
+
 // No Game Over Penalty (by MaCobra52) — four writes verified byte-for-byte
 // against the upstream IPS at `SMB3 - No Game Over Penalty.ips` in this
 // repo. After a Game Over the player keeps their reserve inventory,
@@ -927,6 +976,32 @@ mod tests {
         assert_eq!(
             rom.read_range(TAIL_SWIM_ROUTINE_OFFSET, TAIL_SWIM_ROUTINE.len()),
             &TAIL_SWIM_ROUTINE
+        );
+    }
+
+    #[test]
+    fn test_faster_frog_writes() {
+        let mut rom = make_test_rom();
+        // Mirror randomizer order: tail-swim (always-on) first, then faster_frog
+        // layers on top — its Group A edits patch inside the tail-swim routine.
+        apply_macobra_patches(&mut rom);
+        apply_faster_frog(&mut rom);
+
+        // Group A: edits land inside the tail-swim routine span (0x0109E4..0x010B01),
+        // so they must be written after apply_macobra_patches to survive.
+        assert_eq!(
+            rom.read_range(FASTER_FROG_EDIT_A_OFFSET, FASTER_FROG_EDIT_A_BYTES.len()),
+            &FASTER_FROG_EDIT_A_BYTES
+        );
+        assert_eq!(
+            rom.read_range(FASTER_FROG_EDIT_B_OFFSET, FASTER_FROG_EDIT_B_BYTES.len()),
+            &FASTER_FROG_EDIT_B_BYTES
+        );
+        // Group B: standalone routine + hook.
+        assert_eq!(rom.read_range(FS_FASTER_FROG, FASTER_FROG_ROUTINE.len()), &FASTER_FROG_ROUTINE);
+        assert_eq!(
+            rom.read_range(FASTER_FROG_HOOK_OFFSET, FASTER_FROG_HOOK_BYTES.len()),
+            &FASTER_FROG_HOOK_BYTES
         );
     }
 
