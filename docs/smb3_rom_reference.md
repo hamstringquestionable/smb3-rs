@@ -2536,11 +2536,12 @@ one rendered wins and the other draws garbled sprites.
 | 0x5E–0x60 | Rotodisc Fast/1.5 | $12 | +4 |
 | 0x90–0x93 | Moving Platforms | $4F | +5 |
 | 0x94–0x9A | Big ? Blocks | $4C | +4 |
-| 0x9D | Podoboo Fire Jet | $37 | +5 |
+| 0x9D | Fire Jet Upward | $37 | +5 |
 | 0x9E | Podoboo Fire Jet 2 | $12 | +4 |
 | 0xA8 | Muncher | $5A | +4 |
-| 0xAC | Fire Jet Upward | $37 | +5 |
-| 0xB1–0xB2 | Fire Jet Down/Right | $37 | +5 |
+| 0xAC | Fire Jet Left | $37 | +5 |
+| 0xB1 | Fire Jet Right | $37 | +5 |
+| 0xB2 | Fire Jet Upside-down (Down) | $37 | +5 |
 
 #### PatTableSel ROM Table Locations
 
@@ -2750,7 +2751,7 @@ partial tables in the sections above are subsets of this data.
 | 0x9A | $4C | $4C | +4 | Big ? Block Hammer |
 | 0x9B | $00 | — | NOCHANGE | ObjectEntry9B |
 | 0x9C | $00 | — | NOCHANGE | ObjectEntry9C |
-| 0x9D | $B7 | $37 | +5 | Podoboo Fire Jet |
+| 0x9D | $B7 | $37 | +5 | Fire Jet Upward |
 | 0x9E | $12 | $12 | +4 | Podoboo Fire Jet 2 |
 | 0x9F | $0E | $0E | +4 | ObjectEntry9F |
 | 0xA0 | $CF | $4F | +5 | Green Piranha |
@@ -2765,13 +2766,13 @@ partial tables in the sections above are subsets of this data.
 | 0xA9 | $5A | $5A | +4 | Muncher (alt) |
 | 0xAA | $36 | $36 | +4 | ObjectEntryAA |
 | 0xAB | $36 | $36 | +4 | ObjectEntryAB |
-| 0xAC | $B7 | $37 | +5 | Fire Jet Upward |
-| 0xAD | $36 | $36 | +4 | ObjectEntryAD |
+| 0xAC | $B7 | $37 | +5 | Fire Jet Left |
+| 0xAD | $36 | $36 | +4 | Rocky Wrench |
 | 0xAE | $36 | $36 | +4 | ObjectEntryAE |
 | 0xAF | $32 | $32 | +4 | ObjectEntryAF |
 | 0xB0 | $36 | $36 | +4 | ObjectEntryB0 |
-| 0xB1 | $B7 | $37 | +5 | Fire Jet Down |
-| 0xB2 | $B7 | $37 | +5 | Fire Jet Right |
+| 0xB1 | $B7 | $37 | +5 | Fire Jet Right |
+| 0xB2 | $B7 | $37 | +5 | Fire Jet Upside-down (Down) |
 | 0xB3 | $0B | $0B | +4 | ObjectEntryB3 |
 
 All 180 entries verified byte-for-byte against ROM (2025-04-13). Matches
@@ -2797,7 +2798,15 @@ All 180 entries verified byte-for-byte against ROM (2025-04-13). Matches
 | 0x080AE | Para-Goomba de-wing sprite |
 | 0x06EA9 | Boom-Boom drop sprite |
 
-### Piranha Plant Visibility (PRG004 / PRG005)
+### Piranha Plant Visibility (PRG004 / PRG005) — REMOVED, kept for reference
+
+> **Status:** these patches were **removed** in the piranha-rework branch. The
+> piranha randomizer no longer dumps piranhas into the global wild pool (it
+> swaps within piranha-kind plus Rocky Wrench instead), so piranhas no longer
+> land in arbitrary non-pipe slots and the visibility/hitbox issues these
+> thunks addressed no longer arise. The byte-level writeup below is preserved
+> verbatim in case the approach is needed again; the free space it used
+> (`0x09E66`, `0x0BFD6`, `0x0BFDD`) is now available.
 
 Piranha plants use `Objects_Var4` (zero-page `$7F`) as their state machine:
 `0=HideInPipe`, `1=Emerge`, `2=Attack`, `3=Retract`. Init routines do **not**

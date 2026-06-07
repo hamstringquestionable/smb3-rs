@@ -85,7 +85,8 @@ const BRO_ENEMIES: &[u8] = &[
     0x87, // OBJ_FIREBRO
 ];
 
-/// Piranha plant variants (including Giant World) — swap among themselves.
+/// Standard (non-ceiling) piranha plant variants (including Giant World) —
+/// the Shuffle-mode pool; they swap among themselves.
 const PIRANHAS: &[u8] = &[
     0x7D, // OBJ_BIGGREENPIRANHA
     0x7F, // OBJ_BIGREDPIRANHA
@@ -94,13 +95,84 @@ const PIRANHAS: &[u8] = &[
     0xA4, // OBJ_GREENPIRANHA_FIRE
     0xA6, // OBJ_VENUSFIRETRAP
 ];
-/// Piranha Ceiling / Flipped variants
+
+/// Rocky Wrench — the mole (`OBJ_ROCKYWRENCH`) that pops out of the ground and
+/// throws wrenches. NOT the flying-wrench cannon-fire variant (`0xBE`,
+/// `CFIRE_ROCKYWRENCH`), which is a projectile spawner and stays untouched.
+/// Carries CHR page `0x36`/slot 4, so it flows through the normal CHR-compat
+/// system like any other enemy (no garbled-tile risk).
+const ROCKY_WRENCH: u8 = 0xAD;
+
+/// Upward-shooting fire jet (`OBJ_FIREJET_UPWARD`). Joins the *standard* piranha
+/// pool in Wild — its flame erupts upward like a piranha emerging from a pipe.
+/// CHR page `$37`/slot 5, so it rides the normal CHR-compat system.
+const FIREJET_UP: u8 = 0x9D;
+
+/// Downward-shooting fire jet (`OBJ_FIREJET_UPSIDEDOWN`). Joins the *ceiling*
+/// piranha pool in Wild — its flame shoots down like a ceiling piranha. Same
+/// CHR page `$37`/slot 5.
+const FIREJET_DOWN: u8 = 0xB2;
+
+/// Rows the upward fire jet is raised (Y−) when it replaces a standard piranha,
+/// and rows the downward jet is lowered (Y+) when it replaces a ceiling piranha.
+/// Playtest-tuned so the flame base lines up with the former pipe mouth.
+const FIREJET_UP_Y_RISE: u8 = 3;
+const FIREJET_DOWN_Y_DROP: u8 = 1;
+
+/// Wild-mode standard pool: the standard piranhas plus Rocky Wrench and the
+/// upward fire jet. In Wild mode piranhas are *self-contained* (parallel to the
+/// cannons model) — they never merge into the global wild pool in either
+/// direction. Removing an extra member is a one-line edit on this list.
+const PIRANHAS_WILD: &[u8] = &[
+    0x7D, // OBJ_BIGGREENPIRANHA
+    0x7F, // OBJ_BIGREDPIRANHA
+    0xA0, // OBJ_GREENPIRANHA
+    0xA2, // OBJ_REDPIRANHA
+    0xA4, // OBJ_GREENPIRANHA_FIRE
+    0xA6, // OBJ_VENUSFIRETRAP
+    ROCKY_WRENCH, // 0xAD — the mole; see ROCKY_WRENCH doc
+    FIREJET_UP,   // 0x9D — upward fire jet; see FIREJET_UP doc
+];
+
+/// Piranha Ceiling / Flipped variants — the Shuffle-mode ceiling pool.
 const PIRANHASC: &[u8] = &[
     0xA1, // OBJ_GREENPIRANHA_FLIPPED
     0xA3, // OBJ_REDPIRANHA_FLIPPED
     0xA5, // OBJ_GREENPIRANHA_FIREC
     0xA7, // OBJ_VENUSFIRETRAP_CEIL
 ];
+
+/// Wild-mode ceiling pool: the ceiling piranhas plus the downward fire jet.
+/// Self-contained (no crossover to the standard pool).
+const PIRANHASC_WILD: &[u8] = &[
+    0xA1, // OBJ_GREENPIRANHA_FLIPPED
+    0xA3, // OBJ_REDPIRANHA_FLIPPED
+    0xA5, // OBJ_GREENPIRANHA_FIREC
+    0xA7, // OBJ_VENUSFIRETRAP_CEIL
+    FIREJET_DOWN, // 0xB2 — downward fire jet; see FIREJET_DOWN doc
+];
+
+// --- Category buckets for bucket-first (category-equal) Wild picking ---
+// A Wild piranha slot picks a *category* uniformly (piranha / flame / wrench),
+// then a member, so the lone flame and the lone wrench each get a full category
+// share instead of being two members lost among the many piranhas. CHR still
+// applies — a bucket with no compatible member is skipped that draw. See
+// `pick_bucket_first` and the swap site.
+
+/// Standard piranhas excluding the giant red (0x7F): the piranha bucket for a
+/// slot that wasn't already a giant red (0x7F may only stay where one was).
+const PIRANHAS_NO_RED: &[u8] = &[0x7D, 0xA0, 0xA2, 0xA4, 0xA6];
+
+const BUCKET_UP_JET: &[u8] = &[FIREJET_UP];
+const BUCKET_DOWN_JET: &[u8] = &[FIREJET_DOWN];
+const BUCKET_WRENCH: &[u8] = &[ROCKY_WRENCH];
+
+/// Giant red piranha. Its hitbox is built off-center for *giant* pipes; placing
+/// one in a slot sized for a regular pipe leaves the hitbox outside the pipe
+/// (unfair). So `0x7F` may only be an output where a `0x7F` already was — never
+/// as a replacement for anything else. Enforced in both Shuffle and Wild.
+/// (Giant green `0x7D` was designed to fit regular pipes, so it's unconstrained.)
+const GIANT_RED_PIRANHA: u8 = 0x7F;
 
 /// Thwomp variants — all use CHR page $12/+4 and differ only in movement pattern.
 /// Behind the `wild_thwomps` flag (off by default) because random movement
@@ -505,10 +577,10 @@ impl ClassModes {
         if self.ground == EnemyMode::Wild { pool.extend_from_slice(GROUND_ENEMIES); }
         if self.shell == EnemyMode::Wild { pool.extend_from_slice(SHELL_ENEMIES); }
         if self.flying == EnemyMode::Wild { pool.extend_from_slice(FLYING_ENEMIES); }
-        if self.piranhas == EnemyMode::Wild {
-            pool.extend_from_slice(PIRANHAS);
-            pool.extend_from_slice(PIRANHASC);
-        }
+        // Piranhas are intentionally NOT added to the global wild pool. Like
+        // cfire, they are self-contained in Wild mode: a piranha slot swaps
+        // only within piranha-kind (standard + Rocky Wrench, or ceiling), and
+        // no other class can ever turn into a piranha. See find_class_pool.
         if self.ghosts == EnemyMode::Wild { pool.extend_from_slice(GHOST_ENEMIES); }
         if self.thwomps == EnemyMode::Wild { pool.extend_from_slice(THWOMPS); }
         if self.rotodiscs == EnemyMode::Wild {
@@ -565,8 +637,31 @@ fn find_class_pool<'a>(
     check!(GROUND_ENEMIES, modes.ground);
     check!(SHELL_ENEMIES, modes.shell);
     check!(FLYING_ENEMIES, modes.flying);
-    check!(PIRANHAS, modes.piranhas);
-    check!(PIRANHASC, modes.piranhas); // ceiling piranhas share piranhas mode
+
+    // Piranhas are self-contained (never the global wild pool, either direction).
+    // Standard plants + Rocky Wrench + the upward fire jet swap among each other;
+    // ceiling plants + the downward fire jet swap among themselves. Rocky Wrench
+    // (0xAD) and the fire jets (0x9D up / 0xB2 down) join ONLY in Wild mode — they
+    // belong to no class otherwise, so in Shuffle/Off they're left untouched.
+    if PIRANHAS.contains(&id) || id == ROCKY_WRENCH || id == FIREJET_UP {
+        return match modes.piranhas {
+            EnemyMode::Off => None,
+            EnemyMode::Shuffle => {
+                if PIRANHAS.contains(&id) { Some(PIRANHAS) } else { None }
+            }
+            EnemyMode::Wild => Some(PIRANHAS_WILD),
+        };
+    }
+    if PIRANHASC.contains(&id) || id == FIREJET_DOWN {
+        return match modes.piranhas {
+            EnemyMode::Off => None,
+            EnemyMode::Shuffle => {
+                if PIRANHASC.contains(&id) { Some(PIRANHASC) } else { None }
+            }
+            EnemyMode::Wild => Some(PIRANHASC_WILD),
+        };
+    }
+
     check!(GHOST_ENEMIES, modes.ghosts);
     check!(THWOMPS, modes.thwomps);
     check!(ROTODISCS_SINGLE, modes.rotodiscs);
@@ -646,25 +741,36 @@ fn commit_chr_page(id: u8, slot4: &mut ChrSlot, slot5: &mut ChrSlot) {
     }
 }
 
-/// Write `new_id` into the enemy slot at `id_index` and nudge X/Y so the
-/// replacement sprite lines up with the slot. Bundles the write + adjustment
-/// so call sites can't forget one. Adjustments:
+/// Y offset (rows) that seats a piranha-pool member correctly relative to the
+/// piranha "reference" position. Piranhas and Rocky Wrench sit at the reference
+/// (0); fire jets self-position differently, so they carry an offset: the upward
+/// jet sits `FIREJET_UP_Y_RISE` rows higher (−), the downward jet
+/// `FIREJET_DOWN_Y_DROP` rows lower (+). See `swap_enemy`.
+fn piranha_pool_y_offset(id: u8) -> i8 {
+    match id {
+        FIREJET_UP => -(FIREJET_UP_Y_RISE as i8),
+        FIREJET_DOWN => FIREJET_DOWN_Y_DROP as i8,
+        _ => 0,
+    }
+}
+
+/// Write `new_id` into the enemy slot at `id_index` and nudge Y so the
+/// replacement lines up with the slot. Bundles the write + adjustment so call
+/// sites can't forget one. Adjustments:
 /// - Tall replacements get Y−1 to avoid floor clipping.
-/// - Ground-piranha → non-piranha gets Y−1 so the replacement stands on the
-///   pipe lip instead of inside the pipe shaft (where the rising piranha
-///   normally hides).
+/// - Fire jets self-position differently than a piranha/wrench, so Y shifts by
+///   `offset(new) − offset(old)` (see `piranha_pool_y_offset`). This is
+///   symmetric: a jet replacing a piranha/wrench rises/drops, and a piranha or
+///   wrench replacing a jet gets the exact reverse. Non-jet ↔ non-jet swaps
+///   (piranha↔piranha, piranha↔wrench, and every other class) shift nothing.
 fn swap_enemy(data: &mut [u8], id_index: usize, new_id: u8) {
     let old_id = data[id_index];
     data[id_index] = new_id;
     if TALL_ENEMIES.contains(&new_id) {
         data[id_index + 2] = data[id_index + 2].wrapping_sub(1);
     }
-    if PIRANHAS.contains(&old_id)
-        && !PIRANHAS.contains(&new_id)
-        && !PIRANHASC.contains(&new_id)
-    {
-        data[id_index + 2] = data[id_index + 2].wrapping_sub(1);
-    }
+    let dy = piranha_pool_y_offset(new_id) - piranha_pool_y_offset(old_id);
+    data[id_index + 2] = data[id_index + 2].wrapping_add_signed(dy);
 }
 
 /// Pick a random CHR-compatible enemy from `pool`, or `None` if nothing fits.
@@ -677,6 +783,24 @@ fn pick_compatible<R: Rng>(
         .filter(|&c| is_chr_compatible(c, slot4, slot5))
         .collect();
     compatible.choose(rng).copied()
+}
+
+/// Bucket-first pick: weight each bucket equally rather than each member. Choose
+/// uniformly among the buckets that have ≥1 CHR-compatible member, then a member
+/// uniformly from that bucket. Gives a lone-member bucket (e.g. a single flame or
+/// wrench) a full category share instead of `1/N_pool`. CHR is handled naturally:
+/// a bucket with no compatible member under the current slot commitments is
+/// skipped for this draw. Returns `None` only if no bucket has any fit.
+fn pick_bucket_first<R: Rng>(
+    buckets: &[&[u8]], slot4: ChrSlot, slot5: ChrSlot, rng: &mut R,
+) -> Option<u8> {
+    let eligible: Vec<&[u8]> = buckets
+        .iter()
+        .copied()
+        .filter(|b| b.iter().any(|&id| is_chr_compatible(id, slot4, slot5)))
+        .collect();
+    let &bucket = eligible.choose(rng)?;
+    pick_compatible(bucket, slot4, slot5, rng)
 }
 
 /// Pre-built page buckets for page-first picking. Built once per segment,
@@ -1177,6 +1301,25 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                 } else if let Some(pool) = find_class_pool(entry.obj_id, modes, wild_pool) {
                     let chosen = if std::ptr::eq(pool, wild_pool) {
                         page_buckets.pick(committed_slot4, committed_slot5, rng)
+                    } else if std::ptr::eq(pool, PIRANHAS_WILD) {
+                        // Category-equal: piranha / upward jet / wrench each get a
+                        // uniform turn. Giant red (0x7F) is excluded unless this
+                        // slot already held one (the post-filter covers Shuffle).
+                        let piranha_bucket: &[u8] = if entry.obj_id == GIANT_RED_PIRANHA {
+                            PIRANHAS
+                        } else {
+                            PIRANHAS_NO_RED
+                        };
+                        pick_bucket_first(
+                            &[piranha_bucket, BUCKET_UP_JET, BUCKET_WRENCH],
+                            committed_slot4, committed_slot5, rng,
+                        )
+                    } else if std::ptr::eq(pool, PIRANHASC_WILD) {
+                        // Category-equal: ceiling piranha / downward jet.
+                        pick_bucket_first(
+                            &[PIRANHASC, BUCKET_DOWN_JET],
+                            committed_slot4, committed_slot5, rng,
+                        )
                     } else {
                         pick_compatible(pool, committed_slot4, committed_slot5, rng)
                     };
@@ -1209,6 +1352,22 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                         let filtered: Vec<u8> = pool.iter()
                             .copied()
                             .filter(|id| !HAZARD_PROJECTILE_IDS.contains(id))
+                            .collect();
+                        pick_compatible(&filtered, committed_slot4, committed_slot5, rng)
+                    } else {
+                        chosen
+                    };
+                    // Giant red piranha (0x7F) may only land where a 0x7F
+                    // already was — its off-center hitbox is unfair in any
+                    // slot built for a regular pipe. If the original slot
+                    // wasn't 0x7F, re-pick with 0x7F filtered out. (No-op for
+                    // non-piranha entries, whose pools never contain 0x7F.)
+                    let chosen = if entry.obj_id != GIANT_RED_PIRANHA
+                        && chosen == Some(GIANT_RED_PIRANHA)
+                    {
+                        let filtered: Vec<u8> = pool.iter()
+                            .copied()
+                            .filter(|&id| id != GIANT_RED_PIRANHA)
                             .collect();
                         pick_compatible(&filtered, committed_slot4, committed_slot5, rng)
                     } else {
@@ -1657,6 +1816,166 @@ mod tests {
             assert!(SHELL_ENEMIES.contains(&result[0]), "seed {seed}: big troopa 0x{:02X}", result[0]);
             assert!(PIRANHAS.contains(&result[3]), "seed {seed}: big piranha1 0x{:02X}", result[3]);
             assert!(PIRANHAS.contains(&result[6]), "seed {seed}: big piranha2 0x{:02X}", result[6]);
+        }
+    }
+
+    /// Build the synthetic header + segment the giant-red test reuses, with two
+    /// far-apart piranha slots (separate CHR groups): a regular green piranha
+    /// (0xA0) and a giant red (0x7F).
+    fn giant_red_test_rom() -> Rom {
+        let mut data = vec![0u8; 393232];
+        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
+        data[4] = 16;
+        data[5] = 16;
+        data[6] = 0x40;
+        let seg = &[
+            0xFF,
+            0x01,
+            0xA0, 0x10, 0x17, // GreenPiranha — regular slot, X=0x10
+            0x7F, 0x60, 0x10, // BigRedPiranha — X=0x60 (separate CHR group)
+            0xFF,
+        ];
+        let start = ENEMY_DATA_START;
+        data[start..start + seg.len()].copy_from_slice(seg);
+        Rom::from_bytes_lax(&data, true).unwrap()
+    }
+
+    #[test]
+    fn rocky_wrench_joins_piranhas_only_in_wild() {
+        // Shuffle / Off: Rocky Wrench (0xAD) belongs to no class, so it's left
+        // untouched. Wild: it joins the standard piranha pool both directions.
+        let mut shuffle = ClassModes::from_options(&Options::default());
+        shuffle.piranhas = EnemyMode::Shuffle;
+        assert!(find_class_pool(ROCKY_WRENCH, &shuffle, &[]).is_none());
+
+        shuffle.piranhas = EnemyMode::Off;
+        assert!(find_class_pool(ROCKY_WRENCH, &shuffle, &[]).is_none());
+
+        let mut wild = ClassModes::from_options(&Options::default());
+        wild.piranhas = EnemyMode::Wild;
+        // Rocky Wrench can become a standard piranha…
+        let pool = find_class_pool(ROCKY_WRENCH, &wild, &[]).expect("wrench wild pool");
+        assert_eq!(pool, PIRANHAS_WILD);
+        // …and a standard piranha can become Rocky Wrench.
+        let pool = find_class_pool(0xA0, &wild, &[]).expect("piranha wild pool");
+        assert!(pool.contains(&ROCKY_WRENCH));
+        // Ceiling piranhas stay self-contained (no Rocky Wrench, no upward jet).
+        let cpool = find_class_pool(0xA1, &wild, &[]).expect("ceiling wild pool");
+        assert_eq!(cpool, PIRANHASC_WILD);
+        assert!(!cpool.contains(&ROCKY_WRENCH));
+        assert!(!cpool.contains(&FIREJET_UP));
+    }
+
+    #[test]
+    fn firejets_join_piranha_pools_only_in_wild() {
+        // Shuffle / Off: the fire jets belong to no class → untouched.
+        let mut shuffle = ClassModes::from_options(&Options::default());
+        shuffle.piranhas = EnemyMode::Shuffle;
+        assert!(find_class_pool(FIREJET_UP, &shuffle, &[]).is_none());
+        assert!(find_class_pool(FIREJET_DOWN, &shuffle, &[]).is_none());
+        shuffle.piranhas = EnemyMode::Off;
+        assert!(find_class_pool(FIREJET_UP, &shuffle, &[]).is_none());
+        assert!(find_class_pool(FIREJET_DOWN, &shuffle, &[]).is_none());
+
+        let mut wild = ClassModes::from_options(&Options::default());
+        wild.piranhas = EnemyMode::Wild;
+        // Upward jet ↔ standard pool; downward jet ↔ ceiling pool.
+        assert_eq!(find_class_pool(FIREJET_UP, &wild, &[]).unwrap(), PIRANHAS_WILD);
+        assert_eq!(find_class_pool(FIREJET_DOWN, &wild, &[]).unwrap(), PIRANHASC_WILD);
+        // Standard piranha can become the upward jet; ceiling the downward jet.
+        assert!(find_class_pool(0xA0, &wild, &[]).unwrap().contains(&FIREJET_UP));
+        assert!(find_class_pool(0xA1, &wild, &[]).unwrap().contains(&FIREJET_DOWN));
+        // No crossover: up jet never in ceiling pool, down jet never in standard.
+        assert!(!find_class_pool(0xA0, &wild, &[]).unwrap().contains(&FIREJET_DOWN));
+        assert!(!find_class_pool(0xA1, &wild, &[]).unwrap().contains(&FIREJET_UP));
+    }
+
+    #[test]
+    fn firejet_y_offsets_are_symmetric() {
+        let rise = FIREJET_UP_Y_RISE;
+        let drop = FIREJET_DOWN_Y_DROP;
+        // helper: run swap_enemy on a single 3-byte entry, return new Y
+        let swap = |old: u8, new: u8| {
+            let mut d = [old, 0x20, 0x40];
+            swap_enemy(&mut d, 0, new);
+            assert_eq!(d[0], new);
+            d[2]
+        };
+        // Forward: jet replacing a piranha/wrench rises (up) / drops (down).
+        assert_eq!(swap(0xA0, FIREJET_UP), 0x40u8.wrapping_sub(rise));
+        assert_eq!(swap(ROCKY_WRENCH, FIREJET_UP), 0x40u8.wrapping_sub(rise));
+        assert_eq!(swap(0xA1, FIREJET_DOWN), 0x40u8.wrapping_add(drop));
+        // Reverse: piranha/wrench replacing a jet gets the exact opposite shift.
+        assert_eq!(swap(FIREJET_UP, 0xA0), 0x40u8.wrapping_add(rise));
+        assert_eq!(swap(FIREJET_UP, ROCKY_WRENCH), 0x40u8.wrapping_add(rise));
+        assert_eq!(swap(FIREJET_DOWN, 0xA1), 0x40u8.wrapping_sub(drop));
+        // No shift: jet→same-jet, piranha↔piranha, piranha↔wrench.
+        assert_eq!(swap(FIREJET_UP, FIREJET_UP), 0x40);
+        assert_eq!(swap(0xA0, 0xA2), 0x40);
+        assert_eq!(swap(0xA0, ROCKY_WRENCH), 0x40);
+    }
+
+    #[test]
+    fn bucket_first_weights_categories_and_respects_chr() {
+        use rand::SeedableRng;
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        let buckets: &[&[u8]] = &[PIRANHAS_NO_RED, BUCKET_UP_JET, BUCKET_WRENCH];
+
+        // All slots free: each category should land ~1/3 (1000 of 3000).
+        let (mut npir, mut njet, mut nwr) = (0, 0, 0);
+        for _ in 0..3000 {
+            match pick_bucket_first(buckets, ChrSlot::Free, ChrSlot::Free, &mut rng).unwrap() {
+                FIREJET_UP => njet += 1,
+                ROCKY_WRENCH => nwr += 1,
+                _ => npir += 1,
+            }
+        }
+        assert!((800..1200).contains(&njet), "jet category share off: {njet}/3000");
+        assert!((800..1200).contains(&nwr), "wrench category share off: {nwr}/3000");
+        assert!((800..1200).contains(&npir), "piranha category share off: {npir}/3000");
+
+        // slot 5 committed to the small-piranha page (0x4F) makes the upward jet
+        // (page 0x37, slot 5) incompatible, so its bucket is skipped entirely.
+        for _ in 0..500 {
+            let pick = pick_bucket_first(buckets, ChrSlot::Free, ChrSlot::Page(0x4F), &mut rng).unwrap();
+            assert_ne!(pick, FIREJET_UP, "up-jet placed despite slot 5 = 0x4F");
+        }
+    }
+
+    #[test]
+    fn piranhas_excluded_from_global_wild_pool() {
+        // With every class Wild, piranhas (and Rocky Wrench) must NOT appear in
+        // the shared wild pool — they're self-contained, so no other class can
+        // ever turn into a piranha.
+        let mut opts = Options::default();
+        for m in [
+            &mut opts.ground, &mut opts.shell, &mut opts.flying, &mut opts.piranhas,
+            &mut opts.ghosts, &mut opts.water, &mut opts.bros,
+        ] {
+            *m = EnemyMode::Wild;
+        }
+        let pool = wild_pool_for(&opts);
+        for id in PIRANHAS.iter().chain(PIRANHASC).chain(std::iter::once(&ROCKY_WRENCH)) {
+            assert!(!pool.contains(id), "piranha-kind 0x{id:02X} leaked into global wild pool");
+        }
+    }
+
+    #[test]
+    fn giant_red_never_replaces_non_giant_red() {
+        // A regular piranha slot must never become 0x7F (giant red), in both
+        // Shuffle and Wild. The 0x7F slot may stay 0x7F or change.
+        for piranha_mode in [EnemyMode::Shuffle, EnemyMode::Wild] {
+            let opts = Options { piranhas: piranha_mode, ..Default::default() };
+            for seed in 0..300u64 {
+                let mut rom = giant_red_test_rom();
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                randomize(&mut rom, &mut rng, &opts);
+                let result = rom.read_range(ENEMY_DATA_START + 2, 6);
+                assert_ne!(
+                    result[0], GIANT_RED_PIRANHA,
+                    "{piranha_mode:?} seed {seed}: regular piranha slot became giant red",
+                );
+            }
         }
     }
 

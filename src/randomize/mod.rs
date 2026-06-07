@@ -19,7 +19,6 @@ pub mod overworld_writer;
 pub mod palette_variants;
 pub mod palettes;
 pub mod pipe_helpers;
-pub mod piranha_visibility;
 pub mod podoboo_gauntlet;
 pub mod powerups;
 pub mod qol;
