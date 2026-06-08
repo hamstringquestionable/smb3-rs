@@ -47,6 +47,7 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     // PRG011 (file 0x16010, CPU $A000–$BFFF during map)
     (0x17C87, 29, "start_airship_swap: game-over twirl finalize helper"),
     (0x17D00, 66, "canoe_fix: backup/restore subroutines (CANOE_BACKUP_ROUTINE)"),
+    (0x17D42, 8, "bros_no_hands: hand-trap tile bypass for overworld bro movement gate"),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     (0x0382A, 23, "koopa_hits: subroutine + defeat JMP + threshold table"),
     (0x03841, 13, "koopa_collision_guard: skip collision bitmap during invuln"),
@@ -131,6 +132,10 @@ pub(super) const FS_CANOE_RESPAWN: usize     = 0x15DF0; // 35 bytes
 
 // PRG011
 pub(super) const FS_CANOE_BACKUP: usize      = 0x17D00; // 59 bytes
+// 8-byte hand-trap bypass subroutine for the overworld bro movement gate
+// (MaCobra52's "Bros don't stop on hands"). CPU $BD42. Sits just past the
+// 66-byte FS_CANOE_BACKUP reservation; the gate hook at $B425 JSRs here.
+pub(super) const FS_BROS_NO_HANDS: usize     = 0x17D42; // 8 bytes (CPU $BD42)
 
 // PRG026 (cont.)
 pub(super) const FS_MYSTERY_ANCHOR: usize    = 0x35572; // 13 bytes
