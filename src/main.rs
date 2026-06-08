@@ -3,7 +3,16 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use smb3_rs::{EnemyMode, Options, STARTING_LIVES_VALUES};
+use smb3_rs::{EnemyMode, Options, Tri, STARTING_LIVES_VALUES};
+
+/// Human-readable label for a tri-state flag in the run summary.
+fn tri_str(t: Tri) -> &'static str {
+    match t {
+        Tri::Off => "off",
+        Tri::On => "on",
+        Tri::Maybe => "maybe (seed decides)",
+    }
+}
 
 /// CLI validator for `--starting-lives` — only the four canonical values
 /// that map cleanly to the 2-bit flag-key encoding are accepted.
@@ -99,10 +108,10 @@ struct Cli {
     #[arg(long)]
     keep_rocks: bool,
 
-    /// Convert the W1 (6,5) blocking decoration into a hammer-breakable rock
-    /// that becomes a horizontal path when broken (off by default)
-    #[arg(long)]
-    w1_hammer_rock: bool,
+    /// Convert the W1 (6,5) blocking decoration into a hammer-breakable rock:
+    /// off, on, or maybe (the seed decides, hidden from the flag key). Default: off.
+    #[arg(long, default_value = "off")]
+    w1_hammer_rock: String,
 
     /// Disable card speed clear (one-of-each skips cutscene, on by default)
     #[arg(long)]
@@ -132,13 +141,15 @@ struct Cli {
     #[arg(long)]
     random_koopalings: bool,
 
-    /// Hammer item also breaks fortress lock tiles on the overworld map (off by default)
-    #[arg(long)]
-    hammer_breaks_locks: bool,
+    /// Hammer item also breaks fortress lock tiles on the overworld map:
+    /// off, on, or maybe (the seed decides, hidden from the flag key). Default: off.
+    #[arg(long, default_value = "off")]
+    hammer_breaks_locks: String,
 
-    /// Hammer item also breaks water gap (bridge) tiles on the overworld map (off by default)
-    #[arg(long)]
-    hammer_breaks_bridges: bool,
+    /// Hammer item also breaks water gap (bridge) tiles on the overworld map:
+    /// off, on, or maybe (the seed decides, hidden from the flag key). Default: off.
+    #[arg(long, default_value = "off")]
+    hammer_breaks_bridges: String,
 
     /// Angry Sun begins swooping immediately on spawn (MaCobra52's "Early Sun" patch)
     #[arg(long)]
@@ -180,9 +191,11 @@ struct Cli {
     #[arg(long)]
     no_hands_levels: bool,
 
-    /// Disable troll-pipe level slots (on by default; one regular level per world W2-W8 is disguised as a pipe tile)
-    #[arg(long)]
-    no_troll_pipes: bool,
+    /// Troll-pipe level slots (one regular level per world W2-W8 disguised as a
+    /// pipe tile): off, on, or maybe (the seed decides, hidden from the flag
+    /// key). Default: on.
+    #[arg(long, default_value = "on")]
+    troll_pipes: String,
 
     /// Include ~9 unreferenced beta levels in the overworld shuffle pool (off by default)
     #[arg(long)]
@@ -310,6 +323,19 @@ fn main() {
         }
     }
 
+    fn parse_tri(s: &str, name: &str) -> Tri {
+        match s {
+            "off" => Tri::Off,
+            "on" => Tri::On,
+            "maybe" => Tri::Maybe,
+            other => {
+                eprintln!("Invalid --{name} value: {other}");
+                eprintln!("Valid values: off, on, maybe");
+                process::exit(1);
+            }
+        }
+    }
+
     let starting_items: Vec<u8> = cli.starting_items.iter().map(|name| {
         match name.to_lowercase().as_str() {
             "mushroom" => 0x01,
@@ -373,7 +399,7 @@ fn main() {
             chest_items: !cli.no_chest_items,
             remove_whistles: !cli.keep_whistles,
             remove_rocks: !cli.keep_rocks,
-            w1_hammer_rock: cli.w1_hammer_rock,
+            w1_hammer_rock: parse_tri(&cli.w1_hammer_rock, "w1-hammer-rock"),
             card_speed_clear: !cli.no_card_speed_clear,
             remove_n_cards: !cli.keep_n_cards,
             skip_wand_cutscene: !cli.keep_wand_cutscene,
@@ -381,8 +407,8 @@ fn main() {
             koopaling_hits: !cli.keep_koopaling_stomps,
             hammer_vulnerable_koopalings: cli.hammer_vulnerable_koopalings,
             random_koopalings: cli.random_koopalings,
-            hammer_breaks_locks: cli.hammer_breaks_locks,
-            hammer_breaks_bridges: cli.hammer_breaks_bridges,
+            hammer_breaks_locks: parse_tri(&cli.hammer_breaks_locks, "hammer-breaks-locks"),
+            hammer_breaks_bridges: parse_tri(&cli.hammer_breaks_bridges, "hammer-breaks-bridges"),
             early_sun: cli.early_sun,
             japanese_damage: cli.japanese_damage,
             infinite_mushroom_houses: cli.infinite_mushroom_houses,
@@ -393,7 +419,7 @@ fn main() {
             shuffle_spade_games: !cli.no_shuffle_spade_games,
             shuffle_toad_houses: !cli.no_shuffle_toad_houses,
             hands_levels: !cli.no_hands_levels,
-            troll_pipes: !cli.no_troll_pipes,
+            troll_pipes: parse_tri(&cli.troll_pipes, "troll-pipes"),
             include_beta_stages: cli.include_beta_stages,
             swap_start_airship: cli.swap_start_airship,
             anchor_visuals: cli.anchor_visuals,
@@ -443,7 +469,7 @@ fn main() {
     eprintln!("  Chest items: {}", if options.chest_items { "on" } else { "off" });
     eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });
     eprintln!("  Remove rocks: {}", if options.remove_rocks { "on" } else { "off" });
-    eprintln!("  W1 hammer rock: {}", if options.w1_hammer_rock { "on" } else { "off" });
+    eprintln!("  W1 hammer rock: {}", tri_str(options.w1_hammer_rock));
     eprintln!("  Airship lock: {}", if options.airship_lock { "on" } else { "off" });
     if !options.starting_items.is_empty() {
         let item_names: Vec<&str> = options.starting_items.iter().map(|&id| match id {

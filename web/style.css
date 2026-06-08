@@ -222,7 +222,6 @@ legend {
     background: transparent;
 }
 
-.checkbox-label,
 .radio-label {
     display: flex;
     align-items: center;
@@ -233,13 +232,11 @@ legend {
     cursor: pointer;
 }
 
-.checkbox-label:last-child,
 .radio-label:last-child,
 .select-label:last-child {
     margin-bottom: 0;
 }
 
-input[type="checkbox"],
 input[type="radio"] {
     accent-color: #e44434;
 }
@@ -306,8 +303,41 @@ input[type="radio"] {
 }
 
 .pill-group input[type="radio"]:checked + label {
-    background: var(--pill-active, #e44434);
+    background: var(--pill-active, #4a8a4f);
     color: var(--pill-active-text, #fff);
+}
+
+/* "Off" selected: muted gray so an explicit off doesn't read as a hot accent. */
+.pill-group input[type="radio"][value="off"]:checked + label {
+    background: #3a3a60;
+    color: #b8b8d0;
+}
+
+/* "Maybe" and "Wild" share a cool violet to mark "the seed picks something
+   spicier than a plain shuffle". Visually distinct from the green on/shuffle accent. */
+.pill-group input[type="radio"][value="maybe"]:checked + label,
+.pill-group input[type="radio"][value="wild"]:checked + label {
+    background: #6f5fb8;
+    color: #fff;
+}
+
+/* Row tint for active options. .opt-on is the green "this flag is doing something"
+   state (bool true, or tri non-off). .opt-maybe is the violet "the seed will decide"
+   state. Both are subtle so a screen full of on flags doesn't feel loud. */
+.select-label.opt-on {
+    background: rgba(92, 184, 92, 0.07);
+}
+
+.select-label.opt-maybe {
+    background: rgba(124, 100, 220, 0.14);
+}
+
+.select-label.opt-on,
+.select-label.opt-maybe {
+    border-radius: 4px;
+    padding: 0.25rem 0.45rem;
+    margin: -0.05rem -0.45rem 0.35rem -0.45rem;
+    transition: background-color 0.15s;
 }
 
 /* When "+ Viruses" is the chosen visual patch, also light the Dr. Mario pill

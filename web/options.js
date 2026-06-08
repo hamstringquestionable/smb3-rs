@@ -46,6 +46,16 @@ const TRI = [
 	{ value: "wild", label: "Wild" },
 ];
 
+// Off / On / Maybe pill for player-hidden flags. "Maybe" lets the seed
+// decide on/off at generation time — deterministic, but unreadable from the
+// flag key so the player can't plan around it. Values match the Rust `Tri`
+// enum's serde representation.
+const ON_OFF_MAYBE = [
+	{ value: "off", label: "Off" },
+	{ value: "on", label: "On" },
+	{ value: "maybe", label: "Maybe" },
+];
+
 // Categories rendered as <fieldset> sections, in order.
 export const GROUPS = [
 	{ id: "map", label: "Map" },
@@ -113,10 +123,6 @@ export const SCHEMA = [
 		label: "Hand-Trap Levels", flavor: "It's a trap!",
 		tip: "Add visible hand-trap tiles. Walking onto one grabs you and pulls you into a level.",
 		group: "map", inFlagKey: true },
-	{ id: "troll_pipes", type: "bool", default: true,
-		label: "Troll Pipes", flavor: "Looks like a pipe…",
-		tip: "Disguise one level per world (W2-W8) as a pipe. You can walk past freely, but pressing A loads the hidden level.",
-		group: "map", inFlagKey: true },
 	{ id: "swap_start_airship", type: "bool", default: false,
 		label: "Swap Start / Airship", flavor: "Beat the map backwards.",
 		tip: "Each of Worlds 1-7 has a 50% chance to be played in reverse — Mario spawns where the airship usually lands.",
@@ -133,13 +139,17 @@ export const SCHEMA = [
 		label: "Remove Rocks",
 		tip: "Remove rocks blocking paths in W2 (secret path), W3 (boat dock), and W4 (pipe shortcut)",
 		group: "map", inFlagKey: true },
-	{ id: "w1_hammer_rock", type: "bool", default: false,
-		label: "W1 Hammer Rock",
-		tip: "Place a hammer-breakable rock next to the W1 toad house to provide a shortcut",
-		group: "map", inFlagKey: true },
 	{ id: "remove_n_cards", type: "bool", default: true,
 		label: "Remove N-Cards",
 		tip: "Remove the N-card (N-Spade) bonus games from the overworld map",
+		group: "map", inFlagKey: true },
+	{ id: "troll_pipes", type: "tri", options: ON_OFF_MAYBE, default: "on",
+		label: "Troll Pipes", flavor: "Looks like a pipe…",
+		tip: "Disguise one level per world (W2-W8) as a pipe. You can walk past freely, but pressing A loads the hidden level. Maybe: the seed secretly decides on or off, so you won't know until you play.",
+		group: "map", inFlagKey: true },
+	{ id: "w1_hammer_rock", type: "tri", options: ON_OFF_MAYBE, default: "off",
+		label: "W1 Hammer Rock",
+		tip: "Place a hammer-breakable rock next to the W1 toad house to provide a shortcut. Maybe: the seed secretly decides on or off, so you won't know until you play.",
 		group: "map", inFlagKey: true },
 	{ id: "world_order", type: "bool", default: false,
 		label: "World Order",
@@ -271,14 +281,14 @@ export const SCHEMA = [
 		tip: "Remove warp whistles so all worlds must be played",
 		icon: { x: 561, y: 364, w: 16, h: 16 },
 		group: "items", inFlagKey: true },
-	{ id: "hammer_breaks_locks", type: "bool", default: false,
+	{ id: "hammer_breaks_locks", type: "tri", options: ON_OFF_MAYBE, default: "off",
 		label: "Hammer Breaks Locks",
-		tip: "Hammer item also breaks fortress locks on the overworld map",
+		tip: "Hammer item also breaks fortress locks on the overworld map. Maybe: the seed secretly decides on or off, so you won't know until you play.",
 		icon: { x: 615, y: 364, w: 16, h: 16 },
 		group: "items", inFlagKey: true },
-	{ id: "hammer_breaks_bridges", type: "bool", default: false,
+	{ id: "hammer_breaks_bridges", type: "tri", options: ON_OFF_MAYBE, default: "off",
 		label: "Hammer Breaks Bridges",
-		tip: "Hammer item builds bridges across water gaps on the overworld map",
+		tip: "Hammer item builds bridges across water gaps on the overworld map. Maybe: the seed secretly decides on or off, so you won't know until you play.",
 		icon: { x: 615, y: 364, w: 16, h: 16 },
 		group: "items", inFlagKey: true },
 
@@ -354,7 +364,7 @@ export const PRESETS = [
 			include_beta_stages: true, swap_start_airship: true,
 			big_q_blocks: true, starting_items: [15],
 			fast_mushroom_house: true, faster_frog: true, faster_tail_speed: true,
-			hammer_breaks_locks: true,
+			hammer_breaks_locks: "on",
 			world_order: true, random_koopalings: true,
 			hammer_vulnerable_koopalings: true,
 		} },
@@ -364,9 +374,9 @@ export const PRESETS = [
 			starting_lives: 20, starting_items: [1, 2, 3],
 			infinite_mushroom_houses: true, fast_mushroom_house: true,
 			no_game_over_penalty: true, faster_tail_speed: true,
-			hands_levels: false, troll_pipes: false,
-			shuffle_spade_games: false, w1_hammer_rock: true,
-			hammer_breaks_locks: true, big_q_blocks: true,
+			hands_levels: false, troll_pipes: "off",
+			shuffle_spade_games: false, w1_hammer_rock: "on",
+			hammer_breaks_locks: "on", big_q_blocks: true,
 			ghosts: "off", hb_encounters: "shuffle",
 			world_order: true, random_koopalings: true,
 			hammer_vulnerable_koopalings: true,
@@ -380,8 +390,8 @@ export const PRESETS = [
 			hb_encounters: "wild", rotodiscs: "shuffle",
 			infinite_mushroom_houses: true, fast_mushroom_house: true,
 			no_game_over_penalty: true, faster_tail_speed: true, faster_frog: true,
-			hands_levels: false, troll_pipes: false, w1_hammer_rock: true,
-			hammer_breaks_locks: true, big_q_blocks: true,
+			hands_levels: false, troll_pipes: "off", w1_hammer_rock: "on",
+			hammer_breaks_locks: "on", big_q_blocks: true,
 			random_koopalings: true, hammer_vulnerable_koopalings: true,
 		} },
 	{ id: "vanilla", label: "Vanilla Randomizer",
@@ -392,7 +402,7 @@ export const PRESETS = [
 			wild_injections: true, early_sun: true,
 			include_beta_stages: true,
 			shuffle_spade_games: false, shuffle_toad_houses: false,
-			hands_levels: false, troll_pipes: false,
+			hands_levels: false, troll_pipes: "off",
 			big_q_blocks: true, starting_items: [15, 15, 15],
 			faster_tail_speed: true, faster_frog: true,
 			world_order: true, random_koopalings: true,
@@ -409,7 +419,7 @@ export const PRESETS = [
 			big_q_blocks: true, starting_items: [15, 15, 15],
 			faster_tail_speed: true, faster_frog: true,
 			world_order: true, random_koopalings: true,
-			hammer_breaks_locks: true, hammer_vulnerable_koopalings: true,
+			hammer_breaks_locks: "on", hammer_vulnerable_koopalings: true,
 		} },
 	{ id: "challenging", label: "Challenging",
 		tip: "Wild enemies and beta stages with no quality-of-life crutches.",
@@ -436,6 +446,7 @@ export function applyPreset(overrides) {
 		writeValue(entry, v);
 	}
 	applyEnabledWhen();
+	applyRowStates();
 	saveSettings();
 }
 
@@ -538,17 +549,35 @@ function iconCanvas(entry) {
 
 // --- Renderers per type ---
 
+// Bool entries render as a two-state Off/On pill group (same shape as `renderTri`)
+// so checkboxes and pills share the same visual rhythm. The underlying state is
+// still a real bool — `readValue` collapses the radio "on"/"off" back to true/false.
+const BOOL_OPTIONS = [
+	{ value: "off", label: "Off" },
+	{ value: "on", label: "On" },
+];
+
 function renderBool(entry) {
-	const wrap = el("label", { class: "checkbox-label" + (entry.indent ? " sub-options" : "") });
-	wrap.appendChild(el("input", { type: "checkbox", id: domId(entry.id), checked: entry.default }));
+	const wrap = el("label", { class: "select-label bool-row" + (entry.indent ? " sub-options" : "") });
 	const icon = iconCanvas(entry);
 	if (icon) wrap.appendChild(icon);
-	wrap.appendChild(document.createTextNode(" " + entry.label));
+	wrap.appendChild(document.createTextNode(entry.label));
 	if (entry.flavor) {
 		wrap.appendChild(el("span", { class: "option-flavor" }, entry.flavor));
 	}
 	const btn = tipBtn(entry);
 	if (btn) wrap.appendChild(btn);
+	const group = el("div", { class: "pill-group" });
+	for (const opt of BOOL_OPTIONS) {
+		const inputId = `${domId(entry.id)}-${opt.value}`;
+		const isChecked = (opt.value === "on") === !!entry.default;
+		group.appendChild(el("input", {
+			type: "radio", name: radioName(entry.id), id: inputId,
+			value: opt.value, checked: isChecked,
+		}));
+		group.appendChild(el("label", { for: inputId }, opt.label));
+	}
+	wrap.appendChild(group);
 	return wrap;
 }
 
@@ -682,7 +711,8 @@ export function renderOptions(rootEl, hosts = {}) {
 export function readValue(entry) {
 	switch (entry.type) {
 		case "bool": {
-			return document.getElementById(domId(entry.id))?.checked ?? entry.default;
+			const checked = document.querySelector(`input[name="${radioName(entry.id)}"]:checked`);
+			return checked ? checked.value === "on" : entry.default;
 		}
 		case "tri":
 		case "radio": {
@@ -709,8 +739,9 @@ export function writeValue(entry, value) {
 	if (value === undefined) return;
 	switch (entry.type) {
 		case "bool": {
-			const e = document.getElementById(domId(entry.id));
-			if (e) e.checked = !!value;
+			const target = !!value ? "on" : "off";
+			const e = document.querySelector(`input[name="${radioName(entry.id)}"][value="${target}"]`);
+			if (e) e.checked = true;
 			break;
 		}
 		case "tri":
@@ -825,9 +856,10 @@ function applyEntryEnabled(entry, enabled) {
 
 function entryDomIds(entry) {
 	switch (entry.type) {
-		case "bool":
 		case "select":
 			return [domId(entry.id)];
+		case "bool":
+			return BOOL_OPTIONS.map(o => `${domId(entry.id)}-${o.value}`);
 		case "tri":
 		case "radio":
 			return entry.options.map(o => `${domId(entry.id)}-${o.value}`);
@@ -835,6 +867,33 @@ function entryDomIds(entry) {
 			return Array.from({ length: entry.slots }, (_, i) => `${domId(entry.id)}-${i}`);
 		default:
 			return [];
+	}
+}
+
+// Tag each bool / tri row with an `opt-on` (warm) or `opt-maybe` (cool) class
+// so CSS can give the row a tinted background. For tris, "off" is neutral and
+// every other state is `opt-on` except for "maybe" which gets its own variant.
+export function applyRowStates() {
+	for (const entry of SCHEMA) {
+		if (entry.type !== "bool" && entry.type !== "tri") continue;
+		const ids = entryDomIds(entry);
+		const first = document.getElementById(ids[0]);
+		if (!first) continue;
+		const wrap = first.closest("label");
+		if (!wrap) continue;
+		const value = readValue(entry);
+		let on = false, maybe = false;
+		if (entry.type === "bool") {
+			on = value === true;
+		} else if (value === "maybe" || value === "wild") {
+			// "wild" and "maybe" share the cool violet — both mean "the seed picks
+			// something spicier than the plain shuffle / on baseline".
+			maybe = true;
+		} else if (value !== "off") {
+			on = true;
+		}
+		wrap.classList.toggle("opt-on", on);
+		wrap.classList.toggle("opt-maybe", maybe);
 	}
 }
 
@@ -846,6 +905,7 @@ export function wireListeners(onChange) {
 			if (!node) continue;
 			node.addEventListener("change", () => {
 				applyEnabledWhen();
+				applyRowStates();
 				onChange(entry);
 			});
 		}
@@ -865,7 +925,9 @@ export function saveSettings() {
 		const settings = {};
 		for (const entry of SCHEMA) {
 			const v = readValue(entry);
-			if (entry.type === "tri" || entry.type === "radio") {
+			if (entry.type === "bool") {
+				settings[`radio:${radioName(entry.id)}`] = v ? "on" : "off";
+			} else if (entry.type === "tri" || entry.type === "radio") {
 				settings[`radio:${radioName(entry.id)}`] = v;
 			} else if (entry.type === "items") {
 				for (let i = 0; i < entry.slots; i++) {
@@ -873,7 +935,7 @@ export function saveSettings() {
 					if (node) settings[node.id] = node.value;
 				}
 			} else {
-				settings[domId(entry.id)] = entry.type === "bool" ? !!v : String(v);
+				settings[domId(entry.id)] = String(v);
 			}
 		}
 		// Static radios that live outside the schema (rendered/managed by app.js).
@@ -897,9 +959,15 @@ export function restoreSettings() {
 				if (elNode) elNode.checked = true;
 			} else {
 				const elNode = document.getElementById(key);
-				if (!elNode) continue;
-				if (elNode.type === "checkbox") elNode.checked = val === true || val === "true";
-				else elNode.value = val;
+				if (elNode) {
+					if (elNode.type === "checkbox") elNode.checked = val === true || val === "true";
+					else elNode.value = val;
+					continue;
+				}
+				// Legacy: pre-pill bool settings stored under `domId(entry.id)` → true/false.
+				// Route them through writeValue so the new radio UI picks them up.
+				const legacy = SCHEMA.find(e => e.type === "bool" && domId(e.id) === key);
+				if (legacy) writeValue(legacy, val === true || val === "true");
 			}
 		}
 	} catch (_) {}
