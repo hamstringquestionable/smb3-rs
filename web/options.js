@@ -446,6 +446,7 @@ export function applyPreset(overrides) {
 		writeValue(entry, v);
 	}
 	applyEnabledWhen();
+	applyRowStates();
 	saveSettings();
 }
 
@@ -548,17 +549,35 @@ function iconCanvas(entry) {
 
 // --- Renderers per type ---
 
+// Bool entries render as a two-state Off/On pill group (same shape as `renderTri`)
+// so checkboxes and pills share the same visual rhythm. The underlying state is
+// still a real bool — `readValue` collapses the radio "on"/"off" back to true/false.
+const BOOL_OPTIONS = [
+	{ value: "off", label: "Off" },
+	{ value: "on", label: "On" },
+];
+
 function renderBool(entry) {
-	const wrap = el("label", { class: "checkbox-label" + (entry.indent ? " sub-options" : "") });
-	wrap.appendChild(el("input", { type: "checkbox", id: domId(entry.id), checked: entry.default }));
+	const wrap = el("label", { class: "select-label bool-row" + (entry.indent ? " sub-options" : "") });
 	const icon = iconCanvas(entry);
 	if (icon) wrap.appendChild(icon);
-	wrap.appendChild(document.createTextNode(" " + entry.label));
+	wrap.appendChild(document.createTextNode(entry.label));
 	if (entry.flavor) {
 		wrap.appendChild(el("span", { class: "option-flavor" }, entry.flavor));
 	}
 	const btn = tipBtn(entry);
 	if (btn) wrap.appendChild(btn);
+	const group = el("div", { class: "pill-group" });
+	for (const opt of BOOL_OPTIONS) {
+		const inputId = `${domId(entry.id)}-${opt.value}`;
+		const isChecked = (opt.value === "on") === !!entry.default;
+		group.appendChild(el("input", {
+			type: "radio", name: radioName(entry.id), id: inputId,
+			value: opt.value, checked: isChecked,
+		}));
+		group.appendChild(el("label", { for: inputId }, opt.label));
+	}
+	wrap.appendChild(group);
 	return wrap;
 }
 
@@ -692,7 +711,8 @@ export function renderOptions(rootEl, hosts = {}) {
 export function readValue(entry) {
 	switch (entry.type) {
 		case "bool": {
-			return document.getElementById(domId(entry.id))?.checked ?? entry.default;
+			const checked = document.querySelector(`input[name="${radioName(entry.id)}"]:checked`);
+			return checked ? checked.value === "on" : entry.default;
 		}
 		case "tri":
 		case "radio": {
@@ -719,8 +739,9 @@ export function writeValue(entry, value) {
 	if (value === undefined) return;
 	switch (entry.type) {
 		case "bool": {
-			const e = document.getElementById(domId(entry.id));
-			if (e) e.checked = !!value;
+			const target = !!value ? "on" : "off";
+			const e = document.querySelector(`input[name="${radioName(entry.id)}"][value="${target}"]`);
+			if (e) e.checked = true;
 			break;
 		}
 		case "tri":
@@ -835,9 +856,10 @@ function applyEntryEnabled(entry, enabled) {
 
 function entryDomIds(entry) {
 	switch (entry.type) {
-		case "bool":
 		case "select":
 			return [domId(entry.id)];
+		case "bool":
+			return BOOL_OPTIONS.map(o => `${domId(entry.id)}-${o.value}`);
 		case "tri":
 		case "radio":
 			return entry.options.map(o => `${domId(entry.id)}-${o.value}`);
@@ -845,6 +867,33 @@ function entryDomIds(entry) {
 			return Array.from({ length: entry.slots }, (_, i) => `${domId(entry.id)}-${i}`);
 		default:
 			return [];
+	}
+}
+
+// Tag each bool / tri row with an `opt-on` (warm) or `opt-maybe` (cool) class
+// so CSS can give the row a tinted background. For tris, "off" is neutral and
+// every other state is `opt-on` except for "maybe" which gets its own variant.
+export function applyRowStates() {
+	for (const entry of SCHEMA) {
+		if (entry.type !== "bool" && entry.type !== "tri") continue;
+		const ids = entryDomIds(entry);
+		const first = document.getElementById(ids[0]);
+		if (!first) continue;
+		const wrap = first.closest("label");
+		if (!wrap) continue;
+		const value = readValue(entry);
+		let on = false, maybe = false;
+		if (entry.type === "bool") {
+			on = value === true;
+		} else if (value === "maybe" || value === "wild") {
+			// "wild" and "maybe" share the cool violet — both mean "the seed picks
+			// something spicier than the plain shuffle / on baseline".
+			maybe = true;
+		} else if (value !== "off") {
+			on = true;
+		}
+		wrap.classList.toggle("opt-on", on);
+		wrap.classList.toggle("opt-maybe", maybe);
 	}
 }
 
@@ -856,6 +905,7 @@ export function wireListeners(onChange) {
 			if (!node) continue;
 			node.addEventListener("change", () => {
 				applyEnabledWhen();
+				applyRowStates();
 				onChange(entry);
 			});
 		}
@@ -875,7 +925,9 @@ export function saveSettings() {
 		const settings = {};
 		for (const entry of SCHEMA) {
 			const v = readValue(entry);
-			if (entry.type === "tri" || entry.type === "radio") {
+			if (entry.type === "bool") {
+				settings[`radio:${radioName(entry.id)}`] = v ? "on" : "off";
+			} else if (entry.type === "tri" || entry.type === "radio") {
 				settings[`radio:${radioName(entry.id)}`] = v;
 			} else if (entry.type === "items") {
 				for (let i = 0; i < entry.slots; i++) {
@@ -883,7 +935,7 @@ export function saveSettings() {
 					if (node) settings[node.id] = node.value;
 				}
 			} else {
-				settings[domId(entry.id)] = entry.type === "bool" ? !!v : String(v);
+				settings[domId(entry.id)] = String(v);
 			}
 		}
 		// Static radios that live outside the schema (rendered/managed by app.js).
@@ -907,9 +959,15 @@ export function restoreSettings() {
 				if (elNode) elNode.checked = true;
 			} else {
 				const elNode = document.getElementById(key);
-				if (!elNode) continue;
-				if (elNode.type === "checkbox") elNode.checked = val === true || val === "true";
-				else elNode.value = val;
+				if (elNode) {
+					if (elNode.type === "checkbox") elNode.checked = val === true || val === "true";
+					else elNode.value = val;
+					continue;
+				}
+				// Legacy: pre-pill bool settings stored under `domId(entry.id)` → true/false.
+				// Route them through writeValue so the new radio UI picks them up.
+				const legacy = SCHEMA.find(e => e.type === "bool" && domId(e.id) === key);
+				if (legacy) writeValue(legacy, val === true || val === "true");
 			}
 		}
 	} catch (_) {}

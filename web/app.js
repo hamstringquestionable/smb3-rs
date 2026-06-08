@@ -11,6 +11,7 @@ import {
 	renderOptions,
 	wireListeners,
 	applyEnabledWhen,
+	applyRowStates,
 	getOptionsJson,
 	getChangedFields,
 	formatValue,
@@ -162,6 +163,7 @@ renderVisualPatchPills();
 renderPresetPills();
 restoreSettings();
 applyEnabledWhen();
+applyRowStates();
 updateSkipValidationWarning();
 updateChangesSummary();
 wireListeners(() => {
@@ -214,7 +216,7 @@ init()
 let romValid = false;
 
 function getSkipValidation() {
-	return !!document.getElementById("opt-skip-rom-validation")?.checked;
+	return !!document.getElementById("opt-skip-rom-validation-on")?.checked;
 }
 
 function validateLoadedRom() {
@@ -478,6 +480,7 @@ function applyFlagKey(key) {
 		const json = decode_flag_key(key.trim());
 		applyOptions(JSON.parse(json));
 		applyEnabledWhen();
+		applyRowStates();
 		saveSettings();
 		updateFlagKey();
 		showStatus("Flag key applied!", "success");
@@ -531,7 +534,7 @@ function showStatus(message, type) {
 }
 
 function updateSkipValidationWarning() {
-	const skip = document.getElementById("opt-skip-rom-validation");
+	const skip = document.getElementById("opt-skip-rom-validation-on");
 	if (skipValidationWarning && skip) {
 		skipValidationWarning.hidden = !skip.checked;
 	}
