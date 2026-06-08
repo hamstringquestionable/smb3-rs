@@ -52,6 +52,39 @@ pub enum EnemyMode {
 fn default_shuffle() -> EnemyMode { EnemyMode::Shuffle }
 fn default_off() -> EnemyMode { EnemyMode::Off }
 
+/// Tri-state toggle for player-hidden flags: forced `Off`, forced `On`, or
+/// left to the seed (`Maybe`). A `Maybe` flag is resolved to a concrete
+/// on/off at generation time from a dedicated RNG substream (see
+/// [`Tri::resolve`]), so the same seed + same flags always produce the same
+/// ROM — the player just can't tell from the flag key which way a `Maybe`
+/// landed, so it can't be planned around.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tri {
+    #[default]
+    Off,
+    On,
+    Maybe,
+}
+
+impl Tri {
+    /// Collapse to a concrete bool. `Off`/`On` pass through; `Maybe` flips a
+    /// coin on the provided RNG.
+    fn resolve<R: rand::Rng>(self, rng: &mut R) -> bool {
+        match self {
+            Tri::Off => false,
+            Tri::On => true,
+            Tri::Maybe => rng.random_bool(0.5),
+        }
+    }
+    /// True only for the explicit `On` state — drives the value bit in the flag key.
+    fn is_on(self) -> bool { matches!(self, Tri::On) }
+    /// True only for the `Maybe` state — drives the maybe bit in the flag key.
+    fn is_maybe(self) -> bool { matches!(self, Tri::Maybe) }
+}
+
+fn default_tri_on() -> Tri { Tri::On }
+
 /// Options controlling which randomizations to apply.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Options {
@@ -100,8 +133,10 @@ pub struct Options {
     /// toad house 20) into a hammer-breakable rock that becomes a
     /// horizontal path when broken/cleared. Off keeps the vanilla
     /// non-removable rock.
+    ///
+    /// Tri-state: `Maybe` lets the seed decide (hidden from the flag key).
     #[serde(default)]
-    pub w1_hammer_rock: bool,
+    pub w1_hammer_rock: Tri,
     /// Clear cards instantly (no cutscene, no lives) when collecting one of each type.
     #[serde(default = "default_true")]
     pub card_speed_clear: bool,
@@ -124,11 +159,15 @@ pub struct Options {
     #[serde(default)]
     pub random_koopalings: bool,
     /// Hammer item also breaks fortress lock tiles on the overworld map.
+    ///
+    /// Tri-state: `Maybe` lets the seed decide (hidden from the flag key).
     #[serde(default)]
-    pub hammer_breaks_locks: bool,
+    pub hammer_breaks_locks: Tri,
     /// Hammer item also breaks water gap (bridge) tiles on the overworld map.
+    ///
+    /// Tri-state: `Maybe` lets the seed decide (hidden from the flag key).
     #[serde(default)]
-    pub hammer_breaks_bridges: bool,
+    pub hammer_breaks_bridges: Tri,
     /// Angry Sun begins swooping immediately on spawn instead of waiting
     /// for the vanilla pre-attack delay. (MaCobra52's "Early Sun" patch.)
     #[serde(default)]
@@ -191,8 +230,10 @@ pub struct Options {
     /// it loads the underlying level (no pipe-transit, no destination
     /// table — uniform world-map dispatch enters the slot's pointer entry
     /// like any level number tile).
-    #[serde(default = "default_true")]
-    pub troll_pipes: bool,
+    ///
+    /// Tri-state: `Maybe` lets the seed decide (hidden from the flag key).
+    #[serde(default = "default_tri_on")]
+    pub troll_pipes: Tri,
     /// Include ~9 unreferenced beta levels in the overworld shuffle pool.
     #[serde(default)]
     pub include_beta_stages: bool,
@@ -265,8 +306,14 @@ fn default_true() -> bool {
     true
 }
 
-const FLAG_KEY_VERSION: u8 = 17;
+const FLAG_KEY_VERSION: u8 = 18;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
+
+/// Salt mixed into the seed to derive the substream that resolves `Maybe`
+/// flags. Keeping it on a separate stream means turning a flag to `Maybe`
+/// never perturbs the main randomization RNG, so a seed with no `Maybe`
+/// flags produces byte-identical output to before this feature existed.
+const MAYBE_SALT: u64 = 0x4D41_5942_455F_5631; // "MAYBE_V1"
 
 /// Crockford Base-32 alphabet (excludes I, L, O, U to avoid ambiguity).
 const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -354,12 +401,13 @@ pub fn resolve_starting_item(item: u8, rng: &mut ChaCha8Rng) -> u8 {
 
 impl Options {
     /// Encode options into raw bytes.
-    pub fn to_flag_bytes(&self) -> [u8; 11] {
+    pub fn to_flag_bytes(&self) -> [u8; 12] {
         let b0 = FLAG_KEY_VERSION;
 
-        // b1: non-enemy flags
+        // b1: non-enemy flags. hammer_breaks_locks is tri-state: its value bit
+        // stores On vs (Off/Maybe); the Maybe bit lives in b11.
         let b1 = (self.powerups as u8) << 7
-            | (self.hammer_breaks_locks as u8) << 6
+            | (self.hammer_breaks_locks.is_on() as u8) << 6
             | (self.koopaling_hits as u8) << 5
             | (self.world_order as u8) << 4
             | (self.big_q_blocks as u8) << 3
@@ -374,7 +422,7 @@ impl Options {
             | (self.shuffle_pipes as u8) << 5
             | (self.faster_frog as u8) << 4
             | (self.remove_rocks as u8) << 3
-            | (self.troll_pipes as u8) << 2
+            | (self.troll_pipes.is_on() as u8) << 2
             | (self.shuffle_toad_houses as u8) << 1
             | (self.shuffle_airships as u8);
 
@@ -383,13 +431,13 @@ impl Options {
         //     w1_hammer_rock(0)
         // starting_lives shrank from a 7-bit clamped 1–99 to a 2-bit index
         // into {1, 5, 20, 99}, freeing bits 4-0 for future toggles.
-        let b3 = ((self.hammer_breaks_bridges as u8) << 7)
+        let b3 = ((self.hammer_breaks_bridges.is_on() as u8) << 7)
             | (lives_to_idx(self.starting_lives) << 5)
             | ((self.fast_mushroom_house as u8) << 4)
             | ((self.faster_tail_speed as u8) << 3)
             | ((self.no_game_over_penalty as u8) << 2)
             | ((self.swap_start_airship as u8) << 1)
-            | (self.w1_hammer_rock as u8);
+            | (self.w1_hammer_rock.is_on() as u8);
 
         let b4 = (self.card_speed_clear as u8) << 7
             | (self.remove_n_cards as u8) << 6
@@ -470,7 +518,15 @@ impl Options {
             | (item_mode(i1) << 2)
             | item_mode(i2);
 
-        [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10]
+        // b11: "maybe" bits for the four player-hidden tri-state flags. When a
+        // bit is set the flag is resolved from the seed at generation time, and
+        // its value bit (in b1/b2/b3) is ignored on decode.
+        let b11 = (self.hammer_breaks_locks.is_maybe() as u8)
+            | (self.hammer_breaks_bridges.is_maybe() as u8) << 1
+            | (self.troll_pipes.is_maybe() as u8) << 2
+            | (self.w1_hammer_rock.is_maybe() as u8) << 3;
+
+        [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11]
     }
 
     /// Encode options into a compact Crockford Base-32 flag key (e.g. "SMB3R-1S0G...").
@@ -488,7 +544,7 @@ impl Options {
             .or_else(|| key.strip_prefix("smb3r-"))
             .unwrap_or(key);
 
-        let bytes = base32_decode(encoded, 11)?;
+        let bytes = base32_decode(encoded, 12)?;
 
         let version = bytes[0];
         if version != FLAG_KEY_VERSION {
@@ -505,6 +561,7 @@ impl Options {
         let b8 = bytes[8];
         let b9 = bytes[9];
         let b10 = bytes[10];
+        let b11 = bytes[11];
 
         let starting_lives = idx_to_lives((b3 >> 5) & 0x3);
 
@@ -516,11 +573,17 @@ impl Options {
             }
         }
 
+        // Decode a tri-state flag from its value bit (in b1/b2/b3) and its
+        // maybe bit (in b11). Maybe wins; otherwise the value bit picks On/Off.
+        fn dtri(value: bool, maybe: bool) -> Tri {
+            if maybe { Tri::Maybe } else if value { Tri::On } else { Tri::Off }
+        }
+
         Ok(Options {
             powerups: (b1 >> 7) & 1 != 0,
             palettes: true,
             palette_themed: false, // cosmetic — not encoded in flag key
-            hammer_breaks_locks: (b1 >> 6) & 1 != 0,
+            hammer_breaks_locks: dtri((b1 >> 6) & 1 != 0, b11 & 1 != 0),
             koopaling_hits: (b1 >> 5) & 1 != 0,
             world_order: (b1 >> 4) & 1 != 0,
             big_q_blocks: (b1 >> 3) & 1 != 0,
@@ -534,7 +597,7 @@ impl Options {
             shuffle_airships: b2 & 1 != 0,
             shuffle_toad_houses: (b2 >> 1) & 1 != 0,
             remove_rocks: (b2 >> 3) & 1 != 0,
-            troll_pipes: (b2 >> 2) & 1 != 0,
+            troll_pipes: dtri((b2 >> 2) & 1 != 0, (b11 >> 2) & 1 != 0),
             starting_lives,
             card_speed_clear: (b4 >> 7) & 1 != 0,
             remove_n_cards: (b4 >> 6) & 1 != 0,
@@ -549,10 +612,10 @@ impl Options {
             faster_tail_speed: (b3 >> 3) & 1 != 0,
             no_game_over_penalty: (b3 >> 2) & 1 != 0,
             swap_start_airship: (b3 >> 1) & 1 != 0,
-            w1_hammer_rock: b3 & 1 != 0,
+            w1_hammer_rock: dtri(b3 & 1 != 0, (b11 >> 3) & 1 != 0),
             random_koopalings: (b10 >> 7) & 1 != 0,
             include_beta_stages: (b10 >> 6) & 1 != 0,
-            hammer_breaks_bridges: (b3 >> 7) & 1 != 0,
+            hammer_breaks_bridges: dtri((b3 >> 7) & 1 != 0, (b11 >> 1) & 1 != 0),
             ground: dem(b5 >> 6),
             shell: dem(b5 >> 4),
             flying: dem(b5 >> 2),
@@ -621,7 +684,7 @@ impl Default for Options {
             chest_items: true,
             remove_whistles: true,
             remove_rocks: true,
-            w1_hammer_rock: false,
+            w1_hammer_rock: Tri::Off,
             card_speed_clear: true,
             remove_n_cards: true,
             skip_wand_cutscene: true,
@@ -630,8 +693,8 @@ impl Default for Options {
             hammer_vulnerable_koopalings: false,
             random_koopalings: false,
             include_beta_stages: false,
-            hammer_breaks_locks: false,
-            hammer_breaks_bridges: false,
+            hammer_breaks_locks: Tri::Off,
+            hammer_breaks_bridges: Tri::Off,
             early_sun: false,
             japanese_damage: false,
             infinite_mushroom_houses: false,
@@ -642,7 +705,7 @@ impl Default for Options {
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             hands_levels: true,
-            troll_pipes: true,
+            troll_pipes: Tri::On,
             swap_start_airship: false,
             anchor_visuals: false,
             ground: EnemyMode::Shuffle,
@@ -697,6 +760,18 @@ fn randomize_inner(
         .map(|&item| resolve_starting_item(item, &mut rng))
         .collect();
 
+    // Resolve the player-hidden tri-state flags up front. These draw from a
+    // dedicated substream (MAYBE_SALT) so flipping a flag to `Maybe` never
+    // perturbs the main `rng` sequence — a seed with no `Maybe` flags is
+    // byte-identical to before this feature. The order here is part of the
+    // determinism contract: do not reorder, and append any future tri flags
+    // at the end.
+    let mut maybe_rng = ChaCha8Rng::seed_from_u64(seed ^ MAYBE_SALT);
+    let hammer_breaks_locks = options.hammer_breaks_locks.resolve(&mut maybe_rng);
+    let hammer_breaks_bridges = options.hammer_breaks_bridges.resolve(&mut maybe_rng);
+    let troll_pipes = options.troll_pipes.resolve(&mut maybe_rng);
+    let w1_hammer_rock = options.w1_hammer_rock.resolve(&mut maybe_rng);
+
     // QoL map patches run first so all subsequent overworld operations
     // (fortress redistribution, pipe shuffle, lock shuffle) see the final
     // map connectivity and store correct replacement tiles.
@@ -706,7 +781,7 @@ fn randomize_inner(
         rom.set_tag("qol/rocks");
         randomize::qol::remove_rocks(rom);
     }
-    if options.w1_hammer_rock {
+    if w1_hammer_rock {
         rom.set_tag("qol/w1_hammer_rock");
         randomize::qol::make_w1_hammer_rock(rom);
     }
@@ -826,7 +901,7 @@ fn randomize_inner(
         randomize::hands_levels::mark_hand_traps(&mut build, &mut rng);
         randomize::hands_levels::install_full_grab(rom);
     }
-    if options.troll_pipes {
+    if troll_pipes {
         rom.set_tag("troll_pipes");
         randomize::troll_pipes::mark_troll_pipes(&mut build, &mut rng);
     }
@@ -923,9 +998,9 @@ fn randomize_inner(
     }
 
     // Hammer breaks tiles on the overworld map (locks, bridges, or both).
-    if options.hammer_breaks_locks || options.hammer_breaks_bridges {
+    if hammer_breaks_locks || hammer_breaks_bridges {
         rom.set_tag("qol/hammer_breaks_tiles");
-        randomize::qol::hammer_breaks_tiles(rom, options.hammer_breaks_locks, options.hammer_breaks_bridges);
+        randomize::qol::hammer_breaks_tiles(rom, hammer_breaks_locks, hammer_breaks_bridges);
     }
 
     // MaCobra52's "Early Sun" — Angry Sun begins attacking immediately.
@@ -1003,17 +1078,17 @@ fn randomize_inner(
         randomize::qol::apply_faster_frog(rom);
     }
 
-    // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 23 bytes:
+    // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 24 bytes:
     //   [0..4]   "S3R\xNN" magic + version
-    //   [4..15]  flag key bytes (11 bytes in v12)
-    //   [15..23] seed (little-endian u64)
+    //   [4..16]  flag key bytes (12 bytes in v18)
+    //   [16..24] seed (little-endian u64)
     rom.set_tag("stamp");
     let flag_bytes = options.to_flag_bytes();
-    let mut stamp = [0u8; 23];
+    let mut stamp = [0u8; 24];
     stamp[0..3].copy_from_slice(b"S3R");
     stamp[3] = FLAG_KEY_VERSION;
-    stamp[4..15].copy_from_slice(&flag_bytes);
-    stamp[15..23].copy_from_slice(&seed.to_le_bytes());
+    stamp[4..16].copy_from_slice(&flag_bytes);
+    stamp[16..24].copy_from_slice(&seed.to_le_bytes());
     rom.write_range(STAMP_OFFSET, &stamp);
 }
 
@@ -1173,7 +1248,7 @@ mod tests {
         let opts = Options::default();
         let key = opts.to_flag_key();
         assert!(key.starts_with("SMB3R-"));
-        assert_eq!(key.len(), 24); // "SMB3R-" + 18 base32
+        assert_eq!(key.len(), 26); // "SMB3R-" + 20 base32
         let decoded = Options::from_flag_key(&key).unwrap();
         assert_eq!(opts.powerups, decoded.powerups);
         assert_eq!(opts.palettes, decoded.palettes);
@@ -1226,7 +1301,7 @@ mod tests {
             chest_items: true,
             remove_whistles: true,
             remove_rocks: true,
-            w1_hammer_rock: true,
+            w1_hammer_rock: Tri::On,
             starting_lives: 99,
             card_speed_clear: true,
             remove_n_cards: true,
@@ -1236,8 +1311,8 @@ mod tests {
             hammer_vulnerable_koopalings: true,
             random_koopalings: true,
             include_beta_stages: true,
-            hammer_breaks_locks: true,
-            hammer_breaks_bridges: true,
+            hammer_breaks_locks: Tri::On,
+            hammer_breaks_bridges: Tri::On,
             early_sun: true,
             japanese_damage: true,
             infinite_mushroom_houses: true,
@@ -1248,7 +1323,7 @@ mod tests {
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             hands_levels: true,
-            troll_pipes: true,
+            troll_pipes: Tri::On,
             swap_start_airship: false,
             ground: EnemyMode::Wild,
             shell: EnemyMode::Wild,
@@ -1301,7 +1376,7 @@ mod tests {
             chest_items: false,
             remove_whistles: false,
             remove_rocks: false,
-            w1_hammer_rock: false,
+            w1_hammer_rock: Tri::Off,
             starting_lives: 1,
             card_speed_clear: false,
             remove_n_cards: false,
@@ -1311,8 +1386,8 @@ mod tests {
             hammer_vulnerable_koopalings: false,
             random_koopalings: false,
             include_beta_stages: false,
-            hammer_breaks_locks: false,
-            hammer_breaks_bridges: false,
+            hammer_breaks_locks: Tri::Off,
+            hammer_breaks_bridges: Tri::Off,
             early_sun: false,
             japanese_damage: false,
             infinite_mushroom_houses: false,
@@ -1323,7 +1398,7 @@ mod tests {
             shuffle_spade_games: false,
             shuffle_toad_houses: false,
             hands_levels: false,
-            troll_pipes: false,
+            troll_pipes: Tri::Off,
             swap_start_airship: false,
             ground: EnemyMode::Off,
             shell: EnemyMode::Off,
@@ -1345,8 +1420,8 @@ mod tests {
         let decoded = Options::from_flag_key(&key).unwrap();
         assert!(decoded.starting_items.is_empty());
         assert!(!decoded.powerups);
-        assert!(!decoded.hammer_breaks_locks);
-        assert!(!decoded.hammer_breaks_bridges);
+        assert_eq!(decoded.hammer_breaks_locks, Tri::Off);
+        assert_eq!(decoded.hammer_breaks_bridges, Tri::Off);
         assert!(decoded.palettes); // palettes always true from flag key (cosmetic, not encoded)
         assert!(!decoded.disable_autoscroll);
         assert!(!decoded.shuffle_airships);
@@ -1379,7 +1454,7 @@ mod tests {
     #[test]
     fn flag_key_invalid_version() {
         // Encode version 0xFF into base32 (first byte = 0xFF, rest zeros)
-        let mut bad_bytes = [0u8; 11];
+        let mut bad_bytes = [0u8; 12];
         bad_bytes[0] = 0xFF;
         let key = format!("SMB3R-{}", base32_encode(&bad_bytes));
         let result = Options::from_flag_key(&key);
@@ -1464,7 +1539,6 @@ mod tests {
             ("chest_items",                  Box::new(|o| o.chest_items = !o.chest_items)),
             ("remove_whistles",              Box::new(|o| o.remove_whistles = !o.remove_whistles)),
             ("remove_rocks",                 Box::new(|o| o.remove_rocks = !o.remove_rocks)),
-            ("w1_hammer_rock",               Box::new(|o| o.w1_hammer_rock = !o.w1_hammer_rock)),
             ("card_speed_clear",             Box::new(|o| o.card_speed_clear = !o.card_speed_clear)),
             ("remove_n_cards",               Box::new(|o| o.remove_n_cards = !o.remove_n_cards)),
             ("skip_wand_cutscene",           Box::new(|o| o.skip_wand_cutscene = !o.skip_wand_cutscene)),
@@ -1473,8 +1547,6 @@ mod tests {
             ("hammer_vulnerable_koopalings", Box::new(|o| o.hammer_vulnerable_koopalings = !o.hammer_vulnerable_koopalings)),
             ("random_koopalings",            Box::new(|o| o.random_koopalings = !o.random_koopalings)),
             ("include_beta_stages",          Box::new(|o| o.include_beta_stages = !o.include_beta_stages)),
-            ("hammer_breaks_locks",          Box::new(|o| o.hammer_breaks_locks = !o.hammer_breaks_locks)),
-            ("hammer_breaks_bridges",        Box::new(|o| o.hammer_breaks_bridges = !o.hammer_breaks_bridges)),
             ("shuffle_spade_games",           Box::new(|o| o.shuffle_spade_games = !o.shuffle_spade_games)),
             ("shuffle_toad_houses",          Box::new(|o| o.shuffle_toad_houses = !o.shuffle_toad_houses)),
             ("wild_injections",              Box::new(|o| o.wild_injections = !o.wild_injections)),
@@ -1512,6 +1584,40 @@ mod tests {
                     recovered, expected,
                     "{label}={mode:?}: round-trip mismatch",
                 );
+            }
+        }
+
+        // Player-hidden tri flags (Off/On/Maybe): every state must round-trip,
+        // and every non-default state must change the flag key.
+        type TriFlagSetter = Box<dyn Fn(&mut Options, Tri)>;
+        let tri_flags: Vec<(&str, TriFlagSetter)> = vec![
+            ("hammer_breaks_locks",   Box::new(|o, t| o.hammer_breaks_locks = t)),
+            ("hammer_breaks_bridges", Box::new(|o, t| o.hammer_breaks_bridges = t)),
+            ("troll_pipes",           Box::new(|o, t| o.troll_pipes = t)),
+            ("w1_hammer_rock",        Box::new(|o, t| o.w1_hammer_rock = t)),
+        ];
+        for (label, set) in tri_flags {
+            let default_opts = Options::default();
+            let default_key = default_opts.to_flag_key();
+            for &state in &[Tri::Off, Tri::On, Tri::Maybe] {
+                let mut mutated = default_opts.clone();
+                set(&mut mutated, state);
+                let mutated_key = mutated.to_flag_key();
+                let mut expected = mutated.clone();
+                expected.palettes = true;
+                expected.palette_themed = false;
+                let recovered = Options::from_flag_key(&mutated_key).unwrap();
+                assert_eq!(recovered, expected, "{label}={state:?}: round-trip mismatch");
+                // Default state shares its key with default; non-default must differ.
+                let is_default_state = recovered == {
+                    let mut d = default_opts.clone();
+                    d.palettes = true;
+                    d.palette_themed = false;
+                    d
+                };
+                if !is_default_state {
+                    assert_ne!(default_key, mutated_key, "{label}={state:?}: key must change");
+                }
             }
         }
 
@@ -1561,7 +1667,7 @@ mod tests {
         everything.chest_items = !everything.chest_items;
         everything.remove_whistles = !everything.remove_whistles;
         everything.remove_rocks = !everything.remove_rocks;
-        everything.w1_hammer_rock = !everything.w1_hammer_rock;
+        everything.w1_hammer_rock = Tri::Maybe;
         everything.card_speed_clear = !everything.card_speed_clear;
         everything.remove_n_cards = !everything.remove_n_cards;
         everything.skip_wand_cutscene = !everything.skip_wand_cutscene;
@@ -1570,8 +1676,9 @@ mod tests {
         everything.hammer_vulnerable_koopalings = true;
         everything.random_koopalings = true;
         everything.include_beta_stages = true;
-        everything.hammer_breaks_locks = true;
-        everything.hammer_breaks_bridges = true;
+        everything.hammer_breaks_locks = Tri::Maybe;
+        everything.hammer_breaks_bridges = Tri::On;
+        everything.troll_pipes = Tri::Maybe;
         everything.shuffle_spade_games = !everything.shuffle_spade_games;
         everything.shuffle_toad_houses = !everything.shuffle_toad_houses;
         everything.wild_injections = true;
@@ -1662,7 +1769,7 @@ mod tests {
             chest_items: false,
             remove_whistles: false,
             remove_rocks: false,
-            w1_hammer_rock: false,
+            w1_hammer_rock: Tri::Off,
             starting_lives: 1,
             card_speed_clear: false,
             remove_n_cards: false,
@@ -1672,8 +1779,8 @@ mod tests {
             hammer_vulnerable_koopalings: false,
             random_koopalings: false,
             include_beta_stages: false,
-            hammer_breaks_locks: false,
-            hammer_breaks_bridges: false,
+            hammer_breaks_locks: Tri::Off,
+            hammer_breaks_bridges: Tri::Off,
             early_sun: false,
             japanese_damage: false,
             infinite_mushroom_houses: false,
@@ -1684,7 +1791,7 @@ mod tests {
             shuffle_spade_games: false,
             shuffle_toad_houses: false,
             hands_levels: false,
-            troll_pipes: false,
+            troll_pipes: Tri::Off,
             swap_start_airship: false,
             ground: EnemyMode::Off,
             shell: EnemyMode::Off,
@@ -1721,7 +1828,7 @@ mod tests {
             chest_items: true,
             remove_whistles: true,
             remove_rocks: true,
-            w1_hammer_rock: true,
+            w1_hammer_rock: Tri::On,
             starting_lives: 99,
             card_speed_clear: true,
             remove_n_cards: true,
@@ -1731,8 +1838,8 @@ mod tests {
             hammer_vulnerable_koopalings: true,
             random_koopalings: true,
             include_beta_stages: false,
-            hammer_breaks_locks: true,
-            hammer_breaks_bridges: true,
+            hammer_breaks_locks: Tri::On,
+            hammer_breaks_bridges: Tri::On,
             early_sun: true,
             japanese_damage: true,
             infinite_mushroom_houses: true,
@@ -1743,7 +1850,7 @@ mod tests {
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             hands_levels: true,
-            troll_pipes: true,
+            troll_pipes: Tri::On,
             swap_start_airship: false,
             ground: EnemyMode::Wild,
             shell: EnemyMode::Wild,
@@ -1813,6 +1920,78 @@ mod tests {
                 "{name}: hash mismatch between runs (0x{hash1:016X} vs 0x{hash2:016X})"
             );
         }
+    }
+
+    #[test]
+    fn maybe_flags_are_deterministic_and_hidden() {
+        // A `Maybe` flag must (1) round-trip through the flag key as `Maybe`,
+        // (2) produce a flag key indistinguishable from the seed-resolved
+        // concrete states (the value bit is forced to 0, like Off), and
+        // (3) generate byte-identical ROMs across runs with the same seed.
+        let mut opts = test_options();
+        opts.troll_pipes = Tri::Maybe;
+        opts.hammer_breaks_locks = Tri::Maybe;
+
+        // (1) round-trip
+        let decoded = Options::from_flag_key(&opts.to_flag_key()).unwrap();
+        assert_eq!(decoded.troll_pipes, Tri::Maybe);
+        assert_eq!(decoded.hammer_breaks_locks, Tri::Maybe);
+
+        // (2) hidden: a Maybe key differs from both On and Off keys, so the
+        // player can't read the resolved state off it.
+        let on = Options { troll_pipes: Tri::On, hammer_breaks_locks: Tri::On, ..test_options() };
+        let off = Options { troll_pipes: Tri::Off, hammer_breaks_locks: Tri::Off, ..test_options() };
+        assert_ne!(opts.to_flag_key(), on.to_flag_key());
+        assert_ne!(opts.to_flag_key(), off.to_flag_key());
+
+        // (3) determinism across runs (needs the real ROM).
+        let seed = 0xC0FFEEu64;
+        let Some(mut rom1) = make_test_rom() else { return };
+        let Some(mut rom2) = make_test_rom() else { return };
+        randomize(&mut rom1, seed, &opts);
+        randomize(&mut rom2, seed, &opts);
+        assert_eq!(
+            fnv1a(rom1.output_bytes()),
+            fnv1a(rom2.output_bytes()),
+            "Maybe flags must resolve identically for the same seed",
+        );
+    }
+
+    #[test]
+    fn maybe_resolves_both_ways_across_seeds() {
+        // The w1_hammer_rock=Maybe coin flip must actually flip: across many
+        // seeds it should land On for some and Off for others. We isolate the
+        // *gameplay* effect (the make_w1_hammer_rock tile write) by comparing
+        // each Maybe run's tile bytes to the explicit-On run's bytes, so the
+        // flag-key stamp / title hash (which always differ for Maybe) don't
+        // confound the comparison.
+        let Some(_) = make_test_rom() else { return };
+        let on = Options { w1_hammer_rock: Tri::On, ..test_options() };
+        let maybe = Options { w1_hammer_rock: Tri::Maybe, ..test_options() };
+
+        // Capture the byte ranges make_w1_hammer_rock touches from a known-On run.
+        let on_touched: Vec<(usize, Vec<u8>)> = {
+            let mut rom = make_test_rom().unwrap();
+            randomize(&mut rom, 0, &on);
+            rom.write_log().iter()
+                .filter(|r| r.tag == "qol/w1_hammer_rock")
+                .map(|r| (r.offset, rom.read_range(r.offset, r.len).to_vec()))
+                .collect()
+        };
+        assert!(!on_touched.is_empty(), "expected w1_hammer_rock to write bytes when On");
+
+        let mut saw_on = false;
+        let mut saw_off = false;
+        for seed in 0u64..24 {
+            let mut rom = make_test_rom().unwrap();
+            randomize(&mut rom, seed, &maybe);
+            let matches_on = on_touched.iter()
+                .all(|(off, bytes)| rom.read_range(*off, bytes.len()) == bytes.as_slice());
+            if matches_on { saw_on = true; } else { saw_off = true; }
+        }
+        assert!(saw_on && saw_off,
+            "w1_hammer_rock=Maybe never exercised both outcomes across 24 seeds \
+             (saw_on={saw_on}, saw_off={saw_off})");
     }
 
     #[test]
