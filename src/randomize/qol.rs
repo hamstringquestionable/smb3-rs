@@ -3,7 +3,6 @@ use super::rom_data::{
     BETA_PATCHES,
     FS_BIG_Q_LOOKUP as BIG_Q_ROUTINE_OFFSET,
     FS_BIG_Q_SAVE as BIG_Q_PRG030_OFFSET,
-    FS_BROS_NO_HANDS,
     FS_CANOE_BACKUP,
     FS_CANOE_RESPAWN,
     FS_CARD_CLEAR as CARD_TRAMPOLINE,
@@ -603,38 +602,6 @@ const HOTFOOT_TAIL_A: usize = 0x0413C;
 const HOTFOOT_TAIL_B: usize = 0x04151;
 const HOTFOOT_TAIL_C: usize = 0x0814D;
 
-// Bros don't stop on hands (by MaCobra52) — fixes issue #14. Roaming
-// overworld bros decide where they may rest via the object-movement level
-// gate at PRG011 $B425 (`CMP $7E98,Y`), the sprite-side twin of the player
-// level gate. It reuses the shared per-palette-page threshold table
-// ($7E98,Y); a tile at-or-above its page threshold is a level slot the bro
-// won't rest on, below-threshold tiles are plain path it can settle on.
-// HANDTRAP tile 0xE6 sits just *below* the page-3 threshold (0xE9), so a
-// wandering bro treats it as plain path and can come to rest on a hand-trap
-// slot — colliding the two encounters (one clears the other).
-//
-// The fix replaces the inline `CMP $7E98,Y` at the gate with a JSR to an
-// 8-byte helper in PRG011 free space (FS_BROS_NO_HANDS, CPU $BD42) that
-// forces 0xE6 to read as gated and otherwise performs the identical compare:
-//
-//   CMP #$E6     ; hand-trap tile?
-//   BEQ +3       ; yes -> return with carry SET (gated), skipping the compare
-//   CMP $7E98,Y  ; no  -> vanilla threshold compare (flags identical)
-//   RTS          ; RTS preserves flags; A/X/Y untouched
-//
-// So 0xE6 now behaves like a normal uncompleted level tile to roaming bros:
-// they may walk *over* it but never rest on it. Completed hand-traps are
-// rewritten to a checkmark tile (already above-threshold), so they act as a
-// barrier with no extra work — matching issue #14's desired behavior.
-//
-// MaCobra's standalone IPS placed the helper at CPU $BC80 (file 0x17C90),
-// which collides with our FS_SAS_GAMEOVER_FINALIZE allocation (0x17C87); it
-// is relocated here to FS_BROS_NO_HANDS. Only the JSR operand changes with
-// the relocation; the helper bytes are position-independent.
-const BROS_NO_HANDS_HOOK: usize = 0x17435; // CPU $B425, vanilla `CMP $7E98,Y`
-const BROS_NO_HANDS_JSR: [u8; 3] = [0x20, 0x42, 0xBD]; // JSR $BD42
-const BROS_NO_HANDS_SUB: [u8; 8] = [0xC9, 0xE6, 0xF0, 0x03, 0xD9, 0x98, 0x7E, 0x60];
-
 // ---------------------------------------------------------------------------
 // MaCobra patches — opt-in features
 // Each apply_* below is gated by an individual option in randomizer.rs;
@@ -860,10 +827,6 @@ pub fn apply_macobra_patches(rom: &mut Rom) {
     rom.write_byte(HOTFOOT_TAIL_A, 0x00);
     rom.write_byte(HOTFOOT_TAIL_B, 0x00);
     rom.write_byte(HOTFOOT_TAIL_C, 0x25);
-
-    // Roaming bros don't rest on hand-trap tiles (0xE6). Fixes issue #14.
-    rom.write_range(BROS_NO_HANDS_HOOK, &BROS_NO_HANDS_JSR);
-    rom.write_range(FS_BROS_NO_HANDS, &BROS_NO_HANDS_SUB);
 }
 
 #[cfg(test)]
@@ -1050,30 +1013,6 @@ mod tests {
         assert_eq!(rom.read_byte(HOTFOOT_TAIL_A), 0x00);
         assert_eq!(rom.read_byte(HOTFOOT_TAIL_B), 0x00);
         assert_eq!(rom.read_byte(HOTFOOT_TAIL_C), 0x25);
-    }
-
-    #[test]
-    fn test_macobra_bros_no_hands_writes() {
-        let mut rom = make_test_rom();
-        apply_macobra_patches(&mut rom);
-
-        // Hook rewritten to JSR the relocated helper.
-        assert_eq!(
-            rom.read_range(BROS_NO_HANDS_HOOK, BROS_NO_HANDS_JSR.len()),
-            &BROS_NO_HANDS_JSR
-        );
-        // Helper landed in PRG011 free space.
-        assert_eq!(
-            rom.read_range(FS_BROS_NO_HANDS, BROS_NO_HANDS_SUB.len()),
-            &BROS_NO_HANDS_SUB
-        );
-        // JSR operand must point at FS_BROS_NO_HANDS (CPU $BD42, bank-local).
-        let cpu = 0xA000 + (FS_BROS_NO_HANDS - 0x16000);
-        assert_eq!(BROS_NO_HANDS_JSR[1], (cpu & 0xFF) as u8);
-        assert_eq!(BROS_NO_HANDS_JSR[2], (cpu >> 8) as u8);
-        // Helper preserves vanilla behavior for non-hand tiles: its tail is the
-        // original `CMP $7E98,Y` (D9 98 7E) the hook replaced.
-        assert_eq!(&BROS_NO_HANDS_SUB[4..7], &[0xD9, 0x98, 0x7E]);
     }
 
     #[test]
