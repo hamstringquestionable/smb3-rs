@@ -47,6 +47,7 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     // PRG011 (file 0x16010, CPU $A000–$BFFF during map)
     (0x17C87, 29, "start_airship_swap: game-over twirl finalize helper"),
     (0x17D00, 66, "canoe_fix: backup/restore subroutines (CANOE_BACKUP_ROUTINE)"),
+    (0x17D42, 8, "bros_no_hands: hand-trap tile bypass for overworld bro movement gate"),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     (0x0382A, 23, "koopa_hits: subroutine + defeat JMP + threshold table"),
     (0x03841, 13, "koopa_collision_guard: skip collision bitmap during invuln"),
@@ -131,6 +132,10 @@ pub(super) const FS_CANOE_RESPAWN: usize     = 0x15DF0; // 35 bytes
 
 // PRG011
 pub(super) const FS_CANOE_BACKUP: usize      = 0x17D00; // 59 bytes
+// 8-byte hand-trap bypass subroutine for the overworld bro movement gate
+// (MaCobra52's "Bros don't stop on hands"). CPU $BD42. Sits just past the
+// 66-byte FS_CANOE_BACKUP reservation; the gate hook at $B425 JSRs here.
+pub(super) const FS_BROS_NO_HANDS: usize     = 0x17D42; // 8 bytes (CPU $BD42)
 
 // PRG026 (cont.)
 pub(super) const FS_MYSTERY_ANCHOR: usize    = 0x35572; // 13 bytes
@@ -848,13 +853,40 @@ pub(super) fn is_level_pointer(obj_ptr: u16, lay_ptr: u16) -> bool {
     obj_ptr >= 0xC000 && lay_ptr != 0x0000
 }
 
+/// Convert a CPU address in a fixed PRG bank mapped to the $A000-$BFFF window
+/// into its ROM file offset: `bank * 0x2000 + 0x10 + (cpu - 0xA000)`.
+///
+/// The `+ 0x10` is the iNES header. Forgetting it shifts the result by 16
+/// bytes, which silently mis-aims any JSR/JMP operand derived from it — the
+/// root cause of issue #14. Use this (and [`jsr_into_bank`]) instead of
+/// open-coding the formula so the header offset lives in exactly one place.
+pub(super) fn prg_bank_cpu_to_file(bank: usize, cpu_addr: u16) -> usize {
+    bank * 0x2000 + 0x10 + (cpu_addr as usize - 0xA000)
+}
+
+/// Inverse of [`prg_bank_cpu_to_file`]: file offset within an $A000-window
+/// bank back to its CPU address.
+pub(super) fn prg_bank_file_to_cpu(bank: usize, file_offset: usize) -> u16 {
+    (0xA000 + (file_offset - bank * 0x2000 - 0x10)) as u16
+}
+
+/// Build a 3-byte `JSR <target>` where `target` is given as a *file offset*
+/// inside `bank` (the $A000-window bank live when the hook runs). The operand
+/// is computed from [`prg_bank_file_to_cpu`], so it can never drift from where
+/// the target bytes are actually written. Prefer this over hand-writing the
+/// `[0x20, lo, hi]` literal for any same-bank hook → free-space-helper call.
+pub(super) fn jsr_into_bank(bank: usize, target_file: usize) -> [u8; 3] {
+    let cpu = prg_bank_file_to_cpu(bank, target_file);
+    [0x20, (cpu & 0xFF) as u8, (cpu >> 8) as u8]
+}
+
 /// Convert a layout CPU address ($A000-$BFFF) + tileset to a ROM file offset.
 pub(super) fn layout_file_offset(cpu_addr: u16, tileset: u8) -> Option<usize> {
     if tileset as usize >= PAGE_A000_BY_TILESET.len() || cpu_addr < 0xA000 {
         return None;
     }
     let bank = PAGE_A000_BY_TILESET[tileset as usize];
-    Some(bank * 0x2000 + 0x10 + (cpu_addr as usize - 0xA000))
+    Some(prg_bank_cpu_to_file(bank, cpu_addr))
 }
 
 /// ROM file offset of PRG006 enemy/object data base (CPU $C000).
@@ -1086,9 +1118,9 @@ pub(super) fn read_world_fx_assignments(rom: &Rom) -> [Vec<u8>; 8] {
 /// The master table holds 8 CPU-address words ($A010 bank); each points to a
 /// 9-byte per-world sub-table.
 fn map_obj_slot_offset(rom: &Rom, master_table: usize, world_idx: usize, slot: usize) -> usize {
-    let cpu = read_word(rom, master_table + world_idx * 2) as usize;
-    // PRG011 is bank 11 → file offset = 11 * 0x2000 + 0x10 + (cpu - 0xA000)
-    0x16010 + (cpu - 0xA000) + slot
+    let cpu = read_word(rom, master_table + world_idx * 2);
+    // PRG011 is bank 11; the sub-table base is `cpu`, the entry is `slot` past it.
+    prg_bank_cpu_to_file(11, cpu) + slot
 }
 
 
@@ -1230,5 +1262,38 @@ mod free_space_tests {
         assert!(offsets.contains(&FS_STARTING_ITEMS));
         assert!(offsets.contains(&FS_MYSTERY_ANCHOR));
         assert!(offsets.contains(&FS_HAMMER_LOCKS));
+    }
+
+    // Ground-truth pins for the PRG bank ↔ file-offset mapping. Each pair is a
+    // *known-correct* (bank, cpu, file) triple taken from a shipped patch, so
+    // these tests catch drift in the mapping itself — including dropping the
+    // 0x10 iNES header, the issue #14 root cause. Patch code derives operands
+    // from these helpers (e.g. `jsr_into_bank`) rather than transcribing
+    // address bytes, so getting the helpers right protects every hook.
+    #[test]
+    fn test_prg_bank_mapping_known_pairs() {
+        // PRG011 canoe backup routine: file 0x17D00 ↔ CPU $BCF0 (JSR $BCF0).
+        assert_eq!(prg_bank_cpu_to_file(11, 0xBCF0), 0x17D00);
+        assert_eq!(prg_bank_file_to_cpu(11, 0x17D00), 0xBCF0);
+        // Bank start maps to the window base, header included.
+        assert_eq!(prg_bank_cpu_to_file(11, 0xA000), 0x16010);
+        assert_eq!(prg_bank_file_to_cpu(11, 0x16010), 0xA000);
+        // Round-trips across banks and the whole window.
+        for bank in [9usize, 11, 13, 26] {
+            for cpu in [0xA000u16, 0xA001, 0xB425, 0xBD32, 0xBFFF] {
+                assert_eq!(prg_bank_file_to_cpu(bank, prg_bank_cpu_to_file(bank, cpu)), cpu);
+            }
+        }
+    }
+
+    #[test]
+    fn test_jsr_into_bank_builds_correct_operand() {
+        // `JSR <file 0x17D00 in bank 11>` must encode as 20 F0 BC (JSR $BCF0).
+        assert_eq!(jsr_into_bank(11, 0x17D00), [0x20, 0xF0, 0xBC]);
+        // Opcode is always JSR; operand is little-endian CPU address.
+        let j = jsr_into_bank(11, FS_BROS_NO_HANDS);
+        assert_eq!(j[0], 0x20);
+        let cpu = u16::from_le_bytes([j[1], j[2]]);
+        assert_eq!(prg_bank_cpu_to_file(11, cpu), FS_BROS_NO_HANDS);
     }
 }
