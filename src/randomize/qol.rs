@@ -10,6 +10,7 @@ use super::rom_data::{
     FS_FASTER_FROG,
     FS_HAMMER_LOCKS,
     FS_STARTING_ITEMS,
+    jsr_into_bank,
 };
 
 /// Starting lives value byte (LDA #imm operand).
@@ -629,10 +630,10 @@ const HOTFOOT_TAIL_C: usize = 0x0814D;
 //
 // MaCobra's standalone IPS placed the helper at CPU $BC80 (file 0x17C90),
 // which collides with our FS_SAS_GAMEOVER_FINALIZE allocation (0x17C87); it
-// is relocated here to FS_BROS_NO_HANDS. Only the JSR operand changes with
-// the relocation; the helper bytes are position-independent.
+// is relocated here to FS_BROS_NO_HANDS. The JSR operand is derived from the
+// helper's file offset via `jsr_into_bank` (never hand-written) so it can't
+// drift from where the helper bytes actually land — see issue #14.
 const BROS_NO_HANDS_HOOK: usize = 0x17435; // CPU $B425, vanilla `CMP $7E98,Y`
-const BROS_NO_HANDS_JSR: [u8; 3] = [0x20, 0x32, 0xBD]; // JSR $BD32 (file 0x17D42)
 const BROS_NO_HANDS_SUB: [u8; 8] = [0xC9, 0xE6, 0xF0, 0x03, 0xD9, 0x98, 0x7E, 0x60];
 
 // ---------------------------------------------------------------------------
@@ -862,7 +863,9 @@ pub fn apply_macobra_patches(rom: &mut Rom) {
     rom.write_byte(HOTFOOT_TAIL_C, 0x25);
 
     // Roaming bros don't rest on hand-trap tiles (0xE6). Fixes issue #14.
-    rom.write_range(BROS_NO_HANDS_HOOK, &BROS_NO_HANDS_JSR);
+    // FS_BROS_NO_HANDS lives in PRG011 (bank 11); derive the JSR operand from
+    // its file offset so the hook can never point past the helper.
+    rom.write_range(BROS_NO_HANDS_HOOK, &jsr_into_bank(11, FS_BROS_NO_HANDS));
     rom.write_range(FS_BROS_NO_HANDS, &BROS_NO_HANDS_SUB);
 }
 
@@ -1057,11 +1060,6 @@ mod tests {
         let mut rom = make_test_rom();
         apply_macobra_patches(&mut rom);
 
-        // Hook rewritten to JSR the relocated helper.
-        assert_eq!(
-            rom.read_range(BROS_NO_HANDS_HOOK, BROS_NO_HANDS_JSR.len()),
-            &BROS_NO_HANDS_JSR
-        );
         // Helper landed in PRG011 free space.
         assert_eq!(
             rom.read_range(FS_BROS_NO_HANDS, BROS_NO_HANDS_SUB.len()),
