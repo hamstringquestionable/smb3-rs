@@ -138,7 +138,7 @@ pub(super) const FS_CANOE_BACKUP: usize      = 0x17D00; // 59 bytes
 pub(super) const FS_BROS_NO_HANDS: usize     = 0x17D42; // 8 bytes (CPU $BD42)
 
 // PRG026 (cont.)
-pub(super) const FS_MYSTERY_ANCHOR: usize    = 0x35572; // 13 bytes
+pub(crate) const FS_MYSTERY_ANCHOR: usize    = 0x35572; // 13 bytes
 pub(super) const FS_HAMMER_LOCKS: usize      = 0x3557F; // 50 bytes
 pub(super) const FS_ANCHOR_ITEM_GUARD: usize = 0x355B1; // 12 bytes (CPU $B5A1)
 pub(super) const FS_STARTING_ITEMS: usize    = 0x3E260; // 33 bytes
