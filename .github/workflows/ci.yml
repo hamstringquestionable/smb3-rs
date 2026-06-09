@@ -42,6 +42,16 @@ jobs:
       - name: Test
         run: cargo test
 
+      # Advisory only: flags ROM offsets that bypass their rom_data.rs constant.
+      # `continue-on-error` keeps the job green — this surfaces a nudge in the
+      # step summary without blocking merges.
+      - name: ROM offset duplication scan (advisory)
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 tools/offset_dups.py --exit-code | tee -a "$GITHUB_STEP_SUMMARY"
+
   build:
     needs: ci
     if: github.event_name == 'push'

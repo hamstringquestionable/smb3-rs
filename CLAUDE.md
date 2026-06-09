@@ -93,6 +93,7 @@ tools/
   fx_check.py          # Cross-checks FX slots against actual map tiles
   level_sim.py         # Level tile simulator for debugging individual levels
   gen_test_roms.py     # Batch test ROM generation
+  offset_dups.py       # Flags ROM offsets that bypass their rom_data.rs constant
 docs/
   smb3_rom_reference.md # ROM hacking reference (offsets, data structures, RAM map)
 ```
