@@ -32,8 +32,8 @@ const CLONE_B_CPU: u16 = 0xDA6F; // file 0x0DA7F
 /// Y-byte file offsets of the OBJ_TREASURESET (0xD6) entry in each clone.
 /// Layout within an 11-byte stream: [page][D6 X Y][52 X Y][BA X Y][FF],
 /// so the first entry's Y-byte sits at offset +3.
-pub(super) const HAND_ROOM_CLONE_A_ITEM: usize = 0x0DA74 + 3; // 0x0DA77
-pub(super) const HAND_ROOM_CLONE_B_ITEM: usize = 0x0DA7F + 3; // 0x0DA82
+pub(super) const HAND_ROOM_CLONE_A_ITEM: usize = FS_HAND_ROOMS + 3;      // 0x0DA77
+pub(super) const HAND_ROOM_CLONE_B_ITEM: usize = FS_HAND_ROOMS + 11 + 3; // 0x0DA82
 
 /// Clone the shared Hand sub-area enemy stream so 8-Hnd2 and 8-Hnd3 each
 /// get an independent `OBJ_TREASURESET` Y-byte. 8-Hnd1 keeps the original.

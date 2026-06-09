@@ -1179,7 +1179,7 @@ mod tests {
             "Anchor should stay in item table (mystery item)");
 
         // Trampoline should be written at PRG026 free space
-        const FS: usize = 0x35572;
+        use crate::randomize::rom_data::FS_MYSTERY_ANCHOR as FS;
         // Trampoline starts with LDX $7D80,Y (0xBE)
         assert_eq!(rom.read_byte(FS), 0xBE, "Trampoline LDX abs,Y opcode");
         // Target powerup is at offset +8 (LDX #imm operand)
