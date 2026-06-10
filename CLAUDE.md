@@ -1,4 +1,4 @@
-# SMB3R — Super Mario Bros. 3 Randomizer
+# SMB3-RS — Super Mario Bros. 3 Randomizer
 
 ## Project Overview
 

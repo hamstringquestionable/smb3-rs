@@ -167,9 +167,9 @@ def main():
     total = sum(len(e) for _, _, e in regions)
     html = [
         "<!DOCTYPE html><html><head><meta charset='utf-8'>",
-        "<title>SMB3R palette variants</title>",
+        "<title>SMB3-RS palette variants</title>",
         f"<style>{CSS}</style></head><body>",
-        f"<h1>SMB3R palette variants — {total} positions across {len(regions)} regions</h1>",
+        f"<h1>SMB3-RS palette variants — {total} positions across {len(regions)} regions</h1>",
         "<p style='color:#888;font-size:0.75rem;max-width:700px'>",
         "Each position ships one or more 4-byte variants (vanilla + Recolored + any hand-curated alternates). ",
         "The randomizer picks one variant per position at random. Hatched cells (FF) are SMB3 palette-data format flags, not colors.",
