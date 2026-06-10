@@ -67,7 +67,7 @@ HTML_HEAD = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>SMB3R palette pool preview</title>
+<title>SMB3-RS palette pool preview</title>
 <style>
   body { font-family: -apple-system, system-ui, sans-serif; background: #222; color: #eee; padding: 24px; }
   h1 { font-weight: 500; margin-bottom: 4px; }
@@ -93,7 +93,7 @@ HTML_HEAD = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<h1>SMB3R palette pool preview</h1>
+<h1>SMB3-RS palette pool preview</h1>
 <p class="subtitle">Candidate themed palette pools for the randomizer. Edit
 <code>tools/preview_palette_pools.py</code> and re-run to iterate.</p>
 """

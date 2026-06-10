@@ -1,4 +1,4 @@
-# SMB3R — Super Mario Bros. 3 Randomizer
+# SMB3-RS — Super Mario Bros. 3 Randomizer
 
 A randomizer for Super Mario Bros. 3 (USA Rev 1). Runs entirely in your
 browser — your ROM never leaves your machine.
