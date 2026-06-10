@@ -172,8 +172,9 @@ pub struct Options {
     /// for the vanilla pre-attack delay. (MaCobra52's "Early Sun" patch.)
     #[serde(default)]
     pub early_sun: bool,
-    /// Gate the wandering Hammer Bros' overworld map movement so they roam
-    /// less aggressively. ("SMB3 - Limit Bro Movement" patch.)
+    /// Restrict wandering Hammer Bros to overworld path tiles by converting
+    /// the map-object landing-tile blacklist into a path-tile whitelist.
+    /// ("SMB3 - Limit Bro Movement" patch.)
     #[serde(default)]
     pub limit_bro_movement: bool,
     /// Damage drops the player straight to Small Mario regardless of

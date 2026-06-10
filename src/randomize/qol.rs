@@ -655,12 +655,22 @@ pub fn apply_early_sun(rom: &mut Rom) {
     rom.write_byte(EARLY_SUN_OFFSET, 0x00);
 }
 
-// Limit Bro Movement ("SMB3 - Limit Bro Movement.ips") — reworks the
-// wandering Hammer Bro overworld-sprite movement routine in PRG011 so the
-// roaming bros gate their map movement instead of freely chasing the player.
-// Three in-bank writes, all within the World Map code/data bank
-// (file 0x16010–0x1800F); the patched routine's `JMP $B3A3` stays in-bank.
-// Offsets are header-inclusive file offsets (same convention as the IPS).
+// Limit Bro Movement ("SMB3 - Limit Bro Movement.ips") — restricts where
+// wandering map objects (Hammer Bros) may step on the overworld. The march
+// validator `Map_MarchValidateTravel` (PRG011 CPU $B3A3) scans a tile table
+// at $B388 (`Map_Object_Forbid_LandingTiles`); in vanilla that table is a
+// BLACKLIST and a match rejects the move. This patch does two things:
+//
+//   1. Inverts the branch at $B409 (`F0 06 .. 4C A3 B3`) so a match now
+//      ACCEPTS the move and an exhausted no-match scan rejects it — turning
+//      the table from a blacklist into a WHITELIST.
+//   2. Replaces the table with the 12 walkable path-tile IDs (the rest
+//      filled with 0xFF sentinels that never match a real tile).
+//
+// Net effect: wandering Hammer Bros may only land on path tiles instead of
+// "anything not forbidden", so they stay on the paths. All three writes are
+// in-bank (World Map code/data, file 0x16010–0x1800F); the patched routine's
+// `JMP $B3A3` stays in-bank. Offsets are header-inclusive (same as the IPS).
 const LIMIT_BRO_TABLE_OFFSET: usize = 0x17398;
 const LIMIT_BRO_TABLE: [u8; 12] =
     [0x44, 0x47, 0x48, 0x4A, 0xAE, 0xAF, 0xB5, 0xB6, 0xD9, 0xDC, 0xDD, 0xDE];
@@ -669,8 +679,9 @@ const LIMIT_BRO_FILL: [u8; 9] = [0xFF; 9];
 const LIMIT_BRO_CODE_OFFSET: usize = 0x17419;
 const LIMIT_BRO_CODE: [u8; 8] = [0xF0, 0x06, 0x88, 0xD0, 0xF8, 0x4C, 0xA3, 0xB3];
 
-/// Apply the "Limit Bro Movement" patch — gates the wandering Hammer Bros'
-/// overworld map movement so they roam less aggressively.
+/// Apply the "Limit Bro Movement" patch — converts the wandering-object
+/// landing-tile blacklist into a whitelist of path tiles, so wandering
+/// Hammer Bros may only step onto overworld path tiles.
 pub fn apply_limit_bro_movement(rom: &mut Rom) {
     rom.write_range(LIMIT_BRO_TABLE_OFFSET, &LIMIT_BRO_TABLE);
     rom.write_range(LIMIT_BRO_FILL_OFFSET, &LIMIT_BRO_FILL);
