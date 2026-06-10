@@ -655,6 +655,28 @@ pub fn apply_early_sun(rom: &mut Rom) {
     rom.write_byte(EARLY_SUN_OFFSET, 0x00);
 }
 
+// Limit Bro Movement ("SMB3 - Limit Bro Movement.ips") — reworks the
+// wandering Hammer Bro overworld-sprite movement routine in PRG011 so the
+// roaming bros gate their map movement instead of freely chasing the player.
+// Three in-bank writes, all within the World Map code/data bank
+// (file 0x16010–0x1800F); the patched routine's `JMP $B3A3` stays in-bank.
+// Offsets are header-inclusive file offsets (same convention as the IPS).
+const LIMIT_BRO_TABLE_OFFSET: usize = 0x17398;
+const LIMIT_BRO_TABLE: [u8; 12] =
+    [0x44, 0x47, 0x48, 0x4A, 0xAE, 0xAF, 0xB5, 0xB6, 0xD9, 0xDC, 0xDD, 0xDE];
+const LIMIT_BRO_FILL_OFFSET: usize = 0x173A4;
+const LIMIT_BRO_FILL: [u8; 9] = [0xFF; 9];
+const LIMIT_BRO_CODE_OFFSET: usize = 0x17419;
+const LIMIT_BRO_CODE: [u8; 8] = [0xF0, 0x06, 0x88, 0xD0, 0xF8, 0x4C, 0xA3, 0xB3];
+
+/// Apply the "Limit Bro Movement" patch — gates the wandering Hammer Bros'
+/// overworld map movement so they roam less aggressively.
+pub fn apply_limit_bro_movement(rom: &mut Rom) {
+    rom.write_range(LIMIT_BRO_TABLE_OFFSET, &LIMIT_BRO_TABLE);
+    rom.write_range(LIMIT_BRO_FILL_OFFSET, &LIMIT_BRO_FILL);
+    rom.write_range(LIMIT_BRO_CODE_OFFSET, &LIMIT_BRO_CODE);
+}
+
 // Japanese damage system (by MaCobra52) — NOPs the `JMP $DA15` at file
 // 0x019F9 so the vanilla "demote power-up by one tier" subroutine is
 // skipped. Control falls through into the path that drops the player

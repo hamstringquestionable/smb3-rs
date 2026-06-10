@@ -172,6 +172,10 @@ pub struct Options {
     /// for the vanilla pre-attack delay. (MaCobra52's "Early Sun" patch.)
     #[serde(default)]
     pub early_sun: bool,
+    /// Gate the wandering Hammer Bros' overworld map movement so they roam
+    /// less aggressively. ("SMB3 - Limit Bro Movement" patch.)
+    #[serde(default)]
+    pub limit_bro_movement: bool,
     /// Damage drops the player straight to Small Mario regardless of
     /// current power-up, instead of demoting tier-by-tier. (MaCobra52's
     /// "Japanese damage system (fixed)" patch.)
@@ -507,8 +511,9 @@ impl Options {
         let i1 = items.get(1).copied().unwrap_or(0);
         let i2 = items.get(2).copied().unwrap_or(0);
         let b8 = (item_nibble(i0) << 4) | item_nibble(i1);
-        // b9: i2 nibble (7-4) | reserved (3) | world_count 1..7 (2-0)
+        // b9: i2 nibble (7-4) | limit_bro_movement (3) | world_count 1..7 (2-0)
         let b9 = (item_nibble(i2) << 4)
+            | ((self.limit_bro_movement as u8) << 3)
             | (self.world_count.clamp(1, 7) & 0x07);
 
         // b10: extra flags + per-slot random mode (2 bits each)
@@ -606,6 +611,7 @@ impl Options {
             shuffle_spade_games: (b4 >> 3) & 1 != 0,
             hammer_vulnerable_koopalings: (b5 >> 1) & 1 != 0,
             early_sun: b5 & 1 != 0,
+            limit_bro_movement: (b9 >> 3) & 1 != 0,
             japanese_damage: (b6 >> 7) & 1 != 0,
             infinite_mushroom_houses: (b6 >> 6) & 1 != 0,
             fast_mushroom_house: (b3 >> 4) & 1 != 0,
@@ -696,6 +702,7 @@ impl Default for Options {
             hammer_breaks_locks: Tri::Off,
             hammer_breaks_bridges: Tri::Off,
             early_sun: false,
+            limit_bro_movement: false,
             japanese_damage: false,
             infinite_mushroom_houses: false,
             fast_mushroom_house: false,
@@ -1009,6 +1016,12 @@ fn randomize_inner(
         randomize::qol::apply_early_sun(rom);
     }
 
+    // "Limit Bro Movement" — gate the wandering Hammer Bros' overworld roaming.
+    if options.limit_bro_movement {
+        rom.set_tag("qol/limit_bro_movement");
+        randomize::qol::apply_limit_bro_movement(rom);
+    }
+
     // MaCobra52's "Japanese damage system" — damage drops straight to Small
     // Mario (or kills from a suit) instead of tier-by-tier demotion.
     if options.japanese_damage {
@@ -1314,6 +1327,7 @@ mod tests {
             hammer_breaks_locks: Tri::On,
             hammer_breaks_bridges: Tri::On,
             early_sun: true,
+            limit_bro_movement: true,
             japanese_damage: true,
             infinite_mushroom_houses: true,
             fast_mushroom_house: true,
@@ -1389,6 +1403,7 @@ mod tests {
             hammer_breaks_locks: Tri::Off,
             hammer_breaks_bridges: Tri::Off,
             early_sun: false,
+            limit_bro_movement: false,
             japanese_damage: false,
             infinite_mushroom_houses: false,
             fast_mushroom_house: false,
@@ -1782,6 +1797,7 @@ mod tests {
             hammer_breaks_locks: Tri::Off,
             hammer_breaks_bridges: Tri::Off,
             early_sun: false,
+            limit_bro_movement: false,
             japanese_damage: false,
             infinite_mushroom_houses: false,
             fast_mushroom_house: false,
@@ -1841,6 +1857,7 @@ mod tests {
             hammer_breaks_locks: Tri::On,
             hammer_breaks_bridges: Tri::On,
             early_sun: true,
+            limit_bro_movement: true,
             japanese_damage: true,
             infinite_mushroom_houses: true,
             fast_mushroom_house: true,

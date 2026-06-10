@@ -155,6 +155,10 @@ struct Cli {
     #[arg(long)]
     early_sun: bool,
 
+    /// Gate wandering Hammer Bros' overworld movement so they roam less aggressively ("Limit Bro Movement" patch)
+    #[arg(long)]
+    limit_bro_movement: bool,
+
     /// Damage drops to Small Mario or kills outright instead of demoting tier-by-tier (MaCobra52's "Japanese damage system" patch)
     #[arg(long)]
     japanese_damage: bool,
@@ -410,6 +414,7 @@ fn main() {
             hammer_breaks_locks: parse_tri(&cli.hammer_breaks_locks, "hammer-breaks-locks"),
             hammer_breaks_bridges: parse_tri(&cli.hammer_breaks_bridges, "hammer-breaks-bridges"),
             early_sun: cli.early_sun,
+            limit_bro_movement: cli.limit_bro_movement,
             japanese_damage: cli.japanese_damage,
             infinite_mushroom_houses: cli.infinite_mushroom_houses,
             fast_mushroom_house: cli.fast_mushroom_house,
