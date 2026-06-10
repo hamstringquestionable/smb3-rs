@@ -759,7 +759,7 @@ lifted these from observed laser placements):
 
 Vanilla uses `(0x40, 0x15)` and `(0xA3, 0x16)`. The other 7 are
 "shootable but vanilla-decorative" — the level art has a statue head
-there but no `CFIRE_LASER` entry points at it. SMB3R's `bowser_castle`
+there but no `CFIRE_LASER` entry points at it. SMB3-RS's `bowser_castle`
 composer picks any 2 of the 9 and writes them at the two laser entry
 slots, coordinating fireball placement so the segment stays X-sorted.
 
@@ -781,7 +781,7 @@ Tight vanilla X gaps where naive ±2 jitter could break sort order:
 
 Enemy data segments are the level loader's input — entries within a
 segment must stay in ascending X order or activation timing breaks.
-SMB3R routes all segment edits through `src/randomize/segment_writer.rs`
+SMB3-RS routes all segment edits through `src/randomize/segment_writer.rs`
 which sorts by X, validates count and X-collision invariants, and
 writes back. Per-level "composer" modules (`bowser_castle.rs`,
 `podoboo_gauntlet.rs`, etc.) build a full proposed entry list and pass
@@ -2624,7 +2624,7 @@ partial tables in the sections above are subsets of this data.
 | 0x2A | $0A | $0A | +4 | Patooie |
 | 0x2B | $0B | $0B | +4 | Goomba in Shoe |
 | 0x2C | $0E | $0E | +4 | ChainChomp |
-| 0x2D | $1A | $1A | +4 | ChainChomp Strained |
+| 0x2D | $1A | $1A | +4 | BigBertha |
 | 0x2E | $93 | $13 | +5 | WoodBlock |
 | 0x2F | $12 | $12 | +4 | Boo |
 | 0x30 | $12 | $12 | +4 | HotFoot (shy) |
@@ -2640,7 +2640,7 @@ partial tables in the sections above are subsets of this data.
 | 0x3A | $93 | $13 | +5 | RocketSled |
 | 0x3B | $CF | $4F | +5 | FireJet Left |
 | 0x3C | $0E | $0E | +4 | PlatformCircle |
-| 0x3D | $0A | $0A | +4 | Airship Anchor |
+| 0x3D | $0A | $0A | +4 | NipperFireBreather |
 | 0x3E | $1A | $1A | +4 | PlatformULDR |
 | 0x3F | $93 | $13 | +5 | Dry Bones |
 | 0x40 | $0A | $0A | +4 | Buster Beetle |
@@ -2649,7 +2649,7 @@ partial tables in the sections above are subsets of this data.
 | 0x43 | $CF | $4F | +5 | ObjectEntry43 |
 | 0x44 | $0E | $0E | +4 | PlatformURLL |
 | 0x45 | $12 | $12 | +4 | HotFoot |
-| 0x46 | $0A | $0A | +4 | WonderWing |
+| 0x46 | $0A | $0A | +4 | PiranhaSpikeBall |
 | 0x47 | $00 | — | NOCHANGE | WaterCurrent Down |
 
 **Group 3 — PRG003 (0x06154): IDs 0x48–0x6B**
