@@ -27,13 +27,12 @@ const GROUND_ENEMIES: &[u8] = &[
     0x2B, // OBJ_GOOMBA_SHOE (Kuribo's Shoe)
     0x29, // OBJ_SPIKE
     0x2A, // OBJ_PATOOIE
-    0x2D, // OBJ_CHAINCHOMP (strained on post)
-    0x3D, // OBJ_CHAINCHOMPSTAKE (chained to stake, lunges)
+    0x3D, // OBJ_NIPPERFIREBREATHER (stationary fire-spitting nipper)
     0x4F, // OBJ_CHAINCHOMPFREE (roams freely without post tile)
     0x33, // OBJ_NIPPER (stationary)
     0x39, // OBJ_NIPPERHOPPING
     0x40, // OBJ_BUSTERBEATLE
-    0x46, // OBJ_LAKITU (level-placed variant, CHR $0A/+4)
+    0x46, // OBJ_PIRANHASPIKEBALL (tall plant with spike ball)
     0x55, // OBJ_BOBOMB
     0x58, // OBJ_FIRECHOMP (floats and chases)
     0x59, // OBJ_FIRESNAKE
@@ -65,10 +64,11 @@ const FLYING_ENEMIES: &[u8] = &[
 
 /// Water enemies that can be swapped with each other.
 const WATER_ENEMIES: &[u8] = &[
+    0x2D, // OBJ_BIGBERTHA (leaping eater — the "Boss Bass")
     0x48, // OBJ_BABYBLOOPER
     0x61, // OBJ_BLOOPERWITHKIDS
     0x62, // OBJ_BLOOPER
-    0x63, // OBJ_BIGBERTHABIRTHER
+    0x63, // OBJ_BIGBERTHABIRTHER (swims, spits a baby Cheep Cheep)
     0x64, // OBJ_CHEEPCHEEPHOPPER
     0x67, // OBJ_LAVALOTUS (southbird: "underwater lava plant")
     0x6A, // OBJ_BLOOPERCHILDSHOOT
@@ -321,7 +321,7 @@ pub fn sprite_bank(id: u8) -> Option<SpriteBank> {
         // Platforms (various)
         0x24 | 0x26 | 0x27 | 0x28 | 0x36 | 0x37 | 0x38 | 0x3C | 0x44 =>
             Some(SpriteBank { chr_page: 0x0E, slot: 4 }),
-        // Spike, Patooie, Nipper, NipperHopping, ChainChompStake, BusterBeetle, Lakitu
+        // Spike, Patooie, Nipper, NipperHopping, NipperFireBreather, BusterBeetle, PiranhaSpikeBall
         0x29 | 0x2A | 0x33 | 0x39 | 0x3D | 0x40 | 0x46 =>
             Some(SpriteBank { chr_page: 0x0A, slot: 4 }),
         // Goomba in Shoe
@@ -501,17 +501,22 @@ use super::rom_data::{HAZARD_PROJECTILE_IDS, HB_NEEDS_SHELL_ENEMIES, LEVEL_DATA_
 const WILD_INJECTION_IDS: &[u8] = &[
     0x83, // Lakitu (enemy-spawning variant, CHR $0B/+4)
     0xAF, // Angry Sun
-    0x63, // Boss Bass (Big Bertha)
+    0x2D, // Boss Bass (Big Bertha — the leaping eater)
 ];
 
 /// Probability (out of 256) that a segment will receive an injection when wild_injections is on.
 /// ~15% chance per segment.
 const WILD_INJECTION_CHANCE: u8 = 38;
 
-/// Maximum number of Boss Bass (0x63) allowed in a single enemy segment
-/// (= one obj_ptr / sub-area). More than this causes sprite slot exhaustion
-/// that can prevent other objects (e.g. white blocks) from spawning — this
-/// was observed in 3-9 where the white block became unreachable.
+/// Large "Big Bertha" fish that exhaust sprite slots when stacked: the leaping
+/// eater (0x2D, the injected "Boss Bass") and the cheep-spitting birther (0x63).
+/// Both are sprite-heavy, so the per-segment cap counts them together.
+const BERTHA_IDS: &[u8] = &[0x2D, 0x63];
+
+/// Maximum number of Big Bertha fish (see [`BERTHA_IDS`]) allowed in a single
+/// enemy segment (= one obj_ptr / sub-area). More than this causes sprite slot
+/// exhaustion that can prevent other objects (e.g. white blocks) from spawning —
+/// this was observed in 3-9 where the white block became unreachable.
 const MAX_BERTHA_PER_SEGMENT: u8 = 2;
 
 /// Maximum X-tile gap between consecutive enemies (sorted by X) before they
@@ -1114,13 +1119,14 @@ fn inject_at_entry_points<R: Rng>(
 
         if let Some(chosen) = pick_compatible(WILD_INJECTION_IDS, s4, s5, rng) {
             let bertha_count: u8 = entries.iter()
-                .filter(|e| e.obj_id == 0x63)
+                .filter(|e| BERTHA_IDS.contains(&e.obj_id))
                 .count() as u8;
-            let was_bertha = entries[0].obj_id == 0x63;
+            let was_bertha = BERTHA_IDS.contains(&entries[0].obj_id);
+            let chosen_is_bertha = BERTHA_IDS.contains(&chosen);
             let post_count = bertha_count
                 .saturating_sub(was_bertha as u8)
-                .saturating_add((chosen == 0x63) as u8);
-            if !(chosen == 0x63 && post_count > MAX_BERTHA_PER_SEGMENT) {
+                .saturating_add(chosen_is_bertha as u8);
+            if !(chosen_is_bertha && post_count > MAX_BERTHA_PER_SEGMENT) {
                 let di = entry.data_index;
                 swap_enemy(data, di, chosen);
             }
@@ -1220,7 +1226,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
         // its own pass) added a Bertha to this segment, that's already
         // reflected here because we re-read obj_ids from `data`.
         let mut bertha_count: u8 = entries.iter()
-            .filter(|e| e.obj_id == 0x63)
+            .filter(|e| BERTHA_IDS.contains(&e.obj_id))
             .count() as u8;
 
         // Split entries into proximity groups by X-position. Each group gets
@@ -1323,16 +1329,16 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                     } else {
                         pick_compatible(pool, committed_slot4, committed_slot5, rng)
                     };
-                    // Enforce Boss Bass cap: if picked 0x63 would push the
-                    // segment over MAX_BERTHA_PER_SEGMENT, re-pick from the
-                    // same pool with 0x63 filtered out.
-                    let was_bertha = data[entry.data_index] == 0x63;
+                    // Enforce Big Bertha cap: if the pick would push the segment
+                    // over MAX_BERTHA_PER_SEGMENT bertha-class fish, re-pick from
+                    // the same pool with the bertha IDs filtered out.
+                    let was_bertha = BERTHA_IDS.contains(&data[entry.data_index]);
                     let cap_full = bertha_count.saturating_sub(was_bertha as u8)
                         >= MAX_BERTHA_PER_SEGMENT;
-                    let chosen = if matches!(chosen, Some(0x63)) && cap_full {
+                    let chosen = if matches!(chosen, Some(id) if BERTHA_IDS.contains(&id)) && cap_full {
                         let filtered: Vec<u8> = pool.iter()
                             .copied()
-                            .filter(|&id| id != 0x63)
+                            .filter(|id| !BERTHA_IDS.contains(id))
                             .collect();
                         pick_compatible(&filtered, committed_slot4, committed_slot5, rng)
                     } else {
@@ -1374,9 +1380,10 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                         chosen
                     };
                     if let Some(chosen) = chosen {
-                        if was_bertha && chosen != 0x63 {
+                        let chosen_is_bertha = BERTHA_IDS.contains(&chosen);
+                        if was_bertha && !chosen_is_bertha {
                             bertha_count = bertha_count.saturating_sub(1);
-                        } else if !was_bertha && chosen == 0x63 {
+                        } else if !was_bertha && chosen_is_bertha {
                             bertha_count = bertha_count.saturating_add(1);
                         }
                         swap_enemy(&mut data, entry.data_index, chosen);
@@ -2277,7 +2284,7 @@ mod tests {
         install_fake_entry_header(&mut data, (ENEMY_DATA_START + 1) as u16);
         let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
-        let injection_ids: &[u8] = &[0x83, 0xAF, 0x63];
+        let injection_ids: &[u8] = &[0x83, 0xAF, 0x2D];
         let mut saw_injection = false;
         for seed in 0..2000u64 {
             let mut rom_copy = rom.clone();
@@ -2317,7 +2324,7 @@ mod tests {
         install_fake_entry_header(&mut data, (ENEMY_DATA_START + 1) as u16);
         let rom = Rom::from_bytes_lax(&data, true).unwrap();
 
-        let injection_ids: &[u8] = &[0x83, 0xAF, 0x63];
+        let injection_ids: &[u8] = &[0x83, 0xAF, 0x2D];
         for seed in 0..500u64 {
             let mut rom_copy = rom.clone();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -2479,11 +2486,11 @@ mod tests {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             randomize(&mut rom_copy, &mut rng, &flags);
             let bertha_count = entry_offsets.iter()
-                .filter(|&&off| rom_copy.read_byte(ENEMY_DATA_START + off) == 0x63)
+                .filter(|&&off| BERTHA_IDS.contains(&rom_copy.read_byte(ENEMY_DATA_START + off)))
                 .count();
             assert!(
                 bertha_count <= MAX_BERTHA_PER_SEGMENT as usize,
-                "seed {seed}: {bertha_count} Boss Bass in segment, cap is {}",
+                "seed {seed}: {bertha_count} Big Bertha in segment, cap is {}",
                 MAX_BERTHA_PER_SEGMENT
             );
         }
