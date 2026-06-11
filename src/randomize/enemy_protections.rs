@@ -63,7 +63,9 @@ pub(super) enum EntryProtection {
     ForceStompable,
     /// Walker forces a pick from TANK_BRO_POOL when bros mode is on.
     ForceTankBro,
-    /// Walker excludes HAZARD_PROJECTILE_IDS from the chosen pool.
+    /// Walker excludes hazard-category enemies from the chosen pool (additive-only:
+    /// a hazard of the same category as the vanilla enemy here is kept). See
+    /// `hazard_excluded` in enemies.rs.
     ExcludeHazards,
 }
 

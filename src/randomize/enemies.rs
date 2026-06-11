@@ -188,6 +188,60 @@ const THWOMPS: &[u8] = &[
     0x8F, // OBJ_THWOMPDIAGONALDL
 ];
 
+// --- Hazard taxonomy ---
+//
+// Enemies that are unfair to *introduce* at a curated `ExcludeHazards` spot:
+// unstompable/continuous threats (drops, fire, spike balls, projectile bros)
+// that a player can't avoid in a tight or forced-transit position. Grouped by
+// category so the placement filter can honor the "vanilla exception" — a hazard
+// is allowed when the slot's vanilla enemy was the *same category*, so the level
+// keeps the threat it was designed with (and within-category shuffle, e.g.
+// thwomp variants, still works). The filter is additive-only: it blocks
+// introducing a new hazard category, never strips an existing one.
+
+const HAZARD_LAVA_LOTUS: &[u8] = &[0x67]; // OBJ_LAVALOTUS (fire arcs)
+const HAZARD_PATOOIE: &[u8] = &[
+    0x2A, // OBJ_PATOOIE (spits a spike ball up)
+    0x46, // OBJ_PIRANHASPIKEBALL (Ptooie-style spike-ball launcher)
+];
+const HAZARD_NIPPER: &[u8] = &[
+    0x33, // OBJ_NIPPER
+    0x39, // OBJ_NIPPERHOPPING
+    0x3D, // OBJ_NIPPERFIREBREATHER
+];
+const HAZARD_HOTFOOT: &[u8] = &[
+    0x30, // OBJ_HOTFOOT_SHY
+    0x45, // OBJ_HOTFOOT
+];
+
+/// All hazard categories. THWOMPS and BRO_ENEMIES are reused as-is (the bros
+/// throw continuous projectiles, unavoidable in a forced spot).
+const HAZARD_CATEGORIES: &[&[u8]] = &[
+    THWOMPS,
+    HAZARD_LAVA_LOTUS,
+    HAZARD_PATOOIE,
+    HAZARD_NIPPER,
+    HAZARD_HOTFOOT,
+    BRO_ENEMIES,
+];
+
+/// The hazard category `id` belongs to (its index in [`HAZARD_CATEGORIES`]), or
+/// `None` if `id` isn't a hazard.
+fn hazard_category(id: u8) -> Option<usize> {
+    HAZARD_CATEGORIES.iter().position(|cat| cat.contains(&id))
+}
+
+/// Whether `candidate` must be excluded at a protected spot whose vanilla enemy
+/// was `vanilla`. A hazard is excluded unless it shares the vanilla enemy's
+/// category (the additive-only vanilla exception); a non-hazard is never
+/// excluded.
+fn hazard_excluded(candidate: u8, vanilla: u8) -> bool {
+    match hazard_category(candidate) {
+        None => false,
+        Some(c) => hazard_category(vanilla) != Some(c),
+    }
+}
+
 /// Enemies whose sprites are taller than a standard 1-tile enemy.
 /// When one of these is the replacement in a swap, Y is decremented by 1
 /// to prevent the taller sprite from clipping into the floor.
@@ -496,7 +550,7 @@ const BIG_Q_BLOCKS: &[u8] = &[
 const W7F1_TANOOKI_OFFSET: usize = 0x0C9B7;
 
 use super::enemy_protections::{entry_protection_at, is_injection_blocked, walker_segment_rule_at, EntryProtection, WalkerSegmentRule};
-use super::rom_data::{HAZARD_PROJECTILE_IDS, HB_NEEDS_SHELL_ENEMIES, LEVEL_DATA_REGIONS, STOMPABLE_ENEMIES, TANK_BRO_POOL};
+use super::rom_data::{HB_NEEDS_SHELL_ENEMIES, LEVEL_DATA_REGIONS, STOMPABLE_ENEMIES, TANK_BRO_POOL};
 
 /// Injection candidates for wild_injections mode: special enemies injected after
 /// normal swaps. CHR compatibility checked via `sprite_bank()` at filter time.
@@ -1312,8 +1366,11 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                     }
                     Some(EntryProtection::ExcludeHazards) => {
                         find_class_pool(entry.obj_id, modes, wild_pool).map(|pool| {
+                            // Drop hazards, but keep any of the same category as the
+                            // vanilla enemy here (additive-only: don't strip a
+                            // designed-in hazard, only block introducing a new one).
                             let fp: Vec<u8> = pool.iter().copied()
-                                .filter(|id| !HAZARD_PROJECTILE_IDS.contains(id)).collect();
+                                .filter(|&id| !hazard_excluded(id, entry.obj_id)).collect();
                             let pick = pick_compatible(&fp, committed_slot4, committed_slot5, rng);
                             (pick, Cow::Owned(fp))
                         })
@@ -1350,18 +1407,16 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                 let was_bertha = BERTHA_IDS.contains(&data[entry.data_index]);
                 let cap_full = bertha_count.saturating_sub(was_bertha as u8)
                     >= MAX_BERTHA_PER_SEGMENT;
-                let old_was_piranha = PIRANHAS.contains(&entry.obj_id)
-                    || PIRANHASC.contains(&entry.obj_id);
                 let keep = |id: u8| -> bool {
                     // Big Bertha cap: no new bertha once the segment is full.
                     let over_cap = cap_full && BERTHA_IDS.contains(&id);
                     // Giant red piranha (off-center hitbox) only where one was.
                     let bad_giant = id == GIANT_RED_PIRANHA && entry.obj_id != GIANT_RED_PIRANHA;
-                    // A piranha slot is often the only way through a level
-                    // (forced pipe transit): never a stationary hazard there.
-                    let bad_hazard = old_was_piranha && HAZARD_PROJECTILE_IDS.contains(&id);
-                    !(over_cap || bad_giant || bad_hazard)
+                    !(over_cap || bad_giant)
                 };
+                // (A piranha slot can't become a hazard: the piranha pools are
+                // self-contained and contain none — verified by the harness's
+                // piranha-hazard invariant, so no explicit guard is needed.)
 
                 // Accept the primary pick if it satisfies every constraint;
                 // otherwise re-pick once from the base pool filtered by all of
@@ -2776,9 +2831,9 @@ mod tests {
                         bad("ForceTankBro but result not a tank bro".into());
                     }
                     Some(EntryProtection::ExcludeHazards)
-                        if HAZARD_PROJECTILE_IDS.contains(&new) =>
+                        if hazard_excluded(new, orig) =>
                     {
-                        bad("ExcludeHazards but result is a hazard projectile".into());
+                        bad("ExcludeHazards but introduced a new hazard category".into());
                     }
                     _ => {}
                 }
@@ -2804,11 +2859,13 @@ mod tests {
                     bad("giant-red piranha placed where original wasn't giant-red".into());
                 }
 
-                // --- A piranha slot must never become a stationary hazard ---
+                // --- A piranha slot must never become a hazard (the runtime
+                // guard was removed; this verifies the piranha pools' self-
+                // containment achieves it). ---
                 if (PIRANHAS.contains(&orig) || PIRANHASC.contains(&orig))
-                    && HAZARD_PROJECTILE_IDS.contains(&new)
+                    && hazard_category(new).is_some()
                 {
-                    bad("piranha slot replaced by a stationary hazard".into());
+                    bad("piranha slot replaced by a hazard".into());
                 }
             }
 
