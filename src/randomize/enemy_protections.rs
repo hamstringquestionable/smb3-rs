@@ -80,11 +80,14 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
 
     // --- Individual gameplay-critical entries (walker skips, no whole-level block) ---
     LevelProtection {
-        label: "8-1 (Boo + FlyingRedParatroopa required for progression)",
+        label: "8-1 (FlyingRedParatroopa required for progression; Boo restricted from path-blocking hazards)",
         enemy_ptr: 0xC424,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
-            EntryRule { offset: 0x0C456, rule: EntryProtection::SkipSwap }, // Boo scr=5 col=1
+            // Boo is swap-safe, but a hazard here (Ptooie/nipper/lotus/etc.) would
+            // block a narrow pathway the player must pass through — so swap it to
+            // anything except a hazard rather than skipping it outright.
+            EntryRule { offset: 0x0C456, rule: EntryProtection::ExcludeHazards }, // Boo scr=5 col=1
             EntryRule { offset: 0x0C465, rule: EntryProtection::SkipSwap }, // FlyingRedParatroopa scr=6 col=14
         ],
     },
