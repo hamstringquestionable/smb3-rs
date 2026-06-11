@@ -203,6 +203,37 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
 
+    LevelProtection {
+        label: "4F1 (narrow-hallway fort — a hazard anywhere blocks the only path)",
+        enemy_ptr: 0xD528,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D539, rule: EntryProtection::ExcludeHazards }, // HotFootShy      scr=1 col=0
+            EntryRule { offset: 0x0D53C, rule: EntryProtection::ExcludeHazards }, // HotFootShy      scr=1 col=8
+            EntryRule { offset: 0x0D53F, rule: EntryProtection::ExcludeHazards }, // HotFootShy      scr=2 col=7
+            EntryRule { offset: 0x0D542, rule: EntryProtection::ExcludeHazards }, // ThwompLeftSlide scr=2 col=2
+            EntryRule { offset: 0x0D545, rule: EntryProtection::ExcludeHazards }, // ThwompLeftSlide scr=3 col=0
+            EntryRule { offset: 0x0D548, rule: EntryProtection::ExcludeHazards }, // HotFootShy      scr=3 col=2
+            EntryRule { offset: 0x0D54B, rule: EntryProtection::ExcludeHazards }, // HotFootShy      scr=3 col=10
+            EntryRule { offset: 0x0D54E, rule: EntryProtection::ExcludeHazards }, // ThwompRightSlide scr=4 col=1
+            EntryRule { offset: 0x0D551, rule: EntryProtection::ExcludeHazards }, // HotFootShy      scr=4 col=12
+            EntryRule { offset: 0x0D554, rule: EntryProtection::ExcludeHazards }, // Thwomp          scr=5 col=2
+            EntryRule { offset: 0x0D557, rule: EntryProtection::ExcludeHazards }, // HotFootShy      scr=5 col=3
+            EntryRule { offset: 0x0D55A, rule: EntryProtection::ExcludeHazards }, // ThwompRightSlide scr=5 col=12
+        ],
+    },
+    LevelProtection {
+        label: "4F1 sub-area 1 (narrow-hallway fort)",
+        enemy_ptr: 0xC968,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0C979, rule: EntryProtection::ExcludeHazards }, // DryBones scr=0 col=8
+            EntryRule { offset: 0x0C97C, rule: EntryProtection::ExcludeHazards }, // DryBones scr=1 col=4
+            EntryRule { offset: 0x0C97F, rule: EntryProtection::ExcludeHazards }, // Boo      scr=1 col=13
+            EntryRule { offset: 0x0C982, rule: EntryProtection::ExcludeHazards }, // DryBones scr=2 col=3
+        ],
+    },
+
     // --- Hammer Bro encounters (walker uses HB modes; injection skips) ---
     LevelProtection {
         label: "W1 Hammer Bro",
