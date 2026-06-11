@@ -3005,6 +3005,40 @@ of wild mode settings. Current protected levels:
 - **2-3** (0xD1F0): 2 GreenTroopas at end — shells needed to break bricks
 - **6-5** sub-area (0xC5EB): 1 GreenTroopa — shell needed for progression
 
+### Hazard-Excluded Levels
+
+Some enemies are unfair to *introduce* at a forced or narrow spot — unstompable
+or continuous threats that block a path or can't be avoided. The randomizer
+groups them into a hazard taxonomy (6 categories, 18 IDs) and filters them out of
+the swap pool at curated `ExcludeHazards` offsets:
+
+| Category | IDs |
+|----------|-----|
+| Thwomp | 0x8A–0x8F |
+| Lava Lotus | 0x67 |
+| Patooie (spike-ball plants) | 0x2A, 0x46 |
+| Nipper | 0x33, 0x39, 0x3D |
+| Hot Foot | 0x30, 0x45 |
+| Hammer Bro | 0x81, 0x82, 0x86, 0x87 |
+
+**Additive-only (vanilla exception):** at an `ExcludeHazards` offset a hazard is
+excluded *unless the vanilla enemy there was the same category*, so within-category
+shuffle (e.g. Thwomp variants) still works and a designed-in hazard is never
+stripped — only *introducing* a new hazard category is blocked. See
+`hazard_excluded` / `HAZARD_CATEGORIES` in `enemies.rs`.
+
+Current `ExcludeHazards` levels (`enemy_protections.rs`):
+- **7F2** Boom-Boom sub-area (0xD45C): tight boss arena
+- **7-5** sub-area (0xC171): open field — floor hazards unfair
+- **β4** sub-area (0xC7A7): narrow corridor on the Buzzy Beetle path
+- **4F1** (0xD528) + sub-area 1 (0xC968): narrow-hallway fort — any hazard blocks the only path
+- **8-1** (0xC424): single Boo slot — a hazard there blocks a narrow pathway
+
+Piranha-pipe slots are *not* listed: the piranha pools (`PIRANHAS_WILD` /
+`PIRANHASC_WILD`) are self-contained and hold no hazards, so a pipe lip can't
+become one through the pool. The `enemy_invariant_baseline` test verifies both
+this and the `ExcludeHazards` filter over many seeds.
+
 ### Player Physics
 
 | File Offset | Description |
