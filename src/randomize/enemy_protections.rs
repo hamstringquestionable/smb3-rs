@@ -63,7 +63,9 @@ pub(super) enum EntryProtection {
     ForceStompable,
     /// Walker forces a pick from TANK_BRO_POOL when bros mode is on.
     ForceTankBro,
-    /// Walker excludes HAZARD_PROJECTILE_IDS from the chosen pool.
+    /// Walker excludes hazard-category enemies from the chosen pool (additive-only:
+    /// a hazard of the same category as the vanilla enemy here is kept). See
+    /// `hazard_excluded` in enemies.rs.
     ExcludeHazards,
 }
 
@@ -78,11 +80,14 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
 
     // --- Individual gameplay-critical entries (walker skips, no whole-level block) ---
     LevelProtection {
-        label: "8-1 (Boo + FlyingRedParatroopa required for progression)",
+        label: "8-1 (FlyingRedParatroopa required for progression; Boo restricted from path-blocking hazards)",
         enemy_ptr: 0xC424,
         walker_segment: WalkerSegmentRule::Default,
         entries: &[
-            EntryRule { offset: 0x0C456, rule: EntryProtection::SkipSwap }, // Boo scr=5 col=1
+            // Boo is swap-safe, but a hazard here (Ptooie/nipper/lotus/etc.) would
+            // block a narrow pathway the player must pass through — so swap it to
+            // anything except a hazard rather than skipping it outright.
+            EntryRule { offset: 0x0C456, rule: EntryProtection::ExcludeHazards }, // Boo scr=5 col=1
             EntryRule { offset: 0x0C465, rule: EntryProtection::SkipSwap }, // FlyingRedParatroopa scr=6 col=14
         ],
     },
@@ -195,6 +200,37 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
             EntryRule { offset: 0x0C7CA, rule: EntryProtection::ExcludeHazards }, // BuzzyBeatle scr=2 col=11
             EntryRule { offset: 0x0C7CD, rule: EntryProtection::ExcludeHazards }, // BuzzyBeatle scr=3 col=2
             EntryRule { offset: 0x0C7D0, rule: EntryProtection::ExcludeHazards }, // BuzzyBeatle scr=3 col=4
+        ],
+    },
+
+    LevelProtection {
+        label: "4F1 (narrow-hallway fort — a hazard anywhere blocks the only path)",
+        enemy_ptr: 0xD528,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D539, rule: EntryProtection::ExcludeHazards }, // HotFootShy      scr=1 col=0
+            EntryRule { offset: 0x0D53C, rule: EntryProtection::ExcludeHazards }, // HotFootShy      scr=1 col=8
+            EntryRule { offset: 0x0D53F, rule: EntryProtection::ExcludeHazards }, // HotFootShy      scr=2 col=7
+            EntryRule { offset: 0x0D542, rule: EntryProtection::ExcludeHazards }, // ThwompLeftSlide scr=2 col=2
+            EntryRule { offset: 0x0D545, rule: EntryProtection::ExcludeHazards }, // ThwompLeftSlide scr=3 col=0
+            EntryRule { offset: 0x0D548, rule: EntryProtection::ExcludeHazards }, // HotFootShy      scr=3 col=2
+            EntryRule { offset: 0x0D54B, rule: EntryProtection::ExcludeHazards }, // HotFootShy      scr=3 col=10
+            EntryRule { offset: 0x0D54E, rule: EntryProtection::ExcludeHazards }, // ThwompRightSlide scr=4 col=1
+            EntryRule { offset: 0x0D551, rule: EntryProtection::ExcludeHazards }, // HotFootShy      scr=4 col=12
+            EntryRule { offset: 0x0D554, rule: EntryProtection::ExcludeHazards }, // Thwomp          scr=5 col=2
+            EntryRule { offset: 0x0D557, rule: EntryProtection::ExcludeHazards }, // HotFootShy      scr=5 col=3
+            EntryRule { offset: 0x0D55A, rule: EntryProtection::ExcludeHazards }, // ThwompRightSlide scr=5 col=12
+        ],
+    },
+    LevelProtection {
+        label: "4F1 sub-area 1 (narrow-hallway fort)",
+        enemy_ptr: 0xC968,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0C979, rule: EntryProtection::ExcludeHazards }, // DryBones scr=0 col=8
+            EntryRule { offset: 0x0C97C, rule: EntryProtection::ExcludeHazards }, // DryBones scr=1 col=4
+            EntryRule { offset: 0x0C97F, rule: EntryProtection::ExcludeHazards }, // Boo      scr=1 col=13
+            EntryRule { offset: 0x0C982, rule: EntryProtection::ExcludeHazards }, // DryBones scr=2 col=3
         ],
     },
 

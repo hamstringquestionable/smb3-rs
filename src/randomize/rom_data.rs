@@ -905,24 +905,6 @@ pub(super) fn enemy_ptr_to_file_offset(ep: u16) -> usize {
 pub const ENEMY_DATA_START: usize = 0x0BFD8;
 pub const ENEMY_DATA_END: usize = 0x0E00D;
 
-/// Unstompable hazards that are unfair to introduce into tight sub-areas
-/// (especially boss arenas) or onto a player's walking path. Patooie/Lavalotus
-/// fire continuously with no telegraph; Thwomps drop or slide unpredictably
-/// when added on top of a designed encounter. The registry filters these
-/// out of the chosen swap pool at `EntryProtection::ExcludeHazards`
-/// positions, and they're also excluded from piranha-slot replacements
-/// (a pipe-lip swap to one of these covers or blocks the only way through).
-pub(super) const HAZARD_PROJECTILE_IDS: &[u8] = &[
-    0x2A, // OBJ_PATOOIE (spits spikes upward)
-    0x67, // OBJ_LAVALOTUS (spits fire in arcs)
-    0x8A, // OBJ_THWOMP (standard drop)
-    0x8B, // OBJ_THWOMPLEFTSLIDE
-    0x8C, // OBJ_THWOMPRIGHTSLIDE
-    0x8D, // OBJ_THWOMPUPDOWN
-    0x8E, // OBJ_THWOMPDIAGONALUL
-    0x8F, // OBJ_THWOMPDIAGONALDL
-];
-
 /// Bro enemies that work in tileset 10 (8-Tank sub-area).
 /// Excludes HammerBro (0x81) which fails to spawn in ts=10.
 pub(super) const TANK_BRO_POOL: &[u8] = &[
