@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
@@ -1256,139 +1258,132 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                 }
             }
 
-            // Pass 2: randomize swappable entries respecting pre-commitments
+            // Pass 2: pick a replacement for each swappable entry.
+            //
+            // Every entry funnels through one shape: choose a base pool + a
+            // primary (CHR-aware) pick, then filter through the placement
+            // constraints before committing. Applying the constraints uniformly
+            // — instead of only in the wild-swap branch — is what makes the
+            // bertha cap (and the giant-red / piranha-hazard guards) cover the
+            // Force*/ExcludeHazards paths too.
             for &idx in group {
                 let entry = &entries[idx];
                 let file_offset = ENEMY_DATA_START + entry.data_index;
-
                 let protection = entry_protection_at(file_offset);
+
+                // Big ? blocks and Boom-Booms swap among their own kind and skip
+                // the class machinery entirely.
                 if big_q_only {
-                    if BIG_Q_BLOCKS.contains(&entry.obj_id)
-                        && file_offset != W7F1_TANOOKI_OFFSET
-                    {
+                    if BIG_Q_BLOCKS.contains(&entry.obj_id) && file_offset != W7F1_TANOOKI_OFFSET {
                         data[entry.data_index] = *BIG_Q_BLOCKS.choose(rng).unwrap();
                     }
-                } else if BOOMBOOM_SWAP.contains(&data[entry.data_index]) {
+                    continue;
+                }
+                if BOOMBOOM_SWAP.contains(&data[entry.data_index]) {
                     data[entry.data_index] = *BOOMBOOM_SWAP.choose(rng).unwrap();
-                } else if protection == Some(EntryProtection::SkipSwap) {
+                    continue;
+                }
+                // SkipSwap keeps its enemy but still pins the CHR slot.
+                if protection == Some(EntryProtection::SkipSwap) {
                     commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
-                } else if protection == Some(EntryProtection::ForceShell) && modes.shell != EnemyMode::Off {
-                    if let Some(chosen) = pick_compatible(SHELL_ENEMIES, committed_slot4, committed_slot5, rng) {
-                        swap_enemy(&mut data, entry.data_index, chosen);
-                        commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
+                    continue;
+                }
+
+                // Base pool + primary pick. A pool-replacing protection
+                // (ForceShell/TankBro/Stompable/ExcludeHazards) chooses the pool;
+                // otherwise it's the normal class pool, picked via the
+                // wild/piranha/plain strategy. `None` => no swap for this entry.
+                let picked: Option<(Option<u8>, Cow<[u8]>)> = match protection {
+                    Some(EntryProtection::ForceShell) if modes.shell != EnemyMode::Off => Some((
+                        pick_compatible(SHELL_ENEMIES, committed_slot4, committed_slot5, rng),
+                        Cow::Borrowed(SHELL_ENEMIES),
+                    )),
+                    Some(EntryProtection::ForceTankBro) if modes.bros != EnemyMode::Off => Some((
+                        pick_compatible(TANK_BRO_POOL, committed_slot4, committed_slot5, rng),
+                        Cow::Borrowed(TANK_BRO_POOL),
+                    )),
+                    Some(EntryProtection::ForceStompable) => {
+                        find_class_pool(entry.obj_id, modes, wild_pool).map(|pool| {
+                            let sp: Vec<u8> = pool.iter().copied()
+                                .filter(|id| STOMPABLE_ENEMIES.contains(id)).collect();
+                            let pick = pick_compatible(&sp, committed_slot4, committed_slot5, rng);
+                            (pick, Cow::Owned(sp))
+                        })
                     }
-                } else if protection == Some(EntryProtection::ForceTankBro) && modes.bros != EnemyMode::Off {
-                    if let Some(chosen) = pick_compatible(TANK_BRO_POOL, committed_slot4, committed_slot5, rng) {
-                        swap_enemy(&mut data, entry.data_index, chosen);
-                        commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
+                    Some(EntryProtection::ExcludeHazards) => {
+                        find_class_pool(entry.obj_id, modes, wild_pool).map(|pool| {
+                            let fp: Vec<u8> = pool.iter().copied()
+                                .filter(|id| !HAZARD_PROJECTILE_IDS.contains(id)).collect();
+                            let pick = pick_compatible(&fp, committed_slot4, committed_slot5, rng);
+                            (pick, Cow::Owned(fp))
+                        })
                     }
-                } else if protection == Some(EntryProtection::ForceStompable) {
-                    if let Some(pool) = find_class_pool(entry.obj_id, modes, wild_pool) {
-                        let stompable_pool: Vec<u8> = pool.iter()
-                            .copied()
-                            .filter(|id| STOMPABLE_ENEMIES.contains(id))
-                            .collect();
-                        if let Some(chosen) = pick_compatible(&stompable_pool, committed_slot4, committed_slot5, rng) {
-                            swap_enemy(&mut data, entry.data_index, chosen);
-                            commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
-                        }
-                    }
-                } else if protection == Some(EntryProtection::ExcludeHazards) {
-                    if let Some(pool) = find_class_pool(entry.obj_id, modes, wild_pool) {
-                        let filtered_pool: Vec<u8> = pool.iter()
-                            .copied()
-                            .filter(|id| !HAZARD_PROJECTILE_IDS.contains(id))
-                            .collect();
-                        if let Some(chosen) = pick_compatible(&filtered_pool, committed_slot4, committed_slot5, rng) {
-                            swap_enemy(&mut data, entry.data_index, chosen);
-                            commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
-                        }
-                    }
-                } else if let Some(pool) = find_class_pool(entry.obj_id, modes, wild_pool) {
-                    let chosen = if std::ptr::eq(pool, wild_pool) {
-                        page_buckets.pick(committed_slot4, committed_slot5, rng)
-                    } else if std::ptr::eq(pool, PIRANHAS_WILD) {
-                        // Category-equal: piranha / upward jet / wrench each get a
-                        // uniform turn. Giant red (0x7F) is excluded unless this
-                        // slot already held one (the post-filter covers Shuffle).
-                        let piranha_bucket: &[u8] = if entry.obj_id == GIANT_RED_PIRANHA {
-                            PIRANHAS
+                    _ => find_class_pool(entry.obj_id, modes, wild_pool).map(|pool| {
+                        let pick = if std::ptr::eq(pool, wild_pool) {
+                            page_buckets.pick(committed_slot4, committed_slot5, rng)
+                        } else if std::ptr::eq(pool, PIRANHAS_WILD) {
+                            // Category-equal: piranha / upward jet / wrench each
+                            // get a uniform turn. Giant red (0x7F) only when this
+                            // slot already held one (keep filter covers the rest).
+                            let bucket: &[u8] = if entry.obj_id == GIANT_RED_PIRANHA {
+                                PIRANHAS
+                            } else {
+                                PIRANHAS_NO_RED
+                            };
+                            pick_bucket_first(&[bucket, BUCKET_UP_JET, BUCKET_WRENCH],
+                                committed_slot4, committed_slot5, rng)
+                        } else if std::ptr::eq(pool, PIRANHASC_WILD) {
+                            pick_bucket_first(&[PIRANHASC, BUCKET_DOWN_JET],
+                                committed_slot4, committed_slot5, rng)
                         } else {
-                            PIRANHAS_NO_RED
+                            pick_compatible(pool, committed_slot4, committed_slot5, rng)
                         };
-                        pick_bucket_first(
-                            &[piranha_bucket, BUCKET_UP_JET, BUCKET_WRENCH],
-                            committed_slot4, committed_slot5, rng,
-                        )
-                    } else if std::ptr::eq(pool, PIRANHASC_WILD) {
-                        // Category-equal: ceiling piranha / downward jet.
-                        pick_bucket_first(
-                            &[PIRANHASC, BUCKET_DOWN_JET],
-                            committed_slot4, committed_slot5, rng,
-                        )
-                    } else {
-                        pick_compatible(pool, committed_slot4, committed_slot5, rng)
-                    };
-                    // Enforce Big Bertha cap: if the pick would push the segment
-                    // over MAX_BERTHA_PER_SEGMENT bertha-class fish, re-pick from
-                    // the same pool with the bertha IDs filtered out.
-                    let was_bertha = BERTHA_IDS.contains(&data[entry.data_index]);
-                    let cap_full = bertha_count.saturating_sub(was_bertha as u8)
-                        >= MAX_BERTHA_PER_SEGMENT;
-                    let chosen = if matches!(chosen, Some(id) if BERTHA_IDS.contains(&id)) && cap_full {
-                        let filtered: Vec<u8> = pool.iter()
-                            .copied()
-                            .filter(|id| !BERTHA_IDS.contains(id))
-                            .collect();
+                        (pick, Cow::Borrowed(pool))
+                    }),
+                };
+                let Some((primary, base_pool)) = picked else {
+                    continue; // protection mode off, or not a known class: no swap
+                };
+
+                // Placement constraints, applied to every pick. `keep(id)` is
+                // true when `id` is allowed in this slot.
+                let was_bertha = BERTHA_IDS.contains(&data[entry.data_index]);
+                let cap_full = bertha_count.saturating_sub(was_bertha as u8)
+                    >= MAX_BERTHA_PER_SEGMENT;
+                let old_was_piranha = PIRANHAS.contains(&entry.obj_id)
+                    || PIRANHASC.contains(&entry.obj_id);
+                let keep = |id: u8| -> bool {
+                    // Big Bertha cap: no new bertha once the segment is full.
+                    let over_cap = cap_full && BERTHA_IDS.contains(&id);
+                    // Giant red piranha (off-center hitbox) only where one was.
+                    let bad_giant = id == GIANT_RED_PIRANHA && entry.obj_id != GIANT_RED_PIRANHA;
+                    // A piranha slot is often the only way through a level
+                    // (forced pipe transit): never a stationary hazard there.
+                    let bad_hazard = old_was_piranha && HAZARD_PROJECTILE_IDS.contains(&id);
+                    !(over_cap || bad_giant || bad_hazard)
+                };
+
+                // Accept the primary pick if it satisfies every constraint;
+                // otherwise re-pick once from the base pool filtered by all of
+                // them, so the constraints compose instead of undoing each other.
+                let chosen = match primary {
+                    Some(id) if keep(id) => Some(id),
+                    _ => {
+                        let filtered: Vec<u8> =
+                            base_pool.iter().copied().filter(|&id| keep(id)).collect();
                         pick_compatible(&filtered, committed_slot4, committed_slot5, rng)
-                    } else {
-                        chosen
-                    };
-                    // A piranha slot is often a pipe that's the only way
-                    // through the level. Never replace one with a stationary
-                    // hazard (Ptooie / Lava Lotus / Thwomp) — Ptooie/Lotus
-                    // cover the pipe lip with continuous fire; a Thwomp drops
-                    // on the pipe entry/exit. Neither is fair at a forced
-                    // transit point, and none can be stomped.
-                    let old_was_piranha = PIRANHAS.contains(&entry.obj_id)
-                        || PIRANHASC.contains(&entry.obj_id);
-                    let chosen = if old_was_piranha
-                        && chosen.is_some_and(|id| HAZARD_PROJECTILE_IDS.contains(&id))
-                    {
-                        let filtered: Vec<u8> = pool.iter()
-                            .copied()
-                            .filter(|id| !HAZARD_PROJECTILE_IDS.contains(id))
-                            .collect();
-                        pick_compatible(&filtered, committed_slot4, committed_slot5, rng)
-                    } else {
-                        chosen
-                    };
-                    // Giant red piranha (0x7F) may only land where a 0x7F
-                    // already was — its off-center hitbox is unfair in any
-                    // slot built for a regular pipe. If the original slot
-                    // wasn't 0x7F, re-pick with 0x7F filtered out. (No-op for
-                    // non-piranha entries, whose pools never contain 0x7F.)
-                    let chosen = if entry.obj_id != GIANT_RED_PIRANHA
-                        && chosen == Some(GIANT_RED_PIRANHA)
-                    {
-                        let filtered: Vec<u8> = pool.iter()
-                            .copied()
-                            .filter(|&id| id != GIANT_RED_PIRANHA)
-                            .collect();
-                        pick_compatible(&filtered, committed_slot4, committed_slot5, rng)
-                    } else {
-                        chosen
-                    };
-                    if let Some(chosen) = chosen {
-                        let chosen_is_bertha = BERTHA_IDS.contains(&chosen);
-                        if was_bertha && !chosen_is_bertha {
-                            bertha_count = bertha_count.saturating_sub(1);
-                        } else if !was_bertha && chosen_is_bertha {
-                            bertha_count = bertha_count.saturating_add(1);
-                        }
-                        swap_enemy(&mut data, entry.data_index, chosen);
-                        commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                     }
+                };
+
+                if let Some(chosen) = chosen {
+                    let chosen_is_bertha = BERTHA_IDS.contains(&chosen);
+                    if was_bertha && !chosen_is_bertha {
+                        bertha_count = bertha_count.saturating_sub(1);
+                    } else if !was_bertha && chosen_is_bertha {
+                        bertha_count = bertha_count.saturating_add(1);
+                    }
+                    swap_enemy(&mut data, entry.data_index, chosen);
+                    commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
                 }
             }
 
@@ -2594,12 +2589,9 @@ mod tests {
         berthas_placed: u64,
         giant_reds_placed: u64,
         /// Segment-instances (seed × segment) where the bertha cap was exceeded.
-        /// KNOWN pre-existing bug: the ExcludeHazards / Force* protection branches
-        /// place enemies without the MAX_BERTHA_PER_SEGMENT cap (only the main
-        /// wild-swap branch enforces it), so a segment of protected entries can
-        /// roll >2 berthas. The predicate-pipeline refactor applies the cap as a
-        /// predicate to every pick and should drive this to 0 — at which point
-        /// promote it from a reported stat to a hard assertion.
+        /// Hard invariant: the predicate pipeline applies MAX_BERTHA_PER_SEGMENT
+        /// to every pick (including the Force*/ExcludeHazards paths that used to
+        /// bypass it), so this must stay 0 — any nonzero count is a violation.
         bertha_cap_exceeded: u64,
         max_berthas_in_seg: u8,
         /// new_id -> times placed (only counts actual swaps)
@@ -2820,15 +2812,17 @@ mod tests {
                 }
             }
 
-            // Bertha cap is a KNOWN-buggy invariant today (protection branches
-            // bypass it — see PlacementStats::bertha_cap_exceeded). Record it as
-            // a stat rather than a hard violation so the baseline stays green on
-            // the invariants that DO hold; promote to a hard failure once the
-            // predicate refactor fixes the bypass.
-            let _ = (seed, seg_rule, hb_batch);
+            // Bertha cap: hard invariant now that the predicate pipeline applies
+            // it to every pick (it used to be bypassed by the Force*/ExcludeHazards
+            // branches — see PlacementStats::bertha_cap_exceeded).
             stats.max_berthas_in_seg = stats.max_berthas_in_seg.max(bertha_in_seg);
             if bertha_in_seg > MAX_BERTHA_PER_SEGMENT {
                 stats.bertha_cap_exceeded += 1;
+                out.push(format!(
+                    "seed {seed} @ seg {:#07X}: {bertha_in_seg} berthas, cap is {} (rule={seg_rule:?}, hb_batch={hb_batch})",
+                    ENEMY_DATA_START + b.file_offset,
+                    MAX_BERTHA_PER_SEGMENT,
+                ));
             }
         }
         stats.seeds += 1;
@@ -2862,8 +2856,7 @@ mod tests {
             stats.giant_reds_placed / stats.seeds.max(1),
         );
         eprintln!(
-            "bertha-cap exceeded in {} segment-instances (max {} berthas/seg) \
-             [KNOWN bug: ExcludeHazards/Force* branches bypass the cap]",
+            "bertha-cap exceeded in {} segment-instances (max {} berthas/seg)",
             stats.bertha_cap_exceeded, stats.max_berthas_in_seg,
         );
         eprintln!("placement histogram (id: total placements over all seeds):");
@@ -2871,37 +2864,6 @@ mod tests {
             eprintln!("  0x{id:02X}: {n}");
         }
         violations
-    }
-
-    /// Reproduces the bertha-cap bypass: segment 0x0C181 is a run of
-    /// ExcludeHazards-protected paratroopas/bob-ombs, whose protection branch
-    /// places enemies without the bertha cap, so >2 berthas accumulate.
-    #[test]
-    #[ignore = "diagnostic dump, run explicitly"]
-    fn dump_bertha_segment() {
-        let Some(base) = load_reference_rom() else { return; };
-        let vanilla = base.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START).to_vec();
-        let opts = preset_recommended();
-        let modes = ClassModes::from_options(&opts);
-        let wild = modes.build_wild_pool();
-        let injectable = injectable_offsets(&base, &vanilla, &modes, &wild);
-
-        let seg_off = 0x0C181usize; // file offset of page byte
-        for seed in [69u64, 97, 117] {
-            let mut rom = base.clone();
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom, &mut rng, &opts);
-            eprintln!("--- seed {seed} segment {seg_off:#07X} ---");
-            let mut i = seg_off + 1;
-            while rom.read_byte(i) != 0xFF {
-                let new = rom.read_byte(i);
-                let orig = vanilla[i - ENEMY_DATA_START];
-                let bert = if BERTHA_IDS.contains(&new) { " <-- BERTHA" } else { "" };
-                let inj = if injectable.contains(&(i - ENEMY_DATA_START)) { " [injectable]" } else { "" };
-                eprintln!("  {i:#07X}: 0x{orig:02X}->0x{new:02X}{bert}{inj}");
-                i += 3;
-            }
-        }
     }
 
     #[test]
