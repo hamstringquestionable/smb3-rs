@@ -226,6 +226,28 @@ mod tests {
     }
 
     #[test]
+    fn test_regions_stay_within_one_prg_bank() {
+        // Level data is addressed CPU $A000-$BFFF within a single switched
+        // PRG bank, so no region may cross a 8KB bank boundary. A region
+        // whose `end` overruns its bank walks into the next bank's metatile
+        // quadrant table and the randomizer corrupts metatile definitions
+        // (stray tiles in desert levels and HB battle scenes — issue #34).
+        const INES_HEADER: usize = 0x10;
+        const BANK_SIZE: usize = 0x2000;
+        for region in LEVEL_DATA_REGIONS {
+            let start_bank = (region.start - INES_HEADER) / BANK_SIZE;
+            let end_bank = (region.end - 1 - INES_HEADER) / BANK_SIZE;
+            assert_eq!(
+                start_bank, end_bank,
+                "region 0x{:05X}-0x{:05X} crosses PRG bank boundary 0x{:05X}",
+                region.start,
+                region.end,
+                (start_bank + 1) * BANK_SIZE + INES_HEADER
+            );
+        }
+    }
+
+    #[test]
     fn test_protected_offset_not_changed() {
         let mut data = vec![0u8; 393232];
         data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
