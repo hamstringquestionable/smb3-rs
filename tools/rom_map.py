@@ -195,7 +195,9 @@ LEVEL_DATA_REGIONS = [
         "name": "Cloudy/Giant/Plant (TS5/11/13)",
         "tileset_ids": [5, 11, 13],
         "start": 0x26A6F,
-        "end": 0x28C05,
+        # 0x2800A, NOT 0x28C05: bank ends at 0x28010 and the next bank opens
+        # with the desert metatile quadrant table (see rom_data.rs).
+        "end": 0x2800A,
         "extra_byte_dispatches": {13, 35, 36, 37, 38, 39, 40, 41, 42, 45, 46, 48, 51},
         "randomize_note_wood": True,
     },

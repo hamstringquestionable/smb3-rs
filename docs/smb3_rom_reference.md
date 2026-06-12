@@ -1381,6 +1381,22 @@ stride (every 8th sprite slot) to avoid the 8-sprites-per-scanline hardware limi
 | 0x17 | Airship | 0x34 | 0x6A |
 | 0x1A | HUD | 0x5C | 0x5E |
 
+### Bank Layout Pitfall: Level Data vs. Metatile Tables
+
+Each $A000 level-data bank is 8KB (file offset = 0x10 + bank × 0x2000) and the
+level-data walk must never cross a bank boundary. Concretely: the
+Cloudy/Giant/Plant (TS5/11/13) bank (PRG 19, file 0x26010–0x28010) ends with an
+empty stub level at 0x28000–0x28009, so its level data ends at **0x2800A**. The
+next bank (PRG 20, the Desert/TS9 bank) opens with the **desert metatile
+quadrant table at 0x28010–0x28410** (UL/LL/UR/LR × 256, same layout as the
+world-map table at 0x18010), followed by further tileset tables/code until the
+first desert level header at 0x28F36. A region scan that overruns 0x28010
+misparses these tables as level headers/commands and "finds" phantom powerup
+blocks inside metatile definitions — writing to them corrupts desert metatile
+quadrants (e.g. metatile 0x8F LL → stray palm-leaf-tip CHR tile 0x0B next to
+every battle-scene palm crown, and junk tiles near 2-1's pipes). This was the
+root cause of issue #34.
+
 ### Tileset-to-PRG Page Mapping
 
 Maps 19 tilesets (0–18) to their ROM page banks:

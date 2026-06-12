@@ -314,7 +314,14 @@ pub(super) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
         randomize_note_wood: true,
     },
     LevelDataRegion { // Cloudy / Giant / Plant (TS5/11/13)
-        start: 0x26A6F, end: 0x28C05,
+        // End 0x2800A, NOT 0x28C05: this region's PRG bank ($A000 = file
+        // 0x26010) ends at 0x28010, and the next bank opens with the desert
+        // metatile quadrant table. Walking past the bank boundary misparses
+        // that table as level data and the powerup pass then writes item IDs
+        // into desert metatile quadrants (stray palm-leaf tiles in desert
+        // levels and HB battle scenes). Real data ends with an empty stub
+        // level at 0x28000-0x28009; 0x2800A is one past its terminator.
+        start: 0x26A6F, end: 0x2800A,
         extra_byte_dispatches: &[
             13,                                // DoubleCloud
             35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
