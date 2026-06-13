@@ -277,6 +277,23 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
     // vanilla copies that follow then propagate the corrected X/XHi into
     // Map_Previous_X/XHi, so the continue lands on the real start tile. Y is
     // World_Num (re-loaded in the helper); X is Player_Current (live at the site).
+    //
+    // It is NOT enough to fix only the per-player scroll backup ($0722/$0724,X).
+    // The vanilla twirl-to-start assumes the start is at page-0 hard-left and
+    // flies the camera there (GameOver_TwirlFromAfar scrolls Horz_Scroll down to
+    // 0). So at the twirl landing the live scroll ZP `Horz_Scroll`/`Horz_Scroll_Hi`
+    // ($FD/$12) still point at page 0, regardless of where the swapped start
+    // actually is. The game-over continue path then copies the live scroll into
+    // Map_Prev_XOff/XHi (PRG030_92B6) and re-enters the world (PRG030_8634),
+    // which reloads Horz_Scroll FROM Map_Prev and does a full nametable redraw —
+    // so a stale page-0 live scroll wins, drawing the map on page 0 while Mario
+    // is placed on the real (≥1) start page → off-map softlock whenever the
+    // Game Over happened on a different overworld page than the start tile.
+    // Fix: also stamp the live scroll ZP `Horz_Scroll` ($FD) / `Horz_Scroll_Hi`
+    // ($12) here (global, not per-player) so the subsequent re-enter redraws the
+    // nametable on the start page. The SCRL value is 0 and the SCRH value is the
+    // start screen index, identical to the Map_Init seeds; for unswapped /
+    // page-0 worlds these stores are no-ops.
     rom.set_tag("start_airship_swap/gameover_finalize");
     let finalize_helper = [
         0x9D, 0x88, 0x79,                                            // STA $7988,X (displaced Map_Prev_XHi2,X, A=0)
@@ -287,8 +304,10 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
         0x95, 0x77,                                                  // STA World_Map_XHi,X ($77,X)
         0xB9, (scrl_tbl_cpu & 0xFF) as u8, (scrl_tbl_cpu >> 8) as u8,// LDA FS_SAS_SCRL_TABLE,Y
         0x9D, 0x22, 0x07,                                            // STA Map_Prev_XOff,X ($0722)
+        0x85, 0xFD,                                                  // STA Horz_Scroll     ($FD, live scroll low)
         0xB9, (scrh_tbl_cpu & 0xFF) as u8, (scrh_tbl_cpu >> 8) as u8,// LDA FS_SAS_SCRH_TABLE,Y
         0x9D, 0x24, 0x07,                                            // STA Map_Prev_XHi,X  ($0724)
+        0x85, 0x12,                                                  // STA Horz_Scroll_Hi  ($12, live scroll page)
         0x60,                                                        // RTS
     ];
     rom.write_range(FS_SAS_GAMEOVER_FINALIZE, &finalize_helper);
