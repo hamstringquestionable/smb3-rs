@@ -69,6 +69,45 @@ The builder used `walk_map` for its connectivity checks (lock safety, pipe place
 
 After this change the SAS 1000-seed sweep drops from 63 unreachable W3 cases to 0. The W5 carve-out and other SAS mechanics are unaffected — they don't interact with canoes.
 
+### Game Over → Continue (twirl-to-start) — the live-scroll trap
+
+Dying with lives left is self-correcting and page-agnostic: the per-frame map
+loop `PRG030_8775` continuously syncs the live scroll `Horz_Scroll`/`Horz_Scroll_Hi`
+(`$FD`/`$12`) into `Map_Prev_XOff`/`XHi` (`$0722`/`$0724`) and `World_Map_*` into
+`Map_Entered_*`, and every level entry snapshots those into the skid-back
+backups. `MO_SkidToPrev` restores from the backups, so the respawn always tracks
+live state. SAS needs to do nothing extra here.
+
+**Game Over is different.** The vanilla continue animation assumes the start is at
+page-0 hard-left:
+
+- `GameOver_Timeout` (PRG010, state 3) picks `GameOver_TwirlFromAfar` (state 5)
+  vs `GameOver_TwirlToStart` (state 4) by testing `Horz_Scroll`/`Horz_Scroll_Hi`.
+  Any nonzero (i.e. the camera is scrolled off page-0-left) → TwirlFromAfar.
+- `GameOver_TwirlFromAfar` flies Mario left, **scrolling `Horz_Scroll` down to 0**,
+  then zeroes `Map_Prev_XOff`/`XHi`/`Map_Entered_XHi`.
+- `AlignToStartY` (6) / `ReturnToStartX` (7) then operate entirely within page 0
+  (`World_Map_X` 240 → `$20`) before landing at `PRG011_A698` (state 8).
+
+So at the twirl landing the live scroll is **page 0**, no matter where the swapped
+start actually is. The SAS finalize helper is hooked into that landing
+(`STA Map_Prev_XHi2,X` at `$A6AA`) and stamps the per-player position
+(`World_Map_X/XHi`) and scroll backup (`$0722`/`$0724`) to the real start. But on
+continue, `PRG030_92B6` copies the **live** `Horz_Scroll`/`Horz_Scroll_Hi` into
+`Map_Prev_XOff`/`XHi`, and the world re-enter at `PRG030_8634` reloads
+`Horz_Scroll` *from* `Map_Prev` and does a full nametable redraw. A stale page-0
+live scroll therefore wins: the map redraws on page 0 while Mario is placed on the
+real (≥1) start page → **off-map softlock whenever the Game Over happened on a
+different overworld page than the start tile.** (If the Game Over happened on the
+start's own page, live scroll already matched, which is why it went unnoticed at
+first.)
+
+**Fix:** the finalize helper also stamps the live scroll ZP `Horz_Scroll` (`$FD`)
+= 0 and `Horz_Scroll_Hi` (`$12`) = start screen index (global, not per-player).
+The subsequent `92B6`/`8634` re-enter then carries the start page through and
+redraws the nametable there. Values are identical to the Map_Init seeds, so
+unswapped / page-0 worlds get no-op stores.
+
 ## Verification tooling
 
 The W3 reachability bug was caught by `test_required_progression` in `src/randomize/overworld_build.rs`, a Dijkstra-based must-clear analyzer. Useful flow when changing anything SAS-related:

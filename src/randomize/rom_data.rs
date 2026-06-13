@@ -45,7 +45,7 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x15554, 80, "fx_screen_check: cross-screen lock patch (Fred's algorithm verbatim)"),
     (0x15DF0, 35, "canoe_fix: death respawn position save"),
     // PRG011 (file 0x16010, CPU $A000–$BFFF during map)
-    (0x17C87, 29, "start_airship_swap: game-over twirl finalize helper"),
+    (0x17C87, 33, "start_airship_swap: game-over twirl finalize helper"),
     (0x17D00, 66, "canoe_fix: backup/restore subroutines (CANOE_BACKUP_ROUTINE)"),
     (0x17D42, 8, "bros_no_hands: hand-trap tile bypass for overworld bro movement gate"),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
@@ -89,7 +89,7 @@ pub(super) const FS_SAS_XHI_HELPER: usize        = FS_SAS_BLOCK + 42;  // 22 byt
 // — that PRG031 run has no room for 29 more bytes). PRG011 is the hook's own bank,
 // so the JSR is bank-local; the helper still reads the FS_SAS_* tables in
 // always-resident PRG031.
-pub(super) const FS_SAS_GAMEOVER_FINALIZE: usize = 0x17C87;  // PRG011, 29 bytes — stamps World_Map_X/XHi + scroll at twirl finalize (clean gap before FS_CANOE_BACKUP)
+pub(super) const FS_SAS_GAMEOVER_FINALIZE: usize = 0x17C87;  // PRG011, 33 bytes — stamps World_Map_X/XHi + scroll backup + live Horz_Scroll/Hi at twirl finalize (clean gap before FS_CANOE_BACKUP)
 
 // Vanilla 8-byte Map_Y_Starts table (per-world Mario spawn Y-pixel). Lives in
 // PRG030's world-enter routine. The start_airship_swap module rewrites this
