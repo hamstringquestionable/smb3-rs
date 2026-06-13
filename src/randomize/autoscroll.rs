@@ -33,7 +33,7 @@ pub const SPOILED_SEGMENT_RANGES: &[Range<usize>] = &[
 /// Disable all autoscrollers except 5-9 (parabeetle ride).
 ///
 /// This applies the full set of patches derived from the reference
-/// "Super_Mario_Bros_3_NoAutoscrolls(Except 5-9).ips" patch. The reference
+/// "patches/Super_Mario_Bros_3_NoAutoscrolls(Except 5-9).ips" patch. The reference
 /// patch does far more than simply removing D3 autoscroll objects — it:
 ///
 /// 1. Removes D3 autoscroll controller objects from enemy data

@@ -776,7 +776,7 @@ def resort_pointer_table(rom, world_idx):
 # ---------------------------------------------------------------------------
 
 def main():
-    rom_path = "Super Mario Bros. 3 (USA) (Rev 1).nes"
+    rom_path = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
     output_path = None
     world_filter = None
     seed = 42

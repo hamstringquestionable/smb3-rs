@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 const TOAD_IPS_PATH: &str = "web/visual-patches/super-toad-josuecr4ft.ips";
-const USA_ROM_PATH: &str = "Super Mario Bros. 3 (USA) (Rev 1).nes";
+const USA_ROM_PATH: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";
 
 fn read_optional(path: &str) -> Option<Vec<u8>> {
     if Path::new(path).exists() { Some(fs::read(path).unwrap()) } else { None }

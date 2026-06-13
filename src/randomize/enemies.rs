@@ -2602,7 +2602,7 @@ mod tests {
     // Run with: cargo test enemy_invariant_baseline -- --nocapture
     // ===================================================================
 
-    const REFERENCE_ROM_PATH: &str = "Super Mario Bros. 3 (USA) (Rev 1).nes";
+    const REFERENCE_ROM_PATH: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";
 
     fn load_reference_rom() -> Option<Rom> {
         let data = std::fs::read(REFERENCE_ROM_PATH).ok()?;

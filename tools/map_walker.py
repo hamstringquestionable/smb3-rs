@@ -552,7 +552,7 @@ def render_walk(grid, nodes, edges, path_tiles, chokepoints, pipe_pairs,
 # ---------------------------------------------------------------------------
 
 def main():
-    rom_path = "Super Mario Bros. 3 (USA) (Rev 1).nes"
+    rom_path = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
     world_filter = None
     show_progression = False
 

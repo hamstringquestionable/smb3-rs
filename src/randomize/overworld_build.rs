@@ -2331,7 +2331,7 @@ mod tests {
     use rand_chacha::ChaCha8Rng;
 
     fn load_rom() -> Option<Rom> {
-        let data = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
+        let data = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
         Rom::from_bytes(&data).ok()
     }
 
@@ -3981,7 +3981,7 @@ mod tests {
     fn test_dump_required_progression() {
         use crate::Options;
 
-        let rom_bytes = match std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes") {
+        let rom_bytes = match std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") {
             Ok(b) => b,
             Err(_) => {
                 eprintln!("ROM not found, skipping");

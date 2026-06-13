@@ -14,14 +14,14 @@ safe.
 
 For convenience the tool also:
 - Applies the practice ROM's open-movement patches (PRG010-011 records of
-  smb3practice_SE.ips) so Mario can walk over level/lock/fortress tiles.
+  patches/smb3practice_SE.ips) so Mario can walk over level/lock/fortress tiles.
 - Injects 3 warp whistles + 5 lives into the starting inventory via the same
   PRG031 trampoline used by src/randomize/qol.rs::write_starting_items.
 
 Usage:
     python3 tools/canary_chr.py [source.nes [output.nes]]
 
-Defaults: source = "Super Mario Bros. 3 (USA) (Rev 1).nes", output = canary.nes
+Defaults: source = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes", output = canary.nes
 """
 
 import sys
@@ -151,7 +151,7 @@ def inject_starting_items(rom: bytearray, lives: int = 5, items=(0x0C, 0x0C, 0x0
 
 def main():
     args = sys.argv[1:]
-    src = Path(args[0]) if len(args) >= 1 else PROJECT_ROOT / "Super Mario Bros. 3 (USA) (Rev 1).nes"
+    src = Path(args[0]) if len(args) >= 1 else PROJECT_ROOT / "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
     dst = Path(args[1]) if len(args) >= 2 else PROJECT_ROOT / "canary.nes"
     if len(args) > 2:
         sys.exit("Usage: canary_chr.py [source.nes [output.nes]]")
@@ -161,8 +161,8 @@ def main():
     if len(rom) != 393232:
         print(f"WARNING: source size {len(rom)} != expected 393232 bytes")
 
-    print("Applying open-movement patches (PRG010-011 of smb3practice_SE.ips)...")
-    n = apply_ips_subset(rom, PROJECT_ROOT / "smb3practice_SE.ips", 0x14010, 0x18010)
+    print("Applying open-movement patches (PRG010-011 of patches/smb3practice_SE.ips)...")
+    n = apply_ips_subset(rom, PROJECT_ROOT / "patches/smb3practice_SE.ips", 0x14010, 0x18010)
     print(f"  {n} records applied")
 
     print("Injecting 5 lives + 3 warp whistles into starting inventory...")

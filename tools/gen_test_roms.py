@@ -2,7 +2,7 @@
 """Generate 8 test ROMs with every level replaced by 7-F1, one per starting world."""
 import os
 
-rom_path = "Super Mario Bros. 3 (USA) (Rev 1).nes"
+rom_path = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
 rom = bytearray(open(rom_path, "rb").read())
 
 F1_TILESET = 2

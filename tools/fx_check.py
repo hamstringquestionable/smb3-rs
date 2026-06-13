@@ -7,7 +7,7 @@ lock shuffle, and related overworld mutations leave the FX system consistent.
 
 Usage:
     python3 tools/fx_check.py <rom_file>
-    python3 tools/fx_check.py "Super Mario Bros. 3 (USA) (Rev 1).nes"
+    python3 tools/fx_check.py "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
 
 Output per world:
   - Fortress entries (tileset 2 from pointer table) with grid positions and map tiles

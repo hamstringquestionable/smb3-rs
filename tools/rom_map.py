@@ -22,7 +22,7 @@ Modes:
   python3 tools/rom_map.py [rom] --tile 45          # CHR pattern, behavior, palette
   python3 tools/rom_map.py [rom] --check-dispatches # validate 4-byte dispatch tables
 
-Default ROM: "Super Mario Bros. 3 (USA) (Rev 1).nes"
+Default ROM: "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
 """
 
 import json
@@ -2157,7 +2157,7 @@ def _render_walk_grid(grid, nodes, path_tiles, chokepoints,
 # --------------------------------------------------------------------------
 
 def main():
-    rom_path = "Super Mario Bros. 3 (USA) (Rev 1).nes"
+    rom_path = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
     output_path = "tools/rom_map.json"
     mode = "json"  # default: generate JSON
     world_filter = None

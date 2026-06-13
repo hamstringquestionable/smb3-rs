@@ -595,7 +595,7 @@ mod tests {
     use crate::randomize::rom_data::MAP_TILE_GRIDS;
 
     fn load_rom() -> Option<Rom> {
-        let data = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
+        let data = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
         Rom::from_bytes(&data).ok()
     }
 

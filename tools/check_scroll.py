@@ -1,4 +1,4 @@
-with open('Super Mario Bros. 3 (USA) (Rev 1).nes', 'rb') as f:
+with open('roms/Super Mario Bros. 3 (USA) (Rev 1).nes', 'rb') as f:
     rom = f.read()
 
 PAGE_A000 = [11, 15, 21, 16, 17, 19, 18, 18, 18, 20, 23, 19, 17, 19, 13, 26, 26, 26, 9]

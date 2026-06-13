@@ -46,7 +46,7 @@ mod tests {
 
     #[test]
     fn marks_one_pipe_per_world_w2_w8() {
-        let Ok(bytes) = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
             return; // Base ROM not present (e.g. CI) — skip.
         };
         let rom = Rom::from_bytes(&bytes).unwrap();

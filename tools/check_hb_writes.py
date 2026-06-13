@@ -6,7 +6,7 @@
 import re
 import json
 
-VANILLA = "/home/michio/git/SMB3R/Super Mario Bros. 3 (USA) (Rev 1).nes"
+VANILLA = "/home/michio/git/SMB3R/roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
 RANDO = "/tmp/smb3rs_repro.nes"
 
 

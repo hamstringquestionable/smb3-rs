@@ -16,8 +16,8 @@ from pathlib import Path
 from collections import defaultdict
 
 ROOT = Path(__file__).resolve().parent.parent
-ROM_PATH = ROOT / "Super Mario Bros. 3 (USA) (Rev 1).nes"
-IPS_PATH = ROOT / "Super Mario Bros. 3 Recolored v1.0.ips"
+ROM_PATH = ROOT / "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
+IPS_PATH = ROOT / "patches/Super Mario Bros. 3 Recolored v1.0.ips"
 
 # Regions with confirmed purpose from emulator probes.
 # (label, start, end, notes)

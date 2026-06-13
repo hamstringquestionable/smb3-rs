@@ -6,7 +6,7 @@ across W1's first ~9 tiles, see every tileset under the same probe.
 Combines:
   - tools/gen_palette_rainbow.py (rainbow paint of a region)
   - the per-tileset rep map (one early level per tileset, taken from rom_map.json)
-  - smb3practice_SE.ips (open movement + warp whistles + level select)
+  - patches/smb3practice_SE.ips (open movement + warp whistles + level select)
 
 Usage:
   python3 tools/gen_tileset_sampler.py --start 0x37400 --end 0x37600 --bands 8
@@ -19,8 +19,8 @@ import argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-ROM_PATH = ROOT / "Super Mario Bros. 3 (USA) (Rev 1).nes"
-PRACTICE_IPS = ROOT / "smb3practice_SE.ips"
+ROM_PATH = ROOT / "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
+PRACTICE_IPS = ROOT / "patches/smb3practice_SE.ips"
 OUT_DIR = ROOT / "test_roms"
 OUT_DIR.mkdir(exist_ok=True)
 
