@@ -9,7 +9,7 @@ Any byte modified that DOESN'T match these criteria = walker desync (bug).
 
 import json
 
-VANILLA = "/home/michio/git/SMB3R/Super Mario Bros. 3 (USA) (Rev 1).nes"
+VANILLA = "/home/michio/git/SMB3R/roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
 RANDO = "/home/michio/git/SMB3R/smb3-rs_2889718939757641.nes"
 
 QBLOCK = {0x00, 0x01, 0x02}

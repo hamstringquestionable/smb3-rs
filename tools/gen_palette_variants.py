@@ -20,8 +20,8 @@ Usage:
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-ROM = ROOT / "Super Mario Bros. 3 (USA) (Rev 1).nes"
-IPS = ROOT / "Super Mario Bros. 3 Recolored v1.0.ips"
+ROM = ROOT / "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
+IPS = ROOT / "patches/Super Mario Bros. 3 Recolored v1.0.ips"
 OUT = ROOT / "src/randomize/palette_variants.rs"
 
 # (rust_const_name, label, start, end, description)

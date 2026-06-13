@@ -219,7 +219,7 @@ def collect_shuffleable(rom: bytes, world_idx: int, rowtype_offset: int, entry_c
 def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_dir = os.path.dirname(script_dir)
-    rom_path = os.path.join(project_dir, "Super Mario Bros. 3 (USA) (Rev 1).nes")
+    rom_path = os.path.join(project_dir, "roms/Super Mario Bros. 3 (USA) (Rev 1).nes")
     map_path = os.path.join(script_dir, "rom_map.json")
 
     if not os.path.exists(rom_path):

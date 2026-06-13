@@ -1135,7 +1135,7 @@ mod tests {
     /// silently skips) when the ROM isn't in the project root, mirroring
     /// `map_walker::tests::test_render_randomized_seed`.
     fn make_test_rom() -> Option<Rom> {
-        let bytes = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
+        let bytes = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
         Rom::from_bytes(&bytes).ok()
     }
 

@@ -27,8 +27,8 @@ import argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-ROM_PATH = ROOT / "Super Mario Bros. 3 (USA) (Rev 1).nes"
-PRACTICE_IPS = ROOT / "smb3practice_SE.ips"
+ROM_PATH = ROOT / "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
+PRACTICE_IPS = ROOT / "patches/smb3practice_SE.ips"
 START_WORLD_OFFSET = 0x30CC3
 OUT_DIR = ROOT / "test_roms"
 OUT_DIR.mkdir(exist_ok=True)

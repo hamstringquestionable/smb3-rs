@@ -16,7 +16,7 @@ Examples:
 2. **Generate** the ROM using `target/release/smb3-rs` with the provided flags/seed (or defaults: `--no-enemies --no-palettes --no-chest-items --no-levels`, seed random). Always use `--patched-rom -o test_level.nes`.
 
 3. **Apply open-movement patches** from the practice ROM so the player can walk over level/lock/fortress tiles without entering or clearing them:
-   `nix-shell -p python3 --run 'python3 tools/apply_ips_subset.py smb3practice_SE.ips test_level.nes 0x14010 0x18010'`
+   `nix-shell -p python3 --run 'python3 tools/apply_ips_subset.py patches/smb3practice_SE.ips test_level.nes 0x14010 0x18010'`
    This applies only the PRG010–011 records (~19 records, ~85 bytes). Do NOT apply the full IPS — its PRG006/PRG012 records would clobber the randomized enemy data and overworld map.
 
 4. **Identify levels** by name. Use these mappings to find vanilla obj_ptr/lay_ptr/tileset:
@@ -42,5 +42,5 @@ Examples:
 ## Key ROM offsets
 - Map object ID master pointer: 0x16050 (per-world, 9 slots each)
 - Starting world byte: 0x30CC3
-- Vanilla ROM: `Super Mario Bros. 3 (USA) (Rev 1).nes`
+- Vanilla ROM: `roms/Super Mario Bros. 3 (USA) (Rev 1).nes`
 - Pointer table starts: W1=0x19438, W2=0x194BA, W3=0x195D8, W4=0x19714, W5=0x197E4, W6=0x198E4, W7=0x19A3E, W8=0x19B56

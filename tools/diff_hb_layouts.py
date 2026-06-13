@@ -10,7 +10,7 @@ end and report all differences.
 
 import json
 
-VANILLA = "/home/michio/git/SMB3R/Super Mario Bros. 3 (USA) (Rev 1).nes"
+VANILLA = "/home/michio/git/SMB3R/roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
 RANDO = "/home/michio/git/SMB3R/smb3-rs_2889718939757641.nes"
 
 

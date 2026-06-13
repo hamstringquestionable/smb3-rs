@@ -517,7 +517,7 @@ mod tests {
 
     #[test]
     fn test_find_start_all_worlds() {
-        let rom_data_bytes = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        let rom_data_bytes = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes");
         if rom_data_bytes.is_err() {
             return;
         }
@@ -536,7 +536,7 @@ mod tests {
 
     #[test]
     fn test_walk_w1_reachable() {
-        let rom_data_bytes = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        let rom_data_bytes = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes");
         if rom_data_bytes.is_err() {
             return;
         }
@@ -557,7 +557,7 @@ mod tests {
 
     #[test]
     fn test_walk_w7_needs_pipes() {
-        let rom_data_bytes = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        let rom_data_bytes = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes");
         if rom_data_bytes.is_err() {
             return;
         }
@@ -592,7 +592,7 @@ mod tests {
 
     #[test]
     fn test_chokepoints_w1() {
-        let rom_data_bytes = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        let rom_data_bytes = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes");
         if rom_data_bytes.is_err() {
             return;
         }
@@ -611,7 +611,7 @@ mod tests {
 
     #[test]
     fn test_render_debug_visual() {
-        let rom_data_bytes = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        let rom_data_bytes = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes");
         if rom_data_bytes.is_err() {
             return;
         }
@@ -638,7 +638,7 @@ mod tests {
 
     #[test]
     fn test_render_progression_w6() {
-        let rom_data_bytes = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        let rom_data_bytes = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes");
         if rom_data_bytes.is_err() {
             return;
         }
@@ -652,7 +652,7 @@ mod tests {
 
     #[test]
     fn test_render_randomized_seed() {
-        let rom_data_bytes = std::fs::read("Super Mario Bros. 3 (USA) (Rev 1).nes");
+        let rom_data_bytes = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes");
         if rom_data_bytes.is_err() {
             return;
         }

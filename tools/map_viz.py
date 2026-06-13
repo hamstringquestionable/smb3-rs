@@ -13,7 +13,7 @@ Usage:
     python3 tools/map_viz.py [rom_path] --raw          # show raw hex tile IDs
     python3 tools/map_viz.py [rom_path] --summary       # just show slot counts
 
-Default ROM: "Super Mario Bros. 3 (USA) (Rev 1).nes"
+Default ROM: "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
 """
 
 import os
@@ -685,7 +685,7 @@ def print_mapping_validation(rom):
 
 def main():
     # Parse args
-    rom_path = "Super Mario Bros. 3 (USA) (Rev 1).nes"
+    rom_path = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
     world_filter = None
     raw_hex = False
     summary_only = False

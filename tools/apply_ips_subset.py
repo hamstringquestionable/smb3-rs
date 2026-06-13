@@ -9,7 +9,7 @@ Records are kept if their starting offset falls in [start, end) of the ROM file
 
 Example — apply only PRG010-011 records (file offsets 0x14010..0x18010) of the
 practice patch to a freshly-generated test ROM:
-    python3 tools/apply_ips_subset.py smb3practice_SE.ips test_level.nes 0x14010 0x18010
+    python3 tools/apply_ips_subset.py patches/smb3practice_SE.ips test_level.nes 0x14010 0x18010
 """
 
 import sys

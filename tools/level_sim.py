@@ -7,7 +7,7 @@ Simulates the SMB3 level generator system to produce a tile grid
 showing exactly which tile IDs end up at each position in a level.
 
 Usage: python3 tools/level_sim.py [rom_path] [level_offset_hex]
-  Default: "Super Mario Bros. 3 (USA) (Rev 1).nes" at 0x1FB92 (World 1-1)
+  Default: "roms/Super Mario Bros. 3 (USA) (Rev 1).nes" at 0x1FB92 (World 1-1)
 """
 
 import os
@@ -545,7 +545,7 @@ class LevelSimulator:
 
 
 def main():
-    rom_path = "Super Mario Bros. 3 (USA) (Rev 1).nes"
+    rom_path = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
     level_offset = 0x1FB92  # World 1-1
 
     if len(sys.argv) >= 2:

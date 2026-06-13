@@ -27,8 +27,8 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
-ROM_PATH = ROOT / "Super Mario Bros. 3 (USA) (Rev 1).nes"
-IPS_PATH = ROOT / "Super Mario Bros. 3 Recolored v1.0.ips"
+ROM_PATH = ROOT / "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
+IPS_PATH = ROOT / "patches/Super Mario Bros. 3 Recolored v1.0.ips"
 ROM_MAP_PATH = ROOT / "tools" / "rom_map.json"
 
 INES_HEADER = 0x10

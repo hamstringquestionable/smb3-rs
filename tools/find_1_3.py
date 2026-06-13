@@ -3,7 +3,7 @@
 
 import sys
 
-rom_path = "Super Mario Bros. 3 (USA) (Rev 1).nes"
+rom_path = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
 rom = open(rom_path, "rb").read()
 
 def hexdump(data):

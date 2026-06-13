@@ -3,7 +3,7 @@
 vivid canary color (NES 0x24 hot magenta). Run each in an emulator to identify
 which level/area/sprite uses that table.
 
-Each probe also has the smb3practice_SE.ips open-movement subset (PRG010-011 only)
+Each probe also has the patches/smb3practice_SE.ips open-movement subset (PRG010-011 only)
 applied so Mario can walk freely over locks/forts/levels without entering them —
 this lets us scan the entire overworld map for color changes.
 
@@ -16,8 +16,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-ROM_PATH = ROOT / "Super Mario Bros. 3 (USA) (Rev 1).nes"
-PRACTICE_IPS = ROOT / "smb3practice_SE.ips"
+ROM_PATH = ROOT / "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
+PRACTICE_IPS = ROOT / "patches/smb3practice_SE.ips"
 OPEN_MOVE_RANGE = (0x14010, 0x18010)  # PRG010-011 only; safe vs PRG012-013 palette tables
 START_WORLD_OFFSET = 0x30CC3            # operand of LDA #$00 — sets starting world index 0..7
 OUT_DIR = ROOT / "test_roms"
@@ -176,7 +176,7 @@ def main():
     ap.add_argument(
         "--practice", choices=("open-move", "full"), default="full",
         help=(
-            "what subset of smb3practice_SE.ips to apply. "
+            "what subset of patches/smb3practice_SE.ips to apply. "
             "'open-move' = PRG010-011 only (~85 B, walk freely over locks/forts). "
             "'full' (default) = everything except records that would overwrite a "
             "painted palette table (gives warp whistles, level select, infinite lives, etc.)."

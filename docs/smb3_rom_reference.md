@@ -1302,7 +1302,7 @@ by Recolored, proving these are the master per-tileset/area palette tables.
 
 > **Empirical confirmations** are from `tools/gen_palette_probes.py` runs in an emulator
 > (paint each table to NES `0x24` hot magenta, observe which graphics turn pink).
-> Probes apply `smb3practice_SE.ips` for warp whistles + level select + open movement
+> Probes apply `patches/smb3practice_SE.ips` for warp whistles + level select + open movement
 > so all worlds are reachable. Filenames: `test_roms/palette_probe_<name>_wN.nes`.
 
 > **Quartet alignment varies** across these tables — outline `0F` is at byte 2 in
@@ -3249,7 +3249,7 @@ The track is chosen deterministically from the seed via a curated 16-entry table
 
 ## Autoscroll Disable
 
-Disabling autoscrollers requires far more than removing the D3 autoscroll objects. The reference patch `Super_Mario_Bros_3_NoAutoscrolls(Except 5-9).ips` (65 records, 662 bytes) makes changes across five ROM regions:
+Disabling autoscrollers requires far more than removing the D3 autoscroll objects. The reference patch `patches/Super_Mario_Bros_3_NoAutoscrolls(Except 5-9).ips` (65 records, 662 bytes) makes changes across five ROM regions:
 
 ### 1. Enemy/Object Data (0x0BFD8–0x0E00D)
 

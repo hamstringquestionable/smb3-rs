@@ -214,7 +214,7 @@ fn print_slot(label: &str, counts: &PageCounts) {
 }
 
 fn load_rom() -> Option<Rom> {
-    let path = "Super Mario Bros. 3 (USA) (Rev 1).nes";
+    let path = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";
     let data = std::fs::read(path).ok()?;
     Rom::from_bytes(&data).ok()
 }

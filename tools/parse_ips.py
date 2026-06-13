@@ -85,7 +85,7 @@ def main():
         # Default to the reference IPS in the project
         script_dir = os.path.dirname(os.path.abspath(__file__))
         project_dir = os.path.dirname(script_dir)
-        filepath = os.path.join(project_dir, "Super_Mario_Bros_3_NoAutoscrolls(Except 5-9).ips")
+        filepath = os.path.join(project_dir, "patches/Super_Mario_Bros_3_NoAutoscrolls(Except 5-9).ips")
         if not os.path.exists(filepath):
             print(f"Usage: {sys.argv[0]} <ips_file>", file=sys.stderr)
             print(f"Default file not found: {filepath}", file=sys.stderr)
