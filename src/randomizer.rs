@@ -794,6 +794,11 @@ fn randomize_inner(
         randomize::qol::make_w1_hammer_rock(rom);
     }
 
+    // W8 Dark World map edits (beta): extra paths + water/bridge final page.
+    // Must run before the overworld builder so it sees the new connectivity.
+    rom.set_tag("qol/w8_map_edits");
+    randomize::qol::apply_w8_map_edits(rom);
+
     // Fix Big ? Block bonus rooms so they follow the level, not the world slot.
     // Always applied — needed whenever world_order or cross-world shuffle is active,
     // and harmless (identity mapping) when worlds aren't shuffled.
@@ -986,12 +991,12 @@ fn randomize_inner(
         randomize::qol::remove_n_cards(rom);
     }
 
-    // Fix W3 canoe softlocks (needed when spade games are shuffled, since their
-    // original W3 island tiles can then host levels that the canoe interacts with).
-    if options.shuffle_spade_games {
-        rom.set_tag("qol/fix_canoe_softlock");
-        randomize::qol::fix_canoe_softlock(rom);
-    }
+    // Fix canoe softlocks. Always applied: the W8 canoe/docks are unconditional
+    // (see `apply_w8_map_edits`), and the canoe is also reachable via spade and
+    // toad-house shuffle. The fix is world-agnostic (keys on the dock tile 0x4B
+    // and canoe object 0x10), so running it unconditionally is correct and safe.
+    rom.set_tag("qol/fix_canoe_softlock");
+    randomize::qol::fix_canoe_softlock(rom);
 
     // Adjust Bowser and Koopaling hitboxes.
     if options.adjust_boss_hitboxes {

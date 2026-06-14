@@ -1768,6 +1768,19 @@ Pointer tables indexed by World_Num (8 entries each):
 
 9 objects max per world (Hammer Bros, bonus objects, HELP bubble, Airship, etc.)
 
+Master pointer table file offsets: `Map_List_Object_Ys` 0x16020, `_XHis` 0x16030,
+`_XLos` 0x16040, `_IDs` 0x16050 (8 LE CPU words each; entries point into PRG011,
+CPU $A000–$BFFF → file `0x16010 + (cpu - 0xA000)`). A slot's grid position encodes
+as `Y = (row+2)*16`, `XHi = col/16`, `XLo = (col%16)*16`.
+
+**Canoe object (ID 0x10) is not W3-specific.** Writing a canoe into an otherwise
+empty map-object slot makes it function in any world — the engine processes all
+populated slots, not just W3's. The randomizer uses this to add a W8 canoe at
+slot 6 (vanilla W8 uses slots 0–5: `01 00 0E 0D 0F 0E …`), floating beside a
+dock tile (`0x4B`) so the player can board it. See the randomizer's
+`write_map_sprite` and W8 `CANOE_EDGES` (mainland `(5,6)` → islands
+`(3,8)/(5,10)/(5,12)`).
+
 ### Map_Unused7EEA — Dead Code LUT (PRG011: 0x16018)
 
 An 8-byte LUT at PRG011 CPU `$A008` (file `0x16018`), labeled `Map_Unused7EEA_Vals` in

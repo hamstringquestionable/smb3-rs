@@ -208,6 +208,9 @@ fn pick_up_world(
 const BLANK_TILE_OVERRIDES: &[(usize, usize, usize, u8)] = &[
     (2, 8, 6, 0x47), // W3 spade near start — heuristic picks 0x44 (no neighbors), needs 0x47 for BFS
     (4, 6, 20, 0xD9), // W5 spade in sky region — neighbors are non-path sky bg, heuristic falls to land
+    (7, 5, 8, 0x8D), // W8 battleship entry — its cell is navy water (canoe area), not a land blank.
+                     // The entry is still picked up into the pool (placed elsewhere); only this
+                     // leftover tile changes, so the heuristic's 0x44 land tile is overridden to water.
 ];
 
 /// Positions that should use island-themed blank tiles (0xAE/0xAF/0xB5/0xB6).

@@ -237,8 +237,15 @@ pub(super) const TILE_START: u8 = 0xE5;
 /// filter by `world_idx`, or they will fabricate canoe connectivity in any
 /// other world that happens to reach a mainland dock's raw coordinate.
 pub(super) const CANOE_EDGES: &[(usize, TeleportEdge)] = &[
+    // W3: mainland dock (6,20) → two island docks.
     (2, ((6, 20), (5, 24))),  // mainland dock → island 1
     (2, ((6, 20), (0, 32))),  // mainland dock → island 2
+    // W8: mainland dock (5,6) → three island docks on screen 0.
+    // The canoe sprite floats at (5,7), immediately right of (5,6) — same
+    // "sprite one tile beside the mainland dock" convention as W3.
+    (7, ((5, 6), (3, 8))),
+    (7, ((5, 6), (5, 10))),
+    (7, ((5, 6), (5, 12))),
 ];
 
 // ---------------------------------------------------------------------------
@@ -688,6 +695,8 @@ const MAP_OBJ_YS_MASTER: usize = 0x16020;
 const MAP_OBJ_XHIS_MASTER: usize = 0x16030;
 /// Master pointer table for Map_List_Object_XLos.
 const MAP_OBJ_XLOS_MASTER: usize = 0x16040;
+/// Master pointer table for Map_List_Object_IDs.
+const MAP_OBJ_IDS_MASTER: usize = 0x16050;
 
 /// Map object → pointer table entry linkage.
 /// (world_idx, object_slot, pointer_table_entry_idx)
@@ -1142,6 +1151,21 @@ pub(super) fn write_map_sprite_position(
     rom.write_byte(xlo_off, xlo);
 }
 
+/// Place a map-object sprite: write its position (Y/XHi/XLo) and its type ID.
+/// Used to add new sprites (e.g. the W8 canoe at an otherwise-empty slot).
+pub(super) fn write_map_sprite(
+    rom: &mut Rom,
+    world_idx: usize,
+    slot: usize,
+    grid_row: usize,
+    grid_col: usize,
+    id: u8,
+) {
+    write_map_sprite_position(rom, world_idx, slot, grid_row, grid_col);
+    let id_off = map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot);
+    rom.write_byte(id_off, id);
+}
+
 /// Read the grid positions of all active floating sprites for a world.
 ///
 /// Each world has up to 9 map object slots. A slot with ID $FF is unused.
@@ -1149,7 +1173,6 @@ pub(super) fn write_map_sprite_position(
 /// These are the positions where floating sprites sit (hammer bros, piranhas,
 /// W8 hand traps, etc.) and should not have level/fort tiles placed under them.
 pub(super) fn read_map_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
-    const MAP_OBJ_IDS_MASTER: usize = 0x16050;
     let mut positions = Vec::new();
 
     for slot in 0..9 {
@@ -1185,7 +1208,6 @@ pub(super) fn read_map_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usi
 /// These positions need HB level pointer entries even though they are excluded
 /// from level/fort/pipe placement by `fixed_positions`.
 pub(super) fn read_hb_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
-    const MAP_OBJ_IDS_MASTER: usize = 0x16050;
     let mut positions = Vec::new();
 
     for slot in 0..9 {
