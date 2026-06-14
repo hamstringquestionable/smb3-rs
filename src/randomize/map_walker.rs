@@ -591,6 +591,69 @@ mod tests {
         );
     }
 
+    /// Regression test for the canoe-edge world-leak bug (PR #39).
+    ///
+    /// `CANOE_EDGES` coordinates are not world-unique, so before world filtering
+    /// any world whose BFS reached a mainland-dock *coordinate* got the canoe
+    /// teleport injected — fabricating connectivity. This proves each edge fires
+    /// ONLY in its own world.
+    ///
+    /// Rather than inject a synthetic edge (the edge list is a `const`), we use
+    /// the real edges but evaluate them from a world that has none: same grid,
+    /// same reachable dock coordinate, different `world_idx`. The island must be
+    /// reachable in the edge's own world and unreachable from the other. Under
+    /// the old unfiltered code the negative assertion would fail.
+    #[test]
+    fn test_canoe_edges_are_world_scoped() {
+        // A world with no canoe edges at all: walking it must never produce
+        // canoe connectivity regardless of which coordinates are reachable.
+        let canoe_worlds: HashSet<usize> =
+            rom_data::CANOE_EDGES.iter().map(|&(w, _)| w).collect();
+        let other = (0..8)
+            .find(|w| !canoe_worlds.contains(w))
+            .expect("at least one world should have no canoe edges");
+
+        for &(world, (a, b)) in rom_data::CANOE_EDGES {
+            assert!(a.1 >= 2, "test assumes mainland dock col >= 2");
+
+            // Background grid (0xB4) large enough for every dock coordinate,
+            // with a 2-tile walk carved from `start` to the mainland dock `a`.
+            // The island dock `b` is left isolated, so it can only be reached
+            // via a canoe hop — never by walking.
+            let mut grid = Grid { tiles: vec![vec![0xB4u8; 48]; 9], rows: 9, cols: 48 };
+            let start = (a.0, a.1 - 2);
+            grid.set(a.0, a.1 - 1, 0x45); // VALID_HORZ path tile
+            grid.set(a.0, a.1, 0x45); // mainland dock node (non-background)
+
+            // Positive: in the edge's own world the canoe makes `b` reachable.
+            let own = walk_map(&grid, &[], Some(start), world);
+            assert!(
+                own.nodes.contains(&a),
+                "W{} mainland dock {a:?} should be walk-reachable",
+                world + 1
+            );
+            assert!(
+                own.nodes.contains(&b),
+                "W{} canoe {a:?}->{b:?} should reach the island in its own world",
+                world + 1
+            );
+
+            // Negative: same grid + same reachable coordinate, but a world with
+            // no canoe edges must NOT gain the island.
+            let leaked = walk_map(&grid, &[], Some(start), other);
+            assert!(
+                leaked.nodes.contains(&a),
+                "control: mainland coord {a:?} still walk-reachable in W{}",
+                other + 1
+            );
+            assert!(
+                !leaked.nodes.contains(&b),
+                "LEAK: canoe {a:?}->{b:?} (world {world}) fired in world {other} — \
+                 world filtering is broken"
+            );
+        }
+    }
+
     #[test]
     fn test_dest_indices_for_world() {
         assert_eq!(rom_data::dest_indices_for_world(0).len(), 0); // W1: no pipes
