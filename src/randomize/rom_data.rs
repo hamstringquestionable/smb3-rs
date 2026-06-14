@@ -227,10 +227,15 @@ pub(super) const VALID_BLANK_TILES: &[u8] = &[
 /// Start tile ID.
 pub(super) const TILE_START: u8 = 0xE5;
 
-/// W3 canoe teleport edges: (world_idx, (origin, destination)).
-/// The canoe transports the player from the mainland dock at (6,20) to two
-/// island docks. These are bidirectional teleport edges in BFS, like pipes.
-/// The mainland dock is only reachable when rocks are cleared.
+/// Canoe teleport edges: (world_idx, (origin, destination)).
+/// The canoe transports the player from a mainland dock to an island dock.
+/// These are bidirectional teleport edges in BFS, like pipes. (W3's mainland
+/// dock at (6,20) is only reachable when rocks are cleared.)
+///
+/// IMPORTANT: the coordinates are NOT world-unique — e.g. (6,20) exists in the
+/// grids of W2/W4–W8 too. Consumers (`canoes_reachable`, `walk_map`) MUST
+/// filter by `world_idx`, or they will fabricate canoe connectivity in any
+/// other world that happens to reach a mainland dock's raw coordinate.
 pub(super) const CANOE_EDGES: &[(usize, TeleportEdge)] = &[
     (2, ((6, 20), (5, 24))),  // mainland dock → island 1
     (2, ((6, 20), (0, 32))),  // mainland dock → island 2
