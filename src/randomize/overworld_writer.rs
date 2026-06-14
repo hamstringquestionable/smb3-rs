@@ -655,7 +655,7 @@ fn write_tile_grid<R: Rng>(
         .collect();
 
     let start_pos = rom_data::find_start(&grid);
-    let bfs = bfs_ordered(&grid, &built.pipe_pairs, start_pos);
+    let bfs = bfs_ordered(&grid, &built.pipe_pairs, start_pos, built.world_idx);
 
     // Level tile sequence: $03-$0B = levels 1-9 (vanilla numbered tiles),
     // $0C-$15 = levels 10-19 (double-digit tiles with custom "1" tens digit
@@ -1570,7 +1570,7 @@ mod tests {
                 let pipe_pairs = pipes_by_world.get(&wi)
                     .cloned()
                     .unwrap_or_default();
-                let walk = super::super::map_walker::walk_map(&grid, &pipe_pairs, None);
+                let walk = super::super::map_walker::walk_map(&grid, &pipe_pairs, None, wi);
 
                 // Collect positions that have pointer table entries.
                 let mut covered: HashSet<(usize, usize)> = HashSet::new();

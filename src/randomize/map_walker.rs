@@ -68,10 +68,16 @@ fn canoes_reachable(
     grid: &Grid,
     pipe_pairs: &[TeleportEdge],
     start: (usize, usize),
+    world_idx: usize,
 ) -> bool {
-    // Mainland docks per `CANOE_EDGES` are the `a` side of each tuple.
+    // Mainland docks per `CANOE_EDGES` are the `a` side of each tuple, scoped to
+    // this world. Filtering by `world_idx` is essential: the edge coordinates
+    // are not world-unique, so an unfiltered scan would fabricate canoe
+    // connectivity in any world that happens to reach a mainland dock's
+    // coordinate (e.g. W3's (6,20) also exists in W2/W4–W8).
     let docks: Vec<(usize, usize)> = rom_data::CANOE_EDGES
         .iter()
+        .filter(|&&(w, _)| w == world_idx)
         .map(|&(_, (a, _))| a)
         .collect();
     if docks.is_empty() {
@@ -139,6 +145,7 @@ pub(super) fn walk_map(
     grid: &Grid,
     pipe_pairs: &[TeleportEdge],
     start_pos: Option<(usize, usize)>,
+    world_idx: usize,
 ) -> WalkResult {
     let start = match start_pos.or_else(|| rom_data::find_start(grid)) {
         Some(s) => s,
@@ -172,8 +179,11 @@ pub(super) fn walk_map(
     // structural fix for the SAS-W3 deadlock where the swap moves the start
     // into a region with no walking path to the dock.
     let mut canoe_lookup: HashMap<(usize, usize), Vec<(usize, usize)>> = HashMap::new();
-    if canoes_reachable(grid, pipe_pairs, start) {
-        for &(_, (a, b)) in rom_data::CANOE_EDGES {
+    if canoes_reachable(grid, pipe_pairs, start, world_idx) {
+        for &(w, (a, b)) in rom_data::CANOE_EDGES {
+            if w != world_idx {
+                continue;
+            }
             canoe_lookup.entry(a).or_default().push(b);
             canoe_lookup.entry(b).or_default().push(a);
         }
@@ -457,7 +467,7 @@ pub(super) fn render_progression(
     }
 
     // Initial walk
-    let result = walk_map(&grid, pipe_pairs, None);
+    let result = walk_map(&grid, pipe_pairs, None, world_idx);
     let chokes = find_chokepoints(&result);
     out.push_str(&render_debug(
         &grid, Some(&result), Some(&chokes), Some(&pipe_pos),
@@ -466,7 +476,7 @@ pub(super) fn render_progression(
 
     loop {
         // Re-walk with current grid state to get fresh reachable set
-        let result = walk_map(&grid, pipe_pairs, None);
+        let result = walk_map(&grid, pipe_pairs, None, world_idx);
 
         let reachable_forts: Vec<usize> = world_forts
             .iter()
@@ -500,7 +510,7 @@ pub(super) fn render_progression(
             }
         }
 
-        let result = walk_map(&grid, pipe_pairs, None);
+        let result = walk_map(&grid, pipe_pairs, None, world_idx);
         let chokes = find_chokepoints(&result);
         out.push_str(&render_debug(
             &grid, Some(&result), Some(&chokes), Some(&pipe_pos), &label,
@@ -545,7 +555,7 @@ mod tests {
         let grid = rom_data::read_tile_grid(&rom, 0);
         let pipes = rom_data::read_pipe_pairs(&rom);
         let w1_pipes = pipes.get(&0).cloned().unwrap_or_default();
-        let result = walk_map(&grid, &w1_pipes, None);
+        let result = walk_map(&grid, &w1_pipes, None, 0);
 
         // W1 has 21 entries, most are reachable from start (no pipes needed)
         assert!(
@@ -566,12 +576,12 @@ mod tests {
         let grid = rom_data::read_tile_grid(&rom, 6);
 
         // Walk without pipes — should be very limited
-        let result_no_pipes = walk_map(&grid, &[], None);
+        let result_no_pipes = walk_map(&grid, &[], None, 6);
 
         // Walk with pipes — should reach many more
         let pipes = rom_data::read_pipe_pairs(&rom);
         let w7_pipes = pipes.get(&6).cloned().unwrap_or_default();
-        let result_with_pipes = walk_map(&grid, &w7_pipes, None);
+        let result_with_pipes = walk_map(&grid, &w7_pipes, None, 6);
 
         assert!(
             result_with_pipes.nodes.len() > result_no_pipes.nodes.len(),
@@ -599,7 +609,7 @@ mod tests {
         let rom = Rom::from_bytes(&rom_data_bytes.unwrap()).unwrap();
 
         let grid = rom_data::read_tile_grid(&rom, 0);
-        let result = walk_map(&grid, &[], None);
+        let result = walk_map(&grid, &[], None, 0);
         let chokepoints = find_chokepoints(&result);
 
         // W1 has a linear path structure with many chokepoints
@@ -621,7 +631,7 @@ mod tests {
         for wi in 0..8 {
             let grid = rom_data::read_tile_grid(&rom, wi);
             let pipes = all_pipes.get(&wi).cloned().unwrap_or_default();
-            let result = walk_map(&grid, &pipes, None);
+            let result = walk_map(&grid, &pipes, None, wi);
             let chokes = find_chokepoints(&result);
 
             let mut pipe_pos = HashSet::new();
@@ -674,7 +684,7 @@ mod tests {
         for wi in 0..8 {
             let grid = rom_data::read_tile_grid(&rom, wi);
             let pipes = all_pipes.get(&wi).cloned().unwrap_or_default();
-            let result = walk_map(&grid, &pipes, None);
+            let result = walk_map(&grid, &pipes, None, wi);
             let chokes = find_chokepoints(&result);
 
             let mut pipe_pos = HashSet::new();

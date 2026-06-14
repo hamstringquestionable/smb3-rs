@@ -326,6 +326,7 @@ pub(crate) fn build<R: Rng>(
                 &built.slots,
                 fort_counts[wi],
                 true, // force_safe
+                wi,
                 rng,
             );
             if new_locks.iter().any(|l| l.secret_exit_safe) {
@@ -628,6 +629,7 @@ fn build_world<R: Rng>(
         target_pos,
         pipe_pair_count,
         &fixed_pipe_eps,
+        world_idx,
         rng,
     );
 
@@ -646,18 +648,19 @@ fn build_world<R: Rng>(
         &pipe_positions,
         fixed_positions,
         fort_count,
+        world_idx,
     );
 
     // Build BFS distance map for scoring — reflects actual walkable distance.
     let bfs_distances: HashMap<(usize, usize), usize> =
-        bfs_ordered(&grid, &pipe_pairs, start_pos)
+        bfs_ordered(&grid, &pipe_pairs, start_pos, world_idx)
             .into_iter()
             .collect();
 
     // Reverse BFS from target (airship/Bowser) — used to compute path relevance
     // for level scoring. Positions on the main start→target trunk have low detour.
     let reverse_bfs: HashMap<(usize, usize), usize> = target_pos
-        .map(|tp| walk_map(&grid, &pipe_pairs, Some(tp)).distances)
+        .map(|tp| walk_map(&grid, &pipe_pairs, Some(tp), world_idx).distances)
         .unwrap_or_default();
     let target_bfs_dist = target_pos.and_then(|tp| bfs_distances.get(&tp).copied());
 
@@ -715,6 +718,7 @@ fn build_world<R: Rng>(
         &slots,
         fort_count,
         force_safe,
+        world_idx,
         rng,
     );
 
@@ -813,8 +817,9 @@ pub(super) fn bfs_ordered(
     grid: &Grid,
     pipe_pairs: &[TeleportEdge],
     start_pos: Option<(usize, usize)>,
+    world_idx: usize,
 ) -> Vec<((usize, usize), usize)> {
-    let result = walk_map(grid, pipe_pairs, start_pos);
+    let result = walk_map(grid, pipe_pairs, start_pos, world_idx);
     let mut ordered: Vec<((usize, usize), usize)> = result
         .distances
         .into_iter()
@@ -850,6 +855,11 @@ fn split_blanks_by_reachability(
     (reach, unreach)
 }
 
+// Reason: each argument is a distinct pipe-placement input (grid, candidate
+// blanks, start/target anchors, pair budget, fixed endpoints, world, RNG).
+// They don't form a cohesive concept, so bundling would add indirection
+// without clarity.
+#[allow(clippy::too_many_arguments)]
 fn place_pipes<R: Rng>(
     grid: &mut Grid,
     blank_positions: &[(usize, usize)],
@@ -857,6 +867,7 @@ fn place_pipes<R: Rng>(
     target_pos: Option<(usize, usize)>,
     pair_count: usize,
     fixed_endpoints: &[(usize, usize)],
+    world_idx: usize,
     rng: &mut R,
 ) -> Vec<TeleportEdge> {
     if pair_count == 0 {
@@ -873,7 +884,7 @@ fn place_pipes<R: Rng>(
     let no_pipe_zone: HashSet<(usize, usize)> = {
         let mut zone: HashSet<(usize, usize)> = HashSet::new();
         for anchor in [start_pos, target_pos].into_iter().flatten() {
-            let walk = walk_map(grid, &[], Some(anchor));
+            let walk = walk_map(grid, &[], Some(anchor), world_idx);
             for (&pos, &d) in &walk.distances {
                 if d <= 1 {
                     zone.insert(pos);
@@ -912,7 +923,7 @@ fn place_pipes<R: Rng>(
         used_positions.insert(fixed_pos);
 
         // BFS to find which blanks are reachable from start.
-        let walk = walk_map(grid, &placed_pairs, start_pos);
+        let walk = walk_map(grid, &placed_pairs, start_pos, world_idx);
         let fixed_is_reachable = walk.nodes.contains(&fixed_pos);
 
         // Pick partner from opposite side: if fixed is on an island,
@@ -947,7 +958,7 @@ fn place_pipes<R: Rng>(
     // best-effort in B), then fill remaining pairs in reachable area.
     let target_reachable = |g: &Grid, pairs: &[TeleportEdge]| -> bool {
         if let Some(tp) = target_pos {
-            let walk = walk_map(g, pairs, start_pos);
+            let walk = walk_map(g, pairs, start_pos, world_idx);
             walk.nodes.contains(&tp)
         } else {
             true // no target = nothing to connect
@@ -961,7 +972,7 @@ fn place_pipes<R: Rng>(
             must_connect_target = false;
         }
 
-        let walk = walk_map(grid, &placed_pairs, start_pos);
+        let walk = walk_map(grid, &placed_pairs, start_pos, world_idx);
         let (reachable_blanks, unreachable_blanks) =
             split_blanks_by_reachability(blank_positions, &walk.nodes, &used_positions);
 
@@ -1045,6 +1056,11 @@ fn place_pipes<R: Rng>(
 // ---------------------------------------------------------------------------
 
 /// Divide reachable blank slots into N sections by BFS distance from start.
+// Reason: arguments are distinct traversal inputs (grid, pipes, start, blanks,
+// pipe/fixed position sets, section count, world); they don't cluster into a
+// meaningful concept, so a bundling struct would be a lint bandage, not a real
+// abstraction.
+#[allow(clippy::too_many_arguments)]
 fn bfs_section(
     grid: &Grid,
     pipe_pairs: &[TeleportEdge],
@@ -1053,6 +1069,7 @@ fn bfs_section(
     pipe_positions: &HashSet<(usize, usize)>,
     fixed_positions: &HashSet<(usize, usize)>,
     section_count: usize,
+    world_idx: usize,
 ) -> Vec<Vec<(usize, usize)>> {
     if section_count == 0 {
         return vec![blank_positions
@@ -1063,7 +1080,7 @@ fn bfs_section(
     }
 
     // BFS-order all reachable positions
-    let ordered = bfs_ordered(grid, pipe_pairs, start_pos);
+    let ordered = bfs_ordered(grid, pipe_pairs, start_pos, world_idx);
 
     // Filter to only blank slots that aren't used by pipes or fixed entries
     let assignable: Vec<(usize, usize)> = ordered
@@ -1503,6 +1520,7 @@ fn place_locks<R: Rng>(
     slots: &[SlotAssignment],
     fort_count: usize,
     force_safe: bool,
+    world_idx: usize,
     rng: &mut R,
 ) -> Vec<LockAssignment> {
     let mut locks: Vec<LockAssignment> = Vec::new();
@@ -1602,7 +1620,7 @@ fn place_locks<R: Rng>(
         // Open grid (no candidate lock) is constant for all candidates in this
         // section — hoist the BFS to avoid redundant walks per candidate.
         let open_grid = build_test_grid(None);
-        let open_node_count = walk_map(&open_grid, pipe_pairs, start_pos).nodes.len() as i32;
+        let open_node_count = walk_map(&open_grid, pipe_pairs, start_pos, world_idx).nodes.len() as i32;
 
         // If a previous lock in this world already blocks the target, suppress
         // the target-blocking bonus to avoid stacking multiple locks against
@@ -1616,7 +1634,7 @@ fn place_locks<R: Rng>(
             // Hard rule 1: with this lock placed (and earlier locks opened),
             // the current fortress must still be reachable from start.
             let test_grid = build_test_grid(Some((cand_pos, gap)));
-            let walk = walk_map(&test_grid, pipe_pairs, start_pos);
+            let walk = walk_map(&test_grid, pipe_pairs, start_pos, world_idx);
 
             if !walk.nodes.contains(&fort_pos) {
                 continue;
@@ -1640,7 +1658,7 @@ fn place_locks<R: Rng>(
                     }
                     // Also place the candidate lock
                     g.set(cand_pos.0, cand_pos.1, gap);
-                    let w = walk_map(&g, pipe_pairs, start_pos);
+                    let w = walk_map(&g, pipe_pairs, start_pos, world_idx);
                     !w.nodes.contains(&pf.pos)
                 } else {
                     false
@@ -1941,7 +1959,7 @@ fn analyze_with_pre_opened_mask(
         None => return RequiredProgression::default(),
     };
 
-    let walk = walk_map(&grid, &built.pipe_pairs, Some(start));
+    let walk = walk_map(&grid, &built.pipe_pairs, Some(start), built.world_idx);
 
     // 2. Per-position slot info (skip the target; it's accounted for separately).
     let mut kind_at: HashMap<(usize, usize), &SlotKind> = HashMap::new();
@@ -2470,7 +2488,7 @@ mod tests {
                         .map(|s| s.pos);
 
                     if let Some(fp) = fort_pos {
-                        let walk = walk_map(&locked_grid, &built.pipe_pairs, start_pos);
+                        let walk = walk_map(&locked_grid, &built.pipe_pairs, start_pos, built.world_idx);
                         assert!(walk.nodes.contains(&fp),
                             "Seed {seed} W{}: lock at {:?} blocks its own fort at {:?}",
                             built.world_idx + 1, lock.pos, fp);
@@ -2796,7 +2814,7 @@ mod tests {
                 for (r, c) in &uncovered {
                     eprintln!("    UNCOVERED: ({},{}) tile=${:02X}", r, c, cw.grid.get(*r, *c));
                     // Check if BFS can reach it with the placed pipes
-                    let bfs_all = bfs_ordered(&built.grid, &built.pipe_pairs, rom_data::find_start(&built.grid));
+                    let bfs_all = bfs_ordered(&built.grid, &built.pipe_pairs, rom_data::find_start(&built.grid), built.world_idx);
                     let bfs_set: HashSet<(usize, usize)> = bfs_all.iter().map(|&(p, _)| p).collect();
                     eprintln!("      BFS reachable: {}", bfs_set.contains(&(*r, *c)));
                 }
@@ -2867,12 +2885,12 @@ mod tests {
 
                 for lock in &built.locks {
                     // Open grid: no locks
-                    let walk_open = walk_map(&base_grid, &built.pipe_pairs, start_pos);
+                    let walk_open = walk_map(&base_grid, &built.pipe_pairs, start_pos, built.world_idx);
 
                     // Locked grid: this lock closed
                     let mut locked_grid = base_grid.clone();
                     locked_grid.set(lock.pos.0, lock.pos.1, lock.gap_tile);
-                    let walk_locked = walk_map(&locked_grid, &built.pipe_pairs, start_pos);
+                    let walk_locked = walk_map(&locked_grid, &built.pipe_pairs, start_pos, built.world_idx);
 
                     let gated_count = walk_open.nodes.len() as i32 - walk_locked.nodes.len() as i32;
 
@@ -2889,7 +2907,7 @@ mod tests {
 
                     // BFS distance from lock to target (via adjacent nodes)
                     let target_dist = if let Some(tp) = target_pos {
-                        let walk_from_target = walk_map(&base_grid, &built.pipe_pairs, Some(tp));
+                        let walk_from_target = walk_map(&base_grid, &built.pipe_pairs, Some(tp), built.world_idx);
                         let (lr, lc) = lock.pos;
                         [(-1i16, 0i16), (1, 0), (0, -1), (0, 1)].iter()
                             .filter_map(|&(dr, dc)| {
@@ -2970,7 +2988,7 @@ mod tests {
             eprintln!("\n  Section {section_idx} (fort at {:?}):", fort_pos);
 
             // Open grid for this section: earlier locks open, no current lock
-            let walk_open = walk_map(&base_grid, &built.pipe_pairs, start_pos);
+            let walk_open = walk_map(&base_grid, &built.pipe_pairs, start_pos, built.world_idx);
             let open_node_count = walk_open.nodes.len();
 
             // Find all lockable path tiles
@@ -2986,7 +3004,7 @@ mod tests {
                     let gap = gap_tile_for(tile);
                     let mut test_grid = base_grid.clone();
                     test_grid.set(r, c, gap);
-                    let walk = walk_map(&test_grid, &built.pipe_pairs, start_pos);
+                    let walk = walk_map(&test_grid, &built.pipe_pairs, start_pos, built.world_idx);
 
                     // Hard rule: fort must be reachable
                     if !walk.nodes.contains(&fort_pos) { continue; }
@@ -3111,7 +3129,7 @@ mod tests {
                 }
 
                 // BFS from target — distances to every reachable node
-                let walk_from_target = walk_map(&stamped, &built.pipe_pairs, Some(tp));
+                let walk_from_target = walk_map(&stamped, &built.pipe_pairs, Some(tp), built.world_idx);
 
                 for lock in &built.locks {
                     total_locks += 1;
@@ -3616,7 +3634,7 @@ mod tests {
                     .collect();
 
                 // BFS from start (matches what scoring used).
-                let walk = walk_map(&built.grid, &built.pipe_pairs, start_pos);
+                let walk = walk_map(&built.grid, &built.pipe_pairs, start_pos, built.world_idx);
                 let bfs_distances = &walk.distances;
 
                 // === Spread: avg pairwise distance between placed levels ===
@@ -3655,7 +3673,7 @@ mod tests {
                 // positions can't have a meaningful detour relative to a route
                 // they're not on.
                 if let Some(tp) = target_pos {
-                    let reverse_walk = walk_map(&built.grid, &built.pipe_pairs, Some(tp));
+                    let reverse_walk = walk_map(&built.grid, &built.pipe_pairs, Some(tp), built.world_idx);
                     if let Some(&td) = bfs_distances.get(&tp) {
                         for &pos in &levels {
                             if let (Some(&fwd), Some(&rev)) = (
@@ -4087,7 +4105,7 @@ mod tests {
                         probe(&built.grid, "target", target);
 
                         // What does walk_map see as reachable from start?
-                        let walk = walk_map(&built.grid, &built.pipe_pairs, Some(start));
+                        let walk = walk_map(&built.grid, &built.pipe_pairs, Some(start), built.world_idx);
                         let mut reachable: Vec<(usize, usize)> = walk.nodes.iter().copied().collect();
                         reachable.sort();
                         eprintln!("\n  walk_map reachable from start ({} nodes):", reachable.len());
