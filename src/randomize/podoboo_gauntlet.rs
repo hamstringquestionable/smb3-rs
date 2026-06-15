@@ -36,6 +36,18 @@ const MIN_X_GAP: u8 = 2;
 /// MIN_X_GAP constraint to surrounding entries.
 const X_JITTER_RADIUS: u8 = 4;
 
+/// ROM file offsets of podoboos pinned to their vanilla (X, Y) — they are
+/// never jittered. These are the first two regular podoboos of the
+/// corridor; players rely on them as a fixed entry landmark. Keyed on
+/// absolute ROM offset to match the enemy-protection convention used
+/// elsewhere (e.g. `powerups::PROTECTED_OFFSETS`). Each segment entry is 3
+/// bytes starting at `SEG_OFFSET + 1`, so `VANILLA[j]` lives at
+/// `SEG_OFFSET + 1 + 3*j`.
+const PROTECTED_OFFSETS: &[usize] = &[
+    0xD2CA, // 5-F2 sub-area 1 podoboo #1 (X=0x06)
+    0xD2CD, // 5-F2 sub-area 1 podoboo #2 (X=0x0B)
+];
+
 /// Vanilla layout of 5-F2 sub-area 1 — hard-coded so the composer
 /// produces a known segment regardless of what bytes the input ROM has at
 /// this offset (matters for integration tests using stub ROMs). 26 entries
@@ -81,12 +93,22 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // entries 20 (Podoboo 0x63) and 21 (Boo 0x6F) — index 22 (Podoboo
     // 0x6A) follows. We sort by X up-front so the jitter logic sees a
     // canonical order.
+    // Resolve protected offsets to vanilla X values before sorting. VANILLA
+    // is in file order, so entry j sits at SEG_OFFSET + 1 + 3*j; X is unique
+    // within the segment, so matching by X during the sorted walk is exact.
+    let pinned_x: Vec<u8> = VANILLA
+        .iter()
+        .enumerate()
+        .filter(|(j, _)| PROTECTED_OFFSETS.contains(&(SEG_OFFSET + 1 + 3 * j)))
+        .map(|(_, e)| e.x)
+        .collect();
+
     let mut sorted_vanilla: Vec<SegmentEntry> = VANILLA.to_vec();
     sorted_vanilla.sort_by_key(|e| e.x);
 
     let mut out: Vec<SegmentEntry> = Vec::with_capacity(ENTRY_COUNT);
     for (i, entry) in sorted_vanilla.iter().enumerate() {
-        let new_entry = if is_target(entry.obj_id) {
+        let new_entry = if is_target(entry.obj_id) && !pinned_x.contains(&entry.x) {
             let prev_x = out.last().map(|e| e.x).unwrap_or(SEG_X_MIN.saturating_sub(MIN_X_GAP));
             let next_x = sorted_vanilla.get(i + 1).map(|e| e.x).unwrap_or(SEG_X_MAX.saturating_add(MIN_X_GAP));
             let lo = prev_x.saturating_add(MIN_X_GAP)
@@ -166,6 +188,26 @@ mod tests {
             for e in out.iter().filter(|e| e.obj_id == PODOBOO) {
                 assert_eq!(e.y & 0xF0, 0x10, "seed {seed}: podoboo crossed page");
             }
+        }
+    }
+
+    #[test]
+    fn first_two_podoboos_pinned() {
+        // The first two regular podoboos (vanilla X=0x06 Y=0x17, X=0x0B
+        // Y=0x15) must never move, across all seeds.
+        for seed in 0..50u64 {
+            let mut rom = make_test_rom();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom, &mut rng);
+            let out = segment_writer::read_segment(&rom, SEG_OFFSET, ENTRY_COUNT);
+            assert!(
+                out.iter().any(|e| e.obj_id == PODOBOO && e.x == 0x06 && e.y == 0x17),
+                "seed {seed}: pinned podoboo #1 (0x06,0x17) missing"
+            );
+            assert!(
+                out.iter().any(|e| e.obj_id == PODOBOO && e.x == 0x0B && e.y == 0x15),
+                "seed {seed}: pinned podoboo #2 (0x0B,0x15) missing"
+            );
         }
     }
 
