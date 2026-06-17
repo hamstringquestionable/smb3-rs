@@ -947,6 +947,42 @@ fn place_pipes<R: Rng>(
         };
         let candidates = if available.is_empty() { &fallback } else { &available };
 
+        // The fixed pipe is usually the sole escape from an isolated region
+        // (e.g. the SAS-swapped W3 start island, where the start lands on the
+        // pipe's island). If its partner is picked uniformly from every
+        // opposite-side blank, RNG can land it on a *different* dead island
+        // instead of the target's landmass: the pipe then bridges nothing
+        // useful, the reachable side has no free blank left to anchor the
+        // remaining pipes, and Phase A/B below breaks with the airship still
+        // unreachable.
+        //
+        // Prefer a partner that actually reconnects start to target: tentatively
+        // bridge each candidate with the fixed pipe and keep only those that make
+        // the target reachable from start under the real, canoe-gated walk. This
+        // must be evaluated from the *start* anchor — walking from the target
+        // turns canoes on (the target can reach the dock) and would wrongly count
+        // canoe islands as connected, when from the stranded start the canoe is
+        // unusable. Falls back to the unfiltered pool when no single bridge
+        // suffices (Phase A/B then chains the rest).
+        //
+        // No-op for vanilla (non-SAS) W3: there the target is already reachable
+        // from start without this pipe, so every candidate passes the filter,
+        // `preferred` equals `candidates`, and the `choose` draw is identical.
+        let preferred: Vec<(usize, usize)> = match (start_pos, target_pos) {
+            (Some(s), Some(t)) => candidates
+                .iter()
+                .copied()
+                .filter(|&p| walk_map(grid, &[(fixed_pos, p)], Some(s), world_idx).nodes.contains(&t))
+                .collect(),
+            _ => Vec::new(),
+        };
+        // Only narrow the pool when the filter actually drops a candidate; an
+        // equal-length `preferred` is element-identical to `candidates`, so
+        // leaving `candidates` untouched keeps the RNG draw bit-for-bit the same
+        // (this is what makes the vanilla path a true no-op).
+        let use_preferred = !preferred.is_empty() && preferred.len() != candidates.len();
+        let candidates = if use_preferred { &preferred } else { candidates };
+
         if let Some(&partner) = candidates.choose(rng) {
             grid.set(partner.0, partner.1, TILE_PIPE);
             used_positions.insert(partner);
@@ -3792,6 +3828,42 @@ mod tests {
     /// mode" where all locks start open, isolating fortresses that were
     /// only required because of lock gating.
     ///
+    /// Regression: under start↔airship swap, the W3 fixed pipe used to be
+    /// paired with a random opposite-side blank, which could land on a dead
+    /// canoe island and strand the start — leaving the airship unreachable
+    /// (~1.6% of SAS seeds). `place_pipes` now biases the fixed pipe's partner
+    /// toward a blank that actually reconnects start to target. These seeds all
+    /// failed before that fix; they must stay reachable.
+    #[test]
+    fn test_sas_w3_fixed_pipe_keeps_target_reachable() {
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => return, // ROM not present in this environment; skip.
+        };
+        let rom = apply_qol_for_overworld(&rom);
+        // Previously-unreachable SAS W3 seeds (from the SAS=1 progression sweep).
+        for seed in [123u64, 385, 515, 559, 629] {
+            let mut catalog = NodeCatalog::build(&rom, false);
+            let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
+            super::super::start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
+            let pickup = super::super::overworld_pickup::pick_up(
+                &rom,
+                &catalog,
+                super::super::overworld_pickup::PickupFlags {
+                    shuffle_spade_games: true,
+                    shuffle_toad_houses: true,
+                },
+            );
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+            let w3 = result.worlds.iter().find(|b| b.world_idx == 2).unwrap();
+            assert!(
+                analyze_required_progression(w3, false).reachable,
+                "SAS seed {seed}: W3 airship must be reachable",
+            );
+        }
+    }
+
     /// Run with: cargo test --release test_required_progression -- --ignored --nocapture
     /// Override seed count with PROG_SEEDS=N.
     /// Toggle start↔airship swap with SAS=1.
