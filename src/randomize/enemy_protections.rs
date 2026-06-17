@@ -233,7 +233,15 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
             EntryRule { offset: 0x0C982, rule: EntryProtection::ExcludeHazards }, // DryBones scr=2 col=3
         ],
     },
-
+    LevelProtection {
+        label: "8F roto-disc narrow area makes hazards unfair",
+        enemy_ptr: 0xD551,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D562, rule: EntryProtection::ExcludeHazards }, // Rotodisc
+            EntryRule { offset: 0x0D568, rule: EntryProtection::ExcludeHazards }, // Rotodisc
+        ],
+    },
     // --- Hammer Bro encounters (walker uses HB modes; injection skips) ---
     LevelProtection {
         label: "W1 Hammer Bro",
