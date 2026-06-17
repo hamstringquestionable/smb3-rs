@@ -34,6 +34,10 @@ When clippy flags new code:
 
 Never silence a lint by deleting the warning text or globally disabling — the goal is "every warning was considered," not "no warnings emitted."
 
+## Changelog
+
+`CHANGELOG.md` (repo root, [Keep a Changelog](https://keepachangelog.com/) format) tracks notable changes. When a change is user-visible or notable (a new flag/option, a behavior change, a fixed bug players would notice), add a one-line entry under the `[Unreleased]` section in the right group (`Added` / `Changed` / `Fixed` / `Removed`) as part of the same change. Skip purely internal refactors, test-only changes, and tooling tweaks. At version-bump time, move the accumulated `[Unreleased]` entries into a new versioned section.
+
 ## Architecture: Separate Randomization from ROM Writes
 
 Randomization modules follow a **decide then write** pattern. Each feature area has two layers:
