@@ -345,6 +345,23 @@ ENEMY_NAMES = {
     0xCE: "CannonFire_CE", 0xCF: "CannonFire_CF", 0xD0: "CannonFire_D0",
     0x94: "BigQ_3Up", 0x95: "BigQ_Mushroom", 0x96: "BigQ_FireFlower",
     0x97: "BigQ_SuperLeaf", 0x98: "BigQ_Tanooki", 0x99: "BigQ_Frog", 0x9A: "BigQ_Hammer",
+    # Roto-Disc family (fortress fire wheels) — see docs/smb3_rom_reference.md
+    0x51: "RotodiscDualCW", 0x5A: "RotodiscCW", 0x5B: "RotodiscCCW",
+    0x5E: "RotodiscDualOppH", 0x5F: "RotodiscDualOppV", 0x60: "RotodiscDualCCW",
+    # Fortress / hazard sprites
+    0x4F: "ChainChompFree", 0x53: "PodobooCeiling", 0x58: "FireChomp",
+    0x59: "FireSnake", 0x5D: "Tornado", 0x67: "LavaLotus", 0x89: "ChainChomp",
+    0x9E: "Podoboo", 0xAF: "AngrySun", 0xAD: "RockyWrench",
+    0x31: "StretchBoo", 0x32: "StretchBooFlip",
+    0x46: "PiranhaSpikeBall", 0x56: "PiranhaSidewaysL", 0x57: "PiranhaSidewaysR",
+    # Cheeps / water hazards
+    0x17: "SpinyCheep", 0x2D: "BigBerthaEater", 0x3B: "ChargingCheep",
+    0x3D: "NipperFireBreather", 0x42: "CheepPoolHop3", 0x43: "CheepPoolHop2",
+    0x48: "TinyCheep", 0x76: "JumpingCheep",
+    # Misc enemies / projectiles
+    0x68: "TwirlingBuzzy", 0x69: "TwirlingSpiny", 0x78: "BulletBill",
+    0x79: "BulletBillHoming", 0x83: "Lakitu", 0x9F: "Parabeetle",
+    0x50: "BobOmbExplode", 0x75: "BossStatueFire", 0x84: "SpinyEgg", 0x85: "SpinyEggDud",
 }
 
 # Protected offsets
@@ -832,14 +849,17 @@ def trace_sub_areas(entry_level, layout_index):
     """Follow the header chain from an entry point to find all sub-areas.
 
     Each 9-byte layout header contains alt_layout/alt_tileset pointing to
-    the next sub-area. Only follow when junction_count > 0 (headers without
-    junctions have dead alt_layout pointers). Uses a visited set by
-    header_offset to prevent infinite loops (e.g., Pyramid has a two-way loop)."""
+    the level's alternate (pipe/door destination) area. Follow the chain as
+    long as the alt pointer resolves to a real, distinct level in the layout
+    index — the resolution check itself rejects dead/garbage pointers, so no
+    junction_count gate is needed (8F has a live Podoboo sub-area despite zero
+    junction commands). A visited set by header_offset prevents infinite loops
+    (e.g., Pyramid has a two-way loop)."""
     result = [entry_level]
     visited = {entry_level["header_offset"]}
     current = entry_level
 
-    while current["junction_count"] > 0:
+    while True:
         alt_layout = current["alt_layout"]
         alt_tileset = current["alt_tileset"]
 
