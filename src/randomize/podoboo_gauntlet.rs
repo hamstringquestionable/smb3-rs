@@ -24,10 +24,23 @@ const ENTRY_COUNT: usize = 26;
 
 const PODOBOO: u8 = 0x9E;
 const CEILING_PODOBOO: u8 = 0x53;
+/// OBJ_BOO. Vanilla 5-F2 sub-area 1 has two of these. (The earlier hard-coded
+/// table mislabeled them as `0x65` = OBJ_WATERCURRENTUPWARD, which silently
+/// replaced both Boos with upward water currents — see issue #32.)
+const BOO: u8 = 0x2F;
 
 /// X bounds: 5-F2 sub-area 1 is 8 screens, so X spans 0..=0x7F.
 const SEG_X_MIN: u8 = 0x02;
 const SEG_X_MAX: u8 = 0x7D;
+
+/// No-spawn doorway safe zone. The player enters sub-area 1 at screen 0's
+/// left edge, so any jittered podoboo at X <= this column can land on/next
+/// to the entry doorway and hit the player on spawn with no chance to react.
+/// Jittered targets are floored to `ENTRY_SAFE_X + 1`. The two pinned
+/// landmark podoboos at X=0x06/0x0B are exempt (they never jitter), and the
+/// landmark pinning already keeps later podoboos clear via MIN_X_GAP — this
+/// floor makes the doorway protection explicit rather than incidental.
+const ENTRY_SAFE_X: u8 = 0x05;
 
 const MIN_X_GAP: u8 = 2;
 
@@ -67,14 +80,14 @@ const VANILLA: &[SegmentEntry] = &[
     SegmentEntry { obj_id: PODOBOO,         x: 0x32, y: 0x11 },
     SegmentEntry { obj_id: PODOBOO,         x: 0x36, y: 0x12 },
     SegmentEntry { obj_id: CEILING_PODOBOO, x: 0x3A, y: 0x0F },
-    SegmentEntry { obj_id: 0x65,            x: 0x47, y: 0x17 }, // Boo
+    SegmentEntry { obj_id: BOO,             x: 0x47, y: 0x17 }, // Boo
     SegmentEntry { obj_id: PODOBOO,         x: 0x4B, y: 0x14 },
     SegmentEntry { obj_id: PODOBOO,         x: 0x4E, y: 0x17 },
     SegmentEntry { obj_id: PODOBOO,         x: 0x51, y: 0x14 },
     SegmentEntry { obj_id: CEILING_PODOBOO, x: 0x56, y: 0x0F },
     SegmentEntry { obj_id: CEILING_PODOBOO, x: 0x5E, y: 0x0F },
     SegmentEntry { obj_id: PODOBOO,         x: 0x63, y: 0x11 },
-    SegmentEntry { obj_id: 0x65,            x: 0x6F, y: 0x15 }, // Boo
+    SegmentEntry { obj_id: BOO,             x: 0x6F, y: 0x15 }, // Boo
     SegmentEntry { obj_id: PODOBOO,         x: 0x6A, y: 0x10 },
     SegmentEntry { obj_id: PODOBOO,         x: 0x71, y: 0x12 },
     SegmentEntry { obj_id: PODOBOO,         x: 0x78, y: 0x13 },
@@ -113,7 +126,8 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
             let next_x = sorted_vanilla.get(i + 1).map(|e| e.x).unwrap_or(SEG_X_MAX.saturating_add(MIN_X_GAP));
             let lo = prev_x.saturating_add(MIN_X_GAP)
                 .max(entry.x.saturating_sub(X_JITTER_RADIUS))
-                .max(SEG_X_MIN);
+                .max(SEG_X_MIN)
+                .max(ENTRY_SAFE_X + 1);
             let hi = next_x.saturating_sub(MIN_X_GAP)
                 .min(entry.x.saturating_add(X_JITTER_RADIUS))
                 .min(SEG_X_MAX);
@@ -178,8 +192,10 @@ mod tests {
             // Non-targets stay at vanilla X and Y.
             let drybones: Vec<&SegmentEntry> = out.iter().filter(|e| e.obj_id == 0x3F).collect();
             assert_eq!(drybones.len(), 2);
-            let boos: Vec<&SegmentEntry> = out.iter().filter(|e| e.obj_id == 0x65).collect();
-            assert_eq!(boos.len(), 2);
+            let boos: Vec<&SegmentEntry> = out.iter().filter(|e| e.obj_id == BOO).collect();
+            assert_eq!(boos.len(), 2, "seed {seed}: should have 2 real Boos (0x2F)");
+            // The wrong ID (0x65 = water current) must not leak through.
+            assert!(out.iter().all(|e| e.obj_id != 0x65), "seed {seed}: stray 0x65 water current");
             // Ceiling podoboos stay on page 0 (Y high nibble == 0).
             for e in out.iter().filter(|e| e.obj_id == CEILING_PODOBOO) {
                 assert_eq!(e.y & 0xF0, 0x00, "seed {seed}: ceiling podoboo crossed page");
@@ -208,6 +224,24 @@ mod tests {
                 out.iter().any(|e| e.obj_id == PODOBOO && e.x == 0x0B && e.y == 0x15),
                 "seed {seed}: pinned podoboo #2 (0x0B,0x15) missing"
             );
+        }
+    }
+
+    #[test]
+    fn no_target_spawns_in_entry_doorway() {
+        // No podoboo (regular or ceiling) may occupy the doorway columns
+        // (X <= ENTRY_SAFE_X) where the player enters sub-area 1, or it
+        // hits them on spawn. Pinned landmarks sit at 0x06/0x0B (> safe
+        // zone), so the whole segment should clear the doorway.
+        for seed in 0..100u64 {
+            let mut rom = make_test_rom();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom, &mut rng);
+            let out = segment_writer::read_segment(&rom, SEG_OFFSET, ENTRY_COUNT);
+            for e in out.iter().filter(|e| is_target(e.obj_id)) {
+                assert!(e.x > ENTRY_SAFE_X,
+                        "seed {seed}: target {:02X} at X={:02X} is in the entry doorway", e.obj_id, e.x);
+            }
         }
     }
 

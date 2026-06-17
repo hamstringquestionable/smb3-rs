@@ -769,7 +769,7 @@ Fireball X spread in fred's data spans the whole segment
 #### 5-F2 Sub-Area 1 (file offset `0xD2C9`, 26 entries)
 
 Podoboo gauntlet — 16 Podoboo (0x9E) + 6 Ceiling Podoboo (0x53) + 2
-DryBones (0x3F) + 2 Boos (0x65). Y high nibble = vertical page (page
+DryBones (0x3F) + 2 Boos (0x2F = OBJ_BOO). Y high nibble = vertical page (page
 0 for ceiling podoboos, page 1 for regular). The composer preserves
 the high nibble so a ceiling podoboo can't fall to a regular page or
 vice versa.
