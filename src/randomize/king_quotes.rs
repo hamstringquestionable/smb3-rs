@@ -500,6 +500,30 @@ const QUOTES: &[[&str; 6]] = &[
         "randomizer!",
         "",
     ],
+    [
+        "You may not be",
+        "the best but at",
+        "least you can",
+        "beat Dr. Torstol",
+        "",
+        "",
+    ],
+    [
+        "HAXOR",
+        "TO D",
+        "MAXOR",
+        "",
+        "",
+        "",
+    ],
+    [
+        "It looks like you're",
+        "trying to clip",
+        "through this wall.",
+        "Would you like help?",
+        "",
+        "",
+    ],
 ];
 
 /// Suit-specific quotes: shown when Mario visits the king wearing frog suit.

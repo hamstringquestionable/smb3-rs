@@ -171,10 +171,10 @@ pub(super) const KOOPA_Y_CLAMP_CPU: u16  = 0xBFC0;  // $A000 + (0x03FD0 - 0x0201
 
 // Random Fire Flower (issue #22) — injected routine that derives the granted
 // power state from a seed-derived salt (the shuffled starting world) + the
-// current World_Num + the flower's absolute level position, instead of the
-// vanilla hardcoded Fire. Sits in the PRG001 bank-end gap right after
-// koopa_y_clamp (which ends at 0x3FE6). Up to 36 bytes: 28-byte routine + a
-// 4- or 6-byte pool table. ObjHit_FireFlower runs with PRG001 banked at
+// current World_Num + the level layout pointer + the flower's screen number,
+// instead of the vanilla hardcoded Fire. Sits in the PRG001 bank-end gap right
+// after koopa_y_clamp (which ends at 0x3FE6). Up to 36 bytes: 26-byte routine +
+// a 4- or 6-byte pool table. ObjHit_FireFlower runs with PRG001 banked at
 // $A000, so the JSR from the hook is bank-local.
 pub(super) const FS_FIRE_FLOWER: usize     = 0x03FE6;
 pub(super) const FIRE_FLOWER_SUB_CPU: u16  = 0xBFD6; // $A000 + (0x03FE6 - 0x02010)
