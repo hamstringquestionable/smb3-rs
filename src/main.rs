@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use smb3_rs::{EnemyMode, Options, Tri, STARTING_LIVES_VALUES};
+use smb3_rs::{EnemyMode, FireFlowerMode, Options, Tri, STARTING_LIVES_VALUES};
 
 /// Human-readable label for a tri-state flag in the run summary.
 fn tri_str(t: Tri) -> &'static str {
@@ -183,6 +183,12 @@ struct Cli {
     #[arg(long)]
     faster_frog: bool,
 
+    /// Random Fire Flower: in-level Fire Flowers grant a position-derived power
+    /// state instead of always Fire — off, on, or wild (default: off).
+    /// `on` = Fire/Frog/Tanooki/Hammer; `wild` also allows Small/Big.
+    #[arg(long, default_value = "off")]
+    fire_flower: String,
+
     /// Disable spade-game shuffle (on by default; off keeps vanilla spade positions)
     #[arg(long)]
     no_shuffle_spade_games: bool,
@@ -327,6 +333,19 @@ fn main() {
         }
     }
 
+    fn parse_fire_flower(s: &str) -> FireFlowerMode {
+        match s {
+            "off" => FireFlowerMode::Off,
+            "on" => FireFlowerMode::On,
+            "wild" => FireFlowerMode::Wild,
+            other => {
+                eprintln!("Invalid --fire-flower value: {other}");
+                eprintln!("Valid values: off, on, wild");
+                process::exit(1);
+            }
+        }
+    }
+
     fn parse_tri(s: &str, name: &str) -> Tri {
         match s {
             "off" => Tri::Off,
@@ -421,6 +440,7 @@ fn main() {
             faster_tail_speed: cli.faster_tail_speed,
             no_game_over_penalty: cli.no_game_over_penalty,
             faster_frog: cli.faster_frog,
+            fire_flower: parse_fire_flower(&cli.fire_flower),
             shuffle_spade_games: !cli.no_shuffle_spade_games,
             shuffle_toad_houses: !cli.no_shuffle_toad_houses,
             hands_levels: !cli.no_hands_levels,
@@ -475,6 +495,11 @@ fn main() {
     eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });
     eprintln!("  Remove rocks: {}", if options.remove_rocks { "on" } else { "off" });
     eprintln!("  W1 hammer rock: {}", tri_str(options.w1_hammer_rock));
+    eprintln!("  Random fire flower: {}", match options.fire_flower {
+        FireFlowerMode::Off => "off",
+        FireFlowerMode::On => "on",
+        FireFlowerMode::Wild => "wild",
+    });
     eprintln!("  Airship lock: {}", if options.airship_lock { "on" } else { "off" });
     if !options.starting_items.is_empty() {
         let item_names: Vec<&str> = options.starting_items.iter().map(|&id| match id {

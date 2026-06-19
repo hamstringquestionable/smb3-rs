@@ -56,6 +56,15 @@ const ON_OFF_MAYBE = [
 	{ value: "maybe", label: "Maybe" },
 ];
 
+// Off / On / Wild pill for Random Fire Flower. "Wild" widens the pool to also
+// include the Small/Big downgrade outcomes. Values match the Rust
+// `FireFlowerMode` enum's serde representation.
+const OFF_ON_WILD = [
+	{ value: "off", label: "Off" },
+	{ value: "on", label: "On" },
+	{ value: "wild", label: "Wild" },
+];
+
 // Categories rendered as <fieldset> sections, in order.
 export const GROUPS = [
 	{ id: "map", label: "Map" },
@@ -269,6 +278,11 @@ export const SCHEMA = [
 		label: "Chest Items",
 		tip: "Randomize chest and Toad House reward items",
 		icon: { x: 525, y: 292, w: 16, h: 16 },
+		group: "items", inFlagKey: true },
+	{ id: "fire_flower", type: "tri", options: OFF_ON_WILD, default: "off",
+		label: "Random Fire Flower",
+		tip: "Fire Flowers still look the same, but each one gives a different suit based on where it is. On: Fire, Frog, Tanooki, or Hammer. Wild: also lets it shrink you to Big or Small.",
+		icon: { x: 453, y: 364, w: 16, h: 16 }, // fire flower
 		group: "items", inFlagKey: true },
 	{ id: "big_q_blocks", type: "bool", default: false,
 		label: "Big ? Blocks",

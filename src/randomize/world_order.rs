@@ -10,7 +10,13 @@ const WORLD_INC_OFFSET: usize = 0x3D0A1;
 /// File offset of the `LDA #$00` operand that initializes World_Num at game start.
 /// Original: `LDA #$00; STA $0727; STA $0160`. We patch the #$00 to the starting world
 /// and NOP out the `STA $0160` so the debug flag isn't set to the world number.
-const WORLD_INIT_OPERAND: usize = 0x30CC3;
+///
+/// Exposed so [`super::fire_flower`] can read the baked starting world (the
+/// first world in the shuffled progression, or 0 when world order is off) and
+/// use it as a seed-derived salt. Reading it is only meaningful after this
+/// module has run, which the orchestrator guarantees (world order is applied
+/// before fire_flower).
+pub(super) const WORLD_INIT_OPERAND: usize = 0x30CC3;
 
 /// File offset of the `STA $0160` (Debug_Flag) instruction (3 bytes).
 /// We NOP this out because patching the LDA operand above would otherwise

@@ -54,6 +54,7 @@ const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x0384E, 16, "koopa_vram_clear: clear VRAM buffer on defeat"),
     (0x0385E, 12, "koopa_fire_preset: set stomp counter from threshold table for fireball defeat"),
     (0x03FD0, 22, "koopa_y_clamp: clamp Koopaling Y position to screen"),
+    (0x03FE6, 36, "fire_flower: position-hash suit routine + pool table"),
     // PRG006 (file 0x0C010, CPU $C000–$DFFF) — level enemy data bank
     (0x0DA74, 22, "hand_rooms: 2 cloned enemy streams for unique 8-Hnd treasure rooms"),
     // PRG029 (file 0x3A010, CPU $C000–$DFFF) — swim physics bank
@@ -167,6 +168,16 @@ pub(super) const KOOPA_VRAM_CLEAR_CPU: u16  = 0xB83E;  // $A000 + (0x0384E - 0x0
 // Source: Fred's Koopaling fixes.
 pub(super) const FS_KOOPA_Y_CLAMP: usize = 0x03FD0; // 22 bytes
 pub(super) const KOOPA_Y_CLAMP_CPU: u16  = 0xBFC0;  // $A000 + (0x03FD0 - 0x02010)
+
+// Random Fire Flower (issue #22) — injected routine that derives the granted
+// power state from a seed-derived salt (the shuffled starting world) + the
+// current World_Num + the flower's absolute level position, instead of the
+// vanilla hardcoded Fire. Sits in the PRG001 bank-end gap right after
+// koopa_y_clamp (which ends at 0x3FE6). Up to 36 bytes: 28-byte routine + a
+// 4- or 6-byte pool table. ObjHit_FireFlower runs with PRG001 banked at
+// $A000, so the JSR from the hook is bank-local.
+pub(super) const FS_FIRE_FLOWER: usize     = 0x03FE6;
+pub(super) const FIRE_FLOWER_SUB_CPU: u16  = 0xBFD6; // $A000 + (0x03FE6 - 0x02010)
 
 // Fireball defeat preset — load per-world stomp threshold from table so the
 // fireball→stomp handoff always triggers defeat after INC.
