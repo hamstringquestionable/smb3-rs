@@ -118,11 +118,13 @@ export const SCHEMA = [
 		group: "map", inFlagKey: true },
 	{ id: "infinite_mushroom_houses", type: "bool", default: false,
 		label: "Infinite Mushroom Houses",
-		tip: "Toad / Mushroom Houses don't disappear after entering — visit them any number of times. Credit: MaCobra52.",
+		tip: "Toad / Mushroom Houses don't disappear after entering — visit them any number of times.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "map", inFlagKey: true },
 	{ id: "fast_mushroom_house", type: "bool", default: false,
 		label: "Fast Mushroom House",
-		tip: "Skip the entry animation and shorten the exit when using a Toad / Mushroom House. Credit: MaCobra52.",
+		tip: "Skip the entry animation and shorten the exit when using a Toad / Mushroom House.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "map", inFlagKey: true },
 	{ id: "shuffle_airships", type: "bool", default: true,
 		label: "Shuffle Airships",
@@ -151,6 +153,7 @@ export const SCHEMA = [
 	{ id: "remove_n_cards", type: "bool", default: true,
 		label: "Remove N-Cards",
 		tip: "Remove the N-card (N-Spade) bonus games from the overworld map",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "map", inFlagKey: true },
 	{ id: "troll_pipes", type: "tri", options: ON_OFF_MAYBE, default: "on",
 		label: "Troll Pipes", flavor: "Looks like a pipe…",
@@ -163,6 +166,7 @@ export const SCHEMA = [
 	{ id: "limit_bro_movement", type: "bool", default: false,
 		label: "Limit Bro Movement",
 		tip: "Gate Hammer Bro overworld Movements to increase race equality.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "map", inFlagKey: true },
 	{ id: "world_order", type: "bool", default: false,
 		label: "World Order",
@@ -227,7 +231,8 @@ export const SCHEMA = [
 		group: "enemies", inFlagKey: true },
 	{ id: "early_sun", type: "bool", default: false,
 		label: "Early Sun",
-		tip: "Angry Sun starts attacking immediately on spawn. Credit: MaCobra52.",
+		tip: "Angry Sun starts attacking immediately on spawn.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "enemies", inFlagKey: true },
 
 	// --- Bosses ---
@@ -244,16 +249,19 @@ export const SCHEMA = [
 	{ id: "hammer_vulnerable_koopalings", type: "bool", default: false,
 		label: "Hammer Vulnerable Koopalings",
 		tip: "Koopalings can be damaged by thrown hammers (normally hammers pass through them)",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		icon: { x: 543, y: 364, w: 16, h: 16 },
 		group: "bosses", inFlagKey: true },
 	{ id: "adjust_boss_hitboxes", type: "bool", default: true,
 		label: "Adjust Boss Hitboxes",
 		tip: "Adjust Bowser and Koopaling hitboxes so they're easier to hit",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		icon: { x: 171, y: 511, w: 32, h: 44, sheet: "bosses" }, // Bowser
 		group: "bosses", inFlagKey: true },
 	{ id: "skip_wand_cutscene", type: "bool", default: true,
 		label: "Skip Wand Cutscene", flavor: "Jump Up, Super Star!",
 		tip: "Skip the wand falling cutscene after defeating a Koopaling — jump to grab the wand instead",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		icon: { x: 435, y: 328, w: 16, h: 16 },
 		group: "bosses", inFlagKey: true },
 
@@ -282,6 +290,7 @@ export const SCHEMA = [
 	{ id: "fire_flower", type: "tri", options: OFF_ON_WILD, default: "off",
 		label: "Random Fire Flower",
 		tip: "Fire Flowers still look the same, but each one gives a different suit based on where it is. On: Fire, Frog, Tanooki, or Hammer. Wild: also lets it shrink you to Big or Small.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		icon: { x: 453, y: 364, w: 16, h: 16 }, // fire flower
 		group: "items", inFlagKey: true },
 	{ id: "big_q_blocks", type: "bool", default: false,
@@ -318,19 +327,23 @@ export const SCHEMA = [
 		group: "player", inFlagKey: true },
 	{ id: "japanese_damage", type: "bool", default: false,
 		label: "Japanese Damage System",
-		tip: "Taking damage drops you straight to Small Mario instead of demoting one tier at a time. Credit: MaCobra52.",
+		tip: "Taking damage drops you straight to Small Mario instead of demoting one tier at a time.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "player", inFlagKey: true },
 	{ id: "faster_tail_speed", type: "bool", default: false,
 		label: "Faster Tail Speed",
-		tip: "Speeds up the Raccoon / Tanooki tail swipe so you barely slow down using it. Slightly tweaks raccoon flight to keep level design intact. Credit: MaCobra52.",
+		tip: "Speeds up the Raccoon / Tanooki tail swipe so you barely slow down using it. Slightly tweaks raccoon flight to keep level design intact.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "player", inFlagKey: true },
 	{ id: "no_game_over_penalty", type: "bool", default: false,
 		label: "No Game Over Penalty",
-		tip: "Game Over no longer wipes your inventory, map progress, or cards — continue picks up where you left off. Credit: MaCobra52.",
+		tip: "Game Over no longer wipes your inventory, map progress, or cards — continue picks up where you left off.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "player", inFlagKey: true },
 	{ id: "faster_frog", type: "bool", default: false,
 		label: "Faster Frog",
 		tip: "Speeds up swimming and running while wearing the Frog Suit.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "player", inFlagKey: true },
 	{ id: "starting_items", type: "items",
 		items: ITEM_OPTIONS, slots: 3,
@@ -537,7 +550,20 @@ function tipBtn(entry) {
 
 function tipBlock(entry) {
 	if (!entry.tip) return null;
-	return el("div", { id: `tip-${entry.id}`, class: "option-tip", hidden: true }, entry.tip);
+	let creditLine = null;
+	if (entry.credit) {
+		const { name, url } = entry.credit;
+		const who = url
+			? el("a", { href: url, target: "_blank", rel: "noopener noreferrer" }, name)
+			: name;
+		creditLine = el("div", { class: "option-credit" }, "Credit: ", who);
+	}
+	return el(
+		"div",
+		{ id: `tip-${entry.id}`, class: "option-tip", hidden: true },
+		entry.tip,
+		creditLine,
+	);
 }
 
 // Optional sprite icon next to an option. Returns a canvas at the icon's

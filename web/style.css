@@ -403,6 +403,16 @@ input[type="radio"] {
     margin-left: 1.25rem;
 }
 
+.option-credit {
+    margin-top: 0.4rem;
+    font-size: 0.7rem;
+    color: #7a7a92;
+}
+
+.option-credit a {
+    color: #5c94fc;
+}
+
 /* --- Tags --- */
 
 .tag {

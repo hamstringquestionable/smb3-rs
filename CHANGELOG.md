@@ -66,6 +66,8 @@ full history.
   counts that never exceed vanilla.
 - Pipes are forbidden adjacent to start/target tiles to eliminate
   trivial-bypass worlds.
+- Option tooltips show contributor credits on their own line, linked to the
+  contributor (MaCobra52 credited across the features he authored).
 
 ### Fixed
 
