@@ -52,6 +52,20 @@ pub enum EnemyMode {
 fn default_shuffle() -> EnemyMode { EnemyMode::Shuffle }
 fn default_off() -> EnemyMode { EnemyMode::Off }
 
+/// Random Fire Flower mode (issue #22). Collecting an in-level Fire Flower
+/// grants a power state derived deterministically from the world and the
+/// flower's level position, instead of always Fire. `On` substitutes among the
+/// four big-form suits (Fire/Frog/Tanooki/Hammer); `Wild` adds the Small/Big
+/// downgrade outcomes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FireFlowerMode {
+    #[default]
+    Off,
+    On,
+    Wild,
+}
+
 /// Tri-state toggle for player-hidden flags: forced `Off`, forced `On`, or
 /// left to the seed (`Maybe`). A `Maybe` flag is resolved to a concrete
 /// on/off at generation time from a dedicated RNG substream (see
@@ -211,6 +225,12 @@ pub struct Options {
     /// always-on tail-attack-while-swimming routine.)
     #[serde(default)]
     pub faster_frog: bool,
+    /// Random Fire Flower (issue #22): an in-level Fire Flower grants a power
+    /// state derived deterministically from the world + the flower's level
+    /// position, instead of always Fire. `Off`/`On`/`Wild` (see
+    /// [`FireFlowerMode`]). The flower sprite is unchanged.
+    #[serde(default)]
+    pub fire_flower: FireFlowerMode,
     /// When true, the 19 vanilla spade-game tiles are picked up by the overworld
     /// builder and re-placed at random HammerBro slots, freeing their original
     /// positions for level placement. When false, spade games stay at vanilla
@@ -524,13 +544,24 @@ impl Options {
             | (item_mode(i1) << 2)
             | item_mode(i2);
 
-        // b11: "maybe" bits for the four player-hidden tri-state flags. When a
-        // bit is set the flag is resolved from the seed at generation time, and
-        // its value bit (in b1/b2/b3) is ignored on decode.
+        // Encode FireFlowerMode as 2 bits (off=0, on=1, wild=2).
+        fn ffm(m: FireFlowerMode) -> u8 {
+            match m {
+                FireFlowerMode::Off => 0,
+                FireFlowerMode::On => 1,
+                FireFlowerMode::Wild => 2,
+            }
+        }
+
+        // b11: "maybe" bits for the four player-hidden tri-state flags (bits
+        // 0-3). When a maybe bit is set the flag is resolved from the seed at
+        // generation time, and its value bit (in b1/b2/b3) is ignored on decode.
+        // Bits 4-5 hold the Random Fire Flower mode; bits 6-7 are free.
         let b11 = (self.hammer_breaks_locks.is_maybe() as u8)
             | (self.hammer_breaks_bridges.is_maybe() as u8) << 1
             | (self.troll_pipes.is_maybe() as u8) << 2
-            | (self.w1_hammer_rock.is_maybe() as u8) << 3;
+            | (self.w1_hammer_rock.is_maybe() as u8) << 3
+            | ffm(self.fire_flower) << 4;
 
         [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11]
     }
@@ -585,6 +616,15 @@ impl Options {
             if maybe { Tri::Maybe } else if value { Tri::On } else { Tri::Off }
         }
 
+        // Decode the 2-bit Random Fire Flower mode (b11 bits 4-5).
+        fn dffm(bits: u8) -> FireFlowerMode {
+            match bits & 0x03 {
+                1 => FireFlowerMode::On,
+                2 => FireFlowerMode::Wild,
+                _ => FireFlowerMode::Off,
+            }
+        }
+
         Ok(Options {
             powerups: (b1 >> 7) & 1 != 0,
             palettes: true,
@@ -623,6 +663,7 @@ impl Options {
             random_koopalings: (b10 >> 7) & 1 != 0,
             include_beta_stages: (b10 >> 6) & 1 != 0,
             hammer_breaks_bridges: dtri((b3 >> 7) & 1 != 0, (b11 >> 1) & 1 != 0),
+            fire_flower: dffm(b11 >> 4),
             ground: dem(b5 >> 6),
             shell: dem(b5 >> 4),
             flying: dem(b5 >> 2),
@@ -710,6 +751,7 @@ impl Default for Options {
             faster_tail_speed: false,
             no_game_over_penalty: false,
             faster_frog: false,
+            fire_flower: FireFlowerMode::Off,
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
             hands_levels: true,
@@ -1097,6 +1139,14 @@ fn randomize_inner(
         randomize::qol::apply_faster_frog(rom);
     }
 
+    // Random Fire Flower — in-level Fire Flower grants a position-derived suit
+    // instead of always Fire. Pure static patch (no RNG): the substitution is a
+    // deterministic function of World_Num + the flower's level position.
+    if options.fire_flower != FireFlowerMode::Off {
+        rom.set_tag("fire_flower");
+        randomize::fire_flower::apply(rom, options.fire_flower);
+    }
+
     // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 24 bytes:
     //   [0..4]   "S3R\xNN" magic + version
     //   [4..16]  flag key bytes (12 bytes in v18)
@@ -1307,6 +1357,7 @@ mod tests {
     #[test]
     fn flag_key_round_trip_all_wild() {
         let opts = Options {
+            fire_flower: FireFlowerMode::Wild,
             powerups: true,
             palettes: true,
             palette_themed: false,
@@ -1383,6 +1434,7 @@ mod tests {
     #[test]
     fn flag_key_round_trip_all_off() {
         let opts = Options {
+            fire_flower: FireFlowerMode::Off,
             powerups: false,
             palettes: false,
             palette_themed: false,
@@ -1777,6 +1829,7 @@ mod tests {
     /// Build an Options with everything disabled (exercises "skip everything" branches).
     fn all_off_options() -> Options {
         Options {
+            fire_flower: FireFlowerMode::Off,
             powerups: false,
             palettes: false,
             palette_themed: false,
@@ -1837,6 +1890,7 @@ mod tests {
     /// Palettes disabled because they use OS entropy (cosmetic, decoupled from seed).
     fn all_on_options() -> Options {
         Options {
+            fire_flower: FireFlowerMode::On,
             powerups: true,
             palettes: false,
             palette_themed: false,
