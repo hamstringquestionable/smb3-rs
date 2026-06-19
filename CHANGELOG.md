@@ -19,10 +19,10 @@ full history.
 - **Random Fire Flower** (`--fire-flower off|on|wild`, issue #22) — an in-level
   Fire Flower still looks the same but grants a power state derived
   deterministically from a seed salt (the shuffled starting world), the current
-  world, and the flower's level position, instead of always Fire. `on`
+  world, the level, and the flower's screen, instead of always Fire. `on`
   substitutes among Fire/Frog/Tanooki/Hammer; `wild` also allows the Small/Big
-  downgrades. Same seed and spot always give the same suit; the mapping rotates
-  per seed when world-order shuffle is enabled.
+  downgrades. Same seed always gives the same suit for a given flower; the
+  mapping rotates per seed when world-order shuffle is enabled.
 - **Overworld builder pipeline** — the core randomization system. A
   four-phase pipeline (catalog → pickup → build → write) that re-lays each
   world: assigns levels to map slots via BFS-ordered placement, places

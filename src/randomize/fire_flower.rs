@@ -17,34 +17,43 @@
 //! injected routine that computes:
 //!
 //! ```text
-//! index = (salt + World_Num + Objects_XHi,X + Objects_X,X + Objects_Y,X) mod pool_len
+//! index = (salt + World_Num + Level_LayPtr_AddrL + Objects_XHi,X) mod pool_len
 //! Player_QueueSuit = POOL[index]
 //! ```
 //!
-//! ## Where the variation comes from
+//! ## Where the variation comes from — and why every input must be stable
 //!
-//! - **`salt`** is a single byte baked in at patch-generation time: the
-//!   *starting world* of the shuffled progression (the first world in
-//!   `world_order`). It is seed-derived, so the whole suit mapping rotates from
-//!   seed to seed — which is the only way a level that **never moves worlds**
-//!   (e.g. Bowser's castle) can give a different suit across seeds, since every
-//!   pure-game-state input is identical for it on every seed. When world order
-//!   shuffling is off, the starting world is always 0, so the salt is constant
-//!   and fixed levels resolve to the same suit across seeds.
-//! - **`World_Num`** (`$0727`) spreads different worlds apart within a single
-//!   playthrough.
-//! - The three object arrays (all indexed by the colliding object's slot in
-//!   `X`) are the flower's *absolute* level coordinates — stable regardless of
-//!   camera scroll — so each flower tile resolves to one fixed suit, and two
-//!   flowers in the same level differ.
+//! The hash must use only values that **do not change between two collections
+//! of the same flower**, or the same block yields different suits. A flower
+//! popped from a `?` block *rises and drifts as it emerges*, so its fine
+//! position (`Objects_X` low byte, `Objects_Y`) is NOT stable at collision time
+//! — using them was a determinism bug. We key only on values that are fixed for
+//! the whole time the flower exists:
 //!
-//! Because the salt is baked into the ROM, the result is fully deterministic
-//! for a given seed (every player gets the same suit from a given flower) with
-//! no live/in-game RNG.
+//! - **`salt`** — a byte baked in at patch-generation time: the *starting
+//!   world* of the shuffled progression (`world_order`). Seed-derived, so the
+//!   whole suit mapping rotates seed to seed — the only way a level that **never
+//!   moves worlds** (e.g. Bowser's castle) can give a different suit across
+//!   seeds, since every pure-game-state input is identical for it on every seed.
+//!   With world-order shuffle off the starting world is 0, so fixed levels
+//!   resolve to the same suit across seeds.
+//! - **`World_Num`** (`$0727`) — spreads worlds apart; constant within a level.
+//! - **`Level_LayPtr_AddrL`** (`$61`) — the level layout pointer, a per-area
+//!   constant set at level load and not touched during play. Distinguishes
+//!   different levels/sub-areas that share a world and screen.
+//! - **`Objects_XHi,X`** (`$76,X`, the colliding object's slot in `X`) — the
+//!   flower's *screen number*. Unlike the low-byte X/Y it doesn't change as the
+//!   flower rises a few pixels, so it's stable per block. (Same input the
+//!   community "Random Fire Flower" patch used.)
+//!
+//! Granularity is therefore per-(seed, world, level/area, screen): two flowers
+//! on the *same screen of the same level* resolve to the same suit. Finer
+//! per-tile distinction isn't available because the flower's fine position isn't
+//! stable at collision time. Because the salt is baked into the ROM, the result
+//! is fully deterministic for a given seed with no live/in-game RNG.
 //!
 //! The hook mirrors the community "Random Fire Flower" patch's site but diverts
-//! to our own routine and uses the starting-world salt + `World_Num` (the
-//! original used `Level_LayPtr_AddrL`, which ties the suit to level *content*).
+//! to our own routine and adds the starting-world salt + `World_Num`.
 //!
 //! ## Scope / caveats
 //!
@@ -83,7 +92,7 @@ const POOL_ON: &[u8] = &[Q_FIRE, Q_FROG, Q_TANOOKI, Q_HAMMER];
 const POOL_WILD: &[u8] = &[Q_SMALL, Q_BIG, Q_FIRE, Q_FROG, Q_TANOOKI, Q_HAMMER];
 
 /// Length of the injected routine code (excluding the trailing pool table).
-const ROUTINE_LEN: u16 = 28;
+const ROUTINE_LEN: u16 = 26;
 
 /// Install the Random Fire Flower patch. `Off` is a no-op.
 ///
@@ -107,13 +116,14 @@ pub fn apply(rom: &mut Rom, mode: FireFlowerMode) {
     let tlo = (table_cpu & 0xFF) as u8;
     let thi = (table_cpu >> 8) as u8;
 
-    // Injected routine (X = colliding object's slot index):
+    // Injected routine (X = colliding object's slot index). Every summed input
+    // is stable for the flower's whole lifetime — see the module doc for why
+    // the fine position (Objects_X/Y) must NOT be used.
     //   LDA #salt        ; seed-derived starting-world salt
     //   CLC
     //   ADC $0727        ; + World_Num  (current world)
-    //   ADC $76,X        ; + Objects_XHi,X  (screen number, absolute)
-    //   ADC $91,X        ; + Objects_X,X    (low X within screen, absolute)
-    //   ADC $A3,X        ; + Objects_Y,X    (absolute Y)
+    //   ADC $61          ; + Level_LayPtr_AddrL  (per-area constant)
+    //   ADC $76,X        ; + Objects_XHi,X  (flower screen number)
     // modloop:
     //   CMP #n           ; reduce the (carry-folded) sum mod pool_len
     //   BCC moddone
@@ -129,14 +139,13 @@ pub fn apply(rom: &mut Rom, mode: FireFlowerMode) {
         0xA9, salt,         // LDA #salt
         0x18,               // CLC
         0x6D, 0x27, 0x07,   // ADC $0727  (World_Num)
+        0x65, 0x61,         // ADC $61    (Level_LayPtr_AddrL)
         0x75, 0x76,         // ADC $76,X  (Objects_XHi,X)
-        0x75, 0x91,         // ADC $91,X  (Objects_X,X)
-        0x75, 0xA3,         // ADC $A3,X  (Objects_Y,X)
-        0xC9, n,            // CMP #n            (modloop @ +12)
-        0x90, 0x04,         // BCC +4 -> moddone (+20)
+        0xC9, n,            // CMP #n            (modloop @ +10)
+        0x90, 0x04,         // BCC +4 -> moddone (+16)
         0xE9, n,            // SBC #n
-        0xB0, 0xF8,         // BCS -8 -> modloop (+12)
-        0xA8,               // TAY               (moddone @ +20)
+        0xB0, 0xF8,         // BCS -8 -> modloop (+10)
+        0xA8,               // TAY               (moddone @ +16)
         0xB9, tlo, thi,     // LDA POOL,Y
         0x8D, 0x78, 0x05,   // STA $0578  (Player_QueueSuit)
         0x60,               // RTS
@@ -167,12 +176,12 @@ mod tests {
     use crate::rom::Rom;
 
     /// Mirror the injected 6502 routine in Rust to confirm the table index math.
-    fn sim(salt: u8, world: u8, xhi: u8, x: u8, y: u8, pool: &[u8]) -> u8 {
+    /// Only stable inputs (salt, world, layout pointer, flower screen) feed it.
+    fn sim(salt: u8, world: u8, layptr: u8, xhi: u8, pool: &[u8]) -> u8 {
         let sum = salt
             .wrapping_add(world)
-            .wrapping_add(xhi)
-            .wrapping_add(x)
-            .wrapping_add(y);
+            .wrapping_add(layptr)
+            .wrapping_add(xhi);
         pool[(sum % pool.len() as u8) as usize]
     }
 
@@ -207,8 +216,8 @@ mod tests {
             &[0xEA, 0xEA, 0xA9, 0x1F, 0x8D, 0x55, 0x05, 0xEA, 0xEA, 0x20, lo, hi],
         );
         // CMP immediate is the pool length; table follows the routine.
-        assert_eq!(rom.read_byte(FS_FIRE_FLOWER + 12), 0xC9);
-        assert_eq!(rom.read_byte(FS_FIRE_FLOWER + 13), POOL_ON.len() as u8);
+        assert_eq!(rom.read_byte(FS_FIRE_FLOWER + 10), 0xC9);
+        assert_eq!(rom.read_byte(FS_FIRE_FLOWER + 11), POOL_ON.len() as u8);
         assert_eq!(
             rom.read_range(FS_FIRE_FLOWER + ROUTINE_LEN as usize, POOL_ON.len()),
             POOL_ON,
@@ -219,7 +228,7 @@ mod tests {
     fn wild_uses_six_entry_pool() {
         let mut rom = blank_rom();
         apply(&mut rom, FireFlowerMode::Wild);
-        assert_eq!(rom.read_byte(FS_FIRE_FLOWER + 13), POOL_WILD.len() as u8);
+        assert_eq!(rom.read_byte(FS_FIRE_FLOWER + 11), POOL_WILD.len() as u8);
         assert_eq!(
             rom.read_range(FS_FIRE_FLOWER + ROUTINE_LEN as usize, POOL_WILD.len()),
             POOL_WILD,
@@ -228,7 +237,7 @@ mod tests {
 
     #[test]
     fn routine_stays_within_allocation() {
-        // 28-byte routine + the larger (Wild) 6-byte table must fit the 36-byte
+        // 26-byte routine + the larger (Wild) 6-byte table must fit the 36-byte
         // reservation and not spill past the PRG001 bank end (0x4010).
         const _: () = assert!(ROUTINE_LEN as usize + POOL_WILD.len() <= 36);
         const _: () = assert!(FS_FIRE_FLOWER + 36 <= 0x4010);
@@ -240,9 +249,9 @@ mod tests {
         for &pool in &[POOL_ON, POOL_WILD] {
             for salt in 0..8u8 {
                 for world in 0..8u8 {
-                    for &(xhi, x, y) in &[(0u8, 0u8, 0u8), (1, 0x40, 0x80), (15, 0xFF, 0xFF)] {
-                        let a = sim(salt, world, xhi, x, y, pool);
-                        let b = sim(salt, world, xhi, x, y, pool);
+                    for &(layptr, xhi) in &[(0u8, 0u8), (0x40, 1), (0xFF, 15)] {
+                        let a = sim(salt, world, layptr, xhi, pool);
+                        let b = sim(salt, world, layptr, xhi, pool);
                         assert_eq!(a, b);
                         assert!(pool.contains(&a));
                     }
