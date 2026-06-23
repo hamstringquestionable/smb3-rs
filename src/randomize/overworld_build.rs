@@ -199,6 +199,7 @@ pub(crate) fn build<R: Rng>(
     data: &OverworldData,
     rng: &mut R,
     shuffle_toad_houses: bool,
+    eights_are_wild: bool,
 ) -> BuildResult {
     let pickup = data.pickup;
     let catalog = data.catalog;
@@ -214,6 +215,11 @@ pub(crate) fn build<R: Rng>(
     let mut patched_grids: Vec<Grid> = Vec::with_capacity(8);
     for wi in 0..8 {
         let mut grid = pickup.worlds[wi].grid.clone();
+        // Stamp the `8s are Wild` flag onto every grid the builder walks. It
+        // rides through all downstream clones (test grids, open/locked grids,
+        // `built.grid` consumed by the writer), so `active_canoe_edges` gates
+        // the W8 canoe correctly everywhere without per-call threading.
+        grid.eights_are_wild = eights_are_wild;
         for entry in &catalog.entries {
             if entry.world_idx != wi {
                 continue;
@@ -2018,11 +2024,8 @@ fn analyze_with_pre_opened_mask(
     //     X, and after the ride the boat is at Y. Walking/piping to an island
     //     without the boat leaves you stranded (no canoe edge usable from
     //     that island).
-    let canoe_edges: Vec<((usize, usize), (usize, usize))> = rom_data::CANOE_EDGES
-        .iter()
-        .filter(|&&(w, _)| w == built.world_idx)
-        .map(|&(_, edge)| edge)
-        .collect();
+    let canoe_edges: Vec<((usize, usize), (usize, usize))> =
+        rom_data::active_canoe_edges(built.world_idx, built.grid.eights_are_wild);
     let canoe_pair_set: HashSet<((usize, usize), (usize, usize))> = canoe_edges
         .iter()
         .flat_map(|&(a, b)| [(a, b), (b, a)])
@@ -2225,11 +2228,8 @@ pub(crate) fn dump_required_progression(built: &BuiltWorld) {
     let start = rom_data::find_start(&built.grid);
     let target = find_target(&built.grid, built.world_idx);
 
-    let canoes: Vec<((usize, usize), (usize, usize))> = rom_data::CANOE_EDGES
-        .iter()
-        .filter(|&&(w, _)| w == built.world_idx)
-        .map(|&(_, edge)| edge)
-        .collect();
+    let canoes: Vec<((usize, usize), (usize, usize))> =
+        rom_data::active_canoe_edges(built.world_idx, built.grid.eights_are_wild);
 
     eprintln!("\n--- W{} ---", built.world_idx + 1);
     eprintln!(
@@ -2446,7 +2446,7 @@ mod tests {
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
         let mut rng = ChaCha8Rng::seed_from_u64(42);
 
-        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
 
         assert_eq!(result.worlds.len(), 8);
 
@@ -2486,7 +2486,7 @@ mod tests {
 
         for seed in 0..10 {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
 
             for built in &result.worlds {
                 let start_pos = rom_data::find_start(&built.grid);
@@ -2546,7 +2546,7 @@ mod tests {
 
         for seed in [42, 123, 999] {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
 
             let mut rom_copy = Rom::from_bytes(&rom.data).unwrap();
             debug_stamp_rom(&mut rom_copy, &result);
@@ -2580,7 +2580,7 @@ mod tests {
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
         let mut rng = ChaCha8Rng::seed_from_u64(42);
 
-        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
 
         for built in &result.worlds {
             eprintln!("\n=== World {} ({} sections) ===",
@@ -2625,7 +2625,7 @@ mod tests {
 
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
 
             let total_levels: usize = result.worlds.iter()
                 .map(|b| b.slots.iter().filter(|s| s.kind == SlotKind::Level).count())
@@ -2672,7 +2672,7 @@ mod tests {
         let mut no_safe_details: Vec<(u64, [usize; 8])> = Vec::new();
         for seed in 0..seeds {
             let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
-            let result2 = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng2, true);
+            let result2 = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng2, true, false);
             let has_safe = result2.worlds.iter().any(|b| {
                 b.locks.iter().any(|l| l.secret_exit_safe)
             });
@@ -2715,7 +2715,7 @@ mod tests {
 
         for seed in 0..6u64 {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
             let built = &result.worlds[5]; // W6 (0-indexed)
 
             eprintln!("\n===== Seed {seed} — W6 =====");
@@ -2815,7 +2815,7 @@ mod tests {
         // Run the actual build for several seeds and check coverage
         for seed in 0..5u64 {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
             let built = &result.worlds[wi];
 
             // All positions that got a slot assignment
@@ -2884,7 +2884,7 @@ mod tests {
 
         for seed in [42u64, 123, 999] {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
 
             eprintln!("\n{}", "=".repeat(60));
             eprintln!("=== Seed {seed} ===");
@@ -2988,7 +2988,7 @@ mod tests {
         let target_wi = 6; // 0-indexed: W7 = 6
 
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
         let built = &result.worlds[target_wi];
 
         let start_pos = rom_data::find_start(&built.grid);
@@ -3113,7 +3113,7 @@ mod tests {
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let (catalog, pickup) = build_catalog_pickup(&rom, seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
             let mut seed_has_close = false;
             let mut seed_has_close_pair = false;
 
@@ -3312,7 +3312,7 @@ mod tests {
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let (catalog, pickup) = build_catalog_pickup(&rom, seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
 
             for built in &result.worlds {
                 let wi = built.world_idx;
@@ -3467,7 +3467,7 @@ mod tests {
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let (catalog, pickup) = build_catalog_pickup(&rom, seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
 
             for built in &result.worlds {
                 let wi = built.world_idx;
@@ -3649,7 +3649,7 @@ mod tests {
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let (catalog, pickup) = build_catalog_pickup(&rom, seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
 
             for built in &result.worlds {
                 let wi = built.world_idx;
@@ -3855,7 +3855,7 @@ mod tests {
                 },
             );
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
             let w3 = result.worlds.iter().find(|b| b.world_idx == 2).unwrap();
             assert!(
                 analyze_required_progression(w3, false).reachable,
@@ -3912,7 +3912,7 @@ mod tests {
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let (catalog, pickup) = build_catalog_pickup(&rom, seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
 
             for built in &result.worlds {
                 let wi = built.world_idx;
@@ -4127,6 +4127,7 @@ mod tests {
                 &OverworldData { pickup: &pickup, catalog: &catalog },
                 &mut rng,
                 true,
+                false,
             );
             let sas_label = if std::env::var("SAS").is_ok() {
                 " [SAS=1]"
