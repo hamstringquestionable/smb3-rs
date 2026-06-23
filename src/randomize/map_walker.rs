@@ -70,15 +70,13 @@ fn canoes_reachable(
     start: (usize, usize),
     world_idx: usize,
 ) -> bool {
-    // Mainland docks per `CANOE_EDGES` are the `a` side of each tuple, scoped to
-    // this world. Filtering by `world_idx` is essential: the edge coordinates
-    // are not world-unique, so an unfiltered scan would fabricate canoe
-    // connectivity in any world that happens to reach a mainland dock's
-    // coordinate (e.g. W3's (6,20) also exists in W2/W4–W8).
-    let docks: Vec<(usize, usize)> = rom_data::CANOE_EDGES
-        .iter()
-        .filter(|&&(w, _)| w == world_idx)
-        .map(|&(_, (a, _))| a)
+    // Mainland docks are the `a` side of each active canoe edge for this world.
+    // `active_canoe_edges` applies both the world filter (the coordinates are
+    // not world-unique — W3's (6,20) also exists in W2/W4–W8) and the `8s are
+    // Wild` gate (W8's docks only exist when the flag is on).
+    let docks: Vec<(usize, usize)> = rom_data::active_canoe_edges(world_idx, grid.eights_are_wild)
+        .into_iter()
+        .map(|(a, _)| a)
         .collect();
     if docks.is_empty() {
         return true;
@@ -180,10 +178,7 @@ pub(super) fn walk_map(
     // into a region with no walking path to the dock.
     let mut canoe_lookup: HashMap<(usize, usize), Vec<(usize, usize)>> = HashMap::new();
     if canoes_reachable(grid, pipe_pairs, start, world_idx) {
-        for &(w, (a, b)) in rom_data::CANOE_EDGES {
-            if w != world_idx {
-                continue;
-            }
+        for (a, b) in rom_data::active_canoe_edges(world_idx, grid.eights_are_wild) {
             canoe_lookup.entry(a).or_default().push(b);
             canoe_lookup.entry(b).or_default().push(a);
         }
@@ -598,29 +593,43 @@ mod tests {
     /// teleport injected — fabricating connectivity. This proves each edge fires
     /// ONLY in its own world.
     ///
-    /// Rather than inject a synthetic edge (the edge list is a `const`), we use
+    /// Rather than inject a synthetic edge (the edge list is private), we use
     /// the real edges but evaluate them from a world that has none: same grid,
     /// same reachable dock coordinate, different `world_idx`. The island must be
     /// reachable in the edge's own world and unreachable from the other. Under
     /// the old unfiltered code the negative assertion would fail.
     #[test]
     fn test_canoe_edges_are_world_scoped() {
+        // Gather every active canoe edge (all worlds, `8s are Wild` on so the
+        // W8 edges are included) via the single accessor.
+        let all_edges: Vec<(usize, (Pos, Pos))> = (0..8)
+            .flat_map(|w| {
+                rom_data::active_canoe_edges(w, true)
+                    .into_iter()
+                    .map(move |e| (w, e))
+            })
+            .collect();
         // A world with no canoe edges at all: walking it must never produce
         // canoe connectivity regardless of which coordinates are reachable.
-        let canoe_worlds: HashSet<usize> =
-            rom_data::CANOE_EDGES.iter().map(|&(w, _)| w).collect();
+        let canoe_worlds: HashSet<usize> = all_edges.iter().map(|&(w, _)| w).collect();
         let other = (0..8)
             .find(|w| !canoe_worlds.contains(w))
             .expect("at least one world should have no canoe edges");
 
-        for &(world, (a, b)) in rom_data::CANOE_EDGES {
+        for (world, (a, b)) in all_edges {
             assert!(a.1 >= 2, "test assumes mainland dock col >= 2");
 
             // Background grid (0xB4) large enough for every dock coordinate,
             // with a 2-tile walk carved from `start` to the mainland dock `a`.
             // The island dock `b` is left isolated, so it can only be reached
-            // via a canoe hop — never by walking.
-            let mut grid = Grid { tiles: vec![vec![0xB4u8; 48]; 9], rows: 9, cols: 48 };
+            // via a canoe hop — never by walking. `eights_are_wild` on so the
+            // W8 edges resolve.
+            let mut grid = Grid {
+                tiles: vec![vec![0xB4u8; 48]; 9],
+                rows: 9,
+                cols: 48,
+                eights_are_wild: true,
+            };
             let start = (a.0, a.1 - 2);
             grid.set(a.0, a.1 - 1, 0x45); // VALID_HORZ path tile
             grid.set(a.0, a.1, 0x45); // mainland dock node (non-background)

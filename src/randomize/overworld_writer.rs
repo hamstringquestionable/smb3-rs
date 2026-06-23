@@ -1323,7 +1323,7 @@ mod tests {
         let catalog = super::super::node_catalog::NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+        let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
 
         let mut rng2 = ChaCha8Rng::seed_from_u64(99);
         let assignments = assign_pool(&rom, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng2, true);
@@ -1392,7 +1392,7 @@ mod tests {
 
         for seed in 0u64..32 {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let mut build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+            let mut build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
             super::super::troll_pipes::mark_troll_pipes(&mut build, &mut rng);
 
             let troll_positions: HashSet<(usize, (usize, usize))> = build.worlds.iter()
@@ -1432,7 +1432,7 @@ mod tests {
         for pass in 0..2 {
             let target = if pass == 0 { &mut rom1 } else { &mut rom2 };
             let mut rng = ChaCha8Rng::seed_from_u64(42);
-            let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+            let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
             write_overworld(target, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
         }
 
@@ -1448,7 +1448,7 @@ mod tests {
         let catalog = super::super::node_catalog::NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+        let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
 
         let mut test_rom = rom.clone();
         write_overworld(&mut test_rom, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
@@ -1474,7 +1474,7 @@ mod tests {
         let catalog = super::super::node_catalog::NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+        let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
 
         let mut test_rom = rom.clone();
         write_overworld(&mut test_rom, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
@@ -1512,7 +1512,7 @@ mod tests {
         let catalog = super::super::node_catalog::NodeCatalog::build(&rom, false);
         let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+        let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
 
         let mut test_rom = rom.clone();
         write_overworld(&mut test_rom, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
@@ -1555,7 +1555,7 @@ mod tests {
 
         for seed in [42u64, 123, 999, 7777, 31337] {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+            let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
 
             let mut test_rom = rom.clone();
             super::super::qol::fix_w3_drawbridges(&mut test_rom);
@@ -1617,7 +1617,7 @@ mod tests {
 
         for seed in [42u64, 123, 999] {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true);
+            let build = super::super::overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false);
 
             let mut out = rom.clone();
 

@@ -108,10 +108,16 @@ struct Cli {
     #[arg(long)]
     keep_rocks: bool,
 
-    /// Convert the W1 (6,5) blocking decoration into a hammer-breakable rock:
+    /// Add extra hammer-breakable rocks (W1 6,5 and W8 3,37 decorations):
     /// off, on, or maybe (the seed decides, hidden from the flag key). Default: off.
     #[arg(long, default_value = "off")]
-    w1_hammer_rock: String,
+    more_hammer_rocks: String,
+
+    /// 8s are Wild: enable the W8 Dark World canoe (screen 0) and extra paths
+    /// (screen 2): off, on, or maybe (the seed decides, hidden from the flag
+    /// key). Default: off.
+    #[arg(long, default_value = "off")]
+    eights_are_wild: String,
 
     /// Disable card speed clear (one-of-each skips cutscene, on by default)
     #[arg(long)]
@@ -422,7 +428,8 @@ fn main() {
             chest_items: !cli.no_chest_items,
             remove_whistles: !cli.keep_whistles,
             remove_rocks: !cli.keep_rocks,
-            w1_hammer_rock: parse_tri(&cli.w1_hammer_rock, "w1-hammer-rock"),
+            more_hammer_rocks: parse_tri(&cli.more_hammer_rocks, "more-hammer-rocks"),
+            eights_are_wild: parse_tri(&cli.eights_are_wild, "eights-are-wild"),
             card_speed_clear: !cli.no_card_speed_clear,
             remove_n_cards: !cli.keep_n_cards,
             skip_wand_cutscene: !cli.keep_wand_cutscene,
@@ -494,7 +501,8 @@ fn main() {
     eprintln!("  Chest items: {}", if options.chest_items { "on" } else { "off" });
     eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });
     eprintln!("  Remove rocks: {}", if options.remove_rocks { "on" } else { "off" });
-    eprintln!("  W1 hammer rock: {}", tri_str(options.w1_hammer_rock));
+    eprintln!("  More hammer rocks: {}", tri_str(options.more_hammer_rocks));
+    eprintln!("  8s are Wild: {}", tri_str(options.eights_are_wild));
     eprintln!("  Random fire flower: {}", match options.fire_flower {
         FireFlowerMode::Off => "off",
         FireFlowerMode::On => "on",

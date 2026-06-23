@@ -143,14 +143,21 @@ pub struct Options {
     /// Remove rocks blocking paths (W2 secret path, W3 boat dock).
     #[serde(default = "default_true", alias = "remove_w2_rock")]
     pub remove_rocks: bool,
-    /// Convert the W1 (6,5) decoration tile (between hammer-bro 14 and
-    /// toad house 20) into a hammer-breakable rock that becomes a
-    /// horizontal path when broken/cleared. Off keeps the vanilla
-    /// non-removable rock.
+    /// Add extra hammer-breakable rocks: the W1 (6,5) decoration (between
+    /// hammer-bro 14 and toad house 20) and the W8 (3,37) screen-2 decoration.
+    /// Each becomes a horizontal path when broken/cleared. Off keeps the
+    /// vanilla non-removable rocks.
     ///
     /// Tri-state: `Maybe` lets the seed decide (hidden from the flag key).
     #[serde(default)]
-    pub w1_hammer_rock: Tri,
+    pub more_hammer_rocks: Tri,
+    /// `8s are Wild`: enable the W8 (Dark World) canoe on screen 0 and the
+    /// extra paths on screen 2. Off keeps W8 without the canoe shortcut.
+    /// (The screen-3 bridges are always present.)
+    ///
+    /// Tri-state: `Maybe` lets the seed decide (hidden from the flag key).
+    #[serde(default)]
+    pub eights_are_wild: Tri,
     /// Clear cards instantly (no cutscene, no lives) when collecting one of each type.
     #[serde(default = "default_true")]
     pub card_speed_clear: bool,
@@ -331,7 +338,7 @@ fn default_true() -> bool {
     true
 }
 
-const FLAG_KEY_VERSION: u8 = 18;
+const FLAG_KEY_VERSION: u8 = 19;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
 
 /// Salt mixed into the seed to derive the substream that resolves `Maybe`
@@ -453,7 +460,7 @@ impl Options {
 
         // b3: hammer_breaks_bridges(7) starting_lives(6-5) fast_mushroom_house(4)
         //     faster_tail_speed(3) no_game_over_penalty(2) swap_start_airship(1)
-        //     w1_hammer_rock(0)
+        //     more_hammer_rocks(0)
         // starting_lives shrank from a 7-bit clamped 1–99 to a 2-bit index
         // into {1, 5, 20, 99}, freeing bits 4-0 for future toggles.
         let b3 = ((self.hammer_breaks_bridges.is_on() as u8) << 7)
@@ -462,7 +469,7 @@ impl Options {
             | ((self.faster_tail_speed as u8) << 3)
             | ((self.no_game_over_penalty as u8) << 2)
             | ((self.swap_start_airship as u8) << 1)
-            | (self.w1_hammer_rock.is_on() as u8);
+            | (self.more_hammer_rocks.is_on() as u8);
 
         let b4 = (self.card_speed_clear as u8) << 7
             | (self.remove_n_cards as u8) << 6
@@ -556,12 +563,15 @@ impl Options {
         // b11: "maybe" bits for the four player-hidden tri-state flags (bits
         // 0-3). When a maybe bit is set the flag is resolved from the seed at
         // generation time, and its value bit (in b1/b2/b3) is ignored on decode.
-        // Bits 4-5 hold the Random Fire Flower mode; bits 6-7 are free.
+        // Bits 4-5 hold the Random Fire Flower mode. Bit 6 is the eights_are_wild
+        // ON bit and bit 7 its Maybe bit (both live here since b1-b4 are full).
         let b11 = (self.hammer_breaks_locks.is_maybe() as u8)
             | (self.hammer_breaks_bridges.is_maybe() as u8) << 1
             | (self.troll_pipes.is_maybe() as u8) << 2
-            | (self.w1_hammer_rock.is_maybe() as u8) << 3
-            | ffm(self.fire_flower) << 4;
+            | (self.more_hammer_rocks.is_maybe() as u8) << 3
+            | ffm(self.fire_flower) << 4
+            | (self.eights_are_wild.is_on() as u8) << 6
+            | (self.eights_are_wild.is_maybe() as u8) << 7;
 
         [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11]
     }
@@ -659,7 +669,8 @@ impl Options {
             faster_tail_speed: (b3 >> 3) & 1 != 0,
             no_game_over_penalty: (b3 >> 2) & 1 != 0,
             swap_start_airship: (b3 >> 1) & 1 != 0,
-            w1_hammer_rock: dtri(b3 & 1 != 0, (b11 >> 3) & 1 != 0),
+            more_hammer_rocks: dtri(b3 & 1 != 0, (b11 >> 3) & 1 != 0),
+            eights_are_wild: dtri((b11 >> 6) & 1 != 0, (b11 >> 7) & 1 != 0),
             random_koopalings: (b10 >> 7) & 1 != 0,
             include_beta_stages: (b10 >> 6) & 1 != 0,
             hammer_breaks_bridges: dtri((b3 >> 7) & 1 != 0, (b11 >> 1) & 1 != 0),
@@ -732,7 +743,8 @@ impl Default for Options {
             chest_items: true,
             remove_whistles: true,
             remove_rocks: true,
-            w1_hammer_rock: Tri::Off,
+            more_hammer_rocks: Tri::Off,
+            eights_are_wild: Tri::Off,
             card_speed_clear: true,
             remove_n_cards: true,
             skip_wand_cutscene: true,
@@ -820,7 +832,8 @@ fn randomize_inner(
     let hammer_breaks_locks = options.hammer_breaks_locks.resolve(&mut maybe_rng);
     let hammer_breaks_bridges = options.hammer_breaks_bridges.resolve(&mut maybe_rng);
     let troll_pipes = options.troll_pipes.resolve(&mut maybe_rng);
-    let w1_hammer_rock = options.w1_hammer_rock.resolve(&mut maybe_rng);
+    let more_hammer_rocks = options.more_hammer_rocks.resolve(&mut maybe_rng);
+    let eights_are_wild = options.eights_are_wild.resolve(&mut maybe_rng);
 
     // QoL map patches run first so all subsequent overworld operations
     // (fortress redistribution, pipe shuffle, lock shuffle) see the final
@@ -831,15 +844,21 @@ fn randomize_inner(
         rom.set_tag("qol/rocks");
         randomize::qol::remove_rocks(rom);
     }
-    if w1_hammer_rock {
-        rom.set_tag("qol/w1_hammer_rock");
-        randomize::qol::make_w1_hammer_rock(rom);
+    if more_hammer_rocks {
+        rom.set_tag("qol/more_hammer_rocks");
+        randomize::qol::make_hammer_rocks(rom);
     }
 
-    // W8 Dark World map edits (beta): extra paths + water/bridge final page.
-    // Must run before the overworld builder so it sees the new connectivity.
-    rom.set_tag("qol/w8_map_edits");
-    randomize::qol::apply_w8_map_edits(rom);
+    // W8 Dark World map edits. The screen-3 water/bridge final page is always
+    // applied; the screen-0 canoe + screen-2 extra paths are gated behind
+    // `8s are Wild`. Both must run before the overworld builder so it sees the
+    // new connectivity.
+    rom.set_tag("qol/w8_bridges");
+    randomize::qol::apply_w8_bridges(rom);
+    if eights_are_wild {
+        rom.set_tag("qol/w8_canoe_and_paths");
+        randomize::qol::apply_w8_canoe_and_paths(rom);
+    }
 
     // Fix Big ? Block bonus rooms so they follow the level, not the world slot.
     // Always applied — needed whenever world_order or cross-world shuffle is active,
@@ -949,7 +968,7 @@ fn randomize_inner(
         catalog: &catalog,
     };
     let mut build = randomize::overworld_build::build(
-        rom, &data, &mut rng, options.shuffle_toad_houses,
+        rom, &data, &mut rng, options.shuffle_toad_houses, eights_are_wild,
     );
     if options.hands_levels {
         rom.set_tag("hands_levels");
@@ -1033,10 +1052,11 @@ fn randomize_inner(
         randomize::qol::remove_n_cards(rom);
     }
 
-    // Fix canoe softlocks. Always applied: the W8 canoe/docks are unconditional
-    // (see `apply_w8_map_edits`), and the canoe is also reachable via spade and
-    // toad-house shuffle. The fix is world-agnostic (keys on the dock tile 0x4B
-    // and canoe object 0x10), so running it unconditionally is correct and safe.
+    // Fix canoe softlocks. Always applied: the vanilla W3 canoe is always
+    // present (and the W8 canoe is present when `8s are Wild` is on), and canoes
+    // are also reachable via spade and toad-house shuffle. The fix is
+    // world-agnostic (keys on the dock tile 0x4B and canoe object 0x10), so
+    // running it unconditionally is correct and safe.
     rom.set_tag("qol/fix_canoe_softlock");
     randomize::qol::fix_canoe_softlock(rom);
 
@@ -1331,7 +1351,7 @@ mod tests {
         assert_eq!(opts.shuffle_pipes, decoded.shuffle_pipes);
         assert_eq!(opts.shuffle_airships, decoded.shuffle_airships);
         assert_eq!(opts.remove_rocks, decoded.remove_rocks);
-        assert_eq!(opts.w1_hammer_rock, decoded.w1_hammer_rock);
+        assert_eq!(opts.more_hammer_rocks, decoded.more_hammer_rocks);
         assert_eq!(opts.starting_lives, decoded.starting_lives);
         assert_eq!(opts.card_speed_clear, decoded.card_speed_clear);
         assert_eq!(opts.remove_n_cards, decoded.remove_n_cards);
@@ -1371,7 +1391,8 @@ mod tests {
             chest_items: true,
             remove_whistles: true,
             remove_rocks: true,
-            w1_hammer_rock: Tri::On,
+            more_hammer_rocks: Tri::On,
+            eights_are_wild: Tri::On,
             starting_lives: 99,
             card_speed_clear: true,
             remove_n_cards: true,
@@ -1448,7 +1469,8 @@ mod tests {
             chest_items: false,
             remove_whistles: false,
             remove_rocks: false,
-            w1_hammer_rock: Tri::Off,
+            more_hammer_rocks: Tri::Off,
+            eights_are_wild: Tri::Off,
             starting_lives: 1,
             card_speed_clear: false,
             remove_n_cards: false,
@@ -1667,7 +1689,8 @@ mod tests {
             ("hammer_breaks_locks",   Box::new(|o, t| o.hammer_breaks_locks = t)),
             ("hammer_breaks_bridges", Box::new(|o, t| o.hammer_breaks_bridges = t)),
             ("troll_pipes",           Box::new(|o, t| o.troll_pipes = t)),
-            ("w1_hammer_rock",        Box::new(|o, t| o.w1_hammer_rock = t)),
+            ("more_hammer_rocks",        Box::new(|o, t| o.more_hammer_rocks = t)),
+            ("eights_are_wild",       Box::new(|o, t| o.eights_are_wild = t)),
         ];
         for (label, set) in tri_flags {
             let default_opts = Options::default();
@@ -1740,7 +1763,8 @@ mod tests {
         everything.chest_items = !everything.chest_items;
         everything.remove_whistles = !everything.remove_whistles;
         everything.remove_rocks = !everything.remove_rocks;
-        everything.w1_hammer_rock = Tri::Maybe;
+        everything.more_hammer_rocks = Tri::Maybe;
+        everything.eights_are_wild = Tri::Maybe;
         everything.card_speed_clear = !everything.card_speed_clear;
         everything.remove_n_cards = !everything.remove_n_cards;
         everything.skip_wand_cutscene = !everything.skip_wand_cutscene;
@@ -1843,7 +1867,8 @@ mod tests {
             chest_items: false,
             remove_whistles: false,
             remove_rocks: false,
-            w1_hammer_rock: Tri::Off,
+            more_hammer_rocks: Tri::Off,
+            eights_are_wild: Tri::Off,
             starting_lives: 1,
             card_speed_clear: false,
             remove_n_cards: false,
@@ -1904,7 +1929,8 @@ mod tests {
             chest_items: true,
             remove_whistles: true,
             remove_rocks: true,
-            w1_hammer_rock: Tri::On,
+            more_hammer_rocks: Tri::On,
+            eights_are_wild: Tri::On,
             starting_lives: 99,
             card_speed_clear: true,
             remove_n_cards: true,
@@ -2036,26 +2062,26 @@ mod tests {
 
     #[test]
     fn maybe_resolves_both_ways_across_seeds() {
-        // The w1_hammer_rock=Maybe coin flip must actually flip: across many
+        // The more_hammer_rocks=Maybe coin flip must actually flip: across many
         // seeds it should land On for some and Off for others. We isolate the
-        // *gameplay* effect (the make_w1_hammer_rock tile write) by comparing
+        // *gameplay* effect (the make_hammer_rocks tile write) by comparing
         // each Maybe run's tile bytes to the explicit-On run's bytes, so the
         // flag-key stamp / title hash (which always differ for Maybe) don't
         // confound the comparison.
         let Some(_) = make_test_rom() else { return };
-        let on = Options { w1_hammer_rock: Tri::On, ..test_options() };
-        let maybe = Options { w1_hammer_rock: Tri::Maybe, ..test_options() };
+        let on = Options { more_hammer_rocks: Tri::On, ..test_options() };
+        let maybe = Options { more_hammer_rocks: Tri::Maybe, ..test_options() };
 
-        // Capture the byte ranges make_w1_hammer_rock touches from a known-On run.
+        // Capture the byte ranges make_hammer_rocks touches from a known-On run.
         let on_touched: Vec<(usize, Vec<u8>)> = {
             let mut rom = make_test_rom().unwrap();
             randomize(&mut rom, 0, &on);
             rom.write_log().iter()
-                .filter(|r| r.tag == "qol/w1_hammer_rock")
+                .filter(|r| r.tag == "qol/more_hammer_rocks")
                 .map(|r| (r.offset, rom.read_range(r.offset, r.len).to_vec()))
                 .collect()
         };
-        assert!(!on_touched.is_empty(), "expected w1_hammer_rock to write bytes when On");
+        assert!(!on_touched.is_empty(), "expected more_hammer_rocks to write bytes when On");
 
         let mut saw_on = false;
         let mut saw_off = false;
@@ -2067,7 +2093,7 @@ mod tests {
             if matches_on { saw_on = true; } else { saw_off = true; }
         }
         assert!(saw_on && saw_off,
-            "w1_hammer_rock=Maybe never exercised both outcomes across 24 seeds \
+            "more_hammer_rocks=Maybe never exercised both outcomes across 24 seeds \
              (saw_on={saw_on}, saw_off={saw_off})");
     }
 

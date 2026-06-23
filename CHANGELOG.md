@@ -43,7 +43,13 @@ full history.
   (self-contained, with Rocky Wrench and directional fire jets), and an
   expanded hazard taxonomy.
 - **Quality-of-life flags** — Faster Frog, Limit Bro Movement, MaCobra
-  tail-attack patches, W1 hammer rock, and lives/drawbridge tweaks.
+  tail-attack patches, and lives/drawbridge tweaks.
+- **More hammer rocks** (`--more-hammer-rocks off|on|maybe`) — adds
+  hammer-breakable rock shortcuts by the W1 toad house and in W8. (Replaces the
+  earlier W1-only "W1 hammer rock" flag.)
+- **8s are Wild** (`--eights-are-wild off|on|maybe`) — opens up World 8 (Dark
+  World) with a canoe on screen 0 and extra paths on screen 2. The W8 screen-3
+  water/bridge approach is now always present, independent of this flag.
 - **Tri-state (off/on/maybe) flags** — seed-hidden options that resolve via a
   dedicated RNG substream.
 - **Cosmetic options** — palette randomization, "Oops all Anchors" anchor

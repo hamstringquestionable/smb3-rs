@@ -238,26 +238,50 @@ pub(super) const VALID_BLANK_TILES: &[u8] = &[
 /// Start tile ID.
 pub(super) const TILE_START: u8 = 0xE5;
 
+/// World index of the Dark World (W8). The W8 canoe edges below are gated
+/// behind the `8s are Wild` option.
+pub(super) const W8_IDX: usize = 7;
+
 /// Canoe teleport edges: (world_idx, (origin, destination)).
 /// The canoe transports the player from a mainland dock to an island dock.
 /// These are bidirectional teleport edges in BFS, like pipes. (W3's mainland
 /// dock at (6,20) is only reachable when rocks are cleared.)
 ///
 /// IMPORTANT: the coordinates are NOT world-unique — e.g. (6,20) exists in the
-/// grids of W2/W4–W8 too. Consumers (`canoes_reachable`, `walk_map`) MUST
-/// filter by `world_idx`, or they will fabricate canoe connectivity in any
-/// other world that happens to reach a mainland dock's raw coordinate.
-pub(super) const CANOE_EDGES: &[(usize, TeleportEdge)] = &[
+/// grids of W2/W4–W8 too, and the W8 edges only exist when `8s are Wild` is on.
+/// This const is therefore PRIVATE: the only way to read it is
+/// [`active_canoe_edges`], which applies both the world filter and the flag
+/// gate. A new consumer that needs canoe edges cannot bypass that gate.
+const CANOE_EDGES: &[(usize, TeleportEdge)] = &[
     // W3: mainland dock (6,20) → two island docks.
     (2, ((6, 20), (5, 24))),  // mainland dock → island 1
     (2, ((6, 20), (0, 32))),  // mainland dock → island 2
-    // W8: mainland dock (5,6) → three island docks on screen 0.
+    // W8: mainland dock (5,6) → three island docks on screen 0. Only active
+    // when `8s are Wild` is on (the docks/sprite aren't placed otherwise).
     // The canoe sprite floats at (5,7), immediately right of (5,6) — same
     // "sprite one tile beside the mainland dock" convention as W3.
-    (7, ((5, 6), (3, 8))),
-    (7, ((5, 6), (5, 10))),
-    (7, ((5, 6), (5, 12))),
+    (W8_IDX, ((5, 6), (3, 8))),
+    (W8_IDX, ((5, 6), (5, 10))),
+    (W8_IDX, ((5, 6), (5, 12))),
 ];
+
+/// The canoe edges active for `world_idx` under the current options, as plain
+/// [`TeleportEdge`]s (world tag stripped). This is the SINGLE place the
+/// world-scope filter and the `8s are Wild` gate live — every consumer
+/// (reachability check, BFS walk, builder placement, progression debug) reads
+/// canoe edges through here rather than touching `CANOE_EDGES` directly, so a
+/// new consumer cannot accidentally bypass the gate.
+///
+/// When `eights_are_wild` is false the W8 docks/sprite are never written, so
+/// the W8 edges must be excluded to keep the walker's view consistent with the
+/// map. W3's canoe is unconditional.
+pub(super) fn active_canoe_edges(world_idx: usize, eights_are_wild: bool) -> Vec<TeleportEdge> {
+    CANOE_EDGES
+        .iter()
+        .filter(|&&(w, _)| w == world_idx && (w != W8_IDX || eights_are_wild))
+        .map(|&(_, edge)| edge)
+        .collect()
+}
 
 // ---------------------------------------------------------------------------
 // Level data regions and tile generator dispatch tables
@@ -728,6 +752,13 @@ pub(crate) struct Grid {
     pub tiles: Vec<Vec<u8>>,
     pub rows: usize,
     pub cols: usize,
+    /// Whether `8s are Wild` is active for this run. Rides on the grid so the
+    /// map walker and builder can resolve the active canoe edges (via
+    /// [`active_canoe_edges`]) without threading the flag through every call
+    /// site. Defaults to `false` (the safe default — no phantom W8 canoe); the
+    /// overworld builder stamps the real value onto the grids it walks, and it
+    /// is preserved through clones.
+    pub eights_are_wild: bool,
 }
 
 impl Grid {
@@ -1007,7 +1038,10 @@ pub(super) fn write_entry(rom: &mut Rom, world: &WorldTables, idx: usize, entry:
 // Grid reading
 // ---------------------------------------------------------------------------
 
-/// Read a world's tile grid from ROM as a mutable Grid.
+/// Read a world's tile grid from ROM as a mutable Grid. The grid is born with
+/// `eights_are_wild = false` (the safe default — no W8 canoe); the overworld
+/// builder stamps the real flag onto the grids it walks (see
+/// [`Grid::eights_are_wild`] and [`active_canoe_edges`]).
 pub(super) fn read_tile_grid(rom: &Rom, world_idx: usize) -> Grid {
     let info = &MAP_TILE_GRIDS[world_idx];
     let cols = info.columns;
@@ -1024,7 +1058,7 @@ pub(super) fn read_tile_grid(rom: &Rom, world_idx: usize) -> Grid {
         tiles.push(row);
     }
 
-    Grid { tiles, rows: ROWS, cols }
+    Grid { tiles, rows: ROWS, cols, eights_are_wild: false }
 }
 
 /// Find the START tile position in a grid.
