@@ -131,9 +131,6 @@ pub struct Options {
     /// Up to 3 items to start with in inventory (item IDs, e.g. 0x03 = Leaf).
     #[serde(default)]
     pub starting_items: Vec<u8>,
-    /// Enable always-on airship lock (anchor effect, disables airship movement on death)
-    #[serde(default = "default_true")]
-    pub airship_lock: bool,
     /// Randomize chest and reward items (Hammer Bros, Toad House, Princess letter, treasure chests).
     #[serde(default = "default_true")]
     pub chest_items: bool,
@@ -338,7 +335,7 @@ fn default_true() -> bool {
     true
 }
 
-const FLAG_KEY_VERSION: u8 = 19;
+const FLAG_KEY_VERSION: u8 = 20;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
 
 /// Salt mixed into the seed to derive the substream that resolves `Maybe`
@@ -438,13 +435,14 @@ impl Options {
 
         // b1: non-enemy flags. hammer_breaks_locks is tri-state: its value bit
         // stores On vs (Off/Maybe); the Maybe bit lives in b11.
+        // b1 bit 1 is free (formerly airship_lock, now unconditionally on) and
+        // available for reuse by a future flag.
         let b1 = (self.powerups as u8) << 7
             | (self.hammer_breaks_locks.is_on() as u8) << 6
             | (self.koopaling_hits as u8) << 5
             | (self.world_order as u8) << 4
             | (self.big_q_blocks as u8) << 3
             | (self.disable_autoscroll as u8) << 2
-            | (self.airship_lock as u8) << 1
             | (self.chest_items as u8);
 
         // b2 bit 4 = faster_frog (reuses the slot formerly fix_drawbridges,
@@ -644,7 +642,6 @@ impl Options {
             world_order: (b1 >> 4) & 1 != 0,
             big_q_blocks: (b1 >> 3) & 1 != 0,
             disable_autoscroll: (b1 >> 2) & 1 != 0,
-            airship_lock: (b1 >> 1) & 1 != 0,
             chest_items: b1 & 1 != 0,
             remove_whistles: (b2 >> 7) & 1 != 0,
             hands_levels: (b2 >> 6) & 1 != 0,
@@ -739,7 +736,6 @@ impl Default for Options {
             shuffle_pipes: true,
             shuffle_airships: true,
             disable_autoscroll: true,
-            airship_lock: true,
             chest_items: true,
             remove_whistles: true,
             remove_rocks: true,
@@ -1010,16 +1006,16 @@ fn randomize_inner(
     rom.set_tag("qol/starting_lives");
     randomize::qol::set_starting_lives(rom, options.starting_lives);
 
-    // Airship lock (anchor effect always on): patch at 0x1FABC ("KXUUXZVG" / Game Genie)
-    if options.airship_lock {
-        rom.set_tag("airship_lock");
-        // A9 01 EA = LDA #$01; NOP (forces anchor flag always set)
-        rom.write_range(0x1FABC, &[0xA9, 0x01, 0xEA]);
-        // Anchors stay in inventory as mystery items — patch the item-use
-        // dispatch so using an anchor triggers a random powerup effect.
-        rom.set_tag("items/mystery_anchor");
-        randomize::items::write_mystery_anchor(rom, &mut rng);
-    }
+    // Airship lock (anchor effect): always applied. Patch at 0x1FABC
+    // ("KXUUXZVG" / Game Genie). The airship stays put after a loss instead of
+    // moving, which also keeps its Map_Object slot-1 sprite from ever spawning.
+    rom.set_tag("airship_lock");
+    // A9 01 EA = LDA #$01; NOP (forces anchor flag always set)
+    rom.write_range(0x1FABC, &[0xA9, 0x01, 0xEA]);
+    // Anchors stay in inventory as mystery items — patch the item-use
+    // dispatch so using an anchor triggers a random powerup effect.
+    rom.set_tag("items/mystery_anchor");
+    randomize::items::write_mystery_anchor(rom, &mut rng);
 
     // Patch double-digit level tiles (11–19) to show a "1" tens digit
     rom.set_tag("metatile/double_digit");
@@ -1234,29 +1230,13 @@ mod tests {
     }
 
     #[test]
-    fn anchor_lock_patch_can_be_disabled() {
-        let Some(mut rom) = make_test_rom() else { return };
-        let original_bytes = rom.read_range(ANCHOR_PATCH_OFFSET, 3).to_vec();
-        let mut options = test_options();
-        options.airship_lock = false;
-        randomize(&mut rom, 0x12345678, &options);
-
-        assert_eq!(
-            rom.read_range(ANCHOR_PATCH_OFFSET, 3),
-            &original_bytes[..],
-            "Anchor lock patch must NOT be present when airship_lock = false"
-        );
-    }
-
-    #[test]
-    fn mystery_anchor_trampoline_when_airship_lock_on() {
+    fn mystery_anchor_trampoline_written() {
         let Some(mut rom) = make_test_rom() else { return };
         // Place anchors in item tables — they should stay as 0x0A
         rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 2, ANCHOR);
         rom.write_byte(TOAD_HOUSE_ITEMS_OFFSET + 1, ANCHOR);
 
         let mut options = test_options();
-        options.airship_lock = true;
         options.chest_items = false;
         options.remove_whistles = false;
         randomize(&mut rom, 0x12345678, &options);
@@ -1280,25 +1260,6 @@ mod tests {
         assert_eq!(rom.read_range(0x34564, 2), &[0xB6, 0xA5]);
         // Hook at 0x345D8: JSR $B562
         assert_eq!(rom.read_range(0x345D8, 3), &[0x20, 0x62, 0xB5]);
-    }
-
-    #[test]
-    fn mystery_anchor_not_written_when_airship_lock_off() {
-        let Some(mut rom) = make_test_rom() else { return };
-        rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 2, ANCHOR);
-
-        let mut options = test_options();
-        options.airship_lock = false;
-        options.chest_items = false;
-        options.remove_whistles = false;
-        randomize(&mut rom, 0x12345678, &options);
-
-        // Anchor should stay and no trampoline written
-        assert_eq!(rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 2), ANCHOR,
-            "Anchor should be preserved when airship_lock is off");
-        // Dispatch should not be patched
-        assert_ne!(rom.read_range(0x3E500, 3), &[0x4C, 0x40, 0xE2],
-            "Dispatch should NOT be patched when airship_lock is off");
     }
 
     #[test]
@@ -1345,7 +1306,6 @@ mod tests {
         assert_eq!(opts.world_count, decoded.world_count);
         assert_eq!(opts.big_q_blocks, decoded.big_q_blocks);
         assert_eq!(opts.disable_autoscroll, decoded.disable_autoscroll);
-        assert_eq!(opts.airship_lock, decoded.airship_lock);
         assert_eq!(opts.chest_items, decoded.chest_items);
         assert_eq!(opts.remove_whistles, decoded.remove_whistles);
         assert_eq!(opts.shuffle_pipes, decoded.shuffle_pipes);
@@ -1387,7 +1347,6 @@ mod tests {
             shuffle_pipes: true,
             shuffle_airships: true,
             disable_autoscroll: true,
-            airship_lock: true,
             chest_items: true,
             remove_whistles: true,
             remove_rocks: true,
@@ -1465,7 +1424,6 @@ mod tests {
             shuffle_pipes: false,
             shuffle_airships: false,
             disable_autoscroll: false,
-            airship_lock: false,
             chest_items: false,
             remove_whistles: false,
             remove_rocks: false,
@@ -1630,7 +1588,6 @@ mod tests {
             ("shuffle_pipes",                Box::new(|o| o.shuffle_pipes = !o.shuffle_pipes)),
             ("shuffle_airships",             Box::new(|o| o.shuffle_airships = !o.shuffle_airships)),
             ("disable_autoscroll",           Box::new(|o| o.disable_autoscroll = !o.disable_autoscroll)),
-            ("airship_lock",                 Box::new(|o| o.airship_lock = !o.airship_lock)),
             ("chest_items",                  Box::new(|o| o.chest_items = !o.chest_items)),
             ("remove_whistles",              Box::new(|o| o.remove_whistles = !o.remove_whistles)),
             ("remove_rocks",                 Box::new(|o| o.remove_rocks = !o.remove_rocks)),
@@ -1759,7 +1716,6 @@ mod tests {
         everything.shuffle_pipes = !everything.shuffle_pipes;
         everything.shuffle_airships = !everything.shuffle_airships;
         everything.disable_autoscroll = !everything.disable_autoscroll;
-        everything.airship_lock = !everything.airship_lock;
         everything.chest_items = !everything.chest_items;
         everything.remove_whistles = !everything.remove_whistles;
         everything.remove_rocks = !everything.remove_rocks;
@@ -1863,7 +1819,6 @@ mod tests {
             shuffle_pipes: false,
             shuffle_airships: false,
             disable_autoscroll: false,
-            airship_lock: false,
             chest_items: false,
             remove_whistles: false,
             remove_rocks: false,
@@ -1925,7 +1880,6 @@ mod tests {
             shuffle_pipes: false,
             shuffle_airships: true,
             disable_autoscroll: true,
-            airship_lock: true,
             chest_items: true,
             remove_whistles: true,
             remove_rocks: true,
@@ -2110,9 +2064,9 @@ mod tests {
         options.water = EnemyMode::Off;
         options.bros = EnemyMode::Off;
         options.world_order = false;
-        // Keep these on — they write to known offsets even on a zeroed ROM
+        // Keep this on — it writes to known offsets even on a zeroed ROM.
+        // (airship_lock is now unconditional, so its tag always appears.)
         options.disable_autoscroll = true;
-        options.airship_lock = true;
         randomize(&mut rom, 42, &options);
 
         let tags: Vec<&str> = rom.write_log().iter().map(|r| r.tag.as_str()).collect();

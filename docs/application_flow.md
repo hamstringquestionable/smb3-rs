@@ -170,8 +170,7 @@ flowchart TD
         PO1n{"remove_whistles?"}
         PO1ny["items::remove_whistles_only  · tag items/whistles"]
         PO2["[always] qol::set_starting_lives  · tag qol/starting_lives"]
-        PO3{"airship_lock?"}
-        PO3y["write 0x1FABC = A9 01 EA (anchor always-on) +<br/>items::write_mystery_anchor · tags airship_lock, items/mystery_anchor"]
+        PO3["[always] write 0x1FABC = A9 01 EA (anchor always-on) +<br/>items::write_mystery_anchor · tags airship_lock, items/mystery_anchor"]
         PO4["[always] patch_double_digit_metatiles  · tag metatile/double_digit"]
         PO5["[always] patch_metatile_6a_freeze  · tag metatile/6a_freeze"]
         PO6["[always] king_quotes::randomize (main rng)  · tag king_quotes"]
@@ -182,9 +181,7 @@ flowchart TD
         PO1 -- no --> PO1n
         PO1n -- yes --> PO1ny --> PO2
         PO1n -- no --> PO2
-        PO2 --> PO3
-        PO3 -- yes --> PO3y --> PO4
-        PO3 -- no --> PO4
+        PO2 --> PO3 --> PO4
         PO4 --> PO5 --> PO6 --> PO7
         PO7 -- yes --> PO7y --> QOL
         PO7 -- no --> QOL

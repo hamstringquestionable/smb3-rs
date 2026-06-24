@@ -65,6 +65,9 @@ full history.
 
 ### Changed
 
+- Airship lock is now always on (the **Remove Anchor** / `--no-airship-lock`
+  option is removed): anchors always become random power-ups and airships always
+  stay put after a loss instead of moving. Flag-key version bumped to 20.
 - Fortress FX visibility checks use Mario's position and the real per-world
   FX slot (derived from `FortressFX_W1_W8[...]`) rather than `$0745`
   directly.
