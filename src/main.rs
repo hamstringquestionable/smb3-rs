@@ -277,9 +277,6 @@ struct Cli {
     #[arg(long)]
     wild_injections: bool,
 
-    /// Disable airship lock (anchor effect always on by default, use this flag to disable)
-    #[arg(long)]
-    no_airship_lock: bool,
     /// Set starting lives. Must be one of 1, 5, 20, 99 (default: 5).
     #[arg(long, default_value_t = 5, value_parser = parse_starting_lives)]
     starting_lives: u8,
@@ -455,7 +452,6 @@ fn main() {
             include_beta_stages: cli.include_beta_stages,
             swap_start_airship: cli.swap_start_airship,
             anchor_visuals: cli.anchor_visuals,
-            airship_lock: !cli.no_airship_lock,
             ground: parse_enemy_mode(&cli.ground, "ground"),
             shell: parse_enemy_mode(&cli.shell, "shell"),
             flying: parse_enemy_mode(&cli.flying, "flying"),
@@ -508,7 +504,6 @@ fn main() {
         FireFlowerMode::On => "on",
         FireFlowerMode::Wild => "wild",
     });
-    eprintln!("  Airship lock: {}", if options.airship_lock { "on" } else { "off" });
     if !options.starting_items.is_empty() {
         let item_names: Vec<&str> = options.starting_items.iter().map(|&id| match id {
             0x01 => "Mushroom", 0x02 => "Fire Flower", 0x03 => "Super Leaf",
