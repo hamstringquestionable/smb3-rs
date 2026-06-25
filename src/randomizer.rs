@@ -123,6 +123,10 @@ pub struct Options {
     /// Shuffle airship levels across worlds 1-7.
     #[serde(default = "default_true")]
     pub shuffle_airships: bool,
+    /// Redistribute the wandering Hammer Bro encounters across all worlds
+    /// (random 1-3 per world, 15 total) instead of keeping their vanilla spots.
+    #[serde(default = "default_true")]
+    pub shuffle_hammer_bros: bool,
     #[serde(default = "default_true")]
     pub disable_autoscroll: bool,
     /// Set starting lives for both Mario and Luigi (1–99).
@@ -335,7 +339,7 @@ fn default_true() -> bool {
     true
 }
 
-const FLAG_KEY_VERSION: u8 = 20;
+const FLAG_KEY_VERSION: u8 = 21;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
 
 /// Salt mixed into the seed to derive the substream that resolves `Maybe`
@@ -435,14 +439,15 @@ impl Options {
 
         // b1: non-enemy flags. hammer_breaks_locks is tri-state: its value bit
         // stores On vs (Off/Maybe); the Maybe bit lives in b11.
-        // b1 bit 1 is free (formerly airship_lock, now unconditionally on) and
-        // available for reuse by a future flag.
+        // b1 bit 1 = shuffle_hammer_bros (reuses the slot formerly airship_lock,
+        // now unconditionally on).
         let b1 = (self.powerups as u8) << 7
             | (self.hammer_breaks_locks.is_on() as u8) << 6
             | (self.koopaling_hits as u8) << 5
             | (self.world_order as u8) << 4
             | (self.big_q_blocks as u8) << 3
             | (self.disable_autoscroll as u8) << 2
+            | (self.shuffle_hammer_bros as u8) << 1
             | (self.chest_items as u8);
 
         // b2 bit 4 = faster_frog (reuses the slot formerly fix_drawbridges,
@@ -642,6 +647,7 @@ impl Options {
             world_order: (b1 >> 4) & 1 != 0,
             big_q_blocks: (b1 >> 3) & 1 != 0,
             disable_autoscroll: (b1 >> 2) & 1 != 0,
+            shuffle_hammer_bros: (b1 >> 1) & 1 != 0,
             chest_items: b1 & 1 != 0,
             remove_whistles: (b2 >> 7) & 1 != 0,
             hands_levels: (b2 >> 6) & 1 != 0,
@@ -735,6 +741,7 @@ impl Default for Options {
             big_q_blocks: false,
             shuffle_pipes: true,
             shuffle_airships: true,
+            shuffle_hammer_bros: true,
             disable_autoscroll: true,
             chest_items: true,
             remove_whistles: true,
@@ -957,6 +964,7 @@ fn randomize_inner(
         randomize::overworld_pickup::PickupFlags {
             shuffle_spade_games: options.shuffle_spade_games,
             shuffle_toad_houses: options.shuffle_toad_houses,
+            shuffle_hammer_bros: options.shuffle_hammer_bros,
         },
     );
     let data = randomize::overworld_build::OverworldData {
@@ -965,6 +973,7 @@ fn randomize_inner(
     };
     let mut build = randomize::overworld_build::build(
         rom, &data, &mut rng, options.shuffle_toad_houses, eights_are_wild,
+        options.shuffle_hammer_bros,
     );
     if options.hands_levels {
         rom.set_tag("hands_levels");
@@ -986,7 +995,7 @@ fn randomize_inner(
         *slot = Some(build.clone());
     }
     randomize::overworld_writer::write_overworld(
-        rom, &build, &data, &mut rng, true,
+        rom, &build, &data, &mut rng, true, options.shuffle_hammer_bros,
     );
     // Give each W8 Hand its own treasure-room enemy stream so the chest
     // randomizer can roll a unique item per Hand. Runs before items::randomize
@@ -1239,6 +1248,10 @@ mod tests {
         let mut options = test_options();
         options.chest_items = false;
         options.remove_whistles = false;
+        // Pin Hammer Bro redistribution off so the planted anchor in the HB
+        // reward table isn't relocated — this test is about the mystery-anchor
+        // trampoline, not sprite shuffling.
+        options.shuffle_hammer_bros = false;
         randomize(&mut rom, 0x12345678, &options);
 
         // Anchor items should remain in data tables (mystery behavior)
@@ -1310,6 +1323,7 @@ mod tests {
         assert_eq!(opts.remove_whistles, decoded.remove_whistles);
         assert_eq!(opts.shuffle_pipes, decoded.shuffle_pipes);
         assert_eq!(opts.shuffle_airships, decoded.shuffle_airships);
+        assert_eq!(opts.shuffle_hammer_bros, decoded.shuffle_hammer_bros);
         assert_eq!(opts.remove_rocks, decoded.remove_rocks);
         assert_eq!(opts.more_hammer_rocks, decoded.more_hammer_rocks);
         assert_eq!(opts.starting_lives, decoded.starting_lives);
@@ -1346,6 +1360,7 @@ mod tests {
             big_q_blocks: true,
             shuffle_pipes: true,
             shuffle_airships: true,
+            shuffle_hammer_bros: true,
             disable_autoscroll: true,
             chest_items: true,
             remove_whistles: true,
@@ -1423,6 +1438,7 @@ mod tests {
             big_q_blocks: false,
             shuffle_pipes: false,
             shuffle_airships: false,
+            shuffle_hammer_bros: false,
             disable_autoscroll: false,
             chest_items: false,
             remove_whistles: false,
@@ -1587,6 +1603,7 @@ mod tests {
             ("big_q_blocks",                 Box::new(|o| o.big_q_blocks = !o.big_q_blocks)),
             ("shuffle_pipes",                Box::new(|o| o.shuffle_pipes = !o.shuffle_pipes)),
             ("shuffle_airships",             Box::new(|o| o.shuffle_airships = !o.shuffle_airships)),
+            ("shuffle_hammer_bros",          Box::new(|o| o.shuffle_hammer_bros = !o.shuffle_hammer_bros)),
             ("disable_autoscroll",           Box::new(|o| o.disable_autoscroll = !o.disable_autoscroll)),
             ("chest_items",                  Box::new(|o| o.chest_items = !o.chest_items)),
             ("remove_whistles",              Box::new(|o| o.remove_whistles = !o.remove_whistles)),
@@ -1715,6 +1732,7 @@ mod tests {
         everything.big_q_blocks = !everything.big_q_blocks;
         everything.shuffle_pipes = !everything.shuffle_pipes;
         everything.shuffle_airships = !everything.shuffle_airships;
+        everything.shuffle_hammer_bros = !everything.shuffle_hammer_bros;
         everything.disable_autoscroll = !everything.disable_autoscroll;
         everything.chest_items = !everything.chest_items;
         everything.remove_whistles = !everything.remove_whistles;
@@ -1818,6 +1836,7 @@ mod tests {
             big_q_blocks: false,
             shuffle_pipes: false,
             shuffle_airships: false,
+            shuffle_hammer_bros: false,
             disable_autoscroll: false,
             chest_items: false,
             remove_whistles: false,
@@ -1879,6 +1898,7 @@ mod tests {
             big_q_blocks: true,
             shuffle_pipes: false,
             shuffle_airships: true,
+            shuffle_hammer_bros: true,
             disable_autoscroll: true,
             chest_items: true,
             remove_whistles: true,

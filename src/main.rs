@@ -104,6 +104,10 @@ struct Cli {
     #[arg(long)]
     no_shuffle_airships: bool,
 
+    /// Disable Hammer Bro location shuffle (on by default)
+    #[arg(long)]
+    no_shuffle_hammer_bros: bool,
+
     /// Keep path-blocking rocks (W2 secret path, W3 boat dock, W4 pipe shortcut)
     #[arg(long)]
     keep_rocks: bool,
@@ -421,6 +425,7 @@ fn main() {
             big_q_blocks: cli.big_q_blocks,
             shuffle_pipes: !cli.no_shuffle_pipes,
             shuffle_airships: !cli.no_shuffle_airships,
+            shuffle_hammer_bros: !cli.no_shuffle_hammer_bros,
             disable_autoscroll: !cli.keep_autoscroll,
             chest_items: !cli.no_chest_items,
             remove_whistles: !cli.keep_whistles,
@@ -493,6 +498,7 @@ fn main() {
     eprintln!("  Starting Lives: {}", options.starting_lives);
     eprintln!("  Pipe shuffle: {}", if options.shuffle_pipes { "on" } else { "off" });
     eprintln!("  Airship shuffle: {}", if options.shuffle_airships { "on" } else { "off" });
+    eprintln!("  Hammer Bro shuffle: {}", if options.shuffle_hammer_bros { "on" } else { "off" });
     eprintln!("  Autoscroll: {}", if options.disable_autoscroll { "disabled" } else { "enabled" });
     eprintln!("  Chest items: {}", if options.chest_items { "on" } else { "off" });
     eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });

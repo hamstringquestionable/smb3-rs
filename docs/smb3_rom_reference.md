@@ -2431,8 +2431,21 @@ and was abandoned in favor of the simpler NOP approach.
 
 | File Offset | Size | Description |
 |------------|------|-------------|
-| 0x16190 | ~32 bytes | Hammer Bros item table (uses Global Item IDs) |
+| 0x16190 | 72 bytes (9×8) | Map-object reward item table (Global Item IDs) |
 | 0x1625B | varies | Map horizontal spawn positions |
+
+**Map-object reward table (`0x16190`)** is a flat block laid out **parallel to the
+map-object slot tables**: 9 bytes per world, indexed by the same slot index as
+`Map_List_Object_IDs`. `reward[world*9 + slot]` is the Global Item ID awarded for
+clearing the encounter at that slot. Non-encounter slots (Mario marker slot 0,
+canoe, W8 army) hold `0x00`. Every Hammer-Bro slot (obj id `0x03–0x06`) and both
+W7 piranha slots (obj id `0x07`) carry a nonzero reward. **The reward is keyed to
+`(world, slot)`, not to the level/`obj_ptr` under the sprite** — so relocating a
+map-object sprite to a different `(world, slot)` requires copying its reward byte
+to the destination slot, or the moved encounter takes the destination slot's
+vanilla reward. Vanilla HB rewards: W1 Leaf; W2 Star/Tanooki/Hammer; W3
+Tanooki/Leaf; W4 Mushroom/Leaf/FireFlower; W5 FireFlower/Star/Leaf; W6
+Tanooki/Mushroom/Leaf.
 
 ---
 

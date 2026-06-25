@@ -76,9 +76,9 @@ mod tests {
         for seed in 0u64..SEEDS {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let catalog = node_catalog::NodeCatalog::build(&rom, false);
-            let pickup = overworld_pickup::pick_up(&rom, &catalog, overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
+            let pickup = overworld_pickup::pick_up(&rom, &catalog, overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, shuffle_hammer_bros: false });
             let data = overworld_build::OverworldData { pickup: &pickup, catalog: &catalog };
-            let mut build = overworld_build::build(&rom, &data, &mut rng, true, false);
+            let mut build = overworld_build::build(&rom, &data, &mut rng, true, false, false);
             troll_pipes::mark_troll_pipes(&mut build, &mut rng);
             for w in &build.worlds {
                 let n = w.slots.iter().filter(|s| s.is_troll_pipe).count();
@@ -111,9 +111,9 @@ mod tests {
         let run = || {
             let mut rng = ChaCha8Rng::seed_from_u64(42);
             let catalog = node_catalog::NodeCatalog::build(&rom, false);
-            let pickup = overworld_pickup::pick_up(&rom, &catalog, overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
+            let pickup = overworld_pickup::pick_up(&rom, &catalog, overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, shuffle_hammer_bros: false });
             let data = overworld_build::OverworldData { pickup: &pickup, catalog: &catalog };
-            let mut build = overworld_build::build(&rom, &data, &mut rng, true, false);
+            let mut build = overworld_build::build(&rom, &data, &mut rng, true, false, false);
             troll_pipes::mark_troll_pipes(&mut build, &mut rng);
             build.worlds.iter()
                 .map(|w| w.slots.iter().filter(|s| s.is_troll_pipe).count())

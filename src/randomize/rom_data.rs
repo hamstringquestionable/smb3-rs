@@ -1282,6 +1282,94 @@ pub(super) fn read_hb_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usiz
     positions
 }
 
+/// Map-object reward item table (Global Item IDs). A flat 9-bytes-per-world
+/// block laid out parallel to the map-object slot tables: `reward[world*9 +
+/// slot]` is the item awarded for clearing the encounter at that slot. The
+/// reward is keyed to `(world, slot)`, not to the level under the sprite — see
+/// `docs/smb3_rom_reference.md`.
+const MAP_OBJ_REWARDS: usize = 0x16190;
+
+/// File offset of the reward byte for map-object `slot` in `world_idx`.
+fn map_obj_reward_offset(world_idx: usize, slot: usize) -> usize {
+    MAP_OBJ_REWARDS + world_idx * 9 + slot
+}
+
+/// Map-object slot indices that can host a redistributed Hammer Bro sprite in
+/// this world. Slot 0 always holds a fixed non-HB marker (`id 0x01`) and is
+/// reserved; slot 1 (the airship sprite slot) is reserved in W1-W7 but usable
+/// in W8, which has no airship. A slot qualifies if it is empty (`0x00`) or
+/// currently holds a Hammer Bro (`0x03-0x06`, which redistribution clears) — so
+/// the result is identical before and after [`clear_hb_sprites`].
+pub(super) fn eligible_hb_map_slots(rom: &Rom, world_idx: usize) -> Vec<usize> {
+    const W8: usize = 7;
+    let first = if world_idx == W8 { 1 } else { 2 };
+    (first..9)
+        .filter(|&slot| {
+            let id = rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot));
+            id == 0x00 || (0x03..=0x06).contains(&id)
+        })
+        .collect()
+}
+
+/// Collect the reward byte of every Hammer-Bro map-object sprite (id
+/// `0x03-0x06`) across all worlds, in `(world, slot)` order. These travel with
+/// the encounters when Hammer Bros are redistributed.
+pub(super) fn collect_hb_sprite_rewards(rom: &Rom) -> Vec<u8> {
+    let mut rewards = Vec::new();
+    for world_idx in 0..8 {
+        for slot in 0..9 {
+            let id = rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot));
+            if (0x03..=0x06).contains(&id) {
+                rewards.push(rom.read_byte(map_obj_reward_offset(world_idx, slot)));
+            }
+        }
+    }
+    rewards
+}
+
+/// Clear every Hammer-Bro map-object sprite (id `0x03-0x06`) in a world: the
+/// slot's id, position, and reward byte are zeroed so the tile is freed and the
+/// sprite no longer spawns. Used before writing redistributed Hammer Bros.
+pub(super) fn clear_hb_sprites(rom: &mut Rom, world_idx: usize) {
+    for slot in 0..9 {
+        let id_off = map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot);
+        if (0x03..=0x06).contains(&rom.read_byte(id_off)) {
+            rom.write_byte(id_off, 0x00);
+            rom.write_byte(map_obj_slot_offset(rom, MAP_OBJ_YS_MASTER, world_idx, slot), 0);
+            rom.write_byte(map_obj_slot_offset(rom, MAP_OBJ_XHIS_MASTER, world_idx, slot), 0);
+            rom.write_byte(map_obj_slot_offset(rom, MAP_OBJ_XLOS_MASTER, world_idx, slot), 0);
+            rom.write_byte(map_obj_reward_offset(world_idx, slot), 0);
+        }
+    }
+}
+
+/// Write a redistributed Hammer-Bro sprite into a specific map-object slot:
+/// its type id, grid position, and reward byte.
+pub(super) fn write_hb_sprite(
+    rom: &mut Rom,
+    world_idx: usize,
+    slot: usize,
+    grid_row: usize,
+    grid_col: usize,
+    id: u8,
+    reward: u8,
+) {
+    write_map_sprite(rom, world_idx, slot, grid_row, grid_col, id);
+    rom.write_byte(map_obj_reward_offset(world_idx, slot), reward);
+}
+
+/// Read the non-Hammer-Bro floating sprite positions for a world (army, canoe,
+/// piranhas, …). When Hammer Bros are redistributed, only these stay fixed and
+/// must be protected from level/fort placement; the vanilla HB tiles are freed.
+pub(super) fn read_non_hb_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
+    let hb: std::collections::HashSet<(usize, usize)> =
+        read_hb_sprite_positions(rom, world_idx).into_iter().collect();
+    read_map_sprite_positions(rom, world_idx)
+        .into_iter()
+        .filter(|pos| !hb.contains(pos))
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Free space overlap test
 // ---------------------------------------------------------------------------
