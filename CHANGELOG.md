@@ -3,19 +3,26 @@
 All notable changes to SMB3-RS are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-The project has not had a tagged release yet — it is pre-1.0 and the
-`Cargo.toml` version is bumped internally as work lands (currently `0.8.x`).
-Until the first release, everything below lives under **[Unreleased]**; cut a
-versioned section here when a release is tagged.
+The project is pre-1.0; new work accumulates under **[Unreleased]** and is moved
+into a versioned section when a release is cut.
 
 ## [Unreleased]
 
-This is a baseline backfill of notable changes since the project began. It
+## [0.9.0] - 2026-06-25
+
+The first cut: a baseline of notable changes since the project began. It
 summarizes feature areas rather than every commit — see `git log` for the
 full history.
 
 ### Added
 
+- **Shuffle HammerBro Locations** (`--no-shuffle-hammer-bros` to disable; on by
+  default, issue #20) — the wandering Hammer Bro encounters are spread across all
+  worlds (random 1-3 per world, 15 total, with light anti-clustering) instead of
+  their fixed vanilla spots, and each carries its reward item. The Dark World
+  keeps at most one, and a couple of map-object slots stay free in every world so
+  level-triggered white mushroom houses can still appear. A feature-dense world
+  with no spare path tile may get fewer, with its share spilling elsewhere.
 - **Random Fire Flower** (`--fire-flower off|on|wild`, issue #22) — an in-level
   Fire Flower still looks the same but grants a power state derived
   deterministically from a seed salt (the shuffled starting world), the current

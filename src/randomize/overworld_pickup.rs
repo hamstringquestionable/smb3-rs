@@ -53,6 +53,10 @@ pub(crate) struct PickupResult {
     pub worlds: Vec<ClearedWorld>,
     /// Global pool of all level-like entries across all worlds.
     pub pool: Vec<PoolEntry>,
+    /// Reward items picked up from the wandering Hammer Bro sprites (Global Item
+    /// IDs), to be reattached when the encounters are redistributed. Empty when
+    /// `shuffle_hammer_bros` is off (the sprites stay at vanilla positions).
+    pub hb_reward_pool: Vec<u8>,
 }
 
 /// Per-feature flags controlling which catalog entry kinds the pickup phase
@@ -62,6 +66,7 @@ pub(crate) struct PickupResult {
 pub(crate) struct PickupFlags {
     pub shuffle_spade_games: bool,
     pub shuffle_toad_houses: bool,
+    pub shuffle_hammer_bros: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -140,7 +145,15 @@ pub(super) fn pick_up_filtered(
         });
     }
 
-    PickupResult { worlds, pool }
+    // Pick up the wandering Hammer Bro rewards so they can be reattached to the
+    // redistributed encounters in the build/write phases.
+    let hb_reward_pool = if flags.shuffle_hammer_bros {
+        rom_data::collect_hb_sprite_rewards(rom)
+    } else {
+        Vec::new()
+    };
+
+    PickupResult { worlds, pool, hb_reward_pool }
 }
 
 // ---------------------------------------------------------------------------
@@ -317,7 +330,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
+        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, shuffle_hammer_bros: false });
 
         // 62 levels + 17 fortresses + 48 pipes + 151 hammer bros + 19 bonus games + 22 toad houses = 319
         // (Airships and Bowser excluded — their pointer table entries stay vanilla
@@ -336,7 +349,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
+        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, shuffle_hammer_bros: false });
 
         for (pi, pe) in result.pool.iter().enumerate() {
             let entry = &catalog.entries[pe.catalog_idx];
@@ -362,7 +375,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
+        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, shuffle_hammer_bros: false });
 
         let fx_slots = rom_data::read_fx_slots(&rom);
         let fx_assignments = rom_data::read_world_fx_assignments(&rom);
@@ -393,7 +406,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
+        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, shuffle_hammer_bros: false });
 
         for entry in &catalog.entries {
             if !matches!(entry.kind, NodeKind::Start) {
@@ -417,7 +430,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
+        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, shuffle_hammer_bros: false });
 
         for cw in &result.worlds {
             for &pi in &cw.pool_indices {
@@ -446,7 +459,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true });
+        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, shuffle_hammer_bros: false });
 
         for cw in &result.worlds {
             eprintln!("\n=== World {} ({} picked up) ===", cw.world_idx + 1, cw.pool_indices.len());
@@ -483,7 +496,7 @@ mod tests {
 
     /// Helper: write cleared grids into a ROM copy and save to disk.
     fn dump_filtered_rom(rom: &Rom, catalog: &NodeCatalog, pred: fn(&CatalogEntry, PickupFlags) -> bool, filename: &str) {
-        let result = pick_up_filtered(rom, catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true }, pred);
+        let result = pick_up_filtered(rom, catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, shuffle_hammer_bros: false }, pred);
         let mut data = rom.data.clone();
         for cw in &result.worlds {
             for r in 0..cw.grid.rows {
@@ -545,6 +558,7 @@ mod tests {
         let result = pick_up(&rom, &catalog, PickupFlags {
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
+            shuffle_hammer_bros: false,
         });
         let w5 = &result.worlds[4];
         assert_eq!(w5.grid.get(6, 20), 0xD9, "W5 (6,20) override should produce sky none-tile");
