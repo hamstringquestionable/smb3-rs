@@ -39,6 +39,16 @@ pub(crate) struct OverworldData<'a> {
     pub catalog: &'a NodeCatalog,
 }
 
+/// Feature flags consumed by the build phase. Construct exhaustively in
+/// production so a new flag forces a conscious wire-up; in tests use
+/// `BuildFlags { ..Default::default() }` so adding a flag leaves them untouched.
+#[derive(Copy, Clone, Default)]
+pub(crate) struct BuildFlags {
+    pub shuffle_toad_houses: bool,
+    pub eights_are_wild: bool,
+    pub shuffle_hammer_bros: bool,
+}
+
 /// What kind of node occupies a grid slot.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SlotKind {
@@ -212,10 +222,13 @@ pub(crate) fn build<R: Rng>(
     rom: &Rom,
     data: &OverworldData,
     rng: &mut R,
-    shuffle_toad_houses: bool,
-    eights_are_wild: bool,
-    shuffle_hammer_bros: bool,
+    flags: BuildFlags,
 ) -> BuildResult {
+    let BuildFlags {
+        shuffle_toad_houses,
+        eights_are_wild,
+        shuffle_hammer_bros,
+    } = flags;
     let pickup = data.pickup;
     let catalog = data.catalog;
     // Step 0: redistribute fortresses
@@ -2584,7 +2597,7 @@ mod tests {
             super::super::overworld_pickup::PickupFlags {
                 shuffle_spade_games: true,
                 shuffle_toad_houses: true,
-                shuffle_hammer_bros: false,
+                ..Default::default()
             },
         );
         (catalog, pickup)
@@ -2612,10 +2625,10 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, shuffle_hammer_bros: false });
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
         let mut rng = ChaCha8Rng::seed_from_u64(42);
 
-        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false, false);
+        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
 
         assert_eq!(result.worlds.len(), 8);
 
@@ -2666,9 +2679,7 @@ mod tests {
                 &rom,
                 &OverworldData { pickup: &pickup, catalog: &catalog },
                 &mut rng,
-                true,
-                false,
-                true,
+                BuildFlags { shuffle_toad_houses: true, shuffle_hammer_bros: true, ..Default::default() },
             );
 
             // The vanilla 15 encounters are always placed (W1-W6 alone have the
@@ -2725,11 +2736,11 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, shuffle_hammer_bros: false });
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
 
         for seed in 0..10 {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false, false);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
 
             for built in &result.worlds {
                 let start_pos = rom_data::find_start(&built.grid);
@@ -2785,11 +2796,11 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, shuffle_hammer_bros: false });
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
 
         for seed in [42, 123, 999] {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false, false);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
 
             let mut rom_copy = Rom::from_bytes(&rom.data).unwrap();
             debug_stamp_rom(&mut rom_copy, &result);
@@ -2820,10 +2831,10 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, shuffle_hammer_bros: false });
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
         let mut rng = ChaCha8Rng::seed_from_u64(42);
 
-        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false, false);
+        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
 
         for built in &result.worlds {
             eprintln!("\n=== World {} ({} sections) ===",
@@ -2860,7 +2871,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, shuffle_hammer_bros: false });
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
 
         let mut level_shortfalls = 0u32;
         let mut lock_shortfalls = 0u32;
@@ -2868,7 +2879,7 @@ mod tests {
 
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false, false);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
 
             let total_levels: usize = result.worlds.iter()
                 .map(|b| b.slots.iter().filter(|s| s.kind == SlotKind::Level).count())
@@ -2915,7 +2926,7 @@ mod tests {
         let mut no_safe_details: Vec<(u64, [usize; 8])> = Vec::new();
         for seed in 0..seeds {
             let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
-            let result2 = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng2, true, false, false);
+            let result2 = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng2, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
             let has_safe = result2.worlds.iter().any(|b| {
                 b.locks.iter().any(|l| l.secret_exit_safe)
             });
@@ -2954,11 +2965,11 @@ mod tests {
             }
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, shuffle_hammer_bros: false });
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
 
         for seed in 0..6u64 {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false, false);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
             let built = &result.worlds[5]; // W6 (0-indexed)
 
             eprintln!("\n===== Seed {seed} — W6 =====");
@@ -3043,7 +3054,7 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, shuffle_hammer_bros: false });
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
         let wi = 6; // W7
 
         let cw = &pickup.worlds[wi];
@@ -3058,7 +3069,7 @@ mod tests {
         // Run the actual build for several seeds and check coverage
         for seed in 0..5u64 {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false, false);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
             let built = &result.worlds[wi];
 
             // All positions that got a slot assignment
@@ -3123,11 +3134,11 @@ mod tests {
             }
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, shuffle_hammer_bros: false });
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
 
         for seed in [42u64, 123, 999] {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false, false);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
 
             eprintln!("\n{}", "=".repeat(60));
             eprintln!("=== Seed {seed} ===");
@@ -3225,13 +3236,13 @@ mod tests {
             None => { eprintln!("ROM not found"); return; }
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, shuffle_hammer_bros: false });
+        let pickup = super::super::overworld_pickup::pick_up(&rom, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
 
         let seed = 42u64;
         let target_wi = 6; // 0-indexed: W7 = 6
 
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false, false);
+        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
         let built = &result.worlds[target_wi];
 
         let start_pos = rom_data::find_start(&built.grid);
@@ -3356,7 +3367,7 @@ mod tests {
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let (catalog, pickup) = build_catalog_pickup(&rom, seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false, false);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
             let mut seed_has_close = false;
             let mut seed_has_close_pair = false;
 
@@ -3555,7 +3566,7 @@ mod tests {
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let (catalog, pickup) = build_catalog_pickup(&rom, seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false, false);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
 
             for built in &result.worlds {
                 let wi = built.world_idx;
@@ -3710,7 +3721,7 @@ mod tests {
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let (catalog, pickup) = build_catalog_pickup(&rom, seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false, false);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
 
             for built in &result.worlds {
                 let wi = built.world_idx;
@@ -3892,7 +3903,7 @@ mod tests {
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let (catalog, pickup) = build_catalog_pickup(&rom, seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false, false);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
 
             for built in &result.worlds {
                 let wi = built.world_idx;
@@ -4095,11 +4106,11 @@ mod tests {
                 super::super::overworld_pickup::PickupFlags {
                     shuffle_spade_games: true,
                     shuffle_toad_houses: true,
-                    shuffle_hammer_bros: false,
+                    ..Default::default()
                 },
             );
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false, false);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
             let w3 = result.worlds.iter().find(|b| b.world_idx == 2).unwrap();
             assert!(
                 analyze_required_progression(w3, false).reachable,
@@ -4156,7 +4167,7 @@ mod tests {
         for seed in 0..seeds {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let (catalog, pickup) = build_catalog_pickup(&rom, seed);
-            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, true, false, false);
+            let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
 
             for built in &result.worlds {
                 let wi = built.world_idx;
@@ -4370,9 +4381,7 @@ mod tests {
                 &rom,
                 &OverworldData { pickup: &pickup, catalog: &catalog },
                 &mut rng,
-                true,
-                false,
-                false,
+                BuildFlags { shuffle_toad_houses: true, ..Default::default() },
             );
             let sas_label = if std::env::var("SAS").is_ok() {
                 " [SAS=1]"
