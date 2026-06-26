@@ -972,8 +972,14 @@ fn randomize_inner(
         catalog: &catalog,
     };
     let mut build = randomize::overworld_build::build(
-        rom, &data, &mut rng, options.shuffle_toad_houses, eights_are_wild,
-        options.shuffle_hammer_bros,
+        rom,
+        &data,
+        &mut rng,
+        randomize::overworld_build::BuildFlags {
+            shuffle_toad_houses: options.shuffle_toad_houses,
+            eights_are_wild,
+            shuffle_hammer_bros: options.shuffle_hammer_bros,
+        },
     );
     if options.hands_levels {
         rom.set_tag("hands_levels");
@@ -995,7 +1001,14 @@ fn randomize_inner(
         *slot = Some(build.clone());
     }
     randomize::overworld_writer::write_overworld(
-        rom, &build, &data, &mut rng, true, options.shuffle_hammer_bros,
+        rom,
+        &build,
+        &data,
+        &mut rng,
+        randomize::overworld_writer::WriteFlags {
+            cross_world: true,
+            shuffle_hammer_bros: options.shuffle_hammer_bros,
+        },
     );
     // Give each W8 Hand its own treasure-room enemy stream so the chest
     // randomizer can roll a unique item per Hand. Runs before items::randomize
