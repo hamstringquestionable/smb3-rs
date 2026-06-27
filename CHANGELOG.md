@@ -8,6 +8,8 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-06-27
+
 ### Changed
 
 - **Level spread across worlds** — levels are distributed by compressed capacity
