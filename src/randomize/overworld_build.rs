@@ -213,6 +213,14 @@ const FORTRESS_BONUS: f64 = 0.5;
 /// Total vanilla levels across all worlds (62 Level entries in the catalog).
 const VANILLA_LEVEL_COUNT: usize = 62;
 
+/// Exponent applied to each world's capacity when distributing levels. `1.0`
+/// is pure capacity-proportional (rich worlds run away with levels); `0.0` is
+/// uniform. A sub-linear value compresses the spread toward the middle —
+/// pulling the high-capacity worlds (Desert, Ice) down and filling the
+/// emptier ones — without forcing uniformity. Tuned by feel, not exposed to
+/// players. See `distribute_levels`.
+const LEVEL_SPREAD_EXPONENT: f64 = 0.5;
+
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
@@ -234,85 +242,21 @@ pub(crate) fn build<R: Rng>(
     // Step 0: redistribute fortresses
     let fort_counts = redistribute_fortresses(rng);
 
-    // Build patched grids once: clone pickup grids and restore Airship/Bowser
-    // tiles (blanked during pickup but kept at vanilla positions). The Start
-    // tile is also restored here so that worlds where the start ↔ airship
-    // swap fired have the two tiles in their new (swapped) positions before
-    // BFS/lock placement runs. For un-swapped worlds the Start restore is a
-    // no-op rewrite of the same byte at its vanilla position.
-    let mut patched_grids: Vec<Grid> = Vec::with_capacity(8);
-    for wi in 0..8 {
-        let mut grid = pickup.worlds[wi].grid.clone();
-        // Stamp the `8s are Wild` flag onto every grid the builder walks. It
-        // rides through all downstream clones (test grids, open/locked grids,
-        // `built.grid` consumed by the writer), so `active_canoe_edges` gates
-        // the W8 canoe correctly everywhere without per-call threading.
-        grid.eights_are_wild = eights_are_wild;
-        for entry in &catalog.entries {
-            if entry.world_idx != wi {
-                continue;
-            }
-            if matches!(
-                entry.kind,
-                NodeKind::Airship | NodeKind::Bowser | NodeKind::Start
-            ) {
-                let (r, c) = entry.grid_pos;
-                if r < grid.rows && c < grid.cols {
-                    grid.set(r, c, entry.tile);
-                }
-            }
-        }
-        super::start_airship_swap::swap_tiles_above(&mut grid, wi, catalog);
-        patched_grids.push(grid);
-    }
+    // Pre-compute patched grids, fixed positions, and per-world level capacity.
+    // (Shared with the distribution-tuning tests so they can't drift.)
+    let CapacityPrep {
+        patched_grids,
+        fixed_positions,
+        capacities,
+    } = prepare_capacities(
+        rom, catalog, pickup, &fort_counts,
+        eights_are_wild, shuffle_toad_houses, shuffle_hammer_bros,
+    );
 
-    // Pre-compute available level slots per world. Two constraints apply:
-    // 1. Grid blanks: number of blank node tiles on the map (visual capacity).
-    // 2. Pointer table slots: entries vacated during pickup (ROM capacity).
-    // The tighter constraint wins — assigning more entries than pointer table
-    // slots causes blank screens because write_pointer_entries runs out of
-    // slots to write to.
-    // Pre-compute fixed positions once per world (used by both capacity
-    // calculation and build_world).
-    let fixed_positions: Vec<HashSet<(usize, usize)>> = (0..8)
-        .map(|wi| fixed_positions_for_world(rom, catalog, wi, shuffle_toad_houses, shuffle_hammer_bros))
-        .collect();
-
-    let mut capacities = [0usize; 8];
-    for wi in 0..8 {
-        let pipe_endpoints = VANILLA_PIPE_PAIRS[wi] * 2;
-        let blanks = find_blank_slots(&patched_grids[wi], &fixed_positions[wi]).len();
-        let grid_capacity = blanks.saturating_sub(pipe_endpoints + fort_counts[wi]);
-
-        // Cap by available pointer table slots from pickup.
-        let ptr_slots = pickup.worlds[wi].pool_indices.len();
-        let ptr_capacity = ptr_slots.saturating_sub(pipe_endpoints + fort_counts[wi]);
-
-        capacities[wi] = grid_capacity.min(ptr_capacity);
-    }
-
-    // Distribute VANILLA_LEVEL_COUNT levels across worlds proportionally to capacity.
-    let mut level_counts = distribute_levels(&capacities, VANILLA_LEVEL_COUNT, rng);
-
-    // W6 (index 5): cap levels so levels + fortresses = vanilla total (13).
-    // W6's dense map topology clumps badly with too many levels.
-    let w6_max_levels = 13usize.saturating_sub(fort_counts[5]);
-    if level_counts[5] > w6_max_levels {
-        let surplus = level_counts[5] - w6_max_levels;
-        level_counts[5] = w6_max_levels;
-
-        // Redistribute surplus to other worlds with spare capacity.
-        let mut remaining = surplus;
-        let mut order: Vec<usize> = (0..8).filter(|&w| w != 5).collect();
-        order.shuffle(rng);
-        for &wi in &order {
-            if remaining == 0 { break; }
-            let spare = capacities[wi].saturating_sub(level_counts[wi]);
-            let give = spare.min(remaining);
-            level_counts[wi] += give;
-            remaining -= give;
-        }
-    }
+    // Distribute VANILLA_LEVEL_COUNT levels across worlds by compressed capacity
+    // (see LEVEL_SPREAD_EXPONENT). The compression keeps the densest worlds from
+    // hoarding levels, so the old W6-specific clamp is no longer needed.
+    let level_counts = distribute_levels(&capacities, VANILLA_LEVEL_COUNT, LEVEL_SPREAD_EXPONENT, rng);
 
 
     let mut worlds = Vec::with_capacity(8);
@@ -553,39 +497,124 @@ fn fixed_positions_for_world(
     fixed
 }
 
-/// Distribute `total` levels across worlds proportional to capacity.
-/// Ensures every level is placed (sum of output == total).
-/// World processing order is shuffled to avoid front-loading bias from
-/// rounding.
-fn distribute_levels<R: Rng>(capacities: &[usize; 8], total: usize, rng: &mut R) -> [usize; 8] {
-    let total_cap: usize = capacities.iter().sum();
-    let mut counts = [0usize; 8];
+/// Output of [`prepare_capacities`]: the per-world grids the builder walks, the
+/// fixed-position sets, and the derived level capacity per world.
+struct CapacityPrep {
+    patched_grids: Vec<Grid>,
+    fixed_positions: Vec<HashSet<(usize, usize)>>,
+    capacities: [usize; 8],
+}
 
-    if total_cap == 0 || total == 0 {
+/// Build the patched grids and fixed-position sets, then derive each world's
+/// level capacity. Factored out of [`build`] so the distribution-tuning tests
+/// compute capacity exactly as production does.
+///
+/// `patched_grids` clone the pickup grids and restore the Airship/Bowser/Start
+/// tiles (blanked during pickup but kept at their possibly-swapped vanilla
+/// positions) so BFS/lock placement sees real connectivity. Capacity is the min
+/// of grid-blank room and pointer-table room after reserving pipe endpoints and
+/// fortresses — the tighter constraint wins, since assigning more entries than
+/// pointer-table slots would leave blank screens.
+fn prepare_capacities(
+    rom: &Rom,
+    catalog: &NodeCatalog,
+    pickup: &PickupResult,
+    fort_counts: &[usize; 8],
+    eights_are_wild: bool,
+    shuffle_toad_houses: bool,
+    shuffle_hammer_bros: bool,
+) -> CapacityPrep {
+    let mut patched_grids: Vec<Grid> = Vec::with_capacity(8);
+    for wi in 0..8 {
+        let mut grid = pickup.worlds[wi].grid.clone();
+        // The `8s are Wild` flag rides through every downstream clone so the
+        // W8 canoe edges gate correctly without per-call threading.
+        grid.eights_are_wild = eights_are_wild;
+        for entry in &catalog.entries {
+            if entry.world_idx != wi {
+                continue;
+            }
+            if matches!(entry.kind, NodeKind::Airship | NodeKind::Bowser | NodeKind::Start) {
+                let (r, c) = entry.grid_pos;
+                if r < grid.rows && c < grid.cols {
+                    grid.set(r, c, entry.tile);
+                }
+            }
+        }
+        super::start_airship_swap::swap_tiles_above(&mut grid, wi, catalog);
+        patched_grids.push(grid);
+    }
+
+    let fixed_positions: Vec<HashSet<(usize, usize)>> = (0..8)
+        .map(|wi| fixed_positions_for_world(rom, catalog, wi, shuffle_toad_houses, shuffle_hammer_bros))
+        .collect();
+
+    let mut capacities = [0usize; 8];
+    for wi in 0..8 {
+        let pipe_endpoints = VANILLA_PIPE_PAIRS[wi] * 2;
+        let blanks = find_blank_slots(&patched_grids[wi], &fixed_positions[wi]).len();
+        let grid_capacity = blanks.saturating_sub(pipe_endpoints + fort_counts[wi]);
+        let ptr_slots = pickup.worlds[wi].pool_indices.len();
+        let ptr_capacity = ptr_slots.saturating_sub(pipe_endpoints + fort_counts[wi]);
+        capacities[wi] = grid_capacity.min(ptr_capacity);
+    }
+
+    CapacityPrep {
+        patched_grids,
+        fixed_positions,
+        capacities,
+    }
+}
+
+/// Distribute `total` levels across worlds by compressed capacity.
+///
+/// Each world's weight is `capacity^exponent` (see [`LEVEL_SPREAD_EXPONENT`]);
+/// the floor of each world's fair share is assigned first (clamped to its hard
+/// capacity), then the leftover from flooring is handed out one level at a time
+/// to uniformly random worlds that still have spare capacity. The random
+/// leftover keeps a little per-seed jitter rather than always topping up the
+/// same worlds. A world's count never exceeds its capacity; if every world is
+/// at capacity the remainder is dropped (cannot happen for the vanilla total,
+/// whose capacity headroom is large).
+fn distribute_levels<R: Rng>(
+    capacities: &[usize; 8],
+    total: usize,
+    exponent: f64,
+    rng: &mut R,
+) -> [usize; 8] {
+    let mut counts = [0usize; 8];
+    if total == 0 {
         return counts;
     }
 
-    // Shuffle world processing order to spread rounding bias randomly.
-    let mut order: Vec<usize> = (0..8).collect();
-    order.shuffle(rng);
-
-    // Proportional allocation
-    let mut remaining = total;
-    for &wi in &order {
-        let share = (capacities[wi] as f64 / total_cap as f64 * total as f64).round() as usize;
-        counts[wi] = share.min(capacities[wi]).min(remaining);
-        remaining -= counts[wi];
+    let weights: [f64; 8] = std::array::from_fn(|wi| {
+        if capacities[wi] == 0 {
+            0.0
+        } else {
+            (capacities[wi] as f64).powf(exponent)
+        }
+    });
+    let total_w: f64 = weights.iter().sum();
+    if total_w == 0.0 {
+        return counts;
     }
 
-    // Distribute any leftover (rounding errors) to worlds with spare capacity
-    for &wi in &order {
-        if remaining == 0 {
+    // Floor of each world's fair share, clamped to hard capacity.
+    for wi in 0..8 {
+        let share = weights[wi] / total_w * total as f64;
+        counts[wi] = (share.floor() as usize).min(capacities[wi]);
+    }
+
+    // Hand out the flooring leftover to random worlds with spare capacity.
+    let mut remaining = total.saturating_sub(counts.iter().sum());
+    while remaining > 0 {
+        let eligible: Vec<usize> = (0..8).filter(|&wi| counts[wi] < capacities[wi]).collect();
+        if eligible.is_empty() {
             break;
         }
-        let spare = capacities[wi] - counts[wi];
-        let give = spare.min(remaining);
-        counts[wi] += give;
-        remaining -= give;
+        let wi = eligible[rng.random_range(..eligible.len())];
+        counts[wi] += 1;
+        remaining -= 1;
     }
 
     counts
@@ -2735,6 +2764,81 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// Tuning diagnostic: sweep the level-spread exponent and show the resulting
+    /// per-world mean assigned-level count, plus how often we hit "overflow" —
+    /// a world's fair share exceeding its hard capacity (clamp), or the total
+    /// not fully placeable (underfill). Uses the same capacity + distribution
+    /// code as production. Run with:
+    ///   cargo test --lib report_distribution_by_exponent -- --nocapture
+    #[test]
+    fn report_distribution_by_exponent() {
+        let raw = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+        let rom = apply_qol_for_overworld(&raw);
+        let catalog = NodeCatalog::build(&rom, false);
+        let pickup = super::super::overworld_pickup::pick_up(
+            &rom,
+            &catalog,
+            super::super::overworld_pickup::PickupFlags {
+                shuffle_spade_games: true,
+                shuffle_toad_houses: true,
+                ..Default::default()
+            },
+        );
+        let mut vanilla = [0usize; 8];
+        for e in &catalog.entries {
+            if matches!(e.kind, NodeKind::Level) {
+                vanilla[e.world_idx] += 1;
+            }
+        }
+
+        const SEEDS: u64 = 300;
+        let names = ["W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8"];
+        let header: String = names.iter().map(|n| format!("{n:>6}")).collect();
+        eprintln!("\nLevel distribution by exponent ({SEEDS} seeds, mean assigned per world):");
+        eprintln!("  exp  {header}");
+        let van: String = vanilla.iter().map(|v| format!("{v:>6}")).collect();
+        eprintln!("  van  {van}");
+
+        for &exp in &[1.0_f64, 0.7, 0.6, 0.5, 0.4] {
+            let mut sums = [0usize; 8];
+            let mut clamp_events = 0usize; // (seed,world) share floored > capacity
+            let mut underfill_seeds = 0usize; // seeds where total placed < 62
+            for seed in 0..SEEDS {
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                let fort_counts = redistribute_fortresses(&mut rng);
+                let caps = prepare_capacities(&rom, &catalog, &pickup, &fort_counts, false, true, false)
+                    .capacities;
+
+                // Detect clamp events (a world's fair share exceeds its capacity).
+                let weights: [f64; 8] = std::array::from_fn(|wi| {
+                    if caps[wi] == 0 { 0.0 } else { (caps[wi] as f64).powf(exp) }
+                });
+                let tw: f64 = weights.iter().sum();
+                for wi in 0..8 {
+                    let share = weights[wi] / tw * VANILLA_LEVEL_COUNT as f64;
+                    if share.floor() as usize > caps[wi] {
+                        clamp_events += 1;
+                    }
+                }
+
+                let counts = distribute_levels(&caps, VANILLA_LEVEL_COUNT, exp, &mut rng);
+                if counts.iter().sum::<usize>() < VANILLA_LEVEL_COUNT {
+                    underfill_seeds += 1;
+                }
+                for wi in 0..8 {
+                    sums[wi] += counts[wi];
+                }
+            }
+            let row: String = (0..8)
+                .map(|wi| format!("{:>6.1}", sums[wi] as f64 / SEEDS as f64))
+                .collect();
+            eprintln!("  {exp:<3}  {row}    clamp_events={clamp_events} underfill_seeds={underfill_seeds}");
         }
     }
 

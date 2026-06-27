@@ -8,6 +8,16 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+### Changed
+
+- **Level spread across worlds** — levels are distributed by compressed capacity
+  (`capacity^0.5`) instead of straight proportional, so the densest worlds (Ice,
+  Desert) no longer hoard levels and the emptier ones (Giant, Pipe, Dark) fill
+  out, without forcing every world to the same count. The leftover from rounding
+  is now placed in random worlds for a little per-seed variety. The old
+  World 6-specific level cap is gone — the level-spread scoring's density penalty
+  handles clumping, and measured clumping is actually lower at the new spread.
+
 ### Fixed
 
 - **Overworld connectivity** — pipe placement could occasionally strand a
