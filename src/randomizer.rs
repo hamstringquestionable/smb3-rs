@@ -141,9 +141,6 @@ pub struct Options {
     /// Remove warp whistles and replace with random items.
     #[serde(default = "default_true")]
     pub remove_whistles: bool,
-    /// Remove rocks blocking paths (W2 secret path, W3 boat dock).
-    #[serde(default = "default_true", alias = "remove_w2_rock")]
-    pub remove_rocks: bool,
     /// Add extra hammer-breakable rocks: the W1 (6,5) decoration (between
     /// hammer-bro 14 and toad house 20) and the W8 (3,37) screen-2 decoration.
     /// Each becomes a horizontal path when broken/cleared. Off keeps the
@@ -339,7 +336,7 @@ fn default_true() -> bool {
     true
 }
 
-const FLAG_KEY_VERSION: u8 = 21;
+const FLAG_KEY_VERSION: u8 = 22;
 const FLAG_KEY_PREFIX: &str = "SMB3R-";
 
 /// Salt mixed into the seed to derive the substream that resolves `Maybe`
@@ -456,7 +453,7 @@ impl Options {
             | (self.hands_levels as u8) << 6
             | (self.shuffle_pipes as u8) << 5
             | (self.faster_frog as u8) << 4
-            | (self.remove_rocks as u8) << 3
+            // b2 bit 3 = free (was remove_rocks, now always-on and ungated).
             | (self.troll_pipes.is_on() as u8) << 2
             | (self.shuffle_toad_houses as u8) << 1
             | (self.shuffle_airships as u8);
@@ -655,7 +652,6 @@ impl Options {
             faster_frog: (b2 >> 4) & 1 != 0,
             shuffle_airships: b2 & 1 != 0,
             shuffle_toad_houses: (b2 >> 1) & 1 != 0,
-            remove_rocks: (b2 >> 3) & 1 != 0,
             troll_pipes: dtri((b2 >> 2) & 1 != 0, (b11 >> 2) & 1 != 0),
             starting_lives,
             card_speed_clear: (b4 >> 7) & 1 != 0,
@@ -745,7 +741,6 @@ impl Default for Options {
             disable_autoscroll: true,
             chest_items: true,
             remove_whistles: true,
-            remove_rocks: true,
             more_hammer_rocks: Tri::Off,
             eights_are_wild: Tri::Off,
             card_speed_clear: true,
@@ -843,10 +838,11 @@ fn randomize_inner(
     // map connectivity and store correct replacement tiles.
     rom.set_tag("qol/drawbridges");
     randomize::qol::fix_w3_drawbridges(rom);
-    if options.remove_rocks {
-        rom.set_tag("qol/rocks");
-        randomize::qol::remove_rocks(rom);
-    }
+    // Path-blocking rocks (W2 secret path, W3 boat dock, W4 pipe shortcut) are
+    // always removed: the overworld builder relies on those tiles being open
+    // for connectivity, so this is no longer player-gated.
+    rom.set_tag("qol/rocks");
+    randomize::qol::remove_rocks(rom);
     if more_hammer_rocks {
         rom.set_tag("qol/more_hammer_rocks");
         randomize::qol::make_hammer_rocks(rom);
@@ -1337,7 +1333,6 @@ mod tests {
         assert_eq!(opts.shuffle_pipes, decoded.shuffle_pipes);
         assert_eq!(opts.shuffle_airships, decoded.shuffle_airships);
         assert_eq!(opts.shuffle_hammer_bros, decoded.shuffle_hammer_bros);
-        assert_eq!(opts.remove_rocks, decoded.remove_rocks);
         assert_eq!(opts.more_hammer_rocks, decoded.more_hammer_rocks);
         assert_eq!(opts.starting_lives, decoded.starting_lives);
         assert_eq!(opts.card_speed_clear, decoded.card_speed_clear);
@@ -1377,7 +1372,6 @@ mod tests {
             disable_autoscroll: true,
             chest_items: true,
             remove_whistles: true,
-            remove_rocks: true,
             more_hammer_rocks: Tri::On,
             eights_are_wild: Tri::On,
             starting_lives: 99,
@@ -1455,7 +1449,6 @@ mod tests {
             disable_autoscroll: false,
             chest_items: false,
             remove_whistles: false,
-            remove_rocks: false,
             more_hammer_rocks: Tri::Off,
             eights_are_wild: Tri::Off,
             starting_lives: 1,
@@ -1620,7 +1613,6 @@ mod tests {
             ("disable_autoscroll",           Box::new(|o| o.disable_autoscroll = !o.disable_autoscroll)),
             ("chest_items",                  Box::new(|o| o.chest_items = !o.chest_items)),
             ("remove_whistles",              Box::new(|o| o.remove_whistles = !o.remove_whistles)),
-            ("remove_rocks",                 Box::new(|o| o.remove_rocks = !o.remove_rocks)),
             ("card_speed_clear",             Box::new(|o| o.card_speed_clear = !o.card_speed_clear)),
             ("remove_n_cards",               Box::new(|o| o.remove_n_cards = !o.remove_n_cards)),
             ("skip_wand_cutscene",           Box::new(|o| o.skip_wand_cutscene = !o.skip_wand_cutscene)),
@@ -1749,7 +1741,6 @@ mod tests {
         everything.disable_autoscroll = !everything.disable_autoscroll;
         everything.chest_items = !everything.chest_items;
         everything.remove_whistles = !everything.remove_whistles;
-        everything.remove_rocks = !everything.remove_rocks;
         everything.more_hammer_rocks = Tri::Maybe;
         everything.eights_are_wild = Tri::Maybe;
         everything.card_speed_clear = !everything.card_speed_clear;
@@ -1853,7 +1844,6 @@ mod tests {
             disable_autoscroll: false,
             chest_items: false,
             remove_whistles: false,
-            remove_rocks: false,
             more_hammer_rocks: Tri::Off,
             eights_are_wild: Tri::Off,
             starting_lives: 1,
@@ -1915,7 +1905,6 @@ mod tests {
             disable_autoscroll: true,
             chest_items: true,
             remove_whistles: true,
-            remove_rocks: true,
             more_hammer_rocks: Tri::On,
             eights_are_wild: Tri::On,
             starting_lives: 99,

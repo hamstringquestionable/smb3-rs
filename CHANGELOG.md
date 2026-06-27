@@ -8,6 +8,23 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Overworld connectivity** — pipe placement could occasionally strand a
+  world's airship/Bowser behind an unreachable region (most often Giant Land),
+  producing an unbeatable world. The island-connect step now refuses to spend a
+  pipe on a dead-end that doesn't lead toward the target, and will lift the
+  start-adjacent no-pipe restriction when that's the only way to keep the world
+  completable. This also subsumes the old World 3 start↔airship-swap pipe
+  special-case, which has been removed.
+
+### Removed
+
+- **Remove Rocks** is no longer an option — path-blocking rocks (W2 secret path,
+  W3 boat dock, W4 pipe shortcut) are always cleared, since the overworld builder
+  depends on those tiles being open for connectivity. (Adding extra
+  hammer-breakable shortcut rocks remains a separate option.)
+
 ## [0.9.0] - 2026-06-25
 
 The first cut: a baseline of notable changes since the project began. It

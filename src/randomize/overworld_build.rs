@@ -314,6 +314,7 @@ pub(crate) fn build<R: Rng>(
         }
     }
 
+
     let mut worlds = Vec::with_capacity(8);
     for wi in 0..8 {
         // Max non-pipe slots = pointer table slots minus pipe endpoints.
@@ -1068,31 +1069,44 @@ fn place_pipes<R: Rng>(
     // both ends of that pattern eliminates the failure mode. Fixed
     // endpoints (W3 boat dock) are exempt: their position is dictated by
     // ROM data, not chosen by the builder.
-    let no_pipe_zone: HashSet<(usize, usize)> = {
-        let mut zone: HashSet<(usize, usize)> = HashSet::new();
-        for anchor in [start_pos, target_pos].into_iter().flatten() {
-            let walk = walk_map(grid, &[], Some(anchor), world_idx);
-            for (&pos, &d) in &walk.distances {
+    // No-pipe exclusion zone, split by anchor. A pipe within one walking hop of
+    // start or target trivially skips the world, so both are barred by default.
+    // The halves are kept separate so the START side can be lifted when
+    // connectivity demands it (completability outranks the anti-skip rule); the
+    // TARGET side is never lifted, since a pipe next to the airship is the skip
+    // we actually care about.
+    let zone_within_1_hop = |anchor: Option<(usize, usize)>| -> HashSet<(usize, usize)> {
+        let mut z = HashSet::new();
+        if let Some(a) = anchor {
+            for (&pos, &d) in &walk_map(grid, &[], Some(a), world_idx).distances {
                 if d <= 1 {
-                    zone.insert(pos);
+                    z.insert(pos);
                 }
             }
         }
-        // Fixed endpoints stay placeable even inside the zone.
-        for &fp in fixed_endpoints {
-            zone.remove(&fp);
-        }
-        zone
+        z
     };
-    // Shadow the parameter with the filtered set so every candidate site
-    // below (phase 0 partner, island connections, no-more-islands pairs)
-    // automatically respects the zone.
-    let blank_positions: Vec<(usize, usize)> = blank_positions
+    let mut start_zone = zone_within_1_hop(start_pos);
+    let mut target_zone = zone_within_1_hop(target_pos);
+    // Fixed endpoints stay placeable even inside either zone.
+    for &fp in fixed_endpoints {
+        start_zone.remove(&fp);
+        target_zone.remove(&fp);
+    }
+
+    // Strict pool (default) excludes both zones; the relaxed pool restores the
+    // start side. Phase 0 (fixed endpoints) and the loop start on `strict`.
+    let strict: Vec<(usize, usize)> = blank_positions
         .iter()
         .copied()
-        .filter(|p| !no_pipe_zone.contains(p))
+        .filter(|p| !start_zone.contains(p) && !target_zone.contains(p))
         .collect();
-    let blank_positions = blank_positions.as_slice();
+    let relaxed: Vec<(usize, usize)> = blank_positions
+        .iter()
+        .copied()
+        .filter(|p| !target_zone.contains(p))
+        .collect();
+    let blank_positions = strict.as_slice();
 
     let mut placed_pairs: Vec<TeleportEdge> = Vec::new();
     let mut used_positions: HashSet<(usize, usize)> = HashSet::new();
@@ -1134,42 +1148,12 @@ fn place_pipes<R: Rng>(
         };
         let candidates = if available.is_empty() { &fallback } else { &available };
 
-        // The fixed pipe is usually the sole escape from an isolated region
-        // (e.g. the SAS-swapped W3 start island, where the start lands on the
-        // pipe's island). If its partner is picked uniformly from every
-        // opposite-side blank, RNG can land it on a *different* dead island
-        // instead of the target's landmass: the pipe then bridges nothing
-        // useful, the reachable side has no free blank left to anchor the
-        // remaining pipes, and Phase A/B below breaks with the airship still
-        // unreachable.
-        //
-        // Prefer a partner that actually reconnects start to target: tentatively
-        // bridge each candidate with the fixed pipe and keep only those that make
-        // the target reachable from start under the real, canoe-gated walk. This
-        // must be evaluated from the *start* anchor — walking from the target
-        // turns canoes on (the target can reach the dock) and would wrongly count
-        // canoe islands as connected, when from the stranded start the canoe is
-        // unusable. Falls back to the unfiltered pool when no single bridge
-        // suffices (Phase A/B then chains the rest).
-        //
-        // No-op for vanilla (non-SAS) W3: there the target is already reachable
-        // from start without this pipe, so every candidate passes the filter,
-        // `preferred` equals `candidates`, and the `choose` draw is identical.
-        let preferred: Vec<(usize, usize)> = match (start_pos, target_pos) {
-            (Some(s), Some(t)) => candidates
-                .iter()
-                .copied()
-                .filter(|&p| walk_map(grid, &[(fixed_pos, p)], Some(s), world_idx).nodes.contains(&t))
-                .collect(),
-            _ => Vec::new(),
-        };
-        // Only narrow the pool when the filter actually drops a candidate; an
-        // equal-length `preferred` is element-identical to `candidates`, so
-        // leaving `candidates` untouched keeps the RNG draw bit-for-bit the same
-        // (this is what makes the vanilla path a true no-op).
-        let use_preferred = !preferred.is_empty() && preferred.len() != candidates.len();
-        let candidates = if use_preferred { &preferred } else { candidates };
-
+        // The fixed-endpoint partner is picked from the opposite side (island ↔
+        // mainland) above; the must_connect_target loop below then places the
+        // remaining pairs with a target-component filter, so a sub-optimal
+        // partner here is recovered rather than stranding the airship. (This
+        // replaced an earlier W3/SAS-specific `preferred` reachability filter,
+        // now subsumed by the general island-connect logic.)
         if let Some(&partner) = candidates.choose(rng) {
             grid.set(partner.0, partner.1, TILE_PIPE);
             used_positions.insert(partner);
@@ -1188,6 +1172,12 @@ fn place_pipes<R: Rng>(
         }
     };
 
+    // `active` is the candidate pool the loop draws from. It starts strict and
+    // is lifted to `relaxed` at most once, only when the loop would otherwise
+    // give up with the target still unreachable.
+    let mut active: &[(usize, usize)] = blank_positions;
+    let mut lifted = false;
+
     let mut must_connect_target = true;
     while placed_pairs.len() < pair_count {
         // In the must_connect_target phase, stop once target is reachable.
@@ -1196,8 +1186,26 @@ fn place_pipes<R: Rng>(
         }
 
         let walk = walk_map(grid, &placed_pairs, start_pos, world_idx);
-        let (reachable_blanks, unreachable_blanks) =
-            split_blanks_by_reachability(blank_positions, &walk.nodes, &used_positions);
+        let (reachable_blanks, mut unreachable_blanks) =
+            split_blanks_by_reachability(active, &walk.nodes, &used_positions);
+
+        // While we still must reach the target, prefer bridging to an island
+        // that actually leads there: keep only unreachable blanks that share a
+        // walk-component with the target. This generalizes the W3 fixed-endpoint
+        // `preferred` filter to every island connection, so RNG can't squander a
+        // pipe on a dead tile that connects nothing (e.g. W4's stranded (6,24)).
+        // Falls back to the unfiltered set when no candidate reaches the target.
+        if must_connect_target && let Some(t) = target_pos {
+            let target_comp = walk_map(grid, &placed_pairs, Some(t), world_idx).nodes;
+            let toward_target: Vec<(usize, usize)> = unreachable_blanks
+                .iter()
+                .copied()
+                .filter(|b| target_comp.contains(b))
+                .collect();
+            if !toward_target.is_empty() {
+                unreachable_blanks = toward_target;
+            }
+        }
 
         if !unreachable_blanks.is_empty() && !reachable_blanks.is_empty() {
             // Connect an island: scored selection for both endpoints.
@@ -1235,10 +1243,20 @@ fn place_pipes<R: Rng>(
             used_positions.insert(b);
             placed_pairs.push((a, b));
         } else if must_connect_target {
-            break; // can't connect anything more but target still unreachable
+            // Can't connect anything more from the strict pool, but the target
+            // is still stranded. Completability beats the anti-skip rule: lift
+            // the start-side no-pipe zone once and retry, which exposes the
+            // start-adjacent blanks as fresh anchors. Only give up if even the
+            // relaxed pool leaves the target unreachable.
+            if !lifted {
+                lifted = true;
+                active = &relaxed;
+                continue;
+            }
+            break;
         } else {
             // No more islands — score candidate pairs and pick from top N
-            let available: Vec<(usize, usize)> = blank_positions
+            let available: Vec<(usize, usize)> = active
                 .iter()
                 .copied()
                 .filter(|p| !used_positions.contains(p))
@@ -2655,6 +2673,175 @@ mod tests {
         assert_eq!(total_levels, VANILLA_LEVEL_COUNT,
             "total levels {} != {}", total_levels, VANILLA_LEVEL_COUNT);
         assert_eq!(total_forts, 17, "total forts {} != 17", total_forts);
+    }
+
+    /// Regression: the overworld builder must never strand a world's target
+    /// (airship/Bowser) — that would be an unbeatable world. Covers SAS on/off,
+    /// hammer-bro shuffle on/off, and both the raw ROM and the QoL-patched ROM.
+    /// The raw-ROM arm (path rocks still present) locks in that the pipe
+    /// island-connect logic recovers connectivity even when a rock blocks a
+    /// path, so this can't regress if the rock-removal QoL ever changes.
+    #[test]
+    fn all_world_targets_reachable() {
+        let raw = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+        let qol = apply_qol_for_overworld(&raw);
+        let names = ["W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8"];
+
+        for (rom_label, rom) in [("raw", &raw), ("qol", &qol)] {
+            for hb in [false, true] {
+                for sas in [false, true] {
+                    for seed in 0..40u64 {
+                        let mut catalog = NodeCatalog::build(rom, false);
+                        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                        if sas {
+                            super::super::start_airship_swap::pick_swaps(&mut catalog, &mut rng);
+                        }
+                        let pickup = super::super::overworld_pickup::pick_up(
+                            rom,
+                            &catalog,
+                            super::super::overworld_pickup::PickupFlags {
+                                shuffle_spade_games: true,
+                                shuffle_toad_houses: true,
+                                shuffle_hammer_bros: hb,
+                            },
+                        );
+                        let result = build(
+                            rom,
+                            &OverworldData { pickup: &pickup, catalog: &catalog },
+                            &mut rng,
+                            BuildFlags {
+                                shuffle_toad_houses: true,
+                                shuffle_hammer_bros: hb,
+                                ..Default::default()
+                            },
+                        );
+                        for built in &result.worlds {
+                            let wi = built.world_idx;
+                            let start = rom_data::find_start(&built.grid);
+                            if let Some(t) = find_target(&built.grid, wi) {
+                                assert!(
+                                    walk_map(&built.grid, &built.pipe_pairs, start, wi)
+                                        .nodes
+                                        .contains(&t),
+                                    "{rom_label} hb={hb} sas={sas} seed={seed}: \
+                                     {} target unreachable from start",
+                                    names[wi],
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Diagnostic (not an assertion): tabulate how many levels the builder
+    /// places in each world across many seeds, next to the vanilla count, plus
+    /// the number of leftover open path tiles (placeable blank nodes left with
+    /// nothing on them). Run with:
+    ///   cargo test report_levels_per_world -- --nocapture
+    #[test]
+    fn report_levels_per_world() {
+        let raw = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+        // QoL map edits (incl. remove_rocks) run before the builder in the real
+        // pipeline; build from the patched ROM so capacities/connectivity match
+        // what players actually get.
+        let rom = apply_qol_for_overworld(&raw);
+
+        const SEEDS: u64 = 200;
+
+        // Vanilla per-world Level counts, straight from the catalog (the same
+        // source VANILLA_LEVEL_COUNT is derived from).
+        let vanilla_catalog = NodeCatalog::build(&rom, false);
+        let mut vanilla_levels = [0usize; 8];
+        for e in &vanilla_catalog.entries {
+            if matches!(e.kind, NodeKind::Level) {
+                vanilla_levels[e.world_idx] += 1;
+            }
+        }
+
+        // Per world, collect the placed-level count and open-tile count per seed.
+        let mut levels: [Vec<usize>; 8] = Default::default();
+        let mut opens: [Vec<usize>; 8] = Default::default();
+
+        for seed in 0..SEEDS {
+            let catalog = NodeCatalog::build(&rom, false);
+            let pickup = super::super::overworld_pickup::pick_up(
+                &rom,
+                &catalog,
+                super::super::overworld_pickup::PickupFlags {
+                    shuffle_spade_games: true,
+                    shuffle_toad_houses: true,
+                    ..Default::default()
+                },
+            );
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let result = build(
+                &rom,
+                &OverworldData { pickup: &pickup, catalog: &catalog },
+                &mut rng,
+                BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+            );
+
+            for built in &result.worlds {
+                let wi = built.world_idx;
+                let lv = built.slots.iter().filter(|s| s.kind == SlotKind::Level).count();
+
+                // Open path = currently-blank placeable node tiles not occupied
+                // by a non-pipe slot. The build phase stamps pipe tiles onto the
+                // grid but leaves level/fort/HB/bonus/toad slots blank, so those
+                // slot positions still read as blank here and must be subtracted.
+                let fixed = fixed_positions_for_world(&rom, &catalog, wi, true, false);
+                let blank = find_blank_slots(&built.grid, &fixed).len();
+                let non_pipe_slots =
+                    built.slots.iter().filter(|s| s.kind != SlotKind::Pipe).count();
+                let open = blank.saturating_sub(non_pipe_slots);
+
+                levels[wi].push(lv);
+                opens[wi].push(open);
+            }
+        }
+
+        let stats = |v: &[usize]| -> (usize, f64, usize) {
+            let min = *v.iter().min().unwrap();
+            let max = *v.iter().max().unwrap();
+            let mean = v.iter().sum::<usize>() as f64 / v.len() as f64;
+            (min, mean, max)
+        };
+
+        let names = ["Grass", "Desert", "Water", "Giant", "Sky", "Ice", "Pipe", "Dark"];
+        eprintln!("\nLevels placed per world over {SEEDS} seeds (shuffle_toad_houses on):\n");
+        eprintln!(
+            "  {:<14} {:>7} | {:>18} | {:>18}",
+            "World", "Vanilla", "Levels min/mean/max", "Open min/mean/max"
+        );
+        eprintln!("  {}", "-".repeat(66));
+        let mut van_total = 0usize;
+        let mut lvl_mean_total = 0.0f64;
+        let mut open_mean_total = 0.0f64;
+        for wi in 0..8 {
+            let (lmin, lmean, lmax) = stats(&levels[wi]);
+            let (omin, omean, omax) = stats(&opens[wi]);
+            van_total += vanilla_levels[wi];
+            lvl_mean_total += lmean;
+            open_mean_total += omean;
+            eprintln!(
+                "  W{} {:<11} {:>7} | {:>5} {:>6.1} {:>4} | {:>5} {:>6.1} {:>4}",
+                wi + 1, names[wi], vanilla_levels[wi],
+                lmin, lmean, lmax, omin, omean, omax,
+            );
+        }
+        eprintln!("  {}", "-".repeat(66));
+        eprintln!(
+            "  {:<14} {:>7} | {:>5} {:>6.1} {:>4} | {:>5} {:>6.1} {:>4}",
+            "Total", van_total, "", lvl_mean_total, "", "", open_mean_total, "",
+        );
     }
 
     #[test]
