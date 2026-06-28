@@ -8,6 +8,15 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-06-28
+
+### Fixed
+
+- **4-1 hazard placement** — the three Big Red Troopas each sit on a small
+  platform Mario must land on to move forward; in Wild enemy mode they could be
+  swapped to a hazard (Thwomp/Ptooie/nipper/lotus/hotfoot), forcing an
+  unavoidable hit. Those spots are now hazard-protected.
+
 ## [0.9.1] - 2026-06-27
 
 ### Changed

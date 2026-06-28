@@ -234,6 +234,16 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
+        label: "4-1 (each troopa sits on a small platform Mario must land on to progress; a hazard here forces an unavoidable hit)",
+        enemy_ptr: 0xCE97,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0CEBD, rule: EntryProtection::ExcludeHazards }, // BigRedTroopa scr=5 col=8
+            EntryRule { offset: 0x0CEC0, rule: EntryProtection::ExcludeHazards }, // BigRedTroopa scr=5 col=15
+            EntryRule { offset: 0x0CEC3, rule: EntryProtection::ExcludeHazards }, // BigRedTroopa scr=6 col=4
+        ],
+    },
+    LevelProtection {
         label: "8F roto-disc narrow area makes hazards unfair",
         enemy_ptr: 0xD551,
         walker_segment: WalkerSegmentRule::Default,
