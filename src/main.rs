@@ -108,10 +108,6 @@ struct Cli {
     #[arg(long)]
     no_shuffle_hammer_bros: bool,
 
-    /// Keep path-blocking rocks (W2 secret path, W3 boat dock, W4 pipe shortcut)
-    #[arg(long)]
-    keep_rocks: bool,
-
     /// Add extra hammer-breakable rocks (W1 6,5 and W8 3,37 decorations):
     /// off, on, or maybe (the seed decides, hidden from the flag key). Default: off.
     #[arg(long, default_value = "off")]
@@ -429,7 +425,6 @@ fn main() {
             disable_autoscroll: !cli.keep_autoscroll,
             chest_items: !cli.no_chest_items,
             remove_whistles: !cli.keep_whistles,
-            remove_rocks: !cli.keep_rocks,
             more_hammer_rocks: parse_tri(&cli.more_hammer_rocks, "more-hammer-rocks"),
             eights_are_wild: parse_tri(&cli.eights_are_wild, "eights-are-wild"),
             card_speed_clear: !cli.no_card_speed_clear,
@@ -502,7 +497,6 @@ fn main() {
     eprintln!("  Autoscroll: {}", if options.disable_autoscroll { "disabled" } else { "enabled" });
     eprintln!("  Chest items: {}", if options.chest_items { "on" } else { "off" });
     eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });
-    eprintln!("  Remove rocks: {}", if options.remove_rocks { "on" } else { "off" });
     eprintln!("  More hammer rocks: {}", tri_str(options.more_hammer_rocks));
     eprintln!("  8s are Wild: {}", tri_str(options.eights_are_wild));
     eprintln!("  Random fire flower: {}", match options.fire_flower {
