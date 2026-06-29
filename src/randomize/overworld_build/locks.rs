@@ -1,0 +1,312 @@
+//! Fortress lock / water-gap placement.
+
+use super::*;
+
+// Reason: every argument represents a distinct, independent input to lock
+// placement (geometry, slot list, count, safety flag, RNG). No subset
+// clusters into a meaningful concept — bundling would be a clippy bandage,
+// not a real abstraction.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn place_locks<R: Rng>(
+    grid: &Grid,
+    pipe_pairs: &[TeleportEdge],
+    start_pos: Option<(usize, usize)>,
+    target_pos: Option<(usize, usize)>,
+    slots: &[SlotAssignment],
+    fort_count: usize,
+    force_safe: bool,
+    world_idx: usize,
+    rng: &mut R,
+) -> Vec<LockAssignment> {
+    let mut locks: Vec<LockAssignment> = Vec::new();
+    let mut locked_tiles: HashSet<(usize, usize)> = HashSet::new();
+
+    // Build a base grid with forts/levels stamped so BFS sees them as nodes.
+    // This grid does NOT have any locks on it.
+    let mut base_grid = grid.clone();
+    for slot in slots {
+        match slot.kind {
+            SlotKind::Fortress => base_grid.set(slot.pos.0, slot.pos.1, TILE_FORTRESS),
+            SlotKind::Level => {
+                let tile = base_grid.get(slot.pos.0, slot.pos.1);
+                if BACKGROUND_TILES.contains(&tile) {
+                    base_grid.set(slot.pos.0, slot.pos.1, TILE_NODE);
+                }
+            }
+            SlotKind::Pipe => {} // already stamped on grid
+            SlotKind::HammerBro => {} // blank path tile, no stamp needed
+            SlotKind::BonusGame => base_grid.set(slot.pos.0, slot.pos.1, TILE_BONUS_GAME),
+            SlotKind::ToadHouse => base_grid.set(slot.pos.0, slot.pos.1, TILE_TOAD_HOUSE),
+        }
+    }
+
+    // Process each fortress in section order
+    for section_idx in 0..fort_count {
+        let fort_pos = match slots
+            .iter()
+            .find(|s| s.section == section_idx && s.kind == SlotKind::Fortress)
+        {
+            Some(s) => s.pos,
+            None => continue,
+        };
+
+        // Build the "current state" grid: base grid + all previously placed locks
+        // + all locks from earlier sections opened (simulating progression).
+        // When checking section N's lock, sections 0..N-1 have been beaten,
+        // so their locks are open. The new lock we're testing is the only closed one.
+        let build_test_grid = |new_lock: Option<((usize, usize), u8)>| -> Grid {
+            let mut g = base_grid.clone();
+            // Place all previously committed locks
+            for prev in &locks {
+                if prev.fort_section < section_idx {
+                    // Earlier section — fort beaten, lock opened (restore path tile)
+                    g.set(prev.pos.0, prev.pos.1, prev.replace_tile);
+                } else {
+                    // Same or later section — lock still closed
+                    g.set(prev.pos.0, prev.pos.1, prev.gap_tile);
+                }
+            }
+            // Place the candidate lock
+            if let Some((pos, gap)) = new_lock {
+                g.set(pos.0, pos.1, gap);
+            }
+            g
+        };
+
+        // Find all lockable path tiles not yet used
+        let reference_grid = build_test_grid(None);
+        let mut candidates: Vec<(usize, usize)> = Vec::new();
+        for r in 0..reference_grid.rows {
+            for c in 0..reference_grid.cols {
+                let tile = reference_grid.get(r, c);
+                if LOCKABLE_TILES.contains(&tile) && !locked_tiles.contains(&(r, c)) {
+                    // Row 7 and row 8 share Map_Completions bit ($01).
+                    // A lock/bridge/gap is completion-unsafe — it would
+                    // prevent the fallthrough between rows 7 and 8.
+                    // Skip if the paired row has a completable slot.
+                    if r == 7 || r == 8 {
+                        let paired_row = if r == 7 { 8 } else { 7 };
+                        let pair_completable = slots.iter().any(|s| {
+                            s.pos == (paired_row, c)
+                                && matches!(s.kind, SlotKind::Level | SlotKind::Fortress | SlotKind::Pipe | SlotKind::BonusGame | SlotKind::ToadHouse)
+                        });
+                        if pair_completable {
+                            continue;
+                        }
+                    }
+                    candidates.push((r, c));
+                }
+            }
+        }
+
+        candidates.shuffle(rng);
+
+        // Prefer safe when forced (retry path) or when the best candidate
+        // is weak anyway (score < 5) — don't sacrifice a high-scoring lock.
+        // Evaluated after scoring all candidates, see below.
+        // (pos, gap_tile, replace_tile, score, safe, blocks_target)
+        type LockCandidate = (Pos, u8, u8, i32, bool, bool);
+        // Subset of LockCandidate without the safe/blocks_target flags.
+        type SafeLockCandidate = (Pos, u8, u8, i32);
+
+        let mut best: Option<LockCandidate> = None;
+        let mut best_safe: Option<SafeLockCandidate> = None;
+
+        // Open grid (no candidate lock) is constant for all candidates in this
+        // section — hoist the BFS to avoid redundant walks per candidate.
+        let open_grid = build_test_grid(None);
+        let open_node_count = walk_map(&open_grid, pipe_pairs, start_pos, world_idx).nodes.len() as i32;
+
+        // If a previous lock in this world already blocks the target, suppress
+        // the target-blocking bonus to avoid stacking multiple locks against
+        // the airship/Bowser.
+        let target_already_locked = locks.iter().any(|l| l.blocks_target);
+
+        for &cand_pos in &candidates {
+            let tile = reference_grid.get(cand_pos.0, cand_pos.1);
+            let gap = gap_tile_for(tile);
+
+            // Hard rule 1: with this lock placed (and earlier locks opened),
+            // the current fortress must still be reachable from start.
+            let test_grid = build_test_grid(Some((cand_pos, gap)));
+            let walk = walk_map(&test_grid, pipe_pairs, start_pos, world_idx);
+
+            if !walk.nodes.contains(&fort_pos) {
+                continue;
+            }
+
+            // Hard rule 2: this lock must not block any earlier fortress.
+            // Check each earlier section's fort is reachable when its own
+            // lock (and all locks before it) are open but this new lock is closed.
+            let blocks_earlier = locks.iter().any(|prev_lock| {
+                let prev_fort = slots.iter()
+                    .find(|s| s.section == prev_lock.fort_section && s.kind == SlotKind::Fortress);
+                if let Some(pf) = prev_fort {
+                    // Build grid: open locks up to prev_lock's section, close the rest + candidate
+                    let mut g = base_grid.clone();
+                    for l in &locks {
+                        if l.fort_section < prev_lock.fort_section {
+                            g.set(l.pos.0, l.pos.1, l.replace_tile);
+                        } else {
+                            g.set(l.pos.0, l.pos.1, l.gap_tile);
+                        }
+                    }
+                    // Also place the candidate lock
+                    g.set(cand_pos.0, cand_pos.1, gap);
+                    let w = walk_map(&g, pipe_pairs, start_pos, world_idx);
+                    !w.nodes.contains(&pf.pos)
+                } else {
+                    false
+                }
+            });
+            if blocks_earlier {
+                continue;
+            }
+
+            // Check if target is reachable with this lock closed (used for
+            // secret exit safety).
+            let target_reachable = target_pos
+                .map(|tp| walk.nodes.contains(&tp))
+                .unwrap_or(true);
+
+            // A "safe" lock blocks nothing important: all fortresses and
+            // the target remain reachable. Safe for 1-F secret exit since
+            // leaving it closed can never cause a softlock.
+            let safe = target_reachable && slots.iter().all(|s| {
+                s.kind != SlotKind::Fortress || walk.nodes.contains(&s.pos)
+            });
+
+            // Score by gated node count: how many nodes become unreachable
+            // when this lock is closed? Prefers chokepoints that gate large
+            // portions of the map over locks adjacent to the airship (which
+            // only gate ~1 node).
+            let gated = open_node_count - walk.nodes.len() as i32;
+
+            let mut score: i32 = gated;
+
+            // Bonus: blocks a later fortress (strong progression signal)
+            let blocks_later_fort = slots.iter().any(|s| {
+                s.kind == SlotKind::Fortress
+                    && s.section > section_idx
+                    && !walk.nodes.contains(&s.pos)
+            });
+            if blocks_later_fort {
+                score += 100;
+            }
+
+            // Bonus: blocks the target (airship/bowser) — only credited to
+            // the first such lock in the world; subsequent target-blockers
+            // would just pile up next to the airship.
+            if !target_reachable && !target_already_locked {
+                score += 10;
+            }
+
+            // Spread penalty: discourage placing this lock close to any
+            // already-placed lock in the world. Falls off linearly with
+            // Manhattan distance, zero past 8 tiles.
+            if let Some(min_dist) = locks
+                .iter()
+                .map(|l| cand_pos.0.abs_diff(l.pos.0) + cand_pos.1.abs_diff(l.pos.1))
+                .min()
+            {
+                score -= (8i32 - min_dist as i32).max(0) * 2;
+            }
+
+            // Slight preference for bridge tiles — water gaps look better
+            // than locks on regular path tiles.
+            if tile == 0xB3 {
+                score += 1;
+            }
+
+            // Track best overall and best safe separately.
+            let dominated = match &best {
+                Some((_, _, _, best_score, _, _)) => score > *best_score,
+                None => true,
+            };
+            if dominated {
+                best = Some((cand_pos, gap, tile, score, safe, !target_reachable));
+            }
+
+            if safe {
+                let safe_dominated = match &best_safe {
+                    Some((_, _, _, best_score)) => score > *best_score,
+                    None => true,
+                };
+                if safe_dominated {
+                    best_safe = Some((cand_pos, gap, tile, score));
+                }
+            }
+        }
+
+        // Prefer safe when forced (retry) or when best score is low —
+        // no point picking an impactful lock if there are none.
+        let best_score = best.map(|(_, _, _, s, _, _)| s).unwrap_or(0);
+        let prefer_safe = force_safe || best_score < 5;
+
+        let chosen = if prefer_safe {
+            best_safe.map(|(pos, gap, replace, score)| (pos, gap, replace, score, true, false))
+                .or(best)
+        } else {
+            best
+        };
+
+        if let Some((pos, gap, replace, _score, safe, blocks_target)) = chosen {
+            locked_tiles.insert(pos);
+            locks.push(LockAssignment {
+                pos,
+                gap_tile: gap,
+                replace_tile: replace,
+                fort_section: section_idx,
+                secret_exit_safe: safe,
+                blocks_target,
+            });
+        }
+    }
+
+    locks
+}
+
+/// Stamp build results onto the ROM tile grids for visual inspection.
+///
+/// Writes generic tiles for each slot type so the overworld maps can be
+/// viewed in an emulator. The game will crash if you enter any level.
+#[allow(dead_code)]
+pub(super) fn debug_stamp_rom(rom: &mut crate::rom::Rom, result: &BuildResult) {
+    for built in &result.worlds {
+        let wi = built.world_idx;
+
+        // First write the cleared grid (with pipes already placed)
+        for r in 0..built.grid.rows {
+            for c in 0..built.grid.cols {
+                let offset = rom_data::map_tile_offset(wi, r, c);
+                rom.data[offset] = built.grid.get(r, c);
+            }
+        }
+
+        // Stamp slot assignments
+        let mut level_num: u8 = 1;
+        for slot in &built.slots {
+            let tile = match slot.kind {
+                SlotKind::Level => {
+                    // Use numbered map tiles ($03-$0D = levels 1-11, then wrap)
+                    let t = 0x02 + level_num.min(13);
+                    level_num = level_num.wrapping_add(1);
+                    t
+                }
+                SlotKind::Fortress => TILE_FORTRESS,
+                SlotKind::Pipe => TILE_PIPE,
+                SlotKind::BonusGame => TILE_BONUS_GAME,
+                SlotKind::ToadHouse => TILE_TOAD_HOUSE,
+                SlotKind::HammerBro => continue, // keep existing blank path tile
+            };
+            let offset = rom_data::map_tile_offset(wi, slot.pos.0, slot.pos.1);
+            rom.data[offset] = tile;
+        }
+
+        // Stamp locks
+        for lock in &built.locks {
+            let offset = rom_data::map_tile_offset(wi, lock.pos.0, lock.pos.1);
+            rom.data[offset] = lock.gap_tile;
+        }
+    }
+}
