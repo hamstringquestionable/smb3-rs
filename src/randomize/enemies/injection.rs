@@ -1,0 +1,176 @@
+//! Wild-injection pass: seed Lakitu / Angry Sun / Boss Bass into a fraction
+//! of level segments, keyed off authoritative level entry points.
+
+use super::*;
+
+/// Collect every `enemy_ptr` value (bytes 2-3 of every 9-byte level
+/// header) from every region in [`LEVEL_DATA_REGIONS`]. This is the
+/// authoritative set of file offsets where the SMB3 level loader actually
+/// begins reading enemy data — the level/sub-area entry points. Used by
+/// [`inject_at_entry_points`] so wild_injection writes only land where a
+/// level will actually read them.
+///
+/// Returned values are unique and in first-seen order.
+///
+/// Exposed `pub` so integration tests (`tests/chr_stats.rs`) can use the
+/// same authoritative set for distribution / visibility analysis.
+pub fn enemy_entry_points(rom: &Rom) -> Vec<u16> {
+    const LEVEL_HEADER_SIZE: usize = 9;
+    let mut pts: Vec<u16> = Vec::new();
+    let mut seen: std::collections::HashSet<u16> = std::collections::HashSet::new();
+    for region in LEVEL_DATA_REGIONS {
+        let len = region.end - region.start;
+        let data = rom.read_range(region.start, len);
+        let mut i = 0usize;
+        while i + LEVEL_HEADER_SIZE < data.len() {
+            // Header at data[i..i+9]; enemy_ptr is bytes 2-3 (little-endian).
+            let ep = (data[i + 2] as u16) | ((data[i + 3] as u16) << 8);
+            if seen.insert(ep) {
+                pts.push(ep);
+            }
+            i += LEVEL_HEADER_SIZE;
+            // Walk commands until the level's $FF terminator.
+            while i + 2 < data.len() {
+                if data[i] == 0xFF {
+                    i += 1;
+                    break;
+                }
+                let b0 = data[i];
+                let b2 = data[i + 2];
+                let is_fixed = (b2 & 0xF0) == 0;
+                let mut cmd_size = 3;
+                if !is_fixed {
+                    let grp = (b0 >> 5) as usize;
+                    let dispatch = grp * 15 + ((b2 >> 4) as usize) - 1;
+                    if region.extra_byte_dispatches.contains(&(dispatch as u8)) {
+                        cmd_size = 4;
+                    }
+                }
+                i += cmd_size;
+            }
+        }
+    }
+    pts
+}
+
+/// Wild-injection pass driven by *level entry points* rather than by
+/// `$FF`-bounded walker segments. For every `enemy_ptr` reported by
+/// [`enemy_entry_points`] that isn't an HB or protected segment, roll
+/// against `WILD_INJECTION_CHANCE` and — on success — replace the first
+/// entry the SMB3 level loader will actually read with a CHR-compatible
+/// Lakitu / Angry Sun / Boss Bass.
+///
+/// This replaces the in-walker injection block: the walker historically
+/// injected at `entries[0]` of every walker-segment, but most walker
+/// segments don't start at a level entry point (the level enters
+/// mid-segment). Driving the pass off `enemy_ptr` ensures injections are
+/// visible in-game.
+pub(super) fn inject_at_entry_points<R: Rng>(
+    data: &mut [u8],
+    entry_ptrs: &[u16],
+    opts: &Options,
+    rng: &mut R,
+) {
+    let normal_modes = ClassModes::from_options(opts);
+    let normal_wild_pool = normal_modes.build_wild_pool();
+
+    for &ep_u16 in entry_ptrs {
+        let ep = ep_u16 as usize;
+        if !(ENEMY_DATA_START..ENEMY_DATA_END).contains(&ep) {
+            continue;
+        }
+        if is_injection_blocked(ep_u16) {
+            continue;
+        }
+
+        let ep_local = ep - ENEMY_DATA_START;
+        if ep_local >= data.len() {
+            continue;
+        }
+
+        // SMB3 enemy data has two layout flavors at an entry point:
+        //   (a) page byte (0x00 or 0x01) then 3-byte entries
+        //   (b) entries-only (the entry_ptr lands directly on the first obj_id)
+        // Real obj_ids never overlap 0x00/0x01, so the byte value is the
+        // unambiguous discriminator the walker has always used.
+        let first_entry_idx = if matches!(data[ep_local], 0x00 | 0x01) {
+            ep_local + 1
+        } else {
+            ep_local
+        };
+        if first_entry_idx >= data.len() || data[first_entry_idx] == 0xFF {
+            continue; // empty level — no enemy entries to inject into
+        }
+
+        // Gather entries from this entry point up to its $FF terminator.
+        let mut entries: Vec<SegmentEntry> = Vec::new();
+        let mut j = first_entry_idx;
+        while j + 2 < data.len() && data[j] != 0xFF {
+            entries.push(SegmentEntry {
+                data_index: j,
+                obj_id: data[j],
+                x_pos: data[j + 1],
+            });
+            j += 3;
+        }
+        if entries.is_empty() {
+            continue;
+        }
+
+        let roll: u8 = rng.random_range(..=255);
+        if roll >= WILD_INJECTION_CHANCE {
+            continue;
+        }
+
+        let entry = &entries[0];
+        let fo = ENEMY_DATA_START + entry.data_index;
+        // Skip if the walker pass would override or filter our pick: the four
+        // force-* rules silently replace the injected enemy with a class pool
+        // member (e.g. 6-5's shell at 0xC5EB must stay shell for brick-break
+        // progression), and ExcludeHazards would filter a Lakitu/Boss Bass
+        // back out (e.g. 7F2's Boom-Boom arena).
+        let class_protected = matches!(
+            entry_protection_at(fo),
+            Some(EntryProtection::SkipSwap
+                | EntryProtection::ForceShell
+                | EntryProtection::ForceStompable
+                | EntryProtection::ForceTankBro
+                | EntryProtection::ExcludeHazards)
+        );
+        let swappable = !class_protected
+            && find_class_pool(entry.obj_id, &normal_modes, &normal_wild_pool).is_some();
+        if !swappable {
+            continue;
+        }
+
+        // Pre-commit CHR pages for the rest of the run so the injected
+        // enemy is chosen compatible with what stays.
+        let mut s4 = ChrSlot::Free;
+        let mut s5 = ChrSlot::Free;
+        for e in &entries[1..] {
+            let should_precommit = match find_class_pool(e.obj_id, &normal_modes, &normal_wild_pool) {
+                None => !BOOMBOOM_IDS.contains(&e.obj_id),
+                Some(pool) if std::ptr::eq(pool, normal_wild_pool.as_slice()) => false,
+                Some(class) => is_uniform_chr_class(class),
+            };
+            if should_precommit {
+                commit_chr_page(e.obj_id, &mut s4, &mut s5);
+            }
+        }
+
+        if let Some(chosen) = pick_compatible(WILD_INJECTION_IDS, s4, s5, rng) {
+            let bertha_count: u8 = entries.iter()
+                .filter(|e| BERTHA_IDS.contains(&e.obj_id))
+                .count() as u8;
+            let was_bertha = BERTHA_IDS.contains(&entries[0].obj_id);
+            let chosen_is_bertha = BERTHA_IDS.contains(&chosen);
+            let post_count = bertha_count
+                .saturating_sub(was_bertha as u8)
+                .saturating_add(chosen_is_bertha as u8);
+            if !(chosen_is_bertha && post_count > MAX_BERTHA_PER_SEGMENT) {
+                let di = entry.data_index;
+                swap_enemy(data, di, chosen);
+            }
+        }
+    }
+}
