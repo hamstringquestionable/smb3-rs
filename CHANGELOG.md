@@ -8,6 +8,15 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-07-01
+
+### Fixed
+
+- **Randomized Koopalings — ring graphics** — the moved ring attack now loads
+  its own sprite CHR page on whichever body carries it, so the ring no longer
+  renders as garbled tiles. Also fixes the reverse case where the (no-longer-
+  ring) Wendy identity drew a garbled wand blast.
+
 ## [0.9.4] - 2026-06-30
 
 ### Changed
