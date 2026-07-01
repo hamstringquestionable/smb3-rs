@@ -198,6 +198,14 @@ const KOOPALING_REMAP_LUT: usize = 0x16018;
 const KOOPALING_HEAVY_CMP_ROY: usize = 0x03616;
 const KOOPALING_HEAVY_CMP_LUDWIG: usize = 0x0361A;
 
+/// Immediate operands of the three checks that together make up Wendy's ring
+/// attack: the ring-vs-wand projectile choice (`CMP` at 0x02FB2), the firing
+/// cadence (`CMP` at 0x02FFA), and the straight-aim / skip-homing branch
+/// (`CPY` at 0x03024). All three test the same identity (vanilla 0x02 = Wendy),
+/// so they must be rewritten *together* to the same value to move the whole
+/// ring package coherently onto another body.
+const KOOPALING_RING_CMP_SITES: [usize; 3] = [0x02FB2, 0x02FFA, 0x03024];
+
 pub fn random_koopalings(rom: &mut Rom, rng: &mut ChaCha8Rng) {
     use rand::seq::SliceRandom;
 
@@ -223,6 +231,17 @@ pub fn random_koopalings(rom: &mut Rom, rng: &mut ChaCha8Rng) {
     heavy.shuffle(rng);
     rom.write_byte(KOOPALING_HEAVY_CMP_ROY, heavy[0]);
     rom.write_byte(KOOPALING_HEAVY_CMP_LUDWIG, heavy[1]);
+
+    // Move Wendy's ring attack onto a random identity's body. There is exactly
+    // one ring boss (as in vanilla); randomizing the compare value picks which
+    // body carries it. All three ring sites take the SAME value to stay
+    // coherent. Lemmy (0x05) is excluded: his ball AI replaces the wand-fire
+    // path the ring gate lives on, so the ring would never fire on his body.
+    let mut ring: [u8; 6] = [0, 1, 2, 3, 4, 6];
+    ring.shuffle(rng);
+    for &site in &KOOPALING_RING_CMP_SITES {
+        rom.write_byte(site, ring[0]);
+    }
 }
 
 /// Adjust hitboxes for Bowser and Koopalings so they're easier to hit.
@@ -482,6 +501,22 @@ mod tests {
                 "heavy-physics identity 0x{id:02X} outside pool (Lemmy excluded)"
             );
         }
+
+        // Ring attack: all three sites rewritten to the SAME identity, drawn
+        // from the pool {0,1,2,3,4,6} (Lemmy/0x05 excluded).
+        let ring: Vec<u8> = KOOPALING_RING_CMP_SITES
+            .iter()
+            .map(|&s| rom.read_byte(s))
+            .collect();
+        assert!(
+            ring.iter().all(|&id| id == ring[0]),
+            "ring sites must all hold the same identity, got {ring:02X?}"
+        );
+        assert!(
+            [0, 1, 2, 3, 4, 6].contains(&ring[0]),
+            "ring identity 0x{:02X} outside pool (Lemmy excluded)",
+            ring[0]
+        );
     }
 
     #[test]
