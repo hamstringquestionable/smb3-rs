@@ -190,6 +190,14 @@ const KOOPALING_REMAP_SITES: &[usize] = &[
 ];
 const KOOPALING_REMAP_LUT: usize = 0x16018;
 
+/// Immediate operands of the two `CMP #$imm` checks in `Koopaling_DetectWorld`
+/// (file 0x03612 / CPU $B602) that gate the heavy-physics effect (enhanced
+/// gravity, floor-shake, player paralysis). Vanilla compares against the Roy
+/// (0x04) and Ludwig (0x06) identity values; rewriting these operands moves the
+/// effect onto any two identities. See docs/smb3_rom_reference.md § "Map_Unused7EEA".
+const KOOPALING_HEAVY_CMP_ROY: usize = 0x03616;
+const KOOPALING_HEAVY_CMP_LUDWIG: usize = 0x0361A;
+
 pub fn random_koopalings(rom: &mut Rom, rng: &mut ChaCha8Rng) {
     use rand::seq::SliceRandom;
 
@@ -204,6 +212,17 @@ pub fn random_koopalings(rom: &mut Rom, rng: &mut ChaCha8Rng) {
     for &site in KOOPALING_REMAP_SITES {
         rom.write_range(site + 1, &[0xEA, 0x7E]);
     }
+
+    // Reassign the heavy-physics effect (vanilla: Roy + Ludwig) to two random
+    // identities. The two DetectWorld compares are equality tests, so the picks
+    // must be distinct to keep exactly two heavy bosses. Lemmy (0x05) is
+    // excluded from the pool: his AI is replaced wholesale by the ball routine,
+    // so it's unverified whether DetectWorld's heavy branch even runs for him —
+    // keeping him out guarantees the effect always lands on two live bosses.
+    let mut heavy: [u8; 6] = [0, 1, 2, 3, 4, 6];
+    heavy.shuffle(rng);
+    rom.write_byte(KOOPALING_HEAVY_CMP_ROY, heavy[0]);
+    rom.write_byte(KOOPALING_HEAVY_CMP_LUDWIG, heavy[1]);
 }
 
 /// Adjust hitboxes for Bowser and Koopalings so they're easier to hit.
@@ -450,6 +469,18 @@ mod tests {
             );
             // Opcode byte preserved
             assert_eq!(rom.read_byte(site), 0xAD);
+        }
+
+        // Heavy-physics compares reassigned to two distinct identities drawn
+        // from the pool {0,1,2,3,4,6} (Lemmy/0x05 excluded).
+        let a = rom.read_byte(KOOPALING_HEAVY_CMP_ROY);
+        let b = rom.read_byte(KOOPALING_HEAVY_CMP_LUDWIG);
+        assert_ne!(a, b, "heavy-physics identities must be distinct");
+        for id in [a, b] {
+            assert!(
+                [0, 1, 2, 3, 4, 6].contains(&id),
+                "heavy-physics identity 0x{id:02X} outside pool (Lemmy excluded)"
+            );
         }
     }
 
