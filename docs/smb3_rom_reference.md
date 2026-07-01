@@ -1830,6 +1830,29 @@ Not controlled by `$0727` (and therefore not remapped): hit count to defeat (har
 `#$0A` in `ObjInit_Koopaling`, then `#$03` in `PRG001_B185`), timer constants, and
 wand-state dispatch (`Level_GetWandState`).
 
+#### Sprite CHR Bank Tables (`ObjNorm_Koopaling`, `$AEC4`)
+
+`ObjNorm_Koopaling` loads two sprite CHR pages per Koopaling into `PatTable_BankSel`
+slots +4 / +5, indexed by `$0727` (remapped to `$7EEA`, i.e. by identity):
+
+```
+$AEC4: AC EA 7E   LDY $7EEA          ; identity 0-6 (post-remap; vanilla LDY $0727)
+$AEC7: B9 72 AE   LDA KoopalingPatSet4,Y   ; -> $071D (BankSel+4)
+$AECD: B9 79 AE   LDA KoopalingPatSet5,Y   ; -> $071E (BankSel+5)
+```
+
+| Table | CPU | File | Values (identity 0-6: Larry Morton Wendy Iggy Roy Lemmy Ludwig) |
+|-------|-----|------|-----------------------------------------------------------------|
+| `KoopalingPatSet4` (slot +4, **body**)       | `$AE72` | `0x02E82` | `48 49 4a 48 49 48 4a` |
+| `KoopalingPatSet5` (slot +5, **projectile**) | `$AE79` | `0x02E89` | `37 37 4a 37 37 48 37` |
+
+Slot +4 is the boss body; slot +5 is the projectile graphic. Slot +5 keys to attack
+type: **`0x4A` = ring** (Wendy only), **`0x48` = ball** (Lemmy), **`0x37` = plain wand
+blast** (everyone else). Moving the ring *behavior* to another identity (the three ring
+CMP sites) requires also moving the ring page: `qol::random_koopalings` rewrites
+`KoopalingPatSet5` so `0x4A` follows the ring identity, `0x48` stays on Lemmy, and all
+others get `0x37`. Without it the new ring boss loads `0x37` and the ring renders garbled.
+
 ### Airship Travel Data
 
 | Label | Description |

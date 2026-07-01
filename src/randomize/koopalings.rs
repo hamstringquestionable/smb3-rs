@@ -206,6 +206,20 @@ const KOOPALING_HEAVY_CMP_LUDWIG: usize = 0x0361A;
 /// ring package coherently onto another body.
 const KOOPALING_RING_CMP_SITES: [usize; 3] = [0x02FB2, 0x02FFA, 0x03024];
 
+/// `KoopalingPatSet5` — the per-identity sprite CHR page loaded into `PatTable_BankSel+5`
+/// (the projectile window) by `ObjNorm_Koopaling` (`$AEC4: LDY $7EEA; LDA $AE79,Y`).
+/// 7 bytes, indexed by remapped Koopaling identity. Slot +4 (`KoopalingPatSet4`, the
+/// body window) needs no change — each identity already loads its own body page.
+const KOOPALING_PATSET5: usize = 0x02E89;
+/// CHR page holding Wendy's ring projectile tiles (vanilla: only Wendy's identity loads it).
+const CHR_PAGE_RING: u8 = 0x4A;
+/// CHR page holding Lemmy's ball tiles.
+const CHR_PAGE_BALL: u8 = 0x48;
+/// CHR page holding the plain wand-blast tiles (every non-ring, non-ball boss).
+const CHR_PAGE_WAND: u8 = 0x37;
+/// Lemmy's Koopaling identity value.
+const LEMMY_IDENTITY: usize = 0x05;
+
 pub fn random_koopalings(rom: &mut Rom, rng: &mut ChaCha8Rng) {
     use rand::seq::SliceRandom;
 
@@ -242,6 +256,21 @@ pub fn random_koopalings(rom: &mut Rom, rng: &mut ChaCha8Rng) {
     for &site in &KOOPALING_RING_CMP_SITES {
         rom.write_byte(site, ring[0]);
     }
+
+    // Move the ring's *graphics* to match the moved *behavior*. The projectile
+    // lives in its own 1KB sprite CHR page loaded into BankSel slot +5
+    // (KoopalingPatSet5); vanilla only maps the ring page (0x4A) for Wendy's
+    // identity, so retargeting the ring behavior without this leaves the new
+    // ring boss loading the plain wand-blast page and rendering garbled tiles.
+    // Rewrite the per-identity table so the projectile page follows assignment:
+    // the ring identity gets the ring page, Lemmy keeps his ball page, everyone
+    // else gets the wand-blast page. This also corrects the reverse case — the
+    // old Wendy identity no longer loads 0x4A, so her wand blast renders right.
+    // ring[0] is drawn from a pool excluding Lemmy (0x05), so it never collides.
+    let mut patset5 = [CHR_PAGE_WAND; 7];
+    patset5[LEMMY_IDENTITY] = CHR_PAGE_BALL;
+    patset5[ring[0] as usize] = CHR_PAGE_RING;
+    rom.write_range(KOOPALING_PATSET5, &patset5);
 }
 
 /// Adjust hitboxes for Bowser and Koopalings so they're easier to hit.
