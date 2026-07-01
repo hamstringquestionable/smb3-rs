@@ -8,6 +8,15 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-06-30
+
+### Changed
+
+- **Randomized Koopalings — ring attack** — with random Koopalings on, Wendy's
+  ring attack (ring projectile + firing cadence + straight aim) now rides a
+  random Koopaling identity's body instead of always Wendy. There's still
+  exactly one ring boss; only which body carries it is randomized.
+
 ## [0.9.3] - 2026-06-30
 
 ### Changed
