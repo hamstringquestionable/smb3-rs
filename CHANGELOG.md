@@ -8,6 +8,15 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-06-30
+
+### Changed
+
+- **Randomized Koopalings — heavy physics** — with random Koopalings on, the
+  heavy-physics effect (enhanced gravity, floor-shake, player paralysis) is now
+  reassigned to two random Koopaling identities instead of always Roy and
+  Ludwig, so a differently-shaped boss can carry the crushing feel.
+
 ## [0.9.2] - 2026-06-28
 
 ### Fixed
