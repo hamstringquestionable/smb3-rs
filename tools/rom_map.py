@@ -38,10 +38,15 @@ from collections import defaultdict, deque
 # only rom_data.rs needs to change.
 # --------------------------------------------------------------------------
 
-_ROM_DATA_RS = os.path.join(
+# rom_data was split from a single rom_data.rs into a rom_data/ submodule
+# directory (access.rs, free_space.rs, grid.rs, tables.rs, mod.rs). Support
+# both layouts: prefer the directory, fall back to the legacy single file.
+_RANDOMIZE_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
-    "..", "src", "randomize", "rom_data.rs",
+    "..", "src", "randomize",
 )
+_ROM_DATA_DIR = os.path.join(_RANDOMIZE_DIR, "rom_data")
+_ROM_DATA_RS = os.path.join(_RANDOMIZE_DIR, "rom_data.rs")
 
 
 def _parse_tuple_list(rs_src, name):
@@ -132,8 +137,20 @@ def _parse_beta_patches(rs_src):
     ]
 
 
-with open(_ROM_DATA_RS) as _f:
-    _RS_SRC = _f.read()
+def _read_rom_data_src():
+    """Read rom_data source, concatenating all .rs files if it's a directory."""
+    if os.path.isdir(_ROM_DATA_DIR):
+        parts = []
+        for fname in sorted(os.listdir(_ROM_DATA_DIR)):
+            if fname.endswith(".rs"):
+                with open(os.path.join(_ROM_DATA_DIR, fname)) as f:
+                    parts.append(f.read())
+        return "\n".join(parts)
+    with open(_ROM_DATA_RS) as f:
+        return f.read()
+
+
+_RS_SRC = _read_rom_data_src()
 
 # --------------------------------------------------------------------------
 # Constants
