@@ -91,11 +91,12 @@ impl Options {
 
         // b2 bit 4 = faster_frog (reuses the slot formerly fix_drawbridges,
         // now always-on).
+        // b2 bit 3 = boomboom_hits (reuses the slot formerly remove_rocks).
         let b2 = (self.remove_whistles as u8) << 7
             | (self.hands_levels as u8) << 6
             | (self.shuffle_pipes as u8) << 5
             | (self.faster_frog as u8) << 4
-            // b2 bit 3 = free (was remove_rocks, now always-on and ungated).
+            | (self.boomboom_hits as u8) << 3
             | (self.troll_pipes.is_on() as u8) << 2
             | (self.shuffle_toad_houses as u8) << 1
             | (self.shuffle_airships as u8);
@@ -283,6 +284,7 @@ impl Options {
             palette_themed: false, // cosmetic — not encoded in flag key
             hammer_breaks_locks: dtri((b1 >> 6) & 1 != 0, b11 & 1 != 0),
             koopaling_hits: (b1 >> 5) & 1 != 0,
+            boomboom_hits: (b2 >> 3) & 1 != 0,
             world_order: (b1 >> 4) & 1 != 0,
             big_q_blocks: (b1 >> 3) & 1 != 0,
             disable_autoscroll: (b1 >> 2) & 1 != 0,

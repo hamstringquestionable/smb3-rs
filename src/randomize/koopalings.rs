@@ -401,6 +401,122 @@ pub fn randomize_koopaling_hits(rom: &mut Rom, rng: &mut ChaCha8Rng) {
     rom.write_range(KOOPA_FIRE_HANDOFF, &[0x20, lo, hi, 0xEA]); // JSR + NOP
 }
 
+// Randomize per-fortress Boom-Boom stomp counts (1–5 hits each).
+//
+// Boom-Boom's boss AI lives in PRG003. Unlike the Koopaling, its stomp count is
+// entangled with its attack-state machine: `Objects_Var5` ($9A,X) is *both* the
+// hit counter *and* the index the DynJump dispatcher uses to pick the current
+// attack (2=Primary, 3=Secondary, 4=Final, 5=Death). The vanilla stomp handler
+// at CPU $AE68 does:
+//   LDA $9A,X ; INC $9A,X ; CMP #$04 ; BEQ death   (death when Var5 reaches 5)
+// Var5 starts the fight at 2, so 3 stomps (2→3→4→5) kill it.
+//
+// We can't just change the compare: death *requires* Var5 to reach the death
+// state (5), and letting Var5 climb past 5 would index off the 6-entry jump
+// table (crash). Instead we DECOUPLE the count from the state:
+//
+//   * `Objects_Var12` ($7CD2,X) — cleared to 0 on spawn by Level_PrepareNewObject
+//     and never touched by any Boom-Boom routine — is our real stomp tally.
+//   * Var5 keeps advancing (2→3→4) so the boss still cycles through its attacks;
+//     when it would hit the death state (5) but the tally hasn't reached the
+//     threshold yet, we bounce it back to Primary (state 2) so it keeps fighting.
+//   * Only when the tally reaches this fortress's threshold do we force Var5=5
+//     and take the vanilla death path.
+//
+// The per-fortress threshold comes from a 16-byte table indexed by
+// `(World_Num << 2 + ordinal) & $0F`, where the ordinal (1–4) is Boom-Boom's
+// fortress number within its world, sitting in `Objects_Var4` ($7F,X) at the
+// moment of the stomp. That index makes every fortress *within a world* distinct
+// (only far-apart cross-world fortresses can share a table slot, which is
+// invisible in play).
+//
+// Fireball defeat (37 fireballs via Objects_HitCount) is a separate path and is
+// intentionally left unchanged — only the stomp count is randomized.
+
+/// File offset of the vanilla Boom-Boom stomp handler
+/// `LDA $9A,X; INC $9A,X; CMP #$04; BEQ +$12` in BoomBoom_HitTest (8 bytes,
+/// CPU $AE68). We overwrite it with `JMP subroutine` + NOP padding.
+const BOOMBOOM_PATCH_SITE: usize = 0x06E78;
+/// CPU address of the vanilla "survive" tail (clears state vars, sets Timer2, RTS).
+const BOOMBOOM_SURVIVE_CPU: u16 = 0xAE70;
+/// CPU address of the vanilla "death" tail (sets death Timer, RTS).
+const BOOMBOOM_DEATH_CPU: u16 = 0xAE82;
+
+pub fn randomize_boomboom_hits(rom: &mut Rom, rng: &mut ChaCha8Rng) {
+    use rand::Rng;
+    use super::rom_data::{
+        BOOMBOOM_HITS_SUB_CPU, BOOMBOOM_HITS_TABLE_CPU, FS_BOOMBOOM_HITS_SUB,
+        FS_BOOMBOOM_HITS_TABLE,
+    };
+
+    // 16-entry threshold table: each fortress index gets an independent 1–5.
+    let table: [u8; 16] = std::array::from_fn(|_| rng.random_range(1..=5));
+    rom.write_range(FS_BOOMBOOM_HITS_TABLE, &table);
+
+    let tbl_lo = BOOMBOOM_HITS_TABLE_CPU as u8;
+    let tbl_hi = (BOOMBOOM_HITS_TABLE_CPU >> 8) as u8;
+    let surv_lo = BOOMBOOM_SURVIVE_CPU as u8;
+    let surv_hi = (BOOMBOOM_SURVIVE_CPU >> 8) as u8;
+    let death_lo = BOOMBOOM_DEATH_CPU as u8;
+    let death_hi = (BOOMBOOM_DEATH_CPU >> 8) as u8;
+
+    // Subroutine (44 bytes, CPU $BFCF):
+    //   INC $7CD2,X          ; Objects_Var12 — stomp tally (self-zeroed on spawn)
+    //   INC $9A,X            ; Objects_Var5  — advance attack state
+    //   LDA $0727            ; World_Num
+    //   ASL ; ASL            ; world * 4
+    //   CLC ; ADC $7F,X      ; + ordinal (Objects_Var4, 1–4)
+    //   AND #$0F             ; -> table index 0..15
+    //   TAY
+    //   LDA $7CD2,X          ; tally
+    //   CMP table,Y          ; tally - threshold
+    //   BCS .death           ; tally >= threshold -> defeat
+    //   LDA $9A,X            ; else keep Var5 a valid attack state:
+    //   CMP #$05
+    //   BCC .surv            ;   still 2–4 -> fine
+    //   LDA #$02 ; STA $9A,X ;   would be Death -> bounce back to Primary
+    // .surv:
+    //   JMP $AE70            ; vanilla survive tail
+    // .death:
+    //   LDA #$05 ; STA $9A,X ; force Death state
+    //   JMP $AE82            ; vanilla death tail
+    #[rustfmt::skip]
+    let code: [u8; 44] = [
+        0xFE, 0xD2, 0x7C,               // INC $7CD2,X
+        0xF6, 0x9A,                     // INC $9A,X
+        0xAD, 0x27, 0x07,               // LDA $0727
+        0x0A,                           // ASL
+        0x0A,                           // ASL
+        0x18,                           // CLC
+        0x75, 0x7F,                     // ADC $7F,X
+        0x29, 0x0F,                     // AND #$0F
+        0xA8,                           // TAY
+        0xBD, 0xD2, 0x7C,               // LDA $7CD2,X
+        0xD9, tbl_lo, tbl_hi,           // CMP table,Y
+        0xB0, 0x0D,                     // BCS .death (+$0D)
+        0xB5, 0x9A,                     // LDA $9A,X
+        0xC9, 0x05,                     // CMP #$05
+        0x90, 0x04,                     // BCC .surv (+$04)
+        0xA9, 0x02,                     // LDA #$02
+        0x95, 0x9A,                     // STA $9A,X
+        0x4C, surv_lo, surv_hi,         // .surv:  JMP $AE70
+        0xA9, 0x05,                     // .death: LDA #$05
+        0x95, 0x9A,                     // STA $9A,X
+        0x4C, death_lo, death_hi,       // JMP $AE82
+    ];
+    rom.write_range(FS_BOOMBOOM_HITS_SUB, &code);
+
+    // Patch the stomp handler: replace the 8-byte vanilla block with
+    // `JMP subroutine` + 5 NOPs (the NOPs are unreachable — the JMP is taken
+    // unconditionally — but keep the disassembly clean).
+    let sub_lo = BOOMBOOM_HITS_SUB_CPU as u8;
+    let sub_hi = (BOOMBOOM_HITS_SUB_CPU >> 8) as u8;
+    rom.write_range(BOOMBOOM_PATCH_SITE, &[
+        0x4C, sub_lo, sub_hi,           // JMP subroutine
+        0xEA, 0xEA, 0xEA, 0xEA, 0xEA,   // NOP × 5
+    ]);
+}
+
 /// Skip the wand falling cutscene after defeating a Koopaling.
 ///
 /// Lets the player jump for the wand grab instead of watching the wand drop.
@@ -486,6 +602,40 @@ mod tests {
         let fire = rom.read_range(crate::randomize::rom_data::FS_KOOPA_FIRE_PRESET, 12);
         assert_eq!(fire[0], 0xAC); // LDY abs
         assert_eq!(fire[11], 0x60); // RTS
+    }
+
+    #[test]
+    fn test_randomize_boomboom_hits() {
+        use rand::SeedableRng;
+        use crate::randomize::rom_data::{
+            BOOMBOOM_HITS_SUB_CPU, FS_BOOMBOOM_HITS_SUB, FS_BOOMBOOM_HITS_TABLE,
+        };
+
+        let mut rom = make_test_rom();
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        randomize_boomboom_hits(&mut rom, &mut rng);
+
+        // Patch site: JMP subroutine + 5 NOPs.
+        assert_eq!(rom.read_byte(BOOMBOOM_PATCH_SITE), 0x4C);
+        assert_eq!(rom.read_range(BOOMBOOM_PATCH_SITE + 1, 2), &[
+            BOOMBOOM_HITS_SUB_CPU as u8,
+            (BOOMBOOM_HITS_SUB_CPU >> 8) as u8,
+        ]);
+        assert_eq!(rom.read_range(BOOMBOOM_PATCH_SITE + 3, 5), &[0xEA; 5]);
+
+        // Subroutine head: INC $7CD2,X ; INC $9A,X ; and it ends in JMP $AE82.
+        assert_eq!(rom.read_range(FS_BOOMBOOM_HITS_SUB, 5), &[0xFE, 0xD2, 0x7C, 0xF6, 0x9A]);
+        assert_eq!(rom.read_range(FS_BOOMBOOM_HITS_SUB + 41, 3), &[
+            0x4C,
+            BOOMBOOM_DEATH_CPU as u8,
+            (BOOMBOOM_DEATH_CPU >> 8) as u8,
+        ]);
+
+        // Threshold table: 16 entries, each a valid 1–5 hit count.
+        let table = rom.read_range(FS_BOOMBOOM_HITS_TABLE, 16);
+        for &v in table {
+            assert!((1..=5).contains(&v), "threshold {v} out of range 1–5");
+        }
     }
 
     #[test]

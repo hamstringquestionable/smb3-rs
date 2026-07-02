@@ -8,6 +8,13 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+### Added
+
+- **Randomized Boom-Boom stomp counts** — each fortress's Boom-Boom now takes a
+  random 1–5 stomps to defeat (per-fortress, distinct within each world) instead
+  of the fixed 3. On by default; disable with `--keep-boomboom-stomps`. Fireball
+  defeats are unaffected.
+
 ## [0.9.5] - 2026-07-01
 
 ### Fixed

@@ -2985,6 +2985,63 @@ Fireballs use a separate counter `Objects_HitCount` (`$7CF6–$7CFA`), initializ
 to 2 and jumps into the stomp-kill path, forcing defeat as if the third stomp landed.
 Bowser uses only `Objects_HitCount` (initialized to 34), no stomp counter.
 
+### Boom-Boom Stomp Threshold (PRG003)
+
+Boom-Boom (object IDs `$4B` jumping / `$4C` flying) lives in PRG003 (file
+0x06010–0x0800F, CPU $A000–$BFFF; **8 KB bank** — `file = 0x06010 + (cpu - $A000)`).
+Unlike the Koopaling, its stomp count is **not** a standalone counter: `Objects_Var5`
+(`$9A,X`) is simultaneously the hit tally **and** the state index dispatched by the
+`DynJump` state machine (`LDA $9A,X; JSR DynJump` at `$AAD9`), whose 6-entry table is:
+
+| Var5 | State |
+|------|-------|
+| 0 | `BoomBoom_Init` — stand still, wait for player |
+| 1 | unused (falls through to 2) |
+| 2 | `BoomBoom_PrimaryAttack` — run/flail |
+| 3 | `BoomBoom_SecondaryAttack` — jump/fly |
+| 4 | `BoomBoom_FinalAttack` |
+| 5 | `BoomBoom_Death` — kaboom + crystal ball |
+
+The stomp handler in `BoomBoom_HitTest` at CPU `$AE68` advances Var5 and defeats when
+it reaches the Death state (Var5 starts the fight at 2, so 3 stomps kill it):
+
+```
+$AE68: B5 9A       LDA $9A,X        ; A = Var5 (pre-increment)
+$AE6A: F6 9A       INC $9A,X        ; advance state / tally
+$AE6C: C9 04       CMP #$04         ; pre-inc == 4 → Var5 is now 5 (Death)
+$AE6E: F0 12       BEQ $AE82        ; defeat tail (sets death Timer, RTS)
+$AE70: ...                          ; survive tail (clears state, Timer2=$30, RTS)
+```
+
+| Item | Value |
+|------|-------|
+| PRG bank | PRG003 (file 0x06010–0x0800F, CPU $A000–$BFFF, 8 KB) |
+| `ObjInit_BoomBoom` | CPU **$A9EA** (file 0x069FA) — copies Y-byte ordinal `$88,X`→`$7F,X` (Var4), sets `Objects_HitCount`=37 |
+| Crystal-ball handler | CPU **$A8F6** (file 0x06906) — `LDA $7F,X; STA $0745` (Map_DoFortressFX = fortress ordinal) |
+| Stomp patch site | File **0x06E78** (CPU $AE68, 8 bytes) |
+| Survive tail | CPU **$AE70** |
+| Defeat tail | CPU **$AE82** |
+| Free space | 0x07FCF–0x0800F (bank-end filler, 65 bytes, CPU $BFBF–$BFFF) |
+
+**Why randomizing this is different from the Koopaling.** You can't just change the
+`CMP #$04`: defeat requires Var5 to actually reach the Death state (5), and letting it
+climb past 5 indexes off the jump table (crash). The randomizer therefore **decouples**
+the tally from the state (`randomize_boomboom_hits`):
+
+- `Objects_Var12` (`$7CD2,X`) — cleared to 0 on spawn by `Level_PrepareNewObject`
+  (slots 0–4 branch, file 0x0150D) and never referenced anywhere in PRG003 — holds the
+  real stomp tally.
+- Var5 still advances (2→3→4) so the boss keeps cycling its attacks; when it would hit
+  the Death state early it is bounced back to Primary (state 2) instead.
+- Only when the tally reaches the per-fortress threshold is Var5 forced to 5 and the
+  vanilla defeat tail taken.
+- Threshold table: 16 bytes at CPU `$BFBF`, indexed by `(World_Num << 2 + ordinal) & $0F`
+  where the ordinal (1–4, this fortress's number within its world) is `Objects_Var4`
+  (`$7F,X`). That makes every fortress within a world distinct.
+
+Fireball defeat (`Objects_HitCount`=37, a separate path) is left unchanged — only the
+stomp count is randomized.
+
 ### Koopaling Softlock Fix (PRG001)
 
 When airship levels are shuffled across worlds, Koopalings can softlock due to an

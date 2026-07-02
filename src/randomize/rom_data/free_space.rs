@@ -36,6 +36,9 @@ pub(crate) const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x0385E, 12, "koopa_fire_preset: set stomp counter from threshold table for fireball defeat"),
     (0x03FD0, 22, "koopa_y_clamp: clamp Koopaling Y position to screen"),
     (0x03FE6, 36, "fire_flower: position-hash suit routine + pool table"),
+    // PRG003 (file 0x06010, CPU $A000–$BFFF) — object AI bank (Boom-Boom lives here)
+    (0x07FCF, 16, "boomboom_hits: per-fortress threshold table"),
+    (0x07FDF, 44, "boomboom_hits: decoupled stomp-count subroutine"),
     // PRG006 (file 0x0C010, CPU $C000–$DFFF) — level enemy data bank
     (0x0DA74, 22, "hand_rooms: 2 cloned enemy streams for unique 8-Hnd treasure rooms"),
     // PRG029 (file 0x3A010, CPU $C000–$DFFF) — swim physics bank
@@ -187,6 +190,20 @@ pub(crate) const FS_KOOPA_FIRE_PRESET: usize = 0x0385E; // 12 bytes
 
 pub(crate) const KOOPA_FIRE_PRESET_CPU: u16  = 0xB84E;  // $A000 + (0x0385E - 0x02010)
 
+// PRG003 (file 0x06010, CPU $A000–$BFFF) — Boom-Boom stomp-count randomization.
+// The Boom-Boom boss AI (ObjInit_BoomBoom, BoomBoom_HitTest, the DynJump state
+// machine) lives in this bank, so the stomp handler's JMP into these routines is
+// bank-local. Both allocations sit in the bank-end filler gap ($BFBF–$BFFF).
+//
+// Layout: 16-byte threshold table first, then the 44-byte subroutine.
+pub(crate) const FS_BOOMBOOM_HITS_TABLE: usize = 0x07FCF; // 16 bytes (CPU $BFBF)
+
+pub(crate) const BOOMBOOM_HITS_TABLE_CPU: u16  = 0xBFBF;  // $A000 + (0x07FCF - 0x06010)
+
+pub(crate) const FS_BOOMBOOM_HITS_SUB: usize   = 0x07FDF; // 44 bytes (CPU $BFCF)
+
+pub(crate) const BOOMBOOM_HITS_SUB_CPU: u16    = 0xBFCF;  // $A000 + (0x07FDF - 0x06010)
+
 // PRG006 — duplicated enemy streams for the W8 Hand sub-areas. Each clone is
 // 11 bytes (page byte + 3 enemy entries + 0xFF terminator); two clones give
 // the three Hand levels independent OBJ_TREASURESET item bytes.
@@ -230,6 +247,8 @@ mod free_space_tests {
         assert!(offsets.contains(&FS_CANOE_RESPAWN));
         assert!(offsets.contains(&FS_CANOE_BACKUP));
         assert!(offsets.contains(&FS_KOOPA_HITS_SUB));
+        assert!(offsets.contains(&FS_BOOMBOOM_HITS_TABLE));
+        assert!(offsets.contains(&FS_BOOMBOOM_HITS_SUB));
         assert!(offsets.contains(&FS_STARTING_ITEMS));
         assert!(offsets.contains(&FS_MYSTERY_ANCHOR));
         assert!(offsets.contains(&FS_HAMMER_LOCKS));

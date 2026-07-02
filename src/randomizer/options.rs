@@ -170,6 +170,9 @@ pub struct Options {
     /// Randomize per-Koopaling stomp counts (each gets 1–5 hits independently).
     #[serde(default = "default_true")]
     pub koopaling_hits: bool,
+    /// Randomize per-fortress Boom-Boom stomp counts (each gets 1–5 hits).
+    #[serde(default = "default_true")]
+    pub boomboom_hits: bool,
     /// Make Koopalings vulnerable to thrown hammers (clears invulnerability flag).
     #[serde(default)]
     pub hammer_vulnerable_koopalings: bool,
@@ -357,6 +360,7 @@ impl Default for Options {
             skip_wand_cutscene: true,
             adjust_boss_hitboxes: true,
             koopaling_hits: true,
+            boomboom_hits: true,
             hammer_vulnerable_koopalings: false,
             random_koopalings: false,
             include_beta_stages: false,
