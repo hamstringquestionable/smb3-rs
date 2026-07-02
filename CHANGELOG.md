@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The project is pre-1.0; new work accumulates under **[Unreleased]** and is moved
 into a versioned section when a release is cut.
 
-## [Unreleased]
+## [0.10.0] - 2026-07-01
 
 ### Added
 
@@ -14,6 +14,9 @@ into a versioned section when a release is cut.
   random 1–5 stomps to defeat (per-fortress, distinct within each world) instead
   of the fixed 3. On by default; disable with `--keep-boomboom-stomps`. Fireball
   defeats are unaffected.
+- **β9 Tornado** — when beta stages are included (`--include-beta-stages`), one of
+  the β9 beta stage's three Fire Chomps is randomly turned into a Tornado (borrowing
+  the World 2 quicksand Tornado's height).
 
 ## [0.9.5] - 2026-07-01
 
