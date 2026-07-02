@@ -181,6 +181,7 @@
             skip_wand_cutscene: true,
             adjust_boss_hitboxes: true,
             koopaling_hits: true,
+            boomboom_hits: true,
             hammer_vulnerable_koopalings: true,
             random_koopalings: true,
             include_beta_stages: true,
@@ -258,6 +259,7 @@
             skip_wand_cutscene: false,
             adjust_boss_hitboxes: false,
             koopaling_hits: false,
+            boomboom_hits: false,
             hammer_vulnerable_koopalings: false,
             random_koopalings: false,
             include_beta_stages: false,
@@ -419,6 +421,7 @@
             ("skip_wand_cutscene",           Box::new(|o| o.skip_wand_cutscene = !o.skip_wand_cutscene)),
             ("adjust_boss_hitboxes",         Box::new(|o| o.adjust_boss_hitboxes = !o.adjust_boss_hitboxes)),
             ("koopaling_hits",               Box::new(|o| o.koopaling_hits = !o.koopaling_hits)),
+            ("boomboom_hits",                Box::new(|o| o.boomboom_hits = !o.boomboom_hits)),
             ("hammer_vulnerable_koopalings", Box::new(|o| o.hammer_vulnerable_koopalings = !o.hammer_vulnerable_koopalings)),
             ("random_koopalings",            Box::new(|o| o.random_koopalings = !o.random_koopalings)),
             ("include_beta_stages",          Box::new(|o| o.include_beta_stages = !o.include_beta_stages)),
@@ -549,6 +552,7 @@
         everything.skip_wand_cutscene = !everything.skip_wand_cutscene;
         everything.adjust_boss_hitboxes = !everything.adjust_boss_hitboxes;
         everything.koopaling_hits = !everything.koopaling_hits;
+        everything.boomboom_hits = !everything.boomboom_hits;
         everything.hammer_vulnerable_koopalings = true;
         everything.random_koopalings = true;
         everything.include_beta_stages = true;
@@ -653,6 +657,7 @@
             skip_wand_cutscene: false,
             adjust_boss_hitboxes: false,
             koopaling_hits: false,
+            boomboom_hits: false,
             hammer_vulnerable_koopalings: false,
             random_koopalings: false,
             include_beta_stages: false,
@@ -714,6 +719,7 @@
             skip_wand_cutscene: true,
             adjust_boss_hitboxes: true,
             koopaling_hits: true,
+            boomboom_hits: true,
             hammer_vulnerable_koopalings: true,
             random_koopalings: true,
             include_beta_stages: false,

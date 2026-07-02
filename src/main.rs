@@ -139,6 +139,10 @@ struct Cli {
     #[arg(long)]
     keep_koopaling_stomps: bool,
 
+    /// Keep vanilla Boom-Boom stomp counts (3 hits each; randomized 1–5 per fortress by default)
+    #[arg(long)]
+    keep_boomboom_stomps: bool,
+
     /// Make Koopalings vulnerable to thrown hammers (off by default)
     #[arg(long)]
     hammer_vulnerable_koopalings: bool,
@@ -432,6 +436,7 @@ fn main() {
             skip_wand_cutscene: !cli.keep_wand_cutscene,
             adjust_boss_hitboxes: !cli.keep_boss_hitboxes,
             koopaling_hits: !cli.keep_koopaling_stomps,
+            boomboom_hits: !cli.keep_boomboom_stomps,
             hammer_vulnerable_koopalings: cli.hammer_vulnerable_koopalings,
             random_koopalings: cli.random_koopalings,
             hammer_breaks_locks: parse_tri(&cli.hammer_breaks_locks, "hammer-breaks-locks"),

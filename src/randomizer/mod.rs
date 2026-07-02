@@ -349,6 +349,12 @@ fn randomize_inner(
         randomize::koopalings::randomize_koopaling_hits(rom, &mut rng);
     }
 
+    // Per-fortress Boom-Boom random stomp counts (1–5 hits each).
+    if options.boomboom_hits {
+        rom.set_tag("boomboom/random_hits");
+        randomize::koopalings::randomize_boomboom_hits(rom, &mut rng);
+    }
+
     // Hammer breaks tiles on the overworld map (locks, bridges, or both).
     if hammer_breaks_locks || hammer_breaks_bridges {
         rom.set_tag("qol/hammer_breaks_tiles");
