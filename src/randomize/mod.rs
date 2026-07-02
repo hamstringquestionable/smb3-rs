@@ -1,5 +1,6 @@
 pub mod anchor_visuals;
 pub mod autoscroll;
+pub mod beta_tornado;
 pub mod bowser_castle;
 pub mod enemies;
 pub mod enemy_protections;

@@ -162,6 +162,14 @@ fn randomize_inner(
         rom.set_tag("enemies");
         randomize::enemies::randomize(rom, &mut rng, options);
     }
+    // Force one of β9's Fire Chomps into a Tornado. Runs after the enemy pass
+    // (which may randomize β9's Fire Chomps when it's placed) so the Tornado is
+    // final, and only when beta stages are included so we don't touch β9's data
+    // for nothing.
+    if options.include_beta_stages {
+        rom.set_tag("beta_tornado");
+        randomize::beta_tornado::randomize_beta9_tornado(rom, &mut rng);
+    }
     randomize::bowser_castle::randomize(rom, &mut rng);
     randomize::podoboo_gauntlet::randomize(rom, &mut rng);
     if options.world_order {
