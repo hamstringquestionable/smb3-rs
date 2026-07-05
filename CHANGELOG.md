@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The project is pre-1.0; new work accumulates under **[Unreleased]** and is moved
 into a versioned section when a release is cut.
 
+## [0.10.1] - 2026-07-05
+
+### Fixed
+
+- **Start↔Airship swap — death respawn** — in a swapped world, dying with lives
+  remaining in a level on a different overworld page than the swapped start no
+  longer strands Mario on a blank tile with the map drawn on the wrong screen.
+  The engine's "skid back from afar" restores the camera from a secondary scroll
+  backup the swap scaffolding never seeded, so it scrolled to page 0; it is now
+  seeded (at both Map Init and the game-over finalize) so the skid scrolls to the
+  real start page.
+
+### Changed
+
+- **Start↔Airship swap — start framing** — a swapped start on a non-zero screen
+  is now centered half a screen back instead of pinned at the left edge of its
+  page, so the surrounding map is visible and the camera no longer auto-pans on
+  arrival. Page-0 / unswapped worlds are unaffected.
+
 ## [0.10.0] - 2026-07-01
 
 ### Added
