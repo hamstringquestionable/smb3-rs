@@ -199,15 +199,22 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
         y_tbl[wi] = ((sr as u8) * 0x10).wrapping_add(0x20);
         x_tbl[wi] = ((sc % 16) as u8) * 0x10;
         xhi_tbl[wi] = (sc / 16) as u8;
-        // Camera framing: half a screen back from Mario, snapped to the nearest
-        // valid half-page scroll stop (Scroll_ColumnL a multiple of 8) and clamped
-        // to the map's scrollable range. Page-aligning instead would pin Mario at
-        // screen column 2 — the left auto-pan margin — and show the far edge of his
-        // page; the engine only rests cleanly on these half-page stops. Page-0 /
-        // unswapped starts collapse to column 0 (identical to vanilla).
+        // Camera framing. Most worlds smooth-scroll and rest cleanly on half-page
+        // stops (Scroll_ColumnL a multiple of 8): frame Mario half a screen back
+        // (page-aligning would pin him at the left auto-pan margin and show the far
+        // edge of his page). W5 (Sky) is the exception — it presents two *static*
+        // screens (ground / sky) with no smooth scroll, so any non-page-aligned
+        // scroll is invalid; snap to the start's whole screen instead. (W8 is the
+        // other edge-scroll-skipped world but is never swapped, so its col-2 start
+        // collapses to 0 regardless.) Page-0 / unswapped starts collapse to column 0
+        // in either branch (identical to vanilla).
         let cols = MAP_TILE_GRIDS[wi].columns as i32;
-        let stop = (((sc as i32 - 8) + 4).max(0) / 8) * 8; // round-to-8, floored at 0
-        let col = stop.clamp(0, (cols - 16).max(0));
+        let col = if wi == 4 {
+            (sc as i32 / 16) * 16 // W5: page-align to the start's static screen
+        } else {
+            (((sc as i32 - 8) + 4).max(0) / 8) * 8 // round-to-8, floored at 0
+        };
+        let col = col.clamp(0, (cols - 16).max(0));
         scrl_tbl[wi] = if col & 8 != 0 { 0x80 } else { 0x00 };
         scrh_tbl[wi] = (col >> 4) as u8;
     }
