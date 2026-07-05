@@ -6,6 +6,7 @@
 !web/visual-patches/*.ips
 *.zip
 *.cht
+*.wch
 /new
 tools/rom_map.json
 __pycache__/

@@ -13,10 +13,10 @@
 //! and leaves the path tile intact — the relocated airship loses its
 //! decorative top half, but the world stays playable.
 //!
-//! The engine-side scaffolding (per-world camera + Mario-position tables,
-//! three helper routines, Map_Init + GameOver_TwirlToStart JSR patches, and
-//! Map_Object slot-1 sprite moves) is committed once at the tail of the
-//! writer via `write_engine_scaffolding`.
+//! The engine-side scaffolding (per-world camera + Mario-position tables, a
+//! Map_Init seed helper and a game-over finalize helper, their JSR patches, and
+//! Map_Object slot-1 sprite moves) is committed once at the tail of the writer
+//! via `write_engine_scaffolding`.
 //!
 //! Background and POC derivation: see `docs/start_airship_swap_findings.md`.
 
@@ -28,9 +28,8 @@ use super::node_catalog::{NodeCatalog, NodeKind};
 use super::pipe_helpers::grid_pos_to_dest_nibbles;
 use super::rom_data::{
     self, AIRSHIP_OBJ_SLOT, FS_SAS_GAMEOVER_FINALIZE, FS_SAS_SCRH_TABLE, FS_SAS_SCRL_TABLE,
-    FS_SAS_X_HELPER, FS_SAS_X_TABLE, FS_SAS_XHI_HELPER, FS_SAS_XHI_TABLE,
-    GAMEOVER_FINALIZE_SITE, Grid, MAP_INIT_SCROLL_SITE, MAP_INIT_X_LOW_SITE,
-    MAP_Y_STARTS_OFF, WORLDS,
+    FS_SAS_SEED_HELPER, FS_SAS_X_TABLE, FS_SAS_XHI_TABLE, GAMEOVER_FINALIZE_SITE, Grid,
+    MAP_INIT_SCROLL_SITE, MAP_TILE_GRIDS, MAP_Y_STARTS_OFF, WORLDS,
 };
 
 // ---------------------------------------------------------------------------
@@ -178,9 +177,9 @@ pub(super) fn write_swapped_world_entries(rom: &mut Rom, world_idx: usize, catal
 /// Writes:
 ///   * `Map_Y_Starts` (vanilla 8-byte table at `MAP_Y_STARTS_OFF`)
 ///   * Four per-world tables in PRG031 free space (X, XHi, ScrL, ScrH)
-///   * Two PRG031 helper subroutines (X-low setter, XHi + camera-scroll setter)
+///   * One PRG031 Map_Init seed helper (position + primary/secondary scroll backups)
 ///     plus a PRG011 game-over finalize helper (stamps World_Map_X/XHi + scroll)
-///   * `Map_Init` inline patches replaced with `JSR helper`
+///   * `Map_Init` scroll-store replaced with `JSR seed_helper`
 ///   * `GameOver_TwirlToStart` finalize store replaced with `JSR finalize` so
 ///     the spiral lands on the per-world start instead of vanilla column 2
 ///   * Per-swapped-world `Map_Object` slot-1 sprite position move
@@ -200,11 +199,17 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
         y_tbl[wi] = ((sr as u8) * 0x10).wrapping_add(0x20);
         x_tbl[wi] = ((sc % 16) as u8) * 0x10;
         xhi_tbl[wi] = (sc / 16) as u8;
-        // Page-aligned camera: $0722 = 0 (viewport at left of loaded slice),
-        // $0724 = Mario's screen index so Scroll_Update_Ranges loads cols
-        // (screen*16)..(screen*16+15).
-        scrl_tbl[wi] = 0;
-        scrh_tbl[wi] = (sc / 16) as u8;
+        // Camera framing: half a screen back from Mario, snapped to the nearest
+        // valid half-page scroll stop (Scroll_ColumnL a multiple of 8) and clamped
+        // to the map's scrollable range. Page-aligning instead would pin Mario at
+        // screen column 2 — the left auto-pan margin — and show the far edge of his
+        // page; the engine only rests cleanly on these half-page stops. Page-0 /
+        // unswapped starts collapse to column 0 (identical to vanilla).
+        let cols = MAP_TILE_GRIDS[wi].columns as i32;
+        let stop = (((sc as i32 - 8) + 4).max(0) / 8) * 8; // round-to-8, floored at 0
+        let col = stop.clamp(0, (cols - 16).max(0));
+        scrl_tbl[wi] = if col & 8 != 0 { 0x80 } else { 0x00 };
+        scrh_tbl[wi] = (col >> 4) as u8;
     }
 
     rom.set_tag("start_airship_swap/tables");
@@ -214,53 +219,48 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
     rom.write_range(FS_SAS_SCRL_TABLE, &scrl_tbl);
     rom.write_range(FS_SAS_SCRH_TABLE, &scrh_tbl);
 
-    rom.set_tag("start_airship_swap/helpers");
+    rom.set_tag("start_airship_swap/helper");
     let x_tbl_cpu = file_to_prg031_cpu(FS_SAS_X_TABLE);
-    let x_helper = [
-        0xB9, (x_tbl_cpu & 0xFF) as u8, (x_tbl_cpu >> 8) as u8, // LDA Map_X_Starts,Y
-        0x9D, 0x7A, 0x79,                                       // STA Map_Entered_X,X
-        0x9D, 0x82, 0x79,                                       // STA $7982,X (mirror)
-        0x60,                                                   // RTS
-    ];
-    rom.write_range(FS_SAS_X_HELPER, &x_helper);
-
     let xhi_tbl_cpu = file_to_prg031_cpu(FS_SAS_XHI_TABLE);
     let scrl_tbl_cpu = file_to_prg031_cpu(FS_SAS_SCRL_TABLE);
     let scrh_tbl_cpu = file_to_prg031_cpu(FS_SAS_SCRH_TABLE);
-    // $7980,X is the death-respawn X-high (mirror of $7978,X). Vanilla Map_Init
-    // stamps it to 0 a few cycles earlier; without re-stamping it here, dying
-    // before saving in a swapped world whose new start is on screen ≥ 1 puts
-    // Mario back on screen 0 (off the path).
-    let xhi_helper = [
-        0xB9, (xhi_tbl_cpu & 0xFF) as u8, (xhi_tbl_cpu >> 8) as u8,   // LDA Map_XHi_Starts,Y
-        0x9D, 0x78, 0x79,                                             // STA Map_Entered_XHi,X     ($7978,X)
-        0x9D, 0x80, 0x79,                                             // STA Map_Respawn_XHi,X    ($7980,X)
-        0xB9, (scrl_tbl_cpu & 0xFF) as u8, (scrl_tbl_cpu >> 8) as u8, // LDA Map_ScrL_Starts,Y
-        0x9D, 0x22, 0x07,                                             // STA Map_Prev_XOff,X ($0722)
-        0xB9, (scrh_tbl_cpu & 0xFF) as u8, (scrh_tbl_cpu >> 8) as u8, // LDA Map_ScrH_Starts,Y
-        0x9D, 0x24, 0x07,                                             // STA Map_Prev_XHi,X  ($0724)
-        0x60,                                                         // RTS
+    // Single Map_Init seed subroutine (Y = World_Num, X = Player index — both live
+    // at the loop's scroll-store hook). Overwrites Mario's start position and BOTH
+    // scroll backups from the four tables:
+    //   X   -> Map_Entered_X ($797A) + Map_Previous_X ($7982)
+    //   XHi -> Map_Entered_XHi ($7978) + Map_Previous_XHi ($7980)
+    //   ScrL-> Map_Prev_XOff ($0722) + Map_Prev_XOff2 ($7986)
+    //   ScrH-> Map_Prev_XHi  ($0724) + Map_Prev_XHi2  ($7988)
+    // The secondary backups ($7986/$7988) are what the death-with-lives "skid from
+    // afar" restores the camera from; leaving them at the vanilla page-0 value
+    // strands Mario off-page after dying in a swapped world. The finalize helper
+    // below mirrors this exact store order for the game-over path.
+    let seed_helper = [
+        0xB9, (x_tbl_cpu & 0xFF) as u8, (x_tbl_cpu >> 8) as u8,       // LDA X_TABLE,Y
+        0x9D, 0x7A, 0x79,                                            // STA Map_Entered_X,X   ($797A)
+        0x9D, 0x82, 0x79,                                            // STA Map_Previous_X,X  ($7982)
+        0xB9, (xhi_tbl_cpu & 0xFF) as u8, (xhi_tbl_cpu >> 8) as u8,   // LDA XHI_TABLE,Y
+        0x9D, 0x78, 0x79,                                            // STA Map_Entered_XHi,X  ($7978)
+        0x9D, 0x80, 0x79,                                            // STA Map_Previous_XHi,X ($7980)
+        0xB9, (scrl_tbl_cpu & 0xFF) as u8, (scrl_tbl_cpu >> 8) as u8, // LDA SCRL_TABLE,Y
+        0x9D, 0x22, 0x07,                                            // STA Map_Prev_XOff,X  ($0722)
+        0x9D, 0x86, 0x79,                                            // STA Map_Prev_XOff2,X ($7986)
+        0xB9, (scrh_tbl_cpu & 0xFF) as u8, (scrh_tbl_cpu >> 8) as u8, // LDA SCRH_TABLE,Y
+        0x9D, 0x24, 0x07,                                            // STA Map_Prev_XHi,X  ($0724)
+        0x9D, 0x88, 0x79,                                            // STA Map_Prev_XHi2,X ($7988)
+        0x60,                                                        // RTS
     ];
-    rom.write_range(FS_SAS_XHI_HELPER, &xhi_helper);
+    rom.write_range(FS_SAS_SEED_HELPER, &seed_helper);
 
     rom.set_tag("start_airship_swap/map_init");
-    let x_helper_cpu = file_to_prg031_cpu(FS_SAS_X_HELPER);
-    let xhi_helper_cpu = file_to_prg031_cpu(FS_SAS_XHI_HELPER);
-    // Replace the 8-byte inline X-low immediate-store block with `JSR helper`
-    // followed by five NOPs to keep the surrounding flow intact.
-    rom.write_range(
-        MAP_INIT_X_LOW_SITE,
-        &[
-            0x20, (x_helper_cpu & 0xFF) as u8, (x_helper_cpu >> 8) as u8,
-            0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
-        ],
-    );
-    // Replace `STA $0724,X` (the final store before DEX) with `JSR xhi_helper`.
-    // The helper writes $7978/$0722/$0724 as its tail, so its values win against
-    // the inline zero-store at `$0722` (left intact a few cycles earlier).
+    let seed_helper_cpu = file_to_prg031_cpu(FS_SAS_SEED_HELPER);
+    // Replace the vanilla `STA $0724,X` (the last store before DEX) with
+    // `JSR seed_helper`. The vanilla `LDA #$20 / STA $797A / STA $7982` X-low store
+    // earlier in the same iteration is left intact — the helper re-stamps those
+    // bytes here, so the table values win before any draw.
     rom.write_range(
         MAP_INIT_SCROLL_SITE,
-        &[0x20, (xhi_helper_cpu & 0xFF) as u8, (xhi_helper_cpu >> 8) as u8],
+        &[0x20, (seed_helper_cpu & 0xFF) as u8, (seed_helper_cpu >> 8) as u8],
     );
 
     // GameOver_TwirlToStart spirals Mario back to the start via a per-frame X/Y
@@ -271,12 +271,16 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
     // animation play and STAMP the correct position at finalize.
     //
     // Hook: replace `STA Map_Prev_XHi2,X` (the last store before the World_Map →
-    // Map_Previous copies; A = 0 there) with `JSR finalize`. The helper re-does
-    // the displaced store, then overwrites World_Map_X ($79,X) / World_Map_XHi
-    // ($77,X) and camera scroll ($0722/$0724,X) from the FS_SAS_* tables. The
-    // vanilla copies that follow then propagate the corrected X/XHi into
+    // Map_Previous copies; A = 0 there) with `JSR finalize`. The helper overwrites
+    // World_Map_X ($79,X) / World_Map_XHi ($77,X), the camera scroll ($0722/$0724,X)
+    // and both secondary scroll backups ($7986/$7988,X) from the FS_SAS_* tables.
+    // The vanilla copies that follow then propagate the corrected X/XHi into
     // Map_Previous_X/XHi, so the continue lands on the real start tile. Y is
     // World_Num (re-loaded in the helper); X is Player_Current (live at the site).
+    // The displaced `STA $7988` (A = 0) is dropped: the helper stamps $7988 with
+    // the start screen instead, which is exactly what the death-with-lives afar
+    // skid later restores the camera page from. Nothing between the hook and the
+    // vanilla copies reads $7988.
     //
     // It is NOT enough to fix only the per-player scroll backup ($0722/$0724,X).
     // The vanilla twirl-to-start assumes the start is at page-0 hard-left and
@@ -291,23 +295,24 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
     // Game Over happened on a different overworld page than the start tile.
     // Fix: also stamp the live scroll ZP `Horz_Scroll` ($FD) / `Horz_Scroll_Hi`
     // ($12) here (global, not per-player) so the subsequent re-enter redraws the
-    // nametable on the start page. The SCRL value is 0 and the SCRH value is the
-    // start screen index, identical to the Map_Init seeds; for unswapped /
-    // page-0 worlds these stores are no-ops.
+    // nametable on the start framing. SCRL/SCRH are the half-page framing scroll
+    // (identical to the Map_Init seeds); for unswapped / page-0 worlds they are 0,
+    // so these stores are no-ops. Store order mirrors `seed_helper`.
     rom.set_tag("start_airship_swap/gameover_finalize");
     let finalize_helper = [
-        0x9D, 0x88, 0x79,                                            // STA $7988,X (displaced Map_Prev_XHi2,X, A=0)
         0xAC, 0x27, 0x07,                                            // LDY World_Num ($0727)
         0xB9, (x_tbl_cpu & 0xFF) as u8, (x_tbl_cpu >> 8) as u8,      // LDA FS_SAS_X_TABLE,Y
         0x95, 0x79,                                                  // STA World_Map_X,X   ($79,X)
         0xB9, (xhi_tbl_cpu & 0xFF) as u8, (xhi_tbl_cpu >> 8) as u8,  // LDA FS_SAS_XHI_TABLE,Y
         0x95, 0x77,                                                  // STA World_Map_XHi,X ($77,X)
         0xB9, (scrl_tbl_cpu & 0xFF) as u8, (scrl_tbl_cpu >> 8) as u8,// LDA FS_SAS_SCRL_TABLE,Y
-        0x9D, 0x22, 0x07,                                            // STA Map_Prev_XOff,X ($0722)
-        0x85, 0xFD,                                                  // STA Horz_Scroll     ($FD, live scroll low)
+        0x9D, 0x22, 0x07,                                            // STA Map_Prev_XOff,X  ($0722)
+        0x85, 0xFD,                                                  // STA Horz_Scroll      ($FD, live scroll low)
+        0x9D, 0x86, 0x79,                                            // STA Map_Prev_XOff2,X ($7986)
         0xB9, (scrh_tbl_cpu & 0xFF) as u8, (scrh_tbl_cpu >> 8) as u8,// LDA FS_SAS_SCRH_TABLE,Y
-        0x9D, 0x24, 0x07,                                            // STA Map_Prev_XHi,X  ($0724)
-        0x85, 0x12,                                                  // STA Horz_Scroll_Hi  ($12, live scroll page)
+        0x9D, 0x24, 0x07,                                            // STA Map_Prev_XHi,X   ($0724)
+        0x85, 0x12,                                                  // STA Horz_Scroll_Hi   ($12, live scroll page)
+        0x9D, 0x88, 0x79,                                            // STA Map_Prev_XHi2,X  ($7988)
         0x60,                                                        // RTS
     ];
     rom.write_range(FS_SAS_GAMEOVER_FINALIZE, &finalize_helper);
