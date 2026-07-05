@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The project is pre-1.0; new work accumulates under **[Unreleased]** and is moved
 into a versioned section when a release is cut.
 
+## [0.10.2] - 2026-07-05
+
+### Fixed
+
+- **Hold-left airship entry** — holding Left while entering an airship no longer
+  spawns Mario out over the pit and kills him (seen with autoscrollers disabled).
+  Applies MaCobra52's "Hold left fix" as an always-on bugfix.
+
 ## [0.10.1] - 2026-07-05
 
 ### Fixed

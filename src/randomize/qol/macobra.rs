@@ -1,7 +1,7 @@
 //! MaCobra52 patch bundle: always-on bugfixes plus opt-in feature patches.
 
 use crate::rom::Rom;
-use crate::randomize::rom_data::{FS_BROS_NO_HANDS, FS_FASTER_FROG, jsr_into_bank};
+use crate::randomize::rom_data::{FS_BROS_NO_HANDS, FS_FASTER_FROG, FS_HOLD_LEFT_HELPER, jsr_into_bank};
 
 // ---------------------------------------------------------------------------
 // MaCobra patches — always-on bundle
@@ -112,6 +112,54 @@ const HOTFOOT_TAIL_C: usize = 0x0814D;
 // drift from where the helper bytes actually land — see issue #14.
 const BROS_NO_HANDS_HOOK: usize = 0x17435; // CPU $B425, vanilla `CMP $7E98,Y`
 const BROS_NO_HANDS_SUB: [u8; 8] = [0xC9, 0xE6, 0xF0, 0x03, 0xD9, 0x98, 0x7E, 0x60];
+
+// Hold-left airship-entry fix (by MaCobra52) — "SMB3 - Hold left fix.ips".
+// Bug: holding Left while entering an airship spawns Mario out over the pit and
+// kills him; it surfaces when autoscrollers are disabled. The in-level
+// horizontal-scroll routine (PRG008, entry ~$B11F) has several exit paths that
+// all fall through to a common tail at $B1CE. When the player holds Left the
+// scroll anchor $AB pins to the left edge ($AB == 0) and that tail mispositions
+// the airship-entry camera/spawn.
+//
+// The fix is nine ROM writes, reproduced verbatim from MaCobra's IPS:
+//   * A 7-byte scroll-commit helper is dropped in PRG000 dead code at CPU $C918
+//     (FS_HOLD_LEFT_HELPER) — `STA $FD; STA $0780; RTS` (+ a trailing NOP). That
+//     is exactly the `STA $FD; STA $0780` the tail used to run inline; folding
+//     it into a subroutine frees the 2 bytes the new guard needs.
+//   * The tail is rewritten (HOLD_LEFT_TAIL) so a new guard sits at $B1CC, two
+//     bytes ahead of the old $B1CE tail:
+//         $B1CC: LDA $AB
+//                BEQ $B208     ; scroll pinned at the left edge -> skip the
+//                              ; clamp, jump straight to the finalize path
+//                ...           ; vanilla clamp continues unchanged
+//     The `STA $FD; STA $0780` there becomes `JSR $C918` (byte-for-byte the
+//     helper above).
+//   * Every branch/jump that used to land on $B1CE is retargeted to $B1CC
+//     (HOLD_LEFT_RETARGETS + the tail's own BPL) so all exits run the guard.
+//
+// Confirmed against vanilla USA Rev1: every record's original bytes match, and
+// no vanilla code references $C918. The "spawn over the pit" behavior itself is
+// MaCobra's description of the bug, not independently re-derived here.
+const HOLD_LEFT_HELPER_BYTES: [u8; 7] = [0x85, 0xFD, 0x8D, 0x80, 0x07, 0x60, 0xEA];
+
+// Retarget the scroll-routine exits from the old $B1CE tail to the new $B1CC
+// guard. Each entry is (file_offset, replacement bytes); only branch/jump
+// operands change, so the surrounding instructions stay intact.
+const HOLD_LEFT_RETARGETS: &[(usize, &[u8])] = &[
+    (0x1113D, &[0xCC]),             // JMP $B1CC (was $B1CE)
+    (0x1117B, &[0x60]),             // BMI $B1CC
+    (0x11182, &[0x59, 0x30, 0x57]), // BEQ $B1CC / BMI $B1CC
+    (0x1119A, &[0x41]),             // BMI $B1CC
+    (0x111A3, &[0xCC]),             // JMP $B1CC
+    (0x111B9, &[0x22]),             // BMI $B1CC
+    (0x111C0, &[0x1B]),             // BPL $B1CC
+];
+
+// New scroll tail: BPL $B1CC / `LDA #$00; STA $12` / JSR $C918 / LDA $AB /
+// BEQ $B208. The `20 18 C9` in the middle is `JSR $C918` = the helper above.
+const HOLD_LEFT_TAIL_OFFSET: usize = 0x111D4;
+const HOLD_LEFT_TAIL_BYTES: [u8; 12] =
+    [0x07, 0xA9, 0x00, 0x85, 0x12, 0x20, 0x18, 0xC9, 0xA5, 0xAB, 0xF0, 0x38];
 
 // ---------------------------------------------------------------------------
 // MaCobra patches — opt-in features
@@ -377,6 +425,14 @@ pub fn apply_macobra_patches(rom: &mut Rom) {
     // its file offset so the hook can never point past the helper.
     rom.write_range(BROS_NO_HANDS_HOOK, &jsr_into_bank(11, FS_BROS_NO_HANDS));
     rom.write_range(FS_BROS_NO_HANDS, &BROS_NO_HANDS_SUB);
+
+    // Hold-left airship-entry pit-death fix (MaCobra52). See notes above the
+    // HOLD_LEFT_* constants. Nine verbatim writes: helper + tail + exit retargets.
+    rom.write_range(FS_HOLD_LEFT_HELPER, &HOLD_LEFT_HELPER_BYTES);
+    rom.write_range(HOLD_LEFT_TAIL_OFFSET, &HOLD_LEFT_TAIL_BYTES);
+    for &(offset, bytes) in HOLD_LEFT_RETARGETS {
+        rom.write_range(offset, bytes);
+    }
 }
 
 #[cfg(test)]
@@ -431,6 +487,37 @@ mod tests {
         assert_eq!(rom.read_byte(HOTFOOT_TAIL_A), 0x00);
         assert_eq!(rom.read_byte(HOTFOOT_TAIL_B), 0x00);
         assert_eq!(rom.read_byte(HOTFOOT_TAIL_C), 0x25);
+    }
+
+    #[test]
+    fn test_macobra_hold_left_fix_writes() {
+        let mut rom = make_test_rom();
+        apply_macobra_patches(&mut rom);
+
+        // Helper + new tail land where expected.
+        assert_eq!(
+            rom.read_range(FS_HOLD_LEFT_HELPER, HOLD_LEFT_HELPER_BYTES.len()),
+            &HOLD_LEFT_HELPER_BYTES
+        );
+        assert_eq!(
+            rom.read_range(HOLD_LEFT_TAIL_OFFSET, HOLD_LEFT_TAIL_BYTES.len()),
+            &HOLD_LEFT_TAIL_BYTES
+        );
+        for &(offset, bytes) in HOLD_LEFT_RETARGETS {
+            assert_eq!(rom.read_range(offset, bytes.len()), bytes);
+        }
+    }
+
+    #[test]
+    fn test_hold_left_jsr_targets_helper() {
+        // The new tail's `JSR $C918` (bytes 5..8 = 20 18 C9) must point at the
+        // helper. PRG000's dead code is reached at $C000 + (file - iNES header).
+        let jsr = &HOLD_LEFT_TAIL_BYTES[5..8];
+        assert_eq!(jsr[0], 0x20, "expected a JSR opcode");
+        let target_cpu = u16::from_le_bytes([jsr[1], jsr[2]]);
+        let helper_cpu = (0xC000 + (FS_HOLD_LEFT_HELPER - 0x10)) as u16;
+        assert_eq!(target_cpu, helper_cpu, "JSR operand must match the helper's $C918 address");
+        assert_eq!(target_cpu, 0xC918);
     }
 
     #[test]
