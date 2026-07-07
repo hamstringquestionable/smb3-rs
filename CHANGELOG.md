@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The project is pre-1.0; new work accumulates under **[Unreleased]** and is moved
 into a versioned section when a release is cut.
 
+## [0.10.3] - 2026-07-07
+
+### Fixed
+
+- **Airship-lock patch corrupted 4-4's sub-area** — removed a dead always-on
+  write (`A9 01 EA` at `0x1FABC`) that was intended to keep the airship from
+  moving. The offset actually landed in the middle of level 4-4's sub-area
+  layout data, so entering that sub-area black-screened. The write did nothing
+  for airship behavior — the mobile airship is a live map-object the builder
+  never spawns (the airship is placed as a static tile), so there is nothing to
+  lock — and removing it fixes the crash with no behavior change.
+
 ## [0.10.2] - 2026-07-05
 
 ### Fixed
