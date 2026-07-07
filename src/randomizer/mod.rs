@@ -295,12 +295,6 @@ fn randomize_inner(
     rom.set_tag("qol/starting_lives");
     randomize::qol::set_starting_lives(rom, options.starting_lives);
 
-    // Airship lock (anchor effect): always applied. Patch at 0x1FABC
-    // ("KXUUXZVG" / Game Genie). The airship stays put after a loss instead of
-    // moving, which also keeps its Map_Object slot-1 sprite from ever spawning.
-    rom.set_tag("airship_lock");
-    // A9 01 EA = LDA #$01; NOP (forces anchor flag always set)
-    rom.write_range(0x1FABC, &[0xA9, 0x01, 0xEA]);
     // Anchors stay in inventory as mystery items — patch the item-use
     // dispatch so using an anchor triggers a random powerup effect.
     rom.set_tag("items/mystery_anchor");

@@ -1,8 +1,6 @@
     use super::*;
     use crate::rom::Rom;
 
-    const ANCHOR_PATCH_OFFSET: usize = 0x1FABC;
-    const PATCHED_BYTES: [u8; 3] = [0xA9, 0x01, 0xEA];
     const ANCHOR: u8 = 0x0A;
 
     // Item table offsets (must match items.rs)
@@ -27,25 +25,6 @@
     fn make_test_rom() -> Option<Rom> {
         let bytes = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
         Rom::from_bytes(&bytes).ok()
-    }
-
-    #[test]
-    fn randomized_rom_has_anchor_lock_patch_by_default() {
-        let Some(mut rom) = make_test_rom() else { return };
-        let original_bytes = rom.read_range(ANCHOR_PATCH_OFFSET, 3).to_vec();
-        let options = test_options();
-        randomize(&mut rom, 0x12345678, &options);
-
-        assert_eq!(
-            rom.read_range(ANCHOR_PATCH_OFFSET, 3),
-            &PATCHED_BYTES,
-            "Anchor lock patch should be present by default"
-        );
-        // Sanity: the patch actually changed something
-        assert_ne!(
-            original_bytes, PATCHED_BYTES,
-            "Test ROM should not already contain the patch bytes"
-        );
     }
 
     #[test]
@@ -894,14 +873,12 @@
         options.bros = EnemyMode::Off;
         options.world_order = false;
         // Keep this on — it writes to known offsets even on a zeroed ROM.
-        // (airship_lock is now unconditional, so its tag always appears.)
         options.disable_autoscroll = true;
         randomize(&mut rom, 42, &options);
 
         let tags: Vec<&str> = rom.write_log().iter().map(|r| r.tag.as_str()).collect();
         // These modules write to fixed offsets that differ from zero
         assert!(tags.iter().any(|t| t.starts_with("autoscroll")));
-        assert!(tags.iter().any(|t| t.starts_with("airship_lock")));
         // Disabled modules should not appear
         assert!(!tags.iter().any(|t| t.starts_with("enemies")));
         assert!(!tags.iter().any(|t| t.starts_with("world_order")));
