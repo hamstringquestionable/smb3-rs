@@ -109,6 +109,13 @@ pub struct Options {
     /// Cosmetic — not encoded in the flag key, so flipping this never changes level content.
     #[serde(default)]
     pub palette_themed: bool,
+    /// Player-chosen NES color byte anchoring the character palette scheme
+    /// (Mario's body gets this color; Luigi and the power-up suits are derived
+    /// from it). Must be chromatic (hue nibble 1-C, value <= 0x3C). None =
+    /// random character colors. Cosmetic — not encoded in the flag key.
+    /// Only takes effect while `palettes` is on.
+    #[serde(default)]
+    pub player_color: Option<u8>,
     #[serde(default)]
     pub world_order: bool,
     /// Number of worlds before Dark Land (1–7, default 7).
@@ -344,6 +351,7 @@ impl Default for Options {
             powerups: true,
             palettes: true,
             palette_themed: false,
+            player_color: None,
             world_order: false,
             world_count: default_world_count(),
             big_q_blocks: false,

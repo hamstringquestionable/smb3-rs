@@ -11,6 +11,8 @@
 // check against the Rust source-of-truth (default_options_json) flags
 // drift in either direction via console.error.
 
+import { NES_PALETTE } from "./chr.js";
+
 const ITEM_OPTIONS = [
 	{ value: 0, label: "None" },
 	{ value: 1, label: "Mushroom" },
@@ -359,6 +361,11 @@ export const SCHEMA = [
 	{ id: "palette_themed", type: "bool", default: false,
 		label: "Themed per-tileset",
 		tip: "Recolor backgrounds, enemies, and world maps with a random color theme. Brightness stays the same, so everything stays easy to see. Re-rolls freely (doesn't affect the seed).",
+		group: "cosmetic", inFlagKey: false,
+		enabledWhen: { palettes: true }, indent: true },
+	{ id: "player_color", type: "nescolor", default: null,
+		label: "Player color",
+		tip: "Pick Mario's color — Luigi and the power-up suits get matching colors built from your pick. Leave on Random for surprise colors.",
 		group: "cosmetic", inFlagKey: false,
 		enabledWhen: { palettes: true }, indent: true },
 ];
@@ -710,12 +717,68 @@ function renderItems(entry) {
 	return frag;
 }
 
+const nesRgbCss = (byte) => {
+	const [r, g, b] = NES_PALETTE[byte & 0x3F];
+	return `rgb(${r},${g},${b})`;
+};
+
+// The pickable player colors: the 48 chromatic NES colors (luminance rows
+// 0-3 x hue columns 1-C). Grays/blacks/whites are excluded — the palette
+// scheme is derived by hue, so it needs a hue to anchor on.
+function chromaticGridRows() {
+	const rows = [];
+	for (let row = 0; row < 4; row++) {
+		const cols = [];
+		for (let hue = 1; hue <= 0x0C; hue++) {
+			cols.push((row << 4) | hue);
+		}
+		rows.push(cols);
+	}
+	return rows;
+}
+
+function renderNesColor(entry) {
+	const wrap = el("div", { class: "nescolor-block" + (entry.indent ? " sub-options" : "") });
+	const header = el("div", { class: "option-header" }, entry.label);
+	const btn = tipBtn(entry);
+	if (btn) header.appendChild(btn);
+	wrap.appendChild(header);
+
+	// "Random" tile first — the default.
+	const randId = `${domId(entry.id)}-rand`;
+	wrap.appendChild(el("input", {
+		type: "radio", name: radioName(entry.id), id: randId,
+		value: "rand", checked: entry.default == null, class: "nescolor-input",
+	}));
+	wrap.appendChild(el("label", { for: randId, class: "nescolor-random" }, "Random"));
+
+	const grid = el("div", { class: "nescolor-grid" });
+	for (const rowBytes of chromaticGridRows()) {
+		for (const byte of rowBytes) {
+			const hex = byte.toString(16).toUpperCase().padStart(2, "0");
+			const inputId = `${domId(entry.id)}-${hex}`;
+			grid.appendChild(el("input", {
+				type: "radio", name: radioName(entry.id), id: inputId,
+				value: String(byte), checked: entry.default === byte, class: "nescolor-input",
+			}));
+			grid.appendChild(el("label", {
+				for: inputId, class: "nescolor-swatch",
+				style: `background:${nesRgbCss(byte)}`,
+				title: `$${hex}`,
+			}));
+		}
+	}
+	wrap.appendChild(grid);
+	return wrap;
+}
+
 const RENDERERS = {
 	bool: renderBool,
 	tri: renderTri,
 	select: renderSelect,
 	radio: renderRadio,
 	items: renderItems,
+	nescolor: renderNesColor,
 };
 
 function renderEntry(entry) {
@@ -780,6 +843,11 @@ export function readValue(entry) {
 			}
 			return out;
 		}
+		case "nescolor": {
+			const checked = document.querySelector(`input[name="${radioName(entry.id)}"]:checked`);
+			if (!checked || checked.value === "rand") return null;
+			return Number(checked.value);
+		}
 	}
 }
 
@@ -809,6 +877,12 @@ export function writeValue(entry, value) {
 				const e = document.getElementById(`${domId(entry.id)}-${i}`);
 				if (e) e.value = String(arr[i] ?? 0);
 			}
+			break;
+		}
+		case "nescolor": {
+			const target = value == null ? "rand" : String(value);
+			const e = document.querySelector(`input[name="${radioName(entry.id)}"][value="${target}"]`);
+			if (e) e.checked = true;
 			break;
 		}
 	}
@@ -858,6 +932,10 @@ export function formatValue(entry, value) {
 				const opt = entry.items.find(o => o.value === v);
 				return opt ? opt.label : String(v);
 			}).join(", ");
+		}
+		case "nescolor": {
+			if (value == null) return "Random";
+			return "$" + value.toString(16).toUpperCase().padStart(2, "0");
 		}
 		default: return String(value);
 	}
@@ -913,6 +991,16 @@ function entryDomIds(entry) {
 			return entry.options.map(o => `${domId(entry.id)}-${o.value}`);
 		case "items":
 			return Array.from({ length: entry.slots }, (_, i) => `${domId(entry.id)}-${i}`);
+		case "nescolor": {
+			const ids = [`${domId(entry.id)}-rand`];
+			for (let row = 0; row < 4; row++) {
+				for (let hue = 1; hue <= 0x0C; hue++) {
+					const hex = ((row << 4) | hue).toString(16).toUpperCase().padStart(2, "0");
+					ids.push(`${domId(entry.id)}-${hex}`);
+				}
+			}
+			return ids;
+		}
 		default:
 			return [];
 	}
@@ -977,6 +1065,8 @@ export function saveSettings() {
 				settings[`radio:${radioName(entry.id)}`] = v ? "on" : "off";
 			} else if (entry.type === "tri" || entry.type === "radio") {
 				settings[`radio:${radioName(entry.id)}`] = v;
+			} else if (entry.type === "nescolor") {
+				settings[`radio:${radioName(entry.id)}`] = v == null ? "rand" : String(v);
 			} else if (entry.type === "items") {
 				for (let i = 0; i < entry.slots; i++) {
 					const node = document.getElementById(`${domId(entry.id)}-${i}`);

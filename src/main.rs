@@ -16,6 +16,22 @@ fn tri_str(t: Tri) -> &'static str {
 
 /// CLI validator for `--starting-lives` — only the four canonical values
 /// that map cleanly to the 2-bit flag-key encoding are accepted.
+/// Parse a NES color byte from hex ("16", "0x16", "$16") and require it to be
+/// chromatic (hue nibble 1-C, value <= 0x3C) so the palette scheme has a hue
+/// to anchor on.
+fn parse_nes_color(s: &str) -> Result<u8, String> {
+    let hex = s.trim_start_matches("0x").trim_start_matches("0X").trim_start_matches('$');
+    let n = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+    let hue = n & 0x0F;
+    if n <= 0x3C && (1..=0x0C).contains(&hue) {
+        Ok(n)
+    } else {
+        Err(format!(
+            "0x{n:02X} is not a chromatic NES color (need value <= 0x3C with low nibble 1-C; grays/blacks can't anchor a color scheme)"
+        ))
+    }
+}
+
 fn parse_starting_lives(s: &str) -> Result<u8, String> {
     let n: u8 = s.parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
     if STARTING_LIVES_VALUES.contains(&n) {
@@ -63,6 +79,13 @@ struct Cli {
     /// Cosmetic; does not affect ROM content and is not encoded in the flag key.
     #[arg(long)]
     themed_palettes: bool,
+
+    /// Anchor the character palettes on a chosen NES color (hex, e.g. "16" or
+    /// "0x12"): Mario wears it, Luigi and the suits are derived from it.
+    /// Must be a chromatic NES color (hue nibble 1-C, value <= 0x3C).
+    /// Cosmetic; requires palettes enabled. Default: random colors.
+    #[arg(long, value_parser = parse_nes_color)]
+    player_color: Option<u8>,
 
     /// Enable world order randomization
     #[arg(long)]
@@ -404,6 +427,10 @@ fn main() {
                 if cli.themed_palettes {
                     opts.palette_themed = true;
                 }
+                // player_color is cosmetic too — overlay like palette_themed.
+                if cli.player_color.is_some() {
+                    opts.player_color = cli.player_color;
+                }
                 // Same for skip_rom_validation — a property of the input ROM.
                 if cli.skip_rom_validation {
                     opts.skip_rom_validation = true;
@@ -420,6 +447,7 @@ fn main() {
             powerups: !cli.no_powerups,
             palettes: !cli.no_palettes,
             palette_themed: cli.themed_palettes,
+            player_color: cli.player_color,
             world_order: cli.world_order,
             world_count: cli.world_count,
             big_q_blocks: cli.big_q_blocks,
@@ -489,6 +517,9 @@ fn main() {
         (true, false) => "characters",
         (true, true)  => "themed",
     });
+    if let Some(c) = options.player_color.filter(|_| options.palettes) {
+        eprintln!("  Player color: ${c:02X}");
+    }
     eprintln!("  Enemies:  {}", if options.any_enemies_active() { "on" } else { "off" });
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
     if options.world_order && options.world_count < 7 {

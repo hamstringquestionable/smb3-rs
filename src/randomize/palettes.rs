@@ -39,13 +39,72 @@ const SAFE_COLORS: &[u8] = &[
 ];
 
 /// Randomize character sprite palettes (Mario/Luigi power-up colors).
-pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
+///
+/// When `player_color` is Some, the player's picked color anchors a
+/// deterministic scheme (see `apply_player_scheme`) instead of random picks.
+pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, player_color: Option<u8>) {
+    if let Some(anchor) = player_color.filter(|&c| is_chromatic(c)) {
+        apply_player_scheme(rom, anchor);
+        return;
+    }
     for &(offset, _name) in PALETTE_RANGES {
         // Randomize bytes 1-2 (body and highlight), preserve byte 0 (bg mirror) and 3 (outline)
         for i in 1..3 {
             rom.write_byte(offset + i, SAFE_COLORS[rng.random_range(..SAFE_COLORS.len())]);
         }
     }
+}
+
+/// NES skin-tone byte (pale orange) shared as the face/highlight color across
+/// the character palettes. Pinned during scheme generation so a recolored
+/// Mario keeps a natural face.
+const SKIN_TONE: u8 = 0x36;
+
+/// Vanilla Small/Big Mario body hue (red, column 6) — the rotation origin
+/// for the player-color scheme.
+const VANILLA_MARIO_HUE: u8 = 0x06;
+
+/// Whether a byte is a rotatable NES color (luminance row 0-3, hue 1-C).
+fn is_chromatic(b: u8) -> bool {
+    b <= 0x3C && (1..=0x0C).contains(&(b & 0x0F))
+}
+
+/// Derive the whole character wardrobe from one player-picked color.
+///
+/// The vanilla palettes already encode the relationships that make the cast
+/// read correctly: Luigi's green sits +4 hues from Mario's red, the Fire suit
+/// keeps a red accent byte, the Hammer suit is white (achromatic), and every
+/// suit shares the skin-tone highlight. So the scheme is a single hue
+/// rotation of the vanilla wardrobe by (picked hue - vanilla red): every
+/// relative relationship survives, anchored on the pick. Deterministic — the
+/// same pick always produces the same wardrobe.
+///
+/// Two pins keep it looking intentional:
+/// - `SKIN_TONE` bytes never rotate (blue Mario has blue clothes, not a blue
+///   face);
+/// - Mario's body byte is set to the picked color EXACTLY (row included), so
+///   what the player clicked is what Mario wears.
+///
+/// Picking vanilla red (0x16) reproduces the vanilla wardrobe byte-for-byte.
+pub fn apply_player_scheme(rom: &mut Rom, anchor: u8) {
+    debug_assert!(is_chromatic(anchor), "anchor {anchor:#04x} must be chromatic");
+    let delta = ((anchor & 0x0F) + 12 - VANILLA_MARIO_HUE) % 12;
+
+    for &(offset, _name) in PALETTE_RANGES {
+        // Bytes 1-3: body, highlight, and the outline/accent byte (usually
+        // 0x0F black, which passes through — but the Fire suit carries a red
+        // accent there that should follow the scheme). Byte 0 stays 0x00.
+        for i in 1..4 {
+            let b = rom.read_byte(offset + i);
+            if b != SKIN_TONE {
+                rom.write_byte(offset + i, rotate_hue(b, delta));
+            }
+        }
+    }
+
+    // Mario wears exactly what the player clicked.
+    let (mario_offset, _) = PALETTE_RANGES[0];
+    rom.write_byte(mario_offset + 1, anchor);
 }
 
 /// All variant-group regions applied by `randomize_themed`, in write order.
@@ -180,9 +239,9 @@ fn theme_group_for(offset: usize) -> Option<usize> {
 /// Quartets Recolored kept at vanilla but which hold chromatic bytes are in
 /// `ROTATE_ONLY_QUARTETS`: they never variant-swap, but they DO hue-rotate,
 /// so a kept-vanilla green can't clash with rotated colors on the same screen.
-pub fn randomize_themed<R: Rng>(rom: &mut Rom, rng: &mut R) {
+pub fn randomize_themed<R: Rng>(rom: &mut Rom, rng: &mut R, player_color: Option<u8>) {
     // Character palettes stay randomized too — independent of tileset palettes.
-    randomize(rom, rng);
+    randomize(rom, rng, player_color);
 
     // Roll one shift per theme group, in declaration order (deterministic
     // for a given RNG stream).
@@ -263,7 +322,7 @@ mod tests {
         rom.write_range(0x10539, &[0x00, 0x16, 0x36, 0x0F]);
 
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng);
+        randomize(&mut rom, &mut rng, None);
 
         for &(offset, name) in PALETTE_RANGES {
             for i in 1..3 {
@@ -287,13 +346,120 @@ mod tests {
         let mut rng1 = ChaCha8Rng::seed_from_u64(99);
         let mut rng2 = ChaCha8Rng::seed_from_u64(99);
 
-        randomize(&mut rom1, &mut rng1);
-        randomize(&mut rom2, &mut rng2);
+        randomize(&mut rom1, &mut rng1, None);
+        randomize(&mut rom2, &mut rng2, None);
 
         for &(offset, _) in PALETTE_RANGES {
             assert_eq!(
                 rom1.read_range(offset, 4),
                 rom2.read_range(offset, 4),
+            );
+        }
+    }
+
+    /// Vanilla character palette quartets, as in the real ROM.
+    const VANILLA_WARDROBE: &[(usize, [u8; 4])] = &[
+        (0x10539, [0x00, 0x16, 0x36, 0x0F]), // Small/Big Mario
+        (0x1053D, [0x00, 0x2A, 0x36, 0x0F]), // Small/Big Luigi
+        (0x10541, [0x00, 0x27, 0x36, 0x16]), // Fire M/L
+        (0x10549, [0x00, 0x2A, 0x36, 0x0F]), // Frog M/L
+        (0x1054D, [0x00, 0x17, 0x36, 0x0F]), // Tanooki M/L
+        (0x10551, [0x00, 0x30, 0x27, 0x0F]), // Hammer M/L
+    ];
+
+    fn make_wardrobe_rom() -> Rom {
+        let mut rom = make_test_rom();
+        for &(offset, quartet) in VANILLA_WARDROBE {
+            rom.write_range(offset, &quartet);
+        }
+        rom
+    }
+
+    #[test]
+    fn player_scheme_vanilla_anchor_is_identity() {
+        // Picking Mario's vanilla red must reproduce the vanilla wardrobe
+        // byte-for-byte — the free "classic" option.
+        let mut rom = make_wardrobe_rom();
+        apply_player_scheme(&mut rom, 0x16);
+        for &(offset, quartet) in VANILLA_WARDROBE {
+            assert_eq!(
+                rom.read_range(offset, 4),
+                &quartet,
+                "vanilla anchor changed quartet at {offset:#06x}"
+            );
+        }
+    }
+
+    #[test]
+    fn player_scheme_structure() {
+        // Anchor on blue (0x12): Mario wears exactly the pick, skin stays
+        // skin, the white Hammer suit stays white, and everything chromatic
+        // rotates by the same delta (blue is 4 hues counterclockwise of red).
+        let mut rom = make_wardrobe_rom();
+        apply_player_scheme(&mut rom, 0x12);
+
+        // Mario: exact pick + pinned skin + black outline.
+        assert_eq!(rom.read_range(0x10539, 4), &[0x00, 0x12, 0x36, 0x0F]);
+        // Luigi: green 0x2A rotates by the same -4 delta to cyan-blue land,
+        // preserving the vanilla brother contrast.
+        let delta = 8; // picked hue 2 minus vanilla red 6, mod 12 (≡ -4)
+        assert_eq!(rom.read_byte(0x1053D + 1), rotate_hue(0x2A, delta));
+        // Fire suit: red accent byte follows the scheme (0x16 -> blue 0x12).
+        assert_eq!(rom.read_byte(0x10541 + 3), 0x12);
+        // Hammer suit: white body is achromatic — must not rotate.
+        assert_eq!(rom.read_byte(0x10551 + 1), 0x30);
+        // Skin tone pinned everywhere it appears.
+        for &(offset, quartet) in VANILLA_WARDROBE {
+            for (i, &vb) in quartet.iter().enumerate() {
+                if vb == SKIN_TONE {
+                    assert_eq!(
+                        rom.read_byte(offset + i),
+                        SKIN_TONE,
+                        "skin tone rotated at {offset:#06x}+{i}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn player_scheme_every_chromatic_anchor_emits_valid_colors() {
+        // For all 48 chromatic anchors: every emitted byte stays a valid NES
+        // color (or structural 0x00/0x0F), and Mario's body is the anchor.
+        for row in 0u8..4 {
+            for hue in 1u8..=0x0C {
+                let anchor = (row << 4) | hue;
+                let mut rom = make_wardrobe_rom();
+                apply_player_scheme(&mut rom, anchor);
+                assert_eq!(rom.read_byte(0x10539 + 1), anchor, "Mario body != anchor");
+                for &(offset, _) in VANILLA_WARDROBE {
+                    for i in 0..4 {
+                        let b = rom.read_byte(offset + i);
+                        assert!(
+                            b <= 0x3C && (b & 0x0F) != 0x0D || b == 0x0F || b == 0x00,
+                            "anchor {anchor:#04x}: invalid byte {b:#04x} at {offset:#06x}+{i}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn randomize_with_player_color_uses_scheme() {
+        // randomize() with a player color must produce the deterministic
+        // scheme regardless of RNG state.
+        let mut rom1 = make_wardrobe_rom();
+        let mut rom2 = make_wardrobe_rom();
+        let mut rng1 = ChaCha8Rng::seed_from_u64(1);
+        let mut rng2 = ChaCha8Rng::seed_from_u64(999);
+        randomize(&mut rom1, &mut rng1, Some(0x2A));
+        randomize(&mut rom2, &mut rng2, Some(0x2A));
+        for &(offset, _) in VANILLA_WARDROBE {
+            assert_eq!(
+                rom1.read_range(offset, 4),
+                rom2.read_range(offset, 4),
+                "player-color scheme must be RNG-independent"
             );
         }
     }
@@ -351,7 +517,7 @@ mod tests {
         for seed in [1u64, 42, 99, 777, 12345] {
             let mut rom = make_test_rom();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize_themed(&mut rom, &mut rng);
+            randomize_themed(&mut rom, &mut rng, None);
 
             for (gi, tg) in THEME_GROUPS.iter().enumerate() {
                 let group_quartets: Vec<&'static VariantGroup> = all_variant_groups()
@@ -458,7 +624,7 @@ mod tests {
         }
 
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize_themed(&mut rom, &mut rng);
+        randomize_themed(&mut rom, &mut rng, None);
 
         let curated_offsets: std::collections::HashSet<usize> = all_variant_groups()
             .iter()
@@ -518,7 +684,7 @@ mod tests {
         rom.write_range(0x377E0, &vanilla);
 
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize_themed(&mut rom, &mut rng);
+        randomize_themed(&mut rom, &mut rng, None);
 
         assert_eq!(
             rom.read_range(0x377E0, 0x28),
