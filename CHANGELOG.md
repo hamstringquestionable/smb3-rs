@@ -10,11 +10,13 @@ into a versioned section when a release is cut.
 
 ### Changed
 
-- **Themed palettes: whole-game color themes + wider coverage** — themed
-  palette randomization now applies a global hue rotation (one of 12 per
-  roll) on top of the variant swap, recoloring the whole game as one
-  coherent theme while keeping every brightness/contrast relationship
-  intact for visibility. Coverage extended to the W6/W7 overworld maps,
+- **Themed palettes: context-aware color themes + wider coverage** — themed
+  palette randomization now applies subtle, context-aware hue shifts on top
+  of the variant swap: each context (plains, water, fortress, desert,
+  lava, maps, ...) rolls its own small shift (at most 2 steps on the NES
+  hue wheel) from a per-context allowed set, so water stays watery, lava
+  stays warm, and skies never go magenta. Brightness is never changed, so
+  visibility is preserved. Coverage extended to the W6/W7 overworld maps,
   the slot-table tail (lava/Bowser quartets), the 0x36E20 palette pool,
   and stragglers past slice 4 — 118 new curated positions plus 324
   rotate-only positions that previously stayed vanilla.

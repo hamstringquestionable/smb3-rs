@@ -68,6 +68,91 @@ const THEMED_REGIONS: &[&[VariantGroup]] = &[
     SLICE4_POST_VARIANTS,
 ];
 
+/// A context-aware theme group: a set of palette regions that paint the same
+/// screens, sharing one hue shift per roll, constrained to shifts that keep
+/// the group's dominant colors plausible.
+struct ThemeGroup {
+    #[allow(dead_code)] // documentation + debugging aid
+    name: &'static str,
+    /// File-offset ranges (start, end) belonging to this group. A curated
+    /// quartet or rotate-only quartet belongs to the group whose range
+    /// contains its offset.
+    ranges: &'static [(usize, usize)],
+    /// Allowed hue shifts (0-11), rolled uniformly. All small (0, ±1, ±2 =
+    /// at most ~60° around the wheel) so no context ever leaves its
+    /// plausible color family. 11 = -1, 10 = -2 (mod 12).
+    shifts: &'static [u8],
+}
+
+/// Context-aware theme groups. Regions that light up the same screens share
+/// a group (plains BG in slot 3 and its slice-4 variants must shift
+/// together, or one screen would split into two themes).
+///
+/// Shift sets are chosen from what each context's dominant hues tolerate on
+/// the NES wheel (1→C: blue→violet→magenta→red→orange→yellow→green→cyan):
+/// - plains/giant/water tolerate ±1 and -2 (spring / dusk / autumn / swamp
+///   readings) but NOT +2 (magenta sky territory);
+/// - warm contexts (desert, lava) and identity-ish contexts (maps, sprite
+///   skin tones, the partially unmapped pool) stay within ±1.
+const THEME_GROUPS: &[ThemeGroup] = &[
+    ThemeGroup {
+        name: "maps",
+        ranges: &[(0x36BE4, 0x36C54)], // slots 0-1 (W6 + W7 overworld maps)
+        shifts: &[0, 1, 11],
+    },
+    ThemeGroup {
+        name: "sprites/text",
+        ranges: &[(0x36C54, 0x36C8C)], // slot 2 (hammer bro sprites, HELP text)
+        shifts: &[0, 1, 11],
+    },
+    ThemeGroup {
+        name: "plains",
+        // slot 3 (plains BG+HUD), slot 5 (plains enemies / W7-5 BG),
+        // slice 4 head/tail/post (sky-land + plains variants)
+        ranges: &[(0x36C8C, 0x36CC4), (0x36CFC, 0x36D34), (0x37600, 0x377E0), (0x37808, 0x37850)],
+        shifts: &[0, 1, 11, 10],
+    },
+    ThemeGroup {
+        name: "giant",
+        ranges: &[(0x36CC4, 0x36CFC), (0x37400, 0x37600)], // slot 4 + slice 3
+        shifts: &[0, 1, 11, 10],
+    },
+    ThemeGroup {
+        name: "fortress",
+        ranges: &[(0x36D34, 0x36DA6)], // slots 6-7 (fortress HUD + BG)
+        shifts: &[0, 1, 11],
+    },
+    ThemeGroup {
+        name: "lava/bowser",
+        ranges: &[(0x36DA8, 0x36E20)], // slot tail (lava, rotodisc, bowser, donut)
+        shifts: &[0, 1, 11],
+    },
+    ThemeGroup {
+        name: "pool",
+        ranges: &[(0x36E20, 0x37000)], // mixed pool (water sprites at 0x36F00)
+        shifts: &[0, 1, 11],
+    },
+    ThemeGroup {
+        name: "water",
+        ranges: &[(0x37000, 0x37200)], // slice 1
+        shifts: &[0, 1, 11, 10],
+    },
+    ThemeGroup {
+        name: "desert/airship",
+        ranges: &[(0x37200, 0x37400)], // slice 2 (desert + fortress + airship)
+        shifts: &[0, 1, 11],
+    },
+];
+
+/// Look up the theme-group index owning a file offset. Every curated offset
+/// must belong to a group (enforced by test); unknown offsets get None and
+/// are left unrotated.
+fn theme_group_for(offset: usize) -> Option<usize> {
+    THEME_GROUPS.iter().position(|g| {
+        g.ranges.iter().any(|&(start, end)| (start..end).contains(&offset))
+    })
+}
+
 /// Themed palette randomization across all tilesets.
 ///
 /// Two layers, both aesthetically safe by construction:
@@ -77,17 +162,17 @@ const THEMED_REGIONS: &[&[VariantGroup]] = &[
 ///    Recolored + hand-curated). Every emitted palette group was designed as
 ///    a coherent unit — no flat color-pool mixing, no independent byte picks.
 ///
-/// 2. **Global hue rotation**: one hue shift (0-11 steps around the NES
-///    12-hue wheel) is picked per seed and applied to every chromatic byte
-///    of every picked variant. The NES color byte is `(luminance << 4) | hue`,
-///    so rotating the hue nibble while preserving the luminance nibble keeps
-///    every brightness/contrast relationship of the source palette intact —
-///    visibility is preserved by construction, only the color scheme changes.
-///    Because the same shift applies everywhere, all relative hue
-///    relationships (grass vs. sky, enemy vs. background) survive too, so the
-///    result reads as a coherent "season" of the whole game rather than a
-///    per-screen clash. Grays, blacks, whites (hue nibble 0/D/E/F) and
-///    non-color bytes (> 0x3C, 0xFF skip markers) pass through untouched.
+/// 2. **Context-aware hue rotation**: each theme group (plains, water,
+///    fortress, ...) rolls its own small hue shift from the group's allowed
+///    set and applies it to every chromatic byte the group owns. The NES
+///    color byte is `(luminance << 4) | hue`, so rotating the hue nibble
+///    while preserving the luminance nibble keeps every brightness/contrast
+///    relationship of the source palette intact — visibility is preserved by
+///    construction. Shifts are capped at 2 steps (~60°) and constrained per
+///    context, so water stays watery, lava stays warm, and skies never go
+///    magenta — subtle seasonal variation instead of a whole-wheel spin.
+///    Grays, blacks, whites (hue nibble 0/D/E/F) and non-color bytes
+///    (> 0x3C, 0xFF skip markers) pass through untouched.
 ///
 /// Coverage: every quartet Recolored changed across the themed-slot table
 /// (slots 0-7 + tail), the palette pool at 0x36E20, and master-pool slices
@@ -99,18 +184,26 @@ pub fn randomize_themed<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // Character palettes stay randomized too — independent of tileset palettes.
     randomize(rom, rng);
 
-    // One global hue shift per seed: 0 = source hues, 1-11 = rotated themes.
-    let hue_shift: u8 = rng.random_range(..12);
+    // Roll one shift per theme group, in declaration order (deterministic
+    // for a given RNG stream).
+    let group_shifts: Vec<u8> = THEME_GROUPS
+        .iter()
+        .map(|g| *g.shifts.choose(rng).unwrap())
+        .collect();
+    let shift_for = |offset: usize| -> u8 {
+        theme_group_for(offset).map_or(0, |gi| group_shifts[gi])
+    };
 
     for region in THEMED_REGIONS {
-        apply_variant_groups(rom, region, hue_shift, rng);
+        apply_variant_groups(rom, region, &shift_for, rng);
     }
 
     // Hue-rotate the kept-vanilla chromatic quartets in place.
     for &offset in ROTATE_ONLY_QUARTETS {
+        let shift = shift_for(offset);
         for i in 0..4 {
             let b = rom.read_byte(offset + i);
-            rom.write_byte(offset + i, rotate_hue(b, hue_shift));
+            rom.write_byte(offset + i, rotate_hue(b, shift));
         }
     }
 }
@@ -133,16 +226,17 @@ fn rotate_hue(byte: u8, shift: u8) -> u8 {
 }
 
 /// For each curated position, pick one 4-byte variant at random, hue-rotate
-/// its chromatic bytes by the global shift, and write it.
+/// its chromatic bytes by its theme group's shift, and write it.
 fn apply_variant_groups<R: Rng>(
     rom: &mut Rom,
     groups: &[VariantGroup],
-    hue_shift: u8,
+    shift_for: &dyn Fn(usize) -> u8,
     rng: &mut R,
 ) {
     for group in groups {
         let picked = group.variants.choose(rng).unwrap();
-        let rotated = picked.map(|b| rotate_hue(b, hue_shift));
+        let shift = shift_for(group.offset);
+        let rotated = picked.map(|b| rotate_hue(b, shift));
         rom.write_range(group.offset, &rotated);
     }
 }
@@ -251,27 +345,83 @@ mod tests {
     #[test]
     fn themed_emits_rotated_curated_variants_only() {
         // Every 4-byte write at a curated position must match one of the
-        // pre-registered variants rotated by a single global hue shift —
-        // the SAME shift across all positions (coherent theme, no per-quartet
-        // rainbow), and no free-byte picks.
+        // pre-registered variants rotated by its theme group's shift — ONE
+        // shift per group (coherent theme within each context, no per-quartet
+        // rainbow), drawn from the group's allowed set, and no free-byte picks.
         for seed in [1u64, 42, 99, 777, 12345] {
             let mut rom = make_test_rom();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             randomize_themed(&mut rom, &mut rng);
 
-            let shift_matches = |shift: u8| -> bool {
-                all_variant_groups().iter().all(|group| {
-                    let written = rom.read_range(group.offset, 4);
-                    group.variants.iter().any(|v| {
-                        v.iter().zip(written).all(|(&vb, &wb)| rotate_hue(vb, shift) == wb)
+            for (gi, tg) in THEME_GROUPS.iter().enumerate() {
+                let group_quartets: Vec<&'static VariantGroup> = all_variant_groups()
+                    .into_iter()
+                    .filter(|g| theme_group_for(g.offset) == Some(gi))
+                    .collect();
+                let shift_matches = |shift: u8| -> bool {
+                    group_quartets.iter().all(|group| {
+                        let written = rom.read_range(group.offset, 4);
+                        group.variants.iter().any(|v| {
+                            v.iter().zip(written).all(|(&vb, &wb)| rotate_hue(vb, shift) == wb)
+                        })
                     })
-                })
-            };
-            let matching: Vec<u8> = (0u8..12).filter(|&s| shift_matches(s)).collect();
-            assert!(
-                !matching.is_empty(),
-                "seed {seed}: no single global hue shift explains all written quartets"
+                };
+                assert!(
+                    tg.shifts.iter().any(|&s| shift_matches(s)),
+                    "seed {seed}, group '{}': no allowed shift explains all written quartets",
+                    tg.name,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_curated_offset_belongs_to_one_theme_group() {
+        // Every variant-group and rotate-only offset must fall inside exactly
+        // one theme group's ranges — an unowned offset would silently skip
+        // rotation and could clash with its rotated neighbors.
+        for group in all_variant_groups() {
+            let owners = THEME_GROUPS
+                .iter()
+                .filter(|tg| tg.ranges.iter().any(|&(s, e)| (s..e).contains(&group.offset)))
+                .count();
+            assert_eq!(
+                owners, 1,
+                "variant group at {:#08x} owned by {owners} theme groups (want 1)",
+                group.offset
             );
+        }
+        for &offset in ROTATE_ONLY_QUARTETS {
+            let owners = THEME_GROUPS
+                .iter()
+                .filter(|tg| tg.ranges.iter().any(|&(s, e)| (s..e).contains(&offset)))
+                .count();
+            assert_eq!(
+                owners, 1,
+                "rotate-only quartet at {offset:#08x} owned by {owners} theme groups (want 1)"
+            );
+        }
+    }
+
+    #[test]
+    fn theme_shifts_are_subtle() {
+        // Garishness guard: every allowed shift must be within 2 steps of
+        // vanilla on the 12-hue wheel (0, ±1, ±2 — i.e. {0, 1, 2, 10, 11}).
+        // A shift of 3+ steps sends skies magenta / grass purple.
+        for tg in THEME_GROUPS {
+            assert!(!tg.shifts.is_empty(), "group '{}' has no shifts", tg.name);
+            assert!(
+                tg.shifts.contains(&0),
+                "group '{}' must always allow vanilla hues",
+                tg.name
+            );
+            for &s in tg.shifts {
+                assert!(
+                    matches!(s, 0 | 1 | 2 | 10 | 11),
+                    "group '{}' allows non-subtle shift {s}",
+                    tg.name
+                );
+            }
         }
     }
 
