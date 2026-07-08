@@ -23,36 +23,20 @@ const PALETTE_RANGES: &[(usize, &str)] = &[
     (0x10551, "Hammer Mario/Luigi"),
 ];
 
-/// Valid NES colors that produce good visible results.
-/// Excludes 0x0D (known to cause issues on some hardware),
-/// 0x0E, 0x0F (black variants), and 0x20+ emphasis colors.
-/// We stick to the base 64-color NES palette (0x00–0x3F) minus problematic entries.
-const SAFE_COLORS: &[u8] = &[
-    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-    0x08, 0x09, 0x0A, 0x0B, 0x0C,
-    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
-    0x18, 0x19, 0x1A, 0x1B, 0x1C,
-    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
-    0x28, 0x29, 0x2A, 0x2B, 0x2C,
-    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
-    0x38, 0x39, 0x3A, 0x3B, 0x3C,
-];
-
 /// Randomize character sprite palettes (Mario/Luigi power-up colors).
 ///
-/// When `player_color` is Some, the player's picked color anchors a
-/// deterministic scheme (see `apply_player_scheme`) instead of random picks.
+/// When `player_color` is Some, that color anchors the wardrobe scheme;
+/// otherwise a random chromatic anchor is rolled — same as clicking a random
+/// swatch on the web grid. Either way the output goes through
+/// `apply_player_scheme`, so every roll is a coherent wardrobe (natural face,
+/// Luigi contrast, white Hammer suit) rather than independent byte picks.
 pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, player_color: Option<u8>) {
-    if let Some(anchor) = player_color.filter(|&c| is_chromatic(c)) {
-        apply_player_scheme(rom, anchor);
-        return;
-    }
-    for &(offset, _name) in PALETTE_RANGES {
-        // Randomize bytes 1-2 (body and highlight), preserve byte 0 (bg mirror) and 3 (outline)
-        for i in 1..3 {
-            rom.write_byte(offset + i, SAFE_COLORS[rng.random_range(..SAFE_COLORS.len())]);
-        }
-    }
+    let anchor = player_color.filter(|&c| is_chromatic(c)).unwrap_or_else(|| {
+        let row: u8 = rng.random_range(..4);
+        let hue: u8 = rng.random_range(1..=0x0C);
+        (row << 4) | hue
+    });
+    apply_player_scheme(rom, anchor);
 }
 
 /// NES skin-tone byte (pale orange) shared as the face/highlight color across
@@ -315,48 +299,6 @@ mod tests {
         Rom::from_bytes_lax(&data, true).unwrap()
     }
 
-    #[test]
-    fn test_palettes_use_safe_colors() {
-        let mut rom = make_test_rom();
-        // Set vanilla values
-        rom.write_range(0x10539, &[0x00, 0x16, 0x36, 0x0F]);
-
-        let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng, None);
-
-        for &(offset, name) in PALETTE_RANGES {
-            for i in 1..3 {
-                let byte = rom.read_byte(offset + i);
-                assert!(
-                    SAFE_COLORS.contains(&byte),
-                    "Palette '{name}' at {offset:#06x}+{i} has unsafe color: {byte:#04x}"
-                );
-            }
-        }
-
-        // Verify byte 0 (bg mirror) and byte 3 (outline) are preserved
-        assert_eq!(rom.read_byte(0x10539), 0x00, "Mario byte 0 must stay 0x00");
-        assert_eq!(rom.read_byte(0x1053C), 0x0F, "Mario outline must stay 0x0F");
-    }
-
-    #[test]
-    fn test_palettes_deterministic() {
-        let mut rom1 = make_test_rom();
-        let mut rom2 = make_test_rom();
-        let mut rng1 = ChaCha8Rng::seed_from_u64(99);
-        let mut rng2 = ChaCha8Rng::seed_from_u64(99);
-
-        randomize(&mut rom1, &mut rng1, None);
-        randomize(&mut rom2, &mut rng2, None);
-
-        for &(offset, _) in PALETTE_RANGES {
-            assert_eq!(
-                rom1.read_range(offset, 4),
-                rom2.read_range(offset, 4),
-            );
-        }
-    }
-
     /// Vanilla character palette quartets, as in the real ROM.
     const VANILLA_WARDROBE: &[(usize, [u8; 4])] = &[
         (0x10539, [0x00, 0x16, 0x36, 0x0F]), // Small/Big Mario
@@ -373,6 +315,50 @@ mod tests {
             rom.write_range(offset, &quartet);
         }
         rom
+    }
+
+    #[test]
+    fn random_roll_is_a_coherent_scheme() {
+        // With no player color, randomize() must still emit a wardrobe that
+        // matches apply_player_scheme for SOME chromatic anchor — never the
+        // old independent per-byte picks.
+        for seed in [1u64, 42, 99, 777] {
+            let mut rom = make_wardrobe_rom();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom, &mut rng, None);
+
+            let mario_body = rom.read_byte(0x10539 + 1);
+            assert!(is_chromatic(mario_body), "seed {seed}: anchor {mario_body:#04x} not chromatic");
+
+            // Rebuild the scheme from the observed anchor; it must match.
+            let mut expected = make_wardrobe_rom();
+            apply_player_scheme(&mut expected, mario_body);
+            for &(offset, _) in VANILLA_WARDROBE {
+                assert_eq!(
+                    rom.read_range(offset, 4),
+                    expected.read_range(offset, 4),
+                    "seed {seed}: random roll diverged from scheme at {offset:#06x}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_palettes_deterministic() {
+        let mut rom1 = make_wardrobe_rom();
+        let mut rom2 = make_wardrobe_rom();
+        let mut rng1 = ChaCha8Rng::seed_from_u64(99);
+        let mut rng2 = ChaCha8Rng::seed_from_u64(99);
+
+        randomize(&mut rom1, &mut rng1, None);
+        randomize(&mut rom2, &mut rng2, None);
+
+        for &(offset, _) in PALETTE_RANGES {
+            assert_eq!(
+                rom1.read_range(offset, 4),
+                rom2.read_range(offset, 4),
+            );
+        }
     }
 
     #[test]

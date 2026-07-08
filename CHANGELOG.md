@@ -13,8 +13,9 @@ into a versioned section when a release is cut.
 - **Player color picker** — choose Mario's color from a NES palette grid in
   the web app (or `--player-color <hex>` in the CLI); Luigi and the power-up
   suits get matching colors derived from the pick, keeping the vanilla
-  brother contrast and natural skin tones. Leave on Random for the previous
-  behavior.
+  brother contrast and natural skin tones. Random (the default) now rolls a
+  random color through the same matching-wardrobe scheme instead of the old
+  fully-independent byte picks.
 
 ### Changed
 
