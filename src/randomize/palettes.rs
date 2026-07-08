@@ -69,10 +69,24 @@ fn is_chromatic(b: u8) -> bool {
 /// - Mario's body byte is set to the picked color EXACTLY (row included), so
 ///   what the player clicked is what Mario wears.
 ///
-/// Picking vanilla red (0x16) reproduces the vanilla wardrobe byte-for-byte.
+/// Picking Mario's current color reproduces the current wardrobe
+/// byte-for-byte (vanilla red 0x16 on an unpatched ROM).
 pub fn apply_player_scheme(rom: &mut Rom, anchor: u8) {
     debug_assert!(is_chromatic(anchor), "anchor {anchor:#04x} must be chromatic");
-    let delta = ((anchor & 0x0F) + 12 - VANILLA_MARIO_HUE) % 12;
+    // Rotation origin = the CURRENT Mario body hue, not a hard-coded vanilla
+    // red: visual reskin patches (Luigi-35th, Peach, ...) apply before
+    // randomization and restyle the wardrobe, and rotating from the actual
+    // body hue keeps the reskin's body-to-suit relationships intact (picking
+    // the character's current color is always a no-op). Falls back to
+    // vanilla red if a patch made the body achromatic (Dr. Mario's white
+    // coat), so the accents still rotate sensibly.
+    let current_body = rom.read_byte(PALETTE_RANGES[0].0 + 1);
+    let origin_hue = if is_chromatic(current_body) {
+        current_body & 0x0F
+    } else {
+        VANILLA_MARIO_HUE
+    };
+    let delta = ((anchor & 0x0F) + 12 - origin_hue) % 12;
 
     for &(offset, _name) in PALETTE_RANGES {
         // Bytes 1-3: body, highlight, and the outline/accent byte (usually
@@ -374,6 +388,51 @@ mod tests {
                 "vanilla anchor changed quartet at {offset:#06x}"
             );
         }
+    }
+
+    #[test]
+    fn player_scheme_composes_with_visual_reskins() {
+        // Visual reskin patches apply BEFORE randomization and restyle the
+        // wardrobe (Luigi-35th sets Mario's body green 0x1A). The rotation
+        // origin is the current body hue, so:
+        // 1. picking the reskin's own color is a no-op;
+        // 2. picking another color rotates the RESKINNED wardrobe uniformly.
+        let reskin: &[(usize, [u8; 4])] = &[
+            (0x10539, [0x00, 0x1A, 0x36, 0x0F]), // body green (Luigi-35th style)
+            (0x1053D, [0x00, 0x16, 0x36, 0x0F]),
+            (0x10541, [0x00, 0x27, 0x36, 0x1A]),
+            (0x10549, [0x00, 0x2A, 0x36, 0x0F]),
+            (0x1054D, [0x00, 0x17, 0x36, 0x0F]),
+            (0x10551, [0x00, 0x30, 0x27, 0x0F]),
+        ];
+        let make_reskin_rom = || {
+            let mut rom = make_test_rom();
+            for &(offset, quartet) in reskin {
+                rom.write_range(offset, &quartet);
+            }
+            rom
+        };
+
+        // Identity: picking the reskin's current body color changes nothing.
+        let mut rom = make_reskin_rom();
+        apply_player_scheme(&mut rom, 0x1A);
+        for &(offset, quartet) in reskin {
+            assert_eq!(
+                rom.read_range(offset, 4),
+                &quartet,
+                "current-color anchor must be a no-op at {offset:#06x}"
+            );
+        }
+
+        // Uniform rotation from the reskin's hue: picking red (hue 6) from
+        // green (hue A) is delta -4 for every chromatic non-skin byte.
+        let mut rom = make_reskin_rom();
+        apply_player_scheme(&mut rom, 0x16);
+        let delta = 8; // picked hue 6 minus reskin body hue A, mod 12 (≡ -4)
+        assert_eq!(rom.read_byte(0x10539 + 1), 0x16, "body must be the exact pick");
+        assert_eq!(rom.read_byte(0x1053D + 1), rotate_hue(0x16, delta));
+        assert_eq!(rom.read_byte(0x10541 + 3), rotate_hue(0x1A, delta), "accent follows");
+        assert_eq!(rom.read_byte(0x10551 + 1), 0x30, "white suit stays white");
     }
 
     #[test]
