@@ -358,7 +358,7 @@ export const SCHEMA = [
 		group: "cosmetic", inFlagKey: false },
 	{ id: "palette_themed", type: "bool", default: false,
 		label: "Themed per-tileset",
-		tip: "Also randomize background and enemy colors per area, using palettes from Super Mario Bros. 3 Recolored. Re-rolls freely (doesn't affect the seed).",
+		tip: "Recolor backgrounds, enemies, and world maps with a random color theme. Brightness stays the same, so everything stays easy to see. Re-rolls freely (doesn't affect the seed).",
 		group: "cosmetic", inFlagKey: false,
 		enabledWhen: { palettes: true }, indent: true },
 ];

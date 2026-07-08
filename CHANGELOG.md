@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The project is pre-1.0; new work accumulates under **[Unreleased]** and is moved
 into a versioned section when a release is cut.
 
+## [Unreleased]
+
+### Changed
+
+- **Themed palettes: whole-game color themes + wider coverage** — themed
+  palette randomization now applies a global hue rotation (one of 12 per
+  roll) on top of the variant swap, recoloring the whole game as one
+  coherent theme while keeping every brightness/contrast relationship
+  intact for visibility. Coverage extended to the W6/W7 overworld maps,
+  the slot-table tail (lava/Bowser quartets), the 0x36E20 palette pool,
+  and stragglers past slice 4 — 118 new curated positions plus 324
+  rotate-only positions that previously stayed vanilla.
+
 ## [0.10.3] - 2026-07-07
 
 ### Fixed

@@ -11,10 +11,11 @@ at every known-changed position. Hand-added alternates (curated, from other
 palette hacks) are appended to each entry's `variants` list after the fact.
 
 Regions excluded from the output:
-  - Slot 0 / Slot 1 (overworld maps) — stretch goal, out of scope for tileset
-    variant-swap randomizer.
   - 0x377E0-0x37807 inside slice 4 — level-layout pointer table (CRASH TRAP).
     The slice4 region stops at 0x377E0; slice4_tail picks up at 0x37808.
+  - 0x33046-0x335xx (transition/fade palette stream) — Recolored RESTRUCTURED
+    this stream (byte insertions shifted everything and code was repointed),
+    so in-place quartet swaps against it would corrupt the stream. Skip.
 """
 
 from pathlib import Path
@@ -24,17 +25,26 @@ ROM = ROOT / "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
 IPS = ROOT / "patches/Super Mario Bros. 3 Recolored v1.0.ips"
 
 REGIONS = [
+    ("slot0_w6_map_hud",           0x36BE4, 0x36C1C),
+    ("slot1_w7_map",               0x36C1C, 0x36C54),
     ("slot2_overworld_text",       0x36C54, 0x36C8C),
     ("slot3_plains_bg_hud",        0x36C8C, 0x36CC4),
     ("slot4_giant_w4",             0x36CC4, 0x36CFC),
     ("slot5_plains_enemies",       0x36CFC, 0x36D34),
     ("slot6_fortress_hud",         0x36D34, 0x36D6C),
     ("slot7_fortress_bg",          0x36D6C, 0x36DA6),
+    # slot_tail starts at 0x36DA8 (first offset past slot 7 on the table's
+    # 4-byte grid), not the probed boundary 0x36DA6.
+    ("slot_tail",                  0x36DA8, 0x36E20),
+    # merged pool: walking from 0x36E20 aligns the confirmed water-sprite
+    # slot at 0x36F00 (the old 0x36EE2 sub-start does not).
+    ("pool",                       0x36E20, 0x37000),
     ("slice1_water",               0x37000, 0x37200),
     ("slice2_desert_fort_airship", 0x37200, 0x37400),
     ("slice3_giant",               0x37400, 0x37600),
     ("slice4_skyland_plains",      0x37600, 0x377E0),
     ("slice4_tail",                0x37808, 0x37846),
+    ("slice4_post",                0x37844, 0x37850),
 ]
 
 
@@ -59,6 +69,13 @@ def parse_ips(p):
     return out
 
 
+def palette_like(quartet):
+    """True if every byte could be a palette color (<= 0x3F) or the 0xFF skip
+    marker. Quartets failing this may be code/pointers hiding in the region —
+    they get flagged instead of emitted."""
+    return all(b <= 0x3F or b == 0xFF for b in quartet)
+
+
 def main():
     vanilla = ROM.read_bytes()
     recolored = bytearray(vanilla)
@@ -67,14 +84,20 @@ def main():
 
     for label, start, end in REGIONS:
         changed = []
+        flagged = []
         offset = start
         while offset + 4 <= end:
             v = vanilla[offset : offset + 4]
             r = bytes(recolored[offset : offset + 4])
             if v != r:
-                changed.append((offset, v, r))
+                if palette_like(v) and palette_like(r):
+                    changed.append((offset, v, r))
+                else:
+                    flagged.append((offset, v, r))
             offset += 4
         print(f"// === {label}  ({start:#08x}-{end:#08x}, {len(changed)} quartets changed) ===")
+        for off, v, r in flagged:
+            print(f"    // FLAGGED non-palette bytes at 0x{off:05X}: vanilla={v.hex()} recolored={r.hex()} — verify by hand before including")
         for off, v, r in changed:
             v_hex = ", ".join(f"0x{b:02X}" for b in v)
             r_hex = ", ".join(f"0x{b:02X}" for b in r)

@@ -3,9 +3,11 @@ use rand::Rng;
 
 use crate::randomize::palette_variants::{
     VariantGroup,
-    PLAINS_SLOT3_VARIANTS, SLOT2_VARIANTS, SLOT4_VARIANTS, SLOT5_VARIANTS,
-    SLOT6_VARIANTS, SLOT7_VARIANTS, SLICE1_WATER_VARIANTS, SLICE2_VARIANTS,
-    SLICE3_GIANT_VARIANTS, SLICE4_HEAD_VARIANTS, SLICE4_TAIL_VARIANTS,
+    PLAINS_SLOT3_VARIANTS, SLOT0_MAP_VARIANTS, SLOT1_MAP_VARIANTS, SLOT2_VARIANTS,
+    SLOT4_VARIANTS, SLOT5_VARIANTS, SLOT6_VARIANTS, SLOT7_VARIANTS, SLOT_TAIL_VARIANTS,
+    SLICE1_WATER_VARIANTS, SLICE2_VARIANTS, SLICE3_GIANT_VARIANTS,
+    SLICE4_HEAD_VARIANTS, SLICE4_POST_VARIANTS, SLICE4_TAIL_VARIANTS,
+    POOL_VARIANTS, ROTATE_ONLY_QUARTETS,
 };
 use crate::rom::Rom;
 
@@ -46,45 +48,102 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
     }
 }
 
+/// All variant-group regions applied by `randomize_themed`, in write order.
+const THEMED_REGIONS: &[&[VariantGroup]] = &[
+    SLOT0_MAP_VARIANTS,
+    SLOT1_MAP_VARIANTS,
+    SLOT2_VARIANTS,
+    PLAINS_SLOT3_VARIANTS,
+    SLOT4_VARIANTS,
+    SLOT5_VARIANTS,
+    SLOT6_VARIANTS,
+    SLOT7_VARIANTS,
+    SLOT_TAIL_VARIANTS,
+    POOL_VARIANTS,
+    SLICE1_WATER_VARIANTS,
+    SLICE2_VARIANTS,
+    SLICE3_GIANT_VARIANTS,
+    SLICE4_HEAD_VARIANTS,
+    SLICE4_TAIL_VARIANTS,
+    SLICE4_POST_VARIANTS,
+];
+
 /// Themed palette randomization across all tilesets.
 ///
-/// Uses palette-group SWAP randomization: for each curated quartet position,
-/// the randomizer picks ONE whole 4-byte variant from a list of pre-validated
-/// options (vanilla + Recolored). This guarantees every emitted palette was
-/// designed as a coherent unit — no flat color-pool mixing, no independent
-/// byte picks, no risk of cross-palette clash.
+/// Two layers, both aesthetically safe by construction:
+///
+/// 1. **Variant swap**: for each curated quartet position, pick ONE whole
+///    4-byte variant from a list of pre-validated options (vanilla +
+///    Recolored + hand-curated). Every emitted palette group was designed as
+///    a coherent unit — no flat color-pool mixing, no independent byte picks.
+///
+/// 2. **Global hue rotation**: one hue shift (0-11 steps around the NES
+///    12-hue wheel) is picked per seed and applied to every chromatic byte
+///    of every picked variant. The NES color byte is `(luminance << 4) | hue`,
+///    so rotating the hue nibble while preserving the luminance nibble keeps
+///    every brightness/contrast relationship of the source palette intact —
+///    visibility is preserved by construction, only the color scheme changes.
+///    Because the same shift applies everywhere, all relative hue
+///    relationships (grass vs. sky, enemy vs. background) survive too, so the
+///    result reads as a coherent "season" of the whole game rather than a
+///    per-screen clash. Grays, blacks, whites (hue nibble 0/D/E/F) and
+///    non-color bytes (> 0x3C, 0xFF skip markers) pass through untouched.
 ///
 /// Coverage: every quartet Recolored changed across the themed-slot table
-/// (slots 2-7) and master-pool slices 1-4 (skipping the level-layout pointer
-/// table at 0x377E0-0x37807). With two variants per position (vanilla,
-/// Recolored), variety scales as 2^(changed positions). Additional variants
-/// per position (hand-curated or from other palette hacks) can be appended to
-/// each `VariantGroup`'s `variants` list without touching this code path.
-///
-/// Positions that Recolored didn't change are omitted from the variants tables —
-/// they stay vanilla always.
+/// (slots 0-7 + tail), the palette pool at 0x36E20, and master-pool slices
+/// 1-4 (skipping the level-layout pointer table at 0x377E0-0x37807).
+/// Quartets Recolored kept at vanilla but which hold chromatic bytes are in
+/// `ROTATE_ONLY_QUARTETS`: they never variant-swap, but they DO hue-rotate,
+/// so a kept-vanilla green can't clash with rotated colors on the same screen.
 pub fn randomize_themed<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // Character palettes stay randomized too — independent of tileset palettes.
     randomize(rom, rng);
 
-    apply_variant_groups(rom, SLOT2_VARIANTS, rng);
-    apply_variant_groups(rom, PLAINS_SLOT3_VARIANTS, rng);
-    apply_variant_groups(rom, SLOT4_VARIANTS, rng);
-    apply_variant_groups(rom, SLOT5_VARIANTS, rng);
-    apply_variant_groups(rom, SLOT6_VARIANTS, rng);
-    apply_variant_groups(rom, SLOT7_VARIANTS, rng);
-    apply_variant_groups(rom, SLICE1_WATER_VARIANTS, rng);
-    apply_variant_groups(rom, SLICE2_VARIANTS, rng);
-    apply_variant_groups(rom, SLICE3_GIANT_VARIANTS, rng);
-    apply_variant_groups(rom, SLICE4_HEAD_VARIANTS, rng);
-    apply_variant_groups(rom, SLICE4_TAIL_VARIANTS, rng);
+    // One global hue shift per seed: 0 = source hues, 1-11 = rotated themes.
+    let hue_shift: u8 = rng.random_range(..12);
+
+    for region in THEMED_REGIONS {
+        apply_variant_groups(rom, region, hue_shift, rng);
+    }
+
+    // Hue-rotate the kept-vanilla chromatic quartets in place.
+    for &offset in ROTATE_ONLY_QUARTETS {
+        for i in 0..4 {
+            let b = rom.read_byte(offset + i);
+            rom.write_byte(offset + i, rotate_hue(b, hue_shift));
+        }
+    }
 }
 
-/// For each curated position, pick one 4-byte variant at random and write it.
-fn apply_variant_groups<R: Rng>(rom: &mut Rom, groups: &[VariantGroup], rng: &mut R) {
+/// Rotate a NES color's hue around the 12-hue wheel, preserving luminance.
+///
+/// NES color byte layout: high nibble = luminance row (0-3), low nibble =
+/// hue column (1-C; 0 = gray/white, D-F = blacks/forbidden). Only chromatic
+/// bytes (row 0-3, hue 1-C) rotate; everything else — grays, blacks, the
+/// 0xFF skip marker, and any non-color byte — passes through unchanged.
+/// Output hue stays in 1-C, so rotation can never produce the problematic
+/// 0x0D/0x0E/0x0F column or leave the base 64-color palette.
+fn rotate_hue(byte: u8, shift: u8) -> u8 {
+    let hue = byte & 0x0F;
+    if byte > 0x3C || hue == 0 || hue > 0x0C {
+        return byte;
+    }
+    let rotated = ((hue - 1 + shift) % 12) + 1;
+    (byte & 0xF0) | rotated
+}
+
+/// For each curated position, pick one 4-byte variant at random, hue-rotate
+/// its chromatic bytes by the global shift, and write it.
+fn apply_variant_groups<R: Rng>(
+    rom: &mut Rom,
+    groups: &[VariantGroup],
+    hue_shift: u8,
+    rng: &mut R,
+) {
     for group in groups {
         let picked = group.variants.choose(rng).unwrap();
-        rom.write_range(group.offset, picked);
+        let rotated = picked.map(|b| rotate_hue(b, hue_shift));
+        rom.write_range(group.offset, &rotated);
     }
 }
 
@@ -148,55 +207,97 @@ mod tests {
     /// All variant constants applied by `randomize_themed` (except character
     /// palettes, which have their own test).
     fn all_variant_groups() -> Vec<&'static VariantGroup> {
-        use crate::randomize::palette_variants::*;
         let mut v: Vec<&'static VariantGroup> = Vec::new();
-        for slice in [
-            SLOT2_VARIANTS, PLAINS_SLOT3_VARIANTS, SLOT4_VARIANTS, SLOT5_VARIANTS,
-            SLOT6_VARIANTS, SLOT7_VARIANTS, SLICE1_WATER_VARIANTS, SLICE2_VARIANTS,
-            SLICE3_GIANT_VARIANTS, SLICE4_HEAD_VARIANTS, SLICE4_TAIL_VARIANTS,
-        ] {
+        for slice in THEMED_REGIONS {
             v.extend(slice.iter());
         }
         v
     }
 
     #[test]
-    fn themed_emits_curated_variants_only() {
-        // Every 4-byte write at a curated position must exactly match one of the
-        // pre-registered variants — no random pool fallback, no free-byte picks.
-        for seed in [1u64, 42, 99, 777, 12345] {
-            let mut rom = make_test_rom();
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize_themed(&mut rom, &mut rng);
-            for group in all_variant_groups() {
-                let written = rom.read_range(group.offset, 4);
-                let matched = group.variants.iter().any(|v| v == written);
-                assert!(
-                    matched,
-                    "seed {seed} at {:#08x}: wrote {:02x?}, must match one curated variant",
-                    group.offset, written
-                );
+    fn rotate_hue_basics() {
+        // Shift 0 and full-circle shift are identity for every byte value.
+        for b in 0u8..=0xFF {
+            assert_eq!(rotate_hue(b, 0), b, "shift 0 must be identity for {b:#04x}");
+        }
+        // Chromatic bytes: luminance nibble preserved, hue stays in 1-C,
+        // 12-step cycle returns to start.
+        for row in 0u8..4 {
+            for hue in 1u8..=0x0C {
+                let b = (row << 4) | hue;
+                for shift in 0u8..12 {
+                    let r = rotate_hue(b, shift);
+                    assert_eq!(r & 0xF0, b & 0xF0, "luminance changed for {b:#04x}");
+                    let rh = r & 0x0F;
+                    assert!((1..=0x0C).contains(&rh), "hue {rh:#03x} out of range");
+                }
+                // applying 1-step rotation 12 times cycles back
+                let mut cur = b;
+                for _ in 0..12 {
+                    cur = rotate_hue(cur, 1);
+                }
+                assert_eq!(cur, b, "12-cycle must return to {b:#04x}");
+            }
+        }
+        // Non-chromatic bytes pass through at every shift: grays/whites
+        // (hue 0), blacks/forbidden (hue D-F), and anything above 0x3C.
+        for &b in &[0x00u8, 0x10, 0x20, 0x30, 0x0D, 0x0E, 0x0F, 0x1D, 0x2F, 0x3D, 0x3F, 0x40, 0x99, 0xAD, 0xFF] {
+            for shift in 0u8..12 {
+                assert_eq!(rotate_hue(b, shift), b, "{b:#04x} must pass through");
             }
         }
     }
 
     #[test]
+    fn themed_emits_rotated_curated_variants_only() {
+        // Every 4-byte write at a curated position must match one of the
+        // pre-registered variants rotated by a single global hue shift —
+        // the SAME shift across all positions (coherent theme, no per-quartet
+        // rainbow), and no free-byte picks.
+        for seed in [1u64, 42, 99, 777, 12345] {
+            let mut rom = make_test_rom();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize_themed(&mut rom, &mut rng);
+
+            let shift_matches = |shift: u8| -> bool {
+                all_variant_groups().iter().all(|group| {
+                    let written = rom.read_range(group.offset, 4);
+                    group.variants.iter().any(|v| {
+                        v.iter().zip(written).all(|(&vb, &wb)| rotate_hue(vb, shift) == wb)
+                    })
+                })
+            };
+            let matching: Vec<u8> = (0u8..12).filter(|&s| shift_matches(s)).collect();
+            assert!(
+                !matching.is_empty(),
+                "seed {seed}: no single global hue shift explains all written quartets"
+            );
+        }
+    }
+
+    #[test]
     fn themed_does_not_touch_uncurated_positions() {
-        // For every region covered, offsets not in any VariantGroup must stay
-        // untouched. We stamp recognizable canary bytes in each covered range
-        // and check them after running the randomizer.
+        // For every region covered, offsets not in any VariantGroup and not in
+        // a rotate-only quartet must stay untouched. We stamp recognizable
+        // canary bytes (all >= 0x40, so hue rotation passes them through) in
+        // each covered range and check them after running the randomizer.
         const REGIONS: &[(usize, usize, u8)] = &[
+            (0x36BE4, 0x36C1C, 0x40),  // slot 0 (W6 map)
+            (0x36C1C, 0x36C54, 0x50),  // slot 1 (W7 map)
             (0x36C54, 0x36C8C, 0xA0),  // slot 2
             (0x36C8C, 0x36CC4, 0xC0),  // slot 3
             (0x36CC4, 0x36CFC, 0xD0),  // slot 4
             (0x36CFC, 0x36D34, 0xE0),  // slot 5
             (0x36D34, 0x36D6C, 0x90),  // slot 6
             (0x36D6C, 0x36DA6, 0x80),  // slot 7
+            (0x36DA8, 0x36E20, 0x40),  // slot tail
+            (0x36E20, 0x37000, 0x50),  // pool
             (0x37000, 0x37200, 0x70),  // slice 1
             (0x37200, 0x37400, 0x60),  // slice 2
             (0x37400, 0x37600, 0x50),  // slice 3
             (0x37600, 0x377E0, 0xB0),  // slice 4 head
             (0x37808, 0x37846, 0xC0),  // slice 4 tail
+            (0x37844, 0x37850, 0x40),  // slice 4 post
         ];
 
         let mut rom = make_test_rom();
@@ -219,6 +320,9 @@ mod tests {
                 if curated_offsets.contains(&off) {
                     continue;
                 }
+                // Rotate-only quartets are read-rotate-written, but the canary
+                // bytes are all >= 0x40, which rotate_hue passes through — so
+                // even those positions must still hold their canary.
                 assert_eq!(
                     rom.read_byte(off),
                     base | ((off - start) as u8 & 0x0F),
@@ -228,6 +332,30 @@ mod tests {
                     end,
                 );
             }
+        }
+    }
+
+    #[test]
+    fn rotate_only_quartets_are_disjoint_and_safe() {
+        // Rotate-only quartets must not overlap any variant group (they'd
+        // double-write) and must not touch the pointer-table crash trap.
+        let curated_offsets: std::collections::HashSet<usize> = all_variant_groups()
+            .iter()
+            .flat_map(|g| (0..4).map(move |k| g.offset + k))
+            .collect();
+
+        for &offset in ROTATE_ONLY_QUARTETS {
+            for k in 0..4 {
+                assert!(
+                    !curated_offsets.contains(&(offset + k)),
+                    "rotate-only quartet {offset:#08x} overlaps a variant group"
+                );
+            }
+            let overlaps_ptr = offset + 4 > 0x377E0 && offset < 0x37808;
+            assert!(
+                !overlaps_ptr,
+                "rotate-only quartet {offset:#08x} overlaps pointer table"
+            );
         }
     }
 

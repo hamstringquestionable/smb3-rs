@@ -1312,6 +1312,37 @@ by Recolored, proving these are the master per-tileset/area palette tables.
 
 > **Note**: Specific table semantics (tileset assignment, index mapping) are inferred from
 > structural patterns and the Recolored IPS, not yet verified against the SMB3 disassembly.
+
+### Recolored diff sweep findings (2026-07-08)
+
+A full sweep of Recolored's changes across PRG012–013 (for themed-palette
+coverage expansion) established:
+
+- **0x33046–0x335xx (transition/fade palette streams + map attribute data):
+  Recolored RESTRUCTURED this region** — it inserted bytes, shifting the
+  remainder of the stream, and repointed referencing code elsewhere. Vanilla
+  data appears at recolored offsets ±8. In-place quartet swaps against this
+  region would corrupt the stream structure; supporting it would require
+  porting Recolored's code repoints too. **Skipped by the themed randomizer.**
+- **Slot-table tail (0x36DA8–0x36E20)**: Recolored recolors it in place with
+  its usual palette signature (`36 0F → 37 06` etc.). Treated as palette
+  quartets on the 0x36BE4 table grid. Contains the known Lava/Rotodisc
+  (0x36DAA) and Bowser/Donut (0x36DFE) quartets.
+- **Pool 0x36E20–0x37000**: walking quartets from 0x36E20 aligns the
+  empirically confirmed water-sprite slot at 0x36F00 (0xE0 is 4-aligned);
+  the previously documented 0x36EE2 sub-start does not (0x1E is not).
+  The 0x36E20 grid is therefore the structural one.
+- **0x37844–0x37850 (post slice 4)**: two more palette quartets past the
+  documented pool end (`30 36 0F` and `16 36 0F` recolored with the usual
+  pattern). The byte at 0x3784F is 0xAD (non-palette, likely code/data
+  boundary) — quartet writes must keep it identical.
+- Scattered single-byte `99→92` diffs across PRG013 are the `JSR $FE99 →
+  JSR $FE92` jump-engine relocation — code, never palette-swappable.
+
+Themed-palette randomizer coverage after this sweep: all Recolored-changed
+quartets in slots 0–7 + tail, pool, slices 1–4 (`palette_variants.rs`
+variant swap), plus hue-rotation-only coverage of kept-vanilla chromatic
+quartets (`ROTATE_ONLY_QUARTETS`).
 > Confirm with disassembly cross-reference before basing critical writes on these offsets.
 >
 > Diagnostic tool: `nix-shell -p python3 --run 'python3 tools/palette_inspect.py'` dumps
