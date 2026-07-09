@@ -149,13 +149,17 @@ fn randomize_inner(
         rom.set_tag("powerups");
         randomize::powerups::randomize(rom, &mut rng, options.hammer_vulnerable_koopalings);
     }
-    if options.palettes {
+    // Player colors and world colors are independent cosmetic layers:
+    // `palettes` drives the character wardrobe (random or player-picked),
+    // `palette_themed` drives level/enemy/map palettes.
+    if options.palettes || options.palette_themed {
         rom.set_tag("palettes");
         let mut palette_rng = ChaCha8Rng::from_os_rng();
+        if options.palettes {
+            randomize::palettes::randomize(rom, &mut palette_rng, options.player_color);
+        }
         if options.palette_themed {
             randomize::palettes::randomize_themed(rom, &mut palette_rng);
-        } else {
-            randomize::palettes::randomize(rom, &mut palette_rng);
         }
     }
     if options.any_enemies_active() {

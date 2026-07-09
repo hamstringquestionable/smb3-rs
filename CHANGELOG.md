@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The project is pre-1.0; new work accumulates under **[Unreleased]** and is moved
 into a versioned section when a release is cut.
 
+## [0.11.0] - 2026-07-08
+
+### Added
+
+- **Player color picker** — choose Mario's color from a NES palette grid in
+  the web app (or `--player-color <hex>` in the CLI); Luigi and the power-up
+  suits get matching colors derived from the pick, keeping the vanilla
+  brother contrast and natural skin tones. Random (the default) now rolls a
+  random color through the same matching-wardrobe scheme instead of the old
+  fully-independent byte picks. Composes with the visual re-skin patches:
+  the scheme anchors on the character's current colors, so picking works
+  the same on Luigi-35th, Peach, and Dr. Mario re-skins.
+
+### Changed
+
+- **Palette options reorganized into "Player colors" and "World colors"** —
+  the old Palettes / Themed per-tileset / Player color trio is now two
+  independent toggles: Player colors (the wardrobe: off = vanilla outfits,
+  random, or a picked color) and World colors (themed level/enemy/map
+  recoloring). Themed world colors no longer require player colors to be
+  on, and turning them on no longer re-rolls the wardrobe.
+- **Themed palettes: context-aware color themes + wider coverage** — themed
+  palette randomization now applies subtle, context-aware hue shifts on top
+  of the variant swap: each context (plains, water, fortress, desert,
+  lava, maps, ...) rolls its own small shift (at most 2 steps on the NES
+  hue wheel) from a per-context allowed set, so water stays watery, lava
+  stays warm, and skies never go magenta. Brightness is never changed, so
+  visibility is preserved. Coverage extended to the W6/W7 overworld maps,
+  the slot-table tail (lava/Bowser quartets), the 0x36E20 palette pool,
+  and stragglers past slice 4 — 118 new curated positions plus 324
+  rotate-only positions that previously stayed vanilla.
+
 ## [0.10.3] - 2026-07-07
 
 ### Fixed
