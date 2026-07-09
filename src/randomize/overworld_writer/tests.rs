@@ -502,3 +502,61 @@
             );
         }
     }
+
+    /// With piranha shuffle active the two plant levels enter the regular
+    /// level pool — and they end in a treasure chest, so a troll pipe must
+    /// never disguise them (CHEST_LEVELS membership drives the exclusion,
+    /// same as 3-7 / 5-1 / 8-Tank).
+    #[test]
+    fn test_troll_pipes_never_assigned_piranha_levels() {
+        use crate::PiranhaMode;
+
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+        // Piranha-active pipeline: sprites cleared, catalog entries released.
+        let mut prepped = rom.clone();
+        super::super::piranha_rooms::clear_vanilla_plants(&mut prepped);
+        let mut catalog = super::super::node_catalog::NodeCatalog::build(&prepped, false);
+        catalog.release_map_objects();
+        let pickup = super::super::overworld_pickup::pick_up(&prepped, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
+
+        // Both released plant levels must be in the pool at all.
+        let pooled_piranhas = pickup.pool.iter()
+            .filter(|pe| rom_data::MAP_OBJ_ENTRY_LINKS.iter()
+                .any(|&(w, _, e)| pe.world_idx == w && pe.entry_idx == e))
+            .count();
+        assert_eq!(pooled_piranhas, 2, "released plant levels missing from pool");
+
+        for seed in 0u64..32 {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let mut build = super::super::overworld_build::build(&prepped, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, super::super::overworld_build::BuildFlags { shuffle_toad_houses: true, ..Default::default() });
+            super::super::troll_pipes::mark_troll_pipes(&mut build, &mut rng);
+
+            let troll_positions: HashSet<(usize, (usize, usize))> = build.worlds.iter()
+                .flat_map(|w| w.slots.iter()
+                    .filter(|s| s.is_troll_pipe)
+                    .map(move |s| (w.world_idx, s.pos)))
+                .collect();
+
+            let flags = WriteFlags { piranha: PiranhaMode::Wild, ..Default::default() };
+            let assignments = assign_pool(&prepped, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, flags);
+
+            for (wi, wa) in assignments.iter().enumerate() {
+                for a in &wa.level {
+                    if !troll_positions.contains(&(wi, a.pos))
+                        || wa.demoted_troll_pipes.contains(&a.pos)
+                    {
+                        continue;
+                    }
+                    let ce = &catalog.entries[pickup.pool[a.pool_idx].catalog_idx];
+                    assert!(
+                        !rom_data::is_chest_level(ce.world_idx, ce.entry_idx),
+                        "seed {seed}: W{} troll pipe at {:?} got chest level (W{} entry {})",
+                        wi + 1, a.pos, ce.world_idx + 1, ce.entry_idx,
+                    );
+                }
+            }
+        }
+    }
