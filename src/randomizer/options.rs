@@ -103,16 +103,19 @@ pub(super) fn default_tri_on() -> Tri { Tri::On }
 pub struct Options {
     #[serde(default = "default_true")]
     pub powerups: bool,
+    /// Player colors: recolor the character wardrobe (random or picked via
+    /// `player_color`). Off = vanilla outfits. Cosmetic — not in the flag key.
     #[serde(default = "default_true")]
     pub palettes: bool,
-    /// Use themed per-tileset palette randomization instead of the character-only mode.
-    /// Cosmetic — not encoded in the flag key, so flipping this never changes level content.
+    /// World colors: themed palette randomization of levels, enemies, and
+    /// overworld maps. Independent of `palettes`. Cosmetic — not encoded in
+    /// the flag key, so flipping this never changes level content.
     #[serde(default)]
     pub palette_themed: bool,
-    /// Player-chosen NES color byte anchoring the character palette scheme
+    /// Player-chosen NES color byte anchoring the character wardrobe scheme
     /// (Mario's body gets this color; Luigi and the power-up suits are derived
     /// from it). Must be chromatic (hue nibble 1-C, value <= 0x3C). None =
-    /// random character colors. Cosmetic — not encoded in the flag key.
+    /// random color. Cosmetic — not encoded in the flag key.
     /// Only takes effect while `palettes` is on.
     #[serde(default)]
     pub player_color: Option<u8>,

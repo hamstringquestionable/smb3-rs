@@ -79,7 +79,7 @@ src/
     map_walker.rs      # BFS map walker for overworld connectivity analysis
     levels.rs          # Airship shuffle (the one cross-world level shuffle that's still independent of the overworld builder)
     powerups.rs        # ? block item randomization
-    palettes.rs        # Character/lava/Bowser color randomization
+    palettes.rs        # Player wardrobe colors + themed world palettes
     enemies.rs         # Enemy type swapping within class
     world_order.rs     # Shuffle world progression order
     items.rs           # Chest/reward item randomization

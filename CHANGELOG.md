@@ -21,6 +21,12 @@ into a versioned section when a release is cut.
 
 ### Changed
 
+- **Palette options reorganized into "Player colors" and "World colors"** —
+  the old Palettes / Themed per-tileset / Player color trio is now two
+  independent toggles: Player colors (the wardrobe: off = vanilla outfits,
+  random, or a picked color) and World colors (themed level/enemy/map
+  recoloring). Themed world colors no longer require player colors to be
+  on, and turning them on no longer re-rolls the wardrobe.
 - **Themed palettes: context-aware color themes + wider coverage** — themed
   palette randomization now applies subtle, context-aware hue shifts on top
   of the variant swap: each context (plains, water, fortress, desert,

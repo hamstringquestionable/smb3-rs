@@ -237,9 +237,9 @@ fn theme_group_for(offset: usize) -> Option<usize> {
 /// Quartets Recolored kept at vanilla but which hold chromatic bytes are in
 /// `ROTATE_ONLY_QUARTETS`: they never variant-swap, but they DO hue-rotate,
 /// so a kept-vanilla green can't clash with rotated colors on the same screen.
-pub fn randomize_themed<R: Rng>(rom: &mut Rom, rng: &mut R, player_color: Option<u8>) {
-    // Character palettes stay randomized too — independent of tileset palettes.
-    randomize(rom, rng, player_color);
+pub fn randomize_themed<R: Rng>(rom: &mut Rom, rng: &mut R) {
+    // World palettes only — the character wardrobe is `randomize()`'s job,
+    // driven independently by the player-colors option.
 
     // Roll one shift per theme group, in declaration order (deterministic
     // for a given RNG stream).
@@ -562,7 +562,7 @@ mod tests {
         for seed in [1u64, 42, 99, 777, 12345] {
             let mut rom = make_test_rom();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize_themed(&mut rom, &mut rng, None);
+            randomize_themed(&mut rom, &mut rng);
 
             for (gi, tg) in THEME_GROUPS.iter().enumerate() {
                 let group_quartets: Vec<&'static VariantGroup> = all_variant_groups()
@@ -669,7 +669,7 @@ mod tests {
         }
 
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize_themed(&mut rom, &mut rng, None);
+        randomize_themed(&mut rom, &mut rng);
 
         let curated_offsets: std::collections::HashSet<usize> = all_variant_groups()
             .iter()
@@ -729,7 +729,7 @@ mod tests {
         rom.write_range(0x377E0, &vanilla);
 
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize_themed(&mut rom, &mut rng, None);
+        randomize_themed(&mut rom, &mut rng);
 
         assert_eq!(
             rom.read_range(0x377E0, 0x28),

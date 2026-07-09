@@ -355,19 +355,18 @@ export const SCHEMA = [
 
 	// --- Cosmetic (does not affect seed or flag key) ---
 	{ id: "palettes", type: "bool", default: true,
-		label: "Palettes",
-		tip: "Randomize character, lava, and Bowser color palettes",
+		label: "Player colors",
+		tip: "Give Mario and Luigi new outfit colors. Off keeps the classic red and green.",
 		group: "cosmetic", inFlagKey: false },
-	{ id: "palette_themed", type: "bool", default: false,
-		label: "Themed per-tileset",
-		tip: "Recolor backgrounds, enemies, and world maps with a random color theme. Brightness stays the same, so everything stays easy to see. Re-rolls freely (doesn't affect the seed).",
-		group: "cosmetic", inFlagKey: false,
-		enabledWhen: { palettes: true }, indent: true },
 	{ id: "player_color", type: "nescolor", default: null,
-		label: "Player color",
-		tip: "Pick Mario's color — Luigi and the power-up suits get matching colors built from your pick. Leave on Random for surprise colors.",
+		label: "Color",
+		tip: "Pick Mario's color — Luigi and the power-up suits get matching colors built from your pick. Random rolls a new color every time.",
 		group: "cosmetic", inFlagKey: false,
 		enabledWhen: { palettes: true }, indent: true },
+	{ id: "palette_themed", type: "bool", default: false,
+		label: "World colors",
+		tip: "Recolor levels, enemies, and world maps with a random color theme. Brightness stays the same, so everything stays easy to see.",
+		group: "cosmetic", inFlagKey: false },
 ];
 
 // Hardcoded fields sent to Rust that aren't user-facing.

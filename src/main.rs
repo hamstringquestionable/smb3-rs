@@ -71,12 +71,13 @@ struct Cli {
     #[arg(long)]
     no_powerups: bool,
 
-    /// Disable palette randomization
+    /// Disable player color randomization (keep the brothers' vanilla outfits)
     #[arg(long)]
     no_palettes: bool,
 
-    /// Use themed per-tileset palette randomization instead of character-only mode.
-    /// Cosmetic; does not affect ROM content and is not encoded in the flag key.
+    /// Recolor levels, enemies, and world maps with a random theme (world
+    /// colors). Independent of player colors.
+    /// Cosmetic; not encoded in the flag key.
     #[arg(long)]
     themed_palettes: bool,
 
@@ -512,14 +513,12 @@ fn main() {
     eprintln!("  Seed: {seed}");
     eprintln!("  Flags: {}", options.to_flag_key());
     eprintln!("  Powerups: {}", if options.powerups { "on" } else { "off" });
-    eprintln!("  Palettes: {}", match (options.palettes, options.palette_themed) {
-        (false, _)   => "off",
-        (true, false) => "characters",
-        (true, true)  => "themed",
+    eprintln!("  Player colors: {}", match (options.palettes, options.player_color) {
+        (false, _)      => "vanilla".to_string(),
+        (true, None)    => "random".to_string(),
+        (true, Some(c)) => format!("${c:02X}"),
     });
-    if let Some(c) = options.player_color.filter(|_| options.palettes) {
-        eprintln!("  Player color: ${c:02X}");
-    }
+    eprintln!("  World colors: {}", if options.palette_themed { "themed" } else { "vanilla" });
     eprintln!("  Enemies:  {}", if options.any_enemies_active() { "on" } else { "off" });
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
     if options.world_order && options.world_count < 7 {
