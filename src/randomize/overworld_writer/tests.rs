@@ -383,3 +383,122 @@
             eprintln!("Wrote {filename}");
         }
     }
+
+    /// Piranha shuffle end-to-end: run the full randomizer in On and Wild
+    /// modes and check the ROM-side invariants — plants written with no
+    /// reward byte, sitting on path-node tiles over real pointer entries,
+    /// and every world keeping enough empty map-object slots for runtime
+    /// bonus spawns. Off mode must keep the vanilla W7 plants.
+    #[test]
+    fn test_piranha_shuffle_plants_written() {
+        use crate::{Options, PiranhaMode};
+
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+
+        let plant_slots = |out: &Rom, wi: usize| -> Vec<(usize, (usize, usize))> {
+            (0..9)
+                .filter(|&slot| {
+                    out.read_byte(rom_data::map_obj_slot_offset(
+                        out, rom_data::MAP_OBJ_IDS_MASTER, wi, slot,
+                    )) == 0x07
+                })
+                .map(|slot| {
+                    let y = out.read_byte(rom_data::map_obj_slot_offset(
+                        out, rom_data::MAP_OBJ_YS_MASTER, wi, slot,
+                    )) as usize;
+                    let xhi = out.read_byte(rom_data::map_obj_slot_offset(
+                        out, rom_data::MAP_OBJ_XHIS_MASTER, wi, slot,
+                    )) as usize;
+                    let xlo = out.read_byte(rom_data::map_obj_slot_offset(
+                        out, rom_data::MAP_OBJ_XLOS_MASTER, wi, slot,
+                    )) as usize;
+                    (slot, (y / 16 - 2, xhi * 16 + xlo / 16))
+                })
+                .collect()
+        };
+
+        for mode in [PiranhaMode::On, PiranhaMode::Wild] {
+            let mut out = rom.clone();
+            let options = Options {
+                piranha_shuffle: mode,
+                palettes: false,
+                ..Default::default()
+            };
+            crate::randomizer::randomize(&mut out, 42, &options);
+
+            let mut total_plants = 0;
+            for wi in 0..8 {
+                let empty = (0..9)
+                    .filter(|&slot| {
+                        out.read_byte(rom_data::map_obj_slot_offset(
+                            &out, rom_data::MAP_OBJ_IDS_MASTER, wi, slot,
+                        )) == 0x00
+                    })
+                    .count();
+                assert!(
+                    empty >= super::super::overworld_build::RESERVED_DYNAMIC_SLOTS,
+                    "{mode:?}: W{} has only {empty} empty map-object slots",
+                    wi + 1,
+                );
+
+                for (slot, (row, col)) in plant_slots(&out, wi) {
+                    total_plants += 1;
+                    assert_eq!(
+                        out.read_byte(rom_data::map_obj_reward_offset(wi, slot)),
+                        0,
+                        "{mode:?}: relocated plant carries a reward byte",
+                    );
+                    // Under-tile is a path node, not a numbered level tile.
+                    let tile = out.read_byte(rom_data::map_tile_offset(wi, row, col));
+                    assert!(
+                        !(0x03..=0x15).contains(&tile),
+                        "{mode:?}: W{} plant at ({row},{col}) sits on level tile {tile:#04x}",
+                        wi + 1,
+                    );
+                    // A pointer entry (the level the plant fronts) exists there.
+                    let world = &rom_data::WORLDS[wi];
+                    let found = (0..world.entry_count).any(|i| {
+                        rom_data::entry_grid_position(&out, world, i) == (row, col)
+                    });
+                    assert!(
+                        found,
+                        "{mode:?}: W{} plant at ({row},{col}) has no pointer entry",
+                        wi + 1,
+                    );
+                }
+            }
+            match mode {
+                // Both released levels got sprites at seed 42 (skips are
+                // possible in principle — hand-trap slot, full world — but
+                // zero plants would mean the feature silently no-opped).
+                PiranhaMode::On => assert!(
+                    (1..=2).contains(&total_plants),
+                    "On: expected 1-2 plants, found {total_plants}",
+                ),
+                PiranhaMode::Wild => assert!(
+                    total_plants >= 6,
+                    "Wild: expected ~1 plant per world, found {total_plants}",
+                ),
+                PiranhaMode::Off => unreachable!(),
+            }
+        }
+
+        // Off: vanilla plants stay at their linked slots with a reward.
+        let mut out = rom.clone();
+        let options = Options { palettes: false, ..Default::default() };
+        crate::randomizer::randomize(&mut out, 42, &options);
+        for &(wi, slot, _) in rom_data::MAP_OBJ_ENTRY_LINKS {
+            let id = out.read_byte(rom_data::map_obj_slot_offset(
+                &out, rom_data::MAP_OBJ_IDS_MASTER, wi, slot,
+            ));
+            assert_eq!(id, 0x07, "Off: vanilla plant missing at W{} slot {slot}", wi + 1);
+            assert_ne!(
+                out.read_byte(rom_data::map_obj_reward_offset(wi, slot)),
+                0,
+                "Off: vanilla plant reward cleared",
+            );
+        }
+    }

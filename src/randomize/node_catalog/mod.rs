@@ -155,6 +155,18 @@ impl NodeCatalog {
         NodeCatalog { entries, start_airship_swapped: [false; 8] }
     }
 
+    /// Reclassify map-object-linked entries (the W7 piranha plant levels) as
+    /// plain levels so they enter the shuffle pool. Called when piranha
+    /// shuffle is active; pairs with `piranha_rooms::clear_vanilla_plants`,
+    /// which frees their sprites/positions on the ROM side.
+    pub(crate) fn release_map_objects(&mut self) {
+        for e in &mut self.entries {
+            if matches!(e.kind, NodeKind::MapObject) {
+                e.kind = NodeKind::Level;
+            }
+        }
+    }
+
     /// Iterate entries for a specific world.
     pub(super) fn world(&self, world_idx: usize) -> impl Iterator<Item = &CatalogEntry> {
         self.entries.iter().filter(move |e| e.world_idx == world_idx)

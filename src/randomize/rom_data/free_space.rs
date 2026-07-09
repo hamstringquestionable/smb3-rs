@@ -41,6 +41,7 @@ pub(crate) const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x07FDF, 44, "boomboom_hits: decoupled stomp-count subroutine"),
     // PRG006 (file 0x0C010, CPU $C000–$DFFF) — level enemy data bank
     (0x0DA74, 22, "hand_rooms: 2 cloned enemy streams for unique 8-Hnd treasure rooms"),
+    (0x0DA8A, 22, "piranha_rooms: 2 cloned chest-room streams with OBJ_TREASURESET for 7-P1/7-P2"),
     // PRG029 (file 0x3A010, CPU $C000–$DFFF) — swim physics bank
     (0x3A600, 24, "faster_frog: Frog-Suit swim-speed boost routine"),
     // PRG000 (file 0x00010) — dead code at CPU $C918 (bytes skipped by the
@@ -216,6 +217,11 @@ pub(crate) const BOOMBOOM_HITS_SUB_CPU: u16    = 0xBFCF;  // $A000 + (0x07FDF - 
 // 11 bytes (page byte + 3 enemy entries + 0xFF terminator); two clones give
 // the three Hand levels independent OBJ_TREASURESET item bytes.
 pub(crate) const FS_HAND_ROOMS: usize = 0x0DA74; // 22 bytes (2 × 11)
+
+// PRG006 — piranha-shuffle chest-room clones (7-P1/7-P2), each 11 bytes:
+// page byte + OBJ_TREASURESET + treasure box + box-appear trigger + 0xFF.
+// Sits right after FS_HAND_ROOMS; the bank-end 0xFF filler runs to 0xE00F.
+pub(crate) const FS_PIRANHA_ROOMS: usize = 0x0DA8A; // 22 bytes (2 × 11, CPU $DA7A)
 
 // PRG029 (file 0x3A010, CPU $C000–$DFFF) — Frog-Suit swim-speed boost routine
 // reached by a bank-local JSR $C5F0 from the swim-physics code. 24 bytes.

@@ -54,7 +54,7 @@ pub(super) fn assign_pool<R: Rng>(
     rng: &mut R,
     flags: WriteFlags,
 ) -> Vec<WorldAssignments> {
-    let WriteFlags { cross_world, shuffle_hammer_bros } = flags;
+    let WriteFlags { cross_world, shuffle_hammer_bros, .. } = flags;
     let pickup = data.pickup;
     let catalog = data.catalog;
     // Partition pool by kind.

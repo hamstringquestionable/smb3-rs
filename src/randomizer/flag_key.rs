@@ -3,7 +3,7 @@
 
 use super::*;
 
-pub(super) const FLAG_KEY_VERSION: u8 = 22;
+pub(super) const FLAG_KEY_VERSION: u8 = 23;
 
 pub(super) const FLAG_KEY_PREFIX: &str = "SMB3R-";
 
@@ -73,7 +73,7 @@ pub(super) fn base32_decode(s: &str, expected_bytes: usize) -> Result<Vec<u8>, S
 
 impl Options {
     /// Encode options into raw bytes.
-    pub fn to_flag_bytes(&self) -> [u8; 12] {
+    pub fn to_flag_bytes(&self) -> [u8; 13] {
         let b0 = FLAG_KEY_VERSION;
 
         // b1: non-enemy flags. hammer_breaks_locks is tri-state: its value bit
@@ -216,7 +216,19 @@ impl Options {
             | (self.eights_are_wild.is_on() as u8) << 6
             | (self.eights_are_wild.is_maybe() as u8) << 7;
 
-        [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11]
+        // Encode PiranhaMode as 2 bits (off=0, on=1, wild=2).
+        fn pm(m: PiranhaMode) -> u8 {
+            match m {
+                PiranhaMode::Off => 0,
+                PiranhaMode::On => 1,
+                PiranhaMode::Wild => 2,
+            }
+        }
+
+        // b12: piranha_shuffle(1-0). Bits 7-2 free for future flags.
+        let b12 = pm(self.piranha_shuffle);
+
+        [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12]
     }
 
     /// Encode options into a compact Crockford Base-32 flag key (e.g. "SMB3R-1S0G...").
@@ -234,7 +246,7 @@ impl Options {
             .or_else(|| key.strip_prefix("smb3r-"))
             .unwrap_or(key);
 
-        let bytes = base32_decode(encoded, 12)?;
+        let bytes = base32_decode(encoded, 13)?;
 
         let version = bytes[0];
         if version != FLAG_KEY_VERSION {
@@ -252,6 +264,7 @@ impl Options {
         let b9 = bytes[9];
         let b10 = bytes[10];
         let b11 = bytes[11];
+        let b12 = bytes[12];
 
         let starting_lives = idx_to_lives((b3 >> 5) & 0x3);
 
@@ -275,6 +288,15 @@ impl Options {
                 1 => FireFlowerMode::On,
                 2 => FireFlowerMode::Wild,
                 _ => FireFlowerMode::Off,
+            }
+        }
+
+        // Decode the 2-bit piranha shuffle mode (b12 bits 1-0).
+        fn dpm(bits: u8) -> PiranhaMode {
+            match bits & 0x03 {
+                1 => PiranhaMode::On,
+                2 => PiranhaMode::Wild,
+                _ => PiranhaMode::Off,
             }
         }
 
@@ -319,6 +341,7 @@ impl Options {
             include_beta_stages: (b10 >> 6) & 1 != 0,
             hammer_breaks_bridges: dtri((b3 >> 7) & 1 != 0, (b11 >> 1) & 1 != 0),
             fire_flower: dffm(b11 >> 4),
+            piranha_shuffle: dpm(b12),
             ground: dem(b5 >> 6),
             shell: dem(b5 >> 4),
             flying: dem(b5 >> 2),

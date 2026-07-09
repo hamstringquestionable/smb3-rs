@@ -425,6 +425,28 @@ pub(crate) fn clear_hb_sprites(rom: &mut Rom, world_idx: usize) {
     }
 }
 
+/// Highest-index empty map-object slot usable for a stationary sprite,
+/// scanning from the top so the low slots stay free for the Hammer-Bro
+/// writer (which fills eligible slots from the bottom) and the reserved
+/// dynamic-spawn buffer.
+pub(crate) fn last_empty_map_obj_slot(rom: &Rom, world_idx: usize) -> Option<usize> {
+    const W8: usize = 7;
+    let first = if world_idx == W8 { 1 } else { 2 };
+    (first..9).rev().find(|&slot| {
+        rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot)) == 0x00
+    })
+}
+
+/// Clear a single map-object slot: id, position, and reward byte zeroed so
+/// the sprite no longer spawns and the slot reads as empty (`0x00`).
+pub(crate) fn clear_map_sprite(rom: &mut Rom, world_idx: usize, slot: usize) {
+    rom.write_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot), 0);
+    rom.write_byte(map_obj_slot_offset(rom, MAP_OBJ_YS_MASTER, world_idx, slot), 0);
+    rom.write_byte(map_obj_slot_offset(rom, MAP_OBJ_XHIS_MASTER, world_idx, slot), 0);
+    rom.write_byte(map_obj_slot_offset(rom, MAP_OBJ_XLOS_MASTER, world_idx, slot), 0);
+    rom.write_byte(map_obj_reward_offset(world_idx, slot), 0);
+}
+
 /// Write a redistributed Hammer-Bro sprite into a specific map-object slot:
 /// its type id, grid position, and reward byte.
 pub(crate) fn write_hb_sprite(
