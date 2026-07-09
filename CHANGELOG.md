@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The project is pre-1.0; new work accumulates under **[Unreleased]** and is moved
 into a versioned section when a release is cut.
 
-## [Unreleased]
+## [0.11.0] - 2026-07-08
 
 ### Added
 
@@ -15,7 +15,9 @@ into a versioned section when a release is cut.
   suits get matching colors derived from the pick, keeping the vanilla
   brother contrast and natural skin tones. Random (the default) now rolls a
   random color through the same matching-wardrobe scheme instead of the old
-  fully-independent byte picks.
+  fully-independent byte picks. Composes with the visual re-skin patches:
+  the scheme anchors on the character's current colors, so picking works
+  the same on Luigi-35th, Peach, and Dr. Mario re-skins.
 
 ### Changed
 
