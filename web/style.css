@@ -813,8 +813,11 @@ footer p {
 }
 
 .nescolor-random {
-    display: inline-block;
-    padding: 0.2rem 0.6rem;
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    text-align: center;
+    padding: 0.3rem 0.6rem;
     margin: 0.3rem 0;
     font-size: 0.75rem;
     color: #9a9ab0;
@@ -837,14 +840,17 @@ footer p {
 
 .nescolor-grid {
     display: grid;
-    grid-template-columns: repeat(12, 1.4rem);
-    gap: 2px;
+    /* Fluid: fill the options column; swatches stay square via aspect-ratio. */
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 3px;
     margin-top: 0.25rem;
+    width: 100%;
 }
 
 .nescolor-swatch {
-    width: 1.4rem;
-    height: 1.4rem;
+    width: 100%;
+    aspect-ratio: 1;
+    box-sizing: border-box;
     border-radius: 3px;
     border: 2px solid transparent;
     cursor: pointer;
