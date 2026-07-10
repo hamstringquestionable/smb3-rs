@@ -202,8 +202,11 @@ LEVEL_DATA_REGIONS = [
         "randomize_note_wood": True,
     },
     {
-        "name": "Pipe/Water (TS7)",
-        "tileset_ids": [7],
+        # TS6/TS7/TS8 all map to PRG018 (PAGE_A000_ByTileset), sharing this
+        # bank's generator set — the W7 pipe-maze interiors and 5-2's shaft
+        # are referenced via ts6/ts8 alt pointers into this same region.
+        "name": "Pipe/Water (TS6/7/8)",
+        "tileset_ids": [7, 6, 8],
         "start": 0x24BA7,
         "end": 0x26005,
         "extra_byte_dispatches": {35, 36, 37, 38, 39, 40, 41, 42, 49, 57},  # +49 OrangeBlock
@@ -3302,10 +3305,20 @@ def _junction_commands(rom, level, region_by_name):
 
 
 def find_antechamber_candidates(rom):
-    """Find levels matching the antechamber pattern: a small entry area whose
-    junction leads to a larger main area (the level content), which returns
-    either to the entry area (header-chain loop-back) or via the hardcoded
-    generic exit (JctCtl=4).
+    """Find levels matching the antechamber pattern: an entry area whose
+    front-door pipe (a junction near the start) leads into the level's
+    interior. Candidates must be safe for interior shuffling:
+
+    - the interior resolves and is self-contained — it defines its own exit
+      junction command(s), or never junctions out at all (dead alt pointer,
+      goal inside the interior). Spawn slots are read from the SOURCE area's
+      parse, so an interior relying on stale slots left by the entry area's
+      parse would break when hosted behind a foreign entry.
+    - no bosses in the pair.
+    - shape: the front-door junction sits on screens 0-2 of the entry area
+      and the interior is >= 6 screens. This separates the pattern from
+      bonus dips and end rooms (a level piping into a small room), which
+      are mechanically shuffle-safe but a different feature.
 
     Returns a list of candidate dicts keyed by entry header offset."""
     all_region_levels = []
@@ -3347,18 +3360,24 @@ def find_antechamber_candidates(rom):
             if main_lv is None or main_lv is entry_lv:
                 continue
 
-            entry_screens = entry_lv["header"]["screens"]
-            main_screens = main_lv["header"]["screens"]
-
-            # Pattern shape: small entry room, main area at least as large.
-            if entry_screens > 4 or main_screens < entry_screens:
+            entry_juncts = _junction_commands(rom, entry_lv, region_by_name)
+            if not entry_juncts:
                 continue
-            # The main area must define its own exit-transition junction
-            # command (spawn slots are read from the SOURCE area's parse —
-            # see "Junction Spawn Positions" in the ROM reference). A main
-            # with zero junction commands relies on stale slots left over
-            # from the entry area's parse, which the shuffle would corrupt.
-            if main_lv["junction_count"] < 1:
+
+            # Shape: front-door pipe near the level start, substantial
+            # interior. Excludes bonus dips / end rooms (inverse pattern).
+            if min(j["slot"] for j in entry_juncts) > 2:
+                continue
+            if main_lv["header"]["screens"] < 6:
+                continue
+
+            # The interior must be self-contained: it defines its own exit
+            # junction command(s), or never junctions out (dead alt). An
+            # interior with zero junction commands but a live alt pointer
+            # would rely on stale slots from the entry area's parse, which
+            # the shuffle corrupts.
+            back = layout_index.get((main_lv["alt_tileset"], main_lv["alt_layout"]))
+            if main_lv["junction_count"] < 1 and back is not None:
                 continue
 
             # No bosses anywhere in the pair (koopalings/boom-booms/bowser
@@ -3368,8 +3387,7 @@ def find_antechamber_candidates(rom):
                     or entry_lv["has_bowser"] or any(main_boss.values())):
                 continue
 
-            loop_back = layout_index.get(
-                (main_lv["alt_tileset"], main_lv["alt_layout"])) is entry_lv
+            loop_back = back is entry_lv
 
             candidates[entry_lv["header_offset"]] = {
                 "refs": [name],
@@ -3377,7 +3395,7 @@ def find_antechamber_candidates(rom):
                 "entry_tileset": tileset,
                 "main": main_lv,
                 "loop_back": loop_back,
-                "entry_junctions": _junction_commands(rom, entry_lv, region_by_name),
+                "entry_junctions": entry_juncts,
                 "main_junctions": _junction_commands(rom, main_lv, region_by_name),
             }
 
@@ -3408,10 +3426,11 @@ def render_antechamber_report(rom):
                     f"    {tag} junction @0x{j['offset']:05X} slot={j['slot']} "
                     f"exit_dir={j['exit_dir']} ystart={j['ystart_idx']} "
                     f"spawn scr {j['spawn_screen']} col {j['spawn_col']}{vert}")
-        # The shuffle overwrites the entry area's junction command bytes 1-2
-        # with the donor level's — that only works if there is exactly one.
+        # Multi-pipe entries are supported (all commands get the donor's
+        # spawn bytes; the lowest-slot command is the front door / donor
+        # source) but deserve a closer look when curating the pool.
         if len(c["entry_junctions"]) != 1:
-            lines.append(f"    {YELLOW}ambiguous: {len(c['entry_junctions'])} "
+            lines.append(f"    {YELLOW}note: {len(c['entry_junctions'])} "
                          f"junction commands in entry area{RESET}")
         lines.append("")
     lines.append(f"{len(cands)} candidate(s)")

@@ -171,7 +171,7 @@ export const SCHEMA = [
 		group: "map", inFlagKey: true },
 	{ id: "antechamber_shuffle", type: "tri", options: ON_OFF_MAYBE, default: "off",
 		label: "Lobby Shuffle", flavor: "Wrong door…",
-		tip: "Four levels start in a small room with a pipe into the level itself (5-3, 6-6, 7-5, 7-7). Shuffle which of those levels each pipe leads into. Maybe: the seed secretly decides on or off, so you won't know until you play.",
+		tip: "Ten levels start with a pipe that leads into the level itself. Shuffle which of those levels each pipe drops you into — you finish through whichever level you land in. Maybe: the seed secretly decides on or off, so you won't know until you play.",
 		group: "map", inFlagKey: true },
 	{ id: "piranha_shuffle", type: "tri", options: OFF_ON_WILD, default: "off",
 		label: "Piranha Shuffle",
