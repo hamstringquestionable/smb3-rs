@@ -114,13 +114,7 @@ pub(super) const FIREJET_DOWN_Y_DROP: u8 = 1;
 /// upward fire jet. In Wild mode piranhas are *self-contained* (parallel to the
 /// cannons model) — they never merge into the global wild pool in either
 /// direction. Removing an extra member is a one-line edit on this list.
-// PIRANHAS_WILD / PIRANHASC_WILD are `static`, not `const`: the object walker
-// classifies find_class_pool's result with `std::ptr::eq` against these slices.
-// A const's promoted backing array has no guaranteed unique address and can be
-// duplicated per codegen-unit once the producer (class_modes) and the comparison
-// (the walker) live in different modules, silently breaking the identity check.
-// `static` guarantees one address, keeping the pointer identity stable.
-pub(super) static PIRANHAS_WILD: &[u8] = &[
+pub(super) const PIRANHAS_WILD: &[u8] = &[
     0x7D, // OBJ_BIGGREENPIRANHA
     0x7F, // OBJ_BIGREDPIRANHA
     0xA0, // OBJ_GREENPIRANHA
@@ -141,7 +135,7 @@ pub(super) const PIRANHASC: &[u8] = &[
 
 /// Wild-mode ceiling pool: the ceiling piranhas plus the downward fire jet.
 /// Self-contained (no crossover to the standard pool).
-pub(super) static PIRANHASC_WILD: &[u8] = &[
+pub(super) const PIRANHASC_WILD: &[u8] = &[
     0xA1, // OBJ_GREENPIRANHA_FLIPPED
     0xA3, // OBJ_REDPIRANHA_FLIPPED
     0xA5, // OBJ_GREENPIRANHA_FIREC
@@ -323,22 +317,6 @@ pub(super) const GHOST_ENEMIES: &[u8] = &[
     0x45, // OBJ_HOTFOOT (Hot Foot, walks on floor)
 ];
 
-// ---------------------------------------------------------------------------
-// CHR sprite bank data — extracted from ROM PatTableSel tables
-// (PRG001–PRG005, each at bank offset +0x144)
-// ---------------------------------------------------------------------------
-//
-// Each object requests a 1KB CHR page be loaded into one of two sprite bank
-// slots: PatTable_BankSel+4 (PPU $1800-$1BFF) or +5 (PPU $1C00-$1FFF).
-// If two on-screen objects request different CHR pages for the same slot,
-// one renders with garbled sprites (the last one rendered wins).
-//
-// We track CHR page commitments per enemy data segment (= one sub-area)
-// and only allow swaps that are compatible with already-committed pages.
-// The two-pass approach pre-commits CHR from ALL non-swappable objects
-// before randomizing swappable enemies, preventing ordering-dependent bugs.
-
-
 /// Big ? Block IDs — these can be swapped with each other to randomize
 /// which suit/powerup the player gets from Big ? Blocks.
 pub(super) const BIG_Q_BLOCKS: &[u8] = &[
@@ -356,8 +334,6 @@ pub(super) const BIG_Q_BLOCKS: &[u8] = &[
 /// The W7 room is at enemy_ptr 0xC9A3; the Tanooki is the second entry.
 pub(super) const W7F1_TANOOKI_OFFSET: usize = 0x0C9B7;
 
-
-
 /// Injection candidates for wild_injections mode: special enemies injected after
 /// normal swaps. CHR compatibility checked via `sprite_bank()` at filter time.
 pub(super) const WILD_INJECTION_IDS: &[u8] = &[
@@ -369,6 +345,11 @@ pub(super) const WILD_INJECTION_IDS: &[u8] = &[
 /// Probability (out of 256) that a segment will receive an injection when wild_injections is on.
 /// ~15% chance per segment.
 pub(super) const WILD_INJECTION_CHANCE: u8 = 38;
+
+/// Odds (numerator, denominator) that a 2-enemy HB wild segment takes the
+/// non-stompable path (one HB_NEEDS_SHELL enemy + one shell partner) instead
+/// of two stompables. 5/31 ≈ 16%.
+pub(super) const HB_NONSTOMPABLE_ODDS: (u32, u32) = (5, 31);
 
 /// Large "Big Bertha" fish that exhaust sprite slots when stacked: the leaping
 /// eater (0x2D, the injected "Boss Bass") and the cheep-spitting birther (0x63).

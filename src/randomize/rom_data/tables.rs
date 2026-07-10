@@ -99,6 +99,21 @@ pub(crate) struct LevelDataRegion {
     pub randomize_note_wood: bool,
 }
 
+impl LevelDataRegion {
+    /// Size in bytes of the generator command whose first and third stream
+    /// bytes are `b0`/`b2`: 3 normally, 4 when the tileset's variable-size
+    /// dispatch reads an extra byte. Every level-stream walker (powerups,
+    /// enemy entry points) must step with this — a re-derived copy of the
+    /// formula is how parsers drift out of alignment.
+    pub fn command_size(&self, b0: u8, b2: u8) -> usize {
+        if (b2 & 0xF0) == 0 {
+            return 3; // fixed-size generator
+        }
+        let dispatch = (b0 >> 5) as usize * 15 + ((b2 >> 4) as usize) - 1;
+        if self.extra_byte_dispatches.contains(&(dispatch as u8)) { 4 } else { 3 }
+    }
+}
+
 /// Level data regions by tileset (file offset ranges + extra-byte dispatch info).
 pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
     LevelDataRegion { // Underground (TS14) — same dispatch table as TS3

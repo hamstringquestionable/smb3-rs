@@ -133,17 +133,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, no_airship_stars: bool) {
                 }
             }
 
-            // Determine command size: 3 bytes normally, 4 if this is a
-            // variable-size dispatch that reads an extra byte.
-            let mut cmd_size = 3;
-            if !is_fixed {
-                let grp = (b0 >> 5) as usize;
-                let dispatch = grp * 15 + ((b2 >> 4) as usize) - 1;
-                if region.extra_byte_dispatches.contains(&(dispatch as u8)) {
-                    cmd_size = 4;
-                }
-            }
-            i += cmd_size;
+            i += region.command_size(b0, b2);
         }
 
         rom.write_range(region.start, &data);

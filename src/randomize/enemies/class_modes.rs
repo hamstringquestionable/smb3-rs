@@ -85,19 +85,63 @@ impl ClassModes {
     }
 }
 
+/// A classified enemy's swap pool. The kind is explicit because callers pick
+/// differently per kind: `Wild` draws from the caller's wild pool with the
+/// uniform CHR-aware pick, the two piranha kinds use their self-contained
+/// category-equal strategies, and `Class` is a plain within-class pool.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum ClassPool {
+    /// The global wild pool (union of Wild-mode classes). Its members are
+    /// built per-Options at runtime, so callers supply the slice.
+    Wild,
+    /// Self-contained standard-piranha wild pool ([`PIRANHAS_WILD`]).
+    PiranhaStd,
+    /// Self-contained ceiling-piranha wild pool ([`PIRANHASC_WILD`]).
+    PiranhaCeil,
+    /// A plain class pool: Shuffle mode, or a self-contained Wild class
+    /// (cannons).
+    Class(&'static [u8]),
+}
+
+impl ClassPool {
+    /// The pool members. `wild_pool` supplies the `Wild` variant's slice;
+    /// the other variants ignore it.
+    pub(super) fn slice(self, wild_pool: &[u8]) -> &[u8] {
+        match self {
+            ClassPool::Wild => wild_pool,
+            ClassPool::PiranhaStd => PIRANHAS_WILD,
+            ClassPool::PiranhaCeil => PIRANHASC_WILD,
+            ClassPool::Class(class) => class,
+        }
+    }
+}
+
+/// Whether the walker's Pass 1 should pre-commit this object's CHR page
+/// before replacements are picked: non-swappable objects (except Boom-Booms,
+/// which are swapped separately via `BOOMBOOM_SWAP`) and uniform-CHR classes
+/// (every member shares the page/slot, so a swap can't change it). Wild
+/// entries never pre-commit — their page is decided by the pick itself.
+pub(super) fn should_precommit(obj_id: u8, modes: &ClassModes) -> bool {
+    match find_class_pool(obj_id, modes) {
+        None => !BOOMBOOM_IDS.contains(&obj_id),
+        Some(ClassPool::Wild) => false,
+        Some(ClassPool::PiranhaStd) => is_uniform_chr_class(PIRANHAS_WILD),
+        Some(ClassPool::PiranhaCeil) => is_uniform_chr_class(PIRANHASC_WILD),
+        Some(ClassPool::Class(class)) => is_uniform_chr_class(class),
+    }
+}
+
 /// Identify which class an enemy ID belongs to, and return the swap pool
 /// based on that class's mode. Returns None if the class is Off or unknown.
-pub(super) fn find_class_pool<'a>(
-    id: u8, modes: &ClassModes, wild_pool: &'a [u8],
-) -> Option<&'a [u8]> {
+pub(super) fn find_class_pool(id: u8, modes: &ClassModes) -> Option<ClassPool> {
     // Macro to check class membership and return appropriate pool
     macro_rules! check {
         ($ids:expr, $mode:expr) => {
             if $ids.contains(&id) {
                 return match $mode {
                     EnemyMode::Off => None,
-                    EnemyMode::Shuffle => Some($ids),
-                    EnemyMode::Wild => Some(wild_pool),
+                    EnemyMode::Shuffle => Some(ClassPool::Class($ids)),
+                    EnemyMode::Wild => Some(ClassPool::Wild),
                 };
             }
         };
@@ -115,18 +159,18 @@ pub(super) fn find_class_pool<'a>(
         return match modes.piranhas {
             EnemyMode::Off => None,
             EnemyMode::Shuffle => {
-                if PIRANHAS.contains(&id) { Some(PIRANHAS) } else { None }
+                if PIRANHAS.contains(&id) { Some(ClassPool::Class(PIRANHAS)) } else { None }
             }
-            EnemyMode::Wild => Some(PIRANHAS_WILD),
+            EnemyMode::Wild => Some(ClassPool::PiranhaStd),
         };
     }
     if PIRANHASC.contains(&id) || id == FIREJET_DOWN {
         return match modes.piranhas {
             EnemyMode::Off => None,
             EnemyMode::Shuffle => {
-                if PIRANHASC.contains(&id) { Some(PIRANHASC) } else { None }
+                if PIRANHASC.contains(&id) { Some(ClassPool::Class(PIRANHASC)) } else { None }
             }
-            EnemyMode::Wild => Some(PIRANHASC_WILD),
+            EnemyMode::Wild => Some(ClassPool::PiranhaCeil),
         };
     }
 
@@ -145,8 +189,10 @@ pub(super) fn find_class_pool<'a>(
             if sub.contains(&id) {
                 return match modes.cannons {
                     EnemyMode::Off => None,
-                    EnemyMode::Shuffle => Some(sub), // stay within sub-class
-                    EnemyMode::Wild => Some(ALL_CANNONS), // any cfire → any cfire
+                    // stay within sub-class
+                    EnemyMode::Shuffle => Some(ClassPool::Class(sub)),
+                    // any cfire → any cfire
+                    EnemyMode::Wild => Some(ClassPool::Class(ALL_CANNONS)),
                 };
             }
         }
