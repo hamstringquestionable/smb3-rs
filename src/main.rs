@@ -14,8 +14,6 @@ fn tri_str(t: Tri) -> &'static str {
     }
 }
 
-/// CLI validator for `--starting-lives` — only the four canonical values
-/// that map cleanly to the 2-bit flag-key encoding are accepted.
 /// Parse a NES color byte from hex ("16", "0x16", "$16") and require it to be
 /// chromatic (hue nibble 1-C, value <= 0x3C) so the palette scheme has a hue
 /// to anchor on.
@@ -32,6 +30,8 @@ fn parse_nes_color(s: &str) -> Result<u8, String> {
     }
 }
 
+/// CLI validator for `--starting-lives` — only the four canonical values
+/// that map cleanly to the 2-bit flag-key encoding are accepted.
 fn parse_starting_lives(s: &str) -> Result<u8, String> {
     let n: u8 = s.parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
     if STARTING_LIVES_VALUES.contains(&n) {
@@ -47,6 +47,90 @@ fn parse_starting_lives(s: &str) -> Result<u8, String> {
             n
         ))
     }
+}
+
+/// clap value parser for the per-class enemy flags (off/shuffle/wild).
+fn parse_enemy_mode(s: &str) -> Result<EnemyMode, String> {
+    match s {
+        "off" => Ok(EnemyMode::Off),
+        "shuffle" => Ok(EnemyMode::Shuffle),
+        "wild" => Ok(EnemyMode::Wild),
+        _ => Err("valid values: off, shuffle, wild".to_string()),
+    }
+}
+
+/// clap value parser for `--fire-flower` (off/on/wild).
+fn parse_fire_flower(s: &str) -> Result<FireFlowerMode, String> {
+    match s {
+        "off" => Ok(FireFlowerMode::Off),
+        "on" => Ok(FireFlowerMode::On),
+        "wild" => Ok(FireFlowerMode::Wild),
+        _ => Err("valid values: off, on, wild".to_string()),
+    }
+}
+
+/// clap value parser for `--piranha-shuffle` (off/on/wild).
+fn parse_piranha(s: &str) -> Result<PiranhaMode, String> {
+    match s {
+        "off" => Ok(PiranhaMode::Off),
+        "on" => Ok(PiranhaMode::On),
+        "wild" => Ok(PiranhaMode::Wild),
+        _ => Err("valid values: off, on, wild".to_string()),
+    }
+}
+
+/// clap value parser for the tri-state flags (off/on/maybe).
+fn parse_tri(s: &str) -> Result<Tri, String> {
+    match s {
+        "off" => Ok(Tri::Off),
+        "on" => Ok(Tri::On),
+        "maybe" => Ok(Tri::Maybe),
+        _ => Err("valid values: off, on, maybe".to_string()),
+    }
+}
+
+/// Inventory items: (CLI name, item ID, display name). Single source for the
+/// `--starting-items` parser and the run-summary printer; extra spellings are
+/// handled as aliases in `item_id`.
+const ITEMS: &[(&str, u8, &str)] = &[
+    ("mushroom", 0x01, "Mushroom"),
+    ("fire", 0x02, "Fire Flower"),
+    ("leaf", 0x03, "Super Leaf"),
+    ("frog", 0x04, "Frog Suit"),
+    ("tanooki", 0x05, "Tanooki Suit"),
+    ("hammer-suit", 0x06, "Hammer Suit"),
+    ("cloud", 0x07, "Cloud"),
+    ("p-wing", 0x08, "P-Wing"),
+    ("star", 0x09, "Starman"),
+    ("anchor", 0x0A, "Anchor"),
+    ("hammer", 0x0B, "Hammer"),
+    ("whistle", 0x0C, "Whistle"),
+    ("music-box", 0x0D, "Music Box"),
+    ("random", 0x0E, "Random"),
+    ("random-no-whistle", 0x0F, "Random (No Whistle)"),
+    ("random-suit-only", 0x10, "Random (Suit Only)"),
+];
+
+/// Look up a starting-item ID by CLI name (case-insensitive, with aliases).
+fn item_id(name: &str) -> Option<u8> {
+    let lower = name.to_lowercase();
+    let canonical = match lower.as_str() {
+        "fire-flower" | "fireflower" => "fire",
+        "frog-suit" => "frog",
+        "tanooki-suit" => "tanooki",
+        "hammersuit" => "hammer-suit",
+        "pwing" => "p-wing",
+        "starman" => "star",
+        "musicbox" => "music-box",
+        "random-suit" => "random-suit-only",
+        other => other,
+    };
+    ITEMS.iter().find(|&&(n, _, _)| n == canonical).map(|&(_, id, _)| id)
+}
+
+/// Display name for a starting-item ID in the run summary.
+fn item_display_name(id: u8) -> &'static str {
+    ITEMS.iter().find(|&&(_, i, _)| i == id).map_or("?", |&(_, _, n)| n)
 }
 
 #[derive(Parser)]
@@ -112,17 +196,9 @@ struct Cli {
     #[arg(long)]
     keep_whistles: bool,
 
-    /// Shuffle pipe endpoint positions during the overworld rebuild
-    #[arg(long)]
-    shuffle_pipes: bool,
-
     /// Disable pipe shuffle (on by default)
     #[arg(long)]
     no_shuffle_pipes: bool,
-
-    /// Shuffle airship levels across worlds
-    #[arg(long)]
-    shuffle_airships: bool,
 
     /// Disable airship shuffle (on by default)
     #[arg(long)]
@@ -134,14 +210,14 @@ struct Cli {
 
     /// Add extra hammer-breakable rocks (W1 6,5 and W8 3,37 decorations):
     /// off, on, or maybe (the seed decides, hidden from the flag key). Default: off.
-    #[arg(long, default_value = "off")]
-    more_hammer_rocks: String,
+    #[arg(long, default_value = "off", value_parser = parse_tri)]
+    more_hammer_rocks: Tri,
 
     /// 8s are Wild: enable the W8 Dark World canoe (screen 0) and extra paths
     /// (screen 2): off, on, or maybe (the seed decides, hidden from the flag
     /// key). Default: off.
-    #[arg(long, default_value = "off")]
-    eights_are_wild: String,
+    #[arg(long, default_value = "off", value_parser = parse_tri)]
+    eights_are_wild: Tri,
 
     /// Disable card speed clear (one-of-each skips cutscene, on by default)
     #[arg(long)]
@@ -177,13 +253,13 @@ struct Cli {
 
     /// Hammer item also breaks fortress lock tiles on the overworld map:
     /// off, on, or maybe (the seed decides, hidden from the flag key). Default: off.
-    #[arg(long, default_value = "off")]
-    hammer_breaks_locks: String,
+    #[arg(long, default_value = "off", value_parser = parse_tri)]
+    hammer_breaks_locks: Tri,
 
     /// Hammer item also breaks water gap (bridge) tiles on the overworld map:
     /// off, on, or maybe (the seed decides, hidden from the flag key). Default: off.
-    #[arg(long, default_value = "off")]
-    hammer_breaks_bridges: String,
+    #[arg(long, default_value = "off", value_parser = parse_tri)]
+    hammer_breaks_bridges: Tri,
 
     /// Angry Sun begins swooping immediately on spawn (MaCobra52's "Early Sun" patch)
     #[arg(long)]
@@ -220,14 +296,14 @@ struct Cli {
     /// Random Fire Flower: in-level Fire Flowers grant a position-derived power
     /// state instead of always Fire — off, on, or wild (default: off).
     /// `on` = Fire/Frog/Tanooki/Hammer; `wild` also allows Small/Big.
-    #[arg(long, default_value = "off")]
-    fire_flower: String,
+    #[arg(long, default_value = "off", value_parser = parse_fire_flower)]
+    fire_flower: FireFlowerMode,
 
     /// Piranha shuffle: release the two W7 piranha plant levels into the level
     /// pool — off, on, or wild (default: off). `on` = their plant sprites follow
     /// them; `wild` = plants scatter onto ~1 random level slot per world instead.
-    #[arg(long, default_value = "off")]
-    piranha_shuffle: String,
+    #[arg(long, default_value = "off", value_parser = parse_piranha)]
+    piranha_shuffle: PiranhaMode,
 
     /// Disable spade-game shuffle (on by default; off keeps vanilla spade positions)
     #[arg(long)]
@@ -244,8 +320,8 @@ struct Cli {
     /// Troll-pipe level slots (one regular level per world W2-W8 disguised as a
     /// pipe tile): off, on, or maybe (the seed decides, hidden from the flag
     /// key). Default: on.
-    #[arg(long, default_value = "on")]
-    troll_pipes: String,
+    #[arg(long, default_value = "on", value_parser = parse_tri)]
+    troll_pipes: Tri,
 
     /// Include ~9 unreferenced beta levels in the overworld shuffle pool (off by default)
     #[arg(long)]
@@ -264,48 +340,48 @@ struct Cli {
     anchor_visuals: bool,
 
     /// Ground enemies: off, shuffle, or wild (default: shuffle)
-    #[arg(long, default_value = "shuffle")]
-    ground: String,
+    #[arg(long, default_value = "shuffle", value_parser = parse_enemy_mode)]
+    ground: EnemyMode,
 
     /// Shell enemies: off, shuffle, or wild (default: shuffle)
-    #[arg(long, default_value = "shuffle")]
-    shell: String,
+    #[arg(long, default_value = "shuffle", value_parser = parse_enemy_mode)]
+    shell: EnemyMode,
 
     /// Flying enemies: off, shuffle, or wild (default: shuffle)
-    #[arg(long, default_value = "shuffle")]
-    flying: String,
+    #[arg(long, default_value = "shuffle", value_parser = parse_enemy_mode)]
+    flying: EnemyMode,
 
     /// Piranha plant variants: off, shuffle, or wild (default: shuffle)
-    #[arg(long, default_value = "shuffle")]
-    piranhas: String,
+    #[arg(long, default_value = "shuffle", value_parser = parse_enemy_mode)]
+    piranhas: EnemyMode,
 
     /// Ghost house enemies: off, shuffle, or wild (default: shuffle)
-    #[arg(long, default_value = "shuffle")]
-    ghosts: String,
+    #[arg(long, default_value = "shuffle", value_parser = parse_enemy_mode)]
+    ghosts: EnemyMode,
 
     /// Thwomp variants: off, shuffle, or wild (default: off)
-    #[arg(long, default_value = "off")]
-    thwomps: String,
+    #[arg(long, default_value = "off", value_parser = parse_enemy_mode)]
+    thwomps: EnemyMode,
 
     /// Rotodisc variants: off, shuffle, or wild (default: off)
-    #[arg(long, default_value = "off")]
-    rotodiscs: String,
+    #[arg(long, default_value = "off", value_parser = parse_enemy_mode)]
+    rotodiscs: EnemyMode,
 
     /// Cannon fire variants: off, shuffle, or wild (default: off)
-    #[arg(long, default_value = "off")]
-    cannons: String,
+    #[arg(long, default_value = "off", value_parser = parse_enemy_mode)]
+    cannons: EnemyMode,
 
     /// Water enemies: off, shuffle, or wild (default: shuffle)
-    #[arg(long, default_value = "shuffle")]
-    water: String,
+    #[arg(long, default_value = "shuffle", value_parser = parse_enemy_mode)]
+    water: EnemyMode,
 
     /// Hammer/Boomerang/Fire Bros: off, shuffle, or wild (default: shuffle)
-    #[arg(long, default_value = "shuffle")]
-    bros: String,
+    #[arg(long, default_value = "shuffle", value_parser = parse_enemy_mode)]
+    bros: EnemyMode,
 
     /// HB encounter segments: off, shuffle, or wild (default: off)
-    #[arg(long, default_value = "off")]
-    hb_encounters: String,
+    #[arg(long, default_value = "off", value_parser = parse_enemy_mode)]
+    hb_encounters: EnemyMode,
 
     /// Inject Lakitu/Angry Sun/Boss Bass into ~15% of segments
     #[arg(long)]
@@ -344,102 +420,24 @@ struct Cli {
     skip_rom_validation: bool,
 }
 
-fn main() {
-    let cli = Cli::parse();
-
-    let rom_data = match fs::read(&cli.rom) {
-        Ok(data) => data,
-        Err(e) => {
-            eprintln!("Error reading ROM: {e}");
-            process::exit(1);
-        }
-    };
-
-    let seed = cli.seed.unwrap_or_else(rand::random);
-
-    fn parse_enemy_mode(s: &str, name: &str) -> EnemyMode {
-        match s {
-            "off" => EnemyMode::Off,
-            "shuffle" => EnemyMode::Shuffle,
-            "wild" => EnemyMode::Wild,
-            other => {
-                eprintln!("Invalid --{name} value: {other}");
-                eprintln!("Valid values: off, shuffle, wild");
-                process::exit(1);
-            }
-        }
-    }
-
-    fn parse_fire_flower(s: &str) -> FireFlowerMode {
-        match s {
-            "off" => FireFlowerMode::Off,
-            "on" => FireFlowerMode::On,
-            "wild" => FireFlowerMode::Wild,
-            other => {
-                eprintln!("Invalid --fire-flower value: {other}");
-                eprintln!("Valid values: off, on, wild");
-                process::exit(1);
-            }
-        }
-    }
-
-    fn parse_piranha(s: &str) -> PiranhaMode {
-        match s {
-            "off" => PiranhaMode::Off,
-            "on" => PiranhaMode::On,
-            "wild" => PiranhaMode::Wild,
-            other => {
-                eprintln!("Invalid --piranha-shuffle value: {other}");
-                eprintln!("Valid values: off, on, wild");
-                process::exit(1);
-            }
-        }
-    }
-
-    fn parse_tri(s: &str, name: &str) -> Tri {
-        match s {
-            "off" => Tri::Off,
-            "on" => Tri::On,
-            "maybe" => Tri::Maybe,
-            other => {
-                eprintln!("Invalid --{name} value: {other}");
-                eprintln!("Valid values: off, on, maybe");
-                process::exit(1);
-            }
-        }
-    }
-
+/// Assemble the randomizer `Options` from parsed CLI arguments (or from a
+/// `--flags` key, which overrides everything except the cosmetic overlays).
+/// Exits with an error message on invalid starting items or flag key.
+fn build_options(cli: &Cli) -> Options {
     let starting_items: Vec<u8> = cli.starting_items.iter().map(|name| {
-        match name.to_lowercase().as_str() {
-            "mushroom" => 0x01,
-            "fire" | "fire-flower" | "fireflower" => 0x02,
-            "leaf" => 0x03,
-            "frog" | "frog-suit" => 0x04,
-            "tanooki" | "tanooki-suit" => 0x05,
-            "hammer-suit" | "hammersuit" => 0x06,
-            "cloud" => 0x07,
-            "p-wing" | "pwing" => 0x08,
-            "star" | "starman" => 0x09,
-            "anchor" => 0x0A,
-            "hammer" => 0x0B,
-            "whistle" => 0x0C,
-            "music-box" | "musicbox" => 0x0D,
-            "random" => 0x0E,
-            "random-no-whistle" => 0x0F,
-            "random-suit-only" | "random-suit" => 0x10,
-            other => {
-                eprintln!("Unknown item: {other}");
-                eprintln!("Valid: mushroom, fire, leaf, frog, tanooki, hammer-suit, cloud, p-wing, star, anchor, hammer, whistle, music-box, random, random-no-whistle, random-suit-only");
-                process::exit(1);
-            }
-        }
+        item_id(name).unwrap_or_else(|| {
+            eprintln!("Unknown item: {name}");
+            let valid: Vec<&str> = ITEMS.iter().map(|&(n, _, _)| n).collect();
+            eprintln!("Valid: {}", valid.join(", "));
+            process::exit(1);
+        })
     }).collect();
     if starting_items.len() > 3 {
         eprintln!("At most 3 starting items allowed (got {})", starting_items.len());
         process::exit(1);
     }
 
-    let options = if let Some(ref flag_key) = cli.flags {
+    if let Some(ref flag_key) = cli.flags {
         match Options::from_flag_key(flag_key) {
             Ok(mut opts) => {
                 // palette_themed is cosmetic and deliberately not encoded in the
@@ -477,8 +475,8 @@ fn main() {
             disable_autoscroll: !cli.keep_autoscroll,
             chest_items: !cli.no_chest_items,
             remove_whistles: !cli.keep_whistles,
-            more_hammer_rocks: parse_tri(&cli.more_hammer_rocks, "more-hammer-rocks"),
-            eights_are_wild: parse_tri(&cli.eights_are_wild, "eights-are-wild"),
+            more_hammer_rocks: cli.more_hammer_rocks,
+            eights_are_wild: cli.eights_are_wild,
             card_speed_clear: !cli.no_card_speed_clear,
             remove_n_cards: !cli.keep_n_cards,
             skip_wand_cutscene: !cli.keep_wand_cutscene,
@@ -487,8 +485,8 @@ fn main() {
             boomboom_hits: !cli.keep_boomboom_stomps,
             hammer_vulnerable_koopalings: cli.hammer_vulnerable_koopalings,
             random_koopalings: cli.random_koopalings,
-            hammer_breaks_locks: parse_tri(&cli.hammer_breaks_locks, "hammer-breaks-locks"),
-            hammer_breaks_bridges: parse_tri(&cli.hammer_breaks_bridges, "hammer-breaks-bridges"),
+            hammer_breaks_locks: cli.hammer_breaks_locks,
+            hammer_breaks_bridges: cli.hammer_breaks_bridges,
             early_sun: cli.early_sun,
             limit_bro_movement: cli.limit_bro_movement,
             japanese_damage: cli.japanese_damage,
@@ -497,38 +495,36 @@ fn main() {
             faster_tail_speed: cli.faster_tail_speed,
             no_game_over_penalty: cli.no_game_over_penalty,
             faster_frog: cli.faster_frog,
-            fire_flower: parse_fire_flower(&cli.fire_flower),
-            piranha_shuffle: parse_piranha(&cli.piranha_shuffle),
+            fire_flower: cli.fire_flower,
+            piranha_shuffle: cli.piranha_shuffle,
             shuffle_spade_games: !cli.no_shuffle_spade_games,
             shuffle_toad_houses: !cli.no_shuffle_toad_houses,
             hands_levels: !cli.no_hands_levels,
-            troll_pipes: parse_tri(&cli.troll_pipes, "troll-pipes"),
+            troll_pipes: cli.troll_pipes,
             include_beta_stages: cli.include_beta_stages,
             swap_start_airship: cli.swap_start_airship,
             anchor_visuals: cli.anchor_visuals,
-            ground: parse_enemy_mode(&cli.ground, "ground"),
-            shell: parse_enemy_mode(&cli.shell, "shell"),
-            flying: parse_enemy_mode(&cli.flying, "flying"),
-            piranhas: parse_enemy_mode(&cli.piranhas, "piranhas"),
-            ghosts: parse_enemy_mode(&cli.ghosts, "ghosts"),
-            thwomps: parse_enemy_mode(&cli.thwomps, "thwomps"),
-            rotodiscs: parse_enemy_mode(&cli.rotodiscs, "rotodiscs"),
-            cannons: parse_enemy_mode(&cli.cannons, "cannons"),
-            water: parse_enemy_mode(&cli.water, "water"),
-            bros: parse_enemy_mode(&cli.bros, "bros"),
-            hb_encounters: parse_enemy_mode(&cli.hb_encounters, "hb-encounters"),
+            ground: cli.ground,
+            shell: cli.shell,
+            flying: cli.flying,
+            piranhas: cli.piranhas,
+            ghosts: cli.ghosts,
+            thwomps: cli.thwomps,
+            rotodiscs: cli.rotodiscs,
+            cannons: cli.cannons,
+            water: cli.water,
+            bros: cli.bros,
+            hb_encounters: cli.hb_encounters,
             wild_injections: cli.wild_injections,
             starting_lives: cli.starting_lives,
-            starting_items: starting_items.clone(),
+            starting_items,
             skip_rom_validation: cli.skip_rom_validation,
         }
-    };
+    }
+}
 
-    let ext = if cli.patched_rom { "nes" } else { "ips" };
-    let output_path = cli
-        .output
-        .unwrap_or_else(|| PathBuf::from(format!("smb3-rs_{seed}.{ext}")));
-
+/// Print the run summary (seed, flag key, active options, output path) to stderr.
+fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("SMB3 Randomizer v{}", env!("CARGO_PKG_VERSION"));
     eprintln!("  Seed: {seed}");
     eprintln!("  Flags: {}", options.to_flag_key());
@@ -565,17 +561,35 @@ fn main() {
         PiranhaMode::Wild => "wild",
     });
     if !options.starting_items.is_empty() {
-        let item_names: Vec<&str> = options.starting_items.iter().map(|&id| match id {
-            0x01 => "Mushroom", 0x02 => "Fire Flower", 0x03 => "Super Leaf",
-            0x04 => "Frog Suit", 0x05 => "Tanooki Suit", 0x06 => "Hammer Suit",
-            0x07 => "Cloud", 0x08 => "P-Wing", 0x09 => "Starman",
-            0x0A => "Anchor", 0x0B => "Hammer", 0x0C => "Whistle", 0x0D => "Music Box",
-            0x0E => "Random", 0x0F => "Random (No Whistle)", 0x10 => "Random (Suit Only)",
-            _ => "?",
-        }).collect();
+        let item_names: Vec<&str> =
+            options.starting_items.iter().map(|&id| item_display_name(id)).collect();
         eprintln!("  Starting items: {}", item_names.join(", "));
     }
     eprintln!("  Output:   {}", output_path.display());
+}
+
+fn main() {
+    let cli = Cli::parse();
+
+    let rom_data = match fs::read(&cli.rom) {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("Error reading ROM: {e}");
+            process::exit(1);
+        }
+    };
+
+    let seed = cli.seed.unwrap_or_else(rand::random);
+
+    let options = build_options(&cli);
+
+    let ext = if cli.patched_rom { "nes" } else { "ips" };
+    let output_path = cli
+        .output
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(format!("smb3-rs_{seed}.{ext}")));
+
+    print_summary(&options, seed, &output_path);
 
     // Apply sprite patch before randomization so randomizer writes take priority.
     // --toad applies a bundled IPS first; --sprite-patch layers on top of that.
