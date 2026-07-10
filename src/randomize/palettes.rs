@@ -534,7 +534,7 @@ mod tests {
                     let r = rotate_hue(b, shift);
                     assert_eq!(r & 0xF0, b & 0xF0, "luminance changed for {b:#04x}");
                     let rh = r & 0x0F;
-                    assert!((1..=0x0C).contains(&rh), "hue {rh:#03x} out of range");
+                    assert!((1..=0x0C).contains(&rh), "hue {rh:#04x} out of range");
                 }
                 // applying 1-step rotation 12 times cycles back
                 let mut cur = b;
