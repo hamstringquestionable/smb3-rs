@@ -2,6 +2,19 @@
 
 use super::*;
 
+use super::types::{BuildResult, LockAssignment, SlotAssignment, SlotKind, stamp_slots};
+
+/// A scored lock candidate tracked during selection.
+#[derive(Clone, Copy)]
+struct ScoredLock {
+    pos: Pos,
+    gap_tile: u8,
+    replace_tile: u8,
+    score: i32,
+    safe: bool,
+    blocks_target: bool,
+}
+
 // Reason: every argument represents a distinct, independent input to lock
 // placement (geometry, slot list, count, safety flag, RNG). No subset
 // clusters into a meaningful concept — bundling would be a clippy bandage,
@@ -24,21 +37,7 @@ pub(super) fn place_locks<R: Rng>(
     // Build a base grid with forts/levels stamped so BFS sees them as nodes.
     // This grid does NOT have any locks on it.
     let mut base_grid = grid.clone();
-    for slot in slots {
-        match slot.kind {
-            SlotKind::Fortress => base_grid.set(slot.pos.0, slot.pos.1, TILE_FORTRESS),
-            SlotKind::Level => {
-                let tile = base_grid.get(slot.pos.0, slot.pos.1);
-                if BACKGROUND_TILES.contains(&tile) {
-                    base_grid.set(slot.pos.0, slot.pos.1, TILE_NODE);
-                }
-            }
-            SlotKind::Pipe => {} // already stamped on grid
-            SlotKind::HammerBro => {} // blank path tile, no stamp needed
-            SlotKind::BonusGame => base_grid.set(slot.pos.0, slot.pos.1, TILE_BONUS_GAME),
-            SlotKind::ToadHouse => base_grid.set(slot.pos.0, slot.pos.1, TILE_TOAD_HOUSE),
-        }
-    }
+    stamp_slots(&mut base_grid, slots);
 
     // Process each fortress in section order
     for section_idx in 0..fort_count {
@@ -104,13 +103,8 @@ pub(super) fn place_locks<R: Rng>(
         // Prefer safe when forced (retry path) or when the best candidate
         // is weak anyway (score < 5) — don't sacrifice a high-scoring lock.
         // Evaluated after scoring all candidates, see below.
-        // (pos, gap_tile, replace_tile, score, safe, blocks_target)
-        type LockCandidate = (Pos, u8, u8, i32, bool, bool);
-        // Subset of LockCandidate without the safe/blocks_target flags.
-        type SafeLockCandidate = (Pos, u8, u8, i32);
-
-        let mut best: Option<LockCandidate> = None;
-        let mut best_safe: Option<SafeLockCandidate> = None;
+        let mut best: Option<ScoredLock> = None;
+        let mut best_safe: Option<ScoredLock> = None;
 
         // Open grid (no candidate lock) is constant for all candidates in this
         // section — hoist the BFS to avoid redundant walks per candidate.
@@ -218,47 +212,40 @@ pub(super) fn place_locks<R: Rng>(
                 score += 1;
             }
 
-            // Track best overall and best safe separately.
-            let dominated = match &best {
-                Some((_, _, _, best_score, _, _)) => score > *best_score,
-                None => true,
+            // Track best overall and best safe separately. (A safe lock
+            // never blocks the target, so its blocks_target is false.)
+            let cand = ScoredLock {
+                pos: cand_pos,
+                gap_tile: gap,
+                replace_tile: tile,
+                score,
+                safe,
+                blocks_target: !target_reachable,
             };
-            if dominated {
-                best = Some((cand_pos, gap, tile, score, safe, !target_reachable));
+            if best.is_none_or(|b| score > b.score) {
+                best = Some(cand);
             }
-
-            if safe {
-                let safe_dominated = match &best_safe {
-                    Some((_, _, _, best_score)) => score > *best_score,
-                    None => true,
-                };
-                if safe_dominated {
-                    best_safe = Some((cand_pos, gap, tile, score));
-                }
+            if safe && best_safe.is_none_or(|b| score > b.score) {
+                best_safe = Some(cand);
             }
         }
 
         // Prefer safe when forced (retry) or when best score is low —
         // no point picking an impactful lock if there are none.
-        let best_score = best.map(|(_, _, _, s, _, _)| s).unwrap_or(0);
+        let best_score = best.map(|b| b.score).unwrap_or(0);
         let prefer_safe = force_safe || best_score < 5;
 
-        let chosen = if prefer_safe {
-            best_safe.map(|(pos, gap, replace, score)| (pos, gap, replace, score, true, false))
-                .or(best)
-        } else {
-            best
-        };
+        let chosen = if prefer_safe { best_safe.or(best) } else { best };
 
-        if let Some((pos, gap, replace, _score, safe, blocks_target)) = chosen {
-            locked_tiles.insert(pos);
+        if let Some(c) = chosen {
+            locked_tiles.insert(c.pos);
             locks.push(LockAssignment {
-                pos,
-                gap_tile: gap,
-                replace_tile: replace,
+                pos: c.pos,
+                gap_tile: c.gap_tile,
+                replace_tile: c.replace_tile,
                 fort_section: section_idx,
-                secret_exit_safe: safe,
-                blocks_target,
+                secret_exit_safe: c.safe,
+                blocks_target: c.blocks_target,
             });
         }
     }

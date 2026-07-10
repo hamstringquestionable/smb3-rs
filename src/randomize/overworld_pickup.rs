@@ -110,6 +110,9 @@ fn default_pickup_pred(entry: &CatalogEntry, flags: PickupFlags) -> bool {
 }
 
 /// Like `pick_up`, but only collects entries whose `CatalogEntry` satisfies `pred`.
+///
+/// The `pred` hook exists only for the `#[ignore]`d `test_dump_cleared_roms`
+/// diagnostic dump; production always passes `default_pickup_pred`.
 pub(super) fn pick_up_filtered(
     rom: &Rom,
     catalog: &NodeCatalog,

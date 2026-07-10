@@ -1,10 +1,16 @@
 //! Required-progression analysis and diagnostic dumps.
 
+// Reason: this whole module is exercised only by the test suite today
+// (reserved for a future WASM single-seed dump), so in non-test builds
+// everything here is dead code.
+#![allow(dead_code)]
+
 use super::*;
+
+use super::types::{BuiltWorld, SlotKind, stamp_slots};
 
 /// What occupies a grid position visited along the required path.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // variants are inspected only by the dump helper today.
 pub(crate) enum PathNodeKind {
     Start,
     Level,
@@ -19,7 +25,6 @@ pub(crate) enum PathNodeKind {
 }
 
 #[derive(Clone, Debug, Default)]
-#[allow(dead_code)] // read by tests today; consumed by the WASM single-seed dump later.
 pub(crate) struct RequiredProgression {
     /// Distinct fortress slots the player must clear (excludes the objective
     /// itself if it happens to live at a fortress tile).
@@ -44,7 +49,6 @@ pub(crate) struct RequiredProgression {
 /// When `hammer` is true: the player has one hammer that can break exactly
 /// ONE overworld lock for free. We try every individual lock-break and pick
 /// the option that minimises total clears (including "don't use hammer").
-#[allow(dead_code)] // read by tests today; consumed by the WASM single-seed dump later.
 pub(crate) fn analyze_required_progression(
     built: &BuiltWorld,
     hammer: bool,
@@ -76,7 +80,6 @@ pub(crate) fn analyze_required_progression(
 
 /// Inner Dijkstra: returns the minimum-cost progression with `hammered_section`
 /// pre-opened (if `Some`) or no locks pre-opened (`None`).
-#[allow(dead_code)]
 pub(super) fn analyze_with_pre_opened(
     built: &BuiltWorld,
     hammered_section: Option<usize>,
@@ -90,7 +93,6 @@ pub(super) fn analyze_with_pre_opened(
 
 /// Same as `analyze_with_pre_opened` but takes an arbitrary opened-section
 /// mask. Useful for the all-locks-open sanity check in the dump.
-#[allow(dead_code)]
 pub(super) fn analyze_with_pre_opened_mask(
     built: &BuiltWorld,
     initial_mask: u32,
@@ -98,19 +100,7 @@ pub(super) fn analyze_with_pre_opened_mask(
     // 1. Stamp slots onto a working grid so walk_map sees them as nodes.
     //    Skip locks — we model them as conditional edges instead.
     let mut grid = built.grid.clone();
-    for slot in &built.slots {
-        match slot.kind {
-            SlotKind::Fortress => grid.set(slot.pos.0, slot.pos.1, TILE_FORTRESS),
-            SlotKind::Level
-                if BACKGROUND_TILES.contains(&grid.get(slot.pos.0, slot.pos.1)) =>
-            {
-                grid.set(slot.pos.0, slot.pos.1, TILE_NODE);
-            }
-            SlotKind::BonusGame => grid.set(slot.pos.0, slot.pos.1, TILE_BONUS_GAME),
-            SlotKind::ToadHouse => grid.set(slot.pos.0, slot.pos.1, TILE_TOAD_HOUSE),
-            _ => {}
-        }
-    }
+    stamp_slots(&mut grid, &built.slots);
 
     let start = match rom_data::find_start(&grid) {
         Some(s) => s,
@@ -197,6 +187,24 @@ pub(super) fn analyze_with_pre_opened_mask(
             break;
         }
 
+        // Relax one edge from the current state: entering a fortress flips
+        // its section bit; standard Dijkstra decrease-key + heap push.
+        let mut relax = |dest: (usize, usize), boat_after: Option<(usize, usize)>| {
+            let (edge_cost, is_fort) = entry_cost(dest);
+            let new_mask = if is_fort {
+                mask | (1u32 << section_at[&dest])
+            } else {
+                mask
+            };
+            let key = (dest, new_mask, boat_after);
+            let new_cost = cost + edge_cost;
+            if new_cost < *dist.get(&key).unwrap_or(&usize::MAX) {
+                dist.insert(key, new_cost);
+                prev.insert(key, state);
+                heap.push(Reverse((new_cost, dest, new_mask, boat_after)));
+            }
+        };
+
         // Walk / pipe edges from walk_map. Skip canoe edges — those are
         // handled below with explicit boat-state tracking.
         if let Some(edges) = walk.edges.get(&pos) {
@@ -211,24 +219,12 @@ pub(super) fn analyze_with_pre_opened_mask(
                 {
                     continue;
                 }
-                let dest = edge.dest;
-                let (edge_cost, is_fort) = entry_cost(dest);
-                let new_mask = if is_fort {
-                    mask | (1u32 << section_at[&dest])
-                } else {
-                    mask
-                };
-                let key = (dest, new_mask, boat);
-                let new_cost = cost + edge_cost;
-                if new_cost < *dist.get(&key).unwrap_or(&usize::MAX) {
-                    dist.insert(key, new_cost);
-                    prev.insert(key, state);
-                    heap.push(Reverse((new_cost, dest, new_mask, boat)));
-                }
+                relax(edge.dest, boat);
             }
         }
 
         // Canoe edges: usable only if the boat sits at the current position.
+        // Riding moves the boat with the player to the destination.
         if boat == Some(pos) {
             for &(a, b) in &canoe_edges {
                 let dest = if a == pos {
@@ -238,20 +234,7 @@ pub(super) fn analyze_with_pre_opened_mask(
                 } else {
                     continue;
                 };
-                let (edge_cost, is_fort) = entry_cost(dest);
-                let new_mask = if is_fort {
-                    mask | (1u32 << section_at[&dest])
-                } else {
-                    mask
-                };
-                let new_boat = Some(dest);
-                let key = (dest, new_mask, new_boat);
-                let new_cost = cost + edge_cost;
-                if new_cost < *dist.get(&key).unwrap_or(&usize::MAX) {
-                    dist.insert(key, new_cost);
-                    prev.insert(key, state);
-                    heap.push(Reverse((new_cost, dest, new_mask, new_boat)));
-                }
+                relax(dest, Some(dest));
             }
         }
     }
@@ -335,7 +318,6 @@ pub(super) fn analyze_with_pre_opened_mask(
 
 /// Pretty-print a `RequiredProgression` result for one world. Use for
 /// verification + as a reference for the WASM single-seed dump.
-#[allow(dead_code)]
 pub(crate) fn dump_required_progression(built: &BuiltWorld) {
     let no_hammer = analyze_required_progression(built, false);
     let with_hammer = analyze_required_progression(built, true);
@@ -426,10 +408,8 @@ pub(crate) fn dump_required_progression(built: &BuiltWorld) {
 }
 
 /// Set of directed teleport edges (pipe-pair / canoe-pair, both orientations).
-#[allow(dead_code)]
 type EdgeSet = HashSet<((usize, usize), (usize, usize))>;
 
-#[allow(dead_code)]
 pub(super) fn print_progression(
     label: &str,
     p: &RequiredProgression,

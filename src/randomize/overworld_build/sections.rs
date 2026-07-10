@@ -2,6 +2,14 @@
 
 use super::*;
 
+use super::locks::place_locks;
+use super::pipes::{FIXED_PIPE_ENDPOINTS, PIPE_EXCLUDED_POSITIONS, place_pipes};
+use super::scoring::{
+    FORTRESS_SOFTMAX_T, is_row78_conflict, pick_softmax_by_score, score_candidate,
+    score_fortress_candidate,
+};
+use super::types::{BuiltWorld, SlotAssignment, SlotKind, WorldSlotCounts};
+
 pub(super) fn build_world<R: Rng>(
     world_idx: usize,
     rom: &Rom,
@@ -230,7 +238,6 @@ pub(super) fn completable_positions(grid: &Grid, slots: &[SlotAssignment]) -> Ha
     set
 }
 
-/// BFS from start, returning nodes in visit order with their distances.
 /// BFS-ordered list of (position, distance) using the canonical `walk_map`.
 ///
 /// This is the single source of truth for map traversal — all BFS-dependent
@@ -421,18 +428,21 @@ pub(super) fn populate_sections<R: Rng>(
     let mut level_positions: HashSet<(usize, usize)> = HashSet::new();
 
     for _ in 0..level_count {
+        // Score each candidate once, then pick the max on the cached score.
+        // (`max_by` returns the LAST maximal element on ties, matching the
+        // pre-caching behavior.)
         let best = global_candidates
             .iter()
             .filter(|(pos, _)| !level_positions.contains(pos))
             .filter(|(pos, _)| !is_row78_conflict(*pos, &completable))
-            .max_by(|(a, _), (b, _)| {
-                let sa = score_candidate(grid, *a, &placed_levels_and_forts, bfs_distances, reverse_bfs, target_bfs_dist);
-                let sb = score_candidate(grid, *b, &placed_levels_and_forts, bfs_distances, reverse_bfs, target_bfs_dist);
-                sa.partial_cmp(&sb).unwrap_or(std::cmp::Ordering::Equal)
-            });
+            .map(|&(pos, _)| {
+                let score = score_candidate(grid, pos, &placed_levels_and_forts, bfs_distances, reverse_bfs, target_bfs_dist);
+                (pos, score)
+            })
+            .max_by(|(_, sa), (_, sb)| sa.partial_cmp(sb).unwrap_or(std::cmp::Ordering::Equal));
 
         match best {
-            Some(&(pos, _)) => {
+            Some((pos, _)) => {
                 level_positions.insert(pos);
                 completable.insert(pos);
                 placed_levels_and_forts.insert(pos);

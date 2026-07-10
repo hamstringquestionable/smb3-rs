@@ -49,6 +49,28 @@ pub struct SlotAssignment {
     pub is_troll_pipe: bool,
 }
 
+/// Stamp assigned slots onto a grid so `walk_map` sees them as nodes.
+/// Pipes are already stamped on the build grid and HammerBro slots stay
+/// blank path tiles, so neither needs a stamp. Locks are NOT stamped —
+/// callers model them separately (test grids / conditional edges).
+pub(super) fn stamp_slots(grid: &mut Grid, slots: &[SlotAssignment]) {
+    for slot in slots {
+        match slot.kind {
+            SlotKind::Fortress => grid.set(slot.pos.0, slot.pos.1, TILE_FORTRESS),
+            SlotKind::Level
+                if BACKGROUND_TILES.contains(&grid.get(slot.pos.0, slot.pos.1)) =>
+            {
+                grid.set(slot.pos.0, slot.pos.1, TILE_NODE);
+            }
+            SlotKind::BonusGame => grid.set(slot.pos.0, slot.pos.1, TILE_BONUS_GAME),
+            SlotKind::ToadHouse => grid.set(slot.pos.0, slot.pos.1, TILE_TOAD_HOUSE),
+            // Pipe: already stamped; HammerBro: stays a blank path tile;
+            // Level on a non-background tile: keep the existing tile.
+            _ => {}
+        }
+    }
+}
+
 /// A lock/bridge placed on a path tile.
 #[derive(Clone, Debug)]
 pub(crate) struct LockAssignment {

@@ -23,39 +23,47 @@ const LEVEL_NAME_OVERRIDES: &[(usize, usize, &str)] = &[
     (7, 36, "8-STnk"),   // super tank
 ];
 
+/// Number of kinds that get per-world ordinal suffixes (see `ordinal_slot`).
+const ORDINAL_SLOTS: usize = 6;
+
+/// Slot index + name abbreviation for kinds that get ordinal suffixes.
+fn ordinal_slot(kind: &NodeKind) -> Option<(usize, &'static str)> {
+    match kind {
+        NodeKind::Fortress { .. } => Some((0, "F")),
+        NodeKind::Pipe { .. } => Some((1, "Pi")),
+        NodeKind::ToadHouse => Some((2, "TH")),
+        NodeKind::BonusGame => Some((3, "BG")),
+        NodeKind::HammerBro => Some((4, "HB")),
+        NodeKind::MapObject => Some((5, "MO")),
+        _ => None,
+    }
+}
+
+/// "prefix" when the world has exactly one of the kind, "prefix<ord>" otherwise.
+fn suffixed(prefix: &str, count: usize, ord: usize) -> String {
+    if count == 1 {
+        prefix.to_string()
+    } else {
+        format!("{prefix}{ord}")
+    }
+}
+
 /// Assign human-readable names to all catalog entries.
 ///
 /// Two-pass: first count per-world per-kind totals, then assign names
 /// with ordinal suffixes when a world has multiples of the same kind.
 pub(super) fn assign_names(entries: &mut [CatalogEntry]) {
     // Count per-world kind totals for ordinal suffixes
-    let mut fortress_counts: [usize; 8] = [0; 8];
-    let mut toad_counts: [usize; 8] = [0; 8];
-    let mut bonus_counts: [usize; 8] = [0; 8];
-    let mut hammer_counts: [usize; 8] = [0; 8];
-    let mut map_obj_counts: [usize; 8] = [0; 8];
-    let mut pipe_counts: [usize; 8] = [0; 8];
-
+    let mut counts = [[0usize; 8]; ORDINAL_SLOTS];
     for e in entries.iter() {
         if e.world_idx == usize::MAX { continue; } // skip synthetic (beta) entries
-        match e.kind {
-            NodeKind::Fortress { .. } => fortress_counts[e.world_idx] += 1,
-            NodeKind::ToadHouse => toad_counts[e.world_idx] += 1,
-            NodeKind::BonusGame => bonus_counts[e.world_idx] += 1,
-            NodeKind::HammerBro => hammer_counts[e.world_idx] += 1,
-            NodeKind::MapObject => map_obj_counts[e.world_idx] += 1,
-            NodeKind::Pipe { .. } => pipe_counts[e.world_idx] += 1,
-            _ => {}
+        if let Some((slot, _)) = ordinal_slot(&e.kind) {
+            counts[slot][e.world_idx] += 1;
         }
     }
 
     // Track ordinals per world per kind
-    let mut fortress_ord: [usize; 8] = [0; 8];
-    let mut toad_ord: [usize; 8] = [0; 8];
-    let mut bonus_ord: [usize; 8] = [0; 8];
-    let mut hammer_ord: [usize; 8] = [0; 8];
-    let mut map_obj_ord: [usize; 8] = [0; 8];
-    let mut pipe_ord: [usize; 8] = [0; 8];
+    let mut ords = [[0usize; 8]; ORDINAL_SLOTS];
 
     for e in entries.iter_mut() {
         // Skip synthetic entries (betas) — they already have names.
@@ -75,54 +83,21 @@ pub(super) fn assign_names(entries: &mut [CatalogEntry]) {
             continue;
         }
 
+        if let Some((slot, abbr)) = ordinal_slot(&e.kind) {
+            ords[slot][w] += 1;
+            e.name = if matches!(e.kind, NodeKind::Pipe { .. }) {
+                // Pipes are always numbered, even when a world has just one.
+                format!("{w1}{abbr}{}", ords[slot][w])
+            } else {
+                suffixed(&format!("{w1}{abbr}"), counts[slot][w], ords[slot][w])
+            };
+            continue;
+        }
+
         e.name = match &e.kind {
             NodeKind::Start => format!("{w1}S"),
             NodeKind::Bowser => "8B".to_string(),
             NodeKind::Airship => format!("{w1}A"),
-            NodeKind::Fortress { .. } => {
-                fortress_ord[w] += 1;
-                if fortress_counts[w] == 1 {
-                    format!("{w1}F")
-                } else {
-                    format!("{w1}F{}", fortress_ord[w])
-                }
-            }
-            NodeKind::Pipe { .. } => {
-                pipe_ord[w] += 1;
-                format!("{w1}Pi{}", pipe_ord[w])
-            }
-            NodeKind::ToadHouse => {
-                toad_ord[w] += 1;
-                if toad_counts[w] == 1 {
-                    format!("{w1}TH")
-                } else {
-                    format!("{w1}TH{}", toad_ord[w])
-                }
-            }
-            NodeKind::BonusGame => {
-                bonus_ord[w] += 1;
-                if bonus_counts[w] == 1 {
-                    format!("{w1}BG")
-                } else {
-                    format!("{w1}BG{}", bonus_ord[w])
-                }
-            }
-            NodeKind::HammerBro => {
-                hammer_ord[w] += 1;
-                if hammer_counts[w] == 1 {
-                    format!("{w1}HB")
-                } else {
-                    format!("{w1}HB{}", hammer_ord[w])
-                }
-            }
-            NodeKind::MapObject => {
-                map_obj_ord[w] += 1;
-                if map_obj_counts[w] == 1 {
-                    format!("{w1}MO")
-                } else {
-                    format!("{w1}MO{}", map_obj_ord[w])
-                }
-            }
             NodeKind::Level => {
                 // Numbered levels: tile 0x03-0x0F → level number = tile - 2
                 if e.tile >= 0x03 && e.tile <= 0x0F {
@@ -132,6 +107,8 @@ pub(super) fn assign_names(entries: &mut [CatalogEntry]) {
                     format!("{w1}L[{}]", e.entry_idx)
                 }
             }
+            // Suffixed kinds are handled by `ordinal_slot` above.
+            _ => unreachable!("ordinal kinds handled above"),
         };
     }
 }
