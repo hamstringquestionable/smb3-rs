@@ -58,6 +58,18 @@ pub(super) struct WalkResult {
 // BFS map walker
 // ---------------------------------------------------------------------------
 
+/// Position → teleport destinations, built from bidirectional edge pairs.
+type TeleportLookup = HashMap<(usize, usize), Vec<(usize, usize)>>;
+
+fn teleport_lookup(pairs: &[TeleportEdge]) -> TeleportLookup {
+    let mut lookup = TeleportLookup::new();
+    for &(a, b) in pairs {
+        lookup.entry(a).or_default().push(b);
+        lookup.entry(b).or_default().push(a);
+    }
+    lookup
+}
+
 /// First-pass reachability check: can the player walk (using pipes only — no
 /// canoes) to ANY canoe mainland dock from `start`? If yes, canoes become
 /// usable for the main BFS. If no, canoes stay disabled.
@@ -82,55 +94,10 @@ fn canoes_reachable(
         return true;
     }
 
-    let mut pipe_lookup: HashMap<(usize, usize), Vec<(usize, usize)>> = HashMap::new();
-    for &(a, b) in pipe_pairs {
-        pipe_lookup.entry(a).or_default().push(b);
-        pipe_lookup.entry(b).or_default().push(a);
-    }
-
-    let mut visited: HashSet<(usize, usize)> = HashSet::new();
-    let mut queue = VecDeque::new();
-    visited.insert(start);
-    queue.push_back(start);
-
-    while let Some((r, c)) = queue.pop_front() {
-        if docks.contains(&(r, c)) {
-            return true;
-        }
-        for &(dr, dc, is_horz) in &DIRECTIONS {
-            let pr = r as i16 + dr as i16;
-            let pc = c as i16 + dc as i16;
-            if pr < 0 || pr >= grid.rows as i16 || pc < 0 || pc >= grid.cols as i16 {
-                continue;
-            }
-            let (pr, pc) = (pr as usize, pc as usize);
-            let path_tile = grid.get(pr, pc);
-            let valid = if is_horz { VALID_HORZ } else { VALID_VERT };
-            if !valid.contains(&path_tile) {
-                continue;
-            }
-            let nr = r as i16 + 2 * dr as i16;
-            let nc = c as i16 + 2 * dc as i16;
-            if nr < 0 || nr >= grid.rows as i16 || nc < 0 || nc >= grid.cols as i16 {
-                continue;
-            }
-            let (nr, nc) = (nr as usize, nc as usize);
-            if BACKGROUND_TILES.contains(&grid.get(nr, nc)) {
-                continue;
-            }
-            if visited.insert((nr, nc)) {
-                queue.push_back((nr, nc));
-            }
-        }
-        if let Some(dests) = pipe_lookup.get(&(r, c)) {
-            for &dest in dests {
-                if visited.insert(dest) {
-                    queue.push_back(dest);
-                }
-            }
-        }
-    }
-    false
+    // Same BFS as the main walk, just with no canoe edges (a 9×64 grid, so
+    // running it to completion instead of early-exiting at a dock is cheap).
+    let no_canoes = walk_from(grid, start, &teleport_lookup(pipe_pairs), &TeleportLookup::new());
+    docks.iter().any(|d| no_canoes.nodes.contains(d))
 }
 
 /// BFS walk from a start position, returning reachable nodes, edges, and path tiles.
@@ -157,12 +124,7 @@ pub(super) fn walk_map(
         }
     };
 
-    // Build pipe lookup: position → list of destinations
-    let mut pipe_lookup: HashMap<(usize, usize), Vec<(usize, usize)>> = HashMap::new();
-    for &(a, b) in pipe_pairs {
-        pipe_lookup.entry(a).or_default().push(b);
-        pipe_lookup.entry(b).or_default().push(a);
-    }
+    let pipe_lookup = teleport_lookup(pipe_pairs);
 
     // Canoes: the boat starts at the mainland dock (the `a` side of each
     // `CANOE_EDGES` tuple). The player must be able to *walk* to that dock
@@ -176,14 +138,23 @@ pub(super) fn walk_map(
     // we omit the edges entirely so the BFS reflects reality. This is the
     // structural fix for the SAS-W3 deadlock where the swap moves the start
     // into a region with no walking path to the dock.
-    let mut canoe_lookup: HashMap<(usize, usize), Vec<(usize, usize)>> = HashMap::new();
-    if canoes_reachable(grid, pipe_pairs, start, world_idx) {
-        for (a, b) in rom_data::active_canoe_edges(world_idx, grid.eights_are_wild) {
-            canoe_lookup.entry(a).or_default().push(b);
-            canoe_lookup.entry(b).or_default().push(a);
-        }
-    }
+    let canoe_lookup = if canoes_reachable(grid, pipe_pairs, start, world_idx) {
+        teleport_lookup(&rom_data::active_canoe_edges(world_idx, grid.eights_are_wild))
+    } else {
+        TeleportLookup::new()
+    };
 
+    walk_from(grid, start, &pipe_lookup, &canoe_lookup)
+}
+
+/// The BFS core shared by `walk_map` and the canoe first pass: walk from
+/// `start` expanding orthogonal 2-tile moves plus the given teleport edges.
+fn walk_from(
+    grid: &Grid,
+    start: (usize, usize),
+    pipe_lookup: &TeleportLookup,
+    canoe_lookup: &TeleportLookup,
+) -> WalkResult {
     let mut nodes = HashSet::new();
     let mut distances: HashMap<(usize, usize), usize> = HashMap::new();
     let mut edges: HashMap<(usize, usize), Vec<Edge>> = HashMap::new();
@@ -201,7 +172,7 @@ pub(super) fn walk_map(
         for &(dr, dc, is_horz) in &DIRECTIONS {
             let pr = r as i16 + dr as i16;
             let pc = c as i16 + dc as i16;
-            if pr < 0 || pr >= grid.rows as i16 || pc < 0 || pc >= grid.cols as i16 {
+            if pr < 0 || pr >= grid.rows() as i16 || pc < 0 || pc >= grid.cols as i16 {
                 continue;
             }
             let (pr, pc) = (pr as usize, pc as usize);
@@ -214,7 +185,7 @@ pub(super) fn walk_map(
 
             let nr = r as i16 + 2 * dr as i16;
             let nc = c as i16 + 2 * dc as i16;
-            if nr < 0 || nr >= grid.rows as i16 || nc < 0 || nc >= grid.cols as i16 {
+            if nr < 0 || nr >= grid.rows() as i16 || nc < 0 || nc >= grid.cols as i16 {
                 continue;
             }
             let (nr, nc) = (nr as usize, nc as usize);
@@ -237,33 +208,20 @@ pub(super) fn walk_map(
             }
         }
 
-        // Pipe edges: direct teleport
-        if let Some(dests) = pipe_lookup.get(&(r, c)) {
-            for &dest in dests {
-                edges.entry((r, c)).or_default().push(Edge {
-                    dest,
-                    path_pos: None,
-                });
-                if !nodes.contains(&dest) {
-                    nodes.insert(dest);
-                    distances.insert(dest, distances[&(r, c)] + 1);
-                    queue.push_back(dest);
-                }
-            }
-        }
-
-        // Canoe edges: only present when the mainland dock was reachable
-        // via the first pass (see canoe_lookup construction above).
-        if let Some(dests) = canoe_lookup.get(&(r, c)) {
-            for &dest in dests {
-                edges.entry((r, c)).or_default().push(Edge {
-                    dest,
-                    path_pos: None,
-                });
-                if !nodes.contains(&dest) {
-                    nodes.insert(dest);
-                    distances.insert(dest, distances[&(r, c)] + 1);
-                    queue.push_back(dest);
+        // Teleport edges: pipes, then canoes (canoe edges are only present
+        // when the mainland dock was reachable — see canoe_lookup above).
+        for lookup in [pipe_lookup, canoe_lookup] {
+            if let Some(dests) = lookup.get(&(r, c)) {
+                for &dest in dests {
+                    edges.entry((r, c)).or_default().push(Edge {
+                        dest,
+                        path_pos: None,
+                    });
+                    if !nodes.contains(&dest) {
+                        nodes.insert(dest);
+                        distances.insert(dest, distances[&(r, c)] + 1);
+                        queue.push_back(dest);
+                    }
                 }
             }
         }
@@ -371,7 +329,7 @@ pub(super) fn render_debug(
     out.push_str(&format!("{RESET}\n"));
 
     // Grid rows
-    for r in 0..grid.rows {
+    for r in 0..grid.rows() {
         out.push_str(&format!("{DIM}{r} {RESET}"));
         for c in 0..grid.cols {
             let tile = grid.get(r, c);
@@ -419,7 +377,7 @@ pub(super) fn render_debug(
 #[cfg(test)]
 fn find_fortress_tiles(grid: &Grid) -> Vec<(usize, usize)> {
     let mut positions = Vec::new();
-    for r in 0..grid.rows {
+    for r in 0..grid.rows() {
         for c in 0..grid.cols {
             let t = grid.get(r, c);
             if t == TILE_FORTRESS || t == 0xEB || t == 0x6A {
@@ -626,7 +584,6 @@ mod tests {
             // W8 edges resolve.
             let mut grid = Grid {
                 tiles: vec![vec![0xB4u8; 48]; 9],
-                rows: 9,
                 cols: 48,
                 eights_are_wild: true,
             };

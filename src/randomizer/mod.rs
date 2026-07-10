@@ -448,8 +448,11 @@ fn randomize_inner(
     }
 
     // Starting items trampoline — must run AFTER title_screen because both
-    // write to the lives init region at 0x308E0. The trampoline incorporates
-    // the intro skip (LDA #$06; STA $DE) so the title_screen hook is preserved.
+    // write to the lives init region at 0x308E0: this one wins, overwriting
+    // title_screen's intro-skip hook at 0x308E2. The trampoline replays the
+    // identical intro-skip + menu-music bytes (shared
+    // `title_screen::intro_skip_music_bytes`), so behavior is unchanged;
+    // title_screen's FS_INTRO_SKIP routine is left in ROM unreferenced.
     if !options.starting_items.is_empty() {
         rom.set_tag("qol/starting_items");
         randomize::qol::write_starting_items(rom, seed, options.starting_lives, &resolved_items);
@@ -475,16 +478,16 @@ fn randomize_inner(
         randomize::fire_flower::apply(rom, options.fire_flower);
     }
 
-    // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 25 bytes:
-    //   [0..4]   "S3R\xNN" magic + version
-    //   [4..17]  flag key bytes (13 bytes in v23)
-    //   [17..25] seed (little-endian u64)
+    // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012):
+    //   "S3R" magic + version byte, the flag key bytes (13 in v23), then the
+    //   seed (little-endian u64). Sizes derive from to_flag_bytes() so the
+    //   stamp grows with the flag key.
     rom.set_tag("stamp");
     let flag_bytes = options.to_flag_bytes();
-    let mut stamp = [0u8; 25];
-    stamp[0..3].copy_from_slice(b"S3R");
-    stamp[3] = FLAG_KEY_VERSION;
-    stamp[4..17].copy_from_slice(&flag_bytes);
-    stamp[17..25].copy_from_slice(&seed.to_le_bytes());
+    let mut stamp = Vec::with_capacity(4 + flag_bytes.len() + 8);
+    stamp.extend_from_slice(b"S3R");
+    stamp.push(FLAG_KEY_VERSION);
+    stamp.extend_from_slice(&flag_bytes);
+    stamp.extend_from_slice(&seed.to_le_bytes());
     rom.write_range(STAMP_OFFSET, &stamp);
 }

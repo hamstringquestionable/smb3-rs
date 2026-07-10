@@ -13,8 +13,7 @@ use super::rom_data::AIRSHIP_ENTRIES;
 /// this shuffle runs, so airship shuffle only has a visible effect
 /// when autoscroll is kept enabled.
 pub fn randomize_airships<R: Rng>(rom: &mut Rom, rng: &mut R) {
-    let indices: Vec<(usize, usize)> = AIRSHIP_ENTRIES.to_vec();
-    level_helpers::shuffle_entries(rom, rng, &indices);
+    level_helpers::shuffle_entries(rom, rng, AIRSHIP_ENTRIES);
 }
 
 #[cfg(test)]

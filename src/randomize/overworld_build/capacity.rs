@@ -2,6 +2,11 @@
 
 use super::*;
 
+use super::pipes::VANILLA_PIPE_PAIRS;
+use super::scoring::is_row78_conflict;
+use super::sections::{completable_positions, find_blank_slots};
+use super::types::{BuiltWorld, CapacityPrep, HbSprite, OverworldData, SlotKind};
+
 pub(super) const SPADE_BUDGET: usize = 19;
 
 /// Promote HammerBro slots to a target `SlotKind`, distributing picked-up pool
@@ -188,7 +193,7 @@ pub(super) fn prepare_capacities(
             }
             if matches!(entry.kind, NodeKind::Airship | NodeKind::Bowser | NodeKind::Start) {
                 let (r, c) = entry.grid_pos;
-                if r < grid.rows && c < grid.cols {
+                if r < grid.rows() && c < grid.cols {
                     grid.set(r, c, entry.tile);
                 }
             }

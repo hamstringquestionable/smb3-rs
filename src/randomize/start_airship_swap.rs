@@ -32,6 +32,11 @@ use super::rom_data::{
     MAP_INIT_SCROLL_SITE, MAP_TILE_GRIDS, MAP_Y_STARTS_OFF, WORLDS,
 };
 
+/// World index of W5 (Sky), the one world with special-case handling: its
+/// vanilla start is approached from above (no castle-top write) and its map
+/// presents two static screens (page-aligned camera framing).
+const W5_IDX: usize = 4;
+
 // ---------------------------------------------------------------------------
 // Phase 1: catalog mutation
 // ---------------------------------------------------------------------------
@@ -90,9 +95,9 @@ pub(super) fn swap_tiles_above(grid: &mut Grid, world_idx: usize, catalog: &Node
         .world(world_idx)
         .find(|e| matches!(e.kind, NodeKind::Start))
     else { return };
-    let (sr, sc) = airship_entry.grid_pos;
-    let (ar, ac) = start_entry.grid_pos;
-    if sr == 0 || ar == 0 {
+    let (old_start_r, old_start_c) = airship_entry.grid_pos;
+    let (old_airship_r, old_airship_c) = start_entry.grid_pos;
+    if old_start_r == 0 || old_airship_r == 0 {
         return;
     }
     // The tile directly above the vanilla airship (`0xC8`, the castle's top
@@ -107,14 +112,14 @@ pub(super) fn swap_tiles_above(grid: &mut Grid, world_idx: usize, catalog: &Node
     // start position, that water square dangles above the relocated start
     // tile in the middle of land/sky, which looks wrong. Substitute a
     // per-world background tile in those cases.
-    let above_old_airship = grid.get(ar - 1, ac);
+    let above_old_airship = grid.get(old_airship_r - 1, old_airship_c);
     let above_for_new_start = match above_start_override(world_idx) {
         Some(t) => t,
-        None => grid.get(sr - 1, sc),
+        None => grid.get(old_start_r - 1, old_start_c),
     };
-    grid.set(ar - 1, ac, above_for_new_start);
-    if world_idx != 4 {
-        grid.set(sr - 1, sc, above_old_airship);
+    grid.set(old_airship_r - 1, old_airship_c, above_for_new_start);
+    if world_idx != W5_IDX {
+        grid.set(old_start_r - 1, old_start_c, above_old_airship);
     }
 }
 
@@ -123,8 +128,8 @@ pub(super) fn swap_tiles_above(grid: &mut Grid, world_idx: usize, catalog: &Node
 /// water override to a generic land/sky blank.
 fn above_start_override(world_idx: usize) -> Option<u8> {
     match world_idx {
-        3 | 6 => Some(0x42), // W4 / W7 — land path blank
-        4 => Some(0xD7),     // W5 — sky blank
+        3 | 6 => Some(0x42),    // W4 / W7 — land path blank
+        W5_IDX => Some(0xD7),   // W5 — sky blank
         _ => None,
     }
 }
@@ -184,6 +189,16 @@ pub(super) fn write_swapped_world_entries(rom: &mut Rom, world_idx: usize, catal
 ///     the spiral lands on the per-world start instead of vanilla column 2
 ///   * Per-swapped-world `Map_Object` slot-1 sprite position move
 pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
+    build_position_tables(rom, catalog);
+    write_seed_helper(rom);
+    write_gameover_finalize(rom);
+    move_airship_sprites(rom, catalog);
+}
+
+/// Build and write the four per-world position tables (X/XHi/ScrL/ScrH) in
+/// PRG031 free space plus the vanilla `Map_Y_Starts` table, all derived from
+/// the catalog's (possibly swapped) Start positions.
+fn build_position_tables(rom: &mut Rom, catalog: &NodeCatalog) {
     let mut y_tbl = [0u8; 8];
     let mut x_tbl = [0u8; 8];
     let mut xhi_tbl = [0u8; 8];
@@ -209,7 +224,7 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
         // collapses to 0 regardless.) Page-0 / unswapped starts collapse to column 0
         // in either branch (identical to vanilla).
         let cols = MAP_TILE_GRIDS[wi].columns as i32;
-        let col = if wi == 4 {
+        let col = if wi == W5_IDX {
             (sc as i32 / 16) * 16 // W5: page-align to the start's static screen
         } else {
             (((sc as i32 - 8) + 4).max(0) / 8) * 8 // round-to-8, floored at 0
@@ -225,7 +240,11 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
     rom.write_range(FS_SAS_XHI_TABLE, &xhi_tbl);
     rom.write_range(FS_SAS_SCRL_TABLE, &scrl_tbl);
     rom.write_range(FS_SAS_SCRH_TABLE, &scrh_tbl);
+}
 
+/// Write the PRG031 Map_Init seed subroutine and replace the vanilla
+/// `Map_Init` scroll-store with a `JSR` to it.
+fn write_seed_helper(rom: &mut Rom) {
     rom.set_tag("start_airship_swap/helper");
     let x_tbl_cpu = file_to_prg031_cpu(FS_SAS_X_TABLE);
     let xhi_tbl_cpu = file_to_prg031_cpu(FS_SAS_XHI_TABLE);
@@ -269,7 +288,15 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
         MAP_INIT_SCROLL_SITE,
         &[0x20, (seed_helper_cpu & 0xFF) as u8, (seed_helper_cpu >> 8) as u8],
     );
+}
 
+/// Write the PRG011 game-over twirl finalize subroutine and hook it into
+/// `GameOver_TwirlToStart`.
+fn write_gameover_finalize(rom: &mut Rom) {
+    let x_tbl_cpu = file_to_prg031_cpu(FS_SAS_X_TABLE);
+    let xhi_tbl_cpu = file_to_prg031_cpu(FS_SAS_XHI_TABLE);
+    let scrl_tbl_cpu = file_to_prg031_cpu(FS_SAS_SCRL_TABLE);
+    let scrh_tbl_cpu = file_to_prg031_cpu(FS_SAS_SCRH_TABLE);
     // GameOver_TwirlToStart spirals Mario back to the start via a per-frame X/Y
     // delta, then at finalize copies World_Map_X/XHi/Y into Map_Previous_*. The
     // delta is low-byte/within-screen only (and uses a second hardcoded column-2
@@ -328,7 +355,11 @@ pub(crate) fn write_engine_scaffolding(rom: &mut Rom, catalog: &NodeCatalog) {
         GAMEOVER_FINALIZE_SITE,
         &[0x20, (finalize_cpu & 0xFF) as u8, (finalize_cpu >> 8) as u8],
     );
+}
 
+/// Move the `Map_Object` slot-1 airship sprite to the catalog's Airship
+/// position in each swapped world.
+fn move_airship_sprites(rom: &mut Rom, catalog: &NodeCatalog) {
     rom.set_tag("start_airship_swap/slot1");
     for wi in 0..7 {
         if !catalog.start_airship_swapped[wi] {

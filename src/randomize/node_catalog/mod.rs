@@ -172,12 +172,6 @@ impl NodeCatalog {
         self.entries.iter().filter(move |e| e.world_idx == world_idx)
     }
 
-    /// Iterate entries matching a kind predicate.
-    #[allow(dead_code)] // used in tests
-    pub(super) fn by_kind(&self, pred: fn(&NodeKind) -> bool) -> impl Iterator<Item = &CatalogEntry> {
-        self.entries.iter().filter(move |e| pred(&e.kind))
-    }
-
     /// Collect unique real HammerBro levels (obj >= 0xC000).
     /// Excludes toad house / bonus game pointer formats.
     pub(super) fn unique_hammer_bro_levels(&self) -> Vec<rom_data::LevelEntry> {

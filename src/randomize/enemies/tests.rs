@@ -7,6 +7,25 @@
         Options::default()
     }
 
+    /// A blank 393,232-byte ROM image with a valid iNES header
+    /// (16 PRG pages, 16 CHR pages, mapper 4).
+    fn blank_rom_image() -> Vec<u8> {
+        let mut data = vec![0u8; 393232];
+        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
+        data[4] = 16;
+        data[5] = 16;
+        data[6] = 0x40;
+        data
+    }
+
+    /// A blank ROM with `seg` copied to ENEMY_DATA_START — the standard
+    /// fixture for walker tests that need one synthetic enemy segment.
+    fn rom_with_segment(seg: &[u8]) -> Rom {
+        let mut data = blank_rom_image();
+        data[ENEMY_DATA_START..ENEMY_DATA_START + seg.len()].copy_from_slice(seg);
+        Rom::from_bytes_lax(&data, true).unwrap()
+    }
+
     /// Install a synthetic 9-byte level header at the start of the Plains
     /// region whose `enemy_ptr` (header bytes 2-3) equals `ep`, followed
     /// by an immediate `0xFF` terminator. Used by wild-injection tests so
@@ -26,18 +45,10 @@
     }
 
     fn make_test_rom() -> Rom {
-        let mut data = vec![0u8; 393232];
-        // iNES header
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16; // PRG pages
-        data[5] = 16; // CHR pages
-        data[6] = 0x40; // mapper flags
-
-        // Set up a realistic enemy data segment at ENEMY_DATA_START:
-        // FF terminator, then a segment with page flag + entries + FF.
-        // Entries MUST be sorted by ascending X (real SMB3 format
-        // requirement, enforced by segment_writer).
-        let seg = &[
+        // A realistic enemy data segment: FF terminator, then a segment with
+        // page flag + entries + FF. Entries MUST be sorted by ascending X
+        // (real SMB3 format requirement, enforced by segment_writer).
+        rom_with_segment(&[
             0xFF, // leading terminator
             0x01, // page flag
             0x72, 0x0E, 0x19, // Goomba at (0x0E, 0x19)
@@ -46,11 +57,7 @@
             0x41, 0xA8, 0x15, // End Level Card at (0xA8, 0x15) — must not change
             0xD3, 0xC0, 0x50, // Autoscroll at (0xC0, 0x50) — must not change
             0xFF, // terminator
-        ];
-        let start = ENEMY_DATA_START;
-        data[start..start + seg.len()].copy_from_slice(seg);
-
-        Rom::from_bytes_lax(&data, true).unwrap()
+        ])
     }
 
     #[test]
@@ -122,11 +129,7 @@
     }
 
     fn make_bigq_test_rom() -> Rom {
-        let mut data = vec![0u8; 393232];
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16;
-        data[5] = 16;
-        data[6] = 0x40;
+        let mut data = blank_rom_image();
 
         // Pre-fill the enemy data region with 0xFF so gaps between fixture
         // segments don't look like one giant collision-prone segment to
@@ -190,12 +193,6 @@
     fn test_chr_compatibility_enforced() {
         // Place a Goomba ($4F/+5) and Dry Bones ($13/+5) in the same segment.
         // After randomization, both must use compatible CHR pages on slot +5.
-        let mut data = vec![0u8; 393232];
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16;
-        data[5] = 16;
-        data[6] = 0x40;
-
         let seg = &[
             0xFF,
             0x01, // page flag
@@ -205,9 +202,7 @@
             0x71, 0x40, 0x19, // Spiny (slot +4, page $0B)
             0xFF,
         ];
-        let start = ENEMY_DATA_START;
-        data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes_lax(&data, true).unwrap();
+        let rom = rom_with_segment(seg);
 
         // Run many times to exercise different random paths
         for seed in 0..200u64 {
@@ -267,12 +262,6 @@
     fn test_chr_resets_across_segments() {
         // Two segments: first has a Spike ($0A/+4), second has a Spiny ($0B/+4).
         // They should be able to choose independently since they're in different segments.
-        let mut data = vec![0u8; 393232];
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16;
-        data[5] = 16;
-        data[6] = 0x40;
-
         let seg = &[
             0xFF,
             0x01,             // page flag
@@ -282,9 +271,7 @@
             0x71, 0x20, 0x19, // Spiny (slot +4, page $0B)
             0xFF,
         ];
-        let start = ENEMY_DATA_START;
-        data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes_lax(&data, true).unwrap();
+        let rom = rom_with_segment(seg);
 
         // Run many times — Spiny in second segment should freely choose
         // any ground enemy, not be constrained by first segment's Spike.
@@ -332,12 +319,6 @@
 
     #[test]
     fn test_ghost_enemies_stay_in_class() {
-        let mut data = vec![0u8; 393232];
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16;
-        data[5] = 16;
-        data[6] = 0x40;
-
         let seg = &[
             0xFF,
             0x01,
@@ -345,9 +326,7 @@
             0x45, 0x20, 0x18, // Hot Foot
             0xFF,
         ];
-        let start = ENEMY_DATA_START;
-        data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes_lax(&data, true).unwrap();
+        let rom = rom_with_segment(seg);
 
         for seed in 0..100u64 {
             let mut rom_copy = rom.clone();
@@ -365,12 +344,6 @@
     fn test_big_enemies_in_regular_classes() {
         // Big enemies are merged into their regular-sized counterparts' classes:
         // BigGreenTroopa → SHELL_ENEMIES, BigGreenPiranha/BigRedPiranha → PIRANHAS
-        let mut data = vec![0u8; 393232];
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16;
-        data[5] = 16;
-        data[6] = 0x40;
-
         let seg = &[
             0xFF,
             0x01,
@@ -379,9 +352,7 @@
             0x7F, 0x30, 0x10, // BigRedPiranha
             0xFF,
         ];
-        let start = ENEMY_DATA_START;
-        data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes_lax(&data, true).unwrap();
+        let rom = rom_with_segment(seg);
 
         for seed in 0..100u64 {
             let mut rom_copy = rom.clone();
@@ -400,21 +371,13 @@
     /// far-apart piranha slots (separate CHR groups): a regular green piranha
     /// (0xA0) and a giant red (0x7F).
     fn giant_red_test_rom() -> Rom {
-        let mut data = vec![0u8; 393232];
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16;
-        data[5] = 16;
-        data[6] = 0x40;
-        let seg = &[
+        rom_with_segment(&[
             0xFF,
             0x01,
             0xA0, 0x10, 0x17, // GreenPiranha — regular slot, X=0x10
             0x7F, 0x60, 0x10, // BigRedPiranha — X=0x60 (separate CHR group)
             0xFF,
-        ];
-        let start = ENEMY_DATA_START;
-        data[start..start + seg.len()].copy_from_slice(seg);
-        Rom::from_bytes_lax(&data, true).unwrap()
+        ])
     }
 
     #[test]
@@ -423,24 +386,22 @@
         // untouched. Wild: it joins the standard piranha pool both directions.
         let mut shuffle = ClassModes::from_options(&Options::default());
         shuffle.piranhas = EnemyMode::Shuffle;
-        assert!(find_class_pool(ROCKY_WRENCH, &shuffle, &[]).is_none());
+        assert!(find_class_pool(ROCKY_WRENCH, &shuffle).is_none());
 
         shuffle.piranhas = EnemyMode::Off;
-        assert!(find_class_pool(ROCKY_WRENCH, &shuffle, &[]).is_none());
+        assert!(find_class_pool(ROCKY_WRENCH, &shuffle).is_none());
 
         let mut wild = ClassModes::from_options(&Options::default());
         wild.piranhas = EnemyMode::Wild;
         // Rocky Wrench can become a standard piranha…
-        let pool = find_class_pool(ROCKY_WRENCH, &wild, &[]).expect("wrench wild pool");
-        assert_eq!(pool, PIRANHAS_WILD);
+        assert_eq!(find_class_pool(ROCKY_WRENCH, &wild), Some(ClassPool::PiranhaStd));
         // …and a standard piranha can become Rocky Wrench.
-        let pool = find_class_pool(0xA0, &wild, &[]).expect("piranha wild pool");
-        assert!(pool.contains(&ROCKY_WRENCH));
+        assert_eq!(find_class_pool(0xA0, &wild), Some(ClassPool::PiranhaStd));
+        assert!(PIRANHAS_WILD.contains(&ROCKY_WRENCH));
         // Ceiling piranhas stay self-contained (no Rocky Wrench, no upward jet).
-        let cpool = find_class_pool(0xA1, &wild, &[]).expect("ceiling wild pool");
-        assert_eq!(cpool, PIRANHASC_WILD);
-        assert!(!cpool.contains(&ROCKY_WRENCH));
-        assert!(!cpool.contains(&FIREJET_UP));
+        assert_eq!(find_class_pool(0xA1, &wild), Some(ClassPool::PiranhaCeil));
+        assert!(!PIRANHASC_WILD.contains(&ROCKY_WRENCH));
+        assert!(!PIRANHASC_WILD.contains(&FIREJET_UP));
     }
 
     #[test]
@@ -448,23 +409,25 @@
         // Shuffle / Off: the fire jets belong to no class → untouched.
         let mut shuffle = ClassModes::from_options(&Options::default());
         shuffle.piranhas = EnemyMode::Shuffle;
-        assert!(find_class_pool(FIREJET_UP, &shuffle, &[]).is_none());
-        assert!(find_class_pool(FIREJET_DOWN, &shuffle, &[]).is_none());
+        assert!(find_class_pool(FIREJET_UP, &shuffle).is_none());
+        assert!(find_class_pool(FIREJET_DOWN, &shuffle).is_none());
         shuffle.piranhas = EnemyMode::Off;
-        assert!(find_class_pool(FIREJET_UP, &shuffle, &[]).is_none());
-        assert!(find_class_pool(FIREJET_DOWN, &shuffle, &[]).is_none());
+        assert!(find_class_pool(FIREJET_UP, &shuffle).is_none());
+        assert!(find_class_pool(FIREJET_DOWN, &shuffle).is_none());
 
         let mut wild = ClassModes::from_options(&Options::default());
         wild.piranhas = EnemyMode::Wild;
         // Upward jet ↔ standard pool; downward jet ↔ ceiling pool.
-        assert_eq!(find_class_pool(FIREJET_UP, &wild, &[]).unwrap(), PIRANHAS_WILD);
-        assert_eq!(find_class_pool(FIREJET_DOWN, &wild, &[]).unwrap(), PIRANHASC_WILD);
+        assert_eq!(find_class_pool(FIREJET_UP, &wild), Some(ClassPool::PiranhaStd));
+        assert_eq!(find_class_pool(FIREJET_DOWN, &wild), Some(ClassPool::PiranhaCeil));
         // Standard piranha can become the upward jet; ceiling the downward jet.
-        assert!(find_class_pool(0xA0, &wild, &[]).unwrap().contains(&FIREJET_UP));
-        assert!(find_class_pool(0xA1, &wild, &[]).unwrap().contains(&FIREJET_DOWN));
+        assert_eq!(find_class_pool(0xA0, &wild), Some(ClassPool::PiranhaStd));
+        assert_eq!(find_class_pool(0xA1, &wild), Some(ClassPool::PiranhaCeil));
+        assert!(PIRANHAS_WILD.contains(&FIREJET_UP));
+        assert!(PIRANHASC_WILD.contains(&FIREJET_DOWN));
         // No crossover: up jet never in ceiling pool, down jet never in standard.
-        assert!(!find_class_pool(0xA0, &wild, &[]).unwrap().contains(&FIREJET_DOWN));
-        assert!(!find_class_pool(0xA1, &wild, &[]).unwrap().contains(&FIREJET_UP));
+        assert!(!PIRANHAS_WILD.contains(&FIREJET_DOWN));
+        assert!(!PIRANHASC_WILD.contains(&FIREJET_UP));
     }
 
     #[test]
@@ -520,6 +483,25 @@
     }
 
     #[test]
+    fn wild_pools_are_unions_of_their_parts() {
+        // The hand-restated union constants must stay in sync with the lists
+        // they combine — nothing else enforces this.
+        let mut piranhas_wild: Vec<u8> = PIRANHAS.to_vec();
+        piranhas_wild.extend([ROCKY_WRENCH, FIREJET_UP]);
+        assert_eq!(PIRANHAS_WILD, piranhas_wild.as_slice());
+
+        let mut piranhasc_wild: Vec<u8> = PIRANHASC.to_vec();
+        piranhasc_wild.push(FIREJET_DOWN);
+        assert_eq!(PIRANHASC_WILD, piranhasc_wild.as_slice());
+
+        let mut all_cannons: Vec<u8> = Vec::new();
+        all_cannons.extend_from_slice(CFIRE_LEFT);
+        all_cannons.extend_from_slice(CFIRE_RIGHT);
+        all_cannons.extend_from_slice(CFIRE_BILLS);
+        assert_eq!(ALL_CANNONS, all_cannons.as_slice());
+    }
+
+    #[test]
     fn piranhas_excluded_from_global_wild_pool() {
         // With every class Wild, piranhas (and Rocky Wrench) must NOT appear in
         // the shared wild pool — they're self-contained, so no other class can
@@ -562,12 +544,6 @@
         // A swappable ground enemy (Spike, $0A/+4) appears BEFORE a Boo ($12/+4,
         // uniform ghost class — pre-committed in pass 1). Without two-pass, the
         // Spike could be swapped to something that commits a conflicting slot+4 page.
-        let mut data = vec![0u8; 393232];
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16;
-        data[5] = 16;
-        data[6] = 0x40;
-
         let seg = &[
             0xFF,
             0x01,
@@ -576,9 +552,7 @@
             0x2F, 0x20, 0x08, // Boo ($12/+4) — swappable, uniform-CHR class (pre-committed)
             0xFF,
         ];
-        let start = ENEMY_DATA_START;
-        data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes_lax(&data, true).unwrap();
+        let rom = rom_with_segment(seg);
 
         for seed in 0..500u64 {
             let mut rom_copy = rom.clone();
@@ -611,12 +585,6 @@
         // Boo ($12/+4, uniform ghost class) + ground enemy in same segment.
         // The ground enemy must never commit a conflicting slot+4 page because
         // uniform classes are pre-committed in pass 1.
-        let mut data = vec![0u8; 393232];
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16;
-        data[5] = 16;
-        data[6] = 0x40;
-
         let seg = &[
             0xFF,
             0x01,
@@ -624,9 +592,7 @@
             0x2F, 0x20, 0x08, // Boo ($12/+4) — ghost, uniform-CHR
             0xFF,
         ];
-        let start = ENEMY_DATA_START;
-        data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes_lax(&data, true).unwrap();
+        let rom = rom_with_segment(seg);
 
         for seed in 0..500u64 {
             let mut rom_copy = rom.clone();
@@ -657,12 +623,6 @@
         // Two non-swappable objects with different +4 pages in the same segment.
         // Slot+4 becomes Conflicted, so any swappable enemy needing slot+4 gets
         // no compatible candidates and must keep its original ID.
-        let mut data = vec![0u8; 393232];
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16;
-        data[5] = 16;
-        data[6] = 0x40;
-
         let seg = &[
             0xFF,
             0x01,
@@ -671,9 +631,7 @@
             0x29, 0x30, 0x19, // Spike ($0A/+4) — swappable ground enemy
             0xFF,
         ];
-        let start = ENEMY_DATA_START;
-        data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes_lax(&data, true).unwrap();
+        let rom = rom_with_segment(seg);
 
         for seed in 0..100u64 {
             let mut rom_copy = rom.clone();
@@ -706,8 +664,7 @@
     fn test_kuribo_shoe_in_ground_class() {
         assert!(GROUND_ENEMIES.contains(&0x2B), "Kuribo's Shoe Goomba missing from ground class");
         let modes = ClassModes::from_options(&enemy_opts());
-        let wild_pool = modes.build_wild_pool();
-        assert_eq!(find_class_pool(0x2B, &modes, &wild_pool), Some(GROUND_ENEMIES as &[u8]));
+        assert_eq!(find_class_pool(0x2B, &modes), Some(ClassPool::Class(GROUND_ENEMIES)));
     }
 
     #[test]
@@ -716,9 +673,8 @@
         assert!(!GROUND_ENEMIES.contains(&0x2C), "0x2C (cloud platform) must NOT be in ground class");
         assert!(GROUND_ENEMIES.contains(&0x58), "Fire Chomp missing from ground class");
         let modes = ClassModes::from_options(&enemy_opts());
-        let wild_pool = modes.build_wild_pool();
-        assert_eq!(find_class_pool(0x4F, &modes, &wild_pool), Some(GROUND_ENEMIES as &[u8]));
-        assert_eq!(find_class_pool(0x58, &modes, &wild_pool), Some(GROUND_ENEMIES as &[u8]));
+        assert_eq!(find_class_pool(0x4F, &modes), Some(ClassPool::Class(GROUND_ENEMIES)));
+        assert_eq!(find_class_pool(0x58, &modes), Some(ClassPool::Class(GROUND_ENEMIES)));
     }
 
     #[test]
@@ -737,25 +693,18 @@
         assert!(wild_pool.contains(&0x6C)); // GreenTroopa
         // Flying should NOT be in wild pool (it's Shuffle, not Wild)
         assert!(!wild_pool.contains(&0x6E)); // Paratroopa
-        // Ground enemy → returns wild pool
-        let pool = find_class_pool(0x72, &modes, &wild_pool).unwrap();
-        assert!(pool.contains(&0x6C), "wild pool should contain shell enemies");
+        // Ground enemy → resolves to the wild pool
+        assert_eq!(find_class_pool(0x72, &modes), Some(ClassPool::Wild));
         // Flying → returns own class only
-        let fly_pool = find_class_pool(0x6E, &modes, &wild_pool).unwrap();
-        assert_eq!(fly_pool, FLYING_ENEMIES);
+        assert_eq!(find_class_pool(0x6E, &modes), Some(ClassPool::Class(FLYING_ENEMIES)));
 
         // Run many seeds and confirm cross-class swaps happen
-        let mut data = vec![0u8; 393232];
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16; data[5] = 16; data[6] = 0x40;
         let seg = &[
             0xFF, 0x01,
             0x72, 0x10, 0x19, // Goomba (ground)
             0xFF,
         ];
-        let start = ENEMY_DATA_START;
-        data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes_lax(&data, true).unwrap();
+        let rom = rom_with_segment(seg);
 
         let mut saw_shell = false;
         for seed in 0..500u64 {
@@ -782,18 +731,13 @@
             shell: EnemyMode::Shuffle,
             ..Options::default()
         };
-        let mut data = vec![0u8; 393232];
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16; data[5] = 16; data[6] = 0x40;
         let seg = &[
             0xFF, 0x01,
             0x72, 0x10, 0x19, // Goomba (ground - Off)
             0x6C, 0x20, 0x16, // GreenTroopa (shell - Shuffle)
             0xFF,
         ];
-        let start = ENEMY_DATA_START;
-        data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes_lax(&data, true).unwrap();
+        let rom = rom_with_segment(seg);
 
         for seed in 0..100u64 {
             let mut rom_copy = rom.clone();
@@ -823,10 +767,10 @@
         assert!(wild_pool.contains(&0x2F)); // Boo
         assert!(wild_pool.contains(&0x8A)); // Thwomp
         assert!(wild_pool.contains(&0x51)); // Rotodisc
-        // All return the same wild pool
-        assert_eq!(find_class_pool(0x2F, &modes, &wild_pool), Some(wild_pool.as_slice()));
-        assert_eq!(find_class_pool(0x8A, &modes, &wild_pool), Some(wild_pool.as_slice()));
-        assert_eq!(find_class_pool(0x51, &modes, &wild_pool), Some(wild_pool.as_slice()));
+        // All resolve to the shared wild pool
+        assert_eq!(find_class_pool(0x2F, &modes), Some(ClassPool::Wild));
+        assert_eq!(find_class_pool(0x8A, &modes), Some(ClassPool::Wild));
+        assert_eq!(find_class_pool(0x51, &modes), Some(ClassPool::Wild));
     }
 
     #[test]
@@ -836,9 +780,7 @@
             wild_injections: true,
             ..Options::default()
         };
-        let mut data = vec![0u8; 393232];
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16; data[5] = 16; data[6] = 0x40;
+        let mut data = blank_rom_image();
         let seg = &[
             0xFF, 0x01,
             0x72, 0x10, 0x19, // Goomba
@@ -879,9 +821,7 @@
             wild_injections: true,
             ..Options::default()
         };
-        let mut data = vec![0u8; 393232];
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16; data[5] = 16; data[6] = 0x40;
+        let mut data = blank_rom_image();
         let seg = &[
             0xFF, 0x01,
             0x18, 0x05, 0x10, // Bowser (slot 4, page 0x3A — incompatible with all injections)
@@ -915,12 +855,6 @@
         // Two enemies far apart (screen 0 vs screen 5) should get independent
         // CHR groups. A Boo ($12/+4) on screen 0 should NOT block a ground enemy
         // on screen 5 from picking a non-$12 slot+4 page.
-        let mut data = vec![0u8; 393232];
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16;
-        data[5] = 16;
-        data[6] = 0x40;
-
         let seg = &[
             0xFF,
             0x01,
@@ -928,9 +862,7 @@
             0x29, 0x50, 0x19, // Spike ($0A/+4) at x=80 (screen 5)
             0xFF,
         ];
-        let start = ENEMY_DATA_START;
-        data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes_lax(&data, true).unwrap();
+        let rom = rom_with_segment(seg);
 
         // Under segment-wide tracking, Spike would be locked to $12/+4 enemies only.
         // Under distance-based grouping, Spike should freely pick any ground enemy.
@@ -959,12 +891,6 @@
         // CHR constraints — same behavior as before grouping.
         // Goomba ($4F/+5) won't conflict with Boo ($12/+4) on slot+4,
         // so we can verify that any slot+4 ground enemy picked must be $12.
-        let mut data = vec![0u8; 393232];
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16;
-        data[5] = 16;
-        data[6] = 0x40;
-
         let seg = &[
             0xFF,
             0x01,
@@ -972,9 +898,7 @@
             0x72, 0x12, 0x19, // Goomba ($4F/+5) at x=18 (10 tiles away, same group)
             0xFF,
         ];
-        let start = ENEMY_DATA_START;
-        data[start..start + seg.len()].copy_from_slice(seg);
-        let rom = Rom::from_bytes_lax(&data, true).unwrap();
+        let rom = rom_with_segment(seg);
 
         // Boo pre-commits $12/+4 as uniform ghost class, so the ground enemy
         // must be compatible — any slot+4 pick must be $12 (or use slot+5 only).
@@ -1031,9 +955,7 @@
             wild_injections: true,
             ..Options::default()
         };
-        let mut data = vec![0u8; 393232];
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16; data[5] = 16; data[6] = 0x40;
+        let mut data = blank_rom_image();
         // 6 water enemies clustered close together (so they share one CHR group)
         let seg = &[
             0xFF, 0x01,
@@ -1080,9 +1002,7 @@
     /// segment survives byte-for-byte.
     #[test]
     fn ghost_segment_does_not_corrupt_trailing_segment() {
-        let mut data = vec![0u8; 393232];
-        data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16; data[5] = 16; data[6] = 0x40;
+        let mut data = blank_rom_image();
         data[ENEMY_DATA_START..ENEMY_DATA_END].fill(0xFF);
 
         // Place the bug pattern at the real $0CFE2 (covered by a
@@ -1182,7 +1102,6 @@
         base: &Rom,
         vanilla: &[u8],
         modes: &ClassModes,
-        wild: &[u8],
     ) -> std::collections::HashSet<usize> {
         let mut set = std::collections::HashSet::new();
         for ep in enemy_entry_points(base) {
@@ -1205,18 +1124,10 @@
             if first >= vanilla.len() || vanilla[first] == 0xFF {
                 continue;
             }
-            let class_protected = matches!(
-                entry_protection_at(ENEMY_DATA_START + first),
-                Some(EntryProtection::SkipSwap
-                    | EntryProtection::ForceShell
-                    | EntryProtection::ForceStompable
-                    | EntryProtection::ForceTankBro
-                    | EntryProtection::ExcludeHazards)
-            );
-            if class_protected {
+            if entry_protection_at(ENEMY_DATA_START + first).is_some() {
                 continue;
             }
-            if find_class_pool(vanilla[first], modes, wild).is_none() {
+            if find_class_pool(vanilla[first], modes).is_none() {
                 continue;
             }
             set.insert(first);
@@ -1312,8 +1223,8 @@
                 if injectable.contains(&off) {
                     let ok = WILD_INJECTION_IDS.contains(&new)
                         || normal_wild.contains(&new)
-                        || find_class_pool(orig, &normal_modes, &normal_wild)
-                            .is_some_and(|p| p.contains(&new));
+                        || find_class_pool(orig, &normal_modes)
+                            .is_some_and(|p| p.slice(&normal_wild).contains(&new));
                     if !ok {
                         bad("injectable slot: not a wild-pool member or injection id".into());
                     }
@@ -1366,8 +1277,8 @@
                     Some(EntryProtection::ForceShell | EntryProtection::ForceTankBro)
                 );
                 if !forced_pool {
-                    let in_class = find_class_pool(orig, modes, wild_pool)
-                        .is_some_and(|p| p.contains(&new));
+                    let in_class = find_class_pool(orig, modes)
+                        .is_some_and(|p| p.slice(wild_pool).contains(&new));
                     let boomboom = BOOMBOOM_SWAP.contains(&orig) && BOOMBOOM_SWAP.contains(&new);
                     if !in_class && !boomboom {
                         bad("swap not in original's class pool (and not boom-boom)".into());
@@ -1409,9 +1320,8 @@
         let mut stats = PlacementStats::default();
         let mut violations = Vec::new();
         let modes = ClassModes::from_options(opts);
-        let wild = modes.build_wild_pool();
         let injectable = if opts.wild_injections {
-            injectable_offsets(base, vanilla, &modes, &wild)
+            injectable_offsets(base, vanilla, &modes)
         } else {
             std::collections::HashSet::new()
         };

@@ -110,6 +110,9 @@ fn default_pickup_pred(entry: &CatalogEntry, flags: PickupFlags) -> bool {
 }
 
 /// Like `pick_up`, but only collects entries whose `CatalogEntry` satisfies `pred`.
+///
+/// The `pred` hook exists only for the `#[ignore]`d `test_dump_cleared_roms`
+/// diagnostic dump; production always passes `default_pickup_pred`.
 pub(super) fn pick_up_filtered(
     rom: &Rom,
     catalog: &NodeCatalog,
@@ -199,7 +202,7 @@ fn pick_up_world(
         pickup_positions.push((row, col));
         pool_indices.push(pool_idx);
 
-        if row < grid.rows && col < grid.cols {
+        if row < grid.rows() && col < grid.cols {
             grid.set(row, col, blank_tile_for(&grid, world_idx, row, col));
         }
     }
@@ -304,7 +307,7 @@ pub(super) fn blank_tile_from_neighbors(grid: &Grid, world_idx: usize, row: usiz
 fn open_fx_gaps(grid: &mut Grid, fx_slots: &[FxSlot], world_fx: &[u8]) {
     for &slot_idx in world_fx {
         let slot = &fx_slots[slot_idx as usize];
-        if slot.grid_row < grid.rows && slot.grid_col < grid.cols {
+        if slot.grid_row < grid.rows() && slot.grid_col < grid.cols {
             grid.set(slot.grid_row, slot.grid_col, slot.replace_tile);
         }
     }
@@ -356,7 +359,7 @@ mod tests {
             let (row, col) = entry.grid_pos;
             let cw = &result.worlds[entry.world_idx];
 
-            if row < cw.grid.rows && col < cw.grid.cols {
+            if row < cw.grid.rows() && col < cw.grid.cols {
                 let tile = cw.grid.get(row, col);
                 let valid_blank = VALID_BLANK_TILES.contains(&tile);
                 assert!(
@@ -387,7 +390,7 @@ mod tests {
                 if !world_fx.contains(&(si as u8)) {
                     continue;
                 }
-                if slot.grid_row < grid.rows && slot.grid_col < grid.cols {
+                if slot.grid_row < grid.rows() && slot.grid_col < grid.cols {
                     let tile = grid.get(slot.grid_row, slot.grid_col);
                     assert!(
                         tile != 0x54 && tile != 0x56 && tile != 0x9D && tile != 0xE4,
@@ -499,7 +502,7 @@ mod tests {
         let result = pick_up_filtered(rom, catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() }, pred);
         let mut data = rom.data.clone();
         for cw in &result.worlds {
-            for r in 0..cw.grid.rows {
+            for r in 0..cw.grid.rows() {
                 for c in 0..cw.grid.cols {
                     let offset = rom_data::map_tile_offset(cw.world_idx, r, c);
                     data[offset] = cw.grid.get(r, c);

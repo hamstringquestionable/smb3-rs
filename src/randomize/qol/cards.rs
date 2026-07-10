@@ -44,7 +44,7 @@ pub fn card_speed_clear(rom: &mut Rom) {
         0xEA, 0xEA,        // NOP; NOP (pad to 5 bytes)
     ]);
 
-    // Trampoline at $FFE0 (PRG031, always mapped, 24 bytes):
+    // Trampoline at $FFE0 (PRG031, always mapped, 26 bytes):
     //
     // $FFE0: LDA $7D9E,Y      ; displaced: load 3rd card
     // $FFE3: BNE +3            ; if not empty → check cards
@@ -95,7 +95,7 @@ mod tests {
 
         // Hook: JMP $FFE0; NOP; NOP
         assert_eq!(rom.read_range(CARD_HOOK, 5), &[0x4C, 0xE0, 0xFF, 0xEA, 0xEA]);
-        // Trampoline: 24 bytes at PRG031 dead space
+        // Trampoline: 26 bytes at PRG031 dead space
         assert_eq!(rom.read_byte(CARD_TRAMPOLINE), 0xB9); // LDA $7D9E,Y
         assert_eq!(rom.read_byte(CARD_TRAMPOLINE + 2), 0x7D);
         // One-of-each path: JMP $BD5A

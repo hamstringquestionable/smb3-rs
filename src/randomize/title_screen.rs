@@ -33,17 +33,18 @@ const HOOK_OFFSET: usize = 0x317B1;
 
 /// PRG031 free space for the sprite copy routine — from rom_data::FS_SEED_HASH_ROUTINE.
 const ROUTINE_OFFSET: usize = super::rom_data::FS_SEED_HASH_ROUTINE;
+const ROUTINE_CPU: u16 = super::rom_data::prg031_file_to_cpu(ROUTINE_OFFSET); // $E914
 
 /// Sprite data table immediately after the routine — from rom_data::FS_SEED_HASH_DATA.
 const DATA_OFFSET: usize = super::rom_data::FS_SEED_HASH_DATA;
-const DATA_CPU_LO: u8 = 0x2D;
-const DATA_CPU_HI: u8 = 0xE9;
+const DATA_CPU: u16 = super::rom_data::prg031_file_to_cpu(DATA_OFFSET); // $E92D
 
 /// Skip the title screen intro cutscene by setting Title_State = 6 (IntroSkip)
 /// during init, after the zero-page clear. Title_State is at zero-page $DE.
 /// We hook STA $0736 at file 0x308E2 → JSR $E955 (free space after sprite data).
 const INTRO_SKIP_HOOK_OFFSET: usize = 0x308E2;
 const INTRO_SKIP_ROUTINE_OFFSET: usize = super::rom_data::FS_INTRO_SKIP;
+const INTRO_SKIP_CPU: u16 = super::rom_data::prg031_file_to_cpu(INTRO_SKIP_ROUTINE_OFFSET); // $E955
 
 /// Curated music tracks for the title menu. Values are written to the music
 /// change trigger at $04F5 — each one is a looping theme that fits a static
@@ -77,6 +78,19 @@ const X_RIGHT: u8 = 24;
 const Y_START: u8 = 64;
 const Y_SPACING: u8 = 24;
 
+/// Instruction bytes shared by the intro-skip routine (here) and the
+/// starting-items trampoline (`qol::starting_state`): set Title_State ($DE) =
+/// 6 (IntroSkip) and queue the seeded menu music via $04F5.
+pub(super) fn intro_skip_music_bytes(seed: u64) -> [u8; 9] {
+    let music = pick_menu_music(seed);
+    [
+        0xA9, 0x06,       // LDA #$06
+        0x85, 0xDE,       // STA $DE    (Title_State = IntroSkip)
+        0xA9, music,      // LDA #music
+        0x8D, 0xF5, 0x04, // STA $04F5  (queue menu music)
+    ]
+}
+
 /// Compute 5 icon indices and a palette choice from seed + flag bytes.
 fn compute_hash(seed: u64, options: &Options) -> ([usize; HASH_LENGTH], u8) {
     let flag_bytes = options.to_flag_bytes();
@@ -100,16 +114,14 @@ fn compute_hash(seed: u64, options: &Options) -> ([usize; HASH_LENGTH], u8) {
 /// in the top-left corner. The icons and palette are deterministically
 /// chosen from the seed and options so players can verify they share
 /// the same settings.
-pub fn write_seed_hash(rom: &mut Rom, seed: u64, options: &Options) {
-    let (icons, palette) = compute_hash(seed, options);
-
-    // Build sprite data: 5 icons x 2 sprites x 4 bytes = 40 bytes.
-    // The copy routine iterates X downward in groups of 8, mapping:
-    //   data[32..39] -> OAM[0..7],  data[24..31] -> OAM[32..39],
-    //   data[16..23] -> OAM[64..71], data[8..15] -> OAM[96..103],
-    //   data[0..7]   -> OAM[128..135]
-    // We place icon 0 (topmost) in the highest data group so it lands
-    // in the lowest OAM slot (highest sprite priority).
+/// Build the 40-byte sprite data table: 5 icons x 2 sprites x 4 bytes.
+/// The copy routine iterates X downward in groups of 8, mapping:
+///   data[32..39] -> OAM[0..7],  data[24..31] -> OAM[32..39],
+///   data[16..23] -> OAM[64..71], data[8..15] -> OAM[96..103],
+///   data[0..7]   -> OAM[128..135]
+/// We place icon 0 (topmost) in the highest data group so it lands
+/// in the lowest OAM slot (highest sprite priority).
+fn build_sprite_data(icons: &[usize; HASH_LENGTH], palette: u8) -> [u8; HASH_LENGTH * 8] {
     let mut sprite_data = [0u8; HASH_LENGTH * 8];
     for i in 0..HASH_LENGTH {
         let group = HASH_LENGTH - 1 - i; // icon 0 -> group 4 (bytes 32-39)
@@ -125,6 +137,12 @@ pub fn write_seed_hash(rom: &mut Rom, seed: u64, options: &Options) {
         sprite_data[base + 6] = palette | extra_attr_r;
         sprite_data[base + 7] = X_RIGHT;
     }
+    sprite_data
+}
+
+pub fn write_seed_hash(rom: &mut Rom, seed: u64, options: &Options) {
+    let (icons, palette) = compute_hash(seed, options);
+    let sprite_data = build_sprite_data(&icons, palette);
 
     // ASM routine (25 bytes) at CPU $E914:
     //   LDY #$07
@@ -148,7 +166,7 @@ pub fn write_seed_hash(rom: &mut Rom, seed: u64, options: &Options) {
     let routine: [u8; 25] = [
         0xA0, 0x07,                         // LDY #$07
         0xA2, (HASH_LENGTH * 8 - 1) as u8,  // LDX #$27
-        0xBD, DATA_CPU_LO, DATA_CPU_HI,     // LDA $E92D,X
+        0xBD, DATA_CPU as u8, (DATA_CPU >> 8) as u8, // LDA $E92D,X
         0x99, 0x00, 0x02,                   // STA $0200,Y
         0x8A,                                // TXA
         0x29, 0x07,                          // AND #$07
@@ -167,7 +185,7 @@ pub fn write_seed_hash(rom: &mut Rom, seed: u64, options: &Options) {
     rom.write_range(DATA_OFFSET, &sprite_data);
 
     // Hook: replace JSR $B7D6 with JMP $E914 in the title screen sprite loop.
-    rom.write_range(HOOK_OFFSET, &[0x4C, 0x14, 0xE9]);
+    rom.write_range(HOOK_OFFSET, &[0x4C, ROUTINE_CPU as u8, (ROUTINE_CPU >> 8) as u8]);
 
     // Skip intro cutscene: hook STA $0736 in title screen init to also set
     // Title_State ($DE) = 6 (IntroSkip). This loads all graphics quickly and
@@ -176,17 +194,19 @@ pub fn write_seed_hash(rom: &mut Rom, seed: u64, options: &Options) {
     //
     // Replace: 8D 36 07 (STA $0736) → 20 55 E9 (JSR $E955)
     // At $E955: STA $0736 / LDA #$06 / STA $DE / LDA #music / STA $04F5 / RTS
-    let music = pick_menu_music(seed);
-    rom.write_range(INTRO_SKIP_HOOK_OFFSET, &[0x20, 0x55, 0xE9]);
-    #[rustfmt::skip]
-    rom.write_range(INTRO_SKIP_ROUTINE_OFFSET, &[
-        0x8D, 0x36, 0x07, // STA $0736  (original instruction)
-        0xA9, 0x06,       // LDA #$06
-        0x85, 0xDE,       // STA $DE    (Title_State = IntroSkip)
-        0xA9, music,      // LDA #music
-        0x8D, 0xF5, 0x04, // STA $04F5  (queue menu music)
-        0x60,             // RTS
-    ]);
+    //
+    // NOTE: when starting items are enabled, `qol::write_starting_items` later
+    // overwrites the whole lives-init block at 0x308E0 (including this hook)
+    // with its own trampoline, which replays the same intro-skip + music bytes
+    // (`intro_skip_music_bytes`); the routine below is then dead but harmless.
+    rom.write_range(
+        INTRO_SKIP_HOOK_OFFSET,
+        &[0x20, INTRO_SKIP_CPU as u8, (INTRO_SKIP_CPU >> 8) as u8],
+    );
+    let mut intro_routine = vec![0x8D, 0x36, 0x07]; // STA $0736 (original instruction)
+    intro_routine.extend_from_slice(&intro_skip_music_bytes(seed));
+    intro_routine.push(0x60); // RTS
+    rom.write_range(INTRO_SKIP_ROUTINE_OFFSET, &intro_routine);
 }
 
 #[cfg(test)]
@@ -237,22 +257,7 @@ mod tests {
     fn sprite_data_positions() {
         let opts = Options::default();
         let (icons, palette) = compute_hash(42, &opts);
-
-        let mut sprite_data = [0u8; HASH_LENGTH * 8];
-        for i in 0..HASH_LENGTH {
-            let group = HASH_LENGTH - 1 - i;
-            let y = Y_START + i as u8 * Y_SPACING;
-            let (tile_l, tile_r, extra_attr_r) = ICON_TILES[icons[i]];
-            let base = group * 8;
-            sprite_data[base] = y;
-            sprite_data[base + 1] = tile_l;
-            sprite_data[base + 2] = palette;
-            sprite_data[base + 3] = X_LEFT;
-            sprite_data[base + 4] = y;
-            sprite_data[base + 5] = tile_r;
-            sprite_data[base + 6] = palette | extra_attr_r;
-            sprite_data[base + 7] = X_RIGHT;
-        }
+        let sprite_data = build_sprite_data(&icons, palette);
 
         // Icon 0 is in group 4 (bytes 32-39), should have Y_START
         assert_eq!(sprite_data[32], Y_START);
@@ -261,6 +266,22 @@ mod tests {
 
         // Icon 4 is in group 0 (bytes 0-7), should have Y_START + 4*Y_SPACING
         assert_eq!(sprite_data[0], Y_START + 4 * Y_SPACING);
+    }
+
+    #[test]
+    fn write_seed_hash_writes_sprite_data_to_rom() {
+        let opts = Options::default();
+        let mut rom = crate::randomize::qol::test_support::make_test_rom();
+        write_seed_hash(&mut rom, 42, &opts);
+
+        // The data table in ROM must be exactly what build_sprite_data emits.
+        let (icons, palette) = compute_hash(42, &opts);
+        let expected = build_sprite_data(&icons, palette);
+        assert_eq!(rom.read_range(DATA_OFFSET, expected.len()), &expected[..]);
+
+        // Hook and intro-skip hook target the derived CPU addresses.
+        assert_eq!(rom.read_range(HOOK_OFFSET, 3), &[0x4C, 0x14, 0xE9]);
+        assert_eq!(rom.read_range(INTRO_SKIP_HOOK_OFFSET, 3), &[0x20, 0x55, 0xE9]);
     }
 
     #[test]

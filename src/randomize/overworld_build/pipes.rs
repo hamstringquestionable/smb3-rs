@@ -2,6 +2,12 @@
 
 use super::*;
 
+use super::scoring::{
+    PIPE_SOFTMAX_T, TARGET_MAX_DIST, pick_softmax_by_score, score_pipe_endpoint,
+    score_pipe_pair, target_proximity_penalty,
+};
+use super::sections::split_blanks_by_reachability;
+
 /// Number of pipe pairs (not endpoints) per world in the vanilla ROM.
 pub(super) const VANILLA_PIPE_PAIRS: [usize; 8] = [
     0,  // W1
@@ -45,19 +51,15 @@ pub(super) fn place_pipes<R: Rng>(
         return Vec::new();
     }
 
-    // Hard exclusion: forbid pipe endpoints adjacent (≤1 walking hop) to
-    // start or target. Diagnostic on 1000-seed sweeps showed 100% of
-    // "trivial bypass" (0 forts + 0 levels) playthroughs were caused by
-    // pipes sitting next to start, next to target, or both — eliminating
-    // both ends of that pattern eliminates the failure mode. Fixed
-    // endpoints (W3 boat dock) are exempt: their position is dictated by
-    // ROM data, not chosen by the builder.
-    // No-pipe exclusion zone, split by anchor. A pipe within one walking hop of
-    // start or target trivially skips the world, so both are barred by default.
-    // The halves are kept separate so the START side can be lifted when
-    // connectivity demands it (completability outranks the anti-skip rule); the
-    // TARGET side is never lifted, since a pipe next to the airship is the skip
-    // we actually care about.
+    // No-pipe exclusion zone, split by anchor. Diagnostic on 1000-seed sweeps
+    // showed 100% of "trivial bypass" (0 forts + 0 levels) playthroughs were
+    // caused by pipes within one walking hop of start or target, so both are
+    // barred by default. The halves are kept separate so the START side can be
+    // lifted when connectivity demands it (completability outranks the
+    // anti-skip rule); the TARGET side is never lifted, since a pipe next to
+    // the airship is the skip we actually care about. Fixed endpoints (W3 boat
+    // dock) are exempt: their position is dictated by ROM data, not chosen by
+    // the builder.
     let zone_within_1_hop = |anchor: Option<(usize, usize)>| -> HashSet<(usize, usize)> {
         let mut z = HashSet::new();
         if let Some(a) = anchor {
@@ -89,7 +91,6 @@ pub(super) fn place_pipes<R: Rng>(
         .copied()
         .filter(|p| !target_zone.contains(p))
         .collect();
-    let blank_positions = strict.as_slice();
 
     let mut placed_pairs: Vec<TeleportEdge> = Vec::new();
     let mut used_positions: HashSet<(usize, usize)> = HashSet::new();
@@ -112,7 +113,7 @@ pub(super) fn place_pipes<R: Rng>(
 
         // Pick partner from opposite side: if fixed is on an island,
         // partner must be reachable (and vice versa).
-        let available: Vec<(usize, usize)> = blank_positions
+        let available: Vec<(usize, usize)> = strict
             .iter()
             .copied()
             .filter(|p| !used_positions.contains(p))
@@ -121,7 +122,7 @@ pub(super) fn place_pipes<R: Rng>(
 
         // Fall back to any available blank if no opposite-side candidates.
         let fallback: Vec<(usize, usize)> = if available.is_empty() {
-            blank_positions
+            strict
                 .iter()
                 .copied()
                 .filter(|p| !used_positions.contains(p))
@@ -158,7 +159,7 @@ pub(super) fn place_pipes<R: Rng>(
     // `active` is the candidate pool the loop draws from. It starts strict and
     // is lifted to `relaxed` at most once, only when the loop would otherwise
     // give up with the target still unreachable.
-    let mut active: &[(usize, usize)] = blank_positions;
+    let mut active: &[(usize, usize)] = &strict;
     let mut lifted = false;
 
     let mut must_connect_target = true;

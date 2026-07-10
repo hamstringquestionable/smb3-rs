@@ -118,27 +118,25 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
 fn pick_fireball_x<R: Rng>(anchors: &[u8], rng: &mut R) -> u8 {
     // Build gap intervals: virtual boundaries at SEG_X_MIN - MIN_X_GAP and
     // SEG_X_MAX + MIN_X_GAP so the actual usable range is [SEG_X_MIN..=SEG_X_MAX].
+    let sentinel = SEG_X_MAX.saturating_add(MIN_X_GAP);
     let mut prev = SEG_X_MIN.saturating_sub(MIN_X_GAP);
-    let mut best: Option<(u8, u8, u32)> = None;  // (lo, hi, size)
-
-    let consider = |lo_raw: u8, hi_raw: u8, best: &mut Option<(u8, u8, u32)>| {
-        let lo = lo_raw.saturating_add(MIN_X_GAP).max(SEG_X_MIN);
-        let hi = hi_raw.saturating_sub(MIN_X_GAP).min(SEG_X_MAX);
+    let mut gaps: Vec<(u8, u8)> = Vec::new(); // usable (lo, hi) intervals
+    for &a in anchors.iter().chain(std::iter::once(&sentinel)) {
+        let lo = prev.saturating_add(MIN_X_GAP).max(SEG_X_MIN);
+        let hi = a.saturating_sub(MIN_X_GAP).min(SEG_X_MAX);
         if hi >= lo {
-            let size = (hi - lo + 1) as u32;
-            if best.is_none_or(|(_, _, s)| size > s) {
-                *best = Some((lo, hi, size));
-            }
+            gaps.push((lo, hi));
         }
-    };
-
-    for &a in anchors {
-        consider(prev, a, &mut best);
         prev = a;
     }
-    consider(prev, SEG_X_MAX.saturating_add(MIN_X_GAP), &mut best);
 
-    let (lo, hi, _) = best.expect("bowser_castle: no fireball gap available");
+    // Widest gap wins; ties keep the leftmost gap (`rev()` turns max_by_key's
+    // last-max-wins tie rule into first-max-wins in original order).
+    let &(lo, hi) = gaps
+        .iter()
+        .rev()
+        .max_by_key(|(lo, hi)| hi - lo)
+        .expect("bowser_castle: no fireball gap available");
     rng.random_range(lo..=hi)
 }
 

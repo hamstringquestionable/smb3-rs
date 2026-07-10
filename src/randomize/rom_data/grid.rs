@@ -6,7 +6,6 @@ use super::*;
 #[derive(Clone, Debug)]
 pub(crate) struct Grid {
     pub tiles: Vec<Vec<u8>>,
-    pub rows: usize,
     pub cols: usize,
     /// Whether `8s are Wild` is active for this run. Rides on the grid so the
     /// map walker and builder can resolve the active canoe edges (via
@@ -26,6 +25,11 @@ impl Grid {
         self.tiles[row][col] = tile;
     }
 
+    /// Row count — every overworld grid has exactly [`ROWS`] rows; only the
+    /// column count varies per world.
+    pub fn rows(&self) -> usize {
+        ROWS
+    }
 }
 
 /// Read a world's tile grid from ROM as a mutable Grid. The grid is born with
@@ -48,12 +52,12 @@ pub(crate) fn read_tile_grid(rom: &Rom, world_idx: usize) -> Grid {
         tiles.push(row);
     }
 
-    Grid { tiles, rows: ROWS, cols, eights_are_wild: false }
+    Grid { tiles, cols, eights_are_wild: false }
 }
 
 /// Find the START tile position in a grid.
 pub(crate) fn find_start(grid: &Grid) -> Option<(usize, usize)> {
-    for r in 0..grid.rows {
+    for r in 0..grid.rows() {
         for c in 0..grid.cols {
             if grid.get(r, c) == TILE_START {
                 return Some((r, c));

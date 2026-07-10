@@ -139,7 +139,7 @@ pub struct Options {
     /// Number of worlds before Dark Land (1–7, default 7).
     #[serde(default = "default_world_count")]
     pub world_count: u8,
-    #[serde(default = "default_false")]
+    #[serde(default)]
     pub big_q_blocks: bool,
     /// Shuffle pipe endpoint positions during the overworld rebuild.
     #[serde(default = "default_true")]
@@ -359,10 +359,6 @@ pub struct Options {
     /// randomization seed.
     #[serde(default)]
     pub skip_rom_validation: bool,
-}
-
-pub(super) fn default_false() -> bool {
-    false
 }
 
 pub(super) fn default_true() -> bool {

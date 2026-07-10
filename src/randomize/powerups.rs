@@ -113,15 +113,17 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, no_airship_stars: bool) {
                 let shape = b2 & 0x0F;
                 let file_offset = region.start + i + 2;
 
-                if group == GEN_GROUP_POWERBLOCK {
-                    if QBLOCK_SHAPES.contains(&shape) && !PROTECTED_OFFSETS.contains(&file_offset) {
+                // Protected offsets only ever hold group-1 blocks, so the
+                // guard applies to group 1 alone (group 2 is never checked).
+                if group == GEN_GROUP_POWERBLOCK && !PROTECTED_OFFSETS.contains(&file_offset) {
+                    if QBLOCK_SHAPES.contains(&shape) {
                         let pool = if no_airship_stars && AIRSHIP_QBLOCK_OFFSETS.contains(&file_offset) {
                             QBLOCK_SHAPES_NO_STAR
                         } else {
                             QBLOCK_SHAPES
                         };
                         data[i + 2] = *pool.choose(rng).unwrap();
-                    } else if BRICK_SHAPES.contains(&shape) && !PROTECTED_OFFSETS.contains(&file_offset) {
+                    } else if BRICK_SHAPES.contains(&shape) {
                         data[i + 2] = *BRICK_SHAPES.choose(rng).unwrap();
                     }
                 } else if group == GEN_GROUP_EXTENDED && region.randomize_note_wood {
@@ -133,17 +135,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, no_airship_stars: bool) {
                 }
             }
 
-            // Determine command size: 3 bytes normally, 4 if this is a
-            // variable-size dispatch that reads an extra byte.
-            let mut cmd_size = 3;
-            if !is_fixed {
-                let grp = (b0 >> 5) as usize;
-                let dispatch = grp * 15 + ((b2 >> 4) as usize) - 1;
-                if region.extra_byte_dispatches.contains(&(dispatch as u8)) {
-                    cmd_size = 4;
-                }
-            }
-            i += cmd_size;
+            i += region.command_size(b0, b2);
         }
 
         rom.write_range(region.start, &data);

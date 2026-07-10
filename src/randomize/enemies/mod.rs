@@ -88,10 +88,9 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
         skip_ranges.iter().find(|r| r.contains(&idx)).map(|r| r.end)
     };
 
-    // Build class modes, wild pool, and pre-bucketed page groups
+    // Build class modes and wild pools
     let normal_modes = ClassModes::from_options(opts);
     let normal_wild_pool = normal_modes.build_wild_pool();
-    let normal_page_buckets = PageBuckets::build(&normal_wild_pool);
     let hb_modes = hb_class_modes(opts.hb_encounters);
     let hb_wild_pool = hb_modes.build_wild_pool();
 
@@ -133,10 +132,10 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
         }
 
         let is_hb_segment = segment_rule == WalkerSegmentRule::HammerBro;
-        let (modes, wild_pool, page_buckets) = if is_hb_segment {
-            (&hb_modes, hb_wild_pool.as_slice(), &normal_page_buckets) // HB uses own wild path
+        let (modes, wild_pool) = if is_hb_segment {
+            (&hb_modes, hb_wild_pool.as_slice()) // HB Wild is batch-handled below
         } else {
-            (&normal_modes, normal_wild_pool.as_slice(), &normal_page_buckets)
+            (&normal_modes, normal_wild_pool.as_slice())
         };
 
         // Collect all entries in this segment
@@ -152,7 +151,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
 
         // HB Wild: batch-assign enemies with stompability constraints.
         if is_hb_segment && opts.hb_encounters == EnemyMode::Wild && !big_q_only {
-            randomize_hb_wild_segment(&mut data, &entries, &hb_modes, &hb_wild_pool, rng);
+            randomize_hb_wild_segment(&mut data, &entries, &hb_modes, rng);
             continue;
         }
 
@@ -180,25 +179,16 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
             if !big_q_only {
                 for &idx in group {
                     let entry = &entries[idx];
-                    let should_precommit = match find_class_pool(entry.obj_id, modes, wild_pool) {
-                        None => !BOOMBOOM_IDS.contains(&entry.obj_id),
-                        Some(pool) if std::ptr::eq(pool, wild_pool) => false,
-                        Some(class) => is_uniform_chr_class(class),
-                    };
-                    if should_precommit {
+                    if should_precommit(entry.obj_id, modes) {
                         commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
                     }
                 }
             }
 
-            // Pass 2: pick a replacement for each swappable entry.
-            //
-            // Every entry funnels through one shape: choose a base pool + a
-            // primary (CHR-aware) pick, then filter through the placement
-            // constraints before committing. Applying the constraints uniformly
-            // — instead of only in the wild-swap branch — is what makes the
-            // bertha cap (and the giant-red / piranha-hazard guards) cover the
-            // Force*/ExcludeHazards paths too.
+            // Pass 2: pick a replacement for each swappable entry. The
+            // per-entry decision (pool choice, primary pick, placement
+            // constraints) lives in `pick_replacement`; this loop handles the
+            // special-cased swaps and the segment-level bookkeeping.
             for &idx in group {
                 let entry = &entries[idx];
                 let file_offset = ENEMY_DATA_START + entry.data_index;
@@ -222,103 +212,24 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                     continue;
                 }
 
-                // Base pool + primary pick. A pool-replacing protection
-                // (ForceShell/TankBro/Stompable/ExcludeHazards) chooses the pool;
-                // otherwise it's the normal class pool, picked via the
-                // wild/piranha/plain strategy. `None` => no swap for this entry.
-                let picked: Option<(Option<u8>, Cow<[u8]>)> = match protection {
-                    Some(EntryProtection::ForceShell) if modes.shell != EnemyMode::Off => Some((
-                        pick_compatible(SHELL_ENEMIES, committed_slot4, committed_slot5, rng),
-                        Cow::Borrowed(SHELL_ENEMIES),
-                    )),
-                    Some(EntryProtection::ForceTankBro) if modes.bros != EnemyMode::Off => Some((
-                        pick_compatible(TANK_BRO_POOL, committed_slot4, committed_slot5, rng),
-                        Cow::Borrowed(TANK_BRO_POOL),
-                    )),
-                    Some(EntryProtection::ForceStompable) => {
-                        find_class_pool(entry.obj_id, modes, wild_pool).map(|pool| {
-                            let sp: Vec<u8> = pool.iter().copied()
-                                .filter(|id| STOMPABLE_ENEMIES.contains(id)).collect();
-                            let pick = pick_compatible(&sp, committed_slot4, committed_slot5, rng);
-                            (pick, Cow::Owned(sp))
-                        })
-                    }
-                    Some(EntryProtection::ExcludeHazards) => {
-                        find_class_pool(entry.obj_id, modes, wild_pool).map(|pool| {
-                            // Drop hazards, but keep any of the same category as the
-                            // vanilla enemy here (additive-only: don't strip a
-                            // designed-in hazard, only block introducing a new one).
-                            let fp: Vec<u8> = pool.iter().copied()
-                                .filter(|&id| !hazard_excluded(id, entry.obj_id)).collect();
-                            let pick = pick_compatible(&fp, committed_slot4, committed_slot5, rng);
-                            (pick, Cow::Owned(fp))
-                        })
-                    }
-                    _ => find_class_pool(entry.obj_id, modes, wild_pool).map(|pool| {
-                        let pick = if std::ptr::eq(pool, wild_pool) {
-                            page_buckets.pick(committed_slot4, committed_slot5, rng)
-                        } else if std::ptr::eq(pool, PIRANHAS_WILD) {
-                            // Category-equal: piranha / upward jet / wrench each
-                            // get a uniform turn. Giant red (0x7F) only when this
-                            // slot already held one (keep filter covers the rest).
-                            let bucket: &[u8] = if entry.obj_id == GIANT_RED_PIRANHA {
-                                PIRANHAS
-                            } else {
-                                PIRANHAS_NO_RED
-                            };
-                            pick_bucket_first(&[bucket, BUCKET_UP_JET, BUCKET_WRENCH],
-                                committed_slot4, committed_slot5, rng)
-                        } else if std::ptr::eq(pool, PIRANHASC_WILD) {
-                            pick_bucket_first(&[PIRANHASC, BUCKET_DOWN_JET],
-                                committed_slot4, committed_slot5, rng)
-                        } else {
-                            pick_compatible(pool, committed_slot4, committed_slot5, rng)
-                        };
-                        (pick, Cow::Borrowed(pool))
-                    }),
-                };
-                let Some((primary, base_pool)) = picked else {
-                    continue; // protection mode off, or not a known class: no swap
-                };
-
-                // Placement constraints, applied to every pick. `keep(id)` is
-                // true when `id` is allowed in this slot.
                 let was_bertha = BERTHA_IDS.contains(&data[entry.data_index]);
                 let cap_full = bertha_count.saturating_sub(was_bertha as u8)
                     >= MAX_BERTHA_PER_SEGMENT;
-                let keep = |id: u8| -> bool {
-                    // Big Bertha cap: no new bertha once the segment is full.
-                    let over_cap = cap_full && BERTHA_IDS.contains(&id);
-                    // Giant red piranha (off-center hitbox) only where one was.
-                    let bad_giant = id == GIANT_RED_PIRANHA && entry.obj_id != GIANT_RED_PIRANHA;
-                    !(over_cap || bad_giant)
-                };
-                // (A piranha slot can't become a hazard: the piranha pools are
-                // self-contained and contain none — verified by the harness's
-                // piranha-hazard invariant, so no explicit guard is needed.)
-
-                // Accept the primary pick if it satisfies every constraint;
-                // otherwise re-pick once from the base pool filtered by all of
-                // them, so the constraints compose instead of undoing each other.
-                let chosen = match primary {
-                    Some(id) if keep(id) => Some(id),
-                    _ => {
-                        let filtered: Vec<u8> =
-                            base_pool.iter().copied().filter(|&id| keep(id)).collect();
-                        pick_compatible(&filtered, committed_slot4, committed_slot5, rng)
-                    }
+                let Some(chosen) = pick_replacement(
+                    entry, protection, modes, wild_pool,
+                    (committed_slot4, committed_slot5), cap_full, rng,
+                ) else {
+                    continue; // protection mode off, or not a known class: no swap
                 };
 
-                if let Some(chosen) = chosen {
-                    let chosen_is_bertha = BERTHA_IDS.contains(&chosen);
-                    if was_bertha && !chosen_is_bertha {
-                        bertha_count = bertha_count.saturating_sub(1);
-                    } else if !was_bertha && chosen_is_bertha {
-                        bertha_count = bertha_count.saturating_add(1);
-                    }
-                    swap_enemy(&mut data, entry.data_index, chosen);
-                    commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
+                let chosen_is_bertha = BERTHA_IDS.contains(&chosen);
+                if was_bertha && !chosen_is_bertha {
+                    bertha_count = bertha_count.saturating_sub(1);
+                } else if !was_bertha && chosen_is_bertha {
+                    bertha_count = bertha_count.saturating_add(1);
                 }
+                swap_enemy(&mut data, entry.data_index, chosen);
+                commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
             }
 
         }

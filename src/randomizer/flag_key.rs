@@ -114,13 +114,6 @@ impl Options {
             | ((self.swap_start_airship as u8) << 1)
             | (self.more_hammer_rocks.is_on() as u8);
 
-        let b4 = (self.card_speed_clear as u8) << 7
-            | (self.remove_n_cards as u8) << 6
-            | (self.skip_wand_cutscene as u8) << 5
-            | (self.adjust_boss_hitboxes as u8) << 4
-            | (self.shuffle_spade_games as u8) << 3;
-            // bits 2-0 used by hb_encounters and wild_injections below
-
         // Helper to encode EnemyMode as 2 bits
         fn em(m: EnemyMode) -> u8 {
             match m {
@@ -129,6 +122,17 @@ impl Options {
                 EnemyMode::Wild => 2,
             }
         }
+
+        // b4: card_speed_clear(7) remove_n_cards(6) skip_wand_cutscene(5)
+        //     adjust_boss_hitboxes(4) shuffle_spade_games(3)
+        //     hb_encounters(2-1) wild_injections(0)
+        let b4 = (self.card_speed_clear as u8) << 7
+            | (self.remove_n_cards as u8) << 6
+            | (self.skip_wand_cutscene as u8) << 5
+            | (self.adjust_boss_hitboxes as u8) << 4
+            | (self.shuffle_spade_games as u8) << 3
+            | em(self.hb_encounters) << 1
+            | (self.wild_injections as u8);
 
         // b5: ground(7-6) shell(5-4) flying(3-2) hammer_vulnerable_koopalings(1) early_sun(0)
         let b5 = em(self.ground) << 6
@@ -148,20 +152,10 @@ impl Options {
             | em(self.thwomps);
 
         // b7: rotodiscs(7-6) cannons(5-4) water(3-2) bros(1-0)
-        // But we also need hb_encounters(2 bits) and wild_injections(1 bit)
-        // = 5 tri-states (10 bits) + 1 bool = 11 bits. We have 16 bits (b7+overflow).
-        // Rearrange: put last 5 tri-states + injection across b7 and steal bits from b4.
-        //
-        // b7: rotodiscs(7-6) cannons(5-4) water(3-2) bros(1-0)
         let b7 = em(self.rotodiscs) << 6
             | em(self.cannons) << 4
             | em(self.water) << 2
             | em(self.bros);
-
-        // Use b4 bits 2-0 for hb_encounters(2 bits) + wild_injections(1 bit)
-        let b4 = b4
-            | (em(self.hb_encounters) << 1)
-            | (self.wild_injections as u8);
 
         // b8-b9: starting items (3 nibbles, 0 = none)
         // For sentinel values (>=14), store 0 in the nibble and encode
@@ -242,9 +236,16 @@ impl Options {
 
     /// Decode a Crockford Base-32 flag key string into Options.
     pub fn from_flag_key(key: &str) -> Result<Options, String> {
-        let encoded = key.strip_prefix(FLAG_KEY_PREFIX)
-            .or_else(|| key.strip_prefix("smb3r-"))
-            .unwrap_or(key);
+        // Strip the "SMB3R-" prefix case-insensitively if present. Compare as
+        // bytes so a non-ASCII key can't panic on a char-boundary slice.
+        let prefix_len = FLAG_KEY_PREFIX.len();
+        let encoded = if key.len() >= prefix_len
+            && key.as_bytes()[..prefix_len].eq_ignore_ascii_case(FLAG_KEY_PREFIX.as_bytes())
+        {
+            &key[prefix_len..]
+        } else {
+            key
+        };
 
         let bytes = base32_decode(encoded, 13)?;
 

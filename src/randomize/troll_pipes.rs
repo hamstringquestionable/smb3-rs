@@ -18,9 +18,8 @@ const TROLL_PIPE_PERCENT: u32 = 75;
 ///
 /// Each eligible world independently has a [`TROLL_PIPE_PERCENT`]% chance of
 /// actually receiving a pipe; on the miss the world keeps a normal level
-/// tile. The roll is always drawn (even when there is no candidate slot) so
-/// downstream RNG stays aligned across worlds and the output is reproducible
-/// per seed.
+/// tile. The roll is drawn every world regardless of whether a candidate
+/// slot exists, so the outcome is reproducible per seed.
 ///
 /// The writer reads `slot.is_troll_pipe` and stamps `0xBC` (PIPE tile)
 /// instead of a level-number tile. The slot's level pointer entry is
@@ -45,8 +44,8 @@ pub(crate) fn mark_troll_pipes<R: Rng>(build: &mut BuildResult, rng: &mut R) {
             .filter(|(_, s)| s.kind == SlotKind::Level && !s.is_hand_trap)
             .map(|(i, _)| i)
             .collect();
-        // Draw the appearance roll unconditionally so RNG advances by the
-        // same amount per world regardless of whether a candidate exists.
+        // The appearance roll is drawn every world, candidates or not (the
+        // `choose` below still only consumes RNG when candidates exist).
         let appears = rng.random_range(..100u32) < TROLL_PIPE_PERCENT;
         if let Some(&pick) = candidates.choose(rng)
             && appears
@@ -64,6 +63,18 @@ mod tests {
     use crate::randomize::{node_catalog, overworld_build, overworld_pickup, troll_pipes};
     use crate::rom::Rom;
 
+    /// Run the catalog → pickup → build pipeline for `seed` and mark troll
+    /// pipes, returning the finished build.
+    fn build_with_troll_pipes(rom: &Rom, seed: u64) -> overworld_build::BuildResult {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let catalog = node_catalog::NodeCatalog::build(rom, false);
+        let pickup = overworld_pickup::pick_up(rom, &catalog, overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
+        let data = overworld_build::OverworldData { pickup: &pickup, catalog: &catalog };
+        let mut build = overworld_build::build(rom, &data, &mut rng, overworld_build::BuildFlags { shuffle_toad_houses: true, ..Default::default() });
+        troll_pipes::mark_troll_pipes(&mut build, &mut rng);
+        build
+    }
+
     #[test]
     fn marks_at_most_one_pipe_per_world_w2_w8() {
         let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
@@ -74,12 +85,7 @@ mod tests {
         let mut marked = 0usize; // W2-W8 worlds that got a pipe
         let mut eligible = 0usize; // W2-W8 worlds total
         for seed in 0u64..SEEDS {
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let catalog = node_catalog::NodeCatalog::build(&rom, false);
-            let pickup = overworld_pickup::pick_up(&rom, &catalog, overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
-            let data = overworld_build::OverworldData { pickup: &pickup, catalog: &catalog };
-            let mut build = overworld_build::build(&rom, &data, &mut rng, overworld_build::BuildFlags { shuffle_toad_houses: true, ..Default::default() });
-            troll_pipes::mark_troll_pipes(&mut build, &mut rng);
+            let build = build_with_troll_pipes(&rom, seed);
             for w in &build.worlds {
                 let n = w.slots.iter().filter(|s| s.is_troll_pipe).count();
                 if w.world_idx == 0 {
@@ -109,13 +115,7 @@ mod tests {
         };
         let rom = Rom::from_bytes(&bytes).unwrap();
         let run = || {
-            let mut rng = ChaCha8Rng::seed_from_u64(42);
-            let catalog = node_catalog::NodeCatalog::build(&rom, false);
-            let pickup = overworld_pickup::pick_up(&rom, &catalog, overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
-            let data = overworld_build::OverworldData { pickup: &pickup, catalog: &catalog };
-            let mut build = overworld_build::build(&rom, &data, &mut rng, overworld_build::BuildFlags { shuffle_toad_houses: true, ..Default::default() });
-            troll_pipes::mark_troll_pipes(&mut build, &mut rng);
-            build.worlds.iter()
+            build_with_troll_pipes(&rom, 42).worlds.iter()
                 .map(|w| w.slots.iter().filter(|s| s.is_troll_pipe).count())
                 .collect::<Vec<_>>()
         };

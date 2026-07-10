@@ -15,12 +15,11 @@ pub(super) fn write_tile_grid<R: Rng>(
     let wi = built.world_idx;
     let mut grid = built.grid.clone();
 
-    // Stamp fortress tiles. The game treats $67, $EB, and $6A as fortress
-    // tiles (Map_Removable_Tiles + completion-unsafe), so pick per-fortress.
-    // $6A's CHR animation is frozen by patch_metatile_6a_freeze.
-    const FORTRESS_TILES: [u8; 3] = [0x67, 0xEB, 0x6A];
+    // Stamp fortress tiles — pick per-fortress from the game's fortress
+    // tile set (see rom_data::FORTRESS_TILES).
     for a in &wa.fortress {
-        let tile = FORTRESS_TILES[rng.random_range(..FORTRESS_TILES.len())];
+        let tile =
+            rom_data::FORTRESS_TILES[rng.random_range(..rom_data::FORTRESS_TILES.len())];
         grid.set(a.pos.0, a.pos.1, tile);
     }
 
@@ -114,21 +113,21 @@ pub(super) fn write_tile_grid<R: Rng>(
     let mut level_idx: usize = 0;
     let mut assigned: Vec<bool> = vec![false; wa.level.len()];
 
-    let pick_level_tile = |pos: (usize, usize), level_idx: &mut usize| -> u8 {
+    let mut pick_level_tile = |pos: (usize, usize)| -> u8 {
         if hand_trap_positions.contains(&pos) {
             TILE_HAND_TRAP
         } else if troll_pipe_positions.contains(&pos) {
             TILE_TROLL_PIPE
         } else {
-            let t = LEVEL_TILES[(*level_idx).min(LEVEL_TILES.len() - 1)];
-            *level_idx += 1;
+            let t = LEVEL_TILES[level_idx.min(LEVEL_TILES.len() - 1)];
+            level_idx += 1;
             t
         }
     };
 
     for &(pos, _dist) in &bfs {
         if let Some(&la_idx) = level_pos_set.get(&pos) && !assigned[la_idx] {
-            let tile = pick_level_tile(pos, &mut level_idx);
+            let tile = pick_level_tile(pos);
             grid.set(pos.0, pos.1, tile);
             assigned[la_idx] = true;
         }
@@ -137,7 +136,7 @@ pub(super) fn write_tile_grid<R: Rng>(
     // Any level slots not reached by BFS (safety fallback).
     for (i, a) in wa.level.iter().enumerate() {
         if !assigned[i] {
-            let tile = pick_level_tile(a.pos, &mut level_idx);
+            let tile = pick_level_tile(a.pos);
             grid.set(a.pos.0, a.pos.1, tile);
         }
     }
@@ -157,7 +156,7 @@ pub(super) fn write_tile_grid<R: Rng>(
     }
 
     // Write grid to ROM.
-    for r in 0..grid.rows {
+    for r in 0..grid.rows() {
         for c in 0..grid.cols {
             let offset = rom_data::map_tile_offset(wi, r, c);
             rom.write_byte(offset, grid.get(r, c));

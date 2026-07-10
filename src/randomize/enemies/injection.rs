@@ -35,18 +35,7 @@ pub fn enemy_entry_points(rom: &Rom) -> Vec<u16> {
                     i += 1;
                     break;
                 }
-                let b0 = data[i];
-                let b2 = data[i + 2];
-                let is_fixed = (b2 & 0xF0) == 0;
-                let mut cmd_size = 3;
-                if !is_fixed {
-                    let grp = (b0 >> 5) as usize;
-                    let dispatch = grp * 15 + ((b2 >> 4) as usize) - 1;
-                    if region.extra_byte_dispatches.contains(&(dispatch as u8)) {
-                        cmd_size = 4;
-                    }
-                }
-                i += cmd_size;
+                i += region.command_size(data[i], data[i + 2]);
             }
         }
     }
@@ -72,7 +61,6 @@ pub(super) fn inject_at_entry_points<R: Rng>(
     rng: &mut R,
 ) {
     let normal_modes = ClassModes::from_options(opts);
-    let normal_wild_pool = normal_modes.build_wild_pool();
 
     for &ep_u16 in entry_ptrs {
         let ep = ep_u16 as usize;
@@ -124,21 +112,14 @@ pub(super) fn inject_at_entry_points<R: Rng>(
 
         let entry = &entries[0];
         let fo = ENEMY_DATA_START + entry.data_index;
-        // Skip if the walker pass would override or filter our pick: the four
-        // force-* rules silently replace the injected enemy with a class pool
-        // member (e.g. 6-5's shell at 0xC5EB must stay shell for brick-break
-        // progression), and ExcludeHazards would filter a Lakitu/Boss Bass
-        // back out (e.g. 7F2's Boom-Boom arena).
-        let class_protected = matches!(
-            entry_protection_at(fo),
-            Some(EntryProtection::SkipSwap
-                | EntryProtection::ForceShell
-                | EntryProtection::ForceStompable
-                | EntryProtection::ForceTankBro
-                | EntryProtection::ExcludeHazards)
-        );
-        let swappable = !class_protected
-            && find_class_pool(entry.obj_id, &normal_modes, &normal_wild_pool).is_some();
+        // Skip if the walker pass would override or filter our pick: every
+        // protection either keeps the vanilla enemy (SkipSwap), silently
+        // replaces the injected enemy with a forced-pool member (e.g. 6-5's
+        // shell at 0xC5EB must stay shell for brick-break progression), or
+        // filters a Lakitu/Boss Bass back out (ExcludeHazards, e.g. 7F2's
+        // Boom-Boom arena).
+        let swappable = entry_protection_at(fo).is_none()
+            && find_class_pool(entry.obj_id, &normal_modes).is_some();
         if !swappable {
             continue;
         }
@@ -148,12 +129,7 @@ pub(super) fn inject_at_entry_points<R: Rng>(
         let mut s4 = ChrSlot::Free;
         let mut s5 = ChrSlot::Free;
         for e in &entries[1..] {
-            let should_precommit = match find_class_pool(e.obj_id, &normal_modes, &normal_wild_pool) {
-                None => !BOOMBOOM_IDS.contains(&e.obj_id),
-                Some(pool) if std::ptr::eq(pool, normal_wild_pool.as_slice()) => false,
-                Some(class) => is_uniform_chr_class(class),
-            };
-            if should_precommit {
+            if should_precommit(e.obj_id, &normal_modes) {
                 commit_chr_page(e.obj_id, &mut s4, &mut s5);
             }
         }

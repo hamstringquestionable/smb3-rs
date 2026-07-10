@@ -63,8 +63,14 @@ pub(crate) fn prg_bank_cpu_to_file(bank: usize, cpu_addr: u16) -> usize {
 
 /// Inverse of [`prg_bank_cpu_to_file`]: file offset within an $A000-window
 /// bank back to its CPU address.
-pub(crate) fn prg_bank_file_to_cpu(bank: usize, file_offset: usize) -> u16 {
+pub(crate) const fn prg_bank_file_to_cpu(bank: usize, file_offset: usize) -> u16 {
     (0xA000 + (file_offset - bank * 0x2000 - 0x10)) as u16
+}
+
+/// Convert a file offset in PRG031 (the MMC3 fixed bank, always mapped at
+/// $E000-$FFFF, file 0x3E010) to its CPU address.
+pub(crate) const fn prg031_file_to_cpu(file_offset: usize) -> u16 {
+    (0xE000 + (file_offset - 0x3E010)) as u16
 }
 
 /// Build a 3-byte `JSR <target>` where `target` is given as a *file offset*
@@ -293,20 +299,26 @@ pub(crate) fn write_map_sprite(
     rom.write_byte(id_off, id);
 }
 
-/// Read the grid positions of all active floating sprites for a world.
-///
-/// Each world has up to 9 map object slots. A slot with ID $FF is unused.
-/// For active slots, we convert pixel coordinates back to grid positions.
-/// These are the positions where floating sprites sit (hammer bros, piranhas,
-/// W8 hand traps, etc.) and should not have level/fort tiles placed under them.
-pub(crate) fn read_map_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
+/// True if a map-object slot id is a Hammer Bro sprite (0x03–0x06).
+pub(crate) fn is_hb_sprite_id(id: u8) -> bool {
+    (0x03..=0x06).contains(&id)
+}
+
+/// Read the grid positions of map-object sprites whose slot id satisfies
+/// `pred`. Pixel coordinates are converted back to grid positions (reverse of
+/// Grid→pixel: Y=(row+2)*16, XHi=col/16, XLo=(col%16)*16); slots whose Y would
+/// put the row below 0 are skipped as invalid.
+fn read_sprite_positions(
+    rom: &Rom,
+    world_idx: usize,
+    pred: impl Fn(u8) -> bool,
+) -> Vec<(usize, usize)> {
     let mut positions = Vec::new();
 
     for slot in 0..9 {
         let id_off = map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot);
-        let id = rom.read_byte(id_off);
-        if id == 0xFF {
-            continue; // unused slot
+        if !pred(rom.read_byte(id_off)) {
+            continue;
         }
 
         let y_off = map_obj_slot_offset(rom, MAP_OBJ_YS_MASTER, world_idx, slot);
@@ -317,7 +329,6 @@ pub(crate) fn read_map_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usi
         let xhi = rom.read_byte(xhi_off) as usize;
         let xlo = rom.read_byte(xlo_off) as usize;
 
-        // Reverse of Grid→pixel: Y=(row+2)*16, XHi=col/16, XLo=(col%16)*16
         if y < 32 {
             continue; // invalid (row would be negative)
         }
@@ -330,38 +341,21 @@ pub(crate) fn read_map_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usi
     positions
 }
 
+/// Read the grid positions of all active floating sprites for a world.
+///
+/// Each world has up to 9 map object slots. A slot with ID $FF is unused.
+/// These are the positions where floating sprites sit (hammer bros, piranhas,
+/// W8 hand traps, etc.) and should not have level/fort tiles placed under them.
+pub(crate) fn read_map_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
+    read_sprite_positions(rom, world_idx, |id| id != 0xFF)
+}
+
 /// Read grid positions of hammer bro sprites only (IDs 0x03–0x06).
 ///
 /// These positions need HB level pointer entries even though they are excluded
 /// from level/fort/pipe placement by `fixed_positions`.
 pub(crate) fn read_hb_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
-    let mut positions = Vec::new();
-
-    for slot in 0..9 {
-        let id_off = map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot);
-        let id = rom.read_byte(id_off);
-        if !(0x03..=0x06).contains(&id) {
-            continue;
-        }
-
-        let y_off = map_obj_slot_offset(rom, MAP_OBJ_YS_MASTER, world_idx, slot);
-        let xhi_off = map_obj_slot_offset(rom, MAP_OBJ_XHIS_MASTER, world_idx, slot);
-        let xlo_off = map_obj_slot_offset(rom, MAP_OBJ_XLOS_MASTER, world_idx, slot);
-
-        let y = rom.read_byte(y_off) as usize;
-        let xhi = rom.read_byte(xhi_off) as usize;
-        let xlo = rom.read_byte(xlo_off) as usize;
-
-        if y < 32 {
-            continue;
-        }
-        let row = (y / 16).saturating_sub(2);
-        let col = xhi * 16 + xlo / 16;
-
-        positions.push((row, col));
-    }
-
-    positions
+    read_sprite_positions(rom, world_idx, is_hb_sprite_id)
 }
 
 /// Map-object reward item table (Global Item IDs). A flat 9-bytes-per-world
@@ -376,19 +370,24 @@ pub(crate) fn map_obj_reward_offset(world_idx: usize, slot: usize) -> usize {
     MAP_OBJ_REWARDS + world_idx * 9 + slot
 }
 
+/// First map-object slot usable for sprite placement in a world. Slot 0
+/// always holds a fixed non-HB marker (`id 0x01`) and is reserved; slot 1
+/// (the airship sprite slot) is reserved in W1-W7 but usable in W8, which has
+/// no airship.
+pub(crate) fn first_usable_map_obj_slot(world_idx: usize) -> usize {
+    if world_idx == W8_IDX { 1 } else { 2 }
+}
+
 /// Map-object slot indices that can host a redistributed Hammer Bro sprite in
-/// this world. Slot 0 always holds a fixed non-HB marker (`id 0x01`) and is
-/// reserved; slot 1 (the airship sprite slot) is reserved in W1-W7 but usable
-/// in W8, which has no airship. A slot qualifies if it is empty (`0x00`) or
-/// currently holds a Hammer Bro (`0x03-0x06`, which redistribution clears) — so
-/// the result is identical before and after [`clear_hb_sprites`].
+/// this world (see [`first_usable_map_obj_slot`] for the reserved low slots).
+/// A slot qualifies if it is empty (`0x00`) or currently holds a Hammer Bro
+/// (`0x03-0x06`, which redistribution clears) — so the result is identical
+/// before and after [`clear_hb_sprites`].
 pub(crate) fn eligible_hb_map_slots(rom: &Rom, world_idx: usize) -> Vec<usize> {
-    const W8: usize = 7;
-    let first = if world_idx == W8 { 1 } else { 2 };
-    (first..9)
+    (first_usable_map_obj_slot(world_idx)..9)
         .filter(|&slot| {
             let id = rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot));
-            id == 0x00 || (0x03..=0x06).contains(&id)
+            id == 0x00 || is_hb_sprite_id(id)
         })
         .collect()
 }
@@ -401,7 +400,7 @@ pub(crate) fn collect_hb_sprite_rewards(rom: &Rom) -> Vec<u8> {
     for world_idx in 0..8 {
         for slot in 0..9 {
             let id = rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot));
-            if (0x03..=0x06).contains(&id) {
+            if is_hb_sprite_id(id) {
                 rewards.push(rom.read_byte(map_obj_reward_offset(world_idx, slot)));
             }
         }
@@ -415,12 +414,8 @@ pub(crate) fn collect_hb_sprite_rewards(rom: &Rom) -> Vec<u8> {
 pub(crate) fn clear_hb_sprites(rom: &mut Rom, world_idx: usize) {
     for slot in 0..9 {
         let id_off = map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot);
-        if (0x03..=0x06).contains(&rom.read_byte(id_off)) {
-            rom.write_byte(id_off, 0x00);
-            rom.write_byte(map_obj_slot_offset(rom, MAP_OBJ_YS_MASTER, world_idx, slot), 0);
-            rom.write_byte(map_obj_slot_offset(rom, MAP_OBJ_XHIS_MASTER, world_idx, slot), 0);
-            rom.write_byte(map_obj_slot_offset(rom, MAP_OBJ_XLOS_MASTER, world_idx, slot), 0);
-            rom.write_byte(map_obj_reward_offset(world_idx, slot), 0);
+        if is_hb_sprite_id(rom.read_byte(id_off)) {
+            clear_map_sprite(rom, world_idx, slot);
         }
     }
 }
@@ -430,9 +425,7 @@ pub(crate) fn clear_hb_sprites(rom: &mut Rom, world_idx: usize) {
 /// writer (which fills eligible slots from the bottom) and the reserved
 /// dynamic-spawn buffer.
 pub(crate) fn last_empty_map_obj_slot(rom: &Rom, world_idx: usize) -> Option<usize> {
-    const W8: usize = 7;
-    let first = if world_idx == W8 { 1 } else { 2 };
-    (first..9).rev().find(|&slot| {
+    (first_usable_map_obj_slot(world_idx)..9).rev().find(|&slot| {
         rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot)) == 0x00
     })
 }

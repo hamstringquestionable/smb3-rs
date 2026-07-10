@@ -142,15 +142,16 @@ fn test_fortress_boomboom_offsets() {
 }
 
 #[test]
-fn test_regression_vs_old_classification() {
+fn test_kind_totals_sum_to_340() {
     let rom = match load_rom() {
         Some(r) => r,
         None => return,
     };
     let catalog = NodeCatalog::build(&rom, false);
 
-    // Verify aggregate counts match known vanilla totals:
-    // 17 fortresses, 7 airships, 1 bowser, 48 pipes, 8 starts
+    // Aggregate counts plus the known vanilla fixed totals
+    // (17 fortresses, 48 pipes, 7 airships, 1 bowser, 8 starts)
+    // must cover all 340 pointer table entries.
     let levels: usize = catalog.entries.iter()
         .filter(|e| matches!(e.kind, NodeKind::Level))
         .count();

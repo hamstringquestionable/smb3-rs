@@ -37,18 +37,18 @@ pub(super) fn chr_groups(entries: &[SegmentEntry]) -> Vec<Vec<usize>> {
 
 /// HB Wild segment randomization with stompability constraints.
 /// 1-enemy segments: pick from STOMPABLE_ENEMIES only.
-/// 2-enemy segments: 5/31 chance for non-stompable path (one from
-/// HB_NEEDS_SHELL_ENEMIES + one from SHELL_ENEMIES), otherwise both stompable.
+/// 2-enemy segments: `HB_NONSTOMPABLE_ODDS` chance for the non-stompable path
+/// (one from HB_NEEDS_SHELL_ENEMIES + one from SHELL_ENEMIES), otherwise both
+/// stompable.
 pub(super) fn randomize_hb_wild_segment<R: Rng>(
     data: &mut [u8],
     entries: &[SegmentEntry],
     hb_modes: &ClassModes,
-    hb_wild_pool: &[u8],
     rng: &mut R,
 ) {
     let swappable: Vec<usize> = entries.iter()
         .enumerate()
-        .filter(|(_, e)| find_class_pool(e.obj_id, hb_modes, hb_wild_pool).is_some())
+        .filter(|(_, e)| find_class_pool(e.obj_id, hb_modes).is_some())
         .map(|(idx, _)| idx)
         .collect();
 
@@ -66,8 +66,9 @@ pub(super) fn randomize_hb_wild_segment<R: Rng>(
             swap_enemy(data, entries[swappable[0]].data_index, chosen);
         }
     } else if swappable.len() == 2 {
-        // Roll whether this segment gets a non-stompable enemy (5/31 ≈ 16%)
-        if rng.random_range(..31u32) < 5 {
+        // Roll whether this segment gets a non-stompable enemy
+        let (num, den) = HB_NONSTOMPABLE_ODDS;
+        if rng.random_range(..den) < num {
             // Pick non-stompable, then a shell partner
             if let Some(ns) = pick_compatible(HB_NEEDS_SHELL_ENEMIES, slot4, slot5, rng) {
                 let mut s4 = slot4;

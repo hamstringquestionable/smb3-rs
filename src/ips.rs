@@ -11,6 +11,31 @@ const MAX_RECORD_LEN: usize = 0xFFFF;
 // RLE saves when N >= 4, but we use a higher threshold to avoid many tiny RLE records.
 const MIN_RLE_RUN: usize = 8;
 
+// Identical-byte gaps up to this long are absorbed into the surrounding diff
+// region (when more differing bytes follow), so nearby diffs share one record
+// instead of fragmenting into many tiny ones.
+const MAX_ABSORBED_GAP: usize = 4;
+
+/// End (exclusive) of the run of differing bytes starting at `from`.
+fn diff_run_end(original: &[u8], modified: &[u8], from: usize, len: usize) -> usize {
+    let mut i = from;
+    while i < len && original[i] != modified[i] {
+        i += 1;
+    }
+    i
+}
+
+/// A diff run just ended at `gap_start`. If at most `MAX_ABSORBED_GAP`
+/// identical bytes sit there followed by another differing byte, return that
+/// byte's position so the caller can absorb the gap; otherwise the region ends.
+fn next_diff_after_gap(original: &[u8], modified: &[u8], gap_start: usize, len: usize) -> Option<usize> {
+    let mut i = gap_start;
+    while i < len && i - gap_start < MAX_ABSORBED_GAP && original[i] == modified[i] {
+        i += 1;
+    }
+    (i < len && original[i] != modified[i]).then_some(i)
+}
+
 /// Build an IPS patch by diffing original and modified byte slices.
 pub fn build_ips_patch(original: &[u8], modified: &[u8]) -> Vec<u8> {
     assert_eq!(original.len(), modified.len(), "ROM sizes must match for diffing");
@@ -28,30 +53,15 @@ pub fn build_ips_patch(original: &[u8], modified: &[u8]) -> Vec<u8> {
             continue;
         }
 
-        // Found a diff region — find its extent
+        // Found a diff region: a run of differing bytes, extended across any
+        // short identical-byte gaps that have more diffs after them.
         let start = i;
-        while i < len && original[i] != modified[i] {
-            i += 1;
-            // Allow small gaps of identical bytes (up to 3) to be absorbed into the record
-            // to avoid fragmenting into many tiny records
-            if i < len && original[i] == modified[i] {
-                let gap_start = i;
-                while i < len && original[i] == modified[i] && (i - gap_start) < 4 {
-                    i += 1;
-                }
-                if i < len && original[i] != modified[i] {
-                    // Absorb the gap
-                    continue;
-                } else {
-                    // Gap was at the end of diffs, rewind
-                    i = gap_start;
-                    break;
-                }
-            }
+        i = diff_run_end(original, modified, i, len);
+        while let Some(next) = next_diff_after_gap(original, modified, i, len) {
+            i = diff_run_end(original, modified, next, len);
         }
 
-        let region = &modified[start..i];
-        write_records(&mut patch, start, region);
+        write_records(&mut patch, start, &modified[start..i]);
     }
 
     patch.extend_from_slice(FOOTER);
@@ -254,6 +264,39 @@ mod tests {
         let patch = build_ips_patch(&original, &modified);
         let result = apply_ips_patch(&original, &patch).unwrap();
         assert_eq!(result, modified);
+    }
+
+    #[test]
+    fn test_gap_absorption_record_layout() {
+        let original = vec![0u8; 64];
+        let mut modified = original.clone();
+        // 1-byte gap between diffs: absorbed into one record
+        modified[10] = 0xFF;
+        modified[12] = 0xFF;
+        // 3-byte gap: absorbed
+        modified[20] = 0xFF;
+        modified[24] = 0xFF;
+        // 4-byte gap: absorbed (MAX_ABSORBED_GAP)
+        modified[30] = 0xFF;
+        modified[35] = 0xFF;
+        // 5-byte gap: too long — splits into two records
+        modified[42] = 0xFF;
+        modified[48] = 0xFF;
+
+        let patch = build_ips_patch(&original, &modified);
+        let result = apply_ips_patch(&original, &patch).unwrap();
+        assert_eq!(result, modified);
+
+        // Pin the exact record layout.
+        let mut expected = Vec::new();
+        expected.extend_from_slice(b"PATCH");
+        expected.extend_from_slice(&[0, 0, 10, 0, 3, 0xFF, 0x00, 0xFF]);
+        expected.extend_from_slice(&[0, 0, 20, 0, 5, 0xFF, 0, 0, 0, 0xFF]);
+        expected.extend_from_slice(&[0, 0, 30, 0, 6, 0xFF, 0, 0, 0, 0, 0xFF]);
+        expected.extend_from_slice(&[0, 0, 42, 0, 1, 0xFF]);
+        expected.extend_from_slice(&[0, 0, 48, 0, 1, 0xFF]);
+        expected.extend_from_slice(b"EOF");
+        assert_eq!(patch, expected);
     }
 
     #[test]

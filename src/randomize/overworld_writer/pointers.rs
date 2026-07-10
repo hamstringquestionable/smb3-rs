@@ -2,6 +2,22 @@
 
 use super::*;
 
+/// Write an entry's rowtype/screencol bytes: row nibble + tileset into the
+/// rowtype table at `rt`, screen nibble + in-screen column into the
+/// screen-column table at `sc`.
+fn write_entry_pos(
+    rom: &mut Rom,
+    rt: usize,
+    sc: usize,
+    entry_idx: usize,
+    pos: (usize, usize),
+    tileset: u8,
+) {
+    let (screen, col_in_screen, row_nib) = pipe_helpers::grid_pos_to_dest_nibbles(pos.0, pos.1);
+    rom.write_byte(rt + entry_idx, (row_nib << 4) | (tileset & 0x0F));
+    rom.write_byte(sc + entry_idx, (screen << 4) | col_in_screen);
+}
+
 pub(super) fn write_pointer_entries(
     rom: &mut Rom,
     world_idx: usize,
@@ -73,14 +89,7 @@ pub(super) fn write_pointer_entries(
             .expect("assigned pool entry must have level_entry");
 
         rom_data::write_entry(rom, world, entry_idx, level_entry);
-
-        let (row, col) = pos;
-        let row_nib = (row + 2) as u8;
-        let screen = (col / 16) as u8;
-        let col_in_screen = (col % 16) as u8;
-
-        rom.write_byte(rt + entry_idx, (row_nib << 4) | (level_entry.tileset & 0x0F));
-        rom.write_byte(sc + entry_idx, (screen << 4) | col_in_screen);
+        write_entry_pos(rom, rt, sc, entry_idx, pos, level_entry.tileset);
     }
 
     // Write hammer bro entries (carry their own LevelEntry).
@@ -92,14 +101,7 @@ pub(super) fn write_pointer_entries(
         slot_i += 1;
 
         rom_data::write_entry(rom, world, entry_idx, &hb.level_entry);
-
-        let (row, col) = hb.pos;
-        let row_nib = (row + 2) as u8;
-        let screen = (col / 16) as u8;
-        let col_in_screen = (col % 16) as u8;
-
-        rom.write_byte(rt + entry_idx, (row_nib << 4) | (hb.level_entry.tileset & 0x0F));
-        rom.write_byte(sc + entry_idx, (screen << 4) | col_in_screen);
+        write_entry_pos(rom, rt, sc, entry_idx, hb.pos, hb.level_entry.tileset);
     }
 
     // Fill any remaining unused pointer table slots with valid HB levels.
@@ -130,7 +132,7 @@ pub(super) fn write_pointer_entries(
             .map(|e| e.grid_pos)
             .collect();
         let mut uncovered_blanks: Vec<(usize, usize)> = Vec::new();
-        for r in 0..built.grid.rows {
+        for r in 0..built.grid.rows() {
             for c in 0..built.grid.cols {
                 if rom_data::VALID_BLANK_TILES.contains(&built.grid.get(r, c))
                     && !covered.contains(&(r, c))
@@ -148,13 +150,9 @@ pub(super) fn write_pointer_entries(
             let le = hb_level_iter.next().unwrap();
             rom_data::write_entry(rom, world, entry_idx, &le);
 
-            if let Some((row, col)) = blank_iter.next() {
+            if let Some(pos) = blank_iter.next() {
                 // Place at actual blank tile position.
-                let row_nib = (row + 2) as u8;
-                let screen = (col / 16) as u8;
-                let col_in_screen = (col % 16) as u8;
-                rom.write_byte(rt + entry_idx, (row_nib << 4) | (le.tileset & 0x0F));
-                rom.write_byte(sc + entry_idx, (screen << 4) | col_in_screen);
+                write_entry_pos(rom, rt, sc, entry_idx, pos, le.tileset);
             } else {
                 // No more blanks — park at unreachable position.
                 rom.write_byte(rt + entry_idx, le.tileset & 0x0F); // row_nib=0 → grid_row=-2

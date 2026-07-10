@@ -193,11 +193,14 @@ pub fn walk_segments(
         let mut count = 0;
         let mut terminated = false;
         while i < end {
-            // Treat entering a skip range mid-segment as if we hit the
-            // segment's terminator. The skip range starts on a boundary
-            // a level loader would also treat as a stop (it covers
-            // bytes a per-level loader would not read), so cutting the
-            // segment there matches loader semantics.
+            // Running into a skip range mid-segment leaves `terminated`
+            // false, so the segment is dropped and the walk ends (the
+            // `!terminated` break below). In practice this never fires:
+            // every SPOILED_SEGMENT_RANGES entry starts at a segment
+            // boundary (leading $FF / page byte — see its doc), so ranges
+            // are consumed whole by the outer-loop skip. This check is a
+            // backstop so a mis-specified range can't yield a segment
+            // built from spoiled bytes.
             if in_skip(i).is_some() {
                 break;
             }

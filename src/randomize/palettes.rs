@@ -252,7 +252,7 @@ pub fn randomize_themed<R: Rng>(rom: &mut Rom, rng: &mut R) {
     };
 
     for region in THEMED_REGIONS {
-        apply_variant_groups(rom, region, &shift_for, rng);
+        apply_variant_groups(rom, region, shift_for, rng);
     }
 
     // Hue-rotate the kept-vanilla chromatic quartets in place.
@@ -287,7 +287,7 @@ fn rotate_hue(byte: u8, shift: u8) -> u8 {
 fn apply_variant_groups<R: Rng>(
     rom: &mut Rom,
     groups: &[VariantGroup],
-    shift_for: &dyn Fn(usize) -> u8,
+    shift_for: impl Fn(usize) -> u8,
     rng: &mut R,
 ) {
     for group in groups {

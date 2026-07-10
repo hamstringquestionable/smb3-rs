@@ -27,18 +27,21 @@ mod pipes;
 mod locks;
 mod progression;
 
-use types::*;
-use scoring::*;
-use capacity::*;
-use sections::*;
-use pipes::*;
-use locks::*;
+use capacity::{
+    SPADE_BUDGET, assign_hb_sprites, distribute_levels, prepare_capacities, promote_hb_slots,
+    redistribute_fortresses,
+};
+use locks::place_locks;
+use pipes::VANILLA_PIPE_PAIRS;
+use scoring::{LEVEL_SPREAD_EXPONENT, VANILLA_LEVEL_COUNT};
+use sections::build_world;
+use types::{CapacityPrep, WorldSlotCounts};
 
 // Public API consumed by the randomizer and the overworld writer.
 pub use {types::SlotAssignment, types::SlotKind};
 pub(crate) use sections::bfs_ordered;
 pub(crate) use capacity::RESERVED_DYNAMIC_SLOTS;
-pub(crate) use types::{BuildFlags, BuildResult, BuiltWorld, HbSprite, LockAssignment, OverworldData};
+pub(crate) use types::{BuildFlags, BuildResult, BuiltWorld, OverworldData};
 // Progression analysis is exercised only by the test suite today (reserved for a
 // future WASM single-seed dump), so surface it just for `tests`.
 #[cfg(test)]

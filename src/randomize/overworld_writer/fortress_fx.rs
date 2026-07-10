@@ -13,16 +13,12 @@ pub(super) fn write_fortress_fx(
     let pickup = data.pickup;
     let catalog = data.catalog;
     // Pair each lock with its fortress assignment (matched by section).
+    // Fortress assignments are ordered by section in assign_pool, so
+    // assignment index == fort_section for this world.
     let locked_forts: Vec<_> = built
         .locks
         .iter()
-        .filter_map(|lock| {
-            wa.fortress.iter().enumerate().find(|(fi, _)| {
-                // Fortress assignments are ordered by section in assign_pool.
-                // Assignment index fi == fort_section for this world.
-                *fi == lock.fort_section
-            }).map(|(_, fa)| (lock, fa))
-        })
+        .filter_map(|lock| wa.fortress.get(lock.fort_section).map(|fa| (lock, fa)))
         .collect();
 
     // Write FX world table (up to 4 slots per world).

@@ -635,9 +635,9 @@ const HAMMER_QUOTE_OFFSET: usize = 0x3642C;
 /// Free space in PRG027 for standard quote data + ASM hook.
 const KING_QUOTE_BASE: usize = super::rom_data::FS_KING_QUOTES;
 
-/// PRG027 file offset 0x36010 maps to CPU $A000.
+/// PRG027 (file 0x36010) is an $A000-window bank.
 fn cpu_addr(file_offset: usize) -> u16 {
-    0xA000 + (file_offset - 0x36010) as u16
+    super::rom_data::prg_bank_file_to_cpu(27, file_offset)
 }
 
 /// ROM offset of the vanilla quote selection code at CPU $A293.
@@ -650,17 +650,10 @@ const QUOTE_SELECT_PATCH: usize = 0x362A3;
 /// Write randomized king quotes into the ROM.
 pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng) {
     // --- 1. Write 7 unique standard quotes into free space ---
-    let mut pool: Vec<usize> = (0..QUOTES.len()).collect();
-    let mut chosen = Vec::with_capacity(7);
-    for _ in 0..7 {
-        let idx = pool.choose(rng).copied().unwrap();
-        pool.retain(|&x| x != idx);
-        chosen.push(idx);
-    }
-
+    // choose_multiple samples without replacement, so the 7 quotes are unique.
     let mut std_addrs = Vec::with_capacity(7);
-    for (world, &quote_idx) in chosen.iter().enumerate() {
-        let encoded = encode_quote(&QUOTES[quote_idx]);
+    for (world, quote) in QUOTES.choose_multiple(rng, 7).enumerate() {
+        let encoded = encode_quote(quote);
         let file_offset = KING_QUOTE_BASE + world * 120;
         rom.write_range(file_offset, &encoded);
         std_addrs.push(cpu_addr(file_offset));

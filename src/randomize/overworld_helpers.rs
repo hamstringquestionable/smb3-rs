@@ -30,7 +30,7 @@ pub(super) const LOCKABLE_TILES: &[u8] = &[
 /// Find the airship or Bowser's castle position on the grid.
 pub(super) fn find_target(grid: &Grid, world_idx: usize) -> Option<(usize, usize)> {
     let target_tile = if world_idx == 7 { TILE_BOWSER } else { TILE_AIRSHIP };
-    for r in 0..grid.rows {
+    for r in 0..grid.rows() {
         for c in 0..grid.cols {
             if grid.get(r, c) == target_tile {
                 return Some((r, c));
@@ -40,14 +40,21 @@ pub(super) fn find_target(grid: &Grid, world_idx: usize) -> Option<(usize, usize
     None
 }
 
+/// Vertical path tiles (plain + variants + drawbridge). Both the gap-tile
+/// and FX-pattern lookups key on this — a new vertical variant added here
+/// gets the vertical lock AND its FX pattern together.
+fn is_vertical_path(tile: u8) -> bool {
+    matches!(tile, 0x46 | 0xAA | 0xAB | 0xB0 | 0xB1 | 0xDB | 0xBA)
+}
+
 /// Determine the lock/gap tile for a given path tile.
 /// 0x54 = vertical lock, 0x56 = horizontal lock, 0xE4 = sky lock, 0x9D = water gap.
 pub(super) fn gap_tile_for(tile: u8) -> u8 {
     match tile {
-        0xB3 => 0x9D,                                          // bridge → water gap
-        0xDA => 0xE4,                                          // sky path → sky lock
-        0x46 | 0xAA | 0xAB | 0xB0 | 0xB1 | 0xDB | 0xBA => 0x54, // vertical path → vertical lock
-        _ => 0x56,                                              // horizontal path → horizontal lock
+        0xB3 => 0x9D,                          // bridge → water gap
+        0xDA => 0xE4,                          // sky path → sky lock
+        t if is_vertical_path(t) => 0x54,      // vertical path → vertical lock
+        _ => 0x56,                             // horizontal path → horizontal lock
     }
 }
 
@@ -55,8 +62,7 @@ pub(super) fn gap_tile_for(tile: u8) -> u8 {
 pub(super) fn fx_patterns_for(tile: u8) -> [u8; 4] {
     match tile {
         0xB3 => [0xD4, 0xD6, 0xD5, 0xD7],                    // water bridge
-        0x46 | 0xAA | 0xAB | 0xB0 | 0xB1 | 0xDB | 0xBA =>
-            [0xFE, 0xC0, 0xFE, 0xC0],                          // lock (vertical)
+        t if is_vertical_path(t) => [0xFE, 0xC0, 0xFE, 0xC0], // lock (vertical)
         _ => [0xFE, 0xFE, 0xE1, 0xE1],                        // bridge gap / sky
     }
 }

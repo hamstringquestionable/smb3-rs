@@ -65,7 +65,7 @@ pub(super) fn is_dead_end(grid: &Grid, pos: (usize, usize)) -> bool {
     if c >= 2 && VALID_HORZ.contains(&grid.get(r, c - 1)) { exits += 1; }
     if c + 2 < grid.cols && VALID_HORZ.contains(&grid.get(r, c + 1)) { exits += 1; }
     if r >= 2 && VALID_VERT.contains(&grid.get(r - 1, c)) { exits += 1; }
-    if r + 2 < grid.rows && VALID_VERT.contains(&grid.get(r + 1, c)) { exits += 1; }
+    if r + 2 < grid.rows() && VALID_VERT.contains(&grid.get(r + 1, c)) { exits += 1; }
     exits == 1
 }
 
@@ -86,39 +86,39 @@ pub(super) fn is_row78_conflict(
     }
 }
 
-/// Core scoring logic shared by level and fortress placement.
-pub(super) fn score_with_weights(
-    grid: &Grid,
+// Shared spread/density weights (used by level, fortress, and pipe scoring).
+const W_MANHATTAN: f64 = 1.0;    // visual/spatial spread
+const W_BFS: f64 = 1.5;          // traversal spread (weighted higher than grid distance)
+const W_DENSITY: f64 = 3.0;      // penalty per nearby occupied tile
+const DENSITY_RADIUS: usize = 4; // combined manhattan+BFS distance threshold
+const SEP_CAP: f64 = 8.0;        // max separation contribution per metric
+
+/// Shared spread/density quantities of `pos` relative to a set of reference
+/// positions: (min manhattan distance, min BFS-distance difference, count of
+/// reference positions within DENSITY_RADIUS). The min values are
+/// `usize::MAX` / `None` when they can't be computed (empty set / no BFS
+/// data) — callers apply their own fallbacks.
+fn spread_and_density(
     pos: (usize, usize),
-    completable: &HashSet<(usize, usize)>,
+    others: &HashSet<(usize, usize)>,
     bfs_distances: &HashMap<(usize, usize), usize>,
-    dead_end_bonus_value: f64,
-) -> f64 {
+) -> (usize, Option<usize>, usize) {
     let (r, c) = pos;
     let my_bfs = bfs_distances.get(&pos).copied().unwrap_or(0);
 
-    const W_MANHATTAN: f64 = 1.0;    // visual/spatial spread
-    const W_BFS: f64 = 1.5;          // traversal spread (weighted higher than grid distance)
-    const W_DENSITY: f64 = 3.0;      // penalty per nearby completable tile
-    const DENSITY_RADIUS: usize = 4; // combined manhattan+BFS distance threshold
-    const SEP_CAP: f64 = 8.0;        // max separation contribution per metric
-
-    let min_manhattan = completable
+    let min_manhattan = others
         .iter()
         .map(|&(cr, cc)| r.abs_diff(cr) + c.abs_diff(cc))
         .min()
         .unwrap_or(usize::MAX);
-    let manhattan_score = (min_manhattan as f64).min(SEP_CAP) * W_MANHATTAN;
 
-    let min_bfs_diff = completable
+    let min_bfs_diff = others
         .iter()
         .filter_map(|p| bfs_distances.get(p))
         .map(|&d| my_bfs.abs_diff(d))
-        .min()
-        .unwrap_or(usize::MAX);
-    let bfs_score = (min_bfs_diff as f64).min(SEP_CAP) * W_BFS;
+        .min();
 
-    let nearby = completable
+    let nearby = others
         .iter()
         .filter(|&&(cr, cc)| {
             let manhattan = r.abs_diff(cr) + c.abs_diff(cc);
@@ -129,6 +129,24 @@ pub(super) fn score_with_weights(
             manhattan.max(bfs_diff) <= DENSITY_RADIUS
         })
         .count();
+
+    (min_manhattan, min_bfs_diff, nearby)
+}
+
+/// Core scoring logic shared by level and fortress placement.
+pub(super) fn score_with_weights(
+    grid: &Grid,
+    pos: (usize, usize),
+    completable: &HashSet<(usize, usize)>,
+    bfs_distances: &HashMap<(usize, usize), usize>,
+    dead_end_bonus_value: f64,
+) -> f64 {
+    let (min_manhattan, min_bfs_diff, nearby) =
+        spread_and_density(pos, completable, bfs_distances);
+    let min_bfs_diff = min_bfs_diff.unwrap_or(usize::MAX);
+
+    let manhattan_score = (min_manhattan as f64).min(SEP_CAP) * W_MANHATTAN;
+    let bfs_score = (min_bfs_diff as f64).min(SEP_CAP) * W_BFS;
     let density_penalty = nearby as f64 * W_DENSITY;
 
     let dead_end_bonus = if is_dead_end(grid, pos) { dead_end_bonus_value } else { 0.0 };
@@ -240,46 +258,20 @@ pub(super) fn score_pipe_endpoint(
     bfs_distances: &HashMap<(usize, usize), usize>,
     target_pos: Option<(usize, usize)>,
 ) -> f64 {
-    const W_MANHATTAN: f64 = 1.0;
-    const W_BFS: f64 = 1.5;
-    const W_DENSITY: f64 = 3.0;
-    const DENSITY_RADIUS: usize = 4;
-    const SEP_CAP: f64 = 8.0;
     const DEAD_END_BONUS: f64 = 1.0;
 
-    let (r, c) = pos;
-    let my_bfs = bfs_distances.get(&pos).copied().unwrap_or(0);
+    let (min_manhattan, min_bfs_diff, nearby) =
+        spread_and_density(pos, pipe_positions, bfs_distances);
 
     let spread = if pipe_positions.is_empty() {
         0.0
     } else {
-        let min_manhattan = pipe_positions
-            .iter()
-            .map(|&(cr, cc)| r.abs_diff(cr) + c.abs_diff(cc))
-            .min()
-            .unwrap();
-        let min_bfs_diff = pipe_positions
-            .iter()
-            .filter_map(|p| bfs_distances.get(p))
-            .map(|&d| my_bfs.abs_diff(d))
-            .min()
-            .unwrap_or(min_manhattan);
+        let min_bfs_diff = min_bfs_diff.unwrap_or(min_manhattan);
         let m = (min_manhattan as f64).min(SEP_CAP) * W_MANHATTAN;
         let b = (min_bfs_diff as f64).min(SEP_CAP) * W_BFS;
         (m + b).min(PIPE_SPREAD_CAP)
     };
 
-    let nearby = pipe_positions
-        .iter()
-        .filter(|&&(cr, cc)| {
-            let manhattan = r.abs_diff(cr) + c.abs_diff(cc);
-            let bfs_diff = bfs_distances
-                .get(&(cr, cc))
-                .map(|&d| my_bfs.abs_diff(d))
-                .unwrap_or(manhattan);
-            manhattan.max(bfs_diff) <= DENSITY_RADIUS
-        })
-        .count();
     let density_penalty = nearby as f64 * W_DENSITY;
 
     let dead_end_bonus = if is_dead_end(grid, pos) { DEAD_END_BONUS } else { 0.0 };

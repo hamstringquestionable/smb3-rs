@@ -1,6 +1,7 @@
 //! Overworld map tile edits: rocks, W8 canoe/bridges, drawbridges, N-cards.
 
 use crate::rom::Rom;
+use crate::randomize::rom_data::{FX_MAP_TILE_REPLACE, map_tile_offset, write_map_sprite};
 
 // W3 drawbridge map tile patches: (file offset, replacement tile).
 // Vanilla: 2× $B2 horizontal + 2× $B1 vertical. Replace with $B3
@@ -84,7 +85,7 @@ const W8_BRIDGE_EDITS: &[(usize, usize, u8)] = &[
 /// [`W8_BRIDGE_EDITS`]). Independent of the `8s are Wild` option.
 pub fn apply_w8_bridges(rom: &mut Rom) {
     for &(row, col, tile) in W8_BRIDGE_EDITS {
-        rom.write_byte(crate::randomize::rom_data::map_tile_offset(7, row, col), tile);
+        rom.write_byte(map_tile_offset(7, row, col), tile);
     }
     // Vanilla FX slot 16 sits at W8 (row 5, col 53) — right on our new bridge
     // row — and its replace_tile is 0x45 (plain path). The builder's pickup
@@ -92,20 +93,20 @@ pub fn apply_w8_bridges(rom: &mut Rom) {
     // 0xB3 bridge. Point it at the bridge tile so the slot opens to a bridge,
     // matching the other bridge columns (and gating as a water gap if a
     // fortress lands there).
-    rom.write_byte(crate::randomize::rom_data::FX_MAP_TILE_REPLACE + 16, 0xB3);
+    rom.write_byte(FX_MAP_TILE_REPLACE + 16, 0xB3);
 }
 
 /// Apply the W8 canoe docks + extra paths and place the canoe sprite (see
 /// [`W8_CANOE_PATH_EDITS`]). Gated behind the `8s are Wild` option.
 pub fn apply_w8_canoe_and_paths(rom: &mut Rom) {
     for &(row, col, tile) in W8_CANOE_PATH_EDITS {
-        rom.write_byte(crate::randomize::rom_data::map_tile_offset(7, row, col), tile);
+        rom.write_byte(map_tile_offset(7, row, col), tile);
     }
     // Place the W8 canoe (object ID 0x10) in map-object slot 6, floating at
     // (5,7) beside the mainland dock (5,6). Slot 6 is past the builder's army
     // sprites (slots 2-5), so the overworld writer leaves it intact. This is
     // the boat that makes the screen-0 island docks reachable in-game.
-    crate::randomize::rom_data::write_map_sprite(rom, 7, 6, 5, 7, 0x10);
+    write_map_sprite(rom, 7, 6, 5, 7, 0x10);
 }
 
 /// Add extra hammer-breakable rocks (the `More hammer rocks` option).
@@ -121,7 +122,7 @@ pub fn apply_w8_canoe_and_paths(rom: &mut Rom) {
 ///   independently of the `8s are Wild` option.
 pub fn make_hammer_rocks(rom: &mut Rom) {
     rom.write_byte(W1_HAMMER_ROCK_OFFSET, 0x51);
-    rom.write_byte(crate::randomize::rom_data::map_tile_offset(7, 3, 37), 0x51);
+    rom.write_byte(map_tile_offset(7, 3, 37), 0x51);
 }
 
 /// Remove N-card (N-Spade) panels from the overworld map.
@@ -169,7 +170,7 @@ mod tests {
         assert_eq!(rom.read_byte(W1_HAMMER_ROCK_OFFSET), 0x51);
         // W8 (3,37) screen-2 rock.
         assert_eq!(
-            rom.read_byte(crate::randomize::rom_data::map_tile_offset(7, 3, 37)),
+            rom.read_byte(map_tile_offset(7, 3, 37)),
             0x51
         );
     }

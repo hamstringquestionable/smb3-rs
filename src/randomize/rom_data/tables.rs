@@ -99,6 +99,21 @@ pub(crate) struct LevelDataRegion {
     pub randomize_note_wood: bool,
 }
 
+impl LevelDataRegion {
+    /// Size in bytes of the generator command whose first and third stream
+    /// bytes are `b0`/`b2`: 3 normally, 4 when the tileset's variable-size
+    /// dispatch reads an extra byte. Every level-stream walker (powerups,
+    /// enemy entry points) must step with this — a re-derived copy of the
+    /// formula is how parsers drift out of alignment.
+    pub fn command_size(&self, b0: u8, b2: u8) -> usize {
+        if (b2 & 0xF0) == 0 {
+            return 3; // fixed-size generator
+        }
+        let dispatch = (b0 >> 5) as usize * 15 + ((b2 >> 4) as usize) - 1;
+        if self.extra_byte_dispatches.contains(&(dispatch as u8)) { 4 } else { 3 }
+    }
+}
+
 /// Level data regions by tileset (file offset ranges + extra-byte dispatch info).
 pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
     LevelDataRegion { // Underground (TS14) — same dispatch table as TS3
@@ -208,6 +223,11 @@ pub(crate) const TILE_PIPE: u8 = 0xBC;
 #[allow(dead_code)]
 pub(crate) const TILE_FORTRESS: u8 = 0x67;
 
+/// All map tiles the game treats as fortresses ($67, $EB, $6A —
+/// Map_Removable_Tiles + completion-unsafe). $6A's CHR animation is frozen
+/// by `patch_metatile_6a_freeze` so it can serve as a static variant.
+pub(crate) const FORTRESS_TILES: [u8; 3] = [TILE_FORTRESS, 0xEB, 0x6A];
+
 /// Airship dock tile ID.
 pub(crate) const TILE_AIRSHIP: u8 = 0xC9;
 
@@ -230,6 +250,11 @@ pub(crate) const TILE_NODE: u8 = 0x47;
 
 /// Number of rows in every overworld map.
 pub(crate) const ROWS: usize = 9;
+
+/// File offset where PRG012 begins. PRG012 is loaded at CPU $A000-$BFFF
+/// during the map screen; file offset = 0x18010 + (cpu_addr - 0xA000).
+/// Holds the map metatile quadrant tables and the InitIndex master table.
+pub(crate) const PRG012_FILE_BASE: usize = 0x18010;
 
 // Pipe destination tables (PRG002)
 pub(crate) const PIPE_MAP_XHI: usize = 0x046AA;
@@ -294,6 +319,12 @@ pub(crate) fn is_chest_level(world_idx: usize, entry_idx: usize) -> bool {
     CHEST_LEVELS
         .iter()
         .any(|&(w, e, _)| w == world_idx && e == entry_idx)
+}
+
+/// True if the given vanilla `(world_idx, entry_idx)` is a W8 hand level
+/// (8-Hnd1/2/3) — the short item-drop bonus rooms behind the hand traps.
+pub(crate) fn is_hand_level(world_idx: usize, entry_idx: usize) -> bool {
+    world_idx == 7 && (14..=16).contains(&entry_idx)
 }
 
 /// Destination byte → world index (0-based). Only paired pipe destinations.
@@ -621,4 +652,54 @@ pub(crate) struct FxSlot {
     pub grid_row: usize,
     pub grid_col: usize,
     pub replace_tile: u8,
+}
+
+#[cfg(test)]
+mod fortress_table_tests {
+    use super::*;
+    use crate::randomize::rom_data::read_entry;
+    use crate::rom::Rom;
+
+    /// FORTRESS_ENTRIES, BOOMBOOM_Y_OFFSETS, and VANILLA_FORTRESS_OBJ_PTRS are
+    /// three parallel arrays held in the same order (per-fortress). This guard
+    /// pins the invariants their consumers rely on.
+    #[test]
+    fn fortress_parallel_tables_stay_in_sync() {
+        assert_eq!(FORTRESS_ENTRIES.len(), BOOMBOOM_Y_OFFSETS.len());
+        assert_eq!(FORTRESS_ENTRIES.len(), VANILLA_FORTRESS_OBJ_PTRS.len());
+
+        // boomboom_y_offset_for_obj keys the pairing on the obj_ptr, so a
+        // duplicate obj_ptr would silently shadow a later fortress.
+        for (i, a) in VANILLA_FORTRESS_OBJ_PTRS.iter().enumerate() {
+            assert!(
+                !VANILLA_FORTRESS_OBJ_PTRS[i + 1..].contains(a),
+                "duplicate fortress obj_ptr {a:#06X}"
+            );
+        }
+
+        // Cross-check the shared ordering against the real ROM: the pointer
+        // table entry at FORTRESS_ENTRIES[i] must hold obj_ptr
+        // VANILLA_FORTRESS_OBJ_PTRS[i], and BOOMBOOM_Y_OFFSETS[i] must point
+        // at the Y byte of a Boom-Boom enemy entry ([id, x, y]).
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            return; // Base ROM not present (e.g. CI) — skip.
+        };
+        let rom = Rom::from_bytes(&bytes).unwrap();
+        for (i, &(w, e)) in FORTRESS_ENTRIES.iter().enumerate() {
+            let entry = read_entry(&rom, &WORLDS[w], e);
+            let obj_ptr = ((entry.obj_hi as u16) << 8) | entry.obj_lo as u16;
+            assert_eq!(
+                obj_ptr, VANILLA_FORTRESS_OBJ_PTRS[i],
+                "fortress {i} (W{}[{e}]): obj_ptr mismatch",
+                w + 1
+            );
+            // Boom-Boom object ids: 0x4A Q-ball, 0x4B jump, 0x4C fly (see tools/rom_map.py BOOMBOOM_IDS).
+            let id = rom.read_byte(BOOMBOOM_Y_OFFSETS[i] - 2);
+            assert!(
+                (0x4A..=0x4C).contains(&id),
+                "fortress {i} (W{}[{e}]): byte at BOOMBOOM_Y_OFFSETS[{i}]-2 is {id:#04X}, not a Boom-Boom id",
+                w + 1
+            );
+        }
+    }
 }
