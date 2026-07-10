@@ -11,14 +11,14 @@ pub(crate) const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     // PRG031 (always mapped $E000–$FFFF, file 0x3E010)
     (0x3E924, 25, "title_screen: sprite copy routine"),
     (0x3E93D, 40, "title_screen: sprite data table"),
-    (0x35572, 13, "mystery_anchor: item redirect trampoline"),
-    (0x3557F, 50, "hammer_locks: tile check subroutine + tables"),
     (0x3E260, 33, "starting_items: lives + intro skip + menu music + inventory init trampoline"),
     (0x3E281, 69, "start_airship_swap: 4 tables (X/XHi/ScrL/ScrH × 8) + Map_Init seed helper"),
     (0x3E965, 13, "title_screen: intro skip + menu music routine"),
     (0x3FFF0, 26, "card_speed_clear: XOR trampoline"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
     (0x35530, 66, "big_q_block: lookup routine + tables"),
+    (0x35572, 13, "mystery_anchor: item redirect trampoline"),
+    (0x3557F, 50, "hammer_locks: tile check subroutine + tables"),
     (0x355B1, 12, "anchor_visuals: items-vs-cards index guard trampoline"),
     // PRG027 (file 0x36010, CPU $A000–$BFFF)
     (0x379D9, 894, "king_quotes: 7 quotes + hook (7×120 + 54)"),
@@ -67,6 +67,8 @@ pub(crate) const FS_SEED_HASH_DATA: usize    = 0x3E93D; // 40 bytes
 pub(crate) const FS_INTRO_SKIP: usize        = 0x3E965; // 13 bytes
 
 pub(crate) const FS_CARD_CLEAR: usize        = 0x3FFF0; // 26 bytes
+
+pub(crate) const FS_STARTING_ITEMS: usize    = 0x3E260; // 33 bytes
 
 // PRG031 — start_airship_swap engine scaffolding. One ~69-byte block: 4 × 8-byte
 // per-world tables followed by a single assembled seed subroutine. PRG031 is
@@ -140,12 +142,12 @@ pub(crate) const FS_FX_SCREEN_CHECK: usize   = 0x15554; // 80 bytes (Fred's algo
 pub(crate) const FS_CANOE_RESPAWN: usize     = 0x15DF0; // 35 bytes
 
 // PRG011
-pub(crate) const FS_CANOE_BACKUP: usize      = 0x17D00; // 59 bytes
+pub(crate) const FS_CANOE_BACKUP: usize      = 0x17D00; // 66 bytes
 
 // 8-byte hand-trap bypass subroutine for the overworld bro movement gate
-// (MaCobra52's "Bros don't stop on hands"). CPU $BD42. Sits just past the
+// (MaCobra52's "Bros don't stop on hands"). CPU $BD32. Sits just past the
 // 66-byte FS_CANOE_BACKUP reservation; the gate hook at $B425 JSRs here.
-pub(crate) const FS_BROS_NO_HANDS: usize     = 0x17D42; // 8 bytes (CPU $BD42)
+pub(crate) const FS_BROS_NO_HANDS: usize     = 0x17D42; // 8 bytes (CPU $BD32)
 
 // PRG026 (cont.)
 pub(crate) const FS_MYSTERY_ANCHOR: usize    = 0x35572; // 13 bytes
@@ -153,8 +155,6 @@ pub(crate) const FS_MYSTERY_ANCHOR: usize    = 0x35572; // 13 bytes
 pub(crate) const FS_HAMMER_LOCKS: usize      = 0x3557F; // 50 bytes
 
 pub(crate) const FS_ANCHOR_ITEM_GUARD: usize = 0x355B1; // 12 bytes (CPU $B5A1)
-
-pub(crate) const FS_STARTING_ITEMS: usize    = 0x3E260; // 33 bytes
 
 // PRG001 (file 0x02010, CPU $A000–$BFFF)
 // Koopaling stomp handler is ObjHit_Koopaling in prg001.asm (southbird disassembly).
@@ -261,23 +261,63 @@ mod free_space_tests {
     #[test]
     fn test_free_space_constants_match_registry() {
         let offsets: Vec<usize> = FREE_SPACE_ALLOCATIONS.iter().map(|&(o, _, _)| o).collect();
-        assert!(offsets.contains(&FS_WORLD_ORDER));
-        assert!(offsets.contains(&FS_BIG_Q_SAVE));
-        assert!(offsets.contains(&FS_SEED_HASH_ROUTINE));
-        assert!(offsets.contains(&FS_SEED_HASH_DATA));
-        assert!(offsets.contains(&FS_INTRO_SKIP));
-        assert!(offsets.contains(&FS_CARD_CLEAR));
-        assert!(offsets.contains(&FS_BIG_Q_LOOKUP));
-        assert!(offsets.contains(&FS_KING_QUOTES));
-        assert!(offsets.contains(&FS_FX_SCREEN_CHECK));
-        assert!(offsets.contains(&FS_CANOE_RESPAWN));
-        assert!(offsets.contains(&FS_CANOE_BACKUP));
-        assert!(offsets.contains(&FS_KOOPA_HITS_SUB));
-        assert!(offsets.contains(&FS_BOOMBOOM_HITS_TABLE));
-        assert!(offsets.contains(&FS_BOOMBOOM_HITS_SUB));
-        assert!(offsets.contains(&FS_STARTING_ITEMS));
-        assert!(offsets.contains(&FS_MYSTERY_ANCHOR));
-        assert!(offsets.contains(&FS_HAMMER_LOCKS));
+        // Every FS_* constant that names a whole allocation must be a
+        // registry row. This list is exhaustive — add new FS_* consts here.
+        for &(off, name) in &[
+            (FS_WORLD_ORDER, "FS_WORLD_ORDER"),
+            (FS_BIG_Q_SAVE, "FS_BIG_Q_SAVE"),
+            (FS_SEED_HASH_ROUTINE, "FS_SEED_HASH_ROUTINE"),
+            (FS_SEED_HASH_DATA, "FS_SEED_HASH_DATA"),
+            (FS_INTRO_SKIP, "FS_INTRO_SKIP"),
+            (FS_CARD_CLEAR, "FS_CARD_CLEAR"),
+            (FS_STARTING_ITEMS, "FS_STARTING_ITEMS"),
+            (FS_SAS_BLOCK, "FS_SAS_BLOCK"),
+            (FS_SAS_GAMEOVER_FINALIZE, "FS_SAS_GAMEOVER_FINALIZE"),
+            (FS_BIG_Q_LOOKUP, "FS_BIG_Q_LOOKUP"),
+            (FS_MYSTERY_ANCHOR, "FS_MYSTERY_ANCHOR"),
+            (FS_HAMMER_LOCKS, "FS_HAMMER_LOCKS"),
+            (FS_ANCHOR_ITEM_GUARD, "FS_ANCHOR_ITEM_GUARD"),
+            (FS_KING_QUOTES, "FS_KING_QUOTES"),
+            (FS_FX_SCREEN_CHECK, "FS_FX_SCREEN_CHECK"),
+            (FS_CANOE_RESPAWN, "FS_CANOE_RESPAWN"),
+            (FS_CANOE_BACKUP, "FS_CANOE_BACKUP"),
+            (FS_BROS_NO_HANDS, "FS_BROS_NO_HANDS"),
+            (FS_KOOPA_HITS_SUB, "FS_KOOPA_HITS_SUB"),
+            (FS_KOOPA_COLLISION_GUARD, "FS_KOOPA_COLLISION_GUARD"),
+            (FS_KOOPA_VRAM_CLEAR, "FS_KOOPA_VRAM_CLEAR"),
+            (FS_KOOPA_FIRE_PRESET, "FS_KOOPA_FIRE_PRESET"),
+            (FS_KOOPA_Y_CLAMP, "FS_KOOPA_Y_CLAMP"),
+            (FS_FIRE_FLOWER, "FS_FIRE_FLOWER"),
+            (FS_BOOMBOOM_HITS_TABLE, "FS_BOOMBOOM_HITS_TABLE"),
+            (FS_BOOMBOOM_HITS_SUB, "FS_BOOMBOOM_HITS_SUB"),
+            (FS_HAND_ROOMS, "FS_HAND_ROOMS"),
+            (FS_PIRANHA_ROOMS, "FS_PIRANHA_ROOMS"),
+            (FS_FASTER_FROG, "FS_FASTER_FROG"),
+            (FS_HOLD_LEFT_HELPER, "FS_HOLD_LEFT_HELPER"),
+        ] {
+            assert!(
+                offsets.contains(&off),
+                "{name} (0x{off:05X}) missing from FREE_SPACE_ALLOCATIONS"
+            );
+        }
+        // Interior offsets (sub-tables inside a parent allocation) must fall
+        // within some registry row.
+        let covered = |o: usize| {
+            FREE_SPACE_ALLOCATIONS.iter().any(|&(ro, rs, _)| o >= ro && o < ro + rs)
+        };
+        for &(off, name) in &[
+            (FS_SAS_X_TABLE, "FS_SAS_X_TABLE"),
+            (FS_SAS_XHI_TABLE, "FS_SAS_XHI_TABLE"),
+            (FS_SAS_SCRL_TABLE, "FS_SAS_SCRL_TABLE"),
+            (FS_SAS_SCRH_TABLE, "FS_SAS_SCRH_TABLE"),
+            (FS_SAS_SEED_HELPER, "FS_SAS_SEED_HELPER"),
+            (FS_KOOPA_HITS_TABLE, "FS_KOOPA_HITS_TABLE"),
+        ] {
+            assert!(
+                covered(off),
+                "{name} (0x{off:05X}) not covered by any FREE_SPACE_ALLOCATIONS row"
+            );
+        }
     }
 
     // Ground-truth pins for the PRG bank ↔ file-offset mapping. Each pair is a

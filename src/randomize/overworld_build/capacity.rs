@@ -193,7 +193,7 @@ pub(super) fn prepare_capacities(
             }
             if matches!(entry.kind, NodeKind::Airship | NodeKind::Bowser | NodeKind::Start) {
                 let (r, c) = entry.grid_pos;
-                if r < grid.rows && c < grid.cols {
+                if r < grid.rows() && c < grid.cols {
                     grid.set(r, c, entry.tile);
                 }
             }

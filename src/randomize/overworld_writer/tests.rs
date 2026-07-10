@@ -343,7 +343,7 @@ fn test_no_uncovered_blank_nodes() {
             let mut covered: HashSet<(usize, usize)> = HashSet::new();
             for i in 0..world.entry_count {
                 let pos = rom_data::entry_grid_position(&test_rom, world, i);
-                if pos.0 < grid.rows {
+                if pos.0 < grid.rows() {
                     covered.insert(pos);
                 }
             }
@@ -351,7 +351,7 @@ fn test_no_uncovered_blank_nodes() {
             // Every reachable blank tile must be covered.
             for &node in &walk.nodes {
                 let (r, c) = node;
-                if r >= grid.rows || c >= grid.cols {
+                if r >= grid.rows() || c >= grid.cols {
                     continue;
                 }
                 let tile = grid.get(r, c);

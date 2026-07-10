@@ -75,7 +75,7 @@ pub(super) fn place_locks<R: Rng>(
         // Find all lockable path tiles not yet used
         let reference_grid = build_test_grid(None);
         let mut candidates: Vec<(usize, usize)> = Vec::new();
-        for r in 0..reference_grid.rows {
+        for r in 0..reference_grid.rows() {
             for c in 0..reference_grid.cols {
                 let tile = reference_grid.get(r, c);
                 if LOCKABLE_TILES.contains(&tile) && !locked_tiles.contains(&(r, c)) {
@@ -263,7 +263,7 @@ pub(super) fn debug_stamp_rom(rom: &mut crate::rom::Rom, result: &BuildResult) {
         let wi = built.world_idx;
 
         // First write the cleared grid (with pipes already placed)
-        for r in 0..built.grid.rows {
+        for r in 0..built.grid.rows() {
             for c in 0..built.grid.cols {
                 let offset = rom_data::map_tile_offset(wi, r, c);
                 rom.data[offset] = built.grid.get(r, c);

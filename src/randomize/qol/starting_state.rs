@@ -18,26 +18,27 @@ pub fn set_starting_lives(rom: &mut Rom, lives: u8) {
 
 /// Write starting items into Mario's inventory via a trampoline in PRG031.
 ///
-/// Replaces the 8-byte lives init at 0x308E0 with `JSR $E250` into a
-/// routine that sets lives, does the intro skip, queues the seeded menu
-/// music, AND writes up to 3 items to inventory ($7D80+). Must run AFTER
-/// title_screen (which hooks the same region for intro skip) — this
-/// trampoline incorporates that behavior.
+/// Replaces the 8-byte lives init at 0x308E0 with `JSR $E250`
+/// (FS_STARTING_ITEMS) into a routine that sets lives, does the intro skip,
+/// queues the seeded menu music, AND writes up to 3 items to inventory
+/// ($7D80+).
+///
+/// Must run AFTER title_screen: both patch the lives-init region, and this
+/// JSR overwrites title_screen's intro-skip hook at 0x308E2. The trampoline
+/// replays the identical intro-skip + menu-music bytes (shared
+/// `title_screen::intro_skip_music_bytes`), so behavior is preserved;
+/// title_screen's FS_INTRO_SKIP routine is left in ROM unreferenced.
 pub fn write_starting_items(rom: &mut Rom, seed: u64, lives: u8, items: &[u8]) {
     let lives = lives.clamp(1, 99);
-    let music = crate::randomize::title_screen::pick_menu_music(seed);
+    let cpu = crate::randomize::rom_data::prg031_file_to_cpu(FS_STARTING_ITEMS); // $E250
     // Build trampoline: lives init + intro skip + menu music + item writes + RTS
-    // CPU $E250 = file FS_STARTING_ITEMS
     let mut buf = Vec::with_capacity(33);
     buf.extend_from_slice(&[
         0xA9, lives,         // LDA #lives
         0x8D, 0x36, 0x07,    // STA $0736
         0x8D, 0x37, 0x07,    // STA $0737
-        0xA9, 0x06,          // LDA #$06       (Title_State = IntroSkip)
-        0x85, 0xDE,          // STA $DE
-        0xA9, music,         // LDA #music
-        0x8D, 0xF5, 0x04,    // STA $04F5      (queue menu music)
     ]);
+    buf.extend_from_slice(&crate::randomize::title_screen::intro_skip_music_bytes(seed));
     for (i, &item) in items.iter().take(3).enumerate() {
         buf.extend_from_slice(&[
             0xA9, item,                      // LDA #item
@@ -47,9 +48,10 @@ pub fn write_starting_items(rom: &mut Rom, seed: u64, lives: u8, items: &[u8]) {
     buf.push(0x60); // RTS
     rom.write_range(FS_STARTING_ITEMS, &buf);
 
-    // Patch lives init: JSR $E250 + NOP×5
+    // Patch lives init: JSR $E250 + NOP×5 (overwrites the title_screen
+    // intro-skip hook at 0x308E2 — see the doc comment above).
     rom.write_range(LIVES_INIT_BASE, &[
-        0x20, 0x50, 0xE2,                    // JSR $E250
+        0x20, cpu as u8, (cpu >> 8) as u8,   // JSR $E250
         0xEA, 0xEA, 0xEA, 0xEA, 0xEA,       // NOP ×5
     ]);
 }

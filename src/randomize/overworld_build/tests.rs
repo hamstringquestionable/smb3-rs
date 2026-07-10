@@ -933,7 +933,7 @@ fn test_lock_candidates_dump() {
         type LockDebugCandidate = (Pos, i32, bool, i32, bool, bool);
         let mut candidates: Vec<LockDebugCandidate> = Vec::new();
 
-        for r in 0..base_grid.rows {
+        for r in 0..base_grid.rows() {
             for c in 0..base_grid.cols {
                 let tile = base_grid.get(r, c);
                 if !LOCKABLE_TILES.contains(&tile) { continue; }
@@ -1069,7 +1069,7 @@ fn test_lock_airship_distance() {
                     .filter_map(|&(dr, dc)| {
                         let nr = lr as i16 + dr;
                         let nc = lc as i16 + dc;
-                        if nr < 0 || nr >= stamped.rows as i16 || nc < 0 || nc >= stamped.cols as i16 {
+                        if nr < 0 || nr >= stamped.rows() as i16 || nc < 0 || nc >= stamped.cols as i16 {
                             return None;
                         }
                         let pos = (nr as usize, nc as usize);
@@ -1951,7 +1951,7 @@ fn test_dump_required_progression() {
         let wi = world_filter.unwrap_or(2); // default W3
         let grid = rom_data::read_tile_grid(&rom, wi);
         eprintln!("=== Vanilla W{} grid (post-QoL) ===", wi + 1);
-        for r in 0..grid.rows {
+        for r in 0..grid.rows() {
             eprint!("  r{r:1}:");
             for c in 0..grid.cols {
                 eprint!(" {:02X}", grid.get(r, c));
@@ -1998,7 +1998,7 @@ fn test_dump_required_progression() {
             // GRID=1: also print the post-build grid for visual inspection.
             if std::env::var("GRID").is_ok() {
                 eprintln!("\n  Post-build grid:");
-                for r in 0..built.grid.rows {
+                for r in 0..built.grid.rows() {
                     eprint!("    r{r:1}:");
                     for c in 0..built.grid.cols {
                         eprint!(" {:02X}", built.grid.get(r, c));
@@ -2020,7 +2020,7 @@ fn test_dump_required_progression() {
                         ];
                         eprintln!("  {label}={pos:?} tile=0x{:02X}", grid.get(pos.0, pos.1));
                         for (d, rr, cc) in dirs {
-                            if rr < 0 || cc < 0 || rr as usize >= grid.rows || cc as usize >= grid.cols {
+                            if rr < 0 || cc < 0 || rr as usize >= grid.rows() || cc as usize >= grid.cols {
                                 eprintln!("    {d} ({rr},{cc}): off-grid");
                             } else {
                                 eprintln!("    {d} ({rr},{cc}): 0x{:02X}", grid.get(rr as usize, cc as usize));

@@ -65,7 +65,7 @@ pub(super) fn classify_world(
         let (row, col) = rom_data::entry_grid_position(rom, world, i);
         let obj = rom_data::read_word(rom, objsets + i * 2);
         let lay = rom_data::read_word(rom, layouts + i * 2);
-        let map_tile = if row < grid.rows && col < grid.cols {
+        let map_tile = if row < grid.rows() && col < grid.cols {
             grid.get(row, col)
         } else {
             0xFF

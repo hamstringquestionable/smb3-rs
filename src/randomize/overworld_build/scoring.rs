@@ -65,7 +65,7 @@ pub(super) fn is_dead_end(grid: &Grid, pos: (usize, usize)) -> bool {
     if c >= 2 && VALID_HORZ.contains(&grid.get(r, c - 1)) { exits += 1; }
     if c + 2 < grid.cols && VALID_HORZ.contains(&grid.get(r, c + 1)) { exits += 1; }
     if r >= 2 && VALID_VERT.contains(&grid.get(r - 1, c)) { exits += 1; }
-    if r + 2 < grid.rows && VALID_VERT.contains(&grid.get(r + 1, c)) { exits += 1; }
+    if r + 2 < grid.rows() && VALID_VERT.contains(&grid.get(r + 1, c)) { exits += 1; }
     exits == 1
 }
 

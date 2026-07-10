@@ -173,7 +173,7 @@ pub(super) fn find_blank_slots(
     fixed_positions: &HashSet<(usize, usize)>,
 ) -> Vec<(usize, usize)> {
     let mut blanks = Vec::new();
-    for r in 0..grid.rows {
+    for r in 0..grid.rows() {
         for c in 0..grid.cols {
             let pos = (r, c);
             if fixed_positions.contains(&pos) {
@@ -220,7 +220,7 @@ pub(super) fn is_completion_unsafe(tile: u8) -> bool {
 /// (which will be stamped as completion-unsafe tiles by the writer).
 pub(super) fn completable_positions(grid: &Grid, slots: &[SlotAssignment]) -> HashSet<(usize, usize)> {
     let mut set: HashSet<(usize, usize)> = HashSet::new();
-    for r in 0..grid.rows {
+    for r in 0..grid.rows() {
         for c in 0..grid.cols {
             if is_completion_unsafe(grid.get(r, c)) {
                 set.insert((r, c));

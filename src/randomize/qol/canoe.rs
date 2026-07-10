@@ -1,24 +1,39 @@
 //! W3 canoe softlock fixes (respawn + map-data backup/restore).
 
 use crate::rom::Rom;
-use crate::randomize::rom_data::{FS_CANOE_BACKUP, FS_CANOE_RESPAWN};
+use crate::randomize::rom_data::{FS_CANOE_BACKUP, FS_CANOE_RESPAWN, jsr_into_bank};
 
 // Canoe softlock fix — based on "SMB3 - Canoe Softlock Fixes (Open World
-// compatible).ips". Two hooks plus two free-space subroutines.
+// compatible).ips". Two hooks, one JSR retarget, and two free-space
+// subroutines.
 
-// Hook at PRG010 CPU $C6EA → JSR FS_CANOE_RESPAWN (5 bytes incl. NOP NOP).
-const CANOE_RESPAWN_HOOK: usize = 0x146FA;
-// Boundary check adjustment at PRG010 CPU $CF13 (2 bytes).
-const CANOE_BOUNDARY_PATCH: usize = 0x14F23;
-// Hook at PRG011 CPU $A22F → JSR FS_CANOE_BACKUP (5 bytes incl. NOP NOP).
+// Byte offset of Part B (map-data restore) inside CANOE_BACKUP_ROUTINE.
+// Part A (backup) is the first 28 bytes; Part B follows at CPU $BD0C.
+const CANOE_RESTORE_OFFSET: usize = 28;
+
+// Hook at PRG010 CPU $C6EA (5 bytes): replaces the vanilla `LDA #$00 /
+// STA $0500` with `JSR` to Part B of FS_CANOE_BACKUP, which restores the
+// backed-up map data and then re-executes the displaced LDA/STA itself.
+const CANOE_RESTORE_HOOK: usize = 0x146FA;
+
+// Operand bytes of the vanilla `JSR $D1FE` at PRG010 CPU $CF12 (2 bytes),
+// retargeted to FS_CANOE_RESPAWN — which runs the original $D1FE routine
+// first, then saves the death-respawn position for canoe entry.
+const CANOE_RESPAWN_RETARGET: usize = 0x14F23;
+
+// FS_CANOE_RESPAWN's CPU address: PRG010 is mapped at $C000-$DFFF on the
+// world map, so CPU = $C000 + (file - 0x14010) = $DDE0.
+const CANOE_RESPAWN_CPU: u16 = (0xC000 + FS_CANOE_RESPAWN - 0x14010) as u16;
+
+// Hook at PRG011 CPU $A22F → JSR FS_CANOE_BACKUP Part A (5 bytes incl. NOP NOP).
 const CANOE_BACKUP_HOOK: usize = 0x1623F;
 
 // Record 3: subroutine in PRG010 free space (FS_CANOE_RESPAWN).
 // Saves player map position as death respawn point when entering via canoe ($4B).
 #[rustfmt::skip]
 const CANOE_RESPAWN_ROUTINE: [u8; 35] = [
-    0x20, 0xFE, 0xD1, // JSR $D1FE  (original routine)
-    0xC9, 0x4B,       // CMP #$4B   (canoe state?)
+    0x20, 0xFE, 0xD1, // JSR $D1FE  (the displaced original JSR target)
+    0xC9, 0x4B,       // CMP #$4B   (canoe dock tile)
     0xD0, 0x1B,       // BNE +27    (skip if not canoe)
     0xB5, 0x75,       // LDA $75,X  (map obj Y)
     0x9D, 0x7E, 0x79, // STA $797E,X (death respawn Y)
@@ -79,17 +94,22 @@ const CANOE_BACKUP_ROUTINE: [u8; 66] = [
 ///
 /// Based on "SMB3 - Canoe Softlock Fixes (Open World compatible).ips".
 pub fn fix_canoe_softlock(rom: &mut Rom) {
-    // Record 1: Hook at PRG010 CPU $C6EA → JSR $BD0C (canoe cleanup)
-    rom.write_range(CANOE_RESPAWN_HOOK, &[0x20, 0x0C, 0xBD, 0xEA, 0xEA]);
+    // Record 1: hook at PRG010 CPU $C6EA → JSR $BD0C (FS_CANOE_BACKUP Part B,
+    // the map-data restore), NOP-padded over the displaced 5 bytes.
+    let [jsr, lo, hi] = jsr_into_bank(11, FS_CANOE_BACKUP + CANOE_RESTORE_OFFSET);
+    rom.write_range(CANOE_RESTORE_HOOK, &[jsr, lo, hi, 0xEA, 0xEA]);
 
-    // Record 2: Boundary check adjustment at PRG010 CPU $CF13
-    rom.write_range(CANOE_BOUNDARY_PATCH, &[0xE0, 0xDD]);
+    // Record 2: retarget the vanilla `JSR $D1FE` at CPU $CF12 to
+    // FS_CANOE_RESPAWN ($DDE0) — operand bytes only, the JSR opcode stays.
+    rom.write_range(CANOE_RESPAWN_RETARGET, &CANOE_RESPAWN_CPU.to_le_bytes());
 
     // Record 3: respawn-save subroutine
     rom.write_range(FS_CANOE_RESPAWN, &CANOE_RESPAWN_ROUTINE);
 
-    // Record 4: Hook at PRG011 CPU $A22F → JSR $BCF0 (canoe backup)
-    rom.write_range(CANOE_BACKUP_HOOK, &[0x20, 0xF0, 0xBC, 0xEA, 0xEA]);
+    // Record 4: hook at PRG011 CPU $A22F → JSR $BCF0 (FS_CANOE_BACKUP Part A,
+    // the backup).
+    let [jsr, lo, hi] = jsr_into_bank(11, FS_CANOE_BACKUP);
+    rom.write_range(CANOE_BACKUP_HOOK, &[jsr, lo, hi, 0xEA, 0xEA]);
 
     // Record 5: backup/restore subroutines
     rom.write_range(FS_CANOE_BACKUP, &CANOE_BACKUP_ROUTINE);

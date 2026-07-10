@@ -132,7 +132,7 @@ pub(super) fn write_pointer_entries(
             .map(|e| e.grid_pos)
             .collect();
         let mut uncovered_blanks: Vec<(usize, usize)> = Vec::new();
-        for r in 0..built.grid.rows {
+        for r in 0..built.grid.rows() {
             for c in 0..built.grid.cols {
                 if rom_data::VALID_BLANK_TILES.contains(&built.grid.get(r, c))
                     && !covered.contains(&(r, c))

@@ -1,14 +1,18 @@
 //! Hammer item also breaks fortress locks / water-gap bridges.
 
 use crate::rom::Rom;
-use crate::randomize::rom_data::FS_HAMMER_LOCKS;
+use crate::randomize::rom_data::{FS_HAMMER_LOCKS, prg_bank_file_to_cpu};
 
-// Make the hammer item also break fortress lock tiles on the overworld map.
+// Make the hammer item also break fortress lock tiles and/or water-gap
+// bridge locks on the overworld map.
 //
 // The vanilla hammer routine at PRG026 (file 0x346D5, CPU $A6C5) uses a
 // 7-byte range check: `SEC; SBC #$51; CMP #$02; BCC .found` which only
 // matches rock tiles $51–$52. We replace this with a JSR to a table-driven
-// subroutine in PRG026 free space that checks 5 tile IDs (2 rocks + 3 locks).
+// subroutine in PRG026 free space whose tables are built from the flags:
+// the 2 rock tiles are always present, `locks` adds the 3 fortress lock
+// tiles, and `bridges` adds the water gap lock (0x9D → 0xB3) — so the
+// tables hold 2–6 entries.
 //
 // Patch site 1 — Range check (file 0x346D5, 7 bytes):
 //   `SEC; SBC #$51; CMP #$02; BCC .found` →
@@ -17,19 +21,16 @@ use crate::randomize::rom_data::FS_HAMMER_LOCKS;
 // Patch site 2 — Replacement tile load (file 0x346E9, 3 bytes):
 //   `LDA $A6B1,X` → `LDA $7EB6` (load from scratch RAM set by subroutine)
 //
-// New subroutine at FS_HAMMER_LOCKS (0x3557F, CPU $B56F), 47 bytes:
+// New subroutine at FS_HAMMER_LOCKS (0x3557F, CPU $B56F), up to 50 bytes:
 //   Table-driven check of breakable tiles, stores replacement tile in $7EB6,
 //   saves/restores X via $7EB7, returns carry clear if breakable.
-//
-// Water gap locks (0x9D → 0xB3) are intentionally excluded — bridge tiles
-// need more testing.
 
 /// File offset of the 7-byte range check in the hammer routine ($A6C5).
 const HAMMER_RANGE_CHECK: usize = 0x346D5;
 /// File offset of `LDA $A6B1,X` (replacement tile load) at CPU $A6D8.
 const HAMMER_REPLACE_LOAD: usize = 0x346E8;
-/// CPU address of the subroutine: $A000 + (0x3557F - 0x34010) = $B56F.
-const HAMMER_LOCKS_SUB_CPU: u16 = 0xB56F;
+/// CPU address of the subroutine in PRG026 ($A000 window): $B56F.
+const HAMMER_LOCKS_SUB_CPU: u16 = prg_bank_file_to_cpu(26, FS_HAMMER_LOCKS);
 
 pub fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool) {
     // Build tables dynamically based on which flags are set.

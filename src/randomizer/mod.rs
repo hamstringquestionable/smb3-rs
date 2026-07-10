@@ -448,8 +448,11 @@ fn randomize_inner(
     }
 
     // Starting items trampoline — must run AFTER title_screen because both
-    // write to the lives init region at 0x308E0. The trampoline incorporates
-    // the intro skip (LDA #$06; STA $DE) so the title_screen hook is preserved.
+    // write to the lives init region at 0x308E0: this one wins, overwriting
+    // title_screen's intro-skip hook at 0x308E2. The trampoline replays the
+    // identical intro-skip + menu-music bytes (shared
+    // `title_screen::intro_skip_music_bytes`), so behavior is unchanged;
+    // title_screen's FS_INTRO_SKIP routine is left in ROM unreferenced.
     if !options.starting_items.is_empty() {
         rom.set_tag("qol/starting_items");
         randomize::qol::write_starting_items(rom, seed, options.starting_lives, &resolved_items);

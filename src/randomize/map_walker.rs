@@ -172,7 +172,7 @@ fn walk_from(
         for &(dr, dc, is_horz) in &DIRECTIONS {
             let pr = r as i16 + dr as i16;
             let pc = c as i16 + dc as i16;
-            if pr < 0 || pr >= grid.rows as i16 || pc < 0 || pc >= grid.cols as i16 {
+            if pr < 0 || pr >= grid.rows() as i16 || pc < 0 || pc >= grid.cols as i16 {
                 continue;
             }
             let (pr, pc) = (pr as usize, pc as usize);
@@ -185,7 +185,7 @@ fn walk_from(
 
             let nr = r as i16 + 2 * dr as i16;
             let nc = c as i16 + 2 * dc as i16;
-            if nr < 0 || nr >= grid.rows as i16 || nc < 0 || nc >= grid.cols as i16 {
+            if nr < 0 || nr >= grid.rows() as i16 || nc < 0 || nc >= grid.cols as i16 {
                 continue;
             }
             let (nr, nc) = (nr as usize, nc as usize);
@@ -329,7 +329,7 @@ pub(super) fn render_debug(
     out.push_str(&format!("{RESET}\n"));
 
     // Grid rows
-    for r in 0..grid.rows {
+    for r in 0..grid.rows() {
         out.push_str(&format!("{DIM}{r} {RESET}"));
         for c in 0..grid.cols {
             let tile = grid.get(r, c);
@@ -377,7 +377,7 @@ pub(super) fn render_debug(
 #[cfg(test)]
 fn find_fortress_tiles(grid: &Grid) -> Vec<(usize, usize)> {
     let mut positions = Vec::new();
-    for r in 0..grid.rows {
+    for r in 0..grid.rows() {
         for c in 0..grid.cols {
             let t = grid.get(r, c);
             if t == TILE_FORTRESS || t == 0xEB || t == 0x6A {
@@ -584,7 +584,6 @@ mod tests {
             // W8 edges resolve.
             let mut grid = Grid {
                 tiles: vec![vec![0xB4u8; 48]; 9],
-                rows: 9,
                 cols: 48,
                 eights_are_wild: true,
             };

@@ -653,3 +653,53 @@ pub(crate) struct FxSlot {
     pub grid_col: usize,
     pub replace_tile: u8,
 }
+
+#[cfg(test)]
+mod fortress_table_tests {
+    use super::*;
+    use crate::randomize::rom_data::read_entry;
+    use crate::rom::Rom;
+
+    /// FORTRESS_ENTRIES, BOOMBOOM_Y_OFFSETS, and VANILLA_FORTRESS_OBJ_PTRS are
+    /// three parallel arrays held in the same order (per-fortress). This guard
+    /// pins the invariants their consumers rely on.
+    #[test]
+    fn fortress_parallel_tables_stay_in_sync() {
+        assert_eq!(FORTRESS_ENTRIES.len(), BOOMBOOM_Y_OFFSETS.len());
+        assert_eq!(FORTRESS_ENTRIES.len(), VANILLA_FORTRESS_OBJ_PTRS.len());
+
+        // boomboom_y_offset_for_obj keys the pairing on the obj_ptr, so a
+        // duplicate obj_ptr would silently shadow a later fortress.
+        for (i, a) in VANILLA_FORTRESS_OBJ_PTRS.iter().enumerate() {
+            assert!(
+                !VANILLA_FORTRESS_OBJ_PTRS[i + 1..].contains(a),
+                "duplicate fortress obj_ptr {a:#06X}"
+            );
+        }
+
+        // Cross-check the shared ordering against the real ROM: the pointer
+        // table entry at FORTRESS_ENTRIES[i] must hold obj_ptr
+        // VANILLA_FORTRESS_OBJ_PTRS[i], and BOOMBOOM_Y_OFFSETS[i] must point
+        // at the Y byte of a Boom-Boom enemy entry ([id, x, y]).
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            return; // Base ROM not present (e.g. CI) — skip.
+        };
+        let rom = Rom::from_bytes(&bytes).unwrap();
+        for (i, &(w, e)) in FORTRESS_ENTRIES.iter().enumerate() {
+            let entry = read_entry(&rom, &WORLDS[w], e);
+            let obj_ptr = ((entry.obj_hi as u16) << 8) | entry.obj_lo as u16;
+            assert_eq!(
+                obj_ptr, VANILLA_FORTRESS_OBJ_PTRS[i],
+                "fortress {i} (W{}[{e}]): obj_ptr mismatch",
+                w + 1
+            );
+            // Boom-Boom object ids: 0x4A Q-ball, 0x4B jump, 0x4C fly (see tools/rom_map.py BOOMBOOM_IDS).
+            let id = rom.read_byte(BOOMBOOM_Y_OFFSETS[i] - 2);
+            assert!(
+                (0x4A..=0x4C).contains(&id),
+                "fortress {i} (W{}[{e}]): byte at BOOMBOOM_Y_OFFSETS[{i}]-2 is {id:#04X}, not a Boom-Boom id",
+                w + 1
+            );
+        }
+    }
+}
