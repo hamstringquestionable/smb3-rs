@@ -51,8 +51,6 @@ const GOOD_ITEMS_WITH_WHISTLE: &[u8] = &[
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0B, 0x0C, 0x0D,
 ];
 
-
-
 // Hammer Bros map items: 8 worlds x 9 object slots = 72 bytes.
 // Non-zero entries are item rewards from defeating Hammer Bros.
 const HAMMER_BROS_ITEMS_OFFSET: usize = 0x16190;
@@ -87,6 +85,16 @@ const WHISTLE_OFFSETS: &[usize] = &[
     0x0D36A, // In-level treasure D6 Y-byte
 ];
 
+/// Read `len` bytes at `offset`, map each through `f` (in table order, so any
+/// RNG the closure consumes is drawn per byte first-to-last), and write back.
+fn map_table(rom: &mut Rom, offset: usize, len: usize, mut f: impl FnMut(u8) -> u8) {
+    let mut bytes = rom.read_range(offset, len).to_vec();
+    for byte in &mut bytes {
+        *byte = f(*byte);
+    }
+    rom.write_range(offset, &bytes);
+}
+
 /// Randomize all chest and reward items: Hammer Bros drops, Princess letter
 /// rewards, Toad House chests, and in-level treasure chests.
 ///
@@ -105,29 +113,19 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, remove_whistles: bool, pira
     };
 
     // Hammer Bros map items: randomize non-zero entries only (zero = no item).
-    let mut hb = rom.read_range(HAMMER_BROS_ITEMS_OFFSET, HAMMER_BROS_ITEMS_LEN).to_vec();
-    for byte in &mut hb {
-        if *byte != 0 {
-            *byte = *pool.choose(rng).unwrap();
-        }
-    }
-    rom.write_range(HAMMER_BROS_ITEMS_OFFSET, &hb);
+    map_table(rom, HAMMER_BROS_ITEMS_OFFSET, HAMMER_BROS_ITEMS_LEN, |b| {
+        if b != 0 { *pool.choose(rng).unwrap() } else { b }
+    });
 
     // Princess letter rewards: randomize non-zero entries (0x00 = no reward).
-    let mut pr = rom.read_range(PRINCESS_REWARDS_OFFSET, PRINCESS_REWARDS_LEN).to_vec();
-    for byte in &mut pr {
-        if *byte != 0 {
-            *byte = *pool.choose(rng).unwrap();
-        }
-    }
-    rom.write_range(PRINCESS_REWARDS_OFFSET, &pr);
+    map_table(rom, PRINCESS_REWARDS_OFFSET, PRINCESS_REWARDS_LEN, |b| {
+        if b != 0 { *pool.choose(rng).unwrap() } else { b }
+    });
 
     // Toad House chests: use restricted pool (no cloud/hammer/music box/whistle).
-    let mut th = rom.read_range(TOAD_HOUSE_ITEMS_OFFSET, TOAD_HOUSE_ITEMS_LEN).to_vec();
-    for byte in &mut th {
-        *byte = *TOAD_HOUSE_ITEMS.choose(rng).unwrap();
-    }
-    rom.write_range(TOAD_HOUSE_ITEMS_OFFSET, &th);
+    map_table(rom, TOAD_HOUSE_ITEMS_OFFSET, TOAD_HOUSE_ITEMS_LEN, |_| {
+        *TOAD_HOUSE_ITEMS.choose(rng).unwrap()
+    });
 
     // In-level treasure chests: randomize each D6 Y-byte.
     for &offset in TREASURE_CHEST_OFFSETS {
@@ -149,33 +147,11 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, remove_whistles: bool, pira
 /// only the item ID in the data tables.
 pub fn replace_anchors<R: Rng>(rom: &mut Rom, rng: &mut R) {
     let replacement = *POWERUP_ITEMS.choose(rng).unwrap();
+    let swap_anchor = |b: u8| if b == ANCHOR { replacement } else { b };
 
-    // Hammer Bros map items
-    let mut hb = rom.read_range(HAMMER_BROS_ITEMS_OFFSET, HAMMER_BROS_ITEMS_LEN).to_vec();
-    for byte in &mut hb {
-        if *byte == ANCHOR {
-            *byte = replacement;
-        }
-    }
-    rom.write_range(HAMMER_BROS_ITEMS_OFFSET, &hb);
-
-    // Princess letter rewards
-    let mut pr = rom.read_range(PRINCESS_REWARDS_OFFSET, PRINCESS_REWARDS_LEN).to_vec();
-    for byte in &mut pr {
-        if *byte == ANCHOR {
-            *byte = replacement;
-        }
-    }
-    rom.write_range(PRINCESS_REWARDS_OFFSET, &pr);
-
-    // Toad House chests
-    let mut th = rom.read_range(TOAD_HOUSE_ITEMS_OFFSET, TOAD_HOUSE_ITEMS_LEN).to_vec();
-    for byte in &mut th {
-        if *byte == ANCHOR {
-            *byte = replacement;
-        }
-    }
-    rom.write_range(TOAD_HOUSE_ITEMS_OFFSET, &th);
+    map_table(rom, HAMMER_BROS_ITEMS_OFFSET, HAMMER_BROS_ITEMS_LEN, swap_anchor);
+    map_table(rom, PRINCESS_REWARDS_OFFSET, PRINCESS_REWARDS_LEN, swap_anchor);
+    map_table(rom, TOAD_HOUSE_ITEMS_OFFSET, TOAD_HOUSE_ITEMS_LEN, swap_anchor);
 }
 
 /// Remove warp whistles without full item randomization. Replaces the 3 known
@@ -279,6 +255,19 @@ mod tests {
         data[0x0D36A] = WARP_WHISTLE;
 
         Rom::from_bytes_lax(&data, true).unwrap()
+    }
+
+    #[test]
+    fn test_whistle_pool_is_good_items_plus_whistle() {
+        let mut expected: Vec<u8> = GOOD_ITEMS.to_vec();
+        expected.push(WARP_WHISTLE);
+        expected.sort();
+        let mut actual: Vec<u8> = GOOD_ITEMS_WITH_WHISTLE.to_vec();
+        actual.sort();
+        assert_eq!(
+            actual, expected,
+            "GOOD_ITEMS_WITH_WHISTLE must equal GOOD_ITEMS plus WARP_WHISTLE"
+        );
     }
 
     #[test]

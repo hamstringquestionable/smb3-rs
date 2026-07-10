@@ -10,6 +10,7 @@
 //! must run *after* `enemies::randomize` so the forced Tornado is final.
 
 use rand::Rng;
+use rand::seq::IndexedRandom;
 
 use crate::rom::Rom;
 
@@ -33,7 +34,7 @@ const TORNADO_Y_BYTE: u8 = 0x12;
 /// there is no reason to touch it. Only the id and y (height) bytes change; the
 /// screen/column byte is preserved from the replaced Fire Chomp.
 pub fn randomize_beta9_tornado<R: Rng>(rom: &mut Rom, rng: &mut R) {
-    let id_offset = BETA9_FIRE_CHOMP_OFFSETS[rng.random_range(..BETA9_FIRE_CHOMP_OFFSETS.len())];
+    let id_offset = *BETA9_FIRE_CHOMP_OFFSETS.choose(rng).unwrap();
     rom.write_byte(id_offset, TORNADO_ID);
     rom.write_byte(id_offset + 2, TORNADO_Y_BYTE);
 }

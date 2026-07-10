@@ -52,6 +52,11 @@ pub(crate) const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
 // PRG030
 pub(crate) const FS_WORLD_ORDER: usize       = 0x3DF20; // 28 bytes
 
+/// CPU address of the world-order routine: $8000 + (0x3DF20 - 0x3C010) = $9F10.
+/// PRG030 is the MMC3 fixed bank at $8000-$9FFF (file 0x3C010), so
+/// `prg_bank_file_to_cpu` (which assumes the $A000 window) does not apply.
+pub(crate) const WORLD_ORDER_CPU: u16        = 0x9F10;
+
 pub(crate) const FS_BIG_Q_SAVE: usize        = 0x3DF3C; // 20 bytes
 
 // PRG031

@@ -1,5 +1,8 @@
+use rand::Rng;
+
 use crate::rom::Rom;
-use rand_chacha::ChaCha8Rng;
+
+use super::rom_data::{KOOPA_HITS_SUB_CPU, KOOPA_HITS_TABLE_CPU};
 
 /// Fix Koopaling softlock when airships are shuffled across worlds.
 ///
@@ -220,7 +223,7 @@ const CHR_PAGE_WAND: u8 = 0x37;
 /// Lemmy's Koopaling identity value.
 const LEMMY_IDENTITY: usize = 0x05;
 
-pub fn random_koopalings(rom: &mut Rom, rng: &mut ChaCha8Rng) {
+pub fn random_koopalings<R: Rng>(rom: &mut Rom, rng: &mut R) {
     use rand::seq::SliceRandom;
 
     let mut koopalings: [u8; 7] = [0, 1, 2, 3, 4, 5, 6];
@@ -317,8 +320,6 @@ const KOOPA_SURVIVE_CPU: u16 = 0xB18D;
 /// CPU address of the vanilla "defeated" path.
 const KOOPA_DEFEAT_CPU: u16 = 0xB193;
 
-use super::rom_data::{KOOPA_HITS_SUB_CPU, KOOPA_HITS_TABLE_CPU};
-
 /// Subroutine machine code (13 bytes):
 /// ```asm
 ///   LDA $7F,X              ; load stomp counter (original instruction)
@@ -335,9 +336,8 @@ const KOOPA_HITS_CODE: [u8; 13] = [
     0xB0, 0x03,                                                  // BCS +3 (to JMP defeat)
     0x4C, KOOPA_SURVIVE_CPU as u8, (KOOPA_SURVIVE_CPU >> 8) as u8, // JMP $B18D
 ];
-// Note: defeat JMP ($B193) follows immediately after in the table area,
-// but we can just let BCS fall through to the table bytes — instead we
-// place the defeat JMP right after the code, before the table.
+// Layout: the defeat JMP ($B193) sits right after the code (sub + 13),
+// followed by the 7-byte threshold table.
 // Total: 13 bytes code + 3 bytes JMP defeat + 7 bytes table = 23 bytes.
 
 /// File offset of fireball→stomp handoff: `LDA #$02; STA $7F,X` (4 bytes).
@@ -353,11 +353,8 @@ const KOOPA_HITS_CODE: [u8; 13] = [
 /// threshold, guaranteeing defeat.
 const KOOPA_FIRE_HANDOFF: usize = 0x03035;
 
-pub fn randomize_koopaling_hits(rom: &mut Rom, rng: &mut ChaCha8Rng) {
-    use rand::Rng;
-    use super::rom_data::{
-        FS_KOOPA_FIRE_PRESET, KOOPA_FIRE_PRESET_CPU, KOOPA_HITS_TABLE_CPU,
-    };
+pub fn randomize_koopaling_hits<R: Rng>(rom: &mut Rom, rng: &mut R) {
+    use super::rom_data::{FS_KOOPA_FIRE_PRESET, KOOPA_FIRE_PRESET_CPU};
 
     // Write stomp threshold subroutine into free space
     rom.write_range(super::rom_data::FS_KOOPA_HITS_SUB, &KOOPA_HITS_CODE);
@@ -442,8 +439,7 @@ const BOOMBOOM_SURVIVE_CPU: u16 = 0xAE70;
 /// CPU address of the vanilla "death" tail (sets death Timer, RTS).
 const BOOMBOOM_DEATH_CPU: u16 = 0xAE82;
 
-pub fn randomize_boomboom_hits(rom: &mut Rom, rng: &mut ChaCha8Rng) {
-    use rand::Rng;
+pub fn randomize_boomboom_hits<R: Rng>(rom: &mut Rom, rng: &mut R) {
     use super::rom_data::{
         BOOMBOOM_HITS_SUB_CPU, BOOMBOOM_HITS_TABLE_CPU, FS_BOOMBOOM_HITS_SUB,
         FS_BOOMBOOM_HITS_TABLE,
@@ -531,6 +527,7 @@ pub fn skip_wand_cutscene(rom: &mut Rom) {
 mod tests {
     use super::*;
     use crate::rom::Rom;
+    use rand_chacha::ChaCha8Rng;
 
     fn make_test_rom() -> Rom {
         let mut data = vec![0u8; 393232];

@@ -2,6 +2,7 @@ use rand::Rng;
 use rand::seq::SliceRandom;
 
 use crate::rom::Rom;
+use super::rom_data::{FS_WORLD_ORDER, WORLD_ORDER_CPU};
 
 /// File offset of the `INC World_Num; JMP $84A0` instruction (6 bytes).
 /// Original bytes: EE 27 07 4C A0 84
@@ -24,20 +25,13 @@ pub(super) const WORLD_INIT_OPERAND: usize = 0x30CC3;
 /// clears $0160 to zero on power-on, so it's safe to skip this write.
 const DEBUG_FLAG_STA_OFFSET: usize = 0x30CC7;
 
-/// Free space in PRG030 — offset from rom_data::FS_WORLD_ORDER.
-/// Uses 28 bytes: 12 routine + 8 next-world table + 8 display table.
-const ROUTINE_OFFSET: usize = super::rom_data::FS_WORLD_ORDER;
-
-/// CPU address of the routine in free space.
-const ROUTINE_CPU: u16 = 0x9F10;
-
 /// CPU address of the lookup table (routine + 12 bytes).
-const TABLE_CPU: u16 = ROUTINE_CPU + 12;
+const TABLE_CPU: u16 = WORLD_ORDER_CPU + 12;
 
 /// File offset of the display-number table (8 bytes, right after next-world table).
 /// PRG030 is always mapped at $8000–$9FFF (MMC3 fixed bank in mode 1), so CPU $9F24
 /// is accessible from any bank configuration.
-const DISPLAY_TABLE_OFFSET: usize = ROUTINE_OFFSET + 20; // 12 routine + 8 next-world
+const DISPLAY_TABLE_OFFSET: usize = FS_WORLD_ORDER + 20; // 12 routine + 8 next-world
 const DISPLAY_TABLE_CPU: u16 = TABLE_CPU + 8; // $9F24
 
 /// Map screen "WORLD X" display site (PRG010).
@@ -83,8 +77,8 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) {
     next_world[7] = 7;
 
     // Patch the original INC World_Num site to JMP to our routine
-    let routine_lo = (ROUTINE_CPU & 0xFF) as u8;
-    let routine_hi = ((ROUTINE_CPU >> 8) & 0xFF) as u8;
+    let routine_lo = (WORLD_ORDER_CPU & 0xFF) as u8;
+    let routine_hi = ((WORLD_ORDER_CPU >> 8) & 0xFF) as u8;
     rom.write_range(WORLD_INC_OFFSET, &[
         0x4C, routine_lo, routine_hi, // JMP $9F10
         0xEA, 0xEA, 0xEA,            // NOP NOP NOP (pad)
@@ -99,10 +93,10 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) {
         0x8D, 0x27, 0x07,             // STA World_Num ($0727)
         0x4C, 0xA0, 0x84,             // JMP $84A0 (map init)
     ];
-    rom.write_range(ROUTINE_OFFSET, &routine);
+    rom.write_range(FS_WORLD_ORDER, &routine);
 
     // Write the lookup table immediately after the routine
-    rom.write_range(ROUTINE_OFFSET + routine.len(), &next_world);
+    rom.write_range(FS_WORLD_ORDER + routine.len(), &next_world);
 
     // Build the display-number table: internal world -> display tile ($F1–$F8).
     // worlds[i] is the internal world at shuffled position i, so position i
@@ -121,7 +115,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) {
     // Original 10 bytes: AC 27 07 C8 98 09 F0 8D 04 03
     rom.write_range(MAP_DISPLAY_OFFSET, &[
         0xAE, 0x27, 0x07,             // LDX $0727  (World_Num)
-        0xBD, disp_lo, disp_hi,       // LDA $DF24,X (display tile)
+        0xBD, disp_lo, disp_hi,       // LDA $9F24,X (display tile)
         0x8D, 0x04, 0x03,             // STA $0304
         0xEA,                         // NOP (pad)
     ]);
@@ -130,7 +124,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) {
     // Original 10 bytes: AE 27 07 E8 8A 09 F0 99 04 03
     rom.write_range(STATUS_DISPLAY_OFFSET, &[
         0xAE, 0x27, 0x07,             // LDX $0727  (World_Num)
-        0xBD, disp_lo, disp_hi,       // LDA $DF24,X (display tile)
+        0xBD, disp_lo, disp_hi,       // LDA $9F24,X (display tile)
         0x99, 0x04, 0x03,             // STA $0304,Y
         0xEA,                         // NOP (pad)
     ]);
@@ -156,7 +150,7 @@ mod tests {
         data[WORLD_INC_OFFSET..WORLD_INC_OFFSET + 6]
             .copy_from_slice(&[0xEE, 0x27, 0x07, 0x4C, 0xA0, 0x84]);
         // Fill free space with FF
-        data[ROUTINE_OFFSET..ROUTINE_OFFSET + 32].fill(0xFF);
+        data[FS_WORLD_ORDER..FS_WORLD_ORDER + 32].fill(0xFF);
         Rom::from_bytes_lax(&data, true).unwrap()
     }
 
@@ -177,17 +171,11 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         randomize(&mut rom, &mut rng, 7);
 
-        // Read the lookup table
-        let table = rom.read_range(ROUTINE_OFFSET + 12, 8);
+        // Read the lookup table and check three things: world 7 maps to
+        // itself, every entry is a valid world number, and following the
+        // next-world chain from any start visits all 8 worlds.
+        let table = rom.read_range(FS_WORLD_ORDER + 12, 8);
 
-        // Every world 0-7 should appear exactly once as a "next" destination
-        // (except world 7 which maps to itself)
-        // More importantly: following the chain from world[0] in shuffled order
-        // should visit all 8 worlds
-        let mut visited = [false; 8];
-        // Find which world is first in the shuffled order (it's the one that
-        // no other world points to, except itself if it's 7)
-        // Actually, let's just verify: table[7] == 7 (world 7 is always last)
         assert_eq!(table[7], 7, "World 7 (Dark Land) should map to itself");
 
         // All table values should be valid world numbers
@@ -195,10 +183,8 @@ mod tests {
             assert!(next <= 7, "Invalid world number in table: {next}");
         }
 
-        // The chain should visit all worlds: starting from any world in position 0,
-        // following next pointers should reach world 7
-        // Find a starting world (one that appears as table[x] for no x,
-        // i.e., it's the first world in the sequence — or just check all worlds reachable)
+        // Following next pointers from every start should cover all 8 worlds.
+        let mut visited = [false; 8];
         for start in 0..8u8 {
             let mut current = start;
             visited[current as usize] = true;
@@ -223,7 +209,7 @@ mod tests {
 
         // The starting world should match the first entry in the chain
         // Follow the chain from start_world and verify we visit all 8 worlds
-        let table = rom.read_range(ROUTINE_OFFSET + 12, 8);
+        let table = rom.read_range(FS_WORLD_ORDER + 12, 8);
         let mut visited = [false; 8];
         let mut current = start_world;
         for _ in 0..8 {
@@ -258,8 +244,8 @@ mod tests {
         randomize(&mut rom2, &mut rng2, 7);
 
         assert_eq!(
-            rom1.read_range(ROUTINE_OFFSET, 20),
-            rom2.read_range(ROUTINE_OFFSET, 20),
+            rom1.read_range(FS_WORLD_ORDER, 20),
+            rom2.read_range(FS_WORLD_ORDER, 20),
         );
     }
 
@@ -269,7 +255,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         randomize(&mut rom, &mut rng, 7);
 
-        let routine = rom.read_range(ROUTINE_OFFSET, 12);
+        let routine = rom.read_range(FS_WORLD_ORDER, 12);
         // LDX $0727
         assert_eq!(&routine[0..3], &[0xAE, 0x27, 0x07]);
         // LDA table,X (BD xx xx)
@@ -319,14 +305,14 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         randomize(&mut rom, &mut rng, 7);
 
-        // Map display: should now use LDX $0727; LDA $DF24,X; STA $0304; NOP
+        // Map display: should now use LDX $0727; LDA $9F24,X; STA $0304; NOP
         let map_patch = rom.read_range(MAP_DISPLAY_OFFSET, 10);
         assert_eq!(&map_patch[0..3], &[0xAE, 0x27, 0x07]); // LDX $0727
         assert_eq!(map_patch[3], 0xBD);                      // LDA abs,X
         assert_eq!(&map_patch[6..9], &[0x8D, 0x04, 0x03]);  // STA $0304
         assert_eq!(map_patch[9], 0xEA);                      // NOP
 
-        // Status bar: should now use LDX $0727; LDA $DF24,X; STA $0304,Y; NOP
+        // Status bar: should now use LDX $0727; LDA $9F24,X; STA $0304,Y; NOP
         let status_patch = rom.read_range(STATUS_DISPLAY_OFFSET, 10);
         assert_eq!(&status_patch[0..3], &[0xAE, 0x27, 0x07]); // LDX $0727
         assert_eq!(status_patch[3], 0xBD);                      // LDA abs,X
@@ -340,7 +326,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         randomize(&mut rom, &mut rng, 3);
 
-        let table = rom.read_range(ROUTINE_OFFSET + 12, 8);
+        let table = rom.read_range(FS_WORLD_ORDER + 12, 8);
 
         // Follow chain from starting world: should visit exactly 4 worlds (3 + Dark Land)
         let start_world = rom.read_byte(WORLD_INIT_OPERAND);
