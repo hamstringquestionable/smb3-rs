@@ -21,6 +21,7 @@ Modes:
   python3 tools/rom_map.py [rom] --tile 0xE6        # look up a world-map tile byte
   python3 tools/rom_map.py [rom] --tile 45          # CHR pattern, behavior, palette
   python3 tools/rom_map.py [rom] --check-dispatches # validate 4-byte dispatch tables
+  python3 tools/rom_map.py [rom] --antechamber      # antechamber-pattern shuffle pool
 
 Default ROM: "roms/Super Mario Bros. 3 (USA) (Rev 1).nes"
 """
@@ -2234,6 +2235,9 @@ def main():
         elif args[i] == "--check-dispatches":
             mode = "check_dispatches"
             i += 1
+        elif args[i] == "--antechamber":
+            mode = "antechamber"
+            i += 1
         elif args[i] == "--rocks":
             traverse_rocks = True
             i += 1
@@ -2319,6 +2323,9 @@ def main():
 
     elif mode == "check_dispatches":
         check_dispatch_tables(rom)
+
+    elif mode == "antechamber":
+        print(render_antechamber_report(rom))
 
 
 def check_dispatch_tables(rom):
@@ -3265,6 +3272,150 @@ def check_node_coverage(rom, world_idx, pipe_pairs):
             uncovered.append((r, c, tile))
 
     return uncovered
+
+
+# --------------------------------------------------------------------------
+# Antechamber pattern detection (--antechamber)
+# --------------------------------------------------------------------------
+
+def _junction_commands(rom, level, region_by_name):
+    """Re-parse a level's layout commands and return its junction commands,
+    decoded per the 'Junction Spawn Positions' section of the ROM reference."""
+    region = region_by_name[level["region"]]
+    commands, _ = parse_level_commands(rom, level["data_offset"], region)
+    juncts = []
+    for cmd in commands:
+        if cmd.get("type") != "junction":
+            continue
+        b0, b1, b2 = cmd["bytes"][:3]
+        juncts.append({
+            "offset": cmd["offset"],
+            "bytes": [b0, b1, b2],
+            "slot": b0 & 0x0F,          # Level_JctY/XLHStart index
+            "exit_dir": b1 & 0x0F,      # Level_PipeExitDir
+            "ystart_idx": (b1 >> 4) & 0x07,
+            "vertical": bool(b1 & 0x80),
+            "spawn_screen": b2 & 0x0F,  # X Hi
+            "spawn_col": (b2 >> 4) & 0x0F,
+        })
+    return juncts
+
+
+def find_antechamber_candidates(rom):
+    """Find levels matching the antechamber pattern: a small entry area whose
+    junction leads to a larger main area (the level content), which returns
+    either to the entry area (header-chain loop-back) or via the hardcoded
+    generic exit (JctCtl=4).
+
+    Returns a list of candidate dicts keyed by entry header offset."""
+    all_region_levels = []
+    for region in LEVEL_DATA_REGIONS:
+        levels = scan_level_data_region(rom, region)
+        all_region_levels.append({
+            "region": region["name"],
+            "tileset_ids": region["tileset_ids"],
+            "levels": levels,
+        })
+    layout_index = build_layout_index(all_region_levels)
+    region_by_name = {r["name"]: r for r in LEVEL_DATA_REGIONS}
+
+    candidates = {}  # entry header_offset -> candidate
+
+    for w_idx, w_info in enumerate(WORLDS):
+        world_data = parse_world_tables(rom, w_idx, w_info)
+        grid = read_tile_grid(rom, w_idx)
+        for entry in world_data["entries"]:
+            if entry["type"] != "level":
+                continue
+            tileset = entry["tileset"]
+            entry_lv = layout_index.get((tileset, entry["lay_ptr"]))
+            if entry_lv is None:
+                continue
+
+            # Human-readable name from the map tile under this entry
+            gr, gc = entry["grid_row"], entry["grid_col"]
+            tile = grid[gr][gc] if 0 <= gr < len(grid) and 0 <= gc < len(grid[0]) else 0
+            name = derive_level_name(w_idx, entry["index"], entry["type"], tile) \
+                or f"W{w_idx + 1}[{entry['index']}]"
+
+            ec = candidates.get(entry_lv["header_offset"])
+            if ec is not None:
+                ec["refs"].append(name)
+                continue
+
+            main_lv = layout_index.get((entry_lv["alt_tileset"], entry_lv["alt_layout"]))
+            if main_lv is None or main_lv is entry_lv:
+                continue
+
+            entry_screens = entry_lv["header"]["screens"]
+            main_screens = main_lv["header"]["screens"]
+
+            # Pattern shape: small entry room, main area at least as large.
+            if entry_screens > 4 or main_screens < entry_screens:
+                continue
+            # The main area must define its own exit-transition junction
+            # command (spawn slots are read from the SOURCE area's parse —
+            # see "Junction Spawn Positions" in the ROM reference). A main
+            # with zero junction commands relies on stale slots left over
+            # from the entry area's parse, which the shuffle would corrupt.
+            if main_lv["junction_count"] < 1:
+                continue
+
+            # No bosses anywhere in the pair (koopalings/boom-booms/bowser
+            # rooms are managed by other systems and must not move).
+            main_boss = scan_enemy_segment_bosses(rom, entry_lv["alt_objects"])
+            if (entry_lv["has_boomboom"] or entry_lv["has_koopaling"]
+                    or entry_lv["has_bowser"] or any(main_boss.values())):
+                continue
+
+            loop_back = layout_index.get(
+                (main_lv["alt_tileset"], main_lv["alt_layout"])) is entry_lv
+
+            candidates[entry_lv["header_offset"]] = {
+                "refs": [name],
+                "entry": entry_lv,
+                "entry_tileset": tileset,
+                "main": main_lv,
+                "loop_back": loop_back,
+                "entry_junctions": _junction_commands(rom, entry_lv, region_by_name),
+                "main_junctions": _junction_commands(rom, main_lv, region_by_name),
+            }
+
+    return sorted(candidates.values(), key=lambda c: c["refs"][0])
+
+
+def render_antechamber_report(rom):
+    """Human-readable report of antechamber-pattern candidates, with the
+    offsets needed for shuffle constants (entry header, main area pointers,
+    entry-junction slot in the main area's layout)."""
+    lines = []
+    cands = find_antechamber_candidates(rom)
+    for c in cands:
+        e, m = c["entry"], c["main"]
+        ret = "loop-back" if c["loop_back"] else "NO loop-back (generic exit?)"
+        lines.append(f"{CYAN}{'/'.join(c['refs'])}{RESET} [{e['region']}]")
+        lines.append(f"  entry: header 0x{e['header_offset']:05X} "
+                     f"lay=${e['layout_cpu']:04X} ts={c['entry_tileset']} "
+                     f"{e['header']['screens']}scr timer={e['header']['timer']}")
+        lines.append(f"  main:  header 0x{m['header_offset']:05X} "
+                     f"alt_layout=${e['alt_layout']:04X} alt_objects=${e['alt_objects']:04X} "
+                     f"alt_ts={e['alt_tileset']} {m['header']['screens']}scr  return: {ret}")
+        for tag, juncts in (("main", c["main_junctions"]),
+                            ("entry", c["entry_junctions"])):
+            for j in juncts:
+                vert = " vert" if j["vertical"] else ""
+                lines.append(
+                    f"    {tag} junction @0x{j['offset']:05X} slot={j['slot']} "
+                    f"exit_dir={j['exit_dir']} ystart={j['ystart_idx']} "
+                    f"spawn scr {j['spawn_screen']} col {j['spawn_col']}{vert}")
+        # The shuffle overwrites the entry area's junction command bytes 1-2
+        # with the donor level's — that only works if there is exactly one.
+        if len(c["entry_junctions"]) != 1:
+            lines.append(f"    {YELLOW}ambiguous: {len(c['entry_junctions'])} "
+                         f"junction commands in entry area{RESET}")
+        lines.append("")
+    lines.append(f"{len(cands)} candidate(s)")
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":

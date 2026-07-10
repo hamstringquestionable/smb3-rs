@@ -294,6 +294,15 @@ pub struct Options {
     /// Include ~9 unreferenced beta levels in the overworld shuffle pool.
     #[serde(default)]
     pub include_beta_stages: bool,
+    /// Antechamber shuffle: the four levels that open with a small entry
+    /// room (5-3, 6-6, 7-5, 7-7) get their interiors randomly permuted, so
+    /// one level's entry pipe can drop into another's interior. The player
+    /// then finishes through that level's vanilla ending; map completion
+    /// still credits the tile they entered from.
+    ///
+    /// Tri-state: `Maybe` lets the seed decide (hidden from the flag key).
+    #[serde(default)]
+    pub antechamber_shuffle: Tri,
     /// Piranha shuffle: release the two W7 piranha plant levels into the
     /// level pool. `On` = plant sprites follow the levels; `Wild` = plants
     /// scatter onto ~1 random level slot per world instead (see
@@ -392,6 +401,7 @@ impl Default for Options {
             hammer_vulnerable_koopalings: false,
             random_koopalings: false,
             include_beta_stages: false,
+            antechamber_shuffle: Tri::Off,
             piranha_shuffle: PiranhaMode::Off,
             hammer_breaks_locks: Tri::Off,
             hammer_breaks_bridges: Tri::Off,

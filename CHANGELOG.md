@@ -8,8 +8,16 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-07-10
+
 ### Added
 
+- **Lobby Shuffle** (off/on/maybe, `--antechamber-shuffle`) — the four levels
+  that open with a small entry room whose pipe leads into the level itself
+  (5-3, 6-6, 7-5, 7-7) get their interiors randomly permuted, so one level's
+  entry pipe can drop into another's interior. The level then plays out
+  through that interior's vanilla ending; map completion still credits the
+  tile you entered from.
 - 34 new king rescue quotes: 26 suit-specific (9 frog, 8 raccoon, 9 hammer)
   plus eight standard quotes.
 

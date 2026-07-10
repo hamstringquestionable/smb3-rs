@@ -219,6 +219,13 @@ struct Cli {
     #[arg(long, default_value = "off", value_parser = parse_tri)]
     eights_are_wild: Tri,
 
+    /// Antechamber shuffle: the four levels that open with a small entry room
+    /// (5-3, 6-6, 7-5, 7-7) get their interiors randomly permuted, so one
+    /// level's entry pipe can drop into another's interior: off, on, or maybe
+    /// (the seed decides, hidden from the flag key). Default: off.
+    #[arg(long, default_value = "off", value_parser = parse_tri)]
+    antechamber_shuffle: Tri,
+
     /// Disable card speed clear (one-of-each skips cutscene, on by default)
     #[arg(long)]
     no_card_speed_clear: bool,
@@ -477,6 +484,7 @@ fn build_options(cli: &Cli) -> Options {
             remove_whistles: !cli.keep_whistles,
             more_hammer_rocks: cli.more_hammer_rocks,
             eights_are_wild: cli.eights_are_wild,
+            antechamber_shuffle: cli.antechamber_shuffle,
             card_speed_clear: !cli.no_card_speed_clear,
             remove_n_cards: !cli.keep_n_cards,
             skip_wand_cutscene: !cli.keep_wand_cutscene,
@@ -550,6 +558,7 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });
     eprintln!("  More hammer rocks: {}", tri_str(options.more_hammer_rocks));
     eprintln!("  8s are Wild: {}", tri_str(options.eights_are_wild));
+    eprintln!("  Antechamber shuffle: {}", tri_str(options.antechamber_shuffle));
     eprintln!("  Random fire flower: {}", match options.fire_flower {
         FireFlowerMode::Off => "off",
         FireFlowerMode::On => "on",
