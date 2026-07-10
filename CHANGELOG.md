@@ -8,6 +8,11 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+### Added
+
+- 34 new king rescue quotes: 26 suit-specific (9 frog, 8 raccoon, 9 hammer)
+  plus eight standard quotes.
+
 ### Removed
 
 - The no-op `--shuffle-pipes` and `--shuffle-airships` CLI flags — both
