@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 The project is pre-1.0; new work accumulates under **[Unreleased]** and is moved
 into a versioned section when a release is cut.
 
+## [0.11.1] - 2026-07-09
+
+### Added
+
+- **Piranha Shuffle** (off/on/wild, `--piranha-shuffle`) — frees the two W7
+  piranha plant levels (7-P1/7-P2) into the level shuffle pool. On: their
+  plant sprites travel with them, guarding whichever slot they land on
+  (auto-starts on step, poofs when beaten, vanilla style). Wild: the plants
+  scatter instead — one lands on a random level slot in each world. The
+  plant levels' treasure chests now carry their own item (randomized with
+  chest items), so they reward correctly no matter how they're entered.
+
 ## [0.11.0] - 2026-07-08
 
 ### Added

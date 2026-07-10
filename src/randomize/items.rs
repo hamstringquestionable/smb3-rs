@@ -92,7 +92,12 @@ const WHISTLE_OFFSETS: &[usize] = &[
 ///
 /// When `remove_whistles` is true, warp whistles are excluded from the item
 /// pool so they never appear.
-pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, remove_whistles: bool) {
+///
+/// When `piranha_chests` is true, the two chest-room streams cloned by
+/// `piranha_rooms::install_treasure_sets` also get their D6 item bytes
+/// rolled. Only pass true when the clones are installed (piranha shuffle
+/// active) — otherwise those free-space offsets hold no D6 entry.
+pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, remove_whistles: bool, piranha_chests: bool) {
     let pool = if remove_whistles {
         GOOD_ITEMS
     } else {
@@ -127,6 +132,13 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, remove_whistles: bool) {
     // In-level treasure chests: randomize each D6 Y-byte.
     for &offset in TREASURE_CHEST_OFFSETS {
         rom.write_byte(offset, *pool.choose(rng).unwrap());
+    }
+
+    // Piranha-shuffle chest rooms (7-P1/7-P2 cloned streams).
+    if piranha_chests {
+        for offset in [super::piranha_rooms::P1_ROOM_ITEM, super::piranha_rooms::P2_ROOM_ITEM] {
+            rom.write_byte(offset, *pool.choose(rng).unwrap());
+        }
     }
 }
 
@@ -273,7 +285,7 @@ mod tests {
     fn test_items_randomized() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng, true);
+        randomize(&mut rom, &mut rng, true, false);
 
         // Toad House items should all be valid items
         for i in 0..TOAD_HOUSE_ITEMS_LEN {
@@ -292,7 +304,7 @@ mod tests {
     fn test_zero_slots_preserved() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng, true);
+        randomize(&mut rom, &mut rng, true, false);
 
         // W8 Hammer Bros items (all zero) should stay zero
         for i in 0..9 {
@@ -308,7 +320,7 @@ mod tests {
     fn test_whistles_removed() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng, true);
+        randomize(&mut rom, &mut rng, true, false);
 
         for &offset in WHISTLE_OFFSETS {
             let b = rom.read_byte(offset);
@@ -325,7 +337,7 @@ mod tests {
         for seed in 0..100 {
             let mut rom = make_test_rom();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom, &mut rng, false);
+            randomize(&mut rom, &mut rng, false, false);
 
             for i in 0..HAMMER_BROS_ITEMS_LEN {
                 if rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + i) == WARP_WHISTLE {
@@ -371,8 +383,8 @@ mod tests {
         let mut rng1 = ChaCha8Rng::seed_from_u64(123);
         let mut rng2 = ChaCha8Rng::seed_from_u64(123);
 
-        randomize(&mut rom1, &mut rng1, true);
-        randomize(&mut rom2, &mut rng2, true);
+        randomize(&mut rom1, &mut rng1, true, false);
+        randomize(&mut rom2, &mut rng2, true, false);
 
         // Check all item regions are identical
         assert_eq!(

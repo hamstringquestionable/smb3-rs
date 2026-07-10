@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use smb3_rs::{EnemyMode, FireFlowerMode, Options, Tri, STARTING_LIVES_VALUES};
+use smb3_rs::{EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri, STARTING_LIVES_VALUES};
 
 /// Human-readable label for a tri-state flag in the run summary.
 fn tri_str(t: Tri) -> &'static str {
@@ -223,6 +223,12 @@ struct Cli {
     #[arg(long, default_value = "off")]
     fire_flower: String,
 
+    /// Piranha shuffle: release the two W7 piranha plant levels into the level
+    /// pool — off, on, or wild (default: off). `on` = their plant sprites follow
+    /// them; `wild` = plants scatter onto ~1 random level slot per world instead.
+    #[arg(long, default_value = "off")]
+    piranha_shuffle: String,
+
     /// Disable spade-game shuffle (on by default; off keeps vanilla spade positions)
     #[arg(long)]
     no_shuffle_spade_games: bool,
@@ -377,6 +383,19 @@ fn main() {
         }
     }
 
+    fn parse_piranha(s: &str) -> PiranhaMode {
+        match s {
+            "off" => PiranhaMode::Off,
+            "on" => PiranhaMode::On,
+            "wild" => PiranhaMode::Wild,
+            other => {
+                eprintln!("Invalid --piranha-shuffle value: {other}");
+                eprintln!("Valid values: off, on, wild");
+                process::exit(1);
+            }
+        }
+    }
+
     fn parse_tri(s: &str, name: &str) -> Tri {
         match s {
             "off" => Tri::Off,
@@ -479,6 +498,7 @@ fn main() {
             no_game_over_penalty: cli.no_game_over_penalty,
             faster_frog: cli.faster_frog,
             fire_flower: parse_fire_flower(&cli.fire_flower),
+            piranha_shuffle: parse_piranha(&cli.piranha_shuffle),
             shuffle_spade_games: !cli.no_shuffle_spade_games,
             shuffle_toad_houses: !cli.no_shuffle_toad_houses,
             hands_levels: !cli.no_hands_levels,
@@ -538,6 +558,11 @@ fn main() {
         FireFlowerMode::Off => "off",
         FireFlowerMode::On => "on",
         FireFlowerMode::Wild => "wild",
+    });
+    eprintln!("  Piranha shuffle: {}", match options.piranha_shuffle {
+        PiranhaMode::Off => "off",
+        PiranhaMode::On => "on",
+        PiranhaMode::Wild => "wild",
     });
     if !options.starting_items.is_empty() {
         let item_names: Vec<&str> = options.starting_items.iter().map(|&id| match id {

@@ -383,3 +383,180 @@
             eprintln!("Wrote {filename}");
         }
     }
+
+    /// Piranha shuffle end-to-end: run the full randomizer in On and Wild
+    /// modes and check the ROM-side invariants — plants written with no
+    /// reward byte, sitting on path-node tiles over real pointer entries,
+    /// and every world keeping enough empty map-object slots for runtime
+    /// bonus spawns. Off mode must keep the vanilla W7 plants.
+    #[test]
+    fn test_piranha_shuffle_plants_written() {
+        use crate::{Options, PiranhaMode};
+
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+
+        let plant_slots = |out: &Rom, wi: usize| -> Vec<(usize, (usize, usize))> {
+            (0..9)
+                .filter(|&slot| {
+                    out.read_byte(rom_data::map_obj_slot_offset(
+                        out, rom_data::MAP_OBJ_IDS_MASTER, wi, slot,
+                    )) == 0x07
+                })
+                .map(|slot| {
+                    let y = out.read_byte(rom_data::map_obj_slot_offset(
+                        out, rom_data::MAP_OBJ_YS_MASTER, wi, slot,
+                    )) as usize;
+                    let xhi = out.read_byte(rom_data::map_obj_slot_offset(
+                        out, rom_data::MAP_OBJ_XHIS_MASTER, wi, slot,
+                    )) as usize;
+                    let xlo = out.read_byte(rom_data::map_obj_slot_offset(
+                        out, rom_data::MAP_OBJ_XLOS_MASTER, wi, slot,
+                    )) as usize;
+                    (slot, (y / 16 - 2, xhi * 16 + xlo / 16))
+                })
+                .collect()
+        };
+
+        for mode in [PiranhaMode::On, PiranhaMode::Wild] {
+            let mut out = rom.clone();
+            let options = Options {
+                piranha_shuffle: mode,
+                palettes: false,
+                ..Default::default()
+            };
+            crate::randomizer::randomize(&mut out, 42, &options);
+
+            let mut total_plants = 0;
+            for wi in 0..8 {
+                let empty = (0..9)
+                    .filter(|&slot| {
+                        out.read_byte(rom_data::map_obj_slot_offset(
+                            &out, rom_data::MAP_OBJ_IDS_MASTER, wi, slot,
+                        )) == 0x00
+                    })
+                    .count();
+                assert!(
+                    empty >= super::super::overworld_build::RESERVED_DYNAMIC_SLOTS,
+                    "{mode:?}: W{} has only {empty} empty map-object slots",
+                    wi + 1,
+                );
+
+                for (slot, (row, col)) in plant_slots(&out, wi) {
+                    total_plants += 1;
+                    assert_eq!(
+                        out.read_byte(rom_data::map_obj_reward_offset(wi, slot)),
+                        0,
+                        "{mode:?}: relocated plant carries a reward byte",
+                    );
+                    // Under-tile is a path node, not a numbered level tile.
+                    let tile = out.read_byte(rom_data::map_tile_offset(wi, row, col));
+                    assert!(
+                        !(0x03..=0x15).contains(&tile),
+                        "{mode:?}: W{} plant at ({row},{col}) sits on level tile {tile:#04x}",
+                        wi + 1,
+                    );
+                    // A pointer entry (the level the plant fronts) exists there.
+                    let world = &rom_data::WORLDS[wi];
+                    let found = (0..world.entry_count).any(|i| {
+                        rom_data::entry_grid_position(&out, world, i) == (row, col)
+                    });
+                    assert!(
+                        found,
+                        "{mode:?}: W{} plant at ({row},{col}) has no pointer entry",
+                        wi + 1,
+                    );
+                }
+            }
+            match mode {
+                // Both released levels got sprites at seed 42 (skips are
+                // possible in principle — hand-trap slot, full world — but
+                // zero plants would mean the feature silently no-opped).
+                PiranhaMode::On => assert!(
+                    (1..=2).contains(&total_plants),
+                    "On: expected 1-2 plants, found {total_plants}",
+                ),
+                PiranhaMode::Wild => assert!(
+                    total_plants >= 6,
+                    "Wild: expected ~1 plant per world, found {total_plants}",
+                ),
+                PiranhaMode::Off => unreachable!(),
+            }
+        }
+
+        // Off: vanilla plants stay at their linked slots with a reward.
+        let mut out = rom.clone();
+        let options = Options { palettes: false, ..Default::default() };
+        crate::randomizer::randomize(&mut out, 42, &options);
+        for &(wi, slot, _) in rom_data::MAP_OBJ_ENTRY_LINKS {
+            let id = out.read_byte(rom_data::map_obj_slot_offset(
+                &out, rom_data::MAP_OBJ_IDS_MASTER, wi, slot,
+            ));
+            assert_eq!(id, 0x07, "Off: vanilla plant missing at W{} slot {slot}", wi + 1);
+            assert_ne!(
+                out.read_byte(rom_data::map_obj_reward_offset(wi, slot)),
+                0,
+                "Off: vanilla plant reward cleared",
+            );
+        }
+    }
+
+    /// With piranha shuffle active the two plant levels enter the regular
+    /// level pool — and they end in a treasure chest, so a troll pipe must
+    /// never disguise them (CHEST_LEVELS membership drives the exclusion,
+    /// same as 3-7 / 5-1 / 8-Tank).
+    #[test]
+    fn test_troll_pipes_never_assigned_piranha_levels() {
+        use crate::PiranhaMode;
+
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+        // Piranha-active pipeline: sprites cleared, catalog entries released.
+        let mut prepped = rom.clone();
+        super::super::piranha_rooms::clear_vanilla_plants(&mut prepped);
+        let mut catalog = super::super::node_catalog::NodeCatalog::build(&prepped, false);
+        catalog.release_map_objects();
+        let pickup = super::super::overworld_pickup::pick_up(&prepped, &catalog, super::super::overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
+
+        // Both released plant levels must be in the pool at all.
+        let pooled_piranhas = pickup.pool.iter()
+            .filter(|pe| rom_data::MAP_OBJ_ENTRY_LINKS.iter()
+                .any(|&(w, _, e)| pe.world_idx == w && pe.entry_idx == e))
+            .count();
+        assert_eq!(pooled_piranhas, 2, "released plant levels missing from pool");
+
+        for seed in 0u64..32 {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let mut build = super::super::overworld_build::build(&prepped, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, super::super::overworld_build::BuildFlags { shuffle_toad_houses: true, ..Default::default() });
+            super::super::troll_pipes::mark_troll_pipes(&mut build, &mut rng);
+
+            let troll_positions: HashSet<(usize, (usize, usize))> = build.worlds.iter()
+                .flat_map(|w| w.slots.iter()
+                    .filter(|s| s.is_troll_pipe)
+                    .map(move |s| (w.world_idx, s.pos)))
+                .collect();
+
+            let flags = WriteFlags { piranha: PiranhaMode::Wild, ..Default::default() };
+            let assignments = assign_pool(&prepped, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, flags);
+
+            for (wi, wa) in assignments.iter().enumerate() {
+                for a in &wa.level {
+                    if !troll_positions.contains(&(wi, a.pos))
+                        || wa.demoted_troll_pipes.contains(&a.pos)
+                    {
+                        continue;
+                    }
+                    let ce = &catalog.entries[pickup.pool[a.pool_idx].catalog_idx];
+                    assert!(
+                        !rom_data::is_chest_level(ce.world_idx, ce.entry_idx),
+                        "seed {seed}: W{} troll pipe at {:?} got chest level (W{} entry {})",
+                        wi + 1, a.pos, ce.world_idx + 1, ce.entry_idx,
+                    );
+                }
+            }
+        }
+    }

@@ -37,6 +37,7 @@ use locks::*;
 // Public API consumed by the randomizer and the overworld writer.
 pub use {types::SlotAssignment, types::SlotKind};
 pub(crate) use sections::bfs_ordered;
+pub(crate) use capacity::RESERVED_DYNAMIC_SLOTS;
 pub(crate) use types::{BuildFlags, BuildResult, BuiltWorld, HbSprite, LockAssignment, OverworldData};
 // Progression analysis is exercised only by the test suite today (reserved for a
 // future WASM single-seed dump), so surface it just for `tests`.

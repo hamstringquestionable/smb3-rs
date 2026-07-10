@@ -65,6 +65,21 @@ pub enum FireFlowerMode {
     Wild,
 }
 
+/// Piranha shuffle mode. The two W7 piranha plant levels (7-P1/7-P2) are
+/// normally pinned to their vanilla map spots. `On` releases them into the
+/// global level pool and their plant sprites follow them to wherever they
+/// land. `Wild` also releases them (as plain numbered levels), and instead
+/// scatters plant sprites onto ~1 random level slot per world — stepping on
+/// a plant auto-starts the level under it, vanilla W7 style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PiranhaMode {
+    #[default]
+    Off,
+    On,
+    Wild,
+}
+
 /// Tri-state toggle for player-hidden flags: forced `Off`, forced `On`, or
 /// left to the seed (`Maybe`). A `Maybe` flag is resolved to a concrete
 /// on/off at generation time from a dedicated RNG substream (see
@@ -279,6 +294,12 @@ pub struct Options {
     /// Include ~9 unreferenced beta levels in the overworld shuffle pool.
     #[serde(default)]
     pub include_beta_stages: bool,
+    /// Piranha shuffle: release the two W7 piranha plant levels into the
+    /// level pool. `On` = plant sprites follow the levels; `Wild` = plants
+    /// scatter onto ~1 random level slot per world instead (see
+    /// [`PiranhaMode`]).
+    #[serde(default)]
+    pub piranha_shuffle: PiranhaMode,
     /// Per-world (W1-W7) coin flip: when on, each world independently rolls
     /// to swap Mario's start tile with the airship/castle tile. Mario spawns
     /// at the vanilla airship coords; the level objective lives at the
@@ -375,6 +396,7 @@ impl Default for Options {
             hammer_vulnerable_koopalings: false,
             random_koopalings: false,
             include_beta_stages: false,
+            piranha_shuffle: PiranhaMode::Off,
             hammer_breaks_locks: Tri::Off,
             hammer_breaks_bridges: Tri::Off,
             early_sun: false,

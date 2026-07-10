@@ -16,8 +16,8 @@ use options::*;
 
 // Public API re-exported by the crate root (see lib.rs).
 pub use options::{
-    EnemyMode, FireFlowerMode, Options, Tri, ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE,
-    ITEM_RANDOM_SUIT_ONLY, STARTING_LIVES_VALUES,
+    EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri, ITEM_RANDOM,
+    ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY, STARTING_LIVES_VALUES,
 };
 
 #[cfg(test)]
@@ -226,6 +226,15 @@ fn randomize_inner(
 
     rom.set_tag("overworld/builder");
     let mut catalog = randomize::node_catalog::NodeCatalog::build(rom, options.include_beta_stages);
+    // Piranha shuffle: free the two W7 plant levels into the pool. The sprite
+    // clear must precede the builder — capacity/eligibility reads sprite
+    // state straight from the ROM.
+    let piranha_active = options.piranha_shuffle != PiranhaMode::Off;
+    if piranha_active {
+        rom.set_tag("piranha_shuffle");
+        randomize::piranha_rooms::clear_vanilla_plants(rom);
+        catalog.release_map_objects();
+    }
     if options.swap_start_airship {
         randomize::start_airship_swap::pick_swaps(&mut catalog, &mut rng);
     }
@@ -279,6 +288,7 @@ fn randomize_inner(
         randomize::overworld_writer::WriteFlags {
             cross_world: true,
             shuffle_hammer_bros: options.shuffle_hammer_bros,
+            piranha: options.piranha_shuffle,
         },
     );
     // Give each W8 Hand its own treasure-room enemy stream so the chest
@@ -287,9 +297,18 @@ fn randomize_inner(
     rom.set_tag("hand_rooms");
     randomize::hand_rooms::patch_clone_hand_rooms(rom);
 
+    // Piranha shuffle: once 7-P1/7-P2 leave their vanilla map-object spots
+    // they can be entered like any level tile, so their chests must carry
+    // their own OBJ_TREASURESET. Runs before items::randomize so the cloned
+    // item bytes are in place when chests roll.
+    if piranha_active {
+        rom.set_tag("piranha_rooms");
+        randomize::piranha_rooms::install_treasure_sets(rom);
+    }
+
     if options.chest_items {
         rom.set_tag("items");
-        randomize::items::randomize(rom, &mut rng, options.remove_whistles);
+        randomize::items::randomize(rom, &mut rng, options.remove_whistles, piranha_active);
     } else if options.remove_whistles {
         rom.set_tag("items/whistles");
         randomize::items::remove_whistles_only(rom, &mut rng);
@@ -456,16 +475,16 @@ fn randomize_inner(
         randomize::fire_flower::apply(rom, options.fire_flower);
     }
 
-    // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 24 bytes:
+    // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012). 25 bytes:
     //   [0..4]   "S3R\xNN" magic + version
-    //   [4..16]  flag key bytes (12 bytes in v18)
-    //   [16..24] seed (little-endian u64)
+    //   [4..17]  flag key bytes (13 bytes in v23)
+    //   [17..25] seed (little-endian u64)
     rom.set_tag("stamp");
     let flag_bytes = options.to_flag_bytes();
-    let mut stamp = [0u8; 24];
+    let mut stamp = [0u8; 25];
     stamp[0..3].copy_from_slice(b"S3R");
     stamp[3] = FLAG_KEY_VERSION;
-    stamp[4..16].copy_from_slice(&flag_bytes);
-    stamp[16..24].copy_from_slice(&seed.to_le_bytes());
+    stamp[4..17].copy_from_slice(&flag_bytes);
+    stamp[17..25].copy_from_slice(&seed.to_le_bytes());
     rom.write_range(STAMP_OFFSET, &stamp);
 }

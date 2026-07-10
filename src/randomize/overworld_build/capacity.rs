@@ -305,7 +305,7 @@ pub(super) const MAX_HB_PER_WORLD: usize = 3;
 /// White houses are tied to the level, not the world, and levels shuffle across
 /// worlds, so the buffer applies everywhere. Conservative: harmless if the
 /// engine actually spawns bonuses into the runtime-only slots above the table.
-pub(super) const RESERVED_DYNAMIC_SLOTS: usize = 2;
+pub(crate) const RESERVED_DYNAMIC_SLOTS: usize = 2;
 
 /// Hammer Bro cap for the Dark World (W8). Its map-object table is dominated by
 /// the army (and the optional `8s are Wild` canoe), leaving little room — keep

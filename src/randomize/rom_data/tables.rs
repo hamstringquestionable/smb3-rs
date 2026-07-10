@@ -281,6 +281,8 @@ pub(crate) const CHEST_LEVELS: &[(usize, usize, &str)] = &[
     (0, 11, "1F (Warp Whistle)"),
     (2, 29, "3-7 (Cloud)"),
     (4, 5,  "5-1 (Music Box)"),
+    (6, 11, "7-P1 (chest)"),
+    (6, 45, "7-P2 (chest)"),
     (7, 5,  "8-Tank (Star)"),
     (7, 14, "8-Hnd1 (chest)"),
     (7, 15, "8-Hnd2 (chest)"),

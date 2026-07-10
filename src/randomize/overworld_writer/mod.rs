@@ -8,6 +8,7 @@ use rand::Rng;
 use rand::seq::{IndexedRandom, SliceRandom};
 
 use crate::rom::Rom;
+use crate::PiranhaMode;
 
 use super::node_catalog::NodeKind;
 use super::overworld_build::{bfs_ordered, BuildResult, BuiltWorld, OverworldData, SlotKind};
@@ -55,6 +56,20 @@ pub(crate) fn write_overworld<R: Rng>(
     let w8_sprite_pos_set: HashSet<(usize, usize)> =
         w8_sprite_positions.iter().map(|&(_, pos)| pos).collect();
 
+    // Piranha plant sprite placements (piranha shuffle). Decided before the
+    // tile pass for the same reason as the army sprites: the level slot under
+    // a plant gets a connectivity-aware path node instead of a number tile.
+    let plant_positions = pick_plant_positions(
+        rom, build, data, &assignments, &w8_sprite_pos_set, flags, rng,
+    );
+
+    // Per-world sprite-covered positions for the tile pass.
+    let mut sprite_masks: Vec<HashSet<(usize, usize)>> = vec![HashSet::new(); 8];
+    sprite_masks[7].extend(w8_sprite_pos_set.iter().copied());
+    for &(wi, pos) in &plant_positions {
+        sprite_masks[wi].insert(pos);
+    }
+
     // Cycling HB level pool for fallback pointer table entries (same interleaving).
     let hb_fallback_levels = interleave_hb_by_obj_ptr(data.catalog.unique_hammer_bro_levels(), rng);
     let mut hb_fallback_iter = hb_fallback_levels.iter().cycle().cloned();
@@ -62,7 +77,7 @@ pub(crate) fn write_overworld<R: Rng>(
     let mut fx_slot = 0usize;
     for (wi, wa) in assignments.iter().enumerate() {
         let built = &build.worlds[wi];
-        let sprite_mask = if wi == 7 { &w8_sprite_pos_set } else { &HashSet::new() };
+        let sprite_mask = &sprite_masks[wi];
 
         write_tile_grid(rom, built, wa, data, sprite_mask, rng);
         write_pointer_entries(rom, wi, built, wa, data, &mut hb_fallback_iter);
@@ -80,6 +95,9 @@ pub(crate) fn write_overworld<R: Rng>(
     }
 
     write_w8_sprites(rom, &w8_sprite_positions);
+    // Plants claim their map-object slots before the HB writer so its slot
+    // eligibility scan sees them as occupied.
+    write_plant_sprites(rom, &plant_positions);
     if flags.shuffle_hammer_bros {
         write_hb_sprites(rom, build, rng);
     }
@@ -100,10 +118,11 @@ pub(crate) fn write_overworld<R: Rng>(
 pub(crate) struct WriteFlags {
     pub cross_world: bool,
     pub shuffle_hammer_bros: bool,
+    pub piranha: PiranhaMode,
 }
 
 impl Default for WriteFlags {
     fn default() -> Self {
-        Self { cross_world: true, shuffle_hammer_bros: false }
+        Self { cross_world: true, shuffle_hammer_bros: false, piranha: PiranhaMode::Off }
     }
 }

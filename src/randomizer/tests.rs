@@ -100,7 +100,7 @@
         let opts = Options::default();
         let key = opts.to_flag_key();
         assert!(key.starts_with("SMB3R-"));
-        assert_eq!(key.len(), 26); // "SMB3R-" + 20 base32
+        assert_eq!(key.len(), 27); // "SMB3R-" + 21 base32
         let decoded = Options::from_flag_key(&key).unwrap();
         assert_eq!(opts.powerups, decoded.powerups);
         assert_eq!(opts.palettes, decoded.palettes);
@@ -140,6 +140,7 @@
     fn flag_key_round_trip_all_wild() {
         let opts = Options {
             fire_flower: FireFlowerMode::Wild,
+            piranha_shuffle: PiranhaMode::Wild,
             powerups: true,
             palettes: true,
             palette_themed: false,
@@ -219,6 +220,7 @@
     fn flag_key_round_trip_all_off() {
         let opts = Options {
             fire_flower: FireFlowerMode::Off,
+            piranha_shuffle: PiranhaMode::Off,
             powerups: false,
             palettes: false,
             palette_themed: false,
@@ -313,7 +315,7 @@
     #[test]
     fn flag_key_invalid_version() {
         // Encode version 0xFF into base32 (first byte = 0xFF, rest zeros)
-        let mut bad_bytes = [0u8; 12];
+        let mut bad_bytes = [0u8; 13];
         bad_bytes[0] = 0xFF;
         let key = format!("SMB3R-{}", base32_encode(&bad_bytes));
         let result = Options::from_flag_key(&key);
@@ -481,6 +483,22 @@
             }
         }
 
+        // Piranha shuffle (Off/On/Wild): every state must round-trip, and the
+        // non-default states must change the flag key.
+        {
+            let default_key = Options::default().to_flag_key();
+            for &mode in &[PiranhaMode::Off, PiranhaMode::On, PiranhaMode::Wild] {
+                let mutated = Options { piranha_shuffle: mode, ..Default::default() };
+                let mutated_key = mutated.to_flag_key();
+                let expected = Options { palettes: true, palette_themed: false, ..mutated.clone() };
+                let recovered = Options::from_flag_key(&mutated_key).unwrap();
+                assert_eq!(recovered, expected, "piranha_shuffle={mode:?}: round-trip mismatch");
+                if mode != PiranhaMode::Off {
+                    assert_ne!(default_key, mutated_key, "piranha_shuffle={mode:?}: key must change");
+                }
+            }
+        }
+
         // starting_lives is 2 bits indexing {1, 5, 20, 99} — only the four
         // canonical values round-trip exactly.
         for lives in STARTING_LIVES_VALUES {
@@ -618,6 +636,7 @@
     fn all_off_options() -> Options {
         Options {
             fire_flower: FireFlowerMode::Off,
+            piranha_shuffle: PiranhaMode::Off,
             powerups: false,
             palettes: false,
             palette_themed: false,
@@ -681,6 +700,7 @@
     fn all_on_options() -> Options {
         Options {
             fire_flower: FireFlowerMode::On,
+            piranha_shuffle: PiranhaMode::On,
             powerups: true,
             palettes: false,
             palette_themed: false,
