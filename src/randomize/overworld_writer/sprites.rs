@@ -2,6 +2,19 @@
 
 use super::*;
 
+/// W8 army sprite definitions: (map_object_slot, is_fortress).
+/// Tank goes on a level slot, the other 3 go on fortress slots.
+const W8_ARMY_SPRITES: &[(usize, bool)] = &[
+    (2, false), // Tank sprite (ID $0E) → level slot
+    (3, true),  // Navy/Battleship sprite (ID $0D) → fortress slot
+    (4, true),  // Air Force sprite (ID $0F) → fortress slot
+    (5, true),  // Super Tank sprite (ID $0E) → fortress slot
+];
+
+/// Hammer Bro map-sprite type ids. Cosmetic on the overworld (the battle is the
+/// node under the sprite); assigned at random per encounter.
+const HB_SPRITE_IDS: [u8; 4] = [0x03, 0x04, 0x05, 0x06];
+
 /// Decide where each W8 army sprite goes. Returns (sprite_slot, grid_pos).
 pub(super) fn pick_w8_sprite_positions<R: Rng>(
     wa_w8: &WorldAssignments,

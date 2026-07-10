@@ -2,15 +2,6 @@
 
 use super::*;
 
-/// W8 army sprite definitions: (map_object_slot, is_fortress).
-/// Tank goes on a level slot, the other 3 go on fortress slots.
-pub(super) const W8_ARMY_SPRITES: &[(usize, bool)] = &[
-    (2, false), // Tank sprite (ID $0E) → level slot
-    (3, true),  // Navy/Battleship sprite (ID $0D) → fortress slot
-    (4, true),  // Air Force sprite (ID $0F) → fortress slot
-    (5, true),  // Super Tank sprite (ID $0E) → fortress slot
-];
-
 /// A concrete assignment of a pool entry to a grid position.
 #[derive(Clone, Debug)]
 pub(super) struct Assignment {
@@ -63,7 +54,3 @@ pub(super) struct WorldAssignments {
     /// sees a normal level icon rather than a pipe leading to a hand-trap.
     pub(super) demoted_troll_pipes: HashSet<(usize, usize)>,
 }
-
-/// Hammer Bro map-sprite type ids. Cosmetic on the overworld (the battle is the
-/// node under the sprite); assigned at random per encounter.
-pub(super) const HB_SPRITE_IDS: [u8; 4] = [0x03, 0x04, 0x05, 0x06];

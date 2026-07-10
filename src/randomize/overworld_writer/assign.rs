@@ -17,20 +17,7 @@ pub(super) fn interleave_hb_by_obj_ptr<R: Rng>(
         return levels;
     }
 
-    // Group by obj_ptr using BTreeMap for deterministic iteration order.
-    let mut groups: std::collections::BTreeMap<u16, Vec<rom_data::LevelEntry>> =
-        std::collections::BTreeMap::new();
-    for le in levels {
-        let obj = u16::from_le_bytes([le.obj_lo, le.obj_hi]);
-        groups.entry(obj).or_default().push(le);
-    }
-
-    // Shuffle within each group and collect group keys in random order.
-    let mut keys: Vec<u16> = groups.keys().copied().collect();
-    keys.as_mut_slice().shuffle(rng);
-    for group in groups.values_mut() {
-        group.as_mut_slice().shuffle(rng);
-    }
+    let (keys, groups) = shuffled_obj_groups(levels, rng);
 
     // Round-robin: pick one from each group per round until all exhausted.
     let max_len = groups.values().map(|g| g.len()).max().unwrap_or(0);
@@ -45,6 +32,54 @@ pub(super) fn interleave_hb_by_obj_ptr<R: Rng>(
     }
 
     result
+}
+
+/// Group level entries by `obj_ptr` (BTreeMap for deterministic iteration
+/// order), shuffle the key order, then shuffle each group's contents.
+/// Shared by `interleave_hb_by_obj_ptr` and the sprite round-robin grouping
+/// in `assign_pool` — both consume the exact same RNG draw sequence.
+fn shuffled_obj_groups<R: Rng>(
+    levels: Vec<rom_data::LevelEntry>,
+    rng: &mut R,
+) -> (Vec<u16>, std::collections::BTreeMap<u16, Vec<rom_data::LevelEntry>>) {
+    let mut groups: std::collections::BTreeMap<u16, Vec<rom_data::LevelEntry>> =
+        std::collections::BTreeMap::new();
+    for le in levels {
+        let obj = u16::from_le_bytes([le.obj_lo, le.obj_hi]);
+        groups.entry(obj).or_default().push(le);
+    }
+    let mut keys: Vec<u16> = groups.keys().copied().collect();
+    keys.as_mut_slice().shuffle(rng);
+    for group in groups.values_mut() {
+        group.as_mut_slice().shuffle(rng);
+    }
+    (keys, groups)
+}
+
+/// Take the next level pool entry for a slot. `take_front` selects which end
+/// of the pool feeds regular slots: the cross-world deque drains from the
+/// front, the intra-world pools drain from the back (preserving the original
+/// per-mode take order). Troll-pipe slots scan from that same end for the
+/// first eligible entry; when none qualifies, the slot takes the plain next
+/// entry and reports itself demoted (second tuple field).
+fn take_level_slot(
+    pool: &mut VecDeque<usize>,
+    take_front: bool,
+    is_troll_pipe: bool,
+    is_ineligible: impl Fn(usize) -> bool,
+) -> (usize, bool) {
+    if is_troll_pipe {
+        let found = if take_front {
+            pool.iter().position(|&pi| !is_ineligible(pi))
+        } else {
+            pool.iter().rposition(|&pi| !is_ineligible(pi))
+        };
+        if let Some(idx) = found {
+            return (pool.remove(idx).unwrap(), false);
+        }
+    }
+    let pi = if take_front { pool.pop_front() } else { pool.pop_back() };
+    (pi.expect("level pool exhausted"), is_troll_pipe)
 }
 
 pub(super) fn assign_pool<R: Rng>(
@@ -99,18 +134,9 @@ pub(super) fn assign_pool<R: Rng>(
 
     // Build per-obj_ptr groups for sprite position round-robin assignment.
     // This ensures each HB sprite encounter in a world gets a different
-    // enemy set (different obj_ptr = different enemies).
-    let mut hb_obj_groups: std::collections::BTreeMap<u16, Vec<rom_data::LevelEntry>> =
-        std::collections::BTreeMap::new();
-    for le in &hb_levels {
-        let obj = u16::from_le_bytes([le.obj_lo, le.obj_hi]);
-        hb_obj_groups.entry(obj).or_default().push(le.clone());
-    }
-    let mut hb_group_keys: Vec<u16> = hb_obj_groups.keys().copied().collect();
-    hb_group_keys.as_mut_slice().shuffle(rng);
-    for group in hb_obj_groups.values_mut() {
-        group.as_mut_slice().shuffle(rng);
-    }
+    // enemy set (different obj_ptr = different enemies). Fresh shuffles on
+    // purpose — the RNG draws here are load-bearing for seed compatibility.
+    let (hb_group_keys, hb_obj_groups) = shuffled_obj_groups(hb_levels.clone(), rng);
 
     // --- Pre-assign the 1-F fortress to a secret-exit-safe slot ---
     //
@@ -165,7 +191,7 @@ pub(super) fn assign_pool<R: Rng>(
 
     // For intra-world mode, partition fort/level pools by origin world.
     let mut fort_by_world: HashMap<usize, Vec<usize>> = HashMap::new();
-    let mut level_by_world: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut level_by_world: HashMap<usize, VecDeque<usize>> = HashMap::new();
     if !cross_world {
         for &pi in &fort_pool {
             let wi = catalog.entries[pickup.pool[pi].catalog_idx].world_idx;
@@ -173,7 +199,7 @@ pub(super) fn assign_pool<R: Rng>(
         }
         for &pi in &level_pool {
             let wi = catalog.entries[pickup.pool[pi].catalog_idx].world_idx;
-            level_by_world.entry(wi).or_default().push(pi);
+            level_by_world.entry(wi).or_default().push_back(pi);
         }
     }
 
@@ -194,7 +220,7 @@ pub(super) fn assign_pool<R: Rng>(
     //    fortress, never a regular-level slot.
     let is_troll_pipe_ineligible = |pi: usize| -> bool {
         let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
-        (ce.world_idx == 7 && matches!(ce.entry_idx, 14..=16))
+        rom_data::is_hand_level(ce.world_idx, ce.entry_idx)
             || rom_data::is_chest_level(ce.world_idx, ce.entry_idx)
     };
 
@@ -249,32 +275,18 @@ pub(super) fn assign_pool<R: Rng>(
         ordered.extend(level_slots.iter().copied().filter(|s| !s.is_troll_pipe));
 
         for slot in ordered {
-            let pi = if cross_world {
-                if slot.is_troll_pipe {
-                    if let Some(pos) = level_pool.iter().position(|&pi| !is_troll_pipe_ineligible(pi)) {
-                        level_pool.remove(pos).unwrap()
-                    } else {
-                        demoted_troll_pipes.insert(slot.pos);
-                        level_pool.pop_front().expect("level pool exhausted")
-                    }
-                } else {
-                    level_pool.pop_front().expect("level pool exhausted")
-                }
+            let pool = if cross_world {
+                &mut level_pool
             } else {
-                let v = level_by_world
+                level_by_world
                     .get_mut(&wi)
-                    .expect("intra-world level pool missing");
-                if slot.is_troll_pipe {
-                    if let Some(idx) = v.iter().rposition(|&pi| !is_troll_pipe_ineligible(pi)) {
-                        v.remove(idx)
-                    } else {
-                        demoted_troll_pipes.insert(slot.pos);
-                        v.pop().expect("intra-world level pool exhausted")
-                    }
-                } else {
-                    v.pop().expect("intra-world level pool exhausted")
-                }
+                    .expect("intra-world level pool missing")
             };
+            let (pi, demoted) =
+                take_level_slot(pool, cross_world, slot.is_troll_pipe, is_troll_pipe_ineligible);
+            if demoted {
+                demoted_troll_pipes.insert(slot.pos);
+            }
             level.push(Assignment { pool_idx: pi, pos: slot.pos });
         }
 

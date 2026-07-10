@@ -223,6 +223,11 @@ pub(crate) const TILE_PIPE: u8 = 0xBC;
 #[allow(dead_code)]
 pub(crate) const TILE_FORTRESS: u8 = 0x67;
 
+/// All map tiles the game treats as fortresses ($67, $EB, $6A —
+/// Map_Removable_Tiles + completion-unsafe). $6A's CHR animation is frozen
+/// by `patch_metatile_6a_freeze` so it can serve as a static variant.
+pub(crate) const FORTRESS_TILES: [u8; 3] = [TILE_FORTRESS, 0xEB, 0x6A];
+
 /// Airship dock tile ID.
 pub(crate) const TILE_AIRSHIP: u8 = 0xC9;
 
@@ -245,6 +250,11 @@ pub(crate) const TILE_NODE: u8 = 0x47;
 
 /// Number of rows in every overworld map.
 pub(crate) const ROWS: usize = 9;
+
+/// File offset where PRG012 begins. PRG012 is loaded at CPU $A000-$BFFF
+/// during the map screen; file offset = 0x18010 + (cpu_addr - 0xA000).
+/// Holds the map metatile quadrant tables and the InitIndex master table.
+pub(crate) const PRG012_FILE_BASE: usize = 0x18010;
 
 // Pipe destination tables (PRG002)
 pub(crate) const PIPE_MAP_XHI: usize = 0x046AA;
@@ -309,6 +319,12 @@ pub(crate) fn is_chest_level(world_idx: usize, entry_idx: usize) -> bool {
     CHEST_LEVELS
         .iter()
         .any(|&(w, e, _)| w == world_idx && e == entry_idx)
+}
+
+/// True if the given vanilla `(world_idx, entry_idx)` is a W8 hand level
+/// (8-Hnd1/2/3) — the short item-drop bonus rooms behind the hand traps.
+pub(crate) fn is_hand_level(world_idx: usize, entry_idx: usize) -> bool {
+    world_idx == 7 && (14..=16).contains(&entry_idx)
 }
 
 /// Destination byte → world index (0-based). Only paired pipe destinations.

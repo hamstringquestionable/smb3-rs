@@ -116,7 +116,7 @@ pub(super) fn resort_pointer_table(rom: &mut Rom, world_idx: usize) {
     // PRG012 is loaded at CPU $A000-$BFFF during the map screen, so the
     // CPU addresses in the master table are in the $A000+ range.
     let init_ptr = rom_data::read_word(rom, INIT_INDEX_MASTER + world_idx * 2);
-    let init_file = 0x18010 + (init_ptr as usize - 0xA000);
+    let init_file = rom_data::PRG012_FILE_BASE + (init_ptr as usize - 0xA000);
 
     // All worlds allocate 4 InitIndex bytes (gap between InitIndex and
     // ByRowType pointers is always 4), regardless of actual screen count.

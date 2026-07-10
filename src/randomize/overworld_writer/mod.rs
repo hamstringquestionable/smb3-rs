@@ -27,12 +27,15 @@ mod fortress_fx;
 mod metatiles;
 mod sprites;
 
-use types::*;
-use assign::*;
-use grid::*;
-use pointers::*;
-use fortress_fx::*;
-use sprites::*;
+use assign::{assign_pool, interleave_hb_by_obj_ptr};
+use fortress_fx::{patch_fortress_fx_screen_check, write_fortress_fx};
+use grid::write_tile_grid;
+use pointers::{write_pipe_dests, write_pointer_entries};
+use sprites::{
+    pick_plant_positions, pick_w8_sprite_positions, write_hb_sprites, write_plant_sprites,
+    write_w8_sprites,
+};
+use types::{Assignment, HammerBroAssignment, PipeAssignment, WorldAssignments};
 
 // Public API consumed by the randomizer.
 pub(crate) use metatiles::{patch_double_digit_metatiles, patch_metatile_6a_freeze};

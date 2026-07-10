@@ -2,33 +2,9 @@
 
 use super::*;
 
-/// Patches the MO_DoFortressFX engine routine so the lock-breaking visual
-/// animation (VRAM pattern write + poof sprites) is skipped when the lock is
-/// not on the currently visible screen.
-///
-/// In vanilla the fortress and its lock are always on the same screen, so the
-/// animation plays correctly.  When we shuffle fortress/lock positions, the
-/// lock can end up on a different screen.  Because the VRAM write and sprite
-/// positions are screen-relative, playing the animation on the wrong screen
-/// causes a visual glitch (tile placed at wrong spot + poof on wrong screen).
-///
-/// The map-data replacement (tile + Map_Completions) is NOT screen-relative
-/// and always works correctly, so we only need to skip the visual part.
-///
-/// The map viewport scrolls in 128-pixel half-screen steps.  ZP $12
-/// (Map_Scroll_XHi) is the scroll page and $FD (Map_Scroll_X) is either
-/// 0 or 128.  When $FD=128 the viewport straddles two grid screens, so
-/// the lock is visible if its screen == $12 OR (screen == $12+1 AND $FD≥128).
-///
-/// Hook: replace 3 bytes at file 0x148F6 (CPU $C8E6):
-///   vanilla: A9 01 85  (LDA #$01 / STA $20[hi])
-///   patched: 4C 44 D5  (JMP $D544)
-///
-/// Custom code at file 0x15554 (CPU $D544, PRG010 free space):
-///   Read lock screen from FortressFX_MapLocation[slot] & 0x0F.
-///   Compare with $12 — if equal, animate.
-///   Otherwise check if lock_screen == $12+1 AND $FD >= 128 — if so, animate.
-///   Else skip animation (data-only update via JMP $C952).
+/// File offset where the world-map CHR data begins.
+const CHR_BASE: usize = 0x40010;
+
 /// Patch metatile LL quadrant for double-digit level tiles (0x0D–0x15).
 ///
 /// Vanilla tiles 0x0D–0x15 have a blank LL (CHR 0xBE = solid fill). We write
@@ -58,13 +34,12 @@ use super::*;
 /// bank swapping); pages 0x16/0x17 are loaded only as the world-map BG bank
 /// (R1 = 0x16) and never as a sprite or level CHR source.
 pub(crate) fn patch_double_digit_metatiles(rom: &mut Rom) {
-    // Metatile quadrant tables at 0x18010: UL(256) LL(256) UR(256) LR(256).
-    const METATILE_LL_BASE: usize = 0x18010 + 256; // 0x18110
+    // Metatile quadrant tables at PRG012 base: UL(256) LL(256) UR(256) LR(256).
+    const METATILE_LL_BASE: usize = rom_data::PRG012_FILE_BASE + 256; // 0x18110
 
     // Overwrite CHR tile 0xFD with our custom "1" digit.
     // CHR page 0x17 covers tile IDs 0xC0–0xFF; tile 0xFD = local index 0x3D.
-    const CHR_START: usize = 0x40010;
-    const CHR_PAGE_17: usize = CHR_START + 0x17 * 0x400;
+    const CHR_PAGE_17: usize = CHR_BASE + 0x17 * 0x400;
     const TILE_FD_OFFSET: usize = CHR_PAGE_17 + 0x3D * 16;
     // Arrow shape (cols 2–5) + "1" serif (col 6 row 1) + right border (col 7 = color 2).
     #[rustfmt::skip]
@@ -92,7 +67,6 @@ pub(crate) fn patch_double_digit_metatiles(rom: &mut Rom) {
 /// Metatile 0x6A is the only metatile referencing CHR 0x64-0x67, so no other
 /// tile is affected.
 pub(crate) fn patch_metatile_6a_freeze(rom: &mut Rom) {
-    const CHR_BASE: usize = 0x40010;
     const BASE_PAGE: usize = 0x15;
     const ANIM_PAGES: [usize; 3] = [0x71, 0x73, 0x75];
     // Tiles 0x64-0x67 live in page 0x15 at local indices 0x24-0x27.
