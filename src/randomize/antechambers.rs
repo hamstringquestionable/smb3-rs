@@ -1,12 +1,13 @@
-//! Antechamber shuffle: ten levels open with an entry area whose pipe
-//! leads to the level's interior (4-3, 5-2, 5-3, 6-6, 6-9, 7-1, 7-4,
-//! 7-5, 7-6, 7-7). This module shuffles which interior each entry
-//! area's pipe drops into, so walking into one level's front door can
-//! land you inside another's. The interior's own exit transition is
-//! untouched — the player finishes through the donor level's vanilla
-//! ending (4-3's interior carries its own goal; the others loop back to
-//! their own entry area's end side), and map completion still credits
-//! the tile they entered from.
+//! Antechamber shuffle: twelve levels open with an entry area whose
+//! pipe/door leads to the level's interior (2-Pyr, 4-3, 5-2, 5-3, 6-5,
+//! 6-6, 6-9, 7-1, 7-4, 7-5, 7-6, 7-7). This module shuffles which
+//! interior each entry area's pipe drops into, so walking into one
+//! level's front door can land you inside another's. The interior's own
+//! exit transition is untouched — the player finishes through the donor
+//! level's vanilla ending (most interiors loop back to their own entry
+//! area's end side; 4-3's exits via the slot-free hardcoded generic
+//! exit, JctCtl=4), and map completion still credits the tile they
+//! entered from.
 //!
 //! Two writes per reassignment (see "Junction Spawn Positions" in
 //! docs/smb3_rom_reference.md):
@@ -44,10 +45,12 @@ struct Antechamber {
     junctions: &'static [usize],
 }
 
-const ANTECHAMBERS: [Antechamber; 10] = [
+const ANTECHAMBERS: [Antechamber; 12] = [
+    Antechamber { name: "2-Pyr", header: 0x28F36, junctions: &[0x28F6F, 0x28F96] },
     Antechamber { name: "4-3", header: 0x2701F, junctions: &[0x27073] },
     Antechamber { name: "5-2", header: 0x1A587, junctions: &[0x1A804, 0x1A807] },
     Antechamber { name: "5-3", header: 0x1EC26, junctions: &[0x1EC4A] },
+    Antechamber { name: "6-5", header: 0x22CFA, junctions: &[0x22D3F, 0x22D78, 0x22D7B] },
     Antechamber { name: "6-6", header: 0x23941, junctions: &[0x23990] },
     Antechamber { name: "6-9", header: 0x23CFE, junctions: &[0x23D17] },
     Antechamber { name: "7-1", header: 0x1EA71, junctions: &[0x1EA94, 0x1EAA2] },
@@ -56,6 +59,16 @@ const ANTECHAMBERS: [Antechamber; 10] = [
     Antechamber { name: "7-6", header: 0x1F342, junctions: &[0x1F38E] },
     Antechamber { name: "7-7", header: 0x1EAB8, junctions: &[0x1EAEB] },
 ];
+
+// Mechanically-safe candidates surfaced by `rom_map.py --antechamber` but
+// deliberately left OUT of the pool:
+//
+// - 5-1 (entry hdr 0x1F45B): its interior is a bonus room; keeping it
+//   vanilla for now per design preference.
+// - 4-6 (entry hdr 0x1EAEF): the big/small mirror level — entry and
+//   "interior" are the same layout with different enemy sets, and the
+//   doors toggle between them at matching coordinates. Shuffling it
+//   would break the mirror conceit; revisit if ever wanted.
 
 /// Everything that must travel with an interior when it is reassigned
 /// to another level's entry room.
@@ -275,17 +288,19 @@ mod tests {
         // Reason: one-off test fixture row; a named type would just move
         // the field legend away from the data.
         #[allow(clippy::type_complexity)]
-        let expected: [(u16, u16, u8, &[u8], [u8; 2]); 10] = [
-            (0xB6D5, 0xC863, 3, &[2], [0x52, 0x20]),    // 4-3
-            (0xB481, 0xCE4B, 8, &[0, 4], [0x82, 0x20]), // 5-2 (vert shaft)
-            (0xAC3E, 0xC29E, 1, &[0], [0x02, 0x67]),    // 5-3
-            (0xACDC, 0xC64B, 3, &[0], [0x12, 0x20]),    // 6-6
-            (0xA9D7, 0xC60E, 3, &[0], [0x02, 0x40]),    // 6-9
-            (0xAB97, 0xCD93, 8, &[0, 1], [0xF8, 0x27]), // 7-1 (vert shaft)
-            (0xADC4, 0xCDC2, 6, &[0], [0x53, 0x20]),    // 7-4
-            (0xA5CD, 0xC171, 1, &[0], [0x52, 0x20]),    // 7-5
-            (0xB600, 0xCE56, 8, &[1], [0xF8, 0x27]),    // 7-6 (vert shaft)
-            (0xBD2F, 0xCD35, 4, &[0], [0x73, 0x20]),    // 7-7
+        let expected: [(u16, u16, u8, &[u8], [u8; 2]); 12] = [
+            (0xA577, 0xC5BC, 3, &[0, 3], [0x68, 0x20]),    // 2-Pyr (doors)
+            (0xB6D5, 0xC863, 3, &[2], [0x52, 0x20]),       // 4-3
+            (0xB481, 0xCE4B, 8, &[0, 4], [0x82, 0x20]),    // 5-2 (vert shaft)
+            (0xAC3E, 0xC29E, 1, &[0], [0x02, 0x67]),       // 5-3
+            (0xA7D7, 0xC5EB, 3, &[0, 1, 2], [0x52, 0x20]), // 6-5 (3 pipes)
+            (0xACDC, 0xC64B, 3, &[0], [0x12, 0x20]),       // 6-6
+            (0xA9D7, 0xC60E, 3, &[0], [0x02, 0x40]),       // 6-9
+            (0xAB97, 0xCD93, 8, &[0, 1], [0xF8, 0x27]),    // 7-1 (vert shaft)
+            (0xADC4, 0xCDC2, 6, &[0], [0x53, 0x20]),       // 7-4
+            (0xA5CD, 0xC171, 1, &[0], [0x52, 0x20]),       // 7-5
+            (0xB600, 0xCE56, 8, &[1], [0xF8, 0x27]),       // 7-6 (vert shaft)
+            (0xBD2F, 0xCD35, 4, &[0], [0x73, 0x20]),       // 7-7
         ];
 
         for (a, (lay, obj, ts, slots, spawn)) in ANTECHAMBERS.iter().zip(expected) {

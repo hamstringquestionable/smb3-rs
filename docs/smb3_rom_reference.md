@@ -456,8 +456,12 @@ contract: a pipe on screen N of area X requires X's own layout to contain a
 junction command with `byte0 & 0x0F == N`, whose bytes 1-2 give the arrival
 position in X's `alt_*` destination. (Verified across 5-3/6-6/7-5/7-7: each
 main area's single junction command slot equals its exit pipe's screen.)
-`LevelJct_GenericExit` (JctCtl=4) runs the same slot lookup before loading its
-hardcoded destination.
+`LevelJct_GenericExit` (JctCtl=4) does NOT use the slot arrays at all: it
+loads the world-keyed hardcoded destination (`LevelJctGE_*` tables) and sets
+fixed spawn constants (`Player_X=$28`, `Player_Y=$80`, `Player_YHi=1`,
+`PipeExitDir=1`, never vertical) — which is why an area can exit via a
+`100xx` pipe without defining any junction commands (e.g. 4-3's interior,
+which has zero junction commands and a null alt pointer).
 
 **Consequence for redirects:** retargeting header X's `alt_*` pointers moves
 the destination but the arrival position still comes from X's own junction

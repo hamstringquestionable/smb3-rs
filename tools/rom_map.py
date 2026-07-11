@@ -3310,10 +3310,12 @@ def find_antechamber_candidates(rom):
     interior. Candidates must be safe for interior shuffling:
 
     - the interior resolves and is self-contained — it defines its own exit
-      junction command(s), or never junctions out at all (dead alt pointer,
-      goal inside the interior). Spawn slots are read from the SOURCE area's
-      parse, so an interior relying on stale slots left by the entry area's
-      parse would break when hosted behind a foreign entry.
+      junction command(s), or has a dead alt pointer (such interiors either
+      contain their own goal or exit via the generic exit, JctCtl=4, whose
+      spawn is hardcoded and slot-free — e.g. 4-3). Spawn slots are read
+      from the SOURCE area's parse, so an interior relying on stale slots
+      left by the entry area's parse would break when hosted behind a
+      foreign entry.
     - no bosses in the pair.
     - shape: the front-door junction sits on screens 0-2 of the entry area
       and the interior is >= 6 screens. This separates the pattern from

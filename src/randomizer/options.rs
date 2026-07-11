@@ -294,12 +294,12 @@ pub struct Options {
     /// Include ~9 unreferenced beta levels in the overworld shuffle pool.
     #[serde(default)]
     pub include_beta_stages: bool,
-    /// Antechamber shuffle: the ten levels that open with an entry area
-    /// piping into the level's interior (4-3, 5-2, 5-3, 6-6, 6-9, 7-1,
-    /// 7-4, 7-5, 7-6, 7-7) get their interiors randomly permuted, so one
-    /// level's entry pipe can drop into another's interior. The player
-    /// then finishes through that level's vanilla ending; map completion
-    /// still credits the tile they entered from.
+    /// Antechamber shuffle: the twelve levels that open with an entry area
+    /// piping into the level's interior (2-Pyr, 4-3, 5-2, 5-3, 6-5, 6-6,
+    /// 6-9, 7-1, 7-4, 7-5, 7-6, 7-7) get their interiors randomly
+    /// permuted, so one level's entry pipe can drop into another's
+    /// interior. The player then finishes through that level's vanilla
+    /// ending; map completion still credits the tile they entered from.
     ///
     /// Tri-state: `Maybe` lets the seed decide (hidden from the flag key).
     #[serde(default)]
