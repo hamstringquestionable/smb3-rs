@@ -12,13 +12,12 @@ into a versioned section when a release is cut.
 
 ### Added
 
-- **Lobby Shuffle** (off/on/maybe, `--antechamber-shuffle`) — the twelve
-  levels that open with an entry area whose pipe or door leads into the
-  level itself (2-Pyramid, 4-3, 5-2, 5-3, 6-5, 6-6, 6-9, 7-1, 7-4, 7-5,
-  7-6, 7-7) get their interiors randomly permuted, so one level's entrance
-  can drop into another's interior. The level then plays out through that
-  interior's vanilla ending; map completion still credits the tile you
-  entered from.
+- **Lobby Shuffle** (off/on/maybe, `--antechamber-shuffle`) — the ten
+  levels that open with an entry area whose pipe leads into the level
+  itself (4-3, 5-2, 5-3, 6-6, 6-9, 7-1, 7-4, 7-5, 7-6, 7-7) get their
+  interiors randomly permuted, so one level's entrance can drop into
+  another's interior. The level then plays out through that interior's
+  vanilla ending; map completion still credits the tile you entered from.
 - 34 new king rescue quotes: 26 suit-specific (9 frog, 8 raccoon, 9 hammer)
   plus eight standard quotes.
 

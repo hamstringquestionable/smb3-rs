@@ -219,11 +219,11 @@ struct Cli {
     #[arg(long, default_value = "off", value_parser = parse_tri)]
     eights_are_wild: Tri,
 
-    /// Antechamber shuffle: the twelve levels that open with an entry area
-    /// piping into the level's interior (2-Pyr, 4-3, 5-2, 5-3, 6-5, 6-6, 6-9,
-    /// 7-1, 7-4, 7-5, 7-6, 7-7) get their interiors randomly permuted, so one
-    /// level's entry pipe can drop into another's interior: off, on, or maybe
-    /// (the seed decides, hidden from the flag key). Default: off.
+    /// Antechamber shuffle: the ten levels that open with an entry area
+    /// piping into the level's interior (4-3, 5-2, 5-3, 6-6, 6-9, 7-1, 7-4,
+    /// 7-5, 7-6, 7-7) get their interiors randomly permuted, so one level's
+    /// entry pipe can drop into another's interior: off, on, or maybe (the
+    /// seed decides, hidden from the flag key). Default: off.
     #[arg(long, default_value = "off", value_parser = parse_tri)]
     antechamber_shuffle: Tri,
 
