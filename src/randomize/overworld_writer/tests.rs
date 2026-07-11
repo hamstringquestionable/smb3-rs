@@ -577,3 +577,199 @@ fn test_troll_pipes_never_assigned_piranha_levels() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// March veto (keep wandering bros off plant/army nodes + hand traps)
+// ---------------------------------------------------------------------------
+
+/// Parse the written registry back out of the ROM: per-world address lists.
+fn read_veto_registry(rom: &Rom) -> Vec<Vec<u16>> {
+    let offs = rom
+        .read_range(rom_data::FS_MARCH_VETO + march_veto::ROUTINE_LEN, march_veto::OFFSETS_LEN)
+        .to_vec();
+    let list = rom
+        .read_range(
+            rom_data::FS_MARCH_VETO + march_veto::ROUTINE_LEN + march_veto::OFFSETS_LEN,
+            march_veto::LIST_LEN,
+        )
+        .to_vec();
+    offs.iter()
+        .map(|&o| {
+            let mut v = Vec::new();
+            let mut i = o as usize;
+            while list[i] != 0 {
+                v.push(u16::from_be_bytes([list[i], list[i + 1]]));
+                i += 2;
+            }
+            v
+        })
+        .collect()
+}
+
+/// Semantic hook check: the bytes at the hook site must be a JSR whose
+/// operand resolves (via the bank mapping, not recomputed arithmetic) to the
+/// FS_MARCH_VETO block, and the block must start with the displaced vanilla
+/// instruction.
+fn assert_veto_hook_installed(rom: &Rom) {
+    let hook = rom.read_range(march_veto::MARCH_VETO_HOOK, 3);
+    assert_eq!(hook[0], 0x20, "hook must be a JSR");
+    let cpu = u16::from_le_bytes([hook[1], hook[2]]);
+    assert_eq!(
+        rom_data::prg_bank_cpu_to_file(11, cpu),
+        rom_data::FS_MARCH_VETO,
+        "hook JSR must land on the veto trampoline"
+    );
+    assert_eq!(
+        rom.read_range(rom_data::FS_MARCH_VETO, 3),
+        march_veto::DISPLACED_JSR,
+        "trampoline must start with the displaced PickTravel JSR"
+    );
+}
+
+#[test]
+fn test_march_veto_registry_roundtrip() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let mut test_rom = rom.clone();
+    // W8 armies (world 7 implied) + plants; (7, (4, 6)) duplicates an army.
+    let w8 = vec![(2usize, (4usize, 6usize)), (3, (2, 20))];
+    let plants = vec![(0usize, (2usize, 3usize)), (7, (4, 6))];
+    march_veto::write_march_veto(&mut test_rom, &w8, &plants);
+
+    assert_veto_hook_installed(&test_rom);
+
+    let registry = read_veto_registry(&test_rom);
+    assert_eq!(registry[0], vec![march_veto::veto_addr(2, 3)]);
+    let w7 = &registry[7];
+    assert!(w7.contains(&march_veto::veto_addr(4, 6)));
+    assert!(w7.contains(&march_veto::veto_addr(2, 20)));
+    assert_eq!(w7.len(), 2, "duplicate army/plant coordinate must dedup");
+    for (wi, list) in registry.iter().enumerate().take(7).skip(1) {
+        assert!(list.is_empty(), "world {} should have no entries", wi + 1);
+    }
+    for addr in registry.iter().flatten() {
+        assert!(
+            (0x6110..=0x66AF).contains(addr),
+            "veto address {addr:#06X} outside the map tile SRAM window"
+        );
+    }
+}
+
+/// veto_addr must reproduce the engine's own address computation: the real
+/// Tile_Mem_Addr word table (PRG030, file 0x3C010) + $F0 + Temp_Var3.
+#[test]
+fn test_march_veto_addr_matches_engine_tile_mem_table() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    for &(row, col) in &[(0usize, 0usize), (2, 3), (4, 19), (7, 35), (8, 63)] {
+        let word_off = 0x3C010 + 2 * (col / 16);
+        let screen_base =
+            u16::from_le_bytes([rom.read_byte(word_off), rom.read_byte(word_off + 1)]);
+        let expected = screen_base + 0xF0 + ((((row as u16) + 2) * 16) | (col as u16 % 16));
+        assert_eq!(
+            march_veto::veto_addr(row, col),
+            expected,
+            "veto_addr({row}, {col}) diverges from the engine formula"
+        );
+    }
+}
+
+/// Full pipeline: piranha Wild + HB shuffle -> the hook is installed and the
+/// registry is well-formed with W8's army nodes present.
+#[test]
+fn test_march_veto_pipeline_writes_registry() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let mut prepped = rom.clone();
+    piranha_rooms::clear_vanilla_plants(&mut prepped);
+    let mut catalog = node_catalog::NodeCatalog::build(&prepped, false);
+    catalog.release_map_objects();
+    let pickup = overworld_pickup::pick_up(
+        &prepped,
+        &catalog,
+        overworld_pickup::PickupFlags {
+            shuffle_spade_games: true,
+            shuffle_toad_houses: true,
+            shuffle_hammer_bros: true,
+        },
+    );
+    let data = OverworldData { pickup: &pickup, catalog: &catalog };
+    let mut rng = ChaCha8Rng::seed_from_u64(7);
+    let build = overworld_build::build(
+        &prepped,
+        &data,
+        &mut rng,
+        overworld_build::BuildFlags {
+            shuffle_toad_houses: true,
+            shuffle_hammer_bros: true,
+            ..Default::default()
+        },
+    );
+    let mut out = prepped.clone();
+    write_overworld(&mut out, &build, &data, &mut rng, WriteFlags {
+        piranha: PiranhaMode::Wild,
+        shuffle_hammer_bros: true,
+        ..Default::default()
+    });
+
+    assert_veto_hook_installed(&out);
+    let registry = read_veto_registry(&out);
+    let total: usize = registry.iter().map(Vec::len).sum();
+    assert!(total <= 16, "registry overflow: {total} entries");
+    assert!(
+        !registry[7].is_empty(),
+        "W8 army nodes must always be vetoed (tank sprite at minimum)"
+    );
+    for addr in registry.iter().flatten() {
+        assert!(
+            (0x6110..=0x66AF).contains(addr),
+            "veto address {addr:#06X} outside the map tile SRAM window"
+        );
+    }
+}
+
+/// The veto must compose with MaCobra's opt-in limit_bro_movement rewrite in
+/// either application order — the two touch disjoint byte ranges.
+#[test]
+fn test_march_veto_composes_with_limit_bro_movement() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let w8 = vec![(2usize, (4usize, 6usize))];
+    let plants = vec![(3usize, (2usize, 9usize))];
+
+    let mut veto_first = rom.clone();
+    march_veto::write_march_veto(&mut veto_first, &w8, &plants);
+    qol::apply_limit_bro_movement(&mut veto_first);
+
+    let mut limit_first = rom.clone();
+    qol::apply_limit_bro_movement(&mut limit_first);
+    march_veto::write_march_veto(&mut limit_first, &w8, &plants);
+
+    // Identical output either way: no overlap between the two patches.
+    for (range_start, range_len, what) in [
+        (0x17398usize, 0x15usize, "limit-bro whitelist table + fill"),
+        (0x17419, 8, "limit-bro rewritten scan code"),
+        (march_veto::MARCH_VETO_HOOK, 3, "veto hook"),
+        (rom_data::FS_MARCH_VETO, 107, "veto trampoline + registry"),
+    ] {
+        assert_eq!(
+            veto_first.read_range(range_start, range_len),
+            limit_first.read_range(range_start, range_len),
+            "{what} differs between application orders"
+        );
+    }
+    assert_veto_hook_installed(&veto_first);
+    assert_veto_hook_installed(&limit_first);
+
+    // Fold-in regression: the old bros_no_hands hook site ($B425) must stay
+    // vanilla — hand-trap avoidance now lives in the veto trampoline.
+    assert_eq!(veto_first.read_range(0x17435, 3), &[0xD9, 0x98, 0x7E]);
+}
