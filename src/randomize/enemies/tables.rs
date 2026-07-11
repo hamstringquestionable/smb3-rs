@@ -1,10 +1,10 @@
 //! Enemy / hazard class tables and the hazard-category predicates.
 //! Pure data + small pure helpers shared across the enemies submodules.
 
-pub(super) const BOOMBOOM_IDS: &[u8] = &[0x4A, 0x4B, 0x4C];
-
-/// Boom-Boom variants that can be swapped with each other.
-/// 0x4A is excluded — it's the stationary variant used in specific contexts.
+/// Boom-Boom variants that can be swapped with each other (0x4B jump, 0x4C
+/// fly — both CHR page $33/slot 5, so the swap is CHR-neutral).
+/// 0x4A (Q-ball) is excluded — it's the stationary variant used in specific
+/// contexts. All three pre-commit their vanilla page (see should_precommit).
 pub(super) const BOOMBOOM_SWAP: &[u8] = &[0x4B, 0x4C];
 
 // Object IDs from the Southbird SMB3 disassembly (smb3.asm).
@@ -366,6 +366,20 @@ pub(super) const MAX_BERTHA_PER_SEGMENT: u8 = 2;
 /// are split into separate CHR groups. Enemies more than one screen apart
 /// can never be visible simultaneously, so they don't need compatible CHR pages.
 pub(super) const CHR_GROUP_GAP: u8 = 16;
+
+/// Enemies that follow the player across the whole level: Lakitu hovers
+/// overhead indefinitely, the Angry Sun swoops for the rest of the level once
+/// triggered, and the two Big Bertha fish shadow the player along connected
+/// water. The one-screen assumption behind [`CHR_GROUP_GAP`] does not hold
+/// for these — their CHR page constrains *every* proximity group in the
+/// segment, and placing one anywhere requires compatibility with every page
+/// committed anywhere in the segment.
+pub(super) const CHASER_IDS: &[u8] = &[
+    0x83, // Lakitu (enemy-spawning variant)
+    0xAF, // Angry Sun
+    0x2D, // OBJ_BIGBERTHA (leaping eater — the "Boss Bass")
+    0x63, // OBJ_BIGBERTHABIRTHER
+];
 
 /// All cannon-fire IDs merged for Wild mode — every cfire ID can become every
 /// other cfire ID (incl. cross-direction and cross-type swaps). Excludes

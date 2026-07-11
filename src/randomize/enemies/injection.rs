@@ -57,6 +57,7 @@ pub fn enemy_entry_points(rom: &Rom) -> Vec<u16> {
 pub(super) fn inject_at_entry_points<R: Rng>(
     data: &mut [u8],
     entry_ptrs: &[u16],
+    bounds: &[segment_writer::SegmentBounds],
     opts: &Options,
     rng: &mut R,
 ) {
@@ -124,13 +125,30 @@ pub(super) fn inject_at_entry_points<R: Rng>(
             continue;
         }
 
-        // Pre-commit CHR pages for the rest of the run so the injected
-        // enemy is chosen compatible with what stays.
+        // Pre-commit pinned CHR pages from the WHOLE $FF-bounded segment
+        // containing this ep — not just the ep's own run. Level enemy runs
+        // nest inside segments: an outer level's run starts earlier and
+        // reads straight through this ep, so the injected enemy (which
+        // chases the player level-wide — every WILD_INJECTION_ID is a
+        // chaser) is also on screen with entries *before* the ep when that
+        // level is played.
+        let Some(seg) = bounds.iter().find(|b| {
+            let entries_start = b.file_offset + 1;
+            let entries_end = entries_start + b.entry_count * 3;
+            (entries_start..entries_end).contains(&first_entry_idx)
+        }) else {
+            continue; // ep not inside any walkable segment — don't inject
+        };
         let mut s4 = ChrSlot::Free;
         let mut s5 = ChrSlot::Free;
-        for e in &entries[1..] {
-            if should_precommit(e.obj_id, &normal_modes) {
-                commit_chr_page(e.obj_id, &mut s4, &mut s5);
+        for k in 0..seg.entry_count {
+            let off = seg.file_offset + 1 + k * 3;
+            if off == entries[0].data_index {
+                continue; // the slot being replaced — its enemy goes away
+            }
+            let fo = ENEMY_DATA_START + off;
+            if is_pinned(data[off], fo, &normal_modes) {
+                commit_chr_page(data[off], &mut s4, &mut s5);
             }
         }
 

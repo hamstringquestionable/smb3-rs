@@ -177,6 +177,17 @@ pub(super) fn is_uniform_chr_class(class: &[u8]) -> bool {
     page4.is_some() || page5.is_some()
 }
 
+/// CHR commitments a pick consults. `local` is the proximity group's slots —
+/// what can share the screen with the entry under the one-screen model.
+/// `segment` is every commitment anywhere in the segment (pinned pages from
+/// all groups, plus every pick made so far): the bar a level-wide chaser must
+/// clear, since it follows the player into every group (see `CHASER_IDS`).
+#[derive(Clone, Copy)]
+pub(super) struct ChrCtx {
+    pub(super) local: (ChrSlot, ChrSlot),
+    pub(super) segment: (ChrSlot, ChrSlot),
+}
+
 /// Check whether an enemy is compatible with the current CHR page commitments.
 pub(super) fn is_chr_compatible(id: u8, slot4: ChrSlot, slot5: ChrSlot) -> bool {
     match sprite_bank(id) {

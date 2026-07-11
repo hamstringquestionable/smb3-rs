@@ -82,10 +82,12 @@ pub(super) fn pick_replacement<R: Rng>(
     protection: Option<EntryProtection>,
     modes: &ClassModes,
     wild_pool: &[u8],
-    (slot4, slot5): (ChrSlot, ChrSlot),
+    chr: ChrCtx,
     cap_full: bool,
     rng: &mut R,
 ) -> Option<u8> {
+    let (slot4, slot5) = chr.local;
+    let (seg4, seg5) = chr.segment;
     // Base pool + primary pick. A pool-replacing protection
     // (ForceShell/TankBro/Stompable/ExcludeHazards) chooses the pool;
     // otherwise it's the normal class pool, picked via the
@@ -150,7 +152,11 @@ pub(super) fn pick_replacement<R: Rng>(
         let over_cap = cap_full && BERTHA_IDS.contains(&id);
         // Giant red piranha (off-center hitbox) only where one was.
         let bad_giant = id == GIANT_RED_PIRANHA && entry.obj_id != GIANT_RED_PIRANHA;
-        !(over_cap || bad_giant)
+        // A level-wide chaser must be CHR-compatible with every page
+        // committed anywhere in the segment, not just this group — it
+        // follows the player into all of them (see CHASER_IDS).
+        let chaser_clash = CHASER_IDS.contains(&id) && !is_chr_compatible(id, seg4, seg5);
+        !(over_cap || bad_giant || chaser_clash)
     };
     // (A piranha slot can't become a hazard: the piranha pools are
     // self-contained and contain none — verified by the harness's

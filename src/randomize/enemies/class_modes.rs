@@ -117,18 +117,29 @@ impl ClassPool {
 }
 
 /// Whether the walker's Pass 1 should pre-commit this object's CHR page
-/// before replacements are picked: non-swappable objects (except Boom-Booms,
-/// which are swapped separately via `BOOMBOOM_SWAP`) and uniform-CHR classes
-/// (every member shares the page/slot, so a swap can't change it). Wild
-/// entries never pre-commit — their page is decided by the pick itself.
+/// before replacements are picked: non-swappable objects and uniform-CHR
+/// classes (every member shares the page/slot, so a swap can't change it).
+/// Boom-Booms pre-commit too — their separate `BOOMBOOM_SWAP` is CHR-neutral
+/// (0x4B↔0x4C share one page/slot; 0x4A never swaps), so the original id's
+/// page is exact. Wild entries never pre-commit — their page is decided by
+/// the pick itself.
 pub(super) fn should_precommit(obj_id: u8, modes: &ClassModes) -> bool {
     match find_class_pool(obj_id, modes) {
-        None => !BOOMBOOM_IDS.contains(&obj_id),
+        None => true,
         Some(ClassPool::Wild) => false,
         Some(ClassPool::PiranhaStd) => is_uniform_chr_class(PIRANHAS_WILD),
         Some(ClassPool::PiranhaCeil) => is_uniform_chr_class(PIRANHASC_WILD),
         Some(ClassPool::Class(class)) => is_uniform_chr_class(class),
     }
+}
+
+/// Whether this entry's CHR page is fixed before any pick is made: either the
+/// enemy can't change (no class pool / class off / curated SkipSwap), or any
+/// swap it can undergo keeps the same page (uniform-CHR class, Boom-Boom
+/// self-swap). Pinned pages are pre-committed so picks route around them.
+pub(super) fn is_pinned(obj_id: u8, file_offset: usize, modes: &ClassModes) -> bool {
+    should_precommit(obj_id, modes)
+        || entry_protection_at(file_offset) == Some(EntryProtection::SkipSwap)
 }
 
 /// Identify which class an enemy ID belongs to, and return the swap pool
