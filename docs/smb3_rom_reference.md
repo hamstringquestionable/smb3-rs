@@ -1812,6 +1812,77 @@ dock tile (`0x4B`) so the player can board it. See the randomizer's
 `write_map_sprite` and W8 `CANOE_EDGES` (mainland `(5,6)` → islands
 `(3,8)/(5,10)/(5,12)`).
 
+### World-Map Object March Validation (PRG011)
+
+How wandering map objects (Hammer Bros, N-Spade, white toad house, coin ship)
+decide where they may move after each level completion. All addresses verified
+against the southbird disassembly (prg011.asm) and ROM bytes. PRG011 file =
+CPU − $A000 + 0x16010.
+
+**Routines** (marchers use `Map_Object_March`; the W7 plant and W8 artillery
+use `Map_Object_Stationary` and never move):
+
+| Routine | CPU | File | Role |
+|---------|-----|------|------|
+| `Map_MarchValidateTravel` | `$B39D` (entry) | `0x173AD` | Validates a candidate travel direction; called with A = random 0–3 |
+| — retry-pick loop | `$B3A3` | `0x173B3` | Re-pick target: rejects `JMP` here (does NOT reset the give-up counter) |
+| — landing-zone PickTravel `JSR $B43B` | `$B3FD` | `0x1740D` | Second PickTravel call (2-tiles-ahead landing zone) — randomizer hook site |
+| — blacklist scan | `$B406` | `0x17416` | `CMP Map_Object_Forbid_LandingTiles-1,Y` loop |
+| — threshold check | `$B425` | `0x17435` | `CMP $7E98,Y` (Tile_AttrTable+4, shared level-gate thresholds) |
+| `Map_Object_March_PickTravel` | `$B43B` | `0x1744B` | Computes the target tile's SRAM address + row/col nibbles |
+
+**Movement model:** each march hop is **2 tiles**. The pass-through tile
+(1 ahead) must be in `Map_Object_Valid_Left/Right/Down/Up` (PRG010, the same
+9-byte path-tile registries at file 0x15258/0x15261/0x1526A/0x15273 the player
+walk uses) — so marchers only travel along the path network and can never
+cross water; they CAN cross screens (the travel offset tables carry X-Hi
+deltas). The landing tile (2 ahead) is then checked against:
+
+1. `Map_Object_Forbid_LandingTiles` — 17-byte blacklist at `$B388` / file
+   `0x17398`: completed-level checkmark panels (`TILE_MARIOCOMP_*` /
+   `LUIGICOMP_*`), pipe, spade, spirals, fort rubble, Start, dancing
+   palm/bush. Match → `JMP $B3A3` (reject, re-pick). This is why bros never
+   park on beaten *regular* levels. The opt-in `limit_bro_movement` patch
+   (macobra.rs) rewrites this table into a 12-entry whitelist of node tiles
+   and inverts the scan branch at `$B409` / file `0x17419`.
+2. `Map_MarchXtraForbidTiles` — 4 bytes right after: toad houses,
+   castle-bottom, path-and-nub. Match → extend march (`Map_March_Count` $20
+   → $40) so the object keeps moving.
+3. `Tile_AttrTable+4,Y` (`$7E98`, per-palette-page level-gate thresholds, the
+   same RAM the player gate uses) — an "enterable" landing (tile ≥ its page
+   threshold) also extends the march instead of resting.
+
+**Give-up path:** after 4 failed direction attempts (`Temp_Var2`), the routine
+does `PLA/PLA/RTS` — returning to its caller's *caller*, so the object stays
+put for this turn. Any injected reject must preserve this stack contract.
+
+**PickTravel state** (decoded from ROM bytes; zero-page temp numbering per
+southbird): after `Map_Object_March_PickTravel` returns,
+`Map_Tile_Addr` (`$63/$64`) = `Tile_Mem_Addr[screen] + $F0` and `Temp_Var3`
+(`$02`) = Y-coordinate byte OR'd with the column-within-screen, so
+**`($63) + $02` is the landing tile's absolute SRAM address** — unique per
+(screen, row, col) in the loaded world (`World_Num` `$0727` disambiguates).
+`Tile_Mem_Addr` is a word table in PRG030 (fixed bank) at CPU `$8000` / file
+`0x3C010`, base `$6000`, stride `$1B0` per screen. Grid coords encode as
+`addr = $6000 + (col/16)*$1B0 + $F0 + (row+2)*16 + col%16` (hi byte always
+≥ `$61`). `Temp_Var15/16` (`$0E/$0F`) plus A/X/Y/flags are dead scratch at
+the hook site. Relevant object RAM: `Map_Object_ActY` `$0500`, `ActX` `$050F`,
+`ActXH` `$051E`, `Map_Object_Data` (march direction) `$052D`,
+`Map_March_Count` `$053C`.
+
+**Randomizer hook (march veto,** `overworld_writer/march_veto.rs`**):** the
+`JSR $B43B` at `$B3FD` is replaced with a JSR to a trampoline in PRG011 free
+space (`FS_MARCH_VETO`, file `0x17D70` / CPU `$BD60`; 59-byte routine +
+8-byte per-world offset table + 40-byte address list). It computes the
+landing SRAM address as above and rejects the hop (`PLA/PLA` +
+`JMP $B3A3`) when the address matches the current world's registry — the
+plant/army auto-enter nodes, which the engine never converts to checkmark
+tiles (winning only poofs the sprite), plus any landing on the hand-trap
+tile `$E6` (subsuming MaCobra's former `bros_no_hands` `$B425` hook; `$E6`
+stays in the pass-through registries so bros still walk *through* hands).
+Composes with `limit_bro_movement` in either order — disjoint byte ranges,
+and the veto fires before either table-scan regime.
+
 ### Map_Unused7EEA — Dead Code LUT (PRG011: 0x16018)
 
 An 8-byte LUT at PRG011 CPU `$A008` (file `0x16018`), labeled `Map_Unused7EEA_Vals` in

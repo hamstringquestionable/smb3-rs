@@ -24,6 +24,7 @@ mod assign;
 mod grid;
 mod pointers;
 mod fortress_fx;
+mod march_veto;
 mod metatiles;
 mod sprites;
 
@@ -101,6 +102,10 @@ pub(crate) fn write_overworld<R: Rng>(
     // Plants claim their map-object slots before the HB writer so its slot
     // eligibility scan sees them as occupied.
     write_plant_sprites(rom, &plant_positions);
+    // Keep wandering map objects (Hammer Bros) off plant/army nodes — a bro
+    // parked on one would replay the level after it's beaten. Also vetoes
+    // hand-trap landings (subsumes the former bros_no_hands patch).
+    march_veto::write_march_veto(rom, &w8_sprite_positions, &plant_positions);
     if flags.shuffle_hammer_bros {
         write_hb_sprites(rom, build, rng);
     }

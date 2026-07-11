@@ -1,7 +1,7 @@
 //! MaCobra52 patch bundle: always-on bugfixes plus opt-in feature patches.
 
 use crate::rom::Rom;
-use crate::randomize::rom_data::{FS_BROS_NO_HANDS, FS_FASTER_FROG, FS_HOLD_LEFT_HELPER, jsr_into_bank};
+use crate::randomize::rom_data::{FS_FASTER_FROG, FS_HOLD_LEFT_HELPER};
 
 // ---------------------------------------------------------------------------
 // MaCobra patches — always-on bundle
@@ -80,38 +80,6 @@ const TAIL_SWIM_ROUTINE: [u8; 285] = [
 const HOTFOOT_TAIL_A: usize = 0x0413C;
 const HOTFOOT_TAIL_B: usize = 0x04151;
 const HOTFOOT_TAIL_C: usize = 0x0814D;
-
-// Bros don't stop on hands (by MaCobra52) — fixes issue #14. Roaming
-// overworld bros decide where they may rest via the object-movement level
-// gate at PRG011 $B425 (`CMP $7E98,Y`), the sprite-side twin of the player
-// level gate. It reuses the shared per-palette-page threshold table
-// ($7E98,Y); a tile at-or-above its page threshold is a level slot the bro
-// won't rest on, below-threshold tiles are plain path it can settle on.
-// HANDTRAP tile 0xE6 sits just *below* the page-3 threshold (0xE9), so a
-// wandering bro treats it as plain path and can come to rest on a hand-trap
-// slot — colliding the two encounters (one clears the other).
-//
-// The fix replaces the inline `CMP $7E98,Y` at the gate with a JSR to an
-// 8-byte helper in PRG011 free space (FS_BROS_NO_HANDS, CPU $BD32) that
-// forces 0xE6 to read as gated and otherwise performs the identical compare:
-//
-//   CMP #$E6     ; hand-trap tile?
-//   BEQ +3       ; yes -> return with carry SET (gated), skipping the compare
-//   CMP $7E98,Y  ; no  -> vanilla threshold compare (flags identical)
-//   RTS          ; RTS preserves flags; A/X/Y untouched
-//
-// So 0xE6 now behaves like a normal uncompleted level tile to roaming bros:
-// they may walk *over* it but never rest on it. Completed hand-traps are
-// rewritten to a checkmark tile (already above-threshold), so they act as a
-// barrier with no extra work — matching issue #14's desired behavior.
-//
-// MaCobra's standalone IPS placed the helper at CPU $BC80 (file 0x17C90),
-// which collides with our FS_SAS_GAMEOVER_FINALIZE allocation (0x17C87); it
-// is relocated here to FS_BROS_NO_HANDS. The JSR operand is derived from the
-// helper's file offset via `jsr_into_bank` (never hand-written) so it can't
-// drift from where the helper bytes actually land — see issue #14.
-const BROS_NO_HANDS_HOOK: usize = 0x17435; // CPU $B425, vanilla `CMP $7E98,Y`
-const BROS_NO_HANDS_SUB: [u8; 8] = [0xC9, 0xE6, 0xF0, 0x03, 0xD9, 0x98, 0x7E, 0x60];
 
 // Hold-left airship-entry fix (by MaCobra52) — "SMB3 - Hold left fix.ips".
 // Bug: holding Left while entering an airship spawns Mario out over the pit and
@@ -420,11 +388,10 @@ pub fn apply_macobra_patches(rom: &mut Rom) {
     rom.write_byte(HOTFOOT_TAIL_B, 0x00);
     rom.write_byte(HOTFOOT_TAIL_C, 0x25);
 
-    // Roaming bros don't rest on hand-trap tiles (0xE6). Fixes issue #14.
-    // FS_BROS_NO_HANDS lives in PRG011 (bank 11); derive the JSR operand from
-    // its file offset so the hook can never point past the helper.
-    rom.write_range(BROS_NO_HANDS_HOOK, &jsr_into_bank(11, FS_BROS_NO_HANDS));
-    rom.write_range(FS_BROS_NO_HANDS, &BROS_NO_HANDS_SUB);
+    // NOTE: MaCobra's "Bros don't stop on hands" (issue #14) used to live
+    // here; it is subsumed by the overworld writer's march-veto trampoline
+    // (overworld_writer/march_veto.rs), which rejects hand-trap landings
+    // outright at Map_MarchValidateTravel's landing-zone check.
 
     // Hold-left airship-entry pit-death fix (MaCobra52). See notes above the
     // HOLD_LEFT_* constants. Nine verbatim writes: helper + tail + exit retargets.
@@ -520,44 +487,15 @@ mod tests {
         assert_eq!(target_cpu, 0xC918);
     }
 
+    // The former bros-don't-stop-on-hands hook ($B425) is gone: hand-trap
+    // avoidance moved into the march-veto trampoline. Prove macobra no longer
+    // touches the site (the writer's own tests cover the veto behavior).
     #[test]
-    fn test_macobra_bros_no_hands_writes() {
+    fn test_macobra_leaves_bro_gate_vanilla() {
         let mut rom = make_test_rom();
+        let before = rom.read_range(0x17435, 3).to_vec();
         apply_macobra_patches(&mut rom);
-
-        // Helper landed in PRG011 free space.
-        assert_eq!(
-            rom.read_range(FS_BROS_NO_HANDS, BROS_NO_HANDS_SUB.len()),
-            &BROS_NO_HANDS_SUB
-        );
-        // Follow the JSR operand actually written into the ROM and prove it
-        // resolves to the helper bytes. This is deliberately *semantic*: it
-        // does not recompute the expected operand (the previous version did,
-        // with the same off-by-header arithmetic the production const used, so
-        // it confirmed the bug instead of catching it — see issue #14). A
-        // mis-aimed JSR lands somewhere other than FS_BROS_NO_HANDS, and the
-        // bytes there won't match, regardless of *how* the operand was wrong.
-        let hook = rom.read_range(BROS_NO_HANDS_HOOK, 3);
-        assert_eq!(hook[0], 0x20, "hook must be a JSR");
-        let target_cpu = u16::from_le_bytes([hook[1], hook[2]]) as usize;
-        assert!(
-            (0xA000..0xC000).contains(&target_cpu),
-            "JSR target must stay in the PRG011 $A000-$BFFF window, got {target_cpu:#06X}"
-        );
-        // PRG011 is bank 11: file = 11 * 0x2000 + 0x10 (iNES header) + (cpu - $A000).
-        let target_file = 11 * 0x2000 + 0x10 + (target_cpu - 0xA000);
-        assert_eq!(
-            target_file, FS_BROS_NO_HANDS,
-            "JSR must point at the registered helper allocation, not arbitrary free space"
-        );
-        assert_eq!(
-            rom.read_range(target_file, BROS_NO_HANDS_SUB.len()),
-            &BROS_NO_HANDS_SUB,
-            "JSR operand must land on the helper bytes, not past them"
-        );
-        // Helper preserves vanilla behavior for non-hand tiles: its tail is the
-        // original `CMP $7E98,Y` (D9 98 7E) the hook replaced.
-        assert_eq!(&BROS_NO_HANDS_SUB[4..7], &[0xD9, 0x98, 0x7E]);
+        assert_eq!(rom.read_range(0x17435, 3), &before[..]);
     }
 
     #[test]

@@ -28,7 +28,8 @@ pub(crate) const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     // PRG011 (file 0x16010, CPU $A000–$BFFF during map)
     (0x17C87, 36, "start_airship_swap: game-over twirl finalize helper"),
     (0x17D00, 66, "canoe_fix: backup/restore subroutines (CANOE_BACKUP_ROUTINE)"),
-    (0x17D42, 8, "bros_no_hands: hand-trap tile bypass for overworld bro movement gate"),
+    (0x17D50, 26, "no_game_over_penalty: MaCobra NGO routine (macobra.rs NGO_ROUTINE_OFFSET)"),
+    (0x17D70, 107, "march_veto: landing-veto trampoline + per-world coord registry"),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     (0x0382A, 23, "koopa_hits: subroutine + defeat JMP + threshold table"),
     (0x03841, 13, "koopa_collision_guard: skip collision bitmap during invuln"),
@@ -144,10 +145,12 @@ pub(crate) const FS_CANOE_RESPAWN: usize     = 0x15DF0; // 35 bytes
 // PRG011
 pub(crate) const FS_CANOE_BACKUP: usize      = 0x17D00; // 66 bytes
 
-// 8-byte hand-trap bypass subroutine for the overworld bro movement gate
-// (MaCobra52's "Bros don't stop on hands"). CPU $BD32. Sits just past the
-// 66-byte FS_CANOE_BACKUP reservation; the gate hook at $B425 JSRs here.
-pub(crate) const FS_BROS_NO_HANDS: usize     = 0x17D42; // 8 bytes (CPU $BD32)
+// March landing-veto trampoline + per-world coordinate registry (CPU $BD60).
+// 59-byte routine + 8-byte per-world offset table + 40-byte address list.
+// Hooked from Map_MarchValidateTravel's landing-zone PickTravel call at
+// $B3FD; keeps wandering map objects off plant/army nodes and hand traps.
+// Sits just past the 26-byte NGO routine (macobra.rs NGO_ROUTINE_OFFSET).
+pub(crate) const FS_MARCH_VETO: usize        = 0x17D70; // 107 bytes (CPU $BD60)
 
 // PRG026 (cont.)
 pub(crate) const FS_MYSTERY_ANCHOR: usize    = 0x35572; // 13 bytes
@@ -281,7 +284,7 @@ mod free_space_tests {
             (FS_FX_SCREEN_CHECK, "FS_FX_SCREEN_CHECK"),
             (FS_CANOE_RESPAWN, "FS_CANOE_RESPAWN"),
             (FS_CANOE_BACKUP, "FS_CANOE_BACKUP"),
-            (FS_BROS_NO_HANDS, "FS_BROS_NO_HANDS"),
+            (FS_MARCH_VETO, "FS_MARCH_VETO"),
             (FS_KOOPA_HITS_SUB, "FS_KOOPA_HITS_SUB"),
             (FS_KOOPA_COLLISION_GUARD, "FS_KOOPA_COLLISION_GUARD"),
             (FS_KOOPA_VRAM_CLEAR, "FS_KOOPA_VRAM_CLEAR"),
@@ -347,9 +350,9 @@ mod free_space_tests {
         // `JSR <file 0x17D00 in bank 11>` must encode as 20 F0 BC (JSR $BCF0).
         assert_eq!(jsr_into_bank(11, 0x17D00), [0x20, 0xF0, 0xBC]);
         // Opcode is always JSR; operand is little-endian CPU address.
-        let j = jsr_into_bank(11, FS_BROS_NO_HANDS);
+        let j = jsr_into_bank(11, FS_MARCH_VETO);
         assert_eq!(j[0], 0x20);
         let cpu = u16::from_le_bytes([j[1], j[2]]);
-        assert_eq!(prg_bank_cpu_to_file(11, cpu), FS_BROS_NO_HANDS);
+        assert_eq!(prg_bank_cpu_to_file(11, cpu), FS_MARCH_VETO);
     }
 }
