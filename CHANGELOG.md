@@ -13,9 +13,8 @@ into a versioned section when a release is cut.
 - Garbled enemy sprites in levels with player-chasing enemies: Lakitu, the
   Angry Sun, and the Big Berthas (vanilla, wild-picked, or wild-injected)
   now pin their graphics page across the whole level instead of just their
-  own screen, wild injections check the entire enemy segment (including
-  levels that share its data), and Boom-Boom's page is respected by nearby
-  enemy picks.
+  own screen, and wild injections check the entire enemy segment (including
+  levels that share its data).
 
 ## [0.11.2] - 2026-07-10
 

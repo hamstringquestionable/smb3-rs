@@ -921,12 +921,14 @@
         }
     }
 
-    /// Boom-Boom's CHR page is pinned in Pass 1 (its self-swap is CHR-neutral:
-    /// 0x4B↔0x4C share $33/+5), so nearby picks can't garble the boss.
+    /// Boom-Booms are deliberately NOT CHR-pinned (see should_precommit):
+    /// shell enemies (koopas, $4F/+5) must stay pickable next to a Boom-Boom
+    /// ($33/+5) because the shell-vs-boss interaction is wanted gameplay.
     #[test]
-    fn test_boomboom_page_precommitted() {
+    fn test_boomboom_does_not_block_shell_picks() {
         let flags = Options {
-            ground: EnemyMode::Wild,
+            ground: EnemyMode::Wild, // goomba slot draws from the wild pool…
+            shell: EnemyMode::Wild,  // …which includes the koopas
             ..Options::default()
         };
         let rom = rom_with_segment(&[
@@ -935,6 +937,7 @@
             0x4B, 0x10, 0x10, // Boom-Boom (jump, $33/+5)
             0xFF,
         ]);
+        let mut saw_koopa = false;
         for seed in 0..200u64 {
             let mut rom_copy = rom.clone();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -944,16 +947,19 @@
                 BOOMBOOM_SWAP.contains(&boom),
                 "seed {seed}: Boom-Boom became 0x{boom:02X}"
             );
-            let id = rom_copy.read_byte(ENEMY_DATA_START + 2);
-            if let Some(bank) = sprite_bank(id) {
-                assert!(
-                    bank.slot != 5 || bank.chr_page == 0x33,
-                    "seed {seed}: pick 0x{id:02X} (page ${:02X}/+5) garbles the \
-                     Boom-Boom ($33/+5)",
-                    bank.chr_page
-                );
+            // Green/Red Troopa are $4F/+5 — CHR-conflicting with the
+            // Boom-Boom, but allowed on purpose.
+            if matches!(rom_copy.read_byte(ENEMY_DATA_START + 2), 0x6C | 0x6D) {
+                saw_koopa = true;
+                break;
             }
         }
+        assert!(
+            saw_koopa,
+            "no koopa ever picked next to a Boom-Boom in 200 seeds — \
+             Boom-Boom's CHR page is being pinned, but it must stay unpinned \
+             so shells remain available in boss rooms"
+        );
     }
 
     /// Install two fake level headers so both eps are entry points: the outer

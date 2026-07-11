@@ -1,10 +1,12 @@
 //! Enemy / hazard class tables and the hazard-category predicates.
 //! Pure data + small pure helpers shared across the enemies submodules.
 
-/// Boom-Boom variants that can be swapped with each other (0x4B jump, 0x4C
-/// fly — both CHR page $33/slot 5, so the swap is CHR-neutral).
-/// 0x4A (Q-ball) is excluded — it's the stationary variant used in specific
-/// contexts. All three pre-commit their vanilla page (see should_precommit).
+/// All Boom-Boom variants — exempt from CHR pinning (see should_precommit:
+/// shell enemies must stay pickable in Boom-Boom rooms).
+pub(super) const BOOMBOOM_IDS: &[u8] = &[0x4A, 0x4B, 0x4C];
+
+/// Boom-Boom variants that can be swapped with each other.
+/// 0x4A is excluded — it's the stationary variant used in specific contexts.
 pub(super) const BOOMBOOM_SWAP: &[u8] = &[0x4B, 0x4C];
 
 // Object IDs from the Southbird SMB3 disassembly (smb3.asm).

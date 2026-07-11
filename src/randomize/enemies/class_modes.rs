@@ -119,13 +119,16 @@ impl ClassPool {
 /// Whether the walker's Pass 1 should pre-commit this object's CHR page
 /// before replacements are picked: non-swappable objects and uniform-CHR
 /// classes (every member shares the page/slot, so a swap can't change it).
-/// Boom-Booms pre-commit too — their separate `BOOMBOOM_SWAP` is CHR-neutral
-/// (0x4B↔0x4C share one page/slot; 0x4A never swaps), so the original id's
-/// page is exact. Wild entries never pre-commit — their page is decided by
-/// the pick itself.
+/// Wild entries never pre-commit — their page is decided by the pick itself.
+///
+/// Boom-Booms are DELIBERATELY not pinned, even though their self-swap is
+/// CHR-neutral: pinning $33/+5 (or $13/+4 for 0x4A) would exclude shell
+/// enemies (koopas are $4F/+5) from Boom-Boom rooms, and the shell-vs-boss
+/// interaction is wanted gameplay. Boom-Booms sit alone in their arenas in
+/// almost every level, so the CHR risk is accepted.
 pub(super) fn should_precommit(obj_id: u8, modes: &ClassModes) -> bool {
     match find_class_pool(obj_id, modes) {
-        None => true,
+        None => !BOOMBOOM_IDS.contains(&obj_id),
         Some(ClassPool::Wild) => false,
         Some(ClassPool::PiranhaStd) => is_uniform_chr_class(PIRANHAS_WILD),
         Some(ClassPool::PiranhaCeil) => is_uniform_chr_class(PIRANHASC_WILD),
