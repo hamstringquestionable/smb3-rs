@@ -3025,6 +3025,39 @@ partial tables in the sections above are subsets of this data.
 All 180 entries verified byte-for-byte against ROM (2025-04-13). Matches
 `sprite_bank()` in `enemies.rs` with zero discrepancies.
 
+#### Cannon Fire Family CHR Behavior (PRG007, verified 2026-07-12)
+
+The cannon fire objects (`OBJ_CFIRE_*`, IDs 0xBC–0xD0) are special objects
+with **no `PatTableSel` dispatch entry**, but they have real CHR effects
+(southbird prg007.asm, CFire jump table at the `CannonFire_DrawAndUpdate`
+DynJump):
+
+- **`CFire_Cannonball`** — handles ALL cannonball cannons, BIG cannonball
+  cannons, and the Bob-omb launchers (0xC2–0xCF). Its first instructions are
+  `LDA #$36 / STA PatTable_BankSel+4`, executed **unconditionally every frame
+  the cfire slot is loaded** — *before* its own fire-timer and off-screen
+  early-outs. **`CFire_4Way`** (0xBF) does the same.
+- CannonFire slots live in a dedicated 8-entry FIFO (`CannonFire_ID` etc.),
+  spawned by scroll (PRG005 `Level_ObjectsSpawnByScroll` shifts all slots up
+  and drops the oldest). Slots are **never freed by scrolling away** — once
+  spawned, a cannon keeps re-asserting slot +4 = $36 until eight newer
+  cfires push it out or the level ends. Effectively a level-wide slot-4 pin.
+- **`CFire_GoombaPipe`** (0xC0/0xC1) — no PatTable write; spawns `OBJ_GOOMBA`
+  (0x72), whose own PatTableSel demands $4F/+5.
+- **`CFire_BulletBill`** (0xBC/0xBD) — no PatTable write; spawns the bullet /
+  missile bill objects 0x78/0x79 ($4F/+5). Placing 0x78/0x79 directly in
+  level data leaves them uninitialized — only the cannon sets their state.
+- **`CFire_RockyWrench`** (0xBE) — spawns `OBJ_ROCKYWRENCH` (0xAD), which
+  needs $36/+4 (same page as the cannonballs).
+- **`CFire_Laser`** (0xD0) — no PatTable write, no spawned bank need.
+
+Vanilla level data respects the pin: **no vanilla enemy segment mixes a
+cannonball-family cfire with a non-$36 slot-4 enemy** (checked across all
+240 segments via rom_map.json), and the two segments mixing pipes/bills
+with $37/+5 fire jets keep them >16 tiles apart. The randomizer mirrors
+this in `sprite_bank()` (cfire arm) and `CHASER_IDS` (cannonball family =
+level-wide pin).
+
 ---
 
 ## Gameplay Mechanics (ROM Offsets)

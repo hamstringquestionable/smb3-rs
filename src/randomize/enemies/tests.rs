@@ -1579,3 +1579,100 @@
             violations.iter().take(40).cloned().collect::<Vec<_>>().join("\n"),
         );
     }
+
+    /// Every cannon-fire family member carries the CHR bank its engine
+    /// behavior demands (see the cfire arm in `sprite_bank`): bills and
+    /// goomba pipes spawn $4F/+5 children; the cannonball family (plus the
+    /// 4-way and Rocky Wrench cfires) needs $36/+4. The laser needs nothing.
+    /// The cannonball family is chaser-class (its handler rewrites slot 4
+    /// every frame it stays loaded); bills/pipes are proximity-scoped.
+    #[test]
+    fn test_cfire_sprite_banks() {
+        for &id in &[0xBCu8, 0xBD, 0xC0, 0xC1] {
+            let b = sprite_bank(id).expect("bill/pipe cfire must have a bank");
+            assert_eq!((b.chr_page, b.slot), (0x4F, 5), "id 0x{id:02X}");
+            assert!(!CHASER_IDS.contains(&id), "0x{id:02X} is proximity-scoped");
+        }
+        for id in [0xBEu8, 0xBF].into_iter().chain(0xC2..=0xCF) {
+            let b = sprite_bank(id).expect("cannonball-family cfire must have a bank");
+            assert_eq!((b.chr_page, b.slot), (0x36, 4), "id 0x{id:02X}");
+        }
+        for id in 0xC2u8..=0xCF {
+            assert!(CHASER_IDS.contains(&id), "0x{id:02X} must be chaser-class");
+        }
+        assert!(CHASER_IDS.contains(&0xBF), "4-way pins slot 4 every frame");
+        assert!(sprite_bank(0xD0).is_none(), "laser has no CHR need");
+    }
+
+    /// A cannonball cfire pins slot 4 = $36 for the whole level — its
+    /// handler re-writes the bank every frame it stays loaded, and a spawned
+    /// cfire slot survives until pushed out of the 8-slot FIFO. Picks in
+    /// distant proximity groups must therefore stay $36-compatible on
+    /// slot 4, exactly like the true chasers.
+    #[test]
+    fn test_cannon_pins_distant_groups() {
+        let flags = Options {
+            ground: EnemyMode::Wild,
+            shell: EnemyMode::Wild,
+            flying: EnemyMode::Wild,
+            water: EnemyMode::Wild,
+            bros: EnemyMode::Wild,
+            ..Options::default() // cannons Off → the cfire itself is pinned
+        };
+        let rom = rom_with_segment(&[
+            0xFF, 0x01,
+            0xC8, 0x05, 0x10, // HLCANNON2 ($36/+4 frame-pin) — screen 0
+            0x72, 0x80, 0x19, // Goomba — 7 screens away, own CHR group
+            0x6C, 0x84, 0x19, // Green Troopa — same distant group
+            0xFF,
+        ]);
+        for seed in 0..200u64 {
+            let mut rom_copy = rom.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_copy, &mut rng, &flags);
+            assert_eq!(
+                rom_copy.read_byte(ENEMY_DATA_START + 2), 0xC8,
+                "seed {seed}: pinned cannon must not be swapped"
+            );
+            for off in [5usize, 8] {
+                let id = rom_copy.read_byte(ENEMY_DATA_START + off);
+                if let Some(bank) = sprite_bank(id) {
+                    assert!(
+                        bank.slot != 4 || bank.chr_page == 0x36,
+                        "seed {seed}: pick 0x{id:02X} (page ${:02X}/+4) in a distant \
+                         group conflicts with the level-wide cannon pin ($36/+4)",
+                        bank.chr_page
+                    );
+                }
+            }
+        }
+    }
+
+    /// Cannons-wild picks are CHR-gated like any other class: next to a
+    /// pinned fire jet ($37/+5), a Bill cannon can only become a
+    /// cannonball-family member — bills and goomba pipes are filtered out
+    /// because their spawned children need $4F on the jet's slot.
+    #[test]
+    fn test_cannons_wild_respects_slot5_pin() {
+        let flags = Options {
+            cannons: EnemyMode::Wild,
+            ..Options::default()
+        };
+        let rom = rom_with_segment(&[
+            0xFF, 0x01,
+            0xBC, 0x05, 0x0C, // Bullet Bill cannon ($4F/+5 via spawned bills)
+            0xAC, 0x07, 0x11, // upward fire jet ($37/+5), no class → pinned
+            0xFF,
+        ]);
+        for seed in 0..300u64 {
+            let mut rom_copy = rom.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_copy, &mut rng, &flags);
+            let id = rom_copy.read_byte(ENEMY_DATA_START + 2);
+            assert!(
+                (0xC2..=0xCF).contains(&id),
+                "seed {seed}: bill slot became 0x{id:02X}; only the $36/+4 \
+                 cannonball family fits beside a $37/+5 fire jet"
+            );
+        }
+    }

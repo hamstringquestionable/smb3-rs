@@ -369,18 +369,41 @@ pub(super) const MAX_BERTHA_PER_SEGMENT: u8 = 2;
 /// can never be visible simultaneously, so they don't need compatible CHR pages.
 pub(super) const CHR_GROUP_GAP: u8 = 16;
 
-/// Enemies that follow the player across the whole level: Lakitu hovers
-/// overhead indefinitely, the Angry Sun swoops for the rest of the level once
-/// triggered, and the two Big Bertha fish shadow the player along connected
-/// water. The one-screen assumption behind [`CHR_GROUP_GAP`] does not hold
-/// for these — their CHR page constrains *every* proximity group in the
-/// segment, and placing one anywhere requires compatibility with every page
-/// committed anywhere in the segment.
+/// Enemies whose CHR page constrains *every* proximity group in the segment,
+/// so the one-screen assumption behind [`CHR_GROUP_GAP`] does not hold and
+/// placing one anywhere requires compatibility with every page committed
+/// anywhere in the segment. Two ways to earn membership:
+/// - True chasers that follow the player across the whole level: Lakitu
+///   hovers overhead indefinitely, the Angry Sun swoops for the rest of the
+///   level once triggered, and the two Big Bertha fish shadow the player
+///   along connected water.
+/// - Cannonball-family cannon fires: `CFire_Cannonball` / `CFire_4Way` write
+///   `PatTable_BankSel+4 = $36` unconditionally every frame they're loaded
+///   (before their own on-screen checks), and a spawned cfire slot survives
+///   until 8 newer cfires push it out of the FIFO — usually the rest of the
+///   level. They don't move, but their slot-4 pin follows the player anyway.
+///   (Vanilla respects this: no vanilla segment mixes a cannonball cfire
+///   with a non-$36 slot-4 enemy.)
 pub(super) const CHASER_IDS: &[u8] = &[
     0x83, // Lakitu (enemy-spawning variant)
     0xAF, // Angry Sun
     0x2D, // OBJ_BIGBERTHA (leaping eater — the "Boss Bass")
     0x63, // OBJ_BIGBERTHABIRTHER
+    0xBF, // OBJ_CFIRE_4WAY (unconditional +4=$36 every frame)
+    0xC2, // OBJ_CFIRE_HLCANNON     — all 0xC2–0xCF run CFire_Cannonball:
+    0xC3, // OBJ_CFIRE_HLBIGCANNON    unconditional +4=$36 every frame
+    0xC4, // OBJ_CFIRE_ULCANNON
+    0xC5, // OBJ_CFIRE_URCANNON
+    0xC6, // OBJ_CFIRE_LLCANNON
+    0xC7, // OBJ_CFIRE_LRCANNON
+    0xC8, // OBJ_CFIRE_HLCANNON2
+    0xC9, // OBJ_CFIRE_ULCANNON2
+    0xCA, // OBJ_CFIRE_URCANNON2
+    0xCB, // OBJ_CFIRE_LLCANNON2
+    0xCC, // OBJ_CFIRE_HRCANNON
+    0xCD, // OBJ_CFIRE_HRBIGCANNON
+    0xCE, // OBJ_CFIRE_LBOBOMBS
+    0xCF, // OBJ_CFIRE_RBOBOMBS
 ];
 
 /// All cannon-fire IDs merged for Wild mode — every cfire ID can become every

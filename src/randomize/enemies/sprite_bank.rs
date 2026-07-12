@@ -10,7 +10,9 @@ pub struct SpriteBank {
 /// Returns `None` for objects that use NOCHANGE (no bank switch).
 /// Covers ALL object IDs 0x00–0xB3 (from ROM PatTableSel tables) so that
 /// the two-pass pre-scan can correctly pre-commit CHR pages from non-swappable
-/// objects (platforms, rotodiscs, bosses, fire jets, etc.).
+/// objects (platforms, rotodiscs, bosses, fire jets, etc.), plus the cannon
+/// fire family 0xBC–0xD0 whose requirements come from in-routine bank writes
+/// and spawned children rather than a PatTableSel entry (see the cfire arm).
 pub fn sprite_bank(id: u8) -> Option<SpriteBank> {
     match id {
         // === Group 1: PRG001 (IDs 0x00–0x23) ===
@@ -125,8 +127,26 @@ pub fn sprite_bank(id: u8) -> Option<SpriteBank> {
         0xAF => Some(SpriteBank { chr_page: 0x32, slot: 4 }),
         0xB3 => Some(SpriteBank { chr_page: 0x0B, slot: 4 }),
 
-        // IDs 0xB4+ (cannons, autoscroll, etc.) — handled by PRG007,
-        // typically NOCHANGE or no visible sprites requiring bank switch
+        // === Cannon fire family (IDs 0xBC–0xD0, CFire handlers in PRG007) ===
+        // These spawners have no PatTableSel dispatch entry, but they have
+        // real CHR needs (verified in southbird prg007.asm):
+        // - Bullet/Missile Bill cannons spawn 0x78/0x79 and Goomba pipes
+        //   spawn OBJ_GOOMBA (0x72) — the children's own PatTableSel demands
+        //   $4F on slot +5.
+        0xBC | 0xBD | 0xC0 | 0xC1 => Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
+        // - `CFire_Cannonball` (all cannonballs, BIG cannonballs, and the
+        //   bob-omb launchers) and `CFire_4Way` write PatTable_BankSel+4=$36
+        //   UNCONDITIONALLY every frame they're loaded — before their own
+        //   timer/off-screen early-outs — and a spawned cfire slot survives
+        //   until 8 newer cfires push it out of the FIFO, i.e. usually the
+        //   rest of the level. Level-wide slot-4 pin (they're in CHASER_IDS
+        //   for exactly that reason).
+        // - The Rocky Wrench cfire (0xBE) spawns OBJ_ROCKYWRENCH (0xAD),
+        //   which needs the same $36/+4 via its own PatTableSel.
+        0xBE | 0xBF | 0xC2..=0xCF => Some(SpriteBank { chr_page: 0x36, slot: 4 }),
+
+        // Everything else 0xB4+ (laser cfire 0xD0, autoscroll controllers,
+        // etc.) — no bank switch and no spawned sprite bank need.
         _ => None,
     }
 }
