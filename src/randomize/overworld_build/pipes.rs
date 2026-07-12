@@ -2,10 +2,7 @@
 
 use super::*;
 
-use super::scoring::{
-    PIPE_SOFTMAX_T, TARGET_MAX_DIST, pick_softmax_by_score, score_pipe_endpoint,
-    score_pipe_pair, target_proximity_penalty,
-};
+use super::scoring::{PIPE_SOFTMAX_T, TARGET_MAX_DIST, pick_softmax_by_score, score_pipe_pair};
 use super::sections::split_blanks_by_reachability;
 
 /// Number of pipe pairs (not endpoints) per world in the vanilla ROM.
@@ -173,13 +170,21 @@ pub(super) fn place_pipes<R: Rng>(
         let (reachable_blanks, mut unreachable_blanks) =
             split_blanks_by_reachability(active, &walk.nodes, &used_positions);
 
-        // While we still must reach the target, prefer bridging to an island
-        // that actually leads there: keep only unreachable blanks that share a
-        // walk-component with the target. This generalizes the W3 fixed-endpoint
-        // `preferred` filter to every island connection, so RNG can't squander a
-        // pipe on a dead tile that connects nothing (e.g. W4's stranded (6,24)).
-        // Falls back to the unfiltered set when no candidate reaches the target.
-        if must_connect_target && let Some(t) = target_pos {
+        // Guarantee fallback: on the LAST connectivity pipe with the objective
+        // still stranded, restrict the island side to the objective's own
+        // walk-component so this pipe definitely reaches it. Pipes are
+        // teleports (no distance limit), so one pipe always suffices — hence
+        // reserving just the final pipe is enough to guarantee reachability.
+        // On every earlier pipe we instead grow outward (below), so the goal
+        // is reached through intermediate islands, not a direct start→goal
+        // jump. (The old code applied this filter on EVERY connectivity pipe,
+        // which forced the first pipe straight to the goal island — a 100%
+        // start→goal express rate that collapsed multi-island worlds.)
+        let pipes_left = pair_count - placed_pairs.len();
+        if must_connect_target
+            && pipes_left <= 1
+            && let Some(t) = target_pos
+        {
             let target_comp = walk_map(grid, &placed_pairs, Some(t), world_idx).nodes;
             let toward_target: Vec<(usize, usize)> = unreachable_blanks
                 .iter()
@@ -192,31 +197,34 @@ pub(super) fn place_pipes<R: Rng>(
         }
 
         if !unreachable_blanks.is_empty() && !reachable_blanks.is_empty() {
-            // Connect an island: scored selection for both endpoints.
-            // Unreachable side: prefer nearer islands (manhattan from start)
-            // to create progressive chains rather than jumping to the end.
-            let start = start_pos.unwrap_or((0, 0));
+            // Build outward: bridge the reachable frontier to the NEAREST
+            // unreachable island, connecting its closest two blanks. This
+            // grows the pipe network as a chain from start (start → i1 → i2 →
+            // … → goal) instead of teleporting straight to the goal island.
+            // Island side: prefer the blank nearest to the current frontier.
             let b_scored: Vec<((usize, usize), f64)> = unreachable_blanks
                 .iter()
-                .map(|&pos| {
-                    let start_dist = (pos.0.abs_diff(start.0) + pos.1.abs_diff(start.1)) as f64;
-                    // Nearer to start = higher score (invert distance)
-                    let proximity_score = (TARGET_MAX_DIST - start_dist.min(TARGET_MAX_DIST)) / TARGET_MAX_DIST * 5.0;
-                    let target_pen = target_proximity_penalty(pos, target_pos);
-                    (pos, proximity_score - target_pen)
+                .map(|&b| {
+                    let frontier_dist = reachable_blanks
+                        .iter()
+                        .map(|&a| (a.0.abs_diff(b.0) + a.1.abs_diff(b.1)) as f64)
+                        .fold(f64::INFINITY, f64::min);
+                    // Nearer to the reachable frontier = higher score.
+                    let proximity =
+                        (TARGET_MAX_DIST - frontier_dist.min(TARGET_MAX_DIST)) / TARGET_MAX_DIST * 5.0;
+                    (b, proximity)
                 })
                 .collect();
             let b = pick_softmax_by_score(b_scored, PIPE_SOFTMAX_T, rng).unwrap();
 
-            // Reachable side: prefer positions far from start (BFS distance),
-            // spread from existing pipes, and away from target.
+            // Reachable side: the frontier blank nearest to b (shortest bridge),
+            // so the pipe extends the frontier to that island rather than
+            // reaching back across the map.
             let a_scored: Vec<((usize, usize), f64)> = reachable_blanks
                 .iter()
-                .map(|&pos| {
-                    let score = score_pipe_endpoint(
-                        grid, pos, &used_positions, &walk.distances, target_pos,
-                    );
-                    (pos, score)
+                .map(|&a| {
+                    let d = (a.0.abs_diff(b.0) + a.1.abs_diff(b.1)) as f64;
+                    (a, -d) // nearer to b = higher
                 })
                 .collect();
             let a = pick_softmax_by_score(a_scored, PIPE_SOFTMAX_T, rng).unwrap();

@@ -1709,207 +1709,276 @@ fn test_sas_w3_fixed_pipe_keeps_target_reachable() {
     }
 }
 
-/// Required-progression analyzer.
+/// Per-world linearity accumulators for one measurement pass.
+#[derive(Clone, Default)]
+struct ProgLinWorld {
+    reachable: u32,
+    unreachable: u32,
+    sum_clears: u64,
+    sum_streak: u64,
+    max_streak: usize,
+    streak_ge2: u32,
+    streak_ge3: u32,
+    sum_goal: u64,
+    goal_ge2: u32,
+    sum_adj: u64,
+    // Pipe classification (summed over seeds): counts per class + total
+    // forced clears skipped by shortcut pipes.
+    sum_conn: u64,
+    sum_island: u64,
+    sum_dead: u64,
+    sum_shortcut: u64,
+    sum_pipe_skip: u64,
+    // Start→goal express pipe: how often a single pipe bridges start-island
+    // straight to goal-island. express_total = seeds where it's applicable
+    // (start and goal on different islands).
+    sum_express: u64,
+    sum_express_total: u64,
+    sum_islands: u64,
+    sum_rock_skip: u64,
+}
+
+/// Run `seeds` full-pipeline builds under `options` and accumulate per-world
+/// linearity stats. Uses `randomize_rom_with_overworld_capture` so the maps
+/// are exactly what the CLI/web ships (not a direct `build()`, whose RNG
+/// state differs from a real run).
+fn prog_measure_pass(rom_bytes: &[u8], options: &crate::Options, seeds: u64) -> [ProgLinWorld; 8] {
+    let mut worlds: [ProgLinWorld; 8] = std::array::from_fn(|_| ProgLinWorld::default());
+    for seed in 0..seeds {
+        let (_rom, result) =
+            match crate::randomize_rom_with_overworld_capture(rom_bytes, seed, options, None) {
+                Ok(pair) => pair,
+                Err(e) => {
+                    eprintln!("seed {seed}: randomize failed: {e}");
+                    continue;
+                }
+            };
+        for built in &result.worlds {
+            let w = &mut worlds[built.world_idx];
+            let nh = analyze_required_progression(built, false);
+            if !nh.reachable {
+                w.unreachable += 1;
+                continue;
+            }
+            w.reachable += 1;
+            w.sum_clears += (nh.forts_required + nh.levels_required) as u64;
+            w.sum_streak += nh.level_streak as u64;
+            w.max_streak = w.max_streak.max(nh.level_streak);
+            if nh.level_streak >= 2 {
+                w.streak_ge2 += 1;
+            }
+            if nh.level_streak >= 3 {
+                w.streak_ge3 += 1;
+            }
+            w.sum_goal += nh.goal_stack as u64;
+            if nh.goal_stack >= 2 {
+                w.goal_ge2 += 1;
+            }
+            w.sum_adj += level_adjacency_pairs(built) as u64;
+            w.sum_rock_skip += hammer_skip(built) as u64;
+            for class in classify_pipes(built) {
+                match class {
+                    PipeClass::Connectivity => w.sum_conn += 1,
+                    PipeClass::IslandRouting => w.sum_island += 1,
+                    PipeClass::DeadLoop => w.sum_dead += 1,
+                    PipeClass::Shortcut(n) => {
+                        w.sum_shortcut += 1;
+                        w.sum_pipe_skip += n as u64;
+                    }
+                }
+            }
+            w.sum_islands += island_count(built) as u64;
+            if let Some(direct) = start_goal_express_pipe(built) {
+                w.sum_express_total += 1;
+                if direct {
+                    w.sum_express += 1;
+                }
+            }
+        }
+    }
+    worlds
+}
+
+/// Print one pass's per-world linearity + pipe-role tables.
+fn prog_print_pass(label: &str, worlds: &[ProgLinWorld; 8]) {
+    eprintln!("\n  [{label}]");
+    eprintln!(
+        "    {:<4} {:>7} {:>7} {:>5} {:>5} {:>8} {:>6} {:>10}",
+        "", "clears", "streak", "≥2", "≥3", "goalstk", "adj", "rock-skip",
+    );
+    let (mut t_reach, mut t_streak, mut t_ge2, mut t_ge3, mut t_goal2, mut t_rock) =
+        (0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
+    for (wi, w) in worlds.iter().enumerate() {
+        if w.reachable == 0 {
+            eprintln!("    W{}: (no reachable seeds)", wi + 1);
+            continue;
+        }
+        let r = w.reachable as f64;
+        eprintln!(
+            "    W{}  {:>7.2} {:>7.2} {:>4.0}% {:>4.0}% {:>8.2} {:>6.2} {:>10.2}",
+            wi + 1,
+            w.sum_clears as f64 / r,
+            w.sum_streak as f64 / r,
+            w.streak_ge2 as f64 / r * 100.0,
+            w.streak_ge3 as f64 / r * 100.0,
+            w.sum_goal as f64 / r,
+            w.sum_adj as f64 / r,
+            w.sum_rock_skip as f64 / r,
+        );
+        t_reach += w.reachable as u64;
+        t_streak += w.sum_streak;
+        t_ge2 += w.streak_ge2 as u64;
+        t_ge3 += w.streak_ge3 as u64;
+        t_goal2 += w.goal_ge2 as u64;
+        t_rock += w.sum_rock_skip;
+    }
+    if t_reach > 0 {
+        let tr = t_reach as f64;
+        eprintln!(
+            "    overall: streak {:.2} | ≥2 {:.0}% ≥3 {:.0}% | goal-stack≥2 {:.0}% | rock-skip {:.2}",
+            t_streak as f64 / tr,
+            t_ge2 as f64 / tr * 100.0,
+            t_ge3 as f64 / tr * 100.0,
+            t_goal2 as f64 / tr * 100.0,
+            t_rock as f64 / tr,
+        );
+    }
+
+    // Pipe-role breakdown: mean pipes per class per world. dead-loop (mainland
+    // loop skipping nothing) is the true waste; island-routing is intentional
+    // alternate island paths (variety, not waste).
+    eprintln!(
+        "    pipes/world:   {:>5} {:>8} {:>10} {:>10} {:>11} {:>7} {:>9}",
+        "conn", "island", "dead-loop", "shortcut", "lvls-skipped", "islands", "express%",
+    );
+    let (mut g_conn, mut g_island, mut g_dead, mut g_short, mut g_skip) =
+        (0u64, 0u64, 0u64, 0u64, 0u64);
+    for (wi, w) in worlds.iter().enumerate() {
+        if w.reachable == 0 {
+            continue;
+        }
+        let r = w.reachable as f64;
+        let express = if w.sum_express_total > 0 {
+            format!("{:.1}%", w.sum_express as f64 / w.sum_express_total as f64 * 100.0)
+        } else {
+            "n/a".to_string()
+        };
+        eprintln!(
+            "      W{}         {:>5.2} {:>8.2} {:>10.2} {:>10.2} {:>11.2} {:>7.2} {:>9}",
+            wi + 1,
+            w.sum_conn as f64 / r,
+            w.sum_island as f64 / r,
+            w.sum_dead as f64 / r,
+            w.sum_shortcut as f64 / r,
+            w.sum_pipe_skip as f64 / r,
+            w.sum_islands as f64 / r,
+            express,
+        );
+        g_conn += w.sum_conn;
+        g_island += w.sum_island;
+        g_dead += w.sum_dead;
+        g_short += w.sum_shortcut;
+        g_skip += w.sum_pipe_skip;
+    }
+    if t_reach > 0 {
+        let tr = t_reach as f64;
+        let all_pipes = g_conn + g_island + g_dead + g_short;
+        eprintln!(
+            "      overall:   {:>5.2} {:>8.2} {:>10.2} {:>10.2} {:>11.2}  (mainland dead-loop {:.0}% of all pipes)",
+            g_conn as f64 / tr,
+            g_island as f64 / tr,
+            g_dead as f64 / tr,
+            g_short as f64 / tr,
+            g_skip as f64 / tr,
+            if all_pipes > 0 {
+                g_dead as f64 / all_pipes as f64 * 100.0
+            } else {
+                0.0
+            },
+        );
+    }
+    let unreach: u32 = worlds.iter().map(|w| w.unreachable).sum();
+    if unreach > 0 {
+        eprintln!("    WARNING: {unreach} unreachable-target case(s) — possible builder bug");
+    }
+}
+
+/// Required-progression / linearity analyzer.
 ///
-/// Per world, computes the minimum number of fortress + level entries
-/// the player must clear to reach the airship/Bowser. Locks block path
-/// tiles until the fortress whose section opens them is cleared; pipes
-/// are taken whenever they shorten the route. Also reports a "hammer
-/// mode" where all locks start open, isolating fortresses that were
-/// only required because of lock gating.
+/// Per world, computes the minimum fortress + level entries the player must
+/// clear to reach the airship/Bowser (locks gate path tiles until their
+/// fortress is cleared; pipes/canoes taken when they shorten the route),
+/// then derives linearity metrics: back-to-back forced-level streaks, levels
+/// stacked on the goal approach, physical level-adjacency, and how many
+/// forced clears pipes / a lock-breaking hammer let the player skip.
+///
+/// Reports BOTH start↔airship modes (SAS off and on) in one run, since SAS
+/// redistributes which worlds stack levels.
 ///
 /// Run with: cargo test --release test_required_progression -- --ignored --nocapture
-/// Override seed count with PROG_SEEDS=N.
-/// Toggle start↔airship swap with SAS=1.
+/// Override seed count with PROG_SEEDS=N (runs that many PER mode).
+/// FLAGS=SMB3R-… measures a specific flag set (e.g. hammer-breaks-locks on).
 #[test]
 #[ignore]
 fn test_required_progression() {
-    let rom = match load_rom() {
-        Some(r) => r,
-        None => {
+    let rom_bytes = match std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") {
+        Ok(b) => b,
+        Err(_) => {
             eprintln!("ROM not found, skipping");
             return;
         }
     };
-    let rom = apply_qol_for_overworld(&rom);
 
     let seeds: u64 = std::env::var("PROG_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(1000);
 
-    // Per-world tallies: sums for mean, plus min/max.
-    let mut sum_forts = [0u64; 8];
-    let mut sum_levels = [0u64; 8];
-    let mut sum_h_forts = [0u64; 8];
-    let mut sum_h_levels = [0u64; 8];
-    let mut min_forts = [usize::MAX; 8];
-    let mut max_forts = [0usize; 8];
-    let mut min_levels = [usize::MAX; 8];
-    let mut max_levels = [0usize; 8];
-    let mut min_h_forts = [usize::MAX; 8];
-    let mut max_h_forts = [0usize; 8];
-    let mut unreachable = [0u32; 8];
-    let mut unreachable_seeds: [Vec<u64>; 8] = Default::default();
-    // "Trivial bypass" = hammerless playthrough requires 0 forts AND 0
-    // levels (player walks/pipes straight to the airship). Tracked per
-    // world plus classified by whether the path uses a pipe right after
-    // start (pipe_start), right before target (pipe_target), both, or
-    // neither — diagnostic that pinpoints the failure mode.
-    let mut zero_zero = [0u32; 8];
-    let mut zero_zero_seeds: [Vec<u64>; 8] = Default::default();
-    let mut bypass_both = [0u32; 8];
-    let mut bypass_start = [0u32; 8];
-    let mut bypass_target = [0u32; 8];
-    let mut bypass_other = [0u32; 8];
-
-    for seed in 0..seeds {
-        let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let (catalog, pickup) = build_catalog_pickup(&rom, seed);
-        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
-
-        for built in &result.worlds {
-            let wi = built.world_idx;
-            let no_hammer = analyze_required_progression(built, false);
-            let with_hammer = analyze_required_progression(built, true);
-
-            if !no_hammer.reachable {
-                unreachable[wi] += 1;
-                if unreachable_seeds[wi].len() < 5 {
-                    unreachable_seeds[wi].push(seed);
-                }
-                continue;
+    // Base options = the shipped map. Options::default() is hand-tuned to the
+    // CLI/web defaults; the full pipeline (randomize_rom_with_overworld_capture)
+    // consumes RNG exactly as a real run, so the built maps match real ROMs.
+    // FLAGS=SMB3R-… overrides the flag set (e.g. hammer-breaks-locks).
+    // Palettes off only for run-to-run determinism (cosmetic; no topology).
+    let mut base = match std::env::var("FLAGS") {
+        Ok(key) => match crate::Options::from_flag_key(&key) {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("Invalid FLAGS key: {e}");
+                return;
             }
-            if no_hammer.forts_required == 0 && no_hammer.levels_required == 0 {
-                zero_zero[wi] += 1;
-                if zero_zero_seeds[wi].len() < 5 {
-                    zero_zero_seeds[wi].push(seed);
-                }
-                let path = &no_hammer.path;
-                let pipe_after_start = path.get(1).is_some_and(|(_, k)| matches!(k, PathNodeKind::Pipe));
-                let pipe_before_target = path.len() >= 2
-                    && matches!(path[path.len() - 2].1, PathNodeKind::Pipe);
-                match (pipe_after_start, pipe_before_target) {
-                    (true, true)  => bypass_both[wi]  += 1,
-                    (true, false) => bypass_start[wi] += 1,
-                    (false, true) => bypass_target[wi] += 1,
-                    (false, false)=> bypass_other[wi] += 1,
-                }
-            }
-            sum_forts[wi] += no_hammer.forts_required as u64;
-            sum_levels[wi] += no_hammer.levels_required as u64;
-            sum_h_forts[wi] += with_hammer.forts_required as u64;
-            sum_h_levels[wi] += with_hammer.levels_required as u64;
+        },
+        Err(_) => crate::Options::default(),
+    };
+    base.palettes = false;
+    base.palette_themed = false;
 
-            min_forts[wi] = min_forts[wi].min(no_hammer.forts_required);
-            max_forts[wi] = max_forts[wi].max(no_hammer.forts_required);
-            min_levels[wi] = min_levels[wi].min(no_hammer.levels_required);
-            max_levels[wi] = max_levels[wi].max(no_hammer.levels_required);
-            min_h_forts[wi] = min_h_forts[wi].min(with_hammer.forts_required);
-            max_h_forts[wi] = max_h_forts[wi].max(with_hammer.forts_required);
+    // Combined report: measure BOTH start↔airship modes, since SAS
+    // redistributes which worlds stack levels.
+    let mut sas_off = base.clone();
+    sas_off.swap_start_airship = false;
+    let mut sas_on = base.clone();
+    sas_on.swap_start_airship = true;
+
+    let off = prog_measure_pass(&rom_bytes, &sas_off, seeds);
+    prog_print_pass("SAS off", &off);
+    let on = prog_measure_pass(&rom_bytes, &sas_on, seeds);
+    prog_print_pass("SAS on", &on);
+
+    // Combined one-line comparison of the two modes.
+    let overall = |w: &[ProgLinWorld; 8]| -> (f64, f64) {
+        let reach: u64 = w.iter().map(|x| x.reachable as u64).sum();
+        if reach == 0 {
+            return (0.0, 0.0);
         }
-    }
-
-    let sas_label = if std::env::var("SAS").is_ok() { " [SAS=1]" } else { "" };
-    eprintln!("\n=== Required Progression to Airship ({seeds} seeds{sas_label}) ===");
-    eprintln!();
+        let s: u64 = w.iter().map(|x| x.sum_streak).sum();
+        let g2: u64 = w.iter().map(|x| x.goal_ge2 as u64).sum();
+        (s as f64 / reach as f64, g2 as f64 / reach as f64 * 100.0)
+    };
+    let (so, go) = overall(&off);
+    let (sn, gn) = overall(&on);
     eprintln!(
-        "{:<4} {:>8} {:>8}  {:>8} {:>8}   {:>8} {:>8}  {:>8}",
-        "", "forts", "(range)", "levels", "(range)", "h-forts", "(range)", "saves",
+        "\n  Combined: SAS-off streak {so:.2} / goal-stack≥2 {go:.0}%   vs   SAS-on streak {sn:.2} / goal-stack≥2 {gn:.0}%",
     );
-
-    let mut grand_forts = 0u64;
-    let mut grand_levels = 0u64;
-    let mut grand_h_forts = 0u64;
-    let mut grand_h_levels = 0u64;
-
-    for wi in 0..8 {
-        let seeds_ok = (seeds as u32 - unreachable[wi]) as f64;
-        if seeds_ok == 0.0 {
-            eprintln!("  W{}: (no reachable seeds)", wi + 1);
-            continue;
-        }
-        let avg_f = sum_forts[wi] as f64 / seeds_ok;
-        let avg_l = sum_levels[wi] as f64 / seeds_ok;
-        let avg_hf = sum_h_forts[wi] as f64 / seeds_ok;
-        let saves = avg_f - avg_hf;
-
-        grand_forts += sum_forts[wi];
-        grand_levels += sum_levels[wi];
-        grand_h_forts += sum_h_forts[wi];
-        grand_h_levels += sum_h_levels[wi];
-
-        eprintln!(
-            "  W{}  {:>6.2}   {}-{:<3}  {:>6.2}   {}-{:<3}    {:>6.2}   {}-{:<3}   {:>5.2}",
-            wi + 1,
-            avg_f, min_forts[wi], max_forts[wi],
-            avg_l, min_levels[wi], max_levels[wi],
-            avg_hf, min_h_forts[wi], max_h_forts[wi],
-            saves,
-        );
-    }
-
-    let avg_total_forts = grand_forts as f64 / seeds as f64;
-    let avg_total_levels = grand_levels as f64 / seeds as f64;
-    let avg_total_h_forts = grand_h_forts as f64 / seeds as f64;
-    let avg_total_h_levels = grand_h_levels as f64 / seeds as f64;
-    eprintln!();
-    eprintln!("  Per-seed totals (excludes the 8 objectives):");
-    eprintln!(
-        "    Without hammer: {:.2} forts + {:.2} levels  =  {:.2} clears",
-        avg_total_forts, avg_total_levels, avg_total_forts + avg_total_levels,
-    );
-    eprintln!(
-        "    With hammer:    {:.2} forts + {:.2} levels  =  {:.2} clears  (saves {:.2})",
-        avg_total_h_forts, avg_total_h_levels,
-        avg_total_h_forts + avg_total_h_levels,
-        (avg_total_forts + avg_total_levels) - (avg_total_h_forts + avg_total_h_levels),
-    );
-
-    let total_unreach: u32 = unreachable.iter().sum();
-    if total_unreach > 0 {
-        eprintln!("\n  WARNING: {total_unreach} unreachable-target case(s) — builder bug?");
-        for (wi, &count) in unreachable.iter().enumerate() {
-            if count > 0 {
-                let pct = count as f64 / seeds as f64 * 100.0;
-                let seed_examples: Vec<String> = unreachable_seeds[wi]
-                    .iter()
-                    .map(u64::to_string)
-                    .collect();
-                eprintln!(
-                    "    W{}: {count}/{seeds} ({pct:.1}%)  example seeds: {}",
-                    wi + 1,
-                    seed_examples.join(", "),
-                );
-            }
-        }
-    }
-
-    let total_zero_zero: u32 = zero_zero.iter().sum();
-    let total_world_seeds = seeds as u32 * 8;
-    let overall_pct = total_zero_zero as f64 / total_world_seeds as f64 * 100.0;
-    eprintln!(
-        "\n  Trivial-bypass (0 forts + 0 levels) — overall {total_zero_zero}/{total_world_seeds} ({overall_pct:.2}%):"
-    );
-    for (wi, &count) in zero_zero.iter().enumerate() {
-        let pct = count as f64 / seeds as f64 * 100.0;
-        let examples = if zero_zero_seeds[wi].is_empty() {
-            String::new()
-        } else {
-            let s: Vec<String> = zero_zero_seeds[wi].iter().map(u64::to_string).collect();
-            format!("  example seeds: {}", s.join(", "))
-        };
-        eprintln!("    W{}: {count}/{seeds} ({pct:.1}%){examples}", wi + 1);
-    }
-    let tb = bypass_both.iter().sum::<u32>();
-    let ts = bypass_start.iter().sum::<u32>();
-    let tt = bypass_target.iter().sum::<u32>();
-    let to_ = bypass_other.iter().sum::<u32>();
-    if total_zero_zero > 0 {
-        eprintln!(
-            "  Bypass classification — pipe-both: {tb}, pipe-start-only: {ts}, pipe-target-only: {tt}, neither: {to_}",
-        );
-    }
 }
 
 /// Single-seed dump of the required-progression analysis. Intended for
