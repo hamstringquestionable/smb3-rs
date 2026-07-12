@@ -15,6 +15,12 @@ into a versioned section when a release is cut.
   now pin their graphics page across the whole level instead of just their
   own screen, and wild injections check the entire enemy segment (including
   levels that share its data).
+- Garbled enemy sprites in levels with cannons and spawner pipes: the cannon
+  fire family now counts toward graphics-page compatibility — cannonball and
+  bob-omb cannons force their page level-wide (matching how the game engine
+  reloads it every frame), goomba pipes and Bill cannons account for the
+  page their spawned enemies need, and cannon shuffle picks respect the
+  pages already committed around them.
 
 ## [0.11.2] - 2026-07-10
 
