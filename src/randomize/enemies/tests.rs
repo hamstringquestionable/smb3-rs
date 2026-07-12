@@ -850,6 +850,213 @@
         }
     }
 
+    /// A vanilla Lakitu (out-of-pool chaser) must pin its CHR page for the
+    /// WHOLE level, not just its own proximity group — it follows the player
+    /// across every group (see CHASER_IDS).
+    #[test]
+    fn test_chaser_pins_distant_groups() {
+        let flags = Options {
+            ground: EnemyMode::Wild,
+            shell: EnemyMode::Wild,
+            flying: EnemyMode::Wild,
+            water: EnemyMode::Wild,
+            bros: EnemyMode::Wild,
+            ..Options::default()
+        };
+        let rom = rom_with_segment(&[
+            0xFF, 0x01,
+            0x83, 0x05, 0x10, // Lakitu ($0B/+4, chaser) — screen 0
+            0x72, 0x80, 0x19, // Goomba — 7 screens away, own CHR group
+            0x6C, 0x84, 0x19, // Green Troopa — same distant group
+            0xFF,
+        ]);
+        for seed in 0..200u64 {
+            let mut rom_copy = rom.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_copy, &mut rng, &flags);
+            assert_eq!(
+                rom_copy.read_byte(ENEMY_DATA_START + 2), 0x83,
+                "seed {seed}: Lakitu must not be swapped"
+            );
+            for off in [5usize, 8] {
+                let id = rom_copy.read_byte(ENEMY_DATA_START + off);
+                if let Some(bank) = sprite_bank(id) {
+                    assert!(
+                        bank.slot != 4 || bank.chr_page == 0x0B,
+                        "seed {seed}: pick 0x{id:02X} (page ${:02X}/+4) in a distant \
+                         group conflicts with the level-wide Lakitu ($0B/+4)",
+                        bank.chr_page
+                    );
+                }
+            }
+        }
+    }
+
+    /// A chaser pick (Big Bertha) must be CHR-compatible with pages pinned
+    /// anywhere in the segment, not just its own group — it will follow the
+    /// player to them. Non-chaser picks in the distant group stay free.
+    #[test]
+    fn test_chaser_pick_respects_distant_pins() {
+        let flags = Options {
+            water: EnemyMode::Wild,
+            ..Options::default()
+        };
+        let rom = rom_with_segment(&[
+            0xFF, 0x01,
+            0x8A, 0x05, 0x10, // Thwomp ($12/+4), class off by default → pinned
+            0x62, 0x80, 0x19, // Blooper — 7 screens away, own CHR group
+            0xFF,
+        ]);
+        for seed in 0..300u64 {
+            let mut rom_copy = rom.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_copy, &mut rng, &flags);
+            assert_eq!(rom_copy.read_byte(ENEMY_DATA_START + 2), 0x8A);
+            let id = rom_copy.read_byte(ENEMY_DATA_START + 5);
+            assert!(
+                !BERTHA_IDS.contains(&id),
+                "seed {seed}: Bertha 0x{id:02X} ($1A/+4) picked despite the Thwomp \
+                 ($12/+4) pinned elsewhere in the level"
+            );
+        }
+    }
+
+    /// Boom-Booms are deliberately NOT CHR-pinned (see should_precommit):
+    /// shell enemies (koopas, $4F/+5) must stay pickable next to a Boom-Boom
+    /// ($33/+5) because the shell-vs-boss interaction is wanted gameplay.
+    #[test]
+    fn test_boomboom_does_not_block_shell_picks() {
+        let flags = Options {
+            ground: EnemyMode::Wild, // goomba slot draws from the wild pool…
+            shell: EnemyMode::Wild,  // …which includes the koopas
+            ..Options::default()
+        };
+        let rom = rom_with_segment(&[
+            0xFF, 0x01,
+            0x72, 0x0E, 0x19, // Goomba — same screen as the Boom-Boom
+            0x4B, 0x10, 0x10, // Boom-Boom (jump, $33/+5)
+            0xFF,
+        ]);
+        let mut saw_koopa = false;
+        for seed in 0..200u64 {
+            let mut rom_copy = rom.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_copy, &mut rng, &flags);
+            let boom = rom_copy.read_byte(ENEMY_DATA_START + 5);
+            assert!(
+                BOOMBOOM_SWAP.contains(&boom),
+                "seed {seed}: Boom-Boom became 0x{boom:02X}"
+            );
+            // Green/Red Troopa are $4F/+5 — CHR-conflicting with the
+            // Boom-Boom, but allowed on purpose.
+            if matches!(rom_copy.read_byte(ENEMY_DATA_START + 2), 0x6C | 0x6D) {
+                saw_koopa = true;
+                break;
+            }
+        }
+        assert!(
+            saw_koopa,
+            "no koopa ever picked next to a Boom-Boom in 200 seeds — \
+             Boom-Boom's CHR page is being pinned, but it must stay unpinned \
+             so shells remain available in boss rooms"
+        );
+    }
+
+    /// Install two fake level headers so both eps are entry points: the outer
+    /// level's run starts at the segment head and reads straight through the
+    /// inner ep.
+    fn install_two_entry_headers(data: &mut [u8], ep_a: u16, ep_b: u16) {
+        let region_start = 0x1E512usize; // Plains (TS1) region start
+        let mut pos = region_start;
+        for ep in [ep_a, ep_b] {
+            data[pos] = 0;
+            data[pos + 1] = 0;
+            data[pos + 2] = (ep & 0xFF) as u8;
+            data[pos + 3] = ((ep >> 8) & 0xFF) as u8;
+            for k in 4..9 {
+                data[pos + k] = 0;
+            }
+            data[pos + 9] = 0xFF; // empty command stream
+            pos += 10;
+        }
+    }
+
+    /// The injection pin-scan must cover the whole $FF-bounded segment, not
+    /// just the ep's own run: an outer level reads straight through the inner
+    /// ep, so its pinned pages constrain the injected chaser too.
+    #[test]
+    fn test_injection_pin_scan_covers_outer_prefix() {
+        let flags = Options {
+            wild_injections: true,
+            ..Options::default()
+        };
+        let injection_ids: &[u8] = &[0x83, 0xAF, 0x2D];
+
+        // Outer ep → page byte at +1; inner ep → the Goomba entry at +5
+        // (entries-only form). The Thwomp sits BEFORE the inner ep — only the
+        // outer level sees it — and pins slot 4 to $12, which conflicts with
+        // every injection id (all slot 4: $0B / $32 / $1A).
+        let mut data = blank_rom_image();
+        let seg = &[
+            0xFF, 0x01,
+            0x8A, 0x05, 0x10, // Thwomp ($12/+4), class off by default → pinned
+            0x72, 0x10, 0x19, // Goomba (inner level's first entry)
+            0xFF,
+        ];
+        data[ENEMY_DATA_START..ENEMY_DATA_START + seg.len()].copy_from_slice(seg);
+        install_two_entry_headers(
+            &mut data,
+            (ENEMY_DATA_START + 1) as u16,
+            (ENEMY_DATA_START + 5) as u16,
+        );
+        let rom = Rom::from_bytes_lax(&data, true).unwrap();
+        for seed in 0..500u64 {
+            let mut rom_copy = rom.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_copy, &mut rng, &flags);
+            let id = rom_copy.read_byte(ENEMY_DATA_START + 5);
+            assert!(
+                !injection_ids.contains(&id),
+                "seed {seed}: chaser 0x{id:02X} injected at the inner ep despite \
+                 the Thwomp ($12/+4) in the outer level's prefix"
+            );
+        }
+
+        // Positive control: swap the Thwomp for a slot-5 pin (wood block,
+        // $13/+5). All injection ids are slot 4, so injections must still
+        // land at the inner ep in some seeds — the wider pin-scan must not
+        // over-block.
+        let mut data2 = blank_rom_image();
+        let seg2 = &[
+            0xFF, 0x01,
+            0x2E, 0x05, 0x10, // Wood block ($13/+5), out-of-pool → pinned
+            0x72, 0x10, 0x19, // Goomba (inner level's first entry)
+            0xFF,
+        ];
+        data2[ENEMY_DATA_START..ENEMY_DATA_START + seg2.len()].copy_from_slice(seg2);
+        install_two_entry_headers(
+            &mut data2,
+            (ENEMY_DATA_START + 1) as u16,
+            (ENEMY_DATA_START + 5) as u16,
+        );
+        let rom2 = Rom::from_bytes_lax(&data2, true).unwrap();
+        let mut saw = false;
+        for seed in 0..500u64 {
+            let mut rom_copy = rom2.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_copy, &mut rng, &flags);
+            if injection_ids.contains(&rom_copy.read_byte(ENEMY_DATA_START + 5)) {
+                saw = true;
+                break;
+            }
+        }
+        assert!(
+            saw,
+            "pin-scan over-blocks: no injection at the inner ep in 500 seeds \
+             with only a slot-5 pin present"
+        );
+    }
+
     #[test]
     fn test_chr_groups_split_distant_enemies() {
         // Two enemies far apart (screen 0 vs screen 5) should get independent

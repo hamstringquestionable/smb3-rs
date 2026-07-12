@@ -97,10 +97,14 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
     // Wild injection runs in its own pass driven by *level entry points*
     // (header-pointed enemy_ptr values), not by walker-segments. This
     // guarantees every injection lands on a byte the SMB3 level loader
-    // actually reads. See inject_at_entry_points doc for details.
+    // actually reads. See inject_at_entry_points doc for details. Segment
+    // bounds are passed so the injection's CHR pin-scan can cover the whole
+    // $FF-bounded segment, not just the ep's own run (runs nest, and outer
+    // levels see the injected enemy too).
     if opts.wild_injections && !big_q_only {
         let entry_ptrs = enemy_entry_points(rom);
-        inject_at_entry_points(&mut data, &entry_ptrs, opts, rng);
+        let bounds = segment_writer::walk_segments(&data, 0, data.len(), &skip_ranges);
+        inject_at_entry_points(&mut data, &entry_ptrs, &bounds, opts, rng);
     }
 
     let mut i = 0;
@@ -169,17 +173,46 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
         // CHR pages.
         let groups = chr_groups(&entries);
 
+        // Level-wide chaser bookkeeping (see CHASER_IDS): Lakitu, the Angry
+        // Sun, and the Big Berthas follow the player across proximity groups,
+        // so the one-screen assumption behind chr_groups doesn't hold for them.
+        //  - seg_all accumulates every commitment in the segment: pinned pages
+        //    from all groups up front, then every pick as it's made. A chaser
+        //    candidate must be compatible with all of it (checked in
+        //    pick_replacement via ChrCtx::segment).
+        //  - seg_chaser holds the pages of chasers present in the segment
+        //    (pinned now, or picked as we go); it seeds every group's local
+        //    slots so ordinary picks stay compatible with a chaser that will
+        //    follow the player to them.
+        let mut seg_all4 = ChrSlot::Free;
+        let mut seg_all5 = ChrSlot::Free;
+        let mut seg_chaser4 = ChrSlot::Free;
+        let mut seg_chaser5 = ChrSlot::Free;
+        if !big_q_only {
+            for entry in &entries {
+                let fo = ENEMY_DATA_START + entry.data_index;
+                if is_pinned(entry.obj_id, fo, modes) {
+                    commit_chr_page(entry.obj_id, &mut seg_all4, &mut seg_all5);
+                    if CHASER_IDS.contains(&entry.obj_id) {
+                        commit_chr_page(entry.obj_id, &mut seg_chaser4, &mut seg_chaser5);
+                    }
+                }
+            }
+        }
+
         for group in &groups {
             // Two-pass approach per CHR group:
-            // Pass 1: pre-commit CHR pages from non-swappable objects AND uniform-CHR
-            // classes (all members share the same page/slot, so swapping can't change it).
-            let mut committed_slot4 = ChrSlot::Free;
-            let mut committed_slot5 = ChrSlot::Free;
+            // Pass 1: pre-commit CHR pages from pinned entries (non-swappable
+            // objects, uniform-CHR classes, SkipSwap protections), seeded with
+            // the pages of any level-wide chasers in the segment.
+            let mut committed_slot4 = seg_chaser4;
+            let mut committed_slot5 = seg_chaser5;
 
             if !big_q_only {
                 for &idx in group {
                     let entry = &entries[idx];
-                    if should_precommit(entry.obj_id, modes) {
+                    let fo = ENEMY_DATA_START + entry.data_index;
+                    if is_pinned(entry.obj_id, fo, modes) {
                         commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
                     }
                 }
@@ -206,20 +239,33 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                     data[entry.data_index] = *BOOMBOOM_SWAP.choose(rng).unwrap();
                     continue;
                 }
-                // SkipSwap keeps its enemy but still pins the CHR slot.
+                // SkipSwap keeps its enemy; its CHR page was already pinned
+                // in Pass 1 (is_pinned covers SkipSwap protections).
                 if protection == Some(EntryProtection::SkipSwap) {
-                    commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
                     continue;
                 }
 
                 let was_bertha = BERTHA_IDS.contains(&data[entry.data_index]);
                 let cap_full = bertha_count.saturating_sub(was_bertha as u8)
                     >= MAX_BERTHA_PER_SEGMENT;
+                let chr = ChrCtx {
+                    local: (committed_slot4, committed_slot5),
+                    segment: (seg_all4, seg_all5),
+                };
                 let Some(chosen) = pick_replacement(
-                    entry, protection, modes, wild_pool,
-                    (committed_slot4, committed_slot5), cap_full, rng,
+                    entry, protection, modes, wild_pool, chr, cap_full, rng,
                 ) else {
-                    continue; // protection mode off, or not a known class: no swap
+                    // No swap (protection mode off, unknown class, or no
+                    // compatible candidate) — the vanilla enemy stays, so its
+                    // page is a real on-screen commitment like any pick.
+                    // (Redundant for pass-1-pinned entries; it matters when a
+                    // swappable entry found no compatible replacement.)
+                    commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
+                    commit_chr_page(entry.obj_id, &mut seg_all4, &mut seg_all5);
+                    if CHASER_IDS.contains(&entry.obj_id) {
+                        commit_chr_page(entry.obj_id, &mut seg_chaser4, &mut seg_chaser5);
+                    }
+                    continue;
                 };
 
                 let chosen_is_bertha = BERTHA_IDS.contains(&chosen);
@@ -230,6 +276,10 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                 }
                 swap_enemy(&mut data, entry.data_index, chosen);
                 commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);
+                commit_chr_page(chosen, &mut seg_all4, &mut seg_all5);
+                if CHASER_IDS.contains(&chosen) {
+                    commit_chr_page(chosen, &mut seg_chaser4, &mut seg_chaser5);
+                }
             }
 
         }
