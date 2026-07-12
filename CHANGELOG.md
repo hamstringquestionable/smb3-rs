@@ -10,6 +10,17 @@ into a versioned section when a release is cut.
 
 ### Fixed
 
+- Lobby Shuffle no longer crashes when a level whose interior is a vertical
+  shaft (7-1, 7-6) or a door room (2-Pyramid) is entered through another
+  level's front pipe. Those interiors carry an out-of-range pipe-exit
+  direction that vanilla only ever reaches by falling in or through a door;
+  the shuffle now normalizes the donated direction to a valid pipe exit so
+  the player lands correctly instead of crashing.
+
+### Changed
+
+- Lobby Shuffle pool grows to 11 with the 2-Pyramid bonus rejoining (its
+  pipe-exit crash is fixed above).
 - Garbled enemy sprites in levels with player-chasing enemies: Lakitu, the
   Angry Sun, and the Big Berthas (vanilla, wild-picked, or wild-injected)
   now pin their graphics page across the whole level instead of just their
