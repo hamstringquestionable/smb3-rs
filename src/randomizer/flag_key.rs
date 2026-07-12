@@ -3,7 +3,7 @@
 
 use super::*;
 
-pub(super) const FLAG_KEY_VERSION: u8 = 23;
+pub(super) const FLAG_KEY_VERSION: u8 = 24;
 
 pub(super) const FLAG_KEY_PREFIX: &str = "SMB3R-";
 
@@ -219,8 +219,11 @@ impl Options {
             }
         }
 
-        // b12: piranha_shuffle(1-0). Bits 7-2 free for future flags.
-        let b12 = pm(self.piranha_shuffle);
+        // b12: piranha_shuffle(1-0), antechamber_shuffle ON bit (2) and
+        // Maybe bit (3). Bits 7-4 free for future flags.
+        let b12 = pm(self.piranha_shuffle)
+            | (self.antechamber_shuffle.is_on() as u8) << 2
+            | (self.antechamber_shuffle.is_maybe() as u8) << 3;
 
         [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12]
     }
@@ -343,6 +346,7 @@ impl Options {
             hammer_breaks_bridges: dtri((b3 >> 7) & 1 != 0, (b11 >> 1) & 1 != 0),
             fire_flower: dffm(b11 >> 4),
             piranha_shuffle: dpm(b12),
+            antechamber_shuffle: dtri((b12 >> 2) & 1 != 0, (b12 >> 3) & 1 != 0),
             ground: dem(b5 >> 6),
             shell: dem(b5 >> 4),
             flying: dem(b5 >> 2),

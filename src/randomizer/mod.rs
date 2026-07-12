@@ -95,6 +95,7 @@ fn randomize_inner(
     let troll_pipes = options.troll_pipes.resolve(&mut maybe_rng);
     let more_hammer_rocks = options.more_hammer_rocks.resolve(&mut maybe_rng);
     let eights_are_wild = options.eights_are_wild.resolve(&mut maybe_rng);
+    let antechamber_shuffle = options.antechamber_shuffle.resolve(&mut maybe_rng);
 
     // QoL map patches run first so all subsequent overworld operations
     // (fortress redistribution, pipe shuffle, lock shuffle) see the final
@@ -192,6 +193,14 @@ fn randomize_inner(
     if options.shuffle_airships {
         rom.set_tag("levels/airships");
         randomize::levels::randomize_airships(rom, &mut rng);
+    }
+
+    // Antechamber shuffle touches only level data (entry headers + junction
+    // commands), never pointer tables or enemy streams, so it's independent
+    // of the overworld builder and the enemy/powerup passes.
+    if antechamber_shuffle {
+        rom.set_tag("levels/antechambers");
+        randomize::antechambers::shuffle(rom, &mut rng);
     }
 
     // Koopaling stability patches — needed whenever Koopalings may load in a

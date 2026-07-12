@@ -1,4 +1,5 @@
 pub mod anchor_visuals;
+pub mod antechambers;
 pub mod autoscroll;
 pub mod beta_tornado;
 pub mod bowser_castle;

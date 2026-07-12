@@ -313,7 +313,8 @@ This matches the MarioWiki count of 3 mushroom/leaf powerups (all QBLOCKLEAF).
 #### How Junctions Work
 
 Group 7 commands (`byte0 & 0xE0 == 0xE0`) are **level junctions** — they do not
-generate tiles. Junction byte2 encodes player spawn positions, NOT target addresses.
+generate tiles. Junction byte2 encodes player spawn positions, NOT target addresses
+(full decode in "Junction Spawn Positions" below).
 The actual sub-area target is determined by the **header chain**: each 9-byte level
 header contains pointers to the next sub-area's layout and enemy data.
 
@@ -413,6 +414,85 @@ resolve each `alt_layout` through its own `alt_tileset` before indexing.
 - Overwrite byte 6 low nibble: `0x0B` (preserves upper nibble = 0).
 - Result: entering 8-Hnd1 and triggering its junction lands directly in the
   cloud-tileset coin-heaven room at `$AB4F` / `$CE89` / ts=11 in PRG019.
+
+#### Junction Spawn Positions (Group 7 Command Decode)
+
+Sources: southbird disasm `prg030.asm` (LevelLoad, layout parse loop),
+`prg014.asm` (`LoadLevel_StoreJctStart`, CPU $DFD1), `prg026.asm`
+(`Level_JctCtl_Do` $A9CD, `LevelJct_General` $AA87), `smb3.asm` RAM map.
+
+**Where spawn data lives:** in the *source* area — the area the player is
+leaving. A Group 7 command (`byte0 & 0xE0 == 0xE0`) is 3 bytes; whenever an
+area's layout is parsed, each of its junction commands fills one slot of two
+16-entry SRAM arrays:
+
+```
+idx = byte0 & 0x0F                 ; slot index
+Level_JctYLHStart[idx] = byte1     ; $7F54-$7F63
+Level_JctXLHStart[idx] = byte2     ; $7F64-$7F73
+```
+
+| Byte | Bits | Meaning |
+|------|------|---------|
+| byte1 | 0-3 | `Level_PipeExitDir` (exit animation; >= 3 also skips X centering) |
+| byte1 | 4-6 | Y start index into `LevelJct_YLHStarts`/`LevelJct_VertStarts` (PRG026 $AA77/$AA7F) |
+| byte1 | 7 | Destination is vertical mode |
+| byte2 | 0-3 | Spawn X-Hi (destination screen number) |
+| byte2 | 4-7 | Spawn X-Lo (tile column within screen; engine ORs `#$08` to center unless ExitDir >= 3) |
+
+**Order of operations makes these *source* data:** on a pipe/door transition,
+`HandleLevelJunction` (PRG026 $A930) calls `Level_JctCtl_Do` — which swaps the
+layout pointers (`Level_JctInit`) *and immediately* computes the player's new
+position from the slot arrays — and only afterwards jumps to display
+preparation (PRG030 $897B), where the destination layout gets parsed. So the
+slot values consumed by a transition are the ones filled when the **source**
+area was parsed. Each area's junction commands define where the player appears
+in the *destination* of transitions **out of** that area.
+
+**Which slot is used:** `LevelJct_General` indexes the arrays with
+`Player_XHi` — the screen the player occupies at the pipe/door (for a vertical
+source area, a Y-progress value via `LevelJct_GetVScreenH` instead). Vanilla
+contract: a pipe on screen N of area X requires X's own layout to contain a
+junction command with `byte0 & 0x0F == N`, whose bytes 1-2 give the arrival
+position in X's `alt_*` destination. (Verified across 5-3/6-6/7-5/7-7: each
+main area's single junction command slot equals its exit pipe's screen.)
+`LevelJct_GenericExit` (JctCtl=4) does NOT use the slot arrays at all: it
+loads the world-keyed hardcoded destination (`LevelJctGE_*` tables) and sets
+fixed spawn constants (`Player_X=$28`, `Player_Y=$80`, `Player_YHi=1`,
+`PipeExitDir=1`, never vertical) — which is why an area can exit via a
+`100xx` pipe without defining any junction commands (e.g. 4-3's interior,
+which has zero junction commands and a null alt pointer).
+
+**Consequence for redirects:** retargeting header X's `alt_*` pointers moves
+the destination but the arrival position still comes from X's own junction
+command. To land correctly in a new destination D, also overwrite bytes 1-2 of
+X's junction command (at slot = X's pipe screen) with values valid for D —
+e.g., the bytes of the command that vanilla-jumped into D. The slot nibble in
+byte0 stays untouched (it matches X's pipe position). Because every transition
+reads slots from the most recent parse (the source area's), redirected
+pairings cannot interfere with each other's slots.
+
+**`Level_JctCtl` values** (set by pipe/door code, dispatched via
+`Level_JctCtl_Do` PRG026 $A9CD): 0 none, 1 init, 2 Big Question Block bonus
+area (per-world hardcoded tables `LevelJctBQ_*`), 3 general (follows header
+`alt_*` chain), 4 generic exit, 5 special Toad House (1-3 whistle). `$80` =
+reuse current `Level_AltLayout`/`Level_AltObjects` values.
+
+**Pipe encoding** (`Level_PipeMove`, bit7 clear = entering): bits 2-4 select
+`001` exit level (world-map pipes), `010` Big Q Block area (JctCtl=2), `011`
+general junction (JctCtl=3), `100` generic exit area (JctCtl=4), `101`
+in-level transit (W7 pipe mazes; no junction — same area).
+
+**Generic exit area (JctCtl=4):** hardcoded per-world tables at PRG026
+`LevelJctGE_Layout`/`_Objects`/`_Tileset` ($AB17/$AB27/$AB37) — every world
+uses the shared plains `W503_End` area except W4 (`GenericW4L`). Levels ending
+in a `100xx` pipe bypass the header chain entirely on exit.
+
+**Header load during a junction** (`LevelLoad` PRG030 $97B7): when
+`Level_JctCtl != 0` the loader still reads the target header but **skips**
+byte 4's vertical-start (bits 5-7) and byte 8's timer (bits 6-7) — the running
+clock persists across junctions — while music (byte 8 bits 0-3), init action
+(byte 7 bits 5-7), palettes, and size are re-read from the target header.
 
 #### OBJ_TREASURESET (0xD6) — Treasure Box Items
 

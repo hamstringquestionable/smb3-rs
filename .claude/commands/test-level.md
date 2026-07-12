@@ -19,25 +19,43 @@ Examples:
    `nix-shell -p python3 --run 'python3 tools/apply_ips_subset.py patches/smb3practice_SE.ips test_level.nes 0x14010 0x18010'`
    This applies only the PRG010–011 records (~19 records, ~85 bytes). Do NOT apply the full IPS — its PRG006/PRG012 records would clobber the randomized enemy data and overworld map.
 
-4. **Identify levels** by name. Use these mappings to find vanilla obj_ptr/lay_ptr/tileset:
+4. **Remove locks** so fortress locks and water gaps never block movement:
+   replace every lock/gap tile on all 8 world map grids with its walkable
+   path tile — `0x54→0x46` (vertical lock), `0x56→0x45` (horizontal lock),
+   `0xE4→0xDA` (sky lock), `0x9D→0xB3` (water gap):
+   ```sh
+   nix-shell -p python3 --run "python3 -c \"
+   rom = bytearray(open('test_level.nes','rb').read())
+   GRIDS = [(0x185BA,16),(0x1864B,32),(0x1876C,48),(0x1891D,32),(0x18A3E,32),(0x18B5F,48),(0x18D10,32),(0x18E31,64)]
+   REPL = {0x54:0x46, 0x56:0x45, 0xE4:0xDA, 0x9D:0xB3}
+   for off,cols in GRIDS:
+       for i in range(9*cols):
+           if rom[off+i] in REPL: rom[off+i] = REPL[rom[off+i]]
+   open('test_level.nes','wb').write(bytes(rom))
+   \""
+   ```
+   (Fortress-clear FX later rewriting one of these positions is harmless in a
+   test ROM.)
+
+5. **Identify levels** by name. Use these mappings to find vanilla obj_ptr/lay_ptr/tileset:
    - Format: `W-F1` = World fortress 1 (e.g., `6-F1`), `BC` = Bowser Castle
    - Look up the level in the vanilla pointer tables (W1=0x19438/21 entries, W2=0x194BA/47, W3=0x195D8/52, W4=0x19714/34, W5=0x197E4/42, W6=0x198E4/57, W7=0x19A3E/46, W8=0x19B56/41)
    - Fortress entries from `FORTRESS_ENTRIES` in `src/randomize/rom_data.rs`
    - Bowser Castle = W8 index 40 (last real entry)
 
-5. **Find numbered level tiles** on the target world's map grid. Map grid offsets from `MAP_TILE_GRIDS` in `rom_data.rs`:
+6. **Find numbered level tiles** on the target world's map grid. Map grid offsets from `MAP_TILE_GRIDS` in `rom_data.rs`:
    - W1: 0x185BA (16 cols), W2: 0x1864B (32 cols), W3: 0x1876C (48 cols)
    - W4: 0x1891D (32 cols), W5: 0x18A3E (32 cols), W6: 0x18B5F (48 cols)
    - W7: 0x18D10 (32 cols), W8: 0x18E31 (64 cols)
    - All grids have 9 rows. Tiles 0x03-0x0F are numbered levels (tile - 2 = level number).
 
-6. **Find pointer table entries** that correspond to those tile positions using the InitIndex/ByRowType/ByScrCol tables.
+7. **Find pointer table entries** that correspond to those tile positions using the InitIndex/ByRowType/ByScrCol tables.
 
-7. **Overwrite** the pointer table entry (ByRowType byte for tileset, ObjSets word, LevelLayouts word) with the target level's values.
+8. **Overwrite** the pointer table entry (ByRowType byte for tileset, ObjSets word, LevelLayouts word) with the target level's values.
 
-8. **Set starting world**: write world index (0-7) to ROM offset `0x30CC3`.
+9. **Set starting world**: write world index (0-7) to ROM offset `0x30CC3`.
 
-9. **Save** as `test_level.nes` and report which tiles have which levels. With the open-movement patches applied, no tile clearing is needed — Mario can walk freely across the entire overworld.
+10. **Save** as `test_level.nes` and report which tiles have which levels. With the open-movement patches applied, no tile clearing is needed — Mario can walk freely across the entire overworld.
 
 ## Key ROM offsets
 - Map object ID master pointer: 0x16050 (per-world, 9 slots each)

@@ -131,6 +131,7 @@ fn flag_key_round_trip_all_wild() {
         remove_whistles: true,
         more_hammer_rocks: Tri::On,
         eights_are_wild: Tri::On,
+        antechamber_shuffle: Tri::On,
         starting_lives: 99,
         card_speed_clear: true,
         remove_n_cards: true,
@@ -177,6 +178,7 @@ fn flag_key_round_trip_all_wild() {
     assert_eq!(opts.starting_items, decoded.starting_items);
     assert_eq!(opts.hammer_breaks_locks, decoded.hammer_breaks_locks);
     assert_eq!(opts.hammer_breaks_bridges, decoded.hammer_breaks_bridges);
+    assert_eq!(opts.antechamber_shuffle, decoded.antechamber_shuffle);
     assert_eq!(opts.world_order, decoded.world_order);
     assert_eq!(opts.world_count, decoded.world_count);
     assert_eq!(opts.starting_lives, decoded.starting_lives);
@@ -565,6 +567,7 @@ fn all_off_options() -> Options {
         remove_whistles: false,
         more_hammer_rocks: Tri::Off,
         eights_are_wild: Tri::Off,
+        antechamber_shuffle: Tri::Off,
         starting_lives: 1,
         card_speed_clear: false,
         remove_n_cards: false,
@@ -629,6 +632,7 @@ fn all_on_options() -> Options {
         remove_whistles: true,
         more_hammer_rocks: Tri::On,
         eights_are_wild: Tri::On,
+        antechamber_shuffle: Tri::On,
         starting_lives: 99,
         card_speed_clear: true,
         remove_n_cards: true,
