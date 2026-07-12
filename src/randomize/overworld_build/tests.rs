@@ -1725,9 +1725,9 @@ struct ProgLinWorld {
     // Pipe classification (summed over seeds): counts per class + total
     // forced clears skipped by shortcut pipes.
     sum_conn: u64,
-    sum_island: u64,
-    sum_dead: u64,
     sum_shortcut: u64,
+    sum_access: u64,
+    sum_redundant: u64,
     sum_pipe_skip: u64,
     // Start→goal express pipe: how often a single pipe bridges start-island
     // straight to goal-island. express_total = seeds where it's applicable
@@ -1779,12 +1779,12 @@ fn prog_measure_pass(rom_bytes: &[u8], options: &crate::Options, seeds: u64) -> 
             for class in classify_pipes(built) {
                 match class {
                     PipeClass::Connectivity => w.sum_conn += 1,
-                    PipeClass::IslandRouting => w.sum_island += 1,
-                    PipeClass::DeadLoop => w.sum_dead += 1,
                     PipeClass::Shortcut(n) => {
                         w.sum_shortcut += 1;
                         w.sum_pipe_skip += n as u64;
                     }
+                    PipeClass::ContentAccess => w.sum_access += 1,
+                    PipeClass::Redundant => w.sum_redundant += 1,
                 }
             }
             w.sum_islands += island_count(built) as u64;
@@ -1844,14 +1844,15 @@ fn prog_print_pass(label: &str, worlds: &[ProgLinWorld; 8]) {
         );
     }
 
-    // Pipe-role breakdown: mean pipes per class per world. dead-loop (mainland
-    // loop skipping nothing) is the true waste; island-routing is intentional
-    // alternate island paths (variety, not waste).
+    // Pipe-role breakdown (mean pipes/world), by what removing the pipe would
+    // cost the player: conn = strands the target; shortcut = raises min-clears
+    // (lvls-skipped = how many); access = strands other level/fort content;
+    // redundant = nothing changes (pure waste).
     eprintln!(
-        "    pipes/world:   {:>5} {:>8} {:>10} {:>10} {:>11} {:>7} {:>9}",
-        "conn", "island", "dead-loop", "shortcut", "lvls-skipped", "islands", "express%",
+        "    pipes/world:   {:>5} {:>9} {:>12} {:>7} {:>10} {:>7} {:>9}",
+        "conn", "shortcut", "lvls-skipped", "access", "redundant", "islands", "express%",
     );
-    let (mut g_conn, mut g_island, mut g_dead, mut g_short, mut g_skip) =
+    let (mut g_conn, mut g_short, mut g_skip, mut g_access, mut g_redundant) =
         (0u64, 0u64, 0u64, 0u64, 0u64);
     for (wi, w) in worlds.iter().enumerate() {
         if w.reachable == 0 {
@@ -1864,34 +1865,34 @@ fn prog_print_pass(label: &str, worlds: &[ProgLinWorld; 8]) {
             "n/a".to_string()
         };
         eprintln!(
-            "      W{}         {:>5.2} {:>8.2} {:>10.2} {:>10.2} {:>11.2} {:>7.2} {:>9}",
+            "      W{}         {:>5.2} {:>9.2} {:>12.2} {:>7.2} {:>10.2} {:>7.2} {:>9}",
             wi + 1,
             w.sum_conn as f64 / r,
-            w.sum_island as f64 / r,
-            w.sum_dead as f64 / r,
             w.sum_shortcut as f64 / r,
             w.sum_pipe_skip as f64 / r,
+            w.sum_access as f64 / r,
+            w.sum_redundant as f64 / r,
             w.sum_islands as f64 / r,
             express,
         );
         g_conn += w.sum_conn;
-        g_island += w.sum_island;
-        g_dead += w.sum_dead;
         g_short += w.sum_shortcut;
         g_skip += w.sum_pipe_skip;
+        g_access += w.sum_access;
+        g_redundant += w.sum_redundant;
     }
     if t_reach > 0 {
         let tr = t_reach as f64;
-        let all_pipes = g_conn + g_island + g_dead + g_short;
+        let all_pipes = g_conn + g_short + g_access + g_redundant;
         eprintln!(
-            "      overall:   {:>5.2} {:>8.2} {:>10.2} {:>10.2} {:>11.2}  (mainland dead-loop {:.0}% of all pipes)",
+            "      overall:   {:>5.2} {:>9.2} {:>12.2} {:>7.2} {:>10.2}  (redundant {:.0}% of all pipes)",
             g_conn as f64 / tr,
-            g_island as f64 / tr,
-            g_dead as f64 / tr,
             g_short as f64 / tr,
             g_skip as f64 / tr,
+            g_access as f64 / tr,
+            g_redundant as f64 / tr,
             if all_pipes > 0 {
-                g_dead as f64 / all_pipes as f64 * 100.0
+                g_redundant as f64 / all_pipes as f64 * 100.0
             } else {
                 0.0
             },

@@ -399,50 +399,62 @@ pub(crate) fn level_adjacency_pairs(built: &BuiltWorld) -> usize {
     pairs.len()
 }
 
-/// What role a single pipe pair plays on the required route.
+/// What a single pipe pair earns its keep by — decided by leave-one-out:
+/// remove it and see what the player loses. The distinction is functional
+/// ("does removing it take anything away"), not geometric (mainland vs
+/// island): an island pipe whose island is reachable another way is just as
+/// redundant as a mainland loop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PipeClass {
-    /// Removing this pipe strands the objective — it's mandatory access to an
-    /// island / rock-sectioned area (function 1: connectivity).
+    /// Removing it strands the objective — mandatory access (blocks target
+    /// progress).
     Connectivity,
-    /// Removing it keeps the objective reachable and doesn't change min-clears,
-    /// but at least one endpoint is an island (not walk-reachable without
-    /// pipes). This is a *redundant island route* — it gives the player an
-    /// alternate path through the island network, so it's variety, not waste.
-    IslandRouting,
-    /// Removing it keeps the objective reachable, doesn't change min-clears,
-    /// AND both endpoints are walk-reachable mainland. A loop over ground the
-    /// player could already walk, skipping nothing — the true waste to minimize.
-    DeadLoop,
-    /// Removing it RAISES min-clears by `n` — a real shortcut that skips `n`
-    /// forced clears (function 2), regardless of mainland/island.
+    /// Removing it RAISES min-clears by `n` — a shortcut that skips `n` forced
+    /// clears.
     Shortcut(usize),
+    /// Removing it keeps the target reachable and min-clears unchanged, but
+    /// strands OTHER content: some level/fortress becomes unreachable. Sole
+    /// route to optional content the player can choose to play.
+    ContentAccess,
+    /// Removing it changes NOTHING — target still reachable, min-clears
+    /// unchanged, and the reachable level/fort set is identical. Pure waste.
+    Redundant,
+}
+
+/// Level/fortress slot positions reachable from start with the given pipe set
+/// (locks treated as open — this is topological "can the player ever get here",
+/// which they can by clearing the gating fortress). Canoes handled by walk_map.
+fn reachable_content(built: &BuiltWorld) -> HashSet<(usize, usize)> {
+    let mut grid = built.grid.clone();
+    stamp_slots(&mut grid, &built.slots);
+    let Some(start) = rom_data::find_start(&grid) else {
+        return HashSet::new();
+    };
+    let reachable = walk_map(&grid, &built.pipe_pairs, Some(start), built.world_idx).nodes;
+    built
+        .slots
+        .iter()
+        .filter(|s| matches!(s.kind, SlotKind::Level | SlotKind::Fortress))
+        .map(|s| s.pos)
+        .filter(|p| reachable.contains(p))
+        .collect()
 }
 
 /// Classify every pipe pair by leave-one-out: remove it (leaving the others
-/// and all canoes intact) and re-run the required-progression analysis. The
-/// mainland/island split uses walk-only reachability from start (no pipes) so
-/// intentional island-hopping routes aren't miscounted as dead-loop waste.
+/// and all canoes intact) and re-run the required-progression analysis plus a
+/// reachable-content check.
 ///
-/// Caveat: leave-one-out reads a lateral loop offering an equal-length
-/// alternative as delta-0 (it doesn't lower the MINIMUM clears). For a
-/// mainland loop that's exactly the waste we're after; the island case is
-/// separated out as `IslandRouting`.
+/// Caveat: leave-one-out reads a pipe as `Redundant` whenever an equally-good
+/// alternative route AND alternative content-access both exist — i.e. it
+/// measures "does removing this pipe take anything away from the MINIMUM
+/// route or the reachable content", not "could a player ever use it".
 pub(crate) fn classify_pipes(built: &BuiltWorld) -> Vec<PipeClass> {
     let base = analyze_required_progression(built, false);
     let base_clears = base.forts_required + base.levels_required;
-
-    // Mainland = nodes walk-reachable from start with NO pipes. An endpoint
-    // outside this set is only reachable by pipe (an island).
-    let mut grid = built.grid.clone();
-    stamp_slots(&mut grid, &built.slots);
-    let mainland: HashSet<(usize, usize)> = rom_data::find_start(&grid)
-        .map(|s| walk_map(&grid, &[], Some(s), built.world_idx).nodes)
-        .unwrap_or_default();
+    let base_content = reachable_content(built);
 
     let mut out = Vec::with_capacity(built.pipe_pairs.len());
     for i in 0..built.pipe_pairs.len() {
-        let (a, b) = built.pipe_pairs[i];
         let mut without = built.clone();
         without.pipe_pairs.remove(i);
         let r = analyze_required_progression(&without, false);
@@ -452,10 +464,12 @@ pub(crate) fn classify_pipes(built: &BuiltWorld) -> Vec<PipeClass> {
             let delta = (r.forts_required + r.levels_required).saturating_sub(base_clears);
             if delta > 0 {
                 PipeClass::Shortcut(delta)
-            } else if mainland.contains(&a) && mainland.contains(&b) {
-                PipeClass::DeadLoop
+            } else if reachable_content(&without).len() < base_content.len() {
+                // Removing it left the target reachable and clears unchanged,
+                // but a level/fort dropped out of reach — sole content access.
+                PipeClass::ContentAccess
             } else {
-                PipeClass::IslandRouting
+                PipeClass::Redundant
             }
         });
     }
