@@ -157,12 +157,17 @@ pub(super) fn score_with_weights(
 /// Path relevance: max detour (in BFS hops) that still earns a bonus.
 pub(super) const PATH_DETOUR_CAP: f64 = 6.0;
 
-/// Path relevance weight. Max bonus = PATH_DETOUR_CAP * W_PATH = 9.0.
-/// Tuned via test_level_placement_quality: 0.5 was decorative (no bias);
-/// 3.0 dominated and clumped levels on the route at the expense of spread
-/// and dead-ends. 1.5 produces a meaningful route bias without breaking
-/// the spread or density terms.
-pub(super) const W_PATH: f64 = 1.5;
+/// Path relevance weight. Max bonus = PATH_DETOUR_CAP * W_PATH = 4.5.
+/// Lowered from 1.5 → 0.75 to cut back-to-back forced-level streaks: the route
+/// bias was gluing levels onto the start→target trunk, which was the dominant
+/// driver of overworld linearity (mean forced-level streak ~2.1, well above
+/// the reference SMB3 randomizer's ~1.8). A W_PATH sweep via
+/// test_required_progression's linearity block: 1.5→streak 2.12, 1.0→1.89,
+/// 0.75→1.79 (≈ reference), 0.5→1.70, 0.0→1.34 (overshoots and thins the
+/// required route too much). 0.75 keeps a meaningful route bias while landing
+/// streak at the reference level. (History: 3.0 dominated and clumped hard;
+/// 0.5 was once considered "decorative" at the old weightings.)
+pub(super) const W_PATH: f64 = 0.75;
 
 /// Score a candidate position for level placement. Higher = better.
 /// Includes a path relevance bonus: positions on the main start→target

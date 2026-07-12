@@ -19,6 +19,11 @@ into a versioned section when a release is cut.
 
 ### Changed
 
+- Overworld level placement is less linear: the weight biasing levels onto the
+  main start→airship route was halved (1.5 → 0.75), so fewer forced levels get
+  glued back-to-back along the critical path. Average run of consecutive
+  must-play levels drops from ~2.1 to ~1.8 (in line with the reference SMB3
+  randomizer) while levels still favor the route over dead-end spurs.
 - Overworld pipe routing in multi-island worlds now grows a chain outward from
   the start, bridging the nearest unreached island each step, instead of always
   piping the start island straight to the goal island. Worlds like 7 and 8
