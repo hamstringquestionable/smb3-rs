@@ -416,28 +416,35 @@ pub(crate) enum PipeClass {
     /// strands OTHER content: some level/fortress becomes unreachable. Sole
     /// route to optional content the player can choose to play.
     ContentAccess,
+    /// Removing it strands nodes but NO level/fort content — a pipe to a
+    /// content-less spot (e.g. a lone island that just lets the player glimpse
+    /// the final island). Purposefully redundant / scenic, not gameplay waste.
+    Scenic,
     /// Removing it changes NOTHING — target still reachable, min-clears
-    /// unchanged, and the reachable level/fort set is identical. Pure waste.
+    /// unchanged, and the reachable node set is identical. Pure waste.
     Redundant,
 }
 
-/// Level/fortress slot positions reachable from start with the given pipe set
-/// (locks treated as open — this is topological "can the player ever get here",
-/// which they can by clearing the gating fortress). Canoes handled by walk_map.
-fn reachable_content(built: &BuiltWorld) -> HashSet<(usize, usize)> {
+/// Nodes reachable from start with the given pipe set (locks treated as open —
+/// topological "can the player ever get here", which they can by clearing the
+/// gating fortress). Canoes handled by walk_map.
+fn reachable_nodes(built: &BuiltWorld) -> HashSet<(usize, usize)> {
     let mut grid = built.grid.clone();
     stamp_slots(&mut grid, &built.slots);
-    let Some(start) = rom_data::find_start(&grid) else {
-        return HashSet::new();
-    };
-    let reachable = walk_map(&grid, &built.pipe_pairs, Some(start), built.world_idx).nodes;
+    match rom_data::find_start(&grid) {
+        Some(start) => walk_map(&grid, &built.pipe_pairs, Some(start), built.world_idx).nodes,
+        None => HashSet::new(),
+    }
+}
+
+/// How many Level/Fortress slots fall inside a reachable-node set.
+fn content_in(built: &BuiltWorld, reachable: &HashSet<(usize, usize)>) -> usize {
     built
         .slots
         .iter()
         .filter(|s| matches!(s.kind, SlotKind::Level | SlotKind::Fortress))
-        .map(|s| s.pos)
-        .filter(|p| reachable.contains(p))
-        .collect()
+        .filter(|s| reachable.contains(&s.pos))
+        .count()
 }
 
 /// Classify every pipe pair by leave-one-out: remove it (leaving the others
@@ -451,7 +458,8 @@ fn reachable_content(built: &BuiltWorld) -> HashSet<(usize, usize)> {
 pub(crate) fn classify_pipes(built: &BuiltWorld) -> Vec<PipeClass> {
     let base = analyze_required_progression(built, false);
     let base_clears = base.forts_required + base.levels_required;
-    let base_content = reachable_content(built);
+    let base_nodes = reachable_nodes(built);
+    let base_content = content_in(built, &base_nodes);
 
     let mut out = Vec::with_capacity(built.pipe_pairs.len());
     for i in 0..built.pipe_pairs.len() {
@@ -464,12 +472,17 @@ pub(crate) fn classify_pipes(built: &BuiltWorld) -> Vec<PipeClass> {
             let delta = (r.forts_required + r.levels_required).saturating_sub(base_clears);
             if delta > 0 {
                 PipeClass::Shortcut(delta)
-            } else if reachable_content(&without).len() < base_content.len() {
-                // Removing it left the target reachable and clears unchanged,
-                // but a level/fort dropped out of reach — sole content access.
-                PipeClass::ContentAccess
             } else {
-                PipeClass::Redundant
+                // Target still reachable, clears unchanged. Split by what
+                // removing the pipe strands from the reachable set.
+                let nodes = reachable_nodes(&without);
+                if content_in(&without, &nodes) < base_content {
+                    PipeClass::ContentAccess // stranded a level/fort
+                } else if nodes.len() < base_nodes.len() {
+                    PipeClass::Scenic // stranded content-less nodes (a view)
+                } else {
+                    PipeClass::Redundant // stranded nothing — pure waste
+                }
             }
         });
     }

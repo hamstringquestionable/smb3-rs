@@ -1727,6 +1727,7 @@ struct ProgLinWorld {
     sum_conn: u64,
     sum_shortcut: u64,
     sum_access: u64,
+    sum_scenic: u64,
     sum_redundant: u64,
     sum_pipe_skip: u64,
     // Start→goal express pipe: how often a single pipe bridges start-island
@@ -1784,6 +1785,7 @@ fn prog_measure_pass(rom_bytes: &[u8], options: &crate::Options, seeds: u64) -> 
                         w.sum_pipe_skip += n as u64;
                     }
                     PipeClass::ContentAccess => w.sum_access += 1,
+                    PipeClass::Scenic => w.sum_scenic += 1,
                     PipeClass::Redundant => w.sum_redundant += 1,
                 }
             }
@@ -1849,11 +1851,11 @@ fn prog_print_pass(label: &str, worlds: &[ProgLinWorld; 8]) {
     // (lvls-skipped = how many); access = strands other level/fort content;
     // redundant = nothing changes (pure waste).
     eprintln!(
-        "    pipes/world:   {:>5} {:>9} {:>12} {:>7} {:>10} {:>7} {:>9}",
-        "conn", "shortcut", "lvls-skipped", "access", "redundant", "islands", "express%",
+        "    pipes/world:   {:>5} {:>9} {:>8} {:>7} {:>7} {:>10} {:>9}",
+        "conn", "shortcut", "skipped", "access", "scenic", "redundant", "express%",
     );
-    let (mut g_conn, mut g_short, mut g_skip, mut g_access, mut g_redundant) =
-        (0u64, 0u64, 0u64, 0u64, 0u64);
+    let (mut g_conn, mut g_short, mut g_skip, mut g_access, mut g_scenic, mut g_redundant) =
+        (0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
     for (wi, w) in worlds.iter().enumerate() {
         if w.reachable == 0 {
             continue;
@@ -1865,31 +1867,33 @@ fn prog_print_pass(label: &str, worlds: &[ProgLinWorld; 8]) {
             "n/a".to_string()
         };
         eprintln!(
-            "      W{}         {:>5.2} {:>9.2} {:>12.2} {:>7.2} {:>10.2} {:>7.2} {:>9}",
+            "      W{}         {:>5.2} {:>9.2} {:>8.2} {:>7.2} {:>7.2} {:>10.2} {:>9}",
             wi + 1,
             w.sum_conn as f64 / r,
             w.sum_shortcut as f64 / r,
             w.sum_pipe_skip as f64 / r,
             w.sum_access as f64 / r,
+            w.sum_scenic as f64 / r,
             w.sum_redundant as f64 / r,
-            w.sum_islands as f64 / r,
             express,
         );
         g_conn += w.sum_conn;
         g_short += w.sum_shortcut;
         g_skip += w.sum_pipe_skip;
         g_access += w.sum_access;
+        g_scenic += w.sum_scenic;
         g_redundant += w.sum_redundant;
     }
     if t_reach > 0 {
         let tr = t_reach as f64;
-        let all_pipes = g_conn + g_short + g_access + g_redundant;
+        let all_pipes = g_conn + g_short + g_access + g_scenic + g_redundant;
         eprintln!(
-            "      overall:   {:>5.2} {:>9.2} {:>12.2} {:>7.2} {:>10.2}  (redundant {:.0}% of all pipes)",
+            "      overall:   {:>5.2} {:>9.2} {:>8.2} {:>7.2} {:>7.2} {:>10.2}  (redundant {:.0}% of all pipes)",
             g_conn as f64 / tr,
             g_short as f64 / tr,
             g_skip as f64 / tr,
             g_access as f64 / tr,
+            g_scenic as f64 / tr,
             g_redundant as f64 / tr,
             if all_pipes > 0 {
                 g_redundant as f64 / all_pipes as f64 * 100.0
