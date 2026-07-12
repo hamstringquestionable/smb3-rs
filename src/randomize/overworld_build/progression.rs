@@ -455,7 +455,30 @@ fn content_in(built: &BuiltWorld, reachable: &HashSet<(usize, usize)>) -> usize 
 /// alternative route AND alternative content-access both exist — i.e. it
 /// measures "does removing this pipe take anything away from the MINIMUM
 /// route or the reachable content", not "could a player ever use it".
+/// Copy of `built` with breakable rocks turned to path ($51→$45 horizontal,
+/// $52→$46 vertical, matching the game's `RockBreak_Replace`). Unbreakable
+/// rocks ($53) stay. Used only by the pipe classifier so a pipe whose sole
+/// value is bypassing a hammer-breakable rock counts as redundant — the player
+/// could break the rock instead. Does NOT affect the build or the streak /
+/// goal-stack metrics, which keep the true rock-as-wall topology.
+fn hammer_open_rocks(built: &BuiltWorld) -> BuiltWorld {
+    let mut b = built.clone();
+    for r in 0..b.grid.rows() {
+        for c in 0..b.grid.cols {
+            match b.grid.get(r, c) {
+                0x51 => b.grid.set(r, c, 0x45),
+                0x52 => b.grid.set(r, c, 0x46),
+                _ => {}
+            }
+        }
+    }
+    b
+}
+
 pub(crate) fn classify_pipes(built: &BuiltWorld) -> Vec<PipeClass> {
+    // Pipe value is judged with hammer-breakable rocks treated as passable, so
+    // a pipe that only bypasses a rock a hammer could break reads as redundant.
+    let built = &hammer_open_rocks(built);
     let base = analyze_required_progression(built, false);
     let base_clears = base.forts_required + base.levels_required;
     let base_nodes = reachable_nodes(built);
