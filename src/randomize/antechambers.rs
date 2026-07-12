@@ -45,7 +45,8 @@ struct Antechamber {
     junctions: &'static [usize],
 }
 
-const ANTECHAMBERS: [Antechamber; 10] = [
+const ANTECHAMBERS: [Antechamber; 11] = [
+    Antechamber { name: "2-Pyr", header: 0x28F36, junctions: &[0x28F6F, 0x28F96] },
     Antechamber { name: "4-3", header: 0x2701F, junctions: &[0x27073] },
     Antechamber { name: "5-2", header: 0x1A587, junctions: &[0x1A804, 0x1A807] },
     Antechamber { name: "5-3", header: 0x1EC26, junctions: &[0x1EC4A] },
@@ -61,22 +62,14 @@ const ANTECHAMBERS: [Antechamber; 10] = [
 // Candidates surfaced by `rom_map.py --antechamber` but deliberately left
 // OUT of the pool:
 //
-// - 2-Pyr (entry hdr 0x28F36): its front entrances are DOORS, and its
-//   front-door spawn bytes carry PipeExitDir=8 — not a valid pipe exit
-//   direction (1=Up 2=Down 3=Right 4=Left 5=Transit; doors never run the
-//   pipe-exit path, so vanilla never feeds 8 to it). Donating those bytes
-//   to a pipe host makes the arrival code index past the 5-entry
-//   Event_Countdown_Init table (PRG008 $A3C0) and the pipe-exit state
-//   machine matches no direction — observed as a hard crash entering the
-//   interior. (7-1/7-6's dir-8 bytes are fine: they set the vertical
-//   flag, a vanilla pipe pattern — fall-into-shaft.) Its exterior is
-//   also a mid-level hub like 6-5 below.
 // - 6-5 (entry hdr 0x22CFA): its entry area is a mid-level HUB, not a
 //   start/end shell — the cave interior's three return junctions bounce
 //   the player back into the entry (screens 1/2/4, the two-pipe leaf
 //   room), and those pipes' slot data must stay vanilla for the route to
 //   work. Hosting rewrites all entry junctions, so 6-5 can't host; a
-//   permutation then forces identity, so it's out entirely.
+//   permutation then forces identity, so it's out entirely. (2-Pyr is
+//   also a hub but is kept IN — see the NOTE below: its hub sits in a
+//   rarely-entered bonus, and its break is non-crashing.)
 // - 5-1 (entry hdr 0x1F45B): its interior is a bonus room; keeping it
 //   vanilla for now per design preference.
 // - 4-6 (entry hdr 0x1EAEF): the big/small mirror level — entry and
@@ -84,10 +77,17 @@ const ANTECHAMBERS: [Antechamber; 10] = [
 //   doors toggle between them at matching coordinates. Shuffling it
 //   would break the mirror conceit; revisit if ever wanted.
 //
-// NOTE: 5-2 and 7-1 also have multi-junction entries (mid-level re-entry
-// pipes). Unlike 6-5, their donated interiors produce playable chains
-// (pipe-fronted donors, valid exit dirs), so they stay in the pool —
-// watch them in playtests.
+// NOTE: 5-2, 7-1, and 2-Pyr also have multi-junction entries (mid-level
+// re-entry pipes). 5-2/7-1 donate cleanly (their interiors produce playable
+// chains). 2-Pyr is a genuine hub like 6-5 — its interior loops back to its
+// own entry — so when 2-Pyr HOSTS, that loop lands the player in whatever
+// was donated to 2-Pyr instead of 2-Pyr's own cave. Kept in anyway: unlike
+// 6-5 (mainline), 2-Pyr's hub is a rarely-entered bonus, and the outcome is
+// non-crashing — you just play the level attached to the 2-Pyr entrance.
+//
+// 2-Pyr's front door carries PipeExitDir=8 (7-1/7-6 do too, as vertical
+// shafts); `sanitize_exit_dir` remaps that to a valid pipe-exit direction so
+// a pipe host doesn't crash feeding dir 8 to the pipe-exit path.
 
 /// Everything that must travel with an interior when it is reassigned
 /// to another level's entry room.
@@ -100,6 +100,34 @@ struct Interior {
     spawn: [u8; 2],
     /// Header byte 8 bits 6-7: timer setting.
     timer: u8,
+}
+
+/// Force a junction command's exit-direction nibble (byte1 low nibble =
+/// `Level_PipeExitDir`) into the range a *pipe* transition can survive.
+///
+/// `LevelJct_General` (PRG026 $AA87) stores `byte1 & 0x0F` straight into
+/// `Level_PipeExitDir` with no range check. Valid pipe-exit directions are
+/// 1-4 (the engine's `Event_Countdown_Init` table has 5 entries and its own
+/// comment says "only 0-3 valid"). Some interiors are entered another way in
+/// vanilla — a vertical fall (7-1, 7-6: dir 8 + vertical bit) or a door
+/// (2-Pyr: dir 8) — so their front-door command carries dir 8, which vanilla
+/// never feeds to the pipe-exit path. Donating those bytes to a *pipe* host
+/// runs the pipe-exit path with dir 8 → the engine reads past the countdown
+/// table and the arrival state is garbage → hard crash (observed 5-2 → 7-1).
+///
+/// Remap any out-of-range direction to 3. Direction >= 3 tells the engine to
+/// skip X-centering, so dir 3 reproduces the exact player X the vanilla dir-8
+/// arrival used; playtest confirmed dir 3 lands correctly where dir 2 (< 3,
+/// which re-centers) buries the player in the floor. Valid directions (the
+/// dir-2/dir-3 pipe interiors already in the pool) are left untouched, so
+/// their donations stay byte-identical.
+fn sanitize_exit_dir(byte1: u8) -> u8 {
+    let dir = byte1 & 0x0F;
+    if (1..=4).contains(&dir) {
+        byte1
+    } else {
+        (byte1 & 0xF0) | 0x03
+    }
 }
 
 /// Randomly permute which interior each antechamber level's entry pipe
@@ -124,7 +152,10 @@ pub fn shuffle(rom: &mut Rom, rng: &mut ChaCha8Rng) {
             Interior {
                 alt_ptrs: [hdr[0], hdr[1], hdr[2], hdr[3]],
                 tileset: hdr[6] & 0x0F,
-                spawn: [rom.read_byte(front_door + 1), rom.read_byte(front_door + 2)],
+                spawn: [
+                    sanitize_exit_dir(rom.read_byte(front_door + 1)),
+                    rom.read_byte(front_door + 2),
+                ],
                 timer: hdr[8] & 0xC0,
             }
         })
@@ -185,7 +216,11 @@ mod tests {
             for (k, &j) in a.junctions.iter().enumerate() {
                 let k = k as u8;
                 data[j] = 0xE0 | ((n + k) & 0x0F);
-                data[j + 1] = 0x40 + n + (k << 4);
+                // byte1 low nibble kept in the valid pipe-exit range 1-4 so
+                // sanitize_exit_dir is a no-op here (the permutation test
+                // wants donated bytes to survive verbatim); byte2 stays
+                // distinct per level+command to make moves observable.
+                data[j + 1] = 0x40 | (((n + k) & 0x03) + 1);
                 data[j + 2] = 0x80 + n + (k << 4);
             }
         }
@@ -270,6 +305,54 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_exit_dir_remaps_only_invalid() {
+        // Valid pipe-exit directions (1-4) pass through untouched, with all
+        // other byte1 bits preserved.
+        for byte1 in [0x01u8, 0x72, 0x83, 0x14, 0xF4] {
+            assert_eq!(sanitize_exit_dir(byte1), byte1, "dir {:#04x}", byte1);
+        }
+        // Out-of-range directions become 3 (the ">=3 skip-centering" class),
+        // keeping the vertical/ystart bits.
+        assert_eq!(sanitize_exit_dir(0xF8), 0xF3); // 7-1 / 7-6 vertical shaft
+        assert_eq!(sanitize_exit_dir(0x68), 0x63); // 2-Pyr door front
+        assert_eq!(sanitize_exit_dir(0x00), 0x03); // dir 0 fallback
+        assert_eq!(sanitize_exit_dir(0x05), 0x03); // transit / any >=5
+    }
+
+    /// A donor whose front-door command carries an invalid pipe-exit dir must
+    /// reach its host with the dir remapped to 3 (so the pipe host survives),
+    /// while its arrival column/screen and the rest of the interior travel
+    /// unchanged.
+    #[test]
+    fn donated_invalid_dir_is_sanitized_at_host() {
+        let mut rom = make_test_rom();
+        // Give one level a vertical-shaft-style front door: dir 8 + vertical.
+        let donor = &ANTECHAMBERS[6]; // 7-4 slot, arbitrary
+        rom.write_byte(donor.junctions[0] + 1, 0xF8);
+        rom.write_byte(donor.junctions[0] + 2, 0x27);
+
+        // Force the permutation so some other level hosts this donor: shuffle
+        // until a non-identity assignment lands the donor somewhere.
+        let mut rng = ChaCha8Rng::seed_from_u64(3);
+        shuffle(&mut rom, &mut rng);
+
+        // Wherever the donor's interior went, its junctions must read dir 3
+        // (0xF3) — never the raw 0xF8 — and keep the arrival column 0x27.
+        let mut seen = false;
+        for a in &ANTECHAMBERS {
+            for &j in a.junctions {
+                let b1 = rom.read_byte(j + 1);
+                assert_ne!(b1, 0xF8, "{}: raw dir-8 leaked to a host pipe", a.name);
+                if rom.read_byte(j + 2) == 0x27 {
+                    assert_eq!(b1, 0xF3, "{}: sanitized donor dir wrong", a.name);
+                    seen = true;
+                }
+            }
+        }
+        assert!(seen, "donor interior never placed — pick another seed");
+    }
+
+    #[test]
     fn same_seed_same_result() {
         let mut rom_a = make_test_rom();
         let mut rom_b = make_test_rom();
@@ -307,7 +390,8 @@ mod tests {
         // Reason: one-off test fixture row; a named type would just move
         // the field legend away from the data.
         #[allow(clippy::type_complexity)]
-        let expected: [(u16, u16, u8, &[u8], [u8; 2]); 10] = [
+        let expected: [(u16, u16, u8, &[u8], [u8; 2]); 11] = [
+            (0xA577, 0xC5BC, 3, &[0, 3], [0x68, 0x20]),    // 2-Pyr (door, dir 8)
             (0xB6D5, 0xC863, 3, &[2], [0x52, 0x20]),       // 4-3
             (0xB481, 0xCE4B, 8, &[0, 4], [0x82, 0x20]),    // 5-2 (vert shaft)
             (0xAC3E, 0xC29E, 1, &[0], [0x02, 0x67]),       // 5-3
