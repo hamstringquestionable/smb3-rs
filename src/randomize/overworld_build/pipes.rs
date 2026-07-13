@@ -2,8 +2,9 @@
 
 use super::*;
 
-use super::scoring::{PIPE_SOFTMAX_T, TARGET_MAX_DIST, pick_softmax_by_score, score_pipe_pair};
+use super::scoring::{PIPE_SOFTMAX_T, TARGET_MAX_DIST, pick_softmax_by_score};
 use super::sections::split_blanks_by_reachability;
+use super::types::{SlotAssignment, SlotKind};
 
 /// Number of pipe pairs (not endpoints) per world in the vanilla ROM.
 pub(super) const VANILLA_PIPE_PAIRS: [usize; 8] = [
@@ -247,39 +248,129 @@ pub(super) fn place_pipes<R: Rng>(
             }
             break;
         } else {
-            // No more islands — score candidate pairs and pick from top N
-            let available: Vec<(usize, usize)> = active
-                .iter()
-                .copied()
-                .filter(|p| !used_positions.contains(p))
-                .collect();
-
-            if available.len() < 2 {
-                break; // not enough slots
-            }
-
-            // Enumerate all candidate pairs and score them
-            let mut candidates: Vec<(TeleportEdge, f64)> = Vec::new();
-            for i in 0..available.len() {
-                for j in (i + 1)..available.len() {
-                    let a = available[i];
-                    let b = available[j];
-                    let score = score_pipe_pair(
-                        grid, a, b, &used_positions, &walk.distances, target_pos,
-                    );
-                    candidates.push(((a, b), score));
-                }
-            }
-
-            let (a, b) = pick_softmax_by_score(candidates, PIPE_SOFTMAX_T, rng).unwrap();
-
-            grid.set(a.0, a.1, TILE_PIPE);
-            grid.set(b.0, b.1, TILE_PIPE);
-            used_positions.insert(a);
-            used_positions.insert(b);
-            placed_pairs.push((a, b));
+            // All islands are connected and the target is reachable. The
+            // remaining pipe budget is placed later by `place_spare_pipes`,
+            // after levels exist, so each spare pipe can be aimed to skip a
+            // level instead of being scored on spatial spread alone. Stop the
+            // connectivity phase here.
+            break;
         }
     }
 
     placed_pairs
+}
+
+/// Place `spare_needed` spare pipe pairs after `populate_sections`, converting
+/// the lowest-value filler (HammerBro) slots into pipe endpoints. Unlike the
+/// connectivity phase this runs with levels already placed, so each pair is
+/// scored by how many level slots it lets the player skip: a pipe from a
+/// near-start node to a far node teleports past every level on the stretch
+/// between them (approximated by route-distance band). Endpoints are drawn
+/// only from HammerBro slots — never levels or forts — and both are already
+/// reachable, so a spare pipe can never strand content; it only shortcuts.
+/// Pairs that skip nothing are still placed (a fall-back keeps the world at
+/// its fixed vanilla pipe count).
+// Reason: each argument is a distinct placement input (grid, slots to convert,
+// the pipe list to extend, budget, reserved sprite tiles, start anchor, world,
+// RNG). They don't form a cohesive concept, so bundling adds indirection
+// without clarity — same call shape as `place_pipes`.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn place_spare_pipes<R: Rng>(
+    grid: &mut Grid,
+    slots: &mut [SlotAssignment],
+    pipe_pairs: &mut Vec<TeleportEdge>,
+    spare_needed: usize,
+    reserved: &HashSet<(usize, usize)>,
+    start_pos: Option<(usize, usize)>,
+    world_idx: usize,
+    rng: &mut R,
+) {
+    if spare_needed == 0 {
+        return;
+    }
+
+    // Convertible endpoints: HammerBro filler slots, minus any reserved
+    // (mandatory HB sprite) positions that must keep their sprite. Kept as an
+    // ordered Vec (slot order) — candidate order feeds softmax sampling, so it
+    // must be deterministic across runs, unlike HashSet iteration.
+    let mut available: Vec<(usize, usize)> = slots
+        .iter()
+        .filter(|s| s.kind == SlotKind::HammerBro && !reserved.contains(&s.pos))
+        .map(|s| s.pos)
+        .collect();
+
+    let level_positions: Vec<(usize, usize)> = slots
+        .iter()
+        .filter(|s| s.kind == SlotKind::Level)
+        .map(|s| s.pos)
+        .collect();
+
+    for _ in 0..spare_needed {
+        if available.len() < 2 {
+            break;
+        }
+        // Recompute distances each round — a placed spare pipe (a teleport)
+        // changes the route, so later pairs score against the updated map.
+        let dist = walk_map(grid, pipe_pairs, start_pos, world_idx).distances;
+        let level_d: Vec<usize> = level_positions
+            .iter()
+            .filter_map(|p| dist.get(p).copied())
+            .collect();
+
+        let avail = &available;
+        let mut candidates: Vec<(TeleportEdge, f64)> = Vec::new();
+        for i in 0..avail.len() {
+            for j in (i + 1)..avail.len() {
+                let a = avail[i];
+                let b = avail[j];
+                let (da, db) = match (dist.get(&a), dist.get(&b)) {
+                    (Some(&da), Some(&db)) => (da, db),
+                    _ => continue,
+                };
+                let (lo, hi) = (da.min(db), da.max(db));
+                if hi - lo < 2 {
+                    continue; // too small a jump to be a real shortcut
+                }
+                // Levels whose route distance sits strictly between the two
+                // endpoints are the ones the teleport lets the player skip.
+                let skipped = level_d.iter().filter(|&&d| d > lo && d < hi).count();
+                let score = skipped as f64 * 10.0 + (hi - lo) as f64;
+                candidates.push(((a, b), score));
+            }
+        }
+
+        // Prefer a level-skipping pair; if none qualifies, fall back to the
+        // most distance-separated pair so the world still reaches its vanilla
+        // pipe count.
+        let chosen = pick_softmax_by_score(candidates, PIPE_SOFTMAX_T, rng).or_else(|| {
+            let mut best: Option<(TeleportEdge, usize)> = None;
+            for i in 0..avail.len() {
+                for j in (i + 1)..avail.len() {
+                    let (a, b) = (avail[i], avail[j]);
+                    if let (Some(&da), Some(&db)) = (dist.get(&a), dist.get(&b)) {
+                        let jump = da.abs_diff(db);
+                        if best.is_none_or(|(_, bj)| jump > bj) {
+                            best = Some(((a, b), jump));
+                        }
+                    }
+                }
+            }
+            best.map(|(pair, _)| pair)
+        });
+
+        let (a, b) = match chosen {
+            Some(pair) => pair,
+            None => break,
+        };
+
+        grid.set(a.0, a.1, TILE_PIPE);
+        grid.set(b.0, b.1, TILE_PIPE);
+        available.retain(|&p| p != a && p != b);
+        pipe_pairs.push((a, b));
+        for s in slots.iter_mut() {
+            if s.pos == a || s.pos == b {
+                s.kind = SlotKind::Pipe;
+            }
+        }
+    }
 }

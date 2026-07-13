@@ -8,6 +8,8 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-12
+
 ### Fixed
 
 - Lobby Shuffle no longer crashes when a level whose interior is a vertical
@@ -31,6 +33,12 @@ into a versioned section when a release is cut.
   intended rather than collapsing the journey into one jump; connectivity is
   still guaranteed (a direct link to the goal is used only as a last-pipe
   fallback).
+- Overworld "spare" pipes (those beyond what island connectivity requires) are
+  now placed after levels are laid out, so each one is aimed to skip a run of
+  forced levels instead of being scored on spatial spread alone. Fewer pointless
+  pipe loops, more genuine shortcuts (pipes now skip ~60% more levels), and a
+  shorter average forced-level run (~1.8 → ~1.4). Every world keeps its vanilla
+  pipe count; connectivity pipes are unchanged.
 - Lobby Shuffle pool grows to 11 with the 2-Pyramid bonus rejoining (its
   pipe-exit crash is fixed above).
 - Garbled enemy sprites in levels with player-chasing enemies: Lakitu, the

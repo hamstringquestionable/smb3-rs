@@ -3,7 +3,7 @@
 use super::*;
 
 use super::locks::place_locks;
-use super::pipes::{FIXED_PIPE_ENDPOINTS, PIPE_EXCLUDED_POSITIONS, place_pipes};
+use super::pipes::{FIXED_PIPE_ENDPOINTS, PIPE_EXCLUDED_POSITIONS, place_pipes, place_spare_pipes};
 use super::scoring::{
     FORTRESS_SOFTMAX_T, is_row78_conflict, pick_softmax_by_score, score_candidate,
     score_fortress_candidate,
@@ -49,8 +49,9 @@ pub(super) fn build_world<R: Rng>(
         .filter(|p| !pipe_excluded.contains(p))
         .collect();
 
-    // Step 1: Place pipes
-    let pipe_pairs = place_pipes(
+    // Step 1: Place connectivity pipes only (island access + target
+    // reachability). Spare pipes are deferred to Step 3.5, after levels exist.
+    let mut pipe_pairs = place_pipes(
         &mut grid,
         &pipe_blanks,
         start_pos,
@@ -61,7 +62,10 @@ pub(super) fn build_world<R: Rng>(
         rng,
     );
 
-    // Collect positions used by pipes
+    // Collect positions used by the connectivity pipes. Spare pipe positions
+    // don't exist yet, so sectioning and level scoring see only these — which
+    // is intended: levels are placed as if there were no shortcuts, then the
+    // spare pipes are added to skip some of them.
     let pipe_positions: HashSet<(usize, usize)> = pipe_pairs
         .iter()
         .flat_map(|&(a, b)| vec![a, b])
@@ -141,6 +145,22 @@ pub(super) fn build_world<R: Rng>(
         kept.extend(hb_slots.into_iter().take(hb_budget));
         slots = kept;
     }
+
+    // Step 3.5: Spare pipes. Now that levels are placed, fill the remaining
+    // pipe budget by converting HammerBro filler slots into pipe endpoints
+    // aimed to skip levels. Runs before locks so `place_locks` accounts for
+    // every pipe (a post-lock pipe could otherwise teleport across a lock).
+    let spare_needed = pipe_pair_count.saturating_sub(pipe_pairs.len());
+    place_spare_pipes(
+        &mut grid,
+        &mut slots,
+        &mut pipe_pairs,
+        spare_needed,
+        &hb_sprite_positions,
+        start_pos,
+        world_idx,
+        rng,
+    );
 
     // Step 4: Lock placement
     let locks = place_locks(

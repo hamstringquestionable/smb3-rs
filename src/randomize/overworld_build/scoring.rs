@@ -215,18 +215,9 @@ pub(super) fn score_fortress_candidate(
     base + island_bonus
 }
 
-/// Target proximity penalty weight. Higher = more aggressively avoids placing
-/// pipes near the airship/Bowser. Tweakable for tuning.
-pub(super) const W_TARGET_PROXIMITY: f64 = 4.0;
-
-/// Max manhattan distance for target penalty normalization.
+/// Max manhattan distance for pipe frontier-proximity normalization (used by
+/// the connectivity build-outward scoring in `place_pipes`).
 pub(super) const TARGET_MAX_DIST: f64 = 20.0;
-
-/// Cap on the manhattan + BFS spread reward for pipe scoring. Positions
-/// beyond this effective spread all score the same, preventing very-far
-/// positions from always dominating. Applied to the spread term only —
-/// dead-end bonus and density penalty bypass the cap so they always count.
-pub(super) const PIPE_SPREAD_CAP: f64 = 7.0;
 
 /// Softmax temperature for pipe placement. Higher = more random, lower =
 /// more concentrated on top-scoring candidates. Tuned for typical pipe
@@ -236,67 +227,3 @@ pub(super) const PIPE_SOFTMAX_T: f64 = 4.0;
 /// Softmax temperature for fortress placement. Score range is similar to
 /// pipes (~[-12, +15] including the +5 dead-end bonus).
 pub(super) const FORTRESS_SOFTMAX_T: f64 = 4.0;
-
-/// Compute target proximity penalty for a position. Positions near the
-/// airship/Bowser get penalized; positions far away get no penalty.
-pub(super) fn target_proximity_penalty(pos: (usize, usize), target_pos: Option<(usize, usize)>) -> f64 {
-    if let Some(tp) = target_pos {
-        let dist = (pos.0.abs_diff(tp.0) + pos.1.abs_diff(tp.1)) as f64;
-        W_TARGET_PROXIMITY * (TARGET_MAX_DIST - dist.min(TARGET_MAX_DIST)) / TARGET_MAX_DIST
-    } else {
-        0.0
-    }
-}
-
-/// Score a single pipe endpoint. Higher = better.
-///
-/// Spread reward (distance from nearest existing pipe) is capped at
-/// PIPE_SPREAD_CAP. Dead-end bonus, density penalty, and target penalty
-/// are applied outside the cap so they always influence the score.
-///
-/// When `pipe_positions` is empty (first pair) the spread term is 0 — every
-/// candidate ties on spread, so picking is driven by dead-end + target only.
-pub(super) fn score_pipe_endpoint(
-    grid: &Grid,
-    pos: (usize, usize),
-    pipe_positions: &HashSet<(usize, usize)>,
-    bfs_distances: &HashMap<(usize, usize), usize>,
-    target_pos: Option<(usize, usize)>,
-) -> f64 {
-    const DEAD_END_BONUS: f64 = 1.0;
-
-    let (min_manhattan, min_bfs_diff, nearby) =
-        spread_and_density(pos, pipe_positions, bfs_distances);
-
-    let spread = if pipe_positions.is_empty() {
-        0.0
-    } else {
-        let min_bfs_diff = min_bfs_diff.unwrap_or(min_manhattan);
-        let m = (min_manhattan as f64).min(SEP_CAP) * W_MANHATTAN;
-        let b = (min_bfs_diff as f64).min(SEP_CAP) * W_BFS;
-        (m + b).min(PIPE_SPREAD_CAP)
-    };
-
-    let density_penalty = nearby as f64 * W_DENSITY;
-
-    let dead_end_bonus = if is_dead_end(grid, pos) { DEAD_END_BONUS } else { 0.0 };
-
-    spread + dead_end_bonus - density_penalty - target_proximity_penalty(pos, target_pos)
-}
-
-/// Score a candidate pipe pair. Higher = better.
-/// Rewards spread from already-placed pipes, separation between endpoints,
-/// and penalizes proximity to the airship/Bowser target.
-pub(super) fn score_pipe_pair(
-    grid: &Grid,
-    a: (usize, usize),
-    b: (usize, usize),
-    pipe_positions: &HashSet<(usize, usize)>,
-    bfs_distances: &HashMap<(usize, usize), usize>,
-    target_pos: Option<(usize, usize)>,
-) -> f64 {
-    let spread_a = score_pipe_endpoint(grid, a, pipe_positions, bfs_distances, target_pos);
-    let spread_b = score_pipe_endpoint(grid, b, pipe_positions, bfs_distances, target_pos);
-    let separation = ((a.0.abs_diff(b.0) + a.1.abs_diff(b.1)) as f64 * 0.5).min(10.0);
-    spread_a + spread_b + separation
-}

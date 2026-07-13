@@ -1856,6 +1856,10 @@ fn prog_print_pass(label: &str, worlds: &[ProgLinWorld; 8]) {
     );
     let (mut g_conn, mut g_short, mut g_skip, mut g_access, mut g_scenic, mut g_redundant) =
         (0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
+    // Same aggregate but excluding W7, whose 8-pair pipe mesh dominates the
+    // redundancy total and hides the picture for the rest of the map.
+    let (mut x_conn, mut x_short, mut x_access, mut x_scenic, mut x_redundant, mut x_reach) =
+        (0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
     for (wi, w) in worlds.iter().enumerate() {
         if w.reachable == 0 {
             continue;
@@ -1883,6 +1887,14 @@ fn prog_print_pass(label: &str, worlds: &[ProgLinWorld; 8]) {
         g_access += w.sum_access;
         g_scenic += w.sum_scenic;
         g_redundant += w.sum_redundant;
+        if wi != 6 {
+            x_conn += w.sum_conn;
+            x_short += w.sum_shortcut;
+            x_access += w.sum_access;
+            x_scenic += w.sum_scenic;
+            x_redundant += w.sum_redundant;
+            x_reach += w.reachable as u64;
+        }
     }
     if t_reach > 0 {
         let tr = t_reach as f64;
@@ -1897,6 +1909,24 @@ fn prog_print_pass(label: &str, worlds: &[ProgLinWorld; 8]) {
             g_redundant as f64 / tr,
             if all_pipes > 0 {
                 g_redundant as f64 / all_pipes as f64 * 100.0
+            } else {
+                0.0
+            },
+        );
+    }
+    if x_reach > 0 {
+        let xr = x_reach as f64;
+        let x_pipes = x_conn + x_short + x_access + x_scenic + x_redundant;
+        eprintln!(
+            "      ex-W7:     {:>5.2} {:>9.2} {:>8} {:>7.2} {:>7.2} {:>10.2}  (redundant {:.0}% of all pipes)",
+            x_conn as f64 / xr,
+            x_short as f64 / xr,
+            "",
+            x_access as f64 / xr,
+            x_scenic as f64 / xr,
+            x_redundant as f64 / xr,
+            if x_pipes > 0 {
+                x_redundant as f64 / x_pipes as f64 * 100.0
             } else {
                 0.0
             },
