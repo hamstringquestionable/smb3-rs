@@ -2,11 +2,9 @@
 
 use super::*;
 
-use super::scoring::{
-    PIPE_SOFTMAX_T, TARGET_MAX_DIST, pick_softmax_by_score, score_pipe_endpoint,
-    score_pipe_pair, target_proximity_penalty,
-};
+use super::scoring::{PIPE_SOFTMAX_T, TARGET_MAX_DIST, pick_softmax_by_score};
 use super::sections::split_blanks_by_reachability;
+use super::types::{SlotAssignment, SlotKind};
 
 /// Number of pipe pairs (not endpoints) per world in the vanilla ROM.
 pub(super) const VANILLA_PIPE_PAIRS: [usize; 8] = [
@@ -173,13 +171,21 @@ pub(super) fn place_pipes<R: Rng>(
         let (reachable_blanks, mut unreachable_blanks) =
             split_blanks_by_reachability(active, &walk.nodes, &used_positions);
 
-        // While we still must reach the target, prefer bridging to an island
-        // that actually leads there: keep only unreachable blanks that share a
-        // walk-component with the target. This generalizes the W3 fixed-endpoint
-        // `preferred` filter to every island connection, so RNG can't squander a
-        // pipe on a dead tile that connects nothing (e.g. W4's stranded (6,24)).
-        // Falls back to the unfiltered set when no candidate reaches the target.
-        if must_connect_target && let Some(t) = target_pos {
+        // Guarantee fallback: on the LAST connectivity pipe with the objective
+        // still stranded, restrict the island side to the objective's own
+        // walk-component so this pipe definitely reaches it. Pipes are
+        // teleports (no distance limit), so one pipe always suffices — hence
+        // reserving just the final pipe is enough to guarantee reachability.
+        // On every earlier pipe we instead grow outward (below), so the goal
+        // is reached through intermediate islands, not a direct start→goal
+        // jump. (The old code applied this filter on EVERY connectivity pipe,
+        // which forced the first pipe straight to the goal island — a 100%
+        // start→goal express rate that collapsed multi-island worlds.)
+        let pipes_left = pair_count - placed_pairs.len();
+        if must_connect_target
+            && pipes_left <= 1
+            && let Some(t) = target_pos
+        {
             let target_comp = walk_map(grid, &placed_pairs, Some(t), world_idx).nodes;
             let toward_target: Vec<(usize, usize)> = unreachable_blanks
                 .iter()
@@ -192,31 +198,34 @@ pub(super) fn place_pipes<R: Rng>(
         }
 
         if !unreachable_blanks.is_empty() && !reachable_blanks.is_empty() {
-            // Connect an island: scored selection for both endpoints.
-            // Unreachable side: prefer nearer islands (manhattan from start)
-            // to create progressive chains rather than jumping to the end.
-            let start = start_pos.unwrap_or((0, 0));
+            // Build outward: bridge the reachable frontier to the NEAREST
+            // unreachable island, connecting its closest two blanks. This
+            // grows the pipe network as a chain from start (start → i1 → i2 →
+            // … → goal) instead of teleporting straight to the goal island.
+            // Island side: prefer the blank nearest to the current frontier.
             let b_scored: Vec<((usize, usize), f64)> = unreachable_blanks
                 .iter()
-                .map(|&pos| {
-                    let start_dist = (pos.0.abs_diff(start.0) + pos.1.abs_diff(start.1)) as f64;
-                    // Nearer to start = higher score (invert distance)
-                    let proximity_score = (TARGET_MAX_DIST - start_dist.min(TARGET_MAX_DIST)) / TARGET_MAX_DIST * 5.0;
-                    let target_pen = target_proximity_penalty(pos, target_pos);
-                    (pos, proximity_score - target_pen)
+                .map(|&b| {
+                    let frontier_dist = reachable_blanks
+                        .iter()
+                        .map(|&a| (a.0.abs_diff(b.0) + a.1.abs_diff(b.1)) as f64)
+                        .fold(f64::INFINITY, f64::min);
+                    // Nearer to the reachable frontier = higher score.
+                    let proximity =
+                        (TARGET_MAX_DIST - frontier_dist.min(TARGET_MAX_DIST)) / TARGET_MAX_DIST * 5.0;
+                    (b, proximity)
                 })
                 .collect();
             let b = pick_softmax_by_score(b_scored, PIPE_SOFTMAX_T, rng).unwrap();
 
-            // Reachable side: prefer positions far from start (BFS distance),
-            // spread from existing pipes, and away from target.
+            // Reachable side: the frontier blank nearest to b (shortest bridge),
+            // so the pipe extends the frontier to that island rather than
+            // reaching back across the map.
             let a_scored: Vec<((usize, usize), f64)> = reachable_blanks
                 .iter()
-                .map(|&pos| {
-                    let score = score_pipe_endpoint(
-                        grid, pos, &used_positions, &walk.distances, target_pos,
-                    );
-                    (pos, score)
+                .map(|&a| {
+                    let d = (a.0.abs_diff(b.0) + a.1.abs_diff(b.1)) as f64;
+                    (a, -d) // nearer to b = higher
                 })
                 .collect();
             let a = pick_softmax_by_score(a_scored, PIPE_SOFTMAX_T, rng).unwrap();
@@ -239,39 +248,129 @@ pub(super) fn place_pipes<R: Rng>(
             }
             break;
         } else {
-            // No more islands — score candidate pairs and pick from top N
-            let available: Vec<(usize, usize)> = active
-                .iter()
-                .copied()
-                .filter(|p| !used_positions.contains(p))
-                .collect();
-
-            if available.len() < 2 {
-                break; // not enough slots
-            }
-
-            // Enumerate all candidate pairs and score them
-            let mut candidates: Vec<(TeleportEdge, f64)> = Vec::new();
-            for i in 0..available.len() {
-                for j in (i + 1)..available.len() {
-                    let a = available[i];
-                    let b = available[j];
-                    let score = score_pipe_pair(
-                        grid, a, b, &used_positions, &walk.distances, target_pos,
-                    );
-                    candidates.push(((a, b), score));
-                }
-            }
-
-            let (a, b) = pick_softmax_by_score(candidates, PIPE_SOFTMAX_T, rng).unwrap();
-
-            grid.set(a.0, a.1, TILE_PIPE);
-            grid.set(b.0, b.1, TILE_PIPE);
-            used_positions.insert(a);
-            used_positions.insert(b);
-            placed_pairs.push((a, b));
+            // All islands are connected and the target is reachable. The
+            // remaining pipe budget is placed later by `place_spare_pipes`,
+            // after levels exist, so each spare pipe can be aimed to skip a
+            // level instead of being scored on spatial spread alone. Stop the
+            // connectivity phase here.
+            break;
         }
     }
 
     placed_pairs
+}
+
+/// Place `spare_needed` spare pipe pairs after `populate_sections`, converting
+/// the lowest-value filler (HammerBro) slots into pipe endpoints. Unlike the
+/// connectivity phase this runs with levels already placed, so each pair is
+/// scored by how many level slots it lets the player skip: a pipe from a
+/// near-start node to a far node teleports past every level on the stretch
+/// between them (approximated by route-distance band). Endpoints are drawn
+/// only from HammerBro slots — never levels or forts — and both are already
+/// reachable, so a spare pipe can never strand content; it only shortcuts.
+/// Pairs that skip nothing are still placed (a fall-back keeps the world at
+/// its fixed vanilla pipe count).
+// Reason: each argument is a distinct placement input (grid, slots to convert,
+// the pipe list to extend, budget, reserved sprite tiles, start anchor, world,
+// RNG). They don't form a cohesive concept, so bundling adds indirection
+// without clarity — same call shape as `place_pipes`.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn place_spare_pipes<R: Rng>(
+    grid: &mut Grid,
+    slots: &mut [SlotAssignment],
+    pipe_pairs: &mut Vec<TeleportEdge>,
+    spare_needed: usize,
+    reserved: &HashSet<(usize, usize)>,
+    start_pos: Option<(usize, usize)>,
+    world_idx: usize,
+    rng: &mut R,
+) {
+    if spare_needed == 0 {
+        return;
+    }
+
+    // Convertible endpoints: HammerBro filler slots, minus any reserved
+    // (mandatory HB sprite) positions that must keep their sprite. Kept as an
+    // ordered Vec (slot order) — candidate order feeds softmax sampling, so it
+    // must be deterministic across runs, unlike HashSet iteration.
+    let mut available: Vec<(usize, usize)> = slots
+        .iter()
+        .filter(|s| s.kind == SlotKind::HammerBro && !reserved.contains(&s.pos))
+        .map(|s| s.pos)
+        .collect();
+
+    let level_positions: Vec<(usize, usize)> = slots
+        .iter()
+        .filter(|s| s.kind == SlotKind::Level)
+        .map(|s| s.pos)
+        .collect();
+
+    for _ in 0..spare_needed {
+        if available.len() < 2 {
+            break;
+        }
+        // Recompute distances each round — a placed spare pipe (a teleport)
+        // changes the route, so later pairs score against the updated map.
+        let dist = walk_map(grid, pipe_pairs, start_pos, world_idx).distances;
+        let level_d: Vec<usize> = level_positions
+            .iter()
+            .filter_map(|p| dist.get(p).copied())
+            .collect();
+
+        let avail = &available;
+        let mut candidates: Vec<(TeleportEdge, f64)> = Vec::new();
+        for i in 0..avail.len() {
+            for j in (i + 1)..avail.len() {
+                let a = avail[i];
+                let b = avail[j];
+                let (da, db) = match (dist.get(&a), dist.get(&b)) {
+                    (Some(&da), Some(&db)) => (da, db),
+                    _ => continue,
+                };
+                let (lo, hi) = (da.min(db), da.max(db));
+                if hi - lo < 2 {
+                    continue; // too small a jump to be a real shortcut
+                }
+                // Levels whose route distance sits strictly between the two
+                // endpoints are the ones the teleport lets the player skip.
+                let skipped = level_d.iter().filter(|&&d| d > lo && d < hi).count();
+                let score = skipped as f64 * 10.0 + (hi - lo) as f64;
+                candidates.push(((a, b), score));
+            }
+        }
+
+        // Prefer a level-skipping pair; if none qualifies, fall back to the
+        // most distance-separated pair so the world still reaches its vanilla
+        // pipe count.
+        let chosen = pick_softmax_by_score(candidates, PIPE_SOFTMAX_T, rng).or_else(|| {
+            let mut best: Option<(TeleportEdge, usize)> = None;
+            for i in 0..avail.len() {
+                for j in (i + 1)..avail.len() {
+                    let (a, b) = (avail[i], avail[j]);
+                    if let (Some(&da), Some(&db)) = (dist.get(&a), dist.get(&b)) {
+                        let jump = da.abs_diff(db);
+                        if best.is_none_or(|(_, bj)| jump > bj) {
+                            best = Some(((a, b), jump));
+                        }
+                    }
+                }
+            }
+            best.map(|(pair, _)| pair)
+        });
+
+        let (a, b) = match chosen {
+            Some(pair) => pair,
+            None => break,
+        };
+
+        grid.set(a.0, a.1, TILE_PIPE);
+        grid.set(b.0, b.1, TILE_PIPE);
+        available.retain(|&p| p != a && p != b);
+        pipe_pairs.push((a, b));
+        for s in slots.iter_mut() {
+            if s.pos == a || s.pos == b {
+                s.kind = SlotKind::Pipe;
+            }
+        }
+    }
 }

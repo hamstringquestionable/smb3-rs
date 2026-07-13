@@ -41,6 +41,18 @@ pub(crate) struct RequiredProgression {
     /// Which section's lock the hammer pre-opened, if any. `None` means the
     /// hammer was not used (or the analysis was no-hammer).
     pub hammer_broke_section: Option<usize>,
+    /// Longest run of back-to-back forced *level* plays along the required
+    /// route with no other activity between them. A fortress, pipe transit,
+    /// hammer-bro fight, or lock-poof resets the run; plain walking and
+    /// toad-house/spade panels (rarely entered) do not. This is the "levels
+    /// stacked with nothing to do between them" linearity signal.
+    pub level_streak: usize,
+    /// Trailing level run reaching the objective — how many forced levels sit
+    /// right in front of the airship/Bowser with no fort/pipe/HB/lock between
+    /// the run and the goal. `0` means an action (or lock) gates the final
+    /// approach. A high value is the "clear path, just 2+ levels on the goal"
+    /// complaint.
+    pub goal_stack: usize,
 }
 
 /// Compute the minimum number of fortress/level entries the player must clear
@@ -279,6 +291,13 @@ pub(super) fn analyze_with_pre_opened_mask(
     let mut forts: HashSet<(usize, usize)> = HashSet::new();
     let mut levels: HashSet<(usize, usize)> = HashSet::new();
 
+    // Streak accounting: `run` = current back-to-back forced-level count.
+    // An "activity" (fort / pipe / hammer-bro / crossed lock) resets it;
+    // toad-house/spade/walk tiles pass through without resetting.
+    let mut level_streak = 0usize;
+    let mut goal_stack = 0usize;
+    let mut run = 0usize;
+
     for (i, state) in chain.iter().enumerate() {
         let pos = state.0;
         path.push((pos, kind_for(pos)));
@@ -290,18 +309,41 @@ pub(super) fn analyze_with_pre_opened_mask(
                 && let Some(&section) = lock_section.get(&path_pos)
             {
                 locks_crossed.push((path_pos, section));
+                // A lock crossed on the way into this node is an activity
+                // between the previous node and this one.
+                run = 0;
             }
         }
-        if pos == start || pos == target {
+        if pos == target {
+            // Whatever level run reached the objective uninterrupted.
+            goal_stack = run;
+            continue;
+        }
+        if pos == start {
             continue;
         }
         match kind_at.get(&pos) {
             Some(SlotKind::Fortress) => {
                 forts.insert(pos);
+                run = 0;
             }
             Some(SlotKind::Level) => {
                 levels.insert(pos);
+                run += 1;
+                level_streak = level_streak.max(run);
             }
+            // A pipe ride is a deterministic activity, so it breaks a run.
+            Some(SlotKind::Pipe) => {
+                run = 0;
+            }
+            // Everything else passes through without breaking the run:
+            //   - HammerBro: a hammer-bro *node* is not entered by standing
+            //     on it. The fight is triggered by the wandering sprite,
+            //     whose position is dynamic and unmodeled here, so a node
+            //     with no sprite on it is just empty path. Do NOT credit it
+            //     as an activity between levels.
+            //   - ToadHouse / BonusGame: rarely entered by players.
+            //   - Unclassified / stray transit tiles.
             _ => {}
         }
     }
@@ -313,7 +355,233 @@ pub(super) fn analyze_with_pre_opened_mask(
         path,
         locks_crossed,
         hammer_broke_section: None,
+        level_streak,
+        goal_stack,
     }
+}
+
+/// Count of graph-adjacent Level–Level node pairs, independent of the
+/// required route: two level slots joined by a single walk edge (not a
+/// pipe/canoe teleport). A high count means the map physically stacks
+/// levels side by side — the "level physically next to level" signal,
+/// distinct from the route-based `level_streak`.
+pub(crate) fn level_adjacency_pairs(built: &BuiltWorld) -> usize {
+    let mut grid = built.grid.clone();
+    stamp_slots(&mut grid, &built.slots);
+    let Some(start) = rom_data::find_start(&grid) else {
+        return 0;
+    };
+    let walk = walk_map(&grid, &built.pipe_pairs, Some(start), built.world_idx);
+    let level_pos: HashSet<(usize, usize)> = built
+        .slots
+        .iter()
+        .filter(|s| s.kind == SlotKind::Level)
+        .map(|s| s.pos)
+        .collect();
+    let mut pairs: HashSet<((usize, usize), (usize, usize))> = HashSet::new();
+    for (&a, edges) in &walk.edges {
+        if !level_pos.contains(&a) {
+            continue;
+        }
+        for edge in edges {
+            // path_pos.is_some() ⇒ a walk edge (physical adjacency), not a
+            // pipe/canoe teleport.
+            if edge.path_pos.is_some() && level_pos.contains(&edge.dest) {
+                let key = if a <= edge.dest {
+                    (a, edge.dest)
+                } else {
+                    (edge.dest, a)
+                };
+                pairs.insert(key);
+            }
+        }
+    }
+    pairs.len()
+}
+
+/// What a single pipe pair earns its keep by — decided by leave-one-out:
+/// remove it and see what the player loses. The distinction is functional
+/// ("does removing it take anything away"), not geometric (mainland vs
+/// island): an island pipe whose island is reachable another way is just as
+/// redundant as a mainland loop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PipeClass {
+    /// Removing it strands the objective — mandatory access (blocks target
+    /// progress).
+    Connectivity,
+    /// Removing it RAISES min-clears by `n` — a shortcut that skips `n` forced
+    /// clears.
+    Shortcut(usize),
+    /// Removing it keeps the target reachable and min-clears unchanged, but
+    /// strands OTHER content: some level/fortress becomes unreachable. Sole
+    /// route to optional content the player can choose to play.
+    ContentAccess,
+    /// Removing it strands nodes but NO level/fort content — a pipe to a
+    /// content-less spot (e.g. a lone island that just lets the player glimpse
+    /// the final island). Purposefully redundant / scenic, not gameplay waste.
+    Scenic,
+    /// Removing it changes NOTHING — target still reachable, min-clears
+    /// unchanged, and the reachable node set is identical. Pure waste.
+    Redundant,
+}
+
+/// Nodes reachable from start with the given pipe set (locks treated as open —
+/// topological "can the player ever get here", which they can by clearing the
+/// gating fortress). Canoes handled by walk_map.
+fn reachable_nodes(built: &BuiltWorld) -> HashSet<(usize, usize)> {
+    let mut grid = built.grid.clone();
+    stamp_slots(&mut grid, &built.slots);
+    match rom_data::find_start(&grid) {
+        Some(start) => walk_map(&grid, &built.pipe_pairs, Some(start), built.world_idx).nodes,
+        None => HashSet::new(),
+    }
+}
+
+/// How many Level/Fortress slots fall inside a reachable-node set.
+fn content_in(built: &BuiltWorld, reachable: &HashSet<(usize, usize)>) -> usize {
+    built
+        .slots
+        .iter()
+        .filter(|s| matches!(s.kind, SlotKind::Level | SlotKind::Fortress))
+        .filter(|s| reachable.contains(&s.pos))
+        .count()
+}
+
+/// Classify every pipe pair by leave-one-out: remove it (leaving the others
+/// and all canoes intact) and re-run the required-progression analysis plus a
+/// reachable-content check.
+///
+/// Caveat: leave-one-out reads a pipe as `Redundant` whenever an equally-good
+/// alternative route AND alternative content-access both exist — i.e. it
+/// measures "does removing this pipe take anything away from the MINIMUM
+/// route or the reachable content", not "could a player ever use it".
+/// Copy of `built` with breakable rocks turned to path ($51→$45 horizontal,
+/// $52→$46 vertical, matching the game's `RockBreak_Replace`). Unbreakable
+/// rocks ($53) stay. Used only by the pipe classifier so a pipe whose sole
+/// value is bypassing a hammer-breakable rock counts as redundant — the player
+/// could break the rock instead. Does NOT affect the build or the streak /
+/// goal-stack metrics, which keep the true rock-as-wall topology.
+fn hammer_open_rocks(built: &BuiltWorld) -> BuiltWorld {
+    let mut b = built.clone();
+    for r in 0..b.grid.rows() {
+        for c in 0..b.grid.cols {
+            match b.grid.get(r, c) {
+                0x51 => b.grid.set(r, c, 0x45),
+                0x52 => b.grid.set(r, c, 0x46),
+                _ => {}
+            }
+        }
+    }
+    b
+}
+
+pub(crate) fn classify_pipes(built: &BuiltWorld) -> Vec<PipeClass> {
+    // Pipe value is judged with hammer-breakable rocks treated as passable, so
+    // a pipe that only bypasses a rock a hammer could break reads as redundant.
+    let built = &hammer_open_rocks(built);
+    let base = analyze_required_progression(built, false);
+    let base_clears = base.forts_required + base.levels_required;
+    let base_nodes = reachable_nodes(built);
+    let base_content = content_in(built, &base_nodes);
+
+    let mut out = Vec::with_capacity(built.pipe_pairs.len());
+    for i in 0..built.pipe_pairs.len() {
+        let mut without = built.clone();
+        without.pipe_pairs.remove(i);
+        let r = analyze_required_progression(&without, false);
+        out.push(if !r.reachable {
+            PipeClass::Connectivity
+        } else {
+            let delta = (r.forts_required + r.levels_required).saturating_sub(base_clears);
+            if delta > 0 {
+                PipeClass::Shortcut(delta)
+            } else {
+                // Target still reachable, clears unchanged. Split by what
+                // removing the pipe strands from the reachable set.
+                let nodes = reachable_nodes(&without);
+                if content_in(&without, &nodes) < base_content {
+                    PipeClass::ContentAccess // stranded a level/fort
+                } else if nodes.len() < base_nodes.len() {
+                    PipeClass::Scenic // stranded content-less nodes (a view)
+                } else {
+                    PipeClass::Redundant // stranded nothing — pure waste
+                }
+            }
+        });
+    }
+    out
+}
+
+/// Whether a single pipe directly bridges the start walk-component to the
+/// goal walk-component — a start→goal "express" pipe that short-circuits any
+/// intermediate island hops.
+///
+/// `None` when start and goal already share a walk component (no bridging
+/// pipe needed, e.g. W1/W2) or the target is missing. Otherwise `Some(true)`
+/// if such a direct pipe exists.
+///
+/// Interpretation is world-dependent: for few-island worlds (W3/W4/W5) a
+/// direct link is natural or required (~100%). For many-island worlds
+/// (W7/W8) it collapses the intended island-hopping journey into one jump
+/// and should be rare.
+pub(crate) fn start_goal_express_pipe(built: &BuiltWorld) -> Option<bool> {
+    let mut grid = built.grid.clone();
+    stamp_slots(&mut grid, &built.slots);
+    let start = rom_data::find_start(&grid)?;
+    let target = find_target(&grid, built.world_idx)?;
+    let start_comp = walk_map(&grid, &[], Some(start), built.world_idx).nodes;
+    if start_comp.contains(&target) {
+        return None; // start and goal already on the same island
+    }
+    let goal_comp = walk_map(&grid, &[], Some(target), built.world_idx).nodes;
+    let direct = built.pipe_pairs.iter().any(|&(a, b)| {
+        (start_comp.contains(&a) && goal_comp.contains(&b))
+            || (goal_comp.contains(&a) && start_comp.contains(&b))
+    });
+    Some(direct)
+}
+
+/// Rough island count: the number of distinct walk-only components (no pipes)
+/// spanned by the world's start, target, and pipe endpoints. Context for the
+/// express-pipe rate — a world with 2 islands "should" bridge start↔goal
+/// directly; a world with 5 should route through the middle ones.
+pub(crate) fn island_count(built: &BuiltWorld) -> usize {
+    let mut grid = built.grid.clone();
+    stamp_slots(&mut grid, &built.slots);
+    let mut key: Vec<(usize, usize)> = built
+        .pipe_pairs
+        .iter()
+        .flat_map(|&(a, b)| [a, b])
+        .collect();
+    if let Some(s) = rom_data::find_start(&grid) {
+        key.push(s);
+    }
+    if let Some(t) = find_target(&grid, built.world_idx) {
+        key.push(t);
+    }
+    let mut seen: HashSet<(usize, usize)> = HashSet::new();
+    let mut comps = 0;
+    for n in key {
+        if seen.contains(&n) {
+            continue;
+        }
+        let comp = walk_map(&grid, &[], Some(n), built.world_idx).nodes;
+        comps += 1;
+        seen.extend(comp);
+    }
+    comps
+}
+
+/// How many forced clears a lock-breaking hammer lets the player skip:
+/// (no-hammer clears) − (one-hammer clears). This is the "breaking a
+/// rock/lock opens a shortcut past levels" value, assuming the
+/// hammer-breaks-locks mechanic is in play.
+pub(crate) fn hammer_skip(built: &BuiltWorld) -> usize {
+    let nh = analyze_required_progression(built, false);
+    let wh = analyze_required_progression(built, true);
+    let nh_c = nh.forts_required + nh.levels_required;
+    let wh_c = wh.forts_required + wh.levels_required;
+    nh_c.saturating_sub(wh_c)
 }
 
 /// Pretty-print a `RequiredProgression` result for one world. Use for
@@ -424,6 +692,10 @@ pub(super) fn print_progression(
         eprintln!("    TARGET UNREACHABLE");
         return;
     }
+    eprintln!(
+        "    level streak: {}  |  goal stack: {}",
+        p.level_streak, p.goal_stack,
+    );
     let mut lock_iter = p.locks_crossed.iter().peekable();
     for (i, (pos, kind)) in p.path.iter().enumerate() {
         let tag = match kind {

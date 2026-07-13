@@ -45,7 +45,10 @@ pub(crate) use types::{BuildFlags, BuildResult, BuiltWorld, OverworldData};
 // Progression analysis is exercised only by the test suite today (reserved for a
 // future WASM single-seed dump), so surface it just for `tests`.
 #[cfg(test)]
-pub(crate) use progression::{analyze_required_progression, dump_required_progression, PathNodeKind};
+pub(crate) use progression::{
+    analyze_required_progression, classify_pipes, dump_required_progression, hammer_skip,
+    island_count, level_adjacency_pairs, start_goal_express_pipe, PipeClass,
+};
 
 #[cfg(test)]
 mod tests;

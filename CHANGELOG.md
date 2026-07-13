@@ -8,6 +8,8 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-12
+
 ### Fixed
 
 - Lobby Shuffle no longer crashes when a level whose interior is a vertical
@@ -19,6 +21,28 @@ into a versioned section when a release is cut.
 
 ### Changed
 
+- Overworld level placement is less linear: the weight biasing levels onto the
+  main start→airship route was halved (1.5 → 0.75), so fewer forced levels get
+  glued back-to-back along the critical path. Average run of consecutive
+  must-play levels drops from ~2.1 to ~1.8 (in line with the reference SMB3
+  randomizer) while levels still favor the route over dead-end spurs.
+- Overworld pipe routing in multi-island worlds now grows a chain outward from
+  the start, bridging the nearest unreached island each step, instead of always
+  piping the start island straight to the goal island. Worlds like 7 and 8
+  (5-7 islands) now route the player through the intermediate islands as
+  intended rather than collapsing the journey into one jump; connectivity is
+  still guaranteed (a direct link to the goal is used only as a last-pipe
+  fallback).
+- Overworld "spare" pipes (those beyond what island connectivity requires) are
+  now placed after levels are laid out, so each one is aimed to skip a run of
+  forced levels instead of being scored on spatial spread alone. Fewer pointless
+  pipe loops, more genuine shortcuts (pipes now skip ~60% more levels), and a
+  shorter average forced-level run (~1.8 → ~1.4). Every world keeps its vanilla
+  pipe count; connectivity pipes are unchanged.
+- World 8's showcase bridges are gated out (as a fortress lock) more often: at
+  least one bridge is out in ~99% of seeds (was ~80%) and two in ~30% (was ~6%),
+  with a rare ~0.08% chance all four are out at once. Pure lock-placement bias;
+  connectivity and beatability are unaffected.
 - Lobby Shuffle pool grows to 11 with the 2-Pyramid bonus rejoining (its
   pipe-exit crash is fixed above).
 - Garbled enemy sprites in levels with player-chasing enemies: Lakitu, the
