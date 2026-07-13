@@ -4,6 +4,18 @@ use super::*;
 
 use super::types::{BuildResult, LockAssignment, SlotAssignment, SlotKind, stamp_slots};
 
+/// The five always-on W8 screen-3 bridges (see `qol::overworld_map`'s
+/// `W8_BRIDGE_EDITS`). Locking one gaps it out as water until its fortress is
+/// beaten — a deliberate showcase, so the lock scorer nudges toward them.
+const W8_BRIDGE_LOCK_POSITIONS: &[(usize, usize)] = &[(5, 51), (5, 53), (5, 55), (5, 57), (5, 59)];
+
+/// Score bonus for locking a W8 showcase bridge. Sized to noticeably raise how
+/// often a bridge is chosen without overriding the `blocks_later_fort` (+100)
+/// progression signal or the hard reachability rules. Tuned via a 200k-seed
+/// sweep: +8 puts ≥1 bridge out in ~99.6% of seeds, two out in ~30%, and all
+/// four (the ceiling — W8 has 4 forts = 4 locks) out in ~0.08% (a rare treat).
+const W8_BRIDGE_LOCK_BONUS: i32 = 8;
+
 /// A scored lock candidate tracked during selection.
 #[derive(Clone, Copy)]
 struct ScoredLock {
@@ -210,6 +222,13 @@ pub(super) fn place_locks<R: Rng>(
             // than locks on regular path tiles.
             if tile == 0xB3 {
                 score += 1;
+            }
+
+            // W8-specific: bias harder toward the screen-3 showcase bridges so
+            // they're gated out more often than raw chokepoint value alone
+            // would pick them.
+            if world_idx == 7 && W8_BRIDGE_LOCK_POSITIONS.contains(&cand_pos) {
+                score += W8_BRIDGE_LOCK_BONUS;
             }
 
             // Track best overall and best safe separately. (A safe lock

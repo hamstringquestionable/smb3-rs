@@ -1938,6 +1938,98 @@ fn prog_print_pass(label: &str, worlds: &[ProgLinWorld; 8]) {
     }
 }
 
+/// How often each of the five always-on W8 screen-3 bridges is chosen as a
+/// lock (i.e. gated "out" as a water gap until its fortress is beaten). Runs
+/// the shipped pipeline so the bridges (`apply_w8_bridges`) are present, and
+/// reports per-bridge frequency plus the distribution of how many are out per
+/// seed, for both start↔airship modes.
+///
+/// Run with: cargo test --release report_w8_bridge_locks -- --ignored --nocapture
+/// Override seed count with BRIDGE_SEEDS=N (default 2000, per mode).
+#[test]
+#[ignore]
+fn report_w8_bridge_locks() {
+    let rom_bytes = match std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") {
+        Ok(b) => b,
+        Err(_) => {
+            eprintln!("ROM not found, skipping");
+            return;
+        }
+    };
+    let seeds: u64 = std::env::var("BRIDGE_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2000);
+
+    // The 5 always-on W8 screen-3 bridges (row 5). A lock on a bridge tile
+    // gaps it out as water (`gap_tile_for`: 0xB3 -> 0x9D) until its fort falls.
+    const W8_BRIDGES: [(usize, usize); 5] = [(5, 51), (5, 53), (5, 55), (5, 57), (5, 59)];
+
+    let base = crate::Options {
+        palettes: false,
+        palette_themed: false,
+        ..Default::default()
+    };
+
+    for (label, sas) in [("SAS off", false), ("SAS on", true)] {
+        let mut opts = base.clone();
+        opts.swap_start_airship = sas;
+
+        let mut per_bridge = [0u32; 5];
+        let mut count_dist = [0u32; 6]; // index = # bridges out this seed (0..=5)
+        let mut seeds_with_any = 0u32;
+        let mut measured = 0u32;
+
+        for seed in 0..seeds {
+            let (_rom, result) =
+                match crate::randomize_rom_with_overworld_capture(&rom_bytes, seed, &opts, None) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("seed {seed}: {e}");
+                        continue;
+                    }
+                };
+            let w8 = match result.worlds.iter().find(|b| b.world_idx == 7) {
+                Some(b) => b,
+                None => continue,
+            };
+            measured += 1;
+            let mut out_this_seed = 0;
+            for (i, &pos) in W8_BRIDGES.iter().enumerate() {
+                if w8.locks.iter().any(|l| l.pos == pos) {
+                    per_bridge[i] += 1;
+                    out_this_seed += 1;
+                }
+            }
+            count_dist[out_this_seed] += 1;
+            if out_this_seed > 0 {
+                seeds_with_any += 1;
+            }
+        }
+
+        let m = measured.max(1) as f64;
+        eprintln!("\n=== W8 bridges chosen as locks [{label}] — {measured} seeds ===");
+        eprintln!("Per-bridge (locked => bridge is out):");
+        for (i, &pos) in W8_BRIDGES.iter().enumerate() {
+            eprintln!(
+                "  bridge {} {:?}:  {:>5}  ({:>4.1}%)",
+                i + 1,
+                pos,
+                per_bridge[i],
+                per_bridge[i] as f64 / m * 100.0,
+            );
+        }
+        eprintln!("Bridges out per seed:");
+        for (n, &c) in count_dist.iter().enumerate() {
+            eprintln!("  {n}:  {:>5}  ({:>4.1}%)", c, c as f64 / m * 100.0);
+        }
+        eprintln!(
+            "Seeds with >=1 bridge out:  {seeds_with_any}/{measured}  ({:.1}%)",
+            seeds_with_any as f64 / m * 100.0,
+        );
+    }
+}
+
 /// Required-progression / linearity analyzer.
 ///
 /// Per world, computes the minimum fortress + level entries the player must

@@ -39,6 +39,10 @@ into a versioned section when a release is cut.
   pipe loops, more genuine shortcuts (pipes now skip ~60% more levels), and a
   shorter average forced-level run (~1.8 → ~1.4). Every world keeps its vanilla
   pipe count; connectivity pipes are unchanged.
+- World 8's showcase bridges are gated out (as a fortress lock) more often: at
+  least one bridge is out in ~99% of seeds (was ~80%) and two in ~30% (was ~6%),
+  with a rare ~0.08% chance all four are out at once. Pure lock-placement bias;
+  connectivity and beatability are unaffected.
 - Lobby Shuffle pool grows to 11 with the 2-Pyramid bonus rejoining (its
   pipe-exit crash is fixed above).
 - Garbled enemy sprites in levels with player-chasing enemies: Lakitu, the
