@@ -8,6 +8,13 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+### Fixed
+
+- The "Oops all Anchors" (`anchor_visuals`) toggle is now encoded in the
+  shareable flag key, so turning it on/off actually changes the key and the
+  option round-trips when a key is loaded. Previously it was silently dropped
+  from the flag key (flag-key version bumped to 25).
+
 ## [0.12.0] - 2026-07-12
 
 ### Fixed
