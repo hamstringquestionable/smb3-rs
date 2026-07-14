@@ -333,6 +333,7 @@ fn flag_key_per_option_round_trip() {
         ("shuffle_spade_games",           Box::new(|o| o.shuffle_spade_games = !o.shuffle_spade_games)),
         ("shuffle_toad_houses",          Box::new(|o| o.shuffle_toad_houses = !o.shuffle_toad_houses)),
         ("wild_injections",              Box::new(|o| o.wild_injections = !o.wild_injections)),
+        ("anchor_visuals",               Box::new(|o| o.anchor_visuals = !o.anchor_visuals)),
     ];
     for (label, mutate) in bools {
         check_round_trip(label, mutate, true);
@@ -491,6 +492,54 @@ fn flag_key_per_option_round_trip() {
     let expected = normalized(everything.clone());
     let recovered = Options::from_flag_key(&everything.to_flag_key()).unwrap();
     assert_eq!(recovered, expected, "all-fields-flipped: round-trip mismatch");
+}
+
+/// Exhaustive guard: every boolean field on `Options` must either be encoded
+/// in the flag key (flipping it changes the key) or be a deliberate cosmetic /
+/// operational exclusion listed below. Driven by serde so a NEW bool field
+/// added to `Options` is automatically covered — if it's dropped from the flag
+/// key (the exact bug that hid `anchor_visuals`), this test fails until the
+/// author either encodes it or consciously adds it to `NOT_ENCODED`.
+#[test]
+fn flag_key_encodes_every_bool_option() {
+    // Bool fields intentionally absent from the flag key, with the reason.
+    // Adding to this list is a conscious decision, not an oversight.
+    const NOT_ENCODED: &[&str] = &[
+        "palettes",            // cosmetic; uses OS randomness, not seed-derived
+        "palette_themed",      // cosmetic
+        "skip_rom_validation", // operational (CLI/WASM input handling), not randomization
+    ];
+
+    let default_key = Options::default().to_flag_key();
+    let default_json = serde_json::to_value(Options::default()).unwrap();
+    let obj = default_json.as_object().unwrap();
+
+    let mut checked_encoded = 0;
+    for (field, value) in obj {
+        let Some(b) = value.as_bool() else { continue };
+
+        // Flip this one bool in the serialized form and rebuild Options.
+        let mut mutated_json = default_json.clone();
+        mutated_json[field] = serde_json::Value::Bool(!b);
+        let mutated: Options = serde_json::from_value(mutated_json).unwrap();
+        let mutated_key = mutated.to_flag_key();
+
+        if NOT_ENCODED.contains(&field.as_str()) {
+            assert_eq!(
+                default_key, mutated_key,
+                "'{field}' is on the NOT_ENCODED list but flipping it changed the flag key",
+            );
+        } else {
+            assert_ne!(
+                default_key, mutated_key,
+                "bool option '{field}' does not affect the flag key — encode it in \
+                 to_flag_bytes/from_flag_key, or add it to NOT_ENCODED with a reason",
+            );
+            checked_encoded += 1;
+        }
+    }
+
+    assert!(checked_encoded > 0, "no encoded bool fields found — serde reflection broke?");
 }
 
 #[test]
