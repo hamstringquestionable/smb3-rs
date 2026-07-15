@@ -13,7 +13,10 @@ into a versioned section when a release is cut.
 - The "Oops all Anchors" (`anchor_visuals`) toggle is now encoded in the
   shareable flag key, so turning it on/off actually changes the key and the
   option round-trips when a key is loaded. Previously it was silently dropped
-  from the flag key (flag-key version bumped to 25).
+  from the flag key (flag-key version bumped to 25). Also fixed the web UI so
+  applying a flag key with the toggle off actually clears it — the option was
+  marked as not-in-flag-key, so `applyOptions` skipped it and left a
+  previously-enabled checkbox on.
 
 ## [0.12.0] - 2026-07-12
 
