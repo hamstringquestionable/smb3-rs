@@ -147,7 +147,7 @@ export const SCHEMA = [
 	{ id: "anchor_visuals", type: "bool", default: false,
 		label: "Oops all Anchors", flavor: "Anchors aweigh.",
 		tip: "Every item in your inventory looks like an Anchor. It still works the same — a mushroom still grows you.",
-		group: "map", inFlagKey: false },
+		group: "map", inFlagKey: true },
 	{ id: "include_beta_stages", type: "bool", default: false,
 		label: "Include Beta Stages",
 		tip: "Adds 9 stages previously not included in the vanilla game.",
