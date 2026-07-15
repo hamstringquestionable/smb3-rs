@@ -177,10 +177,15 @@ fn randomize_inner(
     }
     randomize::bowser_castle::randomize(rom, &mut rng);
     randomize::podoboo_gauntlet::randomize(rom, &mut rng);
-    if options.world_order {
+    // World order shuffle. The credits reorder that aligns the ending montage
+    // with the progression runs later (after the mini-maps are regenerated and
+    // repacked, since it permutes the picture pointers those steps rewrite).
+    let credits_progression = if options.world_order {
         rom.set_tag("world_order");
-        randomize::world_order::randomize(rom, &mut rng, options.world_count);
-    }
+        Some(randomize::world_order::randomize(rom, &mut rng, options.world_count))
+    } else {
+        None
+    };
     if options.big_q_blocks {
         rom.set_tag("enemies/big_q_blocks");
         randomize::enemies::randomize_big_q_blocks(rom, &mut rng);
@@ -300,6 +305,20 @@ fn randomize_inner(
             piranha: options.piranha_shuffle,
         },
     );
+
+    // Redraw + repack the ending credits mini-maps from the freshly-written
+    // randomized world maps, then (if world order shuffled) reorder the montage
+    // so each world's picture shows in the order the player traversed it. Both
+    // run after `write_overworld` reads the final map tiles; the reorder must
+    // run after the repack because it permutes the picture pointers.
+    rom.set_tag("credits/world_maps");
+    randomize::credits::render_world_maps(rom, &mut rng);
+    if let Some(progression) = &credits_progression {
+        rom.set_tag("credits/world_order");
+        let order = randomize::credits::order_from_progression(progression);
+        randomize::credits::reorder_world_pictures(rom, &order);
+    }
+
     // Give each W8 Hand its own treasure-room enemy stream so the chest
     // randomizer can roll a unique item per Hand. Runs before items::randomize
     // so the cloned Y-bytes are in place when chests roll.
