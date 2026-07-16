@@ -8,6 +8,8 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-07-16
+
 ### Added
 
 - **Remove Flashing** (MaCobra52): a Visual option that suppresses the
