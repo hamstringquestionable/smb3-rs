@@ -310,6 +310,7 @@ impl Options {
             palettes: true,
             palette_themed: false, // cosmetic — not encoded in flag key
             player_color: None,    // cosmetic — not encoded in flag key
+            remove_flashing: true, // cosmetic/accessibility — not encoded in flag key
             hammer_breaks_locks: dtri((b1 >> 6) & 1 != 0, b11 & 1 != 0),
             koopaling_hits: (b1 >> 5) & 1 != 0,
             boomboom_hits: (b2 >> 3) & 1 != 0,

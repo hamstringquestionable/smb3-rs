@@ -18,7 +18,7 @@ pub use hammer_breaks::hammer_breaks_tiles;
 pub use macobra::{
     apply_early_sun, apply_fast_mushroom_house, apply_faster_frog, apply_faster_tail_speed,
     apply_infinite_mushroom_houses, apply_japanese_damage, apply_limit_bro_movement,
-    apply_macobra_patches, apply_no_game_over_penalty,
+    apply_macobra_patches, apply_no_game_over_penalty, apply_remove_flashing,
 };
 pub use overworld_map::{
     apply_w8_bridges, apply_w8_canoe_and_paths, fix_w3_drawbridges, make_hammer_rocks,

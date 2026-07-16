@@ -8,6 +8,19 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+### Added
+
+- **Remove Flashing** (MaCobra52): a Visual option that suppresses the
+  full-screen palette flash/fade animation for photosensitive-safe play. On by
+  default; not encoded in the flag key and consumes no RNG. Turn it off with
+  `--keep-flashing` on the CLI.
+
+### Fixed
+
+- **Tail Enemies don't respawn** (MaCobra52, always on): enemies defeated by the
+  Raccoon/Tanooki tail are now recorded in the level's persistent kill memory,
+  so they no longer respawn when scrolled off-screen and back.
+
 ## [0.12.2] - 2026-07-16
 
 ### Changed

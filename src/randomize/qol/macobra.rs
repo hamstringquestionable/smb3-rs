@@ -1,7 +1,7 @@
 //! MaCobra52 patch bundle: always-on bugfixes plus opt-in feature patches.
 
 use crate::rom::Rom;
-use crate::randomize::rom_data::{FS_FASTER_FROG, FS_HOLD_LEFT_HELPER};
+use crate::randomize::rom_data::{FS_FASTER_FROG, FS_HOLD_LEFT_HELPER, FS_TAIL_STAY_DEAD};
 
 // ---------------------------------------------------------------------------
 // MaCobra patches — always-on bundle
@@ -128,6 +128,25 @@ const HOLD_LEFT_RETARGETS: &[(usize, &[u8])] = &[
 const HOLD_LEFT_TAIL_OFFSET: usize = 0x111D4;
 const HOLD_LEFT_TAIL_BYTES: [u8; 12] =
     [0x07, 0xA9, 0x00, 0x85, 0x12, 0x20, 0x18, 0xC9, 0xA5, 0xAB, 0xF0, 0x38];
+
+// Tail Enemies don't respawn (by MaCobra52) — "SMB3 - Tail Enemies don't
+// respawn.ips". Bug: an enemy defeated by the Raccoon/Tanooki tail (or spin)
+// is only flagged dead in its on-screen slot ($0520,X), not in the level's
+// persistent kill memory, so scrolling it off and back respawns it. The fix
+// is two writes verified byte-for-byte against the IPS on USA Rev1:
+//
+//   1. An 8-byte routine dropped into a dead gap in PRG003 at CPU $A5F9
+//      (FS_TAIL_STAY_DEAD, file 0x06609 — between the `RTS` at 0x06608 and the
+//      routine at 0x06611):
+//          LDA #$FF          ; a9 ff
+//          STA $0659,X       ; 9d 59 06   persistent "stay dead" flag
+//          JMP $BA0B         ; 4c 0b ba   continue the vanilla defeat path
+//   2. The tail-defeat handler's `JMP $BA0B` (file 0x07E49) is retargeted to
+//      `JMP $A5F9` by rewriting its operand (file 0x07E4A: 0b ba -> f9 a5), so
+//      the new routine runs first and then falls through to the original code.
+const TAIL_STAY_DEAD_ROUTINE: [u8; 8] = [0xA9, 0xFF, 0x9D, 0x59, 0x06, 0x4C, 0x0B, 0xBA];
+const TAIL_STAY_DEAD_HOOK_OFFSET: usize = 0x07E4A;
+const TAIL_STAY_DEAD_HOOK_BYTES: [u8; 2] = [0xF9, 0xA5]; // JMP $A5F9 operand
 
 // ---------------------------------------------------------------------------
 // MaCobra patches — opt-in features
@@ -356,6 +375,58 @@ pub fn apply_no_game_over_penalty(rom: &mut Rom) {
     rom.write_range(NGO_NOP_OFFSET, &NGO_NOP_BYTES);
 }
 
+// Remove Flashing (by MaCobra52) — "SMB3 - Remove Flashing.ips". Suppresses
+// the full-screen palette-flash/fade animation (the rapid color strobing used
+// on some transitions and effects) to make the game safer for photosensitive
+// players. Eight writes, reproduced byte-for-byte from the IPS and verified
+// against USA Rev1. The core mechanism:
+//
+//   * The fade routine's per-color palette writes (`STA $0301,X` … `STA $030C,X`)
+//     are all redirected to a scratch address (`STA $0379,X`), so the computed
+//     flash colors are never committed to the active palette RAM.
+//   * The fade-index load `LDX $0300` is pinned to `LDX #$01` (+ NOP) so the
+//     animation no longer cycles.
+//   * Three single-byte tweaks (0x149F0, 0x1634E: 0x16->0x1F; 0x361B9:
+//     0x16->0x0F) in the related banks complete the effect.
+//
+// Cosmetic / accessibility only — not encoded in the flag key and consumes no
+// RNG. The IPS records are non-contiguous because it only overwrites the bytes
+// that differ from vanilla, so each record is reproduced as its own write.
+const REMOVE_FLASHING_WRITES: &[(usize, &[u8])] = &[
+    (0x0E19F, &[0xA2, 0x01, 0xEA]),
+    (
+        0x0E1BB,
+        &[
+            0x79, 0x03, 0xA9, 0x04, 0x9D, 0x79, 0x03, 0xA9, 0x08, 0x9D, 0x79, 0x03, 0xB9, 0x8B,
+            0xA1, 0x9D, 0x79, 0x03, 0x9D, 0x79, 0x03, 0x9D, 0x79, 0x03, 0x9D, 0x79, 0x03, 0xAD,
+            0xC5, 0x07, 0x9D, 0x79, 0x03, 0xAD, 0xC9, 0x07, 0x9D, 0x79, 0x03, 0xAD, 0xCB, 0x07,
+            0x9D, 0x79, 0x03, 0xAD, 0xCC, 0x07, 0x9D, 0x79, 0x03, 0xA9, 0x00, 0x9D, 0x79,
+        ],
+    ),
+    (0x0E1F8, &[0x79]),
+    (
+        0x0E209,
+        &[
+            0x79, 0x03, 0xA9, 0x10, 0x9D, 0x79, 0x03, 0xAD, 0xD2, 0x07, 0x9D, 0x79, 0x03, 0xAD,
+            0xD3, 0x07, 0x9D, 0x79, 0x03, 0xAD, 0xD4, 0x07, 0x9D, 0x79, 0x03, 0xA9, 0x3F, 0x9D,
+            0x79, 0x03, 0xA9, 0x04, 0x9D, 0x79, 0x03, 0xA9, 0x00, 0x9D, 0x79,
+        ],
+    ),
+    (0x0E236, &[0x79]),
+    (0x149F0, &[0x1F]),
+    (0x1634E, &[0x1F]),
+    (0x361B9, &[0x0F]),
+];
+
+/// Apply MaCobra52's "Remove Flashing" patch — suppresses the full-screen
+/// palette-flash/fade animation for photosensitive-safe play. Cosmetic /
+/// accessibility option; not in the flag key and uses no RNG.
+pub fn apply_remove_flashing(rom: &mut Rom) {
+    for &(offset, bytes) in REMOVE_FLASHING_WRITES {
+        rom.write_range(offset, bytes);
+    }
+}
+
 /// Apply MaCobra's always-on bugfixes and fairness patches.
 pub fn apply_macobra_patches(rom: &mut Rom) {
     // Prevent forced hammer bro fights (4 NOPs)
@@ -387,6 +458,11 @@ pub fn apply_macobra_patches(rom: &mut Rom) {
     rom.write_byte(HOTFOOT_TAIL_A, 0x00);
     rom.write_byte(HOTFOOT_TAIL_B, 0x00);
     rom.write_byte(HOTFOOT_TAIL_C, 0x25);
+
+    // Tail Enemies don't respawn: mark tail-defeated enemies dead in the
+    // level's persistent kill memory so they stay dead across scrolling.
+    rom.write_range(FS_TAIL_STAY_DEAD, &TAIL_STAY_DEAD_ROUTINE);
+    rom.write_range(TAIL_STAY_DEAD_HOOK_OFFSET, &TAIL_STAY_DEAD_HOOK_BYTES);
 
     // NOTE: MaCobra's "Bros don't stop on hands" (issue #14) used to live
     // here; it is subsumed by the overworld writer's march-veto trampoline
@@ -496,6 +572,37 @@ mod tests {
         let before = rom.read_range(0x17435, 3).to_vec();
         apply_macobra_patches(&mut rom);
         assert_eq!(rom.read_range(0x17435, 3), &before[..]);
+    }
+
+    #[test]
+    fn test_macobra_tail_stay_dead_writes() {
+        let mut rom = make_test_rom();
+        apply_macobra_patches(&mut rom);
+
+        // Routine lands in the PRG003 gap, and the defeat-handler JMP operand
+        // is retargeted to it ($A5F9).
+        assert_eq!(
+            rom.read_range(FS_TAIL_STAY_DEAD, TAIL_STAY_DEAD_ROUTINE.len()),
+            &TAIL_STAY_DEAD_ROUTINE
+        );
+        assert_eq!(
+            rom.read_range(TAIL_STAY_DEAD_HOOK_OFFSET, TAIL_STAY_DEAD_HOOK_BYTES.len()),
+            &TAIL_STAY_DEAD_HOOK_BYTES
+        );
+        // The retarget must name the routine's CPU address: PRG003 maps to
+        // $A000, so CPU = $A000 + (FS_TAIL_STAY_DEAD - 0x06010).
+        let routine_cpu = (0xA000 + (FS_TAIL_STAY_DEAD - 0x06010)) as u16;
+        assert_eq!(routine_cpu, 0xA5F9);
+        assert_eq!(u16::from_le_bytes(TAIL_STAY_DEAD_HOOK_BYTES), routine_cpu);
+    }
+
+    #[test]
+    fn test_remove_flashing_writes() {
+        let mut rom = make_test_rom();
+        apply_remove_flashing(&mut rom);
+        for &(offset, bytes) in REMOVE_FLASHING_WRITES {
+            assert_eq!(rom.read_range(offset, bytes.len()), bytes);
+        }
     }
 
     #[test]

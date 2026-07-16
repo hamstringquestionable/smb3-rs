@@ -471,6 +471,14 @@ fn randomize_inner(
     rom.set_tag("qol/macobra");
     randomize::qol::apply_macobra_patches(rom);
 
+    // MaCobra52's "Remove Flashing" — suppress the palette-flash animation for
+    // photosensitive-safe play. On by default; accessibility/cosmetic option,
+    // not in the flag key and consumes no RNG.
+    if options.remove_flashing {
+        rom.set_tag("qol/remove_flashing");
+        randomize::qol::apply_remove_flashing(rom);
+    }
+
     // Faster Frog — speeds up Frog-Suit swimming. MUST run after
     // apply_macobra_patches: two of its writes patch inside the tail-swim
     // routine that macobra writes unconditionally, so it has to layer on top.
