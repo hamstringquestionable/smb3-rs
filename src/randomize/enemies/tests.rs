@@ -850,6 +850,52 @@
         }
     }
 
+    /// An injected Angry Sun must be re-seeded to the vanilla screen-0 spawn
+    /// (SUN_SPAWN_X/Y), not left at the replaced enemy's inherited position.
+    /// The sun idles in the background until its screen counter hits the attack
+    /// threshold; the Early Sun QoL patch moves that threshold to screen 0, so a
+    /// sun spawned on any later screen never fires (and a stuck sun blocks the
+    /// level goal card). The replaced entries[0] here sits deep at screen 5.
+    #[test]
+    fn test_injected_sun_repositioned_to_screen0() {
+        let flags = Options {
+            wild_injections: true,
+            ..Options::default()
+        };
+        let mut data = blank_rom_image();
+        // First (leftmost) enemy sits deep at screen 5; slot-5 Goombas keep
+        // slot 4 free so the sun (0x32/+4) is CHR-compatible and injectable.
+        let seg = &[
+            0xFF, 0x01,
+            0x72, 0x58, 0x19, // Goomba at screen 5 — the entries[0] a sun replaces
+            0x72, 0x62, 0x19, // Goomba
+            0x72, 0x70, 0x19, // Goomba
+            0xFF,
+        ];
+        data[ENEMY_DATA_START..ENEMY_DATA_START + seg.len()].copy_from_slice(seg);
+        install_fake_entry_header(&mut data, (ENEMY_DATA_START + 1) as u16);
+        let rom = Rom::from_bytes_lax(&data, true).unwrap();
+
+        let mut saw_sun = false;
+        for seed in 0..2000u64 {
+            let mut rom_copy = rom.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_copy, &mut rng, &flags);
+            if rom_copy.read_byte(ENEMY_DATA_START + 2) == ANGRY_SUN_ID {
+                saw_sun = true;
+                assert_eq!(
+                    rom_copy.read_byte(ENEMY_DATA_START + 3), SUN_SPAWN_X,
+                    "seed {seed}: injected sun X not re-seeded to screen 0"
+                );
+                assert_eq!(
+                    rom_copy.read_byte(ENEMY_DATA_START + 4), SUN_SPAWN_Y,
+                    "seed {seed}: injected sun Y not re-seeded"
+                );
+            }
+        }
+        assert!(saw_sun, "2000 seeds and never injected a sun to verify reposition");
+    }
+
     /// A vanilla Lakitu (out-of-pool chaser) must pin its CHR page for the
     /// WHOLE level, not just its own proximity group — it follows the player
     /// across every group (see CHASER_IDS).

@@ -164,6 +164,21 @@ pub(super) fn inject_at_entry_points<R: Rng>(
             if !(chosen_is_bertha && post_count > MAX_BERTHA_PER_SEGMENT) {
                 let di = entry.data_index;
                 swap_enemy(data, di, chosen);
+                // The Angry Sun idles in the background until its screen
+                // counter hits the attack threshold; the Early Sun QoL patch
+                // moves that threshold to screen 0, so a sun that spawns on any
+                // later screen never fires (and a stuck sun blocks the level's
+                // goal card). Injection inherits the replaced enemy's position,
+                // which is usually deep in the level. Re-seed the sun at the
+                // vanilla 2-Quicksand spawn (screen 0, Y=0x11) so it engages
+                // immediately with Early Sun on and matches the one working
+                // vanilla placement. The sun is already `entries[0]` (lowest X
+                // in the sorted run), so moving it to screen 0 keeps the run
+                // X-sorted for the writeback.
+                if chosen == ANGRY_SUN_ID {
+                    data[di + 1] = SUN_SPAWN_X; // X: screen 0
+                    data[di + 2] = SUN_SPAWN_Y; // Y: sky row
+                }
             }
         }
     }
