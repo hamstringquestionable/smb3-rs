@@ -8,6 +8,8 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-07-15
+
 ### Changed
 
 - Wild injections (Lakitu / Angry Sun / Boss Bass) are no longer placed in any
