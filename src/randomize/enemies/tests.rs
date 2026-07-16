@@ -896,6 +896,39 @@
         assert!(saw_sun, "2000 seeds and never injected a sun to verify reposition");
     }
 
+    /// Wild injection must never place a level-wide chaser into a segment that
+    /// holds a Boom-Boom, even when entries[0] is otherwise a valid target.
+    #[test]
+    fn test_no_injection_in_boomboom_segment() {
+        let flags = Options {
+            wild_injections: true,
+            ..Options::default()
+        };
+        let mut data = blank_rom_image();
+        let seg = &[
+            0xFF, 0x01,
+            0x72, 0x10, 0x19, // Goomba — a valid injectable entries[0]
+            0x4B, 0x20, 0x19, // Boom-Boom lives in this level
+            0x72, 0x30, 0x19, // Goomba
+            0xFF,
+        ];
+        data[ENEMY_DATA_START..ENEMY_DATA_START + seg.len()].copy_from_slice(seg);
+        install_fake_entry_header(&mut data, (ENEMY_DATA_START + 1) as u16);
+        let rom = Rom::from_bytes_lax(&data, true).unwrap();
+
+        let injection_ids: &[u8] = &[0x83, 0xAF, 0x2D];
+        for seed in 0..1000u64 {
+            let mut rom_copy = rom.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_copy, &mut rng, &flags);
+            let id = rom_copy.read_byte(ENEMY_DATA_START + 2);
+            assert!(
+                !injection_ids.contains(&id),
+                "seed {seed}: injected 0x{id:02X} into a Boom-Boom segment"
+            );
+        }
+    }
+
     /// A vanilla Lakitu (out-of-pool chaser) must pin its CHR page for the
     /// WHOLE level, not just its own proximity group — it follows the player
     /// across every group (see CHASER_IDS).

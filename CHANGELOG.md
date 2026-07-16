@@ -8,6 +8,12 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+### Changed
+
+- Wild injections (Lakitu / Angry Sun / Boss Bass) are no longer placed in any
+  level segment that contains a Boom-Boom, so a level-wide chaser can't turn up
+  in a fortress boss room.
+
 ### Fixed
 
 - Wild-injected Angry Suns no longer get stuck idling in the background (which

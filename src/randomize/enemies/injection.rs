@@ -139,6 +139,19 @@ pub(super) fn inject_at_entry_points<R: Rng>(
         }) else {
             continue; // ep not inside any walkable segment — don't inject
         };
+
+        // Never drop a level-wide chaser into a segment that holds a Boom-Boom.
+        // Same whole-segment scope as the CHR scan below and for the same
+        // reason: the chaser follows the player across the entire segment (and
+        // nested outer levels read through this ep), so a Boom-Boom anywhere in
+        // the segment could share the boss room with it. Content-based skip,
+        // like the Bertha cap — no offset list to keep in sync with the ROM.
+        if (0..seg.entry_count)
+            .any(|k| BOOMBOOM_SWAP.contains(&data[seg.file_offset + 1 + k * 3]))
+        {
+            continue;
+        }
+
         let mut s4 = ChrSlot::Free;
         let mut s5 = ChrSlot::Free;
         for k in 0..seg.entry_count {
