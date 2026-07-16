@@ -8,8 +8,22 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-07-15
+
+### Changed
+
+- Wild injections (Lakitu / Angry Sun / Boss Bass) are no longer placed in any
+  level segment that contains a Boom-Boom, so a level-wide chaser can't turn up
+  in a fortress boss room.
+
 ### Fixed
 
+- Wild-injected Angry Suns no longer get stuck idling in the background (which
+  could also stop a level's goal card from spawning, making the level
+  uncompletable). Injection used to leave the sun at the replaced enemy's
+  position — usually deep in the level — but with Early Sun on, the sun only
+  attacks if it spawned on the first screen. Injected suns are now seeded at the
+  vanilla screen-0 spawn so they engage as intended.
 - The "Oops all Anchors" (`anchor_visuals`) toggle is now encoded in the
   shareable flag key, so turning it on/off actually changes the key and the
   option round-trips when a key is loaded. Previously it was silently dropped

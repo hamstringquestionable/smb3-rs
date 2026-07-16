@@ -340,9 +340,20 @@ pub(super) const W7F1_TANOOKI_OFFSET: usize = 0x0C9B7;
 /// normal swaps. CHR compatibility checked via `sprite_bank()` at filter time.
 pub(super) const WILD_INJECTION_IDS: &[u8] = &[
     0x83, // Lakitu (enemy-spawning variant, CHR $0B/+4)
-    0xAF, // Angry Sun
+    ANGRY_SUN_ID, // Angry Sun
     0x2D, // Boss Bass (Big Bertha — the leaping eater)
 ];
+
+/// Angry Sun object id.
+pub(super) const ANGRY_SUN_ID: u8 = 0xAF;
+
+/// Spawn position an injected Angry Sun is re-seeded to: screen 0, Y=0x11 —
+/// the vanilla 2-Quicksand placement, the one spawn that works with the Early
+/// Sun QoL patch (whose attack threshold fires only on screen 0). Injection
+/// otherwise inherits the replaced enemy's usually-deep position, leaving the
+/// sun stuck idling in the background.
+pub(super) const SUN_SPAWN_X: u8 = 0x02;
+pub(super) const SUN_SPAWN_Y: u8 = 0x11;
 
 /// Probability (out of 256) that a segment will receive an injection when wild_injections is on.
 /// ~15% chance per segment.
