@@ -38,6 +38,7 @@ pub(crate) const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x03FD0, 22, "koopa_y_clamp: clamp Koopaling Y position to screen"),
     (0x03FE6, 36, "fire_flower: position-hash suit routine + pool table"),
     // PRG003 (file 0x06010, CPU $A000–$BFFF) — object AI bank (Boom-Boom lives here)
+    (0x06609, 8, "tail_stay_dead: MaCobra respawn-suppress routine (CPU $A5F9 gap)"),
     (0x07FCF, 16, "boomboom_hits: per-fortress threshold table"),
     (0x07FDF, 44, "boomboom_hits: decoupled stomp-count subroutine"),
     // PRG006 (file 0x0C010, CPU $C000–$DFFF) — level enemy data bank
@@ -213,6 +214,12 @@ pub(crate) const KOOPA_FIRE_PRESET_CPU: u16  = 0xB84E;  // $A000 + (0x0385E - 0x
 // bank-local. Both allocations sit in the bank-end filler gap ($BFBF–$BFFF).
 //
 // Layout: 16-byte threshold table first, then the 44-byte subroutine.
+// PRG003 8-byte dead gap between an RTS (file 0x06608) and the routine that
+// starts at file 0x06611. MaCobra's "Tail Enemies don't respawn" fix drops an
+// 8-byte respawn-suppress routine here, reached by a bank-local `JMP $A5F9`
+// (see macobra.rs TAIL_STAY_DEAD_*).
+pub(crate) const FS_TAIL_STAY_DEAD: usize = 0x06609; // 8 bytes (CPU $A5F9)
+
 pub(crate) const FS_BOOMBOOM_HITS_TABLE: usize = 0x07FCF; // 16 bytes (CPU $BFBF)
 
 pub(crate) const BOOMBOOM_HITS_TABLE_CPU: u16  = 0xBFBF;  // $A000 + (0x07FCF - 0x06010)
@@ -291,6 +298,7 @@ mod free_space_tests {
             (FS_KOOPA_FIRE_PRESET, "FS_KOOPA_FIRE_PRESET"),
             (FS_KOOPA_Y_CLAMP, "FS_KOOPA_Y_CLAMP"),
             (FS_FIRE_FLOWER, "FS_FIRE_FLOWER"),
+            (FS_TAIL_STAY_DEAD, "FS_TAIL_STAY_DEAD"),
             (FS_BOOMBOOM_HITS_TABLE, "FS_BOOMBOOM_HITS_TABLE"),
             (FS_BOOMBOOM_HITS_SUB, "FS_BOOMBOOM_HITS_SUB"),
             (FS_HAND_ROOMS, "FS_HAND_ROOMS"),

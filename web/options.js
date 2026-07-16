@@ -375,6 +375,11 @@ export const SCHEMA = [
 		label: "World colors",
 		tip: "Recolor levels, enemies, and world maps with a random color theme. Brightness stays the same, so everything stays easy to see.",
 		group: "cosmetic", inFlagKey: false },
+	{ id: "remove_flashing", type: "bool", default: true,
+		label: "Remove flashing",
+		tip: "Stop the full-screen flashing and fading effects. On by default so the game is safer for players sensitive to flashing lights.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
+		group: "cosmetic", inFlagKey: false },
 ];
 
 // Hardcoded fields sent to Rust that aren't user-facing.
@@ -953,7 +958,7 @@ export function getOptionsJson() {
 }
 
 // Apply a decoded flag-key payload back to the DOM. Skips non-flag-key
-// fields (palettes, palette_themed, skip_rom_validation) so applying a
+// fields (palettes, palette_themed, remove_flashing, skip_rom_validation) so applying a
 // shared key doesn't clobber the user's local cosmetic / ROM choices.
 export function applyOptions(opts) {
 	for (const entry of SCHEMA) {

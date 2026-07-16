@@ -134,6 +134,12 @@ pub struct Options {
     /// Only takes effect while `palettes` is on.
     #[serde(default)]
     pub player_color: Option<u8>,
+    /// Remove the full-screen palette-flash/fade animation (MaCobra52's
+    /// "Remove Flashing" patch) so photosensitive players aren't exposed to
+    /// the strobing. On by default. Accessibility / cosmetic — not encoded in
+    /// the flag key and consumes no RNG.
+    #[serde(default = "default_true")]
+    pub remove_flashing: bool,
     #[serde(default)]
     pub world_order: bool,
     /// Number of worlds before Dark Land (1–7, default 7).
@@ -382,6 +388,7 @@ impl Default for Options {
             palettes: true,
             palette_themed: false,
             player_color: None,
+            remove_flashing: true,
             world_order: false,
             world_count: default_world_count(),
             big_q_blocks: false,

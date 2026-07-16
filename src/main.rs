@@ -159,6 +159,11 @@ struct Cli {
     #[arg(long)]
     no_palettes: bool,
 
+    /// Keep the full-screen flash/fade animation (the "Remove Flashing"
+    /// accessibility patch is on by default). Cosmetic; not in the flag key.
+    #[arg(long)]
+    keep_flashing: bool,
+
     /// Recolor levels, enemies, and world maps with a random theme (world
     /// colors). Independent of player colors.
     /// Cosmetic; not encoded in the flag key.
@@ -457,6 +462,11 @@ fn build_options(cli: &Cli) -> Options {
                 if cli.player_color.is_some() {
                     opts.player_color = cli.player_color;
                 }
+                // remove_flashing is a cosmetic/accessibility default-on option,
+                // not in the flag key; --keep-flashing overlays it off.
+                if cli.keep_flashing {
+                    opts.remove_flashing = false;
+                }
                 // Same for skip_rom_validation — a property of the input ROM.
                 if cli.skip_rom_validation {
                     opts.skip_rom_validation = true;
@@ -474,6 +484,7 @@ fn build_options(cli: &Cli) -> Options {
             palettes: !cli.no_palettes,
             palette_themed: cli.themed_palettes,
             player_color: cli.player_color,
+            remove_flashing: !cli.keep_flashing,
             world_order: cli.world_order,
             world_count: cli.world_count,
             big_q_blocks: cli.big_q_blocks,
@@ -544,6 +555,7 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
         (true, Some(c)) => format!("${c:02X}"),
     });
     eprintln!("  World colors: {}", if options.palette_themed { "themed" } else { "vanilla" });
+    eprintln!("  Remove flashing: {}", if options.remove_flashing { "on" } else { "off" });
     eprintln!("  Enemies:  {}", if options.any_enemies_active() { "on" } else { "off" });
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
     if options.world_order && options.world_count < 7 {

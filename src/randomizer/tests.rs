@@ -32,6 +32,7 @@ fn make_test_rom() -> Option<Rom> {
 fn normalized(mut o: Options) -> Options {
     o.palettes = true;
     o.palette_themed = false;
+    o.remove_flashing = true;
     o
 }
 
@@ -303,8 +304,9 @@ fn flag_key_per_option_round_trip() {
 
     // Cosmetic: must NOT change the flag key.
     let cosmetic: Vec<OptionTweak> = vec![
-        ("palettes",       Box::new(|o| o.palettes = !o.palettes)),
-        ("palette_themed", Box::new(|o| o.palette_themed = !o.palette_themed)),
+        ("palettes",        Box::new(|o| o.palettes = !o.palettes)),
+        ("palette_themed",  Box::new(|o| o.palette_themed = !o.palette_themed)),
+        ("remove_flashing", Box::new(|o| o.remove_flashing = !o.remove_flashing)),
     ];
     for (label, mutate) in cosmetic {
         check_round_trip(label, mutate, false);
@@ -507,6 +509,7 @@ fn flag_key_encodes_every_bool_option() {
     const NOT_ENCODED: &[&str] = &[
         "palettes",            // cosmetic; uses OS randomness, not seed-derived
         "palette_themed",      // cosmetic
+        "remove_flashing",     // cosmetic/accessibility; static patch, no RNG
         "skip_rom_validation", // operational (CLI/WASM input handling), not randomization
     ];
 
@@ -605,6 +608,7 @@ fn all_off_options() -> Options {
         palettes: false,
         palette_themed: false,
         player_color: None,
+        remove_flashing: false,
         world_order: false,
         world_count: 7,
         big_q_blocks: false,
@@ -670,6 +674,7 @@ fn all_on_options() -> Options {
         palettes: false,
         palette_themed: false,
         player_color: None,
+        remove_flashing: true,
         world_order: true,
         world_count: 3,
         big_q_blocks: true,
