@@ -1569,3 +1569,72 @@
         }
         assert!(saw_injection, "30 seeds and never saw a chaser injected into a level");
     }
+
+    /// An injected Lakitu's height coin-flips between the replaced enemy's Y and
+    /// LAKITU_ALT_Y (0x12): across many seeds we must see both outcomes, so it's
+    /// not always stuck at the (harder) low inherited height.
+    #[test]
+    fn wild_injected_lakitu_height_varies() {
+        use crate::randomize::node_catalog::NodeCatalog;
+        use crate::randomize::rom_data::enemy_ptr_to_file_offset;
+        const LAKITU: u8 = 0x83;
+
+        let Some(base) = load_reference_rom() else {
+            eprintln!("reference ROM not present — skipping wild_injected_lakitu_height_varies");
+            return;
+        };
+        let len = ENEMY_DATA_END - ENEMY_DATA_START;
+        let vanilla = base.read_range(ENEMY_DATA_START, len).to_vec();
+        let catalog = NodeCatalog::build(&base, false);
+
+        let first_idx = |obj_ptr: u16, data: &[u8]| -> Option<usize> {
+            if obj_ptr < 0xC000 {
+                return None;
+            }
+            let fo = enemy_ptr_to_file_offset(obj_ptr);
+            if !(ENEMY_DATA_START..ENEMY_DATA_END).contains(&fo) {
+                return None;
+            }
+            let p = fo - ENEMY_DATA_START;
+            if p >= data.len() {
+                return None;
+            }
+            let first = if matches!(data[p], 0x00 | 0x01) { p + 1 } else { p };
+            if first >= data.len() || data[first] == 0xFF {
+                return None;
+            }
+            Some(first)
+        };
+
+        let opts = Options { wild_injections: true, ..preset_recommended() };
+        let mut saw_alt = false; // lifted to LAKITU_ALT_Y (0x12)
+        let mut saw_kept = false; // kept a non-0x12 inherited height
+        'seeds: for seed in 0..60u64 {
+            let mut rom = base.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom, &mut rng, &opts);
+            let patched = rom.read_range(ENEMY_DATA_START, len).to_vec();
+            for e in &catalog.entries {
+                let Some(le) = &e.level_entry else { continue };
+                let obj_ptr = ((le.obj_hi as u16) << 8) | le.obj_lo as u16;
+                let Some(fi) = first_idx(obj_ptr, &patched) else { continue };
+                if patched[fi] != LAKITU {
+                    continue;
+                }
+                let van_first = first_idx(obj_ptr, &vanilla).map(|v| vanilla[v]);
+                if van_first == Some(LAKITU) {
+                    continue; // vanilla-native Lakitu, not injected
+                }
+                if patched[fi + 2] == 0x12 {
+                    saw_alt = true;
+                } else {
+                    saw_kept = true;
+                }
+                if saw_alt && saw_kept {
+                    break 'seeds;
+                }
+            }
+        }
+        assert!(saw_alt, "no injected Lakitu lifted to 0x12 in 60 seeds");
+        assert!(saw_kept, "no injected Lakitu kept its inherited height in 60 seeds");
+    }

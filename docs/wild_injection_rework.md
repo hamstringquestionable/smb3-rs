@@ -76,6 +76,13 @@ Everything uses `obj_ptr` + `enemy_ptr_to_file_offset` (the same frame as
 Kept as-is: injected suns are re-seeded to the vanilla 2-Quicksand spawn
 (screen 0, `Y=0x11`). Confirmed necessary — deep suns idle in the background.
 
+### Lakitu height
+Lakitu works at any spawn height, but inheriting the replaced first enemy's Y
+(usually a low ground-enemy spot) makes it too consistently punishing — the
+spinies land closer. So an injected Lakitu's Y is a coin-flip between the
+inherited height and `LAKITU_ALT_Y` (`0x12`, the common vanilla Lakitu height):
+half stay low, half lift up. X is always inherited.
+
 ## Retained / removed
 - `enemy_entry_points` retained (used by the `chr_stats` integration test).
 - Removed: the old `inject_at_entry_points`, the per-segment `0x4B/0x4C` Boom-Boom

@@ -19,7 +19,9 @@ into a versioned section when a release is cut.
   correct enemy-data location (the old path was offset by 0x10, which could
   corrupt a level). Suns still spawn on screen 0. **Boss Bass is dropped from the
   injection pool** — it's a water-class enemy, so the enemy shuffle reshuffled an
-  injected one away; injections are now Lakitu + Angry Sun.
+  injected one away; injections are now Lakitu + Angry Sun. An injected Lakitu's
+  height is randomized between the replaced enemy's spot and a raised height, so
+  it isn't always at the harder low position.
 - Wild injections roll more often (~15% → ~40% per level) so a seed lands
   noticeably more Lakitu / Angry Sun chasers.
 

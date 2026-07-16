@@ -342,12 +342,15 @@ pub(super) const W7F1_TANOOKI_OFFSET: usize = 0x0C9B7;
 /// (Boss Bass 0x2D is deliberately excluded: it's a `WATER_ENEMIES` member, so
 /// the walker would reshuffle an injected one into an ordinary water enemy.)
 pub(super) const WILD_INJECTION_IDS: &[u8] = &[
-    0x83, // Lakitu (enemy-spawning variant, CHR $0B/+4)
+    LAKITU_ID,    // Lakitu (enemy-spawning variant, CHR $0B/+4)
     ANGRY_SUN_ID, // Angry Sun
 ];
 
 /// Angry Sun object id.
 pub(super) const ANGRY_SUN_ID: u8 = 0xAF;
+
+/// Lakitu (enemy-spawning variant) object id.
+pub(super) const LAKITU_ID: u8 = 0x83;
 
 /// Spawn position an injected Angry Sun is re-seeded to: screen 0, Y=0x11 —
 /// the vanilla 2-Quicksand placement, the one spawn that works with the Early
@@ -356,6 +359,13 @@ pub(super) const ANGRY_SUN_ID: u8 = 0xAF;
 /// sun stuck idling in the background.
 pub(super) const SUN_SPAWN_X: u8 = 0x02;
 pub(super) const SUN_SPAWN_Y: u8 = 0x11;
+
+/// An injected Lakitu's height is a coin-flip between the replaced enemy's Y and
+/// this value — the common vanilla Lakitu spawn height (7 of 10 vanilla Lakitu
+/// use it). Lakitu works at any height, but inheriting a low ground-enemy Y
+/// every time makes it too consistently punishing (spinies land closer), so
+/// half the time it lifts to this height for variety.
+pub(super) const LAKITU_ALT_Y: u8 = 0x12;
 
 /// Probability (out of 256) that a segment will receive an injection when wild_injections is on.
 /// ~40% chance per segment (102/256). Note the effective rate is lower because a

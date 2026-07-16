@@ -199,6 +199,11 @@ pub(super) fn inject_wild_chasers<R: Rng>(
         if chosen == ANGRY_SUN_ID {
             data[first_idx + 1] = SUN_SPAWN_X;
             data[first_idx + 2] = SUN_SPAWN_Y;
+        } else if chosen == LAKITU_ID && rng.random_range(..2u8) == 0 {
+            // Lakitu works at any height, but the inherited Y is usually a low
+            // ground-enemy spot (harder). Coin-flip half of them up to the
+            // common vanilla Lakitu height; the other half keep the low Y.
+            data[first_idx + 2] = LAKITU_ALT_Y;
         }
     }
 }
