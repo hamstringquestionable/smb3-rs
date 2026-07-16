@@ -19,9 +19,10 @@ into a versioned section when a release is cut.
 
 ### Fixed
 
-- **Tail Enemies don't respawn** (MaCobra52, always on): enemies defeated by the
-  Raccoon/Tanooki tail are now recorded in the level's persistent kill memory,
-  so they no longer respawn when scrolled off-screen and back.
+- **Fire enemies stay dead** (MaCobra52's "Tail Enemies don't respawn", always
+  on): Fire Chomp and Fire Snake no longer respawn after you defeat them and
+  scroll them off-screen and back. ("Tail" in the patch name refers to these
+  fire-trail enemies — nothing to do with the Raccoon/Tanooki tail.)
 
 ## [0.12.2] - 2026-07-16
 

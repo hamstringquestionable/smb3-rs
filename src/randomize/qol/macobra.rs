@@ -130,20 +130,23 @@ const HOLD_LEFT_TAIL_BYTES: [u8; 12] =
     [0x07, 0xA9, 0x00, 0x85, 0x12, 0x20, 0x18, 0xC9, 0xA5, 0xAB, 0xF0, 0x38];
 
 // Tail Enemies don't respawn (by MaCobra52) — "SMB3 - Tail Enemies don't
-// respawn.ips". Bug: an enemy defeated by the Raccoon/Tanooki tail (or spin)
-// is only flagged dead in its on-screen slot ($0520,X), not in the level's
-// persistent kill memory, so scrolling it off and back respawns it. The fix
-// is two writes verified byte-for-byte against the IPS on USA Rev1:
+// respawn.ips". "Tail" here means the fire-TRAIL enemies Fire Chomp (object
+// $58) and Fire Snake ($59) — NOT the Raccoon/Tanooki tail. Vanilla lets these
+// respawn when scrolled off-screen and back; the fix marks a per-object flag so
+// they stay dead once defeated. Two writes verified byte-for-byte against the
+// IPS on USA Rev1:
 //
 //   1. An 8-byte routine dropped into a dead gap in PRG003 at CPU $A5F9
 //      (FS_TAIL_STAY_DEAD, file 0x06609 — between the `RTS` at 0x06608 and the
 //      routine at 0x06611):
 //          LDA #$FF          ; a9 ff
-//          STA $0659,X       ; 9d 59 06   persistent "stay dead" flag
-//          JMP $BA0B         ; 4c 0b ba   continue the vanilla defeat path
-//   2. The tail-defeat handler's `JMP $BA0B` (file 0x07E49) is retargeted to
-//      `JMP $A5F9` by rewriting its operand (file 0x07E4A: 0b ba -> f9 a5), so
-//      the new routine runs first and then falls through to the original code.
+//          STA $0659,X       ; 9d 59 06   per-object "stay dead" flag ($0659,X)
+//          JMP $BA0B         ; 4c 0b ba   continue the vanilla despawn path
+//   2. In the Fire Chomp / Fire Snake AI (PRG003), the `JMP $BA0B` at file
+//      0x07E49 (CPU $BE39 — right after a `CMP #$59` Fire Snake ID check) is
+//      retargeted to `JMP $A5F9` by rewriting its operand (file 0x07E4A:
+//      0b ba -> f9 a5), so the new routine runs first and then falls through to
+//      the original code.
 const TAIL_STAY_DEAD_ROUTINE: [u8; 8] = [0xA9, 0xFF, 0x9D, 0x59, 0x06, 0x4C, 0x0B, 0xBA];
 const TAIL_STAY_DEAD_HOOK_OFFSET: usize = 0x07E4A;
 const TAIL_STAY_DEAD_HOOK_BYTES: [u8; 2] = [0xF9, 0xA5]; // JMP $A5F9 operand
@@ -459,8 +462,8 @@ pub fn apply_macobra_patches(rom: &mut Rom) {
     rom.write_byte(HOTFOOT_TAIL_B, 0x00);
     rom.write_byte(HOTFOOT_TAIL_C, 0x25);
 
-    // Tail Enemies don't respawn: mark tail-defeated enemies dead in the
-    // level's persistent kill memory so they stay dead across scrolling.
+    // Tail Enemies don't respawn: mark Fire Chomp / Fire Snake with a per-object
+    // "stay dead" flag so they don't respawn when scrolled off-screen and back.
     rom.write_range(FS_TAIL_STAY_DEAD, &TAIL_STAY_DEAD_ROUTINE);
     rom.write_range(TAIL_STAY_DEAD_HOOK_OFFSET, &TAIL_STAY_DEAD_HOOK_BYTES);
 
