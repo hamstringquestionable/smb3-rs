@@ -356,8 +356,10 @@ pub(super) const SUN_SPAWN_X: u8 = 0x02;
 pub(super) const SUN_SPAWN_Y: u8 = 0x11;
 
 /// Probability (out of 256) that a segment will receive an injection when wild_injections is on.
-/// ~15% chance per segment.
-pub(super) const WILD_INJECTION_CHANCE: u8 = 38;
+/// ~40% chance per segment (102/256). Note the effective rate is lower because a
+/// level only injects if its first enemy is a swappable class and a chaser is
+/// CHR-compatible — see the injection funnel in `inject_at_entry_points`.
+pub(super) const WILD_INJECTION_CHANCE: u8 = 102;
 
 /// Odds (numerator, denominator) that a 2-enemy HB wild segment takes the
 /// non-stompable path (one HB_NEEDS_SHELL enemy + one shell partner) instead

@@ -8,6 +8,11 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+### Changed
+
+- Wild injections roll more often (~15% → ~40% per level) so a seed lands
+  noticeably more Lakitu / Angry Sun / Boss Bass chasers.
+
 ## [0.12.1] - 2026-07-15
 
 ### Changed
