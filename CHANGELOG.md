@@ -8,6 +8,8 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-07-16
+
 ### Changed
 
 - Wild injections reworked to be level-centric (driven by the node catalog
