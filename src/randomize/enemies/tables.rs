@@ -336,12 +336,14 @@ pub(super) const BIG_Q_BLOCKS: &[u8] = &[
 /// The W7 room is at enemy_ptr 0xC9A3; the Tanooki is the second entry.
 pub(super) const W7F1_TANOOKI_OFFSET: usize = 0x0C9B7;
 
-/// Injection candidates for wild_injections mode: special enemies injected after
-/// normal swaps. CHR compatibility checked via `sprite_bank()` at filter time.
+/// Injection candidates for wild_injections mode: level-wide chasers seeded into
+/// a level's first enemy. CHR compatibility checked via `sprite_bank()` at filter
+/// time. Both are in NO class pool, so the walker leaves an injected one alone.
+/// (Boss Bass 0x2D is deliberately excluded: it's a `WATER_ENEMIES` member, so
+/// the walker would reshuffle an injected one into an ordinary water enemy.)
 pub(super) const WILD_INJECTION_IDS: &[u8] = &[
     0x83, // Lakitu (enemy-spawning variant, CHR $0B/+4)
     ANGRY_SUN_ID, // Angry Sun
-    0x2D, // Boss Bass (Big Bertha — the leaping eater)
 ];
 
 /// Angry Sun object id.

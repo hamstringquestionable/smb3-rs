@@ -5,9 +5,13 @@ replacing the old raw-enemy-pointer approach.
 
 ## What it does
 
-For each seed, injects Lakitu (`0x83`) / Angry Sun (`0xAF`) / Boss Bass (`0x2D`)
-into a random subset of real action levels, replacing each chosen level's first
-enemy with a CHR-compatible chaser.
+For each seed, injects a level-wide chaser — Lakitu (`0x83`) or Angry Sun
+(`0xAF`) — into a random subset of real action levels, replacing each chosen
+level's first enemy with a CHR-compatible chaser.
+
+**Boss Bass (`0x2D`) is excluded** from the pool: it's a `WATER_ENEMIES` member,
+so the later walker pass would reshuffle an injected one into an ordinary water
+enemy. Lakitu and Sun are in no class pool, so the walker leaves them alone.
 
 ## Why it was reworked
 

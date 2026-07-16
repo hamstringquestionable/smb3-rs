@@ -1,5 +1,6 @@
-//! Wild-injection pass: seed Lakitu / Angry Sun / Boss Bass into a fraction of
-//! real action levels, selected via the `node_catalog` (not raw enemy pointers).
+//! Wild-injection pass: seed a level-wide chaser (Lakitu or Angry Sun) into a
+//! fraction of real action levels, selected via the `node_catalog` (not raw
+//! enemy pointers).
 //!
 //! Level-centric design (replaces the old entry-point / `enemy_entry_points`
 //! approach). Each candidate is a `NodeKind::Level` — fortresses, airships and
@@ -8,12 +9,17 @@
 //! level does not already have. Suns are re-seeded to the vanilla screen-0
 //! spawn so they engage (deep suns idle in the background).
 //!
+//! The pool is Lakitu + Angry Sun only. Boss Bass is deliberately excluded: it's
+//! a `WATER_ENEMIES` member, so the later walker pass would reshuffle an injected
+//! one into an ordinary water enemy. Lakitu and Sun belong to no class pool, so
+//! the walker leaves them untouched.
+//!
 //! Guards: boss-type exclusion, shared-enemy-set de-dup (one physical enemy set
 //! injects at most once), no-double (`has_enemy_id`), first-enemy must be a
 //! real swappable/unprotected enemy (don't clobber a critical object or get
-//! reverted by the walker), CHR compatibility, and the Big-Bertha per-segment
-//! cap. All offsets use the `enemy_ptr_to_file_offset` frame — the same one
-//! `has_enemy_id` and the rest of the codebase use.
+//! reverted by the walker), and CHR compatibility. All offsets use the
+//! `enemy_ptr_to_file_offset` frame — the same one `has_enemy_id` and the rest
+//! of the codebase use.
 
 use std::collections::HashSet;
 
@@ -105,44 +111,22 @@ fn collect_candidates(rom: &Rom, data: &[u8], opts: &Options) -> Vec<Candidate> 
     out
 }
 
-/// Pick a CHR-compatible chaser this level doesn't already have, honoring the
-/// per-segment Big-Bertha cap. Returns `None` if nothing fits.
-#[allow(clippy::too_many_arguments)] // Reason: threading ROM + segment context
-                                     // for one focused selection step; splitting
-                                     // it would hide the guard set, not clarify.
+/// Pick a CHR-compatible chaser this level doesn't already have. Returns `None`
+/// if nothing fits.
 fn pick_injection<R: Rng>(
     rom: &Rom,
     obj_ptr: u16,
     slot4: ChrSlot,
     slot5: ChrSlot,
-    data: &[u8],
-    seg: &segment_writer::SegmentBounds,
-    first_idx: usize,
     rng: &mut R,
 ) -> Option<u8> {
-    let bertha_ct: u8 = (0..seg.entry_count)
-        .filter(|&k| BERTHA_IDS.contains(&data[seg.file_offset + 1 + k * 3]))
-        .count() as u8;
-    let first_is_bertha = BERTHA_IDS.contains(&data[first_idx]);
     let eligible: Vec<u8> = WILD_INJECTION_IDS
         .iter()
         .copied()
         .filter(|&id| {
-            if !is_chr_compatible(id, slot4, slot5) {
-                return false;
-            }
-            if has_enemy_id(rom, obj_ptr, id) {
-                return false; // no doubling (e.g. 2-Quicksand already has a sun)
-            }
-            if BERTHA_IDS.contains(&id) {
-                let post = bertha_ct
-                    .saturating_sub(first_is_bertha as u8)
-                    .saturating_add(1);
-                if post > MAX_BERTHA_PER_SEGMENT {
-                    return false;
-                }
-            }
-            true
+            // CHR-compatible with the segment's pinned pages, and not a chaser
+            // the level already has (no doubling — e.g. 2-Quicksand's sun).
+            is_chr_compatible(id, slot4, slot5) && !has_enemy_id(rom, obj_ptr, id)
         })
         .collect();
     eligible.choose(rng).copied()
@@ -202,8 +186,7 @@ pub(super) fn inject_wild_chasers<R: Rng>(
             }
         }
 
-        let Some(chosen) = pick_injection(rom, obj_ptr, s4, s5, data, seg, first_idx, rng)
-        else {
+        let Some(chosen) = pick_injection(rom, obj_ptr, s4, s5, rng) else {
             continue;
         };
 

@@ -1460,7 +1460,7 @@
     fn wild_injection_rework_guarantees() {
         use crate::randomize::node_catalog::{NodeCatalog, NodeKind};
         use crate::randomize::rom_data::enemy_ptr_to_file_offset;
-        const INJ: [u8; 3] = [0x83, 0xAF, 0x2D];
+        const INJ: [u8; 2] = [0x83, 0xAF]; // Lakitu + Angry Sun (Boss Bass dropped)
 
         let Some(base) = load_reference_rom() else {
             eprintln!("reference ROM not present — skipping wild_injection_rework_guarantees");
