@@ -10,6 +10,14 @@ into a versioned section when a release is cut.
 
 ### Changed
 
+- Wild injections reworked to be level-centric (driven by the node catalog
+  instead of raw enemy pointers). Chasers are now placed into real action
+  levels only: **fortresses, airships and Bowser are excluded by type**, so a
+  Lakitu / Angry Sun / Boss Bass can no longer turn up in a boss room. A level
+  is never given a chaser it already has (fixes a second Angry Sun stacking onto
+  2-Quicksand and breaking it), shared enemy sets inject at most once, and
+  injections now write to the correct enemy-data location (the old path was
+  offset by 0x10, which could corrupt a level). Suns still spawn on screen 0.
 - Wild injections roll more often (~15% → ~40% per level) so a seed lands
   noticeably more Lakitu / Angry Sun / Boss Bass chasers.
 

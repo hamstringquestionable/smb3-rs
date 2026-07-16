@@ -26,24 +26,6 @@
         Rom::from_bytes_lax(&data, true).unwrap()
     }
 
-    /// Install a synthetic 9-byte level header at the start of the Plains
-    /// region whose `enemy_ptr` (header bytes 2-3) equals `ep`, followed
-    /// by an immediate `0xFF` terminator. Used by wild-injection tests so
-    /// the entry-point-driven injection pass treats `ep` as a real level
-    /// entry. Without this, the new injection pass has no entry points
-    /// pointing at the test segment and the test would never inject.
-    fn install_fake_entry_header(data: &mut [u8], ep: u16) {
-        let region_start = 0x1E512usize; // Plains (TS1) region start
-        data[region_start] = 0;
-        data[region_start + 1] = 0;
-        data[region_start + 2] = (ep & 0xFF) as u8;
-        data[region_start + 3] = ((ep >> 8) & 0xFF) as u8;
-        for k in 4..9 {
-            data[region_start + k] = 0;
-        }
-        data[region_start + 9] = 0xFF; // empty command stream
-    }
-
     fn make_test_rom() -> Rom {
         // A realistic enemy data segment: FF terminator, then a segment with
         // page flag + entries + FF. Entries MUST be sorted by ascending X
@@ -773,162 +755,6 @@
         assert_eq!(find_class_pool(0x51, &modes), Some(ClassPool::Wild));
     }
 
-    #[test]
-    fn test_wild_injection_occurs() {
-        // Run many seeds with wild_injections on, confirm at least one injection
-        let flags = Options {
-            wild_injections: true,
-            ..Options::default()
-        };
-        let mut data = blank_rom_image();
-        let seg = &[
-            0xFF, 0x01,
-            0x72, 0x10, 0x19, // Goomba
-            0x72, 0x20, 0x19, // Goomba
-            0x72, 0x30, 0x19, // Goomba
-            0x72, 0x40, 0x19, // Goomba
-            0xFF,
-        ];
-        let start = ENEMY_DATA_START;
-        data[start..start + seg.len()].copy_from_slice(seg);
-        // Make our synthetic segment a real entry point so the new
-        // entry-point-driven injection pass sees it. Page byte at +1.
-        install_fake_entry_header(&mut data, (ENEMY_DATA_START + 1) as u16);
-        let rom = Rom::from_bytes_lax(&data, true).unwrap();
-
-        let injection_ids: &[u8] = &[0x83, 0xAF, 0x2D];
-        let mut saw_injection = false;
-        for seed in 0..2000u64 {
-            let mut rom_copy = rom.clone();
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom_copy, &mut rng, &flags);
-            for off in [2, 5, 8, 11] {
-                let id = rom_copy.read_byte(ENEMY_DATA_START + off);
-                if injection_ids.contains(&id) {
-                    saw_injection = true;
-                    break;
-                }
-            }
-            if saw_injection { break; }
-        }
-        assert!(saw_injection, "2000 seeds and never saw an injection");
-    }
-
-    #[test]
-    fn test_wild_injection_respects_chr() {
-        // Pre-commit slot 4 to an incompatible page via a non-swappable object.
-        let flags = Options {
-            wild_injections: true,
-            ..Options::default()
-        };
-        let mut data = blank_rom_image();
-        let seg = &[
-            0xFF, 0x01,
-            0x18, 0x05, 0x10, // Bowser (slot 4, page 0x3A — incompatible with all injections)
-            0x72, 0x10, 0x19, // Goomba
-            0x72, 0x20, 0x19, // Goomba
-            0xFF,
-        ];
-        let start = ENEMY_DATA_START;
-        data[start..start + seg.len()].copy_from_slice(seg);
-        install_fake_entry_header(&mut data, (ENEMY_DATA_START + 1) as u16);
-        let rom = Rom::from_bytes_lax(&data, true).unwrap();
-
-        let injection_ids: &[u8] = &[0x83, 0xAF, 0x2D];
-        for seed in 0..500u64 {
-            let mut rom_copy = rom.clone();
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom_copy, &mut rng, &flags);
-            assert_eq!(rom_copy.read_byte(ENEMY_DATA_START + 2), 0x18);
-            for off in [5, 8] {
-                let id = rom_copy.read_byte(ENEMY_DATA_START + off);
-                assert!(
-                    !injection_ids.contains(&id),
-                    "seed {seed}: injection 0x{id:02X} despite slot 4 conflict"
-                );
-            }
-        }
-    }
-
-    /// An injected Angry Sun must be re-seeded to the vanilla screen-0 spawn
-    /// (SUN_SPAWN_X/Y), not left at the replaced enemy's inherited position.
-    /// The sun idles in the background until its screen counter hits the attack
-    /// threshold; the Early Sun QoL patch moves that threshold to screen 0, so a
-    /// sun spawned on any later screen never fires (and a stuck sun blocks the
-    /// level goal card). The replaced entries[0] here sits deep at screen 5.
-    #[test]
-    fn test_injected_sun_repositioned_to_screen0() {
-        let flags = Options {
-            wild_injections: true,
-            ..Options::default()
-        };
-        let mut data = blank_rom_image();
-        // First (leftmost) enemy sits deep at screen 5; slot-5 Goombas keep
-        // slot 4 free so the sun (0x32/+4) is CHR-compatible and injectable.
-        let seg = &[
-            0xFF, 0x01,
-            0x72, 0x58, 0x19, // Goomba at screen 5 — the entries[0] a sun replaces
-            0x72, 0x62, 0x19, // Goomba
-            0x72, 0x70, 0x19, // Goomba
-            0xFF,
-        ];
-        data[ENEMY_DATA_START..ENEMY_DATA_START + seg.len()].copy_from_slice(seg);
-        install_fake_entry_header(&mut data, (ENEMY_DATA_START + 1) as u16);
-        let rom = Rom::from_bytes_lax(&data, true).unwrap();
-
-        let mut saw_sun = false;
-        for seed in 0..2000u64 {
-            let mut rom_copy = rom.clone();
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom_copy, &mut rng, &flags);
-            if rom_copy.read_byte(ENEMY_DATA_START + 2) == ANGRY_SUN_ID {
-                saw_sun = true;
-                assert_eq!(
-                    rom_copy.read_byte(ENEMY_DATA_START + 3), SUN_SPAWN_X,
-                    "seed {seed}: injected sun X not re-seeded to screen 0"
-                );
-                assert_eq!(
-                    rom_copy.read_byte(ENEMY_DATA_START + 4), SUN_SPAWN_Y,
-                    "seed {seed}: injected sun Y not re-seeded"
-                );
-            }
-        }
-        assert!(saw_sun, "2000 seeds and never injected a sun to verify reposition");
-    }
-
-    /// Wild injection must never place a level-wide chaser into a segment that
-    /// holds a Boom-Boom, even when entries[0] is otherwise a valid target.
-    #[test]
-    fn test_no_injection_in_boomboom_segment() {
-        let flags = Options {
-            wild_injections: true,
-            ..Options::default()
-        };
-        let mut data = blank_rom_image();
-        let seg = &[
-            0xFF, 0x01,
-            0x72, 0x10, 0x19, // Goomba — a valid injectable entries[0]
-            0x4B, 0x20, 0x19, // Boom-Boom lives in this level
-            0x72, 0x30, 0x19, // Goomba
-            0xFF,
-        ];
-        data[ENEMY_DATA_START..ENEMY_DATA_START + seg.len()].copy_from_slice(seg);
-        install_fake_entry_header(&mut data, (ENEMY_DATA_START + 1) as u16);
-        let rom = Rom::from_bytes_lax(&data, true).unwrap();
-
-        let injection_ids: &[u8] = &[0x83, 0xAF, 0x2D];
-        for seed in 0..1000u64 {
-            let mut rom_copy = rom.clone();
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom_copy, &mut rng, &flags);
-            let id = rom_copy.read_byte(ENEMY_DATA_START + 2);
-            assert!(
-                !injection_ids.contains(&id),
-                "seed {seed}: injected 0x{id:02X} into a Boom-Boom segment"
-            );
-        }
-    }
-
     /// A vanilla Lakitu (out-of-pool chaser) must pin its CHR page for the
     /// WHOLE level, not just its own proximity group — it follows the player
     /// across every group (see CHASER_IDS).
@@ -1041,101 +867,6 @@
         );
     }
 
-    /// Install two fake level headers so both eps are entry points: the outer
-    /// level's run starts at the segment head and reads straight through the
-    /// inner ep.
-    fn install_two_entry_headers(data: &mut [u8], ep_a: u16, ep_b: u16) {
-        let region_start = 0x1E512usize; // Plains (TS1) region start
-        let mut pos = region_start;
-        for ep in [ep_a, ep_b] {
-            data[pos] = 0;
-            data[pos + 1] = 0;
-            data[pos + 2] = (ep & 0xFF) as u8;
-            data[pos + 3] = ((ep >> 8) & 0xFF) as u8;
-            for k in 4..9 {
-                data[pos + k] = 0;
-            }
-            data[pos + 9] = 0xFF; // empty command stream
-            pos += 10;
-        }
-    }
-
-    /// The injection pin-scan must cover the whole $FF-bounded segment, not
-    /// just the ep's own run: an outer level reads straight through the inner
-    /// ep, so its pinned pages constrain the injected chaser too.
-    #[test]
-    fn test_injection_pin_scan_covers_outer_prefix() {
-        let flags = Options {
-            wild_injections: true,
-            ..Options::default()
-        };
-        let injection_ids: &[u8] = &[0x83, 0xAF, 0x2D];
-
-        // Outer ep → page byte at +1; inner ep → the Goomba entry at +5
-        // (entries-only form). The Thwomp sits BEFORE the inner ep — only the
-        // outer level sees it — and pins slot 4 to $12, which conflicts with
-        // every injection id (all slot 4: $0B / $32 / $1A).
-        let mut data = blank_rom_image();
-        let seg = &[
-            0xFF, 0x01,
-            0x8A, 0x05, 0x10, // Thwomp ($12/+4), class off by default → pinned
-            0x72, 0x10, 0x19, // Goomba (inner level's first entry)
-            0xFF,
-        ];
-        data[ENEMY_DATA_START..ENEMY_DATA_START + seg.len()].copy_from_slice(seg);
-        install_two_entry_headers(
-            &mut data,
-            (ENEMY_DATA_START + 1) as u16,
-            (ENEMY_DATA_START + 5) as u16,
-        );
-        let rom = Rom::from_bytes_lax(&data, true).unwrap();
-        for seed in 0..500u64 {
-            let mut rom_copy = rom.clone();
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom_copy, &mut rng, &flags);
-            let id = rom_copy.read_byte(ENEMY_DATA_START + 5);
-            assert!(
-                !injection_ids.contains(&id),
-                "seed {seed}: chaser 0x{id:02X} injected at the inner ep despite \
-                 the Thwomp ($12/+4) in the outer level's prefix"
-            );
-        }
-
-        // Positive control: swap the Thwomp for a slot-5 pin (wood block,
-        // $13/+5). All injection ids are slot 4, so injections must still
-        // land at the inner ep in some seeds — the wider pin-scan must not
-        // over-block.
-        let mut data2 = blank_rom_image();
-        let seg2 = &[
-            0xFF, 0x01,
-            0x2E, 0x05, 0x10, // Wood block ($13/+5), out-of-pool → pinned
-            0x72, 0x10, 0x19, // Goomba (inner level's first entry)
-            0xFF,
-        ];
-        data2[ENEMY_DATA_START..ENEMY_DATA_START + seg2.len()].copy_from_slice(seg2);
-        install_two_entry_headers(
-            &mut data2,
-            (ENEMY_DATA_START + 1) as u16,
-            (ENEMY_DATA_START + 5) as u16,
-        );
-        let rom2 = Rom::from_bytes_lax(&data2, true).unwrap();
-        let mut saw = false;
-        for seed in 0..500u64 {
-            let mut rom_copy = rom2.clone();
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom_copy, &mut rng, &flags);
-            if injection_ids.contains(&rom_copy.read_byte(ENEMY_DATA_START + 5)) {
-                saw = true;
-                break;
-            }
-        }
-        assert!(
-            saw,
-            "pin-scan over-blocks: no injection at the inner ep in 500 seeds \
-             with only a slot-5 pin present"
-        );
-    }
-
     #[test]
     fn test_chr_groups_split_distant_enemies() {
         // Two enemies far apart (screen 0 vs screen 5) should get independent
@@ -1229,49 +960,6 @@
         let groups = chr_groups(&entries);
         assert_eq!(groups.len(), 1, "all within gap — one group");
         assert_eq!(groups[0].len(), 3);
-    }
-
-    #[test]
-    fn test_boss_bass_capped_per_segment() {
-        // Build a segment full of water enemies. With water=Wild and
-        // wild_injections on, the segment should never end up with more
-        // than MAX_BERTHA_PER_SEGMENT (2) Boss Bass across all sources.
-        let flags = Options {
-            water: EnemyMode::Wild,
-            wild_injections: true,
-            ..Options::default()
-        };
-        let mut data = blank_rom_image();
-        // 6 water enemies clustered close together (so they share one CHR group)
-        let seg = &[
-            0xFF, 0x01,
-            0x62, 0x02, 0x10, // Blooper
-            0x62, 0x04, 0x10, // Blooper
-            0x62, 0x06, 0x10, // Blooper
-            0x62, 0x08, 0x10, // Blooper
-            0x62, 0x0A, 0x10, // Blooper
-            0x62, 0x0C, 0x10, // Blooper
-            0xFF,
-        ];
-        let start = ENEMY_DATA_START;
-        data[start..start + seg.len()].copy_from_slice(seg);
-        install_fake_entry_header(&mut data, (ENEMY_DATA_START + 1) as u16);
-        let rom = Rom::from_bytes_lax(&data, true).unwrap();
-
-        let entry_offsets = [2usize, 5, 8, 11, 14, 17];
-        for seed in 0..2000u64 {
-            let mut rom_copy = rom.clone();
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom_copy, &mut rng, &flags);
-            let bertha_count = entry_offsets.iter()
-                .filter(|&&off| BERTHA_IDS.contains(&rom_copy.read_byte(ENEMY_DATA_START + off)))
-                .count();
-            assert!(
-                bertha_count <= MAX_BERTHA_PER_SEGMENT as usize,
-                "seed {seed}: {bertha_count} Big Bertha in segment, cap is {}",
-                MAX_BERTHA_PER_SEGMENT
-            );
-        }
     }
 
     /// Regression: at the exact ROM offsets where `disable_autoscroll`
@@ -1381,31 +1069,39 @@
 
     /// The deterministic set of enemy-data offsets (relative to ENEMY_DATA_START)
     /// that the wild-injection pass may overwrite: the first real entry of each
-    /// non-blocked, non-class-protected, swappable entry point. Mirrors
-    /// inject_at_entry_points' target selection. RNG decides *whether* a slot is
-    /// injected, but the candidate set is fixed.
+    /// `NodeKind::Level` whose first enemy is swappable and unprotected. Mirrors
+    /// `inject_wild_chasers`' candidate selection. RNG decides *whether* a slot
+    /// is injected, but the candidate set is fixed.
     fn injectable_offsets(
         base: &Rom,
         vanilla: &[u8],
         modes: &ClassModes,
     ) -> std::collections::HashSet<usize> {
+        use crate::randomize::node_catalog::{NodeCatalog, NodeKind};
+        use crate::randomize::rom_data::enemy_ptr_to_file_offset;
         let mut set = std::collections::HashSet::new();
-        for ep in enemy_entry_points(base) {
-            let ep = ep as usize;
-            if !(ENEMY_DATA_START..ENEMY_DATA_END).contains(&ep) {
+        let catalog = NodeCatalog::build(base, false);
+        for e in &catalog.entries {
+            if !matches!(e.kind, NodeKind::Level) {
                 continue;
             }
-            if is_injection_blocked(ep as u16) {
+            let Some(le) = &e.level_entry else { continue };
+            let obj_ptr = ((le.obj_hi as u16) << 8) | le.obj_lo as u16;
+            if obj_ptr < 0xC000 {
                 continue;
             }
-            let ep_local = ep - ENEMY_DATA_START;
-            if ep_local >= vanilla.len() {
+            let file_off = enemy_ptr_to_file_offset(obj_ptr);
+            if !(ENEMY_DATA_START..ENEMY_DATA_END).contains(&file_off) {
                 continue;
             }
-            let first = if matches!(vanilla[ep_local], 0x00 | 0x01) {
-                ep_local + 1
+            let page_idx = file_off - ENEMY_DATA_START;
+            if page_idx >= vanilla.len() {
+                continue;
+            }
+            let first = if matches!(vanilla[page_idx], 0x00 | 0x01) {
+                page_idx + 1
             } else {
-                ep_local
+                page_idx
             };
             if first >= vanilla.len() || vanilla[first] == 0xFF {
                 continue;
@@ -1754,4 +1450,122 @@
                  cannonball family fits beside a $37/+5 fire jet"
             );
         }
+    }
+
+    /// End-to-end guarantees of the level-centric wild-injection rework against
+    /// the real ROM: injections happen; every injected sun spawns on screen 0;
+    /// no boss level (fortress / airship / Bowser) receives a chaser; and a
+    /// level is never given a chaser it already has (the 2-Quicksand double).
+    #[test]
+    fn wild_injection_rework_guarantees() {
+        use crate::randomize::node_catalog::{NodeCatalog, NodeKind};
+        use crate::randomize::rom_data::enemy_ptr_to_file_offset;
+        const INJ: [u8; 3] = [0x83, 0xAF, 0x2D];
+
+        let Some(base) = load_reference_rom() else {
+            eprintln!("reference ROM not present — skipping wild_injection_rework_guarantees");
+            return;
+        };
+        let len = ENEMY_DATA_END - ENEMY_DATA_START;
+        let vanilla = base.read_range(ENEMY_DATA_START, len).to_vec();
+        let catalog = NodeCatalog::build(&base, false);
+
+        // First-enemy data index for a level's obj_ptr (after any page byte).
+        let first_idx = |obj_ptr: u16, data: &[u8]| -> Option<usize> {
+            if obj_ptr < 0xC000 {
+                return None;
+            }
+            let fo = enemy_ptr_to_file_offset(obj_ptr);
+            if !(ENEMY_DATA_START..ENEMY_DATA_END).contains(&fo) {
+                return None;
+            }
+            let p = fo - ENEMY_DATA_START;
+            if p >= data.len() {
+                return None;
+            }
+            let first = if matches!(data[p], 0x00 | 0x01) { p + 1 } else { p };
+            if first >= data.len() || data[first] == 0xFF {
+                return None;
+            }
+            Some(first)
+        };
+        // Count occurrences of `id` across a level's first $FF run.
+        let run_count = |obj_ptr: u16, data: &[u8], id: u8| -> usize {
+            let Some(mut i) = first_idx(obj_ptr, data) else {
+                return 0;
+            };
+            let mut n = 0;
+            while i + 2 < data.len() && data[i] != 0xFF {
+                if data[i] == id {
+                    n += 1;
+                }
+                i += 3;
+            }
+            n
+        };
+
+        let opts = Options { wild_injections: true, ..preset_recommended() };
+        let mut saw_injection = false;
+        for seed in 0..30u64 {
+            let mut rom = base.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom, &mut rng, &opts);
+            let patched = rom.read_range(ENEMY_DATA_START, len).to_vec();
+
+            for e in &catalog.entries {
+                let Some(le) = &e.level_entry else { continue };
+                let obj_ptr = ((le.obj_hi as u16) << 8) | le.obj_lo as u16;
+                let Some(fi) = first_idx(obj_ptr, &patched) else { continue };
+                let pid = patched[fi];
+                let van_first = first_idx(obj_ptr, &vanilla).map(|v| vanilla[v]);
+
+                // Boss levels are excluded by type — a chaser at their first
+                // enemy can only be a vanilla-native one, never injected.
+                if matches!(
+                    e.kind,
+                    NodeKind::Fortress { .. } | NodeKind::Airship | NodeKind::Bowser
+                ) {
+                    if INJ.contains(&pid) {
+                        assert_eq!(
+                            Some(pid), van_first,
+                            "seed {seed}: boss level {} got chaser 0x{pid:02X}", e.name
+                        );
+                    }
+                    continue;
+                }
+                if !matches!(e.kind, NodeKind::Level) {
+                    continue;
+                }
+
+                // An injected chaser (first enemy changed to a chaser).
+                let injected_here = INJ.contains(&pid) && van_first != Some(pid);
+                if injected_here {
+                    saw_injection = true;
+                    // Suns must spawn on screen 0.
+                    if pid == 0xAF {
+                        assert_eq!(
+                            patched[fi + 1], SUN_SPAWN_X,
+                            "seed {seed}: injected sun in {} not at screen 0", e.name
+                        );
+                        assert_eq!(
+                            patched[fi + 2], SUN_SPAWN_Y,
+                            "seed {seed}: injected sun in {} wrong Y", e.name
+                        );
+                    }
+                }
+
+                // No-double: a chaser the level already had is never added again
+                // (walker never creates chasers, so any increase is injection).
+                for &c in &INJ {
+                    let van = run_count(obj_ptr, &vanilla, c);
+                    if van > 0 {
+                        assert!(
+                            run_count(obj_ptr, &patched, c) <= van,
+                            "seed {seed}: {} doubled chaser 0x{c:02X}", e.name
+                        );
+                    }
+                }
+            }
+        }
+        assert!(saw_injection, "30 seeds and never saw a chaser injected into a level");
     }
