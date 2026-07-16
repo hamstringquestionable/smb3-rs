@@ -12,8 +12,7 @@ use rand::Rng;
 use rand::seq::IndexedRandom;
 
 use crate::randomize::enemy_protections::{
-    entry_protection_at, is_injection_blocked, walker_segment_rule_at, EntryProtection,
-    WalkerSegmentRule,
+    entry_protection_at, walker_segment_rule_at, EntryProtection, WalkerSegmentRule,
 };
 use crate::randomize::rom_data::{
     ENEMY_DATA_END, ENEMY_DATA_START, HB_NEEDS_SHELL_ENEMIES, LEVEL_DATA_REGIONS, STOMPABLE_ENEMIES,
@@ -102,9 +101,8 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
     // $FF-bounded segment, not just the ep's own run (runs nest, and outer
     // levels see the injected enemy too).
     if opts.wild_injections && !big_q_only {
-        let entry_ptrs = enemy_entry_points(rom);
         let bounds = segment_writer::walk_segments(&data, 0, data.len(), &skip_ranges);
-        inject_at_entry_points(&mut data, &entry_ptrs, &bounds, opts, rng);
+        inject_wild_chasers(&mut data, rom, &bounds, opts, rng);
     }
 
     let mut i = 0;

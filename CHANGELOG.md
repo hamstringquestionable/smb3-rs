@@ -8,10 +8,25 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-07-16
+
 ### Changed
 
+- Wild injections reworked to be level-centric (driven by the node catalog
+  instead of raw enemy pointers). Chasers are now placed into real action
+  levels only: **fortresses, airships and Bowser are excluded by type**, so a
+  chaser can no longer turn up in a boss room. A level is never given a chaser it
+  already has (fixes a second Angry Sun stacking onto 2-Quicksand and breaking
+  it), shared enemy sets inject at most once, and injections now write to the
+  correct enemy-data location (the old path was offset by 0x10, which could
+  corrupt a level). Suns still spawn on screen 0. **Boss Bass is dropped from the
+  injection pool** — it's a water-class enemy, so the enemy shuffle reshuffled an
+  injected one away; injections are now Lakitu + Angry Sun, weighted ~2:1 toward
+  the sun since Lakitu is the harder chaser. An injected Lakitu's height is
+  randomized between the replaced enemy's spot and a raised height, so it isn't
+  always at the harder low position.
 - Wild injections roll more often (~15% → ~40% per level) so a seed lands
-  noticeably more Lakitu / Angry Sun / Boss Bass chasers.
+  noticeably more Lakitu / Angry Sun chasers.
 
 ## [0.12.1] - 2026-07-15
 

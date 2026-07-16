@@ -10,9 +10,9 @@
 //!
 //! Adding a new protection is one block here with a label and a reason.
 //! Both passes (the walker in `enemies::randomize_object_data` and
-//! `enemies::inject_at_entry_points`) consume the registry through the
-//! derived helpers (`entry_protection_at`, `is_injection_blocked`,
-//! `walker_segment_rule_at`) — never the table directly.
+//! `enemies::inject_wild_chasers`) consume the registry through the
+//! derived helpers (`entry_protection_at`, `walker_segment_rule_at`)
+//! — never the table directly.
 
 use super::rom_data::enemy_ptr_to_file_offset;
 
@@ -303,15 +303,6 @@ pub(super) fn entry_protection_at(file_offset: usize) -> Option<EntryProtection>
         .iter()
         .flat_map(|l| l.entries)
         .find_map(|e| (e.offset == file_offset).then_some(e.rule))
-}
-
-/// True if `wild_injection` should not fire at this entry_ptr. Any row with a
-/// non-`Default` walker rule blocks injection too — `Skip` and `HammerBro`
-/// segments both override or replace the player-visible enemy choice.
-pub(super) fn is_injection_blocked(enemy_ptr: u16) -> bool {
-    LEVEL_PROTECTIONS
-        .iter()
-        .any(|l| l.enemy_ptr == enemy_ptr && l.walker_segment != WalkerSegmentRule::Default)
 }
 
 /// Walker rule for the segment whose page byte sits at this absolute file
