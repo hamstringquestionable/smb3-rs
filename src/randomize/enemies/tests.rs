@@ -1638,3 +1638,69 @@
         assert!(saw_alt, "no injected Lakitu lifted to 0x12 in 60 seeds");
         assert!(saw_kept, "no injected Lakitu kept its inherited height in 60 seeds");
     }
+
+    /// The injection pick is weighted toward the Angry Sun over the (harder)
+    /// Lakitu: over many seeds, injected suns must clearly outnumber injected
+    /// Lakitu, and both must occur.
+    #[test]
+    fn wild_injection_favors_sun() {
+        use crate::randomize::node_catalog::NodeCatalog;
+        use crate::randomize::rom_data::enemy_ptr_to_file_offset;
+
+        let Some(base) = load_reference_rom() else {
+            eprintln!("reference ROM not present — skipping wild_injection_favors_sun");
+            return;
+        };
+        let len = ENEMY_DATA_END - ENEMY_DATA_START;
+        let vanilla = base.read_range(ENEMY_DATA_START, len).to_vec();
+        let catalog = NodeCatalog::build(&base, false);
+
+        let first_idx = |obj_ptr: u16, data: &[u8]| -> Option<usize> {
+            if obj_ptr < 0xC000 {
+                return None;
+            }
+            let fo = enemy_ptr_to_file_offset(obj_ptr);
+            if !(ENEMY_DATA_START..ENEMY_DATA_END).contains(&fo) {
+                return None;
+            }
+            let p = fo - ENEMY_DATA_START;
+            if p >= data.len() {
+                return None;
+            }
+            let first = if matches!(data[p], 0x00 | 0x01) { p + 1 } else { p };
+            if first >= data.len() || data[first] == 0xFF {
+                return None;
+            }
+            Some(first)
+        };
+
+        let opts = Options { wild_injections: true, ..preset_recommended() };
+        let (mut suns, mut lakitus) = (0u32, 0u32);
+        for seed in 0..40u64 {
+            let mut rom = base.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom, &mut rng, &opts);
+            let patched = rom.read_range(ENEMY_DATA_START, len).to_vec();
+            for e in &catalog.entries {
+                let Some(le) = &e.level_entry else { continue };
+                let obj_ptr = ((le.obj_hi as u16) << 8) | le.obj_lo as u16;
+                let Some(fi) = first_idx(obj_ptr, &patched) else { continue };
+                let pid = patched[fi];
+                let van_first = first_idx(obj_ptr, &vanilla).map(|v| vanilla[v]);
+                if van_first == Some(pid) {
+                    continue; // unchanged — vanilla-native, not injected
+                }
+                match pid {
+                    0xAF => suns += 1,
+                    0x83 => lakitus += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert!(lakitus > 0, "no Lakitu injected at all across 40 seeds");
+        // 2:1 weighting over hundreds of samples — suns should clearly lead.
+        assert!(
+            suns > lakitus,
+            "expected sun-favored injection, got {suns} suns vs {lakitus} Lakitu"
+        );
+    }

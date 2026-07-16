@@ -129,7 +129,13 @@ fn pick_injection<R: Rng>(
             is_chr_compatible(id, slot4, slot5) && !has_enemy_id(rom, obj_ptr, id)
         })
         .collect();
-    eligible.choose(rng).copied()
+    // Favor the sun over the (harder) Lakitu when both fit.
+    eligible
+        .choose_weighted(rng, |&id| {
+            if id == ANGRY_SUN_ID { SUN_INJECTION_WEIGHT } else { 1 }
+        })
+        .ok()
+        .copied()
 }
 
 /// Wild-injection pass. Shuffles the candidate levels for per-seed variety,

@@ -76,6 +76,11 @@ Everything uses `obj_ptr` + `enemy_ptr_to_file_offset` (the same frame as
 Kept as-is: injected suns are re-seeded to the vanilla 2-Quicksand spawn
 (screen 0, `Y=0x11`). Confirmed necessary — deep suns idle in the background.
 
+### Pick weighting
+When both chasers are eligible for a level, the pick is weighted toward the sun
+(`SUN_INJECTION_WEIGHT = 2`, i.e. ~1/3 Lakitu / 2/3 sun) — Lakitu is much harder
+to deal with, so it's kept rarer. Tune the constant to shift the mix.
+
 ### Lakitu height
 Lakitu works at any spawn height, but inheriting the replaced first enemy's Y
 (usually a low ground-enemy spot) makes it too consistently punishing — the

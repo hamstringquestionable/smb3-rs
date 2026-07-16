@@ -352,6 +352,11 @@ pub(super) const ANGRY_SUN_ID: u8 = 0xAF;
 /// Lakitu (enemy-spawning variant) object id.
 pub(super) const LAKITU_ID: u8 = 0x83;
 
+/// Weight of the Angry Sun relative to Lakitu (weight 1) when both are eligible
+/// for an injection. Lakitu is much harder to deal with, so the sun is favored:
+/// 2:1 ≈ 1/3 Lakitu / 2/3 sun. Bump this to make Lakitu rarer still.
+pub(super) const SUN_INJECTION_WEIGHT: u32 = 2;
+
 /// Spawn position an injected Angry Sun is re-seeded to: screen 0, Y=0x11 —
 /// the vanilla 2-Quicksand placement, the one spawn that works with the Early
 /// Sun QoL patch (whose attack threshold fires only on screen 0). Injection
