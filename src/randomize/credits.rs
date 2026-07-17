@@ -20,6 +20,13 @@
 //! world `order[p]` at montage position `p`, set `new[p] = old[order[p]]` for
 //! each table. No code changes are needed — only data is rewritten.
 //!
+//! The one thing that *isn't* a permuted pointer is the on-screen "WORLD n"
+//! caption: it's a plain background tile baked into each scene's graphics-load
+//! command data (drawn outside the mini-map frame), so a pure reorder would
+//! leave every scene captioned with its original world number. After permuting,
+//! we rewrite each scene's caption digit to its montage position so the world
+//! shown first reads "WORLD 1", the second "WORLD 2", and so on.
+//!
 //! This follows the project's "decide then write" split: the orchestrator
 //! decides `order` (from the [`super::world_order`] shuffle), this module
 //! performs the mechanical ROM writes.
@@ -70,6 +77,31 @@ const BYTE_TABLES: [usize; 13] = [
 /// command $4D+p indexes entry `p` here.
 const PALETTE_PTR_TABLE: usize = 0x32684;
 
+/// Ending-font digit glyphs: the world-number tile for digit `n` is
+/// `DIGIT_TILE_BASE + n`, i.e. $77 = "1" … $7E = "8". Confirmed against the
+/// vanilla "WORLD n" captions.
+const DIGIT_TILE_BASE: u8 = 0x76;
+
+/// File offset(s) of the "WORLD n" caption digit tile in each world's ending
+/// scene, one entry per internal world 0-7. Unlike everything else the montage
+/// draws, the caption is a background tile in the scene's graphics-load command
+/// data (PRG025), drawn *outside* the mini-map frame — so neither the reorder
+/// nor [`render_world_maps`] touches it, and each scene keeps its original
+/// number unless we rewrite it. World 5's scene streams its caption twice
+/// (initial draw + redraw), so it has two offsets; every other world has one.
+/// Offsets verified by signature search for the "WORLD " prefix
+/// (`DE F4 EF F1 E3 5C`) against SMB3 USA Rev 1.
+const CAPTION_DIGIT_OFFSETS: [&[usize]; 8] = [
+    &[0x32D9B],          // World 1
+    &[0x32E00],          // World 2
+    &[0x32E5E],          // World 3
+    &[0x32EAC],          // World 4
+    &[0x32EDE, 0x32F18], // World 5 (caption drawn twice)
+    &[0x32F39],          // World 6
+    &[0x32FE1],          // World 7
+    &[0x3305F],          // World 8
+];
+
 /// Reorder the ending montage so that position `p` displays internal world
 /// `order[p]`. `order` must be a permutation of `0..=7`.
 ///
@@ -96,6 +128,17 @@ pub fn reorder_world_pictures(rom: &mut Rom, order: &[u8; 8]) {
     for (p, &world) in order.iter().enumerate() {
         let src = world as usize * 2;
         rom.write_range(PALETTE_PTR_TABLE + p * 2, &old_pal[src..src + 2]);
+    }
+
+    // Renumber each scene's "WORLD n" caption to its montage position: the world
+    // shown at slot `p` now reads "WORLD p+1". The caption is a static tile the
+    // reorder doesn't move, so without this the first-shown world would keep its
+    // original number. `p` ranges 0..=7, so the digit is always a single glyph.
+    for (p, &world) in order.iter().enumerate() {
+        let digit_tile = DIGIT_TILE_BASE + (p as u8 + 1);
+        for &off in CAPTION_DIGIT_OFFSETS[world as usize] {
+            rom.write_byte(off, digit_tile);
+        }
     }
 }
 
@@ -351,6 +394,13 @@ mod tests {
             data[PALETTE_PTR_TABLE + w as usize * 2] = 0xA0 | w;
             data[PALETTE_PTR_TABLE + w as usize * 2 + 1] = 0xB0 | w;
         }
+        // Caption digit tiles: seed each world's "WORLD n" glyph to its vanilla
+        // number so the renumber can be checked against montage position.
+        for (w, offs) in CAPTION_DIGIT_OFFSETS.iter().enumerate() {
+            for &off in *offs {
+                data[off] = DIGIT_TILE_BASE + (w as u8 + 1);
+            }
+        }
         Rom::from_bytes_lax(&data, true).unwrap()
     }
 
@@ -375,6 +425,37 @@ mod tests {
                     expect,
                     "table {id} position {p} should hold world {world}'s byte",
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn renumbers_captions_to_montage_position() {
+        let mut rom = make_test_rom();
+        let order = [3u8, 5, 0, 7, 1, 6, 2, 4];
+        reorder_world_pictures(&mut rom, &order);
+        // The world shown at slot `p` must read "WORLD p+1" at all of its
+        // caption offsets, regardless of its original number.
+        for (p, &world) in order.iter().enumerate() {
+            let expect = DIGIT_TILE_BASE + (p as u8 + 1);
+            for &off in CAPTION_DIGIT_OFFSETS[world as usize] {
+                assert_eq!(
+                    rom.read_byte(off),
+                    expect,
+                    "world {world} shown at slot {p} should read digit {}",
+                    p + 1,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn identity_order_keeps_vanilla_caption_numbers() {
+        let mut rom = make_test_rom();
+        reorder_world_pictures(&mut rom, &[0, 1, 2, 3, 4, 5, 6, 7]);
+        for (w, offs) in CAPTION_DIGIT_OFFSETS.iter().enumerate() {
+            for &off in *offs {
+                assert_eq!(rom.read_byte(off), DIGIT_TILE_BASE + (w as u8 + 1));
             }
         }
     }

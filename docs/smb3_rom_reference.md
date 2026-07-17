@@ -2669,12 +2669,25 @@ so showing the worlds in a different order is a pure permutation of these tables
   `74 71…75`.
 - **Palette** is fired as `Graphics_Queue = Ending2_CurWorld + $4D`, so command
   `$4D + position` indexes entry `position` of the palette pointer table above.
+- **"WORLD n" caption:** the number/name label ("WORLD 1 / GRASS LAND", etc.) is
+  **not** a permuted pointer — it's a background tile stream inside each scene's
+  `$2A..$4C` graphics-load command data, drawn *outside* the mini-map frame. The
+  digit is a single glyph, `tile = $76 + n` (`$77` = "1" … `$7E` = "8"), found
+  right after the `"WORLD "` prefix (`DE F4 EF F1 E3 5C`). Because it's baked
+  into the (permuted-by-index but not rewritten) command data, reordering the
+  montage alone leaves each scene showing its *original* number; the digit must
+  be rewritten to the montage position separately. Per-world caption digit file
+  offsets: W1 `0x32D9B`, W2 `0x32E00`, W3 `0x32E5E`, W4 `0x32EAC`,
+  W5 `0x32EDE` **and** `0x32F18` (its scene streams the caption twice),
+  W6 `0x32F39`, W7 `0x32FE1`, W8 `0x3305F`.
 - **Finale:** world 7 (Dark Land) is always shown last; the "THE END" sprite
   card and P-Wing-for-everybody reset follow.
 
 `src/randomize/credits.rs` reorders this montage to follow the World Order
-progression (permuting the tables above) **and** redraws each mini-map from the
-randomized overworld grid. It only rewrites data, never code.
+progression (permuting the tables above), redraws each mini-map from the
+randomized overworld grid, **and** rewrites each scene's "WORLD n" caption digit
+to its montage position (so the first-shown world reads "WORLD 1"). It only
+rewrites data, never code.
 
 ### Mini-map picture format & rendering
 

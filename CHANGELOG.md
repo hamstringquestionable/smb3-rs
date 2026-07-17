@@ -8,6 +8,22 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+### Changed
+
+- The ending credits montage now presents the eight world scenes in the same
+  order the player traversed the worlds when World Order randomization is on
+  (Dark Land still closes the sequence). Each world's picture, sprites,
+  palette, and graphics keep their original pairing — only the order changes.
+- The credits mini-maps are redrawn from the randomized overworld: each world's
+  little top-down map now shows a (randomly chosen) page of that world's actual
+  randomized map — real terrain, paths, and level / fortress / pipe / toad-house
+  markers — in the world's own palette. The picture frame, sprites, and colors
+  are untouched; only the map inside each frame is regenerated. World 8 is framed
+  on Bowser's castle (the finale), showing its randomized dark-world approach.
+- Each credits scene's "WORLD n" caption is renumbered to match the new
+  progression order, so the first world shown reads "WORLD 1", the second
+  "WORLD 2", and so on (the world's name and theme are unchanged).
+
 ## [0.12.3] - 2026-07-16
 
 ### Added
@@ -67,19 +83,6 @@ into a versioned section when a release is cut.
   applying a flag key with the toggle off actually clears it — the option was
   marked as not-in-flag-key, so `applyOptions` skipped it and left a
   previously-enabled checkbox on.
-
-### Changed
-
-- The ending credits montage now presents the eight world scenes in the same
-  order the player traversed the worlds when World Order randomization is on
-  (Dark Land still closes the sequence). Each world's picture, sprites,
-  palette, and graphics keep their original pairing — only the order changes.
-- The credits mini-maps are redrawn from the randomized overworld: each world's
-  little top-down map now shows a (randomly chosen) page of that world's actual
-  randomized map — real terrain, paths, and level / fortress / pipe / toad-house
-  markers — in the world's own palette. The picture frame, sprites, and colors
-  are untouched; only the map inside each frame is regenerated. World 8 is framed
-  on Bowser's castle (the finale), showing its randomized dark-world approach.
 
 ## [0.12.0] - 2026-07-12
 
