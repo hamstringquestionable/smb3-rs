@@ -23,6 +23,8 @@ into a versioned section when a release is cut.
 - Each credits scene's "WORLD n" caption is renumbered to match the new
   progression order, so the first world shown reads "WORLD 1", the second
   "WORLD 2", and so on (the world's name and theme are unchanged).
+- Credits mini-maps now draw hand-trap slots with a ring node marker (the
+  spade/bonus-game tile) instead of a stray straight path segment.
 
 ## [0.12.3] - 2026-07-16
 

@@ -312,6 +312,30 @@ fn find_tile(grid: &Grid, tile: u8) -> Option<usize> {
         .map(|(_, c)| c)
 }
 
+/// The HANDTRAP overworld tile: the builder stamps it at a node slot in place of
+/// a level number (`overworld_writer`), so on the map it's a node sitting on a
+/// path. Its metatile ID is shared with a plain horizontal path variant (it's in
+/// `VALID_HORZ`), so a flat [`MINI_TILE_LUT`] entry would draw it as a bare
+/// horizontal path — instead we draw a node marker.
+const HAND_TRAP_TILE: u8 = 0xE6;
+
+/// Mini-tile drawn for a hand-trap node. The ending art has no dedicated
+/// hand-trap icon, so we reuse the spade / bonus-game ring tile. The mini-maps
+/// are purely cosmetic, so it's fine that hand-traps and spade games share a
+/// marker; the ring's blank margins let the path connect through it, and reusing
+/// an existing tile means no CHR is touched.
+const HAND_TRAP_MINI: u8 = 0x10;
+
+/// Mini-tile for one map cell: a [`MINI_TILE_LUT`] lookup, except a HANDTRAP node
+/// draws the [`HAND_TRAP_MINI`] ring marker.
+fn mini_tile_at(grid: &Grid, row: usize, col: usize) -> u8 {
+    let tile = grid.get(row, col);
+    if tile == HAND_TRAP_TILE {
+        return HAND_TRAP_MINI;
+    }
+    MINI_TILE_LUT[tile as usize]
+}
+
 /// Build one world's 0xC1-byte picture: the shared frame border, a 14-column
 /// window of the map (starting at column `base`) drawn 1:1 through
 /// [`MINI_TILE_LUT`], and the world's decorative bottom-fill strip. The map's 9
@@ -332,7 +356,7 @@ fn build_frame(grid: &Grid, base: usize, world: usize) -> Vec<u8> {
     for r in 0..ROWS {
         for ic in 0..INTERIOR_W {
             let mc = (base + ic).min(grid.cols - 1);
-            f[(r + 1) * FRAME_W + (ic + 1)] = MINI_TILE_LUT[grid.get(r, mc) as usize];
+            f[(r + 1) * FRAME_W + (ic + 1)] = mini_tile_at(grid, r, mc);
         }
     }
     // Decorative bottom strip fills the extra 10th interior row.
@@ -478,6 +502,15 @@ mod tests {
         let order = order_from_progression(&[2, 5, 0, 3, 1, 6, 4, 7]);
         assert_eq!(order[7], 7);
         assert!(is_permutation(&order));
+    }
+
+    #[test]
+    fn handtrap_renders_as_node_marker() {
+        let g = Grid { tiles: vec![vec![0x45, HAND_TRAP_TILE]], cols: 2, eights_are_wild: false };
+        // A hand-trap draws the ring marker regardless of its neighbors.
+        assert_eq!(mini_tile_at(&g, 0, 1), HAND_TRAP_MINI);
+        // A non-hand-trap tile is a plain LUT lookup.
+        assert_eq!(mini_tile_at(&g, 0, 0), MINI_TILE_LUT[0x45]);
     }
 
     #[test]
