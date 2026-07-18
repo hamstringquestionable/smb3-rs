@@ -260,6 +260,15 @@ pub(super) fn place_pipes<R: Rng>(
     placed_pairs
 }
 
+/// Per-pipe skip-cap weights: relative chance a spare pipe's max-skip is 1, 2,
+/// 3, or 4 levels. Each pipe rolls a cap from this distribution, then greedily
+/// takes the biggest skip up to it — so big skips happen *sometimes* (a pipe
+/// rolling a high cap) rather than every pipe grabbing the largest skip and
+/// trivializing short worlds. Tuned via a sweep (this shape ≈ halves W2/W6 skip
+/// size vs. uncapped while keeping most of the anti-linearity win); safe to
+/// retune if real gameplay feels off.
+const SPARE_CAP_WEIGHTS: [f64; 4] = [30.0, 25.0, 25.0, 20.0];
+
 /// Place `spare_needed` spare pipe pairs after `populate_sections`, converting
 /// the lowest-value filler (HammerBro) slots into pipe endpoints. Unlike the
 /// connectivity phase this runs with levels already placed, so each pair is
@@ -318,7 +327,8 @@ pub(super) fn place_spare_pipes<R: Rng>(
             .collect();
 
         let avail = &available;
-        let mut candidates: Vec<(TeleportEdge, f64)> = Vec::new();
+        // (pair, skipped levels, jump distance) for every pair that hops >=2.
+        let mut candidates: Vec<(TeleportEdge, usize, usize)> = Vec::new();
         for i in 0..avail.len() {
             for j in (i + 1)..avail.len() {
                 let a = avail[i];
@@ -334,15 +344,44 @@ pub(super) fn place_spare_pipes<R: Rng>(
                 // Levels whose route distance sits strictly between the two
                 // endpoints are the ones the teleport lets the player skip.
                 let skipped = level_d.iter().filter(|&&d| d > lo && d < hi).count();
-                let score = skipped as f64 * 10.0 + (hi - lo) as f64;
-                candidates.push(((a, b), score));
+                candidates.push(((a, b), skipped, hi - lo));
             }
         }
 
-        // Prefer a level-skipping pair; if none qualifies, fall back to the
-        // most distance-separated pair so the world still reaches its vanilla
-        // pipe count.
-        let chosen = pick_softmax_by_score(candidates, PIPE_SOFTMAX_T, rng).or_else(|| {
+        // Roll this pipe's skip cap from the weighted distribution.
+        let cap = {
+            let total: f64 = SPARE_CAP_WEIGHTS.iter().sum();
+            let mut roll = rng.random_range(0.0..total);
+            let mut c = SPARE_CAP_WEIGHTS.len();
+            for (i, w) in SPARE_CAP_WEIGHTS.iter().enumerate() {
+                roll -= w;
+                if roll <= 0.0 {
+                    c = i + 1;
+                    break;
+                }
+            }
+            c
+        };
+
+        // Greedily take the biggest skip within the cap (softmax breaks near
+        // ties). If every shortcut skips more than the cap, take the smallest
+        // one (least overshoot) so the pipe still stays as modest as possible.
+        let within: Vec<(TeleportEdge, f64)> = candidates
+            .iter()
+            .filter(|&&(_, s, _)| (1..=cap).contains(&s))
+            .map(|&(p, s, j)| (p, s as f64 * 10.0 + j as f64))
+            .collect();
+        let chosen = pick_softmax_by_score(within, PIPE_SOFTMAX_T, rng).or_else(|| {
+            candidates
+                .iter()
+                .filter(|&&(_, s, _)| s >= 1)
+                .min_by_key(|&&(_, s, _)| s)
+                .map(|&(p, _, _)| p)
+        });
+
+        // Fall back to the most distance-separated pair if nothing qualified, so
+        // the world still reaches its fixed vanilla pipe count.
+        let chosen = chosen.or_else(|| {
             let mut best: Option<(TeleportEdge, usize)> = None;
             for i in 0..avail.len() {
                 for j in (i + 1)..avail.len() {

@@ -2030,6 +2030,84 @@ fn report_w8_bridge_locks() {
     }
 }
 
+/// Distribution of how many forced levels each W2 / W6 shortcut pipe skips.
+/// (Concern: these small worlds' pipes may skip too much at once.) A pipe's
+/// "skip" is the rise in minimum required clears when it's removed — i.e. the
+/// forced levels it lets the player bypass. Reports a per-pipe histogram plus
+/// mean/max for both start↔airship modes, using the shipped pipeline.
+///
+/// Run: cargo test --release report_w2_w6_pipe_skips -- --ignored --nocapture
+/// Override seed count with PROG_SEEDS=N.
+#[test]
+#[ignore]
+fn report_w2_w6_pipe_skips() {
+    let rom_bytes = match std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") {
+        Ok(b) => b,
+        Err(_) => {
+            eprintln!("ROM not found, skipping");
+            return;
+        }
+    };
+    let seeds: u64 = std::env::var("PROG_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2000);
+    let base = crate::Options {
+        palettes: false,
+        palette_themed: false,
+        ..Default::default()
+    };
+
+    for (label, sas) in [("SAS off", false), ("SAS on", true)] {
+        let mut opts = base.clone();
+        opts.swap_start_airship = sas;
+
+        // Per world_idx: histogram of Shortcut(n) skip counts (n capped at 9).
+        let mut hist: [[u32; 10]; 8] = [[0; 10]; 8];
+        for seed in 0..seeds {
+            let (_rom, result) =
+                match crate::randomize_rom_with_overworld_capture(&rom_bytes, seed, &opts, None) {
+                    Ok(p) => p,
+                    Err(_) => continue,
+                };
+            for built in &result.worlds {
+                let wi = built.world_idx;
+                for class in classify_pipes(built) {
+                    if let PipeClass::Shortcut(n) = class {
+                        hist[wi][n.min(9)] += 1;
+                    }
+                }
+            }
+        }
+
+        eprintln!("\n=== [{label}] W2 / W6 shortcut-pipe levels-skipped ({seeds} seeds) ===");
+        for &wi in &[1usize, 5] {
+            let h = &hist[wi];
+            let total: u32 = h.iter().sum();
+            let t = total.max(1) as f64;
+            let sum: u64 = h.iter().enumerate().map(|(n, &c)| n as u64 * c as u64).sum();
+            let mean = sum as f64 / t;
+            let max = h.iter().rposition(|&c| c > 0).unwrap_or(0);
+            let ge3: u32 = h[3..].iter().sum();
+            let ge4: u32 = h[4..].iter().sum();
+            eprintln!(
+                "  W{}: {total} shortcut pipes total, mean skip {mean:.2}, max {max}",
+                wi + 1
+            );
+            for (n, &c) in h.iter().enumerate() {
+                if c > 0 {
+                    eprintln!("     skips {n}: {c:>5}  ({:>4.1}%)", c as f64 / t * 100.0);
+                }
+            }
+            eprintln!(
+                "     >=3 skipped: {ge3} ({:.1}%)   >=4 skipped: {ge4} ({:.1}%)",
+                ge3 as f64 / t * 100.0,
+                ge4 as f64 / t * 100.0,
+            );
+        }
+    }
+}
+
 /// Required-progression / linearity analyzer.
 ///
 /// Per world, computes the minimum fortress + level entries the player must
