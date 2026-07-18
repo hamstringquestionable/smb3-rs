@@ -46,6 +46,14 @@ const INTRO_SKIP_HOOK_OFFSET: usize = 0x308E2;
 const INTRO_SKIP_ROUTINE_OFFSET: usize = super::rom_data::FS_INTRO_SKIP;
 const INTRO_SKIP_CPU: u16 = super::rom_data::prg031_file_to_cpu(INTRO_SKIP_ROUTINE_OFFSET); // $E955
 
+/// Disable the attract-mode demo. When the 1P/2P menu sits idle, a countdown
+/// (`$DF` × `$E0` frames) expires and the title handler at PRG024 CPU $8C4E does
+/// `LDA #$FF / STA $E1`; a later check (`LDA $E1 / BEQ / JMP $A8AF` at CPU $8979)
+/// reads that flag and jumps into the recorded demo playback. Setting the stored
+/// value to 0 keeps `$E1` clear, so the `BEQ` is always taken and the demo never
+/// starts — the menu just holds. The byte at 0x30C5F is the `#$FF` operand.
+const DEMO_TRIGGER_OPERAND_OFFSET: usize = 0x30C5F;
+
 /// Curated music tracks for the title menu. Values are written to the music
 /// change trigger at $04F5 — each one is a looping theme that fits a static
 /// menu screen (map themes 1–8 plus a handful of level / mushroom / hilly
@@ -207,6 +215,10 @@ pub fn write_seed_hash(rom: &mut Rom, seed: u64, options: &Options) {
     intro_routine.extend_from_slice(&intro_skip_music_bytes(seed));
     intro_routine.push(0x60); // RTS
     rom.write_range(INTRO_SKIP_ROUTINE_OFFSET, &intro_routine);
+
+    // Disable the attract-mode demo: LDA #$FF → LDA #$00 so the idle-timeout
+    // never raises the demo-trigger flag $E1 (see DEMO_TRIGGER_OPERAND_OFFSET).
+    rom.write_byte(DEMO_TRIGGER_OPERAND_OFFSET, 0x00);
 }
 
 #[cfg(test)]
@@ -272,6 +284,7 @@ mod tests {
     fn write_seed_hash_writes_sprite_data_to_rom() {
         let opts = Options::default();
         let mut rom = crate::randomize::qol::test_support::make_test_rom();
+        rom.write_byte(DEMO_TRIGGER_OPERAND_OFFSET, 0xFF); // vanilla operand
         write_seed_hash(&mut rom, 42, &opts);
 
         // The data table in ROM must be exactly what build_sprite_data emits.
@@ -282,6 +295,9 @@ mod tests {
         // Hook and intro-skip hook target the derived CPU addresses.
         assert_eq!(rom.read_range(HOOK_OFFSET, 3), &[0x4C, 0x14, 0xE9]);
         assert_eq!(rom.read_range(INTRO_SKIP_HOOK_OFFSET, 3), &[0x20, 0x55, 0xE9]);
+
+        // Attract-mode demo trigger neutralized: LDA #$FF operand becomes #$00.
+        assert_eq!(rom.read_byte(DEMO_TRIGGER_OPERAND_OFFSET), 0x00);
     }
 
     #[test]
