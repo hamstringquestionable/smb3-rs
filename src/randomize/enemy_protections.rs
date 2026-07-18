@@ -241,6 +241,7 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
             EntryRule { offset: 0x0CEBD, rule: EntryProtection::ExcludeHazards }, // BigRedTroopa scr=5 col=8
             EntryRule { offset: 0x0CEC0, rule: EntryProtection::ExcludeHazards }, // BigRedTroopa scr=5 col=15
             EntryRule { offset: 0x0CEC3, rule: EntryProtection::ExcludeHazards }, // BigRedTroopa scr=6 col=4
+            EntryRule { offset: 0x0CEC9, rule: EntryProtection::ExcludeHazards }, // BigGreenTroopa scr=7 col=10
         ],
     },
     LevelProtection {
