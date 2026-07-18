@@ -8,6 +8,16 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.12.6] - 2026-07-17
+
+### Changed
+
+- Overworld shortcut pipes now vary how much they skip: each pipe rolls a random
+  cap on how many forced levels it may bypass (usually 1–2, occasionally more)
+  instead of always grabbing the largest possible skip. Big skips still happen,
+  just less often — so a single pipe no longer routinely trivializes a short
+  world like 2 or 6, while the overall maps stay less linear.
+
 ## [0.12.5] - 2026-07-17
 
 ### Changed
