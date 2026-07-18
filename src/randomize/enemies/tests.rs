@@ -1355,6 +1355,34 @@
         );
     }
 
+    /// The coin-ship reward fight (2×BoomerangBro sub-area at enemy_ptr 0xDA0F,
+    /// file 0x0DA1F) must never receive a Dry Bones: that room is enclosed and
+    /// never scrolls, so a Dry Bones — which revives after every stomp and has
+    /// no edge to wander off — could never be cleared.
+    #[test]
+    fn coinship_fight_never_gets_dry_bones() {
+        let Some(base) = load_reference_rom() else {
+            eprintln!("reference ROM not present — skipping coinship_fight_never_gets_dry_bones");
+            return;
+        };
+        // Vanilla layout: [FF] 01 (page) | 82 03 17 | 82 0C 17 | BA 0F 11 | FF.
+        // The two 0x82 BoomerangBro obj_id bytes sit at 0x0DA20 and 0x0DA23.
+        const BRO0: usize = 0x0DA20;
+        const BRO1: usize = 0x0DA23;
+        assert_eq!(base.read_range(BRO0, 1)[0], 0x82, "vanilla layout drifted");
+        assert_eq!(base.read_range(BRO1, 1)[0], 0x82, "vanilla layout drifted");
+
+        for seed in 0..400u64 {
+            let mut rom = base.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom, &mut rng, &preset_recommended());
+            for off in [BRO0, BRO1] {
+                let id = rom.read_range(off, 1)[0];
+                assert_ne!(id, 0x3F, "seed {seed}: Dry Bones placed in coin-ship fight");
+            }
+        }
+    }
+
     /// Every cannon-fire family member carries the CHR bank its engine
     /// behavior demands (see the cfire arm in `sprite_bank`): bills and
     /// goomba pipes spawn $4F/+5 children; the cannonball family (plus the

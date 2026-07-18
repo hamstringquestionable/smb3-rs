@@ -12,7 +12,8 @@ use rand::Rng;
 use rand::seq::IndexedRandom;
 
 use crate::randomize::enemy_protections::{
-    entry_protection_at, walker_segment_rule_at, EntryProtection, WalkerSegmentRule,
+    entry_protection_at, is_coinship_fight, walker_segment_rule_at, EntryProtection,
+    WalkerSegmentRule,
 };
 use crate::randomize::rom_data::{
     ENEMY_DATA_END, ENEMY_DATA_START, HB_NEEDS_SHELL_ENEMIES, LEVEL_DATA_REGIONS, STOMPABLE_ENEMIES,
@@ -153,7 +154,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
 
         // HB Wild: batch-assign enemies with stompability constraints.
         if is_hb_segment && opts.hb_encounters == EnemyMode::Wild && !big_q_only {
-            randomize_hb_wild_segment(&mut data, &entries, &hb_modes, rng);
+            randomize_hb_wild_segment(&mut data, &entries, &hb_modes, seg_file_offset, rng);
             continue;
         }
 

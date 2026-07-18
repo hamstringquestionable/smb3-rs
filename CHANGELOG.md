@@ -8,6 +8,14 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.12.7] - 2026-07-17
+
+### Fixed
+
+- Randomized enemies no longer place a Dry Bones in the Coin Ship reward fight.
+  That room is enclosed and never scrolls, so a Dry Bones — which revives after
+  every stomp and has nowhere to wander off — could never be cleared.
+
 ## [0.12.6] - 2026-07-17
 
 ### Changed
