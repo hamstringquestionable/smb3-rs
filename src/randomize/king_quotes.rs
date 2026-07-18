@@ -588,6 +588,14 @@ const QUOTES: &[[&str; 6]] = &[
         "A plumber,it turns",
         "out.",
     ],
+    [
+        "If you can dodge a",
+        "Rocky Wrench you can",
+        "dodge a Cheep Cheep.",
+        "",
+        "",
+        "",
+    ],
 ];
 
 /// Suit-specific quotes: shown when Mario visits the king wearing frog suit.
@@ -784,14 +792,6 @@ const RACCOON_QUOTES: &[[&str; 6]] = &[
         "You didn't knock",
         "over my bins on",
         "the way in,did you?",
-        "",
-        "",
-        "",
-    ],
-    [
-        "You look exhausted.",
-        "Or are those just",
-        "raccoon eyes?",
         "",
         "",
         "",
