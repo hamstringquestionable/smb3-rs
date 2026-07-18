@@ -8,6 +8,8 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.12.5] - 2026-07-17
+
 ### Changed
 
 - The ending credits montage now presents the eight world scenes in the same
