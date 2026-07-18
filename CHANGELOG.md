@@ -8,6 +8,15 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.12.8] - 2026-07-18
+
+### Fixed
+
+- The final Big Green Troopa in 4-1 is now covered by the level's hazard
+  protection, like the Big Red Troopas earlier in the stage. Each troopa sits on
+  a small platform Mario must land on to progress, so a hazard enemy there could
+  force an unavoidable hit.
+
 ## [0.12.7] - 2026-07-17
 
 ### Fixed
