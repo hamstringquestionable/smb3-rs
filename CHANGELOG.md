@@ -8,6 +8,8 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.12.6] - 2026-07-17
+
 ### Changed
 
 - Overworld shortcut pipes now vary how much they skip: each pipe rolls a random
