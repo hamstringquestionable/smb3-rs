@@ -28,6 +28,14 @@ into a versioned section when a release is cut.
 - Credits mini-maps now draw hand-trap slots with a ring node marker (the
   spade/bonus-game tile) instead of a stray straight path segment.
 
+## [0.12.4] - 2026-07-17
+
+### Added
+
+- New shipped visual patch **Baldman Bros** by Dr. Trash Panda
+  (<https://www.twitch.tv/doctor_tp>), selectable in the web app's Visual
+  Patch picker.
+
 ## [0.12.3] - 2026-07-16
 
 ### Added

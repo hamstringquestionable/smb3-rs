@@ -79,6 +79,15 @@ const VISUAL_PATCHES = [
 		textColor: "#1c1c38",
 		creditLabel: "Dr. Mario Bros 3",
 	},
+	{
+		id: "baldman_bros",
+		label: "Baldman Bros",
+		path: "./visual-patches/baldman-bros.ips",
+		author: "Dr. Trash Panda",
+		url: "https://www.twitch.tv/doctor_tp",
+		color: "#e0b78a", // bald scalp tan
+		textColor: "#1c1c38",
+	},
 ];
 
 const visualPatchCache = new Map(); // id → Promise<Uint8Array>
