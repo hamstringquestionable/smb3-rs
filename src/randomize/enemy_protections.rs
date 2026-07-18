@@ -305,6 +305,18 @@ pub(super) fn entry_protection_at(file_offset: usize) -> Option<EntryProtection>
         .find_map(|e| (e.offset == file_offset).then_some(e.rule))
 }
 
+/// CPU enemy pointer of the coin-ship reward fight (the 2×BoomerangBro
+/// sub-area past the end-pipe). Kept in sync with its `LEVEL_PROTECTIONS` row.
+const COINSHIP_FIGHT_ENEMY_PTR: u16 = 0xDA0F;
+
+/// Whether `segment_file_offset` is the coin-ship reward fight. That sub-area is
+/// an enclosed, non-scrolling room, so an enemy that can never be permanently
+/// cleared — Dry Bones revives after every stomp and has no screen edge to
+/// wander off — must be kept out of its wild pool.
+pub(super) fn is_coinship_fight(segment_file_offset: usize) -> bool {
+    enemy_ptr_to_file_offset(COINSHIP_FIGHT_ENEMY_PTR) == segment_file_offset
+}
+
 /// Walker rule for the segment whose page byte sits at this absolute file
 /// offset. Returns `Default` for unprotected segments.
 pub(super) fn walker_segment_rule_at(segment_file_offset: usize) -> WalkerSegmentRule {

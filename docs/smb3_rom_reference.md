@@ -3399,6 +3399,12 @@ WalkerSegmentRule::HammerBro`). This routes its enemy randomization through
 the HB-wild path (stompable-only pool, optionally one shell-killable + one
 shell partner).
 
+Dry Bones (`0x3F`) is additionally excluded from this segment's stompable pool
+(`is_coinship_fight` in `enemy_protections.rs`): the reward room is enclosed and
+never scrolls, so a Dry Bones revives after every stomp with no screen edge to
+wander off and can never be cleared. It stays a valid HB-wild pick everywhere
+else.
+
 ### Enemy Stompability Classification
 
 Used by the randomizer for Hammer Bro encounter constraints. Enemies are classified

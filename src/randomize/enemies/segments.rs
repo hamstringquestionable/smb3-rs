@@ -44,8 +44,19 @@ pub(super) fn randomize_hb_wild_segment<R: Rng>(
     data: &mut [u8],
     entries: &[SegmentEntry],
     hb_modes: &ClassModes,
+    seg_file_offset: usize,
     rng: &mut R,
 ) {
+    // The coin-ship reward room is enclosed and never scrolls, so Dry Bones
+    // (0x3F) — which revives after every stomp and has no edge to wander off —
+    // can never be cleared there. Drop it from the stompable pool for that one
+    // segment; everywhere else it's a fine HB-wild pick.
+    let stompable: Cow<[u8]> = if is_coinship_fight(seg_file_offset) {
+        Cow::Owned(STOMPABLE_ENEMIES.iter().copied().filter(|&id| id != 0x3F).collect())
+    } else {
+        Cow::Borrowed(STOMPABLE_ENEMIES)
+    };
+
     let swappable: Vec<usize> = entries.iter()
         .enumerate()
         .filter(|(_, e)| find_class_pool(e.obj_id, hb_modes).is_some())
@@ -62,7 +73,7 @@ pub(super) fn randomize_hb_wild_segment<R: Rng>(
     }
 
     if swappable.len() == 1 {
-        if let Some(chosen) = pick_compatible(STOMPABLE_ENEMIES, slot4, slot5, rng) {
+        if let Some(chosen) = pick_compatible(&stompable, slot4, slot5, rng) {
             swap_enemy(data, entries[swappable[0]].data_index, chosen);
         }
     } else if swappable.len() == 2 {
@@ -88,12 +99,12 @@ pub(super) fn randomize_hb_wild_segment<R: Rng>(
             }
         } else {
             // Both from stompable pool
-            if let Some(first) = pick_compatible(STOMPABLE_ENEMIES, slot4, slot5, rng) {
+            if let Some(first) = pick_compatible(&stompable, slot4, slot5, rng) {
                 swap_enemy(data, entries[swappable[0]].data_index, first);
                 let mut s4 = slot4;
                 let mut s5 = slot5;
                 commit_chr_page(first, &mut s4, &mut s5);
-                if let Some(second) = pick_compatible(STOMPABLE_ENEMIES, s4, s5, rng) {
+                if let Some(second) = pick_compatible(&stompable, s4, s5, rng) {
                     swap_enemy(data, entries[swappable[1]].data_index, second);
                 }
             }
