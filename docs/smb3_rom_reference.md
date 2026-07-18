@@ -3664,6 +3664,25 @@ Vanilla SMB3 leaves the 1P/2P select menu silent (the only title-screen music is
 
 The track is chosen deterministically from the seed via a curated 16-entry table (world map themes 1–9, plus level themes 0x10/0x20/0x30/0x40/0x60/0x80/0x90). See `src/randomize/title_screen.rs::MENU_MUSIC_TRACKS` and `pick_menu_music`. When `starting_items` is active it overwrites the lives-init hook, so `qol::write_starting_items` mirrors the same `STA $04F5` inside its own trampoline.
 
+### Attract-Mode Demo Trigger (PRG024)
+
+While the 1P/2P menu sits idle, a two-stage countdown decrements each frame: the
+menu handler at CPU **$8C4E** (file **0x30C45**) does `DEC $E0` (low byte, reloads
+to 0x60) and, on rollover, `DEC $DF` (high byte, seeded to 0x14 at CPU $8C28).
+When `$DF` hits zero it runs `LDA #$FF / STA $E1` — the `#$FF` operand is at file
+**0x30C5F**. A later check at CPU **$8979** (file 0x30989) reads the flag:
+
+```
+$8979:  A5 E1        LDA $E1
+$897B:  F0 03        BEQ +3
+$897D:  4C AF A8     JMP $A8AF   ; start recorded demo playback
+```
+
+`$E1` is written only at the timer site and read only here. Patching the operand
+at 0x30C5F from `0xFF` to `0x00` keeps `$E1` clear, so the `BEQ` is always taken
+and the demo never starts — the menu holds indefinitely. Applied by
+`title_screen.rs::write_seed_hash` (`DEMO_TRIGGER_OPERAND_OFFSET`).
+
 ---
 
 ## Autoscroll Disable
