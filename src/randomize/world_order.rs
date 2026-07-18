@@ -50,7 +50,12 @@ const STATUS_DISPLAY_OFFSET: usize = 0x350D7;
 ///
 /// The 8 worlds (0-7) are shuffled, but world 7 (Dark Land) is always last
 /// since it contains Bowser and the game ending.
-pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) {
+///
+/// Returns the shuffled progression as internal world numbers, in play order
+/// (first entry is the starting world, last is always 7/Dark Land). With
+/// `world_count` < 7 this is shorter than 8 (unvisited worlds are omitted).
+/// Callers such as [`super::credits`] use it to align the ending montage.
+pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8> {
     let world_count = world_count.clamp(1, 7) as usize;
 
     // Build shuffled world order: shuffle worlds 0-6, take first world_count, append world 7
@@ -128,6 +133,8 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) {
         0x99, 0x04, 0x03,             // STA $0304,Y
         0xEA,                         // NOP (pad)
     ]);
+
+    worlds
 }
 
 #[cfg(test)]

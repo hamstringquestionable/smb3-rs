@@ -2632,6 +2632,98 @@ this redundant write is safe.
 STA instructions with separate LDA operands. This caused a 2-player switching bug
 and was abandoned in favor of the simpler NOP approach.
 
+## Ending Credits Montage (PRG024/PRG025)
+
+After Bowser, `Ending_Credits` (PRG024, CPU $BB8B) raises a curtain and plays a
+montage that shows one hand-drawn scene per world. `Ending2_DoEndPic` loops the
+counter `Ending2_CurWorld` from 0 to 7; for each world it fades a picture in,
+holds, fades out, then advances. The pictures are **fixed vignettes** drawn in a
+dedicated ending tileset (grassland / desert / water / pipe / ice / cloud /
+giant / dark-castle) — they are *not* renderings of the overworld map grid.
+
+Every per-world asset is a parallel 8-entry table indexed by `Ending2_CurWorld`,
+so showing the worlds in a different order is a pure permutation of these tables
+(`new[position] = old[world_shown_there]`). No code changes are required.
+
+| Table | File offset | Stride | Label |
+|-------|-------------|--------|-------|
+| Series-queue start cmd | 0x31E39 | 1 B | `PRG024_BE29` (start of the $2A–$4C graphics-load command range) |
+| Series-queue end cmd   | 0x31E41 | 1 B | `PRG024_BE31` (end of that range) |
+| CHR pattern bank 2     | 0x31F6E | 1 B | `Ending2_EndPicPatTable2` |
+| CHR pattern bank 3     | 0x31F76 | 1 B | `Ending2_EndPicPatTable3` |
+| CHR pattern bank 4     | 0x31F7E | 1 B | `Ending2_EndPicPatTable4` |
+| CHR pattern bank 5     | 0x31F86 | 1 B | `Ending2_EndPicPatTable5` |
+| Sprite list ptr hi     | 0x31F8E | 1 B | `Ending2_EndPicSpriteListH` |
+| Sprite list ptr lo     | 0x31F96 | 1 B | `Ending2_EndPicSpriteListL` |
+| Sprite list length     | 0x31F9E | 1 B | `Ending2_EndPicSpriteListLen` |
+| Picture buffer ptr hi  | 0x32126 | 1 B | `EndPicByWorld_H` → `EndPic_World1..8` |
+| Picture buffer ptr lo  | 0x3212E | 1 B | `EndPicByWorld_L` |
+| Picture VRAM start hi   | 0x325DA | 1 B | `EndPic_VRAMStart_H` |
+| Picture VRAM start lo   | 0x325E2 | 1 B | `EndPic_VRAMStart_L` |
+| Palette pointer table   | 0x32684 | 2 B | `Video_Upd_Table2` cmds $4D–$54 (`EndSeq_World1Pal..World8Pal`) |
+
+- **Picture buffers** (`EndPic_World1..8`, from 0x32136): each decompresses to
+  0xC1 bytes into `Ending_CmdBuffer`. Compression: a byte with bit 7 set emits
+  `(byte & 0x7F)` **twice**; otherwise it emits once. The scene is a bordered
+  frame — top row `70 71…72`, interior rows delimited by `73 73`, bottom row
+  `74 71…75`.
+- **Palette** is fired as `Graphics_Queue = Ending2_CurWorld + $4D`, so command
+  `$4D + position` indexes entry `position` of the palette pointer table above.
+- **"WORLD n" caption:** the number/name label ("WORLD 1 / GRASS LAND", etc.) is
+  **not** a permuted pointer — it's a background tile stream inside each scene's
+  `$2A..$4C` graphics-load command data, drawn *outside* the mini-map frame. The
+  digit is a single glyph, `tile = $76 + n` (`$77` = "1" … `$7E` = "8"), found
+  right after the `"WORLD "` prefix (`DE F4 EF F1 E3 5C`). Because it's baked
+  into the (permuted-by-index but not rewritten) command data, reordering the
+  montage alone leaves each scene showing its *original* number; the digit must
+  be rewritten to the montage position separately. Per-world caption digit file
+  offsets: W1 `0x32D9B`, W2 `0x32E00`, W3 `0x32E5E`, W4 `0x32EAC`,
+  W5 `0x32EDE` **and** `0x32F18` (its scene streams the caption twice),
+  W6 `0x32F39`, W7 `0x32FE1`, W8 `0x3305F`.
+- **Finale:** world 7 (Dark Land) is always shown last; the "THE END" sprite
+  card and P-Wing-for-everybody reset follow.
+
+`src/randomize/credits.rs` reorders this montage to follow the World Order
+progression (permuting the tables above), redraws each mini-map from the
+randomized overworld grid, **and** rewrites each scene's "WORLD n" caption digit
+to its montage position (so the first-shown world reads "WORLD 1"). It only
+rewrites data, never code.
+
+### Mini-map picture format & rendering
+
+Each `EndPic_WorldN` buffer (from 0x32136, packed back-to-back) decompresses to
+0xC1 bytes = a 16×12 tile frame (14×10 interior). Compression: a byte with bit 7
+set emits `(byte & 0x7F)` **twice**, else once — so every tile ID is < 0x80.
+Frame borders: `70 71…72` (top), `73 73` row edges, `74 71…75` (bottom).
+
+Rendering a mini-map (see `tools/credits_render.py`) requires four inputs:
+- **BG CHR:** tiles $00-$3F ← CHR page $7c, $40-$7F ← $7d, $80-$BF ← $76,
+  $C0-$FF ← $77 (`Ending_Credits` sets `PatTable_BankSel`/`+1` = $7c/$76). CHR
+  file base 0x40010 + page*0x400.
+- **Nametable:** the buffer is written 16 wide at `EndPic_VRAMStart` (+0x20 per
+  row, 12 rows) into NT2 ($2800); the per-world series graphics commands
+  (`Video_Upd_Table2` $2A..$4C, ranges in `PRG024_BE29/BE31`) add nametable +
+  **attribute** ($2BC0) data. Command format: `[addr_hi addr_lo][cmd][data…]`,
+  `cmd` bit7 = vertical (+32) stride, bit6 = RLE (one repeated byte), bits0-5 =
+  count; a `$00` byte terminates.
+- **Attributes:** $2BC0 region, 1 byte per 4×4-tile block (2 bits per 16×16 quad).
+- **Palette:** `EndSeq_WorldNPal` (32 bytes → $3F00), pointer table at 0x32684.
+
+**The mini-map is a ~1:1 grid of one map screen.** Like the vanilla vignettes
+(which each show a single 16-column screen of their world), `render_world_maps`
+picks one screen at random per world and draws it 1:1: the playable overworld is
+14 columns wide (columns 0 and `cols-1` are the `$02` border) and the mini-map
+interior is also 14 wide, and vertical-path columns line up exactly. Each
+overworld metatile maps to one mini-tile via a lookup (`credits::MINI_TILE_LUT`,
+tallied from the vanilla maps at their 1:1-aligned cells); the chosen screen's
+inner 14 columns fill the interior, the 9 map rows fill the 10 interior rows
+(bottom repeated), and the shared frame border is kept. The eight regenerated
+pictures are then **repacked** contiguously into their shared buffer region
+(0x32136 .. 0x325DA, 1188 B; ~1150 B used) and `EndPicByWorld_H/L` repointed —
+so buffers can grow/shrink as long as the total fits. Attributes, palette,
+sprites, and CHR banks are untouched. `render_world_maps` runs **before** the
+credits reorder (which permutes those same pointers).
+
 ### Per-World Specific Offsets
 
 | File Offset | Size | Description |
