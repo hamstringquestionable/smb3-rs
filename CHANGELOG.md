@@ -8,6 +8,8 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [0.12.9] - 2026-07-18
+
 ### Fixed
 
 - The title screen no longer rolls the attract-mode demo. Sitting on the 1P/2P
