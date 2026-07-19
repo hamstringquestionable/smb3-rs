@@ -100,10 +100,19 @@ pub(super) fn intro_skip_music_bytes(seed: u64) -> [u8; 9] {
 }
 
 /// Compute 5 icon indices and a palette choice from seed + flag bytes.
+///
+/// The randomizer version (`CARGO_PKG_VERSION`) is folded in so two builds with
+/// different randomization logic never collide on the same icons for a shared
+/// seed + options. CI (`version-guard` in `.github/workflows/ci.yml`) requires a
+/// version bump on every merge to `main`, so any output-affecting change lands
+/// under a distinct version and thus a distinct hash.
 fn compute_hash(seed: u64, options: &Options) -> ([usize; HASH_LENGTH], u8) {
     let flag_bytes = options.to_flag_bytes();
     let mut h = seed;
     for &b in &flag_bytes {
+        h = h.wrapping_mul(2_654_435_761).wrapping_add(b as u64);
+    }
+    for &b in env!("CARGO_PKG_VERSION").as_bytes() {
         h = h.wrapping_mul(2_654_435_761).wrapping_add(b as u64);
     }
 

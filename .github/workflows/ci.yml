@@ -52,6 +52,37 @@ jobs:
           set -o pipefail
           python3 tools/offset_dups.py --exit-code | tee -a "$GITHUB_STEP_SUMMARY"
 
+  version-guard:
+    # Every PR to main must bump the Cargo.toml version. The title-screen seed
+    # hash folds in CARGO_PKG_VERSION, so a version bump is what makes two builds
+    # with different randomization logic produce different verification icons.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # need base history to read main's Cargo.toml
+      - name: Require a version bump
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver() { sed -n 's/^version = "\(.*\)"/\1/p' "$1" | head -1; }
+          git show '${{ github.event.pull_request.base.sha }}:Cargo.toml' > /tmp/base-cargo.toml
+          base=$(ver /tmp/base-cargo.toml)
+          head=$(ver Cargo.toml)
+          echo "base version: $base"
+          echo "head version: $head"
+          if [ "$base" = "$head" ]; then
+            echo "::error file=Cargo.toml::Version unchanged ($head). Bump the version before merging to main."
+            exit 1
+          fi
+          # Enforce a strictly-increasing version (highest sorts last).
+          highest=$(printf '%s\n%s\n' "$base" "$head" | sort -V | tail -1)
+          if [ "$highest" != "$head" ]; then
+            echo "::error file=Cargo.toml::Version $head is not greater than main's $base."
+            exit 1
+          fi
+
   build:
     needs: ci
     if: github.event_name == 'push'
