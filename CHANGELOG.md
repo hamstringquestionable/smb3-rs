@@ -8,6 +8,15 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-19
+
+### Changed
+
+- The title-screen seed-verification icons now depend on the randomizer version
+  in addition to the seed and options. Two builds with different randomization
+  logic no longer show identical icons for the same seed. (CI now requires a
+  version bump on every merge to `main`, so each release is a distinct version.)
+
 ## [0.12.9] - 2026-07-18
 
 ### Fixed
