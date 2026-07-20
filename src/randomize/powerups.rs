@@ -53,8 +53,17 @@ const PROTECTED_OFFSETS: &[usize] = &[
     0x23DB0, // 7-7 Q-star byte2 (screen 2)
     0x23E1F, // 7-7 Q-star byte2 (screen 5)
     0x23EA0, // 7-7 Q-star byte2 (screen 8)
-    0x2B39E, // 7-F1 Q-flower — small Mario needs mushroom to break bricks for Tanooki area
     0x2B900, // 8-F brick-flower (sub-area 2) — player must be big to break a block later
+];
+
+/// ? block byte2 offsets that randomize between flower and leaf only — never a
+/// star — regardless of the airship no-star option. Both flower and leaf power
+/// small Mario up so he can break bricks, but a star would leave him small.
+///
+/// 7-F1: the Q-block gating the Tanooki area. Small Mario must break bricks to
+/// reach it, so the block has to grant a persistent power-up (flower or leaf).
+const FLOWER_OR_LEAF_QBLOCK_OFFSETS: &[usize] = &[
+    0x2B39E, // 7-F1 Q-block — flower/leaf so small Mario can break bricks for Tanooki area
 ];
 
 /// Airship Q-block byte2 offsets (all 9 powerup blocks across W1-W7 airships).
@@ -71,6 +80,20 @@ const AIRSHIP_QBLOCK_OFFSETS: &[usize] = &[
     0x2F50D, // W7 airship (block 1)
     0x2F572, // W7 airship (block 2)
 ];
+
+/// Pick the shape pool for a ? block at `file_offset`. Blocks that gate
+/// progression on breaking bricks (`FLOWER_OR_LEAF_QBLOCK_OFFSETS`) always
+/// exclude the star; airship blocks exclude it only when `no_airship_stars`
+/// is set. Everything else may become flower, leaf, or star.
+fn qblock_pool(file_offset: usize, no_airship_stars: bool) -> &'static [u8] {
+    let exclude_star = FLOWER_OR_LEAF_QBLOCK_OFFSETS.contains(&file_offset)
+        || (no_airship_stars && AIRSHIP_QBLOCK_OFFSETS.contains(&file_offset));
+    if exclude_star {
+        QBLOCK_SHAPES_NO_STAR
+    } else {
+        QBLOCK_SHAPES
+    }
+}
 
 /// Randomize per-level powerup block types by scanning all level data regions
 /// for generator commands that place powerup blocks, and swapping the shape
@@ -117,11 +140,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, no_airship_stars: bool) {
                 // guard applies to group 1 alone (group 2 is never checked).
                 if group == GEN_GROUP_POWERBLOCK && !PROTECTED_OFFSETS.contains(&file_offset) {
                     if QBLOCK_SHAPES.contains(&shape) {
-                        let pool = if no_airship_stars && AIRSHIP_QBLOCK_OFFSETS.contains(&file_offset) {
-                            QBLOCK_SHAPES_NO_STAR
-                        } else {
-                            QBLOCK_SHAPES
-                        };
+                        let pool = qblock_pool(file_offset, no_airship_stars);
                         data[i + 2] = *pool.choose(rng).unwrap();
                     } else if BRICK_SHAPES.contains(&shape) {
                         data[i + 2] = *BRICK_SHAPES.choose(rng).unwrap();
@@ -199,6 +218,33 @@ mod tests {
 
         let b2_brick = rom.read_byte(start + 8);
         assert!(BRICK_SHAPES.contains(&b2_brick), "Brick became 0x{b2_brick:02X}");
+    }
+
+    #[test]
+    fn qblock_pool_7f1_is_flower_or_leaf_never_star() {
+        // 7-F1's Tanooki-gate block: flower or leaf, never star, regardless of
+        // the airship no-star flag.
+        for no_airship_stars in [false, true] {
+            let pool = qblock_pool(0x2B39E, no_airship_stars);
+            assert_eq!(pool, QBLOCK_SHAPES_NO_STAR);
+            assert!(pool.contains(&0x00), "flower missing from pool");
+            assert!(pool.contains(&0x01), "leaf missing from pool");
+            assert!(!pool.contains(&0x02), "star must never be in the 7-F1 pool");
+        }
+    }
+
+    #[test]
+    fn qblock_pool_airship_star_gated_by_flag() {
+        // An airship block keeps the star unless the no-star option is set.
+        assert_eq!(qblock_pool(0x2ED22, false), QBLOCK_SHAPES);
+        assert_eq!(qblock_pool(0x2ED22, true), QBLOCK_SHAPES_NO_STAR);
+    }
+
+    #[test]
+    fn qblock_pool_ordinary_block_allows_star() {
+        // A normal block (not in either special list) can still roll a star.
+        assert_eq!(qblock_pool(0x12345, false), QBLOCK_SHAPES);
+        assert_eq!(qblock_pool(0x12345, true), QBLOCK_SHAPES);
     }
 
     #[test]
