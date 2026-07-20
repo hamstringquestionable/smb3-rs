@@ -2,9 +2,12 @@ name: CI & Deploy
 
 on:
   push:
-    branches: [main, 'refactor/**', 'beta/**']
+    # Only main and the beta/next integration branch deploy. main -> root site,
+    # beta/next -> /beta/. No other branch can touch the deployed site.
+    branches: [main, 'beta/next']
   pull_request:
-    branches: [main]
+    # Run CI for feature PRs into beta/next as well as PRs into main.
+    branches: [main, 'beta/next']
   workflow_dispatch:
 
 permissions:
@@ -56,7 +59,9 @@ jobs:
     # Every PR to main must bump the Cargo.toml version. The title-screen seed
     # hash folds in CARGO_PKG_VERSION, so a version bump is what makes two builds
     # with different randomization logic produce different verification icons.
-    if: github.event_name == 'pull_request'
+    # Only enforced for PRs targeting main (the release PR beta/next -> main, or
+    # any direct-to-main PR) — feature PRs into beta/next don't each need a bump.
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -118,23 +123,24 @@ jobs:
           cp -r main-src/web/. _site/
           cp -r main-src/pkg _site/pkg
 
-      - name: Checkout trigger ref
-        if: github.ref != 'refs/heads/main'
+      # Beta page: ALWAYS built from the beta/next integration branch, whatever
+      # triggered this run. This locks /beta/ to beta/next and keeps it stable —
+      # a main deploy no longer wipes it, and no other branch can clobber it.
+      - name: Checkout beta/next
         uses: actions/checkout@v5
         with:
-          path: branch-src
+          ref: beta/next
+          path: beta-src
 
-      - name: Build trigger branch
-        if: github.ref != 'refs/heads/main'
-        working-directory: branch-src
+      - name: Build beta/next
+        working-directory: beta-src
         run: wasm-pack build --target web --out-dir pkg
 
-      - name: Stage trigger branch into _site/beta/
-        if: github.ref != 'refs/heads/main'
+      - name: Stage beta/next into _site/beta/
         run: |
           mkdir -p _site/beta
-          cp -r branch-src/web/. _site/beta/
-          cp -r branch-src/pkg _site/beta/pkg
+          cp -r beta-src/web/. _site/beta/
+          cp -r beta-src/pkg _site/beta/pkg
 
       # Freeze each main version at /v/<version>/ and carry the whole archive
       # forward into every deploy. Only the current version is ever built (above);
