@@ -3,10 +3,22 @@
 All notable changes to SMB3-RS are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-The project is pre-1.0; new work accumulates under **[Unreleased]** and is moved
-into a versioned section when a release is cut.
+New work accumulates under **[Unreleased]** and is moved into a new versioned
+section when a release is cut — a merge to `main`, which bumps the version and
+deploys.
 
 ## [Unreleased]
+
+## [1.0.2] - 2026-07-20
+
+### Added
+
+- Every version of the web app is now archived at a permanent URL
+  (`.../smb3-rs/v/<version>/`). The site root keeps serving the latest build;
+  each merged version is also frozen at its own path so it never changes. The
+  "Share URL" button now points at the exact version that generated the seed, so
+  a shared link keeps producing the same seed even after newer versions ship. A
+  version picker in the footer lets players open any older build.
 
 ## [1.0.1] - 2026-07-20
 
