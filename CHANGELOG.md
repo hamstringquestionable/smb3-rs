@@ -8,6 +8,15 @@ into a versioned section when a release is cut.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-20
+
+### Changed
+
+- The 7-Fortress 1 ? block that gates the Tanooki area now randomizes 50/50
+  between a Fire Flower and a Super Leaf instead of always being a Fire Flower.
+  It can never roll a star, so small Mario always gets a power-up that lets him
+  break the bricks to reach the area.
+
 ## [1.0.0] - 2026-07-19
 
 ### Changed
