@@ -87,6 +87,12 @@ jobs:
     needs: ci
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    # `contents: write` so the archive step can push frozen version snapshots to
+    # the `site-versions` branch. `pages`/`id-token` retained for the artifact.
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
     steps:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -129,6 +135,60 @@ jobs:
           mkdir -p _site/beta
           cp -r branch-src/web/. _site/beta/
           cp -r branch-src/pkg _site/beta/pkg
+
+      # Freeze each main version at /v/<version>/ and carry the whole archive
+      # forward into every deploy. Only the current version is ever built (above);
+      # prior versions are copied verbatim from the `site-versions` branch, so
+      # build time stays flat no matter how many versions accumulate.
+      - name: Archive version snapshot and stage version history
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VER=$(sed -n 's/^version = "\(.*\)"/\1/p' main-src/Cargo.toml | head -1)
+          echo "Main version: $VER"
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          # Fetch the archive branch, or start it empty if it does not exist yet.
+          if git clone --branch site-versions --single-branch "$REMOTE" versions-repo 2>/dev/null; then
+            echo "Fetched site-versions branch."
+          else
+            echo "site-versions branch absent; creating a fresh archive."
+            git clone "$REMOTE" versions-repo
+            ( cd versions-repo
+              git checkout --orphan site-versions
+              git rm -rf . >/dev/null 2>&1 || true
+              mkdir -p v )
+          fi
+
+          cd versions-repo
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Snapshot only from a main push, and only once per version (never overwrite).
+          if [ "$GITHUB_REF" = "refs/heads/main" ] && [ ! -d "v/$VER" ]; then
+            mkdir -p "v/$VER"
+            cp -r ../main-src/web/. "v/$VER/"
+            cp -r ../main-src/pkg   "v/$VER/pkg"
+            git add -A
+            git commit -m "archive v$VER"
+            git push origin site-versions
+            echo "Archived v$VER."
+          else
+            echo "No new snapshot (ref=$GITHUB_REF, v/$VER exists: $( [ -d "v/$VER" ] && echo yes || echo no ))."
+          fi
+          cd ..
+
+          # Carry every archived version into the deploy (file copy, no rebuild).
+          mkdir -p _site/v
+          if [ -n "$(ls -A versions-repo/v 2>/dev/null)" ]; then
+            cp -r versions-repo/v/. _site/v/
+          fi
+
+          # Manifest for the in-app version picker (newest first).
+          ARR=$(ls versions-repo/v 2>/dev/null | sort -Vr | sed 's/.*/"&"/' | paste -sd, -)
+          printf '{"current":"%s","versions":[%s]}\n' "$VER" "$ARR" > _site/versions.json
+          cat _site/versions.json
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v4

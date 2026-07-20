@@ -210,6 +210,7 @@ init()
 		assertPresetParity();
 		selfTestRoundTrip(encode_flag_key, decode_flag_key);
 		applyUrlParams();
+		initVersionPicker();
 		// If a cached ROM finished loading before WASM, validate it now.
 		validateLoadedRom();
 	})
@@ -507,13 +508,26 @@ flagKeyCopyBtn.addEventListener("click", () => {
 
 flagKeyApplyBtn.addEventListener("click", () => applyFlagKey(flagKeyInput.value));
 
+// The deploy root, with any trailing `v/<ver>/` or `beta/` segment stripped —
+// e.g. `/smb3-rs/` whether we're at the root app, a `/v/1.0.0/` snapshot, or
+// `/beta/`. Version paths hang off this, so it stays correct under the GitHub
+// Pages project-path prefix.
+function deployBase() {
+	return location.pathname
+		.replace(/index\.html$/, "")
+		.replace(/(v\/[^/]+|beta)\/$/, "");
+}
+
 shareUrlBtn.addEventListener("click", () => {
 	updateFlagKey();
 	const params = new URLSearchParams();
 	const seedStr = seedInput.value.trim();
 	if (seedStr) params.set("seed", seedStr);
 	if (flagKeyInput.value) params.set("flags", flagKeyInput.value);
-	const url = `${location.origin}${location.pathname}?${params.toString()}`;
+	// Pin the link to the exact version that built this app, so the seed stays
+	// reproducible after newer versions ship. `version()` returns whichever app
+	// is actually loaded (current at the root, the frozen version in a snapshot).
+	const url = `${location.origin}${deployBase()}v/${version()}/?${params.toString()}`;
 	navigator.clipboard.writeText(url).then(() => {
 		showStatus("Share URL copied!", "success");
 	});
@@ -528,6 +542,37 @@ function applyUrlParams() {
 		flagKeyInput.value = flags;
 		applyFlagKey(flags);
 	}
+}
+
+// Populate the footer version picker from the deploy manifest. Silently does
+// nothing if the manifest is absent (local dev, or before the first archive).
+async function initVersionPicker() {
+	const picker = document.getElementById("version-picker");
+	if (!picker) return;
+	let manifest;
+	try {
+		const res = await fetch(`${deployBase()}versions.json`, { cache: "no-store" });
+		if (!res.ok) return;
+		manifest = await res.json();
+	} catch {
+		return;
+	}
+	const { current, versions } = manifest;
+	if (!Array.isArray(versions) || versions.length === 0) return;
+	const here = version(); // version of the app actually running
+	for (const v of versions) {
+		const opt = document.createElement("option");
+		opt.value = v;
+		opt.textContent = v === current ? `v${v} (latest)` : `v${v}`;
+		if (v === here) opt.selected = true;
+		picker.appendChild(opt);
+	}
+	picker.addEventListener("change", () => {
+		const v = picker.value;
+		// Latest → deploy root; any older version → its frozen snapshot.
+		location.href = v === current ? deployBase() : `${deployBase()}v/${v}/`;
+	});
+	picker.closest(".version-picker-wrap")?.removeAttribute("hidden");
 }
 
 // --- Misc ---

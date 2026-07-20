@@ -785,6 +785,24 @@ footer p {
     color: #444;
 }
 
+.version-picker-wrap {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+}
+
+.version-picker-wrap select {
+    font-family: inherit;
+    font-size: 0.65rem;
+    color: #444;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    padding: 0.1rem 0.25rem;
+}
+
 .link-btn {
     background: none;
     border: none;
