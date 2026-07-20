@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMB3 Randomizer (beta)</title>
+    <!-- beta: refactor/frontend-schema -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="page-wrapper">
+    <div class="container">
+        <header>
+            <h1>SMB3 Randomizer <span id="version" class="version"></span></h1>
+            <div class="pipe-divider">
+                <span class="pipe"></span>
+                <span class="pipe-label">Super Mario Bros. 3</span>
+                <span class="pipe"></span>
+            </div>
+        </header>
+
+        <div class="section">
+            <label for="rom-input" class="file-label" id="rom-label">
+                Select ROM file...
+            </label>
+            <input type="file" id="rom-input" accept=".nes" hidden>
+            <p class="note">Provide your own SMB3 (USA Rev 1) ROM. Nothing is uploaded.</p>
+            <div id="rom-extras"></div>
+            <p class="note skip-validation-warning" id="skip-validation-warning" hidden>
+                ROM validation is disabled. The racing hash on the title screen will not be applied.
+            </p>
+        </div>
+
+        <div id="options-root"></div>
+
+        <!-- Visual Patch markup lives here in static HTML so app.js can target
+             #visual-patch-pills / #visual-patch-credit by id. After options
+             render, app.js relocates this block into the Cosmetic fieldset. -->
+        <div id="visual-patch-block" hidden>
+            <label class="visual-patch-label">Visual Patch</label>
+            <div class="pill-group" id="visual-patch-pills"></div>
+            <p class="note" id="visual-patch-credit" hidden></p>
+            <p class="note">Optional cosmetic re-skin. Applied to the input ROM before randomization, so palette randomization can layer on top. Included in both Patched ROM and IPS output.</p>
+        </div>
+
+        <footer>
+            <p>ROM never leaves your browser. All randomization runs locally via WASM.</p>
+            <p class="version-picker-wrap" hidden>
+                <label for="version-picker">Randomizer version:</label>
+                <select id="version-picker"></select>
+            </p>
+        </footer>
+    </div>
+
+    <aside class="control-panel">
+        <div class="control-panel-section">
+            <label for="seed-input" class="control-panel-title">Seed</label>
+            <div class="input-row">
+                <input type="text" id="seed-input" placeholder="Random">
+                <button id="random-seed-btn" type="button" title="Generate random seed">?</button>
+            </div>
+        </div>
+
+        <div class="control-panel-section">
+            <div class="control-panel-title">Presets</div>
+            <div class="preset-pills" id="preset-pills"></div>
+            <p class="note">Load a curated set of options as a starting point — tweak anything afterward.</p>
+        </div>
+
+        <div class="control-panel-section">
+            <div class="control-panel-title">Flag Key</div>
+            <input type="text" id="flag-key-input" placeholder="SMB3R-..." spellcheck="false">
+            <div class="flag-key-buttons">
+                <button id="flag-key-copy-btn" type="button" title="Copy flag key">Copy</button>
+                <button id="flag-key-apply-btn" type="button" title="Apply flag key">Apply</button>
+                <button id="share-url-btn" type="button" title="Copy a shareable URL with the current seed and flags">Share</button>
+            </div>
+            <p class="note">Share the key or URL to reproduce these settings.</p>
+        </div>
+
+        <div class="control-panel-section">
+            <div class="control-panel-title">Output Format</div>
+            <div class="radio-group">
+                <label class="radio-label">
+                    <input type="radio" name="output-format" value="ips">
+                    IPS Patch
+                </label>
+                <label class="radio-label">
+                    <input type="radio" name="output-format" value="rom" checked>
+                    Patched ROM
+                </label>
+            </div>
+        </div>
+
+        <div class="control-panel-section">
+            <button id="changes-summary-toggle" type="button"
+                    class="changes-summary-toggle"
+                    aria-expanded="false"
+                    aria-controls="changes-summary-list"
+                    title="Show options that differ from defaults"
+                    disabled>
+                <span id="changes-summary-text">All defaults</span>
+            </button>
+            <div id="changes-summary-list" class="changes-summary-list" hidden></div>
+            <button id="generate-btn" type="button" disabled>Generate</button>
+            <p class="early-access-note"><em>Early access — you may encounter bugs. Report issues on <a href="https://github.com/hamstringquestionable/smb3-rs/issues" target="_blank" rel="noopener">GitHub</a>.</em></p>
+            <div id="status" class="status" hidden></div>
+        </div>
+    </aside>
+    </div>
+
+    <script data-goatcounter="https://smb3rs.goatcounter.com/count"
+            async src="//gc.zgo.at/count.js"></script>
+    <script type="module" src="app.js"></script>
+</body>
+</html>
