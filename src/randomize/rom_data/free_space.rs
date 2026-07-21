@@ -25,6 +25,7 @@ pub(crate) const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
     (0x15554, 80, "fx_screen_check: cross-screen lock patch (Fred's algorithm verbatim)"),
     (0x15DF0, 35, "canoe_fix: death respawn position save"),
+    (0x15E13, 160, "map_warp: 2P Start+Select warp-to-partner routine"),
     // PRG011 (file 0x16010, CPU $A000–$BFFF during map)
     (0x17C87, 36, "start_airship_swap: game-over twirl finalize helper"),
     (0x17D00, 66, "canoe_fix: backup/restore subroutines (CANOE_BACKUP_ROUTINE)"),
@@ -142,6 +143,7 @@ pub(crate) const FS_KING_QUOTES: usize       = 0x379D9; // 894 bytes
 pub(crate) const FS_FX_SCREEN_CHECK: usize   = 0x15554; // 80 bytes (Fred's algorithm)
 
 pub(crate) const FS_CANOE_RESPAWN: usize     = 0x15DF0; // 35 bytes
+pub(crate) const FS_MAP_WARP: usize          = 0x15E13; // 160 bytes (CPU $DE03)
 
 // PRG011
 pub(crate) const FS_CANOE_BACKUP: usize      = 0x17D00; // 66 bytes

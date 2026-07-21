@@ -390,6 +390,13 @@ fn randomize_inner(
     rom.set_tag("qol/fix_canoe_softlock");
     randomize::qol::fix_canoe_softlock(rom);
 
+    // Two-player "warp to partner" escape hatch (Start+Select on the map).
+    // Always applied: in 2P the players share one map and its movable objects
+    // (canoe, Hammer Bros), so one player can strand the other; this gives a
+    // manual recovery. No effect in 1P (guarded on Total_Players).
+    rom.set_tag("qol/map_warp");
+    randomize::qol::apply_map_warp(rom);
+
     // Adjust Bowser and Koopaling hitboxes.
     if options.adjust_boss_hitboxes {
         rom.set_tag("koopalings/adjust_boss_hitboxes");
