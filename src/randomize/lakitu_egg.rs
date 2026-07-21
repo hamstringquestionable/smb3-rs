@@ -1,11 +1,11 @@
 //! Random Lakitu egg type.
 //!
 //! Vanilla decides what a Lakitu throws from the level-wide `Level_SlopeEn`
-//! flag (a tileset property): non-sloped levels get the real **Spiny Egg**
-//! (`OBJ_SPINYEGG`, red, hatches into a chasing Spiny), sloped levels (Hills /
-//! Underground tilesets) get the harmless **green "dud" egg** (`OBJ_SPINYEGGDUD`,
-//! palette 2, never hatches). Because wild injections land in ordinary
-//! (non-sloped) levels, an injected Lakitu always throws the real red egg.
+//! flag (a tileset property): non-sloped levels get the **red egg**
+//! (`OBJ_SPINYEGG`, hatches into a chasing Spiny), sloped levels (Hills /
+//! Underground tilesets) get the **green egg** (`OBJ_SPINYEGGDUD`, palette 2)
+//! which does not hatch. Because wild injections land in ordinary (non-sloped)
+//! levels, an injected Lakitu always throws the red egg.
 //!
 //! This patch substitutes that hardcoded, tileset-driven choice for a
 //! position-hash — the same deterministic-without-RNG trick as
@@ -19,22 +19,22 @@
 //!
 //! ```text
 //! LDA #$00 / CMP Level_SlopeEn        ; carry set iff SlopeEn == 0
-//! LDA #OBJ_SPINYEGG ($84)             ; assume real egg
-//! BGE +7                              ; SlopeEn == 0 -> keep real egg
+//! LDA #OBJ_SPINYEGG ($84)             ; assume red egg
+//! BGE +7                              ; SlopeEn == 0 -> keep red egg
 //! LDA #$02 / STA Objects_SprAttr,Y    ; else palette 2
-//! LDA #OBJ_SPINYEGGDUD ($85)          ; ...and the green dud egg
+//! LDA #OBJ_SPINYEGGDUD ($85)          ; ...and the green egg
 //! ```
 //!
 //! We overwrite that 16-byte block with a `JSR` to an injected routine (padded
 //! with NOPs) that computes, with `Y` still holding the egg's object slot:
 //!
 //! ```text
-//! low_bit_of(salt + World_Num + Level_LayPtr_AddrL) == 0 -> real red egg
-//!                                                    == 1 -> green dud egg
+//! low_bit_of(salt + World_Num + Level_LayPtr_AddrL) == 0 -> red egg
+//!                                                    == 1 -> green egg
 //! ```
 //!
 //! and returns `A` = the chosen object id (setting `Objects_SprAttr,Y` to
-//! palette 2 for the dud). The block falls through into the vanilla
+//! palette 2 for the green egg). The block falls through into the vanilla
 //! `STA Level_ObjectID,Y` exactly as before.
 //!
 //! ## Why these inputs (and only these)
@@ -85,9 +85,9 @@ const HOOK_VANILLA: [u8; 16] = [
     0xA9, 0x85,             // LDA #$85   (OBJ_SPINYEGGDUD)
 ];
 
-const OBJ_SPINYEGG: u8 = 0x84; // real egg (hatches into a Spiny), keeps SPR_PAL1
-const OBJ_SPINYEGGDUD: u8 = 0x85; // green dud egg (never hatches), palette 2
-const DUD_PALETTE: u8 = 0x02; // Objects_SprAttr value the vanilla dud path sets
+const OBJ_SPINYEGG: u8 = 0x84; // red egg (hatches into a Spiny), keeps SPR_PAL1
+const OBJ_SPINYEGGDUD: u8 = 0x85; // green egg (does not hatch), palette 2
+const GREEN_EGG_PALETTE: u8 = 0x02; // Objects_SprAttr value the vanilla green-egg path sets
 
 /// Length of the injected routine.
 const ROUTINE_LEN: u16 = 25;
@@ -114,13 +114,13 @@ pub fn apply(rom: &mut Rom, enabled: bool) {
     //   ADC $0727        ; + World_Num
     //   ADC $61          ; + Level_LayPtr_AddrL
     //   AND #$01         ; coin flip: low bit of the sum
-    //   BEQ real         ; 0 -> real egg
+    //   BEQ red          ; 0 -> red egg
     //   LDA #$02
     //   STA $7FE7,Y      ; Objects_SprAttr,Y = palette 2 (green)
     //   LDA #OBJ_SPINYEGGDUD
     //   SEC              ; downstream SBC #12 (egg spawn Y) expects carry set
     //   RTS
-    // real:
+    // red:
     //   LDA #OBJ_SPINYEGG ; SprAttr already SPR_PAL1 from before the hook
     //   SEC
     //   RTS
@@ -131,13 +131,13 @@ pub fn apply(rom: &mut Rom, enabled: bool) {
         0x6D, 0x27, 0x07,       // ADC $0727  (World_Num)
         0x65, 0x61,             // ADC $61    (Level_LayPtr_AddrL)
         0x29, 0x01,             // AND #$01
-        0xF0, 0x09,             // BEQ +9 -> real
-        0xA9, DUD_PALETTE,      // LDA #$02
+        0xF0, 0x09,             // BEQ +9 -> red
+        0xA9, GREEN_EGG_PALETTE, // LDA #$02
         0x99, 0xE7, 0x7F,       // STA $7FE7,Y (Objects_SprAttr,Y)
         0xA9, OBJ_SPINYEGGDUD,  // LDA #$85
         0x38,                   // SEC
         0x60,                   // RTS
-        0xA9, OBJ_SPINYEGG,     // LDA #$84   (real @ +9 from the BEQ)
+        0xA9, OBJ_SPINYEGG,     // LDA #$84   (red @ +9 from the BEQ)
         0x38,                   // SEC
         0x60,                   // RTS
     ];
@@ -165,8 +165,8 @@ mod tests {
     use crate::rom::Rom;
 
     /// Mirror the injected routine's coin flip: low bit of the stable-input sum.
-    /// `true` = green dud egg, `false` = real red egg.
-    fn is_dud(salt: u8, world: u8, layptr: u8) -> bool {
+    /// `true` = green egg, `false` = red egg.
+    fn is_green(salt: u8, world: u8, layptr: u8) -> bool {
         salt.wrapping_add(world).wrapping_add(layptr) & 1 == 1
     }
 
@@ -230,19 +230,19 @@ mod tests {
     #[test]
     fn coin_flip_is_deterministic_and_both_outcomes_occur() {
         // Same inputs -> same egg; across realistic inputs we see both eggs.
-        let mut saw_real = false;
-        let mut saw_dud = false;
+        let mut saw_red = false;
+        let mut saw_green = false;
         for salt in 0..9u8 {
             for world in 0..9u8 {
                 for layptr in [0x00u8, 0x14, 0x2B, 0x40, 0x7F, 0xC3, 0xFE] {
-                    let a = is_dud(salt, world, layptr);
-                    let b = is_dud(salt, world, layptr);
+                    let a = is_green(salt, world, layptr);
+                    let b = is_green(salt, world, layptr);
                     assert_eq!(a, b, "must be deterministic");
-                    saw_real |= !a;
-                    saw_dud |= a;
+                    saw_red |= !a;
+                    saw_green |= a;
                 }
             }
         }
-        assert!(saw_real && saw_dud, "both egg types must be reachable");
+        assert!(saw_red && saw_green, "both egg types must be reachable");
     }
 }

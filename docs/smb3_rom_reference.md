@@ -1069,16 +1069,16 @@ A Lakitu (`0x83`) chooses what it throws in `Lakitu_TossEnemy` (PRG004, egg-sele
 block at file `0x08E58`) from the level-wide flag **`Level_SlopeEn` (`$0563`)** —
 *not* from any per-enemy value:
 
-- `Level_SlopeEn == 0` → **`OBJ_SPINYEGG` (`0x84`)**, the real red egg that hatches
+- `Level_SlopeEn == 0` → **`OBJ_SPINYEGG` (`0x84`)**, the red egg that hatches
   into a chasing Spiny (keeps `SPR_PAL1`).
-- `Level_SlopeEn != 0` → **`OBJ_SPINYEGGDUD` (`0x85`)**, the harmless green "dud"
-  egg that never hatches (`Objects_SprAttr` palette `2`).
+- `Level_SlopeEn != 0` → **`OBJ_SPINYEGGDUD` (`0x85`)**, the green egg that does
+  not hatch (`Objects_SprAttr` palette `2`).
 
 `Level_SlopeEn` is set once per level load by `LevelInit_EnableSlopes` (PRG008),
 derived purely from `Level_Tileset`: `1` for tileset 3 (Hills) and 14
 (Underground), else `0` (tileset 5's `Level_UnusedSlopesTS5` path is dead code).
 So the egg type is really "which tileset is the host level," and injected Lakitus
-(always in non-sloped levels) always throw the real egg.
+(always in non-sloped levels) always throw the red egg.
 
 `Level_SlopeEn` is **load-bearing slope physics** — also read for slope-tile
 collision (PRG000), player sliding / ground-LUT / bounce (PRG008), and fireball
