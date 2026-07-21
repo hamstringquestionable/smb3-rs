@@ -176,7 +176,12 @@ jobs:
             mkdir -p "v/$VER"
             cp -r ../main-src/web/. "v/$VER/"
             cp -r ../main-src/pkg   "v/$VER/pkg"
-            git add -A
+            # wasm-pack writes a `pkg/.gitignore` containing `*`, which makes
+            # `git add` skip the entire WASM bundle and leaves the frozen
+            # snapshot with an empty pkg/ (so its app fails to boot). Drop that
+            # ignore file and force-add so the snapshot actually ships its pkg/.
+            rm -f "v/$VER/pkg/.gitignore"
+            git add -Af "v/$VER"
             git commit -m "archive v$VER"
             git push origin site-versions
             echo "Archived v$VER."
