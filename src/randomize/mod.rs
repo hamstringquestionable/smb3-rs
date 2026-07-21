@@ -7,6 +7,7 @@ pub mod credits;
 pub mod enemies;
 pub mod enemy_protections;
 pub mod fire_flower;
+pub mod lakitu_egg;
 pub mod hand_rooms;
 pub mod hands_levels;
 pub mod items;

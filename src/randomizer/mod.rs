@@ -514,6 +514,17 @@ fn randomize_inner(
         randomize::fire_flower::apply(rom, options.fire_flower);
     }
 
+    // Random Lakitu egg type — rides on wild injections. Every Lakitu's tossed
+    // egg (real red Spiny Egg vs harmless green dud) becomes a deterministic
+    // position-hash of stable game state + the starting-world salt, instead of
+    // the vanilla tileset-driven choice that always gives injected Lakitus the
+    // real egg. Pure static patch (no RNG); must run after world_order so the
+    // salt is final (same salt as fire_flower above).
+    if options.wild_injections {
+        rom.set_tag("lakitu_egg");
+        randomize::lakitu_egg::apply(rom, options.wild_injections);
+    }
+
     // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012):
     //   "S3R" magic + version byte, the flag key bytes (13 in v23), then the
     //   seed (little-endian u64). Sizes derive from to_flag_bytes() so the

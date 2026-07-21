@@ -9,6 +9,13 @@ deploys.
 
 ## [Unreleased]
 
+### Changed
+
+- With wild injections on, Lakitus now throw either a red egg (which hatches into
+  a Spiny) or a non-hatching green egg, chosen deterministically per level from
+  the seed instead of the vanilla tileset rule that always gave injected Lakitus
+  the red egg. Applies to every Lakitu in the seed.
+
 ## [1.0.2] - 2026-07-20
 
 ### Added
