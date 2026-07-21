@@ -886,3 +886,66 @@ footer p {
     box-shadow: 0 0 0 1px #000;
     transform: scale(1.1);
 }
+
+/* --- Beta build theme ---
+   Keyed on <html class="beta-build">, which the inline script in index.html
+   sets only when the URL path contains /beta/. Retints the structural frame
+   violet and adds a badge + warning stripe so the /beta/ deploy is obvious at a
+   glance versus the red main site. Interior controls keep their normal colors. */
+
+/* Badge in the header title — hidden unless this is the beta deploy. */
+.beta-badge {
+    display: none;
+    margin-left: 0.5rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 4px;
+    background: #a05cff;
+    color: #1a0a2e;
+    font-size: 0.6rem;
+    font-weight: bold;
+    letter-spacing: 0.1em;
+    vertical-align: middle;
+    text-shadow: none;
+}
+
+.beta-build .beta-badge {
+    display: inline-block;
+}
+
+.beta-build body {
+    padding-top: 3rem; /* clear the fixed banner below */
+    background-image:
+        radial-gradient(circle at 20% 50%, rgba(160, 92, 255, 0.06) 0%, transparent 50%),
+        radial-gradient(circle at 80% 20%, rgba(92, 148, 252, 0.05) 0%, transparent 50%);
+}
+
+/* Dashed warning stripe pinned to the top of the viewport. */
+.beta-build body::before {
+    content: "🚧 BETA BUILD — bleeding-edge features, expect bugs 🚧";
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    padding: 0.35rem 1rem;
+    text-align: center;
+    font-size: 0.72rem;
+    font-weight: bold;
+    letter-spacing: 0.06em;
+    color: #1a0a2e;
+    background: repeating-linear-gradient(
+        45deg,
+        #a05cff,
+        #a05cff 12px,
+        #ffd23f 12px,
+        #ffd23f 24px
+    );
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.beta-build .container {
+    border-color: #a05cff;
+    box-shadow:
+        0 0 20px rgba(160, 92, 255, 0.2),
+        0 8px 32px rgba(0, 0, 0, 0.4);
+}

@@ -9,6 +9,16 @@ deploys.
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-07-25
+
+### Changed
+
+- The main site's tab title is now "SMB3 Randomizer" (previously carried a
+  "(beta)" tag). The `/beta/` deploy is now visually distinct from the main
+  site: it shows a hazard-striped "BETA BUILD" banner, a violet frame, and a
+  BETA badge in the header, keyed on the URL path so it can't be confused with
+  the stable release page.
+
 ## [1.0.4] - 2026-07-24
 
 ### Removed
