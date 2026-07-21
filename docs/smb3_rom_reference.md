@@ -3835,6 +3835,47 @@ Background tiles `{$B4, $FF, $02}` block movement to the destination node.
 
 Pipes create **bidirectional teleport edges** between two node positions, bypassing the path tile check.
 
+### Two-Player Map Battle Trigger (PRG010)
+
+In 2-player mode both players share one loaded map, with each player's position held
+in parallel per-player arrays (`World_Map_Y` `$75,X`, `World_Map_XHi` `$77,X`,
+`World_Map_X` `$79,X`, where X is the player index). When the current player presses A
+while standing on the **same tile** as the other player, the game launches the
+two-player Battle Game (a Mario Bros. style versus stage).
+
+**Trigger routine `PRG010_CE78` — CPU `$CE78`, file `0x14E88` (byte-verified):**
+
+```
+PRG010_CE78:
+  LDA $F5 / ORA $F6 / AND #$80 / BEQ ...   ; either controller pressed A?
+  LDX $0726          ; X = Player_Current (0=Mario, 1=Luigi)
+  TXA / EOR #$01 / TAY   ; Y = the OTHER player
+  LDA $0736,Y / CMP #$FF / BEQ ...   ; skip if other player is dead (lives $FF)
+  LDA $77,X / CMP $0077,Y / BNE ...   ; XHi match?
+  LDA $75,X / CMP $0075,Y / BNE ...   ; Y match?
+  LDA $79,X / CMP $0079,Y / BNE ...   ; X match?
+  LDA #$12 / STA $1D    ; Map_Enter2PFlag = $12 (enter 2P Vs)
+PRG010_CEA7:            ; CPU $CEA7, file 0x14EB7
+  LDA #$10 / STA $0729  ; Map_Operation = $10 (begin "enter level" effect)
+```
+
+Sits immediately after the level-entry gate at `$CDF8` (file `0x14E08`).
+`Map_Enter2PFlag` (`$1D`) = `$12` tells the level loader to spawn the versus stage
+instead of a normal level.
+
+**Downstream (from southbird disasm `prg009.asm` / `prg010.asm`, not byte-verified):**
+the battle resolves in PRG009's Vs-mode code (`Vs_EndGame` ~CPU `$B3D1`, coin-race win
+condition) and records the loser in `Map_PlayerLost2PVs`. On return to the map the
+loser is bumped back to their prior tile via the **skid-back** mechanic
+(`Map_Player_SkidBack,X`, driven by `Map_Operation = $0F`); turn ownership is
+`Player_Current` `$0726`.
+
+**Softlock note:** this can *only* fire when both players occupy the same tile, so it
+is **not** a rescue for a player stranded across water (e.g. a mis-parked `8s are Wild`
+canoe) — the two players cannot be on the same tile across the gap. It does confirm the
+map view + its map objects (including the shared canoe) are common to both players, not
+per-player.
+
 ---
 
 ## Big ? Block Bonus Rooms

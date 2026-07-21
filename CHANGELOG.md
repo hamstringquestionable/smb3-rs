@@ -9,6 +9,13 @@ deploys.
 
 ## [Unreleased]
 
+### Added
+
+- Two-player "warp to partner" escape hatch: on the overworld map, the active
+  player can press Start+Select to jump to the other player's tile. This
+  prevents softlocks where one player moves a shared map object (such as the
+  `8s are Wild` canoe) out of the other's reach. No effect in 1-player games.
+
 ## [1.0.2] - 2026-07-20
 
 ### Added

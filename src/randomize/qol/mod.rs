@@ -7,6 +7,7 @@ mod canoe;
 mod cards;
 mod hammer_breaks;
 mod macobra;
+mod map_warp;
 mod overworld_map;
 mod starting_state;
 
@@ -20,6 +21,7 @@ pub use macobra::{
     apply_infinite_mushroom_houses, apply_japanese_damage, apply_limit_bro_movement,
     apply_macobra_patches, apply_no_game_over_penalty, apply_remove_flashing,
 };
+pub use map_warp::apply_map_warp;
 pub use overworld_map::{
     apply_w8_bridges, apply_w8_canoe_and_paths, fix_w3_drawbridges, make_hammer_rocks,
     remove_n_cards, remove_rocks,
