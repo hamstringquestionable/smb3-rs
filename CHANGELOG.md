@@ -9,6 +9,15 @@ deploys.
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-07-21
+
+### Fixed
+
+- Archived version pages (`.../smb3-rs/v/<version>/`) were shipping without their
+  WASM bundle, so they loaded a blank shell with no options. The snapshot step
+  now force-includes `pkg/`, which `wasm-pack`'s generated `.gitignore` had been
+  causing `git add` to skip.
+
 ## [1.0.2] - 2026-07-20
 
 ### Added
