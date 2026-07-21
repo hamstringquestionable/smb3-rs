@@ -1,0 +1,15 @@
+{
+  "name": "smb3-rs",
+  "type": "module",
+  "version": "1.0.3",
+  "files": [
+    "smb3_rs_bg.wasm",
+    "smb3_rs.js",
+    "smb3_rs.d.ts"
+  ],
+  "main": "smb3_rs.js",
+  "types": "smb3_rs.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
