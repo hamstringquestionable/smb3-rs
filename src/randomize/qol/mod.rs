@@ -4,6 +4,7 @@
 mod beta;
 mod big_q;
 mod canoe;
+mod canoe_summon;
 mod cards;
 mod hammer_breaks;
 mod macobra;
@@ -14,6 +15,7 @@ mod starting_state;
 pub use beta::fix_beta_stages;
 pub use big_q::fix_big_q_block_rooms;
 pub use canoe::fix_canoe_softlock;
+pub use canoe_summon::apply_canoe_summon;
 pub use cards::card_speed_clear;
 pub use hammer_breaks::hammer_breaks_tiles;
 pub use macobra::{

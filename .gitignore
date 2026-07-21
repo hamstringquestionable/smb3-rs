@@ -9,4 +9,5 @@
 *.wch
 /new
 tools/rom_map.json
+tools/southbird-smb3/
 __pycache__/

@@ -26,6 +26,7 @@ pub(crate) const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x15554, 80, "fx_screen_check: cross-screen lock patch (Fred's algorithm verbatim)"),
     (0x15DF0, 35, "canoe_fix: death respawn position save"),
     (0x15E13, 162, "map_warp: 2P Start+Select warp-to-partner routine"),
+    (0x15EB5, 148, "canoe_summon: A-on-dock call-the-boat routine + offset tables"),
     // PRG011 (file 0x16010, CPU $A000–$BFFF during map)
     (0x17C87, 36, "start_airship_swap: game-over twirl finalize helper"),
     (0x17D00, 66, "canoe_fix: backup/restore subroutines (CANOE_BACKUP_ROUTINE)"),
@@ -144,6 +145,11 @@ pub(crate) const FS_FX_SCREEN_CHECK: usize   = 0x15554; // 80 bytes (Fred's algo
 
 pub(crate) const FS_CANOE_RESPAWN: usize     = 0x15DF0; // 35 bytes
 pub(crate) const FS_MAP_WARP: usize          = 0x15E13; // 162 bytes (CPU $DE03)
+
+// Canoe "call the boat" routine (CPU $DEA5). ORIGIN-LOCKED: the assembled bytes
+// contain self-referential absolute addresses (JMP $DEB7, and the ADC $DF2D/31/35
+// offset-table reads), so this MUST live at exactly 0x15EB5. See canoe_summon.rs.
+pub(crate) const FS_CANOE_SUMMON: usize      = 0x15EB5; // 148 bytes (CPU $DEA5)
 
 // PRG011
 pub(crate) const FS_CANOE_BACKUP: usize      = 0x17D00; // 66 bytes
@@ -292,6 +298,7 @@ mod free_space_tests {
             (FS_KING_QUOTES, "FS_KING_QUOTES"),
             (FS_FX_SCREEN_CHECK, "FS_FX_SCREEN_CHECK"),
             (FS_CANOE_RESPAWN, "FS_CANOE_RESPAWN"),
+            (FS_CANOE_SUMMON, "FS_CANOE_SUMMON"),
             (FS_CANOE_BACKUP, "FS_CANOE_BACKUP"),
             (FS_MARCH_VETO, "FS_MARCH_VETO"),
             (FS_KOOPA_HITS_SUB, "FS_KOOPA_HITS_SUB"),

@@ -11,6 +11,9 @@ deploys.
 
 ### Added
 
+- Canoe "call the boat" rescue: stand on any dock and press A to summon the
+  canoe to the water beside you, then board as usual. Prevents canoe softlocks
+  where the boat was left out of reach, in both 1- and 2-player games.
 - Two-player "warp to partner" escape hatch: on the overworld map, the active
   player can press Start+Select to jump to the other player's tile. This
   prevents softlocks where one player moves a shared map object (such as the
