@@ -3,15 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SMB3 Randomizer (beta)</title>
+    <title>SMB3 Randomizer</title>
     <!-- beta: refactor/frontend-schema -->
     <link rel="stylesheet" href="style.css">
+    <!-- The /beta/ deploy shares this HTML with the root site; key the beta
+         look on the URL path so a merge to main can't carry it over. Inline in
+         <head> so the class applies before first paint (no flash). -->
+    <script>
+        if (location.pathname.split("/").includes("beta")) {
+            document.documentElement.classList.add("beta-build");
+            document.title = "🚧 SMB3 Randomizer (BETA)";
+        }
+    </script>
 </head>
 <body>
     <div class="page-wrapper">
     <div class="container">
         <header>
-            <h1>SMB3 Randomizer <span id="version" class="version"></span></h1>
+            <h1>SMB3 Randomizer <span id="version" class="version"></span><span class="beta-badge">BETA</span></h1>
             <div class="pipe-divider">
                 <span class="pipe"></span>
                 <span class="pipe-label">Super Mario Bros. 3</span>

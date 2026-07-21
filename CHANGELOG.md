@@ -11,6 +11,10 @@ deploys.
 
 ### Added
 
+- Beta site is now visually distinct from the main site: the `/beta/` deploy
+  shows a hazard-striped "BETA BUILD" banner, a violet frame, and a BETA badge
+  in the header so it can't be confused with the stable release page.
+
 - Canoe "call the boat" rescue: stand on any dock and press A to summon the
   canoe to the water beside you, then board as usual. Prevents canoe softlocks
   where the boat was left out of reach, in both 1- and 2-player games.
