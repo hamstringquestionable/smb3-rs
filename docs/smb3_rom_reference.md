@@ -1063,6 +1063,29 @@ Source: `smb3.asm` from the [Southbird disassembly](https://github.com/captainso
 | 0xAD | OBJ_ROCKYWRENCH | Rocky Wrench |
 | 0xAF | OBJ_ENEMYSUN | Angry Sun |
 
+### Lakitu egg type & `Level_SlopeEn`
+
+A Lakitu (`0x83`) chooses what it throws in `Lakitu_TossEnemy` (PRG004, egg-select
+block at file `0x08E58`) from the level-wide flag **`Level_SlopeEn` (`$0563`)** —
+*not* from any per-enemy value:
+
+- `Level_SlopeEn == 0` → **`OBJ_SPINYEGG` (`0x84`)**, the real red egg that hatches
+  into a chasing Spiny (keeps `SPR_PAL1`).
+- `Level_SlopeEn != 0` → **`OBJ_SPINYEGGDUD` (`0x85`)**, the harmless green "dud"
+  egg that never hatches (`Objects_SprAttr` palette `2`).
+
+`Level_SlopeEn` is set once per level load by `LevelInit_EnableSlopes` (PRG008),
+derived purely from `Level_Tileset`: `1` for tileset 3 (Hills) and 14
+(Underground), else `0` (tileset 5's `Level_UnusedSlopesTS5` path is dead code).
+So the egg type is really "which tileset is the host level," and injected Lakitus
+(always in non-sloped levels) always throw the real egg.
+
+`Level_SlopeEn` is **load-bearing slope physics** — also read for slope-tile
+collision (PRG000), player sliding / ground-LUT / bounce (PRG008), and fireball
+collision (PRG007), plus the Lakitu *toss cadence* (`$7F` vs `$3F` mask). Do not
+flip or repurpose it. The `lakitu_egg` randomizer instead diverts only the
+egg-select branch to a position-hash routine (see `src/randomize/lakitu_egg.rs`).
+
 ---
 
 ## Power-Up / Item Data
