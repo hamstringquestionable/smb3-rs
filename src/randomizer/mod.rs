@@ -397,6 +397,13 @@ fn randomize_inner(
     rom.set_tag("qol/map_warp");
     randomize::qol::apply_map_warp(rom);
 
+    // Canoe "call the boat" rescue: press A on any dock to summon the shared
+    // canoe to the adjacent water tile. Always applied — covers the canoe
+    // softlocks map_warp can't (1P, and both players stranded). Works in any
+    // world (keys on dock tile 0x4B + canoe object 0x10).
+    rom.set_tag("qol/canoe_summon");
+    randomize::qol::apply_canoe_summon(rom);
+
     // Adjust Bowser and Koopaling hitboxes.
     if options.adjust_boss_hitboxes {
         rom.set_tag("koopalings/adjust_boss_hitboxes");
