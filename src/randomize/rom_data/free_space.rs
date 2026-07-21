@@ -37,6 +37,8 @@ pub(crate) const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x0385E, 12, "koopa_fire_preset: set stomp counter from threshold table for fireball defeat"),
     (0x03FD0, 22, "koopa_y_clamp: clamp Koopaling Y position to screen"),
     (0x03FE6, 36, "fire_flower: position-hash suit routine + pool table"),
+    // PRG004 (file 0x08010, CPU $A000–$BFFF) — object AI bank (Lakitu lives here)
+    (0x09E66, 25, "lakitu_egg: position-hash egg-type routine (real vs green dud)"),
     // PRG003 (file 0x06010, CPU $A000–$BFFF) — object AI bank (Boom-Boom lives here)
     (0x06609, 8, "tail_stay_dead: MaCobra respawn-suppress routine (CPU $A5F9 gap)"),
     (0x07FCF, 16, "boomboom_hits: per-fortress threshold table"),
@@ -207,6 +209,14 @@ pub(crate) const FIRE_FLOWER_SUB_CPU: u16  = 0xBFD6; // $A000 + (0x03FE6 - 0x020
 pub(crate) const FS_KOOPA_FIRE_PRESET: usize = 0x0385E; // 12 bytes
 
 pub(crate) const KOOPA_FIRE_PRESET_CPU: u16  = 0xB84E;  // $A000 + (0x0385E - 0x02010)
+
+// PRG004 (file 0x08010, CPU $A000–$BFFF) — object AI bank where ObjNorm_Lakitu /
+// Lakitu_TossEnemy live. The routine that picks a tossed Lakitu's egg type sits
+// in the bank-end 0xFF filler (426 free bytes from 0x09E66), so the JSR from the
+// toss hook is bank-local. 25 bytes.
+pub(crate) const FS_LAKITU_EGG: usize      = 0x09E66;
+
+pub(crate) const LAKITU_EGG_SUB_CPU: u16   = 0xBE56; // $A000 + (0x09E66 - 0x08010)
 
 // PRG003 (file 0x06010, CPU $A000–$BFFF) — Boom-Boom stomp-count randomization.
 // The Boom-Boom boss AI (ObjInit_BoomBoom, BoomBoom_HitTest, the DynJump state

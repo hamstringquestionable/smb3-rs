@@ -9,6 +9,13 @@ deploys.
 
 ## [Unreleased]
 
+### Changed
+
+- With wild injections on, Lakitus now throw either the real (red) Spiny Egg or
+  the harmless green "dud" egg, chosen deterministically per level from the seed
+  instead of the vanilla tileset rule that always gave injected Lakitus the real
+  egg. Applies to every Lakitu in the seed.
+
 ## [1.0.2] - 2026-07-20
 
 ### Added
