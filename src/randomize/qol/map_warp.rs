@@ -80,9 +80,10 @@ const MAP_REENTRY_CPU: u16 = 0x84D7;
 /// returns with the Z flag intact, so the vanilla `BEQ` after the hook still
 /// decides the A-button path.
 #[rustfmt::skip]
-const MAP_WARP_ROUTINE: [u8; 160] = [
-    0xAD, 0x2B, 0x07,       // LDA Total_Players ($072B)
-    0xF0, 0x13,             // BEQ pass          (1P game -> normal input)
+const MAP_WARP_ROUTINE: [u8; 162] = [
+    0xAD, 0x2B, 0x07,       // LDA Total_Players ($072B) — 1 for 1P, 2 for 2P
+    0xC9, 0x02,             // CMP #$02
+    0xD0, 0x13,             // BNE pass           (not a 2-player game -> skip)
     0xB5, 0xF7,             // LDA Controller1,X  (held input, current player)
     0x29, 0x30,             // AND #$30           (Start | Select)
     0xC9, 0x30,             // CMP #$30           (both held?)
