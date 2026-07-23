@@ -497,6 +497,697 @@ fn test_dump_debug_rom() {
     }
 }
 
+/// Diagnostic: how often does each world end up with 1, 2, or 3 fortresses?
+/// Runs the real build for 1000 seeds and tallies the actual placed Fortress
+/// slots per world. W8 is fixed at 4. Run with:
+///   cargo test --lib fort_count_distribution -- --ignored --nocapture
+#[test]
+#[ignore]
+fn fort_count_distribution() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    // Catalog/pickup are seed-independent here (SAS off), so build them once.
+    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
+
+    const SEEDS: u64 = 1000;
+    // hist[world][count] — count in 0..=4 (index 0/unused for W1-W7).
+    let mut hist = [[0u32; 5]; 8];
+    for seed in 0..SEEDS {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
+        for built in &result.worlds {
+            let forts = built.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count();
+            hist[built.world_idx][forts] += 1;
+        }
+    }
+
+    eprintln!("\nFortress-count distribution over {SEEDS} seeds:");
+    eprintln!("  world |    1 fort    |    2 forts   |    3 forts   |    4 forts   | mean");
+    let s = SEEDS as f64;
+    for (wi, h) in hist.iter().enumerate() {
+        let pct = |c: u32| 100.0 * c as f64 / s;
+        let mean: f64 = (1..=4).map(|c| c as f64 * h[c] as f64).sum::<f64>() / s;
+        eprintln!(
+            "   W{}   | {:4} ({:5.1}%) | {:4} ({:5.1}%) | {:4} ({:5.1}%) | {:4} ({:5.1}%) | {:.2}",
+            wi + 1,
+            h[1], pct(h[1]), h[2], pct(h[2]), h[3], pct(h[3]), h[4], pct(h[4]), mean,
+        );
+    }
+
+    // Aggregate across W1-W7 (W8 is always 4): of all 7000 world-instances,
+    // how often is each count seen?
+    let mut agg = [0u32; 5];
+    for h in &hist[..7] {
+        for (c, &count) in h.iter().enumerate().take(4).skip(1) {
+            agg[c] += count;
+        }
+    }
+    let total = (SEEDS * 7) as f64;
+    eprintln!("\nAcross W1-W7 ({} world-instances):", SEEDS * 7);
+    for (c, &count) in agg.iter().enumerate().take(4).skip(1) {
+        eprintln!("  {} fort(s): {:5} ({:5.1}%)", c, count, 100.0 * count as f64 / total);
+    }
+}
+
+/// Least-*levels* distance from `source` to every reachable node: entering a
+/// `blocking` node (a level or fortress the player must clear to pass) costs 1,
+/// everything else 0. 0-1 BFS over the walk graph. The source itself is free.
+/// Canoe reachability is recomputed from `source`, so mid-map sources in canoe
+/// worlds are a slight approximation.
+fn least_levels_from(
+    grid: &Grid,
+    pipe_pairs: &[TeleportEdge],
+    source: Pos,
+    wi: usize,
+    blocking: &HashSet<Pos>,
+) -> HashMap<Pos, usize> {
+    use std::collections::VecDeque;
+    let walk = walk_map(grid, pipe_pairs, Some(source), wi);
+    let mut dist: HashMap<Pos, usize> = HashMap::new();
+    let mut dq: VecDeque<Pos> = VecDeque::new();
+    dist.insert(source, 0);
+    dq.push_back(source);
+    while let Some(u) = dq.pop_front() {
+        let du = dist[&u];
+        if let Some(edges) = walk.edges.get(&u) {
+            for e in edges {
+                let w = usize::from(blocking.contains(&e.dest));
+                let nd = du + w;
+                if nd < *dist.get(&e.dest).unwrap_or(&usize::MAX) {
+                    dist.insert(e.dest, nd);
+                    if w == 0 {
+                        dq.push_front(e.dest);
+                    } else {
+                        dq.push_back(e.dest);
+                    }
+                }
+            }
+        }
+    }
+    dist
+}
+
+/// Player-model fort taxonomy over many seeds. Classifies every fortress that
+/// owns a lock into: mandatory (goal unreachable without it), shortcut (optional
+/// but beating it cuts >=2 levels off the route, counting the fort itself),
+/// decoy (optional, no worthwhile shortcut, but accessible at start so it reads
+/// as a real choice), or inert (optional, off the beaten path). Also reports how
+/// often a world is a "choice-fork" (one required fort plus >=1 accessible decoy)
+/// and the distribution of levels a shortcut actually saves. Run with:
+///   cargo test --lib fort_taxonomy -- --ignored --nocapture
+#[test]
+#[ignore]
+fn fort_taxonomy() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
+    const SEEDS: u64 = 1000;
+
+    let mut n_mandatory = 0u64;
+    let mut n_shortcut = 0u64;
+    let mut n_decoy = 0u64;
+    let mut n_inert = 0u64;
+    let mut n_nolock = 0u64; // forts with no lock at all
+    let mut saved_hist = [0u64; 8]; // levels saved by a shortcut fort (capped 7)
+
+    // World-level buckets.
+    let mut w_total = 0u64;
+    let mut w_choice_fork = 0u64; // 1 required + >=1 accessible decoy
+    let mut w_has_shortcut = 0u64;
+    // Cross-tab of (chain depth to goal) x (has a fork), 2+-fort worlds only.
+    let mut b_pure_chain = 0u64; // depth >=2, no fork  (the "grind" we dislike)
+    let mut b_chain_fork = 0u64; // depth >=2, has fork (W8 chain-2+fork-2)
+    let mut b_fork_shallow = 0u64; // depth <2, has fork (fork at/near start)
+    let mut b_linear = 0u64; // depth <2, no fork
+    let mut w_multi = 0u64;
+
+    for seed in 0..SEEDS {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
+
+        for built in &result.worlds {
+            let wi = built.world_idx;
+            let mut base = built.grid.clone();
+            stamp_slots(&mut base, &built.slots);
+            let Some(start) = rom_data::find_start(&base) else { continue };
+            let Some(target) = find_target(&base, wi) else { continue };
+
+            let forts: Vec<(usize, Pos)> = built
+                .slots
+                .iter()
+                .filter(|s| s.kind == SlotKind::Fortress)
+                .map(|s| (s.section, s.pos))
+                .collect();
+            if forts.is_empty() {
+                continue;
+            }
+            let blocking: HashSet<Pos> = built
+                .slots
+                .iter()
+                .filter(|s| matches!(s.kind, SlotKind::Level | SlotKind::Fortress))
+                .map(|s| s.pos)
+                .collect();
+            let all_sections: HashSet<usize> =
+                built.locks.iter().map(|l| l.fort_section).collect();
+
+            let grid_with = |opened: &HashSet<usize>| -> Grid {
+                let mut g = base.clone();
+                for l in &built.locks {
+                    if opened.contains(&l.fort_section) {
+                        g.set(l.pos.0, l.pos.1, l.replace_tile);
+                    } else {
+                        g.set(l.pos.0, l.pos.1, l.gap_tile);
+                    }
+                }
+                g
+            };
+
+            // Progression simulation: the round at which each fort first
+            // becomes reachable (beat every reachable fort each round). Forts
+            // sharing a round are co-accessible — a fork. Detects forks at any
+            // depth, including a fork behind a chain (W8's chain-2 + fork-2).
+            let mut unlock_round: HashMap<usize, usize> = HashMap::new();
+            let mut goal_round: Option<usize> = None;
+            {
+                let mut beaten: HashSet<usize> = HashSet::new();
+                let mut round = 0usize;
+                loop {
+                    let g = grid_with(&beaten);
+                    let reach = walk_map(&g, &built.pipe_pairs, Some(start), wi);
+                    if goal_round.is_none() && reach.nodes.contains(&target) {
+                        goal_round = Some(round);
+                    }
+                    let newly: Vec<usize> = forts
+                        .iter()
+                        .filter(|(s, p)| !unlock_round.contains_key(s) && reach.nodes.contains(p))
+                        .map(|(s, _)| *s)
+                        .collect();
+                    if newly.is_empty() {
+                        break;
+                    }
+                    for &s in &newly {
+                        unlock_round.insert(s, round);
+                        beaten.insert(s);
+                    }
+                    round += 1;
+                    if round > 30 {
+                        break;
+                    }
+                }
+            }
+            // Cohort size = how many forts share an unlock round.
+            let mut round_counts: HashMap<usize, usize> = HashMap::new();
+            for r in unlock_round.values() {
+                *round_counts.entry(*r).or_insert(0) += 1;
+            }
+
+            let mut world_decoys = 0u64;
+            let mut world_shortcuts = 0u64;
+
+            for &(sec, fpos) in &forts {
+                if !all_sections.contains(&sec) {
+                    n_nolock += 1;
+                    continue;
+                }
+                let cohort = unlock_round
+                    .get(&sec)
+                    .and_then(|r| round_counts.get(r))
+                    .copied()
+                    .unwrap_or(1);
+
+                // All other locks open, this one's state varies.
+                let mut others_open = all_sections.clone();
+                others_open.remove(&sec);
+                let g_closed = grid_with(&others_open); // this fort NOT beaten
+                let g_open = grid_with(&all_sections); // this fort beaten too
+
+                // Mandatory: goal unreachable while this lock stays closed.
+                let reach_closed = walk_map(&g_closed, &built.pipe_pairs, Some(start), wi);
+                if !reach_closed.nodes.contains(&target) {
+                    n_mandatory += 1;
+                    continue;
+                }
+
+                // Optional fort. Compute shortcut value in levels.
+                let from_start_closed = least_levels_from(&g_closed, &built.pipe_pairs, start, wi, &blocking);
+                let from_fort_open = least_levels_from(&g_open, &built.pipe_pairs, fpos, wi, &blocking);
+                let l_without = from_start_closed.get(&target).copied();
+                // reach+beat F = dist to F (F is a fort, so its weight of 1 is
+                // already the "beat it" cost), then F -> goal via opened door.
+                let l_with = match (from_start_closed.get(&fpos), from_fort_open.get(&target)) {
+                    (Some(&to_f), Some(&f_to_goal)) => Some(to_f + f_to_goal),
+                    _ => None,
+                };
+
+                let saved = match (l_without, l_with) {
+                    (Some(wo), Some(wi_)) => wo as i64 - wi_ as i64,
+                    _ => i64::MIN,
+                };
+
+                if saved >= 2 {
+                    n_shortcut += 1;
+                    world_shortcuts += 1;
+                    saved_hist[(saved as usize).min(7)] += 1;
+                } else if cohort >= 2 {
+                    // Optional fort co-accessible with a sibling = a decoy in a fork.
+                    n_decoy += 1;
+                    world_decoys += 1;
+                } else {
+                    n_inert += 1;
+                }
+            }
+
+            w_total += 1;
+            if world_decoys >= 1 {
+                w_choice_fork += 1;
+            }
+            if world_shortcuts >= 1 {
+                w_has_shortcut += 1;
+            }
+
+            // Cross-tab: pure grind chain vs chain-then-fork, 2+-fort worlds.
+            if forts.len() >= 2 {
+                w_multi += 1;
+                let deep = goal_round.unwrap_or(0) >= 2;
+                let has_fork = world_decoys >= 1;
+                match (deep, has_fork) {
+                    (true, false) => b_pure_chain += 1,
+                    (true, true) => b_chain_fork += 1,
+                    (false, true) => b_fork_shallow += 1,
+                    (false, false) => b_linear += 1,
+                }
+            }
+        }
+    }
+
+    let fort_total = n_mandatory + n_shortcut + n_decoy + n_inert;
+    eprintln!("\n=== Fort taxonomy ({fort_total} forts w/ a lock; {n_nolock} forts had no lock), {SEEDS} seeds ===");
+    let fp = |c: u64| 100.0 * c as f64 / fort_total as f64;
+    eprintln!("  mandatory (goal needs it)      : {n_mandatory:6} ({:5.1}%)", fp(n_mandatory));
+    eprintln!("  shortcut  (optional, saves >=2): {n_shortcut:6} ({:5.1}%)", fp(n_shortcut));
+    eprintln!("  decoy     (optional, accessible, no shortcut): {n_decoy:6} ({:5.1}%)", fp(n_decoy));
+    eprintln!("  inert     (optional, off-path) : {n_inert:6} ({:5.1}%)", fp(n_inert));
+
+    eprintln!("\n=== Levels saved by shortcut forts ({n_shortcut} forts) ===");
+    let stot: u64 = saved_hist.iter().sum();
+    for (s, &c) in saved_hist.iter().enumerate() {
+        if c == 0 {
+            continue;
+        }
+        let label = if s == 7 { "7+".to_string() } else { s.to_string() };
+        eprintln!("  saves {label}: {c:6} ({:5.1}%)", 100.0 * c as f64 / stot as f64);
+    }
+
+    eprintln!("\n=== World-level ({w_total} worlds) ===");
+    eprintln!("  choice-fork (>=1 co-accessible optional decoy, any depth): {w_choice_fork:6} ({:5.1}%)", 100.0 * w_choice_fork as f64 / w_total as f64);
+    eprintln!("  has >=1 shortcut fort: {w_has_shortcut:6} ({:5.1}%)", 100.0 * w_has_shortcut as f64 / w_total as f64);
+
+    eprintln!("\n=== Chain x Fork cross-tab ({w_multi} worlds w/ 2+ forts) ===");
+    let mp = |c: u64| 100.0 * c as f64 / w_multi as f64;
+    eprintln!("  PURE CHAIN  (depth>=2, no fork — the grind): {b_pure_chain:6} ({:5.1}%)", mp(b_pure_chain));
+    eprintln!("  chain+fork  (depth>=2, has fork — e.g. W8): {b_chain_fork:6} ({:5.1}%)", mp(b_chain_fork));
+    eprintln!("  fork shallow(depth<2,  has fork)          : {b_fork_shallow:6} ({:5.1}%)", mp(b_fork_shallow));
+    eprintln!("  linear      (depth<2,  no fork)           : {b_linear:6} ({:5.1}%)", mp(b_linear));
+}
+
+/// Baseline metrics for the lock/fort progression-topology work. Emits, over
+/// many seeds:
+///   Problem 2 (chain topology):
+///     - chain depth: rounds of "beat every reachable fort" until the airship
+///       is reachable (0 = goal open at start, 2 = the deep-chain pattern)
+///     - a topology census bucketing each world by (depth, mandatory-fort
+///       count, forts-accessible-at-start)
+///   Problem 1 (fort/lock cramping):
+///     - Manhattan distance from each fort to the lock it opens (% <=2 tiles)
+///     - the fort-side component size when only that fort's own lock is closed
+///       (small = fort stranded on a tiny island with its own gate)
+/// Run with:
+///   cargo test --lib progression_metrics -- --ignored --nocapture
+#[test]
+#[ignore]
+fn progression_metrics() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
+
+    const SEEDS: u64 = 1000;
+
+    // --- Problem 2 accumulators ---
+    let mut depth_hist = [0u64; 8]; // index = chain depth (capped at 7)
+    let mut depth_by_world = [(0u64, 0u64); 8]; // (sum, count) per world
+    // Topology buckets.
+    let mut b_goal_open = 0u64;
+    let mut b_single_gate = 0u64; // depth 1, 1 mandatory, 1 fort at start
+    let mut b_single_plus_optional = 0u64; // depth 1, 1 mandatory, >=2 at start
+    let mut b_either_key = 0u64; // depth 1, 0 mandatory, >=2 at start
+    let mut b_parallel_and = 0u64; // depth 1, >=2 mandatory
+    let mut b_chain = 0u64; // depth >= 2
+    let mut b_other = 0u64;
+    let mut census_total = 0u64; // 2+-fort world-instances only
+    let mut single_fort_worlds = 0u64; // 1-fort worlds excluded from census
+    let mut chain_by_world = [(0u64, 0u64); 8]; // (chain, total) among 2+-fort worlds
+
+    // --- Problem 1 accumulators ---
+    let mut man_hist = [0u64; 12]; // Manhattan dist fort->own lock (capped at 11)
+    let mut man_total = 0u64;
+    let mut man_le2 = 0u64;
+    let mut comp_hist = [0u64; 12]; // fort-side component size (capped at 11)
+    let mut comp_total = 0u64;
+
+    for seed in 0..SEEDS {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
+
+        for built in &result.worlds {
+            let wi = built.world_idx;
+            // Base grid = pipes + slots stamped, all lock tiles left OPEN
+            // (built.grid holds each lock position as its original path tile).
+            let mut base = built.grid.clone();
+            stamp_slots(&mut base, &built.slots);
+
+            let forts: Vec<Pos> = built
+                .slots
+                .iter()
+                .filter(|s| s.kind == SlotKind::Fortress)
+                .map(|s| s.pos)
+                .collect();
+            if forts.is_empty() {
+                continue;
+            }
+            let start = rom_data::find_start(&base);
+            let target = find_target(&base, wi);
+
+            // Build a grid with `opened` fort-sections' locks restored (open)
+            // and every other lock closed (gapped).
+            let grid_with = |opened: &HashSet<usize>| -> Grid {
+                let mut g = base.clone();
+                for l in &built.locks {
+                    if opened.contains(&l.fort_section) {
+                        g.set(l.pos.0, l.pos.1, l.replace_tile);
+                    } else {
+                        g.set(l.pos.0, l.pos.1, l.gap_tile);
+                    }
+                }
+                g
+            };
+            let all_lock_sections: HashSet<usize> =
+                built.locks.iter().map(|l| l.fort_section).collect();
+
+            // ---- Problem 2: chain depth (round-count) ----
+            if let Some(tgt) = target {
+                let mut opened: HashSet<usize> = HashSet::new();
+                let mut depth = 0usize;
+                let mut infeasible = false;
+                loop {
+                    let g = grid_with(&opened);
+                    let walk = walk_map(&g, &built.pipe_pairs, start, wi);
+                    if walk.nodes.contains(&tgt) {
+                        break;
+                    }
+                    // Beat every reachable, not-yet-opened fort this round.
+                    let newly: Vec<usize> = built
+                        .slots
+                        .iter()
+                        .filter(|s| s.kind == SlotKind::Fortress && walk.nodes.contains(&s.pos))
+                        .map(|s| s.section)
+                        .filter(|sec| all_lock_sections.contains(sec) && !opened.contains(sec))
+                        .collect();
+                    if newly.is_empty() {
+                        infeasible = true;
+                        break;
+                    }
+                    for sec in newly {
+                        opened.insert(sec);
+                    }
+                    depth += 1;
+                }
+
+                if !infeasible {
+                    depth_hist[depth.min(7)] += 1;
+                    depth_by_world[wi].0 += depth as u64;
+                    depth_by_world[wi].1 += 1;
+
+                    // Mandatory forts: goal unreachable if this one stays closed
+                    // while all other locks are open.
+                    let mut mandatory = 0usize;
+                    for &sec in &all_lock_sections {
+                        let mut opened_but_one = all_lock_sections.clone();
+                        opened_but_one.remove(&sec);
+                        let g = grid_with(&opened_but_one);
+                        let walk = walk_map(&g, &built.pipe_pairs, start, wi);
+                        if !walk.nodes.contains(&tgt) {
+                            mandatory += 1;
+                        }
+                    }
+
+                    // Forts accessible at start (all locks closed).
+                    let g0 = grid_with(&HashSet::new());
+                    let walk0 = walk_map(&g0, &built.pipe_pairs, start, wi);
+                    let at_start =
+                        forts.iter().filter(|p| walk0.nodes.contains(*p)).count();
+
+                    // Census only worlds that CAN chain (2+ forts); single-fort
+                    // worlds are trivially single-gate and would dilute the rate.
+                    if forts.len() < 2 {
+                        single_fort_worlds += 1;
+                    } else {
+                        census_total += 1;
+                        let is_chain = depth >= 2;
+                        chain_by_world[wi].0 += is_chain as u64;
+                        chain_by_world[wi].1 += 1;
+                        if depth == 0 {
+                            b_goal_open += 1;
+                        } else if is_chain {
+                            b_chain += 1;
+                        } else if mandatory >= 2 {
+                            b_parallel_and += 1;
+                        } else if mandatory == 1 {
+                            if at_start >= 2 {
+                                b_single_plus_optional += 1;
+                            } else {
+                                b_single_gate += 1;
+                            }
+                        } else if mandatory == 0 && at_start >= 2 {
+                            b_either_key += 1;
+                        } else {
+                            b_other += 1;
+                        }
+                    }
+                }
+            }
+
+            // ---- Problem 1: fort <-> own-lock proximity & cramping ----
+            for l in &built.locks {
+                // The fort this lock opens.
+                let fort_pos = built.slots.iter().find(|s| {
+                    s.kind == SlotKind::Fortress && s.section == l.fort_section
+                });
+                let Some(fp) = fort_pos.map(|s| s.pos) else { continue };
+
+                let man = fp.0.abs_diff(l.pos.0) + fp.1.abs_diff(l.pos.1);
+                man_hist[man.min(11)] += 1;
+                man_total += 1;
+                if man <= 2 {
+                    man_le2 += 1;
+                }
+
+                // Fort-side component: only this lock closed, all others open;
+                // walk from the fort. Small => fort stuck with its own gate.
+                let mut opened = all_lock_sections.clone();
+                opened.remove(&l.fort_section);
+                let g = grid_with(&opened);
+                let walk = walk_map(&g, &built.pipe_pairs, Some(fp), wi);
+                comp_hist[walk.nodes.len().min(11)] += 1;
+                comp_total += 1;
+            }
+        }
+    }
+
+    let names = ["W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8"];
+
+    eprintln!("\n=== Problem 2: chain depth (rounds of beat-all-reachable to open airship), {SEEDS} seeds ===");
+    let dtot: u64 = depth_hist.iter().sum();
+    for (d, &c) in depth_hist.iter().enumerate() {
+        if c == 0 {
+            continue;
+        }
+        let label = if d == 7 { "7+".to_string() } else { d.to_string() };
+        eprintln!("  depth {label}: {c:6} ({:5.1}%)", 100.0 * c as f64 / dtot as f64);
+    }
+    eprint!("  mean depth per world: ");
+    for wi in 0..8 {
+        let (s, c) = depth_by_world[wi];
+        if c > 0 {
+            eprint!("{}={:.2}  ", names[wi], s as f64 / c as f64);
+        }
+    }
+    eprintln!();
+
+    eprintln!(
+        "\n=== Problem 2: topology census ({census_total} worlds w/ 2+ forts; \
+         {single_fort_worlds} single-fort worlds excluded) ===");
+    let pc = |c: u64| 100.0 * c as f64 / census_total as f64;
+    eprintln!("  goal open at start        : {b_goal_open:6} ({:5.1}%)", pc(b_goal_open));
+    eprintln!("  single gate (1 req, 1 open): {b_single_gate:6} ({:5.1}%)", pc(b_single_gate));
+    eprintln!("  single gate + optional fort: {b_single_plus_optional:6} ({:5.1}%)", pc(b_single_plus_optional));
+    eprintln!("  either-key choice (any opens): {b_either_key:6} ({:5.1}%)", pc(b_either_key));
+    eprintln!("  parallel-AND (all req, reachable together): {b_parallel_and:6} ({:5.1}%)", pc(b_parallel_and));
+    eprintln!("  CHAIN (depth >= 2)        : {b_chain:6} ({:5.1}%)", pc(b_chain));
+    eprintln!("  other                     : {b_other:6} ({:5.1}%)", pc(b_other));
+    eprint!("  chain rate per world (2+ forts only): ");
+    for wi in 0..8 {
+        let (ch, tot) = chain_by_world[wi];
+        if tot > 0 {
+            eprint!("{}={:.0}%  ", names[wi], 100.0 * ch as f64 / tot as f64);
+        }
+    }
+    eprintln!();
+
+    eprintln!("\n=== Problem 1: Manhattan distance fort -> its own lock ({man_total} locks) ===");
+    for (d, &c) in man_hist.iter().enumerate() {
+        if c == 0 {
+            continue;
+        }
+        let label = if d == 11 { "11+".to_string() } else { d.to_string() };
+        eprintln!("  dist {label:>3}: {c:6} ({:5.1}%)", 100.0 * c as f64 / man_total as f64);
+    }
+    eprintln!("  <=2 tiles (immediately behind): {man_le2} ({:5.1}%)", 100.0 * man_le2 as f64 / man_total as f64);
+
+    eprintln!("\n=== Problem 1: fort-side component size when its own lock is closed ({comp_total} forts) ===");
+    for (sz, &c) in comp_hist.iter().enumerate() {
+        if c == 0 {
+            continue;
+        }
+        let label = if sz == 11 { "11+".to_string() } else { sz.to_string() };
+        eprintln!("  {label:>3} nodes: {c:6} ({:5.1}%)", 100.0 * c as f64 / comp_total as f64);
+    }
+}
+
+/// Diagnostic: in worlds with 2+ fortresses, how many forts are reachable from
+/// the world start *before completing any fortress* (all locks closed)? A later
+/// fort can be gated behind an earlier fort's lock, so not all are guaranteed
+/// open at game start. Run with:
+///   cargo test --lib forts_accessible_at_start -- --ignored --nocapture
+#[test]
+#[ignore]
+fn forts_accessible_at_start() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
+
+    const SEEDS: u64 = 1000;
+    // For a world with N forts, tally how many are accessible at start.
+    // by_fortcount[N][accessible] — N in 2..=4, accessible in 0..=N.
+    let mut by_fortcount = [[0u32; 5]; 5];
+    // Totals across every world that has >= 2 forts.
+    let mut worlds_2plus = 0u64;
+    let mut total_forts_2plus = 0u64;
+    let mut total_accessible_2plus = 0u64;
+    let mut worlds_all_open = 0u64; // every fort reachable at start
+    let mut worlds_some_locked = 0u64; // at least one fort gated behind another
+
+    for seed in 0..SEEDS {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
+
+        for built in &result.worlds {
+            let wi = built.world_idx;
+            let fort_positions: Vec<Pos> = built
+                .slots
+                .iter()
+                .filter(|s| s.kind == SlotKind::Fortress)
+                .map(|s| s.pos)
+                .collect();
+            let fort_count = fort_positions.len();
+            if fort_count < 2 {
+                continue;
+            }
+
+            // Game-start grid: slots stamped, then ALL locks closed (gapped).
+            let mut grid = built.grid.clone();
+            stamp_slots(&mut grid, &built.slots);
+            for lock in &built.locks {
+                grid.set(lock.pos.0, lock.pos.1, lock.gap_tile);
+            }
+
+            let start = rom_data::find_start(&grid);
+            let walk = walk_map(&grid, &built.pipe_pairs, start, wi);
+            let accessible = fort_positions.iter().filter(|p| walk.nodes.contains(*p)).count();
+
+            by_fortcount[fort_count][accessible] += 1;
+            worlds_2plus += 1;
+            total_forts_2plus += fort_count as u64;
+            total_accessible_2plus += accessible as u64;
+            if accessible == fort_count {
+                worlds_all_open += 1;
+            } else {
+                worlds_some_locked += 1;
+            }
+        }
+    }
+
+    eprintln!("\nForts accessible at start (all locks closed), {SEEDS} seeds:");
+    eprintln!("  For each world with N forts, how many are reachable before beating any fort:");
+    for (n, row) in by_fortcount.iter().enumerate().take(5).skip(2) {
+        let total: u32 = row.iter().sum();
+        if total == 0 {
+            continue;
+        }
+        eprint!("  {n}-fort worlds ({total:5} instances): ");
+        for (a, &c) in row.iter().enumerate().take(n + 1) {
+            eprint!("{a}→{:5.1}%  ", 100.0 * c as f64 / total as f64);
+        }
+        let mean: f64 = row.iter().take(n + 1).enumerate().map(|(a, &c)| a as f64 * c as f64).sum::<f64>() / total as f64;
+        eprintln!(" (mean {mean:.2})");
+    }
+
+    eprintln!("\nAcross all {worlds_2plus} world-instances with 2+ forts:");
+    eprintln!(
+        "  {} forts total, {} accessible at start = {:.1}% openable without beating a fort",
+        total_forts_2plus,
+        total_accessible_2plus,
+        100.0 * total_accessible_2plus as f64 / total_forts_2plus as f64,
+    );
+    eprintln!(
+        "  all forts open at start: {} worlds ({:.1}%)",
+        worlds_all_open,
+        100.0 * worlds_all_open as f64 / worlds_2plus as f64,
+    );
+    eprintln!(
+        "  >=1 fort gated behind another: {} worlds ({:.1}%)",
+        worlds_some_locked,
+        100.0 * worlds_some_locked as f64 / worlds_2plus as f64,
+    );
+}
+
 #[test]
 #[ignore]
 fn test_print_build() {
