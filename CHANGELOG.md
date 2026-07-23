@@ -9,6 +9,14 @@ deploys.
 
 ## [Unreleased]
 
+### Changed
+
+- Overworld fortress locks now follow a per-world progression archetype (chain,
+  single-gate, or a choice-fork with decoy fortresses) instead of always greedily
+  gating the deepest chokepoint. This adds variety — worlds can present a genuine
+  "pick the right fort" fork, and W8 mixes a short chain into a final fork —
+  rather than defaulting to a linear beat-fort-to-reach-next-fort grind.
+
 ### Added
 
 - Beta site is now visually distinct from the main site: the `/beta/` deploy

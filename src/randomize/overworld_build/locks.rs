@@ -16,6 +16,106 @@ const W8_BRIDGE_LOCK_POSITIONS: &[(usize, usize)] = &[(5, 51), (5, 53), (5, 55),
 /// four (the ceiling — W8 has 4 forts = 4 locks) out in ~0.08% (a rare treat).
 const W8_BRIDGE_LOCK_BONUS: i32 = 8;
 
+/// The role a fortress's lock plays in the world's progression archetype.
+/// Decided per-world in [`sample_lock_plan`] and consumed by [`place_locks`],
+/// which places each lock to satisfy its role using the shared positional
+/// scorer. See the `fort_topology_archetypes` design notes.
+#[derive(Clone, Debug)]
+pub(super) enum LockRole {
+    /// Lock must gate (make unreachable) every fort section in `targets` — a
+    /// chain link (gate the next fort) or the prefix→fork entrance (gate the
+    /// whole terminal group at once).
+    ChainLink { targets: Vec<usize> },
+    /// Lock must gate the airship/Bowser target while stranding no fortress.
+    GoalGate,
+    /// Lock must gate nothing important (no fort, no target) — the fortress
+    /// stays reachable. Decoy and inert forts.
+    Safe,
+}
+
+/// Weighted per-world archetype sample → per-section lock roles.
+///
+/// - 1 fort: SingleGate (the lone fort gates the goal).
+/// - W8 (dense, 4 forts): 25% Chain / 75% Fork; Fork = chain-2 → 2-way fork.
+/// - other multi-fort worlds: 30% Chain / 30% SingleGate / 40% Fork; a Fork
+///   samples a terminal width `k` (capped at 3, surplus forts chain in front),
+///   so a 3-fort Fork is a 50/50 mix of chain-1→2-fork and a pure 3-way fork.
+pub(super) fn sample_lock_plan<R: Rng>(
+    fort_count: usize,
+    world_idx: usize,
+    rng: &mut R,
+) -> Vec<LockRole> {
+    match fort_count {
+        0 => return Vec::new(),
+        1 => return vec![LockRole::GoalGate],
+        _ => {}
+    }
+
+    enum Arch {
+        Chain,
+        Single,
+        Fork,
+    }
+    let arch = if world_idx == 7 {
+        if rng.random_range(..100u32) < 25 { Arch::Chain } else { Arch::Fork }
+    } else {
+        let r = rng.random_range(..100u32);
+        if r < 30 {
+            Arch::Chain
+        } else if r < 60 {
+            Arch::Single
+        } else {
+            Arch::Fork
+        }
+    };
+
+    match arch {
+        Arch::Chain => (0..fort_count)
+            .map(|i| {
+                if i + 1 < fort_count {
+                    LockRole::ChainLink { targets: vec![i + 1] }
+                } else {
+                    LockRole::GoalGate
+                }
+            })
+            .collect(),
+        Arch::Single => (0..fort_count)
+            .map(|i| if i + 1 == fort_count { LockRole::GoalGate } else { LockRole::Safe })
+            .collect(),
+        Arch::Fork => {
+            // W8 and 2-fort worlds: a plain 2-way fork. 3-fort worlds mix
+            // 50/50 between chain-1 → 2-fork (k=2) and a pure 3-way fork (k=3).
+            let k = if world_idx == 7 || fort_count == 2 {
+                2
+            } else {
+                2 + rng.random_range(..2u32) as usize
+            };
+            fork_roles(fort_count, k)
+        }
+    }
+}
+
+/// Chain the first `n - k` forts, then a `k`-way fork (one GoalGate + `k-1`
+/// Safe decoys). `k` is capped at 3 and at `n`.
+fn fork_roles(n: usize, k: usize) -> Vec<LockRole> {
+    let k = k.min(n).min(3);
+    let prefix = n - k;
+    let mut roles = Vec::with_capacity(n);
+    for i in 0..prefix {
+        let targets = if i + 1 < prefix {
+            vec![i + 1]
+        } else {
+            // Last prefix link opens the whole terminal fork as a unit.
+            (prefix..n).collect()
+        };
+        roles.push(LockRole::ChainLink { targets });
+    }
+    for i in prefix..n {
+        roles.push(if i == n - 1 { LockRole::GoalGate } else { LockRole::Safe });
+    }
+    roles
+}
+
 /// A scored lock candidate tracked during selection.
 #[derive(Clone, Copy)]
 struct ScoredLock {
@@ -39,12 +139,20 @@ pub(super) fn place_locks<R: Rng>(
     target_pos: Option<(usize, usize)>,
     slots: &[SlotAssignment],
     fort_count: usize,
+    roles: &[LockRole],
     force_safe: bool,
     world_idx: usize,
     rng: &mut R,
 ) -> Vec<LockAssignment> {
     let mut locks: Vec<LockAssignment> = Vec::new();
     let mut locked_tiles: HashSet<(usize, usize)> = HashSet::new();
+
+    // Fort position by section, for evaluating archetype role constraints.
+    let fort_by_section: HashMap<usize, (usize, usize)> = slots
+        .iter()
+        .filter(|s| s.kind == SlotKind::Fortress)
+        .map(|s| (s.section, s.pos))
+        .collect();
 
     // Build a base grid with forts/levels stamped so BFS sees them as nodes.
     // This grid does NOT have any locks on it.
@@ -117,6 +225,9 @@ pub(super) fn place_locks<R: Rng>(
         // Evaluated after scoring all candidates, see below.
         let mut best: Option<ScoredLock> = None;
         let mut best_safe: Option<ScoredLock> = None;
+        // Best candidate that satisfies this section's archetype role, if any.
+        let mut best_role: Option<ScoredLock> = None;
+        let role = roles.get(section_idx);
 
         // Open grid (no candidate lock) is constant for all candidates in this
         // section — hoist the BFS to avoid redundant walks per candidate.
@@ -247,6 +358,27 @@ pub(super) fn place_locks<R: Rng>(
             if safe && best_safe.is_none_or(|b| score > b.score) {
                 best_safe = Some(cand);
             }
+
+            // Does this candidate satisfy the section's archetype role?
+            let role_ok = match role {
+                Some(LockRole::ChainLink { targets }) => targets.iter().all(|t| {
+                    fort_by_section
+                        .get(t)
+                        .is_some_and(|fp| !walk.nodes.contains(fp))
+                }),
+                // Gate the target while stranding no fortress.
+                Some(LockRole::GoalGate) => {
+                    !target_reachable
+                        && slots
+                            .iter()
+                            .all(|s| s.kind != SlotKind::Fortress || walk.nodes.contains(&s.pos))
+                }
+                Some(LockRole::Safe) => safe,
+                None => false,
+            };
+            if role_ok && best_role.is_none_or(|b| score > b.score) {
+                best_role = Some(cand);
+            }
         }
 
         // Prefer safe when forced (retry) or when best score is low —
@@ -254,7 +386,10 @@ pub(super) fn place_locks<R: Rng>(
         let best_score = best.map(|b| b.score).unwrap_or(0);
         let prefer_safe = force_safe || best_score < 5;
 
-        let chosen = if prefer_safe { best_safe.or(best) } else { best };
+        // Archetype role wins when realizable; otherwise fall back to the
+        // unconstrained pick (feasibility fallback — this world's geometry
+        // couldn't host the sampled shape for this fort).
+        let chosen = best_role.or(if prefer_safe { best_safe.or(best) } else { best });
 
         if let Some(c) = chosen {
             locked_tiles.insert(c.pos);

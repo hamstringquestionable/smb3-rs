@@ -2,7 +2,7 @@
 
 use super::*;
 
-use super::locks::place_locks;
+use super::locks::{LockRole, place_locks};
 use super::pipes::{FIXED_PIPE_ENDPOINTS, PIPE_EXCLUDED_POSITIONS, place_pipes, place_spare_pipes};
 use super::scoring::{
     FORTRESS_SOFTMAX_T, is_row78_conflict, pick_softmax_by_score, score_candidate,
@@ -10,12 +10,17 @@ use super::scoring::{
 };
 use super::types::{BuiltWorld, SlotAssignment, SlotKind, WorldSlotCounts};
 
+// Reason: each arg is a distinct build input (world, rom, grid, fixed slots,
+// budgets, lock roles, HB flag, RNG). No subset forms a cohesive concept worth
+// a struct — bundling would add indirection without clarifying anything.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_world<R: Rng>(
     world_idx: usize,
     rom: &Rom,
     mut grid: Grid,
     fixed_positions: &HashSet<(usize, usize)>,
     counts: &WorldSlotCounts,
+    roles: &[LockRole],
     shuffle_hammer_bros: bool,
     rng: &mut R,
 ) -> BuiltWorld {
@@ -170,6 +175,7 @@ pub(super) fn build_world<R: Rng>(
         target_pos,
         &slots,
         fort_count,
+        roles,
         force_safe,
         world_idx,
         rng,
