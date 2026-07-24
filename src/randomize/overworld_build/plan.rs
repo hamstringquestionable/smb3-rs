@@ -276,37 +276,78 @@ pub(crate) struct WorldPlan {
     pub pipe: PipeScoring,
 }
 
+/// Top-level progression family: how much of the world's fort content is
+/// compulsory. This is the dimension players feel (beat everything / choose /
+/// free) and the one the census metrics measure, so sampling weights live at
+/// this level — adding a shape to a family never silently shifts how often
+/// "you must beat every fort" worlds appear.
+// Reason: enum_variant_names — the shared "Forts" postfix is the point: the
+// family axis IS "how many forts are compulsory" (all / partial / none), and
+// bare All/Partial/None would read as generic quantifiers.
+#[allow(clippy::enum_variant_names)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Family {
+    /// Every fort is required. Shapes: Chain (ordered). (TwinGates — an
+    /// unordered tail — is this family's parked second shape.)
+    AllForts,
+    /// One fort really matters; the rest are decoys. Shapes: SingleGate,
+    /// Fork.
+    PartialForts,
+    /// No fort is required. RESERVED at weight 0 until an open/shortcut
+    /// shape exists to populate it.
+    NoForts,
+}
+
+/// Family weights [AllForts, PartialForts, NoForts] out of 100, W1–W7.
+/// NoForts stays 0 until it has a shape; any weight past AllForts falls
+/// through to PartialForts.
+const FAMILY_WEIGHTS: [u32; 3] = [30, 70, 0];
+/// W8 family weights — denser (4 forts), forks stay dominant. AllForts=Chain
+/// keeps W8's pre-family 25% chain rate.
+const W8_FAMILY_WEIGHTS: [u32; 3] = [25, 75, 0];
+/// Within PartialForts: [SingleGate, Fork] out of 100.
+const PARTIAL_SPLIT: [u32; 2] = [40, 60];
+
 impl WorldPlan {
-    /// Weighted per-world archetype sample → the full plan.
+    /// Family-first per-world sample → the full plan.
     ///
     /// - 1 fort: SingleGate (the lone fort gates the goal).
-    /// - W8 (dense, 4 forts): 25% Chain / 75% Fork; Fork = chain-2 → 2-way fork.
-    /// - other multi-fort worlds: 30% Chain / 30% SingleGate / 40% Fork; a
-    ///   Fork samples a terminal width `k` (capped at 3, surplus forts chain
-    ///   in front), so a 3-fort Fork is a 50/50 mix of chain-1→2-fork and a
-    ///   pure 3-way fork.
+    /// - Family rolled from `FAMILY_WEIGHTS` (`W8_FAMILY_WEIGHTS` for W8),
+    ///   then the shape within it: AllForts → Chain; PartialForts →
+    ///   SingleGate/Fork per `PARTIAL_SPLIT` (W8's Fork is always
+    ///   chain-2 → 2-way). A Fork samples terminal width `k` (capped at 3,
+    ///   surplus forts chain in front), so a 3-fort Fork is a 50/50 mix of
+    ///   chain-1→2-fork and a pure 3-way fork.
     ///
     /// All scoring knobs are currently the uniform defaults — archetypes gain
     /// scoring opinions here (and only here) as sweeps justify them.
     pub(crate) fn sample<R: Rng>(fort_count: usize, world_idx: usize, rng: &mut R) -> Self {
-        let archetype = match fort_count {
-            0 | 1 => Archetype::SingleGate,
-            _ if world_idx == 7 => {
-                if rng.random_range(..100u32) < 25 {
-                    Archetype::Chain
-                } else {
+        if fort_count <= 1 {
+            return WorldPlan::from_archetype(Archetype::SingleGate, fort_count);
+        }
+
+        let weights = if world_idx == 7 { &W8_FAMILY_WEIGHTS } else { &FAMILY_WEIGHTS };
+        let roll = rng.random_range(..100u32);
+        let family = if roll < weights[0] {
+            Family::AllForts
+        } else if roll < weights[0] + weights[1] {
+            Family::PartialForts
+        } else {
+            Family::NoForts
+        };
+
+        let archetype = match family {
+            Family::AllForts => Archetype::Chain,
+            // NoForts has no shapes yet (weight 0); fall through to the
+            // partial shapes so a nonzero weight can't brick sampling.
+            Family::PartialForts | Family::NoForts => {
+                if world_idx == 7 {
                     Archetype::Fork { k: 2 }
-                }
-            }
-            _ => {
-                let r = rng.random_range(..100u32);
-                if r < 30 {
-                    Archetype::Chain
-                } else if r < 60 {
+                } else if rng.random_range(..100u32) < PARTIAL_SPLIT[0] {
                     Archetype::SingleGate
                 } else {
-                    // W8 and 2-fort worlds: a plain 2-way fork. 3-fort worlds
-                    // mix 50/50 between chain-1 → 2-fork and a pure 3-way fork.
+                    // 2-fort worlds: a plain 2-way fork. 3-fort worlds mix
+                    // 50/50 between chain-1 → 2-fork and a pure 3-way fork.
                     let k = if fort_count == 2 {
                         2
                     } else {
@@ -356,6 +397,42 @@ impl WorldPlan {
         let mut plan = WorldPlan::from_archetype(Archetype::SingleGate, fort_count);
         plan.roles = vec![LockRole::Safe; fort_count];
         plan
+    }
+}
+
+/// Seed-level invariant: at least one lock role somewhere in the seed must
+/// be Safe. Without it, a seed can sample Chain everywhere (plus 1-fort
+/// GoalGates) — zero Safe roles — and the only escape hatch is the
+/// post-build force_safe retry, which flattens a whole world to all-Safe
+/// (measured: ~1.4% of seeds). Downgrading up front is shape-preserving:
+/// the LAST ChainLink of one random Chain world becomes Safe (its chain
+/// shortens by one link; that fort becomes a decoy). Runs after all 8 plans
+/// are sampled, before any placement.
+pub(super) fn ensure_seed_safe_role<R: Rng>(plans: &mut [WorldPlan], rng: &mut R) {
+    let has_safe = plans
+        .iter()
+        .any(|p| p.roles.iter().any(|r| matches!(r, LockRole::Safe)));
+    if has_safe {
+        return;
+    }
+    // No Safe anywhere ⇒ every multi-fort world rolled Chain (multi-fort
+    // SingleGate and Fork always carry Safes), so ChainLink roles exist.
+    let candidates: Vec<usize> = plans
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.roles.iter().any(|r| matches!(r, LockRole::ChainLink { .. })))
+        .map(|(i, _)| i)
+        .collect();
+    let Some(&wi) = candidates.choose(rng) else {
+        return;
+    };
+    let plan = &mut plans[wi];
+    if let Some(idx) = plan
+        .roles
+        .iter()
+        .rposition(|r| matches!(r, LockRole::ChainLink { .. }))
+    {
+        plan.roles[idx] = LockRole::Safe;
     }
 }
 

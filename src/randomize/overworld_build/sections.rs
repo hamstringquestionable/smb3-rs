@@ -198,6 +198,7 @@ pub(super) fn build_world<R: Rng>(
         pipe_pairs,
         // Filled in after the per-world loop when shuffle_hammer_bros is on.
         hb_sprites: Vec::new(),
+        plan: plan.clone(),
     }
 }
 

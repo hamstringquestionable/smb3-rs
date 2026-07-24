@@ -88,6 +88,14 @@ pub(crate) fn build<R: Rng>(
     // hoarding levels, so the old W6-specific clamp is no longer needed.
     let level_counts = distribute_levels(&capacities, VANILLA_LEVEL_COUNT, LEVEL_SPREAD_EXPONENT, rng);
 
+    // Sample every world's plan up front, then enforce the seed-level
+    // invariant (>=1 Safe role somewhere) before any placement happens —
+    // cheaper and shape-preserving compared to the post-build force_safe
+    // retry, which remains only as a backstop.
+    let mut plans: Vec<WorldPlan> = (0..8)
+        .map(|wi| WorldPlan::sample(fort_counts[wi], wi, rng))
+        .collect();
+    plan::ensure_seed_safe_role(&mut plans, rng);
 
     let mut worlds = Vec::with_capacity(8);
     for wi in 0..8 {
@@ -105,16 +113,13 @@ pub(crate) fn build<R: Rng>(
             max_non_pipe_slots,
             force_safe: false,
         };
-        // Sample this world's plan: progression archetype → per-fort lock
-        // roles + every scoring knob the placement passes consume.
-        let plan = WorldPlan::sample(fort_counts[wi], wi, rng);
         let built = build_world(
             wi,
             rom,
             patched_grids[wi].clone(),
             &fixed_positions[wi],
             &counts,
-            &plan,
+            &plans[wi],
             shuffle_hammer_bros,
             rng,
         );
@@ -149,6 +154,9 @@ pub(crate) fn build<R: Rng>(
             );
             if new_locks.iter().any(|l| l.secret_exit_safe) {
                 worlds[wi].locks = new_locks;
+                // Keep the stored plan truthful for diagnostics — this world
+                // is now all-Safe, whatever it originally sampled.
+                worlds[wi].plan = safe_plan;
                 break;
             }
         }
