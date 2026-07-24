@@ -698,7 +698,6 @@ mod tests {
         let mut rom = Rom::from_bytes(&rom_data_bytes.unwrap()).unwrap();
 
         let options = crate::randomizer::Options {
-            shuffle_pipes: true,
             shuffle_airships: true,
             ..Default::default()
         };

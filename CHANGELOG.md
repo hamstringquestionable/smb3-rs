@@ -9,6 +9,15 @@ deploys.
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-07-24
+
+### Removed
+
+- The "Pipe Shuffle" option (web checkbox and `--no-shuffle-pipes` CLI flag).
+  It has been a no-op since the overworld builder took over pipe placement —
+  pipes are always placed by the builder. Flag keys bump to v26; old keys
+  encoding the dead bit are no longer accepted.
+
 ## [1.0.3] - 2026-07-21
 
 ### Fixed
