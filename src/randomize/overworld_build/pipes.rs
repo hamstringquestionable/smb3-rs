@@ -2,7 +2,8 @@
 
 use super::*;
 
-use super::scoring::{PIPE_SOFTMAX_T, TARGET_MAX_DIST, pick_softmax_by_score};
+use super::plan::{FortSkipPolicy, PipeScoring};
+use super::scoring::pick_softmax_by_score;
 use super::sections::split_blanks_by_reachability;
 use super::types::{LockAssignment, SlotAssignment, SlotKind, stamp_slots};
 
@@ -42,6 +43,7 @@ pub(super) fn place_pipes<R: Rng>(
     target_pos: Option<(usize, usize)>,
     pair_count: usize,
     fixed_endpoints: &[(usize, usize)],
+    knobs: &PipeScoring,
     world_idx: usize,
     rng: &mut R,
 ) -> Vec<TeleportEdge> {
@@ -211,12 +213,14 @@ pub(super) fn place_pipes<R: Rng>(
                         .map(|&a| (a.0.abs_diff(b.0) + a.1.abs_diff(b.1)) as f64)
                         .fold(f64::INFINITY, f64::min);
                     // Nearer to the reachable frontier = higher score.
-                    let proximity =
-                        (TARGET_MAX_DIST - frontier_dist.min(TARGET_MAX_DIST)) / TARGET_MAX_DIST * 5.0;
+                    let proximity = (knobs.frontier_max_dist
+                        - frontier_dist.min(knobs.frontier_max_dist))
+                        / knobs.frontier_max_dist
+                        * knobs.frontier_weight;
                     (b, proximity)
                 })
                 .collect();
-            let b = pick_softmax_by_score(b_scored, PIPE_SOFTMAX_T, rng).unwrap();
+            let b = pick_softmax_by_score(b_scored, knobs.softmax_t, rng).unwrap();
 
             // Reachable side: the frontier blank nearest to b (shortest bridge),
             // so the pipe extends the frontier to that island rather than
@@ -228,7 +232,7 @@ pub(super) fn place_pipes<R: Rng>(
                     (a, -d) // nearer to b = higher
                 })
                 .collect();
-            let a = pick_softmax_by_score(a_scored, PIPE_SOFTMAX_T, rng).unwrap();
+            let a = pick_softmax_by_score(a_scored, knobs.softmax_t, rng).unwrap();
 
             grid.set(a.0, a.1, TILE_PIPE);
             grid.set(b.0, b.1, TILE_PIPE);
@@ -260,15 +264,6 @@ pub(super) fn place_pipes<R: Rng>(
     placed_pairs
 }
 
-/// Per-pipe skip-cap weights: relative chance a spare pipe's max-skip is 1, 2,
-/// 3, or 4 levels. Each pipe rolls a cap from this distribution, then greedily
-/// takes the biggest skip up to it — so big skips happen *sometimes* (a pipe
-/// rolling a high cap) rather than every pipe grabbing the largest skip and
-/// trivializing short worlds. Tuned via a sweep (this shape ≈ halves W2/W6 skip
-/// size vs. uncapped while keeping most of the anti-linearity win); safe to
-/// retune if real gameplay feels off.
-const SPARE_CAP_WEIGHTS: [f64; 4] = [30.0, 25.0, 25.0, 20.0];
-
 /// Place `spare_needed` spare pipe pairs after `populate_sections` AND
 /// `place_locks`, converting the lowest-value filler (HammerBro) slots into
 /// pipe endpoints. Unlike the connectivity phase this runs with levels already
@@ -297,6 +292,7 @@ pub(super) fn place_spare_pipes<R: Rng>(
     spare_needed: usize,
     reserved: &HashSet<(usize, usize)>,
     locks: &[LockAssignment],
+    knobs: &PipeScoring,
     start_pos: Option<(usize, usize)>,
     target_pos: Option<(usize, usize)>,
     world_idx: usize,
@@ -412,7 +408,9 @@ pub(super) fn place_spare_pipes<R: Rng>(
                 let opens_goal = all_closed_components
                     .as_ref()
                     .is_some_and(|c| straddles(c, a, b));
-                if opens_goal || bypassed >= 2 || (bypassed == 1 && fort_skip_placed) {
+                let skip_allowed = knobs.fort_skip == FortSkipPolicy::AnyOneFort
+                    && !fort_skip_placed;
+                if opens_goal || bypassed >= 2 || (bypassed == 1 && !skip_allowed) {
                     continue;
                 }
                 let (lo, hi) = (da.min(db), da.max(db));
@@ -420,7 +418,10 @@ pub(super) fn place_spare_pipes<R: Rng>(
                 // endpoints are the ones the teleport lets the player skip.
                 let skipped = level_d.iter().filter(|&&d| d > lo && d < hi).count();
                 if bypassed == 1 {
-                    fort_candidates.push(((a, b), skipped as f64 * 10.0 + (hi - lo) as f64));
+                    fort_candidates.push((
+                        (a, b),
+                        skipped as f64 * knobs.level_skip_weight + (hi - lo) as f64 * knobs.jump_weight,
+                    ));
                     continue;
                 }
                 if hi - lo >= 2 {
@@ -436,14 +437,14 @@ pub(super) fn place_spare_pipes<R: Rng>(
         // breaks ties toward the pair that also skips the most levels).
         let chosen = if !fort_candidates.is_empty() {
             fort_skip_placed = true;
-            pick_softmax_by_score(fort_candidates, PIPE_SOFTMAX_T, rng)
+            pick_softmax_by_score(fort_candidates, knobs.softmax_t, rng)
         } else {
             // Roll this pipe's skip cap from the weighted distribution.
             let cap = {
-                let total: f64 = SPARE_CAP_WEIGHTS.iter().sum();
+                let total: f64 = knobs.spare_cap_weights.iter().sum();
                 let mut roll = rng.random_range(0.0..total);
-                let mut c = SPARE_CAP_WEIGHTS.len();
-                for (i, w) in SPARE_CAP_WEIGHTS.iter().enumerate() {
+                let mut c = knobs.spare_cap_weights.len();
+                for (i, w) in knobs.spare_cap_weights.iter().enumerate() {
                     roll -= w;
                     if roll <= 0.0 {
                         c = i + 1;
@@ -462,9 +463,11 @@ pub(super) fn place_spare_pipes<R: Rng>(
             let within: Vec<(TeleportEdge, f64)> = candidates
                 .iter()
                 .filter(|&&(_, s, _)| (1..=cap).contains(&s))
-                .map(|&(p, s, j)| (p, s as f64 * 10.0 + j as f64))
+                .map(|&(p, s, j)| {
+                    (p, s as f64 * knobs.level_skip_weight + j as f64 * knobs.jump_weight)
+                })
                 .collect();
-            pick_softmax_by_score(within, PIPE_SOFTMAX_T, rng)
+            pick_softmax_by_score(within, knobs.softmax_t, rng)
                 .or_else(|| {
                     candidates
                         .iter()

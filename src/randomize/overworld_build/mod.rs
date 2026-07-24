@@ -20,6 +20,7 @@ use super::rom_data::{
 };
 
 mod types;
+mod plan;
 mod scoring;
 mod capacity;
 mod sections;
@@ -31,8 +32,9 @@ use capacity::{
     SPADE_BUDGET, assign_hb_sprites, distribute_levels, prepare_capacities, promote_hb_slots,
     redistribute_fortresses,
 };
-use locks::{LockRole, place_locks, sample_lock_plan};
+use locks::place_locks;
 use pipes::VANILLA_PIPE_PAIRS;
+use plan::WorldPlan;
 use scoring::{LEVEL_SPREAD_EXPONENT, VANILLA_LEVEL_COUNT};
 use sections::build_world;
 use types::{CapacityPrep, WorldSlotCounts};
@@ -103,15 +105,16 @@ pub(crate) fn build<R: Rng>(
             max_non_pipe_slots,
             force_safe: false,
         };
-        // Sample this world's progression archetype → per-fort lock roles.
-        let roles = sample_lock_plan(fort_counts[wi], wi, rng);
+        // Sample this world's plan: progression archetype → per-fort lock
+        // roles + every scoring knob the placement passes consume.
+        let plan = WorldPlan::sample(fort_counts[wi], wi, rng);
         let built = build_world(
             wi,
             rom,
             patched_grids[wi].clone(),
             &fixed_positions[wi],
             &counts,
-            &roles,
+            &plan,
             shuffle_hammer_bros,
             rng,
         );
@@ -130,8 +133,8 @@ pub(crate) fn build<R: Rng>(
             let start_pos = rom_data::find_start(&built.grid);
             let target_pos = find_target(&built.grid, wi);
             // Retry aims only to surface a secret-exit-safe lock, so ask for
-            // all-Safe roles (matches force_safe) rather than the world's shape.
-            let safe_roles = vec![LockRole::Safe; fort_counts[wi]];
+            // an all-Safe plan (matches force_safe) rather than the world's shape.
+            let safe_plan = WorldPlan::all_safe(fort_counts[wi]);
             let new_locks = place_locks(
                 &built.grid,
                 &built.pipe_pairs,
@@ -139,7 +142,7 @@ pub(crate) fn build<R: Rng>(
                 target_pos,
                 &built.slots,
                 fort_counts[wi],
-                &safe_roles,
+                &safe_plan,
                 true, // force_safe
                 wi,
                 rng,
