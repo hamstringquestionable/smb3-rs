@@ -594,6 +594,135 @@ fn least_levels_from(
     dist
 }
 
+/// Baseline pipe diagnostics: per-world pipe-pair counts, how many levels the
+/// pipe set shaves off the least-levels path to the goal (the "level skip"
+/// value), and how often a pipe already makes an otherwise-mandatory fort
+/// optional (the "fort skip" — expected ~0 on current code, since spare pipes
+/// are placed before locks and `place_locks` gates around them). Run with:
+///   cargo test --lib pipe_metrics -- --ignored --nocapture
+#[test]
+#[ignore]
+fn pipe_metrics() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
+    const SEEDS: u64 = 1000;
+
+    let mut pairs_hist = [0u64; 12]; // pipe-pair count per world
+    let mut worlds_with_pipes = 0u64;
+    let mut conn_required = 0u64; // goal unreachable on foot (pipes needed for access)
+    let mut shortcut_worlds = 0u64; // goal reachable on foot; pipes are pure shortcuts
+    let mut saved_hist = [0u64; 12]; // levels the pipe set saves (shortcut worlds)
+    let mut skipped_forts = 0u64; // forts mandatory on foot but optional with pipes
+    let mut forts_examined = 0u64; // forts in foot-reachable pipe worlds
+    let mut worlds_fort_skip = 0u64;
+
+    for seed in 0..SEEDS {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
+
+        for built in &result.worlds {
+            let wi = built.world_idx;
+            let mut base = built.grid.clone();
+            stamp_slots(&mut base, &built.slots);
+            let Some(start) = rom_data::find_start(&base) else { continue };
+            let Some(target) = find_target(&base, wi) else { continue };
+
+            let npairs = built.pipe_pairs.len();
+            pairs_hist[npairs.min(11)] += 1;
+            if npairs == 0 {
+                continue;
+            }
+            worlds_with_pipes += 1;
+
+            let blocking: HashSet<Pos> = built
+                .slots
+                .iter()
+                .filter(|s| matches!(s.kind, SlotKind::Level | SlotKind::Fortress))
+                .map(|s| s.pos)
+                .collect();
+
+            // Least-levels to goal with all locks OPEN (pure geography), with the
+            // pipe set vs with no pipes at all.
+            let with = least_levels_from(&base, &built.pipe_pairs, start, wi, &blocking);
+            let without = least_levels_from(&base, &[], start, wi, &blocking);
+            let foot_reachable = without.contains_key(&target);
+            if !foot_reachable {
+                conn_required += 1;
+                continue; // can't separate a pipe "skip" from required access
+            }
+            shortcut_worlds += 1;
+            let saved = without[&target].saturating_sub(*with.get(&target).unwrap_or(&without[&target]));
+            saved_hist[saved.min(11)] += 1;
+
+            // Fort skip: with each lock closed (others open), is the fort
+            // mandatory on foot but bypassed once pipes are included?
+            let all_sections: HashSet<usize> = built.locks.iter().map(|l| l.fort_section).collect();
+            let grid_with = |opened: &HashSet<usize>| -> Grid {
+                let mut g = base.clone();
+                for l in &built.locks {
+                    if opened.contains(&l.fort_section) {
+                        g.set(l.pos.0, l.pos.1, l.replace_tile);
+                    } else {
+                        g.set(l.pos.0, l.pos.1, l.gap_tile);
+                    }
+                }
+                g
+            };
+            let mut world_skips = 0u64;
+            for sec in &all_sections {
+                forts_examined += 1;
+                let mut others = all_sections.clone();
+                others.remove(sec);
+                let g = grid_with(&others);
+                let mand_pipes = !walk_map(&g, &built.pipe_pairs, Some(start), wi).nodes.contains(&target);
+                let mand_foot = !walk_map(&g, &[], Some(start), wi).nodes.contains(&target);
+                if mand_foot && !mand_pipes {
+                    skipped_forts += 1;
+                    world_skips += 1;
+                }
+            }
+            if world_skips >= 1 {
+                worlds_fort_skip += 1;
+            }
+        }
+    }
+
+    eprintln!("\n=== Pipe pairs per world ({SEEDS} seeds, 8000 worlds) ===");
+    let ptot: u64 = pairs_hist.iter().sum();
+    for (n, &c) in pairs_hist.iter().enumerate() {
+        if c == 0 {
+            continue;
+        }
+        let label = if n == 11 { "11+".to_string() } else { n.to_string() };
+        eprintln!("  {label:>3} pairs: {c:6} ({:5.1}%)", 100.0 * c as f64 / ptot as f64);
+    }
+
+    eprintln!("\n=== Level skip (worlds with >=1 pipe: {worlds_with_pipes}) ===");
+    eprintln!("  goal needs pipes for access (connectivity): {conn_required} ({:5.1}%)", 100.0 * conn_required as f64 / worlds_with_pipes as f64);
+    eprintln!("  pipes are pure shortcuts (foot-reachable goal): {shortcut_worlds} ({:5.1}%)", 100.0 * shortcut_worlds as f64 / worlds_with_pipes as f64);
+    eprintln!("  levels saved by the pipe set (shortcut worlds):");
+    let stot: u64 = saved_hist.iter().sum();
+    for (s, &c) in saved_hist.iter().enumerate() {
+        if c == 0 {
+            continue;
+        }
+        let label = if s == 11 { "11+".to_string() } else { s.to_string() };
+        eprintln!("    saves {label:>3}: {c:6} ({:5.1}%)", 100.0 * c as f64 / stot as f64);
+    }
+
+    eprintln!("\n=== Fort skip ({forts_examined} forts in foot-reachable pipe worlds) ===");
+    eprintln!("  forts mandatory on foot but bypassed by a pipe: {skipped_forts} ({:5.2}%)", 100.0 * skipped_forts as f64 / forts_examined.max(1) as f64);
+    eprintln!("  worlds with >=1 pipe-skipped fort: {worlds_fort_skip} ({:5.2}% of pipe worlds)", 100.0 * worlds_fort_skip as f64 / worlds_with_pipes as f64);
+}
+
 /// Player-model fort taxonomy over many seeds. Classifies every fortress that
 /// owns a lock into: mandatory (goal unreachable without it), shortcut (optional
 /// but beating it cuts >=2 levels off the route, counting the fort itself),
