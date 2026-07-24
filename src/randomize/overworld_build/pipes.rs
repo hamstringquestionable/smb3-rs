@@ -377,13 +377,23 @@ pub(super) fn place_spare_pipes<R: Rng>(
             .collect();
         // All-locks-closed split: a pipe straddling THIS one makes the goal
         // reachable with zero forts beaten — always rejected.
-        let all_closed_components = {
+        let all_closed_grid = {
             let mut g = stamped.clone();
             for l in locks {
                 g.set(l.pos.0, l.pos.1, l.gap_tile);
             }
-            split_components(&g)
+            g
         };
+        let all_closed_components = split_components(&all_closed_grid);
+        // Per-lock closed grids, kept for the exact verification below.
+        let lock_grids: Vec<Grid> = locks
+            .iter()
+            .map(|l| {
+                let mut g = stamped.clone();
+                g.set(l.pos.0, l.pos.1, l.gap_tile);
+                g
+            })
+            .collect();
         let straddles = |(cs, ct): &(HashSet<Pos>, HashSet<Pos>), a: Pos, b: Pos| {
             (cs.contains(&a) && ct.contains(&b)) || (cs.contains(&b) && ct.contains(&a))
         };
@@ -394,8 +404,8 @@ pub(super) fn place_spare_pipes<R: Rng>(
         let mut candidates: Vec<(TeleportEdge, usize, usize)> = Vec::new();
         // Fort-skip candidates: pairs that bypass exactly one mandatory fort.
         let mut fort_candidates: Vec<(TeleportEdge, f64)> = Vec::new();
-        // Most distance-separated non-rejected pair, the last-resort pick.
-        let mut widest: Option<(TeleportEdge, usize)> = None;
+        // All non-rejected pairs with their jump, for the last-resort pick.
+        let mut allowed_pairs: Vec<(TeleportEdge, usize)> = Vec::new();
         for i in 0..avail.len() {
             for j in (i + 1)..avail.len() {
                 let a = avail[i];
@@ -427,61 +437,128 @@ pub(super) fn place_spare_pipes<R: Rng>(
                 if hi - lo >= 2 {
                     candidates.push(((a, b), skipped, hi - lo));
                 }
-                if widest.is_none_or(|(_, wj)| hi - lo > wj) {
-                    widest = Some(((a, b), hi - lo));
-                }
+                allowed_pairs.push(((a, b), hi - lo));
             }
         }
 
-        // A fort skip is the prize: take one whenever it exists (softmax
-        // breaks ties toward the pair that also skips the most levels).
-        let chosen = if !fort_candidates.is_empty() {
-            fort_skip_placed = true;
-            pick_softmax_by_score(fort_candidates, knobs.softmax_t, rng)
-        } else {
-            // Roll this pipe's skip cap from the weighted distribution.
-            let cap = {
-                let total: f64 = knobs.spare_cap_weights.iter().sum();
-                let mut roll = rng.random_range(0.0..total);
-                let mut c = knobs.spare_cap_weights.len();
-                for (i, w) in knobs.spare_cap_weights.iter().enumerate() {
-                    roll -= w;
-                    if roll <= 0.0 {
-                        c = i + 1;
-                        break;
-                    }
-                }
-                c
-            };
+        // Exact pre-walks for verification (candidate-independent, per round).
+        let exact_state: Option<(bool, Vec<bool>)> = match (start_pos, target_pos) {
+            (Some(sp), Some(tp)) => {
+                let sealed = !walk_map(&all_closed_grid, pipe_pairs, Some(sp), world_idx)
+                    .nodes
+                    .contains(&tp);
+                let lock_sealed: Vec<bool> = lock_grids
+                    .iter()
+                    .map(|g| !walk_map(g, pipe_pairs, Some(sp), world_idx).nodes.contains(&tp))
+                    .collect();
+                Some((sealed, lock_sealed))
+            }
+            _ => None,
+        };
 
-            // Greedily take the biggest skip within the cap (softmax breaks
-            // near ties). If every shortcut skips more than the cap, take the
-            // smallest one (least overshoot) so the pipe still stays as modest
-            // as possible. Fall back to the most distance-separated pair if
-            // nothing qualified, so the world still reaches its fixed vanilla
-            // pipe count.
-            let within: Vec<(TeleportEdge, f64)> = candidates
+        // Selection + EXACT verification. The component-straddle model above
+        // assumes a candidate pipe only merges its two endpoints' components.
+        // The canoe systems (W3; W8 under `8s are Wild`) break that: walk_map
+        // enables canoe edges only while the mainland dock is reachable, so
+        // one pipe can open routes far from either endpoint (observed: W3
+        // "goal open at start" worlds where a level-skip spare silently
+        // opened the goal through the canoe network). Every winning pair is
+        // re-checked with real walks; a pair the exact model rejects is
+        // banned and selection re-runs without it.
+        let mut banned: HashSet<TeleportEdge> = HashSet::new();
+        let mut verified_fort_skip = false;
+        let chosen: Option<TeleportEdge> = loop {
+            // A fort skip is the prize: take one whenever it exists (softmax
+            // breaks ties toward the pair that also skips the most levels).
+            let fc: Vec<(TeleportEdge, f64)> = fort_candidates
                 .iter()
-                .filter(|&&(_, s, _)| (1..=cap).contains(&s))
-                .map(|&(p, s, j)| {
-                    (p, s as f64 * knobs.level_skip_weight + j as f64 * knobs.jump_weight)
-                })
+                .filter(|(p, _)| !banned.contains(p))
+                .copied()
                 .collect();
-            pick_softmax_by_score(within, knobs.softmax_t, rng)
-                .or_else(|| {
-                    candidates
-                        .iter()
-                        .filter(|&&(_, s, _)| s >= 1)
-                        .min_by_key(|&&(_, s, _)| s)
-                        .map(|&(p, _, _)| p)
+            let pick = if !fc.is_empty() {
+                pick_softmax_by_score(fc, knobs.softmax_t, rng)
+            } else {
+                // Roll this pipe's skip cap from the weighted distribution.
+                let cap = {
+                    let total: f64 = knobs.spare_cap_weights.iter().sum();
+                    let mut roll = rng.random_range(0.0..total);
+                    let mut c = knobs.spare_cap_weights.len();
+                    for (i, w) in knobs.spare_cap_weights.iter().enumerate() {
+                        roll -= w;
+                        if roll <= 0.0 {
+                            c = i + 1;
+                            break;
+                        }
+                    }
+                    c
+                };
+
+                // Greedily take the biggest skip within the cap (softmax
+                // breaks near ties). If every shortcut skips more than the
+                // cap, take the smallest one (least overshoot). Fall back to
+                // the most distance-separated pair if nothing qualified, so
+                // the world still reaches its fixed vanilla pipe count.
+                let within: Vec<(TeleportEdge, f64)> = candidates
+                    .iter()
+                    .filter(|(p, s, _)| !banned.contains(p) && (1..=cap).contains(s))
+                    .map(|&(p, s, j)| {
+                        (p, s as f64 * knobs.level_skip_weight + j as f64 * knobs.jump_weight)
+                    })
+                    .collect();
+                pick_softmax_by_score(within, knobs.softmax_t, rng)
+                    .or_else(|| {
+                        candidates
+                            .iter()
+                            .filter(|(p, s, _)| !banned.contains(p) && *s >= 1)
+                            .min_by_key(|&&(_, s, _)| s)
+                            .map(|&(p, _, _)| p)
+                    })
+                    .or_else(|| {
+                        allowed_pairs
+                            .iter()
+                            .filter(|(p, _)| !banned.contains(p))
+                            .max_by_key(|&&(_, j)| j)
+                            .map(|&(p, _)| p)
+                    })
+            };
+            let Some(pair) = pick else { break None };
+
+            // Exact verification with real walks.
+            let Some((sealed, lock_sealed)) = &exact_state else { break Some(pair) };
+            let (Some(sp), Some(tp)) = (start_pos, target_pos) else { break Some(pair) };
+            let mut trial: Vec<TeleportEdge> = pipe_pairs.clone();
+            trial.push(pair);
+            let opens_goal = *sealed
+                && walk_map(&all_closed_grid, &trial, Some(sp), world_idx).nodes.contains(&tp);
+            if opens_goal {
+                banned.insert(pair);
+                continue;
+            }
+            let bypass = lock_grids
+                .iter()
+                .zip(lock_sealed.iter())
+                .filter(|(g, was_sealed)| {
+                    **was_sealed
+                        && walk_map(g, &trial, Some(sp), world_idx).nodes.contains(&tp)
                 })
-                .or_else(|| widest.map(|(pair, _)| pair))
+                .count();
+            let skip_allowed =
+                knobs.fort_skip == FortSkipPolicy::AnyOneFort && !fort_skip_placed;
+            if bypass >= 2 || (bypass == 1 && !skip_allowed) {
+                banned.insert(pair);
+                continue;
+            }
+            verified_fort_skip = bypass == 1;
+            break Some(pair);
         };
 
         let (a, b) = match chosen {
             Some(pair) => pair,
             None => break,
         };
+        if verified_fort_skip {
+            fort_skip_placed = true;
+        }
 
         grid.set(a.0, a.1, TILE_PIPE);
         grid.set(b.0, b.1, TILE_PIPE);
