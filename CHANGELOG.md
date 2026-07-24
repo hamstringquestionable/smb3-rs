@@ -16,6 +16,11 @@ deploys.
   gating the deepest chokepoint. This adds variety — worlds can present a genuine
   "pick the right fort" fork, and W8 mixes a short chain into a final fork —
   rather than defaulting to a linear beat-fort-to-reach-next-fort grind.
+- Spare overworld pipes are now placed after fortress locks and may bridge
+  across one of them: at most one pipe per world can make a single fortress
+  optional (a free "fort skip" shortcut for players who find it). Pipes that
+  would bypass two or more fortresses, or reach the goal with every lock still
+  closed, are never placed.
 
 ### Added
 

@@ -4,7 +4,7 @@ use super::*;
 
 use super::scoring::{PIPE_SOFTMAX_T, TARGET_MAX_DIST, pick_softmax_by_score};
 use super::sections::split_blanks_by_reachability;
-use super::types::{SlotAssignment, SlotKind};
+use super::types::{LockAssignment, SlotAssignment, SlotKind, stamp_slots};
 
 /// Number of pipe pairs (not endpoints) per world in the vanilla ROM.
 pub(super) const VANILLA_PIPE_PAIRS: [usize; 8] = [
@@ -269,20 +269,26 @@ pub(super) fn place_pipes<R: Rng>(
 /// retune if real gameplay feels off.
 const SPARE_CAP_WEIGHTS: [f64; 4] = [30.0, 25.0, 25.0, 20.0];
 
-/// Place `spare_needed` spare pipe pairs after `populate_sections`, converting
-/// the lowest-value filler (HammerBro) slots into pipe endpoints. Unlike the
-/// connectivity phase this runs with levels already placed, so each pair is
-/// scored by how many level slots it lets the player skip: a pipe from a
-/// near-start node to a far node teleports past every level on the stretch
-/// between them (approximated by route-distance band). Endpoints are drawn
-/// only from HammerBro slots — never levels or forts — and both are already
-/// reachable, so a spare pipe can never strand content; it only shortcuts.
-/// Pairs that skip nothing are still placed (a fall-back keeps the world at
-/// its fixed vanilla pipe count).
+/// Place `spare_needed` spare pipe pairs after `populate_sections` AND
+/// `place_locks`, converting the lowest-value filler (HammerBro) slots into
+/// pipe endpoints. Unlike the connectivity phase this runs with levels already
+/// placed, so each pair is scored by how many level slots it lets the player
+/// skip: a pipe from a near-start node to a far node teleports past every
+/// level on the stretch between them (approximated by route-distance band).
+/// Endpoints are drawn only from HammerBro slots — never levels or forts —
+/// and both are already reachable, so a spare pipe can never strand content;
+/// it only shortcuts. Pairs that skip nothing are still placed (a fall-back
+/// keeps the world at its fixed vanilla pipe count).
+///
+/// Because locks are already placed, every pair is also checked against them:
+/// a pair that would bypass exactly ONE mandatory fortress is the fort-skip
+/// prize and is taken whenever one exists (at most once per world); a pair
+/// that would bypass two or more fortresses, or make the goal reachable with
+/// every lock still closed, is rejected outright.
 // Reason: each argument is a distinct placement input (grid, slots to convert,
-// the pipe list to extend, budget, reserved sprite tiles, start anchor, world,
-// RNG). They don't form a cohesive concept, so bundling adds indirection
-// without clarity — same call shape as `place_pipes`.
+// the pipe list to extend, budget, reserved sprite tiles, locks, anchors,
+// world, RNG). They don't form a cohesive concept, so bundling adds
+// indirection without clarity — same call shape as `place_pipes`.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn place_spare_pipes<R: Rng>(
     grid: &mut Grid,
@@ -290,7 +296,9 @@ pub(super) fn place_spare_pipes<R: Rng>(
     pipe_pairs: &mut Vec<TeleportEdge>,
     spare_needed: usize,
     reserved: &HashSet<(usize, usize)>,
+    locks: &[LockAssignment],
     start_pos: Option<(usize, usize)>,
+    target_pos: Option<(usize, usize)>,
     world_idx: usize,
     rng: &mut R,
 ) {
@@ -298,13 +306,30 @@ pub(super) fn place_spare_pipes<R: Rng>(
         return;
     }
 
+    // Rows 7 and 8 share a Map_Completions bit, and a pipe is
+    // completion-relevant — the same engine bug `place_locks` guards against.
+    // Locks no longer see future spare pipes, so the exclusion runs this way
+    // instead: never convert a slot whose row-7/8 partner column holds a lock.
+    let lock_row78_conflicts: HashSet<(usize, usize)> = locks
+        .iter()
+        .filter_map(|l| match l.pos.0 {
+            7 => Some((8, l.pos.1)),
+            8 => Some((7, l.pos.1)),
+            _ => None,
+        })
+        .collect();
+
     // Convertible endpoints: HammerBro filler slots, minus any reserved
     // (mandatory HB sprite) positions that must keep their sprite. Kept as an
     // ordered Vec (slot order) — candidate order feeds softmax sampling, so it
     // must be deterministic across runs, unlike HashSet iteration.
     let mut available: Vec<(usize, usize)> = slots
         .iter()
-        .filter(|s| s.kind == SlotKind::HammerBro && !reserved.contains(&s.pos))
+        .filter(|s| {
+            s.kind == SlotKind::HammerBro
+                && !reserved.contains(&s.pos)
+                && !lock_row78_conflicts.contains(&s.pos)
+        })
         .map(|s| s.pos)
         .collect();
 
@@ -313,6 +338,9 @@ pub(super) fn place_spare_pipes<R: Rng>(
         .filter(|s| s.kind == SlotKind::Level)
         .map(|s| s.pos)
         .collect();
+
+    // At most one fort skip per world — the prize stays special.
+    let mut fort_skip_placed = false;
 
     for _ in 0..spare_needed {
         if available.len() < 2 {
@@ -326,9 +354,52 @@ pub(super) fn place_spare_pipes<R: Rng>(
             .filter_map(|p| dist.get(p).copied())
             .collect();
 
+        // Per-lock start-side / goal-side components with that lock closed
+        // and every other lock open (the progression state in which beating
+        // that fort is the player's obstacle). A candidate pipe whose
+        // endpoints straddle the two components makes the fort optional.
+        // Only locks that actually gate the goal in that state count —
+        // decoy/safe locks yield None and are skipped.
+        let mut stamped = grid.clone();
+        stamp_slots(&mut stamped, slots);
+        let split_components = |g: &Grid| -> Option<(HashSet<Pos>, HashSet<Pos>)> {
+            let tp = target_pos?;
+            let comp_start = walk_map(g, pipe_pairs, start_pos, world_idx).nodes;
+            if comp_start.contains(&tp) {
+                return None; // goal reachable in this state — nothing to bypass
+            }
+            let comp_target = walk_map(g, pipe_pairs, Some(tp), world_idx).nodes;
+            Some((comp_start, comp_target))
+        };
+        let lock_components: Vec<(HashSet<Pos>, HashSet<Pos>)> = locks
+            .iter()
+            .filter_map(|l| {
+                let mut g = stamped.clone();
+                g.set(l.pos.0, l.pos.1, l.gap_tile);
+                split_components(&g)
+            })
+            .collect();
+        // All-locks-closed split: a pipe straddling THIS one makes the goal
+        // reachable with zero forts beaten — always rejected.
+        let all_closed_components = {
+            let mut g = stamped.clone();
+            for l in locks {
+                g.set(l.pos.0, l.pos.1, l.gap_tile);
+            }
+            split_components(&g)
+        };
+        let straddles = |(cs, ct): &(HashSet<Pos>, HashSet<Pos>), a: Pos, b: Pos| {
+            (cs.contains(&a) && ct.contains(&b)) || (cs.contains(&b) && ct.contains(&a))
+        };
+
         let avail = &available;
-        // (pair, skipped levels, jump distance) for every pair that hops >=2.
+        // Level-skip candidates: (pair, skipped levels, jump distance) for
+        // every non-rejected pair that hops >=2 and bypasses no fort.
         let mut candidates: Vec<(TeleportEdge, usize, usize)> = Vec::new();
+        // Fort-skip candidates: pairs that bypass exactly one mandatory fort.
+        let mut fort_candidates: Vec<(TeleportEdge, f64)> = Vec::new();
+        // Most distance-separated non-rejected pair, the last-resort pick.
+        let mut widest: Option<(TeleportEdge, usize)> = None;
         for i in 0..avail.len() {
             for j in (i + 1)..avail.len() {
                 let a = avail[i];
@@ -337,65 +408,72 @@ pub(super) fn place_spare_pipes<R: Rng>(
                     (Some(&da), Some(&db)) => (da, db),
                     _ => continue,
                 };
-                let (lo, hi) = (da.min(db), da.max(db));
-                if hi - lo < 2 {
-                    continue; // too small a jump to be a real shortcut
+                let bypassed = lock_components.iter().filter(|c| straddles(c, a, b)).count();
+                let opens_goal = all_closed_components
+                    .as_ref()
+                    .is_some_and(|c| straddles(c, a, b));
+                if opens_goal || bypassed >= 2 || (bypassed == 1 && fort_skip_placed) {
+                    continue;
                 }
+                let (lo, hi) = (da.min(db), da.max(db));
                 // Levels whose route distance sits strictly between the two
                 // endpoints are the ones the teleport lets the player skip.
                 let skipped = level_d.iter().filter(|&&d| d > lo && d < hi).count();
-                candidates.push(((a, b), skipped, hi - lo));
+                if bypassed == 1 {
+                    fort_candidates.push(((a, b), skipped as f64 * 10.0 + (hi - lo) as f64));
+                    continue;
+                }
+                if hi - lo >= 2 {
+                    candidates.push(((a, b), skipped, hi - lo));
+                }
+                if widest.is_none_or(|(_, wj)| hi - lo > wj) {
+                    widest = Some(((a, b), hi - lo));
+                }
             }
         }
 
-        // Roll this pipe's skip cap from the weighted distribution.
-        let cap = {
-            let total: f64 = SPARE_CAP_WEIGHTS.iter().sum();
-            let mut roll = rng.random_range(0.0..total);
-            let mut c = SPARE_CAP_WEIGHTS.len();
-            for (i, w) in SPARE_CAP_WEIGHTS.iter().enumerate() {
-                roll -= w;
-                if roll <= 0.0 {
-                    c = i + 1;
-                    break;
-                }
-            }
-            c
-        };
-
-        // Greedily take the biggest skip within the cap (softmax breaks near
-        // ties). If every shortcut skips more than the cap, take the smallest
-        // one (least overshoot) so the pipe still stays as modest as possible.
-        let within: Vec<(TeleportEdge, f64)> = candidates
-            .iter()
-            .filter(|&&(_, s, _)| (1..=cap).contains(&s))
-            .map(|&(p, s, j)| (p, s as f64 * 10.0 + j as f64))
-            .collect();
-        let chosen = pick_softmax_by_score(within, PIPE_SOFTMAX_T, rng).or_else(|| {
-            candidates
-                .iter()
-                .filter(|&&(_, s, _)| s >= 1)
-                .min_by_key(|&&(_, s, _)| s)
-                .map(|&(p, _, _)| p)
-        });
-
-        // Fall back to the most distance-separated pair if nothing qualified, so
-        // the world still reaches its fixed vanilla pipe count.
-        let chosen = chosen.or_else(|| {
-            let mut best: Option<(TeleportEdge, usize)> = None;
-            for i in 0..avail.len() {
-                for j in (i + 1)..avail.len() {
-                    let (a, b) = (avail[i], avail[j]);
-                    if let (Some(&da), Some(&db)) = (dist.get(&a), dist.get(&b)) {
-                        let jump = da.abs_diff(db);
-                        if best.is_none_or(|(_, bj)| jump > bj) {
-                            best = Some(((a, b), jump));
-                        }
+        // A fort skip is the prize: take one whenever it exists (softmax
+        // breaks ties toward the pair that also skips the most levels).
+        let chosen = if !fort_candidates.is_empty() {
+            fort_skip_placed = true;
+            pick_softmax_by_score(fort_candidates, PIPE_SOFTMAX_T, rng)
+        } else {
+            // Roll this pipe's skip cap from the weighted distribution.
+            let cap = {
+                let total: f64 = SPARE_CAP_WEIGHTS.iter().sum();
+                let mut roll = rng.random_range(0.0..total);
+                let mut c = SPARE_CAP_WEIGHTS.len();
+                for (i, w) in SPARE_CAP_WEIGHTS.iter().enumerate() {
+                    roll -= w;
+                    if roll <= 0.0 {
+                        c = i + 1;
+                        break;
                     }
                 }
-            }
-            best.map(|(pair, _)| pair)
-        });
+                c
+            };
+
+            // Greedily take the biggest skip within the cap (softmax breaks
+            // near ties). If every shortcut skips more than the cap, take the
+            // smallest one (least overshoot) so the pipe still stays as modest
+            // as possible. Fall back to the most distance-separated pair if
+            // nothing qualified, so the world still reaches its fixed vanilla
+            // pipe count.
+            let within: Vec<(TeleportEdge, f64)> = candidates
+                .iter()
+                .filter(|&&(_, s, _)| (1..=cap).contains(&s))
+                .map(|&(p, s, j)| (p, s as f64 * 10.0 + j as f64))
+                .collect();
+            pick_softmax_by_score(within, PIPE_SOFTMAX_T, rng)
+                .or_else(|| {
+                    candidates
+                        .iter()
+                        .filter(|&&(_, s, _)| s >= 1)
+                        .min_by_key(|&&(_, s, _)| s)
+                        .map(|&(p, _, _)| p)
+                })
+                .or_else(|| widest.map(|(pair, _)| pair))
+        };
 
         let (a, b) = match chosen {
             Some(pair) => pair,

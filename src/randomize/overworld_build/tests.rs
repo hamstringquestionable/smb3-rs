@@ -594,11 +594,11 @@ fn least_levels_from(
     dist
 }
 
-/// Baseline pipe diagnostics: per-world pipe-pair counts, how many levels the
-/// pipe set shaves off the least-levels path to the goal (the "level skip"
-/// value), and how often a pipe already makes an otherwise-mandatory fort
-/// optional (the "fort skip" — expected ~0 on current code, since spare pipes
-/// are placed before locks and `place_locks` gates around them). Run with:
+/// Pipe diagnostics: per-world pipe-pair counts, how many levels the pipe set
+/// shaves off the least-levels path to the goal (the "level skip" value), and
+/// how often a pipe makes an otherwise-mandatory fort optional (the "fort
+/// skip"). Baseline before the lock-aware spare-pipe pass was ~0 fort skips
+/// (2026-07: 1 of 3735 forts); the fort-skip pass should raise it. Run with:
 ///   cargo test --lib pipe_metrics -- --ignored --nocapture
 #[test]
 #[ignore]

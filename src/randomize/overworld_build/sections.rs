@@ -151,23 +151,9 @@ pub(super) fn build_world<R: Rng>(
         slots = kept;
     }
 
-    // Step 3.5: Spare pipes. Now that levels are placed, fill the remaining
-    // pipe budget by converting HammerBro filler slots into pipe endpoints
-    // aimed to skip levels. Runs before locks so `place_locks` accounts for
-    // every pipe (a post-lock pipe could otherwise teleport across a lock).
-    let spare_needed = pipe_pair_count.saturating_sub(pipe_pairs.len());
-    place_spare_pipes(
-        &mut grid,
-        &mut slots,
-        &mut pipe_pairs,
-        spare_needed,
-        &hb_sprite_positions,
-        start_pos,
-        world_idx,
-        rng,
-    );
-
-    // Step 4: Lock placement
+    // Step 4: Lock placement. Runs BEFORE the spare-pipe pass so locks are
+    // placed on pure geography (connectivity pipes only) — the spare pipes
+    // below may then deliberately bridge across ONE of them (a fort skip).
     let locks = place_locks(
         &grid,
         &pipe_pairs,
@@ -177,6 +163,26 @@ pub(super) fn build_world<R: Rng>(
         fort_count,
         roles,
         force_safe,
+        world_idx,
+        rng,
+    );
+
+    // Step 4.5: Spare pipes. Now that levels AND locks exist, fill the
+    // remaining pipe budget by converting HammerBro filler slots into pipe
+    // endpoints. Each pair is scored lock-aware: at most one pair per world
+    // may bypass a single mandatory fortress (the fort-skip prize); pairs
+    // that would bypass 2+ forts or open the goal outright are rejected;
+    // the rest aim to skip levels as before.
+    let spare_needed = pipe_pair_count.saturating_sub(pipe_pairs.len());
+    place_spare_pipes(
+        &mut grid,
+        &mut slots,
+        &mut pipe_pairs,
+        spare_needed,
+        &hb_sprite_positions,
+        &locks,
+        start_pos,
+        target_pos,
         world_idx,
         rng,
     );
