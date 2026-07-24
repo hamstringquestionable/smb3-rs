@@ -24,20 +24,30 @@ fn shannon_entropy<'a>(counts: impl IntoIterator<Item = &'a u32>, total: f64) ->
         .sum()
 }
 
+/// Load the test ROM with the always-on pre-builder QoL patches applied —
+/// the same map state production hands the builder. Diagnostics measured on
+/// the raw ROM lie about connectivity: e.g. W2's secret-path rock (row 0)
+/// walls off a pocket that production opens, turning W2's only pipe pair
+/// into an island bridge in tests while production gets a spare pipe.
 fn load_rom() -> Option<Rom> {
     let data = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
-    Rom::from_bytes(&data).ok()
+    let rom = Rom::from_bytes(&data).ok()?;
+    Some(apply_qol_for_overworld(&rom))
 }
 
 /// Apply the QoL patches that the real pipeline runs before the overworld
-/// builder (`randomizer.rs` ~L657-670). These mutate the world-map grid —
-/// rocks blocking pipe shortcuts, W3 drawbridge tiles, big-Q rooms — so
-/// the catalog must see the post-patch state, not vanilla.
+/// builder (`randomizer.rs` pre-build block). These mutate the world-map
+/// grid — rocks blocking pipe shortcuts, W3 drawbridge tiles, big-Q rooms,
+/// the always-on W8 screen-3 water/bridge page — so the catalog must see
+/// the post-patch state, not vanilla. (The W8 canoe edits are gated behind
+/// `8s are Wild` and are NOT applied here.) Idempotent: `load_rom` already
+/// applies it; explicit callers just re-write the same bytes.
 fn apply_qol_for_overworld(rom: &Rom) -> Rom {
     let mut out = rom.clone();
     super::super::qol::fix_w3_drawbridges(&mut out);
     super::super::qol::remove_rocks(&mut out);
     super::super::qol::fix_big_q_block_rooms(&mut out);
+    super::super::qol::apply_w8_bridges(&mut out);
     out
 }
 
