@@ -21,6 +21,10 @@ deploys.
   optional (a free "fort skip" shortcut for players who find it). Pipes that
   would bypass two or more fortresses, or reach the goal with every lock still
   closed, are never placed.
+- Fortress choice-forks no longer have a tell: the fort that really opens the
+  way forward is now equally likely to be any of the forked forts. Previously
+  it was almost always the farthest one to reach, so "always pick the far
+  fort" beat the choice 70% of the time.
 
 ### Added
 
