@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::rom::Rom;
 
 use super::rom_data::{
-    self, BACKGROUND_TILES, VALID_HORZ, VALID_VERT,
+    self, BACKGROUND_TILES, TILE_AIRSHIP, TILE_BOWSER, VALID_HORZ, VALID_VERT,
     Grid, TeleportEdge,
 };
 
@@ -167,6 +167,21 @@ fn walk_from(
 
     while let Some((r, c)) = queue.pop_front() {
         edges.entry((r, c)).or_default();
+
+        // The airship/Bowser target blocks through-movement until completed —
+        // and completing it ends the world — so the player can never pass
+        // THROUGH it. Model it as enterable but not exitable (a sink): the
+        // region behind the target is a separate island to every walk, which
+        // is what the game actually plays like (and what lets the pipe
+        // connectivity phase serve that region its own access). Exception:
+        // when the walk STARTS on the target, expansion stays enabled — a
+        // from-target walk asks "which nodes can reach me", and since every
+        // other edge is symmetric, expanding out of the sink source keeps
+        // that meaning intact.
+        let tile_here = grid.get(r, c);
+        if (tile_here == TILE_AIRSHIP || tile_here == TILE_BOWSER) && (r, c) != start {
+            continue;
+        }
 
         // Orthogonal movement: node → path tile → node (2 tiles)
         for &(dr, dc, is_horz) in &DIRECTIONS {

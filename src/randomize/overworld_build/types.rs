@@ -121,6 +121,11 @@ pub(crate) struct BuiltWorld {
     /// Redistributed wandering Hammer Bro sprites for this world. Empty when
     /// `shuffle_hammer_bros` is off (the writer keeps the vanilla sprites).
     pub hb_sprites: Vec<HbSprite>,
+    /// The plan this world was built from — sampled intent, kept for the
+    /// diagnostics/census tests to compare against realized topology. The
+    /// force_safe retry overwrites it with the all-Safe plan it actually
+    /// used, so this field is always truthful.
+    pub plan: super::plan::WorldPlan,
 }
 
 /// Complete Phase 3 output.

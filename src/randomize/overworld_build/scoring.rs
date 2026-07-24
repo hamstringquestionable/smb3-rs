@@ -1,6 +1,12 @@
 //! Candidate scoring: softmax sampling and the per-placement weight functions.
+//!
+//! Every tunable weight lives in the `plan` knob structs (`SpreadScoring`,
+//! `LevelScoring`, `FortScoring`, `LockScoring`, `PipeScoring`) — this module
+//! only holds the scoring *mechanics* and fixed geometry facts.
 
 use super::*;
+
+use super::plan::{FortScoring, LevelScoring, SpreadScoring};
 
 /// Sample a candidate weighted by softmax(score / temperature). Higher
 /// temperature flattens the distribution (more random); lower temperature
@@ -44,8 +50,6 @@ pub(super) const FORTRESS_BONUS_POSITIONS: &[(usize, (usize, usize))] = &[
     (2, (3, 28)), // W3 canoe island
 ];
 
-pub(super) const FORTRESS_BONUS: f64 = 0.5;
-
 /// Total vanilla levels across all worlds (62 Level entries in the catalog).
 pub(super) const VANILLA_LEVEL_COUNT: usize = 62;
 
@@ -86,22 +90,16 @@ pub(super) fn is_row78_conflict(
     }
 }
 
-// Shared spread/density weights (used by level, fortress, and pipe scoring).
-const W_MANHATTAN: f64 = 1.0;    // visual/spatial spread
-const W_BFS: f64 = 1.5;          // traversal spread (weighted higher than grid distance)
-const W_DENSITY: f64 = 3.0;      // penalty per nearby occupied tile
-const DENSITY_RADIUS: usize = 4; // combined manhattan+BFS distance threshold
-const SEP_CAP: f64 = 8.0;        // max separation contribution per metric
-
 /// Shared spread/density quantities of `pos` relative to a set of reference
 /// positions: (min manhattan distance, min BFS-distance difference, count of
-/// reference positions within DENSITY_RADIUS). The min values are
+/// reference positions within `density_radius`). The min values are
 /// `usize::MAX` / `None` when they can't be computed (empty set / no BFS
 /// data) — callers apply their own fallbacks.
 fn spread_and_density(
     pos: (usize, usize),
     others: &HashSet<(usize, usize)>,
     bfs_distances: &HashMap<(usize, usize), usize>,
+    density_radius: usize,
 ) -> (usize, Option<usize>, usize) {
     let (r, c) = pos;
     let my_bfs = bfs_distances.get(&pos).copied().unwrap_or(0);
@@ -126,7 +124,7 @@ fn spread_and_density(
                 .get(&(cr, cc))
                 .map(|&d| my_bfs.abs_diff(d))
                 .unwrap_or(manhattan);
-            manhattan.max(bfs_diff) <= DENSITY_RADIUS
+            manhattan.max(bfs_diff) <= density_radius
         })
         .count();
 
@@ -139,35 +137,21 @@ pub(super) fn score_with_weights(
     pos: (usize, usize),
     completable: &HashSet<(usize, usize)>,
     bfs_distances: &HashMap<(usize, usize), usize>,
+    spread: &SpreadScoring,
     dead_end_bonus_value: f64,
 ) -> f64 {
     let (min_manhattan, min_bfs_diff, nearby) =
-        spread_and_density(pos, completable, bfs_distances);
+        spread_and_density(pos, completable, bfs_distances, spread.density_radius);
     let min_bfs_diff = min_bfs_diff.unwrap_or(usize::MAX);
 
-    let manhattan_score = (min_manhattan as f64).min(SEP_CAP) * W_MANHATTAN;
-    let bfs_score = (min_bfs_diff as f64).min(SEP_CAP) * W_BFS;
-    let density_penalty = nearby as f64 * W_DENSITY;
+    let manhattan_score = (min_manhattan as f64).min(spread.separation_cap) * spread.manhattan;
+    let bfs_score = (min_bfs_diff as f64).min(spread.separation_cap) * spread.bfs;
+    let density_penalty = nearby as f64 * spread.density_penalty;
 
     let dead_end_bonus = if is_dead_end(grid, pos) { dead_end_bonus_value } else { 0.0 };
 
     manhattan_score + bfs_score + dead_end_bonus - density_penalty
 }
-
-/// Path relevance: max detour (in BFS hops) that still earns a bonus.
-pub(super) const PATH_DETOUR_CAP: f64 = 6.0;
-
-/// Path relevance weight. Max bonus = PATH_DETOUR_CAP * W_PATH = 4.5.
-/// Lowered from 1.5 → 0.75 to cut back-to-back forced-level streaks: the route
-/// bias was gluing levels onto the start→target trunk, which was the dominant
-/// driver of overworld linearity (mean forced-level streak ~2.1, well above
-/// the reference SMB3 randomizer's ~1.8). A W_PATH sweep via
-/// test_required_progression's linearity block: 1.5→streak 2.12, 1.0→1.89,
-/// 0.75→1.79 (≈ reference), 0.5→1.70, 0.0→1.34 (overshoots and thins the
-/// required route too much). 0.75 keeps a meaningful route bias while landing
-/// streak at the reference level. (History: 3.0 dominated and clumped hard;
-/// 0.5 was once considered "decorative" at the old weightings.)
-pub(super) const W_PATH: f64 = 0.75;
 
 /// Score a candidate position for level placement. Higher = better.
 /// Includes a path relevance bonus: positions on the main start→target
@@ -179,8 +163,11 @@ pub(super) fn score_candidate(
     bfs_distances: &HashMap<(usize, usize), usize>,
     reverse_bfs: &HashMap<(usize, usize), usize>,
     target_bfs_dist: Option<usize>,
+    knobs: &LevelScoring,
 ) -> f64 {
-    let base = score_with_weights(grid, pos, completable, bfs_distances, 0.5);
+    let base = score_with_weights(
+        grid, pos, completable, bfs_distances, &knobs.spread, knobs.dead_end_bonus,
+    );
 
     // Path relevance: detour = dist(start→pos) + dist(pos→target) - dist(start→target).
     // Zero detour = perfectly on the shortest path. Higher detour = side branch.
@@ -188,7 +175,8 @@ pub(super) fn score_candidate(
         (Some(target_dist), Some(&rev_d)) => {
             let fwd_d = bfs_distances.get(&pos).copied().unwrap_or(0);
             let detour = (fwd_d + rev_d).saturating_sub(target_dist);
-            (PATH_DETOUR_CAP - (detour as f64).min(PATH_DETOUR_CAP)) * W_PATH
+            (knobs.path_detour_cap - (detour as f64).min(knobs.path_detour_cap))
+                * knobs.path_bonus
         }
         _ => 0.0,
     };
@@ -197,33 +185,23 @@ pub(super) fn score_candidate(
 }
 
 /// Score a candidate position for fortress placement. Higher = better.
-/// Fortresses get a larger dead-end bonus (+5.0) since they naturally
-/// belong at path termini, plus a bonus for designated island positions.
+/// Fortresses get a larger dead-end bonus since they naturally belong at
+/// path termini, plus a bonus for designated island positions.
 pub(super) fn score_fortress_candidate(
     grid: &Grid,
     pos: (usize, usize),
     completable: &HashSet<(usize, usize)>,
     bfs_distances: &HashMap<(usize, usize), usize>,
     world_idx: usize,
+    knobs: &FortScoring,
 ) -> f64 {
-    let base = score_with_weights(grid, pos, completable, bfs_distances, 5.0);
+    let base = score_with_weights(
+        grid, pos, completable, bfs_distances, &knobs.spread, knobs.dead_end_bonus,
+    );
     let island_bonus = if FORTRESS_BONUS_POSITIONS.iter().any(|&(wi, p)| wi == world_idx && p == pos) {
-        FORTRESS_BONUS
+        knobs.island_bonus
     } else {
         0.0
     };
     base + island_bonus
 }
-
-/// Max manhattan distance for pipe frontier-proximity normalization (used by
-/// the connectivity build-outward scoring in `place_pipes`).
-pub(super) const TARGET_MAX_DIST: f64 = 20.0;
-
-/// Softmax temperature for pipe placement. Higher = more random, lower =
-/// more concentrated on top-scoring candidates. Tuned for typical pipe
-/// score range of ~[-8, +12].
-pub(super) const PIPE_SOFTMAX_T: f64 = 4.0;
-
-/// Softmax temperature for fortress placement. Score range is similar to
-/// pipes (~[-12, +15] including the +5 dead-end bonus).
-pub(super) const FORTRESS_SOFTMAX_T: f64 = 4.0;

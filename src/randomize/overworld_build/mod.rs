@@ -20,6 +20,7 @@ use super::rom_data::{
 };
 
 mod types;
+mod plan;
 mod scoring;
 mod capacity;
 mod sections;
@@ -31,8 +32,9 @@ use capacity::{
     SPADE_BUDGET, assign_hb_sprites, distribute_levels, prepare_capacities, promote_hb_slots,
     redistribute_fortresses,
 };
-use locks::{LockRole, place_locks, sample_lock_plan};
+use locks::place_locks;
 use pipes::VANILLA_PIPE_PAIRS;
+use plan::WorldPlan;
 use scoring::{LEVEL_SPREAD_EXPONENT, VANILLA_LEVEL_COUNT};
 use sections::build_world;
 use types::{CapacityPrep, WorldSlotCounts};
@@ -86,6 +88,14 @@ pub(crate) fn build<R: Rng>(
     // hoarding levels, so the old W6-specific clamp is no longer needed.
     let level_counts = distribute_levels(&capacities, VANILLA_LEVEL_COUNT, LEVEL_SPREAD_EXPONENT, rng);
 
+    // Sample every world's plan up front, then enforce the seed-level
+    // invariant (>=1 Safe role somewhere) before any placement happens —
+    // cheaper and shape-preserving compared to the post-build force_safe
+    // retry, which remains only as a backstop.
+    let mut plans: Vec<WorldPlan> = (0..8)
+        .map(|wi| WorldPlan::sample(fort_counts[wi], wi, rng))
+        .collect();
+    plan::ensure_seed_safe_role(&mut plans, rng);
 
     let mut worlds = Vec::with_capacity(8);
     for wi in 0..8 {
@@ -103,15 +113,13 @@ pub(crate) fn build<R: Rng>(
             max_non_pipe_slots,
             force_safe: false,
         };
-        // Sample this world's progression archetype → per-fort lock roles.
-        let roles = sample_lock_plan(fort_counts[wi], wi, rng);
         let built = build_world(
             wi,
             rom,
             patched_grids[wi].clone(),
             &fixed_positions[wi],
             &counts,
-            &roles,
+            &plans[wi],
             shuffle_hammer_bros,
             rng,
         );
@@ -130,8 +138,8 @@ pub(crate) fn build<R: Rng>(
             let start_pos = rom_data::find_start(&built.grid);
             let target_pos = find_target(&built.grid, wi);
             // Retry aims only to surface a secret-exit-safe lock, so ask for
-            // all-Safe roles (matches force_safe) rather than the world's shape.
-            let safe_roles = vec![LockRole::Safe; fort_counts[wi]];
+            // an all-Safe plan (matches force_safe) rather than the world's shape.
+            let safe_plan = WorldPlan::all_safe(fort_counts[wi]);
             let new_locks = place_locks(
                 &built.grid,
                 &built.pipe_pairs,
@@ -139,13 +147,16 @@ pub(crate) fn build<R: Rng>(
                 target_pos,
                 &built.slots,
                 fort_counts[wi],
-                &safe_roles,
+                &safe_plan,
                 true, // force_safe
                 wi,
                 rng,
             );
             if new_locks.iter().any(|l| l.secret_exit_safe) {
                 worlds[wi].locks = new_locks;
+                // Keep the stored plan truthful for diagnostics — this world
+                // is now all-Safe, whatever it originally sampled.
+                worlds[wi].plan = safe_plan;
                 break;
             }
         }

@@ -2,119 +2,13 @@
 
 use super::*;
 
+use super::plan::{LockRole, WorldPlan};
 use super::types::{BuildResult, LockAssignment, SlotAssignment, SlotKind, stamp_slots};
 
 /// The five always-on W8 screen-3 bridges (see `qol::overworld_map`'s
 /// `W8_BRIDGE_EDITS`). Locking one gaps it out as water until its fortress is
 /// beaten — a deliberate showcase, so the lock scorer nudges toward them.
 const W8_BRIDGE_LOCK_POSITIONS: &[(usize, usize)] = &[(5, 51), (5, 53), (5, 55), (5, 57), (5, 59)];
-
-/// Score bonus for locking a W8 showcase bridge. Sized to noticeably raise how
-/// often a bridge is chosen without overriding the `blocks_later_fort` (+100)
-/// progression signal or the hard reachability rules. Tuned via a 200k-seed
-/// sweep: +8 puts ≥1 bridge out in ~99.6% of seeds, two out in ~30%, and all
-/// four (the ceiling — W8 has 4 forts = 4 locks) out in ~0.08% (a rare treat).
-const W8_BRIDGE_LOCK_BONUS: i32 = 8;
-
-/// The role a fortress's lock plays in the world's progression archetype.
-/// Decided per-world in [`sample_lock_plan`] and consumed by [`place_locks`],
-/// which places each lock to satisfy its role using the shared positional
-/// scorer. See the `fort_topology_archetypes` design notes.
-#[derive(Clone, Debug)]
-pub(super) enum LockRole {
-    /// Lock must gate (make unreachable) every fort section in `targets` — a
-    /// chain link (gate the next fort) or the prefix→fork entrance (gate the
-    /// whole terminal group at once).
-    ChainLink { targets: Vec<usize> },
-    /// Lock must gate the airship/Bowser target while stranding no fortress.
-    GoalGate,
-    /// Lock must gate nothing important (no fort, no target) — the fortress
-    /// stays reachable. Decoy and inert forts.
-    Safe,
-}
-
-/// Weighted per-world archetype sample → per-section lock roles.
-///
-/// - 1 fort: SingleGate (the lone fort gates the goal).
-/// - W8 (dense, 4 forts): 25% Chain / 75% Fork; Fork = chain-2 → 2-way fork.
-/// - other multi-fort worlds: 30% Chain / 30% SingleGate / 40% Fork; a Fork
-///   samples a terminal width `k` (capped at 3, surplus forts chain in front),
-///   so a 3-fort Fork is a 50/50 mix of chain-1→2-fork and a pure 3-way fork.
-pub(super) fn sample_lock_plan<R: Rng>(
-    fort_count: usize,
-    world_idx: usize,
-    rng: &mut R,
-) -> Vec<LockRole> {
-    match fort_count {
-        0 => return Vec::new(),
-        1 => return vec![LockRole::GoalGate],
-        _ => {}
-    }
-
-    enum Arch {
-        Chain,
-        Single,
-        Fork,
-    }
-    let arch = if world_idx == 7 {
-        if rng.random_range(..100u32) < 25 { Arch::Chain } else { Arch::Fork }
-    } else {
-        let r = rng.random_range(..100u32);
-        if r < 30 {
-            Arch::Chain
-        } else if r < 60 {
-            Arch::Single
-        } else {
-            Arch::Fork
-        }
-    };
-
-    match arch {
-        Arch::Chain => (0..fort_count)
-            .map(|i| {
-                if i + 1 < fort_count {
-                    LockRole::ChainLink { targets: vec![i + 1] }
-                } else {
-                    LockRole::GoalGate
-                }
-            })
-            .collect(),
-        Arch::Single => (0..fort_count)
-            .map(|i| if i + 1 == fort_count { LockRole::GoalGate } else { LockRole::Safe })
-            .collect(),
-        Arch::Fork => {
-            // W8 and 2-fort worlds: a plain 2-way fork. 3-fort worlds mix
-            // 50/50 between chain-1 → 2-fork (k=2) and a pure 3-way fork (k=3).
-            let k = if world_idx == 7 || fort_count == 2 {
-                2
-            } else {
-                2 + rng.random_range(..2u32) as usize
-            };
-            fork_roles(fort_count, k)
-        }
-    }
-}
-
-/// Chain the first `n - k` forts, then a `k`-way fork (one GoalGate + `k-1`
-/// Safe decoys). `k` is capped at 3 and at `n`.
-fn fork_roles(n: usize, k: usize) -> Vec<LockRole> {
-    let k = k.min(n).min(3);
-    let prefix = n - k;
-    let mut roles = Vec::with_capacity(n);
-    for i in 0..prefix {
-        let targets = if i + 1 < prefix {
-            vec![i + 1]
-        } else {
-            // Last prefix link opens the whole terminal fork as a unit.
-            (prefix..n).collect()
-        };
-        roles.push(LockRole::ChainLink { targets });
-    }
-    for i in prefix..n {
-        roles.push(if i == n - 1 { LockRole::GoalGate } else { LockRole::Safe });
-    }
-    roles
-}
 
 /// A scored lock candidate tracked during selection.
 #[derive(Clone, Copy)]
@@ -128,7 +22,7 @@ struct ScoredLock {
 }
 
 // Reason: every argument represents a distinct, independent input to lock
-// placement (geometry, slot list, count, safety flag, RNG). No subset
+// placement (geometry, slot list, count, plan, safety flag, RNG). No subset
 // clusters into a meaningful concept — bundling would be a clippy bandage,
 // not a real abstraction.
 #[allow(clippy::too_many_arguments)]
@@ -139,11 +33,13 @@ pub(super) fn place_locks<R: Rng>(
     target_pos: Option<(usize, usize)>,
     slots: &[SlotAssignment],
     fort_count: usize,
-    roles: &[LockRole],
+    plan: &WorldPlan,
     force_safe: bool,
     world_idx: usize,
     rng: &mut R,
 ) -> Vec<LockAssignment> {
+    let knobs = &plan.lock;
+    let roles = &plan.roles;
     let mut locks: Vec<LockAssignment> = Vec::new();
     let mut locked_tiles: HashSet<(usize, usize)> = HashSet::new();
 
@@ -308,38 +204,39 @@ pub(super) fn place_locks<R: Rng>(
                     && !walk.nodes.contains(&s.pos)
             });
             if blocks_later_fort {
-                score += 100;
+                score += knobs.blocks_later_fort_bonus;
             }
 
             // Bonus: blocks the target (airship/bowser) — only credited to
             // the first such lock in the world; subsequent target-blockers
             // would just pile up next to the airship.
             if !target_reachable && !target_already_locked {
-                score += 10;
+                score += knobs.blocks_target_bonus;
             }
 
             // Spread penalty: discourage placing this lock close to any
             // already-placed lock in the world. Falls off linearly with
-            // Manhattan distance, zero past 8 tiles.
+            // Manhattan distance, zero past `spread_radius` tiles.
             if let Some(min_dist) = locks
                 .iter()
                 .map(|l| cand_pos.0.abs_diff(l.pos.0) + cand_pos.1.abs_diff(l.pos.1))
                 .min()
             {
-                score -= (8i32 - min_dist as i32).max(0) * 2;
+                score -= (knobs.spread_radius - min_dist as i32).max(0)
+                    * knobs.spread_penalty_per_tile;
             }
 
             // Slight preference for bridge tiles — water gaps look better
             // than locks on regular path tiles.
             if tile == 0xB3 {
-                score += 1;
+                score += knobs.bridge_bonus;
             }
 
             // W8-specific: bias harder toward the screen-3 showcase bridges so
             // they're gated out more often than raw chokepoint value alone
             // would pick them.
             if world_idx == 7 && W8_BRIDGE_LOCK_POSITIONS.contains(&cand_pos) {
-                score += W8_BRIDGE_LOCK_BONUS;
+                score += knobs.w8_bridge_bonus;
             }
 
             // Track best overall and best safe separately. (A safe lock
@@ -384,7 +281,7 @@ pub(super) fn place_locks<R: Rng>(
         // Prefer safe when forced (retry) or when best score is low —
         // no point picking an impactful lock if there are none.
         let best_score = best.map(|b| b.score).unwrap_or(0);
-        let prefer_safe = force_safe || best_score < 5;
+        let prefer_safe = force_safe || best_score < knobs.weak_lock_threshold;
 
         // Archetype role wins when realizable; otherwise fall back to the
         // unconstrained pick (feasibility fallback — this world's geometry

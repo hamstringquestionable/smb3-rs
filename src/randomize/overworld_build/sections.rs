@@ -2,16 +2,16 @@
 
 use super::*;
 
-use super::locks::{LockRole, place_locks};
+use super::locks::place_locks;
 use super::pipes::{FIXED_PIPE_ENDPOINTS, PIPE_EXCLUDED_POSITIONS, place_pipes, place_spare_pipes};
+use super::plan::WorldPlan;
 use super::scoring::{
-    FORTRESS_SOFTMAX_T, is_row78_conflict, pick_softmax_by_score, score_candidate,
-    score_fortress_candidate,
+    is_row78_conflict, pick_softmax_by_score, score_candidate, score_fortress_candidate,
 };
 use super::types::{BuiltWorld, SlotAssignment, SlotKind, WorldSlotCounts};
 
 // Reason: each arg is a distinct build input (world, rom, grid, fixed slots,
-// budgets, lock roles, HB flag, RNG). No subset forms a cohesive concept worth
+// budgets, world plan, HB flag, RNG). No subset forms a cohesive concept worth
 // a struct — bundling would add indirection without clarifying anything.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_world<R: Rng>(
@@ -20,7 +20,7 @@ pub(super) fn build_world<R: Rng>(
     mut grid: Grid,
     fixed_positions: &HashSet<(usize, usize)>,
     counts: &WorldSlotCounts,
-    roles: &[LockRole],
+    plan: &WorldPlan,
     shuffle_hammer_bros: bool,
     rng: &mut R,
 ) -> BuiltWorld {
@@ -63,6 +63,7 @@ pub(super) fn build_world<R: Rng>(
         target_pos,
         pipe_pair_count,
         &fixed_pipe_eps,
+        &plan.pipe,
         world_idx,
         rng,
     );
@@ -102,7 +103,7 @@ pub(super) fn build_world<R: Rng>(
     let target_bfs_dist = target_pos.and_then(|tp| bfs_distances.get(&tp).copied());
 
     // Step 3: Populate sections
-    let mut slots = populate_sections(&grid, &sections, fort_count, level_count, &pipe_positions, &bfs_distances, &reverse_bfs, target_bfs_dist, world_idx, rng);
+    let mut slots = populate_sections(&grid, &sections, fort_count, level_count, &pipe_positions, &bfs_distances, &reverse_bfs, target_bfs_dist, plan, world_idx, rng);
 
     // Add mandatory HammerBro slots for HB sprite starting positions.
     // These were excluded from find_blank_slots (so levels/forts/pipes
@@ -151,23 +152,9 @@ pub(super) fn build_world<R: Rng>(
         slots = kept;
     }
 
-    // Step 3.5: Spare pipes. Now that levels are placed, fill the remaining
-    // pipe budget by converting HammerBro filler slots into pipe endpoints
-    // aimed to skip levels. Runs before locks so `place_locks` accounts for
-    // every pipe (a post-lock pipe could otherwise teleport across a lock).
-    let spare_needed = pipe_pair_count.saturating_sub(pipe_pairs.len());
-    place_spare_pipes(
-        &mut grid,
-        &mut slots,
-        &mut pipe_pairs,
-        spare_needed,
-        &hb_sprite_positions,
-        start_pos,
-        world_idx,
-        rng,
-    );
-
-    // Step 4: Lock placement
+    // Step 4: Lock placement. Runs BEFORE the spare-pipe pass so locks are
+    // placed on pure geography (connectivity pipes only) — the spare pipes
+    // below may then deliberately bridge across ONE of them (a fort skip).
     let locks = place_locks(
         &grid,
         &pipe_pairs,
@@ -175,8 +162,29 @@ pub(super) fn build_world<R: Rng>(
         target_pos,
         &slots,
         fort_count,
-        roles,
+        plan,
         force_safe,
+        world_idx,
+        rng,
+    );
+
+    // Step 4.5: Spare pipes. Now that levels AND locks exist, fill the
+    // remaining pipe budget by converting HammerBro filler slots into pipe
+    // endpoints. Each pair is scored lock-aware: at most one pair per world
+    // may bypass a single mandatory fortress (the fort-skip prize); pairs
+    // that would bypass 2+ forts or open the goal outright are rejected;
+    // the rest aim to skip levels as before.
+    let spare_needed = pipe_pair_count.saturating_sub(pipe_pairs.len());
+    place_spare_pipes(
+        &mut grid,
+        &mut slots,
+        &mut pipe_pairs,
+        spare_needed,
+        &hb_sprite_positions,
+        &locks,
+        &plan.pipe,
+        start_pos,
+        target_pos,
         world_idx,
         rng,
     );
@@ -190,6 +198,7 @@ pub(super) fn build_world<R: Rng>(
         pipe_pairs,
         // Filled in after the per-world loop when shuffle_hammer_bros is on.
         hb_sprites: Vec::new(),
+        plan: plan.clone(),
     }
 }
 
@@ -364,12 +373,12 @@ pub(super) fn bfs_section(
     sections
 }
 
-// Reason: 10 args is over clippy's 7-arg default. Candidate bundles
+// Reason: 11 args is over clippy's 7-arg default. Candidate bundles
 // investigated (`BfsCtx` for the 3 distance args, reusing `WorldSlotCounts`
 // for the 2 budget args) — none reveals a concept beyond what the inline
 // arg names already convey. Each arg is a distinct input (geometry,
-// sections, budgets, pipe positions, BFS data, world, RNG) and bundling
-// them would add indirection without clarity.
+// sections, budgets, pipe positions, BFS data, plan, world, RNG) and
+// bundling them would add indirection without clarity.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn populate_sections<R: Rng>(
     grid: &Grid,
@@ -380,6 +389,7 @@ pub(super) fn populate_sections<R: Rng>(
     bfs_distances: &HashMap<(usize, usize), usize>,
     reverse_bfs: &HashMap<(usize, usize), usize>,
     target_bfs_dist: Option<usize>,
+    plan: &WorldPlan,
     world_idx: usize,
     rng: &mut R,
 ) -> Vec<SlotAssignment> {
@@ -420,12 +430,12 @@ pub(super) fn populate_sections<R: Rng>(
             .iter()
             .filter(|pos| !is_row78_conflict(**pos, &completable))
             .map(|&pos| {
-                (pos, score_fortress_candidate(grid, pos, &placed_levels_and_forts, bfs_distances, world_idx))
+                (pos, score_fortress_candidate(grid, pos, &placed_levels_and_forts, bfs_distances, world_idx, &plan.fort))
             })
             .collect();
 
         // Sample by softmax; fallback to any section slot if none passed the row78 filter.
-        let pos = pick_softmax_by_score(candidates, FORTRESS_SOFTMAX_T, rng)
+        let pos = pick_softmax_by_score(candidates, plan.fort.softmax_t, rng)
             .unwrap_or_else(|| section[rng.random_range(..section.len())]);
 
         completable.insert(pos);
@@ -462,7 +472,7 @@ pub(super) fn populate_sections<R: Rng>(
             .filter(|(pos, _)| !level_positions.contains(pos))
             .filter(|(pos, _)| !is_row78_conflict(*pos, &completable))
             .map(|&(pos, _)| {
-                let score = score_candidate(grid, pos, &placed_levels_and_forts, bfs_distances, reverse_bfs, target_bfs_dist);
+                let score = score_candidate(grid, pos, &placed_levels_and_forts, bfs_distances, reverse_bfs, target_bfs_dist, &plan.level);
                 (pos, score)
             })
             .max_by(|(_, sa), (_, sb)| sa.partial_cmp(sb).unwrap_or(std::cmp::Ordering::Equal));

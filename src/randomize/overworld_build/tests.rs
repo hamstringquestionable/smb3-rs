@@ -5,6 +5,7 @@ use super::capacity::{
 };
 use super::locks::debug_stamp_rom;
 use super::pipes::VANILLA_PIPE_PAIRS;
+use super::plan::{Archetype, FortSkipPolicy, LockRole};
 use super::scoring::{VANILLA_LEVEL_COUNT, is_dead_end};
 use super::sections::find_blank_slots;
 use super::types::stamp_slots;
@@ -23,20 +24,30 @@ fn shannon_entropy<'a>(counts: impl IntoIterator<Item = &'a u32>, total: f64) ->
         .sum()
 }
 
+/// Load the test ROM with the always-on pre-builder QoL patches applied —
+/// the same map state production hands the builder. Diagnostics measured on
+/// the raw ROM lie about connectivity: e.g. W2's secret-path rock (row 0)
+/// walls off a pocket that production opens, turning W2's only pipe pair
+/// into an island bridge in tests while production gets a spare pipe.
 fn load_rom() -> Option<Rom> {
     let data = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
-    Rom::from_bytes(&data).ok()
+    let rom = Rom::from_bytes(&data).ok()?;
+    Some(apply_qol_for_overworld(&rom))
 }
 
 /// Apply the QoL patches that the real pipeline runs before the overworld
-/// builder (`randomizer.rs` ~L657-670). These mutate the world-map grid —
-/// rocks blocking pipe shortcuts, W3 drawbridge tiles, big-Q rooms — so
-/// the catalog must see the post-patch state, not vanilla.
+/// builder (`randomizer.rs` pre-build block). These mutate the world-map
+/// grid — rocks blocking pipe shortcuts, W3 drawbridge tiles, big-Q rooms,
+/// the always-on W8 screen-3 water/bridge page — so the catalog must see
+/// the post-patch state, not vanilla. (The W8 canoe edits are gated behind
+/// `8s are Wild` and are NOT applied here.) Idempotent: `load_rom` already
+/// applies it; explicit callers just re-write the same bytes.
 fn apply_qol_for_overworld(rom: &Rom) -> Rom {
     let mut out = rom.clone();
     super::super::qol::fix_w3_drawbridges(&mut out);
     super::super::qol::remove_rocks(&mut out);
     super::super::qol::fix_big_q_block_rooms(&mut out);
+    super::super::qol::apply_w8_bridges(&mut out);
     out
 }
 
@@ -592,6 +603,1026 @@ fn least_levels_from(
         }
     }
     dist
+}
+
+/// Pipe diagnostics: per-world pipe-pair counts, how many levels the pipe set
+/// shaves off the least-levels path to the goal (the "level skip" value), and
+/// how often a pipe makes an otherwise-mandatory fort optional (the "fort
+/// skip"). Baseline before the lock-aware spare-pipe pass was ~0 fort skips
+/// (2026-07: 1 of 3735 forts); the fort-skip pass should raise it. Run with:
+///   cargo test --lib pipe_metrics -- --ignored --nocapture
+#[test]
+#[ignore]
+fn pipe_metrics() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
+    const SEEDS: u64 = 1000;
+
+    let mut pairs_hist = [0u64; 12]; // pipe-pair count per world
+    let mut worlds_with_pipes = 0u64;
+    let mut conn_required = 0u64; // goal unreachable on foot (pipes needed for access)
+    let mut shortcut_worlds = 0u64; // goal reachable on foot; pipes are pure shortcuts
+    let mut saved_hist = [0u64; 12]; // levels the pipe set saves (shortcut worlds)
+    let mut skipped_forts = 0u64; // forts mandatory on foot but optional with pipes
+    let mut forts_examined = 0u64; // forts in foot-reachable pipe worlds
+    let mut worlds_fort_skip = 0u64;
+
+    for seed in 0..SEEDS {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
+
+        for built in &result.worlds {
+            let wi = built.world_idx;
+            let mut base = built.grid.clone();
+            stamp_slots(&mut base, &built.slots);
+            let Some(start) = rom_data::find_start(&base) else { continue };
+            let Some(target) = find_target(&base, wi) else { continue };
+
+            let npairs = built.pipe_pairs.len();
+            pairs_hist[npairs.min(11)] += 1;
+            if npairs == 0 {
+                continue;
+            }
+            worlds_with_pipes += 1;
+
+            let blocking: HashSet<Pos> = built
+                .slots
+                .iter()
+                .filter(|s| matches!(s.kind, SlotKind::Level | SlotKind::Fortress))
+                .map(|s| s.pos)
+                .collect();
+
+            // Least-levels to goal with all locks OPEN (pure geography), with the
+            // pipe set vs with no pipes at all.
+            let with = least_levels_from(&base, &built.pipe_pairs, start, wi, &blocking);
+            let without = least_levels_from(&base, &[], start, wi, &blocking);
+            let foot_reachable = without.contains_key(&target);
+            if !foot_reachable {
+                conn_required += 1;
+                continue; // can't separate a pipe "skip" from required access
+            }
+            shortcut_worlds += 1;
+            let saved = without[&target].saturating_sub(*with.get(&target).unwrap_or(&without[&target]));
+            saved_hist[saved.min(11)] += 1;
+
+            // Fort skip: with each lock closed (others open), is the fort
+            // mandatory on foot but bypassed once pipes are included?
+            let all_sections: HashSet<usize> = built.locks.iter().map(|l| l.fort_section).collect();
+            let grid_with = |opened: &HashSet<usize>| -> Grid {
+                let mut g = base.clone();
+                for l in &built.locks {
+                    if opened.contains(&l.fort_section) {
+                        g.set(l.pos.0, l.pos.1, l.replace_tile);
+                    } else {
+                        g.set(l.pos.0, l.pos.1, l.gap_tile);
+                    }
+                }
+                g
+            };
+            let mut world_skips = 0u64;
+            for sec in &all_sections {
+                forts_examined += 1;
+                let mut others = all_sections.clone();
+                others.remove(sec);
+                let g = grid_with(&others);
+                let mand_pipes = !walk_map(&g, &built.pipe_pairs, Some(start), wi).nodes.contains(&target);
+                let mand_foot = !walk_map(&g, &[], Some(start), wi).nodes.contains(&target);
+                if mand_foot && !mand_pipes {
+                    skipped_forts += 1;
+                    world_skips += 1;
+                }
+            }
+            if world_skips >= 1 {
+                worlds_fort_skip += 1;
+            }
+        }
+    }
+
+    eprintln!("\n=== Pipe pairs per world ({SEEDS} seeds, 8000 worlds) ===");
+    let ptot: u64 = pairs_hist.iter().sum();
+    for (n, &c) in pairs_hist.iter().enumerate() {
+        if c == 0 {
+            continue;
+        }
+        let label = if n == 11 { "11+".to_string() } else { n.to_string() };
+        eprintln!("  {label:>3} pairs: {c:6} ({:5.1}%)", 100.0 * c as f64 / ptot as f64);
+    }
+
+    eprintln!("\n=== Level skip (worlds with >=1 pipe: {worlds_with_pipes}) ===");
+    eprintln!("  goal needs pipes for access (connectivity): {conn_required} ({:5.1}%)", 100.0 * conn_required as f64 / worlds_with_pipes as f64);
+    eprintln!("  pipes are pure shortcuts (foot-reachable goal): {shortcut_worlds} ({:5.1}%)", 100.0 * shortcut_worlds as f64 / worlds_with_pipes as f64);
+    eprintln!("  levels saved by the pipe set (shortcut worlds):");
+    let stot: u64 = saved_hist.iter().sum();
+    for (s, &c) in saved_hist.iter().enumerate() {
+        if c == 0 {
+            continue;
+        }
+        let label = if s == 11 { "11+".to_string() } else { s.to_string() };
+        eprintln!("    saves {label:>3}: {c:6} ({:5.1}%)", 100.0 * c as f64 / stot as f64);
+    }
+
+    eprintln!("\n=== Fort skip ({forts_examined} forts in foot-reachable pipe worlds) ===");
+    eprintln!("  forts mandatory on foot but bypassed by a pipe: {skipped_forts} ({:5.2}%)", 100.0 * skipped_forts as f64 / forts_examined.max(1) as f64);
+    eprintln!("  worlds with >=1 pipe-skipped fort: {worlds_fort_skip} ({:5.2}% of pipe worlds)", 100.0 * worlds_fort_skip as f64 / worlds_with_pipes as f64);
+}
+
+/// Per-world topology snapshot for the goal-open probes. Distilled from the
+/// `progression_metrics` logic: same lock-state model (grid holds locks
+/// open; close by stamping gap tiles), same walk_map traversal. (The parked
+/// plan-sweep harness carried richer fields — mandatory/forts_at_start/
+/// fort_skip — restore them from the backup branch when a census consumer
+/// returns.)
+struct WorldTopology {
+    fort_count: usize,
+    /// Rounds of "beat every reachable fort" until the goal opens (with
+    /// pipes). 0 = goal open at start; 99 = infeasible (never observed).
+    depth: usize,
+}
+
+fn world_topology(built: &BuiltWorld) -> Option<WorldTopology> {
+    let wi = built.world_idx;
+    let mut base = built.grid.clone();
+    stamp_slots(&mut base, &built.slots);
+    let start = rom_data::find_start(&base)?;
+    let target = find_target(&base, wi)?;
+    let forts: Vec<(usize, Pos)> = built
+        .slots
+        .iter()
+        .filter(|s| s.kind == SlotKind::Fortress)
+        .map(|s| (s.section, s.pos))
+        .collect();
+    if forts.is_empty() {
+        return None;
+    }
+    let all_secs: HashSet<usize> = built.locks.iter().map(|l| l.fort_section).collect();
+    let grid_with = |opened: &HashSet<usize>| -> Grid {
+        let mut g = base.clone();
+        for l in &built.locks {
+            if opened.contains(&l.fort_section) {
+                g.set(l.pos.0, l.pos.1, l.replace_tile);
+            } else {
+                g.set(l.pos.0, l.pos.1, l.gap_tile);
+            }
+        }
+        g
+    };
+
+    // Chain depth: rounds of beat-all-reachable until the goal opens.
+    let mut opened: HashSet<usize> = HashSet::new();
+    let mut depth = 0usize;
+    loop {
+        let g = grid_with(&opened);
+        let walk = walk_map(&g, &built.pipe_pairs, Some(start), wi);
+        if walk.nodes.contains(&target) {
+            break;
+        }
+        let newly: Vec<usize> = forts
+            .iter()
+            .filter(|(sec, pos)| {
+                walk.nodes.contains(pos) && all_secs.contains(sec) && !opened.contains(sec)
+            })
+            .map(|(sec, _)| *sec)
+            .collect();
+        if newly.is_empty() {
+            depth = 99;
+            break;
+        }
+        opened.extend(newly);
+        depth += 1;
+    }
+
+    Some(WorldTopology { fort_count: forts.len(), depth })
+}
+
+/// TEMP probe: dump full detail for every world where the goal is reachable
+/// with ALL locks closed (the rare "goal open at start" census bucket).
+#[test]
+#[ignore]
+fn goal_open_probe() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
+    for seed in 0..1000u64 {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
+        let hit = result.worlds.iter().any(|b| {
+            world_topology(b).is_some_and(|t| t.fort_count >= 2 && t.depth == 0)
+        });
+        if !hit {
+            continue;
+        }
+        eprintln!("seed {seed}: full-seed picture (goal-open world marked *)");
+        for built in &result.worlds {
+            let t = world_topology(built);
+            let open = t.as_ref().is_some_and(|t| t.fort_count >= 2 && t.depth == 0);
+            let safe_roles = built
+                .plan
+                .roles
+                .iter()
+                .filter(|r| matches!(r, LockRole::Safe))
+                .count();
+            let safe_locks = built.locks.iter().filter(|l| l.secret_exit_safe).count();
+            eprintln!(
+                "  {}W{}: {:?}, forts {}, Safe roles {}, safe locks {}/{}",
+                if open { "*" } else { " " },
+                built.world_idx + 1,
+                built.plan.archetype,
+                built.locks.len(),
+                safe_roles,
+                safe_locks,
+                built.locks.len(),
+            );
+            // For the goal-open world: is the goal gateable AT ALL — does any
+            // single lockable tile, gapped, sever the target (pipes+canoes
+            // considered)?
+            if open {
+                let wi = built.world_idx;
+                let mut base = built.grid.clone();
+                stamp_slots(&mut base, &built.slots);
+                let start = rom_data::find_start(&base).unwrap();
+                let target = find_target(&base, wi).unwrap();
+                let mut gateable = 0usize;
+                for r in 0..base.rows() {
+                    for c in 0..base.cols {
+                        let tile = base.get(r, c);
+                        if !LOCKABLE_TILES.contains(&tile) {
+                            continue;
+                        }
+                        let mut g = base.clone();
+                        g.set(r, c, gap_tile_for(tile));
+                        if !walk_map(&g, &built.pipe_pairs, Some(start), wi)
+                            .nodes
+                            .contains(&target)
+                        {
+                            gateable += 1;
+                        }
+                    }
+                }
+                eprintln!(
+                    "     -> single-lock-gateable candidate tiles for the goal: {gateable}"
+                );
+            }
+        }
+    }
+}
+
+/// How close do goal-blocking locks sit to the goal, and how much deeper
+/// COULD they sit if forts weren't in the way? For every world with a
+/// realized target-blocking lock: its Manhattan distance to the target and
+/// its gated-node count, vs the deepest fort-free severing tile available
+/// on that map (the placement headroom). Answers "are doorstep gates a
+/// lock-scoring problem or a fort-placement problem?"
+#[test]
+#[ignore]
+fn goal_gate_depth_probe() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
+    let mut dist_hist = [0usize; 12]; // Manhattan distance, last bucket = 11+
+    let mut chosen_gated: Vec<usize> = Vec::new();
+    let mut best_gated: Vec<usize> = Vec::new();
+    let mut at_headroom = 0usize; // chosen gate is within 2 nodes of best available
+    let mut worlds_with_gate = 0usize;
+    for seed in 0..300u64 {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
+        for built in &result.worlds {
+            let wi = built.world_idx;
+            let Some(gate) = built.locks.iter().find(|l| l.blocks_target) else {
+                continue;
+            };
+            let mut base = built.grid.clone();
+            stamp_slots(&mut base, &built.slots);
+            let start = rom_data::find_start(&base);
+            let Some(target) = find_target(&base, wi) else { continue };
+            worlds_with_gate += 1;
+
+            let d = gate.pos.0.abs_diff(target.0) + gate.pos.1.abs_diff(target.1);
+            dist_hist[d.min(11)] += 1;
+
+            let open_nodes = walk_map(&base, &built.pipe_pairs, start, wi).nodes;
+            let forts: Vec<(usize, usize)> = built
+                .slots
+                .iter()
+                .filter(|s| s.kind == SlotKind::Fortress)
+                .map(|s| s.pos)
+                .collect();
+
+            // Chosen gate's gated-node count.
+            let mut g = base.clone();
+            g.set(gate.pos.0, gate.pos.1, gate.gap_tile);
+            let chosen =
+                open_nodes.len() - walk_map(&g, &built.pipe_pairs, start, wi).nodes.len();
+            chosen_gated.push(chosen);
+
+            // Deepest fort-free severing tile available on this map.
+            let mut best = 0usize;
+            for r in 0..base.rows() {
+                for c in 0..base.cols {
+                    let tile = base.get(r, c);
+                    if !LOCKABLE_TILES.contains(&tile) {
+                        continue;
+                    }
+                    let mut g2 = base.clone();
+                    g2.set(r, c, gap_tile_for(tile));
+                    let walk = walk_map(&g2, &built.pipe_pairs, start, wi);
+                    if walk.nodes.contains(&target) {
+                        continue;
+                    }
+                    if forts.iter().any(|f| !walk.nodes.contains(f)) {
+                        continue; // strands a fort — not usable headroom
+                    }
+                    best = best.max(open_nodes.len() - walk.nodes.len());
+                }
+            }
+            best_gated.push(best);
+            if chosen + 2 >= best {
+                at_headroom += 1;
+            }
+        }
+    }
+    eprintln!("\n=== goal_gate_depth_probe (300 seeds, {worlds_with_gate} gated worlds) ===");
+    eprint!("  gate->target Manhattan dist: ");
+    for (d, n) in dist_hist.iter().enumerate() {
+        if *n > 0 {
+            eprint!("{}{}={} ", if d == 11 { "≥" } else { "" }, d, n);
+        }
+    }
+    let mean = |v: &Vec<usize>| v.iter().sum::<usize>() as f64 / v.len().max(1) as f64;
+    eprintln!(
+        "\n  doorstep gates (dist <=2): {} ({:.1}%)",
+        dist_hist[..3].iter().sum::<usize>(),
+        100.0 * dist_hist[..3].iter().sum::<usize>() as f64 / worlds_with_gate as f64
+    );
+    eprintln!(
+        "  gated nodes: chosen mean {:.1} vs best-available (fort-free) mean {:.1}; chosen within 2 of best: {} ({:.1}%)",
+        mean(&chosen_gated),
+        mean(&best_gated),
+        at_headroom,
+        100.0 * at_headroom as f64 / worlds_with_gate as f64
+    );
+}
+
+/// Rule-aware dissect of SAS goal-open worlds: the rule-blind scan says the
+/// goal IS single-lock gateable (3-10 severing tiles), yet place_locks ends
+/// all-safe. For each severing tile, report WHICH lock rule refuses it:
+/// row-7/8 completion-bit exclusion, rule 1 (strands its own section's
+/// fort), rule 2 (strands an earlier section's fort), or GoalGate role
+/// rejection (strands any fort). Run with SAS=1.
+#[test]
+#[ignore]
+fn w7_sas_rule_dissect() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
+    let mut dissected = 0usize;
+    for seed in 0..1000u64 {
+        if dissected >= 5 {
+            break;
+        }
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
+        for built in &result.worlds {
+            let open = world_topology(built).is_some_and(|t| t.fort_count >= 2 && t.depth == 0);
+            if !open {
+                continue;
+            }
+            dissected += 1;
+            let wi = built.world_idx;
+            let mut base = built.grid.clone();
+            stamp_slots(&mut base, &built.slots);
+            let start = rom_data::find_start(&base);
+            let target = find_target(&base, wi).unwrap();
+
+            // Fort positions by section, ordered.
+            let forts: Vec<(usize, (usize, usize))> = {
+                let mut f: Vec<(usize, (usize, usize))> = built
+                    .slots
+                    .iter()
+                    .filter(|s| s.kind == SlotKind::Fortress)
+                    .map(|s| (s.section, s.pos))
+                    .collect();
+                f.sort();
+                f
+            };
+            eprintln!(
+                "\nseed {seed} W{}: {:?}, forts {:?}, roles {:?}",
+                wi + 1,
+                built.plan.archetype,
+                forts,
+                built.plan.roles,
+            );
+            for l in &built.locks {
+                eprintln!(
+                    "  placed lock: sec {} at {:?} safe={} blocks_target={}",
+                    l.fort_section, l.pos, l.secret_exit_safe, l.blocks_target
+                );
+            }
+
+            for r in 0..base.rows() {
+                for c in 0..base.cols {
+                    let tile = base.get(r, c);
+                    if !LOCKABLE_TILES.contains(&tile) {
+                        continue;
+                    }
+                    let mut g = base.clone();
+                    g.set(r, c, gap_tile_for(tile));
+                    let walk = walk_map(&g, &built.pipe_pairs, start, wi);
+                    if walk.nodes.contains(&target) {
+                        continue; // not goal-severing
+                    }
+                    // Row 7/8 completion-bit exclusion, as in place_locks.
+                    let row78 = (r == 7 || r == 8) && {
+                        let paired = if r == 7 { 8 } else { 7 };
+                        built.slots.iter().any(|s| {
+                            s.pos == (paired, c)
+                                && matches!(
+                                    s.kind,
+                                    SlotKind::Level
+                                        | SlotKind::Fortress
+                                        | SlotKind::Pipe
+                                        | SlotKind::BonusGame
+                                        | SlotKind::ToadHouse
+                                )
+                        })
+                    };
+                    let stranded: Vec<usize> = forts
+                        .iter()
+                        .filter(|(_, fp)| !walk.nodes.contains(fp))
+                        .map(|(sec, _)| *sec)
+                        .collect();
+                    eprintln!(
+                        "  severing ({r},{c}) tile {tile:02X}: row78_excluded={} strands_fort_sections={:?} gated_nodes={}",
+                        row78,
+                        stranded,
+                        {
+                            let open_walk = walk_map(&base, &built.pipe_pairs, start, wi);
+                            open_walk.nodes.len() - walk.nodes.len()
+                        },
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// How NESTED are a world's locks? A chain-link lock is "nested" when closing
+/// it alone (others open) blocks the GOAL — i.e. its gated region contains
+/// the rest of the progression, not just the next fort's local pocket. The
+/// fort-skip machinery can only see nested locks (its splits are goal-anchored),
+/// so a world whose chain links gate local pockets is invisible to it.
+#[test]
+#[ignore]
+fn lock_nesting_probe() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
+    // (nonfinal locks blocking goal, nonfinal total, final blocking, final total)
+    let mut per_world = [(0u64, 0u64, 0u64, 0u64); 8];
+    for seed in 0..300u64 {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
+        for built in &result.worlds {
+            if built.locks.len() < 2 {
+                continue;
+            }
+            let wi = built.world_idx;
+            let mut base = built.grid.clone();
+            stamp_slots(&mut base, &built.slots);
+            let Some(start) = rom_data::find_start(&base) else { continue };
+            let Some(target) = find_target(&base, wi) else { continue };
+            let all_secs: HashSet<usize> = built.locks.iter().map(|l| l.fort_section).collect();
+            let max_sec = *all_secs.iter().max().unwrap();
+            for l in &built.locks {
+                let mut g = base.clone();
+                for l2 in &built.locks {
+                    let t = if l2.fort_section == l.fort_section { l2.gap_tile } else { l2.replace_tile };
+                    g.set(l2.pos.0, l2.pos.1, t);
+                }
+                let blocks =
+                    !walk_map(&g, &built.pipe_pairs, Some(start), wi).nodes.contains(&target);
+                let s = &mut per_world[wi];
+                if l.fort_section == max_sec {
+                    s.3 += 1;
+                    if blocks { s.2 += 1; }
+                } else {
+                    s.1 += 1;
+                    if blocks { s.0 += 1; }
+                }
+            }
+        }
+    }
+    eprintln!("\n=== lock_nesting_probe (300 seeds, multi-lock worlds) ===");
+    eprintln!("world  nonfinal-locks-blocking-goal%   final-lock-blocking-goal%");
+    for (wi, &(nb, nt, fb, ft)) in per_world.iter().enumerate() {
+        if nt + ft == 0 { continue; }
+        eprintln!(
+            "  W{}   {:>6.1}% ({}/{})              {:>6.1}% ({}/{})",
+            wi + 1,
+            100.0 * nb as f64 / nt.max(1) as f64, nb, nt,
+            100.0 * fb as f64 / ft.max(1) as f64, fb, ft,
+        );
+    }
+}
+
+/// TEMP: dissect W2 fort-skip failures at placement-time fidelity — W2 has
+/// no connectivity pipes, so the placer's view is exactly pipes=[]. For the
+/// first N skip-allowed W2 worlds, print each lock's split and the candidate
+/// endpoint situation the spare-pipe pass actually faced.
+#[test]
+#[ignore]
+fn w2_skip_dissect() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
+    let mut shown = 0;
+    for seed in 0..200u64 {
+        if shown >= 6 {
+            break;
+        }
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
+        let built = &result.worlds[1]; // W2
+        if built.plan.pipe.fort_skip != FortSkipPolicy::AnyOneFort || built.locks.len() < 2 {
+            continue;
+        }
+        shown += 1;
+        let mut base = built.grid.clone();
+        stamp_slots(&mut base, &built.slots);
+        let start = rom_data::find_start(&base).unwrap();
+        let target = find_target(&base, 1).unwrap();
+        let reserved: HashSet<Pos> =
+            rom_data::read_hb_sprite_positions(&rom, 1).into_iter().collect();
+        let lock_row78: HashSet<Pos> = built
+            .locks
+            .iter()
+            .filter_map(|l| match l.pos.0 {
+                7 => Some((8, l.pos.1)),
+                8 => Some((7, l.pos.1)),
+                _ => None,
+            })
+            .collect();
+        let endpoints: Vec<Pos> = built
+            .slots
+            .iter()
+            .filter(|s| {
+                matches!(s.kind, SlotKind::HammerBro | SlotKind::ToadHouse | SlotKind::BonusGame)
+                    && !reserved.contains(&s.pos)
+                    && !lock_row78.contains(&s.pos)
+            })
+            .map(|s| s.pos)
+            .collect();
+        eprintln!(
+            "\nseed {seed} W2: {:?}, pipes {}, forts {}, HB-ish endpoints {} (reserved {})",
+            built.plan.archetype,
+            built.pipe_pairs.len(),
+            built.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count(),
+            endpoints.len(),
+            reserved.len(),
+        );
+        let all_secs: HashSet<usize> = built.locks.iter().map(|l| l.fort_section).collect();
+        for l in &built.locks {
+            let mut g = base.clone();
+            for l2 in &built.locks {
+                let t = if l2.fort_section == l.fort_section { l2.gap_tile } else { l2.replace_tile };
+                g.set(l2.pos.0, l2.pos.1, t);
+            }
+            // Placement-time view: no pipes (W2 has no connectivity pipes).
+            let cs = walk_map(&g, &[], Some(start), 1).nodes;
+            let blocks = !cs.contains(&target);
+            if !blocks {
+                eprintln!(
+                    "  lock sec {} at {:?}: does NOT block goal (others open) -> invisible to skip eval",
+                    l.fort_section, l.pos
+                );
+                continue;
+            }
+            let ct = walk_map(&g, &[], Some(target), 1).nodes;
+            let ea = endpoints.iter().filter(|p| cs.contains(p)).count();
+            let eb = endpoints.iter().filter(|p| ct.contains(p)).count();
+            // Unclassified nodes: reachable from neither (stranded by this lock).
+            let neither = endpoints.iter().filter(|p| !cs.contains(p) && !ct.contains(p)).count();
+            eprintln!(
+                "  lock sec {} at {:?}: BLOCKS goal; start-side {} nodes/{} endpts, goal-side {} nodes/{} endpts, neither {}",
+                l.fort_section, l.pos, cs.len(), ea, ct.len(), eb, neither
+            );
+        }
+        // All-closed split (the goal-open rejection state).
+        let mut g = base.clone();
+        for l2 in &built.locks {
+            g.set(l2.pos.0, l2.pos.1, l2.gap_tile);
+        }
+        let cs = walk_map(&g, &[], Some(start), 1).nodes;
+        let ct = walk_map(&g, &[], Some(target), 1).nodes;
+        let ea = endpoints.iter().filter(|p| cs.contains(p)).count();
+        let eb = endpoints.iter().filter(|p| ct.contains(p)).count();
+        eprintln!(
+            "  ALL-CLOSED: start-side {} endpts, goal-side {} endpts (a straddle here = goal-open reject)",
+            ea, eb
+        );
+        // Where did the actual spare pipe land relative to each gating lock?
+        for &(a, b) in &built.pipe_pairs {
+            for l in &built.locks {
+                let mut g = base.clone();
+                for l2 in &built.locks {
+                    let t = if l2.fort_section == l.fort_section { l2.gap_tile } else { l2.replace_tile };
+                    g.set(l2.pos.0, l2.pos.1, t);
+                }
+                let cs = walk_map(&g, &[], Some(start), 1).nodes;
+                if cs.contains(&target) {
+                    continue;
+                }
+                let ct = walk_map(&g, &[], Some(target), 1).nodes;
+                let side = |p: Pos| {
+                    if cs.contains(&p) { "start" } else if ct.contains(&p) { "goal" } else { "mid" }
+                };
+                eprintln!(
+                    "  placed pipe {:?}<->{:?} vs lock sec {}: {} <-> {}",
+                    a, b, l.fort_section, side(a), side(b)
+                );
+            }
+        }
+        let _ = all_secs;
+    }
+}
+
+/// Per-world pipe budget composition: how many of each world's pairs are
+/// island bridges (an endpoint unreachable by walk alone, locks open) vs
+/// spares (both endpoints on the walk-connected mainland). Bridges are
+/// placed by the connectivity phase; only spares can become fort-skips.
+#[test]
+#[ignore]
+fn pipe_budget_probe() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
+    let mut per_world = [(0u64, 0u64, 0u64); 8]; // (pairs, bridges, worlds)
+    for seed in 0..300u64 {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
+        for built in &result.worlds {
+            let wi = built.world_idx;
+            let mut base = built.grid.clone();
+            stamp_slots(&mut base, &built.slots);
+            let Some(start) = rom_data::find_start(&base) else { continue };
+            let open_walk = walk_map(&base, &[], Some(start), wi).nodes;
+            let bridges = built
+                .pipe_pairs
+                .iter()
+                .filter(|&&(a, b)| !open_walk.contains(&a) || !open_walk.contains(&b))
+                .count();
+            let s = &mut per_world[wi];
+            s.0 += built.pipe_pairs.len() as u64;
+            s.1 += bridges as u64;
+            s.2 += 1;
+        }
+    }
+    eprintln!("\n=== pipe_budget_probe (300 seeds) ===");
+    eprintln!("world  avg pairs  avg bridges  avg spares");
+    for (wi, &(pairs, bridges, n)) in per_world.iter().enumerate() {
+        if n == 0 { continue; }
+        let n = n as f64;
+        eprintln!(
+            "  W{}     {:>5.2}      {:>5.2}       {:>5.2}",
+            wi + 1,
+            pairs as f64 / n,
+            bridges as f64 / n,
+            (pairs - bridges) as f64 / n,
+        );
+    }
+}
+
+/// TEMP: for goal-open W3 worlds, replicate the GoalGate section's candidate
+/// evaluation with the other locks as actually placed, and report WHY each
+/// goal-severing tile was rejected (rule 1: own fort stranded; role: which
+/// fort stranded; row78; already locked). Ground truth for the fallback bug.
+#[test]
+#[ignore]
+fn w3_goalgate_dissect() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
+    let mut shown = 0;
+    for seed in 0..1000u64 {
+        if shown >= 3 {
+            break;
+        }
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
+        let built = &result.worlds[2]; // W3
+        let Some(t) = world_topology(built) else { continue };
+        if t.fort_count < 2 || t.depth != 0 {
+            continue;
+        }
+        shown += 1;
+        let wi = 2;
+        let mut base = built.grid.clone();
+        stamp_slots(&mut base, &built.slots);
+        let start = rom_data::find_start(&base).unwrap();
+        let target = find_target(&base, wi).unwrap();
+        let goal_sec = built
+            .plan
+            .roles
+            .iter()
+            .position(|r| matches!(r, LockRole::GoalGate))
+            .unwrap();
+        let forts: Vec<(usize, Pos)> = built
+            .slots
+            .iter()
+            .filter(|s| s.kind == SlotKind::Fortress)
+            .map(|s| (s.section, s.pos))
+            .collect();
+        eprintln!(
+            "\nseed {seed} W3 {:?}: roles {:?}, GoalGate sec {goal_sec}, forts {:?}, start {:?}, target {:?}",
+            built.plan.archetype, built.plan.roles, forts, start, target
+        );
+        eprintln!("  placed locks: {:?}", built.locks.iter().map(|l| (l.fort_section, l.pos)).collect::<Vec<_>>());
+        eprintln!("  pipes: {:?}", built.pipe_pairs);
+
+        // Which pipe subset creates the all-locks-closed route to the goal?
+        {
+            let mut g = base.clone();
+            for l in &built.locks {
+                g.set(l.pos.0, l.pos.1, l.gap_tile);
+            }
+            for n in 0..=built.pipe_pairs.len() {
+                let subset = &built.pipe_pairs[..n];
+                let reach = walk_map(&g, subset, Some(start), wi).nodes.contains(&target);
+                eprintln!("  all-closed, first {n} pipes: target reachable = {reach}");
+            }
+        }
+
+        // Evaluate every goal-severing lockable tile as a GoalGate candidate
+        // with the OTHER sections' actual locks in their place_locks state
+        // (earlier sections open, later closed).
+        let other_locks: Vec<_> = built
+            .locks
+            .iter()
+            .filter(|l| l.fort_section != goal_sec)
+            .collect();
+        for r in 0..base.rows() {
+            for c in 0..base.cols {
+                let tile = base.get(r, c);
+                if !LOCKABLE_TILES.contains(&tile) {
+                    continue;
+                }
+                if built.locks.iter().any(|l| l.pos == (r, c)) {
+                    continue;
+                }
+                let mut g = base.clone();
+                for l in &other_locks {
+                    let t2 = if l.fort_section < goal_sec { l.replace_tile } else { l.gap_tile };
+                    g.set(l.pos.0, l.pos.1, t2);
+                }
+                g.set(r, c, gap_tile_for(tile));
+                let walk = walk_map(&g, &built.pipe_pairs, Some(start), wi);
+                if walk.nodes.contains(&target) {
+                    continue; // doesn't sever the goal — not interesting
+                }
+                let own_fort = forts.iter().find(|(s, _)| *s == goal_sec).map(|(_, p)| *p);
+                let own_stranded =
+                    own_fort.is_some_and(|p| !walk.nodes.contains(&p));
+                let stranded: Vec<usize> = forts
+                    .iter()
+                    .filter(|(_, p)| !walk.nodes.contains(p))
+                    .map(|(s, _)| *s)
+                    .collect();
+                eprintln!(
+                    "  severs-goal ({r},{c}) tile {tile:02X}: own-fort-stranded {} | stranded sections {:?}",
+                    own_stranded, stranded
+                );
+            }
+        }
+    }
+}
+
+/// Fork-balance diagnostic: how "true" is the choice a Fork world presents?
+/// For every sampled-Fork world, simulate progression to the FORK MOMENT
+/// (first state with >=2 unbeaten terminal-fork forts co-accessible), then
+/// compare the player cost (least-levels from start, current lock state) of
+/// reaching each fork fort. A true 50/50 means near-equal costs and no
+/// systematic tell on which fort is the real GoalGate. Run with:
+///   cargo test --release --lib fork_balance -- --ignored --nocapture
+#[test]
+#[ignore]
+fn fork_balance() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
+    let seeds: u64 = std::env::var("SWEEP_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(500);
+
+    let mut sampled = 0u64;
+    let mut realized = 0u64; // fork moment reached with >=2 co-accessible
+    let mut asym_hist = [0u64; 6]; // max-min cost among fork forts (capped 5)
+    let mut goal_cheapest = 0u64;
+    let mut goal_tied = 0u64;
+    let mut goal_dearest = 0u64;
+    let mut goal_inaccessible = 0u64; // goal fort not in the co-accessible set
+
+    for seed in 0..seeds {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
+        for built in &result.worlds {
+            let Archetype::Fork { .. } = built.plan.archetype else { continue };
+            sampled += 1;
+
+            let wi = built.world_idx;
+            let mut base = built.grid.clone();
+            stamp_slots(&mut base, &built.slots);
+            let Some(start) = rom_data::find_start(&base) else { continue };
+            let Some(target) = find_target(&base, wi) else { continue };
+            let fort_pos: HashMap<usize, Pos> = built
+                .slots
+                .iter()
+                .filter(|s| s.kind == SlotKind::Fortress)
+                .map(|s| (s.section, s.pos))
+                .collect();
+            let all_secs: HashSet<usize> = built.locks.iter().map(|l| l.fort_section).collect();
+            let grid_with = |opened: &HashSet<usize>| -> Grid {
+                let mut g = base.clone();
+                for l in &built.locks {
+                    if opened.contains(&l.fort_section) {
+                        g.set(l.pos.0, l.pos.1, l.replace_tile);
+                    } else {
+                        g.set(l.pos.0, l.pos.1, l.gap_tile);
+                    }
+                }
+                g
+            };
+            // Terminal fork sections: the Safe decoys + the GoalGate.
+            let terminal: Vec<usize> = built
+                .plan
+                .roles
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| matches!(r, LockRole::Safe | LockRole::GoalGate))
+                .map(|(i, _)| i)
+                .collect();
+            let goal_sec = built
+                .plan
+                .roles
+                .iter()
+                .position(|r| matches!(r, LockRole::GoalGate));
+
+            // Advance progression until the fork is on the table.
+            let mut opened: HashSet<usize> = HashSet::new();
+            let fork_state: Option<(Grid, Vec<usize>)> = loop {
+                let g = grid_with(&opened);
+                let walk = walk_map(&g, &built.pipe_pairs, Some(start), wi);
+                let acc_terminal: Vec<usize> = terminal
+                    .iter()
+                    .copied()
+                    .filter(|sec| {
+                        !opened.contains(sec)
+                            && fort_pos.get(sec).is_some_and(|p| walk.nodes.contains(p))
+                    })
+                    .collect();
+                if acc_terminal.len() >= 2 {
+                    break Some((g, acc_terminal));
+                }
+                if walk.nodes.contains(&target) {
+                    break None; // goal opened before any real fork appeared
+                }
+                let newly: Vec<usize> = fort_pos
+                    .iter()
+                    .filter(|(sec, pos)| {
+                        walk.nodes.contains(pos)
+                            && all_secs.contains(*sec)
+                            && !opened.contains(*sec)
+                    })
+                    .map(|(sec, _)| *sec)
+                    .collect();
+                if newly.is_empty() {
+                    break None;
+                }
+                opened.extend(newly);
+            };
+
+            let Some((g, acc)) = fork_state else { continue };
+            realized += 1;
+
+            let blocking: HashSet<Pos> = built
+                .slots
+                .iter()
+                .filter(|s| matches!(s.kind, SlotKind::Level | SlotKind::Fortress))
+                .map(|s| s.pos)
+                .collect();
+            let dist = least_levels_from(&g, &built.pipe_pairs, start, wi, &blocking);
+            let costs: Vec<(usize, usize)> = acc
+                .iter()
+                .filter_map(|sec| dist.get(&fort_pos[sec]).map(|&d| (*sec, d)))
+                .collect();
+            if costs.len() < 2 {
+                continue;
+            }
+            let min = costs.iter().map(|&(_, c)| c).min().unwrap();
+            let max = costs.iter().map(|&(_, c)| c).max().unwrap();
+            asym_hist[(max - min).min(5)] += 1;
+
+            match goal_sec.and_then(|gs| costs.iter().find(|&&(s, _)| s == gs)) {
+                None => goal_inaccessible += 1,
+                Some(&(gs, gc)) => {
+                    let others_min = costs
+                        .iter()
+                        .filter(|&&(s, _)| s != gs)
+                        .map(|&(_, c)| c)
+                        .min()
+                        .unwrap();
+                    if gc < others_min {
+                        goal_cheapest += 1;
+                    } else if gc == others_min {
+                        goal_tied += 1;
+                    } else {
+                        goal_dearest += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    eprintln!("\n=== fork_balance ({seeds} seeds) ===");
+    eprintln!("  sampled Fork worlds: {sampled}; fork moment realized: {realized} ({:.1}%)",
+        100.0 * realized as f64 / sampled.max(1) as f64);
+    eprintln!("  cost asymmetry (levels, max-min) among co-accessible fork forts:");
+    let tot: u64 = asym_hist.iter().sum();
+    for (d, &c) in asym_hist.iter().enumerate() {
+        if c == 0 { continue; }
+        let label = if d == 5 { "5+".to_string() } else { d.to_string() };
+        eprintln!("    diff {label:>2}: {c:5} ({:5.1}%)", 100.0 * c as f64 / tot.max(1) as f64);
+    }
+    eprintln!("  which fork fort is the REAL GoalGate:");
+    let gtot = goal_cheapest + goal_tied + goal_dearest;
+    eprintln!("    cheapest: {goal_cheapest} ({:.1}%)  tied: {goal_tied} ({:.1}%)  dearest: {goal_dearest} ({:.1}%)  (inaccessible at fork: {goal_inaccessible})",
+        100.0 * goal_cheapest as f64 / gtot.max(1) as f64,
+        100.0 * goal_tied as f64 / gtot.max(1) as f64,
+        100.0 * goal_dearest as f64 / gtot.max(1) as f64);
 }
 
 /// Player-model fort taxonomy over many seeds. Classifies every fortress that
