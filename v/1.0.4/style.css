@@ -1,0 +1,888 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: "Courier New", Courier, monospace;
+    background: #0c0c1e;
+    background-image:
+        radial-gradient(circle at 20% 50%, rgba(92, 148, 252, 0.04) 0%, transparent 50%),
+        radial-gradient(circle at 80% 20%, rgba(228, 68, 52, 0.04) 0%, transparent 50%);
+    color: #e0e0e0;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 2rem 1rem;
+}
+
+.page-wrapper {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+}
+
+.container {
+    background: #141428;
+    border: 3px solid #e44434;
+    border-radius: 12px;
+    padding: 2rem;
+    max-width: 800px;
+    width: 100%;
+    box-shadow:
+        0 0 20px rgba(228, 68, 52, 0.15),
+        0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+/* --- Header --- */
+
+header {
+    text-align: center;
+    margin-bottom: 1.5rem;
+}
+
+h1 {
+    color: #e44434;
+    font-size: 1.6rem;
+    letter-spacing: 0.05em;
+    text-shadow: 2px 2px 0 #1a0a08;
+}
+
+.version {
+    font-size: 0.75rem;
+    color: #5c94fc;
+    vertical-align: super;
+    letter-spacing: 0;
+}
+
+.pipe-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+}
+
+.pipe {
+    flex: 1;
+    height: 4px;
+    background: linear-gradient(180deg, #5c94fc, #3c6edc);
+    border-radius: 2px;
+}
+
+.pipe-label {
+    font-size: 0.75rem;
+    color: #5c94fc;
+    white-space: nowrap;
+    letter-spacing: 0.08em;
+}
+
+/* --- Sections --- */
+
+.section {
+    margin-bottom: 1.25rem;
+}
+
+label {
+    display: block;
+    font-size: 0.85rem;
+    margin-bottom: 0.4rem;
+    color: #9a9ab0;
+}
+
+/* --- File Input --- */
+
+.file-label {
+    display: block;
+    padding: 0.75rem 1rem;
+    border: 2px dashed #e44434;
+    border-radius: 6px;
+    text-align: center;
+    cursor: pointer;
+    color: #e44434;
+    transition: all 0.2s;
+    font-weight: bold;
+}
+
+.file-label:hover {
+    background: rgba(228, 68, 52, 0.08);
+    border-color: #ff6a5a;
+}
+
+.file-label.loaded {
+    border-style: solid;
+    color: #6dce56;
+    border-color: #6dce56;
+}
+
+.note {
+    font-size: 0.7rem;
+    color: #555;
+    margin-top: 0.4rem;
+}
+
+.note a {
+    color: #5c94fc;
+    text-decoration: none;
+}
+
+.note a:hover {
+    text-decoration: underline;
+}
+
+.skip-validation-warning {
+    color: #d4a14e;
+}
+
+/* --- Text Inputs --- */
+
+input[type="text"] {
+    width: 100%;
+    padding: 0.5rem 0.6rem;
+    background: #1c1c38;
+    border: 1px solid #2a2a50;
+    border-radius: 4px;
+    color: #e0e0e0;
+    font-family: inherit;
+    font-size: 0.85rem;
+}
+
+input[type="text"]::placeholder {
+    color: #444;
+}
+
+input[type="text"]:focus {
+    outline: none;
+    border-color: #5c94fc;
+}
+
+.input-row {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.input-row input {
+    flex: 1;
+}
+
+.input-row button {
+    background: #1c1c38;
+    border: 1px solid #2a2a50;
+    border-radius: 4px;
+    color: #9a9ab0;
+    cursor: pointer;
+    padding: 0.5rem 0.75rem;
+    font-family: inherit;
+    font-size: 0.8rem;
+    transition: all 0.15s;
+}
+
+.input-row button:hover {
+    background: #2a2a50;
+    color: #e0e0e0;
+}
+
+/* --- Fieldsets --- */
+
+fieldset {
+    border: 1px solid #2a2a50;
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.25rem;
+}
+
+legend {
+    font-size: 0.8rem;
+    color: #5c94fc;
+    padding: 0 0.5rem;
+    font-weight: bold;
+    letter-spacing: 0.04em;
+}
+
+.group-note {
+    margin-top: 0;
+    margin-bottom: 0.75rem;
+}
+
+#visual-patch-block {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #2a2a50;
+}
+
+/* --- Checkboxes & Radios --- */
+
+.opt-icon {
+    width: 24px;
+    height: 24px;
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    flex-shrink: 0;
+    background: transparent;
+}
+
+.radio-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: #e0e0e0;
+    margin-bottom: 0.4rem;
+    cursor: pointer;
+}
+
+.radio-label:last-child,
+.select-label:last-child {
+    margin-bottom: 0;
+}
+
+input[type="radio"] {
+    accent-color: #e44434;
+}
+
+/* --- Select Labels --- */
+
+.select-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: #e0e0e0;
+    margin-bottom: 0.4rem;
+}
+
+.select-label select {
+    background: #1c1c38;
+    border: 1px solid #2a2a50;
+    border-radius: 4px;
+    color: #e0e0e0;
+    font-family: inherit;
+    font-size: 0.8rem;
+    padding: 0.25rem 0.4rem;
+    margin-left: auto;
+}
+
+.select-label select:focus {
+    outline: none;
+    border-color: #5c94fc;
+}
+
+/* --- Pill Groups (tri-state segmented controls) --- */
+
+.pill-group {
+    display: inline-flex;
+    border: 1px solid #2a2a50;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-left: auto;
+}
+
+.pill-group input[type="radio"] {
+    display: none;
+}
+
+.pill-group label {
+    padding: 0.2rem 0.5rem;
+    font-size: 0.75rem;
+    color: #9a9ab0;
+    cursor: pointer;
+    border-right: 1px solid #2a2a50;
+    margin-bottom: 0;
+    transition: all 0.15s;
+    background: #1c1c38;
+}
+
+.pill-group label:last-of-type {
+    border-right: none;
+}
+
+.pill-group label:hover {
+    background: #2a2a50;
+    color: #e0e0e0;
+}
+
+.pill-group input[type="radio"]:checked + label {
+    background: var(--pill-active, #4a8a4f);
+    color: var(--pill-active-text, #fff);
+}
+
+/* "Off" selected: muted gray so an explicit off doesn't read as a hot accent. */
+.pill-group input[type="radio"][value="off"]:checked + label {
+    background: #3a3a60;
+    color: #b8b8d0;
+}
+
+/* "Maybe" and "Wild" share a cool violet to mark "the seed picks something
+   spicier than a plain shuffle". Visually distinct from the green on/shuffle accent. */
+.pill-group input[type="radio"][value="maybe"]:checked + label,
+.pill-group input[type="radio"][value="wild"]:checked + label {
+    background: #6f5fb8;
+    color: #fff;
+}
+
+/* Row tint for active options. .opt-on is the green "this flag is doing something"
+   state (bool true, or tri non-off). .opt-maybe is the violet "the seed will decide"
+   state. Both are subtle so a screen full of on flags doesn't feel loud. */
+.select-label.opt-on {
+    background: rgba(92, 184, 92, 0.07);
+}
+
+.select-label.opt-maybe {
+    background: rgba(124, 100, 220, 0.14);
+}
+
+.select-label.opt-on,
+.select-label.opt-maybe {
+    border-radius: 4px;
+    padding: 0.25rem 0.45rem;
+    margin: -0.05rem -0.45rem 0.35rem -0.45rem;
+    transition: background-color 0.15s;
+}
+
+/* When "+ Viruses" is the chosen visual patch, also light the Dr. Mario pill
+   so the player sees the relationship (viruses implies Dr. Mario). The base
+   pill keeps its own white background and dark text regardless of which
+   sibling is the actual radio selection. */
+.pill-group:has(input#vp-dr_mario_viruses:checked) label[for="vp-dr_mario"] {
+    background: #e8e8f0;
+    color: #1c1c38;
+}
+
+/* --- Tip Button + Block --- */
+
+.tip-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    background: #2a2a50;
+    border: none;
+    border-radius: 50%;
+    color: #9a9ab0;
+    font-size: 0.7rem;
+    font-weight: bold;
+    font-family: inherit;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.15s;
+    padding: 0;
+    line-height: 1;
+    vertical-align: middle;
+}
+
+.option-header > .tip-btn {
+    margin-left: 0.4rem;
+}
+
+.tip-btn:hover,
+.tip-btn:focus-visible {
+    background: #5c94fc;
+    color: #fff;
+    outline: none;
+}
+
+.tip-btn[aria-expanded="true"] {
+    background: #5c94fc;
+    color: #fff;
+}
+
+.option-tip {
+    font-size: 0.75rem;
+    color: #9a9ab0;
+    background: #1c1c38;
+    padding: 0.5rem 0.75rem;
+    border-left: 2px solid #5c94fc;
+    border-radius: 4px;
+    margin: 0.25rem 0 0.5rem 0;
+    line-height: 1.45;
+}
+
+.sub-options + .option-tip {
+    margin-left: 1.25rem;
+}
+
+.option-credit {
+    margin-top: 0.4rem;
+    font-size: 0.7rem;
+    color: #7a7a92;
+}
+
+.option-credit a {
+    color: #5c94fc;
+}
+
+/* --- Tags --- */
+
+.tag {
+    font-size: 0.65rem;
+    background: #e44434;
+    color: #fff;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+}
+
+/* --- Overworld two-column layout --- */
+
+.overworld-columns {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.overworld-col {
+    flex: 1;
+    padding: 0.5rem;
+    border: 1px solid #2a2a50;
+    border-radius: 6px;
+    transition: opacity 0.2s;
+}
+
+.overworld-col.disabled {
+    opacity: 0.35;
+}
+
+.overworld-col.disabled .sub-options {
+    pointer-events: none;
+}
+
+.option-explain {
+    font-size: 0.65rem;
+    color: #5c94fc;
+    margin: 0.15rem 0 0.35rem 1.25rem;
+    line-height: 1.3;
+}
+
+.sub-options {
+    padding-left: 1.25rem;
+    margin-top: 0.25rem;
+}
+
+.sub-options.disabled {
+    opacity: 0.35;
+    pointer-events: none;
+}
+
+/* --- Option Groups (radio sections) --- */
+
+.option-group {
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid #1e1e3a;
+}
+
+.option-group:last-of-type {
+    margin-bottom: 0.5rem;
+}
+
+.option-header {
+    font-size: 0.85rem;
+    color: #e0e0e0;
+    margin-bottom: 0.35rem;
+}
+
+.radio-group-vertical {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding-left: 0.5rem;
+}
+
+.option-desc {
+    font-size: 0.7rem;
+    color: #5c94fc;
+    margin-left: 0.25rem;
+}
+
+.option-flavor {
+    font-size: 0.65rem;
+    color: #0c0c1e;
+    background: #6dce56;
+    margin-left: 0.25rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-style: italic;
+}
+
+/* --- Radio Group (inline) --- */
+
+.radio-group {
+    display: flex;
+    gap: 1.5rem;
+}
+
+/* --- Generate Button --- */
+
+#generate-btn {
+    display: block;
+    width: 100%;
+    padding: 0.85rem;
+    background: #e44434;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 1rem;
+    font-weight: bold;
+    cursor: pointer;
+    letter-spacing: 0.06em;
+    transition: all 0.15s;
+    text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.3);
+}
+
+#generate-btn:hover:not(:disabled) {
+    background: #ff5a4a;
+    box-shadow: 0 0 12px rgba(228, 68, 52, 0.3);
+}
+
+#generate-btn:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+#generate-btn:disabled {
+    background: #2a2a50;
+    color: #555;
+    cursor: not-allowed;
+    text-shadow: none;
+}
+
+/* --- Status --- */
+
+.status {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    text-align: center;
+}
+
+.status.success {
+    background: rgba(109, 206, 86, 0.1);
+    color: #6dce56;
+    border: 1px solid rgba(109, 206, 86, 0.3);
+}
+
+.status.error {
+    background: rgba(228, 68, 52, 0.1);
+    color: #e44434;
+    border: 1px solid rgba(228, 68, 52, 0.3);
+}
+
+.status.loading {
+    color: #9a9ab0;
+}
+
+/* --- Control Panel (sidebar: seed / flag key / generate) --- */
+
+.control-panel {
+    width: 280px;
+    flex-shrink: 0;
+    position: sticky;
+    top: 2rem;
+    background: #141428;
+    border: 3px solid #e44434;
+    border-radius: 12px;
+    padding: 1rem;
+    color: #9a9ab0;
+    box-shadow:
+        0 0 20px rgba(228, 68, 52, 0.15),
+        0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.control-panel-section {
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #2a2a50;
+}
+
+.control-panel-section:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.control-panel-title {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: bold;
+    color: #e44434;
+    margin-bottom: 0.5rem;
+    letter-spacing: 0.04em;
+}
+
+.control-panel input[type="text"] {
+    margin-bottom: 0.5rem;
+}
+
+#flag-key-input {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8rem;
+}
+
+.preset-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.preset-pill {
+    flex: 1 1 calc(50% - 0.25rem);
+    background: #1c1c38;
+    border: 1px solid #2a2a50;
+    border-radius: 4px;
+    color: #9a9ab0;
+    cursor: pointer;
+    padding: 0.4rem 0.6rem;
+    font-family: inherit;
+    font-size: 0.8rem;
+    transition: all 0.15s;
+}
+
+.preset-pill:hover {
+    background: #2a2a50;
+    color: #e0e0e0;
+}
+
+.flag-key-buttons {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.flag-key-buttons button {
+    flex: 1;
+    background: #1c1c38;
+    border: 1px solid #2a2a50;
+    border-radius: 4px;
+    color: #9a9ab0;
+    cursor: pointer;
+    padding: 0.4rem 0.6rem;
+    font-family: inherit;
+    font-size: 0.8rem;
+    transition: all 0.15s;
+}
+
+.flag-key-buttons button:hover {
+    background: #2a2a50;
+    color: #e0e0e0;
+}
+
+.changes-summary-toggle {
+    width: 100%;
+    background: #1c1c38;
+    border: 1px solid #2a2a50;
+    border-radius: 4px;
+    color: #9a9ab0;
+    cursor: pointer;
+    padding: 0.4rem 0.6rem;
+    font-family: inherit;
+    font-size: 0.75rem;
+    text-align: left;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: all 0.15s;
+    margin-bottom: 0.5rem;
+}
+
+.changes-summary-toggle:hover:not(:disabled) {
+    background: #2a2a50;
+    color: #e0e0e0;
+}
+
+.changes-summary-toggle:disabled {
+    cursor: default;
+    opacity: 0.7;
+}
+
+.changes-summary-toggle::after {
+    content: "▸";
+    font-size: 0.7rem;
+    transition: transform 0.15s;
+    margin-left: 0.5rem;
+}
+
+.changes-summary-toggle[aria-expanded="true"]::after {
+    transform: rotate(90deg);
+}
+
+.changes-summary-toggle:disabled::after {
+    visibility: hidden;
+}
+
+.changes-summary-list {
+    margin-bottom: 0.5rem;
+    max-height: 250px;
+    overflow-y: auto;
+    background: #0e0e1c;
+    border: 1px solid #2a2a50;
+    border-radius: 4px;
+    padding: 0.4rem 0.5rem;
+}
+
+.change-row {
+    font-size: 0.7rem;
+    color: #e0e0e0;
+    padding: 0.25rem 0;
+    line-height: 1.4;
+}
+
+.change-row + .change-row {
+    border-top: 1px solid #1e1e3a;
+}
+
+.change-row .change-label {
+    color: #9a9ab0;
+}
+
+.change-row .change-value {
+    color: #e0e0e0;
+    font-weight: bold;
+}
+
+.change-row .change-default {
+    color: #555;
+    margin-left: 0.25rem;
+}
+
+.early-access-note {
+    margin-top: 0.6rem;
+    text-align: center;
+    font-size: 0.7rem;
+    color: #777;
+    line-height: 1.4;
+}
+
+.early-access-note a {
+    color: #5c94fc;
+    text-decoration: none;
+}
+
+.early-access-note a:hover {
+    text-decoration: underline;
+}
+
+@media (max-width: 1100px) {
+    .page-wrapper {
+        display: block;
+    }
+    .control-panel {
+        width: 100%;
+        margin-top: 1rem;
+    }
+}
+
+/* --- Footer --- */
+
+footer {
+    margin-top: 1.25rem;
+    text-align: center;
+}
+
+footer p {
+    font-size: 0.65rem;
+    color: #444;
+}
+
+.version-picker-wrap {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+}
+
+.version-picker-wrap select {
+    font-family: inherit;
+    font-size: 0.65rem;
+    color: #444;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    padding: 0.1rem 0.25rem;
+}
+
+.link-btn {
+    background: none;
+    border: none;
+    color: #e44434;
+    font-family: inherit;
+    font-size: 0.75rem;
+    cursor: pointer;
+    padding: 0.2rem 0;
+    text-decoration: underline;
+}
+
+.link-btn:hover {
+    color: #ff6b5b;
+}
+
+/* --- NES color grid picker (player color) --- */
+
+.nescolor-block .option-header {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.nescolor-input {
+    display: none;
+}
+
+.nescolor-random {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    text-align: center;
+    padding: 0.3rem 0.6rem;
+    margin: 0.3rem 0;
+    font-size: 0.75rem;
+    color: #9a9ab0;
+    background: #1c1c38;
+    border: 1px solid #2a2a50;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.nescolor-random:hover {
+    background: #2a2a50;
+    color: #e0e0e0;
+}
+
+.nescolor-input:checked + .nescolor-random {
+    background: var(--pill-active, #4a8a4f);
+    color: var(--pill-active-text, #fff);
+}
+
+.nescolor-grid {
+    display: grid;
+    /* Fluid: fill the options column; swatches stay square via aspect-ratio. */
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 3px;
+    margin-top: 0.25rem;
+    width: 100%;
+}
+
+.nescolor-swatch {
+    width: 100%;
+    aspect-ratio: 1;
+    box-sizing: border-box;
+    border-radius: 3px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    margin-bottom: 0;
+    transition: transform 0.1s, border-color 0.1s;
+}
+
+.nescolor-swatch:hover {
+    transform: scale(1.15);
+    border-color: #9a9ab0;
+}
+
+.nescolor-input:checked + .nescolor-swatch {
+    border-color: #fff;
+    box-shadow: 0 0 0 1px #000;
+    transform: scale(1.1);
+}
