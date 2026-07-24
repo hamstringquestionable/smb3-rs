@@ -3,7 +3,7 @@
 
 use super::*;
 
-pub(super) const FLAG_KEY_VERSION: u8 = 25;
+pub(super) const FLAG_KEY_VERSION: u8 = 26;
 
 pub(super) const FLAG_KEY_PREFIX: &str = "SMB3R-";
 
@@ -89,12 +89,12 @@ impl Options {
             | (self.shuffle_hammer_bros as u8) << 1
             | (self.chest_items as u8);
 
+        // b2 bit 5 is free (formerly shuffle_pipes, a dead flag removed in v26).
         // b2 bit 4 = faster_frog (reuses the slot formerly fix_drawbridges,
         // now always-on).
         // b2 bit 3 = boomboom_hits (reuses the slot formerly remove_rocks).
         let b2 = (self.remove_whistles as u8) << 7
             | (self.hands_levels as u8) << 6
-            | (self.shuffle_pipes as u8) << 5
             | (self.faster_frog as u8) << 4
             | (self.boomboom_hits as u8) << 3
             | (self.troll_pipes.is_on() as u8) << 2
@@ -321,7 +321,6 @@ impl Options {
             chest_items: b1 & 1 != 0,
             remove_whistles: (b2 >> 7) & 1 != 0,
             hands_levels: (b2 >> 6) & 1 != 0,
-            shuffle_pipes: (b2 >> 5) & 1 != 0,
             faster_frog: (b2 >> 4) & 1 != 0,
             shuffle_airships: b2 & 1 != 0,
             shuffle_toad_houses: (b2 >> 1) & 1 != 0,

@@ -106,10 +106,6 @@ export const SCHEMA = [
 	// --- Map ---
 	// Icons are clipped from web/assets/sprites.png. Coordinates picked via
 	// web/sprite-picker.html. Format: { x, y, w, h } in sprite-sheet pixels.
-	{ id: "shuffle_pipes", type: "bool", default: true,
-		label: "Pipe Shuffle",
-		tip: "Shuffle pipe endpoint positions on the overworld map",
-		group: "map", inFlagKey: true },
 	{ id: "shuffle_spade_games", type: "bool", default: true,
 		label: "Shuffle Spade Games",
 		tip: "Move spade (card-matching) games to random spots on the map",

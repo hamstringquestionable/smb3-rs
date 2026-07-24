@@ -147,9 +147,6 @@ pub struct Options {
     pub world_count: u8,
     #[serde(default)]
     pub big_q_blocks: bool,
-    /// Shuffle pipe endpoint positions during the overworld rebuild.
-    #[serde(default = "default_true")]
-    pub shuffle_pipes: bool,
     /// Shuffle airship levels across worlds 1-7.
     #[serde(default = "default_true")]
     pub shuffle_airships: bool,
@@ -392,7 +389,6 @@ impl Default for Options {
             world_order: false,
             world_count: default_world_count(),
             big_q_blocks: false,
-            shuffle_pipes: true,
             shuffle_airships: true,
             shuffle_hammer_bros: true,
             disable_autoscroll: true,
