@@ -124,7 +124,6 @@ fn flag_key_round_trip_all_wild() {
         palettes: true,
         world_order: true,
         big_q_blocks: true,
-        shuffle_pipes: true,
         shuffle_airships: true,
         shuffle_hammer_bros: true,
         disable_autoscroll: true,
@@ -317,7 +316,6 @@ fn flag_key_per_option_round_trip() {
         ("powerups",                     Box::new(|o| o.powerups = !o.powerups)),
         ("world_order",                  Box::new(|o| o.world_order = !o.world_order)),
         ("big_q_blocks",                 Box::new(|o| o.big_q_blocks = !o.big_q_blocks)),
-        ("shuffle_pipes",                Box::new(|o| o.shuffle_pipes = !o.shuffle_pipes)),
         ("shuffle_airships",             Box::new(|o| o.shuffle_airships = !o.shuffle_airships)),
         ("shuffle_hammer_bros",          Box::new(|o| o.shuffle_hammer_bros = !o.shuffle_hammer_bros)),
         ("disable_autoscroll",           Box::new(|o| o.disable_autoscroll = !o.disable_autoscroll)),
@@ -454,7 +452,6 @@ fn flag_key_per_option_round_trip() {
     everything.powerups = !everything.powerups;
     everything.world_order = !everything.world_order;
     everything.big_q_blocks = !everything.big_q_blocks;
-    everything.shuffle_pipes = !everything.shuffle_pipes;
     everything.shuffle_airships = !everything.shuffle_airships;
     everything.shuffle_hammer_bros = !everything.shuffle_hammer_bros;
     everything.disable_autoscroll = !everything.disable_autoscroll;
@@ -612,7 +609,6 @@ fn all_off_options() -> Options {
         world_order: false,
         world_count: 7,
         big_q_blocks: false,
-        shuffle_pipes: false,
         shuffle_airships: false,
         shuffle_hammer_bros: false,
         disable_autoscroll: false,
@@ -678,7 +674,6 @@ fn all_on_options() -> Options {
         world_order: true,
         world_count: 3,
         big_q_blocks: true,
-        shuffle_pipes: false,
         shuffle_airships: true,
         shuffle_hammer_bros: true,
         disable_autoscroll: true,
