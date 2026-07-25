@@ -1,12 +1,27 @@
-//! Embed a [`Mission`] into a [`Map`]: find fort positions and lock tiles that
-//! realize the mission, or `None` if the map can't host it.
+//! Embed a [`Mission`] into a map: find fort positions and lock tiles that make
+//! the mission true, or `None` if the map can't host it.
 //!
-//! A backtracking search over (fort slot × lockable tile) assignments. Each
-//! leaf is checked with [`verify::realizes`], so whatever `embed` returns is
-//! correct by construction — there is no fallback that silently degrades the
-//! mission (the failure mode of the geometry-first builder). Search is naive
-//! (fine for the small synthetic maps this slice targets); real-map pruning is
-//! a later concern.
+//! The whole job is filling in one table. For a chain "fort 0 gates fort 1,
+//! fort 1 gates the goal":
+//!
+//! | fort | its lock must cut off… | pick a lock that does + a spot in front of it |
+//! |------|------------------------|-----------------------------------------------|
+//! | 0    | fort 1                 | …                                             |
+//! | 1    | the goal               | …                                             |
+//!
+//! We try (spot, lock) pairs until every row is filled, then confirm the whole
+//! layout is actually beatable with [`verify::realizes`]. Whatever `embed`
+//! returns is correct by construction — there is no "give up and place a
+//! meaningless lock" fallback (the failure mode of the geometry-first builder).
+//!
+//! Two things keep the search fast on real worlds:
+//! - `processing_order` places a `ChainLink`'s target BEFORE the fort that gates
+//!   it, so when we pick that fort's lock we already know where the target is.
+//! - `lock_role_plausible` rejects hopeless (spot, lock) pairs immediately,
+//!   using `GridMap`'s precomputed "what does each lock cut off" table.
+//!
+//! The `<M: MapView>` on `embed` just means "works for any map type" — see the
+//! header of `map.rs` for why that trait exists.
 
 use std::collections::HashSet;
 

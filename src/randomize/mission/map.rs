@@ -7,6 +7,17 @@
 //! and `strands` fall out as defaults. A real world map satisfies this via
 //! `walk_map` (see `gridmap.rs`); the synthetic [`Map`] here satisfies it with a
 //! plain BFS over hand-written graphs you can verify by eye.
+//!
+//! # Why a trait (the `MapView` / `<M: MapView>` stuff)
+//!
+//! There are two very different kinds of map: tiny hand-built graphs for tests,
+//! and full SMB3 worlds (`GridMap`, backed by `walk_map`). Rather than write the
+//! solver twice, we define ONE list of questions any map must answer — that list
+//! is the `trait MapView` — and write `embed`/`verify` against the trait. The
+//! `<M: MapView>` you'll see on those functions reads as "works for any map type
+//! `M`, so long as `M` answers these questions." So the same solver runs on a
+//! 5-node test graph and on World 8 with zero duplication. If the generics ever
+//! feel like too much, that's the entire reason they exist — nothing more.
 
 use std::collections::{HashSet, VecDeque};
 

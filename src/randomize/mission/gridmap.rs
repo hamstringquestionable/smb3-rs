@@ -6,6 +6,17 @@
 //! tile — identical to how `place_locks` tests a candidate. This is the first
 //! point where the mission engine touches real ROM data; it is still read-only
 //! and produces no ROM writes.
+//!
+//! # Where do pipes come from?
+//!
+//! This module does NOT place pipes — it only *honors* them. Pipe placement is
+//! the existing builder's job, and it happens BEFORE forts. The already-placed
+//! pipe teleport edges are passed in as `pipe_pairs` and stored, then handed to
+//! `walk_map` on EVERY reachability query (see [`GridMap::new`] and
+//! [`GridMap::reachable_blocking`]). So when the solver asks "does closing this
+//! lock cut off that fort?", `walk_map` will happily route AROUND the lock
+//! through a pipe if one exists — the pipes are simply part of the map's
+//! connectivity, an input the mission engine inherits rather than decides.
 
 use std::collections::{HashMap, HashSet};
 
@@ -17,6 +28,9 @@ use crate::randomize::rom_data::{self, Grid, TeleportEdge};
 /// A world's overworld map, adapted to [`MapView`].
 pub(crate) struct GridMap {
     grid: Grid,
+    /// Pipe teleport edges (start<->dest), placed by the builder before us and
+    /// passed in. We never modify these; we hand them to `walk_map` so pipes
+    /// count as connections. See the module header.
     pipe_pairs: Vec<TeleportEdge>,
     cols: usize,
     world_idx: usize,
@@ -43,11 +57,15 @@ impl GridMap {
         world_idx: usize,
     ) -> Option<GridMap> {
         let cols = grid.cols;
+        // A grid position (row, col) packs into one number so node ids are plain
+        // usizes. `enc` packs; `decode` (below) unpacks.
         let enc = |p: (usize, usize)| p.0 * cols + p.1;
 
         let start_pos = rom_data::find_start(&grid)?;
         let goal_pos = find_target(&grid, world_idx)?;
 
+        // Walk the world once with nothing locked. `pipe_pairs` is passed here,
+        // so this reachability already includes pipe shortcuts.
         let walk = walk_map(&grid, &pipe_pairs, Some(start_pos), world_idx);
 
         // Fort slots are blank *nodes* (standable tiles). Lockable tiles are the
@@ -122,6 +140,9 @@ impl MapView for GridMap {
         &self.lockable
     }
 
+    /// Which nodes are reachable with the given locks closed. We model "closed"
+    /// literally: copy the grid, turn each locked tile into a gap, and re-walk
+    /// (still through pipes). Nothing closed is the common case, so it's cached.
     fn reachable_blocking(&self, blocked: &HashSet<usize>) -> HashSet<usize> {
         if blocked.is_empty() {
             return self.open_reach.clone();
@@ -129,9 +150,10 @@ impl MapView for GridMap {
         let mut g = self.grid.clone();
         for &id in blocked {
             let (r, c) = self.decode(id);
-            g.set(r, c, gap_tile_for(g.get(r, c)));
+            g.set(r, c, gap_tile_for(g.get(r, c))); // this tile is now impassable
         }
         let start_pos = self.decode(self.start);
+        // `self.pipe_pairs` again — pipes still work with locks closed.
         walk_map(&g, &self.pipe_pairs, Some(start_pos), self.world_idx)
             .nodes
             .iter()
