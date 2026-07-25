@@ -1,7 +1,16 @@
-//! Phase 3 of the overworld pipeline: assign levels to map slots via BFS-ordered
-//! placement, distribute fortresses/pipes/locks, and enforce connectivity.
-//! Steps live in submodules (types, scoring, capacity, sections, pipes, locks, progression); this module holds the
-//! `build` entry point that drives them.
+//! Phase 3 of the overworld pipeline: assign levels to map slots, distribute
+//! fortresses/pipes/locks, and enforce connectivity. This module holds the
+//! two entry points that drive the submodules:
+//!
+//! - `build` — the shipping geometry-first builder (scored BFS placement).
+//! - `mission_build` — the experimental mission-first builder (decide the
+//!   progression, then place forts/locks/pipes to realize it), gated behind
+//!   the `mission_overworld` option.
+//!
+//! Submodules: shared data (`types`, `plan`), scoring mechanics (`scoring`),
+//! and placement steps — `capacity`, `sections`, `pipes`, `locks`,
+//! `progression` (used by both), plus `mission_build` and `mission_pipes`
+//! (the mission-first builder's own orchestrator and connectivity pass).
 
 use std::collections::{HashMap, HashSet};
 
