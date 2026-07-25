@@ -37,10 +37,6 @@ deploys.
   1-Up Mushroom becomes a Poison Mushroom that hurts you instead of granting a
   life. Off by default; on in the Challenging preset.
 
-- Beta site is now visually distinct from the main site: the `/beta/` deploy
-  shows a hazard-striped "BETA BUILD" banner, a violet frame, and a BETA badge
-  in the header so it can't be confused with the stable release page.
-
 - Canoe "call the boat" rescue: stand on any dock and press A to summon the
   canoe to the water beside you, then board as usual. Prevents canoe softlocks
   where the boat was left out of reach, in both 1- and 2-player games.
@@ -48,6 +44,16 @@ deploys.
   player can press Start+Select to jump to the other player's tile. This
   prevents softlocks where one player moves a shared map object (such as the
   `8s are Wild` canoe) out of the other's reach. No effect in 1-player games.
+
+## [1.0.5] - 2026-07-25
+
+### Changed
+
+- The main site's tab title is now "SMB3 Randomizer" (previously carried a
+  "(beta)" tag). The `/beta/` deploy is now visually distinct from the main
+  site: it shows a hazard-striped "BETA BUILD" banner, a violet frame, and a
+  BETA badge in the header, keyed on the URL path so it can't be confused with
+  the stable release page.
 
 ## [1.0.4] - 2026-07-24
 
