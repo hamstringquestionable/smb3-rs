@@ -7,7 +7,7 @@
 //! point where the mission engine touches real ROM data; it is still read-only
 //! and produces no ROM writes.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::map::MapView;
 use crate::randomize::map_walker::walk_map;
@@ -27,6 +27,10 @@ pub(crate) struct GridMap {
     /// Reachable node ids with nothing closed — cached, since it's queried on
     /// every `strand_set`/`strands` and never changes.
     open_reach: HashSet<usize>,
+    /// What each lockable tile gates (node ids stranded when it alone is
+    /// closed), precomputed once. `embed` queries these thousands of times, so
+    /// caching them turns each query from a `walk_map` into a lookup.
+    strand_cache: HashMap<usize, HashSet<usize>>,
 }
 
 impl GridMap {
@@ -67,6 +71,24 @@ impl GridMap {
 
         let open_reach: HashSet<usize> = walk.nodes.iter().map(|&p| enc(p)).collect();
 
+        // Precompute each lockable tile's strand set once. Closing a lock is
+        // gap_tile_for on that tile; what it gates is the nodes that fall out of
+        // the walk (difference form, so already-unreachable nodes aren't
+        // miscredited).
+        let mut strand_cache: HashMap<usize, HashSet<usize>> = HashMap::new();
+        for &lock in &lockable {
+            let (r, c) = (lock / cols, lock % cols);
+            let mut g = grid.clone();
+            g.set(r, c, gap_tile_for(g.get(r, c)));
+            let closed: HashSet<usize> = walk_map(&g, &pipe_pairs, Some(start_pos), world_idx)
+                .nodes
+                .iter()
+                .map(|&p| enc(p))
+                .collect();
+            let strand = open_reach.difference(&closed).copied().filter(|v| *v != lock).collect();
+            strand_cache.insert(lock, strand);
+        }
+
         Some(GridMap {
             grid,
             pipe_pairs,
@@ -77,6 +99,7 @@ impl GridMap {
             fort_slots,
             lockable,
             open_reach,
+            strand_cache,
         })
     }
 
@@ -115,6 +138,14 @@ impl MapView for GridMap {
             .map(|&(r, c)| r * self.cols + c)
             .collect()
     }
+
+    // Served from the precomputed cache — the hot path during embed search.
+    fn strand_set(&self, lock: usize) -> HashSet<usize> {
+        self.strand_cache.get(&lock).cloned().unwrap_or_default()
+    }
+    fn strands(&self, lock: usize, target: usize) -> bool {
+        self.strand_cache.get(&lock).is_some_and(|s| s.contains(&target))
+    }
 }
 
 #[cfg(test)]
@@ -122,7 +153,12 @@ mod tests {
     use super::super::embed::embed;
     use super::super::{Mission, Role};
     use super::*;
+    use crate::randomize::node_catalog::NodeCatalog;
+    use crate::randomize::overworld_build::{BuildFlags, OverworldData, build};
+    use crate::randomize::overworld_pickup::{PickupFlags, pick_up};
     use crate::rom::Rom;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
 
     fn load_rom() -> Option<Rom> {
         let data = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
@@ -172,5 +208,75 @@ mod tests {
                 if gated { "yes" } else { "no" },
             );
         }
+    }
+
+    /// The real measurement: run the actual builder to get each world's cleared,
+    /// piped grid (no forts stamped), then embed a SingleGate mission on it.
+    /// Unlike the vanilla probe, these grids have no pre-existing fortress locks,
+    /// so the goal is openly reachable and a placed lock actually gates it.
+    /// Run with: `cargo test --release --lib mission_cleared_grid_probe -- --nocapture`
+    #[test]
+    fn mission_cleared_grid_probe() {
+        let Some(rom) = load_rom() else {
+            return; // no ROM in CI — skip
+        };
+
+        const SEEDS: u64 = 30;
+        // Catalog + pickup don't depend on the build RNG, so build them once.
+        let catalog = NodeCatalog::build(&rom, false);
+        let pickup = pick_up(
+            &rom,
+            &catalog,
+            PickupFlags {
+                shuffle_spade_games: false,
+                shuffle_toad_houses: true,
+                shuffle_hammer_bros: false,
+            },
+        );
+
+        let mut gate_ok = [0u32; 8];
+        let mut goal_reachable = [0u32; 8];
+        let mut total = [0u32; 8];
+
+        for seed in 0..SEEDS {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let result = build(
+                &rom,
+                &OverworldData { pickup: &pickup, catalog: &catalog },
+                &mut rng,
+                BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+            );
+            for built in &result.worlds {
+                let wi = built.world_idx;
+                let Some(gm) = GridMap::new(built.grid.clone(), built.pipe_pairs.clone(), wi) else {
+                    continue;
+                };
+                total[wi] += 1;
+                if gm.open_reach.contains(&gm.goal) {
+                    goal_reachable[wi] += 1;
+                }
+                let single_gate = Mission { roles: vec![Role::GoalGate] };
+                if embed(&single_gate, &gm).is_some() {
+                    gate_ok[wi] += 1;
+                }
+            }
+        }
+
+        eprintln!("\nSingleGate embed on cleared + piped builder grids ({SEEDS} seeds):\n");
+        eprintln!("  {:<6} {:>10} {:>12}", "world", "goal-reach", "goal-gated");
+        let (mut g, mut t) = (0u32, 0u32);
+        for wi in 0..8 {
+            eprintln!(
+                "  W{:<5} {:>7}/{:<2} {:>9}/{:<2}",
+                wi + 1,
+                goal_reachable[wi],
+                total[wi],
+                gate_ok[wi],
+                total[wi],
+            );
+            g += gate_ok[wi];
+            t += total[wi];
+        }
+        eprintln!("\n  overall goal-gate embed: {g}/{t}");
     }
 }
