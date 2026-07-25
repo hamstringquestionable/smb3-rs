@@ -27,6 +27,7 @@ mod sections;
 mod pipes;
 mod locks;
 mod mission_build;
+mod mission_pipes;
 mod progression;
 
 use capacity::{

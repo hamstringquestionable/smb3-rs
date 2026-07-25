@@ -145,7 +145,7 @@ impl<M: MapView> Search<'_, M> {
             return false;
         }
         match &self.mission.roles[i] {
-            Role::GoalGate => self.map.strands(lock, self.map.goal()),
+            Role::GoalGate | Role::GoalGateLoose => self.map.strands(lock, self.map.goal()),
             Role::Safe => !self.map.strands(lock, self.map.goal()),
             // Targets are already placed (processing order guarantees it), so
             // the lock must strand every one of their positions.

@@ -50,6 +50,12 @@ pub(crate) enum LockRole {
     ChainLink { targets: Vec<usize> },
     /// Lock must gate the airship/Bowser target while stranding no fortress.
     GoalGate,
+    /// Loose goal gate: gates the target and may strand SAFE forts (decoys),
+    /// but never a required (chain/goal) fort. The mission builder's ladder
+    /// uses it for geometry where the start is a cul-de-sac and any
+    /// goal-gating lock strands most of the map (measured: SAS W7) — the
+    /// goal still gets a real gate instead of falling to all-Safe.
+    GoalGateLoose,
     /// Lock must gate nothing important (no fort, no target) — the fortress
     /// stays reachable. Decoy and inert forts.
     Safe,

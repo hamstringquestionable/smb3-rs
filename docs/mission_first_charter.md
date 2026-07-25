@@ -152,6 +152,14 @@ its intended chain links only **34–49%** of the time. Embed either finds a
 placement that realizes the shape, or honestly reports the map can't host it (then
 we pick a simpler shape) — never a silent, meaningless lock.
 
+**Hard rules (settled 2026-07-25):** every budgeted fort is placed and every
+fort gets a real lock — neither ever degrades. Only the *roles* degrade, down
+a fixed ladder: sampled shape → single gate → chain → **loose single gate**
+(the goal gate may strand Safe decoys — for cul-de-sac geometry where any
+goal-gating lock strands most of the map, e.g. swapped-start W7) → all-Safe.
+A map that can't host even all-Safe is a geometry-pipeline bug and fails
+loudly, never silently.
+
 ### Forts and route topology
 
 Connectivity pipes create hub-vs-chain island layouts (see Pipes), and that
@@ -233,6 +241,22 @@ Pipes serve several roles, and one pipe can wear more than one hat:
 - **Intended route.** A pipe can *be* the expected way through an area, not an
   add-on — e.g. the pipe is how you reach the far side of a lock, and beating the
   fort changes that access. Pipes are part of the layout, not just bonuses.
+
+### Topology rules (settled 2026-07-25, built in iteration 3)
+
+Connectivity pipes construct the mission's island topology; the mission
+builder owns its own pipe pass. Three rules, all hard *preferences* with
+explicit fallbacks (completability always outranks topology quality):
+
+- **Choked entrances.** A pipe is untraversable if you can't walk to its
+  entrance, so an island whose source-side entrance sits behind a lockable
+  tile is gateable with one lock. Chain missions get chained, individually
+  gateable islands; a fork's terminal group gets a one-lock island home.
+- **Gate preservation.** New islands attach OUTSIDE the goal's best gate
+  (the smallest strand containing the goal), so their fort slots don't get
+  swallowed by the gate's strand and starve `GoalGate`'s feasibility.
+- **No start→goal express.** The pipe that connects the goal's component
+  avoids sourcing from the start island when the map allows depth.
 
 ### The philosophy (this shapes the whole approach)
 

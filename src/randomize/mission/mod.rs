@@ -48,6 +48,12 @@ pub(crate) enum Role {
     ChainLink { targets: Vec<usize> },
     /// This fort's lock gates the goal (airship/Bowser), stranding no fort.
     GoalGate,
+    /// A goal gate that may additionally strand `Safe` decoys — never a
+    /// required fort. The embed ladder's rung for cul-de-sac geometry where
+    /// every goal-gating lock strands most of the map: the goal still gets a
+    /// real gate, and the stranded decoys stay beatable once it opens
+    /// (completability is verified as usual).
+    GoalGateLoose,
     /// This fort's lock gates nothing important — a decoy or optional fort.
     Safe,
 }

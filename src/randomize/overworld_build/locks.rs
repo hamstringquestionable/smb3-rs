@@ -270,6 +270,9 @@ pub(super) fn place_locks<R: Rng>(
                             .iter()
                             .all(|s| s.kind != SlotKind::Fortress || walk.nodes.contains(&s.pos))
                 }
+                // Mission-ladder-only role; the geometry-first builder never
+                // samples it. Treated as a plain goal gate here for safety.
+                Some(LockRole::GoalGateLoose) => !target_reachable,
                 Some(LockRole::Safe) => safe,
                 None => false,
             };

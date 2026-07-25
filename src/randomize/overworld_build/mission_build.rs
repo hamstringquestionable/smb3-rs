@@ -20,10 +20,8 @@ use super::capacity::{
     SPADE_BUDGET, assign_hb_sprites, distribute_levels, prepare_capacities, promote_hb_slots,
     redistribute_fortresses,
 };
-use super::pipes::{
-    FIXED_PIPE_ENDPOINTS, PIPE_EXCLUDED_POSITIONS, VANILLA_PIPE_PAIRS, place_pipes,
-    place_spare_pipes,
-};
+use super::mission_pipes::{fixed_pipe_endpoints, mission_place_pipes, pipe_excluded_positions};
+use super::pipes::{VANILLA_PIPE_PAIRS, place_spare_pipes};
 use super::plan::{self, Archetype, LockRole, WorldPlan};
 use super::scoring::{LEVEL_SPREAD_EXPONENT, VANILLA_LEVEL_COUNT, is_row78_conflict};
 use super::sections::{completable_positions, find_blank_slots};
@@ -140,6 +138,7 @@ fn mission_from_plan(plan: &WorldPlan) -> Mission {
         .map(|r| match r {
             LockRole::ChainLink { targets } => Role::ChainLink { targets: targets.clone() },
             LockRole::GoalGate => Role::GoalGate,
+            LockRole::GoalGateLoose => Role::GoalGateLoose,
             LockRole::Safe => Role::Safe,
         })
         .collect();
@@ -166,23 +165,18 @@ fn mission_build_world<R: Rng>(
     let target_pos = find_target(&grid, world_idx);
     let blank_positions = find_blank_slots(&grid, fixed_positions);
 
-    // Step 1: connectivity pipes — reused helper, default knobs.
-    let fixed_pipe_eps: Vec<Pos> = FIXED_PIPE_ENDPOINTS
-        .iter()
-        .filter(|(wi, _)| *wi == world_idx)
-        .map(|(_, pos)| *pos)
-        .collect();
-    let pipe_excluded: HashSet<Pos> = PIPE_EXCLUDED_POSITIONS
-        .iter()
-        .filter(|(wi, _)| *wi == world_idx)
-        .map(|(_, pos)| *pos)
-        .collect();
+    // Step 1: connectivity pipes — the mission builder's OWN pass: same
+    // island-chaining skeleton as the shared one, plus the topology rules
+    // (choked entrances so islands stay gateable; the goal-connecting pipe
+    // avoids sourcing from the start island). See `mission_pipes`.
+    let fixed_pipe_eps = fixed_pipe_endpoints(world_idx);
+    let pipe_excluded = pipe_excluded_positions(world_idx);
     let pipe_blanks: Vec<Pos> = blank_positions
         .iter()
         .copied()
         .filter(|p| !pipe_excluded.contains(p))
         .collect();
-    let mut pipe_pairs = place_pipes(
+    let mut pipe_pairs = mission_place_pipes(
         &mut grid,
         &pipe_blanks,
         start_pos,
@@ -381,6 +375,16 @@ fn embed_mission<R: Rng>(
         ladder.push(WorldPlan::from_archetype(Archetype::SingleGate, n));
     }
     ladder.push(WorldPlan::from_archetype(Archetype::Chain, n));
+    // Loose single gate: for cul-de-sac geometry (e.g. SAS W7) where every
+    // goal-gating lock strands most of the map, allow the gate to strand the
+    // Safe decoys — the goal still gets a real gate instead of all-Safe.
+    if n >= 2 {
+        let mut loose = WorldPlan::from_archetype(Archetype::SingleGate, n);
+        if let Some(last) = loose.roles.last_mut() {
+            *last = LockRole::GoalGateLoose;
+        }
+        ladder.push(loose);
+    }
     ladder.push(WorldPlan::all_safe(n));
 
     let mut tried: Vec<Vec<Role>> = Vec::new();

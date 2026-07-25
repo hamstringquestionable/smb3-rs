@@ -85,6 +85,19 @@ pub(crate) fn realizes<M: MapView>(mission: &Mission, map: &M, emb: &Embedding) 
                     return false;
                 }
             }
+            // Loose gate: must gate the goal; may strand Safe decoys but
+            // never a required fort (or itself — its own index is not Safe).
+            Role::GoalGateLoose => {
+                if !strand.contains(&map.goal()) {
+                    return false;
+                }
+                let strands_required = emb.fort_pos.iter().enumerate().any(|(j, p)| {
+                    strand.contains(p) && !matches!(mission.roles[j], Role::Safe)
+                });
+                if strands_required {
+                    return false;
+                }
+            }
             Role::Safe => {
                 if strand.contains(&map.goal()) || strands_a_fort {
                     return false;
