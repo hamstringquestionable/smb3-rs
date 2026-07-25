@@ -154,4 +154,46 @@ mod tests {
         let mission = Mission { roles: vec![Role::GoalGate] };
         assert!(embed(&mission, &m).is_none());
     }
+
+    /// Two-fort chain: fort 0's lock gates fort 1, fort 1's lock gates the goal.
+    ///   0=start — 1 — 2 — 3 — 4 — 5=goal ; forts {1,3}, locks {2,4}.
+    #[test]
+    fn two_fort_chain() {
+        let mut m = Map::new(6, 0, 5);
+        m.edge(0, 1).edge(1, 2).edge(2, 3).edge(3, 4).edge(4, 5);
+        m.fort_slots = vec![1, 3];
+        m.lockable = vec![2, 4];
+
+        let mission = Mission {
+            roles: vec![Role::ChainLink { target: 1 }, Role::GoalGate],
+        };
+        let emb = embed(&mission, &m).expect("should embed");
+
+        assert!(m.strands(emb.lock_pos[0], emb.fort_pos[1])); // link gates next fort
+        assert!(m.strands(emb.lock_pos[1], m.goal)); // last gates the goal
+    }
+
+    /// Three-fort chain along a longer corridor. `embed` must place the forts in
+    /// depth order (a nearer fort can't be gated behind a farther one without
+    /// stranding itself), which it finds by search.
+    #[test]
+    fn three_fort_chain() {
+        let mut m = Map::new(8, 0, 7);
+        m.edge(0, 1).edge(1, 2).edge(2, 3).edge(3, 4).edge(4, 5).edge(5, 6).edge(6, 7);
+        m.fort_slots = vec![1, 3, 5];
+        m.lockable = vec![2, 4, 6];
+
+        let mission = Mission {
+            roles: vec![
+                Role::ChainLink { target: 1 },
+                Role::ChainLink { target: 2 },
+                Role::GoalGate,
+            ],
+        };
+        let emb = embed(&mission, &m).expect("should embed");
+
+        assert!(m.strands(emb.lock_pos[0], emb.fort_pos[1]));
+        assert!(m.strands(emb.lock_pos[1], emb.fort_pos[2]));
+        assert!(m.strands(emb.lock_pos[2], m.goal));
+    }
 }

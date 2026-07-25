@@ -98,3 +98,63 @@ pub(crate) fn realizes(mission: &Mission, map: &Map, emb: &Embedding) -> bool {
     let (beaten, goal_reachable) = analyze(map, emb);
     beaten.len() == n && goal_reachable
 }
+
+#[cfg(test)]
+mod tests {
+    use super::realizes;
+    use super::super::map::Map;
+    use super::super::{Embedding, Mission, Role};
+
+    /// 0=start — 1 — 2 — 3 — 4 — 5=goal ; forts {1,3}, locks {2,4}.
+    fn chain_map() -> Map {
+        let mut m = Map::new(6, 0, 5);
+        m.edge(0, 1).edge(1, 2).edge(2, 3).edge(3, 4).edge(4, 5);
+        m.fort_slots = vec![1, 3];
+        m.lockable = vec![2, 4];
+        m
+    }
+
+    #[test]
+    fn correct_chain_realizes() {
+        let m = chain_map();
+        let mission = Mission {
+            roles: vec![Role::ChainLink { target: 1 }, Role::GoalGate],
+        };
+        // fort0@1 lock@2 gates fort1@3; fort1@3 lock@4 gates goal@5.
+        let emb = Embedding {
+            fort_pos: vec![1, 3],
+            lock_pos: vec![2, 4],
+        };
+        assert!(realizes(&mission, &m, &emb));
+    }
+
+    #[test]
+    fn chain_link_that_misses_its_target_is_rejected() {
+        let m = chain_map();
+        let mission = Mission {
+            roles: vec![Role::ChainLink { target: 1 }, Role::GoalGate],
+        };
+        // fort0's lock is now node 4 — past fort1@3, so it doesn't gate fort1.
+        let emb = Embedding {
+            fort_pos: vec![1, 3],
+            lock_pos: vec![4, 2],
+        };
+        assert!(!realizes(&mission, &m, &emb));
+    }
+
+    #[test]
+    fn safe_lock_that_strands_a_fort_is_rejected() {
+        // A "Safe" lock must gate nothing important. Here fort0@3 sits behind
+        // its own lock@2 (strand_set(2) = {3,4,5}), which strands both a fort
+        // and the goal — not Safe.
+        let m = chain_map();
+        let mission = Mission {
+            roles: vec![Role::Safe, Role::GoalGate],
+        };
+        let emb = Embedding {
+            fort_pos: vec![3, 1],
+            lock_pos: vec![2, 4],
+        };
+        assert!(!realizes(&mission, &m, &emb));
+    }
+}
