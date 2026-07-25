@@ -302,6 +302,14 @@ struct Cli {
     #[arg(long)]
     faster_frog: bool,
 
+    /// Every 1-Up Mushroom becomes a Poison Mushroom that hurts you (MaCobra52's "All 1UPs are Poison Mushrooms" patch)
+    #[arg(long)]
+    poison_mushrooms: bool,
+
+    /// Small Mario grabbing a Fire Flower or suit gets its power without turning Big first (MaCobra52's "Easy Power-up System" patch)
+    #[arg(long)]
+    modern_powerups: bool,
+
     /// Random Fire Flower: in-level Fire Flowers grant a position-derived power
     /// state instead of always Fire — off, on, or wild (default: off).
     /// `on` = Fire/Frog/Tanooki/Hammer; `wild` also allows Small/Big.
@@ -510,6 +518,8 @@ fn build_options(cli: &Cli) -> Options {
             faster_tail_speed: cli.faster_tail_speed,
             no_game_over_penalty: cli.no_game_over_penalty,
             faster_frog: cli.faster_frog,
+            poison_mushrooms: cli.poison_mushrooms,
+            modern_powerups: cli.modern_powerups,
             fire_flower: cli.fire_flower,
             piranha_shuffle: cli.piranha_shuffle,
             shuffle_spade_games: !cli.no_shuffle_spade_games,

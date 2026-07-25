@@ -520,6 +520,20 @@ fn randomize_inner(
         randomize::qol::apply_faster_frog(rom);
     }
 
+    // MaCobra52's "All 1UPs are Poison Mushrooms" — every 1-Up becomes a
+    // Poison Mushroom that damages the player. Challenge option.
+    if options.poison_mushrooms {
+        rom.set_tag("qol/poison_mushrooms");
+        randomize::qol::apply_poison_mushrooms(rom);
+    }
+
+    // MaCobra52's "Easy Power-up System" — Small Mario gets suits / Fire power
+    // without first growing Big (modern Mario power-up behavior).
+    if options.modern_powerups {
+        rom.set_tag("qol/modern_powerups");
+        randomize::qol::apply_modern_powerups(rom);
+    }
+
     // Random Fire Flower — in-level Fire Flower grants a position-derived suit
     // instead of always Fire. Pure static patch (no RNG): the substitution is a
     // deterministic function of World_Num + the flower's level position.
