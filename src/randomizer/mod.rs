@@ -265,16 +265,18 @@ fn randomize_inner(
         pickup: &pickup,
         catalog: &catalog,
     };
-    let mut build = randomize::overworld_build::build(
-        rom,
-        &data,
-        &mut rng,
-        randomize::overworld_build::BuildFlags {
-            shuffle_toad_houses: options.shuffle_toad_houses,
-            eights_are_wild,
-            shuffle_hammer_bros: options.shuffle_hammer_bros,
-        },
-    );
+    let build_flags = randomize::overworld_build::BuildFlags {
+        shuffle_toad_houses: options.shuffle_toad_houses,
+        eights_are_wild,
+        shuffle_hammer_bros: options.shuffle_hammer_bros,
+    };
+    // EXPERIMENTAL: the mission-first builder is a drop-in sibling of the
+    // geometry-first one — same inputs, same BuildResult, same writer.
+    let mut build = if options.mission_overworld {
+        randomize::overworld_build::mission_build(rom, &data, &mut rng, build_flags)
+    } else {
+        randomize::overworld_build::build(rom, &data, &mut rng, build_flags)
+    };
     if options.hands_levels {
         rom.set_tag("hands_levels");
         randomize::hands_levels::mark_hand_traps(&mut build, &mut rng);

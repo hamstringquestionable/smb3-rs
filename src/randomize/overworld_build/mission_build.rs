@@ -45,9 +45,7 @@ const EMBED_RETRIES: usize = 12;
 
 /// Execute the mission-first build for all 8 worlds. Same contract as
 /// [`super::build`]: the writer consumes the returned `BuildResult` unchanged.
-// Reason: WIP — wired into the shipping path by the next slice (an Options
-// flag routing the randomizer here); only exercised by tests until then.
-#[allow(dead_code)]
+/// Selected by the experimental `mission_overworld` option.
 pub(crate) fn mission_build<R: Rng>(
     rom: &Rom,
     data: &OverworldData,

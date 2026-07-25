@@ -508,6 +508,7 @@ fn flag_key_encodes_every_bool_option() {
         "palette_themed",      // cosmetic
         "remove_flashing",     // cosmetic/accessibility; static patch, no RNG
         "skip_rom_validation", // operational (CLI/WASM input handling), not randomization
+        "mission_overworld",   // experimental builder switch; encoded once it ships
     ];
 
     let default_key = Options::default().to_flag_key();
@@ -658,6 +659,7 @@ fn all_off_options() -> Options {
         wild_injections: false,
         starting_items: vec![],
         skip_rom_validation: false,
+        mission_overworld: false,
         anchor_visuals: false,
     }
 }
@@ -725,6 +727,9 @@ fn all_on_options() -> Options {
         wild_injections: true,
         starting_items: vec![0x05, 0x09, 0x03],
         skip_rom_validation: false,
+        // Experimental, not flag-keyed — kept off so the all-on hashes track
+        // the shipping builder.
+        mission_overworld: false,
         anchor_visuals: true,
     }
 }
@@ -934,4 +939,20 @@ fn resolve_concrete_passthrough() {
     assert_eq!(resolve_starting_item(0, &mut rng), 0);
     assert_eq!(resolve_starting_item(5, &mut rng), 5);
     assert_eq!(resolve_starting_item(13, &mut rng), 13);
+}
+
+/// EXPERIMENTAL mission-first builder: the full randomize pipeline (builder →
+/// writer → post passes) completes on real data over several seeds. Content
+/// correctness is covered by the builder's own tests; this guards the seam.
+#[test]
+fn mission_overworld_full_pipeline_smoke() {
+    for seed in [0u64, 1, 0xDEADBEEF] {
+        let Some(mut rom) = make_test_rom() else { return };
+        let options = Options {
+            mission_overworld: true,
+            palettes: false, // OS entropy — keep the run reproducible
+            ..Default::default()
+        };
+        randomize(&mut rom, seed, &options);
+    }
 }

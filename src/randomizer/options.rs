@@ -329,6 +329,12 @@ pub struct Options {
     /// vanilla start coords. W8 (Bowser's castle) never swaps.
     #[serde(default)]
     pub swap_start_airship: bool,
+    /// EXPERIMENTAL: build the overworld with the mission-first builder
+    /// (decide each world's progression first, then place forts/locks/levels
+    /// to realize it) instead of the geometry-first builder. Not encoded in
+    /// the flag key while under construction.
+    #[serde(default)]
+    pub mission_overworld: bool,
     /// Cosmetic: every inventory item displays as the Anchor sprite while
     /// keeping its original behavior. Covers the world-map reserve grid,
     /// Toad House chests, in-level treasure boxes, and the Princess letter
@@ -435,6 +441,7 @@ impl Default for Options {
             hands_levels: true,
             troll_pipes: Tri::On,
             swap_start_airship: false,
+            mission_overworld: false,
             anchor_visuals: false,
             ground: EnemyMode::Shuffle,
             shell: EnemyMode::Shuffle,

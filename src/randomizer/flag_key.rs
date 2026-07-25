@@ -387,6 +387,7 @@ impl Options {
                 if wc == 0 { 7 } else { wc.clamp(1, 7) }
             },
             skip_rom_validation: false,
+            mission_overworld: false, // experimental — not encoded in flag key
             anchor_visuals: (b12 >> 4) & 1 != 0,
             poison_mushrooms: (b12 >> 5) & 1 != 0,
             modern_powerups: (b12 >> 6) & 1 != 0,

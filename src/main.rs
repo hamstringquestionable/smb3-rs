@@ -349,6 +349,12 @@ struct Cli {
     #[arg(long)]
     swap_start_airship: bool,
 
+    /// EXPERIMENTAL: build the overworld with the mission-first builder
+    /// instead of the geometry-first builder. Under construction — hidden
+    /// from --help until it ships.
+    #[arg(long, hide = true)]
+    mission_overworld: bool,
+
     /// Cosmetic: every inventory item displays as the Anchor sprite while
     /// keeping its original behavior. Covers the world-map reserve grid,
     /// Toad House chests, in-level treasure boxes, and the Princess letter
@@ -528,6 +534,7 @@ fn build_options(cli: &Cli) -> Options {
             troll_pipes: cli.troll_pipes,
             include_beta_stages: cli.include_beta_stages,
             swap_start_airship: cli.swap_start_airship,
+            mission_overworld: cli.mission_overworld,
             anchor_visuals: cli.anchor_visuals,
             ground: cli.ground,
             shell: cli.shell,

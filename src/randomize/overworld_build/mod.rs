@@ -42,6 +42,7 @@ use types::{CapacityPrep, WorldSlotCounts};
 
 // Public API consumed by the randomizer and the overworld writer.
 pub use {types::SlotAssignment, types::SlotKind};
+pub(crate) use mission_build::mission_build;
 pub(crate) use sections::bfs_ordered;
 pub(crate) use capacity::RESERVED_DYNAMIC_SLOTS;
 pub(crate) use types::{BuildFlags, BuildResult, BuiltWorld, OverworldData};
