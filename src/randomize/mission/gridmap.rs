@@ -13,7 +13,6 @@ use super::map::MapView;
 use crate::randomize::map_walker::walk_map;
 use crate::randomize::overworld_helpers::{LOCKABLE_TILES, find_target, gap_tile_for};
 use crate::randomize::rom_data::{self, Grid, TeleportEdge};
-use crate::rom::Rom;
 
 /// A world's overworld map, adapted to [`MapView`].
 pub(crate) struct GridMap {
@@ -81,11 +80,6 @@ impl GridMap {
         })
     }
 
-    /// Read world `world_idx` straight from the ROM (vanilla geometry, no pipes).
-    pub(crate) fn from_rom(rom: &Rom, world_idx: usize) -> Option<GridMap> {
-        Self::new(rom_data::read_tile_grid(rom, world_idx), Vec::new(), world_idx)
-    }
-
     fn decode(&self, id: usize) -> (usize, usize) {
         (id / self.cols, id % self.cols)
     }
@@ -128,6 +122,7 @@ mod tests {
     use super::super::embed::embed;
     use super::super::{Mission, Role};
     use super::*;
+    use crate::rom::Rom;
 
     fn load_rom() -> Option<Rom> {
         let data = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
@@ -147,13 +142,15 @@ mod tests {
             return; // no ROM in CI — skip
         };
 
-        eprintln!("\nMission adapter over real world maps (vanilla geometry, no pipes):\n");
+        eprintln!("\nMission adapter over real world maps (vanilla geometry, with pipes):\n");
         eprintln!(
             "  {:<6} {:>5} {:>6} {:>9} {:>10} {:>10}",
             "world", "nodes", "forts", "lockable", "goal-reach", "goal-gate?"
         );
         for wi in 0..8 {
-            let gm = GridMap::from_rom(&rom, wi).expect("world should adapt");
+            let grid = rom_data::read_tile_grid(&rom, wi);
+            let pipes = rom_data::read_pipe_pairs(&rom).remove(&wi).unwrap_or_default();
+            let gm = GridMap::new(grid, pipes, wi).expect("world should adapt");
 
             // Start is always a reachable node.
             assert!(gm.open_reach.contains(&gm.start));
