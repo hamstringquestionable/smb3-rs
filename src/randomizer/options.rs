@@ -260,6 +260,16 @@ pub struct Options {
     /// always-on tail-attack-while-swimming routine.)
     #[serde(default)]
     pub faster_frog: bool,
+    /// Every 1-Up Mushroom is replaced with a Poison Mushroom that damages
+    /// the player instead of granting a life. (MaCobra52's "All 1UPs are
+    /// Poison Mushrooms" patch.) Off by default; a challenge option.
+    #[serde(default)]
+    pub poison_mushrooms: bool,
+    /// Power-ups behave like the modern Mario games: a Fire Flower or suit
+    /// grabbed as Small Mario grants its power without first becoming Big.
+    /// (MaCobra52's "Easy Power-up System" patch.)
+    #[serde(default)]
+    pub modern_powerups: bool,
     /// Random Fire Flower (issue #22): an in-level Fire Flower grants a power
     /// state derived deterministically from the world + the flower's level
     /// position, instead of always Fire. `Off`/`On`/`Wild` (see
@@ -417,6 +427,8 @@ impl Default for Options {
             faster_tail_speed: false,
             no_game_over_penalty: false,
             faster_frog: false,
+            poison_mushrooms: false,
+            modern_powerups: false,
             fire_flower: FireFlowerMode::Off,
             shuffle_spade_games: true,
             shuffle_toad_houses: true,

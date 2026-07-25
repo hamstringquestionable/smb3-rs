@@ -3,7 +3,7 @@
 
 use super::*;
 
-pub(super) const FLAG_KEY_VERSION: u8 = 26;
+pub(super) const FLAG_KEY_VERSION: u8 = 27;
 
 pub(super) const FLAG_KEY_PREFIX: &str = "SMB3R-";
 
@@ -220,11 +220,14 @@ impl Options {
         }
 
         // b12: piranha_shuffle(1-0), antechamber_shuffle ON bit (2) and
-        // Maybe bit (3), anchor_visuals(4). Bits 7-5 free for future flags.
+        // Maybe bit (3), anchor_visuals(4), poison_mushrooms(5),
+        // modern_powerups(6). Bit 7 free for future flags.
         let b12 = pm(self.piranha_shuffle)
             | (self.antechamber_shuffle.is_on() as u8) << 2
             | (self.antechamber_shuffle.is_maybe() as u8) << 3
-            | (self.anchor_visuals as u8) << 4;
+            | (self.anchor_visuals as u8) << 4
+            | (self.poison_mushrooms as u8) << 5
+            | (self.modern_powerups as u8) << 6;
 
         [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12]
     }
@@ -385,6 +388,8 @@ impl Options {
             },
             skip_rom_validation: false,
             anchor_visuals: (b12 >> 4) & 1 != 0,
+            poison_mushrooms: (b12 >> 5) & 1 != 0,
+            modern_powerups: (b12 >> 6) & 1 != 0,
         })
     }
 

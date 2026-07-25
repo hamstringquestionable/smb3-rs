@@ -28,6 +28,15 @@ deploys.
 
 ### Added
 
+- Modern Power-Ups option (MaCobra52's "Easy Power-up System"): power-ups work
+  like the newer Mario games — Small Mario grabbing a Fire Flower or suit gets
+  its power without turning Big first. Off by default; on in the Beginner
+  Friendly preset.
+
+- Poison Mushrooms option (MaCobra52's "All 1UPs are Poison Mushrooms"): every
+  1-Up Mushroom becomes a Poison Mushroom that hurts you instead of granting a
+  life. Off by default; on in the Challenging preset.
+
 - Beta site is now visually distinct from the main site: the `/beta/` deploy
   shows a hazard-striped "BETA BUILD" banner, a violet frame, and a BETA badge
   in the header so it can't be confused with the stable release page.
