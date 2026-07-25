@@ -21,6 +21,11 @@ mod gridmap;
 mod map;
 mod verify;
 
+// The engine's public surface for the (in-progress) mission-first builder.
+pub(crate) use embed::embed;
+pub(crate) use gridmap::GridMap;
+pub(crate) use map::MapView;
+
 /// A realized mission: each fort placed on a map node, each fort's lock on a
 /// map node. Indexed by the same mission-local fort index as [`Mission::roles`]
 /// — `fort_pos[i]` is fort `i`'s position, `lock_pos[i]` the lock its defeat
