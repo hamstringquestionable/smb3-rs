@@ -946,13 +946,17 @@ fn resolve_concrete_passthrough() {
 /// correctness is covered by the builder's own tests; this guards the seam.
 #[test]
 fn mission_overworld_full_pipeline_smoke() {
-    for seed in [0u64, 1, 0xDEADBEEF] {
+    for (seed, swap) in [(0u64, false), (1, false), (0xDEADBEEF, false), (1, true), (5, true)] {
         let Some(mut rom) = make_test_rom() else { return };
         let options = Options {
             mission_overworld: true,
+            // SAS moves each world's start/goal, which reshapes what the
+            // mission engine must gate — worth its own smoke coverage.
+            swap_start_airship: swap,
             palettes: false, // OS entropy — keep the run reproducible
             ..Default::default()
         };
         randomize(&mut rom, seed, &options);
     }
 }
+
