@@ -16,7 +16,19 @@
 // module docs). The allow comes off the moment the module is consumed.
 #![allow(dead_code)]
 
+mod embed;
 mod map;
+mod verify;
+
+/// A realized mission: each fort placed on a map node, each fort's lock on a
+/// map node. Indexed by the same mission-local fort index as [`Mission::roles`]
+/// — `fort_pos[i]` is fort `i`'s position, `lock_pos[i]` the lock its defeat
+/// opens.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Embedding {
+    pub fort_pos: Vec<usize>,
+    pub lock_pos: Vec<usize>,
+}
 
 /// The role a fort's lock plays in a mission. Forts are identified by
 /// mission-local index (`0..n`); embedding maps each index to a map position.

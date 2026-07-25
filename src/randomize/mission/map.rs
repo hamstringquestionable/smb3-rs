@@ -40,18 +40,18 @@ impl Map {
         self
     }
 
-    /// Nodes reachable from `start`, optionally with one node `removed` (a
-    /// closed lock — impassable, so it can neither be entered nor traversed).
-    pub fn reachable(&self, removed: Option<usize>) -> HashSet<usize> {
+    /// Nodes reachable from `start` with every node in `blocked` closed (a
+    /// closed lock is impassable — it can neither be entered nor traversed).
+    pub fn reachable_blocking(&self, blocked: &HashSet<usize>) -> HashSet<usize> {
         let mut seen = HashSet::new();
-        if removed == Some(self.start) {
+        if blocked.contains(&self.start) {
             return seen; // start itself blocked — nothing is reachable
         }
         seen.insert(self.start);
         let mut q = VecDeque::from([self.start]);
         while let Some(u) = q.pop_front() {
             for &v in &self.adj[u] {
-                if removed == Some(v) || seen.contains(&v) {
+                if blocked.contains(&v) || seen.contains(&v) {
                     continue;
                 }
                 seen.insert(v);
@@ -59,6 +59,11 @@ impl Map {
             }
         }
         seen
+    }
+
+    /// Nodes reachable from `start`, optionally with one node `removed`.
+    pub fn reachable(&self, removed: Option<usize>) -> HashSet<usize> {
+        self.reachable_blocking(&removed.into_iter().collect())
     }
 
     /// The set of nodes a lock at `lock` gates: those reachable from the start
