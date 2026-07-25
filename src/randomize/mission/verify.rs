@@ -90,8 +90,8 @@ pub(crate) fn realizes<M: MapView>(mission: &Mission, map: &M, emb: &Embedding) 
                     return false;
                 }
             }
-            Role::ChainLink { target } => {
-                if !strand.contains(&emb.fort_pos[*target]) {
+            Role::ChainLink { targets } => {
+                if !targets.iter().all(|t| strand.contains(&emb.fort_pos[*t])) {
                     return false;
                 }
             }
@@ -122,7 +122,7 @@ mod tests {
     fn correct_chain_realizes() {
         let m = chain_map();
         let mission = Mission {
-            roles: vec![Role::ChainLink { target: 1 }, Role::GoalGate],
+            roles: vec![Role::ChainLink { targets: vec![1] }, Role::GoalGate],
         };
         // fort0@1 lock@2 gates fort1@3; fort1@3 lock@4 gates goal@5.
         let emb = Embedding {
@@ -136,7 +136,7 @@ mod tests {
     fn chain_link_that_misses_its_target_is_rejected() {
         let m = chain_map();
         let mission = Mission {
-            roles: vec![Role::ChainLink { target: 1 }, Role::GoalGate],
+            roles: vec![Role::ChainLink { targets: vec![1] }, Role::GoalGate],
         };
         // fort0's lock is now node 4 — past fort1@3, so it doesn't gate fort1.
         let emb = Embedding {

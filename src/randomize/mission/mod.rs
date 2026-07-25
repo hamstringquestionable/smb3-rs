@@ -40,9 +40,12 @@ pub(crate) struct Embedding {
 /// mission-local index (`0..n`); embedding maps each index to a map position.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Role {
-    /// This fort's lock gates fort `target` — you must beat this fort to reach
-    /// `target`.
-    ChainLink { target: usize },
+    /// This fort's lock gates every fort in `targets` — you must beat this
+    /// fort to reach them. A plain chain link has one target; a fork's
+    /// entrance link gates the whole terminal group at once (one lock, many
+    /// forts), so the group becomes reachable together and no fort is
+    /// telegraphed as "the one that appeared last".
+    ChainLink { targets: Vec<usize> },
     /// This fort's lock gates the goal (airship/Bowser), stranding no fort.
     GoalGate,
     /// This fort's lock gates nothing important — a decoy or optional fort.
@@ -63,7 +66,7 @@ impl Mission {
         let roles = (0..n)
             .map(|i| {
                 if i + 1 < n {
-                    Role::ChainLink { target: i + 1 }
+                    Role::ChainLink { targets: vec![i + 1] }
                 } else {
                     Role::GoalGate
                 }
@@ -77,43 +80,43 @@ impl Mission {
     }
 
     /// Well-formedness of the abstract mission (independent of any map):
-    /// every `ChainLink` target is in range and not the fort itself, and the
-    /// gating relation is acyclic — a cycle would be an unbeatable deadlock
-    /// (fort A needs B beaten, B needs A beaten).
+    /// every `ChainLink` has at least one target, each in range and not the
+    /// fort itself, and the gating relation is acyclic — a cycle would be an
+    /// unbeatable deadlock (fort A needs B beaten, B needs A beaten).
     pub fn is_well_formed(&self) -> bool {
         let n = self.roles.len();
         for (i, r) in self.roles.iter().enumerate() {
-            if let Role::ChainLink { target } = r
-                && (*target >= n || *target == i)
+            if let Role::ChainLink { targets } = r
+                && (targets.is_empty() || targets.iter().any(|t| *t >= n || *t == i))
             {
                 return false;
             }
         }
-        !self.has_cycle()
-    }
-
-    /// Each fort has at most one outgoing `ChainLink`, so the gating relation is
-    /// a functional graph: a cycle exists iff following edges from some fort
-    /// takes more than `n` steps without reaching a terminal (`GoalGate`/`Safe`).
-    fn has_cycle(&self) -> bool {
-        let n = self.roles.len();
-        for start in 0..n {
-            let mut cur = start;
-            let mut terminated = false;
-            for _ in 0..=n {
-                match &self.roles[cur] {
-                    Role::ChainLink { target } => cur = *target,
-                    _ => {
-                        terminated = true;
-                        break;
-                    }
+        // Acyclic iff a processing order exists: a fort is placeable once all
+        // its targets are placed (the same order `embed` assigns in).
+        let mut placed = vec![false; n];
+        let mut placed_count = 0;
+        loop {
+            let mut progressed = false;
+            for i in 0..n {
+                if placed[i] {
+                    continue;
+                }
+                let ready = match &self.roles[i] {
+                    Role::ChainLink { targets } => targets.iter().all(|t| placed[*t]),
+                    _ => true,
+                };
+                if ready {
+                    placed[i] = true;
+                    placed_count += 1;
+                    progressed = true;
                 }
             }
-            if !terminated {
-                return true;
+            if !progressed {
+                break;
             }
         }
-        false
+        placed_count == n
     }
 }
 
@@ -126,12 +129,33 @@ mod tests {
         // 0 -> 1 -> 2, and fort 2 gates the goal.
         let m = Mission {
             roles: vec![
-                Role::ChainLink { target: 1 },
-                Role::ChainLink { target: 2 },
+                Role::ChainLink { targets: vec![1] },
+                Role::ChainLink { targets: vec![2] },
                 Role::GoalGate,
             ],
         };
         assert!(m.is_well_formed());
+    }
+
+    #[test]
+    fn fork_is_well_formed() {
+        // 0 gates the terminal group {1, 2}: one GoalGate + one decoy.
+        let m = Mission {
+            roles: vec![
+                Role::ChainLink { targets: vec![1, 2] },
+                Role::GoalGate,
+                Role::Safe,
+            ],
+        };
+        assert!(m.is_well_formed());
+    }
+
+    #[test]
+    fn empty_targets_rejected() {
+        let m = Mission {
+            roles: vec![Role::ChainLink { targets: vec![] }, Role::GoalGate],
+        };
+        assert!(!m.is_well_formed());
     }
 
     #[test]
@@ -145,7 +169,7 @@ mod tests {
     #[test]
     fn self_gate_rejected() {
         let m = Mission {
-            roles: vec![Role::ChainLink { target: 0 }],
+            roles: vec![Role::ChainLink { targets: vec![0] }],
         };
         assert!(!m.is_well_formed());
     }
@@ -153,7 +177,7 @@ mod tests {
     #[test]
     fn out_of_range_target_rejected() {
         let m = Mission {
-            roles: vec![Role::ChainLink { target: 5 }],
+            roles: vec![Role::ChainLink { targets: vec![5] }],
         };
         assert!(!m.is_well_formed());
     }
@@ -163,8 +187,21 @@ mod tests {
         // 0 -> 1 -> 0 : deadlock.
         let m = Mission {
             roles: vec![
-                Role::ChainLink { target: 1 },
-                Role::ChainLink { target: 0 },
+                Role::ChainLink { targets: vec![1] },
+                Role::ChainLink { targets: vec![0] },
+            ],
+        };
+        assert!(!m.is_well_formed());
+    }
+
+    #[test]
+    fn multi_target_cycle_rejected() {
+        // 0 gates {1, 2}, but 2 gates 0 — deadlock through the group.
+        let m = Mission {
+            roles: vec![
+                Role::ChainLink { targets: vec![1, 2] },
+                Role::GoalGate,
+                Role::ChainLink { targets: vec![0] },
             ],
         };
         assert!(!m.is_well_formed());

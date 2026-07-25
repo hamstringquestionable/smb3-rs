@@ -50,11 +50,12 @@ pub(crate) fn embed<M: MapView>(mission: &Mission, map: &M) -> Option<Embedding>
     })
 }
 
-/// Order forts so a `ChainLink`'s target is assigned BEFORE the fort that gates
-/// it — then, when we pick the gating fort's lock, its target's position is
-/// already known and we can prune to locks that strand it. `None` if the gating
-/// relation is cyclic (no valid order). For a chain `0->1->..->goal` this is
-/// simply the reverse: goal-fort first.
+/// Order forts so a `ChainLink`'s targets are ALL assigned BEFORE the fort
+/// that gates them — then, when we pick the gating fort's lock, every target's
+/// position is already known and we can prune to locks that strand them all.
+/// `None` if the gating relation is cyclic (no valid order). For a chain
+/// `0->1->..->goal` this is simply the reverse: goal-fort first; for a fork,
+/// the terminal group first, then its entrance link.
 fn processing_order(mission: &Mission) -> Option<Vec<usize>> {
     let n = mission.fort_count();
     let mut placed = vec![false; n];
@@ -66,7 +67,7 @@ fn processing_order(mission: &Mission) -> Option<Vec<usize>> {
                 continue;
             }
             let ready = match &mission.roles[i] {
-                Role::ChainLink { target } => placed[*target],
+                Role::ChainLink { targets } => targets.iter().all(|t| placed[*t]),
                 _ => true,
             };
             if ready {
@@ -146,12 +147,12 @@ impl<M: MapView> Search<'_, M> {
         match &self.mission.roles[i] {
             Role::GoalGate => self.map.strands(lock, self.map.goal()),
             Role::Safe => !self.map.strands(lock, self.map.goal()),
-            // Target is already placed (processing order guarantees it), so the
-            // lock must strand exactly that fort's position.
-            Role::ChainLink { target } => {
-                let tpos = self.fort_pos[*target];
+            // Targets are already placed (processing order guarantees it), so
+            // the lock must strand every one of their positions.
+            Role::ChainLink { targets } => targets.iter().all(|t| {
+                let tpos = self.fort_pos[*t];
                 tpos != usize::MAX && self.map.strands(lock, tpos)
-            }
+            }),
         }
     }
 }
@@ -227,7 +228,7 @@ mod tests {
         m.lockable = vec![2, 4];
 
         let mission = Mission {
-            roles: vec![Role::ChainLink { target: 1 }, Role::GoalGate],
+            roles: vec![Role::ChainLink { targets: vec![1] }, Role::GoalGate],
         };
         let emb = embed(&mission, &m).expect("should embed");
 
@@ -247,8 +248,8 @@ mod tests {
 
         let mission = Mission {
             roles: vec![
-                Role::ChainLink { target: 1 },
-                Role::ChainLink { target: 2 },
+                Role::ChainLink { targets: vec![1] },
+                Role::ChainLink { targets: vec![2] },
                 Role::GoalGate,
             ],
         };
@@ -257,5 +258,40 @@ mod tests {
         assert!(m.strands(emb.lock_pos[0], emb.fort_pos[1]));
         assert!(m.strands(emb.lock_pos[1], emb.fort_pos[2]));
         assert!(m.strands(emb.lock_pos[2], m.goal));
+    }
+
+    /// Fork behind a chain prefix: fort 0's lock gates the terminal group
+    /// {1, 2} as a unit; inside the group, fort 1 is the GoalGate and fort 2 a
+    /// Safe decoy.
+    ///   0=start — 1(fort) — 2(lock) — 3(hub)
+    ///   3 — 4(fort) — 5(lock) — 6=goal    (real branch)
+    ///   3 — 7(fort) — 8(lock, dead end)   (decoy branch)
+    #[test]
+    fn fork_with_prefix() {
+        let mut m = Map::new(9, 0, 6);
+        m.edge(0, 1).edge(1, 2).edge(2, 3);
+        m.edge(3, 4).edge(4, 5).edge(5, 6);
+        m.edge(3, 7).edge(7, 8);
+        m.fort_slots = vec![1, 4, 7];
+        m.lockable = vec![2, 5, 8];
+
+        let mission = Mission {
+            roles: vec![
+                Role::ChainLink { targets: vec![1, 2] },
+                Role::GoalGate,
+                Role::Safe,
+            ],
+        };
+        let emb = embed(&mission, &m).expect("should embed");
+
+        // The entrance link strands BOTH terminal forts at once.
+        assert!(m.strands(emb.lock_pos[0], emb.fort_pos[1]));
+        assert!(m.strands(emb.lock_pos[0], emb.fort_pos[2]));
+        // GoalGate gates the goal; the Safe decoy's lock gates nothing.
+        assert!(m.strands(emb.lock_pos[1], m.goal));
+        let safe_strand = m.strand_set(emb.lock_pos[2]);
+        assert!(!safe_strand.contains(&m.goal));
+        assert!(!safe_strand.contains(&emb.fort_pos[0]));
+        assert!(!safe_strand.contains(&emb.fort_pos[1]));
     }
 }

@@ -14,7 +14,7 @@
 use std::collections::HashSet;
 
 use rand::Rng;
-use rand::seq::{IndexedRandom, SliceRandom};
+use rand::seq::SliceRandom;
 
 use super::capacity::{
     SPADE_BUDGET, assign_hb_sprites, distribute_levels, prepare_capacities, promote_hb_slots,
@@ -24,7 +24,7 @@ use super::pipes::{
     FIXED_PIPE_ENDPOINTS, PIPE_EXCLUDED_POSITIONS, VANILLA_PIPE_PAIRS, place_pipes,
     place_spare_pipes,
 };
-use super::plan::{Archetype, PipeScoring, WorldPlan};
+use super::plan::{self, Archetype, LockRole, WorldPlan};
 use super::scoring::{LEVEL_SPREAD_EXPONENT, VANILLA_LEVEL_COUNT, is_row78_conflict};
 use super::sections::{completable_positions, find_blank_slots};
 use super::types::{
@@ -73,16 +73,21 @@ pub(crate) fn mission_build<R: Rng>(
     );
     let level_counts = distribute_levels(&capacities, VANILLA_LEVEL_COUNT, LEVEL_SPREAD_EXPONENT, rng);
 
-    // Per-world missions: iteration 1 is a full chain everywhere. One world
-    // swaps its chain tail for a Safe decoy so the seed always contains a
-    // secret-exit-safe lock — a Safe lock strands neither the goal nor any
-    // fort, so it is secret-exit-safe BY CONSTRUCTION. (The old builder needed
-    // a post-build force_safe retry to establish the same invariant.)
-    let mut missions: Vec<Mission> = (0..8).map(|wi| Mission::chain(fort_counts[wi])).collect();
-    let safe_candidates: Vec<usize> = (0..8).filter(|&wi| fort_counts[wi] >= 2).collect();
-    if let Some(&wi) = safe_candidates.choose(rng) {
-        missions[wi] = chain_with_safe(fort_counts[wi]);
-    }
+    // Per-world shapes come from the SAME family-weighted sampler as the old
+    // builder (`WorldPlan::sample`: Chain / SingleGate / Fork), so the two
+    // builders draw identical shape distributions and remain comparable. The
+    // plan's LockRole vocabulary translates 1:1 into a `Mission`
+    // (`mission_from_plan`); the mission engine then realizes it by
+    // construction instead of hoping scoring produces it.
+    //
+    // Seed invariant: at least one Safe role somewhere (a Safe lock strands
+    // nothing, so it is secret-exit-safe BY CONSTRUCTION — no post-build
+    // force_safe retry needed). Multi-fort SingleGate/Fork plans always carry
+    // Safes; `ensure_seed_safe_role` covers the all-Chain seed.
+    let mut plans: Vec<WorldPlan> = (0..8)
+        .map(|wi| WorldPlan::sample(fort_counts[wi], wi, rng))
+        .collect();
+    plan::ensure_seed_safe_role(&mut plans, rng);
 
     let mut worlds = Vec::with_capacity(8);
     for wi in 0..8 {
@@ -104,7 +109,7 @@ pub(crate) fn mission_build<R: Rng>(
             patched_grids[wi].clone(),
             &fixed_positions[wi],
             &counts,
-            &missions[wi],
+            &plans[wi],
             shuffle_hammer_bros,
             rng,
         ));
@@ -126,13 +131,18 @@ pub(crate) fn mission_build<R: Rng>(
     BuildResult { worlds, fort_counts }
 }
 
-/// A chain of `n` forts whose last fort is a Safe decoy: forts `0..n-1` chain
-/// to the goal as usual, fort `n-1`'s lock gates nothing important. Used to
-/// guarantee the seed a secret-exit-safe lock. Requires `n >= 2`.
-fn chain_with_safe(n: usize) -> Mission {
-    debug_assert!(n >= 2);
-    let mut roles = Mission::chain(n - 1).roles;
-    roles.push(Role::Safe);
+/// Translate a `WorldPlan`'s lock roles into a `Mission` — the two vocabularies
+/// are deliberately 1:1 (`LockRole` grew out of the same lock-and-key model).
+fn mission_from_plan(plan: &WorldPlan) -> Mission {
+    let roles = plan
+        .roles
+        .iter()
+        .map(|r| match r {
+            LockRole::ChainLink { targets } => Role::ChainLink { targets: targets.clone() },
+            LockRole::GoalGate => Role::GoalGate,
+            LockRole::Safe => Role::Safe,
+        })
+        .collect();
     Mission { roles }
 }
 
@@ -148,7 +158,7 @@ fn mission_build_world<R: Rng>(
     mut grid: Grid,
     fixed_positions: &HashSet<Pos>,
     counts: &WorldSlotCounts,
-    mission: &Mission,
+    plan: &WorldPlan,
     shuffle_hammer_bros: bool,
     rng: &mut R,
 ) -> BuiltWorld {
@@ -172,7 +182,6 @@ fn mission_build_world<R: Rng>(
         .copied()
         .filter(|p| !pipe_excluded.contains(p))
         .collect();
-    let pipe_knobs = PipeScoring::default();
     let mut pipe_pairs = place_pipes(
         &mut grid,
         &pipe_blanks,
@@ -180,15 +189,17 @@ fn mission_build_world<R: Rng>(
         target_pos,
         counts.pipe_pair_count,
         &fixed_pipe_eps,
-        &pipe_knobs,
+        &plan.pipe,
         world_idx,
         rng,
     );
     let pipe_positions: HashSet<Pos> = pipe_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
 
     // Step 2: embed the mission — forts + locks realized by construction.
-    let (fort_slots, locks) =
-        embed_with_fallback(&grid, &pipe_pairs, world_idx, mission, fixed_positions, rng);
+    // `realized_plan` is the plan that actually embedded (== `plan` unless the
+    // simplification ladder had to step in), kept truthful for diagnostics.
+    let (fort_slots, locks, realized_plan) =
+        embed_mission(&grid, &pipe_pairs, world_idx, plan, fixed_positions, rng);
     let section_count = fort_slots.len();
     let fort_positions: HashSet<Pos> = fort_slots.iter().map(|s| s.pos).collect();
 
@@ -323,7 +334,7 @@ fn mission_build_world<R: Rng>(
         spare_needed,
         &hb_sprite_positions,
         &locks,
-        &pipe_knobs,
+        &plan.pipe,
         start_pos,
         target_pos,
         world_idx,
@@ -338,43 +349,44 @@ fn mission_build_world<R: Rng>(
         section_count,
         pipe_pairs,
         hb_sprites: Vec::new(),
-        // Diagnostics-only field. Chain is what iteration 1 builds; the
-        // mission (not this plan) is the source of truth for roles.
-        plan: WorldPlan::from_archetype(Archetype::Chain, section_count),
+        plan: realized_plan,
     }
 }
 
-/// Embed `mission`; if the map can't host it, shrink the chain one fort at a
-/// time (keeping the Safe tail when the original had one) until something
-/// embeds. Shrinking places fewer fortress slots than budgeted — leftover
-/// fortress pool entries simply go unassigned by the writer. Measured at 100%
-/// full-size on cleared grids, so the ladder is a correctness backstop, not an
-/// expected path; `n = 0` always succeeds, so this never fails outright.
-fn embed_with_fallback<R: Rng>(
+/// Embed the plan's mission; if the map can't host it, walk a simplification
+/// ladder — same fort count with a simpler shape first (SingleGate, then
+/// Chain), then shrinking chains. Shrinking places fewer fortress slots than
+/// budgeted (leftover fortress pool entries go unassigned by the writer).
+/// Returns the forts, locks, and the plan that actually embedded, so
+/// `BuiltWorld.plan` stays truthful. Full-size embeds are the overwhelmingly
+/// measured case; `n = 0` always succeeds, so this never fails outright.
+fn embed_mission<R: Rng>(
     grid: &Grid,
     pipes: &[TeleportEdge],
     world_idx: usize,
-    mission: &Mission,
+    plan: &WorldPlan,
     excluded_forts: &HashSet<Pos>,
     rng: &mut R,
-) -> (Vec<SlotAssignment>, Vec<LockAssignment>) {
-    let full = mission.fort_count();
-    let has_safe_tail = matches!(mission.roles.last(), Some(Role::Safe));
-    for n in (0..=full).rev() {
-        let shrunk;
-        let m = if n == full {
-            mission
-        } else {
-            shrunk = if has_safe_tail && n >= 2 {
-                chain_with_safe(n)
-            } else {
-                Mission::chain(n)
-            };
-            &shrunk
-        };
-        if let Some(placed) = mission_forts_and_locks(grid, pipes, world_idx, m, excluded_forts, rng)
+) -> (Vec<SlotAssignment>, Vec<LockAssignment>, WorldPlan) {
+    let n = plan.roles.len();
+    // The sampled plan leads; fallbacks re-derive fresh role lists (the
+    // sampled one may carry an ensure_seed_safe_role demotion, so a same-shape
+    // fallback is not always redundant).
+    let mut ladder: Vec<WorldPlan> = vec![plan.clone()];
+    if n >= 2 && plan.archetype != Archetype::SingleGate {
+        ladder.push(WorldPlan::from_archetype(Archetype::SingleGate, n));
+    }
+    ladder.push(WorldPlan::from_archetype(Archetype::Chain, n));
+    for k in (0..n).rev() {
+        ladder.push(WorldPlan::from_archetype(Archetype::Chain, k));
+    }
+
+    for cand in ladder {
+        let mission = mission_from_plan(&cand);
+        if let Some((forts, locks)) =
+            mission_forts_and_locks(grid, pipes, world_idx, &mission, excluded_forts, rng)
         {
-            return placed;
+            return (forts, locks, cand);
         }
     }
     unreachable!("0-fort mission always embeds");
@@ -607,5 +619,129 @@ mod tests {
             assert_eq!(total_levels, VANILLA_LEVEL_COUNT, "seed {seed}: level total");
             assert!(any_safe, "seed {seed}: no secret-exit-safe lock in the seed");
         }
+    }
+
+    /// Shape-variety scoreboard: can non-chain shapes embed on real grids?
+    /// For every world of every seed's mission build, try embedding EACH shape
+    /// at the world's full fort count on the world's actual piped grid, and
+    /// report per-shape realization; also reports the archetype census the
+    /// builds actually shipped (truthful `BuiltWorld.plan`).
+    ///
+    /// NOTE: built grids include spare pipes (production embeds BEFORE those
+    /// are placed), so probe rates here are if anything slightly pessimistic —
+    /// extra teleports only make stranding harder.
+    ///
+    /// Ignored by default: probing every shape on every world (including
+    /// exhaustively proving the rare impossible fork) takes ~70s in release.
+    /// The fast invariants test above already guards shipped builds.
+    /// Run with: cargo test --release --lib mission_shape_scoreboard -- --ignored --nocapture
+    #[test]
+    #[ignore = "on-demand scoreboard diagnostic (~70s release)"]
+    fn mission_shape_scoreboard() {
+        use std::collections::BTreeMap;
+
+        let Some(rom) = load_rom() else {
+            return; // no ROM — skip
+        };
+        let catalog = NodeCatalog::build(&rom, false);
+        let pickup = pick_up(
+            &rom,
+            &catalog,
+            PickupFlags {
+                shuffle_spade_games: false,
+                shuffle_toad_houses: true,
+                shuffle_hammer_bros: false,
+            },
+        );
+        let data = OverworldData { pickup: &pickup, catalog: &catalog };
+
+        const SEEDS: u64 = 30;
+        let label = |a: Archetype| match a {
+            Archetype::Chain => "chain".to_string(),
+            Archetype::SingleGate => "single-gate".to_string(),
+            Archetype::Fork { k } => format!("fork-{k}"),
+        };
+
+        // shape label -> (attempts, full-size embeds)
+        let mut probe: BTreeMap<String, (u32, u32)> = BTreeMap::new();
+        // realized archetype label -> world count
+        let mut shipped: BTreeMap<String, u32> = BTreeMap::new();
+        let mut full_size = 0u32;
+        let mut worlds_total = 0u32;
+
+        for seed in 0..SEEDS {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let result = mission_build(
+                &rom,
+                &data,
+                &mut rng,
+                BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+            );
+            let CapacityPrep { fixed_positions, .. } =
+                prepare_capacities(&rom, &catalog, &pickup, &result.fort_counts, false, true, false);
+
+            for built in &result.worlds {
+                let wi = built.world_idx;
+                let n = result.fort_counts[wi];
+                worlds_total += 1;
+                if built.section_count == n {
+                    full_size += 1;
+                }
+                *shipped.entry(label(built.plan.archetype)).or_default() += 1;
+
+                let mut shapes = vec![Archetype::Chain];
+                if n >= 2 {
+                    shapes.push(Archetype::SingleGate);
+                    shapes.push(Archetype::Fork { k: 2 });
+                }
+                if n >= 3 {
+                    shapes.push(Archetype::Fork { k: 3 });
+                }
+                for arch in shapes {
+                    let plan = WorldPlan::from_archetype(arch, n);
+                    let mission = mission_from_plan(&plan);
+                    let ok = mission_forts_and_locks(
+                        &built.grid,
+                        &built.pipe_pairs,
+                        wi,
+                        &mission,
+                        &fixed_positions[wi],
+                        &mut rng,
+                    )
+                    .is_some();
+                    let e = probe.entry(label(arch)).or_default();
+                    e.0 += 1;
+                    if ok {
+                        e.1 += 1;
+                    }
+                }
+            }
+        }
+
+        eprintln!("\nShape embed rates on real piped grids ({SEEDS} seeds x 8 worlds):\n");
+        eprintln!("  {:<12} {:>9} {:>9} {:>7}", "shape", "attempts", "embeds", "rate");
+        for (l, (att, ok)) in &probe {
+            eprintln!(
+                "  {:<12} {:>9} {:>9} {:>6.1}%",
+                l, att, ok,
+                *ok as f64 / (*att).max(1) as f64 * 100.0
+            );
+        }
+        eprintln!("\nShipped archetype census (realized plans):");
+        for (l, c) in &shipped {
+            eprintln!("  {:<12} {:>4} ({:>4.1}%)", l, c, *c as f64 / worlds_total as f64 * 100.0);
+        }
+        eprintln!(
+            "\n  full-size embeds in shipped builds: {full_size}/{worlds_total} ({:.1}%)",
+            full_size as f64 / worlds_total as f64 * 100.0
+        );
+
+        // Regression floor — every shape must embed on the vast majority of
+        // real grids, and shipped builds must essentially never shrink.
+        for (l, (att, ok)) in &probe {
+            let rate = *ok as f64 / (*att).max(1) as f64;
+            assert!(rate >= 0.9, "shape '{l}' embed rate {:.1}% below 90%", rate * 100.0);
+        }
+        assert_eq!(full_size, worlds_total, "shipped builds shrank a mission");
     }
 }
