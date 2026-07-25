@@ -17,9 +17,13 @@ use super::{Embedding, Mission, Role};
 /// Find an embedding of `mission` into `map`, or `None`.
 pub(crate) fn embed<M: MapView>(mission: &Mission, map: &M) -> Option<Embedding> {
     let n = mission.fort_count();
+    let Some(order) = processing_order(mission) else {
+        return None; // cyclic mission — not embeddable
+    };
     let mut search = Search {
         mission,
         map,
+        order,
         fort_pos: vec![usize::MAX; n],
         lock_pos: vec![usize::MAX; n],
         used_pos: HashSet::new(),
@@ -31,9 +35,43 @@ pub(crate) fn embed<M: MapView>(mission: &Mission, map: &M) -> Option<Embedding>
     })
 }
 
+/// Order forts so a `ChainLink`'s target is assigned BEFORE the fort that gates
+/// it — then, when we pick the gating fort's lock, its target's position is
+/// already known and we can prune to locks that strand it. `None` if the gating
+/// relation is cyclic (no valid order). For a chain `0->1->..->goal` this is
+/// simply the reverse: goal-fort first.
+fn processing_order(mission: &Mission) -> Option<Vec<usize>> {
+    let n = mission.fort_count();
+    let mut placed = vec![false; n];
+    let mut order = Vec::with_capacity(n);
+    while order.len() < n {
+        let mut progressed = false;
+        for i in 0..n {
+            if placed[i] {
+                continue;
+            }
+            let ready = match &mission.roles[i] {
+                Role::ChainLink { target } => placed[*target],
+                _ => true,
+            };
+            if ready {
+                placed[i] = true;
+                order.push(i);
+                progressed = true;
+            }
+        }
+        if !progressed {
+            return None; // cycle
+        }
+    }
+    Some(order)
+}
+
 struct Search<'a, M: MapView> {
     mission: &'a Mission,
     map: &'a M,
+    /// Fort indices in assignment order (targets before their gating forts).
+    order: Vec<usize>,
     fort_pos: Vec<usize>,
     lock_pos: Vec<usize>,
     used_pos: HashSet<usize>,
@@ -41,16 +79,17 @@ struct Search<'a, M: MapView> {
 }
 
 impl<M: MapView> Search<'_, M> {
-    /// Assign fort `i`, then recurse. Returns true once a full assignment
-    /// verifies. On success `fort_pos`/`lock_pos` hold the answer.
-    fn assign(&mut self, i: usize) -> bool {
-        if i == self.mission.fort_count() {
+    /// Assign the fort at `order[step]`, then recurse. Returns true once a full
+    /// assignment verifies; on success `fort_pos`/`lock_pos` hold the answer.
+    fn assign(&mut self, step: usize) -> bool {
+        if step == self.order.len() {
             let emb = Embedding {
                 fort_pos: self.fort_pos.clone(),
                 lock_pos: self.lock_pos.clone(),
             };
             return realizes(self.mission, self.map, &emb);
         }
+        let i = self.order[step];
 
         for &pos in self.map.fort_slots() {
             if self.used_pos.contains(&pos) {
@@ -60,10 +99,7 @@ impl<M: MapView> Search<'_, M> {
                 if self.used_lock.contains(&lock) || lock == pos {
                     continue;
                 }
-                // Cheap, position-independent prune: a GoalGate lock must gate
-                // the goal; a Safe lock must not. (ChainLink needs its target's
-                // position, so it's left to the leaf check.)
-                if !self.lock_role_plausible(i, lock) {
+                if !self.lock_role_plausible(i, pos, lock) {
                     continue;
                 }
 
@@ -72,7 +108,7 @@ impl<M: MapView> Search<'_, M> {
                 self.used_pos.insert(pos);
                 self.used_lock.insert(lock);
 
-                if self.assign(i + 1) {
+                if self.assign(step + 1) {
                     return true;
                 }
 
@@ -85,12 +121,22 @@ impl<M: MapView> Search<'_, M> {
         false
     }
 
-    fn lock_role_plausible(&self, i: usize, lock: usize) -> bool {
-        let gates_goal = self.map.strands(lock, self.map.goal());
-        match self.mission.roles[i] {
-            Role::GoalGate => gates_goal,
-            Role::Safe => !gates_goal,
-            Role::ChainLink { .. } => true,
+    /// Necessary conditions on fort `i`'s lock, checked before recursing. The
+    /// leaf `realizes` does the full check; these just prune the search.
+    fn lock_role_plausible(&self, i: usize, pos: usize, lock: usize) -> bool {
+        // No fort can sit behind its own lock (it must stay reachable to beat).
+        if self.map.strands(lock, pos) {
+            return false;
+        }
+        match &self.mission.roles[i] {
+            Role::GoalGate => self.map.strands(lock, self.map.goal()),
+            Role::Safe => !self.map.strands(lock, self.map.goal()),
+            // Target is already placed (processing order guarantees it), so the
+            // lock must strand exactly that fort's position.
+            Role::ChainLink { target } => {
+                let tpos = self.fort_pos[*target];
+                tpos != usize::MAX && self.map.strands(lock, tpos)
+            }
         }
     }
 }

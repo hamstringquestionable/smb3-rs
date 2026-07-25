@@ -234,8 +234,8 @@ mod tests {
             },
         );
 
-        let mut gate_ok = [0u32; 8];
-        let mut goal_reachable = [0u32; 8];
+        let mut chain_ok = [0u32; 8];
+        let mut fort_total = [0u32; 8]; // sum of fort counts (for the mean)
         let mut total = [0u32; 8];
 
         for seed in 0..SEEDS {
@@ -252,31 +252,35 @@ mod tests {
                     continue;
                 };
                 total[wi] += 1;
-                if gm.open_reach.contains(&gm.goal) {
-                    goal_reachable[wi] += 1;
-                }
-                let single_gate = Mission { roles: vec![Role::GoalGate] };
-                if embed(&single_gate, &gm).is_some() {
-                    gate_ok[wi] += 1;
+                fort_total[wi] += built.section_count as u32;
+
+                // A full chain of this world's actual fort count: fort 0 gates
+                // 1, …, last gates the goal. This is the archetype geometry-first
+                // realized only 34-49% of the time (as ChainLink roles).
+                let chain = Mission::chain(built.section_count);
+                if embed(&chain, &gm).is_some() {
+                    chain_ok[wi] += 1;
                 }
             }
         }
 
-        eprintln!("\nSingleGate embed on cleared + piped builder grids ({SEEDS} seeds):\n");
-        eprintln!("  {:<6} {:>10} {:>12}", "world", "goal-reach", "goal-gated");
-        let (mut g, mut t) = (0u32, 0u32);
+        eprintln!("\nFull-chain embed on cleared + piped builder grids ({SEEDS} seeds):\n");
+        eprintln!("  {:<6} {:>10} {:>14}", "world", "mean forts", "chain embeds");
+        let (mut c, mut t) = (0u32, 0u32);
         for wi in 0..8 {
             eprintln!(
-                "  W{:<5} {:>7}/{:<2} {:>9}/{:<2}",
+                "  W{:<5} {:>10.1} {:>11}/{:<2}",
                 wi + 1,
-                goal_reachable[wi],
-                total[wi],
-                gate_ok[wi],
+                fort_total[wi] as f64 / total[wi].max(1) as f64,
+                chain_ok[wi],
                 total[wi],
             );
-            g += gate_ok[wi];
+            c += chain_ok[wi];
             t += total[wi];
         }
-        eprintln!("\n  overall goal-gate embed: {g}/{t}");
+        eprintln!(
+            "\n  overall full-chain embed: {c}/{t} ({:.1}%)  [geometry-first ChainLink: 34-49%]",
+            c as f64 / t.max(1) as f64 * 100.0
+        );
     }
 }

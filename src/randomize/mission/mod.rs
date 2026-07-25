@@ -51,6 +51,22 @@ pub(crate) struct Mission {
 }
 
 impl Mission {
+    /// A chain of `n` forts: fort 0 gates fort 1, 1 gates 2, …, and the last
+    /// gates the goal. `n == 0` is the empty mission; `n == 1` is a lone
+    /// `GoalGate`.
+    pub fn chain(n: usize) -> Mission {
+        let roles = (0..n)
+            .map(|i| {
+                if i + 1 < n {
+                    Role::ChainLink { target: i + 1 }
+                } else {
+                    Role::GoalGate
+                }
+            })
+            .collect();
+        Mission { roles }
+    }
+
     pub fn fort_count(&self) -> usize {
         self.roles.len()
     }
