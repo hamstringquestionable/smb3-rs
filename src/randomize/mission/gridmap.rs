@@ -20,6 +20,9 @@
 
 use std::collections::{HashMap, HashSet};
 
+use rand::Rng;
+use rand::seq::SliceRandom;
+
 use super::map::MapView;
 use crate::randomize::map_walker::walk_map;
 use crate::randomize::overworld_helpers::{LOCKABLE_TILES, find_target, gap_tile_for};
@@ -123,6 +126,30 @@ impl GridMap {
 
     fn decode(&self, id: usize) -> (usize, usize) {
         (id / self.cols, id % self.cols)
+    }
+
+    /// Shuffle candidate order. `embed` returns the FIRST valid embedding, so
+    /// without this the same grid always yields the same fort spots; shuffling
+    /// turns "first valid" into "a random valid one" per seed.
+    pub(crate) fn shuffle_candidates<R: Rng>(&mut self, rng: &mut R) {
+        self.fort_slots.shuffle(rng);
+        self.lockable.shuffle(rng);
+    }
+
+    /// Drop fort-slot / lockable candidates whose grid position the given
+    /// predicates reject. Lets the caller impose constraints the map alone
+    /// can't see (fixed sprite positions, row-7/8 completion-bit partners).
+    /// Exclusions only ever shrink the candidate pool, so repeated calls
+    /// compose. Stale `strand_cache` entries for removed locks are harmless —
+    /// they're only looked up by candidate id.
+    pub(crate) fn exclude(
+        &mut self,
+        fort_blocked: impl Fn((usize, usize)) -> bool,
+        lock_blocked: impl Fn((usize, usize)) -> bool,
+    ) {
+        let cols = self.cols;
+        self.fort_slots.retain(|&id| !fort_blocked((id / cols, id % cols)));
+        self.lockable.retain(|&id| !lock_blocked((id / cols, id % cols)));
     }
 }
 

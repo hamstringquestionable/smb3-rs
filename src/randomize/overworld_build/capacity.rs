@@ -45,7 +45,14 @@ pub(super) fn promote_hb_slots<R: Rng>(
             .into_iter()
             .collect();
 
-        let completable = completable_positions(&w.grid, &w.slots);
+        // Locks aren't stamped on the build grid, but a lock/gap tile is
+        // completion-relevant: a promoted spade/toad house on its row-7/8
+        // partner column would share the completion bit (the same rule
+        // place_locks applies in the other direction), so include them.
+        let mut completable = completable_positions(&w.grid, &w.slots);
+        for l in &w.locks {
+            completable.insert(l.pos);
+        }
 
         let mut cands: Vec<(usize, usize)> = w
             .slots
