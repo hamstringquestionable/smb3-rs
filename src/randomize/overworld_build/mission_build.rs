@@ -353,13 +353,17 @@ fn mission_build_world<R: Rng>(
     }
 }
 
-/// Embed the plan's mission; if the map can't host it, walk a simplification
-/// ladder — same fort count with a simpler shape first (SingleGate, then
-/// Chain), then shrinking chains. Shrinking places fewer fortress slots than
-/// budgeted (leftover fortress pool entries go unassigned by the writer).
-/// Returns the forts, locks, and the plan that actually embedded, so
-/// `BuiltWorld.plan` stays truthful. Full-size embeds are the overwhelmingly
-/// measured case; `n = 0` always succeeds, so this never fails outright.
+/// Embed the plan's mission under two HARD rules: every budgeted fort is
+/// placed, and every fort gets a real lock. Neither ever degrades — if the
+/// map can't host the sampled shape, only the ROLES simplify: SingleGate,
+/// then Chain, then all-Safe (every lock gates nothing important — the same
+/// floor as the old builder's force_safe shape). Returns the forts, locks,
+/// and the plan that actually embedded, so `BuiltWorld.plan` stays truthful.
+///
+/// A map that can't even host all-Safe (n free-standing forts + n harmless
+/// locks) has no valid placement under the hard rules at all; that's a bug
+/// in the geometry pipeline, not a shape problem, so it panics loudly
+/// instead of silently shipping a world with missing content.
 fn embed_mission<R: Rng>(
     grid: &Grid,
     pipes: &[TeleportEdge],
@@ -377,19 +381,26 @@ fn embed_mission<R: Rng>(
         ladder.push(WorldPlan::from_archetype(Archetype::SingleGate, n));
     }
     ladder.push(WorldPlan::from_archetype(Archetype::Chain, n));
-    for k in (0..n).rev() {
-        ladder.push(WorldPlan::from_archetype(Archetype::Chain, k));
-    }
+    ladder.push(WorldPlan::all_safe(n));
 
+    let mut tried: Vec<Vec<Role>> = Vec::new();
     for cand in ladder {
         let mission = mission_from_plan(&cand);
+        if tried.contains(&mission.roles) {
+            continue; // identical role list already failed (e.g. Chain(1) == SingleGate(1))
+        }
+        tried.push(mission.roles.clone());
         if let Some((forts, locks)) =
             mission_forts_and_locks(grid, pipes, world_idx, &mission, excluded_forts, rng)
         {
             return (forts, locks, cand);
         }
     }
-    unreachable!("0-fort mission always embeds");
+    panic!(
+        "W{}: no {n}-fort mission embeds on this grid — even all-Safe failed \
+         (fort/lock hard rules are unsatisfiable; geometry pipeline bug)",
+        world_idx + 1
+    );
 }
 
 /// Place this world's fortresses and locks mission-first: embed `mission` on

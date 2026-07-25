@@ -946,6 +946,8 @@ fn resolve_concrete_passthrough() {
 /// correctness is covered by the builder's own tests; this guards the seam.
 #[test]
 fn mission_overworld_full_pipeline_smoke() {
+    use crate::randomize::overworld_build::SlotKind;
+
     for (seed, swap) in [(0u64, false), (1, false), (0xDEADBEEF, false), (1, true), (5, true)] {
         let Some(mut rom) = make_test_rom() else { return };
         let options = Options {
@@ -956,7 +958,26 @@ fn mission_overworld_full_pipeline_smoke() {
             palettes: false, // OS entropy — keep the run reproducible
             ..Default::default()
         };
-        randomize(&mut rom, seed, &options);
+        let mut cap = None;
+        randomize_with_overworld_capture(&mut rom, seed, &options, &mut cap);
+
+        // HARD rules: every budgeted fort is placed, every fort has a lock.
+        // Shapes may degrade (down to all-Safe); fort/lock counts never do.
+        let build = cap.expect("overworld capture");
+        for w in &build.worlds {
+            let budget = build.fort_counts[w.world_idx];
+            let forts = w.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count();
+            assert_eq!(
+                forts, budget,
+                "seed {seed} swap {swap} W{}: {forts} forts placed, {budget} budgeted",
+                w.world_idx + 1
+            );
+            assert_eq!(
+                w.locks.len(),
+                budget,
+                "seed {seed} swap {swap} W{}: fort without a lock",
+                w.world_idx + 1
+            );
+        }
     }
 }
-
