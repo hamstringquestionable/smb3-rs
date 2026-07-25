@@ -17,6 +17,7 @@
 #![allow(dead_code)]
 
 mod embed;
+mod gridmap;
 mod map;
 mod verify;
 

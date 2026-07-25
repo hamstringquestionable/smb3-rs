@@ -10,12 +10,12 @@
 
 use std::collections::HashSet;
 
-use super::map::Map;
+use super::map::MapView;
 use super::verify::realizes;
 use super::{Embedding, Mission, Role};
 
 /// Find an embedding of `mission` into `map`, or `None`.
-pub(crate) fn embed(mission: &Mission, map: &Map) -> Option<Embedding> {
+pub(crate) fn embed<M: MapView>(mission: &Mission, map: &M) -> Option<Embedding> {
     let n = mission.fort_count();
     let mut search = Search {
         mission,
@@ -31,16 +31,16 @@ pub(crate) fn embed(mission: &Mission, map: &Map) -> Option<Embedding> {
     })
 }
 
-struct Search<'a> {
+struct Search<'a, M: MapView> {
     mission: &'a Mission,
-    map: &'a Map,
+    map: &'a M,
     fort_pos: Vec<usize>,
     lock_pos: Vec<usize>,
     used_pos: HashSet<usize>,
     used_lock: HashSet<usize>,
 }
 
-impl Search<'_> {
+impl<M: MapView> Search<'_, M> {
     /// Assign fort `i`, then recurse. Returns true once a full assignment
     /// verifies. On success `fort_pos`/`lock_pos` hold the answer.
     fn assign(&mut self, i: usize) -> bool {
@@ -52,11 +52,11 @@ impl Search<'_> {
             return realizes(self.mission, self.map, &emb);
         }
 
-        for &pos in &self.map.fort_slots {
+        for &pos in self.map.fort_slots() {
             if self.used_pos.contains(&pos) {
                 continue;
             }
-            for &lock in &self.map.lockable {
+            for &lock in self.map.lockable() {
                 if self.used_lock.contains(&lock) || lock == pos {
                     continue;
                 }
@@ -86,7 +86,7 @@ impl Search<'_> {
     }
 
     fn lock_role_plausible(&self, i: usize, lock: usize) -> bool {
-        let gates_goal = self.map.strands(lock, self.map.goal);
+        let gates_goal = self.map.strands(lock, self.map.goal());
         match self.mission.roles[i] {
             Role::GoalGate => gates_goal,
             Role::Safe => !gates_goal,
@@ -97,6 +97,7 @@ impl Search<'_> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::map::Map;
     use super::*;
 
     /// Single fort gating the goal on a linear corridor:

@@ -11,11 +11,15 @@
 
 use std::collections::HashSet;
 
-use super::map::Map;
+use super::map::MapView;
 use super::{Embedding, Mission, Role};
 
 /// Nodes reachable while the locks of not-yet-`beaten` forts are closed.
-fn reachable_with_beaten(map: &Map, emb: &Embedding, beaten: &HashSet<usize>) -> HashSet<usize> {
+fn reachable_with_beaten<M: MapView>(
+    map: &M,
+    emb: &Embedding,
+    beaten: &HashSet<usize>,
+) -> HashSet<usize> {
     let blocked: HashSet<usize> = (0..emb.lock_pos.len())
         .filter(|i| !beaten.contains(i))
         .map(|i| emb.lock_pos[i])
@@ -26,7 +30,7 @@ fn reachable_with_beaten(map: &Map, emb: &Embedding, beaten: &HashSet<usize>) ->
 /// Simulate progression to a fixpoint: repeatedly reach every fort you can,
 /// beat it (opening its lock), and see what that unlocks. Returns the set of
 /// forts beaten and whether the goal ends up reachable.
-fn analyze(map: &Map, emb: &Embedding) -> (HashSet<usize>, bool) {
+fn analyze<M: MapView>(map: &M, emb: &Embedding) -> (HashSet<usize>, bool) {
     let n = emb.fort_pos.len();
     let mut beaten: HashSet<usize> = HashSet::new();
     loop {
@@ -42,13 +46,13 @@ fn analyze(map: &Map, emb: &Embedding) -> (HashSet<usize>, bool) {
             break;
         }
     }
-    let goal_reachable = reachable_with_beaten(map, emb, &beaten).contains(&map.goal);
+    let goal_reachable = reachable_with_beaten(map, emb, &beaten).contains(&map.goal());
     (beaten, goal_reachable)
 }
 
 /// True iff `emb` is a valid, role-correct, completable realization of
 /// `mission` on `map`.
-pub(crate) fn realizes(mission: &Mission, map: &Map, emb: &Embedding) -> bool {
+pub(crate) fn realizes<M: MapView>(mission: &Mission, map: &M, emb: &Embedding) -> bool {
     let n = mission.fort_count();
     if emb.fort_pos.len() != n || emb.lock_pos.len() != n {
         return false;
@@ -61,10 +65,10 @@ pub(crate) fn realizes(mission: &Mission, map: &Map, emb: &Embedding) -> bool {
     if fort_set.len() != n || lock_set.len() != n {
         return false;
     }
-    if !emb.fort_pos.iter().all(|p| map.fort_slots.contains(p)) {
+    if !emb.fort_pos.iter().all(|p| map.fort_slots().contains(p)) {
         return false;
     }
-    if !emb.lock_pos.iter().all(|l| map.lockable.contains(l)) {
+    if !emb.lock_pos.iter().all(|l| map.lockable().contains(l)) {
         return false;
     }
     if emb.fort_pos.iter().any(|p| lock_set.contains(p)) {
@@ -77,12 +81,12 @@ pub(crate) fn realizes(mission: &Mission, map: &Map, emb: &Embedding) -> bool {
         let strands_a_fort = strand.iter().any(|s| fort_set.contains(s));
         match role {
             Role::GoalGate => {
-                if !strand.contains(&map.goal) || strands_a_fort {
+                if !strand.contains(&map.goal()) || strands_a_fort {
                     return false;
                 }
             }
             Role::Safe => {
-                if strand.contains(&map.goal) || strands_a_fort {
+                if strand.contains(&map.goal()) || strands_a_fort {
                     return false;
                 }
             }
