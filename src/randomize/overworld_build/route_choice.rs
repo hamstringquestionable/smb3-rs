@@ -83,6 +83,57 @@ pub(crate) struct RouteChoice {
     /// when there is no in-band alternative (LINEAR).
     #[allow(dead_code)]
     pub runner_up_gap: Option<u32>,
+    /// DOMINATED routes (a strict superset of some kept route's levels at no
+    /// lower cost — pure detours), cheapest first, capped. Not choices — but
+    /// they are the shaping pass's raw material: a fort on the kept route's
+    /// exclusive path stretch re-prices it, un-nesting the cost relation and
+    /// turning the detour into a real alternative.
+    pub detours: Vec<ChoiceRoute>,
+}
+
+/// Cap on the dominated-detour list — plenty for shaping, keeps the struct
+/// small on detour-rich maps.
+const MAX_DETOURS: usize = 8;
+
+/// Rescue targets for the shaping passes, most-promising first: out-of-band
+/// parallel routes and dominated superset detours. Either way, shifting the
+/// cheap route's cost by +`COST_FORT` (a fort on its exclusive stretch, or a
+/// fort-gated lock on its exclusive edge) lands targets whose gap is closest
+/// to `COST_FORT` in the choice band most often.
+pub(super) fn rescue_targets(rc: &RouteChoice) -> Vec<ChoiceRoute> {
+    if rc.routes.is_empty() {
+        return Vec::new();
+    }
+    let band = rc.best_cost + DEFAULT_SLACK;
+    let mut targets: Vec<ChoiceRoute> = rc
+        .routes
+        .iter()
+        .filter(|r| r.cost > band)
+        .chain(rc.detours.iter().filter(|r| r.cost > rc.best_cost))
+        .cloned()
+        .collect();
+    targets.sort_by_key(|r| ((r.cost - rc.best_cost).abs_diff(COST_FORT), r.cost));
+    targets.truncate(3);
+    targets
+}
+
+/// The mid path-tiles of a route's WALK edges (consecutive path nodes two
+/// apart; teleport hops have no mid tile). The cheap route's exclusive mids
+/// vs a rescue target are the golden LOCK sites: gapping one forces the
+/// fort's cost onto the shortcut without touching the target route.
+pub(super) fn walk_edge_mids(path: &[Pos]) -> HashSet<Pos> {
+    path.windows(2)
+        .filter_map(|w| {
+            let (a, b) = (w[0], w[1]);
+            if a.0 == b.0 && a.1.abs_diff(b.1) == 2 {
+                Some((a.0, (a.1 + b.1) / 2))
+            } else if a.1 == b.1 && a.0.abs_diff(b.0) == 2 {
+                Some(((a.0 + b.0) / 2, a.1))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// Enumerate every distinct near-optimal route to the goal and summarise the
@@ -332,17 +383,27 @@ pub(crate) fn analyze_route_choice(built: &BuiltWorld, slack: u32) -> RouteChoic
                 .any(|rj| rj.cost <= ri.cost && rj.levels != ri.levels && rj.levels.is_subset(&ri.levels))
         })
         .collect();
-    let mut kept: Vec<ChoiceRoute> = routes
-        .drain(..)
-        .zip(dominated)
-        .filter_map(|(r, dom)| (!dom).then_some(r))
-        .collect();
+    let (mut kept, mut detours): (Vec<ChoiceRoute>, Vec<ChoiceRoute>) = {
+        let mut kept = Vec::new();
+        let mut detours = Vec::new();
+        for (r, dom) in routes.drain(..).zip(dominated) {
+            if dom {
+                detours.push(r);
+            } else {
+                kept.push(r);
+            }
+        }
+        (kept, detours)
+    };
 
-    kept.sort_by(|a, b| {
+    let by_cost_then_levels = |a: &ChoiceRoute, b: &ChoiceRoute| {
         a.cost
             .cmp(&b.cost)
             .then_with(|| a.levels.iter().cmp(b.levels.iter()))
-    });
+    };
+    kept.sort_by(by_cost_then_levels);
+    detours.sort_by(by_cost_then_levels);
+    detours.truncate(MAX_DETOURS);
     let tied_at_best = kept.iter().filter(|r| r.cost == best_cost).count();
     let runner_up_gap = kept
         .iter()
@@ -356,6 +417,7 @@ pub(crate) fn analyze_route_choice(built: &BuiltWorld, slack: u32) -> RouteChoic
         routes: kept,
         tied_at_best,
         runner_up_gap,
+        detours,
     }
 }
 

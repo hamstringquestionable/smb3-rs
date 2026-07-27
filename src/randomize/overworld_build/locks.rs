@@ -17,7 +17,10 @@
 use super::*;
 
 use super::knobs::LockScoring;
-use super::route_choice::{DEFAULT_SLACK, analyze_route_choice};
+use super::route_choice::{
+    DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice, rescue_targets,
+    walk_edge_mids,
+};
 use super::types::{BuildResult, BuiltWorld, LockAssignment, SlotAssignment, SlotKind, stamp_slots};
 
 /// The five always-on W8 screen-3 bridges (see `qol::overworld_map`'s
@@ -57,15 +60,9 @@ pub(super) fn place_locks<R: Rng>(
     let mut locks: Vec<LockAssignment> = Vec::new();
     let mut locked_tiles: HashSet<(usize, usize)> = HashSet::new();
 
-    // The section whose lock still owes the goal a gate. Starts at the
-    // shaping pass's hint and carries forward when a section's geometry
-    // can't sever the goal.
-    let mut gate_pending = gate_section;
-
-    // Choice-guard measurement: in-band route count with a given lock list.
-    // Locks are modeled as conditional edges by the scorer, so the raw build
-    // grid is correct here.
-    let measure_routes = |trial_locks: Vec<LockAssignment>| -> usize {
+    // Route measurement with a given lock list. Locks are modeled as
+    // conditional edges by the scorer, so the raw build grid is correct here.
+    let measure = |trial_locks: Vec<LockAssignment>, slack: u32| -> RouteChoice {
         let world = BuiltWorld {
             world_idx,
             grid: grid.clone(),
@@ -75,7 +72,18 @@ pub(super) fn place_locks<R: Rng>(
             pipe_pairs: pipe_pairs.to_vec(),
             hb_sprites: Vec::new(),
         };
-        analyze_route_choice(&world, DEFAULT_SLACK).routes.len()
+        analyze_route_choice(&world, slack)
+    };
+    // In-band route count — the choice-delta yardstick.
+    let measure_routes =
+        |trial_locks: Vec<LockAssignment>| -> usize { measure(trial_locks, DEFAULT_SLACK).routes.len() };
+    let assignment_for = |c: &ScoredLock, section_idx: usize| LockAssignment {
+        pos: c.pos,
+        gap_tile: c.gap_tile,
+        replace_tile: c.replace_tile,
+        fort_section: section_idx,
+        secret_exit_safe: c.safe,
+        blocks_target: c.blocks_target,
     };
 
     // Build a base grid with forts/levels stamped so BFS sees them as nodes.
@@ -83,14 +91,87 @@ pub(super) fn place_locks<R: Rng>(
     let mut base_grid = grid.clone();
     stamp_slots(&mut base_grid, slots);
 
-    // Process each fortress in section order
-    for section_idx in 0..fort_count {
+    // Re-anchor the gate hint on feasibility: a section can host the goal
+    // gate only if SOME severing tile keeps its own fort and every earlier
+    // fort reachable (the hard rules, approximated on the lockless grid).
+    // A blind random hint strands the duty on sections that can never gate
+    // (deep forts sit goal-side of the severs), and the carry-forward then
+    // exhausts — measured as goal-open worlds. Uniform choice among
+    // FEASIBLE sections keeps the no-tell property and the guarantee.
+    let mut gate_pending = if let Some(hint) = gate_section {
+        let fort_of: Vec<Option<Pos>> = (0..fort_count)
+            .map(|sec| {
+                slots
+                    .iter()
+                    .find(|s| s.section == sec && s.kind == SlotKind::Fortress)
+                    .map(|s| s.pos)
+            })
+            .collect();
+        let mut feasible: Vec<usize> = Vec::new();
+        'tiles: {
+            let mut sever_walks: Vec<HashSet<Pos>> = Vec::new();
+            let Some(tp) = target_pos else { break 'tiles };
+            for r in 0..base_grid.rows() {
+                for c in 0..base_grid.cols {
+                    let tile = base_grid.get(r, c);
+                    if !LOCKABLE_TILES.contains(&tile) {
+                        continue;
+                    }
+                    let mut g = base_grid.clone();
+                    g.set(r, c, gap_tile_for(tile));
+                    let nodes = walk_map(&g, pipe_pairs, start_pos, world_idx).nodes;
+                    if !nodes.contains(&tp) {
+                        sever_walks.push(nodes);
+                    }
+                }
+            }
+            for sec in 0..fort_count {
+                let ok = sever_walks.iter().any(|nodes| {
+                    (0..=sec).all(|j| fort_of[j].is_none_or(|fp| nodes.contains(&fp)))
+                });
+                if ok {
+                    feasible.push(sec);
+                }
+            }
+        }
+        // Keep the hint when it's feasible (or nothing provably gates and
+        // the backstops must do what they can); otherwise re-pick uniformly
+        // among the feasible sections.
+        if feasible.contains(&hint) || feasible.is_empty() {
+            Some(hint)
+        } else {
+            Some(feasible[rng.random_range(..feasible.len())])
+        }
+    } else {
+        None
+    };
+
+    // Process the gate section FIRST, then the rest in section order. The
+    // gate's hard rules are evaluated with no other lock committed (maximum
+    // feasibility — committed safe locks otherwise combine with the sever to
+    // strand forts and kill every gate candidate); the other sections then
+    // place around the committed gate. `build_test_grid` keys progression on
+    // section NUMBERS, not commit order, so the simulation stays correct.
+    let order: Vec<usize> = match gate_pending {
+        Some(g) if g < fort_count => {
+            std::iter::once(g).chain((0..fort_count).filter(|&s| s != g)).collect()
+        }
+        _ => (0..fort_count).collect(),
+    };
+    for (oi, &section_idx) in order.iter().enumerate() {
         let fort_pos = match slots
             .iter()
             .find(|s| s.section == section_idx && s.kind == SlotKind::Fortress)
         {
             Some(s) => s.pos,
-            None => continue,
+            None => {
+                // A fortless section can't lock anything — pass any pending
+                // gate duty along instead of silently dropping it.
+                if gate_pending == Some(section_idx) {
+                    gate_pending = order.get(oi + 1).copied();
+                }
+                continue;
+            }
         };
 
         // Build the "current state" grid: base grid + all previously placed locks
@@ -279,29 +360,10 @@ pub(super) fn place_locks<R: Rng>(
         scored.sort_by_key(|c| std::cmp::Reverse(c.score));
         let mut ordered = scored;
 
-        // Gate guarantee: if this section owes the goal a gate, restrict to
-        // candidates that actually sever it; carry the duty forward when
-        // this section's geometry can't.
-        if gate_pending == Some(section_idx) {
-            let gating: Vec<ScoredLock> =
-                ordered.iter().copied().filter(|c| c.blocks_target).collect();
-            if gating.is_empty() {
-                if section_idx + 1 < fort_count {
-                    gate_pending = Some(section_idx + 1);
-                }
-                // else: no section could sever the goal — fall through; the
-                // blocks_target_bonus soft backstop has done what it can.
-            } else {
-                ordered = gating;
-                gate_pending = None;
-            }
-        }
-
         // Prefer safe when forced (retry path) or when the best candidate is
         // weak anyway — don't spend an impactful-lock slot on a weak
         // chokepoint. Safe candidates float to the front, order kept within
-        // each half. (Gate candidates are never safe, so an active gate
-        // filter is unaffected.)
+        // each half.
         let best_score = ordered.first().map(|c| c.score).unwrap_or(0);
         if force_safe || best_score < knobs.weak_lock_threshold {
             let (safe_first, rest): (Vec<ScoredLock>, Vec<ScoredLock>) =
@@ -310,32 +372,99 @@ pub(super) fn place_locks<R: Rng>(
             ordered.extend(rest);
         }
 
-        // Choice guard: demote a lock that would shrink the in-band route
-        // count. Bounded by `choice_guard_tries`; falls back to the top
-        // candidate when every measured one degrades (a gate lock may
-        // legitimately cost a zero-fort route).
-        let chosen = if ordered.len() <= 1 {
-            ordered.first().copied()
-        } else {
-            let baseline = measure_routes(locks.clone());
-            let mut pick: Option<ScoredLock> = None;
-            for cand in ordered.iter().take(knobs.choice_guard_tries) {
-                let mut trial = locks.clone();
-                trial.push(LockAssignment {
-                    pos: cand.pos,
-                    gap_tile: cand.gap_tile,
-                    replace_tile: cand.replace_tile,
-                    fort_section: section_idx,
-                    secret_exit_safe: cand.safe,
-                    blocks_target: cand.blocks_target,
-                });
-                if measure_routes(trial) >= baseline {
-                    pick = Some(*cand);
-                    break;
+        let baseline = measure_routes(locks.clone());
+        // Measure a candidate's effect on the in-band route count and fold
+        // it into a running best by (delta, then score). No negative skip:
+        // max-by-delta already prefers non-degrading candidates, and when
+        // EVERYTHING degrades this picks the least destructive one.
+        let mut best: Option<(i64, i32, ScoredLock)> = None;
+        let measure_into_best = |cand: &ScoredLock, best: &mut Option<(i64, i32, ScoredLock)>| {
+            let mut trial = locks.clone();
+            trial.push(assignment_for(cand, section_idx));
+            let delta = measure_routes(trial) as i64 - baseline as i64;
+            if best.as_ref().is_none_or(|&(d, s, _)| (delta, cand.score) > (d, s)) {
+                *best = Some((delta, cand.score, *cand));
+            }
+        };
+
+        // Gate guarantee: if this section owes the goal a gate, measure the
+        // severing candidates and take the best (delta, score) — a post-merge
+        // trunk tile gates at delta 0 when one exists; otherwise the least
+        // destructive sever wins, because the gate outranks choice. The duty
+        // is carried to the next section only when this one can't sever the
+        // goal at all (the feasibility pre-pass makes that rare).
+        let mut chosen: Option<ScoredLock> = None;
+        if gate_pending == Some(section_idx) {
+            let gating: Vec<ScoredLock> =
+                ordered.iter().copied().filter(|c| c.blocks_target).collect();
+            if gating.is_empty() {
+                // Hand the duty to the next section processed. If none is
+                // left, no section could sever the goal — fall through; the
+                // blocks_target_bonus soft backstop has done what it can.
+                gate_pending = order.get(oi + 1).copied();
+            } else {
+                for cand in gating.iter().take(knobs.choice_guard_tries) {
+                    measure_into_best(cand, &mut best);
+                }
+                if let Some((_, _, c)) = best {
+                    chosen = Some(c);
+                    gate_pending = None;
                 }
             }
-            pick.or_else(|| ordered.first().copied())
-        };
+        }
+
+        // Normal selection: measure a pool — the golden route-derived sites
+        // plus the top-scored candidates — best by (delta, score). force_safe
+        // skips the golden hunt: the retry needs a SAFE lock, not a choice,
+        // and the safe-first ordering plus delta max already serves that.
+        if chosen.is_none() {
+            if ordered.len() <= 1 {
+                chosen = ordered.first().copied();
+            } else {
+                // Golden sites: mid path-tiles of the cheap route's exclusive
+                // walk edges vs each rescue target. Gapping one forces this
+                // fort's +5 onto the shortcut while the target route walks
+                // around — the choice-creating lock. These gate ~0 nodes, so
+                // they never surface in the score ordering; measured
+                // explicitly.
+                let golden: Vec<Pos> = if force_safe {
+                    Vec::new()
+                } else {
+                    let rc = measure(locks.clone(), SHAPING_SLACK);
+                    let mut sites: Vec<Pos> = Vec::new();
+                    if let Some(cheap) = rc.routes.first() {
+                        let cheap_mids = walk_edge_mids(&cheap.path);
+                        for target in rescue_targets(&rc) {
+                            let target_mids = walk_edge_mids(&target.path);
+                            let mut exclusive: Vec<Pos> =
+                                cheap_mids.difference(&target_mids).copied().collect();
+                            exclusive.sort();
+                            sites.extend(exclusive);
+                        }
+                    }
+                    sites
+                };
+                let mut pool: Vec<ScoredLock> = Vec::new();
+                let mut seen: HashSet<Pos> = HashSet::new();
+                for pos in golden {
+                    if let Some(c) = ordered.iter().find(|c| c.pos == pos)
+                        && seen.insert(c.pos)
+                        && pool.len() < 3
+                    {
+                        pool.push(*c);
+                    }
+                }
+                for cand in ordered.iter().take(knobs.choice_guard_tries) {
+                    if seen.insert(cand.pos) {
+                        pool.push(*cand);
+                    }
+                }
+                for cand in pool {
+                    measure_into_best(&cand, &mut best);
+                }
+                chosen = best.map(|(_, _, c)| c).or_else(|| ordered.first().copied());
+            }
+        }
 
         if let Some(c) = chosen {
             locked_tiles.insert(c.pos);
@@ -350,6 +479,9 @@ pub(super) fn place_locks<R: Rng>(
         }
     }
 
+    // The gate-first processing order commits out of section order; restore
+    // the section-sorted invariant downstream consumers have always seen.
+    locks.sort_by_key(|l| l.fort_section);
     locks
 }
 

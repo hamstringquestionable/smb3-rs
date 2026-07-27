@@ -136,8 +136,15 @@ pub(crate) fn build<R: Rng>(
             let built = &worlds[wi];
             let start_pos = rom_data::find_start(&built.grid);
             let target_pos = find_target(&built.grid, wi);
-            // Retry aims only to surface a secret-exit-safe lock: force_safe
-            // floats safe candidates first, and no gate duty is imposed.
+            // Retry aims to surface a secret-exit-safe lock: force_safe
+            // floats safe candidates first. The world's goal gate must NOT
+            // be flattened in the process — carry its section through so the
+            // rebuild keeps the goal gated while the other sections go safe.
+            let gate_section = built
+                .locks
+                .iter()
+                .find(|l| l.blocks_target)
+                .map(|l| l.fort_section);
             let new_locks = place_locks(
                 &built.grid,
                 &built.pipe_pairs,
@@ -146,7 +153,7 @@ pub(crate) fn build<R: Rng>(
                 &built.slots,
                 fort_counts[wi],
                 &knobs.lock,
-                None, // gate_section
+                gate_section,
                 true, // force_safe
                 wi,
                 rng,

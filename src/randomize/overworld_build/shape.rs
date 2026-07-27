@@ -30,7 +30,9 @@
 use super::*;
 
 use super::knobs::FortScoring;
-use super::route_choice::{DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice};
+use super::route_choice::{
+    ChoiceRoute, DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice, rescue_targets,
+};
 use super::scoring::{is_row78_conflict, pick_softmax_by_score, score_fortress_candidate};
 use super::sections::completable_positions;
 use super::types::{BuiltWorld, SlotKind};
@@ -63,46 +65,138 @@ pub(super) fn shape_forts<R: Rng>(
     let mut placed: Vec<Pos> = Vec::new();
     let mut rc = measure(built);
 
+    // Phase A0: level rebalancing. A PARALLEL out-of-band route (non-nested
+    // level-set — nested detours are in `rc.detours`, not here) at gap 4-9
+    // comes into the band by moving one level OFF its exclusive stretch
+    // (-3), landing it on the cheap route's stretch when the gap needs the
+    // full -6. Free — no fort spent; sets stay non-nested so nothing falls
+    // to the domination filter. Bounded and measure-verified like the fort
+    // phase.
+    for _ in 0..2 {
+        if in_band_count(&rc) >= 2 {
+            break;
+        }
+        let parallels: Vec<ChoiceRoute> = rc
+            .routes
+            .iter()
+            .filter(|r| r.cost > rc.best_cost + DEFAULT_SLACK)
+            .take(2)
+            .cloned()
+            .collect();
+        if parallels.is_empty() {
+            break;
+        }
+        let before = (in_band_count(&rc), shaping_gap(&rc));
+        let mut applied = false;
+        'moves: for target in parallels {
+            let cheap_nodes: HashSet<Pos> = rc.routes[0].path.iter().copied().collect();
+            // Levels only the target route plays — the movable weight.
+            let sources: Vec<Pos> = target
+                .levels
+                .iter()
+                .copied()
+                .filter(|l| !rc.routes[0].levels.contains(l))
+                .collect();
+            // Destinations: HB slots, cheap-exclusive first (full -6 swing),
+            // then off-route (-3).
+            let target_nodes: HashSet<Pos> = target.path.iter().copied().collect();
+            let all_dests = ranked_convertible(built, None, reserved, bfs_distances, knobs);
+            let mut dests: Vec<Pos> = all_dests
+                .iter()
+                .filter(|(p, _)| cheap_nodes.contains(p) && !target_nodes.contains(p))
+                .map(|(p, _)| *p)
+                .collect();
+            dests.extend(
+                all_dests
+                    .iter()
+                    .filter(|(p, _)| !cheap_nodes.contains(p) && !target_nodes.contains(p))
+                    .map(|(p, _)| *p),
+            );
+            let mut measures = 0;
+            for &src in sources.iter().take(2) {
+                let Some(src_idx) = built
+                    .slots
+                    .iter()
+                    .position(|s| s.pos == src && s.kind == SlotKind::Level)
+                else {
+                    continue;
+                };
+                for &dst in dests.iter().take(2) {
+                    if measures >= MEASURED_TRIES {
+                        break 'moves;
+                    }
+                    let Some(dst_idx) = hb_slot_index(built, dst) else { continue };
+                    built.slots[src_idx].kind = SlotKind::HammerBro;
+                    built.slots[dst_idx].kind = SlotKind::Level;
+                    measures += 1;
+                    let rc2 = measure(built);
+                    let after = (in_band_count(&rc2), shaping_gap(&rc2));
+                    if after.0 > before.0 || (after.0 == before.0 && after.1 < before.1) {
+                        rc = rc2;
+                        applied = true;
+                        break 'moves;
+                    }
+                    built.slots[src_idx].kind = SlotKind::Level;
+                    built.slots[dst_idx].kind = SlotKind::HammerBro;
+                }
+            }
+        }
+        if !applied {
+            break;
+        }
+    }
+
     // Phase A: equalize. Bounded — each iteration either places a fort or
-    // breaks out.
+    // breaks out. Rescue targets are BOTH kinds of also-ran the scorer
+    // reports: out-of-band parallel routes (close the gap by re-pricing the
+    // cheap route +5) and dominated superset detours (a fort on the cheap
+    // route's exclusive, level-empty stretch un-nests the cost relation —
+    // "beat the fort or play the extra levels" becomes a real choice).
     let mut iterations = 0;
     while placed.len() < fort_count && iterations < 2 * fort_count {
         iterations += 1;
         if in_band_count(&rc) >= 2 {
             break; // already choiceful — remaining forts are content
         }
-        let Some(nm) = near_miss(&rc) else {
+        let targets = rescue_targets(&rc);
+        if targets.is_empty() {
             break; // nothing a fort can rescue; spare pipes get a turn later
-        };
-        // Fort candidates: convertible HB slots on the cheap route's
-        // exclusive stretch (nodes the near-miss route doesn't cross).
-        let nm_nodes: HashSet<Pos> = nm.path.iter().copied().collect();
-        let exclusive: Vec<Pos> = rc.routes[0]
-            .path
-            .iter()
-            .copied()
-            .filter(|p| !nm_nodes.contains(p))
-            .collect();
-        let mut cands = ranked_convertible(built, Some(&exclusive), reserved, bfs_distances, knobs);
-        cands.truncate(MEASURED_TRIES);
+        }
 
         let before = (in_band_count(&rc), shaping_gap(&rc));
         let mut applied = false;
-        for (pos, _) in cands {
-            let Some(idx) = hb_slot_index(built, pos) else { continue };
-            convert(built, idx, placed.len());
-            let rc2 = measure(built);
-            let after = (in_band_count(&rc2), shaping_gap(&rc2));
-            if after.0 > before.0 || (after.0 == before.0 && after.1 < before.1) {
-                rc = rc2;
-                placed.push(pos);
-                applied = true;
-                break;
+        let mut measures = 0;
+        'targets: for target in targets {
+            // Fort candidates: convertible HB slots on the cheap route's
+            // exclusive stretch (nodes the target route doesn't cross).
+            let target_nodes: HashSet<Pos> = target.path.iter().copied().collect();
+            let exclusive: Vec<Pos> = rc.routes[0]
+                .path
+                .iter()
+                .copied()
+                .filter(|p| !target_nodes.contains(p))
+                .collect();
+            let cands = ranked_convertible(built, Some(&exclusive), reserved, bfs_distances, knobs);
+            for (pos, _) in cands {
+                if measures >= MEASURED_TRIES {
+                    break 'targets;
+                }
+                let Some(idx) = hb_slot_index(built, pos) else { continue };
+                convert(built, idx, placed.len());
+                measures += 1;
+                let rc2 = measure(built);
+                let after = (in_band_count(&rc2), shaping_gap(&rc2));
+                if after.0 > before.0 || (after.0 == before.0 && after.1 < before.1) {
+                    rc = rc2;
+                    placed.push(pos);
+                    applied = true;
+                    break 'targets;
+                }
+                revert(built, idx);
             }
-            revert(built, idx);
         }
         if !applied {
-            break; // forts can't close this gap
+            break; // forts can't create choice here
         }
     }
 
@@ -164,7 +258,7 @@ fn in_band_count(rc: &RouteChoice) -> usize {
 }
 
 /// Cheapest route ABOVE the choice band — the rescuable near-miss.
-fn near_miss(rc: &RouteChoice) -> Option<&super::route_choice::ChoiceRoute> {
+fn near_miss(rc: &RouteChoice) -> Option<&ChoiceRoute> {
     rc.routes.iter().find(|r| r.cost > rc.best_cost + DEFAULT_SLACK)
 }
 
