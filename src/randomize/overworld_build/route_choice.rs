@@ -81,15 +81,18 @@ pub(crate) struct RouteChoice {
 pub(crate) fn analyze_route_choice(built: &BuiltWorld, slack: u32) -> RouteChoice {
     // Working grid: open breakable rocks so walk_map makes edges through them
     // (we charge 8 the first time one is crossed, below); then stamp nodes.
+    // Rocks are kept in grid scan order: their mask bits (assigned below) must
+    // be seed-stable, since heap tie-breaking includes the mask and placement
+    // decisions will key on the returned routes.
     let mut grid = built.grid.clone();
-    let mut rock_tiles: HashSet<Pos> = HashSet::new();
+    let mut rock_tiles: Vec<Pos> = Vec::new();
     for r in 0..grid.rows() {
         for c in 0..grid.cols {
             let t = grid.get(r, c);
             for (closed, open) in BREAKABLE_ROCKS {
                 if t == closed {
                     grid.set(r, c, open);
-                    rock_tiles.insert((r, c));
+                    rock_tiles.push((r, c));
                 }
             }
         }
