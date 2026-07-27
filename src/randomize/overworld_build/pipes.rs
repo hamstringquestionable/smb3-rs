@@ -2,7 +2,22 @@
 
 use super::*;
 
-use super::plan::{FortSkipPolicy, PipeScoring};
+use super::knobs::{FortSkipPolicy, PipeScoring};
+use super::route_choice::{C1_FLOOR, DEFAULT_SLACK, RouteChoice, measure_counts};
+use super::types::BuiltWorld;
+
+/// Score adjustment per in-band route a spare pipe CREATES (measured by
+/// `analyze_route_choice`). Sized to dominate the level-skip/jump score
+/// (range ~0-50) — a pipe that hands the player a real route decision beats
+/// any plain shortcut.
+const CHOICE_PIPE_BONUS: f64 = 100.0;
+/// Score penalty when a spare pipe DESTROYS in-band routes — a soft veto:
+/// softmax practically never picks it while alternatives exist, but it stays
+/// available so the world can still reach its vanilla pipe count.
+const CHOICE_PIPE_VETO: f64 = -1000.0;
+/// Candidate pairs measured per spare-pipe round. Bounds the per-round
+/// Dijkstra budget.
+const CHOICE_MEASURES_PER_ROUND: usize = 10;
 use super::scoring::pick_softmax_by_score;
 use super::sections::split_blanks_by_reachability;
 use super::types::{LockAssignment, SlotAssignment, SlotKind, stamp_slots};
@@ -302,6 +317,18 @@ pub(super) fn place_spare_pipes<R: Rng>(
         return;
     }
 
+    // Pipe-sparse worlds (vanilla budget <= 2 pairs) get the HARD choice
+    // veto: a spare that collapses an in-band route is banned and selection
+    // retries, instead of the soft score veto that can still lose to a weak
+    // field. Measured A/B (1000 seeds): dramatically lifts choice on the
+    // sparse worlds (W2 36→24% linear, W4 31→16, W5 24→15, W6 8→2; overall
+    // 46→41%) and skips their pool measures, but the same veto REGRESSES
+    // pipe-heavy worlds (W3/W7/W8) — there, shortcut webs are the choice
+    // fabric and the measured bonus/soft-veto pool below does better. Gate
+    // on the world's actual budget, not its index, so future budget changes
+    // follow automatically.
+    let hard_choice_veto = pipe_pairs.len() + spare_needed <= 2;
+
     // Rows 7 and 8 share a Map_Completions bit, and a pipe is
     // completion-relevant — the same engine bug `place_locks` guards against.
     // Locks no longer see future spare pipes, so the exclusion runs this way
@@ -441,6 +468,95 @@ pub(super) fn place_spare_pipes<R: Rng>(
             }
         }
 
+        // Choice-aware adjustment: measure how the top-scored candidate
+        // pairs change the world's in-band route count. Creating a route is
+        // rewarded heavily; collapsing one is soft-vetoed. This is where a
+        // linear world earns its second route — the pipe is the only tool
+        // that can fork single-corridor terrain.
+        let section_count = slots.iter().filter(|s| s.kind == SlotKind::Fortress).count();
+        let measure_with = |extra: Option<TeleportEdge>| -> RouteChoice {
+            let mut pp = pipe_pairs.clone();
+            pp.extend(extra);
+            let world = BuiltWorld {
+                world_idx,
+                grid: grid.clone(),
+                slots: slots.to_vec(),
+                locks: locks.to_vec(),
+                section_count,
+                pipe_pairs: pp,
+                hb_sprites: Vec::new(),
+            };
+            // Counts-only: this pass reads `best_cost` / `routes.len()` /
+            // `reachable`, never a path.
+            measure_counts(&world, DEFAULT_SLACK)
+        };
+        let rc_now = measure_with(None);
+        // C1-floor guard target: a shortcut may not price the cheapest route
+        // below the floor — or, on an already-deficient world, below where
+        // it stands (`enforce_c1_floor` ran before this pass).
+        let c1_target = rc_now.best_cost.min(C1_FLOOR);
+        let in_band_now = rc_now.routes.len();
+        let choice_adjust: HashMap<TeleportEdge, f64> = if hard_choice_veto {
+            // Sparse world: the committed pair gets a real measured veto in
+            // the verification loop instead — no pre-measured score pool.
+            HashMap::new()
+        } else {
+            // Measurement pool, most-likely-choice-creators first. A pipe
+            // creates an IN-BAND alternative mainly when it skips exactly one
+            // level (net -2: the walk route stays 2 points behind, inside the
+            // slack band) — big skips replace the best route instead of tying
+            // it. So: 1-skip pairs (widest jumps first), then fort-skip
+            // pairs, then the top plain scores (to veto choice-destroyers
+            // among the likely winners).
+            let mut pool: Vec<TeleportEdge> = Vec::new();
+            let mut one_skips: Vec<(TeleportEdge, usize)> = candidates
+                .iter()
+                .filter(|&&(_, s, _)| s == 1)
+                .map(|&(p, _, j)| (p, j))
+                .collect();
+            one_skips.sort_by_key(|&(p, j)| (std::cmp::Reverse(j), p));
+            pool.extend(one_skips.into_iter().map(|(p, _)| p).take(6));
+            let mut forts_by_score = fort_candidates.clone();
+            forts_by_score.sort_by(|a, b| {
+                b.1.partial_cmp(&a.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.0.cmp(&b.0))
+            });
+            pool.extend(forts_by_score.into_iter().map(|(p, _)| p).take(3));
+            let mut by_score: Vec<(TeleportEdge, f64)> = candidates
+                .iter()
+                .map(|&(p, s, j)| {
+                    (p, s as f64 * knobs.level_skip_weight + j as f64 * knobs.jump_weight)
+                })
+                .collect();
+            by_score.sort_by(|a, b| {
+                b.1.partial_cmp(&a.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.0.cmp(&b.0))
+            });
+            pool.extend(by_score.into_iter().map(|(p, _)| p).take(3));
+            pool.dedup_by_key(|p| *p); // adjacent dups only; full dedup below via map insert
+            pool.truncate(CHOICE_MEASURES_PER_ROUND);
+
+            let mut adj_map: HashMap<TeleportEdge, f64> = HashMap::new();
+            for pair in pool {
+                if adj_map.contains_key(&pair) {
+                    continue;
+                }
+                let delta = measure_with(Some(pair)).routes.len() as i64 - in_band_now as i64;
+                let adj = if delta < 0 {
+                    CHOICE_PIPE_VETO
+                } else {
+                    delta as f64 * CHOICE_PIPE_BONUS
+                };
+                adj_map.insert(pair, adj);
+            }
+            adj_map
+        };
+        let adjusted = |pair: TeleportEdge, base: f64| -> f64 {
+            base + choice_adjust.get(&pair).copied().unwrap_or(0.0)
+        };
+
         // Exact pre-walks for verification (candidate-independent, per round).
         let exact_state: Option<(bool, Vec<bool>)> = match (start_pos, target_pos) {
             (Some(sp), Some(tp)) => {
@@ -466,6 +582,18 @@ pub(super) fn place_spare_pipes<R: Rng>(
         // re-checked with real walks; a pair the exact model rejects is
         // banned and selection re-runs without it.
         let mut banned: HashSet<TeleportEdge> = HashSet::new();
+        // Hard-veto choice bans and floor bans are SOFT overall: tracked
+        // separately so they can be lifted if they'd leave the world short
+        // of its vanilla pipe budget — the budget outranks both. Choice
+        // lifts first (the weaker rule); the C1 floor holds out longest.
+        let mut choice_banned: Vec<TeleportEdge> = Vec::new();
+        let mut choice_active = hard_choice_veto;
+        // Bound the hard-veto retry churn: after this many banned pairs in
+        // one round, fall back to the unmeasured pick (worst-case seeds
+        // otherwise pay a measure per banned candidate).
+        let mut choice_vetoes_left = 8usize;
+        let mut floor_banned: Vec<TeleportEdge> = Vec::new();
+        let mut floor_active = true;
         let mut verified_fort_skip = false;
         let chosen: Option<TeleportEdge> = loop {
             // A fort skip is the prize: take one whenever it exists (softmax
@@ -473,7 +601,7 @@ pub(super) fn place_spare_pipes<R: Rng>(
             let fc: Vec<(TeleportEdge, f64)> = fort_candidates
                 .iter()
                 .filter(|(p, _)| !banned.contains(p))
-                .copied()
+                .map(|&(p, s)| (p, adjusted(p, s)))
                 .collect();
             let pick = if !fc.is_empty() {
                 pick_softmax_by_score(fc, knobs.softmax_t, rng)
@@ -500,9 +628,17 @@ pub(super) fn place_spare_pipes<R: Rng>(
                 // the world still reaches its fixed vanilla pipe count.
                 let within: Vec<(TeleportEdge, f64)> = candidates
                     .iter()
-                    .filter(|(p, s, _)| !banned.contains(p) && (1..=cap).contains(s))
+                    .filter(|(p, s, _)| {
+                        !banned.contains(p)
+                            && ((1..=cap).contains(s)
+                                // A measured route-creating pair ignores the
+                                // skip cap: handing the player a decision
+                                // outranks capping shortcut size.
+                                || choice_adjust.get(p).is_some_and(|&adj| adj > 0.0))
+                    })
                     .map(|&(p, s, j)| {
-                        (p, s as f64 * knobs.level_skip_weight + j as f64 * knobs.jump_weight)
+                        let base = s as f64 * knobs.level_skip_weight + j as f64 * knobs.jump_weight;
+                        (p, adjusted(p, base))
                     })
                     .collect();
                 pick_softmax_by_score(within, knobs.softmax_t, rng)
@@ -521,7 +657,23 @@ pub(super) fn place_spare_pipes<R: Rng>(
                             .map(|&(p, _)| p)
                     })
             };
-            let Some(pair) = pick else { break None };
+            let Some(pair) = pick else {
+                if !choice_banned.is_empty() {
+                    for p in choice_banned.drain(..) {
+                        banned.remove(&p);
+                    }
+                    choice_active = false;
+                    continue;
+                }
+                if floor_active && !floor_banned.is_empty() {
+                    for p in floor_banned.drain(..) {
+                        banned.remove(&p);
+                    }
+                    floor_active = false;
+                    continue;
+                }
+                break None;
+            };
 
             // Exact verification with real walks.
             let Some((sealed, lock_sealed)) = &exact_state else { break Some(pair) };
@@ -547,6 +699,31 @@ pub(super) fn place_spare_pipes<R: Rng>(
             if bypass >= 2 || (bypass == 1 && !skip_allowed) {
                 banned.insert(pair);
                 continue;
+            }
+            // Measured winner checks (one route measure per tried pair):
+            // on sparse worlds the shortcut may not collapse an in-band
+            // route (hard choice veto), and everywhere it may not price the
+            // world below the C1 floor (or cheapen an already-deficient
+            // world further).
+            if rc_now.reachable && (choice_active || floor_active) {
+                let m = measure_with(Some(pair));
+                if choice_active && m.routes.len() < in_band_now {
+                    banned.insert(pair);
+                    choice_banned.push(pair);
+                    choice_vetoes_left -= 1;
+                    if choice_vetoes_left == 0 {
+                        // Measure budget spent: keep the known collapsers
+                        // banned (the budget-lift below can still restore
+                        // them), but stop paying for further measures.
+                        choice_active = false;
+                    }
+                    continue;
+                }
+                if floor_active && m.best_cost < c1_target {
+                    banned.insert(pair);
+                    floor_banned.push(pair);
+                    continue;
+                }
             }
             verified_fort_skip = bypass == 1;
             break Some(pair);

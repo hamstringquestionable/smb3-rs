@@ -1,7 +1,11 @@
 # Choice-First Overworld Builder — Charter
 
-Status: **draft for review.** This is the plain-English contract for the feature.
-Every future slice is measured against it. No Rust here on purpose.
+Status: **first constructive implementation landed (2026-07-27).** The builder
+now measures route structure and shapes forts/locks/pipes against it — see
+"Implementation status" at the end of this document for what exists, the
+mechanisms discovered along the way, and the measured numbers. The rest of the
+charter remains the plain-English contract the work is measured against. No
+Rust here on purpose.
 
 > **A note on the name.** This started as a "mission-first" builder, and the code
 > still carries that name (the `Mission` struct, the `--mission-overworld` flag).
@@ -470,3 +474,87 @@ no fuzzy scoring in between. (A share like "≈60% mandatory" is fine here — i
 7. **Measuring decision density.** The goal-check metric is still fuzzy. What's a
    concrete, seed-averaged score for "how many real decisions does this map offer"?
    Until we can measure it, the north star is a principle, not yet a scoreboard.
+
+## Implementation status (2026-07-27)
+
+The first constructive builder is live on `feature/choice-first`. Answering
+open question 7 first turned out to unlock everything else: the metric is
+`route_choice::analyze_route_choice` — a weighted set-cost Dijkstra (pipe 1 /
+level 3 / fort 5 / rock 8, each clearable charged once) that enumerates every
+distinct near-optimal route (identity = level-set), drops dominated superset
+detours, and calls a world *choiceful* when ≥2 routes sit within 3 points.
+
+**Pipeline** (per world): connectivity pipes → levels placed as the terrain
+(`place_levels` — first half greedy, second half measured) → measured fort
+shaping (`shape.rs`) → fort sections renumbered by BFS rank → locks → spare
+pipes. The `WorldPlan` archetype /
+`LockRole` layer is deleted — the measured route structure decides directly.
+No rerolls: worlds whose terrain can't fork stay honestly linear.
+
+**Mechanisms, in the order the censuses forced them into existence:**
+
+1. *Fort re-pricing* (`shape.rs` phase A): a fort on the cheap route's
+   exclusive stretch pulls a +4..8-gap parallel route into the band.
+2. *Dominated detours are the raw material.* On these tree-ish maps almost
+   every alternative is a superset detour, which the domination filter hides.
+   The scorer now reports them (`RouteChoice::detours`) as rescue targets.
+3. *Golden locks* (the workhorse): a nested detour's differentiator is usually
+   a single path TILE, not a node — the shortcut edge. A lock there, gated by
+   any fort, prices the shortcut at +5 vs the 3-6-point level loop: "beat the
+   fort or take the long way around." These locks gate ~0 nodes, so they are
+   derived from the route structure (exclusive walk-edge mids) and measured
+   explicitly; lock selection is max (in-band route delta, then score).
+4. *Gate-first, feasibility-anchored*: the goal-gate section is drawn
+   uniformly from the sections that CAN gate (a severing tile keeping its own
+   and all earlier forts reachable) and its lock is placed before any other —
+   committed safe locks otherwise combine with the sever and kill every gate
+   candidate. The secret-exit-safe retry carries the gate through instead of
+   flattening it (this bug was producing goal-open worlds).
+5. *Choice-aware spare pipes*: candidate pairs are measured for in-band route
+   deltas — creators get a dominating bonus (and may ignore the skip cap),
+   destroyers a soft veto that never blocks the vanilla pipe budget.
+6. *Choice-aware second-half level placement*: the aesthetic `path_bonus`
+   glues levels to the trunk, leaving every cycle's short side empty — a
+   nested dominated detour. So only the FIRST half of each world's levels is
+   placed greedy on the aesthetic score; each second-half level measures its
+   candidates (top aesthetic scorers ∪ blanks on the cheap route's exclusive
+   stretch vs each level-rescuable detour) and takes the max (in-band route
+   count, then aesthetic score). ONE level on a node-bearing short side makes
+   the level-sets disjoint and the detour a real fork — the level counterpart
+   of golden locks, which keep the zero-node short sides. An A/B against a
+   random first half measured 46% vs 50% linear for random, but its
+   forced-level streak fell to 1.70 (off the ≈1.79 calibration — required
+   routes thinned), so greedy stays the default; random survives as the
+   `random_first_half` knob.
+7. *C1 floor* (`C1_FLOOR = 14`): the choice metric bounds the GAP (C2−C1)
+   but nothing bounded C1 itself — even gated, ~13% of worlds let the
+   player finish for under 14 points (the goal gate proved choice-neutral
+   AND floor-less in the `test_c1_floor_probe` A/B). `enforce_c1_floor`
+   runs after locks: while C1 < 14, an off-route level moves onto the cheap
+   route, measure-verified on the key (C1 capped at the floor, in-band
+   count) — the cap stops floor-chasing from overshooting at choice's
+   expense, and the tie-break means floor repair often CREATES ties. The
+   spare-pipe pass gained a matching soft veto (a shortcut may not price
+   the world below the floor; the vanilla pipe budget still outranks it).
+   Sub-14 worlds: 13.4% → 1.2%. A Level↔HammerBro swap never changes
+   walkability, so locks and the goal-open guarantee are untouched.
+
+**Numbers** (1000 seeds, slack 3): 46% linear overall, mean 1.85 routes/world
+— vs 50% before the C1 floor, 58% before the choice-aware level pass, 68%
+for the pre-reroll builder, and ~20% for best-of-8 rerolling. W6 richest
+(94% choiceful), W8 poorest (25% — the corridor); W1 lifted from 12% to 33%
+choiceful by the level pass (its lone cycle now gets a level even when no
+fort can fork it). Worlds under C1 14: 1.2% (was 13.4%), min 9, mean C1
+19.0. Goal-open: 0/1000 SAS-off. Forced-level streak 1.91/1.81 (reference
+≈1.79). ~0.32 s per full seed. Same-seed byte-identical.
+
+**Honest gap vs the reroll era:** rerolls exploited raw geometry variance —
+eight fresh level layouts per world — where the constructive builder gets one
+deterministic layout given pipes (the measured second half claws back part of
+that, and the `random_first_half` knob would buy more variance at a measured
+cost: 46% vs 50% linear but streak 1.70, off calibration). The identified
+next lever is *cycle dressing*: enumerate the walk graph's physical cycles
+directly and dress each (levels on one side, golden lock on the other, loads
+tuned to tie) instead of only rescuing the also-rans the route scorer happens
+to surface. Level rebalancing (phase A0) exists but rarely fires — parallel
+non-nested routes are rare without it.

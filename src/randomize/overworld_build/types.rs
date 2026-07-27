@@ -71,6 +71,16 @@ pub(super) fn stamp_slots(grid: &mut Grid, slots: &[SlotAssignment]) {
     }
 }
 
+/// Index of the convertible HammerBro filler slot at `pos`, if any — the
+/// shared lookup for the passes that realize content by flipping fillers
+/// (levels, forts, spare pipes).
+pub(super) fn hb_slot_index(built: &BuiltWorld, pos: Pos) -> Option<usize> {
+    built
+        .slots
+        .iter()
+        .position(|s| s.pos == pos && s.kind == SlotKind::HammerBro)
+}
+
 /// A lock/bridge placed on a path tile.
 #[derive(Clone, Debug)]
 pub(crate) struct LockAssignment {
@@ -121,11 +131,6 @@ pub(crate) struct BuiltWorld {
     /// Redistributed wandering Hammer Bro sprites for this world. Empty when
     /// `shuffle_hammer_bros` is off (the writer keeps the vanilla sprites).
     pub hb_sprites: Vec<HbSprite>,
-    /// The plan this world was built from — sampled intent, kept for the
-    /// diagnostics/census tests to compare against realized topology. The
-    /// force_safe retry overwrites it with the all-Safe plan it actually
-    /// used, so this field is always truthful.
-    pub plan: super::plan::WorldPlan,
 }
 
 /// Complete Phase 3 output.
