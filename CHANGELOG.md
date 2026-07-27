@@ -11,23 +11,23 @@ deploys.
 
 ### Changed
 
-- The overworld builder now rerolls each world looking for real route choice:
-  it rebuilds a world up to a few times and keeps the first version that offers
-  two or more roughly-equal paths to the goal (scored by how many levels each
-  path forces), instead of accepting whatever it first produced. This takes the
-  share of "single forced path" worlds from ~68% down to ~20%, so most worlds
-  now hand the player a genuine "which way do I go" decision. Deterministic —
-  the same seed still produces the same maps.
-- Overworld fortress locks now follow a per-world progression archetype (chain,
-  single-gate, or a choice-fork with decoy fortresses) instead of always greedily
-  gating the deepest chokepoint. This adds variety — worlds can present a genuine
-  "pick the right fort" fork, and W8 mixes a short chain into a final fork —
-  rather than defaulting to a linear beat-fort-to-reach-next-fort grind.
+- The overworld builder now BUILDS for route choice instead of rerolling for
+  it: levels are placed first as the world's terrain, the route structure is
+  measured (how many roughly-equal paths reach the goal, priced by the levels,
+  fortresses, and pipes each path forces), and fortresses, locks, and spare
+  pipes are then placed as targeted moves to create two or three close routes
+  — a fort re-prices a shortcut, a lock forces that fort's cost onto it (the
+  classic "beat the fort or take the long way around"), a pipe opens or
+  cheapens an alternative. One fortress lock per world is guaranteed to gate
+  the goal (chosen among the sections that can, so the "real" fort carries no
+  positional tell). Worlds whose terrain genuinely can't fork stay honestly
+  linear. Deterministic — the same seed still produces the same maps.
 - Spare overworld pipes are now placed after fortress locks and may bridge
   across one of them: at most one pipe per world can make a single fortress
   optional (a free "fort skip" shortcut for players who find it). Pipes that
   would bypass two or more fortresses, or reach the goal with every lock still
-  closed, are never placed.
+  closed, are never placed; pipes that would collapse an existing route choice
+  are avoided, and pipes that create one are preferred.
 - Fortress choice-forks no longer have a tell: the fort that really opens the
   way forward is now equally likely to be any of the forked forts. Previously
   it was almost always the farthest one to reach, so "always pick the far
