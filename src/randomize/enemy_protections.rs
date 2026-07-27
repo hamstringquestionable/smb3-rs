@@ -130,6 +130,15 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
+        label: "7-1 sub-area (scr=0 GreenTroopas kept in the shell pool)",
+        enemy_ptr: 0xCD93,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0CDA7, rule: EntryProtection::ForceShell }, // GreenTroopa scr=0 col=2
+            EntryRule { offset: 0x0CDAA, rule: EntryProtection::ForceShell }, // GreenTroopa scr=0 col=4
+        ],
+    },
+    LevelProtection {
         label: "6-5 sub-area (shell needed for progression)",
         enemy_ptr: 0xC5EB,
         walker_segment: WalkerSegmentRule::Default,

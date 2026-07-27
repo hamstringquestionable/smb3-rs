@@ -7,6 +7,8 @@ New work accumulates under **[Unreleased]** and is moved into a new versioned
 section when a release is cut — a merge to `main`, which bumps the version and
 deploys.
 
+## [Unreleased]
+
 ## [1.1.0] - 2026-07-27
 
 ### Changed
@@ -80,6 +82,23 @@ deploys.
   player can press Start+Select to jump to the other player's tile. This
   prevents softlocks where one player moves a shared map object (such as the
   `8s are Wild` canoe) out of the other's reach. No effect in 1-player games.
+
+## [1.0.6] - 2026-07-27
+
+### Fixed
+
+- 7-1: the two Green Troopas near the start now always stay in the shell pool,
+  so the enemy shuffle can no longer replace them with something unsafe there.
+
+## [1.0.5] - 2026-07-25
+
+### Changed
+
+- The main site's tab title is now "SMB3 Randomizer" (previously carried a
+  "(beta)" tag). The `/beta/` deploy is now visually distinct from the main
+  site: it shows a hazard-striped "BETA BUILD" banner, a violet frame, and a
+  BETA badge in the header, keyed on the URL path so it can't be confused with
+  the stable release page.
 
 ## [1.0.4] - 2026-07-24
 
