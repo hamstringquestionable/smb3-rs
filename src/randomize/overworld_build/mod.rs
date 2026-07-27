@@ -172,6 +172,12 @@ pub(crate) fn build<R: Rng>(
                 .iter()
                 .find(|l| l.blocks_target)
                 .map(|l| l.fort_section);
+            // place_locks drops the hint unless goal_gate is on, so a world
+            // gated by the C1-floor backstop must keep gate duty here too.
+            let mut retry_knobs = knobs.lock;
+            if gate_section.is_some() {
+                retry_knobs.goal_gate = true;
+            }
             let new_locks = place_locks(
                 &built.grid,
                 &built.pipe_pairs,
@@ -179,7 +185,7 @@ pub(crate) fn build<R: Rng>(
                 target_pos,
                 &built.slots,
                 fort_counts[wi],
-                &knobs.lock,
+                &retry_knobs,
                 gate_section,
                 true, // force_safe
                 wi,

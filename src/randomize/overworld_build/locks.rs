@@ -278,8 +278,12 @@ pub(super) fn place_locks<R: Rng>(
                             g.set(l.pos.0, l.pos.1, l.gap_tile);
                         }
                     }
-                    // Also place the candidate lock
-                    g.set(cand_pos.0, cand_pos.1, gap);
+                    // Also place the candidate lock. Gate-first ordering can
+                    // commit a LATER section before this one, so the candidate
+                    // is open (already beaten) at prev_lock's checkpoint when
+                    // its section is earlier — same rule as the loop above.
+                    let cand_tile = if section_idx < prev_lock.fort_section { tile } else { gap };
+                    g.set(cand_pos.0, cand_pos.1, cand_tile);
                     let w = walk_map(&g, pipe_pairs, start_pos, world_idx);
                     !w.nodes.contains(&pf.pos)
                 } else {
