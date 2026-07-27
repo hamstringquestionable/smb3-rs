@@ -35,6 +35,14 @@ pub(crate) const COST_FORT: u32 = 5;
 pub(crate) const COST_ROCK: u32 = 8;
 /// "Roughly equal" band, in points. 3 = one level of wobble.
 pub(crate) const DEFAULT_SLACK: u32 = 3;
+/// Floor on the cheapest route's cost — the world must charge at least this
+/// much to finish, however composed (levels / forts / rocks / pipes).
+/// Enforced best-effort by `enforce_c1_floor` (moving off-route levels onto
+/// the cheap route) and guarded by the spare-pipe pass (a shortcut may not
+/// price the world below the floor). This is the "not skippable" guarantee;
+/// the goal gate is the "door and key" one — they overlap but neither
+/// implies the other (probe: ~13% of gated worlds sat below 14).
+pub(crate) const C1_FLOOR: u32 = 14;
 
 /// Wider measuring band used while SHAPING a world (`shape_forts`): routes up
 /// to 13 points above best stay visible — two stacked forts (+10) plus the

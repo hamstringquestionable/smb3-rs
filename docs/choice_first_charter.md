@@ -526,14 +526,27 @@ No rerolls: worlds whose terrain can't fork stay honestly linear.
    forced-level streak fell to 1.70 (off the ≈1.79 calibration — required
    routes thinned), so greedy stays the default; random survives as the
    `random_first_half` knob.
+7. *C1 floor* (`C1_FLOOR = 14`): the choice metric bounds the GAP (C2−C1)
+   but nothing bounded C1 itself — even gated, ~13% of worlds let the
+   player finish for under 14 points (the goal gate proved choice-neutral
+   AND floor-less in the `test_c1_floor_probe` A/B). `enforce_c1_floor`
+   runs after locks: while C1 < 14, an off-route level moves onto the cheap
+   route, measure-verified on the key (C1 capped at the floor, in-band
+   count) — the cap stops floor-chasing from overshooting at choice's
+   expense, and the tie-break means floor repair often CREATES ties. The
+   spare-pipe pass gained a matching soft veto (a shortcut may not price
+   the world below the floor; the vanilla pipe budget still outranks it).
+   Sub-14 worlds: 13.4% → 1.2%. A Level↔HammerBro swap never changes
+   walkability, so locks and the goal-open guarantee are untouched.
 
-**Numbers** (1000 seeds, slack 3): 50% linear overall, mean 1.81 routes/world
-— vs 58% before the choice-aware level pass, 68% for the pre-reroll builder,
-and ~20% for best-of-8 rerolling. W6 richest (92% choiceful), W8 poorest (22%
-— the corridor); W1 lifted from 12% to 33% choiceful by the level pass (its
-lone cycle now gets a level even when no fort can fork it). Goal-open: 0/1000
-SAS-off. Forced-level streak 1.88/1.75 (reference ≈1.79). ~0.32 s per full
-seed. Same-seed byte-identical.
+**Numbers** (1000 seeds, slack 3): 46% linear overall, mean 1.85 routes/world
+— vs 50% before the C1 floor, 58% before the choice-aware level pass, 68%
+for the pre-reroll builder, and ~20% for best-of-8 rerolling. W6 richest
+(94% choiceful), W8 poorest (25% — the corridor); W1 lifted from 12% to 33%
+choiceful by the level pass (its lone cycle now gets a level even when no
+fort can fork it). Worlds under C1 14: 1.2% (was 13.4%), min 9, mean C1
+19.0. Goal-open: 0/1000 SAS-off. Forced-level streak 1.91/1.81 (reference
+≈1.79). ~0.32 s per full seed. Same-seed byte-identical.
 
 **Honest gap vs the reroll era:** rerolls exploited raw geometry variance —
 eight fresh level layouts per world — where the constructive builder gets one

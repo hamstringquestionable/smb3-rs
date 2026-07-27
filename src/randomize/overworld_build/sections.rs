@@ -14,7 +14,7 @@ use super::route_choice::{
     COST_LEVEL, DEFAULT_SLACK, SHAPING_SLACK, analyze_route_choice, in_band_count,
 };
 use super::scoring::{is_row78_conflict, score_candidate};
-use super::shape::shape_forts;
+use super::shape::{enforce_c1_floor, shape_forts};
 use super::types::{BuiltWorld, SlotAssignment, SlotKind, WorldSlotCounts, hb_slot_index};
 
 // Reason: each arg is a distinct build input (world, rom, grid, fixed slots,
@@ -214,6 +214,12 @@ pub(super) fn build_world<R: Rng>(
         world_idx,
         rng,
     );
+
+    // Step 5.2: C1 floor. With the cost landscape final (locks committed),
+    // ensure the cheapest route charges at least C1_FLOOR points where the
+    // content budget allows — off-route levels migrate onto the cheap route.
+    // Level moves never change walkability, so the locks stay valid.
+    enforce_c1_floor(&mut built, &hb_sprite_positions);
 
     // Step 5.5: Spare pipes. Now that levels AND locks exist, fill the
     // remaining pipe budget by converting HammerBro filler slots into pipe

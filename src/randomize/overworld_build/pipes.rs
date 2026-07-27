@@ -3,7 +3,7 @@
 use super::*;
 
 use super::knobs::{FortSkipPolicy, PipeScoring};
-use super::route_choice::{DEFAULT_SLACK, analyze_route_choice};
+use super::route_choice::{C1_FLOOR, DEFAULT_SLACK, RouteChoice, analyze_route_choice};
 use super::types::BuiltWorld;
 
 /// Score adjustment per in-band route a spare pipe CREATES (measured by
@@ -462,7 +462,7 @@ pub(super) fn place_spare_pipes<R: Rng>(
         // linear world earns its second route — the pipe is the only tool
         // that can fork single-corridor terrain.
         let section_count = slots.iter().filter(|s| s.kind == SlotKind::Fortress).count();
-        let measure_with = |extra: Option<TeleportEdge>| -> usize {
+        let measure_with = |extra: Option<TeleportEdge>| -> RouteChoice {
             let mut pp = pipe_pairs.clone();
             pp.extend(extra);
             let world = BuiltWorld {
@@ -474,10 +474,15 @@ pub(super) fn place_spare_pipes<R: Rng>(
                 pipe_pairs: pp,
                 hb_sprites: Vec::new(),
             };
-            analyze_route_choice(&world, DEFAULT_SLACK).routes.len()
+            analyze_route_choice(&world, DEFAULT_SLACK)
         };
+        let rc_now = measure_with(None);
+        // C1-floor guard target: a shortcut may not price the cheapest route
+        // below the floor — or, on an already-deficient world, below where
+        // it stands (`enforce_c1_floor` ran before this pass).
+        let c1_target = rc_now.best_cost.min(C1_FLOOR);
         let choice_adjust: HashMap<TeleportEdge, f64> = {
-            let in_band_now = measure_with(None);
+            let in_band_now = rc_now.routes.len();
             // Measurement pool, most-likely-choice-creators first. A pipe
             // creates an IN-BAND alternative mainly when it skips exactly one
             // level (net -2: the walk route stays 2 points behind, inside the
@@ -520,7 +525,7 @@ pub(super) fn place_spare_pipes<R: Rng>(
                 if adj_map.contains_key(&pair) {
                     continue;
                 }
-                let delta = measure_with(Some(pair)) as i64 - in_band_now as i64;
+                let delta = measure_with(Some(pair)).routes.len() as i64 - in_band_now as i64;
                 let adj = if delta < 0 {
                     CHOICE_PIPE_VETO
                 } else {
@@ -559,6 +564,11 @@ pub(super) fn place_spare_pipes<R: Rng>(
         // re-checked with real walks; a pair the exact model rejects is
         // banned and selection re-runs without it.
         let mut banned: HashSet<TeleportEdge> = HashSet::new();
+        // Floor bans are SOFT: tracked separately so they can be lifted if
+        // they'd leave the world short of its vanilla pipe budget — the
+        // budget outranks the floor (matching the choice soft-veto's rule).
+        let mut floor_banned: Vec<TeleportEdge> = Vec::new();
+        let mut floor_active = true;
         let mut verified_fort_skip = false;
         let chosen: Option<TeleportEdge> = loop {
             // A fort skip is the prize: take one whenever it exists (softmax
@@ -622,7 +632,16 @@ pub(super) fn place_spare_pipes<R: Rng>(
                             .map(|&(p, _)| p)
                     })
             };
-            let Some(pair) = pick else { break None };
+            let Some(pair) = pick else {
+                if floor_active && !floor_banned.is_empty() {
+                    for p in floor_banned.drain(..) {
+                        banned.remove(&p);
+                    }
+                    floor_active = false;
+                    continue;
+                }
+                break None;
+            };
 
             // Exact verification with real walks.
             let Some((sealed, lock_sealed)) = &exact_state else { break Some(pair) };
@@ -647,6 +666,16 @@ pub(super) fn place_spare_pipes<R: Rng>(
                 knobs.fort_skip == FortSkipPolicy::AnyOneFort && !fort_skip_placed;
             if bypass >= 2 || (bypass == 1 && !skip_allowed) {
                 banned.insert(pair);
+                continue;
+            }
+            // C1 floor: reject a shortcut that prices the world below the
+            // floor (or cheapens an already-deficient world further).
+            if floor_active
+                && rc_now.reachable
+                && measure_with(Some(pair)).best_cost < c1_target
+            {
+                banned.insert(pair);
+                floor_banned.push(pair);
                 continue;
             }
             verified_fort_skip = bypass == 1;

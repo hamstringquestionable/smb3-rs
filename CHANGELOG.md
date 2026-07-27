@@ -23,6 +23,11 @@ deploys.
   the goal (chosen among the sections that can, so the "real" fort carries no
   positional tell). Worlds whose terrain genuinely can't fork stay honestly
   linear. Deterministic — the same seed still produces the same maps.
+- Every world now has a minimum-challenge floor: the cheapest way through
+  must cost at least about five levels' worth of effort — as levels,
+  fortresses, a smashed rock, or any mix. Worlds that used to roll out
+  nearly-free routes get levels moved onto the main path instead, and a
+  shortcut pipe is never placed if it would price the world below the floor.
 - Spare overworld pipes are now placed after fortress locks and may bridge
   across one of them: at most one pipe per world can make a single fortress
   optional (a free "fort skip" shortcut for players who find it). Pipes that

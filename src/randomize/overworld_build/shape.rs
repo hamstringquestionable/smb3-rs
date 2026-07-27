@@ -31,8 +31,8 @@ use super::*;
 
 use super::knobs::FortScoring;
 use super::route_choice::{
-    ChoiceRoute, DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice, in_band_count,
-    rescue_targets,
+    C1_FLOOR, ChoiceRoute, DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice,
+    in_band_count, rescue_targets,
 };
 use super::scoring::{is_row78_conflict, pick_softmax_by_score, score_fortress_candidate};
 use super::sections::completable_positions;
@@ -247,6 +247,122 @@ pub(super) fn shape_forts<R: Rng>(
         return None;
     }
     Some(placed[rng.random_range(..placed.len())])
+}
+
+/// Level moves attempted per world by the C1-floor repair pass, and measured
+/// (src, dst) pairs per move. Only deficient worlds (~14% pre-floor) pay.
+const FLOOR_MAX_MOVES: usize = 4;
+const FLOOR_MOVE_MEASURES: usize = 6;
+
+/// Raise the cheapest route's cost to `C1_FLOOR` where the content budget
+/// allows: while C1 is below the floor, move a level the cheap route doesn't
+/// play onto the cheap route's path, measure-verified. A Level↔HammerBro
+/// swap never changes walkability — only route cost — so locks, the goal
+/// gate, and reachability are structurally untouched. Runs after locks (the
+/// cost landscape is final) and before spare pipes (whose own floor guard
+/// keeps shortcuts from undoing this).
+///
+/// Candidate picks maximize (C1 capped at the floor, in-band route count) —
+/// the cap stops the pass from overshooting the floor at choice's expense.
+/// Best-effort: a world without movable off-route levels or blank on-route
+/// nodes stays cheap (the census counts them).
+pub(super) fn enforce_c1_floor(built: &mut BuiltWorld, reserved: &HashSet<Pos>) {
+    // Row 7/8 completion-bit partners of committed locks: a level may not
+    // land there (locks aren't stamped on the grid, so `completable_positions`
+    // can't see them — same guard the spare-pipe pass runs).
+    let lock_partners: HashSet<Pos> = built
+        .locks
+        .iter()
+        .filter_map(|l| match l.pos.0 {
+            7 => Some((8, l.pos.1)),
+            8 => Some((7, l.pos.1)),
+            _ => None,
+        })
+        .collect();
+
+    for _ in 0..FLOOR_MAX_MOVES {
+        let rc = measure(built);
+        if !rc.reachable || rc.best_cost >= C1_FLOOR {
+            return;
+        }
+        let Some(cheap) = rc.routes.first().cloned() else { return };
+        let band = rc.best_cost + DEFAULT_SLACK;
+        let in_band_levels: HashSet<Pos> = rc
+            .routes
+            .iter()
+            .filter(|r| r.cost <= band)
+            .flat_map(|r| r.levels.iter().copied())
+            .collect();
+
+        // Sources, most-decorative first: levels no in-band route plays
+        // (moving them can't cheapen any in-band route), then levels in the
+        // band but not on the cheap route (their route drops 3, the cheap
+        // route gains 3 — the measure decides if the min still rises).
+        let mut sources: Vec<Pos> = built
+            .slots
+            .iter()
+            .filter(|s| s.kind == SlotKind::Level && !in_band_levels.contains(&s.pos))
+            .map(|s| s.pos)
+            .collect();
+        sources.extend(
+            built
+                .slots
+                .iter()
+                .filter(|s| {
+                    s.kind == SlotKind::Level
+                        && in_band_levels.contains(&s.pos)
+                        && !cheap.levels.contains(&s.pos)
+                })
+                .map(|s| s.pos),
+        );
+
+        // Destinations: blank (HammerBro) nodes on the cheap route's path,
+        // in path order — cost added there lands on C1 directly.
+        let completable = completable_positions(&built.grid, &built.slots);
+        let dests: Vec<Pos> = cheap
+            .path
+            .iter()
+            .copied()
+            .filter(|p| !reserved.contains(p) && !lock_partners.contains(p))
+            .filter(|p| !is_row78_conflict(*p, &completable))
+            .filter(|p| hb_slot_index(built, *p).is_some())
+            .collect();
+
+        let before = (rc.best_cost.min(C1_FLOOR), in_band_count(&rc));
+        let mut best: Option<((usize, usize), (u32, usize))> = None;
+        let mut measures = 0;
+        'moves: for &src in sources.iter().take(3) {
+            let Some(src_idx) = built
+                .slots
+                .iter()
+                .position(|s| s.pos == src && s.kind == SlotKind::Level)
+            else {
+                continue;
+            };
+            for &dst in dests.iter().take(3) {
+                if measures >= FLOOR_MOVE_MEASURES {
+                    break 'moves;
+                }
+                let Some(dst_idx) = hb_slot_index(built, dst) else { continue };
+                built.slots[src_idx].kind = SlotKind::HammerBro;
+                built.slots[dst_idx].kind = SlotKind::Level;
+                measures += 1;
+                let rc2 = measure(built);
+                let key = (rc2.best_cost.min(C1_FLOOR), in_band_count(&rc2));
+                if key > before && best.as_ref().is_none_or(|(_, bk)| key > *bk) {
+                    best = Some(((src_idx, dst_idx), key));
+                }
+                built.slots[src_idx].kind = SlotKind::Level;
+                built.slots[dst_idx].kind = SlotKind::HammerBro;
+            }
+        }
+
+        // Apply the winning move; if no move raised (capped C1, in-band),
+        // the floor is out of this world's reach — stop.
+        let Some(((src_idx, dst_idx), _)) = best else { return };
+        built.slots[src_idx].kind = SlotKind::HammerBro;
+        built.slots[dst_idx].kind = SlotKind::Level;
+    }
 }
 
 /// Cheapest route ABOVE the choice band — the rescuable near-miss.
