@@ -2,7 +2,7 @@
 
 use super::*;
 
-use super::plan::{FortSkipPolicy, PipeScoring};
+use super::knobs::{FortSkipPolicy, PipeScoring};
 use super::scoring::pick_softmax_by_score;
 use super::sections::split_blanks_by_reachability;
 use super::types::{LockAssignment, SlotAssignment, SlotKind, stamp_slots};

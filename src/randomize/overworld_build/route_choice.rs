@@ -22,8 +22,6 @@
 //! domination filter then drops any route that only plays an EXTRA level for no
 //! benefit (a within-slack detour), so those don't masquerade as real choices.
 
-#![allow(dead_code)] // test-only today; re-exported under cfg(test)
-
 use super::*;
 use super::types::{BuiltWorld, SlotKind, stamp_slots};
 
@@ -38,11 +36,11 @@ pub(crate) const COST_ROCK: u32 = 8;
 /// "Roughly equal" band, in points. 3 = one level of wobble.
 pub(crate) const DEFAULT_SLACK: u32 = 3;
 
-/// How many times the builder rerolls a world looking for real route choice
-/// before giving up and keeping the best it found. Early-stops on the first
-/// choiceful roll, so easy worlds cost one build and only the stubborn ones
-/// (e.g. W8) pay the full price. ~8 takes linear worlds from ~68% to ~20%.
-pub(crate) const REROLL_LIMIT: usize = 8;
+/// Wider measuring band used while SHAPING a world (`shape_forts`): routes up
+/// to 13 points above best stay visible — two stacked forts (+10) plus the
+/// choice band (+3) — so any near-miss corridor the fort budget could rescue
+/// is on the table. Final acceptance still uses `DEFAULT_SLACK`.
+pub(crate) const SHAPING_SLACK: u32 = 13;
 
 /// Breakable overworld rocks and the path tile they open into
 /// ($51→$45 horizontal, $52→$46 vertical). $53 is unbreakable (stays a wall).
@@ -56,7 +54,12 @@ pub(crate) struct ChoiceRoute {
     /// Distinct levels played — the route's identity (dedup key).
     pub levels: BTreeSet<Pos>,
     /// Distinct forts beaten / rocks broken (breakdown for display).
+    // Reason: dead_code — read only by the cfg(test) renderers and census
+    // tests; kept in the production struct so the breakdown is computed once,
+    // next to the mask that defines it.
+    #[allow(dead_code)]
     pub forts: u32,
+    #[allow(dead_code)]
     pub rocks: u32,
     /// Node path start..goal, for rendering.
     pub path: Vec<Pos>,
@@ -65,14 +68,20 @@ pub(crate) struct ChoiceRoute {
 /// Per-world choice summary.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RouteChoice {
+    // Reason: dead_code — the summary fields below are read only by the
+    // cfg(test) dump/census consumers today; production code derives its own
+    // views (in-band count, shaping gap) from `routes` + `best_cost`.
+    #[allow(dead_code)]
     pub reachable: bool,
     pub best_cost: u32,
     /// Distinct non-dominated routes within `slack` of best, cheapest first.
     pub routes: Vec<ChoiceRoute>,
     /// How many routes tie at `best_cost`.
+    #[allow(dead_code)]
     pub tied_at_best: usize,
     /// Cheapest strictly-worse in-band route minus best (the "gap"); `None`
     /// when there is no in-band alternative (LINEAR).
+    #[allow(dead_code)]
     pub runner_up_gap: Option<u32>,
 }
 
@@ -351,6 +360,7 @@ pub(crate) fn analyze_route_choice(built: &BuiltWorld, slack: u32) -> RouteChoic
 }
 
 /// One-line route-choice verdict for a world (eyeball diagnostic).
+#[cfg(test)]
 pub(crate) fn dump_route_choice(built: &BuiltWorld, slack: u32) {
     let rc = analyze_route_choice(built, slack);
     if !rc.reachable {
@@ -376,6 +386,7 @@ pub(crate) fn dump_route_choice(built: &BuiltWorld, slack: u32) {
 
 /// ASCII render of every route through a world — one grid per route, the path
 /// drawn on the map — so the enumeration can be eyeballed against the geometry.
+#[cfg(test)]
 pub(crate) fn render_route_choice(built: &BuiltWorld, slack: u32) -> String {
     use std::fmt::Write as _;
     let rc = analyze_route_choice(built, slack);

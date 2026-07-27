@@ -1,7 +1,9 @@
 //! Phase 3 of the overworld pipeline: assign levels to map slots via BFS-ordered
-//! placement, distribute fortresses/pipes/locks, and enforce connectivity.
-//! Steps live in submodules (types, scoring, capacity, sections, pipes, locks, progression); this module holds the
-//! `build` entry point that drives them.
+//! placement, then shape fortresses/locks/pipes against the measured route
+//! structure (choice-first — the builder's job is to hand the player
+//! decisions). Steps live in submodules (types, knobs, scoring, capacity,
+//! sections, shape, pipes, locks, route_choice, progression); this module
+//! holds the `build` entry point that drives them.
 
 use std::collections::{HashMap, HashSet};
 
@@ -20,10 +22,11 @@ use super::rom_data::{
 };
 
 mod types;
-mod plan;
+mod knobs;
 mod scoring;
 mod capacity;
 mod sections;
+mod shape;
 mod pipes;
 mod locks;
 mod progression;
@@ -33,9 +36,9 @@ use capacity::{
     SPADE_BUDGET, assign_hb_sprites, distribute_levels, prepare_capacities, promote_hb_slots,
     redistribute_fortresses,
 };
+use knobs::Knobs;
 use locks::place_locks;
 use pipes::VANILLA_PIPE_PAIRS;
-use plan::WorldPlan;
 use scoring::{LEVEL_SPREAD_EXPONENT, VANILLA_LEVEL_COUNT};
 use sections::build_world;
 use types::{CapacityPrep, WorldSlotCounts};
@@ -92,15 +95,7 @@ pub(crate) fn build<R: Rng>(
     // hoarding levels, so the old W6-specific clamp is no longer needed.
     let level_counts = distribute_levels(&capacities, VANILLA_LEVEL_COUNT, LEVEL_SPREAD_EXPONENT, rng);
 
-    // Sample every world's plan up front, then enforce the seed-level
-    // invariant (>=1 Safe role somewhere) before any placement happens —
-    // cheaper and shape-preserving compared to the post-build force_safe
-    // retry, which remains only as a backstop.
-    let mut plans: Vec<WorldPlan> = (0..8)
-        .map(|wi| WorldPlan::sample(fort_counts[wi], wi, rng))
-        .collect();
-    plan::ensure_seed_safe_role(&mut plans, rng);
-
+    let knobs = Knobs::default();
     let mut worlds = Vec::with_capacity(8);
     for wi in 0..8 {
         // Max non-pipe slots = pointer table slots minus pipe endpoints.
@@ -117,16 +112,13 @@ pub(crate) fn build<R: Rng>(
             max_non_pipe_slots,
             force_safe: false,
         };
-        // Reroll this world for real route choice — see `build_world_best_of_k`.
-        // Intrinsic to the builder, not a flag: a good overworld hands the
-        // player decisions. The seed-coordinated plan is tried first.
-        let built = build_world_best_of_k(
+        let built = build_world(
             wi,
             rom,
-            &patched_grids[wi],
+            patched_grids[wi].clone(),
             &fixed_positions[wi],
             &counts,
-            &plans[wi],
+            &knobs,
             shuffle_hammer_bros,
             rng,
         );
@@ -144,9 +136,8 @@ pub(crate) fn build<R: Rng>(
             let built = &worlds[wi];
             let start_pos = rom_data::find_start(&built.grid);
             let target_pos = find_target(&built.grid, wi);
-            // Retry aims only to surface a secret-exit-safe lock, so ask for
-            // an all-Safe plan (matches force_safe) rather than the world's shape.
-            let safe_plan = WorldPlan::all_safe(fort_counts[wi]);
+            // Retry aims only to surface a secret-exit-safe lock: force_safe
+            // floats safe candidates first, and no gate duty is imposed.
             let new_locks = place_locks(
                 &built.grid,
                 &built.pipe_pairs,
@@ -154,16 +145,14 @@ pub(crate) fn build<R: Rng>(
                 target_pos,
                 &built.slots,
                 fort_counts[wi],
-                &safe_plan,
+                &knobs.lock,
+                None, // gate_section
                 true, // force_safe
                 wi,
                 rng,
             );
             if new_locks.iter().any(|l| l.secret_exit_safe) {
                 worlds[wi].locks = new_locks;
-                // Keep the stored plan truthful for diagnostics — this world
-                // is now all-Safe, whatever it originally sampled.
-                worlds[wi].plan = safe_plan;
                 break;
             }
         }
@@ -191,46 +180,3 @@ pub(crate) fn build<R: Rng>(
     BuildResult { worlds, fort_counts }
 }
 
-/// Reroll a world for route choice: build it from the seed-coordinated plan,
-/// and if that comes out linear, re-sample the plan and rebuild — up to
-/// `REROLL_LIMIT` builds total — returning the first version that offers real
-/// route choice (≥2 roughly-equal routes). If none do, keep the coordinated
-/// build (exactly what the builder would have produced without rerolling).
-/// Early-stops, so choiceful worlds cost a single build. Deterministic: rerolls
-/// draw from the seeded `rng` in order.
-// Reason: too_many_arguments — this is `build_world`'s own parameter list; the
-// reroll wraps it without adding state, so a struct would just indirect it.
-#[allow(clippy::too_many_arguments)]
-fn build_world_best_of_k<R: Rng>(
-    world_idx: usize,
-    rom: &Rom,
-    grid: &Grid,
-    fixed_positions: &HashSet<Pos>,
-    counts: &WorldSlotCounts,
-    first_plan: &WorldPlan,
-    shuffle_hammer_bros: bool,
-    rng: &mut R,
-) -> BuiltWorld {
-    let has_choice = |w: &BuiltWorld| {
-        route_choice::analyze_route_choice(w, route_choice::DEFAULT_SLACK)
-            .routes
-            .len()
-            >= 2
-    };
-    let build = |plan: &WorldPlan, rng: &mut R| {
-        build_world(world_idx, rom, grid.clone(), fixed_positions, counts, plan, shuffle_hammer_bros, rng)
-    };
-
-    let base = build(first_plan, rng);
-    if has_choice(&base) {
-        return base;
-    }
-    for _ in 1..route_choice::REROLL_LIMIT {
-        let plan = WorldPlan::sample(counts.fort_count, world_idx, rng);
-        let candidate = build(&plan, rng);
-        if has_choice(&candidate) {
-            return candidate;
-        }
-    }
-    base
-}

@@ -1,17 +1,21 @@
-//! Per-world section building: BFS ordering, blank classification, placement.
+//! Per-world building: BFS ordering, blank classification, placement.
+//!
+//! Choice-first pipeline order: connectivity pipes → levels (the terrain) →
+//! mandatory HB slots + pointer-budget cap → measured fort shaping
+//! (`shape_forts`) → fort section renumbering by BFS rank → locks → spare
+//! pipes.
 
 use super::*;
 
+use super::knobs::{Knobs, LevelScoring};
 use super::locks::place_locks;
 use super::pipes::{FIXED_PIPE_ENDPOINTS, PIPE_EXCLUDED_POSITIONS, place_pipes, place_spare_pipes};
-use super::plan::WorldPlan;
-use super::scoring::{
-    is_row78_conflict, pick_softmax_by_score, score_candidate, score_fortress_candidate,
-};
+use super::scoring::{is_row78_conflict, score_candidate};
+use super::shape::shape_forts;
 use super::types::{BuiltWorld, SlotAssignment, SlotKind, WorldSlotCounts};
 
 // Reason: each arg is a distinct build input (world, rom, grid, fixed slots,
-// budgets, world plan, HB flag, RNG). No subset forms a cohesive concept worth
+// budgets, knobs, HB flag, RNG). No subset forms a cohesive concept worth
 // a struct — bundling would add indirection without clarifying anything.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_world<R: Rng>(
@@ -20,7 +24,7 @@ pub(super) fn build_world<R: Rng>(
     mut grid: Grid,
     fixed_positions: &HashSet<(usize, usize)>,
     counts: &WorldSlotCounts,
-    plan: &WorldPlan,
+    knobs: &Knobs,
     shuffle_hammer_bros: bool,
     rng: &mut R,
 ) -> BuiltWorld {
@@ -56,14 +60,14 @@ pub(super) fn build_world<R: Rng>(
 
     // Step 1: Place connectivity pipes only (island access + target
     // reachability). Spare pipes are deferred to Step 3.5, after levels exist.
-    let mut pipe_pairs = place_pipes(
+    let pipe_pairs = place_pipes(
         &mut grid,
         &pipe_blanks,
         start_pos,
         target_pos,
         pipe_pair_count,
         &fixed_pipe_eps,
-        &plan.pipe,
+        &knobs.pipe,
         world_idx,
         rng,
     );
@@ -77,23 +81,20 @@ pub(super) fn build_world<R: Rng>(
         .flat_map(|&(a, b)| vec![a, b])
         .collect();
 
-    // Step 2: BFS sectioning
-    let sections = bfs_section(
-        &grid,
-        &pipe_pairs,
-        start_pos,
-        &blank_positions,
-        &pipe_positions,
-        fixed_positions,
-        fort_count,
-        world_idx,
-    );
-
-    // Build BFS distance map for scoring — reflects actual walkable distance.
-    let bfs_distances: HashMap<(usize, usize), usize> =
-        bfs_ordered(&grid, &pipe_pairs, start_pos, world_idx)
-            .into_iter()
-            .collect();
+    // Step 2: BFS-ordered assignable blanks (reachable, not a pipe endpoint,
+    // not a fixed entry). This is the candidate pool for levels and — via
+    // the HammerBro fillers they become — forts.
+    let ordered = bfs_ordered(&grid, &pipe_pairs, start_pos, world_idx);
+    let bfs_distances: HashMap<(usize, usize), usize> = ordered.iter().copied().collect();
+    let assignable: Vec<(usize, usize)> = ordered
+        .iter()
+        .map(|&(pos, _)| pos)
+        .filter(|p| {
+            blank_positions.contains(p)
+                && !pipe_positions.contains(p)
+                && !fixed_positions.contains(p)
+        })
+        .collect();
 
     // Reverse BFS from target (airship/Bowser) — used to compute path relevance
     // for level scoring. Positions on the main start→target trunk have low detour.
@@ -102,8 +103,19 @@ pub(super) fn build_world<R: Rng>(
         .unwrap_or_default();
     let target_bfs_dist = target_pos.and_then(|tp| bfs_distances.get(&tp).copied());
 
-    // Step 3: Populate sections
-    let mut slots = populate_sections(&grid, &sections, fort_count, level_count, &pipe_positions, &bfs_distances, &reverse_bfs, target_bfs_dist, plan, world_idx, rng);
+    // Step 3: Levels first (the terrain forts respond to), remaining blanks
+    // become HammerBro fillers — the conversion stock for forts and spare
+    // pipes.
+    let mut slots = place_levels(
+        &grid,
+        &assignable,
+        level_count,
+        &pipe_positions,
+        &bfs_distances,
+        &reverse_bfs,
+        target_bfs_dist,
+        &knobs.level,
+    );
 
     // Add mandatory HammerBro slots for HB sprite starting positions.
     // These were excluded from find_blank_slots (so levels/forts/pipes
@@ -132,11 +144,13 @@ pub(super) fn build_world<R: Rng>(
         });
     }
 
-    // Cap total slots to what the pointer table can hold. Forts and levels
-    // are already within budget (capped during capacity calculation); any
-    // excess is purely HammerBro slots from blank tiles. Drop the farthest
-    // regular HB slots but never drop HB sprite positions — those are
-    // mandatory.
+    // Cap total slots to what the pointer table can hold. Levels are
+    // already within budget (capped during capacity calculation, which also
+    // reserves fort_count on top); any excess is purely HammerBro slots from
+    // blank tiles. Drop the farthest regular HB slots but never drop HB
+    // sprite positions — those are mandatory. Runs BEFORE fort shaping: the
+    // HB→Fortress conversion doesn't change the slot count, and the reserved
+    // fort headroom means the cap always leaves >= fort_count HB slots.
     if slots.len() > max_non_pipe_slots {
         let mut kept: Vec<SlotAssignment> = Vec::with_capacity(max_non_pipe_slots);
         let mut hb_slots: Vec<SlotAssignment> = Vec::new();
@@ -152,54 +166,98 @@ pub(super) fn build_world<R: Rng>(
         slots = kept;
     }
 
-    // Step 4: Lock placement. Runs BEFORE the spare-pipe pass so locks are
+    // Step 4: Measured fort shaping — convert HammerBro fillers to
+    // fortresses, using route measurement to create route choice where the
+    // terrain allows it. Returns the gate-fort hint for the lock pass.
+    let mut built = BuiltWorld {
+        world_idx,
+        grid,
+        slots,
+        locks: Vec::new(),
+        section_count: fort_count,
+        pipe_pairs,
+        // Filled in after the per-world loop when shuffle_hammer_bros is on.
+        hb_sprites: Vec::new(),
+    };
+    let gate_pos = shape_forts(
+        &mut built,
+        fort_count,
+        &hb_sprite_positions,
+        &bfs_distances,
+        &knobs.fort,
+        rng,
+    );
+    // Renumber fort sections to BFS-distance rank: the lock pass simulates
+    // progression in section order, and downstream (assignment, fortress FX)
+    // pairs locks to forts by section index.
+    let gate_section = renumber_fort_sections(&mut built.slots, &bfs_distances, gate_pos);
+
+    // Step 5: Lock placement. Runs BEFORE the spare-pipe pass so locks are
     // placed on pure geography (connectivity pipes only) — the spare pipes
     // below may then deliberately bridge across ONE of them (a fort skip).
-    let locks = place_locks(
-        &grid,
-        &pipe_pairs,
+    built.locks = place_locks(
+        &built.grid,
+        &built.pipe_pairs,
         start_pos,
         target_pos,
-        &slots,
+        &built.slots,
         fort_count,
-        plan,
+        &knobs.lock,
+        gate_section,
         force_safe,
         world_idx,
         rng,
     );
 
-    // Step 4.5: Spare pipes. Now that levels AND locks exist, fill the
+    // Step 5.5: Spare pipes. Now that levels AND locks exist, fill the
     // remaining pipe budget by converting HammerBro filler slots into pipe
     // endpoints. Each pair is scored lock-aware: at most one pair per world
     // may bypass a single mandatory fortress (the fort-skip prize); pairs
     // that would bypass 2+ forts or open the goal outright are rejected;
     // the rest aim to skip levels as before.
-    let spare_needed = pipe_pair_count.saturating_sub(pipe_pairs.len());
+    let spare_needed = pipe_pair_count.saturating_sub(built.pipe_pairs.len());
     place_spare_pipes(
-        &mut grid,
-        &mut slots,
-        &mut pipe_pairs,
+        &mut built.grid,
+        &mut built.slots,
+        &mut built.pipe_pairs,
         spare_needed,
         &hb_sprite_positions,
-        &locks,
-        &plan.pipe,
+        &built.locks,
+        &knobs.pipe,
         start_pos,
         target_pos,
         world_idx,
         rng,
     );
 
-    BuiltWorld {
-        world_idx,
-        grid,
-        slots,
-        locks,
-        section_count: fort_count,
-        pipe_pairs,
-        // Filled in after the per-world loop when shuffle_hammer_bros is on.
-        hb_sprites: Vec::new(),
-        plan: plan.clone(),
+    built
+}
+
+/// Renumber fortress sections to BFS-distance rank (position tie-break) and
+/// map the gate-fort position hint to its final section index. The lock
+/// pass's progression simulation ("earlier sections beaten first") needs
+/// sections ordered by how soon the player can reach each fort.
+fn renumber_fort_sections(
+    slots: &mut [SlotAssignment],
+    bfs_distances: &HashMap<(usize, usize), usize>,
+    gate_pos: Option<(usize, usize)>,
+) -> Option<usize> {
+    let mut forts: Vec<(usize, (usize, usize))> = slots
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.kind == SlotKind::Fortress)
+        .map(|(i, s)| (i, s.pos))
+        .collect();
+    forts.sort_by_key(|&(_, pos)| (bfs_distances.get(&pos).copied().unwrap_or(usize::MAX), pos));
+
+    let mut gate_section = None;
+    for (rank, &(idx, pos)) in forts.iter().enumerate() {
+        slots[idx].section = rank;
+        if gate_pos == Some(pos) {
+            gate_section = Some(rank);
+        }
     }
+    gate_section
 }
 
 /// Find all blank node slots on the grid (positions with theme-blank tiles).
@@ -316,82 +374,24 @@ pub(super) fn split_blanks_by_reachability(
     (reach, unreach)
 }
 
-/// Divide reachable blank slots into N sections by BFS distance from start.
-// Reason: arguments are distinct traversal inputs (grid, pipes, start, blanks,
-// pipe/fixed position sets, section count, world); they don't cluster into a
-// meaningful concept, so a bundling struct would be a lint bandage, not a real
-// abstraction.
+/// Place `level_count` levels on the assignable blanks by greedy score-based
+/// picking (no RNG), then emit every slot: pipes, levels, and HammerBro
+/// fillers for the remaining blanks. Sections are all 0 — only fortress
+/// slots carry a meaningful section index, assigned later by the shaping
+/// pass and `renumber_fort_sections`.
+// Reason: 8 args is over clippy's 7-arg default. Each is a distinct input
+// (geometry, candidate pool, budget, pipe positions, BFS data, knobs);
+// bundling any subset would add indirection without clarity.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn bfs_section(
+fn place_levels(
     grid: &Grid,
-    pipe_pairs: &[TeleportEdge],
-    start_pos: Option<(usize, usize)>,
-    blank_positions: &[(usize, usize)],
-    pipe_positions: &HashSet<(usize, usize)>,
-    fixed_positions: &HashSet<(usize, usize)>,
-    section_count: usize,
-    world_idx: usize,
-) -> Vec<Vec<(usize, usize)>> {
-    if section_count == 0 {
-        return vec![blank_positions
-            .iter()
-            .copied()
-            .filter(|p| !pipe_positions.contains(p))
-            .collect()];
-    }
-
-    // BFS-order all reachable positions
-    let ordered = bfs_ordered(grid, pipe_pairs, start_pos, world_idx);
-
-    // Filter to only blank slots that aren't used by pipes or fixed entries
-    let assignable: Vec<(usize, usize)> = ordered
-        .iter()
-        .map(|&(pos, _)| pos)
-        .filter(|p| {
-            blank_positions.contains(p)
-                && !pipe_positions.contains(p)
-                && !fixed_positions.contains(p)
-        })
-        .collect();
-
-    if assignable.is_empty() {
-        return vec![assignable];
-    }
-
-    // Divide into roughly equal sections
-    let per_section = assignable.len() / section_count;
-    let extra = assignable.len() % section_count;
-
-    let mut sections = Vec::with_capacity(section_count);
-    let mut offset = 0;
-    for i in 0..section_count {
-        let size = per_section + if i < extra { 1 } else { 0 };
-        sections.push(assignable[offset..offset + size].to_vec());
-        offset += size;
-    }
-
-    sections
-}
-
-// Reason: 11 args is over clippy's 7-arg default. Candidate bundles
-// investigated (`BfsCtx` for the 3 distance args, reusing `WorldSlotCounts`
-// for the 2 budget args) — none reveals a concept beyond what the inline
-// arg names already convey. Each arg is a distinct input (geometry,
-// sections, budgets, pipe positions, BFS data, plan, world, RNG) and
-// bundling them would add indirection without clarity.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn populate_sections<R: Rng>(
-    grid: &Grid,
-    sections: &[Vec<(usize, usize)>],
-    fort_count: usize,
+    assignable: &[(usize, usize)],
     level_count: usize,
     pipe_positions: &HashSet<(usize, usize)>,
     bfs_distances: &HashMap<(usize, usize), usize>,
     reverse_bfs: &HashMap<(usize, usize), usize>,
     target_bfs_dist: Option<usize>,
-    plan: &WorldPlan,
-    world_idx: usize,
-    rng: &mut R,
+    knobs: &LevelScoring,
 ) -> Vec<SlotAssignment> {
     let mut slots = Vec::new();
 
@@ -399,131 +399,67 @@ pub(super) fn populate_sections<R: Rng>(
     // 1. `completable` — all completion-unsafe tiles on the grid. Used for
     //    the row 7/8 hard constraint (game engine bug). Includes spades,
     //    airships, etc.
-    // 2. `placed_levels_and_forts` — only levels and fortresses we've placed.
-    //    Used by the scoring function to spread levels apart. Excludes spades,
-    //    pipes, and other non-clumping tiles.
+    // 2. `placed_levels` — only levels we've placed. Used by the scoring
+    //    function to spread levels apart. Excludes spades, pipes, and other
+    //    non-clumping tiles.
     let mut completable = completable_positions(grid, &[]);
-    let mut placed_levels_and_forts: HashSet<(usize, usize)> = HashSet::new();
+    let mut placed_levels: HashSet<(usize, usize)> = HashSet::new();
 
-    // Add pipe slots (not in sections, but tracked)
+    // Pipe slots (already stamped on the grid, tracked as slots).
     for &pos in pipe_positions {
         slots.push(SlotAssignment {
             pos,
             kind: SlotKind::Pipe,
-            section: 0, // pipes don't really belong to a section
+            section: 0,
             is_hand_trap: false,
             is_troll_pipe: false,
         });
     }
-
-    // Phase 1: Place levels globally across all sections using score-based
-    // picking. Levels go down BEFORE fortresses: they are the terrain the
-    // forts respond to (choice-first). A per-section guard keeps at least
-    // one free slot in every fort-owning section so its fortress can't be
-    // starved out.
-    let global_candidates: Vec<((usize, usize), usize)> = sections
-        .iter()
-        .enumerate()
-        .flat_map(|(si, section)| section.iter().map(move |&pos| (pos, si)))
-        .collect();
-    let mut free_per_section: Vec<usize> = sections.iter().map(|s| s.len()).collect();
-
-    let mut level_positions: HashSet<(usize, usize)> = HashSet::new();
 
     for _ in 0..level_count {
         // Score each candidate once, then pick the max on the cached score.
         // (`max_by` returns the LAST maximal element on ties, matching the
         // pre-caching behavior.)
-        let best = global_candidates
+        let best = assignable
             .iter()
-            .filter(|(pos, _)| !level_positions.contains(pos))
-            .filter(|&&(_, si)| si >= fort_count || free_per_section[si] > 1)
-            .filter(|(pos, _)| !is_row78_conflict(*pos, &completable))
-            .map(|&(pos, si)| {
-                let score = score_candidate(grid, pos, &placed_levels_and_forts, bfs_distances, reverse_bfs, target_bfs_dist, &plan.level);
-                (pos, si, score)
+            .filter(|pos| !placed_levels.contains(*pos))
+            .filter(|pos| !is_row78_conflict(**pos, &completable))
+            .map(|&pos| {
+                let score = score_candidate(
+                    grid,
+                    pos,
+                    &placed_levels,
+                    bfs_distances,
+                    reverse_bfs,
+                    target_bfs_dist,
+                    knobs,
+                );
+                (pos, score)
             })
-            .max_by(|(_, _, sa), (_, _, sb)| sa.partial_cmp(sb).unwrap_or(std::cmp::Ordering::Equal));
+            .max_by(|(_, sa), (_, sb)| sa.partial_cmp(sb).unwrap_or(std::cmp::Ordering::Equal));
 
         match best {
-            Some((pos, si, _)) => {
-                level_positions.insert(pos);
+            Some((pos, _)) => {
+                placed_levels.insert(pos);
                 completable.insert(pos);
-                placed_levels_and_forts.insert(pos);
-                free_per_section[si] -= 1;
             }
             None => break,
         }
     }
 
-    // Phase 2: Place one fortress per section on the remaining free slots.
-    // Fort spread scoring sees the placed levels, so forts avoid clumping
-    // onto them.
-    let mut fort_positions: HashSet<(usize, usize)> = HashSet::new();
-
-    for (si, section) in sections.iter().enumerate() {
-        if section.is_empty() || si >= fort_count {
-            continue;
-        }
-
-        // Score all free candidates in this section, filtering row 7/8 conflicts.
-        let candidates: Vec<((usize, usize), f64)> = section
-            .iter()
-            .filter(|pos| !level_positions.contains(*pos))
-            .filter(|pos| !is_row78_conflict(**pos, &completable))
-            .map(|&pos| {
-                (pos, score_fortress_candidate(grid, pos, &placed_levels_and_forts, bfs_distances, world_idx, &plan.fort))
-            })
-            .collect();
-
-        // Sample by softmax; fallback to any free section slot if none passed
-        // the row78 filter. (The phase-1 guard guarantees a free slot exists.)
-        let pos = pick_softmax_by_score(candidates, plan.fort.softmax_t, rng)
-            .unwrap_or_else(|| {
-                let free: Vec<(usize, usize)> = section
-                    .iter()
-                    .copied()
-                    .filter(|p| !level_positions.contains(p))
-                    .collect();
-                free[rng.random_range(..free.len())]
-            });
-
-        completable.insert(pos);
-        placed_levels_and_forts.insert(pos);
-        fort_positions.insert(pos);
+    // Emit level and HammerBro filler slots.
+    for &pos in assignable {
         slots.push(SlotAssignment {
             pos,
-            kind: SlotKind::Fortress,
-            section: si,
+            kind: if placed_levels.contains(&pos) {
+                SlotKind::Level
+            } else {
+                SlotKind::HammerBro
+            },
+            section: 0,
             is_hand_trap: false,
             is_troll_pipe: false,
         });
-    }
-
-    // Phase 3: Emit remaining slots — levels and hammer bros.
-    for (si, section) in sections.iter().enumerate() {
-        for &pos in section {
-            if fort_positions.contains(&pos) {
-                continue; // already emitted in phase 1
-            }
-            if level_positions.contains(&pos) {
-                slots.push(SlotAssignment {
-                    pos,
-                    kind: SlotKind::Level,
-                    section: si,
-                    is_hand_trap: false,
-                    is_troll_pipe: false,
-                });
-            } else {
-                slots.push(SlotAssignment {
-                    pos,
-                    kind: SlotKind::HammerBro,
-                    section: si,
-                    is_hand_trap: false,
-                    is_troll_pipe: false,
-                });
-            }
-        }
     }
 
     slots

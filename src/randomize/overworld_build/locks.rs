@@ -1,9 +1,24 @@
 //! Fortress lock / water-gap placement.
+//!
+//! Per section (in BFS-rank order): score every lockable tile by how much of
+//! the map it walls off, enforce two hard rules (the section's own fort stays
+//! reachable; no earlier fort is stranded), then pick with two choice-first
+//! refinements:
+//!
+//! - **Gate guarantee** — the section named by `gate_section` (the shaping
+//!   pass's random fort pick) hard-filters to candidates that make the goal
+//!   unreachable, so some fort actually gates the goal whenever the geometry
+//!   offers a severing tile. Infeasible sections carry the duty forward.
+//! - **Choice guard** — a lock that would shrink the world's in-band route
+//!   count (measured by `analyze_route_choice`) is demoted and the next-best
+//!   candidate tried, bounded by `choice_guard_tries`. This replaces the
+//!   archetype-era `blocks_later_fort_bonus` chain magnet (now defaulted 0).
 
 use super::*;
 
-use super::plan::{LockRole, WorldPlan};
-use super::types::{BuildResult, LockAssignment, SlotAssignment, SlotKind, stamp_slots};
+use super::knobs::LockScoring;
+use super::route_choice::{DEFAULT_SLACK, analyze_route_choice};
+use super::types::{BuildResult, BuiltWorld, LockAssignment, SlotAssignment, SlotKind, stamp_slots};
 
 /// The five always-on W8 screen-3 bridges (see `qol::overworld_map`'s
 /// `W8_BRIDGE_EDITS`). Locking one gaps it out as water until its fortress is
@@ -22,9 +37,9 @@ struct ScoredLock {
 }
 
 // Reason: every argument represents a distinct, independent input to lock
-// placement (geometry, slot list, count, plan, safety flag, RNG). No subset
-// clusters into a meaningful concept — bundling would be a clippy bandage,
-// not a real abstraction.
+// placement (geometry, slot list, count, knobs, gate hint, safety flag, RNG).
+// No subset clusters into a meaningful concept — bundling would be a clippy
+// bandage, not a real abstraction.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn place_locks<R: Rng>(
     grid: &Grid,
@@ -33,22 +48,35 @@ pub(super) fn place_locks<R: Rng>(
     target_pos: Option<(usize, usize)>,
     slots: &[SlotAssignment],
     fort_count: usize,
-    plan: &WorldPlan,
+    knobs: &LockScoring,
+    gate_section: Option<usize>,
     force_safe: bool,
     world_idx: usize,
     rng: &mut R,
 ) -> Vec<LockAssignment> {
-    let knobs = &plan.lock;
-    let roles = &plan.roles;
     let mut locks: Vec<LockAssignment> = Vec::new();
     let mut locked_tiles: HashSet<(usize, usize)> = HashSet::new();
 
-    // Fort position by section, for evaluating archetype role constraints.
-    let fort_by_section: HashMap<usize, (usize, usize)> = slots
-        .iter()
-        .filter(|s| s.kind == SlotKind::Fortress)
-        .map(|s| (s.section, s.pos))
-        .collect();
+    // The section whose lock still owes the goal a gate. Starts at the
+    // shaping pass's hint and carries forward when a section's geometry
+    // can't sever the goal.
+    let mut gate_pending = gate_section;
+
+    // Choice-guard measurement: in-band route count with a given lock list.
+    // Locks are modeled as conditional edges by the scorer, so the raw build
+    // grid is correct here.
+    let measure_routes = |trial_locks: Vec<LockAssignment>| -> usize {
+        let world = BuiltWorld {
+            world_idx,
+            grid: grid.clone(),
+            slots: slots.to_vec(),
+            locks: trial_locks,
+            section_count: fort_count,
+            pipe_pairs: pipe_pairs.to_vec(),
+            hb_sprites: Vec::new(),
+        };
+        analyze_route_choice(&world, DEFAULT_SLACK).routes.len()
+    };
 
     // Build a base grid with forts/levels stamped so BFS sees them as nodes.
     // This grid does NOT have any locks on it.
@@ -116,14 +144,9 @@ pub(super) fn place_locks<R: Rng>(
 
         candidates.shuffle(rng);
 
-        // Prefer safe when forced (retry path) or when the best candidate
-        // is weak anyway (score < 5) — don't sacrifice a high-scoring lock.
-        // Evaluated after scoring all candidates, see below.
-        let mut best: Option<ScoredLock> = None;
-        let mut best_safe: Option<ScoredLock> = None;
-        // Best candidate that satisfies this section's archetype role, if any.
-        let mut best_role: Option<ScoredLock> = None;
-        let role = roles.get(section_idx);
+        // All hard-rule-passing candidates, scored. Selection happens after
+        // the loop (gate filter → safe preference → choice guard).
+        let mut scored: Vec<ScoredLock> = Vec::new();
 
         // Open grid (no candidate lock) is constant for all candidates in this
         // section — hoist the BFS to avoid redundant walks per candidate.
@@ -239,54 +262,80 @@ pub(super) fn place_locks<R: Rng>(
                 score += knobs.w8_bridge_bonus;
             }
 
-            // Track best overall and best safe separately. (A safe lock
-            // never blocks the target, so its blocks_target is false.)
-            let cand = ScoredLock {
+            // (A safe lock never blocks the target, so its blocks_target is
+            // false.)
+            scored.push(ScoredLock {
                 pos: cand_pos,
                 gap_tile: gap,
                 replace_tile: tile,
                 score,
                 safe,
                 blocks_target: !target_reachable,
-            };
-            if best.is_none_or(|b| score > b.score) {
-                best = Some(cand);
-            }
-            if safe && best_safe.is_none_or(|b| score > b.score) {
-                best_safe = Some(cand);
-            }
+            });
+        }
 
-            // Does this candidate satisfy the section's archetype role?
-            let role_ok = match role {
-                Some(LockRole::ChainLink { targets }) => targets.iter().all(|t| {
-                    fort_by_section
-                        .get(t)
-                        .is_some_and(|fp| !walk.nodes.contains(fp))
-                }),
-                // Gate the target while stranding no fortress.
-                Some(LockRole::GoalGate) => {
-                    !target_reachable
-                        && slots
-                            .iter()
-                            .all(|s| s.kind != SlotKind::Fortress || walk.nodes.contains(&s.pos))
+        // Sort desc by score. Stable — keeps the shuffled candidate order
+        // among ties, matching the old first-best-wins behavior.
+        scored.sort_by_key(|c| std::cmp::Reverse(c.score));
+        let mut ordered = scored;
+
+        // Gate guarantee: if this section owes the goal a gate, restrict to
+        // candidates that actually sever it; carry the duty forward when
+        // this section's geometry can't.
+        if gate_pending == Some(section_idx) {
+            let gating: Vec<ScoredLock> =
+                ordered.iter().copied().filter(|c| c.blocks_target).collect();
+            if gating.is_empty() {
+                if section_idx + 1 < fort_count {
+                    gate_pending = Some(section_idx + 1);
                 }
-                Some(LockRole::Safe) => safe,
-                None => false,
-            };
-            if role_ok && best_role.is_none_or(|b| score > b.score) {
-                best_role = Some(cand);
+                // else: no section could sever the goal — fall through; the
+                // blocks_target_bonus soft backstop has done what it can.
+            } else {
+                ordered = gating;
+                gate_pending = None;
             }
         }
 
-        // Prefer safe when forced (retry) or when best score is low —
-        // no point picking an impactful lock if there are none.
-        let best_score = best.map(|b| b.score).unwrap_or(0);
-        let prefer_safe = force_safe || best_score < knobs.weak_lock_threshold;
+        // Prefer safe when forced (retry path) or when the best candidate is
+        // weak anyway — don't spend an impactful-lock slot on a weak
+        // chokepoint. Safe candidates float to the front, order kept within
+        // each half. (Gate candidates are never safe, so an active gate
+        // filter is unaffected.)
+        let best_score = ordered.first().map(|c| c.score).unwrap_or(0);
+        if force_safe || best_score < knobs.weak_lock_threshold {
+            let (safe_first, rest): (Vec<ScoredLock>, Vec<ScoredLock>) =
+                ordered.into_iter().partition(|c| c.safe);
+            ordered = safe_first;
+            ordered.extend(rest);
+        }
 
-        // Archetype role wins when realizable; otherwise fall back to the
-        // unconstrained pick (feasibility fallback — this world's geometry
-        // couldn't host the sampled shape for this fort).
-        let chosen = best_role.or(if prefer_safe { best_safe.or(best) } else { best });
+        // Choice guard: demote a lock that would shrink the in-band route
+        // count. Bounded by `choice_guard_tries`; falls back to the top
+        // candidate when every measured one degrades (a gate lock may
+        // legitimately cost a zero-fort route).
+        let chosen = if ordered.len() <= 1 {
+            ordered.first().copied()
+        } else {
+            let baseline = measure_routes(locks.clone());
+            let mut pick: Option<ScoredLock> = None;
+            for cand in ordered.iter().take(knobs.choice_guard_tries) {
+                let mut trial = locks.clone();
+                trial.push(LockAssignment {
+                    pos: cand.pos,
+                    gap_tile: cand.gap_tile,
+                    replace_tile: cand.replace_tile,
+                    fort_section: section_idx,
+                    secret_exit_safe: cand.safe,
+                    blocks_target: cand.blocks_target,
+                });
+                if measure_routes(trial) >= baseline {
+                    pick = Some(*cand);
+                    break;
+                }
+            }
+            pick.or_else(|| ordered.first().copied())
+        };
 
         if let Some(c) = chosen {
             locked_tiles.insert(c.pos);

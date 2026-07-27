@@ -1,12 +1,12 @@
 //! Candidate scoring: softmax sampling and the per-placement weight functions.
 //!
-//! Every tunable weight lives in the `plan` knob structs (`SpreadScoring`,
+//! Every tunable weight lives in the `knobs` structs (`SpreadScoring`,
 //! `LevelScoring`, `FortScoring`, `LockScoring`, `PipeScoring`) — this module
 //! only holds the scoring *mechanics* and fixed geometry facts.
 
 use super::*;
 
-use super::plan::{FortScoring, LevelScoring, SpreadScoring};
+use super::knobs::{FortScoring, LevelScoring, SpreadScoring};
 
 /// Sample a candidate weighted by softmax(score / temperature). Higher
 /// temperature flattens the distribution (more random); lower temperature

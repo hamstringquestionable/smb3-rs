@@ -5,7 +5,6 @@ use super::capacity::{
 };
 use super::locks::debug_stamp_rom;
 use super::pipes::VANILLA_PIPE_PAIRS;
-use super::plan::{Archetype, FortSkipPolicy, LockRole};
 use super::scoring::{VANILLA_LEVEL_COUNT, is_dead_end};
 use super::sections::find_blank_slots;
 use super::types::stamp_slots;
@@ -830,20 +829,12 @@ fn goal_open_probe() {
         for built in &result.worlds {
             let t = world_topology(built);
             let open = t.as_ref().is_some_and(|t| t.fort_count >= 2 && t.depth == 0);
-            let safe_roles = built
-                .plan
-                .roles
-                .iter()
-                .filter(|r| matches!(r, LockRole::Safe))
-                .count();
             let safe_locks = built.locks.iter().filter(|l| l.secret_exit_safe).count();
             eprintln!(
-                "  {}W{}: {:?}, forts {}, Safe roles {}, safe locks {}/{}",
+                "  {}W{}: forts {}, safe locks {}/{}",
                 if open { "*" } else { " " },
                 built.world_idx + 1,
-                built.plan.archetype,
                 built.locks.len(),
-                safe_roles,
                 safe_locks,
                 built.locks.len(),
             );
@@ -1034,13 +1025,7 @@ fn w7_sas_rule_dissect() {
                 f.sort();
                 f
             };
-            eprintln!(
-                "\nseed {seed} W{}: {:?}, forts {:?}, roles {:?}",
-                wi + 1,
-                built.plan.archetype,
-                forts,
-                built.plan.roles,
-            );
+            eprintln!("\nseed {seed} W{}: forts {:?}", wi + 1, forts);
             for l in &built.locks {
                 eprintln!(
                     "  placed lock: sec {} at {:?} safe={} blocks_target={}",
@@ -1186,7 +1171,7 @@ fn w2_skip_dissect() {
             BuildFlags { shuffle_toad_houses: true, ..Default::default() },
         );
         let built = &result.worlds[1]; // W2
-        if built.plan.pipe.fort_skip != FortSkipPolicy::AnyOneFort || built.locks.len() < 2 {
+        if built.locks.len() < 2 {
             continue;
         }
         shown += 1;
@@ -1216,8 +1201,7 @@ fn w2_skip_dissect() {
             .map(|s| s.pos)
             .collect();
         eprintln!(
-            "\nseed {seed} W2: {:?}, pipes {}, forts {}, HB-ish endpoints {} (reserved {})",
-            built.plan.archetype,
+            "\nseed {seed} W2: pipes {}, forts {}, HB-ish endpoints {} (reserved {})",
             built.pipe_pairs.len(),
             built.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count(),
             endpoints.len(),
@@ -1342,288 +1326,7 @@ fn pipe_budget_probe() {
     }
 }
 
-/// TEMP: for goal-open W3 worlds, replicate the GoalGate section's candidate
-/// evaluation with the other locks as actually placed, and report WHY each
-/// goal-severing tile was rejected (rule 1: own fort stranded; role: which
-/// fort stranded; row78; already locked). Ground truth for the fallback bug.
-#[test]
-#[ignore]
-fn w3_goalgate_dissect() {
-    let rom = match load_rom() {
-        Some(r) => r,
-        None => return,
-    };
-    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
-    let mut shown = 0;
-    for seed in 0..1000u64 {
-        if shown >= 3 {
-            break;
-        }
-        let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let result = build(
-            &rom,
-            &OverworldData { pickup: &pickup, catalog: &catalog },
-            &mut rng,
-            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
-        );
-        let built = &result.worlds[2]; // W3
-        let Some(t) = world_topology(built) else { continue };
-        if t.fort_count < 2 || t.depth != 0 {
-            continue;
-        }
-        shown += 1;
-        let wi = 2;
-        let mut base = built.grid.clone();
-        stamp_slots(&mut base, &built.slots);
-        let start = rom_data::find_start(&base).unwrap();
-        let target = find_target(&base, wi).unwrap();
-        let goal_sec = built
-            .plan
-            .roles
-            .iter()
-            .position(|r| matches!(r, LockRole::GoalGate))
-            .unwrap();
-        let forts: Vec<(usize, Pos)> = built
-            .slots
-            .iter()
-            .filter(|s| s.kind == SlotKind::Fortress)
-            .map(|s| (s.section, s.pos))
-            .collect();
-        eprintln!(
-            "\nseed {seed} W3 {:?}: roles {:?}, GoalGate sec {goal_sec}, forts {:?}, start {:?}, target {:?}",
-            built.plan.archetype, built.plan.roles, forts, start, target
-        );
-        eprintln!("  placed locks: {:?}", built.locks.iter().map(|l| (l.fort_section, l.pos)).collect::<Vec<_>>());
-        eprintln!("  pipes: {:?}", built.pipe_pairs);
 
-        // Which pipe subset creates the all-locks-closed route to the goal?
-        {
-            let mut g = base.clone();
-            for l in &built.locks {
-                g.set(l.pos.0, l.pos.1, l.gap_tile);
-            }
-            for n in 0..=built.pipe_pairs.len() {
-                let subset = &built.pipe_pairs[..n];
-                let reach = walk_map(&g, subset, Some(start), wi).nodes.contains(&target);
-                eprintln!("  all-closed, first {n} pipes: target reachable = {reach}");
-            }
-        }
-
-        // Evaluate every goal-severing lockable tile as a GoalGate candidate
-        // with the OTHER sections' actual locks in their place_locks state
-        // (earlier sections open, later closed).
-        let other_locks: Vec<_> = built
-            .locks
-            .iter()
-            .filter(|l| l.fort_section != goal_sec)
-            .collect();
-        for r in 0..base.rows() {
-            for c in 0..base.cols {
-                let tile = base.get(r, c);
-                if !LOCKABLE_TILES.contains(&tile) {
-                    continue;
-                }
-                if built.locks.iter().any(|l| l.pos == (r, c)) {
-                    continue;
-                }
-                let mut g = base.clone();
-                for l in &other_locks {
-                    let t2 = if l.fort_section < goal_sec { l.replace_tile } else { l.gap_tile };
-                    g.set(l.pos.0, l.pos.1, t2);
-                }
-                g.set(r, c, gap_tile_for(tile));
-                let walk = walk_map(&g, &built.pipe_pairs, Some(start), wi);
-                if walk.nodes.contains(&target) {
-                    continue; // doesn't sever the goal — not interesting
-                }
-                let own_fort = forts.iter().find(|(s, _)| *s == goal_sec).map(|(_, p)| *p);
-                let own_stranded =
-                    own_fort.is_some_and(|p| !walk.nodes.contains(&p));
-                let stranded: Vec<usize> = forts
-                    .iter()
-                    .filter(|(_, p)| !walk.nodes.contains(p))
-                    .map(|(s, _)| *s)
-                    .collect();
-                eprintln!(
-                    "  severs-goal ({r},{c}) tile {tile:02X}: own-fort-stranded {} | stranded sections {:?}",
-                    own_stranded, stranded
-                );
-            }
-        }
-    }
-}
-
-/// Fork-balance diagnostic: how "true" is the choice a Fork world presents?
-/// For every sampled-Fork world, simulate progression to the FORK MOMENT
-/// (first state with >=2 unbeaten terminal-fork forts co-accessible), then
-/// compare the player cost (least-levels from start, current lock state) of
-/// reaching each fork fort. A true 50/50 means near-equal costs and no
-/// systematic tell on which fort is the real GoalGate. Run with:
-///   cargo test --release --lib fork_balance -- --ignored --nocapture
-#[test]
-#[ignore]
-fn fork_balance() {
-    let rom = match load_rom() {
-        Some(r) => r,
-        None => return,
-    };
-    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
-    let seeds: u64 = std::env::var("SWEEP_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(500);
-
-    let mut sampled = 0u64;
-    let mut realized = 0u64; // fork moment reached with >=2 co-accessible
-    let mut asym_hist = [0u64; 6]; // max-min cost among fork forts (capped 5)
-    let mut goal_cheapest = 0u64;
-    let mut goal_tied = 0u64;
-    let mut goal_dearest = 0u64;
-    let mut goal_inaccessible = 0u64; // goal fort not in the co-accessible set
-
-    for seed in 0..seeds {
-        let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let result = build(
-            &rom,
-            &OverworldData { pickup: &pickup, catalog: &catalog },
-            &mut rng,
-            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
-        );
-        for built in &result.worlds {
-            let Archetype::Fork { .. } = built.plan.archetype else { continue };
-            sampled += 1;
-
-            let wi = built.world_idx;
-            let mut base = built.grid.clone();
-            stamp_slots(&mut base, &built.slots);
-            let Some(start) = rom_data::find_start(&base) else { continue };
-            let Some(target) = find_target(&base, wi) else { continue };
-            let fort_pos: HashMap<usize, Pos> = built
-                .slots
-                .iter()
-                .filter(|s| s.kind == SlotKind::Fortress)
-                .map(|s| (s.section, s.pos))
-                .collect();
-            let all_secs: HashSet<usize> = built.locks.iter().map(|l| l.fort_section).collect();
-            let grid_with = |opened: &HashSet<usize>| -> Grid {
-                let mut g = base.clone();
-                for l in &built.locks {
-                    if opened.contains(&l.fort_section) {
-                        g.set(l.pos.0, l.pos.1, l.replace_tile);
-                    } else {
-                        g.set(l.pos.0, l.pos.1, l.gap_tile);
-                    }
-                }
-                g
-            };
-            // Terminal fork sections: the Safe decoys + the GoalGate.
-            let terminal: Vec<usize> = built
-                .plan
-                .roles
-                .iter()
-                .enumerate()
-                .filter(|(_, r)| matches!(r, LockRole::Safe | LockRole::GoalGate))
-                .map(|(i, _)| i)
-                .collect();
-            let goal_sec = built
-                .plan
-                .roles
-                .iter()
-                .position(|r| matches!(r, LockRole::GoalGate));
-
-            // Advance progression until the fork is on the table.
-            let mut opened: HashSet<usize> = HashSet::new();
-            let fork_state: Option<(Grid, Vec<usize>)> = loop {
-                let g = grid_with(&opened);
-                let walk = walk_map(&g, &built.pipe_pairs, Some(start), wi);
-                let acc_terminal: Vec<usize> = terminal
-                    .iter()
-                    .copied()
-                    .filter(|sec| {
-                        !opened.contains(sec)
-                            && fort_pos.get(sec).is_some_and(|p| walk.nodes.contains(p))
-                    })
-                    .collect();
-                if acc_terminal.len() >= 2 {
-                    break Some((g, acc_terminal));
-                }
-                if walk.nodes.contains(&target) {
-                    break None; // goal opened before any real fork appeared
-                }
-                let newly: Vec<usize> = fort_pos
-                    .iter()
-                    .filter(|(sec, pos)| {
-                        walk.nodes.contains(pos)
-                            && all_secs.contains(*sec)
-                            && !opened.contains(*sec)
-                    })
-                    .map(|(sec, _)| *sec)
-                    .collect();
-                if newly.is_empty() {
-                    break None;
-                }
-                opened.extend(newly);
-            };
-
-            let Some((g, acc)) = fork_state else { continue };
-            realized += 1;
-
-            let blocking: HashSet<Pos> = built
-                .slots
-                .iter()
-                .filter(|s| matches!(s.kind, SlotKind::Level | SlotKind::Fortress))
-                .map(|s| s.pos)
-                .collect();
-            let dist = least_levels_from(&g, &built.pipe_pairs, start, wi, &blocking);
-            let costs: Vec<(usize, usize)> = acc
-                .iter()
-                .filter_map(|sec| dist.get(&fort_pos[sec]).map(|&d| (*sec, d)))
-                .collect();
-            if costs.len() < 2 {
-                continue;
-            }
-            let min = costs.iter().map(|&(_, c)| c).min().unwrap();
-            let max = costs.iter().map(|&(_, c)| c).max().unwrap();
-            asym_hist[(max - min).min(5)] += 1;
-
-            match goal_sec.and_then(|gs| costs.iter().find(|&&(s, _)| s == gs)) {
-                None => goal_inaccessible += 1,
-                Some(&(gs, gc)) => {
-                    let others_min = costs
-                        .iter()
-                        .filter(|&&(s, _)| s != gs)
-                        .map(|&(_, c)| c)
-                        .min()
-                        .unwrap();
-                    if gc < others_min {
-                        goal_cheapest += 1;
-                    } else if gc == others_min {
-                        goal_tied += 1;
-                    } else {
-                        goal_dearest += 1;
-                    }
-                }
-            }
-        }
-    }
-
-    eprintln!("\n=== fork_balance ({seeds} seeds) ===");
-    eprintln!("  sampled Fork worlds: {sampled}; fork moment realized: {realized} ({:.1}%)",
-        100.0 * realized as f64 / sampled.max(1) as f64);
-    eprintln!("  cost asymmetry (levels, max-min) among co-accessible fork forts:");
-    let tot: u64 = asym_hist.iter().sum();
-    for (d, &c) in asym_hist.iter().enumerate() {
-        if c == 0 { continue; }
-        let label = if d == 5 { "5+".to_string() } else { d.to_string() };
-        eprintln!("    diff {label:>2}: {c:5} ({:5.1}%)", 100.0 * c as f64 / tot.max(1) as f64);
-    }
-    eprintln!("  which fork fort is the REAL GoalGate:");
-    let gtot = goal_cheapest + goal_tied + goal_dearest;
-    eprintln!("    cheapest: {goal_cheapest} ({:.1}%)  tied: {goal_tied} ({:.1}%)  dearest: {goal_dearest} ({:.1}%)  (inaccessible at fork: {goal_inaccessible})",
-        100.0 * goal_cheapest as f64 / gtot.max(1) as f64,
-        100.0 * goal_tied as f64 / gtot.max(1) as f64,
-        100.0 * goal_dearest as f64 / gtot.max(1) as f64);
-}
 
 /// Player-model fort taxonomy over many seeds. Classifies every fortress that
 /// owns a lock into: mandatory (goal unreachable without it), shortcut (optional
@@ -4184,93 +3887,3 @@ fn test_route_choice() {
     }
 }
 
-/// Best-of-K feasibility experiment (no builder changes): does the builder's
-/// own random variation already contain more-choiceful versions of each world?
-///
-/// Build M seeds, record whether each world came out LINEAR (≤1 route) or
-/// CHOICE (≥2), then compute the best-of-K linear rate — the chance that all K
-/// independent tries come out linear, `∏(L-i)/(M-i)` over M samples with L
-/// linear. If that rate falls off fast as K grows, best-of-K helps; a world
-/// stuck near 100% at large K is geometry-capped (selection can't save it).
-///
-///   BEST_SEEDS=400 SLACK=3 cargo test --release \
-///     test_best_of_k -- --ignored --nocapture
-#[test]
-#[ignore]
-fn test_best_of_k() {
-    let rom_bytes = match std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") {
-        Ok(b) => b,
-        Err(_) => {
-            eprintln!("ROM not found, skipping");
-            return;
-        }
-    };
-    let rom = match Rom::from_bytes(&rom_bytes) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("ROM parse failed: {e}");
-            return;
-        }
-    };
-    let rom = apply_qol_for_overworld(&rom);
-
-    let m: u64 = std::env::var("BEST_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(400);
-    let slack: u32 = std::env::var("SLACK")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(route_choice::DEFAULT_SLACK);
-
-    // Per world: how many of the M builds came out LINEAR.
-    let mut linear: [usize; 8] = [0; 8];
-    for seed in 0..m {
-        let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let (catalog, pickup) = build_catalog_pickup(&rom, seed);
-        let result = build(
-            &rom,
-            &OverworldData { pickup: &pickup, catalog: &catalog },
-            &mut rng,
-            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
-        );
-        for built in &result.worlds {
-            let rc = analyze_route_choice(built, slack);
-            let is_choice = rc.reachable && rc.routes.len() >= 2;
-            if !is_choice {
-                linear[built.world_idx] += 1;
-            }
-        }
-    }
-
-    // P(all K of a random K-subset are linear) = ∏_{i<K} (L-i)/(M-i).
-    let best_of_k_linear = |l: usize, k: usize| -> f64 {
-        if l < k {
-            return 0.0;
-        }
-        (0..k).map(|i| (l - i) as f64 / (m as usize - i) as f64).product::<f64>() * 100.0
-    };
-
-    let ks = [1usize, 2, 4, 8, 16];
-    eprintln!("\n=== Best-of-K linear% over {m} seeds (slack {slack}) ===");
-    eprint!("  {:<5}", "");
-    for k in ks {
-        eprint!(" K={k:<5}");
-    }
-    eprintln!("  (geometry-capped if K=16 stays high)");
-    let mut overall = [0.0f64; 5];
-    for (wi, &l) in linear.iter().enumerate() {
-        eprint!("  W{:<4}", wi + 1);
-        for (j, &k) in ks.iter().enumerate() {
-            let v = best_of_k_linear(l, k);
-            overall[j] += v / 8.0;
-            eprint!(" {v:5.0}% ");
-        }
-        eprintln!();
-    }
-    eprint!("  {:<5}", "all");
-    for v in overall {
-        eprint!(" {v:5.0}% ");
-    }
-    eprintln!("  <- overall linear% by K");
-}
