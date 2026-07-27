@@ -484,9 +484,10 @@ level 3 / fort 5 / rock 8, each clearable charged once) that enumerates every
 distinct near-optimal route (identity = level-set), drops dominated superset
 detours, and calls a world *choiceful* when ≥2 routes sit within 3 points.
 
-**Pipeline** (per world): connectivity pipes → levels placed greedily as the
-terrain (`place_levels`) → measured fort shaping (`shape.rs`) → fort sections
-renumbered by BFS rank → locks → spare pipes. The `WorldPlan` archetype /
+**Pipeline** (per world): connectivity pipes → levels placed as the terrain
+(`place_levels` — first half greedy, second half measured) → measured fort
+shaping (`shape.rs`) → fort sections renumbered by BFS rank → locks → spare
+pipes. The `WorldPlan` archetype /
 `LockRole` layer is deleted — the measured route structure decides directly.
 No rerolls: worlds whose terrain can't fork stay honestly linear.
 
@@ -512,18 +513,35 @@ No rerolls: worlds whose terrain can't fork stay honestly linear.
 5. *Choice-aware spare pipes*: candidate pairs are measured for in-band route
    deltas — creators get a dominating bonus (and may ignore the skip cap),
    destroyers a soft veto that never blocks the vanilla pipe budget.
+6. *Choice-aware second-half level placement*: the aesthetic `path_bonus`
+   glues levels to the trunk, leaving every cycle's short side empty — a
+   nested dominated detour. So only the FIRST half of each world's levels is
+   placed greedy on the aesthetic score; each second-half level measures its
+   candidates (top aesthetic scorers ∪ blanks on the cheap route's exclusive
+   stretch vs each level-rescuable detour) and takes the max (in-band route
+   count, then aesthetic score). ONE level on a node-bearing short side makes
+   the level-sets disjoint and the detour a real fork — the level counterpart
+   of golden locks, which keep the zero-node short sides. An A/B against a
+   random first half measured 46% vs 50% linear for random, but its
+   forced-level streak fell to 1.70 (off the ≈1.79 calibration — required
+   routes thinned), so greedy stays the default; random survives as the
+   `random_first_half` knob.
 
-**Numbers** (1000 seeds, slack 3): 58% linear overall — vs 68% for the
-pre-reroll builder and ~20% for best-of-8 rerolling. W2/W6 richest (62-64%
-choiceful), W1 poorest (12% — one fort, few pipes, no parallel corridors).
-Goal-open: 0/1000 SAS-off. Forced-level streak 1.85/1.79 (reference ≈1.79).
-~0.21 s per full seed. Same-seed byte-identical.
+**Numbers** (1000 seeds, slack 3): 50% linear overall, mean 1.81 routes/world
+— vs 58% before the choice-aware level pass, 68% for the pre-reroll builder,
+and ~20% for best-of-8 rerolling. W6 richest (92% choiceful), W8 poorest (22%
+— the corridor); W1 lifted from 12% to 33% choiceful by the level pass (its
+lone cycle now gets a level even when no fort can fork it). Goal-open: 0/1000
+SAS-off. Forced-level streak 1.88/1.75 (reference ≈1.79). ~0.32 s per full
+seed. Same-seed byte-identical.
 
 **Honest gap vs the reroll era:** rerolls exploited raw geometry variance —
 eight fresh level layouts per world — where the constructive builder gets one
-(greedy level placement is deterministic given pipes). The identified next
-lever is *cycle dressing*: enumerate the walk graph's physical cycles directly
-and dress each (levels on one side, golden lock on the other, loads tuned to
-tie) instead of only rescuing the also-rans the route scorer happens to
-surface. Level rebalancing (phase A0) exists but rarely fires — parallel
+deterministic layout given pipes (the measured second half claws back part of
+that, and the `random_first_half` knob would buy more variance at a measured
+cost: 46% vs 50% linear but streak 1.70, off calibration). The identified
+next lever is *cycle dressing*: enumerate the walk graph's physical cycles
+directly and dress each (levels on one side, golden lock on the other, loads
+tuned to tie) instead of only rescuing the also-rans the route scorer happens
+to surface. Level rebalancing (phase A0) exists but rarely fires — parallel
 non-nested routes are rare without it.

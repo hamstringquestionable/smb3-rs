@@ -95,6 +95,15 @@ pub(crate) struct RouteChoice {
 /// small on detour-rich maps.
 const MAX_DETOURS: usize = 8;
 
+/// Routes within `DEFAULT_SLACK` of best — the count that defines "has
+/// choice", measured inside a wider (`SHAPING_SLACK`) result.
+pub(super) fn in_band_count(rc: &RouteChoice) -> usize {
+    rc.routes
+        .iter()
+        .filter(|r| r.cost <= rc.best_cost + DEFAULT_SLACK)
+        .count()
+}
+
 /// Rescue targets for the shaping passes, most-promising first: out-of-band
 /// parallel routes and dominated superset detours. Either way, shifting the
 /// cheap route's cost by +`COST_FORT` (a fort on its exclusive stretch, or a

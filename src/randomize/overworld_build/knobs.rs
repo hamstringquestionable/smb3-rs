@@ -108,6 +108,11 @@ pub(crate) struct LevelScoring {
     /// Max detour (BFS hops off the shortest start→target route) that still
     /// earns any path bonus.
     pub path_detour_cap: f64,
+    /// A/B experiment: when true, the greedy (aesthetic-max) first half of
+    /// level placement is replaced by uniform random picks — buys back the
+    /// reroll era's raw layout variance at the cost of spread quality. The
+    /// measured second half is unaffected.
+    pub random_first_half: bool,
 }
 
 impl Default for LevelScoring {
@@ -117,6 +122,7 @@ impl Default for LevelScoring {
             dead_end_bonus: 0.5,
             path_bonus: 0.75,
             path_detour_cap: 6.0,
+            random_first_half: false,
         }
     }
 }

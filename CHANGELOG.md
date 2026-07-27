@@ -12,8 +12,9 @@ deploys.
 ### Changed
 
 - The overworld builder now BUILDS for route choice instead of rerolling for
-  it: levels are placed first as the world's terrain, the route structure is
-  measured (how many roughly-equal paths reach the goal, priced by the levels,
+  it: levels are placed first as the world's terrain (half by look and spread,
+  half as measured moves that turn empty shortcut loops into real either-or
+  forks), the route structure is measured (how many roughly-equal paths reach the goal, priced by the levels,
   fortresses, and pipes each path forces), and fortresses, locks, and spare
   pipes are then placed as targeted moves to create two or three close routes
   — a fort re-prices a shortcut, a lock forces that fort's cost onto it (the

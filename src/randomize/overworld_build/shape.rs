@@ -31,11 +31,12 @@ use super::*;
 
 use super::knobs::FortScoring;
 use super::route_choice::{
-    ChoiceRoute, DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice, rescue_targets,
+    ChoiceRoute, DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice, in_band_count,
+    rescue_targets,
 };
 use super::scoring::{is_row78_conflict, pick_softmax_by_score, score_fortress_candidate};
 use super::sections::completable_positions;
-use super::types::{BuiltWorld, SlotKind};
+use super::types::{BuiltWorld, SlotKind, hb_slot_index};
 
 /// Max candidate conversions re-measured per shaping decision before giving
 /// up on that decision (phase A: give the pipe pass a turn; phase B: accept
@@ -248,15 +249,6 @@ pub(super) fn shape_forts<R: Rng>(
     Some(placed[rng.random_range(..placed.len())])
 }
 
-/// Routes within `DEFAULT_SLACK` of best — the count that defines "has
-/// choice", measured inside the wider `SHAPING_SLACK` result.
-fn in_band_count(rc: &RouteChoice) -> usize {
-    rc.routes
-        .iter()
-        .filter(|r| r.cost <= rc.best_cost + DEFAULT_SLACK)
-        .count()
-}
-
 /// Cheapest route ABOVE the choice band — the rescuable near-miss.
 fn near_miss(rc: &RouteChoice) -> Option<&ChoiceRoute> {
     rc.routes.iter().find(|r| r.cost > rc.best_cost + DEFAULT_SLACK)
@@ -314,13 +306,6 @@ fn ranked_convertible(
             .then_with(|| a.0.cmp(&b.0))
     });
     out
-}
-
-fn hb_slot_index(built: &BuiltWorld, pos: Pos) -> Option<usize> {
-    built
-        .slots
-        .iter()
-        .position(|s| s.pos == pos && s.kind == SlotKind::HammerBro)
 }
 
 fn convert(built: &mut BuiltWorld, idx: usize, ordinal: usize) {

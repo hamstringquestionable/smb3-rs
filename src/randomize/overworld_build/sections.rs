@@ -10,9 +10,12 @@ use super::*;
 use super::knobs::{Knobs, LevelScoring};
 use super::locks::place_locks;
 use super::pipes::{FIXED_PIPE_ENDPOINTS, PIPE_EXCLUDED_POSITIONS, place_pipes, place_spare_pipes};
+use super::route_choice::{
+    COST_LEVEL, DEFAULT_SLACK, SHAPING_SLACK, analyze_route_choice, in_band_count,
+};
 use super::scoring::{is_row78_conflict, score_candidate};
 use super::shape::shape_forts;
-use super::types::{BuiltWorld, SlotAssignment, SlotKind, WorldSlotCounts};
+use super::types::{BuiltWorld, SlotAssignment, SlotKind, WorldSlotCounts, hb_slot_index};
 
 // Reason: each arg is a distinct build input (world, rom, grid, fixed slots,
 // budgets, knobs, HB flag, RNG). No subset forms a cohesive concept worth
@@ -107,14 +110,17 @@ pub(super) fn build_world<R: Rng>(
     // become HammerBro fillers — the conversion stock for forts and spare
     // pipes.
     let mut slots = place_levels(
+        world_idx,
         &grid,
         &assignable,
         level_count,
         &pipe_positions,
+        &pipe_pairs,
         &bfs_distances,
         &reverse_bfs,
         target_bfs_dist,
         &knobs.level,
+        rng,
     );
 
     // Add mandatory HammerBro slots for HB sprite starting positions.
@@ -374,27 +380,48 @@ pub(super) fn split_blanks_by_reachability(
     (reach, unreach)
 }
 
-/// Place `level_count` levels on the assignable blanks by greedy score-based
-/// picking (no RNG), then emit every slot: pipes, levels, and HammerBro
-/// fillers for the remaining blanks. Sections are all 0 — only fortress
-/// slots carry a meaningful section index, assigned later by the shaping
-/// pass and `renumber_fort_sections`.
-// Reason: 8 args is over clippy's 7-arg default. Each is a distinct input
-// (geometry, candidate pool, budget, pipe positions, BFS data, knobs);
+/// Aesthetic-score candidates measured per choice-aware level placement.
+const LEVEL_AESTHETIC_CANDIDATES: usize = 5;
+/// Cap on total measured candidates per choice-aware level placement.
+const LEVEL_MEASURED_CANDIDATES: usize = 8;
+/// Detour-derived targets kept per detour (ranked by aesthetic score).
+const LEVEL_TARGETS_PER_DETOUR: usize = 2;
+
+/// Place `level_count` levels on the assignable blanks, then emit every slot:
+/// pipes, levels, and HammerBro fillers for the remaining blanks.
+///
+/// Choice-aware split: the FIRST half is placed on the aesthetic score alone
+/// (greedy spread + path relevance — the terrain; uniform random instead when
+/// `knobs.random_first_half`), the SECOND half is placed MEASURED. Per level,
+/// candidates are the top aesthetic scorers plus detour-derived targets —
+/// blanks on the cheap route's exclusive stretch vs each dominated detour
+/// whose gap one level can rescue — and the pick maximizes the in-band route
+/// count, aesthetic score as tie-break. The point: `path_bonus` glues levels
+/// to the trunk, leaving every cycle's short side empty, which reads as a
+/// nested dominated detour; ONE level on a node-bearing short side makes the
+/// two level-sets disjoint and the detour a real choice. (Zero-node short
+/// sides are the golden-lock pass's job; true trees fall through to pure
+/// aesthetics.)
+///
+/// Sections are all 0 — only fortress slots carry a meaningful section index,
+/// assigned later by the shaping pass and `renumber_fort_sections`.
+// Reason: 10 args is over clippy's 7-arg default. Each is a distinct input
+// (geometry, candidate pool, budget, pipe data, BFS data, knobs, RNG);
 // bundling any subset would add indirection without clarity.
 #[allow(clippy::too_many_arguments)]
-fn place_levels(
+fn place_levels<R: Rng>(
+    world_idx: usize,
     grid: &Grid,
     assignable: &[(usize, usize)],
     level_count: usize,
     pipe_positions: &HashSet<(usize, usize)>,
+    pipe_pairs: &[TeleportEdge],
     bfs_distances: &HashMap<(usize, usize), usize>,
     reverse_bfs: &HashMap<(usize, usize), usize>,
     target_bfs_dist: Option<usize>,
     knobs: &LevelScoring,
+    rng: &mut R,
 ) -> Vec<SlotAssignment> {
-    let mut slots = Vec::new();
-
     // Two separate sets:
     // 1. `completable` — all completion-unsafe tiles on the grid. Used for
     //    the row 7/8 hard constraint (game engine bug). Includes spades,
@@ -405,7 +432,55 @@ fn place_levels(
     let mut completable = completable_positions(grid, &[]);
     let mut placed_levels: HashSet<(usize, usize)> = HashSet::new();
 
-    // Pipe slots (already stamped on the grid, tracked as slots).
+    let measured_count = level_count / 2;
+    let greedy_count = level_count - measured_count;
+
+    for _ in 0..greedy_count {
+        let pick = if knobs.random_first_half {
+            let eligible: Vec<(usize, usize)> = assignable
+                .iter()
+                .copied()
+                .filter(|pos| !placed_levels.contains(pos))
+                .filter(|pos| !is_row78_conflict(*pos, &completable))
+                .collect();
+            eligible.choose(rng).copied()
+        } else {
+            // Score each candidate once, then pick the max on the cached
+            // score. (`max_by` returns the LAST maximal element on ties,
+            // matching the pre-caching behavior.)
+            assignable
+                .iter()
+                .filter(|pos| !placed_levels.contains(*pos))
+                .filter(|pos| !is_row78_conflict(**pos, &completable))
+                .map(|&pos| {
+                    let score = score_candidate(
+                        grid,
+                        pos,
+                        &placed_levels,
+                        bfs_distances,
+                        reverse_bfs,
+                        target_bfs_dist,
+                        knobs,
+                    );
+                    (pos, score)
+                })
+                .max_by(|(_, sa), (_, sb)| sa.partial_cmp(sb).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(pos, _)| pos)
+        };
+
+        match pick {
+            Some(pos) => {
+                placed_levels.insert(pos);
+                completable.insert(pos);
+            }
+            None => break,
+        }
+    }
+
+    // Emit pipe slots (already stamped on the grid, tracked as slots), then
+    // level and HammerBro filler slots — the measured pass below flips more
+    // fillers to levels in place.
+    let mut slots: Vec<SlotAssignment> = Vec::new();
     for &pos in pipe_positions {
         slots.push(SlotAssignment {
             pos,
@@ -415,39 +490,6 @@ fn place_levels(
             is_troll_pipe: false,
         });
     }
-
-    for _ in 0..level_count {
-        // Score each candidate once, then pick the max on the cached score.
-        // (`max_by` returns the LAST maximal element on ties, matching the
-        // pre-caching behavior.)
-        let best = assignable
-            .iter()
-            .filter(|pos| !placed_levels.contains(*pos))
-            .filter(|pos| !is_row78_conflict(**pos, &completable))
-            .map(|&pos| {
-                let score = score_candidate(
-                    grid,
-                    pos,
-                    &placed_levels,
-                    bfs_distances,
-                    reverse_bfs,
-                    target_bfs_dist,
-                    knobs,
-                );
-                (pos, score)
-            })
-            .max_by(|(_, sa), (_, sb)| sa.partial_cmp(sb).unwrap_or(std::cmp::Ordering::Equal));
-
-        match best {
-            Some((pos, _)) => {
-                placed_levels.insert(pos);
-                completable.insert(pos);
-            }
-            None => break,
-        }
-    }
-
-    // Emit level and HammerBro filler slots.
     for &pos in assignable {
         slots.push(SlotAssignment {
             pos,
@@ -461,6 +503,109 @@ fn place_levels(
             is_troll_pipe: false,
         });
     }
+    if measured_count == 0 {
+        return slots;
+    }
 
-    slots
+    // Interim world for measuring: no forts/locks yet, so routes differ only
+    // by level-sets — exactly the structure a level placement can shape.
+    let mut interim = BuiltWorld {
+        world_idx,
+        grid: grid.clone(),
+        slots,
+        locks: Vec::new(),
+        section_count: 0,
+        pipe_pairs: pipe_pairs.to_vec(),
+        hb_sprites: Vec::new(),
+    };
+
+    for _ in 0..measured_count {
+        let rc = analyze_route_choice(&interim, SHAPING_SLACK);
+
+        // Aesthetic scores for every remaining eligible blank, best first.
+        let mut scored: Vec<((usize, usize), f64)> = assignable
+            .iter()
+            .copied()
+            .filter(|pos| !placed_levels.contains(pos))
+            .filter(|pos| !is_row78_conflict(*pos, &completable))
+            .map(|pos| {
+                let score = score_candidate(
+                    grid,
+                    pos,
+                    &placed_levels,
+                    bfs_distances,
+                    reverse_bfs,
+                    target_bfs_dist,
+                    knobs,
+                );
+                (pos, score)
+            })
+            .collect();
+        scored.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        if scored.is_empty() {
+            break;
+        }
+        let score_of: HashMap<Pos, f64> = scored.iter().copied().collect();
+
+        // Candidates: detour-derived targets first (they're the point), then
+        // the top aesthetic scorers as the fallback pool.
+        let mut candidates: Vec<Pos> = Vec::new();
+        if let Some(cheap) = rc.routes.first() {
+            // A detour is level-rescuable when +COST_LEVEL on the cheap route
+            // lands its gap inside the choice band.
+            let rescuable = COST_LEVEL..=(COST_LEVEL + DEFAULT_SLACK);
+            for detour in rc
+                .detours
+                .iter()
+                .filter(|d| rescuable.contains(&(d.cost - rc.best_cost)))
+                .take(3)
+            {
+                let detour_nodes: HashSet<Pos> = detour.path.iter().copied().collect();
+                let mut targets: Vec<Pos> = cheap
+                    .path
+                    .iter()
+                    .copied()
+                    .filter(|p| !detour_nodes.contains(p))
+                    .filter(|p| score_of.contains_key(p))
+                    .collect();
+                targets.sort_by(|a, b| {
+                    score_of[b]
+                        .partial_cmp(&score_of[a])
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| a.cmp(b))
+                });
+                candidates.extend(targets.into_iter().take(LEVEL_TARGETS_PER_DETOUR));
+            }
+        }
+        candidates.extend(scored.iter().take(LEVEL_AESTHETIC_CANDIDATES).map(|&(p, _)| p));
+        let mut seen: HashSet<Pos> = HashSet::new();
+        candidates.retain(|p| seen.insert(*p));
+        candidates.truncate(LEVEL_MEASURED_CANDIDATES);
+
+        // Measure each candidate; keep the max (in-band routes, aesthetic
+        // score). First-in-candidate-order wins ties, so detour targets beat
+        // equal aesthetic picks.
+        let mut best: Option<(Pos, usize, f64)> = None;
+        for &pos in &candidates {
+            let Some(idx) = hb_slot_index(&interim, pos) else { continue };
+            interim.slots[idx].kind = SlotKind::Level;
+            let rc2 = analyze_route_choice(&interim, SHAPING_SLACK);
+            interim.slots[idx].kind = SlotKind::HammerBro;
+            let (in_band, score) = (in_band_count(&rc2), score_of[&pos]);
+            if best.is_none_or(|(_, bi, bs)| in_band > bi || (in_band == bi && score > bs)) {
+                best = Some((pos, in_band, score));
+            }
+        }
+        let Some((pos, _, _)) = best else { break };
+        let Some(idx) = hb_slot_index(&interim, pos) else { break };
+        interim.slots[idx].kind = SlotKind::Level;
+        placed_levels.insert(pos);
+        completable.insert(pos);
+    }
+
+    interim.slots
 }
