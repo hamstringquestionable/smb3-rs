@@ -3887,3 +3887,75 @@ fn test_route_choice() {
     }
 }
 
+
+/// Production-parity route-choice render for ONE real seed: runs the full
+/// randomizer pipeline (so the RNG stream is exactly what that CLI/web seed
+/// produces), then prints the route-choice verdict and an ASCII map per
+/// route for every world.
+///
+///   DUMP_SEED=<n> [DUMP_WORLD=w] [SLACK=3] [FLAGS=SMB3R-...] [SAS=1] \
+///     cargo test --release --lib test_render_route_choice -- --ignored --nocapture
+#[test]
+#[ignore]
+fn test_render_route_choice() {
+    use crate::Options;
+
+    let rom_bytes = match std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") {
+        Ok(b) => b,
+        Err(_) => {
+            eprintln!("ROM not found, skipping");
+            return;
+        }
+    };
+    let seed: u64 = std::env::var("DUMP_SEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let world_filter: Option<usize> = std::env::var("DUMP_WORLD")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .map(|w| w.saturating_sub(1));
+    let slack: u32 = std::env::var("SLACK")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(route_choice::DEFAULT_SLACK);
+
+    // Same options handling as test_dump_required_progression: FLAGS key
+    // preferred, palettes forced off for reproducibility.
+    let mut options = match std::env::var("FLAGS") {
+        Ok(key) => match Options::from_flag_key(&key) {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("Invalid FLAGS key: {e}");
+                return;
+            }
+        },
+        Err(_) => Options::default(),
+    };
+    if std::env::var("SAS").is_ok() {
+        options.swap_start_airship = true;
+    }
+    options.palettes = false;
+    options.palette_themed = false;
+
+    let (_rom, result) =
+        match crate::randomize_rom_with_overworld_capture(&rom_bytes, seed, &options, None) {
+            Ok(pair) => pair,
+            Err(e) => {
+                eprintln!("randomize_rom_with_overworld_capture failed: {e}");
+                return;
+            }
+        };
+
+    eprintln!("=== Route-choice render (seed={seed}, slack={slack}) ===");
+    eprintln!("Flags: {}", options.to_flag_key());
+    for built in &result.worlds {
+        if let Some(w) = world_filter
+            && built.world_idx != w
+        {
+            continue;
+        }
+        dump_route_choice(built, slack);
+        eprintln!("{}", route_choice::render_route_choice(built, slack));
+    }
+}
