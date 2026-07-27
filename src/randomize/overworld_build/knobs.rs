@@ -159,6 +159,11 @@ pub(crate) struct LockScoring {
     /// Max candidate locks per section re-measured by the choice-guard
     /// before giving up and accepting the top-scored one.
     pub choice_guard_tries: usize,
+    /// Whether some lock MUST sever the goal (the goal-gate duty). Default
+    /// true — the shipped guarantee. `false` is the C1-floor experiment arm:
+    /// every lock places purely by (choice delta, score) and the goal may be
+    /// open at start; see `test_c1_floor_probe`.
+    pub goal_gate: bool,
 }
 
 impl Default for LockScoring {
@@ -172,6 +177,7 @@ impl Default for LockScoring {
             w8_bridge_bonus: 8,
             weak_lock_threshold: 5,
             choice_guard_tries: 4,
+            goal_gate: true,
         }
     }
 }

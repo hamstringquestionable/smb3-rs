@@ -3888,6 +3888,104 @@ fn test_route_choice() {
 }
 
 
+/// C1-floor probe: per-world distribution of the cheapest route's cost (C1),
+/// the goal-open rate, and linear% — the evidence base for the "replace the
+/// binary goal-gate duty with a cost floor on the cheapest route" question.
+/// Run once with the shipped default (`goal_gate: true`) and once with the
+/// knob flipped to compare the gated and ungated arms.
+///
+/// Run with:
+///   ROUTE_SEEDS=200 cargo test --release --lib test_c1_floor_probe -- --ignored --nocapture
+#[test]
+#[ignore]
+fn test_c1_floor_probe() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let rom = apply_qol_for_overworld(&rom);
+
+    let seeds: u64 = std::env::var("ROUTE_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(200);
+
+    // Per world: C1 samples, goal-open hits, linear hits.
+    let mut c1s: Vec<Vec<u32>> = vec![Vec::new(); 8];
+    let mut goal_open: [usize; 8] = [0; 8];
+    let mut linear: [usize; 8] = [0; 8];
+
+    for seed in 0..seeds {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let (catalog, pickup) = build_catalog_pickup(&rom, seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
+        for built in &result.worlds {
+            let rc = analyze_route_choice(built, route_choice::DEFAULT_SLACK);
+            if !rc.reachable {
+                continue;
+            }
+            let wi = built.world_idx;
+            c1s[wi].push(rc.best_cost);
+            if rc.routes.len() <= 1 {
+                linear[wi] += 1;
+            }
+            if world_topology(built).is_some_and(|t| t.fort_count >= 2 && t.depth == 0) {
+                goal_open[wi] += 1;
+            }
+        }
+    }
+
+    eprintln!("\n=== C1 floor probe over {seeds} seeds ===");
+    eprintln!(
+        "  {:<4} {:>5} {:>5} {:>6} {:>6} {:>6} {:>6} {:>9} {:>8}",
+        "", "min", "p10", "mean", "<8", "<14", "<17", "goal-open", "linear%",
+    );
+    let mut all: Vec<u32> = Vec::new();
+    for wi in 0..8 {
+        let c = &mut c1s[wi];
+        if c.is_empty() {
+            continue;
+        }
+        all.extend(c.iter().copied());
+        c.sort_unstable();
+        let n = c.len();
+        let mean = c.iter().sum::<u32>() as f64 / n as f64;
+        let pct_below = |t: u32| c.iter().filter(|&&x| x < t).count() as f64 / n as f64 * 100.0;
+        eprintln!(
+            "  W{:<3} {:>5} {:>5} {:>6.1} {:>5.0}% {:>5.0}% {:>5.0}% {:>8.1}% {:>7.0}%",
+            wi + 1,
+            c[0],
+            c[n / 10],
+            mean,
+            pct_below(8),
+            pct_below(14),
+            pct_below(17),
+            goal_open[wi] as f64 / n as f64 * 100.0,
+            linear[wi] as f64 / n as f64 * 100.0,
+        );
+    }
+    if !all.is_empty() {
+        all.sort_unstable();
+        let n = all.len();
+        let mean = all.iter().sum::<u32>() as f64 / n as f64;
+        let go: usize = goal_open.iter().sum();
+        let lin: usize = linear.iter().sum();
+        eprintln!(
+            "  overall: min {} p10 {} mean {mean:.1}; <14 {:.1}%; goal-open {:.1}%; linear {:.0}%",
+            all[0],
+            all[n / 10],
+            all.iter().filter(|&&x| x < 14).count() as f64 / n as f64 * 100.0,
+            go as f64 / n as f64 * 100.0,
+            lin as f64 / n as f64 * 100.0,
+        );
+    }
+}
+
 /// Production-parity route-choice render for ONE real seed: runs the full
 /// randomizer pipeline (so the RNG stream is exactly what that CLI/web seed
 /// produces), then prints the route-choice verdict and an ASCII map per

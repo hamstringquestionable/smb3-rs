@@ -91,6 +91,10 @@ pub(super) fn place_locks<R: Rng>(
     let mut base_grid = grid.clone();
     stamp_slots(&mut base_grid, slots);
 
+    // Gate duty off (C1-floor experiment arm): drop the hint entirely — every
+    // section places by the normal (choice delta, score) selection below.
+    let gate_section = if knobs.goal_gate { gate_section } else { None };
+
     // Re-anchor the gate hint on feasibility: a section can host the goal
     // gate only if SOME severing tile keeps its own fort and every earlier
     // fort reachable (the hard rules, approximated on the lockless grid).
