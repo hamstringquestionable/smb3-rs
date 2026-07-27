@@ -7,7 +7,7 @@ New work accumulates under **[Unreleased]** and is moved into a new versioned
 section when a release is cut — a merge to `main`, which bumps the version and
 deploys.
 
-## [Unreleased]
+## [1.1.0] - 2026-07-27
 
 ### Changed
 
