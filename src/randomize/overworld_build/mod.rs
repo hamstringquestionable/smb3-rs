@@ -27,6 +27,7 @@ mod sections;
 mod pipes;
 mod locks;
 mod progression;
+mod route_choice;
 
 use capacity::{
     SPADE_BUDGET, assign_hb_sprites, distribute_levels, prepare_capacities, promote_hb_slots,
@@ -51,6 +52,9 @@ pub(crate) use progression::{
     analyze_required_progression, classify_pipes, dump_required_progression, hammer_skip,
     island_count, level_adjacency_pairs, start_goal_express_pipe, PipeClass,
 };
+// Choice-first route scorer (separate weighted model — see route_choice.rs).
+#[cfg(test)]
+pub(crate) use route_choice::{analyze_route_choice, dump_route_choice};
 
 #[cfg(test)]
 mod tests;
@@ -113,10 +117,13 @@ pub(crate) fn build<R: Rng>(
             max_non_pipe_slots,
             force_safe: false,
         };
-        let built = build_world(
+        // Reroll this world for real route choice — see `build_world_best_of_k`.
+        // Intrinsic to the builder, not a flag: a good overworld hands the
+        // player decisions. The seed-coordinated plan is tried first.
+        let built = build_world_best_of_k(
             wi,
             rom,
-            patched_grids[wi].clone(),
+            &patched_grids[wi],
             &fixed_positions[wi],
             &counts,
             &plans[wi],
@@ -182,4 +189,48 @@ pub(crate) fn build<R: Rng>(
     }
 
     BuildResult { worlds, fort_counts }
+}
+
+/// Reroll a world for route choice: build it from the seed-coordinated plan,
+/// and if that comes out linear, re-sample the plan and rebuild — up to
+/// `REROLL_LIMIT` builds total — returning the first version that offers real
+/// route choice (≥2 roughly-equal routes). If none do, keep the coordinated
+/// build (exactly what the builder would have produced without rerolling).
+/// Early-stops, so choiceful worlds cost a single build. Deterministic: rerolls
+/// draw from the seeded `rng` in order.
+// Reason: too_many_arguments — this is `build_world`'s own parameter list; the
+// reroll wraps it without adding state, so a struct would just indirect it.
+#[allow(clippy::too_many_arguments)]
+fn build_world_best_of_k<R: Rng>(
+    world_idx: usize,
+    rom: &Rom,
+    grid: &Grid,
+    fixed_positions: &HashSet<Pos>,
+    counts: &WorldSlotCounts,
+    first_plan: &WorldPlan,
+    shuffle_hammer_bros: bool,
+    rng: &mut R,
+) -> BuiltWorld {
+    let has_choice = |w: &BuiltWorld| {
+        route_choice::analyze_route_choice(w, route_choice::DEFAULT_SLACK)
+            .routes
+            .len()
+            >= 2
+    };
+    let build = |plan: &WorldPlan, rng: &mut R| {
+        build_world(world_idx, rom, grid.clone(), fixed_positions, counts, plan, shuffle_hammer_bros, rng)
+    };
+
+    let base = build(first_plan, rng);
+    if has_choice(&base) {
+        return base;
+    }
+    for _ in 1..route_choice::REROLL_LIMIT {
+        let plan = WorldPlan::sample(counts.fort_count, world_idx, rng);
+        let candidate = build(&plan, rng);
+        if has_choice(&candidate) {
+            return candidate;
+        }
+    }
+    base
 }
