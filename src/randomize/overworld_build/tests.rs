@@ -71,6 +71,57 @@ fn build_catalog_pickup(rom: &Rom, seed: u64) -> (NodeCatalog, PickupResult) {
     (catalog, pickup)
 }
 
+/// Run `per_seed` for seeds 0..`seeds` across worker threads and return the
+/// results in seed order. The census diagnostics are embarrassingly parallel
+/// — each seed builds from a fresh RNG and catalog/pickup and only reads the
+/// ROM — so the multi-minute serial 1000-seed loops drop to one core-share
+/// of wall clock. Aggregation stays serial in each caller.
+fn par_seeds<T: Send>(seeds: u64, per_seed: impl Fn(u64) -> T + Sync) -> Vec<T> {
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(seeds.max(1) as usize);
+    let next = std::sync::atomic::AtomicU64::new(0);
+    let mut results: Vec<Option<T>> =
+        std::iter::repeat_with(|| None).take(seeds as usize).collect();
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut out: Vec<(u64, T)> = Vec::new();
+                    loop {
+                        let seed = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if seed >= seeds {
+                            break;
+                        }
+                        out.push((seed, per_seed(seed)));
+                    }
+                    out
+                })
+            })
+            .collect();
+        for h in handles {
+            for (seed, val) in h.join().unwrap() {
+                results[seed as usize] = Some(val);
+            }
+        }
+    });
+    results.into_iter().map(|o| o.unwrap()).collect()
+}
+
+/// One standard census build: fresh per-seed RNG + catalog/pickup, the
+/// default diagnostic flags. The shared parallel body of the censuses.
+fn census_build(rom: &Rom, seed: u64) -> BuildResult {
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let (catalog, pickup) = build_catalog_pickup(rom, seed);
+    build(
+        rom,
+        &OverworldData { pickup: &pickup, catalog: &catalog },
+        &mut rng,
+        BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+    )
+}
+
 #[test]
 fn test_fortress_redistribution() {
     let mut rng = ChaCha8Rng::seed_from_u64(42);
@@ -811,14 +862,16 @@ fn goal_open_probe() {
         None => return,
     };
     let (catalog, pickup) = build_catalog_pickup(&rom, 0);
-    for seed in 0..1000u64 {
+    let results = par_seeds(1000, |seed| {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let result = build(
+        build(
             &rom,
             &OverworldData { pickup: &pickup, catalog: &catalog },
             &mut rng,
             BuildFlags { shuffle_toad_houses: true, ..Default::default() },
-        );
+        )
+    });
+    for (seed, result) in results.iter().enumerate() {
         let hit = result.worlds.iter().any(|b| {
             world_topology(b).is_some_and(|t| t.fort_count >= 2 && t.depth == 0)
         });
@@ -1364,15 +1417,16 @@ fn fort_taxonomy() {
     let mut b_linear = 0u64; // depth <2, no fork
     let mut w_multi = 0u64;
 
-    for seed in 0..SEEDS {
+    let results = par_seeds(SEEDS, |seed| {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let result = build(
+        build(
             &rom,
             &OverworldData { pickup: &pickup, catalog: &catalog },
             &mut rng,
             BuildFlags { shuffle_toad_houses: true, ..Default::default() },
-        );
-
+        )
+    });
+    for result in &results {
         for built in &result.worlds {
             let wi = built.world_idx;
             let mut base = built.grid.clone();
@@ -2625,11 +2679,7 @@ fn test_pipe_distribution() {
     let mut total_endpoints = [0u32; 8];
     let mut total_pairs = [0u32; 8];
 
-    for seed in 0..seeds {
-        let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let (catalog, pickup) = build_catalog_pickup(&rom, seed);
-        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
-
+    for result in &par_seeds(seeds, |seed| census_build(&rom, seed)) {
         for built in &result.worlds {
             let wi = built.world_idx;
             for &(a, b) in &built.pipe_pairs {
@@ -2761,11 +2811,7 @@ fn test_fortress_distribution() {
     let mut section_counts: [Vec<HashMap<(usize, usize), u32>>; 8] = Default::default();
     let mut section_total: [Vec<u32>; 8] = Default::default();
 
-    for seed in 0..seeds {
-        let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let (catalog, pickup) = build_catalog_pickup(&rom, seed);
-        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
-
+    for result in &par_seeds(seeds, |seed| census_build(&rom, seed)) {
         for built in &result.worlds {
             let wi = built.world_idx;
 
@@ -2924,11 +2970,7 @@ fn test_level_placement_quality() {
     let mut total_candidate_detour = [0u64; 8];
     let mut total_candidates_for_detour = [0u64; 8];
 
-    for seed in 0..seeds {
-        let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let (catalog, pickup) = build_catalog_pickup(&rom, seed);
-        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
-
+    for result in &par_seeds(seeds, |seed| census_build(&rom, seed)) {
         for built in &result.worlds {
             let wi = built.world_idx;
             let start_pos = rom_data::find_start(&built.grid);
@@ -3170,15 +3212,18 @@ struct ProgLinWorld {
 /// state differs from a real run).
 fn prog_measure_pass(rom_bytes: &[u8], options: &crate::Options, seeds: u64) -> [ProgLinWorld; 8] {
     let mut worlds: [ProgLinWorld; 8] = std::array::from_fn(|_| ProgLinWorld::default());
-    for seed in 0..seeds {
-        let (_rom, result) =
-            match crate::randomize_rom_with_overworld_capture(rom_bytes, seed, options, None) {
-                Ok(pair) => pair,
-                Err(e) => {
-                    eprintln!("seed {seed}: randomize failed: {e}");
-                    continue;
-                }
-            };
+    // Full-pipeline builds fan out; the (much cheaper) progression analysis
+    // below stays serial. The dropped ROM is rebuilt per seed in-thread.
+    let results = par_seeds(seeds, |seed| {
+        match crate::randomize_rom_with_overworld_capture(rom_bytes, seed, options, None) {
+            Ok((_rom, result)) => Some(result),
+            Err(e) => {
+                eprintln!("seed {seed}: randomize failed: {e}");
+                None
+            }
+        }
+    });
+    for result in results.iter().flatten() {
         for built in &result.worlds {
             let w = &mut worlds[built.world_idx];
             let nh = analyze_required_progression(built, false);
@@ -3839,23 +3884,17 @@ fn test_route_choice() {
         .ok()
         .and_then(|s| s.parse().ok());
 
-    let mut counts: Vec<Vec<usize>> = vec![Vec::new(); 8];
-
-    for seed in 0..seeds {
-        let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let (catalog, pickup) = build_catalog_pickup(&rom, seed);
-        let result = build(
-            &rom,
-            &OverworldData { pickup: &pickup, catalog: &catalog },
-            &mut rng,
-            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
-        );
+    // Build AND analyze in the parallel closure — the route Dijkstras are a
+    // real share of the census cost. Dump output (one seed) prints in-thread.
+    let per_seed = par_seeds(seeds, |seed| {
+        let result = census_build(&rom, seed);
         if Some(seed) == dump_seed {
             eprintln!("\n=== Route choice, seed {seed} (slack {slack}) ===");
         }
+        let mut route_counts = [0usize; 8];
         for built in &result.worlds {
             let rc = analyze_route_choice(built, slack);
-            counts[built.world_idx].push(if rc.reachable { rc.routes.len() } else { 0 });
+            route_counts[built.world_idx] = if rc.reachable { rc.routes.len() } else { 0 };
             if Some(seed) == dump_seed {
                 if std::env::var("RENDER").is_ok() {
                     eprint!("{}", route_choice::render_route_choice(built, slack));
@@ -3863,6 +3902,13 @@ fn test_route_choice() {
                     dump_route_choice(built, slack);
                 }
             }
+        }
+        route_counts
+    });
+    let mut counts: Vec<Vec<usize>> = vec![Vec::new(); 8];
+    for rc in &per_seed {
+        for (wi, &n) in rc.iter().enumerate() {
+            counts[wi].push(n);
         }
     }
 
@@ -3915,26 +3961,28 @@ fn test_c1_floor_probe() {
     let mut goal_open: [usize; 8] = [0; 8];
     let mut linear: [usize; 8] = [0; 8];
 
-    for seed in 0..seeds {
-        let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let (catalog, pickup) = build_catalog_pickup(&rom, seed);
-        let result = build(
-            &rom,
-            &OverworldData { pickup: &pickup, catalog: &catalog },
-            &mut rng,
-            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
-        );
+    // Per-seed, per-world: (C1, linear, goal-open); None = unreachable.
+    let per_seed = par_seeds(seeds, |seed| {
+        let result = census_build(&rom, seed);
+        let mut out: [Option<(u32, bool, bool)>; 8] = [None; 8];
         for built in &result.worlds {
             let rc = analyze_route_choice(built, route_choice::DEFAULT_SLACK);
             if !rc.reachable {
                 continue;
             }
-            let wi = built.world_idx;
-            c1s[wi].push(rc.best_cost);
-            if rc.routes.len() <= 1 {
+            let go = world_topology(built).is_some_and(|t| t.fort_count >= 2 && t.depth == 0);
+            out[built.world_idx] = Some((rc.best_cost, rc.routes.len() <= 1, go));
+        }
+        out
+    });
+    for worlds in &per_seed {
+        for (wi, entry) in worlds.iter().enumerate() {
+            let Some((c1, lin, go)) = entry else { continue };
+            c1s[wi].push(*c1);
+            if *lin {
                 linear[wi] += 1;
             }
-            if world_topology(built).is_some_and(|t| t.fort_count >= 2 && t.depth == 0) {
+            if *go {
                 goal_open[wi] += 1;
             }
         }
