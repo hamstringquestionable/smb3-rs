@@ -416,8 +416,49 @@ pub(super) fn populate_sections<R: Rng>(
         });
     }
 
-    // Phase 1: Place one fortress per section.
-    // Track which positions are fortresses so we exclude them from level candidates.
+    // Phase 1: Place levels globally across all sections using score-based
+    // picking. Levels go down BEFORE fortresses: they are the terrain the
+    // forts respond to (choice-first). A per-section guard keeps at least
+    // one free slot in every fort-owning section so its fortress can't be
+    // starved out.
+    let global_candidates: Vec<((usize, usize), usize)> = sections
+        .iter()
+        .enumerate()
+        .flat_map(|(si, section)| section.iter().map(move |&pos| (pos, si)))
+        .collect();
+    let mut free_per_section: Vec<usize> = sections.iter().map(|s| s.len()).collect();
+
+    let mut level_positions: HashSet<(usize, usize)> = HashSet::new();
+
+    for _ in 0..level_count {
+        // Score each candidate once, then pick the max on the cached score.
+        // (`max_by` returns the LAST maximal element on ties, matching the
+        // pre-caching behavior.)
+        let best = global_candidates
+            .iter()
+            .filter(|(pos, _)| !level_positions.contains(pos))
+            .filter(|&&(_, si)| si >= fort_count || free_per_section[si] > 1)
+            .filter(|(pos, _)| !is_row78_conflict(*pos, &completable))
+            .map(|&(pos, si)| {
+                let score = score_candidate(grid, pos, &placed_levels_and_forts, bfs_distances, reverse_bfs, target_bfs_dist, &plan.level);
+                (pos, si, score)
+            })
+            .max_by(|(_, _, sa), (_, _, sb)| sa.partial_cmp(sb).unwrap_or(std::cmp::Ordering::Equal));
+
+        match best {
+            Some((pos, si, _)) => {
+                level_positions.insert(pos);
+                completable.insert(pos);
+                placed_levels_and_forts.insert(pos);
+                free_per_section[si] -= 1;
+            }
+            None => break,
+        }
+    }
+
+    // Phase 2: Place one fortress per section on the remaining free slots.
+    // Fort spread scoring sees the placed levels, so forts avoid clumping
+    // onto them.
     let mut fort_positions: HashSet<(usize, usize)> = HashSet::new();
 
     for (si, section) in sections.iter().enumerate() {
@@ -425,18 +466,27 @@ pub(super) fn populate_sections<R: Rng>(
             continue;
         }
 
-        // Score all candidates in this section, filtering row 7/8 conflicts.
+        // Score all free candidates in this section, filtering row 7/8 conflicts.
         let candidates: Vec<((usize, usize), f64)> = section
             .iter()
+            .filter(|pos| !level_positions.contains(*pos))
             .filter(|pos| !is_row78_conflict(**pos, &completable))
             .map(|&pos| {
                 (pos, score_fortress_candidate(grid, pos, &placed_levels_and_forts, bfs_distances, world_idx, &plan.fort))
             })
             .collect();
 
-        // Sample by softmax; fallback to any section slot if none passed the row78 filter.
+        // Sample by softmax; fallback to any free section slot if none passed
+        // the row78 filter. (The phase-1 guard guarantees a free slot exists.)
         let pos = pick_softmax_by_score(candidates, plan.fort.softmax_t, rng)
-            .unwrap_or_else(|| section[rng.random_range(..section.len())]);
+            .unwrap_or_else(|| {
+                let free: Vec<(usize, usize)> = section
+                    .iter()
+                    .copied()
+                    .filter(|p| !level_positions.contains(p))
+                    .collect();
+                free[rng.random_range(..free.len())]
+            });
 
         completable.insert(pos);
         placed_levels_and_forts.insert(pos);
@@ -448,43 +498,6 @@ pub(super) fn populate_sections<R: Rng>(
             is_hand_trap: false,
             is_troll_pipe: false,
         });
-    }
-
-    // Phase 2: Place levels globally across all sections using score-based
-    // picking. Candidates are all non-fortress positions from every section.
-    let mut global_candidates: Vec<((usize, usize), usize)> = Vec::new(); // (pos, section_idx)
-    for (si, section) in sections.iter().enumerate() {
-        for &pos in section {
-            if !fort_positions.contains(&pos) {
-                global_candidates.push((pos, si));
-            }
-        }
-    }
-
-    let mut level_positions: HashSet<(usize, usize)> = HashSet::new();
-
-    for _ in 0..level_count {
-        // Score each candidate once, then pick the max on the cached score.
-        // (`max_by` returns the LAST maximal element on ties, matching the
-        // pre-caching behavior.)
-        let best = global_candidates
-            .iter()
-            .filter(|(pos, _)| !level_positions.contains(pos))
-            .filter(|(pos, _)| !is_row78_conflict(*pos, &completable))
-            .map(|&(pos, _)| {
-                let score = score_candidate(grid, pos, &placed_levels_and_forts, bfs_distances, reverse_bfs, target_bfs_dist, &plan.level);
-                (pos, score)
-            })
-            .max_by(|(_, sa), (_, sb)| sa.partial_cmp(sb).unwrap_or(std::cmp::Ordering::Equal));
-
-        match best {
-            Some((pos, _)) => {
-                level_positions.insert(pos);
-                completable.insert(pos);
-                placed_levels_and_forts.insert(pos);
-            }
-            None => break,
-        }
     }
 
     // Phase 3: Emit remaining slots — levels and hammer bros.
