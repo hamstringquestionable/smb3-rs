@@ -18,8 +18,8 @@ use super::*;
 
 use super::knobs::LockScoring;
 use super::route_choice::{
-    DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice, rescue_targets,
-    walk_edge_mids,
+    DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice, measure_counts,
+    rescue_targets, walk_edge_mids,
 };
 use super::types::{BuildResult, BuiltWorld, LockAssignment, SlotAssignment, SlotKind, stamp_slots};
 
@@ -60,10 +60,10 @@ pub(super) fn place_locks<R: Rng>(
     let mut locks: Vec<LockAssignment> = Vec::new();
     let mut locked_tiles: HashSet<(usize, usize)> = HashSet::new();
 
-    // Route measurement with a given lock list. Locks are modeled as
-    // conditional edges by the scorer, so the raw build grid is correct here.
-    let measure = |trial_locks: Vec<LockAssignment>, slack: u32| -> RouteChoice {
-        let world = BuiltWorld {
+    // Trial world with a given lock list. Locks are modeled as conditional
+    // edges by the scorer, so the raw build grid is correct here.
+    let trial_world = |trial_locks: Vec<LockAssignment>| -> BuiltWorld {
+        BuiltWorld {
             world_idx,
             grid: grid.clone(),
             slots: slots.to_vec(),
@@ -71,12 +71,18 @@ pub(super) fn place_locks<R: Rng>(
             section_count: fort_count,
             pipe_pairs: pipe_pairs.to_vec(),
             hb_sprites: Vec::new(),
-        };
-        analyze_route_choice(&world, slack)
+        }
     };
-    // In-band route count — the choice-delta yardstick.
-    let measure_routes =
-        |trial_locks: Vec<LockAssignment>| -> usize { measure(trial_locks, DEFAULT_SLACK).routes.len() };
+    // Full planning measure (wide band, paths populated) — the golden-site
+    // derivation reads route paths.
+    let measure = |trial_locks: Vec<LockAssignment>| -> RouteChoice {
+        analyze_route_choice(&trial_world(trial_locks), SHAPING_SLACK)
+    };
+    // In-band route count — the choice-delta yardstick. Counts-only trial
+    // measure: narrow band, no path reconstruction.
+    let measure_routes = |trial_locks: Vec<LockAssignment>| -> usize {
+        measure_counts(&trial_world(trial_locks), DEFAULT_SLACK).routes.len()
+    };
     let assignment_for = |c: &ScoredLock, section_idx: usize| LockAssignment {
         pos: c.pos,
         gap_tile: c.gap_tile,
@@ -434,7 +440,7 @@ pub(super) fn place_locks<R: Rng>(
                 let golden: Vec<Pos> = if force_safe {
                     Vec::new()
                 } else {
-                    let rc = measure(locks.clone(), SHAPING_SLACK);
+                    let rc = measure(locks.clone());
                     let mut sites: Vec<Pos> = Vec::new();
                     if let Some(cheap) = rc.routes.first() {
                         let cheap_mids = walk_edge_mids(&cheap.path);
