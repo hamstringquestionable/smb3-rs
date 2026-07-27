@@ -4095,3 +4095,182 @@ fn test_dump_required_progression() {
     std::fs::write(&filename, rom.output_bytes()).unwrap();
     eprintln!("\nWrote {filename}");
 }
+
+/// Choice-first route metric (weighted set-cost: pipe 1 / level 3 / fort 5 /
+/// rock 8, each clearable charged once). Aggregates how many distinct
+/// near-optimal routes each world offers over many seeds — LINEAR = one best
+/// route, CHOICE = 2+ within `slack` points. Verdict + gap are exact.
+///
+/// Run with:
+///   ROUTE_SEEDS=200 SLACK=3 cargo test --release \
+///     test_route_choice -- --ignored --nocapture
+/// DUMP_SEED=<n> also prints per-world one-liners for that seed.
+#[test]
+#[ignore]
+fn test_route_choice() {
+    let rom_bytes = match std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") {
+        Ok(b) => b,
+        Err(_) => {
+            eprintln!("ROM not found, skipping");
+            return;
+        }
+    };
+    let rom = match Rom::from_bytes(&rom_bytes) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("ROM parse failed: {e}");
+            return;
+        }
+    };
+    let rom = apply_qol_for_overworld(&rom);
+
+    let seeds: u64 = std::env::var("ROUTE_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100);
+    let slack: u32 = std::env::var("SLACK")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(route_choice::DEFAULT_SLACK);
+    let dump_seed: Option<u64> = std::env::var("DUMP_SEED")
+        .ok()
+        .and_then(|s| s.parse().ok());
+
+    let mut counts: Vec<Vec<usize>> = vec![Vec::new(); 8];
+
+    for seed in 0..seeds {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let (catalog, pickup) = build_catalog_pickup(&rom, seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
+        if Some(seed) == dump_seed {
+            eprintln!("\n=== Route choice, seed {seed} (slack {slack}) ===");
+        }
+        for built in &result.worlds {
+            let rc = analyze_route_choice(built, slack);
+            counts[built.world_idx].push(if rc.reachable { rc.routes.len() } else { 0 });
+            if Some(seed) == dump_seed {
+                if std::env::var("RENDER").is_ok() {
+                    eprint!("{}", route_choice::render_route_choice(built, slack));
+                } else {
+                    dump_route_choice(built, slack);
+                }
+            }
+        }
+    }
+
+    eprintln!("\n=== Route choice over {seeds} seeds (slack {slack}) ===");
+    eprintln!("  {:<4} {:>6} {:>8} {:>8} {:>5}", "", "mean", "linear%", "choice%", "max");
+    let mut all: Vec<usize> = Vec::new();
+    for (wi, c) in counts.iter().enumerate() {
+        if c.is_empty() {
+            continue;
+        }
+        all.extend(c.iter().copied());
+        let mean = c.iter().sum::<usize>() as f64 / c.len() as f64;
+        let linear = c.iter().filter(|&&n| n <= 1).count() as f64 / c.len() as f64 * 100.0;
+        let choice = c.iter().filter(|&&n| n >= 2).count() as f64 / c.len() as f64 * 100.0;
+        let max = c.iter().copied().max().unwrap_or(0);
+        eprintln!("  W{:<3} {mean:>6.2} {linear:>7.0}% {choice:>7.0}% {max:>5}", wi + 1);
+    }
+    if !all.is_empty() {
+        let mean = all.iter().sum::<usize>() as f64 / all.len() as f64;
+        let linear = all.iter().filter(|&&n| n <= 1).count() as f64 / all.len() as f64 * 100.0;
+        eprintln!("  overall: mean {mean:.2} routes/world; {linear:.0}% linear");
+    }
+}
+
+/// Best-of-K feasibility experiment (no builder changes): does the builder's
+/// own random variation already contain more-choiceful versions of each world?
+///
+/// Build M seeds, record whether each world came out LINEAR (≤1 route) or
+/// CHOICE (≥2), then compute the best-of-K linear rate — the chance that all K
+/// independent tries come out linear, `∏(L-i)/(M-i)` over M samples with L
+/// linear. If that rate falls off fast as K grows, best-of-K helps; a world
+/// stuck near 100% at large K is geometry-capped (selection can't save it).
+///
+///   BEST_SEEDS=400 SLACK=3 cargo test --release \
+///     test_best_of_k -- --ignored --nocapture
+#[test]
+#[ignore]
+fn test_best_of_k() {
+    let rom_bytes = match std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") {
+        Ok(b) => b,
+        Err(_) => {
+            eprintln!("ROM not found, skipping");
+            return;
+        }
+    };
+    let rom = match Rom::from_bytes(&rom_bytes) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("ROM parse failed: {e}");
+            return;
+        }
+    };
+    let rom = apply_qol_for_overworld(&rom);
+
+    let m: u64 = std::env::var("BEST_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(400);
+    let slack: u32 = std::env::var("SLACK")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(route_choice::DEFAULT_SLACK);
+
+    // Per world: how many of the M builds came out LINEAR.
+    let mut linear: [usize; 8] = [0; 8];
+    for seed in 0..m {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let (catalog, pickup) = build_catalog_pickup(&rom, seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
+        for built in &result.worlds {
+            let rc = analyze_route_choice(built, slack);
+            let is_choice = rc.reachable && rc.routes.len() >= 2;
+            if !is_choice {
+                linear[built.world_idx] += 1;
+            }
+        }
+    }
+
+    // P(all K of a random K-subset are linear) = ∏_{i<K} (L-i)/(M-i).
+    let best_of_k_linear = |l: usize, k: usize| -> f64 {
+        if l < k {
+            return 0.0;
+        }
+        (0..k).map(|i| (l - i) as f64 / (m as usize - i) as f64).product::<f64>() * 100.0
+    };
+
+    let ks = [1usize, 2, 4, 8, 16];
+    eprintln!("\n=== Best-of-K linear% over {m} seeds (slack {slack}) ===");
+    eprint!("  {:<5}", "");
+    for k in ks {
+        eprint!(" K={k:<5}");
+    }
+    eprintln!("  (geometry-capped if K=16 stays high)");
+    let mut overall = [0.0f64; 5];
+    for (wi, &l) in linear.iter().enumerate() {
+        eprint!("  W{:<4}", wi + 1);
+        for (j, &k) in ks.iter().enumerate() {
+            let v = best_of_k_linear(l, k);
+            overall[j] += v / 8.0;
+            eprint!(" {v:5.0}% ");
+        }
+        eprintln!();
+    }
+    eprint!("  {:<5}", "all");
+    for v in overall {
+        eprint!(" {v:5.0}% ");
+    }
+    eprintln!("  <- overall linear% by K");
+}
