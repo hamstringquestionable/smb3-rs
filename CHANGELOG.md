@@ -9,6 +9,13 @@ deploys.
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-07-27
+
+### Fixed
+
+- 7-1: the two Green Troopas near the start now always stay in the shell pool,
+  so the enemy shuffle can no longer replace them with something unsafe there.
+
 ## [1.0.5] - 2026-07-25
 
 ### Changed
