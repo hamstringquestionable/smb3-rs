@@ -11,6 +11,25 @@ deploys.
 
 ### Changed
 
+- Worlds with few pipes (all but 3, 7, and 8) now offer real route choice
+  much more often: a shortcut pipe that would collapse one of the world's
+  roughly-equal routes is rejected and re-picked instead of merely
+  discouraged. Across all worlds, seeds with only one reasonable route drop
+  from 46% to 41% of worlds — the best the builder has measured.
+- The guaranteed "beat this fortress to open the way to the goal" lock is
+  no longer forced on every world: the guarantee is now the challenge floor
+  alone (the cheapest way through a world always costs about five levels'
+  worth of effort — now held more tightly than ever, with the floor's rare
+  escapes down from 1.6% to 0.1% of worlds). A world that can't reach the
+  floor without a goal gate still gets one, and about 1% of worlds now have
+  the goal open from the start — for a price.
+- Seed generation is ~5x faster (typical browser generate drops from
+  ~0.4 s to ~0.08 s): the choice-first builder's route measures — the bulk
+  of its work — now skip path bookkeeping on trial flips, measure at the
+  narrowest useful band, and run their Dijkstra on a packed-state flat table
+  instead of hashed tuple maps; the level pass keeps an already-choiceful
+  greedy layout instead of always re-measuring it. Route quality re-verified
+  by census (linearity, forced-level streaks, challenge floor, goal gate).
 - The overworld builder now BUILDS for route choice instead of rerolling for
   it: levels are placed first as the world's terrain (half by look and spread,
   half as measured moves that turn empty shortcut loops into real either-or

@@ -11,7 +11,7 @@ use super::knobs::{Knobs, LevelScoring};
 use super::locks::place_locks;
 use super::pipes::{FIXED_PIPE_ENDPOINTS, PIPE_EXCLUDED_POSITIONS, place_pipes, place_spare_pipes};
 use super::route_choice::{
-    COST_LEVEL, DEFAULT_SLACK, SHAPING_SLACK, analyze_route_choice, in_band_count,
+    COST_LEVEL, DEFAULT_SLACK, SHAPING_SLACK, analyze_route_choice, in_band_count, measure_counts,
 };
 use super::scoring::{is_row78_conflict, score_candidate};
 use super::shape::{enforce_c1_floor, shape_forts};
@@ -242,6 +242,13 @@ pub(super) fn build_world<R: Rng>(
         rng,
     );
 
+    // Step 5.6: C1 floor, second pass. The spare-pipe floor guard is SOFT —
+    // the vanilla pipe budget outranks it, so a pipe-rich world can be
+    // forced to place a floor-violating shortcut (min C1 sank to 4 on W7
+    // without this). Repair against the FINAL cost landscape: level moves
+    // still can't change walkability, so pipes and locks stay valid.
+    enforce_c1_floor(&mut built, &hb_sprite_positions);
+
     built
 }
 
@@ -398,7 +405,10 @@ const LEVEL_TARGETS_PER_DETOUR: usize = 2;
 ///
 /// Choice-aware split: the FIRST half is placed on the aesthetic score alone
 /// (greedy spread + path relevance — the terrain; uniform random instead when
-/// `knobs.random_first_half`), the SECOND half is placed MEASURED. Per level,
+/// `knobs.random_first_half`), the SECOND half is placed greedily too and
+/// KEPT when the layout already measures choiceful (lazy repair — one cheap
+/// measure instead of ~25); only linear layouts re-place it MEASURED. Per
+/// measured level,
 /// candidates are the top aesthetic scorers plus detour-derived targets —
 /// blanks on the cheap route's exclusive stretch vs each dominated detour
 /// whose gap one level can rescue — and the pick maximizes the in-band route
@@ -440,8 +450,11 @@ fn place_levels<R: Rng>(
 
     let measured_count = level_count / 2;
     let greedy_count = level_count - measured_count;
+    // Second-half picks made greedily — kept if the greedy layout already
+    // measures choiceful, ripped up and re-placed measured if not.
+    let mut greedy_tail: Vec<(usize, usize)> = Vec::new();
 
-    for _ in 0..greedy_count {
+    for i in 0..level_count {
         let pick = if knobs.random_first_half {
             let eligible: Vec<(usize, usize)> = assignable
                 .iter()
@@ -478,6 +491,9 @@ fn place_levels<R: Rng>(
             Some(pos) => {
                 placed_levels.insert(pos);
                 completable.insert(pos);
+                if i >= greedy_count {
+                    greedy_tail.push(pos);
+                }
             }
             None => break,
         }
@@ -515,6 +531,9 @@ fn place_levels<R: Rng>(
 
     // Interim world for measuring: no forts/locks yet, so routes differ only
     // by level-sets — exactly the structure a level placement can shape.
+    // LAZY REPAIR: measure the all-greedy layout once — when it already
+    // offers 2+ in-band routes, keep it and skip the measured rework
+    // entirely; only linear layouts pay for the per-candidate measures.
     let mut interim = BuiltWorld {
         world_idx,
         grid: grid.clone(),
@@ -524,6 +543,24 @@ fn place_levels<R: Rng>(
         pipe_pairs: pipe_pairs.to_vec(),
         hb_sprites: Vec::new(),
     };
+
+    let rc0 = measure_counts(&interim, DEFAULT_SLACK);
+    if in_band_count(&rc0) >= 2 {
+        return interim.slots;
+    }
+    // Linear — rip up the greedy second half and re-place it measured, from
+    // the same first-half-only state the measured pass has always seen.
+    for &pos in &greedy_tail {
+        if let Some(i) = interim
+            .slots
+            .iter()
+            .position(|s| s.pos == pos && s.kind == SlotKind::Level)
+        {
+            interim.slots[i].kind = SlotKind::HammerBro;
+        }
+        placed_levels.remove(&pos);
+        completable.remove(&pos);
+    }
 
     for _ in 0..measured_count {
         let rc = analyze_route_choice(&interim, SHAPING_SLACK);
@@ -599,7 +636,9 @@ fn place_levels<R: Rng>(
         for &pos in &candidates {
             let Some(idx) = hb_slot_index(&interim, pos) else { continue };
             interim.slots[idx].kind = SlotKind::Level;
-            let rc2 = analyze_route_choice(&interim, SHAPING_SLACK);
+            // Trial: only `in_band_count` is read, defined on the
+            // `DEFAULT_SLACK` band — measure narrow, no paths.
+            let rc2 = measure_counts(&interim, DEFAULT_SLACK);
             interim.slots[idx].kind = SlotKind::HammerBro;
             let (in_band, score) = (in_band_count(&rc2), score_of[&pos]);
             if best.is_none_or(|(_, bi, bs)| in_band > bi || (in_band == bi && score > bs)) {

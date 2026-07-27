@@ -6,8 +6,12 @@
 //! to `SlotKind::Fortress` (the same mechanism the spare-pipe pass uses for
 //! HB→Pipe), which keeps the pointer-table budget exactly balanced.
 //!
-//! Two phases, both driven by `analyze_route_choice` at `SHAPING_SLACK`
-//! (wide band — near-miss corridors stay visible):
+//! Two phases, driven by `analyze_route_choice`. Planning measures run at
+//! `SHAPING_SLACK` (wide band — near-miss corridors stay visible) with
+//! paths; trial measures use the cheap `measure_counts` variant, at the
+//! narrowest band their accept key allows (phase A reads `shaping_gap`, so
+//! its trials stay wide; phase B and the C1-floor pass read only in-band
+//! numbers and run at `DEFAULT_SLACK`):
 //!
 //! - **Phase A — equalize.** While the world lacks 2 roughly-equal routes
 //!   (`DEFAULT_SLACK` band) and a rescuable near-miss route exists, try a
@@ -32,7 +36,7 @@ use super::*;
 use super::knobs::FortScoring;
 use super::route_choice::{
     C1_FLOOR, ChoiceRoute, DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice,
-    in_band_count, rescue_targets,
+    in_band_count, measure_counts, rescue_targets,
 };
 use super::scoring::{is_row78_conflict, pick_softmax_by_score, score_fortress_candidate};
 use super::sections::completable_positions;
@@ -130,10 +134,13 @@ pub(super) fn shape_forts<R: Rng>(
                     built.slots[src_idx].kind = SlotKind::HammerBro;
                     built.slots[dst_idx].kind = SlotKind::Level;
                     measures += 1;
-                    let rc2 = measure(built);
+                    // Trial: wide band (the accept key reads `shaping_gap`),
+                    // no paths. On accept, re-measure in full — the next
+                    // planning round reads route paths.
+                    let rc2 = measure_counts(built, SHAPING_SLACK);
                     let after = (in_band_count(&rc2), shaping_gap(&rc2));
                     if after.0 > before.0 || (after.0 == before.0 && after.1 < before.1) {
-                        rc = rc2;
+                        rc = measure(built);
                         applied = true;
                         break 'moves;
                     }
@@ -185,10 +192,12 @@ pub(super) fn shape_forts<R: Rng>(
                 let Some(idx) = hb_slot_index(built, pos) else { continue };
                 convert(built, idx, placed.len());
                 measures += 1;
-                let rc2 = measure(built);
+                // Trial: wide band (accept key reads `shaping_gap`), no
+                // paths; full re-measure on accept for the next round.
+                let rc2 = measure_counts(built, SHAPING_SLACK);
                 let after = (in_band_count(&rc2), shaping_gap(&rc2));
                 if after.0 > before.0 || (after.0 == before.0 && after.1 < before.1) {
-                    rc = rc2;
+                    rc = measure(built);
                     placed.push(pos);
                     applied = true;
                     break 'targets;
@@ -219,7 +228,12 @@ pub(super) fn shape_forts<R: Rng>(
             first_pick.get_or_insert(pos);
             let Some(idx) = hb_slot_index(built, pos) else { break };
             convert(built, idx, placed.len());
-            let rc2 = measure(built);
+            // Trial: only `in_band_count` is read, which is defined on the
+            // `DEFAULT_SLACK` band — measure narrow, no paths. (In-band
+            // routes and their domination status can't depend on
+            // out-of-band routes: a dominator is never costlier than what
+            // it dominates.)
+            let rc2 = measure_counts(built, DEFAULT_SLACK);
             if in_band_count(&rc2) >= baseline {
                 placed.push(pos);
                 accepted = Some(rc2);
@@ -237,7 +251,7 @@ pub(super) fn shape_forts<R: Rng>(
                 let Some(pos) = first_pick else { break };
                 let Some(idx) = hb_slot_index(built, pos) else { break };
                 convert(built, idx, placed.len());
-                rc = measure(built);
+                rc = measure_counts(built, DEFAULT_SLACK);
                 placed.push(pos);
             }
         }
@@ -251,8 +265,8 @@ pub(super) fn shape_forts<R: Rng>(
 
 /// Level moves attempted per world by the C1-floor repair pass, and measured
 /// (src, dst) pairs per move. Only deficient worlds (~14% pre-floor) pay.
-const FLOOR_MAX_MOVES: usize = 4;
-const FLOOR_MOVE_MEASURES: usize = 6;
+const FLOOR_MAX_MOVES: usize = 6;
+const FLOOR_MOVE_MEASURES: usize = 12;
 
 /// Raise the cheapest route's cost to `C1_FLOOR` where the content budget
 /// allows: while C1 is below the floor, move a level the cheap route doesn't
@@ -281,7 +295,10 @@ pub(super) fn enforce_c1_floor(built: &mut BuiltWorld, reserved: &HashSet<Pos>) 
         .collect();
 
     for _ in 0..FLOOR_MAX_MOVES {
-        let rc = measure(built);
+        // Everything this pass reads lives in the `DEFAULT_SLACK` band, so
+        // it plans AND trials narrow; the plan needs `cheap.path`, trials
+        // read only (capped C1, in-band count).
+        let rc = analyze_route_choice(built, DEFAULT_SLACK);
         if !rc.reachable || rc.best_cost >= C1_FLOOR {
             return;
         }
@@ -331,7 +348,7 @@ pub(super) fn enforce_c1_floor(built: &mut BuiltWorld, reserved: &HashSet<Pos>) 
         let before = (rc.best_cost.min(C1_FLOOR), in_band_count(&rc));
         let mut best: Option<((usize, usize), (u32, usize))> = None;
         let mut measures = 0;
-        'moves: for &src in sources.iter().take(3) {
+        'moves: for &src in sources.iter().take(4) {
             let Some(src_idx) = built
                 .slots
                 .iter()
@@ -339,7 +356,7 @@ pub(super) fn enforce_c1_floor(built: &mut BuiltWorld, reserved: &HashSet<Pos>) 
             else {
                 continue;
             };
-            for &dst in dests.iter().take(3) {
+            for &dst in dests.iter().take(4) {
                 if measures >= FLOOR_MOVE_MEASURES {
                     break 'moves;
                 }
@@ -347,7 +364,7 @@ pub(super) fn enforce_c1_floor(built: &mut BuiltWorld, reserved: &HashSet<Pos>) 
                 built.slots[src_idx].kind = SlotKind::HammerBro;
                 built.slots[dst_idx].kind = SlotKind::Level;
                 measures += 1;
-                let rc2 = measure(built);
+                let rc2 = measure_counts(built, DEFAULT_SLACK);
                 let key = (rc2.best_cost.min(C1_FLOOR), in_band_count(&rc2));
                 if key > before && best.as_ref().is_none_or(|(_, bk)| key > *bk) {
                     best = Some(((src_idx, dst_idx), key));
@@ -376,6 +393,8 @@ fn shaping_gap(rc: &RouteChoice) -> u32 {
     near_miss(rc).map_or(u32::MAX, |r| r.cost - rc.best_cost)
 }
 
+/// Full planning measure: wide band, paths populated — the result the
+/// candidate-derivation reads (`routes[0].path`, `rescue_targets`) come from.
 fn measure(built: &BuiltWorld) -> RouteChoice {
     analyze_route_choice(built, SHAPING_SLACK)
 }

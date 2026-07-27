@@ -160,9 +160,14 @@ pub(crate) struct LockScoring {
     /// before giving up and accepting the top-scored one.
     pub choice_guard_tries: usize,
     /// Whether some lock MUST sever the goal (the goal-gate duty). Default
-    /// true — the shipped guarantee. `false` is the C1-floor experiment arm:
-    /// every lock places purely by (choice delta, score) and the goal may be
-    /// open at start; see `test_c1_floor_probe`.
+    /// FALSE (user decision 2026-07-27): the shipped guarantee is the C1
+    /// floor, not the door-and-key moment — every lock places purely by
+    /// (choice delta, score) and the goal may be open at start (~1% of
+    /// worlds). The build loop still flips this on per-world as a FLOOR
+    /// BACKSTOP: a world whose ungated cheapest route can't be repaired to
+    /// `C1_FLOOR` (connectivity-pipe corridors that dodge level moves for
+    /// free) is rebuilt gated — the goal-severing lock is the one tool that
+    /// prices such a corridor. See `test_c1_floor_probe`.
     pub goal_gate: bool,
 }
 
@@ -177,7 +182,7 @@ impl Default for LockScoring {
             w8_bridge_bonus: 8,
             weak_lock_threshold: 5,
             choice_guard_tries: 4,
-            goal_gate: true,
+            goal_gate: false,
         }
     }
 }

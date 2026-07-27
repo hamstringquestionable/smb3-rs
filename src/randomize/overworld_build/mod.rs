@@ -122,6 +122,33 @@ pub(crate) fn build<R: Rng>(
             shuffle_hammer_bros,
             rng,
         );
+
+        // C1-floor backstop: with the goal-gate duty off, ~3% of worlds end
+        // below the floor because their cheapest route rides connectivity
+        // pipes — a corridor level moves can't charge (the walk just dodges
+        // any level for free). A goal-severing lock is the one tool that
+        // prices such a corridor, so rebuild ONLY those worlds with the gate
+        // on. Cheap: one counts-only measure per world, a rebuild for the
+        // deficient few.
+        let built = {
+            let rc = route_choice::measure_counts(&built, route_choice::DEFAULT_SLACK);
+            if knobs.lock.goal_gate || !rc.reachable || rc.best_cost >= route_choice::C1_FLOOR {
+                built
+            } else {
+                let mut gated = knobs;
+                gated.lock.goal_gate = true;
+                build_world(
+                    wi,
+                    rom,
+                    patched_grids[wi].clone(),
+                    &fixed_positions[wi],
+                    &counts,
+                    &gated,
+                    shuffle_hammer_bros,
+                    rng,
+                )
+            }
+        };
         worlds.push(built);
     }
 

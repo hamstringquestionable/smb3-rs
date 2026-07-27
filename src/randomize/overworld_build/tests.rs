@@ -42,11 +42,24 @@ fn load_rom() -> Option<Rom> {
 /// `8s are Wild` and are NOT applied here.) Idempotent: `load_rom` already
 /// applies it; explicit callers just re-write the same bytes.
 fn apply_qol_for_overworld(rom: &Rom) -> Rom {
+    apply_qol_variant(rom, false, false)
+}
+
+/// Arm-parameterized map QOL: the always-on patches plus optional
+/// `more_hammer_rocks` / `8s are Wild` edits, in production order
+/// (`randomize_inner` applies these before the builder reads the map).
+fn apply_qol_variant(rom: &Rom, hammer_rocks: bool, eights_wild: bool) -> Rom {
     let mut out = rom.clone();
     super::super::qol::fix_w3_drawbridges(&mut out);
     super::super::qol::remove_rocks(&mut out);
-    super::super::qol::fix_big_q_block_rooms(&mut out);
+    if hammer_rocks {
+        super::super::qol::make_hammer_rocks(&mut out);
+    }
     super::super::qol::apply_w8_bridges(&mut out);
+    if eights_wild {
+        super::super::qol::apply_w8_canoe_and_paths(&mut out);
+    }
+    super::super::qol::fix_big_q_block_rooms(&mut out);
     out
 }
 
@@ -109,16 +122,57 @@ fn par_seeds<T: Send>(seeds: u64, per_seed: impl Fn(u64) -> T + Sync) -> Vec<T> 
     results.into_iter().map(|o| o.unwrap()).collect()
 }
 
-/// One standard census build: fresh per-seed RNG + catalog/pickup, the
-/// default diagnostic flags. The shared parallel body of the censuses.
+/// Census flag arms. Every census seed runs with start↔airship swap ON
+/// (per-world 50/50, exactly as the real flag rolls it — so unswapped
+/// worlds stay covered inside every arm), and the map-QOL arms split
+/// 50% base / 25% `more hammer rocks` / 25% `8s are Wild` by seed.
+#[derive(Clone, Copy, PartialEq)]
+enum CensusArm {
+    Base,
+    HammerRocks,
+    EightsWild,
+}
+
+fn census_arm(seed: u64) -> CensusArm {
+    match seed % 4 {
+        2 => CensusArm::HammerRocks,
+        3 => CensusArm::EightsWild,
+        _ => CensusArm::Base,
+    }
+}
+
+/// One standard census build: fresh per-seed RNG + catalog/pickup over the
+/// seed's flag arm (see [`CensusArm`]). Takes the RAW rom — QOL is applied
+/// here, per arm. The shared parallel body of the censuses.
 fn census_build(rom: &Rom, seed: u64) -> BuildResult {
-    let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    let (catalog, pickup) = build_catalog_pickup(rom, seed);
-    build(
+    let arm = census_arm(seed);
+    let rom = apply_qol_variant(
         rom,
+        arm == CensusArm::HammerRocks,
+        arm == CensusArm::EightsWild,
+    );
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let mut catalog = NodeCatalog::build(&rom, false);
+    let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
+    super::super::start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
+    let pickup = super::super::overworld_pickup::pick_up(
+        &rom,
+        &catalog,
+        super::super::overworld_pickup::PickupFlags {
+            shuffle_spade_games: true,
+            shuffle_toad_houses: true,
+            ..Default::default()
+        },
+    );
+    build(
+        &rom,
         &OverworldData { pickup: &pickup, catalog: &catalog },
         &mut rng,
-        BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        BuildFlags {
+            shuffle_toad_houses: true,
+            eights_are_wild: arm == CensusArm::EightsWild,
+            ..Default::default()
+        },
     )
 }
 
@@ -2666,7 +2720,6 @@ fn test_pipe_distribution() {
             return;
         }
     };
-    let rom = apply_qol_for_overworld(&rom);
 
     let seeds: u64 = std::env::var("PIPE_SEEDS")
         .ok()
@@ -2797,7 +2850,6 @@ fn test_fortress_distribution() {
             return;
         }
     };
-    let rom = apply_qol_for_overworld(&rom);
 
     let seeds: u64 = std::env::var("FORT_SEEDS")
         .ok()
@@ -2950,7 +3002,6 @@ fn test_level_placement_quality() {
             return;
         }
     };
-    let rom = apply_qol_for_overworld(&rom);
 
     let seeds: u64 = std::env::var("LEVEL_SEEDS")
         .ok()
@@ -3870,7 +3921,6 @@ fn test_route_choice() {
             return;
         }
     };
-    let rom = apply_qol_for_overworld(&rom);
 
     let seeds: u64 = std::env::var("ROUTE_SEEDS")
         .ok()
@@ -3934,6 +3984,117 @@ fn test_route_choice() {
 }
 
 
+/// Per-seed build wall time — the number the WASM app's generate latency
+/// tracks. Serial on purpose (per-seed timing, no thread contention).
+///   TIME_SEEDS=40 cargo test --release --lib test_build_time -- --ignored --nocapture
+#[test]
+#[ignore]
+fn test_build_time() {
+    let rom_bytes = match std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") {
+        Ok(b) => b,
+        Err(_) => {
+            eprintln!("ROM not found, skipping");
+            return;
+        }
+    };
+    let rom = Rom::from_bytes(&rom_bytes).unwrap();
+    let seeds: u64 = std::env::var("TIME_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(40);
+
+    let mut per_seed_ms: Vec<f64> = Vec::new();
+    for seed in 0..seeds {
+        let t = std::time::Instant::now();
+        let _ = census_build(&rom, seed);
+        per_seed_ms.push(t.elapsed().as_secs_f64() * 1e3);
+    }
+    let mean = per_seed_ms.iter().sum::<f64>() / per_seed_ms.len() as f64;
+    let max = per_seed_ms.iter().cloned().fold(0.0f64, f64::max);
+    let min = per_seed_ms.iter().cloned().fold(f64::INFINITY, f64::min);
+    eprintln!("\nbuild time over {seeds} seeds: mean {mean:.1} ms  min {min:.1}  max {max:.1}");
+}
+
+/// Rock-path census: how often the cheapest route (C1) breaks a rock, and
+/// how often any in-band ALTERNATIVE (C2+) does — i.e. is the rock a forced
+/// part of the cheap way through, or the price of a route choice? Rates are
+/// also given relative to worlds that have a breakable rock at all.
+///   ROUTE_SEEDS=1000 cargo test --release --lib test_rock_route_census -- --ignored --nocapture
+#[test]
+#[ignore]
+fn test_rock_route_census() {
+    let rom_bytes = match std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") {
+        Ok(b) => b,
+        Err(_) => {
+            eprintln!("ROM not found, skipping");
+            return;
+        }
+    };
+    let rom = Rom::from_bytes(&rom_bytes).unwrap();
+    let seeds: u64 = std::env::var("ROUTE_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(200);
+
+    // Per world: (worlds seen, worlds with >=1 breakable rock, C1 breaks a
+    // rock, some in-band alternative breaks a rock).
+    let per_seed = par_seeds(seeds, |seed| {
+        let result = census_build(&rom, seed);
+        let mut rows = [[0u32; 4]; 8];
+        for built in &result.worlds {
+            let mut has_rock = false;
+            for r in 0..built.grid.rows() {
+                for c in 0..built.grid.cols {
+                    if matches!(built.grid.get(r, c), 0x51 | 0x52) {
+                        has_rock = true;
+                    }
+                }
+            }
+            let rc = analyze_route_choice(built, route_choice::DEFAULT_SLACK);
+            let c1_rock = rc.routes.first().is_some_and(|r| r.rocks > 0);
+            let alt_rock = rc.routes.iter().skip(1).any(|r| r.rocks > 0);
+            let row = &mut rows[built.world_idx];
+            row[0] += 1;
+            row[1] += has_rock as u32;
+            row[2] += c1_rock as u32;
+            row[3] += alt_rock as u32;
+        }
+        rows
+    });
+    let mut totals = [[0u64; 4]; 8];
+    for rows in &per_seed {
+        for (wi, row) in rows.iter().enumerate() {
+            for (t, &v) in totals[wi].iter_mut().zip(row.iter()) {
+                *t += v as u64;
+            }
+        }
+    }
+
+    eprintln!("\n=== Rock-path census over {seeds} seeds ===");
+    eprintln!(
+        "  {:<4} {:>10} {:>10} {:>12} {:>14} {:>14}",
+        "", "rock-world", "C1 rock", "alt(C2+) rock", "C1|rock-world", "alt|rock-world"
+    );
+    for (wi, t) in totals.iter().enumerate() {
+        let [n, rockw, c1, alt] = *t;
+        if n == 0 {
+            continue;
+        }
+        let pc = |x: u64, base: u64| {
+            if base == 0 { 0.0 } else { x as f64 / base as f64 * 100.0 }
+        };
+        eprintln!(
+            "  W{:<3} {:>9.0}% {:>9.1}% {:>11.1}% {:>13.1}% {:>13.1}%",
+            wi + 1,
+            pc(rockw, n),
+            pc(c1, n),
+            pc(alt, n),
+            pc(c1, rockw),
+            pc(alt, rockw),
+        );
+    }
+}
+
 /// C1-floor probe: per-world distribution of the cheapest route's cost (C1),
 /// the goal-open rate, and linear% — the evidence base for the "replace the
 /// binary goal-gate duty with a cost floor on the cheapest route" question.
@@ -3949,7 +4110,6 @@ fn test_c1_floor_probe() {
         Some(r) => r,
         None => return,
     };
-    let rom = apply_qol_for_overworld(&rom);
 
     let seeds: u64 = std::env::var("ROUTE_SEEDS")
         .ok()
