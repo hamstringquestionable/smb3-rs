@@ -252,7 +252,7 @@ fn walk_from(
 
 /// Reachable-node set as a flat bitset (index `r * cols + c`). The many
 /// reachability-only callers — `place_locks`' per-candidate hard-rule checks,
-/// `canoes_reachable`, the compound phase's completability/goal-open guards —
+/// `canoes_reachable`, the gated shortcut's completability/goal-open guards —
 /// need only "is this node reachable" and "how many", never the edge graph or
 /// distances. Building those (a `HashMap<Pos, Vec<Edge>>` + distance map) per
 /// call dominated the lock pass's cost; this returns the identical node SET

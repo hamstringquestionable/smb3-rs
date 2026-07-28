@@ -8,23 +8,24 @@
 //!
 //! Two phases, driven by `analyze_route_choice`. Planning measures run at
 //! `SHAPING_SLACK` (wide band — near-miss corridors stay visible) with
-//! paths; trial measures use the cheap `measure_counts` variant, at the
-//! narrowest band their accept key allows (phase A reads `shaping_gap`, so
-//! its trials stay wide; phase B and the C1-floor pass read only in-band
-//! numbers and run at `DEFAULT_SLACK`):
+//! paths; trial measures use the cheap `measure_counts` variant at
+//! `SHAPING_SLACK` (the accept key reads `shaping_gap`):
 //!
-//! - **Phase A — equalize.** While the world lacks 2 roughly-equal routes
-//!   (`DEFAULT_SLACK` band) and a rescuable near-miss route exists, try a
-//!   fort on the CHEAP route's exclusive stretch (nodes the near-miss route
-//!   doesn't share). A fort there re-prices the cheap route +5, closing the
-//!   gap. Candidates are ranked by the aesthetic fort score; each try is
-//!   re-measured and reverted unless it grows the in-band route count or
-//!   shrinks the gap.
-//! - **Phase B — aesthetic remainder.** Remaining forts go down by the
-//!   existing softmax over the fort score, with a choice-guard: a pick that
-//!   SHRINKS the in-band route count is reverted and redrawn (bounded), so
-//!   late forts don't wreck what phase A built. If every redraw degrades,
-//!   the first pick lands anyway — a fort must land.
+//! - **Rescue loop — equalize.** While the world lacks 2 roughly-equal
+//!   routes and a rescuable near-miss exists, add cost to the CHEAP route's
+//!   exclusive stretch (the nodes a near-miss route doesn't share). The
+//!   "add cost" tool is a parameter — a [`RescueMove`] is either a FORT
+//!   converted onto that stretch (+5) or a LEVEL rebalanced onto it (moving
+//!   a near-miss route's exclusive level there). Each round measures both
+//!   kinds and commits the single best, preferring the cheaper move (a free
+//!   level swap over a spent fort) on a measured tie. (Folds the old Phase
+//!   A0 level-rebalance and Phase A fort-placement, which ran the same
+//!   diagnose→locate→add-cost steps, into one loop — issue #125.)
+//! - **Phase B — aesthetic remainder.** Any forts the rescue loop didn't
+//!   spend go down by the softmax over the fort score, with a choice-guard:
+//!   a pick that SHRINKS the in-band route count is reverted and redrawn
+//!   (bounded), so late forts don't wreck what the rescue loop built. If
+//!   every redraw degrades, the first pick lands anyway — a fort must land.
 //!
 //! The returned gate hint is a uniformly random placed fort: `place_locks`
 //! hard-filters that fort's lock to goal-gating candidates. Uniform choice

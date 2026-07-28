@@ -40,19 +40,19 @@ use super::locks::place_locks;
 use super::route_choice::{C1_FLOOR, DEFAULT_SLACK, in_band_count, measure_counts};
 use super::types::{BuiltWorld, LockAssignment, SlotKind, stamp_slots};
 
-/// Metrics for "how often the compound move comes into play" (issue #125 /
-/// census `test_compound_moves`). `ELIGIBLE` = linear worlds that entered the
+/// Metrics for "how often the gated shortcut comes into play" (issue #125 /
+/// census `test_gated_shortcut_moves`). `ELIGIBLE` = linear worlds that entered the
 /// loop (had a fort to gate with); `APPLIED` = worlds where at least one
 /// choice-shaping move was committed. Relaxed atomics: a single add per built
 /// world, negligible in production, read only by the census.
-pub(crate) static COMPOUND_ELIGIBLE: AtomicU64 = AtomicU64::new(0);
-pub(crate) static COMPOUND_APPLIED: AtomicU64 = AtomicU64::new(0);
+pub(crate) static GATED_SHORTCUT_ELIGIBLE: AtomicU64 = AtomicU64::new(0);
+pub(crate) static GATED_SHORTCUT_APPLIED: AtomicU64 = AtomicU64::new(0);
 
 /// Reset the metric counters (census calls this before a sweep).
 #[cfg(test)]
 pub(crate) fn reset_metrics() {
-    COMPOUND_ELIGIBLE.store(0, Ordering::Relaxed);
-    COMPOUND_APPLIED.store(0, Ordering::Relaxed);
+    GATED_SHORTCUT_ELIGIBLE.store(0, Ordering::Relaxed);
+    GATED_SHORTCUT_APPLIED.store(0, Ordering::Relaxed);
 }
 
 /// Rounds of the shaping loop (a successful move usually makes the world
@@ -67,7 +67,7 @@ const MAX_PIPES: usize = 2;
 /// them); returns how many it used (the caller places the rest as ordinary
 /// spares). The re-hunt move spends no pipes, so this fires even at
 /// `spare_budget == 0` (pipe-less worlds).
-pub(super) fn shape_choice<R: Rng>(
+pub(super) fn place_gated_shortcut<R: Rng>(
     built: &mut BuiltWorld,
     spare_budget: usize,
     reserved: &HashSet<Pos>,
@@ -98,7 +98,7 @@ pub(super) fn shape_choice<R: Rng>(
             break; // no fort whose lock could gate a fork
         }
         if !counted_eligible {
-            COMPOUND_ELIGIBLE.fetch_add(1, Ordering::Relaxed);
+            GATED_SHORTCUT_ELIGIBLE.fetch_add(1, Ordering::Relaxed);
             counted_eligible = true;
         }
         let goal_open_before = goal_open(built, start_pos, target_pos);
@@ -141,7 +141,7 @@ pub(super) fn shape_choice<R: Rng>(
                     pipes_used += 1;
                 }
                 if !counted_applied {
-                    COMPOUND_APPLIED.fetch_add(1, Ordering::Relaxed);
+                    GATED_SHORTCUT_APPLIED.fetch_add(1, Ordering::Relaxed);
                     counted_applied = true;
                 }
             }

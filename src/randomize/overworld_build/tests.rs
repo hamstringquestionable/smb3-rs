@@ -296,11 +296,11 @@ fn all_world_targets_reachable() {
 /// forts in reachable order, opening their locks, and reach the goal. The
 /// all-locks-open connectivity check above misses a lock that strands its own
 /// gate; this uses the authoritative progression oracle instead. Guards the
-/// compound gated-shortcut move (issue #125), whose relocated lock is the one
-/// place a builder pass could newly strand the goal, across the realistic
+/// gated-shortcut move (issue #125), whose added pipe + re-hunted lock are the
+/// one place a builder pass could newly strand the goal, across the realistic
 /// census flag mix (both hammer arms).
 #[test]
-fn compound_progression_never_strands_goal() {
+fn gated_shortcut_progression_never_strands_goal() {
     let rom = match load_rom() {
         Some(r) => r,
         None => return,
@@ -4358,16 +4358,16 @@ fn test_c1_floor_probe() {
     }
 }
 
-/// Headroom probe for the gated-shortcut compound move (issue #125): per
-/// LINEAR world (the compound move's target), how much room is there to build
-/// one? Counts FX-slot headroom (4 locks/world cap), off-cheap-route forts
-/// (candidates to gate a shortcut with), lockless off-route forts (additive
-/// gating), and spare-pipe presence (a shortcut needs a pipe edge).
+/// Headroom probe for the gated shortcut (issue #125): per LINEAR world (the
+/// move's target), how much room is there to build one? Counts FX-slot headroom
+/// (4 locks/world cap), off-cheap-route forts (candidates to gate a shortcut
+/// with), lockless off-route forts (why a re-hunt, not an added lock), and
+/// spare-pipe presence (a shortcut needs a pipe edge).
 ///
-///   ROUTE_SEEDS=500 cargo test --release --lib test_compound_headroom -- --ignored --nocapture
+///   ROUTE_SEEDS=500 cargo test --release --lib test_gated_shortcut_headroom -- --ignored --nocapture
 #[test]
 #[ignore]
-fn test_compound_headroom() {
+fn test_gated_shortcut_headroom() {
     let rom = match load_rom() {
         Some(r) => r,
         None => return,
@@ -4385,7 +4385,7 @@ fn test_compound_headroom() {
         for built in &result.worlds {
             let rc = analyze_route_choice(built, route_choice::DEFAULT_SLACK);
             if !rc.reachable || rc.routes.len() >= 2 {
-                continue; // only linear worlds are the compound target
+                continue; // only linear worlds are the gated-shortcut target
             }
             let cheap: HashSet<Pos> = rc
                 .routes
@@ -4445,7 +4445,7 @@ fn test_compound_headroom() {
     }
     let pct = |n: usize| n as f64 / linear_worlds.max(1) as f64 * 100.0;
     eprintln!("\n=== Compound-move headroom over {seeds} seeds ===");
-    eprintln!("  linear worlds (compound target): {linear_worlds}");
+    eprintln!("  linear worlds (gated-shortcut target): {linear_worlds}");
     eprintln!("  ...with FX headroom (locks<4):        {} ({:.0}%)", with_fx_headroom, pct(with_fx_headroom));
     eprintln!("  ...with an off-cheap-route fort:      {} ({:.0}%)", with_off_route, pct(with_off_route));
     eprintln!("  ...with a LOCKLESS off-route fort:    {} ({:.0}%)", with_lockless_off_route, pct(with_lockless_off_route));
@@ -4458,10 +4458,10 @@ fn test_compound_headroom() {
 /// worlds that entered the search with the ingredients) and APPLIED (a gated
 /// shortcut actually placed) as rates over all built worlds.
 ///
-///   ROUTE_SEEDS=500 cargo test --release --lib test_compound_moves -- --ignored --nocapture
+///   ROUTE_SEEDS=500 cargo test --release --lib test_gated_shortcut_moves -- --ignored --nocapture
 #[test]
 #[ignore]
-fn test_compound_moves() {
+fn test_gated_shortcut_moves() {
     let rom = match load_rom() {
         Some(r) => r,
         None => return,
@@ -4471,13 +4471,13 @@ fn test_compound_moves() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(500);
 
-    super::compound::reset_metrics();
-    // Build every world; the compound pass bumps its global counters in-build.
+    super::gated_shortcut::reset_metrics();
+    // Build every world; the gated-shortcut pass bumps its global counters in-build.
     par_seeds(seeds, |seed| {
         let _ = census_build(&rom, seed);
     });
-    let eligible = super::compound::COMPOUND_ELIGIBLE.load(std::sync::atomic::Ordering::Relaxed);
-    let applied = super::compound::COMPOUND_APPLIED.load(std::sync::atomic::Ordering::Relaxed);
+    let eligible = super::gated_shortcut::GATED_SHORTCUT_ELIGIBLE.load(std::sync::atomic::Ordering::Relaxed);
+    let applied = super::gated_shortcut::GATED_SHORTCUT_APPLIED.load(std::sync::atomic::Ordering::Relaxed);
     let worlds = seeds * 8;
     eprintln!("\n=== Compound gated-shortcut over {seeds} seeds ({worlds} worlds) ===");
     eprintln!(

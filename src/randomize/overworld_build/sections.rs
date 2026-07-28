@@ -221,8 +221,8 @@ pub(super) fn build_world<R: Rng>(
     // Level moves never change walkability, so the locks stay valid.
     enforce_c1_floor(&mut built, &hb_sprite_positions);
 
-    // Reserve one pipe from the spare budget for a possible compound gated
-    // shortcut (Step 5.6). That move must run AFTER the spare-pipe pass — a
+    // Reserve one pipe from the spare budget for a possible gated shortcut
+    // (Step 5.6). That move must run AFTER the spare-pipe pass — a
     // spare pipe added later can collapse the choice a gate creates — but it
     // still needs a pipe slot to spend, so hold one back here. If the move
     // declines it, it is placed as an ordinary spare below.
@@ -249,14 +249,13 @@ pub(super) fn build_world<R: Rng>(
         rng,
     );
 
-    // Step 5.6: Unified choice-shaping phase (issue #125). One measured loop
-    // over the complete map with a compound-move vocabulary — golden-lock
-    // relocation (no pipe; the only tool for pipe-less worlds) and the gated
-    // shortcut (pipe + relocated lock). Runs LAST among the pipe passes so
-    // nothing downstream collapses the choice it creates, spending at most the
-    // reserved pipe. Each move is committed only if it strictly raises the
-    // in-band route count.
-    let used = compound::shape_choice(
+    // Step 5.6: Gated shortcut (issue #125). On a still-linear world, add a
+    // content-skipping pipe and re-run the lock hunt so a fortress's lock gates
+    // the shortcut — a "long way, or beat the fort and pipe" choice. Runs LAST
+    // among the pipe passes so nothing downstream collapses the choice it
+    // creates, spending the reserved pipe (or leaving it for an ordinary spare
+    // below). Committed only if it strictly raises the in-band route count.
+    let used = gated_shortcut::place_gated_shortcut(
         &mut built,
         hold,
         &hb_sprite_positions,
