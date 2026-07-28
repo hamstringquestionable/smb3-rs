@@ -205,13 +205,17 @@ pub(crate) struct PipeScoring {
     /// Softmax temperature for every pipe candidate pick. Score range is
     /// typically ~[-8, +12].
     pub softmax_t: f64,
-    /// Connectivity build-outward: Manhattan distance at which an island
-    /// blank's frontier-proximity score reaches zero (normalization cap).
-    pub frontier_max_dist: f64,
-    /// Connectivity build-outward: weight on frontier proximity (nearer
-    /// islands are bridged first, growing a chain instead of jumping to the
-    /// goal).
-    pub frontier_weight: f64,
+    /// Connectivity build-outward (issue #121): weight on an endpoint's
+    /// walk-degree, so a bridge lands on a junction (a branch node the later
+    /// passes can fork) rather than a dead-end tip (a one-way spur). This is
+    /// the topology-aware endpoint bias — it shapes HOW an island connects,
+    /// never whether (reachability is enforced by the reachable/unreachable
+    /// split, not scored).
+    pub junction_weight: f64,
+    /// Connectivity build-outward: penalty per Manhattan hop of bridge length.
+    /// Keeps the junction bias from reaching back across the map — the island
+    /// still joins via a short bridge to a NEARBY junction, not a distant one.
+    pub bridge_penalty: f64,
     /// Per-spare-pipe skip-cap weights: relative chance the pipe's max
     /// level-skip is 1, 2, 3, or 4. Each pipe rolls a cap, then greedily
     /// takes the biggest skip within it — big skips happen sometimes, not
@@ -233,8 +237,8 @@ impl Default for PipeScoring {
     fn default() -> Self {
         PipeScoring {
             softmax_t: 4.0,
-            frontier_max_dist: 20.0,
-            frontier_weight: 5.0,
+            junction_weight: 5.0,
+            bridge_penalty: 5.0,
             spare_cap_weights: [30.0, 25.0, 25.0, 20.0],
             level_skip_weight: 10.0,
             jump_weight: 1.0,

@@ -4016,6 +4016,60 @@ fn test_route_choice() {
 }
 
 
+/// Probe how a world (WORLD=n, 1-based; default 4) places connectivity pipes.
+/// For each base-arm seed it prints the world's route count plus, per pipe
+/// pair, each endpoint's walk-degree and BFS hops from start / to target. This
+/// is the tool that diagnosed the W4 junction-endpoint regression (issue #121)
+/// — junction bridges landed the island mouth next to the airship (low t),
+/// building a goal express; see `PROXIMITY_ENDPOINT_WORLDS`.
+///   PROBE_SEEDS=200 WORLD=4 cargo test --release --lib test_pipe_probe -- --ignored --nocapture
+#[test]
+#[ignore]
+fn test_pipe_probe() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => {
+            eprintln!("ROM not found, skipping");
+            return;
+        }
+    };
+    let seeds: u64 = std::env::var("PROBE_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(200);
+    let world: usize = std::env::var("WORLD").ok().and_then(|s| s.parse().ok()).unwrap_or(4);
+    let wi = world - 1;
+    for seed in 0..seeds {
+        if census_arm(seed) != CensusArm::Base {
+            continue; // one flag arm, so on/off compare like-for-like
+        }
+        let result = census_build(&rom, seed);
+        let Some(built) = result.worlds.iter().find(|b| b.world_idx == wi) else { continue };
+        let rc = analyze_route_choice(built, route_choice::DEFAULT_SLACK);
+        let n = if rc.reachable { rc.routes.len() } else { 0 };
+
+        let mut grid = built.grid.clone();
+        stamp_slots(&mut grid, &built.slots);
+        let start = rom_data::find_start(&grid);
+        let target = find_target(&grid, wi);
+        let d_start = walk_map(&grid, &built.pipe_pairs, start, wi).distances;
+        let d_target = target.map(|t| walk_map(&grid, &built.pipe_pairs, Some(t), wi).distances);
+        let stat = |p: (usize, usize)| -> String {
+            let deg = walk_degree(&grid, p);
+            let ds = d_start.get(&p).map(|d| d.to_string()).unwrap_or_else(|| "-".into());
+            let dt = d_target
+                .as_ref()
+                .and_then(|m| m.get(&p))
+                .map(|d| d.to_string())
+                .unwrap_or_else(|| "-".into());
+            format!("{p:?}:deg{deg},s{ds},t{dt}")
+        };
+        let pipes: Vec<String> = built
+            .pipe_pairs
+            .iter()
+            .map(|&(a, b)| format!("[{} <-> {}]", stat(a), stat(b)))
+            .collect();
+        eprintln!("seed {seed:>4}  routes {n}  cost {}  pipes {}", rc.best_cost, pipes.join(" "));
+    }
+}
+
 /// Per-seed build wall time — the number the WASM app's generate latency
 /// tracks. Serial on purpose (per-seed timing, no thread contention).
 ///   TIME_SEEDS=40 cargo test --release --lib test_build_time -- --ignored --nocapture
