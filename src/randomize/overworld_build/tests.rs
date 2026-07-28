@@ -4015,6 +4015,138 @@ fn test_build_time() {
     eprintln!("\nbuild time over {seeds} seeds: mean {mean:.1} ms  min {min:.1}  max {max:.1}");
 }
 
+/// Reuse-correctness for the hoisted walk-graph base (issue #120). Compiling a
+/// `WalkGraph` once and `measure`-ing candidates against it must yield EXACTLY
+/// what a from-scratch `analyze_route_choice` on the mutated world would — for
+/// every candidate whose flip leaves the walk graph unchanged. This validates
+/// three things on real census data:
+///   1. the compile/measure split is behavior-preserving (base-measure ==
+///      one-shot on the unmutated world),
+///   2. kind flips (HB↔Fortress / HB↔Level) really ARE walk-invariant for the
+///      slots the passes flip (the premise the issue said to verify, not
+///      assume) — and where a flip is NOT invariant (a slot on a background
+///      tile), reuse is correctly skipped,
+///   3. adding a lock (an overlay `walk_map` never sees) is always invariant.
+///
+/// ROUTE_SEEDS=100 cargo test --release --lib test_walkgraph_reuse -- --ignored --nocapture
+#[test]
+#[ignore]
+fn test_walkgraph_reuse() {
+    let rom_bytes = match std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") {
+        Ok(b) => b,
+        Err(_) => {
+            eprintln!("ROM not found, skipping");
+            return;
+        }
+    };
+    let rom = Rom::from_bytes(&rom_bytes).unwrap();
+    let seeds: u64 = std::env::var("ROUTE_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100);
+    let slack = route_choice::DEFAULT_SLACK;
+
+    let (mut invariant_flips, mut variant_flips, mut lock_trials) = (0usize, 0usize, 0usize);
+
+    for seed in 0..seeds {
+        for built in &census_build(&rom, seed).worlds {
+            let Some(base) = route_choice::WalkGraph::compile(built) else {
+                continue;
+            };
+            let world = built.world_idx + 1;
+
+            // (1) Split is behavior-preserving: reuse on the SAME world equals
+            // the one-shot entry point, byte for byte (paths included).
+            assert_eq!(
+                base.measure(built, slack, true),
+                analyze_route_choice(built, slack),
+                "W{world} seed {seed}: base-measure differs from one-shot",
+            );
+
+            // (2) Kind-flip candidates: flip each slot to each other content
+            // kind. When the flip leaves the walk graph unchanged (checked
+            // directly), reuse MUST match a fresh measure; when it doesn't
+            // (background-tile slot), reuse is unsound and correctly skipped.
+            for i in 0..built.slots.len() {
+                for new_kind in [SlotKind::Fortress, SlotKind::Level, SlotKind::HammerBro] {
+                    if built.slots[i].kind == new_kind {
+                        continue;
+                    }
+                    let mut cand = built.clone();
+                    cand.slots[i].kind = new_kind.clone();
+                    if base.walk_invariant(&cand) {
+                        invariant_flips += 1;
+                        assert_eq!(
+                            base.measure(&cand, slack, true),
+                            analyze_route_choice(&cand, slack),
+                            "W{world} seed {seed}: reuse != fresh for a walk-invariant \
+                             {:?}→{new_kind:?} flip at slot {i}",
+                            built.slots[i].kind,
+                        );
+                    } else {
+                        variant_flips += 1;
+                    }
+                }
+            }
+
+            // (3) Lock candidates: add a lock on an arbitrary existing lock's
+            // tile (or, if the world has none, on a real path tile), opening a
+            // random section. Locks never touch the grid walk_map sees, so the
+            // base stays valid and reuse must match fresh.
+            if built.section_count > 0 {
+                let mut cand = built.clone();
+                let lock_pos = built
+                    .locks
+                    .first()
+                    .map(|l| l.pos)
+                    .or_else(|| walk_edge_path_tile(built));
+                if let Some(pos) = lock_pos {
+                    cand.locks.push(super::types::LockAssignment {
+                        pos,
+                        gap_tile: 0x54,
+                        replace_tile: 0x00,
+                        fort_section: seed as usize % built.section_count,
+                        secret_exit_safe: false,
+                        blocks_target: false,
+                    });
+                    assert!(
+                        base.walk_invariant(&cand),
+                        "W{world} seed {seed}: adding a lock changed the walk graph",
+                    );
+                    lock_trials += 1;
+                    assert_eq!(
+                        base.measure(&cand, slack, true),
+                        analyze_route_choice(&cand, slack),
+                        "W{world} seed {seed}: reuse != fresh after adding a lock",
+                    );
+                }
+            }
+        }
+    }
+
+    // The test must actually exercise the reuse path, not pass vacuously.
+    assert!(invariant_flips > 0, "no walk-invariant kind flips were exercised");
+    assert!(lock_trials > 0, "no lock trials were exercised");
+    eprintln!(
+        "\nWalkGraph reuse over {seeds} seeds: {invariant_flips} walk-invariant kind flips, \
+         {variant_flips} walk-changing flips (correctly skipped), {lock_trials} lock trials — \
+         all reuse results matched a fresh measure.",
+    );
+}
+
+/// Any path tile crossed by a walk edge in `built` (a valid lock site) — for
+/// the reuse test's lock candidate when the world has no lock yet.
+fn walk_edge_path_tile(built: &BuiltWorld) -> Option<(usize, usize)> {
+    let mut grid = built.grid.clone();
+    stamp_slots(&mut grid, &built.slots);
+    let start = rom_data::find_start(&grid);
+    walk_map(&grid, &built.pipe_pairs, start, built.world_idx)
+        .edges
+        .values()
+        .flatten()
+        .find_map(|e| e.path_pos)
+}
+
 /// Rock-path census: how often the cheapest route (C1) breaks a rock, and
 /// how often any in-band ALTERNATIVE (C2+) does — i.e. is the rock a forced
 /// part of the cheap way through, or the price of a route choice? Rates are
