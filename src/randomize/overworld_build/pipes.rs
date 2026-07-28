@@ -60,6 +60,28 @@ const PROXIMITY_ENDPOINT_WORLDS: &[usize] = &[
     3, // W4 (Giant Land) — junction island tiles are goal-adjacent
 ];
 
+/// Whether `world_idx`'s connectivity-pipe island endpoint uses the old
+/// nearest-frontier scoring instead of junction preference. In release this is
+/// purely the constant above; under `cfg(test)` two env knobs A/B the passes
+/// for census sweeps (`PIPEMODE=proximity` forces every world to proximity,
+/// `FORCEJUNCTION=1` forces every world to junction). Compiled out of the
+/// shipped/WASM binary.
+#[cfg(not(test))]
+#[inline]
+fn use_proximity_endpoint(world_idx: usize) -> bool {
+    PROXIMITY_ENDPOINT_WORLDS.contains(&world_idx)
+}
+#[cfg(test)]
+fn use_proximity_endpoint(world_idx: usize) -> bool {
+    if std::env::var("FORCEJUNCTION").is_ok() {
+        false
+    } else if std::env::var("PIPEMODE").ok().as_deref() == Some("proximity") {
+        true
+    } else {
+        PROXIMITY_ENDPOINT_WORLDS.contains(&world_idx)
+    }
+}
+
 /// Nearest-frontier island score (proximity opt-out only): Manhattan distance
 /// at which the score saturates to zero, and the weight it scales to. Retained
 /// from the pre-#121 scorer so opted-out worlds keep their exact behavior.
@@ -246,7 +268,7 @@ pub(super) fn place_pipes<R: Rng>(
             // passes can fork. A mild per-hop bridge penalty keeps the junction
             // bias from reaching across the map. Worlds in
             // PROXIMITY_ENDPOINT_WORLDS opt out (see that constant).
-            let use_proximity = PROXIMITY_ENDPOINT_WORLDS.contains(&world_idx);
+            let use_proximity = use_proximity_endpoint(world_idx);
             let island_score = |b: (usize, usize), frontier_dist: f64| -> f64 {
                 if use_proximity {
                     // Nearer the frontier = higher (shortest bridge), saturated.
