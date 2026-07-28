@@ -18,6 +18,15 @@ deploys.
   reads as more distinct near-optimal routes). The trade is slightly longer
   runs of back-to-back required levels; seed generation stays well under the
   browser's speed budget.
+- Corridor-heavy worlds gain a lot more route choice from a new **gated
+  shortcut**: on a world with only one reasonable route, the builder adds a
+  shortcut pipe and re-runs the lock placement so a fortress's lock lands on the
+  shortcut — taking it means beating that fortress first, a real "long way or
+  beat the fort" decision instead of a free skip. Worlds with a single route
+  drop most where it was worst (World 8 ~66%→36%, World 3 ~53%→32%, World 7
+  ~35%→29%; ~31%→24% overall). Seed generation actually got *faster* — a rewritten
+  reachability walk more than pays for the extra work (~94 ms in the browser).
+  (issue #125)
 
 ## [1.1.0] - 2026-07-27
 

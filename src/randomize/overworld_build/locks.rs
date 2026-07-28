@@ -119,7 +119,7 @@ pub(super) fn place_locks<R: Rng>(
             .collect();
         let mut feasible: Vec<usize> = Vec::new();
         'tiles: {
-            let mut sever_walks: Vec<HashSet<Pos>> = Vec::new();
+            let mut sever_walks: Vec<Reach> = Vec::new();
             let Some(tp) = target_pos else { break 'tiles };
             for r in 0..base_grid.rows() {
                 for c in 0..base_grid.cols {
@@ -129,15 +129,15 @@ pub(super) fn place_locks<R: Rng>(
                     }
                     let mut g = base_grid.clone();
                     g.set(r, c, gap_tile_for(tile));
-                    let nodes = walk_map(&g, pipe_pairs, start_pos, world_idx).nodes;
-                    if !nodes.contains(&tp) {
+                    let nodes = walk_reachable(&g, pipe_pairs, start_pos, world_idx);
+                    if !nodes.contains(tp) {
                         sever_walks.push(nodes);
                     }
                 }
             }
             for sec in 0..fort_count {
                 let ok = sever_walks.iter().any(|nodes| {
-                    (0..=sec).all(|j| fort_of[j].is_none_or(|fp| nodes.contains(&fp)))
+                    (0..=sec).all(|j| fort_of[j].is_none_or(|fp| nodes.contains(fp)))
                 });
                 if ok {
                     feasible.push(sec);
@@ -242,7 +242,7 @@ pub(super) fn place_locks<R: Rng>(
         // Open grid (no candidate lock) is constant for all candidates in this
         // section — hoist the BFS to avoid redundant walks per candidate.
         let open_grid = build_test_grid(None);
-        let open_node_count = walk_map(&open_grid, pipe_pairs, start_pos, world_idx).nodes.len() as i32;
+        let open_node_count = walk_reachable(&open_grid, pipe_pairs, start_pos, world_idx).len() as i32;
 
         // If a previous lock in this world already blocks the target, suppress
         // the target-blocking bonus to avoid stacking multiple locks against
@@ -256,9 +256,9 @@ pub(super) fn place_locks<R: Rng>(
             // Hard rule 1: with this lock placed (and earlier locks opened),
             // the current fortress must still be reachable from start.
             let test_grid = build_test_grid(Some((cand_pos, gap)));
-            let walk = walk_map(&test_grid, pipe_pairs, start_pos, world_idx);
+            let walk = walk_reachable(&test_grid, pipe_pairs, start_pos, world_idx);
 
-            if !walk.nodes.contains(&fort_pos) {
+            if !walk.contains(fort_pos) {
                 continue;
             }
 
@@ -284,8 +284,8 @@ pub(super) fn place_locks<R: Rng>(
                     // its section is earlier — same rule as the loop above.
                     let cand_tile = if section_idx < prev_lock.fort_section { tile } else { gap };
                     g.set(cand_pos.0, cand_pos.1, cand_tile);
-                    let w = walk_map(&g, pipe_pairs, start_pos, world_idx);
-                    !w.nodes.contains(&pf.pos)
+                    let w = walk_reachable(&g, pipe_pairs, start_pos, world_idx);
+                    !w.contains(pf.pos)
                 } else {
                     false
                 }
@@ -297,21 +297,21 @@ pub(super) fn place_locks<R: Rng>(
             // Check if target is reachable with this lock closed (used for
             // secret exit safety).
             let target_reachable = target_pos
-                .map(|tp| walk.nodes.contains(&tp))
+                .map(|tp| walk.contains(tp))
                 .unwrap_or(true);
 
             // A "safe" lock blocks nothing important: all fortresses and
             // the target remain reachable. Safe for 1-F secret exit since
             // leaving it closed can never cause a softlock.
             let safe = target_reachable && slots.iter().all(|s| {
-                s.kind != SlotKind::Fortress || walk.nodes.contains(&s.pos)
+                s.kind != SlotKind::Fortress || walk.contains(s.pos)
             });
 
             // Score by gated node count: how many nodes become unreachable
             // when this lock is closed? Prefers chokepoints that gate large
             // portions of the map over locks adjacent to the airship (which
             // only gate ~1 node).
-            let gated = open_node_count - walk.nodes.len() as i32;
+            let gated = open_node_count - walk.len() as i32;
 
             let mut score: i32 = gated;
 
@@ -319,7 +319,7 @@ pub(super) fn place_locks<R: Rng>(
             let blocks_later_fort = slots.iter().any(|s| {
                 s.kind == SlotKind::Fortress
                     && s.section > section_idx
-                    && !walk.nodes.contains(&s.pos)
+                    && !walk.contains(s.pos)
             });
             if blocks_later_fort {
                 score += knobs.blocks_later_fort_bonus;
