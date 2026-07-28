@@ -292,6 +292,38 @@ fn all_world_targets_reachable() {
     }
 }
 
+/// Every built world must stay completable via PROGRESSION — you can beat the
+/// forts in reachable order, opening their locks, and reach the goal. The
+/// all-locks-open connectivity check above misses a lock that strands its own
+/// gate; this uses the authoritative progression oracle instead. Guards the
+/// compound gated-shortcut move (issue #125), whose relocated lock is the one
+/// place a builder pass could newly strand the goal, across the realistic
+/// census flag mix (both hammer arms).
+#[test]
+fn compound_progression_never_strands_goal() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let failures = par_seeds(200, |seed| {
+        let result = census_build(&rom, seed);
+        let mut bad: Vec<(u64, usize, bool)> = Vec::new();
+        for built in &result.worlds {
+            for hammer in [false, true] {
+                if !analyze_required_progression(built, hammer).reachable {
+                    bad.push((seed, built.world_idx, hammer));
+                }
+            }
+        }
+        bad
+    });
+    let all: Vec<_> = failures.into_iter().flatten().collect();
+    assert!(
+        all.is_empty(),
+        "worlds unreachable via progression (seed, world_idx, hammer): {all:?}",
+    );
+}
+
 /// Tuning diagnostic: sweep the level-spread exponent and show the resulting
 /// per-world mean assigned-level count, plus how often we hit "overflow" —
 /// a world's fair share exceeding its hard capacity (clamp), or the total
@@ -4324,6 +4356,139 @@ fn test_c1_floor_probe() {
             lin as f64 / n as f64 * 100.0,
         );
     }
+}
+
+/// Headroom probe for the gated-shortcut compound move (issue #125): per
+/// LINEAR world (the compound move's target), how much room is there to build
+/// one? Counts FX-slot headroom (4 locks/world cap), off-cheap-route forts
+/// (candidates to gate a shortcut with), lockless off-route forts (additive
+/// gating), and spare-pipe presence (a shortcut needs a pipe edge).
+///
+///   ROUTE_SEEDS=500 cargo test --release --lib test_compound_headroom -- --ignored --nocapture
+#[test]
+#[ignore]
+fn test_compound_headroom() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let seeds: u64 = std::env::var("ROUTE_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(500);
+
+    // Per-seed, per-world: only linear worlds report a tuple.
+    // (fx_headroom, off_route_forts, lockless_off_route_forts, spare_pipes).
+    let per_seed = par_seeds(seeds, |seed| {
+        let result = census_build(&rom, seed);
+        let mut out: Vec<(usize, usize, usize, usize, usize)> = Vec::new();
+        for built in &result.worlds {
+            let rc = analyze_route_choice(built, route_choice::DEFAULT_SLACK);
+            if !rc.reachable || rc.routes.len() >= 2 {
+                continue; // only linear worlds are the compound target
+            }
+            let cheap: HashSet<Pos> = rc
+                .routes
+                .first()
+                .map(|r| r.path.iter().copied().collect())
+                .unwrap_or_default();
+            let locked_sections: HashSet<usize> =
+                built.locks.iter().map(|l| l.fort_section).collect();
+            let mut off_route = 0;
+            let mut lockless_off_route = 0;
+            for s in &built.slots {
+                if s.kind != SlotKind::Fortress || cheap.contains(&s.pos) {
+                    continue;
+                }
+                off_route += 1;
+                if !locked_sections.contains(&s.section) {
+                    lockless_off_route += 1;
+                }
+            }
+            let fx_headroom = 4usize.saturating_sub(built.locks.len());
+            out.push((
+                built.world_idx,
+                fx_headroom,
+                off_route,
+                lockless_off_route,
+                built.pipe_pairs.len(),
+            ));
+        }
+        out
+    });
+
+    let mut linear_worlds = 0usize;
+    let mut with_fx_headroom = 0usize;
+    let mut with_off_route = 0usize;
+    let mut with_lockless_off_route = 0usize;
+    let mut additive_ready = 0usize; // fx headroom AND lockless off-route fort
+    let mut with_pipes = 0usize;
+    for worlds in &per_seed {
+        for &(_, fx, off, lockless, pipes) in worlds {
+            linear_worlds += 1;
+            if fx >= 1 {
+                with_fx_headroom += 1;
+            }
+            if off >= 1 {
+                with_off_route += 1;
+            }
+            if lockless >= 1 {
+                with_lockless_off_route += 1;
+            }
+            if fx >= 1 && lockless >= 1 {
+                additive_ready += 1;
+            }
+            if pipes >= 1 {
+                with_pipes += 1;
+            }
+        }
+    }
+    let pct = |n: usize| n as f64 / linear_worlds.max(1) as f64 * 100.0;
+    eprintln!("\n=== Compound-move headroom over {seeds} seeds ===");
+    eprintln!("  linear worlds (compound target): {linear_worlds}");
+    eprintln!("  ...with FX headroom (locks<4):        {} ({:.0}%)", with_fx_headroom, pct(with_fx_headroom));
+    eprintln!("  ...with an off-cheap-route fort:      {} ({:.0}%)", with_off_route, pct(with_off_route));
+    eprintln!("  ...with a LOCKLESS off-route fort:    {} ({:.0}%)", with_lockless_off_route, pct(with_lockless_off_route));
+    eprintln!("  ...additive-ready (headroom+lockless):{} ({:.0}%)", additive_ready, pct(additive_ready));
+    eprintln!("  ...with >=1 pipe pair:                {} ({:.0}%)", with_pipes, pct(with_pipes));
+}
+
+/// Compound gated-shortcut census (issue #125): how often the joint pipe+lock
+/// move comes into play across a realistic flag mix. Reports ELIGIBLE (linear
+/// worlds that entered the search with the ingredients) and APPLIED (a gated
+/// shortcut actually placed) as rates over all built worlds.
+///
+///   ROUTE_SEEDS=500 cargo test --release --lib test_compound_moves -- --ignored --nocapture
+#[test]
+#[ignore]
+fn test_compound_moves() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let seeds: u64 = std::env::var("ROUTE_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(500);
+
+    super::compound::reset_metrics();
+    // Build every world; the compound pass bumps its global counters in-build.
+    par_seeds(seeds, |seed| {
+        let _ = census_build(&rom, seed);
+    });
+    let eligible = super::compound::COMPOUND_ELIGIBLE.load(std::sync::atomic::Ordering::Relaxed);
+    let applied = super::compound::COMPOUND_APPLIED.load(std::sync::atomic::Ordering::Relaxed);
+    let worlds = seeds * 8;
+    eprintln!("\n=== Compound gated-shortcut over {seeds} seeds ({worlds} worlds) ===");
+    eprintln!(
+        "  eligible (linear + ingredients): {eligible} ({:.1}% of worlds)",
+        eligible as f64 / worlds as f64 * 100.0
+    );
+    eprintln!(
+        "  applied  (gated shortcut placed): {applied} ({:.1}% of worlds, {:.0}% of eligible)",
+        applied as f64 / worlds as f64 * 100.0,
+        applied as f64 / eligible.max(1) as f64 * 100.0
+    );
 }
 
 /// Production-parity route-choice render for ONE real seed: runs the full

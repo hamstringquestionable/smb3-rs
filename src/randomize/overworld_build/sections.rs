@@ -221,18 +221,25 @@ pub(super) fn build_world<R: Rng>(
     // Level moves never change walkability, so the locks stay valid.
     enforce_c1_floor(&mut built, &hb_sprite_positions);
 
+    // Reserve one pipe from the spare budget for a possible compound gated
+    // shortcut (Step 5.6). That move must run AFTER the spare-pipe pass — a
+    // spare pipe added later can collapse the choice a gate creates — but it
+    // still needs a pipe slot to spend, so hold one back here. If the move
+    // declines it, it is placed as an ordinary spare below.
+    let spare_needed = pipe_pair_count.saturating_sub(built.pipe_pairs.len());
+    let hold = spare_needed.min(1);
+
     // Step 5.5: Spare pipes. Now that levels AND locks exist, fill the
     // remaining pipe budget by converting HammerBro filler slots into pipe
     // endpoints. Each pair is scored lock-aware: at most one pair per world
     // may bypass a single mandatory fortress (the fort-skip prize); pairs
     // that would bypass 2+ forts or open the goal outright are rejected;
     // the rest aim to skip levels as before.
-    let spare_needed = pipe_pair_count.saturating_sub(built.pipe_pairs.len());
     place_spare_pipes(
         &mut built.grid,
         &mut built.slots,
         &mut built.pipe_pairs,
-        spare_needed,
+        spare_needed - hold,
         &hb_sprite_positions,
         &built.locks,
         &knobs.pipe,
@@ -242,11 +249,42 @@ pub(super) fn build_world<R: Rng>(
         rng,
     );
 
-    // Step 5.6: C1 floor, second pass. The spare-pipe floor guard is SOFT —
+    // Step 5.6: Compound gated shortcut (issue #125). One joint pipe+lock move
+    // on a still-linear world: a content-skipping pipe made fair by relocating
+    // an off-route fort's lock onto the shortcut. Runs LAST among the pipe
+    // passes so nothing downstream collapses the choice, spending the reserved
+    // slot. Applied only if it strictly raises the in-band route count.
+    let used = compound::place_gated_shortcut(
+        &mut built,
+        hold,
+        &hb_sprite_positions,
+        start_pos,
+        target_pos,
+        rng,
+    );
+    if hold > used {
+        // Declined — spend the reserved pipe as an ordinary spare.
+        place_spare_pipes(
+            &mut built.grid,
+            &mut built.slots,
+            &mut built.pipe_pairs,
+            hold - used,
+            &hb_sprite_positions,
+            &built.locks,
+            &knobs.pipe,
+            start_pos,
+            target_pos,
+            world_idx,
+            rng,
+        );
+    }
+
+    // Step 5.7: C1 floor, final pass. The spare-pipe floor guard is SOFT —
     // the vanilla pipe budget outranks it, so a pipe-rich world can be
     // forced to place a floor-violating shortcut (min C1 sank to 4 on W7
-    // without this). Repair against the FINAL cost landscape: level moves
-    // still can't change walkability, so pipes and locks stay valid.
+    // without this). Repair against the FINAL cost landscape (spares +
+    // gated shortcut committed): level moves can't change walkability, so
+    // pipes and locks stay valid.
     enforce_c1_floor(&mut built, &hb_sprite_positions);
 
     built

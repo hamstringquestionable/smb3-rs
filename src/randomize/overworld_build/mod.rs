@@ -29,6 +29,7 @@ mod sections;
 mod shape;
 mod pipes;
 mod locks;
+mod compound;
 mod progression;
 mod route_choice;
 
