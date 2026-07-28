@@ -249,12 +249,14 @@ pub(super) fn build_world<R: Rng>(
         rng,
     );
 
-    // Step 5.6: Compound gated shortcut (issue #125). One joint pipe+lock move
-    // on a still-linear world: a content-skipping pipe made fair by relocating
-    // an off-route fort's lock onto the shortcut. Runs LAST among the pipe
-    // passes so nothing downstream collapses the choice, spending the reserved
-    // slot. Applied only if it strictly raises the in-band route count.
-    let used = compound::place_gated_shortcut(
+    // Step 5.6: Unified choice-shaping phase (issue #125). One measured loop
+    // over the complete map with a compound-move vocabulary — golden-lock
+    // relocation (no pipe; the only tool for pipe-less worlds) and the gated
+    // shortcut (pipe + relocated lock). Runs LAST among the pipe passes so
+    // nothing downstream collapses the choice it creates, spending at most the
+    // reserved pipe. Each move is committed only if it strictly raises the
+    // in-band route count.
+    let used = compound::shape_choice(
         &mut built,
         hold,
         &hb_sprite_positions,

@@ -1,24 +1,25 @@
-//! Compound choice-shaping move: the **gated shortcut** (issue #125).
+//! Unified choice-shaping phase (issue #125): one measured loop with a
+//! **compound-move vocabulary**, replacing the siloed single-object measured
+//! sub-passes. Runs after the knob-built terrain + forts + locks + spare pipes,
+//! over the complete map, and reshapes a still-LINEAR world into a choiceful one
+//! by adding cost to the cheap route's exclusive stretch — the tool a parameter,
+//! per the issue's "the four passes already share one decision core."
 //!
-//! Every measured sub-pass before this one is *single-object* — it places a
-//! fort, OR a lock, OR a pipe, blind to the others. The interesting
-//! choice-structures are *compound*: a gated shortcut is a pipe **and** a lock
-//! **and** an off-path fort, working as one unit. This module places that one
-//! compound move as a joint pipe+lock step, measured atomically.
+//! ## Move vocabulary
 //!
-//! ## What it builds
+//! - **Golden lock** (no pipe) — relocate an off-route fortress's lock onto a
+//!   tile the cheap route crosses but a near-optimal also-ran does not, so the
+//!   cheap route now costs that fort's +5 and the also-ran becomes a real
+//!   alternative. The only choice tool available to pipe-less worlds (World 1
+//!   has a zero pipe budget).
+//! - **Gated shortcut** (pipe + lock) — add a content-skipping pipe (a
+//!   dominating shortcut the spare-pipe pass would veto) and gate it the same
+//!   way, so taking the shortcut means beating an off-path fort first.
 //!
-//! On a LINEAR world (one in-band route), a spare pipe that skips content
-//! creates a *dominating* shortcut — a strictly cheaper route that the
-//! spare-pipe pass would veto (a free skip is not a choice). This pass keeps
-//! that pipe and makes it *fair*: it relocates an existing **off-route fort's
-//! lock** onto the shortcut's exclusive stretch, so the shortcut now costs the
-//! player that fort's +5. Two comparable routes = a real decision:
-//!
-//! ```text
-//!   main route:      start ─ level ─ level ─ level ─ goal      (cost C0)
-//!   gated shortcut:  start ─ beat F ─[lock]─ pipe ══> goal      (cost ~C0)
-//! ```
+//! Both are the same core — *price a route against a balancing target by
+//! relocating an off-both-routes fort's lock onto their exclusive stretch*
+//! ([`try_gate`]) — differing only in whether a pipe first creates the priced
+//! route. Each round measures every candidate and commits the single best.
 //!
 //! ## Why relocation, not a new lock
 //!
@@ -28,17 +29,17 @@
 //! (the writer folds each lock into its fort's FX batch). A census of 500 seeds
 //! found ~0% of linear worlds have a *lockless* off-route fort — every fort is
 //! already locked — so a gated shortcut cannot add a lock. It instead **moves**
-//! an off-route fort's existing lock from its original chokepoint onto the
-//! shortcut: lock count stays == fort count, the FX writer is untouched, and
-//! the fort that was gating dead nodes now gates a real choice.
+//! an off-route fort's existing lock: lock count stays == fort count, the FX
+//! writer is untouched, and a fort that was gating dead nodes gates a real
+//! choice.
 //!
 //! ## Safety
 //!
-//! The move is applied to a clone and kept only if (a) the world stays
-//! completable (a monotone fort-beating fixpoint reaches the goal) and (b) the
-//! measured in-band route count strictly rises. Adding a pipe can only add
-//! reachability; the sole new stranding risk is the relocated lock's tile,
-//! which the completability fixpoint checks directly.
+//! Every move is applied to a clone and committed only if (a) the in-band route
+//! count strictly rises, (b) the world stays completable (a monotone
+//! fort-beating fixpoint reaches the goal), and (c) it doesn't newly open the
+//! goal at start. A pipe only adds reachability; the sole new stranding risk is
+//! the relocated lock's tile, which the completability fixpoint checks directly.
 
 use super::*;
 
@@ -46,15 +47,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::route_choice::{
     DEFAULT_SLACK, SHAPING_SLACK, analyze_route_choice, in_band_count, measure_counts,
-    walk_edge_mids,
+    rescue_targets, walk_edge_mids,
 };
 use super::types::{BuiltWorld, SlotKind, stamp_slots};
 
 /// Metrics for "how often the compound move comes into play" (issue #125 /
 /// census `test_compound_moves`). `ELIGIBLE` = linear worlds that entered the
-/// search with the ingredients present; `APPLIED` = worlds where a gated
-/// shortcut was actually placed. Relaxed atomics: a single add per built world,
-/// negligible in production, read only by the census after a build sweep.
+/// loop with an off-route locked fort to spend; `APPLIED` = worlds where at
+/// least one choice-shaping move was committed. Relaxed atomics: a single add
+/// per built world, negligible in production, read only by the census.
 pub(crate) static COMPOUND_ELIGIBLE: AtomicU64 = AtomicU64::new(0);
 pub(crate) static COMPOUND_APPLIED: AtomicU64 = AtomicU64::new(0);
 
@@ -65,20 +66,22 @@ pub(crate) fn reset_metrics() {
     COMPOUND_APPLIED.store(0, Ordering::Relaxed);
 }
 
-/// Candidate off-route forts examined per world, shortcut pipes per fort-free
-/// scan, and golden lock sites per shortcut. All small: the pass runs only on
+/// Rounds of the shaping loop (a successful move usually makes the world
+/// choiceful in one), candidate off-route forts examined, shortcut pipes
+/// scanned, and golden lock sites per target. All small: the loop runs only on
 /// linear worlds but still measures per candidate, so the budget stays inside
-/// the sub-100ms WASM ceiling. (Census `test_build_time` guards this.)
+/// the sub-100ms WASM ceiling (guarded by `test_build_time`).
+const MAX_ROUNDS: usize = 3;
 const MAX_PIPES: usize = 4;
 const MAX_FORTS: usize = 2;
 const MAX_SITES: usize = 2;
 
-/// Try to place one gated-shortcut compound move on `built`, consuming at most
-/// one pipe from the `spare_budget` the spare-pipe pass would otherwise use.
-/// Returns the number of pipe pairs consumed (0 or 1). Runs after locks and the
-/// C1 floor, before spare pipes, so it sees the final fort/lock landscape and
-/// leaves the remaining pipe budget to the spare pass.
-pub(super) fn place_gated_shortcut<R: Rng>(
+/// Run the unified choice-shaping loop on `built`. `spare_budget` is how many
+/// pipe pairs the gated-shortcut move may spend (the spare-pipe pass reserved
+/// them); returns how many it used (the caller places the rest as ordinary
+/// spares). Golden-lock moves spend no pipes, so this fires even at
+/// `spare_budget == 0` (pipe-less worlds).
+pub(super) fn shape_choice<R: Rng>(
     built: &mut BuiltWorld,
     spare_budget: usize,
     reserved: &HashSet<Pos>,
@@ -86,28 +89,97 @@ pub(super) fn place_gated_shortcut<R: Rng>(
     target_pos: Option<Pos>,
     rng: &mut R,
 ) -> usize {
-    if spare_budget == 0 {
-        return 0;
-    }
-    // Only linear worlds need the move; a choiceful world is already done.
-    let rc = analyze_route_choice(built, SHAPING_SLACK);
-    let base_in_band = in_band_count(&rc);
-    if !rc.reachable || base_in_band >= 2 {
-        return 0;
-    }
-    let Some(cheap) = rc.routes.first() else { return 0 };
-    let cheap_nodes: HashSet<Pos> = cheap.path.iter().copied().collect();
-    let cheap_mids = walk_edge_mids(&cheap.path);
-    // Whether the goal is already open at start (no fort gates it). Relocating a
-    // fort's lock off its chokepoint can un-gate the goal; if it was gated, we
-    // won't accept a move that opens it (keeps the goal-open rate flat).
-    let goal_open_before = goal_open(built, start_pos, target_pos);
+    let mut pipes_used = 0;
+    let mut counted_eligible = false;
+    let mut counted_applied = false;
 
-    // Off-route forts whose lock we could relocate: a fortress not on the cheap
-    // route (so beating it is a genuine extra cost), carrying an existing lock
-    // that is NOT the world's goal gate (moving the goal gate could open the
-    // goal at start). Shuffled so the choice of which fort to spend varies.
-    let locked_sections: HashSet<usize> = built
+    for _ in 0..MAX_ROUNDS {
+        let rc = analyze_route_choice(built, SHAPING_SLACK);
+        let base = in_band_count(&rc);
+        if !rc.reachable || base >= 2 {
+            break; // choiceful — done
+        }
+        let Some(cheap) = rc.routes.first().cloned() else { break };
+        // Forts we may spend: off the cheap route (beating one is real extra
+        // cost), carrying a lock that isn't the world's goal gate.
+        let forts = off_route_locked_forts(built, &cheap.path, rng);
+        if forts.is_empty() {
+            break; // nothing to gate with
+        }
+        if !counted_eligible {
+            COMPOUND_ELIGIBLE.fetch_add(1, Ordering::Relaxed);
+            counted_eligible = true;
+        }
+        let goal_open_before = goal_open(built, start_pos, target_pos);
+
+        // Best move this round: (world, in_band, relocated section, used a pipe).
+        let mut best: Option<(BuiltWorld, usize, usize, bool)> = None;
+        let keep = |cand: Option<(BuiltWorld, usize, usize)>,
+                        used_pipe: bool,
+                        best: &mut Option<(BuiltWorld, usize, usize, bool)>| {
+            if let Some((w, n, sec)) = cand
+                && best.as_ref().is_none_or(|&(_, bn, _, _)| n > bn)
+            {
+                *best = Some((w, n, sec, used_pipe));
+            }
+        };
+
+        // Golden-lock moves (no pipe): gate the cheap route against each rescue
+        // target (an out-of-band parallel or a dominated detour).
+        for target in rescue_targets(&rc) {
+            let cand = try_gate(
+                built, &cheap.path, &target.path, &forts, goal_open_before, base, start_pos,
+                target_pos,
+            );
+            keep(cand, false, &mut best);
+        }
+
+        // Gated-shortcut moves (one pipe): add a content-skipping pipe, then
+        // gate the shortcut it creates against the old cheap route.
+        if spare_budget - pipes_used >= 1 {
+            for (a, b) in shortcut_pipe_candidates(built, reserved, start_pos) {
+                let mut piped = built.clone();
+                add_pipe(&mut piped, a, b);
+                let rc_p = analyze_route_choice(&piped, SHAPING_SLACK);
+                let Some(shortcut) = rc_p.routes.first().cloned() else { continue };
+                let piped_forts = off_route_locked_forts(&piped, &shortcut.path, rng);
+                let cand = try_gate(
+                    &piped, &shortcut.path, &cheap.path, &piped_forts, goal_open_before, base,
+                    start_pos, target_pos,
+                );
+                keep(cand, true, &mut best);
+            }
+        }
+
+        match best {
+            Some((mut world, _, section, used_pipe)) => {
+                finalize_lock_flags(&mut world, section, start_pos, target_pos);
+                *built = world;
+                if used_pipe {
+                    pipes_used += 1;
+                }
+                if !counted_applied {
+                    COMPOUND_APPLIED.fetch_add(1, Ordering::Relaxed);
+                    counted_applied = true;
+                }
+            }
+            None => break, // no improving move
+        }
+    }
+    pipes_used
+}
+
+/// Off-route fortresses whose lock we may relocate: a fort NOT on `route`
+/// (beating it is genuine extra cost) carrying a lock that is NOT the world's
+/// goal gate (moving the gate could open the goal). Shuffled so which fort is
+/// spent varies, then capped.
+fn off_route_locked_forts<R: Rng>(
+    built: &BuiltWorld,
+    route: &[Pos],
+    rng: &mut R,
+) -> Vec<(usize, Pos)> {
+    let on_route: HashSet<Pos> = route.iter().copied().collect();
+    let locked: HashSet<usize> = built
         .locks
         .iter()
         .filter(|l| !l.blocks_target)
@@ -116,18 +188,23 @@ pub(super) fn place_gated_shortcut<R: Rng>(
     let mut forts: Vec<(usize, Pos)> = built
         .slots
         .iter()
-        .filter(|s| s.kind == SlotKind::Fortress && !cheap_nodes.contains(&s.pos))
-        .filter(|s| locked_sections.contains(&s.section))
+        .filter(|s| s.kind == SlotKind::Fortress && !on_route.contains(&s.pos))
+        .filter(|s| locked.contains(&s.section))
         .map(|s| (s.section, s.pos))
         .collect();
-    if forts.is_empty() {
-        return 0;
-    }
     forts.shuffle(rng);
     forts.truncate(MAX_FORTS);
+    forts
+}
 
-    // Convertible pipe endpoints: HammerBro fillers (never levels/forts), not a
-    // reserved sprite tile — same stock the spare-pipe pass draws from.
+/// Candidate shortcut pipes: HammerBro-filler endpoint pairs that skip content
+/// (levels whose route-distance sits strictly between them), widest skip first
+/// — the pairs most likely to create a dominating shortcut worth gating.
+fn shortcut_pipe_candidates(
+    built: &BuiltWorld,
+    reserved: &HashSet<Pos>,
+    start_pos: Option<Pos>,
+) -> Vec<(Pos, Pos)> {
     let dist = walk_map(&built.grid, &built.pipe_pairs, start_pos, built.world_idx).distances;
     let endpoints: Vec<Pos> = built
         .slots
@@ -136,19 +213,12 @@ pub(super) fn place_gated_shortcut<R: Rng>(
         .map(|s| s.pos)
         .filter(|p| dist.contains_key(p))
         .collect();
-    if endpoints.len() < 2 {
-        return 0;
-    }
     let level_d: Vec<usize> = built
         .slots
         .iter()
         .filter(|s| s.kind == SlotKind::Level)
         .filter_map(|s| dist.get(&s.pos).copied())
         .collect();
-
-    // Rank candidate shortcut pipes by how much content they skip (levels whose
-    // route-distance sits strictly between the endpoints), widest first — the
-    // pairs most likely to create a dominating shortcut worth gating.
     let mut pairs: Vec<(Pos, Pos, usize, usize)> = Vec::new();
     for i in 0..endpoints.len() {
         for j in (i + 1)..endpoints.len() {
@@ -165,80 +235,77 @@ pub(super) fn place_gated_shortcut<R: Rng>(
             pairs.push((a, b, skipped, hi - lo));
         }
     }
-    if pairs.is_empty() {
-        return 0;
-    }
-    // We got here with the ingredients present — this world is a real candidate.
-    COMPOUND_ELIGIBLE.fetch_add(1, Ordering::Relaxed);
     pairs.sort_by_key(|&(a, b, skipped, jump)| {
         (std::cmp::Reverse(skipped), std::cmp::Reverse(jump), a, b)
     });
     pairs.truncate(MAX_PIPES);
+    pairs.into_iter().map(|(a, b, _, _)| (a, b)).collect()
+}
 
-    // Search: for each shortcut pipe, derive the golden lock sites (tiles the
-    // shortcut crosses but the old cheap route does not), then gate one with an
-    // off-route fort's relocated lock. Keep the move that most raises the
-    // in-band route count.
-    let mut best: Option<(BuiltWorld, usize, usize)> = None; // (world, in_band, section)
-    for (a, b, _, _) in pairs {
-        let mut piped = built.clone();
-        add_pipe(&mut piped, a, b);
-        let rc_p = analyze_route_choice(&piped, SHAPING_SLACK);
-        let Some(shortcut) = rc_p.routes.first() else { continue };
-        // Golden sites: the shortcut's exclusive walk-edge mid-tiles vs the old
-        // cheap route. Sorted for determinism; capped.
-        let shortcut_nodes: HashSet<Pos> = shortcut.path.iter().copied().collect();
-        let mut sites: Vec<Pos> = walk_edge_mids(&shortcut.path)
-            .difference(&cheap_mids)
-            .copied()
-            .filter(|&t| t.0 != 7 && t.0 != 8) // conservative: skip row-7/8 completion-bit tiles
-            .filter(|&t| lockable_tile_at(&piped.grid, t))
-            // Never stack onto another fort's lock tile: two locks on one tile
-            // would collide in the route model's lock map and the FX writer.
-            .filter(|&t| !piped.locks.iter().any(|l| l.pos == t))
-            .collect();
-        if sites.is_empty() {
+/// The shared gating core: charge the `priced` route a fort's +5 by relocating
+/// an off-both-routes fort's lock onto a **golden site** — a walk-edge mid-tile
+/// the priced route crosses but the balancing `target` does not. Returns the
+/// best resulting `(world, in_band, section)` that strictly beats `base`, stays
+/// completable, and doesn't newly open the goal. `base_world` is what the lock
+/// is relocated on (already carrying the pipe for a gated shortcut).
+// Reason: eight distinct inputs (world, the two routes, fort pool, goal state,
+// baseline, anchors) with no cohesive sub-bundle — grouping would obscure, not
+// clarify. Same call shape as the other builder passes.
+#[allow(clippy::too_many_arguments)]
+fn try_gate(
+    base_world: &BuiltWorld,
+    priced: &[Pos],
+    target: &[Pos],
+    forts: &[(usize, Pos)],
+    goal_open_before: bool,
+    base: usize,
+    start_pos: Option<Pos>,
+    target_pos: Option<Pos>,
+) -> Option<(BuiltWorld, usize, usize)> {
+    let priced_nodes: HashSet<Pos> = priced.iter().copied().collect();
+    let target_nodes: HashSet<Pos> = target.iter().copied().collect();
+    // Golden sites: mid-tiles of the priced route's exclusive walk edges.
+    let target_mids = walk_edge_mids(target);
+    let mut sites: Vec<Pos> = walk_edge_mids(priced)
+        .difference(&target_mids)
+        .copied()
+        .filter(|&t| t.0 != 7 && t.0 != 8) // conservative: skip row-7/8 completion-bit tiles
+        .filter(|&t| lockable_tile_at(&base_world.grid, t))
+        // Never stack onto another fort's lock tile (route-model + FX collision).
+        .filter(|&t| !base_world.locks.iter().any(|l| l.pos == t))
+        .collect();
+    if sites.is_empty() {
+        return None;
+    }
+    sites.sort_unstable();
+    sites.truncate(MAX_SITES);
+
+    let mut best: Option<(BuiltWorld, usize, usize)> = None;
+    for &(section, fort_pos) in forts {
+        // The gating fort must be off BOTH routes: on the priced route it would
+        // be paid for anyway; on the target route both routes pay it and it
+        // stops differentiating them.
+        if priced_nodes.contains(&fort_pos) || target_nodes.contains(&fort_pos) {
             continue;
         }
-        sites.sort_unstable();
-        sites.truncate(MAX_SITES);
-
-        for &(section, fort_pos) in &forts {
-            // A fort already on the shortcut is paid for there — its lock would
-            // be decorative. Skip.
-            if shortcut_nodes.contains(&fort_pos) {
+        for &site in &sites {
+            let mut trial = base_world.clone();
+            if !relocate_lock(&mut trial, section, site) {
                 continue;
             }
-            for &site in &sites {
-                let mut trial = piped.clone();
-                if !relocate_lock(&mut trial, section, site) {
-                    continue;
-                }
-                // Measure choice first, then gate the (more expensive)
-                // completability fixpoint on the candidate actually being a new
-                // best — most trials never reach it.
-                let after = in_band_count(&measure_counts(&trial, DEFAULT_SLACK));
-                if after > base_in_band
-                    && best.as_ref().is_none_or(|&(_, n, _)| after > n)
-                    && (goal_open_before || !goal_open(&trial, start_pos, target_pos))
-                    && completable(&trial, start_pos, target_pos)
-                {
-                    best = Some((trial, after, section));
-                }
+            // Cheap choice measure first, then the (more expensive) goal-open and
+            // completability checks only on a would-be new best.
+            let after = in_band_count(&measure_counts(&trial, DEFAULT_SLACK));
+            if after > base
+                && best.as_ref().is_none_or(|&(_, n, _)| after > n)
+                && (goal_open_before || !goal_open(&trial, start_pos, target_pos))
+                && completable(&trial, start_pos, target_pos)
+            {
+                best = Some((trial, after, section));
             }
         }
     }
-
-    if let Some((mut world, _, section)) = best {
-        // Recompute the relocated lock's secret-exit/target flags against the
-        // final layout (the search left them stale — see relocate_lock).
-        finalize_lock_flags(&mut world, section, start_pos, target_pos);
-        *built = world;
-        COMPOUND_APPLIED.fetch_add(1, Ordering::Relaxed);
-        1
-    } else {
-        0
-    }
+    best
 }
 
 /// Stamp a pipe pair `(a, b)` onto `built`: mark both endpoints as pipe tiles /
