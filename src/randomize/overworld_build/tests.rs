@@ -3979,7 +3979,7 @@ fn test_route_choice() {
     if !all.is_empty() {
         let mean = all.iter().sum::<usize>() as f64 / all.len() as f64;
         let linear = all.iter().filter(|&&n| n <= 1).count() as f64 / all.len() as f64 * 100.0;
-        eprintln!("  overall: mean {mean:.2} routes/world; {linear:.0}% linear");
+        eprintln!("  overall: mean {mean:.3} routes/world; {linear:.2}% linear (n={})", all.len());
     }
 }
 

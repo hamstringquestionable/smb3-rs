@@ -98,12 +98,16 @@ pub(crate) struct LevelScoring {
     /// Path-relevance weight: positions on the main start→target route (low
     /// detour) score higher. Max bonus = `path_detour_cap * path_bonus`.
     ///
-    /// THE dominant linearity lever. Lowered 1.5 → 0.75 to cut back-to-back
-    /// forced-level streaks (route bias was gluing levels onto the trunk).
-    /// Sweep via test_required_progression: 1.5→streak 2.12, 1.0→1.89,
-    /// 0.75→1.79 (≈ the reference randomizer), 0.5→1.70, 0.0→1.34
-    /// (overshoots and thins the required route). History: 3.0 clumped hard;
-    /// 0.5 was "decorative" at the old weightings.
+    /// THE dominant linearity lever — and a deliberate choice↔streak trade.
+    /// Raising it puts more levels on the trunk, which the route scorer reads
+    /// as more distinct near-optimal routes (lower `test_route_choice`
+    /// linear%) but also lengthens back-to-back forced-level streaks. Set to
+    /// 1.0 (user decision 2026-07-28: accept the streak hit for the choice).
+    /// Measured: route-choice linear% 34.8→32.5 (2000-seed) at 1.0 vs 0.75;
+    /// forced-level streak 1.79→~1.89 (test_required_progression). Curve is
+    /// non-monotonic for choice — 1.0 is the optimum; 1.25–2.0 regress.
+    /// History: was 0.75 (lowered from 1.5 to cut streaks; streak sweep
+    /// 1.5→2.12, 1.0→1.89, 0.75→1.79, 0.5→1.70, 0.0→1.34). 3.0 clumped hard.
     pub path_bonus: f64,
     /// Max detour (BFS hops off the shortest start→target route) that still
     /// earns any path bonus.
@@ -120,7 +124,7 @@ impl Default for LevelScoring {
         LevelScoring {
             spread: SpreadScoring::default(),
             dead_end_bonus: 0.5,
-            path_bonus: 0.75,
+            path_bonus: 1.0,
             path_detour_cap: 6.0,
             random_first_half: false,
         }
@@ -157,7 +161,14 @@ pub(crate) struct LockScoring {
     /// no point spending an impactful-lock slot on a weak chokepoint.
     pub weak_lock_threshold: i32,
     /// Max candidate locks per section re-measured by the choice-guard
-    /// before giving up and accepting the top-scored one.
+    /// before giving up and accepting the top-scored one. The lock pass is
+    /// where route choice is actually manufactured, and this is its budget:
+    /// higher = the guard finds route-creating locks more often (lower
+    /// linear%), at the cost of more route measures per build. Set to 8
+    /// (from 4) — a modest, streak-free, ~+5ms/build choice gain that keeps
+    /// worst-case build latency inside the WASM budget. Sweep (2000-seed
+    /// route-choice linear%, all else default): 4→34.8, 8→33.5, 12→31.8,
+    /// 16→30.0, 24→29.6, but build-time mean climbs 60→74→90ms+ past 12.
     pub choice_guard_tries: usize,
     /// Whether some lock MUST sever the goal (the goal-gate duty). Default
     /// FALSE (user decision 2026-07-27): the shipped guarantee is the C1
@@ -181,7 +192,7 @@ impl Default for LockScoring {
             bridge_bonus: 1,
             w8_bridge_bonus: 8,
             weak_lock_threshold: 5,
-            choice_guard_tries: 4,
+            choice_guard_tries: 8,
             goal_gate: false,
         }
     }

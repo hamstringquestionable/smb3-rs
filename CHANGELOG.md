@@ -9,6 +9,16 @@ deploys.
 
 ## [Unreleased]
 
+### Changed
+
+- Overworld maps now offer real route choice more often: worlds with only
+  one reasonable way through drop from ~35% to ~33% across all worlds. Two
+  builder weights were retuned — the lock pass looks harder for placements
+  that fork the route, and levels sit a little more on the main path (which
+  reads as more distinct near-optimal routes). The trade is slightly longer
+  runs of back-to-back required levels; seed generation stays well under the
+  browser's speed budget.
+
 ## [1.1.0] - 2026-07-27
 
 ### Changed
