@@ -36,6 +36,7 @@ const DIRECTIONS: [(i8, i8, bool); 4] = [
 /// An edge in the walk graph.
 /// Fields are populated during BFS and consumed by test-only visualization/analysis.
 #[allow(dead_code)]
+#[derive(PartialEq, Eq)]
 pub(super) struct Edge {
     pub dest: (usize, usize),
     /// Path tile position (None for pipe teleport edges).

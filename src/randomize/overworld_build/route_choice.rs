@@ -24,6 +24,7 @@
 
 use super::*;
 use super::types::{BuiltWorld, SlotKind, stamp_slots};
+use crate::randomize::map_walker::WalkResult;
 
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap};
@@ -58,7 +59,7 @@ pub(crate) const SHAPING_SLACK: u32 = 9;
 const BREAKABLE_ROCKS: [(u8, u8); 2] = [(0x51, 0x45), (0x52, 0x46)];
 
 /// One distinct route to the goal.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ChoiceRoute {
     /// Weighted set-cost, in points.
     pub cost: u32,
@@ -77,7 +78,7 @@ pub(crate) struct ChoiceRoute {
 }
 
 /// Per-world choice summary.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RouteChoice {
     // Reason: dead_code — the summary fields below are read only by the
     // cfg(test) dump/census consumers today; production code derives its own
@@ -391,15 +392,41 @@ pub(crate) fn measure_counts(built: &BuiltWorld, slack: u32) -> RouteChoice {
     analyze_route_choice_inner(built, slack, false)
 }
 
-// TEMP micro-profile counters (to be removed): ns in grid-prep+walk vs
-// dijkstra vs extraction, aggregated across threads.
+/// The walk-invariant base of a route measurement — the `walk_map` BFS graph
+/// plus the grid-derived pieces (rock tiles, canoe edges, start/target) that do
+/// NOT change when a candidate flips a slot's KIND (Level / Fortress /
+/// HammerBro filler are all walk-nodes) or toggles a LOCK (a lock is a
+/// `built.locks` overlay, never stamped into the grid `walk_map` sees). Across
+/// the candidates of ONE selection step — the bulk of all measures — this base
+/// is constant, so it is compiled ONCE (`WalkGraph::compile`) and every
+/// candidate `measure`d against it, hoisting the BFS out of the trial loop.
+///
+/// INVALIDATED by anything that changes the walk graph: editing grid path/node
+/// tiles, or `pipe_pairs` (spare-pipe trials feed the pair list to the BFS). A
+/// slot flip onto a *background* tile is likewise NOT walk-invariant — an HB
+/// filler on a background tile is unreachable, so converting it to a Fortress
+/// adds a node — which is why `measure` VERIFIES walk-invariance in debug
+/// builds (see the guard there) rather than assuming it. Reuse is a correctness
+/// contract on the caller: only reuse a base across kind/lock candidates.
+pub(super) struct WalkGraph {
+    rows: usize,
+    start: Pos,
+    target: Pos,
+    walk: WalkResult,
+    /// Breakable-rock path tiles, in grid scan order — their mask-bit order
+    /// must be seed-stable (heap tie-breaking includes the mask). Grid-derived,
+    /// so stable across kind/lock candidates.
+    rock_tiles: Vec<Pos>,
+    canoe_edges: Vec<(Pos, Pos)>,
+    canoe_pair_set: FastSet<(Pos, Pos)>,
+    initial_boat: u128,
+}
 
-fn analyze_route_choice_inner(built: &BuiltWorld, slack: u32, want_paths: bool) -> RouteChoice {
-    // Working grid: open breakable rocks so walk_map makes edges through them
-    // (we charge 8 the first time one is crossed, below); then stamp nodes.
-    // Rocks are kept in grid scan order: their mask bits (assigned below) must
-    // be seed-stable, since heap tie-breaking includes the mask and placement
-    // decisions will key on the returned routes.
+/// Build the working grid a measure walks: clone, open breakable rocks so
+/// `walk_map` makes edges through them (the 8-point charge lands on first
+/// crossing, in the Dijkstra), then stamp the slot nodes. Returns the grid and
+/// the opened-rock tiles in scan order.
+fn stage_grid(built: &BuiltWorld) -> (Grid, Vec<Pos>) {
     let mut grid = built.grid.clone();
     let mut rock_tiles: Vec<Pos> = Vec::new();
     for r in 0..grid.rows() {
@@ -414,307 +441,374 @@ fn analyze_route_choice_inner(built: &BuiltWorld, slack: u32, want_paths: bool) 
         }
     }
     stamp_slots(&mut grid, &built.slots);
+    (grid, rock_tiles)
+}
 
-    let (Some(start), Some(target)) = (
-        rom_data::find_start(&grid),
-        find_target(&grid, built.world_idx),
-    ) else {
-        return RouteChoice::default();
-    };
-    let walk = walk_map(&grid, &built.pipe_pairs, Some(start), built.world_idx);
+impl WalkGraph {
+    /// Compile the walk-invariant base for `built`. `None` when the world has
+    /// no start or no target (a degenerate world — the caller returns an empty
+    /// `RouteChoice`).
+    pub(super) fn compile(built: &BuiltWorld) -> Option<WalkGraph> {
+        let (grid, rock_tiles) = stage_grid(built);
+        let start = rom_data::find_start(&grid)?;
+        let target = find_target(&grid, built.world_idx)?;
+        let walk = walk_map(&grid, &built.pipe_pairs, Some(start), built.world_idx);
 
-    // Slot kind + section per node; lock path-tiles → the fort section that
-    // opens them. FastMap: these are hit on every edge relax.
-    let mut kind_at: FastMap<Pos, &SlotKind> = FastMap::default();
-    let mut section_at: FastMap<Pos, usize> = FastMap::default();
-    for slot in &built.slots {
-        kind_at.insert(slot.pos, &slot.kind);
-        section_at.insert(slot.pos, slot.section);
+        // Canoe (boat) — same model as progression.rs: one boat, rides move it.
+        let canoe_edges = rom_data::active_canoe_edges(built.world_idx, built.grid.eights_are_wild);
+        let canoe_pair_set: FastSet<(Pos, Pos)> =
+            canoe_edges.iter().flat_map(|&(a, b)| [(a, b), (b, a)]).collect();
+        let initial_boat = boat_code(canoe_edges.first().map(|&(a, _)| a));
+
+        Some(WalkGraph {
+            rows: grid.rows(),
+            start,
+            target,
+            walk,
+            rock_tiles,
+            canoe_edges,
+            canoe_pair_set,
+            initial_boat,
+        })
     }
-    let mut lock_section: FastMap<Pos, usize> = FastMap::default();
-    for lock in &built.locks {
-        lock_section.insert(lock.pos, lock.fort_section);
+
+    /// Whether reusing this base for `built` is sound — i.e. `built`'s walk
+    /// graph still matches the compiled one. Recomputes the BFS, so it is the
+    /// explicit *check* a caller runs when a candidate MIGHT change the graph
+    /// (spare-pipe trials, or a slot flip that could land on a background tile);
+    /// kind and lock candidates are invariant by construction. Also the oracle
+    /// behind `measure`'s debug guard. Only compiled where it is used (the guard
+    /// and the reuse tests), so release builds carry neither it nor a warning.
+    #[cfg(any(debug_assertions, test))]
+    pub(super) fn walk_invariant(&self, built: &BuiltWorld) -> bool {
+        let (grid, _) = stage_grid(built);
+        let fresh = walk_map(&grid, &built.pipe_pairs, Some(self.start), built.world_idx);
+        fresh.nodes == self.walk.nodes && fresh.edges == self.walk.edges
     }
 
-    // Cleared-mask bit layout (u64): fort sections use bits 0..section_count,
-    // then one bit per level, then one bit per rock. `level_pos` inverts the
-    // level bits so we can read a goal mask back into a level-set.
-    let mut level_bit: FastMap<Pos, u32> = FastMap::default();
-    let mut level_pos: Vec<(u32, Pos)> = Vec::new();
-    let mut next = built.section_count as u32;
-    for slot in &built.slots {
-        if matches!(slot.kind, SlotKind::Level) {
-            level_bit.insert(slot.pos, next);
-            level_pos.push((next, slot.pos));
+    /// Measure `built`'s route choice against this compiled base. `built` must
+    /// share the grid tiles and `pipe_pairs` the base was compiled from (only
+    /// its slot KINDS / sections and `locks` may differ) — the reuse contract on
+    /// `WalkGraph`, verified in debug builds below.
+    pub(super) fn measure(&self, built: &BuiltWorld, slack: u32, want_paths: bool) -> RouteChoice {
+        // Walk-invariance guard: reusing this base for `built` is sound only if
+        // `built`'s walk graph still matches the compiled one. Catches a stale
+        // reuse across a graph-changing trial (spare pipe, or a slot flip onto a
+        // background tile). Debug-only — release/census builds never run the
+        // second BFS.
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            self.walk_invariant(built),
+            "WalkGraph reused across a walk-graph-changing trial: the walk graph \
+             differs from the compiled base (grid tiles or pipe_pairs changed, or \
+             a slot flipped onto a background tile)",
+        );
+
+        let (rows, start, target, initial_boat) =
+            (self.rows, self.start, self.target, self.initial_boat);
+        let walk = &self.walk;
+        let canoe_edges = &self.canoe_edges;
+        let canoe_pair_set = &self.canoe_pair_set;
+        let rock_tiles = &self.rock_tiles;
+
+        // Slot kind + section per node; lock path-tiles → the fort section that
+        // opens them. FastMap: these are hit on every edge relax.
+        let mut kind_at: FastMap<Pos, &SlotKind> = FastMap::default();
+        let mut section_at: FastMap<Pos, usize> = FastMap::default();
+        for slot in &built.slots {
+            kind_at.insert(slot.pos, &slot.kind);
+            section_at.insert(slot.pos, slot.section);
+        }
+        let mut lock_section: FastMap<Pos, usize> = FastMap::default();
+        for lock in &built.locks {
+            lock_section.insert(lock.pos, lock.fort_section);
+        }
+
+        // Cleared-mask bit layout (u64): fort sections use bits 0..section_count,
+        // then one bit per level, then one bit per rock. `level_pos` inverts the
+        // level bits so we can read a goal mask back into a level-set.
+        let mut level_bit: FastMap<Pos, u32> = FastMap::default();
+        let mut level_pos: Vec<(u32, Pos)> = Vec::new();
+        let mut next = built.section_count as u32;
+        for slot in &built.slots {
+            if matches!(slot.kind, SlotKind::Level) {
+                level_bit.insert(slot.pos, next);
+                level_pos.push((next, slot.pos));
+                next += 1;
+            }
+        }
+        let mut rock_bit: FastMap<Pos, u32> = FastMap::default();
+        for &rp in rock_tiles {
+            rock_bit.insert(rp, next);
             next += 1;
         }
-    }
-    let mut rock_bit: FastMap<Pos, u32> = FastMap::default();
-    for &rp in &rock_tiles {
-        rock_bit.insert(rp, next);
-        next += 1;
-    }
-    debug_assert!(next <= 64, "too many clearables for a u64 mask ({next})");
-    let fort_bits: u64 = (0..built.section_count).map(|s| 1u64 << s).sum();
-    let rock_bits: u64 = rock_bit.values().map(|&b| 1u64 << b).sum();
+        debug_assert!(next <= 64, "too many clearables for a u64 mask ({next})");
+        let fort_bits: u64 = (0..built.section_count).map(|s| 1u64 << s).sum();
+        let rock_bits: u64 = rock_bit.values().map(|&b| 1u64 << b).sum();
 
-    // Node-entry cost: charge a level/fort the FIRST time (bit flip), free
-    // after. Pipes/other transit nodes are free at the node — a pipe RIDE is
-    // charged on its teleport edge instead. Resolved to a per-node
-    // (cost, mask bit) at compile time; `relax` applies the first-time rule.
-    let node_charge = |p: Pos| -> Option<(u32, u64)> {
-        if p == target {
-            return None;
-        }
-        match kind_at.get(&p) {
-            Some(SlotKind::Fortress) => Some((COST_FORT, 1u64 << section_at[&p])),
-            Some(SlotKind::Level) => Some((COST_LEVEL, 1u64 << level_bit[&p])),
-            _ => None,
-        }
-    };
-
-    // Canoe (boat) — same model as progression.rs: one boat, rides move it.
-    let canoe_edges = rom_data::active_canoe_edges(built.world_idx, built.grid.eights_are_wild);
-    let canoe_pair_set: FastSet<(Pos, Pos)> =
-        canoe_edges.iter().flat_map(|&(a, b)| [(a, b), (b, a)]).collect();
-    let initial_boat = boat_code(canoe_edges.first().map(|&(a, _)| a));
-
-    // Compile the walk graph once: pre-resolve each edge's lock section, rock
-    // bit, pipe surcharge, and destination charge, so the Dijkstra's inner
-    // loop touches no map except `dist`. Edge order per node is preserved
-    // (and canoe-pair teleports dropped here instead of per-visit), so relax
-    // order — and therefore `prev` tie-breaking — is unchanged.
-    struct CompiledEdge {
-        dest: Pos,
-        /// (cost, mask bit) charged on first entry to `dest`.
-        dest_charge: Option<(u32, u64)>,
-        /// Pipe-ride cost (teleport edges only).
-        surcharge: u32,
-        /// Path tile crossable only once this fort section's bit is set.
-        lock_sec: Option<u32>,
-        /// Rock bit charged and set on first crossing.
-        rock: Option<u32>,
-    }
-    // Direct-indexed: node (r, c) → span into a flat edge list, row-major at
-    // a fixed 64-column stride (grids are at most 64 wide) — the per-pop
-    // adjacency lookup is then a plain load. Per-node edge order is
-    // preserved; node order in the flat list is irrelevant.
-    let mut adj_span: Vec<(u32, u32)> = vec![(0, 0); grid.rows() * 64];
-    let mut adj_edges: Vec<CompiledEdge> = Vec::with_capacity(4 * walk.edges.len());
-    for (&p, es) in &walk.edges {
-        let span_start = adj_edges.len() as u32;
-        adj_edges.extend(es.iter().filter_map(|e| match e.path_pos {
-            Some(pp) => Some(CompiledEdge {
-                dest: e.dest,
-                dest_charge: node_charge(e.dest),
-                surcharge: 0,
-                lock_sec: lock_section.get(&pp).map(|&s| s as u32),
-                rock: rock_bit.get(&pp).copied(),
-            }),
-            None if canoe_pair_set.contains(&(p, e.dest)) => None,
-            None => Some(CompiledEdge {
-                dest: e.dest,
-                dest_charge: node_charge(e.dest),
-                surcharge: COST_PIPE,
-                lock_sec: None,
-                rock: None,
-            }),
-        }));
-        adj_span[p.0 * 64 + p.1] = (span_start, adj_edges.len() as u32 - span_start);
-    }
-
-    // Dijkstra over packed (pos, cleared-mask, boat) states. We do NOT stop
-    // at the first goal: once `best` is known (the first goal popped, by cost
-    // order), we keep going until the popped cost exceeds `best + slack`,
-    // collecting every goal-state in that band. Each is a distinct route (its
-    // mask says which levels/forts/rocks it used). dist + heap are borrowed
-    // from the thread-local scratch — no allocation in the hot loop.
-    let (mut dist, mut heap) =
-        SCRATCH.with(|s| s.replace((DistMap::placeholder(), BinaryHeap::new())));
-    dist.reset();
-    heap.clear();
-
-    let init = pack(start, 0, initial_boat);
-    dist.improve(init, 0, NO_PREV);
-    heap.push(Reverse((0, init)));
-
-    let mut best: Option<u32> = None;
-    let mut goals: Vec<(PackedState, u32)> = Vec::new(); // (goal state, cost)
-
-    while let Some(Reverse((cost, state))) = heap.pop() {
-        if cost > dist.get(state).unwrap_or(u32::MAX) {
-            continue;
-        }
-        if let Some(b) = best
-            && cost > b + slack
-        {
-            break; // everything left is out of band
-        }
-        let pos = unpack_pos(state);
-        let mask = unpack_mask(state);
-        let boat = state & 0xFFFF;
-        if pos == target {
-            best.get_or_insert(cost);
-            goals.push((state, cost));
-            continue; // target is a sink — never expand through it
-        }
-
-        // Relax an edge: `edge_extra` is the pipe/rock surcharge and `mask_in`
-        // is the mask after any rock-break on the crossed path tile; then add
-        // the destination node's own charge (first visit only).
-        let mut relax = |dest: Pos,
-                         dest_charge: Option<(u32, u64)>,
-                         boat_after: u128,
-                         edge_extra: u32,
-                         mask_in: u64| {
-            let (nc, nm) = match dest_charge {
-                Some((c, bit)) if mask_in & bit == 0 => (c, mask_in | bit),
-                _ => (0, mask_in),
-            };
-            let new_cost = cost + edge_extra + nc;
-            let key = pack(dest, nm, boat_after);
-            if dist.improve(key, new_cost, state) {
-                heap.push(Reverse((new_cost, key)));
+        // Node-entry cost: charge a level/fort the FIRST time (bit flip), free
+        // after. Pipes/other transit nodes are free at the node — a pipe RIDE is
+        // charged on its teleport edge instead. Resolved to a per-node
+        // (cost, mask bit) at compile time; `relax` applies the first-time rule.
+        let node_charge = |p: Pos| -> Option<(u32, u64)> {
+            if p == target {
+                return None;
+            }
+            match kind_at.get(&p) {
+                Some(SlotKind::Fortress) => Some((COST_FORT, 1u64 << section_at[&p])),
+                Some(SlotKind::Level) => Some((COST_LEVEL, 1u64 << level_bit[&p])),
+                _ => None,
             }
         };
 
-        let (span_start, span_len) = adj_span[pos.0 * 64 + pos.1];
-        for e in &adj_edges[span_start as usize..(span_start + span_len) as usize] {
-            // Lock: crossable only once its fort's section is open.
-            if let Some(sec) = e.lock_sec
-                && mask & (1u64 << sec) == 0
-            {
+        // Compile the walk graph once: pre-resolve each edge's lock section, rock
+        // bit, pipe surcharge, and destination charge, so the Dijkstra's inner
+        // loop touches no map except `dist`. Edge order per node is preserved
+        // (and canoe-pair teleports dropped here instead of per-visit), so relax
+        // order — and therefore `prev` tie-breaking — is unchanged.
+        struct CompiledEdge {
+            dest: Pos,
+            /// (cost, mask bit) charged on first entry to `dest`.
+            dest_charge: Option<(u32, u64)>,
+            /// Pipe-ride cost (teleport edges only).
+            surcharge: u32,
+            /// Path tile crossable only once this fort section's bit is set.
+            lock_sec: Option<u32>,
+            /// Rock bit charged and set on first crossing.
+            rock: Option<u32>,
+        }
+        // Direct-indexed: node (r, c) → span into a flat edge list, row-major at
+        // a fixed 64-column stride (grids are at most 64 wide) — the per-pop
+        // adjacency lookup is then a plain load. Per-node edge order is
+        // preserved; node order in the flat list is irrelevant.
+        let mut adj_span: Vec<(u32, u32)> = vec![(0, 0); rows * 64];
+        let mut adj_edges: Vec<CompiledEdge> = Vec::with_capacity(4 * walk.edges.len());
+        for (&p, es) in &walk.edges {
+            let span_start = adj_edges.len() as u32;
+            adj_edges.extend(es.iter().filter_map(|e| match e.path_pos {
+                Some(pp) => Some(CompiledEdge {
+                    dest: e.dest,
+                    dest_charge: node_charge(e.dest),
+                    surcharge: 0,
+                    lock_sec: lock_section.get(&pp).map(|&s| s as u32),
+                    rock: rock_bit.get(&pp).copied(),
+                }),
+                None if canoe_pair_set.contains(&(p, e.dest)) => None,
+                None => Some(CompiledEdge {
+                    dest: e.dest,
+                    dest_charge: node_charge(e.dest),
+                    surcharge: COST_PIPE,
+                    lock_sec: None,
+                    rock: None,
+                }),
+            }));
+            adj_span[p.0 * 64 + p.1] = (span_start, adj_edges.len() as u32 - span_start);
+        }
+
+        // Dijkstra over packed (pos, cleared-mask, boat) states. We do NOT stop
+        // at the first goal: once `best` is known (the first goal popped, by cost
+        // order), we keep going until the popped cost exceeds `best + slack`,
+        // collecting every goal-state in that band. Each is a distinct route (its
+        // mask says which levels/forts/rocks it used). dist + heap are borrowed
+        // from the thread-local scratch — no allocation in the hot loop.
+        let (mut dist, mut heap) =
+            SCRATCH.with(|s| s.replace((DistMap::placeholder(), BinaryHeap::new())));
+        dist.reset();
+        heap.clear();
+
+        let init = pack(start, 0, initial_boat);
+        dist.improve(init, 0, NO_PREV);
+        heap.push(Reverse((0, init)));
+
+        let mut best: Option<u32> = None;
+        let mut goals: Vec<(PackedState, u32)> = Vec::new(); // (goal state, cost)
+
+        while let Some(Reverse((cost, state))) = heap.pop() {
+            if cost > dist.get(state).unwrap_or(u32::MAX) {
                 continue;
             }
-            // Rock: break it (charge once) the first time crossed.
-            let mut edge_extra = e.surcharge;
-            let mut mask_after = mask;
-            if let Some(rb) = e.rock {
-                let bit = 1u64 << rb;
-                if mask_after & bit == 0 {
-                    edge_extra += COST_ROCK;
-                    mask_after |= bit;
-                }
+            if let Some(b) = best
+                && cost > b + slack
+            {
+                break; // everything left is out of band
             }
-            relax(e.dest, e.dest_charge, boat, edge_extra, mask_after);
-        }
+            let pos = unpack_pos(state);
+            let mask = unpack_mask(state);
+            let boat = state & 0xFFFF;
+            if pos == target {
+                best.get_or_insert(cost);
+                goals.push((state, cost));
+                continue; // target is a sink — never expand through it
+            }
 
-        // Canoe rides: free, and only when the boat sits at the current node.
-        if boat == boat_code(Some(pos)) {
-            for &(a, b) in &canoe_edges {
-                let dest = if a == pos {
-                    b
-                } else if b == pos {
-                    a
-                } else {
-                    continue;
+            // Relax an edge: `edge_extra` is the pipe/rock surcharge and `mask_in`
+            // is the mask after any rock-break on the crossed path tile; then add
+            // the destination node's own charge (first visit only).
+            let mut relax = |dest: Pos,
+                             dest_charge: Option<(u32, u64)>,
+                             boat_after: u128,
+                             edge_extra: u32,
+                             mask_in: u64| {
+                let (nc, nm) = match dest_charge {
+                    Some((c, bit)) if mask_in & bit == 0 => (c, mask_in | bit),
+                    _ => (0, mask_in),
                 };
-                relax(dest, node_charge(dest), boat_code(Some(dest)), 0, mask);
-            }
-        }
-    }
-
-    let Some(best_cost) = best else {
-        SCRATCH.with(|s| *s.borrow_mut() = (dist, heap));
-        return RouteChoice::default();
-    };
-
-    // Read each in-band goal state back into a route; keep the cheapest per
-    // distinct level-set (remembering the state so we can rebuild its path).
-    let mut by_levels: HashMap<BTreeSet<Pos>, (u32, PackedState)> = HashMap::new();
-    for (state, cost) in goals {
-        let mask = unpack_mask(state);
-        let levels: BTreeSet<Pos> = level_pos
-            .iter()
-            .filter(|(bit, _)| mask & (1u64 << bit) != 0)
-            .map(|&(_, pos)| pos)
-            .collect();
-        by_levels
-            .entry(levels)
-            .and_modify(|e| {
-                if cost < e.0 {
-                    *e = (cost, state);
+                let new_cost = cost + edge_extra + nc;
+                let key = pack(dest, nm, boat_after);
+                if dist.improve(key, new_cost, state) {
+                    heap.push(Reverse((new_cost, key)));
                 }
-            })
-            .or_insert((cost, state));
-    }
+            };
 
-    // Rebuild the node path for a goal state by walking the recorded
-    // predecessors back to start. Counts-only measures skip this.
-    let reconstruct = |goal: PackedState| -> Vec<Pos> {
-        if !want_paths {
-            return Vec::new();
-        }
-        let mut nodes = vec![unpack_pos(goal)];
-        let mut cur = goal;
-        while let Some(p) = dist.prev_of(cur) {
-            nodes.push(unpack_pos(p));
-            cur = p;
-        }
-        nodes.reverse();
-        nodes
-    };
+            let (span_start, span_len) = adj_span[pos.0 * 64 + pos.1];
+            for e in &adj_edges[span_start as usize..(span_start + span_len) as usize] {
+                // Lock: crossable only once its fort's section is open.
+                if let Some(sec) = e.lock_sec
+                    && mask & (1u64 << sec) == 0
+                {
+                    continue;
+                }
+                // Rock: break it (charge once) the first time crossed.
+                let mut edge_extra = e.surcharge;
+                let mut mask_after = mask;
+                if let Some(rb) = e.rock {
+                    let bit = 1u64 << rb;
+                    if mask_after & bit == 0 {
+                        edge_extra += COST_ROCK;
+                        mask_after |= bit;
+                    }
+                }
+                relax(e.dest, e.dest_charge, boat, edge_extra, mask_after);
+            }
 
-    let mut routes: Vec<ChoiceRoute> = by_levels
-        .into_iter()
-        .map(|(levels, (cost, state))| ChoiceRoute {
-            cost,
-            levels,
-            forts: (unpack_mask(state) & fort_bits).count_ones(),
-            rocks: (unpack_mask(state) & rock_bits).count_ones(),
-            path: reconstruct(state),
-        })
-        .collect();
-
-    // Reconstruction done — return the scratch for the next call.
-    SCRATCH.with(|s| *s.borrow_mut() = (dist, heap));
-
-    // Domination filter: drop a route that plays a strict superset of another
-    // route's levels at no lower cost — a within-slack detour, not a real
-    // choice. (Level-sets are already distinct, so subset ⇒ strict.)
-    let dominated: Vec<bool> = routes
-        .iter()
-        .map(|ri| {
-            routes
-                .iter()
-                .any(|rj| rj.cost <= ri.cost && rj.levels != ri.levels && rj.levels.is_subset(&ri.levels))
-        })
-        .collect();
-    let (mut kept, mut detours): (Vec<ChoiceRoute>, Vec<ChoiceRoute>) = {
-        let mut kept = Vec::new();
-        let mut detours = Vec::new();
-        for (r, dom) in routes.drain(..).zip(dominated) {
-            if dom {
-                detours.push(r);
-            } else {
-                kept.push(r);
+            // Canoe rides: free, and only when the boat sits at the current node.
+            if boat == boat_code(Some(pos)) {
+                for &(a, b) in canoe_edges {
+                    let dest = if a == pos {
+                        b
+                    } else if b == pos {
+                        a
+                    } else {
+                        continue;
+                    };
+                    relax(dest, node_charge(dest), boat_code(Some(dest)), 0, mask);
+                }
             }
         }
-        (kept, detours)
-    };
 
-    let by_cost_then_levels = |a: &ChoiceRoute, b: &ChoiceRoute| {
-        a.cost
-            .cmp(&b.cost)
-            .then_with(|| a.levels.iter().cmp(b.levels.iter()))
-    };
-    kept.sort_by(by_cost_then_levels);
-    detours.sort_by(by_cost_then_levels);
-    detours.truncate(MAX_DETOURS);
-    let tied_at_best = kept.iter().filter(|r| r.cost == best_cost).count();
-    let runner_up_gap = kept
-        .iter()
-        .map(|r| r.cost)
-        .find(|&c| c > best_cost)
-        .map(|c| c - best_cost);
+        let Some(best_cost) = best else {
+            SCRATCH.with(|s| *s.borrow_mut() = (dist, heap));
+            return RouteChoice::default();
+        };
 
-    RouteChoice {
-        reachable: true,
-        best_cost,
-        routes: kept,
-        tied_at_best,
-        runner_up_gap,
-        detours,
+        // Read each in-band goal state back into a route; keep the cheapest per
+        // distinct level-set (remembering the state so we can rebuild its path).
+        let mut by_levels: HashMap<BTreeSet<Pos>, (u32, PackedState)> = HashMap::new();
+        for (state, cost) in goals {
+            let mask = unpack_mask(state);
+            let levels: BTreeSet<Pos> = level_pos
+                .iter()
+                .filter(|(bit, _)| mask & (1u64 << bit) != 0)
+                .map(|&(_, pos)| pos)
+                .collect();
+            by_levels
+                .entry(levels)
+                .and_modify(|e| {
+                    if cost < e.0 {
+                        *e = (cost, state);
+                    }
+                })
+                .or_insert((cost, state));
+        }
+
+        // Rebuild the node path for a goal state by walking the recorded
+        // predecessors back to start. Counts-only measures skip this.
+        let reconstruct = |goal: PackedState| -> Vec<Pos> {
+            if !want_paths {
+                return Vec::new();
+            }
+            let mut nodes = vec![unpack_pos(goal)];
+            let mut cur = goal;
+            while let Some(p) = dist.prev_of(cur) {
+                nodes.push(unpack_pos(p));
+                cur = p;
+            }
+            nodes.reverse();
+            nodes
+        };
+
+        let mut routes: Vec<ChoiceRoute> = by_levels
+            .into_iter()
+            .map(|(levels, (cost, state))| ChoiceRoute {
+                cost,
+                levels,
+                forts: (unpack_mask(state) & fort_bits).count_ones(),
+                rocks: (unpack_mask(state) & rock_bits).count_ones(),
+                path: reconstruct(state),
+            })
+            .collect();
+
+        // Reconstruction done — return the scratch for the next call.
+        SCRATCH.with(|s| *s.borrow_mut() = (dist, heap));
+
+        // Domination filter: drop a route that plays a strict superset of another
+        // route's levels at no lower cost — a within-slack detour, not a real
+        // choice. (Level-sets are already distinct, so subset ⇒ strict.)
+        let dominated: Vec<bool> = routes
+            .iter()
+            .map(|ri| {
+                routes
+                    .iter()
+                    .any(|rj| rj.cost <= ri.cost && rj.levels != ri.levels && rj.levels.is_subset(&ri.levels))
+            })
+            .collect();
+        let (mut kept, mut detours): (Vec<ChoiceRoute>, Vec<ChoiceRoute>) = {
+            let mut kept = Vec::new();
+            let mut detours = Vec::new();
+            for (r, dom) in routes.drain(..).zip(dominated) {
+                if dom {
+                    detours.push(r);
+                } else {
+                    kept.push(r);
+                }
+            }
+            (kept, detours)
+        };
+
+        let by_cost_then_levels = |a: &ChoiceRoute, b: &ChoiceRoute| {
+            a.cost
+                .cmp(&b.cost)
+                .then_with(|| a.levels.iter().cmp(b.levels.iter()))
+        };
+        kept.sort_by(by_cost_then_levels);
+        detours.sort_by(by_cost_then_levels);
+        detours.truncate(MAX_DETOURS);
+        let tied_at_best = kept.iter().filter(|r| r.cost == best_cost).count();
+        let runner_up_gap = kept
+            .iter()
+            .map(|r| r.cost)
+            .find(|&c| c > best_cost)
+            .map(|c| c - best_cost);
+
+        RouteChoice {
+            reachable: true,
+            best_cost,
+            routes: kept,
+            tied_at_best,
+            runner_up_gap,
+            detours,
+        }
+    }
+}
+
+/// Compile the walk-invariant base and measure `built` against it. The compile
+/// and the measure are split (`WalkGraph::compile` / `WalkGraph::measure`) so a
+/// selection step can hoist the compile and reuse it across its kind/lock
+/// candidates; the single-shot public entry points keep the one-call form.
+fn analyze_route_choice_inner(built: &BuiltWorld, slack: u32, want_paths: bool) -> RouteChoice {
+    match WalkGraph::compile(built) {
+        Some(g) => g.measure(built, slack, want_paths),
+        None => RouteChoice::default(),
     }
 }
 
