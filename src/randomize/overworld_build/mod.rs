@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use rand::Rng;
 use rand::seq::{IndexedRandom, SliceRandom};
 
-use super::map_walker::walk_map;
+use super::map_walker::{Reach, walk_map, walk_reachable};
 use super::node_catalog::{NodeCatalog, NodeKind};
 use super::overworld_helpers::{find_target, gap_tile_for, LOCKABLE_TILES};
 use super::overworld_pickup::PickupResult;

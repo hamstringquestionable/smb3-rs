@@ -97,8 +97,8 @@ fn canoes_reachable(
 
     // Same BFS as the main walk, just with no canoe edges (a 9×64 grid, so
     // running it to completion instead of early-exiting at a dock is cheap).
-    let no_canoes = walk_from(grid, start, &teleport_lookup(pipe_pairs), &TeleportLookup::new());
-    docks.iter().any(|d| no_canoes.nodes.contains(d))
+    let no_canoes = reach_from(grid, start, &teleport_lookup(pipe_pairs), &TeleportLookup::new());
+    docks.iter().any(|&d| no_canoes.contains(d))
 }
 
 /// BFS walk from a start position, returning reachable nodes, edges, and path tiles.
@@ -244,6 +244,138 @@ fn walk_from(
     }
 
     WalkResult { nodes, distances, edges, path_tiles }
+}
+
+// ---------------------------------------------------------------------------
+// Reachability-only walk (flat bitset) — the hot path
+// ---------------------------------------------------------------------------
+
+/// Reachable-node set as a flat bitset (index `r * cols + c`). The many
+/// reachability-only callers — `place_locks`' per-candidate hard-rule checks,
+/// `canoes_reachable`, the compound phase's completability/goal-open guards —
+/// need only "is this node reachable" and "how many", never the edge graph or
+/// distances. Building those (a `HashMap<Pos, Vec<Edge>>` + distance map) per
+/// call dominated the lock pass's cost; this returns the identical node SET
+/// (BFS reachability is order-independent) with no per-call allocation beyond
+/// one bit-vector.
+pub(super) struct Reach {
+    bits: Vec<u64>,
+    cols: usize,
+    count: usize,
+}
+
+impl Reach {
+    fn new(rows: usize, cols: usize) -> Self {
+        Reach {
+            bits: vec![0; rows * cols / 64 + 1],
+            cols,
+            count: 0,
+        }
+    }
+
+    /// Set the bit for `(r, c)`; returns true if it was newly set.
+    #[inline]
+    fn insert(&mut self, (r, c): (usize, usize)) -> bool {
+        let i = r * self.cols + c;
+        let (word, bit) = (i >> 6, i & 63);
+        if (self.bits[word] >> bit) & 1 == 1 {
+            return false;
+        }
+        self.bits[word] |= 1 << bit;
+        self.count += 1;
+        true
+    }
+
+    #[inline]
+    pub(super) fn contains(&self, (r, c): (usize, usize)) -> bool {
+        let i = r * self.cols + c;
+        (self.bits[i >> 6] >> (i & 63)) & 1 == 1
+    }
+
+    #[inline]
+    pub(super) fn len(&self) -> usize {
+        self.count
+    }
+}
+
+/// Reachability-only BFS core — mirrors [`walk_from`]'s traversal exactly but
+/// tracks only the reachable set, so it yields the identical `nodes` set.
+fn reach_from(
+    grid: &Grid,
+    start: (usize, usize),
+    pipe_lookup: &TeleportLookup,
+    canoe_lookup: &TeleportLookup,
+) -> Reach {
+    let mut reach = Reach::new(grid.rows(), grid.cols);
+    let mut queue = VecDeque::new();
+    reach.insert(start);
+    queue.push_back(start);
+
+    while let Some((r, c)) = queue.pop_front() {
+        let tile_here = grid.get(r, c);
+        if (tile_here == TILE_AIRSHIP || tile_here == TILE_BOWSER) && (r, c) != start {
+            continue; // target is a sink (see walk_from)
+        }
+
+        for &(dr, dc, is_horz) in &DIRECTIONS {
+            let pr = r as i16 + dr as i16;
+            let pc = c as i16 + dc as i16;
+            if pr < 0 || pr >= grid.rows() as i16 || pc < 0 || pc >= grid.cols as i16 {
+                continue;
+            }
+            let (pr, pc) = (pr as usize, pc as usize);
+            let path_tile = grid.get(pr, pc);
+            let valid = if is_horz { VALID_HORZ } else { VALID_VERT };
+            if !valid.contains(&path_tile) {
+                continue;
+            }
+            let nr = r as i16 + 2 * dr as i16;
+            let nc = c as i16 + 2 * dc as i16;
+            if nr < 0 || nr >= grid.rows() as i16 || nc < 0 || nc >= grid.cols as i16 {
+                continue;
+            }
+            let (nr, nc) = (nr as usize, nc as usize);
+            if BACKGROUND_TILES.contains(&grid.get(nr, nc)) {
+                continue;
+            }
+            if reach.insert((nr, nc)) {
+                queue.push_back((nr, nc));
+            }
+        }
+
+        for lookup in [pipe_lookup, canoe_lookup] {
+            if let Some(dests) = lookup.get(&(r, c)) {
+                for &dest in dests {
+                    if reach.insert(dest) {
+                        queue.push_back(dest);
+                    }
+                }
+            }
+        }
+    }
+    reach
+}
+
+/// Reachability-only counterpart of [`walk_map`]: same start resolution and
+/// canoe gating, returns the reachable-node bitset. Use wherever only `.nodes`
+/// is read.
+pub(super) fn walk_reachable(
+    grid: &Grid,
+    pipe_pairs: &[TeleportEdge],
+    start_pos: Option<(usize, usize)>,
+    world_idx: usize,
+) -> Reach {
+    let start = match start_pos.or_else(|| rom_data::find_start(grid)) {
+        Some(s) => s,
+        None => return Reach::new(grid.rows(), grid.cols),
+    };
+    let pipe_lookup = teleport_lookup(pipe_pairs);
+    let canoe_lookup = if canoes_reachable(grid, pipe_pairs, start, world_idx) {
+        teleport_lookup(&rom_data::active_canoe_edges(world_idx, grid.eights_are_wild))
+    } else {
+        TeleportLookup::new()
+    };
+    reach_from(grid, start, &pipe_lookup, &canoe_lookup)
 }
 
 // ---------------------------------------------------------------------------

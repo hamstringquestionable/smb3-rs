@@ -260,6 +260,7 @@ pub(super) fn build_world<R: Rng>(
         &mut built,
         hold,
         &hb_sprite_positions,
+        &knobs.lock,
         start_pos,
         target_pos,
         rng,
