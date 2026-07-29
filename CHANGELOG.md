@@ -11,6 +11,9 @@ deploys.
 
 ### Changed
 
+- The World 5 spiral-castle pipe no longer always draws the castle on the far
+  endpoint — the castle and the pipe mouth are now coin-flipped between the
+  pair's two cells, so the castle can appear on either side.
 - Connectivity pipes (the ones that bridge otherwise-cut-off parts of a map)
   now land their island end on a **junction** instead of the nearest dead-end
   tip, so a bridged-in region joins the map as something you can route
