@@ -11,6 +11,14 @@ deploys.
 
 ### Changed
 
+- Connectivity pipes (the ones that bridge otherwise-cut-off parts of a map)
+  now land their island end on a **junction** instead of the nearest dead-end
+  tip, so a bridged-in region joins the map as something you can route
+  *through* rather than a one-way spur. This adds route choice on most worlds
+  (World 8 single-route seeds ~39%→17%, World 5 ~16%→10%; ~24%→20% overall) at
+  no speed cost. World 4 keeps the old shortest-bridge behavior — its central
+  tiles sit next to the airship, so a junction bridge there just became a free
+  express to the goal. (issue #121)
 - Overworld maps now offer real route choice more often: worlds with only
   one reasonable way through drop from ~35% to ~33% across all worlds. Two
   builder weights were retuned — the lock pass looks harder for placements

@@ -378,6 +378,38 @@ pub(super) fn walk_reachable(
     reach_from(grid, start, &pipe_lookup, &canoe_lookup)
 }
 
+/// Walk-degree of a node: how many of the 4 orthogonal directions lead to a
+/// real neighbor node (valid path tile at +1, non-background node at +2). This
+/// is pure grid topology — pipes and canoes are ignored, and reachability from
+/// any start is irrelevant. Degree 1 marks a dead-end tip; degree 3-4 marks a
+/// junction/branch node. Used by the connectivity-pipe pass to prefer landing
+/// a bridge on a junction (integrating an island as a routable subgraph) over
+/// a dead-end tip (a one-way spur). Mirrors [`walk_from`]'s expansion exactly.
+pub(super) fn walk_degree(grid: &Grid, (r, c): (usize, usize)) -> usize {
+    let mut degree = 0;
+    for &(dr, dc, is_horz) in &DIRECTIONS {
+        let pr = r as i16 + dr as i16;
+        let pc = c as i16 + dc as i16;
+        if pr < 0 || pr >= grid.rows() as i16 || pc < 0 || pc >= grid.cols as i16 {
+            continue;
+        }
+        let path_tile = grid.get(pr as usize, pc as usize);
+        let valid = if is_horz { VALID_HORZ } else { VALID_VERT };
+        if !valid.contains(&path_tile) {
+            continue;
+        }
+        let nr = r as i16 + 2 * dr as i16;
+        let nc = c as i16 + 2 * dc as i16;
+        if nr < 0 || nr >= grid.rows() as i16 || nc < 0 || nc >= grid.cols as i16 {
+            continue;
+        }
+        if !BACKGROUND_TILES.contains(&grid.get(nr as usize, nc as usize)) {
+            degree += 1;
+        }
+    }
+    degree
+}
+
 // ---------------------------------------------------------------------------
 // Chokepoint detection
 // ---------------------------------------------------------------------------

@@ -4016,6 +4016,131 @@ fn test_route_choice() {
 }
 
 
+/// Probe how a world (WORLD=n, 1-based; default 4) places connectivity pipes.
+/// For each base-arm seed it prints the world's route count plus, per pipe
+/// pair, each endpoint's walk-degree and BFS hops from start / to target. This
+/// is the tool that diagnosed the W4 junction-endpoint regression (issue #121)
+/// — junction bridges landed the island mouth next to the airship (low t),
+/// building a goal express; see `PROXIMITY_ENDPOINT_WORLDS`.
+///   PROBE_SEEDS=200 WORLD=4 cargo test --release --lib test_pipe_probe -- --ignored --nocapture
+#[test]
+#[ignore]
+fn test_pipe_probe() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => {
+            eprintln!("ROM not found, skipping");
+            return;
+        }
+    };
+    let seeds: u64 = std::env::var("PROBE_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(200);
+    let world: usize = std::env::var("WORLD").ok().and_then(|s| s.parse().ok()).unwrap_or(4);
+    let wi = world - 1;
+    for seed in 0..seeds {
+        if census_arm(seed) != CensusArm::Base {
+            continue; // one flag arm, so on/off compare like-for-like
+        }
+        let result = census_build(&rom, seed);
+        let Some(built) = result.worlds.iter().find(|b| b.world_idx == wi) else { continue };
+        let rc = analyze_route_choice(built, route_choice::DEFAULT_SLACK);
+        let n = if rc.reachable { rc.routes.len() } else { 0 };
+
+        let mut grid = built.grid.clone();
+        stamp_slots(&mut grid, &built.slots);
+        let start = rom_data::find_start(&grid);
+        let target = find_target(&grid, wi);
+        let d_start = walk_map(&grid, &built.pipe_pairs, start, wi).distances;
+        let d_target = target.map(|t| walk_map(&grid, &built.pipe_pairs, Some(t), wi).distances);
+        let stat = |p: (usize, usize)| -> String {
+            let deg = walk_degree(&grid, p);
+            let ds = d_start.get(&p).map(|d| d.to_string()).unwrap_or_else(|| "-".into());
+            let dt = d_target
+                .as_ref()
+                .and_then(|m| m.get(&p))
+                .map(|d| d.to_string())
+                .unwrap_or_else(|| "-".into());
+            format!("{p:?}:deg{deg},s{ds},t{dt}")
+        };
+        let pipes: Vec<String> = built
+            .pipe_pairs
+            .iter()
+            .map(|&(a, b)| format!("[{} <-> {}]", stat(a), stat(b)))
+            .collect();
+        eprintln!("seed {seed:>4}  routes {n}  cost {}  pipes {}", rc.best_cost, pipes.join(" "));
+    }
+}
+
+/// Route-choice linear% split by whether each world was Start↔Airship
+/// swapped, so the #121 junction endpoints can be checked separately under
+/// SAS on/off. Rebuilds like `census_build` but reads the per-world swap
+/// flag. Combine with PIPEMODE=proximity / FORCEJUNCTION to A/B.
+///   SAS_SEEDS=2000 cargo test --release --lib test_sas_split -- --ignored --nocapture
+#[test]
+#[ignore]
+fn test_sas_split() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => {
+            eprintln!("ROM not found, skipping");
+            return;
+        }
+    };
+    let seeds: u64 = std::env::var("SAS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(2000);
+    // (world, swapped) -> (linear_count, total)
+    let per_seed = par_seeds(seeds, |seed| {
+        let arm = census_arm(seed);
+        let rom = apply_qol_variant(&rom, arm == CensusArm::HammerRocks, arm == CensusArm::EightsWild);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let mut catalog = NodeCatalog::build(&rom, false);
+        let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
+        super::super::start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
+        let swapped = catalog.start_airship_swapped;
+        let pickup = super::super::overworld_pickup::pick_up(
+            &rom,
+            &catalog,
+            super::super::overworld_pickup::PickupFlags {
+                shuffle_spade_games: true,
+                shuffle_toad_houses: true,
+                ..Default::default()
+            },
+        );
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags {
+                shuffle_toad_houses: true,
+                eights_are_wild: arm == CensusArm::EightsWild,
+                ..Default::default()
+            },
+        );
+        let mut rows = Vec::new();
+        for built in &result.worlds {
+            let rc = analyze_route_choice(built, route_choice::DEFAULT_SLACK);
+            let n = if rc.reachable { rc.routes.len() } else { 0 };
+            rows.push((built.world_idx, swapped[built.world_idx], n <= 1));
+        }
+        rows
+    });
+    // Aggregate.
+    let mut lin = [[0usize; 2]; 8];
+    let mut tot = [[0usize; 2]; 8];
+    for rows in &per_seed {
+        for &(wi, sw, is_lin) in rows {
+            let s = sw as usize;
+            tot[wi][s] += 1;
+            if is_lin { lin[wi][s] += 1; }
+        }
+    }
+    eprintln!("\n=== linear% by SAS state ({seeds} seeds) ===");
+    eprintln!("  {:<4} {:>16} {:>16}", "", "SAS-off", "SAS-on");
+    for wi in 0..8 {
+        let pct = |s: usize| if tot[wi][s] == 0 { "-".to_string() }
+            else { format!("{:.0}% (n={})", lin[wi][s] as f64 / tot[wi][s] as f64 * 100.0, tot[wi][s]) };
+        eprintln!("  W{:<3} {:>16} {:>16}", wi + 1, pct(0), pct(1));
+    }
+}
+
 /// Per-seed build wall time — the number the WASM app's generate latency
 /// tracks. Serial on purpose (per-seed timing, no thread contention).
 ///   TIME_SEEDS=40 cargo test --release --lib test_build_time -- --ignored --nocapture

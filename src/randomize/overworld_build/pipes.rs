@@ -46,6 +46,48 @@ pub(super) const PIPE_EXCLUDED_POSITIONS: &[(usize, (usize, usize))] = &[
     (2, (8, 6)), // W3 between two rocks near start — HB only, not a pipe slot
 ];
 
+/// Worlds that keep the OLD nearest-frontier (shortest-bridge) island endpoint
+/// instead of the junction-preference one (issue #121). Junction preference
+/// helps every other world's route choice, but on a compact world whose
+/// central (high walk-degree) island tiles sit next to the airship, landing
+/// the mandatory island bridge on that junction builds a near-start→near-goal
+/// express that dominates every walking route. Measured: W4 regresses 20%→39%
+/// linear under junction endpoints while W5/W7/W8 all improve, and no
+/// world-agnostic knob (bridge penalty, goal-distance bias) separated the two
+/// cases — the split is geometric, so W4 simply opts out. See
+/// `test_pipe_probe` for the per-seed mechanism.
+const PROXIMITY_ENDPOINT_WORLDS: &[usize] = &[
+    3, // W4 (Giant Land) — junction island tiles are goal-adjacent
+];
+
+/// Whether `world_idx`'s connectivity-pipe island endpoint uses the old
+/// nearest-frontier scoring instead of junction preference. In release this is
+/// purely the constant above; under `cfg(test)` two env knobs A/B the passes
+/// for census sweeps (`PIPEMODE=proximity` forces every world to proximity,
+/// `FORCEJUNCTION=1` forces every world to junction). Compiled out of the
+/// shipped/WASM binary.
+#[cfg(not(test))]
+#[inline]
+fn use_proximity_endpoint(world_idx: usize) -> bool {
+    PROXIMITY_ENDPOINT_WORLDS.contains(&world_idx)
+}
+#[cfg(test)]
+fn use_proximity_endpoint(world_idx: usize) -> bool {
+    if std::env::var("FORCEJUNCTION").is_ok() {
+        false
+    } else if std::env::var("PIPEMODE").ok().as_deref() == Some("proximity") {
+        true
+    } else {
+        PROXIMITY_ENDPOINT_WORLDS.contains(&world_idx)
+    }
+}
+
+/// Nearest-frontier island score (proximity opt-out only): Manhattan distance
+/// at which the score saturates to zero, and the weight it scales to. Retained
+/// from the pre-#121 scorer so opted-out worlds keep their exact behavior.
+const FRONTIER_CAP: f64 = 20.0;
+const FRONTIER_WEIGHT: f64 = 5.0;
+
 // Reason: each argument is a distinct pipe-placement input (grid, candidate
 // blanks, start/target anchors, pair budget, fixed endpoints, world, RNG).
 // They don't form a cohesive concept, so bundling would add indirection
@@ -215,11 +257,28 @@ pub(super) fn place_pipes<R: Rng>(
         }
 
         if !unreachable_blanks.is_empty() && !reachable_blanks.is_empty() {
-            // Build outward: bridge the reachable frontier to the NEAREST
-            // unreachable island, connecting its closest two blanks. This
-            // grows the pipe network as a chain from start (start → i1 → i2 →
-            // … → goal) instead of teleporting straight to the goal island.
-            // Island side: prefer the blank nearest to the current frontier.
+            // Build outward: bridge the reachable frontier to the nearest
+            // unreachable island. The ISLAND endpoint lands on a JUNCTION rather
+            // than the closest dead-end tip (issue #121). A connectivity pipe is
+            // placed before any level exists, so the old scorer took the island
+            // blank nearest the frontier — usually a corridor tip — and the
+            // island joined as a one-way spur (a spanning tree, the most linear
+            // shape there is). Landing on a high walk-degree tile instead
+            // integrates the island as a routable subgraph the later measured
+            // passes can fork. A mild per-hop bridge penalty keeps the junction
+            // bias from reaching across the map. Worlds in
+            // PROXIMITY_ENDPOINT_WORLDS opt out (see that constant).
+            let use_proximity = use_proximity_endpoint(world_idx);
+            let island_score = |b: (usize, usize), frontier_dist: f64| -> f64 {
+                if use_proximity {
+                    // Nearer the frontier = higher (shortest bridge), saturated.
+                    (FRONTIER_CAP - frontier_dist.min(FRONTIER_CAP)) / FRONTIER_CAP
+                        * FRONTIER_WEIGHT
+                } else {
+                    walk_degree(grid, b) as f64 * knobs.junction_weight
+                        - frontier_dist * knobs.bridge_penalty
+                }
+            };
             let b_scored: Vec<((usize, usize), f64)> = unreachable_blanks
                 .iter()
                 .map(|&b| {
@@ -227,19 +286,17 @@ pub(super) fn place_pipes<R: Rng>(
                         .iter()
                         .map(|&a| (a.0.abs_diff(b.0) + a.1.abs_diff(b.1)) as f64)
                         .fold(f64::INFINITY, f64::min);
-                    // Nearer to the reachable frontier = higher score.
-                    let proximity = (knobs.frontier_max_dist
-                        - frontier_dist.min(knobs.frontier_max_dist))
-                        / knobs.frontier_max_dist
-                        * knobs.frontier_weight;
-                    (b, proximity)
+                    (b, island_score(b, frontier_dist))
                 })
                 .collect();
             let b = pick_softmax_by_score(b_scored, knobs.softmax_t, rng).unwrap();
 
-            // Reachable side: the frontier blank nearest to b (shortest bridge),
-            // so the pipe extends the frontier to that island rather than
-            // reaching back across the map.
+            // Frontier (mainland) side: the blank nearest b — a short bridge, so
+            // the pipe extends the frontier to the island rather than reaching
+            // back across the map. Junction preference here proved both worse
+            // for choice and slower (distant central bridges cost the downstream
+            // measure passes ~5ms/build), so the mainland mouth stays nearest-b
+            // on every world.
             let a_scored: Vec<((usize, usize), f64)> = reachable_blanks
                 .iter()
                 .map(|&a| {
