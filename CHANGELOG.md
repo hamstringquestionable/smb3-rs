@@ -39,6 +39,14 @@ deploys.
   reachability walk more than pays for the extra work (~94 ms in the browser).
   (issue #125)
 
+### Fixed
+
+- The "call the boat" canoe summon (press A on a dock) could drop the canoe on
+  a land tile *inside* an island instead of on the water beside the dock,
+  leaving it unboardable. Its tile check read one map row too low, so a path
+  tile below the water could be mistaken for water. It now reads the correct
+  cell (World 3's middle island dock was the visible case).
+
 ## [1.1.0] - 2026-07-27
 
 ### Changed

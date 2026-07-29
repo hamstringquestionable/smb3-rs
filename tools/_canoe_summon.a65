@@ -1,0 +1,110 @@
+; canoe_summon routine, origin-locked to CPU $DEA5 (FS_CANOE_SUMMON).
+; Assemble and paste bytes into src/randomize/qol/canoe_summon.rs:
+;   xa -o cs.bin tools/_canoe_summon.a65
+; The SEC/SBC #$10 before the tile lookup reads one row up so the checked cell
+; matches the placement cell (map tiles live at screen_base+$110, INC gives +$100).
+
+
+World_Map_Tile   = $E5
+Temp_Var4        = $03
+Temp_Var5        = $04
+Temp_Var6        = $05
+Temp_Var7        = $06
+Temp_Var15       = $0E
+Temp_Var16       = $0F
+Map_Tile_AddrL   = $63
+Map_Tile_AddrH   = $64
+World_Map_Y      = $75
+World_Map_XHi    = $77
+World_Map_X      = $79
+Map_Object_ActY  = $0500
+Map_Object_ActX  = $050F
+Map_Object_ActXH = $051E
+Player_Current   = $0726
+Map_Objects_Y    = $7EEB
+Map_Objects_XLo  = $7EF9
+Map_Objects_XHi  = $7F07
+Map_Objects_IDs  = $7F15
+Tile_Mem_Addr    = $8000
+
+    * = $DEA5
+
+    lda World_Map_Tile
+    cmp #$4B
+    bne csexit
+    ldx #$0D
+csfind:
+    lda Map_Objects_IDs,x
+    cmp #$10
+    beq cshave
+    dex
+    bpl csfind
+csexit:
+    lda World_Map_Tile
+    ldy #$1A
+    rts
+cshave:
+    stx Temp_Var5
+    lda #$00
+    sta Temp_Var4
+csloop:
+    ldx Player_Current
+    ldy Temp_Var4
+    lda World_Map_Y,x
+    clc
+    adc csyoff,y
+    sta Temp_Var15
+    lda World_Map_X,x
+    clc
+    adc csxoff,y
+    sta Temp_Var16
+    lda World_Map_XHi,x
+    adc csxhioff,y
+    sta Temp_Var6
+    asl
+    tax
+    lda Tile_Mem_Addr,x
+    sta Map_Tile_AddrL
+    lda Tile_Mem_Addr+1,x
+    sta Map_Tile_AddrH
+    inc Map_Tile_AddrH
+    lda Temp_Var16
+    lsr
+    lsr
+    lsr
+    lsr
+    sta Temp_Var7
+    lda Temp_Var15
+    sec
+    sbc #$10
+    and #$F0
+    ora Temp_Var7
+    tay
+    lda (Map_Tile_AddrL),y
+    cmp #$82
+    bcc csnext
+    cmp #$AA
+    bcs csnext
+    ldx Temp_Var5
+    lda Temp_Var15
+    sta Map_Objects_Y,x
+    sta Map_Object_ActY,x
+    lda Temp_Var16
+    sta Map_Objects_XLo,x
+    sta Map_Object_ActX,x
+    lda Temp_Var6
+    sta Map_Objects_XHi,x
+    sta Map_Object_ActXH,x
+    jmp csexit
+csnext:
+    inc Temp_Var4
+    lda Temp_Var4
+    cmp #$04
+    bne csloop
+    jmp csexit
+csyoff:
+    .byte $00,$00,$10,$F0
+csxoff:
+    .byte $10,$F0,$00,$00
+csxhioff:
+    .byte $00,$FF,$00,$00
