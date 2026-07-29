@@ -24,7 +24,9 @@
 //!
 //! The navigable-water range `$82..=$A9` is the canoe engine's own bound
 //! (`TILE_WATER_INVT $82 <= tile < TILE_VERTPATHWLU $AA` in the in-canoe move
-//! check), so any dock's water neighbor lands in it and no path/blank tile can.
+//! check). The scan must read the tile at the *placement* cell, which requires a
+//! one-row compensation in the tile lookup (see `CANOE_SUMMON_ROUTINE`); without
+//! it the check read one row low and could pick a land/path tile beside a dock.
 //!
 //! **Hook.** A pressed on a dock does nothing in vanilla (`$4B` is a page-1 tile,
 //! below its `$67` gate threshold, and not a special-entry tile), so the summon
@@ -50,8 +52,17 @@ const CANOE_SUMMON_CPU: u16 = (0xC000 + FS_CANOE_SUMMON - 0x14010) as u16;
 /// `tools/_canoe_summon.a65` with `xa`. On entry it is reached only when A was
 /// just pressed; it exits with `A = World_Map_Tile` and `Y = $1A` on every path
 /// so the displaced special-enter-tile scan continues exactly as in vanilla.
+///
+/// The tile check reads the map-tile page **one row up** from the neighbor cell
+/// (the `SEC / SBC #$10` below). The world map's tiles live at `screen_base +
+/// $110`, but the inline lookup only `INC`s the high byte (`+$100`) — so without
+/// the compensation every read lands one row too low. The game's own
+/// `MapTile_Get_By_Offset` avoids this because its `Search_YOff` table bakes in a
+/// matching `-16`. The `-$10` here keeps the tile we *test* aligned with the cell
+/// we actually drop the boat on; the placement coordinate itself is left alone
+/// (it must stay `World_Map_Y`-relative for boarding to find the canoe).
 #[rustfmt::skip]
-const CANOE_SUMMON_ROUTINE: [u8; 148] = [
+const CANOE_SUMMON_ROUTINE: [u8; 151] = [
     0xA5, 0xE5,             // LDA World_Map_Tile
     0xC9, 0x4B,             // CMP #$4B         (TILE_DOCK)
     0xD0, 0x0C,             // BNE csexit       (not a dock -> passthrough)
@@ -75,14 +86,14 @@ const CANOE_SUMMON_ROUTINE: [u8; 148] = [
     0xA4, 0x03,             // LDY Temp_Var4    (direction)
     0xB5, 0x75,             // LDA World_Map_Y,X ($75)
     0x18,                   // CLC
-    0x79, 0x2D, 0xDF,       // ADC csyoff,Y     ($DF2D)
+    0x79, 0x30, 0xDF,       // ADC csyoff,Y     ($DF30)
     0x85, 0x0E,             // STA Temp_Var15   (neighbor Y)
     0xB5, 0x79,             // LDA World_Map_X,X ($79)
     0x18,                   // CLC
-    0x79, 0x31, 0xDF,       // ADC csxoff,Y     ($DF31)
+    0x79, 0x34, 0xDF,       // ADC csxoff,Y     ($DF34)
     0x85, 0x0F,             // STA Temp_Var16   (neighbor X)
     0xB5, 0x77,             // LDA World_Map_XHi,X ($77)
-    0x79, 0x35, 0xDF,       // ADC csxhioff,Y   ($DF35, +carry from X)
+    0x79, 0x38, 0xDF,       // ADC csxhioff,Y   ($DF38, +carry from X)
     0x85, 0x05,             // STA Temp_Var6    (neighbor XHi)
     0x0A,                   // ASL             (screen index * 2)
     0xAA,                   // TAX
@@ -90,11 +101,15 @@ const CANOE_SUMMON_ROUTINE: [u8; 148] = [
     0x85, 0x63,             // STA Map_Tile_AddrL
     0xBD, 0x01, 0x80,       // LDA Tile_Mem_Addr+1,X
     0x85, 0x64,             // STA Map_Tile_AddrH
-    0xE6, 0x64,             // INC Map_Tile_AddrH  (screen tiles at base + $100)
+    0xE6, 0x64,             // INC Map_Tile_AddrH  (reaches base + $100)
     0xA5, 0x0F,             // LDA Temp_Var16   (neighbor X)
     0x4A, 0x4A, 0x4A, 0x4A, // LSR x4           (>> 4 -> column within screen)
     0x85, 0x06,             // STA Temp_Var7
     0xA5, 0x0E,             // LDA Temp_Var15   (neighbor Y)
+    0x38,                   // SEC
+    0xE9, 0x10,             // SBC #$10         (tiles are at base+$110, INC only got
+                            //                   +$100 -> read one row up so the tile
+                            //                   we test matches the placement cell)
     0x29, 0xF0,             // AND #$F0
     0x05, 0x06,             // ORA Temp_Var7
     0xA8,                   // TAY
@@ -119,12 +134,12 @@ const CANOE_SUMMON_ROUTINE: [u8; 148] = [
     0xE6, 0x03,             // INC Temp_Var4    (next direction)
     0xA5, 0x03,             // LDA Temp_Var4
     0xC9, 0x04,             // CMP #$04
-    0xD0, 0x98,             // BNE csloop
+    0xD0, 0x95,             // BNE csloop
     0x4C, 0xB7, 0xDE,       // JMP csexit ($DEB7)  (no water neighbor)
     // csyoff / csxoff / csxhioff — cardinal offsets, dir 0..3 = right,left,down,up:
-    0x00, 0x00, 0x10, 0xF0, // csyoff   ($DF2D)
-    0x10, 0xF0, 0x00, 0x00, // csxoff   ($DF31)
-    0x00, 0xFF, 0x00, 0x00, // csxhioff ($DF35)
+    0x00, 0x00, 0x10, 0xF0, // csyoff   ($DF30)
+    0x10, 0xF0, 0x00, 0x00, // csxoff   ($DF34)
+    0x00, 0xFF, 0x00, 0x00, // csxhioff ($DF38)
 ];
 
 /// Install the "call the boat" summon: A on a dock warps the canoe alongside.
