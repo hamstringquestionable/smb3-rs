@@ -16,10 +16,10 @@ pub(crate) const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x3E965, 13, "title_screen: intro skip + menu music routine"),
     (0x3FFF0, 26, "card_speed_clear: XOR trampoline"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
-    (0x35530, 66, "big_q_block: lookup routine + tables"),
     (0x35572, 13, "mystery_anchor: item redirect trampoline"),
     (0x3557F, 50, "hammer_locks: tile check subroutine + tables"),
     (0x355B1, 12, "anchor_visuals: items-vs-cards index guard trampoline"),
+    (0x355BD, 106, "big_q_block: two-pass lookup routine + 13-entry tables (current-area then frozen entry)"),
     // PRG027 (file 0x36010, CPU $A000–$BFFF)
     (0x379D9, 894, "king_quotes: 7 quotes + hook (7×120 + 54)"),
     // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
@@ -134,8 +134,9 @@ pub(crate) const GAMEOVER_FINALIZE_SITE: usize = 0x166BA;  // 3 bytes — `STA $
 // "NOTE: Assumes Index 1 is the Airship!"
 pub(crate) const AIRSHIP_OBJ_SLOT: usize = 1;
 
-// PRG026
-pub(crate) const FS_BIG_Q_LOOKUP: usize      = 0x35530; // 66 bytes
+// PRG026 — two-pass Big ? Block lookup (qol/big_q.rs), relocated off the old
+// 0x35530 slot into tail free space to hold the two-pass routine + 12 entries.
+pub(crate) const FS_BIG_Q_LOOKUP: usize      = 0x355BD; // 106 bytes (CPU $B5AD)
 
 // PRG027
 pub(crate) const FS_KING_QUOTES: usize       = 0x379D9; // 894 bytes

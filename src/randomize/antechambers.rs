@@ -37,18 +37,29 @@ struct Antechamber {
     name: &'static str,
     /// File offset of the entry area's 9-byte layout header.
     header: usize,
-    /// File offsets of the entry area's 3-byte junction commands. All of
-    /// them receive the donor's spawn bytes when hosting; the FIRST is
-    /// the canonical front-door command whose bytes serve as this
-    /// level's donor data (matters for 5-2, whose second pipe is a
-    /// mid-level re-entry at different coordinates).
+    /// File offsets of the entry area's front-door junction commands. All of
+    /// them receive the donor's spawn bytes when hosting; the FIRST is the
+    /// canonical front-door command whose bytes serve as this level's donor
+    /// data.
+    ///
+    /// Only list junctions that are genuinely *entrances to the interior*. A
+    /// junction command also seeds a spawn SLOT (`Level_JctXLHStart[slot]`),
+    /// and a Big ? Block bonus room reads its arrival position from that slot.
+    /// If a listed junction happens to be the slot a bonus room uses, hosting
+    /// overwrites it and the bonus room drops you at a corrupted position (a
+    /// void). 5-2 is exactly this case: its slot-4 command `0x1A807` seeds the
+    /// arrival for its Big ? Block room, so it is deliberately NOT listed —
+    /// only the real front door `0x1A804` is. (See the big_q room lookup in
+    /// `qol/big_q.rs` for the matching room-selection half.)
     junctions: &'static [usize],
 }
 
 const ANTECHAMBERS: [Antechamber; 11] = [
     Antechamber { name: "2-Pyr", header: 0x28F36, junctions: &[0x28F6F, 0x28F96] },
     Antechamber { name: "4-3", header: 0x2701F, junctions: &[0x27073] },
-    Antechamber { name: "5-2", header: 0x1A587, junctions: &[0x1A804, 0x1A807] },
+    // 5-2 lists only its front door 0x1A804; 0x1A807 (slot 4) seeds the Big ?
+    // Block bonus-room arrival and must stay vanilla — see the `junctions` doc.
+    Antechamber { name: "5-2", header: 0x1A587, junctions: &[0x1A804] },
     Antechamber { name: "5-3", header: 0x1EC26, junctions: &[0x1EC4A] },
     Antechamber { name: "6-6", header: 0x23941, junctions: &[0x23990] },
     Antechamber { name: "6-9", header: 0x23CFE, junctions: &[0x23D17] },
@@ -393,7 +404,7 @@ mod tests {
         let expected: [(u16, u16, u8, &[u8], [u8; 2]); 11] = [
             (0xA577, 0xC5BC, 3, &[0, 3], [0x68, 0x20]),    // 2-Pyr (door, dir 8)
             (0xB6D5, 0xC863, 3, &[2], [0x52, 0x20]),       // 4-3
-            (0xB481, 0xCE4B, 8, &[0, 4], [0x82, 0x20]),    // 5-2 (vert shaft)
+            (0xB481, 0xCE4B, 8, &[0], [0x82, 0x20]),       // 5-2 (vert shaft; slot-4 0x1A807 excluded, it's the bonus-room slot)
             (0xAC3E, 0xC29E, 1, &[0], [0x02, 0x67]),       // 5-3
             (0xACDC, 0xC64B, 3, &[0], [0x12, 0x20]),       // 6-6
             (0xA9D7, 0xC60E, 3, &[0], [0x02, 0x40]),       // 6-9

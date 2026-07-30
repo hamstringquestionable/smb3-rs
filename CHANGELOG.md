@@ -41,6 +41,18 @@ deploys.
 
 ### Fixed
 
+- Lobby (antechamber) shuffle could drop you into a void when you entered a
+  Big ? Block bonus room inside 5-2 or 6-9, in two ways, both fixed:
+  - **5-2's bonus room landed you in a garbage spot.** 5-2's bonus room reads
+    its arrival position from the same pipe the shuffle was rewriting to relink
+    the lobby — so it flung you into the room at a corrupted position. The
+    shuffle now leaves that pipe alone.
+  - **The bonus room itself was the wrong (void) one.** The fix that keeps these
+    rooms working when a level moves worlds keyed on the map tile you entered —
+    which, under lobby shuffle, is a *different* level's tile. It now keys on the
+    room you're actually standing in, so 5-2 and 6-9 open their own bonus rooms
+    even when reached through another level's lobby.
+
 - The "call the boat" canoe summon (press A on a dock) could drop the canoe on
   a land tile *inside* an island instead of on the water beside the dock,
   leaving it unboardable. Its tile check read one map row too low, so a path
