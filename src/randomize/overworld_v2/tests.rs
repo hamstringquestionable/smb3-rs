@@ -381,6 +381,104 @@ fn test_v2_levels_census() {
     }
 }
 
+/// One logged spare-pipe delta, parsed back out of the report line
+/// `pipe (r, c) <-> (r, c): routes A -> B, C1 M -> N`.
+fn parse_pipe_delta(line: &str) -> Option<(usize, usize, u32, u32)> {
+    let rest = line.split(": routes ").nth(1)?;
+    let (routes, c1) = rest.split_once(", C1 ")?;
+    let (ra, rb) = routes.split_once(" -> ")?;
+    let (ca, cb) = c1.split_once(" -> ")?;
+    Some((ra.parse().ok()?, rb.parse().ok()?, ca.parse().ok()?, cb.parse().ok()?))
+}
+
+/// Spare-pipes discovery census: what do RANDOM pipes do to route structure?
+/// Buckets per placed pipe, from the phase's own delta instrumentation:
+/// create (routes up), destroy (routes down), cheapen (routes flat, C1 down
+/// — the silent dominating shortcut), inert (nothing measurable changed).
+/// `V2_SEEDS` seeds (default 50).
+#[test]
+fn test_v2_spare_pipes_census() {
+    let Some(rom) = load_rom() else {
+        eprintln!("ROM not found, skipping");
+        return;
+    };
+    let rom = base_qol(&rom);
+    let seeds: u64 = std::env::var("V2_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
+    let catalog = NodeCatalog::build(&rom, false);
+    let pickup = pick_up(&rom, &catalog, PickupFlags::default());
+
+    println!("v2 spare-pipes census ({seeds} seeds, random toss, observe-only deltas)");
+    println!("world  spares  create%  destroy%  cheapen%  inert%  C1(mean)  routes  linear%");
+    for world_idx in 0..8 {
+        let mut spares = 0usize;
+        let (mut create, mut destroy, mut cheapen, mut inert) = (0usize, 0usize, 0usize, 0usize);
+        let mut c1_sum = 0u64;
+        let mut routes_sum = 0usize;
+        let mut linear = 0usize;
+
+        for seed in 0..seeds {
+            let mut state = from_pickup(&rom, &catalog, &pickup, world_idx);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            run_schedule(&mut state, &[&Connectivity, &Levels, &SparePipes], &mut rng);
+
+            let spare_report = state
+                .log
+                .iter()
+                .find(|r| r.phase == "spare_pipes")
+                .expect("spare_pipes always reports");
+            for line in &spare_report.actions {
+                let Some((ra, rb, ca, cb)) = parse_pipe_delta(line) else { continue };
+                spares += 1;
+                if rb > ra {
+                    create += 1;
+                } else if rb < ra {
+                    destroy += 1;
+                } else if cb < ca {
+                    cheapen += 1;
+                } else {
+                    inert += 1;
+                }
+            }
+
+            let measure = measure_world(&state);
+            c1_sum += u64::from(measure.c1);
+            routes_sum += measure.routes_in_band;
+            if measure.routes_in_band < 2 {
+                linear += 1;
+            }
+        }
+
+        let n = seeds as f64;
+        let per = |x: usize| 100.0 * x as f64 / spares.max(1) as f64;
+        println!(
+            "  W{}   {:>6.2} {:>7.0}% {:>8.0}% {:>8.0}% {:>6.0}% {:>9.1} {:>7.2} {:>7.0}%",
+            world_idx + 1,
+            spares as f64 / n,
+            per(create),
+            per(destroy),
+            per(cheapen),
+            per(inert),
+            c1_sum as f64 / n,
+            routes_sum as f64 / n,
+            100.0 * linear as f64 / n,
+        );
+    }
+
+    // One narrated example: W2 (whose single spare IS its whole pipe story).
+    let mut state = from_pickup(&rom, &catalog, &pickup, 1);
+    let mut rng = ChaCha8Rng::seed_from_u64(0);
+    run_schedule(&mut state, &[&Connectivity, &Levels, &SparePipes], &mut rng);
+    println!("example (W2, seed 0):");
+    for report in &state.log {
+        for action in &report.actions {
+            println!("    [{}] {action}", report.phase);
+        }
+    }
+}
+
 /// Hand-check probe: one vanilla world at a wide measuring band, kept and
 /// dominated routes both printed. `V2_WORLD` picks the world (1-8, default
 /// 2), `V2_SLACK` the band (default 12). Born from the W2 rock question —

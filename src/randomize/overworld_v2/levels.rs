@@ -33,7 +33,7 @@ impl Phase for Levels {
     fn run(&self, state: &mut WorldState, rng: &mut dyn RngCore) -> PhaseReport {
         let mut actions = Vec::new();
 
-        let mut candidates = legal_blanks(state);
+        let mut candidates = state.legal_blanks();
         let mut placed = 0usize;
 
         while placed < state.level_budget {
@@ -59,40 +59,5 @@ impl Phase for Levels {
 
         actions.push(format!("done: {placed}/{} levels placed", state.level_budget));
         PhaseReport { phase: self.name(), actions }
-    }
-}
-
-/// Blanks a level may claim: blank tile, not `fixed`, not already a slot,
-/// and not the row-7/8 partner of existing completable content.
-fn legal_blanks(state: &WorldState) -> Vec<Pos> {
-    let taken: HashSet<Pos> = state.slots.iter().map(|s| s.pos).collect();
-    let barred: HashSet<Pos> = state
-        .slots
-        .iter()
-        .filter_map(|s| row78_partner(s.pos))
-        .collect();
-    let mut out = Vec::new();
-    for r in 0..state.grid.rows() {
-        for c in 0..state.grid.cols {
-            let pos = (r, c);
-            if rom_data::VALID_BLANK_TILES.contains(&state.grid.get(r, c))
-                && !state.fixed.contains(&pos)
-                && !taken.contains(&pos)
-                && !barred.contains(&pos)
-            {
-                out.push(pos);
-            }
-        }
-    }
-    out
-}
-
-/// The cell sharing `pos`'s completion bit: (8,c) for (7,c) and vice versa.
-/// `None` for every other row.
-fn row78_partner(pos: Pos) -> Option<Pos> {
-    match pos.0 {
-        7 => Some((8, pos.1)),
-        8 => Some((7, pos.1)),
-        _ => None,
     }
 }

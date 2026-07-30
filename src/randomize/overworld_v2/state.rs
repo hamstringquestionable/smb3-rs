@@ -51,6 +51,50 @@ impl WorldState {
             .count()
     }
 
+    /// Blanks a phase may claim for new content: blank tile, not `fixed`,
+    /// not already a slot, and not the row-7/8 completion-bit partner of
+    /// existing content (rows 7 and 8 share one completion bit per column —
+    /// a ROM mechanic; stacked completable content marks each other beaten).
+    pub(crate) fn legal_blanks(&self) -> Vec<Pos> {
+        let taken: HashSet<Pos> = self.slots.iter().map(|s| s.pos).collect();
+        let barred: HashSet<Pos> = self
+            .slots
+            .iter()
+            .filter_map(|s| row78_partner(s.pos))
+            .collect();
+        let mut out = Vec::new();
+        for r in 0..self.grid.rows() {
+            for c in 0..self.grid.cols {
+                let pos = (r, c);
+                if rom_data::VALID_BLANK_TILES.contains(&self.grid.get(r, c))
+                    && !self.fixed.contains(&pos)
+                    && !taken.contains(&pos)
+                    && !barred.contains(&pos)
+                {
+                    out.push(pos);
+                }
+            }
+        }
+        out
+    }
+
+    /// Stamp a teleport pipe pair: both tiles become pipes, both positions
+    /// become Pipe slots, and the edge joins the pair list. One writer so
+    /// grid, slots, and pairs can never drift apart.
+    pub(crate) fn add_pipe_pair(&mut self, a: Pos, b: Pos) {
+        for pos in [a, b] {
+            self.grid.set(pos.0, pos.1, TILE_PIPE);
+            self.slots.push(SlotAssignment {
+                pos,
+                kind: SlotKind::Pipe,
+                section: 0,
+                is_hand_trap: false,
+                is_troll_pipe: false,
+            });
+        }
+        self.pipe_pairs.push((a, b));
+    }
+
     /// View this state as a `BuiltWorld` so the shipping builder's route
     /// scorer (and every census metric built on it) can measure it. This is
     /// the "same measuring stick" bridge — v2 never re-implements scoring.
@@ -64,6 +108,16 @@ impl WorldState {
             pipe_pairs: self.pipe_pairs.clone(),
             hb_sprites: Vec::new(),
         }
+    }
+}
+
+/// The cell sharing `pos`'s completion bit: (8,c) for (7,c) and vice versa.
+/// `None` for every other row.
+pub(crate) fn row78_partner(pos: Pos) -> Option<Pos> {
+    match pos.0 {
+        7 => Some((8, pos.1)),
+        8 => Some((7, pos.1)),
+        _ => None,
     }
 }
 

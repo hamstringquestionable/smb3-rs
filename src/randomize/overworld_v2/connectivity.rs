@@ -45,19 +45,17 @@ impl Phase for Connectivity {
             };
 
             // The island = whatever the walker can cover starting from the
-            // seed. Its blanks (minus fixed) are the far-endpoint candidates.
+            // seed. Endpoint candidacy uses the shared `legal_blanks` rules
+            // (not fixed, not taken, row-7/8 partner respected — a pipe is
+            // completable content too), split by which side of the cut each
+            // blank sits on.
             let island_reach =
                 walk_reachable(&state.grid, &state.pipe_pairs, Some(island_seed), state.world_idx);
-            let island_candidates: Vec<Pos> = blanks
-                .iter()
-                .copied()
-                .filter(|p| island_reach.contains(*p) && !state.fixed.contains(p))
-                .collect();
-            let mainland_candidates: Vec<Pos> = blanks
-                .iter()
-                .copied()
-                .filter(|p| reach.contains(*p) && !state.fixed.contains(p))
-                .collect();
+            let legal = state.legal_blanks();
+            let island_candidates: Vec<Pos> =
+                legal.iter().copied().filter(|p| island_reach.contains(*p)).collect();
+            let mainland_candidates: Vec<Pos> =
+                legal.iter().copied().filter(|p| reach.contains(*p)).collect();
 
             let (Some(&near), Some(&far)) =
                 (mainland_candidates.choose(rng), island_candidates.choose(rng))
@@ -70,7 +68,7 @@ impl Phase for Connectivity {
                 break;
             };
 
-            place_pipe_pair(state, near, far);
+            state.add_pipe_pair(near, far);
             actions.push(format!("pipe {near:?} <-> {far:?} (island of {} blanks)", island_candidates.len()));
         }
 
@@ -115,18 +113,3 @@ fn next_island_seed(state: &WorldState, reach: &Reach, blanks: &[Pos]) -> Option
     blanks.iter().copied().find(|p| !reach.contains(*p))
 }
 
-/// Stamp a teleport pipe pair onto the state: both tiles become pipes, both
-/// positions become Pipe slots, and the teleport edge joins the pair list.
-fn place_pipe_pair(state: &mut WorldState, a: Pos, b: Pos) {
-    for pos in [a, b] {
-        state.grid.set(pos.0, pos.1, TILE_PIPE);
-        state.slots.push(SlotAssignment {
-            pos,
-            kind: SlotKind::Pipe,
-            section: 0,
-            is_hand_trap: false,
-            is_troll_pipe: false,
-        });
-    }
-    state.pipe_pairs.push((a, b));
-}
