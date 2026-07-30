@@ -19,6 +19,10 @@ pub mod node_catalog;
 pub mod overworld_build;
 pub mod overworld_helpers;
 pub mod overworld_pickup;
+/// v2 overworld builder — parallel rebuild, harness-only for now (no
+/// production caller), so it compiles only with the test suite.
+#[cfg(test)]
+pub mod overworld_v2;
 pub mod overworld_writer;
 pub mod palette_variants;
 pub mod palettes;

@@ -53,7 +53,7 @@ pub struct SlotAssignment {
 /// Pipes are already stamped on the build grid and HammerBro slots stay
 /// blank path tiles, so neither needs a stamp. Locks are NOT stamped —
 /// callers model them separately (test grids / conditional edges).
-pub(super) fn stamp_slots(grid: &mut Grid, slots: &[SlotAssignment]) {
+pub(crate) fn stamp_slots(grid: &mut Grid, slots: &[SlotAssignment]) {
     for slot in slots {
         match slot.kind {
             SlotKind::Fortress => grid.set(slot.pos.0, slot.pos.1, TILE_FORTRESS),

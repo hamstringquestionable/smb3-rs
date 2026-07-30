@@ -59,6 +59,13 @@ pub(crate) use progression::{
 // Choice-first route scorer (separate weighted model — see route_choice.rs).
 #[cfg(test)]
 pub(crate) use route_choice::{analyze_route_choice, dump_route_choice};
+// Measurement surface for the v2 builder harness (`overworld_v2`): the v2
+// world state converts to a `BuiltWorld` so both builders are measured with
+// the same route scorer. Test-only until v2 gains a production caller.
+#[cfg(test)]
+pub(crate) use route_choice::{DEFAULT_SLACK, RouteChoice};
+#[cfg(test)]
+pub(crate) use types::{LockAssignment, stamp_slots};
 
 #[cfg(test)]
 mod tests;
