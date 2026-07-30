@@ -98,6 +98,50 @@ impl WorldState {
         self.pipe_pairs.push((a, b));
     }
 
+    /// Order-free completability — the locks invariant. Close every lock,
+    /// beat every fort the walker can reach, open those forts' locks,
+    /// repeat to a fixpoint. Valid iff the goal is reached AND every fort
+    /// was beaten (a fort sealed behind its own lock is permanently
+    /// unplayable content). No assumption about the order the player beats
+    /// forts in — deliberately unlike the shipping builder's per-section
+    /// simulation.
+    pub(crate) fn completable(&self) -> bool {
+        let mut base = self.grid.clone();
+        stamp_slots(&mut base, &self.slots);
+        let forts: Vec<(usize, Pos)> = self
+            .slots
+            .iter()
+            .filter(|s| s.kind == SlotKind::Fortress)
+            .map(|s| (s.section, s.pos))
+            .collect();
+
+        let mut open: HashSet<usize> = HashSet::new();
+        loop {
+            let mut g = base.clone();
+            for lock in &self.locks {
+                let tile = if open.contains(&lock.fort_section) {
+                    lock.replace_tile
+                } else {
+                    lock.gap_tile
+                };
+                g.set(lock.pos.0, lock.pos.1, tile);
+            }
+            let reach = walk_reachable(&g, &self.pipe_pairs, self.start, self.world_idx);
+            let mut progressed = false;
+            for &(fort_id, pos) in &forts {
+                if !open.contains(&fort_id) && reach.contains(pos) {
+                    open.insert(fort_id);
+                    progressed = true;
+                }
+            }
+            if !progressed {
+                let all_forts_beatable = open.len() == forts.len();
+                let goal_reached = self.target.is_none_or(|t| reach.contains(t));
+                return all_forts_beatable && goal_reached;
+            }
+        }
+    }
+
     /// View this state as a `BuiltWorld` so the shipping builder's route
     /// scorer (and every census metric built on it) can measure it. This is
     /// the "same measuring stick" bridge — v2 never re-implements scoring.

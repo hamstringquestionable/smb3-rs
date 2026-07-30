@@ -454,6 +454,120 @@ fn test_v2_forts_census() {
     }
 }
 
+/// Full-skeleton census: all five dumb phases (connectivity → levels →
+/// spare pipes → forts → locks). The skeleton's report card, measured with
+/// the same stick as the shipping builder — compare against
+/// `test_v2_current_builder_worlds`. New columns: lockless% (forts whose
+/// every lock candidate broke completability), goal-open% (world finishable
+/// with all locks closed), zero-gate% (locks that wall off nothing — pure
+/// decoration). `V2_SEEDS` seeds (default 50).
+#[test]
+fn test_v2_locks_census() {
+    let Some(rom) = load_rom() else {
+        eprintln!("ROM not found, skipping");
+        return;
+    };
+    let rom = base_qol(&rom);
+    let seeds: u64 = std::env::var("V2_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
+    let catalog = NodeCatalog::build(&rom, false);
+    let pickup = pick_up(&rom, &catalog, PickupFlags::default());
+
+    println!("v2 full-skeleton census ({seeds} seeds, all five dumb phases)");
+    println!("world  forts  locks  lockless%  goal-open%  zero-gate%  C1(mean)  routes  linear%");
+    for world_idx in 0..8 {
+        let mut fort_sum = 0usize;
+        let mut lock_sum = 0usize;
+        let mut zero_gate = 0usize;
+        let mut goal_open_count = 0usize;
+        let mut c1_sum = 0u64;
+        let mut routes_sum = 0usize;
+        let mut linear = 0usize;
+
+        for seed in 0..seeds {
+            let mut state = from_pickup(&rom, &catalog, &pickup, world_idx);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            run_schedule(
+                &mut state,
+                &[&Connectivity, &Levels, &SparePipes, &Forts, &Locks],
+                &mut rng,
+            );
+            assert!(
+                state.completable(),
+                "seed {} W{} must be completable after locks",
+                seed,
+                world_idx + 1
+            );
+
+            fort_sum += state
+                .slots
+                .iter()
+                .filter(|s| s.kind == SlotKind::Fortress)
+                .count();
+            lock_sum += state.locks.len();
+
+            // Zero-gate locks: with all OTHER locks open, closing this one
+            // walls off no node at all — pure decoration.
+            let mut open_grid = state.grid.clone();
+            super::super::overworld_build::stamp_slots(&mut open_grid, &state.slots);
+            for lock in &state.locks {
+                open_grid.set(lock.pos.0, lock.pos.1, lock.replace_tile);
+            }
+            let open_reach =
+                walk_reachable(&open_grid, &state.pipe_pairs, state.start, state.world_idx);
+            for lock in &state.locks {
+                let mut g = open_grid.clone();
+                g.set(lock.pos.0, lock.pos.1, lock.gap_tile);
+                let reach = walk_reachable(&g, &state.pipe_pairs, state.start, state.world_idx);
+                if reach.len() == open_reach.len() {
+                    zero_gate += 1;
+                }
+            }
+
+            let measure = measure_world(&state);
+            if measure.goal_open {
+                goal_open_count += 1;
+            }
+            c1_sum += u64::from(measure.c1);
+            routes_sum += measure.routes_in_band;
+            if measure.routes_in_band < 2 {
+                linear += 1;
+            }
+        }
+
+        let n = seeds as f64;
+        println!(
+            "  W{}   {:>4.1} {:>6.1} {:>9.0}% {:>10.0}% {:>10.0}% {:>9.1} {:>7.2} {:>7.0}%",
+            world_idx + 1,
+            fort_sum as f64 / n,
+            lock_sum as f64 / n,
+            100.0 * (fort_sum - lock_sum) as f64 / fort_sum.max(1) as f64,
+            100.0 * goal_open_count as f64 / n,
+            100.0 * zero_gate as f64 / lock_sum.max(1) as f64,
+            c1_sum as f64 / n,
+            routes_sum as f64 / n,
+            100.0 * linear as f64 / n,
+        );
+    }
+
+    // One narrated example: W4, seed 0 — a two-fort world end to end.
+    let mut state = from_pickup(&rom, &catalog, &pickup, 3);
+    let mut rng = ChaCha8Rng::seed_from_u64(0);
+    run_schedule(
+        &mut state,
+        &[&Connectivity, &Levels, &SparePipes, &Forts, &Locks],
+        &mut rng,
+    );
+    println!("example (W4, seed 0):");
+    for report in &state.log {
+        for action in &report.actions {
+            println!("    [{}] {action}", report.phase);
+        }
+    }
+}
+
 /// One logged spare-pipe delta, parsed back out of the report line
 /// `pipe (r, c) <-> (r, c): routes A -> B, C1 M -> N`.
 fn parse_pipe_delta(line: &str) -> Option<(usize, usize, u32, u32)> {

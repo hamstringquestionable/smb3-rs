@@ -38,13 +38,14 @@ use super::overworld_build::{
     BuiltWorld, DEFAULT_SLACK, LockAssignment, RouteChoice, SlotAssignment, SlotKind,
     VANILLA_PIPE_PAIRS, analyze_route_choice, fixed_positions_for_world, stamp_slots,
 };
-use super::overworld_helpers::find_target;
+use super::overworld_helpers::{LOCKABLE_TILES, find_target, gap_tile_for};
 use super::overworld_pickup::PickupResult;
 use super::rom_data::{self, Grid, Pos, TILE_PIPE, TeleportEdge};
 
 mod connectivity;
 mod forts;
 mod levels;
+mod locks;
 mod metrics;
 mod sources;
 mod spare_pipes;
@@ -56,6 +57,7 @@ mod tests;
 pub(crate) use connectivity::Connectivity;
 pub(crate) use forts::Forts;
 pub(crate) use levels::Levels;
+pub(crate) use locks::Locks;
 pub(crate) use metrics::measure_world;
 pub(crate) use spare_pipes::SparePipes;
 pub(crate) use sources::{from_built, from_pickup, from_vanilla};
