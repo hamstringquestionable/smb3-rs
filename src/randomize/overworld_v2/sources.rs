@@ -1,8 +1,10 @@
-//! World sources for the v2 harness: places a `WorldState` can come from
-//! before v2 has placement phases of its own.
+//! World sources: places a `WorldState` can come from. All three are LOADERS
+//! — they package existing data into v2's state and never redo the work of
+//! the shared phases (catalog, pickup) they read from.
 //!
-//! Two sources, doing different jobs:
-//! - [`vanilla_world`] reads a world straight from the unmodified ROM. Vanilla
+//! - [`from_pickup`] is the v2 build input: one world as the shared pickup
+//!   phase hands it over, ready for placement phases to run on.
+//! - [`from_vanilla`] reads a world straight from the unmodified ROM. Vanilla
 //!   is *known ground truth* — if a metric reads vanilla W1 and reports
 //!   something we know is wrong, the metric is broken, not the world.
 //! - [`from_built`] wraps the shipping builder's output — the baseline every
@@ -36,7 +38,7 @@ pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
 /// Uses the SIMPLEST configuration while v2 finds its feet: no start↔airship
 /// swap, no shuffled toad houses / hammer bros / spades — so pinned houses
 /// and floating sprites land in `fixed`.
-pub(crate) fn pickup_world(
+pub(crate) fn from_pickup(
     rom: &Rom,
     catalog: &NodeCatalog,
     pickup: &PickupResult,
@@ -71,7 +73,7 @@ pub(crate) fn pickup_world(
 /// The grid is normalized to the builder convention the route scorer
 /// expects: lock tiles are RESTORED to their open path tile on the grid, and
 /// the closed state lives only in the `locks` overlay.
-pub(crate) fn vanilla_world(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -> WorldState {
+pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -> WorldState {
     let mut grid = rom_data::read_tile_grid(rom, world_idx);
     let slots = vanilla_slots(rom, catalog, world_idx);
     let fort_count = slots

@@ -52,5 +52,5 @@ mod tests;
 
 pub(crate) use connectivity::Connectivity;
 pub(crate) use metrics::measure_world;
-pub(crate) use sources::{from_built, pickup_world, vanilla_world};
+pub(crate) use sources::{from_built, from_pickup, from_vanilla};
 pub(crate) use state::{Phase, PhaseReport, WorldState, run_schedule};

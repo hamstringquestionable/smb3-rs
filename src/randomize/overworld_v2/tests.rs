@@ -82,7 +82,7 @@ fn test_v2_vanilla_worlds() {
     println!("vanilla worlds (raw ROM, scorer points: level 3 / fort 5 / pipe 1 / rock 8)");
     println!("world  levels forts pipes locks |  C1  routes  uniq  detours  goal-open");
     for world_idx in 0..8 {
-        let state = vanilla_world(&rom, &catalog, world_idx);
+        let state = from_vanilla(&rom, &catalog, world_idx);
         let measure = measure_world(&state);
         let count = |kind: SlotKind| state.slots.iter().filter(|s| s.kind == kind).count();
         println!(
@@ -228,7 +228,7 @@ fn test_v2_connectivity_census() {
         let mut goal_ok = 0usize;
         let mut pair_sets: HashSet<Vec<TeleportEdge>> = HashSet::new();
         for seed in 0..seeds {
-            let mut state = pickup_world(&rom, &catalog, &pickup, world_idx);
+            let mut state = from_pickup(&rom, &catalog, &pickup, world_idx);
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             run_schedule(&mut state, &[&Connectivity], &mut rng);
             pipes_sum += state.pipe_pairs.len();
@@ -260,7 +260,7 @@ fn test_v2_connectivity_census() {
     }
 
     // One narrated example for hand-checking: W3, seed 0.
-    let mut state = pickup_world(&rom, &catalog, &pickup, 2);
+    let mut state = from_pickup(&rom, &catalog, &pickup, 2);
     let mut rng = ChaCha8Rng::seed_from_u64(0);
     run_schedule(&mut state, &[&Connectivity], &mut rng);
     println!("example (W3, seed 0):");
@@ -282,7 +282,7 @@ fn test_v2_probe_vanilla_world() {
     let world: usize = std::env::var("V2_WORLD").ok().and_then(|s| s.parse().ok()).unwrap_or(2);
     let slack: u32 = std::env::var("V2_SLACK").ok().and_then(|s| s.parse().ok()).unwrap_or(12);
     let catalog = NodeCatalog::build(&rom, false);
-    let state = vanilla_world(&rom, &catalog, world - 1);
+    let state = from_vanilla(&rom, &catalog, world - 1);
     let rc = analyze_route_choice(&state.to_built(), slack);
     println!("vanilla W{world} wide band (slack {slack}): best={}", rc.best_cost);
     for r in &rc.routes {
