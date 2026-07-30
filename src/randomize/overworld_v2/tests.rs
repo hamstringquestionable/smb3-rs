@@ -701,6 +701,8 @@ fn test_v2_shaping_census() {
     let mut lr_rej = [0usize; 8];
     let mut gs_acc = [0usize; 8];
     let mut gs_rej = [0usize; 8];
+    let mut fl_acc = [0usize; 8];
+    let mut fl_rej = [0usize; 8];
     let mut time_dumb = std::time::Duration::ZERO;
     let mut time_shaped = std::time::Duration::ZERO;
 
@@ -749,18 +751,21 @@ fn test_v2_shaping_census() {
                 |needle: &str| report.actions.iter().filter(|a| a.contains(needle)).count();
             let la = count("lock_replace ACCEPT");
             let ga = count("gated_shortcut ACCEPT");
+            let fa = count("fort_lock ACCEPT");
             lr_acc[world_idx] += la;
             lr_rej[world_idx] += count("lock_replace REJECT");
             gs_acc[world_idx] += ga;
             gs_rej[world_idx] += count("gated_shortcut REJECT");
-            if la + ga > 0 {
+            fl_acc[world_idx] += fa;
+            fl_rej[world_idx] += count("fort_lock REJECT");
+            if la + ga + fa > 0 {
                 touched[world_idx] += 1;
             }
         }
     }
 
     println!("v2 shaping A/B census ({seeds} seeds, dumb skeleton vs diagnosis-driven shaping, flag-mix arms)");
-    println!("world  arm     C1(mean)  routes  linear%  zero-gate%  goal-open%  pipes  touched%  lr(acc:rej)  gs(acc:rej)");
+    println!("world  arm     C1(mean)  routes  linear%  zero-gate%  goal-open%  pipes  touched%  lr(acc:rej)  gs(acc:rej)  fl(acc:rej)");
     let n = seeds as f64;
     for world_idx in 0..8 {
         for (arm, t) in [("dumb", &dumb[world_idx]), ("shaped", &shaped[world_idx])] {
@@ -776,15 +781,17 @@ fn test_v2_shaping_census() {
             );
             if arm == "shaped" {
                 println!(
-                    "{base} {:>7.0}% {:>8}:{:<4} {:>6}:{:<4}",
+                    "{base} {:>7.0}% {:>8}:{:<4} {:>6}:{:<4} {:>6}:{:<4}",
                     100.0 * touched[world_idx] as f64 / n,
                     lr_acc[world_idx],
                     lr_rej[world_idx],
                     gs_acc[world_idx],
                     gs_rej[world_idx],
+                    fl_acc[world_idx],
+                    fl_rej[world_idx],
                 );
             } else {
-                println!("{base}        -        -         -");
+                println!("{base}        -        -         -         -");
             }
         }
     }

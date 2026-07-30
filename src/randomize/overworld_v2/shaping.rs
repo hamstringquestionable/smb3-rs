@@ -19,6 +19,11 @@
 //!   topology can help — walk edges are local, so a pipe is the one move
 //!   that creates a route that doesn't exist yet. **Gated shortcut**: add a
 //!   pipe pair, re-place ALL locks on the new topology, judge the bundle.
+//! - **Both cheaper rungs spent** (exhausted or unavailable): **fort+lock
+//!   move** — relocate one fort and re-place all locks as one bundle. The
+//!   trunk-fort symptom: a fort ON the cheapest route makes every lock
+//!   decorative and no lock or pipe move can fix that; only moving the fort
+//!   changes the lock's search space.
 //!
 //! Moves are judged on the complete world and rolled back on rejection; a
 //! move type that keeps failing escalates past itself ([`ESCALATE_AFTER`]),
@@ -30,11 +35,12 @@
 //! watchdog on that argument.
 //!
 //! The loop's knobs (the ONLY knobs in v2): [`MOVE_BUDGET`],
-//! [`TARGET_ROUTES`], [`SHORTCUT_TRIES`], [`ESCALATE_AFTER`].
+//! [`TARGET_ROUTES`], [`SHORTCUT_TRIES`], [`FORTLOCK_TRIES`],
+//! [`ESCALATE_AFTER`].
 
 use super::*;
 
-use rand::seq::IndexedRandom;
+use rand::seq::{IndexedRandom, SliceRandom};
 
 use super::locks::{place_locks_gating, recompute_safety_flags};
 use super::metrics::WorldMeasure;
@@ -45,6 +51,8 @@ const MOVE_BUDGET: usize = 8;
 const TARGET_ROUTES: usize = 2;
 /// Candidate pipe pairs tried inside ONE gated-shortcut move.
 const SHORTCUT_TRIES: usize = 4;
+/// Full fort-relocation evaluations paid inside ONE fort+lock move.
+const FORTLOCK_TRIES: usize = 4;
 /// Consecutive rejections of a move type before escalating past it.
 const ESCALATE_AFTER: usize = 2;
 
@@ -61,6 +69,7 @@ impl Phase for Shaping {
         let mut accepted = 0usize;
         let mut lock_rejects = 0usize;
         let mut shortcut_rejects = 0usize;
+        let mut fortlock_rejects = 0usize;
 
         let status = loop {
             let before = measure_world(state);
@@ -77,38 +86,40 @@ impl Phase for Shaping {
                 && (zero_gate > 0 || before.dominated_detours > 0);
             let shortcut_available = state.pipe_pairs.len() < state.pipe_budget
                 && shortcut_rejects < ESCALATE_AFTER;
+            let fortlock_available =
+                state.fort_count() > 0 && fortlock_rejects < ESCALATE_AFTER;
 
             moves += 1;
-            if lock_available {
-                match try_lock_replace(state, rng, &before, zero_gate) {
-                    Ok(line) => {
-                        lock_rejects = 0;
-                        accepted += 1;
-                        actions.push(line);
-                    }
-                    Err(line) => {
-                        lock_rejects += 1;
-                        actions.push(line);
-                    }
-                }
+            // On any accept the world changed, so every rung's ammunition is
+            // fresh — all three exhaustion counters reset together.
+            let outcome = if lock_available {
+                try_lock_replace(state, rng, &before, zero_gate)
             } else if shortcut_available {
-                match try_gated_shortcut(state, rng, &before) {
-                    Ok(line) => {
-                        // New topology is fresh lock ammunition — un-exhaust
-                        // the cheaper rung too.
-                        shortcut_rejects = 0;
-                        lock_rejects = 0;
-                        accepted += 1;
-                        actions.push(line);
-                    }
-                    Err(line) => {
-                        shortcut_rejects += 1;
-                        actions.push(line);
-                    }
-                }
+                try_gated_shortcut(state, rng, &before)
+            } else if fortlock_available {
+                try_fort_lock(state, rng, &before)
             } else {
                 moves -= 1;
                 break "stuck: no move available";
+            };
+            match outcome {
+                Ok(line) => {
+                    lock_rejects = 0;
+                    shortcut_rejects = 0;
+                    fortlock_rejects = 0;
+                    accepted += 1;
+                    actions.push(line);
+                }
+                Err(line) => {
+                    if lock_available {
+                        lock_rejects += 1;
+                    } else if shortcut_available {
+                        shortcut_rejects += 1;
+                    } else {
+                        fortlock_rejects += 1;
+                    }
+                    actions.push(line);
+                }
             }
         };
 
@@ -203,6 +214,76 @@ fn try_gated_shortcut(
     }
     Err(format!(
         "gated_shortcut REJECT: no pair in {SHORTCUT_TRIES} tries beats routes {}",
+        before.routes_in_band,
+    ))
+}
+
+/// The escalation rung: relocate ONE fort AND re-place all locks as a single
+/// bundle judged on the finished world. Jurisdiction is the trunk-fort
+/// symptom: a fort sitting on the cheapest route makes every lock decorative
+/// (the player passes it regardless), and neither lock re-place nor a
+/// shortcut can manufacture an alternative — only moving the fort changes
+/// what its lock can gate. Accept iff routes rise.
+///
+/// Forts on the cheapest route are proposed first (shuffled within each
+/// group). That ordering comes from the full-world measure already in hand —
+/// per the seeding lesson, the bundle is still the only thing judged.
+fn try_fort_lock(
+    state: &mut WorldState,
+    rng: &mut dyn RngCore,
+    before: &WorldMeasure,
+) -> Result<String, String> {
+    let saved_slots = state.slots.clone();
+    let saved_locks = state.locks.clone();
+
+    let trunk: HashSet<Pos> = before
+        .rc
+        .routes
+        .first()
+        .map(|r| r.path.iter().copied().collect())
+        .unwrap_or_default();
+
+    let mut fort_indices: Vec<usize> = state
+        .slots
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.kind == SlotKind::Fortress)
+        .map(|(i, _)| i)
+        .collect();
+    fort_indices.shuffle(rng);
+    // Stable sort: trunk forts first, shuffled order kept within each group.
+    fort_indices.sort_by_key(|&i| !trunk.contains(&state.slots[i].pos));
+
+    let mut evals = 0usize;
+    for &fi in &fort_indices {
+        if evals >= FORTLOCK_TRIES {
+            break;
+        }
+        let fort_id = state.slots[fi].section;
+        let old_pos = state.slots[fi].pos;
+        for _ in 0..2 {
+            if evals >= FORTLOCK_TRIES {
+                break;
+            }
+            let candidates = state.legal_blanks();
+            let Some(&new_pos) = candidates.choose(rng) else { break };
+            state.slots[fi].pos = new_pos;
+            evals += 1;
+            if place_locks_gating(state, rng) {
+                let after = measure_world(state);
+                if after.routes_in_band > before.routes_in_band {
+                    return Ok(format!(
+                        "fort_lock ACCEPT: fort {fort_id} {old_pos:?} -> {new_pos:?}, routes {} -> {}, C1 {} -> {}",
+                        before.routes_in_band, after.routes_in_band, before.c1, after.c1,
+                    ));
+                }
+            }
+            state.slots = saved_slots.clone();
+            state.locks = saved_locks.clone();
+        }
+    }
+    Err(format!(
+        "fort_lock REJECT: no relocation beats routes {} ({evals} full evals)",
         before.routes_in_band,
     ))
 }
