@@ -57,6 +57,7 @@ fn test_v2_schedule_runs_phases_in_order() {
         target: None,
         fixed: HashSet::new(),
         pipe_budget: 0,
+        level_budget: 0,
         log: Vec::new(),
     };
     let first = Recorder("first");
@@ -266,6 +267,117 @@ fn test_v2_connectivity_census() {
     println!("example (W3, seed 0):");
     for action in &state.log[0].actions {
         println!("    {action}");
+    }
+}
+
+/// Levels discovery census: connectivity + uniform-random level placement,
+/// measured for the numbers any future placement preference must beat —
+/// budget shortfalls, clustering (adjacent-level rate, nearest-neighbor
+/// distance), screen crowding, and what the route scorer sees in a world
+/// of pure levels (no forts/locks yet). `V2_SEEDS` seeds (default 50).
+#[test]
+fn test_v2_levels_census() {
+    let Some(rom) = load_rom() else {
+        eprintln!("ROM not found, skipping");
+        return;
+    };
+    let rom = base_qol(&rom);
+    let seeds: u64 = std::env::var("V2_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
+    let catalog = NodeCatalog::build(&rom, false);
+    let pickup = pick_up(&rom, &catalog, PickupFlags::default());
+
+    println!("v2 levels census ({seeds} seeds, uniform placement after connectivity)");
+    println!("world  budget  placed  short%  adj%  nn-dist  maxscreen%  C1(mean)  routes  linear%");
+    for world_idx in 0..8 {
+        let mut placed_sum = 0usize;
+        let mut short = 0usize;
+        let mut adj_levels = 0usize;
+        let mut level_count = 0usize;
+        let mut nn_sum = 0f64;
+        let mut maxscreen_sum = 0f64;
+        let mut c1_sum = 0u64;
+        let mut routes_sum = 0usize;
+        let mut linear = 0usize;
+        let mut budget = 0usize;
+
+        for seed in 0..seeds {
+            let mut state = from_pickup(&rom, &catalog, &pickup, world_idx);
+            budget = state.level_budget;
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            run_schedule(&mut state, &[&Connectivity, &Levels], &mut rng);
+
+            let levels: Vec<Pos> = state
+                .slots
+                .iter()
+                .filter(|s| s.kind == SlotKind::Level)
+                .map(|s| s.pos)
+                .collect();
+            placed_sum += levels.len();
+            if levels.len() < state.level_budget {
+                short += 1;
+            }
+            for &a in &levels {
+                let nearest = levels
+                    .iter()
+                    .filter(|&&b| b != a)
+                    .map(|&b| a.0.abs_diff(b.0) + a.1.abs_diff(b.1))
+                    .min();
+                if let Some(d) = nearest {
+                    nn_sum += d as f64;
+                    // Map nodes sit two tiles apart, so distance 2 on one
+                    // axis is "the very next node".
+                    if d == 2 {
+                        adj_levels += 1;
+                    }
+                }
+                level_count += 1;
+            }
+            let screens = state.grid.cols.div_ceil(16);
+            let mut per_screen = vec![0usize; screens];
+            for &(_, c) in &levels {
+                per_screen[c / 16] += 1;
+            }
+            if !levels.is_empty() {
+                maxscreen_sum +=
+                    *per_screen.iter().max().unwrap() as f64 / levels.len() as f64;
+            }
+
+            let measure = measure_world(&state);
+            c1_sum += u64::from(measure.c1);
+            routes_sum += measure.routes_in_band;
+            if measure.routes_in_band < 2 {
+                linear += 1;
+            }
+        }
+
+        let n = seeds as f64;
+        println!(
+            "  W{}   {:>5} {:>7.2} {:>6.0}% {:>4.0}% {:>8.2} {:>10.0}% {:>9.1} {:>7.2} {:>7.0}%",
+            world_idx + 1,
+            budget,
+            placed_sum as f64 / n,
+            100.0 * short as f64 / n,
+            100.0 * adj_levels as f64 / level_count.max(1) as f64,
+            nn_sum / level_count.max(1) as f64,
+            100.0 * maxscreen_sum / n,
+            c1_sum as f64 / n,
+            routes_sum as f64 / n,
+            100.0 * linear as f64 / n,
+        );
+    }
+
+    // One narrated example for hand-checking: W5, seed 0.
+    let mut state = from_pickup(&rom, &catalog, &pickup, 4);
+    let mut rng = ChaCha8Rng::seed_from_u64(0);
+    run_schedule(&mut state, &[&Connectivity, &Levels], &mut rng);
+    println!("example (W5, seed 0):");
+    for report in &state.log {
+        for action in &report.actions {
+            println!("    [{}] {action}", report.phase);
+        }
     }
 }
 

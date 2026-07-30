@@ -43,6 +43,7 @@ use super::overworld_pickup::PickupResult;
 use super::rom_data::{self, Grid, Pos, TILE_PIPE, TeleportEdge};
 
 mod connectivity;
+mod levels;
 mod metrics;
 mod sources;
 mod state;
@@ -51,6 +52,7 @@ mod state;
 mod tests;
 
 pub(crate) use connectivity::Connectivity;
+pub(crate) use levels::Levels;
 pub(crate) use metrics::measure_world;
 pub(crate) use sources::{from_built, from_pickup, from_vanilla};
 pub(crate) use state::{Phase, PhaseReport, WorldState, run_schedule};
