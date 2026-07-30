@@ -45,16 +45,22 @@ pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
 /// Bowser tiles stamped back at their catalog positions (pickup blanks them,
 /// but they are terrain, not placements).
 ///
-/// Uses the SIMPLEST configuration while v2 finds its feet: no start↔airship
-/// swap, no shuffled toad houses / hammer bros / spades — so pinned houses
-/// and floating sprites land in `fixed`.
+/// `flags` mirrors the build configuration: toad-house / hammer-bro shuffle
+/// decide whether pinned houses and floating sprites stay `fixed`, and
+/// `eights_are_wild` is stamped onto the grid so the walker sees the W8
+/// canoe edges. The caller owns consistency: the catalog must already be
+/// SAS-swapped when testing start↔airship swap (pick_swaps runs before
+/// pickup, as in the real pipeline), and `pickup` must have been built with
+/// PickupFlags matching `flags`.
 pub(crate) fn from_pickup(
     rom: &Rom,
     catalog: &NodeCatalog,
     pickup: &PickupResult,
     world_idx: usize,
+    flags: &BuildFlags,
 ) -> WorldState {
     let mut grid = pickup.worlds[world_idx].grid.clone();
+    grid.eights_are_wild = flags.eights_are_wild;
     for entry in catalog.entries.iter().filter(|e| e.world_idx == world_idx) {
         if matches!(entry.kind, NodeKind::Start | NodeKind::Airship | NodeKind::Bowser) {
             grid.set(entry.grid_pos.0, entry.grid_pos.1, entry.tile);
@@ -62,7 +68,13 @@ pub(crate) fn from_pickup(
     }
     let start = rom_data::find_start(&grid);
     let target = find_target(&grid, world_idx);
-    let fixed = fixed_positions_for_world(rom, catalog, world_idx, false, false);
+    let fixed = fixed_positions_for_world(
+        rom,
+        catalog,
+        world_idx,
+        flags.shuffle_toad_houses,
+        flags.shuffle_hammer_bros,
+    );
     let level_budget = catalog
         .entries
         .iter()

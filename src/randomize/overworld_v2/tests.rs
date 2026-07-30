@@ -4,12 +4,13 @@
 
 use super::*;
 
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-use super::super::overworld_build::{BuildFlags, OverworldData, build};
-use super::super::overworld_pickup::{PickupFlags, pick_up};
+use super::super::overworld_build::{OverworldData, build};
+use super::super::overworld_pickup::{PickupFlags, PickupResult as Pickup, pick_up};
 use super::super::qol;
+use super::super::start_airship_swap;
 
 fn load_rom() -> Option<Rom> {
     let bytes = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
@@ -20,12 +21,81 @@ fn load_rom() -> Option<Rom> {
 /// "base" arm): W3 drawbridges fixed, vanilla rocks removed, W8 bridges in,
 /// big ? block rooms fixed.
 fn base_qol(rom: &Rom) -> Rom {
+    qol_variant(rom, false, false)
+}
+
+/// Arm-parameterized map QOL: the always-on patches plus the optional
+/// `more hammer rocks` / `8s are Wild` map edits, in production order
+/// (`randomize_inner` applies these before the builder reads the map).
+fn qol_variant(rom: &Rom, hammer_rocks: bool, eights_wild: bool) -> Rom {
     let mut out = rom.clone();
     qol::fix_w3_drawbridges(&mut out);
     qol::remove_rocks(&mut out);
+    if hammer_rocks {
+        qol::make_hammer_rocks(&mut out);
+    }
     qol::apply_w8_bridges(&mut out);
+    if eights_wild {
+        qol::apply_w8_canoe_and_paths(&mut out);
+    }
     qol::fix_big_q_block_rooms(&mut out);
     out
+}
+
+/// One seed's realistic build input, mirroring the shipping census harness
+/// (`overworld_build::tests::census_build`): always-on QOL plus the seed's
+/// map arm (50% base / 25% more-hammer-rocks / 25% 8s-are-wild by seed % 4),
+/// start↔airship swap rolled per world exactly as the real flag does (50/50
+/// inside `pick_swaps`, so swapped and unswapped worlds are covered in every
+/// arm), and toad-house / hammer-bro shuffle each rolled 50/50 per seed.
+///
+/// v2 has no toad-house / hammer-bro / spade placement phases yet — when a
+/// shuffle rolls on, those slots are simply picked up and stay blank space.
+/// Spade shuffle stays off until such a phase exists.
+struct CensusCtx {
+    rom: Rom,
+    catalog: NodeCatalog,
+    pickup: Pickup,
+    flags: BuildFlags,
+}
+
+fn census_ctx(raw: &Rom, seed: u64) -> CensusCtx {
+    let (hammer_rocks, eights_wild) = match seed % 4 {
+        2 => (true, false),
+        3 => (false, true),
+        _ => (false, false),
+    };
+    let rom = qol_variant(raw, hammer_rocks, eights_wild);
+    let mut catalog = NodeCatalog::build(&rom, false);
+    let mut roll_rng = ChaCha8Rng::seed_from_u64(seed);
+    start_airship_swap::pick_swaps(&mut catalog, &mut roll_rng);
+    let shuffle_toad_houses = roll_rng.random_bool(0.5);
+    let shuffle_hammer_bros = roll_rng.random_bool(0.5);
+    let pickup = pick_up(
+        &rom,
+        &catalog,
+        PickupFlags {
+            shuffle_spade_games: false,
+            shuffle_toad_houses,
+            shuffle_hammer_bros,
+        },
+    );
+    CensusCtx {
+        rom,
+        catalog,
+        pickup,
+        flags: BuildFlags {
+            shuffle_toad_houses,
+            eights_are_wild: eights_wild,
+            shuffle_hammer_bros,
+        },
+    }
+}
+
+impl CensusCtx {
+    fn world(&self, world_idx: usize) -> WorldState {
+        from_pickup(&self.rom, &self.catalog, &self.pickup, world_idx, &self.flags)
+    }
 }
 
 /// A phase that only records that it ran — the schedule contract probe.
@@ -204,39 +274,36 @@ fn test_v2_current_builder_worlds() {
 /// Connectivity discovery census: run ONLY the connectivity phase on the
 /// pickup-cleared worlds and measure what it does — pipes spent vs the
 /// vanilla budget, blanks left stranded, goal reachability, and endpoint
-/// variety across seeds. `V2_SEEDS` sets the seed count (default 50).
+/// variety across seeds. Runs the realistic flag mix (see [`census_ctx`]).
+/// `V2_SEEDS` sets the seed count (default 100).
 ///
 /// No assertions on coverage yet: this is the rediscovery baseline the
 /// controls will be justified against.
 #[test]
 fn test_v2_connectivity_census() {
-    let Some(rom) = load_rom() else {
+    let Some(raw) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
     };
-    let rom = base_qol(&rom);
     let seeds: u64 = std::env::var("V2_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(50);
-    let catalog = NodeCatalog::build(&rom, false);
-    let pickup = pick_up(&rom, &catalog, PickupFlags::default());
+        .unwrap_or(100);
 
-    println!("v2 connectivity census ({seeds} seeds, knob-free uniform endpoints)");
-    println!("world  budget  pipes(mean)  stranded(mean)  goal-ok%  distinct-pairsets");
-    for (world_idx, &budget) in VANILLA_PIPE_PAIRS.iter().enumerate() {
-        let mut pipes_sum = 0usize;
-        let mut stranded_sum = 0usize;
-        let mut goal_ok = 0usize;
-        let mut pair_sets: HashSet<Vec<TeleportEdge>> = HashSet::new();
-        for seed in 0..seeds {
-            let mut state = from_pickup(&rom, &catalog, &pickup, world_idx);
+    let mut pipes_sum = [0usize; 8];
+    let mut stranded_sum = [0usize; 8];
+    let mut goal_ok = [0usize; 8];
+    let mut pair_sets: Vec<HashSet<Vec<TeleportEdge>>> = (0..8).map(|_| HashSet::new()).collect();
+    for seed in 0..seeds {
+        let ctx = census_ctx(&raw, seed);
+        for world_idx in 0..8 {
+            let mut state = ctx.world(world_idx);
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             run_schedule(&mut state, &[&Connectivity], &mut rng);
-            pipes_sum += state.pipe_pairs.len();
+            pipes_sum[world_idx] += state.pipe_pairs.len();
             let mut pairs = state.pipe_pairs.clone();
             pairs.sort();
-            pair_sets.insert(pairs);
+            pair_sets[world_idx].insert(pairs);
             let last = state.log.last().expect("connectivity always reports");
             let done = last.actions.last().expect("has a done line");
             let stranded: usize = done
@@ -245,24 +312,29 @@ fn test_v2_connectivity_census() {
                 .and_then(|s| s.split(' ').next())
                 .and_then(|s| s.parse().ok())
                 .expect("done line starts with the stranded count");
-            stranded_sum += stranded;
+            stranded_sum[world_idx] += stranded;
             if done.ends_with("true") {
-                goal_ok += 1;
+                goal_ok[world_idx] += 1;
             }
         }
+    }
+
+    println!("v2 connectivity census ({seeds} seeds, knob-free uniform endpoints, flag-mix arms)");
+    println!("world  budget  pipes(mean)  stranded(mean)  goal-ok%  distinct-pairsets");
+    for (world_idx, &budget) in VANILLA_PIPE_PAIRS.iter().enumerate() {
         println!(
             "  W{}   {:>5} {:>10.2} {:>14.2} {:>8.0}% {:>13}",
             world_idx + 1,
             budget,
-            pipes_sum as f64 / seeds as f64,
-            stranded_sum as f64 / seeds as f64,
-            100.0 * goal_ok as f64 / seeds as f64,
-            pair_sets.len(),
+            pipes_sum[world_idx] as f64 / seeds as f64,
+            stranded_sum[world_idx] as f64 / seeds as f64,
+            100.0 * goal_ok[world_idx] as f64 / seeds as f64,
+            pair_sets[world_idx].len(),
         );
     }
 
     // One narrated example for hand-checking: W3, seed 0.
-    let mut state = from_pickup(&rom, &catalog, &pickup, 2);
+    let mut state = census_ctx(&raw, 0).world(2);
     let mut rng = ChaCha8Rng::seed_from_u64(0);
     run_schedule(&mut state, &[&Connectivity], &mut rng);
     println!("example (W3, seed 0):");
@@ -275,38 +347,35 @@ fn test_v2_connectivity_census() {
 /// measured for the numbers any future placement preference must beat —
 /// budget shortfalls, clustering (adjacent-level rate, nearest-neighbor
 /// distance), screen crowding, and what the route scorer sees in a world
-/// of pure levels (no forts/locks yet). `V2_SEEDS` seeds (default 50).
+/// of pure levels (no forts/locks yet). Runs the realistic flag mix (see
+/// [`census_ctx`]). `V2_SEEDS` seeds (default 100).
 #[test]
 fn test_v2_levels_census() {
-    let Some(rom) = load_rom() else {
+    let Some(raw) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
     };
-    let rom = base_qol(&rom);
     let seeds: u64 = std::env::var("V2_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(50);
-    let catalog = NodeCatalog::build(&rom, false);
-    let pickup = pick_up(&rom, &catalog, PickupFlags::default());
+        .unwrap_or(100);
 
-    println!("v2 levels census ({seeds} seeds, uniform placement after connectivity)");
-    println!("world  budget  placed  short%  adj%  nn-dist  maxscreen%  C1(mean)  routes  linear%");
-    for world_idx in 0..8 {
-        let mut placed_sum = 0usize;
-        let mut short = 0usize;
-        let mut adj_levels = 0usize;
-        let mut level_count = 0usize;
-        let mut nn_sum = 0f64;
-        let mut maxscreen_sum = 0f64;
-        let mut c1_sum = 0u64;
-        let mut routes_sum = 0usize;
-        let mut linear = 0usize;
-        let mut budget = 0usize;
+    let mut placed_sum = [0usize; 8];
+    let mut short = [0usize; 8];
+    let mut adj_levels = [0usize; 8];
+    let mut level_count = [0usize; 8];
+    let mut nn_sum = [0f64; 8];
+    let mut maxscreen_sum = [0f64; 8];
+    let mut c1_sum = [0u64; 8];
+    let mut routes_sum = [0usize; 8];
+    let mut linear = [0usize; 8];
+    let mut budget = [0usize; 8];
 
-        for seed in 0..seeds {
-            let mut state = from_pickup(&rom, &catalog, &pickup, world_idx);
-            budget = state.level_budget;
+    for seed in 0..seeds {
+        let ctx = census_ctx(&raw, seed);
+        for world_idx in 0..8 {
+            let mut state = ctx.world(world_idx);
+            budget[world_idx] = state.level_budget;
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             run_schedule(&mut state, &[&Connectivity, &Levels], &mut rng);
 
@@ -316,9 +385,9 @@ fn test_v2_levels_census() {
                 .filter(|s| s.kind == SlotKind::Level)
                 .map(|s| s.pos)
                 .collect();
-            placed_sum += levels.len();
+            placed_sum[world_idx] += levels.len();
             if levels.len() < state.level_budget {
-                short += 1;
+                short[world_idx] += 1;
             }
             for &a in &levels {
                 let nearest = levels
@@ -327,14 +396,14 @@ fn test_v2_levels_census() {
                     .map(|&b| a.0.abs_diff(b.0) + a.1.abs_diff(b.1))
                     .min();
                 if let Some(d) = nearest {
-                    nn_sum += d as f64;
+                    nn_sum[world_idx] += d as f64;
                     // Map nodes sit two tiles apart, so distance 2 on one
                     // axis is "the very next node".
                     if d == 2 {
-                        adj_levels += 1;
+                        adj_levels[world_idx] += 1;
                     }
                 }
-                level_count += 1;
+                level_count[world_idx] += 1;
             }
             let screens = state.grid.cols.div_ceil(16);
             let mut per_screen = vec![0usize; screens];
@@ -342,36 +411,40 @@ fn test_v2_levels_census() {
                 per_screen[c / 16] += 1;
             }
             if !levels.is_empty() {
-                maxscreen_sum +=
+                maxscreen_sum[world_idx] +=
                     *per_screen.iter().max().unwrap() as f64 / levels.len() as f64;
             }
 
             let measure = measure_world(&state);
-            c1_sum += u64::from(measure.c1);
-            routes_sum += measure.routes_in_band;
+            c1_sum[world_idx] += u64::from(measure.c1);
+            routes_sum[world_idx] += measure.routes_in_band;
             if measure.routes_in_band < 2 {
-                linear += 1;
+                linear[world_idx] += 1;
             }
         }
+    }
 
-        let n = seeds as f64;
+    println!("v2 levels census ({seeds} seeds, uniform placement after connectivity, flag-mix arms)");
+    println!("world  budget  placed  short%  adj%  nn-dist  maxscreen%  C1(mean)  routes  linear%");
+    let n = seeds as f64;
+    for world_idx in 0..8 {
         println!(
             "  W{}   {:>5} {:>7.2} {:>6.0}% {:>4.0}% {:>8.2} {:>10.0}% {:>9.1} {:>7.2} {:>7.0}%",
             world_idx + 1,
-            budget,
-            placed_sum as f64 / n,
-            100.0 * short as f64 / n,
-            100.0 * adj_levels as f64 / level_count.max(1) as f64,
-            nn_sum / level_count.max(1) as f64,
-            100.0 * maxscreen_sum / n,
-            c1_sum as f64 / n,
-            routes_sum as f64 / n,
-            100.0 * linear as f64 / n,
+            budget[world_idx],
+            placed_sum[world_idx] as f64 / n,
+            100.0 * short[world_idx] as f64 / n,
+            100.0 * adj_levels[world_idx] as f64 / level_count[world_idx].max(1) as f64,
+            nn_sum[world_idx] / level_count[world_idx].max(1) as f64,
+            100.0 * maxscreen_sum[world_idx] / n,
+            c1_sum[world_idx] as f64 / n,
+            routes_sum[world_idx] as f64 / n,
+            100.0 * linear[world_idx] as f64 / n,
         );
     }
 
     // One narrated example for hand-checking: W5, seed 0.
-    let mut state = from_pickup(&rom, &catalog, &pickup, 4);
+    let mut state = census_ctx(&raw, 0).world(4);
     let mut rng = ChaCha8Rng::seed_from_u64(0);
     run_schedule(&mut state, &[&Connectivity, &Levels], &mut rng);
     println!("example (W5, seed 0):");
@@ -386,36 +459,32 @@ fn test_v2_levels_census() {
 /// levels → spare pipes → forts). The headline number is on-route%: how
 /// often a random fort lands on the cheapest route — where the player pays
 /// its 5 points no matter what, and its future lock gates nothing (the
-/// "on-path fort = decorative lock" thesis, baselined). `V2_SEEDS` seeds
-/// (default 50).
+/// "on-path fort = decorative lock" thesis, baselined). Runs the realistic
+/// flag mix (see [`census_ctx`]). `V2_SEEDS` seeds (default 100).
 #[test]
 fn test_v2_forts_census() {
-    let Some(rom) = load_rom() else {
+    let Some(raw) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
     };
-    let rom = base_qol(&rom);
     let seeds: u64 = std::env::var("V2_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(50);
-    let catalog = NodeCatalog::build(&rom, false);
-    let pickup = pick_up(&rom, &catalog, PickupFlags::default());
+        .unwrap_or(100);
 
-    println!("v2 forts census ({seeds} seeds, uniform placement, full dumb pipeline)");
-    println!("world  budget  placed  on-route%  C1(mean)  routes  linear%");
-    for world_idx in 0..8 {
-        let mut placed_sum = 0usize;
-        let mut on_route = 0usize;
-        let mut fort_count = 0usize;
-        let mut c1_sum = 0u64;
-        let mut routes_sum = 0usize;
-        let mut linear = 0usize;
-        let mut budget = 0usize;
+    let mut placed_sum = [0usize; 8];
+    let mut on_route = [0usize; 8];
+    let mut fort_count = [0usize; 8];
+    let mut c1_sum = [0u64; 8];
+    let mut routes_sum = [0usize; 8];
+    let mut linear = [0usize; 8];
+    let mut budget = [0usize; 8];
 
-        for seed in 0..seeds {
-            let mut state = from_pickup(&rom, &catalog, &pickup, world_idx);
-            budget = state.fort_budget;
+    for seed in 0..seeds {
+        let ctx = census_ctx(&raw, seed);
+        for world_idx in 0..8 {
+            let mut state = ctx.world(world_idx);
+            budget[world_idx] = state.fort_budget;
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             run_schedule(&mut state, &[&Connectivity, &Levels, &SparePipes, &Forts], &mut rng);
 
@@ -425,31 +494,35 @@ fn test_v2_forts_census() {
                 .filter(|s| s.kind == SlotKind::Fortress)
                 .map(|s| s.pos)
                 .collect();
-            placed_sum += forts.len();
+            placed_sum[world_idx] += forts.len();
 
             let measure = measure_world(&state);
             if let Some(cheap) = measure.rc.routes.first() {
                 let path: HashSet<Pos> = cheap.path.iter().copied().collect();
-                on_route += forts.iter().filter(|p| path.contains(p)).count();
+                on_route[world_idx] += forts.iter().filter(|p| path.contains(p)).count();
             }
-            fort_count += forts.len();
-            c1_sum += u64::from(measure.c1);
-            routes_sum += measure.routes_in_band;
+            fort_count[world_idx] += forts.len();
+            c1_sum[world_idx] += u64::from(measure.c1);
+            routes_sum[world_idx] += measure.routes_in_band;
             if measure.routes_in_band < 2 {
-                linear += 1;
+                linear[world_idx] += 1;
             }
         }
+    }
 
-        let n = seeds as f64;
+    println!("v2 forts census ({seeds} seeds, uniform placement, full dumb pipeline, flag-mix arms)");
+    println!("world  budget  placed  on-route%  C1(mean)  routes  linear%");
+    let n = seeds as f64;
+    for world_idx in 0..8 {
         println!(
             "  W{}   {:>5} {:>7.2} {:>9.0}% {:>9.1} {:>7.2} {:>7.0}%",
             world_idx + 1,
-            budget,
-            placed_sum as f64 / n,
-            100.0 * on_route as f64 / fort_count.max(1) as f64,
-            c1_sum as f64 / n,
-            routes_sum as f64 / n,
-            100.0 * linear as f64 / n,
+            budget[world_idx],
+            placed_sum[world_idx] as f64 / n,
+            100.0 * on_route[world_idx] as f64 / fort_count[world_idx].max(1) as f64,
+            c1_sum[world_idx] as f64 / n,
+            routes_sum[world_idx] as f64 / n,
+            100.0 * linear[world_idx] as f64 / n,
         );
     }
 }
@@ -460,37 +533,34 @@ fn test_v2_forts_census() {
 /// `test_v2_current_builder_worlds`. Columns: removed% (forts removed by the
 /// every-fort-locked invariant — expected ~0), safe% (locks that are
 /// secret-exit-safe), goal-open% (world finishable with all locks closed),
-/// zero-gate% (locks that wall off nothing — pure decoration). `V2_SEEDS`
-/// seeds (default 50).
+/// zero-gate% (locks that wall off nothing — pure decoration). Runs the
+/// realistic flag mix (see [`census_ctx`]) — the invariant asserts cover
+/// every arm. `V2_SEEDS` seeds (default 100).
 #[test]
 fn test_v2_locks_census() {
-    let Some(rom) = load_rom() else {
+    let Some(raw) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
     };
-    let rom = base_qol(&rom);
     let seeds: u64 = std::env::var("V2_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(50);
-    let catalog = NodeCatalog::build(&rom, false);
-    let pickup = pick_up(&rom, &catalog, PickupFlags::default());
+        .unwrap_or(100);
 
-    println!("v2 full-skeleton census ({seeds} seeds, all five dumb phases)");
-    println!("world  forts  locks  removed%  safe%  goal-open%  zero-gate%  C1(mean)  routes  linear%");
-    for world_idx in 0..8 {
-        let mut fort_sum = 0usize;
-        let mut lock_sum = 0usize;
-        let mut safe_sum = 0usize;
-        let mut removed_sum = 0usize;
-        let mut zero_gate = 0usize;
-        let mut goal_open_count = 0usize;
-        let mut c1_sum = 0u64;
-        let mut routes_sum = 0usize;
-        let mut linear = 0usize;
+    let mut fort_sum = [0usize; 8];
+    let mut lock_sum = [0usize; 8];
+    let mut safe_sum = [0usize; 8];
+    let mut removed_sum = [0usize; 8];
+    let mut zero_gate = [0usize; 8];
+    let mut goal_open_count = [0usize; 8];
+    let mut c1_sum = [0u64; 8];
+    let mut routes_sum = [0usize; 8];
+    let mut linear = [0usize; 8];
 
-        for seed in 0..seeds {
-            let mut state = from_pickup(&rom, &catalog, &pickup, world_idx);
+    for seed in 0..seeds {
+        let ctx = census_ctx(&raw, seed);
+        for world_idx in 0..8 {
+            let mut state = ctx.world(world_idx);
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             run_schedule(
                 &mut state,
@@ -513,10 +583,10 @@ fn test_v2_locks_census() {
                 world_idx + 1
             );
 
-            fort_sum += state.fort_count();
-            lock_sum += state.locks.len();
-            safe_sum += state.locks.iter().filter(|l| l.secret_exit_safe).count();
-            removed_sum += state
+            fort_sum[world_idx] += state.fort_count();
+            lock_sum[world_idx] += state.locks.len();
+            safe_sum[world_idx] += state.locks.iter().filter(|l| l.secret_exit_safe).count();
+            removed_sum[world_idx] += state
                 .log
                 .iter()
                 .flat_map(|r| &r.actions)
@@ -537,39 +607,44 @@ fn test_v2_locks_census() {
                 g.set(lock.pos.0, lock.pos.1, lock.gap_tile);
                 let reach = walk_reachable(&g, &state.pipe_pairs, state.start, state.world_idx);
                 if reach.len() == open_reach.len() {
-                    zero_gate += 1;
+                    zero_gate[world_idx] += 1;
                 }
             }
 
             let measure = measure_world(&state);
             if measure.goal_open {
-                goal_open_count += 1;
+                goal_open_count[world_idx] += 1;
             }
-            c1_sum += u64::from(measure.c1);
-            routes_sum += measure.routes_in_band;
+            c1_sum[world_idx] += u64::from(measure.c1);
+            routes_sum[world_idx] += measure.routes_in_band;
             if measure.routes_in_band < 2 {
-                linear += 1;
+                linear[world_idx] += 1;
             }
         }
+    }
 
-        let n = seeds as f64;
+    println!("v2 full-skeleton census ({seeds} seeds, all five dumb phases, flag-mix arms)");
+    println!("world  forts  locks  removed%  safe%  goal-open%  zero-gate%  C1(mean)  routes  linear%");
+    let n = seeds as f64;
+    for world_idx in 0..8 {
         println!(
             "  W{}   {:>4.1} {:>6.1} {:>8.0}% {:>5.0}% {:>10.0}% {:>10.0}% {:>9.1} {:>7.2} {:>7.0}%",
             world_idx + 1,
-            fort_sum as f64 / n,
-            lock_sum as f64 / n,
-            100.0 * removed_sum as f64 / (fort_sum + removed_sum).max(1) as f64,
-            100.0 * safe_sum as f64 / lock_sum.max(1) as f64,
-            100.0 * goal_open_count as f64 / n,
-            100.0 * zero_gate as f64 / lock_sum.max(1) as f64,
-            c1_sum as f64 / n,
-            routes_sum as f64 / n,
-            100.0 * linear as f64 / n,
+            fort_sum[world_idx] as f64 / n,
+            lock_sum[world_idx] as f64 / n,
+            100.0 * removed_sum[world_idx] as f64
+                / (fort_sum[world_idx] + removed_sum[world_idx]).max(1) as f64,
+            100.0 * safe_sum[world_idx] as f64 / lock_sum[world_idx].max(1) as f64,
+            100.0 * goal_open_count[world_idx] as f64 / n,
+            100.0 * zero_gate[world_idx] as f64 / lock_sum[world_idx].max(1) as f64,
+            c1_sum[world_idx] as f64 / n,
+            routes_sum[world_idx] as f64 / n,
+            100.0 * linear[world_idx] as f64 / n,
         );
     }
 
     // One narrated example: W4, seed 0 — a two-fort world end to end.
-    let mut state = from_pickup(&rom, &catalog, &pickup, 3);
+    let mut state = census_ctx(&raw, 0).world(3);
     let mut rng = ChaCha8Rng::seed_from_u64(0);
     run_schedule(
         &mut state,
@@ -588,28 +663,27 @@ fn test_v2_locks_census() {
 /// dumb schedule, at least one lock somewhere must be secret-exit-safe (the
 /// writer parks the 1-F fortress level on it). Measures how often uniform
 /// placement satisfies this naturally vs how often the relocation backstop
-/// has to act. `V2_SEEDS` seeds (default 20 — each seed builds all 8 worlds).
+/// has to act. Runs the realistic flag mix (see [`census_ctx`]). `V2_SEEDS`
+/// seeds (default 100 — each seed builds all 8 worlds).
 #[test]
 fn test_v2_secret_exit_safety() {
-    let Some(rom) = load_rom() else {
+    let Some(raw) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
     };
-    let rom = base_qol(&rom);
     let seeds: u64 = std::env::var("V2_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(20);
-    let catalog = NodeCatalog::build(&rom, false);
-    let pickup = pick_up(&rom, &catalog, PickupFlags::default());
+        .unwrap_or(100);
 
     let mut natural = 0usize;
     let mut relocated = 0usize;
     for seed in 0..seeds {
+        let ctx = census_ctx(&raw, seed);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let mut worlds: Vec<WorldState> = (0..8)
             .map(|world_idx| {
-                let mut state = from_pickup(&rom, &catalog, &pickup, world_idx);
+                let mut state = ctx.world(world_idx);
                 run_schedule(
                     &mut state,
                     &[&Connectivity, &Levels, &SparePipes, &Forts, &Locks],
@@ -654,6 +728,180 @@ fn test_v2_secret_exit_safety() {
     );
 }
 
+/// One seed's shape, for across-seed comparison: where its levels sit, which
+/// of them the cheapest route plays, and how clumped the layout is.
+struct SeedShape {
+    levels: std::collections::BTreeSet<Pos>,
+    cheap_route_levels: std::collections::BTreeSet<Pos>,
+    /// Mean Manhattan distance from each level to its nearest other level —
+    /// low = clustered, high = spread.
+    nearest_neighbor: f64,
+}
+
+impl SeedShape {
+    fn of(state: &WorldState) -> SeedShape {
+        let positions: Vec<Pos> = state
+            .slots
+            .iter()
+            .filter(|s| s.kind == SlotKind::Level)
+            .map(|s| s.pos)
+            .collect();
+        let measure = measure_world(state);
+        SeedShape {
+            levels: positions.iter().copied().collect(),
+            cheap_route_levels: measure
+                .rc
+                .routes
+                .first()
+                .map(|r| r.levels.clone())
+                .unwrap_or_default(),
+            nearest_neighbor: mean_nearest_neighbor(&positions),
+        }
+    }
+}
+
+/// Mean over points of the Manhattan distance to the nearest other point.
+fn mean_nearest_neighbor(positions: &[Pos]) -> f64 {
+    if positions.len() < 2 {
+        return 0.0;
+    }
+    let total: usize = positions
+        .iter()
+        .map(|a| {
+            positions
+                .iter()
+                .filter(|b| *b != a)
+                .map(|b| a.0.abs_diff(b.0) + a.1.abs_diff(b.1))
+                .min()
+                .unwrap()
+        })
+        .sum();
+    total as f64 / positions.len() as f64
+}
+
+/// Jaccard distance between two position sets: 0 = identical, 1 = disjoint.
+fn jaccard_distance(a: &std::collections::BTreeSet<Pos>, b: &std::collections::BTreeSet<Pos>) -> f64 {
+    let union = a.union(b).count();
+    if union == 0 {
+        return 0.0;
+    }
+    1.0 - a.intersection(b).count() as f64 / union as f64
+}
+
+fn pearson(xs: &[f64], ys: &[f64]) -> f64 {
+    let n = xs.len() as f64;
+    let mx = xs.iter().sum::<f64>() / n;
+    let my = ys.iter().sum::<f64>() / n;
+    let cov: f64 = xs.iter().zip(ys).map(|(x, y)| (x - mx) * (y - my)).sum();
+    let vx: f64 = xs.iter().map(|x| (x - mx) * (x - mx)).sum();
+    let vy: f64 = ys.iter().map(|y| (y - my) * (y - my)).sum();
+    if vx == 0.0 || vy == 0.0 {
+        return 0.0;
+    }
+    cov / (vx * vy).sqrt()
+}
+
+/// The across-seed numbers for one world+arm: mean pairwise layout/route
+/// distance, nearest-neighbor mean and across-seed spread, and the
+/// layout↔route distance correlation ("salt r").
+fn diversity_row(shapes: &[SeedShape]) -> (f64, f64, f64, f64, f64) {
+    let mut layout_d = Vec::new();
+    let mut route_d = Vec::new();
+    for i in 0..shapes.len() {
+        for j in (i + 1)..shapes.len() {
+            layout_d.push(jaccard_distance(&shapes[i].levels, &shapes[j].levels));
+            route_d.push(jaccard_distance(
+                &shapes[i].cheap_route_levels,
+                &shapes[j].cheap_route_levels,
+            ));
+        }
+    }
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len().max(1) as f64;
+    let nn: Vec<f64> = shapes.iter().map(|s| s.nearest_neighbor).collect();
+    let nn_mean = mean(&nn);
+    let nn_sd =
+        (nn.iter().map(|x| (x - nn_mean) * (x - nn_mean)).sum::<f64>() / nn.len() as f64).sqrt();
+    (mean(&layout_d), mean(&route_d), nn_mean, nn_sd, pearson(&layout_d, &route_d))
+}
+
+/// Across-seed diversity census: how different are two SEEDS of the same
+/// world? The within-seed metrics (routes, uniq) can look good while every
+/// seed produces nearly the same world — this census measures the spread.
+///
+/// Columns, per world and arm:
+/// - layout-div: mean pairwise Jaccard distance between level-position sets
+/// - route-div: same distance over the cheapest route's level set
+/// - NN mean±sd: per-seed clumpiness (mean nearest-neighbor Manhattan
+///   distance); the sd ACROSS seeds is the shape-variety number — uniform
+///   placement is expected to produce similar NN every seed (low sd)
+/// - salt-r: correlation between layout distance and route distance over
+///   seed pairs — the "levels are the rng salt" hypothesis test
+///
+/// Arms: v2 skeleton (uniform placement) vs the shipping builder (scored
+/// placement) — the baseline any uniqueness knob must beat. `V2_SEEDS`
+/// seeds (default 20).
+///
+/// Deliberately runs the CONTROLLED configuration (always-on QOL only — no
+/// SAS, no map arms, no shuffle rolls), unlike the report-card censuses:
+/// this census isolates PLACEMENT-driven diversity, and mixing flag-driven
+/// input variation into the pairwise distances would inflate every arm's
+/// numbers with differences the placement code didn't produce.
+#[test]
+fn test_v2_diversity_census() {
+    let Some(rom) = load_rom() else {
+        eprintln!("ROM not found, skipping");
+        return;
+    };
+    let rom = base_qol(&rom);
+    let seeds: u64 = std::env::var("V2_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20);
+    let catalog = NodeCatalog::build(&rom, false);
+    let pickup = pick_up(&rom, &catalog, PickupFlags::default());
+
+    // Shipping arm: one build() per seed yields all 8 worlds.
+    let mut shipping: Vec<Vec<SeedShape>> = (0..8).map(|_| Vec::new()).collect();
+    for seed in 0..seeds {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags::default(),
+        );
+        for built in &result.worlds {
+            shipping[built.world_idx].push(SeedShape::of(&from_built(built)));
+        }
+    }
+
+    println!("v2 across-seed diversity census ({seeds} seeds, v2 uniform vs shipping scored)");
+    println!("world  arm       layout-div  route-div  NN(mean±sd)  salt-r");
+    for (world_idx, shipping_shapes) in shipping.iter().enumerate() {
+        let v2_shapes: Vec<SeedShape> = (0..seeds)
+            .map(|seed| {
+                let mut state =
+                    from_pickup(&rom, &catalog, &pickup, world_idx, &BuildFlags::default());
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                run_schedule(
+                    &mut state,
+                    &[&Connectivity, &Levels, &SparePipes, &Forts, &Locks],
+                    &mut rng,
+                );
+                SeedShape::of(&state)
+            })
+            .collect();
+
+        for (arm, shapes) in [("v2", &v2_shapes), ("shipping", shipping_shapes)] {
+            let (layout, route, nn_mean, nn_sd, salt_r) = diversity_row(shapes);
+            println!(
+                "  W{}   {arm:<9} {layout:>9.2} {route:>10.2}  {nn_mean:>5.2} ±{nn_sd:4.2} {salt_r:>7.2}",
+                world_idx + 1,
+            );
+        }
+    }
+}
+
 /// One logged spare-pipe delta, parsed back out of the report line
 /// `pipe (r, c) <-> (r, c): routes A -> B, C1 M -> N`.
 fn parse_pipe_delta(line: &str) -> Option<(usize, usize, u32, u32)> {
@@ -668,32 +916,32 @@ fn parse_pipe_delta(line: &str) -> Option<(usize, usize, u32, u32)> {
 /// Buckets per placed pipe, from the phase's own delta instrumentation:
 /// create (routes up), destroy (routes down), cheapen (routes flat, C1 down
 /// — the silent dominating shortcut), inert (nothing measurable changed).
-/// `V2_SEEDS` seeds (default 50).
+/// Runs the realistic flag mix (see [`census_ctx`]). `V2_SEEDS` seeds
+/// (default 100).
 #[test]
 fn test_v2_spare_pipes_census() {
-    let Some(rom) = load_rom() else {
+    let Some(raw) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
     };
-    let rom = base_qol(&rom);
     let seeds: u64 = std::env::var("V2_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(50);
-    let catalog = NodeCatalog::build(&rom, false);
-    let pickup = pick_up(&rom, &catalog, PickupFlags::default());
+        .unwrap_or(100);
 
-    println!("v2 spare-pipes census ({seeds} seeds, random toss, observe-only deltas)");
-    println!("world  spares  create%  destroy%  cheapen%  inert%  C1(mean)  routes  linear%");
-    for world_idx in 0..8 {
-        let mut spares = 0usize;
-        let (mut create, mut destroy, mut cheapen, mut inert) = (0usize, 0usize, 0usize, 0usize);
-        let mut c1_sum = 0u64;
-        let mut routes_sum = 0usize;
-        let mut linear = 0usize;
+    let mut spares = [0usize; 8];
+    let mut create = [0usize; 8];
+    let mut destroy = [0usize; 8];
+    let mut cheapen = [0usize; 8];
+    let mut inert = [0usize; 8];
+    let mut c1_sum = [0u64; 8];
+    let mut routes_sum = [0usize; 8];
+    let mut linear = [0usize; 8];
 
-        for seed in 0..seeds {
-            let mut state = from_pickup(&rom, &catalog, &pickup, world_idx);
+    for seed in 0..seeds {
+        let ctx = census_ctx(&raw, seed);
+        for world_idx in 0..8 {
+            let mut state = ctx.world(world_idx);
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             run_schedule(&mut state, &[&Connectivity, &Levels, &SparePipes], &mut rng);
 
@@ -704,44 +952,48 @@ fn test_v2_spare_pipes_census() {
                 .expect("spare_pipes always reports");
             for line in &spare_report.actions {
                 let Some((ra, rb, ca, cb)) = parse_pipe_delta(line) else { continue };
-                spares += 1;
+                spares[world_idx] += 1;
                 if rb > ra {
-                    create += 1;
+                    create[world_idx] += 1;
                 } else if rb < ra {
-                    destroy += 1;
+                    destroy[world_idx] += 1;
                 } else if cb < ca {
-                    cheapen += 1;
+                    cheapen[world_idx] += 1;
                 } else {
-                    inert += 1;
+                    inert[world_idx] += 1;
                 }
             }
 
             let measure = measure_world(&state);
-            c1_sum += u64::from(measure.c1);
-            routes_sum += measure.routes_in_band;
+            c1_sum[world_idx] += u64::from(measure.c1);
+            routes_sum[world_idx] += measure.routes_in_band;
             if measure.routes_in_band < 2 {
-                linear += 1;
+                linear[world_idx] += 1;
             }
         }
+    }
 
-        let n = seeds as f64;
-        let per = |x: usize| 100.0 * x as f64 / spares.max(1) as f64;
+    println!("v2 spare-pipes census ({seeds} seeds, random toss, observe-only deltas, flag-mix arms)");
+    println!("world  spares  create%  destroy%  cheapen%  inert%  C1(mean)  routes  linear%");
+    let n = seeds as f64;
+    for world_idx in 0..8 {
+        let per = |x: usize| 100.0 * x as f64 / spares[world_idx].max(1) as f64;
         println!(
             "  W{}   {:>6.2} {:>7.0}% {:>8.0}% {:>8.0}% {:>6.0}% {:>9.1} {:>7.2} {:>7.0}%",
             world_idx + 1,
-            spares as f64 / n,
-            per(create),
-            per(destroy),
-            per(cheapen),
-            per(inert),
-            c1_sum as f64 / n,
-            routes_sum as f64 / n,
-            100.0 * linear as f64 / n,
+            spares[world_idx] as f64 / n,
+            per(create[world_idx]),
+            per(destroy[world_idx]),
+            per(cheapen[world_idx]),
+            per(inert[world_idx]),
+            c1_sum[world_idx] as f64 / n,
+            routes_sum[world_idx] as f64 / n,
+            100.0 * linear[world_idx] as f64 / n,
         );
     }
 
     // One narrated example: W2 (whose single spare IS its whole pipe story).
-    let mut state = from_pickup(&rom, &catalog, &pickup, 1);
+    let mut state = census_ctx(&raw, 0).world(1);
     let mut rng = ChaCha8Rng::seed_from_u64(0);
     run_schedule(&mut state, &[&Connectivity, &Levels, &SparePipes], &mut rng);
     println!("example (W2, seed 0):");
