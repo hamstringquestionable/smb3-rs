@@ -37,6 +37,9 @@ pub(crate) struct WorldState {
     /// count, seeded from the vanilla catalog's Level tally. Loader sources
     /// (`from_built`/`from_vanilla`) set it to what's already on the map.
     pub level_budget: usize,
+    /// How many fortresses the Forts phase places — same pattern as
+    /// `level_budget`, seeded from the vanilla catalog's Fortress tally.
+    pub fort_budget: usize,
     /// What each phase did, in run order — the build's own story, read by
     /// the metrics harness and by per-feature breakdowns.
     pub log: Vec<PhaseReport>,

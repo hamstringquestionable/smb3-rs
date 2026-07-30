@@ -31,6 +31,11 @@ pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
             .iter()
             .filter(|s| s.kind == SlotKind::Level)
             .count(),
+        fort_budget: built
+            .slots
+            .iter()
+            .filter(|s| s.kind == SlotKind::Fortress)
+            .count(),
         log: Vec::new(),
     }
 }
@@ -63,6 +68,11 @@ pub(crate) fn from_pickup(
         .iter()
         .filter(|e| e.world_idx == world_idx && matches!(e.kind, NodeKind::Level))
         .count();
+    let fort_budget = catalog
+        .entries
+        .iter()
+        .filter(|e| e.world_idx == world_idx && matches!(e.kind, NodeKind::Fortress { .. }))
+        .count();
     WorldState {
         world_idx,
         grid,
@@ -74,6 +84,7 @@ pub(crate) fn from_pickup(
         fixed,
         pipe_budget: VANILLA_PIPE_PAIRS[world_idx],
         level_budget,
+        fort_budget,
         log: Vec::new(),
     }
 }
@@ -98,6 +109,7 @@ pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -
     let start = rom_data::find_start(&grid);
     let target = find_target(&grid, world_idx);
     let level_budget = slots.iter().filter(|s| s.kind == SlotKind::Level).count();
+    let fort_budget = slots.iter().filter(|s| s.kind == SlotKind::Fortress).count();
     WorldState {
         world_idx,
         grid,
@@ -109,6 +121,7 @@ pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -
         fixed: HashSet::new(),
         pipe_budget: VANILLA_PIPE_PAIRS[world_idx],
         level_budget,
+        fort_budget,
         log: Vec::new(),
     }
 }

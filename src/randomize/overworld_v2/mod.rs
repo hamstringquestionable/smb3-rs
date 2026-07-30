@@ -43,6 +43,7 @@ use super::overworld_pickup::PickupResult;
 use super::rom_data::{self, Grid, Pos, TILE_PIPE, TeleportEdge};
 
 mod connectivity;
+mod forts;
 mod levels;
 mod metrics;
 mod sources;
@@ -53,6 +54,7 @@ mod state;
 mod tests;
 
 pub(crate) use connectivity::Connectivity;
+pub(crate) use forts::Forts;
 pub(crate) use levels::Levels;
 pub(crate) use metrics::measure_world;
 pub(crate) use spare_pipes::SparePipes;

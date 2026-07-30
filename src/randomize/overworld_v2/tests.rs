@@ -58,6 +58,7 @@ fn test_v2_schedule_runs_phases_in_order() {
         fixed: HashSet::new(),
         pipe_budget: 0,
         level_budget: 0,
+        fort_budget: 0,
         log: Vec::new(),
     };
     let first = Recorder("first");
@@ -378,6 +379,78 @@ fn test_v2_levels_census() {
         for action in &report.actions {
             println!("    [{}] {action}", report.phase);
         }
+    }
+}
+
+/// Forts discovery census: the full dumb pipeline so far (connectivity →
+/// levels → spare pipes → forts). The headline number is on-route%: how
+/// often a random fort lands on the cheapest route — where the player pays
+/// its 5 points no matter what, and its future lock gates nothing (the
+/// "on-path fort = decorative lock" thesis, baselined). `V2_SEEDS` seeds
+/// (default 50).
+#[test]
+fn test_v2_forts_census() {
+    let Some(rom) = load_rom() else {
+        eprintln!("ROM not found, skipping");
+        return;
+    };
+    let rom = base_qol(&rom);
+    let seeds: u64 = std::env::var("V2_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
+    let catalog = NodeCatalog::build(&rom, false);
+    let pickup = pick_up(&rom, &catalog, PickupFlags::default());
+
+    println!("v2 forts census ({seeds} seeds, uniform placement, full dumb pipeline)");
+    println!("world  budget  placed  on-route%  C1(mean)  routes  linear%");
+    for world_idx in 0..8 {
+        let mut placed_sum = 0usize;
+        let mut on_route = 0usize;
+        let mut fort_count = 0usize;
+        let mut c1_sum = 0u64;
+        let mut routes_sum = 0usize;
+        let mut linear = 0usize;
+        let mut budget = 0usize;
+
+        for seed in 0..seeds {
+            let mut state = from_pickup(&rom, &catalog, &pickup, world_idx);
+            budget = state.fort_budget;
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            run_schedule(&mut state, &[&Connectivity, &Levels, &SparePipes, &Forts], &mut rng);
+
+            let forts: Vec<Pos> = state
+                .slots
+                .iter()
+                .filter(|s| s.kind == SlotKind::Fortress)
+                .map(|s| s.pos)
+                .collect();
+            placed_sum += forts.len();
+
+            let measure = measure_world(&state);
+            if let Some(cheap) = measure.rc.routes.first() {
+                let path: HashSet<Pos> = cheap.path.iter().copied().collect();
+                on_route += forts.iter().filter(|p| path.contains(p)).count();
+            }
+            fort_count += forts.len();
+            c1_sum += u64::from(measure.c1);
+            routes_sum += measure.routes_in_band;
+            if measure.routes_in_band < 2 {
+                linear += 1;
+            }
+        }
+
+        let n = seeds as f64;
+        println!(
+            "  W{}   {:>5} {:>7.2} {:>9.0}% {:>9.1} {:>7.2} {:>7.0}%",
+            world_idx + 1,
+            budget,
+            placed_sum as f64 / n,
+            100.0 * on_route as f64 / fort_count.max(1) as f64,
+            c1_sum as f64 / n,
+            routes_sum as f64 / n,
+            100.0 * linear as f64 / n,
+        );
     }
 }
 
