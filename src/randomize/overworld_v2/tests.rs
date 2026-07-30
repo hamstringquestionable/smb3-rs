@@ -224,7 +224,7 @@ fn test_v2_connectivity_census() {
 
     println!("v2 connectivity census ({seeds} seeds, knob-free uniform endpoints)");
     println!("world  budget  pipes(mean)  stranded(mean)  goal-ok%  distinct-pairsets");
-    for world_idx in 0..8 {
+    for (world_idx, &budget) in VANILLA_PIPE_PAIRS.iter().enumerate() {
         let mut pipes_sum = 0usize;
         let mut stranded_sum = 0usize;
         let mut goal_ok = 0usize;
@@ -253,7 +253,7 @@ fn test_v2_connectivity_census() {
         println!(
             "  W{}   {:>5} {:>10.2} {:>14.2} {:>8.0}% {:>13}",
             world_idx + 1,
-            VANILLA_PIPE_PAIRS[world_idx],
+            budget,
             pipes_sum as f64 / seeds as f64,
             stranded_sum as f64 / seeds as f64,
             100.0 * goal_ok as f64 / seeds as f64,
@@ -457,10 +457,11 @@ fn test_v2_forts_census() {
 /// Full-skeleton census: all five dumb phases (connectivity → levels →
 /// spare pipes → forts → locks). The skeleton's report card, measured with
 /// the same stick as the shipping builder — compare against
-/// `test_v2_current_builder_worlds`. New columns: lockless% (forts whose
-/// every lock candidate broke completability), goal-open% (world finishable
-/// with all locks closed), zero-gate% (locks that wall off nothing — pure
-/// decoration). `V2_SEEDS` seeds (default 50).
+/// `test_v2_current_builder_worlds`. Columns: removed% (forts removed by the
+/// every-fort-locked invariant — expected ~0), safe% (locks that are
+/// secret-exit-safe), goal-open% (world finishable with all locks closed),
+/// zero-gate% (locks that wall off nothing — pure decoration). `V2_SEEDS`
+/// seeds (default 50).
 #[test]
 fn test_v2_locks_census() {
     let Some(rom) = load_rom() else {
@@ -476,10 +477,12 @@ fn test_v2_locks_census() {
     let pickup = pick_up(&rom, &catalog, PickupFlags::default());
 
     println!("v2 full-skeleton census ({seeds} seeds, all five dumb phases)");
-    println!("world  forts  locks  lockless%  goal-open%  zero-gate%  C1(mean)  routes  linear%");
+    println!("world  forts  locks  removed%  safe%  goal-open%  zero-gate%  C1(mean)  routes  linear%");
     for world_idx in 0..8 {
         let mut fort_sum = 0usize;
         let mut lock_sum = 0usize;
+        let mut safe_sum = 0usize;
+        let mut removed_sum = 0usize;
         let mut zero_gate = 0usize;
         let mut goal_open_count = 0usize;
         let mut c1_sum = 0u64;
@@ -500,13 +503,25 @@ fn test_v2_locks_census() {
                 seed,
                 world_idx + 1
             );
+            // Every-fort-locked invariant: unlockable forts were removed, so
+            // the emitted world always pairs forts and locks 1:1.
+            assert_eq!(
+                state.locks.len(),
+                state.fort_count(),
+                "seed {} W{}: every fort must have a lock",
+                seed,
+                world_idx + 1
+            );
 
-            fort_sum += state
-                .slots
-                .iter()
-                .filter(|s| s.kind == SlotKind::Fortress)
-                .count();
+            fort_sum += state.fort_count();
             lock_sum += state.locks.len();
+            safe_sum += state.locks.iter().filter(|l| l.secret_exit_safe).count();
+            removed_sum += state
+                .log
+                .iter()
+                .flat_map(|r| &r.actions)
+                .filter(|a| a.contains("REMOVED"))
+                .count();
 
             // Zero-gate locks: with all OTHER locks open, closing this one
             // walls off no node at all — pure decoration.
@@ -539,11 +554,12 @@ fn test_v2_locks_census() {
 
         let n = seeds as f64;
         println!(
-            "  W{}   {:>4.1} {:>6.1} {:>9.0}% {:>10.0}% {:>10.0}% {:>9.1} {:>7.2} {:>7.0}%",
+            "  W{}   {:>4.1} {:>6.1} {:>8.0}% {:>5.0}% {:>10.0}% {:>10.0}% {:>9.1} {:>7.2} {:>7.0}%",
             world_idx + 1,
             fort_sum as f64 / n,
             lock_sum as f64 / n,
-            100.0 * (fort_sum - lock_sum) as f64 / fort_sum.max(1) as f64,
+            100.0 * removed_sum as f64 / (fort_sum + removed_sum).max(1) as f64,
+            100.0 * safe_sum as f64 / lock_sum.max(1) as f64,
             100.0 * goal_open_count as f64 / n,
             100.0 * zero_gate as f64 / lock_sum.max(1) as f64,
             c1_sum as f64 / n,
@@ -566,6 +582,76 @@ fn test_v2_locks_census() {
             println!("    [{}] {action}", report.phase);
         }
     }
+}
+
+/// Cross-world secret-exit-safety invariant: after all 8 worlds run the full
+/// dumb schedule, at least one lock somewhere must be secret-exit-safe (the
+/// writer parks the 1-F fortress level on it). Measures how often uniform
+/// placement satisfies this naturally vs how often the relocation backstop
+/// has to act. `V2_SEEDS` seeds (default 20 — each seed builds all 8 worlds).
+#[test]
+fn test_v2_secret_exit_safety() {
+    let Some(rom) = load_rom() else {
+        eprintln!("ROM not found, skipping");
+        return;
+    };
+    let rom = base_qol(&rom);
+    let seeds: u64 = std::env::var("V2_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20);
+    let catalog = NodeCatalog::build(&rom, false);
+    let pickup = pick_up(&rom, &catalog, PickupFlags::default());
+
+    let mut natural = 0usize;
+    let mut relocated = 0usize;
+    for seed in 0..seeds {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let mut worlds: Vec<WorldState> = (0..8)
+            .map(|world_idx| {
+                let mut state = from_pickup(&rom, &catalog, &pickup, world_idx);
+                run_schedule(
+                    &mut state,
+                    &[&Connectivity, &Levels, &SparePipes, &Forts, &Locks],
+                    &mut rng,
+                );
+                state
+            })
+            .collect();
+
+        let safe_before = worlds
+            .iter()
+            .any(|w| w.locks.iter().any(|l| l.secret_exit_safe));
+        let report = ensure_secret_exit_safe(&mut worlds, &mut rng);
+
+        if safe_before {
+            natural += 1;
+        } else {
+            relocated += 1;
+            println!("seed {seed}: backstop acted — {:?}", report.actions);
+        }
+        assert!(
+            worlds
+                .iter()
+                .any(|w| w.locks.iter().any(|l| l.secret_exit_safe)),
+            "seed {seed}: no secret-exit-safe lock in any world after backstop"
+        );
+        // The flags the invariant relied on must be honest: safe means the
+        // world survives that lock never opening.
+        for w in &worlds {
+            for li in 0..w.locks.len() {
+                assert_eq!(
+                    w.locks[li].secret_exit_safe,
+                    w.completable_sealed(Some(li)),
+                    "seed {seed} W{}: stale secret_exit_safe flag on lock {li}",
+                    w.world_idx + 1
+                );
+            }
+        }
+    }
+    println!(
+        "secret-exit safety over {seeds} seeds: natural {natural}, backstop relocations {relocated}"
+    );
 }
 
 /// One logged spare-pipe delta, parsed back out of the report line

@@ -106,6 +106,15 @@ impl WorldState {
     /// forts in — deliberately unlike the shipping builder's per-section
     /// simulation.
     pub(crate) fn completable(&self) -> bool {
+        self.completable_sealed(None)
+    }
+
+    /// The same fixpoint with one lock (by index into `locks`) SEALED: it
+    /// stays closed even after its fort is beaten. This is the secret-exit
+    /// question — the 1-F fortress's secret exit skips the lock-opening FX,
+    /// so whichever lock pairs with the fort hosting 1-F may never open. A
+    /// lock is secret-exit-safe iff the world is completable with it sealed.
+    pub(crate) fn completable_sealed(&self, sealed: Option<usize>) -> bool {
         let mut base = self.grid.clone();
         stamp_slots(&mut base, &self.slots);
         let forts: Vec<(usize, Pos)> = self
@@ -118,12 +127,9 @@ impl WorldState {
         let mut open: HashSet<usize> = HashSet::new();
         loop {
             let mut g = base.clone();
-            for lock in &self.locks {
-                let tile = if open.contains(&lock.fort_section) {
-                    lock.replace_tile
-                } else {
-                    lock.gap_tile
-                };
+            for (li, lock) in self.locks.iter().enumerate() {
+                let opens = open.contains(&lock.fort_section) && Some(li) != sealed;
+                let tile = if opens { lock.replace_tile } else { lock.gap_tile };
                 g.set(lock.pos.0, lock.pos.1, tile);
             }
             let reach = walk_reachable(&g, &self.pipe_pairs, self.start, self.world_idx);

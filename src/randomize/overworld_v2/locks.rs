@@ -6,15 +6,25 @@
 //! gate (including how often the answer is "nothing"), and the shaping
 //! controls get argued from those numbers.
 //!
-//! The one invariant is ORDER-FREE completability (`WorldState::completable`):
-//! close every lock, beat every reachable fort, open those locks, repeat —
-//! the world is valid iff the goal is reached AND every fort is eventually
-//! beatable (a fort sealed behind its own lock is permanently unplayable
-//! content). This single fixpoint subsumes the shipping builder's per-section
-//! hard rules without its "sections beaten in order" linearization.
+//! Hard invariants (true safety, per the charter):
 //!
-//! A fort may end up lockless when every candidate fails the invariant —
-//! soft, reported, counted by the census.
+//! - **ORDER-FREE completability** (`WorldState::completable`): close every
+//!   lock, beat every reachable fort, open those locks, repeat — the world
+//!   is valid iff the goal is reached AND every fort is eventually beatable
+//!   (a fort sealed behind its own lock is permanently unplayable content).
+//!   This single fixpoint subsumes the shipping builder's per-section hard
+//!   rules without its "sections beaten in order" linearization.
+//! - **Every fort has a lock.** A fort's Boom-Boom ordinal indexes the world
+//!   FX list, and a lockless fort is dead weight (its beat does nothing). If
+//!   every candidate breaks completability, the fort is REMOVED from the
+//!   world — loudly reported, counted by the census (expected rate ~0: a
+//!   dead-end path tile gates nothing and always passes the fixpoint).
+//! - **Secret-exit safety is computed, not stamped false.** A lock is safe
+//!   iff the world stays completable with that lock sealed forever
+//!   (`completable_sealed`) — the 1-F fortress's secret exit skips the
+//!   lock-opening FX. The ROM-level requirement is at least one safe lock
+//!   ACROSS ALL WORLDS (the writer parks 1-F on a safe slot);
+//!   [`ensure_secret_exit_safe`] is that cross-world backstop.
 
 use super::*;
 
@@ -49,8 +59,8 @@ impl Phase for Locks {
                     gap_tile: gap_tile_for(tile),
                     replace_tile: tile,
                     fort_section: fort_id,
-                    // Write-phase concerns (1-F secret exit safety, gate
-                    // bookkeeping) — not computed by the dumb skeleton.
+                    // Stamped by recompute_safety_flags once the set is
+                    // final; blocks_target stays a shipping-scorer concern.
                     secret_exit_safe: false,
                     blocks_target: false,
                 });
@@ -62,19 +72,105 @@ impl Phase for Locks {
                 state.locks.pop();
             }
             if !placed {
+                // Invariant: every fort has a lock. An unlockable fort is
+                // removed rather than left as dead weight on the map.
+                let idx = state
+                    .slots
+                    .iter()
+                    .position(|s| s.kind == SlotKind::Fortress && s.section == fort_id)
+                    .expect("fort id came from the slot list");
+                let pos = state.slots[idx].pos;
+                state.slots.remove(idx);
                 actions.push(format!(
-                    "fort {fort_id} lockless: all {tried} candidates break completability",
+                    "fort {fort_id} REMOVED from {pos:?}: all {tried} lock candidates break completability",
                 ));
             }
         }
 
+        recompute_safety_flags(state);
+
         actions.push(format!(
-            "done: {}/{} forts locked",
+            "done: {}/{} forts locked, {} secret-exit-safe",
             state.locks.len(),
-            state.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count(),
+            state.fort_count(),
+            state.locks.iter().filter(|l| l.secret_exit_safe).count(),
         ));
         PhaseReport { phase: self.name(), actions }
     }
+}
+
+/// Stamp every lock's `secret_exit_safe` flag from the final lock set: safe
+/// iff the world stays completable with that lock sealed forever. Computed
+/// after all placements — sealing interacts with the OTHER locks, so the
+/// flag is only meaningful on the finished set.
+fn recompute_safety_flags(state: &mut WorldState) {
+    for li in 0..state.locks.len() {
+        state.locks[li].secret_exit_safe = state.completable_sealed(Some(li));
+    }
+}
+
+/// Cross-world invariant: at least one lock across all worlds must be
+/// secret-exit-safe — the write phase parks the 1-F fortress level (whose
+/// secret exit skips the lock-opening FX) on a slot whose lock can stay
+/// closed forever without softlocking.
+///
+/// Knob-free backstop, run after every world's schedule: if uniform
+/// placement produced no safe lock anywhere, relocate ONE existing lock —
+/// shuffled worlds, shuffled forts, shuffled candidates, first tile that
+/// keeps the world completable both normally and with the new lock sealed.
+pub(crate) fn ensure_secret_exit_safe(
+    worlds: &mut [WorldState],
+    rng: &mut dyn RngCore,
+) -> PhaseReport {
+    let mut actions = Vec::new();
+    let phase = "secret_exit_safety";
+
+    if worlds
+        .iter()
+        .any(|w| w.locks.iter().any(|l| l.secret_exit_safe))
+    {
+        actions.push("already satisfied: uniform placement produced a safe lock".into());
+        return PhaseReport { phase, actions };
+    }
+
+    let mut world_order: Vec<usize> = (0..worlds.len()).collect();
+    world_order.shuffle(rng);
+    for wi in world_order {
+        let state = &mut worlds[wi];
+        let mut lock_indices: Vec<usize> = (0..state.locks.len()).collect();
+        lock_indices.shuffle(rng);
+        for li in lock_indices {
+            let original = state.locks[li].clone();
+            let mut candidates = lock_candidates(state);
+            candidates.shuffle(rng);
+            for (pos, tile) in candidates {
+                state.locks[li] = LockAssignment {
+                    pos,
+                    gap_tile: gap_tile_for(tile),
+                    replace_tile: tile,
+                    fort_section: original.fort_section,
+                    secret_exit_safe: false,
+                    blocks_target: false,
+                };
+                if state.completable() && state.completable_sealed(Some(li)) {
+                    // Relocation changed the world — every flag in it is
+                    // stale, not just the moved lock's.
+                    recompute_safety_flags(state);
+                    actions.push(format!(
+                        "W{} fort {} lock relocated {:?} -> {pos:?} (secret-exit-safe)",
+                        state.world_idx + 1,
+                        original.fort_section,
+                        original.pos,
+                    ));
+                    return PhaseReport { phase, actions };
+                }
+            }
+            state.locks[li] = original;
+        }
+    }
+
+    actions.push("UNSATISFIED: no relocation in any world yields a safe lock".into());
+    PhaseReport { phase, actions }
 }
 
 /// Tiles a lock may claim: lockable path-tile types (the kinds the FX engine

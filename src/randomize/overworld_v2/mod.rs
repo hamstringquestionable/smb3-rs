@@ -57,7 +57,7 @@ mod tests;
 pub(crate) use connectivity::Connectivity;
 pub(crate) use forts::Forts;
 pub(crate) use levels::Levels;
-pub(crate) use locks::Locks;
+pub(crate) use locks::{Locks, ensure_secret_exit_safe};
 pub(crate) use metrics::measure_world;
 pub(crate) use spare_pipes::SparePipes;
 pub(crate) use sources::{from_built, from_pickup, from_vanilla};
