@@ -39,7 +39,7 @@ use capacity::{
 };
 use knobs::Knobs;
 use locks::place_locks;
-use pipes::VANILLA_PIPE_PAIRS;
+pub(crate) use pipes::VANILLA_PIPE_PAIRS;
 use scoring::{LEVEL_SPREAD_EXPONENT, VANILLA_LEVEL_COUNT};
 use sections::build_world;
 use types::{CapacityPrep, WorldSlotCounts};
@@ -66,6 +66,8 @@ pub(crate) use route_choice::{analyze_route_choice, dump_route_choice};
 pub(crate) use route_choice::{DEFAULT_SLACK, RouteChoice};
 #[cfg(test)]
 pub(crate) use types::{LockAssignment, stamp_slots};
+#[cfg(test)]
+pub(crate) use capacity::fixed_positions_for_world;
 
 #[cfg(test)]
 mod tests;

@@ -26,21 +26,23 @@
 //! current-builder adapter); [`metrics`] is the measuring stick. Placement
 //! phases will arrive one at a time, each with its own module.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rand::RngCore;
 
 use crate::rom::Rom;
 
-use super::map_walker::walk_reachable;
+use super::map_walker::{Reach, walk_reachable};
 use super::node_catalog::{NodeCatalog, NodeKind};
 use super::overworld_build::{
     BuiltWorld, DEFAULT_SLACK, LockAssignment, RouteChoice, SlotAssignment, SlotKind,
-    analyze_route_choice, stamp_slots,
+    analyze_route_choice, fixed_positions_for_world, stamp_slots,
 };
 use super::overworld_helpers::find_target;
-use super::rom_data::{self, Grid, Pos, TeleportEdge};
+use super::overworld_pickup::PickupResult;
+use super::rom_data::{self, Grid, Pos, TILE_PIPE, TeleportEdge};
 
+mod connectivity;
 mod metrics;
 mod sources;
 mod state;
@@ -48,6 +50,7 @@ mod state;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use connectivity::Connectivity;
 pub(crate) use metrics::measure_world;
-pub(crate) use sources::{from_built, vanilla_world};
+pub(crate) use sources::{from_built, pickup_world, vanilla_world};
 pub(crate) use state::{Phase, PhaseReport, WorldState, run_schedule};

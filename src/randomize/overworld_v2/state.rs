@@ -22,6 +22,10 @@ pub(crate) struct WorldState {
     pub start: Option<Pos>,
     /// The world goal (airship dock / Bowser's castle), if present.
     pub target: Option<Pos>,
+    /// Positions no phase may claim (floating map sprites, pinned toad
+    /// houses, airship/Bowser tiles) — input from the shared pickup/catalog
+    /// phases, constant across the build.
+    pub fixed: HashSet<Pos>,
     /// What each phase did, in run order — the build's own story, read by
     /// the metrics harness and by per-feature breakdowns.
     pub log: Vec<PhaseReport>,

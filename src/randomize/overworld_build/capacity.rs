@@ -120,7 +120,7 @@ pub(super) fn promote_hb_slots<R: Rng>(
 /// HammerBro catalog entries are NOT excluded — those blank tiles are valid
 /// placement slots. Only the actual floating sprite positions are excluded
 /// because a numbered level tile under a floating sprite looks wrong.
-pub(super) fn fixed_positions_for_world(
+pub(crate) fn fixed_positions_for_world(
     rom: &Rom,
     catalog: &NodeCatalog,
     world_idx: usize,

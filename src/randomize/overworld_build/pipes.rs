@@ -23,7 +23,7 @@ use super::sections::split_blanks_by_reachability;
 use super::types::{LockAssignment, SlotAssignment, SlotKind, stamp_slots};
 
 /// Number of pipe pairs (not endpoints) per world in the vanilla ROM.
-pub(super) const VANILLA_PIPE_PAIRS: [usize; 8] = [
+pub(crate) const VANILLA_PIPE_PAIRS: [usize; 8] = [
     0,  // W1
     1,  // W2
     3,  // W3

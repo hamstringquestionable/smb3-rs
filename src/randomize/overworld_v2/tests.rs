@@ -55,6 +55,7 @@ fn test_v2_schedule_runs_phases_in_order() {
         pipe_pairs: Vec::new(),
         start: None,
         target: None,
+        fixed: HashSet::new(),
         log: Vec::new(),
     };
     let first = Recorder("first");
@@ -195,6 +196,76 @@ fn test_v2_current_builder_worlds() {
         c1_sum as f64 / world_count as f64,
         goal_open_worlds,
     );
+}
+
+/// Connectivity discovery census: run ONLY the connectivity phase on the
+/// pickup-cleared worlds and measure what it does — pipes spent vs the
+/// vanilla budget, blanks left stranded, goal reachability, and endpoint
+/// variety across seeds. `V2_SEEDS` sets the seed count (default 50).
+///
+/// No assertions on coverage yet: this is the rediscovery baseline the
+/// controls will be justified against.
+#[test]
+fn test_v2_connectivity_census() {
+    let Some(rom) = load_rom() else {
+        eprintln!("ROM not found, skipping");
+        return;
+    };
+    let rom = base_qol(&rom);
+    let seeds: u64 = std::env::var("V2_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
+    let catalog = NodeCatalog::build(&rom, false);
+    let pickup = pick_up(&rom, &catalog, PickupFlags::default());
+
+    println!("v2 connectivity census ({seeds} seeds, knob-free uniform endpoints)");
+    println!("world  budget  pipes(mean)  stranded(mean)  goal-ok%  distinct-pairsets");
+    for world_idx in 0..8 {
+        let mut pipes_sum = 0usize;
+        let mut stranded_sum = 0usize;
+        let mut goal_ok = 0usize;
+        let mut pair_sets: HashSet<Vec<TeleportEdge>> = HashSet::new();
+        for seed in 0..seeds {
+            let mut state = pickup_world(&rom, &catalog, &pickup, world_idx);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            run_schedule(&mut state, &[&Connectivity], &mut rng);
+            pipes_sum += state.pipe_pairs.len();
+            let mut pairs = state.pipe_pairs.clone();
+            pairs.sort();
+            pair_sets.insert(pairs);
+            let last = state.log.last().expect("connectivity always reports");
+            let done = last.actions.last().expect("has a done line");
+            let stranded: usize = done
+                .split("done: ")
+                .nth(1)
+                .and_then(|s| s.split(' ').next())
+                .and_then(|s| s.parse().ok())
+                .expect("done line starts with the stranded count");
+            stranded_sum += stranded;
+            if done.ends_with("true") {
+                goal_ok += 1;
+            }
+        }
+        println!(
+            "  W{}   {:>5} {:>10.2} {:>14.2} {:>8.0}% {:>13}",
+            world_idx + 1,
+            super::super::overworld_build::VANILLA_PIPE_PAIRS[world_idx],
+            pipes_sum as f64 / seeds as f64,
+            stranded_sum as f64 / seeds as f64,
+            100.0 * goal_ok as f64 / seeds as f64,
+            pair_sets.len(),
+        );
+    }
+
+    // One narrated example for hand-checking: W3, seed 0.
+    let mut state = pickup_world(&rom, &catalog, &pickup, 2);
+    let mut rng = ChaCha8Rng::seed_from_u64(0);
+    run_schedule(&mut state, &[&Connectivity], &mut rng);
+    println!("example (W3, seed 0):");
+    for action in &state.log[0].actions {
+        println!("    {action}");
+    }
 }
 
 /// Hand-check probe: one vanilla world at a wide measuring band, kept and

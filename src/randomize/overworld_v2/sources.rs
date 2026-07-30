@@ -11,7 +11,8 @@
 use super::*;
 
 /// Wrap a shipping-builder world as a v2 `WorldState`. Start/target are
-/// re-derived from the grid the same way the builder derived them.
+/// re-derived from the grid the same way the builder derived them. `fixed`
+/// is empty: a finished world has nothing left to place.
 pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
     WorldState {
         world_idx: built.world_idx,
@@ -21,6 +22,43 @@ pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
         pipe_pairs: built.pipe_pairs.clone(),
         start: rom_data::find_start(&built.grid),
         target: find_target(&built.grid, built.world_idx),
+        fixed: HashSet::new(),
+        log: Vec::new(),
+    }
+}
+
+/// The v2 build entry point's input: one world as the shared pickup phase
+/// hands it over — cleared grid (blank path tiles), with the start/airship/
+/// Bowser tiles stamped back at their catalog positions (pickup blanks them,
+/// but they are terrain, not placements).
+///
+/// Uses the SIMPLEST configuration while v2 finds its feet: no start↔airship
+/// swap, no shuffled toad houses / hammer bros / spades — so pinned houses
+/// and floating sprites land in `fixed`.
+pub(crate) fn pickup_world(
+    rom: &Rom,
+    catalog: &NodeCatalog,
+    pickup: &PickupResult,
+    world_idx: usize,
+) -> WorldState {
+    let mut grid = pickup.worlds[world_idx].grid.clone();
+    for entry in catalog.entries.iter().filter(|e| e.world_idx == world_idx) {
+        if matches!(entry.kind, NodeKind::Start | NodeKind::Airship | NodeKind::Bowser) {
+            grid.set(entry.grid_pos.0, entry.grid_pos.1, entry.tile);
+        }
+    }
+    let start = rom_data::find_start(&grid);
+    let target = find_target(&grid, world_idx);
+    let fixed = fixed_positions_for_world(rom, catalog, world_idx, false, false);
+    WorldState {
+        world_idx,
+        grid,
+        slots: Vec::new(),
+        locks: Vec::new(),
+        pipe_pairs: Vec::new(),
+        start,
+        target,
+        fixed,
         log: Vec::new(),
     }
 }
@@ -52,6 +90,7 @@ pub(crate) fn vanilla_world(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) 
         pipe_pairs: vanilla_pipe_pairs(catalog, world_idx),
         start,
         target,
+        fixed: HashSet::new(),
         log: Vec::new(),
     }
 }
