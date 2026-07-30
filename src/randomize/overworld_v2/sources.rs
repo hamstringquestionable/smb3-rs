@@ -23,6 +23,7 @@ pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
         start: rom_data::find_start(&built.grid),
         target: find_target(&built.grid, built.world_idx),
         fixed: HashSet::new(),
+        pipe_budget: VANILLA_PIPE_PAIRS[built.world_idx],
         log: Vec::new(),
     }
 }
@@ -59,6 +60,7 @@ pub(crate) fn pickup_world(
         start,
         target,
         fixed,
+        pipe_budget: VANILLA_PIPE_PAIRS[world_idx],
         log: Vec::new(),
     }
 }
@@ -91,6 +93,7 @@ pub(crate) fn vanilla_world(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) 
         start,
         target,
         fixed: HashSet::new(),
+        pipe_budget: VANILLA_PIPE_PAIRS[world_idx],
         log: Vec::new(),
     }
 }

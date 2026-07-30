@@ -56,6 +56,7 @@ fn test_v2_schedule_runs_phases_in_order() {
         start: None,
         target: None,
         fixed: HashSet::new(),
+        pipe_budget: 0,
         log: Vec::new(),
     };
     let first = Recorder("first");
@@ -250,7 +251,7 @@ fn test_v2_connectivity_census() {
         println!(
             "  W{}   {:>5} {:>10.2} {:>14.2} {:>8.0}% {:>13}",
             world_idx + 1,
-            super::super::overworld_build::VANILLA_PIPE_PAIRS[world_idx],
+            VANILLA_PIPE_PAIRS[world_idx],
             pipes_sum as f64 / seeds as f64,
             stranded_sum as f64 / seeds as f64,
             100.0 * goal_ok as f64 / seeds as f64,

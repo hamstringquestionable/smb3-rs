@@ -36,7 +36,7 @@ use super::map_walker::{Reach, walk_reachable};
 use super::node_catalog::{NodeCatalog, NodeKind};
 use super::overworld_build::{
     BuiltWorld, DEFAULT_SLACK, LockAssignment, RouteChoice, SlotAssignment, SlotKind,
-    analyze_route_choice, fixed_positions_for_world, stamp_slots,
+    VANILLA_PIPE_PAIRS, analyze_route_choice, fixed_positions_for_world, stamp_slots,
 };
 use super::overworld_helpers::find_target;
 use super::overworld_pickup::PickupResult;

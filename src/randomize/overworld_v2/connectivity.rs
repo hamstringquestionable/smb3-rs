@@ -13,16 +13,18 @@
 //! leaves the rest of the world's pipe budget for the routing phase.
 //!
 //! Not hard rules, by design: a world can end this phase with unreachable
-//! blanks (an island whose every blank is `fixed` has no legal endpoint).
-//! The phase reports what it couldn't do; the census measures how often.
+//! blanks (an island whose every blank is `fixed` has no legal endpoint, or
+//! the pipe budget runs out first). The phase reports what it couldn't do;
+//! the census measures how often.
+//!
+//! The one hard bound is `state.pipe_budget` — the world's chosen pipe
+//! limit (see its doc). Real terrain always connects within it, so hitting
+//! the bound means a bug, contained to this world's few pipes instead of
+//! looping; it also guarantees the island loop terminates.
 
 use super::*;
 
 use rand::seq::IndexedRandom;
-
-/// Safety cap on pipes placed in one world — far above any real map's island
-/// count; a backstop against a walker/terrain surprise, not a tuning value.
-const MAX_CONNECTIVITY_PIPES: usize = 8;
 
 pub(crate) struct Connectivity;
 
@@ -34,7 +36,7 @@ impl Phase for Connectivity {
     fn run(&self, state: &mut WorldState, rng: &mut dyn RngCore) -> PhaseReport {
         let mut actions = Vec::new();
 
-        for _ in 0..MAX_CONNECTIVITY_PIPES {
+        while state.pipe_pairs.len() < state.pipe_budget {
             let reach = walk_reachable(&state.grid, &state.pipe_pairs, state.start, state.world_idx);
             let blanks = blank_positions(state);
 

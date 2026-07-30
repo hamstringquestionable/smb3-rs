@@ -26,6 +26,13 @@ pub(crate) struct WorldState {
     /// houses, airship/Bowser tiles) — input from the shared pickup/catalog
     /// phases, constant across the build.
     pub fixed: HashSet<Pos>,
+    /// Hard limit on pipe pairs in this world — currently the vanilla
+    /// per-world count, a chosen design budget (not an inherent ROM limit;
+    /// it may be raised later). All pipe-placing phases share it: whatever
+    /// connectivity doesn't spend, routing may. Every world's terrain needs
+    /// fewer pipes than its budget to fully connect, so the bound also stops
+    /// a bug from spraying pipes (e.g. 8 into W2) instead of looping.
+    pub pipe_budget: usize,
     /// What each phase did, in run order — the build's own story, read by
     /// the metrics harness and by per-feature breakdowns.
     pub log: Vec<PhaseReport>,
