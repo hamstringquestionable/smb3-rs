@@ -159,6 +159,16 @@ fn try_lock_replace(
 /// The topology rung: spend one pipe pair AND re-place all locks as a single
 /// bundle, judged together on the finished world. Accept iff routes rise —
 /// the shortcut must become a gated alternative, not an ungated express.
+///
+/// Proposal seeding was tried and REVERTED (census-measured, 100 seeds):
+/// a pipe-only measurement pre-screen ("skip pairs whose pipe changes
+/// nothing against the current locks") filtered out true positives — a pipe
+/// inert against the CURRENT locks can still create a route once locks are
+/// re-placed, which is the entire point of the bundle (W8 accepts halved,
+/// linear 73→84%). A walk-distance floor on the endpoints was neutral:
+/// uniform pairs are rarely walk-close, so it filtered almost nothing.
+/// Any future proposal filter must judge the pipe+locks bundle, not the
+/// pipe alone.
 fn try_gated_shortcut(
     state: &mut WorldState,
     rng: &mut dyn RngCore,
