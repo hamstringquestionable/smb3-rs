@@ -24,6 +24,13 @@
 //!   trunk-fort symptom: a fort ON the cheapest route makes every lock
 //!   decorative and no lock or pipe move can fix that; only moving the fort
 //!   changes the lock's search space.
+//! - **Everything spent** (last resort — it spends layout diversity, the
+//!   scarcest currency): **level move** — relocate one off-route level onto
+//!   the cheapest route, making it mandatory. The cheap-trunk symptom: when
+//!   C1 is tiny, no alternative can fit the choice band no matter where
+//!   forts, locks, or pipes go; each forced level raises C1 by 3 and widens
+//!   what the band admits, and every accept resets the other rungs'
+//!   exhaustion so they retry into the wider band.
 //!
 //! Moves are judged on the complete world and rolled back on rejection; a
 //! move type that keeps failing escalates past itself ([`ESCALATE_AFTER`]),
@@ -36,7 +43,7 @@
 //!
 //! The loop's knobs (the ONLY knobs in v2): [`MOVE_BUDGET`],
 //! [`TARGET_ROUTES`], [`SHORTCUT_TRIES`], [`FORTLOCK_TRIES`],
-//! [`ESCALATE_AFTER`].
+//! [`LEVELMOVE_TRIES`], [`ESCALATE_AFTER`].
 
 use super::*;
 
@@ -53,6 +60,8 @@ const TARGET_ROUTES: usize = 2;
 const SHORTCUT_TRIES: usize = 4;
 /// Full fort-relocation evaluations paid inside ONE fort+lock move.
 const FORTLOCK_TRIES: usize = 4;
+/// Level relocations tried inside ONE level move (cheap: no lock re-place).
+const LEVELMOVE_TRIES: usize = 4;
 /// Consecutive rejections of a move type before escalating past it.
 const ESCALATE_AFTER: usize = 2;
 
@@ -67,9 +76,9 @@ impl Phase for Shaping {
         let mut actions = Vec::new();
         let mut moves = 0usize;
         let mut accepted = 0usize;
-        let mut lock_rejects = 0usize;
-        let mut shortcut_rejects = 0usize;
-        let mut fortlock_rejects = 0usize;
+        // Per-rung consecutive-rejection counters, indexed by ladder order:
+        // lock re-place, gated shortcut, fort+lock, level move.
+        let mut rejects = [0usize; 4];
 
         let status = loop {
             let before = measure_world(state);
@@ -81,43 +90,34 @@ impl Phase for Shaping {
             }
 
             let zero_gate = state.zero_gate_locks().len();
-            let lock_available = !state.locks.is_empty()
-                && lock_rejects < ESCALATE_AFTER
-                && (zero_gate > 0 || before.dominated_detours > 0);
-            let shortcut_available = state.pipe_pairs.len() < state.pipe_budget
-                && shortcut_rejects < ESCALATE_AFTER;
-            let fortlock_available =
-                state.fort_count() > 0 && fortlock_rejects < ESCALATE_AFTER;
+            let available = [
+                !state.locks.is_empty() && (zero_gate > 0 || before.dominated_detours > 0),
+                state.pipe_pairs.len() < state.pipe_budget,
+                state.fort_count() > 0,
+                true, // level move checks its own sources/targets
+            ];
+            let Some(rung) = (0..4)
+                .find(|&r| available[r] && rejects[r] < ESCALATE_AFTER)
+            else {
+                break "stuck: no move available";
+            };
 
             moves += 1;
-            // On any accept the world changed, so every rung's ammunition is
-            // fresh — all three exhaustion counters reset together.
-            let outcome = if lock_available {
-                try_lock_replace(state, rng, &before, zero_gate)
-            } else if shortcut_available {
-                try_gated_shortcut(state, rng, &before)
-            } else if fortlock_available {
-                try_fort_lock(state, rng, &before)
-            } else {
-                moves -= 1;
-                break "stuck: no move available";
+            let outcome = match rung {
+                0 => try_lock_replace(state, rng, &before, zero_gate),
+                1 => try_gated_shortcut(state, rng, &before),
+                2 => try_fort_lock(state, rng, &before),
+                _ => try_level_move(state, rng, &before),
             };
             match outcome {
                 Ok(line) => {
-                    lock_rejects = 0;
-                    shortcut_rejects = 0;
-                    fortlock_rejects = 0;
+                    // The world changed — every rung's ammunition is fresh.
+                    rejects = [0; 4];
                     accepted += 1;
                     actions.push(line);
                 }
                 Err(line) => {
-                    if lock_available {
-                        lock_rejects += 1;
-                    } else if shortcut_available {
-                        shortcut_rejects += 1;
-                    } else {
-                        fortlock_rejects += 1;
-                    }
+                    rejects[rung] += 1;
                     actions.push(line);
                 }
             }
@@ -285,5 +285,76 @@ fn try_fort_lock(
     Err(format!(
         "fort_lock REJECT: no relocation beats routes {} ({evals} full evals)",
         before.routes_in_band,
+    ))
+}
+
+/// The last-resort rung: relocate ONE off-route level onto the cheapest
+/// route, making it mandatory. Deliberately NARROW — locks are untouched
+/// (level positions affect neither lock validity nor the completability
+/// fixpoint), so an evaluation is just relocate + measure.
+///
+/// Jurisdiction is the cheap-trunk symptom (a C1 so small that no
+/// alternative can fit the choice band anywhere) plus the mandatory-level
+/// deficit the progression census flagged. Accept iff routes rise, or C1
+/// rises at flat routes — the level genuinely became forced, the absolute
+/// band widened, and the accept resets the other rungs' exhaustion so
+/// shortcut/fort+lock retry into the wider band. Last in the ladder because
+/// it spends layout diversity, the census's scarcest currency.
+fn try_level_move(
+    state: &mut WorldState,
+    rng: &mut dyn RngCore,
+    before: &WorldMeasure,
+) -> Result<String, String> {
+    let trunk: HashSet<Pos> = before
+        .rc
+        .routes
+        .first()
+        .map(|r| r.path.iter().copied().collect())
+        .unwrap_or_default();
+
+    let sources: Vec<usize> = state
+        .slots
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.kind == SlotKind::Level && !trunk.contains(&s.pos))
+        .map(|(i, _)| i)
+        .collect();
+    let targets: Vec<Pos> = state
+        .legal_blanks()
+        .into_iter()
+        .filter(|p| trunk.contains(p))
+        .collect();
+    if sources.is_empty() || targets.is_empty() {
+        return Err(format!(
+            "level_move REJECT: {} off-route levels, {} on-route blanks — nothing to work with",
+            sources.len(),
+            targets.len(),
+        ));
+    }
+
+    let saved_slots = state.slots.clone();
+    let mut evals = 0usize;
+    for _ in 0..LEVELMOVE_TRIES {
+        let Some(&si) = sources.choose(rng) else { break };
+        let Some(&target) = targets.choose(rng) else { break };
+        let old_pos = state.slots[si].pos;
+        if old_pos == target {
+            continue;
+        }
+        state.slots[si].pos = target;
+        evals += 1;
+        let after = measure_world(state);
+        let improved = after.routes_in_band > before.routes_in_band
+            || (after.routes_in_band == before.routes_in_band && after.c1 > before.c1);
+        if improved {
+            return Ok(format!(
+                "level_move ACCEPT: level {old_pos:?} -> {target:?} (on trunk), routes {} -> {}, C1 {} -> {}",
+                before.routes_in_band, after.routes_in_band, before.c1, after.c1,
+            ));
+        }
+        state.slots = saved_slots.clone();
+    }
+    Err(format!(
+        "level_move REJECT: no on-trunk relocation improves ({evals} evals)",
     ))
 }

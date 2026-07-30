@@ -56,14 +56,18 @@ impl WorldState {
 
     /// Blanks a phase may claim for new content: blank tile, not `fixed`,
     /// not already a slot, and not the row-7/8 completion-bit partner of
-    /// existing content (rows 7 and 8 share one completion bit per column —
-    /// a ROM mechanic; stacked completable content marks each other beaten).
+    /// existing content OR of a lock (rows 7 and 8 share one completion bit
+    /// per column — a ROM mechanic; stacked completable content marks each
+    /// other beaten, and a lock consumes that shared bit too). The lock
+    /// barring only matters to the shaping moves — the dumb placement
+    /// phases all run before any lock exists.
     pub(crate) fn legal_blanks(&self) -> Vec<Pos> {
         let taken: HashSet<Pos> = self.slots.iter().map(|s| s.pos).collect();
         let barred: HashSet<Pos> = self
             .slots
             .iter()
             .filter_map(|s| row78_partner(s.pos))
+            .chain(self.locks.iter().filter_map(|l| row78_partner(l.pos)))
             .collect();
         let mut out = Vec::new();
         for r in 0..self.grid.rows() {
