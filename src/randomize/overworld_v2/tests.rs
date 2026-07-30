@@ -7,7 +7,7 @@ use super::*;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-use super::super::overworld_build::{OverworldData, build};
+use super::super::overworld_build::{OverworldData, analyze_required_progression, build};
 use super::super::overworld_pickup::{PickupFlags, PickupResult as Pickup, pick_up};
 use super::super::qol;
 use super::super::start_airship_swap;
@@ -807,6 +807,128 @@ fn test_v2_shaping_census() {
     for report in &state.log {
         for action in &report.actions {
             println!("    [{}] {action}", report.phase);
+        }
+    }
+}
+
+/// Progression census — the OLDER linearity metrics (the required-progression
+/// Dijkstra, a different model from the route-choice band): mandatory fort
+/// and level counts (distinct clears the player is FORCED into), the longest
+/// forced level streak, and the goal stack (forced levels sitting directly on
+/// the airship/Bowser approach with nothing between them — the "clear path,
+/// just 2+ levels on the goal" complaint; ≥2 is the historical badness
+/// threshold). No-hammer analysis, matching the shipping progression census.
+///
+/// Arms per world: `vanilla` (ground truth, raw ROM, one row), `dumb`
+/// (knob-free skeleton), `shaped` (shaping loop), `shipping` (current
+/// builder) — the latter three all fed the same flag-mix input (see
+/// [`census_ctx`]). `V2_SEEDS` seeds (default 100).
+#[test]
+fn test_v2_progression_census() {
+    let Some(raw) = load_rom() else {
+        eprintln!("ROM not found, skipping");
+        return;
+    };
+    let seeds: u64 = std::env::var("V2_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100);
+
+    #[derive(Default, Clone, Copy)]
+    struct ProgTally {
+        forts: u64,
+        levels: u64,
+        streak: u64,
+        streak_ge2: usize,
+        goal: u64,
+        goal_ge2: usize,
+        n: usize,
+    }
+
+    fn tally(t: &mut ProgTally, built: &BuiltWorld) {
+        let p = analyze_required_progression(built, false);
+        assert!(p.reachable, "progression census world must be reachable");
+        t.n += 1;
+        t.forts += p.forts_required as u64;
+        t.levels += p.levels_required as u64;
+        t.streak += p.level_streak as u64;
+        if p.level_streak >= 2 {
+            t.streak_ge2 += 1;
+        }
+        t.goal += p.goal_stack as u64;
+        if p.goal_stack >= 2 {
+            t.goal_ge2 += 1;
+        }
+    }
+
+    let mut dumb = [ProgTally::default(); 8];
+    let mut shaped = [ProgTally::default(); 8];
+    let mut shipping = [ProgTally::default(); 8];
+
+    for seed in 0..seeds {
+        let ctx = census_ctx(&raw, seed);
+
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &ctx.rom,
+            &OverworldData { pickup: &ctx.pickup, catalog: &ctx.catalog },
+            &mut rng,
+            ctx.flags,
+        );
+        for built in &result.worlds {
+            tally(&mut shipping[built.world_idx], built);
+        }
+
+        for world_idx in 0..8 {
+            let mut state = ctx.world(world_idx);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            run_schedule(
+                &mut state,
+                &[&Connectivity, &Levels, &SparePipes, &Forts, &Locks],
+                &mut rng,
+            );
+            tally(&mut dumb[world_idx], &state.to_built());
+
+            let mut state = ctx.world(world_idx);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            run_schedule(
+                &mut state,
+                &[&Connectivity, &Levels, &Forts, &Locks, &Shaping],
+                &mut rng,
+            );
+            tally(&mut shaped[world_idx], &state.to_built());
+        }
+    }
+
+    // Vanilla ground truth: constant per world, measured once.
+    let catalog = NodeCatalog::build(&raw, false);
+    let mut vanilla = [ProgTally::default(); 8];
+    for (world_idx, t) in vanilla.iter_mut().enumerate() {
+        tally(t, &from_vanilla(&raw, &catalog, world_idx).to_built());
+    }
+
+    println!(
+        "v2 progression census ({seeds} seeds, no-hammer required-progression, flag-mix arms)"
+    );
+    println!("world  arm      forts-req  lvls-req  streak  streak>=2%  goalstk  goalstk>=2%");
+    for world_idx in 0..8 {
+        for (arm, t) in [
+            ("vanilla", &vanilla[world_idx]),
+            ("dumb", &dumb[world_idx]),
+            ("shaped", &shaped[world_idx]),
+            ("shipping", &shipping[world_idx]),
+        ] {
+            let n = t.n.max(1) as f64;
+            println!(
+                "  W{}   {arm:<8} {:>8.2} {:>9.2} {:>7.2} {:>9.0}% {:>8.2} {:>10.0}%",
+                world_idx + 1,
+                t.forts as f64 / n,
+                t.levels as f64 / n,
+                t.streak as f64 / n,
+                100.0 * t.streak_ge2 as f64 / n,
+                t.goal as f64 / n,
+                100.0 * t.goal_ge2 as f64 / n,
+            );
         }
     }
 }
