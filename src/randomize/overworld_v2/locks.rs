@@ -103,7 +103,7 @@ impl Phase for Locks {
 /// iff the world stays completable with that lock sealed forever. Computed
 /// after all placements — sealing interacts with the OTHER locks, so the
 /// flag is only meaningful on the finished set.
-fn recompute_safety_flags(state: &mut WorldState) {
+pub(crate) fn recompute_safety_flags(state: &mut WorldState) {
     for li in 0..state.locks.len() {
         state.locks[li].secret_exit_safe = state.completable_sealed(Some(li));
     }
@@ -171,6 +171,70 @@ pub(crate) fn ensure_secret_exit_safe(
 
     actions.push("UNSATISFIED: no relocation in any world yields a safe lock".into());
     PhaseReport { phase, actions }
+}
+
+/// Re-place every lock from scratch, preferring candidates that actually
+/// gate something. The shaping loop's wide lock move: clears the lock set
+/// and rebuilds it one fort at a time (shuffled order) — for each fort, a
+/// first pass over shuffled candidates admits only tiles whose closure walls
+/// off at least one node (measured against the all-open world, the same
+/// definition as [`WorldState::zero_gate_locks`]), a second pass admits any
+/// completable tile. Every placement keeps the completability fixpoint true.
+///
+/// Returns false if some fort ends up unlockable — the caller owns the
+/// snapshot and must restore it (unlike the dumb Locks phase, shaping never
+/// removes forts; a failed proposal is just rolled back).
+pub(crate) fn place_locks_gating(state: &mut WorldState, rng: &mut dyn RngCore) -> bool {
+    state.locks.clear();
+
+    let mut open = state.grid.clone();
+    stamp_slots(&mut open, &state.slots);
+    let open_len = walk_reachable(&open, &state.pipe_pairs, state.start, state.world_idx).len();
+
+    let mut fort_ids: Vec<usize> = state
+        .slots
+        .iter()
+        .filter(|s| s.kind == SlotKind::Fortress)
+        .map(|s| s.section)
+        .collect();
+    fort_ids.shuffle(rng);
+
+    for fort_id in fort_ids {
+        let mut candidates = lock_candidates(state);
+        candidates.shuffle(rng);
+
+        let mut placed = false;
+        'passes: for gating_only in [true, false] {
+            for &(pos, tile) in &candidates {
+                if gating_only {
+                    let mut g = open.clone();
+                    g.set(pos.0, pos.1, gap_tile_for(tile));
+                    let closed_len =
+                        walk_reachable(&g, &state.pipe_pairs, state.start, state.world_idx).len();
+                    if closed_len == open_len {
+                        continue;
+                    }
+                }
+                state.locks.push(LockAssignment {
+                    pos,
+                    gap_tile: gap_tile_for(tile),
+                    replace_tile: tile,
+                    fort_section: fort_id,
+                    secret_exit_safe: false,
+                    blocks_target: false,
+                });
+                if state.completable() {
+                    placed = true;
+                    break 'passes;
+                }
+                state.locks.pop();
+            }
+        }
+        if !placed {
+            return false;
+        }
+    }
+    true
 }
 
 /// Tiles a lock may claim: lockable path-tile types (the kinds the FX engine

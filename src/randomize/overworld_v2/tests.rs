@@ -593,23 +593,7 @@ fn test_v2_locks_census() {
                 .filter(|a| a.contains("REMOVED"))
                 .count();
 
-            // Zero-gate locks: with all OTHER locks open, closing this one
-            // walls off no node at all — pure decoration.
-            let mut open_grid = state.grid.clone();
-            super::super::overworld_build::stamp_slots(&mut open_grid, &state.slots);
-            for lock in &state.locks {
-                open_grid.set(lock.pos.0, lock.pos.1, lock.replace_tile);
-            }
-            let open_reach =
-                walk_reachable(&open_grid, &state.pipe_pairs, state.start, state.world_idx);
-            for lock in &state.locks {
-                let mut g = open_grid.clone();
-                g.set(lock.pos.0, lock.pos.1, lock.gap_tile);
-                let reach = walk_reachable(&g, &state.pipe_pairs, state.start, state.world_idx);
-                if reach.len() == open_reach.len() {
-                    zero_gate[world_idx] += 1;
-                }
-            }
+            zero_gate[world_idx] += state.zero_gate_locks().len();
 
             let measure = measure_world(&state);
             if measure.goal_open {
@@ -652,6 +636,174 @@ fn test_v2_locks_census() {
         &mut rng,
     );
     println!("example (W4, seed 0):");
+    for report in &state.log {
+        for action in &report.actions {
+            println!("    [{}] {action}", report.phase);
+        }
+    }
+}
+
+/// Shaping A/B census: the dumb skeleton (arm `dumb`: connectivity → levels
+/// → spare pipes → forts → locks) against the shaping loop (arm `shaped`:
+/// connectivity → levels → forts → locks → shaping). SparePipes is
+/// deliberately OMITTED from the shaped arm: shaping has first claim on the
+/// pipe budget (pipes are a routing tool, not filler), and what it doesn't
+/// spend shows up as a lower pipes column, not as random toss on top of
+/// shaped structure.
+///
+/// Shaped-arm move columns: touched% = seeds where at least one move was
+/// accepted (satisficing means most worlds should be untouched), lr/gs =
+/// lock_replace / gated_shortcut accepts:rejects summed over all seeds. The
+/// time line is the performance watchdog: mean wall-clock per seed (all 8
+/// worlds) per arm. Runs the realistic flag mix (see [`census_ctx`]).
+/// `V2_SEEDS` seeds (default 100).
+#[test]
+fn test_v2_shaping_census() {
+    let Some(raw) = load_rom() else {
+        eprintln!("ROM not found, skipping");
+        return;
+    };
+    let seeds: u64 = std::env::var("V2_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100);
+
+    #[derive(Default, Clone, Copy)]
+    struct ArmTally {
+        c1: u64,
+        routes: usize,
+        linear: usize,
+        zero_gate: usize,
+        locks: usize,
+        goal_open: usize,
+        pipes: usize,
+    }
+
+    fn tally(t: &mut ArmTally, state: &WorldState) {
+        let m = measure_world(state);
+        t.c1 += u64::from(m.c1);
+        t.routes += m.routes_in_band;
+        if m.routes_in_band < 2 {
+            t.linear += 1;
+        }
+        if m.goal_open {
+            t.goal_open += 1;
+        }
+        t.zero_gate += state.zero_gate_locks().len();
+        t.locks += state.locks.len();
+        t.pipes += state.pipe_pairs.len();
+    }
+
+    let mut dumb = [ArmTally::default(); 8];
+    let mut shaped = [ArmTally::default(); 8];
+    let mut touched = [0usize; 8];
+    let mut lr_acc = [0usize; 8];
+    let mut lr_rej = [0usize; 8];
+    let mut gs_acc = [0usize; 8];
+    let mut gs_rej = [0usize; 8];
+    let mut time_dumb = std::time::Duration::ZERO;
+    let mut time_shaped = std::time::Duration::ZERO;
+
+    for seed in 0..seeds {
+        let ctx = census_ctx(&raw, seed);
+        for world_idx in 0..8 {
+            let mut state = ctx.world(world_idx);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let t0 = std::time::Instant::now();
+            run_schedule(
+                &mut state,
+                &[&Connectivity, &Levels, &SparePipes, &Forts, &Locks],
+                &mut rng,
+            );
+            time_dumb += t0.elapsed();
+            tally(&mut dumb[world_idx], &state);
+
+            let mut state = ctx.world(world_idx);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let t0 = std::time::Instant::now();
+            run_schedule(
+                &mut state,
+                &[&Connectivity, &Levels, &Forts, &Locks, &Shaping],
+                &mut rng,
+            );
+            time_shaped += t0.elapsed();
+            assert!(
+                state.completable(),
+                "seed {seed} W{}: shaped world must stay completable",
+                world_idx + 1
+            );
+            assert_eq!(
+                state.locks.len(),
+                state.fort_count(),
+                "seed {seed} W{}: every fort must keep a lock through shaping",
+                world_idx + 1
+            );
+            tally(&mut shaped[world_idx], &state);
+
+            let report = state
+                .log
+                .iter()
+                .find(|r| r.phase == "shaping")
+                .expect("shaping always reports");
+            let count =
+                |needle: &str| report.actions.iter().filter(|a| a.contains(needle)).count();
+            let la = count("lock_replace ACCEPT");
+            let ga = count("gated_shortcut ACCEPT");
+            lr_acc[world_idx] += la;
+            lr_rej[world_idx] += count("lock_replace REJECT");
+            gs_acc[world_idx] += ga;
+            gs_rej[world_idx] += count("gated_shortcut REJECT");
+            if la + ga > 0 {
+                touched[world_idx] += 1;
+            }
+        }
+    }
+
+    println!("v2 shaping A/B census ({seeds} seeds, dumb skeleton vs diagnosis-driven shaping, flag-mix arms)");
+    println!("world  arm     C1(mean)  routes  linear%  zero-gate%  goal-open%  pipes  touched%  lr(acc:rej)  gs(acc:rej)");
+    let n = seeds as f64;
+    for world_idx in 0..8 {
+        for (arm, t) in [("dumb", &dumb[world_idx]), ("shaped", &shaped[world_idx])] {
+            let base = format!(
+                "  W{}   {arm:<7} {:>7.1} {:>7.2} {:>7.0}% {:>9.0}% {:>9.0}% {:>6.2}",
+                world_idx + 1,
+                t.c1 as f64 / n,
+                t.routes as f64 / n,
+                100.0 * t.linear as f64 / n,
+                100.0 * t.zero_gate as f64 / t.locks.max(1) as f64,
+                100.0 * t.goal_open as f64 / n,
+                t.pipes as f64 / n,
+            );
+            if arm == "shaped" {
+                println!(
+                    "{base} {:>7.0}% {:>8}:{:<4} {:>6}:{:<4}",
+                    100.0 * touched[world_idx] as f64 / n,
+                    lr_acc[world_idx],
+                    lr_rej[world_idx],
+                    gs_acc[world_idx],
+                    gs_rej[world_idx],
+                );
+            } else {
+                println!("{base}        -        -         -");
+            }
+        }
+    }
+    println!(
+        "time: dumb {:.1} ms/seed, shaped {:.1} ms/seed (8 worlds each)",
+        time_dumb.as_secs_f64() * 1000.0 / n,
+        time_shaped.as_secs_f64() * 1000.0 / n,
+    );
+
+    // One narrated example: W8, seed 0 — the most linear world under the
+    // dumb pipeline, so shaping should have work to do.
+    let mut state = census_ctx(&raw, 0).world(7);
+    let mut rng = ChaCha8Rng::seed_from_u64(0);
+    run_schedule(
+        &mut state,
+        &[&Connectivity, &Levels, &Forts, &Locks, &Shaping],
+        &mut rng,
+    );
+    println!("example (W8, seed 0, shaped arm):");
     for report in &state.log {
         for action in &report.actions {
             println!("    [{}] {action}", report.phase);
@@ -837,9 +989,10 @@ fn diversity_row(shapes: &[SeedShape]) -> (f64, f64, f64, f64, f64) {
 /// - salt-r: correlation between layout distance and route distance over
 ///   seed pairs — the "levels are the rng salt" hypothesis test
 ///
-/// Arms: v2 skeleton (uniform placement) vs the shipping builder (scored
-/// placement) — the baseline any uniqueness knob must beat. `V2_SEEDS`
-/// seeds (default 20).
+/// Arms: v2 skeleton (uniform placement), v2 + shaping (the improvement
+/// loop's diversity spend), and the shipping builder (scored placement) —
+/// the collapse any judgment-bearing pass must stay far away from.
+/// `V2_SEEDS` seeds (default 20).
 ///
 /// Deliberately runs the CONTROLLED configuration (always-on QOL only — no
 /// SAS, no map arms, no shuffle rolls), unlike the report-card censuses:
@@ -892,7 +1045,27 @@ fn test_v2_diversity_census() {
             })
             .collect();
 
-        for (arm, shapes) in [("v2", &v2_shapes), ("shipping", shipping_shapes)] {
+        // The shaped arm measures what the improvement loop's accepted moves
+        // cost in across-seed spread — the diversity spend of shaping.
+        let shaped_shapes: Vec<SeedShape> = (0..seeds)
+            .map(|seed| {
+                let mut state =
+                    from_pickup(&rom, &catalog, &pickup, world_idx, &BuildFlags::default());
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                run_schedule(
+                    &mut state,
+                    &[&Connectivity, &Levels, &Forts, &Locks, &Shaping],
+                    &mut rng,
+                );
+                SeedShape::of(&state)
+            })
+            .collect();
+
+        for (arm, shapes) in [
+            ("v2", &v2_shapes),
+            ("v2+shape", &shaped_shapes),
+            ("shipping", shipping_shapes),
+        ] {
             let (layout, route, nn_mean, nn_sd, salt_r) = diversity_row(shapes);
             println!(
                 "  W{}   {arm:<9} {layout:>9.2} {route:>10.2}  {nn_mean:>5.2} ±{nn_sd:4.2} {salt_r:>7.2}",

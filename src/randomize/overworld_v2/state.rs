@@ -98,6 +98,28 @@ impl WorldState {
         self.pipe_pairs.push((a, b));
     }
 
+    /// Locks that gate nothing: with every other lock open, closing this one
+    /// walls off not a single node — pure decoration. Returns indices into
+    /// `locks`. (Locks are never stamped on the grid, so the grid plus
+    /// stamped slots IS the all-open world.)
+    pub(crate) fn zero_gate_locks(&self) -> Vec<usize> {
+        let mut open = self.grid.clone();
+        stamp_slots(&mut open, &self.slots);
+        let open_len =
+            walk_reachable(&open, &self.pipe_pairs, self.start, self.world_idx).len();
+        let mut out = Vec::new();
+        for (li, lock) in self.locks.iter().enumerate() {
+            let mut g = open.clone();
+            g.set(lock.pos.0, lock.pos.1, lock.gap_tile);
+            let closed_len =
+                walk_reachable(&g, &self.pipe_pairs, self.start, self.world_idx).len();
+            if closed_len == open_len {
+                out.push(li);
+            }
+        }
+        out
+    }
+
     /// Order-free completability — the locks invariant. Close every lock,
     /// beat every fort the walker can reach, open those forts' locks,
     /// repeat to a fixpoint. Valid iff the goal is reached AND every fort
