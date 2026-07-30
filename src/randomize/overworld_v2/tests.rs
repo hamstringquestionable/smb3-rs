@@ -102,7 +102,7 @@ fn test_v2_vanilla_worlds() {
                 route.cost,
                 route.levels.len(),
                 route.forts,
-                route.rocks,
+                route.rocks.len(),
             );
         }
         if measure.rc.routes.len() > 5 {
@@ -195,4 +195,28 @@ fn test_v2_current_builder_worlds() {
         c1_sum as f64 / world_count as f64,
         goal_open_worlds,
     );
+}
+
+/// Hand-check probe: one vanilla world at a wide measuring band, kept and
+/// dominated routes both printed. `V2_WORLD` picks the world (1-8, default
+/// 2), `V2_SLACK` the band (default 12). Born from the W2 rock question —
+/// "where did the non-rock route go?" — and kept for the next such question.
+#[test]
+fn test_v2_probe_vanilla_world() {
+    let Some(rom) = load_rom() else {
+        eprintln!("ROM not found, skipping");
+        return;
+    };
+    let world: usize = std::env::var("V2_WORLD").ok().and_then(|s| s.parse().ok()).unwrap_or(2);
+    let slack: u32 = std::env::var("V2_SLACK").ok().and_then(|s| s.parse().ok()).unwrap_or(12);
+    let catalog = NodeCatalog::build(&rom, false);
+    let state = vanilla_world(&rom, &catalog, world - 1);
+    let rc = analyze_route_choice(&state.to_built(), slack);
+    println!("vanilla W{world} wide band (slack {slack}): best={}", rc.best_cost);
+    for r in &rc.routes {
+        println!("  kept route: cost={:2} levels={} forts={} rocks={}", r.cost, r.levels.len(), r.forts, r.rocks.len());
+    }
+    for d in &rc.detours {
+        println!("  dominated:  cost={:2} levels={} forts={} rocks={}", d.cost, d.levels.len(), d.forts, d.rocks.len());
+    }
 }

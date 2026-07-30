@@ -4340,8 +4340,8 @@ fn test_rock_route_census() {
                 }
             }
             let rc = analyze_route_choice(built, route_choice::DEFAULT_SLACK);
-            let c1_rock = rc.routes.first().is_some_and(|r| r.rocks > 0);
-            let alt_rock = rc.routes.iter().skip(1).any(|r| r.rocks > 0);
+            let c1_rock = rc.routes.first().is_some_and(|r| !r.rocks.is_empty());
+            let alt_rock = rc.routes.iter().skip(1).any(|r| !r.rocks.is_empty());
             let row = &mut rows[built.world_idx];
             row[0] += 1;
             row[1] += has_rock as u32;

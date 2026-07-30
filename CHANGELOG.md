@@ -11,6 +11,13 @@ deploys.
 
 ### Changed
 
+- Route measurement now treats breaking a hammer rock as part of a route's
+  identity: a rock shortcut and the walk around it count as two distinct
+  choices (a resource trade) instead of the walk being discarded as a
+  detour. Overworld shaping decisions on maps with rocks (e.g. the
+  `More hammer rocks` option) account for rock-trade routes accordingly;
+  overall route-choice census is unchanged (20.1% vs 20.0% linear, 1000
+  seeds).
 - The World 5 spiral-castle pipe no longer always draws the castle on the far
   endpoint — the castle and the pipe mouth are now coin-flipped between the
   pair's two cells, so the castle can appear on either side.

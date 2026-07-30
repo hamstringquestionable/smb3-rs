@@ -12,8 +12,10 @@
 //! drags in its fort's cost.
 //!
 //! A route's cost is that weighted set-cost. Two routes are the SAME route if
-//! they play the same set of levels. "Roughly equal" = within `slack` points
-//! (default 3 = one level).
+//! they play the same set of levels AND break the same rocks — a rock break
+//! is a resource spend (a hammer), so a rock shortcut and the walk around it
+//! are distinct choices, not duplicates. "Roughly equal" = within `slack`
+//! points (default 3 = one level).
 //!
 //! Enumeration is COMPLETE and needs no bans or backward pass: the cleared-mask
 //! already records exactly which levels a route played, so we run ONE Dijkstra,
@@ -63,16 +65,18 @@ const BREAKABLE_ROCKS: [(u8, u8); 2] = [(0x51, 0x45), (0x52, 0x46)];
 pub(crate) struct ChoiceRoute {
     /// Weighted set-cost, in points.
     pub cost: u32,
-    /// Distinct levels played — the route's identity (dedup key).
+    /// Distinct levels played — with `rocks`, the route's identity (dedup key).
     pub levels: BTreeSet<Pos>,
-    /// Distinct forts beaten / rocks broken (breakdown for display).
+    /// Distinct rocks broken — part of the identity: breaking a rock spends a
+    /// hammer, so a rock route never collapses into (or dominates) the
+    /// rock-free way around.
+    pub rocks: BTreeSet<Pos>,
+    /// Distinct forts beaten (breakdown for display).
     // Reason: dead_code — read only by the cfg(test) renderers and census
     // tests; kept in the production struct so the breakdown is computed once,
     // next to the mask that defines it.
     #[allow(dead_code)]
     pub forts: u32,
-    #[allow(dead_code)]
-    pub rocks: u32,
     /// Node path start..goal, for rendering.
     pub path: Vec<Pos>,
 }
@@ -538,13 +542,14 @@ impl WalkGraph {
             }
         }
         let mut rock_bit: FastMap<Pos, u32> = FastMap::default();
+        let mut rock_pos: Vec<(u32, Pos)> = Vec::new();
         for &rp in rock_tiles {
             rock_bit.insert(rp, next);
+            rock_pos.push((next, rp));
             next += 1;
         }
         debug_assert!(next <= 64, "too many clearables for a u64 mask ({next})");
         let fort_bits: u64 = (0..built.section_count).map(|s| 1u64 << s).sum();
-        let rock_bits: u64 = rock_bit.values().map(|&b| 1u64 << b).sum();
 
         // Node-entry cost: charge a level/fort the FIRST time (bit flip), free
         // after. Pipes/other transit nodes are free at the node — a pipe RIDE is
@@ -702,8 +707,10 @@ impl WalkGraph {
         };
 
         // Read each in-band goal state back into a route; keep the cheapest per
-        // distinct level-set (remembering the state so we can rebuild its path).
-        let mut by_levels: HashMap<BTreeSet<Pos>, (u32, PackedState)> = HashMap::new();
+        // distinct (level-set, rock-set) — the route identity (remembering the
+        // state so we can rebuild its path).
+        type Plays = (BTreeSet<Pos>, BTreeSet<Pos>);
+        let mut by_plays: HashMap<Plays, (u32, PackedState)> = HashMap::new();
         for (state, cost) in goals {
             let mask = unpack_mask(state);
             let levels: BTreeSet<Pos> = level_pos
@@ -711,8 +718,13 @@ impl WalkGraph {
                 .filter(|(bit, _)| mask & (1u64 << bit) != 0)
                 .map(|&(_, pos)| pos)
                 .collect();
-            by_levels
-                .entry(levels)
+            let rocks: BTreeSet<Pos> = rock_pos
+                .iter()
+                .filter(|(bit, _)| mask & (1u64 << bit) != 0)
+                .map(|&(_, pos)| pos)
+                .collect();
+            by_plays
+                .entry((levels, rocks))
                 .and_modify(|e| {
                     if cost < e.0 {
                         *e = (cost, state);
@@ -737,13 +749,13 @@ impl WalkGraph {
             nodes
         };
 
-        let mut routes: Vec<ChoiceRoute> = by_levels
+        let mut routes: Vec<ChoiceRoute> = by_plays
             .into_iter()
-            .map(|(levels, (cost, state))| ChoiceRoute {
+            .map(|((levels, rocks), (cost, state))| ChoiceRoute {
                 cost,
                 levels,
+                rocks,
                 forts: (unpack_mask(state) & fort_bits).count_ones(),
-                rocks: (unpack_mask(state) & rock_bits).count_ones(),
                 path: reconstruct(state),
             })
             .collect();
@@ -751,15 +763,22 @@ impl WalkGraph {
         // Reconstruction done — return the scratch for the next call.
         SCRATCH.with(|s| *s.borrow_mut() = (dist, heap));
 
-        // Domination filter: drop a route that plays a strict superset of another
-        // route's levels at no lower cost — a within-slack detour, not a real
-        // choice. (Level-sets are already distinct, so subset ⇒ strict.)
+        // Domination filter: drop a route that plays a strict superset of
+        // another route's plays (levels AND rocks broken) at no lower cost —
+        // a within-slack detour, not a real choice. Subset is required on
+        // BOTH sets: a rock break spends a hammer, so a rock shortcut never
+        // dominates the rock-free walk around it (they are a resource-trade
+        // choice, e.g. vanilla W2's rock vs its three-level detour).
+        // (Identities are already distinct, so subset on both ⇒ strict.)
         let dominated: Vec<bool> = routes
             .iter()
             .map(|ri| {
-                routes
-                    .iter()
-                    .any(|rj| rj.cost <= ri.cost && rj.levels != ri.levels && rj.levels.is_subset(&ri.levels))
+                routes.iter().any(|rj| {
+                    rj.cost <= ri.cost
+                        && (rj.levels != ri.levels || rj.rocks != ri.rocks)
+                        && rj.levels.is_subset(&ri.levels)
+                        && rj.rocks.is_subset(&ri.rocks)
+                })
             })
             .collect();
         let (mut kept, mut detours): (Vec<ChoiceRoute>, Vec<ChoiceRoute>) = {
@@ -779,6 +798,7 @@ impl WalkGraph {
             a.cost
                 .cmp(&b.cost)
                 .then_with(|| a.levels.iter().cmp(b.levels.iter()))
+                .then_with(|| a.rocks.iter().cmp(b.rocks.iter()))
         };
         kept.sort_by(by_cost_then_levels);
         detours.sort_by(by_cost_then_levels);
@@ -912,7 +932,7 @@ pub(crate) fn render_route_choice(built: &BuiltWorld, slack: u32) -> String {
             route.cost,
             route.levels.len(),
             route.forts,
-            route.rocks,
+            route.rocks.len(),
         );
         for r in r0..=r1 {
             out.push_str("  ");
