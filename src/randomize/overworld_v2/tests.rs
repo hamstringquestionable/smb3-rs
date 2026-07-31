@@ -668,9 +668,13 @@ fn test_v2_shaping_census() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
 
-    #[derive(Default, Clone, Copy)]
+    #[derive(Clone, Copy)]
     struct ArmTally {
         c1: u64,
+        c1_min: u32,
+        // Seeds whose C1 lands under the old v1 floor (12) — the
+        // nearly-free-world tail the mean hides.
+        cheap: usize,
         routes: usize,
         linear: usize,
         zero_gate: usize,
@@ -679,9 +683,29 @@ fn test_v2_shaping_census() {
         pipes: usize,
     }
 
+    impl Default for ArmTally {
+        fn default() -> Self {
+            ArmTally {
+                c1: 0,
+                c1_min: u32::MAX,
+                cheap: 0,
+                routes: 0,
+                linear: 0,
+                zero_gate: 0,
+                locks: 0,
+                goal_open: 0,
+                pipes: 0,
+            }
+        }
+    }
+
     fn tally(t: &mut ArmTally, state: &WorldState) {
         let m = measure_world(state);
         t.c1 += u64::from(m.c1);
+        t.c1_min = t.c1_min.min(m.c1);
+        if m.c1 < 12 {
+            t.cheap += 1;
+        }
         t.routes += m.routes_in_band;
         if m.routes_in_band < 2 {
             t.linear += 1;
@@ -770,14 +794,16 @@ fn test_v2_shaping_census() {
     }
 
     println!("v2 shaping A/B census ({seeds} seeds, dumb skeleton vs diagnosis-driven shaping, flag-mix arms)");
-    println!("world  arm     C1(mean)  routes  linear%  zero-gate%  goal-open%  pipes  touched%  lr(acc:rej)  gs(acc:rej)  fl(acc:rej)  lm(acc:rej)");
+    println!("world  arm     C1(mean)  C1min  C1<12%  routes  linear%  zero-gate%  goal-open%  pipes  touched%  lr(acc:rej)  gs(acc:rej)  fl(acc:rej)  lm(acc:rej)");
     let n = seeds as f64;
     for world_idx in 0..8 {
         for (arm, t) in [("dumb", &dumb[world_idx]), ("shaped", &shaped[world_idx])] {
             let base = format!(
-                "  W{}   {arm:<7} {:>7.1} {:>7.2} {:>7.0}% {:>9.0}% {:>9.0}% {:>6.2}",
+                "  W{}   {arm:<7} {:>7.1} {:>6} {:>6.0}% {:>7.2} {:>7.0}% {:>9.0}% {:>9.0}% {:>6.2}",
                 world_idx + 1,
                 t.c1 as f64 / n,
+                t.c1_min,
+                100.0 * t.cheap as f64 / n,
                 t.routes as f64 / n,
                 100.0 * t.linear as f64 / n,
                 100.0 * t.zero_gate as f64 / t.locks.max(1) as f64,
