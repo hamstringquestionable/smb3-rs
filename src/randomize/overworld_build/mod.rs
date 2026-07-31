@@ -86,7 +86,7 @@ pub(crate) use capacity::{
     fixed_positions_for_world, prepare_capacities, redistribute_fortresses,
 };
 pub(crate) use capacity::{LEVEL_SPREAD_EXPONENT, VANILLA_LEVEL_COUNT};
-pub(crate) use route_choice::{C1_FLOOR, DEFAULT_SLACK, RouteChoice, analyze_route_choice};
+pub(crate) use route_choice::{C1_FLOOR, DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice};
 pub(crate) use types::{
     BuildFlags, BuildResult, BuiltWorld, CapacityPrep, LockAssignment, OverworldData, stamp_slots,
 };
@@ -111,7 +111,7 @@ pub(crate) use progression::{
     hammer_skip, island_count, level_adjacency_pairs, start_goal_express_pipe,
 };
 #[cfg(test)]
-pub(crate) use route_choice::{SHAPING_SLACK, dump_route_choice};
+pub(crate) use route_choice::dump_route_choice;
 #[cfg(test)]
 pub(crate) use sources::{from_built, from_vanilla};
 

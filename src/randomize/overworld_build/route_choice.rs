@@ -54,7 +54,6 @@ pub(crate) const C1_FLOOR: u32 = 14;
 /// A/B at 9 matched it on route/streak/C1 while shrinking the wide-measure
 /// state space — deep near-misses simply never got rescued. Final acceptance
 /// still uses `DEFAULT_SLACK`.
-#[cfg(test)]
 pub(crate) const SHAPING_SLACK: u32 = 9;
 
 /// Breakable overworld rocks and the path tile they open into

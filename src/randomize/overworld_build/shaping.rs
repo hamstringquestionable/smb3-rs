@@ -232,11 +232,19 @@ fn try_lock_replace(
 }
 
 /// The topology rung: spend one pipe pair AND re-place all locks as a single
-/// bundle, judged together on the finished world. Accept iff routes rise —
-/// the shortcut must become a gated alternative, not an ungated express —
-/// AND the floor holds: a pair can manufacture two brand-new cheap routes,
-/// so "routes rose" alone passed while C1 crashed sub-floor (the measured
-/// crash mode, 59% of accepted W7 shortcuts before the guard).
+/// bundle, judged together on the finished world. Accept iff the pipe
+/// CREATED a distinct route — measured with the WIDE stick
+/// ([`SHAPING_SLACK`]): a new route anywhere within C1+9 counts, in band or
+/// not — AND the floor holds ("express" pairs stay rejected: a pair can
+/// manufacture two brand-new cheap routes, so "routes rose" alone passed
+/// while C1 crashed sub-floor — the measured crash mode, 59% of accepted W7
+/// shortcuts before the guard).
+///
+/// Parity is the LOOP's job, not the proposal's (2026-07-31 design): the
+/// narrow band demanded a random pair land within 3 points of C1 in one
+/// draw (~4% hit rate); a new off-price route is kept as structure, and the
+/// existing rungs walk it into the band — each above-floor level-move trim
+/// (+3 to C1) widens the absolute band until the route falls in.
 ///
 /// Proposal seeding was tried and REVERTED (census-measured, 100 seeds):
 /// a pipe-only measurement pre-screen ("skip pairs whose pipe changes
@@ -257,6 +265,8 @@ fn try_gated_shortcut(
     let saved_locks = state.locks.clone();
     let saved_pairs = state.pipe_pairs.clone();
 
+    let wide_before = analyze_route_choice(&state.to_built(), SHAPING_SLACK).routes.len();
+
     for _ in 0..SHORTCUT_TRIES {
         // Anchor-adjacent blanks are barred for pipe endpoints — same rule
         // as connectivity and spare pipes (an ungateable express).
@@ -274,11 +284,24 @@ fn try_gated_shortcut(
         // Shortcut moves only run above the floor — no goal gate wanted.
         if place_locks_gating(state, rng, false) {
             let after = measure_world(state);
-            if after.routes_in_band > before.routes_in_band && after.c1 >= C1_FLOOR {
-                return Ok(format!(
-                    "gated_shortcut ACCEPT: pipe {a:?} <-> {b:?}, routes {} -> {}, C1 {} -> {}",
-                    before.routes_in_band, after.routes_in_band, before.c1, after.c1,
-                ));
+            if after.c1 >= C1_FLOOR {
+                // In-band already: parity for free.
+                if after.routes_in_band > before.routes_in_band {
+                    return Ok(format!(
+                        "gated_shortcut ACCEPT: pipe {a:?} <-> {b:?}, routes {} -> {}, C1 {} -> {}",
+                        before.routes_in_band, after.routes_in_band, before.c1, after.c1,
+                    ));
+                }
+                // New route within the wide band: keep the structure; the
+                // loop's trims walk it to parity.
+                let wide_after =
+                    analyze_route_choice(&state.to_built(), SHAPING_SLACK).routes.len();
+                if wide_after > wide_before {
+                    return Ok(format!(
+                        "gated_shortcut ACCEPT (wide): pipe {a:?} <-> {b:?}, wide routes {wide_before} -> {wide_after}, C1 {} -> {}",
+                        before.c1, after.c1,
+                    ));
+                }
             }
         }
         state.grid = saved_grid.clone();
@@ -287,8 +310,7 @@ fn try_gated_shortcut(
         state.pipe_pairs = saved_pairs.clone();
     }
     Err(format!(
-        "gated_shortcut REJECT: no pair in {SHORTCUT_TRIES} tries beats routes {}",
-        before.routes_in_band,
+        "gated_shortcut REJECT: no pair in {SHORTCUT_TRIES} tries creates a route (band or wide {wide_before})",
     ))
 }
 
