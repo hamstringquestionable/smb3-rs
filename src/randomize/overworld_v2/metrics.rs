@@ -22,9 +22,11 @@ pub(crate) struct WorldMeasure {
     /// route does not — the "how different is the choice" number. 0.0 when
     /// linear.
     pub mean_exclusive_levels: f64,
-    /// Goal reachable from start with EVERY lock closed — the world's
-    /// door-and-key structure is absent. A surprise to keep rare, not a bug
-    /// per se.
+    /// Goal reachable from start with EVERY lock closed — the world has no
+    /// door-and-key moment on its trunk. NOT a problem by decree (2026-07-30):
+    /// 5 of 8 vanilla worlds are goal-open, locks are milestones there, and
+    /// an open goal behind a C1 ≥ floor route is fine. Only CHEAPNESS is a
+    /// defect; this stays a census column, never a target.
     pub goal_open: bool,
     /// The full scorer result, for detailed printing/inspection.
     pub rc: RouteChoice,
