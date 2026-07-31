@@ -1,14 +1,14 @@
 //! World sources: places a `WorldState` can come from. All three are LOADERS
-//! — they package existing data into v2's state and never redo the work of
+//! — they package existing data into the builder's state and never redo the work of
 //! the shared phases (catalog, pickup) they read from.
 //!
-//! - [`from_pickup`] is the v2 build input: one world as the shared pickup
+//! - [`from_pickup`] is the build input: one world as the shared pickup
 //!   phase hands it over, ready for placement phases to run on.
 //! - [`from_vanilla`] reads a world straight from the unmodified ROM. Vanilla
 //!   is *known ground truth* — if a metric reads vanilla W1 and reports
 //!   something we know is wrong, the metric is broken, not the world.
 //! - [`from_built`] wraps the shipping builder's output — the baseline every
-//!   v2 comparison is made against.
+//!   old-vs-new comparisons were made against.
 
 use super::*;
 
@@ -43,9 +43,10 @@ pub(crate) fn allot_budgets(
     (level_counts, fort_counts)
 }
 
-/// Wrap a shipping-builder world as a v2 `WorldState`. Start/target are
+/// Wrap a finished `BuiltWorld` back into a `WorldState`. Start/target are
 /// re-derived from the grid the same way the builder derived them. `fixed`
 /// is empty: a finished world has nothing left to place.
+#[cfg(test)]
 pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
     WorldState {
         world_idx: built.world_idx,
@@ -67,11 +68,13 @@ pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
             .iter()
             .filter(|s| s.kind == SlotKind::Fortress)
             .count(),
+        ptr_slots: 0,
+        hb_sprite_pins: Vec::new(),
         log: Vec::new(),
     }
 }
 
-/// The v2 build entry point's input: one world as the shared pickup phase
+/// The build entry point's input: one world as the shared pickup phase
 /// hands it over — cleared grid (blank path tiles), with the start/airship/
 /// Bowser tiles stamped back at their catalog positions (pickup blanks them,
 /// but they are terrain, not placements).
@@ -116,6 +119,11 @@ pub(crate) fn from_pickup(
         .iter()
         .filter(|e| e.world_idx == world_idx && matches!(e.kind, NodeKind::Fortress { .. }))
         .count();
+    let hb_sprite_pins = if flags.shuffle_hammer_bros {
+        Vec::new()
+    } else {
+        rom_data::read_hb_sprite_positions(rom, world_idx)
+    };
     WorldState {
         world_idx,
         grid,
@@ -128,6 +136,8 @@ pub(crate) fn from_pickup(
         pipe_budget: VANILLA_PIPE_PAIRS[world_idx],
         level_budget,
         fort_budget,
+        ptr_slots: pickup.worlds[world_idx].pool_indices.len(),
+        hb_sprite_pins,
         log: Vec::new(),
     }
 }
@@ -138,6 +148,7 @@ pub(crate) fn from_pickup(
 /// The grid is normalized to the builder convention the route scorer
 /// expects: lock tiles are RESTORED to their open path tile on the grid, and
 /// the closed state lives only in the `locks` overlay.
+#[cfg(test)]
 pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -> WorldState {
     let mut grid = rom_data::read_tile_grid(rom, world_idx);
     let slots = vanilla_slots(rom, catalog, world_idx);
@@ -165,6 +176,8 @@ pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -
         pipe_budget: VANILLA_PIPE_PAIRS[world_idx],
         level_budget,
         fort_budget,
+        ptr_slots: 0,
+        hb_sprite_pins: Vec::new(),
         log: Vec::new(),
     }
 }
@@ -175,6 +188,7 @@ pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -
 /// MapObject entries (e.g. W7's path-blocking piranha plants) have no slot
 /// equivalent in the builder model and are skipped — a known fidelity gap the
 /// vanilla measurements must be read with.
+#[cfg(test)]
 fn vanilla_slots(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -> Vec<SlotAssignment> {
     let mut slots = Vec::new();
     for entry in catalog.entries.iter().filter(|e| e.world_idx == world_idx) {
@@ -207,6 +221,7 @@ fn vanilla_slots(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -> Vec<Slot
 
 /// Vanilla teleport pipe pairs: catalog `Pipe` entries share a `dest_idx` per
 /// pair; the A-side is the first element of the edge.
+#[cfg(test)]
 fn vanilla_pipe_pairs(catalog: &NodeCatalog, world_idx: usize) -> Vec<TeleportEdge> {
     let mut by_dest: HashMap<usize, (Option<Pos>, Option<Pos>)> = HashMap::new();
     for entry in catalog.entries.iter().filter(|e| e.world_idx == world_idx) {
@@ -237,6 +252,7 @@ fn vanilla_pipe_pairs(catalog: &NodeCatalog, world_idx: usize) -> Vec<TeleportEd
 /// catalog's fortress count sidesteps the ambiguity). Position decode inverts
 /// the writer (`fortress_fx.rs`): row byte = (row+2)<<4; loc byte =
 /// (col_in_screen<<4) | screen.
+#[cfg(test)]
 fn vanilla_locks(rom: &Rom, grid: &Grid, world_idx: usize, fort_count: usize) -> Vec<LockAssignment> {
     let mut locks = Vec::new();
     for ordinal in 0..fort_count.min(4) {
@@ -252,7 +268,6 @@ fn vanilla_locks(rom: &Rom, grid: &Grid, world_idx: usize, fort_count: usize) ->
             replace_tile: rom.read_byte(rom_data::FX_MAP_TILE_REPLACE + slot),
             fort_section: ordinal,
             secret_exit_safe: false,
-            blocks_target: false,
         });
     }
     locks

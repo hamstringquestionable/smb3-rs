@@ -1,4 +1,4 @@
-//! Connectivity phase — the first v2 placement phase, from scratch.
+//! Connectivity phase — the first placement phase.
 //!
 //! Job: make the world traversable. Every placeable blank and the world goal
 //! should be walk-reachable from start; terrain the walker can't cross
@@ -7,7 +7,7 @@
 //!
 //! Deliberately KNOB-FREE: both endpoints are uniform-random picks from the
 //! legal candidates. Where an endpoint *should* land (junction vs dead end,
-//! near vs far) is a routing question, and the whole point of the v2
+//! near vs far) is a routing question, and the whole point of the
 //! rediscovery is to let measurement justify every control before it exists.
 //! The phase spends as few pipes as possible (one pair per island) and
 //! leaves the rest of the world's pipe budget for the routing phase.

@@ -11,6 +11,13 @@ deploys.
 
 ### Changed
 
+- The overworld builder was replaced with the choice-first rebuild: knob-free
+  placement (connectivity, levels, forts, locks) plus a diagnosis-driven
+  shaping loop with pipe-web redeals. Every world now guarantees a minimum
+  route cost (no more nearly-free worlds — previously ~4% of W7 seeds with
+  start↔airship swap), fewer worlds are linear overall, and pipes are spent
+  as routing demands rather than always matching the vanilla count.
+
 - Route measurement now treats breaking a hammer rock as part of a route's
   identity: a rock shortcut and the walk around it count as two distinct
   choices (a resource trade) instead of the walk being discarded as a

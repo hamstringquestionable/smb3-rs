@@ -1,11 +1,16 @@
 //! The measuring stick: one summary of a world's route structure, computed
 //! through the SAME scorer the shipping builder uses (`analyze_route_choice`
-//! via `WorldState::to_built`), so vanilla, current-builder, and v2 worlds
+//! via `WorldState::to_built`), so vanilla and built worlds
 //! are always compared like with like.
 
 use super::*;
 
 /// One world's measured route structure.
+// Reason: the fields form one measurement API; production shaping reads
+// c1/routes_in_band/dominated_detours, the census/probe test harness reads
+// the rest. Splitting the struct by reader would obscure the single-stick
+// contract.
+#[allow(dead_code)]
 pub(crate) struct WorldMeasure {
     /// Goal reachable at all (any lock state).
     pub reachable: bool,

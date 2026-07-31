@@ -11,7 +11,7 @@
 //! placement order. It exists only to pair each fort with its lock (a ROM
 //! mechanic: the fort's Boom-Boom ordinal indexes the world FX list — the
 //! write phase makes ids and ordinals agree). There is NO ordering
-//! semantics: v2's lock invariants are order-free (beat-what-you-reach
+//! semantics: the lock invariants are order-free (beat-what-you-reach
 //! fixpoint), unlike the shipping builder's "sections beaten in order"
 //! linearization, which is deliberately not carried over.
 

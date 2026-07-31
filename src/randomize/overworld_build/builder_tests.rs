@@ -1,13 +1,13 @@
-//! v2 harness tests: the schedule contract, and the two measurement demos
+//! Builder harness tests: the schedule contract, and the two measurement demos
 //! (vanilla ground truth, current-builder baseline). Table output prints with
-//! `cargo test overworld_v2 -- --nocapture`.
+//! `cargo test overworld_build -- --nocapture`.
 
 use super::*;
 
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-use super::super::overworld_build::{OverworldData, analyze_required_progression, build};
+
 use super::super::overworld_pickup::{PickupFlags, PickupResult as Pickup, pick_up};
 use super::super::qol;
 use super::super::start_airship_swap;
@@ -49,7 +49,7 @@ fn qol_variant(rom: &Rom, hammer_rocks: bool, eights_wild: bool) -> Rom {
 /// inside `pick_swaps`, so swapped and unswapped worlds are covered in every
 /// arm), and toad-house / hammer-bro shuffle each rolled 50/50 per seed.
 ///
-/// v2 has no toad-house / hammer-bro / spade placement phases yet — when a
+/// The builder has no toad-house / hammer-bro / spade placement phases yet — when a
 /// shuffle rolls on, those slots are simply picked up and stay blank space.
 /// Spade shuffle stays off until such a phase exists.
 struct CensusCtx {
@@ -129,7 +129,7 @@ impl Phase for Recorder {
 /// The schedule is a plain list: phases run in the order given and their
 /// reports land on the state's log in that same order.
 #[test]
-fn test_v2_schedule_runs_phases_in_order() {
+fn test_builder_schedule_runs_phases_in_order() {
     let mut state = WorldState {
         world_idx: 0,
         grid: Grid { tiles: vec![vec![0x00; 4]; 9], cols: 4, eights_are_wild: false },
@@ -142,6 +142,8 @@ fn test_v2_schedule_runs_phases_in_order() {
         pipe_budget: 0,
         level_budget: 0,
         fort_budget: 0,
+        ptr_slots: 0,
+        hb_sprite_pins: Vec::new(),
         log: Vec::new(),
     };
     let first = Recorder("first");
@@ -157,7 +159,7 @@ fn test_v2_schedule_runs_phases_in_order() {
 /// Measure the eight VANILLA worlds — known ground truth for calibrating the
 /// metrics themselves. Raw ROM, no QOL: this is the game as shipped.
 #[test]
-fn test_v2_vanilla_worlds() {
+fn test_builder_vanilla_worlds() {
     let Some(rom) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
@@ -203,18 +205,18 @@ fn test_v2_vanilla_worlds() {
     }
 }
 
-/// Measure SHIPPING-builder output through the v2 harness — the baseline
-/// table v2 is compared against, on the SAME flag mix as the v2 censuses
+/// Measure SHIPPING-builder output through the builder harness — the baseline
+/// table the builder is compared against, on the SAME flag mix as the censuses
 /// (see [`census_ctx`]: QOL arms, SAS 50/50 per world, toad-house /
 /// hammer-bro rolls) and the same metric columns as the shaping census.
-/// Seeds via `V2_SEEDS` (default 20).
+/// Seeds via `CENSUS_SEEDS` (default 20).
 #[test]
-fn test_v2_current_builder_worlds() {
+fn test_builder_current_builder_worlds() {
     let Some(raw) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
     };
-    let seeds: u64 = std::env::var("V2_SEEDS")
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(20);
@@ -279,7 +281,7 @@ fn test_v2_current_builder_worlds() {
         }
     }
 
-    println!("shipping builder through the v2 harness ({seeds} seeds, flag-mix arms)");
+    println!("shipping builder through the builder harness ({seeds} seeds, flag-mix arms)");
     println!("world  C1(mean)  C1min  C1<12%  routes  linear%  uniq  C2-C1  noalt%  goal-open%");
     let n = seeds as f64;
     for (world_idx, t) in tallies.iter().enumerate() {
@@ -303,17 +305,17 @@ fn test_v2_current_builder_worlds() {
 /// pickup-cleared worlds and measure what it does — pipes spent vs the
 /// vanilla budget, blanks left stranded, goal reachability, and endpoint
 /// variety across seeds. Runs the realistic flag mix (see [`census_ctx`]).
-/// `V2_SEEDS` sets the seed count (default 100).
+/// `CENSUS_SEEDS` sets the seed count (default 100).
 ///
 /// No assertions on coverage yet: this is the rediscovery baseline the
 /// controls will be justified against.
 #[test]
-fn test_v2_connectivity_census() {
+fn test_builder_connectivity_census() {
     let Some(raw) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
     };
-    let seeds: u64 = std::env::var("V2_SEEDS")
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
@@ -347,7 +349,7 @@ fn test_v2_connectivity_census() {
         }
     }
 
-    println!("v2 connectivity census ({seeds} seeds, knob-free uniform endpoints, flag-mix arms)");
+    println!("connectivity census ({seeds} seeds, knob-free uniform endpoints, flag-mix arms)");
     println!("world  budget  pipes(mean)  stranded(mean)  goal-ok%  distinct-pairsets");
     for (world_idx, &budget) in VANILLA_PIPE_PAIRS.iter().enumerate() {
         println!(
@@ -376,14 +378,14 @@ fn test_v2_connectivity_census() {
 /// budget shortfalls, clustering (adjacent-level rate, nearest-neighbor
 /// distance), screen crowding, and what the route scorer sees in a world
 /// of pure levels (no forts/locks yet). Runs the realistic flag mix (see
-/// [`census_ctx`]). `V2_SEEDS` seeds (default 100).
+/// [`census_ctx`]). `CENSUS_SEEDS` seeds (default 100).
 #[test]
-fn test_v2_levels_census() {
+fn test_builder_levels_census() {
     let Some(raw) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
     };
-    let seeds: u64 = std::env::var("V2_SEEDS")
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
@@ -452,7 +454,7 @@ fn test_v2_levels_census() {
         }
     }
 
-    println!("v2 levels census ({seeds} seeds, uniform placement after connectivity, flag-mix arms)");
+    println!("levels census ({seeds} seeds, uniform placement after connectivity, flag-mix arms)");
     println!("world  budget  placed  short%  adj%  nn-dist  maxscreen%  C1(mean)  routes  linear%");
     let n = seeds as f64;
     for world_idx in 0..8 {
@@ -488,14 +490,14 @@ fn test_v2_levels_census() {
 /// often a random fort lands on the cheapest route — where the player pays
 /// its 5 points no matter what, and its future lock gates nothing (the
 /// "on-path fort = decorative lock" thesis, baselined). Runs the realistic
-/// flag mix (see [`census_ctx`]). `V2_SEEDS` seeds (default 100).
+/// flag mix (see [`census_ctx`]). `CENSUS_SEEDS` seeds (default 100).
 #[test]
-fn test_v2_forts_census() {
+fn test_builder_forts_census() {
     let Some(raw) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
     };
-    let seeds: u64 = std::env::var("V2_SEEDS")
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
@@ -538,7 +540,7 @@ fn test_v2_forts_census() {
         }
     }
 
-    println!("v2 forts census ({seeds} seeds, uniform placement, full dumb pipeline, flag-mix arms)");
+    println!("forts census ({seeds} seeds, uniform placement, full dumb pipeline, flag-mix arms)");
     println!("world  budget  placed  on-route%  C1(mean)  routes  linear%");
     let n = seeds as f64;
     for world_idx in 0..8 {
@@ -558,19 +560,19 @@ fn test_v2_forts_census() {
 /// Full-skeleton census: all five dumb phases (connectivity → levels →
 /// spare pipes → forts → locks). The skeleton's report card, measured with
 /// the same stick as the shipping builder — compare against
-/// `test_v2_current_builder_worlds`. Columns: removed% (forts removed by the
+/// `test_builder_current_builder_worlds`. Columns: removed% (forts removed by the
 /// every-fort-locked invariant — expected ~0), safe% (locks that are
 /// secret-exit-safe), goal-open% (world finishable with all locks closed),
 /// zero-gate% (locks that wall off nothing — pure decoration). Runs the
 /// realistic flag mix (see [`census_ctx`]) — the invariant asserts cover
-/// every arm. `V2_SEEDS` seeds (default 100).
+/// every arm. `CENSUS_SEEDS` seeds (default 100).
 #[test]
-fn test_v2_locks_census() {
+fn test_builder_locks_census() {
     let Some(raw) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
     };
-    let seeds: u64 = std::env::var("V2_SEEDS")
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
@@ -635,7 +637,7 @@ fn test_v2_locks_census() {
         }
     }
 
-    println!("v2 full-skeleton census ({seeds} seeds, all five dumb phases, flag-mix arms)");
+    println!("full-skeleton census ({seeds} seeds, all five dumb phases, flag-mix arms)");
     println!("world  forts  locks  removed%  safe%  goal-open%  zero-gate%  C1(mean)  routes  linear%");
     let n = seeds as f64;
     for world_idx in 0..8 {
@@ -684,14 +686,14 @@ fn test_v2_locks_census() {
 /// lock_replace / gated_shortcut accepts:rejects summed over all seeds. The
 /// time line is the performance watchdog: mean wall-clock per seed (all 8
 /// worlds) per arm. Runs the realistic flag mix (see [`census_ctx`]).
-/// `V2_SEEDS` seeds (default 100).
+/// `CENSUS_SEEDS` seeds (default 100).
 #[test]
-fn test_v2_shaping_census() {
+fn test_builder_shaping_census() {
     let Some(raw) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
     };
-    let seeds: u64 = std::env::var("V2_SEEDS")
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
@@ -854,7 +856,7 @@ fn test_v2_shaping_census() {
         }
     }
 
-    println!("v2 shaping A/B census ({seeds} seeds, dumb skeleton vs diagnosis-driven shaping, flag-mix arms)");
+    println!("shaping A/B census ({seeds} seeds, dumb skeleton vs diagnosis-driven shaping, flag-mix arms)");
     println!("world  arm     C1(mean)  C1min  C1<12%  routes  linear%  uniq  C2-C1  noalt%  zero-gate%  goal-open%  pipes  touched%  lr(acc:rej)  gs(acc:rej)  fl(acc:rej)  lm(acc:rej)  pm(acc:rej)  redeals");
     let n = seeds as f64;
     for world_idx in 0..8 {
@@ -929,14 +931,14 @@ fn test_v2_shaping_census() {
 /// Arms per world: `vanilla` (ground truth, raw ROM, one row), `dumb`
 /// (knob-free skeleton), `shaped` (shaping loop), `shipping` (current
 /// builder) — the latter three all fed the same flag-mix input (see
-/// [`census_ctx`]). `V2_SEEDS` seeds (default 100).
+/// [`census_ctx`]). `CENSUS_SEEDS` seeds (default 100).
 #[test]
-fn test_v2_progression_census() {
+fn test_builder_progression_census() {
     let Some(raw) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
     };
-    let seeds: u64 = std::env::var("V2_SEEDS")
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
@@ -1011,7 +1013,7 @@ fn test_v2_progression_census() {
     }
 
     println!(
-        "v2 progression census ({seeds} seeds, no-hammer required-progression, flag-mix arms)"
+        "progression census ({seeds} seeds, no-hammer required-progression, flag-mix arms)"
     );
     println!("world  arm      forts-req  lvls-req  streak  streak>=2%  goalstk  goalstk>=2%");
     for world_idx in 0..8 {
@@ -1043,15 +1045,15 @@ fn test_v2_progression_census() {
 /// act. BOTH arms are asserted — the dumb skeleton and the shaped pipeline
 /// (whose moves rewrite lock sets and pipe webs; `recompute_safety_flags`
 /// after accepted moves is what keeps the flags honest). Runs the realistic
-/// flag mix (see [`census_ctx`]). `V2_SEEDS` seeds (default 100 — each seed
+/// flag mix (see [`census_ctx`]). `CENSUS_SEEDS` seeds (default 100 — each seed
 /// builds all 8 worlds per arm).
 #[test]
-fn test_v2_secret_exit_safety() {
+fn test_builder_secret_exit_safety() {
     let Some(raw) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
     };
-    let seeds: u64 = std::env::var("V2_SEEDS")
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
@@ -1223,10 +1225,10 @@ fn diversity_row(shapes: &[SeedShape]) -> (f64, f64, f64, f64, f64) {
 /// - salt-r: correlation between layout distance and route distance over
 ///   seed pairs — the "levels are the rng salt" hypothesis test
 ///
-/// Arms: v2 skeleton (uniform placement), v2 + shaping (the improvement
+/// Arms: dumb skeleton (uniform placement), skeleton + shaping (the improvement
 /// loop's diversity spend), and the shipping builder (scored placement) —
 /// the collapse any judgment-bearing pass must stay far away from.
-/// `V2_SEEDS` seeds (default 20).
+/// `CENSUS_SEEDS` seeds (default 20).
 ///
 /// Deliberately runs the CONTROLLED configuration (always-on QOL only — no
 /// SAS, no map arms, no shuffle rolls), unlike the report-card censuses:
@@ -1234,13 +1236,13 @@ fn diversity_row(shapes: &[SeedShape]) -> (f64, f64, f64, f64, f64) {
 /// input variation into the pairwise distances would inflate every arm's
 /// numbers with differences the placement code didn't produce.
 #[test]
-fn test_v2_diversity_census() {
+fn test_builder_diversity_census() {
     let Some(rom) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
     };
     let rom = base_qol(&rom);
-    let seeds: u64 = std::env::var("V2_SEEDS")
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(20);
@@ -1262,7 +1264,7 @@ fn test_v2_diversity_census() {
         }
     }
 
-    // Per-seed budget allotment for the v2 arms — same variance rules the
+    // Per-seed budget allotment for the builder arms — same variance rules the
     // shipping arm gets internally from build().
     let allotments: Vec<([usize; 8], [usize; 8])> = (0..seeds)
         .map(|seed| {
@@ -1271,7 +1273,7 @@ fn test_v2_diversity_census() {
         })
         .collect();
 
-    println!("v2 across-seed diversity census ({seeds} seeds, v2 uniform vs shipping scored)");
+    println!("across-seed diversity census ({seeds} seeds, uniform vs old-scored baseline)");
     println!("world  arm       layout-div  route-div  NN(mean±sd)  salt-r");
     for (world_idx, shipping_shapes) in shipping.iter().enumerate() {
         let budgeted_world = |seed: u64| {
@@ -1283,7 +1285,7 @@ fn test_v2_diversity_census() {
             state
         };
 
-        let v2_shapes: Vec<SeedShape> = (0..seeds)
+        let dumb_shapes: Vec<SeedShape> = (0..seeds)
             .map(|seed| {
                 let mut state = budgeted_world(seed);
                 let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -1308,8 +1310,8 @@ fn test_v2_diversity_census() {
             .collect();
 
         for (arm, shapes) in [
-            ("v2", &v2_shapes),
-            ("v2+shape", &shaped_shapes),
+            ("dumb", &dumb_shapes),
+            ("shaped", &shaped_shapes),
             ("shipping", shipping_shapes),
         ] {
             let (layout, route, nn_mean, nn_sd, salt_r) = diversity_row(shapes);
@@ -1335,15 +1337,15 @@ fn parse_pipe_delta(line: &str) -> Option<(usize, usize, u32, u32)> {
 /// Buckets per placed pipe, from the phase's own delta instrumentation:
 /// create (routes up), destroy (routes down), cheapen (routes flat, C1 down
 /// — the silent dominating shortcut), inert (nothing measurable changed).
-/// Runs the realistic flag mix (see [`census_ctx`]). `V2_SEEDS` seeds
+/// Runs the realistic flag mix (see [`census_ctx`]). `CENSUS_SEEDS` seeds
 /// (default 100).
 #[test]
-fn test_v2_spare_pipes_census() {
+fn test_builder_spare_pipes_census() {
     let Some(raw) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
     };
-    let seeds: u64 = std::env::var("V2_SEEDS")
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
@@ -1392,7 +1394,7 @@ fn test_v2_spare_pipes_census() {
         }
     }
 
-    println!("v2 spare-pipes census ({seeds} seeds, random toss, observe-only deltas, flag-mix arms)");
+    println!("spare-pipes census ({seeds} seeds, random toss, observe-only deltas, flag-mix arms)");
     println!("world  spares  create%  destroy%  cheapen%  inert%  C1(mean)  routes  linear%");
     let n = seeds as f64;
     for world_idx in 0..8 {
@@ -1424,17 +1426,17 @@ fn test_v2_spare_pipes_census() {
 }
 
 /// Hand-check probe: one vanilla world at a wide measuring band, kept and
-/// dominated routes both printed. `V2_WORLD` picks the world (1-8, default
-/// 2), `V2_SLACK` the band (default 12). Born from the W2 rock question —
+/// dominated routes both printed. `CENSUS_WORLD` picks the world (1-8, default
+/// 2), `CENSUS_SLACK` the band (default 12). Born from the W2 rock question —
 /// "where did the non-rock route go?" — and kept for the next such question.
 #[test]
-fn test_v2_probe_vanilla_world() {
+fn test_builder_probe_vanilla_world() {
     let Some(rom) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
     };
-    let world: usize = std::env::var("V2_WORLD").ok().and_then(|s| s.parse().ok()).unwrap_or(2);
-    let slack: u32 = std::env::var("V2_SLACK").ok().and_then(|s| s.parse().ok()).unwrap_or(12);
+    let world: usize = std::env::var("CENSUS_WORLD").ok().and_then(|s| s.parse().ok()).unwrap_or(2);
+    let slack: u32 = std::env::var("CENSUS_SLACK").ok().and_then(|s| s.parse().ok()).unwrap_or(12);
     let catalog = NodeCatalog::build(&rom, false);
     let state = from_vanilla(&rom, &catalog, world - 1);
     let rc = analyze_route_choice(&state.to_built(), slack);
@@ -1444,5 +1446,84 @@ fn test_v2_probe_vanilla_world() {
     }
     for d in &rc.detours {
         println!("  dominated:  cost={:2} levels={} forts={} rocks={}", d.cost, d.levels.len(), d.forts, d.rocks.len());
+    }
+}
+
+/// PRODUCTION-OUTPUT invariants, on the real `build()` (post promotions and
+/// sprite redistribution), across the census flag mix:
+///
+/// - **Completability**: every world passes the order-free fixpoint — close
+///   every lock, beat every reachable fort, open its lock, repeat; the goal
+///   must be reached and every fort beaten.
+/// - **One lock per fort**, and fort `section` values dense `0..n` in slot
+///   order — the writer pairs locks to forts by index.
+/// - **Secret-exit safety**: each seed has at least one lock, across all 8
+///   worlds, that can stay closed forever (honesty of the flag re-checked
+///   against `completable_sealed`).
+///
+/// `CENSUS_SEEDS` scales the sweep (default 25 — every seed builds 8 worlds).
+#[test]
+fn test_builder_output_completable() {
+    let Some(raw) = load_rom() else {
+        eprintln!("ROM not found, skipping");
+        return;
+    };
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(25);
+    for seed in 0..seeds {
+        let ctx = census_ctx(&raw, seed);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let result = build(
+            &ctx.rom,
+            &OverworldData { pickup: &ctx.pickup, catalog: &ctx.catalog },
+            &mut rng,
+            ctx.flags,
+        );
+        let mut any_safe = false;
+        for built in &result.worlds {
+            let wi = built.world_idx;
+            let state = from_built(built);
+            assert!(
+                state.completable(),
+                "seed {seed} W{}: built world must be completable",
+                wi + 1
+            );
+            let forts: Vec<usize> = built
+                .slots
+                .iter()
+                .filter(|s| s.kind == SlotKind::Fortress)
+                .map(|s| s.section)
+                .collect();
+            assert_eq!(
+                built.locks.len(),
+                forts.len(),
+                "seed {seed} W{}: every fort must have exactly one lock",
+                wi + 1
+            );
+            assert_eq!(
+                forts,
+                (0..forts.len()).collect::<Vec<_>>(),
+                "seed {seed} W{}: fort sections must be dense 0..n in slot order",
+                wi + 1
+            );
+            for (li, lock) in built.locks.iter().enumerate() {
+                assert!(
+                    lock.fort_section < forts.len(),
+                    "seed {seed} W{}: lock {li} points at missing fort {}",
+                    wi + 1,
+                    lock.fort_section
+                );
+                assert_eq!(
+                    lock.secret_exit_safe,
+                    state.completable_sealed(Some(li)),
+                    "seed {seed} W{}: stale secret_exit_safe flag on lock {li}",
+                    wi + 1
+                );
+            }
+            any_safe |= built.locks.iter().any(|l| l.secret_exit_safe);
+        }
+        assert!(
+            any_safe,
+            "seed {seed}: no secret-exit-safe lock in any world"
+        );
     }
 }

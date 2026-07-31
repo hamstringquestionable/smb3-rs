@@ -1,4 +1,4 @@
-//! The two definitions every v2 pass hangs off: the world state a phase
+//! The two definitions every builder pass hangs off: the world state a phase
 //! mutates, and the phase unit itself.
 
 use super::*;
@@ -40,6 +40,15 @@ pub(crate) struct WorldState {
     /// How many fortresses the Forts phase places — same pattern as
     /// `level_budget`, seeded from the vanilla catalog's Fortress tally.
     pub fort_budget: usize,
+    /// Pointer-table entries available to this world (the pickup pool size).
+    /// Every slot — level, fort, hammer bro, pipe endpoint — consumes one;
+    /// the hammer-bro fill phase caps itself against this.
+    pub ptr_slots: usize,
+    /// Vanilla wandering-sprite positions that MUST become HammerBro slots
+    /// (a sprite starts there and can be encountered immediately, so the
+    /// tile needs a pointer entry). Empty when hammer-bro shuffle is on —
+    /// redistribution picks fresh positions from the filled slots instead.
+    pub hb_sprite_pins: Vec<Pos>,
     /// What each phase did, in run order — the build's own story, read by
     /// the metrics harness and by per-feature breakdowns.
     pub log: Vec<PhaseReport>,
@@ -230,7 +239,7 @@ impl WorldState {
 
     /// View this state as a `BuiltWorld` so the shipping builder's route
     /// scorer (and every census metric built on it) can measure it. This is
-    /// the "same measuring stick" bridge — v2 never re-implements scoring.
+    /// the "same measuring stick" bridge — phases never re-implement scoring.
     pub(crate) fn to_built(&self) -> BuiltWorld {
         BuiltWorld {
             world_idx: self.world_idx,
@@ -265,6 +274,9 @@ pub(crate) fn row78_partner(pos: Pos) -> Option<Pos> {
 
 /// What one phase did to the world, in plain words. Starts as free-form
 /// action lines; structured fields get added when a real consumer needs them.
+// Reason: production only APPENDS reports (the build's own story); the
+// census/probe test harness is the reader.
+#[allow(dead_code)]
 pub(crate) struct PhaseReport {
     pub phase: &'static str,
     pub actions: Vec<String>,

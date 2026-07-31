@@ -54,6 +54,7 @@ pub(crate) const C1_FLOOR: u32 = 14;
 /// A/B at 9 matched it on route/streak/C1 while shrinking the wide-measure
 /// state space — deep near-misses simply never got rescued. Final acceptance
 /// still uses `DEFAULT_SLACK`.
+#[cfg(test)]
 pub(crate) const SHAPING_SLACK: u32 = 9;
 
 /// Breakable overworld rocks and the path tile they open into
@@ -110,56 +111,6 @@ pub(crate) struct RouteChoice {
 /// Cap on the dominated-detour list — plenty for shaping, keeps the struct
 /// small on detour-rich maps.
 const MAX_DETOURS: usize = 8;
-
-/// Routes within `DEFAULT_SLACK` of best — the count that defines "has
-/// choice", measured inside a wider (`SHAPING_SLACK`) result.
-pub(super) fn in_band_count(rc: &RouteChoice) -> usize {
-    rc.routes
-        .iter()
-        .filter(|r| r.cost <= rc.best_cost + DEFAULT_SLACK)
-        .count()
-}
-
-/// Rescue targets for the shaping passes, most-promising first: out-of-band
-/// parallel routes and dominated superset detours. Either way, shifting the
-/// cheap route's cost by +`COST_FORT` (a fort on its exclusive stretch, or a
-/// fort-gated lock on its exclusive edge) lands targets whose gap is closest
-/// to `COST_FORT` in the choice band most often.
-pub(super) fn rescue_targets(rc: &RouteChoice) -> Vec<ChoiceRoute> {
-    if rc.routes.is_empty() {
-        return Vec::new();
-    }
-    let band = rc.best_cost + DEFAULT_SLACK;
-    let mut targets: Vec<ChoiceRoute> = rc
-        .routes
-        .iter()
-        .filter(|r| r.cost > band)
-        .chain(rc.detours.iter().filter(|r| r.cost > rc.best_cost))
-        .cloned()
-        .collect();
-    targets.sort_by_key(|r| ((r.cost - rc.best_cost).abs_diff(COST_FORT), r.cost));
-    targets.truncate(3);
-    targets
-}
-
-/// The mid path-tiles of a route's WALK edges (consecutive path nodes two
-/// apart; teleport hops have no mid tile). The cheap route's exclusive mids
-/// vs a rescue target are the golden LOCK sites: gapping one forces the
-/// fort's cost onto the shortcut without touching the target route.
-pub(super) fn walk_edge_mids(path: &[Pos]) -> HashSet<Pos> {
-    path.windows(2)
-        .filter_map(|w| {
-            let (a, b) = (w[0], w[1]);
-            if a.0 == b.0 && a.1.abs_diff(b.1) == 2 {
-                Some((a.0, (a.1 + b.1) / 2))
-            } else if a.1 == b.1 && a.0.abs_diff(b.0) == 2 {
-                Some(((a.0 + b.0) / 2, a.1))
-            } else {
-                None
-            }
-        })
-        .collect()
-}
 
 /// Deterministic multiplicative hasher (the FxHash fold) for the Dijkstra's
 /// hot maps — the default SipHash dominated the build-time profile. Fixed
@@ -384,16 +335,6 @@ fn unpack_mask(key: PackedState) -> u64 {
 /// choice they offer.
 pub(crate) fn analyze_route_choice(built: &BuiltWorld, slack: u32) -> RouteChoice {
     analyze_route_choice_inner(built, slack, true)
-}
-
-/// Counts-only measure for trial flips (flip a slot, read two numbers, flip
-/// back — the bulk of all measures): identical `RouteChoice` except every
-/// `path` is empty. The `prev` map (an insert on nearly every relax) and the
-/// path reconstruction are skipped. Trials read only `best_cost` /
-/// `in_band_count` / `routes.len()` / `shaping_gap`, none of which touch
-/// paths — any call that reads a `path` must use `analyze_route_choice`.
-pub(crate) fn measure_counts(built: &BuiltWorld, slack: u32) -> RouteChoice {
-    analyze_route_choice_inner(built, slack, false)
 }
 
 /// The walk-invariant base of a route measurement — the `walk_map` BFS graph

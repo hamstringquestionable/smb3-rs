@@ -66,7 +66,7 @@
 //! may spend routes to buy the floor, choice mode may spend anything BUT
 //! the floor.
 //!
-//! The loop's knobs (the ONLY knobs in v2): [`MOVE_BUDGET`],
+//! The loop's knobs (the ONLY knobs in the builder): [`MOVE_BUDGET`],
 //! [`TARGET_ROUTES`], [`SHORTCUT_TRIES`], [`FORTLOCK_TRIES`],
 //! [`LEVELMOVE_TRIES`], [`PIPEMOVE_TRIES`], [`ESCALATE_AFTER`].
 
