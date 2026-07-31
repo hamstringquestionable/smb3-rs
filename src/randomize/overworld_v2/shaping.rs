@@ -12,6 +12,12 @@
 //!   is only spent where the measure says the world is linear or nearly
 //!   free (a C1-4 world is beat-Bowser-after-one-level; the floor is the
 //!   same "not skippable" guarantee v1 ended up needing).
+//! - **COST MODE** (C1 below the floor): the floor comes FIRST — the choice
+//!   band is relative to C1, so choice shaped on a trivial trunk is trivial
+//!   too. Every rung except the shortcut (pipes only cheapen) stays
+//!   available regardless of route count, and every acceptance switches to
+//!   "C1 rose without losing routes". Only once the floor holds does the
+//!   loop shape choice.
 //! - **Linear with lock ammunition** (zero-gate locks, or detour structure a
 //!   trunk gate could pull into the band): **lock re-place** — the cheapest
 //!   rung. Re-runs lock placement from scratch via `place_locks_gating`
@@ -32,9 +38,7 @@
 //!   C1 is tiny, no alternative can fit the choice band no matter where
 //!   forts, locks, or pipes go; each forced level raises C1 by 3 and widens
 //!   what the band admits, and every accept resets the other rungs'
-//!   exhaustion so they retry into the wider band. On a world that already
-//!   has its routes but sits under the C1 floor, this is the ONLY rung with
-//!   jurisdiction — the other three exist to create choice, not cost.
+//!   exhaustion so they retry into the wider band.
 //!
 //! Moves are judged on the complete world and rolled back on rejection; a
 //! move type that keeps failing escalates past itself ([`ESCALATE_AFTER`]),
@@ -57,7 +61,7 @@ use super::locks::{place_locks_gating, recompute_safety_flags};
 use super::metrics::WorldMeasure;
 
 /// Max moves (accepted or rejected) per world.
-const MOVE_BUDGET: usize = 8;
+const MOVE_BUDGET: usize = 24;
 /// Satisficing target: stop once this many routes are in the choice band.
 const TARGET_ROUTES: usize = 2;
 /// Candidate pipe pairs tried inside ONE gated-shortcut move.
@@ -96,16 +100,25 @@ impl Phase for Shaping {
             }
 
             let zero_gate = state.zero_gate_locks().len();
-            // The first three rungs create CHOICE; on a cheap-but-choiceful
-            // world only the level move (the cost lever) has jurisdiction.
-            let available = [
-                routes_needy
-                    && !state.locks.is_empty()
-                    && (zero_gate > 0 || before.dominated_detours > 0),
-                routes_needy && state.pipe_pairs.len() < state.pipe_budget,
-                routes_needy && state.fort_count() > 0,
-                true, // level move checks its own sources/targets
-            ];
+            // COST MODE below the floor: the choice band is relative to C1,
+            // so choice shaped on a trivial trunk is trivial too — a
+            // sub-floor world does nothing else until the floor holds. Every
+            // rung except the shortcut (pipes only cheapen) is available and
+            // accepts on C1 progress; the try_ fns branch their acceptance
+            // on the same `before.c1 < C1_FLOOR` test. Above the floor, the
+            // normal choice ladder.
+            let available = if cheap {
+                [!state.locks.is_empty(), false, state.fort_count() > 0, true]
+            } else {
+                [
+                    routes_needy
+                        && !state.locks.is_empty()
+                        && (zero_gate > 0 || before.dominated_detours > 0),
+                    routes_needy && state.pipe_pairs.len() < state.pipe_budget,
+                    routes_needy && state.fort_count() > 0,
+                    true, // level move checks its own sources/targets
+                ]
+            };
             let Some(rung) = (0..4)
                 .find(|&r| available[r] && rejects[r] < ESCALATE_AFTER)
             else {
@@ -163,8 +176,13 @@ fn try_lock_replace(
     }
     let after = measure_world(state);
     let zero_gate_after = state.zero_gate_locks().len();
-    let improved = after.routes_in_band > before.routes_in_band
-        || (after.routes_in_band == before.routes_in_band && zero_gate_after < zero_gate_before);
+    // Below the floor, cost first: accept iff C1 rose without losing routes.
+    let improved = if before.c1 < C1_FLOOR {
+        after.c1 > before.c1 && after.routes_in_band >= before.routes_in_band
+    } else {
+        after.routes_in_band > before.routes_in_band
+            || (after.routes_in_band == before.routes_in_band && zero_gate_after < zero_gate_before)
+    };
     let line = format!(
         "routes {} -> {}, C1 {} -> {}, zero-gate {zero_gate_before} -> {zero_gate_after}",
         before.routes_in_band, after.routes_in_band, before.c1, after.c1,
@@ -281,7 +299,14 @@ fn try_fort_lock(
             evals += 1;
             if place_locks_gating(state, rng) {
                 let after = measure_world(state);
-                if after.routes_in_band > before.routes_in_band {
+                // Below the floor: any relocation that raises C1 without
+                // losing routes is progress. Above: routes must rise.
+                let improved = if before.c1 < C1_FLOOR {
+                    after.c1 > before.c1 && after.routes_in_band >= before.routes_in_band
+                } else {
+                    after.routes_in_band > before.routes_in_band
+                };
+                if improved {
                     return Ok(format!(
                         "fort_lock ACCEPT: fort {fort_id} {old_pos:?} -> {new_pos:?}, routes {} -> {}, C1 {} -> {}",
                         before.routes_in_band, after.routes_in_band, before.c1, after.c1,
@@ -354,8 +379,14 @@ fn try_level_move(
         state.slots[si].pos = target;
         evals += 1;
         let after = measure_world(state);
-        let improved = after.routes_in_band > before.routes_in_band
-            || (after.routes_in_band == before.routes_in_band && after.c1 > before.c1);
+        // Below the floor: C1 progress without losing routes. Above: routes
+        // up, or the fine +3 trim at flat routes.
+        let improved = if before.c1 < C1_FLOOR {
+            after.c1 > before.c1 && after.routes_in_band >= before.routes_in_band
+        } else {
+            after.routes_in_band > before.routes_in_band
+                || (after.routes_in_band == before.routes_in_band && after.c1 > before.c1)
+        };
         if improved {
             return Ok(format!(
                 "level_move ACCEPT: level {old_pos:?} -> {target:?} (on trunk), routes {} -> {}, C1 {} -> {}",
