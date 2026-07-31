@@ -144,10 +144,10 @@ pub(crate) struct BuildResult {
 
 /// Output of [`prepare_capacities`]: the per-world grids the builder walks, the
 /// fixed-position sets, and the derived level capacity per world.
-pub(super) struct CapacityPrep {
+pub(crate) struct CapacityPrep {
     pub(super) patched_grids: Vec<Grid>,
     pub(super) fixed_positions: Vec<HashSet<(usize, usize)>>,
-    pub(super) capacities: [usize; 8],
+    pub(crate) capacities: [usize; 8],
 }
 
 /// Per-world numeric budgets passed into `build_world`. All five fields are

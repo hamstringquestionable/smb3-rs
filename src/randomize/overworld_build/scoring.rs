@@ -51,7 +51,7 @@ pub(super) const FORTRESS_BONUS_POSITIONS: &[(usize, (usize, usize))] = &[
 ];
 
 /// Total vanilla levels across all worlds (62 Level entries in the catalog).
-pub(super) const VANILLA_LEVEL_COUNT: usize = 62;
+pub(crate) const VANILLA_LEVEL_COUNT: usize = 62;
 
 /// Exponent applied to each world's capacity when distributing levels. `1.0`
 /// is pure capacity-proportional (rich worlds run away with levels); `0.0` is
@@ -59,7 +59,7 @@ pub(super) const VANILLA_LEVEL_COUNT: usize = 62;
 /// pulling the high-capacity worlds (Desert, Ice) down and filling the
 /// emptier ones — without forcing uniformity. Tuned by feel, not exposed to
 /// players. See `distribute_levels`.
-pub(super) const LEVEL_SPREAD_EXPONENT: f64 = 0.5;
+pub(crate) const LEVEL_SPREAD_EXPONENT: f64 = 0.5;
 
 /// Returns true if a node position has exactly one traversable exit direction.
 /// Dead-end positions look better with a level or fortress than as blank tiles.

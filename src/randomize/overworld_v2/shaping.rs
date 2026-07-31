@@ -5,11 +5,13 @@
 //! loop reads the world through [`measure_world`], and the measured symptom
 //! selects the move — no move portfolio is evaluated side by side:
 //!
-//! - **Satisfied** (routes in band ≥ [`TARGET_ROUTES`]): no move at all.
-//!   Satisficing, not optimizing — worlds the dumb roll already made
-//!   interesting keep their shape, and the across-seed diversity the uniform
-//!   baseline bought is only spent where the measure says the world is
-//!   linear.
+//! - **Satisfied** (routes in band ≥ [`TARGET_ROUTES`] AND C1 ≥ the shipping
+//!   builder's [`C1_FLOOR`], reused verbatim): no move at all. Satisficing,
+//!   not optimizing — worlds the dumb roll already made interesting keep
+//!   their shape, and the across-seed diversity the uniform baseline bought
+//!   is only spent where the measure says the world is linear or nearly
+//!   free (a C1-4 world is beat-Bowser-after-one-level; the floor is the
+//!   same "not skippable" guarantee v1 ended up needing).
 //! - **Linear with lock ammunition** (zero-gate locks, or detour structure a
 //!   trunk gate could pull into the band): **lock re-place** — the cheapest
 //!   rung. Re-runs lock placement from scratch via `place_locks_gating`
@@ -30,7 +32,9 @@
 //!   C1 is tiny, no alternative can fit the choice band no matter where
 //!   forts, locks, or pipes go; each forced level raises C1 by 3 and widens
 //!   what the band admits, and every accept resets the other rungs'
-//!   exhaustion so they retry into the wider band.
+//!   exhaustion so they retry into the wider band. On a world that already
+//!   has its routes but sits under the C1 floor, this is the ONLY rung with
+//!   jurisdiction — the other three exist to create choice, not cost.
 //!
 //! Moves are judged on the complete world and rolled back on rejection; a
 //! move type that keeps failing escalates past itself ([`ESCALATE_AFTER`]),
@@ -82,7 +86,9 @@ impl Phase for Shaping {
 
         let status = loop {
             let before = measure_world(state);
-            if before.routes_in_band >= TARGET_ROUTES {
+            let routes_needy = before.routes_in_band < TARGET_ROUTES;
+            let cheap = before.c1 < C1_FLOOR;
+            if !routes_needy && !cheap {
                 break "satisfied";
             }
             if moves >= MOVE_BUDGET {
@@ -90,10 +96,14 @@ impl Phase for Shaping {
             }
 
             let zero_gate = state.zero_gate_locks().len();
+            // The first three rungs create CHOICE; on a cheap-but-choiceful
+            // world only the level move (the cost lever) has jurisdiction.
             let available = [
-                !state.locks.is_empty() && (zero_gate > 0 || before.dominated_detours > 0),
-                state.pipe_pairs.len() < state.pipe_budget,
-                state.fort_count() > 0,
+                routes_needy
+                    && !state.locks.is_empty()
+                    && (zero_gate > 0 || before.dominated_detours > 0),
+                routes_needy && state.pipe_pairs.len() < state.pipe_budget,
+                routes_needy && state.fort_count() > 0,
                 true, // level move checks its own sources/targets
             ];
             let Some(rung) = (0..4)

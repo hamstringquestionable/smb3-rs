@@ -12,6 +12,37 @@
 
 use super::*;
 
+/// Roll the per-seed level/fort allotment EXACTLY like the shipping builder,
+/// by calling its machinery verbatim: fortresses via
+/// `redistribute_fortresses` (W8 always keeps 4; W1-W7 roll 1-3 each with
+/// the 13-fort total conserved), then levels via `distribute_levels` over
+/// `prepare_capacities` (capacity^0.5-weighted shares of the 62 vanilla
+/// levels, random leftover topping up random worlds). One roll covers all 8
+/// worlds — the caller writes the result onto each `WorldState`'s budgets
+/// before scheduling. `from_pickup` alone stays vanilla-frozen; variance is
+/// the caller's choice, made here.
+pub(crate) fn allot_budgets(
+    rom: &Rom,
+    catalog: &NodeCatalog,
+    pickup: &PickupResult,
+    flags: &BuildFlags,
+    mut rng: &mut dyn RngCore,
+) -> ([usize; 8], [usize; 8]) {
+    let fort_counts = redistribute_fortresses(&mut rng);
+    let CapacityPrep { capacities, .. } = prepare_capacities(
+        rom,
+        catalog,
+        pickup,
+        &fort_counts,
+        flags.eights_are_wild,
+        flags.shuffle_toad_houses,
+        flags.shuffle_hammer_bros,
+    );
+    let level_counts =
+        distribute_levels(&capacities, VANILLA_LEVEL_COUNT, LEVEL_SPREAD_EXPONENT, &mut rng);
+    (level_counts, fort_counts)
+}
+
 /// Wrap a shipping-builder world as a v2 `WorldState`. Start/target are
 /// re-derived from the grid the same way the builder derived them. `fixed`
 /// is empty: a finished world has nothing left to place.

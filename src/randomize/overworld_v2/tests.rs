@@ -57,6 +57,10 @@ struct CensusCtx {
     catalog: NodeCatalog,
     pickup: Pickup,
     flags: BuildFlags,
+    /// Per-seed level/fort allotment, rolled once for all 8 worlds via the
+    /// shipping builder's exact machinery (`allot_budgets`).
+    level_counts: [usize; 8],
+    fort_counts: [usize; 8],
 }
 
 fn census_ctx(raw: &Rom, seed: u64) -> CensusCtx {
@@ -80,21 +84,30 @@ fn census_ctx(raw: &Rom, seed: u64) -> CensusCtx {
             shuffle_hammer_bros,
         },
     );
+    let flags = BuildFlags {
+        shuffle_toad_houses,
+        eights_are_wild: eights_wild,
+        shuffle_hammer_bros,
+    };
+    let (level_counts, fort_counts) =
+        allot_budgets(&rom, &catalog, &pickup, &flags, &mut roll_rng);
     CensusCtx {
         rom,
         catalog,
         pickup,
-        flags: BuildFlags {
-            shuffle_toad_houses,
-            eights_are_wild: eights_wild,
-            shuffle_hammer_bros,
-        },
+        flags,
+        level_counts,
+        fort_counts,
     }
 }
 
 impl CensusCtx {
     fn world(&self, world_idx: usize) -> WorldState {
-        from_pickup(&self.rom, &self.catalog, &self.pickup, world_idx, &self.flags)
+        let mut state =
+            from_pickup(&self.rom, &self.catalog, &self.pickup, world_idx, &self.flags);
+        state.level_budget = self.level_counts[world_idx];
+        state.fort_budget = self.fort_counts[world_idx];
+        state
     }
 }
 
@@ -1190,13 +1203,30 @@ fn test_v2_diversity_census() {
         }
     }
 
+    // Per-seed budget allotment for the v2 arms — same variance rules the
+    // shipping arm gets internally from build().
+    let allotments: Vec<([usize; 8], [usize; 8])> = (0..seeds)
+        .map(|seed| {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            allot_budgets(&rom, &catalog, &pickup, &BuildFlags::default(), &mut rng)
+        })
+        .collect();
+
     println!("v2 across-seed diversity census ({seeds} seeds, v2 uniform vs shipping scored)");
     println!("world  arm       layout-div  route-div  NN(mean±sd)  salt-r");
     for (world_idx, shipping_shapes) in shipping.iter().enumerate() {
+        let budgeted_world = |seed: u64| {
+            let mut state =
+                from_pickup(&rom, &catalog, &pickup, world_idx, &BuildFlags::default());
+            let (level_counts, fort_counts) = &allotments[seed as usize];
+            state.level_budget = level_counts[world_idx];
+            state.fort_budget = fort_counts[world_idx];
+            state
+        };
+
         let v2_shapes: Vec<SeedShape> = (0..seeds)
             .map(|seed| {
-                let mut state =
-                    from_pickup(&rom, &catalog, &pickup, world_idx, &BuildFlags::default());
+                let mut state = budgeted_world(seed);
                 let mut rng = ChaCha8Rng::seed_from_u64(seed);
                 run_schedule(
                     &mut state,
@@ -1211,8 +1241,7 @@ fn test_v2_diversity_census() {
         // cost in across-seed spread — the diversity spend of shaping.
         let shaped_shapes: Vec<SeedShape> = (0..seeds)
             .map(|seed| {
-                let mut state =
-                    from_pickup(&rom, &catalog, &pickup, world_idx, &BuildFlags::default());
+                let mut state = budgeted_world(seed);
                 let mut rng = ChaCha8Rng::seed_from_u64(seed);
                 run_schedule(
                     &mut state,

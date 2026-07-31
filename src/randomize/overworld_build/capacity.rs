@@ -172,7 +172,7 @@ pub(crate) fn fixed_positions_for_world(
 /// of grid-blank room and pointer-table room after reserving pipe endpoints and
 /// fortresses — the tighter constraint wins, since assigning more entries than
 /// pointer-table slots would leave blank screens.
-pub(super) fn prepare_capacities(
+pub(crate) fn prepare_capacities(
     rom: &Rom,
     catalog: &NodeCatalog,
     pickup: &PickupResult,
@@ -233,7 +233,7 @@ pub(super) fn prepare_capacities(
 /// same worlds. A world's count never exceeds its capacity; if every world is
 /// at capacity the remainder is dropped (cannot happen for the vanilla total,
 /// whose capacity headroom is large).
-pub(super) fn distribute_levels<R: Rng>(
+pub(crate) fn distribute_levels<R: Rng>(
     capacities: &[usize; 8],
     total: usize,
     exponent: f64,
@@ -278,7 +278,7 @@ pub(super) fn distribute_levels<R: Rng>(
 }
 
 /// Distribute 13 fortresses across W1-W7 (each gets 1-3), W8 keeps 4.
-pub(super) fn redistribute_fortresses<R: Rng>(rng: &mut R) -> [usize; 8] {
+pub(crate) fn redistribute_fortresses<R: Rng>(rng: &mut R) -> [usize; 8] {
     let mut counts = [0usize; 8];
     counts[7] = 4; // W8 always keeps 4
 

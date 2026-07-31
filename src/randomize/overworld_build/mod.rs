@@ -33,16 +33,16 @@ mod gated_shortcut;
 mod progression;
 mod route_choice;
 
-use capacity::{
-    SPADE_BUDGET, assign_hb_sprites, distribute_levels, prepare_capacities, promote_hb_slots,
-    redistribute_fortresses,
-};
+use capacity::{SPADE_BUDGET, assign_hb_sprites, promote_hb_slots};
+// pub(crate): v2's budget allotment reuses these verbatim (see below).
+pub(crate) use capacity::{distribute_levels, prepare_capacities, redistribute_fortresses};
 use knobs::Knobs;
 use locks::place_locks;
 pub(crate) use pipes::VANILLA_PIPE_PAIRS;
-use scoring::{LEVEL_SPREAD_EXPONENT, VANILLA_LEVEL_COUNT};
+pub(crate) use scoring::{LEVEL_SPREAD_EXPONENT, VANILLA_LEVEL_COUNT};
 use sections::build_world;
-use types::{CapacityPrep, WorldSlotCounts};
+pub(crate) use types::CapacityPrep;
+use types::WorldSlotCounts;
 
 // Public API consumed by the randomizer and the overworld writer.
 pub use {types::SlotAssignment, types::SlotKind};
@@ -68,6 +68,11 @@ pub(crate) use route_choice::{DEFAULT_SLACK, RouteChoice};
 pub(crate) use types::{LockAssignment, stamp_slots};
 #[cfg(test)]
 pub(crate) use capacity::fixed_positions_for_world;
+// v2 reuses the shipping allotment machinery (fort redistribution, capacity
+// prep, level distribution) and the C1 floor VERBATIM — same variance rules,
+// same floor value, one source of truth.
+#[cfg(test)]
+pub(crate) use route_choice::C1_FLOOR;
 
 #[cfg(test)]
 mod tests;

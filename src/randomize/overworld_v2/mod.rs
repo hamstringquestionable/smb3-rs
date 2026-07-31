@@ -35,8 +35,10 @@ use crate::rom::Rom;
 use super::map_walker::{Reach, walk_reachable};
 use super::node_catalog::{NodeCatalog, NodeKind};
 use super::overworld_build::{
-    BuildFlags, BuiltWorld, DEFAULT_SLACK, LockAssignment, RouteChoice, SlotAssignment, SlotKind,
-    VANILLA_PIPE_PAIRS, analyze_route_choice, fixed_positions_for_world, stamp_slots,
+    BuildFlags, BuiltWorld, C1_FLOOR, CapacityPrep, DEFAULT_SLACK, LEVEL_SPREAD_EXPONENT,
+    LockAssignment, RouteChoice, SlotAssignment, SlotKind, VANILLA_LEVEL_COUNT,
+    VANILLA_PIPE_PAIRS, analyze_route_choice, distribute_levels, fixed_positions_for_world,
+    prepare_capacities, redistribute_fortresses, stamp_slots,
 };
 use super::overworld_helpers::{LOCKABLE_TILES, find_target, gap_tile_for};
 use super::overworld_pickup::PickupResult;
@@ -62,5 +64,5 @@ pub(crate) use locks::{Locks, ensure_secret_exit_safe};
 pub(crate) use metrics::measure_world;
 pub(crate) use shaping::Shaping;
 pub(crate) use spare_pipes::SparePipes;
-pub(crate) use sources::{from_built, from_pickup, from_vanilla};
+pub(crate) use sources::{allot_budgets, from_built, from_pickup, from_vanilla};
 pub(crate) use state::{Phase, PhaseReport, WorldState, row78_partner, run_schedule};
