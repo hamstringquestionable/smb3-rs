@@ -993,12 +993,15 @@ fn test_v2_progression_census() {
     }
 }
 
-/// Cross-world secret-exit-safety invariant: after all 8 worlds run the full
-/// dumb schedule, at least one lock somewhere must be secret-exit-safe (the
-/// writer parks the 1-F fortress level on it). Measures how often uniform
-/// placement satisfies this naturally vs how often the relocation backstop
-/// has to act. Runs the realistic flag mix (see [`census_ctx`]). `V2_SEEDS`
-/// seeds (default 100 — each seed builds all 8 worlds).
+/// Cross-world secret-exit-safety invariant: after all 8 worlds run a full
+/// schedule, at least one lock somewhere must be secret-exit-safe (the
+/// writer parks the 1-F fortress level on it). Measures how often placement
+/// satisfies this naturally vs how often the relocation backstop has to
+/// act. BOTH arms are asserted — the dumb skeleton and the shaped pipeline
+/// (whose moves rewrite lock sets and pipe webs; `recompute_safety_flags`
+/// after accepted moves is what keeps the flags honest). Runs the realistic
+/// flag mix (see [`census_ctx`]). `V2_SEEDS` seeds (default 100 — each seed
+/// builds all 8 worlds per arm).
 #[test]
 fn test_v2_secret_exit_safety() {
     let Some(raw) = load_rom() else {
@@ -1010,56 +1013,56 @@ fn test_v2_secret_exit_safety() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
 
-    let mut natural = 0usize;
-    let mut relocated = 0usize;
-    for seed in 0..seeds {
-        let ctx = census_ctx(&raw, seed);
-        let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let mut worlds: Vec<WorldState> = (0..8)
-            .map(|world_idx| {
-                let mut state = ctx.world(world_idx);
-                run_schedule(
-                    &mut state,
-                    &[&Connectivity, &Levels, &SparePipes, &Forts, &Locks],
-                    &mut rng,
-                );
-                state
-            })
-            .collect();
+    let dumb: &[&dyn Phase] = &[&Connectivity, &Levels, &SparePipes, &Forts, &Locks];
+    let shaped: &[&dyn Phase] = &[&Connectivity, &Levels, &Forts, &Locks, &Shaping];
+    for (arm, schedule) in [("dumb", dumb), ("shaped", shaped)] {
+        let mut natural = 0usize;
+        let mut relocated = 0usize;
+        for seed in 0..seeds {
+            let ctx = census_ctx(&raw, seed);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let mut worlds: Vec<WorldState> = (0..8)
+                .map(|world_idx| {
+                    let mut state = ctx.world(world_idx);
+                    run_schedule(&mut state, schedule, &mut rng);
+                    state
+                })
+                .collect();
 
-        let safe_before = worlds
-            .iter()
-            .any(|w| w.locks.iter().any(|l| l.secret_exit_safe));
-        let report = ensure_secret_exit_safe(&mut worlds, &mut rng);
-
-        if safe_before {
-            natural += 1;
-        } else {
-            relocated += 1;
-            println!("seed {seed}: backstop acted — {:?}", report.actions);
-        }
-        assert!(
-            worlds
+            let safe_before = worlds
                 .iter()
-                .any(|w| w.locks.iter().any(|l| l.secret_exit_safe)),
-            "seed {seed}: no secret-exit-safe lock in any world after backstop"
-        );
-        // The flags the invariant relied on must be honest: safe means the
-        // world survives that lock never opening.
-        for w in &worlds {
-            for li in 0..w.locks.len() {
-                assert_eq!(
-                    w.locks[li].secret_exit_safe,
-                    w.completable_sealed(Some(li)),
-                    "seed {seed} W{}: stale secret_exit_safe flag on lock {li}",
-                    w.world_idx + 1
-                );
+                .any(|w| w.locks.iter().any(|l| l.secret_exit_safe));
+            let report = ensure_secret_exit_safe(&mut worlds, &mut rng);
+
+            if safe_before {
+                natural += 1;
+            } else {
+                relocated += 1;
+                println!("[{arm}] seed {seed}: backstop acted — {:?}", report.actions);
+            }
+            assert!(
+                worlds
+                    .iter()
+                    .any(|w| w.locks.iter().any(|l| l.secret_exit_safe)),
+                "[{arm}] seed {seed}: no secret-exit-safe lock in any world after backstop"
+            );
+            // The flags the invariant relied on must be honest: safe means
+            // the world survives that lock never opening.
+            for w in &worlds {
+                for li in 0..w.locks.len() {
+                    assert_eq!(
+                        w.locks[li].secret_exit_safe,
+                        w.completable_sealed(Some(li)),
+                        "[{arm}] seed {seed} W{}: stale secret_exit_safe flag on lock {li}",
+                        w.world_idx + 1
+                    );
+                }
             }
         }
+        println!(
+            "[{arm}] secret-exit safety over {seeds} seeds: natural {natural}, backstop relocations {relocated}"
+        );
     }
-    println!(
-        "secret-exit safety over {seeds} seeds: natural {natural}, backstop relocations {relocated}"
-    );
 }
 
 /// One seed's shape, for across-seed comparison: where its levels sit, which
