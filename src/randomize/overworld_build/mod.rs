@@ -131,20 +131,29 @@ pub(crate) const WEB_RETRIES: usize = 4;
 /// placement bias and no repair move: restore the placement, pick up the
 /// pipe web ONLY (levels and forts keep their spots — layout diversity is
 /// the scarcest currency), and redeal connectivity + locks + shaping on a
-/// fresh uniform web. Screen the outcome, not the proposal. If every
-/// attempt ends sub-floor, the best by (C1, routes in band) is kept.
+/// fresh uniform web. Screen the outcome, not the proposal. The same
+/// screen enforces the full fort roster (a removed fort is deleted
+/// content). If every attempt fails, the best by (full forts, C1, routes
+/// in band) is kept.
 pub(crate) fn run_shaped_with_web_retries(state: &mut WorldState, rng: &mut dyn RngCore) {
     run_schedule(state, &[&Connectivity, &Levels, &Forts], rng);
     let placement = state.snapshot();
     run_schedule(state, &[&Locks, &Shaping, &SparePipes], rng);
 
-    let mut best: Option<(u32, usize, state::WorldSnapshot)> = None;
+    let mut best: Option<((bool, u32, usize), state::WorldSnapshot)> = None;
     let mut redeals = 0usize;
     loop {
         let m = measure_world(state);
-        if m.c1 >= C1_FLOOR || redeals >= WEB_RETRIES {
-            if let Some((c1, routes, snap)) = &best
-                && (m.c1, m.routes_in_band) < (*c1, *routes)
+        // Full fort roster is an invariant, not a preference: the Locks
+        // phase removes a fort only when NO lock placement keeps the world
+        // completable, and a removed fort is deleted content (its fortress
+        // level leaves the game — measured 2 events per 80k worlds, both on
+        // webs that also failed the floor). Such a web redeals like any
+        // other degenerate web.
+        let full_forts = state.fort_count() == state.fort_budget;
+        if (m.c1 >= C1_FLOOR && full_forts) || redeals >= WEB_RETRIES {
+            if let Some((key, snap)) = &best
+                && (full_forts, m.c1, m.routes_in_band) < *key
             {
                 state.restore(snap);
             }
@@ -153,18 +162,19 @@ pub(crate) fn run_shaped_with_web_retries(state: &mut WorldState, rng: &mut dyn 
                 state.log.push(PhaseReport {
                     phase: "web_retry",
                     actions: vec![format!(
-                        "{redeals} redeal(s): kept C1 {}, routes {}",
-                        kept.c1, kept.routes_in_band,
+                        "{redeals} redeal(s): kept C1 {}, routes {}, forts {}/{}",
+                        kept.c1,
+                        kept.routes_in_band,
+                        state.fort_count(),
+                        state.fort_budget,
                     )],
                 });
             }
             return;
         }
-        if best
-            .as_ref()
-            .is_none_or(|(c1, routes, _)| (m.c1, m.routes_in_band) > (*c1, *routes))
-        {
-            best = Some((m.c1, m.routes_in_band, state.snapshot()));
+        let key = (full_forts, m.c1, m.routes_in_band);
+        if best.as_ref().is_none_or(|(k, _)| key > *k) {
+            best = Some((key, state.snapshot()));
         }
         redeals += 1;
         state.restore(&placement);

@@ -1528,3 +1528,52 @@ fn test_builder_output_completable() {
         );
     }
 }
+
+/// Fort-removal watchdog: the Locks phase removes a fortress when NO lock
+/// placement keeps the world completable ("expected rate ~0"). A removed
+/// fort is deleted content (its fortress level leaves the game), so the
+/// rate must actually BE ~0 — this census counts, over the full shaped
+/// pipeline, every world whose final fort count fell short of its
+/// allotment, plus removal events in any redeal attempt (the log keeps
+/// every attempt's story). `CENSUS_SEEDS` scales (default 200).
+#[test]
+fn test_builder_fort_removal_census() {
+    let Some(raw) = load_rom() else {
+        eprintln!("ROM not found, skipping");
+        return;
+    };
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(200);
+    let mut short_worlds = 0usize;
+    let mut removal_events = 0usize;
+    let mut worlds = 0usize;
+    for seed in 0..seeds {
+        let ctx = census_ctx(&raw, seed);
+        for world_idx in 0..8 {
+            let mut state = ctx.world(world_idx);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            run_shaped_with_web_retries(&mut state, &mut rng);
+            worlds += 1;
+            if state.fort_count() < state.fort_budget {
+                short_worlds += 1;
+                eprintln!(
+                    "seed {seed} W{}: shipped {} of {} allotted forts",
+                    world_idx + 1,
+                    state.fort_count(),
+                    state.fort_budget,
+                );
+            }
+            removal_events += state
+                .log
+                .iter()
+                .flat_map(|r| r.actions.iter())
+                .filter(|a| a.contains("REMOVED"))
+                .count();
+        }
+    }
+    println!(
+        "fort removal census: {short_worlds} short worlds / {worlds}; {removal_events} removal events across all attempts"
+    );
+    // Invariant since the redeal screen gained the full-roster condition:
+    // a removal may occur inside a failed attempt, but never ships.
+    assert_eq!(short_worlds, 0, "worlds shipped short of their fort allotment");
+}
