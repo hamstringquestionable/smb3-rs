@@ -52,12 +52,19 @@
 //!
 //! Moves are judged on the complete world and rolled back on rejection; a
 //! move type that keeps failing escalates past itself ([`ESCALATE_AFTER`]),
-//! so most iterations cost one proposal, not five. Acceptance is deliberately
-//! minimal — routes up (or, for lock re-place, zero-gate down at equal
-//! routes) — with no C1 guard: for the route count to rise, the old
-//! structure must stay within the choice band of the new cheapest route, so
-//! trivializing shortcuts reject themselves. The census C1 column is the
-//! watchdog on that argument.
+//! so most iterations cost one proposal, not five. Acceptance is minimal —
+//! routes up (or, for lock re-place, zero-gate down at equal routes) — PLUS
+//! the floor guard: every choice-mode acceptance requires `after.c1 >=
+//! C1_FLOOR`. The original design had no C1 guard, arguing that for the
+//! route count to rise the old structure must stay within the band of the
+//! new cheapest, so trivializing shortcuts reject themselves. Measured
+//! FALSE (census 2026-07-31): one new pipe can create two brand-new cheap
+//! routes at once — "routes rose" held while C1 crashed 18 -> 5, on ~8% of
+//! all worlds (59% of accepted W7 shortcuts) — and the wreck was silently
+//! repaired by cost mode spending level moves, or by a web redeal blaming
+//! healthy connectivity. With the guard the two modes ratchet: cost mode
+//! may spend routes to buy the floor, choice mode may spend anything BUT
+//! the floor.
 //!
 //! The loop's knobs (the ONLY knobs in v2): [`MOVE_BUDGET`],
 //! [`TARGET_ROUTES`], [`SHORTCUT_TRIES`], [`FORTLOCK_TRIES`],
@@ -207,8 +214,10 @@ fn try_lock_replace(
     let improved = if before.c1 < C1_FLOOR {
         after.c1 > before.c1
     } else {
-        after.routes_in_band > before.routes_in_band
-            || (after.routes_in_band == before.routes_in_band && zero_gate_after < zero_gate_before)
+        (after.routes_in_band > before.routes_in_band
+            || (after.routes_in_band == before.routes_in_band
+                && zero_gate_after < zero_gate_before))
+            && after.c1 >= C1_FLOOR
     };
     let line = format!(
         "routes {} -> {}, C1 {} -> {}, zero-gate {zero_gate_before} -> {zero_gate_after}",
@@ -224,7 +233,10 @@ fn try_lock_replace(
 
 /// The topology rung: spend one pipe pair AND re-place all locks as a single
 /// bundle, judged together on the finished world. Accept iff routes rise —
-/// the shortcut must become a gated alternative, not an ungated express.
+/// the shortcut must become a gated alternative, not an ungated express —
+/// AND the floor holds: a pair can manufacture two brand-new cheap routes,
+/// so "routes rose" alone passed while C1 crashed sub-floor (the measured
+/// crash mode, 59% of accepted W7 shortcuts before the guard).
 ///
 /// Proposal seeding was tried and REVERTED (census-measured, 100 seeds):
 /// a pipe-only measurement pre-screen ("skip pairs whose pipe changes
@@ -262,7 +274,7 @@ fn try_gated_shortcut(
         // Shortcut moves only run above the floor — no goal gate wanted.
         if place_locks_gating(state, rng, false) {
             let after = measure_world(state);
-            if after.routes_in_band > before.routes_in_band {
+            if after.routes_in_band > before.routes_in_band && after.c1 >= C1_FLOOR {
                 return Ok(format!(
                     "gated_shortcut ACCEPT: pipe {a:?} <-> {b:?}, routes {} -> {}, C1 {} -> {}",
                     before.routes_in_band, after.routes_in_band, before.c1, after.c1,
@@ -338,7 +350,7 @@ fn try_fort_lock(
                 let improved = if before.c1 < C1_FLOOR {
                     after.c1 > before.c1
                 } else {
-                    after.routes_in_band > before.routes_in_band
+                    after.routes_in_band > before.routes_in_band && after.c1 >= C1_FLOOR
                 };
                 if improved {
                     return Ok(format!(
@@ -418,8 +430,9 @@ fn try_level_move(
         let improved = if before.c1 < C1_FLOOR {
             after.c1 > before.c1
         } else {
-            after.routes_in_band > before.routes_in_band
-                || (after.routes_in_band == before.routes_in_band && after.c1 > before.c1)
+            (after.routes_in_band > before.routes_in_band
+                || (after.routes_in_band == before.routes_in_band && after.c1 > before.c1))
+                && after.c1 >= C1_FLOOR
         };
         if improved {
             return Ok(format!(
