@@ -1,10 +1,12 @@
 //! Locks phase — one lock (map gap) per fortress, uniform-random placement.
 //!
-//! KNOB-FREE: for each fort id, candidate tiles are shuffled and the first
-//! one that keeps the world completable wins. No chokepoint scoring, no
-//! golden-site hunt, no gate duty — the census measures what random locks
-//! gate (including how often the answer is "nothing"), and the shaping
-//! controls get argued from those numbers.
+//! KNOB-FREE, with one earned aesthetic preference: for each fort id,
+//! candidate tiles are shuffled, BRIDGES float to the front (see
+//! [`BRIDGE_TILES`] — locks belong at water crossings, vanilla's drawbridge
+//! instinct), and the first candidate that keeps the world completable
+//! wins. No chokepoint scoring, no golden-site hunt, no gate duty — the
+//! census measures what random locks gate (including how often the answer
+//! is "nothing"), and the shaping controls get argued from those numbers.
 //!
 //! Hard invariants (true safety, per the charter):
 //!
@@ -50,6 +52,7 @@ impl Phase for Locks {
         for fort_id in fort_ids {
             let mut candidates = lock_candidates(state);
             candidates.shuffle(rng);
+            prefer_bridges(&mut candidates);
 
             let mut placed = false;
             let tried = candidates.len();
@@ -142,6 +145,7 @@ pub(crate) fn ensure_secret_exit_safe(
             let original = state.locks[li].clone();
             let mut candidates = lock_candidates(state);
             candidates.shuffle(rng);
+            prefer_bridges(&mut candidates);
             for (pos, tile) in candidates {
                 state.locks[li] = LockAssignment {
                     pos,
@@ -224,6 +228,7 @@ pub(crate) fn place_locks_gating(
     for fort_id in fort_ids {
         let mut candidates = lock_candidates(state);
         candidates.shuffle(rng);
+        prefer_bridges(&mut candidates);
 
         let mut placed = false;
         'passes: for pass in [LockPass::GoalGate, LockPass::AnyGate, LockPass::Any] {
@@ -271,6 +276,20 @@ pub(crate) fn place_locks_gating(
         }
     }
     true
+}
+
+/// Bridge-class path tiles: the water bridge and the two drawbridges. Locks
+/// PREFER these — a water crossing is vanilla's natural lock site (the
+/// drawbridge) and usually a true chokepoint. Applied as a stable sort
+/// after the candidate shuffle, so bridges win ties WITHIN an admission
+/// pass without overriding pass semantics (a goal-gating plain tile still
+/// beats a non-gating bridge).
+const BRIDGE_TILES: [u8; 3] = [0xB3, 0xB1, 0xB2];
+
+/// Shuffled candidates, bridges floated to the front (stable — the shuffled
+/// order is kept within each group).
+fn prefer_bridges(candidates: &mut [(Pos, u8)]) {
+    candidates.sort_by_key(|&(_, tile)| !BRIDGE_TILES.contains(&tile));
 }
 
 /// Tiles a lock may claim: lockable path-tile types (the kinds the FX engine

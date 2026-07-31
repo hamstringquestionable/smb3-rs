@@ -1577,3 +1577,51 @@ fn test_builder_fort_removal_census() {
     // a removal may occur inside a failed attempt, but never ships.
     assert_eq!(short_worlds, 0, "worlds shipped short of their fort allotment");
 }
+
+/// TEMP: how often do locks land on bridge-class tiles (water bridge 0xB3,
+/// drawbridges 0xB1/0xB2) today, and how often does a world have at least
+/// one bridge tile available?
+#[test]
+fn test_builder_bridge_lock_rate() {
+    let Some(raw) = load_rom() else {
+        eprintln!("ROM not found, skipping");
+        return;
+    };
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(300);
+    const BRIDGE: [u8; 3] = [0xB3, 0xB1, 0xB2];
+    let mut bridge_locks = [0usize; 8];
+    let mut total_locks = [0usize; 8];
+    let mut worlds_with_bridge_tile = [0usize; 8];
+    for seed in 0..seeds {
+        let ctx = census_ctx(&raw, seed);
+        for world_idx in 0..8 {
+            let mut state = ctx.world(world_idx);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            run_shaped_with_web_retries(&mut state, &mut rng);
+            total_locks[world_idx] += state.locks.len();
+            bridge_locks[world_idx] += state
+                .locks
+                .iter()
+                .filter(|l| BRIDGE.contains(&l.replace_tile))
+                .count();
+            let has_bridge = (0..state.grid.rows()).any(|r| {
+                (0..state.grid.cols).any(|c| BRIDGE.contains(&state.grid.get(r, c)))
+            });
+            if has_bridge {
+                worlds_with_bridge_tile[world_idx] += 1;
+            }
+        }
+    }
+    println!("bridge-lock rate over {seeds} seeds (bridge tiles 0xB3/0xB1/0xB2):");
+    for w in 0..8 {
+        println!(
+            "  W{}: {}/{} locks on bridges ({:.1}%), bridge tiles present in {}/{} seeds",
+            w + 1,
+            bridge_locks[w],
+            total_locks[w],
+            100.0 * bridge_locks[w] as f64 / total_locks[w].max(1) as f64,
+            worlds_with_bridge_tile[w],
+            seeds,
+        );
+    }
+}
