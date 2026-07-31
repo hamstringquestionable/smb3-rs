@@ -6,13 +6,16 @@
 //!
 //! Guarded toss, route-seeking: for each remaining pair, up to
 //! [`SPARE_TRIES`] uniform candidate pairs are measured on the finished
-//! world and preferred in tiers — a pair that CREATES a distinct route
-//! (in the band, or anywhere within the wide [`SHAPING_SLACK`] window,
-//! same doctrine as the shortcut rung: parity is refinement's job) beats a
-//! merely harmless pair (floor + routes kept), which beats the best
-//! (floor-clamped C1, routes) fallback — which is placed anyway: placement
-//! is mandatory. The final floor screen is the web-redeal wrapper: a world
-//! whose spares can only crash the floor redeals its whole web.
+//! world and preferred in tiers — a pair that CREATES an in-band route
+//! beats a merely harmless pair (floor + routes kept), which beats the
+//! best (floor-clamped C1, routes) fallback — which is placed anyway:
+//! placement is mandatory. No wide-window tier here, deliberately: spares
+//! run after the shaping loop, so a wide route would never receive the
+//! parity trims — measured near-inert (~1pt W7 noalt) for a large share
+//! of the phase's measurement cost (the shortcut rung keeps its wide
+//! accept; refinement follows it there). The final floor screen is the
+//! web-redeal wrapper: a world whose spares can only crash the floor
+//! redeals its whole web.
 //!
 //! Runs LAST in the shaped pipeline (after shaping): spares must not eat
 //! the budget headroom the gated-shortcut rung draws on, and the guard
@@ -61,8 +64,6 @@ impl Phase for SparePipes {
             }
 
             let before = measure_world(state);
-            let wide_before =
-                analyze_route_choice(&state.to_built(), SHAPING_SLACK).routes.len();
             let mut creator: Option<(Pos, Pos)> = None;
             let mut harmless: Option<(Pos, Pos)> = None;
             // Fallback ranking: reach the floor first, then routes, then C1.
@@ -75,26 +76,16 @@ impl Phase for SparePipes {
                 }
                 state.add_pipe_pair(a, b);
                 let m = measure_world(state);
+                state.pop_pipe_pair();
                 if m.c1 >= C1_FLOOR && m.routes_in_band >= before.routes_in_band {
-                    // In-band creation wins outright; a wide-window route is
-                    // kept structure the loop's trims can refine later.
                     if m.routes_in_band > before.routes_in_band {
                         creator = Some((a, b));
-                        state.pop_pipe_pair();
                         break;
-                    }
-                    if creator.is_none() {
-                        let wide_after =
-                            analyze_route_choice(&state.to_built(), SHAPING_SLACK).routes.len();
-                        if wide_after > wide_before {
-                            creator = Some((a, b));
-                        }
                     }
                     if harmless.is_none() {
                         harmless = Some((a, b));
                     }
                 }
-                state.pop_pipe_pair();
                 let key = (m.c1.min(C1_FLOOR), m.routes_in_band, m.c1);
                 if best.as_ref().is_none_or(|(k, _)| key > *k) {
                     best = Some((key, (a, b)));
@@ -107,9 +98,8 @@ impl Phase for SparePipes {
             state.add_pipe_pair(a, b);
             placed_any = true;
             let after = measure_world(state);
-            let wide_after = analyze_route_choice(&state.to_built(), SHAPING_SLACK).routes.len();
             actions.push(format!(
-                "pipe {a:?} <-> {b:?}: routes {} -> {}, wide {wide_before} -> {wide_after}, C1 {} -> {}",
+                "pipe {a:?} <-> {b:?}: routes {} -> {}, C1 {} -> {}",
                 before.routes_in_band, after.routes_in_band, before.c1, after.c1,
             ));
         }
