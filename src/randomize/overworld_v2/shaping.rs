@@ -16,8 +16,12 @@
 //!   band is relative to C1, so choice shaped on a trivial trunk is trivial
 //!   too. Every rung except the shortcut (pipes only cheapen) stays
 //!   available regardless of route count, and every acceptance switches to
-//!   "C1 rose without losing routes". Only once the floor holds does the
-//!   loop shape choice.
+//!   "C1 rose" — routes may be SPENT: gating an express collapses its
+//!   variants into one route, so demanding "routes not down" vetoes the one
+//!   working move (the W4 sub-floor tail was exactly this refusal, census
+//!   2026-07-31). Satisfaction still demands routes ≥ 2, so the choice
+//!   ladder re-earns above the floor what cost mode spent below it. Only
+//!   once the floor holds does the loop shape choice.
 //! - **Linear with lock ammunition** (zero-gate locks, or detour structure a
 //!   trunk gate could pull into the band): **lock re-place** — the cheapest
 //!   rung. Re-runs lock placement from scratch via `place_locks_gating`
@@ -197,9 +201,11 @@ fn try_lock_replace(
     }
     let after = measure_world(state);
     let zero_gate_after = state.zero_gate_locks().len();
-    // Below the floor, cost first: accept iff C1 rose without losing routes.
+    // Below the floor, cost first: accept iff C1 rose. Routes may drop — a
+    // goal gate collapses the express variants it prices up, and the choice
+    // ladder re-earns routes once the floor holds.
     let improved = if before.c1 < C1_FLOOR {
-        after.c1 > before.c1 && after.routes_in_band >= before.routes_in_band
+        after.c1 > before.c1
     } else {
         after.routes_in_band > before.routes_in_band
             || (after.routes_in_band == before.routes_in_band && zero_gate_after < zero_gate_before)
@@ -327,10 +333,10 @@ fn try_fort_lock(
             evals += 1;
             if place_locks_gating(state, rng, before.c1 < C1_FLOOR) {
                 let after = measure_world(state);
-                // Below the floor: any relocation that raises C1 without
-                // losing routes is progress. Above: routes must rise.
+                // Below the floor: any relocation that raises C1 is
+                // progress (routes may be spent). Above: routes must rise.
                 let improved = if before.c1 < C1_FLOOR {
-                    after.c1 > before.c1 && after.routes_in_band >= before.routes_in_band
+                    after.c1 > before.c1
                 } else {
                     after.routes_in_band > before.routes_in_band
                 };
@@ -407,10 +413,10 @@ fn try_level_move(
         state.slots[si].pos = target;
         evals += 1;
         let after = measure_world(state);
-        // Below the floor: C1 progress without losing routes. Above: routes
+        // Below the floor: C1 progress (routes may be spent). Above: routes
         // up, or the fine +3 trim at flat routes.
         let improved = if before.c1 < C1_FLOOR {
-            after.c1 > before.c1 && after.routes_in_band >= before.routes_in_band
+            after.c1 > before.c1
         } else {
             after.routes_in_band > before.routes_in_band
                 || (after.routes_in_band == before.routes_in_band && after.c1 > before.c1)
@@ -440,7 +446,7 @@ fn try_level_move(
 /// goal must still be walk-reachable — the "new spot must be walkable from
 /// the old one" condition in its chain-safe form. Locks are re-placed on
 /// the new topology (goal-first) and the bundle is judged whole; accept on
-/// the cost rule (C1 up, routes not down). Pairs with a mouth on the
+/// the cost rule (C1 up; routes may be spent). Pairs with a mouth on the
 /// cheapest route are proposed first — trunk mouths are the express
 /// carriers.
 fn try_pipe_move(
@@ -507,7 +513,7 @@ fn try_pipe_move(
 
             if all_content_reachable(state) && place_locks_gating(state, rng, true) {
                 let after = measure_world(state);
-                if after.c1 > before.c1 && after.routes_in_band >= before.routes_in_band {
+                if after.c1 > before.c1 {
                     return Ok(format!(
                         "pipe_move ACCEPT: mouth {old:?} -> {new_pos:?} (pair with {keep:?}), routes {} -> {}, C1 {} -> {}",
                         before.routes_in_band, after.routes_in_band, before.c1, after.c1,
