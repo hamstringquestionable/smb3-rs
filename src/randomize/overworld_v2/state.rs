@@ -192,6 +192,42 @@ impl WorldState {
         }
     }
 
+    /// Capture everything the placement phases decide — the undo unit for
+    /// whole-attempt rollback (the pipe-web redeal).
+    pub(crate) fn snapshot(&self) -> WorldSnapshot {
+        WorldSnapshot {
+            grid: self.grid.clone(),
+            slots: self.slots.clone(),
+            locks: self.locks.clone(),
+            pipe_pairs: self.pipe_pairs.clone(),
+        }
+    }
+
+    /// Restore a [`snapshot`](Self::snapshot). The log is untouched — every
+    /// attempt's story stays on record.
+    pub(crate) fn restore(&mut self, snap: &WorldSnapshot) {
+        self.grid = snap.grid.clone();
+        self.slots = snap.slots.clone();
+        self.locks = snap.locks.clone();
+        self.pipe_pairs = snap.pipe_pairs.clone();
+    }
+
+    /// Remove the entire pipe web: every pair, every Pipe slot, every pipe
+    /// tile restored to its theme blank. Levels, forts, and locks are
+    /// untouched. The freed endpoints return to the blank pool, so a
+    /// re-run of connectivity always has at least the old mouth as an
+    /// island candidate — a redeal can never strand an island the old web
+    /// bridged.
+    pub(crate) fn pickup_pipes(&mut self) {
+        for (a, b) in std::mem::take(&mut self.pipe_pairs) {
+            for pos in [a, b] {
+                let blank = blank_tile_for(&self.grid, self.world_idx, pos.0, pos.1);
+                self.grid.set(pos.0, pos.1, blank);
+            }
+        }
+        self.slots.retain(|s| s.kind != SlotKind::Pipe);
+    }
+
     /// View this state as a `BuiltWorld` so the shipping builder's route
     /// scorer (and every census metric built on it) can measure it. This is
     /// the "same measuring stick" bridge — v2 never re-implements scoring.
@@ -206,6 +242,15 @@ impl WorldState {
             hb_sprites: Vec::new(),
         }
     }
+}
+
+/// One attempt's placement decisions, for whole-attempt rollback. Produced
+/// by [`WorldState::snapshot`], consumed by [`WorldState::restore`].
+pub(crate) struct WorldSnapshot {
+    grid: Grid,
+    slots: Vec<SlotAssignment>,
+    locks: Vec<LockAssignment>,
+    pipe_pairs: Vec<TeleportEdge>,
 }
 
 /// The cell sharing `pos`'s completion bit: (8,c) for (7,c) and vice versa.

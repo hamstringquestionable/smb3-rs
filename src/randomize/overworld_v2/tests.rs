@@ -744,6 +744,7 @@ fn test_v2_shaping_census() {
     let mut lm_rej = [0usize; 8];
     let mut pm_acc = [0usize; 8];
     let mut pm_rej = [0usize; 8];
+    let mut redeals = [0usize; 8];
     let mut time_dumb = std::time::Duration::ZERO;
     let mut time_shaped = std::time::Duration::ZERO;
 
@@ -764,11 +765,7 @@ fn test_v2_shaping_census() {
             let mut state = ctx.world(world_idx);
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let t0 = std::time::Instant::now();
-            run_schedule(
-                &mut state,
-                &[&Connectivity, &Levels, &Forts, &Locks, &Shaping],
-                &mut rng,
-            );
+            run_shaped_with_web_retries(&mut state, &mut rng);
             time_shaped += t0.elapsed();
             assert!(
                 state.completable(),
@@ -783,13 +780,18 @@ fn test_v2_shaping_census() {
             );
             tally(&mut shaped[world_idx], &state);
 
-            let report = state
-                .log
-                .iter()
-                .find(|r| r.phase == "shaping")
-                .expect("shaping always reports");
-            let count =
-                |needle: &str| report.actions.iter().filter(|a| a.contains(needle)).count();
+            // A web redeal re-runs the shaping phase, so counts aggregate
+            // over every attempt's report; redeals = attempts - 1.
+            let shaping_reports =
+                || state.log.iter().filter(|r| r.phase == "shaping");
+            assert!(shaping_reports().count() > 0, "shaping always reports");
+            redeals[world_idx] += shaping_reports().count() - 1;
+            let count = |needle: &str| {
+                shaping_reports()
+                    .flat_map(|r| r.actions.iter())
+                    .filter(|a| a.contains(needle))
+                    .count()
+            };
             let la = count("lock_replace ACCEPT");
             let ga = count("gated_shortcut ACCEPT");
             let fa = count("fort_lock ACCEPT");
@@ -812,7 +814,7 @@ fn test_v2_shaping_census() {
     }
 
     println!("v2 shaping A/B census ({seeds} seeds, dumb skeleton vs diagnosis-driven shaping, flag-mix arms)");
-    println!("world  arm     C1(mean)  C1min  C1<12%  routes  linear%  zero-gate%  goal-open%  pipes  touched%  lr(acc:rej)  gs(acc:rej)  fl(acc:rej)  lm(acc:rej)  pm(acc:rej)");
+    println!("world  arm     C1(mean)  C1min  C1<12%  routes  linear%  zero-gate%  goal-open%  pipes  touched%  lr(acc:rej)  gs(acc:rej)  fl(acc:rej)  lm(acc:rej)  pm(acc:rej)  redeals");
     let n = seeds as f64;
     for world_idx in 0..8 {
         for (arm, t) in [("dumb", &dumb[world_idx]), ("shaped", &shaped[world_idx])] {
@@ -830,7 +832,7 @@ fn test_v2_shaping_census() {
             );
             if arm == "shaped" {
                 println!(
-                    "{base} {:>7.0}% {:>8}:{:<4} {:>6}:{:<4} {:>6}:{:<4} {:>6}:{:<4} {:>6}:{:<4}",
+                    "{base} {:>7.0}% {:>8}:{:<4} {:>6}:{:<4} {:>6}:{:<4} {:>6}:{:<4} {:>6}:{:<4} {:>6}",
                     100.0 * touched[world_idx] as f64 / n,
                     lr_acc[world_idx],
                     lr_rej[world_idx],
@@ -842,9 +844,10 @@ fn test_v2_shaping_census() {
                     lm_rej[world_idx],
                     pm_acc[world_idx],
                     pm_rej[world_idx],
+                    redeals[world_idx],
                 );
             } else {
-                println!("{base}        -        -         -         -         -         -");
+                println!("{base}        -        -         -         -         -         -        -");
             }
         }
     }
@@ -951,11 +954,7 @@ fn test_v2_progression_census() {
 
             let mut state = ctx.world(world_idx);
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            run_schedule(
-                &mut state,
-                &[&Connectivity, &Levels, &Forts, &Locks, &Shaping],
-                &mut rng,
-            );
+            run_shaped_with_web_retries(&mut state, &mut rng);
             tally(&mut shaped[world_idx], &state.to_built());
         }
     }
@@ -1013,9 +1012,7 @@ fn test_v2_secret_exit_safety() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
 
-    let dumb: &[&dyn Phase] = &[&Connectivity, &Levels, &SparePipes, &Forts, &Locks];
-    let shaped: &[&dyn Phase] = &[&Connectivity, &Levels, &Forts, &Locks, &Shaping];
-    for (arm, schedule) in [("dumb", dumb), ("shaped", shaped)] {
+    for arm in ["dumb", "shaped"] {
         let mut natural = 0usize;
         let mut relocated = 0usize;
         for seed in 0..seeds {
@@ -1024,7 +1021,15 @@ fn test_v2_secret_exit_safety() {
             let mut worlds: Vec<WorldState> = (0..8)
                 .map(|world_idx| {
                     let mut state = ctx.world(world_idx);
-                    run_schedule(&mut state, schedule, &mut rng);
+                    if arm == "dumb" {
+                        run_schedule(
+                            &mut state,
+                            &[&Connectivity, &Levels, &SparePipes, &Forts, &Locks],
+                            &mut rng,
+                        );
+                    } else {
+                        run_shaped_with_web_retries(&mut state, &mut rng);
+                    }
                     state
                 })
                 .collect();
@@ -1253,11 +1258,7 @@ fn test_v2_diversity_census() {
             .map(|seed| {
                 let mut state = budgeted_world(seed);
                 let mut rng = ChaCha8Rng::seed_from_u64(seed);
-                run_schedule(
-                    &mut state,
-                    &[&Connectivity, &Levels, &Forts, &Locks, &Shaping],
-                    &mut rng,
-                );
+                run_shaped_with_web_retries(&mut state, &mut rng);
                 SeedShape::of(&state)
             })
             .collect();

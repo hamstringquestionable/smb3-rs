@@ -66,3 +66,61 @@ pub(crate) use shaping::Shaping;
 pub(crate) use spare_pipes::SparePipes;
 pub(crate) use sources::{allot_budgets, from_built, from_pickup, from_vanilla};
 pub(crate) use state::{Phase, PhaseReport, WorldState, row78_partner, run_schedule};
+
+/// Pipe-web redeals allowed beyond the first attempt when the finished
+/// world ends below the C1 floor. Retries fire only on the few percent of
+/// worlds that finish sub-floor, so the cost is a handful of extra shaped
+/// runs per hundred seeds — census-watched, like everything else.
+pub(crate) const WEB_RETRIES: usize = 4;
+
+/// The full shaped pipeline with pipe-web redeals — the answer to the
+/// sub-floor tail (2026-07-31 diagnosis). A world that finishes below the
+/// C1 floor is almost always one unlucky connectivity draw: a bridge mouth
+/// cheap from the start turns the goal into a 1-2 pipe express, and no
+/// shaping move can price a trunk that short (the SAS-swapped W4/W7 goals —
+/// a former start pocket, two tiny walk-arms, two mandatory bridges — are
+/// where the draw goes bad ~1 seed in 9). No placement bias and no repair
+/// move: restore the placement, pick up the pipe web ONLY (levels and forts
+/// keep their spots — layout diversity is the scarcest currency), and
+/// redeal connectivity + locks + shaping on a fresh uniform web. Screen the
+/// outcome, not the proposal. If every attempt ends sub-floor, the best by
+/// (C1, routes in band) is kept.
+pub(crate) fn run_shaped_with_web_retries(state: &mut WorldState, rng: &mut dyn RngCore) {
+    run_schedule(state, &[&Connectivity, &Levels, &Forts], rng);
+    let placement = state.snapshot();
+    run_schedule(state, &[&Locks, &Shaping], rng);
+
+    let mut best: Option<(u32, usize, state::WorldSnapshot)> = None;
+    let mut redeals = 0usize;
+    loop {
+        let m = measure_world(state);
+        if m.c1 >= C1_FLOOR || redeals >= WEB_RETRIES {
+            if let Some((c1, routes, snap)) = &best
+                && (m.c1, m.routes_in_band) < (*c1, *routes)
+            {
+                state.restore(snap);
+            }
+            if redeals > 0 {
+                let kept = measure_world(state);
+                state.log.push(PhaseReport {
+                    phase: "web_retry",
+                    actions: vec![format!(
+                        "{redeals} redeal(s): kept C1 {}, routes {}",
+                        kept.c1, kept.routes_in_band,
+                    )],
+                });
+            }
+            return;
+        }
+        if best
+            .as_ref()
+            .is_none_or(|(c1, routes, _)| (m.c1, m.routes_in_band) > (*c1, *routes))
+        {
+            best = Some((m.c1, m.routes_in_band, state.snapshot()));
+        }
+        redeals += 1;
+        state.restore(&placement);
+        state.pickup_pipes();
+        run_schedule(state, &[&Connectivity, &Locks, &Shaping], rng);
+    }
+}
