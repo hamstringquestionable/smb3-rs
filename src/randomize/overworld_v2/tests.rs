@@ -203,85 +203,100 @@ fn test_v2_vanilla_worlds() {
     }
 }
 
-/// Measure current-builder output through the v2 harness — the baseline
-/// table v2 phases will be compared against. Seeds via `V2_SEEDS` (default
-/// 20). Base QOL arm, no start↔airship swap: the simplest production-like
-/// configuration.
+/// Measure SHIPPING-builder output through the v2 harness — the baseline
+/// table v2 is compared against, on the SAME flag mix as the v2 censuses
+/// (see [`census_ctx`]: QOL arms, SAS 50/50 per world, toad-house /
+/// hammer-bro rolls) and the same metric columns as the shaping census.
+/// Seeds via `V2_SEEDS` (default 20).
 #[test]
 fn test_v2_current_builder_worlds() {
-    let Some(rom) = load_rom() else {
+    let Some(raw) = load_rom() else {
         eprintln!("ROM not found, skipping");
         return;
     };
-    let rom = base_qol(&rom);
     let seeds: u64 = std::env::var("V2_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(20);
 
-    let catalog = NodeCatalog::build(&rom, false);
-    let pickup = pick_up(
-        &rom,
-        &catalog,
-        PickupFlags { shuffle_spade_games: true, ..Default::default() },
-    );
-
-    let mut linear_per_world = [0usize; 8];
-    let mut c1_min = u32::MAX;
-    let mut c1_sum: u64 = 0;
-    let mut route_sum: u64 = 0;
-    let mut goal_open_worlds = 0usize;
-    let mut world_count = 0usize;
+    #[derive(Default, Clone, Copy)]
+    struct Tally {
+        c1: u64,
+        c1_min: u32,
+        cheap: usize,
+        routes: usize,
+        linear: usize,
+        uniq_sum: f64,
+        multi: usize,
+        gap_sum: u64,
+        gapped: usize,
+        noalt: usize,
+        goal_open: usize,
+    }
+    let mut tallies = [Tally { c1_min: u32::MAX, ..Default::default() }; 8];
 
     for seed in 0..seeds {
+        let ctx = census_ctx(&raw, seed);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let result = build(
-            &rom,
-            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &ctx.rom,
+            &OverworldData { pickup: &ctx.pickup, catalog: &ctx.catalog },
             &mut rng,
-            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+            ctx.flags,
         );
         for built in &result.worlds {
             let state = from_built(built);
-            let measure = measure_world(&state);
+            let m = measure_world(&state);
             assert!(
-                measure.reachable,
+                m.reachable,
                 "seed {} W{} goal must be reachable",
                 seed,
                 built.world_idx + 1
             );
-            if measure.routes_in_band < 2 {
-                linear_per_world[built.world_idx] += 1;
+            let t = &mut tallies[built.world_idx];
+            t.c1 += u64::from(m.c1);
+            t.c1_min = t.c1_min.min(m.c1);
+            if m.c1 < 12 {
+                t.cheap += 1;
             }
-            c1_min = c1_min.min(measure.c1);
-            c1_sum += u64::from(measure.c1);
-            route_sum += measure.routes_in_band as u64;
-            if measure.goal_open {
-                goal_open_worlds += 1;
+            t.routes += m.routes_in_band;
+            if m.routes_in_band < 2 {
+                t.linear += 1;
+            } else {
+                t.multi += 1;
+                t.uniq_sum += m.mean_exclusive_levels;
             }
-            world_count += 1;
+            let wide = analyze_route_choice(&state.to_built(), SHAPING_SLACK);
+            if wide.routes.len() >= 2 {
+                t.gap_sum += u64::from(wide.routes[1].cost - wide.routes[0].cost);
+                t.gapped += 1;
+            } else {
+                t.noalt += 1;
+            }
+            if m.goal_open {
+                t.goal_open += 1;
+            }
         }
     }
 
-    println!("current builder through the v2 harness ({seeds} seeds, base arm)");
-    println!(
-        "  linear per world: {}",
-        (0..8)
-            .map(|w| format!("W{} {}/{}", w + 1, linear_per_world[w], seeds))
-            .collect::<Vec<_>>()
-            .join("  ")
-    );
-    let linear_total: usize = linear_per_world.iter().sum();
-    println!(
-        "  overall: linear {}/{} ({:.1}%)  mean routes {:.2}  C1 min {}  C1 mean {:.1}  goal-open {}",
-        linear_total,
-        world_count,
-        100.0 * linear_total as f64 / world_count as f64,
-        route_sum as f64 / world_count as f64,
-        c1_min,
-        c1_sum as f64 / world_count as f64,
-        goal_open_worlds,
-    );
+    println!("shipping builder through the v2 harness ({seeds} seeds, flag-mix arms)");
+    println!("world  C1(mean)  C1min  C1<12%  routes  linear%  uniq  C2-C1  noalt%  goal-open%");
+    let n = seeds as f64;
+    for (world_idx, t) in tallies.iter().enumerate() {
+        println!(
+            "  W{}   {:>7.1} {:>6} {:>6.1}% {:>7.2} {:>7.0}% {:>5.2} {:>6.2} {:>6.0}% {:>9.0}%",
+            world_idx + 1,
+            t.c1 as f64 / n,
+            t.c1_min,
+            100.0 * t.cheap as f64 / n,
+            t.routes as f64 / n,
+            100.0 * t.linear as f64 / n,
+            t.uniq_sum / t.multi.max(1) as f64,
+            t.gap_sum as f64 / t.gapped.max(1) as f64,
+            100.0 * t.noalt as f64 / n,
+            100.0 * t.goal_open as f64 / n,
+        );
+    }
 }
 
 /// Connectivity discovery census: run ONLY the connectivity phase on the
