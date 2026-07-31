@@ -129,6 +129,25 @@ impl WorldState {
         self.pipe_pairs.push((a, b));
     }
 
+    /// Locks whose individual closure severs the GOAL (all other locks
+    /// open) — the census's goal-gate count. More than one per world means
+    /// locks are piling onto the goal approach.
+    #[cfg(test)]
+    pub(crate) fn goal_gate_locks(&self) -> usize {
+        let Some(target) = self.target else { return 0 };
+        let mut open = self.grid.clone();
+        stamp_slots(&mut open, &self.slots);
+        self.locks
+            .iter()
+            .filter(|lock| {
+                let mut g = open.clone();
+                g.set(lock.pos.0, lock.pos.1, lock.gap_tile);
+                !walk_reachable(&g, &self.pipe_pairs, self.start, self.world_idx)
+                    .contains(target)
+            })
+            .count()
+    }
+
     /// Locks that gate nothing: with every other lock open, closing this one
     /// walls off not a single node — pure decoration. Returns indices into
     /// `locks`. (Locks are never stamped on the grid, so the grid plus

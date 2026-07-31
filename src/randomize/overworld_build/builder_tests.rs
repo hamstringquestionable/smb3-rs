@@ -719,6 +719,7 @@ fn test_builder_shaping_census() {
         gapped: usize,
         noalt: usize,
         zero_gate: usize,
+        goal_gates: usize,
         locks: usize,
         goal_open: usize,
         pipes: usize,
@@ -738,6 +739,7 @@ fn test_builder_shaping_census() {
                 gapped: 0,
                 noalt: 0,
                 zero_gate: 0,
+                goal_gates: 0,
                 locks: 0,
                 goal_open: 0,
                 pipes: 0,
@@ -770,6 +772,7 @@ fn test_builder_shaping_census() {
             t.goal_open += 1;
         }
         t.zero_gate += state.zero_gate_locks().len();
+        t.goal_gates += state.goal_gate_locks();
         t.locks += state.locks.len();
         t.pipes += state.pipe_pairs.len();
     }
@@ -857,12 +860,12 @@ fn test_builder_shaping_census() {
     }
 
     println!("shaping A/B census ({seeds} seeds, dumb skeleton vs diagnosis-driven shaping, flag-mix arms)");
-    println!("world  arm     C1(mean)  C1min  C1<12%  routes  linear%  uniq  C2-C1  noalt%  zero-gate%  goal-open%  pipes  touched%  lr(acc:rej)  gs(acc:rej)  fl(acc:rej)  lm(acc:rej)  pm(acc:rej)  redeals");
+    println!("world  arm     C1(mean)  C1min  C1<12%  routes  linear%  uniq  C2-C1  noalt%  zero-gate%  gGate  goal-open%  pipes  touched%  lr(acc:rej)  gs(acc:rej)  fl(acc:rej)  lm(acc:rej)  pm(acc:rej)  redeals");
     let n = seeds as f64;
     for world_idx in 0..8 {
         for (arm, t) in [("dumb", &dumb[world_idx]), ("shaped", &shaped[world_idx])] {
             let base = format!(
-                "  W{}   {arm:<7} {:>7.1} {:>6} {:>6.0}% {:>7.2} {:>7.0}% {:>5.2} {:>6.2} {:>6.0}% {:>9.0}% {:>9.0}% {:>6.2}",
+                "  W{}   {arm:<7} {:>7.1} {:>6} {:>6.0}% {:>7.2} {:>7.0}% {:>5.2} {:>6.2} {:>6.0}% {:>9.0}% {:>5.2} {:>9.0}% {:>6.2}",
                 world_idx + 1,
                 t.c1 as f64 / n,
                 t.c1_min,
@@ -873,6 +876,7 @@ fn test_builder_shaping_census() {
                 t.gap_sum as f64 / t.gapped.max(1) as f64,
                 100.0 * t.noalt as f64 / n,
                 100.0 * t.zero_gate as f64 / t.locks.max(1) as f64,
+                t.goal_gates as f64 / n,
                 100.0 * t.goal_open as f64 / n,
                 t.pipes as f64 / n,
             );
