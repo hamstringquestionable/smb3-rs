@@ -39,6 +39,12 @@
 //!   forts, locks, or pipes go; each forced level raises C1 by 3 and widens
 //!   what the band admits, and every accept resets the other rungs'
 //!   exhaustion so they retry into the wider band.
+//! - **Cost mode's last resort — pipe move**: relocate one mouth of an
+//!   existing pipe pair. When the express IS a pipe (no single lockable
+//!   tile cuts the goal, levels out of trunk targets), the mouth itself is
+//!   the only thing left to move. The vacated tile returns to an unclaimed
+//!   blank; global connectivity (every slot + goal reachable) is a hard
+//!   guard.
 //!
 //! Moves are judged on the complete world and rolled back on rejection; a
 //! move type that keeps failing escalates past itself ([`ESCALATE_AFTER`]),
@@ -51,7 +57,7 @@
 //!
 //! The loop's knobs (the ONLY knobs in v2): [`MOVE_BUDGET`],
 //! [`TARGET_ROUTES`], [`SHORTCUT_TRIES`], [`FORTLOCK_TRIES`],
-//! [`LEVELMOVE_TRIES`], [`ESCALATE_AFTER`].
+//! [`LEVELMOVE_TRIES`], [`PIPEMOVE_TRIES`], [`ESCALATE_AFTER`].
 
 use super::*;
 
@@ -70,6 +76,8 @@ const SHORTCUT_TRIES: usize = 4;
 const FORTLOCK_TRIES: usize = 4;
 /// Level relocations tried inside ONE level move (cheap: no lock re-place).
 const LEVELMOVE_TRIES: usize = 4;
+/// Full endpoint-relocation evaluations paid inside ONE pipe move.
+const PIPEMOVE_TRIES: usize = 4;
 /// Consecutive rejections of a move type before escalating past it.
 const ESCALATE_AFTER: usize = 2;
 
@@ -85,8 +93,8 @@ impl Phase for Shaping {
         let mut moves = 0usize;
         let mut accepted = 0usize;
         // Per-rung consecutive-rejection counters, indexed by ladder order:
-        // lock re-place, gated shortcut, fort+lock, level move.
-        let mut rejects = [0usize; 4];
+        // lock re-place, gated shortcut, fort+lock, level move, pipe move.
+        let mut rejects = [0usize; 5];
 
         let status = loop {
             let before = measure_world(state);
@@ -108,7 +116,16 @@ impl Phase for Shaping {
             // on the same `before.c1 < C1_FLOOR` test. Above the floor, the
             // normal choice ladder.
             let available = if cheap {
-                [!state.locks.is_empty(), false, state.fort_count() > 0, true]
+                // The pipe move is the final cost rung: when no lock cuts
+                // the goal and levels run out of trunk targets, the express
+                // itself (a pipe mouth) is what must move.
+                [
+                    !state.locks.is_empty(),
+                    false,
+                    state.fort_count() > 0,
+                    true,
+                    !state.pipe_pairs.is_empty(),
+                ]
             } else {
                 [
                     routes_needy
@@ -117,9 +134,10 @@ impl Phase for Shaping {
                     routes_needy && state.pipe_pairs.len() < state.pipe_budget,
                     routes_needy && state.fort_count() > 0,
                     true, // level move checks its own sources/targets
+                    false, // pipe move is a cost tool only
                 ]
             };
-            let Some(rung) = (0..4)
+            let Some(rung) = (0..5)
                 .find(|&r| available[r] && rejects[r] < ESCALATE_AFTER)
             else {
                 break "stuck: no move available";
@@ -130,12 +148,13 @@ impl Phase for Shaping {
                 0 => try_lock_replace(state, rng, &before, zero_gate),
                 1 => try_gated_shortcut(state, rng, &before),
                 2 => try_fort_lock(state, rng, &before),
-                _ => try_level_move(state, rng, &before),
+                3 => try_level_move(state, rng, &before),
+                _ => try_pipe_move(state, rng, &before),
             };
             match outcome {
                 Ok(line) => {
                     // The world changed — every rung's ammunition is fresh.
-                    rejects = [0; 4];
+                    rejects = [0; 5];
                     accepted += 1;
                     actions.push(line);
                 }
@@ -407,4 +426,112 @@ fn try_level_move(
     Err(format!(
         "level_move REJECT: no on-trunk relocation improves ({evals} evals)",
     ))
+}
+
+/// The pipe-web rung (cost mode only): relocate ONE endpoint of an existing
+/// pipe pair to a fresh blank elsewhere. Owns the residual no other rung
+/// can touch — a sub-floor world whose express IS a pipe mouth (wide goal
+/// approach fed by a pipe, no single lockable tile cuts it): when no lock
+/// placement can price the world up, the mouth itself must move.
+///
+/// The vacated tile returns to being an unclaimed blank (the future
+/// hammer-bro pool), restored to its theme blank via `blank_tile_for`.
+/// Connectivity is enforced globally: after the move, every slot and the
+/// goal must still be walk-reachable — the "new spot must be walkable from
+/// the old one" condition in its chain-safe form. Locks are re-placed on
+/// the new topology (goal-first) and the bundle is judged whole; accept on
+/// the cost rule (C1 up, routes not down). Pairs with a mouth on the
+/// cheapest route are proposed first — trunk mouths are the express
+/// carriers.
+fn try_pipe_move(
+    state: &mut WorldState,
+    rng: &mut dyn RngCore,
+    before: &WorldMeasure,
+) -> Result<String, String> {
+    let saved_grid = state.grid.clone();
+    let saved_slots = state.slots.clone();
+    let saved_locks = state.locks.clone();
+    let saved_pairs = state.pipe_pairs.clone();
+
+    let trunk: HashSet<Pos> = before
+        .rc
+        .routes
+        .first()
+        .map(|r| r.path.iter().copied().collect())
+        .unwrap_or_default();
+
+    let mut pair_indices: Vec<usize> = (0..state.pipe_pairs.len()).collect();
+    pair_indices.shuffle(rng);
+    pair_indices.sort_by_key(|&i| {
+        let (a, b) = state.pipe_pairs[i];
+        !(trunk.contains(&a) || trunk.contains(&b))
+    });
+
+    let mut evals = 0usize;
+    for &pi in &pair_indices {
+        if evals >= PIPEMOVE_TRIES {
+            break;
+        }
+        let (a, b) = saved_pairs[pi];
+        // Move the trunk-side mouth; coin-flip when both or neither qualify.
+        let move_a = match (trunk.contains(&a), trunk.contains(&b)) {
+            (true, false) => true,
+            (false, true) => false,
+            _ => rng.next_u32() & 1 == 0,
+        };
+        let (old, keep) = if move_a { (a, b) } else { (b, a) };
+
+        for _ in 0..2 {
+            if evals >= PIPEMOVE_TRIES {
+                break;
+            }
+            let candidates: Vec<Pos> = state
+                .legal_blanks()
+                .into_iter()
+                .filter(|&p| !state.near_anchor(p))
+                .collect();
+            let Some(&new_pos) = candidates.choose(rng) else { break };
+
+            let blank = blank_tile_for(&state.grid, state.world_idx, old.0, old.1);
+            state.grid.set(old.0, old.1, blank);
+            state.grid.set(new_pos.0, new_pos.1, TILE_PIPE);
+            if let Some(slot) = state
+                .slots
+                .iter_mut()
+                .find(|s| s.kind == SlotKind::Pipe && s.pos == old)
+            {
+                slot.pos = new_pos;
+            }
+            state.pipe_pairs[pi] = if move_a { (new_pos, keep) } else { (keep, new_pos) };
+            evals += 1;
+
+            if all_content_reachable(state) && place_locks_gating(state, rng, true) {
+                let after = measure_world(state);
+                if after.c1 > before.c1 && after.routes_in_band >= before.routes_in_band {
+                    return Ok(format!(
+                        "pipe_move ACCEPT: mouth {old:?} -> {new_pos:?} (pair with {keep:?}), routes {} -> {}, C1 {} -> {}",
+                        before.routes_in_band, after.routes_in_band, before.c1, after.c1,
+                    ));
+                }
+            }
+            state.grid = saved_grid.clone();
+            state.slots = saved_slots.clone();
+            state.locks = saved_locks.clone();
+            state.pipe_pairs = saved_pairs.clone();
+        }
+    }
+    Err(format!(
+        "pipe_move REJECT: no relocation lifts C1 {} ({evals} full evals)",
+        before.c1,
+    ))
+}
+
+/// Every slot and the goal walk-reachable from start on the all-open world
+/// — the global connectivity guard for moves that rewire the pipe web.
+fn all_content_reachable(state: &WorldState) -> bool {
+    let mut g = state.grid.clone();
+    stamp_slots(&mut g, &state.slots);
+    let reach = walk_reachable(&g, &state.pipe_pairs, state.start, state.world_idx);
+    state.slots.iter().all(|s| reach.contains(s.pos))
+        && state.target.is_none_or(|t| reach.contains(t))
 }

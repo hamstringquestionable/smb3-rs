@@ -742,6 +742,8 @@ fn test_v2_shaping_census() {
     let mut fl_rej = [0usize; 8];
     let mut lm_acc = [0usize; 8];
     let mut lm_rej = [0usize; 8];
+    let mut pm_acc = [0usize; 8];
+    let mut pm_rej = [0usize; 8];
     let mut time_dumb = std::time::Duration::ZERO;
     let mut time_shaped = std::time::Duration::ZERO;
 
@@ -792,6 +794,7 @@ fn test_v2_shaping_census() {
             let ga = count("gated_shortcut ACCEPT");
             let fa = count("fort_lock ACCEPT");
             let ma = count("level_move ACCEPT");
+            let pa = count("pipe_move ACCEPT");
             lr_acc[world_idx] += la;
             lr_rej[world_idx] += count("lock_replace REJECT");
             gs_acc[world_idx] += ga;
@@ -800,14 +803,16 @@ fn test_v2_shaping_census() {
             fl_rej[world_idx] += count("fort_lock REJECT");
             lm_acc[world_idx] += ma;
             lm_rej[world_idx] += count("level_move REJECT");
-            if la + ga + fa + ma > 0 {
+            pm_acc[world_idx] += pa;
+            pm_rej[world_idx] += count("pipe_move REJECT");
+            if la + ga + fa + ma + pa > 0 {
                 touched[world_idx] += 1;
             }
         }
     }
 
     println!("v2 shaping A/B census ({seeds} seeds, dumb skeleton vs diagnosis-driven shaping, flag-mix arms)");
-    println!("world  arm     C1(mean)  C1min  C1<12%  routes  linear%  zero-gate%  goal-open%  pipes  touched%  lr(acc:rej)  gs(acc:rej)  fl(acc:rej)  lm(acc:rej)");
+    println!("world  arm     C1(mean)  C1min  C1<12%  routes  linear%  zero-gate%  goal-open%  pipes  touched%  lr(acc:rej)  gs(acc:rej)  fl(acc:rej)  lm(acc:rej)  pm(acc:rej)");
     let n = seeds as f64;
     for world_idx in 0..8 {
         for (arm, t) in [("dumb", &dumb[world_idx]), ("shaped", &shaped[world_idx])] {
@@ -825,7 +830,7 @@ fn test_v2_shaping_census() {
             );
             if arm == "shaped" {
                 println!(
-                    "{base} {:>7.0}% {:>8}:{:<4} {:>6}:{:<4} {:>6}:{:<4} {:>6}:{:<4}",
+                    "{base} {:>7.0}% {:>8}:{:<4} {:>6}:{:<4} {:>6}:{:<4} {:>6}:{:<4} {:>6}:{:<4}",
                     100.0 * touched[world_idx] as f64 / n,
                     lr_acc[world_idx],
                     lr_rej[world_idx],
@@ -835,9 +840,11 @@ fn test_v2_shaping_census() {
                     fl_rej[world_idx],
                     lm_acc[world_idx],
                     lm_rej[world_idx],
+                    pm_acc[world_idx],
+                    pm_rej[world_idx],
                 );
             } else {
-                println!("{base}        -        -         -         -         -");
+                println!("{base}        -        -         -         -         -         -");
             }
         }
     }

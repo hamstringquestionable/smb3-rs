@@ -41,7 +41,7 @@ use super::overworld_build::{
     prepare_capacities, redistribute_fortresses, stamp_slots,
 };
 use super::overworld_helpers::{LOCKABLE_TILES, find_target, gap_tile_for};
-use super::overworld_pickup::PickupResult;
+use super::overworld_pickup::{PickupResult, blank_tile_for};
 use super::rom_data::{self, Grid, Pos, TILE_PIPE, TeleportEdge};
 
 mod connectivity;
