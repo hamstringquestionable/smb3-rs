@@ -36,7 +36,7 @@ use super::map_walker::{Reach, walk_reachable};
 use super::node_catalog::{NodeCatalog, NodeKind};
 use super::overworld_build::{
     BuildFlags, BuiltWorld, C1_FLOOR, CapacityPrep, DEFAULT_SLACK, LEVEL_SPREAD_EXPONENT,
-    LockAssignment, RouteChoice, SlotAssignment, SlotKind, VANILLA_LEVEL_COUNT,
+    LockAssignment, RouteChoice, SHAPING_SLACK, SlotAssignment, SlotKind, VANILLA_LEVEL_COUNT,
     VANILLA_PIPE_PAIRS, analyze_route_choice, distribute_levels, fixed_positions_for_world,
     prepare_capacities, redistribute_fortresses, stamp_slots,
 };

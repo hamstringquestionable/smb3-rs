@@ -690,6 +690,17 @@ fn test_v2_shaping_census() {
         cheap: usize,
         routes: usize,
         linear: usize,
+        // Choice quality, over the seeds that HAVE a choice (>= 2 routes in
+        // the DEFAULT_SLACK band): how many levels the alternatives play
+        // that the cheapest route doesn't.
+        uniq_sum: f64,
+        multi: usize,
+        // Distance to the runner-up, measured in the wide (SHAPING_SLACK)
+        // band so linear worlds report it too: C2 - C1 when a second route
+        // exists within +SHAPING_SLACK, else the seed counts as `noalt`.
+        gap_sum: u64,
+        gapped: usize,
+        noalt: usize,
         zero_gate: usize,
         locks: usize,
         goal_open: usize,
@@ -704,6 +715,11 @@ fn test_v2_shaping_census() {
                 cheap: 0,
                 routes: 0,
                 linear: 0,
+                uniq_sum: 0.0,
+                multi: 0,
+                gap_sum: 0,
+                gapped: 0,
+                noalt: 0,
                 zero_gate: 0,
                 locks: 0,
                 goal_open: 0,
@@ -722,6 +738,16 @@ fn test_v2_shaping_census() {
         t.routes += m.routes_in_band;
         if m.routes_in_band < 2 {
             t.linear += 1;
+        } else {
+            t.multi += 1;
+            t.uniq_sum += m.mean_exclusive_levels;
+        }
+        let wide = analyze_route_choice(&state.to_built(), SHAPING_SLACK);
+        if wide.routes.len() >= 2 {
+            t.gap_sum += u64::from(wide.routes[1].cost - wide.routes[0].cost);
+            t.gapped += 1;
+        } else {
+            t.noalt += 1;
         }
         if m.goal_open {
             t.goal_open += 1;
@@ -814,18 +840,21 @@ fn test_v2_shaping_census() {
     }
 
     println!("v2 shaping A/B census ({seeds} seeds, dumb skeleton vs diagnosis-driven shaping, flag-mix arms)");
-    println!("world  arm     C1(mean)  C1min  C1<12%  routes  linear%  zero-gate%  goal-open%  pipes  touched%  lr(acc:rej)  gs(acc:rej)  fl(acc:rej)  lm(acc:rej)  pm(acc:rej)  redeals");
+    println!("world  arm     C1(mean)  C1min  C1<12%  routes  linear%  uniq  C2-C1  noalt%  zero-gate%  goal-open%  pipes  touched%  lr(acc:rej)  gs(acc:rej)  fl(acc:rej)  lm(acc:rej)  pm(acc:rej)  redeals");
     let n = seeds as f64;
     for world_idx in 0..8 {
         for (arm, t) in [("dumb", &dumb[world_idx]), ("shaped", &shaped[world_idx])] {
             let base = format!(
-                "  W{}   {arm:<7} {:>7.1} {:>6} {:>6.0}% {:>7.2} {:>7.0}% {:>9.0}% {:>9.0}% {:>6.2}",
+                "  W{}   {arm:<7} {:>7.1} {:>6} {:>6.0}% {:>7.2} {:>7.0}% {:>5.2} {:>6.2} {:>6.0}% {:>9.0}% {:>9.0}% {:>6.2}",
                 world_idx + 1,
                 t.c1 as f64 / n,
                 t.c1_min,
                 100.0 * t.cheap as f64 / n,
                 t.routes as f64 / n,
                 100.0 * t.linear as f64 / n,
+                t.uniq_sum / t.multi.max(1) as f64,
+                t.gap_sum as f64 / t.gapped.max(1) as f64,
+                100.0 * t.noalt as f64 / n,
                 100.0 * t.zero_gate as f64 / t.locks.max(1) as f64,
                 100.0 * t.goal_open as f64 / n,
                 t.pipes as f64 / n,

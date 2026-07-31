@@ -63,7 +63,7 @@ pub(crate) use route_choice::{analyze_route_choice, dump_route_choice};
 // world state converts to a `BuiltWorld` so both builders are measured with
 // the same route scorer. Test-only until v2 gains a production caller.
 #[cfg(test)]
-pub(crate) use route_choice::{DEFAULT_SLACK, RouteChoice};
+pub(crate) use route_choice::{DEFAULT_SLACK, RouteChoice, SHAPING_SLACK};
 #[cfg(test)]
 pub(crate) use types::{LockAssignment, stamp_slots};
 #[cfg(test)]
