@@ -929,8 +929,9 @@ fn test_builder_shaping_census() {
 /// threshold). No-hammer analysis, matching the shipping progression census.
 ///
 /// Arms per world: `vanilla` (ground truth, raw ROM, one row), `dumb`
-/// (knob-free skeleton), `shaped` (shaping loop), `shipping` (current
-/// builder) — the latter three all fed the same flag-mix input (see
+/// (knob-free skeleton), `shaped` (shaping loop), `build` (the full
+/// build() entry, promotions included — shaped and build should agree) —
+/// all fed the same flag-mix input (see
 /// [`census_ctx`]). `CENSUS_SEEDS` seeds (default 100).
 #[test]
 fn test_builder_progression_census() {
@@ -1021,7 +1022,7 @@ fn test_builder_progression_census() {
             ("vanilla", &vanilla[world_idx]),
             ("dumb", &dumb[world_idx]),
             ("shaped", &shaped[world_idx]),
-            ("shipping", &shipping[world_idx]),
+            ("build", &shipping[world_idx]),
         ] {
             let n = t.n.max(1) as f64;
             println!(
@@ -1312,7 +1313,7 @@ fn test_builder_diversity_census() {
         for (arm, shapes) in [
             ("dumb", &dumb_shapes),
             ("shaped", &shaped_shapes),
-            ("shipping", shipping_shapes),
+            ("build", shipping_shapes),
         ] {
             let (layout, route, nn_mean, nn_sd, salt_r) = diversity_row(shapes);
             println!(
