@@ -4,12 +4,15 @@
 //! table and the map loses its pipe density), so placement is MANDATORY —
 //! measurement only steers WHERE, never WHETHER.
 //!
-//! Guarded toss: for each remaining pair, up to [`SPARE_TRIES`] uniform
-//! candidate pairs are measured on the finished world. The first that keeps
-//! the C1 floor AND the route count wins; failing that, the first that
-//! keeps the floor; failing that, the best (floor-clamped C1, routes) seen
-//! is placed anyway. The final floor screen is the web-redeal wrapper: a
-//! world whose spares can only crash the floor redeals its whole web.
+//! Guarded toss, route-seeking: for each remaining pair, up to
+//! [`SPARE_TRIES`] uniform candidate pairs are measured on the finished
+//! world and preferred in tiers — a pair that CREATES a distinct route
+//! (in the band, or anywhere within the wide [`SHAPING_SLACK`] window,
+//! same doctrine as the shortcut rung: parity is refinement's job) beats a
+//! merely harmless pair (floor + routes kept), which beats the best
+//! (floor-clamped C1, routes) fallback — which is placed anyway: placement
+//! is mandatory. The final floor screen is the web-redeal wrapper: a world
+//! whose spares can only crash the floor redeals its whole web.
 //!
 //! Runs LAST in the shaped pipeline (after shaping): spares must not eat
 //! the budget headroom the gated-shortcut rung draws on, and the guard
@@ -58,7 +61,10 @@ impl Phase for SparePipes {
             }
 
             let before = measure_world(state);
-            let mut chosen: Option<(Pos, Pos)> = None;
+            let wide_before =
+                analyze_route_choice(&state.to_built(), SHAPING_SLACK).routes.len();
+            let mut creator: Option<(Pos, Pos)> = None;
+            let mut harmless: Option<(Pos, Pos)> = None;
             // Fallback ranking: reach the floor first, then routes, then C1.
             let mut best: Option<(TrialKey, (Pos, Pos))> = None;
             for _ in 0..SPARE_TRIES {
@@ -69,25 +75,41 @@ impl Phase for SparePipes {
                 }
                 state.add_pipe_pair(a, b);
                 let m = measure_world(state);
-                state.pop_pipe_pair();
                 if m.c1 >= C1_FLOOR && m.routes_in_band >= before.routes_in_band {
-                    chosen = Some((a, b));
-                    break;
+                    // In-band creation wins outright; a wide-window route is
+                    // kept structure the loop's trims can refine later.
+                    if m.routes_in_band > before.routes_in_band {
+                        creator = Some((a, b));
+                        state.pop_pipe_pair();
+                        break;
+                    }
+                    if creator.is_none() {
+                        let wide_after =
+                            analyze_route_choice(&state.to_built(), SHAPING_SLACK).routes.len();
+                        if wide_after > wide_before {
+                            creator = Some((a, b));
+                        }
+                    }
+                    if harmless.is_none() {
+                        harmless = Some((a, b));
+                    }
                 }
+                state.pop_pipe_pair();
                 let key = (m.c1.min(C1_FLOOR), m.routes_in_band, m.c1);
                 if best.as_ref().is_none_or(|(k, _)| key > *k) {
                     best = Some((key, (a, b)));
                 }
             }
-            let Some((a, b)) = chosen.or(best.map(|(_, pair)| pair)) else {
+            let Some((a, b)) = creator.or(harmless).or(best.map(|(_, pair)| pair)) else {
                 actions.push("stuck: no candidate pair could be formed".into());
                 break;
             };
             state.add_pipe_pair(a, b);
             placed_any = true;
             let after = measure_world(state);
+            let wide_after = analyze_route_choice(&state.to_built(), SHAPING_SLACK).routes.len();
             actions.push(format!(
-                "pipe {a:?} <-> {b:?}: routes {} -> {}, C1 {} -> {}",
+                "pipe {a:?} <-> {b:?}: routes {} -> {}, wide {wide_before} -> {wide_after}, C1 {} -> {}",
                 before.routes_in_band, after.routes_in_band, before.c1, after.c1,
             ));
         }
