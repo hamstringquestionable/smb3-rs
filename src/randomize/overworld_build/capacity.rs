@@ -2,12 +2,138 @@
 
 use super::*;
 
-use super::pipes::VANILLA_PIPE_PAIRS;
-use super::scoring::is_row78_conflict;
-use super::sections::{completable_positions, find_blank_slots};
 use super::types::{BuiltWorld, CapacityPrep, HbSprite, OverworldData, SlotKind};
 
 pub(super) const SPADE_BUDGET: usize = 19;
+
+/// Number of pipe pairs (not endpoints) per world in the vanilla ROM — each
+/// world's pipe budget.
+pub(crate) const VANILLA_PIPE_PAIRS: [usize; 8] = [
+    0,  // W1
+    1,  // W2
+    3,  // W3
+    2,  // W4
+    2,  // W5 (includes spiral tower)
+    2,  // W6
+    8,  // W7
+    6,  // W8
+];
+
+/// Total action levels distributed across the 8 worlds (the vanilla count).
+pub(crate) const VANILLA_LEVEL_COUNT: usize = 62;
+
+/// Exponent compressing per-world capacity shares when distributing levels
+/// (0.5 = square root: dense worlds can't hoard).
+pub(crate) const LEVEL_SPREAD_EXPONENT: f64 = 0.5;
+
+/// BFS-ordered list of (position, distance) using the canonical `walk_map`.
+///
+/// This is the single source of truth for map traversal — all BFS-dependent
+/// logic must go through here or `walk_map` directly to stay in sync with
+/// canoe edges, pipe teleports, etc.
+pub(crate) fn bfs_ordered(
+    grid: &Grid,
+    pipe_pairs: &[TeleportEdge],
+    start_pos: Option<(usize, usize)>,
+    world_idx: usize,
+) -> Vec<((usize, usize), usize)> {
+    let result = walk_map(grid, pipe_pairs, start_pos, world_idx);
+    let mut ordered: Vec<((usize, usize), usize)> = result
+        .distances
+        .into_iter()
+        .collect();
+    // Sort by distance, then by position for determinism (HashMap has no order).
+    ordered.sort_by_key(|&((r, c), d)| (d, r, c));
+    ordered
+}
+
+/// Returns true if placing a completable tile at `pos` would create a
+/// row 7/8 completion-bit collision. This is a hard game engine constraint
+/// (shared bit $01) that cannot be relaxed.
+pub(super) fn is_row78_conflict(
+    pos: (usize, usize),
+    completable: &HashSet<(usize, usize)>,
+) -> bool {
+    let (r, c) = pos;
+    if r == 7 {
+        completable.contains(&(8, c))
+    } else if r == 8 {
+        completable.contains(&(7, c))
+    } else {
+        false
+    }
+}
+
+/// All blank placement slots on a grid, minus fixed positions.
+pub(super) fn find_blank_slots(
+    grid: &Grid,
+    fixed_positions: &HashSet<(usize, usize)>,
+) -> Vec<(usize, usize)> {
+    let mut blanks = Vec::new();
+    for r in 0..grid.rows() {
+        for c in 0..grid.cols {
+            let pos = (r, c);
+            if fixed_positions.contains(&pos) {
+                continue;
+            }
+            if !rom_data::VALID_BLANK_TILES.contains(&grid.get(r, c)) {
+                continue;
+            }
+            blanks.push(pos);
+        }
+    }
+    blanks
+}
+
+/// Returns true if a tile would be "caught" by the game's
+/// `Map_Reload_with_Completions` routine. Used to seed the completable set
+/// and to prevent lock placement at row 7 when row 8 has a level.
+///
+/// The game checks (in order):
+/// 1. Special tiles: $50, $E8, $E6, $BD, $E0
+/// 2. Fortress: $67, $EB
+/// 3. Page threshold: page0 >= $03, page1 >= $67, page2 >= $BF, page3 >= $E9
+/// 4. Map_Removable_Tiles: $51, $52, $54, $67, $EB, $E4, $56, $9D
+pub(super) fn is_completion_unsafe(tile: u8) -> bool {
+    const SPECIAL: [u8; 5] = [0x50, 0xE8, 0xE6, 0xBD, 0xE0];
+    const REMOVABLE: [u8; 8] = [0x51, 0x52, 0x54, 0x67, 0xEB, 0xE4, 0x56, 0x9D];
+    const THRESHOLDS: [u8; 4] = [0x03, 0x67, 0xBF, 0xE9];
+
+    // 0x67/0xEB/0x6A are also caught by the threshold check below, but kept
+    // explicit here for readability — fortress tiles are the primary case.
+    if SPECIAL.contains(&tile) || tile == 0x67 || tile == 0xEB || tile == 0x6A {
+        return true;
+    }
+    let page = (tile >> 6) as usize;
+    if tile >= THRESHOLDS[page] {
+        return true;
+    }
+    REMOVABLE.contains(&tile)
+}
+
+/// Collect positions whose tile/slot would be "caught" by the game's
+/// completion-check routine — the input to `is_row78_conflict`. This covers
+/// both completion-unsafe grid tiles and placed Level/Fortress/BonusGame slots
+/// (which will be stamped as completion-unsafe tiles by the writer).
+pub(super) fn completable_positions(grid: &Grid, slots: &[SlotAssignment]) -> HashSet<(usize, usize)> {
+    let mut set: HashSet<(usize, usize)> = HashSet::new();
+    for r in 0..grid.rows() {
+        for c in 0..grid.cols {
+            if is_completion_unsafe(grid.get(r, c)) {
+                set.insert((r, c));
+            }
+        }
+    }
+    for s in slots {
+        if matches!(
+            s.kind,
+            SlotKind::Level | SlotKind::Fortress | SlotKind::BonusGame | SlotKind::ToadHouse
+        ) {
+            set.insert(s.pos);
+        }
+    }
+    set
+}
 
 /// Promote HammerBro slots to a target `SlotKind`, distributing picked-up pool
 /// entries of the matching `NodeKind` across worlds in proportion to each
@@ -120,7 +246,7 @@ pub(super) fn promote_hb_slots<R: Rng>(
 /// HammerBro catalog entries are NOT excluded — those blank tiles are valid
 /// placement slots. Only the actual floating sprite positions are excluded
 /// because a numbered level tile under a floating sprite looks wrong.
-pub(super) fn fixed_positions_for_world(
+pub(crate) fn fixed_positions_for_world(
     rom: &Rom,
     catalog: &NodeCatalog,
     world_idx: usize,
@@ -172,7 +298,7 @@ pub(super) fn fixed_positions_for_world(
 /// of grid-blank room and pointer-table room after reserving pipe endpoints and
 /// fortresses — the tighter constraint wins, since assigning more entries than
 /// pointer-table slots would leave blank screens.
-pub(super) fn prepare_capacities(
+pub(crate) fn prepare_capacities(
     rom: &Rom,
     catalog: &NodeCatalog,
     pickup: &PickupResult,
@@ -233,7 +359,7 @@ pub(super) fn prepare_capacities(
 /// same worlds. A world's count never exceeds its capacity; if every world is
 /// at capacity the remainder is dropped (cannot happen for the vanilla total,
 /// whose capacity headroom is large).
-pub(super) fn distribute_levels<R: Rng>(
+pub(crate) fn distribute_levels<R: Rng>(
     capacities: &[usize; 8],
     total: usize,
     exponent: f64,
@@ -278,7 +404,7 @@ pub(super) fn distribute_levels<R: Rng>(
 }
 
 /// Distribute 13 fortresses across W1-W7 (each gets 1-3), W8 keeps 4.
-pub(super) fn redistribute_fortresses<R: Rng>(rng: &mut R) -> [usize; 8] {
+pub(crate) fn redistribute_fortresses<R: Rng>(rng: &mut R) -> [usize; 8] {
     let mut counts = [0usize; 8];
     counts[7] = 4; // W8 always keeps 4
 

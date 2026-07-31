@@ -42,7 +42,7 @@ Never silence a lint by deleting the warning text or globally disabling — the 
 
 Randomization modules follow a **decide then write** pattern. Each feature area has two layers:
 
-1. **Randomization modules** (`overworld_build.rs`, `levels.rs`, etc.) — contain the algorithms that decide *what* to change (BFS placement, shuffle logic, constraint solving). They consume RNG and produce descriptions of changes (new positions, new assignments, etc.).
+1. **Randomization modules** (`overworld_build/`, `levels.rs`, etc.) — contain the algorithms that decide *what* to change (BFS placement, shuffle logic, constraint solving). They consume RNG and produce descriptions of changes (new positions, new assignments, etc.).
 
 2. **Helper modules** (`pipe_helpers.rs`, `overworld_helpers.rs`, `level_helpers.rs`) — contain the mechanical ROM write operations that execute those decisions. These are pure functions that take explicit inputs (positions, indices, tile values) and write to the ROM. They have no randomization logic or decision-making.
 
@@ -69,7 +69,7 @@ src/
     # --- Overworld builder pipeline (catalog → pickup → build → write) ---
     node_catalog.rs    # Phase 1: classify all 340 pointer table entries
     overworld_pickup.rs # Phase 2: clear map, build level/HB pools
-    overworld_build.rs # Phase 3: assign levels to slots, place locks/pipes/HBs
+    overworld_build/   # Phase 3: choice-first builder (placement phases + shaping loop + censuses)
     overworld_writer.rs # Phase 4: write assignments to ROM (pointer tables, FX, map tiles)
     overworld_helpers.rs # Shared overworld write helpers (locks, FX, gap tiles)
     # --- Helper modules (ROM write operations, no RNG) ---
@@ -108,7 +108,7 @@ The overworld builder is the core randomization system, implemented as a four-ph
 
 1. **Catalog** (`node_catalog.rs`) — classifies all 340 pointer table entries across 8 worlds (Level, Fortress, Pipe, HammerBro, ToadHouse, Airship, Bowser, etc.)
 2. **Pickup** (`overworld_pickup.rs`) — clears the map to blank path tiles, builds a shuffleable pool of levels and hammer bro encounters, applies theme-aware blank tiles per screen
-3. **Build** (`overworld_build.rs`) — assigns levels to map slots via BFS-ordered placement, places fortresses with locks, distributes pipes, tags remaining blanks as hammer bro slots. Enforces connectivity (secret exit safety, row 7/8 completion bit conflicts, cross-screen FX)
+3. **Build** (`overworld_build/`) — the choice-first builder: per world, knob-free uniform placement phases (connectivity pipes bridge islands → levels → forts → locks) followed by a diagnosis-driven shaping loop (lock re-place, gated shortcut, fort+lock move, level move, pipe move) that guarantees a minimum cheapest-route cost (`C1_FLOOR`) and seeks ≥2 routes in the choice band; a world finishing below the floor redeals its pipe web. Cross-world passes handle secret-exit safety, hammer-bro fill, toad-house/spade promotion. Hard invariants: order-free completability fixpoint, row 7/8 completion-bit rule
 4. **Write** (`overworld_writer.rs`) — single-pass ROM write: updates pointer tables, FX table, pipe destination tables, map tiles, and hammer bro sprite assignments
 
 When the overworld builder is active, `levels.rs` intra-world shuffle and airship shuffle are bypassed since the builder handles them.

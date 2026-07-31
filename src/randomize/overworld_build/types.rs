@@ -53,7 +53,7 @@ pub struct SlotAssignment {
 /// Pipes are already stamped on the build grid and HammerBro slots stay
 /// blank path tiles, so neither needs a stamp. Locks are NOT stamped —
 /// callers model them separately (test grids / conditional edges).
-pub(super) fn stamp_slots(grid: &mut Grid, slots: &[SlotAssignment]) {
+pub(crate) fn stamp_slots(grid: &mut Grid, slots: &[SlotAssignment]) {
     for slot in slots {
         match slot.kind {
             SlotKind::Fortress => grid.set(slot.pos.0, slot.pos.1, TILE_FORTRESS),
@@ -71,16 +71,6 @@ pub(super) fn stamp_slots(grid: &mut Grid, slots: &[SlotAssignment]) {
     }
 }
 
-/// Index of the convertible HammerBro filler slot at `pos`, if any — the
-/// shared lookup for the passes that realize content by flipping fillers
-/// (levels, forts, spare pipes).
-pub(super) fn hb_slot_index(built: &BuiltWorld, pos: Pos) -> Option<usize> {
-    built
-        .slots
-        .iter()
-        .position(|s| s.pos == pos && s.kind == SlotKind::HammerBro)
-}
-
 /// A lock/bridge placed on a path tile.
 #[derive(Clone, Debug)]
 pub(crate) struct LockAssignment {
@@ -96,10 +86,6 @@ pub(crate) struct LockAssignment {
     /// this lock closed. These locks are safe for 1-F (secret exit doesn't
     /// trigger FX replacement).
     pub secret_exit_safe: bool,
-    /// True if this lock makes the target unreachable when closed. Used to
-    /// suppress redundant target-blocking bonuses for subsequent locks in
-    /// the same world (avoids piling multiple locks against the airship).
-    pub blocks_target: bool,
 }
 
 /// A redistributed wandering Hammer Bro sprite decided in the build phase.
@@ -144,19 +130,12 @@ pub(crate) struct BuildResult {
 
 /// Output of [`prepare_capacities`]: the per-world grids the builder walks, the
 /// fixed-position sets, and the derived level capacity per world.
-pub(super) struct CapacityPrep {
+// Reason: production consumes only `capacities` (via allot_budgets); the
+// grids and fixed sets are read by the distribution-tuning tests, which must
+// compute capacity exactly as production does.
+#[allow(dead_code)]
+pub(crate) struct CapacityPrep {
     pub(super) patched_grids: Vec<Grid>,
     pub(super) fixed_positions: Vec<HashSet<(usize, usize)>>,
-    pub(super) capacities: [usize; 8],
-}
-
-/// Per-world numeric budgets passed into `build_world`. All five fields are
-/// computed in `build()` from pickup capacity, vanilla pipe counts, and the
-/// redistributed fortress counts.
-pub(super) struct WorldSlotCounts {
-    pub(super) fort_count: usize,
-    pub(super) level_count: usize,
-    pub(super) pipe_pair_count: usize,
-    pub(super) max_non_pipe_slots: usize,
-    pub(super) force_safe: bool,
+    pub(crate) capacities: [usize; 8],
 }
