@@ -170,7 +170,9 @@ fn try_lock_replace(
     zero_gate_before: usize,
 ) -> Result<String, String> {
     let saved = state.locks.clone();
-    if !place_locks_gating(state, rng) {
+    // Below the floor, ask for a goal gate: the pipe-proof cut that raises
+    // C1 when nothing else does.
+    if !place_locks_gating(state, rng, before.c1 < C1_FLOOR) {
         state.locks = saved;
         return Err("lock_replace REJECT: could not lock every fort".into());
     }
@@ -232,7 +234,8 @@ fn try_gated_shortcut(
             continue;
         }
         state.add_pipe_pair(a, b);
-        if place_locks_gating(state, rng) {
+        // Shortcut moves only run above the floor — no goal gate wanted.
+        if place_locks_gating(state, rng, false) {
             let after = measure_world(state);
             if after.routes_in_band > before.routes_in_band {
                 return Ok(format!(
@@ -303,7 +306,7 @@ fn try_fort_lock(
             let Some(&new_pos) = candidates.choose(rng) else { break };
             state.slots[fi].pos = new_pos;
             evals += 1;
-            if place_locks_gating(state, rng) {
+            if place_locks_gating(state, rng, before.c1 < C1_FLOOR) {
                 let after = measure_world(state);
                 // Below the floor: any relocation that raises C1 without
                 // losing routes is progress. Above: routes must rise.

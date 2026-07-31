@@ -173,18 +173,41 @@ pub(crate) fn ensure_secret_exit_safe(
     PhaseReport { phase, actions }
 }
 
+/// Which candidates a lock-placement pass admits, strictest first.
+#[derive(Clone, Copy, PartialEq)]
+enum LockPass {
+    /// Closing the tile makes the GOAL unreachable in the all-open world —
+    /// the pipe-proof cut (nothing routes around the goal approach), the
+    /// same duty the shipping builder's C1-floor backstop assigns.
+    GoalGate,
+    /// Closing the tile walls off at least one node (the
+    /// [`WorldState::zero_gate_locks`] definition).
+    AnyGate,
+    /// Any completable tile.
+    Any,
+}
+
 /// Re-place every lock from scratch, preferring candidates that actually
 /// gate something. The shaping loop's wide lock move: clears the lock set
-/// and rebuilds it one fort at a time (shuffled order) — for each fort, a
-/// first pass over shuffled candidates admits only tiles whose closure walls
-/// off at least one node (measured against the all-open world, the same
-/// definition as [`WorldState::zero_gate_locks`]), a second pass admits any
-/// completable tile. Every placement keeps the completability fixpoint true.
+/// and rebuilds it one fort at a time (shuffled order) — for each fort, the
+/// passes in [`LockPass`] order over shuffled candidates, and every
+/// placement keeps the completability fixpoint true.
+///
+/// `goal_first` (cost mode's request): the first fort that CAN gate the
+/// goal does — a goal gate is the one cut a pipe web cannot bypass, so it
+/// reliably raises C1 on the express-shaped worlds where "gate anything"
+/// finds only worthless cuts. Only one goal gate is sought; the remaining
+/// forts fall back to the normal passes (a goal crowded by every lock is
+/// not a better world).
 ///
 /// Returns false if some fort ends up unlockable — the caller owns the
 /// snapshot and must restore it (unlike the dumb Locks phase, shaping never
 /// removes forts; a failed proposal is just rolled back).
-pub(crate) fn place_locks_gating(state: &mut WorldState, rng: &mut dyn RngCore) -> bool {
+pub(crate) fn place_locks_gating(
+    state: &mut WorldState,
+    rng: &mut dyn RngCore,
+    goal_first: bool,
+) -> bool {
     state.locks.clear();
 
     let mut open = state.grid.clone();
@@ -199,20 +222,33 @@ pub(crate) fn place_locks_gating(state: &mut WorldState, rng: &mut dyn RngCore) 
         .collect();
     fort_ids.shuffle(rng);
 
+    let mut goal_gated = false;
     for fort_id in fort_ids {
         let mut candidates = lock_candidates(state);
         candidates.shuffle(rng);
 
         let mut placed = false;
-        'passes: for gating_only in [true, false] {
+        'passes: for pass in [LockPass::GoalGate, LockPass::AnyGate, LockPass::Any] {
+            if pass == LockPass::GoalGate && (!goal_first || goal_gated) {
+                continue;
+            }
             for &(pos, tile) in &candidates {
-                if gating_only {
-                    let mut g = open.clone();
-                    g.set(pos.0, pos.1, gap_tile_for(tile));
-                    let closed_len =
-                        walk_reachable(&g, &state.pipe_pairs, state.start, state.world_idx).len();
-                    if closed_len == open_len {
-                        continue;
+                match pass {
+                    LockPass::Any => {}
+                    LockPass::GoalGate | LockPass::AnyGate => {
+                        let mut g = open.clone();
+                        g.set(pos.0, pos.1, gap_tile_for(tile));
+                        let reach =
+                            walk_reachable(&g, &state.pipe_pairs, state.start, state.world_idx);
+                        let admits = match pass {
+                            LockPass::GoalGate => {
+                                state.target.is_some_and(|t| !reach.contains(t))
+                            }
+                            _ => reach.len() < open_len,
+                        };
+                        if !admits {
+                            continue;
+                        }
                     }
                 }
                 state.locks.push(LockAssignment {
@@ -225,6 +261,9 @@ pub(crate) fn place_locks_gating(state: &mut WorldState, rng: &mut dyn RngCore) 
                 });
                 if state.completable() {
                     placed = true;
+                    if pass == LockPass::GoalGate {
+                        goal_gated = true;
+                    }
                     break 'passes;
                 }
                 state.locks.pop();
