@@ -15,8 +15,8 @@ deploys.
   placement (connectivity, levels, forts, locks) plus a diagnosis-driven
   shaping loop with pipe-web redeals. Every world now guarantees a minimum
   route cost (no more nearly-free worlds — previously ~4% of W7 seeds with
-  start↔airship swap), fewer worlds are linear overall, and pipes are spent
-  as routing demands rather than always matching the vanilla count.
+  start↔airship swap), fewer worlds are linear overall, and every world
+  still ships its full vanilla pipe count.
 
 - Route measurement now treats breaking a hammer rock as part of a route's
   identity: a rock shortcut and the walk around it count as two distinct

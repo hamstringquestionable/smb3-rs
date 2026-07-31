@@ -214,10 +214,10 @@ fn test_build_all_worlds() {
         // unlockable fort (rare). Every surviving fort keeps exactly one lock.
         assert!(forts <= result.fort_counts[wi],
             "W{}: fort slots {} > allotted {}", wi + 1, forts, result.fort_counts[wi]);
-        // Pipes are a routing tool with a budget, not a quota — the builder
-        // spends as few as connectivity needs plus what shaping earns.
-        assert!(pipes <= VANILLA_PIPE_PAIRS[wi],
-            "W{}: pipe pairs {} > budget {}", wi + 1, pipes, VANILLA_PIPE_PAIRS[wi]);
+        // The full vanilla pipe budget is always spent (an unplaced pair is
+        // deleted content — its transit levels vanish from the game).
+        assert_eq!(pipes, VANILLA_PIPE_PAIRS[wi],
+            "W{}: pipe pairs {} != budget {}", wi + 1, pipes, VANILLA_PIPE_PAIRS[wi]);
         assert_eq!(locks, forts,
             "W{}: every fort must have a lock ({} locks, {} forts)", wi + 1, locks, forts);
     }

@@ -674,12 +674,12 @@ fn test_builder_locks_census() {
 }
 
 /// Shaping A/B census: the dumb skeleton (arm `dumb`: connectivity → levels
-/// → spare pipes → forts → locks) against the shaping loop (arm `shaped`:
-/// connectivity → levels → forts → locks → shaping). SparePipes is
-/// deliberately OMITTED from the shaped arm: shaping has first claim on the
-/// pipe budget (pipes are a routing tool, not filler), and what it doesn't
-/// spend shows up as a lower pipes column, not as random toss on top of
-/// shaped structure.
+/// → spare pipes → forts → locks) against the production pipeline (arm
+/// `shaped`, via `run_shaped_with_web_retries`: connectivity → levels →
+/// forts → locks → shaping → guarded spare pipes). Shaping runs BEFORE the
+/// spares so the gated-shortcut rung keeps first claim on the budget; the
+/// spares then spend the remainder — every world ships its full vanilla
+/// pipe count, so the pipes column should read ≈ budget.
 ///
 /// Shaped-arm move columns: touched% = seeds where at least one move was
 /// accepted (satisficing means most worlds should be untouched), lr/gs =

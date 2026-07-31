@@ -25,10 +25,12 @@
 //!
 //! Per world: [`Connectivity`] (bridge islands with pipe pairs) →
 //! [`Levels`] → [`Forts`] → [`Locks`] → [`Shaping`] (the diagnosis-driven
-//! improvement loop), wrapped in [`run_shaped_with_web_retries`] (a world
-//! that finishes below the C1 floor redeals its pipe web). Then across
-//! worlds: the secret-exit-safety backstop, hammer-bro fill, toad-house /
-//! spade promotion, and wandering-sprite redistribution.
+//! improvement loop) → [`SparePipes`] (the full vanilla pipe budget is
+//! always spent; the guard steers where), wrapped in
+//! [`run_shaped_with_web_retries`] (a world that finishes below the C1
+//! floor redeals its pipe web). Then across worlds: the
+//! secret-exit-safety backstop, hammer-bro fill, toad-house / spade
+//! promotion, and wandering-sprite redistribution.
 //!
 //! Module layout: [`state`] holds the core definitions (world state, phase
 //! unit); [`sources`] loads worlds (pickup input, vanilla ROM reader,
@@ -65,7 +67,6 @@ mod progression;
 mod route_choice;
 mod shaping;
 mod sources;
-#[cfg(test)]
 mod spare_pipes;
 mod state;
 mod types;
@@ -99,6 +100,7 @@ pub(crate) use locks::{Locks, ensure_secret_exit_safe};
 pub(crate) use metrics::measure_world;
 pub(crate) use shaping::Shaping;
 pub(crate) use sources::{allot_budgets, from_pickup};
+pub(crate) use spare_pipes::SparePipes;
 pub(crate) use state::{Phase, PhaseReport, WorldState, row78_partner, run_schedule};
 
 // Test-only measurement surface: the census/probe harness in the test
@@ -112,8 +114,6 @@ pub(crate) use progression::{
 pub(crate) use route_choice::{SHAPING_SLACK, dump_route_choice};
 #[cfg(test)]
 pub(crate) use sources::{from_built, from_vanilla};
-#[cfg(test)]
-pub(crate) use spare_pipes::SparePipes;
 
 /// Pipe-web redeals allowed beyond the first attempt when the finished
 /// world ends below the C1 floor. Retries fire only on the few percent of
@@ -136,7 +136,7 @@ pub(crate) const WEB_RETRIES: usize = 4;
 pub(crate) fn run_shaped_with_web_retries(state: &mut WorldState, rng: &mut dyn RngCore) {
     run_schedule(state, &[&Connectivity, &Levels, &Forts], rng);
     let placement = state.snapshot();
-    run_schedule(state, &[&Locks, &Shaping], rng);
+    run_schedule(state, &[&Locks, &Shaping, &SparePipes], rng);
 
     let mut best: Option<(u32, usize, state::WorldSnapshot)> = None;
     let mut redeals = 0usize;
@@ -169,7 +169,7 @@ pub(crate) fn run_shaped_with_web_retries(state: &mut WorldState, rng: &mut dyn 
         redeals += 1;
         state.restore(&placement);
         state.pickup_pipes();
-        run_schedule(state, &[&Connectivity, &Locks, &Shaping], rng);
+        run_schedule(state, &[&Connectivity, &Locks, &Shaping, &SparePipes], rng);
     }
 }
 

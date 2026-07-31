@@ -221,6 +221,19 @@ impl WorldState {
         self.pipe_pairs = snap.pipe_pairs.clone();
     }
 
+    /// Undo the most recent [`add_pipe_pair`](Self::add_pipe_pair): remove
+    /// the pair, its two Pipe slots, and restore both tiles to theme
+    /// blanks. Trial machinery for guarded pipe placement.
+    pub(crate) fn pop_pipe_pair(&mut self) {
+        let Some((a, b)) = self.pipe_pairs.pop() else { return };
+        for pos in [a, b] {
+            let blank = blank_tile_for(&self.grid, self.world_idx, pos.0, pos.1);
+            self.grid.set(pos.0, pos.1, blank);
+        }
+        self.slots
+            .retain(|s| s.kind != SlotKind::Pipe || (s.pos != a && s.pos != b));
+    }
+
     /// Remove the entire pipe web: every pair, every Pipe slot, every pipe
     /// tile restored to its theme blank. Levels, forts, and locks are
     /// untouched. The freed endpoints return to the blank pool, so a
