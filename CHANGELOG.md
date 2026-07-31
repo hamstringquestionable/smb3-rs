@@ -9,6 +9,8 @@ deploys.
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-07-31
+
 ### Fixed
 
 - Lobby (antechamber) shuffle could drop you into a void when you entered a
