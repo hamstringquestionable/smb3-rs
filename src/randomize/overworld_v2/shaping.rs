@@ -219,7 +219,13 @@ fn try_gated_shortcut(
     let saved_pairs = state.pipe_pairs.clone();
 
     for _ in 0..SHORTCUT_TRIES {
-        let candidates = state.legal_blanks();
+        // Anchor-adjacent blanks are barred for pipe endpoints — same rule
+        // as connectivity and spare pipes (an ungateable express).
+        let candidates: Vec<Pos> = state
+            .legal_blanks()
+            .into_iter()
+            .filter(|&p| !state.near_anchor(p))
+            .collect();
         let picked: Vec<Pos> = candidates.choose_multiple(rng, 2).copied().collect();
         let [a, b] = picked[..] else { break };
         if Some(b) == row78_partner(a) {

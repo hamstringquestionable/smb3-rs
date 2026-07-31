@@ -12,6 +12,12 @@
 //! The phase spends as few pipes as possible (one pair per island) and
 //! leaves the rest of the world's pipe budget for the routing phase.
 //!
+//! One measured-and-earned placement bar: no endpoint within
+//! `PIPE_ANCHOR_RADIUS` of the start or goal (census-diagnosed — an
+//! anchor-adjacent pipe mouth is an ungateable express no later phase can
+//! price back up), with a full-set fallback when an island has no clear
+//! candidate, because bridging outranks the bar.
+//!
 //! Not hard rules, by design: a world can end this phase with unreachable
 //! blanks (an island whose every blank is `fixed` has no legal endpoint, or
 //! the pipe budget runs out first). The phase reports what it couldn't do;
@@ -48,14 +54,21 @@ impl Phase for Connectivity {
             // seed. Endpoint candidacy uses the shared `legal_blanks` rules
             // (not fixed, not taken, row-7/8 partner respected — a pipe is
             // completable content too), split by which side of the cut each
-            // blank sits on.
+            // blank sits on. Anchor-adjacent blanks are barred (an endpoint
+            // next to start/goal is an ungateable express) — but bridging is
+            // mandatory, so a side whose every candidate is near an anchor
+            // falls back to the full set rather than stranding the island.
             let island_reach =
                 walk_reachable(&state.grid, &state.pipe_pairs, Some(island_seed), state.world_idx);
             let legal = state.legal_blanks();
-            let island_candidates: Vec<Pos> =
-                legal.iter().copied().filter(|p| island_reach.contains(*p)).collect();
-            let mainland_candidates: Vec<Pos> =
-                legal.iter().copied().filter(|p| reach.contains(*p)).collect();
+            let pick_side = |on_side: &dyn Fn(&Pos) -> bool| -> Vec<Pos> {
+                let side: Vec<Pos> = legal.iter().copied().filter(|p| on_side(p)).collect();
+                let clear: Vec<Pos> =
+                    side.iter().copied().filter(|&p| !state.near_anchor(p)).collect();
+                if clear.is_empty() { side } else { clear }
+            };
+            let island_candidates = pick_side(&|p| island_reach.contains(*p));
+            let mainland_candidates = pick_side(&|p| reach.contains(*p));
 
             let (Some(&near), Some(&far)) =
                 (mainland_candidates.choose(rng), island_candidates.choose(rng))

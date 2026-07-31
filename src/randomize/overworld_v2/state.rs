@@ -45,7 +45,25 @@ pub(crate) struct WorldState {
     pub log: Vec<PhaseReport>,
 }
 
+/// Exclusion radius (Manhattan tiles; node spacing is 2 tiles, so this is
+/// ~2 walk steps) around the start and goal inside which NO pipe endpoint
+/// may land. A pipe mouth next to the start plus one next to the goal is an
+/// ungateable express — no lock placement can price it back up, because
+/// every lockable tile between them is bypassed by the pipe itself (the
+/// W4/W7/W8 stuck-cheap signature). Blocked at placement, for every
+/// pipe-placing site (connectivity, spare pipes, gated shortcut).
+pub(crate) const PIPE_ANCHOR_RADIUS: usize = 4;
+
 impl WorldState {
+    /// True if `pos` is within [`PIPE_ANCHOR_RADIUS`] of the start or goal —
+    /// barred for pipe endpoints.
+    pub(crate) fn near_anchor(&self, pos: Pos) -> bool {
+        [self.start, self.target]
+            .iter()
+            .flatten()
+            .any(|a| pos.0.abs_diff(a.0) + pos.1.abs_diff(a.1) <= PIPE_ANCHOR_RADIUS)
+    }
+
     /// Number of fortress slots — also the number of lock sections.
     pub(crate) fn fort_count(&self) -> usize {
         self.slots

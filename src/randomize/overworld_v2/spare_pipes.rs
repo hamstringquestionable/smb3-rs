@@ -28,7 +28,13 @@ impl Phase for SparePipes {
         let mut actions = Vec::new();
 
         while state.pipe_pairs.len() < state.pipe_budget {
-            let candidates = state.legal_blanks();
+            // Anchor-adjacent blanks are barred for pipe endpoints (an
+            // ungateable express); spares are optional, so no fallback.
+            let candidates: Vec<Pos> = state
+                .legal_blanks()
+                .into_iter()
+                .filter(|&p| !state.near_anchor(p))
+                .collect();
             let picked: Vec<Pos> = candidates.choose_multiple(rng, 2).copied().collect();
             let [a, b] = picked[..] else {
                 actions.push(format!(
