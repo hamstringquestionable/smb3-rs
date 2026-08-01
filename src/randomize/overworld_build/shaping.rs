@@ -298,11 +298,14 @@ fn try_arm_balance(
     };
     let usable = alt_candidates.iter().find_map(|r| {
         let alt: HashSet<Pos> = r.path.iter().copied().collect();
-        let targets: Vec<Pos> = blanks
-            .iter()
-            .copied()
-            .filter(|p| cheap.contains(p) && !alt.contains(p))
-            .collect();
+        let targets: Vec<Pos> = prefer_spaced(
+            state,
+            blanks
+                .iter()
+                .copied()
+                .filter(|p| cheap.contains(p) && !alt.contains(p))
+                .collect(),
+        );
         (!targets.is_empty()).then_some((r, targets))
     });
     let Some((alt_route, targets)) = usable else {
@@ -563,11 +566,14 @@ fn try_level_move(
         .filter(|(_, s)| s.kind == SlotKind::Level && !trunk.contains(&s.pos))
         .map(|(i, _)| i)
         .collect();
-    let targets: Vec<Pos> = state
-        .legal_blanks()
-        .into_iter()
-        .filter(|p| trunk.contains(p))
-        .collect();
+    let targets: Vec<Pos> = prefer_spaced(
+        state,
+        state
+            .legal_blanks()
+            .into_iter()
+            .filter(|p| trunk.contains(p))
+            .collect(),
+    );
     if sources.is_empty() || targets.is_empty() {
         return Err(format!(
             "level_move REJECT: {} off-route levels, {} on-route blanks — nothing to work with",
@@ -706,6 +712,19 @@ fn try_pipe_move(
         "pipe_move REJECT: no relocation lifts C1 {} ({evals} full evals)",
         before.c1,
     ))
+}
+
+/// Level-relocation targets, spaced when possible: drop targets that would
+/// sit orthogonally next to an existing level unless that would empty the
+/// list — the same avoid-adjacency-when-avoidable rule as level placement
+/// (the trunk must not become a level train; playtest 2026-08-01).
+fn prefer_spaced(state: &WorldState, targets: Vec<Pos>) -> Vec<Pos> {
+    let clear: Vec<Pos> = targets
+        .iter()
+        .copied()
+        .filter(|&p| !super::levels::next_to_level(state, p))
+        .collect();
+    if clear.is_empty() { targets } else { clear }
 }
 
 /// Every slot and the goal walk-reachable from start on the all-open world

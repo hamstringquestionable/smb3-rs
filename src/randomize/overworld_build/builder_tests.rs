@@ -724,6 +724,14 @@ fn test_builder_shaping_census() {
         locks: usize,
         goal_open: usize,
         pipes: usize,
+        // Adjacent-level pairs (orthogonal 2-tile neighbors — visually
+        // stacked levels) — the clustering the playtest flagged.
+        adjacent_levels: usize,
+        // Largest connected chain of adjacent levels: sum (for the mean),
+        // worst seed, and how many seeds have a chain of 4+ levels.
+        chain_sum: usize,
+        chain_worst: usize,
+        chain4: usize,
     }
 
     impl Default for ArmTally {
@@ -744,6 +752,10 @@ fn test_builder_shaping_census() {
                 locks: 0,
                 goal_open: 0,
                 pipes: 0,
+                adjacent_levels: 0,
+                chain_sum: 0,
+                chain_worst: 0,
+                chain4: 0,
             }
         }
     }
@@ -776,6 +788,47 @@ fn test_builder_shaping_census() {
         t.goal_gates += state.goal_gate_locks();
         t.locks += state.locks.len();
         t.pipes += state.pipe_pairs.len();
+        let levels: Vec<Pos> = state
+            .slots
+            .iter()
+            .filter(|s| s.kind == SlotKind::Level)
+            .map(|s| s.pos)
+            .collect();
+        let adjacent = |a: Pos, b: Pos| {
+            let (dr, dc) = (a.0.abs_diff(b.0), a.1.abs_diff(b.1));
+            (dr == 2 && dc == 0) || (dr == 0 && dc == 2)
+        };
+        for (i, &a) in levels.iter().enumerate() {
+            for &b in &levels[i + 1..] {
+                if adjacent(a, b) {
+                    t.adjacent_levels += 1;
+                }
+            }
+        }
+        // Largest connected chain under the same adjacency.
+        let mut comp: Vec<usize> = (0..levels.len()).collect();
+        for i in 0..levels.len() {
+            for j in i + 1..levels.len() {
+                if adjacent(levels[i], levels[j]) {
+                    let (mut ri, mut rj) = (i, j);
+                    while comp[ri] != ri { ri = comp[ri]; }
+                    while comp[rj] != rj { rj = comp[rj]; }
+                    comp[ri] = rj;
+                }
+            }
+        }
+        let mut sizes: HashMap<usize, usize> = HashMap::new();
+        for i in 0..levels.len() {
+            let mut r = i;
+            while comp[r] != r { r = comp[r]; }
+            *sizes.entry(r).or_default() += 1;
+        }
+        let max_chain = sizes.values().copied().max().unwrap_or(0);
+        t.chain_sum += max_chain;
+        t.chain_worst = t.chain_worst.max(max_chain);
+        if max_chain >= 4 {
+            t.chain4 += 1;
+        }
     }
 
     let mut dumb = [ArmTally::default(); 8];
@@ -871,7 +924,7 @@ fn test_builder_shaping_census() {
     for world_idx in 0..8 {
         for (arm, t) in [("dumb", &dumb[world_idx]), ("shaped", &shaped[world_idx])] {
             let base = format!(
-                "  W{}   {arm:<7} {:>7.1} {:>6} {:>6.0}% {:>7.2} {:>7.0}% {:>5.2} {:>6.2} {:>6.0}% {:>9.0}% {:>5.2} {:>9.0}% {:>6.2}",
+                "  W{}   {arm:<7} {:>7.1} {:>6} {:>6.0}% {:>7.2} {:>7.0}% {:>5.2} {:>6.2} {:>6.0}% {:>9.0}% {:>5.2} {:>9.0}% {:>6.2} adjL={:.2}",
                 world_idx + 1,
                 t.c1 as f64 / n,
                 t.c1_min,
@@ -885,6 +938,12 @@ fn test_builder_shaping_census() {
                 t.goal_gates as f64 / n,
                 100.0 * t.goal_open as f64 / n,
                 t.pipes as f64 / n,
+                t.adjacent_levels as f64 / n,
+            ) + &format!(
+                " chain={:.2}/max{}/4+{:.0}%",
+                t.chain_sum as f64 / n,
+                t.chain_worst,
+                100.0 * t.chain4 as f64 / n,
             );
             if arm == "shaped" {
                 println!(

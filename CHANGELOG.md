@@ -9,6 +9,14 @@ deploys.
 
 ## [Unreleased]
 
+### Fixed
+
+- Levels no longer pile up back-to-back in one corner of the map: level
+  placement (and the shaping moves that relocate levels) now avoid putting
+  a level next to another whenever the map allows. Worlds with 4+ levels
+  chained in a row drop from ~1 in 6 to ~1 in 50, and route choice
+  improved as a side effect (spread levels fork more).
+
 ### Changed
 
 - Pipe-fragmented worlds (Worlds 7 and 8 especially) are much less often a
