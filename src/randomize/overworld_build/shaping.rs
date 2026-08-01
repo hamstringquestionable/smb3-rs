@@ -298,7 +298,7 @@ fn try_arm_balance(
     };
     let usable = alt_candidates.iter().find_map(|r| {
         let alt: HashSet<Pos> = r.path.iter().copied().collect();
-        let targets: Vec<Pos> = prefer_spaced(
+        let targets: Vec<Pos> = spaced(
             state,
             blanks
                 .iter()
@@ -335,12 +335,6 @@ fn try_arm_balance(
         let Some(&target) = targets.choose(rng) else { break };
         let old_pos = state.slots[si].pos;
         state.slots[si].pos = target;
-        // Chain cap: arm balance is a choice-mode move — never build a
-        // level train for parity.
-        if level_chain_len(state, target) >= 3 {
-            state.slots = saved_slots.clone();
-            continue;
-        }
         let after = measure_world(state);
         let wide_after = analyze_route_choice(&state.to_built(), SHAPING_SLACK);
         let gap_after = if wide_after.routes.len() >= 2 {
@@ -572,7 +566,7 @@ fn try_level_move(
         .filter(|(_, s)| s.kind == SlotKind::Level && !trunk.contains(&s.pos))
         .map(|(i, _)| i)
         .collect();
-    let targets: Vec<Pos> = prefer_spaced(
+    let targets: Vec<Pos> = spaced(
         state,
         state
             .legal_blanks()
@@ -598,11 +592,6 @@ fn try_level_move(
             continue;
         }
         state.slots[si].pos = target;
-        // Chain cap (choice mode): the move must not build a level train.
-        if before.c1 >= C1_FLOOR && level_chain_len(state, target) >= 3 {
-            state.slots = saved_slots.clone();
-            continue;
-        }
         evals += 1;
         let after = measure_world(state);
         // Below the floor: C1 progress (routes may be spent). Above: routes
@@ -725,49 +714,19 @@ fn try_pipe_move(
     ))
 }
 
-/// Level-relocation targets, spaced when possible: drop targets that would
-/// sit orthogonally next to an existing level unless that would empty the
-/// list — the same avoid-adjacency-when-avoidable rule as level placement
-/// (the trunk must not become a level train; playtest 2026-08-01).
-fn prefer_spaced(state: &WorldState, targets: Vec<Pos>) -> Vec<Pos> {
-    let clear: Vec<Pos> = targets
-        .iter()
-        .copied()
+/// The level-spacing invariant, mover side: a RELOCATION never lands a
+/// level next to another level, full stop — a move is optional (unlike
+/// placement, which must spend its budget and may be forced), so when no
+/// spaced target exists the move simply isn't available. This is the
+/// root-cause fix for the playtest's level trains: the movers relocate
+/// levels onto the cheapest route one accept at a time, and with adjacent
+/// tiles as valid targets that process assembles the whole budget into a
+/// snake along the trunk.
+fn spaced(state: &WorldState, targets: Vec<Pos>) -> Vec<Pos> {
+    targets
+        .into_iter()
         .filter(|&p| !super::levels::next_to_level(state, p))
-        .collect();
-    if clear.is_empty() { targets } else { clear }
-}
-
-/// Size of the connected chain of levels containing `pos` (orthogonal
-/// 2-tile adjacency), on the CURRENT slots. The chain cap: a choice-mode
-/// relocation must not leave its level in a chain of 3+ — the spaced
-/// fallback alone still built trains move-by-move on pipe-less W1, where
-/// every repair is a level move onto a short trunk (playtest 2026-08-01,
-/// round two). Pairs stay allowed (vanilla has plenty); cost mode is
-/// exempt (the C1 floor guarantee outranks aesthetics).
-fn level_chain_len(state: &WorldState, pos: Pos) -> usize {
-    let levels: Vec<Pos> = state
-        .slots
-        .iter()
-        .filter(|s| s.kind == SlotKind::Level)
-        .map(|s| s.pos)
-        .collect();
-    let adjacent = |a: Pos, b: Pos| {
-        let (dr, dc) = (a.0.abs_diff(b.0), a.1.abs_diff(b.1));
-        (dr == 2 && dc == 0) || (dr == 0 && dc == 2)
-    };
-    let mut seen: HashSet<Pos> = HashSet::new();
-    let mut queue = vec![pos];
-    seen.insert(pos);
-    while let Some(p) = queue.pop() {
-        for &l in &levels {
-            if !seen.contains(&l) && adjacent(p, l) {
-                seen.insert(l);
-                queue.push(l);
-            }
-        }
-    }
-    seen.len()
+        .collect()
 }
 
 /// Every slot and the goal walk-reachable from start on the all-open world
