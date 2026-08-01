@@ -26,6 +26,11 @@ pub(crate) struct WorldState {
     /// houses, airship/Bowser tiles) — input from the shared pickup/catalog
     /// phases, constant across the build.
     pub fixed: HashSet<Pos>,
+    /// Lone blanks sealed off by breakable hammer rocks (the W3 spade
+    /// pocket, see `HAMMER_GATED_POCKETS`) — terrain, not stranded islands.
+    /// Connectivity never bridges them and no phase claims them; they stay
+    /// empty hammer-gated nooks.
+    pub hammer_gated: HashSet<Pos>,
     /// Hard limit on pipe pairs in this world — currently the vanilla
     /// per-world count, a chosen design budget (not an inherent ROM limit;
     /// it may be raised later). All pipe-placing phases share it: whatever
@@ -82,12 +87,12 @@ impl WorldState {
     }
 
     /// Blanks a phase may claim for new content: blank tile, not `fixed`,
-    /// not already a slot, and not the row-7/8 completion-bit partner of
-    /// existing content OR of a lock (rows 7 and 8 share one completion bit
-    /// per column — a ROM mechanic; stacked completable content marks each
-    /// other beaten, and a lock consumes that shared bit too). The lock
-    /// barring only matters to the shaping moves — the dumb placement
-    /// phases all run before any lock exists.
+    /// not already a slot, not a hammer-gated pocket, and not the row-7/8
+    /// completion-bit partner of existing content OR of a lock (rows 7 and 8
+    /// share one completion bit per column — a ROM mechanic; stacked
+    /// completable content marks each other beaten, and a lock consumes that
+    /// shared bit too). The lock barring only matters to the shaping moves —
+    /// the dumb placement phases all run before any lock exists.
     pub(crate) fn legal_blanks(&self) -> Vec<Pos> {
         let taken: HashSet<Pos> = self.slots.iter().map(|s| s.pos).collect();
         let barred: HashSet<Pos> = self
@@ -104,6 +109,7 @@ impl WorldState {
                     && !self.fixed.contains(&pos)
                     && !taken.contains(&pos)
                     && !barred.contains(&pos)
+                    && !self.hammer_gated.contains(&pos)
                 {
                     out.push(pos);
                 }
