@@ -1688,6 +1688,10 @@ fn test_builder_w7_probe() {
         pocket_cycles_multi_sum: usize,
         trunk_blanks_sum: usize,
         trunk_levels_sum: usize,
+        noalt_probe: usize,
+        noalt_with_detour: usize,
+        noalt_exclusive: usize,
+        noalt_goldable: usize,
     }
 
     let mut arms: std::collections::BTreeMap<Pos, T> = std::collections::BTreeMap::new();
@@ -1830,6 +1834,35 @@ fn test_builder_w7_probe() {
                 .count();
         }
 
+        // Golden-lock feasibility on NOALT seeds: does a dominated detour
+        // exist within the wide window, and does the cheap route's
+        // exclusive stretch vs that detour contain a LOCKABLE tile? (If
+        // yes, a lock on that edge would split the pair; if the stretch is
+        // empty or unlockable, only new topology can help.)
+        if wide.routes.len() < 2 {
+            t.noalt_probe += 1;
+            if let Some(d) = wide.detours.first() {
+                t.noalt_with_detour += 1;
+                let dpath: HashSet<Pos> = d.path.iter().copied().collect();
+                let exclusive: Vec<Pos> = wide
+                    .routes
+                    .first()
+                    .map(|r| {
+                        r.path.iter().copied().filter(|p| !dpath.contains(p)).collect()
+                    })
+                    .unwrap_or_default();
+                if !exclusive.is_empty() {
+                    t.noalt_exclusive += 1;
+                }
+                if exclusive
+                    .iter()
+                    .any(|&(r, c)| LOCKABLE_TILES.contains(&grid.get(r, c)))
+                {
+                    t.noalt_goldable += 1;
+                }
+            }
+        }
+
         // Render the first couple of NOALT worlds per arm for eyeballing,
         // with their shaping logs.
         if wide.routes.len() < 2 && t.renders < 2 {
@@ -1872,9 +1905,13 @@ fn test_builder_w7_probe() {
             t.blanks_sum as f64 / n,
         );
         println!(
-            "        trunk-blanks {:.2}  trunk-levels {:.2}",
+            "        trunk-blanks {:.2}  trunk-levels {:.2}  noalt breakdown: {} total / {} with detour / {} any-exclusive-tile / {} lockable-exclusive-edge",
             t.trunk_blanks_sum as f64 / n,
             t.trunk_levels_sum as f64 / n,
+            t.noalt_probe,
+            t.noalt_with_detour,
+            t.noalt_exclusive,
+            t.noalt_goldable,
         );
         println!(
             "        pockets {:.2}  max-pocket {:.1}  pipes cross {:.2} intra {:.2}  doubled {:.2}  pocket-cycles {:.2} (linear {:.2} / multi {:.2})",
