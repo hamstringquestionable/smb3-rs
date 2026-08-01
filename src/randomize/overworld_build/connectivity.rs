@@ -85,14 +85,23 @@ impl Phase for Connectivity {
             actions.push(format!("pipe {near:?} <-> {far:?} (island of {} blanks)", island_candidates.len()));
         }
 
-        // Count what remains cut off — measured, not enforced.
+        // Count what remains cut off — measured, not enforced. Hammer-gated
+        // pockets are deliberately left alone, so they are reported apart
+        // from genuine stranding.
         let reach = walk_reachable(&state.grid, &state.pipe_pairs, state.start, state.world_idx);
         let stranded = blank_positions(state)
             .iter()
-            .filter(|p| !reach.contains(**p))
+            .filter(|p| !reach.contains(**p) && !state.hammer_gated.contains(p))
             .count();
         let goal_ok = state.target.is_none_or(|t| reach.contains(t));
-        actions.push(format!("done: {stranded} blanks stranded, goal reachable: {goal_ok}"));
+        let gated_note = if state.hammer_gated.is_empty() {
+            String::new()
+        } else {
+            format!(", {} hammer-gated left alone", state.hammer_gated.len())
+        };
+        actions.push(format!(
+            "done: {stranded} blanks stranded{gated_note}, goal reachable: {goal_ok}"
+        ));
 
         PhaseReport { phase: self.name(), actions }
     }
@@ -115,7 +124,9 @@ fn blank_positions(state: &WorldState) -> Vec<Pos> {
 
 /// Where to grow next: the goal's component first (a world you can't finish
 /// is the worst kind of cut off), then the first stranded blank in scan
-/// order. `None` when start is unknown or nothing is stranded.
+/// order — skipping hammer-gated pockets, which are not stranded (and, being
+/// excluded from `legal_blanks`, could never take an endpoint). `None` when
+/// start is unknown or nothing is stranded.
 fn next_island_seed(state: &WorldState, reach: &Reach, blanks: &[Pos]) -> Option<Pos> {
     state.start?;
     if let Some(target) = state.target
@@ -123,6 +134,9 @@ fn next_island_seed(state: &WorldState, reach: &Reach, blanks: &[Pos]) -> Option
     {
         return Some(target);
     }
-    blanks.iter().copied().find(|p| !reach.contains(*p))
+    blanks
+        .iter()
+        .copied()
+        .find(|p| !reach.contains(*p) && !state.hammer_gated.contains(p))
 }
 

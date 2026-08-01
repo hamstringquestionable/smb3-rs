@@ -57,6 +57,7 @@ pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
         start: rom_data::find_start(&built.grid),
         target: find_target(&built.grid, built.world_idx),
         fixed: HashSet::new(),
+        hammer_gated: HashSet::new(),
         pipe_budget: VANILLA_PIPE_PAIRS[built.world_idx],
         level_budget: built
             .slots
@@ -100,6 +101,13 @@ pub(crate) fn from_pickup(
             grid.set(entry.grid_pos.0, entry.grid_pos.1, entry.tile);
         }
     }
+    // SAS-swapped worlds: the castle's top half ($C8) travels with the
+    // relocated airship tile, and the cell above the relocated start gets a
+    // plausible backdrop (W5 skips the castle-top write — the cell above its
+    // vanilla start is the only approach path). Stamping happens here, on
+    // the grid every phase builds on, so the non-blank $C8 also keeps
+    // placement off that cell.
+    crate::randomize::start_airship_swap::swap_tiles_above(&mut grid, world_idx, catalog);
     let start = rom_data::find_start(&grid);
     let target = find_target(&grid, world_idx);
     let fixed = fixed_positions_for_world(
@@ -124,6 +132,11 @@ pub(crate) fn from_pickup(
     } else {
         rom_data::read_hb_sprite_positions(rom, world_idx)
     };
+    let hammer_gated: HashSet<Pos> = HAMMER_GATED_POCKETS
+        .iter()
+        .filter(|(wi, _)| *wi == world_idx)
+        .map(|(_, pos)| *pos)
+        .collect();
     WorldState {
         world_idx,
         grid,
@@ -133,6 +146,7 @@ pub(crate) fn from_pickup(
         start,
         target,
         fixed,
+        hammer_gated,
         pipe_budget: VANILLA_PIPE_PAIRS[world_idx],
         level_budget,
         fort_budget,
@@ -141,6 +155,15 @@ pub(crate) fn from_pickup(
         log: Vec::new(),
     }
 }
+
+/// Lone blanks sealed off by breakable hammer rocks: `(world_idx, position)`.
+/// W3 (8,6) is the vanilla spade between two rocks — once the spade is picked
+/// up, the cell is a one-blank island that connectivity would otherwise
+/// bridge with a pipe every seed. (W6's rock at (2,13) guards a vanilla PIPE
+/// at (2,14) — deliberately NOT listed, bridging it is vanilla-faithful.)
+const HAMMER_GATED_POCKETS: &[(usize, Pos)] = &[
+    (2, (8, 6)), // W3 spade pocket between two rocks near start
+];
 
 /// Read one vanilla world from the ROM: tiles from the map grid, slots and
 /// pipe pairs from the node catalog, locks from the fortress-FX tables.
@@ -173,6 +196,7 @@ pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -
         start,
         target,
         fixed: HashSet::new(),
+        hammer_gated: HashSet::new(),
         pipe_budget: VANILLA_PIPE_PAIRS[world_idx],
         level_budget,
         fort_budget,
