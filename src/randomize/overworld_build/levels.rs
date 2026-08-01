@@ -68,7 +68,11 @@ impl Phase for Levels {
             candidates.retain(|&c| c != pos && Some(c) != row78_partner(pos));
         }
 
-        actions.push(format!("done: {placed}/{} levels placed", state.level_budget));
+        actions.push(format!(
+            "done: {placed}/{} levels placed (pool was {} blanks)",
+            state.level_budget,
+            state.legal_blanks().len() + placed,
+        ));
         PhaseReport { phase: self.name(), actions }
     }
 }
