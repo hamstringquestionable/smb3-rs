@@ -60,6 +60,7 @@ mod capacity;
 mod connectivity;
 mod forts;
 mod hammer_bros;
+mod islands;
 mod levels;
 mod locks;
 mod metrics;

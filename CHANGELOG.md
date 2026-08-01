@@ -11,11 +11,13 @@ deploys.
 
 ### Changed
 
-- Pipe-fragmented worlds (World 7 especially) are less often a single
-  forced corridor: the builder now wires one extra pipe as a loop between
-  walk pockets and balances level costs across the loop's arms — the same
-  two-parallel-arms structure vanilla World 7 ships. W7 all-linear layouts
-  drop from ~49% to ~39% of seeds.
+- Pipe-fragmented worlds (Worlds 7 and 8 especially) are much less often a
+  single forced corridor: the builder now understands island anatomy —
+  pipe mouths on an island land far apart so routes cross its interior, a
+  loop gets wired between islands, and level costs are balanced across the
+  loop's arms — the same two-tied-arms structure vanilla World 7 ships.
+  All-linear layouts drop from ~49% to ~27% of seeds in W7 and ~11% to
+  ~4% in W8.
 
 - The overworld builder was replaced with the choice-first rebuild: knob-free
   placement (connectivity, levels, forts, locks) plus a diagnosis-driven

@@ -403,6 +403,11 @@ fn try_gated_shortcut(
 
     let wide_before = analyze_route_choice(&state.to_built(), SHAPING_SLACK).routes.len();
 
+    // NOTE: the connectivity spread-mouths refinement was tried on these
+    // trial pairs too and REJECTED (census 2026-08-01): the argmax is
+    // deterministic, so it collapsed the 4 tries onto one tile per island
+    // — W4's shortcut accepts fell 43 -> 9 (2-island world, no diversity
+    // left) while W7 didn't move. Uniform trials stay.
     for _ in 0..SHORTCUT_TRIES {
         // Anchor-adjacent blanks are barred for pipe endpoints — same rule
         // as connectivity and spare pipes (an ungateable express).

@@ -32,7 +32,7 @@
 
 use super::*;
 
-use super::connectivity::{linked_pocket_pairs, pocket_map};
+use super::islands::{linked_pocket_pairs, pocket_map};
 use super::locks::recompute_safety_flags;
 use rand::seq::IndexedRandom;
 

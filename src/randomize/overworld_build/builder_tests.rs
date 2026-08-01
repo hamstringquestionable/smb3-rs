@@ -1639,6 +1639,74 @@ fn test_builder_bridge_lock_rate() {
     }
 }
 
+/// Pin the island anatomy the role model is calibrated on (user design
+/// review 2026-08-01): vanilla orientation, base QOL map. A map edit or
+/// walker change that silently shifts the decomposition fails here first.
+#[test]
+fn test_builder_island_roles() {
+    let Some(raw) = load_rom() else {
+        eprintln!("ROM not found, skipping");
+        return;
+    };
+    use super::islands::IslandRole::{Corridor, Entry, Final, Routing, Utility};
+    let rom = base_qol(&raw);
+    let catalog = NodeCatalog::build(&rom, false);
+    // Toad-house / hammer-bro shuffle ON: those tiles get picked up as
+    // placeable blanks, which is the anatomy the role model was calibrated
+    // on (the flags-off variant shrinks three W7 islands by one tile each).
+    let pickup = pick_up(
+        &rom,
+        &catalog,
+        PickupFlags {
+            shuffle_spade_games: false,
+            shuffle_toad_houses: true,
+            shuffle_hammer_bros: true,
+        },
+    );
+    let flags = BuildFlags {
+        shuffle_toad_houses: true,
+        eights_are_wild: false,
+        shuffle_hammer_bros: true,
+    };
+    let sizes_roles = |world_idx: usize| {
+        let state = from_pickup(&rom, &catalog, &pickup, world_idx, &flags);
+        let (pocket, count) = super::islands::pocket_map(&state);
+        let islands = super::islands::classify(&state, &pocket, count);
+        let mut v: Vec<(usize, super::islands::IslandRole)> =
+            islands.iter().map(|i| (i.size, i.role)).collect();
+        v.sort_unstable_by_key(|&(n, _)| n);
+        v
+    };
+
+    // W7 — the full taxonomy: troll pipe (1), fort/utility slot (2),
+    // corridor (4), start (6 = start tile + 5 placeable), two routing
+    // hubs (8, 9), final island with space (13).
+    assert_eq!(
+        sizes_roles(6),
+        vec![
+            (1, Utility),
+            (2, Utility),
+            (4, Corridor),
+            (6, Entry),
+            (8, Routing),
+            (9, Routing),
+            (13, Final),
+        ],
+    );
+    // W5 — the spiral-tower split: twin big islands, roles taken by
+    // start/target rather than size.
+    let w5 = sizes_roles(4);
+    assert_eq!(w5.len(), 2);
+    assert!(w5.iter().any(|&(_, r)| r == Entry) && w5.iter().any(|&(_, r)| r == Final));
+    // Single-island worlds: the role machinery has nothing to do.
+    assert_eq!(sizes_roles(0).len(), 1);
+    assert_eq!(sizes_roles(1).len(), 1);
+    // W8 — fragmented but with a single big routing hub.
+    let w8 = sizes_roles(7);
+    assert_eq!(w8.len(), 5);
+    assert_eq!(w8.iter().filter(|&&(_, r)| r == Routing).count(), 2);
+}
+
 /// TEMP DIAGNOSTIC (W7 linearity investigation): shaped-arm results for one
 /// world, split by start position (i.e. SAS orientation), with walk-graph
 /// geometry per seed — cycle rank (independent cycles in the final walk
@@ -1692,6 +1760,9 @@ fn test_builder_w7_probe() {
         noalt_with_detour: usize,
         noalt_exclusive: usize,
         noalt_goldable: usize,
+        start_mouths_sum: usize,
+        start_mouths_linear_sum: usize,
+        start_mouths_multi_sum: usize,
     }
 
     let mut arms: std::collections::BTreeMap<Pos, T> = std::collections::BTreeMap::new();
@@ -1785,7 +1856,29 @@ fn test_builder_w7_probe() {
         // links — cycles that thread 3+ pockets (the rebalanceable kind).
         let pocket_cycles = (pair_edges.len() + 1).saturating_sub(sizes.len());
 
+        // Pipe mouths that landed on the START island — the user's
+        // shortcut-concentration question.
+        let start_root = state
+            .start
+            .and_then(|s| index.get(&s).copied())
+            .map(|i| find(&mut comp, i));
+        let start_mouths = built
+            .pipe_pairs
+            .iter()
+            .flat_map(|&(a, b)| [a, b])
+            .filter(|p| {
+                index.get(p).copied().map(|i| find(&mut comp, i)) == start_root
+                    && start_root.is_some()
+            })
+            .count();
+
         let t = arms.entry(state.start.unwrap_or((0, 0))).or_default();
+        t.start_mouths_sum += start_mouths;
+        if m.routes_in_band < 2 {
+            t.start_mouths_linear_sum += start_mouths;
+        } else {
+            t.start_mouths_multi_sum += start_mouths;
+        }
         t.pockets_sum += pockets;
         t.max_pocket_sum += max_pocket;
         t.cross_sum += cross;
@@ -1923,6 +2016,40 @@ fn test_builder_w7_probe() {
             t.pocket_cycles_sum as f64 / n,
             t.pocket_cycles_linear_sum as f64 / t.linear.max(1) as f64,
             t.pocket_cycles_multi_sum as f64 / t.multi.max(1) as f64,
+        );
+        println!(
+            "        start-island pipe mouths {:.2} (linear {:.2} / multi {:.2})",
+            t.start_mouths_sum as f64 / n,
+            t.start_mouths_linear_sum as f64 / t.linear.max(1) as f64,
+            t.start_mouths_multi_sum as f64 / t.multi.max(1) as f64,
+        );
+    }
+
+    // One-time island inventory of the fresh (pre-placement) map: size,
+    // whether it holds the start / target, and its bridge-tile count.
+    let ctx = census_ctx(&raw, 0);
+    let fresh = ctx.world(world_idx);
+    let (pocket, count) = super::islands::pocket_map(&fresh);
+    println!("fresh W{world} island inventory ({count} islands):");
+    for id in 0..count {
+        let members: Vec<Pos> = pocket
+            .iter()
+            .filter(|&(_, &p)| p == id)
+            .map(|(&pos, _)| pos)
+            .collect();
+        let bridges = members
+            .iter()
+            .filter(|&&(r, c)| [0xB3u8, 0xB1, 0xB2].contains(&fresh.grid.get(r, c)))
+            .count();
+        let mut sorted = members.clone();
+        sorted.sort_unstable();
+        println!(
+            "  island {id}: {} tiles, start={} target={} bridges={} members={:?}",
+            members.len(),
+            fresh.start.is_some_and(|s| pocket.get(&s) == Some(&id)),
+            fresh.target.is_some_and(|t| pocket.get(&t) == Some(&id)),
+            bridges,
+            sorted,
         );
     }
 }
