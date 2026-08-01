@@ -1686,6 +1686,8 @@ fn test_builder_w7_probe() {
         pocket_cycles_sum: usize,
         pocket_cycles_linear_sum: usize,
         pocket_cycles_multi_sum: usize,
+        trunk_blanks_sum: usize,
+        trunk_levels_sum: usize,
     }
 
     let mut arms: std::collections::BTreeMap<Pos, T> = std::collections::BTreeMap::new();
@@ -1812,6 +1814,21 @@ fn test_builder_w7_probe() {
         t.nodes_sum += v;
         t.dist_sum += dist;
         t.blanks_sum += state.legal_blanks().len();
+        // Free blanks the cheap route walks THROUGH — the only tiles
+        // arm_balance / level_move can use to discriminate routes.
+        if let Some(r) = m.rc.routes.first() {
+            let path: HashSet<Pos> = r.path.iter().copied().collect();
+            t.trunk_blanks_sum += state
+                .legal_blanks()
+                .iter()
+                .filter(|p| path.contains(*p))
+                .count();
+            t.trunk_levels_sum += state
+                .slots
+                .iter()
+                .filter(|s| s.kind == SlotKind::Level && path.contains(&s.pos))
+                .count();
+        }
 
         // Render the first couple of NOALT worlds per arm for eyeballing,
         // with their shaping logs.
@@ -1853,6 +1870,11 @@ fn test_builder_w7_probe() {
             t.nodes_sum as f64 / n,
             t.dist_sum as f64 / n,
             t.blanks_sum as f64 / n,
+        );
+        println!(
+            "        trunk-blanks {:.2}  trunk-levels {:.2}",
+            t.trunk_blanks_sum as f64 / n,
+            t.trunk_levels_sum as f64 / n,
         );
         println!(
             "        pockets {:.2}  max-pocket {:.1}  pipes cross {:.2} intra {:.2}  doubled {:.2}  pocket-cycles {:.2} (linear {:.2} / multi {:.2})",
