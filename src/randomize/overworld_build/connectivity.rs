@@ -18,6 +18,17 @@
 //! price back up), with a full-set fallback when an island has no clear
 //! candidate, because bridging outranks the bar.
 //!
+//! One structural addition after bridging: the LOOP CLOSER. Spanning
+//! bridges alone leave the pocket graph a tree — every route threads the
+//! same pocket sequence, so no second route can exist no matter where
+//! later phases put content (W7 census 2026-08-01: ~45% linear, and
+//! choice tracked the cycles spare pipes closed by accident; vanilla W7
+//! wires the same 8 pipes into a loop with two arms tied at cost 35).
+//! When the world had 2+ pockets and budget remains, ONE extra pair goes
+//! between two pockets that aren't already directly linked, turning the
+//! tree into a loop the shaping rungs can price. Endpoints stay
+//! uniform-random over the legal candidates.
+//!
 //! Not hard rules, by design: a world can end this phase with unreachable
 //! blanks (an island whose every blank is `fixed` has no legal endpoint, or
 //! the pipe budget runs out first). The phase reports what it couldn't do;
@@ -85,6 +96,46 @@ impl Phase for Connectivity {
             actions.push(format!("pipe {near:?} <-> {far:?} (island of {} blanks)", island_candidates.len()));
         }
 
+        // Loop closer: one pair between two pockets with no direct link yet
+        // (see module doc). Purely optional — no fallback past the anchor
+        // bar, and single-pocket worlds skip it (their pipes are all free
+        // routing ammo already). A stricter "leave shortcut headroom" rule
+        // was tried and reverted: it only ever throttled W7 (the world the
+        // loop is FOR — census 2026-08-01, linear 40% -> 44%), while the
+        // world it meant to protect (W8) never fires the closer at all
+        // (its extra pockets have no legal endpoints).
+        if state.pipe_pairs.len() < state.pipe_budget {
+            let (pocket, pocket_count) = pocket_map(state);
+            if pocket_count >= 2 {
+                let linked = linked_pocket_pairs(&pocket, &state.pipe_pairs);
+                let legal: Vec<Pos> = state
+                    .legal_blanks()
+                    .into_iter()
+                    .filter(|&p| !state.near_anchor(p))
+                    .collect();
+                let mut cands: Vec<(Pos, Pos)> = Vec::new();
+                for (i, &a) in legal.iter().enumerate() {
+                    let Some(&pa) = pocket.get(&a) else { continue };
+                    for &b in &legal[i + 1..] {
+                        let Some(&pb) = pocket.get(&b) else { continue };
+                        if pa != pb
+                            && !linked.contains(&(pa.min(pb), pa.max(pb)))
+                            && Some(b) != row78_partner(a)
+                        {
+                            cands.push((a, b));
+                        }
+                    }
+                }
+                if let Some(&(a, b)) = cands.choose(rng) {
+                    state.add_pipe_pair(a, b);
+                    actions.push(format!(
+                        "loop pipe {a:?} <-> {b:?} (pockets {} <-> {} of {pocket_count})",
+                        pocket[&a], pocket[&b],
+                    ));
+                }
+            }
+        }
+
         // Count what remains cut off — measured, not enforced. Hammer-gated
         // pockets are deliberately left alone, so they are reported apart
         // from genuine stranding.
@@ -120,6 +171,60 @@ fn blank_positions(state: &WorldState) -> Vec<Pos> {
         }
     }
     blanks
+}
+
+/// Pocket decomposition: connected components of the walk network with NO
+/// pipe edges. Canoe edges still count when the canonical walker says they
+/// do (dock walk-reachable from the seed) — canoes are terrain, not budget.
+/// Covers every position the builder places on: blanks, slots, pipe mouths,
+/// start, target. Returns position -> pocket id and the pocket count.
+/// Start seeds first (the mainland pocket claims its canoe islands before
+/// an island seed can claim itself), then scan order — seed-stable.
+pub(super) fn pocket_map(state: &WorldState) -> (HashMap<Pos, usize>, usize) {
+    let mut seeds: Vec<Pos> = blank_positions(state);
+    seeds.extend(state.slots.iter().map(|s| s.pos));
+    for &(a, b) in &state.pipe_pairs {
+        seeds.push(a);
+        seeds.push(b);
+    }
+    seeds.extend(state.target);
+    seeds.sort_unstable();
+    seeds.dedup();
+    if let Some(start) = state.start {
+        seeds.retain(|&p| p != start);
+        seeds.insert(0, start);
+    }
+    let mut pocket: HashMap<Pos, usize> = HashMap::new();
+    let mut count = 0;
+    for &seed in &seeds {
+        if pocket.contains_key(&seed) {
+            continue;
+        }
+        let reach = walk_reachable(&state.grid, &[], Some(seed), state.world_idx);
+        for &q in &seeds {
+            if !pocket.contains_key(&q) && reach.contains(q) {
+                pocket.insert(q, count);
+            }
+        }
+        count += 1;
+    }
+    (pocket, count)
+}
+
+/// The pocket pairs already joined by a direct pipe, normalized (lo, hi).
+/// Intra-pocket pairs appear as (p, p) — harmless to callers, which only
+/// test cross-pocket candidates.
+pub(super) fn linked_pocket_pairs(
+    pocket: &HashMap<Pos, usize>,
+    pipe_pairs: &[TeleportEdge],
+) -> HashSet<(usize, usize)> {
+    pipe_pairs
+        .iter()
+        .filter_map(|&(a, b)| {
+            let (&pa, &pb) = (pocket.get(&a)?, pocket.get(&b)?);
+            Some((pa.min(pb), pa.max(pb)))
+        })
+        .collect()
 }
 
 /// Where to grow next: the goal's component first (a world you can't finish
