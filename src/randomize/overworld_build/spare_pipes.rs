@@ -20,18 +20,29 @@
 //! Runs LAST in the shaped pipeline (after shaping): spares must not eat
 //! the budget headroom the gated-shortcut rung draws on, and the guard
 //! needs the finished structure to measure against.
+//!
+//! Pocket-doubling pairs (a second direct link between two pockets that
+//! already have one) are DEMOTED, not banned: same pocket pair = usually
+//! the same level set both ways, which the domination filter deletes —
+//! measured dead weight (~0.5 pairs/seed on W7, census 2026-08-01). The
+//! creator tier still judges every pair by measurement (a doubled link
+//! with a different forced level on its approach CAN create a route —
+//! vanilla W7's micro-theta), so only the harmless tier and the fallback
+//! ranking prefer non-doubling pairs.
 
 use super::*;
 
+use super::islands::{linked_pocket_pairs, pocket_map};
 use super::locks::recompute_safety_flags;
 use rand::seq::IndexedRandom;
 
 /// Candidate pairs measured per spare pipe before settling.
 const SPARE_TRIES: usize = 8;
 
-/// Fallback ranking key for a trial placement: (floor-clamped C1, routes in
-/// band, raw C1) — reach the floor first, then keep routes, then cost.
-type TrialKey = (u32, usize, u32);
+/// Fallback ranking key for a trial placement: (non-doubling, floor-clamped
+/// C1, routes in band, raw C1) — avoid dead pocket-doubles first, reach the
+/// floor, then keep routes, then cost.
+type TrialKey = (bool, u32, usize, u32);
 
 pub(crate) struct SparePipes;
 
@@ -43,6 +54,10 @@ impl Phase for SparePipes {
     fn run(&self, state: &mut WorldState, rng: &mut dyn RngCore) -> PhaseReport {
         let mut actions = Vec::new();
         let mut placed_any = false;
+
+        // Pipe-free pocket ids are stable across spare placement (a new
+        // mouth was a blank in some pocket already), so compute once.
+        let (pocket, _) = pocket_map(state);
 
         while state.pipe_pairs.len() < state.pipe_budget {
             // Anchor-adjacent blanks are barred for pipe endpoints (an
@@ -63,10 +78,11 @@ impl Phase for SparePipes {
                 break;
             }
 
+            let linked = linked_pocket_pairs(&pocket, &state.pipe_pairs);
             let before = measure_world(state);
             let mut creator: Option<(Pos, Pos)> = None;
             let mut harmless: Option<(Pos, Pos)> = None;
-            // Fallback ranking: reach the floor first, then routes, then C1.
+            // Fallback ranking: non-doubling, then floor, routes, C1.
             let mut best: Option<(TrialKey, (Pos, Pos))> = None;
             for _ in 0..SPARE_TRIES {
                 let picked: Vec<Pos> = candidates.choose_multiple(rng, 2).copied().collect();
@@ -74,6 +90,12 @@ impl Phase for SparePipes {
                 if Some(b) == row78_partner(a) {
                     continue;
                 }
+                let doubling = match (pocket.get(&a), pocket.get(&b)) {
+                    (Some(&pa), Some(&pb)) if pa != pb => {
+                        linked.contains(&(pa.min(pb), pa.max(pb)))
+                    }
+                    _ => false,
+                };
                 state.add_pipe_pair(a, b);
                 let m = measure_world(state);
                 state.pop_pipe_pair();
@@ -82,11 +104,11 @@ impl Phase for SparePipes {
                         creator = Some((a, b));
                         break;
                     }
-                    if harmless.is_none() {
+                    if !doubling && harmless.is_none() {
                         harmless = Some((a, b));
                     }
                 }
-                let key = (m.c1.min(C1_FLOOR), m.routes_in_band, m.c1);
+                let key = (!doubling, m.c1.min(C1_FLOOR), m.routes_in_band, m.c1);
                 if best.as_ref().is_none_or(|(k, _)| key > *k) {
                     best = Some((key, (a, b)));
                 }

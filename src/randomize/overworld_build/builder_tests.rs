@@ -724,6 +724,14 @@ fn test_builder_shaping_census() {
         locks: usize,
         goal_open: usize,
         pipes: usize,
+        // Adjacent-level pairs (orthogonal 2-tile neighbors — visually
+        // stacked levels) — the clustering the playtest flagged.
+        adjacent_levels: usize,
+        // Largest connected chain of adjacent levels: sum (for the mean),
+        // worst seed, and how many seeds have a chain of 4+ levels.
+        chain_sum: usize,
+        chain_worst: usize,
+        chain4: usize,
     }
 
     impl Default for ArmTally {
@@ -744,6 +752,10 @@ fn test_builder_shaping_census() {
                 locks: 0,
                 goal_open: 0,
                 pipes: 0,
+                adjacent_levels: 0,
+                chain_sum: 0,
+                chain_worst: 0,
+                chain4: 0,
             }
         }
     }
@@ -776,6 +788,47 @@ fn test_builder_shaping_census() {
         t.goal_gates += state.goal_gate_locks();
         t.locks += state.locks.len();
         t.pipes += state.pipe_pairs.len();
+        let levels: Vec<Pos> = state
+            .slots
+            .iter()
+            .filter(|s| s.kind == SlotKind::Level)
+            .map(|s| s.pos)
+            .collect();
+        let adjacent = |a: Pos, b: Pos| {
+            let (dr, dc) = (a.0.abs_diff(b.0), a.1.abs_diff(b.1));
+            (dr == 2 && dc == 0) || (dr == 0 && dc == 2)
+        };
+        for (i, &a) in levels.iter().enumerate() {
+            for &b in &levels[i + 1..] {
+                if adjacent(a, b) {
+                    t.adjacent_levels += 1;
+                }
+            }
+        }
+        // Largest connected chain under the same adjacency.
+        let mut comp: Vec<usize> = (0..levels.len()).collect();
+        for i in 0..levels.len() {
+            for j in i + 1..levels.len() {
+                if adjacent(levels[i], levels[j]) {
+                    let (mut ri, mut rj) = (i, j);
+                    while comp[ri] != ri { ri = comp[ri]; }
+                    while comp[rj] != rj { rj = comp[rj]; }
+                    comp[ri] = rj;
+                }
+            }
+        }
+        let mut sizes: HashMap<usize, usize> = HashMap::new();
+        for i in 0..levels.len() {
+            let mut r = i;
+            while comp[r] != r { r = comp[r]; }
+            *sizes.entry(r).or_default() += 1;
+        }
+        let max_chain = sizes.values().copied().max().unwrap_or(0);
+        t.chain_sum += max_chain;
+        t.chain_worst = t.chain_worst.max(max_chain);
+        if max_chain >= 4 {
+            t.chain4 += 1;
+        }
     }
 
     let mut dumb = [ArmTally::default(); 8];
@@ -783,6 +836,8 @@ fn test_builder_shaping_census() {
     let mut touched = [0usize; 8];
     let mut lr_acc = [0usize; 8];
     let mut lr_rej = [0usize; 8];
+    let mut ab_acc = [0usize; 8];
+    let mut ab_rej = [0usize; 8];
     let mut gs_acc = [0usize; 8];
     let mut gs_rej = [0usize; 8];
     let mut fl_acc = [0usize; 8];
@@ -840,12 +895,15 @@ fn test_builder_shaping_census() {
                     .count()
             };
             let la = count("lock_replace ACCEPT");
+            let aa = count("arm_balance ACCEPT");
             let ga = count("gated_shortcut ACCEPT");
             let fa = count("fort_lock ACCEPT");
             let ma = count("level_move ACCEPT");
             let pa = count("pipe_move ACCEPT");
             lr_acc[world_idx] += la;
             lr_rej[world_idx] += count("lock_replace REJECT");
+            ab_acc[world_idx] += aa;
+            ab_rej[world_idx] += count("arm_balance REJECT");
             gs_acc[world_idx] += ga;
             gs_rej[world_idx] += count("gated_shortcut REJECT");
             fl_acc[world_idx] += fa;
@@ -854,19 +912,19 @@ fn test_builder_shaping_census() {
             lm_rej[world_idx] += count("level_move REJECT");
             pm_acc[world_idx] += pa;
             pm_rej[world_idx] += count("pipe_move REJECT");
-            if la + ga + fa + ma + pa > 0 {
+            if la + aa + ga + fa + ma + pa > 0 {
                 touched[world_idx] += 1;
             }
         }
     }
 
     println!("shaping A/B census ({seeds} seeds, dumb skeleton vs diagnosis-driven shaping, flag-mix arms)");
-    println!("world  arm     C1(mean)  C1min  C1<12%  routes  linear%  uniq  C2-C1  noalt%  zero-gate%  gGate  goal-open%  pipes  touched%  lr(acc:rej)  gs(acc:rej)  fl(acc:rej)  lm(acc:rej)  pm(acc:rej)  redeals");
+    println!("world  arm     C1(mean)  C1min  C1<12%  routes  linear%  uniq  C2-C1  noalt%  zero-gate%  gGate  goal-open%  pipes  touched%  lr(acc:rej)  ab(acc:rej)  gs(acc:rej)  fl(acc:rej)  lm(acc:rej)  pm(acc:rej)  redeals");
     let n = seeds as f64;
     for world_idx in 0..8 {
         for (arm, t) in [("dumb", &dumb[world_idx]), ("shaped", &shaped[world_idx])] {
             let base = format!(
-                "  W{}   {arm:<7} {:>7.1} {:>6} {:>6.0}% {:>7.2} {:>7.0}% {:>5.2} {:>6.2} {:>6.0}% {:>9.0}% {:>5.2} {:>9.0}% {:>6.2}",
+                "  W{}   {arm:<7} {:>7.1} {:>6} {:>6.0}% {:>7.2} {:>7.0}% {:>5.2} {:>6.2} {:>6.0}% {:>9.0}% {:>5.2} {:>9.0}% {:>6.2} adjL={:.2}",
                 world_idx + 1,
                 t.c1 as f64 / n,
                 t.c1_min,
@@ -880,13 +938,21 @@ fn test_builder_shaping_census() {
                 t.goal_gates as f64 / n,
                 100.0 * t.goal_open as f64 / n,
                 t.pipes as f64 / n,
+                t.adjacent_levels as f64 / n,
+            ) + &format!(
+                " chain={:.2}/max{}/4+{:.0}%",
+                t.chain_sum as f64 / n,
+                t.chain_worst,
+                100.0 * t.chain4 as f64 / n,
             );
             if arm == "shaped" {
                 println!(
-                    "{base} {:>7.0}% {:>8}:{:<4} {:>6}:{:<4} {:>6}:{:<4} {:>6}:{:<4} {:>6}:{:<4} {:>6}",
+                    "{base} {:>7.0}% {:>8}:{:<4} {:>6}:{:<4} {:>6}:{:<4} {:>6}:{:<4} {:>6}:{:<4} {:>6}:{:<4} {:>6}",
                     100.0 * touched[world_idx] as f64 / n,
                     lr_acc[world_idx],
                     lr_rej[world_idx],
+                    ab_acc[world_idx],
+                    ab_rej[world_idx],
                     gs_acc[world_idx],
                     gs_rej[world_idx],
                     fl_acc[world_idx],
@@ -898,7 +964,7 @@ fn test_builder_shaping_census() {
                     redeals[world_idx],
                 );
             } else {
-                println!("{base}        -        -         -         -         -         -        -");
+                println!("{base}        -        -         -         -         -         -         -        -");
             }
         }
     }
@@ -1453,6 +1519,7 @@ fn test_builder_probe_vanilla_world() {
     for d in &rc.detours {
         println!("  dominated:  cost={:2} levels={} forts={} rocks={}", d.cost, d.levels.len(), d.forts, d.rocks.len());
     }
+    println!("{}", route_choice::render_route_choice(&state.to_built(), slack));
 }
 
 /// PRODUCTION-OUTPUT invariants, on the real `build()` (post promotions and
@@ -1627,6 +1694,421 @@ fn test_builder_bridge_lock_rate() {
             100.0 * bridge_locks[w] as f64 / total_locks[w].max(1) as f64,
             worlds_with_bridge_tile[w],
             seeds,
+        );
+    }
+}
+
+/// Pin the island anatomy the role model is calibrated on (user design
+/// review 2026-08-01): vanilla orientation, base QOL map. A map edit or
+/// walker change that silently shifts the decomposition fails here first.
+#[test]
+fn test_builder_island_roles() {
+    let Some(raw) = load_rom() else {
+        eprintln!("ROM not found, skipping");
+        return;
+    };
+    use super::islands::IslandRole::{Corridor, Entry, Final, Routing, Utility};
+    let rom = base_qol(&raw);
+    let catalog = NodeCatalog::build(&rom, false);
+    // Toad-house / hammer-bro shuffle ON: those tiles get picked up as
+    // placeable blanks, which is the anatomy the role model was calibrated
+    // on (the flags-off variant shrinks three W7 islands by one tile each).
+    let pickup = pick_up(
+        &rom,
+        &catalog,
+        PickupFlags {
+            shuffle_spade_games: false,
+            shuffle_toad_houses: true,
+            shuffle_hammer_bros: true,
+        },
+    );
+    let flags = BuildFlags {
+        shuffle_toad_houses: true,
+        eights_are_wild: false,
+        shuffle_hammer_bros: true,
+    };
+    let sizes_roles = |world_idx: usize| {
+        let state = from_pickup(&rom, &catalog, &pickup, world_idx, &flags);
+        let (pocket, count) = super::islands::pocket_map(&state);
+        let islands = super::islands::classify(&state, &pocket, count);
+        let mut v: Vec<(usize, super::islands::IslandRole)> =
+            islands.iter().map(|i| (i.size, i.role)).collect();
+        v.sort_unstable_by_key(|&(n, _)| n);
+        v
+    };
+
+    // W7 — the full taxonomy: troll pipe (1), fort/utility slot (2),
+    // corridor (4), start (6 = start tile + 5 placeable), two routing
+    // hubs (8, 9), final island with space (13).
+    assert_eq!(
+        sizes_roles(6),
+        vec![
+            (1, Utility),
+            (2, Utility),
+            (4, Corridor),
+            (6, Entry),
+            (8, Routing),
+            (9, Routing),
+            (13, Final),
+        ],
+    );
+    // W5 — the spiral-tower split: twin big islands, roles taken by
+    // start/target rather than size.
+    let w5 = sizes_roles(4);
+    assert_eq!(w5.len(), 2);
+    assert!(w5.iter().any(|&(_, r)| r == Entry) && w5.iter().any(|&(_, r)| r == Final));
+    // Single-island worlds: the role machinery has nothing to do.
+    assert_eq!(sizes_roles(0).len(), 1);
+    assert_eq!(sizes_roles(1).len(), 1);
+    // W8 — fragmented but with a single big routing hub.
+    let w8 = sizes_roles(7);
+    assert_eq!(w8.len(), 5);
+    assert_eq!(w8.iter().filter(|&&(_, r)| r == Routing).count(), 2);
+}
+
+/// TEMP DIAGNOSTIC (W7 linearity investigation): shaped-arm results for one
+/// world, split by start position (i.e. SAS orientation), with walk-graph
+/// geometry per seed — cycle rank (independent cycles in the final walk
+/// graph; 0 = tree = no parallel routes possible), node count, start→goal
+/// hops, and leftover blanks. `CENSUS_WORLD` (default 7), `CENSUS_SEEDS`
+/// (default 200).
+#[test]
+fn test_builder_w7_probe() {
+    let Some(raw) = load_rom() else {
+        eprintln!("ROM not found, skipping");
+        return;
+    };
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(200);
+    let world: usize = std::env::var("CENSUS_WORLD")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(7);
+    let world_idx = world - 1;
+
+    #[derive(Default)]
+    struct T {
+        n: usize,
+        linear: usize,
+        noalt: usize,
+        c1: u64,
+        routes: usize,
+        uniq: f64,
+        multi: usize,
+        beta_sum: usize,
+        beta_linear_sum: usize,
+        beta_multi_sum: usize,
+        beta_zero: usize,
+        nodes_sum: usize,
+        dist_sum: usize,
+        blanks_sum: usize,
+        renders: usize,
+        pockets_sum: usize,
+        max_pocket_sum: usize,
+        cross_sum: usize,
+        intra_sum: usize,
+        doubled_sum: usize,
+        pocket_cycles_sum: usize,
+        pocket_cycles_linear_sum: usize,
+        pocket_cycles_multi_sum: usize,
+        trunk_blanks_sum: usize,
+        trunk_levels_sum: usize,
+        noalt_probe: usize,
+        noalt_with_detour: usize,
+        noalt_exclusive: usize,
+        noalt_goldable: usize,
+        start_mouths_sum: usize,
+        start_mouths_linear_sum: usize,
+        start_mouths_multi_sum: usize,
+    }
+
+    let mut arms: std::collections::BTreeMap<Pos, T> = std::collections::BTreeMap::new();
+
+    for seed in 0..seeds {
+        let ctx = census_ctx(&raw, seed);
+        let mut state = ctx.world(world_idx);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        run_shaped_with_web_retries(&mut state, &mut rng);
+
+        let m = measure_world(&state);
+        let built = state.to_built();
+        let wide = analyze_route_choice(&built, SHAPING_SLACK);
+
+        // Replicate route_choice::stage_grid: open breakable rocks, stamp slots.
+        let mut grid = built.grid.clone();
+        for r in 0..grid.rows() {
+            for c in 0..grid.cols {
+                let t = grid.get(r, c);
+                for (closed, open) in [(0x51u8, 0x45u8), (0x52, 0x46)] {
+                    if t == closed {
+                        grid.set(r, c, open);
+                    }
+                }
+            }
+        }
+        types::stamp_slots(&mut grid, &built.slots);
+        let start = rom_data::find_start(&grid).expect("start");
+        let target = find_target(&grid, world_idx).expect("target");
+        let walk = walk_map(&grid, &built.pipe_pairs, Some(start), world_idx);
+
+        // Undirected edge count: each symmetric edge is recorded once per
+        // endpoint; the target sink never expands, so its edges appear once.
+        let directed: usize = walk.edges.values().map(Vec::len).sum();
+        let v = walk.nodes.len();
+        let e = directed.div_ceil(2);
+        let beta = (e + 1).saturating_sub(v);
+        let dist = walk.distances.get(&target).copied().unwrap_or(999);
+
+        // Pocket structure: connected components over WALK edges only
+        // (path_pos Some — teleport edges excluded). Then classify each pipe
+        // pair: cross-pocket (a mandatory chain link) vs intra-pocket (adds a
+        // cycle the domination filter usually eats).
+        let node_list: Vec<Pos> = walk.nodes.iter().copied().collect();
+        let index: std::collections::HashMap<Pos, usize> =
+            node_list.iter().enumerate().map(|(i, &p)| (p, i)).collect();
+        let mut comp: Vec<usize> = (0..node_list.len()).collect();
+        fn find(comp: &mut Vec<usize>, i: usize) -> usize {
+            if comp[i] != i {
+                let root = find(comp, comp[i]);
+                comp[i] = root;
+            }
+            comp[i]
+        }
+        for (from, edges) in &walk.edges {
+            for edge in edges {
+                if edge.path_pos.is_some()
+                    && let (Some(&a), Some(&b)) = (index.get(from), index.get(&edge.dest))
+                {
+                    let (ra, rb) = (find(&mut comp, a), find(&mut comp, b));
+                    comp[ra] = rb;
+                }
+            }
+        }
+        let mut sizes: std::collections::HashMap<usize, usize> =
+            std::collections::HashMap::new();
+        for i in 0..node_list.len() {
+            *sizes.entry(find(&mut comp, i)).or_default() += 1;
+        }
+        let pockets = sizes.len();
+        let max_pocket = sizes.values().copied().max().unwrap_or(0);
+        let mut cross = 0;
+        let mut intra = 0;
+        let mut pair_edges: std::collections::HashSet<(usize, usize)> =
+            std::collections::HashSet::new();
+        let mut doubled = 0;
+        for &(a, b) in &built.pipe_pairs {
+            if let (Some(&ia), Some(&ib)) = (index.get(&a), index.get(&b)) {
+                let (ra, rb) = (find(&mut comp, ia), find(&mut comp, ib));
+                if ra == rb {
+                    intra += 1;
+                } else {
+                    cross += 1;
+                    if !pair_edges.insert((ra.min(rb), ra.max(rb))) {
+                        doubled += 1;
+                    }
+                }
+            }
+        }
+        // Cycle rank of the pocket graph counting only DISTINCT pocket-pair
+        // links — cycles that thread 3+ pockets (the rebalanceable kind).
+        let pocket_cycles = (pair_edges.len() + 1).saturating_sub(sizes.len());
+
+        // Pipe mouths that landed on the START island — the user's
+        // shortcut-concentration question.
+        let start_root = state
+            .start
+            .and_then(|s| index.get(&s).copied())
+            .map(|i| find(&mut comp, i));
+        let start_mouths = built
+            .pipe_pairs
+            .iter()
+            .flat_map(|&(a, b)| [a, b])
+            .filter(|p| {
+                index.get(p).copied().map(|i| find(&mut comp, i)) == start_root
+                    && start_root.is_some()
+            })
+            .count();
+
+        let t = arms.entry(state.start.unwrap_or((0, 0))).or_default();
+        t.start_mouths_sum += start_mouths;
+        if m.routes_in_band < 2 {
+            t.start_mouths_linear_sum += start_mouths;
+        } else {
+            t.start_mouths_multi_sum += start_mouths;
+        }
+        t.pockets_sum += pockets;
+        t.max_pocket_sum += max_pocket;
+        t.cross_sum += cross;
+        t.intra_sum += intra;
+        t.doubled_sum += doubled;
+        t.pocket_cycles_sum += pocket_cycles;
+        if m.routes_in_band < 2 {
+            t.pocket_cycles_linear_sum += pocket_cycles;
+        } else {
+            t.pocket_cycles_multi_sum += pocket_cycles;
+        }
+        t.n += 1;
+        t.c1 += u64::from(m.c1);
+        t.routes += m.routes_in_band;
+        if m.routes_in_band < 2 {
+            t.linear += 1;
+            t.beta_linear_sum += beta;
+        } else {
+            t.multi += 1;
+            t.uniq += m.mean_exclusive_levels;
+            t.beta_multi_sum += beta;
+        }
+        if wide.routes.len() < 2 {
+            t.noalt += 1;
+        }
+        if beta == 0 {
+            t.beta_zero += 1;
+        }
+        t.beta_sum += beta;
+        t.nodes_sum += v;
+        t.dist_sum += dist;
+        t.blanks_sum += state.legal_blanks().len();
+        // Free blanks the cheap route walks THROUGH — the only tiles
+        // arm_balance / level_move can use to discriminate routes.
+        if let Some(r) = m.rc.routes.first() {
+            let path: HashSet<Pos> = r.path.iter().copied().collect();
+            t.trunk_blanks_sum += state
+                .legal_blanks()
+                .iter()
+                .filter(|p| path.contains(*p))
+                .count();
+            t.trunk_levels_sum += state
+                .slots
+                .iter()
+                .filter(|s| s.kind == SlotKind::Level && path.contains(&s.pos))
+                .count();
+        }
+
+        // Golden-lock feasibility on NOALT seeds: does a dominated detour
+        // exist within the wide window, and does the cheap route's
+        // exclusive stretch vs that detour contain a LOCKABLE tile? (If
+        // yes, a lock on that edge would split the pair; if the stretch is
+        // empty or unlockable, only new topology can help.)
+        if wide.routes.len() < 2 {
+            t.noalt_probe += 1;
+            if let Some(d) = wide.detours.first() {
+                t.noalt_with_detour += 1;
+                let dpath: HashSet<Pos> = d.path.iter().copied().collect();
+                let exclusive: Vec<Pos> = wide
+                    .routes
+                    .first()
+                    .map(|r| {
+                        r.path.iter().copied().filter(|p| !dpath.contains(p)).collect()
+                    })
+                    .unwrap_or_default();
+                if !exclusive.is_empty() {
+                    t.noalt_exclusive += 1;
+                }
+                if exclusive
+                    .iter()
+                    .any(|&(r, c)| LOCKABLE_TILES.contains(&grid.get(r, c)))
+                {
+                    t.noalt_goldable += 1;
+                }
+            }
+        }
+
+        // Render the first couple of NOALT worlds per arm for eyeballing,
+        // with their shaping logs.
+        if wide.routes.len() < 2 && t.renders < 2 {
+            t.renders += 1;
+            println!(
+                "--- seed {seed} W{world} start {:?} C1 {} beta {beta} (NOALT) ---",
+                state.start.unwrap_or((0, 0)),
+                m.c1
+            );
+            println!("{}", route_choice::render_route_choice(&built, SHAPING_SLACK));
+            for report in &state.log {
+                if report.phase == "shaping" {
+                    for action in &report.actions {
+                        println!("    [{}] {action}", report.phase);
+                    }
+                }
+            }
+        }
+    }
+
+    println!("W{world} probe ({seeds} seeds, shaped arm, split by start pos):");
+    println!("start      n  linear%  noalt%  C1    routes  uniq  beta  beta(lin)  beta(multi)  beta0%  nodes  dist  blanks  pockets  maxpkt  pipes(cross:intra)");
+    for (start, t) in &arms {
+        let n = t.n as f64;
+        println!(
+            "{:>7?} {:>4} {:>7.0}% {:>6.0}% {:>5.1} {:>6.2} {:>5.2} {:>5.2} {:>9.2} {:>11.2} {:>6.0}% {:>6.1} {:>5.1} {:>6.1}",
+            start,
+            t.n,
+            100.0 * t.linear as f64 / n,
+            100.0 * t.noalt as f64 / n,
+            t.c1 as f64 / n,
+            t.routes as f64 / n,
+            t.uniq / t.multi.max(1) as f64,
+            t.beta_sum as f64 / n,
+            t.beta_linear_sum as f64 / t.linear.max(1) as f64,
+            t.beta_multi_sum as f64 / t.multi.max(1) as f64,
+            100.0 * t.beta_zero as f64 / n,
+            t.nodes_sum as f64 / n,
+            t.dist_sum as f64 / n,
+            t.blanks_sum as f64 / n,
+        );
+        println!(
+            "        trunk-blanks {:.2}  trunk-levels {:.2}  noalt breakdown: {} total / {} with detour / {} any-exclusive-tile / {} lockable-exclusive-edge",
+            t.trunk_blanks_sum as f64 / n,
+            t.trunk_levels_sum as f64 / n,
+            t.noalt_probe,
+            t.noalt_with_detour,
+            t.noalt_exclusive,
+            t.noalt_goldable,
+        );
+        println!(
+            "        pockets {:.2}  max-pocket {:.1}  pipes cross {:.2} intra {:.2}  doubled {:.2}  pocket-cycles {:.2} (linear {:.2} / multi {:.2})",
+            t.pockets_sum as f64 / n,
+            t.max_pocket_sum as f64 / n,
+            t.cross_sum as f64 / n,
+            t.intra_sum as f64 / n,
+            t.doubled_sum as f64 / n,
+            t.pocket_cycles_sum as f64 / n,
+            t.pocket_cycles_linear_sum as f64 / t.linear.max(1) as f64,
+            t.pocket_cycles_multi_sum as f64 / t.multi.max(1) as f64,
+        );
+        println!(
+            "        start-island pipe mouths {:.2} (linear {:.2} / multi {:.2})",
+            t.start_mouths_sum as f64 / n,
+            t.start_mouths_linear_sum as f64 / t.linear.max(1) as f64,
+            t.start_mouths_multi_sum as f64 / t.multi.max(1) as f64,
+        );
+    }
+
+    // One-time island inventory of the fresh (pre-placement) map: size,
+    // whether it holds the start / target, and its bridge-tile count.
+    let ctx = census_ctx(&raw, 0);
+    let fresh = ctx.world(world_idx);
+    let (pocket, count) = super::islands::pocket_map(&fresh);
+    println!("fresh W{world} island inventory ({count} islands):");
+    for id in 0..count {
+        let members: Vec<Pos> = pocket
+            .iter()
+            .filter(|&(_, &p)| p == id)
+            .map(|(&pos, _)| pos)
+            .collect();
+        let bridges = members
+            .iter()
+            .filter(|&&(r, c)| [0xB3u8, 0xB1, 0xB2].contains(&fresh.grid.get(r, c)))
+            .count();
+        let mut sorted = members.clone();
+        sorted.sort_unstable();
+        println!(
+            "  island {id}: {} tiles, start={} target={} bridges={} members={:?}",
+            members.len(),
+            fresh.start.is_some_and(|s| pocket.get(&s) == Some(&id)),
+            fresh.target.is_some_and(|t| pocket.get(&t) == Some(&id)),
+            bridges,
+            sorted,
         );
     }
 }

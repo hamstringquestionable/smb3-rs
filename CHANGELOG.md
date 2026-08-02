@@ -9,7 +9,23 @@ deploys.
 
 ## [Unreleased]
 
+### Fixed
+
+- Levels no longer pile up back-to-back in one corner of the map: level
+  placement (and the shaping moves that relocate levels) now avoid putting
+  a level next to another whenever the map allows. Worlds with 4+ levels
+  chained in a row drop from ~1 in 6 to ~1 in 50, and route choice
+  improved as a side effect (spread levels fork more).
+
 ### Changed
+
+- Pipe-fragmented worlds (Worlds 7 and 8 especially) are much less often a
+  single forced corridor: the builder now understands island anatomy —
+  pipe mouths on an island land far apart so routes cross its interior, a
+  loop gets wired between islands, and level costs are balanced across the
+  loop's arms — the same two-tied-arms structure vanilla World 7 ships.
+  All-linear layouts drop from ~49% to ~27% of seeds in W7 and ~11% to
+  ~4% in W8.
 
 - The overworld builder was replaced with the choice-first rebuild: knob-free
   placement (connectivity, levels, forts, locks) plus a diagnosis-driven

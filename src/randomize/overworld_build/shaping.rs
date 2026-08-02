@@ -31,6 +31,15 @@
 //!   topology can help — walk edges are local, so a pipe is the one move
 //!   that creates a route that doesn't exist yet. **Gated shortcut**: add a
 //!   pipe pair, re-place ALL locks on the new topology, judge the bundle.
+//! - **Linear with a wide runner-up or detour** (a second route exists
+//!   within [`SHAPING_SLACK`] but outside the band, or dominated): **arm
+//!   balance** — move a level onto the cheap route's EXCLUSIVE stretch,
+//!   closing the cost gap from the C1 side without touching the runner-up
+//!   (and breaking a detour's superset relation, which un-dominates it).
+//!   The generic level move can't do this: it targets the whole trunk, and
+//!   a level on a SHARED stretch raises both routes alike, leaving the gap
+//!   fixed. Vanilla W7 is the precedent — two pocket arms tied at cost 35.
+//!   After the shortcut: creation first, then trimming what it created.
 //! - **Both cheaper rungs spent** (exhausted or unavailable): **fort+lock
 //!   move** — relocate one fort and re-place all locks as one bundle. The
 //!   trunk-fort symptom: a fort ON the cheapest route makes every lock
@@ -67,8 +76,9 @@
 //! the floor.
 //!
 //! The loop's knobs (the ONLY knobs in the builder): [`MOVE_BUDGET`],
-//! [`TARGET_ROUTES`], [`SHORTCUT_TRIES`], [`FORTLOCK_TRIES`],
-//! [`LEVELMOVE_TRIES`], [`PIPEMOVE_TRIES`], [`ESCALATE_AFTER`].
+//! [`TARGET_ROUTES`], [`SHORTCUT_TRIES`], [`ARM_BALANCE_TRIES`],
+//! [`FORTLOCK_TRIES`], [`LEVELMOVE_TRIES`], [`PIPEMOVE_TRIES`],
+//! [`ESCALATE_AFTER`].
 
 use super::*;
 
@@ -83,6 +93,8 @@ const MOVE_BUDGET: usize = 24;
 const TARGET_ROUTES: usize = 2;
 /// Candidate pipe pairs tried inside ONE gated-shortcut move.
 const SHORTCUT_TRIES: usize = 4;
+/// Level relocations tried inside ONE arm-balance move.
+const ARM_BALANCE_TRIES: usize = 4;
 /// Full fort-relocation evaluations paid inside ONE fort+lock move.
 const FORTLOCK_TRIES: usize = 4;
 /// Level relocations tried inside ONE level move (cheap: no lock re-place).
@@ -104,8 +116,11 @@ impl Phase for Shaping {
         let mut moves = 0usize;
         let mut accepted = 0usize;
         // Per-rung consecutive-rejection counters, indexed by ladder order:
-        // lock re-place, gated shortcut, fort+lock, level move, pipe move.
-        let mut rejects = [0usize; 5];
+        // lock re-place, gated shortcut, arm balance, fort+lock, level move,
+        // pipe move. The shortcut CREATES wide routes, arm balance prices
+        // them into the band — creation before trimming (measured: balance
+        // first displaced W8's shortcut accepts, linear 8% -> 11%).
+        let mut rejects = [0usize; 6];
 
         let status = loop {
             let before = measure_world(state);
@@ -129,9 +144,11 @@ impl Phase for Shaping {
             let available = if cheap {
                 // The pipe move is the final cost rung: when no lock cuts
                 // the goal and levels run out of trunk targets, the express
-                // itself (a pipe mouth) is what must move.
+                // itself (a pipe mouth) is what must move. Arm balance is a
+                // choice tool only — cost mode has its own level rung.
                 [
                     !state.locks.is_empty(),
+                    false,
                     false,
                     state.fort_count() > 0,
                     true,
@@ -143,12 +160,13 @@ impl Phase for Shaping {
                         && !state.locks.is_empty()
                         && (zero_gate > 0 || before.dominated_detours > 0),
                     routes_needy && state.pipe_pairs.len() < state.pipe_budget,
+                    routes_needy, // arm balance finds its own wide runner-up
                     routes_needy && state.fort_count() > 0,
                     true, // level move checks its own sources/targets
                     false, // pipe move is a cost tool only
                 ]
             };
-            let Some(rung) = (0..5)
+            let Some(rung) = (0..6)
                 .find(|&r| available[r] && rejects[r] < ESCALATE_AFTER)
             else {
                 break "stuck: no move available";
@@ -158,14 +176,15 @@ impl Phase for Shaping {
             let outcome = match rung {
                 0 => try_lock_replace(state, rng, &before, zero_gate),
                 1 => try_gated_shortcut(state, rng, &before),
-                2 => try_fort_lock(state, rng, &before),
-                3 => try_level_move(state, rng, &before),
+                2 => try_arm_balance(state, rng, &before),
+                3 => try_fort_lock(state, rng, &before),
+                4 => try_level_move(state, rng, &before),
                 _ => try_pipe_move(state, rng, &before),
             };
             match outcome {
                 Ok(line) => {
                     // The world changed — every rung's ammunition is fresh.
-                    rejects = [0; 5];
+                    rejects = [0; 6];
                     accepted += 1;
                     actions.push(line);
                 }
@@ -231,6 +250,126 @@ fn try_lock_replace(
     }
 }
 
+/// The parity rung: when a runner-up route exists in the WIDE window
+/// ([`SHAPING_SLACK`]) but outside the choice band, close the cost gap
+/// surgically — move a level that is NOT on the cheap route onto a blank on
+/// the cheap route's EXCLUSIVE stretch (on the cheap path, off the
+/// runner-up's). Each move raises C1 by 3 while leaving the runner-up
+/// priced as it was (and cheapens it by 3 when the source level sat on it),
+/// so the gap closes without the whole world re-pricing. The generic level
+/// move can't do this: its targets are the whole trunk, and a level landing
+/// on a stretch SHARED with the runner-up raises both costs alike — gap
+/// unchanged, noalt stays noalt. Locks untouched, so an evaluation is
+/// relocate + measure, same as the level move.
+///
+/// The runner-up can be a DOMINATED detour: on tree-ish maps the loop's
+/// second arm usually plays a superset of the cheap route's levels (its
+/// exclusive stretch holds none of its own), so it sits in `detours`, not
+/// `routes` — invisible to the band. The same move fixes that too: a level
+/// on the cheap route's exclusive stretch is a level the detour does NOT
+/// play, so the superset relation breaks and the detour becomes a real
+/// alternative. Accept iff routes rise, a wide route materialized (the
+/// detour split off), or the wide gap shrank at flat routes (floor held) —
+/// a 9-point gap takes multiple moves, and the early ones buy no route
+/// yet. Vanilla W7 is the design precedent: two pocket arms tied at cost
+/// 35 (the loop closer in connectivity builds the arms; this rung prices
+/// them).
+fn try_arm_balance(
+    state: &mut WorldState,
+    rng: &mut dyn RngCore,
+    before: &WorldMeasure,
+) -> Result<String, String> {
+    let wide_before = analyze_route_choice(&state.to_built(), SHAPING_SLACK);
+    let cheap: HashSet<Pos> = match wide_before.routes.first() {
+        Some(r) => r.path.iter().copied().collect(),
+        None => return Err("arm_balance REJECT: no route at all".into()),
+    };
+    let blanks = state.legal_blanks();
+
+    // Runner-up material: the kept wide route, else the cheapest dominated
+    // detour this move can actually work with — one whose cheap-exclusive
+    // stretch holds a legal blank. Detours that differ by a path-tile-only
+    // bypass (no node on the stretch) are lock material, not level
+    // material; skip them.
+    let alt_candidates = if wide_before.routes.len() >= 2 {
+        std::slice::from_ref(&wide_before.routes[1])
+    } else {
+        &wide_before.detours[..]
+    };
+    let usable = alt_candidates.iter().find_map(|r| {
+        let alt: HashSet<Pos> = r.path.iter().copied().collect();
+        let targets: Vec<Pos> = spaced(
+            state,
+            blanks
+                .iter()
+                .copied()
+                .filter(|p| cheap.contains(p) && !alt.contains(p))
+                .collect(),
+        );
+        (!targets.is_empty()).then_some((r, targets))
+    });
+    let Some((alt_route, targets)) = usable else {
+        return Err(format!(
+            "arm_balance REJECT: no runner-up/detour with an exclusive blank ({} candidates)",
+            alt_candidates.len(),
+        ));
+    };
+    let gap_before = alt_route.cost - wide_before.routes[0].cost;
+
+    let sources: Vec<usize> = state
+        .slots
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.kind == SlotKind::Level && !cheap.contains(&s.pos))
+        .map(|(i, _)| i)
+        .collect();
+    if sources.is_empty() {
+        return Err(format!(
+            "arm_balance REJECT: gap {gap_before}, no off-cheap levels to move",
+        ));
+    }
+
+    let saved_slots = state.slots.clone();
+    for _ in 0..ARM_BALANCE_TRIES {
+        let Some(&si) = sources.choose(rng) else { break };
+        let Some(&target) = targets.choose(rng) else { break };
+        let old_pos = state.slots[si].pos;
+        state.slots[si].pos = target;
+        let after = measure_world(state);
+        let wide_after = analyze_route_choice(&state.to_built(), SHAPING_SLACK);
+        let gap_after = if wide_after.routes.len() >= 2 {
+            wide_after.routes[1].cost - wide_after.routes[0].cost
+        } else {
+            u32::MAX
+        };
+        // The gap-shrink tier only applies when the alt was a KEPT
+        // runner-up — after a detour-splitting move the before/after gaps
+        // would describe different detours.
+        let had_runner_up = wide_before.routes.len() >= 2;
+        let improved = after.c1 >= C1_FLOOR
+            && (after.routes_in_band > before.routes_in_band
+                || (after.routes_in_band == before.routes_in_band
+                    && (wide_after.routes.len() > wide_before.routes.len()
+                        || (had_runner_up && gap_after < gap_before))));
+        if improved {
+            return Ok(format!(
+                "arm_balance ACCEPT: level {old_pos:?} -> {target:?} (cheap-exclusive), routes {} -> {}, wide {} -> {}, gap {gap_before} -> {}, C1 {} -> {}",
+                before.routes_in_band,
+                after.routes_in_band,
+                wide_before.routes.len(),
+                wide_after.routes.len(),
+                if gap_after == u32::MAX { "-".into() } else { gap_after.to_string() },
+                before.c1,
+                after.c1,
+            ));
+        }
+        state.slots = saved_slots.clone();
+    }
+    Err(format!(
+        "arm_balance REJECT: no exclusive-stretch move closes gap {gap_before} ({ARM_BALANCE_TRIES} tries)",
+    ))
+}
+
 /// The topology rung: spend one pipe pair AND re-place all locks as a single
 /// bundle, judged together on the finished world. Accept iff the pipe
 /// CREATED a distinct route — measured with the WIDE stick
@@ -267,6 +406,11 @@ fn try_gated_shortcut(
 
     let wide_before = analyze_route_choice(&state.to_built(), SHAPING_SLACK).routes.len();
 
+    // NOTE: the connectivity spread-mouths refinement was tried on these
+    // trial pairs too and REJECTED (census 2026-08-01): the argmax is
+    // deterministic, so it collapsed the 4 tries onto one tile per island
+    // — W4's shortcut accepts fell 43 -> 9 (2-island world, no diversity
+    // left) while W7 didn't move. Uniform trials stay.
     for _ in 0..SHORTCUT_TRIES {
         // Anchor-adjacent blanks are barred for pipe endpoints — same rule
         // as connectivity and spare pipes (an ungateable express).
@@ -422,11 +566,14 @@ fn try_level_move(
         .filter(|(_, s)| s.kind == SlotKind::Level && !trunk.contains(&s.pos))
         .map(|(i, _)| i)
         .collect();
-    let targets: Vec<Pos> = state
-        .legal_blanks()
-        .into_iter()
-        .filter(|p| trunk.contains(p))
-        .collect();
+    let targets: Vec<Pos> = spaced(
+        state,
+        state
+            .legal_blanks()
+            .into_iter()
+            .filter(|p| trunk.contains(p))
+            .collect(),
+    );
     if sources.is_empty() || targets.is_empty() {
         return Err(format!(
             "level_move REJECT: {} off-route levels, {} on-route blanks — nothing to work with",
@@ -565,6 +712,21 @@ fn try_pipe_move(
         "pipe_move REJECT: no relocation lifts C1 {} ({evals} full evals)",
         before.c1,
     ))
+}
+
+/// The level-spacing invariant, mover side: a RELOCATION never lands a
+/// level next to another level, full stop — a move is optional (unlike
+/// placement, which must spend its budget and may be forced), so when no
+/// spaced target exists the move simply isn't available. This is the
+/// root-cause fix for the playtest's level trains: the movers relocate
+/// levels onto the cheapest route one accept at a time, and with adjacent
+/// tiles as valid targets that process assembles the whole budget into a
+/// snake along the trunk.
+fn spaced(state: &WorldState, targets: Vec<Pos>) -> Vec<Pos> {
+    targets
+        .into_iter()
+        .filter(|&p| !super::levels::next_to_level(state, p))
+        .collect()
 }
 
 /// Every slot and the goal walk-reachable from start on the all-open world

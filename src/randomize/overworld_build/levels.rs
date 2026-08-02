@@ -1,10 +1,15 @@
 //! Levels phase — place the world's action levels on the connected map.
 //!
-//! Deliberately KNOB-FREE: every level lands on a uniform-random legal
-//! blank. None of the shipping builder's placement scoring (spread, path
-//! relevance, dead-end preference) exists here — the census measures what
-//! uniform placement produces (clustering, screen balance, route effects),
-//! and any future preference has to beat those numbers to justify itself.
+//! Placement is uniform-random over legal blanks with ONE earned rule —
+//! avoid-adjacency-when-avoidable: if the uniform pick would sit
+//! orthogonally next to an already-placed level and non-adjacent blanks
+//! remain, re-pick uniformly among the non-adjacent ones. Pure uniform
+//! measured terrible (playtest + census 2026-08-01: 14-21% of worlds put
+//! 4+ levels in one connected chain, worst 7 — the whole budget in a
+//! snake and the rest of the map empty; the old builder's spread scorer
+//! had prevented this and was deleted with it). No weights: adjacency is
+//! avoided exactly when the map allows, so small forced corridors (W7)
+//! still chain like vanilla does.
 //!
 //! What binds anyway (facts, not preferences):
 //! - levels go on blank tiles only, never on `fixed` positions;
@@ -37,7 +42,13 @@ impl Phase for Levels {
         let mut placed = 0usize;
 
         while placed < state.level_budget {
-            let Some(&pos) = candidates.choose(rng) else {
+            let clear: Vec<Pos> = candidates
+                .iter()
+                .copied()
+                .filter(|&c| !next_to_level(state, c))
+                .collect();
+            let pool = if clear.is_empty() { &candidates } else { &clear };
+            let Some(&pos) = pool.choose(rng) else {
                 actions.push(format!(
                     "stuck: {placed}/{} levels placed, no legal blanks left",
                     state.level_budget,
@@ -57,7 +68,21 @@ impl Phase for Levels {
             candidates.retain(|&c| c != pos && Some(c) != row78_partner(pos));
         }
 
-        actions.push(format!("done: {placed}/{} levels placed", state.level_budget));
+        actions.push(format!(
+            "done: {placed}/{} levels placed (pool was {} blanks)",
+            state.level_budget,
+            state.legal_blanks().len() + placed,
+        ));
         PhaseReport { phase: self.name(), actions }
     }
+}
+
+/// Orthogonally adjacent (2-tile walk neighbor) to an already-placed level.
+pub(super) fn next_to_level(state: &WorldState, pos: Pos) -> bool {
+    state.slots.iter().any(|s| {
+        s.kind == SlotKind::Level && {
+            let (dr, dc) = (s.pos.0.abs_diff(pos.0), s.pos.1.abs_diff(pos.1));
+            (dr == 2 && dc == 0) || (dr == 0 && dc == 2)
+        }
+    })
 }

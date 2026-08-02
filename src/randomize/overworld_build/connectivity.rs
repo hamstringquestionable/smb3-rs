@@ -18,6 +18,17 @@
 //! price back up), with a full-set fallback when an island has no clear
 //! candidate, because bridging outranks the bar.
 //!
+//! One structural addition after bridging: the LOOP CLOSER. Spanning
+//! bridges alone leave the pocket graph a tree — every route threads the
+//! same pocket sequence, so no second route can exist no matter where
+//! later phases put content (W7 census 2026-08-01: ~45% linear, and
+//! choice tracked the cycles spare pipes closed by accident; vanilla W7
+//! wires the same 8 pipes into a loop with two arms tied at cost 35).
+//! When the world had 2+ pockets and budget remains, ONE extra pair goes
+//! between two pockets that aren't already directly linked, turning the
+//! tree into a loop the shaping rungs can price. Endpoints stay
+//! uniform-random over the legal candidates.
+//!
 //! Not hard rules, by design: a world can end this phase with unreachable
 //! blanks (an island whose every blank is `fixed` has no legal endpoint, or
 //! the pipe budget runs out first). The phase reports what it couldn't do;
@@ -30,6 +41,7 @@
 
 use super::*;
 
+use super::islands::{blank_positions, classify, linked_pocket_pairs, pocket_map, spread_mouth};
 use rand::seq::IndexedRandom;
 
 pub(crate) struct Connectivity;
@@ -41,6 +53,11 @@ impl Phase for Connectivity {
 
     fn run(&self, state: &mut WorldState, rng: &mut dyn RngCore) -> PhaseReport {
         let mut actions = Vec::new();
+
+        // Islands are pipe-free components — stable across everything this
+        // phase does, so decompose and classify once.
+        let (pocket, pocket_count) = pocket_map(state);
+        let islands = classify(state, &pocket, pocket_count);
 
         while state.pipe_pairs.len() < state.pipe_budget {
             let reach = walk_reachable(&state.grid, &state.pipe_pairs, state.start, state.world_idx);
@@ -81,8 +98,63 @@ impl Phase for Connectivity {
                 break;
             };
 
+            // Spread-mouths refinement (uniform pick keeps the cross-island
+            // distribution; the refinement fixes WHERE on the island): on a
+            // routing/corridor/final island that already has a mouth, land
+            // the new mouth as far from the existing ones as the island's
+            // walk network allows, so traversal crosses the interior
+            // instead of hugging one corner.
+            let rn = spread_mouth(state, &pocket, &islands, &mainland_candidates, near);
+            let rf = spread_mouth(state, &pocket, &islands, &island_candidates, far);
+            // Keep the originals if refinement manufactured a row-7/8
+            // partner pair.
+            let (near, far) = if Some(rf) == row78_partner(rn) { (near, far) } else { (rn, rf) };
+
             state.add_pipe_pair(near, far);
             actions.push(format!("pipe {near:?} <-> {far:?} (island of {} blanks)", island_candidates.len()));
+        }
+
+        // Loop closer: one pair between two islands with no direct link yet
+        // (see module doc). Purely optional — no fallback past the anchor
+        // bar, and single-pocket worlds skip it (their pipes are all free
+        // routing ammo already). A stricter "leave shortcut headroom" rule
+        // was tried and reverted: it only ever throttled W7 (the world the
+        // loop is FOR — census 2026-08-01, linear 40% -> 44%), while the
+        // world it meant to protect (W8) never fires the closer at all
+        // (its extra pockets have no legal endpoints).
+        if state.pipe_pairs.len() < state.pipe_budget && pocket_count >= 2 {
+            let linked = linked_pocket_pairs(&pocket, &state.pipe_pairs);
+            let legal: Vec<Pos> = state
+                .legal_blanks()
+                .into_iter()
+                .filter(|&p| !state.near_anchor(p))
+                .collect();
+            let mut cands: Vec<(Pos, Pos)> = Vec::new();
+            for (i, &a) in legal.iter().enumerate() {
+                let Some(&pa) = pocket.get(&a) else { continue };
+                for &b in &legal[i + 1..] {
+                    let Some(&pb) = pocket.get(&b) else { continue };
+                    if pa != pb
+                        && loop_eligible(&islands, pa, pb)
+                        && !linked.contains(&(pa.min(pb), pa.max(pb)))
+                        && Some(b) != row78_partner(a)
+                    {
+                        cands.push((a, b));
+                    }
+                }
+            }
+            if let Some(&(a, b)) = cands.choose(rng) {
+                let ra = spread_mouth(state, &pocket, &islands, &legal, a);
+                let rb = spread_mouth(state, &pocket, &islands, &legal, b);
+                // Refinement moves picks within their islands; keep the
+                // originals if it manufactured a row-7/8 partner pair.
+                let (a, b) = if Some(rb) == row78_partner(ra) { (a, b) } else { (ra, rb) };
+                state.add_pipe_pair(a, b);
+                actions.push(format!(
+                    "loop pipe {a:?} <-> {b:?} (pockets {} <-> {} of {pocket_count})",
+                    pocket[&a], pocket[&b],
+                ));
+            }
         }
 
         // Count what remains cut off — measured, not enforced. Hammer-gated
@@ -107,19 +179,15 @@ impl Phase for Connectivity {
     }
 }
 
-/// All placeable blank tiles on the grid (pickup's blank-tile contract),
-/// including fixed ones — coverage is judged over all of them; only
-/// ENDPOINT candidacy excludes `fixed`.
-fn blank_positions(state: &WorldState) -> Vec<Pos> {
-    let mut blanks = Vec::new();
-    for r in 0..state.grid.rows() {
-        for c in 0..state.grid.cols {
-            if rom_data::VALID_BLANK_TILES.contains(&state.grid.get(r, c)) {
-                blanks.push((r, c));
-            }
-        }
-    }
-    blanks
+/// Which island pairs the loop closer may join: any two distinct islands.
+/// A routing/final-only restriction was tried and REJECTED (census
+/// 2026-08-01: W7 linear 25% -> 32%): the pair only picks where the new
+/// EDGE lands — the cycle it closes runs through the existing tree path
+/// between the two islands, which crosses the big islands regardless, and
+/// under spread mouths even a small island's arc can carry a level. The
+/// restriction just shrank candidate diversity.
+fn loop_eligible(_islands: &[super::islands::Island], _pa: usize, _pb: usize) -> bool {
+    true
 }
 
 /// Where to grow next: the goal's component first (a world you can't finish
