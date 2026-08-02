@@ -9,8 +9,19 @@ deploys.
 
 ## [Unreleased]
 
+### Added
+
+- The Visual Patch pills in the web app now show a preview sprite of what each
+  patch gives you — the same standing pose rendered from each patch's own
+  graphics, so you can see Luigi, Peach, Toad, Dr. Mario or Baldman before
+  generating. The "+ Viruses" pill shows one of its viruses instead, since its
+  player graphics are the same as plain Dr. Mario.
+
 ### Fixed
 
+- The beta site's "Share URL" button now shares a beta link. It was building a
+  `/v/<version>/` link, but only main releases are archived there, so the link
+  either 404'd or opened a different build with the same version number.
 - Levels no longer pile up back-to-back in one corner of the map: level
   placement (and the shaping moves that relocate levels) now avoid putting
   a level next to another whenever the map allows. Worlds with 4+ levels

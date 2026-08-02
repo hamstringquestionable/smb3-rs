@@ -211,6 +211,43 @@ legend {
     border-top: 1px solid #2a2a50;
 }
 
+/* Each visual-patch pill carries the standing-Mario sprite rendered from that
+   patch's own graphics (tools/gen_visual_previews.py), so the re-skin is
+   visible before generating. Sprite above the name, one column per pill.
+
+   The row always stays on ONE line: pills never wrap, and a name too long for
+   its pill ellipsizes instead (the credit line under the pills spells the full
+   name out anyway, so the pills themselves stay short — "Luigi", "Peach"). */
+#visual-patch-pills {
+    flex-wrap: nowrap;
+    margin-top: 0.35rem;
+}
+
+#visual-patch-pills label {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.25rem;
+    padding: 0.4rem 0.6rem;
+    text-align: center;
+}
+
+#visual-patch-pills label span {
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.vp-preview {
+    height: 31px;
+    width: auto;
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+}
+
 /* --- Checkboxes & Radios --- */
 
 .opt-icon {
