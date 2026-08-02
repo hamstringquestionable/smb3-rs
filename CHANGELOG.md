@@ -9,6 +9,22 @@ deploys.
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-07-31
+
+### Fixed
+
+- Lobby (antechamber) shuffle could drop you into a void when you entered a
+  Big ? Block bonus room inside 5-2 or 6-9, in two ways, both fixed:
+  - **5-2's bonus room landed you in a garbage spot.** 5-2's bonus room reads
+    its arrival position from the same pipe the shuffle was rewriting to relink
+    the lobby — so it flung you into the room at a corrupted position. The
+    shuffle now leaves that pipe alone.
+  - **The bonus room itself was the wrong (void) one.** The fix that keeps these
+    rooms working when a level moves worlds keyed on the map tile you entered —
+    which, under lobby shuffle, is a *different* level's tile. It now keys on the
+    room you're actually standing in, so 5-2 and 6-9 open their own bonus rooms
+    even when reached through another level's lobby.
+
 ## [1.0.6] - 2026-07-27
 
 ### Fixed

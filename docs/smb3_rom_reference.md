@@ -3892,36 +3892,59 @@ JMP $894C          ; W8 path: continue with overwrite
 JMP $8964          ; non-W8 path: skip overwrite
 ```
 
-**Part B — Lookup routine replaces World_Num indexing (PRG026)**
+**Part B — Two-pass lookup replaces World_Num indexing (PRG026)**
 
-Hook point: ROM **0x349F9** — replaces `LDY $0727` (3 bytes) with `JSR $B520`.
+Hook point: ROM **0x349F9** — replaces `LDY $0727` (3 bytes) with `JSR $B5AD`.
 
-Lookup routine at ROM **0x35530** (PRG026 free space, CPU $B520), 66 bytes:
+Lookup routine at ROM **0x355BD** (PRG026 free space, CPU $B5AD), 106 bytes. (Moved
+off the old 0x35530/$B520 slot — the 66-byte single-pass version couldn't grow, as
+`mystery_anchor` sits immediately after it.)
 
-The routine reads the saved entry obj_ptr from $7EB4/$7EB5 (not $7EBB/$7EBC which may
-have been overwritten by junctions). It searches an 11-entry table of obj_ptr values.
-On match, it loads the corresponding room index into Y and returns. On no match (levels
-that don't use Big ? Blocks, like W1/W2 levels), it falls back to `LDY $0727`
-(World_Num).
+The room a bonus pipe opens is a property of the *area you're standing in*. The
+routine scans the obj_ptr table against two sources, in order:
 
-**Obj_ptr → room index mapping table (11 levels that use Big ? Blocks):**
+1. **`Level_ObjPtrOrig` ($7EBB/$7EBC)** — the obj_ptr of the current area.
+   `Level_JctInit` writes each area's `Level_AltObjects` here on every junction,
+   so under lobby (antechamber) shuffle — where you reach 5-2/6-9's content
+   through a *foreign lobby* — the bonus pipe still resolves by the room you're
+   actually in, not the entered tile. **This is the lobby-shuffle-aware pass.**
+2. **Frozen map-entry ptr ($7EB4/$7EB5)** — saved by Part A before the W8 code
+   clobbers `Level_ObjPtrOrig` to $C033. Covers 8-1 and any pipe hit in a
+   sub-area whose obj_ptr isn't in the table but whose *entry* is.
+3. **`LDY $0727` (World_Num) fallback** — vanilla default, last resort.
 
-| Level | Obj Hi | Obj Lo | Room Index | Vanilla World |
-|-------|--------|--------|------------|---------------|
+Pass order matters: under lobby shuffle the frozen ptr is the *lobby's*, so
+scanning it first would drop to World_Num and load a garbage room.
+
+**Obj_ptr → room index mapping table (13 entries):**
+
+| Area | Obj Hi | Obj Lo | Room | Notes |
+|------|--------|--------|------|-------|
 | 3-5 | $CD | $EB | 2 | W3 |
 | 3-9 | $C3 | $8F | 2 | W3 |
 | 4-F2 | $D5 | $08 | 3 | W4 |
-| 5-2 | $C8 | $BE | 4 | W5 |
+| 5-2 (entry) | $C8 | $BE | 4 | W5 — its block is here |
 | 5-5 | $CB | $0A | 4 | W5 |
 | 6-3 | $CA | $8E | 5 | W6 |
-| 6-9 | $CD | $2D | 5 | W6 |
+| 6-9 (entry) | $CD | $2D | 5 | W6 |
 | 6-10 | $CC | $E8 | 5 | W6 |
 | 7-F1 | $D4 | $E4 | 6 | W7 |
 | 7-8 | $C3 | $2D | 6 | W7 |
 | 8-1 | $C4 | $24 | 7 | W8 |
+| 5-2 (sub-area) | $CE | $4B | 4 | belt-and-suspenders |
+| **6-9 (interior)** | **$C6** | **$0E** | **5** | 6-9's block lives here, not its entry — needed so lobby-shuffled 6-9 resolves via `ObjPtrOrig` |
 
-Room indices are 0-indexed (matching World_Num values 0–7). W1 and W2 have no levels
-with Big ? Blocks, so they are not in the table and use the World_Num fallback.
+Room indices are 0-indexed (= World_Num 0–7). W1/W2 have no Big ? Block rooms, so
+they use the World_Num fallback. The last two rows are the antechamber levels
+whose content is reachable through a foreign lobby: they must resolve by the
+current area (pass 1), because the frozen entry (pass 2) is the lobby, not them.
+
+**The other half of the lobby-shuffle fix lives in `antechambers.rs`:** the shuffle
+must NOT rewrite a junction command that seeds a bonus room's arrival slot. 5-2's
+slot-4 command `0x1A807` is that slot, so it's excluded from 5-2's rewritten
+junctions (only its front door `0x1A804` is rewritten). Without that, a hosting 5-2
+drops you into its bonus room at a corrupted position (a void), independent of the
+room-*selection* table above.
 
 ### Bonus Room Enemy Data (PRG006)
 
