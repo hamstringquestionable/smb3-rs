@@ -243,6 +243,22 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
     LevelProtection {
+        label: "4F2 (fort ground route — a hazard on the walking path is unavoidable)",
+        enemy_ptr: 0xD508,
+        walker_segment: WalkerSegmentRule::Default,
+        entries: &[
+            EntryRule { offset: 0x0D519, rule: EntryProtection::ExcludeHazards }, // DryBones    scr=2 col=10
+            EntryRule { offset: 0x0D51C, rule: EntryProtection::ExcludeHazards }, // DryBones    scr=3 col=9
+            EntryRule { offset: 0x0D51F, rule: EntryProtection::ExcludeHazards }, // DryBones    scr=4 col=9
+            EntryRule { offset: 0x0D522, rule: EntryProtection::ExcludeHazards }, // DryBones    scr=5 col=4
+            EntryRule { offset: 0x0D525, rule: EntryProtection::ExcludeHazards }, // DryBones    scr=5 col=11
+            EntryRule { offset: 0x0D528, rule: EntryProtection::ExcludeHazards }, // DryBones    scr=6 col=2
+            EntryRule { offset: 0x0D52B, rule: EntryProtection::ExcludeHazards }, // DryBones    scr=6 col=3
+            EntryRule { offset: 0x0D52E, rule: EntryProtection::ExcludeHazards }, // DryBones    scr=6 col=12
+            EntryRule { offset: 0x0D531, rule: EntryProtection::ExcludeHazards }, // RotodiscCCW scr=6 col=14
+        ],
+    },
+    LevelProtection {
         label: "4-1 (each troopa sits on a small platform Mario must land on to progress; a hazard here forces an unavoidable hit)",
         enemy_ptr: 0xCE97,
         walker_segment: WalkerSegmentRule::Default,

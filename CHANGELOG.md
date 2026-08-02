@@ -32,6 +32,9 @@ deploys.
   leaving it unboardable. Its tile check read one map row too low, so a path
   tile below the water could be mistaken for water. It now reads the correct
   cell (World 3's middle island dock was the visible case).
+- The eight Dry Bones and the Roto-Disc in World 4's second fortress are now
+  hazard-protected, so they can't be swapped for a Thwomp/Ptooie/nipper-style
+  hazard sitting on the walking path.
 
 ### Changed
 
