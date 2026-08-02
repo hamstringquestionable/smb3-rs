@@ -34,27 +34,39 @@ let romBytes = null;
 // drop the file in web/visual-patches/ and add an entry here. The patch is
 // fetched lazily at generate time and only applied when output is a Patched
 // ROM (IPS output is the diff of the randomization itself).
+//
+// `preview` is a sprite rendered from the patched CHR by
+// tools/gen_visual_previews.py (standing Mario, or an enemy where the player
+// art duplicates another entry's) — re-run it after adding a patch.
+// `label` stays short since the sprite identifies the re-skin; the full name
+// goes in `creditLabel`, which the credit line under the pills shows.
 const VISUAL_PATCHES = [
 	{
 		id: "super_luigi_35th",
-		label: "Super Luigi Bros. 3",
+		label: "Luigi",
+		creditLabel: "Super Luigi Bros. 3",
 		path: "./visual-patches/super-luigi-35th.ips",
+		preview: "./assets/visual-previews/super-luigi-35th.png",
 		author: "Mario_GMD",
 		url: "https://www.romhacking.net/hacks/5328/",
 		color: "#6dce56", // Luigi green
 	},
 	{
 		id: "super_princess_peach",
-		label: "Super Princess Peach",
+		label: "Peach",
+		creditLabel: "Super Princess Peach",
 		path: "./visual-patches/super-princess-peach.ips",
+		preview: "./assets/visual-previews/super-princess-peach.png",
 		author: "Zynk Oxhyde",
 		url: "https://www.romhacking.net/hacks/6284/",
 		color: "#e07db4", // Peach pink
 	},
 	{
 		id: "super_toad",
-		label: "Super Toad",
+		label: "Toad",
+		creditLabel: "Super Toad",
 		path: "./visual-patches/super-toad-josuecr4ft.ips",
+		preview: "./assets/visual-previews/super-toad-josuecr4ft.png",
 		author: "JosueCr4ft",
 		url: "https://mfgg.net/index.php?act=resdb&param=02&c=7&id=38435",
 		color: "#3a3aff", // Toad blue
@@ -63,6 +75,7 @@ const VISUAL_PATCHES = [
 		id: "dr_mario",
 		label: "Dr. Mario",
 		path: "./visual-patches/dr-mario-bros-3-player-only.ips",
+		preview: "./assets/visual-previews/dr-mario-bros-3-player-only.png",
 		author: "Jon-Dat Flindo",
 		url: "https://www.twitch.tv/jondatflindo",
 		color: "#e8e8f0", // medical white
@@ -73,6 +86,7 @@ const VISUAL_PATCHES = [
 		id: "dr_mario_viruses",
 		label: "+ Viruses",
 		path: "./visual-patches/dr-mario-bros-3.ips",
+		preview: "./assets/visual-previews/dr-mario-bros-3.png",
 		author: "Jon-Dat Flindo",
 		url: "https://www.twitch.tv/jondatflindo",
 		color: "#eab308", // virus yellow
@@ -81,8 +95,10 @@ const VISUAL_PATCHES = [
 	},
 	{
 		id: "baldman_bros",
-		label: "Baldman Bros",
+		label: "Baldman",
+		creditLabel: "Baldman Bros",
 		path: "./visual-patches/baldman-bros.ips",
+		preview: "./assets/visual-previews/baldman-bros.png",
 		author: "Dr. Trash Panda",
 		url: "https://www.twitch.tv/doctor_tp",
 		color: "#e0b78a", // bald scalp tan
@@ -301,7 +317,10 @@ renderAllIcons();
 // --- Visual patch (curated catalog rendered as a pill group) ---
 
 function renderVisualPatchPills() {
-	const opts = [{ id: "", label: "None" }, ...VISUAL_PATCHES];
+	const opts = [
+		{ id: "", label: "None", preview: "./assets/visual-previews/vanilla.png" },
+		...VISUAL_PATCHES,
+	];
 	visualPatchPills.replaceChildren();
 	for (const opt of opts) {
 		const inputId = `vp-${opt.id || "none"}`;
@@ -318,7 +337,16 @@ function renderVisualPatchPills() {
 		});
 		const label = document.createElement("label");
 		label.htmlFor = inputId;
-		label.textContent = opt.label;
+		if (opt.preview) {
+			const img = document.createElement("img");
+			img.className = "vp-preview";
+			img.src = opt.preview;
+			img.alt = "";
+			label.append(img);
+		}
+		const text = document.createElement("span");
+		text.textContent = opt.label;
+		label.append(text);
 		visualPatchPills.append(input, label);
 	}
 }
@@ -518,6 +546,13 @@ function deployBase() {
 		.replace(/(v\/[^/]+|beta)\/$/, "");
 }
 
+// True on the /beta/ deploy. Same path test the inline script in index.html
+// uses to set <html class="beta-build">, read back off the class so the rule
+// lives in exactly one place.
+function isBetaDeploy() {
+	return document.documentElement.classList.contains("beta-build");
+}
+
 shareUrlBtn.addEventListener("click", () => {
 	updateFlagKey();
 	const params = new URLSearchParams();
@@ -527,9 +562,16 @@ shareUrlBtn.addEventListener("click", () => {
 	// Pin the link to the exact version that built this app, so the seed stays
 	// reproducible after newer versions ship. `version()` returns whichever app
 	// is actually loaded (current at the root, the frozen version in a snapshot).
-	const url = `${location.origin}${deployBase()}v/${version()}/?${params.toString()}`;
+	//
+	// The beta deploy is the exception: only main pushes archive a `v/<ver>/`
+	// snapshot, so a beta version number either 404s or resolves to a DIFFERENT
+	// (main) build with the same number. Share /beta/ itself instead — it always
+	// tracks beta/next, so the link can't be pinned, but it does open the app the
+	// sharer is actually looking at.
+	const base = isBetaDeploy() ? `${deployBase()}beta/` : `${deployBase()}v/${version()}/`;
+	const url = `${location.origin}${base}?${params.toString()}`;
 	navigator.clipboard.writeText(url).then(() => {
-		showStatus("Share URL copied!", "success");
+		showStatus(isBetaDeploy() ? "Beta share URL copied!" : "Share URL copied!", "success");
 	});
 });
 

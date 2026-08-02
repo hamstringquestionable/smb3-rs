@@ -2777,6 +2777,36 @@ Tanooki/Mushroom/Leaf.
 | 0x3AC61–0x3AE46 | ~485 bytes | Mario/Luigi sprite raw data |
 | 0x3AE47–0x3AE97 | ~80 bytes | Mario/Luigi sprite tile set |
 
+### Player Sprite Composition (PRG029, `Player_Draw`)
+
+The player is drawn as **six 8×16 sprites** in a 3-column × 2-row block: three
+"upper half" sprites at the player's Y, three "lower half" sprites 16 px below,
+columns 8 px apart. Everything needed to reproduce a frame outside the emulator
+lives in three PRG029 tables (PRG029 = file `0x3A010–0x3C00F`, mapped at `$C000`,
+so file offset = `0x3A010 + (addr - 0xC000)`):
+
+| Table | Address | File | Size | Contents |
+|-------|---------|------|------|----------|
+| `SPPF_Offsets` | `$CC00` | 0x3AC00 | 81 B | One byte per `Player_Frame` ($00–$50); `byte * 2` indexes from `SPPF_Table - 4` |
+| `SPPF_Table` | `$CC51` | 0x3AC51 | 81 × 6 B | Six sprite patterns per frame: upper row (left, middle, right) then lower row |
+| `Player_FramePageOff` | `$CE37` | 0x3AE37 | 81 B | CHR page offset (0–3) added to the power-up root page for that frame |
+| `Player_PUpRootPage` | `$CE98` | 0x3AE98 | 7 B | Root 1KB CHR page per suit: Small `$50`, Big `$54`, Fire `$54`, Raccoon `$00`, Frog `$50`, Tanooki `$40`, Hammer `$44` |
+
+`Player_Draw` loads `Player_PUpRootPage[Player_Suit] + Player_FramePageOff[Player_Frame]`
+into `PatTable_BankSel+2`, so a frame's tiles all come from **one 1KB CHR page**
+(64 tiles) mapped at `$1000`. Sprites are 8×16, so a pattern byte's bit 0 selects
+the pattern table and the actual tile pair is `(pattern & $FE, +1)` within that
+page. Pattern **`$F1` is the magic "don't display this sprite" flag**.
+
+Mirroring: if the two lower-row patterns are equal, the frame is a symmetric
+pose — the left column draws unflipped and the middle column draws horizontally
+flipped (rather than the right column being used). Frame constants are in the
+Southbird disassembly (`PF_*`); `PF_WALKBIG_BASE` = `$0C` is both the first walk
+frame and the standing pose for big/fire/hammer.
+
+`tools/gen_visual_previews.py` implements exactly this to render the standing
+player out of a (possibly re-skinned) ROM.
+
 ### Enemy Sprite CHR Bank Switching (PatTable_BankSel)
 
 SMB3 uses a 6-byte RAM array at **$0719–$071E** (`PatTable_BankSel`) to control
