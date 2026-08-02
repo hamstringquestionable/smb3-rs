@@ -1063,6 +1063,84 @@ Source: `smb3.asm` from the [Southbird disassembly](https://github.com/captainso
 | 0xAD | OBJ_ROCKYWRENCH | Rocky Wrench |
 | 0xAF | OBJ_ENEMYSUN | Angry Sun |
 
+### Unused Group-0 Objects — Repurposable ID Slots (PRG001)
+
+Object group 0 (IDs $00–$23, dispatched from PRG001, CPU $A000–$BFFF, file offset = CPU − $A000 + 0x2010) contains seven leftover objects with live handlers but no name in the Southbird disassembly: **$01, $02, $04, $05, $0A, $1A, $1C**. All seven are fully repurposable (verified 2026-08-02).
+
+> **$0A is now taken**: `src/randomize/poison_mushroom.rs` (the
+> `--poison-mushrooms` flag) installs the Poison Mushroom trap object there
+> (upside-down 1-Up sprite, hurts on touch). It **reuses the 1-Up's Norm
+> handler** (`ObjNorm_PUp1UpMush` at $A77E) and adds only a 17-byte Init+Hit
+> stub pair at $A703, so it inherits the rise-out-of-block animation and
+> powerup-style hit-testing. The same module also adds a **1-Up spawn hook**:
+> both block-spawn sites that run `STA Level_ObjectID,Y` (`99 71 06` at file
+> `0x02597` / `0x02AED`, CPU $A587 / $AADD — where `LDA Bouncer_PUp,Y` has just
+> resolved the block's object) are patched to `JSR` a 31-byte routine at $A714.
+> That routine replays the store and, if the object is a 1-Up ($0B),
+> position-hashes (`salt + World_Num + Level_LayPtr_AddrL + Objects_XHi/X/Y,X`)
+> to keep $0B or swap in $0A — so each 1-Up block independently gives a real
+> 1-Up or poison, deterministically per seed (salt = `WORLD_INIT_OPERAND`, like
+> random fire flower). Covers brick-1up **and** invis-1up (both resolve to
+> `Bouncer_PUp[7]=$0B`). The stub + hook use ~48 bytes of the ~123-byte island;
+> the rest, and the other six unused IDs, remain open.
+
+- **No level data uses them** — zero hits across all 2077 enemy entries in `rom_map.json`.
+- **No code spawns them** — every `STA Level_ObjectID` site in the disassembly was audited; all use named `OBJ_` constants or table-driven spawn lists containing only named IDs. (Two raw-immediate near-misses are benign: PRG000 $D07E stores a *frame* of 3; PRG005 wooden-platform spawner stores $00 as a placeholder before setting the real ID.)
+- **Handlers are referenced only from the three per-ID jump tables** — no cross-calls from other code.
+
+Vanilla behavior of each (from handler code, so a repurposer knows what dies):
+
+| ID | Behavior |
+|----|----------|
+| $01 | Springboard, contact phase: snaps to player X, marks player mid-air, arms var1=$B0 launch |
+| $02 | Springboard, launch phase: compress animation via table at $A361, feeds `Bouncer_PUpVel` into player Y velocity; holding A upgrades launch to $88 |
+| $04 | "Mimic" enemy: 16x32 sprite, copies the player's X/Y velocity onto itself on contact |
+| $05 | Hopping chaser: idles, 1-in-64 random activation for $90 ticks, lunges (YVel −$20) facing player; stomping bounces player −$40 in facing direction |
+| $0A | Rideable platform-creature: player lands on its back (player Y = object Y − 25), left/right input steers it |
+| $1A | "Stop" pickup: on contact deletes itself and zeroes player X/Y velocity |
+| $1C | Flee-and-drop: init launches it away from player (XVel ±$40, YVel −$80) and spawns a Super Mushroom in slot 5 at its own position |
+
+**Per-ID dispatch/attribute tables** (all in PRG001 at fixed `.org` addresses; one entry per ID $00–$23; repurposing an ID means updating its slot in each):
+
+| Table | CPU | File offset | Entry size |
+|-------|-----|-------------|-----------|
+| ObjectGroup00_InitJumpTable | $A000 | 0x2010 | word |
+| ObjectGroup00_NormalJumpTable | $A048 | 0x2058 | word |
+| ObjectGroup00_CollideJumpTable (hit) | $A090 | 0x20A0 | word |
+| ObjectGroup00_Attributes | $A0D8 | 0x20E8 | byte |
+| ObjectGroup00_Attributes2 | $A0FC | 0x210C | byte |
+| ObjectGroup00_Attributes3 | $A120 | 0x2130 | byte |
+| ObjectGroup00_KillAction | $A168 | 0x2178 | byte |
+| ObjectGroup00_PatternStarts | $A18C | 0x219C | byte |
+| ObjectGroup00_PatternSets | $A1B0 | 0x21C0 | table |
+
+Handler entry points as read from the Rev 1 ROM jump tables (`DoNothing` = $D3A0 in the fixed bank):
+
+| ID | Init | Norm | Hit |
+|----|------|------|-----|
+| $01 | $A27B | $A284 | $A2BC |
+| $02 | $A321 | $A36C | DoNothing |
+| $04 | $A3A6 | $A3B9 | $A3CB |
+| $05 | $A3DE | $A3F1 | $A464 |
+| $0A | $A703 | $A709 | $A724 |
+| $1A | DoNothing | $AA21 | $AA33 |
+| $1C | $AB3D | $AB7B | DoNothing |
+
+**Reclaimable code regions** (dead once the table entries are repointed; boundaries verified against neighboring labels):
+
+| CPU range | File offset | Bytes | Contents |
+|-----------|-------------|-------|----------|
+| $A27B–$A4AD | 0x228B–0x24BD | 563 | Obj01/02/04/05 handlers + unreferenced 13-byte blob at $A4A1 (next: ObjInit_BounceDU $A4AE) |
+| $A703–$A77D | 0x2713–0x278D | 123 | Obj0A init/norm/hit + stray RTS (next: ObjNorm_PUp1UpMush $A77E) |
+| $AA21–$AA48 | 0x2A31–0x2A58 | 40 | Obj1A norm/hit + unreferenced 8-byte blob at $AA41 (next: ObjInit_BounceLR $AA49) |
+| $AB3D–$AB8E | 0x2B4D–0x2B9E | 82 | Obj1C init/norm (next: Leaf_YVels $AB8F) |
+
+Total ≈ 808 bytes of reclaimable PRG001 space. New handler code must live in bank 1 (or trampoline to the fixed bank), since that's the bank paged in when a group-0 object runs.
+
+**Caveats:**
+- The `DoNothing` slots ($0F–$16, $1D, $20) look free too, but each needs the same spawn-site audit before use — $00 in particular is used as a placeholder ID by the wooden-platform spawner, leave it alone.
+- The randomizer's CHR model (`sprite_bank()`, CHR pinning) ignores IDs below $24; anything that makes the builder or injection emit one of these IDs must teach that model about it first.
+
 ---
 
 ## Power-Up / Item Data

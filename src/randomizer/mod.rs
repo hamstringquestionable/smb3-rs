@@ -520,13 +520,6 @@ fn randomize_inner(
         randomize::qol::apply_faster_frog(rom);
     }
 
-    // MaCobra52's "All 1UPs are Poison Mushrooms" — every 1-Up becomes a
-    // Poison Mushroom that damages the player. Challenge option.
-    if options.poison_mushrooms {
-        rom.set_tag("qol/poison_mushrooms");
-        randomize::qol::apply_poison_mushrooms(rom);
-    }
-
     // MaCobra52's "Easy Power-up System" — Small Mario gets suits / Fire power
     // without first growing Big (modern Mario power-up behavior).
     if options.modern_powerups {
@@ -540,6 +533,16 @@ fn randomize_inner(
     if options.fire_flower != FireFlowerMode::Off {
         rom.set_tag("fire_flower");
         randomize::fire_flower::apply(rom, options.fire_flower);
+    }
+
+    // Poison Mushroom — each 1-Up block hands out either a real 1-Up or a
+    // purple upside-down poison mushroom, chosen by a seed-salted position
+    // hash. Installs the $0A trap object + a hook on the block-spawn sites.
+    // Must run after world_order so the salt is final (mirrors fire_flower).
+    // Replaces MaCobra52's all-1UPs-poison recolor under the same flag.
+    if options.poison_mushrooms {
+        rom.set_tag("poison_mushrooms");
+        randomize::poison_mushroom::apply(rom);
     }
 
     // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012):

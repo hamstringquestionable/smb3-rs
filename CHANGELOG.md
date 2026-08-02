@@ -17,6 +17,22 @@ deploys.
   generating. The "+ Viruses" pill shows one of its viruses instead, since its
   player graphics are the same as plain Dr. Mario.
 
+### Changed
+
+- "Poison Mushrooms" is now a per-block trap instead of an all-or-nothing
+  swap. Each 1-Up block independently hands out either a real 1-Up or an
+  upside-down poison mushroom that hurts you, decided by the seed — so a run
+  keeps some real 1-Ups mixed in with the traps, and you can't tell which a
+  block holds until you hit it. (Previously every 1-Up in the game turned to
+  poison.) The option key is unchanged, but a given seed + this flag now
+  produces a different result than before.
+
+- World 1 has a new rock sitting between the middle of the map and the
+  bottom-right. With "More hammer rocks" on you can break it, opening a real
+  second way around a world that otherwise runs as one long lap. With the
+  option off the rock is solid — and it looks exactly the same either way, so
+  you have to swing a hammer at it to find out.
+
 ### Fixed
 
 - The beta site's "Share URL" button now shares a beta link. It was building a
