@@ -12,6 +12,11 @@ crate-type = ["cdylib", "rlib"]
 name = "smb3-rs"
 path = "src/main.rs"
 
+# Playtest ROM builder. Native-only tooling; not part of the web build.
+[[bin]]
+name = "testrom"
+path = "src/bin/testrom.rs"
+
 [dependencies]
 rand = "0.9"
 rand_chacha = "0.9"

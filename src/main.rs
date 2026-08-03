@@ -3,7 +3,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use smb3_rs::{EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri, STARTING_LIVES_VALUES};
+use smb3_rs::{
+    item_display_name, item_id, EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri, ITEMS,
+    STARTING_LIVES_VALUES,
+};
 
 /// Human-readable label for a tri-state flag in the run summary.
 fn tri_str(t: Tri) -> &'static str {
@@ -87,50 +90,6 @@ fn parse_tri(s: &str) -> Result<Tri, String> {
         "maybe" => Ok(Tri::Maybe),
         _ => Err("valid values: off, on, maybe".to_string()),
     }
-}
-
-/// Inventory items: (CLI name, item ID, display name). Single source for the
-/// `--starting-items` parser and the run-summary printer; extra spellings are
-/// handled as aliases in `item_id`.
-const ITEMS: &[(&str, u8, &str)] = &[
-    ("mushroom", 0x01, "Mushroom"),
-    ("fire", 0x02, "Fire Flower"),
-    ("leaf", 0x03, "Super Leaf"),
-    ("frog", 0x04, "Frog Suit"),
-    ("tanooki", 0x05, "Tanooki Suit"),
-    ("hammer-suit", 0x06, "Hammer Suit"),
-    ("cloud", 0x07, "Cloud"),
-    ("p-wing", 0x08, "P-Wing"),
-    ("star", 0x09, "Starman"),
-    ("anchor", 0x0A, "Anchor"),
-    ("hammer", 0x0B, "Hammer"),
-    ("whistle", 0x0C, "Whistle"),
-    ("music-box", 0x0D, "Music Box"),
-    ("random", 0x0E, "Random"),
-    ("random-no-whistle", 0x0F, "Random (No Whistle)"),
-    ("random-suit-only", 0x10, "Random (Suit Only)"),
-];
-
-/// Look up a starting-item ID by CLI name (case-insensitive, with aliases).
-fn item_id(name: &str) -> Option<u8> {
-    let lower = name.to_lowercase();
-    let canonical = match lower.as_str() {
-        "fire-flower" | "fireflower" => "fire",
-        "frog-suit" => "frog",
-        "tanooki-suit" => "tanooki",
-        "hammersuit" => "hammer-suit",
-        "pwing" => "p-wing",
-        "starman" => "star",
-        "musicbox" => "music-box",
-        "random-suit" => "random-suit-only",
-        other => other,
-    };
-    ITEMS.iter().find(|&&(n, _, _)| n == canonical).map(|&(_, id, _)| id)
-}
-
-/// Display name for a starting-item ID in the run summary.
-fn item_display_name(id: u8) -> &'static str {
-    ITEMS.iter().find(|&&(_, i, _)| i == id).map_or("?", |&(_, _, n)| n)
 }
 
 #[derive(Parser)]

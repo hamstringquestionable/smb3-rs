@@ -16,8 +16,9 @@ use options::*;
 
 // Public API re-exported by the crate root (see lib.rs).
 pub use options::{
-    EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri, ITEM_RANDOM,
-    ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY, STARTING_LIVES_VALUES,
+    item_display_name, item_id, EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri,
+    ITEMS, ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY,
+    STARTING_LIVES_VALUES,
 };
 
 #[cfg(test)]

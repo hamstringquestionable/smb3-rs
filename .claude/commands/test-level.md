@@ -1,64 +1,64 @@
-Generate a test ROM with specific levels placed on early map tiles for quick playtesting.
+Generate a ROM for playtesting — specific levels on the map, an overworld seed, or a lock layout.
 
 ## Usage
-`/test-level <level-name> [level-name2 ...] [--flags FLAGS] [--seed SEED] [--world N]`
+`/test-level <args...>`
 
-Examples:
-- `/test-level 6-F1` — place 6-F1 on tile 1 in starting world
-- `/test-level 6-F1 5-F1 BC` — place 6-F1 on tile 1, 5-F1 on tile 2, Bowser Castle on tile 3
-- `/test-level BC --flags SMB3R-01FFFD14 --seed 12345` — specific flags/seed
-- `/test-level BC --world 8` — start in W8 so BC is on its home map
+The arguments are passed straight through to the `testrom` binary. Common shapes:
+
+- `/test-level --place 6F1` — park 6-F1 on tile 1 of World 1
+- `/test-level --place 6F1 5F1 8B` — park three levels on tiles 1, 2, 3
+- `/test-level --place 3:8B` — park Bowser's Castle on tile 3 specifically
+- `/test-level --place 7A --world 7` — test W7's airship on its home map
+- `/test-level --randomize --seed 12345` — playtest a randomized overworld
+- `/test-level --randomize --keep-locks --hammer-locks --starting-items hammer,leaf`
+  — locks intact, hammer able to break them, walkable map
+- `/test-level --randomize --keep-locks` — test lock placement on a real seed
+- `/test-level --place-all 7F1` — every numbered level in W1 becomes 7-F1
+- `/test-level --list` — show every placeable level name
 
 ## Instructions
 
-1. **Build** the release binary if needed: `nix-shell -p gcc --run 'export PATH="$HOME/.cargo/bin:$PATH" && cargo build --release'`
-
-2. **Generate** the ROM using `target/release/smb3-rs` with the provided flags/seed (or defaults: `--no-enemies --no-palettes --no-chest-items --no-levels`, seed random). Always use `--patched-rom -o test_level.nes`.
-
-3. **Apply open-movement patches** from the practice ROM so the player can walk over level/lock/fortress tiles without entering or clearing them:
-   `nix-shell -p python3 --run 'python3 tools/apply_ips_subset.py patches/smb3practice_SE.ips test_level.nes 0x14010 0x18010'`
-   This applies only the PRG010–011 records (~19 records, ~85 bytes). Do NOT apply the full IPS — its PRG006/PRG012 records would clobber the randomized enemy data and overworld map.
-
-4. **Remove locks** so fortress locks and water gaps never block movement:
-   replace every lock/gap tile on all 8 world map grids with its walkable
-   path tile — `0x54→0x46` (vertical lock), `0x56→0x45` (horizontal lock),
-   `0xE4→0xDA` (sky lock), `0x9D→0xB3` (water gap):
+1. **Build** if needed:
    ```sh
-   nix-shell -p python3 --run "python3 -c \"
-   rom = bytearray(open('test_level.nes','rb').read())
-   GRIDS = [(0x185BA,16),(0x1864B,32),(0x1876C,48),(0x1891D,32),(0x18A3E,32),(0x18B5F,48),(0x18D10,32),(0x18E31,64)]
-   REPL = {0x54:0x46, 0x56:0x45, 0xE4:0xDA, 0x9D:0xB3}
-   for off,cols in GRIDS:
-       for i in range(9*cols):
-           if rom[off+i] in REPL: rom[off+i] = REPL[rom[off+i]]
-   open('test_level.nes','wb').write(bytes(rom))
-   \""
+   nix-shell -p gcc --run 'export PATH="$HOME/.cargo/bin:$PATH" && cargo build --bin testrom'
    ```
-   (Fortress-clear FX later rewriting one of these positions is harmless in a
-   test ROM.)
 
-5. **Identify levels** by name. Use these mappings to find vanilla obj_ptr/lay_ptr/tileset:
-   - Format: `W-F1` = World fortress 1 (e.g., `6-F1`), `BC` = Bowser Castle
-   - Look up the level in the vanilla pointer tables (W1=0x19438/21 entries, W2=0x194BA/47, W3=0x195D8/52, W4=0x19714/34, W5=0x197E4/42, W6=0x198E4/57, W7=0x19A3E/46, W8=0x19B56/41)
-   - Fortress entries from `FORTRESS_ENTRIES` in `src/randomize/rom_data.rs`
-   - Bowser Castle = W8 index 40 (last real entry)
+2. **Run** it with the user's arguments:
+   ```sh
+   ./target/debug/testrom $ARGUMENTS
+   ```
 
-6. **Find numbered level tiles** on the target world's map grid. Map grid offsets from `MAP_TILE_GRIDS` in `rom_data.rs`:
-   - W1: 0x185BA (16 cols), W2: 0x1864B (32 cols), W3: 0x1876C (48 cols)
-   - W4: 0x1891D (32 cols), W5: 0x18A3E (32 cols), W6: 0x18B5F (48 cols)
-   - W7: 0x18D10 (32 cols), W8: 0x18E31 (64 cols)
-   - All grids have 9 rows. Tiles 0x03-0x0F are numbered levels (tile - 2 = level number).
+3. **Report** the summary it prints (what was placed where, what was opened up)
+   and the output path. Do not re-derive any of it.
 
-7. **Find pointer table entries** that correspond to those tile positions using the InitIndex/ByRowType/ByScrCol tables.
+That's the whole procedure. All ROM knowledge — level-name resolution, pointer
+table surgery, map grid rewrites, the movement patch subset — lives in
+`src/testrom.rs` and is covered by unit tests. **Never hand-patch a test ROM
+with an inline Python one-liner.** If `testrom` can't express what's needed, add
+the flag to the binary rather than working around it.
 
-8. **Overwrite** the pointer table entry (ByRowType byte for tileset, ObjSets word, LevelLayouts word) with the target level's values.
+## Defaults worth knowing
 
-9. **Set starting world**: write world index (0-7) to ROM offset `0x30CC3`.
+- Base is **vanilla** unless `--randomize` is passed. Use vanilla when testing a
+  level's *contents*; use `--randomize` when testing the *overworld* itself.
+- The map is **fully open** by default: locks removed, water gaps bridged, and
+  open movement patched in so Mario walks over level and fortress tiles without
+  entering or clearing them. `--keep-locks` / `--keep-gaps` / `--no-walk` opt out
+  individually — pass `--keep-locks` when the locks are the thing under test.
+- Level names are case-insensitive with optional dashes: `6F1` == `6-F1`.
+  `--beta` adds the 9 unreferenced beta stages to the placeable set.
+- `--starting-items` takes up to 3 (the inventory trampoline's slot count);
+  `--list-items` shows the valid names. `--hammer-locks` / `--hammer-bridges`
+  let the Hammer break lock and water-gap tiles, and work on a vanilla base too.
+- Output defaults to `test_level.nes` (`-o` to change).
 
-10. **Save** as `test_level.nes` and report which tiles have which levels. With the open-movement patches applied, no tile clearing is needed — Mario can walk freely across the entire overworld.
+## When the map layout matters to the test
 
-## Key ROM offsets
-- Map object ID master pointer: 0x16050 (per-world, 9 slots each)
-- Starting world byte: 0x30CC3
-- Vanilla ROM: `roms/Super Mario Bros. 3 (USA) (Rev 1).nes`
-- Pointer table starts: W1=0x19438, W2=0x194BA, W3=0x195D8, W4=0x19714, W5=0x197E4, W6=0x198E4, W7=0x19A3E, W8=0x19B56
+A random seed may simply not place the feature under test where you need it.
+Before handing over a ROM, **check that the thing being tested is actually
+present**, and search seeds if it isn't. For W8 darkness in particular, the
+engine gates on `World_Map_XHi == 2` — only **screen 2 (columns 32–47)** of W8
+is dark — so a dark-page test needs a lock or fortress in that column range.
+`--seed N` makes the search reproducible.
+
+Run `./target/debug/testrom --help` for the full flag list.

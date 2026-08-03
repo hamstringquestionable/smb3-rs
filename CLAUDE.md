@@ -97,6 +97,42 @@ covered by one.
 
 `CHANGELOG.md` (repo root, [Keep a Changelog](https://keepachangelog.com/) format) tracks notable changes. When a change is user-visible or notable (a new flag/option, a behavior change, a fixed bug players would notice), add a one-line entry under the `[Unreleased]` section in the right group (`Added` / `Changed` / `Fixed` / `Removed`) as part of the same change. Skip purely internal refactors, test-only changes, and tooling tweaks. At version-bump time, move the accumulated `[Unreleased]` entries into a new versioned section.
 
+## Playtest ROMs: Use `testrom`, Never Hand-Patch
+
+Playtesting needs ROMs the randomizer would never produce — a specific level on
+tile 1, a map with every lock removed, a fortress reachable without clearing
+three levels first. **Build those with the `testrom` binary, never with an
+ad-hoc Python one-liner against raw offsets.**
+
+```sh
+cargo build --bin testrom
+./target/debug/testrom --place 6F1 5F1 8B   # three levels on W1 tiles 1-3
+./target/debug/testrom --randomize --seed 12345 --world 3
+./target/debug/testrom --randomize --keep-locks --hammer-locks \
+    --starting-items hammer,leaf,fire       # locks intact + a way to break them
+./target/debug/testrom --list               # every placeable level name
+```
+
+The knobs are deliberately orthogonal — base ROM (vanilla vs `--randomize`),
+what to place, starting world, and how open the map is are four independent
+axes, so level / overworld / airship / lock testing are combinations rather
+than named modes. The map is fully open by default (locks removed, gaps
+bridged, open movement patched in); `--keep-locks`, `--keep-gaps` and
+`--no-walk` opt out individually.
+
+Level names resolve through `NodeCatalog`, which already names every one of the
+340 pointer table entries (`6F1`, `8B`, `7A`, `8-Tank`, `1-4`, plus the beta
+stages under `--beta`). Matching is case-insensitive and dashes are optional.
+
+**Why the rule:** the offsets a hand-written patch needs — map grids, pointer
+tables, the starting-world byte — all already exist as constants in
+`rom_data.rs`. Copying them into a throwaway script duplicates the single source
+of truth (exactly what `tools/offset_dups.py` exists to catch) and re-derives
+error-prone arithmetic each time. Map grids in particular are stored
+**screen-major** (144 bytes per screen), so the obvious `base + row * columns +
+col` is wrong; use `rom_data::map_tile_offset`. If `testrom` can't express what
+a test needs, add the flag — don't work around it.
+
 ## Architecture: Separate Randomization from ROM Writes
 
 Randomization modules follow a **decide then write** pattern. Each feature area has two layers:
@@ -121,6 +157,8 @@ src/
   rom.rs               # iNES header parsing, ROM validation, Rom struct
   ips.rs               # IPS patch builder (build_ips_patch) and applier (apply_ips_patch)
   randomizer.rs        # Orchestration: Options struct, calls randomize modules
+  testrom.rs           # Playtest ROM builder (native-only) — see below
+  bin/testrom.rs       # `testrom` CLI: thin clap wrapper over testrom.rs
   wasm.rs              # wasm-bindgen glue (only compiled for wasm32)
   randomize/
     mod.rs
