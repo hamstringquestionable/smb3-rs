@@ -48,6 +48,253 @@ const UNGAP_TILES: &[(u8, u8)] = &[
     (0x9D, 0xB3), // water gap → bridge
 ];
 
+// ---------------------------------------------------------------------------
+// Seed requirements
+// ---------------------------------------------------------------------------
+
+/// A class of map tile a requirement can look for.
+///
+/// Deliberately a small named set plus a raw-byte escape hatch, rather than an
+/// expression language — add a class when a test actually needs one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TileClass {
+    Lock,
+    Gap,
+    Fortress,
+    Level,
+    Pipe,
+    ToadHouse,
+    Airship,
+    Bowser,
+    Raw(u8),
+}
+
+impl TileClass {
+    fn parse(s: &str) -> Result<Self, String> {
+        if let Some(hex) = s.strip_prefix("tile:") {
+            let hex = hex.trim_start_matches("0x").trim_start_matches("0X");
+            return u8::from_str_radix(hex, 16)
+                .map(TileClass::Raw)
+                .map_err(|_| format!("bad tile byte {s:?} (expected e.g. tile:0x54)"));
+        }
+        Ok(match s {
+            "lock" => TileClass::Lock,
+            "gap" => TileClass::Gap,
+            "fortress" | "fort" => TileClass::Fortress,
+            "level" => TileClass::Level,
+            "pipe" => TileClass::Pipe,
+            "toadhouse" => TileClass::ToadHouse,
+            "airship" => TileClass::Airship,
+            "bowser" => TileClass::Bowser,
+            _ => {
+                return Err(format!(
+                    "unknown tile class {s:?} (lock, gap, fortress, level, pipe, \
+                     toadhouse, airship, bowser, or tile:0xNN)"
+                ))
+            }
+        })
+    }
+
+    fn matches(&self, tile: u8) -> bool {
+        match self {
+            TileClass::Lock => UNLOCK_TILES.iter().any(|(l, _)| *l == tile),
+            TileClass::Gap => UNGAP_TILES.iter().any(|(g, _)| *g == tile),
+            TileClass::Fortress => rom_data::FORTRESS_TILES.contains(&tile),
+            TileClass::Level => (NUMBERED_TILE_LO..=NUMBERED_TILE_HI).contains(&tile),
+            TileClass::Pipe => tile == rom_data::TILE_PIPE,
+            TileClass::ToadHouse => tile == rom_data::TILE_TOAD_HOUSE,
+            TileClass::Airship => tile == rom_data::TILE_AIRSHIP,
+            TileClass::Bowser => tile == rom_data::TILE_BOWSER,
+            TileClass::Raw(b) => tile == *b,
+        }
+    }
+
+    fn label(&self) -> String {
+        match self {
+            TileClass::Lock => "lock".into(),
+            TileClass::Gap => "gap".into(),
+            TileClass::Fortress => "fortress".into(),
+            TileClass::Level => "level".into(),
+            TileClass::Pipe => "pipe".into(),
+            TileClass::ToadHouse => "toad house".into(),
+            TileClass::Airship => "airship".into(),
+            TileClass::Bowser => "bowser".into(),
+            TileClass::Raw(b) => format!("tile {b:#04X}"),
+        }
+    }
+}
+
+/// "at least `min_count` of `what` in world `world_idx`, optionally restricted
+/// to one screen." Parsed from `lock@w8:s2>=2`.
+pub struct Requirement {
+    pub what: TileClass,
+    pub world_idx: usize,
+    /// `None` matches anywhere in the world.
+    pub screen: Option<usize>,
+    pub min_count: usize,
+}
+
+impl Requirement {
+    /// Parse `<class>@w<N>[:s<M>][>=<K>]`, e.g. `lock@w8:s2` or `fort@w3>=2`.
+    pub fn parse(spec: &str) -> Result<Self, String> {
+        let bad = || {
+            format!("bad --require {spec:?} (expected e.g. lock@w8:s2, fort@w3>=2, tile:0x54@w8)")
+        };
+
+        let (head, min_count) = match spec.split_once(">=") {
+            Some((h, n)) => (h, n.trim().parse::<usize>().map_err(|_| bad())?),
+            None => (spec, 1),
+        };
+        if min_count == 0 {
+            return Err("--require count must be at least 1".to_string());
+        }
+
+        let (what, loc) = head.rsplit_once('@').ok_or_else(bad)?;
+        let what = TileClass::parse(what.trim())?;
+
+        let (world, screen) = match loc.split_once(':') {
+            Some((w, s)) => (w, Some(s)),
+            None => (loc, None),
+        };
+
+        let world_num: usize = world
+            .trim()
+            .trim_start_matches(['w', 'W'])
+            .parse()
+            .map_err(|_| bad())?;
+        if !(1..=8).contains(&world_num) {
+            return Err(format!("world must be 1-8 in --require {spec:?}"));
+        }
+        let world_idx = world_num - 1;
+
+        let screen = match screen {
+            Some(s) => {
+                let n: usize = s
+                    .trim()
+                    .trim_start_matches(['s', 'S'])
+                    .parse()
+                    .map_err(|_| bad())?;
+                let screens = rom_data::MAP_TILE_GRIDS[world_idx].screens;
+                if n >= screens {
+                    return Err(format!(
+                        "W{world_num} has {screens} screen(s) (0-{}), got s{n}",
+                        screens - 1
+                    ));
+                }
+                Some(n)
+            }
+            None => None,
+        };
+
+        Ok(Requirement { what, world_idx, screen, min_count })
+    }
+
+    /// Positions in the target ROM matching this requirement.
+    fn find(&self, rom: &Rom) -> Vec<(usize, usize)> {
+        let grid = rom_data::read_tile_grid(rom, self.world_idx);
+        let (lo, hi) = match self.screen {
+            Some(s) => (s * 16, s * 16 + 16),
+            None => (0, grid.cols),
+        };
+        (0..grid.rows())
+            .flat_map(|r| (lo..hi.min(grid.cols)).map(move |c| (r, c)))
+            .filter(|&(r, c)| self.what.matches(grid.get(r, c)))
+            .collect()
+    }
+
+    /// One-line English rendering, for progress and error messages.
+    pub fn describe(&self) -> String {
+        let where_ = match self.screen {
+            Some(s) => format!("W{} screen {s}", self.world_idx + 1),
+            None => format!("W{}", self.world_idx + 1),
+        };
+        if self.min_count == 1 {
+            format!("a {} on {where_}", self.what.label())
+        } else {
+            format!("{}× {} on {where_}", self.min_count, self.what.label())
+        }
+    }
+}
+
+/// Outcome of a seed search.
+pub struct SeedHit {
+    pub seed: u64,
+    pub tried: usize,
+    /// Human-readable account of what matched, and a census of the target area
+    /// so the match can be eyeballed rather than trusted.
+    pub report: Vec<String>,
+}
+
+/// Find the lowest seed at or after `from` whose randomized output satisfies
+/// `req`, trying at most `limit` seeds.
+///
+/// Rejection sampling on purpose: biasing the builder to *place* the feature
+/// would produce a map the randomizer never generates, which is worthless for
+/// verifying a fix. This keeps the real distribution and just skips seeds that
+/// don't happen to exercise the thing under test.
+///
+/// Runs entirely in memory — only the winning seed is ever written to disk.
+pub fn search_seed(
+    vanilla: &[u8],
+    options: &Options,
+    req: &Requirement,
+    from: u64,
+    limit: usize,
+) -> Result<Option<SeedHit>, String> {
+    for i in 0..limit {
+        let seed = from.wrapping_add(i as u64);
+        let rom = randomize_rom(vanilla, seed, options, None)?;
+        let hits = req.find(&rom);
+        if hits.len() >= req.min_count {
+            let mut report = vec![format!(
+                "seed {seed}: {} — {} match(es)",
+                req.describe(),
+                hits.len()
+            )];
+            for (r, c) in &hits {
+                report.push(format!("  {} at W{} ({r},{c})", req.what.label(), req.world_idx + 1));
+            }
+            report.extend(census(&rom, req));
+            return Ok(Some(SeedHit { seed, tried: i + 1, report }));
+        }
+    }
+    Ok(None)
+}
+
+/// Count the notable tiles in the requirement's target area.
+///
+/// A predicate can pass while the ROM still fails to test what you meant — a
+/// lock with no fortress beside it is broken by a hammer, not by a fortress
+/// clear, which is a different code path. Printing the surroundings makes the
+/// match checkable instead of trusted.
+fn census(rom: &Rom, req: &Requirement) -> Vec<String> {
+    let classes = [
+        TileClass::Fortress,
+        TileClass::Lock,
+        TileClass::Gap,
+        TileClass::Level,
+        TileClass::Pipe,
+    ];
+    let counts: Vec<String> = classes
+        .iter()
+        .map(|c| {
+            let probe = Requirement { what: *c, min_count: 1, screen: req.screen, world_idx: req.world_idx };
+            (c, probe.find(rom).len())
+        })
+        .filter(|(_, n)| *n > 0)
+        .map(|(c, n)| format!("{} {}", n, c.label()))
+        .collect();
+
+    let where_ = match req.screen {
+        Some(s) => format!("W{} screen {s}", req.world_idx + 1),
+        None => format!("W{}", req.world_idx + 1),
+    };
+    vec![
+        format!("  {where_} contains: {}", counts.join(", ")),
+        "  (eyeball it: tools/map_viz.py <rom.nes> --world N)".to_string(),
+    ]
+}
+
 /// Where the map and level layout come from before test edits are applied.
 pub enum Base {
     /// Untouched vanilla ROM. The right base for testing a level's contents.
@@ -566,6 +813,80 @@ mod tests {
             })
             .sum();
         assert!(surviving > 0, "hammer patch removed the locks it should break at runtime");
+    }
+
+    #[test]
+    fn requirement_parses_every_documented_form() {
+        let r = Requirement::parse("lock@w8:s2").unwrap();
+        assert_eq!(r.what, TileClass::Lock);
+        assert_eq!(r.world_idx, 7);
+        assert_eq!(r.screen, Some(2));
+        assert_eq!(r.min_count, 1);
+
+        let r = Requirement::parse("fort@w3>=2").unwrap();
+        assert_eq!(r.what, TileClass::Fortress);
+        assert_eq!(r.world_idx, 2);
+        assert_eq!(r.screen, None);
+        assert_eq!(r.min_count, 2);
+
+        assert_eq!(Requirement::parse("tile:0x54@w8").unwrap().what, TileClass::Raw(0x54));
+        assert_eq!(Requirement::parse("tile:54@w8").unwrap().what, TileClass::Raw(0x54));
+    }
+
+    #[test]
+    fn requirement_rejects_nonsense_rather_than_guessing() {
+        for bad in [
+            "lock",             // no world
+            "lock@w9:s0",       // world out of range
+            "lock@w1:s7",       // W1 has 1 screen
+            "banana@w1",        // unknown class
+            "lock@w1>=0",       // pointless count
+            "tile:zz@w1",       // bad hex
+        ] {
+            assert!(Requirement::parse(bad).is_err(), "should have rejected {bad:?}");
+        }
+    }
+
+    /// W1 has a single screen, so `s0` is valid and `s1` is not — the check is
+    /// per-world, not a fixed maximum.
+    #[test]
+    fn screen_bound_is_per_world() {
+        assert!(Requirement::parse("lock@w1:s0").is_ok());
+        assert!(Requirement::parse("lock@w1:s1").is_err());
+        assert!(Requirement::parse("lock@w8:s3").is_ok()); // W8 has 4 screens
+        assert!(Requirement::parse("lock@w8:s4").is_err());
+    }
+
+    /// The predicate must be evaluated against the randomized map, and the
+    /// seed it reports must actually satisfy it.
+    #[test]
+    fn search_returns_a_seed_that_really_matches() {
+        let Some(van) = vanilla() else { return };
+
+        let req = Requirement::parse("lock@w8:s2").unwrap();
+        let hit = search_seed(&van, &Options::default(), &req, 1, 8)
+            .unwrap()
+            .expect("a dark-page lock should appear within 8 seeds");
+
+        let rom = randomize_rom(&van, hit.seed, &Options::default(), None).unwrap();
+        assert!(
+            req.find(&rom).len() >= req.min_count,
+            "reported seed {} does not satisfy the predicate",
+            hit.seed
+        );
+        // Matches are reported, not just counted — a silent pass is worse than
+        // no predicate (a lock with no fortress beside it tests a different
+        // code path than a fortress clear).
+        assert!(hit.report.iter().any(|l| l.contains("lock at W8")));
+        assert!(hit.report.iter().any(|l| l.contains("contains:")));
+    }
+
+    #[test]
+    fn search_gives_up_cleanly_when_nothing_matches() {
+        let Some(van) = vanilla() else { return };
+        // W1 has no Bowser castle, so this can never be satisfied.
+        let req = Requirement::parse("bowser@w1").unwrap();
+        assert!(search_seed(&van, &Options::default(), &req, 1, 3).unwrap().is_none());
     }
 
     #[test]

@@ -113,6 +113,33 @@ cargo build --bin testrom
 ./target/debug/testrom --list               # every placeable level name
 ```
 
+### `--require`: search seeds for the feature under test
+
+A random seed often just doesn't contain the thing you need to test. `--require`
+searches for one that does:
+
+```sh
+./target/debug/testrom --require 'lock@w8:s2' --keep-locks --world 8
+./target/debug/testrom --require 'fort@w3>=2'
+./target/debug/testrom --require 'tile:0x54@w8'
+```
+
+Syntax is `<class>@w<N>[:s<M>][>=<K>]`; classes are `lock`, `gap`, `fortress`,
+`level`, `pipe`, `toadhouse`, `airship`, `bowser`, or `tile:0xNN`. Seeds ascend
+from `--seed-from` (default 1) so a given predicate always yields the same map;
+bump it for a different one. `--search` caps the attempt count (default 500,
+about 60ms per seed).
+
+This is **rejection sampling on purpose**. Biasing the builder to *place* the
+feature would produce a map the randomizer never generates — worthless for
+verifying a fix. Searching keeps the real distribution and just skips seeds that
+don't exercise the thing under test.
+
+A predicate can pass while the ROM still fails to test what you meant — a lock
+with no fortress beside it is broken by a hammer, which is a different code path
+from a fortress clear. So the search **prints what it matched** plus a census of
+the target screen. Check that output; don't just trust the exit code.
+
 The knobs are deliberately orthogonal — base ROM (vanilla vs `--randomize`),
 what to place, starting world, and how open the map is are four independent
 axes, so level / overworld / airship / lock testing are combinations rather

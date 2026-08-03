@@ -74,6 +74,21 @@ struct Cli {
     #[arg(long)]
     flags: Option<String>,
 
+    /// Search seeds until the map satisfies this, e.g. "lock@w8:s2",
+    /// "fort@w3>=2", "tile:0x54@w8". Implies --randomize.
+    /// Classes: lock, gap, fortress, level, pipe, toadhouse, airship, bowser.
+    #[arg(long, value_name = "PREDICATE")]
+    require: Option<String>,
+
+    /// How many seeds --require may try before giving up.
+    #[arg(long, default_value_t = 500)]
+    search: usize,
+
+    /// First seed --require tries. Ascending and reproducible; bump it to get
+    /// a different map that still satisfies the predicate.
+    #[arg(long, default_value_t = 1)]
+    seed_from: u64,
+
     /// Starting world, 1-8 (default: the ROM's own).
     #[arg(short, long, value_parser = clap::value_parser!(u8).range(1..=8))]
     world: Option<u8>,
@@ -162,17 +177,46 @@ fn main() {
 
     // Randomizer options only matter with --randomize; reject the combination
     // that silently does nothing rather than pretending it worked.
-    if !cli.randomize && (cli.seed.is_some() || cli.flags.is_some()) {
+    let randomize = cli.randomize || cli.require.is_some();
+    if !randomize && (cli.seed.is_some() || cli.flags.is_some()) {
         die("--seed/--flags require --randomize (vanilla base ignores them)");
     }
+    if cli.require.is_some() && cli.seed.is_some() {
+        die("--require searches for a seed; drop --seed (or use --seed-from)");
+    }
 
-    let base = if cli.randomize {
+    let base = if randomize {
         let options = match &cli.flags {
             Some(key) => Options::from_flag_key(key)
                 .unwrap_or_else(|e| die(format!("invalid --flags value: {e}"))),
             None => Options::default(),
         };
-        let seed = cli.seed.unwrap_or_else(rand::random);
+
+        let seed = match &cli.require {
+            Some(spec) => {
+                let req = testrom::Requirement::parse(spec).unwrap_or_else(|e| die(e));
+                eprintln!("searching for {} ...", req.describe());
+                match testrom::search_seed(&vanilla, &options, &req, cli.seed_from, cli.search)
+                    .unwrap_or_else(|e| die(e))
+                {
+                    Some(hit) => {
+                        for line in &hit.report {
+                            eprintln!("  {line}");
+                        }
+                        eprintln!("  (tried {} seed(s))\n", hit.tried);
+                        hit.seed
+                    }
+                    None => die(format!(
+                        "no seed satisfying {} in {} tried from {}\n       \
+                         raise --search, change --seed-from, or relax the predicate",
+                        req.describe(),
+                        cli.search,
+                        cli.seed_from
+                    )),
+                }
+            }
+            None => cli.seed.unwrap_or_else(rand::random),
+        };
         Base::Randomized { seed, options: Box::new(options) }
     } else {
         Base::Vanilla

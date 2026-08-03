@@ -55,10 +55,19 @@ the flag to the binary rather than working around it.
 ## When the map layout matters to the test
 
 A random seed may simply not place the feature under test where you need it.
-Before handing over a ROM, **check that the thing being tested is actually
-present**, and search seeds if it isn't. For W8 darkness in particular, the
-engine gates on `World_Map_XHi == 2` — only **screen 2 (columns 32–47)** of W8
-is dark — so a dark-page test needs a lock or fortress in that column range.
-`--seed N` makes the search reproducible.
+**Use `--require` rather than generating ROMs and checking by hand:**
+
+```sh
+./target/debug/testrom --require 'lock@w8:s2' --world 8 --keep-locks --hammer-locks
+```
+
+Syntax `<class>@w<N>[:s<M>][>=<K>]` — classes `lock`, `gap`, `fortress`, `level`,
+`pipe`, `toadhouse`, `airship`, `bowser`, `tile:0xNN`. It prints the matched
+positions and a census of the target screen; **read that output** — a predicate
+can pass while the ROM still misses the point (a lock with no fortress beside it
+is hammer-breakable, a different code path from a fortress clear).
+
+For W8 darkness specifically the engine gates on `World_Map_XHi == 2`, so only
+**screen 2 (columns 32–47)** is dark — hence `lock@w8:s2`.
 
 Run `./target/debug/testrom --help` for the full flag list.
