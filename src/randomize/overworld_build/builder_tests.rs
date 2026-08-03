@@ -34,6 +34,7 @@ fn qol_variant(rom: &Rom, hammer_rocks: bool, eights_wild: bool) -> Rom {
     if hammer_rocks {
         qol::make_hammer_rocks(&mut out);
     }
+    qol::apply_w1_shortcut(&mut out, hammer_rocks);
     qol::apply_w8_bridges(&mut out);
     if eights_wild {
         qol::apply_w8_canoe_and_paths(&mut out);
@@ -155,6 +156,57 @@ fn test_builder_schedule_runs_phases_in_order() {
     let ran: Vec<&str> = state.log.iter().map(|r| r.phase).collect();
     assert_eq!(ran, ["first", "second"]);
     assert_eq!(state.log[0].actions, ["ran on world 0"]);
+}
+
+/// The W1 shortcut must be WALKABLE, not just drawn.
+///
+/// `Map_CheckDoMove` validates only the adjacent tile and then moves a
+/// hardcoded 32 units — two tiles — so a new link needs exactly one path tile
+/// between two nodes an even distance apart. Off-by-one drawings (a node
+/// adjacent to its anchor, two stacked path tiles below) look right in a tile
+/// editor and are dead in game, and worse: the stray blank still enters the
+/// placement pool, so the builder puts content on a node no one can reach.
+///
+/// This pins all three halves. With `More hammer rocks` OFF the rock is the
+/// permanent `0x53` — same pixels as `0x52`, so the map gives away nothing
+/// about how a `Maybe` roll came out — and W1 stays vanilla-shaped. With it ON
+/// the rock is a wall to the plain walk, and once broken (4,8) and (6,8) each
+/// step directly onto the other.
+#[test]
+fn test_w1_shortcut_is_walkable() {
+    let Some(raw) = load_rom() else {
+        eprintln!("ROM not found, skipping");
+        return;
+    };
+    let off = rom_data::read_tile_grid(&base_qol(&raw), 0);
+    assert_eq!(off.get(5, 8), 0x53, "flag off must still place the decoy rock");
+    assert_eq!(off.get(6, 8), 0x4A, "the path stub is part of the disguise");
+    let off_pipes = rom_data::read_pipe_pairs(&base_qol(&raw)).remove(&0).unwrap_or_default();
+    let off_walk = walk_map(&off, &off_pipes, None, 0);
+    assert!(
+        !off_walk.edges[&(4, 8)].iter().any(|e| e.dest == (6, 8)),
+        "0x53 is not breakable, so the shortcut must not exist at all",
+    );
+
+    let rom = qol_variant(&raw, true, false);
+    // W1 has no pipes, so its key is simply absent from the map.
+    let pipes = rom_data::read_pipe_pairs(&rom).remove(&0).unwrap_or_default();
+
+    let mut grid = rom_data::read_tile_grid(&rom, 0);
+    assert_eq!(grid.get(5, 8), 0x52, "the shortcut must be gated by a rock");
+    let closed = walk_map(&grid, &pipes, None, 0);
+    assert!(
+        !closed.edges[&(4, 8)].iter().any(|e| e.dest == (6, 8)),
+        "an unbroken rock must not be walkable — the link would be free",
+    );
+
+    grid.set(5, 8, 0x46); // what `BREAKABLE_ROCKS` opens 0x52 into
+    let open = walk_map(&grid, &pipes, None, 0);
+    for (from, to) in [((4, 8), (6, 8)), ((6, 8), (4, 8))] {
+        assert!(open.nodes.contains(&from), "{from:?} unreachable from start");
+        let joins = open.edges[&from].iter().any(|e| e.dest == to);
+        assert!(joins, "{from:?} does not step onto {to:?}");
+    }
 }
 
 /// Measure the eight VANILLA worlds — known ground truth for calibrating the

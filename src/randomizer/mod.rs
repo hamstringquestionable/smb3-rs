@@ -112,6 +112,12 @@ fn randomize_inner(
         randomize::qol::make_hammer_rocks(rom);
     }
 
+    // W1 shortcut rock. The tiles land either way — only the rock's
+    // breakability follows `more_hammer_rocks`, so the map never leaks how a
+    // `Maybe` roll came out. Before the builder, like every map edit.
+    rom.set_tag("qol/w1_shortcut");
+    randomize::qol::apply_w1_shortcut(rom, more_hammer_rocks);
+
     // W8 Dark World map edits. The screen-3 water/bridge final page is always
     // applied; the screen-0 canoe + screen-2 extra paths are gated behind
     // `8s are Wild`. Both must run before the overworld builder so it sees the

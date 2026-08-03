@@ -55,6 +55,7 @@ fn apply_qol_variant(rom: &Rom, hammer_rocks: bool, eights_wild: bool) -> Rom {
     if hammer_rocks {
         super::super::qol::make_hammer_rocks(&mut out);
     }
+    super::super::qol::apply_w1_shortcut(&mut out, hammer_rocks);
     super::super::qol::apply_w8_bridges(&mut out);
     if eights_wild {
         super::super::qol::apply_w8_canoe_and_paths(&mut out);
