@@ -2245,6 +2245,26 @@ fortress/ship in the game.
 3. Reads the FX slot value from `FortressFX_W1[absolute_index]` (0x00–0x10).
 4. Uses the FX slot to index into all visual/map replacement tables below.
 
+**Routine layout and entry points (CPU addresses, PRG010 = file − 0x8010):**
+
+| Address | What it does |
+|---------|--------------|
+| `$C8E6` | `LDA #$01 / STA $20` — sets `Map_ClearLevelFXCnt`. Randomizer hook site. |
+| `$C8EA`–`$C94F` | Queues the replacement tile into `Graphics_Buffer` (the VRAM write) |
+| `$C952` | `Map_Completions` block: loads `FortressFX_MapCompIdx` into `$0A`/`$0B` |
+| `$C964`–`$C969` | `LDA $7D00,Y / AND $0B / BNE $C9C9` — **already-busted check** |
+| `$C96B`–`$C9A2` | Sets the bits (both players), then writes the tile into map RAM |
+| `$C9A4` | Poof-sprite animation loop, driven by `$20` counting up to 7 |
+| `$C9C9` | Clears `Map_DoFortressFX` / `$20` and ends the effect |
+
+Note the ordering: **the VRAM write is queued before the busted check.** Vanilla
+re-runs the effect for an already-broken lock, repainting a tile that already
+shows the replacement — invisible normally, but a disclosure on a dark page.
+Entering at `$C952` therefore skips only the VRAM write; `$20` chosen at entry
+selects whether the poof plays (`$20=1`) or the effect ends at once (`$20=6`).
+`$C952` is self-contained — it reloads the slot from `$0745` and needs no
+register setup. See `fortress_fx.rs` (issue #131).
+
 **Data tables (all 17 entries, indexed by FX slot 0x00–0x10):**
 
 | File Offset | Size | Label | Description |
@@ -3667,6 +3687,21 @@ this and the `ExcludeHazards` filter over many seeds.
 | $797E–$797F | Death respawn map Y (Mario/Luigi) |
 | $7980–$7981 | Death respawn map X high (Mario/Luigi) |
 | $7982–$7983 | Death respawn map X low (Mario/Luigi) |
+| $0596 | `Map_MarchInit` — marching data initialized this cycle |
+| $0597 | `Map_InCanoe_Flag` — player is in the canoe |
+| $0598 | `World_8_Dark` — W8 darkness active; counts 0–7 while the effect sets up |
+
+**`World_8_Dark` ($0598)** is the engine's single source of truth for "the map
+is dark right now." Set on map load (PRG030, two sites: `STY $0598` at 0x3C5B5
+and 0x3D1E1) from `World_Num == 7 && World_Map_XHi[player] == 2` — i.e. it
+tracks the *player's* page, not any particular tile's. Three consumers gate on
+it: `Map_W8DarknessFill` (blanket-fills the nametable with black tile `$FF`
+starting at VRAM `$2880`, ~608 bytes, leaving map RAM untouched),
+`FX_World_8_Darkness` (PRG011 $BB6D — the reveal-around-Mario animation, which
+paints real tiles back into VRAM), and `Map_W8Dark_IntroCover`. Because the
+darkness is *only* a VRAM overlay, anything that writes a tile to VRAM on that
+page paints it lit over the black and it stays that way until reload — which is
+why the fortress lock-break FX has to gate its VRAM write on this flag.
 
 ### Enemy / Object State
 
