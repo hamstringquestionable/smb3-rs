@@ -42,6 +42,15 @@ deploys.
 
 ### Fixed
 
+- Breaking a fortress lock in World 8's dark area no longer lights up the tile.
+  The lock-break effect used to paint the replacement tile over the darkness,
+  leaving it permanently visible. Now the poof plays where the lock was, and a
+  lock out in the dark stays hidden until your light reaches it, while a lock
+  already inside your light simply disappears as it should. Either way the lock
+  is gone for good. As part of the same fix, beating a fortress whose lock you
+  had already smashed with the hammer no longer redraws that tile — in the dark
+  area that redraw gave away which lock belonged to which fortress, which is
+  meant to be the risk you take when you swing the hammer blind.
 - Map nodes no longer show up in the wrong scenery. An empty node sitting in
   World 5's sky region could be drawn as a green land tile, and nodes on the
   island strips in Worlds 3, 4 and 7 could get land tiles instead of sand —

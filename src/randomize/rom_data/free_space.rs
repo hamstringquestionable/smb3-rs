@@ -1,5 +1,22 @@
 //! Central registry of ROM free-space allocations (assembled code + data
 //! tables). The overlap test guards against collisions.
+//!
+//! **Free space is the scarcest resource in this project — size every patch
+//! accordingly.** See the "ROM Free Space Is Scarce" section in `CLAUDE.md`
+//! for the per-bank budget and the size techniques that have paid off.
+//!
+//! The aggregate free-space number is misleading: space is per-bank, and a
+//! routine must live in a bank mapped when it runs. The always-mapped banks
+//! are effectively full — PRG031 (`$E000–$FFFF`) has ~68 bytes left with a
+//! largest contiguous gap of ~30, and PRG030 (`$8000–$9FFF`) has ~120 with a
+//! largest gap of ~74. Swapped banks are roomier (PRG010 ~880, PRG026 ~2600).
+//!
+//! Reserving some headroom in an allocation is fine and encouraged — a routine
+//! that has to grow later is far safer to extend in place than to relocate
+//! (several allocations here are origin-locked by self-referential absolute
+//! addresses). Note both numbers when they differ, e.g. "112 reserved, 97
+//! used". What is *not* fine is letting the code itself be sloppy: reserve
+//! room, but write the bytes as tight as they will go.
 
 /// Free space allocation: (file_offset, size_bytes, label).
 /// The overlap test checks that no two allocations in this list share any bytes.
@@ -23,7 +40,7 @@ pub(crate) const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     // PRG027 (file 0x36010, CPU $A000–$BFFF)
     (0x379D9, 894, "king_quotes: 7 quotes + hook (7×120 + 54)"),
     // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
-    (0x15554, 80, "fx_screen_check: cross-screen lock patch (Fred's algorithm verbatim)"),
+    (0x15554, 112, "fx_screen_check: cross-screen lock patch (Fred's algorithm + busted/darkness gates)"),
     (0x15DF0, 35, "canoe_fix: death respawn position save"),
     (0x15E13, 162, "map_warp: 2P Start+Select warp-to-partner routine"),
     (0x15EB5, 151, "canoe_summon: A-on-dock call-the-boat routine + offset tables"),
@@ -144,7 +161,9 @@ pub(crate) const FS_BIG_Q_LOOKUP: usize      = 0x355BD; // 106 bytes (CPU $B5AD)
 pub(crate) const FS_KING_QUOTES: usize       = 0x379D9; // 894 bytes
 
 // PRG010
-pub(crate) const FS_FX_SCREEN_CHECK: usize   = 0x15554; // 80 bytes (Fred's algorithm)
+// Fred's visibility algorithm plus the busted / darkness gates (issue #131).
+// The $FF run this sits in continues to 0x15810, so there is room to grow.
+pub(crate) const FS_FX_SCREEN_CHECK: usize   = 0x15554; // 112 reserved, 97 used
 
 pub(crate) const FS_CANOE_RESPAWN: usize     = 0x15DF0; // 35 bytes
 pub(crate) const FS_MAP_WARP: usize          = 0x15E13; // 162 bytes (CPU $DE03)
