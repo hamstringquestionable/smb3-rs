@@ -46,8 +46,9 @@ vanilla but produces thin variation. Kept as possible future `--subtle-palettes`
 mode if needed.
 
 This draft is the output of the reverse-engineering phase documented in
-`docs/smb3_rom_reference.md` (section "Palette Data") and
-`tools/palette_inspect.py`. It proposes how to turn that understanding into a
+`docs/smb3_rom_reference.md` (section "Palette Data"), originally produced with
+`tools/palette_inspect.py` (since deleted — recover from git history if the
+analysis needs redoing). It proposes how to turn that understanding into a
 thoughtful in-game palette randomizer, replacing the current minimal
 `src/randomize/palettes.rs` (Mario/Luigi power-up colors only).
 

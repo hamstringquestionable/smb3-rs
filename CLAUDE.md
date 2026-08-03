@@ -189,13 +189,16 @@ web/
   style.css
   app.js               # Loads WASM, handles file input, triggers download
 tools/
+  README.md            # INDEX OF ALL 16 TOOLS — read this before writing a throwaway script
   rom_map.py           # ROM map generator + diagnostic modes (see below)
   rom_map.json         # Pre-built ROM map (gitignored, regenerate with rom_map.py)
+  map_viz.py           # Renders any ROM's world maps as labelled ASCII (use this,
+                       #   don't hand-decode tile grids)
+  map_walker.py        # BFS map connectivity + fortress progression
   fx_check.py          # Cross-checks FX slots against actual map tiles
   level_sim.py         # Level tile simulator for debugging individual levels
-  gen_test_roms.py     # Batch test ROM generation
-  gen_visual_previews.py # Renders the player-sprite preview PNGs for visual IPS patches
   offset_dups.py       # Flags ROM offsets that bypass their rom_data.rs constant
+  ... 9 more           # See tools/README.md
 docs/
   smb3_rom_reference.md # ROM hacking reference (offsets, data structures, RAM map)
 ```
@@ -210,6 +213,27 @@ The overworld builder is the core randomization system, implemented as a four-ph
 4. **Write** (`overworld_writer.rs`) — single-pass ROM write: updates pointer tables, FX table, pipe destination tables, map tiles, and hammer bro sprite assignments
 
 When the overworld builder is active, `levels.rs` intra-world shuffle and airship shuffle are bypassed since the builder handles them.
+
+## Tooling
+
+**`tools/README.md` indexes all 16 scripts** with a verified status for each.
+Read it before scanning the ROM by hand or writing a throwaway script. In
+particular `map_viz.py <rom.nes> --world N` renders any ROM's map as labelled
+ASCII; don't hand-decode tile grids.
+
+Tier 1 (7) is live: `rom_map.py` plus the palette-codegen and visual-preview
+pipelines that regenerate checked-in artifacts. Tier 2 (9) is working general
+diagnostics.
+
+**Keep `tools/` from re-accumulating.** 15 one-off investigation scripts were
+deleted on 2026-08-03 once their findings were captured in the Rust source and
+`docs/smb3_rom_reference.md`. A script written to answer a single question
+should end with its answer folded into the docs and the script deleted — not
+left behind to rot into a trap for the next reader. Recover any of them from git
+history if a line of investigation reopens.
+
+Remember that Rust is the source of truth, not the Python tooling — when a
+script disagrees with Rust, suspect the script.
 
 ## ROM Map
 

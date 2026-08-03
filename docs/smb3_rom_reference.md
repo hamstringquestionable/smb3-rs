@@ -1458,15 +1458,19 @@ by Recolored, proving these are the master per-tileset/area palette tables.
 | 0x37808–0x37846 | ~60 B  | palette data | Slice 4-B — separate paint probe if needed |
 |                 |        |  | **Lesson**: the "master pool" 0x36EE2-0x37846 is NOT pure palette data. Interleaved pointer tables / lookup tables must be preserved. Any randomizer needs per-sub-region byte maps to know what's safe to touch. |
 
-> **Empirical confirmations** are from `tools/gen_palette_probes.py` runs in an emulator
-> (paint each table to NES `0x24` hot magenta, observe which graphics turn pink).
-> Probes apply `patches/smb3practice_SE.ips` for warp whistles + level select + open movement
-> so all worlds are reachable. Filenames: `test_roms/palette_probe_<name>_wN.nes`.
+> **Empirical confirmations** came from emulator probe runs: paint each table to
+> NES `0x24` (hot magenta) and observe which graphics turn pink, with
+> `patches/smb3practice_SE.ips` applied for warp whistles + level select + open
+> movement so all worlds are reachable. The probe generator (`gen_palette_probes.py`)
+> has been deleted now that its findings are recorded here — recover it from git
+> history if the technique is needed again.
 
 > **Quartet alignment varies** across these tables — outline `0F` is at byte 2 in
 > 0x36BE4 but at byte 1 in 0x36EE2. Hardcoding "outline at byte 3" is unsafe; either
-> probe each table for its alignment, or paint every byte that isn't `0x00` or `0x0F`
-> (the `raw` painter strategy in `gen_palette_probes.py`).
+> probe each table for its alignment, or use the **raw painter strategy**: paint
+> every byte in the range that is not `0x00` or `0x0F`, leaving those two alone.
+> That sidesteps alignment entirely and was the approach that produced the
+> confirmations above.
 
 > **Note**: Specific table semantics (tileset assignment, index mapping) are inferred from
 > structural patterns and the Recolored IPS, not yet verified against the SMB3 disassembly.
@@ -1503,8 +1507,11 @@ variant swap), plus hue-rotation-only coverage of kept-vanilla chromatic
 quartets (`ROTATE_ONLY_QUARTETS`).
 > Confirm with disassembly cross-reference before basing critical writes on these offsets.
 >
-> Diagnostic tool: `nix-shell -p python3 --run 'python3 tools/palette_inspect.py'` dumps
-> every Recolored cluster, classifies it, and shows vanilla vs. recolored hex side-by-side.
+> The cluster-by-cluster reverse engineering behind this section was done with
+> `tools/palette_inspect.py` (dumped every Recolored cluster, classified it, and
+> showed vanilla vs. recolored hex side-by-side). That tool has been deleted now
+> that its output is captured here and in `palette_variants.rs`; recover it from
+> git history if the Recolored IPS needs re-analysing.
 
 ### Jump Engine — `$FE99` (Fixed Bank, NOT Palette-Specific)
 
