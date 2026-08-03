@@ -126,25 +126,25 @@ pub(super) fn patch_fortress_fx_screen_check(rom: &mut Rom) {
     // tiles where the lock-break animation would clip across screen
     // boundaries even when nominally "visible."
     //
-    // Two further gates suppress the VRAM tile write (issue #131).
+    // One further gate suppresses the VRAM tile write (issue #131).
     // Vanilla queues that write into `Graphics_Buffer` at the *top* of
-    // `MO_DoFortressFX` ($C8EA..$C94F), before it checks anything — so
-    // both gates have to be decided here, ahead of the jump.
+    // `MO_DoFortressFX` ($C8EA..$C94F), before it checks anything — so the
+    // gate has to be decided here, ahead of the jump.
     //
-    // **1. Lock already busted → skip the write.** Vanilla itself
-    // branches on this at $C964 (`Map_Completions[col] & bit`), but only
-    // *after* the buffer was already filled. Harmless on a lit page (the
-    // tile it draws is the one that's already there), but on the W8 dark
-    // page it repaints a tile the darkness was hiding — so beating a
-    // fortress whose lock the player had already smashed with the hammer
-    // disclosed which lock belonged to that fortress. Hammer breaks go
-    // through `Map_SetCompletion_By_Poof`, which sets the very same
-    // (column, row-bit) this slot's `FortressFX_MapCompIdx` pair encodes,
-    // so reading `Map_Completions` covers them. Taking the skip exit
-    // matches vanilla's own handling: $C952 re-runs the busted check and
-    // ends the effect at $C9C9, no poof, no map write.
+    // A second gate used to sit alongside it, skipping the write when the
+    // lock was already busted (`Map_Completions[col] & bit`, mirroring
+    // vanilla's own test at $C964). It was measured redundant and removed:
+    // with only the busted gate disabled the dark page still behaved
+    // correctly, while disabling the darkness gate alone reproduced the
+    // reveal. Vanilla reaches the same outcome with no gate at all — its
+    // routine is correct on the dark page even once the hammer can break
+    // locks — so the darkness gate compensates for something this
+    // replacement loses between the $C8E6 hook and the buffer commit,
+    // rather than adding behaviour vanilla lacks. Worth understanding
+    // before this patch grows again. (Removing the busted gate saved 15
+    // bytes: 97 → 82.)
     //
-    // **2. Darkness active → poof but no write, then replay the reveal.**
+    // **Darkness active → poof but no write, then replay the reveal.**
     // `Map_W8DarknessFill` blacks out the nametable with tile $FF and
     // leaves map RAM alone; Mario carries a 3x3 metatile box of light that
     // `Map_W8DarknessUpdate` repaints from map RAM as he walks. A tile
@@ -159,15 +159,11 @@ pub(super) fn patch_fortress_fx_screen_check(rom: &mut Rom) {
     // (PRG030 `INY; STY $0598`): `FX_World_8_Darkness` replays the arrival
     // reveal, repainting the light box from the now-updated map RAM.
     //
-    // The two halves cover disjoint cases and neither needs any geometry:
-    // the skip stops a tile *outside* the light from being painted lit
-    // (nothing could ever black it again — the reveal only paints, and the
-    // only routine that blacks the screen writes 608 bytes straight to the
-    // PPU with rendering off, i.e. map load only), and the replay fixes a
-    // tile *inside* the light whose graphic is now stale. Mario is always
-    // standing still on the fortress tile here — the map has just loaded
-    // and input is locked through the effect — so the lit region is exactly
-    // the arrival box the replay redraws.
+    // The replay needs no geometry: it fixes a tile *inside* the light
+    // whose graphic is now stale. Mario is always standing still on the
+    // fortress tile here — the map has just loaded and input is locked
+    // through the effect — so the lit region is exactly the arrival box the
+    // replay redraws.
     //
     // Reset timing takes care of itself: `FX_World_8_Darkness` is reached
     // only via `MapObjects_UpdateDrawEnter`, which is not on the
@@ -223,9 +219,9 @@ pub(super) fn patch_fortress_fx_screen_check(rom: &mut Rom) {
         0x29, 0xF0,          //  7: AND #$F0          ; A = col<<4
         0x45, 0xFD,          //  9: EOR $FD           ; A ^= Map_Scroll_X
         0xC9, 0x10,          // 11: CMP #$10
-        0x90, 0x48,          // 13: BCC +72 → skip
+        0x90, 0x39,          // 13: BCC +57 → skip
         0xC9, 0xE8,          // 15: CMP #$E8
-        0xB0, 0x44,          // 17: BCS +68 → skip
+        0xB0, 0x35,          // 17: BCS +53 → skip
 
         // ----- $0A = lock_half_index = 2*screen + (col>=8 ? 1 : 0) -----
         //
@@ -255,7 +251,7 @@ pub(super) fn patch_fortress_fx_screen_check(rom: &mut Rom) {
         0x65, 0x77,          // 32: ADC $77           ; A = 2*$77 + C  (= mario_half_index)
         0x85, 0x0B,          // 34: STA $0B
         0xC5, 0x0A,          // 36: CMP $0A
-        0xF0, 0x12,          // 38: BEQ +18 → busted  ; same half-screen → visible
+        0xF0, 0x12,          // 38: BEQ +18 → animate ; same half-screen → visible
 
         // ----- adjacency: adjust $0A by ±1 per scroll/mario alignment -----
         // BMI path (B): $79 and $FD differ on bit 7 → INC $0A (+1)
@@ -268,41 +264,26 @@ pub(super) fn patch_fortress_fx_screen_check(rom: &mut Rom) {
         0xE6, 0x0A,          // 50: INC $0A           ; path B target (fall-through for A)
         0xA5, 0x0B,          // 52: LDA $0B           ; mario_index
         0xC5, 0x0A,          // 54: CMP $0A
-        0xD0, 0x1D,          // 56: BNE +29 → skip    ; neither half-screen → invisible
-
-        // ----- Already-busted check: Map_Completions[col] & row_bit -----
-        // Mirrors vanilla's own test at $C964, hoisted ahead of the
-        // graphics-buffer fill so an already-broken lock never reaches VRAM.
-        // $C952 re-runs it and ends the effect. Placed after the visibility
-        // test so the slot*2 index comes from Y (TYA/ASL/TAY) instead of a
-        // second `LDA $0745` — 3 bytes instead of 5.
-        0x98,                // 58: TYA               ; Y still = FX slot
-        0x0A,                // 59: ASL A
-        0xA8,                // 60: TAY               ; Y = slot*2
-        0xBE, 0xDF, 0xC7,    // 61: LDX $C7DF,Y       ; MapCompIdx col
-        0xC8,                // 64: INY
-        0xBD, 0x00, 0x7D,    // 65: LDA $7D00,X       ; Map_Completions[col]
-        0x39, 0xDF, 0xC7,    // 68: AND $C7DF,Y       ; MapCompIdx row bit
-        0xD0, 0x0E,          // 71: BNE +14 → skip    ; busted → no VRAM write
+        0xD0, 0x0E,          // 56: BNE +14 → skip    ; neither half-screen → invisible
 
         // ----- animate: full FX, $20 = 1 -----
-        0xA9, 0x01,          // 73: LDA #$01
-        0x85, 0x20,          // 75: STA $20
+        0xA9, 0x01,          // 58: LDA #$01
+        0x85, 0x20,          // 60: STA $20
         // Darkness active → poof + map data only, and restart the reveal so
         // a lock inside Mario's light gets repainted from the updated map
         // RAM. LDX (not LDA) so A stays #$01 for the STA below.
-        0xAE, 0x98, 0x05,    // 77: LDX $0598         ; World_8_Dark
-        0xF0, 0x0C,          // 80: BEQ +12 → full animate
-        0x8D, 0x98, 0x05,    // 82: STA $0598         ; A=1 → replay arrival reveal
-        0xD0, 0x04,          // 85: BNE +4 → common   ; A=1, always taken
+        0xAE, 0x98, 0x05,    // 62: LDX $0598         ; World_8_Dark
+        0xF0, 0x0C,          // 65: BEQ +12 → full animate
+        0x8D, 0x98, 0x05,    // 67: STA $0598         ; A=1 → replay arrival reveal
+        0xD0, 0x04,          // 70: BNE +4 → common   ; A=1, always taken
 
         // ----- skip: data-only update, $20 = 6 -----
-        0xA9, 0x06,          // 87: LDA #$06
-        0x85, 0x20,          // 89: STA $20
-        0x4C, 0x52, 0xC9,    // 91: JMP $C952         ; common
-        0x4C, 0xEA, 0xC8,    // 94: JMP $C8EA         ; full animate
+        0xA9, 0x06,          // 72: LDA #$06
+        0x85, 0x20,          // 74: STA $20
+        0x4C, 0x52, 0xC9,    // 76: JMP $C952         ; common
+        0x4C, 0xEA, 0xC8,    // 79: JMP $C8EA         ; full animate
     ];
-    debug_assert!(code.len() == 97, "FX screen-check patch must be 97 bytes (allocation is 112, 15 reserved free)");
+    debug_assert!(code.len() == 82, "FX screen-check patch must be 82 bytes (allocation is 112, 30 reserved free)");
     for (i, &b) in code.iter().enumerate() {
         rom.write_byte(CODE_OFFSET + i, b);
     }

@@ -109,7 +109,11 @@ pub(crate) fn write_overworld<R: Rng>(
     if flags.shuffle_hammer_bros {
         write_hb_sprites(rom, build, rng);
     }
+    // Sub-tagged: this is the one writer patch that claims free space, so the
+    // write log has to name it for collision reports to be actionable.
+    rom.push_tag("fx_screen_check");
     patch_fortress_fx_screen_check(rom);
+    rom.pop_tag();
 
     // Apply engine-side scaffolding for the per-world start ↔ airship swap.
     // No-op when the option was off (no worlds got flagged in pick_swaps).

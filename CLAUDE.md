@@ -97,6 +97,69 @@ covered by one.
 
 `CHANGELOG.md` (repo root, [Keep a Changelog](https://keepachangelog.com/) format) tracks notable changes. When a change is user-visible or notable (a new flag/option, a behavior change, a fixed bug players would notice), add a one-line entry under the `[Unreleased]` section in the right group (`Added` / `Changed` / `Fixed` / `Removed`) as part of the same change. Skip purely internal refactors, test-only changes, and tooling tweaks. At version-bump time, move the accumulated `[Unreleased]` entries into a new versioned section.
 
+## Playtest ROMs: Use `testrom`, Never Hand-Patch
+
+Playtesting needs ROMs the randomizer would never produce — a specific level on
+tile 1, a map with every lock removed, a fortress reachable without clearing
+three levels first. **Build those with the `testrom` binary, never with an
+ad-hoc Python one-liner against raw offsets.**
+
+```sh
+cargo build --bin testrom
+./target/debug/testrom --place 6F1 5F1 8B   # three levels on W1 tiles 1-3
+./target/debug/testrom --randomize --seed 12345 --world 3
+./target/debug/testrom --randomize --keep-locks --hammer-locks \
+    --starting-items hammer,leaf,fire       # locks intact + a way to break them
+./target/debug/testrom --list               # every placeable level name
+```
+
+### `--require`: search seeds for the feature under test
+
+A random seed often just doesn't contain the thing you need to test. `--require`
+searches for one that does:
+
+```sh
+./target/debug/testrom --require 'lock@w8:s2' --keep-locks --world 8
+./target/debug/testrom --require 'fort@w3>=2'
+./target/debug/testrom --require 'tile:0x54@w8'
+```
+
+Syntax is `<class>@w<N>[:s<M>][>=<K>]`; classes are `lock`, `gap`, `fortress`,
+`level`, `pipe`, `toadhouse`, `airship`, `bowser`, or `tile:0xNN`. Seeds ascend
+from `--seed-from` (default 1) so a given predicate always yields the same map;
+bump it for a different one. `--search` caps the attempt count (default 500,
+about 60ms per seed).
+
+This is **rejection sampling on purpose**. Biasing the builder to *place* the
+feature would produce a map the randomizer never generates — worthless for
+verifying a fix. Searching keeps the real distribution and just skips seeds that
+don't exercise the thing under test.
+
+A predicate can pass while the ROM still fails to test what you meant — a lock
+with no fortress beside it is broken by a hammer, which is a different code path
+from a fortress clear. So the search **prints what it matched** plus a census of
+the target screen. Check that output; don't just trust the exit code.
+
+The knobs are deliberately orthogonal — base ROM (vanilla vs `--randomize`),
+what to place, starting world, and how open the map is are four independent
+axes, so level / overworld / airship / lock testing are combinations rather
+than named modes. The map is fully open by default (locks removed, gaps
+bridged, open movement patched in); `--keep-locks`, `--keep-gaps` and
+`--no-walk` opt out individually.
+
+Level names resolve through `NodeCatalog`, which already names every one of the
+340 pointer table entries (`6F1`, `8B`, `7A`, `8-Tank`, `1-4`, plus the beta
+stages under `--beta`). Matching is case-insensitive and dashes are optional.
+
+**Why the rule:** the offsets a hand-written patch needs — map grids, pointer
+tables, the starting-world byte — all already exist as constants in
+`rom_data.rs`. Copying them into a throwaway script duplicates the single source
+of truth (exactly what `tools/offset_dups.py` exists to catch) and re-derives
+error-prone arithmetic each time. Map grids in particular are stored
+**screen-major** (144 bytes per screen), so the obvious `base + row * columns +
+col` is wrong; use `rom_data::map_tile_offset`. If `testrom` can't express what
+a test needs, add the flag — don't work around it.
+
 ## Architecture: Separate Randomization from ROM Writes
 
 Randomization modules follow a **decide then write** pattern. Each feature area has two layers:
@@ -121,6 +184,8 @@ src/
   rom.rs               # iNES header parsing, ROM validation, Rom struct
   ips.rs               # IPS patch builder (build_ips_patch) and applier (apply_ips_patch)
   randomizer.rs        # Orchestration: Options struct, calls randomize modules
+  testrom.rs           # Playtest ROM builder (native-only) — see below
+  bin/testrom.rs       # `testrom` CLI: thin clap wrapper over testrom.rs
   wasm.rs              # wasm-bindgen glue (only compiled for wasm32)
   randomize/
     mod.rs
@@ -151,13 +216,16 @@ web/
   style.css
   app.js               # Loads WASM, handles file input, triggers download
 tools/
+  README.md            # INDEX OF ALL 16 TOOLS — read this before writing a throwaway script
   rom_map.py           # ROM map generator + diagnostic modes (see below)
   rom_map.json         # Pre-built ROM map (gitignored, regenerate with rom_map.py)
+  map_viz.py           # Renders any ROM's world maps as labelled ASCII (use this,
+                       #   don't hand-decode tile grids)
+  map_walker.py        # BFS map connectivity + fortress progression
   fx_check.py          # Cross-checks FX slots against actual map tiles
   level_sim.py         # Level tile simulator for debugging individual levels
-  gen_test_roms.py     # Batch test ROM generation
-  gen_visual_previews.py # Renders the player-sprite preview PNGs for visual IPS patches
   offset_dups.py       # Flags ROM offsets that bypass their rom_data.rs constant
+  ... 9 more           # See tools/README.md
 docs/
   smb3_rom_reference.md # ROM hacking reference (offsets, data structures, RAM map)
 ```
@@ -172,6 +240,27 @@ The overworld builder is the core randomization system, implemented as a four-ph
 4. **Write** (`overworld_writer.rs`) — single-pass ROM write: updates pointer tables, FX table, pipe destination tables, map tiles, and hammer bro sprite assignments
 
 When the overworld builder is active, `levels.rs` intra-world shuffle and airship shuffle are bypassed since the builder handles them.
+
+## Tooling
+
+**`tools/README.md` indexes all 16 scripts** with a verified status for each.
+Read it before scanning the ROM by hand or writing a throwaway script. In
+particular `map_viz.py <rom.nes> --world N` renders any ROM's map as labelled
+ASCII; don't hand-decode tile grids.
+
+Tier 1 (7) is live: `rom_map.py` plus the palette-codegen and visual-preview
+pipelines that regenerate checked-in artifacts. Tier 2 (9) is working general
+diagnostics.
+
+**Keep `tools/` from re-accumulating.** 15 one-off investigation scripts were
+deleted on 2026-08-03 once their findings were captured in the Rust source and
+`docs/smb3_rom_reference.md`. A script written to answer a single question
+should end with its answer folded into the docs and the script deleted — not
+left behind to rot into a trap for the next reader. Recover any of them from git
+history if a line of investigation reopens.
+
+Remember that Rust is the source of truth, not the Python tooling — when a
+script disagrees with Rust, suspect the script.
 
 ## ROM Map
 

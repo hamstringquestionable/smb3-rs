@@ -16,8 +16,9 @@ use options::*;
 
 // Public API re-exported by the crate root (see lib.rs).
 pub use options::{
-    EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri, ITEM_RANDOM,
-    ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY, STARTING_LIVES_VALUES,
+    item_display_name, item_id, EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri,
+    ITEMS, ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY,
+    STARTING_LIVES_VALUES,
 };
 
 #[cfg(test)]
@@ -287,7 +288,9 @@ fn randomize_inner(
         randomize::hands_levels::install_full_grab(rom);
     }
     if troll_pipes {
-        rom.set_tag("troll_pipes");
+        // No `set_tag` here: this only mutates `build`, and the ROM writes it
+        // leads to happen later in the writer. Tagging it would label none of
+        // its own bytes and leak the name onto everything the writer emits.
         randomize::troll_pipes::mark_troll_pipes(&mut build, &mut rng);
     }
     // --- OVERWORLD CAPTURE POINT ---
@@ -300,6 +303,7 @@ fn randomize_inner(
     if let Some(slot) = overworld_capture {
         *slot = Some(build.clone());
     }
+    rom.set_tag("overworld_writer");
     randomize::overworld_writer::write_overworld(
         rom,
         &build,

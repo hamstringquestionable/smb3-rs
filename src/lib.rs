@@ -3,6 +3,11 @@ pub mod randomize;
 pub mod randomizer;
 pub mod rom;
 
+/// Playtest ROM assembly. Native-only: it exists to serve the CLI and has no
+/// role in the web build, which never needs a ROM the randomizer wouldn't make.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod testrom;
+
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
 
@@ -10,7 +15,8 @@ use rom::Rom;
 
 pub use ips::apply_ips_patch;
 pub use randomizer::{
-    EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri, STARTING_LIVES_VALUES,
+    item_display_name, item_id, EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri,
+    ITEMS, STARTING_LIVES_VALUES,
     ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY,
 };
 

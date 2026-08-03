@@ -1458,15 +1458,19 @@ by Recolored, proving these are the master per-tileset/area palette tables.
 | 0x37808–0x37846 | ~60 B  | palette data | Slice 4-B — separate paint probe if needed |
 |                 |        |  | **Lesson**: the "master pool" 0x36EE2-0x37846 is NOT pure palette data. Interleaved pointer tables / lookup tables must be preserved. Any randomizer needs per-sub-region byte maps to know what's safe to touch. |
 
-> **Empirical confirmations** are from `tools/gen_palette_probes.py` runs in an emulator
-> (paint each table to NES `0x24` hot magenta, observe which graphics turn pink).
-> Probes apply `patches/smb3practice_SE.ips` for warp whistles + level select + open movement
-> so all worlds are reachable. Filenames: `test_roms/palette_probe_<name>_wN.nes`.
+> **Empirical confirmations** came from emulator probe runs: paint each table to
+> NES `0x24` (hot magenta) and observe which graphics turn pink, with
+> `patches/smb3practice_SE.ips` applied for warp whistles + level select + open
+> movement so all worlds are reachable. The probe generator (`gen_palette_probes.py`)
+> has been deleted now that its findings are recorded here — recover it from git
+> history if the technique is needed again.
 
 > **Quartet alignment varies** across these tables — outline `0F` is at byte 2 in
 > 0x36BE4 but at byte 1 in 0x36EE2. Hardcoding "outline at byte 3" is unsafe; either
-> probe each table for its alignment, or paint every byte that isn't `0x00` or `0x0F`
-> (the `raw` painter strategy in `gen_palette_probes.py`).
+> probe each table for its alignment, or use the **raw painter strategy**: paint
+> every byte in the range that is not `0x00` or `0x0F`, leaving those two alone.
+> That sidesteps alignment entirely and was the approach that produced the
+> confirmations above.
 
 > **Note**: Specific table semantics (tileset assignment, index mapping) are inferred from
 > structural patterns and the Recolored IPS, not yet verified against the SMB3 disassembly.
@@ -1503,8 +1507,11 @@ variant swap), plus hue-rotation-only coverage of kept-vanilla chromatic
 quartets (`ROTATE_ONLY_QUARTETS`).
 > Confirm with disassembly cross-reference before basing critical writes on these offsets.
 >
-> Diagnostic tool: `nix-shell -p python3 --run 'python3 tools/palette_inspect.py'` dumps
-> every Recolored cluster, classifies it, and shows vanilla vs. recolored hex side-by-side.
+> The cluster-by-cluster reverse engineering behind this section was done with
+> `tools/palette_inspect.py` (dumped every Recolored cluster, classified it, and
+> showed vanilla vs. recolored hex side-by-side). That tool has been deleted now
+> that its output is captured here and in `palette_variants.rs`; recover it from
+> git history if the Recolored IPS needs re-analysing.
 
 ### Jump Engine — `$FE99` (Fixed Bank, NOT Palette-Specific)
 
@@ -3701,7 +3708,26 @@ starting at VRAM `$2880`, ~608 bytes, leaving map RAM untouched),
 paints real tiles back into VRAM), and `Map_W8Dark_IntroCover`. Because the
 darkness is *only* a VRAM overlay, anything that writes a tile to VRAM on that
 page paints it lit over the black and it stays that way until reload — which is
-why the fortress lock-break FX has to gate its VRAM write on this flag.
+why the randomizer's fortress lock-break FX has to gate its VRAM write on this
+flag.
+
+**Vanilla does not, and does not need to.** `MO_DoFortressFX` (PRG010 $C8B0)
+never reads `$0598`; the only consumers anywhere in the ROM are the three above.
+It queues the VRAM write into `Graphics_Buffer` at the top of the routine and
+never reconsiders, and its baked address for the W8 dark-page slot ($0F →
+`$2998`) sits inside the `$2880`+608 fill. Yet vanilla is visually correct on
+the dark page — verified on hardware-accurate emulation, both for a plain
+fortress clear and for a lock hammered open first (with the randomizer's
+`hammer_breaks_locks` patch applied to an otherwise vanilla ROM, since the
+vanilla hammer only matches rocks `$51`–`$52`).
+
+So the gate compensates for something the randomizer's replacement routine
+loses between its `$C8E6` hook and the buffer commit, rather than supplying
+behaviour vanilla lacks. What vanilla does in that window to make the write
+harmless is **not yet understood** — worth resolving before that patch grows,
+since it may allow dropping the gate entirely. Measured 2026-08-03: disabling
+the darkness gate alone reproduces the reveal; disabling the (since removed)
+already-busted gate alone does not.
 
 ### Enemy / Object State
 

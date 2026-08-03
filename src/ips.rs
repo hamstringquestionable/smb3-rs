@@ -117,8 +117,20 @@ fn write_rle_record(patch: &mut Vec<u8>, offset: usize, count: usize, value: u8)
     patch.push(value);
 }
 
-/// Apply an IPS patch to a ROM, returning the patched bytes.
-pub fn apply_ips_patch(rom: &[u8], patch: &[u8]) -> Result<Vec<u8>, String> {
+/// One decoded IPS record: the target file offset and the bytes to write there.
+/// RLE records are expanded, so callers see a uniform `(offset, payload)` shape.
+pub struct IpsRecord {
+    pub offset: usize,
+    pub payload: Vec<u8>,
+}
+
+/// Decode every record in an IPS patch.
+///
+/// Exposed separately from [`apply_ips_patch`] so callers can filter records
+/// before applying them — the test-ROM builder takes only the movement records
+/// from a practice patch and drops the rest, which would clobber randomized
+/// data.
+pub fn parse_ips_records(patch: &[u8]) -> Result<Vec<IpsRecord>, String> {
     if patch.len() < 8 {
         return Err("Patch too small".to_string());
     }
@@ -126,7 +138,7 @@ pub fn apply_ips_patch(rom: &[u8], patch: &[u8]) -> Result<Vec<u8>, String> {
         return Err("Invalid IPS header".to_string());
     }
 
-    let mut output = rom.to_vec();
+    let mut records = Vec::new();
     let mut pos = 5; // skip "PATCH"
 
     loop {
@@ -153,7 +165,7 @@ pub fn apply_ips_patch(rom: &[u8], patch: &[u8]) -> Result<Vec<u8>, String> {
         let size = ((patch[pos] as usize) << 8) | (patch[pos + 1] as usize);
         pos += 2;
 
-        if size == 0 {
+        let payload = if size == 0 {
             // RLE record
             if pos + 3 > patch.len() {
                 return Err("Unexpected end of patch reading RLE data".to_string());
@@ -161,29 +173,33 @@ pub fn apply_ips_patch(rom: &[u8], patch: &[u8]) -> Result<Vec<u8>, String> {
             let rle_count = ((patch[pos] as usize) << 8) | (patch[pos + 1] as usize);
             let rle_value = patch[pos + 2];
             pos += 3;
-
-            // Extend output if needed
-            let end = offset + rle_count;
-            if end > output.len() {
-                output.resize(end, 0);
-            }
-            for byte in output[offset..end].iter_mut() {
-                *byte = rle_value;
-            }
+            vec![rle_value; rle_count]
         } else {
             // Raw record
             if pos + size > patch.len() {
                 return Err("Unexpected end of patch reading payload".to_string());
             }
-            let end = offset + size;
-            if end > output.len() {
-                output.resize(end, 0);
-            }
-            output[offset..end].copy_from_slice(&patch[pos..pos + size]);
+            let payload = patch[pos..pos + size].to_vec();
             pos += size;
-        }
+            payload
+        };
+
+        records.push(IpsRecord { offset, payload });
     }
 
+    Ok(records)
+}
+
+/// Apply an IPS patch to a ROM, returning the patched bytes.
+pub fn apply_ips_patch(rom: &[u8], patch: &[u8]) -> Result<Vec<u8>, String> {
+    let mut output = rom.to_vec();
+    for rec in parse_ips_records(patch)? {
+        let end = rec.offset + rec.payload.len();
+        if end > output.len() {
+            output.resize(end, 0);
+        }
+        output[rec.offset..end].copy_from_slice(&rec.payload);
+    }
     Ok(output)
 }
 
