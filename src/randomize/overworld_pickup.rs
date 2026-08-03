@@ -223,15 +223,17 @@ fn pick_up_world(
 /// wrong tile. `(world_idx, row, col, tile)`
 const BLANK_TILE_OVERRIDES: &[(usize, usize, usize, u8)] = &[
     (2, 8, 6, 0x47), // W3 spade near start — heuristic picks 0x44 (no neighbors), needs 0x47 for BFS
-    (4, 6, 20, 0xD9), // W5 spade in sky region — neighbors are non-path sky bg, heuristic falls to land
     (7, 5, 8, 0x8D), // W8 battleship entry — its cell is navy water (canoe area), not a land blank.
                      // The entry is still picked up into the pool (placed elsewhere); only this
                      // leftover tile changes, so the heuristic's 0x44 land tile is overridden to water.
 ];
 
-/// Positions that should use island-themed blank tiles (0xAE/0xAF/0xB5/0xB6).
-/// All other positions default to standard land tiles (0x44-0x4A), except sky
-/// positions which are auto-detected from neighbors (0xD* tiles).
+/// Positions that should use island-themed blank tiles (0xAE/0xAF/0xB5/0xB6)
+/// even though [`theme_for`] would read them as standard land. Only W3 (2,4)
+/// genuinely needs the override — its connecting path is the standard 0x46
+/// above it while the strip it sits on runs south — but the rest are kept as
+/// a safety net, since they stay right even when a lock is stamped over the
+/// island path the sniff would otherwise key on.
 const ISLAND_POSITIONS: &[(usize, usize, usize)] = &[
     // W3 — narrow island strips
     (2, 2, 4),  // 3-2
@@ -248,6 +250,20 @@ const ISLAND_POSITIONS: &[(usize, usize, usize)] = &[
 const THEME_STANDARD: (u8, u8, u8, u8) = (0x47, 0x48, 0x4A, 0x44);
 const THEME_SKY: (u8, u8, u8, u8) = (0xDC, 0xDD, 0xDE, 0xD9);
 const THEME_ISLAND: (u8, u8, u8, u8) = (0xAE, 0xB5, 0xAF, 0xB6);
+
+/// Tiles that only ever appear on a sky page — paths, blanks, the sky lock,
+/// and the cloud background/border tiles. Every one is W5-exclusive in
+/// vanilla (W5 is the only world with a sky page), so one of these next to a
+/// cell is unambiguous evidence that the cell is up in the clouds.
+const SKY_TILES: &[u8] = &[
+    0xCE, 0xD0, 0xD2, 0xD7, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xE4, 0xE9,
+];
+
+/// Walkable tiles that only ever run along the narrow island sand strips.
+/// The water bridges (0xB2, 0xB3, 0xB8, 0xB9, 0xBA) are deliberately absent:
+/// vanilla runs standard land blanks alongside those, and 0xB3/0xB9/0xBA also
+/// appear in worlds with no islands at all.
+const ISLAND_PATHS: &[u8] = &[0xAA, 0xAB, 0xAC, 0xB0, 0xB1, 0xB7];
 
 /// Pick the right blank node tile based on neighboring path directions and
 /// the world/screen visual theme. If the tile is already a valid blank, it
@@ -278,16 +294,12 @@ pub(super) fn blank_tile_from_neighbors(grid: &Grid, world_idx: usize, row: usiz
     let has_h = h_tile.is_some_and(|t| VALID_HORZ.contains(&t));
     let has_v = v_tile.is_some_and(|t| VALID_VERT.contains(&t));
 
-    let force_island = ISLAND_POSITIONS.contains(&(world_idx, row, col));
     let neighbor = has_h.then(|| h_tile.unwrap()).or_else(|| has_v.then(|| v_tile.unwrap()));
 
-    let (h, v, hv, none) = if force_island {
+    let (h, v, hv, none) = if ISLAND_POSITIONS.contains(&(world_idx, row, col)) {
         THEME_ISLAND
     } else {
-        match neighbor.map(|t| t >> 4) {
-            Some(0xD) => THEME_SKY,
-            _ => THEME_STANDARD,
-        }
+        theme_for(grid, row, col, neighbor)
     };
 
     match (has_h, has_v) {
@@ -295,6 +307,44 @@ pub(super) fn blank_tile_from_neighbors(grid: &Grid, world_idx: usize, row: usiz
         (true, false) => h,
         (false, true) => v,
         (false, false) => none,
+    }
+}
+
+/// Which visual theme a blank at `(row, col)` belongs to.
+///
+/// The connecting path tile decides it when there is one — that is the tile
+/// the blank visually joins onto. With no path neighbor the cell is isolated,
+/// so sniff all four neighbors for sky background instead: without that step
+/// the theme drops to land and stamps a green node in the middle of W5's sky
+/// page. Isolated cells never fall back to island — vanilla runs standard
+/// land blanks next to plenty of island paths, so the four-way sniff would
+/// over-fire; [`ISLAND_POSITIONS`] covers the cells that need it.
+fn theme_for(
+    grid: &Grid,
+    row: usize,
+    col: usize,
+    path_neighbor: Option<u8>,
+) -> (u8, u8, u8, u8) {
+    if let Some(t) = path_neighbor {
+        return if SKY_TILES.contains(&t) {
+            THEME_SKY
+        } else if ISLAND_PATHS.contains(&t) {
+            THEME_ISLAND
+        } else {
+            THEME_STANDARD
+        };
+    }
+
+    let around = [
+        (row > 0).then(|| grid.get(row - 1, col)),
+        (row + 1 < grid.rows()).then(|| grid.get(row + 1, col)),
+        (col > 0).then(|| grid.get(row, col - 1)),
+        (col + 1 < grid.cols).then(|| grid.get(row, col + 1)),
+    ];
+    if around.into_iter().flatten().any(|t| SKY_TILES.contains(&t)) {
+        THEME_SKY
+    } else {
+        THEME_STANDARD
     }
 }
 
@@ -320,6 +370,7 @@ fn open_fx_gaps(grid: &mut Grid, fx_slots: &[FxSlot], world_fx: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rom_data::TILE_PIPE;
 
     fn load_rom() -> Option<Rom> {
         let data = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
@@ -551,8 +602,8 @@ mod tests {
     fn test_w5_spade_pickup_uses_sky_blanks() {
         // After pickup, W5 spade positions in the sky region should get
         // sky-palette blanks (not standard land 0x44). (4, 30) hits the V
-        // case via 0xE8 in VALID_VERT; (6, 20) has no path neighbors at all
-        // so an override pins it to the sky "none" tile.
+        // case via 0xE8 in VALID_VERT; (6, 20) has no path neighbors at all,
+        // so it reaches the sky "none" tile through the four-way sniff.
         let rom = match load_rom() {
             Some(r) => r,
             None => return,
@@ -566,6 +617,74 @@ mod tests {
         let w5 = &result.worlds[4];
         assert_eq!(w5.grid.get(6, 20), 0xD9, "W5 (6,20) override should produce sky none-tile");
         assert_eq!(w5.grid.get(4, 30), 0xDD, "W5 (4,30) should produce sky v-tile via 0xE8 in VALID_VERT");
+    }
+
+    #[test]
+    fn test_isolated_sky_cell_reblanks_to_sky() {
+        // The builder places a node on a sky cell, then a shaping mover picks
+        // it back up. By then the cell holds a node tile, so `blank_tile_for`
+        // has to re-derive the theme — and W5 (2,28) has no path tile to its
+        // left or above (0xD0 border, 0xD7 cloud), which used to drop it to
+        // the land theme and stamp a green 0x44 in the middle of the clouds.
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+        let mut grid = rom_data::read_tile_grid(&rom, 4);
+        for (pos, node) in [((2, 28), TILE_PIPE), ((0, 30), 0x50)] {
+            grid.set(pos.0, pos.1, node);
+            assert_eq!(
+                blank_tile_for(&grid, 4, pos.0, pos.1),
+                0xD9,
+                "W5 {pos:?} should re-blank to the sky none-tile",
+            );
+        }
+    }
+
+    #[test]
+    fn test_theme_matches_every_vanilla_blank() {
+        // Vanilla itself is the oracle: wherever the shipped map already has
+        // a blank node tile, the theme we would pick for that cell has to be
+        // the theme vanilla used. Guards the sky/island tile sets against a
+        // widening that starts over-firing.
+        let rom = match load_rom() {
+            Some(r) => r,
+            None => return,
+        };
+        let theme_of = |t: u8| match t {
+            0xAE | 0xAF | 0xB5 | 0xB6 => "island",
+            0xD9 | 0xDC | 0xDD | 0xDE => "sky",
+            _ => "standard",
+        };
+        let mut checked = 0;
+        for wi in 0..8 {
+            let grid = rom_data::read_tile_grid(&rom, wi);
+            for r in 0..grid.rows() {
+                for c in 0..grid.cols {
+                    let vanilla = grid.get(r, c);
+                    if !rom_data::VALID_BLANK_TILES.contains(&vanilla) {
+                        continue;
+                    }
+                    // Overrides are deliberate exceptions to the theme rule
+                    // (W8 (5,8) is navy water, not a themed blank at all).
+                    if BLANK_TILE_OVERRIDES.iter().any(|&(w, r2, c2, _)| (w, r2, c2) == (wi, r, c)) {
+                        continue;
+                    }
+                    checked += 1;
+                    // Re-derive from the neighbors, ignoring the cell itself.
+                    let mut probe = grid.clone();
+                    probe.set(r, c, TILE_PIPE);
+                    let picked = blank_tile_for(&probe, wi, r, c);
+                    assert_eq!(
+                        theme_of(picked),
+                        theme_of(vanilla),
+                        "W{} ({r},{c}): vanilla ${vanilla:02X}, picked ${picked:02X}",
+                        wi + 1,
+                    );
+                }
+            }
+        }
+        assert_eq!(checked, 155, "vanilla blank-tile count changed");
     }
 
     #[test]

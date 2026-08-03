@@ -42,6 +42,11 @@ deploys.
 
 ### Fixed
 
+- Map nodes no longer show up in the wrong scenery. An empty node sitting in
+  World 5's sky region could be drawn as a green land tile, and nodes on the
+  island strips in Worlds 3, 4 and 7 could get land tiles instead of sand —
+  most visibly a green square floating in the middle of the clouds. Roughly
+  3-4 tiles per seed. Nothing moved; only the artwork of those tiles changed.
 - The beta site's "Share URL" button now shares a beta link. It was building a
   `/v/<version>/` link, but only main releases are archived there, so the link
   either 404'd or opened a different build with the same version number.
