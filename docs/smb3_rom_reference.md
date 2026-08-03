@@ -3708,7 +3708,26 @@ starting at VRAM `$2880`, ~608 bytes, leaving map RAM untouched),
 paints real tiles back into VRAM), and `Map_W8Dark_IntroCover`. Because the
 darkness is *only* a VRAM overlay, anything that writes a tile to VRAM on that
 page paints it lit over the black and it stays that way until reload — which is
-why the fortress lock-break FX has to gate its VRAM write on this flag.
+why the randomizer's fortress lock-break FX has to gate its VRAM write on this
+flag.
+
+**Vanilla does not, and does not need to.** `MO_DoFortressFX` (PRG010 $C8B0)
+never reads `$0598`; the only consumers anywhere in the ROM are the three above.
+It queues the VRAM write into `Graphics_Buffer` at the top of the routine and
+never reconsiders, and its baked address for the W8 dark-page slot ($0F →
+`$2998`) sits inside the `$2880`+608 fill. Yet vanilla is visually correct on
+the dark page — verified on hardware-accurate emulation, both for a plain
+fortress clear and for a lock hammered open first (with the randomizer's
+`hammer_breaks_locks` patch applied to an otherwise vanilla ROM, since the
+vanilla hammer only matches rocks `$51`–`$52`).
+
+So the gate compensates for something the randomizer's replacement routine
+loses between its `$C8E6` hook and the buffer commit, rather than supplying
+behaviour vanilla lacks. What vanilla does in that window to make the write
+harmless is **not yet understood** — worth resolving before that patch grows,
+since it may allow dropping the gate entirely. Measured 2026-08-03: disabling
+the darkness gate alone reproduces the reveal; disabling the (since removed)
+already-busted gate alone does not.
 
 ### Enemy / Object State
 

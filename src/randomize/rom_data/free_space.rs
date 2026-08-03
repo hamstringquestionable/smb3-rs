@@ -40,7 +40,7 @@ pub(crate) const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     // PRG027 (file 0x36010, CPU $A000–$BFFF)
     (0x379D9, 894, "king_quotes: 7 quotes + hook (7×120 + 54)"),
     // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
-    (0x15554, 112, "fx_screen_check: cross-screen lock patch (Fred's algorithm + busted/darkness gates)"),
+    (0x15554, 112, "fx_screen_check: cross-screen lock patch (Fred's algorithm + darkness gate)"),
     (0x15DF0, 35, "canoe_fix: death respawn position save"),
     (0x15E13, 162, "map_warp: 2P Start+Select warp-to-partner routine"),
     (0x15EB5, 151, "canoe_summon: A-on-dock call-the-boat routine + offset tables"),
@@ -163,7 +163,7 @@ pub(crate) const FS_KING_QUOTES: usize       = 0x379D9; // 894 bytes
 // PRG010
 // Fred's visibility algorithm plus the busted / darkness gates (issue #131).
 // The $FF run this sits in continues to 0x15810, so there is room to grow.
-pub(crate) const FS_FX_SCREEN_CHECK: usize   = 0x15554; // 112 reserved, 97 used
+pub(crate) const FS_FX_SCREEN_CHECK: usize   = 0x15554; // 112 reserved, 82 used
 
 pub(crate) const FS_CANOE_RESPAWN: usize     = 0x15DF0; // 35 bytes
 pub(crate) const FS_MAP_WARP: usize          = 0x15E13; // 162 bytes (CPU $DE03)
