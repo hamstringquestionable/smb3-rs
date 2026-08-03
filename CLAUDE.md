@@ -34,6 +34,65 @@ When clippy flags new code:
 
 Never silence a lint by deleting the warning text or globally disabling — the goal is "every warning was considered," not "no warnings emitted."
 
+## ROM Free Space Is Scarce — Optimize Every Patch for Size
+
+**Treat bytes of ROM free space as the project's scarcest resource.** Every new
+6502 patch must be written as small as it can be made, not merely small enough
+to fit its current allocation. "It fits, ship it" is not the standard — a patch
+that wastes 5 bytes has spent 5 bytes that a future feature will need.
+
+Space is **always** a concern. Never argue from the local gap ("there are 600
+free bytes right after this patch, so size doesn't matter here") — that
+reasoning is wrong even when the gap is real, because the gap belongs to the
+next feature, not to this one. Optimize the code every time.
+
+This applies to the *code*, not to the *allocation*. Reserving headroom in an
+allocation is encouraged: a routine that later needs a few more bytes is far
+safer to extend in place than to relocate, and several allocations here are
+origin-locked by self-referential absolute addresses. Write the tightest bytes
+you can, then reserve a sensible margin around them and note both numbers
+(e.g. `// 112 reserved, 97 used`).
+
+The total free-space figure is misleading. Free space is **per-bank**, and a
+routine has to live in a bank that is mapped when it runs, so the only number
+that matters is what's left in *the bank you need*. Measured against the current
+allocations (see `FREE_SPACE_ALLOCATIONS` in `rom_data/free_space.rs`):
+
+| Bank | Mapped at | Free left | Largest single gap |
+|------|-----------|-----------|--------------------|
+| PRG031 | `$E000–$FFFF`, always | **68** | **30** |
+| PRG030 | `$8000–$9FFF`, always | **120** | **74** |
+| PRG000–PRG007 | swapped, in-level | 34–58 each (bank 3: **0**) | ≤ 38 |
+| PRG010 | `$C000–$DFFF`, map | 880 | 588 |
+| PRG026 | `$A000–$BFFF`, map/inventory | 2603 | 2537 |
+
+The always-mapped banks are effectively full. Any patch that must run regardless
+of the current bank has under 30 contiguous bytes to work with, so a trampoline
+into a swapped bank is usually the only option — and that costs bytes too.
+
+Regenerate these numbers after adding allocations; the script pattern is to sum
+`FREE_SPACE_ALLOCATIONS` and scan the PRG region for `$FF`/`$00` runs not
+covered by one.
+
+### Size techniques that have actually paid off here
+
+- **Fold constant math into flags.** `ASL` leaves the shifted-out bit in carry;
+  `AND` + `ADC #$00` can then combine two extracted fields in 5 bytes where the
+  arithmetic-first version took 11 (see `fortress_fx.rs`, saved 6 bytes).
+- **Pick the instruction that preserves the register you still need.** `LDX abs`
+  to test a flag keeps `A` live for a following `STA`; `LDA` would force a
+  reload.
+- **Stash in a zero-page temp, not on the stack.** `PHA`/`PLA` is 1 byte per
+  half, but every exit path then needs its own discard — two exits and the
+  zero-page version is already smaller *and* removes the stack-balance hazard.
+- **Derive an index from one you already hold.** `TYA`/`ASL`/`TAY` (3) beats
+  re-reading the source and shifting (5).
+- **Reach a shared exit with a conditional branch.** When a flag is known (e.g.
+  `A` is non-zero), `BNE common` is 2 bytes where a second `JMP` is 3.
+- **Reuse the engine's own state and routines** instead of storing your own.
+  Querying a flag the engine already maintains costs a few bytes; a parallel
+  per-slot table costs bytes *and* can drift out of sync.
+
 ## Changelog
 
 `CHANGELOG.md` (repo root, [Keep a Changelog](https://keepachangelog.com/) format) tracks notable changes. When a change is user-visible or notable (a new flag/option, a behavior change, a fixed bug players would notice), add a one-line entry under the `[Unreleased]` section in the right group (`Added` / `Changed` / `Fixed` / `Removed`) as part of the same change. Skip purely internal refactors, test-only changes, and tooling tweaks. At version-bump time, move the accumulated `[Unreleased]` entries into a new versioned section.
