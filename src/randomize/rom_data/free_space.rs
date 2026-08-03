@@ -39,6 +39,8 @@ pub(crate) const FREE_SPACE_ALLOCATIONS: &[(usize, usize, &str)] = &[
     (0x0385E, 12, "koopa_fire_preset: set stomp counter from threshold table for fireball defeat"),
     (0x03FD0, 22, "koopa_y_clamp: clamp Koopaling Y position to screen"),
     (0x03FE6, 36, "fire_flower: position-hash suit routine + pool table"),
+    (0x02713, 17, "poison_mushroom: object $0A init+hit stubs (Norm reuses 1-Up; reclaimed dead Obj0A code)"),
+    (0x02724, 31, "poison_mushroom: 1-up block-spawn hook (position-hash $0B->$0A)"),
     // PRG003 (file 0x06010, CPU $A000–$BFFF) — object AI bank (Boom-Boom lives here)
     (0x06609, 8, "tail_stay_dead: MaCobra respawn-suppress routine (CPU $A5F9 gap)"),
     (0x07FCF, 16, "boomboom_hits: per-fortress threshold table"),
@@ -211,6 +213,21 @@ pub(crate) const FS_FIRE_FLOWER: usize     = 0x03FE6;
 
 pub(crate) const FIRE_FLOWER_SUB_CPU: u16  = 0xBFD6; // $A000 + (0x03FE6 - 0x02010)
 
+// Poison Mushroom object (ID $0A) — Init + Hit override stubs written over the
+// dead vanilla Obj0A handler region ($A703-$A77D, never spawned by any level or
+// code; see "Unused Group-0 Objects" in docs/smb3_rom_reference.md). Norm is not
+// here: its table slot reuses the 1-Up's ObjNorm_PUp1UpMush ($A77E). Only 17
+// bytes used; the rest of the dead region stays free for future group-0 objects.
+pub(crate) const FS_POISON_MUSHROOM: usize = 0x02713; // CPU $A703
+
+// Poison Mushroom 1-up spawn hook — patched into both block-spawn sites
+// (PRG001 $A587 / $AADD) where `STA Level_ObjectID,Y` commits the object a hit
+// block hands out. The routine replicates that store, and if the object is a
+// 1-Up ($0B) position-hashes (World + LayPtr + block X/XHi/Y + seed salt) to
+// keep it or swap it to the poison object ($0A). Sits right after the $0A
+// stubs in the same reclaimed Obj0A region.
+pub(crate) const FS_POISON_HOOK: usize = 0x02724; // CPU $A714
+
 // Fireball defeat preset — load per-world stomp threshold from table so the
 // fireball→stomp handoff always triggers defeat after INC.
 pub(crate) const FS_KOOPA_FIRE_PRESET: usize = 0x0385E; // 12 bytes
@@ -308,6 +325,8 @@ mod free_space_tests {
             (FS_KOOPA_FIRE_PRESET, "FS_KOOPA_FIRE_PRESET"),
             (FS_KOOPA_Y_CLAMP, "FS_KOOPA_Y_CLAMP"),
             (FS_FIRE_FLOWER, "FS_FIRE_FLOWER"),
+            (FS_POISON_MUSHROOM, "FS_POISON_MUSHROOM"),
+            (FS_POISON_HOOK, "FS_POISON_HOOK"),
             (FS_TAIL_STAY_DEAD, "FS_TAIL_STAY_DEAD"),
             (FS_BOOMBOOM_HITS_TABLE, "FS_BOOMBOOM_HITS_TABLE"),
             (FS_BOOMBOOM_HITS_SUB, "FS_BOOMBOOM_HITS_SUB"),

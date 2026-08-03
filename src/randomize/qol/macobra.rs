@@ -430,28 +430,11 @@ pub fn apply_remove_flashing(rom: &mut Rom) {
     }
 }
 
-// Poison Mushrooms (by MaCobra52) — "All 1UPs are Poison Mushrooms.ips".
-// Every 1-Up Mushroom the game spawns becomes a Poison Mushroom, which
-// damages the player instead of granting a life. Two writes, reproduced
-// byte-for-byte from the IPS:
-//
-//   1. File 0x020F3 ← 0x10 (single byte).
-//   2. File 0x027AA ← 20 D3 D9 EA EA — `JSR $D9D3` + two NOPs, replacing a
-//      vanilla 5-byte sequence.
-//
-// Only the stated effect (1-Up → Poison Mushroom) is claimed here; the
-// per-byte mechanism was not independently disassembled — the bytes match
-// the upstream IPS record-for-record.
-const POISON_MUSH_TYPE_OFFSET: usize = 0x020F3;
-const POISON_MUSH_INIT_OFFSET: usize = 0x027AA;
-const POISON_MUSH_INIT_BYTES: [u8; 5] = [0x20, 0xD3, 0xD9, 0xEA, 0xEA]; // JSR $D9D3 + 2 NOP
-
-/// Apply MaCobra52's "All 1UPs are Poison Mushrooms" patch — every 1-Up
-/// Mushroom is replaced with a Poison Mushroom that hurts the player.
-pub fn apply_poison_mushrooms(rom: &mut Rom) {
-    rom.write_byte(POISON_MUSH_TYPE_OFFSET, 0x10);
-    rom.write_range(POISON_MUSH_INIT_OFFSET, &POISON_MUSH_INIT_BYTES);
-}
+// Poison Mushrooms: the `--poison-mushrooms` flag no longer uses MaCobra52's
+// all-1UPs-poison recolor. It now installs the per-block poison trap in
+// `randomize::poison_mushroom` (each 1-Up block hands out a real 1-Up or a
+// purple poison mushroom by a seed-salted position hash). The old recolor was
+// removed when the flag was repurposed.
 
 // Modern Power-Ups (by MaCobra52) — "Easy Power-up System.ips". Power-ups
 // behave like the modern Mario games: a Fire Flower or a suit taken as Small
@@ -650,18 +633,6 @@ mod tests {
         let routine_cpu = (0xA000 + (FS_TAIL_STAY_DEAD - 0x06010)) as u16;
         assert_eq!(routine_cpu, 0xA5F9);
         assert_eq!(u16::from_le_bytes(TAIL_STAY_DEAD_HOOK_BYTES), routine_cpu);
-    }
-
-    #[test]
-    fn test_poison_mushrooms_writes() {
-        let mut rom = make_test_rom();
-        apply_poison_mushrooms(&mut rom);
-
-        assert_eq!(rom.read_byte(POISON_MUSH_TYPE_OFFSET), 0x10);
-        assert_eq!(
-            rom.read_range(POISON_MUSH_INIT_OFFSET, POISON_MUSH_INIT_BYTES.len()),
-            &POISON_MUSH_INIT_BYTES
-        );
     }
 
     #[test]

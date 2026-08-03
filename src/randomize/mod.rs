@@ -25,6 +25,7 @@ pub mod palettes;
 pub mod pipe_helpers;
 pub mod piranha_rooms;
 pub mod podoboo_gauntlet;
+pub mod poison_mushroom;
 pub mod powerups;
 pub mod qol;
 pub mod rom_data;
