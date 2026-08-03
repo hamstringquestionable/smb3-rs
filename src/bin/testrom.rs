@@ -105,6 +105,12 @@ struct Cli {
     #[arg(long)]
     no_walk: bool,
 
+    /// Apply the open-movement records that don't clash with randomizer
+    /// patches, instead of refusing. Open movement is then PARTIAL — verify
+    /// in-game that you can actually walk where you need to.
+    #[arg(long)]
+    walk_skip_conflicts: bool,
+
     /// Start with these inventory items, up to 3, e.g. "hammer,leaf,fire".
     /// Run --list-items for the full set.
     #[arg(long, value_delimiter = ',')]
@@ -125,6 +131,19 @@ struct Cli {
     /// List valid --starting-items names and exit.
     #[arg(long)]
     list_items: bool,
+
+    /// Apply a whole IPS patch to the base before test edits. Repeatable.
+    /// Use for the full practice ROM (level select + warp whistles) or
+    /// anything in patches/ — unlike the default movement patch, this applies
+    /// every record.
+    #[arg(long, value_name = "PATH")]
+    apply_ips: Vec<PathBuf>,
+
+    /// Stop --apply-ips patches from rewriting the overworld maps. The full
+    /// practice patch removes lock tiles as a side effect; this keeps the
+    /// map you started with. (Enemy data is not protected.)
+    #[arg(long)]
+    protect_map: bool,
 
     /// Practice patch supplying open map movement.
     #[arg(long, default_value = DEFAULT_PRACTICE_IPS)]
@@ -258,12 +277,21 @@ fn main() {
         ));
     }
 
+    let extra_patches: Vec<Vec<u8>> = cli
+        .apply_ips
+        .iter()
+        .map(|p| fs::read(p).unwrap_or_else(|e| die(format!("reading {}: {e}", p.display()))))
+        .collect();
+
     let spec = TestRomSpec {
         base,
         placements,
         place_all: cli.place_all.clone(),
         world: cli.world,
+        extra_patches,
+        protect_map: cli.protect_map,
         movement_patch,
+        walk_skip_conflicts: cli.walk_skip_conflicts,
         remove_locks: !cli.keep_locks,
         remove_gaps: !cli.keep_gaps,
         starting_items,

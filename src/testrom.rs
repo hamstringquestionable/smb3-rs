@@ -18,6 +18,9 @@ use crate::randomize::world_order::WORLD_INIT_OPERAND;
 use crate::rom::Rom;
 use crate::{randomize_rom, Options};
 
+/// Bytes per map screen: 9 rows × 16 columns, stored screen-major.
+const SCREEN_BYTES: usize = 144;
+
 /// Numbered level tiles: tile `0x03..=0x0F`, level number = tile - 2.
 const NUMBERED_TILE_LO: u8 = 0x03;
 const NUMBERED_TILE_HI: u8 = 0x0F;
@@ -320,9 +323,28 @@ pub struct TestRomSpec {
     pub place_all: Option<String>,
     /// Starting world, 1-based. `None` leaves the ROM's own starting world.
     pub world: Option<u8>,
+    /// Whole IPS patches to apply to the base, in order, before any test edits.
+    ///
+    /// Test edits deliberately land *after* these, so `--place`/`--keep-locks`
+    /// win over anything a patch writes to the same bytes. Use this for the
+    /// full practice ROM (level select + warp whistles) or any patch in
+    /// `patches/`; `movement_patch` is the narrow subset instead.
+    pub extra_patches: Vec<Vec<u8>>,
+    /// Keep `extra_patches` from touching the 8 overworld map grids.
+    ///
+    /// The full practice patch rewrites the maps (49 of its records land in
+    /// the grid region) and removes lock tiles along the way, which destroys
+    /// any test that needs a lock. This snapshots the grids before patching
+    /// and restores them after, so the patch's code changes land but its map
+    /// does not — for a randomized base that also protects the built map,
+    /// which is the hazard that made the old procedure apply only a subset.
+    pub protect_map: bool,
     /// Practice-patch bytes supplying open map movement (walk over level,
     /// fortress and lock tiles without entering or clearing them).
     pub movement_patch: Option<Vec<u8>>,
+    /// Apply the movement records that don't clash with randomizer patches
+    /// instead of refusing outright. Yields *partial* open movement.
+    pub walk_skip_conflicts: bool,
     /// Replace lock tiles with walkable path.
     pub remove_locks: bool,
     /// Replace water-gap tiles with bridges.
@@ -433,15 +455,58 @@ fn open_map(rom: &mut Rom, remove_locks: bool, remove_gaps: bool) -> usize {
     changed
 }
 
+/// Records in `patch` that would land on bytes the randomizer has already
+/// written — i.e. free space our own 6502 patches are using.
+///
+/// The free-space map in `rom_data` describes *vanilla*. Once a randomizer
+/// pass has claimed a region, an outside IPS applied on top silently shreds
+/// it: the practice patch's movement records overlap `fx_screen_check` by 19
+/// bytes, which corrupts the cross-screen lock routine on any randomized ROM.
+/// Ordering can't fix it — the two genuinely want the same bytes — so the only
+/// honest options are to refuse or to drop the patch.
+fn collisions(rom: &Rom, patch: &[u8], range: Option<(usize, usize)>) -> Result<Vec<String>, String> {
+    let mut found = Vec::new();
+    for rec in ips::parse_ips_records(patch)? {
+        if range.is_some_and(|(lo, hi)| !(lo..hi).contains(&rec.offset)) {
+            continue;
+        }
+        let end = rec.offset + rec.payload.len();
+        for w in rom.writes_in_range(rec.offset, end) {
+            let desc = format!("0x{:05X}..0x{end:05X} overlaps `{}`", rec.offset, w.tag);
+            if !found.contains(&desc) {
+                found.push(desc);
+            }
+        }
+    }
+    Ok(found)
+}
+
 /// Apply only the map-movement records of a practice patch.
-fn apply_movement(rom: &mut Rom, patch: &[u8]) -> Result<(usize, usize), String> {
+///
+/// With `skip_conflicts`, records landing on randomizer-owned bytes are
+/// dropped instead of shredding them. Returns the skipped count so the caller
+/// can say so out loud — a silently degraded movement patch is its own trap.
+fn apply_movement(
+    rom: &mut Rom,
+    patch: &[u8],
+    skip_conflicts: bool,
+) -> Result<(usize, usize, usize), String> {
     let (start, end) = MOVEMENT_RECORD_RANGE;
     let rom_len = rom.output_bytes().len();
 
     let mut applied = 0;
     let mut written = 0;
+    let mut skipped = 0;
     for rec in ips::parse_ips_records(patch)? {
         if !(start..end).contains(&rec.offset) {
+            continue;
+        }
+        if skip_conflicts
+            && !rom
+                .writes_in_range(rec.offset, rec.offset + rec.payload.len())
+                .is_empty()
+        {
+            skipped += 1;
             continue;
         }
         if rec.offset + rec.payload.len() > rom_len {
@@ -455,7 +520,7 @@ fn apply_movement(rom: &mut Rom, patch: &[u8]) -> Result<(usize, usize), String>
         applied += 1;
         written += rec.payload.len();
     }
-    Ok((applied, written))
+    Ok((applied, written, skipped))
 }
 
 /// Build a test ROM from vanilla bytes and a spec.
@@ -463,19 +528,61 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     let mut report = Vec::new();
 
     // 1. Base ROM — vanilla, or a full randomizer run.
-    let base_bytes = match &spec.base {
+    //
+    // The randomized `Rom` is kept rather than round-tripped through bytes, so
+    // its write log survives; `collisions` below relies on it to catch patches
+    // landing on top of randomizer-owned free space.
+    let mut rom = match &spec.base {
         Base::Vanilla => {
             report.push("base: vanilla".to_string());
-            vanilla.to_vec()
+            Rom::from_bytes_lax(vanilla, true).map_err(|e| e.to_string())?
         }
         Base::Randomized { seed, options } => {
             report.push(format!("base: randomized (seed {seed})"));
-            let rom = randomize_rom(vanilla, *seed, options, None)?;
-            rom.output_bytes().to_vec()
+            randomize_rom(vanilla, *seed, options, None)?
         }
     };
 
-    let mut rom = Rom::from_bytes_lax(&base_bytes, true).map_err(|e| e.to_string())?;
+    // 1b. Whole IPS patches, before any test edit, so test edits win on
+    //     overlapping bytes.
+    if !spec.extra_patches.is_empty() {
+        let saved_grids: Option<Vec<Vec<u8>>> = spec.protect_map.then(|| {
+            rom_data::MAP_TILE_GRIDS
+                .iter()
+                .map(|g| rom.read_range(g.file_offset, g.screens * SCREEN_BYTES).to_vec())
+                .collect()
+        });
+
+        for patch in &spec.extra_patches {
+            let clashes = collisions(&rom, patch, None)?;
+            if !clashes.is_empty() {
+                return Err(format!(
+                    "this patch would overwrite randomizer patches:\n       {}\n       \
+                     A third-party IPS uses the ROM's free space for its own code, and \n       \
+                     rom_data's free-space map describes vanilla, not a patched ROM.\n       \
+                     Build on a vanilla base, or drop the conflicting randomizer feature.",
+                    clashes.join("\n       ")
+                ));
+            }
+            let records = ips::parse_ips_records(patch)?;
+            let bytes: usize = records.iter().map(|r| r.payload.len()).sum();
+            rom.apply_ips_patch(patch)?;
+            report.push(format!("patch: {} records ({bytes} bytes)", records.len()));
+        }
+
+        if let Some(grids) = saved_grids {
+            let mut restored = 0;
+            for (g, saved) in rom_data::MAP_TILE_GRIDS.iter().zip(&grids) {
+                restored += saved
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, b)| rom.read_byte(g.file_offset + i) != **b)
+                    .count();
+                rom.write_range(g.file_offset, saved);
+            }
+            report.push(format!("map protected: {restored} byte(s) reverted"));
+        }
+    }
 
     // 2. Starting world. Resolved before placement so placements land in the
     //    world the player actually boots into.
@@ -566,10 +673,28 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     // 5. Open movement (walk over level/fortress/lock tiles).
     match &spec.movement_patch {
         Some(patch) => {
-            let (applied, written) = apply_movement(&mut rom, patch)?;
+            let clashes = collisions(&rom, patch, Some(MOVEMENT_RECORD_RANGE))?;
+            if !clashes.is_empty() && !spec.walk_skip_conflicts {
+                return Err(format!(
+                    "the open-movement patch would overwrite randomizer patches:\n       {}\n       \
+                     Their free space is the same space — applying both corrupts the routine.\n       \
+                     --walk-skip-conflicts applies only the records that don't clash\n       \
+                     (partial open movement); --no-walk drops it entirely.",
+                    clashes.join("\n       ")
+                ));
+            }
+            let (applied, written, skipped) =
+                apply_movement(&mut rom, patch, spec.walk_skip_conflicts)?;
             report.push(format!(
                 "open movement: {applied} records ({written} bytes)"
             ));
+            if skipped > 0 {
+                report.push(format!(
+                    "  WARNING: {skipped} record(s) skipped — they overlap randomizer \
+                     patches.\n           Open movement is PARTIAL; verify in-game that you \
+                     can actually walk."
+                ));
+            }
         }
         None => report.push("open movement: off".to_string()),
     }
@@ -644,7 +769,10 @@ mod tests {
             placements: Vec::new(),
             place_all: None,
             world: None,
+            extra_patches: Vec::new(),
+            protect_map: false,
             movement_patch: None,
+            walk_skip_conflicts: false,
             remove_locks: false,
             remove_gaps: false,
             starting_items: Vec::new(),
