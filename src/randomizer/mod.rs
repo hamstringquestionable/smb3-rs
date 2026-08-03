@@ -211,7 +211,7 @@ fn randomize_inner(
     // of the overworld builder and the enemy/powerup passes.
     if antechamber_shuffle {
         rom.set_tag("levels/antechambers");
-        randomize::antechambers::shuffle(rom, &mut rng);
+        randomize::antechambers::shuffle(rom, &mut rng, options.include_beta_stages);
     }
 
     // Koopaling stability patches — needed whenever Koopalings may load in a

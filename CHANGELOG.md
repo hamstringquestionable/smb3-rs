@@ -11,6 +11,13 @@ deploys.
 
 ### Added
 
+- The beta stage β4 now joins the Antechamber Shuffle pool when beta stages
+  are enabled. Like the vanilla antechamber levels, its 8-screen interior can
+  be swapped behind another level's entry pipe (and vice versa). With beta
+  stages off, output is unchanged. Note: turning on both beta stages and
+  antechamber shuffle now produces a different result for a given seed than
+  before (the shuffle covers one more level).
+
 - The Visual Patch pills in the web app now show a preview sprite of what each
   patch gives you — the same standing pose rendered from each patch's own
   graphics, so you can see Luigi, Peach, Toad, Dr. Mario or Baldman before
