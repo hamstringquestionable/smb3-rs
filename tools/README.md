@@ -19,6 +19,13 @@ nix-shell -p python3 --run "python3 tools/<script>.py [args]"
 Two scripts need Pillow — use `nix-shell -p python3 python3Packages.pillow`
 (marked **[PIL]**).
 
+> **Not here: free space.** "Where can this patch go" and "what did this run
+> write" are answered by the Rust CLI, which reads the allocation registry:
+> `smb3-rs <rom> --free-space --fit N` lists unclaimed gaps that hold N bytes,
+> and `--write-log` ends with a per-allocation audit plus the per-bank budget.
+> A Python scanner would duplicate `FREE_SPACE_ALLOCATIONS` and drift from it —
+> exactly what `offset_dups.py` exists to catch.
+
 > **Trust note.** The Rust implementation is the source of truth, not these
 > scripts. When a tool disagrees with Rust, suspect the tool.
 > `validate_shuffleable.py` currently reports 4 discrepancies against

@@ -105,12 +105,15 @@ pub(crate) fn write_overworld<R: Rng>(
     // Keep wandering map objects (Hammer Bros) off plant/army nodes — a bro
     // parked on one would replay the level after it's beaten. Also vetoes
     // hand-trap landings (subsumes the former bros_no_hands patch).
+    // Sub-tagged like fx_screen_check below: it claims free space, so the write
+    // log has to name it for the free-space audit and collision reports.
+    rom.push_tag("march_veto");
     march_veto::write_march_veto(rom, &w8_sprite_positions, &plant_positions);
+    rom.pop_tag();
     if flags.shuffle_hammer_bros {
         write_hb_sprites(rom, build, rng);
     }
-    // Sub-tagged: this is the one writer patch that claims free space, so the
-    // write log has to name it for collision reports to be actionable.
+    // Sub-tagged for the same reason as march_veto above.
     rom.push_tag("fx_screen_check");
     patch_fortress_fx_screen_check(rom);
     rom.pop_tag();

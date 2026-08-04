@@ -53,26 +53,65 @@ origin-locked by self-referential absolute addresses. Write the tightest bytes
 you can, then reserve a sensible margin around them and note both numbers
 (e.g. `// 112 reserved, 97 used`).
 
-The total free-space figure is misleading. Free space is **per-bank**, and a
-routine has to live in a bank that is mapped when it runs, so the only number
-that matters is what's left in *the bank you need*. Measured against the current
-allocations (see `FREE_SPACE_ALLOCATIONS` in `rom_data/free_space.rs`):
+**Ask "does a run of N bytes exist", never "how much is free".** Free space is
+per-bank *and* per-gap: a routine needs one contiguous run in a bank that is
+mapped when it runs, so a bank total is worthless on its own — PRG031's 81 free
+bytes are scraps that will not hold a 40-byte routine. Ask the question directly:
+
+```sh
+smb3-rs <rom> --free-space --fit 60   # every unclaimed gap that holds 60 bytes
+smb3-rs <rom> --free-space            # per-bank summary
+```
+
+Two filters the tool cannot apply for you, in this order: the bank must be
+mapped when your code runs, and the gap must be *unreferenced*, not merely
+unclaimed — unclaimed filler can still be data something reads, so check the
+disassembly (`tools/southbird-smb3/PRG/prgNNN.asm`) before taking it. That check
+is once per gap: record it as a `FREE_SPACE_ALLOCATIONS` row and it is settled
+for good.
+
+The per-bank summary, measured against the current allocations (see
+`FREE_SPACE_ALLOCATIONS` in `rom_data/free_space.rs`) — the largest-gap column
+is the one to read:
 
 | Bank | Mapped at | Free left | Largest single gap |
 |------|-----------|-----------|--------------------|
-| PRG031 | `$E000–$FFFF`, always | **68** | **30** |
-| PRG030 | `$8000–$9FFF`, always | **120** | **74** |
-| PRG000–PRG007 | swapped, in-level | 34–58 each (bank 3: **0**) | ≤ 38 |
-| PRG010 | `$C000–$DFFF`, map | 880 | 588 |
+| PRG031 | `$E000–$FFFF`, always | 81 | **30** |
+| PRG030 | `$8000–$9FFF`, always | 120 | 74 |
+| PRG001 | swapped, in-level (object AI) | 60 | 38 |
+| PRG003 | swapped, in-level (object AI) | 5 | 5 |
+| PRG004 | swapped, in-level (object AI, group 3) | 426 | 426 |
+| PRG005 | swapped, in-level (object AI) | 58 | 58 |
+| PRG006 | `$C000–$DFFF`, in-level (enemy data) | 1392 | 1392 |
+| PRG007 | swapped, in-level (object AI) | 27 | 27 |
+| PRG010 | `$C000–$DFFF`, map | 896 | 588 |
 | PRG026 | `$A000–$BFFF`, map/inventory | 2603 | 2537 |
 
-The always-mapped banks are effectively full. Any patch that must run regardless
-of the current bank has under 30 contiguous bytes to work with, so a trampoline
-into a swapped bank is usually the only option — and that costs bytes too.
+PRG000 and PRG002 have no `$FF` filler left at all.
 
-Regenerate these numbers after adding allocations; the script pattern is to sum
-`FREE_SPACE_ALLOCATIONS` and scan the PRG region for `$FF`/`$00` runs not
-covered by one.
+The always-mapped banks are effectively full. A patch that must run regardless of
+the current bank has one 74-byte gap in PRG030 and nothing over 30 bytes in
+PRG031, so past that a trampoline into a swapped bank is the only option — and
+that costs bytes too.
+
+**Do not hand-edit these numbers — regenerate them.** `smb3-rs <rom>
+--free-space` prints the whole per-bank budget without randomizing (the same
+table ends every `--write-log` dump, after the per-allocation audit).
+`free_space_doc_table_is_current` fails when a row here drifts and prints the
+replacement rows, so adding an allocation forces this table to be updated in the
+same commit. That test needs the ROM, so it skips where the ROM is absent — it
+guards the machine the patch is written on, not CI.
+
+The scan counts `$FF` runs of ≥ 8 bytes (the older PRG031=68 / PRG010=880
+figures came from a ≥ 16 scan) and lists `$00` runs in a separate column, which
+is a candidate list rather than space — zeroed data and zero padding look
+identical.
+
+The two largest gaps here have been through the unreferenced check already
+(2026-08-04): `prg004.asm` ends with "Rest of ROM bank was empty" at `$BE56`,
+and PRG006's last assembled data is the dead object stream `_DA60` (file
+0x0DA70..0x0DA74), referenced from nowhere, with the furthest referenced enemy
+stream ending at 0x0D9F6.
 
 ### Size techniques that have actually paid off here
 
@@ -247,6 +286,11 @@ When the overworld builder is active, `levels.rs` intra-world shuffle and airshi
 Read it before scanning the ROM by hand or writing a throwaway script. In
 particular `map_viz.py <rom.nes> --world N` renders any ROM's map as labelled
 ASCII; don't hand-decode tile grids.
+
+Two answers live in the Rust CLI rather than in `tools/`, because they read the
+allocation registry: `--free-space [--fit N]` for where a patch can go, and
+`--write-log` for what a run changed, which module owns each byte, and whether
+any patch overran its allocation. Don't write a script to scan for free space.
 
 Tier 1 (7) is live: `rom_map.py` plus the palette-codegen and visual-preview
 pipelines that regenerate checked-in artifacts. Tier 2 (9) is working general

@@ -390,6 +390,18 @@ struct Cli {
     #[arg(long)]
     write_log: Option<PathBuf>,
 
+    /// Print the per-bank free-space budget and exit, without randomizing.
+    /// Derived from the vanilla ROM and the allocation registry, so it is the
+    /// same for every seed and option set.
+    #[arg(long)]
+    free_space: bool,
+
+    /// With --free-space: list every unclaimed gap that would hold N bytes,
+    /// instead of the per-bank summary. This is the question to ask when
+    /// siting a new patch — a bank total can be scraps.
+    #[arg(long, value_name = "N")]
+    fit: Option<usize>,
+
     /// Skip the SMB3 (USA) header / page-count / size checks so modded or
     /// translated ROMs can be loaded. The title-screen seed hash is also
     /// skipped, since its hooks assume the vanilla ROM layout.
@@ -565,6 +577,23 @@ fn main() {
         }
     };
 
+    if cli.free_space {
+        use smb3_rs::randomize::rom_data::{format_bank_budget, format_gaps_fitting};
+        match smb3_rs::rom::Rom::from_bytes_lax(&rom_data, cli.skip_rom_validation) {
+            Ok(rom) => {
+                match cli.fit {
+                    Some(need) => print!("{}", format_gaps_fitting(&rom, need)),
+                    None => print!("{}", format_bank_budget(&rom)),
+                }
+                return;
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+        }
+    }
+
     let seed = cli.seed.unwrap_or_else(rand::random);
 
     let options = build_options(&cli);
@@ -640,6 +669,10 @@ fn main() {
                 log.push_str(&format!("  0x{off:05X}: {tag1} vs {tag2}\n"));
             }
         }
+
+        // Free space is the scarcest resource here, so the log that says what
+        // was written also says what it cost and what is left.
+        log.push_str(&smb3_rs::randomize::rom_data::format_free_space_report(&rom));
 
         if let Err(e) = fs::write(log_path, &log) {
             eprintln!("Error writing log: {e}");
