@@ -306,13 +306,15 @@ pub struct TestRomSpec {
     pub place_all: Option<String>,
     /// Starting world, 1-based. `None` leaves the ROM's own starting world.
     pub world: Option<u8>,
-    /// Whole IPS patches to apply to the base, in order, before any test edits.
+    /// Whole IPS patches to apply to the base, in order, before any test edits,
+    /// as `(label, bytes)`. The label names the patch in the write log and in
+    /// collision reports — pass the filename.
     ///
     /// Test edits deliberately land *after* these, so `--place`/`--keep-locks`
     /// win over anything a patch writes to the same bytes. Use this for the
     /// full practice ROM (level select + warp whistles) or any patch in
     /// `patches/`; `movement_patch` is the narrow subset instead.
-    pub extra_patches: Vec<Vec<u8>>,
+    pub extra_patches: Vec<(String, Vec<u8>)>,
     /// Keep `extra_patches` from touching the 8 overworld map grids.
     ///
     /// The full practice patch rewrites the maps (49 of its records land in
@@ -537,7 +539,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
                 .collect()
         });
 
-        for patch in &spec.extra_patches {
+        for (label, patch) in &spec.extra_patches {
             let clashes = collisions(&rom, patch, None)?;
             if !clashes.is_empty() {
                 return Err(format!(
@@ -550,8 +552,8 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
             }
             let records = ips::parse_ips_records(patch)?;
             let bytes: usize = records.iter().map(|r| r.payload.len()).sum();
-            rom.apply_ips_patch(patch)?;
-            report.push(format!("patch: {} records ({bytes} bytes)", records.len()));
+            rom.apply_ips_patch(patch, label)?;
+            report.push(format!("patch {label}: {} records ({bytes} bytes)", records.len()));
         }
 
         if let Some(grids) = saved_grids {

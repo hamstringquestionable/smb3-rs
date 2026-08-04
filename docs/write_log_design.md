@@ -1,6 +1,8 @@
 # ROM Write Log — current state and planned enhancements
 
-Status: design note. Nothing here is implemented yet.
+Status: Enhancement 1 (free-space auditor) is implemented — see "Enhancement 1"
+below for what it does and what it found. Enhancements 2 and 3 are still design
+only.
 
 ## What exists today
 
@@ -46,19 +48,21 @@ The two answer different questions:
 
 ## Known gaps
 
-### 1. `apply_ips_patch` bypasses the log
+### 1. `apply_ips_patch` bypasses the log — **fixed for the `Rom` path**
 
-`Rom::apply_ips_patch` writes with a direct slice copy
-(`self.data[HEADER_SIZE..].copy_from_slice(&patched)`), so none of its bytes are
-recorded.
+`Rom::apply_ips_patch` used to write with a direct slice copy
+(`self.data[HEADER_SIZE..].copy_from_slice(&patched)`), recording nothing. It now
+decodes with `ips::parse_ips_records` and applies each record through
+`write_range` under a caller-supplied tag, so patched bytes are logged, audited
+and collision-checked like any other write.
 
-Consequences:
-
-- Visual-patch bytes (Luigi, Peach, Dr. Mario, …) never appear in the log.
-- `testrom --apply-ips` inherits the blind spot: its collision guard compares
-  incoming records against the log, so a *second* applied patch cannot be seen
-  colliding with the first. Patch-vs-randomizer collisions are caught;
-  patch-vs-patch are not.
+Still outstanding: **the CLI does not use that method.** `--toad` and
+`--sprite-patch` apply the free function to the raw bytes before a `Rom` exists
+(`main.rs`), so those two remain invisible to the log — and they are exactly the
+pair most likely to collide, since both replace player graphics. Closing it means
+routing them through `randomize_rom`, whose `visual_patch` parameter takes one
+patch where the CLI layers two, while keeping `pristine_input` intact so the
+emitted IPS still contains the visual bytes.
 
 ### 2. Tags leak between passes
 
@@ -76,73 +80,177 @@ The fix applied was local (drop the stray tag, tag the writer, sub-tag the FX
 patch). The structural problem remains: correctness depends on every one of 83
 call sites being disciplined.
 
-### 3. No dynamic free-space verification
+### 3. No dynamic free-space verification — **fixed, see Enhancement 1**
 
-The existing tests are **static** — they check the registry against itself:
+The tests used to be **static** only — they checked the registry against itself:
 
 - `test_free_space_no_overlap` — allocations don't overlap each other
 - `test_free_space_constants_match_registry` — `FS_*` constants match entries
 
-Nothing checks what is *actually written*. Consequences:
-
-- The `// N reserved, M used` comments on 41 allocations are hand-maintained and
-  can silently go stale. `FS_FX_SCREEN_CHECK` read `112 reserved, 97 used` until
-  it was corrected to `82` by hand in `1fe86fb`; others have not been audited.
-- Nothing detects a patch overrunning its allocation into a neighbour's, or a
-  module writing into free space it does not own.
+Nothing checked what was *actually written*, so the `// N reserved, M used`
+comments could go stale (`FS_FX_SCREEN_CHECK` read `112 reserved, 97 used` until
+it was corrected to `82` by hand in `1fe86fb`), and nothing would have caught a
+patch overrunning its allocation or a module writing into space it does not own.
 
 ---
 
-## Enhancement 1 — free-space auditor (do this first)
+## Enhancement 1 — free-space auditor (implemented)
 
-Cross-reference `FREE_SPACE_ALLOCATIONS` against the write log after a real
+Cross-references `FREE_SPACE_ALLOCATIONS` against the write log after a real
 randomization run.
 
-**Assertions**
+**Where it lives**
 
-1. Every write whose offset falls inside a registered free-space region carries
-   the tag of the module that owns that allocation.
-2. For each allocation, the highest byte actually written is within
-   `offset + size`. (Overrun = failing test.)
-3. Report actual bytes used per allocation, so the `reserved / used` comments
-   can be regenerated rather than remembered.
+- `rom_data::free_space` — `FreeSpaceAlloc` (the registry row, now carrying an
+  `owners` list of write-log tags), `audit_free_space`, `free_space_map`,
+  `format_free_space_report`.
+- `randomizer::tests::free_space_audit_matches_registry` — the CI check.
+- `--write-log` appends the report, so the file that says what changed also says
+  what it cost and what is left.
 
-**Why first**
+**What it asserts**
 
-- It needs no call-site churn — a test plus a small helper.
-- It mechanizes `/review-patch` sections 1–3, currently re-derived by hand for
-  every 6502 patch.
-- It would have caught the stale `97 used` automatically.
-- It tells us whether tags are still lying anywhere else, which is the
-  information needed to decide how urgent Enhancement 3 is.
+1. Every write inside a registered region carries a tag one of that region's
+   `owners` covers. Owners match whole `/`-separated tag components, so
+   `fx_screen_check` covers `overworld_writer/fx_screen_check` and
+   `big_q_blocks` covers both `qol/` and `enemies/` variants.
+2. No write crosses a region boundary, in either direction.
+3. Every allocation is exercised by the audit run. Without this the check is
+   vacuous for anything flag-gated: a patch that never ran writes nothing, and
+   an audit over nothing passes. `audit_options()` is `all_on_options()` with
+   `world_count: 7` and `swap_start_airship: true`; a new gated allocation has
+   to be added there or the test says so by name.
 
-**Prerequisite, already met:** accurate tags. Before `cd5e459` the overworld
-writer's bytes were attributed to `troll_pipes`, which would have made
-assertion 1 fail for reasons unrelated to free space.
+It also reports bytes used per allocation, which is where `// N reserved, M
+used` comments should now come from.
 
-**Gotchas**
+**What it found on the first run**
 
-- Flag-dependent code paths do not run under `Options::default()`. Anything
-  gated off by default (e.g. `hammer_breaks_locks`, `troll_pipes` when off) will
-  simply be absent from the log — the audit must not read "no writes" as
-  "allocation unused". Run the audit over a few option sets, or assert only over
-  allocations whose feature was enabled for that run. This is the same trap that
-  made the overworld baseline sweep vacuous for `hammer_breaks`
-  (see `tests/overworld_baseline.rs`).
+- `march_veto`'s 107 bytes were tagged `overworld_writer`. Not a lie — the
+  writer really does emit them — but too coarse to attribute, and the comment
+  above `fx_screen_check` claimed to be "the one writer patch that claims free
+  space", which had stopped being true. Both are now sub-tagged.
+- The `hand_rooms` and `piranha_rooms` clone blocks are genuinely co-owned:
+  the cloning module builds the enemy stream, then `items` rewrites the
+  `OBJ_TREASURESET` byte inside it via the offsets those modules export. That is
+  why `owners` is a list — a second entry documents intended sharing.
+
+**Limits, by construction**
+
+- `used` is *bytes covered by a logged write* — what the patch occupies, not
+  the narrower "bytes differing from vanilla". `write_range` logs the whole
+  range whenever any byte in it differs, so a routine emitted as one range is
+  measured exactly even where its bytes match the filler underneath. Only a
+  patch built byte-at-a-time with `write_byte` under-counts, since no-op bytes
+  are skipped there. Overrun detection is unaffected either way.
 - A patch may legitimately write fewer bytes than reserved; only *over* is an
   error. Reserved headroom is encouraged (see CLAUDE.md).
 
-## Enhancement 2 — route `apply_ips_patch` through `write_range`
+**Companion: per-bank budget.** `free_space_map` scans the *vanilla* PRG for
+filler runs (≥ 8 bytes) no allocation has claimed, per bank, and reports free
+`$FF`, the largest single gap, and `$00` runs separately — zeroed data looks
+exactly like zero padding, so that column is a candidate list, not space.
 
-Small and self-contained. Volume is not a concern: the largest bundled patch is
-the practice ROM at 193 records.
+Unlike the per-allocation audit this depends on nothing but the vanilla bytes
+and the registry: same answer for every seed and option set, no randomization
+run needed. `smb3-rs <rom> --free-space` prints it on its own.
 
-Two decisions to make when implementing:
+**Which number to decide on.** Three numbers come out of this work and only one
+of them is an input to a decision:
 
-- One record per IPS record (preferred — keeps offsets meaningful) rather than
-  one giant record for the whole ROM.
-- What tag to use. Probably a caller-supplied one, so `--apply-ips` can label
-  the patch by filename and patch-vs-patch collisions become legible.
+| Number | Caveats | Use |
+|---|---|---|
+| bytes used per allocation | flag-dependent; under-counts byte-at-a-time patches | audit output — catches drift, never sites a patch |
+| free bytes per bank | ≥ 8 threshold, `$00` ambiguity, unclaimed ≠ unreferenced | "is this bank roomy", nothing finer |
+| **gap of N contiguous bytes** | **none that bear on the answer** | **where a patch goes** |
+
+A threshold can only hide gaps too small to use, and `$00` ambiguity never
+arises if you claim `$FF` runs — so the question `--free-space --fit N` answers
+is clean, while the aggregate it is derived from is not. The remaining check
+(is this gap *referenced*?) is once per gap, and recording it as a registry row
+retires it permanently. That is why the caveats are not a recurring tax: what
+recurs is arithmetic, and `free_space_doc_table_is_current` does that for you.
+
+CLAUDE.md's per-bank table is that output, and
+`free_space_doc_table_is_current` fails when a row drifts. Reconciling the two
+found: the doc's older figures came from a ≥ 16-byte scan (which is the whole
+of the PRG031 68→81 and PRG010 880→896 difference), and its PRG000–007 row had
+simply missed PRG004 and PRG006, whose bank tails hold 426 and 1392 bytes.
+Both tails were checked against the disassembly before being counted — see the
+note in CLAUDE.md. "Unclaimed filler" is not by itself "unreferenced"; the scan
+finds candidates, the disassembly settles them.
+
+## Enhancement 2 — route `apply_ips_patch` through `write_range` (implemented for the `Rom` path)
+
+Both decisions went the expected way: one write record per IPS record, and a
+caller-supplied tag. `testrom` passes the filename, so a collision report names
+the patch; `randomize_rom` passes `visual_patch`.
+
+Volume is not a problem — the bundled patches run 265–672 records each, and all
+of them end at 0x05FD50, inside the 0x60000 payload.
+
+Two things that came out of doing it:
+
+- **The tag stack had to become `Vec<String>`.** It was `Vec<&'static str>`,
+  which cannot hold a filename. `set_tag`/`push_tag` now take `&str`; all 91
+  existing call sites pass literals and were untouched.
+- **An out-of-range record is now an error, not a panic.** The old path grew a
+  scratch buffer to fit the record and then panicked on the length mismatch when
+  copying it back. Records are validated up front, so a patch that does not fit
+  leaves the ROM untouched instead of half-applied.
+
+**Measured effect on collision reports.** Under default options, visual-patch
+bytes newly collide with `palettes` — 7 bytes for Peach, 1 for Dr. Mario, 0 for
+Toad; with `palette_themed` on, 36 for Peach. The count varies run to run
+because palettes draw on OS entropy rather than the seed. This is real signal:
+the palette randomizer is overwriting colors the visual patch chose. Whether
+that is wanted is a design question (recoloring the swapped sprite may well be
+intended), not a defect in the logging.
+
+## The randomizer-vs-randomizer collisions
+
+A default run used to report ~178 of these. Investigated 2026-08-04: **142 were
+an artifact of the report, and all 36 real ones are intended.**
+
+The artifact: `write_range` logs the *whole* range whenever any byte in it
+differs, so a pass that rewrites a block is credited with every byte in it,
+including the ones it left exactly as it found them. `autoscroll -> powerups`
+(131 bytes, the largest group by far) was entirely this — `powerups` "overwrote"
+those bytes with the identical value autoscroll had put there. `find_collisions`
+now reads `WriteRecord::changes()` instead of the covered range, which drops a
+default seed from 178 to 36–39.
+
+**Not fixed at the source, deliberately.** Narrowing `write_range` to log only
+changed sub-runs would discard the covered/changed distinction, and two
+consumers need *covered*: the free-space audit (a routine byte equal to the
+`$FF` filler under it is still part of the routine, and must stay attributed to
+its owner) and testrom's guard (an incoming patch overwriting such a byte would
+genuinely break that routine). Both facts are recoverable from a record, so the
+fix was to give the distinction a name — `changes()` / `changed_len()` — and
+teach the one consumer that meant "overwrote" to use it.
+
+The per-tag header in `--write-log` now shows both when they differ, which makes
+the shape visible: `[powerups] 52968 bytes (156 changed), 9 writes`. Powerups
+rewrites whole level-data regions to move 156 bytes, which is where essentially
+all of the noise came from. Correct, just coarse — not worth a byte-identity
+risk to narrow.
+
+The 36 that remain, all explained:
+
+| Bytes | Pair | Why |
+|---|---|---|
+| 19 | `autoscroll -> levels/airships` | autoscroll redirects each world's airship ObjSets/LevelLayouts pointers; the airship shuffle then permutes those *post-autoscroll* values between slots. The ordering CLAUDE.md requires, working |
+| 13 | `overworld_writer -> items` | the Hammer Bro reward table at 0x16190: the writer places bros with default rewards, `items` randomizes the reward. Layered by design |
+| 3 | `qol -> overworld_writer` | `gap_tile_for(0xB3) = 0x9D` (the documented bridge→water-gap), the FX slot-16 `replace_tile` handoff after pickup has consumed qol's value, and a level placed on the W1 shortcut stub — which `apply_w1_shortcut` explicitly leaves as a valid blank node |
+| 1 | `hand_rooms -> items` | the co-ownership already recorded in `FREE_SPACE_ALLOCATIONS` |
+
+No defects. Worth re-running after any pass is reordered, since three of the
+four groups are ordering-dependent by construction.
+
+**Known limit of `find_collisions`:** it compares only the *top-level* tag, so
+passes within one family (`koopalings/y_clamp` vs `koopalings/random_hits`) are
+mutually invisible to it. Fine for finding cross-module clobbering, useless for
+intra-module — query full tags via `writes_in_range` for that.
 
 ## Enhancement 3 — make tags un-leakable
 
@@ -158,6 +266,13 @@ This makes leaking structurally impossible rather than a matter of discipline.
 touching every randomization pass. Worth doing *after* Enhancement 1, so the
 audit can confirm whether any other tag is currently wrong — that determines
 whether this is urgent or merely tidy.
+
+**What the audit says about urgency:** the audit run found no *leaked* tag —
+the one attribution problem (`march_veto` under `overworld_writer`) was a
+correct tag that was merely too coarse, not a stale one bleeding across a pass.
+That is weak evidence, though: the audit only sees the 36 free-space regions,
+which is a small share of what a run writes. It lowers the urgency; it does not
+clear the structural problem.
 
 **Verification:** `tests/overworld_baseline.rs` covers it. Tagging is metadata
 and must not move a single ROM byte, so all 20 seeds must stay byte-identical.

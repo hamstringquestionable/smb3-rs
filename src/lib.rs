@@ -46,7 +46,7 @@ pub fn randomize_rom(
     let mut rom = Rom::from_bytes_lax(rom_data, options.skip_rom_validation)
         .map_err(|e| e.to_string())?;
     if let Some(patch) = visual_patch {
-        rom.apply_ips_patch(patch)?;
+        rom.apply_ips_patch(patch, "visual_patch")?;
     }
     randomizer::randomize(&mut rom, seed, options);
     Ok(rom)
@@ -90,7 +90,7 @@ pub(crate) fn randomize_rom_with_overworld_capture(
     let mut rom = Rom::from_bytes_lax(rom_data, options.skip_rom_validation)
         .map_err(|e| e.to_string())?;
     if let Some(patch) = visual_patch {
-        rom.apply_ips_patch(patch)?;
+        rom.apply_ips_patch(patch, "visual_patch")?;
     }
     let mut capture: Option<randomize::overworld_build::BuildResult> = None;
     randomizer::randomize_with_overworld_capture(&mut rom, seed, options, &mut capture);
