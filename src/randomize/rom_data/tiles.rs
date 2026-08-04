@@ -24,12 +24,6 @@
 //! treatment for a table mirror is a test asserting it still matches the bytes
 //! at its ROM offset, not consolidation into these predicates.
 
-// Reason: this module is introduced ahead of its callers on purpose — the
-// consolidation migrates one call site per commit, each verified byte-identical
-// against `tests/overworld_baseline.rs`. Every item here is dead until its
-// first migration; remove this allow once the last inlined list is gone.
-#![allow(dead_code)]
-
 use super::FORTRESS_TILES;
 
 // ---------------------------------------------------------------------------
@@ -68,9 +62,15 @@ pub(crate) fn is_water_gap(tile: u8) -> bool {
 /// it, removed again by a fortress-clear FX. Locks and the water gap both
 /// qualify.
 ///
-/// Use this where a site treats all four identically — the FX-slot assertion in
-/// `overworld_pickup` is the motivating case. Use [`is_lock`] where the water
-/// gap must be excluded.
+/// Use this where a site treats all four identically — `overworld_pickup`'s
+/// `test_no_fx_gaps_remain` is the current consumer. Use [`is_lock`] where the
+/// water gap must be excluded, as `qol::hammer_breaks` does.
+// Reason: only a test consumes this today, so the lib build sees it as dead.
+// Kept because it names the codebase's existing umbrella concept (the output
+// domain of `gap_tile_for`, stored as `LockAssignment::gap_tile`) and is the
+// correct predicate for any future site treating locks and gaps alike —
+// re-inlining that set is exactly the drift this module exists to stop.
+#[allow(dead_code)]
 pub(crate) fn is_gap_tile(tile: u8) -> bool {
     is_lock(tile) || is_water_gap(tile)
 }

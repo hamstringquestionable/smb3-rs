@@ -22,9 +22,6 @@ pub(crate) use access::*;
 pub(crate) use free_space::*;
 pub(crate) use grid::*;
 pub(crate) use tables::*;
-// Reason: re-exported ahead of its callers; the tile-predicate consolidation
-// migrates one call site per commit. Drop this allow with the last one.
-#[allow(unused_imports)]
 pub(crate) use tiles::*;
 
 // Part of the lib's public API (consumed by the chr_stats integration test).

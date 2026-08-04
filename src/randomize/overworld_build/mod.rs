@@ -49,7 +49,8 @@ use crate::rom::Rom;
 
 use super::map_walker::{Reach, walk_map, walk_reachable};
 use super::node_catalog::{NodeCatalog, NodeKind};
-use super::overworld_helpers::{LOCKABLE_TILES, find_target, gap_tile_for};
+use super::overworld_helpers::{LOCKABLE_TILES, find_target};
+use super::rom_data::gap_tile_for;
 use super::overworld_pickup::{PickupResult, blank_tile_for};
 use super::rom_data::{
     self, BACKGROUND_TILES, Grid, Pos, TILE_BONUS_GAME, TILE_FORTRESS, TILE_NODE, TILE_PIPE,

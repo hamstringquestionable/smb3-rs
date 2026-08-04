@@ -21,10 +21,6 @@ use crate::{randomize_rom, Options};
 /// Bytes per map screen: 9 rows × 16 columns, stored screen-major.
 const SCREEN_BYTES: usize = 144;
 
-/// Numbered level tiles: tile `0x03..=0x0F`, level number = tile - 2.
-const NUMBERED_TILE_LO: u8 = 0x03;
-const NUMBERED_TILE_HI: u8 = 0x0F;
-
 /// File-offset window covering PRG010–011 of the ROM.
 ///
 /// Practice-patch records outside this window rewrite PRG006/PRG012 (enemy
@@ -32,24 +28,11 @@ const NUMBERED_TILE_HI: u8 = 0x0F;
 /// produced, so the movement patch is applied as a subset over this range only.
 const MOVEMENT_RECORD_RANGE: (usize, usize) = (0x14010, 0x18010);
 
-/// Path tile to restore for each lock/gap tile.
-///
-/// Locks are a many-to-one encoding — `overworld_helpers::gap_tile_for` maps
-/// every vertical path variant (plain, drawbridge, sky) onto a single lock
-/// byte — so the inverse can only return the plain path tile of the right
-/// orientation, not the original variant. In a test ROM that's a cosmetic
-/// difference on a tile you're about to walk over.
-const UNLOCK_TILES: &[(u8, u8)] = &[
-    (0x54, 0x46), // vertical lock   → vertical path
-    (0x56, 0x45), // horizontal lock → horizontal path
-    (0xE4, 0xDA), // sky lock        → sky path
-];
-
-/// Water gaps are restored separately from locks — testing canoe/bridge
-/// routing usually wants gaps intact even when locks are gone.
-const UNGAP_TILES: &[(u8, u8)] = &[
-    (0x9D, 0xB3), // water gap → bridge
-];
+// Lock/gap classification and the path each restores to come from
+// `rom_data::tiles` — see `is_lock`, `is_water_gap`, `path_for_gap_tile`. The
+// inverse is lossy (a vertical path variant comes back as the plain vertical
+// path), which for a test ROM is a cosmetic difference on a tile you are about
+// to walk over.
 
 // ---------------------------------------------------------------------------
 // Seed requirements
@@ -100,10 +83,10 @@ impl TileClass {
 
     fn matches(&self, tile: u8) -> bool {
         match self {
-            TileClass::Lock => UNLOCK_TILES.iter().any(|(l, _)| *l == tile),
-            TileClass::Gap => UNGAP_TILES.iter().any(|(g, _)| *g == tile),
-            TileClass::Fortress => rom_data::FORTRESS_TILES.contains(&tile),
-            TileClass::Level => (NUMBERED_TILE_LO..=NUMBERED_TILE_HI).contains(&tile),
+            TileClass::Lock => rom_data::is_lock(tile),
+            TileClass::Gap => rom_data::is_water_gap(tile),
+            TileClass::Fortress => rom_data::is_fortress(tile),
+            TileClass::Level => rom_data::is_numbered_level(tile),
             TileClass::Pipe => tile == rom_data::TILE_PIPE,
             TileClass::ToadHouse => tile == rom_data::TILE_TOAD_HOUSE,
             TileClass::Airship => tile == rom_data::TILE_AIRSHIP,
@@ -415,7 +398,7 @@ fn numbered_slots(rom: &Rom, world_idx: usize, include_beta: bool) -> Vec<(u8, u
         .filter(|e| {
             e.world_idx == world_idx
                 && e.is_numbered_level
-                && (NUMBERED_TILE_LO..=NUMBERED_TILE_HI).contains(&e.tile)
+                && rom_data::is_numbered_level(e.tile)
         })
         .map(|e| (e.tile - 2, e.entry_idx))
         .collect();
@@ -427,11 +410,12 @@ fn numbered_slots(rom: &Rom, world_idx: usize, include_beta: bool) -> Vec<(u8, u
 /// Rewrite lock and/or water-gap tiles across all 8 world maps.
 fn open_map(rom: &mut Rom, remove_locks: bool, remove_gaps: bool) -> usize {
     let mut swaps: Vec<(u8, u8)> = Vec::new();
-    if remove_locks {
-        swaps.extend_from_slice(UNLOCK_TILES);
-    }
-    if remove_gaps {
-        swaps.extend_from_slice(UNGAP_TILES);
+    for tile in 0u8..=0xFF {
+        let wanted = (remove_locks && rom_data::is_lock(tile))
+            || (remove_gaps && rom_data::is_water_gap(tile));
+        if let Some(path) = rom_data::path_for_gap_tile(tile).filter(|_| wanted) {
+            swaps.push((tile, path));
+        }
     }
     if swaps.is_empty() {
         return 0;
@@ -826,7 +810,7 @@ mod tests {
         let built = build(&van, &TestRomSpec { remove_locks: true, ..spec() }).unwrap();
         let out = Rom::from_bytes_lax(&built.bytes, true).unwrap();
 
-        let locks: Vec<u8> = UNLOCK_TILES.iter().map(|(l, _)| *l).collect();
+        let locks: Vec<u8> = rom_data::LOCK_TILES.to_vec();
         for world_idx in 0..8 {
             let grid = rom_data::read_tile_grid(&out, world_idx);
             for row in 0..grid.rows() {
@@ -844,7 +828,7 @@ mod tests {
         for (i, (before, after)) in van.iter().zip(built.bytes.iter()).enumerate() {
             if before != after {
                 assert!(
-                    UNLOCK_TILES.contains(&(*before, *after)),
+                    rom_data::path_for_gap_tile(*before) == Some(*after),
                     "unexpected write at 0x{i:05X}: {before:#04X} -> {after:#04X}"
                 );
             }
@@ -930,7 +914,7 @@ mod tests {
         .unwrap();
 
         let out = Rom::from_bytes_lax(&built.bytes, true).unwrap();
-        let locks: Vec<u8> = UNLOCK_TILES.iter().map(|(l, _)| *l).collect();
+        let locks: Vec<u8> = rom_data::LOCK_TILES.to_vec();
         let surviving: usize = (0..8)
             .map(|w| {
                 let grid = rom_data::read_tile_grid(&out, w);
