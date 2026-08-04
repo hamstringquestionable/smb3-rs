@@ -277,10 +277,19 @@ fn main() {
         ));
     }
 
-    let extra_patches: Vec<Vec<u8>> = cli
+    // Labelled by filename: the label is what the write log and any collision
+    // report name, so a second patch clashing with the first is legible.
+    let extra_patches: Vec<(String, Vec<u8>)> = cli
         .apply_ips
         .iter()
-        .map(|p| fs::read(p).unwrap_or_else(|e| die(format!("reading {}: {e}", p.display()))))
+        .map(|p| {
+            let bytes = fs::read(p).unwrap_or_else(|e| die(format!("reading {}: {e}", p.display())));
+            let label = p.file_name().map_or_else(
+                || p.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            (label, bytes)
+        })
         .collect();
 
     let spec = TestRomSpec {

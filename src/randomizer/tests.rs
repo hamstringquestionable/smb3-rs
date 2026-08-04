@@ -73,6 +73,77 @@ fn mystery_anchor_trampoline_written() {
     assert_eq!(rom.read_range(0x345D8, 3), &[0x20, 0x62, 0xB5]);
 }
 
+/// Everything that owns ROM free space, turned on. `all_on_options` is close
+/// but pins `world_count` to 3 and leaves `swap_start_airship` off, and both
+/// gate allocations we want exercised.
+fn audit_options() -> Options {
+    Options {
+        world_count: 7,
+        swap_start_airship: true,
+        ..all_on_options()
+    }
+}
+
+/// Cross-check `FREE_SPACE_ALLOCATIONS` against a real run: every byte written
+/// inside a registered region must come from the module that owns it, and no
+/// write may cross a region boundary.
+///
+/// This is the only check on free space that looks at what the randomizer
+/// *does* rather than at what the registry says about itself. Run with
+/// `--nocapture` to see the usage table — the `used` column is where the
+/// `// N reserved, M used` comments come from.
+#[test]
+fn free_space_audit_matches_registry() {
+    use crate::randomize::rom_data::{audit_free_space, format_free_space_report};
+
+    let Some(mut rom) = make_test_rom() else { return };
+    randomize(&mut rom, 0xA11C0DE, &audit_options());
+
+    let usage = audit_free_space(&rom);
+    println!("{}", format_free_space_report(&rom));
+
+    let problems: Vec<String> = usage
+        .iter()
+        .filter(|u| u.is_problem())
+        .map(|u| {
+            let foreign: Vec<String> = u.foreign.iter()
+                .map(|(tag, n)| format!("{n} byte(s) tagged '{tag}'"))
+                .collect();
+            let over: Vec<String> = u.overruns.iter()
+                .map(|(off, len, tag)| format!("0x{off:05X}+{len} tagged '{tag}' crosses the boundary"))
+                .collect();
+            format!(
+                "0x{:05X} ({}, owner '{}'): {}",
+                u.alloc.offset, u.alloc.label, u.alloc.owners.join(" + "),
+                foreign.into_iter().chain(over).collect::<Vec<_>>().join("; "),
+            )
+        })
+        .collect();
+
+    assert!(
+        problems.is_empty(),
+        "free-space allocations written by a non-owner or overrun:\n  {}",
+        problems.join("\n  "),
+    );
+
+    // A flag-gated patch that never ran writes nothing, and an audit over
+    // nothing passes — the trap that made the overworld baseline vacuous for
+    // hammer_breaks. Every allocation must be exercised for the check above to
+    // mean anything, so assert that rather than trusting it.
+    let untouched: Vec<String> = usage
+        .iter()
+        .filter(|u| u.used == 0)
+        .map(|u| format!("0x{:05X} {} (owner '{}')", u.alloc.offset, u.alloc.label, u.alloc.owners.join(" + ")))
+        .collect();
+    assert!(
+        untouched.is_empty(),
+        "these allocations saw no writes, so the audit above proved nothing about them.\n\
+         Turn the owning feature on in audit_options(), or (if the write is seed-dependent)\n\
+         pick a seed that exercises it:\n  {}",
+        untouched.join("\n  "),
+    );
+}
+
 #[test]
 fn write_log_populated_after_randomize() {
     let Some(mut rom) = make_test_rom() else { return };
