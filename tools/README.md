@@ -53,7 +53,7 @@ Written once because they were written well.
 
 | Tool | Status | Notes |
 |------|--------|-------|
-| `map_viz.py` | OK | **Renders any ROM's world maps as labelled ASCII**, with screen boundaries. Use this instead of hand-decoding tile grids. `map_viz.py <rom.nes> --world 8`. |
+| `map_viz.py` | OK, but see note | **Renders any ROM's world maps as labelled ASCII**, with screen boundaries. Use this instead of hand-decoding tile grids. `map_viz.py <rom.nes> --world 8`. **Do not trust its `F` glyph for fortress positions** — it drew `F` at seed 10's W8 (5,40) where a byte scan finds no fortress tile (`0x67`/`0xEB`/`0x6A`), and disagreed again on seed 23. Either `F` means something else or the renderer is wrong; unresolved as of 2026-08-04. Slated for replacement by the Rust ASCII renderer in `docs/seed_report_design.md`. |
 | `map_walker.py` | OK | BFS map connectivity + fortress progression. |
 | `level_sim.py` | OK | Level tile simulator, for debugging one level's layout. |
 | `fx_check.py` | needs args | `fx_check.py <rom.nes>` — cross-checks FX slots against actual map tiles. |
