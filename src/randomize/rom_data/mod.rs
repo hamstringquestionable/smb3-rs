@@ -5,8 +5,10 @@
 //! multiple randomization modules. The BFS map walker lives in `map_walker.rs`.
 //!
 //! Split into submodules: `free_space` (allocation registry), `tables` (static
-//! data), `grid` (the overworld grid), `access` (typed read/write helpers). All
-//! items are re-exported flat so callers keep using `rom_data::ITEM`.
+//! data), `grid` (the overworld grid), `access` (typed read/write helpers),
+//! `tiles` (overworld tile classification — the single producer for "which
+//! bytes mean what"). All items are re-exported flat so callers keep using
+//! `rom_data::ITEM`.
 
 use crate::rom::Rom;
 
@@ -14,11 +16,16 @@ mod access;
 mod free_space;
 mod grid;
 mod tables;
+mod tiles;
 
 pub(crate) use access::*;
 pub(crate) use free_space::*;
 pub(crate) use grid::*;
 pub(crate) use tables::*;
+// Reason: re-exported ahead of its callers; the tile-predicate consolidation
+// migrates one call site per commit. Drop this allow with the last one.
+#[allow(unused_imports)]
+pub(crate) use tiles::*;
 
 // Part of the lib's public API (consumed by the chr_stats integration test).
 pub use access::{ENEMY_DATA_END, ENEMY_DATA_START};
