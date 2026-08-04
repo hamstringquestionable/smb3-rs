@@ -444,7 +444,7 @@ mod tests {
                 if slot.grid_row < grid.rows() && slot.grid_col < grid.cols {
                     let tile = grid.get(slot.grid_row, slot.grid_col);
                     assert!(
-                        tile != 0x54 && tile != 0x56 && tile != 0x9D && tile != 0xE4,
+                        !rom_data::is_gap_tile(tile),
                         "W{} FX slot {si} at ({},{}) still has gap tile ${tile:02X}",
                         wi + 1, slot.grid_row, slot.grid_col,
                     );
