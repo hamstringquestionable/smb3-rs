@@ -667,3 +667,41 @@ mod tests {
         assert_eq!(rom.read_range(NGO_NOP_OFFSET, NGO_NOP_BYTES.len()), &NGO_NOP_BYTES);
     }
 }
+
+#[cfg(test)]
+mod asm_checks {
+    //! Decode each assembled routine and check the structural properties no
+    //! assembler was around to enforce. See [`crate::randomize::rom_data::asm`].
+    use super::*;
+    use crate::randomize::rom_data::asm;
+
+    #[test]
+    fn faster_frog_is_well_formed() {
+        asm::check(&FASTER_FROG_ROUTINE).allocation(FS_FASTER_FROG).assert_ok();
+    }
+
+    #[test]
+    fn tail_stay_dead_is_well_formed() {
+        asm::check(&TAIL_STAY_DEAD_ROUTINE).allocation(FS_TAIL_STAY_DEAD).assert_ok();
+    }
+
+    #[test]
+    fn hold_left_helper_is_well_formed() {
+        asm::check(&HOLD_LEFT_HELPER_BYTES).allocation(FS_HOLD_LEFT_HELPER).assert_ok();
+    }
+
+    #[test]
+    fn no_game_over_is_well_formed() {
+        asm::check(&NGO_ROUTINE).allocation(NGO_ROUTINE_OFFSET).assert_ok();
+    }
+
+    #[test]
+    fn limit_bro_is_well_formed() {
+        asm::check(&LIMIT_BRO_CODE).fragment().assert_ok();
+    }
+
+    #[test]
+    fn tail_swim_is_well_formed() {
+        asm::check(&TAIL_SWIM_ROUTINE).fragment().assert_ok();
+    }
+}

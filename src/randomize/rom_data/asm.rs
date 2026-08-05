@@ -91,11 +91,13 @@ pub struct Routine<'a> {
     code: &'a [u8],
     allocation: Option<usize>,
     hook: Option<Hook<'a>>,
+    data_from: Option<usize>,
+    fragment: bool,
 }
 
 /// Begin checking an assembled routine.
 pub fn check(code: &[u8]) -> Routine<'_> {
-    Routine { code, allocation: None, hook: None }
+    Routine { code, allocation: None, hook: None, data_from: None, fragment: false }
 }
 
 impl<'a> Routine<'a> {
@@ -113,19 +115,50 @@ impl<'a> Routine<'a> {
         self
     }
 
+    /// Bytes from here to the end are a data table, not code.
+    ///
+    /// A routine carrying its own lookup tables would otherwise be decoded as
+    /// instructions past its last `RTS`/`JMP`, desynchronising everything after
+    /// and reporting failures that say nothing about the code.
+    pub fn data_from(mut self, offset: usize) -> Self {
+        self.data_from = Some(offset);
+        self
+    }
+
+    /// This array is one piece of a larger routine, not a self-contained one.
+    ///
+    /// Two shapes need it: a patch spliced *in place* over vanilla code, whose
+    /// branches legitimately target the vanilla around it, and a fragment
+    /// written next to further pieces in the same allocation, which it falls
+    /// through into. Both drop the terminator requirement and allow branches to
+    /// leave the array — branches landing *inside* it are still checked.
+    pub fn fragment(mut self) -> Self {
+        self.fragment = true;
+        self
+    }
+
     /// Run every configured check, panicking with all failures at once.
     pub fn assert_ok(self) {
         let mut problems: Vec<String> = Vec::new();
 
-        match decode(self.code) {
+        let code = &self.code[..self.data_from.unwrap_or(self.code.len())];
+        match decode(code) {
             Err(e) => problems.push(e),
             Ok(instrs) => {
-                match instrs.last() {
-                    None => problems.push("routine is empty".to_string()),
-                    Some(last) if !matches!(
-                        last.instr,
-                        Instruction::RTS | Instruction::RTI | Instruction::JMP
-                    ) =>
+                // Trailing NOPs are padding — several routines are NOP-filled out
+                // to the length of the vanilla bytes they replace — so the
+                // terminator is the last instruction that actually does something.
+                let last = instrs
+                    .iter()
+                    .rfind(|i| !matches!(i.instr, Instruction::NOP));
+                match last {
+                    None => problems.push("routine is empty or all NOPs".to_string()),
+                    Some(last)
+                        if !self.fragment
+                            && !matches!(
+                                last.instr,
+                                Instruction::RTS | Instruction::RTI | Instruction::JMP
+                            ) =>
                     {
                         problems.push(format!(
                             "routine ends in {:?} at byte {}; execution would run past the \
@@ -138,16 +171,18 @@ impl<'a> Routine<'a> {
 
                 let starts: BTreeSet<usize> = instrs.iter().map(|i| i.start).collect();
                 for i in instrs.iter().filter(|i| i.relative) {
-                    let rel = self.code[i.start + 1] as i8 as isize;
+                    let rel = code[i.start + 1] as i8 as isize;
                     let target = i.start as isize + i.len as isize + rel;
-                    if target < 0 || target as usize >= self.code.len() {
-                        problems.push(format!(
-                            "{:?} at byte {} branches to {target}, outside the routine \
-                             (0..{})",
-                            i.instr,
-                            i.start,
-                            self.code.len()
-                        ));
+                    if target < 0 || target as usize >= code.len() {
+                        if !self.fragment {
+                            problems.push(format!(
+                                "{:?} at byte {} branches to {target}, outside the routine \
+                                 (0..{})",
+                                i.instr,
+                                i.start,
+                                code.len()
+                            ));
+                        }
                     } else if !starts.contains(&(target as usize)) {
                         problems.push(format!(
                             "{:?} at byte {} branches to byte {target}, which is \
@@ -256,6 +291,29 @@ mod tests {
     #[test]
     fn rejects_a_routine_that_falls_off_its_end() {
         let code = [0xA9, 0x00]; // LDA #$00, no terminator
+        assert!(std::panic::catch_unwind(|| check(&code).assert_ok()).is_err());
+    }
+
+    /// `.fragment()` allows branches to *leave* the array, but a branch landing
+    /// inside it must still be on a boundary — otherwise the opt-out would turn
+    /// the check off rather than narrow it.
+    #[test]
+    fn fragment_still_rejects_an_internal_mid_instruction_branch() {
+        // BPL +1 lands on the $FF operand of EOR #$FF, inside the array.
+        let code = [0x10, 0x01, 0x49, 0xFF, 0xCA];
+        assert!(std::panic::catch_unwind(|| check(&code).fragment().assert_ok()).is_err());
+        // ...while a branch past the end is what `.fragment()` is for.
+        let out = [0x10, 0x20, 0x49, 0xFF, 0xCA];
+        check(&out).fragment().assert_ok();
+    }
+
+    /// `.data_from` must exclude the table from decoding, not merely tolerate it.
+    #[test]
+    fn data_from_excludes_the_table_but_still_checks_the_code() {
+        // LDA #$00, RTS, then bytes that do not decode as valid instructions.
+        let code = [0xA9, 0x00, 0x60, 0xFF, 0xFF, 0xFF];
+        check(&code).data_from(3).assert_ok();
+        // Without the opt-out the trailing table is read as code and fails.
         assert!(std::panic::catch_unwind(|| check(&code).assert_ok()).is_err());
     }
 

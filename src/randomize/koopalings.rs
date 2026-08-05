@@ -703,3 +703,16 @@ mod tests {
         assert_eq!(rom.read_range(SKIP_WAND_CUTSCENE_OFFSET, 2), &[0x16, 0xB5]);
     }
 }
+
+#[cfg(test)]
+mod asm_checks {
+    //! Decode each assembled routine and check the structural properties no
+    //! assembler was around to enforce. See [`crate::randomize::rom_data::asm`].
+    use super::*;
+    use crate::randomize::rom_data::asm;
+
+    #[test]
+    fn koopa_hits_is_well_formed() {
+        asm::check(&KOOPA_HITS_CODE).allocation(crate::randomize::rom_data::FS_KOOPA_HITS_SUB).fragment().assert_ok();
+    }
+}

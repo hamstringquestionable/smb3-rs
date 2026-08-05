@@ -114,3 +114,21 @@ pub fn fix_canoe_softlock(rom: &mut Rom) {
     // Record 5: backup/restore subroutines
     rom.write_range(FS_CANOE_BACKUP, &CANOE_BACKUP_ROUTINE);
 }
+
+#[cfg(test)]
+mod asm_checks {
+    //! Decode each assembled routine and check the structural properties no
+    //! assembler was around to enforce. See [`crate::randomize::rom_data::asm`].
+    use super::*;
+    use crate::randomize::rom_data::asm;
+
+    #[test]
+    fn canoe_respawn_is_well_formed() {
+        asm::check(&CANOE_RESPAWN_ROUTINE).allocation(FS_CANOE_RESPAWN).assert_ok();
+    }
+
+    #[test]
+    fn canoe_backup_is_well_formed() {
+        asm::check(&CANOE_BACKUP_ROUTINE).allocation(FS_CANOE_BACKUP).assert_ok();
+    }
+}
