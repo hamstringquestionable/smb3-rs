@@ -414,6 +414,12 @@ fn randomize_inner(
     rom.set_tag("qol/canoe_summon");
     randomize::qol::apply_canoe_summon(rom);
 
+    // Stop an enemy that is jumping up at the player from turning a stomp into
+    // damage. Always applied: it only widens outcomes vanilla already got
+    // wrong, so there is nothing to opt out of.
+    rom.set_tag("stomp_fairness");
+    randomize::stomp_fairness::apply(rom);
+
     // Adjust Bowser and Koopaling hitboxes.
     if options.adjust_boss_hitboxes {
         rom.set_tag("koopalings/adjust_boss_hitboxes");

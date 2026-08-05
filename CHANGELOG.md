@@ -42,6 +42,14 @@ deploys.
 
 ### Fixed
 
+- Landing on an enemy that is jumping up at you now counts as a stomp instead
+  of hurting you. Vanilla decides "stomp or damage" once per frame, so an enemy
+  rising into you could close the gap faster than the check could resolve and
+  the hit landed on you — most visibly with hopping Cheep Cheeps and with
+  Koopalings at their higher jump speeds. The stompable range now cancels out
+  the enemy's own upward speed, so the verdict no longer depends on how fast it
+  was moving. Collisions vanilla already judged correctly are unaffected.
+
 - Breaking a fortress lock in World 8's dark area no longer lights up the tile.
   The lock-break effect used to paint the replacement tile over the darkness,
   leaving it permanently visible. Now the poof plays where the lock was, and a

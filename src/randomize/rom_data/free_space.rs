@@ -12,8 +12,8 @@
 //! The aggregate free-space number is misleading: space is per-bank, and a
 //! routine must live in a bank mapped when it runs. The always-mapped banks
 //! are effectively full — PRG031 (`$E000–$FFFF`) has 81 bytes left but a
-//! largest contiguous gap of only 30, and PRG030 (`$8000–$9FFF`) has 120 with
-//! a largest gap of 74. Swapped banks are roomier (PRG010 896, PRG026 2603,
+//! largest contiguous gap of only 30, and PRG030 (`$8000–$9FFF`) has 88 with
+//! a largest gap of 42. Swapped banks are roomier (PRG010 896, PRG026 2603,
 //! and the in-level banks PRG004 426 / PRG006 1392 in one run each).
 //!
 //! Reserving some headroom in an allocation is fine and encouraged — a routine
@@ -104,6 +104,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     // PRG030 (fixed bank, always mapped $8000–$9FFF, file 0x3C010)
     fs(0x3DF20, 28, &["world_order"], "routine + tables"),
     fs(0x3DF3C, 20, &["big_q_blocks"], "big_q_block: save obj_ptr trampoline"),
+    fs(0x3DFC6, 32, &["stomp_fairness"], "stomp_rise: rise-aware stomp height (32 reserved, 26 used)"),
     // PRG031 (always mapped $E000–$FFFF, file 0x3E010)
     fs(0x3E924, 25, &["title_screen"], "sprite copy routine"),
     fs(0x3E93D, 40, &["title_screen"], "sprite data table"),
@@ -157,10 +158,10 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
 // PRG030
 pub(crate) const FS_WORLD_ORDER: usize       = 0x3DF20; // 28 bytes
 
-/// CPU address of the world-order routine: $8000 + (0x3DF20 - 0x3C010) = $9F10.
-/// PRG030 is the MMC3 fixed bank at $8000-$9FFF (file 0x3C010), so
-/// `prg_bank_file_to_cpu` (which assumes the $A000 window) does not apply.
-pub(crate) const WORLD_ORDER_CPU: u16        = 0x9F10;
+/// CPU address of the world-order routine ($9F10). PRG030 is the MMC3 fixed
+/// bank at $8000-$9FFF (file 0x3C010), so `prg_bank_file_to_cpu` (which assumes
+/// the $A000 window) does not apply — `prg030_file_to_cpu` is its counterpart.
+pub(crate) const WORLD_ORDER_CPU: u16        = super::prg030_file_to_cpu(FS_WORLD_ORDER);
 
 pub(crate) const FS_BIG_Q_SAVE: usize        = 0x3DF3C; // 20 bytes
 
@@ -271,6 +272,22 @@ pub(crate) const FS_MYSTERY_ANCHOR: usize    = 0x35572; // 13 bytes
 pub(crate) const FS_HAMMER_LOCKS: usize      = 0x3557F; // 50 bytes
 
 pub(crate) const FS_ANCHOR_ITEM_GUARD: usize = 0x355B1; // 12 bytes (CPU $B5A1)
+
+// Stomp fairness — rise-aware stomp height, hooked from PRG000 at CPU $D22E.
+// PRG030 is mapped at $8000–$9FFF at all times, so a JSR out of PRG000 reaches
+// it whatever the $C000 window holds.
+//
+// The 74-byte run at 0x3DFC6 is the tail of PRG030 and is $FF in vanilla. It is
+// unreferenced: a PRG-wide scan of every absolute-addressing opcode finds no
+// operand in $9FB6-$9FD5. (The same scan reports two `JSR $9FF4` further up the
+// run, at file 0x15D1F and 0x19D1F — those are byte-identical map data in
+// PRG010 and PRG012, disassembled as data by southbird, not code. They sit
+// outside this reservation either way, but anyone taking the remaining 42 bytes
+// should confirm that before trusting the top of the gap.)
+pub(crate) const FS_STOMP_RISE: usize        = 0x3DFC6; // 32 reserved, 26 used
+
+/// CPU address of the rise-aware stomp-height routine ($9FB6).
+pub(crate) const STOMP_RISE_CPU: u16         = super::prg030_file_to_cpu(FS_STOMP_RISE);
 
 // PRG001 (file 0x02010, CPU $A000–$BFFF)
 // Koopaling stomp handler is ObjHit_Koopaling in prg001.asm (southbird disassembly).
@@ -909,6 +926,14 @@ mod free_space_tests {
                 assert_eq!(prg_bank_file_to_cpu(bank, prg_bank_cpu_to_file(bank, cpu)), cpu);
             }
         }
+
+        // The two fixed banks live outside the $A000 window and need their own
+        // converters. These are the values the shipped patches assemble with,
+        // so a regression here would silently retarget every PRG030/031 hook.
+        assert_eq!(prg030_file_to_cpu(0x3C010), 0x8000);
+        assert_eq!(prg030_file_to_cpu(FS_WORLD_ORDER), 0x9F10);
+        assert_eq!(prg030_file_to_cpu(FS_STOMP_RISE), 0x9FB6);
+        assert_eq!(prg031_file_to_cpu(0x3E010), 0xE000);
     }
 
     #[test]
