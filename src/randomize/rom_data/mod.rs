@@ -14,6 +14,9 @@ use crate::rom::Rom;
 
 mod access;
 mod free_space;
+/// Structural checks for hand-assembled 6502 patches (test-only).
+#[cfg(test)]
+pub(crate) mod asm;
 mod grid;
 mod tables;
 mod tiles;

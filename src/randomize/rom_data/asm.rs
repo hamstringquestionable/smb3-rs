@@ -1,0 +1,270 @@
+//! Structural verification of hand-assembled 6502 patches.
+//!
+//! Every patch in this crate is a `&[u8]` of opcodes that no assembler ever
+//! checked. The classic failure is a miscounted relative branch: it still
+//! "assembles", lands mid-instruction, and the CPU executes an operand as an
+//! opcode. Nothing about the byte array looks wrong, and the ROM boots.
+//!
+//! This module decodes those bytes with the `mos6502` crate's Ricoh 2A03
+//! opcode table — the NES's CPU, so no decimal mode — and checks the
+//! properties that hold for *any* routine, without knowing what it is for:
+//!
+//! * every byte decodes as part of a well-formed instruction, and the routine
+//!   does not end mid-instruction
+//! * it ends in `RTS`/`RTI`/`JMP` rather than running off its own end into the
+//!   `$FF` filler that follows
+//! * every relative branch lands on an instruction boundary, inside the routine
+//! * the code fits its [`FREE_SPACE_ALLOCATIONS`] row and does not cross the
+//!   end of its bank
+//! * a hook displaces *whole* vanilla instructions, leaving no dangling operand
+//!   behind for the CPU to run as an opcode
+//!
+//! What it cannot check is semantics — a well-formed routine can compute the
+//! wrong answer. Executing one to settle that is a separate exercise; see the
+//! arithmetic tests in `stomp_fairness` for the pattern.
+//!
+//! Test-only: `mos6502` is a dev-dependency and never reaches the CLI binary
+//! or the WASM bundle.
+//!
+//! # Routines containing data
+//!
+//! The sweep is linear, so a routine carrying an inline data table would be
+//! misdecoded — and would fail loudly here rather than pass quietly, which is
+//! the intent. Every routine checked so far is pure code. The first one that
+//! is not should grow a `.data(range)` opt-out rather than skip the check.
+
+use std::collections::BTreeSet;
+
+use mos6502::instruction::{AddressingMode, Instruction, Ricoh2a03};
+use mos6502::Variant;
+
+use super::free_space::{prg_bank_end, FREE_SPACE_ALLOCATIONS};
+
+/// One instruction located by the linear sweep.
+struct Decoded {
+    start: usize,
+    len: usize,
+    instr: Instruction,
+    /// `true` for the relative-addressed branches, whose targets get checked.
+    relative: bool,
+}
+
+/// Walk `code` as a straight-line instruction stream.
+fn decode(code: &[u8]) -> Result<Vec<Decoded>, String> {
+    let mut out = Vec::new();
+    let mut pc = 0;
+    while pc < code.len() {
+        let byte = code[pc];
+        let Some((instr, mode)) = Ricoh2a03::decode(byte) else {
+            return Err(format!(
+                "byte {pc} (0x{byte:02X}) is not a valid Ricoh 2A03 opcode"
+            ));
+        };
+        let len = mode.extra_bytes() as usize + 1;
+        if pc + len > code.len() {
+            return Err(format!(
+                "{instr:?} at byte {pc} needs {len} bytes but only {} remain — \
+                 the routine ends mid-instruction",
+                code.len() - pc
+            ));
+        }
+        out.push(Decoded {
+            start: pc,
+            len,
+            instr,
+            relative: matches!(mode, AddressingMode::Relative),
+        });
+        pc += len;
+    }
+    Ok(out)
+}
+
+/// The vanilla bytes a hook overwrites, and how many of them it takes.
+struct Hook<'a> {
+    vanilla: &'a [u8],
+    offset: usize,
+    len: usize,
+}
+
+/// A patch under verification. Build with [`check`], then [`Routine::assert_ok`].
+pub struct Routine<'a> {
+    code: &'a [u8],
+    allocation: Option<usize>,
+    hook: Option<Hook<'a>>,
+}
+
+/// Begin checking an assembled routine.
+pub fn check(code: &[u8]) -> Routine<'_> {
+    Routine { code, allocation: None, hook: None }
+}
+
+impl<'a> Routine<'a> {
+    /// The [`FREE_SPACE_ALLOCATIONS`] row this routine is written to, named by
+    /// its file offset so that owners holding several rows stay unambiguous.
+    pub fn allocation(mut self, file_offset: usize) -> Self {
+        self.allocation = Some(file_offset);
+        self
+    }
+
+    /// The hook site: the vanilla ROM, the file offset the patch writes over,
+    /// and how many bytes it writes there.
+    pub fn hook(mut self, vanilla: &'a [u8], offset: usize, len: usize) -> Self {
+        self.hook = Some(Hook { vanilla, offset, len });
+        self
+    }
+
+    /// Run every configured check, panicking with all failures at once.
+    pub fn assert_ok(self) {
+        let mut problems: Vec<String> = Vec::new();
+
+        match decode(self.code) {
+            Err(e) => problems.push(e),
+            Ok(instrs) => {
+                match instrs.last() {
+                    None => problems.push("routine is empty".to_string()),
+                    Some(last) if !matches!(
+                        last.instr,
+                        Instruction::RTS | Instruction::RTI | Instruction::JMP
+                    ) =>
+                    {
+                        problems.push(format!(
+                            "routine ends in {:?} at byte {}; execution would run past the \
+                             end of the routine into whatever follows it",
+                            last.instr, last.start
+                        ));
+                    }
+                    Some(_) => {}
+                }
+
+                let starts: BTreeSet<usize> = instrs.iter().map(|i| i.start).collect();
+                for i in instrs.iter().filter(|i| i.relative) {
+                    let rel = self.code[i.start + 1] as i8 as isize;
+                    let target = i.start as isize + i.len as isize + rel;
+                    if target < 0 || target as usize >= self.code.len() {
+                        problems.push(format!(
+                            "{:?} at byte {} branches to {target}, outside the routine \
+                             (0..{})",
+                            i.instr,
+                            i.start,
+                            self.code.len()
+                        ));
+                    } else if !starts.contains(&(target as usize)) {
+                        problems.push(format!(
+                            "{:?} at byte {} branches to byte {target}, which is \
+                             mid-instruction",
+                            i.instr, i.start
+                        ));
+                    }
+                }
+            }
+        }
+
+        if let Some(offset) = self.allocation {
+            match FREE_SPACE_ALLOCATIONS.iter().find(|a| a.offset == offset) {
+                None => problems.push(format!(
+                    "no FREE_SPACE_ALLOCATIONS row starts at 0x{offset:05X}"
+                )),
+                Some(a) => {
+                    if self.code.len() > a.size {
+                        problems.push(format!(
+                            "routine is {} bytes but `{}` reserves only {}",
+                            self.code.len(),
+                            a.label,
+                            a.size
+                        ));
+                    }
+                    let bank_end = prg_bank_end(a.offset);
+                    if a.offset + self.code.len() > bank_end {
+                        problems.push(format!(
+                            "routine runs to 0x{:05X}, past the end of its bank \
+                             (0x{bank_end:05X}) — the tail would execute whatever is \
+                             paged in next",
+                            a.offset + self.code.len()
+                        ));
+                    }
+                }
+            }
+        }
+
+        if let Some(h) = self.hook
+            && let Err(e) = check_displacement(h.vanilla, h.offset, h.len)
+        {
+            problems.push(e);
+        }
+
+        assert!(
+            problems.is_empty(),
+            "assembled routine is malformed:\n  - {}",
+            problems.join("\n  - ")
+        );
+    }
+}
+
+/// A hook must overwrite a whole number of vanilla instructions.
+///
+/// Take one byte too few and the tail of the last displaced instruction is
+/// left behind, where the CPU will run its operand as an opcode.
+fn check_displacement(vanilla: &[u8], offset: usize, patch_len: usize) -> Result<(), String> {
+    let mut covered = 0;
+    let mut displaced = Vec::new();
+    while covered < patch_len {
+        let byte = vanilla[offset + covered];
+        let Some((instr, mode)) = Ricoh2a03::decode(byte) else {
+            return Err(format!(
+                "vanilla byte at 0x{:05X} (0x{byte:02X}) is not a valid opcode, so the \
+                 hook site cannot be checked",
+                offset + covered
+            ));
+        };
+        displaced.push(instr);
+        covered += mode.extra_bytes() as usize + 1;
+    }
+    if covered != patch_len {
+        return Err(format!(
+            "the {patch_len}-byte hook at 0x{offset:05X} displaces {displaced:?}, which is \
+             {covered} bytes — {} operand byte(s) would be left dangling for the CPU to \
+             execute as an opcode",
+            covered - patch_len
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The decoder is the foundation every other check stands on, so pin it
+    /// against instructions whose lengths are not in dispute.
+    #[test]
+    fn decode_lengths_match_the_addressing_modes() {
+        //     LDA $D0,X   BPL +2   EOR #$FF  LSR A  JMP $1234  RTS
+        let code = [0xB5, 0xD0, 0x10, 0x02, 0x49, 0xFF, 0x4A, 0x4C, 0x34, 0x12, 0x60];
+        let got: Vec<(usize, usize)> =
+            decode(&code).unwrap().iter().map(|i| (i.start, i.len)).collect();
+        assert_eq!(got, [(0, 2), (2, 2), (4, 2), (6, 1), (7, 3), (10, 1)]);
+    }
+
+    #[test]
+    fn rejects_a_branch_into_the_middle_of_an_instruction() {
+        // BPL +1 lands on the $FF operand of EOR #$FF rather than on the EOR.
+        let code = [0x10, 0x01, 0x49, 0xFF, 0x60];
+        let problems = std::panic::catch_unwind(|| check(&code).assert_ok());
+        assert!(problems.is_err());
+    }
+
+    #[test]
+    fn rejects_a_routine_that_falls_off_its_end() {
+        let code = [0xA9, 0x00]; // LDA #$00, no terminator
+        assert!(std::panic::catch_unwind(|| check(&code).assert_ok()).is_err());
+    }
+
+    #[test]
+    fn rejects_a_hook_that_leaves_a_dangling_operand() {
+        // STY $01 (2 bytes) then LDA $A3,X (2 bytes); a 3-byte hook splits the
+        // second one and strands its $A3 operand.
+        let vanilla = [0x84, 0x01, 0xB5, 0xA3];
+        assert!(check_displacement(&vanilla, 0, 3).is_err());
+        assert!(check_displacement(&vanilla, 0, 4).is_ok());
+    }
+}

@@ -135,10 +135,131 @@ pub fn apply(rom: &mut Rom) {
 
 #[cfg(test)]
 mod tests {
+    use mos6502::cpu::CPU;
+    use mos6502::instruction::{Instruction, Ricoh2a03};
+    use mos6502::memory::{Bus, Memory};
+    use mos6502::Variant;
+
     use super::*;
+    use crate::randomize::rom_data::asm;
 
     fn vanilla() -> Option<Vec<u8>> {
         std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()
+    }
+
+    /// Object slot the routine is exercised on; `LDA Objects_YVel,X` reads
+    /// `$D0 + X`, and any slot exercises the same code.
+    const SLOT: u8 = 3;
+    const OBJECTS_YVEL: u16 = 0x00D0;
+    const TEMP_VAR2: u16 = 0x0001;
+
+    /// A CPU with the routine loaded at its real origin. Reused across cases:
+    /// the routine does not modify itself, so only the inputs need resetting.
+    fn cpu_with_routine() -> CPU<Memory, Ricoh2a03> {
+        let mut mem = Memory::new();
+        mem.set_bytes(STOMP_RISE_CPU, &STOMP_RISE_CODE);
+        CPU::new(mem, Ricoh2a03)
+    }
+
+    /// Run the routine for one `(velocity, height)` pair and return the stomp
+    /// height it commits to `Temp_Var2`.
+    ///
+    /// Entry state mirrors the hook site: `Y` holds the height `$D218` selected
+    /// and `X` the object slot, which is exactly what the displaced
+    /// `STY Temp_Var2` was about to act on.
+    fn stomp_height(cpu: &mut CPU<Memory, Ricoh2a03>, vel: u8, height: u8) -> u8 {
+        cpu.memory.set_byte(OBJECTS_YVEL + u16::from(SLOT), vel);
+        cpu.memory.set_byte(TEMP_VAR2, 0xAA); // poison: a missing store stays visible
+        cpu.registers.program_counter = STOMP_RISE_CPU;
+        cpu.registers.index_x = SLOT;
+        cpu.registers.index_y = height;
+
+        for _ in 0..STOMP_RISE_CODE.len() {
+            let op = cpu.memory.get_byte(cpu.registers.program_counter);
+            if matches!(Ricoh2a03::decode(op), Some((Instruction::RTS, _))) {
+                return cpu.memory.get_byte(TEMP_VAR2);
+            }
+            cpu.single_step();
+        }
+        panic!("routine ran past {} instructions without reaching RTS", STOMP_RISE_CODE.len());
+    }
+
+    /// The whole point of the routine, over every input it can ever see.
+    ///
+    /// A non-negative velocity must leave the vanilla height alone; a rising
+    /// one must lose its whole-pixel rise, floored at zero. 65,536 cases, which
+    /// is the entire state space — the routine reads nothing else.
+    #[test]
+    fn rise_is_subtracted_from_the_stomp_height() {
+        let mut cpu = cpu_with_routine();
+        for height in 0..=u8::MAX {
+            for vel in 0..=u8::MAX {
+                let want = if vel < 0x80 {
+                    height // falling or stationary: untouched
+                } else {
+                    let rise = (vel ^ 0xFF) >> 4; // |vel| - 1, in whole pixels
+                    let t = height.wrapping_sub(rise).wrapping_sub(1); // CLC borrows the 1 back
+                    if t & 0x80 == 0 { t } else { 0 } // clamp rather than wrap
+                };
+                assert_eq!(
+                    stomp_height(&mut cpu, vel, height),
+                    want,
+                    "vel=0x{vel:02X} height={height}"
+                );
+            }
+        }
+    }
+
+    /// The claim [`STOMP_RISE_CODE`]'s comment makes: for the whole-pixel
+    /// velocities the engine actually produces, the height loses *exactly* the
+    /// rise — the `EOR`'s off-by-one and the `CLC`'s borrow cancel. This is the
+    /// property the size trick is only worth having if it preserves.
+    #[test]
+    fn whole_pixel_rises_are_cancelled_exactly() {
+        let mut cpu = cpu_with_routine();
+        for px in 1..=8u8 {
+            let vel = 0u8.wrapping_sub(px * 16); // -$10 ..= -$80
+            for height in px..=64 {
+                // heights where the clamp cannot bite
+                assert_eq!(
+                    stomp_height(&mut cpu, vel, height),
+                    height - px,
+                    "{px} px/frame at height {height}"
+                );
+            }
+        }
+    }
+
+    /// The velocities and heights that actually occur in the game, spelled out.
+    /// Heights are the three `$D218` picks (`prg000.asm:3800`); velocities come
+    /// from `ObjNorm_CheepCheepHopper` and `Koopaling_JumpYVels`.
+    #[test]
+    fn vanilla_cases() {
+        let mut cpu = cpu_with_routine();
+        // Cheep Cheep Hopper, height 17: launches at -$30, or -$60 close in.
+        assert_eq!(stomp_height(&mut cpu, 0xD0, 17), 14); // 3 px/frame
+        assert_eq!(stomp_height(&mut cpu, 0xA0, 17), 11); // 6 px/frame
+        // Koopaling's fastest jump against the generic height.
+        assert_eq!(stomp_height(&mut cpu, 0x90, 19), 12); // 7 px/frame
+        // Falling or stationary leaves vanilla behaviour untouched — including
+        // the Player's own FALLRATE_MAX, which is downward and so not a rise.
+        assert_eq!(stomp_height(&mut cpu, 0x00, 19), 19);
+        assert_eq!(stomp_height(&mut cpu, 0x40, 19), 19);
+        // A giant (height 8) at the fastest representable rise clamps to zero
+        // instead of wrapping to 255, which would invert the comparison.
+        assert_eq!(stomp_height(&mut cpu, 0x80, 8), 0);
+    }
+
+    /// Decode the assembled bytes and check the structural properties no
+    /// assembler was around to check. Supersedes the hand-derived branch-index
+    /// assertions this test used to carry.
+    #[test]
+    fn routine_is_well_formed() {
+        let Some(v) = vanilla() else { return };
+        asm::check(&STOMP_RISE_CODE)
+            .allocation(FS_STOMP_RISE)
+            .hook(&v, STOMP_HEIGHT_HOOK, 4)
+            .assert_ok();
     }
 
     /// Both patch sites, against the bytes the disassembly says are there. A
@@ -169,20 +290,7 @@ mod tests {
             STOMP_RISE_CPU as u8,
             (STOMP_RISE_CPU >> 8) as u8,
         ]);
-        // PRG030 is only mapped at $8000-$9FFF; a routine crossing into the
-        // next bank would execute whatever happens to be paged in.
-        assert!(FS_STOMP_RISE + STOMP_RISE_CODE.len() <= 0x3E010);
-    }
-
-    /// The two `BPL`s are the only relative branches; a miscount lands
-    /// mid-instruction and would still assemble, so pin both targets.
-    #[test]
-    fn routine_branches_land_on_instruction_boundaries() {
-        // BPL at index 2 skips to `.store` (STY $01) at index 21.
-        assert_eq!(STOMP_RISE_CODE[3] as usize + 4, 21);
-        assert_eq!(STOMP_RISE_CODE[21], 0x84);
-        // BPL at index 16 skips the clamp to `.keep` (TAY) at index 20.
-        assert_eq!(STOMP_RISE_CODE[17] as usize + 18, 20);
-        assert_eq!(STOMP_RISE_CODE[20], 0xA8);
+        // Bank containment and allocation fit are checked generically by
+        // `routine_is_well_formed`.
     }
 }
