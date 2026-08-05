@@ -31,6 +31,7 @@ pub mod qol;
 pub mod rom_data;
 pub mod segment_writer;
 pub mod start_airship_swap;
+pub mod stomp_fairness;
 pub mod title_screen;
 pub mod troll_pipes;
 pub mod world_order;

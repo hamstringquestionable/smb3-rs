@@ -73,6 +73,17 @@ pub(crate) const fn prg031_file_to_cpu(file_offset: usize) -> u16 {
     (0xE000 + (file_offset - 0x3E010)) as u16
 }
 
+/// Convert a file offset in PRG030 (always mapped at $8000-$9FFF, file
+/// 0x3C010) to its CPU address.
+///
+/// [`prg_bank_file_to_cpu`] hardcodes the $A000 window and is wrong here, so
+/// PRG030 needs its own converter the way PRG031 does. Deriving beats writing
+/// the address out by hand: dropping the 0x10 iNES header was the issue #14
+/// root cause, and a transcribed operand cannot drift back into agreement.
+pub(crate) const fn prg030_file_to_cpu(file_offset: usize) -> u16 {
+    (0x8000 + (file_offset - 0x3C010)) as u16
+}
+
 /// Build a 3-byte `JSR <target>` where `target` is given as a *file offset*
 /// inside `bank` (the $A000-window bank live when the hook runs). The operand
 /// is computed from [`prg_bank_file_to_cpu`], so it can never drift from where

@@ -77,7 +77,7 @@ is the one to read:
 | Bank | Mapped at | Free left | Largest single gap |
 |------|-----------|-----------|--------------------|
 | PRG031 | `$E000–$FFFF`, always | 81 | **30** |
-| PRG030 | `$8000–$9FFF`, always | 120 | 74 |
+| PRG030 | `$8000–$9FFF`, always | 88 | 42 |
 | PRG001 | swapped, in-level (object AI) | 60 | 38 |
 | PRG003 | swapped, in-level (object AI) | 5 | 5 |
 | PRG004 | swapped, in-level (object AI, group 3) | 426 | 426 |
@@ -90,7 +90,7 @@ is the one to read:
 PRG000 and PRG002 have no `$FF` filler left at all.
 
 The always-mapped banks are effectively full. A patch that must run regardless of
-the current bank has one 74-byte gap in PRG030 and nothing over 30 bytes in
+the current bank has one 42-byte gap in PRG030 and nothing over 30 bytes in
 PRG031, so past that a trampoline into a swapped bank is the only option — and
 that costs bytes too.
 

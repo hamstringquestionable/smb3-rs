@@ -59,15 +59,20 @@ fn sweep_is_deterministic() {
     );
 }
 
-/// Baseline captured 2026-08-03, before any call site was migrated onto
-/// `rom_data::tiles`. Regenerate ONLY for a change intended to alter output,
-/// and say so explicitly in the commit — never to make a red test green.
+/// Regenerate ONLY for a change intended to alter output, and say so
+/// explicitly in the commit — never to make a red test green.
+///
+/// Captured 2026-08-03 before the `rom_data::tiles` migration; re-captured
+/// 2026-08-05 for the always-on stomp-fairness patch, which writes 31 bytes
+/// into every ROM (`stomp_fairness::apply`). These hashes cover the whole
+/// output, so all 20 seeds moved. Overworld topology is untouched by that
+/// change — the ROM bytes differ, the maps do not.
 const BASELINE: [u64; SEEDS as usize] = [
-    0x3CC73D4F8B706AB2, 0x0AEF65A488DCD062, 0x0D056AF8D18E2BFB, 0xB3D5BE313EA37464,
-    0xC7B499E3B7AA3B6D, 0xB5846D1438CE3405, 0x03A24CDEBF64925D, 0x10AA8775674EC492,
-    0xEF8F05273F6202B2, 0x1309B3871D9DD47A, 0x1A760A893B1EA373, 0xB503C9D7095AF6A6,
-    0x43E966B75F3514FF, 0x5968F3BEF7300364, 0x192F85ECF86D75C6, 0x538E5F94D3045FD0,
-    0xB6EDBAACEE372D9C, 0xBC57F481A392D55D, 0x15C89DC8756F6CCA, 0x2F1856871DD3784F,
+    0x155EB975967C4ACB, 0x2DF4A1430D34B093, 0x322575642AA955A6, 0xDEC206CE9041867D,
+    0x15161E783EA3EE9C, 0xF17D4FA051D5EFF4, 0x166EFDF30A772D68, 0x25AD61FEE292102B,
+    0x84F587DBEB2C4E87, 0x75E73651FABAF77B, 0x6EE09335C4E431EA, 0x3CFE80C049E1A927,
+    0xC94F13DA4DD0B4F6, 0xB2734D41553967FD, 0x9A69302D9136071F, 0xEDC915F4FF8C9761,
+    0x6D86BC8A599AFF69, 0x9DD7B9A808BD3134, 0x04EE05C950E8DACB, 0xDBD8F12889EAA542,
 ];
 
 #[test]
