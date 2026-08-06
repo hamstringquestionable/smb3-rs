@@ -15,6 +15,7 @@ use flag_key::*;
 use options::*;
 
 // Public API re-exported by the crate root (see lib.rs).
+pub use flag_key::{current_flag_key_version, flag_key_version_of};
 pub use options::{
     item_display_name, item_id, EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri,
     WildChaser, ITEMS, ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY,

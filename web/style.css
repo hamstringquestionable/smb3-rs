@@ -660,6 +660,16 @@ input[type="radio"] {
     font-size: 0.8rem;
 }
 
+/* A key that failed to apply stays in the box so it can be re-copied or
+   reported, so the box has to say it didn't take. Same red as .status.error.
+   Wins over :focus, which would otherwise hide the marking as soon as the user
+   clicked back into the field to fix the key. */
+#flag-key-input.invalid,
+#flag-key-input.invalid:focus {
+    border-color: #e44434;
+    background: rgba(228, 68, 52, 0.08);
+}
+
 .preset-pills {
     display: flex;
     flex-wrap: wrap;
