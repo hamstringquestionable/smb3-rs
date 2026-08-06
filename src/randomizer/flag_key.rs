@@ -3,7 +3,7 @@
 
 use super::*;
 
-pub(super) const FLAG_KEY_VERSION: u8 = 27;
+pub(super) const FLAG_KEY_VERSION: u8 = 28;
 
 pub(super) const FLAG_KEY_PREFIX: &str = "SMB3R-";
 
@@ -76,6 +76,12 @@ impl Options {
     pub fn to_flag_bytes(&self) -> [u8; 13] {
         let b0 = FLAG_KEY_VERSION;
 
+        // The wild-injection chaser set is one bit each, scattered across three
+        // bytes because no byte had three bits free: sun in b4 bit 0 (where the
+        // old bool lived), lakitu in b12 bit 7, bass in b2 bit 5 (the dead
+        // shuffle_pipes slot). Same trick as eights_are_wild in b11.
+        let has = |c: WildChaser| self.wild_injections.contains(&c) as u8;
+
         // b1: non-enemy flags. hammer_breaks_locks is tri-state: its value bit
         // stores On vs (Off/Maybe); the Maybe bit lives in b11.
         // b1 bit 1 = shuffle_hammer_bros (reuses the slot formerly airship_lock,
@@ -89,12 +95,13 @@ impl Options {
             | (self.shuffle_hammer_bros as u8) << 1
             | (self.chest_items as u8);
 
-        // b2 bit 5 is free (formerly shuffle_pipes, a dead flag removed in v26).
+        // b2 bit 5 = wild-injection Bass bit (was free since shuffle_pipes, a dead\n        // flag removed in v26). That was the last free bit outside b12 bit 7.
         // b2 bit 4 = faster_frog (reuses the slot formerly fix_drawbridges,
         // now always-on).
         // b2 bit 3 = boomboom_hits (reuses the slot formerly remove_rocks).
         let b2 = (self.remove_whistles as u8) << 7
             | (self.hands_levels as u8) << 6
+            | has(WildChaser::Bass) << 5
             | (self.faster_frog as u8) << 4
             | (self.boomboom_hits as u8) << 3
             | (self.troll_pipes.is_on() as u8) << 2
@@ -125,14 +132,14 @@ impl Options {
 
         // b4: card_speed_clear(7) remove_n_cards(6) skip_wand_cutscene(5)
         //     adjust_boss_hitboxes(4) shuffle_spade_games(3)
-        //     hb_encounters(2-1) wild_injections(0)
+        //     hb_encounters(2-1) wild_injections low bit(0)
         let b4 = (self.card_speed_clear as u8) << 7
             | (self.remove_n_cards as u8) << 6
             | (self.skip_wand_cutscene as u8) << 5
             | (self.adjust_boss_hitboxes as u8) << 4
             | (self.shuffle_spade_games as u8) << 3
             | em(self.hb_encounters) << 1
-            | (self.wild_injections as u8);
+            | has(WildChaser::Sun);
 
         // b5: ground(7-6) shell(5-4) flying(3-2) hammer_vulnerable_koopalings(1) early_sun(0)
         let b5 = em(self.ground) << 6
@@ -221,13 +228,15 @@ impl Options {
 
         // b12: piranha_shuffle(1-0), antechamber_shuffle ON bit (2) and
         // Maybe bit (3), anchor_visuals(4), poison_mushrooms(5),
-        // modern_powerups(6). Bit 7 free for future flags.
+        // modern_powerups(6), wild_injections high bit (7 — the key is now
+        // full; the next flag needs a 14th byte).
         let b12 = pm(self.piranha_shuffle)
             | (self.antechamber_shuffle.is_on() as u8) << 2
             | (self.antechamber_shuffle.is_maybe() as u8) << 3
             | (self.anchor_visuals as u8) << 4
             | (self.poison_mushrooms as u8) << 5
-            | (self.modern_powerups as u8) << 6;
+            | (self.modern_powerups as u8) << 6
+            | has(WildChaser::Lakitu) << 7;
 
         [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12]
     }
@@ -308,6 +317,18 @@ impl Options {
             }
         }
 
+        // Rebuild the wild-injection chaser set from its three scattered bits,
+        // always in WildChaser::ALL order so a round-trip normalizes.
+        let chasers: Vec<WildChaser> = [
+            (WildChaser::Sun, b4 & 1),
+            (WildChaser::Lakitu, (b12 >> 7) & 1),
+            (WildChaser::Bass, (b2 >> 5) & 1),
+        ]
+        .into_iter()
+        .filter(|&(_, bit)| bit != 0)
+        .map(|(c, _)| c)
+        .collect();
+
         Ok(Options {
             powerups: (b1 >> 7) & 1 != 0,
             palettes: true,
@@ -362,7 +383,7 @@ impl Options {
             water: dem(b7 >> 2),
             bros: dem(b7),
             hb_encounters: dem(b4 >> 1),
-            wild_injections: b4 & 1 != 0,
+            wild_injections: chasers,
             starting_items: {
                 // Decode per-slot random mode from b10 bits 5-0
                 fn mode_to_sentinel(mode: u8, nibble: u8) -> u8 {
@@ -401,6 +422,6 @@ impl Options {
             || self.ghosts != EnemyMode::Off || self.thwomps != EnemyMode::Off
             || self.rotodiscs != EnemyMode::Off || self.cannons != EnemyMode::Off
             || self.water != EnemyMode::Off || self.bros != EnemyMode::Off
-            || self.hb_encounters != EnemyMode::Off || self.wild_injections
+            || self.hb_encounters != EnemyMode::Off || !self.wild_injections.is_empty()
     }
 }

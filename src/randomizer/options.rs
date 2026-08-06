@@ -124,6 +124,47 @@ pub enum PiranhaMode {
     Wild,
 }
 
+/// A level-wide chaser the wild-injection pass can seed into a level. The
+/// option is the *set* of these the player allowed — an empty set is off.
+///
+/// When more than one is allowed the pick is weighted toward the Angry Sun
+/// (see `SUN_INJECTION_WEIGHT`), the gentlest of the three.
+///
+/// Narrowing the set ought to inject into fewer levels — a candidate whose
+/// segment CHR can't fit the allowed chaser (or that already has one) is
+/// skipped rather than handed a different one. Measured, it doesn't: every
+/// combination lands 8-9 injections per seed over 20 seeds, and the gap
+/// between combinations is the same size as the gap between two runs of the
+/// *same* one, since each draws a different RNG stream. Run the
+/// `print_injection_counts` diagnostic before believing otherwise.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WildChaser {
+    /// Angry Sun.
+    Sun,
+    /// Lakitu, the enemy-spawning variant.
+    Lakitu,
+    /// Big Bertha, the leaping eater — the "Boss Bass".
+    Bass,
+}
+
+impl WildChaser {
+    /// Every chaser, in the canonical order the flag key, the CLI and the web
+    /// pill all use. Decoding produces this order, so a round-trip normalizes.
+    pub const ALL: [WildChaser; 3] = [WildChaser::Sun, WildChaser::Lakitu, WildChaser::Bass];
+
+    /// The lowercase name used by the CLI, the web pill, and serde.
+    pub fn name(self) -> &'static str {
+        match self {
+            WildChaser::Sun => "sun",
+            WildChaser::Lakitu => "lakitu",
+            WildChaser::Bass => "bass",
+        }
+    }
+}
+
 /// Tri-state toggle for player-hidden flags: forced `Off`, forced `On`, or
 /// left to the seed (`Maybe`). A `Maybe` flag is resolved to a concrete
 /// on/off at generation time from a dedicated RNG substream (see
@@ -416,9 +457,10 @@ pub struct Options {
     /// All enemies in Hammer Bro encounter segments
     #[serde(default = "default_off")]
     pub hb_encounters: EnemyMode,
-    /// Inject Lakitu/Angry Sun/Boss Bass into ~15% of segments (CHR-compatible)
+    /// Which level-wide chasers may be seeded into a fraction of real levels
+    /// (CHR-compatible). Empty = off. See [`WildChaser`].
     #[serde(default)]
-    pub wild_injections: bool,
+    pub wild_injections: Vec<WildChaser>,
     /// Skip the SMB3 (USA) iNES header / page-count / size checks so that
     /// modded or translated ROMs can be loaded. When true, the title-screen
     /// seed hash is also skipped because its hooks rely on vanilla offsets.
@@ -491,7 +533,7 @@ impl Default for Options {
             water: EnemyMode::Shuffle,
             bros: EnemyMode::Shuffle,
             hb_encounters: EnemyMode::Off,
-            wild_injections: false,
+            wild_injections: Vec::new(),
             starting_lives: default_starting_lives(),
             starting_items: Vec::new(),
             skip_rom_validation: false,

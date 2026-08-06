@@ -315,7 +315,10 @@ input[type="radio"] {
     margin-left: auto;
 }
 
-.pill-group input[type="radio"] {
+/* Pill groups are radios (pick one) or checkboxes (toggle several, as in
+   Wild Injections). Both hide the input and style the adjacent label. */
+.pill-group input[type="radio"],
+.pill-group input[type="checkbox"] {
     display: none;
 }
 
@@ -339,21 +342,21 @@ input[type="radio"] {
     color: #e0e0e0;
 }
 
-.pill-group input[type="radio"]:checked + label {
+.pill-group input:checked + label {
     background: var(--pill-active, #4a8a4f);
     color: var(--pill-active-text, #fff);
 }
 
 /* "Off" selected: muted gray so an explicit off doesn't read as a hot accent. */
-.pill-group input[type="radio"][value="off"]:checked + label {
+.pill-group input[value="off"]:checked + label {
     background: #3a3a60;
     color: #b8b8d0;
 }
 
 /* "Maybe" and "Wild" share a cool violet to mark "the seed picks something
    spicier than a plain shuffle". Visually distinct from the green on/shuffle accent. */
-.pill-group input[type="radio"][value="maybe"]:checked + label,
-.pill-group input[type="radio"][value="wild"]:checked + label {
+.pill-group input[value="maybe"]:checked + label,
+.pill-group input[value="wild"]:checked + label {
     background: #6f5fb8;
     color: #fff;
 }

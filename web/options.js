@@ -58,6 +58,16 @@ const ON_OFF_MAYBE = [
 	{ value: "maybe", label: "Maybe" },
 ];
 
+// Wild Injections is a `toggles` pill: "Off" is exclusive and the chasers
+// toggle independently, so the value is the list of lit ones (empty = off).
+// Values match the Rust `WildChaser` enum.
+const WILD_INJECTION_TOGGLES = [
+	{ value: "off", label: "Off" },
+	{ value: "sun", label: "Sun" },
+	{ value: "lakitu", label: "Lakitu" },
+	{ value: "bass", label: "Bass" },
+];
+
 // Off / On / Wild pill for Random Fire Flower. "Wild" widens the pool to also
 // include the Small/Big downgrade outcomes. Values match the Rust
 // `FireFlowerMode` enum's serde representation.
@@ -235,9 +245,10 @@ export const SCHEMA = [
 		label: "HB Encounters",
 		tip: "All enemies in overworld Hammer Bro mini-battles",
 		group: "enemies", inFlagKey: true },
-	{ id: "wild_injections", type: "bool", default: false,
+	{ id: "wild_injections", type: "toggles", options: WILD_INJECTION_TOGGLES,
+		default: [],
 		label: "Wild Injections",
-		tip: "Spawn Lakitu, Angry Sun, or Boss Bass in ~15% of levels",
+		tip: "Drop a chaser into some levels that never had one — an Angry Sun, a Lakitu, or a leaping Big Bertha. Pick any combination.",
 		group: "enemies", inFlagKey: true },
 	{ id: "early_sun", type: "bool", default: false,
 		label: "Early Sun",
@@ -414,7 +425,7 @@ export const PRESETS = [
 			ground: "wild", shell: "wild", flying: "wild", piranhas: "wild",
 			ghosts: "wild", water: "wild", cannons: "wild", hb_encounters: "wild",
 			rotodiscs: "shuffle",
-			wild_injections: true, early_sun: true,
+			wild_injections: ["sun", "lakitu"], early_sun: true,
 			include_beta_stages: true, swap_start_airship: true,
 			big_q_blocks: true, starting_items: [15],
 			fast_mushroom_house: true, faster_frog: true, faster_tail_speed: true,
@@ -456,7 +467,7 @@ export const PRESETS = [
 		overrides: {
 			ground: "wild", shell: "wild", flying: "wild",
 			hb_encounters: "shuffle", rotodiscs: "shuffle",
-			wild_injections: true, early_sun: true,
+			wild_injections: ["sun", "lakitu"], early_sun: true,
 			include_beta_stages: true,
 			shuffle_spade_games: false, shuffle_toad_houses: false,
 			hands_levels: false, troll_pipes: "off",
@@ -471,7 +482,7 @@ export const PRESETS = [
 			ground: "wild", shell: "wild", flying: "wild", piranhas: "wild",
 			ghosts: "wild", thwomps: "wild", rotodiscs: "wild", cannons: "wild",
 			water: "wild", bros: "wild", hb_encounters: "wild",
-			wild_injections: true, early_sun: true,
+			wild_injections: ["sun", "lakitu"], early_sun: true,
 			include_beta_stages: true, swap_start_airship: true,
 			big_q_blocks: true, starting_items: [15, 15, 15],
 			faster_tail_speed: true, faster_frog: true,
@@ -487,7 +498,7 @@ export const PRESETS = [
 			ground: "wild", shell: "wild", flying: "wild", piranhas: "wild",
 			ghosts: "wild", thwomps: "wild", rotodiscs: "wild", cannons: "wild",
 			water: "wild", bros: "wild", hb_encounters: "wild",
-			wild_injections: true, early_sun: true,
+			wild_injections: ["sun", "lakitu"], early_sun: true,
 			include_beta_stages: true, swap_start_airship: true,
 			big_q_blocks: true, poison_mushrooms: true,
 			world_order: true, random_koopalings: true,
@@ -674,6 +685,57 @@ function renderTri(entry) {
 	return wrap;
 }
 
+// A pill group where the non-"off" pills toggle independently: check Sun,
+// check Bass, check both. The value is the array of lit pill values, in
+// schema order; empty means off, which is what the exclusive "Off" pill sets.
+function togglePills(entry) {
+	return entry.options.filter(o => o.value !== "off");
+}
+
+function toggleNode(entry, value) {
+	return document.getElementById(`${domId(entry.id)}-${value}`);
+}
+
+// Keep the group coherent after any click: "off" is exclusive, and clearing
+// the last lit pill falls back to "off" so the row is never blank.
+function syncToggles(entry, clicked) {
+	const off = toggleNode(entry, "off");
+	const pills = togglePills(entry).map(o => toggleNode(entry, o.value)).filter(Boolean);
+	if (clicked === "off") {
+		for (const node of pills) node.checked = false;
+		if (off) off.checked = true; // clicking "off" while off keeps it off
+		return;
+	}
+	if (off) off.checked = !pills.some(node => node.checked);
+}
+
+function renderToggles(entry) {
+	const wrap = el("label", { class: "select-label" });
+	const icon = iconCanvas(entry);
+	if (icon) wrap.appendChild(icon);
+	wrap.appendChild(document.createTextNode(entry.label));
+	const btn = tipBtn(entry);
+	if (btn) wrap.appendChild(btn);
+	const group = el("div", { class: "pill-group" });
+	for (const opt of entry.options) {
+		const inputId = `${domId(entry.id)}-${opt.value}`;
+		const lit = opt.value === "off"
+			? entry.default.length === 0
+			: entry.default.includes(opt.value);
+		const input = el("input", {
+			type: "checkbox", name: radioName(entry.id), id: inputId,
+			value: opt.value, checked: lit,
+		});
+		// Registered before wireListeners' listener on the same node, so the
+		// group is already coherent by the time readValue runs.
+		input.addEventListener("change", () => syncToggles(entry, opt.value));
+		group.appendChild(input);
+		group.appendChild(el("label", { for: inputId }, opt.label));
+	}
+	wrap.appendChild(group);
+	return wrap;
+}
+
 function renderSelect(entry) {
 	const wrap = el("label", {
 		class: "select-label" + (entry.indent ? " sub-options" : ""),
@@ -793,6 +855,7 @@ function renderNesColor(entry) {
 const RENDERERS = {
 	bool: renderBool,
 	tri: renderTri,
+	toggles: renderToggles,
 	select: renderSelect,
 	radio: renderRadio,
 	items: renderItems,
@@ -849,6 +912,13 @@ export function readValue(entry) {
 			const v = checked?.value ?? entry.default;
 			return entry.numeric ? Number(v) : v;
 		}
+		case "toggles": {
+			const pills = togglePills(entry).map(o => toggleNode(entry, o.value));
+			if (pills.every(node => !node)) return entry.default; // not rendered yet
+			return togglePills(entry)
+				.filter(o => toggleNode(entry, o.value)?.checked)
+				.map(o => o.value);
+		}
 		case "select": {
 			const v = document.getElementById(domId(entry.id))?.value ?? entry.default;
 			return entry.numeric ? Number(v) : v;
@@ -882,6 +952,18 @@ export function writeValue(entry, value) {
 		case "radio": {
 			const e = document.querySelector(`input[name="${radioName(entry.id)}"][value="${value}"]`);
 			if (e) e.checked = true;
+			break;
+		}
+		case "toggles": {
+			// Tolerates a bare string as well as a list so a hand-edited or
+			// older payload ("sun") still applies.
+			const want = Array.isArray(value) ? value : [value];
+			for (const opt of entry.options) {
+				const node = toggleNode(entry, opt.value);
+				if (node) node.checked = opt.value === "off"
+					? want.length === 0
+					: want.includes(opt.value);
+			}
 			break;
 		}
 		case "select": {
@@ -943,6 +1025,12 @@ export function formatValue(entry, value) {
 		case "select": {
 			const opt = entry.options.find(o => o.value === value);
 			return opt ? opt.label : String(value);
+		}
+		case "toggles": {
+			if (!Array.isArray(value) || value.length === 0) return "OFF";
+			return value
+				.map(v => entry.options.find(o => o.value === v)?.label ?? v)
+				.join(" + ");
 		}
 		case "items": {
 			if (!Array.isArray(value) || value.length === 0) return "(none)";
@@ -1006,6 +1094,7 @@ function entryDomIds(entry) {
 			return BOOL_OPTIONS.map(o => `${domId(entry.id)}-${o.value}`);
 		case "tri":
 		case "radio":
+		case "toggles":
 			return entry.options.map(o => `${domId(entry.id)}-${o.value}`);
 		case "items":
 			return Array.from({ length: entry.slots }, (_, i) => `${domId(entry.id)}-${i}`);
@@ -1029,7 +1118,7 @@ function entryDomIds(entry) {
 // every other state is `opt-on` except for "maybe" which gets its own variant.
 export function applyRowStates() {
 	for (const entry of SCHEMA) {
-		if (entry.type !== "bool" && entry.type !== "tri") continue;
+		if (!["bool", "tri", "toggles"].includes(entry.type)) continue;
 		const ids = entryDomIds(entry);
 		const first = document.getElementById(ids[0]);
 		if (!first) continue;
@@ -1039,6 +1128,8 @@ export function applyRowStates() {
 		let on = false, maybe = false;
 		if (entry.type === "bool") {
 			on = value === true;
+		} else if (entry.type === "toggles") {
+			on = Array.isArray(value) && value.length > 0;
 		} else if (value === "maybe" || value === "wild") {
 			// "wild" and "maybe" share the cool violet — both mean "the seed picks
 			// something spicier than the plain shuffle / on baseline".
@@ -1081,6 +1172,10 @@ export function saveSettings() {
 			const v = readValue(entry);
 			if (entry.type === "bool") {
 				settings[`radio:${radioName(entry.id)}`] = v ? "on" : "off";
+			} else if (entry.type === "toggles") {
+				// Own key prefix: the value is a list, which no single input
+				// carries. Stored as JSON so restore gets an array back.
+				settings[`toggles:${radioName(entry.id)}`] = JSON.stringify(v);
 			} else if (entry.type === "tri" || entry.type === "radio") {
 				settings[`radio:${radioName(entry.id)}`] = v;
 			} else if (entry.type === "nescolor") {
@@ -1109,10 +1204,25 @@ export function restoreSettings() {
 		if (!raw) return;
 		const settings = JSON.parse(raw);
 		for (const [key, val] of Object.entries(settings)) {
-			if (key.startsWith("radio:")) {
+			if (key.startsWith("toggles:")) {
+				const name = key.slice(8);
+				const entry = SCHEMA.find(e => e.type === "toggles" && radioName(e.id) === name);
+				if (!entry) continue;
+				let parsed;
+				try { parsed = JSON.parse(val); } catch (_) { parsed = val; }
+				// Pre-Bass settings stored the combined value as "both".
+				if (parsed === "both") parsed = ["sun", "lakitu"];
+				writeValue(entry, parsed);
+			} else if (key.startsWith("radio:")) {
 				const name = key.slice(6);
 				const elNode = document.querySelector(`input[name="${name}"][value="${val}"]`);
 				if (elNode) elNode.checked = true;
+				if (elNode) continue;
+				// Legacy: a field that used to be a bool and is now a toggle
+				// group (wild_injections). "on" meant the pool as it stood
+				// then — sun and lakitu, before Boss Bass joined.
+				const promoted = SCHEMA.find(e => e.type === "toggles" && radioName(e.id) === name);
+				if (promoted) writeValue(promoted, val === "on" ? ["sun", "lakitu"] : []);
 			} else {
 				const elNode = document.getElementById(key);
 				if (elNode) {

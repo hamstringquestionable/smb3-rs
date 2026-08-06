@@ -12,6 +12,66 @@ pub(super) struct SegmentEntry {
     pub(super) x_pos: u8,
 }
 
+/// CHR pages a segment has already spoken for before any pick is made.
+/// `all` is every fixed entry; `chaser` is the subset that follows the player
+/// across proximity groups (see `CHASER_IDS`).
+#[derive(Clone, Copy)]
+pub(super) struct SegmentPins {
+    pub(super) all: (ChrSlot, ChrSlot),
+    pub(super) chaser: (ChrSlot, ChrSlot),
+}
+
+impl SegmentPins {
+    /// Nothing committed — the Big-?-block pass, which skips the CHR model.
+    pub(super) fn none() -> Self {
+        SegmentPins {
+            all: (ChrSlot::Free, ChrSlot::Free),
+            chaser: (ChrSlot::Free, ChrSlot::Free),
+        }
+    }
+}
+
+/// Whether an entry's obj_id is settled before the picks run: pinned by class
+/// or protection, or a chaser wild injection just wrote here.
+///
+/// The injected case is not redundant with `is_pinned`: `should_precommit`
+/// returns false for anything in a Wild pool, so an injected Boss Bass with
+/// water Wild would otherwise be swapped straight back out — the exact
+/// reshuffle that kept Bertha out of the injection pool to begin with.
+pub(super) fn is_fixed(entry: &SegmentEntry, modes: &ClassModes, injected: &[usize]) -> bool {
+    injected.contains(&entry.data_index)
+        || is_pinned(entry.obj_id, ENEMY_DATA_START + entry.data_index, modes)
+}
+
+/// Accumulate the segment's fixed CHR pages. `skip` drops one entry from the
+/// tally — the wild-injection decision uses it to ignore the enemy it is about
+/// to replace, whose page is on its way out.
+///
+/// Single definition on purpose: the injection decision and the walker's own
+/// seeding must agree about what "already pinned" means, and a second copy of
+/// this loop is what let the old pre-walk injection pass drift.
+pub(super) fn segment_pins(
+    entries: &[SegmentEntry],
+    modes: &ClassModes,
+    injected: &[usize],
+    skip: Option<usize>,
+) -> SegmentPins {
+    let mut pins = SegmentPins {
+        all: (ChrSlot::Free, ChrSlot::Free),
+        chaser: (ChrSlot::Free, ChrSlot::Free),
+    };
+    for entry in entries {
+        if Some(entry.data_index) == skip || !is_fixed(entry, modes, injected) {
+            continue;
+        }
+        commit_chr_page(entry.obj_id, &mut pins.all.0, &mut pins.all.1);
+        if CHASER_IDS.contains(&entry.obj_id) {
+            commit_chr_page(entry.obj_id, &mut pins.chaser.0, &mut pins.chaser.1);
+        }
+    }
+    pins
+}
+
 /// Split entries into proximity groups based on X-position gaps.
 /// Entries within `CHR_GROUP_GAP` tiles of their neighbors stay in the same group.
 /// Returns groups of entry indices (sorted by X within each group).

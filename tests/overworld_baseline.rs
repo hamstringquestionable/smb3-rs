@@ -70,12 +70,19 @@ fn sweep_is_deterministic() {
 /// into every ROM (`stomp_fairness::apply`). These hashes cover the whole
 /// output, so all 20 seeds moved. Overworld topology is untouched by that
 /// change — the ROM bytes differ, the maps do not.
+///
+/// Re-captured again 2026-08-05 for the Wild Injections sun/lakitu pool
+/// (`FLAG_KEY_VERSION` 27 → 28). The version byte is stamped into every ROM,
+/// so all 20 seeds moved for that reason alone: pinning the constant back to
+/// 27 reproduced the previous hashes exactly, which is the check that this
+/// regeneration hides no real change. Default options leave the injection
+/// mode Off, so no gameplay byte differs.
 const BASELINE: [u64; SEEDS as usize] = [
-    0x155EB975967C4ACB, 0x2DF4A1430D34B093, 0x322575642AA955A6, 0xDEC206CE9041867D,
-    0x15161E783EA3EE9C, 0xF17D4FA051D5EFF4, 0x166EFDF30A772D68, 0x25AD61FEE292102B,
-    0x84F587DBEB2C4E87, 0x75E73651FABAF77B, 0x6EE09335C4E431EA, 0x3CFE80C049E1A927,
-    0xC94F13DA4DD0B4F6, 0xB2734D41553967FD, 0x9A69302D9136071F, 0xEDC915F4FF8C9761,
-    0x6D86BC8A599AFF69, 0x9DD7B9A808BD3134, 0x04EE05C950E8DACB, 0xDBD8F12889EAA542,
+    0xE80654E3D012604F, 0x56BC4E0B2651799F, 0x3DA9EB46E38D6B30, 0xDA3EE41D061EDA7B,
+    0xF5D11330921CE33E, 0xAAB1BDBF548B48CE, 0xE0BD2457DB734B68, 0x069292D8922CB143,
+    0x41ADD63B96205A6D, 0x0970C782159DAE35, 0x07203DE4BD1FD154, 0x6E2B6C6D38620047,
+    0x18C631FC4138325E, 0x52F7FC872DBED52D, 0x229493E5CDAC9103, 0x1551C153BAF84493,
+    0x857B1E9A03988D07, 0xFD9E64C758FBB39C, 0xFA1393CD8EB2D7A5, 0xC61841B9C6000A34,
 ];
 
 #[test]

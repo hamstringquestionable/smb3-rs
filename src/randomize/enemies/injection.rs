@@ -1,6 +1,5 @@
-//! Wild-injection pass: seed a level-wide chaser (Lakitu or Angry Sun) into a
-//! fraction of real action levels, selected via the `node_catalog` (not raw
-//! enemy pointers).
+//! Wild injection: seed a level-wide chaser into a fraction of real action
+//! levels, selected via the `node_catalog` (not raw enemy pointers).
 //!
 //! Level-centric design (replaces the old entry-point / `enemy_entry_points`
 //! approach). Each candidate is a `NodeKind::Level` — fortresses, airships and
@@ -9,21 +8,25 @@
 //! level does not already have. Suns are re-seeded to the vanilla screen-0
 //! spawn so they engage (deep suns idle in the background).
 //!
-//! The pool is Lakitu + Angry Sun only. Boss Bass is deliberately excluded: it's
-//! a `WATER_ENEMIES` member, so the later walker pass would reshuffle an injected
-//! one into an ordinary water enemy. Lakitu and Sun belong to no class pool, so
-//! the walker leaves them untouched.
+//! **This is not a pass.** It used to be one, running before the walker, which
+//! meant re-deriving the CHR state the walker was about to compute — a second
+//! copy of a model that had to stay in step with the first. It now happens
+//! inside the walker's segment prologue ([`inject_segment_chasers`], called
+//! from `randomize_object_data`), reading the same [`segment_pins`] the walker
+//! seeds itself from. `collect_candidates` still runs up front, because *where*
+//! a level's first enemy lives has nothing to do with the shuffle.
+//!
+//! Injecting during the prologue rather than after the walk keeps the property
+//! that made the old ordering worth its cost: the chaser is fixed before any
+//! pick is made, so every other enemy in the segment is chosen around it.
 //!
 //! Guards: boss-type exclusion, shared-enemy-set de-dup (one physical enemy set
 //! injects at most once), no-double (`has_enemy_id`), first-enemy must be a
-//! real swappable/unprotected enemy (don't clobber a critical object or get
-//! reverted by the walker), and CHR compatibility. All offsets use the
-//! `enemy_ptr_to_file_offset` frame — the same one `has_enemy_id` and the rest
-//! of the codebase use.
+//! real swappable/unprotected enemy (don't clobber a critical object), and CHR
+//! compatibility. All offsets use the `enemy_ptr_to_file_offset` frame — the
+//! same one `has_enemy_id` and the rest of the codebase use.
 
 use std::collections::HashSet;
-
-use rand::seq::SliceRandom;
 
 use crate::randomize::node_catalog::{NodeCatalog, NodeKind};
 use crate::randomize::rom_data::{enemy_ptr_to_file_offset, has_enemy_id};
@@ -60,6 +63,24 @@ pub fn enemy_entry_points(rom: &Rom) -> Vec<u16> {
         }
     }
     pts
+}
+
+/// Where a level's first enemy sits in the `data` buffer, mapped to the level's
+/// `obj_ptr`. The walker consults this by entry index to learn "this byte is
+/// some level's first enemy, and here is the level it belongs to" — which it
+/// cannot work out itself, because one `$FF` segment routinely spans several
+/// levels' enemy pointers.
+pub(super) type InjectionSites = std::collections::HashMap<usize, u16>;
+
+/// Build the injectable-level map from the node catalog: real action levels
+/// only (`NodeKind::Level`), de-duped by enemy-data location so a shared enemy
+/// set is a single candidate. Consumes no RNG and reads no CHR state — it is
+/// pure level geography, which is why it can run before the walk.
+pub(super) fn collect_injection_sites(rom: &Rom, data: &[u8], opts: &Options) -> InjectionSites {
+    collect_candidates(rom, data, opts)
+        .into_iter()
+        .map(|c| (c.first_idx, c.obj_ptr))
+        .collect()
 }
 
 /// One candidate level for injection: its enemy-data location as an index into
@@ -111,25 +132,44 @@ fn collect_candidates(rom: &Rom, data: &[u8], opts: &Options) -> Vec<Candidate> 
     out
 }
 
-/// Pick a CHR-compatible chaser this level doesn't already have. Returns `None`
-/// if nothing fits.
+/// Which chaser an obj_id is, for matching against the player's allowed set.
+fn chaser_of(id: u8) -> Option<WildChaser> {
+    match id {
+        ANGRY_SUN_ID => Some(WildChaser::Sun),
+        LAKITU_ID => Some(WildChaser::Lakitu),
+        BOSS_BASS_ID => Some(WildChaser::Bass),
+        _ => None,
+    }
+}
+
+/// Pick a CHR-compatible chaser this level doesn't already have, from the set
+/// the player allowed. Returns `None` if nothing fits — a level that can't take
+/// an allowed chaser gets none, rather than one the player didn't ask for.
 fn pick_injection<R: Rng>(
     rom: &Rom,
     obj_ptr: u16,
     slot4: ChrSlot,
     slot5: ChrSlot,
+    allowed: &[WildChaser],
+    bertha_full: bool,
     rng: &mut R,
 ) -> Option<u8> {
     let eligible: Vec<u8> = WILD_INJECTION_IDS
         .iter()
         .copied()
         .filter(|&id| {
-            // CHR-compatible with the segment's pinned pages, and not a chaser
-            // the level already has (no doubling — e.g. 2-Quicksand's sun).
-            is_chr_compatible(id, slot4, slot5) && !has_enemy_id(rom, obj_ptr, id)
+            // Allowed by the player, CHR-compatible with the segment's pinned
+            // pages, not a chaser the level already has (no doubling — e.g.
+            // 2-Quicksand's sun), and within the segment's Bertha budget: a
+            // Boss Bass is sprite-heavy enough that stacking them starves other
+            // objects of slots (see MAX_BERTHA_PER_SEGMENT).
+            chaser_of(id).is_some_and(|c| allowed.contains(&c))
+                && !(bertha_full && BERTHA_IDS.contains(&id))
+                && is_chr_compatible(id, slot4, slot5)
+                && !has_enemy_id(rom, obj_ptr, id)
         })
         .collect();
-    // Favor the sun over the (harder) Lakitu when both fit.
+    // Favor the sun over the harder two when more than one fits.
     eligible
         .choose_weighted(rng, |&id| {
             if id == ANGRY_SUN_ID { SUN_INJECTION_WEIGHT } else { 1 }
@@ -138,78 +178,92 @@ fn pick_injection<R: Rng>(
         .copied()
 }
 
-/// Wild-injection pass. Shuffles the candidate levels for per-seed variety,
-/// then rolls each independently at [`WILD_INJECTION_CHANCE`].
-pub(super) fn inject_wild_chasers<R: Rng>(
+/// Inject chasers into any of this segment's entries that a level points at as
+/// its first enemy. Called from the walker's segment prologue, before the pin
+/// scan and before any pick, so a chaser that lands here constrains every pick
+/// that follows it.
+///
+/// Rolls each site independently at [`WILD_INJECTION_CHANCE`] in data order.
+/// Returns the `data_index` of every entry it wrote, which the walker treats as
+/// fixed for the rest of the segment (see [`is_fixed`]).
+///
+/// `entries` is updated in step with `data` so the caller's later reads — the
+/// Bertha tally, the pin scan, the picks — see the injected enemy.
+pub(super) fn inject_segment_chasers<R: Rng>(
     data: &mut [u8],
     rom: &Rom,
-    bounds: &[segment_writer::SegmentBounds],
+    entries: &mut [SegmentEntry],
+    sites: &InjectionSites,
+    modes: &ClassModes,
     opts: &Options,
     rng: &mut R,
-) {
-    let normal_modes = ClassModes::from_options(opts);
-    let mut candidates = collect_candidates(rom, data, opts);
-    candidates.shuffle(rng);
-
-    for Candidate { obj_ptr, first_idx } in candidates {
+) -> Vec<usize> {
+    let mut injected: Vec<usize> = Vec::new();
+    for k in 0..entries.len() {
+        let first_idx = entries[k].data_index;
+        let Some(&obj_ptr) = sites.get(&first_idx) else {
+            continue; // not a level's first enemy
+        };
         let roll: u8 = rng.random_range(..=255);
         if roll >= WILD_INJECTION_CHANCE {
             continue;
         }
 
-        // The entry we'd replace must be a real, swappable, unprotected enemy:
-        // don't clobber a critical object (find_class_pool guards that it is a
-        // shuffleable enemy) and don't get reverted by the walker's protection
-        // handlers (SkipSwap / forced-pool / ExcludeHazards).
-        let first_id = data[first_idx];
-        let fo = ENEMY_DATA_START + first_idx;
-        if entry_protection_at(fo).is_some() {
+        // The entry we'd replace must be a real, swappable, unprotected enemy —
+        // don't clobber a critical object. `find_class_pool` is the test for
+        // "the shuffle would have been allowed to touch this anyway".
+        if entry_protection_at(ENEMY_DATA_START + first_idx).is_some() {
             continue;
         }
-        if find_class_pool(first_id, &normal_modes).is_none() {
+        if find_class_pool(entries[k].obj_id, modes).is_none() {
             continue;
         }
 
-        // Enclosing $FF segment for CHR pinning (chasers are level-wide, so the
-        // whole segment's pins constrain the pick).
-        let Some(seg) = bounds.iter().find(|b| {
-            let s = b.file_offset + 1;
-            let end = s + b.entry_count * 3;
-            (s..end).contains(&first_idx)
-        }) else {
-            continue;
-        };
-        let mut s4 = ChrSlot::Free;
-        let mut s5 = ChrSlot::Free;
-        for k in 0..seg.entry_count {
-            let off = seg.file_offset + 1 + k * 3;
-            if off == first_idx {
-                continue; // slot being replaced — its enemy goes away
-            }
-            let fo2 = ENEMY_DATA_START + off;
-            if is_pinned(data[off], fo2, &normal_modes) {
-                commit_chr_page(data[off], &mut s4, &mut s5);
-            }
-        }
-
-        let Some(chosen) = pick_injection(rom, obj_ptr, s4, s5, rng) else {
+        // Pages the segment has already committed. Chasers are level-wide, so
+        // the whole segment constrains the pick — and the entry being replaced
+        // is skipped, since its enemy is on its way out.
+        let pins = segment_pins(entries, modes, &injected, Some(first_idx));
+        // Same exclusion for the Bertha tally: the enemy leaving doesn't count,
+        // whatever it was. The walker's own cap can only see swaps, so an
+        // injected Bass has to check the budget here.
+        let bertha_full = entries
+            .iter()
+            .filter(|e| e.data_index != first_idx && BERTHA_IDS.contains(&e.obj_id))
+            .count() as u8
+            >= MAX_BERTHA_PER_SEGMENT;
+        let Some(chosen) = pick_injection(
+            rom,
+            obj_ptr,
+            pins.all.0,
+            pins.all.1,
+            &opts.wild_injections,
+            bertha_full,
+            rng,
+        ) else {
             continue;
         };
 
         swap_enemy(data, first_idx, chosen);
+        entries[k].obj_id = chosen;
         // The Angry Sun idles in the background unless it spawns on the first
         // screen (with Early Sun on). Injection would otherwise leave it at the
         // replaced enemy's usually-deep position, so re-seed it to the vanilla
-        // 2-Quicksand spawn (screen 0, Y=0x11). The sun becomes the lowest-X
-        // entry, keeping the run X-sorted for the writeback.
+        // 2-Quicksand spawn (screen 0, Y=0x11).
         if chosen == ANGRY_SUN_ID {
             data[first_idx + 1] = SUN_SPAWN_X;
             data[first_idx + 2] = SUN_SPAWN_Y;
+            entries[k].x_pos = SUN_SPAWN_X;
         } else if chosen == LAKITU_ID && rng.random_range(..2u8) == 0 {
             // Lakitu works at any height, but the inherited Y is usually a low
             // ground-enemy spot (harder). Coin-flip half of them up to the
             // common vanilla Lakitu height; the other half keep the low Y.
             data[first_idx + 2] = LAKITU_ALT_Y;
         }
+        // Boss Bass keeps the replaced enemy's position: it homes in on the
+        // player from wherever it starts, so unlike the sun there is no spawn
+        // that makes it work and no height that makes it fair. Whether it wants
+        // a rule of its own is a playtest question.
+        injected.push(first_idx);
     }
+    injected
 }
