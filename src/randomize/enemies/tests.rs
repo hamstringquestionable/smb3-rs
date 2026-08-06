@@ -1032,7 +1032,7 @@
             piranhas: EnemyMode::Wild, ghosts: EnemyMode::Wild, water: EnemyMode::Wild,
             cannons: EnemyMode::Wild, hb_encounters: EnemyMode::Wild,
             rotodiscs: EnemyMode::Shuffle,
-            wild_injections: true, early_sun: true,
+            wild_injections: WildInjectionMode::Both, early_sun: true,
             ..Options::default()
         }
     }
@@ -1044,7 +1044,7 @@
             piranhas: EnemyMode::Wild, ghosts: EnemyMode::Wild, thwomps: EnemyMode::Wild,
             rotodiscs: EnemyMode::Wild, cannons: EnemyMode::Wild, water: EnemyMode::Wild,
             bros: EnemyMode::Wild, hb_encounters: EnemyMode::Wild,
-            wild_injections: true, early_sun: true,
+            wild_injections: WildInjectionMode::Both, early_sun: true,
             ..Options::default()
         }
     }
@@ -1302,7 +1302,7 @@
         let mut stats = PlacementStats::default();
         let mut violations = Vec::new();
         let modes = ClassModes::from_options(opts);
-        let injectable = if opts.wild_injections {
+        let injectable = if opts.wild_injections.is_on() {
             injectable_offsets(base, vanilla, &modes)
         } else {
             std::collections::HashSet::new()
@@ -1487,7 +1487,6 @@
     #[test]
     fn wild_injection_rework_guarantees() {
         use crate::randomize::node_catalog::{NodeCatalog, NodeKind};
-        use crate::randomize::rom_data::enemy_ptr_to_file_offset;
         const INJ: [u8; 2] = [0x83, 0xAF]; // Lakitu + Angry Sun (Boss Bass dropped)
 
         let Some(base) = load_reference_rom() else {
@@ -1498,28 +1497,9 @@
         let vanilla = base.read_range(ENEMY_DATA_START, len).to_vec();
         let catalog = NodeCatalog::build(&base, false);
 
-        // First-enemy data index for a level's obj_ptr (after any page byte).
-        let first_idx = |obj_ptr: u16, data: &[u8]| -> Option<usize> {
-            if obj_ptr < 0xC000 {
-                return None;
-            }
-            let fo = enemy_ptr_to_file_offset(obj_ptr);
-            if !(ENEMY_DATA_START..ENEMY_DATA_END).contains(&fo) {
-                return None;
-            }
-            let p = fo - ENEMY_DATA_START;
-            if p >= data.len() {
-                return None;
-            }
-            let first = if matches!(data[p], 0x00 | 0x01) { p + 1 } else { p };
-            if first >= data.len() || data[first] == 0xFF {
-                return None;
-            }
-            Some(first)
-        };
         // Count occurrences of `id` across a level's first $FF run.
         let run_count = |obj_ptr: u16, data: &[u8], id: u8| -> usize {
-            let Some(mut i) = first_idx(obj_ptr, data) else {
+            let Some(mut i) = first_enemy_idx(obj_ptr, data) else {
                 return 0;
             };
             let mut n = 0;
@@ -1532,7 +1512,7 @@
             n
         };
 
-        let opts = Options { wild_injections: true, ..preset_recommended() };
+        let opts = Options { wild_injections: WildInjectionMode::Both, ..preset_recommended() };
         let mut saw_injection = false;
         for seed in 0..30u64 {
             let mut rom = base.clone();
@@ -1543,9 +1523,9 @@
             for e in &catalog.entries {
                 let Some(le) = &e.level_entry else { continue };
                 let obj_ptr = ((le.obj_hi as u16) << 8) | le.obj_lo as u16;
-                let Some(fi) = first_idx(obj_ptr, &patched) else { continue };
+                let Some(fi) = first_enemy_idx(obj_ptr, &patched) else { continue };
                 let pid = patched[fi];
-                let van_first = first_idx(obj_ptr, &vanilla).map(|v| vanilla[v]);
+                let van_first = first_enemy_idx(obj_ptr, &vanilla).map(|v| vanilla[v]);
 
                 // Boss levels are excluded by type — a chaser at their first
                 // enemy can only be a vanilla-native one, never injected.
@@ -1598,13 +1578,104 @@
         assert!(saw_injection, "30 seeds and never saw a chaser injected into a level");
     }
 
+    /// Buffer index of a level's first enemy byte, or `None` when `obj_ptr`
+    /// isn't a real enemy set (out of range, or an empty level). Mirrors the
+    /// frame `inject_wild_chasers` uses — shared by the injection tests, which
+    /// all compare a patched first enemy against vanilla's.
+    fn first_enemy_idx(obj_ptr: u16, data: &[u8]) -> Option<usize> {
+        use crate::randomize::rom_data::enemy_ptr_to_file_offset;
+        if obj_ptr < 0xC000 {
+            return None;
+        }
+        let fo = enemy_ptr_to_file_offset(obj_ptr);
+        if !(ENEMY_DATA_START..ENEMY_DATA_END).contains(&fo) {
+            return None;
+        }
+        let p = fo - ENEMY_DATA_START;
+        if p >= data.len() {
+            return None;
+        }
+        let first = if matches!(data[p], 0x00 | 0x01) { p + 1 } else { p };
+        if first >= data.len() || data[first] == 0xFF {
+            return None;
+        }
+        Some(first)
+    }
+
+    /// Count the chasers injected into level main areas over `seeds` seeds,
+    /// as (Angry Sun, Lakitu). A first enemy that already matched vanilla is
+    /// skipped — neither chaser is in any class pool, so anything that changed
+    /// into one came from the injection pass.
+    fn injected_chaser_counts(base: &Rom, opts: &Options, seeds: u64) -> (u32, u32) {
+        use crate::randomize::node_catalog::NodeCatalog;
+
+        let len = ENEMY_DATA_END - ENEMY_DATA_START;
+        let vanilla = base.read_range(ENEMY_DATA_START, len).to_vec();
+        let catalog = NodeCatalog::build(base, false);
+        let (mut suns, mut lakitus) = (0u32, 0u32);
+        for seed in 0..seeds {
+            let mut rom = base.clone();
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom, &mut rng, opts);
+            let patched = rom.read_range(ENEMY_DATA_START, len).to_vec();
+            for e in &catalog.entries {
+                let Some(le) = &e.level_entry else { continue };
+                let obj_ptr = ((le.obj_hi as u16) << 8) | le.obj_lo as u16;
+                let Some(fi) = first_enemy_idx(obj_ptr, &patched) else { continue };
+                let pid = patched[fi];
+                if first_enemy_idx(obj_ptr, &vanilla).map(|v| vanilla[v]) == Some(pid) {
+                    continue; // unchanged — vanilla-native, not injected
+                }
+                match pid {
+                    ANGRY_SUN_ID => suns += 1,
+                    LAKITU_ID => lakitus += 1,
+                    _ => {}
+                }
+            }
+        }
+        (suns, lakitus)
+    }
+
+    /// A one-chaser pool injects that chaser and only that one. The narrowed
+    /// modes also inject into *fewer* levels than `Both` (a level whose CHR
+    /// can't fit the pick is skipped, not handed the other chaser), so this
+    /// asserts pool contents, not counts.
+    #[test]
+    fn wild_injection_pool_honors_mode() {
+        let Some(base) = load_reference_rom() else {
+            eprintln!("reference ROM not present — skipping wild_injection_pool_honors_mode");
+            return;
+        };
+
+        let sun_only = Options {
+            wild_injections: WildInjectionMode::Sun,
+            ..preset_recommended()
+        };
+        let (suns, lakitus) = injected_chaser_counts(&base, &sun_only, 20);
+        assert_eq!(lakitus, 0, "sun-only mode injected {lakitus} Lakitu");
+        assert!(suns > 0, "sun-only mode injected no suns at all across 20 seeds");
+
+        let lakitu_only = Options {
+            wild_injections: WildInjectionMode::Lakitu,
+            ..preset_recommended()
+        };
+        let (suns, lakitus) = injected_chaser_counts(&base, &lakitu_only, 20);
+        assert_eq!(suns, 0, "lakitu-only mode injected {suns} Angry Sun");
+        assert!(lakitus > 0, "lakitu-only mode injected no Lakitu at all across 20 seeds");
+
+        let off = Options {
+            wild_injections: WildInjectionMode::Off,
+            ..preset_recommended()
+        };
+        assert_eq!(injected_chaser_counts(&base, &off, 5), (0, 0), "off mode injected a chaser");
+    }
+
     /// An injected Lakitu's height coin-flips between the replaced enemy's Y and
     /// LAKITU_ALT_Y (0x12): across many seeds we must see both outcomes, so it's
     /// not always stuck at the (harder) low inherited height.
     #[test]
     fn wild_injected_lakitu_height_varies() {
         use crate::randomize::node_catalog::NodeCatalog;
-        use crate::randomize::rom_data::enemy_ptr_to_file_offset;
         const LAKITU: u8 = 0x83;
 
         let Some(base) = load_reference_rom() else {
@@ -1615,26 +1686,7 @@
         let vanilla = base.read_range(ENEMY_DATA_START, len).to_vec();
         let catalog = NodeCatalog::build(&base, false);
 
-        let first_idx = |obj_ptr: u16, data: &[u8]| -> Option<usize> {
-            if obj_ptr < 0xC000 {
-                return None;
-            }
-            let fo = enemy_ptr_to_file_offset(obj_ptr);
-            if !(ENEMY_DATA_START..ENEMY_DATA_END).contains(&fo) {
-                return None;
-            }
-            let p = fo - ENEMY_DATA_START;
-            if p >= data.len() {
-                return None;
-            }
-            let first = if matches!(data[p], 0x00 | 0x01) { p + 1 } else { p };
-            if first >= data.len() || data[first] == 0xFF {
-                return None;
-            }
-            Some(first)
-        };
-
-        let opts = Options { wild_injections: true, ..preset_recommended() };
+        let opts = Options { wild_injections: WildInjectionMode::Both, ..preset_recommended() };
         let mut saw_alt = false; // lifted to LAKITU_ALT_Y (0x12)
         let mut saw_kept = false; // kept a non-0x12 inherited height
         'seeds: for seed in 0..60u64 {
@@ -1645,11 +1697,11 @@
             for e in &catalog.entries {
                 let Some(le) = &e.level_entry else { continue };
                 let obj_ptr = ((le.obj_hi as u16) << 8) | le.obj_lo as u16;
-                let Some(fi) = first_idx(obj_ptr, &patched) else { continue };
+                let Some(fi) = first_enemy_idx(obj_ptr, &patched) else { continue };
                 if patched[fi] != LAKITU {
                     continue;
                 }
-                let van_first = first_idx(obj_ptr, &vanilla).map(|v| vanilla[v]);
+                let van_first = first_enemy_idx(obj_ptr, &vanilla).map(|v| vanilla[v]);
                 if van_first == Some(LAKITU) {
                     continue; // vanilla-native Lakitu, not injected
                 }
@@ -1673,7 +1725,6 @@
     #[test]
     fn wild_injection_favors_sun() {
         use crate::randomize::node_catalog::NodeCatalog;
-        use crate::randomize::rom_data::enemy_ptr_to_file_offset;
 
         let Some(base) = load_reference_rom() else {
             eprintln!("reference ROM not present — skipping wild_injection_favors_sun");
@@ -1683,26 +1734,7 @@
         let vanilla = base.read_range(ENEMY_DATA_START, len).to_vec();
         let catalog = NodeCatalog::build(&base, false);
 
-        let first_idx = |obj_ptr: u16, data: &[u8]| -> Option<usize> {
-            if obj_ptr < 0xC000 {
-                return None;
-            }
-            let fo = enemy_ptr_to_file_offset(obj_ptr);
-            if !(ENEMY_DATA_START..ENEMY_DATA_END).contains(&fo) {
-                return None;
-            }
-            let p = fo - ENEMY_DATA_START;
-            if p >= data.len() {
-                return None;
-            }
-            let first = if matches!(data[p], 0x00 | 0x01) { p + 1 } else { p };
-            if first >= data.len() || data[first] == 0xFF {
-                return None;
-            }
-            Some(first)
-        };
-
-        let opts = Options { wild_injections: true, ..preset_recommended() };
+        let opts = Options { wild_injections: WildInjectionMode::Both, ..preset_recommended() };
         let (mut suns, mut lakitus) = (0u32, 0u32);
         for seed in 0..40u64 {
             let mut rom = base.clone();
@@ -1712,9 +1744,9 @@
             for e in &catalog.entries {
                 let Some(le) = &e.level_entry else { continue };
                 let obj_ptr = ((le.obj_hi as u16) << 8) | le.obj_lo as u16;
-                let Some(fi) = first_idx(obj_ptr, &patched) else { continue };
+                let Some(fi) = first_enemy_idx(obj_ptr, &patched) else { continue };
                 let pid = patched[fi];
-                let van_first = first_idx(obj_ptr, &vanilla).map(|v| vanilla[v]);
+                let van_first = first_enemy_idx(obj_ptr, &vanilla).map(|v| vanilla[v]);
                 if van_first == Some(pid) {
                     continue; // unchanged — vanilla-native, not injected
                 }

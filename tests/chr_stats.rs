@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashSet};
 use smb3_rs::randomize::autoscroll::SPOILED_SEGMENT_RANGES;
 use smb3_rs::randomize::enemies::{enemy_entry_points, sprite_bank, wild_pool_for};
 use smb3_rs::randomize::rom_data::{ENEMY_DATA_END, ENEMY_DATA_START};
-use smb3_rs::randomizer::{self, EnemyMode, Options};
+use smb3_rs::randomizer::{self, EnemyMode, Options, WildInjectionMode};
 use smb3_rs::rom::Rom;
 
 /// Wild_injection-only obj_ids. Neither is a member of any class swap pool,
@@ -128,7 +128,7 @@ fn max_enemy_opts() -> Options {
         water: EnemyMode::Wild,
         bros: EnemyMode::Wild,
         hb_encounters: EnemyMode::Wild,
-        wild_injections: true,
+        wild_injections: WildInjectionMode::Both,
         ..Options::default()
     }
 }

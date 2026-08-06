@@ -50,9 +50,11 @@ inject_wild_chasers:
         require first enemy swappable + unprotected      # don't clobber critical
                                                          # objects / get reverted
         CHR pin-scan the enclosing $FF segment
-        pick a chaser that is CHR-compatible, the level
-          does NOT already have (has_enemy_id), and
-          within the Big-Bertha per-segment cap
+        pick a chaser that is in the player's pool
+          (WildInjectionMode: sun / lakitu / both),
+          CHR-compatible, the level does NOT already
+          have (has_enemy_id), and within the
+          Big-Bertha per-segment cap
         replace first enemy; re-seed suns to screen 0 (0x02, 0x11)
 ```
 
@@ -108,3 +110,9 @@ half stay low, half lift up. X is always inherited.
 - Only the level's **main area** first enemy is targeted (no sub-area injection).
 - **Rate** (`WILD_INJECTION_CHANCE = 102`, ~40%) now applies per candidate
   level; may warrant re-measuring against the (larger, cleaner) pool.
+- **A one-chaser pool is a sparser pool.** `WildInjectionMode::Sun` / `Lakitu`
+  filter the pool *before* the CHR-compatibility and no-doubling checks, and a
+  candidate that fails them injects nothing rather than falling back to the
+  other chaser. So the single modes land on fewer levels than `Both` — they
+  don't redistribute the same count. The per-mode counts have not been
+  measured; the rate is deliberately left alone until they are.

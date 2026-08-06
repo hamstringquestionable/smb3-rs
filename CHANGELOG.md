@@ -26,6 +26,16 @@ deploys.
 
 ### Changed
 
+- "Wild Injections" now lets you pick which chaser gets dropped into levels.
+  The option is three pills — Off, Sun, Lakitu — where Sun and Lakitu toggle
+  independently, so you can ask for only Angry Suns, only Lakitus, or both
+  (which is what the old on/off toggle did). Picking a single chaser also
+  means fewer injections overall: a level whose graphics can't fit the one you
+  chose is skipped rather than handed the other one. Saved web settings carry
+  over (an old "on" becomes both), and the CLI flag takes a value now:
+  `--wild-injections both`. Flag keys bump to v28; older keys are no longer
+  accepted.
+
 - "Poison Mushrooms" is now a per-block trap instead of an all-or-nothing
   swap. Each 1-Up block independently hands out either a real 1-Up or an
   upside-down poison mushroom that hurts you, decided by the seed — so a run

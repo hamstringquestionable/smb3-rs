@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::process;
 
 use smb3_rs::{
-    item_display_name, item_id, EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri, ITEMS,
+    item_display_name, item_id, EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri,
+    WildInjectionMode, ITEMS,
     STARTING_LIVES_VALUES,
 };
 
@@ -79,6 +80,17 @@ fn parse_piranha(s: &str) -> Result<PiranhaMode, String> {
         "on" => Ok(PiranhaMode::On),
         "wild" => Ok(PiranhaMode::Wild),
         _ => Err("valid values: off, on, wild".to_string()),
+    }
+}
+
+/// clap value parser for `--wild-injections` (off/sun/lakitu/both).
+fn parse_wild_injections(s: &str) -> Result<WildInjectionMode, String> {
+    match s {
+        "off" => Ok(WildInjectionMode::Off),
+        "sun" => Ok(WildInjectionMode::Sun),
+        "lakitu" => Ok(WildInjectionMode::Lakitu),
+        "both" => Ok(WildInjectionMode::Both),
+        _ => Err("valid values: off, sun, lakitu, both".to_string()),
     }
 }
 
@@ -360,9 +372,12 @@ struct Cli {
     #[arg(long, default_value = "off", value_parser = parse_enemy_mode)]
     hb_encounters: EnemyMode,
 
-    /// Inject Lakitu/Angry Sun/Boss Bass into ~15% of segments
-    #[arg(long)]
-    wild_injections: bool,
+    /// Seed a level-wide chaser into a fraction of levels: off, sun, lakitu,
+    /// or both (default: off). A single-chaser pool injects into fewer levels
+    /// than `both` — a level whose CHR can't fit it is skipped, not given the
+    /// other one.
+    #[arg(long, default_value = "off", value_parser = parse_wild_injections)]
+    wild_injections: WildInjectionMode,
 
     /// Set starting lives. Must be one of 1, 5, 20, 99 (default: 5).
     #[arg(long, default_value_t = 5, value_parser = parse_starting_lives)]
@@ -557,6 +572,12 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
         PiranhaMode::Off => "off",
         PiranhaMode::On => "on",
         PiranhaMode::Wild => "wild",
+    });
+    eprintln!("  Wild injections: {}", match options.wild_injections {
+        WildInjectionMode::Off => "off",
+        WildInjectionMode::Sun => "sun",
+        WildInjectionMode::Lakitu => "lakitu",
+        WildInjectionMode::Both => "sun + lakitu",
     });
     if !options.starting_items.is_empty() {
         let item_names: Vec<&str> =

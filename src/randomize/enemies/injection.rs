@@ -9,7 +9,9 @@
 //! level does not already have. Suns are re-seeded to the vanilla screen-0
 //! spawn so they engage (deep suns idle in the background).
 //!
-//! The pool is Lakitu + Angry Sun only. Boss Bass is deliberately excluded: it's
+//! The pool is Lakitu + Angry Sun, narrowed to one of them when the player
+//! picks a single chaser (see [`WildInjectionMode`] — narrowing also thins the
+//! injections out, it doesn't redistribute them). Boss Bass is excluded: it's
 //! a `WATER_ENEMIES` member, so the later walker pass would reshuffle an injected
 //! one into an ordinary water enemy. Lakitu and Sun belong to no class pool, so
 //! the walker leaves them untouched.
@@ -111,6 +113,19 @@ fn collect_candidates(rom: &Rom, data: &[u8], opts: &Options) -> Vec<Candidate> 
     out
 }
 
+/// True when `id` is in the pool the player asked for. `Sun` / `Lakitu` narrow
+/// the pool to one enemy; a level that can't take that one injects nothing
+/// rather than falling back to the other, so a narrowed pool is also a sparser
+/// one (see [`WildInjectionMode`]).
+fn in_pool(mode: WildInjectionMode, id: u8) -> bool {
+    match mode {
+        WildInjectionMode::Off => false,
+        WildInjectionMode::Sun => id == ANGRY_SUN_ID,
+        WildInjectionMode::Lakitu => id == LAKITU_ID,
+        WildInjectionMode::Both => true,
+    }
+}
+
 /// Pick a CHR-compatible chaser this level doesn't already have. Returns `None`
 /// if nothing fits.
 fn pick_injection<R: Rng>(
@@ -118,15 +133,17 @@ fn pick_injection<R: Rng>(
     obj_ptr: u16,
     slot4: ChrSlot,
     slot5: ChrSlot,
+    mode: WildInjectionMode,
     rng: &mut R,
 ) -> Option<u8> {
     let eligible: Vec<u8> = WILD_INJECTION_IDS
         .iter()
         .copied()
         .filter(|&id| {
-            // CHR-compatible with the segment's pinned pages, and not a chaser
-            // the level already has (no doubling — e.g. 2-Quicksand's sun).
-            is_chr_compatible(id, slot4, slot5) && !has_enemy_id(rom, obj_ptr, id)
+            // In the player's chosen pool, CHR-compatible with the segment's
+            // pinned pages, and not a chaser the level already has (no
+            // doubling — e.g. 2-Quicksand's sun).
+            in_pool(mode, id) && is_chr_compatible(id, slot4, slot5) && !has_enemy_id(rom, obj_ptr, id)
         })
         .collect();
     // Favor the sun over the (harder) Lakitu when both fit.
@@ -192,7 +209,7 @@ pub(super) fn inject_wild_chasers<R: Rng>(
             }
         }
 
-        let Some(chosen) = pick_injection(rom, obj_ptr, s4, s5, rng) else {
+        let Some(chosen) = pick_injection(rom, obj_ptr, s4, s5, opts.wild_injections, rng) else {
             continue;
         };
 

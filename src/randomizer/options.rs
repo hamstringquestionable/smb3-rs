@@ -124,6 +124,29 @@ pub enum PiranhaMode {
     Wild,
 }
 
+/// Which level-wide chasers the wild-injection pass may seed into a level.
+/// `Both` is the mixed pool, weighted toward the Angry Sun (see
+/// `SUN_INJECTION_WEIGHT`); `Sun` / `Lakitu` narrow it to that one enemy.
+///
+/// A one-enemy pool injects into *fewer* levels than `Both`, it doesn't just
+/// re-skew the same set: a candidate whose segment CHR can't fit the chosen
+/// chaser (or that already has one) is skipped rather than falling back to
+/// the other. How much sparser each mode runs has not been measured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WildInjectionMode {
+    #[default]
+    Off,
+    Sun,
+    Lakitu,
+    Both,
+}
+
+impl WildInjectionMode {
+    /// True whenever the injection pass runs at all.
+    pub fn is_on(self) -> bool { !matches!(self, WildInjectionMode::Off) }
+}
+
 /// Tri-state toggle for player-hidden flags: forced `Off`, forced `On`, or
 /// left to the seed (`Maybe`). A `Maybe` flag is resolved to a concrete
 /// on/off at generation time from a dedicated RNG substream (see
@@ -416,9 +439,10 @@ pub struct Options {
     /// All enemies in Hammer Bro encounter segments
     #[serde(default = "default_off")]
     pub hb_encounters: EnemyMode,
-    /// Inject Lakitu/Angry Sun/Boss Bass into ~15% of segments (CHR-compatible)
+    /// Seed a level-wide chaser into a fraction of real levels (CHR-compatible).
+    /// Picks which chasers are in the pool — see [`WildInjectionMode`].
     #[serde(default)]
-    pub wild_injections: bool,
+    pub wild_injections: WildInjectionMode,
     /// Skip the SMB3 (USA) iNES header / page-count / size checks so that
     /// modded or translated ROMs can be loaded. When true, the title-screen
     /// seed hash is also skipped because its hooks rely on vanilla offsets.
@@ -491,7 +515,7 @@ impl Default for Options {
             water: EnemyMode::Shuffle,
             bros: EnemyMode::Shuffle,
             hb_encounters: EnemyMode::Off,
-            wild_injections: false,
+            wild_injections: WildInjectionMode::Off,
             starting_lives: default_starting_lives(),
             starting_items: Vec::new(),
             skip_rom_validation: false,

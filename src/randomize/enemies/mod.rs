@@ -20,7 +20,7 @@ use crate::randomize::rom_data::{
     TANK_BRO_POOL,
 };
 use crate::randomize::segment_writer::{self, SegmentEntry as WriterEntry, SortMode};
-use crate::randomizer::{EnemyMode, Options};
+use crate::randomizer::{EnemyMode, Options, WildInjectionMode};
 use crate::rom::Rom;
 
 mod class_modes;
@@ -63,7 +63,7 @@ pub fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
         piranhas: EnemyMode::Off, ghosts: EnemyMode::Off,
         thwomps: EnemyMode::Off, rotodiscs: EnemyMode::Off,
         cannons: EnemyMode::Off, water: EnemyMode::Off, bros: EnemyMode::Off,
-        hb_encounters: EnemyMode::Off, wild_injections: false,
+        hb_encounters: EnemyMode::Off, wild_injections: WildInjectionMode::Off,
         ..Options::default()
     };
     randomize_object_data(rom, rng, true, &no_flags);
@@ -101,7 +101,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
     // bounds are passed so the injection's CHR pin-scan can cover the whole
     // $FF-bounded segment, not just the ep's own run (runs nest, and outer
     // levels see the injected enemy too).
-    if opts.wild_injections && !big_q_only {
+    if opts.wild_injections.is_on() && !big_q_only {
         let bounds = segment_writer::walk_segments(&data, 0, data.len(), &skip_ranges);
         inject_wild_chasers(&mut data, rom, &bounds, opts, rng);
     }
