@@ -172,21 +172,23 @@ fn write_log_populated_after_randomize() {
     }
 }
 
-/// The web layer posts `wild_injections` as one of these strings (the pill
-/// values in `web/options.js`). Deserialization is the only contract between
+/// The web layer posts `wild_injections` as an array of these strings (the lit
+/// pills in `web/options.js`). Deserialization is the only contract between
 /// them, so pin the spelling here — a rename on either side breaks generation
 /// at runtime with no compile error.
 #[test]
-fn wild_injection_mode_parses_web_values() {
+fn wild_chasers_parse_web_values() {
     for (json, want) in [
-        ("off", WildInjectionMode::Off),
-        ("sun", WildInjectionMode::Sun),
-        ("lakitu", WildInjectionMode::Lakitu),
-        ("both", WildInjectionMode::Both),
+        ("[]", vec![]),
+        (r#"["sun"]"#, vec![WildChaser::Sun]),
+        (r#"["lakitu"]"#, vec![WildChaser::Lakitu]),
+        (r#"["bass"]"#, vec![WildChaser::Bass]),
+        (r#"["sun","bass"]"#, vec![WildChaser::Sun, WildChaser::Bass]),
+        (r#"["sun","lakitu","bass"]"#, WildChaser::ALL.to_vec()),
     ] {
         let opts: Options =
-            serde_json::from_str(&format!(r#"{{"wild_injections":"{json}"}}"#)).unwrap();
-        assert_eq!(opts.wild_injections, want, "web value {json:?} did not parse");
+            serde_json::from_str(&format!(r#"{{"wild_injections":{json}}}"#)).unwrap();
+        assert_eq!(opts.wild_injections, want, "web value {json} did not parse");
     }
 }
 
@@ -265,7 +267,7 @@ fn flag_key_round_trip_all_wild() {
         water: EnemyMode::Wild,
         bros: EnemyMode::Wild,
         hb_encounters: EnemyMode::Wild,
-        wild_injections: WildInjectionMode::Both,
+        wild_injections: WildChaser::ALL.to_vec(),
         starting_items: vec![0x05, 0x09, 0x03],
         ..all_off_options()
     };
@@ -305,7 +307,7 @@ fn flag_key_round_trip_all_off() {
     assert_eq!(decoded.ground, EnemyMode::Off);
     assert_eq!(decoded.thwomps, EnemyMode::Off);
     assert_eq!(decoded.hb_encounters, EnemyMode::Off);
-    assert_eq!(decoded.wild_injections, WildInjectionMode::Off);
+    assert!(decoded.wild_injections.is_empty());
     assert_eq!(decoded.starting_lives, 1);
 }
 
@@ -510,32 +512,34 @@ fn flag_key_per_option_round_trip() {
         }
     }
 
-    // Wild injections (Off/Sun/Lakitu/Both): the two bits are split across
-    // b4 bit 0 and b12 bit 7, so every state must round-trip and each of the
-    // three on-states must produce a distinct key.
+    // Wild injections: one bit per chaser, scattered across b4 bit 0, b12 bit 7
+    // and b2 bit 5 (no byte had three free). Every one of the 8 subsets must
+    // round-trip, and all 8 must produce distinct keys — a bit landing on top
+    // of a neighbour would otherwise show up as two subsets sharing a key.
     {
         let default_key = Options::default().to_flag_key();
         let mut keys = Vec::new();
-        for &mode in &[
-            WildInjectionMode::Off,
-            WildInjectionMode::Sun,
-            WildInjectionMode::Lakitu,
-            WildInjectionMode::Both,
-        ] {
-            let mutated = Options { wild_injections: mode, ..Default::default() };
+        for bits in 0u8..8 {
+            let set: Vec<WildChaser> = WildChaser::ALL
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| bits & (1 << i) != 0)
+                .map(|(_, &c)| c)
+                .collect();
+            let mutated = Options { wild_injections: set.clone(), ..Default::default() };
             let mutated_key = mutated.to_flag_key();
             let expected = normalized(mutated.clone());
             let recovered = Options::from_flag_key(&mutated_key).unwrap();
-            assert_eq!(recovered, expected, "wild_injections={mode:?}: round-trip mismatch");
-            if mode != WildInjectionMode::Off {
-                assert_ne!(default_key, mutated_key, "wild_injections={mode:?}: key must change");
+            assert_eq!(recovered, expected, "wild_injections={set:?}: round-trip mismatch");
+            if !set.is_empty() {
+                assert_ne!(default_key, mutated_key, "wild_injections={set:?}: key must change");
             }
             keys.push(mutated_key);
         }
         keys.sort();
         let distinct = keys.len();
         keys.dedup();
-        assert_eq!(keys.len(), distinct, "wild_injections: two modes share a key");
+        assert_eq!(keys.len(), distinct, "wild_injections: two chaser sets share a key");
     }
 
     // starting_lives is 2 bits indexing {1, 5, 20, 99} — only the four
@@ -598,7 +602,7 @@ fn flag_key_per_option_round_trip() {
     everything.troll_pipes = Tri::Maybe;
     everything.shuffle_spade_games = !everything.shuffle_spade_games;
     everything.shuffle_toad_houses = !everything.shuffle_toad_houses;
-    everything.wild_injections = WildInjectionMode::Both;
+    everything.wild_injections = WildChaser::ALL.to_vec();
     everything.ground = EnemyMode::Wild;
     everything.shell = EnemyMode::Wild;
     everything.flying = EnemyMode::Wild;
@@ -780,7 +784,7 @@ fn all_off_options() -> Options {
         water: EnemyMode::Off,
         bros: EnemyMode::Off,
         hb_encounters: EnemyMode::Off,
-        wild_injections: WildInjectionMode::Off,
+        wild_injections: Vec::new(),
         starting_items: vec![],
         skip_rom_validation: false,
         anchor_visuals: false,
@@ -847,7 +851,7 @@ fn all_on_options() -> Options {
         water: EnemyMode::Wild,
         bros: EnemyMode::Wild,
         hb_encounters: EnemyMode::Wild,
-        wild_injections: WildInjectionMode::Both,
+        wild_injections: WildChaser::ALL.to_vec(),
         starting_items: vec![0x05, 0x09, 0x03],
         skip_rom_validation: false,
         anchor_visuals: true,

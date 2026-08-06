@@ -124,30 +124,45 @@ pub enum PiranhaMode {
     Wild,
 }
 
-/// Which level-wide chasers the wild-injection pass may seed into a level.
-/// `Both` is the mixed pool, weighted toward the Angry Sun (see
-/// `SUN_INJECTION_WEIGHT`); `Sun` / `Lakitu` narrow it to that one enemy.
+/// A level-wide chaser the wild-injection pass can seed into a level. The
+/// option is the *set* of these the player allowed — an empty set is off.
 ///
-/// A candidate whose segment CHR can't fit the chosen chaser (or that already
-/// has one) is skipped rather than falling back to the other, so a one-enemy
-/// pool is in principle sparser than `Both`. Measured, it isn't: all three
-/// modes land 8-9 injections per seed over 20 seeds, and the gap between modes
-/// is the same size as the gap between two runs of the *same* mode, since each
-/// mode draws a different RNG stream. Run the `print_injection_counts`
-/// diagnostic before believing otherwise.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+/// When more than one is allowed the pick is weighted toward the Angry Sun
+/// (see `SUN_INJECTION_WEIGHT`), the gentlest of the three.
+///
+/// Narrowing the set ought to inject into fewer levels — a candidate whose
+/// segment CHR can't fit the allowed chaser (or that already has one) is
+/// skipped rather than handed a different one. Measured, it doesn't: every
+/// combination lands 8-9 injections per seed over 20 seeds, and the gap
+/// between combinations is the same size as the gap between two runs of the
+/// *same* one, since each draws a different RNG stream. Run the
+/// `print_injection_counts` diagnostic before believing otherwise.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
-pub enum WildInjectionMode {
-    #[default]
-    Off,
+pub enum WildChaser {
+    /// Angry Sun.
     Sun,
+    /// Lakitu, the enemy-spawning variant.
     Lakitu,
-    Both,
+    /// Big Bertha, the leaping eater — the "Boss Bass".
+    Bass,
 }
 
-impl WildInjectionMode {
-    /// True whenever the injection pass runs at all.
-    pub fn is_on(self) -> bool { !matches!(self, WildInjectionMode::Off) }
+impl WildChaser {
+    /// Every chaser, in the canonical order the flag key, the CLI and the web
+    /// pill all use. Decoding produces this order, so a round-trip normalizes.
+    pub const ALL: [WildChaser; 3] = [WildChaser::Sun, WildChaser::Lakitu, WildChaser::Bass];
+
+    /// The lowercase name used by the CLI, the web pill, and serde.
+    pub fn name(self) -> &'static str {
+        match self {
+            WildChaser::Sun => "sun",
+            WildChaser::Lakitu => "lakitu",
+            WildChaser::Bass => "bass",
+        }
+    }
 }
 
 /// Tri-state toggle for player-hidden flags: forced `Off`, forced `On`, or
@@ -442,10 +457,10 @@ pub struct Options {
     /// All enemies in Hammer Bro encounter segments
     #[serde(default = "default_off")]
     pub hb_encounters: EnemyMode,
-    /// Seed a level-wide chaser into a fraction of real levels (CHR-compatible).
-    /// Picks which chasers are in the pool — see [`WildInjectionMode`].
+    /// Which level-wide chasers may be seeded into a fraction of real levels
+    /// (CHR-compatible). Empty = off. See [`WildChaser`].
     #[serde(default)]
-    pub wild_injections: WildInjectionMode,
+    pub wild_injections: Vec<WildChaser>,
     /// Skip the SMB3 (USA) iNES header / page-count / size checks so that
     /// modded or translated ROMs can be loaded. When true, the title-screen
     /// seed hash is also skipped because its hooks rely on vanilla offsets.
@@ -518,7 +533,7 @@ impl Default for Options {
             water: EnemyMode::Shuffle,
             bros: EnemyMode::Shuffle,
             hb_encounters: EnemyMode::Off,
-            wild_injections: WildInjectionMode::Off,
+            wild_injections: Vec::new(),
             starting_lives: default_starting_lives(),
             starting_items: Vec::new(),
             skip_rom_validation: false,

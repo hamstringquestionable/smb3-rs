@@ -132,39 +132,44 @@ fn collect_candidates(rom: &Rom, data: &[u8], opts: &Options) -> Vec<Candidate> 
     out
 }
 
-/// True when `id` is in the pool the player asked for. `Sun` / `Lakitu` narrow
-/// the pool to one enemy; a level whose CHR cannot fit that one injects nothing
-/// rather than falling back to the other (see [`WildInjectionMode`]).
-fn in_pool(mode: WildInjectionMode, id: u8) -> bool {
-    match mode {
-        WildInjectionMode::Off => false,
-        WildInjectionMode::Sun => id == ANGRY_SUN_ID,
-        WildInjectionMode::Lakitu => id == LAKITU_ID,
-        WildInjectionMode::Both => true,
+/// Which chaser an obj_id is, for matching against the player's allowed set.
+fn chaser_of(id: u8) -> Option<WildChaser> {
+    match id {
+        ANGRY_SUN_ID => Some(WildChaser::Sun),
+        LAKITU_ID => Some(WildChaser::Lakitu),
+        BOSS_BASS_ID => Some(WildChaser::Bass),
+        _ => None,
     }
 }
 
-/// Pick a CHR-compatible chaser this level doesn't already have. Returns `None`
-/// if nothing fits.
+/// Pick a CHR-compatible chaser this level doesn't already have, from the set
+/// the player allowed. Returns `None` if nothing fits — a level that can't take
+/// an allowed chaser gets none, rather than one the player didn't ask for.
 fn pick_injection<R: Rng>(
     rom: &Rom,
     obj_ptr: u16,
     slot4: ChrSlot,
     slot5: ChrSlot,
-    mode: WildInjectionMode,
+    allowed: &[WildChaser],
+    bertha_full: bool,
     rng: &mut R,
 ) -> Option<u8> {
     let eligible: Vec<u8> = WILD_INJECTION_IDS
         .iter()
         .copied()
         .filter(|&id| {
-            // In the player's chosen pool, CHR-compatible with the segment's
-            // pinned pages, and not a chaser the level already has (no
-            // doubling — e.g. 2-Quicksand's sun).
-            in_pool(mode, id) && is_chr_compatible(id, slot4, slot5) && !has_enemy_id(rom, obj_ptr, id)
+            // Allowed by the player, CHR-compatible with the segment's pinned
+            // pages, not a chaser the level already has (no doubling — e.g.
+            // 2-Quicksand's sun), and within the segment's Bertha budget: a
+            // Boss Bass is sprite-heavy enough that stacking them starves other
+            // objects of slots (see MAX_BERTHA_PER_SEGMENT).
+            chaser_of(id).is_some_and(|c| allowed.contains(&c))
+                && !(bertha_full && BERTHA_IDS.contains(&id))
+                && is_chr_compatible(id, slot4, slot5)
+                && !has_enemy_id(rom, obj_ptr, id)
         })
         .collect();
-    // Favor the sun over the (harder) Lakitu when both fit.
+    // Favor the sun over the harder two when more than one fits.
     eligible
         .choose_weighted(rng, |&id| {
             if id == ANGRY_SUN_ID { SUN_INJECTION_WEIGHT } else { 1 }
@@ -218,9 +223,23 @@ pub(super) fn inject_segment_chasers<R: Rng>(
         // the whole segment constrains the pick — and the entry being replaced
         // is skipped, since its enemy is on its way out.
         let pins = segment_pins(entries, modes, &injected, Some(first_idx));
-        let Some(chosen) =
-            pick_injection(rom, obj_ptr, pins.all.0, pins.all.1, opts.wild_injections, rng)
-        else {
+        // Same exclusion for the Bertha tally: the enemy leaving doesn't count,
+        // whatever it was. The walker's own cap can only see swaps, so an
+        // injected Bass has to check the budget here.
+        let bertha_full = entries
+            .iter()
+            .filter(|e| e.data_index != first_idx && BERTHA_IDS.contains(&e.obj_id))
+            .count() as u8
+            >= MAX_BERTHA_PER_SEGMENT;
+        let Some(chosen) = pick_injection(
+            rom,
+            obj_ptr,
+            pins.all.0,
+            pins.all.1,
+            &opts.wild_injections,
+            bertha_full,
+            rng,
+        ) else {
             continue;
         };
 
@@ -240,6 +259,10 @@ pub(super) fn inject_segment_chasers<R: Rng>(
             // common vanilla Lakitu height; the other half keep the low Y.
             data[first_idx + 2] = LAKITU_ALT_Y;
         }
+        // Boss Bass keeps the replaced enemy's position: it homes in on the
+        // player from wherever it starts, so unlike the sun there is no spawn
+        // that makes it work and no height that makes it fair. Whether it wants
+        // a rule of its own is a playtest question.
         injected.push(first_idx);
     }
     injected

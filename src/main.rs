@@ -5,7 +5,7 @@ use std::process;
 
 use smb3_rs::{
     item_display_name, item_id, EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri,
-    WildInjectionMode, ITEMS,
+    WildChaser, ITEMS,
     STARTING_LIVES_VALUES,
 };
 
@@ -83,15 +83,38 @@ fn parse_piranha(s: &str) -> Result<PiranhaMode, String> {
     }
 }
 
-/// clap value parser for `--wild-injections` (off/sun/lakitu/both).
-fn parse_wild_injections(s: &str) -> Result<WildInjectionMode, String> {
-    match s {
-        "off" => Ok(WildInjectionMode::Off),
-        "sun" => Ok(WildInjectionMode::Sun),
-        "lakitu" => Ok(WildInjectionMode::Lakitu),
-        "both" => Ok(WildInjectionMode::Both),
-        _ => Err("valid values: off, sun, lakitu, both".to_string()),
+/// A whole `--wild-injections` value. Newtype rather than a bare
+/// `Vec<WildChaser>` because clap's derive reads a `Vec` field as a repeatable
+/// single-value arg, and would then expect the parser below to return one
+/// `WildChaser` per occurrence — a mismatch that panics at runtime rather than
+/// failing to compile (see `cli_parses_a_chaser_set`). Wrapping keeps the
+/// whole set in one parser, which is what makes `off` and `all` expressible.
+#[derive(Clone, Debug)]
+struct ChaserSet(Vec<WildChaser>);
+
+/// clap value parser for `--wild-injections`: a comma-separated set of chasers
+/// (`sun`, `lakitu`, `bass`), `all` for every one, or `off` for none. Returned
+/// in `WildChaser::ALL` order, which is the order the flag key stores.
+fn parse_wild_injections(s: &str) -> Result<ChaserSet, String> {
+    const VALID: &str = "valid values: off, all, or a comma-separated set of sun, lakitu, bass";
+    if s == "off" || s.is_empty() {
+        return Ok(ChaserSet(Vec::new()));
     }
+    if s == "all" {
+        return Ok(ChaserSet(WildChaser::ALL.to_vec()));
+    }
+    let mut out = Vec::new();
+    for part in s.split(',') {
+        let part = part.trim();
+        let Some(&c) = WildChaser::ALL.iter().find(|c| c.name() == part) else {
+            return Err(format!("unknown chaser {part:?} -- {VALID}"));
+        };
+        if !out.contains(&c) {
+            out.push(c);
+        }
+    }
+    out.sort();
+    Ok(ChaserSet(out))
 }
 
 /// clap value parser for the tri-state flags (off/on/maybe).
@@ -372,12 +395,12 @@ struct Cli {
     #[arg(long, default_value = "off", value_parser = parse_enemy_mode)]
     hb_encounters: EnemyMode,
 
-    /// Seed a level-wide chaser into a fraction of levels: off, sun, lakitu,
-    /// or both (default: off). A single-chaser pool injects into fewer levels
-    /// than `both` — a level whose CHR can't fit it is skipped, not given the
-    /// other one.
+    /// Seed a level-wide chaser into a fraction of levels. A comma-separated
+    /// set of `sun`, `lakitu`, `bass`; or `all`; or `off` (default). A level
+    /// whose CHR can't fit an allowed chaser is skipped rather than given one
+    /// you didn't ask for.
     #[arg(long, default_value = "off", value_parser = parse_wild_injections)]
-    wild_injections: WildInjectionMode,
+    wild_injections: ChaserSet,
 
     /// Set starting lives. Must be one of 1, 5, 20, 99 (default: 5).
     #[arg(long, default_value_t = 5, value_parser = parse_starting_lives)]
@@ -527,7 +550,7 @@ fn build_options(cli: &Cli) -> Options {
             water: cli.water,
             bros: cli.bros,
             hb_encounters: cli.hb_encounters,
-            wild_injections: cli.wild_injections,
+            wild_injections: cli.wild_injections.0.clone(),
             starting_lives: cli.starting_lives,
             starting_items,
             skip_rom_validation: cli.skip_rom_validation,
@@ -573,11 +596,10 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
         PiranhaMode::On => "on",
         PiranhaMode::Wild => "wild",
     });
-    eprintln!("  Wild injections: {}", match options.wild_injections {
-        WildInjectionMode::Off => "off",
-        WildInjectionMode::Sun => "sun",
-        WildInjectionMode::Lakitu => "lakitu",
-        WildInjectionMode::Both => "sun + lakitu",
+    eprintln!("  Wild injections: {}", if options.wild_injections.is_empty() {
+        "off".to_string()
+    } else {
+        options.wild_injections.iter().map(|c| c.name()).collect::<Vec<_>>().join(" + ")
     });
     if !options.starting_items.is_empty() {
         let item_names: Vec<&str> =
@@ -716,4 +738,44 @@ fn main() {
         process::exit(1);
     }
     eprintln!("Done! Wrote {} bytes to {}", output_data.len(), output_path.display());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Parse a real argv, which is the only place this mistake shows up.
+    ///
+    /// clap's derive reads a `Vec` field as a repeatable single-value arg, so a
+    /// `value_parser` returning the whole set downcasts to the wrong type and
+    /// panics during argument parsing — before any of this crate runs. There is
+    /// no compile error, and `Cli::command().debug_assert()` passes (checked:
+    /// it did, while the binary panicked on every invocation). Only converting
+    /// matches back into the struct reaches the downcast, so only a test that
+    /// parses an argv catches it.
+    #[test]
+    fn cli_parses_a_chaser_set() {
+        let cli = Cli::try_parse_from(["smb3-rs", "rom.nes", "--wild-injections", "sun,bass"])
+            .expect("argv should parse");
+        assert_eq!(cli.wild_injections.0, vec![WildChaser::Sun, WildChaser::Bass]);
+
+        let off = Cli::try_parse_from(["smb3-rs", "rom.nes"]).expect("argv should parse");
+        assert!(off.wild_injections.0.is_empty(), "default must be off");
+    }
+
+    #[test]
+    fn wild_injection_sets_parse() {
+        let set = |s: &str| parse_wild_injections(s).map(|c| c.0);
+        assert_eq!(set("off").unwrap(), vec![]);
+        assert_eq!(set("all").unwrap(), WildChaser::ALL.to_vec());
+        assert_eq!(set("bass").unwrap(), vec![WildChaser::Bass]);
+        // Canonical order regardless of how they were typed, so two spellings
+        // of one set produce the same flag key.
+        assert_eq!(set("bass,sun").unwrap(), vec![WildChaser::Sun, WildChaser::Bass]);
+        assert_eq!(set("sun, bass").unwrap(), set("bass,sun").unwrap());
+        // Duplicates collapse rather than double-weighting anything.
+        assert_eq!(set("sun,sun").unwrap(), vec![WildChaser::Sun]);
+        assert!(set("eel").is_err());
+        assert!(set("sun,eel").is_err());
+    }
 }

@@ -26,15 +26,20 @@ deploys.
 
 ### Changed
 
-- "Wild Injections" now lets you pick which chaser gets dropped into levels.
-  The option is three pills — Off, Sun, Lakitu — where Sun and Lakitu toggle
-  independently, so you can ask for only Angry Suns, only Lakitus, or both
-  (which is what the old on/off toggle did). Picking one doesn't make them
-  rarer — every setting drops about the same number of chasers per seed.
-  Saved web settings carry over (an old "on" becomes both), and the CLI flag
-  takes a value now:
-  `--wild-injections both`. Flag keys bump to v28; older keys are no longer
-  accepted.
+- "Wild Injections" now lets you pick which chasers get dropped into levels,
+  and adds a third one. The option is four pills — Off, Sun, Lakitu, Bass —
+  where the three chasers toggle independently and Off clears them, so you can
+  ask for any combination. Picking fewer doesn't make them rarer; every
+  combination drops about the same number per seed.
+
+  **Boss Bass is new to the pool**: a leaping Big Bertha that follows you
+  through a level that never had one, dry ground included. It was meant to be
+  available when the option first shipped, but with water enemies shuffled it
+  was quietly turned back into an ordinary fish before it ever reached the ROM.
+
+  Saved web settings carry over (an old "on" becomes Sun + Lakitu, the pool as
+  it stood then), and the CLI flag takes a set now: `--wild-injections sun,bass`,
+  or `all`, or `off`. Flag keys bump to v28; older keys are no longer accepted.
 
 - "Poison Mushrooms" is now a per-block trap instead of an all-or-nothing
   swap. Each 1-Up block independently hands out either a real 1-Up or an

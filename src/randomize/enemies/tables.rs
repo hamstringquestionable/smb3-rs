@@ -338,12 +338,18 @@ pub(super) const W7F1_TANOOKI_OFFSET: usize = 0x0C9B7;
 
 /// Injection candidates for wild_injections mode: level-wide chasers seeded into
 /// a level's first enemy. CHR compatibility checked via `sprite_bank()` at filter
-/// time. Both are in NO class pool, so the walker leaves an injected one alone.
-/// (Boss Bass 0x2D is deliberately excluded: it's a `WATER_ENEMIES` member, so
-/// the walker would reshuffle an injected one into an ordinary water enemy.)
+/// time.
+///
+/// Boss Bass was excluded until injection moved inside the walker. It is a
+/// `WATER_ENEMIES` member, so with water Wild the walker used to reshuffle an
+/// injected one into an ordinary water enemy — a silent no-op. Deciding the
+/// injection inside the segment prologue and marking the entry settled closes
+/// that hole (Lakitu and the sun never needed it: they belong to no class pool,
+/// so nothing could pick them out).
 pub(super) const WILD_INJECTION_IDS: &[u8] = &[
     LAKITU_ID,    // Lakitu (enemy-spawning variant, CHR $0B/+4)
     ANGRY_SUN_ID, // Angry Sun
+    BOSS_BASS_ID, // Big Bertha, the leaping eater
 ];
 
 /// Angry Sun object id.
@@ -351,6 +357,10 @@ pub(super) const ANGRY_SUN_ID: u8 = 0xAF;
 
 /// Lakitu (enemy-spawning variant) object id.
 pub(super) const LAKITU_ID: u8 = 0x83;
+
+/// Big Bertha, the leaping eater — the "Boss Bass". Also `BERTHA_IDS[0]`, so an
+/// injected one counts against `MAX_BERTHA_PER_SEGMENT` like any other.
+pub(super) const BOSS_BASS_ID: u8 = 0x2D;
 
 /// Weight of the Angry Sun relative to Lakitu (weight 1) when both are eligible
 /// for an injection. Lakitu is much harder to deal with, so the sun is favored:

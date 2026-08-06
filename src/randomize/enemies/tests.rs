@@ -1032,7 +1032,7 @@
             piranhas: EnemyMode::Wild, ghosts: EnemyMode::Wild, water: EnemyMode::Wild,
             cannons: EnemyMode::Wild, hb_encounters: EnemyMode::Wild,
             rotodiscs: EnemyMode::Shuffle,
-            wild_injections: WildInjectionMode::Both, early_sun: true,
+            wild_injections: vec![WildChaser::Sun, WildChaser::Lakitu], early_sun: true,
             ..Options::default()
         }
     }
@@ -1044,7 +1044,7 @@
             piranhas: EnemyMode::Wild, ghosts: EnemyMode::Wild, thwomps: EnemyMode::Wild,
             rotodiscs: EnemyMode::Wild, cannons: EnemyMode::Wild, water: EnemyMode::Wild,
             bros: EnemyMode::Wild, hb_encounters: EnemyMode::Wild,
-            wild_injections: WildInjectionMode::Both, early_sun: true,
+            wild_injections: vec![WildChaser::Sun, WildChaser::Lakitu], early_sun: true,
             ..Options::default()
         }
     }
@@ -1302,7 +1302,7 @@
         let mut stats = PlacementStats::default();
         let mut violations = Vec::new();
         let modes = ClassModes::from_options(opts);
-        let injectable = if opts.wild_injections.is_on() {
+        let injectable = if !opts.wild_injections.is_empty() {
             injectable_offsets(base, vanilla, &modes)
         } else {
             std::collections::HashSet::new()
@@ -1512,7 +1512,7 @@
             n
         };
 
-        let opts = Options { wild_injections: WildInjectionMode::Both, ..preset_recommended() };
+        let opts = Options { wild_injections: vec![WildChaser::Sun, WildChaser::Lakitu], ..preset_recommended() };
         let mut saw_injection = false;
         for seed in 0..30u64 {
             let mut rom = base.clone();
@@ -1602,17 +1602,22 @@
         Some(first)
     }
 
-    /// Count the chasers injected into level main areas over `seeds` seeds,
-    /// as (Angry Sun, Lakitu). A first enemy that already matched vanilla is
-    /// skipped — neither chaser is in any class pool, so anything that changed
-    /// into one came from the injection pass.
-    fn injected_chaser_counts(base: &Rom, opts: &Options, seeds: u64) -> (u32, u32) {
+    /// Count the chasers sitting on level main-area first enemies over `seeds`
+    /// seeds, indexed by `WildChaser::ALL` order (sun, lakitu, bass). Entries
+    /// that still match vanilla are skipped.
+    ///
+    /// Sun and Lakitu counts are exact: neither is in any class pool, so a
+    /// changed entry holding one can only have come from injection. **Bass is
+    /// not** — it is a `WATER_ENEMIES` member, so with water Shuffle/Wild the
+    /// ordinary swap can put one here too. Compare two runs that differ only in
+    /// the injection pool to isolate it.
+    fn injected_chaser_counts(base: &Rom, opts: &Options, seeds: u64) -> [u32; 3] {
         use crate::randomize::node_catalog::NodeCatalog;
 
         let len = ENEMY_DATA_END - ENEMY_DATA_START;
         let vanilla = base.read_range(ENEMY_DATA_START, len).to_vec();
         let catalog = NodeCatalog::build(base, false);
-        let (mut suns, mut lakitus) = (0u32, 0u32);
+        let mut counts = [0u32; 3];
         for seed in 0..seeds {
             let mut rom = base.clone();
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -1627,13 +1632,14 @@
                     continue; // unchanged — vanilla-native, not injected
                 }
                 match pid {
-                    ANGRY_SUN_ID => suns += 1,
-                    LAKITU_ID => lakitus += 1,
+                    ANGRY_SUN_ID => counts[0] += 1,
+                    LAKITU_ID => counts[1] += 1,
+                    BOSS_BASS_ID => counts[2] += 1,
                     _ => {}
                 }
             }
         }
-        (suns, lakitus)
+        counts
     }
 
     /// Prints how many chasers each mode actually injects, so a change to the
@@ -1650,54 +1656,100 @@
             return;
         };
         const SEEDS: u64 = 20;
-        for mode in [
-            WildInjectionMode::Both,
-            WildInjectionMode::Sun,
-            WildInjectionMode::Lakitu,
-        ] {
-            let opts = Options { wild_injections: mode, ..preset_recommended() };
-            let (suns, lakitus) = injected_chaser_counts(&base, &opts, SEEDS);
-            let total = suns + lakitus;
+        let sets: [Vec<WildChaser>; 5] = [
+            WildChaser::ALL.to_vec(),
+            vec![WildChaser::Sun, WildChaser::Lakitu],
+            vec![WildChaser::Sun],
+            vec![WildChaser::Lakitu],
+            vec![WildChaser::Bass],
+        ];
+        for set in sets {
+            let opts = Options { wild_injections: set.clone(), ..preset_recommended() };
+            let c = injected_chaser_counts(&base, &opts, SEEDS);
+            let names: Vec<&str> = set.iter().map(|c| c.name()).collect();
+            let total: u32 = c.iter().sum();
             println!(
-                "{mode:?}: {total} injections over {SEEDS} seeds ({:.1}/seed) — \
-                 {suns} sun, {lakitus} lakitu",
+                "{:<18} {total:>4} over {SEEDS} seeds ({:.1}/seed) — {} sun, {} lakitu, {} bass",
+                names.join("+"),
                 total as f64 / SEEDS as f64,
+                c[0], c[1], c[2],
             );
         }
+        println!("(bass counts include ordinary water swaps — see injected_chaser_counts)");
     }
 
-    /// A one-chaser pool injects that chaser and only that one. The narrowed
-    /// modes also inject into *fewer* levels than `Both` (a level whose CHR
-    /// can't fit the pick is skipped, not handed the other chaser), so this
-    /// asserts pool contents, not counts.
+    /// A one-chaser set injects that chaser and only that one — a level that
+    /// can't take it is skipped, never handed a chaser the player excluded.
+    /// Asserts set membership, not counts (see `print_injection_counts` for the
+    /// rates, which barely move between sets).
     #[test]
-    fn wild_injection_pool_honors_mode() {
+    fn wild_injection_pool_honors_set() {
         let Some(base) = load_reference_rom() else {
-            eprintln!("reference ROM not present — skipping wild_injection_pool_honors_mode");
+            eprintln!("reference ROM not present — skipping wild_injection_pool_honors_set");
             return;
         };
 
         let sun_only = Options {
-            wild_injections: WildInjectionMode::Sun,
+            wild_injections: vec![WildChaser::Sun],
             ..preset_recommended()
         };
-        let (suns, lakitus) = injected_chaser_counts(&base, &sun_only, 20);
-        assert_eq!(lakitus, 0, "sun-only mode injected {lakitus} Lakitu");
-        assert!(suns > 0, "sun-only mode injected no suns at all across 20 seeds");
+        let c = injected_chaser_counts(&base, &sun_only, 20);
+        assert_eq!(c[1], 0, "sun-only injected {} Lakitu", c[1]);
+        assert!(c[0] > 0, "sun-only injected no suns at all across 20 seeds");
 
         let lakitu_only = Options {
-            wild_injections: WildInjectionMode::Lakitu,
+            wild_injections: vec![WildChaser::Lakitu],
             ..preset_recommended()
         };
-        let (suns, lakitus) = injected_chaser_counts(&base, &lakitu_only, 20);
-        assert_eq!(suns, 0, "lakitu-only mode injected {suns} Angry Sun");
-        assert!(lakitus > 0, "lakitu-only mode injected no Lakitu at all across 20 seeds");
+        let c = injected_chaser_counts(&base, &lakitu_only, 20);
+        assert_eq!(c[0], 0, "lakitu-only injected {} Angry Sun", c[0]);
+        assert!(c[1] > 0, "lakitu-only injected no Lakitu at all across 20 seeds");
 
-        let off = Options {
-            wild_injections: WildInjectionMode::Off,
+        // Bass is omitted from the "off" check on purpose: with water Wild the
+        // ordinary shuffle can also land a Bertha on a first enemy, so its
+        // count is not evidence either way (see injected_chaser_counts).
+        let off = Options { wild_injections: Vec::new(), ..preset_recommended() };
+        let c = injected_chaser_counts(&base, &off, 5);
+        assert_eq!((c[0], c[1]), (0, 0), "injections off, but a chaser was injected");
+    }
+
+    /// Boss Bass reaches the ROM with water Wild — the case that kept it out of
+    /// the pool until injection moved inside the walker, where the walker used
+    /// to reshuffle an injected Bertha straight back into an ordinary water
+    /// enemy.
+    ///
+    /// Bass is also an ordinary swap target, so its raw count is ambiguous. Two
+    /// runs differing *only* in whether Bass is in the injection set isolate it:
+    /// the surplus is injection.
+    #[test]
+    fn wild_injection_bass_survives_water_wild() {
+        let Some(base) = load_reference_rom() else {
+            eprintln!("reference ROM not present — skipping wild_injection_bass_survives_water_wild");
+            return;
+        };
+        assert_eq!(
+            preset_recommended().water,
+            EnemyMode::Wild,
+            "this test is specifically about the water-Wild reshuffle",
+        );
+
+        let without = Options {
+            wild_injections: vec![WildChaser::Sun, WildChaser::Lakitu],
             ..preset_recommended()
         };
-        assert_eq!(injected_chaser_counts(&base, &off, 5), (0, 0), "off mode injected a chaser");
+        let with_bass = Options {
+            wild_injections: WildChaser::ALL.to_vec(),
+            ..preset_recommended()
+        };
+        let background = injected_chaser_counts(&base, &without, 20)[2];
+        let injected = injected_chaser_counts(&base, &with_bass, 20)[2];
+        assert!(
+            injected > background + 15,
+            "Boss Bass in the pool added only {} first-enemy Berthas over 20 seeds \
+             ({injected} vs {background} background) — an injected Bass is probably \
+             being reshuffled away again",
+            injected.saturating_sub(background),
+        );
     }
 
     /// An injected Lakitu's height coin-flips between the replaced enemy's Y and
@@ -1716,7 +1768,7 @@
         let vanilla = base.read_range(ENEMY_DATA_START, len).to_vec();
         let catalog = NodeCatalog::build(&base, false);
 
-        let opts = Options { wild_injections: WildInjectionMode::Both, ..preset_recommended() };
+        let opts = Options { wild_injections: vec![WildChaser::Sun, WildChaser::Lakitu], ..preset_recommended() };
         let mut saw_alt = false; // lifted to LAKITU_ALT_Y (0x12)
         let mut saw_kept = false; // kept a non-0x12 inherited height
         'seeds: for seed in 0..60u64 {
@@ -1764,7 +1816,7 @@
         let vanilla = base.read_range(ENEMY_DATA_START, len).to_vec();
         let catalog = NodeCatalog::build(&base, false);
 
-        let opts = Options { wild_injections: WildInjectionMode::Both, ..preset_recommended() };
+        let opts = Options { wild_injections: vec![WildChaser::Sun, WildChaser::Lakitu], ..preset_recommended() };
         let (mut suns, mut lakitus) = (0u32, 0u32);
         for seed in 0..40u64 {
             let mut rom = base.clone();

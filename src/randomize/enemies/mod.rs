@@ -20,7 +20,7 @@ use crate::randomize::rom_data::{
     TANK_BRO_POOL,
 };
 use crate::randomize::segment_writer::{self, SegmentEntry as WriterEntry, SortMode};
-use crate::randomizer::{EnemyMode, Options, WildInjectionMode};
+use crate::randomizer::{EnemyMode, Options, WildChaser};
 use crate::rom::Rom;
 
 mod class_modes;
@@ -63,7 +63,7 @@ pub fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
         piranhas: EnemyMode::Off, ghosts: EnemyMode::Off,
         thwomps: EnemyMode::Off, rotodiscs: EnemyMode::Off,
         cannons: EnemyMode::Off, water: EnemyMode::Off, bros: EnemyMode::Off,
-        hb_encounters: EnemyMode::Off, wild_injections: WildInjectionMode::Off,
+        hb_encounters: EnemyMode::Off, wild_injections: Vec::new(),
         ..Options::default()
     };
     randomize_object_data(rom, rng, true, &no_flags);
@@ -99,7 +99,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
     // pass on either side of it can only re-derive that. All it needs up front
     // is where each level's first enemy lives (header-pointed enemy_ptr values,
     // via node_catalog), which no shuffle can move.
-    let injection_sites = if opts.wild_injections.is_on() && !big_q_only {
+    let injection_sites = if !opts.wild_injections.is_empty() && !big_q_only {
         collect_injection_sites(rom, &data, opts)
     } else {
         InjectionSites::new()
