@@ -253,13 +253,23 @@ mod tests {
     /// Decode the assembled bytes and check the structural properties no
     /// assembler was around to check. Supersedes the hand-derived branch-index
     /// assertions this test used to carry.
+    ///
+    /// Reads only the byte array, so unlike the ROM-dependent tests above it
+    /// runs everywhere — including CI, where the ROM is absent.
     #[test]
     fn routine_is_well_formed() {
+        asm::check(&STOMP_RISE_CODE).allocation(FS_STOMP_RISE).assert_ok();
+    }
+
+    /// The hook must displace *whole* vanilla instructions — `STY Temp_Var2`
+    /// (2 bytes) plus `LDA Objects_Y,X` (2) — or the tail of the second would
+    /// be left for the CPU to run as an opcode. Split from the check above
+    /// because comparing against vanilla needs the ROM, and gating the whole
+    /// structural check on that would keep it out of CI.
+    #[test]
+    fn hook_displaces_whole_instructions() {
         let Some(v) = vanilla() else { return };
-        asm::check(&STOMP_RISE_CODE)
-            .allocation(FS_STOMP_RISE)
-            .hook(&v, STOMP_HEIGHT_HOOK, 4)
-            .assert_ok();
+        asm::check(&STOMP_RISE_CODE).hook(&v, STOMP_HEIGHT_HOOK, 4).assert_ok();
     }
 
     /// Both patch sites, against the bytes the disassembly says are there. A
