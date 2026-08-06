@@ -682,6 +682,7 @@ mod fortress_table_tests {
         // VANILLA_FORTRESS_OBJ_PTRS[i], and BOOMBOOM_Y_OFFSETS[i] must point
         // at the Y byte of a Boom-Boom enemy entry ([id, x, y]).
         let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
             return; // Base ROM not present (e.g. CI) — skip.
         };
         let rom = Rom::from_bytes(&bytes).unwrap();

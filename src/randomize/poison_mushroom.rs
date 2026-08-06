@@ -265,3 +265,16 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod asm_checks {
+    //! Decode each assembled routine and check the structural properties no
+    //! assembler was around to enforce. See [`crate::randomize::rom_data::asm`].
+    use super::*;
+    use crate::randomize::rom_data::asm;
+
+    #[test]
+    fn handler_is_well_formed() {
+        asm::check(&HANDLER).allocation(FS_POISON_MUSHROOM).assert_ok();
+    }
+}

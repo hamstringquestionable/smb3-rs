@@ -452,6 +452,7 @@ mod tests {
     #[test]
     fn vanilla_offsets_match_real_rom() {
         let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
             return;
         };
         let rom = Rom::from_bytes(&bytes).unwrap();

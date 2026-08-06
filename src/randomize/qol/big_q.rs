@@ -189,3 +189,16 @@ mod tests {
         assert_eq!(u16::from_le_bytes([r[13], r[14]]), base + 0x26);
     }
 }
+
+#[cfg(test)]
+mod asm_checks {
+    //! Decode each assembled routine and check the structural properties no
+    //! assembler was around to enforce. See [`crate::randomize::rom_data::asm`].
+    use super::*;
+    use crate::randomize::rom_data::asm;
+
+    #[test]
+    fn big_q_prg030_is_well_formed() {
+        asm::check(&BIG_Q_PRG030_ROUTINE).allocation(BIG_Q_PRG030_OFFSET).assert_ok();
+    }
+}

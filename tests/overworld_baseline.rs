@@ -50,7 +50,10 @@ fn hashes(rom: &[u8]) -> Vec<u64> {
 /// Runs the sweep twice in one process and requires agreement.
 #[test]
 fn sweep_is_deterministic() {
-    let Ok(rom) = std::fs::read(ROM_PATH) else { return };
+    let Ok(rom) = std::fs::read(ROM_PATH) else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
     assert_eq!(
         hashes(&rom),
         hashes(&rom),
@@ -77,7 +80,10 @@ const BASELINE: [u64; SEEDS as usize] = [
 
 #[test]
 fn output_matches_baseline() {
-    let Ok(rom) = std::fs::read(ROM_PATH) else { return };
+    let Ok(rom) = std::fs::read(ROM_PATH) else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
     if BASELINE.iter().all(|h| *h == 0) {
         panic!("BASELINE is unpopulated — run `cargo test print_baseline -- --ignored --nocapture`");
     }
@@ -97,7 +103,7 @@ fn output_matches_baseline() {
 #[ignore]
 fn print_baseline() {
     let Ok(rom) = std::fs::read(ROM_PATH) else {
-        println!("ROM not found at {ROM_PATH}");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     println!("const BASELINE: [u64; SEEDS as usize] = [");

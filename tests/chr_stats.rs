@@ -222,7 +222,7 @@ fn load_rom() -> Option<Rom> {
 #[test]
 fn chr_page_stats() {
     let Some(rom) = load_rom() else {
-        eprintln!("ROM file not present — skipping chr_page_stats (run locally with the ROM in repo root)");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     let opts = max_enemy_opts();

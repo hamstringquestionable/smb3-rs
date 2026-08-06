@@ -183,3 +183,16 @@ mod tests {
         assert_eq!(rom.read_range(TOAD_HOUSE_STORE_OFFSET, 3), &VANILLA_TOAD_LDA);
     }
 }
+
+#[cfg(test)]
+mod asm_checks {
+    //! Decode each assembled routine and check the structural properties no
+    //! assembler was around to enforce. See [`crate::randomize::rom_data::asm`].
+    use super::*;
+    use crate::randomize::rom_data::asm;
+
+    #[test]
+    fn anchor_item_guard_is_well_formed() {
+        asm::check(&ANCHOR_ITEM_GUARD_BODY).allocation(FS_ANCHOR_ITEM_GUARD).assert_ok();
+    }
+}

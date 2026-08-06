@@ -436,6 +436,15 @@ pub fn prg_bank_of(offset: usize) -> usize {
     (offset - PRG_START) / PRG_BANK_SIZE
 }
 
+/// One past the last file offset of the PRG bank containing `offset`.
+///
+/// A routine that runs past this executes whatever is paged in next, so it is
+/// the hard bound on how far an allocation near the end of a bank may grow.
+#[cfg(test)]
+pub(crate) fn prg_bank_end(offset: usize) -> usize {
+    PRG_START + (prg_bank_of(offset) + 1) * PRG_BANK_SIZE
+}
+
 /// True when write-log tag `tag` is covered by allocation owner `owner`.
 ///
 /// Matches whole `/`-separated components, so `koopalings` owns
@@ -865,6 +874,7 @@ mod free_space_tests {
     #[test]
     fn free_space_doc_table_is_current() {
         let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
             return;
         };
         let rom = crate::rom::Rom::from_bytes(&bytes).expect("valid ROM");

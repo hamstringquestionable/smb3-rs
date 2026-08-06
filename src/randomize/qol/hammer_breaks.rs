@@ -143,6 +143,7 @@ mod tests {
     /// the literals this function used before that change.
     fn tables(locks: bool, bridges: bool) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
             return (vec![], vec![], vec![]);
         };
         let mut rom = crate::rom::Rom::from_bytes_lax(&bytes, true).unwrap();

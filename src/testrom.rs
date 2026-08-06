@@ -778,7 +778,10 @@ mod tests {
 
     #[test]
     fn placement_writes_the_source_levels_pointers() {
-        let Some(van) = vanilla() else { return };
+        let Some(van) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
 
         // 6F1 is W6's first fortress: FORTRESS_ENTRIES lists it at (5, 9).
         let src = Rom::from_bytes_lax(&van, true).unwrap();
@@ -807,7 +810,10 @@ mod tests {
     /// zero lock bytes behind and must not touch anything else.
     #[test]
     fn unlocking_clears_every_lock_and_nothing_else() {
-        let Some(van) = vanilla() else { return };
+        let Some(van) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
 
         let built = build(&van, &TestRomSpec { remove_locks: true, ..spec() }).unwrap();
         let out = Rom::from_bytes_lax(&built.bytes, true).unwrap();
@@ -839,7 +845,10 @@ mod tests {
 
     #[test]
     fn gaps_and_locks_are_independent_knobs() {
-        let Some(van) = vanilla() else { return };
+        let Some(van) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
 
         let locks_only = build(&van, &TestRomSpec { remove_locks: true, ..spec() }).unwrap();
         for (i, (before, after)) in van.iter().zip(locks_only.bytes.iter()).enumerate() {
@@ -860,7 +869,10 @@ mod tests {
 
     #[test]
     fn starting_world_is_written() {
-        let Some(van) = vanilla() else { return };
+        let Some(van) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
         let built = build(&van, &TestRomSpec { world: Some(7), ..spec() }).unwrap();
         assert_eq!(built.bytes[WORLD_INIT_OPERAND], 6);
     }
@@ -869,7 +881,10 @@ mod tests {
     /// items must not disturb the map.
     #[test]
     fn starting_items_are_written_and_touch_nothing_on_the_map() {
-        let Some(van) = vanilla() else { return };
+        let Some(van) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
 
         let built = build(
             &van,
@@ -907,7 +922,10 @@ mod tests {
     /// that combination is the whole point of lock-FX testing.
     #[test]
     fn hammer_breaks_locks_leaves_the_locks_in_place() {
-        let Some(van) = vanilla() else { return };
+        let Some(van) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
 
         let built = build(
             &van,
@@ -975,7 +993,10 @@ mod tests {
     /// seed it reports must actually satisfy it.
     #[test]
     fn search_returns_a_seed_that_really_matches() {
-        let Some(van) = vanilla() else { return };
+        let Some(van) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
 
         let req = Requirement::parse("lock@w8:s2").unwrap();
         let hit = search_seed(&van, &Options::default(), &req, 1, 8)
@@ -997,7 +1018,10 @@ mod tests {
 
     #[test]
     fn search_gives_up_cleanly_when_nothing_matches() {
-        let Some(van) = vanilla() else { return };
+        let Some(van) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
         // W1 has no Bowser castle, so this can never be satisfied.
         let req = Requirement::parse("bowser@w1").unwrap();
         assert!(search_seed(&van, &Options::default(), &req, 1, 3).unwrap().is_none());
@@ -1005,7 +1029,10 @@ mod tests {
 
     #[test]
     fn unknown_level_name_is_an_error() {
-        let Some(van) = vanilla() else { return };
+        let Some(van) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
         let err = build(
             &van,
             &TestRomSpec {
@@ -1021,7 +1048,10 @@ mod tests {
     /// should name the kind rather than silently writing garbage pointers.
     #[test]
     fn placing_a_non_level_entry_explains_why() {
-        let Some(van) = vanilla() else { return };
+        let Some(van) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
         let err = build(
             &van,
             &TestRomSpec {

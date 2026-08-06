@@ -175,7 +175,7 @@ fn test_builder_schedule_runs_phases_in_order() {
 #[test]
 fn test_w1_shortcut_is_walkable() {
     let Some(raw) = load_rom() else {
-        eprintln!("ROM not found, skipping");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     let off = rom_data::read_tile_grid(&base_qol(&raw), 0);
@@ -214,7 +214,7 @@ fn test_w1_shortcut_is_walkable() {
 #[test]
 fn test_builder_vanilla_worlds() {
     let Some(rom) = load_rom() else {
-        eprintln!("ROM not found, skipping");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     let catalog = NodeCatalog::build(&rom, false);
@@ -266,7 +266,7 @@ fn test_builder_vanilla_worlds() {
 #[test]
 fn test_builder_current_builder_worlds() {
     let Some(raw) = load_rom() else {
-        eprintln!("ROM not found, skipping");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     let seeds: u64 = std::env::var("CENSUS_SEEDS")
@@ -365,7 +365,7 @@ fn test_builder_current_builder_worlds() {
 #[test]
 fn test_builder_connectivity_census() {
     let Some(raw) = load_rom() else {
-        eprintln!("ROM not found, skipping");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     let seeds: u64 = std::env::var("CENSUS_SEEDS")
@@ -435,7 +435,7 @@ fn test_builder_connectivity_census() {
 #[test]
 fn test_builder_levels_census() {
     let Some(raw) = load_rom() else {
-        eprintln!("ROM not found, skipping");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     let seeds: u64 = std::env::var("CENSUS_SEEDS")
@@ -547,7 +547,7 @@ fn test_builder_levels_census() {
 #[test]
 fn test_builder_forts_census() {
     let Some(raw) = load_rom() else {
-        eprintln!("ROM not found, skipping");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     let seeds: u64 = std::env::var("CENSUS_SEEDS")
@@ -622,7 +622,7 @@ fn test_builder_forts_census() {
 #[test]
 fn test_builder_locks_census() {
     let Some(raw) = load_rom() else {
-        eprintln!("ROM not found, skipping");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     let seeds: u64 = std::env::var("CENSUS_SEEDS")
@@ -743,7 +743,7 @@ fn test_builder_locks_census() {
 #[test]
 fn test_builder_shaping_census() {
     let Some(raw) = load_rom() else {
-        eprintln!("ROM not found, skipping");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     let seeds: u64 = std::env::var("CENSUS_SEEDS")
@@ -1059,7 +1059,7 @@ fn test_builder_shaping_census() {
 #[test]
 fn test_builder_progression_census() {
     let Some(raw) = load_rom() else {
-        eprintln!("ROM not found, skipping");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     let seeds: u64 = std::env::var("CENSUS_SEEDS")
@@ -1174,7 +1174,7 @@ fn test_builder_progression_census() {
 #[test]
 fn test_builder_secret_exit_safety() {
     let Some(raw) = load_rom() else {
-        eprintln!("ROM not found, skipping");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     let seeds: u64 = std::env::var("CENSUS_SEEDS")
@@ -1362,7 +1362,7 @@ fn diversity_row(shapes: &[SeedShape]) -> (f64, f64, f64, f64, f64) {
 #[test]
 fn test_builder_diversity_census() {
     let Some(rom) = load_rom() else {
-        eprintln!("ROM not found, skipping");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     let rom = base_qol(&rom);
@@ -1466,7 +1466,7 @@ fn parse_pipe_delta(line: &str) -> Option<(usize, usize, u32, u32)> {
 #[test]
 fn test_builder_spare_pipes_census() {
     let Some(raw) = load_rom() else {
-        eprintln!("ROM not found, skipping");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     let seeds: u64 = std::env::var("CENSUS_SEEDS")
@@ -1556,7 +1556,7 @@ fn test_builder_spare_pipes_census() {
 #[test]
 fn test_builder_probe_vanilla_world() {
     let Some(rom) = load_rom() else {
-        eprintln!("ROM not found, skipping");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     let world: usize = std::env::var("CENSUS_WORLD").ok().and_then(|s| s.parse().ok()).unwrap_or(2);
@@ -1590,7 +1590,7 @@ fn test_builder_probe_vanilla_world() {
 #[test]
 fn test_builder_output_completable() {
     let Some(raw) = load_rom() else {
-        eprintln!("ROM not found, skipping");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(25);
@@ -1663,7 +1663,7 @@ fn test_builder_output_completable() {
 #[test]
 fn test_builder_fort_removal_census() {
     let Some(raw) = load_rom() else {
-        eprintln!("ROM not found, skipping");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(200);
@@ -1708,7 +1708,7 @@ fn test_builder_fort_removal_census() {
 #[test]
 fn test_builder_bridge_lock_rate() {
     let Some(raw) = load_rom() else {
-        eprintln!("ROM not found, skipping");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(300);
@@ -1756,7 +1756,7 @@ fn test_builder_bridge_lock_rate() {
 #[test]
 fn test_builder_island_roles() {
     let Some(raw) = load_rom() else {
-        eprintln!("ROM not found, skipping");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     use super::islands::IslandRole::{Corridor, Entry, Final, Routing, Utility};
@@ -1827,7 +1827,7 @@ fn test_builder_island_roles() {
 #[test]
 fn test_builder_w7_probe() {
     let Some(raw) = load_rom() else {
-        eprintln!("ROM not found, skipping");
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
     let seeds: u64 = std::env::var("CENSUS_SEEDS")

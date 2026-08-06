@@ -78,6 +78,7 @@ mod tests {
     #[test]
     fn marks_at_most_one_pipe_per_world_w2_w8() {
         let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
             return; // Base ROM not present (e.g. CI) — skip.
         };
         let rom = Rom::from_bytes(&bytes).unwrap();
@@ -111,6 +112,7 @@ mod tests {
     #[test]
     fn deterministic_per_seed() {
         let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
             return; // Base ROM not present (e.g. CI) — skip.
         };
         let rom = Rom::from_bytes(&bytes).unwrap();

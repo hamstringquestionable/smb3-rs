@@ -191,3 +191,16 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod asm_checks {
+    //! Decode each assembled routine and check the structural properties no
+    //! assembler was around to enforce. See [`crate::randomize::rom_data::asm`].
+    use super::*;
+    use crate::randomize::rom_data::asm;
+
+    #[test]
+    fn map_warp_is_well_formed() {
+        asm::check(&MAP_WARP_ROUTINE).allocation(FS_MAP_WARP).assert_ok();
+    }
+}
