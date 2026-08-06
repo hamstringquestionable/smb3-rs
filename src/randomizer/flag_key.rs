@@ -95,7 +95,8 @@ impl Options {
             | (self.shuffle_hammer_bros as u8) << 1
             | (self.chest_items as u8);
 
-        // b2 bit 5 = wild-injection Bass bit (was free since shuffle_pipes, a dead\n        // flag removed in v26). That was the last free bit outside b12 bit 7.
+        // b2 bit 5 = wild-injection Bass bit (free since shuffle_pipes, a dead
+        // flag removed in v26).
         // b2 bit 4 = faster_frog (reuses the slot formerly fix_drawbridges,
         // now always-on).
         // b2 bit 3 = boomboom_hits (reuses the slot formerly remove_rocks).
@@ -228,8 +229,13 @@ impl Options {
 
         // b12: piranha_shuffle(1-0), antechamber_shuffle ON bit (2) and
         // Maybe bit (3), anchor_visuals(4), poison_mushrooms(5),
-        // modern_powerups(6), wild_injections high bit (7 — the key is now
-        // full; the next flag needs a 14th byte).
+        // modern_powerups(6), wild-injection Lakitu bit (7).
+        //
+        // With that bit taken the key is FULL: every bit of b1-b12 is
+        // allocated (checked bit by bit, not assumed — b3's "freeing bits 4-0"
+        // note above is historical, those five were spent since). The next flag
+        // needs a 14th byte, which means a longer key string as well as a
+        // version bump.
         let b12 = pm(self.piranha_shuffle)
             | (self.antechamber_shuffle.is_on() as u8) << 2
             | (self.antechamber_shuffle.is_maybe() as u8) << 3
