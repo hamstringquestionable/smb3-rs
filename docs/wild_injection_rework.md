@@ -110,9 +110,13 @@ half stay low, half lift up. X is always inherited.
 - Only the level's **main area** first enemy is targeted (no sub-area injection).
 - **Rate** (`WILD_INJECTION_CHANCE = 102`, ~40%) now applies per candidate
   level; may warrant re-measuring against the (larger, cleaner) pool.
-- **A one-chaser pool is a sparser pool.** `WildInjectionMode::Sun` / `Lakitu`
+- **A one-chaser pool is not, in practice, a sparser pool.** `Sun` / `Lakitu`
   filter the pool *before* the CHR-compatibility and no-doubling checks, and a
   candidate that fails them injects nothing rather than falling back to the
-  other chaser. So the single modes land on fewer levels than `Both` — they
-  don't redistribute the same count. The per-mode counts have not been
-  measured; the rate is deliberately left alone until they are.
+  other chaser — so the single modes ought to land on fewer levels. Measured
+  over 20 seeds they don't: 8.2–9.2 injections per seed in every mode, with the
+  between-mode spread no larger than the spread between two runs of one mode
+  (each mode draws a different RNG stream). Few levels are CHR-restricted to
+  exactly one chaser, so the effect exists but is far below the noise.
+  `WILD_INJECTION_CHANCE` is therefore left alone. Numbers from the
+  `print_injection_counts` diagnostic in `enemies/tests.rs`.

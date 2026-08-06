@@ -1636,6 +1636,36 @@
         (suns, lakitus)
     }
 
+    /// Prints how many chasers each mode actually injects, so a change to the
+    /// injection machinery can be compared against the run before it. Ignored
+    /// by default (needs the ROM, takes ~20s); same pattern as
+    /// `overworld_baseline::print_baseline`.
+    ///
+    /// `cargo test print_injection_counts -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn print_injection_counts() {
+        let Some(base) = load_reference_rom() else {
+            eprintln!("reference ROM not present — skipping print_injection_counts");
+            return;
+        };
+        const SEEDS: u64 = 20;
+        for mode in [
+            WildInjectionMode::Both,
+            WildInjectionMode::Sun,
+            WildInjectionMode::Lakitu,
+        ] {
+            let opts = Options { wild_injections: mode, ..preset_recommended() };
+            let (suns, lakitus) = injected_chaser_counts(&base, &opts, SEEDS);
+            let total = suns + lakitus;
+            println!(
+                "{mode:?}: {total} injections over {SEEDS} seeds ({:.1}/seed) — \
+                 {suns} sun, {lakitus} lakitu",
+                total as f64 / SEEDS as f64,
+            );
+        }
+    }
+
     /// A one-chaser pool injects that chaser and only that one. The narrowed
     /// modes also inject into *fewer* levels than `Both` (a level whose CHR
     /// can't fit the pick is skipped, not handed the other chaser), so this

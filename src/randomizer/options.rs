@@ -128,10 +128,13 @@ pub enum PiranhaMode {
 /// `Both` is the mixed pool, weighted toward the Angry Sun (see
 /// `SUN_INJECTION_WEIGHT`); `Sun` / `Lakitu` narrow it to that one enemy.
 ///
-/// A one-enemy pool injects into *fewer* levels than `Both`, it doesn't just
-/// re-skew the same set: a candidate whose segment CHR can't fit the chosen
-/// chaser (or that already has one) is skipped rather than falling back to
-/// the other. How much sparser each mode runs has not been measured.
+/// A candidate whose segment CHR can't fit the chosen chaser (or that already
+/// has one) is skipped rather than falling back to the other, so a one-enemy
+/// pool is in principle sparser than `Both`. Measured, it isn't: all three
+/// modes land 8-9 injections per seed over 20 seeds, and the gap between modes
+/// is the same size as the gap between two runs of the *same* mode, since each
+/// mode draws a different RNG stream. Run the `print_injection_counts`
+/// diagnostic before believing otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WildInjectionMode {
