@@ -32,12 +32,21 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+          targets: wasm32-unknown-unknown
 
       - name: Cache cargo registry & build
         uses: Swatinem/rust-cache@v2
 
       - name: Clippy (deny warnings)
         run: cargo clippy --all-targets -- -D warnings
+
+      # The native pass above never evaluates the `cfg(target_arch = "wasm32")`
+      # branch, and `wasm-pack` (in the `build` job) exits 0 on warnings — so
+      # without this, a wasm-only warning is invisible and a wasm-only compile
+      # error first surfaces post-merge, in the job that deploys.
+      # `--lib` is required: the bins pull in clap, which isn't built for wasm.
+      - name: Clippy — wasm target (deny warnings)
+        run: cargo clippy --lib --target wasm32-unknown-unknown -- -D warnings
 
       - name: Build
         run: cargo build --all-targets
