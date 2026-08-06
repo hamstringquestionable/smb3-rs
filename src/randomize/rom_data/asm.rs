@@ -47,6 +47,9 @@ struct Decoded {
     instr: Instruction,
     /// `true` for the relative-addressed branches, whose targets get checked.
     relative: bool,
+    /// `true` when the operand is a full 16-bit address, which is what makes a
+    /// routine origin-locked. See [`Routine::origin`].
+    absolute: bool,
 }
 
 /// Walk `code` as a straight-line instruction stream.
@@ -73,17 +76,25 @@ fn decode(code: &[u8]) -> Result<Vec<Decoded>, String> {
             len,
             instr,
             relative: matches!(mode, AddressingMode::Relative),
+            absolute: matches!(
+                mode,
+                AddressingMode::Absolute
+                    | AddressingMode::AbsoluteX
+                    | AddressingMode::AbsoluteY
+                    | AddressingMode::Indirect
+                    | AddressingMode::BuggyIndirect
+            ),
         });
         pc += len;
     }
     Ok(out)
 }
 
-/// The vanilla bytes a hook overwrites, and how many of them it takes.
+/// The vanilla bytes a hook overwrites, and the bytes written over them.
 struct Hook<'a> {
     vanilla: &'a [u8],
     offset: usize,
-    len: usize,
+    patch: &'a [u8],
 }
 
 /// A patch under verification. Build with [`check`], then [`Routine::assert_ok`].
@@ -93,11 +104,19 @@ pub struct Routine<'a> {
     hook: Option<Hook<'a>>,
     data_from: Option<usize>,
     fragment: bool,
+    origin: Option<u16>,
 }
 
 /// Begin checking an assembled routine.
 pub fn check(code: &[u8]) -> Routine<'_> {
-    Routine { code, allocation: None, hook: None, data_from: None, fragment: false }
+    Routine {
+        code,
+        allocation: None,
+        hook: None,
+        data_from: None,
+        fragment: false,
+        origin: None,
+    }
 }
 
 impl<'a> Routine<'a> {
@@ -109,9 +128,31 @@ impl<'a> Routine<'a> {
     }
 
     /// The hook site: the vanilla ROM, the file offset the patch writes over,
-    /// and how many bytes it writes there.
-    pub fn hook(mut self, vanilla: &'a [u8], offset: usize, len: usize) -> Self {
-        self.hook = Some(Hook { vanilla, offset, len });
+    /// and the bytes written there.
+    ///
+    /// With [`Routine::origin`] also set, a hook that opens with `JSR`/`JMP`
+    /// must target the routine's origin — the check that catches a relocated
+    /// allocation whose hook was not moved with it.
+    pub fn hook(mut self, vanilla: &'a [u8], offset: usize, patch: &'a [u8]) -> Self {
+        self.hook = Some(Hook { vanilla, offset, patch });
+        self
+    }
+
+    /// The CPU address this routine is assembled to run at.
+    ///
+    /// A relative branch says "12 bytes forward" and survives being moved. An
+    /// absolute `JMP $DEB7` has the address baked into its bytes and does not:
+    /// relocate the routine and it jumps to whatever now lives at the old
+    /// address. A routine holding absolute references to itself — or to tables
+    /// in its own tail — is *origin-locked*, and several here are
+    /// (`FS_CANOE_SUMMON` says so in its own comment).
+    ///
+    /// Given the origin, every absolute operand pointing back inside the
+    /// routine must land on an instruction boundary, or in the data region
+    /// declared by [`Routine::data_from`]. One that lands anywhere else means
+    /// the routine moved, or the address was typed wrong.
+    pub fn origin(mut self, cpu: u16) -> Self {
+        self.origin = Some(cpu);
         self
     }
 
@@ -191,6 +232,30 @@ impl<'a> Routine<'a> {
                         ));
                     }
                 }
+
+                // Absolute references back into the routine — the origin lock.
+                if let Some(origin) = self.origin {
+                    let end = origin as usize + self.code.len();
+                    let data = self.data_from.unwrap_or(self.code.len());
+                    for i in instrs.iter().filter(|i| i.absolute) {
+                        let addr =
+                            u16::from_le_bytes([code[i.start + 1], code[i.start + 2]]) as usize;
+                        if addr < origin as usize || addr >= end {
+                            continue; // points outside; nothing here can judge it
+                        }
+                        let off = addr - origin as usize;
+                        if off >= data || starts.contains(&off) {
+                            continue; // a table read, or a real instruction
+                        }
+                        problems.push(format!(
+                            "{:?} at byte {} targets ${addr:04X}, which is byte {off} of this \
+                             routine — mid-instruction. The routine is origin-locked to \
+                             ${origin:04X}; moving it invalidates absolute references like \
+                             this one.",
+                            i.instr, i.start
+                        ));
+                    }
+                }
             }
         }
 
@@ -221,10 +286,24 @@ impl<'a> Routine<'a> {
             }
         }
 
-        if let Some(h) = self.hook
-            && let Err(e) = check_displacement(h.vanilla, h.offset, h.len)
-        {
-            problems.push(e);
+        if let Some(h) = &self.hook {
+            if let Err(e) = check_displacement(h.vanilla, h.offset, h.patch.len()) {
+                problems.push(e);
+            }
+            // A hook that calls or jumps into the routine must name its origin.
+            if let Some(origin) = self.origin
+                && h.patch.len() >= 3
+                && matches!(h.patch[0], 0x20 | 0x4C)
+            {
+                let target = u16::from_le_bytes([h.patch[1], h.patch[2]]);
+                if target != origin {
+                    problems.push(format!(
+                        "the hook at 0x{:05X} targets ${target:04X} but the routine is at \
+                         ${origin:04X} — the allocation moved and the hook did not follow",
+                        h.offset
+                    ));
+                }
+            }
         }
 
         assert!(
@@ -315,6 +394,40 @@ mod tests {
         check(&code).data_from(3).assert_ok();
         // Without the opt-out the trailing table is read as code and fails.
         assert!(std::panic::catch_unwind(|| check(&code).assert_ok()).is_err());
+    }
+
+    /// Relocating an origin-locked routine must be caught: the same bytes that
+    /// pass at their real origin fail one byte away, because the absolute
+    /// reference then resolves into the middle of an instruction.
+    #[test]
+    fn origin_check_catches_a_relocated_routine() {
+        //   byte 0: LDA #$00   byte 2: JMP $8005   byte 5: RTS
+        let code = [0xA9, 0x00, 0x4C, 0x05, 0x80, 0x60];
+        check(&code).origin(0x8000).assert_ok();
+        assert!(std::panic::catch_unwind(|| check(&code).origin(0x8001).assert_ok()).is_err());
+    }
+
+    /// An absolute operand pointing *outside* the routine is somebody else's
+    /// address and cannot be judged from here.
+    #[test]
+    fn origin_check_ignores_addresses_outside_the_routine() {
+        // JMP $C123 — a vanilla routine elsewhere in the bank.
+        let code = [0x4C, 0x23, 0xC1];
+        check(&code).origin(0x8000).assert_ok();
+    }
+
+    #[test]
+    fn hook_must_target_the_routine_origin() {
+        let vanilla = [0x84, 0x01, 0xB5, 0xA3];
+        let code = [0x60];
+        // JSR $9FB6 + NOP, against a routine that really is at $9FB6.
+        let good = [0x20, 0xB6, 0x9F, 0xEA];
+        check(&code).origin(0x9FB6).hook(&vanilla, 0, &good).assert_ok();
+        // The same hook after the allocation moved.
+        assert!(std::panic::catch_unwind(|| {
+            check(&code).origin(0x9FC0).hook(&vanilla, 0, &good).assert_ok()
+        })
+        .is_err());
     }
 
     #[test]

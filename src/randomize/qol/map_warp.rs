@@ -201,6 +201,6 @@ mod asm_checks {
 
     #[test]
     fn map_warp_is_well_formed() {
-        asm::check(&MAP_WARP_ROUTINE).allocation(FS_MAP_WARP).assert_ok();
+        asm::check(&MAP_WARP_ROUTINE).origin(MAP_WARP_CPU).allocation(FS_MAP_WARP).assert_ok();
     }
 }

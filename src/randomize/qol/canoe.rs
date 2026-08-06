@@ -124,7 +124,7 @@ mod asm_checks {
 
     #[test]
     fn canoe_respawn_is_well_formed() {
-        asm::check(&CANOE_RESPAWN_ROUTINE).allocation(FS_CANOE_RESPAWN).assert_ok();
+        asm::check(&CANOE_RESPAWN_ROUTINE).origin(CANOE_RESPAWN_CPU).allocation(FS_CANOE_RESPAWN).assert_ok();
     }
 
     #[test]

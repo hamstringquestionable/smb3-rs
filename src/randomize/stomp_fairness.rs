@@ -122,15 +122,21 @@ const STOMP_RISE_CODE: [u8; 26] = [
 /// Always on: it removes a source of unearned damage and has no effect on any
 /// collision that vanilla already resolved correctly, so there is nothing for
 /// a player to opt out of and no flag-key bit is spent on it.
+/// `JSR STOMP_RISE_CPU`, then a `NOP` filling the 4th displaced byte.
+///
+/// The target is derived from [`FS_STOMP_RISE`] rather than written out, so
+/// moving the allocation moves the hook with it.
+const STOMP_HEIGHT_HOOK_BYTES: [u8; 4] = [
+    0x20,
+    STOMP_RISE_CPU as u8,
+    (STOMP_RISE_CPU >> 8) as u8,
+    0xEA,
+];
+
 pub fn apply(rom: &mut Rom) {
     rom.write_byte(OVERLAP_THRESHOLD, OVERLAP_TOLERANT);
     rom.write_range(FS_STOMP_RISE, &STOMP_RISE_CODE);
-    rom.write_range(STOMP_HEIGHT_HOOK, &[
-        0x20,
-        STOMP_RISE_CPU as u8,
-        (STOMP_RISE_CPU >> 8) as u8,
-        0xEA, // NOP, filling the 4th displaced byte
-    ]);
+    rom.write_range(STOMP_HEIGHT_HOOK, &STOMP_HEIGHT_HOOK_BYTES);
 }
 
 #[cfg(test)]
@@ -258,7 +264,10 @@ mod tests {
     /// runs everywhere — including CI, where the ROM is absent.
     #[test]
     fn routine_is_well_formed() {
-        asm::check(&STOMP_RISE_CODE).allocation(FS_STOMP_RISE).assert_ok();
+        asm::check(&STOMP_RISE_CODE)
+            .allocation(FS_STOMP_RISE)
+            .origin(STOMP_RISE_CPU)
+            .assert_ok();
     }
 
     /// The hook must displace *whole* vanilla instructions — `STY Temp_Var2`
@@ -272,7 +281,10 @@ mod tests {
             eprintln!("SKIP: requires the ROM, which is not included in the repo");
             return;
         };
-        asm::check(&STOMP_RISE_CODE).hook(&v, STOMP_HEIGHT_HOOK, 4).assert_ok();
+        asm::check(&STOMP_RISE_CODE)
+            .origin(STOMP_RISE_CPU)
+            .hook(&v, STOMP_HEIGHT_HOOK, &STOMP_HEIGHT_HOOK_BYTES)
+            .assert_ok();
     }
 
     /// Both patch sites, against the bytes the disassembly says are there. A

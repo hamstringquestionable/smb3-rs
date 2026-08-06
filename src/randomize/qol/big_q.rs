@@ -180,13 +180,15 @@ mod tests {
         assert_eq!(&r[0x5D..0x6A], &BQ_ROOM);
     }
 
+    /// The hook must name the routine's own origin. The routine's *internal*
+    /// self-references are checked by `lookup_routine_is_well_formed`, which
+    /// resolves them against the decoded instruction boundaries rather than
+    /// against a hand-written byte index.
     #[test]
     fn jsr_target_matches_routine_origin() {
         let base = prg_bank_file_to_cpu(26, BIG_Q_ROUTINE_OFFSET);
         let hook = jsr_into_bank(26, BIG_Q_ROUTINE_OFFSET);
         assert_eq!(u16::from_le_bytes([hook[1], hook[2]]), base);
-        let r = build_lookup_routine();
-        assert_eq!(u16::from_le_bytes([r[13], r[14]]), base + 0x26);
     }
 }
 
@@ -200,5 +202,19 @@ mod asm_checks {
     #[test]
     fn big_q_prg030_is_well_formed() {
         asm::check(&BIG_Q_PRG030_ROUTINE).allocation(BIG_Q_PRG030_OFFSET).assert_ok();
+    }
+
+    /// The PRG026 lookup routine, whose internal operands are derived from
+    /// `base` rather than hardcoded — so `.origin` here proves the derivation
+    /// lands on real instruction boundaries, not merely on the right numbers.
+    /// The last 39 bytes are the three 13-entry tables.
+    #[test]
+    fn lookup_routine_is_well_formed() {
+        let routine = build_lookup_routine();
+        asm::check(&routine)
+            .allocation(BIG_Q_ROUTINE_OFFSET)
+            .origin(prg_bank_file_to_cpu(26, BIG_Q_ROUTINE_OFFSET))
+            .data_from(routine.len() - 39)
+            .assert_ok();
     }
 }

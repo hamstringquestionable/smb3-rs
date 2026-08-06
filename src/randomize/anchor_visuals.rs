@@ -193,6 +193,6 @@ mod asm_checks {
 
     #[test]
     fn anchor_item_guard_is_well_formed() {
-        asm::check(&ANCHOR_ITEM_GUARD_BODY).allocation(FS_ANCHOR_ITEM_GUARD).assert_ok();
+        asm::check(&ANCHOR_ITEM_GUARD_BODY).origin(ANCHOR_ITEM_GUARD_CPU_ADDR).allocation(FS_ANCHOR_ITEM_GUARD).assert_ok();
     }
 }

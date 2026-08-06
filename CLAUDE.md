@@ -132,6 +132,62 @@ stream ending at 0x0D9F6.
   Querying a flag the engine already maintains costs a few bytes; a parallel
   per-slot table costs bytes *and* can drift out of sync.
 
+## Every New 6502 Patch Gets an `asm::check` Test
+
+A patch here is a `&[u8]` no assembler ever checked. The classic failure is a
+miscounted relative branch: it still "assembles", lands mid-instruction, the CPU
+runs an operand as an opcode — and the ROM boots. **Add the check in the same
+commit as the patch**, in an `asm_checks` module at the end of the file:
+
+```rust
+#[cfg(test)]
+mod asm_checks {
+    use super::*;
+    use crate::randomize::rom_data::asm;
+
+    #[test]
+    fn my_routine_is_well_formed() {
+        asm::check(&MY_ROUTINE)
+            .allocation(FS_MY_ROUTINE)   // fits its row, stays in its bank
+            .origin(MY_ROUTINE_CPU)      // absolute self-references resolve
+            .assert_ok();
+    }
+}
+```
+
+It decodes the bytes with the `mos6502` crate's Ricoh 2A03 table (a
+dev-dependency; it reaches neither the binary nor the WASM bundle) and checks
+that every byte decodes, the routine ends in `RTS`/`RTI`/`JMP` rather than
+running into the `$FF` filler after it, every relative branch lands on an
+instruction boundary, the code fits its `FREE_SPACE_ALLOCATIONS` row without
+crossing its bank, and absolute references back into the routine still resolve.
+
+Four builder methods, each for a real shape:
+
+| Method | Use when |
+|---|---|
+| `.allocation(FS_*)` | the routine claims free space (nearly always) |
+| `.origin(cpu)` | the routine has absolute references to itself or its tables |
+| `.data_from(n)` | the tail is a lookup table, not code |
+| `.fragment()` | it is spliced in place over vanilla, or continues into a sibling write |
+| `.hook(&vanilla, off, &bytes)` | it is reached from a hook — checks whole instructions are displaced, and that a `JSR`/`JMP` hook names the origin |
+
+`.fragment()` narrows the check rather than switching it off; branches landing
+inside the array are still verified. Prefer fixing the array over reaching for
+an opt-out.
+
+**`.origin` is the one to remember**, because relocating is the dangerous
+operation. A relative branch says "12 bytes forward" and survives being moved;
+an absolute `JMP $DEB7` has the address baked in and does not. Several
+allocations are origin-locked this way (`FS_CANOE_SUMMON` says so in its own
+comment), which is why reserving headroom beats relocating.
+
+The check cannot see *meaning* — a well-formed routine can still compute the
+wrong answer. Where a routine is a self-contained calculation with no calls out
+to the engine, execute it too: `stomp_fairness` runs its routine on an emulated
+CPU over all 65,536 inputs. Most patches read mid-level engine state and cannot
+be tested that way; for those the ROM is the instrument (see `testrom`).
+
 ## Changelog
 
 `CHANGELOG.md` (repo root, [Keep a Changelog](https://keepachangelog.com/) format) tracks notable changes. When a change is user-visible or notable (a new flag/option, a behavior change, a fixed bug players would notice), add a one-line entry under the `[Unreleased]` section in the right group (`Added` / `Changed` / `Fixed` / `Removed`) as part of the same change. Skip purely internal refactors, test-only changes, and tooling tweaks. At version-bump time, move the accumulated `[Unreleased]` entries into a new versioned section.

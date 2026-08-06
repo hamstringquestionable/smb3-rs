@@ -275,6 +275,6 @@ mod asm_checks {
 
     #[test]
     fn handler_is_well_formed() {
-        asm::check(&HANDLER).allocation(FS_POISON_MUSHROOM).assert_ok();
+        asm::check(&HANDLER).origin(INIT_CPU).allocation(FS_POISON_MUSHROOM).assert_ok();
     }
 }
