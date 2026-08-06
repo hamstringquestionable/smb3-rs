@@ -38,7 +38,10 @@ fn normalized(mut o: Options) -> Options {
 
 #[test]
 fn mystery_anchor_trampoline_written() {
-    let Some(mut rom) = make_test_rom() else { return };
+    let Some(mut rom) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
     // Place anchors in item tables — they should stay as 0x0A
     rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 2, ANCHOR);
     rom.write_byte(TOAD_HOUSE_ITEMS_OFFSET + 1, ANCHOR);
@@ -96,7 +99,10 @@ fn audit_options() -> Options {
 fn free_space_audit_matches_registry() {
     use crate::randomize::rom_data::{audit_free_space, format_free_space_report};
 
-    let Some(mut rom) = make_test_rom() else { return };
+    let Some(mut rom) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
     randomize(&mut rom, 0xA11C0DE, &audit_options());
 
     let usage = audit_free_space(&rom);
@@ -146,7 +152,10 @@ fn free_space_audit_matches_registry() {
 
 #[test]
 fn write_log_populated_after_randomize() {
-    let Some(mut rom) = make_test_rom() else { return };
+    let Some(mut rom) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
     let options = test_options();
     randomize(&mut rom, 0x12345678, &options);
 
@@ -820,11 +829,17 @@ fn test_full_determinism() {
     let seed = 42u64;
     for (name, options) in &configs {
         // Run 1
-        let Some(mut rom1) = make_test_rom() else { return };
+        let Some(mut rom1) = make_test_rom() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
         randomize(&mut rom1, seed, options);
 
         // Run 2 (same seed, same options)
-        let Some(mut rom2) = make_test_rom() else { return };
+        let Some(mut rom2) = make_test_rom() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
         randomize(&mut rom2, seed, options);
 
         // Same-run determinism — find first differing byte for diagnostics
@@ -876,8 +891,14 @@ fn maybe_flags_are_deterministic_and_hidden() {
 
     // (3) determinism across runs (needs the real ROM).
     let seed = 0xC0FFEEu64;
-    let Some(mut rom1) = make_test_rom() else { return };
-    let Some(mut rom2) = make_test_rom() else { return };
+    let Some(mut rom1) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let Some(mut rom2) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
     randomize(&mut rom1, seed, &opts);
     randomize(&mut rom2, seed, &opts);
     assert_eq!(
@@ -895,7 +916,10 @@ fn maybe_resolves_both_ways_across_seeds() {
     // each Maybe run's tile bytes to the explicit-On run's bytes, so the
     // flag-key stamp / title hash (which always differ for Maybe) don't
     // confound the comparison.
-    let Some(_) = make_test_rom() else { return };
+    let Some(_) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
     let on = Options { more_hammer_rocks: Tri::On, ..test_options() };
     let maybe = Options { more_hammer_rocks: Tri::Maybe, ..test_options() };
 
@@ -926,7 +950,10 @@ fn maybe_resolves_both_ways_across_seeds() {
 
 #[test]
 fn write_log_tags_match_enabled_modules() {
-    let Some(mut rom) = make_test_rom() else { return };
+    let Some(mut rom) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
     let mut options = test_options();
     // Disable optional modules we can check for absence
     options.ground = EnemyMode::Off;

@@ -268,7 +268,10 @@ mod tests {
     /// structural check on that would keep it out of CI.
     #[test]
     fn hook_displaces_whole_instructions() {
-        let Some(v) = vanilla() else { return };
+        let Some(v) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
         asm::check(&STOMP_RISE_CODE).hook(&v, STOMP_HEIGHT_HOOK, 4).assert_ok();
     }
 
@@ -276,7 +279,10 @@ mod tests {
     /// drifted offset would otherwise sail past the byte-level asserts below.
     #[test]
     fn patch_sites_match_vanilla() {
-        let Some(v) = vanilla() else { return };
+        let Some(v) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
         // Operand of CMP #$08 at $D8E1.
         assert_eq!(v[OVERLAP_THRESHOLD], 0x08);
         // STY Temp_Var2; LDA Objects_Y,X at $D22E.
@@ -290,7 +296,10 @@ mod tests {
 
     #[test]
     fn apply_writes_both_halves() {
-        let Some(v) = vanilla() else { return };
+        let Some(v) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
         let mut rom = Rom::from_bytes_lax(&v, true).expect("valid ROM");
         apply(&mut rom);
         assert_eq!(rom.read_byte(OVERLAP_THRESHOLD), OVERLAP_TOLERANT);

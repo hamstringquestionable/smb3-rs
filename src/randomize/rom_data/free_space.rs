@@ -874,6 +874,7 @@ mod free_space_tests {
     #[test]
     fn free_space_doc_table_is_current() {
         let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
             return;
         };
         let rom = crate::rom::Rom::from_bytes(&bytes).expect("valid ROM");
