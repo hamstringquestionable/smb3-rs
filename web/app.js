@@ -703,9 +703,19 @@ function updateGenerateButton() {
 }
 
 function showStatus(message, type) {
+	// Repeating a message writes identical text into an already-visible box, so
+	// nothing on screen changes and the click reads as a no-op. That's the
+	// common case for flag keys in a race: everyone's key comes from the same
+	// older build, so a second paste produces the same rejection word for word.
+	// Re-flash so it still registers as a response.
+	const repeat = !statusDiv.hidden && statusDiv.textContent === message;
 	statusDiv.textContent = message;
 	statusDiv.className = `status ${type}`;
 	statusDiv.hidden = false;
+	if (repeat) {
+		void statusDiv.offsetWidth; // force reflow so the animation restarts
+		statusDiv.classList.add("flash");
+	}
 }
 
 function updateSkipValidationWarning() {
