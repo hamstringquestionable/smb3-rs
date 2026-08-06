@@ -24,6 +24,9 @@
 //! treatment for a table mirror is a test asserting it still matches the bytes
 //! at its ROM offset, not consolidation into these predicates.
 
+// Only `is_fortress` reads this, and that predicate is native-only (see the
+// "Node tiles" section below).
+#[cfg(not(target_arch = "wasm32"))]
 use super::FORTRESS_TILES;
 
 // ---------------------------------------------------------------------------
@@ -129,19 +132,27 @@ pub(crate) fn path_for_gap_tile(tile: u8) -> Option<u8> {
 
 // ---------------------------------------------------------------------------
 // Node tiles
+//
+// Native-only: `testrom` (itself `cfg(not(wasm32))`) is the sole consumer, so
+// on the WASM build these are dead code and warn. Gated rather than
+// `allow(dead_code)`d so that a genuinely unused item still gets caught.
 // ---------------------------------------------------------------------------
 
 /// Lowest numbered-level tile. Level number = `tile - 2`.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const NUMBERED_TILE_LO: u8 = 0x03;
 /// Highest numbered-level tile.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const NUMBERED_TILE_HI: u8 = 0x0F;
 
 /// A numbered action level (`0x03..=0x0F`, level number = `tile - 2`).
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn is_numbered_level(tile: u8) -> bool {
     (NUMBERED_TILE_LO..=NUMBERED_TILE_HI).contains(&tile)
 }
 
 /// A fortress tile (any of the three variants).
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn is_fortress(tile: u8) -> bool {
     FORTRESS_TILES.contains(&tile)
 }
