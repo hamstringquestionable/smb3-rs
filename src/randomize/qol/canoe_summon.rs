@@ -190,6 +190,6 @@ mod asm_checks {
 
     #[test]
     fn canoe_summon_is_well_formed() {
-        asm::check(&CANOE_SUMMON_ROUTINE).allocation(FS_CANOE_SUMMON).data_from(139).assert_ok();
+        asm::check(&CANOE_SUMMON_ROUTINE).origin(CANOE_SUMMON_CPU).allocation(FS_CANOE_SUMMON).data_from(139).assert_ok();
     }
 }
