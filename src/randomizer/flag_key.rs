@@ -71,6 +71,47 @@ pub(super) fn base32_decode(s: &str, expected_bytes: usize) -> Result<Vec<u8>, S
     Ok(result)
 }
 
+/// Trim surrounding whitespace and strip the "SMB3R-" prefix
+/// case-insensitively if present. Compares as bytes so a non-ASCII key can't
+/// panic on a char-boundary slice.
+///
+/// Shared by `from_flag_key` and `flag_key_version_of` so the two always see
+/// the same string — otherwise a key one accepts and the other rejects would be
+/// classified with the wrong reason.
+fn strip_flag_key_prefix(key: &str) -> &str {
+    let key = key.trim();
+    let prefix_len = FLAG_KEY_PREFIX.len();
+    if key.len() >= prefix_len
+        && key.as_bytes()[..prefix_len].eq_ignore_ascii_case(FLAG_KEY_PREFIX.as_bytes())
+    {
+        &key[prefix_len..]
+    } else {
+        key
+    }
+}
+
+/// The flag-key format version this build reads.
+pub fn current_flag_key_version() -> u8 {
+    FLAG_KEY_VERSION
+}
+
+/// The format version a key claims, read without interpreting the rest of it.
+///
+/// Lets a caller tell "this key is from an older/newer build" apart from "this
+/// isn't a flag key at all" — two failures that need different things from the
+/// user.
+///
+/// Asymmetric about length on purpose. A short key is rejected outright even
+/// though its first byte is readable: a truncated or mistyped paste is not a
+/// version problem, and since a garbled first byte lands above the current
+/// version far more often than not, trusting it would report almost every typo
+/// as "from a newer version" and send the user hunting for a build that doesn't
+/// exist. A *long* key is fine — a future format that grows a 14th byte is
+/// genuinely newer, and saying so is the whole point.
+pub fn flag_key_version_of(key: &str) -> Result<u8, String> {
+    Ok(base32_decode(strip_flag_key_prefix(key), 13)?[0])
+}
+
 impl Options {
     /// Encode options into raw bytes.
     pub fn to_flag_bytes(&self) -> [u8; 13] {
@@ -258,18 +299,7 @@ impl Options {
 
     /// Decode a Crockford Base-32 flag key string into Options.
     pub fn from_flag_key(key: &str) -> Result<Options, String> {
-        // Strip the "SMB3R-" prefix case-insensitively if present. Compare as
-        // bytes so a non-ASCII key can't panic on a char-boundary slice.
-        let prefix_len = FLAG_KEY_PREFIX.len();
-        let encoded = if key.len() >= prefix_len
-            && key.as_bytes()[..prefix_len].eq_ignore_ascii_case(FLAG_KEY_PREFIX.as_bytes())
-        {
-            &key[prefix_len..]
-        } else {
-            key
-        };
-
-        let bytes = base32_decode(encoded, 13)?;
+        let bytes = base32_decode(strip_flag_key_prefix(key), 13)?;
 
         let version = bytes[0];
         if version != FLAG_KEY_VERSION {

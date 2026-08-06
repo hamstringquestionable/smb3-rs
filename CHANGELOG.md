@@ -57,6 +57,16 @@ deploys.
 
 ### Fixed
 
+- A flag key the app can't read is now refused out loud instead of being
+  quietly ignored. Previously the key stayed in the box, the options kept
+  whatever they already were, and Generate stayed clickable — so a key from a
+  different version of the randomizer looked accepted while your own leftover
+  settings were used instead. That mattered most in races, where everyone
+  pastes the same key and each person could end up on different settings with
+  nothing on screen to say so. Now the key is marked as rejected, Generate is
+  held until it's sorted out, and the message says whether the key is from an
+  older version, from a newer one, or just isn't valid.
+
 - Landing on an enemy that is jumping up at you now counts as a stomp instead
   of hurting you. Vanilla decides "stomp or damage" once per frame, so an enemy
   rising into you could close the gap faster than the check could resolve and

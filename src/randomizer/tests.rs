@@ -696,6 +696,51 @@ fn flag_key_hammer_vuln_koopalings_distinct_from_hb_encounters() {
     assert_eq!(dec_b.hb_encounters, EnemyMode::Wild);
 }
 
+/// The version probe backs the web app's three-way rejection message (older /
+/// newer / not a flag key). Each case below is one of those branches.
+#[test]
+fn flag_key_version_probe() {
+    let key = Options::default().to_flag_key();
+    let current = current_flag_key_version();
+
+    // A key this build made reports this build's version, with or without the
+    // prefix, in any case, and with the whitespace a paste tends to carry.
+    assert_eq!(flag_key_version_of(&key), Ok(current));
+    assert_eq!(flag_key_version_of(key.trim_start_matches("SMB3R-")), Ok(current));
+    assert_eq!(flag_key_version_of(&key.to_lowercase()), Ok(current));
+    assert_eq!(flag_key_version_of(&format!("  {key}\n")), Ok(current));
+
+    // An older key: same 13-byte layout, earlier version byte. Reads as "older"
+    // even though the full decode rejects it.
+    let mut older = Options::default().to_flag_bytes();
+    older[0] = current - 1;
+    let older_key = base32_encode(&older);
+    assert_eq!(flag_key_version_of(&older_key), Ok(current - 1));
+    assert!(Options::from_flag_key(&older_key).is_err());
+
+    // A key from a future format that grew a 14th byte. The probe must stay
+    // lenient about length or this would read as garbage instead of "newer",
+    // and the app would tell the user to check for typos in a perfectly good
+    // key. This is the direction that bites today: beta runs ahead of the
+    // released app.
+    let mut newer = Options::default().to_flag_bytes().to_vec();
+    newer[0] = current + 1;
+    newer.push(0x00);
+    assert_eq!(flag_key_version_of(&base32_encode(&newer)), Ok(current + 1));
+
+    // Not a flag key at all — the app's third branch.
+    assert!(flag_key_version_of("").is_err());
+    assert!(flag_key_version_of("!!!!").is_err());
+    assert!(flag_key_version_of("SMB3R-").is_err());
+
+    // A truncated paste must NOT be reported as a version mismatch even though
+    // its first byte reads fine. "ZZZZ" decodes to 0xFF, which would otherwise
+    // be announced as "from a newer version of the randomizer" and send the
+    // user looking for a build that was never released. Short is invalid.
+    assert!(flag_key_version_of("SMB3R-ZZZZ").is_err());
+    assert!(flag_key_version_of(&key[..key.len() - 4]).is_err());
+}
+
 #[test]
 fn base32_round_trip() {
     // Test with various byte patterns

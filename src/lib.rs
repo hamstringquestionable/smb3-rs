@@ -15,6 +15,7 @@ use rom::Rom;
 
 pub use ips::apply_ips_patch;
 pub use randomizer::{
+    current_flag_key_version, flag_key_version_of,
     item_display_name, item_id, EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri,
     WildChaser, ITEMS, STARTING_LIVES_VALUES,
     ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY,

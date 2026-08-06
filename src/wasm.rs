@@ -71,3 +71,19 @@ pub fn decode_flag_key(key: &str) -> Result<String, JsError> {
     let options = Options::from_flag_key(key).map_err(|e| JsError::new(&e))?;
     serde_json::to_string(&options).map_err(|e| JsError::new(&format!("Serialize error: {e}")))
 }
+
+/// The flag-key format version this build reads.
+#[wasm_bindgen]
+pub fn current_flag_key_version() -> u8 {
+    crate::current_flag_key_version()
+}
+
+/// The format version a key claims, without decoding it. The app pairs this
+/// with `current_flag_key_version()` to tell "key from an older build" from
+/// "key from a newer build" from "not a flag key at all" — three rejections
+/// that need different things from the user. Errors only when the key is
+/// garbled beyond reading its first byte.
+#[wasm_bindgen]
+pub fn flag_key_version_of(key: &str) -> Result<u8, JsError> {
+    crate::flag_key_version_of(key).map_err(|e| JsError::new(&e))
+}

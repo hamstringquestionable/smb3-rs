@@ -613,6 +613,23 @@ input[type="radio"] {
     color: #9a9ab0;
 }
 
+/* Applied by showStatus() only when the message repeats verbatim, so the box
+   visibly reacts instead of sitting there unchanged. */
+@keyframes status-flash {
+    from { opacity: 0.2; }
+    to   { opacity: 1; }
+}
+
+.status.flash {
+    animation: status-flash 0.35s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .status.flash {
+        animation: none;
+    }
+}
+
 /* --- Control Panel (sidebar: seed / flag key / generate) --- */
 
 .control-panel {
@@ -658,6 +675,16 @@ input[type="radio"] {
 #flag-key-input {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 0.8rem;
+}
+
+/* A key that failed to apply stays in the box so it can be re-copied or
+   reported, so the box has to say it didn't take. Same red as .status.error.
+   Wins over :focus, which would otherwise hide the marking as soon as the user
+   clicked back into the field to fix the key. */
+#flag-key-input.invalid,
+#flag-key-input.invalid:focus {
+    border-color: #e44434;
+    background: rgba(228, 68, 52, 0.08);
 }
 
 .preset-pills {
