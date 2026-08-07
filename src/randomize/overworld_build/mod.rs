@@ -5,21 +5,69 @@
 //!
 //! ## Design charter (2026-07-30 session; the "choice-first rebuild")
 //!
-//! - **Tool roles.** The lock is the shaper (a fort on the forced path makes
-//!   its lock decorative — the player opens it regardless). Forts belong off
-//!   the path. Pipes are a primary routing tool, not defensive filler. Level
-//!   moves are a final tweak, not an early shaper.
+//! - **Tool roles.** The lock is the shaper (a fort on the forced path zeroes
+//!   its lock's ROUTING value — the player opens it regardless; the lock still
+//!   reports the fort, see "What the map must communicate" below). Forts
+//!   belong off the path. Pipes are a primary routing tool, not defensive
+//!   filler. Level moves are a final tweak, not an early shaper.
 //! - **Reorderable phases.** Every placement pass is a [`Phase`]: take the
 //!   [`WorldState`], change it, report what you did. The pipeline is a plain
 //!   list, so the schedule is data — reordering it (even per seed) is a
 //!   caller decision, not a rewrite.
 //! - **Soft preferences over hard rules.** Only true safety is hard
 //!   (completability, secret-exit safety). Notable structures — an ungated
-//!   shortcut, an open goal — are measured rates to be tuned rare, not banned:
-//!   a rare surprise is a good gameplay moment.
+//!   shortcut, an open goal, a decoy lock — are measured rates to be tuned
+//!   rare, not banned: a rare surprise is a good gameplay moment.
 //! - **Knob-free placement, measured judgment.** The placement phases are
 //!   uniform-random; all judgment concentrates in the [`shaping`] loop and
 //!   is justified by the census tables in the test suite.
+//!
+//! ## What the map must communicate
+//!
+//! Rules the route metric cannot score, and must not be optimized against.
+//! The scorer measures whether a route is worth walking; nothing in it
+//! measures whether the player can READ the map, which is a separate
+//! obligation and not a lesser one. Choice is not exclusively a route metric
+//! (issue #164).
+//!
+//! - **Every fort has a lock.** Not an aesthetic preference — it is how the
+//!   player reads the map. A lock breaking is the only feedback that says
+//!   "that is what the fort did", and a lock that does NOT break says "you
+//!   beat a different one". [`Locks`] already enforces this by REMOVING a
+//!   fort that can find no lock site rather than shipping a lockless one.
+//! - **Fort and lock counts are player-facing information, and the
+//!   distribution is conserved.** W8 always holds 4; W1-W7 hold 1-3 each with
+//!   the total always 13 ([`capacity::redistribute_fortresses`]). One lock per
+//!   fort means a world's lock count reveals its fort count before the forts
+//!   are found, and what a player has already seen constrains what remains.
+//!   That deduction is gameplay. Anything that breaks the correspondence takes
+//!   it away silently — the player has no way to notice the information went
+//!   bad.
+//! - **A lock that gates nothing is not a defect.**
+//!   [`WorldState::zero_gate_locks`] measures ROUTING value only; the count is
+//!   a diagnostic, never a score to drive to zero. Such a lock still reports
+//!   its fort, and it is a DECOY candidate: a player seeing a fort and a lock
+//!   near each other reasonably guesses they are paired and plans to skip
+//!   content on that guess. Being wrong and having to circle back is a real
+//!   decision, not a bug. It only works while the guess is usually right, so
+//!   like the other notable structures above it is a tuned rate, not a
+//!   default.
+//! - **Forts stay off the path to the goal** for two independent reasons: a
+//!   fort on the forced path zeroes its lock's routing value, AND it forfeits
+//!   the decoy read — a player cannot be misled about a fort they were always
+//!   going to play.
+//! - The cost model already encodes the player's own preference: a fort costs
+//!   5 against a level's 3 ([`route_choice`]). A player would rather play a
+//!   level, and the scorer agrees.
+//!
+//! **Not a builder goal: the vanilla recovery shortcut.** In vanilla a fort's
+//! real payoff is game-over recovery — opened locks persist through a game
+//! over while cleared levels reset, so a restart skips the stretch already
+//! beaten. Our locks are a deliberate repurposing as route shapers.
+//! Choice-shaped layouts are unlikely to also make good recovery shortcuts,
+//! and chasing both would trade away the one we can measure. Take it when it
+//! falls out for free; do not build for it, and do not add a metric for it —
+//! a number nobody acts on is confusion.
 //!
 //! ## Pipeline
 //!
