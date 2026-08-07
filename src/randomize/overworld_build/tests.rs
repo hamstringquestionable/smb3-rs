@@ -255,6 +255,20 @@ fn test_build_all_worlds() {
 /// The raw-ROM arm (path rocks still present) locks in that the pipe
 /// island-connect logic recovers connectivity even when a rock blocks a
 /// path, so this can't regress if the rock-removal QoL ever changes.
+///
+/// `CENSUS_SEEDS` seeds per arm (default 20 = 160 builds, 1280 world-checks).
+/// The **arms** are what this test buys, not seed depth: eight genuinely
+/// different code paths, and every build already samples all 8 worlds. Seed
+/// depth was cut from 40 to 20 on evidence rather than taste — a one-off run
+/// at 500/arm (4000 builds, 32000 world-checks, 2026-08-07) found zero
+/// stranded targets, matching the 10000-build result from the express-routing
+/// work. The failure this guards is a logic regression that strands a sizeable
+/// fraction of seeds, which shows up in the first handful; a rare
+/// topology-conditional one was never reliably caught at 40 either.
+///
+/// Before a release, run it deep — it is one env var:
+///   CENSUS_SEEDS=500 cargo test --release --lib \
+///     all_world_targets_reachable        # ~4 min
 #[test]
 fn all_world_targets_reachable() {
     let raw = match load_rom() {
@@ -263,11 +277,15 @@ fn all_world_targets_reachable() {
     };
     let qol = apply_qol_for_overworld(&raw);
     let names = ["W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8"];
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20);
 
     for (rom_label, rom) in [("raw", &raw), ("qol", &qol)] {
         for hb in [false, true] {
             for sas in [false, true] {
-                for seed in 0..40u64 {
+                for seed in 0..seeds {
                     let mut catalog = NodeCatalog::build(rom, false);
                     let mut rng = ChaCha8Rng::seed_from_u64(seed);
                     if sas {
@@ -1746,7 +1764,7 @@ fn test_build_time() {
     let seeds: u64 = std::env::var("CENSUS_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(40);
+        .unwrap_or(20);
 
     let mut per_seed_ms: Vec<f64> = Vec::new();
     for seed in 0..seeds {
