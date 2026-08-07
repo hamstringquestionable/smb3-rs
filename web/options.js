@@ -269,6 +269,11 @@ export const SCHEMA = [
 		tip: "Each Koopaling takes a random number of stomps (1–5) instead of the usual 3",
 		icon: KOOPALINGS,
 		group: "bosses", inFlagKey: true },
+	// No icon yet — sprite coordinates get picked by hand in sprite-picker.html.
+	{ id: "boomboom_hits", type: "bool", default: true,
+		label: "Random Boom-Boom Stomps",
+		tip: "Each fortress Boom-Boom takes a random number of stomps (1–5) instead of the usual 3",
+		group: "bosses", inFlagKey: true },
 	{ id: "hammer_vulnerable_koopalings", type: "bool", default: false,
 		label: "Hammer Vulnerable Koopalings",
 		tip: "Koopalings can be damaged by thrown hammers (normally hammers pass through them)",

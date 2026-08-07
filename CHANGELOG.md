@@ -11,6 +11,12 @@ deploys.
 
 ### Added
 
+- **Random Boom-Boom Stomps** now has a toggle in the web app, under Bosses. It
+  was already part of the randomizer and already carried in the flag key, but
+  with no control on the page the web app always ran it on — and a shared flag
+  key that turned it off was silently ignored. The setting is on by default, so
+  nothing changes unless you turn it off.
+
 - The beta stage β4 now joins the Antechamber Shuffle pool when beta stages
   are enabled. Like the vanilla antechamber levels, its 8-screen interior can
   be swapped behind another level's entry pipe (and vice versa). With beta
