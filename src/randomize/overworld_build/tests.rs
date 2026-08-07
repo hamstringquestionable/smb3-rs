@@ -318,7 +318,12 @@ fn all_world_targets_reachable() {
 /// not fully placeable (underfill). Uses the same capacity + distribution
 /// code as production. Run with:
 ///   cargo test --lib report_distribution_by_exponent -- --nocapture
+///
+/// `#[ignore]`d (2026-08-07): a baseline instrument, not a gate — it
+/// carries no assertions, so running it in CI only spent time. The
+/// censuses that DO assert stay in CI.
 #[test]
+#[ignore]
 fn report_distribution_by_exponent() {
     let raw = match load_rom() {
         Some(r) => r,

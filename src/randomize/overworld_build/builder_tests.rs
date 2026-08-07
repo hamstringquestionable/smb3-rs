@@ -437,7 +437,12 @@ fn test_builder_connectivity_census() {
 /// distance), screen crowding, and what the route scorer sees in a world
 /// of pure levels (no forts/locks yet). Runs the realistic flag mix (see
 /// [`census_ctx`]). `CENSUS_SEEDS` seeds (default 100).
+///
+/// `#[ignore]`d (2026-08-07): a baseline instrument, not a gate — it
+/// carries no assertions, so running it in CI only spent time. The
+/// censuses that DO assert stay in CI.
 #[test]
+#[ignore]
 fn test_builder_levels_census() {
     let Some(raw) = load_rom() else {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
@@ -1573,7 +1578,12 @@ fn test_builder_spare_pipes_census() {
 /// dominated routes both printed. `CENSUS_WORLD` picks the world (1-8, default
 /// 2), `CENSUS_SLACK` the band (default 12). Born from the W2 rock question —
 /// "where did the non-rock route go?" — and kept for the next such question.
+///
+/// `#[ignore]`d (2026-08-07): a baseline instrument, not a gate — it
+/// carries no assertions, so running it in CI only spent time. The
+/// censuses that DO assert stay in CI.
 #[test]
+#[ignore]
 fn test_builder_probe_vanilla_world() {
     let Some(rom) = load_rom() else {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
