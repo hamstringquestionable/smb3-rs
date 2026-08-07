@@ -155,9 +155,14 @@ impl WorldState {
     }
 
     /// Locks that gate nothing: with every other lock open, closing this one
-    /// walls off not a single node — pure decoration. Returns indices into
-    /// `locks`. (Locks are never stamped on the grid, so the grid plus
-    /// stamped slots IS the all-open world.)
+    /// walls off not a single node. Returns indices into `locks`. (Locks are
+    /// never stamped on the grid, so the grid plus stamped slots IS the
+    /// all-open world.)
+    ///
+    /// **ROUTING value only — not a defect count.** Such a lock still reports
+    /// its fort to the player and is a decoy candidate. Read the charter's
+    /// "What the map must communicate" (crate module doc) before treating a
+    /// lower count as an improvement.
     pub(crate) fn zero_gate_locks(&self) -> Vec<usize> {
         let mut open = self.grid.clone();
         stamp_slots(&mut open, &self.slots);
