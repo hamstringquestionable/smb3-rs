@@ -1,9 +1,38 @@
 //! Flag-key encode/decode: the shareable base32 string that round-trips an
 //! `Options` set (Crockford alphabet, versioned).
+//!
+//! # Format (v29)
+//!
+//! ```text
+//! byte 0   version
+//! byte 1   checksum over byte 0 and the payload as transmitted
+//! byte 2+  payload — a bitfield, trailing zero bytes stripped
+//! ```
+//!
+//! Three properties fall out of that shape, and each one is load-bearing:
+//!
+//! - **Bit collisions are unrepresentable.** The payload is a
+//!   [`modular_bitfield`] struct, so bit positions are assigned by declaration
+//!   order rather than written out by hand. Two options cannot land on the same
+//!   bit, which is a class of bug this format used to catch one incident at a
+//!   time.
+//! - **Adding an option does not break existing keys.** The payload has spare
+//!   capacity ([`FLAG_PAYLOAD_BYTES`]); a new option spends reserve bits, an
+//!   older key decodes them as zero, and zero is "off" for every bool and the
+//!   default for every enum here. So an addition needs **no version bump** —
+//!   only *repurposing* an allocated bit does.
+//! - **Mistyped keys are rejected instead of silently decoding to a different
+//!   ruleset.** Before the checksum, ~90% of single-character typos produced a
+//!   valid key for different settings with nothing on screen to say so.
+//!
+//! The version and checksum sit in a fixed two-byte envelope at the front on
+//! purpose: both stay readable without knowing the payload layout, so a future
+//! format can still be classified as "older"/"newer" rather than "garbage".
 
 use super::*;
+use modular_bitfield::prelude::*;
 
-pub(super) const FLAG_KEY_VERSION: u8 = 28;
+pub(super) const FLAG_KEY_VERSION: u8 = 29;
 
 pub(super) const FLAG_KEY_PREFIX: &str = "SMB3R-";
 
@@ -12,6 +41,31 @@ pub(super) const FLAG_KEY_PREFIX: &str = "SMB3R-";
 /// never perturbs the main randomization RNG, so a seed with no `Maybe`
 /// flags produces byte-identical output to before this feature existed.
 pub(super) const MAYBE_SALT: u64 = 0x4D41_5942_455F_5631; // "MAYBE_V1"
+
+/// Bytes of payload the format can address, past the two-byte envelope.
+///
+/// 93 bits are spent today, leaving 147 in reserve — years of headroom at the
+/// rate this project has actually added options (the layout was bumped six
+/// times in the 38 days to 2026-08-06). It is deliberately generous rather than
+/// "one more byte than we need": running out of reserve is the one thing that
+/// forces a breaking version bump, and unused capacity is free. Trailing zero
+/// bytes never leave the encoder, so raising this number does not lengthen a
+/// single key.
+///
+/// Must match the `bytes` argument on `FlagBits` — the compiler enforces it,
+/// since `from_bytes` takes the generated array type.
+const FLAG_PAYLOAD_BYTES: usize = 30;
+
+/// Version byte + checksum byte.
+const ENVELOPE_BYTES: usize = 2;
+
+/// Every pre-v29 key was exactly this many bytes: a version byte and 12 bytes
+/// of hand-packed flags, with no checksum anywhere.
+const LEGACY_KEY_BYTES: usize = 13;
+
+/// Last format version that used the pre-v29 fixed-width layout. Nothing past
+/// this will ever be added, which is what keeps [`legacy_version_of`] exact.
+const LAST_LEGACY_VERSION: u8 = 28;
 
 /// Crockford Base-32 alphabet (excludes I, L, O, U to avoid ambiguity).
 pub(super) const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -40,11 +94,19 @@ pub(super) fn base32_encode(data: &[u8]) -> String {
 
 /// Decode a Crockford Base-32 string back into bytes.
 /// Accepts mixed case; normalizes I→1, L→1, O→0 per Crockford spec.
-pub(super) fn base32_decode(s: &str, expected_bytes: usize) -> Result<Vec<u8>, String> {
+///
+/// Length is not fixed — a key carries only as many payload bytes as it needs
+/// — but it is not free either: N bytes always encode to exactly `ceil(N*8/5)`
+/// characters, and anything else is rejected. That catches a character appended
+/// to or lost from the tail, which the checksum on its own can miss, since those
+/// spare bits are padding that never reaches a byte.
+pub(super) fn base32_decode(s: &str) -> Result<Vec<u8>, String> {
     let mut buf: u64 = 0;
     let mut bits: u32 = 0;
-    let mut result = Vec::with_capacity(expected_bytes);
+    let mut result = Vec::new();
+    let mut chars = 0usize;
     for ch in s.chars() {
+        chars += 1;
         let val = match ch.to_ascii_uppercase() {
             '0' | 'O' => 0,
             '1' | 'I' | 'L' => 1,
@@ -64,11 +126,33 @@ pub(super) fn base32_decode(s: &str, expected_bytes: usize) -> Result<Vec<u8>, S
             result.push((buf >> bits) as u8);
         }
     }
-    if result.len() < expected_bytes {
-        return Err(format!("Flag key too short (decoded {} bytes, expected {})", result.len(), expected_bytes));
+    if chars != (result.len() * 8).div_ceil(5) {
+        return Err(format!("Flag key is the wrong length ({chars} characters)"));
     }
-    result.truncate(expected_bytes);
     Ok(result)
+}
+
+/// CRC-8 (polynomial `0x07`, init 0) over the version byte and the payload as
+/// transmitted.
+///
+/// **Position-weighted on purpose.** A plain sum — or worse, an XOR — is blind
+/// to transposed bytes, so swapping two characters of a pasted key would sail
+/// through. A CRC catches every single-byte error, every transposition, and
+/// burst errors, for one byte of key.
+///
+/// This function is part of the wire format and must not change: a build reads
+/// the envelope of a key from *any* version before it knows whether it can
+/// decode the payload, which is what lets a mistyped key ("invalid") be told
+/// apart from a key built by a different release ("older"/"newer").
+pub(super) fn checksum(version: u8, payload: &[u8]) -> u8 {
+    let mut crc: u8 = 0;
+    for &byte in std::iter::once(&version).chain(payload) {
+        crc ^= byte;
+        for _ in 0..8 {
+            crc = if crc & 0x80 != 0 { (crc << 1) ^ 0x07 } else { crc << 1 };
+        }
+    }
+    crc
 }
 
 /// Trim surrounding whitespace and strip the "SMB3R-" prefix
@@ -90,6 +174,20 @@ fn strip_flag_key_prefix(key: &str) -> &str {
     }
 }
 
+/// Decode a prefix-stripped key into its raw bytes, rejecting anything that
+/// fails the envelope check. On success `bytes[0]` is the version and
+/// `bytes[ENVELOPE_BYTES..]` is the payload as transmitted.
+fn decode_envelope(stripped: &str) -> Result<Vec<u8>, String> {
+    let bytes = base32_decode(stripped)?;
+    if bytes.len() < ENVELOPE_BYTES {
+        return Err("Flag key is too short".to_string());
+    }
+    if bytes[1] != checksum(bytes[0], &bytes[ENVELOPE_BYTES..]) {
+        return Err("Flag key failed its checksum — it looks mistyped or truncated".to_string());
+    }
+    Ok(bytes)
+}
+
 /// The flag-key format version this build reads.
 pub fn current_flag_key_version() -> u8 {
     FLAG_KEY_VERSION
@@ -101,353 +199,454 @@ pub fn current_flag_key_version() -> u8 {
 /// isn't a flag key at all" — two failures that need different things from the
 /// user.
 ///
-/// Asymmetric about length on purpose. A short key is rejected outright even
-/// though its first byte is readable: a truncated or mistyped paste is not a
-/// version problem, and since a garbled first byte lands above the current
-/// version far more often than not, trusting it would report almost every typo
-/// as "from a newer version" and send the user hunting for a build that doesn't
-/// exist. A *long* key is fine — a future format that grows a 14th byte is
-/// genuinely newer, and saying so is the whole point.
+/// The checksum is what makes that split honest: a key only gets as far as
+/// reporting a version if its bytes are intact, so a typo is reported as a bad
+/// key rather than sending the user hunting for a build that never existed.
 pub fn flag_key_version_of(key: &str) -> Result<u8, String> {
-    Ok(base32_decode(strip_flag_key_prefix(key), 13)?[0])
+    let stripped = strip_flag_key_prefix(key);
+    match decode_envelope(stripped) {
+        Ok(bytes) => Ok(bytes[0]),
+        Err(e) => legacy_version_of(stripped).ok_or(e),
+    }
+}
+
+/// Read the version off a pre-v29 key.
+///
+/// Those keys carry no checksum, so [`decode_envelope`] rejects every one of
+/// them as damaged. Without this fallback, everyone still holding a v26 or v28
+/// key — which is everyone, the day v29 ships — would be told their key is
+/// mistyped and sent hunting for a typo that isn't there, instead of "this is
+/// from an older version".
+///
+/// Exact rather than heuristic, and permanently bounded: the old layout was
+/// always 13 bytes with the version in byte 0, and no version past 28 ever used
+/// it. A v29+ key can also be 13 bytes, but its version byte is 29 or higher, so
+/// the two can't be confused.
+fn legacy_version_of(stripped: &str) -> Option<u8> {
+    let bytes = base32_decode(stripped).ok()?;
+    // `first()` rather than `bytes[0]`: an empty key decodes to no bytes, and
+    // `then_some` would evaluate the index either way.
+    let version = *bytes.first()?;
+    let is_legacy =
+        bytes.len() == LEGACY_KEY_BYTES && (1..=LAST_LEGACY_VERSION).contains(&version);
+    is_legacy.then_some(version)
+}
+
+/// The message for a key whose format this build doesn't read.
+fn unsupported_version(version: u8) -> String {
+    format!("Unsupported flag key version {version} (expected {FLAG_KEY_VERSION})")
+}
+
+/// `Options` fields deliberately absent from the flag key, with the reason.
+///
+/// This is the *only* hand-maintained part of the mapping: everything else is
+/// forced by the destructure in [`Options::to_flag_bits`], which names every
+/// field and so fails to compile when `Options` grows one. Adding a name here
+/// is a conscious decision, not an oversight.
+pub(super) const NOT_ENCODED: &[&str] = &[
+    "palettes",            // cosmetic; uses OS randomness, not seed-derived
+    "palette_themed",      // cosmetic
+    "player_color",        // cosmetic
+    "remove_flashing",     // cosmetic/accessibility; static patch, no RNG
+    "skip_rom_validation", // operational (CLI/WASM input handling), not randomization
+];
+
+/// The `Options` field names this build encodes into the flag key.
+///
+/// Derived — the serde field set minus [`NOT_ENCODED`] — so the web app's
+/// `inFlagKey` markings can be checked against what Rust actually persists
+/// instead of being documentation nobody verifies.
+pub fn flag_key_fields() -> Vec<String> {
+    let value = serde_json::to_value(Options::default())
+        .expect("Options is always serializable");
+    value
+        .as_object()
+        .expect("Options serializes to an object")
+        .keys()
+        .filter(|name| !NOT_ENCODED.contains(&name.as_str()))
+        .cloned()
+        .collect()
+}
+
+/// Wraps the generated bitfield so the whole macro expansion can be exempted
+/// from `dead_code` in one place.
+///
+/// Reason: the macro emits a getter, a checked getter, a setter, a checked
+/// setter and a builder method per field, in an `impl` block of its own. Decode
+/// uses the checked getters and encode uses the builders; the rest are
+/// unreachable by construction. The attribute has to sit on a module because it
+/// doesn't survive onto the generated `impl` from the struct.
+mod payload {
+    #![allow(dead_code)]
+    use super::*;
+
+    /// The flag-key payload.
+    ///
+    /// **Declaration order is the wire format.** Fields are packed from bit 0
+    /// of byte 0 upward in the order written here, so:
+    ///
+    /// - New options are **appended** immediately before the reserve. Never
+    ///   reorder, never resize an existing field, never insert in the middle —
+    ///   any of those silently repurposes bits that keys in circulation are
+    ///   using, which is the one change that forces a version bump.
+    /// - Removing an option leaves its bits behind as a named `_dead_*` hole
+    ///   rather than closing the gap, for the same reason.
+    #[bitfield(bytes = 30)]
+    #[derive(Debug, Clone, Copy)]
+    pub(super) struct FlagBits {
+        // --- Bools (32) ---
+        pub(super) powerups: bool,
+        pub(super) world_order: bool,
+        pub(super) big_q_blocks: bool,
+        pub(super) chest_items: bool,
+        pub(super) remove_whistles: bool,
+        pub(super) shuffle_airships: bool,
+        pub(super) shuffle_hammer_bros: bool,
+        pub(super) shuffle_spade_games: bool,
+        pub(super) shuffle_toad_houses: bool,
+        pub(super) hands_levels: bool,
+        pub(super) disable_autoscroll: bool,
+        pub(super) include_beta_stages: bool,
+        pub(super) swap_start_airship: bool,
+        pub(super) limit_bro_movement: bool,
+        pub(super) remove_n_cards: bool,
+        pub(super) card_speed_clear: bool,
+        pub(super) skip_wand_cutscene: bool,
+        pub(super) adjust_boss_hitboxes: bool,
+        pub(super) koopaling_hits: bool,
+        pub(super) boomboom_hits: bool,
+        pub(super) hammer_vulnerable_koopalings: bool,
+        pub(super) random_koopalings: bool,
+        pub(super) early_sun: bool,
+        pub(super) japanese_damage: bool,
+        pub(super) infinite_mushroom_houses: bool,
+        pub(super) fast_mushroom_house: bool,
+        pub(super) faster_tail_speed: bool,
+        pub(super) faster_frog: bool,
+        pub(super) no_game_over_penalty: bool,
+        pub(super) poison_mushrooms: bool,
+        pub(super) modern_powerups: bool,
+        pub(super) anchor_visuals: bool,
+
+        // --- Player-hidden tri-state flags (2 bits each) ---
+        // One field each now. The old layout split these into a value bit and a
+        // "maybe" bit in a different byte, purely because no byte had two free
+        // bits left.
+        pub(super) hammer_breaks_locks: Tri,
+        pub(super) hammer_breaks_bridges: Tri,
+        pub(super) more_hammer_rocks: Tri,
+        pub(super) eights_are_wild: Tri,
+        pub(super) troll_pipes: Tri,
+        pub(super) antechamber_shuffle: Tri,
+
+        // --- Per-class enemy modes (2 bits each) ---
+        pub(super) ground: EnemyMode,
+        pub(super) shell: EnemyMode,
+        pub(super) flying: EnemyMode,
+        pub(super) piranhas: EnemyMode,
+        pub(super) ghosts: EnemyMode,
+        pub(super) thwomps: EnemyMode,
+        pub(super) rotodiscs: EnemyMode,
+        pub(super) cannons: EnemyMode,
+        pub(super) water: EnemyMode,
+        pub(super) bros: EnemyMode,
+        pub(super) hb_encounters: EnemyMode,
+
+        // --- Mode enums (2 bits each) ---
+        pub(super) fire_flower: FireFlowerMode,
+        pub(super) piranha_shuffle: PiranhaMode,
+
+        // --- Wild-injection chaser set: one bit each, in WildChaser::ALL order ---
+        pub(super) wild_sun: bool,
+        pub(super) wild_lakitu: bool,
+        pub(super) wild_bass: bool,
+
+        // --- Numbers ---
+        /// Index into [`STARTING_LIVES_VALUES`].
+        pub(super) starting_lives: B2,
+        /// 1–7; 0 is a dead pattern that decodes to the default of 7.
+        pub(super) world_count: B3,
+        /// Item IDs directly (0 = empty slot), including the `ITEM_RANDOM*`
+        /// sentinels — 5 bits covers all of them, where the old layout needed a
+        /// nibble plus a separate 2-bit mode.
+        pub(super) starting_item_0: B5,
+        pub(super) starting_item_1: B5,
+        pub(super) starting_item_2: B5,
+
+        // --- Reserve ---
+        // 147 bits. Adding an option is: declare it immediately above this
+        // block, then take the same number of bits off `B19`. An older key
+        // simply has those bits zero, which is "off" for a bool and the default
+        // for every enum here, so it stays a correct key for the settings it
+        // named — no version bump, and keys already in circulation keep working.
+        //
+        // Forgetting to shrink the reserve is a compile error, but a cryptic
+        // one: the crate reports `OneMod8: TotalSizeIsMultipleOfEightBits is not
+        // satisfied` against the struct. It means the widths no longer add up to
+        // `bytes * 8`, nothing more.
+        //
+        // Two fields because the crate's widths stop at B128.
+        #[skip] __: B128,
+        #[skip] __: B19,
+    }
+}
+
+use payload::FlagBits;
+
+/// Reduce a starting-item slot to a value the rest of the app knows: item IDs
+/// `1..=13` and the three `ITEM_RANDOM*` sentinels, or 0 for an empty slot.
+///
+/// Applied on both sides. On encode it keeps a hand-written JSON or CLI input
+/// inside the 5-bit field; on decode it drops the 17–31 patterns, which are
+/// reachable from a corrupt or newer key but mean nothing to the inventory
+/// writer.
+fn sanitize_item(raw: u8) -> u8 {
+    if raw <= ITEM_RANDOM_SUIT_ONLY { raw } else { 0 }
 }
 
 impl Options {
-    /// Encode options into raw bytes.
-    pub fn to_flag_bytes(&self) -> [u8; 13] {
-        let b0 = FLAG_KEY_VERSION;
+    /// Pack options into the flag-key payload.
+    #[rustfmt::skip]
+    fn to_flag_bits(&self) -> FlagBits {
+        // Destructured rather than field-accessed on purpose: adding a field to
+        // `Options` is a compile error here until it is either encoded below or
+        // bound as `field: _` and listed in `NOT_ENCODED`. That is what makes
+        // "did we forget to encode this one?" a build failure instead of a test
+        // that only ever covered the types someone remembered to list.
+        let Options {
+            powerups, world_order, big_q_blocks, chest_items, remove_whistles,
+            shuffle_airships, shuffle_hammer_bros, shuffle_spade_games,
+            shuffle_toad_houses, hands_levels, disable_autoscroll,
+            include_beta_stages, swap_start_airship, limit_bro_movement,
+            remove_n_cards, card_speed_clear, skip_wand_cutscene,
+            adjust_boss_hitboxes, koopaling_hits, boomboom_hits,
+            hammer_vulnerable_koopalings, random_koopalings, early_sun,
+            japanese_damage, infinite_mushroom_houses, fast_mushroom_house,
+            faster_tail_speed, faster_frog, no_game_over_penalty,
+            poison_mushrooms, modern_powerups, anchor_visuals,
+            hammer_breaks_locks, hammer_breaks_bridges, more_hammer_rocks,
+            eights_are_wild, troll_pipes, antechamber_shuffle,
+            ground, shell, flying, piranhas, ghosts, thwomps, rotodiscs,
+            cannons, water, bros, hb_encounters,
+            fire_flower, piranha_shuffle, wild_injections,
+            starting_lives, world_count, starting_items,
+            // Not encoded — see NOT_ENCODED for the reason on each.
+            palettes: _, palette_themed: _, player_color: _,
+            remove_flashing: _, skip_rom_validation: _,
+        } = self;
 
-        // The wild-injection chaser set is one bit each, scattered across three
-        // bytes because no byte had three bits free: sun in b4 bit 0 (where the
-        // old bool lived), lakitu in b12 bit 7, bass in b2 bit 5 (the dead
-        // shuffle_pipes slot). Same trick as eights_are_wild in b11.
-        let has = |c: WildChaser| self.wild_injections.contains(&c) as u8;
+        let item = |i: usize| starting_items.get(i).copied().unwrap_or(0);
+        let has = |c: WildChaser| wild_injections.contains(&c);
 
-        // b1: non-enemy flags. hammer_breaks_locks is tri-state: its value bit
-        // stores On vs (Off/Maybe); the Maybe bit lives in b11.
-        // b1 bit 1 = shuffle_hammer_bros (reuses the slot formerly airship_lock,
-        // now unconditionally on).
-        let b1 = (self.powerups as u8) << 7
-            | (self.hammer_breaks_locks.is_on() as u8) << 6
-            | (self.koopaling_hits as u8) << 5
-            | (self.world_order as u8) << 4
-            | (self.big_q_blocks as u8) << 3
-            | (self.disable_autoscroll as u8) << 2
-            | (self.shuffle_hammer_bros as u8) << 1
-            | (self.chest_items as u8);
+        FlagBits::new()
+            .with_powerups(*powerups)
+            .with_world_order(*world_order)
+            .with_big_q_blocks(*big_q_blocks)
+            .with_chest_items(*chest_items)
+            .with_remove_whistles(*remove_whistles)
+            .with_shuffle_airships(*shuffle_airships)
+            .with_shuffle_hammer_bros(*shuffle_hammer_bros)
+            .with_shuffle_spade_games(*shuffle_spade_games)
+            .with_shuffle_toad_houses(*shuffle_toad_houses)
+            .with_hands_levels(*hands_levels)
+            .with_disable_autoscroll(*disable_autoscroll)
+            .with_include_beta_stages(*include_beta_stages)
+            .with_swap_start_airship(*swap_start_airship)
+            .with_limit_bro_movement(*limit_bro_movement)
+            .with_remove_n_cards(*remove_n_cards)
+            .with_card_speed_clear(*card_speed_clear)
+            .with_skip_wand_cutscene(*skip_wand_cutscene)
+            .with_adjust_boss_hitboxes(*adjust_boss_hitboxes)
+            .with_koopaling_hits(*koopaling_hits)
+            .with_boomboom_hits(*boomboom_hits)
+            .with_hammer_vulnerable_koopalings(*hammer_vulnerable_koopalings)
+            .with_random_koopalings(*random_koopalings)
+            .with_early_sun(*early_sun)
+            .with_japanese_damage(*japanese_damage)
+            .with_infinite_mushroom_houses(*infinite_mushroom_houses)
+            .with_fast_mushroom_house(*fast_mushroom_house)
+            .with_faster_tail_speed(*faster_tail_speed)
+            .with_faster_frog(*faster_frog)
+            .with_no_game_over_penalty(*no_game_over_penalty)
+            .with_poison_mushrooms(*poison_mushrooms)
+            .with_modern_powerups(*modern_powerups)
+            .with_anchor_visuals(*anchor_visuals)
+            .with_hammer_breaks_locks(*hammer_breaks_locks)
+            .with_hammer_breaks_bridges(*hammer_breaks_bridges)
+            .with_more_hammer_rocks(*more_hammer_rocks)
+            .with_eights_are_wild(*eights_are_wild)
+            .with_troll_pipes(*troll_pipes)
+            .with_antechamber_shuffle(*antechamber_shuffle)
+            .with_ground(*ground)
+            .with_shell(*shell)
+            .with_flying(*flying)
+            .with_piranhas(*piranhas)
+            .with_ghosts(*ghosts)
+            .with_thwomps(*thwomps)
+            .with_rotodiscs(*rotodiscs)
+            .with_cannons(*cannons)
+            .with_water(*water)
+            .with_bros(*bros)
+            .with_hb_encounters(*hb_encounters)
+            .with_fire_flower(*fire_flower)
+            .with_piranha_shuffle(*piranha_shuffle)
+            .with_wild_sun(has(WildChaser::Sun))
+            .with_wild_lakitu(has(WildChaser::Lakitu))
+            .with_wild_bass(has(WildChaser::Bass))
+            .with_starting_lives(lives_to_idx(*starting_lives))
+            .with_world_count((*world_count).clamp(1, 7))
+            .with_starting_item_0(sanitize_item(item(0)))
+            .with_starting_item_1(sanitize_item(item(1)))
+            .with_starting_item_2(sanitize_item(item(2)))
+    }
 
-        // b2 bit 5 = wild-injection Bass bit (free since shuffle_pipes, a dead
-        // flag removed in v26).
-        // b2 bit 4 = faster_frog (reuses the slot formerly fix_drawbridges,
-        // now always-on).
-        // b2 bit 3 = boomboom_hits (reuses the slot formerly remove_rocks).
-        let b2 = (self.remove_whistles as u8) << 7
-            | (self.hands_levels as u8) << 6
-            | has(WildChaser::Bass) << 5
-            | (self.faster_frog as u8) << 4
-            | (self.boomboom_hits as u8) << 3
-            | (self.troll_pipes.is_on() as u8) << 2
-            | (self.shuffle_toad_houses as u8) << 1
-            | (self.shuffle_airships as u8);
+    /// Unpack the flag-key payload back into options.
+    ///
+    /// Every enum is read through the crate's *checked* accessor. Three-variant
+    /// enums in two bits leave a dead fourth pattern, and a key with reserve
+    /// bits set by a newer build can land on it — a panicking accessor there
+    /// would take the whole web app down, where falling back to the default is
+    /// exactly the "an unknown value is off" rule the reserve already relies on.
+    fn from_flag_bits(f: FlagBits) -> Options {
+        let chasers: Vec<WildChaser> = [
+            (WildChaser::Sun, f.wild_sun()),
+            (WildChaser::Lakitu, f.wild_lakitu()),
+            (WildChaser::Bass, f.wild_bass()),
+        ]
+        .into_iter()
+        .filter(|&(_, set)| set)
+        .map(|(c, _)| c)
+        .collect();
 
-        // b3: hammer_breaks_bridges(7) starting_lives(6-5) fast_mushroom_house(4)
-        //     faster_tail_speed(3) no_game_over_penalty(2) swap_start_airship(1)
-        //     more_hammer_rocks(0)
-        // starting_lives shrank from a 7-bit clamped 1–99 to a 2-bit index
-        // into {1, 5, 20, 99}, freeing bits 4-0 for future toggles.
-        let b3 = ((self.hammer_breaks_bridges.is_on() as u8) << 7)
-            | (lives_to_idx(self.starting_lives) << 5)
-            | ((self.fast_mushroom_house as u8) << 4)
-            | ((self.faster_tail_speed as u8) << 3)
-            | ((self.no_game_over_penalty as u8) << 2)
-            | ((self.swap_start_airship as u8) << 1)
-            | (self.more_hammer_rocks.is_on() as u8);
+        let items: Vec<u8> = [f.starting_item_0(), f.starting_item_1(), f.starting_item_2()]
+            .into_iter()
+            .map(sanitize_item)
+            .filter(|&i| i != 0)
+            .collect();
 
-        // Helper to encode EnemyMode as 2 bits
-        fn em(m: EnemyMode) -> u8 {
-            match m {
-                EnemyMode::Off => 0,
-                EnemyMode::Shuffle => 1,
-                EnemyMode::Wild => 2,
-            }
+        Options {
+            powerups: f.powerups(),
+            world_order: f.world_order(),
+            big_q_blocks: f.big_q_blocks(),
+            chest_items: f.chest_items(),
+            remove_whistles: f.remove_whistles(),
+            shuffle_airships: f.shuffle_airships(),
+            shuffle_hammer_bros: f.shuffle_hammer_bros(),
+            shuffle_spade_games: f.shuffle_spade_games(),
+            shuffle_toad_houses: f.shuffle_toad_houses(),
+            hands_levels: f.hands_levels(),
+            disable_autoscroll: f.disable_autoscroll(),
+            include_beta_stages: f.include_beta_stages(),
+            swap_start_airship: f.swap_start_airship(),
+            limit_bro_movement: f.limit_bro_movement(),
+            remove_n_cards: f.remove_n_cards(),
+            card_speed_clear: f.card_speed_clear(),
+            skip_wand_cutscene: f.skip_wand_cutscene(),
+            adjust_boss_hitboxes: f.adjust_boss_hitboxes(),
+            koopaling_hits: f.koopaling_hits(),
+            boomboom_hits: f.boomboom_hits(),
+            hammer_vulnerable_koopalings: f.hammer_vulnerable_koopalings(),
+            random_koopalings: f.random_koopalings(),
+            early_sun: f.early_sun(),
+            japanese_damage: f.japanese_damage(),
+            infinite_mushroom_houses: f.infinite_mushroom_houses(),
+            fast_mushroom_house: f.fast_mushroom_house(),
+            faster_tail_speed: f.faster_tail_speed(),
+            faster_frog: f.faster_frog(),
+            no_game_over_penalty: f.no_game_over_penalty(),
+            poison_mushrooms: f.poison_mushrooms(),
+            modern_powerups: f.modern_powerups(),
+            anchor_visuals: f.anchor_visuals(),
+            hammer_breaks_locks: f.hammer_breaks_locks_or_err().unwrap_or_default(),
+            hammer_breaks_bridges: f.hammer_breaks_bridges_or_err().unwrap_or_default(),
+            more_hammer_rocks: f.more_hammer_rocks_or_err().unwrap_or_default(),
+            eights_are_wild: f.eights_are_wild_or_err().unwrap_or_default(),
+            troll_pipes: f.troll_pipes_or_err().unwrap_or_default(),
+            antechamber_shuffle: f.antechamber_shuffle_or_err().unwrap_or_default(),
+            ground: f.ground_or_err().unwrap_or_default(),
+            shell: f.shell_or_err().unwrap_or_default(),
+            flying: f.flying_or_err().unwrap_or_default(),
+            piranhas: f.piranhas_or_err().unwrap_or_default(),
+            ghosts: f.ghosts_or_err().unwrap_or_default(),
+            thwomps: f.thwomps_or_err().unwrap_or_default(),
+            rotodiscs: f.rotodiscs_or_err().unwrap_or_default(),
+            cannons: f.cannons_or_err().unwrap_or_default(),
+            water: f.water_or_err().unwrap_or_default(),
+            bros: f.bros_or_err().unwrap_or_default(),
+            hb_encounters: f.hb_encounters_or_err().unwrap_or_default(),
+            fire_flower: f.fire_flower_or_err().unwrap_or_default(),
+            piranha_shuffle: f.piranha_shuffle_or_err().unwrap_or_default(),
+            wild_injections: chasers,
+            starting_lives: idx_to_lives(f.starting_lives()),
+            // 0 is unreachable from the encoder (it clamps to 1–7) but reachable
+            // from a corrupt or newer key; take the default rather than a world
+            // count the builder can't satisfy.
+            world_count: match f.world_count() { 0 => default_world_count(), n => n },
+            starting_items: items,
+            // Not encoded: fixed to the values a shared key should never
+            // override. The web app skips these fields when applying a decoded
+            // key, so a racer's cosmetic and ROM choices survive.
+            palettes: true,
+            palette_themed: false,
+            player_color: None,
+            remove_flashing: true,
+            skip_rom_validation: false,
         }
+    }
 
-        // b4: card_speed_clear(7) remove_n_cards(6) skip_wand_cutscene(5)
-        //     adjust_boss_hitboxes(4) shuffle_spade_games(3)
-        //     hb_encounters(2-1) wild_injections low bit(0)
-        let b4 = (self.card_speed_clear as u8) << 7
-            | (self.remove_n_cards as u8) << 6
-            | (self.skip_wand_cutscene as u8) << 5
-            | (self.adjust_boss_hitboxes as u8) << 4
-            | (self.shuffle_spade_games as u8) << 3
-            | em(self.hb_encounters) << 1
-            | has(WildChaser::Sun);
-
-        // b5: ground(7-6) shell(5-4) flying(3-2) hammer_vulnerable_koopalings(1) early_sun(0)
-        let b5 = em(self.ground) << 6
-            | em(self.shell) << 4
-            | em(self.flying) << 2
-            | (self.hammer_vulnerable_koopalings as u8) << 1
-            | (self.early_sun as u8);
-
-        // b6: japanese_damage(7) infinite_mushroom_houses(6) piranhas(5-4)
-        //     ghosts(3-2) thwomps(1-0)
-        // Bits 7-6 were the two `bullet_bills` bits before v17; now reused
-        // for the two MaCobra52 player/map mechanic toggles.
-        let b6 = (self.japanese_damage as u8) << 7
-            | (self.infinite_mushroom_houses as u8) << 6
-            | em(self.piranhas) << 4
-            | em(self.ghosts) << 2
-            | em(self.thwomps);
-
-        // b7: rotodiscs(7-6) cannons(5-4) water(3-2) bros(1-0)
-        let b7 = em(self.rotodiscs) << 6
-            | em(self.cannons) << 4
-            | em(self.water) << 2
-            | em(self.bros);
-
-        // b8-b9: starting items (3 nibbles, 0 = none)
-        // For sentinel values (>=14), store 0 in the nibble and encode
-        // the random mode in b10 bits 5-0 instead.
-        let items = &self.starting_items;
-        fn item_nibble(item: u8) -> u8 {
-            if item >= ITEM_RANDOM { 0 } else { item }
-        }
-        fn item_mode(item: u8) -> u8 {
-            match item {
-                ITEM_RANDOM => 1,
-                ITEM_RANDOM_NO_WHISTLE => 2,
-                ITEM_RANDOM_SUIT_ONLY => 3,
-                _ => 0,
-            }
-        }
-        let i0 = items.first().copied().unwrap_or(0);
-        let i1 = items.get(1).copied().unwrap_or(0);
-        let i2 = items.get(2).copied().unwrap_or(0);
-        let b8 = (item_nibble(i0) << 4) | item_nibble(i1);
-        // b9: i2 nibble (7-4) | limit_bro_movement (3) | world_count 1..7 (2-0)
-        let b9 = (item_nibble(i2) << 4)
-            | ((self.limit_bro_movement as u8) << 3)
-            | (self.world_count.clamp(1, 7) & 0x07);
-
-        // b10: extra flags + per-slot random mode (2 bits each)
-        let b10 = (self.random_koopalings as u8) << 7
-            | (self.include_beta_stages as u8) << 6
-            | (item_mode(i0) << 4)
-            | (item_mode(i1) << 2)
-            | item_mode(i2);
-
-        // Encode FireFlowerMode as 2 bits (off=0, on=1, wild=2).
-        fn ffm(m: FireFlowerMode) -> u8 {
-            match m {
-                FireFlowerMode::Off => 0,
-                FireFlowerMode::On => 1,
-                FireFlowerMode::Wild => 2,
-            }
-        }
-
-        // b11: "maybe" bits for the four player-hidden tri-state flags (bits
-        // 0-3). When a maybe bit is set the flag is resolved from the seed at
-        // generation time, and its value bit (in b1/b2/b3) is ignored on decode.
-        // Bits 4-5 hold the Random Fire Flower mode. Bit 6 is the eights_are_wild
-        // ON bit and bit 7 its Maybe bit (both live here since b1-b4 are full).
-        let b11 = (self.hammer_breaks_locks.is_maybe() as u8)
-            | (self.hammer_breaks_bridges.is_maybe() as u8) << 1
-            | (self.troll_pipes.is_maybe() as u8) << 2
-            | (self.more_hammer_rocks.is_maybe() as u8) << 3
-            | ffm(self.fire_flower) << 4
-            | (self.eights_are_wild.is_on() as u8) << 6
-            | (self.eights_are_wild.is_maybe() as u8) << 7;
-
-        // Encode PiranhaMode as 2 bits (off=0, on=1, wild=2).
-        fn pm(m: PiranhaMode) -> u8 {
-            match m {
-                PiranhaMode::Off => 0,
-                PiranhaMode::On => 1,
-                PiranhaMode::Wild => 2,
-            }
-        }
-
-        // b12: piranha_shuffle(1-0), antechamber_shuffle ON bit (2) and
-        // Maybe bit (3), anchor_visuals(4), poison_mushrooms(5),
-        // modern_powerups(6), wild-injection Lakitu bit (7).
-        //
-        // With that bit taken the key is FULL: every bit of b1-b12 is
-        // allocated (checked bit by bit, not assumed — b3's "freeing bits 4-0"
-        // note above is historical, those five were spent since). The next flag
-        // needs a 14th byte, which means a longer key string as well as a
-        // version bump.
-        let b12 = pm(self.piranha_shuffle)
-            | (self.antechamber_shuffle.is_on() as u8) << 2
-            | (self.antechamber_shuffle.is_maybe() as u8) << 3
-            | (self.anchor_visuals as u8) << 4
-            | (self.poison_mushrooms as u8) << 5
-            | (self.modern_powerups as u8) << 6
-            | has(WildChaser::Lakitu) << 7;
-
-        [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12]
+    /// Encode options into the raw key bytes: version, checksum, payload.
+    pub fn to_flag_bytes(&self) -> Vec<u8> {
+        let payload = self.to_flag_bits().into_bytes();
+        // Trailing zero bytes carry nothing, so they are not transmitted. That
+        // is what decouples the format's capacity from the key's length: the
+        // reserve can be generous without anyone ever typing it.
+        let used = payload.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+        let mut bytes = Vec::with_capacity(ENVELOPE_BYTES + used);
+        bytes.push(FLAG_KEY_VERSION);
+        bytes.push(checksum(FLAG_KEY_VERSION, &payload[..used]));
+        bytes.extend_from_slice(&payload[..used]);
+        bytes
     }
 
     /// Encode options into a compact Crockford Base-32 flag key (e.g. "SMB3R-1S0G...").
     pub fn to_flag_key(&self) -> String {
-        let bytes = self.to_flag_bytes();
-        let mut key = String::with_capacity(6 + 18);
+        let mut key = String::with_capacity(FLAG_KEY_PREFIX.len() + 24);
         key.push_str(FLAG_KEY_PREFIX);
-        key.push_str(&base32_encode(&bytes));
+        key.push_str(&base32_encode(&self.to_flag_bytes()));
         key
     }
 
     /// Decode a Crockford Base-32 flag key string into Options.
     pub fn from_flag_key(key: &str) -> Result<Options, String> {
-        let bytes = base32_decode(strip_flag_key_prefix(key), 13)?;
+        let stripped = strip_flag_key_prefix(key);
+        let bytes = match decode_envelope(stripped) {
+            Ok(bytes) => bytes,
+            // A pre-v29 key fails the envelope check for want of a checksum, not
+            // because it is damaged. Say which it is — the CLI shows this message
+            // verbatim, and "mistyped" would be a lie.
+            Err(checksum_err) => {
+                return Err(legacy_version_of(stripped).map_or(checksum_err, unsupported_version));
+            }
+        };
 
         let version = bytes[0];
         if version != FLAG_KEY_VERSION {
-            return Err(format!("Unsupported flag key version {version} (expected {FLAG_KEY_VERSION})"));
+            return Err(unsupported_version(version));
         }
 
-        let b1 = bytes[1];
-        let b2 = bytes[2];
-        let b3 = bytes[3];
-        let b4 = bytes[4];
-        let b5 = bytes[5];
-        let b6 = bytes[6];
-        let b7 = bytes[7];
-        let b8 = bytes[8];
-        let b9 = bytes[9];
-        let b10 = bytes[10];
-        let b11 = bytes[11];
-        let b12 = bytes[12];
-
-        let starting_lives = idx_to_lives((b3 >> 5) & 0x3);
-
-        fn dem(bits: u8) -> EnemyMode {
-            match bits & 0x03 {
-                1 => EnemyMode::Shuffle,
-                2 => EnemyMode::Wild,
-                _ => EnemyMode::Off,
-            }
+        let body = &bytes[ENVELOPE_BYTES..];
+        if body.len() > FLAG_PAYLOAD_BYTES {
+            return Err(format!(
+                "Flag key payload is too long ({} bytes, capacity {FLAG_PAYLOAD_BYTES})",
+                body.len(),
+            ));
         }
+        // Zero-fill back to capacity: a key made before some later option
+        // existed simply doesn't carry the bytes that option lives in.
+        let mut payload = [0u8; FLAG_PAYLOAD_BYTES];
+        payload[..body.len()].copy_from_slice(body);
 
-        // Decode a tri-state flag from its value bit (in b1/b2/b3) and its
-        // maybe bit (in b11). Maybe wins; otherwise the value bit picks On/Off.
-        fn dtri(value: bool, maybe: bool) -> Tri {
-            if maybe { Tri::Maybe } else if value { Tri::On } else { Tri::Off }
-        }
-
-        // Decode the 2-bit Random Fire Flower mode (b11 bits 4-5).
-        fn dffm(bits: u8) -> FireFlowerMode {
-            match bits & 0x03 {
-                1 => FireFlowerMode::On,
-                2 => FireFlowerMode::Wild,
-                _ => FireFlowerMode::Off,
-            }
-        }
-
-        // Decode the 2-bit piranha shuffle mode (b12 bits 1-0).
-        fn dpm(bits: u8) -> PiranhaMode {
-            match bits & 0x03 {
-                1 => PiranhaMode::On,
-                2 => PiranhaMode::Wild,
-                _ => PiranhaMode::Off,
-            }
-        }
-
-        // Rebuild the wild-injection chaser set from its three scattered bits,
-        // always in WildChaser::ALL order so a round-trip normalizes.
-        let chasers: Vec<WildChaser> = [
-            (WildChaser::Sun, b4 & 1),
-            (WildChaser::Lakitu, (b12 >> 7) & 1),
-            (WildChaser::Bass, (b2 >> 5) & 1),
-        ]
-        .into_iter()
-        .filter(|&(_, bit)| bit != 0)
-        .map(|(c, _)| c)
-        .collect();
-
-        Ok(Options {
-            powerups: (b1 >> 7) & 1 != 0,
-            palettes: true,
-            palette_themed: false, // cosmetic — not encoded in flag key
-            player_color: None,    // cosmetic — not encoded in flag key
-            remove_flashing: true, // cosmetic/accessibility — not encoded in flag key
-            hammer_breaks_locks: dtri((b1 >> 6) & 1 != 0, b11 & 1 != 0),
-            koopaling_hits: (b1 >> 5) & 1 != 0,
-            boomboom_hits: (b2 >> 3) & 1 != 0,
-            world_order: (b1 >> 4) & 1 != 0,
-            big_q_blocks: (b1 >> 3) & 1 != 0,
-            disable_autoscroll: (b1 >> 2) & 1 != 0,
-            shuffle_hammer_bros: (b1 >> 1) & 1 != 0,
-            chest_items: b1 & 1 != 0,
-            remove_whistles: (b2 >> 7) & 1 != 0,
-            hands_levels: (b2 >> 6) & 1 != 0,
-            faster_frog: (b2 >> 4) & 1 != 0,
-            shuffle_airships: b2 & 1 != 0,
-            shuffle_toad_houses: (b2 >> 1) & 1 != 0,
-            troll_pipes: dtri((b2 >> 2) & 1 != 0, (b11 >> 2) & 1 != 0),
-            starting_lives,
-            card_speed_clear: (b4 >> 7) & 1 != 0,
-            remove_n_cards: (b4 >> 6) & 1 != 0,
-            skip_wand_cutscene: (b4 >> 5) & 1 != 0,
-            adjust_boss_hitboxes: (b4 >> 4) & 1 != 0,
-            shuffle_spade_games: (b4 >> 3) & 1 != 0,
-            hammer_vulnerable_koopalings: (b5 >> 1) & 1 != 0,
-            early_sun: b5 & 1 != 0,
-            limit_bro_movement: (b9 >> 3) & 1 != 0,
-            japanese_damage: (b6 >> 7) & 1 != 0,
-            infinite_mushroom_houses: (b6 >> 6) & 1 != 0,
-            fast_mushroom_house: (b3 >> 4) & 1 != 0,
-            faster_tail_speed: (b3 >> 3) & 1 != 0,
-            no_game_over_penalty: (b3 >> 2) & 1 != 0,
-            swap_start_airship: (b3 >> 1) & 1 != 0,
-            more_hammer_rocks: dtri(b3 & 1 != 0, (b11 >> 3) & 1 != 0),
-            eights_are_wild: dtri((b11 >> 6) & 1 != 0, (b11 >> 7) & 1 != 0),
-            random_koopalings: (b10 >> 7) & 1 != 0,
-            include_beta_stages: (b10 >> 6) & 1 != 0,
-            hammer_breaks_bridges: dtri((b3 >> 7) & 1 != 0, (b11 >> 1) & 1 != 0),
-            fire_flower: dffm(b11 >> 4),
-            piranha_shuffle: dpm(b12),
-            antechamber_shuffle: dtri((b12 >> 2) & 1 != 0, (b12 >> 3) & 1 != 0),
-            ground: dem(b5 >> 6),
-            shell: dem(b5 >> 4),
-            flying: dem(b5 >> 2),
-            piranhas: dem(b6 >> 4),
-            ghosts: dem(b6 >> 2),
-            thwomps: dem(b6),
-            rotodiscs: dem(b7 >> 6),
-            cannons: dem(b7 >> 4),
-            water: dem(b7 >> 2),
-            bros: dem(b7),
-            hb_encounters: dem(b4 >> 1),
-            wild_injections: chasers,
-            starting_items: {
-                // Decode per-slot random mode from b10 bits 5-0
-                fn mode_to_sentinel(mode: u8, nibble: u8) -> u8 {
-                    match mode & 0x03 {
-                        1 => ITEM_RANDOM,
-                        2 => ITEM_RANDOM_NO_WHISTLE,
-                        3 => ITEM_RANDOM_SUIT_ONLY,
-                        _ => nibble,
-                    }
-                }
-                let i0 = mode_to_sentinel((b10 >> 4) & 0x03, b8 >> 4);
-                let i1 = mode_to_sentinel((b10 >> 2) & 0x03, b8 & 0x0F);
-                let i2 = mode_to_sentinel(b10 & 0x03, b9 >> 4);
-                let mut items = Vec::new();
-                if i0 != 0 { items.push(i0); }
-                if i1 != 0 { items.push(i1); }
-                if i2 != 0 { items.push(i2); }
-                items
-            },
-            world_count: {
-                let wc = b9 & 0x07;
-                if wc == 0 { 7 } else { wc.clamp(1, 7) }
-            },
-            skip_rom_validation: false,
-            anchor_visuals: (b12 >> 4) & 1 != 0,
-            poison_mushrooms: (b12 >> 5) & 1 != 0,
-            modern_powerups: (b12 >> 6) & 1 != 0,
-        })
+        Ok(Options::from_flag_bits(FlagBits::from_bytes(payload)))
     }
 
     /// Returns true if any enemy class is enabled (not Off).

@@ -18,6 +18,7 @@ name = "testrom"
 path = "src/bin/testrom.rs"
 
 [dependencies]
+modular-bitfield = "0.13"
 rand = "0.9"
 rand_chacha = "0.9"
 serde = { version = "1", features = ["derive"] }
@@ -32,4 +33,5 @@ js-sys = "0.3"
 getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [dev-dependencies]
+base32 = "0.5"
 mos6502 = "0.10.1"

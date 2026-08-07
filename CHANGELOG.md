@@ -11,6 +11,12 @@ deploys.
 
 ### Added
 
+- **Random Boom-Boom Stomps** now has a toggle in the web app, under Bosses. It
+  was already part of the randomizer and already carried in the flag key, but
+  with no control on the page the web app always ran it on — and a shared flag
+  key that turned it off was silently ignored. The setting is on by default, so
+  nothing changes unless you turn it off.
+
 - The beta stage β4 now joins the Antechamber Shuffle pool when beta stages
   are enabled. Like the vanilla antechamber levels, its 8-screen interior can
   be swapped behind another level's entry pipe (and vice versa). With beta
@@ -25,6 +31,19 @@ deploys.
   player graphics are the same as plain Dr. Mario.
 
 ### Changed
+
+- **Flag keys have been rebuilt, and keys from earlier versions no longer
+  work.** This is the last time they break: the new format has room to grow, so
+  from here on adding an option leaves existing keys valid — the new option is
+  simply off in a key made before it existed. Two other things come with it:
+
+  - **A mistyped key is now caught.** Previously a single wrong character
+    produced a valid key for *different* settings about nine times out of ten,
+    with nothing on screen to say so. A key now carries a check byte, so a typo
+    or a truncated paste is rejected instead of quietly changing the ruleset —
+    which matters most in a race, where everyone is pasting the same key.
+  - **Keys got a little shorter** (26 characters instead of 27 for the default
+    set), and only carry as much as the settings need.
 
 - "Wild Injections" now lets you pick which chasers get dropped into levels,
   and adds a third one. The option is four pills — Off, Sun, Lakitu, Bass —

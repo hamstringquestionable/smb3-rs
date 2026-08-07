@@ -6,6 +6,7 @@ import init, {
 	decode_flag_key,
 	current_flag_key_version,
 	flag_key_version_of,
+	flag_key_fields_json,
 	default_options_json,
 	version,
 } from "./pkg/smb3_rs.js";
@@ -224,7 +225,7 @@ init()
 		const versionEl = document.getElementById("version");
 		if (versionEl) versionEl.textContent = `v${version()}`;
 		updateFlagKey();
-		assertSchemaParity(default_options_json());
+		assertSchemaParity(default_options_json(), flag_key_fields_json());
 		assertPresetParity();
 		selfTestRoundTrip(encode_flag_key, decode_flag_key);
 		applyUrlParams();
