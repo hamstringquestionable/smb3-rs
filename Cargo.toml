@@ -33,4 +33,5 @@ js-sys = "0.3"
 getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [dev-dependencies]
+base32 = "0.5"
 mos6502 = "0.10.1"

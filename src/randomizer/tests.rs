@@ -905,6 +905,92 @@ fn flag_key_not_encoded_names_are_real_fields() {
     }
 }
 
+/// Cross-check the hand-written Crockford codec against an independent
+/// implementation (`base32`, a dev-dependency — it reaches neither the binary
+/// nor the WASM bundle).
+///
+/// The alphabet layer is the one part of the format that is a published spec
+/// rather than our invention, so it can be verified against someone else's
+/// reading of that spec instead of only against itself. A golden test proves we
+/// still agree with *yesterday's us*; this proves we agree with Crockford.
+///
+/// Worth knowing before reaching for a crate here: "Crockford base32" crates
+/// are **not** interchangeable. `c32` 0.6.1 encodes this same key as
+/// `7D2Z73GY000A4AN001T` — 19 characters against our 20 — and swapping to it
+/// would silently invalidate every key in circulation. `crockford` 1.2.1 only
+/// handles `u64`, which cannot hold a 30-byte payload.
+///
+/// Two behaviours are deliberately *not* delegated, which is why the codec is
+/// still ours: `base32` accepts non-canonical lengths (it decoded a 19-character
+/// truncation of the key below to 11 bytes, where we reject it — that check
+/// catches a tail character the checksum can miss), and it returns `Option`, so
+/// it cannot say *which* character was bad in a message the app shows the user.
+#[test]
+fn base32_matches_an_independent_crockford_implementation() {
+    use base32::Alphabet::Crockford;
+
+    // Every payload width the format can produce, plus the envelope.
+    for n in 0..=(2 + 30usize) {
+        let data: Vec<u8> = (0..n)
+            .map(|i| (i as u8).wrapping_mul(37).wrapping_add(11))
+            .collect();
+        let ours = base32_encode(&data);
+        assert_eq!(ours, base32::encode(Crockford, &data), "encode differs at {n} bytes");
+        assert_eq!(
+            base32_decode(&ours).unwrap(),
+            base32::decode(Crockford, &ours).unwrap(),
+            "decode differs at {n} bytes",
+        );
+    }
+
+    // Real keys, not just synthetic patterns.
+    for opts in [Options::default(), all_off_options(), all_on_options()] {
+        let body = opts.to_flag_key();
+        let body = body.strip_prefix("SMB3R-").unwrap();
+        assert_eq!(
+            base32::decode(Crockford, body).unwrap(),
+            opts.to_flag_bytes(),
+            "an independent decoder disagrees about a real key",
+        );
+    }
+
+    // Crockford's exclusions. Asserted against the expectation as well as
+    // against the crate, so both being wrong the same way still fails.
+    for (probe, want_ok) in [
+        ("3PHFKHRF000525AG00X0", true),  // canonical
+        ("3phfkhrf000525ag00x0", true),  // case-insensitive
+        ("3PHFKHRF000525AGU0X0", false), // U is excluded from the alphabet
+        ("3PHFKHRF000525AG!0X0", false), // not an alphabet character at all
+    ] {
+        assert_eq!(base32_decode(probe).is_ok(), want_ok, "'{probe}' decodable?");
+        assert_eq!(
+            base32_decode(probe).is_ok(),
+            base32::decode(Crockford, probe).is_some(),
+            "disagreement on whether '{probe}' is decodable",
+        );
+    }
+
+    // Crockford's ambiguity normalizations: I and L read as 1, O reads as 0.
+    // Compared by decoded *bytes*, not just by "both accepted it" — dropping
+    // the I/L arm entirely still leaves a decodable string, so an acceptance
+    // check alone sails past it (confirmed by mutating the decoder).
+    for (probe, canonical) in [
+        ("IILL", "1111"),
+        ("iIlL", "1111"),
+        ("OOOO", "0000"),
+        ("oO00", "0000"),
+        ("H1JK", "HIJK"),
+    ] {
+        let expected = base32_decode(canonical).unwrap();
+        assert_eq!(base32_decode(probe).unwrap(), expected, "'{probe}' must read as '{canonical}'");
+        assert_eq!(
+            base32::decode(Crockford, probe).unwrap(),
+            expected,
+            "independent decoder disagrees that '{probe}' reads as '{canonical}'",
+        );
+    }
+}
+
 #[test]
 fn base32_round_trip() {
     // Test with various byte patterns
