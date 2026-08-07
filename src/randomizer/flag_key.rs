@@ -59,6 +59,14 @@ const FLAG_PAYLOAD_BYTES: usize = 30;
 /// Version byte + checksum byte.
 const ENVELOPE_BYTES: usize = 2;
 
+/// Every pre-v29 key was exactly this many bytes: a version byte and 12 bytes
+/// of hand-packed flags, with no checksum anywhere.
+const LEGACY_KEY_BYTES: usize = 13;
+
+/// Last format version that used the pre-v29 fixed-width layout. Nothing past
+/// this will ever be added, which is what keeps [`legacy_version_of`] exact.
+const LAST_LEGACY_VERSION: u8 = 28;
+
 /// Crockford Base-32 alphabet (excludes I, L, O, U to avoid ambiguity).
 pub(super) const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -195,7 +203,38 @@ pub fn current_flag_key_version() -> u8 {
 /// reporting a version if its bytes are intact, so a typo is reported as a bad
 /// key rather than sending the user hunting for a build that never existed.
 pub fn flag_key_version_of(key: &str) -> Result<u8, String> {
-    Ok(decode_envelope(strip_flag_key_prefix(key))?[0])
+    let stripped = strip_flag_key_prefix(key);
+    match decode_envelope(stripped) {
+        Ok(bytes) => Ok(bytes[0]),
+        Err(e) => legacy_version_of(stripped).ok_or(e),
+    }
+}
+
+/// Read the version off a pre-v29 key.
+///
+/// Those keys carry no checksum, so [`decode_envelope`] rejects every one of
+/// them as damaged. Without this fallback, everyone still holding a v26 or v28
+/// key — which is everyone, the day v29 ships — would be told their key is
+/// mistyped and sent hunting for a typo that isn't there, instead of "this is
+/// from an older version".
+///
+/// Exact rather than heuristic, and permanently bounded: the old layout was
+/// always 13 bytes with the version in byte 0, and no version past 28 ever used
+/// it. A v29+ key can also be 13 bytes, but its version byte is 29 or higher, so
+/// the two can't be confused.
+fn legacy_version_of(stripped: &str) -> Option<u8> {
+    let bytes = base32_decode(stripped).ok()?;
+    // `first()` rather than `bytes[0]`: an empty key decodes to no bytes, and
+    // `then_some` would evaluate the index either way.
+    let version = *bytes.first()?;
+    let is_legacy =
+        bytes.len() == LEGACY_KEY_BYTES && (1..=LAST_LEGACY_VERSION).contains(&version);
+    is_legacy.then_some(version)
+}
+
+/// The message for a key whose format this build doesn't read.
+fn unsupported_version(version: u8) -> String {
+    format!("Unsupported flag key version {version} (expected {FLAG_KEY_VERSION})")
 }
 
 /// `Options` fields deliberately absent from the flag key, with the reason.
@@ -571,11 +610,20 @@ impl Options {
 
     /// Decode a Crockford Base-32 flag key string into Options.
     pub fn from_flag_key(key: &str) -> Result<Options, String> {
-        let bytes = decode_envelope(strip_flag_key_prefix(key))?;
+        let stripped = strip_flag_key_prefix(key);
+        let bytes = match decode_envelope(stripped) {
+            Ok(bytes) => bytes,
+            // A pre-v29 key fails the envelope check for want of a checksum, not
+            // because it is damaged. Say which it is — the CLI shows this message
+            // verbatim, and "mistyped" would be a lie.
+            Err(checksum_err) => {
+                return Err(legacy_version_of(stripped).map_or(checksum_err, unsupported_version));
+            }
+        };
 
         let version = bytes[0];
         if version != FLAG_KEY_VERSION {
-            return Err(format!("Unsupported flag key version {version} (expected {FLAG_KEY_VERSION})"));
+            return Err(unsupported_version(version));
         }
 
         let body = &bytes[ENVELOPE_BYTES..];

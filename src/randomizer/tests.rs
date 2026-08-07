@@ -727,6 +727,45 @@ fn flag_key_version_probe() {
     assert!(flag_key_version_of(&key[..key.len() - 4]).is_err());
 }
 
+/// Keys made before v29 must be classified as *older*, not as mistyped.
+///
+/// They carry no checksum, so the envelope check rejects every one of them —
+/// and on the day v29 ships, that is every key in circulation. Telling those
+/// users to check for a typo would send them looking for something that isn't
+/// there, and it is the exact three-way message (#159) this format is supposed
+/// to keep honest.
+#[test]
+fn flag_key_pre_v29_keys_read_as_older() {
+    // A real v28 key: the default set, quoted in issue #158's typo measurement.
+    let v28 = "SMB3R-3JKWY87RAGA0A00700000";
+    assert_eq!(flag_key_version_of(v28), Ok(28));
+    assert!(Options::from_flag_key(v28).unwrap_err().contains("version 28"));
+
+    // Synthetic keys across the whole legacy range, in the shape those versions
+    // used: 13 bytes, version in byte 0, no checksum.
+    for version in 1..=28u8 {
+        let mut bytes = [0xA5u8; 13];
+        bytes[0] = version;
+        let key = format!("SMB3R-{}", base32_encode(&bytes));
+        assert_eq!(flag_key_version_of(&key), Ok(version), "v{version} must read as older");
+        assert!(Options::from_flag_key(&key).is_err(), "v{version} must not decode");
+    }
+
+    // The fallback must not swallow real damage. A v29 key with a mangled body
+    // is still 13-plus bytes, but its version byte is 29, so it stays invalid
+    // rather than being announced as some older version.
+    let mut broken = Options::default().to_flag_bytes();
+    let last = broken.len() - 1;
+    broken[last] ^= 0xFF;
+    assert!(flag_key_version_of(&base32_encode(&broken)).is_err());
+
+    // And a legacy-length run of garbage whose first byte is out of range is
+    // still invalid — the probe is a range check, not "trust byte 0".
+    let mut garbage = [0x00u8; 13];
+    garbage[0] = 200;
+    assert!(flag_key_version_of(&base32_encode(&garbage)).is_err());
+}
+
 /// Golden fixtures pinning the v29 bit and byte order.
 ///
 /// The layout is generated from declaration order in `FlagBits`, so nothing in
