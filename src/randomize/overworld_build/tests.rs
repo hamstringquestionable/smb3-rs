@@ -266,7 +266,9 @@ fn test_build_all_worlds() {
 /// fraction of seeds, which shows up in the first handful; a rare
 /// topology-conditional one was never reliably caught at 40 either.
 ///
-/// Before a release, run it deep — it is one env var:
+/// **Run it deep after touching overworld logic, and before a release** — a
+/// stranding bug that needs a rare pipe layout will pass at 20 seeds and fail
+/// a player. It is one env var (see CLAUDE.md's pre-commit section):
 ///   CENSUS_SEEDS=500 cargo test --release --lib \
 ///     all_world_targets_reachable        # ~4 min
 #[test]

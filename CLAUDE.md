@@ -27,6 +27,24 @@ cargo clippy --all-targets   # must show no warnings
 cargo test                   # must pass
 ```
 
+**If you touched overworld logic, `cargo test` alone is not enough.** The
+builder's guarantees are statistical, and the suite runs them shallow on
+purpose so CI stays fast. Re-run the two that matter at depth:
+
+```sh
+# The target must never be stranded — an unbeatable world. 8 arms
+# (raw/qol x hammer-bro x SAS); CI runs 20 seeds/arm, this runs 500.
+CENSUS_SEEDS=500 cargo test --release --lib all_world_targets_reachable   # ~4 min
+
+# Route choice + C1 floor + rock paths, one build pass.
+CENSUS_SEEDS=1000 cargo test --release --lib test_route_census -- --ignored --nocapture
+```
+
+A stranding bug that only shows on a rare pipe layout will pass at 20 seeds and
+fail a player. The measured baselines these should be compared against are in
+`docs/choice_first_charter.md`; `CENSUS_SEEDS` / `CENSUS_SLACK` drive every
+census in `overworld_build`.
+
 When clippy flags new code:
 
 1. **Idiom lints** (`needless_range_loop`, `manual_clamp`, `useless_vec`, etc.): apply the suggested fix. Clippy's lint pages link to docs explaining the *why*.
