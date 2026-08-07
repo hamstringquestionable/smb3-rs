@@ -9,6 +9,8 @@ deploys.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-08
+
 ### Added
 
 - **Random Boom-Boom Stomps** now has a toggle in the web app, under Bosses. It
@@ -29,6 +31,30 @@ deploys.
   graphics, so you can see Luigi, Peach, Toad, Dr. Mario or Baldman before
   generating. The "+ Viruses" pill shows one of its viruses instead, since its
   player graphics are the same as plain Dr. Mario.
+
+- Modern Power-Ups option (MaCobra52's "Easy Power-up System"): power-ups work
+  like the newer Mario games — Small Mario grabbing a Fire Flower or suit gets
+  its power without turning Big first. Off by default; on in the Beginner
+  Friendly preset.
+
+- Poison Mushrooms option (after MaCobra52's "All 1UPs are Poison Mushrooms"):
+  every 1-Up block becomes a coin flip. Each one independently hands out either
+  a real 1-Up or an upside-down poison mushroom that hurts you, decided by the
+  seed — so a run keeps some real 1-Ups mixed in with the traps, and you can't
+  tell which a block holds until you hit it. Off by default; on in the
+  Challenging preset.
+
+- Beta site is now visually distinct from the main site: the `/beta/` deploy
+  shows a hazard-striped "BETA BUILD" banner, a violet frame, and a BETA badge
+  in the header so it can't be confused with the stable release page.
+
+- Canoe "call the boat" rescue: stand on any dock and press A to summon the
+  canoe to the water beside you, then board as usual. Prevents canoe softlocks
+  where the boat was left out of reach, in both 1- and 2-player games.
+- Two-player "warp to partner" escape hatch: on the overworld map, the active
+  player can press Start+Select to jump to the other player's tile. This
+  prevents softlocks where one player moves a shared map object (such as the
+  `8s are Wild` canoe) out of the other's reach. No effect in 1-player games.
 
 ### Changed
 
@@ -58,21 +84,47 @@ deploys.
 
   Saved web settings carry over (an old "on" becomes Sun + Lakitu, the pool as
   it stood then), and the CLI flag takes a set now: `--wild-injections sun,bass`,
-  or `all`, or `off`. Flag keys bump to v28; older keys are no longer accepted.
-
-- "Poison Mushrooms" is now a per-block trap instead of an all-or-nothing
-  swap. Each 1-Up block independently hands out either a real 1-Up or an
-  upside-down poison mushroom that hurts you, decided by the seed — so a run
-  keeps some real 1-Ups mixed in with the traps, and you can't tell which a
-  block holds until you hit it. (Previously every 1-Up in the game turned to
-  poison.) The option key is unchanged, but a given seed + this flag now
-  produces a different result than before.
+  or `all`, or `off`.
 
 - World 1 has a new rock sitting between the middle of the map and the
   bottom-right. With "More hammer rocks" on you can break it, opening a real
   second way around a world that otherwise runs as one long lap. With the
   option off the rock is solid — and it looks exactly the same either way, so
   you have to swing a hammer at it to find out.
+
+- **The overworld builder was rebuilt around route choice.** Maps are no
+  longer rolled and rerolled until one looks acceptable. Each world is laid
+  out plainly first — bridge the cut-off parts with pipes, then place levels,
+  fortresses and locks — then measured for how many roughly-equal routes
+  reach the goal, then shaped by targeted moves: a fortress re-prices a
+  shortcut, a lock forces that fortress's cost onto it (the classic "beat the
+  fort or take the long way round"), a pipe opens an alternative. A world
+  that still won't fork redeals its whole pipe web and tries again.
+
+  What that means to play: **worlds with only one reasonable way through are
+  now about 7% of seeds**, where before the rebuild the same measure sat in
+  the twenties, and a typical world offers roughly two and a half distinct
+  routes. Worlds whose terrain genuinely can't fork stay honestly linear —
+  World 7 is still the most stubborn at ~20%, while World 6 now forks
+  essentially always.
+
+  Structures the shaping can build, which you may notice by name:
+
+  - a **gated shortcut** — a pipe whose approach is locked behind a fortress,
+    so taking it means beating that fort first, rather than a free skip;
+  - a **loop** wired between a world's islands, so it has two arms tied at
+    similar cost instead of one spine — the shape vanilla World 7 ships;
+  - **rock trades** — smashing a hammer rock now counts as a genuinely
+    different route from walking around it, not a detour of the same one.
+
+  Two guarantees hold everywhere: the cheapest way through a world always
+  costs at least about five levels' worth of effort, and every world still
+  ships its full vanilla pipe count. Deterministic as always — the same seed
+  still produces the same maps.
+
+- The World 5 spiral-castle pipe no longer always draws the castle on the far
+  endpoint — the castle and the pipe mouth are now coin-flipped between the
+  pair's two cells, so the castle can appear on either side.
 
 ### Fixed
 
@@ -124,132 +176,6 @@ deploys.
 - The eight Dry Bones and the Roto-Disc in World 4's second fortress are now
   hazard-protected, so they can't be swapped for a Thwomp/Ptooie/nipper-style
   hazard sitting on the walking path.
-
-### Changed
-
-- Pipe-fragmented worlds (Worlds 7 and 8 especially) are much less often a
-  single forced corridor: the builder now understands island anatomy —
-  pipe mouths on an island land far apart so routes cross its interior, a
-  loop gets wired between islands, and level costs are balanced across the
-  loop's arms — the same two-tied-arms structure vanilla World 7 ships.
-  All-linear layouts drop from ~49% to ~27% of seeds in W7 and ~11% to
-  ~4% in W8.
-
-- The overworld builder was replaced with the choice-first rebuild: knob-free
-  placement (connectivity, levels, forts, locks) plus a diagnosis-driven
-  shaping loop with pipe-web redeals. Every world now guarantees a minimum
-  route cost (no more nearly-free worlds — previously ~4% of W7 seeds with
-  start↔airship swap), fewer worlds are linear overall, and every world
-  still ships its full vanilla pipe count.
-
-- Route measurement now treats breaking a hammer rock as part of a route's
-  identity: a rock shortcut and the walk around it count as two distinct
-  choices (a resource trade) instead of the walk being discarded as a
-  detour. Overworld shaping decisions on maps with rocks (e.g. the
-  `More hammer rocks` option) account for rock-trade routes accordingly;
-  overall route-choice census is unchanged (20.1% vs 20.0% linear, 1000
-  seeds).
-- The World 5 spiral-castle pipe no longer always draws the castle on the far
-  endpoint — the castle and the pipe mouth are now coin-flipped between the
-  pair's two cells, so the castle can appear on either side.
-- Connectivity pipes (the ones that bridge otherwise-cut-off parts of a map)
-  now land their island end on a **junction** instead of the nearest dead-end
-  tip, so a bridged-in region joins the map as something you can route
-  *through* rather than a one-way spur. This adds route choice on most worlds
-  (World 8 single-route seeds ~39%→17%, World 5 ~16%→10%; ~24%→20% overall) at
-  no speed cost. World 4 keeps the old shortest-bridge behavior — its central
-  tiles sit next to the airship, so a junction bridge there just became a free
-  express to the goal. (issue #121)
-- Overworld maps now offer real route choice more often: worlds with only
-  one reasonable way through drop from ~35% to ~33% across all worlds. Two
-  builder weights were retuned — the lock pass looks harder for placements
-  that fork the route, and levels sit a little more on the main path (which
-  reads as more distinct near-optimal routes). The trade is slightly longer
-  runs of back-to-back required levels; seed generation stays well under the
-  browser's speed budget.
-- Corridor-heavy worlds gain a lot more route choice from a new **gated
-  shortcut**: on a world with only one reasonable route, the builder adds a
-  shortcut pipe and re-runs the lock placement so a fortress's lock lands on the
-  shortcut — taking it means beating that fortress first, a real "long way or
-  beat the fort" decision instead of a free skip. Worlds with a single route
-  drop most where it was worst (World 8 ~66%→36%, World 3 ~53%→32%, World 7
-  ~35%→29%; ~31%→24% overall). Seed generation actually got *faster* — a rewritten
-  reachability walk more than pays for the extra work (~94 ms in the browser).
-  (issue #125)
-
-## [1.1.0] - 2026-07-27
-
-### Changed
-
-- Worlds with few pipes (all but 3, 7, and 8) now offer real route choice
-  much more often: a shortcut pipe that would collapse one of the world's
-  roughly-equal routes is rejected and re-picked instead of merely
-  discouraged. Across all worlds, seeds with only one reasonable route drop
-  from 46% to 41% of worlds — the best the builder has measured.
-- The guaranteed "beat this fortress to open the way to the goal" lock is
-  no longer forced on every world: the guarantee is now the challenge floor
-  alone (the cheapest way through a world always costs about five levels'
-  worth of effort — now held more tightly than ever, with the floor's rare
-  escapes down from 1.6% to 0.1% of worlds). A world that can't reach the
-  floor without a goal gate still gets one, and about 1% of worlds now have
-  the goal open from the start — for a price.
-- Seed generation is ~5x faster (typical browser generate drops from
-  ~0.4 s to ~0.08 s): the choice-first builder's route measures — the bulk
-  of its work — now skip path bookkeeping on trial flips, measure at the
-  narrowest useful band, and run their Dijkstra on a packed-state flat table
-  instead of hashed tuple maps; the level pass keeps an already-choiceful
-  greedy layout instead of always re-measuring it. Route quality re-verified
-  by census (linearity, forced-level streaks, challenge floor, goal gate).
-- The overworld builder now BUILDS for route choice instead of rerolling for
-  it: levels are placed first as the world's terrain (half by look and spread,
-  half as measured moves that turn empty shortcut loops into real either-or
-  forks), the route structure is measured (how many roughly-equal paths reach the goal, priced by the levels,
-  fortresses, and pipes each path forces), and fortresses, locks, and spare
-  pipes are then placed as targeted moves to create two or three close routes
-  — a fort re-prices a shortcut, a lock forces that fort's cost onto it (the
-  classic "beat the fort or take the long way around"), a pipe opens or
-  cheapens an alternative. One fortress lock per world is guaranteed to gate
-  the goal (chosen among the sections that can, so the "real" fort carries no
-  positional tell). Worlds whose terrain genuinely can't fork stay honestly
-  linear. Deterministic — the same seed still produces the same maps.
-- Every world now has a minimum-challenge floor: the cheapest way through
-  must cost at least about five levels' worth of effort — as levels,
-  fortresses, a smashed rock, or any mix. Worlds that used to roll out
-  nearly-free routes get levels moved onto the main path instead, and a
-  shortcut pipe is never placed if it would price the world below the floor.
-- Spare overworld pipes are now placed after fortress locks and may bridge
-  across one of them: at most one pipe per world can make a single fortress
-  optional (a free "fort skip" shortcut for players who find it). Pipes that
-  would bypass two or more fortresses, or reach the goal with every lock still
-  closed, are never placed; pipes that would collapse an existing route choice
-  are avoided, and pipes that create one are preferred.
-- Fortress choice-forks no longer have a tell: the fort that really opens the
-  way forward is now equally likely to be any of the forked forts. Previously
-  it was almost always the farthest one to reach, so "always pick the far
-  fort" beat the choice 70% of the time.
-
-### Added
-
-- Modern Power-Ups option (MaCobra52's "Easy Power-up System"): power-ups work
-  like the newer Mario games — Small Mario grabbing a Fire Flower or suit gets
-  its power without turning Big first. Off by default; on in the Beginner
-  Friendly preset.
-
-- Poison Mushrooms option (MaCobra52's "All 1UPs are Poison Mushrooms"): every
-  1-Up Mushroom becomes a Poison Mushroom that hurts you instead of granting a
-  life. Off by default; on in the Challenging preset.
-
-- Beta site is now visually distinct from the main site: the `/beta/` deploy
-  shows a hazard-striped "BETA BUILD" banner, a violet frame, and a BETA badge
-  in the header so it can't be confused with the stable release page.
-
-- Canoe "call the boat" rescue: stand on any dock and press A to summon the
-  canoe to the water beside you, then board as usual. Prevents canoe softlocks
-  where the boat was left out of reach, in both 1- and 2-player games.
-- Two-player "warp to partner" escape hatch: on the overworld map, the active
-  player can press Start+Select to jump to the other player's tile. This
-  prevents softlocks where one player moves a shared map object (such as the
-  `8s are Wild` canoe) out of the other's reach. No effect in 1-player games.
 
 ## [1.0.7] - 2026-07-31
 
