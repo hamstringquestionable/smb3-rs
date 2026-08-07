@@ -374,9 +374,17 @@ mod payload {
         pub(super) starting_item_2: B5,
 
         // --- Reserve ---
-        // 147 bits. Spend these from the top when adding an option: an older key
-        // simply has them zero, which is "off" for a bool and the default for
-        // every enum here, so it stays a correct key for the settings it named.
+        // 147 bits. Adding an option is: declare it immediately above this
+        // block, then take the same number of bits off `B19`. An older key
+        // simply has those bits zero, which is "off" for a bool and the default
+        // for every enum here, so it stays a correct key for the settings it
+        // named — no version bump, and keys already in circulation keep working.
+        //
+        // Forgetting to shrink the reserve is a compile error, but a cryptic
+        // one: the crate reports `OneMod8: TotalSizeIsMultipleOfEightBits is not
+        // satisfied` against the struct. It means the widths no longer add up to
+        // `bytes * 8`, nothing more.
+        //
         // Two fields because the crate's widths stop at B128.
         #[skip] __: B128,
         #[skip] __: B19,
