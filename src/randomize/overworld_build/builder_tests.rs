@@ -362,7 +362,12 @@ fn test_builder_current_builder_worlds() {
 ///
 /// No assertions on coverage yet: this is the rediscovery baseline the
 /// controls will be justified against.
+///
+/// `#[ignore]`d (2026-08-07): a baseline instrument, not a gate — it
+/// carries no assertions, so running it in CI only spent time. The
+/// censuses that DO assert stay in CI.
 #[test]
+#[ignore]
 fn test_builder_connectivity_census() {
     let Some(raw) = load_rom() else {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
@@ -544,7 +549,12 @@ fn test_builder_levels_census() {
 /// its 5 points no matter what, and its future lock gates nothing (the
 /// "on-path fort = decorative lock" thesis, baselined). Runs the realistic
 /// flag mix (see [`census_ctx`]). `CENSUS_SEEDS` seeds (default 100).
+///
+/// `#[ignore]`d (2026-08-07): a baseline instrument, not a gate — it
+/// carries no assertions, so running it in CI only spent time. The
+/// censuses that DO assert stay in CI.
 #[test]
+#[ignore]
 fn test_builder_forts_census() {
     let Some(raw) = load_rom() else {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
@@ -1359,7 +1369,12 @@ fn diversity_row(shapes: &[SeedShape]) -> (f64, f64, f64, f64, f64) {
 /// this census isolates PLACEMENT-driven diversity, and mixing flag-driven
 /// input variation into the pairwise distances would inflate every arm's
 /// numbers with differences the placement code didn't produce.
+///
+/// `#[ignore]`d (2026-08-07): a baseline instrument, not a gate — it
+/// carries no assertions, so running it in CI only spent time. The
+/// censuses that DO assert stay in CI.
 #[test]
+#[ignore]
 fn test_builder_diversity_census() {
     let Some(rom) = load_rom() else {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
@@ -1463,7 +1478,12 @@ fn parse_pipe_delta(line: &str) -> Option<(usize, usize, u32, u32)> {
 /// — the silent dominating shortcut), inert (nothing measurable changed).
 /// Runs the realistic flag mix (see [`census_ctx`]). `CENSUS_SEEDS` seeds
 /// (default 100).
+///
+/// `#[ignore]`d (2026-08-07): a baseline instrument, not a gate — it
+/// carries no assertions, so running it in CI only spent time. The
+/// censuses that DO assert stay in CI.
 #[test]
+#[ignore]
 fn test_builder_spare_pipes_census() {
     let Some(raw) = load_rom() else {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
@@ -1705,7 +1725,12 @@ fn test_builder_fort_removal_census() {
 /// TEMP: how often do locks land on bridge-class tiles (water bridge 0xB3,
 /// drawbridges 0xB1/0xB2) today, and how often does a world have at least
 /// one bridge tile available?
+///
+/// `#[ignore]`d (2026-08-07): a baseline instrument, not a gate — it
+/// carries no assertions, so running it in CI only spent time. The
+/// censuses that DO assert stay in CI.
 #[test]
+#[ignore]
 fn test_builder_bridge_lock_rate() {
     let Some(raw) = load_rom() else {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
@@ -1818,14 +1843,44 @@ fn test_builder_island_roles() {
     assert_eq!(w8.iter().filter(|&&(_, r)| r == Routing).count(), 2);
 }
 
-/// TEMP DIAGNOSTIC (W7 linearity investigation): shaped-arm results for one
-/// world, split by start position (i.e. SAS orientation), with walk-graph
-/// geometry per seed — cycle rank (independent cycles in the final walk
-/// graph; 0 = tree = no parallel routes possible), node count, start→goal
-/// hops, and leftover blanks. `CENSUS_WORLD` (default 7), `CENSUS_SEEDS`
-/// (default 200).
+/// Per-world linearity workbench: **why** is a world linear, and could
+/// anything fix it? Shaped-arm results for ONE world, split by start position
+/// (i.e. SAS orientation). Born as the W7 pocket investigation (whose
+/// `pocket_map` since graduated into production — see `connectivity.rs` and
+/// `spare_pipes.rs`), but it was never W7-specific: pick the world with
+/// `CENSUS_WORLD` (default 7), the seed count with `CENSUS_SEEDS` (default
+/// 200).
+///
+/// Two of its measurements exist nowhere else, which is why it is kept rather
+/// than deleted with the rest of that investigation:
+///
+///   - **Cycle rank** β = e − v + 1 over the final walk graph, split by linear
+///     vs multi-route seeds. β = 0 is a tree, so parallel routes are
+///     *physically impossible* — this is what separates "the builder failed to
+///     find a choice" from "the map could not carry one."
+///   - **Golden-lock feasibility** on NOALT seeds (no alternative even at
+///     `SHAPING_SLACK`): does a dominated detour exist, does the cheap route
+///     hold an exclusive stretch against it, and is any tile on that stretch
+///     LOCKABLE? I.e. would a lock split the pair into two real routes, or is
+///     only new topology going to help?
+///
+/// The rest is context for those two: pocket structure with pipe pairs split
+/// cross-pocket (a mandatory chain link) vs intra-pocket (a cycle the
+/// domination filter usually eats), trunk blanks/levels (what `arm_balance`
+/// and `level_move` have to work with), start-island pipe mouths, a render of
+/// the first two NOALT worlds per arm with their shaping logs, and a fresh-map
+/// island inventory.
+///
+/// `#[ignore]`d (2026-08-07): it carries **no assertions** — it is an
+/// instrument, not a guarantee — so running it in CI only spent time and
+/// printed a wall of diagnostics nobody read. Headline linear%/C1/routes are
+/// covered by `test_route_census` and `test_builder_shaping_census`.
+///
+///   CENSUS_WORLD=7 CENSUS_SEEDS=200 cargo test --release --lib \
+///     test_world_linearity_probe -- --ignored --nocapture
 #[test]
-fn test_builder_w7_probe() {
+#[ignore]
+fn test_world_linearity_probe() {
     let Some(raw) = load_rom() else {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;

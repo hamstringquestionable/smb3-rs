@@ -1,12 +1,11 @@
 use super::*;
 use super::capacity::{
-    W8_HB_CAP, distribute_levels, fixed_positions_for_world, prepare_capacities,
+    W8_HB_CAP, distribute_levels, prepare_capacities,
     redistribute_fortresses,
 };
 
 
 
-use super::capacity::find_blank_slots;
 use super::types::stamp_slots;
 use crate::rom::Rom;
 use rand::SeedableRng;
@@ -192,48 +191,62 @@ fn test_fortress_redistribution() {
     }
 }
 
+/// Budget invariants of a finished build: no content may go missing. Run over
+/// `CENSUS_SEEDS` seeds (default 25) through [`census_build`], so every seed
+/// exercises a different flag arm rather than one hand-made `BuildFlags`.
+///
+/// The level-shortfall assert replaces `test_measure_shortfalls`, a 1000-seed
+/// `#[ignore]`d printout that reported these same three counts and had to be
+/// eyeballed (it read 0/1000 on all three at the time it was folded in here,
+/// 2026-08-07). A number nobody runs is not a guarantee.
 #[test]
 fn test_build_all_worlds() {
     let rom = match load_rom() {
         Some(r) => r,
         None => return,
     };
-    let (catalog, pickup) = build_catalog_pickup(&rom, 42);
-    let mut rng = ChaCha8Rng::seed_from_u64(42);
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(25);
 
-    let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
+    par_seeds(seeds, |seed| {
+        let result = census_build(&rom, seed);
+        assert_eq!(result.worlds.len(), 8, "seed {seed}");
 
-    assert_eq!(result.worlds.len(), 8);
+        for built in &result.worlds {
+            let wi = built.world_idx;
+            let forts = built.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count();
+            let pipes = built.pipe_pairs.len();
+            let locks = built.locks.len();
 
-    for built in &result.worlds {
-        let wi = built.world_idx;
-        let forts = built.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count();
-        let pipes = built.pipe_pairs.len();
-        let locks = built.locks.len();
+            // Forts: the allotment is a target, and the Locks phase may remove
+            // an unlockable fort (rare). Every surviving fort keeps one lock.
+            assert!(forts <= result.fort_counts[wi],
+                "seed {seed} W{}: fort slots {forts} > allotted {}", wi + 1, result.fort_counts[wi]);
+            // The full vanilla pipe budget is always spent (an unplaced pair is
+            // deleted content — its transit levels vanish from the game).
+            assert_eq!(pipes, VANILLA_PIPE_PAIRS[wi],
+                "seed {seed} W{}: pipe pairs {pipes} != budget {}", wi + 1, VANILLA_PIPE_PAIRS[wi]);
+            assert_eq!(locks, forts,
+                "seed {seed} W{}: every fort must have a lock ({locks} locks, {forts} forts)",
+                wi + 1);
+        }
 
-        // Forts: the allotment is a target, and the Locks phase may remove an
-        // unlockable fort (rare). Every surviving fort keeps exactly one lock.
-        assert!(forts <= result.fort_counts[wi],
-            "W{}: fort slots {} > allotted {}", wi + 1, forts, result.fort_counts[wi]);
-        // The full vanilla pipe budget is always spent (an unplaced pair is
-        // deleted content — its transit levels vanish from the game).
-        assert_eq!(pipes, VANILLA_PIPE_PAIRS[wi],
-            "W{}: pipe pairs {} != budget {}", wi + 1, pipes, VANILLA_PIPE_PAIRS[wi]);
-        assert_eq!(locks, forts,
-            "W{}: every fort must have a lock ({} locks, {} forts)", wi + 1, locks, forts);
-    }
-
-    let total_levels: usize = result.worlds.iter()
-        .map(|b| b.slots.iter().filter(|s| s.kind == SlotKind::Level).count())
-        .sum();
-    let total_forts: usize = result.worlds.iter()
-        .map(|b| b.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count())
-        .sum();
-    assert_eq!(total_levels, VANILLA_LEVEL_COUNT,
-        "total levels {} != {}", total_levels, VANILLA_LEVEL_COUNT);
-    // 17 allotted; the Locks phase may remove an unlockable fort (rare).
-    assert!(total_forts <= 17, "total forts {} > 17", total_forts);
-    assert!(total_forts >= 15, "total forts {} suspiciously low", total_forts);
+        let total_levels: usize = result.worlds.iter()
+            .map(|b| b.slots.iter().filter(|s| s.kind == SlotKind::Level).count())
+            .sum();
+        let total_forts: usize = result.worlds.iter()
+            .map(|b| b.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count())
+            .sum();
+        // Every vanilla level must land somewhere: a level the builder fails to
+        // place is content deleted from the game, invisible in a finished ROM.
+        assert_eq!(total_levels, VANILLA_LEVEL_COUNT,
+            "seed {seed}: total levels {total_levels} != {VANILLA_LEVEL_COUNT}");
+        // 17 allotted; the Locks phase may remove an unlockable fort (rare).
+        assert!(total_forts <= 17, "seed {seed}: total forts {total_forts} > 17");
+        assert!(total_forts >= 15, "seed {seed}: total forts {total_forts} suspiciously low");
+    });
 }
 
 /// Regression: the overworld builder must never strand a world's target
@@ -365,103 +378,6 @@ fn report_distribution_by_exponent() {
     }
 }
 
-/// Diagnostic (not an assertion): tabulate how many levels the builder
-/// places in each world across many seeds, next to the vanilla count, plus
-/// the number of leftover open path tiles (placeable blank nodes left with
-/// nothing on them). Run with:
-///   cargo test report_levels_per_world -- --nocapture
-#[test]
-fn report_levels_per_world() {
-    let raw = match load_rom() {
-        Some(r) => r,
-        None => return,
-    };
-    // QoL map edits (incl. remove_rocks) run before the builder in the real
-    // pipeline; build from the patched ROM so capacities/connectivity match
-    // what players actually get.
-    let rom = apply_qol_for_overworld(&raw);
-
-    const SEEDS: u64 = 200;
-
-    // Vanilla per-world Level counts, straight from the catalog (the same
-    // source VANILLA_LEVEL_COUNT is derived from).
-    let vanilla_catalog = NodeCatalog::build(&rom, false);
-    let mut vanilla_levels = [0usize; 8];
-    for e in &vanilla_catalog.entries {
-        if matches!(e.kind, NodeKind::Level) {
-            vanilla_levels[e.world_idx] += 1;
-        }
-    }
-
-    // Per world, collect the placed-level count and open-tile count per seed.
-    let mut levels: [Vec<usize>; 8] = Default::default();
-    let mut opens: [Vec<usize>; 8] = Default::default();
-
-    for seed in 0..SEEDS {
-        let (catalog, pickup) = build_catalog_pickup(&rom, seed);
-        let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let result = build(
-            &rom,
-            &OverworldData { pickup: &pickup, catalog: &catalog },
-            &mut rng,
-            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
-        );
-
-        for built in &result.worlds {
-            let wi = built.world_idx;
-            let lv = built.slots.iter().filter(|s| s.kind == SlotKind::Level).count();
-
-            // Open path = currently-blank placeable node tiles not occupied
-            // by a non-pipe slot. The build phase stamps pipe tiles onto the
-            // grid but leaves level/fort/HB/bonus/toad slots blank, so those
-            // slot positions still read as blank here and must be subtracted.
-            let fixed = fixed_positions_for_world(&rom, &catalog, wi, true, false);
-            let blank = find_blank_slots(&built.grid, &fixed).len();
-            let non_pipe_slots =
-                built.slots.iter().filter(|s| s.kind != SlotKind::Pipe).count();
-            let open = blank.saturating_sub(non_pipe_slots);
-
-            levels[wi].push(lv);
-            opens[wi].push(open);
-        }
-    }
-
-    let stats = |v: &[usize]| -> (usize, f64, usize) {
-        let min = *v.iter().min().unwrap();
-        let max = *v.iter().max().unwrap();
-        let mean = v.iter().sum::<usize>() as f64 / v.len() as f64;
-        (min, mean, max)
-    };
-
-    let names = ["Grass", "Desert", "Water", "Giant", "Sky", "Ice", "Pipe", "Dark"];
-    eprintln!("\nLevels placed per world over {SEEDS} seeds (shuffle_toad_houses on):\n");
-    eprintln!(
-        "  {:<14} {:>7} | {:>18} | {:>18}",
-        "World", "Vanilla", "Levels min/mean/max", "Open min/mean/max"
-    );
-    eprintln!("  {}", "-".repeat(66));
-    let mut van_total = 0usize;
-    let mut lvl_mean_total = 0.0f64;
-    let mut open_mean_total = 0.0f64;
-    for wi in 0..8 {
-        let (lmin, lmean, lmax) = stats(&levels[wi]);
-        let (omin, omean, omax) = stats(&opens[wi]);
-        van_total += vanilla_levels[wi];
-        lvl_mean_total += lmean;
-        open_mean_total += omean;
-        eprintln!(
-            "  W{} {:<11} {:>7} | {:>5} {:>6.1} {:>4} | {:>5} {:>6.1} {:>4}",
-            wi + 1, names[wi], vanilla_levels[wi],
-            lmin, lmean, lmax, omin, omean, omax,
-        );
-    }
-    eprintln!("  {}", "-".repeat(66));
-    eprintln!(
-        "  {:<14} {:>7} | {:>5} {:>6.1} {:>4} | {:>5} {:>6.1} {:>4}",
-        "Total", van_total, "", lvl_mean_total, "", "", open_mean_total, "",
-    );
-}
-
 #[test]
 fn hammer_bro_redistribution_invariants() {
     let rom = match load_rom() {
@@ -534,64 +450,7 @@ fn hammer_bro_redistribution_invariants() {
     }
 }
 
-/// Diagnostic: how often does each world end up with 1, 2, or 3 fortresses?
-/// Runs the real build for 1000 seeds and tallies the actual placed Fortress
-/// slots per world. W8 is fixed at 4. Run with:
-///   cargo test --lib fort_count_distribution -- --ignored --nocapture
-#[test]
-#[ignore]
-fn fort_count_distribution() {
-    let rom = match load_rom() {
-        Some(r) => r,
-        None => return,
-    };
-    // Catalog/pickup are seed-independent here (SAS off), so build them once.
-    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
 
-    const SEEDS: u64 = 1000;
-    // hist[world][count] — count in 0..=4 (index 0/unused for W1-W7).
-    let mut hist = [[0u32; 5]; 8];
-    for seed in 0..SEEDS {
-        let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let result = build(
-            &rom,
-            &OverworldData { pickup: &pickup, catalog: &catalog },
-            &mut rng,
-            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
-        );
-        for built in &result.worlds {
-            let forts = built.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count();
-            hist[built.world_idx][forts] += 1;
-        }
-    }
-
-    eprintln!("\nFortress-count distribution over {SEEDS} seeds:");
-    eprintln!("  world |    1 fort    |    2 forts   |    3 forts   |    4 forts   | mean");
-    let s = SEEDS as f64;
-    for (wi, h) in hist.iter().enumerate() {
-        let pct = |c: u32| 100.0 * c as f64 / s;
-        let mean: f64 = (1..=4).map(|c| c as f64 * h[c] as f64).sum::<f64>() / s;
-        eprintln!(
-            "   W{}   | {:4} ({:5.1}%) | {:4} ({:5.1}%) | {:4} ({:5.1}%) | {:4} ({:5.1}%) | {:.2}",
-            wi + 1,
-            h[1], pct(h[1]), h[2], pct(h[2]), h[3], pct(h[3]), h[4], pct(h[4]), mean,
-        );
-    }
-
-    // Aggregate across W1-W7 (W8 is always 4): of all 7000 world-instances,
-    // how often is each count seen?
-    let mut agg = [0u32; 5];
-    for h in &hist[..7] {
-        for (c, &count) in h.iter().enumerate().take(4).skip(1) {
-            agg[c] += count;
-        }
-    }
-    let total = (SEEDS * 7) as f64;
-    eprintln!("\nAcross W1-W7 ({} world-instances):", SEEDS * 7);
-    for (c, &count) in agg.iter().enumerate().take(4).skip(1) {
-        eprintln!("  {} fort(s): {:5} ({:5.1}%)", c, count, 100.0 * count as f64 / total);
-    }
-}
 
 /// Per-world topology snapshot for the goal-open probes. Distilled from the
 /// `progression_metrics` logic: same lock-state model (grid holds locks
@@ -661,8 +520,6 @@ fn world_topology(built: &BuiltWorld) -> Option<WorldTopology> {
     Some(WorldTopology { fort_count: forts.len(), depth })
 }
 
-
-
 /// Baseline metrics for the lock/fort progression-topology work. Emits, over
 /// many seeds:
 ///   Problem 2 (chain topology):
@@ -679,13 +536,26 @@ fn world_topology(built: &BuiltWorld) -> Option<WorldTopology> {
 #[test]
 #[ignore]
 fn progression_metrics() {
-    let rom = match load_rom() {
-        Some(r) => r,
-        None => return,
+    // RAW rom: `census_build` applies the map QOL itself, per flag arm.
+    let rom_bytes = match std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") {
+        Ok(b) => b,
+        Err(_) => {
+            eprintln!("ROM not found, skipping");
+            return;
+        }
     };
-    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
+    let rom = match Rom::from_bytes(&rom_bytes) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("ROM parse failed: {e}");
+            return;
+        }
+    };
 
-    const SEEDS: u64 = 1000;
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1000);
 
     // --- Problem 2 accumulators ---
     let mut depth_hist = [0u64; 8]; // index = chain depth (capped at 7)
@@ -709,14 +579,8 @@ fn progression_metrics() {
     let mut comp_hist = [0u64; 12]; // fort-side component size (capped at 11)
     let mut comp_total = 0u64;
 
-    for seed in 0..SEEDS {
-        let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let result = build(
-            &rom,
-            &OverworldData { pickup: &pickup, catalog: &catalog },
-            &mut rng,
-            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
-        );
+    for seed in 0..seeds {
+        let result = census_build(&rom, seed);
 
         for built in &result.worlds {
             let wi = built.world_idx;
@@ -865,7 +729,7 @@ fn progression_metrics() {
 
     let names = ["W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8"];
 
-    eprintln!("\n=== Problem 2: chain depth (rounds of beat-all-reachable to open airship), {SEEDS} seeds ===");
+    eprintln!("\n=== Problem 2: chain depth (rounds of beat-all-reachable to open airship), {seeds} seeds ===");
     let dtot: u64 = depth_hist.iter().sum();
     for (d, &c) in depth_hist.iter().enumerate() {
         if c == 0 {
@@ -923,226 +787,6 @@ fn progression_metrics() {
     }
 }
 
-#[test]
-#[ignore]
-fn test_print_build() {
-    let rom = match load_rom() {
-        Some(r) => r,
-        None => return,
-    };
-    let (catalog, pickup) = build_catalog_pickup(&rom, 42);
-    let mut rng = ChaCha8Rng::seed_from_u64(42);
-
-    let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
-
-    for built in &result.worlds {
-        eprintln!("\n=== World {} ({} sections) ===",
-            built.world_idx + 1, built.section_count);
-
-        for (si, section_slots) in (0..built.section_count).map(|si| {
-            (si, built.slots.iter().filter(|s| s.section == si).collect::<Vec<_>>())
-        }) {
-            let fort = section_slots.iter().find(|s| s.kind == SlotKind::Fortress);
-            let levels = section_slots.iter().filter(|s| s.kind == SlotKind::Level).count();
-            let lock = built.locks.iter().find(|l| l.fort_section == si);
-
-            eprintln!("  Section {si}: {} slots ({} levels, fort at {:?})",
-                section_slots.len(), levels,
-                fort.map(|f| f.pos));
-            if let Some(l) = lock {
-                eprintln!("    Lock at {:?} (gap=${:02X}, restore=${:02X})",
-                    l.pos, l.gap_tile, l.replace_tile);
-            }
-        }
-
-        eprintln!("  Pipes: {} pairs", built.pipe_pairs.len());
-        for (i, &(a, b)) in built.pipe_pairs.iter().enumerate() {
-            eprintln!("    Pair {i}: ({},{}) ↔ ({},{})", a.0, a.1, b.0, b.1);
-        }
-    }
-}
-
-#[test]
-#[ignore]
-fn test_measure_shortfalls() {
-    let rom = match load_rom() {
-        Some(r) => r,
-        None => return,
-    };
-    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
-
-    let mut level_shortfalls = 0u32;
-    let mut lock_shortfalls = 0u32;
-    let seeds = 1000;
-
-    for seed in 0..seeds {
-        let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
-
-        let total_levels: usize = result.worlds.iter()
-            .map(|b| b.slots.iter().filter(|s| s.kind == SlotKind::Level).count())
-            .sum();
-        if total_levels < VANILLA_LEVEL_COUNT {
-            level_shortfalls += 1;
-            let deficit = VANILLA_LEVEL_COUNT - total_levels;
-            // Show per-world breakdown
-            let mut detail = String::new();
-            for built in &result.worlds {
-                let levels = built.slots.iter().filter(|s| s.kind == SlotKind::Level).count();
-                let section_sizes: Vec<usize> = (0..built.section_count)
-                    .map(|si| built.slots.iter().filter(|s| s.section == si).count())
-                    .collect();
-                if levels < 3 {
-                    detail.push_str(&format!(" W{}={levels}(sections={section_sizes:?})", built.world_idx + 1));
-                }
-            }
-            eprintln!("Seed {seed}: {total_levels}/{VANILLA_LEVEL_COUNT} (-{deficit}){detail}");
-        }
-
-        for built in &result.worlds {
-            let expected_locks = result.fort_counts[built.world_idx];
-            if built.locks.len() < expected_locks {
-                lock_shortfalls += 1;
-                // Find which section(s) are missing locks
-                let placed: HashSet<usize> = built.locks.iter().map(|l| l.fort_section).collect();
-                for si in 0..built.section_count {
-                    if !placed.contains(&si) {
-                        let section_size = built.slots.iter().filter(|s| s.section == si).count();
-                        let fort = built.slots.iter().find(|s| s.section == si && s.kind == SlotKind::Fortress);
-                        eprintln!("Seed {seed} W{} section {si}: NO LOCK, section_size={section_size}, fort={:?}, total_slots={}",
-                            built.world_idx + 1, fort.map(|f| f.pos),
-                            built.slots.len());
-                    }
-                }
-            }
-        }
-    }
-
-    // Count seeds with at least one secret_exit_safe lock and
-    // track which worlds have safe locks in failing seeds
-    let mut safe_count = 0u32;
-    let mut no_safe_details: Vec<(u64, [usize; 8])> = Vec::new();
-    for seed in 0..seeds {
-        let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
-        let result2 = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng2, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
-        let has_safe = result2.worlds.iter().any(|b| {
-            b.locks.iter().any(|l| l.secret_exit_safe)
-        });
-        if has_safe {
-            safe_count += 1;
-        } else {
-            // For failing seeds, count locks per world to see which have room
-            let mut lock_counts = [0usize; 8];
-            for b in &result2.worlds {
-                lock_counts[b.world_idx] = b.locks.len();
-            }
-            no_safe_details.push((seed, lock_counts));
-        }
-    }
-
-    eprintln!("\n=== {seeds} seeds ===");
-    eprintln!("Level shortfalls: {level_shortfalls}/{seeds}");
-    eprintln!("Lock shortfalls:  {lock_shortfalls}/{seeds} (world-level)");
-    eprintln!("Seeds with >=1 secret_exit_safe lock: {safe_count}/{seeds}");
-    if !no_safe_details.is_empty() {
-        eprintln!("No-safe seeds (first 10):");
-        for (seed, counts) in no_safe_details.iter().take(10) {
-            eprintln!("  Seed {seed}: locks per world = {counts:?}");
-        }
-    }
-}
-
-#[test]
-#[ignore]
-fn test_w6_slot_distribution() {
-    let rom = match load_rom() {
-        Some(r) => r,
-        None => {
-            eprintln!("ROM not found, skipping");
-            return;
-        }
-    };
-    let (catalog, pickup) = build_catalog_pickup(&rom, 0);
-
-    for seed in 0..6u64 {
-        let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
-        let built = &result.worlds[5]; // W6 (0-indexed)
-
-        eprintln!("\n===== Seed {seed} — W6 =====");
-        eprintln!("level_count received: {} (from distribute_levels)",
-            built.slots.iter().filter(|s| s.kind == SlotKind::Level).count());
-        eprintln!("fort_count: {}", result.fort_counts[5]);
-        eprintln!("total slots: {}", built.slots.len());
-        eprintln!("section_count: {}", built.section_count);
-        eprintln!("pipe_pairs: {}", built.pipe_pairs.len());
-
-        // Group by kind
-        let mut fortresses = Vec::new();
-        let mut levels = Vec::new();
-        let mut hammer_bros = Vec::new();
-        let mut pipes = Vec::new();
-        let mut bonus_games = Vec::new();
-        let mut toad_houses = Vec::new();
-        for slot in &built.slots {
-            match slot.kind {
-                SlotKind::Fortress => fortresses.push(slot),
-                SlotKind::Level => levels.push(slot),
-                SlotKind::HammerBro => hammer_bros.push(slot),
-                SlotKind::Pipe => pipes.push(slot),
-                SlotKind::BonusGame => bonus_games.push(slot),
-                SlotKind::ToadHouse => toad_houses.push(slot),
-            }
-        }
-
-        eprintln!("\nFortresses ({}):", fortresses.len());
-        for s in &fortresses {
-            eprintln!("  ({:2}, {:2})  section={}", s.pos.0, s.pos.1, s.section);
-        }
-
-        eprintln!("\nLevels ({}):", levels.len());
-        for s in &levels {
-            // Compute min Manhattan distance to nearest other Level slot
-            let min_dist = levels.iter()
-                .filter(|o| o.pos != s.pos)
-                .map(|o| {
-                    let dr = (s.pos.0 as isize - o.pos.0 as isize).unsigned_abs();
-                    let dc = (s.pos.1 as isize - o.pos.1 as isize).unsigned_abs();
-                    dr + dc
-                })
-                .min()
-                .unwrap_or(0);
-            eprintln!("  ({:2}, {:2})  section={}  min_dist_to_level={}", s.pos.0, s.pos.1, s.section, min_dist);
-        }
-
-        eprintln!("\nHammerBros ({}):", hammer_bros.len());
-        for s in &hammer_bros {
-            eprintln!("  ({:2}, {:2})  section={}", s.pos.0, s.pos.1, s.section);
-        }
-
-        eprintln!("\nPipes ({}):", pipes.len());
-        for s in &pipes {
-            eprintln!("  ({:2}, {:2})  section={}", s.pos.0, s.pos.1, s.section);
-        }
-
-        eprintln!("\nBonus Games ({}):", bonus_games.len());
-        for s in &bonus_games {
-            eprintln!("  ({:2}, {:2})  section={}", s.pos.0, s.pos.1, s.section);
-        }
-
-        eprintln!("\nToad Houses ({}):", toad_houses.len());
-        for s in &toad_houses {
-            eprintln!("  ({:2}, {:2})  section={}", s.pos.0, s.pos.1, s.section);
-        }
-
-        eprintln!("\nLocks ({}):", built.locks.len());
-        for l in &built.locks {
-            eprintln!("  ({:2}, {:2})  gap=0x{:02X}  replace=0x{:02X}  fort_section={}  safe={}",
-                l.pos.0, l.pos.1, l.gap_tile, l.replace_tile, l.fort_section, l.secret_exit_safe);
-        }
-    }
-}
-
 /// Distribution analyzer for fortress placement.
 ///
 /// Runs the builder for N seeds and reports, per world:
@@ -1152,7 +796,7 @@ fn test_w6_slot_distribution() {
 ///
 /// Use the entropy number to compare scoring tweaks: higher = more variety.
 /// Run with: cargo test --release test_fortress_distribution -- --ignored --nocapture
-/// Override seed count with FORT_SEEDS=N.
+/// Override seed count with CENSUS_SEEDS=N.
 #[test]
 #[ignore]
 fn test_fortress_distribution() {
@@ -1164,7 +808,7 @@ fn test_fortress_distribution() {
         }
     };
 
-    let seeds: u64 = std::env::var("FORT_SEEDS")
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(1000);
@@ -1569,7 +1213,7 @@ fn prog_print_pass(label: &str, worlds: &[ProgLinWorld; 8]) {
 /// redistributes which worlds stack levels.
 ///
 /// Run with: cargo test --release test_required_progression -- --ignored --nocapture
-/// Override seed count with PROG_SEEDS=N (runs that many PER mode).
+/// Override seed count with CENSUS_SEEDS=N (runs that many PER mode).
 /// FLAGS=SMB3R-… measures a specific flag set (e.g. hammer-breaks-locks on).
 #[test]
 #[ignore]
@@ -1582,7 +1226,7 @@ fn test_required_progression() {
         }
     };
 
-    let seeds: u64 = std::env::var("PROG_SEEDS")
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(1000);
@@ -1683,10 +1327,15 @@ fn test_dump_required_progression() {
         return;
     }
 
-    // STANDALONE=1 bypasses the full pipeline and runs the builder
-    // directly off a fresh `seed_from_u64(seed)` RNG, matching what the
-    // distribution analyzer (test_required_progression) sees. Use this
-    // to reproduce unreachable-target findings reported by that test.
+    // STANDALONE=1 bypasses the full pipeline and runs the builder directly
+    // off a fresh `seed_from_u64(seed)` RNG.
+    //
+    // It no longer matches `test_required_progression`: that census was moved
+    // onto `randomize_rom_with_overworld_capture` (the shipped pipeline, whose
+    // RNG stream differs), and the DEFAULT path below tracks it. So to
+    // reproduce something the census reported for a seed, use the default
+    // path, NOT this one. STANDALONE survives as the raw-builder arm — the way
+    // to tell a builder behaviour apart from a pipeline effect.
     if std::env::var("STANDALONE").is_ok() {
         let rom = match Rom::from_bytes(&rom_bytes) {
             Ok(r) => r,
@@ -1822,18 +1471,72 @@ fn test_dump_required_progression() {
     eprintln!("\nWrote {filename}");
 }
 
-/// Choice-first route metric (weighted set-cost: pipe 1 / level 3 / fort 5 /
-/// rock 8, each clearable charged once). Aggregates how many distinct
-/// near-optimal routes each world offers over many seeds — LINEAR = one best
-/// route, CHOICE = 2+ within `slack` points. Verdict + gap are exact.
+
+// ---------------------------------------------------------------------------
+// Census column arithmetic. Every per-world census prints some mix of these
+// over one world's sample set; keeping the `sum / len as f64` in one place
+// stopped three copies of the same table drifting apart (the C1 column was
+// computed identically in two tests before they were merged below).
+// ---------------------------------------------------------------------------
+
+fn mean_of(v: &[u32]) -> f64 {
+    if v.is_empty() {
+        return 0.0;
+    }
+    v.iter().sum::<u32>() as f64 / v.len() as f64
+}
+
+/// Share of samples satisfying `pred`, in percent.
+fn pct_of(v: &[u32], pred: impl Fn(u32) -> bool) -> f64 {
+    if v.is_empty() {
+        return 0.0;
+    }
+    v.iter().filter(|&&x| pred(x)).count() as f64 / v.len() as f64 * 100.0
+}
+
+/// `p`-th percentile of an ALREADY-SORTED sample set (p in 0..100).
+fn pctile_of(sorted: &[u32], p: usize) -> u32 {
+    if sorted.is_empty() {
+        return 0;
+    }
+    sorted[sorted.len() * p / 100]
+}
+
+/// What one world contributes for one seed. `None` route data = unreachable.
+struct RouteSample {
+    routes: usize,
+    c1: u32,
+    reachable: bool,
+    goal_open: bool,
+    has_rock: bool,
+    c1_breaks_rock: bool,
+    alt_breaks_rock: bool,
+}
+
+/// The route-choice census — ONE build pass over the seeds, three reports.
+///
+/// Merged 2026-08-07 from `test_route_choice` + `test_c1_floor_probe` +
+/// `test_rock_route_census`, which each rebuilt every seed to measure the same
+/// `RouteChoice`. Their C1 and linear% columns were computed twice, identically;
+/// this way the numbers cannot disagree, and one invocation gives the whole
+/// picture instead of three.
+///
+///   1. Route choice — distinct non-dominated routes per world (weighted
+///      set-cost: pipe 1 / level 3 / fort 5 / rock 8, each clearable charged
+///      once). LINEAR = one best route, CHOICE = 2+ within `slack`.
+///   2. C1 floor — distribution of the cheapest route's cost, the quantity
+///      `C1_FLOOR` bounds, plus the goal-open rate.
+///   3. Rock paths — does the cheap route break a rock, or is the rock the
+///      price of an ALTERNATIVE? Also relative to worlds that have one.
 ///
 /// Run with:
-///   ROUTE_SEEDS=200 SLACK=3 cargo test --release \
-///     test_route_choice -- --ignored --nocapture
-/// DUMP_SEED=<n> also prints per-world one-liners for that seed.
+///   CENSUS_SEEDS=200 CENSUS_SLACK=3 cargo test --release --lib \
+///     test_route_census -- --ignored --nocapture
+/// DUMP_SEED=<n> also prints per-world one-liners for that seed (RENDER=1 for
+/// the ASCII maps).
 #[test]
 #[ignore]
-fn test_route_choice() {
+fn test_route_census() {
     let rom_bytes = match std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") {
         Ok(b) => b,
         Err(_) => {
@@ -1841,6 +1544,7 @@ fn test_route_choice() {
             return;
         }
     };
+    // RAW rom on purpose: `census_build` applies the map QOL itself, per arm.
     let rom = match Rom::from_bytes(&rom_bytes) {
         Ok(r) => r,
         Err(e) => {
@@ -1849,11 +1553,11 @@ fn test_route_choice() {
         }
     };
 
-    let seeds: u64 = std::env::var("ROUTE_SEEDS")
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(100);
-    let slack: u32 = std::env::var("SLACK")
+        .unwrap_or(200);
+    let slack: u32 = std::env::var("CENSUS_SLACK")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(route_choice::DEFAULT_SLACK);
@@ -1868,10 +1572,22 @@ fn test_route_choice() {
         if Some(seed) == dump_seed {
             eprintln!("\n=== Route choice, seed {seed} (slack {slack}) ===");
         }
-        let mut route_counts = [0usize; 8];
+        let mut out: [Option<RouteSample>; 8] = [const { None }; 8];
         for built in &result.worlds {
             let rc = analyze_route_choice(built, slack);
-            route_counts[built.world_idx] = if rc.reachable { rc.routes.len() } else { 0 };
+            let has_rock = (0..built.grid.rows()).any(|r| {
+                (0..built.grid.cols).any(|c| matches!(built.grid.get(r, c), 0x51 | 0x52))
+            });
+            out[built.world_idx] = Some(RouteSample {
+                routes: if rc.reachable { rc.routes.len() } else { 0 },
+                c1: rc.best_cost,
+                reachable: rc.reachable,
+                goal_open: world_topology(built)
+                    .is_some_and(|t| t.fort_count >= 2 && t.depth == 0),
+                has_rock,
+                c1_breaks_rock: rc.routes.first().is_some_and(|r| !r.rocks.is_empty()),
+                alt_breaks_rock: rc.routes.iter().skip(1).any(|r| !r.rocks.is_empty()),
+            });
             if Some(seed) == dump_seed {
                 if std::env::var("RENDER").is_ok() {
                     eprint!("{}", route_choice::render_route_choice(built, slack));
@@ -1880,40 +1596,137 @@ fn test_route_choice() {
                 }
             }
         }
-        route_counts
+        out
     });
-    let mut counts: Vec<Vec<usize>> = vec![Vec::new(); 8];
-    for rc in &per_seed {
-        for (wi, &n) in rc.iter().enumerate() {
-            counts[wi].push(n);
+
+    // Per-world sample sets. C1/goal-open only count REACHABLE worlds (an
+    // unreachable world has no cheapest route to price); route counts keep the
+    // 0 so `linear%` still sees it as choice-free.
+    let mut routes: Vec<Vec<u32>> = vec![Vec::new(); 8];
+    let mut c1s: Vec<Vec<u32>> = vec![Vec::new(); 8];
+    let mut goal_open = [0usize; 8];
+    let mut rocks = [[0u64; 4]; 8]; // seen, rock-world, C1 rock, alt rock
+    for worlds in &per_seed {
+        for (wi, s) in worlds.iter().enumerate() {
+            let Some(s) = s else { continue };
+            routes[wi].push(s.routes as u32);
+            if s.reachable {
+                c1s[wi].push(s.c1);
+                goal_open[wi] += s.goal_open as usize;
+            }
+            let row = &mut rocks[wi];
+            row[0] += 1;
+            row[1] += s.has_rock as u64;
+            row[2] += s.c1_breaks_rock as u64;
+            row[3] += s.alt_breaks_rock as u64;
         }
     }
 
+    // -- 1. Route choice ----------------------------------------------------
     eprintln!("\n=== Route choice over {seeds} seeds (slack {slack}) ===");
-    eprintln!("  {:<4} {:>6} {:>8} {:>8} {:>5}", "", "mean", "linear%", "choice%", "max");
-    let mut all: Vec<usize> = Vec::new();
-    for (wi, c) in counts.iter().enumerate() {
+    eprintln!(
+        "  {:<4} {:>6} {:>8} {:>8} {:>5} {:>7} {:>9}",
+        "", "mean", "linear%", "choice%", "max", "C1", "<floor%"
+    );
+    let mut all_routes: Vec<u32> = Vec::new();
+    let mut all_c1: Vec<u32> = Vec::new();
+    for wi in 0..8 {
+        let (r, c) = (&routes[wi], &c1s[wi]);
+        if r.is_empty() {
+            continue;
+        }
+        all_routes.extend(r.iter().copied());
+        all_c1.extend(c.iter().copied());
+        eprintln!(
+            "  W{:<3} {:>6.2} {:>7.0}% {:>7.0}% {:>5} {:>7.1} {:>8.0}%",
+            wi + 1,
+            mean_of(r),
+            pct_of(r, |n| n <= 1),
+            pct_of(r, |n| n >= 2),
+            r.iter().copied().max().unwrap_or(0),
+            mean_of(c),
+            pct_of(c, |v| v < C1_FLOOR),
+        );
+    }
+    if !all_routes.is_empty() {
+        eprintln!(
+            "  overall: mean {:.3} routes/world; {:.2}% linear; C1 {:.1}, {:.1}% below \
+             floor {C1_FLOOR} (n={})",
+            mean_of(&all_routes),
+            pct_of(&all_routes, |n| n <= 1),
+            mean_of(&all_c1),
+            pct_of(&all_c1, |v| v < C1_FLOOR),
+            all_routes.len(),
+        );
+    }
+
+    // -- 2. C1 floor --------------------------------------------------------
+    eprintln!("\n=== C1 floor probe over {seeds} seeds ===");
+    eprintln!(
+        "  {:<4} {:>5} {:>5} {:>6} {:>6} {:>6} {:>6} {:>9} {:>8}",
+        "", "min", "p10", "mean", "<8", "<14", "<17", "goal-open", "linear%",
+    );
+    for wi in 0..8 {
+        let c = &mut c1s[wi];
         if c.is_empty() {
             continue;
         }
-        all.extend(c.iter().copied());
-        let mean = c.iter().sum::<usize>() as f64 / c.len() as f64;
-        let linear = c.iter().filter(|&&n| n <= 1).count() as f64 / c.len() as f64 * 100.0;
-        let choice = c.iter().filter(|&&n| n >= 2).count() as f64 / c.len() as f64 * 100.0;
-        let max = c.iter().copied().max().unwrap_or(0);
-        eprintln!("  W{:<3} {mean:>6.2} {linear:>7.0}% {choice:>7.0}% {max:>5}", wi + 1);
+        c.sort_unstable();
+        eprintln!(
+            "  W{:<3} {:>5} {:>5} {:>6.1} {:>5.0}% {:>5.0}% {:>5.0}% {:>8.1}% {:>7.0}%",
+            wi + 1,
+            c[0],
+            pctile_of(c, 10),
+            mean_of(c),
+            pct_of(c, |x| x < 8),
+            pct_of(c, |x| x < 14),
+            pct_of(c, |x| x < 17),
+            goal_open[wi] as f64 / c.len() as f64 * 100.0,
+            pct_of(&routes[wi], |n| n <= 1),
+        );
     }
-    if !all.is_empty() {
-        let mean = all.iter().sum::<usize>() as f64 / all.len() as f64;
-        let linear = all.iter().filter(|&&n| n <= 1).count() as f64 / all.len() as f64 * 100.0;
-        eprintln!("  overall: mean {mean:.3} routes/world; {linear:.2}% linear (n={})", all.len());
+    if !all_c1.is_empty() {
+        all_c1.sort_unstable();
+        let go: usize = goal_open.iter().sum();
+        eprintln!(
+            "  overall: min {} p10 {} mean {:.1}; <14 {:.1}%; goal-open {:.1}%; linear {:.0}%",
+            all_c1[0],
+            pctile_of(&all_c1, 10),
+            mean_of(&all_c1),
+            pct_of(&all_c1, |x| x < 14),
+            go as f64 / all_c1.len() as f64 * 100.0,
+            pct_of(&all_routes, |n| n <= 1),
+        );
+    }
+
+    // -- 3. Rock paths ------------------------------------------------------
+    eprintln!("\n=== Rock-path census over {seeds} seeds ===");
+    eprintln!(
+        "  {:<4} {:>10} {:>10} {:>12} {:>14} {:>14}",
+        "", "rock-world", "C1 rock", "alt(C2+) rock", "C1|rock-world", "alt|rock-world"
+    );
+    for (wi, t) in rocks.iter().enumerate() {
+        let [n, rockw, c1, alt] = *t;
+        if n == 0 {
+            continue;
+        }
+        let pc = |x: u64, base: u64| {
+            if base == 0 { 0.0 } else { x as f64 / base as f64 * 100.0 }
+        };
+        eprintln!(
+            "  W{:<3} {:>9.0}% {:>9.1}% {:>11.1}% {:>13.1}% {:>13.1}%",
+            wi + 1,
+            pc(rockw, n),
+            pc(c1, n),
+            pc(alt, n),
+            pc(c1, rockw),
+            pc(alt, rockw),
+        );
     }
 }
-
-
 /// Per-seed build wall time — the number the WASM app's generate latency
 /// tracks. Serial on purpose (per-seed timing, no thread contention).
-///   TIME_SEEDS=40 cargo test --release --lib test_build_time -- --ignored --nocapture
+///   CENSUS_SEEDS=40 cargo test --release --lib test_build_time -- --ignored --nocapture
 #[test]
 #[ignore]
 fn test_build_time() {
@@ -1925,7 +1738,7 @@ fn test_build_time() {
         }
     };
     let rom = Rom::from_bytes(&rom_bytes).unwrap();
-    let seeds: u64 = std::env::var("TIME_SEEDS")
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(40);
@@ -1955,7 +1768,7 @@ fn test_build_time() {
 ///      tile), reuse is correctly skipped,
 ///   3. adding a lock (an overlay `walk_map` never sees) is always invariant.
 ///
-/// ROUTE_SEEDS=100 cargo test --release --lib test_walkgraph_reuse -- --ignored --nocapture
+/// CENSUS_SEEDS=100 cargo test --release --lib test_walkgraph_reuse -- --ignored --nocapture
 #[test]
 #[ignore]
 fn test_walkgraph_reuse() {
@@ -1967,7 +1780,7 @@ fn test_walkgraph_reuse() {
         }
     };
     let rom = Rom::from_bytes(&rom_bytes).unwrap();
-    let seeds: u64 = std::env::var("ROUTE_SEEDS")
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
@@ -2073,191 +1886,12 @@ fn walk_edge_path_tile(built: &BuiltWorld) -> Option<(usize, usize)> {
         .find_map(|e| e.path_pos)
 }
 
-/// Rock-path census: how often the cheapest route (C1) breaks a rock, and
-/// how often any in-band ALTERNATIVE (C2+) does — i.e. is the rock a forced
-/// part of the cheap way through, or the price of a route choice? Rates are
-/// also given relative to worlds that have a breakable rock at all.
-///   ROUTE_SEEDS=1000 cargo test --release --lib test_rock_route_census -- --ignored --nocapture
-#[test]
-#[ignore]
-fn test_rock_route_census() {
-    let rom_bytes = match std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") {
-        Ok(b) => b,
-        Err(_) => {
-            eprintln!("ROM not found, skipping");
-            return;
-        }
-    };
-    let rom = Rom::from_bytes(&rom_bytes).unwrap();
-    let seeds: u64 = std::env::var("ROUTE_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(200);
-
-    // Per world: (worlds seen, worlds with >=1 breakable rock, C1 breaks a
-    // rock, some in-band alternative breaks a rock).
-    let per_seed = par_seeds(seeds, |seed| {
-        let result = census_build(&rom, seed);
-        let mut rows = [[0u32; 4]; 8];
-        for built in &result.worlds {
-            let mut has_rock = false;
-            for r in 0..built.grid.rows() {
-                for c in 0..built.grid.cols {
-                    if matches!(built.grid.get(r, c), 0x51 | 0x52) {
-                        has_rock = true;
-                    }
-                }
-            }
-            let rc = analyze_route_choice(built, route_choice::DEFAULT_SLACK);
-            let c1_rock = rc.routes.first().is_some_and(|r| !r.rocks.is_empty());
-            let alt_rock = rc.routes.iter().skip(1).any(|r| !r.rocks.is_empty());
-            let row = &mut rows[built.world_idx];
-            row[0] += 1;
-            row[1] += has_rock as u32;
-            row[2] += c1_rock as u32;
-            row[3] += alt_rock as u32;
-        }
-        rows
-    });
-    let mut totals = [[0u64; 4]; 8];
-    for rows in &per_seed {
-        for (wi, row) in rows.iter().enumerate() {
-            for (t, &v) in totals[wi].iter_mut().zip(row.iter()) {
-                *t += v as u64;
-            }
-        }
-    }
-
-    eprintln!("\n=== Rock-path census over {seeds} seeds ===");
-    eprintln!(
-        "  {:<4} {:>10} {:>10} {:>12} {:>14} {:>14}",
-        "", "rock-world", "C1 rock", "alt(C2+) rock", "C1|rock-world", "alt|rock-world"
-    );
-    for (wi, t) in totals.iter().enumerate() {
-        let [n, rockw, c1, alt] = *t;
-        if n == 0 {
-            continue;
-        }
-        let pc = |x: u64, base: u64| {
-            if base == 0 { 0.0 } else { x as f64 / base as f64 * 100.0 }
-        };
-        eprintln!(
-            "  W{:<3} {:>9.0}% {:>9.1}% {:>11.1}% {:>13.1}% {:>13.1}%",
-            wi + 1,
-            pc(rockw, n),
-            pc(c1, n),
-            pc(alt, n),
-            pc(c1, rockw),
-            pc(alt, rockw),
-        );
-    }
-}
-
-/// C1-floor probe: per-world distribution of the cheapest route's cost (C1),
-/// the goal-open rate, and linear% — the evidence base for the "replace the
-/// binary goal-gate duty with a cost floor on the cheapest route" question.
-/// Run once with the shipped default (`goal_gate: true`) and once with the
-/// knob flipped to compare the gated and ungated arms.
-///
-/// Run with:
-///   ROUTE_SEEDS=200 cargo test --release --lib test_c1_floor_probe -- --ignored --nocapture
-#[test]
-#[ignore]
-fn test_c1_floor_probe() {
-    let rom = match load_rom() {
-        Some(r) => r,
-        None => return,
-    };
-
-    let seeds: u64 = std::env::var("ROUTE_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(200);
-
-    // Per world: C1 samples, goal-open hits, linear hits.
-    let mut c1s: Vec<Vec<u32>> = vec![Vec::new(); 8];
-    let mut goal_open: [usize; 8] = [0; 8];
-    let mut linear: [usize; 8] = [0; 8];
-
-    // Per-seed, per-world: (C1, linear, goal-open); None = unreachable.
-    let per_seed = par_seeds(seeds, |seed| {
-        let result = census_build(&rom, seed);
-        let mut out: [Option<(u32, bool, bool)>; 8] = [None; 8];
-        for built in &result.worlds {
-            let rc = analyze_route_choice(built, route_choice::DEFAULT_SLACK);
-            if !rc.reachable {
-                continue;
-            }
-            let go = world_topology(built).is_some_and(|t| t.fort_count >= 2 && t.depth == 0);
-            out[built.world_idx] = Some((rc.best_cost, rc.routes.len() <= 1, go));
-        }
-        out
-    });
-    for worlds in &per_seed {
-        for (wi, entry) in worlds.iter().enumerate() {
-            let Some((c1, lin, go)) = entry else { continue };
-            c1s[wi].push(*c1);
-            if *lin {
-                linear[wi] += 1;
-            }
-            if *go {
-                goal_open[wi] += 1;
-            }
-        }
-    }
-
-    eprintln!("\n=== C1 floor probe over {seeds} seeds ===");
-    eprintln!(
-        "  {:<4} {:>5} {:>5} {:>6} {:>6} {:>6} {:>6} {:>9} {:>8}",
-        "", "min", "p10", "mean", "<8", "<14", "<17", "goal-open", "linear%",
-    );
-    let mut all: Vec<u32> = Vec::new();
-    for wi in 0..8 {
-        let c = &mut c1s[wi];
-        if c.is_empty() {
-            continue;
-        }
-        all.extend(c.iter().copied());
-        c.sort_unstable();
-        let n = c.len();
-        let mean = c.iter().sum::<u32>() as f64 / n as f64;
-        let pct_below = |t: u32| c.iter().filter(|&&x| x < t).count() as f64 / n as f64 * 100.0;
-        eprintln!(
-            "  W{:<3} {:>5} {:>5} {:>6.1} {:>5.0}% {:>5.0}% {:>5.0}% {:>8.1}% {:>7.0}%",
-            wi + 1,
-            c[0],
-            c[n / 10],
-            mean,
-            pct_below(8),
-            pct_below(14),
-            pct_below(17),
-            goal_open[wi] as f64 / n as f64 * 100.0,
-            linear[wi] as f64 / n as f64 * 100.0,
-        );
-    }
-    if !all.is_empty() {
-        all.sort_unstable();
-        let n = all.len();
-        let mean = all.iter().sum::<u32>() as f64 / n as f64;
-        let go: usize = goal_open.iter().sum();
-        let lin: usize = linear.iter().sum();
-        eprintln!(
-            "  overall: min {} p10 {} mean {mean:.1}; <14 {:.1}%; goal-open {:.1}%; linear {:.0}%",
-            all[0],
-            all[n / 10],
-            all.iter().filter(|&&x| x < 14).count() as f64 / n as f64 * 100.0,
-            go as f64 / n as f64 * 100.0,
-            lin as f64 / n as f64 * 100.0,
-        );
-    }
-}
-
 /// Production-parity route-choice render for ONE real seed: runs the full
 /// randomizer pipeline (so the RNG stream is exactly what that CLI/web seed
 /// produces), then prints the route-choice verdict and an ASCII map per
 /// route for every world.
 ///
-///   DUMP_SEED=<n> [DUMP_WORLD=w] [SLACK=3] [FLAGS=SMB3R-...] [SAS=1] \
+///   DUMP_SEED=<n> [DUMP_WORLD=w] [CENSUS_SLACK=3] [FLAGS=SMB3R-...] [SAS=1] \
 ///     cargo test --release --lib test_render_route_choice -- --ignored --nocapture
 #[test]
 #[ignore]
@@ -2279,7 +1913,7 @@ fn test_render_route_choice() {
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .map(|w| w.saturating_sub(1));
-    let slack: u32 = std::env::var("SLACK")
+    let slack: u32 = std::env::var("CENSUS_SLACK")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(route_choice::DEFAULT_SLACK);

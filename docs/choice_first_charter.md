@@ -529,7 +529,7 @@ No rerolls: worlds whose terrain can't fork stay honestly linear.
 7. *C1 floor* (`C1_FLOOR = 14`): the choice metric bounds the GAP (C2−C1)
    but nothing bounded C1 itself — even gated, ~13% of worlds let the
    player finish for under 14 points (the goal gate proved choice-neutral
-   AND floor-less in the `test_c1_floor_probe` A/B). `enforce_c1_floor`
+   AND floor-less in the `test_route_census` A/B). `enforce_c1_floor`
    runs after locks: while C1 < 14, an off-route level moves onto the cheap
    route, measure-verified on the key (C1 capped at the floor, in-band
    count) — the cap stops floor-chasing from overshooting at choice's
@@ -558,3 +558,66 @@ directly and dress each (levels on one side, golden lock on the other, loads
 tuned to tie) instead of only rescuing the also-rans the route scorer happens
 to surface. Level rebalancing (phase A0) exists but rarely fires — parallel
 non-nested routes are rare without it.
+
+## External baseline — measured against Fred's randomizer (2026-08-07)
+
+100 ROMs from fcoughlin's randomizer (`Rando x100`, PRG0 base, its
+hammer-breaks-locks patch on) against 100 seeds of ours on `beta/next`
+(v1.1.0), scored by the same `analyze_route_choice` at slack 3.
+
+**Route choice** — `mean` is distinct non-dominated routes per world, `C1` the
+cheapest route's cost, `<floor%` the share priced below `C1_FLOOR` (14):
+
+| | ours mean | ours linear% | ours C1 | Fred mean | Fred linear% | Fred C1 | Fred <floor% |
+|---|---|---|---|---|---|---|---|
+| W1 | 2.24 | 11% | 18.3 | 1.23 | 78% | 22.0 | 5% |
+| W2 | 3.01 | 2% | 18.4 | 1.64 | 53% | 19.1 | 16% |
+| W3 | 2.60 | 5% | 18.5 | 1.51 | 60% | 18.9 | 12% |
+| W4 | 2.11 | 11% | 17.5 | 1.41 | 66% | 17.7 | 34% |
+| W5 | 2.71 | 2% | 17.6 | 1.41 | 72% | 22.6 | 8% |
+| W6 | 3.33 | 0% | 20.2 | 3.09 | 20% | 21.2 | 9% |
+| W7 | 2.02 | 26% | 17.6 | 1.20 | 81% | 22.6 | 8% |
+| W8 | 2.28 | 4% | 25.3 | 1.06 | 94% | 22.8 | 9% |
+| **all** | **2.54** | **7.6%** | **19.2** | **1.57** | **65.4%** | **20.8** | **12.7%** |
+
+Ours is 0.0% below floor by construction (`enforce_c1_floor` + the spare-pipe
+veto). The two randomizers fail differently: Fred's cheapest route is *more*
+expensive on average (20.8 vs 19.2), but one world in eight prices out under
+14 — W4 a third of the time — while two thirds of his worlds offer a single
+route. Ours clamps the bottom and buys its choice from having 2+ routes rather
+than from cost spread. Our W8 at 25.3 is our most expensive world by 5 points
+(4 forts); it is the one world where Fred is cheaper.
+
+**Required progression** (the separate min-clears model in `progression.rs`)
+runs the other way, and both readings are real: ours forces more back-to-back
+levels. Mean forced-level streak ours 1.86 vs Fred 1.21; streak ≥2 in 59% vs
+31% of worlds; goal-stack ≥2 in 17% vs 8%; ~40.8 clears to finish vs ~22.3.
+Our W7 (1.06) and W8 (1.11) are already below Fred; the gap is W1 2.09,
+W2 2.36, W3 2.25, W6 2.60 against his 1.4–1.5. So his maps are shorter and
+less forced, but far more often a single corridor.
+
+Reproduce ours with:
+
+```sh
+CENSUS_SEEDS=100 cargo test --release --lib test_route_census -- --ignored --nocapture
+CENSUS_SEEDS=100 cargo test --release --lib test_required_progression -- --ignored --nocapture
+```
+
+**Caveats on the Fred column, all in the direction of understating him:**
+
+- `route_choice` has **no hammer-breaks-locks model** — it prices rocks
+  (`COST_ROCK`) but opens locks only by beating the fort. Every ROM in that set
+  has the patch on, so routes his design intends a hammer to open are invisible
+  to our scorer, and his cheap tail is understated.
+- 20 of 800 worlds scored unreachable, **all of them W5** — likely the same
+  cause, or the W5 spiral-tower transit. They are excluded from his aggregate
+  rather than counted as zero-route (that alone moved W5 from 1.13 to 1.41).
+- Ours is measured natively from `BuiltWorld`, not from finished ROMs, because
+  the ROM-side classifier reads hand traps (`0xE6`) and troll pipes (`0xBC`) as
+  non-levels and would undercount us. There is no ROM→`BuiltWorld` reader:
+  `NodeCatalog` classifies fortress/airship/bowser from hardcoded vanilla
+  `(world, entry_idx)` tables, so it misreads any shuffled pointer table —
+  including our own output. Fred's numbers came from a throwaway JSON bridge
+  (Python classified, Rust scored) that was validated against vanilla
+  (routes `[1, 3, 2, 2, 4, 12, 2, 1]`, identical both ways) and then deleted.
+  Redoing this needs that bridge again, or an obj_ptr-based catalog mode.
