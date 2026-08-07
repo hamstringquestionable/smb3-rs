@@ -15,7 +15,7 @@ use flag_key::*;
 use options::*;
 
 // Public API re-exported by the crate root (see lib.rs).
-pub use flag_key::{current_flag_key_version, flag_key_version_of};
+pub use flag_key::{current_flag_key_version, flag_key_fields, flag_key_version_of};
 pub use options::{
     item_display_name, item_id, EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri,
     WildChaser, ITEMS, ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY,
@@ -563,14 +563,15 @@ fn randomize_inner(
     }
 
     // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012):
-    //   "S3R" magic + version byte, the flag key bytes (13 in v23), then the
-    //   seed (little-endian u64). Sizes derive from to_flag_bytes() so the
-    //   stamp grows with the flag key.
+    //   "S3R" magic, a length byte, the flag key bytes, then the seed
+    //   (little-endian u64). The key bytes lead with their own format version,
+    //   and since v29 their length varies with how much of the payload the
+    //   options reach — hence the length byte, so the seed can still be found.
     rom.set_tag("stamp");
     let flag_bytes = options.to_flag_bytes();
     let mut stamp = Vec::with_capacity(4 + flag_bytes.len() + 8);
     stamp.extend_from_slice(b"S3R");
-    stamp.push(FLAG_KEY_VERSION);
+    stamp.push(flag_bytes.len() as u8);
     stamp.extend_from_slice(&flag_bytes);
     stamp.extend_from_slice(&seed.to_le_bytes());
     rom.write_range(STAMP_OFFSET, &stamp);

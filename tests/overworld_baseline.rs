@@ -77,12 +77,20 @@ fn sweep_is_deterministic() {
 /// 27 reproduced the previous hashes exactly, which is the check that this
 /// regeneration hides no real change. Default options leave the injection
 /// mode Off, so no gameplay byte differs.
+///
+/// Re-captured again 2026-08-06 for the v29 flag-key re-layout (issue #158).
+/// Same story, verified the same way but end-to-end rather than by pinning a
+/// constant, since the whole format changed: seeds 1-3 were generated before
+/// and after and diffed byte by byte. Every difference lands in one of the two
+/// places that carry the flag bytes on purpose — the stamp block at 0x19DF0 and
+/// the title-screen verification icons at `FS_SEED_HASH_DATA` (0x3E93D), whose
+/// hash folds `to_flag_bytes()`. No overworld, level, or enemy byte moved.
 const BASELINE: [u64; SEEDS as usize] = [
-    0xE80654E3D012604F, 0x56BC4E0B2651799F, 0x3DA9EB46E38D6B30, 0xDA3EE41D061EDA7B,
-    0xF5D11330921CE33E, 0xAAB1BDBF548B48CE, 0xE0BD2457DB734B68, 0x069292D8922CB143,
-    0x41ADD63B96205A6D, 0x0970C782159DAE35, 0x07203DE4BD1FD154, 0x6E2B6C6D38620047,
-    0x18C631FC4138325E, 0x52F7FC872DBED52D, 0x229493E5CDAC9103, 0x1551C153BAF84493,
-    0x857B1E9A03988D07, 0xFD9E64C758FBB39C, 0xFA1393CD8EB2D7A5, 0xC61841B9C6000A34,
+    0x2F1BCC4337C08F68, 0x2FA22BE766E829C2, 0xBA27EEB114014065, 0x05F1B18F79E8B6CC,
+    0x751E5E0C61AD8D37, 0xBCC5C3EE0CE9982F, 0x602BF085D5943A01, 0x2D88CD0275AF4D2A,
+    0xC468CE9CC9855C58, 0x357E92F0AC2ACC66, 0x6BC4763423B1C59B, 0x88252754C99D7838,
+    0x9EE4278722525DFD, 0x6C09F4B3354F1FC2, 0xA28A8EBBE81A5C3E, 0xDB4F9E42DA4CCA00,
+    0x449BF758A7F46AA8, 0xEF074E3694941F2B, 0xF242865A87826F34, 0xAB0AE92979F23FE3,
 ];
 
 #[test]

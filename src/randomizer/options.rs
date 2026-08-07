@@ -82,7 +82,16 @@ pub(super) fn lives_to_idx(lives: u8) -> u8 {
 pub(super) fn default_world_count() -> u8 { 7 }
 
 /// Per-class enemy randomization mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+///
+/// The `Specifier` derive gives this a 2-bit flag-key encoding in declaration
+/// order (`Off` = 0). Three variants in two bits leaves a dead fourth pattern,
+/// so the flag-key decoder reads it through the checked accessor and falls back
+/// to `Off` — see `flag_key.rs`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
 #[serde(rename_all = "snake_case")]
 pub enum EnemyMode {
     #[default]
@@ -100,7 +109,11 @@ pub(super) fn default_off() -> EnemyMode { EnemyMode::Off }
 /// flower's level position, instead of always Fire. `On` substitutes among the
 /// four big-form suits (Fire/Frog/Tanooki/Hammer); `Wild` adds the Small/Big
 /// downgrade outcomes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
 #[serde(rename_all = "snake_case")]
 pub enum FireFlowerMode {
     #[default]
@@ -115,7 +128,11 @@ pub enum FireFlowerMode {
 /// land. `Wild` also releases them (as plain numbered levels), and instead
 /// scatters plant sprites onto ~1 random level slot per world — stepping on
 /// a plant auto-starts the level under it, vanilla W7 style.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
 #[serde(rename_all = "snake_case")]
 pub enum PiranhaMode {
     #[default]
@@ -171,7 +188,11 @@ impl WildChaser {
 /// [`Tri::resolve`]), so the same seed + same flags always produce the same
 /// ROM — the player just can't tell from the flag key which way a `Maybe`
 /// landed, so it can't be planned around.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
 #[serde(rename_all = "snake_case")]
 pub enum Tri {
     #[default]
@@ -190,10 +211,6 @@ impl Tri {
             Tri::Maybe => rng.random_bool(0.5),
         }
     }
-    /// True only for the explicit `On` state — drives the value bit in the flag key.
-    pub(super) fn is_on(self) -> bool { matches!(self, Tri::On) }
-    /// True only for the `Maybe` state — drives the maybe bit in the flag key.
-    pub(super) fn is_maybe(self) -> bool { matches!(self, Tri::Maybe) }
 }
 
 pub(super) fn default_tri_on() -> Tri { Tri::On }

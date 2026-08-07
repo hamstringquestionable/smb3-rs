@@ -26,6 +26,19 @@ deploys.
 
 ### Changed
 
+- **Flag keys have been rebuilt, and keys from earlier versions no longer
+  work.** This is the last time they break: the new format has room to grow, so
+  from here on adding an option leaves existing keys valid — the new option is
+  simply off in a key made before it existed. Two other things come with it:
+
+  - **A mistyped key is now caught.** Previously a single wrong character
+    produced a valid key for *different* settings about nine times out of ten,
+    with nothing on screen to say so. A key now carries a check byte, so a typo
+    or a truncated paste is rejected instead of quietly changing the ruleset —
+    which matters most in a race, where everyone is pasting the same key.
+  - **Keys got a little shorter** (26 characters instead of 27 for the default
+    set), and only carry as much as the settings need.
+
 - "Wild Injections" now lets you pick which chasers get dropped into levels,
   and adds a third one. The option is four pills — Off, Sun, Lakitu, Bass —
   where the three chasers toggle independently and Off clears them, so you can

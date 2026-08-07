@@ -209,7 +209,7 @@ fn flag_key_round_trip_defaults() {
     let opts = Options::default();
     let key = opts.to_flag_key();
     assert!(key.starts_with("SMB3R-"));
-    assert_eq!(key.len(), 27); // "SMB3R-" + 21 base32
+    assert_eq!(key.len(), 26); // "SMB3R-" + 20 base32
     let decoded = Options::from_flag_key(&key).unwrap();
     assert_eq!(decoded, normalized(opts));
 }
@@ -338,14 +338,16 @@ fn flag_key_without_prefix() {
     assert_eq!(opts.powerups, decoded.powerups);
 }
 
+/// A well-formed key from a format version this build doesn't speak is
+/// rejected — but only after passing the envelope check, so the app can say
+/// "older/newer version" rather than "mistyped".
 #[test]
 fn flag_key_invalid_version() {
-    // Encode version 0xFF into base32 (first byte = 0xFF, rest zeros)
-    let mut bad_bytes = [0u8; 13];
-    bad_bytes[0] = 0xFF;
-    let key = format!("SMB3R-{}", base32_encode(&bad_bytes));
-    let result = Options::from_flag_key(&key);
-    assert!(result.is_err());
+    for version in [0x00, FLAG_KEY_VERSION - 1, FLAG_KEY_VERSION + 1, 0xFF] {
+        let key = forge_key(version, &Options::default().to_flag_bytes()[2..]);
+        assert_eq!(flag_key_version_of(&key), Ok(version), "version probe on v{version}");
+        assert!(Options::from_flag_key(&key).is_err(), "v{version} must not decode");
+    }
 }
 
 #[test]
@@ -630,14 +632,10 @@ fn flag_key_per_option_round_trip() {
 /// author either encodes it or consciously adds it to `NOT_ENCODED`.
 #[test]
 fn flag_key_encodes_every_bool_option() {
-    // Bool fields intentionally absent from the flag key, with the reason.
-    // Adding to this list is a conscious decision, not an oversight.
-    const NOT_ENCODED: &[&str] = &[
-        "palettes",            // cosmetic; uses OS randomness, not seed-derived
-        "palette_themed",      // cosmetic
-        "remove_flashing",     // cosmetic/accessibility; static patch, no RNG
-        "skip_rom_validation", // operational (CLI/WASM input handling), not randomization
-    ];
+    // The exclusion list lives with the encoder, not here — the destructure in
+    // `to_flag_bits` names every field, so the two can't disagree about which
+    // ones are deliberately left out.
+    use flag_key::NOT_ENCODED;
 
     let default_key = Options::default().to_flag_key();
     let default_json = serde_json::to_value(Options::default()).unwrap();
@@ -671,29 +669,20 @@ fn flag_key_encodes_every_bool_option() {
     assert!(checked_encoded > 0, "no encoded bool fields found — serde reflection broke?");
 }
 
-#[test]
-fn flag_key_hammer_vuln_koopalings_distinct_from_hb_encounters() {
-    // Regression: hammer_vulnerable_koopalings used to share bit 2 of b4
-    // with the high bit of hb_encounters (a tri-state at bits 2-1).
-    // When hb_encounters=Wild (em=2), bit 2 was already set, so toggling
-    // hammer_vulnerable_koopalings produced no change in the flag key.
-    let a = Options {
-        hb_encounters: EnemyMode::Wild,
-        hammer_vulnerable_koopalings: false,
-        ..Default::default()
-    };
+// Removed at v29: `flag_key_hammer_vuln_koopalings_distinct_from_hb_encounters`
+// was a regression test for a real shipped collision — hammer_vulnerable_koopalings
+// shared a bit with the high bit of hb_encounters, and only misbehaved when
+// hb_encounters was Wild. Bit positions are now assigned by declaration order in
+// `FlagBits`, so no two options can share one; the test would be exercising the
+// bitfield crate rather than this repo.
 
-    let b = Options { hammer_vulnerable_koopalings: true, ..a.clone() };
-
-    assert_ne!(a.to_flag_key(), b.to_flag_key(),
-        "toggling hammer_vulnerable_koopalings must change the flag key");
-
-    let dec_a = Options::from_flag_key(&a.to_flag_key()).unwrap();
-    let dec_b = Options::from_flag_key(&b.to_flag_key()).unwrap();
-    assert!(!dec_a.hammer_vulnerable_koopalings);
-    assert!(dec_b.hammer_vulnerable_koopalings);
-    assert_eq!(dec_a.hb_encounters, EnemyMode::Wild);
-    assert_eq!(dec_b.hb_encounters, EnemyMode::Wild);
+/// Build a key with a valid envelope for an arbitrary version and payload —
+/// the shape a build from a different release would produce. Lets the version
+/// branches be tested without a time machine.
+fn forge_key(version: u8, payload: &[u8]) -> String {
+    let mut bytes = vec![version, checksum(version, payload)];
+    bytes.extend_from_slice(payload);
+    format!("SMB3R-{}", base32_encode(&bytes))
 }
 
 /// The version probe backs the web app's three-way rejection message (older /
@@ -701,6 +690,7 @@ fn flag_key_hammer_vuln_koopalings_distinct_from_hb_encounters() {
 #[test]
 fn flag_key_version_probe() {
     let key = Options::default().to_flag_key();
+    let payload = &Options::default().to_flag_bytes()[2..].to_vec();
     let current = current_flag_key_version();
 
     // A key this build made reports this build's version, with or without the
@@ -710,35 +700,170 @@ fn flag_key_version_probe() {
     assert_eq!(flag_key_version_of(&key.to_lowercase()), Ok(current));
     assert_eq!(flag_key_version_of(&format!("  {key}\n")), Ok(current));
 
-    // An older key: same 13-byte layout, earlier version byte. Reads as "older"
-    // even though the full decode rejects it.
-    let mut older = Options::default().to_flag_bytes();
-    older[0] = current - 1;
-    let older_key = base32_encode(&older);
-    assert_eq!(flag_key_version_of(&older_key), Ok(current - 1));
-    assert!(Options::from_flag_key(&older_key).is_err());
+    // An older key reads as "older" even though the full decode rejects it.
+    let older = forge_key(current - 1, payload);
+    assert_eq!(flag_key_version_of(&older), Ok(current - 1));
+    assert!(Options::from_flag_key(&older).is_err());
 
-    // A key from a future format that grew a 14th byte. The probe must stay
-    // lenient about length or this would read as garbage instead of "newer",
-    // and the app would tell the user to check for typos in a perfectly good
-    // key. This is the direction that bites today: beta runs ahead of the
-    // released app.
-    let mut newer = Options::default().to_flag_bytes().to_vec();
-    newer[0] = current + 1;
-    newer.push(0x00);
-    assert_eq!(flag_key_version_of(&base32_encode(&newer)), Ok(current + 1));
+    // A key from a future format that grew past this build's payload capacity.
+    // The probe must stay lenient about length or this would read as garbage
+    // instead of "newer", and the app would tell the user to check for typos in
+    // a perfectly good key. This is the direction that bites today: beta runs
+    // ahead of the released app.
+    let mut long = payload.clone();
+    long.extend_from_slice(&[0x7F; 40]);
+    assert_eq!(flag_key_version_of(&forge_key(current + 1, &long)), Ok(current + 1));
 
     // Not a flag key at all — the app's third branch.
     assert!(flag_key_version_of("").is_err());
     assert!(flag_key_version_of("!!!!").is_err());
     assert!(flag_key_version_of("SMB3R-").is_err());
 
-    // A truncated paste must NOT be reported as a version mismatch even though
-    // its first byte reads fine. "ZZZZ" decodes to 0xFF, which would otherwise
-    // be announced as "from a newer version of the randomizer" and send the
-    // user looking for a build that was never released. Short is invalid.
+    // A truncated paste is caught by the checksum, so it lands in "invalid"
+    // rather than being announced as a version mismatch and sending the user
+    // looking for a build that was never released. Before the checksum existed
+    // this needed a special rule about length; now it falls out of the format.
     assert!(flag_key_version_of("SMB3R-ZZZZ").is_err());
     assert!(flag_key_version_of(&key[..key.len() - 4]).is_err());
+}
+
+/// Golden fixtures pinning the v29 bit and byte order.
+///
+/// The layout is generated from declaration order in `FlagBits`, so nothing in
+/// the source spells out which bit an option lives in. That makes reordering or
+/// resizing a field an easy, silent way to invalidate every key in circulation.
+/// These literals are the tripwire: if they change, the wire format changed and
+/// `FLAG_KEY_VERSION` has to move with it.
+///
+/// Regenerate deliberately, never by pasting whatever the test printed.
+#[test]
+fn flag_key_v29_golden() {
+    assert_eq!(current_flag_key_version(), 29, "these fixtures pin v29");
+
+    // Defaults.
+    let key = "SMB3R-3PHFKHRF000525AG00X0";
+    assert_eq!(Options::default().to_flag_key(), key);
+    assert_eq!(
+        Options::default().to_flag_bytes(),
+        vec![29, 162, 249, 199, 15, 0, 0, 81, 21, 80, 0, 58],
+    );
+    assert_eq!(Options::from_flag_key(key).unwrap(), normalized(Options::default()));
+
+    // Everything off — the payload is nearly all zeros, so trailing-zero
+    // stripping shows up here as a key that is no shorter than the default one
+    // (the last non-zero byte is what sets the length, not the option count).
+    let all_off = "SMB3R-3Q2000000000000000W0";
+    assert_eq!(all_off_options().to_flag_key(), all_off);
+    assert_eq!(Options::from_flag_key(all_off).unwrap(), normalized(all_off_options()));
+
+    // A spread of non-default values across every field width: 5-bit item
+    // slots, the 3-bit world count, 2-bit enums and the scattered chaser bits.
+    let mixed = Options {
+        starting_items: vec![ITEM_RANDOM, 5, ITEM_RANDOM_SUIT_ONLY],
+        starting_lives: 99,
+        world_count: 3,
+        wild_injections: WildChaser::ALL.to_vec(),
+        eights_are_wild: Tri::Maybe,
+        fire_flower: FireFlowerMode::Wild,
+        piranha_shuffle: PiranhaMode::Wild,
+        hb_encounters: EnemyMode::Wild,
+        ..Default::default()
+    };
+    let mixed_key = "SMB3R-3PTFKHRF020525AGXAFJP40";
+    assert_eq!(mixed.to_flag_key(), mixed_key);
+    assert_eq!(Options::from_flag_key(mixed_key).unwrap(), normalized(mixed));
+}
+
+/// Reserve bits are the whole durability story: adding an option must not
+/// invalidate keys already in circulation. A key that stops short of a byte
+/// decodes as if that byte were zero, which is exactly what an older key looks
+/// like once a new option is appended.
+#[test]
+fn flag_key_short_key_zero_fills() {
+    let full = Options::default().to_flag_bytes();
+
+    // Same key with its all-zero reserve bytes spelled out explicitly: adding
+    // trailing zeros must not change what it decodes to, or the encoder's
+    // truncation would be lossy.
+    let mut padded = full[2..].to_vec();
+    padded.extend_from_slice(&[0u8; 8]);
+    assert_eq!(
+        Options::from_flag_key(&forge_key(FLAG_KEY_VERSION, &padded)).unwrap(),
+        Options::from_flag_key(&Options::default().to_flag_key()).unwrap(),
+    );
+
+    // And a key that predates the last two bytes of payload: the options living
+    // there come back off, everything before them survives.
+    let short = &full[2..full.len() - 2];
+    let decoded = Options::from_flag_key(&forge_key(FLAG_KEY_VERSION, short)).unwrap();
+    assert!(decoded.powerups, "an early option must survive a short key");
+    assert_eq!(decoded.ground, EnemyMode::Shuffle);
+    // starting_lives/world_count/items live in the truncated tail.
+    assert_eq!(decoded.world_count, default_world_count());
+}
+
+/// The checksum's reason for existing, measured.
+///
+/// Before it, a single mistyped character produced a valid key for *different*
+/// settings 89.6% of the time (651 mutations of the default key; the only ones
+/// caught were those that happened to corrupt the version byte). That is the
+/// same failure as issue #158 — a silently different ruleset — but far more
+/// likely, since a fumbled paste beats a version skew for frequency.
+///
+/// Measured at v29 over the same sweep: 605 rejected, 15 harmless (they land on
+/// padding bits), **0 silently different**. Run with `--nocapture` to re-read
+/// the split.
+#[test]
+fn flag_key_typos_are_rejected() {
+    let key = Options::default().to_flag_key();
+    let body = key.strip_prefix("SMB3R-").unwrap();
+    let expected = Options::from_flag_key(&key).unwrap();
+
+    let (mut rejected, mut same, mut different) = (0, 0, 0);
+    for i in 0..body.len() {
+        for &c in CROCKFORD.iter() {
+            if body.as_bytes()[i] == c { continue }
+            let mut mutated: Vec<u8> = body.as_bytes().to_vec();
+            mutated[i] = c;
+            let candidate = format!("SMB3R-{}", String::from_utf8(mutated).unwrap());
+            match Options::from_flag_key(&candidate) {
+                Err(_) => rejected += 1,
+                Ok(o) if o == expected => same += 1,
+                Ok(_) => different += 1,
+            }
+        }
+    }
+
+    let total = rejected + same + different;
+    println!("single-character typos: {rejected} rejected, {same} harmless, {different} silently different (of {total})");
+    assert_eq!(total, body.len() * 31, "every single-character mutation is tried");
+    // A CRC-8 lets through about 1 in 256 by chance. Assert well inside that
+    // rather than on the nose so the test pins the property, not the arithmetic.
+    assert!(
+        different * 100 < total,
+        "{different}/{total} single-character typos decoded to a DIFFERENT ruleset \
+         ({rejected} rejected, {same} harmless) — the checksum is not doing its job",
+    );
+}
+
+/// `NOT_ENCODED` is the one hand-maintained list left in the mapping, and the
+/// web app's `inFlagKey` markings are checked against what it produces. A stale
+/// name in it would quietly drop a real option from that check.
+#[test]
+fn flag_key_not_encoded_names_are_real_fields() {
+    let json = serde_json::to_value(Options::default()).unwrap();
+    let fields = json.as_object().unwrap();
+    for name in flag_key::NOT_ENCODED {
+        assert!(
+            fields.contains_key(*name),
+            "NOT_ENCODED lists '{name}', which is not an Options field (renamed or removed?)",
+        );
+    }
+    let encoded = flag_key_fields();
+    assert_eq!(encoded.len(), fields.len() - flag_key::NOT_ENCODED.len());
+    for name in flag_key::NOT_ENCODED {
+        assert!(!encoded.contains(&name.to_string()), "'{name}' must not be advertised as encoded");
+    }
 }
 
 #[test]
@@ -751,7 +876,7 @@ fn base32_round_trip() {
         (0..11).collect::<Vec<u8>>(),
     ] {
         let encoded = base32_encode(&data);
-        let decoded = base32_decode(&encoded, data.len()).unwrap();
+        let decoded = base32_decode(&encoded).unwrap();
         assert_eq!(data, decoded, "round-trip failed for {data:?} (encoded: {encoded})");
     }
 }

@@ -101,8 +101,10 @@ const KOOPALINGS = [
 ];
 
 // Schema. Field names match the Rust Options struct; the load-time parity
-// check guarantees they stay aligned. inFlagKey is informational/UX only;
-// the Rust flag-key encoder is what actually decides what's persisted.
+// check guarantees they stay aligned. inFlagKey decides whether applying a
+// shared key or a preset writes this field, and is checked at load against the
+// list of fields Rust actually encodes (`flag_key_fields_json`) — the Rust
+// encoder remains the authority, this just can't drift from it unnoticed.
 //
 // Within each group, entries render in SCHEMA order, so keep each group's
 // entries contiguous and ordered for display.
@@ -1245,7 +1247,7 @@ export function restoreSettings() {
 // (via wasm `default_options_json`). Any drift is shouted via console.error
 // so the developer notices on the next refresh.
 
-export function assertSchemaParity(wasmDefaultsJson) {
+export function assertSchemaParity(wasmDefaultsJson, flagKeyFieldsJson) {
 	let defaults;
 	try {
 		defaults = JSON.parse(wasmDefaultsJson);
@@ -1261,6 +1263,32 @@ export function assertSchemaParity(wasmDefaultsJson) {
 	const missingInRust = [...schemaIds].filter(id => !wasmIds.has(id));
 	if (missingInJs.length || missingInRust.length) {
 		console.error("Options schema drift detected", { missingInJs, missingInRust });
+	}
+
+	// `inFlagKey` used to be documentation — nothing checked it, so an option
+	// marked shareable that Rust didn't actually encode would have been
+	// invisible. It drives applyOptions and applyPreset, so a wrong marking
+	// means a shared key silently doesn't apply that option. Rust reports what
+	// it encodes; anything that disagrees is a bug on one side or the other.
+	if (!flagKeyFieldsJson) return;
+	let encoded;
+	try {
+		encoded = new Set(JSON.parse(flagKeyFieldsJson));
+	} catch (e) {
+		console.error("Schema parity: could not parse the flag-key field list", e);
+		return;
+	}
+	// Truthiness, not `!== false`, because that's what applyOptions and
+	// applyPreset test — an entry that just forgets the marking is skipped by
+	// them, so it should be reported here too.
+	const claimedButNotEncoded = SCHEMA
+		.filter(e => e.inFlagKey && !encoded.has(e.id))
+		.map(e => e.id);
+	const encodedButNotClaimed = SCHEMA
+		.filter(e => !e.inFlagKey && encoded.has(e.id))
+		.map(e => e.id);
+	if (claimedButNotEncoded.length || encodedButNotClaimed.length) {
+		console.error("inFlagKey drift detected", { claimedButNotEncoded, encodedButNotClaimed });
 	}
 }
 

@@ -229,7 +229,7 @@ flowchart TD
         F3["[always] qol::apply_macobra_patches  · tag qol/macobra"]
         F4{"faster_frog?"}
         F4y["qol::apply_faster_frog (MUST follow macobra patches) · tag qol/faster_frog"]
-        F5["[always] stamp flag-key + seed @ STAMP_OFFSET 0x19DF0 (24 bytes) · tag stamp"]
+        F5["[always] stamp flag-key + seed @ STAMP_OFFSET 0x19DF0 (~22-26 bytes; key length varies) · tag stamp"]
         F1 -- yes --> F1y --> F2
         F1 -- no --> F2
         F2 -- yes --> F2y --> F3

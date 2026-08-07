@@ -2132,14 +2132,19 @@ others get `0x37`. Without it the new ring boss loads `0x37` and the ring render
 
 **0x19103–0x193D9**: Region between overworld tile grid data and the InitIndex master pointer table (starts at 0x193DA). **WARNING:** 0x19103–0x1910F contains a tile lookup table, and 0x19110+ contains active map screen code (level-entry logic: `ROL $07`, `LDA $073C,X`, etc.). This is NOT free space — writing here corrupts the map screen and crashes on level entry.
 
-**0x19DD0–0x19FFF** (560 bytes): Free space after overworld tile/code region. The randomizer stamps a 17-byte identification block at **0x19DF0**:
+**0x19DD0–0x19FFF** (560 bytes): Free space after overworld tile/code region. The randomizer stamps an identification block at **0x19DF0**:
 
 | Offset | Size | Content |
 |--------|------|---------|
 | +0 | 3 | `S3R` magic bytes |
-| +3 | 1 | Version (0x02) |
-| +4 | 5 | Flag key bytes (encoded Options) |
-| +9 | 8 | Seed (little-endian u64) |
+| +3 | 1 | Length of the flag key bytes that follow (`N`) |
+| +4 | N | Flag key bytes (encoded Options; byte 0 is the flag-key format version, byte 1 its checksum) |
+| +4+N | 8 | Seed (little-endian u64) |
+
+`N` varies: since flag-key format v29 the encoder drops trailing zero bytes, so
+a set of options that doesn't reach the tail of the payload produces a shorter
+key. Typical block size is 22–26 bytes; the format's ceiling is 3 + 1 + 32 + 8 =
+44.
 
 **Note:** The Big ? Block trampoline and flag stamp both live in this region.
 
