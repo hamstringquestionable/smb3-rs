@@ -44,11 +44,6 @@ deploys.
   tell which a block holds until you hit it. Off by default; on in the Max
   Chaos and Challenging presets.
 
-- A **League Season 7** preset in the web app: every enemy class wild, Sun and
-  Lakitu injections, beta stages, Lobby Shuffle, scattered piranhas, a swapped
-  starting airship, and the race conveniences (fast mushroom houses, faster
-  tail and frog, no game-over penalty, three random starting items).
-
 - Beta site is now visually distinct from the main site: the `/beta/` deploy
   shows a hazard-striped "BETA BUILD" banner, a violet frame, and a BETA badge
   in the header so it can't be confused with the stable release page.
@@ -63,23 +58,8 @@ deploys.
 
 ### Changed
 
-- The **Max Chaos** preset now covers this release's new options, so it means
-  what its name says again: Boss Bass joins the injected chasers, Fire Flowers
-  are Wild, Poison Mushrooms are on, Piranha Shuffle is Wild, and Lobby Shuffle
-  is a maybe.
-
-- The **Recommended** preset picks up this release's new options and opens up a
-  little: Boss Bass joins its chasers, the Lobby Shuffle is on, piranhas
-  scatter, there's a maybe on the extra hammer rocks, you start with three
-  random items instead of one, and a game over no longer costs you progress.
-
-- The **Vanilla Randomizer** preset swaps Lakitu for Boss Bass in its injected
-  chasers, and no longer speeds up the tail — it keeps the faster frog.
-
-- The **Challenging** preset gets the same treatment, plus a new way to hurt:
-  Boss Bass joins its chasers, the Lobby Shuffle is on, piranhas scatter, and
-  the Japanese damage system means one hit takes you all the way back to Small
-  Mario.
+- The presets have been refreshed to take in this release's new options, and
+  there's a new **League Season 7** preset.
 
 - **Flag keys have been rebuilt, and keys from earlier versions no longer
   work.** This is the last time they break: the new format has room to grow, so
