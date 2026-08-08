@@ -68,6 +68,9 @@ deploys.
   are Wild, Poison Mushrooms are on, Piranha Shuffle is Wild, and Lobby Shuffle
   is a maybe.
 
+- The **Vanilla Randomizer** preset swaps Lakitu for Boss Bass in its injected
+  chasers, and no longer speeds up the tail — it keeps the faster frog.
+
 - The **Challenging** preset gets the same treatment, plus a new way to hurt:
   Boss Bass joins its chasers, the Lobby Shuffle is on, piranhas scatter, and
   the Japanese damage system means one hit takes you all the way back to Small
