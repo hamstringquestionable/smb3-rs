@@ -44,6 +44,11 @@ deploys.
   tell which a block holds until you hit it. Off by default; on in the
   Challenging preset.
 
+- A **League Season 7** preset in the web app: every enemy class wild, Sun and
+  Lakitu injections, beta stages, Lobby Shuffle, scattered piranhas, a swapped
+  starting airship, and the race conveniences (fast mushroom houses, faster
+  tail and frog, no game-over penalty, three random starting items).
+
 - Beta site is now visually distinct from the main site: the `/beta/` deploy
   shows a hazard-striped "BETA BUILD" banner, a violet frame, and a BETA badge
   in the header so it can't be confused with the stable release page.
