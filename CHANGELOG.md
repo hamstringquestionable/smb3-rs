@@ -41,8 +41,8 @@ deploys.
   every 1-Up block becomes a coin flip. Each one independently hands out either
   a real 1-Up or an upside-down poison mushroom that hurts you, decided by the
   seed — so a run keeps some real 1-Ups mixed in with the traps, and you can't
-  tell which a block holds until you hit it. Off by default; on in the
-  Challenging preset.
+  tell which a block holds until you hit it. Off by default; on in the Max
+  Chaos and Challenging presets.
 
 - A **League Season 7** preset in the web app: every enemy class wild, Sun and
   Lakitu injections, beta stages, Lobby Shuffle, scattered piranhas, a swapped
@@ -62,6 +62,11 @@ deploys.
   `8s are Wild` canoe) out of the other's reach. No effect in 1-player games.
 
 ### Changed
+
+- The **Max Chaos** preset now covers this release's new options, so it means
+  what its name says again: Boss Bass joins the injected chasers, Fire Flowers
+  are Wild, Poison Mushrooms are on, Piranha Shuffle is Wild, and Lobby Shuffle
+  is a maybe.
 
 - **Flag keys have been rebuilt, and keys from earlier versions no longer
   work.** This is the last time they break: the new format has room to grow, so
