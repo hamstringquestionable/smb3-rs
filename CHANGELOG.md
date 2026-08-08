@@ -68,6 +68,11 @@ deploys.
   are Wild, Poison Mushrooms are on, Piranha Shuffle is Wild, and Lobby Shuffle
   is a maybe.
 
+- The **Challenging** preset gets the same treatment, plus a new way to hurt:
+  Boss Bass joins its chasers, the Lobby Shuffle is on, piranhas scatter, and
+  the Japanese damage system means one hit takes you all the way back to Small
+  Mario.
+
 - **Flag keys have been rebuilt, and keys from earlier versions no longer
   work.** This is the last time they break: the new format has room to grow, so
   from here on adding an option leaves existing keys valid — the new option is

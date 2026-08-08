@@ -519,14 +519,15 @@ export const PRESETS = [
 			hammer_vulnerable_koopalings: true,
 		} },
 	{ id: "challenging", label: "Challenging",
-		tip: "Wild enemies and beta stages with no quality-of-life crutches.",
+		tip: "Wild enemies, beta stages, poison mushrooms, and one hit back to Small Mario — no quality-of-life crutches.",
 		overrides: {
 			ground: "wild", shell: "wild", flying: "wild", piranhas: "wild",
 			ghosts: "wild", thwomps: "wild", rotodiscs: "wild", cannons: "wild",
 			water: "wild", bros: "wild", hb_encounters: "wild",
-			wild_injections: ["sun", "lakitu"], early_sun: true,
+			wild_injections: ["sun", "lakitu", "bass"], early_sun: true,
 			include_beta_stages: true, swap_start_airship: true,
-			big_q_blocks: true, poison_mushrooms: true,
+			antechamber_shuffle: "on", piranha_shuffle: "wild",
+			big_q_blocks: true, poison_mushrooms: true, japanese_damage: true,
 			world_order: true, random_koopalings: true,
 		} },
 ];
