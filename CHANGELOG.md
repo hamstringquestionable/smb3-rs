@@ -68,6 +68,11 @@ deploys.
   are Wild, Poison Mushrooms are on, Piranha Shuffle is Wild, and Lobby Shuffle
   is a maybe.
 
+- The **Recommended** preset picks up this release's new options and opens up a
+  little: Boss Bass joins its chasers, the Lobby Shuffle is on, piranhas
+  scatter, there's a maybe on the extra hammer rocks, you start with three
+  random items instead of one, and a game over no longer costs you progress.
+
 - The **Vanilla Randomizer** preset swaps Lakitu for Boss Bass in its injected
   chasers, and no longer speeds up the tail — it keeps the faster frog.
 
