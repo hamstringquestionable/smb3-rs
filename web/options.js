@@ -90,6 +90,12 @@ export const GROUPS = [
 // Reused icon sets — referenced from multiple SCHEMA entries.
 // All seven Koopalings; bound to every boss option that doesn't have a more
 // specific icon, randomized per-entry per-page-load for visual variety.
+// CHR icons: tiles are absolute CHR ROM tile indices, listed row-major and
+// `cols` wide; palette is four NES color indices, entry 0 always transparent.
+// Decoded from the player's own ROM at render time — pick them with
+// web/chr-picker.html rather than by hand.
+const HAMMER = { tiles: [344, 346, 345, 347], cols: 2, palette: [0x00, 0x30, 0x08, 0x1D] }; // map hammer, CHR page $05
+
 const KOOPALINGS = [
 	{ x: 1, y: 273, w: 24, h: 32, sheet: "bosses" },
 	{ x: 1, y: 307, w: 24, h: 32, sheet: "bosses" },
@@ -334,12 +340,12 @@ export const SCHEMA = [
 	{ id: "hammer_breaks_locks", type: "tri", options: ON_OFF_MAYBE, default: "off",
 		label: "Hammer Breaks Locks",
 		tip: "Hammer item also breaks fortress locks on the overworld map. Maybe: the seed secretly decides on or off, so you won't know until you play.",
-		icon: { x: 615, y: 364, w: 16, h: 16 },
+		icon: HAMMER,
 		group: "items", inFlagKey: true },
 	{ id: "hammer_breaks_bridges", type: "tri", options: ON_OFF_MAYBE, default: "off",
 		label: "Hammer Breaks Bridges",
 		tip: "Hammer item builds bridges across water gaps on the overworld map. Maybe: the seed secretly decides on or off, so you won't know until you play.",
-		icon: { x: 615, y: 364, w: 16, h: 16 },
+		icon: HAMMER,
 		group: "items", inFlagKey: true },
 
 	// --- Player ---
@@ -648,15 +654,57 @@ function tipBlock(entry) {
 //      default) into the schema entry's `icon` field below.
 //   4. `icon` accepts either a single {x,y,w,h[,sheet]} object or an array of
 //      them (random pick at page load — used by Power-ups for variety).
+// Native pixel size of an icon spec — either a CHR tile grid (`tiles`/`cols`,
+// 8px per tile) or a rectangle on a sprite sheet (`w`/`h`).
+function iconNativeSize(spec) {
+	if (spec.tiles) {
+		const cols = spec.cols ?? 2;
+		return { w: cols * 8, h: Math.ceil(spec.tiles.length / cols) * 8 };
+	}
+	return { w: spec.w ?? 16, h: spec.h ?? 16 };
+}
+
+// Icons are pixel art, so they may only be scaled by a whole number — at a
+// fractional scale the browser snaps some source pixels to two device pixels
+// and others to one, and the sprite reads as squashed. Pick the largest integer
+// scale that keeps the icon inside ICON_BOX; art already that big renders 1:1
+// rather than being shrunk to fit.
+const ICON_BOX = 32;
+
+function iconScale({ w, h }) {
+	return Math.max(1, Math.floor(ICON_BOX / Math.max(w, h)));
+}
+
+// Set an icon canvas's displayed size to its native size times a whole number.
+// `iconCanvas` reserves space using the largest variant; the renderer calls
+// this again with the variant actually drawn, since a smaller one displayed at
+// the reserved size would be back to a fractional scale.
+export function applyIconScale(canvas, spec) {
+	if (!canvas || !spec) return;
+	const native = iconNativeSize(spec);
+	const k = iconScale(native);
+	canvas.style.width = `${native.w * k}px`;
+	canvas.style.height = `${native.h * k}px`;
+}
+
 function iconCanvas(entry) {
 	if (!entry.icon) return null;
-	const first = Array.isArray(entry.icon) ? entry.icon[0] : entry.icon;
+	// A random-per-load array can hold variants of differing size (the
+	// Koopalings differ by a pixel), so reserve the largest.
+	const specs = Array.isArray(entry.icon) ? entry.icon : [entry.icon];
+	const sizes = specs.map(iconNativeSize);
+	const native = {
+		w: Math.max(...sizes.map((s) => s.w)),
+		h: Math.max(...sizes.map((s) => s.h)),
+	};
+	const k = iconScale(native);
 	return el("canvas", {
 		class: "opt-icon",
 		id: `icon-${entry.id}`,
 		"data-icon": entry.id,
-		width: first.w ?? 16,
-		height: first.h ?? 16,
+		width: native.w,
+		height: native.h,
+		style: `width:${native.w * k}px;height:${native.h * k}px`,
 	});
 }
 

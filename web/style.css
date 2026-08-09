@@ -250,9 +250,10 @@ legend {
 
 /* --- Checkboxes & Radios --- */
 
+/* Size is set per-canvas in options.js — each icon is its own native size at a
+   whole-number scale, since pixel art at a fractional scale renders squashed.
+   A fixed box here would reintroduce exactly that. */
 .opt-icon {
-    width: 24px;
-    height: 24px;
     image-rendering: pixelated;
     image-rendering: -moz-crisp-edges;
     flex-shrink: 0;
