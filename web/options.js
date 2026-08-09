@@ -775,6 +775,9 @@ function iconCanvas(entry) {
 		h: Math.max(...sizes.map((s) => s.h)),
 	};
 	const k = iconScale(native);
+	// Hidden until something is actually drawn into it. An undrawn canvas is
+	// transparent but still occupies its box, which would indent icon'd options
+	// past icon-less ones and read as a set of broken images.
 	return el("canvas", {
 		class: "opt-icon",
 		id: `icon-${entry.id}`,
@@ -782,6 +785,7 @@ function iconCanvas(entry) {
 		width: native.w,
 		height: native.h,
 		style: `width:${native.w * k}px;height:${native.h * k}px`,
+		hidden: true,
 	});
 }
 

@@ -328,6 +328,7 @@ function renderAllIcons() {
 			: entry.icon;
 		applyIconScale(canvas, spec);
 		if (rom) renderChrIcon(canvas, rom, spec);
+		canvas.hidden = !rom;
 	}
 }
 renderAllIcons();
