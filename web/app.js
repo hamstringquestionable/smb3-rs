@@ -12,7 +12,7 @@ import init, {
 	apply_ips_patch,
 	version,
 } from "./pkg/smb3_rs.js";
-import { renderIcon } from "./chr.js";
+import { renderIcon as renderChrIcon } from "./chr.js";
 import {
 	renderOptions,
 	wireListeners,
@@ -30,11 +30,15 @@ import {
 	PRESETS,
 	applyPreset,
 	assertPresetParity,
+	applyIconScale,
 } from "./options.js";
-import { ensureSheet, drawSpriteFromSheet } from "./sprites.js";
 
 let wasmReady = false;
 let romBytes = null;
+// romBytes with the selected visual patch applied, keyed on both so swapping
+// either one invalidates it. Declared up here because `previewRom()` can run
+// during module init, before its own section has been evaluated.
+let patchedPreviewRom = null; // { source, id, bytes }
 
 // Curated, hand-vetted visual IPS patches shipped with the app. To add one:
 // drop the file in web/visual-patches/ and add an entry here. The patch is
@@ -268,7 +272,7 @@ function validateLoadedRom() {
 		showStatus(`${err.message ?? err}`, "error");
 	}
 	updateGenerateButton();
-	updateSeedHash();
+	refreshRomGraphics();
 }
 
 romInput.addEventListener("change", (e) => {
@@ -278,6 +282,7 @@ romInput.addEventListener("change", (e) => {
 	const reader = new FileReader();
 	reader.onload = () => {
 		romBytes = new Uint8Array(reader.result);
+		patchedPreviewRom = null;
 		romLabel.textContent = file.name;
 		romLabel.classList.add("loaded");
 		saveRom(romBytes).catch(() => {});
@@ -301,24 +306,29 @@ loadRom().then((bytes) => {
 // Paint every schema entry with an icon spec from the bundled sprite sheet.
 // Sheet loads independently of the user's ROM, so icons render on the empty
 // state too. Called once at init.
-async function renderAllIcons() {
-	const sheets = {};
+// Option icons are decoded from the player's own ROM's CHR, so they stay blank
+// until a ROM is loaded, and pick up any selected visual patch for free.
+//
+// Which variant a random-per-load icon settled on. Picked once and reused, so
+// re-rendering (a ROM arriving, a visual patch swap) doesn't re-roll the icon
+// under the user — "random on each page load" is the intent, not per redraw.
+const iconVariant = new Map();
+
+function renderAllIcons() {
+	const rom = previewRom();
 	for (const entry of SCHEMA) {
 		if (!entry.icon) continue;
 		const canvas = document.getElementById(`icon-${entry.id}`);
-		const spec = Array.isArray(entry.icon)
-			? entry.icon[Math.floor(Math.random() * entry.icon.length)]
-			: entry.icon;
-		const sheetName = spec.sheet ?? "default";
-		if (!sheets[sheetName]) {
-			try {
-				sheets[sheetName] = await ensureSheet(sheetName);
-			} catch (e) {
-				console.warn(`Sprite sheet '${sheetName}' failed to load; icon blank.`, e);
-				continue;
-			}
+		if (!canvas) continue;
+		if (Array.isArray(entry.icon) && !iconVariant.has(entry.id)) {
+			iconVariant.set(entry.id, Math.floor(Math.random() * entry.icon.length));
 		}
-		drawSpriteFromSheet(canvas, sheets[sheetName], spec);
+		const spec = Array.isArray(entry.icon)
+			? entry.icon[iconVariant.get(entry.id)]
+			: entry.icon;
+		applyIconScale(canvas, spec);
+		if (rom) renderChrIcon(canvas, rom, spec);
+		canvas.hidden = !rom;
 	}
 }
 renderAllIcons();
@@ -343,7 +353,7 @@ function renderVisualPatchPills() {
 			saveSettings();
 			updateVisualPatchAccent();
 			updateVisualPatchCredit();
-			updateSeedHash(); // the re-skin may change the icons' graphics
+			refreshRomGraphics(); // the re-skin may change the CHR art
 		});
 		const label = document.createElement("label");
 		label.htmlFor = inputId;
@@ -431,34 +441,59 @@ seedInput.addEventListener("input", updateSeedHash);
 // Rust resolves the tiles and palette (title-screen CHR banks, sprite palette
 // table); this side just decodes and blits them.
 
-// romBytes with the selected visual patch applied — a re-skin changes the CHR
-// the icons come from. Keyed on both the patch and the ROM it was built from,
-// so swapping either one invalidates it.
-let patchedHashRom = null; // { source, id, bytes }
-
-// The ROM to draw icons from, applying the selected visual patch if it's ready.
-// Until it is, the unpatched ROM stands in — identical unless the patch
-// happens to re-skin one of the 15 icons.
-function seedHashRom() {
-	if (!wasmReady || !romBytes) return null;
+// The ROM every CHR-decoded graphic is drawn from — the seed hash icons and the
+// option icons both — with the selected visual patch applied once it's ready.
+// Until then the unpatched ROM stands in, which differs only if the patch
+// happens to re-skin the art in question. Applying the patch needs WASM, so
+// before init the unpatched ROM is all there is.
+function previewRom() {
+	if (!romBytes) return null;
 	const id = selectedVisualPatchId();
-	if (!id) return romBytes;
-	if (patchedHashRom?.source === romBytes && patchedHashRom.id === id) {
-		return patchedHashRom.bytes;
+	if (!id || !wasmReady) return romBytes;
+	if (patchedPreviewRom?.source === romBytes && patchedPreviewRom.id === id) {
+		return patchedPreviewRom.bytes;
 	}
 	const source = romBytes;
 	fetchVisualPatch(id)
 		.then((patch) => {
-			patchedHashRom = { source, id, bytes: apply_ips_patch(source, patch) };
-			if (romBytes === source && selectedVisualPatchId() === id) updateSeedHash();
+			patchedPreviewRom = { source, id, bytes: apply_ips_patch(source, patch) };
+			if (romBytes === source && selectedVisualPatchId() === id) refreshRomGraphics();
 		})
-		.catch(() => {}); // patch unreachable — the unpatched icons are close enough
+		.catch(() => {}); // patch unreachable — the unpatched art is close enough
 	return romBytes;
+}
+
+// Everything decoded from the ROM's CHR. Called when the ROM or the visual
+// patch changes — not on every option change, which would re-roll the
+// random-per-load icon variants under the user.
+function refreshRomGraphics() {
+	updateSeedHash();
+	renderAllIcons();
+	renderTheEnd();
+}
+
+// Footer sign-off: "THE END" from the ending sequence, CHR page $1B. Not an
+// option icon, so it lives here rather than in the schema.
+const THE_END = {
+	tiles: [
+		1776, 1778, 1780, 1782, 1784, 1786, 1788, 1790,
+		1777, 1779, 1781, 1783, 1785, 1787, 1789, 1791,
+	],
+	cols: 8,
+	palette: [0x0F, 0x38, 0x20, 0x04],
+};
+
+function renderTheEnd() {
+	const canvas = document.getElementById("the-end");
+	const rom = previewRom();
+	if (!canvas || !rom) return;
+	renderChrIcon(canvas, rom, THE_END);
+	canvas.hidden = false;
 }
 
 function updateSeedHash() {
 	if (!seedHashRow) return;
-	const rom = seedHashRom();
+	const rom = previewRom();
 	// No seed means a random one at generate time, so there's no hash to show
 	// yet. With validation off the randomizer skips the hash patch entirely.
 	if (!rom || !seedInput.value.trim() || getSkipValidation()) {
@@ -481,7 +516,7 @@ function updateSeedHash() {
 			canvas = document.createElement("canvas");
 			seedHashIcons.append(canvas);
 		}
-		renderIcon(canvas, rom, { ...icon, palette: spec.palette });
+		renderChrIcon(canvas, rom, { ...icon, palette: spec.palette });
 	});
 	seedHashRow.hidden = false;
 }

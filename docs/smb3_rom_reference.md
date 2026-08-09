@@ -2953,6 +2953,19 @@ Each enemy has a `PatTableSel` entry in its object group's dispatch table
 on-screen enemies both write to the same slot with different pages, the last
 one rendered wins and the other draws garbled sprites.
 
+**Reading sprite CHR by eye:** sprites are drawn in 8x16 mode, so the art is
+stored as (even tile = top half, odd tile = bottom half). Dumped as a flat
+16-wide tile grid — what a naive CHR viewer shows — every sprite's two halves
+sit *side by side* and nothing is recognizable; it looks like the page holds
+noise. Lay the page out as 8x16 pairs instead and it reads normally. The pair
+count per row is a free parameter: a 16x16 enemy needs two adjacent pairs in one
+row, but taller art only lines up at the stride its own frames were stored at,
+so that stride has to be nudged per page. `web/chr-picker.html` does both.
+
+Large bosses (Bowser, the Koopalings) are *not* rectangles in CHR at any
+stride — their metasprites are assembled tile-by-tile by their draw routines,
+so reproducing one outside the game means reading that routine's sprite list.
+
 #### CHR Pages for Randomizable Enemies
 
 | Enemy ID | Name | CHR Page | Slot |
