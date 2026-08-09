@@ -108,7 +108,25 @@ const CHEST = { tiles: [362, 364, 363, 365], cols: 2, palette: [0x0F, 0x1D, 0x18
 
 // Other pages — see "Enemy Sprite CHR Bank Switching" in the ROM reference for
 // which page holds which object's art.
-const SPINY = { tiles: [704, 706, 705, 707], cols: 2, palette: [0x0F, 0x1D, 0x20, 0x06] }; // $0B
+// $0B holds most of the ground/shell roster.
+const SPINY = { tiles: [704, 706, 705, 707], cols: 2, palette: [0x0F, 0x1D, 0x20, 0x06] };
+const BUZZY_BEETLE = { tiles: [720, 722, 721, 723], cols: 2, palette: [0x0F, 0x1D, 0x20, 0x27] };
+const KURIBO_SHOE = { tiles: [744, 746, 745, 747], cols: 2, palette: [0x0F, 0x1D, 0x20, 0x09] };
+const BOB_OMB = { tiles: [756, 758, 757, 759], cols: 2, palette: [0x0F, 0x1D, 0x20, 0x27] };
+
+// Which option an enemy belongs to comes from the class tables in
+// src/randomize/enemies/tables.rs, not from intuition — Dry Bones is in
+// GHOST_ENEMIES, alongside Boo and Hot Foot.
+const DRY_BONES = { // $13, 16x32 stacked from two picks
+	tiles: [
+		1216, 1218,
+		1217, 1219,
+		1220, 1222,
+		1221, 1223,
+	],
+	cols: 2,
+	palette: [0x0F, 0x1D, 0x10, 0x20],
+};
 const ROTODISCS = [ // $12, two rotation frames
 	{ tiles: [1176, 1178, 1177, 1179], cols: 2, palette: [0x0F, 0x18, 0x21, 0x20] },
 	{ tiles: [1180, 1182, 1181, 1183], cols: 2, palette: [0x0F, 0x18, 0x21, 0x20] },
@@ -262,11 +280,12 @@ export const SCHEMA = [
 	{ id: "ground", type: "tri", options: TRI, default: "shuffle",
 		label: "Ground",
 		tip: "Ground-walking enemies (Goomba, Spiny, Spike, etc.)",
-		icon: SPINY,
+		icon: [SPINY, BOB_OMB, KURIBO_SHOE],
 		group: "enemies", inFlagKey: true },
 	{ id: "shell", type: "tri", options: TRI, default: "shuffle",
 		label: "Shell",
 		tip: "Shelled enemies (Koopa, Buzzy Beetle, etc.)",
+		icon: BUZZY_BEETLE,
 		group: "enemies", inFlagKey: true },
 	{ id: "flying", type: "tri", options: TRI, default: "shuffle",
 		label: "Flying",
@@ -279,6 +298,7 @@ export const SCHEMA = [
 	{ id: "ghosts", type: "tri", options: TRI, default: "shuffle",
 		label: "Ghosts",
 		tip: "Ghost house enemies (Boo, Hot Foot)",
+		icon: DRY_BONES,
 		group: "enemies", inFlagKey: true },
 	{ id: "thwomps", type: "tri", options: TRI, default: "off",
 		label: "Thwomps",
