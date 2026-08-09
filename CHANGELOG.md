@@ -9,6 +9,8 @@ deploys.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-08-09
+
 ### Added
 
 - The web app now shows the seed's **title hash** under the Generate button as

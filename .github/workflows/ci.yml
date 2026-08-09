@@ -135,10 +135,28 @@ jobs:
       # Beta page: ALWAYS built from the beta/next integration branch, whatever
       # triggered this run. This locks /beta/ to beta/next and keeps it stable —
       # a main deploy no longer wipes it, and no other branch can clobber it.
+      #
+      # Except on a release run: merging beta/next -> main auto-deletes the head
+      # branch, so for that one run beta/next doesn't exist and checking it out
+      # fails the whole deploy. Fall back to main, which is what recreating
+      # beta/next would give us anyway — right after a release the two are the
+      # same commit.
+      - name: Resolve the beta ref
+        id: beta-ref
+        working-directory: main-src
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin beta/next >/dev/null 2>&1; then
+            echo "ref=beta/next" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::beta/next is missing (a release merge deletes it) — building /beta/ from main"
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout beta/next
         uses: actions/checkout@v5
         with:
-          ref: beta/next
+          ref: ${{ steps.beta-ref.outputs.ref }}
           path: beta-src
 
       - name: Build beta/next
