@@ -109,6 +109,12 @@ const CHEST = { tiles: [362, 364, 363, 365], cols: 2, palette: [0x0F, 0x1D, 0x18
 // Other pages — see "Enemy Sprite CHR Bank Switching" in the ROM reference for
 // which page holds which object's art.
 const SPINY = { tiles: [704, 706, 705, 707], cols: 2, palette: [0x0F, 0x1D, 0x20, 0x06] }; // $0B
+const ROTODISCS = [ // $12, two rotation frames
+	{ tiles: [1176, 1178, 1177, 1179], cols: 2, palette: [0x0F, 0x18, 0x21, 0x20] },
+	{ tiles: [1180, 1182, 1181, 1183], cols: 2, palette: [0x0F, 0x18, 0x21, 0x20] },
+];
+const START_TILE = { tiles: [1488, 1490, 1489, 1491], cols: 2, palette: [0x0F, 0x38, 0x20, 0x04] }; // $17
+const KOOPALING_RING = { tiles: [4762, 4762, 4763, 4763], cols: 2, palette: [0x0F, 0x1E, 0x20, 0x25], flipRight: true }; // $4A
 const SPADE = { tiles: [1448, 1448, 1449, 1449], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $16
 const WAND = { tiles: [1982, 1983], cols: 1, palette: [0x0F, 0x28, 0x37, 0x03] }; // $1E, 8x16
 const N_CARD = { tiles: [2064, 2064, 2065, 2065], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $20
@@ -131,16 +137,6 @@ const BOSS_BASS = {
 // Random pick on each page load — flavor for "what will you get?". Still short
 // the super leaf and the starman.
 const POWERUPS = [MUSHROOM, FIRE_FLOWER, FROG_SUIT, TANOOKI_SUIT, HAMMER_SUIT, PWING];
-
-const KOOPALINGS = [
-	{ x: 1, y: 273, w: 24, h: 32, sheet: "bosses" },
-	{ x: 1, y: 307, w: 24, h: 32, sheet: "bosses" },
-	{ x: 1, y: 341, w: 24, h: 32, sheet: "bosses" },
-	{ x: 1, y: 375, w: 24, h: 33, sheet: "bosses" },
-	{ x: 1, y: 409, w: 24, h: 32, sheet: "bosses" },
-	{ x: 1, y: 443, w: 24, h: 32, sheet: "bosses" },
-	{ x: 1, y: 477, w: 24, h: 32, sheet: "bosses" },
-];
 
 // Schema. Field names match the Rust Options struct; the load-time parity
 // check guarantees they stay aligned. inFlagKey decides whether applying a
@@ -194,6 +190,7 @@ export const SCHEMA = [
 	{ id: "swap_start_airship", type: "bool", default: false,
 		label: "Swap Start / Airship", flavor: "Beat the map backwards.",
 		tip: "Each of Worlds 1-7 has a 50% chance to be played in reverse — Mario spawns where the airship usually lands.",
+		icon: START_TILE,
 		group: "map", inFlagKey: true },
 	{ id: "anchor_visuals", type: "bool", default: false,
 		label: "Oops all Anchors", flavor: "Anchors aweigh.",
@@ -275,6 +272,7 @@ export const SCHEMA = [
 	{ id: "rotodiscs", type: "tri", options: TRI, default: "off",
 		label: "Rotodiscs",
 		tip: "Rotodisc rotation variants (single/dual, CW/CCW)",
+		icon: ROTODISCS,
 		group: "enemies", inFlagKey: true },
 	{ id: "cannons", type: "tri", options: TRI, default: "off",
 		label: "Cannons",
@@ -309,12 +307,12 @@ export const SCHEMA = [
 	{ id: "random_koopalings", type: "bool", default: false,
 		label: "Random Koopalings",
 		tip: "Shuffle which Koopaling appears in each world. Each keeps its own moves and abilities. Thanks to fcoughlin (Fred) for the patch.",
-		icon: KOOPALINGS,
+		icon: KOOPALING_RING,
 		group: "bosses", inFlagKey: true },
 	{ id: "koopaling_hits", type: "bool", default: true,
 		label: "Random Koopaling Stomps",
 		tip: "Each Koopaling takes a random number of stomps (1–5) instead of the usual 3",
-		icon: KOOPALINGS,
+		icon: KOOPALING_RING,
 		group: "bosses", inFlagKey: true },
 	// No icon yet — sprite coordinates get picked by hand in sprite-picker.html.
 	{ id: "boomboom_hits", type: "bool", default: true,

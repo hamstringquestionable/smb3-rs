@@ -485,6 +485,26 @@ function previewRom() {
 function refreshRomGraphics() {
 	updateSeedHash();
 	renderAllIcons();
+	renderTheEnd();
+}
+
+// Footer sign-off: "THE END" from the ending sequence, CHR page $1B. Not an
+// option icon, so it lives here rather than in the schema.
+const THE_END = {
+	tiles: [
+		1776, 1778, 1780, 1782, 1784, 1786, 1788, 1790,
+		1777, 1779, 1781, 1783, 1785, 1787, 1789, 1791,
+	],
+	cols: 8,
+	palette: [0x0F, 0x38, 0x20, 0x04],
+};
+
+function renderTheEnd() {
+	const canvas = document.getElementById("the-end");
+	const rom = previewRom();
+	if (!canvas || !rom) return;
+	renderChrIcon(canvas, rom, THE_END);
+	canvas.hidden = false;
 }
 
 function updateSeedHash() {

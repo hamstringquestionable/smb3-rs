@@ -588,6 +588,20 @@ input[type="radio"] {
     text-shadow: none;
 }
 
+/* --- Footer sign-off --- */
+
+/* 64x16 native, doubled. Whole-number scale, same rule as every other piece of
+   CHR art on the page. */
+.the-end {
+    display: block;
+    margin: 1.25rem auto 0;
+    width: 128px;
+    height: 32px;
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    opacity: 0.75;
+}
+
 /* --- Seed hash (title screen verification icons) --- */
 
 /* Label above the icons, like every other panel section — an inline label
