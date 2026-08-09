@@ -8,8 +8,11 @@ import init, {
 	flag_key_version_of,
 	flag_key_fields_json,
 	default_options_json,
+	seed_hash_json,
+	apply_ips_patch,
 	version,
 } from "./pkg/smb3_rs.js";
+import { renderIcon } from "./chr.js";
 import {
 	renderOptions,
 	wireListeners,
@@ -168,6 +171,8 @@ const shareUrlBtn = document.getElementById("share-url-btn");
 const visualPatchPills = document.getElementById("visual-patch-pills");
 const visualPatchCredit = document.getElementById("visual-patch-credit");
 const skipValidationWarning = document.getElementById("skip-validation-warning");
+const seedHashRow = document.getElementById("seed-hash");
+const seedHashIcons = document.getElementById("seed-hash-icons");
 const changesSummaryToggle = document.getElementById("changes-summary-toggle");
 const changesSummaryText = document.getElementById("changes-summary-text");
 const changesSummaryList = document.getElementById("changes-summary-list");
@@ -263,6 +268,7 @@ function validateLoadedRom() {
 		showStatus(`${err.message ?? err}`, "error");
 	}
 	updateGenerateButton();
+	updateSeedHash();
 }
 
 romInput.addEventListener("change", (e) => {
@@ -337,6 +343,7 @@ function renderVisualPatchPills() {
 			saveSettings();
 			updateVisualPatchAccent();
 			updateVisualPatchCredit();
+			updateSeedHash(); // the re-skin may change the icons' graphics
 		});
 		const label = document.createElement("label");
 		label.htmlFor = inputId;
@@ -412,7 +419,72 @@ cleanupOrphanVisualPatch().catch(() => {});
 
 randomSeedBtn.addEventListener("click", () => {
 	seedInput.value = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER).toString();
+	updateSeedHash();
 });
+
+seedInput.addEventListener("input", updateSeedHash);
+
+// --- Seed hash: the icons this seed will put on the title screen ---
+//
+// Same five icons `write_seed_hash` stamps, drawn from the user's own ROM CHR
+// so what's on screen here matches what's on screen there pixel for pixel.
+// Rust resolves the tiles and palette (title-screen CHR banks, sprite palette
+// table); this side just decodes and blits them.
+
+// romBytes with the selected visual patch applied — a re-skin changes the CHR
+// the icons come from. Keyed on both the patch and the ROM it was built from,
+// so swapping either one invalidates it.
+let patchedHashRom = null; // { source, id, bytes }
+
+// The ROM to draw icons from, applying the selected visual patch if it's ready.
+// Until it is, the unpatched ROM stands in — identical unless the patch
+// happens to re-skin one of the 15 icons.
+function seedHashRom() {
+	if (!wasmReady || !romBytes) return null;
+	const id = selectedVisualPatchId();
+	if (!id) return romBytes;
+	if (patchedHashRom?.source === romBytes && patchedHashRom.id === id) {
+		return patchedHashRom.bytes;
+	}
+	const source = romBytes;
+	fetchVisualPatch(id)
+		.then((patch) => {
+			patchedHashRom = { source, id, bytes: apply_ips_patch(source, patch) };
+			if (romBytes === source && selectedVisualPatchId() === id) updateSeedHash();
+		})
+		.catch(() => {}); // patch unreachable — the unpatched icons are close enough
+	return romBytes;
+}
+
+function updateSeedHash() {
+	if (!seedHashRow) return;
+	const rom = seedHashRom();
+	// No seed means a random one at generate time, so there's no hash to show
+	// yet. With validation off the randomizer skips the hash patch entirely.
+	if (!rom || !seedInput.value.trim() || getSkipValidation()) {
+		seedHashRow.hidden = true;
+		return;
+	}
+	let spec;
+	try {
+		spec = JSON.parse(seed_hash_json(rom, BigInt(seedInput.value.trim()), getOptionsJson()));
+	} catch (_) {
+		seedHashRow.hidden = true; // not a u64 (yet) — mid-typing or junk
+		return;
+	}
+	while (seedHashIcons.children.length > spec.icons.length) {
+		seedHashIcons.lastChild.remove();
+	}
+	spec.icons.forEach((icon, i) => {
+		let canvas = seedHashIcons.children[i];
+		if (!canvas) {
+			canvas = document.createElement("canvas");
+			seedHashIcons.append(canvas);
+		}
+		renderIcon(canvas, rom, { ...icon, palette: spec.palette });
+	});
+	seedHashRow.hidden = false;
+}
 
 generateBtn.addEventListener("click", async () => {
 	if (!wasmReady || !romBytes) return;
@@ -576,6 +648,9 @@ function updateFlagKey() {
 		// applied.
 		setFlagKeyError(null);
 	} catch (_) {}
+	// The hash is computed from the same flag bytes this key encodes, so every
+	// path that refreshes the key has changed the icons too.
+	updateSeedHash();
 }
 
 function applyFlagKey(key) {

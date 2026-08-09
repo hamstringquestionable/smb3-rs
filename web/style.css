@@ -587,6 +587,36 @@ input[type="radio"] {
     text-shadow: none;
 }
 
+/* --- Seed hash (title screen verification icons) --- */
+
+.seed-hash {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    margin-top: 0.7rem;
+}
+
+.seed-hash-label {
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #7a7ab0;
+}
+
+.seed-hash-icons {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.seed-hash-icons canvas {
+    width: 24px;
+    height: 24px;
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    background: transparent;
+}
+
 /* --- Status --- */
 
 .status {

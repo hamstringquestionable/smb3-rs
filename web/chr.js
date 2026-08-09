@@ -45,7 +45,8 @@ export function resolvePalette(indices) {
 
 // Decode a single 8×8 CHR tile to an ImageData. paletteRgb = 4 [r,g,b] tuples.
 // Color 0 → fully transparent. Colors 1-3 → opaque.
-export function decodeTile(romBytes, tileId, paletteRgb) {
+// flipX mirrors horizontally, the way OAM attribute bit 6 does.
+export function decodeTile(romBytes, tileId, paletteRgb, flipX = false) {
 	const base = CHR_BASE + tileId * TILE_BYTES;
 	const data = new Uint8ClampedArray(8 * 8 * 4);
 	for (let y = 0; y < 8; y++) {
@@ -54,7 +55,7 @@ export function decodeTile(romBytes, tileId, paletteRgb) {
 		for (let x = 0; x < 8; x++) {
 			const bit = 7 - x;
 			const idx = (((p1 >> bit) & 1) << 1) | ((p0 >> bit) & 1);
-			const o = (y * 8 + x) * 4;
+			const o = (y * 8 + (flipX ? 7 - x : x)) * 4;
 			if (idx === 0) {
 				data[o + 3] = 0; // transparent
 			} else {
@@ -81,7 +82,9 @@ export function renderTileToCanvas(canvas, romBytes, tileId, paletteRgb) {
 // Render a 2×2 metasprite (16×16 px) from four tile IDs in [tl, tr, bl, br] order.
 // Native 16×16 pixels — caller scales via CSS for crisp rendering with
 // `image-rendering: pixelated`.
-export function renderMetatile(canvas, romBytes, tileIds, paletteRgb) {
+// flipRight mirrors the right column, for icons built from one tile column
+// and its h-flipped twin (the title-screen seed hash does this).
+export function renderMetatile(canvas, romBytes, tileIds, paletteRgb, flipRight = false) {
 	canvas.width = 16;
 	canvas.height = 16;
 	const ctx = canvas.getContext("2d");
@@ -96,13 +99,14 @@ export function renderMetatile(canvas, romBytes, tileIds, paletteRgb) {
 		const tid = tileIds[i];
 		if (tid == null) continue;
 		const [x, y] = positions[i];
-		ctx.putImageData(decodeTile(romBytes, tid, paletteRgb), x, y);
+		const flip = flipRight && (i === 1 || i === 3);
+		ctx.putImageData(decodeTile(romBytes, tid, paletteRgb, flip), x, y);
 	}
 }
 
 // Convenience: render an icon spec (from the schema) into a canvas.
-// spec = { tiles: [tl, tr, bl, br], palette: [c0, c1, c2, c3] }
+// spec = { tiles: [tl, tr, bl, br], palette: [c0, c1, c2, c3], flipRight? }
 export function renderIcon(canvas, romBytes, spec) {
 	if (!canvas || !romBytes || !spec) return;
-	renderMetatile(canvas, romBytes, spec.tiles, resolvePalette(spec.palette));
+	renderMetatile(canvas, romBytes, spec.tiles, resolvePalette(spec.palette), !!spec.flipRight);
 }

@@ -9,6 +9,16 @@ deploys.
 
 ## [Unreleased]
 
+### Added
+
+- The web app now shows the seed's **title hash** under the Generate button as
+  soon as a seed is entered — the same five icons the title screen will show,
+  drawn from your own ROM's graphics (and from the selected visual patch, if
+  one is chosen). Racers can compare icons before generating instead of after
+  booting. Hidden while the seed box is empty, since a blank seed is rolled at
+  generate time, and while ROM validation is off, since the hash isn't applied
+  then.
+
 ## [1.1.0] - 2026-08-08
 
 ### Added

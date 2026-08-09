@@ -1546,6 +1546,7 @@ logic into the engine without rebuilding callers.
 | 0x32AFE | Title screen background final color |
 | 0x317B1 | Sprite loop hook: vanilla `JSR $B7D6`, patched to `JMP $E914` for seed hash sprites |
 | 0x31976 | Sprite palette data (4 palettes × 4 bytes); palette 3 is modifiable here |
+| 0x326AD | `Title_Load_Palette` (PRG025): 32-byte upload to $3F00 — 16 background colors, then the 16 sprite colors (4 per palette) the title screen actually runs with. Sprite palette 0 = `0F 16 36 0F` (red), 2 = `0F 27 30 0F` (orange). This is the table to read for title sprite colors; 0x31976 does not reach them. |
 | 0x3E924 | Free space in PRG031 (CPU $E914): seed hash sprite copy routine (25 bytes) |
 | 0x3E93D | Free space in PRG031 (CPU $E92D): seed hash sprite data table (40 bytes) |
 
@@ -1554,6 +1555,17 @@ Each icon is 16×16 (two 8×16 sprites side by side). Uses 8x16 sprite mode — 
 select PT1 ($1000–$1FFF). Tiles can be drawn from any CHR slot (R2–R5) since the slot is
 determined by tile ID, not a global setting. The ASM routine copies sprite data to OAM with
 stride (every 8th sprite slot) to avoid the 8-sprites-per-scanline hardware limit.
+
+**Title screen sprite CHR banks:** the reset path in PRG030 (`PRG030_845A`, the "Load title
+screen graphics" block) sets MMC3 R2–R5 to pages `$20 / $21 / $04 / $7F` before handing off to
+the title handler. So a sprite tile ID of $00–$3F reads from page $20, $40–$7F from $21,
+$80–$BF from $04, and $C0–$FF from $7F — i.e. CHR file offset
+`0x40010 + page * 0x400 + (tile & 0x3F) * 16`. Note that `Title_DrawMarioLuigi` (PRG024)
+overwrites R2/R3 with the bros' own VROM pages (`$50` + sprite page for a small bro) whenever it
+runs, so those two slots are the ones to re-check if title sprites ever come out wrong. Decoding
+the seed-hash icon table under the reset banks reproduces the art `ICON_TILES` names (icon 7,
+tile $13 in R2, is the mushroom house), which is what the web app relies on to draw the icons
+from the player's own ROM (`title_screen.rs::seed_hash_preview`).
 
 ---
 
