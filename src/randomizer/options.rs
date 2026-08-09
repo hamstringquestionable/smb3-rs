@@ -10,6 +10,50 @@ pub const ITEM_RANDOM_NO_WHISTLE: u8 = 15;
 /// Sentinel: resolve to a random suit/powerup (1–6).
 pub const ITEM_RANDOM_SUIT_ONLY: u8 = 16;
 
+/// Inventory items: (CLI name, item ID, display name). Single source for every
+/// `--starting-items` parser and run-summary printer across the binaries;
+/// extra spellings are handled as aliases in [`item_id`].
+pub const ITEMS: &[(&str, u8, &str)] = &[
+    ("mushroom", 0x01, "Mushroom"),
+    ("fire", 0x02, "Fire Flower"),
+    ("leaf", 0x03, "Super Leaf"),
+    ("frog", 0x04, "Frog Suit"),
+    ("tanooki", 0x05, "Tanooki Suit"),
+    ("hammer-suit", 0x06, "Hammer Suit"),
+    ("cloud", 0x07, "Cloud"),
+    ("p-wing", 0x08, "P-Wing"),
+    ("star", 0x09, "Starman"),
+    ("anchor", 0x0A, "Anchor"),
+    ("hammer", 0x0B, "Hammer"),
+    ("whistle", 0x0C, "Whistle"),
+    ("music-box", 0x0D, "Music Box"),
+    ("random", 0x0E, "Random"),
+    ("random-no-whistle", 0x0F, "Random (No Whistle)"),
+    ("random-suit-only", 0x10, "Random (Suit Only)"),
+];
+
+/// Look up a starting-item ID by CLI name (case-insensitive, with aliases).
+pub fn item_id(name: &str) -> Option<u8> {
+    let lower = name.to_lowercase();
+    let canonical = match lower.as_str() {
+        "fire-flower" | "fireflower" => "fire",
+        "frog-suit" => "frog",
+        "tanooki-suit" => "tanooki",
+        "hammersuit" => "hammer-suit",
+        "pwing" => "p-wing",
+        "starman" => "star",
+        "musicbox" => "music-box",
+        "random-suit" => "random-suit-only",
+        other => other,
+    };
+    ITEMS.iter().find(|&&(n, _, _)| n == canonical).map(|&(_, id, _)| id)
+}
+
+/// Display name for a starting-item ID.
+pub fn item_display_name(id: u8) -> &'static str {
+    ITEMS.iter().find(|&&(_, i, _)| i == id).map_or("?", |&(_, _, n)| n)
+}
+
 /// Returns default starting lives (5).
 pub(super) fn default_starting_lives() -> u8 { 5 }
 
@@ -38,7 +82,16 @@ pub(super) fn lives_to_idx(lives: u8) -> u8 {
 pub(super) fn default_world_count() -> u8 { 7 }
 
 /// Per-class enemy randomization mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+///
+/// The `Specifier` derive gives this a 2-bit flag-key encoding in declaration
+/// order (`Off` = 0). Three variants in two bits leaves a dead fourth pattern,
+/// so the flag-key decoder reads it through the checked accessor and falls back
+/// to `Off` — see `flag_key.rs`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
 #[serde(rename_all = "snake_case")]
 pub enum EnemyMode {
     #[default]
@@ -56,7 +109,11 @@ pub(super) fn default_off() -> EnemyMode { EnemyMode::Off }
 /// flower's level position, instead of always Fire. `On` substitutes among the
 /// four big-form suits (Fire/Frog/Tanooki/Hammer); `Wild` adds the Small/Big
 /// downgrade outcomes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
 #[serde(rename_all = "snake_case")]
 pub enum FireFlowerMode {
     #[default]
@@ -71,7 +128,11 @@ pub enum FireFlowerMode {
 /// land. `Wild` also releases them (as plain numbered levels), and instead
 /// scatters plant sprites onto ~1 random level slot per world — stepping on
 /// a plant auto-starts the level under it, vanilla W7 style.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
 #[serde(rename_all = "snake_case")]
 pub enum PiranhaMode {
     #[default]
@@ -80,13 +141,58 @@ pub enum PiranhaMode {
     Wild,
 }
 
+/// A level-wide chaser the wild-injection pass can seed into a level. The
+/// option is the *set* of these the player allowed — an empty set is off.
+///
+/// When more than one is allowed the pick is weighted toward the Angry Sun
+/// (see `SUN_INJECTION_WEIGHT`), the gentlest of the three.
+///
+/// Narrowing the set ought to inject into fewer levels — a candidate whose
+/// segment CHR can't fit the allowed chaser (or that already has one) is
+/// skipped rather than handed a different one. Measured, it doesn't: every
+/// combination lands 8-9 injections per seed over 20 seeds, and the gap
+/// between combinations is the same size as the gap between two runs of the
+/// *same* one, since each draws a different RNG stream. Run the
+/// `print_injection_counts` diagnostic before believing otherwise.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WildChaser {
+    /// Angry Sun.
+    Sun,
+    /// Lakitu, the enemy-spawning variant.
+    Lakitu,
+    /// Big Bertha, the leaping eater — the "Boss Bass".
+    Bass,
+}
+
+impl WildChaser {
+    /// Every chaser, in the canonical order the flag key, the CLI and the web
+    /// pill all use. Decoding produces this order, so a round-trip normalizes.
+    pub const ALL: [WildChaser; 3] = [WildChaser::Sun, WildChaser::Lakitu, WildChaser::Bass];
+
+    /// The lowercase name used by the CLI, the web pill, and serde.
+    pub fn name(self) -> &'static str {
+        match self {
+            WildChaser::Sun => "sun",
+            WildChaser::Lakitu => "lakitu",
+            WildChaser::Bass => "bass",
+        }
+    }
+}
+
 /// Tri-state toggle for player-hidden flags: forced `Off`, forced `On`, or
 /// left to the seed (`Maybe`). A `Maybe` flag is resolved to a concrete
 /// on/off at generation time from a dedicated RNG substream (see
 /// [`Tri::resolve`]), so the same seed + same flags always produce the same
 /// ROM — the player just can't tell from the flag key which way a `Maybe`
 /// landed, so it can't be planned around.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
 #[serde(rename_all = "snake_case")]
 pub enum Tri {
     #[default]
@@ -105,10 +211,6 @@ impl Tri {
             Tri::Maybe => rng.random_bool(0.5),
         }
     }
-    /// True only for the explicit `On` state — drives the value bit in the flag key.
-    pub(super) fn is_on(self) -> bool { matches!(self, Tri::On) }
-    /// True only for the `Maybe` state — drives the maybe bit in the flag key.
-    pub(super) fn is_maybe(self) -> bool { matches!(self, Tri::Maybe) }
 }
 
 pub(super) fn default_tri_on() -> Tri { Tri::On }
@@ -260,6 +362,16 @@ pub struct Options {
     /// always-on tail-attack-while-swimming routine.)
     #[serde(default)]
     pub faster_frog: bool,
+    /// Every 1-Up Mushroom is replaced with a Poison Mushroom that damages
+    /// the player instead of granting a life. (MaCobra52's "All 1UPs are
+    /// Poison Mushrooms" patch.) Off by default; a challenge option.
+    #[serde(default)]
+    pub poison_mushrooms: bool,
+    /// Power-ups behave like the modern Mario games: a Fire Flower or suit
+    /// grabbed as Small Mario grants its power without first becoming Big.
+    /// (MaCobra52's "Easy Power-up System" patch.)
+    #[serde(default)]
+    pub modern_powerups: bool,
     /// Random Fire Flower (issue #22): an in-level Fire Flower grants a power
     /// state derived deterministically from the world + the flower's level
     /// position, instead of always Fire. `Off`/`On`/`Wild` (see
@@ -362,9 +474,10 @@ pub struct Options {
     /// All enemies in Hammer Bro encounter segments
     #[serde(default = "default_off")]
     pub hb_encounters: EnemyMode,
-    /// Inject Lakitu/Angry Sun/Boss Bass into ~15% of segments (CHR-compatible)
+    /// Which level-wide chasers may be seeded into a fraction of real levels
+    /// (CHR-compatible). Empty = off. See [`WildChaser`].
     #[serde(default)]
-    pub wild_injections: bool,
+    pub wild_injections: Vec<WildChaser>,
     /// Skip the SMB3 (USA) iNES header / page-count / size checks so that
     /// modded or translated ROMs can be loaded. When true, the title-screen
     /// seed hash is also skipped because its hooks rely on vanilla offsets.
@@ -417,6 +530,8 @@ impl Default for Options {
             faster_tail_speed: false,
             no_game_over_penalty: false,
             faster_frog: false,
+            poison_mushrooms: false,
+            modern_powerups: false,
             fire_flower: FireFlowerMode::Off,
             shuffle_spade_games: true,
             shuffle_toad_houses: true,
@@ -435,7 +550,7 @@ impl Default for Options {
             water: EnemyMode::Shuffle,
             bros: EnemyMode::Shuffle,
             hb_encounters: EnemyMode::Off,
-            wild_injections: false,
+            wild_injections: Vec::new(),
             starting_lives: default_starting_lives(),
             starting_items: Vec::new(),
             skip_rom_validation: false,

@@ -17,7 +17,7 @@ const WORLD_INC_OFFSET: usize = 0x3D0A1;
 /// use it as a seed-derived salt. Reading it is only meaningful after this
 /// module has run, which the orchestrator guarantees (world order is applied
 /// before fire_flower).
-pub(super) const WORLD_INIT_OPERAND: usize = 0x30CC3;
+pub(crate) const WORLD_INIT_OPERAND: usize = 0x30CC3;
 
 /// File offset of the `STA $0160` (Debug_Flag) instruction (3 bytes).
 /// We NOP this out because patching the LDA operand above would otherwise

@@ -71,6 +71,80 @@ const W8_CANOE_PATH_EDITS: &[(usize, usize, u8)] = &[
     (5, 45, 0x45), (5, 46, 0x4A),
 ];
 
+/// W1 shortcut edits — the rock's BEHAVIOUR is gated by `More hammer rocks`
+/// (see [`apply_w1_shortcut`]), but the tiles are written either way.
+///
+/// Vanilla W1 is one long lap: the middle chain (row 4) and the bottom-right
+/// chain (row 6) only meet by walking all the way around the bottom-left —
+/// (4,4)→(6,4)→(8,4)→(8,6)→(8,8)→(6,8). This drops a single hammer-breakable
+/// vertical rock at (5,8), joining the two chains directly:
+///
+/// ```text
+///   (4,8) spade  --rock(5,8)-->  (6,8)
+/// ```
+///
+/// The rock (`0x52`, opening to `0x46`) rather than a bare path is deliberate.
+/// As a plain path this link is free, and it lands three hops from the start
+/// and two from the airship, so it hands out a near-straight start→goal line:
+/// W1's cheapest route fell to a C1 min of 8 with 7.2% of seeds under 12,
+/// where no other world ever prices below 12. `COST_ROCK` is 8 points, so
+/// gating it puts that back while keeping the second route.
+///
+/// The plain walk treats `0x52` as a wall (it is in neither `VALID_HORZ` nor
+/// `VALID_VERT`), so base connectivity is unchanged from vanilla and the
+/// connectivity phase never leans on this link. Only `analyze_route_choice`
+/// opens rocks, prices them, and keeps them in a route's identity.
+///
+/// `0x4A` at (6,8) is the both-directions blank node — it draws the path stub
+/// running up into the rock, so the shortcut reads as a shortcut. Vanilla's
+/// `0x47` is the horizontal-only variant.
+///
+/// Rocks are also cleared by `Map_Reload_with_Completions` when the cell's
+/// completion bit is set (`Map_Removable_Tiles` → `Map_RemoveTo_Tiles`,
+/// `TILE_ROCKBREAKV` → `TILE_VERTPATH`), not by the hammer alone — which is
+/// how the optional W1 (6,5) rock ends up clearing itself. Row 5 is safe on
+/// two counts: it owns its completion bit outright (only the `$01` bit does
+/// the extra-row pass at `PRG012_A55C`, which is the rows 7/8 sharing), and a
+/// rock is not a completable tile, so nothing sets that bit in the first
+/// place. `0x52` is also absent from `LOCKABLE_TILES`, so the builder can
+/// never drop a fortress lock here and clobber the rock.
+///
+/// Node parity is load-bearing. `Map_CheckDoMove` (PRG010) validates only the
+/// ADJACENT tile and then stores a hardcoded `#32` into `World_Map_Move` — two
+/// tiles, always — so a new node has to sit an EVEN number of tiles from the
+/// node it hangs off, with exactly one path tile between. Drawing a node
+/// adjacent to its anchor with two stacked path tiles below looks right in a
+/// tile editor and is completely dead in game.
+const W1_SHORTCUT_ROCK: (usize, usize) = (5, 8);
+const W1_SHORTCUT_STUB: (usize, usize, u8) = (6, 8, 0x4A);
+
+/// Write the W1 shortcut (see [`W1_SHORTCUT_EDITS`]). The tiles go down
+/// unconditionally; `breakable` only decides whether the rock can be opened.
+///
+/// `0x52` (breakable, opens to `0x46`) and `0x53` (permanent wall) are
+/// PIXEL-IDENTICAL — same CHR quad `0C/0D/0E/0F`, same palette page 1 — and
+/// differ only in whether `Map_Removable_Tiles` lists them. So the map looks
+/// the same either way and a player cannot tell from looking whether the
+/// option came up on. That matters because `More hammer rocks` is a `Tri`
+/// flag: under `Maybe` the seed decides, and a visible difference would leak
+/// the roll before they ever swing a hammer.
+///
+/// The `0x4A` stub at (6,8) is part of the disguise, not the shortcut — it
+/// draws the path running up into the rock in both cases. It stays a valid
+/// blank node either way, so pickup preserves it (`blank_tile_for` returns any
+/// `VALID_BLANK_TILES` tile unchanged).
+///
+/// Must run before the overworld builder reads the map, so the builder prices
+/// a breakable rock into its route analysis — and, when it isn't breakable,
+/// sees a plain wall.
+pub fn apply_w1_shortcut(rom: &mut Rom, breakable: bool) {
+    let (rock_row, rock_col) = W1_SHORTCUT_ROCK;
+    let rock = if breakable { 0x52 } else { 0x53 };
+    rom.write_byte(map_tile_offset(0, rock_row, rock_col), rock);
+    let (stub_row, stub_col, stub) = W1_SHORTCUT_STUB;
+    rom.write_byte(map_tile_offset(0, stub_row, stub_col), stub);
+}
+
 /// W8 (Dark World) screen-3 water + bridge edits, always applied. The bridge
 /// tiles (`0xB3`) on the final page get gated as water gaps (`gap_tile_for`:
 /// `0xB3 -> 0x9D`) by the builder instead of locks. See [`apply_w8_bridges`].
@@ -120,6 +194,10 @@ pub fn apply_w8_canoe_and_paths(rom: &mut Rom) {
 /// - **W8 (3,37):** a screen-2 hammer-breakable rock. It sits on the vanilla
 ///   map (its west neighbor (3,36) is already a path) and is placed
 ///   independently of the `8s are Wild` option.
+///
+/// The W1 (5,8) shortcut rock is also gated by this option, but it lives in
+/// [`apply_w1_shortcut`] — its tiles are written either way so the map gives
+/// nothing away, and only the rock's breakability follows the flag.
 pub fn make_hammer_rocks(rom: &mut Rom) {
     rom.write_byte(W1_HAMMER_ROCK_OFFSET, 0x51);
     rom.write_byte(map_tile_offset(7, 3, 37), 0x51);

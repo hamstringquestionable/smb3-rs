@@ -4,6 +4,9 @@ import init, {
 	validate_rom,
 	encode_flag_key,
 	decode_flag_key,
+	current_flag_key_version,
+	flag_key_version_of,
+	flag_key_fields_json,
 	default_options_json,
 	version,
 } from "./pkg/smb3_rs.js";
@@ -34,27 +37,39 @@ let romBytes = null;
 // drop the file in web/visual-patches/ and add an entry here. The patch is
 // fetched lazily at generate time and only applied when output is a Patched
 // ROM (IPS output is the diff of the randomization itself).
+//
+// `preview` is a sprite rendered from the patched CHR by
+// tools/gen_visual_previews.py (standing Mario, or an enemy where the player
+// art duplicates another entry's) — re-run it after adding a patch.
+// `label` stays short since the sprite identifies the re-skin; the full name
+// goes in `creditLabel`, which the credit line under the pills shows.
 const VISUAL_PATCHES = [
 	{
 		id: "super_luigi_35th",
-		label: "Super Luigi Bros. 3",
+		label: "Luigi",
+		creditLabel: "Super Luigi Bros. 3",
 		path: "./visual-patches/super-luigi-35th.ips",
+		preview: "./assets/visual-previews/super-luigi-35th.png",
 		author: "Mario_GMD",
 		url: "https://www.romhacking.net/hacks/5328/",
 		color: "#6dce56", // Luigi green
 	},
 	{
 		id: "super_princess_peach",
-		label: "Super Princess Peach",
+		label: "Peach",
+		creditLabel: "Super Princess Peach",
 		path: "./visual-patches/super-princess-peach.ips",
+		preview: "./assets/visual-previews/super-princess-peach.png",
 		author: "Zynk Oxhyde",
 		url: "https://www.romhacking.net/hacks/6284/",
 		color: "#e07db4", // Peach pink
 	},
 	{
 		id: "super_toad",
-		label: "Super Toad",
+		label: "Toad",
+		creditLabel: "Super Toad",
 		path: "./visual-patches/super-toad-josuecr4ft.ips",
+		preview: "./assets/visual-previews/super-toad-josuecr4ft.png",
 		author: "JosueCr4ft",
 		url: "https://mfgg.net/index.php?act=resdb&param=02&c=7&id=38435",
 		color: "#3a3aff", // Toad blue
@@ -63,6 +78,7 @@ const VISUAL_PATCHES = [
 		id: "dr_mario",
 		label: "Dr. Mario",
 		path: "./visual-patches/dr-mario-bros-3-player-only.ips",
+		preview: "./assets/visual-previews/dr-mario-bros-3-player-only.png",
 		author: "Jon-Dat Flindo",
 		url: "https://www.twitch.tv/jondatflindo",
 		color: "#e8e8f0", // medical white
@@ -73,6 +89,7 @@ const VISUAL_PATCHES = [
 		id: "dr_mario_viruses",
 		label: "+ Viruses",
 		path: "./visual-patches/dr-mario-bros-3.ips",
+		preview: "./assets/visual-previews/dr-mario-bros-3.png",
 		author: "Jon-Dat Flindo",
 		url: "https://www.twitch.tv/jondatflindo",
 		color: "#eab308", // virus yellow
@@ -81,8 +98,10 @@ const VISUAL_PATCHES = [
 	},
 	{
 		id: "baldman_bros",
-		label: "Baldman Bros",
+		label: "Baldman",
+		creditLabel: "Baldman Bros",
 		path: "./visual-patches/baldman-bros.ips",
+		preview: "./assets/visual-previews/baldman-bros.png",
 		author: "Dr. Trash Panda",
 		url: "https://www.twitch.tv/doctor_tp",
 		color: "#e0b78a", // bald scalp tan
@@ -206,7 +225,7 @@ init()
 		const versionEl = document.getElementById("version");
 		if (versionEl) versionEl.textContent = `v${version()}`;
 		updateFlagKey();
-		assertSchemaParity(default_options_json());
+		assertSchemaParity(default_options_json(), flag_key_fields_json());
 		assertPresetParity();
 		selfTestRoundTrip(encode_flag_key, decode_flag_key);
 		applyUrlParams();
@@ -301,7 +320,10 @@ renderAllIcons();
 // --- Visual patch (curated catalog rendered as a pill group) ---
 
 function renderVisualPatchPills() {
-	const opts = [{ id: "", label: "None" }, ...VISUAL_PATCHES];
+	const opts = [
+		{ id: "", label: "None", preview: "./assets/visual-previews/vanilla.png" },
+		...VISUAL_PATCHES,
+	];
 	visualPatchPills.replaceChildren();
 	for (const opt of opts) {
 		const inputId = `vp-${opt.id || "none"}`;
@@ -318,7 +340,16 @@ function renderVisualPatchPills() {
 		});
 		const label = document.createElement("label");
 		label.htmlFor = inputId;
-		label.textContent = opt.label;
+		if (opt.preview) {
+			const img = document.createElement("img");
+			img.className = "vp-preview";
+			img.src = opt.preview;
+			img.alt = "";
+			label.append(img);
+		}
+		const text = document.createElement("span");
+		text.textContent = opt.label;
+		label.append(text);
 		visualPatchPills.append(input, label);
 	}
 }
@@ -477,17 +508,81 @@ function renderPresetPills() {
 
 // --- Flag Key ---
 
+// Set while the flag key box holds a key that failed to apply. Generate is
+// gated on this being null.
+//
+// Why it exists: the seed bot passes a racer's typed key into `?flags=`
+// verbatim, and a key that failed to decode used to be swallowed — the options
+// kept whatever was in localStorage, the key sat in the box looking accepted,
+// and Generate stayed live. Every racer in the room then built a ROM from their
+// own leftover settings, with nothing on screen to say so.
+let flagKeyError = null;
+
+function setFlagKeyError(rejection) {
+	flagKeyError = rejection;
+	// The key stays in the box on purpose — a racer may need to re-copy it or
+	// show it to whoever posted it — so the box itself has to carry the "this
+	// did NOT apply" signal.
+	flagKeyInput.classList.toggle("invalid", !!rejection);
+	if (rejection) flagKeyInput.setAttribute("aria-invalid", "true");
+	else flagKeyInput.removeAttribute("aria-invalid");
+	updateGenerateButton();
+}
+
+// Classify a rejected key. "Older" and "newer" mean it was well-formed enough
+// to read its format version but this build doesn't speak it; "invalid" means
+// it isn't a usable flag key at all (typo, truncated paste). The three need
+// different things from the user, so they get different messages.
+//
+// The visible wording avoids version numbers — a player has never heard of a
+// flag-key format version — with the raw detail in a trailing parenthetical for
+// anyone reporting the problem.
+function flagKeyRejection(key, err) {
+	try {
+		const keyVer = flag_key_version_of(key);
+		const appVer = current_flag_key_version();
+		const detail = `key format ${keyVer}, this build reads ${appVer}`;
+		if (keyVer < appVer) {
+			return {
+				kind: "older",
+				message: `This flag key is from an older version of the randomizer. Older versions are listed at the bottom of this page. (${detail})`,
+			};
+		}
+		if (keyVer > appVer) {
+			return {
+				kind: "newer",
+				message: `This flag key is from a newer version of the randomizer. (${detail})`,
+			};
+		}
+		// Right format version, but the rest of the key didn't decode — that's
+		// a damaged key, not a version mismatch. Fall through.
+	} catch (_) {
+		// Not even readable that far.
+	}
+	// `err.message` rather than `err` — stringifying the Error prepends a
+	// redundant "Error: " to a message that already reads as one.
+	return {
+		kind: "invalid",
+		message: `This flag key isn't valid. Check it and try again. (${err?.message ?? err})`,
+	};
+}
+
 function updateFlagKey() {
 	if (!wasmReady) return;
 	try {
 		flagKeyInput.value = encode_flag_key(getOptionsJson());
+		// The box now shows a key built from the options actually loaded, so
+		// whatever was rejected is no longer on screen to be mistaken for
+		// applied.
+		setFlagKeyError(null);
 	} catch (_) {}
 }
 
 function applyFlagKey(key) {
 	if (!wasmReady) return;
+	const trimmed = key.trim();
 	try {
-		const json = decode_flag_key(key.trim());
+		const json = decode_flag_key(trimmed);
 		applyOptions(JSON.parse(json));
 		applyEnabledWhen();
 		applyRowStates();
@@ -495,12 +590,25 @@ function applyFlagKey(key) {
 		updateFlagKey();
 		showStatus("Flag key applied!", "success");
 	} catch (err) {
-		showStatus(`Invalid flag key: ${err}`, "error");
+		const rejection = flagKeyRejection(trimmed, err);
+		setFlagKeyError(rejection);
+		showStatus(rejection.message, "error");
 	}
 }
 
+// Editing the box clears the rejection: the text on screen is now the user's
+// own, not the key that failed, so the invalid marking would be stale. Applying
+// it is still a separate, deliberate click.
+flagKeyInput.addEventListener("input", () => {
+	if (flagKeyError) setFlagKeyError(null);
+});
+
 flagKeyCopyBtn.addEventListener("click", () => {
-	updateFlagKey();
+	// Don't refresh over a rejected key. Copy is how someone hands the key back
+	// to whoever posted it, which is exactly what a rejection asks them to do —
+	// regenerating here would silently swap in a different key. Share below
+	// still refreshes, because a share URL must carry a key that works.
+	if (!flagKeyError) updateFlagKey();
 	navigator.clipboard.writeText(flagKeyInput.value).then(() => {
 		showStatus("Flag key copied!", "success");
 	});
@@ -518,6 +626,13 @@ function deployBase() {
 		.replace(/(v\/[^/]+|beta)\/$/, "");
 }
 
+// True on the /beta/ deploy. Same path test the inline script in index.html
+// uses to set <html class="beta-build">, read back off the class so the rule
+// lives in exactly one place.
+function isBetaDeploy() {
+	return document.documentElement.classList.contains("beta-build");
+}
+
 shareUrlBtn.addEventListener("click", () => {
 	updateFlagKey();
 	const params = new URLSearchParams();
@@ -527,9 +642,16 @@ shareUrlBtn.addEventListener("click", () => {
 	// Pin the link to the exact version that built this app, so the seed stays
 	// reproducible after newer versions ship. `version()` returns whichever app
 	// is actually loaded (current at the root, the frozen version in a snapshot).
-	const url = `${location.origin}${deployBase()}v/${version()}/?${params.toString()}`;
+	//
+	// The beta deploy is the exception: only main pushes archive a `v/<ver>/`
+	// snapshot, so a beta version number either 404s or resolves to a DIFFERENT
+	// (main) build with the same number. Share /beta/ itself instead — it always
+	// tracks beta/next, so the link can't be pinned, but it does open the app the
+	// sharer is actually looking at.
+	const base = isBetaDeploy() ? `${deployBase()}beta/` : `${deployBase()}v/${version()}/`;
+	const url = `${location.origin}${base}?${params.toString()}`;
 	navigator.clipboard.writeText(url).then(() => {
-		showStatus("Share URL copied!", "success");
+		showStatus(isBetaDeploy() ? "Beta share URL copied!" : "Share URL copied!", "success");
 	});
 });
 
@@ -578,13 +700,23 @@ async function initVersionPicker() {
 // --- Misc ---
 
 function updateGenerateButton() {
-	generateBtn.disabled = !(wasmReady && romBytes && romValid);
+	generateBtn.disabled = !(wasmReady && romBytes && romValid && !flagKeyError);
 }
 
 function showStatus(message, type) {
+	// Repeating a message writes identical text into an already-visible box, so
+	// nothing on screen changes and the click reads as a no-op. That's the
+	// common case for flag keys in a race: everyone's key comes from the same
+	// older build, so a second paste produces the same rejection word for word.
+	// Re-flash so it still registers as a response.
+	const repeat = !statusDiv.hidden && statusDiv.textContent === message;
 	statusDiv.textContent = message;
 	statusDiv.className = `status ${type}`;
 	statusDiv.hidden = false;
+	if (repeat) {
+		void statusDiv.offsetWidth; // force reflow so the animation restarts
+		statusDiv.classList.add("flash");
+	}
 }
 
 function updateSkipValidationWarning() {

@@ -5,13 +5,33 @@ replacing the old raw-enemy-pointer approach.
 
 ## What it does
 
-For each seed, injects a level-wide chaser — Lakitu (`0x83`) or Angry Sun
-(`0xAF`) — into a random subset of real action levels, replacing each chosen
-level's first enemy with a CHR-compatible chaser.
+For each seed, injects a level-wide chaser — Lakitu (`0x83`), Angry Sun
+(`0xAF`) or Boss Bass (`0x2D`) — into a random subset of real action levels,
+replacing each chosen level's first enemy with a CHR-compatible chaser. The
+player picks which of the three are allowed (`Vec<WildChaser>`; empty = off).
 
-**Boss Bass (`0x2D`) is excluded** from the pool: it's a `WATER_ENEMIES` member,
-so the later walker pass would reshuffle an injected one into an ordinary water
-enemy. Lakitu and Sun are in no class pool, so the walker leaves them alone.
+**Boss Bass was excluded until injection moved inside the walker.** It's a
+`WATER_ENEMIES` member, so while injection ran as a pass *before* the walker,
+the walker reshuffled an injected Bertha into an ordinary water enemy whenever
+water was Shuffle/Wild — a silent no-op. Deciding the injection in the walker's
+own segment prologue and marking the entry settled closes that: nothing after
+it gets a chance to swap it. Lakitu and the Sun never needed the protection,
+being in no class pool.
+
+## Where it runs
+
+Not a pass. `collect_injection_sites` runs up front (level geography, no RNG,
+no CHR), and `inject_segment_chasers` is called from the walker's segment
+prologue in `randomize_object_data` — after the entries are parsed, before
+anything is committed or picked. An injected chaser is therefore just an enemy
+the segment contains: the Bertha tally counts it, `segment_pins` commits its
+page, and every subsequent pick is chosen around it.
+
+That ordering matters. Injecting *after* the walk would also work and would
+also unblock Boss Bass, but the chaser could then only land where the finished
+level happened to accommodate it, instead of the level being built around the
+chaser. Injecting *before* the walk (the old design) required a second copy of
+the walker's CHR model, which is the drift that hid the Boss Bass bug.
 
 ## Why it was reworked
 
@@ -43,17 +63,19 @@ collect_candidates(rom, data, opts):
         first_idx = enemy_ptr_to_file_offset(obj_ptr) - ENEMY_DATA_START (+page byte)
         de-dupe by first_idx                            # shared enemy set = one candidate
 
-inject_wild_chasers:
-    shuffle(candidates)                                 # per-seed variety
-    for cand in candidates:
+inject_segment_chasers:                                 # in the walker prologue
+    for entry in this segment, in data order:
+        skip unless collect_injection_sites knows it    # = some level's first enemy
         roll WILD_INJECTION_CHANCE
-        require first enemy swappable + unprotected      # don't clobber critical
-                                                         # objects / get reverted
-        CHR pin-scan the enclosing $FF segment
-        pick a chaser that is CHR-compatible, the level
-          does NOT already have (has_enemy_id), and
-          within the Big-Bertha per-segment cap
+        require first enemy swappable + unprotected     # don't clobber critical objects
+        pins = segment_pins(entries, skip=this entry)   # the walker's own model
+        pick a chaser that is in the player's set
+          (Vec<WildChaser>: sun / lakitu / bass),
+          CHR-compatible, the level does NOT already
+          have (has_enemy_id), and within the
+          Big-Bertha per-segment cap
         replace first enemy; re-seed suns to screen 0 (0x02, 0x11)
+        mark the entry settled                          # walker pass 2 skips it
 ```
 
 ### Guards
@@ -62,10 +84,13 @@ inject_wild_chasers:
   already contains (the 2-Quicksand fix).
 - **Shared-pointer de-dup** — one physical enemy set injects at most once.
 - **Swappable + unprotected first enemy** — `find_class_pool` guards against
-  destroying a non-enemy object; `entry_protection_at` avoids walker reverts.
+  destroying a non-enemy object; `entry_protection_at` keeps the protection
+  registry authoritative.
 - **CHR compatibility** — unchanged; the chaser's sprite page must fit the
   segment's committed slots.
-- **Bertha cap** — `MAX_BERTHA_PER_SEGMENT`.
+- **Bertha cap** — `MAX_BERTHA_PER_SEGMENT`, counted by the injection itself.
+  The walker enforces it across swaps but can't see an injection that already
+  happened, so an injected Boss Bass checks the budget on its own.
 
 ### Frame
 Everything uses `obj_ptr` + `enemy_ptr_to_file_offset` (the same frame as
@@ -108,3 +133,13 @@ half stay low, half lift up. X is always inherited.
 - Only the level's **main area** first enemy is targeted (no sub-area injection).
 - **Rate** (`WILD_INJECTION_CHANCE = 102`, ~40%) now applies per candidate
   level; may warrant re-measuring against the (larger, cleaner) pool.
+- **A one-chaser pool is not, in practice, a sparser pool.** `Sun` / `Lakitu`
+  filter the pool *before* the CHR-compatibility and no-doubling checks, and a
+  candidate that fails them injects nothing rather than falling back to the
+  other chaser — so the single modes ought to land on fewer levels. Measured
+  over 20 seeds they don't: 8.2–9.2 injections per seed in every mode, with the
+  between-mode spread no larger than the spread between two runs of one mode
+  (each mode draws a different RNG stream). Few levels are CHR-restricted to
+  exactly one chaser, so the effect exists but is far below the noise.
+  `WILD_INJECTION_CHANCE` is therefore left alone. Numbers from the
+  `print_injection_counts` diagnostic in `enemies/tests.rs`.

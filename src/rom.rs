@@ -113,6 +113,20 @@ impl fmt::Display for RomError {
 }
 
 /// A single recorded ROM write operation.
+///
+/// A record carries two distinct facts, and reading the wrong one is the
+/// mistake this type invites:
+///
+/// * **Covered** (`offset`, `len`) — the bytes this pass wrote. `write_range`
+///   logs its whole range whenever *any* byte in it differs, so a pass that
+///   rewrites a block covers every byte in it. This is the ownership question:
+///   what does this pass occupy, and what would an outside patch break?
+/// * **Changed** ([`changes`](Self::changes)) — the subset whose value actually
+///   moved. This is the clobbering question: did a later pass discard an
+///   earlier pass's decision?
+///
+/// Use `changes()` for anything that means "overwrote". Counting covered bytes
+/// as overwrites reported 178 collisions on a default seed where 36 were real.
 #[derive(Clone, Debug)]
 pub struct WriteRecord {
     pub offset: usize,
@@ -120,6 +134,22 @@ pub struct WriteRecord {
     pub old_bytes: Vec<u8>,
     pub new_bytes: Vec<u8>,
     pub tag: String,
+}
+
+impl WriteRecord {
+    /// The bytes this write actually changed, as `(offset, old, new)`.
+    pub fn changes(&self) -> impl Iterator<Item = (usize, u8, u8)> + '_ {
+        (0..self.len)
+            .filter(|&i| self.old_bytes[i] != self.new_bytes[i])
+            .map(move |i| (self.offset + i, self.old_bytes[i], self.new_bytes[i]))
+    }
+
+    /// How many bytes this write changed. Equals `len` for a write that moved
+    /// every byte it touched; less when a range write restated bytes it found
+    /// already correct.
+    pub fn changed_len(&self) -> usize {
+        (0..self.len).filter(|&i| self.old_bytes[i] != self.new_bytes[i]).count()
+    }
 }
 
 /// Parsed iNES header info.
@@ -139,7 +169,7 @@ pub struct Rom {
     pub header: Header,
     /// True when a synthetic iNES header was prepended (unheadered input ROM).
     pub header_synthesized: bool,
-    tag_stack: Vec<&'static str>,
+    tag_stack: Vec<String>,
     write_log: Vec<WriteRecord>,
 }
 
@@ -287,20 +317,39 @@ impl Rom {
     /// Used to layer visual patches before randomization so the final IPS diff
     /// (original → data) captures both visual and randomization changes.
     ///
-    /// The patch is applied against the user-visible bytes (synthetic header
+    /// Patch offsets are relative to the user-visible bytes (synthetic header
     /// stripped if present), matching how external IPS patches are authored.
-    pub fn apply_ips_patch(&mut self, patch: &[u8]) -> Result<(), String> {
-        let view = if self.header_synthesized {
-            &self.data[HEADER_SIZE..]
-        } else {
-            &self.data[..]
-        };
-        let patched = crate::ips::apply_ips_patch(view, patch)?;
-        if self.header_synthesized {
-            self.data[HEADER_SIZE..].copy_from_slice(&patched);
-        } else {
-            self.data.copy_from_slice(&patched);
+    ///
+    /// Each record goes through [`write_range`](Self::write_range), so patched
+    /// bytes appear in the write log under `tag` like any other write. That is
+    /// what lets a *second* patch be seen colliding with the first — while the
+    /// patch was applied as one opaque buffer copy, only patch-vs-randomizer
+    /// collisions were detectable. Pass something that identifies the patch
+    /// (a filename); it is what a collision report will name.
+    pub fn apply_ips_patch(&mut self, patch: &[u8], tag: &str) -> Result<(), String> {
+        let records = crate::ips::parse_ips_records(patch)?;
+        let base = if self.header_synthesized { HEADER_SIZE } else { 0 };
+
+        // Check every record before writing any, so a patch that does not fit
+        // leaves the ROM untouched rather than half-applied. The previous
+        // implementation grew a scratch buffer and then panicked on the
+        // length mismatch when copying it back.
+        for rec in &records {
+            let end = base + rec.offset + rec.payload.len();
+            if end > self.data.len() {
+                return Err(format!(
+                    "IPS record at 0x{:06X} ends at 0x{end:06X}, past the end of the ROM (0x{:06X})",
+                    rec.offset,
+                    self.data.len() - base,
+                ));
+            }
         }
+
+        self.push_tag(tag);
+        for rec in &records {
+            self.write_range(base + rec.offset, &rec.payload);
+        }
+        self.pop_tag();
         Ok(())
     }
 
@@ -346,14 +395,18 @@ impl Rom {
 
     /// Replace the tag stack with a single tag. Used by the orchestrator
     /// before each module call.
-    pub fn set_tag(&mut self, tag: &'static str) {
+    ///
+    /// Takes `&str` rather than `&'static str` so a tag can name something only
+    /// known at runtime — `apply_ips_patch` labels a patch by filename, which is
+    /// what makes a collision between two applied patches legible.
+    pub fn set_tag(&mut self, tag: &str) {
         self.tag_stack.clear();
-        self.tag_stack.push(tag);
+        self.tag_stack.push(tag.to_string());
     }
 
     /// Push a sub-tag onto the stack for hierarchical tagging within a module.
-    pub fn push_tag(&mut self, tag: &'static str) {
-        self.tag_stack.push(tag);
+    pub fn push_tag(&mut self, tag: &str) {
+        self.tag_stack.push(tag.to_string());
     }
 
     /// Pop the most recent sub-tag from the stack.
@@ -407,17 +460,29 @@ impl Rom {
             .any(|r| r.offset < end && r.offset + r.len > start)
     }
 
-    /// Find write collisions: offsets written by more than one top-level tag.
-    /// Returns a list of (offset, tag1, tag2) for each collision.
+    /// Find write collisions: offsets where one top-level tag overwrote a byte
+    /// another had *changed*. Returns (offset, earlier tag, later tag).
+    ///
+    /// Only bytes a pass actually changed count. `write_range` logs the whole
+    /// range whenever any byte in it differs, so a pass that rewrites a block
+    /// is credited with every byte in it — including the ones it left exactly
+    /// as it found them. Counting those produced four noise reports for every
+    /// real one (178 against 36 on a default seed), which is enough to make the
+    /// report not worth reading.
+    ///
+    /// Note this compares only the *top-level* tag, so passes within one family
+    /// (`koopalings/y_clamp` against `koopalings/random_hits`) are invisible to
+    /// each other here. Query full tags with [`writes_in_range`](Self::writes_in_range)
+    /// for that.
     pub fn find_collisions(&self) -> Vec<(usize, String, String)> {
         use std::collections::HashMap;
-        // Map each byte offset to the top-level tag that last wrote it.
+        // Map each byte offset to the top-level tag that last changed it.
         let mut owner: HashMap<usize, &str> = HashMap::new();
         let mut collisions: Vec<(usize, String, String)> = Vec::new();
 
         for rec in &self.write_log {
             let top_tag = rec.tag.split('/').next().unwrap_or(&rec.tag);
-            for off in rec.offset..rec.offset + rec.len {
+            for (off, _, _) in rec.changes() {
                 if let Some(&prev) = owner.get(&off) && prev != top_tag {
                     collisions.push((off, prev.to_string(), top_tag.to_string()));
                 }
@@ -443,7 +508,16 @@ impl Rom {
         let mut out = String::new();
         for (tag, records) in &by_tag {
             let total_bytes: usize = records.iter().map(|r| r.len).sum();
-            let _ = writeln!(out, "[{tag}] {total_bytes} bytes, {} writes", records.len());
+            let changed: usize = records.iter().map(|r| r.changed_len()).sum();
+            // Show both when they differ: the gap is a pass rewriting a block
+            // wider than the bytes it actually moves, which is why counting
+            // covered bytes as overwrites over-reports collisions.
+            let counts = if changed == total_bytes {
+                format!("{total_bytes} bytes")
+            } else {
+                format!("{total_bytes} bytes ({changed} changed)")
+            };
+            let _ = writeln!(out, "[{tag}] {counts}, {} writes", records.len());
             for rec in records {
                 if rec.len <= 4 {
                     let _ = writeln!(
@@ -709,5 +783,108 @@ mod tests {
         assert!(rom.has_writes_in_range(50, 101));
         assert!(!rom.has_writes_in_range(101, 200));
         assert!(!rom.has_writes_in_range(50, 100));
+    }
+
+    // --- IPS application through the write log ---
+
+    /// One raw IPS record: `offset` (3 bytes BE), `len` (2 bytes BE), payload.
+    fn ips_with(offset: usize, payload: &[u8]) -> Vec<u8> {
+        let mut p = b"PATCH".to_vec();
+        p.extend_from_slice(&[(offset >> 16) as u8, (offset >> 8) as u8, offset as u8]);
+        p.extend_from_slice(&[(payload.len() >> 8) as u8, payload.len() as u8]);
+        p.extend_from_slice(payload);
+        p.extend_from_slice(b"EOF");
+        p
+    }
+
+    #[test]
+    fn ips_records_land_in_the_write_log() {
+        let data = make_valid_rom();
+        let mut rom = rom_from(&data);
+        rom.apply_ips_patch(&ips_with(0x100, &[1, 2, 3]), "toad.ips").unwrap();
+
+        let log = rom.write_log();
+        assert_eq!(log.len(), 1, "one record in, one write record out");
+        assert_eq!(log[0].offset, 0x100);
+        assert_eq!(log[0].new_bytes, vec![1, 2, 3]);
+        assert_eq!(log[0].tag, "toad.ips");
+        assert_eq!(rom.read_range(0x100, 3), &[1, 2, 3]);
+    }
+
+    /// Patch offsets are relative to the user-visible bytes, so an unheadered
+    /// input shifts every record by the synthetic header. Getting this wrong
+    /// would corrupt every patch applied to a headerless ROM.
+    #[test]
+    fn ips_offsets_shift_past_a_synthesized_header() {
+        let unheadered = vec![
+            0u8;
+            EXPECTED_PRG_PAGES as usize * PRG_PAGE_SIZE
+                + EXPECTED_CHR_PAGES as usize * CHR_PAGE_SIZE
+        ];
+        let mut rom = rom_from(&unheadered);
+        assert!(rom.header_synthesized);
+
+        rom.apply_ips_patch(&ips_with(0x100, &[9]), "p.ips").unwrap();
+
+        assert_eq!(rom.write_log()[0].offset, HEADER_SIZE + 0x100);
+        assert_eq!(rom.output_bytes()[0x100], 9, "lands at 0x100 of the visible ROM");
+    }
+
+    /// The payoff: while a patch was applied as one opaque buffer copy, a
+    /// second patch overwriting the first was undetectable.
+    #[test]
+    fn second_ips_patch_is_seen_colliding_with_the_first() {
+        let data = make_valid_rom();
+        let mut rom = rom_from(&data);
+        rom.apply_ips_patch(&ips_with(0x100, &[1, 2, 3]), "first.ips").unwrap();
+        rom.apply_ips_patch(&ips_with(0x101, &[4, 5]), "second.ips").unwrap();
+
+        let collisions = rom.find_collisions();
+        assert_eq!(collisions.len(), 2, "two bytes are written by both patches");
+        assert_eq!(collisions[0], (0x101, "first.ips".to_string(), "second.ips".to_string()));
+        assert_eq!(collisions[1], (0x102, "first.ips".to_string(), "second.ips".to_string()));
+    }
+
+    /// A range write logs every byte it covers. A later pass restating a byte
+    /// it did not change is not a collision — counting those buried the real
+    /// ones four to one.
+    #[test]
+    fn a_range_write_restating_a_byte_is_not_a_collision() {
+        let data = make_valid_rom();
+        let mut rom = rom_from(&data);
+
+        rom.set_tag("first");
+        rom.write_range(100, &[0xAA, 0xBB]);
+        // Second pass rewrites the block: 100 is restated, 101 genuinely changed.
+        rom.set_tag("second");
+        rom.write_range(100, &[0xAA, 0xCC]);
+
+        let collisions = rom.find_collisions();
+        assert_eq!(
+            collisions,
+            vec![(101, "first".to_string(), "second".to_string())],
+            "only the byte `second` actually changed should collide",
+        );
+    }
+
+    #[test]
+    fn ips_record_past_the_end_errors_and_writes_nothing() {
+        let data = make_valid_rom();
+        let mut rom = rom_from(&data);
+        let len = rom.data.len();
+
+        // Second record is out of range; the first must not be applied either.
+        let mut patch = b"PATCH".to_vec();
+        patch.extend_from_slice(&[0x00, 0x01, 0x00, 0x00, 0x01, 0xAA]);
+        patch.extend_from_slice(&[
+            ((len >> 16) & 0xFF) as u8, ((len >> 8) & 0xFF) as u8, (len & 0xFF) as u8,
+            0x00, 0x01, 0xBB,
+        ]);
+        patch.extend_from_slice(b"EOF");
+
+        let err = rom.apply_ips_patch(&patch, "too_big.ips").unwrap_err();
+        assert!(err.contains("past the end"), "unexpected error: {err}");
+        assert!(rom.write_log().is_empty(), "a rejected patch must write nothing");
+        assert_eq!(rom.read_byte(0x100), 0, "first record must not be applied");
     }
 }

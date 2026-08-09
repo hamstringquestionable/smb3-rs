@@ -53,6 +53,24 @@ pub(super) enum NodeKind {
 }
 
 impl NodeKind {
+    /// Short display name, used by tooling that lists catalog entries.
+    /// Native-only: its sole consumer is the `testrom` builder.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn label(&self) -> &'static str {
+        match self {
+            NodeKind::Level => "level",
+            NodeKind::Fortress { .. } => "fortress",
+            NodeKind::Pipe { .. } => "pipe",
+            NodeKind::Airship => "airship",
+            NodeKind::Bowser => "bowser",
+            NodeKind::Start => "start",
+            NodeKind::ToadHouse => "toad house",
+            NodeKind::BonusGame => "bonus game",
+            NodeKind::HammerBro => "hammer bro",
+            NodeKind::MapObject => "map object",
+        }
+    }
+
     /// Whether this node is a placeable game level (enters the shuffle pool).
     pub fn is_level_like(&self) -> bool {
         matches!(
@@ -83,6 +101,26 @@ pub(super) struct CatalogEntry {
     /// Vanilla map tile at this position.
     pub tile: u8,
     /// Level entry data (tileset, obj/lay ptrs). None for Start.
+    pub level_entry: Option<LevelEntry>,
+}
+
+/// A flattened, `randomize`-independent view of one catalog entry.
+///
+/// `CatalogEntry` and `NodeKind` are `pub(super)`, so consumers at the crate
+/// root (the test-ROM builder) can't name them. This carries just the fields
+/// that tooling needs, decoupled from the classifier's internals.
+///
+/// Native-only, matching the `testrom` module that consumes it.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) struct EntryView {
+    pub name: String,
+    pub world_idx: usize,
+    pub entry_idx: usize,
+    pub tile: u8,
+    /// Short kind name for display, e.g. "level", "fortress", "airship".
+    pub kind_label: &'static str,
+    /// True only for numbered action levels (the tiles `--place` targets).
+    pub is_numbered_level: bool,
     pub level_entry: Option<LevelEntry>,
 }
 
@@ -170,6 +208,25 @@ impl NodeCatalog {
     /// Iterate entries for a specific world.
     pub(super) fn world(&self, world_idx: usize) -> impl Iterator<Item = &CatalogEntry> {
         self.entries.iter().filter(move |e| e.world_idx == world_idx)
+    }
+
+    /// Flatten the catalog into `EntryView`s for tooling outside `randomize`
+    /// (the test-ROM builder), which needs names and level data but must not
+    /// depend on `CatalogEntry`/`NodeKind`'s internal shape.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn entry_views(&self) -> Vec<EntryView> {
+        self.entries
+            .iter()
+            .map(|e| EntryView {
+                name: e.name.clone(),
+                world_idx: e.world_idx,
+                entry_idx: e.entry_idx,
+                tile: e.tile,
+                kind_label: e.kind.label(),
+                is_numbered_level: matches!(e.kind, NodeKind::Level),
+                level_entry: e.level_entry.clone(),
+            })
+            .collect()
     }
 
     /// Collect unique real HammerBro levels (obj >= 0xC000).

@@ -1,318 +1,382 @@
-//! Fortress lock / water-gap placement.
+//! Locks phase — one lock (map gap) per fortress, marginal-cut-ranked
+//! placement.
+//!
+//! One earned control (census-argued, 2026-07-31): candidates are ranked
+//! by MARGINAL CUT — the nodes closing the site severs that already-placed
+//! locks don't sever — with bridges as the aesthetic tiebreak and shuffled
+//! order under that (see [`rank_candidates`]). The bridge experiment
+//! proved lock-site cut power drives every quality metric (zero-gate
+//! halved, linearity down); marginal rather than raw cut is what stops the
+//! locks piling onto the goal approach — the second lock on a claimed
+//! corridor scores only the slice between, and loses to fresh territory.
+//! The first candidate that keeps the world completable wins.
+//!
+//! Hard invariants (true safety, per the charter):
+//!
+//! - **ORDER-FREE completability** (`WorldState::completable`): close every
+//!   lock, beat every reachable fort, open those locks, repeat — the world
+//!   is valid iff the goal is reached AND every fort is eventually beatable
+//!   (a fort sealed behind its own lock is permanently unplayable content).
+//!   This single fixpoint subsumes the shipping builder's per-section hard
+//!   rules without its "sections beaten in order" linearization.
+//! - **Every fort has a lock.** A fort's Boom-Boom ordinal indexes the world
+//!   FX list, and a lockless fort is dead weight (its beat does nothing). If
+//!   every candidate breaks completability, the fort is REMOVED from the
+//!   world — loudly reported, counted by the census (expected rate ~0: a
+//!   dead-end path tile gates nothing and always passes the fixpoint).
+//! - **Secret-exit safety is computed, not stamped false.** A lock is safe
+//!   iff the world stays completable with that lock sealed forever
+//!   (`completable_sealed`) — the 1-F fortress's secret exit skips the
+//!   lock-opening FX. The ROM-level requirement is at least one safe lock
+//!   ACROSS ALL WORLDS (the writer parks 1-F on a safe slot);
+//!   [`ensure_secret_exit_safe`] is that cross-world backstop.
 
 use super::*;
 
-use super::types::{BuildResult, LockAssignment, SlotAssignment, SlotKind, stamp_slots};
+use rand::seq::SliceRandom;
 
-/// The five always-on W8 screen-3 bridges (see `qol::overworld_map`'s
-/// `W8_BRIDGE_EDITS`). Locking one gaps it out as water until its fortress is
-/// beaten — a deliberate showcase, so the lock scorer nudges toward them.
-const W8_BRIDGE_LOCK_POSITIONS: &[(usize, usize)] = &[(5, 51), (5, 53), (5, 55), (5, 57), (5, 59)];
+pub(crate) struct Locks;
 
-/// Score bonus for locking a W8 showcase bridge. Sized to noticeably raise how
-/// often a bridge is chosen without overriding the `blocks_later_fort` (+100)
-/// progression signal or the hard reachability rules. Tuned via a 200k-seed
-/// sweep: +8 puts ≥1 bridge out in ~99.6% of seeds, two out in ~30%, and all
-/// four (the ceiling — W8 has 4 forts = 4 locks) out in ~0.08% (a rare treat).
-const W8_BRIDGE_LOCK_BONUS: i32 = 8;
+impl Phase for Locks {
+    fn name(&self) -> &'static str {
+        "locks"
+    }
 
-/// A scored lock candidate tracked during selection.
-#[derive(Clone, Copy)]
-struct ScoredLock {
-    pos: Pos,
-    gap_tile: u8,
-    replace_tile: u8,
-    score: i32,
-    safe: bool,
-    blocks_target: bool,
-}
+    fn run(&self, state: &mut WorldState, rng: &mut dyn RngCore) -> PhaseReport {
+        let mut actions = Vec::new();
 
-// Reason: every argument represents a distinct, independent input to lock
-// placement (geometry, slot list, count, safety flag, RNG). No subset
-// clusters into a meaningful concept — bundling would be a clippy bandage,
-// not a real abstraction.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn place_locks<R: Rng>(
-    grid: &Grid,
-    pipe_pairs: &[TeleportEdge],
-    start_pos: Option<(usize, usize)>,
-    target_pos: Option<(usize, usize)>,
-    slots: &[SlotAssignment],
-    fort_count: usize,
-    force_safe: bool,
-    world_idx: usize,
-    rng: &mut R,
-) -> Vec<LockAssignment> {
-    let mut locks: Vec<LockAssignment> = Vec::new();
-    let mut locked_tiles: HashSet<(usize, usize)> = HashSet::new();
-
-    // Build a base grid with forts/levels stamped so BFS sees them as nodes.
-    // This grid does NOT have any locks on it.
-    let mut base_grid = grid.clone();
-    stamp_slots(&mut base_grid, slots);
-
-    // Process each fortress in section order
-    for section_idx in 0..fort_count {
-        let fort_pos = match slots
+        let fort_ids: Vec<usize> = state
+            .slots
             .iter()
-            .find(|s| s.section == section_idx && s.kind == SlotKind::Fortress)
-        {
-            Some(s) => s.pos,
-            None => continue,
-        };
+            .filter(|s| s.kind == SlotKind::Fortress)
+            .map(|s| s.section)
+            .collect();
 
-        // Build the "current state" grid: base grid + all previously placed locks
-        // + all locks from earlier sections opened (simulating progression).
-        // When checking section N's lock, sections 0..N-1 have been beaten,
-        // so their locks are open. The new lock we're testing is the only closed one.
-        let build_test_grid = |new_lock: Option<((usize, usize), u8)>| -> Grid {
-            let mut g = base_grid.clone();
-            // Place all previously committed locks
-            for prev in &locks {
-                if prev.fort_section < section_idx {
-                    // Earlier section — fort beaten, lock opened (restore path tile)
-                    g.set(prev.pos.0, prev.pos.1, prev.replace_tile);
-                } else {
-                    // Same or later section — lock still closed
-                    g.set(prev.pos.0, prev.pos.1, prev.gap_tile);
-                }
-            }
-            // Place the candidate lock
-            if let Some((pos, gap)) = new_lock {
-                g.set(pos.0, pos.1, gap);
-            }
-            g
-        };
+        let mut open = state.grid.clone();
+        stamp_slots(&mut open, &state.slots);
+        let open_reach = walk_reachable(&open, &state.pipe_pairs, state.start, state.world_idx);
+        let mut covered: HashSet<Pos> = HashSet::new();
 
-        // Find all lockable path tiles not yet used
-        let reference_grid = build_test_grid(None);
-        let mut candidates: Vec<(usize, usize)> = Vec::new();
-        for r in 0..reference_grid.rows() {
-            for c in 0..reference_grid.cols {
-                let tile = reference_grid.get(r, c);
-                if LOCKABLE_TILES.contains(&tile) && !locked_tiles.contains(&(r, c)) {
-                    // Row 7 and row 8 share Map_Completions bit ($01).
-                    // A lock/bridge/gap is completion-unsafe — it would
-                    // prevent the fallthrough between rows 7 and 8.
-                    // Skip if the paired row has a completable slot.
-                    if r == 7 || r == 8 {
-                        let paired_row = if r == 7 { 8 } else { 7 };
-                        let pair_completable = slots.iter().any(|s| {
-                            s.pos == (paired_row, c)
-                                && matches!(s.kind, SlotKind::Level | SlotKind::Fortress | SlotKind::Pipe | SlotKind::BonusGame | SlotKind::ToadHouse)
-                        });
-                        if pair_completable {
-                            continue;
-                        }
-                    }
-                    candidates.push((r, c));
+        for fort_id in fort_ids {
+            let candidates = rank_candidates(state, &open, &open_reach, &covered, rng);
+
+            let mut placed = false;
+            let tried = candidates.len();
+            for (pos, tile, cut) in candidates {
+                state.locks.push(LockAssignment {
+                    pos,
+                    gap_tile: gap_tile_for(tile),
+                    replace_tile: tile,
+                    fort_section: fort_id,
+                    // Stamped by recompute_safety_flags once the set is
+                    // final.
+                    secret_exit_safe: false,
+                });
+                if state.completable() {
+                    actions.push(format!("lock for fort {fort_id} at {pos:?}"));
+                    covered.extend(cut);
+                    placed = true;
+                    break;
                 }
+                state.locks.pop();
+            }
+            if !placed {
+                // Invariant: every fort has a lock. An unlockable fort is
+                // removed rather than left as dead weight on the map.
+                let idx = state
+                    .slots
+                    .iter()
+                    .position(|s| s.kind == SlotKind::Fortress && s.section == fort_id)
+                    .expect("fort id came from the slot list");
+                let pos = state.slots[idx].pos;
+                state.slots.remove(idx);
+                actions.push(format!(
+                    "fort {fort_id} REMOVED from {pos:?}: all {tried} lock candidates break completability",
+                ));
             }
         }
 
-        candidates.shuffle(rng);
+        recompute_safety_flags(state);
 
-        // Prefer safe when forced (retry path) or when the best candidate
-        // is weak anyway (score < 5) — don't sacrifice a high-scoring lock.
-        // Evaluated after scoring all candidates, see below.
-        let mut best: Option<ScoredLock> = None;
-        let mut best_safe: Option<ScoredLock> = None;
-
-        // Open grid (no candidate lock) is constant for all candidates in this
-        // section — hoist the BFS to avoid redundant walks per candidate.
-        let open_grid = build_test_grid(None);
-        let open_node_count = walk_map(&open_grid, pipe_pairs, start_pos, world_idx).nodes.len() as i32;
-
-        // If a previous lock in this world already blocks the target, suppress
-        // the target-blocking bonus to avoid stacking multiple locks against
-        // the airship/Bowser.
-        let target_already_locked = locks.iter().any(|l| l.blocks_target);
-
-        for &cand_pos in &candidates {
-            let tile = reference_grid.get(cand_pos.0, cand_pos.1);
-            let gap = gap_tile_for(tile);
-
-            // Hard rule 1: with this lock placed (and earlier locks opened),
-            // the current fortress must still be reachable from start.
-            let test_grid = build_test_grid(Some((cand_pos, gap)));
-            let walk = walk_map(&test_grid, pipe_pairs, start_pos, world_idx);
-
-            if !walk.nodes.contains(&fort_pos) {
-                continue;
-            }
-
-            // Hard rule 2: this lock must not block any earlier fortress.
-            // Check each earlier section's fort is reachable when its own
-            // lock (and all locks before it) are open but this new lock is closed.
-            let blocks_earlier = locks.iter().any(|prev_lock| {
-                let prev_fort = slots.iter()
-                    .find(|s| s.section == prev_lock.fort_section && s.kind == SlotKind::Fortress);
-                if let Some(pf) = prev_fort {
-                    // Build grid: open locks up to prev_lock's section, close the rest + candidate
-                    let mut g = base_grid.clone();
-                    for l in &locks {
-                        if l.fort_section < prev_lock.fort_section {
-                            g.set(l.pos.0, l.pos.1, l.replace_tile);
-                        } else {
-                            g.set(l.pos.0, l.pos.1, l.gap_tile);
-                        }
-                    }
-                    // Also place the candidate lock
-                    g.set(cand_pos.0, cand_pos.1, gap);
-                    let w = walk_map(&g, pipe_pairs, start_pos, world_idx);
-                    !w.nodes.contains(&pf.pos)
-                } else {
-                    false
-                }
-            });
-            if blocks_earlier {
-                continue;
-            }
-
-            // Check if target is reachable with this lock closed (used for
-            // secret exit safety).
-            let target_reachable = target_pos
-                .map(|tp| walk.nodes.contains(&tp))
-                .unwrap_or(true);
-
-            // A "safe" lock blocks nothing important: all fortresses and
-            // the target remain reachable. Safe for 1-F secret exit since
-            // leaving it closed can never cause a softlock.
-            let safe = target_reachable && slots.iter().all(|s| {
-                s.kind != SlotKind::Fortress || walk.nodes.contains(&s.pos)
-            });
-
-            // Score by gated node count: how many nodes become unreachable
-            // when this lock is closed? Prefers chokepoints that gate large
-            // portions of the map over locks adjacent to the airship (which
-            // only gate ~1 node).
-            let gated = open_node_count - walk.nodes.len() as i32;
-
-            let mut score: i32 = gated;
-
-            // Bonus: blocks a later fortress (strong progression signal)
-            let blocks_later_fort = slots.iter().any(|s| {
-                s.kind == SlotKind::Fortress
-                    && s.section > section_idx
-                    && !walk.nodes.contains(&s.pos)
-            });
-            if blocks_later_fort {
-                score += 100;
-            }
-
-            // Bonus: blocks the target (airship/bowser) — only credited to
-            // the first such lock in the world; subsequent target-blockers
-            // would just pile up next to the airship.
-            if !target_reachable && !target_already_locked {
-                score += 10;
-            }
-
-            // Spread penalty: discourage placing this lock close to any
-            // already-placed lock in the world. Falls off linearly with
-            // Manhattan distance, zero past 8 tiles.
-            if let Some(min_dist) = locks
-                .iter()
-                .map(|l| cand_pos.0.abs_diff(l.pos.0) + cand_pos.1.abs_diff(l.pos.1))
-                .min()
-            {
-                score -= (8i32 - min_dist as i32).max(0) * 2;
-            }
-
-            // Slight preference for bridge tiles — water gaps look better
-            // than locks on regular path tiles.
-            if tile == 0xB3 {
-                score += 1;
-            }
-
-            // W8-specific: bias harder toward the screen-3 showcase bridges so
-            // they're gated out more often than raw chokepoint value alone
-            // would pick them.
-            if world_idx == 7 && W8_BRIDGE_LOCK_POSITIONS.contains(&cand_pos) {
-                score += W8_BRIDGE_LOCK_BONUS;
-            }
-
-            // Track best overall and best safe separately. (A safe lock
-            // never blocks the target, so its blocks_target is false.)
-            let cand = ScoredLock {
-                pos: cand_pos,
-                gap_tile: gap,
-                replace_tile: tile,
-                score,
-                safe,
-                blocks_target: !target_reachable,
-            };
-            if best.is_none_or(|b| score > b.score) {
-                best = Some(cand);
-            }
-            if safe && best_safe.is_none_or(|b| score > b.score) {
-                best_safe = Some(cand);
-            }
-        }
-
-        // Prefer safe when forced (retry) or when best score is low —
-        // no point picking an impactful lock if there are none.
-        let best_score = best.map(|b| b.score).unwrap_or(0);
-        let prefer_safe = force_safe || best_score < 5;
-
-        let chosen = if prefer_safe { best_safe.or(best) } else { best };
-
-        if let Some(c) = chosen {
-            locked_tiles.insert(c.pos);
-            locks.push(LockAssignment {
-                pos: c.pos,
-                gap_tile: c.gap_tile,
-                replace_tile: c.replace_tile,
-                fort_section: section_idx,
-                secret_exit_safe: c.safe,
-                blocks_target: c.blocks_target,
-            });
-        }
+        actions.push(format!(
+            "done: {}/{} forts locked, {} secret-exit-safe",
+            state.locks.len(),
+            state.fort_count(),
+            state.locks.iter().filter(|l| l.secret_exit_safe).count(),
+        ));
+        PhaseReport { phase: self.name(), actions }
     }
-
-    locks
 }
 
-/// Stamp build results onto the ROM tile grids for visual inspection.
+/// Stamp every lock's `secret_exit_safe` flag from the final lock set: safe
+/// iff the world stays completable with that lock sealed forever. Computed
+/// after all placements — sealing interacts with the OTHER locks, so the
+/// flag is only meaningful on the finished set.
+pub(crate) fn recompute_safety_flags(state: &mut WorldState) {
+    for li in 0..state.locks.len() {
+        state.locks[li].secret_exit_safe = state.completable_sealed(Some(li));
+    }
+}
+
+/// Cross-world invariant: at least one lock across all worlds must be
+/// secret-exit-safe — the write phase parks the 1-F fortress level (whose
+/// secret exit skips the lock-opening FX) on a slot whose lock can stay
+/// closed forever without softlocking.
 ///
-/// Writes generic tiles for each slot type so the overworld maps can be
-/// viewed in an emulator. The game will crash if you enter any level.
-#[allow(dead_code)]
-pub(super) fn debug_stamp_rom(rom: &mut crate::rom::Rom, result: &BuildResult) {
-    for built in &result.worlds {
-        let wi = built.world_idx;
+/// Knob-free backstop, run after every world's schedule: if uniform
+/// placement produced no safe lock anywhere, relocate ONE existing lock —
+/// shuffled worlds, shuffled forts, shuffled candidates, first tile that
+/// keeps the world completable both normally and with the new lock sealed.
+pub(crate) fn ensure_secret_exit_safe(
+    worlds: &mut [WorldState],
+    rng: &mut dyn RngCore,
+) -> PhaseReport {
+    let mut actions = Vec::new();
+    let phase = "secret_exit_safety";
 
-        // First write the cleared grid (with pipes already placed)
-        for r in 0..built.grid.rows() {
-            for c in 0..built.grid.cols {
-                let offset = rom_data::map_tile_offset(wi, r, c);
-                rom.data[offset] = built.grid.get(r, c);
-            }
-        }
+    if worlds
+        .iter()
+        .any(|w| w.locks.iter().any(|l| l.secret_exit_safe))
+    {
+        actions.push("already satisfied: uniform placement produced a safe lock".into());
+        return PhaseReport { phase, actions };
+    }
 
-        // Stamp slot assignments
-        let mut level_num: u8 = 1;
-        for slot in &built.slots {
-            let tile = match slot.kind {
-                SlotKind::Level => {
-                    // Use numbered map tiles ($03-$0D = levels 1-11, then wrap)
-                    let t = 0x02 + level_num.min(13);
-                    level_num = level_num.wrapping_add(1);
-                    t
+    let mut world_order: Vec<usize> = (0..worlds.len()).collect();
+    world_order.shuffle(rng);
+    for wi in world_order {
+        let state = &mut worlds[wi];
+        let mut open = state.grid.clone();
+        stamp_slots(&mut open, &state.slots);
+        let open_reach = walk_reachable(&open, &state.pipe_pairs, state.start, state.world_idx);
+        let mut lock_indices: Vec<usize> = (0..state.locks.len()).collect();
+        lock_indices.shuffle(rng);
+        for li in lock_indices {
+            let original = state.locks[li].clone();
+            // Marginal ranking against the OTHER locks' cuts — the
+            // relocated lock should claim fresh territory too.
+            let covered: HashSet<Pos> = state
+                .locks
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != li)
+                .flat_map(|(_, l)| {
+                    cut_set(
+                        &open, &open_reach, &state.pipe_pairs, state.start, state.world_idx,
+                        l.pos, l.replace_tile,
+                    )
+                })
+                .collect();
+            let candidates = rank_candidates(state, &open, &open_reach, &covered, rng);
+            for (pos, tile, _) in candidates {
+                state.locks[li] = LockAssignment {
+                    pos,
+                    gap_tile: gap_tile_for(tile),
+                    replace_tile: tile,
+                    fort_section: original.fort_section,
+                    secret_exit_safe: false,
+                };
+                if state.completable() && state.completable_sealed(Some(li)) {
+                    // Relocation changed the world — every flag in it is
+                    // stale, not just the moved lock's.
+                    recompute_safety_flags(state);
+                    actions.push(format!(
+                        "W{} fort {} lock relocated {:?} -> {pos:?} (secret-exit-safe)",
+                        state.world_idx + 1,
+                        original.fort_section,
+                        original.pos,
+                    ));
+                    return PhaseReport { phase, actions };
                 }
-                SlotKind::Fortress => TILE_FORTRESS,
-                SlotKind::Pipe => TILE_PIPE,
-                SlotKind::BonusGame => TILE_BONUS_GAME,
-                SlotKind::ToadHouse => TILE_TOAD_HOUSE,
-                SlotKind::HammerBro => continue, // keep existing blank path tile
-            };
-            let offset = rom_data::map_tile_offset(wi, slot.pos.0, slot.pos.1);
-            rom.data[offset] = tile;
-        }
-
-        // Stamp locks
-        for lock in &built.locks {
-            let offset = rom_data::map_tile_offset(wi, lock.pos.0, lock.pos.1);
-            rom.data[offset] = lock.gap_tile;
+            }
+            state.locks[li] = original;
         }
     }
+
+    actions.push("UNSATISFIED: no relocation in any world yields a safe lock".into());
+    PhaseReport { phase, actions }
+}
+
+/// Which candidates a lock-placement pass admits, strictest first.
+#[derive(Clone, Copy, PartialEq)]
+enum LockPass {
+    /// Closing the tile makes the GOAL unreachable in the all-open world —
+    /// the pipe-proof cut (nothing routes around the goal approach), the
+    /// same duty the shipping builder's C1-floor backstop assigns.
+    GoalGate,
+    /// Closing the tile walls off at least one node (the
+    /// [`WorldState::zero_gate_locks`] definition).
+    AnyGate,
+    /// Any completable tile.
+    Any,
+}
+
+/// Re-place every lock from scratch, preferring candidates that actually
+/// gate something. The shaping loop's wide lock move: clears the lock set
+/// and rebuilds it one fort at a time (shuffled order) — for each fort, the
+/// passes in [`LockPass`] order over shuffled candidates, and every
+/// placement keeps the completability fixpoint true.
+///
+/// `goal_first` (cost mode's request): the first fort that CAN gate the
+/// goal does — a goal gate is the one cut a pipe web cannot bypass, so it
+/// reliably raises C1 on the express-shaped worlds where "gate anything"
+/// finds only worthless cuts. Only one goal gate is sought; the remaining
+/// forts fall back to the normal passes (a goal crowded by every lock is
+/// not a better world).
+///
+/// Returns false if some fort ends up unlockable — the caller owns the
+/// snapshot and must restore it (unlike the dumb Locks phase, shaping never
+/// removes forts; a failed proposal is just rolled back).
+pub(crate) fn place_locks_gating(
+    state: &mut WorldState,
+    rng: &mut dyn RngCore,
+    goal_first: bool,
+) -> bool {
+    state.locks.clear();
+
+    let mut open = state.grid.clone();
+    stamp_slots(&mut open, &state.slots);
+    let open_reach = walk_reachable(&open, &state.pipe_pairs, state.start, state.world_idx);
+
+    let mut fort_ids: Vec<usize> = state
+        .slots
+        .iter()
+        .filter(|s| s.kind == SlotKind::Fortress)
+        .map(|s| s.section)
+        .collect();
+    fort_ids.shuffle(rng);
+
+    let mut covered: HashSet<Pos> = HashSet::new();
+    let mut goal_gated = false;
+    for fort_id in fort_ids {
+        // Ranked candidates carry their cut sets, so pass admission reads
+        // straight off them (no per-candidate walk here).
+        let candidates = rank_candidates(state, &open, &open_reach, &covered, rng);
+
+        let mut placed = false;
+        'passes: for pass in [LockPass::GoalGate, LockPass::AnyGate, LockPass::Any] {
+            if pass == LockPass::GoalGate && (!goal_first || goal_gated) {
+                continue;
+            }
+            for (pos, tile, cut) in &candidates {
+                let admits = match pass {
+                    LockPass::GoalGate => state.target.is_some_and(|t| cut.contains(&t)),
+                    LockPass::AnyGate => !cut.is_empty(),
+                    LockPass::Any => true,
+                };
+                if !admits {
+                    continue;
+                }
+                state.locks.push(LockAssignment {
+                    pos: *pos,
+                    gap_tile: gap_tile_for(*tile),
+                    replace_tile: *tile,
+                    fort_section: fort_id,
+                    secret_exit_safe: false,
+                });
+                if state.completable() {
+                    placed = true;
+                    covered.extend(cut.iter().copied());
+                    if pass == LockPass::GoalGate {
+                        goal_gated = true;
+                    }
+                    break 'passes;
+                }
+                state.locks.pop();
+            }
+        }
+        if !placed {
+            return false;
+        }
+    }
+    true
+}
+
+/// Bridge-class path tiles: the water bridge and the two drawbridges —
+/// vanilla's natural lock sites (the drawbridge). Used as the TIEBREAK in
+/// candidate ranking: among equal marginal cuts, the bridge wins the look.
+const BRIDGE_TILES: [u8; 3] = [0xB3, 0xB1, 0xB2];
+
+/// Positions severed when `pos` alone is closed on the all-open world:
+/// reachable normally, unreachable with the gap. The measure of what a
+/// lock site is actually worth.
+fn cut_set(
+    open: &Grid,
+    open_reach: &Reach,
+    pipe_pairs: &[TeleportEdge],
+    start: Option<Pos>,
+    world_idx: usize,
+    pos: Pos,
+    tile: u8,
+) -> HashSet<Pos> {
+    let mut g = open.clone();
+    g.set(pos.0, pos.1, gap_tile_for(tile));
+    let closed = walk_reachable(&g, pipe_pairs, start, world_idx);
+    let mut cut = HashSet::new();
+    for r in 0..open.rows() {
+        for c in 0..open.cols {
+            if open_reach.contains((r, c)) && !closed.contains((r, c)) {
+                cut.insert((r, c));
+            }
+        }
+    }
+    cut
+}
+
+/// Rank one fort's candidates by MARGINAL cut — the nodes a site severs
+/// that `covered` (the union of already-placed locks' cuts) doesn't
+/// already claim — descending, bridges as the tiebreak, shuffled order
+/// within remaining ties. Marginal (not raw) is what stops the pile-up:
+/// the first goal-corridor lock scores the whole region, the second one
+/// scores the thin slice between them and loses to fresh territory — locks
+/// spread out to claim their own gates (the vanilla milestone shape), and
+/// because cuts depend on the seed's layout the proposal order varies per
+/// seed (unlike the static bridges-first sort this replaces).
+fn rank_candidates(
+    state: &WorldState,
+    open: &Grid,
+    open_reach: &Reach,
+    covered: &HashSet<Pos>,
+    rng: &mut dyn RngCore,
+) -> Vec<(Pos, u8, HashSet<Pos>)> {
+    let mut out: Vec<(Pos, u8, HashSet<Pos>)> = lock_candidates(state)
+        .into_iter()
+        .map(|(pos, tile)| {
+            let cut = cut_set(
+                open, open_reach, &state.pipe_pairs, state.start, state.world_idx, pos, tile,
+            );
+            (pos, tile, cut)
+        })
+        .collect();
+    out.shuffle(rng);
+    out.sort_by_key(|(_, tile, cut)| {
+        let marginal = cut.iter().filter(|p| !covered.contains(*p)).count();
+        (std::cmp::Reverse(marginal), !BRIDGE_TILES.contains(tile))
+    });
+    out
+}
+
+/// Tiles a lock may claim: lockable path-tile types (the kinds the FX engine
+/// can gap out and restore), not already locked, and not the row-7/8 partner
+/// of completable content — a lock consumes that shared completion bit too.
+fn lock_candidates(state: &WorldState) -> Vec<(Pos, u8)> {
+    let locked: HashSet<Pos> = state.locks.iter().map(|l| l.pos).collect();
+    let content: HashSet<Pos> = state.slots.iter().map(|s| s.pos).collect();
+    let mut out = Vec::new();
+    for r in 0..state.grid.rows() {
+        for c in 0..state.grid.cols {
+            let pos = (r, c);
+            let tile = state.grid.get(r, c);
+            if !LOCKABLE_TILES.contains(&tile) || locked.contains(&pos) {
+                continue;
+            }
+            if let Some(partner) = row78_partner(pos)
+                && content.contains(&partner)
+            {
+                continue;
+            }
+            out.push((pos, tile));
+        }
+    }
+    out
 }

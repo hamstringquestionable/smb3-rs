@@ -430,6 +430,42 @@ pub fn apply_remove_flashing(rom: &mut Rom) {
     }
 }
 
+// Poison Mushrooms: the `--poison-mushrooms` flag no longer uses MaCobra52's
+// all-1UPs-poison recolor. It now installs the per-block poison trap in
+// `randomize::poison_mushroom` (each 1-Up block hands out a real 1-Up or a
+// purple poison mushroom by a seed-salted position hash). The old recolor was
+// removed when the flag was repurposed.
+
+// Modern Power-Ups (by MaCobra52) — "Easy Power-up System.ips". Power-ups
+// behave like the modern Mario games: a Fire Flower or a suit taken as Small
+// Mario grants its power directly, without first having to grab a Mushroom
+// and become Big. Five writes, reproduced byte-for-byte from the IPS:
+//
+//   1. File 0x02A12 ← EA EA EA — NOPs a vanilla `JMP $A897` (bytes 4C 97 A8).
+//   2. File 0x02C44 ← EA EA EA — NOPs a second vanilla `JMP $A897`.
+//   3. File 0x043B9 ← 0x1E, 0x11802 ← 0x02, 0x11810 ← 0x03 — three single-byte
+//      data-table tweaks.
+//
+// Only the stated effect (Small Mario keeps suits / Fire power without going
+// Big) is claimed here; the per-byte mechanism was not independently
+// disassembled — the bytes match the upstream IPS record-for-record.
+const MODERN_POWERUP_JMP_A_OFFSET: usize = 0x02A12;
+const MODERN_POWERUP_JMP_B_OFFSET: usize = 0x02C44;
+const MODERN_POWERUP_TABLE_A_OFFSET: usize = 0x043B9;
+const MODERN_POWERUP_TABLE_B_OFFSET: usize = 0x11802;
+const MODERN_POWERUP_TABLE_C_OFFSET: usize = 0x11810;
+
+/// Apply MaCobra52's "Easy Power-up System" patch — power-ups work like the
+/// modern Mario games: Small Mario grabbing a Fire Flower or suit gets its
+/// power straight away without turning Big first.
+pub fn apply_modern_powerups(rom: &mut Rom) {
+    rom.write_range(MODERN_POWERUP_JMP_A_OFFSET, &[0xEA, 0xEA, 0xEA]);
+    rom.write_range(MODERN_POWERUP_JMP_B_OFFSET, &[0xEA, 0xEA, 0xEA]);
+    rom.write_byte(MODERN_POWERUP_TABLE_A_OFFSET, 0x1E);
+    rom.write_byte(MODERN_POWERUP_TABLE_B_OFFSET, 0x02);
+    rom.write_byte(MODERN_POWERUP_TABLE_C_OFFSET, 0x03);
+}
+
 /// Apply MaCobra's always-on bugfixes and fairness patches.
 pub fn apply_macobra_patches(rom: &mut Rom) {
     // Prevent forced hammer bro fights (4 NOPs)
@@ -600,6 +636,18 @@ mod tests {
     }
 
     #[test]
+    fn test_modern_powerups_writes() {
+        let mut rom = make_test_rom();
+        apply_modern_powerups(&mut rom);
+
+        assert_eq!(rom.read_range(MODERN_POWERUP_JMP_A_OFFSET, 3), &[0xEA, 0xEA, 0xEA]);
+        assert_eq!(rom.read_range(MODERN_POWERUP_JMP_B_OFFSET, 3), &[0xEA, 0xEA, 0xEA]);
+        assert_eq!(rom.read_byte(MODERN_POWERUP_TABLE_A_OFFSET), 0x1E);
+        assert_eq!(rom.read_byte(MODERN_POWERUP_TABLE_B_OFFSET), 0x02);
+        assert_eq!(rom.read_byte(MODERN_POWERUP_TABLE_C_OFFSET), 0x03);
+    }
+
+    #[test]
     fn test_remove_flashing_writes() {
         let mut rom = make_test_rom();
         apply_remove_flashing(&mut rom);
@@ -617,5 +665,43 @@ mod tests {
         assert_eq!(rom.read_range(NGO_HOOK_B_OFFSET, NGO_HOOK_B_BYTES.len()), &NGO_HOOK_B_BYTES);
         assert_eq!(rom.read_range(NGO_ROUTINE_OFFSET, NGO_ROUTINE.len()), &NGO_ROUTINE);
         assert_eq!(rom.read_range(NGO_NOP_OFFSET, NGO_NOP_BYTES.len()), &NGO_NOP_BYTES);
+    }
+}
+
+#[cfg(test)]
+mod asm_checks {
+    //! Decode each assembled routine and check the structural properties no
+    //! assembler was around to enforce. See [`crate::randomize::rom_data::asm`].
+    use super::*;
+    use crate::randomize::rom_data::asm;
+
+    #[test]
+    fn faster_frog_is_well_formed() {
+        asm::check(&FASTER_FROG_ROUTINE).allocation(FS_FASTER_FROG).assert_ok();
+    }
+
+    #[test]
+    fn tail_stay_dead_is_well_formed() {
+        asm::check(&TAIL_STAY_DEAD_ROUTINE).allocation(FS_TAIL_STAY_DEAD).assert_ok();
+    }
+
+    #[test]
+    fn hold_left_helper_is_well_formed() {
+        asm::check(&HOLD_LEFT_HELPER_BYTES).allocation(FS_HOLD_LEFT_HELPER).assert_ok();
+    }
+
+    #[test]
+    fn no_game_over_is_well_formed() {
+        asm::check(&NGO_ROUTINE).allocation(NGO_ROUTINE_OFFSET).assert_ok();
+    }
+
+    #[test]
+    fn limit_bro_is_well_formed() {
+        asm::check(&LIMIT_BRO_CODE).fragment().assert_ok();
+    }
+
+    #[test]
+    fn tail_swim_is_well_formed() {
+        asm::check(&TAIL_SWIM_ROUTINE).fragment().assert_ok();
     }
 }

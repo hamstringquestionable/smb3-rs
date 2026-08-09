@@ -1,6 +1,6 @@
 [package]
 name = "smb3-rs"
-version = "1.0.7"
+version = "1.1.0"
 edition = "2024"
 
 [lib]
@@ -12,7 +12,13 @@ crate-type = ["cdylib", "rlib"]
 name = "smb3-rs"
 path = "src/main.rs"
 
+# Playtest ROM builder. Native-only tooling; not part of the web build.
+[[bin]]
+name = "testrom"
+path = "src/bin/testrom.rs"
+
 [dependencies]
+modular-bitfield = "0.13"
 rand = "0.9"
 rand_chacha = "0.9"
 serde = { version = "1", features = ["derive"] }
@@ -25,3 +31,7 @@ clap = { version = "4", features = ["derive"] }
 wasm-bindgen = "0.2"
 js-sys = "0.3"
 getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[dev-dependencies]
+base32 = "0.5"
+mos6502 = "0.10.1"

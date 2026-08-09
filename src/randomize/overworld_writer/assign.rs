@@ -306,7 +306,7 @@ pub(super) fn assign_pool<R: Rng>(
                 if pair_idx >= built.pipe_pairs.len() || group.len() < 2 {
                     break;
                 }
-                let (pos_a, pos_b) = built.pipe_pairs[pair_idx];
+                let (mut pos_a, mut pos_b) = built.pipe_pairs[pair_idx];
 
                 // Use the is_a_side flag precomputed during catalog building.
                 let (idx_a, idx_b) = if group[0].1 {
@@ -314,6 +314,19 @@ pub(super) fn assign_pool<R: Rng>(
                 } else {
                     (group[1].0, group[0].0)
                 };
+
+                // Mixed pairs (one endpoint is the $5F spiral-castle tile, the
+                // other a plain pipe — only the W5 spiral) always drew the
+                // castle on the B-side cell in vanilla. Coin-flip the two
+                // positions so the castle can appear on either endpoint.
+                // pos_a/pos_b feed the tile grid, dest table, and pointer table
+                // consistently, so swapping them keeps the pipe internally
+                // coherent (the A-side entry stays at the A-nibble position).
+                let tile_a = catalog.entries[pickup.pool[idx_a].catalog_idx].tile;
+                let tile_b = catalog.entries[pickup.pool[idx_b].catalog_idx].tile;
+                if tile_a != tile_b && rng.random_bool(0.5) {
+                    std::mem::swap(&mut pos_a, &mut pos_b);
+                }
                 pipes.push(PipeAssignment {
                     pool_idx_a: idx_a,
                     pool_idx_b: idx_b,

@@ -15,9 +15,11 @@ use flag_key::*;
 use options::*;
 
 // Public API re-exported by the crate root (see lib.rs).
+pub use flag_key::{current_flag_key_version, flag_key_fields, flag_key_version_of};
 pub use options::{
-    EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri, ITEM_RANDOM,
-    ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY, STARTING_LIVES_VALUES,
+    item_display_name, item_id, EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri,
+    WildChaser, ITEMS, ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY,
+    STARTING_LIVES_VALUES,
 };
 
 #[cfg(test)]
@@ -112,6 +114,12 @@ fn randomize_inner(
         randomize::qol::make_hammer_rocks(rom);
     }
 
+    // W1 shortcut rock. The tiles land either way — only the rock's
+    // breakability follows `more_hammer_rocks`, so the map never leaks how a
+    // `Maybe` roll came out. Before the builder, like every map edit.
+    rom.set_tag("qol/w1_shortcut");
+    randomize::qol::apply_w1_shortcut(rom, more_hammer_rocks);
+
     // W8 Dark World map edits. The screen-3 water/bridge final page is always
     // applied; the screen-0 canoe + screen-2 extra paths are gated behind
     // `8s are Wild`. Both must run before the overworld builder so it sees the
@@ -205,7 +213,7 @@ fn randomize_inner(
     // of the overworld builder and the enemy/powerup passes.
     if antechamber_shuffle {
         rom.set_tag("levels/antechambers");
-        randomize::antechambers::shuffle(rom, &mut rng);
+        randomize::antechambers::shuffle(rom, &mut rng, options.include_beta_stages);
     }
 
     // Koopaling stability patches — needed whenever Koopalings may load in a
@@ -281,7 +289,9 @@ fn randomize_inner(
         randomize::hands_levels::install_full_grab(rom);
     }
     if troll_pipes {
-        rom.set_tag("troll_pipes");
+        // No `set_tag` here: this only mutates `build`, and the ROM writes it
+        // leads to happen later in the writer. Tagging it would label none of
+        // its own bytes and leak the name onto everything the writer emits.
         randomize::troll_pipes::mark_troll_pipes(&mut build, &mut rng);
     }
     // --- OVERWORLD CAPTURE POINT ---
@@ -294,6 +304,7 @@ fn randomize_inner(
     if let Some(slot) = overworld_capture {
         *slot = Some(build.clone());
     }
+    rom.set_tag("overworld_writer");
     randomize::overworld_writer::write_overworld(
         rom,
         &build,
@@ -389,6 +400,26 @@ fn randomize_inner(
     // running it unconditionally is correct and safe.
     rom.set_tag("qol/fix_canoe_softlock");
     randomize::qol::fix_canoe_softlock(rom);
+
+    // Two-player "warp to partner" escape hatch (Start+Select on the map).
+    // Always applied: in 2P the players share one map and its movable objects
+    // (canoe, Hammer Bros), so one player can strand the other; this gives a
+    // manual recovery. No effect in 1P (guarded on Total_Players).
+    rom.set_tag("qol/map_warp");
+    randomize::qol::apply_map_warp(rom);
+
+    // Canoe "call the boat" rescue: press A on any dock to summon the shared
+    // canoe to the adjacent water tile. Always applied — covers the canoe
+    // softlocks map_warp can't (1P, and both players stranded). Works in any
+    // world (keys on dock tile 0x4B + canoe object 0x10).
+    rom.set_tag("qol/canoe_summon");
+    randomize::qol::apply_canoe_summon(rom);
+
+    // Stop an enemy that is jumping up at the player from turning a stomp into
+    // damage. Always applied: it only widens outcomes vanilla already got
+    // wrong, so there is nothing to opt out of.
+    rom.set_tag("stomp_fairness");
+    randomize::stomp_fairness::apply(rom);
 
     // Adjust Bowser and Koopaling hitboxes.
     if options.adjust_boss_hitboxes {
@@ -506,6 +537,13 @@ fn randomize_inner(
         randomize::qol::apply_faster_frog(rom);
     }
 
+    // MaCobra52's "Easy Power-up System" — Small Mario gets suits / Fire power
+    // without first growing Big (modern Mario power-up behavior).
+    if options.modern_powerups {
+        rom.set_tag("qol/modern_powerups");
+        randomize::qol::apply_modern_powerups(rom);
+    }
+
     // Random Fire Flower — in-level Fire Flower grants a position-derived suit
     // instead of always Fire. Pure static patch (no RNG): the substitution is a
     // deterministic function of World_Num + the flower's level position.
@@ -514,15 +552,26 @@ fn randomize_inner(
         randomize::fire_flower::apply(rom, options.fire_flower);
     }
 
+    // Poison Mushroom — each 1-Up block hands out either a real 1-Up or a
+    // purple upside-down poison mushroom, chosen by a seed-salted position
+    // hash. Installs the $0A trap object + a hook on the block-spawn sites.
+    // Must run after world_order so the salt is final (mirrors fire_flower).
+    // Replaces MaCobra52's all-1UPs-poison recolor under the same flag.
+    if options.poison_mushrooms {
+        rom.set_tag("poison_mushrooms");
+        randomize::poison_mushroom::apply(rom);
+    }
+
     // Stamp flag key + seed into free space at STAMP_OFFSET (PRG012):
-    //   "S3R" magic + version byte, the flag key bytes (13 in v23), then the
-    //   seed (little-endian u64). Sizes derive from to_flag_bytes() so the
-    //   stamp grows with the flag key.
+    //   "S3R" magic, a length byte, the flag key bytes, then the seed
+    //   (little-endian u64). The key bytes lead with their own format version,
+    //   and since v29 their length varies with how much of the payload the
+    //   options reach — hence the length byte, so the seed can still be found.
     rom.set_tag("stamp");
     let flag_bytes = options.to_flag_bytes();
     let mut stamp = Vec::with_capacity(4 + flag_bytes.len() + 8);
     stamp.extend_from_slice(b"S3R");
-    stamp.push(FLAG_KEY_VERSION);
+    stamp.push(flag_bytes.len() as u8);
     stamp.extend_from_slice(&flag_bytes);
     stamp.extend_from_slice(&seed.to_le_bytes());
     rom.write_range(STAMP_OFFSET, &stamp);

@@ -3,7 +3,11 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use smb3_rs::{EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri, STARTING_LIVES_VALUES};
+use smb3_rs::{
+    item_display_name, item_id, EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri,
+    WildChaser, ITEMS,
+    STARTING_LIVES_VALUES,
+};
 
 /// Human-readable label for a tri-state flag in the run summary.
 fn tri_str(t: Tri) -> &'static str {
@@ -79,6 +83,40 @@ fn parse_piranha(s: &str) -> Result<PiranhaMode, String> {
     }
 }
 
+/// A whole `--wild-injections` value. Newtype rather than a bare
+/// `Vec<WildChaser>` because clap's derive reads a `Vec` field as a repeatable
+/// single-value arg, and would then expect the parser below to return one
+/// `WildChaser` per occurrence — a mismatch that panics at runtime rather than
+/// failing to compile (see `cli_parses_a_chaser_set`). Wrapping keeps the
+/// whole set in one parser, which is what makes `off` and `all` expressible.
+#[derive(Clone, Debug)]
+struct ChaserSet(Vec<WildChaser>);
+
+/// clap value parser for `--wild-injections`: a comma-separated set of chasers
+/// (`sun`, `lakitu`, `bass`), `all` for every one, or `off` for none. Returned
+/// in `WildChaser::ALL` order, which is the order the flag key stores.
+fn parse_wild_injections(s: &str) -> Result<ChaserSet, String> {
+    const VALID: &str = "valid values: off, all, or a comma-separated set of sun, lakitu, bass";
+    if s == "off" || s.is_empty() {
+        return Ok(ChaserSet(Vec::new()));
+    }
+    if s == "all" {
+        return Ok(ChaserSet(WildChaser::ALL.to_vec()));
+    }
+    let mut out = Vec::new();
+    for part in s.split(',') {
+        let part = part.trim();
+        let Some(&c) = WildChaser::ALL.iter().find(|c| c.name() == part) else {
+            return Err(format!("unknown chaser {part:?} -- {VALID}"));
+        };
+        if !out.contains(&c) {
+            out.push(c);
+        }
+    }
+    out.sort();
+    Ok(ChaserSet(out))
+}
+
 /// clap value parser for the tri-state flags (off/on/maybe).
 fn parse_tri(s: &str) -> Result<Tri, String> {
     match s {
@@ -87,50 +125,6 @@ fn parse_tri(s: &str) -> Result<Tri, String> {
         "maybe" => Ok(Tri::Maybe),
         _ => Err("valid values: off, on, maybe".to_string()),
     }
-}
-
-/// Inventory items: (CLI name, item ID, display name). Single source for the
-/// `--starting-items` parser and the run-summary printer; extra spellings are
-/// handled as aliases in `item_id`.
-const ITEMS: &[(&str, u8, &str)] = &[
-    ("mushroom", 0x01, "Mushroom"),
-    ("fire", 0x02, "Fire Flower"),
-    ("leaf", 0x03, "Super Leaf"),
-    ("frog", 0x04, "Frog Suit"),
-    ("tanooki", 0x05, "Tanooki Suit"),
-    ("hammer-suit", 0x06, "Hammer Suit"),
-    ("cloud", 0x07, "Cloud"),
-    ("p-wing", 0x08, "P-Wing"),
-    ("star", 0x09, "Starman"),
-    ("anchor", 0x0A, "Anchor"),
-    ("hammer", 0x0B, "Hammer"),
-    ("whistle", 0x0C, "Whistle"),
-    ("music-box", 0x0D, "Music Box"),
-    ("random", 0x0E, "Random"),
-    ("random-no-whistle", 0x0F, "Random (No Whistle)"),
-    ("random-suit-only", 0x10, "Random (Suit Only)"),
-];
-
-/// Look up a starting-item ID by CLI name (case-insensitive, with aliases).
-fn item_id(name: &str) -> Option<u8> {
-    let lower = name.to_lowercase();
-    let canonical = match lower.as_str() {
-        "fire-flower" | "fireflower" => "fire",
-        "frog-suit" => "frog",
-        "tanooki-suit" => "tanooki",
-        "hammersuit" => "hammer-suit",
-        "pwing" => "p-wing",
-        "starman" => "star",
-        "musicbox" => "music-box",
-        "random-suit" => "random-suit-only",
-        other => other,
-    };
-    ITEMS.iter().find(|&&(n, _, _)| n == canonical).map(|&(_, id, _)| id)
-}
-
-/// Display name for a starting-item ID in the run summary.
-fn item_display_name(id: u8) -> &'static str {
-    ITEMS.iter().find(|&&(_, i, _)| i == id).map_or("?", |&(_, _, n)| n)
 }
 
 #[derive(Parser)]
@@ -220,11 +214,12 @@ struct Cli {
     #[arg(long, default_value = "off", value_parser = parse_tri)]
     eights_are_wild: Tri,
 
-    /// Antechamber shuffle: the ten levels that open with an entry area
-    /// piping into the level's interior (4-3, 5-2, 5-3, 6-6, 6-9, 7-1, 7-4,
-    /// 7-5, 7-6, 7-7) get their interiors randomly permuted, so one level's
-    /// entry pipe can drop into another's interior: off, on, or maybe (the
-    /// seed decides, hidden from the flag key). Default: off.
+    /// Antechamber shuffle: the levels that open with an entry area piping
+    /// into the level's interior (2-Pyr, 4-3, 5-2, 5-3, 6-6, 6-9, 7-1, 7-4,
+    /// 7-5, 7-6, 7-7, plus beta stage β4 when --include-beta-stages is set)
+    /// get their interiors randomly permuted, so one level's entry pipe can
+    /// drop into another's interior: off, on, or maybe (the seed decides,
+    /// hidden from the flag key). Default: off.
     #[arg(long, default_value = "off", value_parser = parse_tri)]
     antechamber_shuffle: Tri,
 
@@ -301,6 +296,14 @@ struct Cli {
     /// Speed up Frog-Suit swimming and running ("Faster Frog", tail-attack-while-swimming compatible)
     #[arg(long)]
     faster_frog: bool,
+
+    /// Every 1-Up Mushroom becomes a Poison Mushroom that hurts you (MaCobra52's "All 1UPs are Poison Mushrooms" patch)
+    #[arg(long)]
+    poison_mushrooms: bool,
+
+    /// Small Mario grabbing a Fire Flower or suit gets its power without turning Big first (MaCobra52's "Easy Power-up System" patch)
+    #[arg(long)]
+    modern_powerups: bool,
 
     /// Random Fire Flower: in-level Fire Flowers grant a position-derived power
     /// state instead of always Fire — off, on, or wild (default: off).
@@ -392,9 +395,12 @@ struct Cli {
     #[arg(long, default_value = "off", value_parser = parse_enemy_mode)]
     hb_encounters: EnemyMode,
 
-    /// Inject Lakitu/Angry Sun/Boss Bass into ~15% of segments
-    #[arg(long)]
-    wild_injections: bool,
+    /// Seed a level-wide chaser into a fraction of levels. A comma-separated
+    /// set of `sun`, `lakitu`, `bass`; or `all`; or `off` (default). A level
+    /// whose CHR can't fit an allowed chaser is skipped rather than given one
+    /// you didn't ask for.
+    #[arg(long, default_value = "off", value_parser = parse_wild_injections)]
+    wild_injections: ChaserSet,
 
     /// Set starting lives. Must be one of 1, 5, 20, 99 (default: 5).
     #[arg(long, default_value_t = 5, value_parser = parse_starting_lives)]
@@ -421,6 +427,18 @@ struct Cli {
     /// Dump the write log to a file (shows every ROM byte changed, grouped by module)
     #[arg(long)]
     write_log: Option<PathBuf>,
+
+    /// Print the per-bank free-space budget and exit, without randomizing.
+    /// Derived from the vanilla ROM and the allocation registry, so it is the
+    /// same for every seed and option set.
+    #[arg(long)]
+    free_space: bool,
+
+    /// With --free-space: list every unclaimed gap that would hold N bytes,
+    /// instead of the per-bank summary. This is the question to ask when
+    /// siting a new patch — a bank total can be scraps.
+    #[arg(long, value_name = "N")]
+    fit: Option<usize>,
 
     /// Skip the SMB3 (USA) header / page-count / size checks so modded or
     /// translated ROMs can be loaded. The title-screen seed hash is also
@@ -510,6 +528,8 @@ fn build_options(cli: &Cli) -> Options {
             faster_tail_speed: cli.faster_tail_speed,
             no_game_over_penalty: cli.no_game_over_penalty,
             faster_frog: cli.faster_frog,
+            poison_mushrooms: cli.poison_mushrooms,
+            modern_powerups: cli.modern_powerups,
             fire_flower: cli.fire_flower,
             piranha_shuffle: cli.piranha_shuffle,
             shuffle_spade_games: !cli.no_shuffle_spade_games,
@@ -530,7 +550,7 @@ fn build_options(cli: &Cli) -> Options {
             water: cli.water,
             bros: cli.bros,
             hb_encounters: cli.hb_encounters,
-            wild_injections: cli.wild_injections,
+            wild_injections: cli.wild_injections.0.clone(),
             starting_lives: cli.starting_lives,
             starting_items,
             skip_rom_validation: cli.skip_rom_validation,
@@ -576,6 +596,11 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
         PiranhaMode::On => "on",
         PiranhaMode::Wild => "wild",
     });
+    eprintln!("  Wild injections: {}", if options.wild_injections.is_empty() {
+        "off".to_string()
+    } else {
+        options.wild_injections.iter().map(|c| c.name()).collect::<Vec<_>>().join(" + ")
+    });
     if !options.starting_items.is_empty() {
         let item_names: Vec<&str> =
             options.starting_items.iter().map(|&id| item_display_name(id)).collect();
@@ -594,6 +619,23 @@ fn main() {
             process::exit(1);
         }
     };
+
+    if cli.free_space {
+        use smb3_rs::randomize::rom_data::{format_bank_budget, format_gaps_fitting};
+        match smb3_rs::rom::Rom::from_bytes_lax(&rom_data, cli.skip_rom_validation) {
+            Ok(rom) => {
+                match cli.fit {
+                    Some(need) => print!("{}", format_gaps_fitting(&rom, need)),
+                    None => print!("{}", format_bank_budget(&rom)),
+                }
+                return;
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                process::exit(1);
+            }
+        }
+    }
 
     let seed = cli.seed.unwrap_or_else(rand::random);
 
@@ -671,6 +713,10 @@ fn main() {
             }
         }
 
+        // Free space is the scarcest resource here, so the log that says what
+        // was written also says what it cost and what is left.
+        log.push_str(&smb3_rs::randomize::rom_data::format_free_space_report(&rom));
+
         if let Err(e) = fs::write(log_path, &log) {
             eprintln!("Error writing log: {e}");
         } else {
@@ -692,4 +738,44 @@ fn main() {
         process::exit(1);
     }
     eprintln!("Done! Wrote {} bytes to {}", output_data.len(), output_path.display());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Parse a real argv, which is the only place this mistake shows up.
+    ///
+    /// clap's derive reads a `Vec` field as a repeatable single-value arg, so a
+    /// `value_parser` returning the whole set downcasts to the wrong type and
+    /// panics during argument parsing — before any of this crate runs. There is
+    /// no compile error, and `Cli::command().debug_assert()` passes (checked:
+    /// it did, while the binary panicked on every invocation). Only converting
+    /// matches back into the struct reaches the downcast, so only a test that
+    /// parses an argv catches it.
+    #[test]
+    fn cli_parses_a_chaser_set() {
+        let cli = Cli::try_parse_from(["smb3-rs", "rom.nes", "--wild-injections", "sun,bass"])
+            .expect("argv should parse");
+        assert_eq!(cli.wild_injections.0, vec![WildChaser::Sun, WildChaser::Bass]);
+
+        let off = Cli::try_parse_from(["smb3-rs", "rom.nes"]).expect("argv should parse");
+        assert!(off.wild_injections.0.is_empty(), "default must be off");
+    }
+
+    #[test]
+    fn wild_injection_sets_parse() {
+        let set = |s: &str| parse_wild_injections(s).map(|c| c.0);
+        assert_eq!(set("off").unwrap(), vec![]);
+        assert_eq!(set("all").unwrap(), WildChaser::ALL.to_vec());
+        assert_eq!(set("bass").unwrap(), vec![WildChaser::Bass]);
+        // Canonical order regardless of how they were typed, so two spellings
+        // of one set produce the same flag key.
+        assert_eq!(set("bass,sun").unwrap(), vec![WildChaser::Sun, WildChaser::Bass]);
+        assert_eq!(set("sun, bass").unwrap(), set("bass,sun").unwrap());
+        // Duplicates collapse rather than double-weighting anything.
+        assert_eq!(set("sun,sun").unwrap(), vec![WildChaser::Sun]);
+        assert!(set("eel").is_err());
+        assert!(set("sun,eel").is_err());
+    }
 }

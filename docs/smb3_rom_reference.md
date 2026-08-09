@@ -1063,6 +1063,84 @@ Source: `smb3.asm` from the [Southbird disassembly](https://github.com/captainso
 | 0xAD | OBJ_ROCKYWRENCH | Rocky Wrench |
 | 0xAF | OBJ_ENEMYSUN | Angry Sun |
 
+### Unused Group-0 Objects — Repurposable ID Slots (PRG001)
+
+Object group 0 (IDs $00–$23, dispatched from PRG001, CPU $A000–$BFFF, file offset = CPU − $A000 + 0x2010) contains seven leftover objects with live handlers but no name in the Southbird disassembly: **$01, $02, $04, $05, $0A, $1A, $1C**. All seven are fully repurposable (verified 2026-08-02).
+
+> **$0A is now taken**: `src/randomize/poison_mushroom.rs` (the
+> `--poison-mushrooms` flag) installs the Poison Mushroom trap object there
+> (upside-down 1-Up sprite, hurts on touch). It **reuses the 1-Up's Norm
+> handler** (`ObjNorm_PUp1UpMush` at $A77E) and adds only a 17-byte Init+Hit
+> stub pair at $A703, so it inherits the rise-out-of-block animation and
+> powerup-style hit-testing. The same module also adds a **1-Up spawn hook**:
+> both block-spawn sites that run `STA Level_ObjectID,Y` (`99 71 06` at file
+> `0x02597` / `0x02AED`, CPU $A587 / $AADD — where `LDA Bouncer_PUp,Y` has just
+> resolved the block's object) are patched to `JSR` a 31-byte routine at $A714.
+> That routine replays the store and, if the object is a 1-Up ($0B),
+> position-hashes (`salt + World_Num + Level_LayPtr_AddrL + Objects_XHi/X/Y,X`)
+> to keep $0B or swap in $0A — so each 1-Up block independently gives a real
+> 1-Up or poison, deterministically per seed (salt = `WORLD_INIT_OPERAND`, like
+> random fire flower). Covers brick-1up **and** invis-1up (both resolve to
+> `Bouncer_PUp[7]=$0B`). The stub + hook use ~48 bytes of the ~123-byte island;
+> the rest, and the other six unused IDs, remain open.
+
+- **No level data uses them** — zero hits across all 2077 enemy entries in `rom_map.json`.
+- **No code spawns them** — every `STA Level_ObjectID` site in the disassembly was audited; all use named `OBJ_` constants or table-driven spawn lists containing only named IDs. (Two raw-immediate near-misses are benign: PRG000 $D07E stores a *frame* of 3; PRG005 wooden-platform spawner stores $00 as a placeholder before setting the real ID.)
+- **Handlers are referenced only from the three per-ID jump tables** — no cross-calls from other code.
+
+Vanilla behavior of each (from handler code, so a repurposer knows what dies):
+
+| ID | Behavior |
+|----|----------|
+| $01 | Springboard, contact phase: snaps to player X, marks player mid-air, arms var1=$B0 launch |
+| $02 | Springboard, launch phase: compress animation via table at $A361, feeds `Bouncer_PUpVel` into player Y velocity; holding A upgrades launch to $88 |
+| $04 | "Mimic" enemy: 16x32 sprite, copies the player's X/Y velocity onto itself on contact |
+| $05 | Hopping chaser: idles, 1-in-64 random activation for $90 ticks, lunges (YVel −$20) facing player; stomping bounces player −$40 in facing direction |
+| $0A | Rideable platform-creature: player lands on its back (player Y = object Y − 25), left/right input steers it |
+| $1A | "Stop" pickup: on contact deletes itself and zeroes player X/Y velocity |
+| $1C | Flee-and-drop: init launches it away from player (XVel ±$40, YVel −$80) and spawns a Super Mushroom in slot 5 at its own position |
+
+**Per-ID dispatch/attribute tables** (all in PRG001 at fixed `.org` addresses; one entry per ID $00–$23; repurposing an ID means updating its slot in each):
+
+| Table | CPU | File offset | Entry size |
+|-------|-----|-------------|-----------|
+| ObjectGroup00_InitJumpTable | $A000 | 0x2010 | word |
+| ObjectGroup00_NormalJumpTable | $A048 | 0x2058 | word |
+| ObjectGroup00_CollideJumpTable (hit) | $A090 | 0x20A0 | word |
+| ObjectGroup00_Attributes | $A0D8 | 0x20E8 | byte |
+| ObjectGroup00_Attributes2 | $A0FC | 0x210C | byte |
+| ObjectGroup00_Attributes3 | $A120 | 0x2130 | byte |
+| ObjectGroup00_KillAction | $A168 | 0x2178 | byte |
+| ObjectGroup00_PatternStarts | $A18C | 0x219C | byte |
+| ObjectGroup00_PatternSets | $A1B0 | 0x21C0 | table |
+
+Handler entry points as read from the Rev 1 ROM jump tables (`DoNothing` = $D3A0 in the fixed bank):
+
+| ID | Init | Norm | Hit |
+|----|------|------|-----|
+| $01 | $A27B | $A284 | $A2BC |
+| $02 | $A321 | $A36C | DoNothing |
+| $04 | $A3A6 | $A3B9 | $A3CB |
+| $05 | $A3DE | $A3F1 | $A464 |
+| $0A | $A703 | $A709 | $A724 |
+| $1A | DoNothing | $AA21 | $AA33 |
+| $1C | $AB3D | $AB7B | DoNothing |
+
+**Reclaimable code regions** (dead once the table entries are repointed; boundaries verified against neighboring labels):
+
+| CPU range | File offset | Bytes | Contents |
+|-----------|-------------|-------|----------|
+| $A27B–$A4AD | 0x228B–0x24BD | 563 | Obj01/02/04/05 handlers + unreferenced 13-byte blob at $A4A1 (next: ObjInit_BounceDU $A4AE) |
+| $A703–$A77D | 0x2713–0x278D | 123 | Obj0A init/norm/hit + stray RTS (next: ObjNorm_PUp1UpMush $A77E) |
+| $AA21–$AA48 | 0x2A31–0x2A58 | 40 | Obj1A norm/hit + unreferenced 8-byte blob at $AA41 (next: ObjInit_BounceLR $AA49) |
+| $AB3D–$AB8E | 0x2B4D–0x2B9E | 82 | Obj1C init/norm (next: Leaf_YVels $AB8F) |
+
+Total ≈ 808 bytes of reclaimable PRG001 space. New handler code must live in bank 1 (or trampoline to the fixed bank), since that's the bank paged in when a group-0 object runs.
+
+**Caveats:**
+- The `DoNothing` slots ($0F–$16, $1D, $20) look free too, but each needs the same spawn-site audit before use — $00 in particular is used as a placeholder ID by the wooden-platform spawner, leave it alone.
+- The randomizer's CHR model (`sprite_bank()`, CHR pinning) ignores IDs below $24; anything that makes the builder or injection emit one of these IDs must teach that model about it first.
+
 ---
 
 ## Power-Up / Item Data
@@ -1380,15 +1458,19 @@ by Recolored, proving these are the master per-tileset/area palette tables.
 | 0x37808–0x37846 | ~60 B  | palette data | Slice 4-B — separate paint probe if needed |
 |                 |        |  | **Lesson**: the "master pool" 0x36EE2-0x37846 is NOT pure palette data. Interleaved pointer tables / lookup tables must be preserved. Any randomizer needs per-sub-region byte maps to know what's safe to touch. |
 
-> **Empirical confirmations** are from `tools/gen_palette_probes.py` runs in an emulator
-> (paint each table to NES `0x24` hot magenta, observe which graphics turn pink).
-> Probes apply `patches/smb3practice_SE.ips` for warp whistles + level select + open movement
-> so all worlds are reachable. Filenames: `test_roms/palette_probe_<name>_wN.nes`.
+> **Empirical confirmations** came from emulator probe runs: paint each table to
+> NES `0x24` (hot magenta) and observe which graphics turn pink, with
+> `patches/smb3practice_SE.ips` applied for warp whistles + level select + open
+> movement so all worlds are reachable. The probe generator (`gen_palette_probes.py`)
+> has been deleted now that its findings are recorded here — recover it from git
+> history if the technique is needed again.
 
 > **Quartet alignment varies** across these tables — outline `0F` is at byte 2 in
 > 0x36BE4 but at byte 1 in 0x36EE2. Hardcoding "outline at byte 3" is unsafe; either
-> probe each table for its alignment, or paint every byte that isn't `0x00` or `0x0F`
-> (the `raw` painter strategy in `gen_palette_probes.py`).
+> probe each table for its alignment, or use the **raw painter strategy**: paint
+> every byte in the range that is not `0x00` or `0x0F`, leaving those two alone.
+> That sidesteps alignment entirely and was the approach that produced the
+> confirmations above.
 
 > **Note**: Specific table semantics (tileset assignment, index mapping) are inferred from
 > structural patterns and the Recolored IPS, not yet verified against the SMB3 disassembly.
@@ -1425,8 +1507,11 @@ variant swap), plus hue-rotation-only coverage of kept-vanilla chromatic
 quartets (`ROTATE_ONLY_QUARTETS`).
 > Confirm with disassembly cross-reference before basing critical writes on these offsets.
 >
-> Diagnostic tool: `nix-shell -p python3 --run 'python3 tools/palette_inspect.py'` dumps
-> every Recolored cluster, classifies it, and shows vanilla vs. recolored hex side-by-side.
+> The cluster-by-cluster reverse engineering behind this section was done with
+> `tools/palette_inspect.py` (dumped every Recolored cluster, classified it, and
+> showed vanilla vs. recolored hex side-by-side). That tool has been deleted now
+> that its output is captured here and in `palette_variants.rs`; recover it from
+> git history if the Recolored IPS needs re-analysing.
 
 ### Jump Engine — `$FE99` (Fixed Bank, NOT Palette-Specific)
 
@@ -2047,14 +2132,19 @@ others get `0x37`. Without it the new ring boss loads `0x37` and the ring render
 
 **0x19103–0x193D9**: Region between overworld tile grid data and the InitIndex master pointer table (starts at 0x193DA). **WARNING:** 0x19103–0x1910F contains a tile lookup table, and 0x19110+ contains active map screen code (level-entry logic: `ROL $07`, `LDA $073C,X`, etc.). This is NOT free space — writing here corrupts the map screen and crashes on level entry.
 
-**0x19DD0–0x19FFF** (560 bytes): Free space after overworld tile/code region. The randomizer stamps a 17-byte identification block at **0x19DF0**:
+**0x19DD0–0x19FFF** (560 bytes): Free space after overworld tile/code region. The randomizer stamps an identification block at **0x19DF0**:
 
 | Offset | Size | Content |
 |--------|------|---------|
 | +0 | 3 | `S3R` magic bytes |
-| +3 | 1 | Version (0x02) |
-| +4 | 5 | Flag key bytes (encoded Options) |
-| +9 | 8 | Seed (little-endian u64) |
+| +3 | 1 | Length of the flag key bytes that follow (`N`) |
+| +4 | N | Flag key bytes (encoded Options; byte 0 is the flag-key format version, byte 1 its checksum) |
+| +4+N | 8 | Seed (little-endian u64) |
+
+`N` varies: since flag-key format v29 the encoder drops trailing zero bytes, so
+a set of options that doesn't reach the tail of the payload produces a shorter
+key. Typical block size is 22–26 bytes; the format's ceiling is 3 + 1 + 32 + 8 =
+44.
 
 **Note:** The Big ? Block trampoline and flag stamp both live in this region.
 
@@ -2166,6 +2256,26 @@ fortress/ship in the game.
    `absolute_index = FortressFXBase_ByWorld[World_Num] + Map_DoFortressFX`
 3. Reads the FX slot value from `FortressFX_W1[absolute_index]` (0x00–0x10).
 4. Uses the FX slot to index into all visual/map replacement tables below.
+
+**Routine layout and entry points (CPU addresses, PRG010 = file − 0x8010):**
+
+| Address | What it does |
+|---------|--------------|
+| `$C8E6` | `LDA #$01 / STA $20` — sets `Map_ClearLevelFXCnt`. Randomizer hook site. |
+| `$C8EA`–`$C94F` | Queues the replacement tile into `Graphics_Buffer` (the VRAM write) |
+| `$C952` | `Map_Completions` block: loads `FortressFX_MapCompIdx` into `$0A`/`$0B` |
+| `$C964`–`$C969` | `LDA $7D00,Y / AND $0B / BNE $C9C9` — **already-busted check** |
+| `$C96B`–`$C9A2` | Sets the bits (both players), then writes the tile into map RAM |
+| `$C9A4` | Poof-sprite animation loop, driven by `$20` counting up to 7 |
+| `$C9C9` | Clears `Map_DoFortressFX` / `$20` and ends the effect |
+
+Note the ordering: **the VRAM write is queued before the busted check.** Vanilla
+re-runs the effect for an already-broken lock, repainting a tile that already
+shows the replacement — invisible normally, but a disclosure on a dark page.
+Entering at `$C952` therefore skips only the VRAM write; `$20` chosen at entry
+selects whether the poof plays (`$20=1`) or the effect ends at once (`$20=6`).
+`$C952` is self-contained — it reloads the slot from `$0745` and needs no
+register setup. See `fortress_fx.rs` (issue #131).
 
 **Data tables (all 17 entries, indexed by FX slot 0x00–0x10):**
 
@@ -2776,6 +2886,36 @@ Tanooki/Mushroom/Leaf.
 | 0x3AC10–0x3AC60 | ~80 bytes | Mario/Luigi sprite pointer table |
 | 0x3AC61–0x3AE46 | ~485 bytes | Mario/Luigi sprite raw data |
 | 0x3AE47–0x3AE97 | ~80 bytes | Mario/Luigi sprite tile set |
+
+### Player Sprite Composition (PRG029, `Player_Draw`)
+
+The player is drawn as **six 8×16 sprites** in a 3-column × 2-row block: three
+"upper half" sprites at the player's Y, three "lower half" sprites 16 px below,
+columns 8 px apart. Everything needed to reproduce a frame outside the emulator
+lives in three PRG029 tables (PRG029 = file `0x3A010–0x3C00F`, mapped at `$C000`,
+so file offset = `0x3A010 + (addr - 0xC000)`):
+
+| Table | Address | File | Size | Contents |
+|-------|---------|------|------|----------|
+| `SPPF_Offsets` | `$CC00` | 0x3AC00 | 81 B | One byte per `Player_Frame` ($00–$50); `byte * 2` indexes from `SPPF_Table - 4` |
+| `SPPF_Table` | `$CC51` | 0x3AC51 | 81 × 6 B | Six sprite patterns per frame: upper row (left, middle, right) then lower row |
+| `Player_FramePageOff` | `$CE37` | 0x3AE37 | 81 B | CHR page offset (0–3) added to the power-up root page for that frame |
+| `Player_PUpRootPage` | `$CE98` | 0x3AE98 | 7 B | Root 1KB CHR page per suit: Small `$50`, Big `$54`, Fire `$54`, Raccoon `$00`, Frog `$50`, Tanooki `$40`, Hammer `$44` |
+
+`Player_Draw` loads `Player_PUpRootPage[Player_Suit] + Player_FramePageOff[Player_Frame]`
+into `PatTable_BankSel+2`, so a frame's tiles all come from **one 1KB CHR page**
+(64 tiles) mapped at `$1000`. Sprites are 8×16, so a pattern byte's bit 0 selects
+the pattern table and the actual tile pair is `(pattern & $FE, +1)` within that
+page. Pattern **`$F1` is the magic "don't display this sprite" flag**.
+
+Mirroring: if the two lower-row patterns are equal, the frame is a symmetric
+pose — the left column draws unflipped and the middle column draws horizontally
+flipped (rather than the right column being used). Frame constants are in the
+Southbird disassembly (`PF_*`); `PF_WALKBIG_BASE` = `$0C` is both the first walk
+frame and the standing pose for big/fire/hammer.
+
+`tools/gen_visual_previews.py` implements exactly this to render the standing
+player out of a (possibly re-skinned) ROM.
 
 ### Enemy Sprite CHR Bank Switching (PatTable_BankSel)
 
@@ -3559,6 +3699,40 @@ this and the `ExcludeHazards` filter over many seeds.
 | $797E–$797F | Death respawn map Y (Mario/Luigi) |
 | $7980–$7981 | Death respawn map X high (Mario/Luigi) |
 | $7982–$7983 | Death respawn map X low (Mario/Luigi) |
+| $0596 | `Map_MarchInit` — marching data initialized this cycle |
+| $0597 | `Map_InCanoe_Flag` — player is in the canoe |
+| $0598 | `World_8_Dark` — W8 darkness active; counts 0–7 while the effect sets up |
+
+**`World_8_Dark` ($0598)** is the engine's single source of truth for "the map
+is dark right now." Set on map load (PRG030, two sites: `STY $0598` at 0x3C5B5
+and 0x3D1E1) from `World_Num == 7 && World_Map_XHi[player] == 2` — i.e. it
+tracks the *player's* page, not any particular tile's. Three consumers gate on
+it: `Map_W8DarknessFill` (blanket-fills the nametable with black tile `$FF`
+starting at VRAM `$2880`, ~608 bytes, leaving map RAM untouched),
+`FX_World_8_Darkness` (PRG011 $BB6D — the reveal-around-Mario animation, which
+paints real tiles back into VRAM), and `Map_W8Dark_IntroCover`. Because the
+darkness is *only* a VRAM overlay, anything that writes a tile to VRAM on that
+page paints it lit over the black and it stays that way until reload — which is
+why the randomizer's fortress lock-break FX has to gate its VRAM write on this
+flag.
+
+**Vanilla does not, and does not need to.** `MO_DoFortressFX` (PRG010 $C8B0)
+never reads `$0598`; the only consumers anywhere in the ROM are the three above.
+It queues the VRAM write into `Graphics_Buffer` at the top of the routine and
+never reconsiders, and its baked address for the W8 dark-page slot ($0F →
+`$2998`) sits inside the `$2880`+608 fill. Yet vanilla is visually correct on
+the dark page — verified on hardware-accurate emulation, both for a plain
+fortress clear and for a lock hammered open first (with the randomizer's
+`hammer_breaks_locks` patch applied to an otherwise vanilla ROM, since the
+vanilla hammer only matches rocks `$51`–`$52`).
+
+So the gate compensates for something the randomizer's replacement routine
+loses between its `$C8E6` hook and the buffer commit, rather than supplying
+behaviour vanilla lacks. What vanilla does in that window to make the write
+harmless is **not yet understood** — worth resolving before that patch grows,
+since it may allow dropping the gate entirely. Measured 2026-08-03: disabling
+the darkness gate alone reproduces the reveal; disabling the (since removed)
+already-busted gate alone does not.
 
 ### Enemy / Object State
 
@@ -3834,6 +4008,47 @@ The game moves the player 2 tiles at a time on the overworld: from a **node** ti
 Background tiles `{$B4, $FF, $02}` block movement to the destination node.
 
 Pipes create **bidirectional teleport edges** between two node positions, bypassing the path tile check.
+
+### Two-Player Map Battle Trigger (PRG010)
+
+In 2-player mode both players share one loaded map, with each player's position held
+in parallel per-player arrays (`World_Map_Y` `$75,X`, `World_Map_XHi` `$77,X`,
+`World_Map_X` `$79,X`, where X is the player index). When the current player presses A
+while standing on the **same tile** as the other player, the game launches the
+two-player Battle Game (a Mario Bros. style versus stage).
+
+**Trigger routine `PRG010_CE78` — CPU `$CE78`, file `0x14E88` (byte-verified):**
+
+```
+PRG010_CE78:
+  LDA $F5 / ORA $F6 / AND #$80 / BEQ ...   ; either controller pressed A?
+  LDX $0726          ; X = Player_Current (0=Mario, 1=Luigi)
+  TXA / EOR #$01 / TAY   ; Y = the OTHER player
+  LDA $0736,Y / CMP #$FF / BEQ ...   ; skip if other player is dead (lives $FF)
+  LDA $77,X / CMP $0077,Y / BNE ...   ; XHi match?
+  LDA $75,X / CMP $0075,Y / BNE ...   ; Y match?
+  LDA $79,X / CMP $0079,Y / BNE ...   ; X match?
+  LDA #$12 / STA $1D    ; Map_Enter2PFlag = $12 (enter 2P Vs)
+PRG010_CEA7:            ; CPU $CEA7, file 0x14EB7
+  LDA #$10 / STA $0729  ; Map_Operation = $10 (begin "enter level" effect)
+```
+
+Sits immediately after the level-entry gate at `$CDF8` (file `0x14E08`).
+`Map_Enter2PFlag` (`$1D`) = `$12` tells the level loader to spawn the versus stage
+instead of a normal level.
+
+**Downstream (from southbird disasm `prg009.asm` / `prg010.asm`, not byte-verified):**
+the battle resolves in PRG009's Vs-mode code (`Vs_EndGame` ~CPU `$B3D1`, coin-race win
+condition) and records the loser in `Map_PlayerLost2PVs`. On return to the map the
+loser is bumped back to their prior tile via the **skid-back** mechanic
+(`Map_Player_SkidBack,X`, driven by `Map_Operation = $0F`); turn ownership is
+`Player_Current` `$0726`.
+
+**Softlock note:** this can *only* fire when both players occupy the same tile, so it
+is **not** a rescue for a player stranded across water (e.g. a mis-parked `8s are Wild`
+canoe) — the two players cannot be on the same tile across the gap. It does confirm the
+map view + its map objects (including the shared canoe) are common to both players, not
+per-player.
 
 ---
 

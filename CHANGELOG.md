@@ -9,6 +9,177 @@ deploys.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-08
+
+### Added
+
+- **Random Boom-Boom Stomps** now has a toggle in the web app, under Bosses. It
+  was already part of the randomizer and already carried in the flag key, but
+  with no control on the page the web app always ran it on — and a shared flag
+  key that turned it off was silently ignored. The setting is on by default, so
+  nothing changes unless you turn it off.
+
+- The beta stage β4 now joins the Antechamber Shuffle pool when beta stages
+  are enabled. Like the vanilla antechamber levels, its 8-screen interior can
+  be swapped behind another level's entry pipe (and vice versa). With beta
+  stages off, output is unchanged. Note: turning on both beta stages and
+  antechamber shuffle now produces a different result for a given seed than
+  before (the shuffle covers one more level).
+
+- The Visual Patch pills in the web app now show a preview sprite of what each
+  patch gives you — the same standing pose rendered from each patch's own
+  graphics, so you can see Luigi, Peach, Toad, Dr. Mario or Baldman before
+  generating. The "+ Viruses" pill shows one of its viruses instead, since its
+  player graphics are the same as plain Dr. Mario.
+
+- Modern Power-Ups option (MaCobra52's "Easy Power-up System"): power-ups work
+  like the newer Mario games — Small Mario grabbing a Fire Flower or suit gets
+  its power without turning Big first. Off by default; on in the Beginner
+  Friendly preset.
+
+- Poison Mushrooms option (after MaCobra52's "All 1UPs are Poison Mushrooms"):
+  every 1-Up block becomes a coin flip. Each one independently hands out either
+  a real 1-Up or an upside-down poison mushroom that hurts you, decided by the
+  seed — so a run keeps some real 1-Ups mixed in with the traps, and you can't
+  tell which a block holds until you hit it. Off by default; on in the Max
+  Chaos and Challenging presets.
+
+- Beta site is now visually distinct from the main site: the `/beta/` deploy
+  shows a hazard-striped "BETA BUILD" banner, a violet frame, and a BETA badge
+  in the header so it can't be confused with the stable release page.
+
+- Canoe "call the boat" rescue: stand on any dock and press A to summon the
+  canoe to the water beside you, then board as usual. Prevents canoe softlocks
+  where the boat was left out of reach, in both 1- and 2-player games.
+- Two-player "warp to partner" escape hatch: on the overworld map, the active
+  player can press Start+Select to jump to the other player's tile. This
+  prevents softlocks where one player moves a shared map object (such as the
+  `8s are Wild` canoe) out of the other's reach. No effect in 1-player games.
+
+### Changed
+
+- The presets have been refreshed to take in this release's new options, and
+  there's a new **League Season 7** preset.
+
+- **Flag keys have been rebuilt, and keys from earlier versions no longer
+  work.** This is the last time they break: the new format has room to grow, so
+  from here on adding an option leaves existing keys valid — the new option is
+  simply off in a key made before it existed. Two other things come with it:
+
+  - **A mistyped key is now caught.** Previously a single wrong character
+    produced a valid key for *different* settings about nine times out of ten,
+    with nothing on screen to say so. A key now carries a check byte, so a typo
+    or a truncated paste is rejected instead of quietly changing the ruleset —
+    which matters most in a race, where everyone is pasting the same key.
+  - **Keys got a little shorter** (26 characters instead of 27 for the default
+    set), and only carry as much as the settings need.
+
+- "Wild Injections" now lets you pick which chasers get dropped into levels,
+  and adds a third one. The option is four pills — Off, Sun, Lakitu, Bass —
+  where the three chasers toggle independently and Off clears them, so you can
+  ask for any combination. Picking fewer doesn't make them rarer; every
+  combination drops about the same number per seed.
+
+  **Boss Bass is new to the pool**: a leaping Big Bertha that follows you
+  through a level that never had one, dry ground included. It was meant to be
+  available when the option first shipped, but with water enemies shuffled it
+  was quietly turned back into an ordinary fish before it ever reached the ROM.
+
+  Saved web settings carry over (an old "on" becomes Sun + Lakitu, the pool as
+  it stood then), and the CLI flag takes a set now: `--wild-injections sun,bass`,
+  or `all`, or `off`.
+
+- World 1 has a new rock sitting between the middle of the map and the
+  bottom-right. With "More hammer rocks" on you can break it, opening a real
+  second way around a world that otherwise runs as one long lap. With the
+  option off the rock is solid — and it looks exactly the same either way, so
+  you have to swing a hammer at it to find out.
+
+- **The overworld builder was rebuilt around route choice.** Maps are no
+  longer rolled and rerolled until one looks acceptable. Each world is laid
+  out plainly first — bridge the cut-off parts with pipes, then place levels,
+  fortresses and locks — then measured for how many roughly-equal routes
+  reach the goal, then shaped by targeted moves: a fortress re-prices a
+  shortcut, a lock forces that fortress's cost onto it (the classic "beat the
+  fort or take the long way round"), a pipe opens an alternative. A world
+  that still won't fork redeals its whole pipe web and tries again.
+
+  What that means to play: **worlds with only one reasonable way through are
+  now about 7% of seeds**, where before the rebuild the same measure sat in
+  the twenties, and a typical world offers roughly two and a half distinct
+  routes. Worlds whose terrain genuinely can't fork stay honestly linear —
+  World 7 is still the most stubborn at ~20%, while World 6 now forks
+  essentially always.
+
+  Structures the shaping can build, which you may notice by name:
+
+  - a **gated shortcut** — a pipe whose approach is locked behind a fortress,
+    so taking it means beating that fort first, rather than a free skip;
+  - a **loop** wired between a world's islands, so it has two arms tied at
+    similar cost instead of one spine — the shape vanilla World 7 ships;
+  - **rock trades** — smashing a hammer rock now counts as a genuinely
+    different route from walking around it, not a detour of the same one.
+
+  Two guarantees hold everywhere: the cheapest way through a world always
+  costs at least about five levels' worth of effort, and every world still
+  ships its full vanilla pipe count. Deterministic as always — the same seed
+  still produces the same maps.
+
+- The World 5 spiral-castle pipe no longer always draws the castle on the far
+  endpoint — the castle and the pipe mouth are now coin-flipped between the
+  pair's two cells, so the castle can appear on either side.
+
+### Fixed
+
+- A flag key the app can't read is now refused out loud instead of being
+  quietly ignored. Previously the key stayed in the box, the options kept
+  whatever they already were, and Generate stayed clickable — so a key from a
+  different version of the randomizer looked accepted while your own leftover
+  settings were used instead. That mattered most in races, where everyone
+  pastes the same key and each person could end up on different settings with
+  nothing on screen to say so. Now the key is marked as rejected, Generate is
+  held until it's sorted out, and the message says whether the key is from an
+  older version, from a newer one, or just isn't valid.
+
+- Landing on an enemy that is jumping up at you now counts as a stomp instead
+  of hurting you. Vanilla decides "stomp or damage" once per frame, so an enemy
+  rising into you could close the gap faster than the check could resolve and
+  the hit landed on you — most visibly with hopping Cheep Cheeps and with
+  Koopalings at their higher jump speeds. The stompable range now cancels out
+  the enemy's own upward speed, so the verdict no longer depends on how fast it
+  was moving. Collisions vanilla already judged correctly are unaffected.
+
+- Breaking a fortress lock in World 8's dark area no longer lights up the tile.
+  The lock-break effect used to paint the replacement tile over the darkness,
+  leaving it permanently visible. Now the poof plays where the lock was, and a
+  lock out in the dark stays hidden until your light reaches it, while a lock
+  already inside your light simply disappears as it should. Either way the lock
+  is gone for good. As part of the same fix, beating a fortress whose lock you
+  had already smashed with the hammer no longer redraws that tile — in the dark
+  area that redraw gave away which lock belonged to which fortress, which is
+  meant to be the risk you take when you swing the hammer blind.
+- Map nodes no longer show up in the wrong scenery. An empty node sitting in
+  World 5's sky region could be drawn as a green land tile, and nodes on the
+  island strips in Worlds 3, 4 and 7 could get land tiles instead of sand —
+  most visibly a green square floating in the middle of the clouds. Roughly
+  3-4 tiles per seed. Nothing moved; only the artwork of those tiles changed.
+- The beta site's "Share URL" button now shares a beta link. It was building a
+  `/v/<version>/` link, but only main releases are archived there, so the link
+  either 404'd or opened a different build with the same version number.
+- Levels no longer pile up back-to-back in one corner of the map: level
+  placement (and the shaping moves that relocate levels) now avoid putting
+  a level next to another whenever the map allows. Worlds with 4+ levels
+  chained in a row drop from ~1 in 6 to ~1 in 50, and route choice
+  improved as a side effect (spread levels fork more).
+- The "call the boat" canoe summon (press A on a dock) could drop the canoe on
+  a land tile *inside* an island instead of on the water beside the dock,
+  leaving it unboardable. Its tile check read one map row too low, so a path
+  tile below the water could be mistaken for water. It now reads the correct
+  cell (World 3's middle island dock was the visible case).
+- The eight Dry Bones and the Roto-Disc in World 4's second fortress are now
+  hazard-protected, so they can't be swapped for a Thwomp/Ptooie/nipper-style
+  hazard sitting on the walking path.
+
 ## [1.0.7] - 2026-07-31
 
 ### Fixed

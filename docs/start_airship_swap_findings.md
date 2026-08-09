@@ -114,7 +114,7 @@ The W3 reachability bug was caught by `test_required_progression` in `src/random
 
 ```sh
 nix-shell -p gcc --run 'export PATH="$HOME/.cargo/bin:$PATH" && \
-  PROG_SEEDS=1000 SAS=1 cargo test --release \
+  CENSUS_SEEDS=1000 SAS=1 cargo test --release \
   test_required_progression -- --ignored --nocapture'
 ```
 

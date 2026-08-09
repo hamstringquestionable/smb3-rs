@@ -38,7 +38,10 @@ fn normalized(mut o: Options) -> Options {
 
 #[test]
 fn mystery_anchor_trampoline_written() {
-    let Some(mut rom) = make_test_rom() else { return };
+    let Some(mut rom) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
     // Place anchors in item tables — they should stay as 0x0A
     rom.write_byte(HAMMER_BROS_ITEMS_OFFSET + 2, ANCHOR);
     rom.write_byte(TOAD_HOUSE_ITEMS_OFFSET + 1, ANCHOR);
@@ -73,9 +76,86 @@ fn mystery_anchor_trampoline_written() {
     assert_eq!(rom.read_range(0x345D8, 3), &[0x20, 0x62, 0xB5]);
 }
 
+/// Everything that owns ROM free space, turned on. `all_on_options` is close
+/// but pins `world_count` to 3 and leaves `swap_start_airship` off, and both
+/// gate allocations we want exercised.
+fn audit_options() -> Options {
+    Options {
+        world_count: 7,
+        swap_start_airship: true,
+        ..all_on_options()
+    }
+}
+
+/// Cross-check `FREE_SPACE_ALLOCATIONS` against a real run: every byte written
+/// inside a registered region must come from the module that owns it, and no
+/// write may cross a region boundary.
+///
+/// This is the only check on free space that looks at what the randomizer
+/// *does* rather than at what the registry says about itself. Run with
+/// `--nocapture` to see the usage table — the `used` column is where the
+/// `// N reserved, M used` comments come from.
+#[test]
+fn free_space_audit_matches_registry() {
+    use crate::randomize::rom_data::{audit_free_space, format_free_space_report};
+
+    let Some(mut rom) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    randomize(&mut rom, 0xA11C0DE, &audit_options());
+
+    let usage = audit_free_space(&rom);
+    println!("{}", format_free_space_report(&rom));
+
+    let problems: Vec<String> = usage
+        .iter()
+        .filter(|u| u.is_problem())
+        .map(|u| {
+            let foreign: Vec<String> = u.foreign.iter()
+                .map(|(tag, n)| format!("{n} byte(s) tagged '{tag}'"))
+                .collect();
+            let over: Vec<String> = u.overruns.iter()
+                .map(|(off, len, tag)| format!("0x{off:05X}+{len} tagged '{tag}' crosses the boundary"))
+                .collect();
+            format!(
+                "0x{:05X} ({}, owner '{}'): {}",
+                u.alloc.offset, u.alloc.label, u.alloc.owners.join(" + "),
+                foreign.into_iter().chain(over).collect::<Vec<_>>().join("; "),
+            )
+        })
+        .collect();
+
+    assert!(
+        problems.is_empty(),
+        "free-space allocations written by a non-owner or overrun:\n  {}",
+        problems.join("\n  "),
+    );
+
+    // A flag-gated patch that never ran writes nothing, and an audit over
+    // nothing passes — the trap that made the overworld baseline vacuous for
+    // hammer_breaks. Every allocation must be exercised for the check above to
+    // mean anything, so assert that rather than trusting it.
+    let untouched: Vec<String> = usage
+        .iter()
+        .filter(|u| u.used == 0)
+        .map(|u| format!("0x{:05X} {} (owner '{}')", u.alloc.offset, u.alloc.label, u.alloc.owners.join(" + ")))
+        .collect();
+    assert!(
+        untouched.is_empty(),
+        "these allocations saw no writes, so the audit above proved nothing about them.\n\
+         Turn the owning feature on in audit_options(), or (if the write is seed-dependent)\n\
+         pick a seed that exercises it:\n  {}",
+        untouched.join("\n  "),
+    );
+}
+
 #[test]
 fn write_log_populated_after_randomize() {
-    let Some(mut rom) = make_test_rom() else { return };
+    let Some(mut rom) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
     let options = test_options();
     randomize(&mut rom, 0x12345678, &options);
 
@@ -89,6 +169,26 @@ fn write_log_populated_after_randomize() {
             "Write at offset 0x{:05X} has no tag",
             record.offset
         );
+    }
+}
+
+/// The web layer posts `wild_injections` as an array of these strings (the lit
+/// pills in `web/options.js`). Deserialization is the only contract between
+/// them, so pin the spelling here — a rename on either side breaks generation
+/// at runtime with no compile error.
+#[test]
+fn wild_chasers_parse_web_values() {
+    for (json, want) in [
+        ("[]", vec![]),
+        (r#"["sun"]"#, vec![WildChaser::Sun]),
+        (r#"["lakitu"]"#, vec![WildChaser::Lakitu]),
+        (r#"["bass"]"#, vec![WildChaser::Bass]),
+        (r#"["sun","bass"]"#, vec![WildChaser::Sun, WildChaser::Bass]),
+        (r#"["sun","lakitu","bass"]"#, WildChaser::ALL.to_vec()),
+    ] {
+        let opts: Options =
+            serde_json::from_str(&format!(r#"{{"wild_injections":{json}}}"#)).unwrap();
+        assert_eq!(opts.wild_injections, want, "web value {json} did not parse");
     }
 }
 
@@ -109,7 +209,7 @@ fn flag_key_round_trip_defaults() {
     let opts = Options::default();
     let key = opts.to_flag_key();
     assert!(key.starts_with("SMB3R-"));
-    assert_eq!(key.len(), 27); // "SMB3R-" + 21 base32
+    assert_eq!(key.len(), 26); // "SMB3R-" + 20 base32
     let decoded = Options::from_flag_key(&key).unwrap();
     assert_eq!(decoded, normalized(opts));
 }
@@ -167,7 +267,7 @@ fn flag_key_round_trip_all_wild() {
         water: EnemyMode::Wild,
         bros: EnemyMode::Wild,
         hb_encounters: EnemyMode::Wild,
-        wild_injections: true,
+        wild_injections: WildChaser::ALL.to_vec(),
         starting_items: vec![0x05, 0x09, 0x03],
         ..all_off_options()
     };
@@ -207,7 +307,7 @@ fn flag_key_round_trip_all_off() {
     assert_eq!(decoded.ground, EnemyMode::Off);
     assert_eq!(decoded.thwomps, EnemyMode::Off);
     assert_eq!(decoded.hb_encounters, EnemyMode::Off);
-    assert!(!decoded.wild_injections);
+    assert!(decoded.wild_injections.is_empty());
     assert_eq!(decoded.starting_lives, 1);
 }
 
@@ -238,14 +338,16 @@ fn flag_key_without_prefix() {
     assert_eq!(opts.powerups, decoded.powerups);
 }
 
+/// A well-formed key from a format version this build doesn't speak is
+/// rejected — but only after passing the envelope check, so the app can say
+/// "older/newer version" rather than "mistyped".
 #[test]
 fn flag_key_invalid_version() {
-    // Encode version 0xFF into base32 (first byte = 0xFF, rest zeros)
-    let mut bad_bytes = [0u8; 13];
-    bad_bytes[0] = 0xFF;
-    let key = format!("SMB3R-{}", base32_encode(&bad_bytes));
-    let result = Options::from_flag_key(&key);
-    assert!(result.is_err());
+    for version in [0x00, FLAG_KEY_VERSION - 1, FLAG_KEY_VERSION + 1, 0xFF] {
+        let key = forge_key(version, &Options::default().to_flag_bytes()[2..]);
+        assert_eq!(flag_key_version_of(&key), Ok(version), "version probe on v{version}");
+        assert!(Options::from_flag_key(&key).is_err(), "v{version} must not decode");
+    }
 }
 
 #[test]
@@ -332,7 +434,6 @@ fn flag_key_per_option_round_trip() {
         ("include_beta_stages",          Box::new(|o| o.include_beta_stages = !o.include_beta_stages)),
         ("shuffle_spade_games",           Box::new(|o| o.shuffle_spade_games = !o.shuffle_spade_games)),
         ("shuffle_toad_houses",          Box::new(|o| o.shuffle_toad_houses = !o.shuffle_toad_houses)),
-        ("wild_injections",              Box::new(|o| o.wild_injections = !o.wild_injections)),
         ("anchor_visuals",               Box::new(|o| o.anchor_visuals = !o.anchor_visuals)),
     ];
     for (label, mutate) in bools {
@@ -413,6 +514,36 @@ fn flag_key_per_option_round_trip() {
         }
     }
 
+    // Wild injections: one bit per chaser, scattered across b4 bit 0, b12 bit 7
+    // and b2 bit 5 (no byte had three free). Every one of the 8 subsets must
+    // round-trip, and all 8 must produce distinct keys — a bit landing on top
+    // of a neighbour would otherwise show up as two subsets sharing a key.
+    {
+        let default_key = Options::default().to_flag_key();
+        let mut keys = Vec::new();
+        for bits in 0u8..8 {
+            let set: Vec<WildChaser> = WildChaser::ALL
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| bits & (1 << i) != 0)
+                .map(|(_, &c)| c)
+                .collect();
+            let mutated = Options { wild_injections: set.clone(), ..Default::default() };
+            let mutated_key = mutated.to_flag_key();
+            let expected = normalized(mutated.clone());
+            let recovered = Options::from_flag_key(&mutated_key).unwrap();
+            assert_eq!(recovered, expected, "wild_injections={set:?}: round-trip mismatch");
+            if !set.is_empty() {
+                assert_ne!(default_key, mutated_key, "wild_injections={set:?}: key must change");
+            }
+            keys.push(mutated_key);
+        }
+        keys.sort();
+        let distinct = keys.len();
+        keys.dedup();
+        assert_eq!(keys.len(), distinct, "wild_injections: two chaser sets share a key");
+    }
+
     // starting_lives is 2 bits indexing {1, 5, 20, 99} — only the four
     // canonical values round-trip exactly.
     for lives in STARTING_LIVES_VALUES {
@@ -473,7 +604,7 @@ fn flag_key_per_option_round_trip() {
     everything.troll_pipes = Tri::Maybe;
     everything.shuffle_spade_games = !everything.shuffle_spade_games;
     everything.shuffle_toad_houses = !everything.shuffle_toad_houses;
-    everything.wild_injections = true;
+    everything.wild_injections = WildChaser::ALL.to_vec();
     everything.ground = EnemyMode::Wild;
     everything.shell = EnemyMode::Wild;
     everything.flying = EnemyMode::Wild;
@@ -501,14 +632,10 @@ fn flag_key_per_option_round_trip() {
 /// author either encodes it or consciously adds it to `NOT_ENCODED`.
 #[test]
 fn flag_key_encodes_every_bool_option() {
-    // Bool fields intentionally absent from the flag key, with the reason.
-    // Adding to this list is a conscious decision, not an oversight.
-    const NOT_ENCODED: &[&str] = &[
-        "palettes",            // cosmetic; uses OS randomness, not seed-derived
-        "palette_themed",      // cosmetic
-        "remove_flashing",     // cosmetic/accessibility; static patch, no RNG
-        "skip_rom_validation", // operational (CLI/WASM input handling), not randomization
-    ];
+    // The exclusion list lives with the encoder, not here — the destructure in
+    // `to_flag_bits` names every field, so the two can't disagree about which
+    // ones are deliberately left out.
+    use flag_key::NOT_ENCODED;
 
     let default_key = Options::default().to_flag_key();
     let default_json = serde_json::to_value(Options::default()).unwrap();
@@ -542,29 +669,326 @@ fn flag_key_encodes_every_bool_option() {
     assert!(checked_encoded > 0, "no encoded bool fields found — serde reflection broke?");
 }
 
+// Removed at v29: `flag_key_hammer_vuln_koopalings_distinct_from_hb_encounters`
+// was a regression test for a real shipped collision — hammer_vulnerable_koopalings
+// shared a bit with the high bit of hb_encounters, and only misbehaved when
+// hb_encounters was Wild. Bit positions are now assigned by declaration order in
+// `FlagBits`, so no two options can share one; the test would be exercising the
+// bitfield crate rather than this repo.
+
+/// Build a key with a valid envelope for an arbitrary version and payload —
+/// the shape a build from a different release would produce. Lets the version
+/// branches be tested without a time machine.
+fn forge_key(version: u8, payload: &[u8]) -> String {
+    let mut bytes = vec![version, checksum(version, payload)];
+    bytes.extend_from_slice(payload);
+    format!("SMB3R-{}", base32_encode(&bytes))
+}
+
+/// The version probe backs the web app's three-way rejection message (older /
+/// newer / not a flag key). Each case below is one of those branches.
 #[test]
-fn flag_key_hammer_vuln_koopalings_distinct_from_hb_encounters() {
-    // Regression: hammer_vulnerable_koopalings used to share bit 2 of b4
-    // with the high bit of hb_encounters (a tri-state at bits 2-1).
-    // When hb_encounters=Wild (em=2), bit 2 was already set, so toggling
-    // hammer_vulnerable_koopalings produced no change in the flag key.
-    let a = Options {
+fn flag_key_version_probe() {
+    let key = Options::default().to_flag_key();
+    let payload = &Options::default().to_flag_bytes()[2..].to_vec();
+    let current = current_flag_key_version();
+
+    // A key this build made reports this build's version, with or without the
+    // prefix, in any case, and with the whitespace a paste tends to carry.
+    assert_eq!(flag_key_version_of(&key), Ok(current));
+    assert_eq!(flag_key_version_of(key.trim_start_matches("SMB3R-")), Ok(current));
+    assert_eq!(flag_key_version_of(&key.to_lowercase()), Ok(current));
+    assert_eq!(flag_key_version_of(&format!("  {key}\n")), Ok(current));
+
+    // An older key reads as "older" even though the full decode rejects it.
+    let older = forge_key(current - 1, payload);
+    assert_eq!(flag_key_version_of(&older), Ok(current - 1));
+    assert!(Options::from_flag_key(&older).is_err());
+
+    // A key from a future format that grew past this build's payload capacity.
+    // The probe must stay lenient about length or this would read as garbage
+    // instead of "newer", and the app would tell the user to check for typos in
+    // a perfectly good key. This is the direction that bites today: beta runs
+    // ahead of the released app.
+    let mut long = payload.clone();
+    long.extend_from_slice(&[0x7F; 40]);
+    assert_eq!(flag_key_version_of(&forge_key(current + 1, &long)), Ok(current + 1));
+
+    // Not a flag key at all — the app's third branch.
+    assert!(flag_key_version_of("").is_err());
+    assert!(flag_key_version_of("!!!!").is_err());
+    assert!(flag_key_version_of("SMB3R-").is_err());
+
+    // A truncated paste is caught by the checksum, so it lands in "invalid"
+    // rather than being announced as a version mismatch and sending the user
+    // looking for a build that was never released. Before the checksum existed
+    // this needed a special rule about length; now it falls out of the format.
+    assert!(flag_key_version_of("SMB3R-ZZZZ").is_err());
+    assert!(flag_key_version_of(&key[..key.len() - 4]).is_err());
+}
+
+/// Keys made before v29 must be classified as *older*, not as mistyped.
+///
+/// They carry no checksum, so the envelope check rejects every one of them —
+/// and on the day v29 ships, that is every key in circulation. Telling those
+/// users to check for a typo would send them looking for something that isn't
+/// there, and it is the exact three-way message (#159) this format is supposed
+/// to keep honest.
+#[test]
+fn flag_key_pre_v29_keys_read_as_older() {
+    // A real v28 key: the default set, quoted in issue #158's typo measurement.
+    let v28 = "SMB3R-3JKWY87RAGA0A00700000";
+    assert_eq!(flag_key_version_of(v28), Ok(28));
+    assert!(Options::from_flag_key(v28).unwrap_err().contains("version 28"));
+
+    // Synthetic keys across the whole legacy range, in the shape those versions
+    // used: 13 bytes, version in byte 0, no checksum.
+    for version in 1..=28u8 {
+        let mut bytes = [0xA5u8; 13];
+        bytes[0] = version;
+        let key = format!("SMB3R-{}", base32_encode(&bytes));
+        assert_eq!(flag_key_version_of(&key), Ok(version), "v{version} must read as older");
+        assert!(Options::from_flag_key(&key).is_err(), "v{version} must not decode");
+    }
+
+    // The fallback must not swallow real damage. A v29 key with a mangled body
+    // is still 13-plus bytes, but its version byte is 29, so it stays invalid
+    // rather than being announced as some older version.
+    let mut broken = Options::default().to_flag_bytes();
+    let last = broken.len() - 1;
+    broken[last] ^= 0xFF;
+    assert!(flag_key_version_of(&base32_encode(&broken)).is_err());
+
+    // And a legacy-length run of garbage whose first byte is out of range is
+    // still invalid — the probe is a range check, not "trust byte 0".
+    let mut garbage = [0x00u8; 13];
+    garbage[0] = 200;
+    assert!(flag_key_version_of(&base32_encode(&garbage)).is_err());
+}
+
+/// Golden fixtures pinning the v29 bit and byte order.
+///
+/// The layout is generated from declaration order in `FlagBits`, so nothing in
+/// the source spells out which bit an option lives in. That makes reordering or
+/// resizing a field an easy, silent way to invalidate every key in circulation.
+/// These literals are the tripwire: if they change, the wire format changed and
+/// `FLAG_KEY_VERSION` has to move with it.
+///
+/// Regenerate deliberately, never by pasting whatever the test printed.
+#[test]
+fn flag_key_v29_golden() {
+    assert_eq!(current_flag_key_version(), 29, "these fixtures pin v29");
+
+    // Defaults.
+    let key = "SMB3R-3PHFKHRF000525AG00X0";
+    assert_eq!(Options::default().to_flag_key(), key);
+    assert_eq!(
+        Options::default().to_flag_bytes(),
+        vec![29, 162, 249, 199, 15, 0, 0, 81, 21, 80, 0, 58],
+    );
+    assert_eq!(Options::from_flag_key(key).unwrap(), normalized(Options::default()));
+
+    // Everything off — the payload is nearly all zeros, so trailing-zero
+    // stripping shows up here as a key that is no shorter than the default one
+    // (the last non-zero byte is what sets the length, not the option count).
+    let all_off = "SMB3R-3Q2000000000000000W0";
+    assert_eq!(all_off_options().to_flag_key(), all_off);
+    assert_eq!(Options::from_flag_key(all_off).unwrap(), normalized(all_off_options()));
+
+    // A spread of non-default values across every field width: 5-bit item
+    // slots, the 3-bit world count, 2-bit enums and the scattered chaser bits.
+    let mixed = Options {
+        starting_items: vec![ITEM_RANDOM, 5, ITEM_RANDOM_SUIT_ONLY],
+        starting_lives: 99,
+        world_count: 3,
+        wild_injections: WildChaser::ALL.to_vec(),
+        eights_are_wild: Tri::Maybe,
+        fire_flower: FireFlowerMode::Wild,
+        piranha_shuffle: PiranhaMode::Wild,
         hb_encounters: EnemyMode::Wild,
-        hammer_vulnerable_koopalings: false,
         ..Default::default()
     };
+    let mixed_key = "SMB3R-3PTFKHRF020525AGXAFJP40";
+    assert_eq!(mixed.to_flag_key(), mixed_key);
+    assert_eq!(Options::from_flag_key(mixed_key).unwrap(), normalized(mixed));
+}
 
-    let b = Options { hammer_vulnerable_koopalings: true, ..a.clone() };
+/// Reserve bits are the whole durability story: adding an option must not
+/// invalidate keys already in circulation. A key that stops short of a byte
+/// decodes as if that byte were zero, which is exactly what an older key looks
+/// like once a new option is appended.
+#[test]
+fn flag_key_short_key_zero_fills() {
+    let full = Options::default().to_flag_bytes();
 
-    assert_ne!(a.to_flag_key(), b.to_flag_key(),
-        "toggling hammer_vulnerable_koopalings must change the flag key");
+    // Same key with its all-zero reserve bytes spelled out explicitly: adding
+    // trailing zeros must not change what it decodes to, or the encoder's
+    // truncation would be lossy.
+    let mut padded = full[2..].to_vec();
+    padded.extend_from_slice(&[0u8; 8]);
+    assert_eq!(
+        Options::from_flag_key(&forge_key(FLAG_KEY_VERSION, &padded)).unwrap(),
+        Options::from_flag_key(&Options::default().to_flag_key()).unwrap(),
+    );
 
-    let dec_a = Options::from_flag_key(&a.to_flag_key()).unwrap();
-    let dec_b = Options::from_flag_key(&b.to_flag_key()).unwrap();
-    assert!(!dec_a.hammer_vulnerable_koopalings);
-    assert!(dec_b.hammer_vulnerable_koopalings);
-    assert_eq!(dec_a.hb_encounters, EnemyMode::Wild);
-    assert_eq!(dec_b.hb_encounters, EnemyMode::Wild);
+    // And a key that predates the last two bytes of payload: the options living
+    // there come back off, everything before them survives.
+    let short = &full[2..full.len() - 2];
+    let decoded = Options::from_flag_key(&forge_key(FLAG_KEY_VERSION, short)).unwrap();
+    assert!(decoded.powerups, "an early option must survive a short key");
+    assert_eq!(decoded.ground, EnemyMode::Shuffle);
+    // starting_lives/world_count/items live in the truncated tail.
+    assert_eq!(decoded.world_count, default_world_count());
+}
+
+/// The checksum's reason for existing, measured.
+///
+/// Before it, a single mistyped character produced a valid key for *different*
+/// settings 89.6% of the time (651 mutations of the default key; the only ones
+/// caught were those that happened to corrupt the version byte). That is the
+/// same failure as issue #158 — a silently different ruleset — but far more
+/// likely, since a fumbled paste beats a version skew for frequency.
+///
+/// Measured at v29 over the same sweep: 605 rejected, 15 harmless (they land on
+/// padding bits), **0 silently different**. Run with `--nocapture` to re-read
+/// the split.
+#[test]
+fn flag_key_typos_are_rejected() {
+    let key = Options::default().to_flag_key();
+    let body = key.strip_prefix("SMB3R-").unwrap();
+    let expected = Options::from_flag_key(&key).unwrap();
+
+    let (mut rejected, mut same, mut different) = (0, 0, 0);
+    for i in 0..body.len() {
+        for &c in CROCKFORD.iter() {
+            if body.as_bytes()[i] == c { continue }
+            let mut mutated: Vec<u8> = body.as_bytes().to_vec();
+            mutated[i] = c;
+            let candidate = format!("SMB3R-{}", String::from_utf8(mutated).unwrap());
+            match Options::from_flag_key(&candidate) {
+                Err(_) => rejected += 1,
+                Ok(o) if o == expected => same += 1,
+                Ok(_) => different += 1,
+            }
+        }
+    }
+
+    let total = rejected + same + different;
+    println!("single-character typos: {rejected} rejected, {same} harmless, {different} silently different (of {total})");
+    assert_eq!(total, body.len() * 31, "every single-character mutation is tried");
+    // A CRC-8 lets through about 1 in 256 by chance. Assert well inside that
+    // rather than on the nose so the test pins the property, not the arithmetic.
+    assert!(
+        different * 100 < total,
+        "{different}/{total} single-character typos decoded to a DIFFERENT ruleset \
+         ({rejected} rejected, {same} harmless) — the checksum is not doing its job",
+    );
+}
+
+/// `NOT_ENCODED` is the one hand-maintained list left in the mapping, and the
+/// web app's `inFlagKey` markings are checked against what it produces. A stale
+/// name in it would quietly drop a real option from that check.
+#[test]
+fn flag_key_not_encoded_names_are_real_fields() {
+    let json = serde_json::to_value(Options::default()).unwrap();
+    let fields = json.as_object().unwrap();
+    for name in flag_key::NOT_ENCODED {
+        assert!(
+            fields.contains_key(*name),
+            "NOT_ENCODED lists '{name}', which is not an Options field (renamed or removed?)",
+        );
+    }
+    let encoded = flag_key_fields();
+    assert_eq!(encoded.len(), fields.len() - flag_key::NOT_ENCODED.len());
+    for name in flag_key::NOT_ENCODED {
+        assert!(!encoded.contains(&name.to_string()), "'{name}' must not be advertised as encoded");
+    }
+}
+
+/// Cross-check the hand-written Crockford codec against an independent
+/// implementation (`base32`, a dev-dependency — it reaches neither the binary
+/// nor the WASM bundle).
+///
+/// The alphabet layer is the one part of the format that is a published spec
+/// rather than our invention, so it can be verified against someone else's
+/// reading of that spec instead of only against itself. A golden test proves we
+/// still agree with *yesterday's us*; this proves we agree with Crockford.
+///
+/// Worth knowing before reaching for a crate here: "Crockford base32" crates
+/// are **not** interchangeable. `c32` 0.6.1 encodes this same key as
+/// `7D2Z73GY000A4AN001T` — 19 characters against our 20 — and swapping to it
+/// would silently invalidate every key in circulation. `crockford` 1.2.1 only
+/// handles `u64`, which cannot hold a 30-byte payload.
+///
+/// Two behaviours are deliberately *not* delegated, which is why the codec is
+/// still ours: `base32` accepts non-canonical lengths (it decoded a 19-character
+/// truncation of the key below to 11 bytes, where we reject it — that check
+/// catches a tail character the checksum can miss), and it returns `Option`, so
+/// it cannot say *which* character was bad in a message the app shows the user.
+#[test]
+fn base32_matches_an_independent_crockford_implementation() {
+    use base32::Alphabet::Crockford;
+
+    // Every payload width the format can produce, plus the envelope.
+    for n in 0..=(2 + 30usize) {
+        let data: Vec<u8> = (0..n)
+            .map(|i| (i as u8).wrapping_mul(37).wrapping_add(11))
+            .collect();
+        let ours = base32_encode(&data);
+        assert_eq!(ours, base32::encode(Crockford, &data), "encode differs at {n} bytes");
+        assert_eq!(
+            base32_decode(&ours).unwrap(),
+            base32::decode(Crockford, &ours).unwrap(),
+            "decode differs at {n} bytes",
+        );
+    }
+
+    // Real keys, not just synthetic patterns.
+    for opts in [Options::default(), all_off_options(), all_on_options()] {
+        let body = opts.to_flag_key();
+        let body = body.strip_prefix("SMB3R-").unwrap();
+        assert_eq!(
+            base32::decode(Crockford, body).unwrap(),
+            opts.to_flag_bytes(),
+            "an independent decoder disagrees about a real key",
+        );
+    }
+
+    // Crockford's exclusions. Asserted against the expectation as well as
+    // against the crate, so both being wrong the same way still fails.
+    for (probe, want_ok) in [
+        ("3PHFKHRF000525AG00X0", true),  // canonical
+        ("3phfkhrf000525ag00x0", true),  // case-insensitive
+        ("3PHFKHRF000525AGU0X0", false), // U is excluded from the alphabet
+        ("3PHFKHRF000525AG!0X0", false), // not an alphabet character at all
+    ] {
+        assert_eq!(base32_decode(probe).is_ok(), want_ok, "'{probe}' decodable?");
+        assert_eq!(
+            base32_decode(probe).is_ok(),
+            base32::decode(Crockford, probe).is_some(),
+            "disagreement on whether '{probe}' is decodable",
+        );
+    }
+
+    // Crockford's ambiguity normalizations: I and L read as 1, O reads as 0.
+    // Compared by decoded *bytes*, not just by "both accepted it" — dropping
+    // the I/L arm entirely still leaves a decodable string, so an acceptance
+    // check alone sails past it (confirmed by mutating the decoder).
+    for (probe, canonical) in [
+        ("IILL", "1111"),
+        ("iIlL", "1111"),
+        ("OOOO", "0000"),
+        ("oO00", "0000"),
+        ("H1JK", "HIJK"),
+    ] {
+        let expected = base32_decode(canonical).unwrap();
+        assert_eq!(base32_decode(probe).unwrap(), expected, "'{probe}' must read as '{canonical}'");
+        assert_eq!(
+            base32::decode(Crockford, probe).unwrap(),
+            expected,
+            "independent decoder disagrees that '{probe}' reads as '{canonical}'",
+        );
+    }
 }
 
 #[test]
@@ -577,7 +1001,7 @@ fn base32_round_trip() {
         (0..11).collect::<Vec<u8>>(),
     ] {
         let encoded = base32_encode(&data);
-        let decoded = base32_decode(&encoded, data.len()).unwrap();
+        let decoded = base32_decode(&encoded).unwrap();
         assert_eq!(data, decoded, "round-trip failed for {data:?} (encoded: {encoded})");
     }
 }
@@ -637,6 +1061,8 @@ fn all_off_options() -> Options {
         faster_tail_speed: false,
         no_game_over_penalty: false,
         faster_frog: false,
+        poison_mushrooms: false,
+        modern_powerups: false,
         shuffle_spade_games: false,
         shuffle_toad_houses: false,
         hands_levels: false,
@@ -653,7 +1079,7 @@ fn all_off_options() -> Options {
         water: EnemyMode::Off,
         bros: EnemyMode::Off,
         hb_encounters: EnemyMode::Off,
-        wild_injections: false,
+        wild_injections: Vec::new(),
         starting_items: vec![],
         skip_rom_validation: false,
         anchor_visuals: false,
@@ -702,6 +1128,8 @@ fn all_on_options() -> Options {
         faster_tail_speed: true,
         no_game_over_penalty: true,
         faster_frog: true,
+        poison_mushrooms: true,
+        modern_powerups: true,
         shuffle_spade_games: true,
         shuffle_toad_houses: true,
         hands_levels: true,
@@ -718,7 +1146,7 @@ fn all_on_options() -> Options {
         water: EnemyMode::Wild,
         bros: EnemyMode::Wild,
         hb_encounters: EnemyMode::Wild,
-        wild_injections: true,
+        wild_injections: WildChaser::ALL.to_vec(),
         starting_items: vec![0x05, 0x09, 0x03],
         skip_rom_validation: false,
         anchor_visuals: true,
@@ -745,11 +1173,17 @@ fn test_full_determinism() {
     let seed = 42u64;
     for (name, options) in &configs {
         // Run 1
-        let Some(mut rom1) = make_test_rom() else { return };
+        let Some(mut rom1) = make_test_rom() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
         randomize(&mut rom1, seed, options);
 
         // Run 2 (same seed, same options)
-        let Some(mut rom2) = make_test_rom() else { return };
+        let Some(mut rom2) = make_test_rom() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
         randomize(&mut rom2, seed, options);
 
         // Same-run determinism — find first differing byte for diagnostics
@@ -801,8 +1235,14 @@ fn maybe_flags_are_deterministic_and_hidden() {
 
     // (3) determinism across runs (needs the real ROM).
     let seed = 0xC0FFEEu64;
-    let Some(mut rom1) = make_test_rom() else { return };
-    let Some(mut rom2) = make_test_rom() else { return };
+    let Some(mut rom1) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let Some(mut rom2) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
     randomize(&mut rom1, seed, &opts);
     randomize(&mut rom2, seed, &opts);
     assert_eq!(
@@ -820,7 +1260,10 @@ fn maybe_resolves_both_ways_across_seeds() {
     // each Maybe run's tile bytes to the explicit-On run's bytes, so the
     // flag-key stamp / title hash (which always differ for Maybe) don't
     // confound the comparison.
-    let Some(_) = make_test_rom() else { return };
+    let Some(_) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
     let on = Options { more_hammer_rocks: Tri::On, ..test_options() };
     let maybe = Options { more_hammer_rocks: Tri::Maybe, ..test_options() };
 
@@ -851,7 +1294,10 @@ fn maybe_resolves_both_ways_across_seeds() {
 
 #[test]
 fn write_log_tags_match_enabled_modules() {
-    let Some(mut rom) = make_test_rom() else { return };
+    let Some(mut rom) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
     let mut options = test_options();
     // Disable optional modules we can check for absence
     options.ground = EnemyMode::Off;

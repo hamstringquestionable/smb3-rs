@@ -71,3 +71,30 @@ pub fn decode_flag_key(key: &str) -> Result<String, JsError> {
     let options = Options::from_flag_key(key).map_err(|e| JsError::new(&e))?;
     serde_json::to_string(&options).map_err(|e| JsError::new(&format!("Serialize error: {e}")))
 }
+
+/// The flag-key format version this build reads.
+#[wasm_bindgen]
+pub fn current_flag_key_version() -> u8 {
+    crate::current_flag_key_version()
+}
+
+/// The format version a key claims, without decoding it. The app pairs this
+/// with `current_flag_key_version()` to tell "key from an older build" from
+/// "key from a newer build" from "not a flag key at all" — three rejections
+/// that need different things from the user. Errors when the key fails its
+/// checksum, which is what keeps a typo from being announced as a version
+/// mismatch.
+#[wasm_bindgen]
+pub fn flag_key_version_of(key: &str) -> Result<u8, JsError> {
+    crate::flag_key_version_of(key).map_err(|e| JsError::new(&e))
+}
+
+/// JSON array of the `Options` field names this build encodes into the flag
+/// key. Lets `assertSchemaParity` check the web schema's `inFlagKey` markings
+/// against what Rust actually persists, instead of leaving them as
+/// documentation nobody verifies.
+#[wasm_bindgen]
+pub fn flag_key_fields_json() -> Result<String, JsError> {
+    serde_json::to_string(&crate::flag_key_fields())
+        .map_err(|e| JsError::new(&format!("Serialize error: {e}")))
+}

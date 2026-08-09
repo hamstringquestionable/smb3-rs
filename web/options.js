@@ -58,6 +58,16 @@ const ON_OFF_MAYBE = [
 	{ value: "maybe", label: "Maybe" },
 ];
 
+// Wild Injections is a `toggles` pill: "Off" is exclusive and the chasers
+// toggle independently, so the value is the list of lit ones (empty = off).
+// Values match the Rust `WildChaser` enum.
+const WILD_INJECTION_TOGGLES = [
+	{ value: "off", label: "Off" },
+	{ value: "sun", label: "Sun" },
+	{ value: "lakitu", label: "Lakitu" },
+	{ value: "bass", label: "Bass" },
+];
+
 // Off / On / Wild pill for Random Fire Flower. "Wild" widens the pool to also
 // include the Small/Big downgrade outcomes. Values match the Rust
 // `FireFlowerMode` enum's serde representation.
@@ -91,8 +101,10 @@ const KOOPALINGS = [
 ];
 
 // Schema. Field names match the Rust Options struct; the load-time parity
-// check guarantees they stay aligned. inFlagKey is informational/UX only;
-// the Rust flag-key encoder is what actually decides what's persisted.
+// check guarantees they stay aligned. inFlagKey decides whether applying a
+// shared key or a preset writes this field, and is checked at load against the
+// list of fields Rust actually encodes (`flag_key_fields_json`) — the Rust
+// encoder remains the authority, this just can't drift from it unnoticed.
 //
 // Within each group, entries render in SCHEMA order, so keep each group's
 // entries contiguous and ordered for display.
@@ -235,9 +247,10 @@ export const SCHEMA = [
 		label: "HB Encounters",
 		tip: "All enemies in overworld Hammer Bro mini-battles",
 		group: "enemies", inFlagKey: true },
-	{ id: "wild_injections", type: "bool", default: false,
+	{ id: "wild_injections", type: "toggles", options: WILD_INJECTION_TOGGLES,
+		default: [],
 		label: "Wild Injections",
-		tip: "Spawn Lakitu, Angry Sun, or Boss Bass in ~15% of levels",
+		tip: "Drop a chaser into some levels that never had one — an Angry Sun, a Lakitu, or a leaping Big Bertha. Pick any combination.",
 		group: "enemies", inFlagKey: true },
 	{ id: "early_sun", type: "bool", default: false,
 		label: "Early Sun",
@@ -255,6 +268,11 @@ export const SCHEMA = [
 		label: "Random Koopaling Stomps",
 		tip: "Each Koopaling takes a random number of stomps (1–5) instead of the usual 3",
 		icon: KOOPALINGS,
+		group: "bosses", inFlagKey: true },
+	// No icon yet — sprite coordinates get picked by hand in sprite-picker.html.
+	{ id: "boomboom_hits", type: "bool", default: true,
+		label: "Random Boom-Boom Stomps",
+		tip: "Each fortress Boom-Boom takes a random number of stomps (1–5) instead of the usual 3",
 		group: "bosses", inFlagKey: true },
 	{ id: "hammer_vulnerable_koopalings", type: "bool", default: false,
 		label: "Hammer Vulnerable Koopalings",
@@ -350,6 +368,15 @@ export const SCHEMA = [
 		tip: "Speeds up swimming and running while wearing the Frog Suit.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "player", inFlagKey: true },
+	{ id: "modern_powerups", type: "bool", default: false,
+		label: "Modern Power-Ups",
+		tip: "Power-ups work like the newer Mario games — grab a Fire Flower or suit as Small Mario and get its power without turning Big first.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
+		group: "player", inFlagKey: true },
+	{ id: "poison_mushrooms", type: "bool", default: false,
+		label: "Poison Mushrooms",
+		tip: "Some 1-Up blocks hand out an upside-down poison mushroom that hurts you instead of a 1-Up. You can't tell which until you hit the block.",
+		group: "player", inFlagKey: true },
 	{ id: "starting_items", type: "items",
 		items: ITEM_OPTIONS, slots: 3,
 		default: [],
@@ -405,12 +432,14 @@ export const PRESETS = [
 			ground: "wild", shell: "wild", flying: "wild", piranhas: "wild",
 			ghosts: "wild", water: "wild", cannons: "wild", hb_encounters: "wild",
 			rotodiscs: "shuffle",
-			wild_injections: true, early_sun: true,
+			wild_injections: ["sun", "lakitu", "bass"], early_sun: true,
 			include_beta_stages: true, swap_start_airship: true,
-			big_q_blocks: true, starting_items: [15],
+			antechamber_shuffle: "on", piranha_shuffle: "wild",
+			big_q_blocks: true, starting_items: [15, 15, 15],
 			fast_mushroom_house: true, faster_frog: true, faster_tail_speed: true,
-			limit_bro_movement: true,
+			no_game_over_penalty: true, limit_bro_movement: true,
 			hammer_breaks_locks: "on", eights_are_wild: "on",
+			more_hammer_rocks: "maybe",
 			world_order: true, random_koopalings: true,
 			hammer_vulnerable_koopalings: true,
 		} },
@@ -420,6 +449,7 @@ export const PRESETS = [
 			starting_lives: 20, starting_items: [1, 2, 3],
 			infinite_mushroom_houses: true, fast_mushroom_house: true,
 			no_game_over_penalty: true, faster_tail_speed: true,
+			modern_powerups: true,
 			limit_bro_movement: true,
 			hands_levels: false, troll_pipes: "off",
 			shuffle_spade_games: false, more_hammer_rocks: "on",
@@ -446,24 +476,26 @@ export const PRESETS = [
 		overrides: {
 			ground: "wild", shell: "wild", flying: "wild",
 			hb_encounters: "shuffle", rotodiscs: "shuffle",
-			wild_injections: true, early_sun: true,
+			wild_injections: ["sun", "bass"], early_sun: true,
 			include_beta_stages: true,
 			shuffle_spade_games: false, shuffle_toad_houses: false,
 			hands_levels: false, troll_pipes: "off",
 			big_q_blocks: true, starting_items: [15, 15, 15],
-			faster_tail_speed: true, faster_frog: true,
+			faster_frog: true,
 			world_order: true, random_koopalings: true,
 			hammer_vulnerable_koopalings: true,
 		} },
 	{ id: "max_chaos", label: "Max Chaos",
-		tip: "Everything wild: every enemy class, injections, swapped starts, beta stages, all maybes.",
+		tip: "Everything wild: every enemy class, all three chasers, wild Fire Flowers, poison mushrooms, beta stages, and every maybe.",
 		overrides: {
 			ground: "wild", shell: "wild", flying: "wild", piranhas: "wild",
 			ghosts: "wild", thwomps: "wild", rotodiscs: "wild", cannons: "wild",
 			water: "wild", bros: "wild", hb_encounters: "wild",
-			wild_injections: true, early_sun: true,
+			wild_injections: ["sun", "lakitu", "bass"], early_sun: true,
 			include_beta_stages: true, swap_start_airship: true,
+			antechamber_shuffle: "maybe", piranha_shuffle: "wild",
 			big_q_blocks: true, starting_items: [15, 15, 15],
+			fire_flower: "wild", poison_mushrooms: true,
 			faster_tail_speed: true, faster_frog: true,
 			world_order: true, random_koopalings: true,
 			hammer_vulnerable_koopalings: true,
@@ -471,15 +503,33 @@ export const PRESETS = [
 			eights_are_wild: "maybe",
 			hammer_breaks_locks: "maybe", hammer_breaks_bridges: "maybe",
 		} },
-	{ id: "challenging", label: "Challenging",
-		tip: "Wild enemies and beta stages with no quality-of-life crutches.",
+	{ id: "league_s7", label: "League Season 7",
+		tip: "The Season 7 league ruleset: every enemy class wild, beta stages, shuffled lobbies and scattered piranhas, and the race conveniences.",
 		overrides: {
 			ground: "wild", shell: "wild", flying: "wild", piranhas: "wild",
 			ghosts: "wild", thwomps: "wild", rotodiscs: "wild", cannons: "wild",
 			water: "wild", bros: "wild", hb_encounters: "wild",
-			wild_injections: true, early_sun: true,
+			wild_injections: ["sun", "lakitu"], early_sun: true,
 			include_beta_stages: true, swap_start_airship: true,
-			big_q_blocks: true,
+			antechamber_shuffle: "on", piranha_shuffle: "wild",
+			troll_pipes: "off", eights_are_wild: "maybe",
+			hammer_breaks_locks: "on", limit_bro_movement: true,
+			big_q_blocks: true, fire_flower: "on", starting_items: [15, 15, 15],
+			fast_mushroom_house: true, faster_tail_speed: true, faster_frog: true,
+			no_game_over_penalty: true,
+			world_order: true, random_koopalings: true,
+			hammer_vulnerable_koopalings: true,
+		} },
+	{ id: "challenging", label: "Challenging",
+		tip: "Wild enemies, beta stages, poison mushrooms, and one hit back to Small Mario — no quality-of-life crutches.",
+		overrides: {
+			ground: "wild", shell: "wild", flying: "wild", piranhas: "wild",
+			ghosts: "wild", thwomps: "wild", rotodiscs: "wild", cannons: "wild",
+			water: "wild", bros: "wild", hb_encounters: "wild",
+			wild_injections: ["sun", "lakitu", "bass"], early_sun: true,
+			include_beta_stages: true, swap_start_airship: true,
+			antechamber_shuffle: "on", piranha_shuffle: "wild",
+			big_q_blocks: true, poison_mushrooms: true, japanese_damage: true,
 			world_order: true, random_koopalings: true,
 		} },
 ];
@@ -664,6 +714,57 @@ function renderTri(entry) {
 	return wrap;
 }
 
+// A pill group where the non-"off" pills toggle independently: check Sun,
+// check Bass, check both. The value is the array of lit pill values, in
+// schema order; empty means off, which is what the exclusive "Off" pill sets.
+function togglePills(entry) {
+	return entry.options.filter(o => o.value !== "off");
+}
+
+function toggleNode(entry, value) {
+	return document.getElementById(`${domId(entry.id)}-${value}`);
+}
+
+// Keep the group coherent after any click: "off" is exclusive, and clearing
+// the last lit pill falls back to "off" so the row is never blank.
+function syncToggles(entry, clicked) {
+	const off = toggleNode(entry, "off");
+	const pills = togglePills(entry).map(o => toggleNode(entry, o.value)).filter(Boolean);
+	if (clicked === "off") {
+		for (const node of pills) node.checked = false;
+		if (off) off.checked = true; // clicking "off" while off keeps it off
+		return;
+	}
+	if (off) off.checked = !pills.some(node => node.checked);
+}
+
+function renderToggles(entry) {
+	const wrap = el("label", { class: "select-label" });
+	const icon = iconCanvas(entry);
+	if (icon) wrap.appendChild(icon);
+	wrap.appendChild(document.createTextNode(entry.label));
+	const btn = tipBtn(entry);
+	if (btn) wrap.appendChild(btn);
+	const group = el("div", { class: "pill-group" });
+	for (const opt of entry.options) {
+		const inputId = `${domId(entry.id)}-${opt.value}`;
+		const lit = opt.value === "off"
+			? entry.default.length === 0
+			: entry.default.includes(opt.value);
+		const input = el("input", {
+			type: "checkbox", name: radioName(entry.id), id: inputId,
+			value: opt.value, checked: lit,
+		});
+		// Registered before wireListeners' listener on the same node, so the
+		// group is already coherent by the time readValue runs.
+		input.addEventListener("change", () => syncToggles(entry, opt.value));
+		group.appendChild(input);
+		group.appendChild(el("label", { for: inputId }, opt.label));
+	}
+	wrap.appendChild(group);
+	return wrap;
+}
+
 function renderSelect(entry) {
 	const wrap = el("label", {
 		class: "select-label" + (entry.indent ? " sub-options" : ""),
@@ -783,6 +884,7 @@ function renderNesColor(entry) {
 const RENDERERS = {
 	bool: renderBool,
 	tri: renderTri,
+	toggles: renderToggles,
 	select: renderSelect,
 	radio: renderRadio,
 	items: renderItems,
@@ -839,6 +941,13 @@ export function readValue(entry) {
 			const v = checked?.value ?? entry.default;
 			return entry.numeric ? Number(v) : v;
 		}
+		case "toggles": {
+			const pills = togglePills(entry).map(o => toggleNode(entry, o.value));
+			if (pills.every(node => !node)) return entry.default; // not rendered yet
+			return togglePills(entry)
+				.filter(o => toggleNode(entry, o.value)?.checked)
+				.map(o => o.value);
+		}
 		case "select": {
 			const v = document.getElementById(domId(entry.id))?.value ?? entry.default;
 			return entry.numeric ? Number(v) : v;
@@ -872,6 +981,18 @@ export function writeValue(entry, value) {
 		case "radio": {
 			const e = document.querySelector(`input[name="${radioName(entry.id)}"][value="${value}"]`);
 			if (e) e.checked = true;
+			break;
+		}
+		case "toggles": {
+			// Tolerates a bare string as well as a list so a hand-edited or
+			// older payload ("sun") still applies.
+			const want = Array.isArray(value) ? value : [value];
+			for (const opt of entry.options) {
+				const node = toggleNode(entry, opt.value);
+				if (node) node.checked = opt.value === "off"
+					? want.length === 0
+					: want.includes(opt.value);
+			}
 			break;
 		}
 		case "select": {
@@ -933,6 +1054,12 @@ export function formatValue(entry, value) {
 		case "select": {
 			const opt = entry.options.find(o => o.value === value);
 			return opt ? opt.label : String(value);
+		}
+		case "toggles": {
+			if (!Array.isArray(value) || value.length === 0) return "OFF";
+			return value
+				.map(v => entry.options.find(o => o.value === v)?.label ?? v)
+				.join(" + ");
 		}
 		case "items": {
 			if (!Array.isArray(value) || value.length === 0) return "(none)";
@@ -996,6 +1123,7 @@ function entryDomIds(entry) {
 			return BOOL_OPTIONS.map(o => `${domId(entry.id)}-${o.value}`);
 		case "tri":
 		case "radio":
+		case "toggles":
 			return entry.options.map(o => `${domId(entry.id)}-${o.value}`);
 		case "items":
 			return Array.from({ length: entry.slots }, (_, i) => `${domId(entry.id)}-${i}`);
@@ -1019,7 +1147,7 @@ function entryDomIds(entry) {
 // every other state is `opt-on` except for "maybe" which gets its own variant.
 export function applyRowStates() {
 	for (const entry of SCHEMA) {
-		if (entry.type !== "bool" && entry.type !== "tri") continue;
+		if (!["bool", "tri", "toggles"].includes(entry.type)) continue;
 		const ids = entryDomIds(entry);
 		const first = document.getElementById(ids[0]);
 		if (!first) continue;
@@ -1029,6 +1157,8 @@ export function applyRowStates() {
 		let on = false, maybe = false;
 		if (entry.type === "bool") {
 			on = value === true;
+		} else if (entry.type === "toggles") {
+			on = Array.isArray(value) && value.length > 0;
 		} else if (value === "maybe" || value === "wild") {
 			// "wild" and "maybe" share the cool violet — both mean "the seed picks
 			// something spicier than the plain shuffle / on baseline".
@@ -1071,6 +1201,10 @@ export function saveSettings() {
 			const v = readValue(entry);
 			if (entry.type === "bool") {
 				settings[`radio:${radioName(entry.id)}`] = v ? "on" : "off";
+			} else if (entry.type === "toggles") {
+				// Own key prefix: the value is a list, which no single input
+				// carries. Stored as JSON so restore gets an array back.
+				settings[`toggles:${radioName(entry.id)}`] = JSON.stringify(v);
 			} else if (entry.type === "tri" || entry.type === "radio") {
 				settings[`radio:${radioName(entry.id)}`] = v;
 			} else if (entry.type === "nescolor") {
@@ -1099,10 +1233,25 @@ export function restoreSettings() {
 		if (!raw) return;
 		const settings = JSON.parse(raw);
 		for (const [key, val] of Object.entries(settings)) {
-			if (key.startsWith("radio:")) {
+			if (key.startsWith("toggles:")) {
+				const name = key.slice(8);
+				const entry = SCHEMA.find(e => e.type === "toggles" && radioName(e.id) === name);
+				if (!entry) continue;
+				let parsed;
+				try { parsed = JSON.parse(val); } catch (_) { parsed = val; }
+				// Pre-Bass settings stored the combined value as "both".
+				if (parsed === "both") parsed = ["sun", "lakitu"];
+				writeValue(entry, parsed);
+			} else if (key.startsWith("radio:")) {
 				const name = key.slice(6);
 				const elNode = document.querySelector(`input[name="${name}"][value="${val}"]`);
 				if (elNode) elNode.checked = true;
+				if (elNode) continue;
+				// Legacy: a field that used to be a bool and is now a toggle
+				// group (wild_injections). "on" meant the pool as it stood
+				// then — sun and lakitu, before Boss Bass joined.
+				const promoted = SCHEMA.find(e => e.type === "toggles" && radioName(e.id) === name);
+				if (promoted) writeValue(promoted, val === "on" ? ["sun", "lakitu"] : []);
 			} else {
 				const elNode = document.getElementById(key);
 				if (elNode) {
@@ -1125,7 +1274,7 @@ export function restoreSettings() {
 // (via wasm `default_options_json`). Any drift is shouted via console.error
 // so the developer notices on the next refresh.
 
-export function assertSchemaParity(wasmDefaultsJson) {
+export function assertSchemaParity(wasmDefaultsJson, flagKeyFieldsJson) {
 	let defaults;
 	try {
 		defaults = JSON.parse(wasmDefaultsJson);
@@ -1141,6 +1290,32 @@ export function assertSchemaParity(wasmDefaultsJson) {
 	const missingInRust = [...schemaIds].filter(id => !wasmIds.has(id));
 	if (missingInJs.length || missingInRust.length) {
 		console.error("Options schema drift detected", { missingInJs, missingInRust });
+	}
+
+	// `inFlagKey` used to be documentation — nothing checked it, so an option
+	// marked shareable that Rust didn't actually encode would have been
+	// invisible. It drives applyOptions and applyPreset, so a wrong marking
+	// means a shared key silently doesn't apply that option. Rust reports what
+	// it encodes; anything that disagrees is a bug on one side or the other.
+	if (!flagKeyFieldsJson) return;
+	let encoded;
+	try {
+		encoded = new Set(JSON.parse(flagKeyFieldsJson));
+	} catch (e) {
+		console.error("Schema parity: could not parse the flag-key field list", e);
+		return;
+	}
+	// Truthiness, not `!== false`, because that's what applyOptions and
+	// applyPreset test — an entry that just forgets the marking is skipped by
+	// them, so it should be reported here too.
+	const claimedButNotEncoded = SCHEMA
+		.filter(e => e.inFlagKey && !encoded.has(e.id))
+		.map(e => e.id);
+	const encodedButNotClaimed = SCHEMA
+		.filter(e => !e.inFlagKey && encoded.has(e.id))
+		.map(e => e.id);
+	if (claimedButNotEncoded.length || encodedButNotClaimed.length) {
+		console.error("inFlagKey drift detected", { claimedButNotEncoded, encodedButNotClaimed });
 	}
 }
 

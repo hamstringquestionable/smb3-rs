@@ -1,7 +1,7 @@
 //! Hammer item also breaks fortress locks / water-gap bridges.
 
 use crate::rom::Rom;
-use crate::randomize::rom_data::{FS_HAMMER_LOCKS, prg_bank_file_to_cpu};
+use crate::randomize::rom_data::{self, FS_HAMMER_LOCKS, prg_bank_file_to_cpu};
 
 // Make the hammer item also break fortress lock tiles and/or water-gap
 // bridge locks on the overworld map.
@@ -39,14 +39,25 @@ pub fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool) {
     let mut replace:   Vec<u8> = vec![0x45, 0x46];
     let mut tilefix:   Vec<u8> = vec![0x00, 0x01];
 
+    // `replace` is derived from `path_for_gap_tile` rather than written out
+    // again: it is the same lock→path mapping the FX restore uses, and a third
+    // copy of it here could drift from the other two. `tilefix` stays explicit
+    // — it is a hammer-specific orientation fixup, not tile classification.
     if locks {
-        breakable.extend_from_slice(&[0x54, 0x56, 0xE4]);
-        replace.extend_from_slice(&[0x46, 0x45, 0xDA]);
+        for &lock in &rom_data::LOCK_TILES {
+            breakable.push(lock);
+            replace.push(
+                rom_data::path_for_gap_tile(lock).expect("a lock tile always inverts"),
+            );
+        }
         tilefix.extend_from_slice(&[0x01, 0x00, 0x00]);
     }
     if bridges {
-        breakable.push(0x9D);
-        replace.push(0xB3);
+        breakable.push(rom_data::WATER_GAP_TILE);
+        replace.push(
+            rom_data::path_for_gap_tile(rom_data::WATER_GAP_TILE)
+                .expect("the water gap always inverts"),
+        );
         tilefix.push(0x00);
     }
 
@@ -118,4 +129,75 @@ pub fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool) {
     subroutine.extend_from_slice(&replace);
     subroutine.extend_from_slice(&tilefix);
     rom.write_range(FS_HAMMER_LOCKS, &subroutine);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pins the generated tables byte-for-byte.
+    ///
+    /// `hammer_breaks_locks` is off by default, so the overworld baseline sweep
+    /// never reaches this code — it would pass vacuously and prove nothing about
+    /// deriving `replace` from `path_for_gap_tile`. The expected bytes below are
+    /// the literals this function used before that change.
+    fn tables(locks: bool, bridges: bool) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return (vec![], vec![], vec![]);
+        };
+        let mut rom = crate::rom::Rom::from_bytes_lax(&bytes, true).unwrap();
+        hammer_breaks_tiles(&mut rom, locks, bridges);
+
+        let n = 2 + if locks { 3 } else { 0 } + usize::from(bridges);
+        let base = FS_HAMMER_LOCKS + 32;
+        let read = |i: usize| rom.read_range(base + i * n, n).to_vec();
+        (read(0), read(1), read(2))
+    }
+
+    #[test]
+    fn rocks_only_tables_are_unchanged() {
+        let (breakable, replace, tilefix) = tables(false, false);
+        if breakable.is_empty() {
+            return; // no ROM available
+        }
+        assert_eq!(breakable, vec![0x51, 0x52]);
+        assert_eq!(replace, vec![0x45, 0x46]);
+        assert_eq!(tilefix, vec![0x00, 0x01]);
+    }
+
+    #[test]
+    fn lock_tables_match_the_literals_they_replaced() {
+        let (breakable, replace, tilefix) = tables(true, false);
+        if breakable.is_empty() {
+            return;
+        }
+        assert_eq!(breakable, vec![0x51, 0x52, 0x54, 0x56, 0xE4]);
+        assert_eq!(replace, vec![0x45, 0x46, 0x46, 0x45, 0xDA]);
+        assert_eq!(tilefix, vec![0x00, 0x01, 0x01, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn bridge_entry_appends_after_locks() {
+        let (breakable, replace, tilefix) = tables(true, true);
+        if breakable.is_empty() {
+            return;
+        }
+        assert_eq!(breakable, vec![0x51, 0x52, 0x54, 0x56, 0xE4, 0x9D]);
+        assert_eq!(replace, vec![0x45, 0x46, 0x46, 0x45, 0xDA, 0xB3]);
+        assert_eq!(tilefix, vec![0x00, 0x01, 0x01, 0x00, 0x00, 0x00]);
+    }
+
+    /// Bridges without locks must not shift the lock entries in — the tables are
+    /// parallel arrays indexed together, so order is load-bearing.
+    #[test]
+    fn bridges_without_locks() {
+        let (breakable, replace, tilefix) = tables(false, true);
+        if breakable.is_empty() {
+            return;
+        }
+        assert_eq!(breakable, vec![0x51, 0x52, 0x9D]);
+        assert_eq!(replace, vec![0x45, 0x46, 0xB3]);
+        assert_eq!(tilefix, vec![0x00, 0x01, 0x00]);
+    }
 }

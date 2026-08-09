@@ -20,7 +20,7 @@ use crate::randomize::rom_data::{
     TANK_BRO_POOL,
 };
 use crate::randomize::segment_writer::{self, SegmentEntry as WriterEntry, SortMode};
-use crate::randomizer::{EnemyMode, Options};
+use crate::randomizer::{EnemyMode, Options, WildChaser};
 use crate::rom::Rom;
 
 mod class_modes;
@@ -63,7 +63,7 @@ pub fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
         piranhas: EnemyMode::Off, ghosts: EnemyMode::Off,
         thwomps: EnemyMode::Off, rotodiscs: EnemyMode::Off,
         cannons: EnemyMode::Off, water: EnemyMode::Off, bros: EnemyMode::Off,
-        hb_encounters: EnemyMode::Off, wild_injections: false,
+        hb_encounters: EnemyMode::Off, wild_injections: Vec::new(),
         ..Options::default()
     };
     randomize_object_data(rom, rng, true, &no_flags);
@@ -94,17 +94,16 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
     let hb_modes = hb_class_modes(opts.hb_encounters);
     let hb_wild_pool = hb_modes.build_wild_pool();
 
-    // Wild injection runs in its own pass driven by *level entry points*
-    // (header-pointed enemy_ptr values), not by walker-segments. This
-    // guarantees every injection lands on a byte the SMB3 level loader
-    // actually reads. See inject_at_entry_points doc for details. Segment
-    // bounds are passed so the injection's CHR pin-scan can cover the whole
-    // $FF-bounded segment, not just the ep's own run (runs nest, and outer
-    // levels see the injected enemy too).
-    if opts.wild_injections && !big_q_only {
-        let bounds = segment_writer::walk_segments(&data, 0, data.len(), &skip_ranges);
-        inject_wild_chasers(&mut data, rom, &bounds, opts, rng);
-    }
+    // Wild injection happens inside the segment loop below, not as a pass
+    // around it — the walker is what knows a segment's real CHR pin set, and a
+    // pass on either side of it can only re-derive that. All it needs up front
+    // is where each level's first enemy lives (header-pointed enemy_ptr values,
+    // via node_catalog), which no shuffle can move.
+    let injection_sites = if !opts.wild_injections.is_empty() && !big_q_only {
+        collect_injection_sites(rom, &data, opts)
+    } else {
+        InjectionSites::new()
+    };
 
     let mut i = 0;
     while i < data.len() {
@@ -158,10 +157,23 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
             continue;
         }
 
+        // Wild injection. Runs here — after the entries are parsed, before
+        // anything is committed or picked — so an injected chaser is just an
+        // enemy the segment contains as far as everything below is concerned:
+        // the Bertha tally counts it, the pin scan commits its page, and the
+        // picks route around it. HB segments are excluded; their enemies are
+        // the overworld mini-battle, not a level's.
+        let injected = if injection_sites.is_empty() || is_hb_segment {
+            Vec::new()
+        } else {
+            inject_segment_chasers(
+                &mut data, rom, &mut entries, &injection_sites, modes, opts, rng,
+            )
+        };
+
         // Track Boss Bass count for this segment so the per-segment cap is
-        // enforced during class swaps. If a wild injection (run earlier in
-        // its own pass) added a Bertha to this segment, that's already
-        // reflected here because we re-read obj_ids from `data`.
+        // enforced during class swaps. An injected Bertha is already reflected
+        // here — `entries` was updated in step with `data` above.
         let mut bertha_count: u8 = entries.iter()
             .filter(|e| BERTHA_IDS.contains(&e.obj_id))
             .count() as u8;
@@ -183,21 +195,13 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
         //    (pinned now, or picked as we go); it seeds every group's local
         //    slots so ordinary picks stay compatible with a chaser that will
         //    follow the player to them.
-        let mut seg_all4 = ChrSlot::Free;
-        let mut seg_all5 = ChrSlot::Free;
-        let mut seg_chaser4 = ChrSlot::Free;
-        let mut seg_chaser5 = ChrSlot::Free;
-        if !big_q_only {
-            for entry in &entries {
-                let fo = ENEMY_DATA_START + entry.data_index;
-                if is_pinned(entry.obj_id, fo, modes) {
-                    commit_chr_page(entry.obj_id, &mut seg_all4, &mut seg_all5);
-                    if CHASER_IDS.contains(&entry.obj_id) {
-                        commit_chr_page(entry.obj_id, &mut seg_chaser4, &mut seg_chaser5);
-                    }
-                }
-            }
-        }
+        let seg = if big_q_only {
+            SegmentPins::none()
+        } else {
+            segment_pins(&entries, modes, &injected, None)
+        };
+        let (mut seg_all4, mut seg_all5) = seg.all;
+        let (mut seg_chaser4, mut seg_chaser5) = seg.chaser;
 
         for group in &groups {
             // Two-pass approach per CHR group:
@@ -210,8 +214,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
             if !big_q_only {
                 for &idx in group {
                     let entry = &entries[idx];
-                    let fo = ENEMY_DATA_START + entry.data_index;
-                    if is_pinned(entry.obj_id, fo, modes) {
+                    if is_fixed(entry, modes, &injected) {
                         commit_chr_page(entry.obj_id, &mut committed_slot4, &mut committed_slot5);
                     }
                 }
@@ -241,6 +244,14 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                 // SkipSwap keeps its enemy; its CHR page was already pinned
                 // in Pass 1 (is_pinned covers SkipSwap protections).
                 if protection == Some(EntryProtection::SkipSwap) {
+                    continue;
+                }
+                // A wild injection settled this entry. Not covered by the
+                // SkipSwap check above, and not covered by is_pinned either:
+                // `should_precommit` is false for anything in a Wild pool, so
+                // without this an injected Boss Bass would be swapped straight
+                // back out whenever water is Wild.
+                if injected.contains(&entry.data_index) {
                     continue;
                 }
 

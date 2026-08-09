@@ -3,7 +3,7 @@
 //! These are stateless helpers used by the overworld builder pipeline for tile
 //! classification, gap placement, and FX pattern lookup.
 
-use super::rom_data::{Grid, TILE_AIRSHIP, TILE_BOWSER};
+use super::rom_data::{self, Grid, TILE_AIRSHIP, TILE_BOWSER};
 
 /// All path tiles eligible for lock/water-gap placement.
 /// Locks (0x54, 0x56, 0xE4) are visual variants — all block the path equally.
@@ -40,29 +40,15 @@ pub(super) fn find_target(grid: &Grid, world_idx: usize) -> Option<(usize, usize
     None
 }
 
-/// Vertical path tiles (plain + variants + drawbridge). Both the gap-tile
-/// and FX-pattern lookups key on this — a new vertical variant added here
-/// gets the vertical lock AND its FX pattern together.
-fn is_vertical_path(tile: u8) -> bool {
-    matches!(tile, 0x46 | 0xAA | 0xAB | 0xB0 | 0xB1 | 0xDB | 0xBA)
-}
-
-/// Determine the lock/gap tile for a given path tile.
-/// 0x54 = vertical lock, 0x56 = horizontal lock, 0xE4 = sky lock, 0x9D = water gap.
-pub(super) fn gap_tile_for(tile: u8) -> u8 {
-    match tile {
-        0xB3 => 0x9D,                          // bridge → water gap
-        0xDA => 0xE4,                          // sky path → sky lock
-        t if is_vertical_path(t) => 0x54,      // vertical path → vertical lock
-        _ => 0x56,                             // horizontal path → horizontal lock
-    }
-}
-
 /// Pattern bytes for each FX type (keyed by the original path tile).
+///
+/// Keys on [`rom_data::is_vertical_path`], the same predicate
+/// [`rom_data::gap_tile_for`] uses, so a new vertical variant added there gets
+/// its lock tile and its FX pattern together rather than one of the two.
 pub(super) fn fx_patterns_for(tile: u8) -> [u8; 4] {
     match tile {
-        0xB3 => [0xD4, 0xD6, 0xD5, 0xD7],                    // water bridge
-        t if is_vertical_path(t) => [0xFE, 0xC0, 0xFE, 0xC0], // lock (vertical)
+        rom_data::BRIDGE_TILE => [0xD4, 0xD6, 0xD5, 0xD7],   // water bridge
+        t if rom_data::is_vertical_path(t) => [0xFE, 0xC0, 0xFE, 0xC0], // lock (vertical)
         _ => [0xFE, 0xFE, 0xE1, 0xE1],                        // bridge gap / sky
     }
 }

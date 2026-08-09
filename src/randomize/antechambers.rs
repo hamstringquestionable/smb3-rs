@@ -1,8 +1,9 @@
-//! Antechamber shuffle: ten levels open with an entry area whose
-//! pipe leads to the level's interior (4-3, 5-2, 5-3, 6-6, 6-9, 7-1,
-//! 7-4, 7-5, 7-6, 7-7). This module shuffles which interior each entry
-//! area's pipe drops into, so walking into one level's front door can
-//! land you inside another's. The interior's own exit transition is
+//! Antechamber shuffle: several levels open with an entry area whose
+//! pipe leads to the level's interior (2-Pyr, 4-3, 5-2, 5-3, 6-6, 6-9,
+//! 7-1, 7-4, 7-5, 7-6, 7-7, plus the beta stage β4 when beta stages are
+//! enabled). This module shuffles which interior each entry area's pipe
+//! drops into, so walking into one level's front door can land you
+//! inside another's. The interior's own exit transition is
 //! untouched — the player finishes through the donor level's vanilla
 //! ending (most interiors loop back to their own entry area's end
 //! side; 4-3's exits via the slot-free hardcoded generic exit,
@@ -30,8 +31,9 @@ use rand_chacha::ChaCha8Rng;
 
 use crate::rom::Rom;
 
-/// One antechamber-pattern level (pool emitted by
-/// `tools/rom_map.py --antechamber`).
+/// One antechamber-pattern level. The vanilla entries are emitted by
+/// `tools/rom_map.py --antechamber`; beta stages are added by hand (that
+/// detector only scans pointer-table levels, so it can't see them).
 struct Antechamber {
     /// Vanilla level name, for panic messages.
     name: &'static str,
@@ -52,22 +54,33 @@ struct Antechamber {
     /// only the real front door `0x1A804` is. (See the big_q room lookup in
     /// `qol/big_q.rs` for the matching room-selection half.)
     junctions: &'static [usize],
+    /// True for a beta (unreferenced) stage. Beta antechambers only join the
+    /// pool when `include_beta_stages` is set — otherwise the stage isn't even
+    /// placed on the map, so hosting/donating its interior would be pointless.
+    beta: bool,
 }
 
-const ANTECHAMBERS: [Antechamber; 11] = [
-    Antechamber { name: "2-Pyr", header: 0x28F36, junctions: &[0x28F6F, 0x28F96] },
-    Antechamber { name: "4-3", header: 0x2701F, junctions: &[0x27073] },
+const ANTECHAMBERS: [Antechamber; 12] = [
+    Antechamber { name: "2-Pyr", header: 0x28F36, junctions: &[0x28F6F, 0x28F96], beta: false },
+    Antechamber { name: "4-3", header: 0x2701F, junctions: &[0x27073], beta: false },
     // 5-2 lists only its front door 0x1A804; 0x1A807 (slot 4) seeds the Big ?
     // Block bonus-room arrival and must stay vanilla — see the `junctions` doc.
-    Antechamber { name: "5-2", header: 0x1A587, junctions: &[0x1A804] },
-    Antechamber { name: "5-3", header: 0x1EC26, junctions: &[0x1EC4A] },
-    Antechamber { name: "6-6", header: 0x23941, junctions: &[0x23990] },
-    Antechamber { name: "6-9", header: 0x23CFE, junctions: &[0x23D17] },
-    Antechamber { name: "7-1", header: 0x1EA71, junctions: &[0x1EA94, 0x1EAA2] },
-    Antechamber { name: "7-4", header: 0x1F392, junctions: &[0x1F3BC] },
-    Antechamber { name: "7-5", header: 0x1FCF9, junctions: &[0x1FD3F] },
-    Antechamber { name: "7-6", header: 0x1F342, junctions: &[0x1F38E] },
-    Antechamber { name: "7-7", header: 0x1EAB8, junctions: &[0x1EAEB] },
+    Antechamber { name: "5-2", header: 0x1A587, junctions: &[0x1A804], beta: false },
+    Antechamber { name: "5-3", header: 0x1EC26, junctions: &[0x1EC4A], beta: false },
+    Antechamber { name: "6-6", header: 0x23941, junctions: &[0x23990], beta: false },
+    Antechamber { name: "6-9", header: 0x23CFE, junctions: &[0x23D17], beta: false },
+    Antechamber { name: "7-1", header: 0x1EA71, junctions: &[0x1EA94, 0x1EAA2], beta: false },
+    Antechamber { name: "7-4", header: 0x1F392, junctions: &[0x1F3BC], beta: false },
+    Antechamber { name: "7-5", header: 0x1FCF9, junctions: &[0x1FD3F], beta: false },
+    Antechamber { name: "7-6", header: 0x1F342, junctions: &[0x1F38E], beta: false },
+    Antechamber { name: "7-7", header: 0x1EAB8, junctions: &[0x1EAEB], beta: false },
+    // β4 (beta stage, no pointer-table entry): empty 2-screen entry (0x21452)
+    // pipes into an 8-screen interior (obj $C7A7) and loops back to its own
+    // ending — a textbook antechamber. Only in the pool when beta stages are
+    // enabled. Its front door 0x214A3 carries PipeExitDir=8 (a door, byte1
+    // 0x68), which `sanitize_exit_dir` remaps to a valid pipe-exit direction on
+    // the donor path, same as 2-Pyr. See BETA_LEVELS in rom_data/tables.rs.
+    Antechamber { name: "\u{03B2}4", header: 0x21452, junctions: &[0x214A3], beta: true },
 ];
 
 // Candidates surfaced by `rom_map.py --antechamber` but deliberately left
@@ -144,10 +157,18 @@ fn sanitize_exit_dir(byte1: u8) -> u8 {
 /// Randomly permute which interior each antechamber level's entry pipe
 /// leads to. Identity assignments are allowed (a level may keep its own
 /// interior) and skip their writes entirely.
-pub fn shuffle(rom: &mut Rom, rng: &mut ChaCha8Rng) {
+pub fn shuffle(rom: &mut Rom, rng: &mut ChaCha8Rng, include_beta_stages: bool) {
+    // Beta antechambers only join the pool when their stages are placed. With
+    // beta stages off the pool is the 11 vanilla levels and the output is
+    // byte-identical to before β4 existed.
+    let pool: Vec<&Antechamber> = ANTECHAMBERS
+        .iter()
+        .filter(|a| include_beta_stages || !a.beta)
+        .collect();
+
     // Snapshot all vanilla interiors before any writes, so a permutation
     // never reads a value another assignment already overwrote.
-    let interiors: Vec<Interior> = ANTECHAMBERS
+    let interiors: Vec<Interior> = pool
         .iter()
         .map(|a| {
             let hdr = rom.read_range(a.header, 9);
@@ -172,14 +193,14 @@ pub fn shuffle(rom: &mut Rom, rng: &mut ChaCha8Rng) {
         })
         .collect();
 
-    let mut assignment: Vec<usize> = (0..ANTECHAMBERS.len()).collect();
+    let mut assignment: Vec<usize> = (0..pool.len()).collect();
     assignment.shuffle(rng);
 
     for (host_idx, &donor_idx) in assignment.iter().enumerate() {
         if donor_idx == host_idx {
             continue; // keeps its own interior — leave vanilla bytes alone
         }
-        let host = &ANTECHAMBERS[host_idx];
+        let host = pool[host_idx];
         let donor = &interiors[donor_idx];
 
         rom.write_range(host.header, &donor.alt_ptrs);
@@ -256,7 +277,7 @@ mod tests {
         let vanilla: Vec<_> = ANTECHAMBERS.iter().map(|a| interior_tuple(&rom, a)).collect();
 
         let mut rng = ChaCha8Rng::seed_from_u64(1);
-        shuffle(&mut rom, &mut rng);
+        shuffle(&mut rom, &mut rng, true);
 
         let mut shuffled: Vec<_> =
             ANTECHAMBERS.iter().map(|a| interior_tuple(&rom, a)).collect();
@@ -270,7 +291,7 @@ mod tests {
     fn host_local_bytes_are_preserved() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(1);
-        shuffle(&mut rom, &mut rng);
+        shuffle(&mut rom, &mut rng, true);
 
         for (i, a) in ANTECHAMBERS.iter().enumerate() {
             let n = i as u8;
@@ -291,7 +312,7 @@ mod tests {
         let vanilla: Vec<_> =
             ANTECHAMBERS.iter().map(|a| interior_tuple(&rom, a)).collect();
         let mut rng = ChaCha8Rng::seed_from_u64(1);
-        shuffle(&mut rom, &mut rng);
+        shuffle(&mut rom, &mut rng, true);
 
         for (a, before) in ANTECHAMBERS.iter().zip(&vanilla) {
             let moved = interior_tuple(&rom, a) != *before;
@@ -345,7 +366,7 @@ mod tests {
         // Force the permutation so some other level hosts this donor: shuffle
         // until a non-identity assignment lands the donor somewhere.
         let mut rng = ChaCha8Rng::seed_from_u64(3);
-        shuffle(&mut rom, &mut rng);
+        shuffle(&mut rom, &mut rng, true);
 
         // Wherever the donor's interior went, its junctions must read dir 3
         // (0xF3) — never the raw 0xF8 — and keep the arrival column 0x27.
@@ -369,8 +390,8 @@ mod tests {
         let mut rom_b = make_test_rom();
         let mut rng_a = ChaCha8Rng::seed_from_u64(42);
         let mut rng_b = ChaCha8Rng::seed_from_u64(42);
-        shuffle(&mut rom_a, &mut rng_a);
-        shuffle(&mut rom_b, &mut rng_b);
+        shuffle(&mut rom_a, &mut rng_a, true);
+        shuffle(&mut rom_b, &mut rng_b, true);
 
         for a in &ANTECHAMBERS {
             assert_eq!(
@@ -383,6 +404,47 @@ mod tests {
         }
     }
 
+    /// With beta stages off, a beta antechamber is never in the pool: its
+    /// bytes stay exactly vanilla and the remaining levels still permute among
+    /// themselves (the beta slot can't absorb or donate an interior).
+    #[test]
+    fn beta_excluded_when_flag_off() {
+        let mut rom = make_test_rom();
+        let vanilla: Vec<_> =
+            ANTECHAMBERS.iter().map(|a| interior_tuple(&rom, a)).collect();
+
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        shuffle(&mut rom, &mut rng, false);
+
+        // Every beta entry is untouched.
+        for (a, before) in ANTECHAMBERS.iter().zip(&vanilla) {
+            if a.beta {
+                assert_eq!(
+                    interior_tuple(&rom, a),
+                    *before,
+                    "{}: beta interior changed with flag off",
+                    a.name
+                );
+            }
+        }
+
+        // The non-beta interiors are still a permutation of the vanilla set.
+        let mut shuffled: Vec<_> = ANTECHAMBERS
+            .iter()
+            .filter(|a| !a.beta)
+            .map(|a| interior_tuple(&rom, a))
+            .collect();
+        let mut expected: Vec<_> = ANTECHAMBERS
+            .iter()
+            .zip(&vanilla)
+            .filter(|(a, _)| !a.beta)
+            .map(|(_, before)| before.clone())
+            .collect();
+        shuffled.sort();
+        expected.sort();
+        assert_eq!(shuffled, expected, "vanilla interiors still permute");
+    }
+
     /// Guard the hardcoded offsets against the real ROM: every entry must
     /// hold a junction command, and the header alt pointers must match the
     /// values traced by `tools/rom_map.py --antechamber`. Skipped when the
@@ -390,6 +452,7 @@ mod tests {
     #[test]
     fn vanilla_offsets_match_real_rom() {
         let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
             return;
         };
         let rom = Rom::from_bytes(&bytes).unwrap();
@@ -401,7 +464,7 @@ mod tests {
         // Reason: one-off test fixture row; a named type would just move
         // the field legend away from the data.
         #[allow(clippy::type_complexity)]
-        let expected: [(u16, u16, u8, &[u8], [u8; 2]); 11] = [
+        let expected: [(u16, u16, u8, &[u8], [u8; 2]); 12] = [
             (0xA577, 0xC5BC, 3, &[0, 3], [0x68, 0x20]),    // 2-Pyr (door, dir 8)
             (0xB6D5, 0xC863, 3, &[2], [0x52, 0x20]),       // 4-3
             (0xB481, 0xCE4B, 8, &[0], [0x82, 0x20]),       // 5-2 (vert shaft; slot-4 0x1A807 excluded, it's the bonus-room slot)
@@ -413,6 +476,10 @@ mod tests {
             (0xA5CD, 0xC171, 1, &[0], [0x52, 0x20]),       // 7-5
             (0xB600, 0xCE56, 8, &[1], [0xF8, 0x27]),       // 7-6 (vert shaft)
             (0xBD2F, 0xCD35, 4, &[0], [0x73, 0x20]),       // 7-7
+            // β4 alt pointers + front-door bytes are unaffected by BETA_PATCHES
+            // (which touch header byte5 and layout commands elsewhere), so they
+            // read vanilla-stable straight from the unpatched ROM.
+            (0xB49D, 0xC7A7, 3, &[0], [0x68, 0x20]),       // β4 (door, dir 8)
         ];
 
         for (a, (lay, obj, ts, slots, spawn)) in ANTECHAMBERS.iter().zip(expected) {

@@ -3,6 +3,11 @@ pub mod randomize;
 pub mod randomizer;
 pub mod rom;
 
+/// Playtest ROM assembly. Native-only: it exists to serve the CLI and has no
+/// role in the web build, which never needs a ROM the randomizer wouldn't make.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod testrom;
+
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
 
@@ -10,7 +15,9 @@ use rom::Rom;
 
 pub use ips::apply_ips_patch;
 pub use randomizer::{
-    EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri, STARTING_LIVES_VALUES,
+    current_flag_key_version, flag_key_fields, flag_key_version_of,
+    item_display_name, item_id, EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri,
+    WildChaser, ITEMS, STARTING_LIVES_VALUES,
     ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY,
 };
 
@@ -40,7 +47,7 @@ pub fn randomize_rom(
     let mut rom = Rom::from_bytes_lax(rom_data, options.skip_rom_validation)
         .map_err(|e| e.to_string())?;
     if let Some(patch) = visual_patch {
-        rom.apply_ips_patch(patch)?;
+        rom.apply_ips_patch(patch, "visual_patch")?;
     }
     randomizer::randomize(&mut rom, seed, options);
     Ok(rom)
@@ -84,7 +91,7 @@ pub(crate) fn randomize_rom_with_overworld_capture(
     let mut rom = Rom::from_bytes_lax(rom_data, options.skip_rom_validation)
         .map_err(|e| e.to_string())?;
     if let Some(patch) = visual_patch {
-        rom.apply_ips_patch(patch)?;
+        rom.apply_ips_patch(patch, "visual_patch")?;
     }
     let mut capture: Option<randomize::overworld_build::BuildResult> = None;
     randomizer::randomize_with_overworld_capture(&mut rom, seed, options, &mut capture);
