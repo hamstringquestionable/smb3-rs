@@ -104,6 +104,14 @@ const HAMMER_SUIT = { tiles: [330, 330, 331, 331], cols: 2, palette: [0x0F, 0x30
 const PWING = { tiles: [336, 338, 337, 339], cols: 2, palette: [0x00, 0x30, 0x28, 0x1D] };
 const HAMMER = { tiles: [344, 346, 345, 347], cols: 2, palette: [0x00, 0x30, 0x08, 0x1D] };
 const WHISTLE = { tiles: [352, 354, 353, 355], cols: 2, palette: [0x00, 0x30, 0x28, 0x1D] };
+const CHEST = { tiles: [362, 364, 363, 365], cols: 2, palette: [0x0F, 0x1D, 0x18, 0x08] };
+
+// Other pages — see "Enemy Sprite CHR Bank Switching" in the ROM reference for
+// which page holds which object's art.
+const SPINY = { tiles: [704, 706, 705, 707], cols: 2, palette: [0x0F, 0x1D, 0x20, 0x06] }; // $0B
+const SPADE = { tiles: [1448, 1448, 1449, 1449], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $16
+const WAND = { tiles: [1982, 1983], cols: 1, palette: [0x0F, 0x28, 0x37, 0x03] }; // $1E, 8x16
+const N_CARD = { tiles: [2064, 2064, 2065, 2065], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $20
 
 // Random pick on each page load — flavor for "what will you get?". Still short
 // the super leaf and the starman.
@@ -140,6 +148,7 @@ export const SCHEMA = [
 	{ id: "shuffle_spade_games", type: "bool", default: true,
 		label: "Shuffle Spade Games",
 		tip: "Move spade (card-matching) games to random spots on the map",
+		icon: SPADE,
 		group: "map", inFlagKey: true },
 	{ id: "shuffle_toad_houses", type: "bool", default: true,
 		label: "Shuffle Toad Houses",
@@ -182,6 +191,7 @@ export const SCHEMA = [
 	{ id: "remove_n_cards", type: "bool", default: true,
 		label: "Remove N-Cards",
 		tip: "Remove the N-card (N-Spade) bonus games from the overworld map",
+		icon: N_CARD,
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "map", inFlagKey: true },
 	{ id: "troll_pipes", type: "tri", options: ON_OFF_MAYBE, default: "on",
@@ -225,6 +235,7 @@ export const SCHEMA = [
 	{ id: "ground", type: "tri", options: TRI, default: "shuffle",
 		label: "Ground",
 		tip: "Ground-walking enemies (Goomba, Spiny, Spike, etc.)",
+		icon: SPINY,
 		group: "enemies", inFlagKey: true },
 	{ id: "shell", type: "tri", options: TRI, default: "shuffle",
 		label: "Shell",
@@ -309,7 +320,7 @@ export const SCHEMA = [
 		label: "Skip Wand Cutscene", flavor: "Jump Up, Super Star!",
 		tip: "Skip the wand falling cutscene after defeating a Koopaling — jump to grab the wand instead",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
-		icon: { x: 435, y: 328, w: 16, h: 16 },
+		icon: WAND,
 		group: "bosses", inFlagKey: true },
 
 	// --- Items & Pickups ---
@@ -323,7 +334,7 @@ export const SCHEMA = [
 	{ id: "chest_items", type: "bool", default: true,
 		label: "Chest Items",
 		tip: "Randomize chest and Toad House reward items",
-		icon: { x: 525, y: 292, w: 16, h: 16 },
+		icon: CHEST,
 		group: "items", inFlagKey: true },
 	{ id: "fire_flower", type: "tri", options: OFF_ON_WILD, default: "off",
 		label: "Random Fire Flower",
