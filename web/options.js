@@ -94,10 +94,20 @@ export const GROUPS = [
 // `cols` wide; palette is four NES color indices, entry 0 always transparent.
 // Decoded from the player's own ROM at render time — pick them with
 // web/chr-picker.html rather than by hand.
-// All three are map inventory items, CHR page $05.
-const HAMMER = { tiles: [344, 346, 345, 347], cols: 2, palette: [0x00, 0x30, 0x08, 0x1D] };
+// Map inventory items, all on CHR page $05. The suits and the mushroom are
+// stored as a left half only and drawn mirrored, hence `flipRight`.
+const FROG_SUIT = { tiles: [320, 320, 321, 321], cols: 2, palette: [0x0F, 0x16, 0x0A, 0x0E], flipRight: true };
+const TANOOKI_SUIT = { tiles: [322, 322, 323, 323], cols: 2, palette: [0x0F, 0x36, 0x08, 0x0E], flipRight: true };
+const MUSHROOM = { tiles: [324, 324, 325, 325], cols: 2, palette: [0x0F, 0x36, 0x16, 0x0E], flipRight: true };
+const FIRE_FLOWER = { tiles: [326, 326, 327, 327], cols: 2, palette: [0x0F, 0x30, 0x0B, 0x1D], flipRight: true };
+const HAMMER_SUIT = { tiles: [330, 330, 331, 331], cols: 2, palette: [0x0F, 0x30, 0x38, 0x1D], flipRight: true };
 const PWING = { tiles: [336, 338, 337, 339], cols: 2, palette: [0x00, 0x30, 0x28, 0x1D] };
+const HAMMER = { tiles: [344, 346, 345, 347], cols: 2, palette: [0x00, 0x30, 0x08, 0x1D] };
 const WHISTLE = { tiles: [352, 354, 353, 355], cols: 2, palette: [0x00, 0x30, 0x28, 0x1D] };
+
+// Random pick on each page load — flavor for "what will you get?". Still short
+// the super leaf and the starman.
+const POWERUPS = [MUSHROOM, FIRE_FLOWER, FROG_SUIT, TANOOKI_SUIT, HAMMER_SUIT, PWING];
 
 const KOOPALINGS = [
 	{ x: 1, y: 273, w: 24, h: 32, sheet: "bosses" },
@@ -287,7 +297,7 @@ export const SCHEMA = [
 		label: "Hammer Vulnerable Koopalings",
 		tip: "Koopalings can be damaged by thrown hammers (normally hammers pass through them)",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
-		icon: { x: 543, y: 364, w: 16, h: 16 },
+		icon: HAMMER_SUIT,
 		group: "bosses", inFlagKey: true },
 	{ id: "adjust_boss_hitboxes", type: "bool", default: true,
 		label: "Adjust Boss Hitboxes",
@@ -308,11 +318,7 @@ export const SCHEMA = [
 	{ id: "powerups", type: "bool", default: true,
 		label: "Power-ups",
 		tip: "Randomize ? block and brick block contents, keeping each roughly the same tier",
-		// Was a random-per-load array of all seven power-ups off the sprite
-		// sheet. Mid-conversion this is a single CHR pick — a mixed array would
-		// flip between CHR and sheet art from one load to the next. Add the
-		// remaining power-ups as picks land and the random flavor comes back.
-		icon: PWING,
+		icon: POWERUPS,
 		group: "items", inFlagKey: true },
 	{ id: "chest_items", type: "bool", default: true,
 		label: "Chest Items",
@@ -323,7 +329,7 @@ export const SCHEMA = [
 		label: "Random Fire Flower",
 		tip: "Fire Flowers still look the same, but each one gives a different suit based on where it is. On: Fire, Frog, Tanooki, or Hammer. Wild: also lets it shrink you to Big or Small.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
-		icon: { x: 453, y: 364, w: 16, h: 16 }, // fire flower
+		icon: FIRE_FLOWER,
 		group: "items", inFlagKey: true },
 	{ id: "big_q_blocks", type: "bool", default: false,
 		label: "Big ? Blocks",
@@ -371,6 +377,7 @@ export const SCHEMA = [
 		label: "Faster Frog",
 		tip: "Speeds up swimming and running while wearing the Frog Suit.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
+		icon: FROG_SUIT,
 		group: "player", inFlagKey: true },
 	{ id: "modern_powerups", type: "bool", default: false,
 		label: "Modern Power-Ups",
