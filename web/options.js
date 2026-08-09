@@ -94,7 +94,10 @@ export const GROUPS = [
 // `cols` wide; palette is four NES color indices, entry 0 always transparent.
 // Decoded from the player's own ROM at render time — pick them with
 // web/chr-picker.html rather than by hand.
-const HAMMER = { tiles: [344, 346, 345, 347], cols: 2, palette: [0x00, 0x30, 0x08, 0x1D] }; // map hammer, CHR page $05
+// All three are map inventory items, CHR page $05.
+const HAMMER = { tiles: [344, 346, 345, 347], cols: 2, palette: [0x00, 0x30, 0x08, 0x1D] };
+const PWING = { tiles: [336, 338, 337, 339], cols: 2, palette: [0x00, 0x30, 0x28, 0x1D] };
+const WHISTLE = { tiles: [352, 354, 353, 355], cols: 2, palette: [0x00, 0x30, 0x28, 0x1D] };
 
 const KOOPALINGS = [
 	{ x: 1, y: 273, w: 24, h: 32, sheet: "bosses" },
@@ -305,16 +308,11 @@ export const SCHEMA = [
 	{ id: "powerups", type: "bool", default: true,
 		label: "Power-ups",
 		tip: "Randomize ? block and brick block contents, keeping each roughly the same tier",
-		// Random pick on each page load — flavor for "what will you get?"
-		icon: [
-			{ x: 435, y: 364, w: 16, h: 16 }, // mushroom
-			{ x: 453, y: 364, w: 16, h: 16 }, // fire flower
-			{ x: 471, y: 364, w: 16, h: 16 }, // super leaf
-			{ x: 489, y: 364, w: 16, h: 16 }, // star
-			{ x: 507, y: 364, w: 16, h: 16 }, // frog suit
-			{ x: 525, y: 364, w: 16, h: 16 }, // tanooki suit
-			{ x: 543, y: 364, w: 16, h: 16 }, // hammer suit
-		],
+		// Was a random-per-load array of all seven power-ups off the sprite
+		// sheet. Mid-conversion this is a single CHR pick — a mixed array would
+		// flip between CHR and sheet art from one load to the next. Add the
+		// remaining power-ups as picks land and the random flavor comes back.
+		icon: PWING,
 		group: "items", inFlagKey: true },
 	{ id: "chest_items", type: "bool", default: true,
 		label: "Chest Items",
@@ -335,7 +333,7 @@ export const SCHEMA = [
 	{ id: "remove_whistles", type: "bool", default: true,
 		label: "Remove Warp Whistles",
 		tip: "Remove warp whistles so all worlds must be played",
-		icon: { x: 561, y: 364, w: 16, h: 16 },
+		icon: WHISTLE,
 		group: "items", inFlagKey: true },
 	{ id: "hammer_breaks_locks", type: "tri", options: ON_OFF_MAYBE, default: "off",
 		label: "Hammer Breaks Locks",
