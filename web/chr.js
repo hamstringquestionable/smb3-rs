@@ -79,34 +79,40 @@ export function renderTileToCanvas(canvas, romBytes, tileId, paletteRgb) {
 	ctx.putImageData(decodeTile(romBytes, tileId, paletteRgb), 0, 0);
 }
 
-// Render a 2×2 metasprite (16×16 px) from four tile IDs in [tl, tr, bl, br] order.
-// Native 16×16 pixels — caller scales via CSS for crisp rendering with
-// `image-rendering: pixelated`.
-// flipRight mirrors the right column, for icons built from one tile column
-// and its h-flipped twin (the title-screen seed hash does this).
-export function renderMetatile(canvas, romBytes, tileIds, paletteRgb, flipRight = false) {
-	canvas.width = 16;
-	canvas.height = 16;
+// Render an arbitrary grid of 8×8 tiles, listed row-major and `cols` wide.
+// A null entry leaves that cell transparent, so a non-rectangular sprite can
+// skip the tiles it doesn't use. The canvas is sized to the grid in native
+// pixels — callers scale via CSS with `image-rendering: pixelated`.
+// flipRight mirrors the rightmost column, for icons built from one column and
+// its h-flipped twin (the title-screen seed hash does this).
+export function renderTiles(canvas, romBytes, tileIds, cols, paletteRgb, flipRight = false) {
+	const rows = Math.ceil(tileIds.length / cols);
+	canvas.width = cols * 8;
+	canvas.height = rows * 8;
 	const ctx = canvas.getContext("2d");
-	ctx.clearRect(0, 0, 16, 16);
-	const positions = [
-		[0, 0],   // tl
-		[8, 0],   // tr
-		[0, 8],   // bl
-		[8, 8],   // br
-	];
-	for (let i = 0; i < 4; i++) {
+	ctx.clearRect(0, 0, canvas.width, canvas.height);
+	for (let i = 0; i < tileIds.length; i++) {
 		const tid = tileIds[i];
 		if (tid == null) continue;
-		const [x, y] = positions[i];
-		const flip = flipRight && (i === 1 || i === 3);
-		ctx.putImageData(decodeTile(romBytes, tid, paletteRgb, flip), x, y);
+		const col = i % cols;
+		const flip = flipRight && col === cols - 1;
+		ctx.putImageData(
+			decodeTile(romBytes, tid, paletteRgb, flip),
+			col * 8,
+			Math.floor(i / cols) * 8,
+		);
 	}
 }
 
+// Render a 2×2 metasprite (16×16 px) from four tile IDs in [tl, tr, bl, br] order.
+export function renderMetatile(canvas, romBytes, tileIds, paletteRgb, flipRight = false) {
+	renderTiles(canvas, romBytes, tileIds, 2, paletteRgb, flipRight);
+}
+
 // Convenience: render an icon spec (from the schema) into a canvas.
-// spec = { tiles: [tl, tr, bl, br], palette: [c0, c1, c2, c3], flipRight? }
+// spec = { tiles: [...row-major], cols?: 2, palette: [c0, c1, c2, c3], flipRight? }
 export function renderIcon(canvas, romBytes, spec) {
 	if (!canvas || !romBytes || !spec) return;
-	renderMetatile(canvas, romBytes, spec.tiles, resolvePalette(spec.palette), !!spec.flipRight);
+	const cols = spec.cols ?? 2;
+	renderTiles(canvas, romBytes, spec.tiles, cols, resolvePalette(spec.palette), !!spec.flipRight);
 }
