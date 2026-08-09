@@ -80,6 +80,16 @@ pub(super) fn pick_menu_music(seed: u64) -> u8 {
     MENU_MUSIC_TRACKS[(h % MENU_MUSIC_TRACKS.len() as u64) as usize]
 }
 
+/// CHR page (1 KB) loaded into each sprite pattern slot on the title screen.
+/// The reset path in PRG030 (`PRG030_845A`) sets MMC3 R2–R5 to $20/$21/$04/$7F
+/// before handing control to the title handler, so an OAM tile ID of $00–$3F
+/// reads from page $20, $40–$7F from $21, $80–$BF from $04, $C0–$FF from $7F.
+const TITLE_SPRITE_CHR_PAGES: [usize; 4] = [0x20, 0x21, 0x04, 0x7F];
+
+/// File offset of `Title_Load_Palette` (PRG025): a 32-byte upload to $3F00 —
+/// 16 background colors followed by the 16 sprite colors, four per palette.
+const TITLE_SPRITE_PALETTE_OFFSET: usize = 0x326AD + 16;
+
 /// Sprite positions: vertical column in top-left corner, inset from edge.
 const X_LEFT: u8 = 16;
 const X_RIGHT: u8 = 24;
@@ -123,6 +133,66 @@ fn compute_hash(seed: u64, options: &Options) -> ([usize; HASH_LENGTH], u8) {
     }
     let palette = PALETTES[(h % PALETTES.len() as u64) as usize];
     (icons, palette)
+}
+
+/// One hash icon as a CHR renderer needs it: four 8x8 tile indices into CHR
+/// ROM in `[top-left, top-right, bottom-left, bottom-right]` order, plus
+/// whether the right half is the left half mirrored.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeedHashIcon {
+    pub tiles: [usize; 4],
+    pub flip_right: bool,
+}
+
+/// The five title-screen hash icons for a seed + options, resolved against a
+/// specific ROM's title-screen CHR banks and palette. Lets the web app draw
+/// the icons the player is about to see, from their own ROM's graphics.
+#[derive(serde::Serialize)]
+pub struct SeedHashPreview {
+    pub icons: Vec<SeedHashIcon>,
+    /// NES color indices of the chosen sprite palette. Entry 0 is the
+    /// universal backdrop and renders transparent.
+    pub palette: [u8; 4],
+}
+
+/// Resolve an 8x16-mode OAM tile ID to its absolute CHR ROM tile index.
+/// Every `ICON_TILES` entry is odd (pattern table 1), so the top tile of the
+/// pair is `tile & 0xFE` and the bottom is the one after it.
+fn chr_tile_index(tile: u8) -> usize {
+    TITLE_SPRITE_CHR_PAGES[(tile >> 6) as usize] * 64 + (tile & 0x3F) as usize
+}
+
+/// Describe the hash `write_seed_hash` would stamp for `seed` + `options`,
+/// without writing anything. `rom` is only read for its title sprite palette.
+pub fn seed_hash_preview(rom: &[u8], seed: u64, options: &Options) -> SeedHashPreview {
+    let (icons, palette_attr) = compute_hash(seed, options);
+    let icons = icons
+        .iter()
+        .map(|&i| {
+            let (tile_l, tile_r, extra_attr_r) = ICON_TILES[i];
+            let (top_l, top_r) = (tile_l & 0xFE, tile_r & 0xFE);
+            SeedHashIcon {
+                tiles: [
+                    chr_tile_index(top_l),
+                    chr_tile_index(top_r),
+                    chr_tile_index(top_l + 1),
+                    chr_tile_index(top_r + 1),
+                ],
+                flip_right: extra_attr_r & 0x40 != 0,
+            }
+        })
+        .collect();
+
+    // A ROM too short to hold the table (only reachable with validation off,
+    // where the hash isn't written anyway) falls back to all-backdrop.
+    let base = TITLE_SPRITE_PALETTE_OFFSET + (palette_attr & 0x03) as usize * 4;
+    let mut palette = [0x0Fu8; 4];
+    if let Some(colors) = rom.get(base..base + 4) {
+        palette.copy_from_slice(colors);
+    }
+
+    SeedHashPreview { icons, palette }
 }
 
 /// Write seed hash sprites to the title screen.
@@ -307,6 +377,53 @@ mod tests {
 
         // Attract-mode demo trigger neutralized: LDA #$FF operand becomes #$00.
         assert_eq!(rom.read_byte(DEMO_TRIGGER_OPERAND_OFFSET), 0x00);
+    }
+
+    #[test]
+    fn icon_tiles_are_all_pattern_table_1() {
+        // `chr_tile_index` assumes every icon tile is odd (bit 0 = pattern
+        // table 1), which is what makes `tile & 0xFE` the top half of the
+        // 8x16 pair. An even entry would silently render from PT0.
+        for (i, &(l, r, _)) in ICON_TILES.iter().enumerate() {
+            assert_eq!(l & 1, 1, "icon {i} left tile {l:#04X} is not in PT1");
+            assert_eq!(r & 1, 1, "icon {i} right tile {r:#04X} is not in PT1");
+        }
+    }
+
+    #[test]
+    fn preview_matches_written_sprite_data() {
+        let opts = Options::default();
+        let mut rom = crate::randomize::qol::test_support::make_test_rom();
+        write_seed_hash(&mut rom, 42, &opts);
+        let written = rom.read_range(DATA_OFFSET, HASH_LENGTH * 8).to_vec();
+
+        let preview = seed_hash_preview(&rom.data, 42, &opts);
+        assert_eq!(preview.icons.len(), HASH_LENGTH);
+
+        for (i, icon) in preview.icons.iter().enumerate() {
+            // Icon i sits in group HASH_LENGTH-1-i of the OAM data table.
+            let base = (HASH_LENGTH - 1 - i) * 8;
+            let (tile_l, tile_r) = (written[base + 1], written[base + 5]);
+            assert_eq!(icon.tiles[0], chr_tile_index(tile_l & 0xFE));
+            assert_eq!(icon.tiles[1], chr_tile_index(tile_r & 0xFE));
+            assert_eq!(icon.tiles[2], icon.tiles[0] + 1);
+            assert_eq!(icon.tiles[3], icon.tiles[1] + 1);
+            assert_eq!(icon.flip_right, written[base + 6] & 0x40 != 0);
+        }
+    }
+
+    #[test]
+    fn preview_tile_indices_stay_inside_chr() {
+        // 128 KB of CHR = 8192 tiles.
+        let opts = Options::default();
+        let rom = crate::randomize::qol::test_support::make_test_rom();
+        for seed in 0..100u64 {
+            for icon in seed_hash_preview(&rom.data, seed, &opts).icons {
+                for t in icon.tiles {
+                    assert!(t < 8192, "tile index {t} past the end of CHR");
+                }
+            }
+        }
     }
 
     #[test]
