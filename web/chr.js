@@ -83,8 +83,10 @@ export function renderTileToCanvas(canvas, romBytes, tileId, paletteRgb) {
 // A null entry leaves that cell transparent, so a non-rectangular sprite can
 // skip the tiles it doesn't use. The canvas is sized to the grid in native
 // pixels — callers scale via CSS with `image-rendering: pixelated`.
-// flipRight mirrors the rightmost column, for icons built from one column and
-// its h-flipped twin (the title-screen seed hash does this).
+// flipRight h-flips the right half of the grid, for symmetric art stored as one
+// half and drawn twice (the title-screen seed hash does this). Paired with a
+// tile list whose right half repeats the left in reverse, it mirrors the whole
+// sprite; for the common 2-column case that's just "flip the right column".
 export function renderTiles(canvas, romBytes, tileIds, cols, paletteRgb, flipRight = false) {
 	const rows = Math.ceil(tileIds.length / cols);
 	canvas.width = cols * 8;
@@ -95,7 +97,7 @@ export function renderTiles(canvas, romBytes, tileIds, cols, paletteRgb, flipRig
 		const tid = tileIds[i];
 		if (tid == null) continue;
 		const col = i % cols;
-		const flip = flipRight && col === cols - 1;
+		const flip = flipRight && col >= cols / 2;
 		ctx.putImageData(
 			decodeTile(romBytes, tid, paletteRgb, flip),
 			col * 8,

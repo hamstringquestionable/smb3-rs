@@ -72,10 +72,10 @@ input[type=text], input[type=number], select { background: #0a0a1a; border: 1px 
 
   <h2>Label for next pick</h2>
   <div class="row"><input type="text" id="label" placeholder="e.g. hammer_breaks_locks" style="flex:1"></div>
-  <div class="row"><label><input type="checkbox" id="mirror"> mirror right column</label></div>
-  <div class="note">Several icons are stored as one half only and drawn twice,
-  h-flipped (OAM attribute bit 6). Pick the left half plus one empty column to
-  its right, tick this, and the pick records <code>flipRight</code>.</div>
+  <div class="row"><label><input type="checkbox" id="mirror"> mirror (symmetric sprite)</label></div>
+  <div class="note">Several sprites are stored as one half only and drawn twice,
+  h-flipped — so only half of them exists in CHR. Tick this and drag just that
+  half; the pick comes out as the whole sprite, twice as wide.</div>
 
   <h2>Cursor</h2>
   <div id="cursor" class="coord">—</div>
@@ -354,23 +354,30 @@ cv.addEventListener("mouseleave", () => { if (drag) { drag = null; drawOverlay(v
 // A pick becomes an options.js icon spec: 8x8 tiles listed row-major. Each
 // selected pair row contributes two tile rows — the even (top) halves, then
 // the odd (bottom) halves.
+//
+// With mirror on, you drag only the half that exists in CHR and the pick is
+// widened to the whole sprite here: each row gets its own reverse appended, and
+// `flipRight` h-flips that added half at render time.
 function addPick(r) {
 	const v = view();
+	const mirror = mirrorEl.checked;
 	const tiles = [];
 	for (let row = 0; row < r.rows; row++) {
 		for (const half of [0, 1]) {
+			const line = [];
 			for (let col = 0; col < r.cols; col++) {
-				tiles.push(pairTile(v, r.c + col, r.r + row) + half);
+				line.push(pairTile(v, r.c + col, r.r + row) + half);
 			}
+			tiles.push(...line, ...(mirror ? [...line].reverse() : []));
 		}
 	}
 	const pal = palValues();
 	picks.push({
 		label: labelEl.value.trim(),
 		tiles,
-		cols: r.cols,
+		cols: r.cols * (mirror ? 2 : 1),
 		palette: pal,
-		flipRight: mirrorEl.checked,
+		flipRight: mirror,
 		pairRows: r.rows,
 		view: { firstTile: v.firstTile, stride: v.stride, col: r.c, row: r.r },
 	});
