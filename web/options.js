@@ -115,6 +115,21 @@ const ROTODISCS = [ // $12, two rotation frames
 ];
 const START_TILE = { tiles: [1488, 1490, 1489, 1491], cols: 2, palette: [0x0F, 0x38, 0x20, 0x04] }; // $17
 const KOOPALING_RING = { tiles: [4762, 4762, 4763, 4763], cols: 2, palette: [0x0F, 0x1E, 0x20, 0x25], flipRight: true }; // $4A
+const Q_ORB = { tiles: [4988, 4990, 4989, 4991], cols: 2, palette: [0x0F, 0x1D, 0x38, 0x20] }; // $4D, Boom-Boom's Q ball
+const CANNON = { tiles: [6436, 6438, 6437, 6439], cols: 2, palette: [0x0F, 0x1D, 0x10, 0x20] }; // $64
+
+// $4C. 32x32, and like Boss Bass its halves aren't adjacent in CHR, so they're
+// picked separately and stacked into one grid.
+const BIG_Q = {
+	tiles: [
+		4864, 4866, 4868, 4870,
+		4865, 4867, 4869, 4871,
+		4872, 4874, 4876, 4878,
+		4873, 4875, 4877, 4879,
+	],
+	cols: 4,
+	palette: [0x0F, 0x1D, 0x28, 0x20],
+};
 const SPADE = { tiles: [1448, 1448, 1449, 1449], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $16
 const WAND = { tiles: [1982, 1983], cols: 1, palette: [0x0F, 0x28, 0x37, 0x03] }; // $1E, 8x16
 const N_CARD = { tiles: [2064, 2064, 2065, 2065], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $20
@@ -277,6 +292,7 @@ export const SCHEMA = [
 	{ id: "cannons", type: "tri", options: TRI, default: "off",
 		label: "Cannons",
 		tip: "Cannons, Bullet Bill launchers, goomba pipes, and bob-omb launchers. Shuffle keeps fire direction; Wild lets any cannon become any other.",
+		icon: CANNON,
 		group: "enemies", inFlagKey: true },
 	{ id: "water", type: "tri", options: TRI, default: "shuffle",
 		label: "Water",
@@ -314,10 +330,10 @@ export const SCHEMA = [
 		tip: "Each Koopaling takes a random number of stomps (1–5) instead of the usual 3",
 		icon: KOOPALING_RING,
 		group: "bosses", inFlagKey: true },
-	// No icon yet — sprite coordinates get picked by hand in sprite-picker.html.
 	{ id: "boomboom_hits", type: "bool", default: true,
 		label: "Random Boom-Boom Stomps",
 		tip: "Each fortress Boom-Boom takes a random number of stomps (1–5) instead of the usual 3",
+		icon: Q_ORB,
 		group: "bosses", inFlagKey: true },
 	{ id: "hammer_vulnerable_koopalings", type: "bool", default: false,
 		label: "Hammer Vulnerable Koopalings",
@@ -360,7 +376,7 @@ export const SCHEMA = [
 	{ id: "big_q_blocks", type: "bool", default: false,
 		label: "Big ? Blocks",
 		tip: "Randomize the contents of Big ? Blocks in bonus rooms",
-		icon: { x: 435, y: 170, w: 32, h: 32 },
+		icon: BIG_Q,
 		group: "items", inFlagKey: true },
 	{ id: "remove_whistles", type: "bool", default: true,
 		label: "Remove Warp Whistles",
