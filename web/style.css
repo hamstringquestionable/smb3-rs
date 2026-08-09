@@ -589,11 +589,13 @@ input[type="radio"] {
 
 /* --- Seed hash (title screen verification icons) --- */
 
+/* Label above the icons, like every other panel section — an inline label
+   would leave only ~160px for the row, forcing a fractional icon scale. */
 .seed-hash {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: center;
-    gap: 0.6rem;
+    gap: 0.35rem;
     margin-top: 0.7rem;
 }
 
@@ -609,9 +611,13 @@ input[type="radio"] {
     gap: 0.25rem;
 }
 
+/* The canvases are 16x16 native, so the displayed size must be a whole
+   multiple of 16 — at 24px `pixelated` snapped some source pixels to 2 device
+   px and others to 1, which read as a squashed icon. 2x fits the 248px panel
+   (5 x 32 + 4 x 4 gaps = 176px). */
 .seed-hash-icons canvas {
-    width: 24px;
-    height: 24px;
+    width: 32px;
+    height: 32px;
     image-rendering: pixelated;
     image-rendering: -moz-crisp-edges;
     background: transparent;
