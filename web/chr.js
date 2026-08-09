@@ -80,9 +80,15 @@ export function renderTileToCanvas(canvas, romBytes, tileId, paletteRgb) {
 }
 
 // Render an arbitrary grid of 8×8 tiles, listed row-major and `cols` wide.
-// A null entry leaves that cell transparent, so a non-rectangular sprite can
-// skip the tiles it doesn't use. The canvas is sized to the grid in native
-// pixels — callers scale via CSS with `image-rendering: pixelated`.
+//
+// Each entry is a CHR tile index, `null` for a transparent cell (so a
+// non-rectangular sprite can skip tiles it doesn't use), or `{ t, flip: true }`
+// to h-flip that one tile. Per-tile flips are for composites whose parts differ:
+// Bowser's top half is stored as a left half and mirrored, while his bottom half
+// is stored whole, so no whole-grid rule covers both.
+//
+// The canvas is sized to the grid in native pixels — callers scale via CSS with
+// `image-rendering: pixelated`.
 // flipRight h-flips the right half of the grid, for symmetric art stored as one
 // half and drawn twice (the title-screen seed hash does this). Paired with a
 // tile list whose right half repeats the left in reverse, it mirrors the whole
@@ -94,10 +100,12 @@ export function renderTiles(canvas, romBytes, tileIds, cols, paletteRgb, flipRig
 	const ctx = canvas.getContext("2d");
 	ctx.clearRect(0, 0, canvas.width, canvas.height);
 	for (let i = 0; i < tileIds.length; i++) {
-		const tid = tileIds[i];
-		if (tid == null) continue;
+		const entry = tileIds[i];
+		if (entry == null) continue;
+		const perTile = typeof entry === "object";
+		const tid = perTile ? entry.t : entry;
 		const col = i % cols;
-		const flip = flipRight && col >= cols / 2;
+		const flip = perTile ? !!entry.flip : flipRight && col >= cols / 2;
 		ctx.putImageData(
 			decodeTile(romBytes, tid, paletteRgb, flip),
 			col * 8,

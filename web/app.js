@@ -32,7 +32,6 @@ import {
 	assertPresetParity,
 	applyIconScale,
 } from "./options.js";
-import { ensureSheet, drawSpriteFromSheet } from "./sprites.js";
 
 let wasmReady = false;
 let romBytes = null;
@@ -307,18 +306,15 @@ loadRom().then((bytes) => {
 // Paint every schema entry with an icon spec from the bundled sprite sheet.
 // Sheet loads independently of the user's ROM, so icons render on the empty
 // state too. Called once at init.
-// Two icon spec shapes are supported while the schema is being converted:
-// a CHR tile grid decoded from the player's own ROM (`tiles`/`cols`/`palette`),
-// and the older rectangle on a bundled sprite sheet (`x`/`y`/`w`/`h`). CHR
-// icons stay blank until a ROM is loaded — there's no sheet to fall back to,
-// which is the point of the conversion.
+// Option icons are decoded from the player's own ROM's CHR, so they stay blank
+// until a ROM is loaded, and pick up any selected visual patch for free.
+//
 // Which variant a random-per-load icon settled on. Picked once and reused, so
 // re-rendering (a ROM arriving, a visual patch swap) doesn't re-roll the icon
 // under the user — "random on each page load" is the intent, not per redraw.
 const iconVariant = new Map();
 
-async function renderAllIcons() {
-	const sheets = {};
+function renderAllIcons() {
 	const rom = previewRom();
 	for (const entry of SCHEMA) {
 		if (!entry.icon) continue;
@@ -331,20 +327,7 @@ async function renderAllIcons() {
 			? entry.icon[iconVariant.get(entry.id)]
 			: entry.icon;
 		applyIconScale(canvas, spec);
-		if (spec.tiles) {
-			if (rom) renderChrIcon(canvas, rom, spec);
-			continue;
-		}
-		const sheetName = spec.sheet ?? "default";
-		if (!sheets[sheetName]) {
-			try {
-				sheets[sheetName] = await ensureSheet(sheetName);
-			} catch (e) {
-				console.warn(`Sprite sheet '${sheetName}' failed to load; icon blank.`, e);
-				continue;
-			}
-		}
-		drawSpriteFromSheet(canvas, sheets[sheetName], spec);
+		if (rom) renderChrIcon(canvas, rom, spec);
 	}
 }
 renderAllIcons();

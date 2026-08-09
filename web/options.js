@@ -134,6 +134,21 @@ const ROTODISCS = [ // $12, two rotation frames
 const START_TILE = { tiles: [1488, 1490, 1489, 1491], cols: 2, palette: [0x0F, 0x38, 0x20, 0x04] }; // $17
 const KOOPALING_RING = { tiles: [4762, 4762, 4763, 4763], cols: 2, palette: [0x0F, 0x1E, 0x20, 0x25], flipRight: true }; // $4A
 const Q_ORB = { tiles: [4988, 4990, 4989, 4991], cols: 2, palette: [0x0F, 0x1D, 0x38, 0x20] }; // $4D, Boom-Boom's Q ball
+
+// $3B. Bowser's own draw routine assembles him tile by tile, so no rectangle in
+// CHR is "Bowser" — this is two picks joined. His top half is stored as a left
+// half and mirrored; his bottom half is stored whole. That mix is why the tiles
+// carry per-tile `flip` rather than the spec-wide `flipRight`.
+const BOWSER = {
+	tiles: [
+		3780, 3782, { t: 3782, flip: true }, { t: 3780, flip: true },
+		3781, 3783, { t: 3783, flip: true }, { t: 3781, flip: true },
+		3802, 3804, 3806, 3808,
+		3803, 3805, 3807, 3809,
+	],
+	cols: 4,
+	palette: [0x0F, 0x1D, 0x28, 0x09],
+};
 const CANNON = { tiles: [6436, 6438, 6437, 6439], cols: 2, palette: [0x0F, 0x1D, 0x10, 0x20] }; // $64
 
 // $4C. 32x32, and like Boss Bass its halves aren't adjacent in CHR, so they're
@@ -187,8 +202,6 @@ export const SCHEMA = [
 		group: "rom-extras", host: "rom-extras", inFlagKey: false },
 
 	// --- Map ---
-	// Icons are clipped from web/assets/sprites.png. Coordinates picked via
-	// web/sprite-picker.html. Format: { x, y, w, h } in sprite-sheet pixels.
 	{ id: "shuffle_spade_games", type: "bool", default: true,
 		label: "Shuffle Spade Games",
 		tip: "Move spade (card-matching) games to random spots on the map",
@@ -365,7 +378,7 @@ export const SCHEMA = [
 		label: "Adjust Boss Hitboxes",
 		tip: "Adjust Bowser and Koopaling hitboxes so they're easier to hit",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
-		icon: { x: 171, y: 511, w: 32, h: 44, sheet: "bosses" }, // Bowser
+		icon: BOWSER,
 		group: "bosses", inFlagKey: true },
 	{ id: "skip_wand_cutscene", type: "bool", default: true,
 		label: "Skip Wand Cutscene", flavor: "Jump Up, Super Star!",
@@ -705,30 +718,27 @@ function tipBlock(entry) {
 }
 
 // Optional sprite icon next to an option. Returns a canvas at the icon's
-// natural pixel size with a known DOM id; app.js paints it from the bundled
-// sprite sheets at startup. If entry.icon is unset, returns null and the
-// caller skips the slot.
-//
-// Sheets are declared in web/sprites.js (see SHEETS). The default sheet is
-// web/assets/sprites.png — to use a different one, add `sheet: "bosses"` (or
-// "enemies") to the icon spec.
+// natural pixel size with a known DOM id; app.js decodes it from the player's
+// own ROM. If entry.icon is unset, returns null and the caller skips the slot.
 //
 // To add an icon to an option:
-//   1. Open web/sprite-picker.html in the browser.
-//   2. Pick the sheet from the dropdown, then click-and-drag a tight
-//      rectangle around the sprite.
-//   3. Click "Copy as JSON" and paste the {x,y,w,h} (with `sheet` if not the
-//      default) into the schema entry's `icon` field below.
-//   4. `icon` accepts either a single {x,y,w,h[,sheet]} object or an array of
-//      them (random pick at page load — used by Power-ups for variety).
-// Native pixel size of an icon spec — either a CHR tile grid (`tiles`/`cols`,
-// 8px per tile) or a rectangle on a sprite sheet (`w`/`h`).
+//   1. Open web/chr-picker.html. It reads the ROM the randomizer page cached,
+//      or you can load a .nes directly.
+//   2. Find the sprite's CHR page. The enemy -> page table in
+//      docs/smb3_rom_reference.md ("Enemy Sprite CHR Bank Switching") saves
+//      hunting; map and inventory art is mostly on $05.
+//   3. Drag a rectangle around it, tick "mirror" if only half of it exists in
+//      CHR, then "Copy as JSON" and paste into the entry's `icon` field.
+//   4. `icon` takes one spec or an array of them (random pick per page load,
+//      for options covering several things — Power-ups, Ground, Water).
+//
+// Art the game assembles from scattered tiles (Bowser) needs two picks joined
+// by hand; see BOWSER above for the shape that takes.
+//
+// Native pixel size of an icon spec: a CHR tile grid, 8px per tile.
 function iconNativeSize(spec) {
-	if (spec.tiles) {
-		const cols = spec.cols ?? 2;
-		return { w: cols * 8, h: Math.ceil(spec.tiles.length / cols) * 8 };
-	}
-	return { w: spec.w ?? 16, h: spec.h ?? 16 };
+	const cols = spec.cols ?? 2;
+	return { w: cols * 8, h: Math.ceil(spec.tiles.length / cols) * 8 };
 }
 
 // Icons are pixel art, so they may only be scaled by a whole number — at a
