@@ -113,6 +113,21 @@ const SPADE = { tiles: [1448, 1448, 1449, 1449], cols: 2, palette: [0x0F, 0x20, 
 const WAND = { tiles: [1982, 1983], cols: 1, palette: [0x0F, 0x28, 0x37, 0x03] }; // $1E, 8x16
 const N_CARD = { tiles: [2064, 2064, 2065, 2065], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $20
 
+// Water enemies, page $1A. Boss Bass is 24x32 — his two halves aren't adjacent
+// in CHR, so they're picked separately and stacked here into one grid.
+const BLOOPER = { tiles: [1712, 1712, 1713, 1713], cols: 2, palette: [0x0F, 0x1E, 0x37, 0x03], flipRight: true };
+const MINI_CHEEP = { tiles: [1682, 1684, 1683, 1685], cols: 2, palette: [0x0F, 0x1E, 0x37, 0x16] };
+const BOSS_BASS = {
+	tiles: [
+		1664, 1666, 1668,
+		1665, 1667, 1669,
+		1670, 1672, 1674,
+		1671, 1673, 1675,
+	],
+	cols: 3,
+	palette: [0x0F, 0x1E, 0x37, 0x16],
+};
+
 // Random pick on each page load — flavor for "what will you get?". Still short
 // the super leaf and the starman.
 const POWERUPS = [MUSHROOM, FIRE_FLOWER, FROG_SUIT, TANOOKI_SUIT, HAMMER_SUIT, PWING];
@@ -268,6 +283,7 @@ export const SCHEMA = [
 	{ id: "water", type: "tri", options: TRI, default: "shuffle",
 		label: "Water",
 		tip: "Water enemies (Blooper, Big Bertha, etc.)",
+		icon: [BLOOPER, MINI_CHEEP],
 		group: "enemies", inFlagKey: true },
 	{ id: "bros", type: "tri", options: TRI, default: "shuffle",
 		label: "Bros",
@@ -281,6 +297,7 @@ export const SCHEMA = [
 		default: [],
 		label: "Wild Injections",
 		tip: "Drop a chaser into some levels that never had one — an Angry Sun, a Lakitu, or a leaping Big Bertha. Pick any combination.",
+		icon: BOSS_BASS,
 		group: "enemies", inFlagKey: true },
 	{ id: "early_sun", type: "bool", default: false,
 		label: "Early Sun",
