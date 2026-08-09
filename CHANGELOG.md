@@ -9,6 +9,25 @@ deploys.
 
 ## [Unreleased]
 
+### Added
+
+- A "The End" sign-off in the web app's footer, drawn from the ending
+  sequence's own graphics.
+
+### Changed
+
+- The web app's option icons are now decoded from your own ROM's graphics
+  instead of bundled sprite sheets, so a selected visual patch re-skins them
+  too. They appear once a ROM is loaded. Several options that never had an
+  icon now have one — Boom-Boom Stomps, Cannons, Ghosts, Shell, Rotodiscs,
+  Faster Frog, Swap Start / Airship, Shuffle Spade Games and Remove N-Cards.
+
+### Fixed
+
+- Option icons are no longer squashed. Every sprite was being forced into a
+  24x24 box, which scaled 16x16 art by 1.5x and distorted the taller sprites;
+  pixel art is now only ever scaled by a whole number.
+
 ## [1.1.1] - 2026-08-09
 
 ### Added
