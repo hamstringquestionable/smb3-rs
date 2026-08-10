@@ -396,6 +396,10 @@ cv.addEventListener("mouseleave", () => { if (drag) { drag = null; drawOverlay(v
 function addPick(r) {
 	const v = view();
 	const mirror = mirrorEl.checked;
+	// Mirror appends the selection reversed. In hash mode a one-pair pick is
+	// appended as-is instead, because a hash icon is always two halves wide —
+	// so the preview shows the doubled icon the emitted row describes.
+	const doubleSingle = hashMode() && r.cols === 1 && !mirror;
 	const tiles = [];
 	for (let row = 0; row < r.rows; row++) {
 		for (const half of [0, 1]) {
@@ -403,27 +407,34 @@ function addPick(r) {
 			for (let col = 0; col < r.cols; col++) {
 				line.push(pairTile(v, r.c + col, r.r + row) + half);
 			}
-			tiles.push(...line, ...(mirror ? [...line].reverse() : []));
+			if (mirror) tiles.push(...line, ...[...line].reverse());
+			else if (doubleSingle) tiles.push(...line, ...line);
+			else tiles.push(...line);
 		}
 	}
 	const pal = palValues();
 	// In hash mode also record the pick as ICON_TILES names it: the left and
 	// right halves' OAM tile IDs, and the attribute byte that h-flips the right
 	// one. A mirrored pick uses the same tile twice, which is what 0x40 means.
+	// A hash icon is 16x16 — two 8x16 halves side by side — so a pick is either
+	// two pairs across, or one pair used for both halves. In the one-pair case
+	// the second half is that same tile again, drawn flipped or not; reading the
+	// pair next door would silently pull in art that wasn't selected.
 	const left = pairTile(v, r.c, r.r);
+	const single = r.cols === 1;
 	const oam = hashMode()
 		? {
 			left: oamTileId(left),
-			right: oamTileId(mirror ? left : pairTile(v, r.c + 1, r.r)),
+			right: oamTileId(single ? left : pairTile(v, r.c + 1, r.r)),
 			attr: mirror ? 0x40 : 0x00,
-			// A hash icon is exactly 16x16: two pairs across, or one plus mirror.
-			shapeOk: r.rows === 1 && r.cols === (mirror ? 1 : 2),
+			doubled: single,
+			shapeOk: r.rows === 1 && r.cols <= 2,
 		}
 		: null;
 	picks.push({
 		label: labelEl.value.trim(),
 		tiles,
-		cols: r.cols * (mirror ? 2 : 1),
+		cols: r.cols * (mirror || doubleSingle ? 2 : 1),
 		palette: pal,
 		flipRight: mirror,
 		pairRows: r.rows,
@@ -443,8 +454,11 @@ function specText(p) {
 		if (p.oam.left == null || p.oam.right == null) {
 			return `// ${p.label || "pick"}: not on an addressable page`;
 		}
-		const why = p.oam.shapeOk ? "" : "  // NOT 16x16 — a hash icon is two pairs, or one plus mirror";
-		const note = p.label ? ` // ${p.label}` : "";
+		const why = p.oam.shapeOk
+			? ""
+			: "  // NOT 16x16 — select one or two pairs on a single row";
+		const how = p.oam.doubled ? (p.oam.attr ? " (half, mirrored)" : " (half, doubled)") : "";
+		const note = p.label || how ? ` // ${p.label}${how}` : "";
 		return `(${rustHex(p.oam.left)}, ${rustHex(p.oam.right)}, ${rustHex(p.oam.attr)}),${note}${why}`;
 	}
 	const pal = p.palette.map(rustHex).join(", ");
