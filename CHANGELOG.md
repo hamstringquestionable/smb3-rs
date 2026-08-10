@@ -24,6 +24,17 @@ deploys.
 
 ### Fixed
 
+- **The title hash no longer changes colour when you use a visual patch.** It
+  used to encode part of itself in the icons' colour, drawn from Mario's
+  palette — which every character re-skin rewrites, so the same seed showed red
+  on a vanilla ROM, green under Luigi and cyan under Toad. Two racers on
+  different skins saw different colours for the identical game, and there was no
+  way to tell that apart from a genuinely different seed. The colour is now
+  fixed and means nothing; the icon set grew from 15 to 20 instead, which more
+  than replaces what the colour was worth (3,200,000 combinations, up from
+  1,518,750). **Hash icons change for every seed**, as they do on any version
+  bump.
+
 - Option icons are no longer squashed. Every sprite was being forced into a
   24x24 box, which scaled 16x16 art by 1.5x and distorted the taller sprites;
   pixel art is now only ever scaled by a whole number.

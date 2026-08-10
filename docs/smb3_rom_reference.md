@@ -1550,6 +1550,16 @@ logic into the engine without rebuilding callers.
 | 0x3E924 | Free space in PRG031 (CPU $E914): seed hash sprite copy routine (25 bytes) |
 | 0x3E93D | Free space in PRG031 (CPU $E92D): seed hash sprite data table (40 bytes) |
 
+**Why the hash's colour is fixed:** sprite palettes 0 and 1 are Mario's and
+Luigi's, and any player re-skin rewrites them — the same seed then renders red on
+vanilla, green under a Luigi skin and cyan under a Toad skin. The hash used to
+encode a digit in the choice of palette 0 vs 2, which made that digit
+unverifiable: a player comparing title screens can't tell a recoloured palette
+from a different seed, and unlike a re-skinned *shape* (which reads as "that's a
+skin") a colour carries no signal to discount. The icons now always draw in
+palette 2, which no re-skin touches, and the lost entropy is more than recovered
+by a wider icon set — 20^5 = 3,200,000 against the old 15^5 × 2 = 1,518,750.
+
 **Title screen seed hash sprites:** 5 icons displayed vertically in the top-left corner.
 Each icon is 16×16 (two 8×16 sprites side by side). Uses 8x16 sprite mode — odd tile IDs
 select PT1 ($1000–$1FFF). Tiles can be drawn from any CHR slot (R2–R5) since the slot is

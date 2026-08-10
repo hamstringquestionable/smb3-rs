@@ -4,7 +4,7 @@ use crate::rom::Rom;
 /// Tile pairs for each icon: (left_tile, right_tile, right_extra_attributes).
 /// `right_extra_attributes` is OR'd with the palette bits — 0x40 means h-flip
 /// (symmetric icon using the same tile mirrored), 0x00 means a distinct R tile.
-const ICON_TILES: [(u8, u8, u8); 15] = [
+const ICON_TILES: [(u8, u8, u8); 20] = [
     (0xF1, 0xF3, 0x00), // leaf (L/R pair)
     (0xF5, 0xF5, 0x40), // mirrored
     (0xF7, 0xF7, 0x40), // mirrored
@@ -20,13 +20,36 @@ const ICON_TILES: [(u8, u8, u8); 15] = [
     (0x6B, 0x6D, 0x00), // L/R pair
     (0x79, 0x79, 0x40), // mirrored
     (0xDB, 0xDB, 0x40), // mirrored
+    (0x75, 0x77, 0x00), // shoe
+    (0x55, 0x57, 0x00), // flame
+    (0xB9, 0xBB, 0x00), // note on a panel
+    (0xB5, 0xB5, 0x40), // window block (mirrored)
+    (0x89, 0x89, 0x00), // "00" (half doubled, not mirrored)
 ];
 
 const NUM_ICONS: usize = ICON_TILES.len();
 const HASH_LENGTH: usize = 5;
 
-/// Sprite palettes to choose from: palette 0 (red) and palette 2 (orange/yellow).
-const PALETTES: [u8; 2] = [0x00, 0x02];
+/// Sprite palette the icons are drawn in. Fixed, and deliberately not part of
+/// the hash.
+///
+/// It used to be a sixth digit picking between palettes 0 and 2, which doubled
+/// the output space — but palette 0 is Mario's, and every player re-skin in the
+/// web app's visual patch catalog rewrites it. The same seed then showed red on
+/// vanilla, green under Luigi and cyan under Toad, so a player comparing title
+/// screens couldn't tell a recoloured palette from a different seed. Unlike a
+/// re-skinned *shape*, which reads as "that's a skin" and can be discounted, a
+/// colour carries no such signal — it was pure payload, and unverifiable.
+///
+/// Widening `ICON_TILES` from 15 to 20 more than replaces what dropping the
+/// digit cost: 20^5 = 3,200,000 against the old 15^5 * 2 = 1,518,750. Slot 2 is
+/// not the bros', so no re-skin has reason to touch it.
+const HASH_PALETTE: u8 = 0x02;
+
+// Slots 0 and 1 are the bros', and every player re-skin rewrites them. Guard it
+// at compile time rather than in a test — this is a fact about which slot is
+// safe, not behaviour that needs exercising.
+const _: () = assert!(HASH_PALETTE >= 2, "hash palette must not be the bros'");
 
 /// Hook: replace JSR $B7D6 at CPU $97B1 with JMP $E914.
 const HOOK_OFFSET: usize = 0x317B1;
@@ -109,14 +132,15 @@ pub(super) fn intro_skip_music_bytes(seed: u64) -> [u8; 9] {
     ]
 }
 
-/// Compute 5 icon indices and a palette choice from seed + flag bytes.
+/// Compute the 5 icon indices from seed + flag bytes — five base-`NUM_ICONS`
+/// digits read off one accumulator.
 ///
 /// The randomizer version (`CARGO_PKG_VERSION`) is folded in so two builds with
 /// different randomization logic never collide on the same icons for a shared
 /// seed + options. CI (`version-guard` in `.github/workflows/ci.yml`) requires a
 /// version bump on every merge to `main`, so any output-affecting change lands
 /// under a distinct version and thus a distinct hash.
-fn compute_hash(seed: u64, options: &Options) -> ([usize; HASH_LENGTH], u8) {
+fn compute_hash(seed: u64, options: &Options) -> [usize; HASH_LENGTH] {
     let flag_bytes = options.to_flag_bytes();
     let mut h = seed;
     for &b in &flag_bytes {
@@ -131,8 +155,7 @@ fn compute_hash(seed: u64, options: &Options) -> ([usize; HASH_LENGTH], u8) {
         *icon = (h % NUM_ICONS as u64) as usize;
         h /= NUM_ICONS as u64;
     }
-    let palette = PALETTES[(h % PALETTES.len() as u64) as usize];
-    (icons, palette)
+    icons
 }
 
 /// One hash icon as a CHR renderer needs it: four 8x8 tile indices into CHR
@@ -166,7 +189,7 @@ fn chr_tile_index(tile: u8) -> usize {
 /// Describe the hash `write_seed_hash` would stamp for `seed` + `options`,
 /// without writing anything. `rom` is only read for its title sprite palette.
 pub fn seed_hash_preview(rom: &[u8], seed: u64, options: &Options) -> SeedHashPreview {
-    let (icons, palette_attr) = compute_hash(seed, options);
+    let icons = compute_hash(seed, options);
     let icons = icons
         .iter()
         .map(|&i| {
@@ -186,7 +209,7 @@ pub fn seed_hash_preview(rom: &[u8], seed: u64, options: &Options) -> SeedHashPr
 
     // A ROM too short to hold the table (only reachable with validation off,
     // where the hash isn't written anyway) falls back to all-backdrop.
-    let base = TITLE_SPRITE_PALETTE_OFFSET + (palette_attr & 0x03) as usize * 4;
+    let base = TITLE_SPRITE_PALETTE_OFFSET + HASH_PALETTE as usize * 4;
     let mut palette = [0x0Fu8; 4];
     if let Some(colors) = rom.get(base..base + 4) {
         palette.copy_from_slice(colors);
@@ -208,7 +231,7 @@ pub fn seed_hash_preview(rom: &[u8], seed: u64, options: &Options) -> SeedHashPr
 ///   data[0..7]   -> OAM[128..135]
 /// We place icon 0 (topmost) in the highest data group so it lands
 /// in the lowest OAM slot (highest sprite priority).
-fn build_sprite_data(icons: &[usize; HASH_LENGTH], palette: u8) -> [u8; HASH_LENGTH * 8] {
+fn build_sprite_data(icons: &[usize; HASH_LENGTH]) -> [u8; HASH_LENGTH * 8] {
     let mut sprite_data = [0u8; HASH_LENGTH * 8];
     for i in 0..HASH_LENGTH {
         let group = HASH_LENGTH - 1 - i; // icon 0 -> group 4 (bytes 32-39)
@@ -217,19 +240,19 @@ fn build_sprite_data(icons: &[usize; HASH_LENGTH], palette: u8) -> [u8; HASH_LEN
         let base = group * 8;
         sprite_data[base] = y;
         sprite_data[base + 1] = tile_l;
-        sprite_data[base + 2] = palette;
+        sprite_data[base + 2] = HASH_PALETTE;
         sprite_data[base + 3] = X_LEFT;
         sprite_data[base + 4] = y;
         sprite_data[base + 5] = tile_r;
-        sprite_data[base + 6] = palette | extra_attr_r;
+        sprite_data[base + 6] = HASH_PALETTE | extra_attr_r;
         sprite_data[base + 7] = X_RIGHT;
     }
     sprite_data
 }
 
 pub fn write_seed_hash(rom: &mut Rom, seed: u64, options: &Options) {
-    let (icons, palette) = compute_hash(seed, options);
-    let sprite_data = build_sprite_data(&icons, palette);
+    let icons = compute_hash(seed, options);
+    let sprite_data = build_sprite_data(&icons);
 
     // ASM routine (25 bytes) at CPU $E914:
     //   LDY #$07
@@ -317,7 +340,7 @@ mod tests {
         let opts = Options::default();
         let a = compute_hash(1, &opts);
         let b = compute_hash(2, &opts);
-        assert_ne!(a.0, b.0);
+        assert_ne!(a, b);
     }
 
     #[test]
@@ -326,29 +349,25 @@ mod tests {
         let opts_b = Options { ground: crate::randomizer::EnemyMode::Wild, ..Default::default() };
         let a = compute_hash(42, &opts_a);
         let b = compute_hash(42, &opts_b);
-        assert_ne!(a.0, b.0);
+        assert_ne!(a, b);
     }
 
     #[test]
     fn hash_values_in_range() {
         let opts = Options::default();
         for seed in 0..100u64 {
-            let (icons, palette) = compute_hash(seed, &opts);
+            let icons = compute_hash(seed, &opts);
             for &v in &icons {
                 assert!(v < NUM_ICONS, "icon index {v} out of range");
             }
-            assert!(
-                PALETTES.contains(&palette),
-                "palette {palette} not in PALETTES"
-            );
         }
     }
 
     #[test]
     fn sprite_data_positions() {
         let opts = Options::default();
-        let (icons, palette) = compute_hash(42, &opts);
-        let sprite_data = build_sprite_data(&icons, palette);
+        let icons = compute_hash(42, &opts);
+        let sprite_data = build_sprite_data(&icons);
 
         // Icon 0 is in group 4 (bytes 32-39), should have Y_START
         assert_eq!(sprite_data[32], Y_START);
@@ -367,8 +386,8 @@ mod tests {
         write_seed_hash(&mut rom, 42, &opts);
 
         // The data table in ROM must be exactly what build_sprite_data emits.
-        let (icons, palette) = compute_hash(42, &opts);
-        let expected = build_sprite_data(&icons, palette);
+        let icons = compute_hash(42, &opts);
+        let expected = build_sprite_data(&icons);
         assert_eq!(rom.read_range(DATA_OFFSET, expected.len()), &expected[..]);
 
         // Hook and intro-skip hook target the derived CPU addresses.
@@ -452,23 +471,26 @@ mod tests {
     }
 
     #[test]
-    fn palette_varies_across_seeds() {
+    fn every_icon_is_reachable() {
+        // A digit is `h % NUM_ICONS`, so every index must map to a real row —
+        // and the table's length is what NUM_ICONS is derived from, so this
+        // catches a row added without the count following.
         let opts = Options::default();
-        let mut saw_pal0 = false;
-        let mut saw_pal2 = false;
-        for seed in 0..1000u64 {
-            let (_, palette) = compute_hash(seed, &opts);
-            if palette == 0x00 {
-                saw_pal0 = true;
+        let mut seen = [false; NUM_ICONS];
+        for seed in 0..200_000u64 {
+            for i in compute_hash(seed, &opts) {
+                seen[i] = true;
             }
-            if palette == 0x02 {
-                saw_pal2 = true;
-            }
-            if saw_pal0 && saw_pal2 {
-                break;
+            if seen.iter().all(|&s| s) {
+                return;
             }
         }
-        assert!(saw_pal0, "palette 0 never selected in 1000 seeds");
-        assert!(saw_pal2, "palette 2 never selected in 1000 seeds");
+        let missing: Vec<_> = seen
+            .iter()
+            .enumerate()
+            .filter(|&(_, &s)| !s)
+            .map(|(i, _)| i)
+            .collect();
+        panic!("icons never selected across 200k seeds: {missing:?}");
     }
 }
