@@ -3837,10 +3837,12 @@ Each entry represents a 16x16 metatile column on the world map.
 
 | Address | Description |
 |---------|-------------|
+| $04E4 | `SndCur_Music1` — fanfare currently playing (0 = none) |
+| $04E5 | `SndCur_Music2` — theme currently playing (0 = none). Read this to ask "is music audible right now"; `Music_StopAll` zeroes it. |
 | $04F1 | Sound effect trigger 1 (jump, blocks, swimming) |
 | $04F2 | Sound effect trigger 2 (coins, power-ups, items) |
 | $04F3 | Sound effect trigger 3 (bricks, fire, airship) |
-| $04F4 | Fanfare music trigger (death, victory) |
+| $04F4 | Fanfare music trigger (death, victory). `0x80` = `MUS1_STOPMUSIC`, the engine's own "stop all music". |
 | $04F5 | Music change (world maps, themes) |
 | $04F6 | Sound effect trigger 4 (map movement, level entry) |
 | $04F7 | Pause control (0x01=pause, 0x02=resume) |
@@ -3873,13 +3875,48 @@ Vanilla SMB3 leaves the 1P/2P select menu silent (the only title-screen music is
 
 The track is chosen deterministically from the seed via a curated 16-entry table (world map themes 1–9, plus level themes 0x10/0x20/0x30/0x40/0x60/0x80/0x90). See `src/randomize/title_screen.rs::MENU_MUSIC_TRACKS` and `pick_menu_music`. When `starting_items` is active it overwrites the lives-init hook, so `qol::write_starting_items` mirrors the same `STA $04F5` inside its own trampoline.
 
+### Title Menu Input Loop (PRG024) — and the B-to-mute hook
+
+`Title_Do1P2PMenu` (CPU $AC35, file 0x30C45) is the per-frame handler for the
+1P/2P screen, and it is where every title-menu input is read. PRG030's title
+entry point maps **page 24 to $A000 and page 25 to $C000** before calling
+`Do_Title_Screen` (CPU $A8AF), so both banks are live for the whole title screen.
+The handler reads `Pad_Input` (zero page **$18**, newly-pressed-only; `Pad_Holding`
+is $17) — Select at CPU $AC55 toggles `Total_Players`, Start at CPU $AC86 begins
+the game. Button bits are `A=$80, B=$40, Select=$20, Start=$10, Up=$08, Down=$04,
+Left=$02, Right=$01`.
+
+| Offset | CPU | Vanilla | Note |
+|--------|-----|---------|------|
+| 0x30C62 | $AC52 | `JSR $B78E` | `Title_Menu_UpdateKoopas` |
+| 0x30C65 | $AC55 | `LDA $18 / AND #$20` | Select — 1P/2P toggle |
+| 0x30C93 | $AC83 | `JSR $AA7D` | `Title_3Glow` — the mute hook site |
+| 0x30C96 | $AC86 | `LDA $18 / AND #$10` | Start — begin the game |
+
+**Mute toggle.** The randomizer replaces the `JSR $AA7D` at 0x30C93 with a `JSR`
+into a 22-byte routine in PRG025 free space (CPU $D519, file 0x33529), which
+tail-jumps back to `Title_3Glow` — so the '3' still glows, its `RTS` returns to
+the menu, and Start is untouched. The routine tests B via `BIT $18` (B is bit 6,
+which `BIT` copies straight into V), then reads `SndCur_Music2` ($04E5) to decide
+direction: non-zero means a Set-2 track is audible, so it queues `MUS1_STOPMUSIC`
+($80) to `Sound_QMusic1` ($04F4); zero means silence, so it re-queues the seeded
+track to `Sound_QMusic2` ($04F5). Because `MUS1_STOPMUSIC` runs through
+`Music_StopAll`, which zeroes `SndCur_Music2`, the engine's own state *is* the
+mute flag and no RAM byte is spent on it. The two queues being adjacent is what
+lets a single `STA $04F4,X` with X as a 0/1 selector serve both paths.
+
+The mute persists because the attract-mode patch below holds `$E1` at 0 — without
+it the menu would reset roughly every 20 × 96 frames (~32 s) and the intro-skip
+routine would re-queue the track. See `title_screen.rs::mute_routine`.
+
 ### Attract-Mode Demo Trigger (PRG024)
 
-While the 1P/2P menu sits idle, a two-stage countdown decrements each frame: the
-menu handler at CPU **$8C4E** (file **0x30C45**) does `DEC $E0` (low byte, reloads
-to 0x60) and, on rollover, `DEC $DF` (high byte, seeded to 0x14 at CPU $8C28).
-When `$DF` hits zero it runs `LDA #$FF / STA $E1` — the `#$FF` operand is at file
-**0x30C5F**. A later check at CPU **$8979** (file 0x30989) reads the flag:
+While the 1P/2P menu sits idle, a two-stage countdown decrements each frame:
+`Title_Do1P2PMenu` (CPU **$AC35**, file **0x30C45**) does `DEC $E0` at CPU $AC42
+(low byte, reloads to 0x60) and, on rollover, `DEC $DF` (high byte, seeded to
+0x14 at CPU $AC28 / file 0x30C38). When `$DF` hits zero it runs
+`LDA #$FF / STA $E1` at CPU $AC4E — the `#$FF` operand is at file **0x30C5F**. A
+later check at CPU **$A979** (file 0x30989) reads the flag:
 
 ```
 $8979:  A5 E1        LDA $E1

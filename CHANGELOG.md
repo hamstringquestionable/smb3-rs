@@ -9,6 +9,13 @@ deploys.
 
 ## [Unreleased]
 
+### Added
+
+- **Press B on the title screen to mute the menu music**, and B again to bring
+  it back. Handy when you are generating and verifying seeds back to back, or
+  streaming with the title screen up. Start still begins the game as normal,
+  and the world map queues its own music either way.
+
 ## [1.1.1] - 2026-08-10
 
 ### Added

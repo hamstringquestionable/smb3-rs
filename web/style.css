@@ -638,6 +638,18 @@ input[type="radio"] {
     background: transparent;
 }
 
+/* Quieter than the label: a one-off tip, not a section heading. */
+.seed-hash-hint {
+    margin: 0;
+    font-size: 0.7rem;
+    text-align: center;
+    color: #7a7ab0;
+}
+
+.seed-hash-hint strong {
+    color: #e0e0e0;
+}
+
 /* --- Status --- */
 
 .status {

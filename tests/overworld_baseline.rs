@@ -93,12 +93,19 @@ fn sweep_is_deterministic() {
 /// places that carry the flag bytes on purpose — the stamp block at 0x19DF0 and
 /// the title-screen verification icons at `FS_SEED_HASH_DATA` (0x3E93D), whose
 /// hash folds `to_flag_bytes()`. No overworld, level, or enemy byte moved.
+/// Re-captured 2026-08-10 for the title-screen B-to-mute toggle, which writes
+/// 25 bytes into every ROM (`title_screen::mute_routine` plus its hook), so all
+/// 20 seeds moved. Verified the same way as the recaptures above: seeds 1-3
+/// generated before and after with `--no-palettes --patched-rom` and diffed byte
+/// by byte. Exactly 24 bytes differ per seed, in two places — the `JSR` operand
+/// at the hook site 0x30C94 and the 22-byte routine at 0x33529, which was $FF
+/// filler. No overworld, level or enemy byte moved.
 const BASELINE: [u64; SEEDS as usize] = [
-    0xBB2A7CBF02AF4BBA, 0x761607361C034EDA, 0xC4E3267B24430DB5, 0x871D2AEE7C896AB6,
-    0xF27E5B34E1EEABDD, 0x9D9F280937717403, 0xE879479EEA8398FF, 0x2991D7B20C48097E,
-    0xEFF71177664A5822, 0x4EF2AB92BC810522, 0xD188D3A10F375DB5, 0x833E8EFC349D2154,
-    0x280B67E04F3F5F87, 0xCD041C077C531F96, 0x675C1986FEEDE464, 0x3286199B722396FA,
-    0xD108207D0F8A21EC, 0x13D64C84EB019B01, 0x6C77A703B2285A5A, 0x437324880DC9D14B,
+    0xB94EAEB231B53157, 0x4E77C9EBD2C7FC17, 0x1FA65412B35EA4B4, 0x6DF4D6047DC8F457,
+    0xFACDF601C15ABFA7, 0x34FE0AC25192E976, 0x8C67515F5289906A, 0x20CDD66A9B3E99A1,
+    0xE18B699FB2BFA028, 0x5E54F56DF25EE227, 0xA020A0057C39501D, 0xA389662E7E3DF0BF,
+    0x2E529762AE3049AA, 0xD3562D897C162822, 0x71519D7F0CEB874C, 0x6418203CC4E10283,
+    0xF9D73A5FAD8A6B75, 0x9A6128ABB4E437F8, 0x851FD8A719E18073, 0xB9A634E3FA005F16,
 ];
 
 #[test]
