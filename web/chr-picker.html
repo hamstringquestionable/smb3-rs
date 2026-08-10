@@ -40,6 +40,15 @@ input[type=text], input[type=number], select { background: #0a0a1a; border: 1px 
 
   <h2>View</h2>
   <div class="row">
+    <label><input type="checkbox" id="hashMode"> title hash icons only</label>
+  </div>
+  <div class="row" id="hashPageRow" hidden>
+    <label>page <select id="hashPage"></select></label>
+  </div>
+  <div class="note" id="hashNote" hidden>Only these four 1&nbsp;KB pages are
+  reachable from a title-screen sprite — the banks are fixed, so nothing else can
+  be referenced. Picks come out as <code>ICON_TILES</code> rows.</div>
+  <div class="row" id="pageRow">
     <label>page <input type="number" id="page" value="0" min="0" max="127" style="width:56px"></label>
     <label>count <input type="number" id="pageCount" value="8" min="1" max="32" style="width:48px"></label>
   </div>
@@ -117,6 +126,11 @@ const swatchesEl = document.getElementById("swatches");
 const palGridEl = document.getElementById("palgrid");
 const labelEl = document.getElementById("label");
 const mirrorEl = document.getElementById("mirror");
+const hashModeEl = document.getElementById("hashMode");
+const hashPageEl = document.getElementById("hashPage");
+const hashPageRow = document.getElementById("hashPageRow");
+const hashNote = document.getElementById("hashNote");
+const pageRow = document.getElementById("pageRow");
 const cursorEl = document.getElementById("cursor");
 const lastEl = document.getElementById("last");
 const recentEl = document.getElementById("recent");
@@ -239,9 +253,30 @@ function renderPalGrid() {
 	}
 }
 
+// The four 1 KB CHR pages a title-screen sprite can address, in slot order.
+// PRG030's reset path fixes MMC3 R2-R5 to these, so an OAM tile ID's top two
+// bits pick one of them and nothing outside this set is reachable. Order
+// matters — the index here *is* the tile ID's high bits.
+const HASH_PAGES = [0x20, 0x21, 0x04, 0x7F];
+
+function hashMode() {
+	return hashModeEl.checked;
+}
+
+// Absolute CHR tile -> the OAM tile ID that names it on the title screen, or
+// null if it isn't on an addressable page. ICON_TILES stores the odd (pattern
+// table 1) ID, whose top half is the even tile before it.
+function oamTileId(absTop) {
+	const slot = HASH_PAGES.indexOf(Math.floor(absTop / TILES_PER_PAGE));
+	if (slot < 0) return null;
+	return (slot << 6) | (absTop % TILES_PER_PAGE) | 1;
+}
+
 function view() {
-	const firstTile = Math.max(0, (+pageEl.value || 0)) * TILES_PER_PAGE;
-	const tiles = Math.min((+pageCountEl.value || 1) * TILES_PER_PAGE, TOTAL_TILES - firstTile);
+	const page = hashMode() ? HASH_PAGES[+hashPageEl.value || 0] : Math.max(0, +pageEl.value || 0);
+	const firstTile = page * TILES_PER_PAGE;
+	const count = hashMode() ? 1 : +pageCountEl.value || 1;
+	const tiles = Math.min(count * TILES_PER_PAGE, TOTAL_TILES - firstTile);
 	const stride = Math.max(1, +strideEl.value || 16);
 	const pairs = Math.floor(tiles / 2);
 	return {
@@ -361,6 +396,10 @@ cv.addEventListener("mouseleave", () => { if (drag) { drag = null; drawOverlay(v
 function addPick(r) {
 	const v = view();
 	const mirror = mirrorEl.checked;
+	// Mirror appends the selection reversed. In hash mode a one-pair pick is
+	// appended as-is instead, because a hash icon is always two halves wide —
+	// so the preview shows the doubled icon the emitted row describes.
+	const doubleSingle = hashMode() && r.cols === 1 && !mirror;
 	const tiles = [];
 	for (let row = 0; row < r.rows; row++) {
 		for (const half of [0, 1]) {
@@ -368,17 +407,38 @@ function addPick(r) {
 			for (let col = 0; col < r.cols; col++) {
 				line.push(pairTile(v, r.c + col, r.r + row) + half);
 			}
-			tiles.push(...line, ...(mirror ? [...line].reverse() : []));
+			if (mirror) tiles.push(...line, ...[...line].reverse());
+			else if (doubleSingle) tiles.push(...line, ...line);
+			else tiles.push(...line);
 		}
 	}
 	const pal = palValues();
+	// In hash mode also record the pick as ICON_TILES names it: the left and
+	// right halves' OAM tile IDs, and the attribute byte that h-flips the right
+	// one. A mirrored pick uses the same tile twice, which is what 0x40 means.
+	// A hash icon is 16x16 — two 8x16 halves side by side — so a pick is either
+	// two pairs across, or one pair used for both halves. In the one-pair case
+	// the second half is that same tile again, drawn flipped or not; reading the
+	// pair next door would silently pull in art that wasn't selected.
+	const left = pairTile(v, r.c, r.r);
+	const single = r.cols === 1;
+	const oam = hashMode()
+		? {
+			left: oamTileId(left),
+			right: oamTileId(single ? left : pairTile(v, r.c + 1, r.r)),
+			attr: mirror ? 0x40 : 0x00,
+			doubled: single,
+			shapeOk: r.rows === 1 && r.cols <= 2,
+		}
+		: null;
 	picks.push({
 		label: labelEl.value.trim(),
 		tiles,
-		cols: r.cols * (mirror ? 2 : 1),
+		cols: r.cols * (mirror || doubleSingle ? 2 : 1),
 		palette: pal,
 		flipRight: mirror,
 		pairRows: r.rows,
+		oam,
 		view: { firstTile: v.firstTile, stride: v.stride, col: r.c, row: r.r },
 	});
 	lastEl.textContent = specText(picks[picks.length - 1]);
@@ -387,8 +447,21 @@ function addPick(r) {
 	drawOverlay(v);
 }
 
+const rustHex = (v) => `0x${hex2(v)}`;
+
 function specText(p) {
-	const pal = p.palette.map((c) => `0x${c.toString(16).toUpperCase().padStart(2, "0")}`).join(", ");
+	if (p.oam) {
+		if (p.oam.left == null || p.oam.right == null) {
+			return `// ${p.label || "pick"}: not on an addressable page`;
+		}
+		const why = p.oam.shapeOk
+			? ""
+			: "  // NOT 16x16 — select one or two pairs on a single row";
+		const how = p.oam.doubled ? (p.oam.attr ? " (half, mirrored)" : " (half, doubled)") : "";
+		const note = p.label || how ? ` // ${p.label}${how}` : "";
+		return `(${rustHex(p.oam.left)}, ${rustHex(p.oam.right)}, ${rustHex(p.oam.attr)}),${note}${why}`;
+	}
+	const pal = p.palette.map(rustHex).join(", ");
 	const head = p.label ? `${p.label}: ` : "";
 	const flip = p.flipRight ? ", flipRight: true" : "";
 	return `${head}{ tiles: [${p.tiles.join(", ")}], cols: ${p.cols}, palette: [${pal}]${flip} }`;
@@ -432,6 +505,29 @@ paletteEl.addEventListener("input", refreshPalette);
 for (const el of [pageEl, pageCountEl, strideEl, scaleEl]) {
 	el.addEventListener("input", render);
 }
+
+// Title-hash mode: the only pages a title sprite can name, labelled by what
+// each slot holds so it's obvious where to look.
+const HASH_PAGE_LABELS = ["items & UI", "Mario/Luigi + UI", "score popups", "items (leaf, mushroom…)"];
+HASH_PAGES.forEach((page, slot) => {
+	const opt = document.createElement("option");
+	opt.value = String(slot);
+	opt.textContent = `$${page.toString(16).toUpperCase().padStart(2, "0")} — ${HASH_PAGE_LABELS[slot]}`;
+	hashPageEl.append(opt);
+});
+hashPageEl.value = "3"; // $7F, where most of the current icon set lives
+
+function syncHashMode() {
+	const on = hashMode();
+	hashPageRow.hidden = !on;
+	hashNote.hidden = !on;
+	pageRow.hidden = on;
+	if (on) strideEl.value = "8"; // 8 pairs/row lines a 64-tile page into 4 rows
+	render();
+}
+hashModeEl.addEventListener("change", syncHashMode);
+hashPageEl.addEventListener("change", render);
+
 renderSwatches();
 </script>
 </body>

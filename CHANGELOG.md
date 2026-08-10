@@ -9,7 +9,17 @@ deploys.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-08-10
+
 ### Added
+
+- The web app now shows the seed's **title hash** under the Generate button as
+  soon as a seed is entered — the same five icons the title screen will show,
+  drawn from your own ROM's graphics (and from the selected visual patch, if
+  one is chosen). Racers can compare icons before generating instead of after
+  booting. Hidden while the seed box is empty, since a blank seed is rolled at
+  generate time, and while ROM validation is off, since the hash isn't applied
+  then.
 
 - A "The End" sign-off in the web app's footer, drawn from the ending
   sequence's own graphics.
@@ -24,21 +34,20 @@ deploys.
 
 ### Fixed
 
+- **The title hash no longer changes colour when you use a visual patch.** It
+  used to encode part of itself in the icons' colour, drawn from Mario's
+  palette — which every character re-skin rewrites, so the same seed showed red
+  on a vanilla ROM, green under Luigi and cyan under Toad. Two racers on
+  different skins saw different colours for the identical game, and there was no
+  way to tell that apart from a genuinely different seed. The colour is now
+  fixed and means nothing; the icon set grew from 15 to 20 instead, which more
+  than replaces what the colour was worth (3,200,000 combinations, up from
+  1,518,750). **Your title hash icons will differ from 1.1.0's for the same
+  seed**, as they do on any version change.
+
 - Option icons are no longer squashed. Every sprite was being forced into a
   24x24 box, which scaled 16x16 art by 1.5x and distorted the taller sprites;
   pixel art is now only ever scaled by a whole number.
-
-## [1.1.1] - 2026-08-09
-
-### Added
-
-- The web app now shows the seed's **title hash** under the Generate button as
-  soon as a seed is entered — the same five icons the title screen will show,
-  drawn from your own ROM's graphics (and from the selected visual patch, if
-  one is chosen). Racers can compare icons before generating instead of after
-  booting. Hidden while the seed box is empty, since a blank seed is rolled at
-  generate time, and while ROM validation is off, since the hash isn't applied
-  then.
 
 ## [1.1.0] - 2026-08-08
 
