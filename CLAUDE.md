@@ -328,6 +328,14 @@ web/
   index.html           # Browser frontend
   style.css
   app.js               # Loads WASM, handles file input, triggers download
+  options.js           # Option schema (labels, tips, defaults, icon specs)
+  chr.js               # CHR decoder — every icon in the app is drawn from the
+                       #   player's own ROM, so there are no bundled sprite
+                       #   sheets. Pixel art only ever scales by a whole number.
+  chr-picker.html      # Icon picker. Lays CHR out as 8x16 pairs, which is the
+                       #   only way sprite art is legible (a flat tile grid
+                       #   interleaves each sprite's halves). Emits icon specs
+                       #   for options.js, or ICON_TILES rows in title-hash mode.
 tools/
   README.md            # INDEX OF ALL 16 TOOLS — read this before writing a throwaway script
   rom_map.py           # ROM map generator + diagnostic modes (see below)
