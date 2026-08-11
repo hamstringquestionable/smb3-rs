@@ -77,6 +77,65 @@ const INTRO_SKIP_CPU: u16 = super::rom_data::prg031_file_to_cpu(INTRO_SKIP_ROUTI
 /// starts — the menu just holds. The byte at 0x30C5F is the `#$FF` operand.
 const DEMO_TRIGGER_OPERAND_OFFSET: usize = 0x30C5F;
 
+/// Mute toggle: press B on the 1P/2P menu to stop the menu music, B again to
+/// bring it back.
+///
+/// `Title_Do1P2PMenu` (PRG024) calls `Title_3Glow` once per frame at CPU $AC83,
+/// between drawing the cursor sprite and testing Start. That `JSR $AA7D` becomes
+/// `JSR mute_routine`, and the routine tail-jumps to `Title_3Glow` — so the glow
+/// still runs and its `RTS` returns to the menu exactly as before.
+///
+/// The routine lives in PRG025, which the title entry point in PRG030 maps to
+/// $C000 alongside PRG024 at $A000. Putting it there rather than in PRG031
+/// spends none of the always-mapped space (30 bytes is its largest gap), and the
+/// routine has no reason to run anywhere but the title screen.
+const MUTE_HOOK_OFFSET: usize = 0x30C93;
+const TITLE_3GLOW_CPU: u16 = 0xAA7D;
+const MUTE_ROUTINE_OFFSET: usize = super::rom_data::FS_TITLE_MUTE;
+/// PRG025 file 0x32010 is CPU $C000 while the title screen runs.
+const MUTE_ROUTINE_CPU: u16 = (0xC000 + MUTE_ROUTINE_OFFSET - 0x32010) as u16; // $D519
+
+/// Assemble the 22-byte mute toggle. `music` is the seeded track it restores.
+///
+/// ```text
+///   BIT $18        ; Pad_Input — bit 6 is B, and BIT drops it straight into V
+///   BVC done       ; B not newly pressed this frame: nothing to do
+///   LDX #$01       ; assume unmute: $04F4 + 1 = $04F5 (Sound_QMusic2)
+///   LDA #music
+///   LDY $04E5      ; SndCur_Music2 — a Set 2 track is playing iff non-zero
+///   BEQ store      ; silent already, so the B press means unmute
+///   LDA #$80       ; MUS1_STOPMUSIC
+///   DEX            ; X = 0 → $04F4 (Sound_QMusic1)
+/// store:
+///   STA $04F4,X
+/// done:
+///   JMP $AA7D      ; Title_3Glow, the call this routine displaced
+/// ```
+///
+/// Two size choices worth keeping: `BIT` tests B in 2 bytes where `LDA`/`AND`
+/// takes 4 (B is bit 6, which is exactly the bit `BIT` copies into V), and the
+/// two music queues are adjacent, so one `STA $04F4,X` with X as the 0/1
+/// selector replaces a second store and the branch that would skip it.
+///
+/// The engine's own `SndCur_Music2` is the mute flag — `MUS1_STOPMUSIC` runs
+/// through `Music_StopAll`, which zeroes it — so no RAM byte is spent tracking
+/// state, and nothing can drift out of sync with what is actually audible.
+#[rustfmt::skip]
+fn mute_routine(music: u8) -> [u8; 22] {
+    [
+        0x24, 0x18,             // BIT $18       (Pad_Input)
+        0x50, 0x0F,             // BVC done
+        0xA2, 0x01,             // LDX #$01
+        0xA9, music,            // LDA #music
+        0xAC, 0xE5, 0x04,       // LDY $04E5     (SndCur_Music2)
+        0xF0, 0x03,             // BEQ store
+        0xA9, 0x80,             // LDA #$80      (MUS1_STOPMUSIC)
+        0xCA,                   // DEX
+        0x9D, 0xF4, 0x04,       // STA $04F4,X   (Sound_QMusic1 / Sound_QMusic2)
+        0x4C, TITLE_3GLOW_CPU as u8, (TITLE_3GLOW_CPU >> 8) as u8, // JMP Title_3Glow
+    ]
+}
+
 /// Curated music tracks for the title menu. Values are written to the music
 /// change trigger at $04F5 — each one is a looping theme that fits a static
 /// menu screen (map themes 1–8 plus a handful of level / mushroom / hilly
@@ -321,6 +380,17 @@ pub fn write_seed_hash(rom: &mut Rom, seed: u64, options: &Options) {
     // Disable the attract-mode demo: LDA #$FF → LDA #$00 so the idle-timeout
     // never raises the demo-trigger flag $E1 (see DEMO_TRIGGER_OPERAND_OFFSET).
     rom.write_byte(DEMO_TRIGGER_OPERAND_OFFSET, 0x00);
+
+    // B on the 1P/2P menu toggles the menu music. The routine replaces the
+    // per-frame `JSR Title_3Glow` and tail-jumps back into it, so the '3' keeps
+    // glowing and Start still advances to the map. The demo-disable above is
+    // what makes the mute stick: with $E1 held at 0 the menu never resets, so
+    // the intro-skip routine never re-queues the track behind the player's back.
+    rom.write_range(MUTE_ROUTINE_OFFSET, &mute_routine(pick_menu_music(seed)));
+    rom.write_range(
+        MUTE_HOOK_OFFSET,
+        &[0x20, MUTE_ROUTINE_CPU as u8, (MUTE_ROUTINE_CPU >> 8) as u8],
+    );
 }
 
 #[cfg(test)]
@@ -471,6 +541,52 @@ mod tests {
     }
 
     #[test]
+    fn mute_routine_restores_the_seeded_track() {
+        // The unmute path writes the same track the intro-skip routine queues,
+        // so muting and unmuting cannot land the player on a different song.
+        for seed in [0u64, 1, 42, 12345, u64::MAX] {
+            let routine = mute_routine(pick_menu_music(seed));
+            assert_eq!(routine[7], pick_menu_music(seed));
+            assert_eq!(intro_skip_music_bytes(seed)[5], routine[7]);
+        }
+    }
+
+    #[test]
+    fn write_seed_hash_installs_the_mute_hook() {
+        let opts = Options::default();
+        let mut rom = crate::randomize::qol::test_support::make_test_rom();
+        write_seed_hash(&mut rom, 42, &opts);
+
+        // JSR $D519 in place of the vanilla JSR Title_3Glow.
+        assert_eq!(rom.read_range(MUTE_HOOK_OFFSET, 3), &[0x20, 0x19, 0xD5]);
+        assert_eq!(
+            rom.read_range(MUTE_ROUTINE_OFFSET, 22),
+            &mute_routine(pick_menu_music(42))[..]
+        );
+    }
+
+    #[test]
+    fn mute_hook_site_matches_vanilla() {
+        // Guards the offset itself: 0x30C93 is CPU $AC83, the per-frame
+        // `JSR Title_3Glow` inside Title_Do1P2PMenu. A drifted offset would
+        // splice a JSR into the middle of some other instruction.
+        let Some(v) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+        assert_eq!(
+            &v[MUTE_HOOK_OFFSET..MUTE_HOOK_OFFSET + 3],
+            &[0x20, TITLE_3GLOW_CPU as u8, (TITLE_3GLOW_CPU >> 8) as u8],
+        );
+        // ...followed by the Start test the menu does every frame.
+        assert_eq!(&v[MUTE_HOOK_OFFSET + 3..MUTE_HOOK_OFFSET + 7], &[0xA5, 0x18, 0x29, 0x10]);
+    }
+
+    fn vanilla() -> Option<Vec<u8>> {
+        std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()
+    }
+
+    #[test]
     fn every_icon_is_reachable() {
         // A digit is `h % NUM_ICONS`, so every index must map to a real row —
         // and the table's length is what NUM_ICONS is derived from, so this
@@ -492,5 +608,121 @@ mod tests {
             .map(|(i, _)| i)
             .collect();
         panic!("icons never selected across 200k seeds: {missing:?}");
+    }
+}
+
+#[cfg(test)]
+mod asm_checks {
+    use super::*;
+    use crate::randomize::rom_data::asm;
+
+    #[test]
+    fn mute_routine_is_well_formed() {
+        asm::check(&mute_routine(0x10))
+            .allocation(MUTE_ROUTINE_OFFSET)
+            .origin(MUTE_ROUTINE_CPU)
+            .assert_ok();
+    }
+
+    /// The hook overwrites `JSR Title_3Glow` — one whole 3-byte instruction —
+    /// and must aim at the routine's own origin. Split out because comparing
+    /// against vanilla needs the ROM, which CI does not have.
+    #[test]
+    fn mute_hook_displaces_whole_instructions() {
+        let Some(v) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+        let patch = [0x20, MUTE_ROUTINE_CPU as u8, (MUTE_ROUTINE_CPU >> 8) as u8];
+        asm::check(&mute_routine(0x10))
+            .origin(MUTE_ROUTINE_CPU)
+            .hook(&v, MUTE_HOOK_OFFSET, &patch)
+            .assert_ok();
+    }
+
+    /// Run the mute routine on an emulated CPU and report what it queued.
+    ///
+    /// The routine is self-contained up to its tail `JMP Title_3Glow` — it reads
+    /// `Pad_Input` and `SndCur_Music2` and writes one of the two music queues —
+    /// so the whole thing can be executed rather than merely decoded. Stops at
+    /// the `JMP`, which would otherwise run off into unloaded memory.
+    fn run_mute(pad: u8, playing: u8, music: u8) -> (u8, u8) {
+        use mos6502::cpu::CPU;
+        use mos6502::instruction::{Instruction, Ricoh2a03};
+        use mos6502::memory::{Bus, Memory};
+        use mos6502::Variant;
+
+        let code = mute_routine(music);
+        let mut mem = Memory::new();
+        mem.set_bytes(MUTE_ROUTINE_CPU, &code);
+        mem.set_byte(0x0018, pad); // Pad_Input
+        mem.set_byte(0x04E5, playing); // SndCur_Music2
+        mem.set_byte(0x04F4, 0x00); // Sound_QMusic1, cleared every frame
+        mem.set_byte(0x04F5, 0x00); // Sound_QMusic2, likewise
+        let mut cpu = CPU::new(mem, Ricoh2a03);
+        cpu.registers.program_counter = MUTE_ROUTINE_CPU;
+
+        for _ in 0..code.len() {
+            let op = cpu.memory.get_byte(cpu.registers.program_counter);
+            if matches!(Ricoh2a03::decode(op), Some((Instruction::JMP, _))) {
+                return (cpu.memory.get_byte(0x04F4), cpu.memory.get_byte(0x04F5));
+            }
+            cpu.single_step();
+        }
+        panic!("mute routine ran past {} instructions without reaching its JMP", code.len());
+    }
+
+    /// The routine's actual behaviour, over every input it can see: 256 pad
+    /// states x 256 "what's playing" values. Decoding cannot tell whether `BIT`
+    /// really lands B in V, or whether `LDX #$01`/`DEX` really selects between
+    /// two adjacent queues — executing it can.
+    #[test]
+    fn mute_routine_queues_the_right_thing() {
+        const MUSIC: u8 = 0x30;
+        for playing in 0..=u8::MAX {
+            for pad in 0..=u8::MAX {
+                let (fanfare, theme) = run_mute(pad, playing, MUSIC);
+                let want = match (pad & 0x40 != 0, playing != 0) {
+                    (false, _) => (0x00, 0x00),  // B not pressed: queue nothing
+                    (true, true) => (0x80, 0x00), // audible: MUS1_STOPMUSIC
+                    (true, false) => (0x00, MUSIC), // silent: restore the track
+                };
+                assert_eq!(
+                    (fanfare, theme),
+                    want,
+                    "pad {pad:#04X}, SndCur_Music2 {playing:#04X}",
+                );
+            }
+        }
+    }
+
+    /// Pressing B twice returns to the starting state, which is what makes it a
+    /// toggle rather than a one-way mute. The engine's own `SndCur_Music2` is
+    /// the state, so the second press has to see it as `Music_StopAll` left it.
+    #[test]
+    fn two_presses_restore_the_track() {
+        const MUSIC: u8 = 0x60;
+        const B: u8 = 0x40;
+        // Playing -> the press queues a stop; Music_StopAll then zeroes
+        // SndCur_Music2, which is what the next press reads.
+        assert_eq!(run_mute(B, MUSIC, MUSIC), (0x80, 0x00));
+        assert_eq!(run_mute(B, 0x00, MUSIC), (0x00, MUSIC));
+    }
+
+    /// The seed-hash sprite copy routine and the intro-skip routine predate the
+    /// `asm::check` rule; check them here now that the module exists.
+    #[test]
+    fn seed_hash_routines_are_well_formed() {
+        let mut rom = crate::randomize::qol::test_support::make_test_rom();
+        write_seed_hash(&mut rom, 42, &Options::default());
+
+        asm::check(rom.read_range(ROUTINE_OFFSET, 25))
+            .allocation(ROUTINE_OFFSET)
+            .origin(ROUTINE_CPU)
+            .assert_ok();
+        asm::check(rom.read_range(INTRO_SKIP_ROUTINE_OFFSET, 13))
+            .allocation(INTRO_SKIP_ROUTINE_OFFSET)
+            .origin(INTRO_SKIP_CPU)
+            .assert_ok();
     }
 }
