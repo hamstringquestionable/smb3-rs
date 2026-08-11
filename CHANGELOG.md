@@ -9,6 +9,15 @@ deploys.
 
 ## [Unreleased]
 
+### Changed
+
+- **World length varies more between worlds.** Every world used to guarantee
+  the same minimum amount of play before its goal, which made the cheapest
+  route recognisable once you knew the number to look for. Each world now gets
+  its own minimum — a level's worth below, at, or above the old one — rolled
+  per seed and different every time. Some worlds are dealt no variation at all.
+  The overall amount of play across the eight worlds is unchanged.
+
 ### Added
 
 - **Press B on the title screen to mute the menu music**, and B again to bring

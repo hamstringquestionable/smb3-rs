@@ -1531,6 +1531,9 @@ fn pctile_of(sorted: &[u32], p: usize) -> u32 {
 struct RouteSample {
     routes: usize,
     c1: u32,
+    /// The floor this world was DEALT (`deal_c1_floors`) — every floor
+    /// column scores against this, not against the band's center.
+    floor: u32,
     reachable: bool,
     goal_open: bool,
     has_rock: bool,
@@ -1606,6 +1609,7 @@ fn test_route_census() {
             out[built.world_idx] = Some(RouteSample {
                 routes: if rc.reachable { rc.routes.len() } else { 0 },
                 c1: rc.best_cost,
+                floor: built.c1_floor,
                 reachable: rc.reachable,
                 goal_open: world_topology(built)
                     .is_some_and(|t| t.fort_count >= 2 && t.depth == 0),
@@ -1631,6 +1635,16 @@ fn test_route_census() {
     let mut c1s: Vec<Vec<u32>> = vec![Vec::new(); 8];
     let mut goal_open = [0usize; 8];
     let mut rocks = [[0u64; 4]; 8]; // seen, rock-world, C1 rock, alt rock
+    // Floor accounting: per world, (samples, missed own floor, floor sum);
+    // and the same sliced BY the dealt floor, which is the cut that shows
+    // what a floor actually buys (one row per distinct value in the deal).
+    let mut floor_stat = [[0u64; 3]; 8];
+    let mut by_floor: Vec<(u32, Vec<u32>, Vec<u32>, u64)> = {
+        let mut vals = C1_FLOOR_BAND.to_vec();
+        vals.sort_unstable();
+        vals.dedup();
+        vals.into_iter().map(|f| (f, Vec::new(), Vec::new(), 0)).collect()
+    };
     for worlds in &per_seed {
         for (wi, s) in worlds.iter().enumerate() {
             let Some(s) = s else { continue };
@@ -1638,6 +1652,17 @@ fn test_route_census() {
             if s.reachable {
                 c1s[wi].push(s.c1);
                 goal_open[wi] += s.goal_open as usize;
+                let stat = &mut floor_stat[wi];
+                stat[0] += 1;
+                stat[1] += (s.c1 < s.floor) as u64;
+                stat[2] += s.floor as u64;
+                if let Some(row) =
+                    by_floor.iter_mut().find(|(f, ..)| *f == s.floor)
+                {
+                    row.1.push(s.c1);
+                    row.2.push(s.routes as u32);
+                    row.3 += (s.c1 < s.floor) as u64;
+                }
             }
             let row = &mut rocks[wi];
             row[0] += 1;
@@ -1662,25 +1687,28 @@ fn test_route_census() {
         }
         all_routes.extend(r.iter().copied());
         all_c1.extend(c.iter().copied());
+        let stat = floor_stat[wi];
         eprintln!(
-            "  W{:<3} {:>6.2} {:>7.0}% {:>7.0}% {:>5} {:>7.1} {:>8.0}%",
+            "  W{:<3} {:>6.2} {:>7.0}% {:>7.0}% {:>5} {:>7.1} {:>8.1}%",
             wi + 1,
             mean_of(r),
             pct_of(r, |n| n <= 1),
             pct_of(r, |n| n >= 2),
             r.iter().copied().max().unwrap_or(0),
             mean_of(c),
-            pct_of(c, |v| v < C1_FLOOR),
+            stat[1] as f64 / stat[0].max(1) as f64 * 100.0,
         );
     }
     if !all_routes.is_empty() {
+        let (n, missed): (u64, u64) =
+            floor_stat.iter().fold((0, 0), |(n, m), s| (n + s[0], m + s[1]));
         eprintln!(
-            "  overall: mean {:.3} routes/world; {:.2}% linear; C1 {:.1}, {:.1}% below \
-             floor {C1_FLOOR} (n={})",
+            "  overall: mean {:.3} routes/world; {:.2}% linear; C1 {:.1}, {:.2}% below \
+             its own dealt floor (n={})",
             mean_of(&all_routes),
             pct_of(&all_routes, |n| n <= 1),
             mean_of(&all_c1),
-            pct_of(&all_c1, |v| v < C1_FLOOR),
+            missed as f64 / n.max(1) as f64 * 100.0,
             all_routes.len(),
         );
     }
@@ -1688,8 +1716,8 @@ fn test_route_census() {
     // -- 2. C1 floor --------------------------------------------------------
     eprintln!("\n=== C1 floor probe over {seeds} seeds ===");
     eprintln!(
-        "  {:<4} {:>5} {:>5} {:>6} {:>6} {:>6} {:>6} {:>9} {:>8}",
-        "", "min", "p10", "mean", "<8", "<14", "<17", "goal-open", "linear%",
+        "  {:<4} {:>5} {:>5} {:>6} {:>6} {:>6} {:>6} {:>6} {:>9} {:>8}",
+        "", "min", "p10", "mean", "floor", "<8", "<14", "<own", "goal-open", "linear%",
     );
     for wi in 0..8 {
         let c = &mut c1s[wi];
@@ -1697,17 +1725,36 @@ fn test_route_census() {
             continue;
         }
         c.sort_unstable();
+        let stat = floor_stat[wi];
         eprintln!(
-            "  W{:<3} {:>5} {:>5} {:>6.1} {:>5.0}% {:>5.0}% {:>5.0}% {:>8.1}% {:>7.0}%",
+            "  W{:<3} {:>5} {:>5} {:>6.1} {:>6.1} {:>5.0}% {:>5.0}% {:>5.1}% {:>8.1}% {:>7.0}%",
             wi + 1,
             c[0],
             pctile_of(c, 10),
             mean_of(c),
+            stat[2] as f64 / stat[0].max(1) as f64,
             pct_of(c, |x| x < 8),
             pct_of(c, |x| x < 14),
-            pct_of(c, |x| x < 17),
+            stat[1] as f64 / stat[0].max(1) as f64 * 100.0,
             goal_open[wi] as f64 / c.len() as f64 * 100.0,
             pct_of(&routes[wi], |n| n <= 1),
+        );
+    }
+    // Per-seed total C1 — the "is the budget really conserved" number. The
+    // dealt floor conserves the GUARANTEE (8 x C1_FLOOR) but only bounds
+    // from below, so this is what actually moves. Seeds with an unreachable
+    // world are skipped rather than counted short.
+    let seed_totals: Vec<u32> = per_seed
+        .iter()
+        .filter(|w| w.iter().all(|s| s.as_ref().is_some_and(|s| s.reachable)))
+        .map(|w| w.iter().flatten().map(|s| s.c1).sum())
+        .collect();
+    if !seed_totals.is_empty() {
+        eprintln!(
+            "  per-seed total C1: mean {:.1} (floor total {}, n={})",
+            mean_of(&seed_totals),
+            C1_FLOOR * 8,
+            seed_totals.len(),
         );
     }
     if !all_c1.is_empty() {
@@ -1721,6 +1768,32 @@ fn test_route_census() {
             pct_of(&all_c1, |x| x < 14),
             go as f64 / all_c1.len() as f64 * 100.0,
             pct_of(&all_routes, |n| n <= 1),
+        );
+    }
+
+    // What the dealt floor actually buys, sliced by the floor itself — the
+    // per-world table above averages the whole band away (every world sees
+    // every floor across seeds, so its mean floor is ~14 by construction).
+    // `lift` is C1 minus the floor: how far ABOVE its guarantee the world
+    // finished, which is what says whether a floor is binding or inert.
+    eprintln!("\n=== By dealt C1 floor ===");
+    eprintln!(
+        "  {:<6} {:>7} {:>7} {:>7} {:>7} {:>8} {:>7}",
+        "floor", "n", "C1", "lift", "routes", "linear%", "missed%",
+    );
+    for (f, c1, rts, missed) in &by_floor {
+        if c1.is_empty() {
+            continue;
+        }
+        eprintln!(
+            "  {:<6} {:>7} {:>7.1} {:>7.1} {:>7.2} {:>7.0}% {:>6.1}%",
+            f,
+            c1.len(),
+            mean_of(c1),
+            mean_of(c1) - *f as f64,
+            mean_of(rts),
+            pct_of(rts, |n| n <= 1),
+            *missed as f64 / c1.len() as f64 * 100.0,
         );
     }
 

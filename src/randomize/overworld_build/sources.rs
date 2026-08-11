@@ -12,14 +12,15 @@
 
 use super::*;
 
-/// Roll the per-seed level/fort allotment EXACTLY like the shipping builder,
+/// Roll the per-seed level/fort/floor allotment EXACTLY like the shipping builder,
 /// by calling its machinery verbatim: fortresses via
 /// `redistribute_fortresses` (W8 always keeps 4; W1-W7 roll 1-3 each with
 /// the 13-fort total conserved), then levels via `distribute_levels` over
 /// `prepare_capacities` (capacity^0.5-weighted shares of the 62 vanilla
-/// levels, random leftover topping up random worlds). One roll covers all 8
-/// worlds — the caller writes the result onto each `WorldState`'s budgets
-/// before scheduling. `from_pickup` alone stays vanilla-frozen; variance is
+/// levels, random leftover topping up random worlds), then the C1 floors via
+/// `deal_c1_floors` (a permuted multiset summing to 8 x `C1_FLOOR`). One roll
+/// covers all 8 worlds — the caller writes the result onto each
+/// `WorldState`'s budgets before scheduling. `from_pickup` alone stays vanilla-frozen; variance is
 /// the caller's choice, made here.
 pub(crate) fn allot_budgets(
     rom: &Rom,
@@ -27,7 +28,7 @@ pub(crate) fn allot_budgets(
     pickup: &PickupResult,
     flags: &BuildFlags,
     mut rng: &mut dyn RngCore,
-) -> ([usize; 8], [usize; 8]) {
+) -> ([usize; 8], [usize; 8], [u32; 8]) {
     let fort_counts = redistribute_fortresses(&mut rng);
     let CapacityPrep { capacities, .. } = prepare_capacities(
         rom,
@@ -40,7 +41,8 @@ pub(crate) fn allot_budgets(
     );
     let level_counts =
         distribute_levels(&capacities, VANILLA_LEVEL_COUNT, LEVEL_SPREAD_EXPONENT, &mut rng);
-    (level_counts, fort_counts)
+    let c1_floors = deal_c1_floors(&mut rng);
+    (level_counts, fort_counts, c1_floors)
 }
 
 /// Wrap a finished `BuiltWorld` back into a `WorldState`. Start/target are
@@ -69,6 +71,7 @@ pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
             .iter()
             .filter(|s| s.kind == SlotKind::Fortress)
             .count(),
+        c1_floor: C1_FLOOR,
         ptr_slots: 0,
         hb_sprite_pins: Vec::new(),
         log: Vec::new(),
@@ -150,6 +153,7 @@ pub(crate) fn from_pickup(
         pipe_budget: VANILLA_PIPE_PAIRS[world_idx],
         level_budget,
         fort_budget,
+        c1_floor: C1_FLOOR,
         ptr_slots: pickup.worlds[world_idx].pool_indices.len(),
         hb_sprite_pins,
         log: Vec::new(),
@@ -200,6 +204,7 @@ pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -
         pipe_budget: VANILLA_PIPE_PAIRS[world_idx],
         level_budget,
         fort_budget,
+        c1_floor: C1_FLOOR,
         ptr_slots: 0,
         hb_sprite_pins: Vec::new(),
         log: Vec::new(),

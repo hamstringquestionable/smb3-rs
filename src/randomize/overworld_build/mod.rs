@@ -132,11 +132,13 @@ use capacity::{SPADE_BUDGET, assign_hb_sprites, promote_hb_slots};
 // modules that post-process the build (hands, troll pipes).
 pub use {types::SlotAssignment, types::SlotKind};
 pub(crate) use capacity::{
-    RESERVED_DYNAMIC_SLOTS, VANILLA_PIPE_PAIRS, bfs_ordered, distribute_levels,
+    RESERVED_DYNAMIC_SLOTS, VANILLA_PIPE_PAIRS, bfs_ordered, deal_c1_floors, distribute_levels,
     fixed_positions_for_world, prepare_capacities, redistribute_fortresses,
 };
 pub(crate) use capacity::{LEVEL_SPREAD_EXPONENT, VANILLA_LEVEL_COUNT};
-pub(crate) use route_choice::{C1_FLOOR, DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice};
+pub(crate) use route_choice::{
+    C1_FLOOR, COST_LEVEL, DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice,
+};
 pub(crate) use types::{
     BuildFlags, BuildResult, BuiltWorld, CapacityPrep, LockAssignment, OverworldData, stamp_slots,
 };
@@ -160,6 +162,8 @@ pub(crate) use progression::{
     PipeClass, analyze_required_progression, classify_pipes, dump_required_progression,
     hammer_skip, island_count, level_adjacency_pairs, start_goal_express_pipe,
 };
+#[cfg(test)]
+pub(crate) use capacity::C1_FLOOR_BAND;
 #[cfg(test)]
 pub(crate) use route_choice::dump_route_choice;
 #[cfg(test)]
@@ -201,7 +205,7 @@ pub(crate) fn run_shaped_with_web_retries(state: &mut WorldState, rng: &mut dyn 
         // webs that also failed the floor). Such a web redeals like any
         // other degenerate web.
         let full_forts = state.fort_count() == state.fort_budget;
-        if (m.c1 >= C1_FLOOR && full_forts) || redeals >= WEB_RETRIES {
+        if (m.c1 >= state.c1_floor && full_forts) || redeals >= WEB_RETRIES {
             if let Some((key, snap)) = &best
                 && (full_forts, m.c1, m.routes_in_band) < *key
             {
@@ -243,13 +247,15 @@ pub(crate) fn build<R: Rng>(
     // Per-seed budgets: fortresses via redistribute_fortresses (W8 keeps 4;
     // W1-W7 roll 1-3 with the 13-fort total conserved), levels distributed
     // by compressed capacity shares.
-    let (level_counts, fort_counts) = allot_budgets(rom, data.catalog, data.pickup, &flags, rng);
+    let (level_counts, fort_counts, c1_floors) =
+        allot_budgets(rom, data.catalog, data.pickup, &flags, rng);
 
     let mut states: Vec<WorldState> = (0..8)
         .map(|wi| {
             let mut state = from_pickup(rom, data.catalog, data.pickup, wi, &flags);
             state.level_budget = level_counts[wi];
             state.fort_budget = fort_counts[wi];
+            state.c1_floor = c1_floors[wi];
             state
         })
         .collect();
