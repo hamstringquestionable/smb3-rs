@@ -45,6 +45,12 @@ pub(crate) struct WorldState {
     /// How many fortresses the Forts phase places — same pattern as
     /// `level_budget`, seeded from the vanilla catalog's Fortress tally.
     pub fort_budget: usize,
+    /// Floor on this world's cheapest route ("C1"), in scorer points — the
+    /// per-world value of [`C1_FLOOR`], dealt by [`allot_budgets`] so a seed
+    /// mixes short worlds with long ones at a conserved total. Every site
+    /// that used to read the constant reads this instead; the constant is
+    /// the band's center and the default for the loader sources.
+    pub c1_floor: u32,
     /// Pointer-table entries available to this world (the pickup pool size).
     /// Every slot — level, fort, hammer bro, pipe endpoint — consumes one;
     /// the hammer-bro fill phase caps itself against this.
@@ -292,6 +298,7 @@ impl WorldState {
             section_count: self.fort_count(),
             pipe_pairs: self.pipe_pairs.clone(),
             hb_sprites: Vec::new(),
+            c1_floor: self.c1_floor,
         }
     }
 }

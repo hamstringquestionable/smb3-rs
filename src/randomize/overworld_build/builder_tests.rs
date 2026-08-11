@@ -58,10 +58,11 @@ struct CensusCtx {
     catalog: NodeCatalog,
     pickup: Pickup,
     flags: BuildFlags,
-    /// Per-seed level/fort allotment, rolled once for all 8 worlds via the
-    /// shipping builder's exact machinery (`allot_budgets`).
+    /// Per-seed level/fort/floor allotment, rolled once for all 8 worlds via
+    /// the shipping builder's exact machinery (`allot_budgets`).
     level_counts: [usize; 8],
     fort_counts: [usize; 8],
+    c1_floors: [u32; 8],
 }
 
 fn census_ctx(raw: &Rom, seed: u64) -> CensusCtx {
@@ -90,7 +91,7 @@ fn census_ctx(raw: &Rom, seed: u64) -> CensusCtx {
         eights_are_wild: eights_wild,
         shuffle_hammer_bros,
     };
-    let (level_counts, fort_counts) =
+    let (level_counts, fort_counts, c1_floors) =
         allot_budgets(&rom, &catalog, &pickup, &flags, &mut roll_rng);
     CensusCtx {
         rom,
@@ -99,6 +100,7 @@ fn census_ctx(raw: &Rom, seed: u64) -> CensusCtx {
         flags,
         level_counts,
         fort_counts,
+        c1_floors,
     }
 }
 
@@ -108,6 +110,7 @@ impl CensusCtx {
             from_pickup(&self.rom, &self.catalog, &self.pickup, world_idx, &self.flags);
         state.level_budget = self.level_counts[world_idx];
         state.fort_budget = self.fort_counts[world_idx];
+        state.c1_floor = self.c1_floors[world_idx];
         state
     }
 }
@@ -144,6 +147,7 @@ fn test_builder_schedule_runs_phases_in_order() {
         pipe_budget: 0,
         level_budget: 0,
         fort_budget: 0,
+        c1_floor: C1_FLOOR,
         ptr_slots: 0,
         hb_sprite_pins: Vec::new(),
         log: Vec::new(),
@@ -1410,7 +1414,7 @@ fn test_builder_diversity_census() {
 
     // Per-seed budget allotment for the builder arms — same variance rules the
     // shipping arm gets internally from build().
-    let allotments: Vec<([usize; 8], [usize; 8])> = (0..seeds)
+    let allotments: Vec<([usize; 8], [usize; 8], [u32; 8])> = (0..seeds)
         .map(|seed| {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             allot_budgets(&rom, &catalog, &pickup, &BuildFlags::default(), &mut rng)
@@ -1423,9 +1427,10 @@ fn test_builder_diversity_census() {
         let budgeted_world = |seed: u64| {
             let mut state =
                 from_pickup(&rom, &catalog, &pickup, world_idx, &BuildFlags::default());
-            let (level_counts, fort_counts) = &allotments[seed as usize];
+            let (level_counts, fort_counts, c1_floors) = &allotments[seed as usize];
             state.level_budget = level_counts[world_idx];
             state.fort_budget = fort_counts[world_idx];
+            state.c1_floor = c1_floors[world_idx];
             state
         };
 

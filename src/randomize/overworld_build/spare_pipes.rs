@@ -52,6 +52,7 @@ impl Phase for SparePipes {
     }
 
     fn run(&self, state: &mut WorldState, rng: &mut dyn RngCore) -> PhaseReport {
+        let floor = state.c1_floor;
         let mut actions = Vec::new();
         let mut placed_any = false;
 
@@ -99,7 +100,7 @@ impl Phase for SparePipes {
                 state.add_pipe_pair(a, b);
                 let m = measure_world(state);
                 state.pop_pipe_pair();
-                if m.c1 >= C1_FLOOR && m.routes_in_band >= before.routes_in_band {
+                if m.c1 >= floor && m.routes_in_band >= before.routes_in_band {
                     if m.routes_in_band > before.routes_in_band {
                         creator = Some((a, b));
                         break;
@@ -108,7 +109,7 @@ impl Phase for SparePipes {
                         harmless = Some((a, b));
                     }
                 }
-                let key = (!doubling, m.c1.min(C1_FLOOR), m.routes_in_band, m.c1);
+                let key = (!doubling, m.c1.min(floor), m.routes_in_band, m.c1);
                 if best.as_ref().is_none_or(|(k, _)| key > *k) {
                     best = Some((key, (a, b)));
                 }

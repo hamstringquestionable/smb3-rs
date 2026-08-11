@@ -100,12 +100,25 @@ fn sweep_is_deterministic() {
 /// by byte. Exactly 24 bytes differ per seed, in two places — the `JSR` operand
 /// at the hook site 0x30C94 and the 22-byte routine at 0x33529, which was $FF
 /// filler. No overworld, level or enemy byte moved.
+///
+/// Re-captured 2026-08-11 for the dealt C1 floor (`capacity::deal_c1_floors`).
+/// This one DOES change overworld topology, on purpose: each world is dealt a
+/// floor of 11 / 14 / 17 instead of a flat 14, so shaping resolves differently.
+/// It also draws twice from the shared RNG (the pair count, then a shuffle),
+/// which shifts every downstream stream position — so all 20 seeds move for
+/// two reasons at once and a byte-level diff could not attribute them.
+/// Verified by pinning instead, the way the v28 recapture was: making
+/// `deal_c1_floors` return `[C1_FLOOR; 8]` with no draw reproduced the
+/// PREVIOUS hashes exactly, which shows the difference is the deal alone and
+/// that threading the floor through the shaping sites changed no decision.
+/// (The `C1_FLOOR_FLAT` env arm cannot do this job — it is `cfg(test)`, and
+/// this file links the library as an outside consumer.)
 const BASELINE: [u64; SEEDS as usize] = [
-    0xB94EAEB231B53157, 0x4E77C9EBD2C7FC17, 0x1FA65412B35EA4B4, 0x6DF4D6047DC8F457,
-    0xFACDF601C15ABFA7, 0x34FE0AC25192E976, 0x8C67515F5289906A, 0x20CDD66A9B3E99A1,
-    0xE18B699FB2BFA028, 0x5E54F56DF25EE227, 0xA020A0057C39501D, 0xA389662E7E3DF0BF,
-    0x2E529762AE3049AA, 0xD3562D897C162822, 0x71519D7F0CEB874C, 0x6418203CC4E10283,
-    0xF9D73A5FAD8A6B75, 0x9A6128ABB4E437F8, 0x851FD8A719E18073, 0xB9A634E3FA005F16,
+    0xACE6D29C567449F8, 0x550C792486224F4B, 0xA8C5F0A6B296759D, 0x61CC712A9D8232FF,
+    0x8DA95E9C5FEA6A31, 0xE02746EC8F23D59F, 0xB7FA7BEAEF413EBA, 0xACEBCAE4470A4C11,
+    0xC269A39320B27CFB, 0xEF8AFBB90E2A00AD, 0x14129EF370846280, 0xAADFE1EEB4E9E188,
+    0x6546BD69DCFAB8FE, 0x94C37EDDC54B6A0D, 0x543AC2A0587F25BF, 0x97DB071E9067030A,
+    0x39D2EC7C5988E1F3, 0xDA4AE0193B48CDDF, 0xA77453960E7F51DF, 0x2A1B1A9E8C0DC998,
 ];
 
 #[test]

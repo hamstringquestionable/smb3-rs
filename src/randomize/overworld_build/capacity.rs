@@ -403,6 +403,65 @@ pub(crate) fn distribute_levels<R: Rng>(
     counts
 }
 
+/// Step between the dealt C1 floors: exactly ONE LEVEL, read off the cost
+/// model rather than typed in, so a retune of [`COST_LEVEL`] carries the
+/// band with it. A level is the unit the player perceives; finer steps are
+/// not perceivable and measured as not distinguishable either (the 1000-seed
+/// probe put floors 14 and 15 at C1 19.2/19.4, and 16 and 17 both at 20.7).
+const C1_FLOOR_STEP: u32 = COST_LEVEL;
+
+/// The three floors a world can be dealt: one level below [`C1_FLOOR`], the
+/// centre, one level above — 11 / 14 / 17.
+pub(crate) const C1_FLOOR_BAND: [u32; 3] =
+    [C1_FLOOR - C1_FLOOR_STEP, C1_FLOOR, C1_FLOOR + C1_FLOOR_STEP];
+
+/// Most (low, high) PAIRS one seed can deal. At 4 every world sits at an
+/// end and none at the centre.
+const C1_FLOOR_MAX_PAIRS: usize = 4;
+
+/// Deal one C1 floor per world: `k` worlds a level below centre, `k` a level
+/// above, the rest at centre, shuffled — with `k` itself rolled per seed.
+///
+/// **Why the floor varies at all.** A single global floor is learnable. The
+/// shaping loop satisfices, so it climbs to the floor and stops, and the
+/// measured result is a spike sitting exactly ON the floor rather than a
+/// distribution respecting it: under a flat floor every world measured
+/// `min = 14` with `p10 = 14` in four of the eight, i.e. at least a tenth of
+/// worlds priced at exactly the constant. A player who learns that number
+/// can recognise the intended cheap route by pricing it. Dealing the floor
+/// smears that spike across a band the player cannot see.
+///
+/// **Why a hidden roll and not a derived one.** The floor must be neither
+/// constant nor derivable from anything visible, and an SMB3 map is fully
+/// visible from the start — fortresses and levels are countable before
+/// entering anything. So a floor computed from world content (forts, levels)
+/// would be computable by the player too: the tell survives, upgraded from
+/// memorised to derivable. Only hidden per-seed entropy satisfies both.
+///
+/// **Why the total is conserved for free.** Every low is paid for by a high,
+/// so the sum is `8 * C1_FLOOR` identically, whatever `k` comes up — there
+/// is no deal that can violate it and no magic total to keep in step. `k`
+/// may roll 0, leaving a seed flat at the centre; that costs nothing (it is
+/// simply today's behaviour for that seed) and keeps the roll unstructured.
+pub(crate) fn deal_c1_floors<R: Rng>(rng: &mut R) -> [u32; 8] {
+    // A/B arm: `C1_FLOOR_FLAT=1` restores the single global floor, so the
+    // census can measure the deal against the shape it replaced without
+    // needing two checkouts. Test-only — never reaches the CLI or WASM.
+    #[cfg(test)]
+    if std::env::var("C1_FLOOR_FLAT").is_ok() {
+        return [C1_FLOOR; 8];
+    }
+    let [low, centre, high] = C1_FLOOR_BAND;
+    let pairs = rng.random_range(0..=C1_FLOOR_MAX_PAIRS);
+    let mut floors = [centre; 8];
+    for i in 0..pairs {
+        floors[i] = low;
+        floors[pairs + i] = high;
+    }
+    floors.shuffle(rng);
+    floors
+}
+
 /// Distribute 13 fortresses across W1-W7 (each gets 1-3), W8 keeps 4.
 pub(crate) fn redistribute_fortresses<R: Rng>(rng: &mut R) -> [usize; 8] {
     let mut counts = [0usize; 8];
