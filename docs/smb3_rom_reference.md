@@ -3561,11 +3561,35 @@ walking into the Coin Ship loads an autoscroll ship level in the Ship tileset
 (PRG023). The end of that level contains a pipe junction whose destination is a
 small sub-area with **two BoomerangBros** as the fight reward.
 
+#### How the Coin Ship is loaded
+
+Every step is a table read, and all of them are worth knowing because the coin
+ship is the one level whose *entry path* changes what spawns inside it.
+
+1. Stepping on a map object stores its ID: `Map_EnterViaID = Map_Objects_IDs[slot]`
+   (`prg011.asm:3896`). For a coin ship that is `MAPOBJ_COINSHIP = $0B`.
+   **Entering an ordinary level tile leaves `Map_EnterViaID = 0`** — `prg012.asm:641`
+   branches on non-zero, and `prg002.asm:3712` calls a non-zero value "a Map
+   Entry override."
+2. `$0B` = index 11 of the dispatch table at `prg012.asm:681` → `MO_CoinShip`.
+3. `MO_CoinShip` (`prg012.asm:917`) sets the layout and object pointers from
+   `CoinShip_Layouts[World_Num]` / `CoinShip_Objects[World_Num]` and forces
+   `Level_Tileset = 10`. Both tables are eight identical per-world words —
+   the disassembly wonders aloud whether per-world coin ships were planned.
+
 | Item | Value |
 |------|-------|
+| `CoinShip_Layouts` | file `0x19337` — 8 × `$BC15` |
+| `CoinShip_Objects` | file `0x19347` — 8 × `$DA04` |
+| Ship layout header | `$BC15` → file `0x2FC25` (PRG023) |
+| Ship enemy data | `$DA04` → file `0x0DA14` — autoscroll, clouds, prop; no enemies |
+| Junction | ship header bytes 0-3 = `B8 BC 0F DA` → alt layout `$BCB8`, alt objects `$DA0F` |
+| Sub-area tileset | source header byte 6 low nibble (`0x2FC2B` = `$8A`) = **10** |
 | Sub-area enemy pointer | CPU `$DA0F` (file `0x0DA1F`) |
-| Junction reference | File `0x2FC27` in PRG023 (Ship tileset) — bytes `BC 0F DA` |
-| Enemy contents | 2× `0x82` (BoomerangBro) + `0xBA` terminator (3 entries) |
+| Enemy contents | 2× `0x82` (BoomerangBro) + `0xBA` `OBJ_TREASUREBOXAPPEAR` |
+
+There is exactly **one** reward room: the sub-area header at `$BCB8` contains
+zero junction commands, so the chain dead-ends there.
 
 The sub-area has no world pointer table entry — it's reached only via the
 in-layout junction — so the randomizer protects it via a `LevelProtection`
@@ -3574,11 +3598,80 @@ WalkerSegmentRule::HammerBro`). This routes its enemy randomization through
 the HB-wild path (stompable-only pool, optionally one shell-killable + one
 shell partner).
 
-Dry Bones (`0x3F`) is additionally excluded from this segment's stompable pool
-(`is_coinship_fight` in `enemy_protections.rs`): the reward room is enclosed and
-never scrolls, so a Dry Bones revives after every stomp with no screen edge to
-wander off and can never be cleared. It stays a valid HB-wild pick everywhere
-else.
+The 8-Tank sub-area (`$DA29`) is the other room of this shape — a treasure box
+reached through a non-bro map sprite — and carries the same rule.
+
+**A treasure-box room is cleared to be left, so every enemy in it must be
+permanently killable, not merely stompable.** That is the whole reason the
+bro-fight pool splits in two: `STOMPABLE_ENEMIES` for anything a jump clears,
+and `HB_NEEDS_SHELL_ENEMIES` for what needs a kicked shell, which the 2-enemy
+path always pairs one with. Dry Bones (`0x3F`) is why the distinction is
+load-bearing rather than pedantic: stomping it works and it revives, so it can
+never be cleared by jumping, but a shell does kill it. It therefore sits in
+`HB_NEEDS_SHELL_ENEMIES`, which also means it can only be dealt into a 2-enemy
+room — the 1-enemy rooms (including the 8-Tank) draw from the stompable pool
+alone and never see one.
+
+### `BattleEnemy_ByEnterID` Overrun — a Hammer Bro is a Placeholder
+
+**In any room with `Level_Event = 7` (i.e. whose enemy data contains
+`OBJ_TREASUREBOXAPPEAR`, `$BA`), object `$81` is not a Hammer Bro.** It is a
+placeholder meaning *"whichever bro's map sprite the player walked in
+through"* — which is how one arena serves all four bro battles.
+
+`ObjInit_HammerBro` (`prg004.asm:866`):
+
+```asm
+LDA Level_Event
+CMP #$07
+BNE  ...                 ; not a treasure-box room -> ordinary Hammer Bro
+LDY Map_EnterViaID
+LDA BattleEnemy_ByEnterID,Y
+CMP #OBJ_HAMMERBRO
+BEQ  ...                 ; already the right bro -> keep
+STA Level_ObjectID,X     ; otherwise REWRITE this object's own ID
+DEC Objects_State,X      ; and re-init as whatever that was
+```
+
+`BattleEnemy_ByEnterID` (`prg004.asm:851`, file **`0x08478`**) defines only
+indices 0-9 — the disassembly says so outright: *"No definition for `$0A-$10`
+map objects."* The bytes that follow it are the routine's own machine code
+(`AD 66 05` = `LDA $0566`, i.e. `LDA Level_Event`), so any higher index reads
+an opcode or an operand as an object ID:
+
+| Entered via | Index | `$81` becomes | Result |
+|---|---|---|---|
+| `MAPOBJ_HAMMERBRO` `$03` | 3 | `$81` HammerBro | intended |
+| `MAPOBJ_BOOMERANG/HEAVY/FIREBRO` `$04`-`$06` | 4-6 | `$82`/`$86`/`$87` | intended |
+| ordinary level tile, HELP, airship, W7 plant, N-Spade | 0-2, 7-9 | `$00` | invisible, inert |
+| `MAPOBJ_WHITETOADHOUSE` `$0A` | 10 | `$AD` RockyWrench | out of range |
+| **`MAPOBJ_COINSHIP` `$0B`** | 11 | **`$66` WaterCurrentDown** | out of range |
+| `MAPOBJ_UNK0C` `$0C` | 12 | `$05` | out of range |
+| `MAPOBJ_BATTLESHIP` `$0D` | 13 | `$C9` | out of range |
+| `MAPOBJ_TANK` `$0E` | 14 | `$07` `OBJ_WARPHIDE` | invisible |
+| `MAPOBJ_W8AIRSHIP` `$0F` | 15 | `$D0` | out of range |
+| `MAPOBJ_CANOE` `$10` | 16 | `$16` | out of range |
+
+None of those can be killed, and the treasure box only appears once the room
+is empty — so a `$81` in the wrong treasure-box room is an unescapable room.
+
+**Vanilla observes the rule.** `$81` appears in exactly five treasure-box
+rooms, all bro battles (`$C640`, `$C72B`, `$D0EA`, `$D142`, `$D14D`), and the
+two treasure-box rooms reached by a non-bro map object — the Coin Ship
+(`$DA0F`) and the 8-Tank sub-area (`$DA29`) — use a literal `$82` instead.
+
+The randomizer enforces this generically in `rewrites_hammer_bro`
+(`enemy_protections.rs`), keyed off the existing `HAMMER_BRO_OBJ_PTRS`. It replaced a
+hand-curated `ForceTankBro` row on the 8-Tank sub-area that was labelled
+"HammerBro fails to spawn in ts=10" — a misdiagnosis. The tileset was never
+the cause; index 14 yields `OBJ_WARPHIDE`, which is invisible, and that is
+what "fails to spawn" actually was.
+
+> **Testing caveat.** `testrom --place CoinShip` parks the coin ship's
+> layout/object pointers on a numbered tile, which reproduces the *level* but
+> not `Map_EnterViaID` — entered that way it is 0, so a `$81` there becomes
+> `$00` (invisible) instead of `$66` (a water current). Anything that depends
+> on the entry path cannot be reproduced by placing the level on a tile.
 
 ### Enemy Stompability Classification
 

@@ -297,6 +297,21 @@ pub struct Placement {
     pub slot: Option<u8>,
 }
 
+/// One enemy slot overwritten by hand, for "what does object X actually do in
+/// room Y" experiments the randomizer's pools would never produce.
+///
+/// Addressed by the room's enemy pointer rather than a file offset, so the
+/// arithmetic stays in `rom_data::enemy_ptr_to_file_offset` instead of being
+/// re-derived by whoever is running the test.
+pub struct EnemyOverride {
+    /// CPU enemy pointer of the segment, e.g. `0xDA0F` for the Coin Ship fight.
+    pub enemy_ptr: u16,
+    /// 0-based entry within the segment, past the leading page byte.
+    pub slot: usize,
+    /// Object ID to write.
+    pub id: u8,
+}
+
 /// A full description of the test ROM to build.
 pub struct TestRomSpec {
     pub base: Base,
@@ -345,6 +360,9 @@ pub struct TestRomSpec {
     pub hammer_breaks_bridges: bool,
     /// Include the 9 unreferenced beta stages as placeable names.
     pub include_beta: bool,
+    /// Enemy slots to overwrite outright. Applied last, so they win over the
+    /// randomizer's own choices on a `--randomize` base.
+    pub set_enemies: Vec<EnemyOverride>,
 }
 
 /// Result of a build: the ROM bytes plus a human-readable account of what was
@@ -377,8 +395,14 @@ fn source_catalog(vanilla: &[u8], include_beta: bool) -> Result<Vec<EntryView>, 
 }
 
 /// Resolve a level name to the data that travels with it when placed.
+///
+/// `UNLISTED_LEVELS` is checked first: those levels have no pointer table entry
+/// for the catalog to have classified, so they can only be resolved by name.
 fn resolve(catalog: &[EntryView], name: &str) -> Result<LevelEntry, String> {
     let want = norm(name);
+    if let Some((_, entry)) = rom_data::UNLISTED_LEVELS.iter().find(|(n, _)| norm(n) == want) {
+        return Ok(entry.clone());
+    }
     let hit = catalog
         .iter()
         .find(|e| norm(&e.name) == want)
@@ -726,6 +750,33 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         }
     }
 
+    // 8. Hand-set enemy slots. Last of all, so they survive everything above.
+    for ov in &spec.set_enemies {
+        let seg = rom_data::enemy_ptr_to_file_offset(ov.enemy_ptr);
+        // Walk the segment the way the engine does — page byte, then 3-byte
+        // entries to the 0xFF terminator — so a slot past the end is an error
+        // rather than a silent write into the next room's data.
+        let off = seg + 1 + ov.slot * 3;
+        let mut probe = seg + 1;
+        let mut len = 0usize;
+        while rom.read_range(probe, 1)[0] != 0xFF {
+            len += 1;
+            probe += 3;
+        }
+        if ov.slot >= len {
+            return Err(format!(
+                "segment ${:04X} has {len} enemy slot(s); slot {} is past the end",
+                ov.enemy_ptr, ov.slot
+            ));
+        }
+        let was = rom.read_range(off, 1)[0];
+        rom.write_byte(off, ov.id);
+        report.push(format!(
+            "enemy ${:04X}[{}] @ 0x{off:05X}: {was:#04X} -> {:#04X}",
+            ov.enemy_ptr, ov.slot, ov.id
+        ));
+    }
+
     Ok(TestRom { bytes: rom.output_bytes().to_vec(), report })
 }
 
@@ -736,6 +787,11 @@ pub fn list_levels(vanilla: &[u8], include_beta: bool) -> Result<Vec<String>, St
         .iter()
         .filter(|e| e.level_entry.is_some())
         .map(|e| format!("{:<8} {}", e.name, e.kind_label))
+        .chain(
+            rom_data::UNLISTED_LEVELS
+                .iter()
+                .map(|(n, _)| format!("{n:<8} unlisted (no pointer table entry)")),
+        )
         .collect())
 }
 
@@ -766,6 +822,7 @@ mod tests {
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             include_beta: false,
+            set_enemies: Vec::new(),
         }
     }
 
@@ -803,6 +860,38 @@ mod tests {
             .find(|(num, _)| *num == 1)
             .expect("W1 has a tile 1");
         assert_eq!(rom_data::read_entry(&out, &WORLDS[0], slot.1), want);
+    }
+
+    /// The Coin Ship has no world pointer table entry, so the catalog cannot
+    /// name it — `resolve` has to reach it through `UNLISTED_LEVELS`. Placing it
+    /// must write the exact triple `MO_CoinShip` sets up: tileset 10, objects
+    /// `$DA04`, layout `$BC15`.
+    #[test]
+    fn coin_ship_places_the_triple_mo_coinship_loads() {
+        let Some(van) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+
+        let built = build(
+            &van,
+            &TestRomSpec {
+                placements: vec![Placement { level: "coinship".into(), slot: Some(1) }],
+                world: Some(1),
+                ..spec()
+            },
+        )
+        .unwrap();
+
+        let out = Rom::from_bytes_lax(&built.bytes, true).unwrap();
+        let slot = numbered_slots(&out, 0, false)
+            .into_iter()
+            .find(|(num, _)| *num == 1)
+            .expect("W1 has a tile 1");
+        let got = rom_data::read_entry(&out, &WORLDS[0], slot.1);
+        assert_eq!(got.tileset, 10);
+        assert_eq!((got.obj_hi, got.obj_lo), (0xDA, 0x04));
+        assert_eq!((got.lay_hi, got.lay_lo), (0xBC, 0x15));
     }
 
     /// Regression: map grids are screen-major, so a row-major offset walks off
