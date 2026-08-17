@@ -113,12 +113,33 @@ fn sweep_is_deterministic() {
 /// that threading the floor through the shaping sites changed no decision.
 /// (The `C1_FLOOR_FLAT` env arm cannot do this job — it is `cfg(test)`, and
 /// this file links the library as an outside consumer.)
+/// Re-captured 2026-08-17 for the treasure-box room rules. Two changes, both
+/// deliberate, and every seed moves because both shift the shared RNG stream:
+///
+/// 1. A `$81` in a `Level_Event = 7` room that is not a real bro battle is
+///    rewritten by `ObjInit_HammerBro` into an unkillable object, so it is now
+///    excluded from every such room (`rewrites_hammer_bro`).
+/// 2. Those rooms are cleared to be left, so they take the bro-fight pool:
+///    the 8-Tank treasure room joins the Coin Ship as a `HammerBro` segment,
+///    and Dry Bones moved from `STOMPABLE_ENEMIES` to `HB_NEEDS_SHELL_ENEMIES`
+///    (it is stompable but revives, so only a kicked shell clears it).
+///
+/// Attributed rather than assumed. Against the previous build at default flags
+/// (`hb_encounters` Off): **no** enemy ID in any treasure-box room differs, and
+/// `0x0DA3A` (the 8-Tank slot) now holds vanilla `$82` in every seed checked.
+/// That is the whole story — with `hb_encounters` Off, `hb_modes` is all-Off, so
+/// routing that room through the HB path means its single entry no longer draws
+/// at all where the old `ForceTankBro` row drew once. One fewer draw, and every
+/// downstream consumer (chest items, later segments, the overworld) shifts. The
+/// pool changes themselves only bite with `hb_encounters` on, which this sweep
+/// does not exercise — `treasure_box_rooms_never_get_a_hammer_bro` and the
+/// shell-pairing invariant in `enemies::tests` cover that instead.
 const BASELINE: [u64; SEEDS as usize] = [
-    0xACE6D29C567449F8, 0x550C792486224F4B, 0xA8C5F0A6B296759D, 0x61CC712A9D8232FF,
-    0x8DA95E9C5FEA6A31, 0xE02746EC8F23D59F, 0xB7FA7BEAEF413EBA, 0xACEBCAE4470A4C11,
-    0xC269A39320B27CFB, 0xEF8AFBB90E2A00AD, 0x14129EF370846280, 0xAADFE1EEB4E9E188,
-    0x6546BD69DCFAB8FE, 0x94C37EDDC54B6A0D, 0x543AC2A0587F25BF, 0x97DB071E9067030A,
-    0x39D2EC7C5988E1F3, 0xDA4AE0193B48CDDF, 0xA77453960E7F51DF, 0x2A1B1A9E8C0DC998,
+    0xC1C71A7A4F68594D, 0x534A4AE58D1A3363, 0x44C686DF79468198, 0xC2A259353E396A87,
+    0x362C802799120D4A, 0xACA60B2E92B70172, 0x006C15769D3150F9, 0xC9B5C7A81BCCFF84,
+    0x7619C233EDA9C4A8, 0xA09A4F5BC20009B5, 0x424C0BFC98308197, 0xEFE5625EBEECEACD,
+    0x4CF3C1FC3700FBEB, 0x2D32C04ACB5E0D7D, 0xED60682BD8DC03FA, 0x920F58E88CE8F433,
+    0xA78130770839D989, 0xF0F6E652FEAE6D0B, 0xD3E21E5ED23526D8, 0xEF1FF6F1C5FA9B11,
 ];
 
 #[test]
