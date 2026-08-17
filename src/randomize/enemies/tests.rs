@@ -1238,11 +1238,6 @@
                     {
                         bad("ForceStompable but result not stompable".into());
                     }
-                    Some(EntryProtection::ForceTankBro)
-                        if opts.bros != EnemyMode::Off && !TANK_BRO_POOL.contains(&new) =>
-                    {
-                        bad("ForceTankBro but result not a tank bro".into());
-                    }
                     Some(EntryProtection::ExcludeHazards)
                         if hazard_excluded(new, orig) =>
                     {
@@ -1254,10 +1249,7 @@
                 // --- Class validity: a swap must land in the original's class
                 // pool, be a wild injection, be a Boom-Boom self-swap, or be
                 // covered by a pool-replacing Force* protection above. ---
-                let forced_pool = matches!(
-                    prot,
-                    Some(EntryProtection::ForceShell | EntryProtection::ForceTankBro)
-                );
+                let forced_pool = matches!(prot, Some(EntryProtection::ForceShell));
                 if !forced_pool {
                     let in_class = find_class_pool(orig, modes)
                         .is_some_and(|p| p.slice(wild_pool).contains(&new));
@@ -1279,6 +1271,28 @@
                     && hazard_category(new).is_some()
                 {
                     bad("piranha slot replaced by a hazard".into());
+                }
+            }
+
+            // Shell pairing: hard invariant. A treasure-box room only opens once
+            // it is empty, so an enemy from HB_NEEDS_SHELL_ENEMIES is only fair
+            // there if the room also holds a shell to kill it with. Dry Bones is
+            // the member that makes this load-bearing rather than cosmetic — it
+            // is stompable but revives, so nothing else in the room clears it.
+            if hb_batch {
+                let ids: Vec<u8> = (0..b.entry_count)
+                    .map(|i| randomized[b.file_offset + 1 + i * 3])
+                    .collect();
+                let needs_shell: Vec<u8> =
+                    ids.iter().copied().filter(|id| HB_NEEDS_SHELL_ENEMIES.contains(id)).collect();
+                if !needs_shell.is_empty() && !ids.iter().any(|id| SHELL_ENEMIES.contains(id)) {
+                    out.push(format!(
+                        "seed {seed} @ seg {:#07X}: {:02X?} needs a shell and the room has none \
+                         (ids {:02X?})",
+                        ENEMY_DATA_START + b.file_offset,
+                        needs_shell,
+                        ids,
+                    ));
                 }
             }
 
@@ -1355,30 +1369,86 @@
         );
     }
 
-    /// The coin-ship reward fight (2×BoomerangBro sub-area at enemy_ptr 0xDA0F,
-    /// file 0x0DA1F) must never receive a Dry Bones: that room is enclosed and
-    /// never scrolls, so a Dry Bones — which revives after every stomp and has
-    /// no edge to wander off — could never be cleared.
+    // `coinship_fight_never_gets_dry_bones` lived here. Its assertion is false
+    // by design now: Dry Bones moved from `STOMPABLE_ENEMIES` into
+    // `HB_NEEDS_SHELL_ENEMIES`, so it is a legal pick in that room provided the
+    // other slot is a shell. The invariant that replaced it is the shell-pairing
+    // check in `check_seed`, which covers every bro-fight room instead of one.
+
+    /// No treasure-box room outside the real bro battles may end up holding a
+    /// Hammer Bro. `$81` there is not an enemy — `ObjInit_HammerBro` rewrites it
+    /// via `BattleEnemy_ByEnterID[Map_EnterViaID]`, and every index a non-bro
+    /// map object produces is an object that cannot be killed, so the treasure
+    /// box never appears and the player is stranded (see
+    /// `rewrites_hammer_bro`).
+    ///
+    /// Scans every `$FF` segment rather than fixed offsets, so a room nobody
+    /// has thought about yet is covered too, and sweeps the two enemy modes
+    /// that reach the different code paths (HB-Wild is batch-assigned; the rest
+    /// go through the walker).
     #[test]
-    fn coinship_fight_never_gets_dry_bones() {
+    fn treasure_box_rooms_never_get_a_hammer_bro() {
         let Some(base) = load_reference_rom() else {
-            eprintln!("reference ROM not present — skipping coinship_fight_never_gets_dry_bones");
+            eprintln!("reference ROM absent — skipping treasure_box_rooms_never_get_a_hammer_bro");
             return;
         };
-        // Vanilla layout: [FF] 01 (page) | 82 03 17 | 82 0C 17 | BA 0F 11 | FF.
-        // The two 0x82 BoomerangBro obj_id bytes sit at 0x0DA20 and 0x0DA23.
-        const BRO0: usize = 0x0DA20;
-        const BRO1: usize = 0x0DA23;
-        assert_eq!(base.read_range(BRO0, 1)[0], 0x82, "vanilla layout drifted");
-        assert_eq!(base.read_range(BRO1, 1)[0], 0x82, "vanilla layout drifted");
 
-        for seed in 0..400u64 {
-            let mut rom = base.clone();
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            randomize(&mut rom, &mut rng, &preset_recommended());
-            for off in [BRO0, BRO1] {
-                let id = rom.read_range(off, 1)[0];
-                assert_ne!(id, 0x3F, "seed {seed}: Dry Bones placed in coin-ship fight");
+        // Segment starts, parsed the way the walker does: page byte, 3-byte
+        // entries, 0xFF terminator.
+        let segments = |rom: &Rom| -> Vec<(usize, Vec<usize>)> {
+            let data = rom.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START).to_vec();
+            let mut out = Vec::new();
+            let mut i = 0;
+            while i < data.len() {
+                if data[i] == 0xFF {
+                    i += 1;
+                    continue;
+                }
+                let start = ENEMY_DATA_START + i;
+                i += 1;
+                let mut ids = Vec::new();
+                while i + 2 < data.len() && data[i] != 0xFF {
+                    ids.push(ENEMY_DATA_START + i);
+                    i += 3;
+                }
+                out.push((start, ids));
+            }
+            out
+        };
+
+        // Rooms to police, decided from vanilla so a swap can't hide one.
+        let at_risk: Vec<(usize, Vec<usize>)> = segments(&base)
+            .into_iter()
+            .filter(|(start, ids)| {
+                let has_box =
+                    ids.iter().any(|&o| base.read_range(o, 1)[0] == TREASURE_BOX_APPEAR);
+                rewrites_hammer_bro(*start, has_box)
+            })
+            .collect();
+        assert!(
+            at_risk.len() >= 8,
+            "expected the vanilla treasure-box rooms to be found, got {}",
+            at_risk.len()
+        );
+
+        for mode in [EnemyMode::Wild, EnemyMode::Shuffle] {
+            let mut opts = preset_recommended();
+            opts.hb_encounters = mode;
+            opts.bros = EnemyMode::Wild;
+            for seed in 0..200u64 {
+                let mut rom = base.clone();
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                randomize(&mut rom, &mut rng, &opts);
+                for (start, ids) in &at_risk {
+                    for &off in ids {
+                        assert_ne!(
+                            rom.read_range(off, 1)[0],
+                            HAMMER_BRO_ID,
+                            "seed {seed} ({mode:?}): Hammer Bro at {off:#07X} in treasure-box \
+                             room {start:#07X} — it rewrites to an unkillable object",
+                        );
+                    }
+                }
             }
         }
     }

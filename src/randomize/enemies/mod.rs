@@ -12,12 +12,12 @@ use rand::Rng;
 use rand::seq::IndexedRandom;
 
 use crate::randomize::enemy_protections::{
-    entry_protection_at, is_coinship_fight, walker_segment_rule_at, EntryProtection,
-    WalkerSegmentRule,
+    entry_protection_at, rewrites_hammer_bro, walker_segment_rule_at,
+    EntryProtection, WalkerSegmentRule,
 };
 use crate::randomize::rom_data::{
-    ENEMY_DATA_END, ENEMY_DATA_START, HB_NEEDS_SHELL_ENEMIES, LEVEL_DATA_REGIONS, STOMPABLE_ENEMIES,
-    TANK_BRO_POOL,
+    ENEMY_DATA_END, ENEMY_DATA_START, HAMMER_BRO_ID, HB_NEEDS_SHELL_ENEMIES, LEVEL_DATA_REGIONS,
+    STOMPABLE_ENEMIES, TREASURE_BOX_APPEAR,
 };
 use crate::randomize::segment_writer::{self, SegmentEntry as WriterEntry, SortMode};
 use crate::randomizer::{EnemyMode, Options, WildChaser};
@@ -151,9 +151,18 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
             i += 3;
         }
 
+        // A treasure box in the room means `Level_Event = 7`, which arms the
+        // Hammer Bro placeholder rewrite. Decided once from the segment's own
+        // vanilla contents, before any pick, so both paths below agree.
+        let no_hammer_bro = rewrites_hammer_bro(
+            seg_file_offset,
+            entries.iter().any(|e| e.obj_id == TREASURE_BOX_APPEAR),
+        );
+
         // HB Wild: batch-assign enemies with stompability constraints.
         if is_hb_segment && opts.hb_encounters == EnemyMode::Wild && !big_q_only {
-            randomize_hb_wild_segment(&mut data, &entries, &hb_modes, seg_file_offset, rng);
+            let limits = SegmentLimits { cap_full: false, no_hammer_bro };
+            randomize_hb_wild_segment(&mut data, &entries, &hb_modes, limits, rng);
             continue;
         }
 
@@ -256,14 +265,17 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                 }
 
                 let was_bertha = BERTHA_IDS.contains(&data[entry.data_index]);
-                let cap_full = bertha_count.saturating_sub(was_bertha as u8)
-                    >= MAX_BERTHA_PER_SEGMENT;
+                let limits = SegmentLimits {
+                    cap_full: bertha_count.saturating_sub(was_bertha as u8)
+                        >= MAX_BERTHA_PER_SEGMENT,
+                    no_hammer_bro,
+                };
                 let chr = ChrCtx {
                     local: (committed_slot4, committed_slot5),
                     segment: (seg_all4, seg_all5),
                 };
                 let Some(chosen) = pick_replacement(
-                    entry, protection, modes, wild_pool, chr, cap_full, rng,
+                    entry, protection, modes, wild_pool, chr, limits, rng,
                 ) else {
                     // No swap (protection mode off, unknown class, or no
                     // compatible candidate) — the vanilla enemy stays, so its
