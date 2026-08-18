@@ -267,7 +267,23 @@ class LevelSimulator:
             self._exec_cloud_run(cmd, base_addr, tile_off)
         elif 23 <= dispatch <= 25:
             self._exec_pipe(cmd, base_addr, tile_off)
+        elif dispatch == 43:
+            self._exec_ice_bricks(cmd, base_addr, tile_off)
         # Others: skip (bytes already consumed correctly)
+
+    def _exec_ice_bricks(self, cmd, base_addr, tile_off):
+        """LoadLevel_IceBricks (dispatch 43): a block run forced to index 8.
+
+        prg014.asm's LoadLevel_IceBricks is just `LDX #$08` falling into
+        LoadLevel_BlockRun, so ice bricks never go through the byte2-derived
+        index that _exec_block_run computes. Missing this made every
+        pick-up-able block in the game invisible to the simulator.
+        """
+        width = cmd["byte2"] & 0x0F
+        y = tile_off
+        for _ in range(width + 1):
+            self.tile_mem.write(base_addr, y, 0x32)  # TILEA_ICEBRICK
+            base_addr, y = self.next_column(base_addr, y)
 
     def _exec_block_run(self, cmd, base_addr, tile_off):
         """LoadLevel_BlockRun: place a horizontal run of identical blocks."""

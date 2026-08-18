@@ -7,6 +7,7 @@ mod canoe;
 mod canoe_summon;
 mod cards;
 mod hammer_breaks;
+mod lakitu;
 mod macobra;
 mod map_warp;
 mod overworld_map;
@@ -18,6 +19,7 @@ pub use canoe::fix_canoe_softlock;
 pub use canoe_summon::apply_canoe_summon;
 pub use cards::card_speed_clear;
 pub use hammer_breaks::hammer_breaks_tiles;
+pub use lakitu::apply_lakitu_stays_dead;
 pub use macobra::{
     apply_early_sun, apply_fast_mushroom_house, apply_faster_frog, apply_faster_tail_speed,
     apply_infinite_mushroom_houses, apply_japanese_damage, apply_limit_bro_movement,

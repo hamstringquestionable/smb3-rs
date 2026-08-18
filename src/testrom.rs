@@ -330,6 +330,18 @@ pub struct TestRomSpec {
     /// full practice ROM (level select + warp whistles) or any patch in
     /// `patches/`; `movement_patch` is the narrow subset instead.
     pub extra_patches: Vec<(String, Vec<u8>)>,
+    /// Apply the always-on gameplay patches to a vanilla base.
+    ///
+    /// `--place` builds on vanilla, which does *not* contain the patches
+    /// `randomize_rom` applies unconditionally — so playtesting one of them on
+    /// a vanilla-base test ROM silently tests vanilla instead. The old
+    /// workaround was a randomized base plus an all-off flag key, but that
+    /// brings the overworld builder with it, which both fights the open-movement
+    /// patch for free space and can leave a fortress in the way.
+    ///
+    /// This applies the self-contained always-on patches directly, so a vanilla
+    /// base keeps full open movement and the vanilla map.
+    pub always_on_patches: bool,
     /// Keep `extra_patches` from touching the 8 overworld map grids.
     ///
     /// The full practice patch rewrites the maps (49 of its records land in
@@ -552,6 +564,18 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
             randomize_rom(vanilla, *seed, options, None)?
         }
     };
+
+    // 1a. Always-on gameplay patches, for a vanilla base that would otherwise
+    //     lack them. Skipped on a randomized base, which already has them.
+    if spec.always_on_patches {
+        if matches!(spec.base, Base::Vanilla) {
+            rom.set_tag("stomp_fairness");
+            crate::randomize::stomp_fairness::apply(&mut rom);
+            report.push("always-on patches: stomp_fairness".to_string());
+        } else {
+            report.push("always-on patches: already present (randomized base)".to_string());
+        }
+    }
 
     // 1b. Whole IPS patches, before any test edit, so test edits win on
     //     overlapping bytes.
@@ -814,6 +838,7 @@ mod tests {
             extra_patches: Vec::new(),
             protect_map: false,
             movement_patch: None,
+            always_on_patches: false,
             walk_skip_conflicts: false,
             remove_locks: false,
             remove_gaps: false,
