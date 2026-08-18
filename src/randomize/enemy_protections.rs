@@ -14,7 +14,7 @@
 //! derived helpers (`entry_protection_at`, `walker_segment_rule_at`)
 //! — never the table directly.
 
-use super::rom_data::enemy_ptr_to_file_offset;
+use super::rom_data::{enemy_ptr_to_file_offset, HAMMER_BRO_OBJ_PTRS};
 
 /// One logical level or sub-area with protections that affect enemy
 /// randomization.
@@ -61,8 +61,6 @@ pub(super) enum EntryProtection {
     ForceShell,
     /// Walker forces a pick from the entry's natural pool ∩ STOMPABLE_ENEMIES.
     ForceStompable,
-    /// Walker forces a pick from TANK_BRO_POOL when bros mode is on.
-    ForceTankBro,
     /// Walker excludes hazard-category enemies from the chosen pool (additive-only:
     /// a hazard of the same category as the vanilla enemy here is kept). See
     /// `hazard_excluded` in enemies.rs.
@@ -159,14 +157,23 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         ],
     },
 
-    // --- Bros-pool restriction (HammerBro fails to spawn in tileset 10) ---
+    // --- Bro-fight rooms reached by a non-bro map object ---
+    // A treasure-box room is cleared to be left, so it needs the bro-fight
+    // pool: every enemy in it must be permanently killable. These two are
+    // fight-shaped rooms the player reaches through the Coin Ship / Tank map
+    // sprite rather than a bro sprite, so nothing else classifies them.
+    //
+    // This replaced a `ForceTankBro` row on $DA29 labelled "HammerBro fails to
+    // spawn in ts=10". The tileset was never the cause: it is a
+    // `Level_Event = 7` room entered via `MAPOBJ_TANK` ($0E), so a $81 there
+    // resolved through `BattleEnemy_ByEnterID[14]` to $07 `OBJ_WARPHIDE`, which
+    // is invisible — that is what "fails to spawn" actually was. The ID half of
+    // it is now handled generically by `rewrites_hammer_bro`.
     LevelProtection {
-        label: "8-Tank sub-area (HammerBro fails to spawn in ts=10)",
+        label: "8-Tank sub-area treasure room (bro fight via the Tank sprite)",
         enemy_ptr: 0xDA29,
-        walker_segment: WalkerSegmentRule::Default,
-        entries: &[
-            EntryRule { offset: 0x0DA3A, rule: EntryProtection::ForceTankBro }, // BoomerangBro scr=0 col=12
-        ],
+        walker_segment: WalkerSegmentRule::HammerBro,
+        entries: &[],
     },
 
     // --- Hazard-excluded entries (no Patooie/Lavalotus on player walking path) ---
@@ -331,16 +338,43 @@ pub(super) fn entry_protection_at(file_offset: usize) -> Option<EntryProtection>
         .find_map(|e| (e.offset == file_offset).then_some(e.rule))
 }
 
-/// CPU enemy pointer of the coin-ship reward fight (the 2×BoomerangBro
-/// sub-area past the end-pipe). Kept in sync with its `LEVEL_PROTECTIONS` row.
-const COINSHIP_FIGHT_ENEMY_PTR: u16 = 0xDA0F;
+// The coin-ship reward fight used to need a special case here — a
+// `is_coinship_fight` predicate feeding a Dry Bones filter, because a Dry Bones
+// revives forever in an enclosed room. Dry Bones now lives in
+// `HB_NEEDS_SHELL_ENEMIES`, so it can only ever be dealt into a room that also
+// has a shell to kill it with, in that room and every other. The coin ship is
+// no longer a special case: it is one bro-fight room among several.
 
-/// Whether `segment_file_offset` is the coin-ship reward fight. That sub-area is
-/// an enclosed, non-scrolling room, so an enemy that can never be permanently
-/// cleared — Dry Bones revives after every stomp and has no screen edge to
-/// wander off — must be kept out of its wild pool.
-pub(super) fn is_coinship_fight(segment_file_offset: usize) -> bool {
-    enemy_ptr_to_file_offset(COINSHIP_FIGHT_ENEMY_PTR) == segment_file_offset
+/// Whether this room rewrites a Hammer Bro into something else — in which case
+/// it must never be given one.
+///
+/// In a room with `Level_Event = 7` (i.e. whose enemy data holds
+/// [`TREASURE_BOX_APPEAR`]) a `$81` is not an enemy but a *placeholder* meaning
+/// "whichever bro's map sprite the player walked in through", which is how one
+/// arena serves all four bro battles. `ObjInit_HammerBro` (`prg004.asm:866`)
+/// overwrites the object's own ID with `BattleEnemy_ByEnterID[Map_EnterViaID]`
+/// and re-inits. That table (file `0x08478`) defines only indices 0-9 — the
+/// disassembly says so outright: *"No definition for $0A-$10 map objects"* — so
+/// any other entry path reads the routine's own machine code as an object ID.
+/// The Coin Ship (`MAPOBJ_COINSHIP` = `$0B`) lands on `$66`, a water current;
+/// the 8-Tank (`$0E`) on `$07` `OBJ_WARPHIDE`; an ordinary level tile on `$00`.
+/// None can be killed, so the treasure box never appears and the room has no
+/// exit. Full table in `docs/smb3_rom_reference.md`.
+///
+/// Both halves are load-bearing. The treasure box says the rewrite is *armed*;
+/// [`HAMMER_BRO_OBJ_PTRS`] says whether it is *benign* — in a real bro battle
+/// the lookup resolves correctly and `$81` is the vanilla value, so excluding
+/// it there would mean a Hammer Bro could never appear as an HB encounter.
+/// (W8's `0xC03D` is in that list but is the full 7-7 action level with no
+/// treasure box, so it never reaches this check.)
+///
+/// Nothing here depends on the tileset — an earlier `ForceTankBro` row on the
+/// 8-Tank sub-area blamed tileset 10, which was a misdiagnosis of this.
+pub(super) fn rewrites_hammer_bro(segment_file_offset: usize, has_treasure_box: bool) -> bool {
+    has_treasure_box
+        && !HAMMER_BRO_OBJ_PTRS
+            .iter()
+            .any(|&p| enemy_ptr_to_file_offset(p) == segment_file_offset)
 }
 
 /// Walker rule for the segment whose page byte sits at this absolute file

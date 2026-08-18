@@ -21,6 +21,19 @@ pub(super) struct SegmentPins {
     pub(super) chaser: (ChrSlot, ChrSlot),
 }
 
+/// Placement limits that hold for every entry in one segment, whatever pool
+/// that entry draws from. Both are properties of the *room*, not the slot,
+/// which is why they ride alongside the per-entry protections rather than
+/// being expressed as `EntryRule`s.
+#[derive(Clone, Copy)]
+pub(super) struct SegmentLimits {
+    /// The Big Bertha cap is already reached — no new bertha here.
+    pub(super) cap_full: bool,
+    /// No `$81` here: this room rewrites one into an unkillable object. See
+    /// `enemy_protections::rewrites_hammer_bro`.
+    pub(super) no_hammer_bro: bool,
+}
+
 impl SegmentPins {
     /// Nothing committed — the Big-?-block pass, which skips the CHR model.
     pub(super) fn none() -> Self {
@@ -104,15 +117,17 @@ pub(super) fn randomize_hb_wild_segment<R: Rng>(
     data: &mut [u8],
     entries: &[SegmentEntry],
     hb_modes: &ClassModes,
-    seg_file_offset: usize,
+    limits: SegmentLimits,
     rng: &mut R,
 ) {
-    // The coin-ship reward room is enclosed and never scrolls, so Dry Bones
-    // (0x3F) — which revives after every stomp and has no edge to wander off —
-    // can never be cleared there. Drop it from the stompable pool for that one
-    // segment; everywhere else it's a fine HB-wild pick.
-    let stompable: Cow<[u8]> = if is_coinship_fight(seg_file_offset) {
-        Cow::Owned(STOMPABLE_ENEMIES.iter().copied().filter(|&id| id != 0x3F).collect())
+    // A Hammer Bro is a placeholder the engine rewrites into something
+    // unkillable in a treasure-box room that isn't a real bro battle, which
+    // would strand the player (see `rewrites_hammer_bro`). Clearability is
+    // otherwise a property of the pools themselves, not of the room.
+    let stompable: Cow<[u8]> = if limits.no_hammer_bro {
+        Cow::Owned(
+            STOMPABLE_ENEMIES.iter().copied().filter(|&id| id != HAMMER_BRO_ID).collect(),
+        )
     } else {
         Cow::Borrowed(STOMPABLE_ENEMIES)
     };

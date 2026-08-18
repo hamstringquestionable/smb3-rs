@@ -32,7 +32,28 @@ deploys.
   icon now have one — Boom-Boom Stomps, Cannons, Ghosts, Shell, Rotodiscs,
   Faster Frog, Swap Start / Airship, Shuffle Spade Games and Remove N-Cards.
 
+- The 8-Tank treasure room now draws from the same enemy pool as the other
+  bro-fight rooms, so its enemy follows Hammer Bro encounter randomization
+  along with the rest.
+
 ### Fixed
+
+- **Treasure-box rooms could be made unwinnable.** A room whose exit is a
+  treasure box only opens once you have cleared it, so anything in it that
+  cannot be killed traps you there. Two ways that happened:
+
+  A Hammer Bro in such a room is not really an enemy — the game treats it as
+  "whichever bro's map sprite you walked in through", and in a room you did not
+  reach through a bro sprite it turns into something unkillable. This is what
+  players hit in the Coin Ship's reward fight, and it could also reach the
+  8-Tank and White Toad House reward rooms. Hammer Bros are now kept out of
+  every such room.
+
+  Dry Bones could also appear there. Stomping one works but it gets back up, so
+  in a room you have to clear it is a dead end. It is now only ever placed
+  alongside a Koopa shell, which does kill it for good.
+
+  Both are unchanged everywhere else in the game.
 
 - **The title hash no longer changes colour when you use a visual patch.** It
   used to encode part of itself in the icons' colour, drawn from Mario's

@@ -487,13 +487,17 @@ pub(crate) const HB_EXCLUDE_OBJ_PTRS: &[u16] = &[
     0xC03D, // W8 — 7-7 layout
 ];
 
-/// Stompable enemies — safe for single-enemy HB Wild segments and the default
-/// pool for 2-enemy segments. The player can always defeat these by jumping.
+/// Enemies a player can clear from a closed room with nothing but a jump —
+/// safe for single-enemy HB Wild segments and the default pool for 2-enemy
+/// segments.
+///
+/// "Clear", not merely "stomp": these rooms only open once they are empty, so
+/// an enemy that survives being stomped does not belong here even though
+/// jumping on it works. See `HB_NEEDS_SHELL_ENEMIES` for that case.
 pub(crate) const STOMPABLE_ENEMIES: &[u8] = &[
     // Ground (stompable)
     0x29, // Spike
     0x2B, // GoombShoe (Kuribo)
-    0x3F, // DryBones
     0x40, // BusterBeetle
     0x55, // BobOmb
     0x58, // FireChomp
@@ -525,15 +529,22 @@ pub(crate) const STOMPABLE_ENEMIES: &[u8] = &[
     // instead.
 ];
 
-/// Non-stompable enemies allowed in 2-enemy HB Wild segments only.
-/// If one of these is picked, the other enemy MUST be a shell so the
-/// player can use it to kill the non-stompable.
+/// Enemies allowed in 2-enemy HB Wild segments only, where the other slot is
+/// guaranteed to be a shell the player can kick into them.
+///
+/// These rooms are cleared to be left — the exit (`OBJ_TREASUREBOXAPPEAR`) only
+/// appears once the room is empty — so "the player can deal with it" is not
+/// enough; it has to be permanently killable. Dry Bones is the reason that
+/// distinction matters: it *is* stompable, but it revives every time, so
+/// stomping never clears it. A kicked shell does, which is what puts it here
+/// rather than in `STOMPABLE_ENEMIES`.
 pub(crate) const HB_NEEDS_SHELL_ENEMIES: &[u8] = &[
     0x71, // Spiny
     0x2A, // Patooie
     0x33, // Nipper
     0x39, // NipperHopping
     0x63, // BigBertha
+    0x3F, // DryBones — stompable but revives; only a shell clears it
 ];
 
 /// Specific (obj_ptr, tileset) pairs to exclude from the HB cycling pool.
@@ -574,6 +585,27 @@ pub(crate) struct LevelEntry {
     pub lay_lo: u8,
     pub lay_hi: u8,
 }
+
+/// Levels the engine reaches without going through a world pointer table, so
+/// `NodeCatalog` never classifies them and `--place` cannot name them from the
+/// catalog. Listed here as ready-made entries `testrom` can park on a tile.
+///
+/// The Coin Ship is the only one so far. `MO_CoinShip` (PRG012, reached via
+/// `Map_EnterViaID` = `MAPOBJ_COINSHIP`) loads its layout and objects straight
+/// out of `CoinShip_Layouts` / `CoinShip_Objects` — eight identical per-world
+/// words, `$BC15` and `$DA04` — and forces tileset 10. Placing that triple on a
+/// numbered tile is the only way to walk into the Coin Ship on demand, since
+/// the real thing only spawns when `OBJ_BONUSCONTROLLER`'s coin/score check
+/// fires.
+///
+/// Native-only: `testrom` (itself `cfg(not(wasm32))`) is the sole consumer, so
+/// on the WASM build this is dead code and warns. Gated rather than
+/// `allow(dead_code)`d so that a genuinely unused item still gets caught.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const UNLISTED_LEVELS: &[(&str, LevelEntry)] = &[(
+    "CoinShip",
+    LevelEntry { tileset: 10, obj_lo: 0x04, obj_hi: 0xDA, lay_lo: 0x15, lay_hi: 0xBC },
+)];
 
 /// A beta (unreferenced) level — layout data exists in the ROM but no vanilla
 /// pointer table entry references it. Injected into the shuffle pool when

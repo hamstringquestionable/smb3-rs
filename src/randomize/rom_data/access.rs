@@ -120,13 +120,13 @@ pub const ENEMY_DATA_START: usize = 0x0BFD8;
 
 pub const ENEMY_DATA_END: usize = 0x0E00D;
 
-/// Bro enemies that work in tileset 10 (8-Tank sub-area).
-/// Excludes HammerBro (0x81) which fails to spawn in ts=10.
-pub(crate) const TANK_BRO_POOL: &[u8] = &[
-    0x82, // OBJ_BOOMERANGBRO
-    0x86, // OBJ_HEAVYBRO
-    0x87, // OBJ_FIREBRO
-];
+/// `OBJ_TREASUREBOXAPPEAR`. A segment containing this is a `Level_Event = 7`
+/// room: its exit only appears once the room is cleared. See
+/// `enemy_protections::rewrites_hammer_bro`.
+pub(crate) const TREASURE_BOX_APPEAR: u8 = 0xBA;
+
+/// `OBJ_HAMMERBRO`.
+pub(crate) const HAMMER_BRO_ID: u8 = 0x81;
 
 /// Check whether the first enemy data segment at `obj_ptr` contains `target_id`.
 ///

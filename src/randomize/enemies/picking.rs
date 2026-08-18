@@ -83,7 +83,7 @@ pub(super) fn pick_replacement<R: Rng>(
     modes: &ClassModes,
     wild_pool: &[u8],
     chr: ChrCtx,
-    cap_full: bool,
+    limits: SegmentLimits,
     rng: &mut R,
 ) -> Option<u8> {
     let (slot4, slot5) = chr.local;
@@ -96,10 +96,6 @@ pub(super) fn pick_replacement<R: Rng>(
         Some(EntryProtection::ForceShell) if modes.shell != EnemyMode::Off => Some((
             pick_compatible(SHELL_ENEMIES, slot4, slot5, rng),
             Cow::Borrowed(SHELL_ENEMIES),
-        )),
-        Some(EntryProtection::ForceTankBro) if modes.bros != EnemyMode::Off => Some((
-            pick_compatible(TANK_BRO_POOL, slot4, slot5, rng),
-            Cow::Borrowed(TANK_BRO_POOL),
         )),
         Some(EntryProtection::ForceStompable) => {
             find_class_pool(entry.obj_id, modes).map(|pool| {
@@ -149,14 +145,18 @@ pub(super) fn pick_replacement<R: Rng>(
     // true when `id` is allowed in this slot.
     let keep = |id: u8| -> bool {
         // Big Bertha cap: no new bertha once the segment is full.
-        let over_cap = cap_full && BERTHA_IDS.contains(&id);
+        let over_cap = limits.cap_full && BERTHA_IDS.contains(&id);
+        // A Hammer Bro in a treasure-box room is a placeholder the engine
+        // rewrites into an unkillable object, stranding the player (see
+        // `rewrites_hammer_bro`).
+        let hb_rewritten = limits.no_hammer_bro && id == HAMMER_BRO_ID;
         // Giant red piranha (off-center hitbox) only where one was.
         let bad_giant = id == GIANT_RED_PIRANHA && entry.obj_id != GIANT_RED_PIRANHA;
         // A level-wide chaser must be CHR-compatible with every page
         // committed anywhere in the segment, not just this group — it
         // follows the player into all of them (see CHASER_IDS).
         let chaser_clash = CHASER_IDS.contains(&id) && !is_chr_compatible(id, seg4, seg5);
-        !(over_cap || bad_giant || chaser_clash)
+        !(over_cap || bad_giant || chaser_clash || hb_rewritten)
     };
     // (A piranha slot can't become a hazard: the piranha pools are
     // self-contained and contain none — verified by the harness's
