@@ -6,8 +6,17 @@ on:
     # beta/next -> /beta/. No other branch can touch the deployed site.
     branches: [main, 'beta/next']
   pull_request:
-    # Run CI for feature PRs into beta/next as well as PRs into main.
-    branches: [main, 'beta/next']
+    # Run CI for feature PRs into beta/next as well as PRs into main, and for
+    # backports into a release branch — without this a bad backport is not
+    # caught until the release PR itself runs, which is after it has already
+    # landed on the release branch.
+    #
+    # Safe to widen here but NOT in `push` above: `build` and `deploy` are both
+    # gated on `github.event_name == 'push'`, so a pull_request event can only
+    # ever reach the `ci` job. (`version-guard` gates on
+    # `github.base_ref == 'main'`, so it stays off backport PRs — the version
+    # bump belongs to the release PR, not to each backport into it.)
+    branches: [main, 'beta/next', 'release/**']
   workflow_dispatch:
 
 permissions:
