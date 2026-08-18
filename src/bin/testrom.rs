@@ -101,6 +101,13 @@ struct Cli {
     #[arg(long)]
     keep_gaps: bool,
 
+    /// Apply the always-on gameplay patches (currently stomp fairness) to a
+    /// vanilla base. Use when playtesting one of them — a plain vanilla base
+    /// does not contain them, so the test silently exercises vanilla instead.
+    /// Ignored on a --randomize base, which already has them.
+    #[arg(long)]
+    patches: bool,
+
     /// Skip the open-movement patch, so tiles must be entered and cleared.
     #[arg(long)]
     no_walk: bool,
@@ -336,6 +343,7 @@ fn main() {
         extra_patches,
         protect_map: cli.protect_map,
         movement_patch,
+        always_on_patches: cli.patches,
         walk_skip_conflicts: cli.walk_skip_conflicts,
         remove_locks: !cli.keep_locks,
         remove_gaps: !cli.keep_gaps,

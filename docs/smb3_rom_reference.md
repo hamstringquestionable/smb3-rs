@@ -1143,6 +1143,241 @@ Total ≈ 808 bytes of reclaimable PRG001 space. New handler code must live in b
 
 ---
 
+### Object Slot Table — 8 Slots, Three Tiers (RAM $0661)
+
+`Objects_State` ($0661) has 8 entries, but they are **not interchangeable**.
+`Level_PrepareNewObject` (PRG000 $D499) clears three different sets of variables
+depending on the index, which is what defines the tiers (verified 2026-08-18):
+
+| Slots | Role | Who spawns there |
+|-------|------|------------------|
+| **0–4** | "general" objects, full variable set | Every enemy from the level's own stream (`prg005.asm` $B911: `LDX #$04 … DEX/BPL`), pick-up-able ice blocks, Lakitu's Spiny Eggs, Buster Beetle's thrown blocks |
+| **5** | power-ups only | Three sites, all **unconditional** — see below |
+| **6–7** | block bouncers | `OBJ_ENDLEVELCARD` also force-steals slot 6 (forced just above `PRG005_B911`) |
+
+**Five general slots is the real budget for a level.** When they are full, the
+enemy stream stops spawning and `Level_IceBlock_GrabNew` refuses silently.
+
+**Slot 5 is written without a free check** — an ice block or anything else
+parked there is simply overwritten by the next power-up:
+
+| Site | Context |
+|------|---------|
+| `prg001.asm:1128` | block-bump power-up |
+| `prg001.asm:2267` | block-bump power-up (loads `Objects_State,Y` and then **never tests it** — Southbird: *"? Maybe they were going to check first?"*) |
+| `prg002.asm:714` | Giant World brick power-up |
+
+#### Arrays narrower than 8 — what index 5 aliases
+
+Any object placed in slot 5 or above that touches one of these reads or writes
+the **next** variable in RAM. Index 5 specifically:
+
+| Array | Base | Width | Index 5 lands on | Live? |
+|-------|------|-------|------------------|-------|
+| `Objects_KillTally` | $05F5 | 5 | `PlayerProj_YHi[0]` $05FA | **yes** |
+| `Objects_Timer3` | $06A6 | 5 | `Objects_Timer4[0]` $06AB | **yes** |
+| `Objects_Timer4` | $06AB | 5 | $06B0 | no (unused) |
+| `Objects_InWater` | $06B7 | 5 | $06BC | no (unused) |
+| `Objects_Var6` | $0770 | 5 | `Objects_TargetingXVal[0]` $0775 | **yes** |
+| `Objects_TargetingXVal` | $0775 | 5 | `Objects_TargetingYVal[0]` $077A | **yes** |
+| `Objects_Slope` | $07B5 | 5 | $07BA | no (unused) |
+| `Objects_Var10`–`Var14` | $7CC8–$7CE0 | 5 each | the next `Var` array | **yes** |
+| `Objects_HitCount` | $7CF6 | 5 | `RotatingColor_Cnt` $7CFB | **yes** (rainbow BG palettes) |
+| `Objects_Var3` | $7FD0 | 5 | $7FD5 | — |
+| `Objects_Var4` | $7F (ZP) | 5 | $84 = `Pipe_PlayerX` / `Level_GndLUT_Addr` | **yes** |
+
+Eight-wide despite sitting in the "slot 0–4 only" clear block, so safe at any
+index: `Objects_Var5`, `Objects_Var7`, `Objects_PlayerHitStat`,
+`Objects_UseShortHTest`, `Objects_IsGiant`.
+
+Vanilla itself has a benign off-by-one here: `Level_PrepareNewObject` clears
+`Objects_InWater,X` inside its `CPX #$06` (slots 0–5) block even though the
+array is 5 wide, so every power-up spawn writes 0 to the unused $06BC.
+
+### `ObjectGroup_KillAction` — "Killed" Means Different Things Per Object
+
+`Objects_State == 6` (`OBJSTATE_KILLED`) is **not** a reliable "this object is
+dying" signal. `ObjState_Killed` (PRG000) dispatches on the object's
+`ObjectGroup_KillAction` nibble, and the outcomes differ:
+
+| Action | Name | Terminal? |
+|--------|------|-----------|
+| 0–4, 6 | draw variants → `Object_DoKilledAction` (sets VFLIP, applies movement, tumbles until `Object_FallAndDelete` removes it) | yes |
+| 5 | `KILLACT_NORMALANDKILLED` — runs full normal AI **and** the killed action | yes (still falls) |
+| 7 | `KILLACT_POOFDEATH` → converts to state 8 | yes |
+| 8 | `KILLACT_DRAWMOVENOHALT` | yes, via fall |
+| **9** | **`KILLACT_NORMALSTATE` — `JMP Object_DoNormal` and nothing else** | **no** |
+
+Action 9 objects are flagged killed and then run their normal routine
+indefinitely: no flip, no fall, no deletion path. Users:
+
+```
+$18 BOSS_BOWSER   $2D BIGBERTHA        $3B CHARGINGCHEEPCHEEP
+$46 PIRANHASPIKEBALL   $58 FIRECHOMP   $59 FIRESNAKE
+$5C ICEBLOCK      $61 BLOOPERWITHKIDS  $6A BLOOPERCHILDSHOOT
+$6B PILEDRIVER    $83 LAKITU
+```
+
+Four of the five objects `Object_Delete` special-cases for `Buffer_Occupied`
+release (Fire Chomp, Fire Snake, both Bloopers) are in that list, and the fifth
+(Chain Chomp) is action 5 — so anything that culls objects by state must not
+treat state 6 as free-to-delete.
+
+**State 8 (`OBJSTATE_POOFDEATH`) is the one unambiguously terminal state.**
+`ObjState_PoofDying` (PRG000 $CAA6) is entirely object-independent: it counts
+`Objects_Timer` down from $1F, draws four frames from `PoofDeath_Pats`, then
+jumps to `Object_SetDeadEmpty`. Only two sites ever write it — `Object_PoofDie`
+(kill action 7: Piranhas, Boos, Hot Feet) and `ObjNorm_PiranhaSpikeBall` — and
+none of them is a boss or a buffer-holding object.
+
+### Off-Screen Deletion Is Deliberately Throttled
+
+`Object_DeleteOffScreen` (PRG000 $D3E0) runs its geometry test only on
+alternate frames:
+
+```asm
+	TXA
+	ADD <Counter_1
+	LSR A
+	BCS PRG000_D463   ; "Keeps down on CPU cycles spent wondering about the object"
+```
+
+It is also invoked **per object routine, not globally** — an object whose AI
+never calls it is never scroll-deleted — and the window is a screen or more
+past the edge ($20/$D0 lo, widened to $40/$B0 for the `_N4` variant). So a slot
+stays occupied for a while after its object leaves view. NOP-ing the `BCS`
+(2 bytes) roughly doubles how fast slots free up, at a CPU cost.
+
+### Permanent Slot Holders: Lakitu and the Angry Sun
+
+**Lakitu ($83) never dies in vanilla, and has no respawn timer.**
+`ObjNorm_Lakitu` (PRG004) catches a defeated Lakitu once `Objects_YHi >= 2`
+(fallen clear of the level) and re-seeds it in place at CPU $AD2F: X =
+`Horz_Scroll_Hi − 2` screens, state back to `NORMAL`, Y restored from
+`Objects_TargetingYVal`/`TargetingXVal` (stashed by `ObjInit_Lakitu`). The delay
+is purely fall time plus the walk back, so `SBC #$02` is the only "how long"
+knob and it is distance, not time.
+
+`Lakitu_Active` ($7CF0) is a **global** flag, set by `ObjInit_Lakitu`, cleared
+only by `LevelEvent_LakituFlee` (level event 3). While it is set:
+
+```asm
+	LDA Lakitu_Active
+	BNE PRG004_AD65            ; active -> skip the despawn entirely
+	JSR Object_DeleteOffScreen ; Lakitu is leaving...
+```
+
+…so Lakitu is **exempt from off-screen deletion for its whole life**, holding
+one general slot for the entire level. Clearing the flag makes it flee the
+player *and* become despawnable, and also stops the egg tosses, which are gated
+on the same flag. `Lakitu_TossEnemy` (loop at `PRG004_AE2C`) spawns each Spiny Egg with
+the identical `LDY #$04 … DEY/BPL` search, so a Lakitu plus two live eggs is
+three of the five general slots.
+
+> `qol/lakitu.rs` (`--lakitu-stays-dead`) replaces the respawn block's first
+> three bytes with `JMP Object_SetDeadEmpty` ($D45E). `Object_SetDeadEmpty`
+> rather than `Object_SetDeadAndNotSpawned` — the latter clears the object's
+> `Level_ObjectsSpawned` bit so it returns on scroll-back, the former leaves it
+> set and the Lakitu is finished.
+
+**The Angry Sun ($AF) is pinned too, by a different mechanism.** `ObjNorm_Sun`
+(PRG005) *does* call `Object_DeleteOffScreen`, but it also adds
+`Level_ScrollDiffH` to its own X every frame — it rides the camera and so never
+leaves the delete window. And once killed (action 5) it only sets frame 1 and
+returns, with no transition and no delete. An injected Sun is a permanent slot
+as well.
+
+### Pick-Up-Able Ice Blocks (`TILEA_ICEBRICK` $32)
+
+Not ice-world-specific: $32 is a **shared tile index across every tileset**.
+Blocks are emitted by `LoadLevel_IceBricks` (`prg014.asm`), which is just
+`LDX #$08` falling into `LoadLevel_BlockRun`, wired as **object dispatch 43** in
+every tileset's jump table. `tools/level_sim.py` skipped dispatch 43 until
+2026-08-18, which made every pick-up-able block in the game invisible to it.
+
+The grab lives in `Level_DoCommonSpecialTiles` (PRG008 $B5D1) and refuses when:
+
+- the player is in Kuribo's Shoe
+- the tile-detect index is 3 (**the head tile** — you must be *beside* a block, never under it)
+- `Level_ChgTileEvent` ($0564) is non-zero (one-deep global tile-change queue)
+- `Level_IceBlock_GrabNew` ($B655) finds no free slot in **0–4** — returns X=$FF, and the caller then skips the tile deletion entirely, so the failure is **completely silent**: no sound, no shake, no animation
+
+`Objects_Timer3` is the melt timer: $80 at grab, decremented at ¼ rate while
+held (~8.5 s), and `Object_ShellDoWakeUp` ($D0E1) poofs the block at zero.
+
+Levels containing them, by dispatch-43 command count (main areas only, measured
+2026-08-18) — the top two are far ahead of everything else, and both are built
+around throwing blocks, so a starved slot table can stall progress there:
+
+| World / entry | Level | Tileset | disp-43 commands |
+|---------------|-------|---------|------------------|
+| W7 e38 | **7-9** | 9 (desert) | **45** |
+| W3 e38 | **3-9** | 1 (plains) | **23** |
+| W5 e1 | — | 14 (underground) | 9 |
+| W6 e2 | 6-2 | 12 (ice) | 3 |
+| W1 e18 | — | 14 | 2 |
+| W3 e9 | — | 14 | 2 |
+| W3 e31 | — | 14 | 2 |
+| W6 e29 | — | 14 | 2 |
+| W7 e19 | — | 9 | 2 |
+| W3 e3 | — | 1 | 1 |
+| W3 e20 | — | 6 (water) | 1 |
+| W3 e27 | — | 4 (high-up) | 1 |
+| W4 e20 | 4-2 | 11 (giant) | 1 |
+| W6 e17, W6 e23, W8 e0, W8 e8 | pipe entries | 14 | 1 each |
+
+Counts are a **lower bound**: the scan covers each entry's main area only, not
+sub-areas. 4-2's single command is the easiest one to reach in the whole game —
+three blocks resting on solid ground at screen 2, cols 1–3 — which makes it the
+level of choice for testing grab behaviour. 7-9's are mostly 3-tall columns
+floating in mid-air, reachable only from an adjacent platform or in flight.
+
+### Score Values Are Clamped Before Use
+
+Worth knowing before treating a corrupted score index as dangerous:
+`Score_PopUp` ($C467) only *stores* into `Scores_Value`, and the consumer in
+PRG007 ($AA8F) caps it:
+
+```asm
+	CMP #$0D
+	BLT PRG007_AAA8   ; in range
+	LDA Scores_Value,X
+	AND #$80
+	ORA #$0d	; Cap at 1-up ($0D) regardless of value
+```
+
+Nothing indexes a table with the raw value, so an out-of-range tally cannot
+overrun anything — the worst outcome is an undeserved 1-up.
+
+### Reclaimable Dead *Code* in PRG000 — Invisible to `--free-space`
+
+`smb3-rs --free-space` counts `$FF` filler runs, so it reports PRG000 as having
+**zero** free bytes. PRG000 nonetheless contains dead *code*, which matters
+because it is the bank mapped at **$C000–$DFFF for the whole of
+`Player_DoGameplay` and the object update loop** (PRG030 sets `PAGE_C000 = 0`
+immediately before calling both). It is therefore the only sizeable dead space
+reachable by a plain `JSR` from in-level code in an always-live window — the
+always-mapped banks are effectively full (PRG030's largest gap is 42 bytes,
+PRG031's is 30).
+
+All three verified unreferenced 2026-08-18:
+
+| CPU range | File offset | Bytes | Contents |
+|-----------|-------------|-------|----------|
+| $C3E7–$C406 | 0x003F7 | **32** | Unlabelled leftover "float around" debug routine (reads `Pad_Holding`, writes `Player_XVel`/`YVel` directly) plus the 3-byte velocity table only it reads. Nothing falls into it — the byte before is the end of `PowerUp_Ability` — and no `JSR`/`JMP $C3EA` exists anywhere in the ROM (the `PRG010_C3EA` hits are a different bank). |
+| $D9EC–$DA14 | 0x019FC | **41** | SMB3-J-only suit-loss code, skipped by the vanilla `JMP $DA15` at $D9E9. Its two inbound labels (`PRG000_D9F7`, and `SMB3J_SuitLossFrame`) are referenced *only from inside the block itself*. |
+| $D9CC–$D9D2 | 0x019DC | 7 | `SMB3J_SuitLossFrame` table, read only by the block above. Separated from it by live code. |
+
+Also in PRG000, already partly claimed: **$C918–$C926** (15 bytes, file 0x00928)
+— bytes skipped by the vanilla `JMP $C927` at $C915; 7 are used by
+`FS_HOLD_LEFT_HELPER`, leaving 8.
+
+**Caveat:** these are unclaimed but *unregistered*. Taking any of them means
+adding a `FREE_SPACE_ALLOCATIONS` row in `rom_data/free_space.rs`, which is what
+makes the write-log audit and the overlap tests cover it.
+
+---
+
 ## Power-Up / Item Data
 
 ### Global Item ID Table
