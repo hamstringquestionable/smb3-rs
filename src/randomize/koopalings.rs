@@ -725,7 +725,77 @@ mod asm_checks {
         asm::check(&KOOPA_ARENA_MARK)
             .allocation(crate::randomize::rom_data::FS_KOOPA_ARENA_MARK)
             .origin(crate::randomize::rom_data::KOOPA_ARENA_MARK_CPU)
+            .data_from(20) // the last 7 bytes are the lookup table
             .assert_ok();
+    }
+
+    /// Boss-room layout pointers, low byte, by vanilla world - 1. Mirrors the
+    /// table baked into [`KOOPA_ARENA_MARK`]; the test below pins them together.
+    const KOOPA_ARENA_LAYOUT_LO: [u8; 7] = [0x02, 0x4B, 0xA0, 0x42, 0xF5, 0x4A, 0xBA];
+
+    /// The routine's baked table must stay the table we reason about.
+    #[test]
+    fn routine_table_matches_the_documented_rooms() {
+        assert_eq!(&KOOPA_ARENA_MARK[20..], &KOOPA_ARENA_LAYOUT_LO);
+    }
+
+    /// The seven rooms must stay distinguishable by layout-pointer low byte
+    /// alone. A duplicate would silently alias two arenas onto one id.
+    #[test]
+    fn arena_layout_low_bytes_are_unique() {
+        let mut seen = KOOPA_ARENA_LAYOUT_LO;
+        seen.sort_unstable();
+        seen.windows(2).for_each(|w| assert_ne!(w[0], w[1], "duplicate arena key {:#04X}", w[0]));
+    }
+
+    /// Run the marker on an emulated CPU: every boss room must resolve to its
+    /// vanilla world, an unknown room must resolve to 0 (readout off), and the
+    /// caller's `X` and `Y` contract must survive.
+    #[test]
+    fn marker_resolves_each_boss_room_to_its_vanilla_world() {
+        use mos6502::cpu::CPU;
+        use mos6502::instruction::{Instruction, Ricoh2a03};
+        use mos6502::memory::{Bus, Memory};
+        use mos6502::Variant;
+
+        let origin = crate::randomize::rom_data::KOOPA_ARENA_MARK_CPU;
+        let run = |lay_lo: u8, world_num: u8| -> (u8, u8, u8) {
+            let mut mem = Memory::new();
+            mem.set_bytes(origin, &KOOPA_ARENA_MARK);
+            let mut cpu = CPU::new(mem, Ricoh2a03);
+            cpu.memory.set_byte(0x7EB9, lay_lo); // Level_LayPtrOrig_AddrL
+            cpu.memory.set_byte(0x0727, world_num); // World_Num
+            cpu.memory.set_byte(0x0086, 0xAA); // poison
+            cpu.registers.program_counter = origin;
+            cpu.registers.index_x = 0x5A; // the object slot the caller holds
+            for _ in 0..256 {
+                let op = cpu.memory.get_byte(cpu.registers.program_counter);
+                if matches!(Ricoh2a03::decode(op), Some((Instruction::RTS, _))) {
+                    return (
+                        cpu.memory.get_byte(0x0086),
+                        cpu.registers.index_y,
+                        cpu.registers.index_x,
+                    );
+                }
+                cpu.single_step();
+            }
+            panic!("marker never reached RTS");
+        };
+
+        for (i, &lo) in KOOPA_ARENA_LAYOUT_LO.iter().enumerate() {
+            let vanilla_world = (i + 1) as u8;
+            // Shuffled anywhere: the id must depend on the room, never the world.
+            for world_num in 0..8u8 {
+                let (id, y, x) = run(lo, world_num);
+                assert_eq!(id, vanilla_world, "room {lo:#04X} in world {world_num}");
+                assert_eq!(y, world_num, "displaced LDY World_Num did not restore Y");
+                assert_eq!(x, 0x5A, "clobbered X, which the caller uses as the object slot");
+            }
+        }
+
+        // A room we cannot name turns the readout off rather than mislabelling it.
+        let unknown = (0u8..=255).find(|b| !KOOPA_ARENA_LAYOUT_LO.contains(b)).unwrap();
+        assert_eq!(run(unknown, 3).0, 0, "unknown room should disable the readout");
     }
 
     #[test]
@@ -748,6 +818,7 @@ mod asm_checks {
         let mark_hook = [0x20, mark[0], mark[1]];
         asm::check(&KOOPA_ARENA_MARK)
             .origin(crate::randomize::rom_data::KOOPA_ARENA_MARK_CPU)
+            .data_from(20)
             .hook(&v, KOOPA_ARENA_MARK_SITE, &mark_hook)
             .assert_ok();
 
@@ -818,7 +889,7 @@ mod asm_checks {
     /// the routine can actually see in a Koopaling room.
     #[test]
     fn displayed_value_is_arena_prefix_plus_sixteenths() {
-        for arena in 1..=8u8 {
+        for arena in 1..=7u8 {
             for y_hi in 0..=1u8 {
                 for y in [0u8, 1, 15, 16, 127, 128, 254, 255] {
                     for frac in [0x00u8, 0x10, 0x50, 0xF0, 0xFF] {
@@ -937,7 +1008,7 @@ mod asm_checks {
     fn displayed_value_cannot_overflow_the_score_field() {
         let max_position = (1u32 << 13) - 1; // (YHi:Y) << 4 | frac, YHi <= 1
         assert_eq!(max_position, 8191);
-        let max_displayed = 9 * 10000 + max_position; // World_Num 8 -> arena id 9
+        let max_displayed = 7 * 10000 + max_position; // seven arenas, ids 1-7
         assert!(max_displayed < 100000, "{max_displayed} would overflow to all-9s");
     }
 }
@@ -972,8 +1043,15 @@ mod asm_checks {
 /// The score field has six, so the top two carry the arena number:
 ///
 /// ```text
-///     displayed = (World_Num + 1) * 10000 + position
+///     displayed = arena_id * 10000 + position
 /// ```
+///
+/// `arena_id` is the boss room's **vanilla** world, 1-7 — a property of the
+/// room, not of wherever the airship was shuffled to. Keying it to the current
+/// `World_Num` would make one arena report different numbers from seed to seed,
+/// which is exactly what a per-arena comparison cannot tolerate. The height
+/// itself was already room-stable: it is raw position, and no world number
+/// enters it.
 ///
 /// The status bar appends a fixed `0` tile of its own, so world 5 at position
 /// 4720 reads `0514720`. That trailing zero is part of the static status-bar
@@ -996,9 +1074,10 @@ mod asm_checks {
 /// # Arena detection and the latch
 ///
 /// `ObjNorm_Koopaling` (PRG001 $AEC4) opens with `LDY World_Num`, another whole
-/// 3-byte instruction, so the marker hook displaces it and reuses the same load
-/// for the arena id. It stamps `$86` — unused zero page — with `World_Num + 1`
-/// every frame the Koopaling AI runs. Zero page is cleared by
+/// 3-byte instruction, so the marker hook displaces it. Every frame the
+/// Koopaling AI runs, the marker resolves the room through
+/// [`KOOPA_ARENA_LAYOUT_LO`] and stamps `$86` — unused zero page — with the
+/// arena id. Zero page is cleared by
 /// `Clear_RAM_thru_ZeroPage` on every level exit, so the flag needs no clear
 /// hook of its own.
 ///
@@ -1011,14 +1090,39 @@ mod asm_checks {
 const KOOPA_ARENA_MARK_SITE: usize = 0x02ED4; // ObjNorm_Koopaling: LDY World_Num
 const KOOPA_GRAB_HEIGHT_SITE: usize = 0x351A1; // StatusBar_Fill_Score: STA Player_Score
 
-/// Marker: stamp the arena id, restore `Y`, return. 8 bytes.
+/// Marker: resolve which boss room this is, stamp the arena id, restore `Y`.
+/// 27 bytes — 20 of code and the 7-byte table.
+///
+/// Uses `Y` for the search rather than `X` on purpose: `ObjNorm_Koopaling` is
+/// object AI reached with `X` holding the object slot, and the state handlers
+/// `DynJump` dispatches to index off it. `Y` is free because the displaced
+/// `LDY World_Num` was about to overwrite it anyway, and `A` is dead at entry
+/// for the same reason — the caller's next instruction loads it.
+///
+/// The table is the seven boss rooms' layout-pointer low bytes in vanilla world
+/// order. Each arena is its own sub-area data — `$BA02 $BA4B $BAA0 $AC42 $BAF5
+/// $BB4A $BBBA` — and World 4's sits well away from the rest, which is why
+/// these are looked up rather than computed. Low bytes alone separate them
+/// (they are unique, asserted in the tests), and the lookup only runs with the
+/// arena flag already set, so the pointer is always one of the seven.
+///
+/// A pointer that is not in the table leaves `Y` at `$FF`, so the `INY` makes
+/// the flag 0 and the readout simply stays off. Degrading to "no display" is
+/// the right failure for a room we cannot name.
 #[rustfmt::skip]
-const KOOPA_ARENA_MARK: [u8; 8] = [
-    0xAC, 0x27, 0x07, // LDY World_Num     ; displaced instruction
-    0xC8,             // INY               ; 1-based, so 0 stays "not an arena"
-    0x84, 0x86,       // STY $86           ; arena id (zero page: 2 bytes, auto-cleared)
-    0x88,             // DEY               ; restore Y = World_Num for the caller
+const KOOPA_ARENA_MARK: [u8; 27] = [
+    0xA0, 0x06,       // LDY #$06          ; scan the 7-entry table downward
+    0xB9, 0x6E, 0xB8, // loop: LDA table,Y ; $B86E, origin-locked
+    0xCD, 0xB9, 0x7E, // CMP $7EB9         ; Level_LayPtrOrig_AddrL (this room)
+    0xF0, 0x03,       // BEQ found
+    0x88,             // DEY
+    0x10, 0xF5,       // BPL loop
+    0xC8,             // found: INY        ; 1-based; miss leaves $FF -> 0 = off
+    0x84, 0x86,       // STY $86           ; arena id (zero page, auto-cleared)
+    0xAC, 0x27, 0x07, // LDY World_Num     ; displaced instruction; restores Y
     0x60,             // RTS
+    // table ($B86E): boss-room layout pointer low bytes, vanilla worlds 1-7
+    0x02, 0x4B, 0xA0, 0x42, 0xF5, 0x4A, 0xBA,
 ];
 
 /// Score-field override. 101 bytes.

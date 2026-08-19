@@ -137,7 +137,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(0x03841, 13, &["koopalings"], "koopa_collision_guard: skip collision bitmap during invuln"),
     fs(0x0384E, 16, &["koopalings"], "koopa_vram_clear: clear VRAM buffer on defeat"),
     fs(0x0385E, 12, &["koopalings"], "koopa_fire_preset: set stomp counter from threshold table for fireball defeat"),
-    fs(0x0386A, 12, &["koopalings"], "koopa_arena_mark: flag the Koopaling arena for the height readout (12 reserved, 8 used)"),
+    fs(0x0386A, 32, &["koopalings"], "koopa_arena_mark: resolve + flag the Koopaling arena for the height readout (32 reserved, 27 used)"),
     fs(0x03FD0, 22, &["koopalings"], "koopa_y_clamp: clamp Koopaling Y position to screen"),
     fs(0x03FE6, 36, &["fire_flower"], "position-hash suit routine + pool table"),
     fs(0x02713, 17, &["poison_mushrooms"], "object $0A init+hit stubs (Norm reuses 1-Up; reclaimed dead Obj0A code)"),
@@ -330,7 +330,7 @@ pub(crate) const KOOPA_VRAM_CLEAR_CPU: u16  = 0xB83E;  // $A000 + (0x0384E - 0x0
 // frame ObjNorm_Koopaling runs, so the status-bar hook can tell it is inside a
 // Koopaling room and which arena it is. Zero page is cleared by
 // Clear_RAM_thru_ZeroPage on every level exit, so the flag self-clears.
-pub(crate) const FS_KOOPA_ARENA_MARK: usize = 0x0386A; // 12 reserved, 8 used
+pub(crate) const FS_KOOPA_ARENA_MARK: usize = 0x0386A; // 32 reserved, 27 used
 
 pub(crate) const KOOPA_ARENA_MARK_CPU: u16  = 0xB85A;  // $A000 + (0x0386A - 0x02010)
 
