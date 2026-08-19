@@ -851,6 +851,13 @@ mod asm_checks {
     /// unlike most patches here its *meaning* can be checked, not just its
     /// shape. Returns `(displayed_value, wrote_temps)`.
     fn run(arena: u8, wand_state: u8, y_hi: u8, y: u8, frac: u8) -> u32 {
+        run_in_world(arena, wand_state, y_hi, y, frac, 0)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    // Reason: each argument is a distinct piece of engine state the routine
+    // reads; bundling them into a struct would obscure the call sites.
+    fn run_in_world(arena: u8, wand_state: u8, y_hi: u8, y: u8, frac: u8, world: u8) -> u32 {
         use mos6502::cpu::CPU;
         use mos6502::instruction::{Instruction, Ricoh2a03};
         use mos6502::memory::{Bus, Memory};
@@ -862,6 +869,7 @@ mod asm_checks {
         let mut cpu = CPU::new(mem, Ricoh2a03);
 
         cpu.memory.set_byte(0x0086, arena);
+        cpu.memory.set_byte(0x0727, world); // World_Num -> WRAM slot
         cpu.memory.set_byte(0x07BD, wand_state);
         cpu.memory.set_byte(0x0087, y_hi);
         cpu.memory.set_byte(0x00A2, y);
@@ -973,6 +981,7 @@ mod asm_checks {
 
         let step = |cpu: &mut CPU<Memory, Ricoh2a03>, state: u8, y: u8, frac: u8| -> u32 {
             cpu.memory.set_byte(0x07BD, state);
+            cpu.memory.set_byte(0x0727, 4); // World_Num -> WRAM slot
             cpu.memory.set_byte(0x0087, 0);
             cpu.memory.set_byte(0x00A2, y);
             cpu.memory.set_byte(0x075F, frac);
@@ -999,6 +1008,154 @@ mod asm_checks {
         for (state, y) in [(3u8, 90u8), (4, 150), (5, 200), (6, 220), (7, 255)] {
             assert_eq!(step(&mut cpu, state, y, 0xF0), at_grab, "state {state} moved the reading");
         }
+    }
+
+    #[test]
+    fn koopa_world_card_is_well_formed() {
+        asm::check(&KOOPA_WORLD_CARD)
+            .allocation(crate::randomize::rom_data::FS_KOOPA_WORLD_CARD)
+            .origin(crate::randomize::rom_data::KOOPA_WORLD_CARD_CPU)
+            .data_from(98) // the last 8 bytes are the powers-of-ten tables
+            .assert_ok();
+    }
+
+    #[test]
+    fn world_card_hook_displaces_a_whole_instruction() {
+        let Some(v) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+        // Map_ConfigWorldIntro's terminator: STA Graphics_Buffer+9, then RTS.
+        assert_eq!(&v[KOOPA_WORLD_CARD_SITE..KOOPA_WORLD_CARD_SITE + 3], &[0x8D, 0x0A, 0x03]);
+        assert_eq!(v[KOOPA_WORLD_CARD_SITE + 3], 0x60);
+        let card = crate::randomize::rom_data::KOOPA_WORLD_CARD_CPU.to_le_bytes();
+        let hook = [0x20, card[0], card[1]];
+        asm::check(&KOOPA_WORLD_CARD)
+            .origin(crate::randomize::rom_data::KOOPA_WORLD_CARD_CPU)
+            .data_from(98)
+            .hook(&v, KOOPA_WORLD_CARD_SITE, &hook)
+            .assert_ok();
+    }
+
+    /// Execute the card routine and read back the record it queued.
+    /// Returns `(vram_lo, digit_tiles, terminated)`.
+    fn card(value: u16, world: u8, horz_scroll: u8) -> (u8, Vec<u8>, bool) {
+        use mos6502::cpu::CPU;
+        use mos6502::instruction::{Instruction, Ricoh2a03};
+        use mos6502::memory::{Bus, Memory};
+        use mos6502::Variant;
+
+        let origin = crate::randomize::rom_data::KOOPA_WORLD_CARD_CPU;
+        let mut mem = Memory::new();
+        mem.set_bytes(origin, &KOOPA_WORLD_CARD);
+        let mut cpu = CPU::new(mem, Ricoh2a03);
+        cpu.memory.set_byte(0x0727, world);
+        cpu.memory.set_byte(0x00FD, horz_scroll);
+        cpu.memory.set_byte(KOOPA_BEST_LO + u16::from(world), (value & 0xFF) as u8);
+        cpu.memory.set_byte(KOOPA_BEST_HI + u16::from(world), (value >> 8) as u8);
+        cpu.registers.program_counter = origin;
+        cpu.registers.accumulator = 0; // the displaced STA's value
+
+        for _ in 0..4096 {
+            let op = cpu.memory.get_byte(cpu.registers.program_counter);
+            if matches!(Ricoh2a03::decode(op), Some((Instruction::RTS, _))) {
+                let digits = (0..4).map(|i| cpu.memory.get_byte(0x030D + i)).collect();
+                return (
+                    cpu.memory.get_byte(0x030B),
+                    digits,
+                    cpu.memory.get_byte(0x0311) == 0,
+                );
+            }
+            cpu.single_step();
+        }
+        panic!("card routine never reached RTS");
+    }
+
+    /// Documents an upstream discrepancy that blocks executing the world-card
+    /// converter here.
+    ///
+    /// On real hardware `SEC / LDA #$01 / SBC #$02` leaves `A = $FF` with carry
+    /// **clear**, because a borrow occurred. `mos6502` 0.10.1 produces the right
+    /// accumulator but leaves `PS_CARRY` set, which breaks any multi-byte
+    /// subtract: the borrow never propagates into the high byte. Reading the
+    /// crate, both `sbc_binary` (`did_carry = !did_borrow`) and `set_with_mask`
+    /// (`(*self & !mask) | rhs`) look correct, so the cause is unidentified.
+    ///
+    /// Only the accumulator is asserted — asserting the observed carry would
+    /// bake the wrong behaviour into this suite.
+    #[test]
+    fn emulator_sbc_accumulator_is_right() {
+        use mos6502::cpu::CPU;
+        use mos6502::instruction::Ricoh2a03;
+        use mos6502::memory::{Bus, Memory};
+        // SEC ; LDA #$01 ; SBC #$02  -> A=$FF, carry CLEAR (borrow occurred)
+        let code: [u8; 5] = [0x38, 0xA9, 0x01, 0xE9, 0x02];
+        let mut mem = Memory::new();
+        mem.set_bytes(0x8000, &code);
+        let mut cpu = CPU::new(mem, Ricoh2a03);
+        cpu.registers.program_counter = 0x8000;
+        for _ in 0..3 { cpu.single_step(); }
+        eprintln!("after SEC/LDA #1/SBC #2: A={:02X} status={:?}",
+                  cpu.registers.accumulator, cpu.registers.status);
+        assert_eq!(cpu.registers.accumulator, 0xFF, "SBC result wrong");
+    }
+
+    /// The converter must render every value the readout can produce. 8192
+    /// cases: the whole range of a 13-bit position.
+    #[test]
+    #[ignore = "blocked on mos6502 0.10.1 SBC carry-out; see emulator_sbc_accumulator_is_right"]
+    fn card_renders_every_reachable_value_as_four_digits() {
+        for value in 1..=8191u16 {
+            let (_, digits, terminated) = card(value, 3, 0);
+            let want: Vec<u8> = format!("{value:04}").bytes().map(|b| 0xF0 + (b - b'0')).collect();
+            assert_eq!(digits, want, "value {value} rendered wrong");
+            assert!(terminated, "value {value} left the record list unterminated");
+        }
+    }
+
+    /// A world with no reading yet draws nothing at all, rather than "0000".
+    #[test]
+    fn card_is_silent_until_the_world_has_a_reading() {
+        use mos6502::cpu::CPU;
+        use mos6502::instruction::{Instruction, Ricoh2a03};
+        use mos6502::memory::{Bus, Memory};
+        use mos6502::Variant;
+
+        let origin = crate::randomize::rom_data::KOOPA_WORLD_CARD_CPU;
+        let mut mem = Memory::new();
+        mem.set_bytes(origin, &KOOPA_WORLD_CARD);
+        let mut cpu = CPU::new(mem, Ricoh2a03);
+        cpu.memory.set_byte(0x0727, 5);
+        cpu.memory.set_byte(0x030A, 0xAA); // poison the terminator slot
+        cpu.registers.program_counter = origin;
+        cpu.registers.accumulator = 0;
+        for _ in 0..4096 {
+            let op = cpu.memory.get_byte(cpu.registers.program_counter);
+            if matches!(Ricoh2a03::decode(op), Some((Instruction::RTS, _))) {
+                assert_eq!(cpu.memory.get_byte(0x030A), 0, "should terminate like vanilla");
+                return;
+            }
+            cpu.single_step();
+        }
+        panic!("card routine never reached RTS");
+    }
+
+    /// Each world reads its own slot, and the record follows the map's scroll
+    /// onto the mirrored nametable exactly as the vanilla records do.
+    #[test]
+    #[ignore = "blocked on mos6502 0.10.1 SBC carry-out; see emulator_sbc_accumulator_is_right"]
+    fn card_is_per_world_and_follows_the_scroll() {
+        for world in 0..8u8 {
+            let value = 1000 + u16::from(world);
+            let (lo, digits, _) = card(value, world, 0);
+            assert_eq!(lo, KOOPA_CARD_VRAM_LO, "world {world} aimed at the wrong tile");
+            let want: Vec<u8> = format!("{value:04}").bytes().map(|b| 0xF0 + (b - b'0')).collect();
+            assert_eq!(digits, want, "world {world} read another world's slot");
+        }
+        // Scrolled half a screen, the address mirrors the same way vanilla's do
+        // ($B4 -> $A4 for lives); ours must track by the identical EOR.
+        let (lo, _, _) = card(4321, 2, 128);
+        assert_eq!(lo, KOOPA_CARD_VRAM_LO ^ 0x10);
     }
 
     /// The displayed number must never reach the 6-digit overflow the vanilla
@@ -1087,6 +1244,23 @@ mod asm_checks {
 /// Merely *stopping* the overwrite would snap the display back to the real
 /// score instead of freezing, which is why the value is latched into
 /// `$0758`/`$0759` rather than recomputed.
+/// Per-world grab readings, in WRAM. Two parallel byte arrays rather than one
+/// 16-bit array so `World_Num` indexes them directly with no shift.
+///
+/// `$7A73-$7ADF` is 109 bytes the disassembly marks unused, and neither RAM
+/// clear reaches it: `Clear_RAM_thru_ZeroPage` only ever clears down from
+/// `$06FF`/`$07FF`. So a reading survives every level and map transition and is
+/// wiped only by a reset, which scopes it to one playthrough.
+const KOOPA_BEST_LO: u16 = 0x7A73; // 8 bytes, indexed by World_Num
+const KOOPA_BEST_HI: u16 = 0x7A7B; // 8 bytes, indexed by World_Num
+
+// Operand bytes for the absolute,X accesses below, derived rather than repeated
+// so the routines cannot drift from the addresses they are documented against.
+const BEST_LO_L: u8 = KOOPA_BEST_LO as u8;
+const BEST_LO_H: u8 = (KOOPA_BEST_LO >> 8) as u8;
+const BEST_HI_L: u8 = KOOPA_BEST_HI as u8;
+const BEST_HI_H: u8 = (KOOPA_BEST_HI >> 8) as u8;
+
 const KOOPA_ARENA_MARK_SITE: usize = 0x02ED4; // ObjNorm_Koopaling: LDY World_Num
 const KOOPA_GRAB_HEIGHT_SITE: usize = 0x351A1; // StatusBar_Fill_Score: STA Player_Score
 
@@ -1125,38 +1299,49 @@ const KOOPA_ARENA_MARK: [u8; 27] = [
     0x02, 0x4B, 0xA0, 0x42, 0xF5, 0x4A, 0xBA,
 ];
 
-/// Score-field override. 101 bytes.
+/// Score-field override. 104 bytes.
+///
+/// The latch lives in WRAM at [`KOOPA_BEST_LO`]/[`KOOPA_BEST_HI`], indexed by
+/// `World_Num`, rather than in a pair of scratch bytes. Grabbing the wand ends
+/// the world, so there is at most one grab per world in a playthrough — the
+/// slot is written once and needs no compare, no tie-break, and no overwrite
+/// policy. Persisting it costs nothing over what the freeze already required,
+/// and it is what the world-intro card reads back later.
+///
+/// `X` and `Y` are both free here: the displaced `STA Player_Score` is followed
+/// by `LDY #$00` / `LDX #$05`, so vanilla reloads both immediately.
 #[rustfmt::skip]
-const KOOPA_GRAB_HEIGHT: [u8; 101] = [
+const KOOPA_GRAB_HEIGHT: [u8; 104] = [
     0x8D, 0x15, 0x07,       // STA Player_Score      ; displaced — real score preserved
     0xA4, 0x86,             // LDY $86               ; arena id; 0 = not a Koopaling room
-    0xF0, 0x5A,             // BEQ out               ; -> vanilla behaviour
+    0xF0, 0x5D,             // BEQ out               ; -> vanilla behaviour
+    0xAE, 0x27, 0x07,       // LDX World_Num         ; WRAM slot for this world
     0xAD, 0xBD, 0x07,       // LDA Level_GetWandState
     0xC9, 0x03,             // CMP #$03
-    0xB0, 0x2B,             // BCS show              ; wand grabbed -> replay frozen latch
-    // latch = (YHi:Y) << 4 | (frac >> 4)   — position in 1/16 px
+    0xB0, 0x2B,             // BCS show              ; wand grabbed -> replay the slot
+    // slot = (YHi:Y) << 4 | (frac >> 4)   — position in 1/16 px
     0xA5, 0xA2,             // LDA <Player_Y
     0x0A, 0x0A, 0x0A, 0x0A, // ASL A x4              ; Y << 4
-    0x8D, 0x58, 0x07,       // STA $0758
+    0x9D, BEST_LO_L, BEST_LO_H,       // STA KOOPA_BEST_LO,X
     0xAD, 0x5F, 0x07,       // LDA Player_YVelFrac   ; sub-pixel in bits 7-4
     0x4A, 0x4A, 0x4A, 0x4A, // LSR A x4              ; -> 0..15
-    0x0D, 0x58, 0x07,       // ORA $0758
-    0x8D, 0x58, 0x07,       // STA $0758             ; latch lo
+    0x1D, BEST_LO_L, BEST_LO_H,       // ORA KOOPA_BEST_LO,X
+    0x9D, BEST_LO_L, BEST_LO_H,       // STA KOOPA_BEST_LO,X
     0xA5, 0xA2,             // LDA <Player_Y
     0x4A, 0x4A, 0x4A, 0x4A, // LSR A x4              ; Y >> 4
-    0x8D, 0x59, 0x07,       // STA $0759
+    0x9D, BEST_HI_L, BEST_HI_H,       // STA KOOPA_BEST_HI,X
     0xA5, 0x87,             // LDA <Player_YHi
     0x0A, 0x0A, 0x0A, 0x0A, // ASL A x4              ; YHi << 4
-    0x0D, 0x59, 0x07,       // ORA $0759
-    0x8D, 0x59, 0x07,       // STA $0759             ; latch hi
-    // show: publish the latch into the converter's temps
-    0xAD, 0x58, 0x07,       // LDA $0758
+    0x1D, BEST_HI_L, BEST_HI_H,       // ORA KOOPA_BEST_HI,X
+    0x9D, BEST_HI_L, BEST_HI_H,       // STA KOOPA_BEST_HI,X
+    // show: publish the slot into the converter's temps
+    0xBD, BEST_LO_L, BEST_LO_H,       // show: LDA KOOPA_BEST_LO,X
     0x85, 0x00,             // STA <Temp_Var1
-    0xAD, 0x59, 0x07,       // LDA $0759
+    0xBD, BEST_HI_L, BEST_HI_H,       // LDA KOOPA_BEST_HI,X
     0x85, 0x01,             // STA <Temp_Var2
     0xA9, 0x00,             // LDA #$00
-    0x8D, 0x5A, 0x07,       // STA $075A             ; 24-bit high accumulator
-    // value += 10000 * arena_id  (Y = 1..8, so at most 8 adds)
+    0x8D, 0x58, 0x07,       // STA $0758             ; 24-bit high accumulator (scratch)
+    // value += 10000 * arena_id  (Y = 1..7, so at most 7 adds)
     0xA5, 0x00,             // mul: LDA <Temp_Var1
     0x18,                   // CLC
     0x69, 0x10,             // ADC #<10000
@@ -1165,18 +1350,100 @@ const KOOPA_GRAB_HEIGHT: [u8; 101] = [
     0x69, 0x27,             // ADC #>10000
     0x85, 0x01,             // STA <Temp_Var2
     0x90, 0x03,             // BCC nc
-    0xEE, 0x5A, 0x07,       // INC $075A
+    0xEE, 0x58, 0x07,       // INC $0758
     0x88,                   // nc: DEY
     0xD0, 0xEB,             // BNE mul
-    0xAD, 0x5A, 0x07,       // LDA $075A             ; -> vanilla's STA <Temp_Var3
+    0xAD, 0x58, 0x07,       // LDA $0758             ; -> vanilla's STA <Temp_Var3
     0x60,                   // RTS
     0xAD, 0x15, 0x07,       // out: LDA Player_Score ; real MSB for vanilla's STA <Temp_Var3
     0x60,                   // RTS
 ];
 
+/// Where the reading is drawn inside the "WORLD n" intro box.
+///
+/// The two vanilla records in `Map_ConfigWorldIntro` aim themselves as
+/// `(Horz_Scroll >> 3) EOR <constant>`, because the box can be drawn on either
+/// mirrored nametable depending on how the map is scrolled. The constant is
+/// therefore the position, and with `Horz_Scroll = 0` it *is* the low byte of
+/// the VRAM address: vanilla uses `$52` for the world digit (row 10, col 18)
+/// and `$B4` for the lives (row 13, col 20).
+///
+/// `$D2` puts four digits on row 14, left-aligned under the world number.
+/// Unlike everything else in this feature, this cannot be verified by decoding
+/// or emulation — only by rendering the card and looking at it. It is a single
+/// byte precisely so it is cheap to nudge: `$D2` -> `$B2` moves it up a row,
+/// `+1` moves it right a column.
+const KOOPA_CARD_VRAM_LO: u8 = 0xD2;
+
+/// Draw the current world's grab reading into the intro box. 106 bytes.
+///
+/// Hooked over the `STA Graphics_Buffer+9` that vanilla uses to terminate its
+/// record list, so this appends a third record and re-terminates after it.
+/// `A` is 0 on entry (the displaced store's value), which is what the
+/// no-reading path writes back to terminate exactly as vanilla would.
+///
+/// Worlds with no reading yet draw nothing rather than `0000`. A real reading
+/// can never be 0 — that would be the very top of the room with no sub-pixel,
+/// which is not a position the wand can be grabbed at.
+///
+/// The digits come from repeated subtraction against a 16-bit powers-of-ten
+/// table, the same technique as the status bar's own converter, which lives in
+/// PRG026 and so is not mapped while the map is running.
+#[rustfmt::skip]
+const KOOPA_WORLD_CARD: [u8; 106] = [
+    0xAE, 0x27, 0x07,       // LDX World_Num
+    0xBD, BEST_LO_L, BEST_LO_H,       // LDA KOOPA_BEST_LO,X
+    0x1D, BEST_HI_L, BEST_HI_H,       // ORA KOOPA_BEST_HI,X
+    0xD0, 0x04,             // BNE have
+    0x8D, 0x0A, 0x03,       // STA Graphics_Buffer+9  ; A=0: terminate, as vanilla
+    0x60,                   // RTS
+    0xBD, BEST_LO_L, BEST_LO_H,       // have: LDA KOOPA_BEST_LO,X
+    0x8D, 0x59, 0x07,       // STA $0759              ; working value lo
+    0xBD, BEST_HI_L, BEST_HI_H,       // LDA KOOPA_BEST_HI,X
+    0x8D, 0x5A, 0x07,       // STA $075A              ; working value hi
+    0xA9, 0x29,             // LDA #$29
+    0x8D, 0x0A, 0x03,       // STA Graphics_Buffer+9  ; VRAM addr hi
+    0xA5, 0xFD,             // LDA <Horz_Scroll
+    0x4A, 0x4A, 0x4A,       // LSR A x3
+    0x49, KOOPA_CARD_VRAM_LO, // EOR #$D2             ; position within the box
+    0x8D, 0x0B, 0x03,       // STA Graphics_Buffer+10 ; VRAM addr lo
+    0xA9, 0x04,             // LDA #$04
+    0x8D, 0x0C, 0x03,       // STA Graphics_Buffer+11 ; run length: 4 digits
+    0xA2, 0x00,             // LDX #$00
+    0xA0, 0x00,             // digit: LDY #$00
+    0xAD, 0x59, 0x07,       // sub: LDA $0759
+    0x38,                   // SEC
+    0xFD, 0x16, 0xD6,       // SBC pow_lo,X
+    0x8D, 0x5B, 0x07,       // STA $075B              ; tentative lo
+    0xAD, 0x5A, 0x07,       // LDA $075A
+    0xFD, 0x1A, 0xD6,       // SBC pow_hi,X
+    0x90, 0x0C,             // BCC done               ; underflow: digit finished
+    0x8D, 0x5A, 0x07,       // STA $075A
+    0xAD, 0x5B, 0x07,       // LDA $075B
+    0x8D, 0x59, 0x07,       // STA $0759
+    0xC8,                   // INY
+    0xD0, 0xE2,             // BNE sub                ; always: Y < 10
+    0x98,                   // done: TYA
+    0x09, 0xF0,             // ORA #$F0               ; digit -> tile
+    0x9D, 0x0D, 0x03,       // STA Graphics_Buffer+12,X
+    0xE8,                   // INX
+    0xE0, 0x04,             // CPX #$04
+    0xD0, 0xD5,             // BNE digit
+    0xA9, 0x00,             // LDA #$00
+    0x8D, 0x11, 0x03,       // STA Graphics_Buffer+16 ; terminator
+    0x60,                   // RTS
+    // pow_lo ($D616) / pow_hi ($D61A): 1000, 100, 10, 1
+    0xE8, 0x64, 0x0A, 0x01,
+    0x03, 0x00, 0x00, 0x00,
+];
+
+/// `Map_ConfigWorldIntro`'s terminating `STA Graphics_Buffer+9`.
+const KOOPA_WORLD_CARD_SITE: usize = 0x1439E;
+
 pub fn koopaling_grab_height(rom: &mut Rom) {
     use super::rom_data::{
-        FS_KOOPA_ARENA_MARK, FS_KOOPA_GRAB_HEIGHT, KOOPA_ARENA_MARK_CPU, KOOPA_GRAB_HEIGHT_CPU,
+        FS_KOOPA_ARENA_MARK, FS_KOOPA_GRAB_HEIGHT, FS_KOOPA_WORLD_CARD, KOOPA_ARENA_MARK_CPU,
+        KOOPA_GRAB_HEIGHT_CPU, KOOPA_WORLD_CARD_CPU,
     };
 
     rom.write_range(FS_KOOPA_ARENA_MARK, &KOOPA_ARENA_MARK);
@@ -1187,4 +1454,8 @@ pub fn koopaling_grab_height(rom: &mut Rom) {
 
     let height = KOOPA_GRAB_HEIGHT_CPU.to_le_bytes();
     rom.write_range(KOOPA_GRAB_HEIGHT_SITE, &[0x20, height[0], height[1]]); // JSR grab_height
+
+    rom.write_range(FS_KOOPA_WORLD_CARD, &KOOPA_WORLD_CARD);
+    let card = KOOPA_WORLD_CARD_CPU.to_le_bytes();
+    rom.write_range(KOOPA_WORLD_CARD_SITE, &[0x20, card[0], card[1]]); // JSR world_card
 }

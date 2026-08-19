@@ -119,13 +119,14 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(0x3557F, 50, &["hammer_breaks_tiles"], "hammer_locks: tile check subroutine + tables"),
     fs(0x355B1, 12, &["anchor_visuals"], "items-vs-cards index guard trampoline"),
     fs(0x355BD, 106, &["big_q_blocks"], "big_q_block: two-pass lookup routine + 13-entry tables (current-area then frozen entry)"),
-    fs(0x35627, 128, &["koopalings"], "koopa_grab_height: score-field height readout (128 reserved, 101 used)"),
+    fs(0x35627, 128, &["koopalings"], "koopa_grab_height: score-field height readout (128 reserved, 104 used)"),
     // PRG027 (file 0x36010, CPU $A000–$BFFF)
     fs(0x379D9, 894, &["king_quotes"], "7 quotes + hook (7×120 + 54)"),
     // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
     fs(0x15554, 112, &["fx_screen_check"], "cross-screen lock patch (Fred's algorithm + darkness gate)"),
     fs(0x15DF0, 35, &["fix_canoe_softlock"], "canoe_fix: death respawn position save"),
     fs(0x15E13, 162, &["map_warp"], "2P Start+Select warp-to-partner routine"),
+    fs(0x155C4, 128, &["koopalings"], "koopa_world_card: grab-height readout on the world intro card (128 reserved, 106 used)"),
     fs(0x15EB5, 151, &["canoe_summon"], "A-on-dock call-the-boat routine + offset tables"),
     // PRG011 (file 0x16010, CPU $A000–$BFFF during map)
     fs(0x17C87, 36, &["start_airship_swap"], "game-over twirl finalize helper"),
@@ -336,9 +337,15 @@ pub(crate) const KOOPA_ARENA_MARK_CPU: u16  = 0xB85A;  // $A000 + (0x0386A - 0x0
 
 // Koopaling grab-height readout — replace the score field with the player's
 // vertical position (1/16 px) during a Koopaling fight, frozen at the wand grab.
-pub(crate) const FS_KOOPA_GRAB_HEIGHT: usize = 0x35627; // 128 reserved, 101 used
+pub(crate) const FS_KOOPA_GRAB_HEIGHT: usize = 0x35627; // 128 reserved, 104 used
 
 pub(crate) const KOOPA_GRAB_HEIGHT_CPU: u16  = 0xB617;  // $A000 + (0x35627 - 0x34010)
+
+// Koopaling world-card readout — draw the world's grab reading into the
+// "WORLD n" intro box. Lives in PRG010 beside the map code that calls it.
+pub(crate) const FS_KOOPA_WORLD_CARD: usize = 0x155C4; // 128 reserved, 106 used
+
+pub(crate) const KOOPA_WORLD_CARD_CPU: u16  = 0xD5B4;  // $C000 + (0x155C4 - 0x14010)
 
 // Koopaling Y-position clamp — keep bouncing Koopalings on screen in non-native rooms.
 // Source: Fred's Koopaling fixes.
@@ -852,6 +859,7 @@ mod free_space_tests {
             (FS_KOOPA_Y_CLAMP, "FS_KOOPA_Y_CLAMP"),
             (FS_KOOPA_ARENA_MARK, "FS_KOOPA_ARENA_MARK"),
             (FS_KOOPA_GRAB_HEIGHT, "FS_KOOPA_GRAB_HEIGHT"),
+            (FS_KOOPA_WORLD_CARD, "FS_KOOPA_WORLD_CARD"),
             (FS_FIRE_FLOWER, "FS_FIRE_FLOWER"),
             (FS_POISON_MUSHROOM, "FS_POISON_MUSHROOM"),
             (FS_POISON_HOOK, "FS_POISON_HOOK"),
