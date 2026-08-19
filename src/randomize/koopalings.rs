@@ -720,23 +720,17 @@ mod asm_checks {
         std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()
     }
 
-    #[test]
-    fn koopa_arena_mark_is_well_formed() {
-        asm::check(&KOOPA_ARENA_MARK)
-            .allocation(crate::randomize::rom_data::FS_KOOPA_ARENA_MARK)
-            .origin(crate::randomize::rom_data::KOOPA_ARENA_MARK_CPU)
-            .data_from(20) // the last 7 bytes are the lookup table
-            .assert_ok();
-    }
 
     /// Boss-room layout pointers, low byte, by vanilla world - 1. Mirrors the
     /// table baked into [`KOOPA_ARENA_MARK`]; the test below pins them together.
     const KOOPA_ARENA_LAYOUT_LO: [u8; 7] = [0x02, 0x4B, 0xA0, 0x42, 0xF5, 0x4A, 0xBA];
+    const KOOPA_ARENA_LAYOUT_HI: [u8; 7] = [0xBA, 0xBA, 0xBA, 0xAC, 0xBA, 0xBB, 0xBB];
 
     /// The routine's baked table must stay the table we reason about.
     #[test]
     fn routine_table_matches_the_documented_rooms() {
-        assert_eq!(&KOOPA_ARENA_MARK[20..], &KOOPA_ARENA_LAYOUT_LO);
+        assert_eq!(&KOOPA_GRAB_HEIGHT[124..131], &KOOPA_ARENA_LAYOUT_LO);
+        assert_eq!(&KOOPA_GRAB_HEIGHT[131..], &[0xBA, 0xBA, 0xBA, 0xAC, 0xBA, 0xBB, 0xBB]);
     }
 
     /// The seven rooms must stay distinguishable by layout-pointer low byte
@@ -748,61 +742,13 @@ mod asm_checks {
         seen.windows(2).for_each(|w| assert_ne!(w[0], w[1], "duplicate arena key {:#04X}", w[0]));
     }
 
-    /// Run the marker on an emulated CPU: every boss room must resolve to its
-    /// vanilla world, an unknown room must resolve to 0 (readout off), and the
-    /// caller's `X` and `Y` contract must survive.
-    #[test]
-    fn marker_resolves_each_boss_room_to_its_vanilla_world() {
-        use mos6502::cpu::CPU;
-        use mos6502::instruction::{Instruction, Ricoh2a03};
-        use mos6502::memory::{Bus, Memory};
-        use mos6502::Variant;
-
-        let origin = crate::randomize::rom_data::KOOPA_ARENA_MARK_CPU;
-        let run = |lay_lo: u8, world_num: u8| -> (u8, u8, u8) {
-            let mut mem = Memory::new();
-            mem.set_bytes(origin, &KOOPA_ARENA_MARK);
-            let mut cpu = CPU::new(mem, Ricoh2a03);
-            cpu.memory.set_byte(0x7EB9, lay_lo); // Level_LayPtrOrig_AddrL
-            cpu.memory.set_byte(0x0727, world_num); // World_Num
-            cpu.memory.set_byte(0x0086, 0xAA); // poison
-            cpu.registers.program_counter = origin;
-            cpu.registers.index_x = 0x5A; // the object slot the caller holds
-            for _ in 0..256 {
-                let op = cpu.memory.get_byte(cpu.registers.program_counter);
-                if matches!(Ricoh2a03::decode(op), Some((Instruction::RTS, _))) {
-                    return (
-                        cpu.memory.get_byte(0x0086),
-                        cpu.registers.index_y,
-                        cpu.registers.index_x,
-                    );
-                }
-                cpu.single_step();
-            }
-            panic!("marker never reached RTS");
-        };
-
-        for (i, &lo) in KOOPA_ARENA_LAYOUT_LO.iter().enumerate() {
-            let vanilla_world = (i + 1) as u8;
-            // Shuffled anywhere: the id must depend on the room, never the world.
-            for world_num in 0..8u8 {
-                let (id, y, x) = run(lo, world_num);
-                assert_eq!(id, vanilla_world, "room {lo:#04X} in world {world_num}");
-                assert_eq!(y, world_num, "displaced LDY World_Num did not restore Y");
-                assert_eq!(x, 0x5A, "clobbered X, which the caller uses as the object slot");
-            }
-        }
-
-        // A room we cannot name turns the readout off rather than mislabelling it.
-        let unknown = (0u8..=255).find(|b| !KOOPA_ARENA_LAYOUT_LO.contains(b)).unwrap();
-        assert_eq!(run(unknown, 3).0, 0, "unknown room should disable the readout");
-    }
 
     #[test]
     fn koopa_grab_height_is_well_formed() {
         asm::check(&KOOPA_GRAB_HEIGHT)
             .allocation(crate::randomize::rom_data::FS_KOOPA_GRAB_HEIGHT)
             .origin(crate::randomize::rom_data::KOOPA_GRAB_HEIGHT_CPU)
+            .data_from(124) // the last 14 bytes are the boss-room pointer tables
             .assert_ok();
     }
 
@@ -814,18 +760,11 @@ mod asm_checks {
             eprintln!("SKIP: requires the ROM, which is not included in the repo");
             return;
         };
-        let mark = crate::randomize::rom_data::KOOPA_ARENA_MARK_CPU.to_le_bytes();
-        let mark_hook = [0x20, mark[0], mark[1]];
-        asm::check(&KOOPA_ARENA_MARK)
-            .origin(crate::randomize::rom_data::KOOPA_ARENA_MARK_CPU)
-            .data_from(20)
-            .hook(&v, KOOPA_ARENA_MARK_SITE, &mark_hook)
-            .assert_ok();
-
         let height = crate::randomize::rom_data::KOOPA_GRAB_HEIGHT_CPU.to_le_bytes();
         let height_hook = [0x20, height[0], height[1]];
         asm::check(&KOOPA_GRAB_HEIGHT)
             .origin(crate::randomize::rom_data::KOOPA_GRAB_HEIGHT_CPU)
+            .data_from(124)
             .hook(&v, KOOPA_GRAB_HEIGHT_SITE, &height_hook)
             .assert_ok();
     }
@@ -838,8 +777,6 @@ mod asm_checks {
             eprintln!("SKIP: requires the ROM, which is not included in the repo");
             return;
         };
-        // ObjNorm_Koopaling ($AEC4): LDY World_Num
-        assert_eq!(&v[KOOPA_ARENA_MARK_SITE..KOOPA_ARENA_MARK_SITE + 3], &[0xAC, 0x27, 0x07]);
         // StatusBar_Fill_Score ($B191): STA Player_Score, followed by STA <Temp_Var3.
         // The routine returns the high byte in A precisely so that next store lands it.
         assert_eq!(&v[KOOPA_GRAB_HEIGHT_SITE..KOOPA_GRAB_HEIGHT_SITE + 3], &[0x8D, 0x15, 0x07]);
@@ -868,7 +805,9 @@ mod asm_checks {
         mem.set_bytes(origin, &KOOPA_GRAB_HEIGHT);
         let mut cpu = CPU::new(mem, Ricoh2a03);
 
-        cpu.memory.set_byte(0x0086, arena);
+        // Load the boss room whose arena id we want (arena is 1-based).
+        cpu.memory.set_byte(0x7EB9, KOOPA_ARENA_LAYOUT_LO[arena as usize - 1]);
+        cpu.memory.set_byte(0x7EBA, KOOPA_ARENA_LAYOUT_HI[arena as usize - 1]);
         cpu.memory.set_byte(0x0727, world); // World_Num -> WRAM slot
         cpu.memory.set_byte(0x07BD, wand_state);
         cpu.memory.set_byte(0x0087, y_hi);
@@ -943,7 +882,8 @@ mod asm_checks {
         let mut mem = Memory::new();
         mem.set_bytes(origin, &KOOPA_GRAB_HEIGHT);
         let mut cpu = CPU::new(mem, Ricoh2a03);
-        cpu.memory.set_byte(0x0086, 0x00); // not a Koopaling room
+        cpu.memory.set_byte(0x7EB9, 0x11); // not any Koopaling room
+        cpu.memory.set_byte(0x7EBA, 0x22);
         cpu.memory.set_byte(0x0715, 0x42); // Player_Score high byte
         cpu.memory.set_byte(0x0000, 0xAA);
         cpu.memory.set_byte(0x0001, 0xBB);
@@ -977,7 +917,8 @@ mod asm_checks {
         let mut mem = Memory::new();
         mem.set_bytes(origin, &KOOPA_GRAB_HEIGHT);
         let mut cpu = CPU::new(mem, Ricoh2a03);
-        cpu.memory.set_byte(0x0086, 5); // arena 5
+        cpu.memory.set_byte(0x7EB9, KOOPA_ARENA_LAYOUT_LO[4]); // arena 5's room
+        cpu.memory.set_byte(0x7EBA, KOOPA_ARENA_LAYOUT_HI[4]);
 
         let step = |cpu: &mut CPU<Memory, Ricoh2a03>, state: u8, y: u8, frac: u8| -> u32 {
             cpu.memory.set_byte(0x07BD, state);
@@ -1158,6 +1099,79 @@ mod asm_checks {
         assert_eq!(lo, KOOPA_CARD_VRAM_LO ^ 0x10);
     }
 
+    /// Regression: a room that is not a Koopaling arena must leave the score
+    /// completely alone.
+    ///
+    /// The first version flagged the arena in `$86`, believing the level-context
+    /// RAM map's "unused" note. In the map context that byte is `Map_WWOrHT_Y`,
+    /// so it was routinely non-zero outside a boss room. A garbage arena id ran
+    /// the multiply up to 255 times, the total passed 999999, and vanilla's
+    /// overflow path *wrote* `$0F423F` into `Player_Score` — permanently
+    /// corrupting the real score to a static 9999990.
+    ///
+    /// Sweeps the whole 16-bit pointer space in strides, plus every near-miss
+    /// that shares a byte with a real room.
+    #[test]
+    fn a_room_that_is_not_an_arena_never_touches_the_score() {
+        use mos6502::cpu::CPU;
+        use mos6502::instruction::{Instruction, Ricoh2a03};
+        use mos6502::memory::{Bus, Memory};
+        use mos6502::Variant;
+
+        let origin = crate::randomize::rom_data::KOOPA_GRAB_HEIGHT_CPU;
+        let rooms: Vec<(u8, u8)> = KOOPA_ARENA_LAYOUT_LO
+            .iter()
+            .zip(KOOPA_ARENA_LAYOUT_HI.iter())
+            .map(|(&l, &h)| (l, h))
+            .collect();
+
+        let check = |lo: u8, hi: u8| {
+            let mut mem = Memory::new();
+            mem.set_bytes(origin, &KOOPA_GRAB_HEIGHT);
+            let mut cpu = CPU::new(mem, Ricoh2a03);
+            cpu.memory.set_byte(0x7EB9, lo);
+            cpu.memory.set_byte(0x7EBA, hi);
+            cpu.memory.set_byte(0x0715, 0x42); // Player_Score MSB
+            cpu.memory.set_byte(0x0000, 0xAA); // Temp_Var1
+            cpu.memory.set_byte(0x0001, 0xBB); // Temp_Var2
+            cpu.registers.program_counter = origin;
+            cpu.registers.accumulator = 0x42;
+            for _ in 0..8192 {
+                let op = cpu.memory.get_byte(cpu.registers.program_counter);
+                if matches!(Ricoh2a03::decode(op), Some((Instruction::RTS, _))) {
+                    assert_eq!(cpu.registers.accumulator, 0x42, "room {lo:02X}{hi:02X}: score MSB changed");
+                    assert_eq!(cpu.memory.get_byte(0x0000), 0xAA, "room {lo:02X}{hi:02X}: Temp_Var1 clobbered");
+                    assert_eq!(cpu.memory.get_byte(0x0001), 0xBB, "room {lo:02X}{hi:02X}: Temp_Var2 clobbered");
+                    return;
+                }
+                cpu.single_step();
+            }
+            panic!("room {lo:02X}{hi:02X}: never reached RTS");
+        };
+
+        // Broad sweep of the pointer space.
+        for hi in (0u16..=0xFF).step_by(3) {
+            for lo in (0u16..=0xFF).step_by(7) {
+                if rooms.contains(&(lo as u8, hi as u8)) {
+                    continue;
+                }
+                check(lo as u8, hi as u8);
+            }
+        }
+        // Near misses: right low byte, wrong high byte, and vice versa. These
+        // are what a low-byte-only match would have wrongly accepted.
+        for &(lo, hi) in &rooms {
+            for other in 0x00..=0xFFu8 {
+                if !rooms.contains(&(lo, other)) {
+                    check(lo, other);
+                }
+                if !rooms.contains(&(other, hi)) {
+                    check(other, hi);
+                }
+            }
+        }
+    }
+
     /// The displayed number must never reach the 6-digit overflow the vanilla
     /// converter guards with `CMP #$FA`. Worst case is world 9 at the bottom of
     /// a two-page room, and even that stays under 100000.
@@ -1261,59 +1275,51 @@ const BEST_LO_H: u8 = (KOOPA_BEST_LO >> 8) as u8;
 const BEST_HI_L: u8 = KOOPA_BEST_HI as u8;
 const BEST_HI_H: u8 = (KOOPA_BEST_HI >> 8) as u8;
 
-const KOOPA_ARENA_MARK_SITE: usize = 0x02ED4; // ObjNorm_Koopaling: LDY World_Num
 const KOOPA_GRAB_HEIGHT_SITE: usize = 0x351A1; // StatusBar_Fill_Score: STA Player_Score
 
-/// Marker: resolve which boss room this is, stamp the arena id, restore `Y`.
-/// 27 bytes — 20 of code and the 7-byte table.
+/// Score-field override. 138 bytes.
 ///
-/// Uses `Y` for the search rather than `X` on purpose: `ObjNorm_Koopaling` is
-/// object AI reached with `X` holding the object slot, and the state handlers
-/// `DynJump` dispatches to index off it. `Y` is free because the displaced
-/// `LDY World_Num` was about to overwrite it anyway, and `A` is dead at entry
-/// for the same reason — the caller's next instruction loads it.
+/// # Why the arena is resolved here rather than flagged
 ///
-/// The table is the seven boss rooms' layout-pointer low bytes in vanilla world
-/// order. Each arena is its own sub-area data — `$BA02 $BA4B $BAA0 $AC42 $BAF5
-/// $BB4A $BBBA` — and World 4's sits well away from the rest, which is why
-/// these are looked up rather than computed. Low bytes alone separate them
-/// (they are unique, asserted in the tests), and the lookup only runs with the
-/// arena flag already set, so the pointer is always one of the seven.
+/// This originally cached an arena id in `$86`, which the disassembly's
+/// level-context RAM map calls unused. It is not: in the map context the same
+/// byte is `Map_WWOrHT_Y` (PRG011 $A35B), and no zero-page byte anywhere in
+/// this ROM is free of zero-page-mode references. A stale flag meant a garbage
+/// arena id, the `DEY`/`BNE` multiply ran up to 255 times, and the total blew
+/// past 999999 — which trips vanilla's overflow path, and that path does not
+/// merely display all-9s, it *writes* `$0F423F` into `Player_Score`. One bad
+/// frame permanently corrupted the player's real score.
 ///
-/// A pointer that is not in the table leaves `Y` at `$FF`, so the `INY` makes
-/// the flag 0 and the readout simply stays off. Degrading to "no display" is
-/// the right failure for a room we cannot name.
-#[rustfmt::skip]
-const KOOPA_ARENA_MARK: [u8; 27] = [
-    0xA0, 0x06,       // LDY #$06          ; scan the 7-entry table downward
-    0xB9, 0x6E, 0xB8, // loop: LDA table,Y ; $B86E, origin-locked
-    0xCD, 0xB9, 0x7E, // CMP $7EB9         ; Level_LayPtrOrig_AddrL (this room)
-    0xF0, 0x03,       // BEQ found
-    0x88,             // DEY
-    0x10, 0xF5,       // BPL loop
-    0xC8,             // found: INY        ; 1-based; miss leaves $FF -> 0 = off
-    0x84, 0x86,       // STY $86           ; arena id (zero page, auto-cleared)
-    0xAC, 0x27, 0x07, // LDY World_Num     ; displaced instruction; restores Y
-    0x60,             // RTS
-    // table ($B86E): boss-room layout pointer low bytes, vanilla worlds 1-7
-    0x02, 0x4B, 0xA0, 0x42, 0xF5, 0x4A, 0xBA,
-];
-
-/// Score-field override. 104 bytes.
+/// Resolving the room inline fixes the class of bug, not just the instance:
+/// `Y` can only leave the search as 0-7, so the multiply is bounded by
+/// construction and the overflow is now unreachable. It also needs nothing
+/// cleared, self-corrects when the room changes, and removes a hook.
+///
+/// The match is on the **full 16-bit** pointer. Low bytes alone collide with
+/// ordinary levels; the pair identifies exactly one room.
 ///
 /// The latch lives in WRAM at [`KOOPA_BEST_LO`]/[`KOOPA_BEST_HI`], indexed by
-/// `World_Num`, rather than in a pair of scratch bytes. Grabbing the wand ends
-/// the world, so there is at most one grab per world in a playthrough — the
-/// slot is written once and needs no compare, no tie-break, and no overwrite
-/// policy. Persisting it costs nothing over what the freeze already required,
-/// and it is what the world-intro card reads back later.
+/// `World_Num`. Grabbing the wand ends the world, so there is at most one grab
+/// per world in a playthrough — the slot is written once and needs no compare,
+/// no tie-break and no overwrite policy, and it is what the world-intro card
+/// reads back later.
 ///
 /// `X` and `Y` are both free here: the displaced `STA Player_Score` is followed
 /// by `LDY #$00` / `LDX #$05`, so vanilla reloads both immediately.
 #[rustfmt::skip]
-const KOOPA_GRAB_HEIGHT: [u8; 104] = [
+const KOOPA_GRAB_HEIGHT: [u8; 138] = [
     0x8D, 0x15, 0x07,       // STA Player_Score      ; displaced — real score preserved
-    0xA4, 0x86,             // LDY $86               ; arena id; 0 = not a Koopaling room
+    // which Koopaling boss room is loaded, if any?
+    0xA0, 0x06,             // LDY #$06
+    0xB9, 0x93, 0xB6,       // loop: LDA tlo,Y
+    0xCD, 0xB9, 0x7E,       // CMP Level_LayPtrOrig_AddrL
+    0xD0, 0x08,             // BNE next
+    0xB9, 0x9A, 0xB6,       // LDA thi,Y
+    0xCD, 0xBA, 0x7E,       // CMP Level_LayPtrOrig_AddrH
+    0xF0, 0x03,             // BEQ found
+    0x88,                   // next: DEY
+    0x10, 0xED,             // BPL loop
+    0xC8,                   // found: INY            ; 1..7, or 0 for "no match"
     0xF0, 0x5D,             // BEQ out               ; -> vanilla behaviour
     0xAE, 0x27, 0x07,       // LDX World_Num         ; WRAM slot for this world
     0xAD, 0xBD, 0x07,       // LDA Level_GetWandState
@@ -1322,26 +1328,26 @@ const KOOPA_GRAB_HEIGHT: [u8; 104] = [
     // slot = (YHi:Y) << 4 | (frac >> 4)   — position in 1/16 px
     0xA5, 0xA2,             // LDA <Player_Y
     0x0A, 0x0A, 0x0A, 0x0A, // ASL A x4              ; Y << 4
-    0x9D, BEST_LO_L, BEST_LO_H,       // STA KOOPA_BEST_LO,X
+    0x9D, BEST_LO_L, BEST_LO_H, // STA KOOPA_BEST_LO,X
     0xAD, 0x5F, 0x07,       // LDA Player_YVelFrac   ; sub-pixel in bits 7-4
     0x4A, 0x4A, 0x4A, 0x4A, // LSR A x4              ; -> 0..15
-    0x1D, BEST_LO_L, BEST_LO_H,       // ORA KOOPA_BEST_LO,X
-    0x9D, BEST_LO_L, BEST_LO_H,       // STA KOOPA_BEST_LO,X
+    0x1D, BEST_LO_L, BEST_LO_H, // ORA KOOPA_BEST_LO,X
+    0x9D, BEST_LO_L, BEST_LO_H, // STA KOOPA_BEST_LO,X
     0xA5, 0xA2,             // LDA <Player_Y
     0x4A, 0x4A, 0x4A, 0x4A, // LSR A x4              ; Y >> 4
-    0x9D, BEST_HI_L, BEST_HI_H,       // STA KOOPA_BEST_HI,X
+    0x9D, BEST_HI_L, BEST_HI_H, // STA KOOPA_BEST_HI,X
     0xA5, 0x87,             // LDA <Player_YHi
     0x0A, 0x0A, 0x0A, 0x0A, // ASL A x4              ; YHi << 4
-    0x1D, BEST_HI_L, BEST_HI_H,       // ORA KOOPA_BEST_HI,X
-    0x9D, BEST_HI_L, BEST_HI_H,       // STA KOOPA_BEST_HI,X
+    0x1D, BEST_HI_L, BEST_HI_H, // ORA KOOPA_BEST_HI,X
+    0x9D, BEST_HI_L, BEST_HI_H, // STA KOOPA_BEST_HI,X
     // show: publish the slot into the converter's temps
-    0xBD, BEST_LO_L, BEST_LO_H,       // show: LDA KOOPA_BEST_LO,X
+    0xBD, BEST_LO_L, BEST_LO_H, // show: LDA KOOPA_BEST_LO,X
     0x85, 0x00,             // STA <Temp_Var1
-    0xBD, BEST_HI_L, BEST_HI_H,       // LDA KOOPA_BEST_HI,X
+    0xBD, BEST_HI_L, BEST_HI_H, // LDA KOOPA_BEST_HI,X
     0x85, 0x01,             // STA <Temp_Var2
     0xA9, 0x00,             // LDA #$00
     0x8D, 0x58, 0x07,       // STA $0758             ; 24-bit high accumulator (scratch)
-    // value += 10000 * arena_id  (Y = 1..7, so at most 7 adds)
+    // value += 10000 * arena_id  (Y is 1..7, so at most 7 adds — cannot overflow)
     0xA5, 0x00,             // mul: LDA <Temp_Var1
     0x18,                   // CLC
     0x69, 0x10,             // ADC #<10000
@@ -1357,6 +1363,10 @@ const KOOPA_GRAB_HEIGHT: [u8; 104] = [
     0x60,                   // RTS
     0xAD, 0x15, 0x07,       // out: LDA Player_Score ; real MSB for vanilla's STA <Temp_Var3
     0x60,                   // RTS
+    // tlo ($B693) / thi ($B69A): the seven boss rooms, vanilla world order.
+    // $BA02 $BA4B $BAA0 $AC42 $BAF5 $BB4A $BBBA
+    0x02, 0x4B, 0xA0, 0x42, 0xF5, 0x4A, 0xBA,
+    0xBA, 0xBA, 0xBA, 0xAC, 0xBA, 0xBB, 0xBB,
 ];
 
 /// Where the reading is drawn inside the "WORLD n" intro box.
@@ -1442,15 +1452,10 @@ const KOOPA_WORLD_CARD_SITE: usize = 0x1439E;
 
 pub fn koopaling_grab_height(rom: &mut Rom) {
     use super::rom_data::{
-        FS_KOOPA_ARENA_MARK, FS_KOOPA_GRAB_HEIGHT, FS_KOOPA_WORLD_CARD, KOOPA_ARENA_MARK_CPU,
-        KOOPA_GRAB_HEIGHT_CPU, KOOPA_WORLD_CARD_CPU,
+        FS_KOOPA_GRAB_HEIGHT, FS_KOOPA_WORLD_CARD, KOOPA_GRAB_HEIGHT_CPU, KOOPA_WORLD_CARD_CPU,
     };
 
-    rom.write_range(FS_KOOPA_ARENA_MARK, &KOOPA_ARENA_MARK);
     rom.write_range(FS_KOOPA_GRAB_HEIGHT, &KOOPA_GRAB_HEIGHT);
-
-    let mark = KOOPA_ARENA_MARK_CPU.to_le_bytes();
-    rom.write_range(KOOPA_ARENA_MARK_SITE, &[0x20, mark[0], mark[1]]); // JSR arena_mark
 
     let height = KOOPA_GRAB_HEIGHT_CPU.to_le_bytes();
     rom.write_range(KOOPA_GRAB_HEIGHT_SITE, &[0x20, height[0], height[1]]); // JSR grab_height
