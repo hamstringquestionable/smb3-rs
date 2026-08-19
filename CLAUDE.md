@@ -96,7 +96,7 @@ is the one to read:
 |------|-----------|-----------|--------------------|
 | PRG031 | `$E000–$FFFF`, always | 81 | **30** |
 | PRG030 | `$8000–$9FFF`, always | 88 | 42 |
-| PRG001 | swapped, in-level (object AI) | 60 | 38 |
+| PRG001 | swapped, in-level (object AI) | 48 | 26 |
 | PRG003 | swapped, in-level (object AI) | 5 | 5 |
 | PRG004 | swapped, in-level (object AI, group 3) | 426 | 426 |
 | PRG005 | swapped, in-level (object AI) | 58 | 58 |
@@ -104,7 +104,7 @@ is the one to read:
 | PRG007 | swapped, in-level (object AI) | 27 | 27 |
 | PRG010 | `$C000–$DFFF`, map | 896 | 588 |
 | PRG025 | `$C000–$DFFF`, title screen | 2771 | 2759 |
-| PRG026 | `$A000–$BFFF`, map/inventory | 2603 | 2537 |
+| PRG026 | `$A000–$BFFF`, map/inventory | 2475 | 2409 |
 
 PRG000 and PRG002 have no `$FF` filler left at all.
 

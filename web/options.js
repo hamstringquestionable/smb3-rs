@@ -390,6 +390,11 @@ export const SCHEMA = [
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		icon: WAND,
 		group: "bosses", inFlagKey: true },
+	{ id: "koopaling_grab_height", type: "bool", default: false,
+		label: "Grab Height Readout", flavor: "How high can you get it?",
+		tip: "During a Koopaling fight the score shows how high you are, then freezes the moment you grab the wand — compare your best grab in each airship.",
+		icon: WAND,
+		group: "bosses", inFlagKey: true },
 
 	// --- Items & Pickups ---
 	// (sprite curation deferred — sprite CHR uses dynamic banking that requires

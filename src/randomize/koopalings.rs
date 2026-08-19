@@ -715,4 +715,372 @@ mod asm_checks {
     fn koopa_hits_is_well_formed() {
         asm::check(&KOOPA_HITS_CODE).allocation(crate::randomize::rom_data::FS_KOOPA_HITS_SUB).fragment().assert_ok();
     }
+
+    fn vanilla() -> Option<Vec<u8>> {
+        std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()
+    }
+
+    #[test]
+    fn koopa_arena_mark_is_well_formed() {
+        asm::check(&KOOPA_ARENA_MARK)
+            .allocation(crate::randomize::rom_data::FS_KOOPA_ARENA_MARK)
+            .origin(crate::randomize::rom_data::KOOPA_ARENA_MARK_CPU)
+            .assert_ok();
+    }
+
+    #[test]
+    fn koopa_grab_height_is_well_formed() {
+        asm::check(&KOOPA_GRAB_HEIGHT)
+            .allocation(crate::randomize::rom_data::FS_KOOPA_GRAB_HEIGHT)
+            .origin(crate::randomize::rom_data::KOOPA_GRAB_HEIGHT_CPU)
+            .assert_ok();
+    }
+
+    /// Both hooks displace exactly one whole instruction, and each `JSR` names
+    /// its routine's origin. Needs the ROM, so it skips where the ROM is absent.
+    #[test]
+    fn grab_height_hooks_displace_whole_instructions() {
+        let Some(v) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+        let mark = crate::randomize::rom_data::KOOPA_ARENA_MARK_CPU.to_le_bytes();
+        let mark_hook = [0x20, mark[0], mark[1]];
+        asm::check(&KOOPA_ARENA_MARK)
+            .origin(crate::randomize::rom_data::KOOPA_ARENA_MARK_CPU)
+            .hook(&v, KOOPA_ARENA_MARK_SITE, &mark_hook)
+            .assert_ok();
+
+        let height = crate::randomize::rom_data::KOOPA_GRAB_HEIGHT_CPU.to_le_bytes();
+        let height_hook = [0x20, height[0], height[1]];
+        asm::check(&KOOPA_GRAB_HEIGHT)
+            .origin(crate::randomize::rom_data::KOOPA_GRAB_HEIGHT_CPU)
+            .hook(&v, KOOPA_GRAB_HEIGHT_SITE, &height_hook)
+            .assert_ok();
+    }
+
+    /// The two hook sites, against the bytes the disassembly says are there.
+    /// A drifted offset would silently splice a `JSR` into the wrong routine.
+    #[test]
+    fn grab_height_patch_sites_match_vanilla() {
+        let Some(v) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+        // ObjNorm_Koopaling ($AEC4): LDY World_Num
+        assert_eq!(&v[KOOPA_ARENA_MARK_SITE..KOOPA_ARENA_MARK_SITE + 3], &[0xAC, 0x27, 0x07]);
+        // StatusBar_Fill_Score ($B191): STA Player_Score, followed by STA <Temp_Var3.
+        // The routine returns the high byte in A precisely so that next store lands it.
+        assert_eq!(&v[KOOPA_GRAB_HEIGHT_SITE..KOOPA_GRAB_HEIGHT_SITE + 3], &[0x8D, 0x15, 0x07]);
+        assert_eq!(&v[KOOPA_GRAB_HEIGHT_SITE + 3..KOOPA_GRAB_HEIGHT_SITE + 5], &[0x85, 0x02]);
+    }
+
+    /// Execute the routine on an emulated CPU. It is a self-contained
+    /// calculation — it reads five RAM bytes, calls nothing, and returns — so
+    /// unlike most patches here its *meaning* can be checked, not just its
+    /// shape. Returns `(displayed_value, wrote_temps)`.
+    fn run(arena: u8, wand_state: u8, y_hi: u8, y: u8, frac: u8) -> u32 {
+        use mos6502::cpu::CPU;
+        use mos6502::instruction::{Instruction, Ricoh2a03};
+        use mos6502::memory::{Bus, Memory};
+        use mos6502::Variant;
+
+        let origin = crate::randomize::rom_data::KOOPA_GRAB_HEIGHT_CPU;
+        let mut mem = Memory::new();
+        mem.set_bytes(origin, &KOOPA_GRAB_HEIGHT);
+        let mut cpu = CPU::new(mem, Ricoh2a03);
+
+        cpu.memory.set_byte(0x0086, arena);
+        cpu.memory.set_byte(0x07BD, wand_state);
+        cpu.memory.set_byte(0x0087, y_hi);
+        cpu.memory.set_byte(0x00A2, y);
+        cpu.memory.set_byte(0x075F, frac);
+        cpu.memory.set_byte(0x0000, 0xAA); // Temp_Var1 poison
+        cpu.memory.set_byte(0x0001, 0xAA); // Temp_Var2 poison
+        cpu.registers.program_counter = origin;
+
+        // Bounded by the multiply loop: at most 9 iterations of ~10 instructions.
+        for _ in 0..256 {
+            let op = cpu.memory.get_byte(cpu.registers.program_counter);
+            if matches!(Ricoh2a03::decode(op), Some((Instruction::RTS, _))) {
+                let hi = u32::from(cpu.registers.accumulator);
+                let mid = u32::from(cpu.memory.get_byte(0x0001));
+                let lo = u32::from(cpu.memory.get_byte(0x0000));
+                return hi * 65536 + mid * 256 + lo;
+            }
+            cpu.single_step();
+        }
+        panic!("routine never reached RTS");
+    }
+
+    /// The displayed number is `arena * 10000 + position`, where position is
+    /// the vertical position in 1/16 px. Checked across the whole input space
+    /// the routine can actually see in a Koopaling room.
+    #[test]
+    fn displayed_value_is_arena_prefix_plus_sixteenths() {
+        for arena in 1..=8u8 {
+            for y_hi in 0..=1u8 {
+                for y in [0u8, 1, 15, 16, 127, 128, 254, 255] {
+                    for frac in [0x00u8, 0x10, 0x50, 0xF0, 0xFF] {
+                        let got = run(arena, 0, y_hi, y, frac);
+                        let position =
+                            (u32::from(y_hi) * 256 + u32::from(y)) * 16 + u32::from(frac >> 4);
+                        let want = u32::from(arena) * 10000 + position;
+                        assert_eq!(
+                            got, want,
+                            "arena={arena} yhi={y_hi} y={y} frac={frac:#04X}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Sub-pixel actually reaches the display: two positions one sixteenth of a
+    /// pixel apart must differ by exactly one. This is what breaks ties between
+    /// two players who grabbed on the same pixel.
+    #[test]
+    fn one_sixteenth_of_a_pixel_moves_the_number_by_one() {
+        for frac in 0..15u8 {
+            let a = run(3, 0, 0, 100, frac << 4);
+            let b = run(3, 0, 0, 100, (frac + 1) << 4);
+            assert_eq!(b - a, 1, "sub-pixel {frac} -> {} did not move the readout", frac + 1);
+        }
+        // ...and the low nibble of $075F is never significant: the engine only
+        // ever accumulates into bits 7-4, so it must not perturb the reading.
+        assert_eq!(run(3, 0, 0, 100, 0x50), run(3, 0, 0, 100, 0x5F));
+    }
+
+    /// Outside a Koopaling room the routine must be transparent: it returns the
+    /// real score's high byte and leaves the converter's temps for vanilla.
+    #[test]
+    fn arena_flag_zero_leaves_the_score_alone() {
+        use mos6502::cpu::CPU;
+        use mos6502::instruction::{Instruction, Ricoh2a03};
+        use mos6502::memory::{Bus, Memory};
+        use mos6502::Variant;
+
+        let origin = crate::randomize::rom_data::KOOPA_GRAB_HEIGHT_CPU;
+        let mut mem = Memory::new();
+        mem.set_bytes(origin, &KOOPA_GRAB_HEIGHT);
+        let mut cpu = CPU::new(mem, Ricoh2a03);
+        cpu.memory.set_byte(0x0086, 0x00); // not a Koopaling room
+        cpu.memory.set_byte(0x0715, 0x42); // Player_Score high byte
+        cpu.memory.set_byte(0x0000, 0xAA);
+        cpu.memory.set_byte(0x0001, 0xBB);
+        cpu.registers.program_counter = origin;
+        cpu.registers.accumulator = 0x42; // as the displaced STA would have it
+
+        for _ in 0..256 {
+            let op = cpu.memory.get_byte(cpu.registers.program_counter);
+            if matches!(Ricoh2a03::decode(op), Some((Instruction::RTS, _))) {
+                assert_eq!(cpu.registers.accumulator, 0x42, "real score MSB not returned");
+                assert_eq!(cpu.memory.get_byte(0x0000), 0xAA, "Temp_Var1 was clobbered");
+                assert_eq!(cpu.memory.get_byte(0x0001), 0xBB, "Temp_Var2 was clobbered");
+                return;
+            }
+            cpu.single_step();
+        }
+        panic!("routine never reached RTS");
+    }
+
+    /// From wand state 3 on, the reading is frozen: moving the player must not
+    /// change it. This is the whole point — the number you read is the number
+    /// at the grab.
+    #[test]
+    fn reading_freezes_once_the_wand_is_grabbed() {
+        use mos6502::cpu::CPU;
+        use mos6502::instruction::{Instruction, Ricoh2a03};
+        use mos6502::memory::{Bus, Memory};
+        use mos6502::Variant;
+
+        let origin = crate::randomize::rom_data::KOOPA_GRAB_HEIGHT_CPU;
+        let mut mem = Memory::new();
+        mem.set_bytes(origin, &KOOPA_GRAB_HEIGHT);
+        let mut cpu = CPU::new(mem, Ricoh2a03);
+        cpu.memory.set_byte(0x0086, 5); // arena 5
+
+        let step = |cpu: &mut CPU<Memory, Ricoh2a03>, state: u8, y: u8, frac: u8| -> u32 {
+            cpu.memory.set_byte(0x07BD, state);
+            cpu.memory.set_byte(0x0087, 0);
+            cpu.memory.set_byte(0x00A2, y);
+            cpu.memory.set_byte(0x075F, frac);
+            cpu.registers.program_counter = origin;
+            for _ in 0..256 {
+                let op = cpu.memory.get_byte(cpu.registers.program_counter);
+                if matches!(Ricoh2a03::decode(op), Some((Instruction::RTS, _))) {
+                    return u32::from(cpu.registers.accumulator) * 65536
+                        + u32::from(cpu.memory.get_byte(0x0001)) * 256
+                        + u32::from(cpu.memory.get_byte(0x0000));
+                }
+                cpu.single_step();
+            }
+            panic!("routine never reached RTS");
+        };
+
+        // Fighting: the readout tracks the player.
+        let mid_fight = step(&mut cpu, 0, 100, 0x40);
+        assert_eq!(mid_fight, 5 * 10000 + 100 * 16 + 4);
+        // The grab frame sets the value that must survive.
+        let at_grab = step(&mut cpu, 0, 60, 0x80);
+        assert_eq!(at_grab, 5 * 10000 + 60 * 16 + 8);
+        // Wand grabbed (state 3+): the player falls, the reading must not move.
+        for (state, y) in [(3u8, 90u8), (4, 150), (5, 200), (6, 220), (7, 255)] {
+            assert_eq!(step(&mut cpu, state, y, 0xF0), at_grab, "state {state} moved the reading");
+        }
+    }
+
+    /// The displayed number must never reach the 6-digit overflow the vanilla
+    /// converter guards with `CMP #$FA`. Worst case is world 9 at the bottom of
+    /// a two-page room, and even that stays under 100000.
+    #[test]
+    fn displayed_value_cannot_overflow_the_score_field() {
+        let max_position = (1u32 << 13) - 1; // (YHi:Y) << 4 | frac, YHi <= 1
+        assert_eq!(max_position, 8191);
+        let max_displayed = 9 * 10000 + max_position; // World_Num 8 -> arena id 9
+        assert!(max_displayed < 100000, "{max_displayed} would overflow to all-9s");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Koopaling grab-height readout
+// ---------------------------------------------------------------------------
+
+/// Replace the score field with the player's vertical position during a
+/// Koopaling fight, frozen at the moment the wand is grabbed.
+///
+/// The point is a per-arena competition: with the wand cutscene skipped (see
+/// [`skip_wand_cutscene`]) the player jumps for the wand, and this reports
+/// exactly where they caught it so runs can be compared. Raw Y is deliberate —
+/// it needs no per-room floor constant, so the number means the same thing in
+/// every arena. It counts *down*: a smaller number is a higher grab.
+///
+/// # The value
+///
+/// SMB3 has no player-Y fractional byte, but it does have sub-pixel precision.
+/// `Object_AddVelFrac` (PRG000 $DCFB) takes the 4.4FP velocity, shifts the
+/// fractional nibble up into bits 7-4, accumulates it in `Player_YVelFrac`
+/// ($075F) and carries into the pixel byte. Despite its name that byte is the
+/// sub-*pixel position*, so the full position is:
+///
+/// ```text
+///     Player_YHi ($87) : Player_Y ($A2) . Player_YVelFrac ($075F) >> 4
+/// ```
+///
+/// i.e. 1/16-pixel resolution. We display it in 1/16-px units, which is exact
+/// and lossless (ties break in the sub-pixel) and spans 0..8191 — four digits.
+/// The score field has six, so the top two carry the arena number:
+///
+/// ```text
+///     displayed = (World_Num + 1) * 10000 + position
+/// ```
+///
+/// The status bar appends a fixed `0` tile of its own, so world 5 at position
+/// 4720 reads `0514720`. That trailing zero is part of the static status-bar
+/// layout, not one of the six buffered tiles, so it cannot be dropped without
+/// degrading the real score display everywhere.
+///
+/// # Why the score is never touched
+///
+/// `StatusBar_Fill_Score` (PRG026 $B175) folds `Score_Earned` into
+/// `Player_Score`, copies the three bytes to `Temp_Var1/2/3`, and then converts
+/// **from the temps**. Hooking after the copy and overwriting the temps leaves
+/// `Player_Score` completely alone — the real score keeps accumulating
+/// underneath and reappears by itself when the flag clears. There is no backup
+/// and no restore to get wrong.
+///
+/// The hook displaces `STA Player_Score` (3 bytes) and the routine performs
+/// that store itself, then returns the value's high byte in `A` so vanilla's
+/// very next instruction — `STA <Temp_Var3` — does the third store for free.
+///
+/// # Arena detection and the latch
+///
+/// `ObjNorm_Koopaling` (PRG001 $AEC4) opens with `LDY World_Num`, another whole
+/// 3-byte instruction, so the marker hook displaces it and reuses the same load
+/// for the arena id. It stamps `$86` — unused zero page — with `World_Num + 1`
+/// every frame the Koopaling AI runs. Zero page is cleared by
+/// `Clear_RAM_thru_ZeroPage` on every level exit, so the flag needs no clear
+/// hook of its own.
+///
+/// `Level_GetWandState` ($07BD) supplies the freeze: state 3 is "wand grabbed".
+/// Below 3 the latch is recomputed each frame; from 3 on it is only replayed,
+/// so the reading holds through the grab flash, the time bonus and the fall.
+/// Merely *stopping* the overwrite would snap the display back to the real
+/// score instead of freezing, which is why the value is latched into
+/// `$0758`/`$0759` rather than recomputed.
+const KOOPA_ARENA_MARK_SITE: usize = 0x02ED4; // ObjNorm_Koopaling: LDY World_Num
+const KOOPA_GRAB_HEIGHT_SITE: usize = 0x351A1; // StatusBar_Fill_Score: STA Player_Score
+
+/// Marker: stamp the arena id, restore `Y`, return. 8 bytes.
+#[rustfmt::skip]
+const KOOPA_ARENA_MARK: [u8; 8] = [
+    0xAC, 0x27, 0x07, // LDY World_Num     ; displaced instruction
+    0xC8,             // INY               ; 1-based, so 0 stays "not an arena"
+    0x84, 0x86,       // STY $86           ; arena id (zero page: 2 bytes, auto-cleared)
+    0x88,             // DEY               ; restore Y = World_Num for the caller
+    0x60,             // RTS
+];
+
+/// Score-field override. 101 bytes.
+#[rustfmt::skip]
+const KOOPA_GRAB_HEIGHT: [u8; 101] = [
+    0x8D, 0x15, 0x07,       // STA Player_Score      ; displaced — real score preserved
+    0xA4, 0x86,             // LDY $86               ; arena id; 0 = not a Koopaling room
+    0xF0, 0x5A,             // BEQ out               ; -> vanilla behaviour
+    0xAD, 0xBD, 0x07,       // LDA Level_GetWandState
+    0xC9, 0x03,             // CMP #$03
+    0xB0, 0x2B,             // BCS show              ; wand grabbed -> replay frozen latch
+    // latch = (YHi:Y) << 4 | (frac >> 4)   — position in 1/16 px
+    0xA5, 0xA2,             // LDA <Player_Y
+    0x0A, 0x0A, 0x0A, 0x0A, // ASL A x4              ; Y << 4
+    0x8D, 0x58, 0x07,       // STA $0758
+    0xAD, 0x5F, 0x07,       // LDA Player_YVelFrac   ; sub-pixel in bits 7-4
+    0x4A, 0x4A, 0x4A, 0x4A, // LSR A x4              ; -> 0..15
+    0x0D, 0x58, 0x07,       // ORA $0758
+    0x8D, 0x58, 0x07,       // STA $0758             ; latch lo
+    0xA5, 0xA2,             // LDA <Player_Y
+    0x4A, 0x4A, 0x4A, 0x4A, // LSR A x4              ; Y >> 4
+    0x8D, 0x59, 0x07,       // STA $0759
+    0xA5, 0x87,             // LDA <Player_YHi
+    0x0A, 0x0A, 0x0A, 0x0A, // ASL A x4              ; YHi << 4
+    0x0D, 0x59, 0x07,       // ORA $0759
+    0x8D, 0x59, 0x07,       // STA $0759             ; latch hi
+    // show: publish the latch into the converter's temps
+    0xAD, 0x58, 0x07,       // LDA $0758
+    0x85, 0x00,             // STA <Temp_Var1
+    0xAD, 0x59, 0x07,       // LDA $0759
+    0x85, 0x01,             // STA <Temp_Var2
+    0xA9, 0x00,             // LDA #$00
+    0x8D, 0x5A, 0x07,       // STA $075A             ; 24-bit high accumulator
+    // value += 10000 * arena_id  (Y = 1..8, so at most 8 adds)
+    0xA5, 0x00,             // mul: LDA <Temp_Var1
+    0x18,                   // CLC
+    0x69, 0x10,             // ADC #<10000
+    0x85, 0x00,             // STA <Temp_Var1
+    0xA5, 0x01,             // LDA <Temp_Var2
+    0x69, 0x27,             // ADC #>10000
+    0x85, 0x01,             // STA <Temp_Var2
+    0x90, 0x03,             // BCC nc
+    0xEE, 0x5A, 0x07,       // INC $075A
+    0x88,                   // nc: DEY
+    0xD0, 0xEB,             // BNE mul
+    0xAD, 0x5A, 0x07,       // LDA $075A             ; -> vanilla's STA <Temp_Var3
+    0x60,                   // RTS
+    0xAD, 0x15, 0x07,       // out: LDA Player_Score ; real MSB for vanilla's STA <Temp_Var3
+    0x60,                   // RTS
+];
+
+pub fn koopaling_grab_height(rom: &mut Rom) {
+    use super::rom_data::{
+        FS_KOOPA_ARENA_MARK, FS_KOOPA_GRAB_HEIGHT, KOOPA_ARENA_MARK_CPU, KOOPA_GRAB_HEIGHT_CPU,
+    };
+
+    rom.write_range(FS_KOOPA_ARENA_MARK, &KOOPA_ARENA_MARK);
+    rom.write_range(FS_KOOPA_GRAB_HEIGHT, &KOOPA_GRAB_HEIGHT);
+
+    let mark = KOOPA_ARENA_MARK_CPU.to_le_bytes();
+    rom.write_range(KOOPA_ARENA_MARK_SITE, &[0x20, mark[0], mark[1]]); // JSR arena_mark
+
+    let height = KOOPA_GRAB_HEIGHT_CPU.to_le_bytes();
+    rom.write_range(KOOPA_GRAB_HEIGHT_SITE, &[0x20, height[0], height[1]]); // JSR grab_height
 }

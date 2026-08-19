@@ -342,6 +342,9 @@ pub struct TestRomSpec {
     /// This applies the self-contained always-on patches directly, so a vanilla
     /// base keeps full open movement and the vanilla map.
     pub always_on_patches: bool,
+    /// Apply the Koopaling grab-height readout (a flag-gated option, so it is
+    /// absent from both a vanilla base and a default randomized one).
+    pub koopaling_grab_height: bool,
     /// Keep `extra_patches` from touching the 8 overworld map grids.
     ///
     /// The full practice patch rewrites the maps (49 of its records land in
@@ -575,6 +578,15 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         } else {
             report.push("always-on patches: already present (randomized base)".to_string());
         }
+    }
+
+    // 1a'. Flag-gated options worth playtesting on their own. Unlike the
+    //      always-on patches these are absent from a randomized base too,
+    //      since that base is built from default options.
+    if spec.koopaling_grab_height {
+        rom.set_tag("koopalings/grab_height");
+        crate::randomize::koopalings::koopaling_grab_height(&mut rom);
+        report.push("koopaling grab-height readout".to_string());
     }
 
     // 1b. Whole IPS patches, before any test edit, so test edits win on
@@ -835,6 +847,7 @@ mod tests {
             placements: Vec::new(),
             place_all: None,
             world: None,
+            koopaling_grab_height: false,
             extra_patches: Vec::new(),
             protect_map: false,
             movement_patch: None,

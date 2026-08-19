@@ -108,6 +108,11 @@ struct Cli {
     #[arg(long)]
     patches: bool,
 
+    /// Show the player's height in the score during Koopaling fights, frozen at
+    /// the wand grab. Flag-gated, so it is absent from a plain --randomize base too.
+    #[arg(long)]
+    koopaling_grab_height: bool,
+
     /// Skip the open-movement patch, so tiles must be entered and cleared.
     #[arg(long)]
     no_walk: bool,
@@ -344,6 +349,7 @@ fn main() {
         protect_map: cli.protect_map,
         movement_patch,
         always_on_patches: cli.patches,
+        koopaling_grab_height: cli.koopaling_grab_height,
         walk_skip_conflicts: cli.walk_skip_conflicts,
         remove_locks: !cli.keep_locks,
         remove_gaps: !cli.keep_gaps,

@@ -370,6 +370,12 @@ pub struct Options {
     /// enemies, and pick-up-able ice blocks, of somewhere to spawn.
     #[serde(default)]
     pub lakitu_stays_dead: bool,
+
+    /// Replace the score with the player's height during Koopaling fights,
+    /// frozen at the wand grab.
+    #[serde(default)]
+    pub koopaling_grab_height: bool,
+
     /// Every 1-Up Mushroom is replaced with a Poison Mushroom that damages
     /// the player instead of granting a life. (MaCobra52's "All 1UPs are
     /// Poison Mushrooms" patch.) Off by default; a challenge option.
@@ -539,6 +545,7 @@ impl Default for Options {
             no_game_over_penalty: false,
             faster_frog: false,
             lakitu_stays_dead: false,
+            koopaling_grab_height: false,
             poison_mushrooms: false,
             modern_powerups: false,
             fire_flower: FireFlowerMode::Off,

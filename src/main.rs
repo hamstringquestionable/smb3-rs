@@ -301,6 +301,10 @@ struct Cli {
     #[arg(long)]
     lakitu_stays_dead: bool,
 
+    /// Show the player's height (with sub-pixel) in the score field during Koopaling fights, frozen at the wand grab
+    #[arg(long)]
+    koopaling_grab_height: bool,
+
     /// Every 1-Up Mushroom becomes a Poison Mushroom that hurts you (MaCobra52's "All 1UPs are Poison Mushrooms" patch)
     #[arg(long)]
     poison_mushrooms: bool,
@@ -533,6 +537,7 @@ fn build_options(cli: &Cli) -> Options {
             no_game_over_penalty: cli.no_game_over_penalty,
             faster_frog: cli.faster_frog,
             lakitu_stays_dead: cli.lakitu_stays_dead,
+            koopaling_grab_height: cli.koopaling_grab_height,
             poison_mushrooms: cli.poison_mushrooms,
             modern_powerups: cli.modern_powerups,
             fire_flower: cli.fire_flower,

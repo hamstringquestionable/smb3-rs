@@ -9,6 +9,15 @@ deploys.
 
 ## [Unreleased]
 
+### Added
+
+- **Grab Height Readout.** During a Koopaling fight the score field shows how
+  high you are, down to the sub-pixel, and freezes the instant you grab the
+  wand. The reading counts down, so a smaller number is a higher grab, and the
+  first two digits are the world so a screenshot says which airship it was. Your
+  real score is untouched and comes straight back when the fight ends. Pairs
+  with Skip Wand Cutscene, which is what lets you jump for the wand at all.
+
 ### Changed
 
 - **World length varies more between worlds.** Every world used to guarantee

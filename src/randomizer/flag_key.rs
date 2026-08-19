@@ -375,6 +375,7 @@ mod payload {
 
         // --- Appended after v29 shipped; older keys read these as zero/off ---
         pub(super) lakitu_stays_dead: bool,
+        pub(super) koopaling_grab_height: bool,
 
         // --- Reserve ---
         // 146 bits. Adding an option is: declare it immediately above this
@@ -390,7 +391,7 @@ mod payload {
         //
         // Two fields because the crate's widths stop at B128.
         #[skip] __: B128,
-        #[skip] __: B18,
+        #[skip] __: B17,
     }
 }
 
@@ -425,7 +426,8 @@ impl Options {
             adjust_boss_hitboxes, koopaling_hits, boomboom_hits,
             hammer_vulnerable_koopalings, random_koopalings, early_sun,
             japanese_damage, infinite_mushroom_houses, fast_mushroom_house,
-            faster_tail_speed, faster_frog, lakitu_stays_dead, no_game_over_penalty,
+            faster_tail_speed, faster_frog, lakitu_stays_dead, koopaling_grab_height,
+            no_game_over_penalty,
             poison_mushrooms, modern_powerups, anchor_visuals,
             hammer_breaks_locks, hammer_breaks_bridges, more_hammer_rocks,
             eights_are_wild, troll_pipes, antechamber_shuffle,
@@ -471,6 +473,7 @@ impl Options {
             .with_faster_tail_speed(*faster_tail_speed)
             .with_faster_frog(*faster_frog)
             .with_lakitu_stays_dead(*lakitu_stays_dead)
+            .with_koopaling_grab_height(*koopaling_grab_height)
             .with_no_game_over_penalty(*no_game_over_penalty)
             .with_poison_mushrooms(*poison_mushrooms)
             .with_modern_powerups(*modern_powerups)
@@ -558,6 +561,7 @@ impl Options {
             faster_tail_speed: f.faster_tail_speed(),
             faster_frog: f.faster_frog(),
             lakitu_stays_dead: f.lakitu_stays_dead(),
+            koopaling_grab_height: f.koopaling_grab_height(),
             no_game_over_penalty: f.no_game_over_penalty(),
             poison_mushrooms: f.poison_mushrooms(),
             modern_powerups: f.modern_powerups(),

@@ -532,6 +532,11 @@ fn randomize_inner(
     // A defeated Lakitu is deleted instead of re-seeded two screens back, so it
     // stops holding one of the five general object slots for the whole level
     // (and stops feeding Spiny Eggs into the other four).
+    if options.koopaling_grab_height {
+        rom.set_tag("koopalings/grab_height");
+        randomize::koopalings::koopaling_grab_height(rom);
+    }
+
     if options.lakitu_stays_dead {
         rom.set_tag("qol/lakitu_stays_dead");
         randomize::qol::apply_lakitu_stays_dead(rom);
