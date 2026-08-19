@@ -13,7 +13,7 @@
 //! routine must live in a bank mapped when it runs. The always-mapped banks
 //! are effectively full — PRG031 (`$E000–$FFFF`) has 81 bytes left but a
 //! largest contiguous gap of only 30, and PRG030 (`$8000–$9FFF`) has 88 with
-//! a largest gap of 42. Swapped banks are roomier (PRG010 768, PRG026 2443,
+//! a largest gap of 42. Swapped banks are roomier (PRG010 896, PRG026 2443,
 //! and the in-level banks PRG004 426 / PRG006 1392 in one run each).
 //!
 //! Reserving some headroom in an allocation is fine and encouraged — a routine
@@ -126,7 +126,6 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(0x15554, 112, &["fx_screen_check"], "cross-screen lock patch (Fred's algorithm + darkness gate)"),
     fs(0x15DF0, 35, &["fix_canoe_softlock"], "canoe_fix: death respawn position save"),
     fs(0x15E13, 162, &["map_warp"], "2P Start+Select warp-to-partner routine"),
-    fs(0x155C4, 128, &["koopalings"], "koopa_world_card: grab-height readout on the world intro card (128 reserved, 106 used)"),
     fs(0x15EB5, 151, &["canoe_summon"], "A-on-dock call-the-boat routine + offset tables"),
     // PRG011 (file 0x16010, CPU $A000–$BFFF during map)
     fs(0x17C87, 36, &["start_airship_swap"], "game-over twirl finalize helper"),
@@ -138,7 +137,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(0x03841, 13, &["koopalings"], "koopa_collision_guard: skip collision bitmap during invuln"),
     fs(0x0384E, 16, &["koopalings"], "koopa_vram_clear: clear VRAM buffer on defeat"),
     fs(0x0385E, 12, &["koopalings"], "koopa_fire_preset: set stomp counter from threshold table for fireball defeat"),
-    fs(0x0386A, 12, &["koopalings"], "koopa_arena_mark: stamp the grab-height liveness countdown (12 reserved, 9 used)"),
+    fs(0x0386A, 38, &["koopalings"], "koopa_arena_mark: liveness countdown + capture the height digits (38 reserved, 33 used)"),
     fs(0x03FD0, 22, &["koopalings"], "koopa_y_clamp: clamp Koopaling Y position to screen"),
     fs(0x03FE6, 36, &["fire_flower"], "position-hash suit routine + pool table"),
     fs(0x02713, 17, &["poison_mushrooms"], "object $0A init+hit stubs (Norm reuses 1-Up; reclaimed dead Obj0A code)"),
@@ -329,7 +328,7 @@ pub(crate) const KOOPA_VRAM_CLEAR_CPU: u16  = 0xB83E;  // $A000 + (0x0384E - 0x0
 
 // Koopaling arena marker -- stamp the liveness countdown the grab-height
 // readout decays, so it lapses when the Koopaling AI stops running.
-pub(crate) const FS_KOOPA_ARENA_MARK: usize = 0x0386A; // 12 reserved, 9 used
+pub(crate) const FS_KOOPA_ARENA_MARK: usize = 0x0386A; // 38 reserved, 33 used
 
 pub(crate) const KOOPA_ARENA_MARK_CPU: u16  = 0xB85A;  // $A000 + (0x0386A - 0x02010)
 
@@ -338,12 +337,6 @@ pub(crate) const KOOPA_ARENA_MARK_CPU: u16  = 0xB85A;  // $A000 + (0x0386A - 0x0
 pub(crate) const FS_KOOPA_GRAB_HEIGHT: usize = 0x35627; // 160 reserved, 146 used
 
 pub(crate) const KOOPA_GRAB_HEIGHT_CPU: u16  = 0xB617;  // $A000 + (0x35627 - 0x34010)
-
-// Koopaling world-card readout — draw the world's grab reading into the
-// "WORLD n" intro box. Lives in PRG010 beside the map code that calls it.
-pub(crate) const FS_KOOPA_WORLD_CARD: usize = 0x155C4; // 128 reserved, 106 used
-
-pub(crate) const KOOPA_WORLD_CARD_CPU: u16  = 0xD5B4;  // $C000 + (0x155C4 - 0x14010)
 
 // Koopaling Y-position clamp — keep bouncing Koopalings on screen in non-native rooms.
 // Source: Fred's Koopaling fixes.
@@ -857,7 +850,6 @@ mod free_space_tests {
             (FS_KOOPA_Y_CLAMP, "FS_KOOPA_Y_CLAMP"),
             (FS_KOOPA_ARENA_MARK, "FS_KOOPA_ARENA_MARK"),
             (FS_KOOPA_GRAB_HEIGHT, "FS_KOOPA_GRAB_HEIGHT"),
-            (FS_KOOPA_WORLD_CARD, "FS_KOOPA_WORLD_CARD"),
             (FS_FIRE_FLOWER, "FS_FIRE_FLOWER"),
             (FS_POISON_MUSHROOM, "FS_POISON_MUSHROOM"),
             (FS_POISON_HOOK, "FS_POISON_HOOK"),
