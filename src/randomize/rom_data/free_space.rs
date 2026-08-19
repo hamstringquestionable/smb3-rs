@@ -119,7 +119,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(0x3557F, 50, &["hammer_breaks_tiles"], "hammer_locks: tile check subroutine + tables"),
     fs(0x355B1, 12, &["anchor_visuals"], "items-vs-cards index guard trampoline"),
     fs(0x355BD, 106, &["big_q_blocks"], "big_q_block: two-pass lookup routine + 13-entry tables (current-area then frozen entry)"),
-    fs(0x35627, 160, &["koopalings"], "koopa_grab_height: room lookup + score-field height readout (160 reserved, 138 used)"),
+    fs(0x35627, 160, &["koopalings"], "koopa_grab_height: room lookup + score-field height readout (160 reserved, 146 used)"),
     // PRG027 (file 0x36010, CPU $A000–$BFFF)
     fs(0x379D9, 894, &["king_quotes"], "7 quotes + hook (7×120 + 54)"),
     // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
@@ -138,6 +138,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(0x03841, 13, &["koopalings"], "koopa_collision_guard: skip collision bitmap during invuln"),
     fs(0x0384E, 16, &["koopalings"], "koopa_vram_clear: clear VRAM buffer on defeat"),
     fs(0x0385E, 12, &["koopalings"], "koopa_fire_preset: set stomp counter from threshold table for fireball defeat"),
+    fs(0x0386A, 12, &["koopalings"], "koopa_arena_mark: stamp the grab-height liveness countdown (12 reserved, 9 used)"),
     fs(0x03FD0, 22, &["koopalings"], "koopa_y_clamp: clamp Koopaling Y position to screen"),
     fs(0x03FE6, 36, &["fire_flower"], "position-hash suit routine + pool table"),
     fs(0x02713, 17, &["poison_mushrooms"], "object $0A init+hit stubs (Norm reuses 1-Up; reclaimed dead Obj0A code)"),
@@ -326,9 +327,15 @@ pub(crate) const FS_KOOPA_VRAM_CLEAR: usize = 0x0384E; // 16 bytes
 
 pub(crate) const KOOPA_VRAM_CLEAR_CPU: u16  = 0xB83E;  // $A000 + (0x0384E - 0x02010)
 
+// Koopaling arena marker -- stamp the liveness countdown the grab-height
+// readout decays, so it lapses when the Koopaling AI stops running.
+pub(crate) const FS_KOOPA_ARENA_MARK: usize = 0x0386A; // 12 reserved, 9 used
+
+pub(crate) const KOOPA_ARENA_MARK_CPU: u16  = 0xB85A;  // $A000 + (0x0386A - 0x02010)
+
 // Koopaling grab-height readout — replace the score field with the player's
 // vertical position (1/16 px) during a Koopaling fight, frozen at the wand grab.
-pub(crate) const FS_KOOPA_GRAB_HEIGHT: usize = 0x35627; // 160 reserved, 138 used
+pub(crate) const FS_KOOPA_GRAB_HEIGHT: usize = 0x35627; // 160 reserved, 146 used
 
 pub(crate) const KOOPA_GRAB_HEIGHT_CPU: u16  = 0xB617;  // $A000 + (0x35627 - 0x34010)
 
@@ -848,6 +855,7 @@ mod free_space_tests {
             (FS_KOOPA_VRAM_CLEAR, "FS_KOOPA_VRAM_CLEAR"),
             (FS_KOOPA_FIRE_PRESET, "FS_KOOPA_FIRE_PRESET"),
             (FS_KOOPA_Y_CLAMP, "FS_KOOPA_Y_CLAMP"),
+            (FS_KOOPA_ARENA_MARK, "FS_KOOPA_ARENA_MARK"),
             (FS_KOOPA_GRAB_HEIGHT, "FS_KOOPA_GRAB_HEIGHT"),
             (FS_KOOPA_WORLD_CARD, "FS_KOOPA_WORLD_CARD"),
             (FS_FIRE_FLOWER, "FS_FIRE_FLOWER"),

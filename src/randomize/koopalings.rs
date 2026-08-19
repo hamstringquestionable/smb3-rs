@@ -729,8 +729,8 @@ mod asm_checks {
     /// The routine's baked table must stay the table we reason about.
     #[test]
     fn routine_table_matches_the_documented_rooms() {
-        assert_eq!(&KOOPA_GRAB_HEIGHT[124..131], &KOOPA_ARENA_LAYOUT_LO);
-        assert_eq!(&KOOPA_GRAB_HEIGHT[131..], &[0xBA, 0xBA, 0xBA, 0xAC, 0xBA, 0xBB, 0xBB]);
+        assert_eq!(&KOOPA_GRAB_HEIGHT[132..139], &KOOPA_ARENA_LAYOUT_LO);
+        assert_eq!(&KOOPA_GRAB_HEIGHT[139..], &[0xBA, 0xBA, 0xBA, 0xAC, 0xBA, 0xBB, 0xBB]);
     }
 
     /// The seven rooms must stay distinguishable by layout-pointer low byte
@@ -748,7 +748,7 @@ mod asm_checks {
         asm::check(&KOOPA_GRAB_HEIGHT)
             .allocation(crate::randomize::rom_data::FS_KOOPA_GRAB_HEIGHT)
             .origin(crate::randomize::rom_data::KOOPA_GRAB_HEIGHT_CPU)
-            .data_from(124) // the last 14 bytes are the boss-room pointer tables
+            .data_from(132) // the last 14 bytes are the boss-room pointer tables
             .assert_ok();
     }
 
@@ -764,7 +764,7 @@ mod asm_checks {
         let height_hook = [0x20, height[0], height[1]];
         asm::check(&KOOPA_GRAB_HEIGHT)
             .origin(crate::randomize::rom_data::KOOPA_GRAB_HEIGHT_CPU)
-            .data_from(124)
+            .data_from(132)
             .hook(&v, KOOPA_GRAB_HEIGHT_SITE, &height_hook)
             .assert_ok();
     }
@@ -806,6 +806,7 @@ mod asm_checks {
         let mut cpu = CPU::new(mem, Ricoh2a03);
 
         // Load the boss room whose arena id we want (arena is 1-based).
+        cpu.memory.set_byte(0x7A83, 0x20); // liveness: Koopaling AI running
         cpu.memory.set_byte(0x7EB9, KOOPA_ARENA_LAYOUT_LO[arena as usize - 1]);
         cpu.memory.set_byte(0x7EBA, KOOPA_ARENA_LAYOUT_HI[arena as usize - 1]);
         cpu.memory.set_byte(0x0727, world); // World_Num -> WRAM slot
@@ -882,6 +883,7 @@ mod asm_checks {
         let mut mem = Memory::new();
         mem.set_bytes(origin, &KOOPA_GRAB_HEIGHT);
         let mut cpu = CPU::new(mem, Ricoh2a03);
+        cpu.memory.set_byte(0x7A83, 0x20);
         cpu.memory.set_byte(0x7EB9, 0x11); // not any Koopaling room
         cpu.memory.set_byte(0x7EBA, 0x22);
         cpu.memory.set_byte(0x0715, 0x42); // Player_Score high byte
@@ -917,11 +919,13 @@ mod asm_checks {
         let mut mem = Memory::new();
         mem.set_bytes(origin, &KOOPA_GRAB_HEIGHT);
         let mut cpu = CPU::new(mem, Ricoh2a03);
+        cpu.memory.set_byte(0x7A83, 0x20); // liveness: Koopaling AI running
         cpu.memory.set_byte(0x7EB9, KOOPA_ARENA_LAYOUT_LO[4]); // arena 5's room
         cpu.memory.set_byte(0x7EBA, KOOPA_ARENA_LAYOUT_HI[4]);
 
         let step = |cpu: &mut CPU<Memory, Ricoh2a03>, state: u8, y: u8, frac: u8| -> u32 {
             cpu.memory.set_byte(0x07BD, state);
+            cpu.memory.set_byte(0x7A83, 0x20); // re-stamped each frame by the AI
             cpu.memory.set_byte(0x0727, 4); // World_Num -> WRAM slot
             cpu.memory.set_byte(0x0087, 0);
             cpu.memory.set_byte(0x00A2, y);
@@ -1099,6 +1103,71 @@ mod asm_checks {
         assert_eq!(lo, KOOPA_CARD_VRAM_LO ^ 0x10);
     }
 
+    #[test]
+    fn arena_mark_is_well_formed() {
+        asm::check(&KOOPA_ARENA_MARK)
+            .allocation(crate::randomize::rom_data::FS_KOOPA_ARENA_MARK)
+            .origin(crate::randomize::rom_data::KOOPA_ARENA_MARK_CPU)
+            .assert_ok();
+    }
+
+    /// Regression: once the liveness countdown lapses the readout must release
+    /// the score, even standing in a real boss room with a real reading stored.
+    ///
+    /// This is the bug where the reading survived the fight and sat on the map:
+    /// the map runs the same `StatusBar_UpdateValues`, and `Level_LayPtrOrig`
+    /// still names the boss room until the next level loads.
+    #[test]
+    fn readout_releases_the_score_once_liveness_lapses() {
+        use mos6502::cpu::CPU;
+        use mos6502::instruction::{Instruction, Ricoh2a03};
+        use mos6502::memory::{Bus, Memory};
+        use mos6502::Variant;
+
+        let origin = crate::randomize::rom_data::KOOPA_GRAB_HEIGHT_CPU;
+        // Run one frame with a given liveness value; report (score_msb, temps_kept).
+        let frame = |live: u8| -> (u8, bool, u8) {
+            let mut mem = Memory::new();
+            mem.set_bytes(origin, &KOOPA_GRAB_HEIGHT);
+            let mut cpu = CPU::new(mem, Ricoh2a03);
+            cpu.memory.set_byte(0x7A83, live);
+            cpu.memory.set_byte(0x7EB9, KOOPA_ARENA_LAYOUT_LO[2]); // a real arena
+            cpu.memory.set_byte(0x7EBA, KOOPA_ARENA_LAYOUT_HI[2]);
+            cpu.memory.set_byte(0x0715, 0x42); // real score MSB
+            cpu.memory.set_byte(0x0000, 0xAA);
+            cpu.memory.set_byte(0x0001, 0xBB);
+            cpu.memory.set_byte(0x07BD, 4); // wand grabbed: replay the slot
+            cpu.registers.program_counter = origin;
+            cpu.registers.accumulator = 0x42;
+            for _ in 0..4096 {
+                let op = cpu.memory.get_byte(cpu.registers.program_counter);
+                if matches!(Ricoh2a03::decode(op), Some((Instruction::RTS, _))) {
+                    let untouched = cpu.memory.get_byte(0x0000) == 0xAA
+                        && cpu.memory.get_byte(0x0001) == 0xBB;
+                    return (cpu.registers.accumulator, untouched, cpu.memory.get_byte(0x7A83));
+                }
+                cpu.single_step();
+            }
+            panic!("never reached RTS");
+        };
+
+        // Lapsed: score is vanilla's again, and the flag stays at zero.
+        let (msb, untouched, live) = frame(0x00);
+        assert_eq!(msb, 0x42, "lapsed flag still overwrote the score");
+        assert!(untouched, "lapsed flag still clobbered the converter temps");
+        assert_eq!(live, 0, "flag must not wrap below zero");
+
+        // Live: the readout takes over, and the countdown ticks down.
+        let (_, untouched, live) = frame(0x20);
+        assert!(!untouched, "live flag should have published the reading");
+        assert_eq!(live, 0x1F, "countdown did not decay");
+
+        // The last live frame still draws, and lands exactly on zero.
+        let (_, untouched, live) = frame(0x01);
+        assert!(!untouched, "final live frame should still draw");
+        assert_eq!(live, 0);
+    }
+
     /// Regression: a room that is not a Koopaling arena must leave the score
     /// completely alone.
     ///
@@ -1129,6 +1198,7 @@ mod asm_checks {
             let mut mem = Memory::new();
             mem.set_bytes(origin, &KOOPA_GRAB_HEIGHT);
             let mut cpu = CPU::new(mem, Ricoh2a03);
+            cpu.memory.set_byte(0x7A83, 0x20); // even with liveness stamped
             cpu.memory.set_byte(0x7EB9, lo);
             cpu.memory.set_byte(0x7EBA, hi);
             cpu.memory.set_byte(0x0715, 0x42); // Player_Score MSB
@@ -1275,9 +1345,48 @@ const BEST_LO_H: u8 = (KOOPA_BEST_LO >> 8) as u8;
 const BEST_HI_L: u8 = KOOPA_BEST_HI as u8;
 const BEST_HI_H: u8 = (KOOPA_BEST_HI >> 8) as u8;
 
+/// "The Koopaling AI ran recently" countdown, in WRAM beside the slots.
+///
+/// `ObjNorm_Koopaling` re-stamps it every frame; the status-bar routine decays
+/// it by one per frame and only draws while it is non-zero. When the AI stops
+/// running -- the level is over -- it lapses by itself.
+///
+/// This exists because the room pointer alone is not enough: the map runs the
+/// same `StatusBar_UpdateValues` (PRG030 $8732, `Map_Operation >= 2`), and
+/// `Level_LayPtrOrig` still names the boss room until the *next* level loads.
+/// Without this the readout survived the fight and sat on the map showing a
+/// value recomputed from a stale `Player_Y`.
+///
+/// A countdown rather than a boolean because nothing clears WRAM: no zero-page
+/// byte is free, and neither is any byte of `$0200-$06FF` that the level-exit
+/// clear would have wiped for us. Self-expiry needs no clear hook at all.
+/// $20 frames is a third of a second -- long enough to ride out any frame the
+/// object loop is skipped, short enough to lapse during the screen transition.
+const KOOPA_LIVE_FLAG: u16 = 0x7A83;
+const LIVE_L: u8 = KOOPA_LIVE_FLAG as u8;
+const LIVE_H: u8 = (KOOPA_LIVE_FLAG >> 8) as u8;
+const KOOPA_LIVE_FRAMES: u8 = 0x20;
+
 const KOOPA_GRAB_HEIGHT_SITE: usize = 0x351A1; // StatusBar_Fill_Score: STA Player_Score
 
-/// Score-field override. 138 bytes.
+/// Marker: stamp the liveness countdown, restore `Y`, return. 9 bytes.
+///
+/// Hooked over `ObjNorm_Koopaling`'s opening `LDY World_Num`, a whole 3-byte
+/// instruction. `A` is dead at entry (the caller's next instruction loads it)
+/// and `X` is untouched -- it holds the object slot the state handlers
+/// `DynJump` dispatches to index off.
+#[rustfmt::skip]
+const KOOPA_ARENA_MARK: [u8; 9] = [
+    0xA9, KOOPA_LIVE_FRAMES, // LDA #$20
+    0x8D, LIVE_L, LIVE_H,    // STA KOOPA_LIVE_FLAG
+    0xAC, 0x27, 0x07,        // LDY World_Num   ; displaced; restores Y for the caller
+    0x60,                    // RTS
+];
+
+/// `ObjNorm_Koopaling`'s opening `LDY World_Num`.
+const KOOPA_ARENA_MARK_SITE: usize = 0x02ED4;
+
+/// Score-field override. 146 bytes.
 ///
 /// # Why the arena is resolved here rather than flagged
 ///
@@ -1307,14 +1416,18 @@ const KOOPA_GRAB_HEIGHT_SITE: usize = 0x351A1; // StatusBar_Fill_Score: STA Play
 /// `X` and `Y` are both free here: the displaced `STA Player_Score` is followed
 /// by `LDY #$00` / `LDX #$05`, so vanilla reloads both immediately.
 #[rustfmt::skip]
-const KOOPA_GRAB_HEIGHT: [u8; 138] = [
+const KOOPA_GRAB_HEIGHT: [u8; 146] = [
     0x8D, 0x15, 0x07,       // STA Player_Score      ; displaced — real score preserved
+    // is the Koopaling AI still running? (see KOOPA_LIVE_FLAG)
+    0xAD, LIVE_L, LIVE_H,   // LDA KOOPA_LIVE_FLAG
+    0xF0, 0x78,             // BEQ out               ; lapsed -> vanilla behaviour
+    0xCE, LIVE_L, LIVE_H,   // DEC KOOPA_LIVE_FLAG   ; decays unless re-stamped
     // which Koopaling boss room is loaded, if any?
     0xA0, 0x06,             // LDY #$06
-    0xB9, 0x93, 0xB6,       // loop: LDA tlo,Y
+    0xB9, 0x9B, 0xB6,       // loop: LDA tlo,Y
     0xCD, 0xB9, 0x7E,       // CMP Level_LayPtrOrig_AddrL
     0xD0, 0x08,             // BNE next
-    0xB9, 0x9A, 0xB6,       // LDA thi,Y
+    0xB9, 0xA2, 0xB6,       // LDA thi,Y
     0xCD, 0xBA, 0x7E,       // CMP Level_LayPtrOrig_AddrH
     0xF0, 0x03,             // BEQ found
     0x88,                   // next: DEY
@@ -1452,10 +1565,15 @@ const KOOPA_WORLD_CARD_SITE: usize = 0x1439E;
 
 pub fn koopaling_grab_height(rom: &mut Rom) {
     use super::rom_data::{
-        FS_KOOPA_GRAB_HEIGHT, FS_KOOPA_WORLD_CARD, KOOPA_GRAB_HEIGHT_CPU, KOOPA_WORLD_CARD_CPU,
+        FS_KOOPA_ARENA_MARK, FS_KOOPA_GRAB_HEIGHT, FS_KOOPA_WORLD_CARD, KOOPA_ARENA_MARK_CPU,
+        KOOPA_GRAB_HEIGHT_CPU, KOOPA_WORLD_CARD_CPU,
     };
 
+    rom.write_range(FS_KOOPA_ARENA_MARK, &KOOPA_ARENA_MARK);
     rom.write_range(FS_KOOPA_GRAB_HEIGHT, &KOOPA_GRAB_HEIGHT);
+
+    let mark = KOOPA_ARENA_MARK_CPU.to_le_bytes();
+    rom.write_range(KOOPA_ARENA_MARK_SITE, &[0x20, mark[0], mark[1]]); // JSR arena_mark
 
     let height = KOOPA_GRAB_HEIGHT_CPU.to_le_bytes();
     rom.write_range(KOOPA_GRAB_HEIGHT_SITE, &[0x20, height[0], height[1]]); // JSR grab_height
