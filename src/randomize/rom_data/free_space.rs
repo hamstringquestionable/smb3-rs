@@ -120,6 +120,8 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(0x355B1, 12, &["anchor_visuals"], "items-vs-cards index guard trampoline"),
     fs(0x355BD, 106, &["big_q_blocks"], "big_q_block: two-pass lookup routine + 13-entry tables (current-area then frozen entry)"),
     fs(0x35627, 160, &["koopalings"], "koopa_grab_height: room lookup + score-field height readout (160 reserved, 146 used)"),
+    // PRG025 (file 0x32010, CPU $C000–$DFFF during title/ending)
+    fs(0x33549, 176, &["koopalings"], "koopa_the_end: grab-height table on the THE END screen (176 reserved, 154 used)"),
     // PRG027 (file 0x36010, CPU $A000–$BFFF)
     fs(0x379D9, 894, &["king_quotes"], "7 quotes + hook (7×120 + 54)"),
     // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
@@ -325,6 +327,14 @@ pub(crate) const KOOPA_COLLISION_GUARD_CPU: u16  = 0xB831;  // $A000 + (0x03841 
 pub(crate) const FS_KOOPA_VRAM_CLEAR: usize = 0x0384E; // 16 bytes
 
 pub(crate) const KOOPA_VRAM_CLEAR_CPU: u16  = 0xB83E;  // $A000 + (0x0384E - 0x02010)
+
+// Koopaling THE END readout -- draw the per-world grab heights under "THE END".
+// PRG025 is mapped at $C000 for the whole title/ending sequence, alongside
+// PRG024 at $A000, so the routine can tail-call back into the ending's own
+// vsync helper.
+pub(crate) const FS_KOOPA_THE_END: usize = 0x33549; // 176 reserved, 154 used
+
+pub(crate) const KOOPA_THE_END_CPU: u16  = 0xD539;  // $C000 + (0x33549 - 0x32010)
 
 // Koopaling arena marker -- stamp the liveness countdown the grab-height
 // readout decays, so it lapses when the Koopaling AI stops running.
@@ -849,6 +859,7 @@ mod free_space_tests {
             (FS_KOOPA_FIRE_PRESET, "FS_KOOPA_FIRE_PRESET"),
             (FS_KOOPA_Y_CLAMP, "FS_KOOPA_Y_CLAMP"),
             (FS_KOOPA_ARENA_MARK, "FS_KOOPA_ARENA_MARK"),
+            (FS_KOOPA_THE_END, "FS_KOOPA_THE_END"),
             (FS_KOOPA_GRAB_HEIGHT, "FS_KOOPA_GRAB_HEIGHT"),
             (FS_FIRE_FLOWER, "FS_FIRE_FLOWER"),
             (FS_POISON_MUSHROOM, "FS_POISON_MUSHROOM"),

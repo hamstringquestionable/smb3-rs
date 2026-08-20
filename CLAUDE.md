@@ -103,7 +103,7 @@ is the one to read:
 | PRG006 | `$C000–$DFFF`, in-level (enemy data) | 1392 | 1392 |
 | PRG007 | swapped, in-level (object AI) | 27 | 27 |
 | PRG010 | `$C000–$DFFF`, map | 896 | 588 |
-| PRG025 | `$C000–$DFFF`, title screen | 2771 | 2759 |
+| PRG025 | `$C000–$DFFF`, title screen | 2595 | 2583 |
 | PRG026 | `$A000–$BFFF`, map/inventory | 2443 | 2377 |
 
 PRG000 and PRG002 have no `$FF` filler left at all.

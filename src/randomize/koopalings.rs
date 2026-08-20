@@ -1045,6 +1045,142 @@ mod asm_checks {
         }
     }
 
+    #[test]
+    fn the_end_is_well_formed() {
+        asm::check(&KOOPA_THE_END)
+            .allocation(crate::randomize::rom_data::FS_KOOPA_THE_END)
+            .origin(crate::randomize::rom_data::KOOPA_THE_END_CPU)
+            .data_from(KOOPA_THE_END_ORDER) // order + VRAM row tables
+            .assert_ok();
+    }
+
+    #[test]
+    fn the_end_hook_displaces_a_whole_instruction() {
+        let Some(v) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+        // PRG024 $BCAE: JSR GraphicsBuf_Prep_And_WaitVSyn2 ($A806), then the
+        // START-wait (LDA <Pad_Input / AND #PAD_START / BEQ back).
+        assert_eq!(&v[KOOPA_THE_END_SITE..KOOPA_THE_END_SITE + 3], &[0x20, 0x06, 0xA8]);
+        assert_eq!(&v[KOOPA_THE_END_SITE + 3..KOOPA_THE_END_SITE + 7], &[0xA5, 0x18, 0x29, 0x10]);
+        // The routine tail-calls that same helper, so the hook must not orphan it.
+        assert_eq!(&KOOPA_THE_END[129..132], &[0x4C, 0x06, 0xA8]);
+        let cpu = crate::randomize::rom_data::KOOPA_THE_END_CPU.to_le_bytes();
+        let hook = [0x20, cpu[0], cpu[1]];
+        asm::check(&KOOPA_THE_END)
+            .origin(crate::randomize::rom_data::KOOPA_THE_END_CPU)
+            .data_from(KOOPA_THE_END_ORDER)
+            .hook(&v, KOOPA_THE_END_SITE, &hook)
+            .assert_ok();
+    }
+
+    /// Execute the THE END routine and read back the records it queued.
+    /// Returns the 7 records as (vram_addr, tiles).
+    fn the_end_records(readings: &[Option<[u8; 4]>; 8], order: [u8; 8]) -> Vec<(u16, Vec<u8>)> {
+        use mos6502::cpu::CPU;
+        use mos6502::instruction::Ricoh2a03;
+        use mos6502::memory::{Bus, Memory};
+
+        let origin = crate::randomize::rom_data::KOOPA_THE_END_CPU;
+        let mut code = KOOPA_THE_END;
+        code[KOOPA_THE_END_ORDER..KOOPA_THE_END_ORDER + 8].copy_from_slice(&order);
+        let mut mem = Memory::new();
+        mem.set_bytes(origin, &code);
+        // Stop the tail call from running off into unmapped memory.
+        mem.set_byte(0xA806, 0x60); // RTS
+        let mut cpu = CPU::new(mem, Ricoh2a03);
+        for (world, r) in readings.iter().enumerate() {
+            if let Some(digits) = r {
+                for (n, &d) in digits.iter().enumerate() {
+                    cpu.memory.set_byte(KOOPA_DIGITS[n] + world as u16, d);
+                }
+            }
+        }
+        cpu.registers.program_counter = origin;
+        for _ in 0..20000 {
+            if cpu.registers.program_counter == 0xA806 {
+                break;
+            }
+            cpu.single_step();
+        }
+        assert_eq!(cpu.memory.get_byte(0x005E), 0, "Graphics_Queue must select the buffer");
+        let mut out = Vec::new();
+        let mut c = 0x0301u16;
+        for _ in 0..7 {
+            let hi = cpu.memory.get_byte(c);
+            let lo = cpu.memory.get_byte(c + 1);
+            let len = cpu.memory.get_byte(c + 2) as u16;
+            let tiles = (0..len).map(|i| cpu.memory.get_byte(c + 3 + i)).collect();
+            out.push((u16::from(hi) << 8 | u16::from(lo), tiles));
+            c += 3 + len;
+        }
+        assert_eq!(cpu.memory.get_byte(c), 0, "record list must be terminated");
+        assert!(c - 0x0301 <= 107, "overran the 107-byte graphics buffer");
+        out
+    }
+
+    /// Every line lands on its own row under THE END, labelled by montage
+    /// position, showing that world's digits re-based to the background font.
+    #[test]
+    fn the_end_draws_a_line_per_world() {
+        let readings = [
+            Some([0xF1, 0xF1, 0xF5, 0xF0]), // world 0 -> 1150
+            Some([0xF0, 0xF9, 0xF4, 0xF0]), // world 1 -> 0940
+            Some([0xF1, 0xF8, 0xF7, 0xF5]),
+            Some([0xF2, 0xF2, 0xF1, 0xF0]),
+            Some([0xF2, 0xF2, 0xF8, 0xF0]),
+            Some([0xF3, 0xF1, 0xF2, 0xF0]),
+            Some([0xF1, 0xF0, 0xF6, 0xF0]),
+            None, // world 8: Bowser, no wand to grab
+        ];
+        let recs = the_end_records(&readings, [0, 1, 2, 3, 4, 5, 6, 7]);
+        for (i, (addr, tiles)) in recs.iter().enumerate() {
+            assert_eq!(*addr, 0x22CD + (i as u16) * 32, "line {i} on the wrong row");
+            assert_eq!(tiles.len(), 6);
+            assert_eq!(tiles[0], 0x76 + 1 + i as u8, "line {i} mislabelled");
+            assert_eq!(tiles[1], 0x5C, "expected a space after the label");
+            let want: Vec<u8> =
+                readings[i].unwrap().iter().map(|d| d - 0x7A).collect();
+            assert_eq!(&tiles[2..], &want[..], "line {i} digits wrong");
+            // Re-based into the background font the captions use.
+            assert!(tiles[2..].iter().all(|t| (0x76..=0x7F).contains(t)));
+        }
+    }
+
+    /// Lines follow the montage order, so a line labelled "3" shows the world
+    /// the credits captioned WORLD 3 -- not internal world 3.
+    #[test]
+    fn the_end_follows_the_montage_order() {
+        let mut readings: [Option<[u8; 4]>; 8] = [None; 8];
+        // Give each internal world a digit pattern that identifies it.
+        for (w, r) in readings.iter_mut().enumerate() {
+            *r = Some([0xF0 + w as u8, 0xF0, 0xF0, 0xF0]);
+        }
+        let order = [3, 5, 0, 6, 1, 4, 2, 7];
+        let recs = the_end_records(&readings, order);
+        for (p, (_, tiles)) in recs.iter().enumerate() {
+            assert_eq!(tiles[0], 0x76 + 1 + p as u8, "position {p} mislabelled");
+            let shown = tiles[2] - 0x76; // first digit identifies the world
+            assert_eq!(shown, order[p], "position {p} showed the wrong world");
+        }
+    }
+
+    /// A world with no reading draws blanks, never a bogus number.
+    #[test]
+    fn the_end_blanks_worlds_with_no_reading() {
+        let mut readings: [Option<[u8; 4]>; 8] = [None; 8];
+        readings[2] = Some([0xF1, 0xF2, 0xF3, 0xF4]);
+        let recs = the_end_records(&readings, [0, 1, 2, 3, 4, 5, 6, 7]);
+        for (i, (_, tiles)) in recs.iter().enumerate() {
+            if i == 2 {
+                assert_eq!(&tiles[2..], &[0x77, 0x78, 0x79, 0x7A]);
+            } else {
+                assert!(tiles[2..].iter().all(|&t| t == 0x5C), "line {i} should be blank");
+            }
+        }
+    }
+
     /// Regression: once the liveness countdown lapses the readout must release
     /// the score, even standing in a real boss room with a real reading stored.
     ///
@@ -1459,9 +1595,67 @@ const KOOPA_GRAB_HEIGHT: [u8; 146] = [
     0xBA, 0xBA, 0xBA, 0xAC, 0xBA, 0xBB, 0xBB,
 ];
 
+/// Draw the per-world grab heights under "THE END". 154 bytes.
+///
+/// Hooked over the `JSR GraphicsBuf_Prep_And_WaitVSyn2` at PRG024 $BCAE -- the
+/// loop that waits for START once the THE END fade has finished. Hooking there
+/// rather than earlier matters: the fade sets `Graphics_Queue = $5B` for its
+/// palette cycle, and committing our own records before that would be
+/// overwritten by it. By $BCAE the fade is done and the queue is free. The
+/// routine tail-calls the displaced helper, so it re-commits every frame while
+/// the player reads the screen.
+///
+/// Records go into `Graphics_Buffer` ($0301) and are committed by setting
+/// `Graphics_Queue` ($005E) to 0, which selects the buffer itself -- the same
+/// mechanism `Map_ConfigWorldIntro` uses. Seven records of 9 bytes plus a
+/// terminator is 64 of the buffer's 107.
+///
+/// The ending draws to nametable $2000 (`Ending_CurtainExtension` writes
+/// $22E0/$2300/$2320), and `Vert_Scroll` is $3F, so nametable row R appears at
+/// screen `y = R*8 - 63`. Rows 22-28 land at y 113-161, directly under THE END,
+/// which is sprites occupying y 97-112 and is left untouched.
+///
+/// Digits are the captured status-bar tiles re-based to the background font by
+/// a single `SBC #$7A` ($F0 + d -> $76 + d). Lines are labelled by montage
+/// position, not internal world, so they agree with the captions `credits.rs`
+/// renumbers. A world with no reading draws spaces rather than a bogus number.
+#[rustfmt::skip]
+const KOOPA_THE_END: [u8; 154] = [
+    0xA0, 0x00, 0xA2, 0x00, 0xBD, 0xC5, 0xD5, 0x99, 0x01, 0x03, 0xC8, 0xBD,
+    0xCC, 0xD5, 0x99, 0x01, 0x03, 0xC8, 0xA9, 0x06, 0x99, 0x01, 0x03, 0xC8,
+    0x8A, 0x18, 0x69, 0x77, 0x99, 0x01, 0x03, 0xC8, 0xA9, 0x5C, 0x99, 0x01,
+    0x03, 0xC8, 0x8E, 0xA4, 0x7A, 0xBD, 0xBD, 0xD5, 0xAA, 0xBD, 0x84, 0x7A,
+    0xF0, 0x2B, 0xBD, 0x84, 0x7A, 0x38, 0xE9, 0x7A, 0x99, 0x01, 0x03, 0xC8,
+    0xBD, 0x8C, 0x7A, 0x38, 0xE9, 0x7A, 0x99, 0x01, 0x03, 0xC8, 0xBD, 0x94,
+    0x7A, 0x38, 0xE9, 0x7A, 0x99, 0x01, 0x03, 0xC8, 0xBD, 0x9C, 0x7A, 0x38,
+    0xE9, 0x7A, 0x99, 0x01, 0x03, 0xC8, 0x4C, 0xA8, 0xD5, 0xA9, 0x5C, 0x99,
+    0x01, 0x03, 0xC8, 0x99, 0x01, 0x03, 0xC8, 0x99, 0x01, 0x03, 0xC8, 0x99,
+    0x01, 0x03, 0xC8, 0xAE, 0xA4, 0x7A, 0xE8, 0xE0, 0x07, 0xF0, 0x03, 0x4C,
+    0x3D, 0xD5, 0xA9, 0x00, 0x99, 0x01, 0x03, 0x85, 0x5E, 0x4C, 0x06, 0xA8,
+    // montage position -> internal world; rewritten when world order shuffles
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+    // VRAM row high / low bytes: $22CD + row*32, rows 22-28 at column 13
+    0x22, 0x22, 0x23, 0x23, 0x23, 0x23, 0x23,
+    0xCD, 0xED, 0x0D, 0x2D, 0x4D, 0x6D, 0x8D,
+];
+
+/// Offset of the position->world table inside [`KOOPA_THE_END`].
+const KOOPA_THE_END_ORDER: usize = 132;
+
+/// PRG024 $BCAE: the `JSR GraphicsBuf_Prep_And_WaitVSyn2` in the START wait.
+const KOOPA_THE_END_SITE: usize = 0x31CBE;
+
+/// Point the THE END table at the montage order, so each line is labelled by
+/// the same world number the credits caption showed.
+pub fn koopaling_the_end_order(rom: &mut Rom, order: &[u8; 8]) {
+    use super::rom_data::FS_KOOPA_THE_END;
+    rom.write_range(FS_KOOPA_THE_END + KOOPA_THE_END_ORDER, order);
+}
+
 pub fn koopaling_grab_height(rom: &mut Rom) {
     use super::rom_data::{
-        FS_KOOPA_ARENA_MARK, FS_KOOPA_GRAB_HEIGHT, KOOPA_ARENA_MARK_CPU, KOOPA_GRAB_HEIGHT_CPU,
+        FS_KOOPA_ARENA_MARK, FS_KOOPA_GRAB_HEIGHT, FS_KOOPA_THE_END, KOOPA_ARENA_MARK_CPU,
+        KOOPA_GRAB_HEIGHT_CPU, KOOPA_THE_END_CPU,
     };
 
     rom.write_range(FS_KOOPA_ARENA_MARK, &KOOPA_ARENA_MARK);
@@ -1469,6 +1663,10 @@ pub fn koopaling_grab_height(rom: &mut Rom) {
 
     let mark = KOOPA_ARENA_MARK_CPU.to_le_bytes();
     rom.write_range(KOOPA_ARENA_MARK_SITE, &[0x20, mark[0], mark[1]]); // JSR arena_mark
+
+    rom.write_range(FS_KOOPA_THE_END, &KOOPA_THE_END);
+    let the_end = KOOPA_THE_END_CPU.to_le_bytes();
+    rom.write_range(KOOPA_THE_END_SITE, &[0x20, the_end[0], the_end[1]]); // JSR the_end
 
     let height = KOOPA_GRAB_HEIGHT_CPU.to_le_bytes();
     rom.write_range(KOOPA_GRAB_HEIGHT_SITE, &[0x20, height[0], height[1]]); // JSR grab_height

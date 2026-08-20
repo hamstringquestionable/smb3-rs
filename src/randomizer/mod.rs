@@ -324,11 +324,12 @@ fn randomize_inner(
     // run after the repack because it permutes the picture pointers.
     rom.set_tag("credits/world_maps");
     randomize::credits::render_world_maps(rom, &mut rng);
-    if let Some(progression) = &credits_progression {
+    let montage_order = credits_progression.as_ref().map(|progression| {
         rom.set_tag("credits/world_order");
         let order = randomize::credits::order_from_progression(progression);
         randomize::credits::reorder_world_pictures(rom, &order);
-    }
+        order
+    });
 
     // Give each W8 Hand its own treasure-room enemy stream so the chest
     // randomizer can roll a unique item per Hand. Runs before items::randomize
@@ -535,6 +536,12 @@ fn randomize_inner(
     if options.koopaling_grab_height {
         rom.set_tag("koopalings/grab_height");
         randomize::koopalings::koopaling_grab_height(rom);
+        // Label the THE END lines by montage position, so they agree with the
+        // captions `credits` renumbered. Must follow the routine write, which
+        // lays down the identity table this replaces.
+        if let Some(order) = &montage_order {
+            randomize::koopalings::koopaling_the_end_order(rom, order);
+        }
     }
 
     if options.lakitu_stays_dead {

@@ -19,9 +19,9 @@ deploys.
   Your
   real score is untouched and comes straight back when the fight ends. Pairs
   with Skip Wand Cutscene, which is what lets you jump for the wand at all.
-  Each world's reading is kept and shown again on that world's "WORLD n" intro
-  card, so a grab stays visible after the fight instead of vanishing with the
-  status bar.
+  Each world's reading is kept and listed under "THE END" after the credits, so
+  the whole run's grabs can be compared side by side. Lines are labelled to
+  match the credits' own world captions.
 
 ### Changed
 
