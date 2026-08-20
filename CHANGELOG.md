@@ -9,14 +9,7 @@ deploys.
 
 ## [Unreleased]
 
-### Changed
-
-- **World length varies more between worlds.** Every world used to guarantee
-  the same minimum amount of play before its goal, which made the cheapest
-  route recognisable once you knew the number to look for. Each world now gets
-  its own minimum — a level's worth below, at, or above the old one — rolled
-  per seed and different every time. Some worlds are dealt no variation at all.
-  The overall amount of play across the eight worlds is unchanged.
+## [1.2.0] - 2026-08-22
 
 ### Added
 
@@ -32,6 +25,36 @@ deploys.
   it back. Handy when you are generating and verifying seeds back to back, or
   streaming with the title screen up. Start still begins the game as normal,
   and the world map queues its own music either way.
+
+- The web app now shows the seed's **title hash** under the Generate button as
+  soon as a seed is entered — the same five icons the title screen will show,
+  drawn from your own ROM's graphics (and from the selected visual patch, if
+  one is chosen). Racers can compare icons before generating instead of after
+  booting. Hidden while the seed box is empty, since a blank seed is rolled at
+  generate time, and while ROM validation is off, since the hash isn't applied
+  then.
+
+- A "The End" sign-off in the web app's footer, drawn from the ending
+  sequence's own graphics.
+
+### Changed
+
+- **World length varies more between worlds.** Every world used to guarantee
+  the same minimum amount of play before its goal, which made the cheapest
+  route recognisable once you knew the number to look for. Each world now gets
+  its own minimum — a level's worth below, at, or above the old one — rolled
+  per seed and different every time. Some worlds are dealt no variation at all.
+  The overall amount of play across the eight worlds is unchanged.
+
+- The web app's option icons are now decoded from your own ROM's graphics
+  instead of bundled sprite sheets, so a selected visual patch re-skins them
+  too. They appear once a ROM is loaded. Several options that never had an
+  icon now have one — Boom-Boom Stomps, Cannons, Ghosts, Shell, Rotodiscs,
+  Faster Frog, Swap Start / Airship, Shuffle Spade Games and Remove N-Cards.
+
+- The 8-Tank treasure room now draws from the same enemy pool as the other
+  bro-fight rooms, so its enemy follows Hammer Bro encounter randomization
+  along with the rest.
 
 ### Fixed
 
@@ -51,37 +74,6 @@ deploys.
   alongside a Koopa shell, which does kill it for good.
 
   Both are unchanged everywhere else in the game.
-
-### Changed
-
-- The 8-Tank treasure room now draws from the same enemy pool as the other
-  bro-fight rooms, so its enemy follows Hammer Bro encounter randomization
-  along with the rest.
-
-## [1.1.1] - 2026-08-10
-
-### Added
-
-- The web app now shows the seed's **title hash** under the Generate button as
-  soon as a seed is entered — the same five icons the title screen will show,
-  drawn from your own ROM's graphics (and from the selected visual patch, if
-  one is chosen). Racers can compare icons before generating instead of after
-  booting. Hidden while the seed box is empty, since a blank seed is rolled at
-  generate time, and while ROM validation is off, since the hash isn't applied
-  then.
-
-- A "The End" sign-off in the web app's footer, drawn from the ending
-  sequence's own graphics.
-
-### Changed
-
-- The web app's option icons are now decoded from your own ROM's graphics
-  instead of bundled sprite sheets, so a selected visual patch re-skins them
-  too. They appear once a ROM is loaded. Several options that never had an
-  icon now have one — Boom-Boom Stomps, Cannons, Ghosts, Shell, Rotodiscs,
-  Faster Frog, Swap Start / Airship, Shuffle Spade Games and Remove N-Cards.
-
-### Fixed
 
 - **The title hash no longer changes colour when you use a visual patch.** It
   used to encode part of itself in the icons' colour, drawn from Mario's
