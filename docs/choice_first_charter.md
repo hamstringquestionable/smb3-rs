@@ -621,3 +621,57 @@ CENSUS_SEEDS=100 cargo test --release --lib test_required_progression -- --ignor
   (Python classified, Rust scored) that was validated against vanilla
   (routes `[1, 3, 2, 2, 4, 12, 2, 1]`, identical both ways) and then deleted.
   Redoing this needs that bridge again, or an obj_ptr-based catalog mode.
+
+## The W8 bridge row — dealt, not ranked (2026-08-20)
+
+The five spans on W8 screen 3 (`qol::overworld_map::W8_BRIDGE_COLS`, row 5,
+cols 51/53/55/57/59) are the approach to Bowser's castle: a chain of spans and
+nodes over water, entered only where the seed's pipe web touches it. A lock
+landing on one shows as a water gap its fortress rebuilds — a "bridge out".
+
+**Marginal cut cannot produce a distribution there.** Measured at HEAD before
+the change (600 seeds), the count was 1 in 62% of seeds and 4 in none of them,
+and the span was col 55 in 78% of the seeds that had one. Both follow from the
+ranking rather than from the map: on a chain, one span always wins the cut
+(col 55 by exactly one node, every seed), and once its cut is claimed the rest
+score zero MARGINAL cut and lose to fresh territory anywhere else in the world.
+
+So the count is rolled (`capacity::BRIDGES_OUT_WEIGHTS`) and the spans dealt
+(`locks::deal_bridge_spans`), with the row excluded from `lock_candidates` so
+the ranker cannot add a span the deal did not ask for. Owner's call on the
+shape (2026-08-20): 3% / 45% / 40% / 11.98% / 0.02% for 0-4 out. The ceiling
+of 4 is not chosen — it is W8's fort roster, since every gap needs a fortress
+to restore it.
+
+**Cost per count** (600 seeds per pinned arm via `BRIDGES_OUT=n`, W8 only):
+
+| out | C1 | routes | linear% |
+|---|---|---|---|
+| 0 | 20.66 | 1.56 | 53.3% |
+| 1 | 25.58 | 2.23 | 4.0% |
+| 2 | 27.67 | 2.30 | 4.0% |
+| 3 | 29.58 | 2.38 | 2.8% |
+| 4 | 30.86 | 2.43 | 4.0% |
+
+More spans out is **cheaper**, not dearer: each one drags another fortress onto
+the mandatory path, which raises C1 and pulls more alternatives into the choice
+band. The one arm that costs anything is 0 — an intact row leaves W8 with no
+gate anywhere on its own approach — which is why it is the thin one.
+
+**Why the draw leads with a gating span.** A flat draw over all five was
+measured and rejected: cols 51/53 sever the goal in only ~20% of seeds (it
+depends where the web enters the chain, which is why it cannot be decided from
+the terrain alone), so a single span drawn flat landed decorative a third of
+the time and took W8 linear from 4.0% to 16.3%. The first span is now drawn
+from the spans that actually sever the approach on this seed's web; the extras
+stay flat. That holds the 1-out arm at the baseline 4.0% while cutting the
+same-span rate from 78% to 33%.
+
+Net, `test_route_census` at 1000 seeds: W8 mean routes 2.27 → 2.25 (linear
+4% → 5%), overall 2.548 → 2.537 (linear 6.60% → 6.91%), nothing below its own
+dealt floor either way. Reproduce with:
+
+```sh
+CENSUS_SEEDS=3000 cargo test --release --lib w8_bridges_out -- --ignored --nocapture
+BRIDGES_OUT=3 CENSUS_SEEDS=600 cargo test --release --lib w8_bridges_out -- --ignored --nocapture
+```

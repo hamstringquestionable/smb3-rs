@@ -487,6 +487,64 @@ pub(crate) fn redistribute_fortresses<R: Rng>(rng: &mut R) -> [usize; 8] {
     counts
 }
 
+/// Per-seed weights for how many of W8's four locks land on the bridge
+/// approach to Bowser's castle — the "bridges out" count, indexed 0..=4 and
+/// summing to 10000.
+///
+/// A bridge out is a lock like any other, so the ceiling is W8's fort roster
+/// (always 4, see [`redistribute_fortresses`]) and each extra one drags
+/// another fortress onto the mandatory path: 3 out means three forts must
+/// fall before the corridor is walkable. 4 is the jackpot and stays at one
+/// seed in 5000 — an owner call about how a fully serialized endgame feels,
+/// not a quality budget.
+///
+/// Left to itself the marginal-cut ranking deals 1 nearly always (measured
+/// 62%, and 79% of those on the same span — the third span wins the cut by a
+/// single node every seed), and 4 never: once the first span's cut is claimed
+/// the rest score zero MARGINAL cut and lose to fresh territory. The count is
+/// dealt rather than ranked for exactly that reason.
+///
+/// The shape is measured, not guessed (600 seeds per pinned arm, W8 only):
+///
+/// ```text
+///   out   C1      routes   linear
+///   0     20.66   1.56     53.3%
+///   1     25.58   2.23      4.0%
+///   2     27.67   2.30      4.0%
+///   3     29.58   2.38      2.8%
+///   4     30.86   2.43      4.0%
+/// ```
+///
+/// More spans out is CHEAPER, not dearer: the forts they add to the
+/// mandatory path raise C1 and pull more alternatives into the choice band.
+/// The one arm that costs anything is 0 — an intact row leaves W8 with no
+/// gate anywhere on its own approach — so that is the thin one, and the
+/// weight it gave up went to 3.
+pub(super) const BRIDGES_OUT_WEIGHTS: [u32; 5] = [300, 4500, 4000, 1198, 2];
+
+/// Roll the per-seed W8 bridges-out count from [`BRIDGES_OUT_WEIGHTS`].
+pub(crate) fn roll_bridges_out<R: Rng>(rng: &mut R) -> usize {
+    // Census arm: `BRIDGES_OUT=n` pins the count so the cost of each value
+    // can be measured on its own (see `w8_bridges_out_census`), instead of
+    // being read off a distribution where 4 is one seed in 5000. Test-only —
+    // never reaches the CLI or WASM.
+    #[cfg(test)]
+    if let Ok(n) = std::env::var("BRIDGES_OUT")
+        && let Ok(n) = n.parse::<usize>()
+    {
+        return n;
+    }
+    let total: u32 = BRIDGES_OUT_WEIGHTS.iter().sum();
+    let mut roll = rng.random_range(..total);
+    for (n, &w) in BRIDGES_OUT_WEIGHTS.iter().enumerate() {
+        if roll < w {
+            return n;
+        }
+        roll -= w;
+    }
+    0
+}
+
 /// Largest number of Hammer Bro sprites placed in a single world.
 pub(super) const MAX_HB_PER_WORLD: usize = 3;
 

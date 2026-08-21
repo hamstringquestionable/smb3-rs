@@ -31,6 +31,7 @@ pub use overworld_map::{
     apply_w1_shortcut, apply_w8_bridges, apply_w8_canoe_and_paths, fix_w3_drawbridges,
     make_hammer_rocks, remove_n_cards, remove_rocks,
 };
+pub(crate) use overworld_map::{W8_BRIDGE_COLS, W8_BRIDGE_ROW};
 pub use starting_state::{set_starting_lives, write_starting_items};
 
 #[cfg(test)]
