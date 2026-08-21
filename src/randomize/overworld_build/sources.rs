@@ -73,6 +73,8 @@ pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
             .count(),
         c1_floor: C1_FLOOR,
         ptr_slots: 0,
+        bridges_out: 0,
+        bridge_spans: Vec::new(),
         hb_sprite_pins: Vec::new(),
         log: Vec::new(),
     }
@@ -155,6 +157,8 @@ pub(crate) fn from_pickup(
         fort_budget,
         c1_floor: C1_FLOOR,
         ptr_slots: pickup.worlds[world_idx].pool_indices.len(),
+        bridges_out: 0,
+        bridge_spans: Vec::new(),
         hb_sprite_pins,
         log: Vec::new(),
     }
@@ -206,6 +210,8 @@ pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -
         fort_budget,
         c1_floor: C1_FLOOR,
         ptr_slots: 0,
+        bridges_out: 0,
+        bridge_spans: Vec::new(),
         hb_sprite_pins: Vec::new(),
         log: Vec::new(),
     }

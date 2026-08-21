@@ -63,6 +63,11 @@ struct CensusCtx {
     level_counts: [usize; 8],
     fort_counts: [usize; 8],
     c1_floors: [u32; 8],
+    /// W8's bridges-out count, rolled the way `build` rolls it — right after
+    /// `allot_budgets`, off the same stream. Without this every census here
+    /// would silently measure a W8 pinned to the 0-span arm, which is the one
+    /// arm that behaves differently from the rest (53% linear).
+    bridges_out: usize,
 }
 
 fn census_ctx(raw: &Rom, seed: u64) -> CensusCtx {
@@ -93,6 +98,7 @@ fn census_ctx(raw: &Rom, seed: u64) -> CensusCtx {
     };
     let (level_counts, fort_counts, c1_floors) =
         allot_budgets(&rom, &catalog, &pickup, &flags, &mut roll_rng);
+    let bridges_out = roll_bridges_out(&mut roll_rng);
     CensusCtx {
         rom,
         catalog,
@@ -101,6 +107,7 @@ fn census_ctx(raw: &Rom, seed: u64) -> CensusCtx {
         level_counts,
         fort_counts,
         c1_floors,
+        bridges_out,
     }
 }
 
@@ -111,6 +118,9 @@ impl CensusCtx {
         state.level_budget = self.level_counts[world_idx];
         state.fort_budget = self.fort_counts[world_idx];
         state.c1_floor = self.c1_floors[world_idx];
+        if world_idx == rom_data::W8_IDX {
+            state.bridges_out = self.bridges_out;
+        }
         state
     }
 }
@@ -149,6 +159,8 @@ fn test_builder_schedule_runs_phases_in_order() {
         fort_budget: 0,
         c1_floor: C1_FLOOR,
         ptr_slots: 0,
+        bridges_out: 0,
+        bridge_spans: Vec::new(),
         hb_sprite_pins: Vec::new(),
         log: Vec::new(),
     };

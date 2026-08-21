@@ -134,12 +134,24 @@ fn sweep_is_deterministic() {
 /// pool changes themselves only bite with `hb_encounters` on, which this sweep
 /// does not exercise — `treasure_box_rooms_never_get_a_hammer_bro` and the
 /// shell-pairing invariant in `enemies::tests` cover that instead.
+///
+/// Re-captured 2026-08-20 for the W8 bridges-out deal
+/// (`overworld_build::locks::deal_bridge_spans`). Every seed moves, and for
+/// the usual two reasons at once: `capacity::roll_bridges_out` draws once
+/// from the shared RNG before the worlds are built, shifting every downstream
+/// stream position, and the deal itself changes W8's lock placement on
+/// purpose. Attribution is by census rather than by byte, since a lock moving
+/// re-prices the world: `w8_bridges_out_census` shows the count going from
+/// 11.5/62.3/18.0/8.2/0% to 3.0/46.1/40.2/10.8/~0.02% across 0-4 spans out,
+/// the same-span rate from 78% to 33%, and `test_route_census` at 1000 seeds
+/// shows W8 mean routes 2.27 -> 2.25 (linear 4% -> 5%), overall 2.548 -> 2.537
+/// (linear 6.60% -> 6.91%), nothing below its dealt floor either way.
 const BASELINE: [u64; SEEDS as usize] = [
-    0xC1C71A7A4F68594D, 0x534A4AE58D1A3363, 0x44C686DF79468198, 0xC2A259353E396A87,
-    0x362C802799120D4A, 0xACA60B2E92B70172, 0x006C15769D3150F9, 0xC9B5C7A81BCCFF84,
-    0x7619C233EDA9C4A8, 0xA09A4F5BC20009B5, 0x424C0BFC98308197, 0xEFE5625EBEECEACD,
-    0x4CF3C1FC3700FBEB, 0x2D32C04ACB5E0D7D, 0xED60682BD8DC03FA, 0x920F58E88CE8F433,
-    0xA78130770839D989, 0xF0F6E652FEAE6D0B, 0xD3E21E5ED23526D8, 0xEF1FF6F1C5FA9B11,
+    0x23BB0B1661EB4991, 0x8BCB87C002850E1B, 0xD35E65FB6393BA7B, 0x28316C60D5B50C8C,
+    0x71D46A423D87F88D, 0x16C8AF59B8BB0589, 0x9DE59CE91689D794, 0x4C5689DE1274B707,
+    0xCF0D452FCB5F3BA5, 0xA0DA1A4EA05C9840, 0x913CB348A60E1204, 0xFB9B9EACB78D1131,
+    0x9F479C3584CDB1C9, 0x704A60C34AA3185F, 0xFEBF4CA438E54465, 0x46495F783B0C2C96,
+    0x8B9271CB5F45BD14, 0x7931621C85178986, 0xFC800FBE4F077B0A, 0xEADB5C1E7B634CA5,
 ];
 
 #[test]

@@ -1,7 +1,9 @@
 //! Overworld map tile edits: rocks, W8 canoe/bridges, drawbridges, N-cards.
 
 use crate::rom::Rom;
-use crate::randomize::rom_data::{FX_MAP_TILE_REPLACE, map_tile_offset, write_map_sprite};
+use crate::randomize::rom_data::{
+    BRIDGE_TILE, FX_MAP_TILE_REPLACE, map_tile_offset, write_map_sprite,
+};
 
 // W3 drawbridge map tile patches: (file offset, replacement tile).
 // Vanilla: 2× $B2 horizontal + 2× $B1 vertical. Replace with $B3
@@ -145,21 +147,32 @@ pub fn apply_w1_shortcut(rom: &mut Rom, breakable: bool) {
     rom.write_byte(map_tile_offset(0, stub_row, stub_col), stub);
 }
 
-/// W8 (Dark World) screen-3 water + bridge edits, always applied. The bridge
-/// tiles (`0xB3`) on the final page get gated as water gaps (`gap_tile_for`:
-/// `0xB3 -> 0x9D`) by the builder instead of locks. See [`apply_w8_bridges`].
-const W8_BRIDGE_EDITS: &[(usize, usize, u8)] = &[
-    // --- Screen 3: water (row 4) + bridges (row 5) on the final page ---
+/// W8 (Dark World) screen-3 water decor, always applied: the row above the
+/// bridge approach becomes open water so the corridor reads as a chain of
+/// spans rather than a solid path.
+const W8_WATER_EDITS: &[(usize, usize, u8)] = &[
     (4, 51, 0x99), (4, 52, 0xA2), (4, 53, 0x83), (4, 54, 0xA2), (4, 55, 0x83),
     (4, 56, 0xA2), (4, 57, 0x83), (4, 58, 0xA2), (4, 59, 0x9A),
-    (5, 51, 0xB3), (5, 53, 0xB3), (5, 55, 0xB3), (5, 57, 0xB3), (5, 59, 0xB3),
 ];
 
+/// The W8 bridge approach to Bowser's castle: five spans on screen 3, row 5,
+/// alternating with the nodes between them. Each is an ordinary lockable path
+/// tile, so a lock landing on one shows as a water gap (`gap_tile_for`:
+/// `0xB3 -> 0x9D`) that its fortress rebuilds — the "bridge out" the builder
+/// deals per seed (`overworld_build::locks`). Single source of truth: the
+/// builder reads these positions rather than repeating the coordinates.
+pub(crate) const W8_BRIDGE_ROW: usize = 5;
+pub(crate) const W8_BRIDGE_COLS: [usize; 5] = [51, 53, 55, 57, 59];
+
 /// Apply the always-on W8 screen-3 water + bridge approach (see
-/// [`W8_BRIDGE_EDITS`]). Independent of the `8s are Wild` option.
+/// [`W8_WATER_EDITS`] and [`W8_BRIDGE_COLS`]). Independent of the `8s are
+/// Wild` option.
 pub fn apply_w8_bridges(rom: &mut Rom) {
-    for &(row, col, tile) in W8_BRIDGE_EDITS {
+    for &(row, col, tile) in W8_WATER_EDITS {
         rom.write_byte(map_tile_offset(7, row, col), tile);
+    }
+    for col in W8_BRIDGE_COLS {
+        rom.write_byte(map_tile_offset(7, W8_BRIDGE_ROW, col), BRIDGE_TILE);
     }
     // Vanilla FX slot 16 sits at W8 (row 5, col 53) — right on our new bridge
     // row — and its replace_tile is 0x45 (plain path). The builder's pickup
@@ -167,7 +180,7 @@ pub fn apply_w8_bridges(rom: &mut Rom) {
     // 0xB3 bridge. Point it at the bridge tile so the slot opens to a bridge,
     // matching the other bridge columns (and gating as a water gap if a
     // fortress lands there).
-    rom.write_byte(FX_MAP_TILE_REPLACE + 16, 0xB3);
+    rom.write_byte(FX_MAP_TILE_REPLACE + 16, BRIDGE_TILE);
 }
 
 /// Apply the W8 canoe docks + extra paths and place the canoe sprite (see

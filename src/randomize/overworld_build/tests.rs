@@ -176,6 +176,41 @@ fn census_build(rom: &Rom, seed: u64) -> BuildResult {
     )
 }
 
+/// The roll itself, independent of any world: every count is reachable and
+/// the shares track [`BRIDGES_OUT_WEIGHTS`]. The realized rate after
+/// placement is lower (a span a fort cannot take falls back to the ranked
+/// candidates) and is measured by `w8_bridges_out_census`, which needs the
+/// ROM; this one pins the deal at its source.
+#[test]
+fn test_bridges_out_roll() {
+    // `BRIDGES_OUT=n` pins the roll so a census can measure one arm; it also
+    // makes this test meaningless, and running the suite under it is the
+    // point of the arm (it stress-tests a whole game at that count).
+    if std::env::var("BRIDGES_OUT").is_ok() {
+        eprintln!("SKIP: BRIDGES_OUT pins the roll this test measures");
+        return;
+    }
+    let mut rng = ChaCha8Rng::seed_from_u64(7);
+    let draws = 200_000;
+    let mut hist = [0usize; 5];
+    for _ in 0..draws {
+        hist[capacity::roll_bridges_out(&mut rng)] += 1;
+    }
+    let total: u32 = capacity::BRIDGES_OUT_WEIGHTS.iter().sum();
+    for (n, &w) in capacity::BRIDGES_OUT_WEIGHTS.iter().enumerate() {
+        let want = w as f64 / total as f64;
+        let got = hist[n] as f64 / draws as f64;
+        // 4-out is 1 in 5000, so ~40 hits in 200k — a wide relative band on
+        // purpose. What is being pinned is "reachable and roughly right",
+        // not the fourth decimal.
+        assert!(
+            (got - want).abs() < want.max(0.001) * 0.35,
+            "bridges_out {n}: rolled {got:.5}, weights say {want:.5}",
+        );
+    }
+    assert!(hist[4] > 0, "4 out must be reachable, however rare");
+}
+
 #[test]
 fn test_fortress_redistribution() {
     let mut rng = ChaCha8Rng::seed_from_u64(42);
@@ -2054,4 +2089,109 @@ fn test_render_route_choice() {
         dump_route_choice(built, slack);
         eprintln!("{}", route_choice::render_route_choice(built, slack));
     }
+}
+
+/// W8 bridge-approach census: how many of the five spans to Bowser's castle
+/// are out, which ones, and what each count costs the world.
+///
+///   CENSUS_SEEDS=2000 cargo test --release --lib w8_bridges_out -- --ignored --nocapture
+///
+/// `BRIDGES_OUT=n` pins the count (see `capacity::roll_bridges_out`) so a
+/// single value's cost can be read on its own — the whole point of the arm,
+/// since 4-out is one seed in 5000 under the shipping weights and would never
+/// show up in a census otherwise.
+#[test]
+#[ignore]
+fn w8_bridges_out_census() {
+    let rom_bytes = match std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") {
+        Ok(b) => b,
+        Err(_) => {
+            eprintln!("ROM not found, skipping");
+            return;
+        }
+    };
+    let rom = Rom::from_bytes(&rom_bytes).unwrap();
+    let seeds: u64 = std::env::var("CENSUS_SEEDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(500);
+
+    let per_seed = par_seeds(seeds, |seed| {
+        let result = census_build(&rom, seed);
+        let w8 = result.worlds.iter().find(|w| w.world_idx == 7).unwrap();
+        let state = from_built(w8);
+        let rc = analyze_route_choice(w8, route_choice::DEFAULT_SLACK);
+        W8Sample {
+            spans: w8
+                .locks
+                .iter()
+                .filter(|l| l.replace_tile == rom_data::BRIDGE_TILE)
+                .map(|l| l.pos.1)
+                .collect(),
+            zero_gate: state.zero_gate_locks().len(),
+            safe: w8.locks.iter().filter(|l| l.secret_exit_safe).count(),
+            c1: rc.best_cost,
+            floor: w8.c1_floor,
+            routes: if rc.reachable { rc.routes.len() } else { 0 },
+        }
+    });
+
+    let mut count_hist = [0usize; 5];
+    let mut col_hist = std::collections::BTreeMap::<usize, usize>::new();
+    let mut zero_gate_hist = [0usize; 5];
+    let (mut c1_sum, mut routes_sum, mut linear, mut sub_floor) = (0u64, 0u64, 0usize, 0usize);
+    for s in &per_seed {
+        count_hist[s.spans.len().min(4)] += 1;
+        for c in &s.spans {
+            *col_hist.entry(*c).or_default() += 1;
+        }
+        zero_gate_hist[s.zero_gate.min(4)] += 1;
+        c1_sum += s.c1 as u64;
+        routes_sum += s.routes as u64;
+        if s.routes <= 1 {
+            linear += 1;
+        }
+        if s.c1 < s.floor {
+            sub_floor += 1;
+        }
+    }
+    let pct = |n: usize| 100.0 * n as f64 / seeds as f64;
+    println!("\nW8 bridges out over {seeds} seeds:");
+    for (n, &count) in count_hist.iter().enumerate() {
+        println!("  {n} out: {count:6} ({:6.2}%)", pct(count));
+    }
+    let spans: usize = col_hist.values().sum();
+    println!("  which span (uniform would be {:.0} each):", spans as f64 / 5.0);
+    for (col, count) in &col_hist {
+        println!("    col {col}: {count}");
+    }
+    println!(
+        "  C1 {:.2} (floor {:.2}, {:.2}% below), routes {:.2}, linear {:.2}%",
+        c1_sum as f64 / seeds as f64,
+        per_seed.iter().map(|s| s.floor as f64).sum::<f64>() / seeds as f64,
+        pct(sub_floor),
+        routes_sum as f64 / seeds as f64,
+        pct(linear),
+    );
+    println!("  zero-gate locks (0..4): {zero_gate_hist:?}");
+    let mut safe_hist = [0usize; 5];
+    for s in &per_seed {
+        safe_hist[s.safe.min(4)] += 1;
+    }
+    println!(
+        "  secret-exit-safe locks (0..4): {safe_hist:?}  ({:.2}% of seeds have none in W8)",
+        pct(safe_hist[0]),
+    );
+}
+
+struct W8Sample {
+    spans: Vec<usize>,
+    zero_gate: usize,
+    /// Locks that stay safe with the 1-F secret exit — the pool the writer
+    /// parks that level in. Reported because a heavily-gapped corridor is
+    /// exactly where a world could run out of them.
+    safe: usize,
+    c1: u32,
+    floor: u32,
+    routes: usize,
 }

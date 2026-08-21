@@ -163,7 +163,7 @@ pub(crate) use progression::{
     hammer_skip, island_count, level_adjacency_pairs, start_goal_express_pipe,
 };
 #[cfg(test)]
-pub(crate) use capacity::C1_FLOOR_BAND;
+pub(crate) use capacity::{C1_FLOOR_BAND, roll_bridges_out};
 #[cfg(test)]
 pub(crate) use route_choice::dump_route_choice;
 #[cfg(test)]
@@ -235,6 +235,7 @@ pub(crate) fn run_shaped_with_web_retries(state: &mut WorldState, rng: &mut dyn 
         state.pickup_pipes();
         run_schedule(state, &[&Connectivity, &Locks, &Shaping, &SparePipes], rng);
     }
+
 }
 
 /// Execute Phase 3: build slot assignments for all 8 worlds.
@@ -250,6 +251,11 @@ pub(crate) fn build<R: Rng>(
     let (level_counts, fort_counts, c1_floors) =
         allot_budgets(rom, data.catalog, data.pickup, &flags, rng);
 
+    // How many of W8's four locks land on the bridge approach to Bowser's
+    // castle. Rolled here with the other per-seed budgets, because that is
+    // what it is: a lock budget for one row.
+    let bridges_out = capacity::roll_bridges_out(rng);
+
     let mut states: Vec<WorldState> = (0..8)
         .map(|wi| {
             let mut state = from_pickup(rom, data.catalog, data.pickup, wi, &flags);
@@ -259,6 +265,7 @@ pub(crate) fn build<R: Rng>(
             state
         })
         .collect();
+    states[rom_data::W8_IDX].bridges_out = bridges_out;
 
     for state in &mut states {
         run_shaped_with_web_retries(state, rng);
