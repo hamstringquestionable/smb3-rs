@@ -9,16 +9,6 @@ deploys.
 
 ## [Unreleased]
 
-### Changed
-
-- **World 8's bridges to Bowser's castle now vary.** How many of the five
-  spans are out is rolled per seed — usually one or two, sometimes three,
-  occasionally none at all, and about one seed in five thousand takes out
-  four. Which spans go is drawn fresh each time. Previously it was almost
-  always exactly one, and almost always the same one: the third span won the
-  builder's ranking by a single tile every seed, and once it was taken the
-  others had nothing left to gate.
-
 ## [1.2.0] - 2026-08-22
 
 ### Added
@@ -48,6 +38,14 @@ deploys.
   sequence's own graphics.
 
 ### Changed
+
+- **World 8's bridges to Bowser's castle now vary.** How many of the five
+  spans are out is rolled per seed — usually one or two, sometimes three,
+  occasionally none at all, and about one seed in five thousand takes out
+  four. Which spans go is drawn fresh each time. Previously it was almost
+  always exactly one, and almost always the same one: the third span won the
+  builder's ranking by a single tile every seed, and once it was taken the
+  others had nothing left to gate.
 
 - **World length varies more between worlds.** Every world used to guarantee
   the same minimum amount of play before its goal, which made the cheapest
