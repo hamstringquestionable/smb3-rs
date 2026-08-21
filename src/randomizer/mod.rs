@@ -532,9 +532,9 @@ fn randomize_inner(
     // A defeated Lakitu is deleted instead of re-seeded two screens back, so it
     // stops holding one of the five general object slots for the whole level
     // (and stops feeding Spiny Eggs into the other four).
-    if options.lakitu_stays_dead {
-        rom.set_tag("qol/lakitu_stays_dead");
-        randomize::qol::apply_lakitu_stays_dead(rom);
+    if options.lakitu_stays_down {
+        rom.set_tag("qol/lakitu_stays_down");
+        randomize::qol::apply_lakitu_stays_down(rom);
     }
 
     // Faster Frog — speeds up Frog-Suit swimming. MUST run after

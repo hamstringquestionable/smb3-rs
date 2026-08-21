@@ -1274,7 +1274,7 @@ on the same flag. `Lakitu_TossEnemy` (loop at `PRG004_AE2C`) spawns each Spiny E
 the identical `LDY #$04 … DEY/BPL` search, so a Lakitu plus two live eggs is
 three of the five general slots.
 
-> `qol/lakitu.rs` (`--lakitu-stays-dead`) replaces the respawn block's first
+> `qol/lakitu.rs` (`--lakitu-stays-down`) replaces the respawn block's first
 > three bytes with `JMP Object_SetDeadEmpty` ($D45E). `Object_SetDeadEmpty`
 > rather than `Object_SetDeadAndNotSpawned` — the latter clears the object's
 > `Level_ObjectsSpawned` bit so it returns on scroll-back, the former leaves it

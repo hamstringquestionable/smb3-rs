@@ -297,9 +297,9 @@ struct Cli {
     #[arg(long)]
     faster_frog: bool,
 
-    /// Defeated Lakitus stay gone instead of coming back
+    /// Defeated Lakitus stay down instead of coming back
     #[arg(long)]
-    lakitu_stays_dead: bool,
+    lakitu_stays_down: bool,
 
     /// Every 1-Up Mushroom becomes a Poison Mushroom that hurts you (MaCobra52's "All 1UPs are Poison Mushrooms" patch)
     #[arg(long)]
@@ -532,7 +532,7 @@ fn build_options(cli: &Cli) -> Options {
             faster_tail_speed: cli.faster_tail_speed,
             no_game_over_penalty: cli.no_game_over_penalty,
             faster_frog: cli.faster_frog,
-            lakitu_stays_dead: cli.lakitu_stays_dead,
+            lakitu_stays_down: cli.lakitu_stays_down,
             poison_mushrooms: cli.poison_mushrooms,
             modern_powerups: cli.modern_powerups,
             fire_flower: cli.fire_flower,

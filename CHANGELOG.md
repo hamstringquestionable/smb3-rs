@@ -13,13 +13,12 @@ deploys.
 
 ### Added
 
-- **Lakitu Stays Dead** (off by default). Beat a Lakitu and it's gone, instead
-  of falling off the bottom of the screen and drifting back in from behind you
-  a few seconds later. Vanilla never lets one die, and while it's alive it also
-  never despawns — so it permanently occupies one of the five slots the game
-  has for enemies, and every Spiny Egg it throws takes another. That starves
-  the rest of the level, and can leave a pick-up-able ice block refusing to
-  lift at all.
+- **Lakitu Stays Down** (off by default). Beat a Lakitu and it stays down,
+  instead of drifting back in from behind you a few seconds later. Vanilla
+  never lets one die, and while it's alive it also never despawns — so it
+  permanently occupies one of the five slots the game has for enemies, and
+  every Spiny Egg it throws takes another. That starves the rest of the level,
+  and can leave a pick-up-able ice block refusing to lift at all.
 
 - **Press B on the title screen to mute the menu music**, and B again to bring
   it back. Handy when you are generating and verifying seeds back to back, or
