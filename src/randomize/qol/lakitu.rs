@@ -84,7 +84,7 @@ const PERMA_DEATH: [u8; 3] = [
 ];
 
 /// Make a defeated Lakitu stay defeated instead of returning two screens back.
-pub fn apply_lakitu_stays_dead(rom: &mut Rom) {
+pub fn apply_lakitu_stays_down(rom: &mut Rom) {
     rom.write_range(RESPAWN_BLOCK, &PERMA_DEATH);
 }
 

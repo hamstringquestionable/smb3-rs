@@ -369,7 +369,7 @@ pub struct Options {
     /// each Spiny Egg it throws takes another — starving the level's own
     /// enemies, and pick-up-able ice blocks, of somewhere to spawn.
     #[serde(default)]
-    pub lakitu_stays_dead: bool,
+    pub lakitu_stays_down: bool,
     /// Every 1-Up Mushroom is replaced with a Poison Mushroom that damages
     /// the player instead of granting a life. (MaCobra52's "All 1UPs are
     /// Poison Mushrooms" patch.) Off by default; a challenge option.
@@ -538,7 +538,7 @@ impl Default for Options {
             faster_tail_speed: false,
             no_game_over_penalty: false,
             faster_frog: false,
-            lakitu_stays_dead: false,
+            lakitu_stays_down: false,
             poison_mushrooms: false,
             modern_powerups: false,
             fire_flower: FireFlowerMode::Off,
