@@ -67,13 +67,15 @@ impl ClassModes {
         //    class swap.
         //
         // 2. **Distribution (legacy of the bucket-first picker).** cfire
-        //    IDs share the NOCHANGE CHR slot, so they got per-bucket
-        //    appended in PageBuckets; with the old bucket-first picker
-        //    that over-weighted them ~K× per draw and flooded every level
+        //    IDs share the NOCHANGE CHR slot, so the old `PageBuckets`
+        //    appended them to every bucket; the bucket-first pick then
+        //    over-weighted them ~K× per draw and flooded every level
         //    (observed: 49 → 213 bullet bill cannons before the fix).
-        //    `PageBuckets::pick` is now uniform-among-compatibles, so this
-        //    flooding mechanism no longer exists — but reason (1) alone
-        //    is enough to keep cfire out.
+        //    That picker is gone — `PageBuckets` was deleted once its
+        //    `pick` became identical to `pick_compatible` over the wild
+        //    pool, which draws uniformly among CHR-compatible ids — so the
+        //    flooding mechanism no longer exists. Reason (1) alone is
+        //    enough to keep cfire out.
         //
         // Net semantic: cfire can still transform INTO other wild enemies,
         // but other classes never swap TO cfire — total cfire count stays
