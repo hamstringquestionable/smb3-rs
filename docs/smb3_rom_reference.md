@@ -1143,6 +1143,241 @@ Total ≈ 808 bytes of reclaimable PRG001 space. New handler code must live in b
 
 ---
 
+### Object Slot Table — 8 Slots, Three Tiers (RAM $0661)
+
+`Objects_State` ($0661) has 8 entries, but they are **not interchangeable**.
+`Level_PrepareNewObject` (PRG000 $D499) clears three different sets of variables
+depending on the index, which is what defines the tiers (verified 2026-08-18):
+
+| Slots | Role | Who spawns there |
+|-------|------|------------------|
+| **0–4** | "general" objects, full variable set | Every enemy from the level's own stream (`prg005.asm` $B911: `LDX #$04 … DEX/BPL`), pick-up-able ice blocks, Lakitu's Spiny Eggs, Buster Beetle's thrown blocks |
+| **5** | power-ups only | Three sites, all **unconditional** — see below |
+| **6–7** | block bouncers | `OBJ_ENDLEVELCARD` also force-steals slot 6 (forced just above `PRG005_B911`) |
+
+**Five general slots is the real budget for a level.** When they are full, the
+enemy stream stops spawning and `Level_IceBlock_GrabNew` refuses silently.
+
+**Slot 5 is written without a free check** — an ice block or anything else
+parked there is simply overwritten by the next power-up:
+
+| Site | Context |
+|------|---------|
+| `prg001.asm:1128` | block-bump power-up |
+| `prg001.asm:2267` | block-bump power-up (loads `Objects_State,Y` and then **never tests it** — Southbird: *"? Maybe they were going to check first?"*) |
+| `prg002.asm:714` | Giant World brick power-up |
+
+#### Arrays narrower than 8 — what index 5 aliases
+
+Any object placed in slot 5 or above that touches one of these reads or writes
+the **next** variable in RAM. Index 5 specifically:
+
+| Array | Base | Width | Index 5 lands on | Live? |
+|-------|------|-------|------------------|-------|
+| `Objects_KillTally` | $05F5 | 5 | `PlayerProj_YHi[0]` $05FA | **yes** |
+| `Objects_Timer3` | $06A6 | 5 | `Objects_Timer4[0]` $06AB | **yes** |
+| `Objects_Timer4` | $06AB | 5 | $06B0 | no (unused) |
+| `Objects_InWater` | $06B7 | 5 | $06BC | no (unused) |
+| `Objects_Var6` | $0770 | 5 | `Objects_TargetingXVal[0]` $0775 | **yes** |
+| `Objects_TargetingXVal` | $0775 | 5 | `Objects_TargetingYVal[0]` $077A | **yes** |
+| `Objects_Slope` | $07B5 | 5 | $07BA | no (unused) |
+| `Objects_Var10`–`Var14` | $7CC8–$7CE0 | 5 each | the next `Var` array | **yes** |
+| `Objects_HitCount` | $7CF6 | 5 | `RotatingColor_Cnt` $7CFB | **yes** (rainbow BG palettes) |
+| `Objects_Var3` | $7FD0 | 5 | $7FD5 | — |
+| `Objects_Var4` | $7F (ZP) | 5 | $84 = `Pipe_PlayerX` / `Level_GndLUT_Addr` | **yes** |
+
+Eight-wide despite sitting in the "slot 0–4 only" clear block, so safe at any
+index: `Objects_Var5`, `Objects_Var7`, `Objects_PlayerHitStat`,
+`Objects_UseShortHTest`, `Objects_IsGiant`.
+
+Vanilla itself has a benign off-by-one here: `Level_PrepareNewObject` clears
+`Objects_InWater,X` inside its `CPX #$06` (slots 0–5) block even though the
+array is 5 wide, so every power-up spawn writes 0 to the unused $06BC.
+
+### `ObjectGroup_KillAction` — "Killed" Means Different Things Per Object
+
+`Objects_State == 6` (`OBJSTATE_KILLED`) is **not** a reliable "this object is
+dying" signal. `ObjState_Killed` (PRG000) dispatches on the object's
+`ObjectGroup_KillAction` nibble, and the outcomes differ:
+
+| Action | Name | Terminal? |
+|--------|------|-----------|
+| 0–4, 6 | draw variants → `Object_DoKilledAction` (sets VFLIP, applies movement, tumbles until `Object_FallAndDelete` removes it) | yes |
+| 5 | `KILLACT_NORMALANDKILLED` — runs full normal AI **and** the killed action | yes (still falls) |
+| 7 | `KILLACT_POOFDEATH` → converts to state 8 | yes |
+| 8 | `KILLACT_DRAWMOVENOHALT` | yes, via fall |
+| **9** | **`KILLACT_NORMALSTATE` — `JMP Object_DoNormal` and nothing else** | **no** |
+
+Action 9 objects are flagged killed and then run their normal routine
+indefinitely: no flip, no fall, no deletion path. Users:
+
+```
+$18 BOSS_BOWSER   $2D BIGBERTHA        $3B CHARGINGCHEEPCHEEP
+$46 PIRANHASPIKEBALL   $58 FIRECHOMP   $59 FIRESNAKE
+$5C ICEBLOCK      $61 BLOOPERWITHKIDS  $6A BLOOPERCHILDSHOOT
+$6B PILEDRIVER    $83 LAKITU
+```
+
+Four of the five objects `Object_Delete` special-cases for `Buffer_Occupied`
+release (Fire Chomp, Fire Snake, both Bloopers) are in that list, and the fifth
+(Chain Chomp) is action 5 — so anything that culls objects by state must not
+treat state 6 as free-to-delete.
+
+**State 8 (`OBJSTATE_POOFDEATH`) is the one unambiguously terminal state.**
+`ObjState_PoofDying` (PRG000 $CAA6) is entirely object-independent: it counts
+`Objects_Timer` down from $1F, draws four frames from `PoofDeath_Pats`, then
+jumps to `Object_SetDeadEmpty`. Only two sites ever write it — `Object_PoofDie`
+(kill action 7: Piranhas, Boos, Hot Feet) and `ObjNorm_PiranhaSpikeBall` — and
+none of them is a boss or a buffer-holding object.
+
+### Off-Screen Deletion Is Deliberately Throttled
+
+`Object_DeleteOffScreen` (PRG000 $D3E0) runs its geometry test only on
+alternate frames:
+
+```asm
+	TXA
+	ADD <Counter_1
+	LSR A
+	BCS PRG000_D463   ; "Keeps down on CPU cycles spent wondering about the object"
+```
+
+It is also invoked **per object routine, not globally** — an object whose AI
+never calls it is never scroll-deleted — and the window is a screen or more
+past the edge ($20/$D0 lo, widened to $40/$B0 for the `_N4` variant). So a slot
+stays occupied for a while after its object leaves view. NOP-ing the `BCS`
+(2 bytes) roughly doubles how fast slots free up, at a CPU cost.
+
+### Permanent Slot Holders: Lakitu and the Angry Sun
+
+**Lakitu ($83) never dies in vanilla, and has no respawn timer.**
+`ObjNorm_Lakitu` (PRG004) catches a defeated Lakitu once `Objects_YHi >= 2`
+(fallen clear of the level) and re-seeds it in place at CPU $AD2F: X =
+`Horz_Scroll_Hi − 2` screens, state back to `NORMAL`, Y restored from
+`Objects_TargetingYVal`/`TargetingXVal` (stashed by `ObjInit_Lakitu`). The delay
+is purely fall time plus the walk back, so `SBC #$02` is the only "how long"
+knob and it is distance, not time.
+
+`Lakitu_Active` ($7CF0) is a **global** flag, set by `ObjInit_Lakitu`, cleared
+only by `LevelEvent_LakituFlee` (level event 3). While it is set:
+
+```asm
+	LDA Lakitu_Active
+	BNE PRG004_AD65            ; active -> skip the despawn entirely
+	JSR Object_DeleteOffScreen ; Lakitu is leaving...
+```
+
+…so Lakitu is **exempt from off-screen deletion for its whole life**, holding
+one general slot for the entire level. Clearing the flag makes it flee the
+player *and* become despawnable, and also stops the egg tosses, which are gated
+on the same flag. `Lakitu_TossEnemy` (loop at `PRG004_AE2C`) spawns each Spiny Egg with
+the identical `LDY #$04 … DEY/BPL` search, so a Lakitu plus two live eggs is
+three of the five general slots.
+
+> `qol/lakitu.rs` (`--lakitu-stays-down`) replaces the respawn block's first
+> three bytes with `JMP Object_SetDeadEmpty` ($D45E). `Object_SetDeadEmpty`
+> rather than `Object_SetDeadAndNotSpawned` — the latter clears the object's
+> `Level_ObjectsSpawned` bit so it returns on scroll-back, the former leaves it
+> set and the Lakitu is finished.
+
+**The Angry Sun ($AF) is pinned too, by a different mechanism.** `ObjNorm_Sun`
+(PRG005) *does* call `Object_DeleteOffScreen`, but it also adds
+`Level_ScrollDiffH` to its own X every frame — it rides the camera and so never
+leaves the delete window. And once killed (action 5) it only sets frame 1 and
+returns, with no transition and no delete. An injected Sun is a permanent slot
+as well.
+
+### Pick-Up-Able Ice Blocks (`TILEA_ICEBRICK` $32)
+
+Not ice-world-specific: $32 is a **shared tile index across every tileset**.
+Blocks are emitted by `LoadLevel_IceBricks` (`prg014.asm`), which is just
+`LDX #$08` falling into `LoadLevel_BlockRun`, wired as **object dispatch 43** in
+every tileset's jump table. `tools/level_sim.py` skipped dispatch 43 until
+2026-08-18, which made every pick-up-able block in the game invisible to it.
+
+The grab lives in `Level_DoCommonSpecialTiles` (PRG008 $B5D1) and refuses when:
+
+- the player is in Kuribo's Shoe
+- the tile-detect index is 3 (**the head tile** — you must be *beside* a block, never under it)
+- `Level_ChgTileEvent` ($0564) is non-zero (one-deep global tile-change queue)
+- `Level_IceBlock_GrabNew` ($B655) finds no free slot in **0–4** — returns X=$FF, and the caller then skips the tile deletion entirely, so the failure is **completely silent**: no sound, no shake, no animation
+
+`Objects_Timer3` is the melt timer: $80 at grab, decremented at ¼ rate while
+held (~8.5 s), and `Object_ShellDoWakeUp` ($D0E1) poofs the block at zero.
+
+Levels containing them, by dispatch-43 command count (main areas only, measured
+2026-08-18) — the top two are far ahead of everything else, and both are built
+around throwing blocks, so a starved slot table can stall progress there:
+
+| World / entry | Level | Tileset | disp-43 commands |
+|---------------|-------|---------|------------------|
+| W7 e38 | **7-9** | 9 (desert) | **45** |
+| W3 e38 | **3-9** | 1 (plains) | **23** |
+| W5 e1 | — | 14 (underground) | 9 |
+| W6 e2 | 6-2 | 12 (ice) | 3 |
+| W1 e18 | — | 14 | 2 |
+| W3 e9 | — | 14 | 2 |
+| W3 e31 | — | 14 | 2 |
+| W6 e29 | — | 14 | 2 |
+| W7 e19 | — | 9 | 2 |
+| W3 e3 | — | 1 | 1 |
+| W3 e20 | — | 6 (water) | 1 |
+| W3 e27 | — | 4 (high-up) | 1 |
+| W4 e20 | 4-2 | 11 (giant) | 1 |
+| W6 e17, W6 e23, W8 e0, W8 e8 | pipe entries | 14 | 1 each |
+
+Counts are a **lower bound**: the scan covers each entry's main area only, not
+sub-areas. 4-2's single command is the easiest one to reach in the whole game —
+three blocks resting on solid ground at screen 2, cols 1–3 — which makes it the
+level of choice for testing grab behaviour. 7-9's are mostly 3-tall columns
+floating in mid-air, reachable only from an adjacent platform or in flight.
+
+### Score Values Are Clamped Before Use
+
+Worth knowing before treating a corrupted score index as dangerous:
+`Score_PopUp` ($C467) only *stores* into `Scores_Value`, and the consumer in
+PRG007 ($AA8F) caps it:
+
+```asm
+	CMP #$0D
+	BLT PRG007_AAA8   ; in range
+	LDA Scores_Value,X
+	AND #$80
+	ORA #$0d	; Cap at 1-up ($0D) regardless of value
+```
+
+Nothing indexes a table with the raw value, so an out-of-range tally cannot
+overrun anything — the worst outcome is an undeserved 1-up.
+
+### Reclaimable Dead *Code* in PRG000 — Invisible to `--free-space`
+
+`smb3-rs --free-space` counts `$FF` filler runs, so it reports PRG000 as having
+**zero** free bytes. PRG000 nonetheless contains dead *code*, which matters
+because it is the bank mapped at **$C000–$DFFF for the whole of
+`Player_DoGameplay` and the object update loop** (PRG030 sets `PAGE_C000 = 0`
+immediately before calling both). It is therefore the only sizeable dead space
+reachable by a plain `JSR` from in-level code in an always-live window — the
+always-mapped banks are effectively full (PRG030's largest gap is 42 bytes,
+PRG031's is 30).
+
+All three verified unreferenced 2026-08-18:
+
+| CPU range | File offset | Bytes | Contents |
+|-----------|-------------|-------|----------|
+| $C3E7–$C406 | 0x003F7 | **32** | Unlabelled leftover "float around" debug routine (reads `Pad_Holding`, writes `Player_XVel`/`YVel` directly) plus the 3-byte velocity table only it reads. Nothing falls into it — the byte before is the end of `PowerUp_Ability` — and no `JSR`/`JMP $C3EA` exists anywhere in the ROM (the `PRG010_C3EA` hits are a different bank). |
+| $D9EC–$DA14 | 0x019FC | **41** | SMB3-J-only suit-loss code, skipped by the vanilla `JMP $DA15` at $D9E9. Its two inbound labels (`PRG000_D9F7`, and `SMB3J_SuitLossFrame`) are referenced *only from inside the block itself*. |
+| $D9CC–$D9D2 | 0x019DC | 7 | `SMB3J_SuitLossFrame` table, read only by the block above. Separated from it by live code. |
+
+Also in PRG000, already partly claimed: **$C918–$C926** (15 bytes, file 0x00928)
+— bytes skipped by the vanilla `JMP $C927` at $C915; 7 are used by
+`FS_HOLD_LEFT_HELPER`, leaving 8.
+
+**Caveat:** these are unclaimed but *unregistered*. Taking any of them means
+adding a `FREE_SPACE_ALLOCATIONS` row in `rom_data/free_space.rs`, which is what
+makes the write-log audit and the overlap tests cover it.
+
+---
+
 ## Power-Up / Item Data
 
 ### Global Item ID Table
@@ -1546,14 +1781,36 @@ logic into the engine without rebuilding callers.
 | 0x32AFE | Title screen background final color |
 | 0x317B1 | Sprite loop hook: vanilla `JSR $B7D6`, patched to `JMP $E914` for seed hash sprites |
 | 0x31976 | Sprite palette data (4 palettes × 4 bytes); palette 3 is modifiable here |
+| 0x326AD | `Title_Load_Palette` (PRG025): 32-byte upload to $3F00 — 16 background colors, then the 16 sprite colors (4 per palette) the title screen actually runs with. Sprite palette 0 = `0F 16 36 0F` (red), 2 = `0F 27 30 0F` (orange). This is the table to read for title sprite colors; 0x31976 does not reach them. |
 | 0x3E924 | Free space in PRG031 (CPU $E914): seed hash sprite copy routine (25 bytes) |
 | 0x3E93D | Free space in PRG031 (CPU $E92D): seed hash sprite data table (40 bytes) |
+
+**Why the hash's colour is fixed:** sprite palettes 0 and 1 are Mario's and
+Luigi's, and any player re-skin rewrites them — the same seed then renders red on
+vanilla, green under a Luigi skin and cyan under a Toad skin. The hash used to
+encode a digit in the choice of palette 0 vs 2, which made that digit
+unverifiable: a player comparing title screens can't tell a recoloured palette
+from a different seed, and unlike a re-skinned *shape* (which reads as "that's a
+skin") a colour carries no signal to discount. The icons now always draw in
+palette 2, which no re-skin touches, and the lost entropy is more than recovered
+by a wider icon set — 20^5 = 3,200,000 against the old 15^5 × 2 = 1,518,750.
 
 **Title screen seed hash sprites:** 5 icons displayed vertically in the top-left corner.
 Each icon is 16×16 (two 8×16 sprites side by side). Uses 8x16 sprite mode — odd tile IDs
 select PT1 ($1000–$1FFF). Tiles can be drawn from any CHR slot (R2–R5) since the slot is
 determined by tile ID, not a global setting. The ASM routine copies sprite data to OAM with
 stride (every 8th sprite slot) to avoid the 8-sprites-per-scanline hardware limit.
+
+**Title screen sprite CHR banks:** the reset path in PRG030 (`PRG030_845A`, the "Load title
+screen graphics" block) sets MMC3 R2–R5 to pages `$20 / $21 / $04 / $7F` before handing off to
+the title handler. So a sprite tile ID of $00–$3F reads from page $20, $40–$7F from $21,
+$80–$BF from $04, and $C0–$FF from $7F — i.e. CHR file offset
+`0x40010 + page * 0x400 + (tile & 0x3F) * 16`. Note that `Title_DrawMarioLuigi` (PRG024)
+overwrites R2/R3 with the bros' own VROM pages (`$50` + sprite page for a small bro) whenever it
+runs, so those two slots are the ones to re-check if title sprites ever come out wrong. Decoding
+the seed-hash icon table under the reset banks reproduces the art `ICON_TILES` names (icon 7,
+tile $13 in R2, is the mushroom house), which is what the web app relies on to draw the icons
+from the player's own ROM (`title_screen.rs::seed_hash_preview`).
 
 ---
 
@@ -2941,6 +3198,19 @@ Each enemy has a `PatTableSel` entry in its object group's dispatch table
 on-screen enemies both write to the same slot with different pages, the last
 one rendered wins and the other draws garbled sprites.
 
+**Reading sprite CHR by eye:** sprites are drawn in 8x16 mode, so the art is
+stored as (even tile = top half, odd tile = bottom half). Dumped as a flat
+16-wide tile grid — what a naive CHR viewer shows — every sprite's two halves
+sit *side by side* and nothing is recognizable; it looks like the page holds
+noise. Lay the page out as 8x16 pairs instead and it reads normally. The pair
+count per row is a free parameter: a 16x16 enemy needs two adjacent pairs in one
+row, but taller art only lines up at the stride its own frames were stored at,
+so that stride has to be nudged per page. `web/chr-picker.html` does both.
+
+Large bosses (Bowser, the Koopalings) are *not* rectangles in CHR at any
+stride — their metasprites are assembled tile-by-tile by their draw routines,
+so reproducing one outside the game means reading that routine's sprite list.
+
 #### CHR Pages for Randomizable Enemies
 
 | Enemy ID | Name | CHR Page | Slot |
@@ -3526,11 +3796,35 @@ walking into the Coin Ship loads an autoscroll ship level in the Ship tileset
 (PRG023). The end of that level contains a pipe junction whose destination is a
 small sub-area with **two BoomerangBros** as the fight reward.
 
+#### How the Coin Ship is loaded
+
+Every step is a table read, and all of them are worth knowing because the coin
+ship is the one level whose *entry path* changes what spawns inside it.
+
+1. Stepping on a map object stores its ID: `Map_EnterViaID = Map_Objects_IDs[slot]`
+   (`prg011.asm:3896`). For a coin ship that is `MAPOBJ_COINSHIP = $0B`.
+   **Entering an ordinary level tile leaves `Map_EnterViaID = 0`** — `prg012.asm:641`
+   branches on non-zero, and `prg002.asm:3712` calls a non-zero value "a Map
+   Entry override."
+2. `$0B` = index 11 of the dispatch table at `prg012.asm:681` → `MO_CoinShip`.
+3. `MO_CoinShip` (`prg012.asm:917`) sets the layout and object pointers from
+   `CoinShip_Layouts[World_Num]` / `CoinShip_Objects[World_Num]` and forces
+   `Level_Tileset = 10`. Both tables are eight identical per-world words —
+   the disassembly wonders aloud whether per-world coin ships were planned.
+
 | Item | Value |
 |------|-------|
+| `CoinShip_Layouts` | file `0x19337` — 8 × `$BC15` |
+| `CoinShip_Objects` | file `0x19347` — 8 × `$DA04` |
+| Ship layout header | `$BC15` → file `0x2FC25` (PRG023) |
+| Ship enemy data | `$DA04` → file `0x0DA14` — autoscroll, clouds, prop; no enemies |
+| Junction | ship header bytes 0-3 = `B8 BC 0F DA` → alt layout `$BCB8`, alt objects `$DA0F` |
+| Sub-area tileset | source header byte 6 low nibble (`0x2FC2B` = `$8A`) = **10** |
 | Sub-area enemy pointer | CPU `$DA0F` (file `0x0DA1F`) |
-| Junction reference | File `0x2FC27` in PRG023 (Ship tileset) — bytes `BC 0F DA` |
-| Enemy contents | 2× `0x82` (BoomerangBro) + `0xBA` terminator (3 entries) |
+| Enemy contents | 2× `0x82` (BoomerangBro) + `0xBA` `OBJ_TREASUREBOXAPPEAR` |
+
+There is exactly **one** reward room: the sub-area header at `$BCB8` contains
+zero junction commands, so the chain dead-ends there.
 
 The sub-area has no world pointer table entry — it's reached only via the
 in-layout junction — so the randomizer protects it via a `LevelProtection`
@@ -3539,11 +3833,80 @@ WalkerSegmentRule::HammerBro`). This routes its enemy randomization through
 the HB-wild path (stompable-only pool, optionally one shell-killable + one
 shell partner).
 
-Dry Bones (`0x3F`) is additionally excluded from this segment's stompable pool
-(`is_coinship_fight` in `enemy_protections.rs`): the reward room is enclosed and
-never scrolls, so a Dry Bones revives after every stomp with no screen edge to
-wander off and can never be cleared. It stays a valid HB-wild pick everywhere
-else.
+The 8-Tank sub-area (`$DA29`) is the other room of this shape — a treasure box
+reached through a non-bro map sprite — and carries the same rule.
+
+**A treasure-box room is cleared to be left, so every enemy in it must be
+permanently killable, not merely stompable.** That is the whole reason the
+bro-fight pool splits in two: `STOMPABLE_ENEMIES` for anything a jump clears,
+and `HB_NEEDS_SHELL_ENEMIES` for what needs a kicked shell, which the 2-enemy
+path always pairs one with. Dry Bones (`0x3F`) is why the distinction is
+load-bearing rather than pedantic: stomping it works and it revives, so it can
+never be cleared by jumping, but a shell does kill it. It therefore sits in
+`HB_NEEDS_SHELL_ENEMIES`, which also means it can only be dealt into a 2-enemy
+room — the 1-enemy rooms (including the 8-Tank) draw from the stompable pool
+alone and never see one.
+
+### `BattleEnemy_ByEnterID` Overrun — a Hammer Bro is a Placeholder
+
+**In any room with `Level_Event = 7` (i.e. whose enemy data contains
+`OBJ_TREASUREBOXAPPEAR`, `$BA`), object `$81` is not a Hammer Bro.** It is a
+placeholder meaning *"whichever bro's map sprite the player walked in
+through"* — which is how one arena serves all four bro battles.
+
+`ObjInit_HammerBro` (`prg004.asm:866`):
+
+```asm
+LDA Level_Event
+CMP #$07
+BNE  ...                 ; not a treasure-box room -> ordinary Hammer Bro
+LDY Map_EnterViaID
+LDA BattleEnemy_ByEnterID,Y
+CMP #OBJ_HAMMERBRO
+BEQ  ...                 ; already the right bro -> keep
+STA Level_ObjectID,X     ; otherwise REWRITE this object's own ID
+DEC Objects_State,X      ; and re-init as whatever that was
+```
+
+`BattleEnemy_ByEnterID` (`prg004.asm:851`, file **`0x08478`**) defines only
+indices 0-9 — the disassembly says so outright: *"No definition for `$0A-$10`
+map objects."* The bytes that follow it are the routine's own machine code
+(`AD 66 05` = `LDA $0566`, i.e. `LDA Level_Event`), so any higher index reads
+an opcode or an operand as an object ID:
+
+| Entered via | Index | `$81` becomes | Result |
+|---|---|---|---|
+| `MAPOBJ_HAMMERBRO` `$03` | 3 | `$81` HammerBro | intended |
+| `MAPOBJ_BOOMERANG/HEAVY/FIREBRO` `$04`-`$06` | 4-6 | `$82`/`$86`/`$87` | intended |
+| ordinary level tile, HELP, airship, W7 plant, N-Spade | 0-2, 7-9 | `$00` | invisible, inert |
+| `MAPOBJ_WHITETOADHOUSE` `$0A` | 10 | `$AD` RockyWrench | out of range |
+| **`MAPOBJ_COINSHIP` `$0B`** | 11 | **`$66` WaterCurrentDown** | out of range |
+| `MAPOBJ_UNK0C` `$0C` | 12 | `$05` | out of range |
+| `MAPOBJ_BATTLESHIP` `$0D` | 13 | `$C9` | out of range |
+| `MAPOBJ_TANK` `$0E` | 14 | `$07` `OBJ_WARPHIDE` | invisible |
+| `MAPOBJ_W8AIRSHIP` `$0F` | 15 | `$D0` | out of range |
+| `MAPOBJ_CANOE` `$10` | 16 | `$16` | out of range |
+
+None of those can be killed, and the treasure box only appears once the room
+is empty — so a `$81` in the wrong treasure-box room is an unescapable room.
+
+**Vanilla observes the rule.** `$81` appears in exactly five treasure-box
+rooms, all bro battles (`$C640`, `$C72B`, `$D0EA`, `$D142`, `$D14D`), and the
+two treasure-box rooms reached by a non-bro map object — the Coin Ship
+(`$DA0F`) and the 8-Tank sub-area (`$DA29`) — use a literal `$82` instead.
+
+The randomizer enforces this generically in `rewrites_hammer_bro`
+(`enemy_protections.rs`), keyed off the existing `HAMMER_BRO_OBJ_PTRS`. It replaced a
+hand-curated `ForceTankBro` row on the 8-Tank sub-area that was labelled
+"HammerBro fails to spawn in ts=10" — a misdiagnosis. The tileset was never
+the cause; index 14 yields `OBJ_WARPHIDE`, which is invisible, and that is
+what "fails to spawn" actually was.
+
+> **Testing caveat.** `testrom --place CoinShip` parks the coin ship's
+> layout/object pointers on a numbered tile, which reproduces the *level* but
+> not `Map_EnterViaID` — entered that way it is 0, so a `$81` there becomes
+> `$00` (invisible) instead of `$66` (a water current). Anything that depends
+> on the entry path cannot be reproduced by placing the level on a tile.
 
 ### Enemy Stompability Classification
 
@@ -3802,10 +4165,12 @@ Each entry represents a 16x16 metatile column on the world map.
 
 | Address | Description |
 |---------|-------------|
+| $04E4 | `SndCur_Music1` — fanfare currently playing (0 = none) |
+| $04E5 | `SndCur_Music2` — theme currently playing (0 = none). Read this to ask "is music audible right now"; `Music_StopAll` zeroes it. |
 | $04F1 | Sound effect trigger 1 (jump, blocks, swimming) |
 | $04F2 | Sound effect trigger 2 (coins, power-ups, items) |
 | $04F3 | Sound effect trigger 3 (bricks, fire, airship) |
-| $04F4 | Fanfare music trigger (death, victory) |
+| $04F4 | Fanfare music trigger (death, victory). `0x80` = `MUS1_STOPMUSIC`, the engine's own "stop all music". |
 | $04F5 | Music change (world maps, themes) |
 | $04F6 | Sound effect trigger 4 (map movement, level entry) |
 | $04F7 | Pause control (0x01=pause, 0x02=resume) |
@@ -3838,13 +4203,48 @@ Vanilla SMB3 leaves the 1P/2P select menu silent (the only title-screen music is
 
 The track is chosen deterministically from the seed via a curated 16-entry table (world map themes 1–9, plus level themes 0x10/0x20/0x30/0x40/0x60/0x80/0x90). See `src/randomize/title_screen.rs::MENU_MUSIC_TRACKS` and `pick_menu_music`. When `starting_items` is active it overwrites the lives-init hook, so `qol::write_starting_items` mirrors the same `STA $04F5` inside its own trampoline.
 
+### Title Menu Input Loop (PRG024) — and the B-to-mute hook
+
+`Title_Do1P2PMenu` (CPU $AC35, file 0x30C45) is the per-frame handler for the
+1P/2P screen, and it is where every title-menu input is read. PRG030's title
+entry point maps **page 24 to $A000 and page 25 to $C000** before calling
+`Do_Title_Screen` (CPU $A8AF), so both banks are live for the whole title screen.
+The handler reads `Pad_Input` (zero page **$18**, newly-pressed-only; `Pad_Holding`
+is $17) — Select at CPU $AC55 toggles `Total_Players`, Start at CPU $AC86 begins
+the game. Button bits are `A=$80, B=$40, Select=$20, Start=$10, Up=$08, Down=$04,
+Left=$02, Right=$01`.
+
+| Offset | CPU | Vanilla | Note |
+|--------|-----|---------|------|
+| 0x30C62 | $AC52 | `JSR $B78E` | `Title_Menu_UpdateKoopas` |
+| 0x30C65 | $AC55 | `LDA $18 / AND #$20` | Select — 1P/2P toggle |
+| 0x30C93 | $AC83 | `JSR $AA7D` | `Title_3Glow` — the mute hook site |
+| 0x30C96 | $AC86 | `LDA $18 / AND #$10` | Start — begin the game |
+
+**Mute toggle.** The randomizer replaces the `JSR $AA7D` at 0x30C93 with a `JSR`
+into a 22-byte routine in PRG025 free space (CPU $D519, file 0x33529), which
+tail-jumps back to `Title_3Glow` — so the '3' still glows, its `RTS` returns to
+the menu, and Start is untouched. The routine tests B via `BIT $18` (B is bit 6,
+which `BIT` copies straight into V), then reads `SndCur_Music2` ($04E5) to decide
+direction: non-zero means a Set-2 track is audible, so it queues `MUS1_STOPMUSIC`
+($80) to `Sound_QMusic1` ($04F4); zero means silence, so it re-queues the seeded
+track to `Sound_QMusic2` ($04F5). Because `MUS1_STOPMUSIC` runs through
+`Music_StopAll`, which zeroes `SndCur_Music2`, the engine's own state *is* the
+mute flag and no RAM byte is spent on it. The two queues being adjacent is what
+lets a single `STA $04F4,X` with X as a 0/1 selector serve both paths.
+
+The mute persists because the attract-mode patch below holds `$E1` at 0 — without
+it the menu would reset roughly every 20 × 96 frames (~32 s) and the intro-skip
+routine would re-queue the track. See `title_screen.rs::mute_routine`.
+
 ### Attract-Mode Demo Trigger (PRG024)
 
-While the 1P/2P menu sits idle, a two-stage countdown decrements each frame: the
-menu handler at CPU **$8C4E** (file **0x30C45**) does `DEC $E0` (low byte, reloads
-to 0x60) and, on rollover, `DEC $DF` (high byte, seeded to 0x14 at CPU $8C28).
-When `$DF` hits zero it runs `LDA #$FF / STA $E1` — the `#$FF` operand is at file
-**0x30C5F**. A later check at CPU **$8979** (file 0x30989) reads the flag:
+While the 1P/2P menu sits idle, a two-stage countdown decrements each frame:
+`Title_Do1P2PMenu` (CPU **$AC35**, file **0x30C45**) does `DEC $E0` at CPU $AC42
+(low byte, reloads to 0x60) and, on rollover, `DEC $DF` (high byte, seeded to
+0x14 at CPU $AC28 / file 0x30C38). When `$DF` hits zero it runs
+`LDA #$FF / STA $E1` at CPU $AC4E — the `#$FF` operand is at file **0x30C5F**. A
+later check at CPU **$A979** (file 0x30989) reads the flag:
 
 ```
 $8979:  A5 E1        LDA $E1

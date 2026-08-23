@@ -373,8 +373,11 @@ mod payload {
         pub(super) starting_item_1: B5,
         pub(super) starting_item_2: B5,
 
+        // --- Appended after v29 shipped; older keys read these as zero/off ---
+        pub(super) lakitu_stays_down: bool,
+
         // --- Reserve ---
-        // 147 bits. Adding an option is: declare it immediately above this
+        // 146 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off `B19`. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -387,7 +390,7 @@ mod payload {
         //
         // Two fields because the crate's widths stop at B128.
         #[skip] __: B128,
-        #[skip] __: B19,
+        #[skip] __: B18,
     }
 }
 
@@ -422,7 +425,7 @@ impl Options {
             adjust_boss_hitboxes, koopaling_hits, boomboom_hits,
             hammer_vulnerable_koopalings, random_koopalings, early_sun,
             japanese_damage, infinite_mushroom_houses, fast_mushroom_house,
-            faster_tail_speed, faster_frog, no_game_over_penalty,
+            faster_tail_speed, faster_frog, lakitu_stays_down, no_game_over_penalty,
             poison_mushrooms, modern_powerups, anchor_visuals,
             hammer_breaks_locks, hammer_breaks_bridges, more_hammer_rocks,
             eights_are_wild, troll_pipes, antechamber_shuffle,
@@ -467,6 +470,7 @@ impl Options {
             .with_fast_mushroom_house(*fast_mushroom_house)
             .with_faster_tail_speed(*faster_tail_speed)
             .with_faster_frog(*faster_frog)
+            .with_lakitu_stays_down(*lakitu_stays_down)
             .with_no_game_over_penalty(*no_game_over_penalty)
             .with_poison_mushrooms(*poison_mushrooms)
             .with_modern_powerups(*modern_powerups)
@@ -553,6 +557,7 @@ impl Options {
             fast_mushroom_house: f.fast_mushroom_house(),
             faster_tail_speed: f.faster_tail_speed(),
             faster_frog: f.faster_frog(),
+            lakitu_stays_down: f.lakitu_stays_down(),
             no_game_over_penalty: f.no_game_over_penalty(),
             poison_mushrooms: f.poison_mushrooms(),
             modern_powerups: f.modern_powerups(),

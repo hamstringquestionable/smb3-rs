@@ -250,9 +250,10 @@ legend {
 
 /* --- Checkboxes & Radios --- */
 
+/* Size is set per-canvas in options.js — each icon is its own native size at a
+   whole-number scale, since pixel art at a fractional scale renders squashed.
+   A fixed box here would reintroduce exactly that. */
 .opt-icon {
-    width: 24px;
-    height: 24px;
     image-rendering: pixelated;
     image-rendering: -moz-crisp-edges;
     flex-shrink: 0;
@@ -585,6 +586,68 @@ input[type="radio"] {
     color: #555;
     cursor: not-allowed;
     text-shadow: none;
+}
+
+/* --- Footer sign-off --- */
+
+/* 64x16 native, doubled. Whole-number scale, same rule as every other piece of
+   CHR art on the page. */
+.the-end {
+    display: block;
+    margin: 1.25rem auto 0;
+    width: 128px;
+    height: 32px;
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    opacity: 0.75;
+}
+
+/* --- Seed hash (title screen verification icons) --- */
+
+/* Label above the icons, like every other panel section — an inline label
+   would leave only ~160px for the row, forcing a fractional icon scale. */
+.seed-hash {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+    margin-top: 0.7rem;
+}
+
+.seed-hash-label {
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #7a7ab0;
+}
+
+.seed-hash-icons {
+    display: flex;
+    gap: 0.25rem;
+}
+
+/* The canvases are 16x16 native, so the displayed size must be a whole
+   multiple of 16 — at 24px `pixelated` snapped some source pixels to 2 device
+   px and others to 1, which read as a squashed icon. 2x fits the 248px panel
+   (5 x 32 + 4 x 4 gaps = 176px). */
+.seed-hash-icons canvas {
+    width: 32px;
+    height: 32px;
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    background: transparent;
+}
+
+/* Quieter than the label: a one-off tip, not a section heading. */
+.seed-hash-hint {
+    margin: 0;
+    font-size: 0.7rem;
+    text-align: center;
+    color: #7a7ab0;
+}
+
+.seed-hash-hint strong {
+    color: #e0e0e0;
 }
 
 /* --- Status --- */

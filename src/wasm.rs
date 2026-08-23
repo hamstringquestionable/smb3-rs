@@ -47,6 +47,25 @@ pub fn build_ips_patch(original: &[u8], modified: &[u8]) -> Result<Vec<u8>, JsEr
     Ok(crate::ips::build_ips_patch(original, modified))
 }
 
+/// Apply an IPS patch to `rom` and return the result. The app uses this to
+/// preview a visual patch's graphics (the seed-hash icons) without running a
+/// full randomization; generation itself applies the patch inside Rust.
+#[wasm_bindgen]
+pub fn apply_ips_patch(rom: &[u8], patch: &[u8]) -> Result<Vec<u8>, JsError> {
+    crate::ips::apply_ips_patch(rom, patch).map_err(|e| JsError::new(&e))
+}
+
+/// The title-screen seed-hash icons for `seed` + options, resolved against
+/// `rom`'s title CHR banks and palette so the app can draw exactly what the
+/// player will see. JSON: `{"icons":[{"tiles":[..4],"flipRight":bool}],
+/// "palette":[..4]}` — tile indices are absolute CHR ROM tiles.
+#[wasm_bindgen]
+pub fn seed_hash_json(rom: &[u8], seed: u64, options_json: &str) -> Result<String, JsError> {
+    let options: Options = parse_options(options_json)?;
+    let preview = crate::randomize::title_screen::seed_hash_preview(rom, seed, &options);
+    serde_json::to_string(&preview).map_err(|e| JsError::new(&format!("Serialize error: {e}")))
+}
+
 fn parse_options(json: &str) -> Result<Options, JsError> {
     serde_json::from_str(json).map_err(|e| JsError::new(&format!("Invalid options: {e}")))
 }

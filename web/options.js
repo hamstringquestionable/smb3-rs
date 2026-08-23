@@ -90,15 +90,101 @@ export const GROUPS = [
 // Reused icon sets — referenced from multiple SCHEMA entries.
 // All seven Koopalings; bound to every boss option that doesn't have a more
 // specific icon, randomized per-entry per-page-load for visual variety.
-const KOOPALINGS = [
-	{ x: 1, y: 273, w: 24, h: 32, sheet: "bosses" },
-	{ x: 1, y: 307, w: 24, h: 32, sheet: "bosses" },
-	{ x: 1, y: 341, w: 24, h: 32, sheet: "bosses" },
-	{ x: 1, y: 375, w: 24, h: 33, sheet: "bosses" },
-	{ x: 1, y: 409, w: 24, h: 32, sheet: "bosses" },
-	{ x: 1, y: 443, w: 24, h: 32, sheet: "bosses" },
-	{ x: 1, y: 477, w: 24, h: 32, sheet: "bosses" },
+// CHR icons: tiles are absolute CHR ROM tile indices, listed row-major and
+// `cols` wide; palette is four NES color indices, entry 0 always transparent.
+// Decoded from the player's own ROM at render time — pick them with
+// web/chr-picker.html rather than by hand.
+// Map inventory items, all on CHR page $05. The suits and the mushroom are
+// stored as a left half only and drawn mirrored, hence `flipRight`.
+const FROG_SUIT = { tiles: [320, 320, 321, 321], cols: 2, palette: [0x0F, 0x16, 0x0A, 0x0E], flipRight: true };
+const TANOOKI_SUIT = { tiles: [322, 322, 323, 323], cols: 2, palette: [0x0F, 0x36, 0x08, 0x0E], flipRight: true };
+const MUSHROOM = { tiles: [324, 324, 325, 325], cols: 2, palette: [0x0F, 0x36, 0x16, 0x0E], flipRight: true };
+const FIRE_FLOWER = { tiles: [326, 326, 327, 327], cols: 2, palette: [0x0F, 0x30, 0x0B, 0x1D], flipRight: true };
+const HAMMER_SUIT = { tiles: [330, 330, 331, 331], cols: 2, palette: [0x0F, 0x30, 0x38, 0x1D], flipRight: true };
+const PWING = { tiles: [336, 338, 337, 339], cols: 2, palette: [0x00, 0x30, 0x28, 0x1D] };
+const HAMMER = { tiles: [344, 346, 345, 347], cols: 2, palette: [0x00, 0x30, 0x08, 0x1D] };
+const WHISTLE = { tiles: [352, 354, 353, 355], cols: 2, palette: [0x00, 0x30, 0x28, 0x1D] };
+const CHEST = { tiles: [362, 364, 363, 365], cols: 2, palette: [0x0F, 0x1D, 0x18, 0x08] };
+
+// Other pages — see "Enemy Sprite CHR Bank Switching" in the ROM reference for
+// which page holds which object's art.
+// $0B holds most of the ground/shell roster.
+const SPINY = { tiles: [704, 706, 705, 707], cols: 2, palette: [0x0F, 0x1D, 0x20, 0x06] };
+const BUZZY_BEETLE = { tiles: [720, 722, 721, 723], cols: 2, palette: [0x0F, 0x1D, 0x20, 0x27] };
+const KURIBO_SHOE = { tiles: [744, 746, 745, 747], cols: 2, palette: [0x0F, 0x1D, 0x20, 0x09] };
+const BOB_OMB = { tiles: [756, 758, 757, 759], cols: 2, palette: [0x0F, 0x1D, 0x20, 0x27] };
+
+// Which option an enemy belongs to comes from the class tables in
+// src/randomize/enemies/tables.rs, not from intuition — Dry Bones is in
+// GHOST_ENEMIES, alongside Boo and Hot Foot.
+const DRY_BONES = { // $13, 16x32 stacked from two picks
+	tiles: [
+		1216, 1218,
+		1217, 1219,
+		1220, 1222,
+		1221, 1223,
+	],
+	cols: 2,
+	palette: [0x0F, 0x1D, 0x10, 0x20],
+};
+const ROTODISCS = [ // $12, two rotation frames
+	{ tiles: [1176, 1178, 1177, 1179], cols: 2, palette: [0x0F, 0x18, 0x21, 0x20] },
+	{ tiles: [1180, 1182, 1181, 1183], cols: 2, palette: [0x0F, 0x18, 0x21, 0x20] },
 ];
+const START_TILE = { tiles: [1488, 1490, 1489, 1491], cols: 2, palette: [0x0F, 0x38, 0x20, 0x04] }; // $17
+const KOOPALING_RING = { tiles: [4762, 4762, 4763, 4763], cols: 2, palette: [0x0F, 0x1E, 0x20, 0x25], flipRight: true }; // $4A
+const Q_ORB = { tiles: [4988, 4990, 4989, 4991], cols: 2, palette: [0x0F, 0x1D, 0x38, 0x20] }; // $4D, Boom-Boom's Q ball
+
+// $3B. Bowser's own draw routine assembles him tile by tile, so no rectangle in
+// CHR is "Bowser" — this is two picks joined. His top half is stored as a left
+// half and mirrored; his bottom half is stored whole. That mix is why the tiles
+// carry per-tile `flip` rather than the spec-wide `flipRight`.
+const BOWSER = {
+	tiles: [
+		3780, 3782, { t: 3782, flip: true }, { t: 3780, flip: true },
+		3781, 3783, { t: 3783, flip: true }, { t: 3781, flip: true },
+		3802, 3804, 3806, 3808,
+		3803, 3805, 3807, 3809,
+	],
+	cols: 4,
+	palette: [0x0F, 0x1D, 0x28, 0x09],
+};
+const CANNON = { tiles: [6436, 6438, 6437, 6439], cols: 2, palette: [0x0F, 0x1D, 0x10, 0x20] }; // $64
+
+// $4C. 32x32, and like Boss Bass its halves aren't adjacent in CHR, so they're
+// picked separately and stacked into one grid.
+const BIG_Q = {
+	tiles: [
+		4864, 4866, 4868, 4870,
+		4865, 4867, 4869, 4871,
+		4872, 4874, 4876, 4878,
+		4873, 4875, 4877, 4879,
+	],
+	cols: 4,
+	palette: [0x0F, 0x1D, 0x28, 0x20],
+};
+const SPADE = { tiles: [1448, 1448, 1449, 1449], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $16
+const WAND = { tiles: [1982, 1983], cols: 1, palette: [0x0F, 0x28, 0x37, 0x03] }; // $1E, 8x16
+const N_CARD = { tiles: [2064, 2064, 2065, 2065], cols: 2, palette: [0x0F, 0x20, 0x20, 0x1D], flipRight: true }; // $20
+
+// Water enemies, page $1A. Boss Bass is 24x32 — his two halves aren't adjacent
+// in CHR, so they're picked separately and stacked here into one grid.
+const BLOOPER = { tiles: [1712, 1712, 1713, 1713], cols: 2, palette: [0x0F, 0x1E, 0x37, 0x03], flipRight: true };
+const MINI_CHEEP = { tiles: [1682, 1684, 1683, 1685], cols: 2, palette: [0x0F, 0x1E, 0x37, 0x16] };
+const BOSS_BASS = {
+	tiles: [
+		1664, 1666, 1668,
+		1665, 1667, 1669,
+		1670, 1672, 1674,
+		1671, 1673, 1675,
+	],
+	cols: 3,
+	palette: [0x0F, 0x1E, 0x37, 0x16],
+};
+
+// Random pick on each page load — flavor for "what will you get?". Still short
+// the super leaf and the starman.
+const POWERUPS = [MUSHROOM, FIRE_FLOWER, FROG_SUIT, TANOOKI_SUIT, HAMMER_SUIT, PWING];
 
 // Schema. Field names match the Rust Options struct; the load-time parity
 // check guarantees they stay aligned. inFlagKey decides whether applying a
@@ -116,11 +202,10 @@ export const SCHEMA = [
 		group: "rom-extras", host: "rom-extras", inFlagKey: false },
 
 	// --- Map ---
-	// Icons are clipped from web/assets/sprites.png. Coordinates picked via
-	// web/sprite-picker.html. Format: { x, y, w, h } in sprite-sheet pixels.
 	{ id: "shuffle_spade_games", type: "bool", default: true,
 		label: "Shuffle Spade Games",
 		tip: "Move spade (card-matching) games to random spots on the map",
+		icon: SPADE,
 		group: "map", inFlagKey: true },
 	{ id: "shuffle_toad_houses", type: "bool", default: true,
 		label: "Shuffle Toad Houses",
@@ -151,6 +236,7 @@ export const SCHEMA = [
 	{ id: "swap_start_airship", type: "bool", default: false,
 		label: "Swap Start / Airship", flavor: "Beat the map backwards.",
 		tip: "Each of Worlds 1-7 has a 50% chance to be played in reverse — Mario spawns where the airship usually lands.",
+		icon: START_TILE,
 		group: "map", inFlagKey: true },
 	{ id: "anchor_visuals", type: "bool", default: false,
 		label: "Oops all Anchors", flavor: "Anchors aweigh.",
@@ -163,6 +249,7 @@ export const SCHEMA = [
 	{ id: "remove_n_cards", type: "bool", default: true,
 		label: "Remove N-Cards",
 		tip: "Remove the N-card (N-Spade) bonus games from the overworld map",
+		icon: N_CARD,
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "map", inFlagKey: true },
 	{ id: "troll_pipes", type: "tri", options: ON_OFF_MAYBE, default: "on",
@@ -206,10 +293,12 @@ export const SCHEMA = [
 	{ id: "ground", type: "tri", options: TRI, default: "shuffle",
 		label: "Ground",
 		tip: "Ground-walking enemies (Goomba, Spiny, Spike, etc.)",
+		icon: [SPINY, BOB_OMB, KURIBO_SHOE],
 		group: "enemies", inFlagKey: true },
 	{ id: "shell", type: "tri", options: TRI, default: "shuffle",
 		label: "Shell",
 		tip: "Shelled enemies (Koopa, Buzzy Beetle, etc.)",
+		icon: BUZZY_BEETLE,
 		group: "enemies", inFlagKey: true },
 	{ id: "flying", type: "tri", options: TRI, default: "shuffle",
 		label: "Flying",
@@ -222,6 +311,7 @@ export const SCHEMA = [
 	{ id: "ghosts", type: "tri", options: TRI, default: "shuffle",
 		label: "Ghosts",
 		tip: "Ghost house enemies (Boo, Hot Foot)",
+		icon: DRY_BONES,
 		group: "enemies", inFlagKey: true },
 	{ id: "thwomps", type: "tri", options: TRI, default: "off",
 		label: "Thwomps",
@@ -230,14 +320,17 @@ export const SCHEMA = [
 	{ id: "rotodiscs", type: "tri", options: TRI, default: "off",
 		label: "Rotodiscs",
 		tip: "Rotodisc rotation variants (single/dual, CW/CCW)",
+		icon: ROTODISCS,
 		group: "enemies", inFlagKey: true },
 	{ id: "cannons", type: "tri", options: TRI, default: "off",
 		label: "Cannons",
 		tip: "Cannons, Bullet Bill launchers, goomba pipes, and bob-omb launchers. Shuffle keeps fire direction; Wild lets any cannon become any other.",
+		icon: CANNON,
 		group: "enemies", inFlagKey: true },
 	{ id: "water", type: "tri", options: TRI, default: "shuffle",
 		label: "Water",
 		tip: "Water enemies (Blooper, Big Bertha, etc.)",
+		icon: [BLOOPER, MINI_CHEEP],
 		group: "enemies", inFlagKey: true },
 	{ id: "bros", type: "tri", options: TRI, default: "shuffle",
 		label: "Bros",
@@ -251,6 +344,11 @@ export const SCHEMA = [
 		default: [],
 		label: "Wild Injections",
 		tip: "Drop a chaser into some levels that never had one — an Angry Sun, a Lakitu, or a leaping Big Bertha. Pick any combination.",
+		icon: BOSS_BASS,
+		group: "enemies", inFlagKey: true },
+	{ id: "lakitu_stays_down", type: "bool", default: false,
+		label: "Lakitu Stays Down",
+		tip: "Beat a Lakitu and it stays down, instead of drifting back in a few seconds later.",
 		group: "enemies", inFlagKey: true },
 	{ id: "early_sun", type: "bool", default: false,
 		label: "Early Sun",
@@ -262,35 +360,35 @@ export const SCHEMA = [
 	{ id: "random_koopalings", type: "bool", default: false,
 		label: "Random Koopalings",
 		tip: "Shuffle which Koopaling appears in each world. Each keeps its own moves and abilities. Thanks to fcoughlin (Fred) for the patch.",
-		icon: KOOPALINGS,
+		icon: KOOPALING_RING,
 		group: "bosses", inFlagKey: true },
 	{ id: "koopaling_hits", type: "bool", default: true,
 		label: "Random Koopaling Stomps",
 		tip: "Each Koopaling takes a random number of stomps (1–5) instead of the usual 3",
-		icon: KOOPALINGS,
+		icon: KOOPALING_RING,
 		group: "bosses", inFlagKey: true },
-	// No icon yet — sprite coordinates get picked by hand in sprite-picker.html.
 	{ id: "boomboom_hits", type: "bool", default: true,
 		label: "Random Boom-Boom Stomps",
 		tip: "Each fortress Boom-Boom takes a random number of stomps (1–5) instead of the usual 3",
+		icon: Q_ORB,
 		group: "bosses", inFlagKey: true },
 	{ id: "hammer_vulnerable_koopalings", type: "bool", default: false,
 		label: "Hammer Vulnerable Koopalings",
 		tip: "Koopalings can be damaged by thrown hammers (normally hammers pass through them)",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
-		icon: { x: 543, y: 364, w: 16, h: 16 },
+		icon: HAMMER_SUIT,
 		group: "bosses", inFlagKey: true },
 	{ id: "adjust_boss_hitboxes", type: "bool", default: true,
 		label: "Adjust Boss Hitboxes",
 		tip: "Adjust Bowser and Koopaling hitboxes so they're easier to hit",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
-		icon: { x: 171, y: 511, w: 32, h: 44, sheet: "bosses" }, // Bowser
+		icon: BOWSER,
 		group: "bosses", inFlagKey: true },
 	{ id: "skip_wand_cutscene", type: "bool", default: true,
 		label: "Skip Wand Cutscene", flavor: "Jump Up, Super Star!",
 		tip: "Skip the wand falling cutscene after defeating a Koopaling — jump to grab the wand instead",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
-		icon: { x: 435, y: 328, w: 16, h: 16 },
+		icon: WAND,
 		group: "bosses", inFlagKey: true },
 
 	// --- Items & Pickups ---
@@ -299,47 +397,38 @@ export const SCHEMA = [
 	{ id: "powerups", type: "bool", default: true,
 		label: "Power-ups",
 		tip: "Randomize ? block and brick block contents, keeping each roughly the same tier",
-		// Random pick on each page load — flavor for "what will you get?"
-		icon: [
-			{ x: 435, y: 364, w: 16, h: 16 }, // mushroom
-			{ x: 453, y: 364, w: 16, h: 16 }, // fire flower
-			{ x: 471, y: 364, w: 16, h: 16 }, // super leaf
-			{ x: 489, y: 364, w: 16, h: 16 }, // star
-			{ x: 507, y: 364, w: 16, h: 16 }, // frog suit
-			{ x: 525, y: 364, w: 16, h: 16 }, // tanooki suit
-			{ x: 543, y: 364, w: 16, h: 16 }, // hammer suit
-		],
+		icon: POWERUPS,
 		group: "items", inFlagKey: true },
 	{ id: "chest_items", type: "bool", default: true,
 		label: "Chest Items",
 		tip: "Randomize chest and Toad House reward items",
-		icon: { x: 525, y: 292, w: 16, h: 16 },
+		icon: CHEST,
 		group: "items", inFlagKey: true },
 	{ id: "fire_flower", type: "tri", options: OFF_ON_WILD, default: "off",
 		label: "Random Fire Flower",
 		tip: "Fire Flowers still look the same, but each one gives a different suit based on where it is. On: Fire, Frog, Tanooki, or Hammer. Wild: also lets it shrink you to Big or Small.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
-		icon: { x: 453, y: 364, w: 16, h: 16 }, // fire flower
+		icon: FIRE_FLOWER,
 		group: "items", inFlagKey: true },
 	{ id: "big_q_blocks", type: "bool", default: false,
 		label: "Big ? Blocks",
 		tip: "Randomize the contents of Big ? Blocks in bonus rooms",
-		icon: { x: 435, y: 170, w: 32, h: 32 },
+		icon: BIG_Q,
 		group: "items", inFlagKey: true },
 	{ id: "remove_whistles", type: "bool", default: true,
 		label: "Remove Warp Whistles",
 		tip: "Remove warp whistles so all worlds must be played",
-		icon: { x: 561, y: 364, w: 16, h: 16 },
+		icon: WHISTLE,
 		group: "items", inFlagKey: true },
 	{ id: "hammer_breaks_locks", type: "tri", options: ON_OFF_MAYBE, default: "off",
 		label: "Hammer Breaks Locks",
 		tip: "Hammer item also breaks fortress locks on the overworld map. Maybe: the seed secretly decides on or off, so you won't know until you play.",
-		icon: { x: 615, y: 364, w: 16, h: 16 },
+		icon: HAMMER,
 		group: "items", inFlagKey: true },
 	{ id: "hammer_breaks_bridges", type: "tri", options: ON_OFF_MAYBE, default: "off",
 		label: "Hammer Breaks Bridges",
 		tip: "Hammer item builds bridges across water gaps on the overworld map. Maybe: the seed secretly decides on or off, so you won't know until you play.",
-		icon: { x: 615, y: 364, w: 16, h: 16 },
+		icon: HAMMER,
 		group: "items", inFlagKey: true },
 
 	// --- Player ---
@@ -367,6 +456,7 @@ export const SCHEMA = [
 		label: "Faster Frog",
 		tip: "Speeds up swimming and running while wearing the Frog Suit.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
+		icon: FROG_SUIT,
 		group: "player", inFlagKey: true },
 	{ id: "modern_powerups", type: "bool", default: false,
 		label: "Modern Power-Ups",
@@ -632,31 +722,74 @@ function tipBlock(entry) {
 }
 
 // Optional sprite icon next to an option. Returns a canvas at the icon's
-// natural pixel size with a known DOM id; app.js paints it from the bundled
-// sprite sheets at startup. If entry.icon is unset, returns null and the
-// caller skips the slot.
-//
-// Sheets are declared in web/sprites.js (see SHEETS). The default sheet is
-// web/assets/sprites.png — to use a different one, add `sheet: "bosses"` (or
-// "enemies") to the icon spec.
+// natural pixel size with a known DOM id; app.js decodes it from the player's
+// own ROM. If entry.icon is unset, returns null and the caller skips the slot.
 //
 // To add an icon to an option:
-//   1. Open web/sprite-picker.html in the browser.
-//   2. Pick the sheet from the dropdown, then click-and-drag a tight
-//      rectangle around the sprite.
-//   3. Click "Copy as JSON" and paste the {x,y,w,h} (with `sheet` if not the
-//      default) into the schema entry's `icon` field below.
-//   4. `icon` accepts either a single {x,y,w,h[,sheet]} object or an array of
-//      them (random pick at page load — used by Power-ups for variety).
+//   1. Open web/chr-picker.html. It reads the ROM the randomizer page cached,
+//      or you can load a .nes directly.
+//   2. Find the sprite's CHR page. The enemy -> page table in
+//      docs/smb3_rom_reference.md ("Enemy Sprite CHR Bank Switching") saves
+//      hunting; map and inventory art is mostly on $05.
+//   3. Drag a rectangle around it, tick "mirror" if only half of it exists in
+//      CHR, then "Copy as JSON" and paste into the entry's `icon` field.
+//   4. `icon` takes one spec or an array of them (random pick per page load,
+//      for options covering several things — Power-ups, Ground, Water).
+//
+// Art the game assembles from scattered tiles (Bowser) needs two picks joined
+// by hand; see BOWSER above for the shape that takes.
+//
+// Native pixel size of an icon spec: a CHR tile grid, 8px per tile.
+function iconNativeSize(spec) {
+	const cols = spec.cols ?? 2;
+	return { w: cols * 8, h: Math.ceil(spec.tiles.length / cols) * 8 };
+}
+
+// Icons are pixel art, so they may only be scaled by a whole number — at a
+// fractional scale the browser snaps some source pixels to two device pixels
+// and others to one, and the sprite reads as squashed. Pick the largest integer
+// scale that keeps the icon inside ICON_BOX; art already that big renders 1:1
+// rather than being shrunk to fit.
+const ICON_BOX = 32;
+
+function iconScale({ w, h }) {
+	return Math.max(1, Math.floor(ICON_BOX / Math.max(w, h)));
+}
+
+// Set an icon canvas's displayed size to its native size times a whole number.
+// `iconCanvas` reserves space using the largest variant; the renderer calls
+// this again with the variant actually drawn, since a smaller one displayed at
+// the reserved size would be back to a fractional scale.
+export function applyIconScale(canvas, spec) {
+	if (!canvas || !spec) return;
+	const native = iconNativeSize(spec);
+	const k = iconScale(native);
+	canvas.style.width = `${native.w * k}px`;
+	canvas.style.height = `${native.h * k}px`;
+}
+
 function iconCanvas(entry) {
 	if (!entry.icon) return null;
-	const first = Array.isArray(entry.icon) ? entry.icon[0] : entry.icon;
+	// A random-per-load array can hold variants of differing size (the
+	// Koopalings differ by a pixel), so reserve the largest.
+	const specs = Array.isArray(entry.icon) ? entry.icon : [entry.icon];
+	const sizes = specs.map(iconNativeSize);
+	const native = {
+		w: Math.max(...sizes.map((s) => s.w)),
+		h: Math.max(...sizes.map((s) => s.h)),
+	};
+	const k = iconScale(native);
+	// Hidden until something is actually drawn into it. An undrawn canvas is
+	// transparent but still occupies its box, which would indent icon'd options
+	// past icon-less ones and read as a set of broken images.
 	return el("canvas", {
 		class: "opt-icon",
 		id: `icon-${entry.id}`,
 		"data-icon": entry.id,
-		width: first.w ?? 16,
-		height: first.h ?? 16,
+		width: native.w,
+		height: native.h,
+		style: `width:${native.w * k}px;height:${native.h * k}px`,
+		hidden: true,
 	});
 }
 

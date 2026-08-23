@@ -529,6 +529,14 @@ fn randomize_inner(
         randomize::qol::apply_remove_flashing(rom);
     }
 
+    // A defeated Lakitu is deleted instead of re-seeded two screens back, so it
+    // stops holding one of the five general object slots for the whole level
+    // (and stops feeding Spiny Eggs into the other four).
+    if options.lakitu_stays_down {
+        rom.set_tag("qol/lakitu_stays_down");
+        randomize::qol::apply_lakitu_stays_down(rom);
+    }
+
     // Faster Frog — speeds up Frog-Suit swimming. MUST run after
     // apply_macobra_patches: two of its writes patch inside the tail-swim
     // routine that macobra writes unconditionally, so it has to layer on top.

@@ -362,6 +362,14 @@ pub struct Options {
     /// always-on tail-attack-while-swimming routine.)
     #[serde(default)]
     pub faster_frog: bool,
+    /// A defeated Lakitu stays gone instead of returning two screens behind.
+    /// Vanilla never lets one die: it falls off the bottom and `ObjNorm_Lakitu`
+    /// re-seeds it. It is also exempt from off-screen deletion while alive, so
+    /// it holds one of the five general object slots for the whole level and
+    /// each Spiny Egg it throws takes another — starving the level's own
+    /// enemies, and pick-up-able ice blocks, of somewhere to spawn.
+    #[serde(default)]
+    pub lakitu_stays_down: bool,
     /// Every 1-Up Mushroom is replaced with a Poison Mushroom that damages
     /// the player instead of granting a life. (MaCobra52's "All 1UPs are
     /// Poison Mushrooms" patch.) Off by default; a challenge option.
@@ -530,6 +538,7 @@ impl Default for Options {
             faster_tail_speed: false,
             no_game_over_penalty: false,
             faster_frog: false,
+            lakitu_stays_down: false,
             poison_mushrooms: false,
             modern_powerups: false,
             fire_flower: FireFlowerMode::Off,

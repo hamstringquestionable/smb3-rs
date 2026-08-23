@@ -45,7 +45,8 @@ export function resolvePalette(indices) {
 
 // Decode a single 8×8 CHR tile to an ImageData. paletteRgb = 4 [r,g,b] tuples.
 // Color 0 → fully transparent. Colors 1-3 → opaque.
-export function decodeTile(romBytes, tileId, paletteRgb) {
+// flipX mirrors horizontally, the way OAM attribute bit 6 does.
+export function decodeTile(romBytes, tileId, paletteRgb, flipX = false) {
 	const base = CHR_BASE + tileId * TILE_BYTES;
 	const data = new Uint8ClampedArray(8 * 8 * 4);
 	for (let y = 0; y < 8; y++) {
@@ -54,7 +55,7 @@ export function decodeTile(romBytes, tileId, paletteRgb) {
 		for (let x = 0; x < 8; x++) {
 			const bit = 7 - x;
 			const idx = (((p1 >> bit) & 1) << 1) | ((p0 >> bit) & 1);
-			const o = (y * 8 + x) * 4;
+			const o = (y * 8 + (flipX ? 7 - x : x)) * 4;
 			if (idx === 0) {
 				data[o + 3] = 0; // transparent
 			} else {
@@ -78,31 +79,50 @@ export function renderTileToCanvas(canvas, romBytes, tileId, paletteRgb) {
 	ctx.putImageData(decodeTile(romBytes, tileId, paletteRgb), 0, 0);
 }
 
-// Render a 2×2 metasprite (16×16 px) from four tile IDs in [tl, tr, bl, br] order.
-// Native 16×16 pixels — caller scales via CSS for crisp rendering with
+// Render an arbitrary grid of 8×8 tiles, listed row-major and `cols` wide.
+//
+// Each entry is a CHR tile index, `null` for a transparent cell (so a
+// non-rectangular sprite can skip tiles it doesn't use), or `{ t, flip: true }`
+// to h-flip that one tile. Per-tile flips are for composites whose parts differ:
+// Bowser's top half is stored as a left half and mirrored, while his bottom half
+// is stored whole, so no whole-grid rule covers both.
+//
+// The canvas is sized to the grid in native pixels — callers scale via CSS with
 // `image-rendering: pixelated`.
-export function renderMetatile(canvas, romBytes, tileIds, paletteRgb) {
-	canvas.width = 16;
-	canvas.height = 16;
+// flipRight h-flips the right half of the grid, for symmetric art stored as one
+// half and drawn twice (the title-screen seed hash does this). Paired with a
+// tile list whose right half repeats the left in reverse, it mirrors the whole
+// sprite; for the common 2-column case that's just "flip the right column".
+export function renderTiles(canvas, romBytes, tileIds, cols, paletteRgb, flipRight = false) {
+	const rows = Math.ceil(tileIds.length / cols);
+	canvas.width = cols * 8;
+	canvas.height = rows * 8;
 	const ctx = canvas.getContext("2d");
-	ctx.clearRect(0, 0, 16, 16);
-	const positions = [
-		[0, 0],   // tl
-		[8, 0],   // tr
-		[0, 8],   // bl
-		[8, 8],   // br
-	];
-	for (let i = 0; i < 4; i++) {
-		const tid = tileIds[i];
-		if (tid == null) continue;
-		const [x, y] = positions[i];
-		ctx.putImageData(decodeTile(romBytes, tid, paletteRgb), x, y);
+	ctx.clearRect(0, 0, canvas.width, canvas.height);
+	for (let i = 0; i < tileIds.length; i++) {
+		const entry = tileIds[i];
+		if (entry == null) continue;
+		const perTile = typeof entry === "object";
+		const tid = perTile ? entry.t : entry;
+		const col = i % cols;
+		const flip = perTile ? !!entry.flip : flipRight && col >= cols / 2;
+		ctx.putImageData(
+			decodeTile(romBytes, tid, paletteRgb, flip),
+			col * 8,
+			Math.floor(i / cols) * 8,
+		);
 	}
 }
 
+// Render a 2×2 metasprite (16×16 px) from four tile IDs in [tl, tr, bl, br] order.
+export function renderMetatile(canvas, romBytes, tileIds, paletteRgb, flipRight = false) {
+	renderTiles(canvas, romBytes, tileIds, 2, paletteRgb, flipRight);
+}
+
 // Convenience: render an icon spec (from the schema) into a canvas.
-// spec = { tiles: [tl, tr, bl, br], palette: [c0, c1, c2, c3] }
+// spec = { tiles: [...row-major], cols?: 2, palette: [c0, c1, c2, c3], flipRight? }
 export function renderIcon(canvas, romBytes, spec) {
 	if (!canvas || !romBytes || !spec) return;
-	renderMetatile(canvas, romBytes, spec.tiles, resolvePalette(spec.palette));
+	const cols = spec.cols ?? 2;
+	renderTiles(canvas, romBytes, spec.tiles, cols, resolvePalette(spec.palette), !!spec.flipRight);
 }

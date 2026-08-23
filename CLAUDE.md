@@ -103,6 +103,7 @@ is the one to read:
 | PRG006 | `$C000–$DFFF`, in-level (enemy data) | 1392 | 1392 |
 | PRG007 | swapped, in-level (object AI) | 27 | 27 |
 | PRG010 | `$C000–$DFFF`, map | 896 | 588 |
+| PRG025 | `$C000–$DFFF`, title screen | 2771 | 2759 |
 | PRG026 | `$A000–$BFFF`, map/inventory | 2603 | 2537 |
 
 PRG000 and PRG002 have no `$FF` filler left at all.
@@ -129,7 +130,12 @@ The two largest gaps here have been through the unreferenced check already
 (2026-08-04): `prg004.asm` ends with "Rest of ROM bank was empty" at `$BE56`,
 and PRG006's last assembled data is the dead object stream `_DA60` (file
 0x0DA70..0x0DA74), referenced from nowhere, with the furthest referenced enemy
-stream ending at 0x0D9F6.
+stream ending at 0x0D9F6. PRG025's tail was checked the same way (2026-08-10):
+`prg025.asm` ends with "Rest of ROM bank was empty" after the palette sequence
+at `$D505`, so the whole run from 0x33529 to the bank end is filler. That bank
+is mapped at `$C000` for the entire title screen (PRG030's title entry loads
+page 24 into `$A000` and page 25 into `$C000`), which makes it the right home
+for title-only code instead of the nearly-full always-mapped banks.
 
 ### Size techniques that have actually paid off here
 
@@ -328,6 +334,14 @@ web/
   index.html           # Browser frontend
   style.css
   app.js               # Loads WASM, handles file input, triggers download
+  options.js           # Option schema (labels, tips, defaults, icon specs)
+  chr.js               # CHR decoder — every icon in the app is drawn from the
+                       #   player's own ROM, so there are no bundled sprite
+                       #   sheets. Pixel art only ever scales by a whole number.
+  chr-picker.html      # Icon picker. Lays CHR out as 8x16 pairs, which is the
+                       #   only way sprite art is legible (a flat tile grid
+                       #   interleaves each sprite's halves). Emits icon specs
+                       #   for options.js, or ICON_TILES rows in title-hash mode.
 tools/
   README.md            # INDEX OF ALL 16 TOOLS — read this before writing a throwaway script
   rom_map.py           # ROM map generator + diagnostic modes (see below)

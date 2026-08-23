@@ -5,8 +5,8 @@
 //! loop reads the world through [`measure_world`], and the measured symptom
 //! selects the move — no move portfolio is evaluated side by side:
 //!
-//! - **Satisfied** (routes in band ≥ [`TARGET_ROUTES`] AND C1 ≥ the shipping
-//!   builder's [`C1_FLOOR`], reused verbatim): no move at all. Satisficing,
+//! - **Satisfied** (routes in band ≥ [`TARGET_ROUTES`] AND C1 ≥ this world's
+//!   dealt floor, `WorldState::c1_floor`): no move at all. Satisficing,
 //!   not optimizing — worlds the dumb roll already made interesting keep
 //!   their shape, and the across-seed diversity the uniform baseline bought
 //!   is only spent where the measure says the world is linear or nearly
@@ -64,7 +64,9 @@
 //! so most iterations cost one proposal, not five. Acceptance is minimal —
 //! routes up (or, for lock re-place, zero-gate down at equal routes) — PLUS
 //! the floor guard: every choice-mode acceptance requires `after.c1 >=
-//! C1_FLOOR`. The original design had no C1 guard, arguing that for the
+//! floor`. Both halves live in [`accepted`], which each rung calls with its
+//! own gain and nothing else, so the floor half cannot be forgotten by a
+//! rung added later. The original design had no C1 guard, arguing that for the
 //! route count to rise the old structure must stay within the band of the
 //! new cheapest, so trivializing shortcuts reject themselves. Measured
 //! FALSE (census 2026-07-31): one new pipe can create two brand-new cheap
@@ -104,6 +106,41 @@ const PIPEMOVE_TRIES: usize = 4;
 /// Consecutive rejections of a move type before escalating past it.
 const ESCALATE_AFTER: usize = 2;
 
+/// Does this world still clear its own floor? The ONLY place the floor
+/// comparison is written; everything else asks through here or through
+/// [`accepted`].
+fn meets_floor(m: &WorldMeasure, floor: u32) -> bool {
+    m.c1 >= floor
+}
+
+/// Whether a proposed move is accepted — the shared half of every rung's
+/// verdict, in one place instead of once per rung. `gain` is the rung's OWN
+/// idea of improvement (routes up, a gap closed, a decoy lock converted);
+/// the floor rule wrapped around it is common to all of them.
+///
+/// Below the floor the world is in COST MODE and the only currency is C1,
+/// with routes spendable: gating an express collapses its variants into one
+/// route, so demanding "routes not down" would veto the very move that
+/// repairs the world. At or above the floor, the rung's own gain must hold
+/// AND the move must not price the world back under.
+///
+/// Rungs route their verdict through here so the floor half has one home
+/// rather than five copies. Nothing FORCES a rung to call this — a new one
+/// can still compare fields itself and skip the floor — so this is a
+/// signpost, not a guard rail. Worth having anyway, because that omission
+/// is not hypothetical and no test would catch it: the original ladder had
+/// no C1 guard, on the argument that a trivializing shortcut would reject
+/// itself for lack of route gain, and a census (2026-07-31) measured that
+/// false — one new pipe can create two brand-new cheap routes at once, so
+/// "routes rose" held while C1 crashed 18 -> 5, on ~8% of all worlds.
+fn accepted(before: &WorldMeasure, after: &WorldMeasure, floor: u32, gain: bool) -> bool {
+    if before.c1 < floor {
+        after.c1 > before.c1
+    } else {
+        gain && meets_floor(after, floor)
+    }
+}
+
 pub(crate) struct Shaping;
 
 impl Phase for Shaping {
@@ -112,6 +149,7 @@ impl Phase for Shaping {
     }
 
     fn run(&self, state: &mut WorldState, rng: &mut dyn RngCore) -> PhaseReport {
+        let floor = state.c1_floor;
         let mut actions = Vec::new();
         let mut moves = 0usize;
         let mut accepted = 0usize;
@@ -125,7 +163,7 @@ impl Phase for Shaping {
         let status = loop {
             let before = measure_world(state);
             let routes_needy = before.routes_in_band < TARGET_ROUTES;
-            let cheap = before.c1 < C1_FLOOR;
+            let cheap = before.c1 < floor;
             if !routes_needy && !cheap {
                 break "satisfied";
             }
@@ -139,7 +177,7 @@ impl Phase for Shaping {
             // sub-floor world does nothing else until the floor holds. Every
             // rung except the shortcut (pipes only cheapen) is available and
             // accepts on C1 progress; the try_ fns branch their acceptance
-            // on the same `before.c1 < C1_FLOOR` test. Above the floor, the
+            // on the same `before.c1 < floor` test. Above the floor, the
             // normal choice ladder.
             let available = if cheap {
                 // The pipe move is the final cost rung: when no lock cuts
@@ -218,26 +256,21 @@ fn try_lock_replace(
     before: &WorldMeasure,
     zero_gate_before: usize,
 ) -> Result<String, String> {
+    let floor = state.c1_floor;
     let saved = state.locks.clone();
     // Below the floor, ask for a goal gate: the pipe-proof cut that raises
     // C1 when nothing else does.
-    if !place_locks_gating(state, rng, before.c1 < C1_FLOOR) {
+    if !place_locks_gating(state, rng, before.c1 < floor) {
         state.locks = saved;
         return Err("lock_replace REJECT: could not lock every fort".into());
     }
     let after = measure_world(state);
     let zero_gate_after = state.zero_gate_locks().len();
-    // Below the floor, cost first: accept iff C1 rose. Routes may drop — a
-    // goal gate collapses the express variants it prices up, and the choice
-    // ladder re-earns routes once the floor holds.
-    let improved = if before.c1 < C1_FLOOR {
-        after.c1 > before.c1
-    } else {
-        (after.routes_in_band > before.routes_in_band
-            || (after.routes_in_band == before.routes_in_band
-                && zero_gate_after < zero_gate_before))
-            && after.c1 >= C1_FLOOR
-    };
+    // This rung's gain: routes up, or — at flat routes — decorative locks
+    // converted into gating ones. The floor/cost half is `accepted`'s.
+    let gain = after.routes_in_band > before.routes_in_band
+        || (after.routes_in_band == before.routes_in_band && zero_gate_after < zero_gate_before);
+    let improved = accepted(before, &after, floor, gain);
     let line = format!(
         "routes {} -> {}, C1 {} -> {}, zero-gate {zero_gate_before} -> {zero_gate_after}",
         before.routes_in_band, after.routes_in_band, before.c1, after.c1,
@@ -279,6 +312,7 @@ fn try_arm_balance(
     rng: &mut dyn RngCore,
     before: &WorldMeasure,
 ) -> Result<String, String> {
+    let floor = state.c1_floor;
     let wide_before = analyze_route_choice(&state.to_built(), SHAPING_SLACK);
     let cheap: HashSet<Pos> = match wide_before.routes.first() {
         Some(r) => r.path.iter().copied().collect(),
@@ -346,11 +380,13 @@ fn try_arm_balance(
         // runner-up — after a detour-splitting move the before/after gaps
         // would describe different detours.
         let had_runner_up = wide_before.routes.len() >= 2;
-        let improved = after.c1 >= C1_FLOOR
-            && (after.routes_in_band > before.routes_in_band
-                || (after.routes_in_band == before.routes_in_band
-                    && (wide_after.routes.len() > wide_before.routes.len()
-                        || (had_runner_up && gap_after < gap_before))));
+        // Choice-only rung (never dispatched below the floor), so `accepted`
+        // always takes its choice branch here.
+        let gain = after.routes_in_band > before.routes_in_band
+            || (after.routes_in_band == before.routes_in_band
+                && (wide_after.routes.len() > wide_before.routes.len()
+                    || (had_runner_up && gap_after < gap_before)));
+        let improved = accepted(before, &after, floor, gain);
         if improved {
             return Ok(format!(
                 "arm_balance ACCEPT: level {old_pos:?} -> {target:?} (cheap-exclusive), routes {} -> {}, wide {} -> {}, gap {gap_before} -> {}, C1 {} -> {}",
@@ -399,6 +435,7 @@ fn try_gated_shortcut(
     rng: &mut dyn RngCore,
     before: &WorldMeasure,
 ) -> Result<String, String> {
+    let floor = state.c1_floor;
     let saved_grid = state.grid.clone();
     let saved_slots = state.slots.clone();
     let saved_locks = state.locks.clone();
@@ -428,7 +465,7 @@ fn try_gated_shortcut(
         // Shortcut moves only run above the floor — no goal gate wanted.
         if place_locks_gating(state, rng, false) {
             let after = measure_world(state);
-            if after.c1 >= C1_FLOOR {
+            if meets_floor(&after, floor) {
                 // In-band already: parity for free.
                 if after.routes_in_band > before.routes_in_band {
                     return Ok(format!(
@@ -473,6 +510,7 @@ fn try_fort_lock(
     rng: &mut dyn RngCore,
     before: &WorldMeasure,
 ) -> Result<String, String> {
+    let floor = state.c1_floor;
     let saved_slots = state.slots.clone();
     let saved_locks = state.locks.clone();
 
@@ -509,15 +547,12 @@ fn try_fort_lock(
             let Some(&new_pos) = candidates.choose(rng) else { break };
             state.slots[fi].pos = new_pos;
             evals += 1;
-            if place_locks_gating(state, rng, before.c1 < C1_FLOOR) {
+            if place_locks_gating(state, rng, before.c1 < floor) {
                 let after = measure_world(state);
-                // Below the floor: any relocation that raises C1 is
-                // progress (routes may be spent). Above: routes must rise.
-                let improved = if before.c1 < C1_FLOOR {
-                    after.c1 > before.c1
-                } else {
-                    after.routes_in_band > before.routes_in_band && after.c1 >= C1_FLOOR
-                };
+                // This rung's gain: routes up, nothing subtler — moving a
+                // fort re-prices the whole world, so a finer test is noise.
+                let gain = after.routes_in_band > before.routes_in_band;
+                let improved = accepted(before, &after, floor, gain);
                 if improved {
                     return Ok(format!(
                         "fort_lock ACCEPT: fort {fort_id} {old_pos:?} -> {new_pos:?}, routes {} -> {}, C1 {} -> {}",
@@ -552,6 +587,7 @@ fn try_level_move(
     rng: &mut dyn RngCore,
     before: &WorldMeasure,
 ) -> Result<String, String> {
+    let floor = state.c1_floor;
     let trunk: HashSet<Pos> = before
         .rc
         .routes
@@ -594,15 +630,10 @@ fn try_level_move(
         state.slots[si].pos = target;
         evals += 1;
         let after = measure_world(state);
-        // Below the floor: C1 progress (routes may be spent). Above: routes
-        // up, or the fine +3 trim at flat routes.
-        let improved = if before.c1 < C1_FLOOR {
-            after.c1 > before.c1
-        } else {
-            (after.routes_in_band > before.routes_in_band
-                || (after.routes_in_band == before.routes_in_band && after.c1 > before.c1))
-                && after.c1 >= C1_FLOOR
-        };
+        // This rung's gain: routes up, or the fine +3 trim at flat routes.
+        let gain = after.routes_in_band > before.routes_in_band
+            || (after.routes_in_band == before.routes_in_band && after.c1 > before.c1);
+        let improved = accepted(before, &after, floor, gain);
         if improved {
             return Ok(format!(
                 "level_move ACCEPT: level {old_pos:?} -> {target:?} (on trunk), routes {} -> {}, C1 {} -> {}",
@@ -636,6 +667,7 @@ fn try_pipe_move(
     rng: &mut dyn RngCore,
     before: &WorldMeasure,
 ) -> Result<String, String> {
+    let floor = state.c1_floor;
     let saved_grid = state.grid.clone();
     let saved_slots = state.slots.clone();
     let saved_locks = state.locks.clone();
@@ -695,7 +727,13 @@ fn try_pipe_move(
 
             if all_content_reachable(state) && place_locks_gating(state, rng, true) {
                 let after = measure_world(state);
-                if after.c1 > before.c1 {
+                // Cost-only rung: there is no choice gain to claim, so the
+                // verdict is `accepted`'s cost branch alone — exactly the
+                // rule this used to spell out itself. Were the rung ever made
+                // available above the floor, a `gain` of false makes it
+                // refuse rather than accept blind.
+                let no_choice_gain = false;
+                if accepted(before, &after, floor, no_choice_gain) {
                     return Ok(format!(
                         "pipe_move ACCEPT: mouth {old:?} -> {new_pos:?} (pair with {keep:?}), routes {} -> {}, C1 {} -> {}",
                         before.routes_in_band, after.routes_in_band, before.c1, after.c1,

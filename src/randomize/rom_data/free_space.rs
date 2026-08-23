@@ -112,6 +112,8 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(0x3E281, 69, &["start_airship_swap"], "4 tables (X/XHi/ScrL/ScrH × 8) + Map_Init seed helper"),
     fs(0x3E965, 13, &["title_screen"], "intro skip + menu music routine"),
     fs(0x3FFF0, 26, &["card_speed_clear"], "XOR trampoline"),
+    // PRG025 (file 0x32010, CPU $C000–$DFFF while the title screen runs)
+    fs(0x33529, 32, &["title_screen"], "title menu B-to-mute toggle (32 reserved, 22 used)"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
     fs(0x35572, 13, &["mystery_anchor"], "item redirect trampoline"),
     fs(0x3557F, 50, &["hammer_breaks_tiles"], "hammer_locks: tile check subroutine + tables"),
@@ -173,6 +175,14 @@ pub(crate) const FS_SEED_HASH_DATA: usize    = 0x3E93D; // 40 bytes
 pub(crate) const FS_INTRO_SKIP: usize        = 0x3E965; // 13 bytes
 
 pub(crate) const FS_CARD_CLEAR: usize        = 0x3FFF0; // 26 bytes
+
+// PRG025 — the title-screen bank at $C000–$DFFF (PRG030's title entry loads
+// page 24 into $A000 and page 25 into $C000 before `Do_Title_Screen`). The
+// disassembly ends this bank with "Rest of ROM bank was empty" just before this
+// offset, so the whole 2791-byte run to the bank end is unreferenced filler;
+// only 32 bytes are claimed here. Costs nothing from the always-mapped banks,
+// which is what makes this the right home for a title-only routine.
+pub(crate) const FS_TITLE_MUTE: usize        = 0x33529; // 32 reserved, 22 used
 
 pub(crate) const FS_STARTING_ITEMS: usize    = 0x3E260; // 33 bytes
 
@@ -805,6 +815,7 @@ mod free_space_tests {
             (FS_SEED_HASH_DATA, "FS_SEED_HASH_DATA"),
             (FS_INTRO_SKIP, "FS_INTRO_SKIP"),
             (FS_CARD_CLEAR, "FS_CARD_CLEAR"),
+            (FS_TITLE_MUTE, "FS_TITLE_MUTE"),
             (FS_STARTING_ITEMS, "FS_STARTING_ITEMS"),
             (FS_SAS_BLOCK, "FS_SAS_BLOCK"),
             (FS_SAS_GAMEOVER_FINALIZE, "FS_SAS_GAMEOVER_FINALIZE"),

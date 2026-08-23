@@ -9,7 +9,7 @@ use std::process;
 
 use clap::Parser;
 
-use smb3_rs::testrom::{self, Base, Placement, TestRomSpec};
+use smb3_rs::testrom::{self, Base, EnemyOverride, Placement, TestRomSpec};
 use smb3_rs::Options;
 
 const DEFAULT_ROM: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";
@@ -101,6 +101,13 @@ struct Cli {
     #[arg(long)]
     keep_gaps: bool,
 
+    /// Apply the always-on gameplay patches (currently stomp fairness) to a
+    /// vanilla base. Use when playtesting one of them — a plain vanilla base
+    /// does not contain them, so the test silently exercises vanilla instead.
+    /// Ignored on a --randomize base, which already has them.
+    #[arg(long)]
+    patches: bool,
+
     /// Skip the open-movement patch, so tiles must be entered and cleared.
     #[arg(long)]
     no_walk: bool,
@@ -127,6 +134,13 @@ struct Cli {
     /// Let the Hammer item break water-gap (bridge) tiles on the map.
     #[arg(long)]
     hammer_bridges: bool,
+
+    /// Overwrite one enemy slot outright, as "PTR:SLOT:ID" in hex, e.g.
+    /// "DA0F:1:66" to put a downward water current in the Coin Ship fight's
+    /// second slot. Repeatable. Use to see what an object actually does in a
+    /// room the randomizer's pools would never put it in.
+    #[arg(long, value_name = "PTR:SLOT:ID")]
+    set_enemy: Vec<String>,
 
     /// List valid --starting-items names and exit.
     #[arg(long)]
@@ -167,6 +181,29 @@ fn parse_placement(spec: &str) -> Result<Placement, String> {
         }
         None => Ok(Placement { level: spec.trim().to_string(), slot: None }),
     }
+}
+
+/// Parse a `--set-enemy` item: `"DA0F:1:66"` — enemy pointer, slot, object ID.
+/// Pointer and ID are hex (a leading `0x` is accepted); the slot is decimal.
+fn parse_set_enemy(spec: &str) -> Result<EnemyOverride, String> {
+    fn hex(s: &str) -> &str {
+        s.trim().trim_start_matches("0x").trim_start_matches("0X")
+    }
+    let bad = || format!("bad --set-enemy {spec:?} (expected PTR:SLOT:ID, e.g. DA0F:1:66)");
+    let mut parts = spec.split(':');
+    let (p, s, i) = match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some(p), Some(s), Some(i), None) => (p, s, i),
+        _ => return Err(bad()),
+    };
+    let enemy_ptr = u16::from_str_radix(hex(p), 16).map_err(|_| bad())?;
+    if !(0xC000..=0xDFFF).contains(&enemy_ptr) {
+        return Err(format!("enemy pointer ${enemy_ptr:04X} is outside $C000-$DFFF"));
+    }
+    Ok(EnemyOverride {
+        enemy_ptr,
+        slot: s.trim().parse().map_err(|_| bad())?,
+        id: u8::from_str_radix(hex(i), 16).map_err(|_| bad())?,
+    })
 }
 
 fn main() {
@@ -259,6 +296,12 @@ fn main() {
         .map(|s| parse_placement(s).unwrap_or_else(|e| die(e)))
         .collect();
 
+    let set_enemies: Vec<EnemyOverride> = cli
+        .set_enemy
+        .iter()
+        .map(|s| parse_set_enemy(s).unwrap_or_else(|e| die(e)))
+        .collect();
+
     let starting_items: Vec<u8> = cli
         .starting_items
         .iter()
@@ -300,6 +343,7 @@ fn main() {
         extra_patches,
         protect_map: cli.protect_map,
         movement_patch,
+        always_on_patches: cli.patches,
         walk_skip_conflicts: cli.walk_skip_conflicts,
         remove_locks: !cli.keep_locks,
         remove_gaps: !cli.keep_gaps,
@@ -308,6 +352,7 @@ fn main() {
         hammer_breaks_locks: cli.hammer_locks,
         hammer_breaks_bridges: cli.hammer_bridges,
         include_beta: cli.beta,
+        set_enemies,
     };
 
     let built = testrom::build(&vanilla, &spec).unwrap_or_else(|e| die(e));

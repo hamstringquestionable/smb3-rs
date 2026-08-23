@@ -9,6 +9,94 @@ deploys.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-22
+
+### Added
+
+- **Lakitu Stays Down** (off by default). Beat a Lakitu and it stays down,
+  instead of drifting back in from behind you a few seconds later. Vanilla
+  never lets one die, and while it's alive it also never despawns — so it
+  permanently occupies one of the five slots the game has for enemies, and
+  every Spiny Egg it throws takes another. That starves the rest of the level,
+  and can leave a pick-up-able ice block refusing to lift at all.
+
+- **Press B on the title screen to mute the menu music**, and B again to bring
+  it back. Handy when you are generating and verifying seeds back to back, or
+  streaming with the title screen up. Start still begins the game as normal,
+  and the world map queues its own music either way.
+
+- The web app now shows the seed's **title hash** under the Generate button as
+  soon as a seed is entered — the same five icons the title screen will show,
+  drawn from your own ROM's graphics (and from the selected visual patch, if
+  one is chosen). Racers can compare icons before generating instead of after
+  booting. Hidden while the seed box is empty, since a blank seed is rolled at
+  generate time, and while ROM validation is off, since the hash isn't applied
+  then.
+
+- A "The End" sign-off in the web app's footer, drawn from the ending
+  sequence's own graphics.
+
+### Changed
+
+- **World 8's bridges to Bowser's castle now vary.** How many of the five
+  spans are out is rolled per seed — usually one or two, sometimes three,
+  occasionally none at all, and about one seed in five thousand takes out
+  four. Which spans go is drawn fresh each time. Previously it was almost
+  always exactly one, and almost always the same one: the third span won the
+  builder's ranking by a single tile every seed, and once it was taken the
+  others had nothing left to gate.
+
+- **World length varies more between worlds.** Every world used to guarantee
+  the same minimum amount of play before its goal, which made the cheapest
+  route recognisable once you knew the number to look for. Each world now gets
+  its own minimum — a level's worth below, at, or above the old one — rolled
+  per seed and different every time. Some worlds are dealt no variation at all.
+  The overall amount of play across the eight worlds is unchanged.
+
+- The web app's option icons are now decoded from your own ROM's graphics
+  instead of bundled sprite sheets, so a selected visual patch re-skins them
+  too. They appear once a ROM is loaded. Several options that never had an
+  icon now have one — Boom-Boom Stomps, Cannons, Ghosts, Shell, Rotodiscs,
+  Faster Frog, Swap Start / Airship, Shuffle Spade Games and Remove N-Cards.
+
+- The 8-Tank treasure room now draws from the same enemy pool as the other
+  bro-fight rooms, so its enemy follows Hammer Bro encounter randomization
+  along with the rest.
+
+### Fixed
+
+- **Treasure-box rooms could be made unwinnable.** A room whose exit is a
+  treasure box only opens once you have cleared it, so anything in it that
+  cannot be killed traps you there. Two ways that happened:
+
+  A Hammer Bro in such a room is not really an enemy — the game treats it as
+  "whichever bro's map sprite you walked in through", and in a room you did not
+  reach through a bro sprite it turns into something unkillable. This is what
+  players hit in the Coin Ship's reward fight, and it could also reach the
+  8-Tank and White Toad House reward rooms. Hammer Bros are now kept out of
+  every such room.
+
+  Dry Bones could also appear there. Stomping one works but it gets back up, so
+  in a room you have to clear it is a dead end. It is now only ever placed
+  alongside a Koopa shell, which does kill it for good.
+
+  Both are unchanged everywhere else in the game.
+
+- **The title hash no longer changes colour when you use a visual patch.** It
+  used to encode part of itself in the icons' colour, drawn from Mario's
+  palette — which every character re-skin rewrites, so the same seed showed red
+  on a vanilla ROM, green under Luigi and cyan under Toad. Two racers on
+  different skins saw different colours for the identical game, and there was no
+  way to tell that apart from a genuinely different seed. The colour is now
+  fixed and means nothing; the icon set grew from 15 to 20 instead, which more
+  than replaces what the colour was worth (3,200,000 combinations, up from
+  1,518,750). **Your title hash icons will differ from 1.1.0's for the same
+  seed**, as they do on any version change.
+
+- Option icons are no longer squashed. Every sprite was being forced into a
+  24x24 box, which scaled 16x16 art by 1.5x and distorted the taller sprites;
+  pixel art is now only ever scaled by a whole number.
+
 ## [1.1.0] - 2026-08-08
 
 ### Added

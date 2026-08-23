@@ -117,6 +117,12 @@ pub(crate) struct BuiltWorld {
     /// Redistributed wandering Hammer Bro sprites for this world. Empty when
     /// `shuffle_hammer_bros` is off (the writer keeps the vanilla sprites).
     pub hb_sprites: Vec<HbSprite>,
+    /// The C1 floor this world was built to (see `deal_c1_floors`). Carried
+    /// out of the build so the census can score each world against its OWN
+    /// floor — a global comparison would read a dealt 11 as a failure and a
+    /// dealt 17 as a pass it never had to earn.
+    #[allow(dead_code)] // read in tests
+    pub c1_floor: u32,
 }
 
 /// Complete Phase 3 output.

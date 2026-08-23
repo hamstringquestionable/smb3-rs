@@ -58,6 +58,9 @@
                 <label for="version-picker">Randomizer version:</label>
                 <select id="version-picker"></select>
             </p>
+            <!-- Sign-off drawn from the ending sequence's own graphics. Stays
+                 hidden until a ROM is loaded, like the CHR option icons. -->
+            <canvas id="the-end" class="the-end" hidden aria-label="The End"></canvas>
         </footer>
     </div>
 
@@ -112,6 +115,16 @@
             </button>
             <div id="changes-summary-list" class="changes-summary-list" hidden></div>
             <button id="generate-btn" type="button" disabled>Generate</button>
+            <!-- The five icons this seed + these flags will show on the title
+                 screen. Drawn from the loaded ROM's own CHR by app.js. -->
+            <div id="seed-hash" class="seed-hash" hidden
+                 title="These icons appear on the title screen — check they match everyone else's">
+                <span class="seed-hash-label">Title hash</span>
+                <div class="seed-hash-icons" id="seed-hash-icons"></div>
+                <!-- Shown alongside the hash because both are title-screen
+                     behaviour, and both are skipped when validation is off. -->
+                <p class="seed-hash-hint">Press <strong>B</strong> on the title screen to mute the music.</p>
+            </div>
             <p class="early-access-note"><em>Early access — you may encounter bugs. Report issues on <a href="https://github.com/hamstringquestionable/smb3-rs/issues" target="_blank" rel="noopener">GitHub</a>.</em></p>
             <div id="status" class="status" hidden></div>
         </div>

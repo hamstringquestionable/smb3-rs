@@ -45,10 +45,34 @@ pub(crate) struct WorldState {
     /// How many fortresses the Forts phase places — same pattern as
     /// `level_budget`, seeded from the vanilla catalog's Fortress tally.
     pub fort_budget: usize,
+    /// Floor on this world's cheapest route ("C1"), in scorer points — the
+    /// per-world value of [`C1_FLOOR`], dealt by [`allot_budgets`] so a seed
+    /// mixes short worlds with long ones at a conserved total. Every site
+    /// that used to read the constant reads this instead; the constant is
+    /// the band's center and the default for the loader sources.
+    pub c1_floor: u32,
     /// Pointer-table entries available to this world (the pickup pool size).
     /// Every slot — level, fort, hammer bro, pipe endpoint — consumes one;
     /// the hammer-bro fill phase caps itself against this.
     pub ptr_slots: usize,
+    /// How many spans of the W8 bridge approach to Bowser's castle this seed
+    /// wants gapped out, rolled by `capacity::roll_bridges_out`. Always 0
+    /// outside W8: the deal is scoped to that one row, and the vanilla
+    /// bridges in W1 and W4-W6 stay ordinary lock sites ranked on their
+    /// merits.
+    pub bridges_out: usize,
+    /// Which spans, drawn by `locks::deal_bridge_spans` in the [`Locks`]
+    /// phase — after connectivity, because whether a span gates anything
+    /// depends on where this seed's pipes enter the corridor.
+    ///
+    /// Held on the state, not re-drawn, because every shaping rung that
+    /// re-places locks re-enters `place_locks_gating`. Drawing there would
+    /// let the ladder's accept test pick WHICH bridge is out — it accepts on
+    /// falling zero-gate, so it kept the spans that gate and discarded the
+    /// ones the web left decorative (measured: 55/57/59 drawn twice as often
+    /// as 51/53). A pipe-web redeal re-enters [`Locks`] and does draw again,
+    /// which is right: the new web moves where the corridor is entered.
+    pub bridge_spans: Vec<Pos>,
     /// Vanilla wandering-sprite positions that MUST become HammerBro slots
     /// (a sprite starts there and can be encountered immediately, so the
     /// tile needs a pointer entry). Empty when hammer-bro shuffle is on —
@@ -239,6 +263,7 @@ impl WorldState {
             slots: self.slots.clone(),
             locks: self.locks.clone(),
             pipe_pairs: self.pipe_pairs.clone(),
+            bridge_spans: self.bridge_spans.clone(),
         }
     }
 
@@ -249,6 +274,7 @@ impl WorldState {
         self.slots = snap.slots.clone();
         self.locks = snap.locks.clone();
         self.pipe_pairs = snap.pipe_pairs.clone();
+        self.bridge_spans = snap.bridge_spans.clone();
     }
 
     /// Undo the most recent [`add_pipe_pair`](Self::add_pipe_pair): remove
@@ -292,6 +318,7 @@ impl WorldState {
             section_count: self.fort_count(),
             pipe_pairs: self.pipe_pairs.clone(),
             hb_sprites: Vec::new(),
+            c1_floor: self.c1_floor,
         }
     }
 }
@@ -303,6 +330,10 @@ pub(crate) struct WorldSnapshot {
     slots: Vec<SlotAssignment>,
     locks: Vec<LockAssignment>,
     pipe_pairs: Vec<TeleportEdge>,
+    /// Travels with the locks it explains: a web redeal draws fresh spans,
+    /// and keeping the winning attempt's locks beside a later attempt's
+    /// spans would leave the two disagreeing about which bridge is out.
+    bridge_spans: Vec<Pos>,
 }
 
 /// The cell sharing `pos`'s completion bit: (8,c) for (7,c) and vice versa.
