@@ -311,7 +311,6 @@ fn randomize_inner(
         &data,
         &mut rng,
         randomize::overworld_writer::WriteFlags {
-            cross_world: true,
             shuffle_hammer_bros: options.shuffle_hammer_bros,
             piranha: options.piranha_shuffle,
         },

@@ -722,7 +722,6 @@ fn test_march_veto_pipeline_writes_registry() {
     write_overworld(&mut out, &build, &data, &mut rng, WriteFlags {
         piranha: PiranhaMode::Wild,
         shuffle_hammer_bros: true,
-        ..Default::default()
     });
 
     assert_veto_hook_installed(&out);

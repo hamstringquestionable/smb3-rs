@@ -125,19 +125,12 @@ pub(crate) fn write_overworld<R: Rng>(
     }
 }
 
-/// Feature/mode flags consumed by the writer. `cross_world` is the standard
-/// mode and defaults on; feature flags default off. Construct exhaustively in
-/// production so a new flag forces a conscious wire-up; in tests use
-/// `WriteFlags { ..Default::default() }` so adding a flag leaves them untouched.
-#[derive(Copy, Clone)]
+/// Feature flags consumed by the writer, all defaulting off. Construct
+/// exhaustively in production so a new flag forces a conscious wire-up; in
+/// tests use `WriteFlags { ..Default::default() }` so adding a flag leaves
+/// them untouched.
+#[derive(Copy, Clone, Default)]
 pub(crate) struct WriteFlags {
-    pub cross_world: bool,
     pub shuffle_hammer_bros: bool,
     pub piranha: PiranhaMode,
-}
-
-impl Default for WriteFlags {
-    fn default() -> Self {
-        Self { cross_world: true, shuffle_hammer_bros: false, piranha: PiranhaMode::Off }
-    }
 }

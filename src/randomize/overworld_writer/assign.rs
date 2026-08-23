@@ -56,30 +56,21 @@ fn shuffled_obj_groups<R: Rng>(
     (keys, groups)
 }
 
-/// Take the next level pool entry for a slot. `take_front` selects which end
-/// of the pool feeds regular slots: the cross-world deque drains from the
-/// front, the intra-world pools drain from the back (preserving the original
-/// per-mode take order). Troll-pipe slots scan from that same end for the
-/// first eligible entry; when none qualifies, the slot takes the plain next
-/// entry and reports itself demoted (second tuple field).
+/// Take the next level pool entry for a slot. Regular slots drain the deque
+/// from the front; a troll-pipe slot scans from the front for the first
+/// eligible entry, and when none qualifies takes the plain next entry and
+/// reports itself demoted (second tuple field).
 fn take_level_slot(
     pool: &mut VecDeque<usize>,
-    take_front: bool,
     is_troll_pipe: bool,
     is_ineligible: impl Fn(usize) -> bool,
 ) -> (usize, bool) {
-    if is_troll_pipe {
-        let found = if take_front {
-            pool.iter().position(|&pi| !is_ineligible(pi))
-        } else {
-            pool.iter().rposition(|&pi| !is_ineligible(pi))
-        };
-        if let Some(idx) = found {
-            return (pool.remove(idx).unwrap(), false);
-        }
+    if is_troll_pipe
+        && let Some(idx) = pool.iter().position(|&pi| !is_ineligible(pi))
+    {
+        return (pool.remove(idx).unwrap(), false);
     }
-    let pi = if take_front { pool.pop_front() } else { pool.pop_back() };
-    (pi.expect("level pool exhausted"), is_troll_pipe)
+    (pool.pop_front().expect("level pool exhausted"), is_troll_pipe)
 }
 
 pub(super) fn assign_pool<R: Rng>(
@@ -89,7 +80,7 @@ pub(super) fn assign_pool<R: Rng>(
     rng: &mut R,
     flags: WriteFlags,
 ) -> Vec<WorldAssignments> {
-    let WriteFlags { cross_world, shuffle_hammer_bros, .. } = flags;
+    let WriteFlags { shuffle_hammer_bros, .. } = flags;
     let pickup = data.pickup;
     let catalog = data.catalog;
     // Partition pool by kind.
@@ -154,23 +145,19 @@ pub(super) fn assign_pool<R: Rng>(
     }).expect("1-F fortress not found in pool");
     let fort_1f_pi = fort_pool.remove(fort_1f_pos);
 
-    // Collect all safe (world_idx, section) slots. In intra-world mode,
-    // 1-F can only go to a safe slot in its origin world.
-    let fort_1f_origin = catalog.entries[pickup.pool[fort_1f_pi].catalog_idx].world_idx;
+    // Collect all safe (world_idx, section) slots. World order is
+    // load-bearing: the draw below indexes into this list.
     let mut safe_slots: Vec<(usize, usize)> = Vec::new();
     for wi in 0..8 {
-        if !cross_world && wi != fort_1f_origin {
-            continue;
-        }
         for lock in &build.worlds[wi].locks {
             if lock.secret_exit_safe {
                 safe_slots.push((wi, lock.fort_section));
             }
         }
     }
-    // Pre-assign 1-F to a safe slot if one exists. In intra-world mode,
-    // W1 may have no safe lock — that's fine, the player must use the
-    // normal exit (beat Boom-Boom) to open the lock.
+    // Pre-assign 1-F to a safe slot if one exists. If no world offers one,
+    // that's fine — the player must use the normal exit (beat Boom-Boom)
+    // to open the lock.
     let mut preassigned_forts: HashMap<(usize, usize), usize> = HashMap::new();
     if let Some(&(safe_wi, safe_section)) = safe_slots.choose(rng) {
         preassigned_forts.insert((safe_wi, safe_section), fort_1f_pi);
@@ -188,20 +175,6 @@ pub(super) fn assign_pool<R: Rng>(
     // that depend on specific level assignments per seed.
     toad_pool.as_mut_slice().shuffle(rng);
     let mut toad_iter = toad_pool.into_iter();
-
-    // For intra-world mode, partition fort/level pools by origin world.
-    let mut fort_by_world: HashMap<usize, Vec<usize>> = HashMap::new();
-    let mut level_by_world: HashMap<usize, VecDeque<usize>> = HashMap::new();
-    if !cross_world {
-        for &pi in &fort_pool {
-            let wi = catalog.entries[pickup.pool[pi].catalog_idx].world_idx;
-            fort_by_world.entry(wi).or_default().push(pi);
-        }
-        for &pi in &level_pool {
-            let wi = catalog.entries[pickup.pool[pi].catalog_idx].world_idx;
-            level_by_world.entry(wi).or_default().push_back(pi);
-        }
-    }
 
     let mut fort_iter = fort_pool.into_iter();
     let mut level_pool: VecDeque<usize> = level_pool.into();
@@ -236,15 +209,9 @@ pub(super) fn assign_pool<R: Rng>(
                 s.kind == SlotKind::Fortress && s.section == section
             }) {
                 // Check if this slot was pre-assigned (1-F safe placement).
-                let pi = if let Some(pre) = preassigned_forts.remove(&(wi, section)) {
-                    pre
-                } else if cross_world {
-                    fort_iter.next().expect("fortress pool exhausted")
-                } else {
-                    fort_by_world
-                        .get_mut(&wi)
-                        .and_then(|v| v.pop())
-                        .expect("intra-world fortress pool exhausted")
+                let pi = match preassigned_forts.remove(&(wi, section)) {
+                    Some(pre) => pre,
+                    None => fort_iter.next().expect("fortress pool exhausted"),
                 };
                 fortress.push(Assignment { pool_idx: pi, pos: slot.pos });
             }
@@ -275,15 +242,11 @@ pub(super) fn assign_pool<R: Rng>(
         ordered.extend(level_slots.iter().copied().filter(|s| !s.is_troll_pipe));
 
         for slot in ordered {
-            let pool = if cross_world {
-                &mut level_pool
-            } else {
-                level_by_world
-                    .get_mut(&wi)
-                    .expect("intra-world level pool missing")
-            };
-            let (pi, demoted) =
-                take_level_slot(pool, cross_world, slot.is_troll_pipe, is_troll_pipe_ineligible);
+            let (pi, demoted) = take_level_slot(
+                &mut level_pool,
+                slot.is_troll_pipe,
+                is_troll_pipe_ineligible,
+            );
             if demoted {
                 demoted_troll_pipes.insert(slot.pos);
             }
