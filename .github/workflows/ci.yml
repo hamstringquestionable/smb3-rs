@@ -28,7 +28,14 @@ concurrency:
   # Scope by event type so a `pull_request` sync run can't preempt the
   # `push` run that actually does the deploy (the `build` and `deploy`
   # jobs below are gated on `github.event_name == 'push'`).
-  group: pages-${{ github.event_name }}
+  #
+  # AND by branch: `push` fires on both `main` and `beta/next`, so an
+  # event-only group put them in the same bucket and the later push killed
+  # the earlier run. That bit the 1.2.0 release — pushing `beta/next` back
+  # after the merge (which the release runbook tells you to do) cancelled
+  # the `main` deploy 12s in. Same-branch pushes still supersede each
+  # other, which is what you want; cross-branch ones no longer do.
+  group: pages-${{ github.event_name }}-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -233,8 +240,21 @@ jobs:
           fi
 
           # Manifest for the in-app version picker (newest first).
+          #
+          # `current` comes from the ARCHIVE, not from main's Cargo.toml. Every
+          # run writes this file, including runs triggered by `beta/next` — and
+          # those skip the snapshot above, so reading Cargo.toml let a beta push
+          # advertise a version that had never been archived. That happened on
+          # 1.2.0: the main run was cancelled before it snapshotted, the beta run
+          # that replaced it published `current: 1.2.0` against an archive whose
+          # newest entry was 1.1.0, and /v/1.2.0/ 404'd from the picker.
+          # Newest-archived is always the version the root is serving, because
+          # the snapshot above runs before this line on the main push that
+          # produced that root.
           ARR=$(ls versions-repo/v 2>/dev/null | sort -Vr | sed 's/.*/"&"/' | paste -sd, -)
-          printf '{"current":"%s","versions":[%s]}\n' "$VER" "$ARR" > _site/versions.json
+          CUR=$(ls versions-repo/v 2>/dev/null | sort -V | tail -1)
+          CUR=${CUR:-$VER}   # empty archive (first ever run): fall back to main's version
+          printf '{"current":"%s","versions":[%s]}\n' "$CUR" "$ARR" > _site/versions.json
           cat _site/versions.json
 
       - name: Upload artifact
