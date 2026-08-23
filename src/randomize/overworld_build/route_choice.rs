@@ -332,8 +332,17 @@ fn unpack_mask(key: PackedState) -> u64 {
 
 /// Enumerate every distinct near-optimal route to the goal and summarise the
 /// choice they offer.
+///
+/// Compiles the walk-invariant base and measures `built` against it. The
+/// compile and the measure are split (`WalkGraph::compile` /
+/// `WalkGraph::measure`) so a selection step can hoist the compile and reuse it
+/// across its kind/lock candidates; this single-shot entry point keeps the
+/// one-call form.
 pub(crate) fn analyze_route_choice(built: &BuiltWorld, slack: u32) -> RouteChoice {
-    analyze_route_choice_inner(built, slack, true)
+    match WalkGraph::compile(built) {
+        Some(g) => g.measure(built, slack),
+        None => RouteChoice::default(),
+    }
 }
 
 /// The walk-invariant base of a route measurement — the `walk_map` BFS graph
@@ -434,7 +443,7 @@ impl WalkGraph {
     /// share the grid tiles and `pipe_pairs` the base was compiled from (only
     /// its slot KINDS / sections and `locks` may differ) — the reuse contract on
     /// `WalkGraph`, verified in debug builds below.
-    pub(super) fn measure(&self, built: &BuiltWorld, slack: u32, want_paths: bool) -> RouteChoice {
+    pub(super) fn measure(&self, built: &BuiltWorld, slack: u32) -> RouteChoice {
         // Walk-invariance guard: reusing this base for `built` is sound only if
         // `built`'s walk graph still matches the compiled one. Catches a stale
         // reuse across a graph-changing trial (spare pipe, or a slot flip onto a
@@ -674,11 +683,8 @@ impl WalkGraph {
         }
 
         // Rebuild the node path for a goal state by walking the recorded
-        // predecessors back to start. Counts-only measures skip this.
+        // predecessors back to start.
         let reconstruct = |goal: PackedState| -> Vec<Pos> {
-            if !want_paths {
-                return Vec::new();
-            }
             let mut nodes = vec![unpack_pos(goal)];
             let mut cur = goal;
             while let Some(p) = dist.prev_of(cur) {
@@ -758,17 +764,6 @@ impl WalkGraph {
             runner_up_gap,
             detours,
         }
-    }
-}
-
-/// Compile the walk-invariant base and measure `built` against it. The compile
-/// and the measure are split (`WalkGraph::compile` / `WalkGraph::measure`) so a
-/// selection step can hoist the compile and reuse it across its kind/lock
-/// candidates; the single-shot public entry points keep the one-call form.
-fn analyze_route_choice_inner(built: &BuiltWorld, slack: u32, want_paths: bool) -> RouteChoice {
-    match WalkGraph::compile(built) {
-        Some(g) => g.measure(built, slack, want_paths),
-        None => RouteChoice::default(),
     }
 }
 
