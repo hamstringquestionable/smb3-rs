@@ -372,6 +372,10 @@ pub struct TestRomSpec {
     pub hammer_breaks_bridges: bool,
     /// Include the 9 unreferenced beta stages as placeable names.
     pub include_beta: bool,
+    /// Repoint every Big [?] Block bonus area at "Unused Level 5" (the
+    /// unreferenced eight-room test level) and land 5-2's bonus pipe in the
+    /// room on this screen, 0-7. `None` leaves the vanilla areas alone.
+    pub big_q_unused5: Option<u8>,
     /// Enemy slots to overwrite outright. Applied last, so they win over the
     /// randomizer's own choices on a `--randomize` base.
     pub set_enemies: Vec<EnemyOverride>,
@@ -443,6 +447,86 @@ fn numbered_slots(rom: &Rom, world_idx: usize, include_beta: bool) -> Vec<(u8, u
     slots.sort_unstable();
     slots.dedup_by_key(|(num, _)| *num);
     slots
+}
+
+/// Repoint every Big [?] Block bonus area at "Unused Level 5", and aim 5-2's
+/// bonus pipe at one of its eight rooms.
+///
+/// Two independent things have to line up for a Big [?] pipe to open a room:
+///
+/// 1. **Which area** — `LevelJct_BigQuestionBlock` loads the layout/objects
+///    pointers and the tileset from three 8-entry tables indexed by room
+///    number. Every entry is rewritten here rather than just the one 5-2 uses,
+///    so *any* Big [?] pipe in the game reaches this level no matter which
+///    world its host ended up in. That also sidesteps vanilla's `LDY World_Num`
+///    selection, which a vanilla-base test ROM still has.
+/// 2. **Which room inside it** — the arrival position comes from the *source*
+///    level's own junction command, `(col << 4) | screen` in byte2. Only 5-2's
+///    is retargeted; every other host keeps its vanilla byte2, and since this
+///    level has a room on all eight screens, they all still land in one.
+///
+/// The return trip needs no edit. `Player_DoSpecialTiles` (PRG008 $BCC4) ANDs
+/// the pipe-tile index with 1 while `LevelJctBQ_Flag` is set, which collapses
+/// all four pipe-1/pipe-2 end tiles ($AD-$B0) onto the Big [?] junction type —
+/// so any ordinary pipe in the room sends the player back to the host level.
+/// Loaded normally these same pipes exit to the world map instead, which is
+/// what TCRF describes.
+fn big_q_unused5(rom: &mut Rom, screen: u8) -> Result<Vec<String>, String> {
+    // Read the rooms out of the level's own object stream rather than
+    // hardcoding them: entries are [id, (screen << 4) | col, row].
+    let seg = rom_data::enemy_ptr_to_file_offset(rom_data::UNUSED5_OBJECT_PTR);
+    let mut rooms: Vec<(u8, u8, u8, u8)> = Vec::new();
+    let mut off = seg + 1; // skip the segment's page byte
+    while rom.read_byte(off) != 0xFF {
+        let (id, pos, row) = (rom.read_byte(off), rom.read_byte(off + 1), rom.read_byte(off + 2));
+        rooms.push((pos >> 4, pos & 0x0F, row, id));
+        off += 3;
+    }
+
+    let &(scr, col, row, id) = rooms
+        .iter()
+        .find(|(s, ..)| *s == screen)
+        .ok_or_else(|| {
+            format!(
+                "Unused Level 5 has no Big [?] room on screen {screen} (rooms: {})",
+                rooms
+                    .iter()
+                    .map(|(s, ..)| s.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })?;
+
+    for room in 0..rom_data::BIG_Q_AREA_COUNT {
+        rom.write_range(
+            rom_data::BIG_Q_AREA_LAYOUTS + room * 2,
+            &rom_data::UNUSED5_LAYOUT_PTR.to_le_bytes(),
+        );
+        rom.write_range(
+            rom_data::BIG_Q_AREA_OBJECTS + room * 2,
+            &rom_data::UNUSED5_OBJECT_PTR.to_le_bytes(),
+        );
+        rom.write_byte(rom_data::BIG_Q_AREA_TILESETS + room, rom_data::UNUSED5_TILESET);
+    }
+
+    let was = rom.read_byte(rom_data::W52_BIG_Q_JUNCTION + 2);
+    let now = (col << 4) | scr;
+    rom.write_byte(rom_data::W52_BIG_Q_JUNCTION + 2, now);
+
+    Ok(vec![
+        format!(
+            "big [?] rooms: all {} areas -> Unused Level 5 (layout ${:04X}, objects ${:04X}, tileset {})",
+            rom_data::BIG_Q_AREA_COUNT,
+            rom_data::UNUSED5_LAYOUT_PTR,
+            rom_data::UNUSED5_OBJECT_PTR,
+            rom_data::UNUSED5_TILESET
+        ),
+        format!(
+            "  5-2's bonus pipe: {was:#04X} -> {now:#04X} (screen {scr}, col {col}; \
+             block {id:#04X} at row {row})"
+        ),
+        format!("  {} rooms in the level; place 5-2 to reach one", rooms.len()),
+    ])
 }
 
 /// Rewrite lock and/or water-gap tiles across all 8 world maps.
@@ -690,6 +774,11 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         }
     }
 
+    // 3a. Big [?] Block bonus rooms from the unreferenced test level.
+    if let Some(screen) = spec.big_q_unused5 {
+        report.extend(big_q_unused5(&mut rom, screen)?);
+    }
+
     // 4. Open the map up.
     let opened = open_map(&mut rom, spec.remove_locks, spec.remove_gaps);
     if opened > 0 {
@@ -847,6 +936,7 @@ mod tests {
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             include_beta: false,
+            big_q_unused5: None,
             set_enemies: Vec::new(),
         }
     }
@@ -885,6 +975,75 @@ mod tests {
             .find(|(num, _)| *num == 1)
             .expect("W1 has a tile 1");
         assert_eq!(rom_data::read_entry(&out, &WORLDS[0], slot.1), want);
+    }
+
+    /// `--bigq-unused5` has to line up two independent things: the three
+    /// per-world area tables (which area) and 5-2's own junction command (which
+    /// room inside it). This pins both, and pins the constants to the data they
+    /// claim to name — a wrong `UNUSED5_*` address would still write cleanly.
+    #[test]
+    fn big_q_unused5_repoints_every_area_and_aims_5_2() {
+        let Some(van) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+
+        let src = Rom::from_bytes_lax(&van, true).unwrap();
+
+        // The addresses really are Unused Level 5: an object stream of nothing
+        // but Big [?] Blocks, and a layout header whose size field spans the
+        // eight screens they sit on.
+        let obj = rom_data::enemy_ptr_to_file_offset(rom_data::UNUSED5_OBJECT_PTR);
+        let mut screens: Vec<u8> = Vec::new();
+        let mut off = obj + 1;
+        while src.read_byte(off) != 0xFF {
+            let id = src.read_byte(off);
+            assert!((0x94..=0x9A).contains(&id), "entry {id:#04X} is not a Big [?] Block");
+            screens.push(src.read_byte(off + 1) >> 4);
+            off += 3;
+        }
+        screens.sort_unstable();
+        assert_eq!(screens, (0..8).collect::<Vec<u8>>(), "one room per screen 0-7");
+
+        let lay = rom_data::prg_bank_cpu_to_file(21, rom_data::UNUSED5_LAYOUT_PTR);
+        assert_eq!(
+            src.read_range(lay, 4),
+            &[0x00, 0x00, 0x00, 0x00],
+            "a standalone area has null alt pointers"
+        );
+
+        let built = build(&van, &TestRomSpec { big_q_unused5: Some(5), ..spec() }).unwrap();
+        let out = Rom::from_bytes_lax(&built.bytes, true).unwrap();
+
+        for room in 0..rom_data::BIG_Q_AREA_COUNT {
+            assert_eq!(
+                out.read_range(rom_data::BIG_Q_AREA_LAYOUTS + room * 2, 2),
+                &rom_data::UNUSED5_LAYOUT_PTR.to_le_bytes(),
+                "room {room} layout"
+            );
+            assert_eq!(
+                out.read_range(rom_data::BIG_Q_AREA_OBJECTS + room * 2, 2),
+                &rom_data::UNUSED5_OBJECT_PTR.to_le_bytes(),
+                "room {room} objects"
+            );
+            assert_eq!(
+                out.read_byte(rom_data::BIG_Q_AREA_TILESETS + room),
+                rom_data::UNUSED5_TILESET,
+                "room {room} tileset"
+            );
+        }
+
+        // Screen 5's block sits at column 6, so the arrival byte is (6 << 4) | 5.
+        assert_eq!(out.read_byte(rom_data::W52_BIG_Q_JUNCTION + 2), 0x65);
+        // The rest of the command is untouched — the slot nibble still names
+        // 5-2's own pipe screen, and the exit direction still suits the room.
+        assert_eq!(
+            out.read_range(rom_data::W52_BIG_Q_JUNCTION, 2),
+            src.read_range(rom_data::W52_BIG_Q_JUNCTION, 2)
+        );
+
+        let err = build(&van, &TestRomSpec { big_q_unused5: Some(9), ..spec() }).unwrap_err();
+        assert!(err.contains("no Big [?] room on screen 9"), "{err}");
     }
 
     /// The Coin Ship has no world pointer table entry, so the catalog cannot

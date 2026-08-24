@@ -679,6 +679,55 @@ pub(crate) const BETA_PATCHES: &[(usize, u8)] = &[
     (0x26DB8, 0x63), (0x26DB9, 0x20),
 ];
 
+// ---------------------------------------------------------------------------
+// Big [?] Block bonus areas
+// ---------------------------------------------------------------------------
+
+/// Per-world Big [?] Block bonus-area tables in PRG026 (`LevelJctBQ_Layout`
+/// $A90B, `_Objects` $A91B, `_Tileset` $A92B).
+///
+/// `LevelJct_BigQuestionBlock` indexes all three with a room number — vanilla
+/// uses `World_Num`; `qol::big_q` replaces that with a level-identity lookup.
+/// The layout is then read from whichever bank `PAGE_A000_BY_TILESET` maps for
+/// the tileset byte, so an area's layout does not have to live in PRG013.
+///
+/// Rooms 0 and 1 are unreachable in vanilla: W1's area is empty, and W2's holds
+/// a 3-Up room that no level opens (no W1/W2 level has a Big [?] pipe).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const BIG_Q_AREA_LAYOUTS: usize = 0x3491B;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const BIG_Q_AREA_OBJECTS: usize = 0x3492B;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const BIG_Q_AREA_TILESETS: usize = 0x3493B;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const BIG_Q_AREA_COUNT: usize = 8;
+
+/// 5-2's Big [?] Block junction command — slot 4 of its entry area, the screen
+/// its bonus pipe sits on. byte2 is `(col << 4) | screen`: where in the bonus
+/// area the pipe lands. Vanilla `$73` = screen 3, column 7, which is exactly
+/// where BigQ5's 3-Up block sits.
+///
+/// The antechamber shuffle deliberately leaves this command alone — see
+/// `antechambers.rs`, which lists only 5-2's front door `0x1A804`.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const W52_BIG_Q_JUNCTION: usize = 0x1A807;
+
+/// "Unused Level 5" (TCRF): a fortress-tileset test level holding eight Big [?]
+/// Block rooms, one per screen, every block a Tanooki Suit. Nothing in the ROM
+/// reaches it — no world pointer table entry and no header alt pointer names
+/// either address. Presumably where the rooms were mocked up before being split
+/// into the per-world areas above.
+///
+/// Its layout lives in PRG021, so a `LevelJctBQ_Tileset` entry of 2 (fortress)
+/// is what maps the right bank at $A000; the object stream is in PRG006, which
+/// the loader maps for every level regardless of tileset.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const UNUSED5_LAYOUT_PTR: u16 = 0xB754;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const UNUSED5_OBJECT_PTR: u16 = 0xD401;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const UNUSED5_TILESET: u8 = 2;
+
 /// An FX slot (lock/bridge position and replacement tile).
 pub(crate) struct FxSlot {
     pub grid_row: usize,

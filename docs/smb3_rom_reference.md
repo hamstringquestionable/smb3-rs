@@ -494,6 +494,85 @@ byte 4's vertical-start (bits 5-7) and byte 8's timer (bits 6-7) — the running
 clock persists across junctions — while music (byte 8 bits 0-3), init action
 (byte 7 bits 5-7), palettes, and size are re-read from the target header.
 
+#### Big [?] Block Bonus Areas
+
+Sources: southbird disasm `prg026.asm` (`LevelJct_BigQuestionBlock`),
+`prg008.asm` (`Player_DoSpecialTiles`, `PipeEntryPrepare`), `prg005.asm`
+(`ObjInit_BigQBlock`), `prg030.asm` (`LevelLoad`), `smb3.asm` tile constants.
+
+Eight bonus *areas* — not eight rooms. Each is a multi-screen level that may
+hold several one-screen rooms, and the screen you land on picks the room.
+
+| Table | File offset | CPU (PRG026) | Size |
+|---|---|---|---|
+| `LevelJctBQ_Layout` | 0x3491B | $A90B | 8 words |
+| `LevelJctBQ_Objects` | 0x3492B | $A91B | 8 words |
+| `LevelJctBQ_Tileset` | 0x3493B | $A92B | 8 bytes (all 14 in vanilla) |
+
+**Which area** — `LevelJct_BigQuestionBlock` indexes all three with `LDY
+World_Num` (the randomizer replaces this with a level-identity lookup, see
+`qol/big_q.rs`). The layout is read from whichever bank `PAGE_A000_ByTileset`
+maps for the tileset byte, so an area's layout need not live in PRG013; the
+object stream always comes from PRG006, which `LevelLoad` maps unconditionally
+(`LDA #6 / STA PAGE_C000`) right before `JSR LevelLoad_CopyObjectList`.
+
+**Which room inside it** — the arrival position comes from the *source* level's
+own junction command (see "Junction Spawn Positions"): `Level_JctXLHStart[slot]`
+= `(col << 4) | screen`. 5-2's slot-4 command at **0x1A807** is `E4 02 73`, and
+BigQ5's 3-Up block sits at screen 3 column 7. An object entry's X-byte
+(`(screen << 4) | col`) and the junction's byte2 are nibble-swaps of each other,
+which makes "aim this pipe at that block" a one-byte edit.
+
+**Getting back out needs no special tile.** `LevelJctBQ_Flag` is toggled on
+entry and off on exit. While it is set, the vertical-pipe path ANDs the pipe
+tile index with 1 (`PRG008_BCC4`, just before `PRG008_BCD6`) and the horizontal
+path forces type 0 (just before `PRG008_BCA4`), which collapses all four
+vertical pipe-1/pipe-2 end tiles onto the Big [?] junction type — so *any*
+ordinary pipe in the room returns the player to the host level.
+
+**Outside a bonus area the pipe type is the metatile.** The engine computes
+`$B0 - tile` and uses the result >> 1 as the type:
+
+| Tile | Name | Junction type |
+|---|---|---|
+| $AD / $AE | `TILE1_PIPETB1_L/R` | alt level (exit to map, or general junction) |
+| $AF / $B0 | `TILE1_PIPETB2_L/R` | **Big [?] area** (JctCtl=2) |
+| $B1 / $B2 | `TILE1_PIPETB3_L/R` | not enterable |
+| $B3 / $B4 | `TILE1_PIPETB4_L/R` | within-level transit |
+| $BD / $BE | `TILE3_PIPETB5_L/R` | exit to common end area (gated per tileset) |
+| $B5 | `TILE1_PIPEH1_B` | horizontal, alt level |
+
+`PipeTile_EnableByTileset` (PRG008, indexed by `Level_TilesetIdx`) gates only
+the last two rows; $AD-$B4 are live in every tileset.
+
+So converting an ordinary pipe into a Big [?] pipe is a layout edit ($AD/$AE →
+$AF/$B0) **plus** a group-7 junction command at `slot == the pipe's screen` —
+without one, the arrival reads a stale slot from a previous parse.
+
+**One block per screen, once per world.** `BigQBlock_GotIt` is an 8-bit mask
+indexed by the block's `Objects_XHi` — its *screen* — cleared on world entry,
+game over, and map re-init. Two rooms on the same screen number share one bit.
+
+**Vanilla reaches 11 of the 15 blocks.** Counting `OBJ_BIGQBLOCK_*` entries per
+area: W1 0, W2 1, W3 3, W4 2, W5 2, W6 3, W7 2, W8 2. Eleven levels have a Big
+[?] pipe (3-5, 3-9, 4-F2, 5-2, 5-5, 6-3, 6-9, 6-10, 7-F1, 7-8, 8-1), so W1's
+empty area, W2's whole area (no W1/W2 level has such a pipe) and one spare room
+each in W3/W4/W8 are never opened.
+
+**"Unused Level 5" (TCRF)** is a ninth, fully unreferenced set: eight Big [?]
+rooms, one per screen 0-7, every block a Tanooki Suit ($98).
+
+| Part | File offset | CPU | Bank | Bytes |
+|---|---|---|---|---|
+| Layout | 0x2B764 | $B754 | PRG021 (fortress tileset 2) | 294 |
+| Objects | 0x0D411 | $D401 | PRG006 | 26 |
+
+Neither address appears in the world pointer tables (0x19438–0x19C00) or as a
+header alt pointer. Loaded normally its pipes exit to the world map, which is
+what TCRF describes; reached through a Big [?] junction the flag rule above
+turns them into return pipes. `testrom --bigq-unused5 <screen>` points all
+eight table entries at it and aims 5-2's pipe at one room.
+
 #### OBJ_TREASURESET (0xD6) — Treasure Box Items
 
 A `0xD6` entry in an enemy data stream sets the contents of the next

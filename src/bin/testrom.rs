@@ -142,6 +142,13 @@ struct Cli {
     #[arg(long, value_name = "PTR:SLOT:ID")]
     set_enemy: Vec<String>,
 
+    /// Open "Unused Level 5" -- the unreferenced test level holding eight Big
+    /// [?] Block rooms -- from every Big [?] pipe in the game, landing 5-2's
+    /// pipe in the room on this screen (0-7). Screen 3 reproduces 5-2's
+    /// vanilla arrival column. Pair with --place 5-2.
+    #[arg(long, value_name = "SCREEN", value_parser = clap::value_parser!(u8).range(0..=7))]
+    bigq_unused5: Option<u8>,
+
     /// List valid --starting-items names and exit.
     #[arg(long)]
     list_items: bool,
@@ -352,6 +359,7 @@ fn main() {
         hammer_breaks_locks: cli.hammer_locks,
         hammer_breaks_bridges: cli.hammer_bridges,
         include_beta: cli.beta,
+        big_q_unused5: cli.bigq_unused5,
         set_enemies,
     };
 
