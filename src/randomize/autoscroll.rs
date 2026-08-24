@@ -21,12 +21,18 @@ use crate::rom::Rom;
 /// jumps past the spoiled bytes and resumes parsing at the next real
 /// segment.
 ///
-/// Each range is conservative: it starts at the leading `$FF` (or page
-/// byte) of the affected level's data and ends at the byte just before
-/// the next real segment's page byte.
+/// A range starts at the page byte of the first spoiled stream, and its
+/// **exclusive end is the page byte of the next real stream** — the byte
+/// the walker has to resume on. Off by one in either direction and the
+/// walker parses at the wrong phase for the rest of the block, reading
+/// X/Y and page bytes as obj_ids until it happens to land on an `$FF`
+/// again. `every_enemy_entry_point_is_a_walker_segment_start` (below) is
+/// the guard: it checks every `enemy_ptr` in the ROM against the walker's
+/// segment starts, so a new `$FF` insertion with no row here — or a row
+/// whose end is wrong — fails a test instead of going latent.
 pub const SPOILED_SEGMENT_RANGES: &[Range<usize>] = &[
     0x0CFE2..0x0CFE7,
-    0x0D037..0x0D042,
+    0x0D037..0x0D041,
     0x0D102..0x0D107,
 ];
 
@@ -501,5 +507,118 @@ mod tests {
         // Matches the reference IPS exactly. The 3-7 coin heaven autoscroll
         // is deliberately left intact (chest risk/reward).
         assert_eq!(PATCHES.len(), 64);
+    }
+
+    /// Every enemy-stream entry point the engine can use must land on a
+    /// segment boundary the block-wide walker also recognizes.
+    ///
+    /// The engine enters a stream at an `enemy_ptr` and reads
+    /// `[page byte][id,x,y]...[$FF]`. `enemies.rs` instead scans the whole
+    /// block sequentially, so the two only agree while every real stream
+    /// start is also a walker segment start. `disable_autoscroll` breaks
+    /// that by writing `$FF` over a mid-stream obj_id — the walker keeps
+    /// parsing, mistakes the orphaned bytes for a segment, and from then on
+    /// reads X/Y/page bytes as obj_ids until it happens to resync. Those are
+    /// bytes it will write back.
+    ///
+    /// [`SPOILED_SEGMENT_RANGES`] is what re-syncs it, so this test is
+    /// really a check on those ranges: each must end exactly on the next
+    /// real stream's page byte. An off-by-one there desynchronizes the
+    /// walker for the rest of the block (it did, for `0x0D037..0x0D042`).
+    ///
+    /// Entry points come from both directions the ROM names a stream: the
+    /// per-world pointer tables and the level headers (which reach sub-areas
+    /// the pointer tables don't). Needs the ROM; skips without it.
+    #[test]
+    fn every_enemy_entry_point_is_a_walker_segment_start() {
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            return;
+        };
+        let vanilla = Rom::from_bytes(&bytes).unwrap();
+        let mut patched = Rom::from_bytes(&bytes).unwrap();
+        disable_autoscroll(&mut patched);
+
+        // Entry points are read per-ROM: the airship pointer redirects above
+        // move several `enemy_ptr`s, and those new streams need checking too.
+        let vanilla_eps = all_enemy_entry_points(&vanilla);
+        let patched_eps = all_enemy_entry_points(&patched);
+        assert!(
+            vanilla_eps.len() > 100 && patched_eps.len() > 100,
+            "entry-point collection came up near-empty ({} / {}) — the check \
+             would pass vacuously",
+            vanilla_eps.len(),
+            patched_eps.len(),
+        );
+
+        // Vanilla is the oracle: no skipping needed, nothing may be adrift.
+        assert_eq!(
+            adrift_entry_points(&vanilla, &vanilla_eps, &[]),
+            Vec::<String>::new(),
+            "vanilla enemy streams don't line up with the walker — \
+             the check itself is wrong, not the patch",
+        );
+
+        assert_eq!(
+            adrift_entry_points(&patched, &patched_eps, SPOILED_SEGMENT_RANGES),
+            Vec::<String>::new(),
+            "autoscroll removal desynchronized the enemy-data walker. \
+             Every $FF written into a stream needs a SPOILED_SEGMENT_RANGES \
+             row ending on the next real stream's page byte.",
+        );
+    }
+
+    /// Every `enemy_ptr` the ROM names: the per-world pointer tables plus the
+    /// level headers (the latter reach sub-areas the tables don't).
+    fn all_enemy_entry_points(rom: &Rom) -> Vec<u16> {
+        use crate::randomize::rom_data::{read_entry, WORLDS};
+
+        let mut pts: Vec<u16> = crate::randomize::enemies::enemy_entry_points(rom);
+        for world in &WORLDS {
+            for idx in 0..world.entry_count {
+                let e = read_entry(rom, world, idx);
+                pts.push(((e.obj_hi as u16) << 8) | e.obj_lo as u16);
+            }
+        }
+        pts.retain(|&ep| {
+            ep >= 0xC000
+                && crate::randomize::rom_data::enemy_ptr_to_file_offset(ep)
+                    < crate::randomize::rom_data::ENEMY_DATA_END
+        });
+        pts.sort_unstable();
+        pts.dedup();
+        pts
+    }
+
+    /// Entry points the walker would not see as a stream start, described for
+    /// the failure message. An entry point is fine if it is a walker segment
+    /// start, an empty stream (`$FF` right after the page byte — which is
+    /// what a neutralized autoscroll becomes, and what the block's leading
+    /// placeholders already were in vanilla), or inside a skip range.
+    fn adrift_entry_points(
+        rom: &Rom,
+        entry_points: &[u16],
+        skip: &[Range<usize>],
+    ) -> Vec<String> {
+        use crate::randomize::rom_data::{
+            enemy_ptr_to_file_offset, ENEMY_DATA_END, ENEMY_DATA_START,
+        };
+        use crate::randomize::segment_writer::walk_segments;
+
+        let starts: std::collections::HashSet<usize> =
+            walk_segments(&rom.data, ENEMY_DATA_START, ENEMY_DATA_END, skip)
+                .iter()
+                .map(|b| b.file_offset)
+                .collect();
+
+        entry_points
+            .iter()
+            .filter_map(|&ep| {
+                let fo = enemy_ptr_to_file_offset(ep);
+                let ok = starts.contains(&fo)
+                    || rom.data[fo + 1] == 0xFF
+                    || skip.iter().any(|r| r.contains(&fo));
+                (!ok).then(|| format!("${ep:04X} (file {fo:#07X})"))
+            })
+            .collect()
     }
 }

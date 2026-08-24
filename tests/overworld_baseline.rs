@@ -146,12 +146,33 @@ fn sweep_is_deterministic() {
 /// the same-span rate from 78% to 33%, and `test_route_census` at 1000 seeds
 /// shows W8 mean routes 2.27 -> 2.25 (linear 4% -> 5%), overall 2.548 -> 2.537
 /// (linear 6.60% -> 6.91%), nothing below its dealt floor either way.
+///
+/// Re-captured 2026-08-24 for the `SPOILED_SEGMENT_RANGES` off-by-one
+/// (issue #181). The middle row ended one byte past the next real stream's
+/// page byte, so after autoscroll removal the enemy-data walker resumed
+/// mid-entry and stayed out of phase for 18 slots. Attribution is by
+/// pinning, as with the v28 and C1-floor recaptures: restoring the range to
+/// `0x0D037..0x0D042` reproduces the hashes above exactly, so this one byte
+/// is the whole difference. What it changes: the walker now sees the two
+/// segments it was reading through, whose 17 entries were pinned to vanilla
+/// in every seed before. They are unrelated levels that merely sit next to
+/// each other in the block — `0x0D041` is 4-1's underwater sub-area and
+/// `0x0D049` is 5-4. Only four of the 17 can move: the two Big Berthas at
+/// `0x0D042`/`0x0D045` (water) and the two para-troopas at
+/// `0x0D068`/`0x0D074` (flying). The other 13 are `$90`-`$93`, the tilting
+/// and twirling platforms, which belong to no class pool and so never draw
+/// at any flag setting. Those four extra draws shift the shared RNG stream,
+/// which is why all 20 seeds move and the overworld moves with them.
+/// Nothing was being written to a wrong byte before the fix — the 18
+/// out-of-phase slots held X, Y and page bytes, all `$01..$19` and in no
+/// class pool, so 500 seeds at all-Wild never wrote one. It was latent, and
+/// `every_enemy_entry_point_is_a_walker_segment_start` keeps it that way.
 const BASELINE: [u64; SEEDS as usize] = [
-    0x23BB0B1661EB4991, 0x8BCB87C002850E1B, 0xD35E65FB6393BA7B, 0x28316C60D5B50C8C,
-    0x71D46A423D87F88D, 0x16C8AF59B8BB0589, 0x9DE59CE91689D794, 0x4C5689DE1274B707,
-    0xCF0D452FCB5F3BA5, 0xA0DA1A4EA05C9840, 0x913CB348A60E1204, 0xFB9B9EACB78D1131,
-    0x9F479C3584CDB1C9, 0x704A60C34AA3185F, 0xFEBF4CA438E54465, 0x46495F783B0C2C96,
-    0x8B9271CB5F45BD14, 0x7931621C85178986, 0xFC800FBE4F077B0A, 0xEADB5C1E7B634CA5,
+    0x500AD778776D337C, 0x5094FC748FF2B4A0, 0x20B5E2E0BEF7D0D9, 0xEC95C1580A2BEE84,
+    0xC6B2A9E00C225CB0, 0x44176CCCD2205ADA, 0x72BD61D4494E339B, 0x731F65BE6351EFD6,
+    0x4B121B725E5FE009, 0x7C56E69368F19D0B, 0x17DA3F4A44B528BE, 0xDAB9D9E9664DFF6E,
+    0xEF249386B9EE1856, 0xFBC5053F17052149, 0xA4D37AF9D4FF4E73, 0xED82D0729BCF4787,
+    0xE0201F610E43A939, 0xFDEE0F3892D95E78, 0xD57B93C62D8B9C1B, 0x96C2A5DEAF2ECF88,
 ];
 
 #[test]

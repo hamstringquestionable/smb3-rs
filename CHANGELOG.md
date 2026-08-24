@@ -9,6 +9,16 @@ deploys.
 
 ## [Unreleased]
 
+### Fixed
+
+- With autoscroll removal on, the **two Big Berthas in 4-1's underwater room
+  and the two para-troopas in 5-4** were left vanilla in every seed. Removing
+  an autoscroller writes a stream terminator into the enemy data, and the range
+  that tells the randomizer where to pick the parse back up was one byte long,
+  so it read that whole stretch out of step and skipped past both levels'
+  enemies. Nothing was ever written to a wrong byte; those four simply never
+  randomized. (#181)
+
 ## [1.2.0] - 2026-08-22
 
 ### Added
