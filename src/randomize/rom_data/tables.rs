@@ -721,6 +721,19 @@ pub(crate) const W52_BIG_Q_JUNCTION: usize = 0x1A807;
 /// Its layout lives in PRG021, so a `LevelJctBQ_Tileset` entry of 2 (fortress)
 /// is what maps the right bank at $A000; the object stream is in PRG006, which
 /// the loader maps for every level regardless of tileset.
+/// BigQ5's slot-3 junction command, `E3 61 65` — the return position vanilla
+/// uses when 5-2's Big [?] pipe sends the player home (Y index 6 = row 23,
+/// screen 5, column 6).
+///
+/// A bonus area supplies its own return: on the way out, `LevelJct_
+/// BigQuestionBlock` falls into the same code the entry uses and reads
+/// `Level_JctXLHStart[Player_XHi]`, indexed by the screen the player is
+/// standing on *in the bonus room*. Every vanilla area therefore carries one
+/// group-7 command per room screen, and a room without one returns the player
+/// to whatever stale value that slot happens to hold.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const BIGQ5_SLOT3_JUNCTION: usize = 0x1B479;
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const UNUSED5_LAYOUT_PTR: u16 = 0xB754;
 #[cfg(not(target_arch = "wasm32"))]

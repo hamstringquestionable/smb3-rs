@@ -452,33 +452,45 @@ fn numbered_slots(rom: &Rom, world_idx: usize, include_beta: bool) -> Vec<(u8, u
 /// Where to put the player in each of Unused Level 5's eight rooms, as
 /// `(column, Y-start index)`.
 ///
-/// The first cut aimed the arrival at each room's Big [?] Block, on the theory
-/// that vanilla does — 5-2's `$73` names screen 3 column 7, and BigQ5's block
-/// is at screen 3 column 7. That is a coincidence of BigQ5's geometry: vanilla
-/// aims at the room's *pipe*, which in that room happens to sit above the
-/// block. Aiming at the block here buried the player in the rock over the
-/// block on two rooms out of two tried.
+/// Six of the rooms hang a ceiling pipe over the block room; the arrival aims
+/// at that pipe's column and at a Y index *inside* the pipe, so the player
+/// falls out of its mouth the way vanilla does — 5-2's own `$73` puts the
+/// player at row 0 in BigQ5's screen 3, which is inside that room's pipe.
+/// Rooms 6 and 7 have no ceiling pipe at all (their only pipe is the floor one
+/// you leave by), so those two land beside it instead.
 ///
-/// These are open-floor spots read off the rendered rooms instead — a landing
-/// pad, not a pipe mouth, since a junction places the player outright rather
-/// than animating a pipe exit. The player falls a few rows, lands, and can
-/// reach both the block and the room's exit pipe. The Y index is into
-/// `LevelJct_YLHStarts` (PRG026): 2 = row 7, 3 = row 11, 4 = row 15, 5 = row 20.
+/// Pipe positions come from the level's own layout, decoded with the fortress
+/// tileset's command sizes; the Y index is into `LevelJct_YLHStarts` (PRG026):
+/// 0 = row 0, 4 = row 15, 5 = row 20, 6 = row 23.
 const UNUSED5_ARRIVALS: [(u8, u8); 8] = [
-    (2, 5),  // screen 0: shaft foot, left of the block
-    (5, 4),  // screen 1: left of the block, above the floor
-    (9, 2),  // screen 2: the right-hand chamber the block sits in
-    (5, 5),  // screen 3: left of the block
-    (5, 5),  // screen 4: left of the block, clear of the hanging pipe at col 3
-    (13, 3), // screen 5: right of the brick ring around the block
-    (12, 4), // screen 6: right of the block
-    (7, 2),  // screen 7: middle of the block's chamber
+    (2, 0),  // screen 0: ceiling pipe col 2, rows 0-1
+    (1, 4),  // screen 1: ceiling pipe col 1, rows 12-16
+    (2, 0),  // screen 2: ceiling pipe col 2, rows 0-1 (drift right at rows 8-9
+             //           to reach the block; the shaft drops past it otherwise)
+    (1, 5),  // screen 3: ceiling pipe col 1, rows 16-21
+    (2, 5),  // screen 4: ceiling pipe col 2, rows 16-21
+    (7, 0),  // screen 5: ceiling pipe col 7, rows 0-2
+    (3, 6),  // screen 6: no ceiling pipe — beside the floor pipe at col 1
+    (5, 6),  // screen 7: no ceiling pipe — beside the floor pipe at col 2
 ];
 
-/// Repoint every Big [?] Block bonus area at "Unused Level 5", and aim 5-2's
-/// bonus pipe at one of its eight rooms.
+/// Three-byte commands in Unused Level 5 we can overwrite with a return
+/// junction, as `(file offset, the bytes that must be there, screen)`.
 ///
-/// Two independent things have to line up for a Big [?] pipe to open a room:
+/// The level has no group-7 commands of its own, and its layout stream is
+/// byte-tight — it terminates at 0x2B889 and World 8's fortress layout starts
+/// at 0x2B88A — so a return junction has to *replace* a command rather than
+/// extend the stream. Both of these are a single `Coin` generator (fortress
+/// generator 22), the cheapest thing in the level to lose, and the caller picks
+/// one that is not in the room being tested so the room itself is untouched.
+const UNUSED5_SPARE_COMMANDS: [(usize, [u8; 3], u8); 2] =
+    [(0x2B78D, [0x2C, 0x03, 0x80], 0), (0x2B7C3, [0x2B, 0x21, 0x80], 2)];
+
+/// Repoint every Big [?] Block bonus area at "Unused Level 5", aim 5-2's bonus
+/// pipe at one of its eight rooms, and give that room a return junction.
+///
+/// Three things have to line up for a Big [?] pipe to open a room and bring the
+/// player home again:
 ///
 /// 1. **Which area** — `LevelJct_BigQuestionBlock` loads the layout/objects
 ///    pointers and the tileset from three 8-entry tables indexed by room
@@ -488,16 +500,21 @@ const UNUSED5_ARRIVALS: [(u8, u8); 8] = [
 ///    selection, which a vanilla-base test ROM still has.
 /// 2. **Where inside it** — the arrival comes from the *source* level's own
 ///    junction command: byte2 is `(col << 4) | screen`, byte1 is
-///    `(Y-start index << 4) | pipe-exit dir`. Only 5-2's is retargeted; every
-///    other host keeps its vanilla bytes, which land somewhere in this level
-///    but not necessarily anywhere sensible.
+///    `(Y-start index << 4) | pipe-exit dir`. See `UNUSED5_ARRIVALS`.
+/// 3. **Where it returns to** — supplied by the *bonus area*, not the host: on
+///    the way out the engine reads `Level_JctXLHStart[Player_XHi]` with the
+///    player's screen *in the bonus room*. This level defines no group-7
+///    commands, so without this write the slot holds whatever the host left
+///    there — for room 0 that is 5-2's own front door, whose byte1 bit 7 is the
+///    "destination is vertical" flag, which renders the horizontal lobby as a
+///    vertical level. The return bytes are copied from BigQ5's slot-3 command,
+///    which is vanilla's own answer for 5-2.
 ///
-/// The return trip needs no edit. `Player_DoSpecialTiles` (PRG008 $BCC4) ANDs
-/// the pipe-tile index with 1 while `LevelJctBQ_Flag` is set, which collapses
-/// all four pipe-1/pipe-2 end tiles ($AD-$B0) onto the Big [?] junction type —
-/// so any ordinary pipe in the room sends the player back to the host level.
-/// Loaded normally these same pipes exit to the world map, which is what TCRF
-/// describes.
+/// The pipe the player leaves by needs no edit: `Player_DoSpecialTiles` (PRG008
+/// $BCC4) ANDs the pipe-tile index with 1 while `LevelJctBQ_Flag` is set, which
+/// collapses all four pipe-1/pipe-2 end tiles ($AD-$B0) onto the Big [?]
+/// junction type. Loaded normally these same pipes exit to the world map, which
+/// is what TCRF describes.
 fn big_q_unused5(rom: &mut Rom, screen: u8) -> Result<Vec<String>, String> {
     // Read the rooms out of the level's own object stream rather than
     // hardcoding them: entries are [id, (screen << 4) | col, row].
@@ -537,17 +554,32 @@ fn big_q_unused5(rom: &mut Rom, screen: u8) -> Result<Vec<String>, String> {
         rom.write_byte(rom_data::BIG_Q_AREA_TILESETS + room, rom_data::UNUSED5_TILESET);
     }
 
-    // Keep 5-2's own pipe-exit direction (2) in byte1's low nibble and its slot
-    // nibble in byte0 — the slot still names 5-2's pipe screen, and only the
-    // arrival changes.
+    // Outbound: keep 5-2's own pipe-exit direction in byte1's low nibble and
+    // its slot nibble in byte0 — the slot names 5-2's pipe screen, which is a
+    // property of 5-2 and not of the destination.
     let dir = rom.read_byte(rom_data::W52_BIG_Q_JUNCTION + 1) & 0x0F;
-    let (was1, was2) = (
-        rom.read_byte(rom_data::W52_BIG_Q_JUNCTION + 1),
-        rom.read_byte(rom_data::W52_BIG_Q_JUNCTION + 2),
-    );
     let (now1, now2) = ((y_idx << 4) | dir, (col << 4) | scr);
     rom.write_byte(rom_data::W52_BIG_Q_JUNCTION + 1, now1);
     rom.write_byte(rom_data::W52_BIG_Q_JUNCTION + 2, now2);
+
+    // Inbound: a group-7 command in this room's own slot, carrying vanilla's
+    // return position for 5-2.
+    let &(victim, expect, victim_scr) = UNUSED5_SPARE_COMMANDS
+        .iter()
+        .find(|(_, _, s)| *s != scr)
+        .expect("two spare commands on different screens");
+    if rom.read_range(victim, 3) != expect {
+        return Err(format!(
+            "0x{victim:05X} is not the expected Coin command {expect:02X?} — \
+             Unused Level 5's layout is not vanilla here"
+        ));
+    }
+    let ret = [
+        0xE0 | scr,
+        rom.read_byte(rom_data::BIGQ5_SLOT3_JUNCTION + 1),
+        rom.read_byte(rom_data::BIGQ5_SLOT3_JUNCTION + 2),
+    ];
+    rom.write_range(victim, &ret);
 
     Ok(vec![
         format!(
@@ -558,10 +590,14 @@ fn big_q_unused5(rom: &mut Rom, screen: u8) -> Result<Vec<String>, String> {
             rom_data::UNUSED5_TILESET
         ),
         format!(
-            "  5-2's bonus pipe: {was1:#04X} {was2:#04X} -> {now1:#04X} {now2:#04X} \
-             (screen {scr}, arrive col {col} / Y index {y_idx})"
+            "  5-2's bonus pipe -> {now1:#04X} {now2:#04X}: room {scr}, arrive col {col} / \
+             Y index {y_idx} (block {id:#04X} at col {block_col}, row {block_row})"
         ),
-        format!("  room {scr}: block {id:#04X} at col {block_col}, row {block_row}"),
+        format!(
+            "  return junction {:02X?} written over the Coin at 0x{victim:05X} (screen \
+             {victim_scr}); copied from BigQ5 slot 3",
+            ret
+        ),
     ])
 }
 
@@ -1069,10 +1105,28 @@ mod tests {
             );
         }
 
-        // Screen 5 arrives at column 13, Y index 3: byte2 = (13 << 4) | 5, and
-        // byte1 = (3 << 4) | 5-2's own exit dir (2).
-        assert_eq!(out.read_byte(rom_data::W52_BIG_Q_JUNCTION + 2), 0xD5);
-        assert_eq!(out.read_byte(rom_data::W52_BIG_Q_JUNCTION + 1), 0x32);
+        // Screen 5 arrives at column 7 (its ceiling pipe), Y index 0: byte2 =
+        // (7 << 4) | 5, byte1 = (0 << 4) | 5-2's own exit dir (2).
+        assert_eq!(out.read_byte(rom_data::W52_BIG_Q_JUNCTION + 2), 0x75);
+        assert_eq!(out.read_byte(rom_data::W52_BIG_Q_JUNCTION + 1), 0x02);
+        // The return junction went in on a screen other than the one tested,
+        // in this room's own slot, carrying BigQ5's return bytes.
+        let (victim, _, victim_scr) = UNUSED5_SPARE_COMMANDS[0];
+        assert_ne!(victim_scr, 5);
+        assert_eq!(
+            out.read_range(victim, 3),
+            &[
+                0xE5,
+                src.read_byte(rom_data::BIGQ5_SLOT3_JUNCTION + 1),
+                src.read_byte(rom_data::BIGQ5_SLOT3_JUNCTION + 2)
+            ]
+        );
+        // BigQ5's slot-3 command is the one being copied from: group 7, slot 3.
+        assert_eq!(src.read_byte(rom_data::BIGQ5_SLOT3_JUNCTION), 0xE3);
+        // Every spare command really is where it claims to be in vanilla.
+        for (off, bytes, _) in UNUSED5_SPARE_COMMANDS {
+            assert_eq!(src.read_range(off, 3), &bytes, "spare command at {off:#07X}");
+        }
         // byte0 is untouched — its slot nibble names 5-2's own pipe screen,
         // which is a property of 5-2 and not of the destination.
         assert_eq!(

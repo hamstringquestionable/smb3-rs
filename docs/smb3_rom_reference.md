@@ -523,6 +523,28 @@ BigQ5's 3-Up block sits at screen 3 column 7. An object entry's X-byte
 (`(screen << 4) | col`) and the junction's byte2 are nibble-swaps of each other,
 which makes "aim this pipe at that block" a one-byte edit.
 
+**The return position is supplied by the bonus area, not the host.** On the way
+out, `LevelJct_BigQuestionBlock` restores the layout pointers and then falls into
+the same code the entry uses, reading `Level_JctXLHStart[Player_XHi]` — indexed
+by the screen the player occupies *in the bonus room*. Every vanilla area
+therefore carries one group-7 command per room screen, and the slots line up
+exactly with where its blocks are:
+
+| Area | Block screens | Junction slots |
+|---|---|---|
+| BigQ2 | 1 | 1, 4 |
+| BigQ3 | 1, 4, 5 | 1, 4, 5 |
+| BigQ4 | 2, 3 | 2, 3 |
+| BigQ5 | 3, 7 | 3 (`61 65`), 7 (`42 E5`) |
+| BigQ6 | 3, 5, 6 | 3, 5, 6 |
+| BigQ7 | 4, 6 | 4, 6 |
+| BigQ8 | 1, 4 | 4 |
+
+A room whose screen has no such command returns the player to whatever stale
+value that slot happens to hold — and if that value has byte1 bit 7 set, the
+host area is re-entered in vertical mode, giving correct collision with the
+wrong graphics.
+
 **Getting back out needs no special tile.** `LevelJctBQ_Flag` is toggled on
 entry and off on exit. While it is set, the vertical-pipe path ANDs the pipe
 tile index with 1 (`PRG008_BCC4`, just before `PRG008_BCD6`) and the horizontal
@@ -573,10 +595,27 @@ what TCRF describes; reached through a Big [?] junction the flag rule above
 turns them into return pipes. `testrom --bigq-unused5 <screen>` points all
 eight table entries at it and aims 5-2's pipe at one room.
 
-Its rooms are laid out differently from the per-world areas: the Big [?] Block
-is never under the pipe you arrive from, so an arrival copied from a vanilla
-junction lands in rock. Per-room landing spots are in `UNUSED5_ARRIVALS`
-(`testrom.rs`).
+Unlike the per-world areas it carries **no group-7 commands at all**, so it
+supplies no return position — see `UNUSED5_ARRIVALS` and
+`UNUSED5_SPARE_COMMANDS` in `testrom.rs` for the arrival aims and for how a
+return junction is written into it. Its layout stream is byte-tight (terminator
+at 0x2B889, World 8's fortress layout at 0x2B88A), so a junction command has to
+replace an existing command. Per-room command budgets, from parsing the stream
+with the fortress tileset's sizes:
+
+| Screen | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|---|
+| Commands | 10 | 5 | 10 | 4 | 21 | 22 | 4 | 8 |
+| Bytes | 35 | 18 | 36 | 14 | 66 | 69 | 15 | 31 |
+
+Wiring all eight rooms costs 24 bytes, so deleting any one of screens 0, 2, 4, 5
+or 7 pays for the other seven with room to spare.
+
+**Variable-command sizes are per tileset.** `game.xml` in the southbird disasm
+carries them: a `<generator>` whose `<param>` is commented `<!-- 1 -->` reads a
+fourth byte. Fortress (tileset 2) four-byte generators are 13, 14, 35-42, 46-48,
+57; Plains is 11, 12, 35-42. Parsing a layout with the wrong set desyncs
+silently and the stream still appears to terminate.
 
 #### OBJ_TREASURESET (0xD6) — Treasure Box Items
 
