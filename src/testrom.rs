@@ -449,6 +449,32 @@ fn numbered_slots(rom: &Rom, world_idx: usize, include_beta: bool) -> Vec<(u8, u
     slots
 }
 
+/// Where to put the player in each of Unused Level 5's eight rooms, as
+/// `(column, Y-start index)`.
+///
+/// The first cut aimed the arrival at each room's Big [?] Block, on the theory
+/// that vanilla does — 5-2's `$73` names screen 3 column 7, and BigQ5's block
+/// is at screen 3 column 7. That is a coincidence of BigQ5's geometry: vanilla
+/// aims at the room's *pipe*, which in that room happens to sit above the
+/// block. Aiming at the block here buried the player in the rock over the
+/// block on two rooms out of two tried.
+///
+/// These are open-floor spots read off the rendered rooms instead — a landing
+/// pad, not a pipe mouth, since a junction places the player outright rather
+/// than animating a pipe exit. The player falls a few rows, lands, and can
+/// reach both the block and the room's exit pipe. The Y index is into
+/// `LevelJct_YLHStarts` (PRG026): 2 = row 7, 3 = row 11, 4 = row 15, 5 = row 20.
+const UNUSED5_ARRIVALS: [(u8, u8); 8] = [
+    (2, 5),  // screen 0: shaft foot, left of the block
+    (5, 4),  // screen 1: left of the block, above the floor
+    (9, 2),  // screen 2: the right-hand chamber the block sits in
+    (5, 5),  // screen 3: left of the block
+    (5, 5),  // screen 4: left of the block, clear of the hanging pipe at col 3
+    (13, 3), // screen 5: right of the brick ring around the block
+    (12, 4), // screen 6: right of the block
+    (7, 2),  // screen 7: middle of the block's chamber
+];
+
 /// Repoint every Big [?] Block bonus area at "Unused Level 5", and aim 5-2's
 /// bonus pipe at one of its eight rooms.
 ///
@@ -460,17 +486,18 @@ fn numbered_slots(rom: &Rom, world_idx: usize, include_beta: bool) -> Vec<(u8, u
 ///    so *any* Big [?] pipe in the game reaches this level no matter which
 ///    world its host ended up in. That also sidesteps vanilla's `LDY World_Num`
 ///    selection, which a vanilla-base test ROM still has.
-/// 2. **Which room inside it** — the arrival position comes from the *source*
-///    level's own junction command, `(col << 4) | screen` in byte2. Only 5-2's
-///    is retargeted; every other host keeps its vanilla byte2, and since this
-///    level has a room on all eight screens, they all still land in one.
+/// 2. **Where inside it** — the arrival comes from the *source* level's own
+///    junction command: byte2 is `(col << 4) | screen`, byte1 is
+///    `(Y-start index << 4) | pipe-exit dir`. Only 5-2's is retargeted; every
+///    other host keeps its vanilla bytes, which land somewhere in this level
+///    but not necessarily anywhere sensible.
 ///
 /// The return trip needs no edit. `Player_DoSpecialTiles` (PRG008 $BCC4) ANDs
 /// the pipe-tile index with 1 while `LevelJctBQ_Flag` is set, which collapses
 /// all four pipe-1/pipe-2 end tiles ($AD-$B0) onto the Big [?] junction type —
 /// so any ordinary pipe in the room sends the player back to the host level.
-/// Loaded normally these same pipes exit to the world map instead, which is
-/// what TCRF describes.
+/// Loaded normally these same pipes exit to the world map, which is what TCRF
+/// describes.
 fn big_q_unused5(rom: &mut Rom, screen: u8) -> Result<Vec<String>, String> {
     // Read the rooms out of the level's own object stream rather than
     // hardcoding them: entries are [id, (screen << 4) | col, row].
@@ -483,7 +510,7 @@ fn big_q_unused5(rom: &mut Rom, screen: u8) -> Result<Vec<String>, String> {
         off += 3;
     }
 
-    let &(scr, col, row, id) = rooms
+    let &(scr, block_col, block_row, id) = rooms
         .iter()
         .find(|(s, ..)| *s == screen)
         .ok_or_else(|| {
@@ -496,6 +523,7 @@ fn big_q_unused5(rom: &mut Rom, screen: u8) -> Result<Vec<String>, String> {
                     .join(", ")
             )
         })?;
+    let (col, y_idx) = UNUSED5_ARRIVALS[scr as usize];
 
     for room in 0..rom_data::BIG_Q_AREA_COUNT {
         rom.write_range(
@@ -509,9 +537,17 @@ fn big_q_unused5(rom: &mut Rom, screen: u8) -> Result<Vec<String>, String> {
         rom.write_byte(rom_data::BIG_Q_AREA_TILESETS + room, rom_data::UNUSED5_TILESET);
     }
 
-    let was = rom.read_byte(rom_data::W52_BIG_Q_JUNCTION + 2);
-    let now = (col << 4) | scr;
-    rom.write_byte(rom_data::W52_BIG_Q_JUNCTION + 2, now);
+    // Keep 5-2's own pipe-exit direction (2) in byte1's low nibble and its slot
+    // nibble in byte0 — the slot still names 5-2's pipe screen, and only the
+    // arrival changes.
+    let dir = rom.read_byte(rom_data::W52_BIG_Q_JUNCTION + 1) & 0x0F;
+    let (was1, was2) = (
+        rom.read_byte(rom_data::W52_BIG_Q_JUNCTION + 1),
+        rom.read_byte(rom_data::W52_BIG_Q_JUNCTION + 2),
+    );
+    let (now1, now2) = ((y_idx << 4) | dir, (col << 4) | scr);
+    rom.write_byte(rom_data::W52_BIG_Q_JUNCTION + 1, now1);
+    rom.write_byte(rom_data::W52_BIG_Q_JUNCTION + 2, now2);
 
     Ok(vec![
         format!(
@@ -522,10 +558,10 @@ fn big_q_unused5(rom: &mut Rom, screen: u8) -> Result<Vec<String>, String> {
             rom_data::UNUSED5_TILESET
         ),
         format!(
-            "  5-2's bonus pipe: {was:#04X} -> {now:#04X} (screen {scr}, col {col}; \
-             block {id:#04X} at row {row})"
+            "  5-2's bonus pipe: {was1:#04X} {was2:#04X} -> {now1:#04X} {now2:#04X} \
+             (screen {scr}, arrive col {col} / Y index {y_idx})"
         ),
-        format!("  {} rooms in the level; place 5-2 to reach one", rooms.len()),
+        format!("  room {scr}: block {id:#04X} at col {block_col}, row {block_row}"),
     ])
 }
 
@@ -1033,14 +1069,21 @@ mod tests {
             );
         }
 
-        // Screen 5's block sits at column 6, so the arrival byte is (6 << 4) | 5.
-        assert_eq!(out.read_byte(rom_data::W52_BIG_Q_JUNCTION + 2), 0x65);
-        // The rest of the command is untouched — the slot nibble still names
-        // 5-2's own pipe screen, and the exit direction still suits the room.
+        // Screen 5 arrives at column 13, Y index 3: byte2 = (13 << 4) | 5, and
+        // byte1 = (3 << 4) | 5-2's own exit dir (2).
+        assert_eq!(out.read_byte(rom_data::W52_BIG_Q_JUNCTION + 2), 0xD5);
+        assert_eq!(out.read_byte(rom_data::W52_BIG_Q_JUNCTION + 1), 0x32);
+        // byte0 is untouched — its slot nibble names 5-2's own pipe screen,
+        // which is a property of 5-2 and not of the destination.
         assert_eq!(
-            out.read_range(rom_data::W52_BIG_Q_JUNCTION, 2),
-            src.read_range(rom_data::W52_BIG_Q_JUNCTION, 2)
+            out.read_byte(rom_data::W52_BIG_Q_JUNCTION),
+            src.read_byte(rom_data::W52_BIG_Q_JUNCTION)
         );
+        // Every arrival fits the nibble/table it is written into.
+        for &(col, y_idx) in &UNUSED5_ARRIVALS {
+            assert!(col < 16, "column {col} does not fit a nibble");
+            assert!(y_idx < 8, "Y index {y_idx} is past LevelJct_YLHStarts");
+        }
 
         let err = build(&van, &TestRomSpec { big_q_unused5: Some(9), ..spec() }).unwrap_err();
         assert!(err.contains("no Big [?] room on screen 9"), "{err}");

@@ -573,6 +573,11 @@ what TCRF describes; reached through a Big [?] junction the flag rule above
 turns them into return pipes. `testrom --bigq-unused5 <screen>` points all
 eight table entries at it and aims 5-2's pipe at one room.
 
+Its rooms are laid out differently from the per-world areas: the Big [?] Block
+is never under the pipe you arrive from, so an arrival copied from a vanilla
+junction lands in rock. Per-room landing spots are in `UNUSED5_ARRIVALS`
+(`testrom.rs`).
+
 #### OBJ_TREASURESET (0xD6) — Treasure Box Items
 
 A `0xD6` entry in an enemy data stream sets the contents of the next
