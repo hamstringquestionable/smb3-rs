@@ -149,6 +149,12 @@ struct Cli {
     #[arg(long, value_name = "SCREEN", value_parser = clap::value_parser!(u8).range(0..=7))]
     bigq_unused5: Option<u8>,
 
+    /// BG palette (0-7) for those rooms. The level's own 6 is the placeholder
+    /// palette -- black and white. Real fortresses use 0, 1, 3 or 4.
+    #[arg(long, value_name = "INDEX", default_value_t = 0,
+          value_parser = clap::value_parser!(u8).range(0..=7))]
+    bigq_palette: u8,
+
     /// List valid --starting-items names and exit.
     #[arg(long)]
     list_items: bool,
@@ -360,6 +366,7 @@ fn main() {
         hammer_breaks_bridges: cli.hammer_bridges,
         include_beta: cli.beta,
         big_q_unused5: cli.bigq_unused5,
+        big_q_palette: Some(cli.bigq_palette),
         set_enemies,
     };
 

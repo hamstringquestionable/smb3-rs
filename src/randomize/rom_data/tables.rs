@@ -740,6 +740,17 @@ pub(crate) const UNUSED5_LAYOUT_PTR: u16 = 0xB754;
 pub(crate) const UNUSED5_OBJECT_PTR: u16 = 0xD401;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const UNUSED5_TILESET: u8 = 2;
+/// PRG bank holding the layout, for `prg_bank_cpu_to_file`.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const UNUSED5_LAYOUT_BANK: usize = 21;
+/// Its header's BG-palette index (byte 5 bits 0-2) in vanilla.
+///
+/// 6 is the placeholder: the only two fortress-tileset levels using it are this
+/// one and `Empty`. Real fortresses use 0 (most mini-fortresses), 1 (Koopaling
+/// throne rooms, with object palette 10), 3 (World 3's) or 4 (1-F, 4-F2, 5-F1,
+/// 6-F1, 7-F1, Bowser's castle).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const UNUSED5_VANILLA_BGPAL: u8 = 6;
 
 /// An FX slot (lock/bridge position and replacement tile).
 pub(crate) struct FxSlot {

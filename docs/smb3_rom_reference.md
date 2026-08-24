@@ -611,6 +611,21 @@ with the fortress tileset's sizes:
 Wiring all eight rooms costs 24 bytes, so deleting any one of screens 0, 2, 4, 5
 or 7 pays for the other seven with room to spare.
 
+**Its palette index is the placeholder.** Header byte 5 bits 0-2 select the BG
+palette within the tileset, and the loader re-reads palettes from the target
+header on a junction — so one byte recolours the whole area. Unused Level 5
+carries index 6, which in the fortress tileset is shared with exactly one other
+level, `Empty`; that is why it renders in black and white. Indices real
+fortress-tileset levels use:
+
+| Index | Used by |
+|---|---|
+| 0 | most mini-fortresses — 3-F1, 4-F1, 8-F, the W5 towers, several alt areas |
+| 1 | Koopaling throne rooms (1-K … 7-K), paired with object palette 10 |
+| 3 | World 3's fortresses (3-F2, 3-F1A, 3-F2A) |
+| 4 | 1-F, 4-F2, 5-F1/F2, 6-F1, 7-F1/F2, 8-FA, Bowser's castle |
+| 6 | `Empty` and this level only — the placeholder |
+
 **Variable-command sizes are per tileset.** `game.xml` in the southbird disasm
 carries them: a `<generator>` whose `<param>` is commented `<!-- 1 -->` reads a
 fourth byte. Fortress (tileset 2) four-byte generators are 13, 14, 35-42, 46-48,

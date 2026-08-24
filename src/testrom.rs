@@ -376,6 +376,10 @@ pub struct TestRomSpec {
     /// unreferenced eight-room test level) and land 5-2's bonus pipe in the
     /// room on this screen, 0-7. `None` leaves the vanilla areas alone.
     pub big_q_unused5: Option<u8>,
+    /// BG palette index (0-7) to write into Unused Level 5's header. Its
+    /// vanilla 6 is the placeholder palette — monochrome. Only read when
+    /// `big_q_unused5` is set.
+    pub big_q_palette: Option<u8>,
     /// Enemy slots to overwrite outright. Applied last, so they win over the
     /// randomizer's own choices on a `--randomize` base.
     pub set_enemies: Vec<EnemyOverride>,
@@ -515,7 +519,7 @@ const UNUSED5_SPARE_COMMANDS: [(usize, [u8; 3], u8); 2] =
 /// collapses all four pipe-1/pipe-2 end tiles ($AD-$B0) onto the Big [?]
 /// junction type. Loaded normally these same pipes exit to the world map, which
 /// is what TCRF describes.
-fn big_q_unused5(rom: &mut Rom, screen: u8) -> Result<Vec<String>, String> {
+fn big_q_unused5(rom: &mut Rom, screen: u8, palette: Option<u8>) -> Result<Vec<String>, String> {
     // Read the rooms out of the level's own object stream rather than
     // hardcoding them: entries are [id, (screen << 4) | col, row].
     let seg = rom_data::enemy_ptr_to_file_offset(rom_data::UNUSED5_OBJECT_PTR);
@@ -581,7 +585,32 @@ fn big_q_unused5(rom: &mut Rom, screen: u8) -> Result<Vec<String>, String> {
     ];
     rom.write_range(victim, &ret);
 
-    Ok(vec![
+    // The header's BG palette index. Vanilla 6 is the placeholder palette every
+    // unused fortress-tileset level carries, which draws the rooms in black and
+    // white; the loader re-reads palettes from the target header on a junction,
+    // so one byte here recolours the whole area.
+    let mut pal_note = Some(format!(
+        "  BG palette: left at the level's own {} — the placeholder index, black and white",
+        rom_data::UNUSED5_VANILLA_BGPAL
+    ));
+    if let Some(pal) = palette {
+        if pal > 7 {
+            return Err(format!("BG palette index {pal} is out of range (0-7)"));
+        }
+        let hdr = rom_data::prg_bank_cpu_to_file(
+            rom_data::UNUSED5_LAYOUT_BANK,
+            rom_data::UNUSED5_LAYOUT_PTR,
+        ) + 5;
+        let was = rom.read_byte(hdr);
+        rom.write_byte(hdr, (was & !0x07) | pal);
+        pal_note = Some(format!(
+            "  BG palette: {} -> {pal} (header byte5 {was:#04X} -> {:#04X})",
+            was & 0x07,
+            (was & !0x07) | pal
+        ));
+    }
+
+    let mut report = vec![
         format!(
             "big [?] rooms: all {} areas -> Unused Level 5 (layout ${:04X}, objects ${:04X}, tileset {})",
             rom_data::BIG_Q_AREA_COUNT,
@@ -598,7 +627,9 @@ fn big_q_unused5(rom: &mut Rom, screen: u8) -> Result<Vec<String>, String> {
              {victim_scr}); copied from BigQ5 slot 3",
             ret
         ),
-    ])
+    ];
+    report.extend(pal_note);
+    Ok(report)
 }
 
 /// Rewrite lock and/or water-gap tiles across all 8 world maps.
@@ -848,7 +879,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
 
     // 3a. Big [?] Block bonus rooms from the unreferenced test level.
     if let Some(screen) = spec.big_q_unused5 {
-        report.extend(big_q_unused5(&mut rom, screen)?);
+        report.extend(big_q_unused5(&mut rom, screen, spec.big_q_palette)?);
     }
 
     // 4. Open the map up.
@@ -1009,6 +1040,7 @@ mod tests {
             hammer_breaks_bridges: false,
             include_beta: false,
             big_q_unused5: None,
+            big_q_palette: None,
             set_enemies: Vec::new(),
         }
     }
@@ -1084,7 +1116,19 @@ mod tests {
             "a standalone area has null alt pointers"
         );
 
-        let built = build(&van, &TestRomSpec { big_q_unused5: Some(5), ..spec() }).unwrap();
+        // The header's palette nibble is where the docs say, and vanilla's value
+        // is the placeholder index shared only with `Empty`.
+        let hdr = rom_data::prg_bank_cpu_to_file(
+            rom_data::UNUSED5_LAYOUT_BANK,
+            rom_data::UNUSED5_LAYOUT_PTR,
+        ) + 5;
+        assert_eq!(src.read_byte(hdr) & 0x07, rom_data::UNUSED5_VANILLA_BGPAL);
+
+        let built = build(
+            &van,
+            &TestRomSpec { big_q_unused5: Some(5), big_q_palette: Some(4), ..spec() },
+        )
+        .unwrap();
         let out = Rom::from_bytes_lax(&built.bytes, true).unwrap();
 
         for room in 0..rom_data::BIG_Q_AREA_COUNT {
@@ -1138,6 +1182,10 @@ mod tests {
             assert!(col < 16, "column {col} does not fit a nibble");
             assert!(y_idx < 8, "Y index {y_idx} is past LevelJct_YLHStarts");
         }
+
+        // Only the palette bits move; object palette and X-start are preserved.
+        assert_eq!(out.read_byte(hdr) & 0x07, 4);
+        assert_eq!(out.read_byte(hdr) & !0x07, src.read_byte(hdr) & !0x07);
 
         let err = build(&van, &TestRomSpec { big_q_unused5: Some(9), ..spec() }).unwrap_err();
         assert!(err.contains("no Big [?] room on screen 9"), "{err}");
