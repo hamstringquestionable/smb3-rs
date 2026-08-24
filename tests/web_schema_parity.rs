@@ -16,11 +16,14 @@
 //! Rust remains the source of truth. This only asserts that the JS agrees with
 //! it; when the two disagree, the schema is what changes.
 //!
-//! **On parsing JavaScript with regex:** the checks below extract a handful of
+//! **On hand-parsing JavaScript:** the scanners below extract a handful of
 //! literal keys from a file with a very regular shape. The real hazard is not a
 //! wrong answer but a *vacuous* one — a parser that quietly matches nothing
-//! still passes every comparison it is asked to make. `parser_still_matches_the
-//! _file` guards that directly, and every extractor asserts it found a plausible
+//! still passes every comparison it is asked to make, which is worse than no
+//! check at all because it looks like one. `parser_still_matches_the_file`
+//! guards that directly: it asserts every `id: "` in each block is an entry
+//! opener, so an entry written any other way fails loudly instead of dropping
+//! out of the comparison. Each extractor also asserts it found a plausible
 //! number of items before its results are used.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -159,17 +162,67 @@ fn preset_overrides() -> Vec<(String, String)> {
             }
         }
         let close = close.unwrap_or_else(|| panic!("preset `{pid}` overrides never close"));
-        let body = &entry[open + 1..close];
+        // Comments first: `// TODO: revisit` would otherwise read as an override
+        // key named `TODO`, failing the build with a message that blames the
+        // presets for a parser problem. The JS check ignores comments too.
+        let body = strip_comments(&entry[open + 1..close]);
         assert!(
             !body.contains('{'),
             "preset `{pid}` has a nested object in its overrides — the flat key \
              scan in this test no longer describes the file",
         );
 
-        for key in flat_keys(body) {
+        for key in flat_keys(&body) {
             out.push((pid.to_string(), key));
         }
     }
+    out
+}
+
+/// Drop `//` and `/* … */` comments. String literals are tracked so a `//`
+/// inside one (a URL, say) is never mistaken for a comment start.
+///
+/// Only the result's *content* matters — nothing downstream maps an offset back
+/// to the original — so this copies kept spans wholesale rather than trying to
+/// preserve length.
+fn strip_comments(body: &str) -> String {
+    let b = body.as_bytes();
+    let mut out = String::with_capacity(body.len());
+    let mut i = 0;
+    let mut kept = 0;
+    let mut in_str = false;
+
+    while i < b.len() {
+        if in_str {
+            match b[i] {
+                b'\\' => i += 2,
+                b'"' => {
+                    in_str = false;
+                    i += 1;
+                }
+                _ => i += 1,
+            }
+            continue;
+        }
+        match b[i] {
+            b'"' => {
+                in_str = true;
+                i += 1;
+            }
+            b'/' if b.get(i + 1) == Some(&b'/') => {
+                out.push_str(&body[kept..i]);
+                i += body[i..].find('\n').unwrap_or(body.len() - i);
+                kept = i;
+            }
+            b'/' if b.get(i + 1) == Some(&b'*') => {
+                out.push_str(&body[kept..i]);
+                i += body[i..].find("*/").map_or(body.len() - i, |e| e + 2);
+                kept = i;
+            }
+            _ => i += 1,
+        }
+    }
+    out.push_str(&body[kept..]);
     out
 }
 
@@ -254,16 +307,19 @@ fn parser_still_matches_the_file() {
         preset_entries.len(),
     );
 
-    // Every `id: "…"` inside the SCHEMA block must be an entry opener. If a
-    // nested `id:` ever appears, `entries()` silently under-counts and the
-    // field-set check below would start passing for the wrong reason.
-    let block = array_block(&src, "SCHEMA");
-    assert_eq!(
-        block.matches("id: \"").count(),
-        schema_entries.len(),
-        "SCHEMA has an `id:` that is not an entry opener — `entries()` is \
-         under-counting and every check built on it is unreliable",
-    );
+    // Every `id: "…"` in a block must be an entry opener. An entry written any
+    // other way is silently skipped by `entries()`, and every check built on it
+    // then passes for the wrong reason — a preset reformatted this way takes its
+    // whole override list out of the parity check with nothing to show for it.
+    for name in ["SCHEMA", "PRESETS"] {
+        let block = array_block(&src, name);
+        assert_eq!(
+            block.matches("id: \"").count(),
+            entries(block).len(),
+            "{name} has an `id:` that is not an entry opener — `entries()` is \
+             under-counting and every check built on it is unreliable",
+        );
+    }
 
     assert!(!constant_fields().is_empty(), "CONSTANT_FIELDS parse is empty");
     assert!(!preset_overrides().is_empty(), "preset override parse is empty");
