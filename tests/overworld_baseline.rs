@@ -167,12 +167,23 @@ fn sweep_is_deterministic() {
 /// out-of-phase slots held X, Y and page bytes, all `$01..$19` and in no
 /// class pool, so 500 seeds at all-Wild never wrote one. It was latent, and
 /// `every_enemy_entry_point_is_a_walker_segment_start` keeps it that way.
+///
+/// Re-captured 2026-08-26 for the Super Princess Peach title-screen fix. The
+/// B-to-mute routine moved from 0x33529 to 0x33FF0 — same 22 bytes, different
+/// home, because Peach's title logo claims 0x33530..0x336A7 and the randomizer
+/// writes last. Every seed moves because the ROM bytes moved. Attribution is by
+/// byte diff, as with the recaptures above: seeds 1-3 generated before and
+/// after with `--no-palettes --patched-rom` differ in exactly 46 bytes, in
+/// three runs — the 2-byte `JSR` operand at 0x30C94, the 22 bytes at 0x33529
+/// returning to `$FF` filler, and the byte-identical routine reappearing at
+/// 0x33FF0. The routine's seeded music byte is unchanged per seed, so no RNG
+/// draw shifted; no overworld, level or enemy byte moved.
 const BASELINE: [u64; SEEDS as usize] = [
-    0x500AD778776D337C, 0x5094FC748FF2B4A0, 0x20B5E2E0BEF7D0D9, 0xEC95C1580A2BEE84,
-    0xC6B2A9E00C225CB0, 0x44176CCCD2205ADA, 0x72BD61D4494E339B, 0x731F65BE6351EFD6,
-    0x4B121B725E5FE009, 0x7C56E69368F19D0B, 0x17DA3F4A44B528BE, 0xDAB9D9E9664DFF6E,
-    0xEF249386B9EE1856, 0xFBC5053F17052149, 0xA4D37AF9D4FF4E73, 0xED82D0729BCF4787,
-    0xE0201F610E43A939, 0xFDEE0F3892D95E78, 0xD57B93C62D8B9C1B, 0x96C2A5DEAF2ECF88,
+    0xC1672935E5BE725B, 0xB06CA2D567B1D2C3, 0x17AD5FEF5255106E, 0x4BD4107152F354EB,
+    0x5206D328FB18E899, 0x93CBC953E7CE1151, 0x75C391FD37763CA4, 0xBC969C8412C1C6AD,
+    0x93AC4F94222D42D0, 0xF2043CAEAD240B78, 0xBA6A10BA15FDEF37, 0xD5E046C58E004629,
+    0xEBE210006571D655, 0x748856D512DC4078, 0x2781725105A210AE, 0x076C97B103DA58DC,
+    0x514C3F9D58DD8C46, 0xFDCF738729FEDA5F, 0xC12C828A80132458, 0xD16EBAE7996DB3F7,
 ];
 
 #[test]
