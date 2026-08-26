@@ -187,33 +187,40 @@ Eight of the eleven arrivals are `02 xx` — Y index 0, dir 2 — the "placed at
 0 inside the ceiling pipe, falls out of the mouth" shape that `UNUSED5_ARRIVALS`
 was built to imitate. 4-F2, 6-3 and 6-10 use `52`, `52` and `12` instead.
 
-### An unresolved inconsistency — do not build on the slot model yet
+### The return is not tied to the pipe (resolved 2026-08-26)
 
-The obvious cross-check fails. If a host's junction slot is the screen its Big
-[?] pipe stands on, and the room returns the player to that same pipe, then the
-slot should equal the return's screen nibble. It does not, on 7 of the 8 rows
-where both are known — including **5-2, the row that is independently
-confirmed** (slot 4, return screen 5).
+An earlier note here called it an unresolved inconsistency that a host's
+junction slot does not match the screen in its room's return bytes — 5-2's pipe
+is on screen 4 and its return lands on screen 5. That was a bad assumption, not
+a data problem. **A return position is just a hand-authored safe spot in the
+host; nothing ties it to the pipe.**
 
-So one of these is wrong: that the slot is the pipe's screen, that the return
-lands the player at the pipe, or that byte2 is `(col << 4) | screen` on the
-return leg the same way it is on the arrival leg. The arrival encoding is
-verified — 5-2's `$73` is BigQ5's screen 3 column 7, exactly where the block is
-— so the doubt sits on the return leg or on the slot.
+Both halves of the slot model are confirmed in the disassembly:
 
-This matters because the pass writes the return leg. Settle it before writing
-code: point a testrom host at a known room and watch where the player comes
-back. Filtering candidates on the slot rule was tried and rejects 5-2, so it is
-the rule that is wrong, not the candidate.
+```asm
+LoadLevel_StoreJctStart:            ; prg014 - fills the slots during the parse
+    LDA <Temp_Var15                 ; the command's byte0
+    AND #$0f
+    TAY                             ; slot = byte0 & $0F
+    ...  STA Level_JctYLHStart,Y    ; byte1
+    ...  STA Level_JctXLHStart,Y    ; byte2
+
+LevelJct_BigQuestionBlock:          ; prg026 - reads one back
+    LDX <Player_XHi
+    LDA Level_JctXLHStart,X         ; indexed by the player's current screen
+```
+
+So the pass is unaffected. Writing an arrival touches only bytes 1-2 of the
+host's existing junction — the slot stays put because the pipe has not moved.
+Writing a return copies the host's own vanilla return bytes, a spot already
+proven safe in that host, into the drawn room's slot. Whichever room a host
+draws, its players come back exactly where they always did.
 
 ## Next step when this resumes
 
-1. **Settle the return leg** (see the inconsistency above) with a testrom: send a
-   known host to a known room and watch where the player comes back. Everything
-   the pass writes depends on it.
-2. **Disambiguate 6-9** — two commands in its area aim at BigQ6 s3; only one is
-   the bonus pipe. Same testrom run answers it.
-3. **Find spare commands in Unused Level 5.** Only rooms drawn from it need one
+1. **Disambiguate 6-9** — two commands in its area aim at BigQ6 s3; only one is
+   the bonus pipe. A testrom run answers it.
+2. **Find spare commands in Unused Level 5.** Only rooms drawn from it need one
    (vanilla rooms already carry a return command to overwrite in place), so the
    need is 0-8 per seed. The doc claims 10 of its 15 `Coin` commands sit in the
    unreachable sealed chamber on screen 4; two are registered in
