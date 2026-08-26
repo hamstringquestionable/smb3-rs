@@ -146,12 +146,58 @@ fn sweep_is_deterministic() {
 /// the same-span rate from 78% to 33%, and `test_route_census` at 1000 seeds
 /// shows W8 mean routes 2.27 -> 2.25 (linear 4% -> 5%), overall 2.548 -> 2.537
 /// (linear 6.60% -> 6.91%), nothing below its dealt floor either way.
+///
+/// Re-captured 2026-08-24 for the `SPOILED_SEGMENT_RANGES` off-by-one
+/// (issue #181). The middle row ended one byte past the next real stream's
+/// page byte, so after autoscroll removal the enemy-data walker resumed
+/// mid-entry and stayed out of phase for 18 slots. Attribution is by
+/// pinning, as with the v28 and C1-floor recaptures: restoring the range to
+/// `0x0D037..0x0D042` reproduces the hashes above exactly, so this one byte
+/// is the whole difference. What it changes: the walker now sees the two
+/// segments it was reading through, whose 17 entries were pinned to vanilla
+/// in every seed before. They are unrelated levels that merely sit next to
+/// each other in the block — `0x0D041` is 4-1's underwater sub-area and
+/// `0x0D049` is 5-4. Only four of the 17 can move: the two Big Berthas at
+/// `0x0D042`/`0x0D045` (water) and the two para-troopas at
+/// `0x0D068`/`0x0D074` (flying). The other 13 are `$90`-`$93`, the tilting
+/// and twirling platforms, which belong to no class pool and so never draw
+/// at any flag setting. Those four extra draws shift the shared RNG stream,
+/// which is why all 20 seeds move and the overworld moves with them.
+/// Nothing was being written to a wrong byte before the fix — the 18
+/// out-of-phase slots held X, Y and page bytes, all `$01..$19` and in no
+/// class pool, so 500 seeds at all-Wild never wrote one. It was latent, and
+/// `every_enemy_entry_point_is_a_walker_segment_start` keeps it that way.
+///
+/// Re-captured 2026-08-26 for the Super Princess Peach title-screen fix. The
+/// B-to-mute routine moved from 0x33529 to 0x33FF0 — same 22 bytes, different
+/// home, because Peach's title logo claims 0x33530..0x336A7 and the randomizer
+/// writes last. Every seed moves because the ROM bytes moved. Attribution is by
+/// byte diff, as with the recaptures above: seeds 1-3 generated before and
+/// after with `--no-palettes --patched-rom` differ in exactly 46 bytes, in
+/// three runs — the 2-byte `JSR` operand at 0x30C94, the 22 bytes at 0x33529
+/// returning to `$FF` filler, and the byte-identical routine reappearing at
+/// 0x33FF0. The routine's seeded music byte is unchanged per seed, so no RNG
+/// draw shifted; no overworld, level or enemy byte moved.
+///
+/// Re-captured 2026-08-26 for the 1.2.1 bump. A version bump alone moves every
+/// seed: `compute_hash` folds `CARGO_PKG_VERSION`, which is the whole point of
+/// the version-guard. Attribution is by round trip *and* by byte. Round trip:
+/// 1.2.0 on this same tree reproduces the previous array exactly and 1.2.1
+/// reproduces this one, so the version string is the only cause. Byte: seeds
+/// 1-3 generated at each version with `--no-palettes --patched-rom` differ in
+/// 2-3 bytes, every one of them inside `FS_SEED_HASH_DATA` (0x3E93D+40) -- the
+/// title-screen verification icons, which is exactly what is supposed to move.
+///
+/// One trap worth naming: `cargo` did NOT rebuild on a version-only edit to
+/// `Cargo.toml` here, so the first recapture attempt printed a stale binary's
+/// hashes. Force it (`touch src/lib.rs`, or `cargo clean -p smb3-rs`) before
+/// trusting any number this test prints after a bump.
 const BASELINE: [u64; SEEDS as usize] = [
-    0x23BB0B1661EB4991, 0x8BCB87C002850E1B, 0xD35E65FB6393BA7B, 0x28316C60D5B50C8C,
-    0x71D46A423D87F88D, 0x16C8AF59B8BB0589, 0x9DE59CE91689D794, 0x4C5689DE1274B707,
-    0xCF0D452FCB5F3BA5, 0xA0DA1A4EA05C9840, 0x913CB348A60E1204, 0xFB9B9EACB78D1131,
-    0x9F479C3584CDB1C9, 0x704A60C34AA3185F, 0xFEBF4CA438E54465, 0x46495F783B0C2C96,
-    0x8B9271CB5F45BD14, 0x7931621C85178986, 0xFC800FBE4F077B0A, 0xEADB5C1E7B634CA5,
+    0xBED95ABDD9439FB5, 0xDBF47F5B31DA86EF, 0xB04474783CB4D0C2, 0x74AC5BCD65AD258D,
+    0x03A4151A9BBFCF29, 0x1F35830291CF10D1, 0x2C970403032C84A6, 0x56890C44D7D2E751,
+    0xD0F5B5E94A13DD88, 0x5C83EEC7421A3608, 0x7652B197D0160E55, 0x0D99057DED830981,
+    0xB8D7424F73B99BF1, 0x1DC2D6E4F10E3616, 0x883D33A2E3BB6E7C, 0xED0DEA0D8520786C,
+    0x650CEA1C0A0A5996, 0x8EDA0264B99A185F, 0x181B0A493C5FEC2C, 0xF39CB84027935889,
 ];
 
 #[test]

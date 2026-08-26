@@ -93,7 +93,7 @@ const MUTE_HOOK_OFFSET: usize = 0x30C93;
 const TITLE_3GLOW_CPU: u16 = 0xAA7D;
 const MUTE_ROUTINE_OFFSET: usize = super::rom_data::FS_TITLE_MUTE;
 /// PRG025 file 0x32010 is CPU $C000 while the title screen runs.
-const MUTE_ROUTINE_CPU: u16 = (0xC000 + MUTE_ROUTINE_OFFSET - 0x32010) as u16; // $D519
+const MUTE_ROUTINE_CPU: u16 = (0xC000 + MUTE_ROUTINE_OFFSET - 0x32010) as u16; // $DFE0
 
 /// Assemble the 22-byte mute toggle. `music` is the seeded track it restores.
 ///
@@ -557,8 +557,8 @@ mod tests {
         let mut rom = crate::randomize::qol::test_support::make_test_rom();
         write_seed_hash(&mut rom, 42, &opts);
 
-        // JSR $D519 in place of the vanilla JSR Title_3Glow.
-        assert_eq!(rom.read_range(MUTE_HOOK_OFFSET, 3), &[0x20, 0x19, 0xD5]);
+        // JSR $DFE0 in place of the vanilla JSR Title_3Glow.
+        assert_eq!(rom.read_range(MUTE_HOOK_OFFSET, 3), &[0x20, 0xE0, 0xDF]);
         assert_eq!(
             rom.read_range(MUTE_ROUTINE_OFFSET, 22),
             &mute_routine(pick_menu_music(42))[..]

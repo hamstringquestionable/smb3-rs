@@ -113,7 +113,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(0x3E965, 13, &["title_screen"], "intro skip + menu music routine"),
     fs(0x3FFF0, 26, &["card_speed_clear"], "XOR trampoline"),
     // PRG025 (file 0x32010, CPU $C000–$DFFF while the title screen runs)
-    fs(0x33529, 32, &["title_screen"], "title menu B-to-mute toggle (32 reserved, 22 used)"),
+    fs(0x33FF0, 32, &["title_screen"], "title menu B-to-mute toggle (32 reserved, 22 used)"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
     fs(0x35572, 13, &["mystery_anchor"], "item redirect trampoline"),
     fs(0x3557F, 50, &["hammer_breaks_tiles"], "hammer_locks: tile check subroutine + tables"),
@@ -178,11 +178,19 @@ pub(crate) const FS_CARD_CLEAR: usize        = 0x3FFF0; // 26 bytes
 
 // PRG025 — the title-screen bank at $C000–$DFFF (PRG030's title entry loads
 // page 24 into $A000 and page 25 into $C000 before `Do_Title_Screen`). The
-// disassembly ends this bank with "Rest of ROM bank was empty" just before this
-// offset, so the whole 2791-byte run to the bank end is unreferenced filler;
-// only 32 bytes are claimed here. Costs nothing from the always-mapped banks,
-// which is what makes this the right home for a title-only routine.
-pub(crate) const FS_TITLE_MUTE: usize        = 0x33529; // 32 reserved, 22 used
+// disassembly ends this bank with "Rest of ROM bank was empty" at 0x33529, so
+// the whole 2791-byte run to the bank end is unreferenced filler; only 32 bytes
+// are claimed here. Costs nothing from the always-mapped banks, which is what
+// makes this the right home for a title-only routine.
+//
+// Sited at the *end* of that run rather than its start, and deliberately: a
+// third-party title-screen hack that needs room in this bank starts at the
+// first $FF it finds, which is 0x33529. Super Princess Peach does exactly that
+// — its five 36-byte logo VRAM-upload blocks run 0x33530..0x336A7 — and the
+// routine used to sit right on top of the first one, so a Peach seed drew a
+// band of garbage tiles across the title screen (`visual_patches_clear_the_free
+// _space_registry` guards the whole registry against the bundled patches now).
+pub(crate) const FS_TITLE_MUTE: usize        = 0x33FF0; // 32 reserved, 22 used
 
 pub(crate) const FS_STARTING_ITEMS: usize    = 0x3E260; // 33 bytes
 
@@ -966,5 +974,67 @@ mod free_space_tests {
         assert_eq!(j[0], 0x20);
         let cpu = u16::from_le_bytes([j[1], j[2]]);
         assert_eq!(prg_bank_cpu_to_file(11, cpu), FS_MARCH_VETO);
+    }
+
+    /// Every bundled visual patch must leave the free-space registry alone.
+    ///
+    /// The web app applies the player's chosen visual patch *before*
+    /// randomization, so a patch and an allocation that want the same bytes do
+    /// not collide loudly — the randomizer simply writes last and silently
+    /// corrupts the patch's data. That is what happened to Super Princess
+    /// Peach: its title logo needs room in PRG025 and, like any hack looking
+    /// for space, took it from the first `$FF` run in the bank — the same run
+    /// [`FS_TITLE_MUTE`] was sited at. Every Peach seed drew a band of garbage
+    /// tiles across the title screen.
+    ///
+    /// The patch is a third-party artifact and cannot be edited, so the
+    /// allocation is what moves. This reads the shipped `.ips` files directly,
+    /// needs no ROM, and so runs in CI — a patch dropped into
+    /// `web/visual-patches/` is checked the moment it lands.
+    #[test]
+    fn bundled_visual_patches_clear_the_free_space_registry() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/web/visual-patches");
+        let mut checked = 0;
+        let mut collisions = Vec::new();
+
+        for entry in std::fs::read_dir(dir).expect("web/visual-patches must exist") {
+            let path = entry.expect("readable dir entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("ips") {
+                continue;
+            }
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            let bytes = std::fs::read(&path).expect("readable patch");
+            let records = crate::ips::parse_ips_records(&bytes).expect("valid IPS");
+            checked += 1;
+
+            for rec in &records {
+                let (rec_start, rec_end) = (rec.offset, rec.offset + rec.payload.len());
+                for alloc in FREE_SPACE_ALLOCATIONS {
+                    let (a_start, a_end) = (alloc.offset, alloc.offset + alloc.size);
+                    let overlap = rec_start.max(a_start)..rec_end.min(a_end);
+                    if !overlap.is_empty() {
+                        collisions.push(format!(
+                            "  {name}: 0x{:05X}..0x{:05X} ({} bytes) lands in {} @ 0x{:05X}+{} ({})",
+                            overlap.start,
+                            overlap.end,
+                            overlap.len(),
+                            alloc.owners.join("/"),
+                            alloc.offset,
+                            alloc.size,
+                            alloc.label,
+                        ));
+                    }
+                }
+            }
+        }
+
+        assert!(checked > 0, "no .ips files found in {dir}");
+        assert!(
+            collisions.is_empty(),
+            "bundled visual patches write into reserved free space — the \
+             randomizer would overwrite them. Move the allocation, not the \
+             patch:\n{}",
+            collisions.join("\n"),
+        );
     }
 }

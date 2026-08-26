@@ -9,6 +9,26 @@ deploys.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-08-26
+
+### Fixed
+
+- The **Super Princess Peach** visual patch drew a band of garbage tiles across
+  the title screen. Peach's title logo needs room in the ROM bank the title
+  screen runs from, and took it from the same stretch of empty space the B-to-
+  mute toggle was written to; the randomizer applies the visual patch first, so
+  it landed on top of the logo data. The toggle moved to the far end of that
+  bank, and a test now checks every bundled visual patch against the whole
+  free-space registry.
+
+- With autoscroll removal on, the **two Big Berthas in 4-1's underwater room
+  and the two para-troopas in 5-4** were left vanilla in every seed. Removing
+  an autoscroller writes a stream terminator into the enemy data, and the range
+  that tells the randomizer where to pick the parse back up was one byte long,
+  so it read that whole stretch out of step and skipped past both levels'
+  enemies. Nothing was ever written to a wrong byte; those four simply never
+  randomized. (#181)
+
 ## [1.2.0] - 2026-08-22
 
 ### Added

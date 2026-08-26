@@ -1931,7 +1931,7 @@ fn test_walkgraph_reuse() {
             // (1) Split is behavior-preserving: reuse on the SAME world equals
             // the one-shot entry point, byte for byte (paths included).
             assert_eq!(
-                base.measure(built, slack, true),
+                base.measure(built, slack),
                 analyze_route_choice(built, slack),
                 "W{world} seed {seed}: base-measure differs from one-shot",
             );
@@ -1950,7 +1950,7 @@ fn test_walkgraph_reuse() {
                     if base.walk_invariant(&cand) {
                         invariant_flips += 1;
                         assert_eq!(
-                            base.measure(&cand, slack, true),
+                            base.measure(&cand, slack),
                             analyze_route_choice(&cand, slack),
                             "W{world} seed {seed}: reuse != fresh for a walk-invariant \
                              {:?}→{new_kind:?} flip at slot {i}",
@@ -1987,7 +1987,7 @@ fn test_walkgraph_reuse() {
                     );
                     lock_trials += 1;
                     assert_eq!(
-                        base.measure(&cand, slack, true),
+                        base.measure(&cand, slack),
                         analyze_route_choice(&cand, slack),
                         "W{world} seed {seed}: reuse != fresh after adding a lock",
                     );
