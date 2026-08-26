@@ -153,40 +153,75 @@ Three things this settled:
   none) and shifted every area's block list by one. Vanilla is 0/1/3/2/2/3/2/2
   = 15, which is what the reference already said.
 
-## Harvest, part 2: the host side — blocked, needs layout simulation
+## Harvest, part 2: the host side (candidates, 2026-08-26)
 
-**The column nibble is not part of the contract.** A host junction's byte2 is
-`(col << 4) | screen`; only the *screen* nibble selects the room. The column is
-wherever the pipe drops the player, and vanilla only sometimes makes that the
-block's own column. So "junction whose byte2 equals a block's `(col << 4) |
-screen`" — the signature that looked obvious — both **misses** real hosts and
-matches unrelated junctions in other worlds by coincidence (5-2's `E4 02 73`
-scores against BigQ4 and BigQ5 alike; BigQ3's own return `E5 61 76` scores as a
-BigQ7 host). It found 8 candidates where 11 are expected, several of them wrong.
+Found by taking each host's entry `obj_ptr` straight from `qol/big_q.rs`'s own
+lookup table, resolving it through the world pointer tables, walking its alt
+chain, and keeping every group-7 command whose byte2 screen nibble is a block
+screen in that host's area.
 
-There is no byte-level signature to fall back on: **`Level_JctCtl = 2` is
-computed from the pipe tile at run time** ($AF/$B0 → Big [?]), not stored in the
-junction command. A Big [?] junction is byte-identical to any other junction.
-Identifying the 11 hosts therefore means finding `$AF`/`$B0` tiles in their
-layouts — layout simulation, across several tilesets. `tools/level_sim.py` only
-knows tileset 1, and `rom_map.py`'s world attribution (`level_groups`
-`world_refs`) does not reach most of the host sub-areas.
+`arrival` is the host command's bytes 1-2 — reusable as *any* host's arrival for
+that room. `return` is the room's command bytes 1-2, from the part-1 table.
 
-Doing this in Rust is the way: `NodeCatalog` already names all 340 entries and
-carries the world for each, and the per-tileset command sizes would live next to
-the code that will consume them rather than in a script that rots.
+| Host | Room | Junction | Bytes | arrival | return | Confidence |
+|---|---|---|---|---|---|---|
+| 3-5 | BigQ3 s4 3-Up | 0x25227 | `E4 02 14` | `02 14` | `71 46` | single candidate |
+| 3-9 | BigQ3 s5 Frog | 0x1F31B | `E2 02 15` | `02 15` | `61 76` | single candidate |
+| 4-F2 | BigQ4 s2 3-Up | 0x2B6B2 | `EA 52 22` | `52 22` | `51 86` | single candidate |
+| 5-2 | BigQ5 s3 3-Up | 0x1A807 | `E4 02 73` | `02 73` | `61 65` | **confirmed** |
+| 5-5 | BigQ5 s7 Tanooki | 0x23045 | `E2 02 17` | `02 17` | `42 E5` | single candidate |
+| 6-3 | BigQ6 s5 Tanooki | 0x22B2F | `E3 52 25` | `52 25` | `11 A3` | single candidate |
+| 6-9 | BigQ6 s3 3-Up | 0x20B2F **or** 0x20C40 | `E3 02 83` / `E6 61 43` | — | `61 64` | room certain, command ambiguous |
+| 6-10 | BigQ6 s6 Hammer | 0x23A93 | `E4 12 D6` | `12 D6` | `61 E3` | single candidate |
+| 7-F1 | BigQ7 s6 Tanooki | 0x2B47E | `E6 02 16` | `02 16` | `61 C6` | **room confirmed** |
+| 7-8 | BigQ7 s4 Hammer | 0x1F074 | `E6 52 14` | `52 14` | `61 29` | by elimination |
+| 8-1 | BigQ8 s4 3-Up | 0x1F8C8 | `E2 02 D4` | `02 D4` | `51 F5` | single candidate |
+
+5-2 is ground truth — `testrom --bigq-unused5` already drives that command, and
+it agrees. 7-F1's *room* is pinned independently by
+`enemies::tables::W7F1_TANOOKI_OFFSET` (0x0C9B7), which is the second entry in
+BigQ7's object stream, i.e. the s6 Tanooki — the block flight is required for.
+That resolves 7-F1 to s6 and, since a room serves one host, 7-8 to s4.
+
+Eight of the eleven arrivals are `02 xx` — Y index 0, dir 2 — the "placed at row
+0 inside the ceiling pipe, falls out of the mouth" shape that `UNUSED5_ARRIVALS`
+was built to imitate. 4-F2, 6-3 and 6-10 use `52`, `52` and `12` instead.
+
+### An unresolved inconsistency — do not build on the slot model yet
+
+The obvious cross-check fails. If a host's junction slot is the screen its Big
+[?] pipe stands on, and the room returns the player to that same pipe, then the
+slot should equal the return's screen nibble. It does not, on 7 of the 8 rows
+where both are known — including **5-2, the row that is independently
+confirmed** (slot 4, return screen 5).
+
+So one of these is wrong: that the slot is the pipe's screen, that the return
+lands the player at the pipe, or that byte2 is `(col << 4) | screen` on the
+return leg the same way it is on the arrival leg. The arrival encoding is
+verified — 5-2's `$73` is BigQ5's screen 3 column 7, exactly where the block is
+— so the doubt sits on the return leg or on the slot.
+
+This matters because the pass writes the return leg. Settle it before writing
+code: point a testrom host at a known room and watch where the player comes
+back. Filtering candidates on the slot rule was tried and rejects 5-2, so it is
+the rule that is wrong, not the candidate.
 
 ## Next step when this resumes
 
-Find the 11 host junctions. That needs a layout walk that resolves `$AF`/`$B0`
-pipe tiles per tileset — see 'Harvest, part 2' above for why no byte signature works.
-Once each host's junction offset is known, its return bytes come free: they are
-already in the part-1 table, since a room's return command *is* the host's
-return position.
+1. **Settle the return leg** (see the inconsistency above) with a testrom: send a
+   known host to a known room and watch where the player comes back. Everything
+   the pass writes depends on it.
+2. **Disambiguate 6-9** — two commands in its area aim at BigQ6 s3; only one is
+   the bonus pipe. Same testrom run answers it.
+3. **Find spare commands in Unused Level 5.** Only rooms drawn from it need one
+   (vanilla rooms already carry a return command to overwrite in place), so the
+   need is 0-8 per seed. The doc claims 10 of its 15 `Coin` commands sit in the
+   unreachable sealed chamber on screen 4; two are registered in
+   `UNUSED5_SPARE_COMMANDS`.
 
-Then the 22-row room table is complete except for the three spare vanilla rooms
-(BigQ2 s4, BigQ3 s1, BigQ8 s1), which need arrivals authored, and BigQ8 s1
-additionally needs a return command it does not have.
+Then the pass itself: 19-room pool (11 vanilla + 8 Unused Level 5), drawn
+without replacement, skipping any screen already taken within the same
+post-builder world. Vanilla rooms need no new bytes.
 
 ## Playtest ROMs
 
