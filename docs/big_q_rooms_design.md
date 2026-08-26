@@ -98,11 +98,95 @@ layout. Fortress areas roll from {0, 3, 4} (1 wants object palette 10). The
 underground areas need the same survey run before trusting a set; vanilla only
 samples 3, 4 and 7 there.
 
+## Harvest, part 1: the room side (done, verified 2026-08-26)
+
+Every vanilla room, its block, and the return junction its area supplies.
+`arrival` is the byte2 a host junction needs to land on that room's screen —
+`(col << 4) | screen`, though only the *screen* nibble is forced (see below).
+`return` is the group-7 command in the bonus area's own layout, slot = room
+screen, that sends the player back; bytes 1-2 are the position in the host.
+
+| Area | bgpal | Room | Block | arrival | Return cmd | Return offset | Lands in host at |
+|---|---|---|---|---|---|---|---|
+| BigQ1 | 7 | — | *(no blocks)* | — | — | — | — |
+| BigQ2 | 3 | s1 | 3-Up | `$81` | `E1 12 95` | 0x1B294 | scr 5 col 9, Yidx 1 dir 2 |
+| BigQ2 | 3 | s4 | *(none)* | — | `E4 71 25` | 0x1B297 | scr 5 col 2, Yidx 7 dir 1 |
+| BigQ3 | 3 | s1 | Tanooki | `$61` | `E1 00 00` | 0x1B378 | **null — dir 0** |
+| BigQ3 | 3 | s4 | 3-Up | `$84` | `E4 71 46` | 0x1B37B | scr 6 col 4, Yidx 7 dir 1 |
+| BigQ3 | 3 | s5 | Frog | `$85` | `E5 61 76` | 0x1B37E | scr 6 col 7, Yidx 6 dir 1 |
+| BigQ4 | 3 | s2 | 3-Up | `$72` | `E2 51 86` | 0x1B3E1 | scr 6 col 8, Yidx 5 dir 1 |
+| BigQ4 | 3 | s3 | Frog | `$73` | `E3 61 03` | 0x1B3E4 | scr 3 col 0, Yidx 6 dir 1 |
+| BigQ5 | 3 | s3 | 3-Up | `$73` | `E3 61 65` | 0x1B479 | scr 5 col 6, Yidx 6 dir 1 |
+| BigQ5 | 3 | s7 | Tanooki | `$77` | `E7 42 E5` | 0x1B47C | scr 5 col 14, Yidx 4 dir 2 |
+| BigQ6 | 4 | s3 | 3-Up | `$53` | `E3 61 64` | 0x1B5E8 | scr 4 col 6, Yidx 6 dir 1 |
+| BigQ6 | 4 | s5 | Tanooki | `$75` | `E5 11 A3` | 0x1B5EB | scr 3 col 10, Yidx 1 dir 1 |
+| BigQ6 | 4 | s6 | Hammer | `$56` | `E6 61 E3` | 0x1B5EE | scr 3 col 14, Yidx 6 dir 1 |
+| BigQ7 | 3 | s4 | Hammer | `$44` | `E4 61 29` | 0x1B664 | scr 9 col 2, Yidx 6 dir 1 |
+| BigQ7 | 3 | s6 | Tanooki | `$76` | `E6 61 C6` | 0x1B667 | scr 6 col 12, Yidx 6 dir 1 |
+| BigQ8 | 7 | s1 | Tanooki | `$81` | *(none)* | — | — |
+| BigQ8 | 7 | s4 | 3-Up | `$84` | `E4 51 F5` | 0x1B725 | scr 5 col 15, Yidx 5 dir 1 |
+
+Area pointers (`LevelJctBQ_*` index = vanilla `World_Num`), all tileset 14:
+
+| Area | Layout | Objects |
+|---|---|---|
+| BigQ1 | `$B1AF` 0x1B1BF | `$C976` 0x0C986 |
+| BigQ2 | `$B1BC` 0x1B1CC | `$C978` 0x0C988 |
+| BigQ3 | `$B28B` 0x1B29B | `$C97D` 0x0C98D |
+| BigQ4 | `$B372` 0x1B382 | `$C988` 0x0C998 |
+| BigQ5 | `$B3D8` 0x1B3E8 | `$C990` 0x0C9A0 |
+| BigQ6 | `$B470` 0x1B480 | `$C998` 0x0C9A8 |
+| BigQ7 | `$B5E2` 0x1B5F2 | `$C9A3` 0x0C9B3 |
+| BigQ8 | `$B65B` 0x1B66B | `$C9AB` 0x0C9BB |
+
+Three things this settled:
+
+- **The junction slots match the ROM reference exactly**, including BigQ5's two
+  and BigQ8's single one — so the "BigQ8 s1 needs new bytes" decision holds.
+- **BigQ3 s1's return is `E1 00 00`** — a null command, dir 0, outside the valid
+  1-4 range. That is one of the three spare rooms, and its return was never
+  authored. Any room the pass hands a host needs a real return written, spare
+  rooms included; `sanitize_exit_dir`'s rule (remap to 3) is the precedent.
+- **Object streams open with a 1-byte prefix** before the 3-byte entries. Parsing
+  from the pointer directly steps over the `$FF` terminator into the next
+  stream and silently over-counts — it produced blocks for BigQ1 (which has
+  none) and shifted every area's block list by one. Vanilla is 0/1/3/2/2/3/2/2
+  = 15, which is what the reference already said.
+
+## Harvest, part 2: the host side — blocked, needs layout simulation
+
+**The column nibble is not part of the contract.** A host junction's byte2 is
+`(col << 4) | screen`; only the *screen* nibble selects the room. The column is
+wherever the pipe drops the player, and vanilla only sometimes makes that the
+block's own column. So "junction whose byte2 equals a block's `(col << 4) |
+screen`" — the signature that looked obvious — both **misses** real hosts and
+matches unrelated junctions in other worlds by coincidence (5-2's `E4 02 73`
+scores against BigQ4 and BigQ5 alike; BigQ3's own return `E5 61 76` scores as a
+BigQ7 host). It found 8 candidates where 11 are expected, several of them wrong.
+
+There is no byte-level signature to fall back on: **`Level_JctCtl = 2` is
+computed from the pipe tile at run time** ($AF/$B0 → Big [?]), not stored in the
+junction command. A Big [?] junction is byte-identical to any other junction.
+Identifying the 11 hosts therefore means finding `$AF`/`$B0` tiles in their
+layouts — layout simulation, across several tilesets. `tools/level_sim.py` only
+knows tileset 1, and `rom_map.py`'s world attribution (`level_groups`
+`world_refs`) does not reach most of the host sub-areas.
+
+Doing this in Rust is the way: `NodeCatalog` already names all 340 entries and
+carries the world for each, and the per-tileset command sizes would live next to
+the code that will consume them rather than in a script that rots.
+
 ## Next step when this resumes
 
-Harvest the 11 vanilla pairings — dump each host's junction bytes and each
-room's return bytes and check they line up with the model. That table either
-falls out cleanly or tells us early that something does not fit.
+Find the 11 host junctions. That needs a layout walk that resolves `$AF`/`$B0`
+pipe tiles per tileset — see 'Harvest, part 2' above for why no byte signature works.
+Once each host's junction offset is known, its return bytes come free: they are
+already in the part-1 table, since a room's return command *is* the host's
+return position.
+
+Then the 22-row room table is complete except for the three spare vanilla rooms
+(BigQ2 s4, BigQ3 s1, BigQ8 s1), which need arrivals authored, and BigQ8 s1
+additionally needs a return command it does not have.
 
 ## Playtest ROMs
 
