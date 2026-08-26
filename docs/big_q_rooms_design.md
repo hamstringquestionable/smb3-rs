@@ -50,9 +50,17 @@ space there. Unused Level 5 carries none and needs 3 bytes per room.
 - **BigQ8 s1 is dropped from the pool.** It is the only spare vanilla room that
   would need new bytes, its area has no spare decoration, and it is a duplicate
   of BigQ8 s4 and BigQ2 s1 — so excluding it costs no novelty.
-- **One option, not three.** Room selection and per-area palette ride together;
-  `big_q_blocks` keeps its current meaning (what is *in* the block) and its
-  existing key bit.
+- **No option at all — always on** (2026-08-26). Which room a pipe leads to is
+  not a gameplay difference worth a control: every room hands out one block and
+  returns you where you came from, so there is nothing to turn off. It joins
+  `qol::fix_big_q_block_rooms` as unconditional behavior. No `Options` field, no
+  flag-key bit, no key version bump, no web control — and `big_q_blocks` keeps
+  its current meaning (what is *in* the block) and its existing key bit,
+  untouched. Room selection and per-area palette ride together in the one pass.
+
+  Consequence to keep in mind: the pass consumes RNG unconditionally, so it
+  shifts the stream for everything downstream of it and rebaselines any pinned
+  output. Place it deliberately in `randomizer/mod.rs`, not wherever is handy.
 
 ## Why it is worth doing
 
