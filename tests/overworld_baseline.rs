@@ -178,12 +178,26 @@ fn sweep_is_deterministic() {
 /// returning to `$FF` filler, and the byte-identical routine reappearing at
 /// 0x33FF0. The routine's seeded music byte is unchanged per seed, so no RNG
 /// draw shifted; no overworld, level or enemy byte moved.
+///
+/// Re-captured 2026-08-26 for the 1.2.1 bump. A version bump alone moves every
+/// seed: `compute_hash` folds `CARGO_PKG_VERSION`, which is the whole point of
+/// the version-guard. Attribution is by round trip *and* by byte. Round trip:
+/// 1.2.0 on this same tree reproduces the previous array exactly and 1.2.1
+/// reproduces this one, so the version string is the only cause. Byte: seeds
+/// 1-3 generated at each version with `--no-palettes --patched-rom` differ in
+/// 2-3 bytes, every one of them inside `FS_SEED_HASH_DATA` (0x3E93D+40) -- the
+/// title-screen verification icons, which is exactly what is supposed to move.
+///
+/// One trap worth naming: `cargo` did NOT rebuild on a version-only edit to
+/// `Cargo.toml` here, so the first recapture attempt printed a stale binary's
+/// hashes. Force it (`touch src/lib.rs`, or `cargo clean -p smb3-rs`) before
+/// trusting any number this test prints after a bump.
 const BASELINE: [u64; SEEDS as usize] = [
-    0xC1672935E5BE725B, 0xB06CA2D567B1D2C3, 0x17AD5FEF5255106E, 0x4BD4107152F354EB,
-    0x5206D328FB18E899, 0x93CBC953E7CE1151, 0x75C391FD37763CA4, 0xBC969C8412C1C6AD,
-    0x93AC4F94222D42D0, 0xF2043CAEAD240B78, 0xBA6A10BA15FDEF37, 0xD5E046C58E004629,
-    0xEBE210006571D655, 0x748856D512DC4078, 0x2781725105A210AE, 0x076C97B103DA58DC,
-    0x514C3F9D58DD8C46, 0xFDCF738729FEDA5F, 0xC12C828A80132458, 0xD16EBAE7996DB3F7,
+    0xBED95ABDD9439FB5, 0xDBF47F5B31DA86EF, 0xB04474783CB4D0C2, 0x74AC5BCD65AD258D,
+    0x03A4151A9BBFCF29, 0x1F35830291CF10D1, 0x2C970403032C84A6, 0x56890C44D7D2E751,
+    0xD0F5B5E94A13DD88, 0x5C83EEC7421A3608, 0x7652B197D0160E55, 0x0D99057DED830981,
+    0xB8D7424F73B99BF1, 0x1DC2D6E4F10E3616, 0x883D33A2E3BB6E7C, 0xED0DEA0D8520786C,
+    0x650CEA1C0A0A5996, 0x8EDA0264B99A185F, 0x181B0A493C5FEC2C, 0xF39CB84027935889,
 ];
 
 #[test]

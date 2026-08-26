@@ -9,6 +9,8 @@ deploys.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-08-26
+
 ### Fixed
 
 - The **Super Princess Peach** visual patch drew a band of garbage tiles across
