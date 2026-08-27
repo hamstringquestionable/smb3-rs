@@ -2,6 +2,7 @@ pub mod anchor_visuals;
 pub mod antechambers;
 pub mod autoscroll;
 pub mod beta_tornado;
+pub mod big_q_rooms;
 pub mod bowser_castle;
 pub mod credits;
 pub mod enemies;

@@ -49,16 +49,90 @@ const BIG_Q_HOOK_OFFSET: usize = 0x349F9;
 //   * 6-9 donated interior $C60E -> room 5 (its block lives HERE, not in the
 //     entry $CD2D — so without this row, reaching 6-9 via a lobby falls through
 //     to World_Num and picks the wrong room).
-const BQ_OBJ_HI: [u8; 13] =
+pub(crate) const BQ_OBJ_HI: [u8; 13] =
     [0xCD, 0xC3, 0xD5, 0xC8, 0xCB, 0xCA, 0xCD, 0xCC, 0xD4, 0xC3, 0xC4, 0xCE, 0xC6];
-const BQ_OBJ_LO: [u8; 13] =
+pub(crate) const BQ_OBJ_LO: [u8; 13] =
     [0xEB, 0x8F, 0x08, 0xBE, 0x0A, 0x8E, 0x2D, 0xE8, 0xE4, 0x2D, 0x24, 0x4B, 0x0E];
-const BQ_ROOM: [u8; 13] =
+pub(crate) const BQ_ROOM: [u8; 13] =
     [0x02, 0x02, 0x03, 0x04, 0x04, 0x05, 0x05, 0x05, 0x06, 0x06, 0x07, 0x04, 0x05];
 
-const BIG_Q_ROUTINE_LEN: usize = 106;
+/// Vanilla arrival spawn bytes per row: `(byte1, byte2)` where byte1 is
+/// `(Y-start index << 4) | pipe-exit dir` and byte2 is `(col << 4) | screen`.
+/// The screen nibble is what picks the room inside the area.
+///
+/// Harvested from each host's own Big ? junction command. Rows 11 and 12 mirror
+/// rows 3 and 6 (the same two levels reached through a lobby).
+pub(crate) const BQ_ARRIVE: [(u8, u8); 13] = [
+    (0x02, 0x14), // 3-5   -> BigQ3 s4
+    (0x02, 0x15), // 3-9   -> BigQ3 s5
+    (0x52, 0x22), // 4-F2  -> BigQ4 s2
+    (0x02, 0x73), // 5-2   -> BigQ5 s3
+    (0x02, 0x17), // 5-5   -> BigQ5 s7
+    (0x52, 0x25), // 6-3   -> BigQ6 s5
+    (0x02, 0x83), // 6-9   -> BigQ6 s3
+    (0x12, 0xD6), // 6-10  -> BigQ6 s6
+    (0x02, 0x16), // 7-F1  -> BigQ7 s6
+    (0x52, 0x14), // 7-8   -> BigQ7 s4
+    (0x02, 0xD4), // 8-1   -> BigQ8 s4
+    (0x02, 0x73), // 5-2 sub-area — mirrors row 3
+    (0x02, 0x83), // 6-9 interior — mirrors row 6
+];
 
-/// Build the PRG026 Big ? Block bonus-room lookup routine.
+/// Vanilla return spawn bytes per row, in the same `(byte1, byte2)` format but
+/// naming a position in the HOST. Harvested from each room's own group-7
+/// command in the bonus area (slot = the room's screen).
+///
+/// A return position is not tied to the pipe you came down — it is a
+/// hand-authored safe spot. 5-2's pipe is on screen 4 and its return lands on
+/// screen 5; that is vanilla, not a bug.
+pub(crate) const BQ_RETURN: [(u8, u8); 13] = [
+    (0x71, 0x46), // 3-5   <- BigQ3 slot 4
+    (0x61, 0x76), // 3-9   <- BigQ3 slot 5
+    (0x51, 0x86), // 4-F2  <- BigQ4 slot 2
+    (0x61, 0x65), // 5-2   <- BigQ5 slot 3
+    (0x42, 0xE5), // 5-5   <- BigQ5 slot 7
+    (0x11, 0xA3), // 6-3   <- BigQ6 slot 5
+    (0x61, 0x64), // 6-9   <- BigQ6 slot 3
+    (0x61, 0xE3), // 6-10  <- BigQ6 slot 6
+    (0x61, 0xC6), // 7-F1  <- BigQ7 slot 6
+    (0x61, 0x29), // 7-8   <- BigQ7 slot 4
+    (0x51, 0xF5), // 8-1   <- BigQ8 slot 4
+    (0x61, 0x65), // 5-2 sub-area — mirrors row 3
+    (0x61, 0x64), // 6-9 interior — mirrors row 6
+];
+
+/// Rows that must move together: reaching a level through a lobby has to open
+/// the same room as reaching it from its own tile. `(primary, mirror)`.
+#[cfg(test)]
+pub(crate) const BQ_MIRROR_ROWS: [(usize, usize); 2] = [(3, 11), (6, 12)];
+
+// Byte offsets of the pieces inside the assembled routine. `apply_room_rooms`
+// rewrites the four payload tables in place; the seeding code and the scan
+// never change.
+const OFF_HIT: usize = 0x26;
+const OFF_SCAN: usize = 0x39;
+const OFF_EXIT: usize = 0x52;
+const OFF_HI: usize = 0x74;
+const OFF_LO: usize = 0x81;
+pub(crate) const OFF_ROOM: usize = 0x8E;
+pub(crate) const OFF_ARR_Y: usize = 0x9B;
+pub(crate) const OFF_ARR_X: usize = 0xA8;
+pub(crate) const OFF_RET_Y: usize = 0xB5;
+pub(crate) const OFF_RET_X: usize = 0xC2;
+const BIG_Q_ROUTINE_LEN: usize = 0xCF; // 207
+
+// Zero page / RAM the routine touches.
+const PLAYER_XHI: u8 = 0x75;
+const JCT_YLH_START: u16 = 0x7F54; // 16-byte slot array
+const JCT_XLH_START: u16 = 0x7F64; // 16-byte slot array
+
+/// `JMP PRG026_AA8A` at the tail of the Big ? exit path (`PRG026_AA5A`), which
+/// runs only when leaving a bonus room. Swapping this 3-byte jump for a jump
+/// into our own routine displaces whole instructions and needs no NOP padding.
+pub(crate) const BIG_Q_EXIT_HOOK: usize = 0x34A84;
+const BIG_Q_EXIT_RETURN: u16 = 0xAA8A;
+
+/// Build the PRG026 Big ? Block lookup + slot-seeding routine.
 ///
 /// **Two-pass lookup.** The room a bonus pipe opens is a property of the *level
 /// whose area you're standing in*. The routine resolves that by scanning the
@@ -77,14 +151,34 @@ const BIG_Q_ROUTINE_LEN: usize = 106;
 ///    an area not itself in the table.
 /// 3. **`LDY $0727` (World_Num) fallback** — vanilla default, last resort.
 ///
+/// **Slot seeding.** On a match the routine also stamps the row's spawn bytes
+/// into `Level_JctYLHStart` / `Level_JctXLHStart` at the slot the engine is
+/// about to read (`Player_XHi`). That is what lets a host open *any* room: the
+/// arrival no longer has to come from the host's own group-7 layout command, so
+/// no layout data is located or edited. The exit half does the same with the
+/// return bytes, hooked at the Big ?-only exit path where the pointer restore
+/// has just put the host's own obj_ptr back into `Level_ObjPtrOrig`.
+///
 /// Internal absolute operands are derived from where the routine is written, so
 /// it is not origin-locked to a hardcoded CPU address.
 fn build_lookup_routine() -> Vec<u8> {
-    let base = prg_bank_file_to_cpu(26, BIG_Q_ROUTINE_OFFSET); // routine start (CPU)
-    let scan = (base + 0x26).to_le_bytes(); // bq_scan subroutine
-    let hi = (base + 0x43).to_le_bytes(); // BQ_OBJ_HI table
-    let lo = (base + 0x50).to_le_bytes(); // BQ_OBJ_LO table (13 bytes after hi)
-    let room = (base + 0x5D).to_le_bytes(); // BQ_ROOM table (13 bytes after lo)
+    build_routine_with(&BQ_ROOM, &BQ_ARRIVE, &BQ_RETURN)
+}
+
+fn build_routine_with(
+    rooms: &[u8; 13],
+    arrive: &[(u8, u8); 13],
+    ret: &[(u8, u8); 13],
+) -> Vec<u8> {
+    let base = prg_bank_file_to_cpu(26, BIG_Q_ROUTINE_OFFSET);
+    let at = |off: usize| (base + off as u16).to_le_bytes();
+    let (scan, hi, lo) = (at(OFF_SCAN), at(OFF_HI), at(OFF_LO));
+    let (room_t, arr_y, arr_x) = (at(OFF_ROOM), at(OFF_ARR_Y), at(OFF_ARR_X));
+    let (ret_y, ret_x) = (at(OFF_RET_Y), at(OFF_RET_X));
+    let ylh = JCT_YLH_START.to_le_bytes();
+    let xlh = JCT_XLH_START.to_le_bytes();
+    let back = BIG_Q_EXIT_RETURN.to_le_bytes();
+
     let mut r: Vec<u8> = vec![
         // --- pass 1: current area (Level_ObjPtrOrig $7EBB/$7EBC) ---
         0xAD, 0xBB, 0x7E,       // LDA $7EBB     ; current-area obj_lo
@@ -92,42 +186,72 @@ fn build_lookup_routine() -> Vec<u8> {
         0xAD, 0xBC, 0x7E,       // LDA $7EBC     ; current-area obj_hi
         0x8D, 0xB3, 0x7E,       // STA $7EB3     ; scratch hi
         0x20, scan[0], scan[1], // JSR bq_scan
-        0xB0, 0x14,             // BCS .ret      ; matched -> Y = room
+        0xB0, 0x15,             // BCS .hit
         // --- pass 2: frozen map-entry ptr ($7EB4/$7EB5, saved by Part A) ---
         0xAD, 0xB4, 0x7E,       // LDA $7EB4     ; frozen obj_lo
         0x8D, 0xB2, 0x7E,       // STA $7EB2
         0xAD, 0xB5, 0x7E,       // LDA $7EB5     ; frozen obj_hi
         0x8D, 0xB3, 0x7E,       // STA $7EB3
         0x20, scan[0], scan[1], // JSR bq_scan
-        0xB0, 0x03,             // BCS .ret
+        0xB0, 0x04,             // BCS .hit
         // --- fallback: World_Num ---
         0xAC, 0x27, 0x07,       // LDY $0727
-        0x60,                   // .ret: RTS
-        // --- bq_scan: scratch $7EB2=lo/$7EB3=hi -> carry set + Y=room on match ---
+        0x60,                   // RTS
+        // --- .hit ($26): X = row. Seed the arrival, return the area in Y ---
+        0xA4, PLAYER_XHI,       // LDY Player_XHi   ; the slot the engine reads
+        0xBD, arr_y[0], arr_y[1], // LDA BQ_ARR_Y,X
+        0x99, ylh[0], ylh[1],   // STA Level_JctYLHStart,Y
+        0xBD, arr_x[0], arr_x[1], // LDA BQ_ARR_X,X
+        0x99, xlh[0], xlh[1],   // STA Level_JctXLHStart,Y
+        0xBD, room_t[0], room_t[1], // LDA BQ_ROOM,X
+        0xA8,                   // TAY
+        0x60,                   // RTS
+        // --- bq_scan ($39): $7EB2/$7EB3 -> carry set + X = row on match ---
         0xA2, 0x0C,             // LDX #12  (13 entries, index 0..12)
         0xAD, 0xB3, 0x7E,       // .loop: LDA $7EB3
         0xDD, hi[0], hi[1],     // CMP BQ_OBJ_HI,X
-        0xD0, 0x0E,             // BNE .next
+        0xD0, 0x0A,             // BNE .next
         0xAD, 0xB2, 0x7E,       // LDA $7EB2
         0xDD, lo[0], lo[1],     // CMP BQ_OBJ_LO,X
-        0xD0, 0x06,             // BNE .next
-        0xBD, room[0], room[1], // LDA BQ_ROOM,X
-        0xA8,                   // TAY
+        0xD0, 0x02,             // BNE .next
         0x38,                   // SEC
         0x60,                   // RTS
         0xCA,                   // .next: DEX
-        0x10, 0xE7,             // BPL .loop
+        0x10, 0xEB,             // BPL .loop
         0x18,                   // CLC
         0x60,                   // RTS
+        // --- exit seed ($52): reached from the Big ?-only exit path. The
+        //     pointer restore just before it put the HOST's obj_ptr back. ---
+        0xAD, 0xBB, 0x7E,       // LDA $7EBB
+        0x8D, 0xB2, 0x7E,       // STA $7EB2
+        0xAD, 0xBC, 0x7E,       // LDA $7EBC
+        0x8D, 0xB3, 0x7E,       // STA $7EB3
+        0x20, scan[0], scan[1], // JSR bq_scan
+        0x90, 0x0E,             // BCC .done   (not ours — leave vanilla alone)
+        0xA4, PLAYER_XHI,       // LDY Player_XHi   ; the room's screen
+        0xBD, ret_y[0], ret_y[1], // LDA BQ_RET_Y,X
+        0x99, ylh[0], ylh[1],   // STA Level_JctYLHStart,Y
+        0xBD, ret_x[0], ret_x[1], // LDA BQ_RET_X,X
+        0x99, xlh[0], xlh[1],   // STA Level_JctXLHStart,Y
+        0x4C, back[0], back[1], // .done: JMP PRG026_AA8A
     ];
     r.extend_from_slice(&BQ_OBJ_HI);
     r.extend_from_slice(&BQ_OBJ_LO);
-    r.extend_from_slice(&BQ_ROOM);
+    r.extend_from_slice(rooms);
+    r.extend(arrive.iter().map(|&(y, _)| y));
+    r.extend(arrive.iter().map(|&(_, x)| x));
+    r.extend(ret.iter().map(|&(y, _)| y));
+    r.extend(ret.iter().map(|&(_, x)| x));
     debug_assert_eq!(r.len(), BIG_Q_ROUTINE_LEN);
+    // Both `BCS .hit` displacements are written by hand above; check they still
+    // reach `.hit` rather than landing mid-instruction.
+    debug_assert_eq!(0x11 + r[0x10] as usize, OFF_HIT, "pass 1 BCS .hit");
+    debug_assert_eq!(0x22 + r[0x21] as usize, OFF_HIT, "pass 2 BCS .hit");
     r
 }
 
-/// Patch Big ? Block bonus room selection to use level identity instead of World_Num.
+/// Patch Big ? Block bonus room selection to use level identity instead of
+/// World_Num, and seed the spawn slots from our own tables.
 pub fn fix_big_q_block_rooms(rom: &mut Rom) {
     // Part A: PRG030 save trampoline (saves $65/$66 before W8 overwrite)
     rom.write_range(BIG_Q_PRG030_HOOK, &BIG_Q_PRG030_JMP);
@@ -135,6 +259,31 @@ pub fn fix_big_q_block_rooms(rom: &mut Rom) {
     // Part B: PRG026 two-pass lookup routine + hook
     rom.write_range(BIG_Q_HOOK_OFFSET, &jsr_into_bank(26, BIG_Q_ROUTINE_OFFSET));
     rom.write_range(BIG_Q_ROUTINE_OFFSET, &build_lookup_routine());
+    // Part C: the exit path's `JMP PRG026_AA8A` -> our return seeder
+    let exit = prg_bank_file_to_cpu(26, BIG_Q_ROUTINE_OFFSET) + OFF_EXIT as u16;
+    rom.write_range(BIG_Q_EXIT_HOOK, &[0x4C, exit as u8, (exit >> 8) as u8]);
+}
+
+/// Rewrite the four per-row payload tables in the already-written routine.
+///
+/// `fix_big_q_block_rooms` must have run first — this only stamps over the
+/// tables, leaving the code and the obj_ptr key tables untouched.
+pub(crate) fn write_room_tables(
+    rom: &mut Rom,
+    rooms: &[u8; 13],
+    arrive: &[(u8, u8); 13],
+    ret: &[(u8, u8); 13],
+) {
+    let base = BIG_Q_ROUTINE_OFFSET;
+    rom.write_range(base + OFF_ROOM, rooms);
+    for (i, &(y, x)) in arrive.iter().enumerate() {
+        rom.write_byte(base + OFF_ARR_Y + i, y);
+        rom.write_byte(base + OFF_ARR_X + i, x);
+    }
+    for (i, &(y, x)) in ret.iter().enumerate() {
+        rom.write_byte(base + OFF_RET_Y + i, y);
+        rom.write_byte(base + OFF_RET_X + i, x);
+    }
 }
 
 #[cfg(test)]
@@ -174,10 +323,10 @@ mod tests {
         assert_eq!(&r[6..9], &[0xAD, 0xBC, 0x7E], "pass 1 LDA $7EBC");
         assert_eq!(&r[17..20], &[0xAD, 0xB4, 0x7E], "pass 2 LDA $7EB4");
         assert_eq!(&r[23..26], &[0xAD, 0xB5, 0x7E], "pass 2 LDA $7EB5");
-        assert_eq!(&r[34..38], &[0xAC, 0x27, 0x07, 0x60], "fallback LDY $0727; RTS");
-        assert_eq!(&r[0x43..0x50], &BQ_OBJ_HI);
-        assert_eq!(&r[0x50..0x5D], &BQ_OBJ_LO);
-        assert_eq!(&r[0x5D..0x6A], &BQ_ROOM);
+        assert_eq!(&r[0x22..0x26], &[0xAC, 0x27, 0x07, 0x60], "fallback LDY $0727; RTS");
+        assert_eq!(&r[OFF_HI..OFF_LO], &BQ_OBJ_HI);
+        assert_eq!(&r[OFF_LO..OFF_ROOM], &BQ_OBJ_LO);
+        assert_eq!(&r[OFF_ROOM..OFF_ARR_Y], &BQ_ROOM);
     }
 
     /// The hook must name the routine's own origin. The routine's *internal*
@@ -207,14 +356,14 @@ mod asm_checks {
     /// The PRG026 lookup routine, whose internal operands are derived from
     /// `base` rather than hardcoded — so `.origin` here proves the derivation
     /// lands on real instruction boundaries, not merely on the right numbers.
-    /// The last 39 bytes are the three 13-entry tables.
+    /// The last 91 bytes are the seven 13-entry tables.
     #[test]
     fn lookup_routine_is_well_formed() {
         let routine = build_lookup_routine();
         asm::check(&routine)
             .allocation(BIG_Q_ROUTINE_OFFSET)
             .origin(prg_bank_file_to_cpu(26, BIG_Q_ROUTINE_OFFSET))
-            .data_from(routine.len() - 39)
+            .data_from(routine.len() - 91)
             .assert_ok();
     }
 }

@@ -1,7 +1,7 @@
 # Big [?] Bonus Room Shuffle — design notes
 
-**Status: parked 2026-08-26**, branch `experiment/unused5-bigq-testrom`.
-Playtested and working as a `testrom` knob; not started as a randomizer option.
+**Status: implemented 2026-08-27.** Always on, no option. The `testrom
+--bigq-unused5` knob remains for looking at a single room in isolation.
 
 Mechanism reference lives in `docs/smb3_rom_reference.md` under "Big [?] Block
 Bonus Areas" — tables, junction decode, pipe-tile types, palette indices, the
@@ -17,9 +17,11 @@ Playtested in an emulator, all eight rooms: the area loads, the fortress-tileset
 bank swap works, the block is collectable, and the pipe returns to 5-2. Palette
 4 was chosen. This is the proof that the rooms are usable.
 
-## What is not built
+## What is built in the randomizer
 
-Anything in the randomizer proper. No option, no flag-key bit, no web control.
+`randomize/big_q_rooms.rs` — every host draws from the 19-room pool, always on,
+no option and no flag-key bit. `qol/big_q.rs` grew the slot-seeding halves and
+the four payload tables the pass fills in.
 
 ## The pairing model
 
@@ -333,34 +335,73 @@ junction, so a general shuffle cannot seed slots from there without a key that
 distinguishes one pipe from another — and at that point `Player_XHi` is all the
 engine knows. Big [?] is easy precisely because its handler is exclusive.
 
-## Next step when this resumes
+## What shipped, against the design
 
-Implement the seed-the-slots design above. In order:
+Built as designed: two hooks, both on Big [?]-only paths, seeding
+`Level_JctXLHStart` / `Level_JctYLHStart` from tables in the lookup routine. No
+layout command is located or edited, so neither open blocker — host junction
+offsets, spare `Coin` commands in Unused Level 5 — had to be resolved.
 
-1. **Widen the lookup routine** — two arrival tables, the entry seed, and grow
-   `FS_BIG_Q_LOOKUP` to fit. Measure the real byte count; the ~100 figure is an
-   estimate. `asm::check` with `.allocation` and `.origin` in the same commit.
-2. **Add the exit hook** at `PRG026_AA5A` with the two return tables.
-3. **Harvest what the tables need** — per room: arrival byte1/byte2. The 11
-   vanilla rooms' values are in the part-2 candidate table, the 8 Unused Level 5
-   values are `UNUSED5_ARRIVALS` in `testrom.rs`. Per host: return byte1/byte2,
-   all in the part-1 table. **Note the candidate table is now only needed for its
-   arrival bytes, not for its junction offsets** — a wrong offset no longer
-   matters because nothing is written there.
-4. **The pass itself** — 19-room pool, draw without replacement, respect the
-   per-world `BigQBlock_GotIt` screen rule, always on, no option. Runs after
-   `qol::fix_big_q_block_rooms` (whose routine it fills in) and before
-   `randomize_big_q_blocks`.
-5. **7-F1** — exclude its drawn room's block offset from the contents roll.
-   Every Unused Level 5 block is already a Tanooki, so no value needs forcing.
+Measured, not estimated: the routine is **207 bytes in a 224-byte allocation**,
+against the ~100 the design guessed. The guess forgot that the seeding is
+duplicated for entry and exit and that four 13-byte payload tables cost 52 on
+their own. PRG026's largest gap starts exactly where `FS_BIG_Q_LOOKUP` ends, so
+it grew in place; the bank is down to 2485 free / 2419 largest.
 
-The old blockers — locating host junctions, finding spare commands in Unused
-Level 5 — are dropped by the design and do not need resolving.
+Two things resolved along the way that the earlier sections got wrong:
+
+- **The host-to-room pairing is settled**, and the pairing table in "Harvest,
+  part 2" is now load-bearing for the *return* bytes (a wrong pairing would send
+  a host's players back into a different level). The discriminator that finished
+  it: 7-F1's only in-area candidate carries **pipe-exit dir 8**, which is a front
+  door, not a bonus pipe. Excluding dir-8 leaves 7-8 on s4, so 7-F1 takes s6 —
+  agreeing with `W7F1_TANOOKI_OFFSET` and with 6-9 taking BigQ6 s3 by
+  elimination. All 11 rooms come out distinct.
+- **Vertical hosts index differently.** `PRG026_AA9A` sends vertical levels
+  through `LevelJct_GetVScreenH` instead of `Player_XHi`, while the Big [?]
+  *entry* path uses `Player_XHi` unconditionally. Entry is therefore safe. The
+  exit seed writes at `Player_XHi` and is correct as long as bonus areas stay
+  horizontal, which all eight vanilla ones and Unused Level 5 are.
 
 ## Playtest ROMs
 
-`~/Copyparty/MiSTer/games/NES/_rando/unused5_bigq_s0..s7.nes` (one per room,
-palette 0) and `unused5_pal1/3/4.nes` (room 5 in the other fortress palettes).
-Rebuild any of them with `testrom --place 5-2 --bigq-unused5 <screen>
---bigq-palette <index>`; delete the target on the mount first, it never
-overwrites.
+Six seeds through the real pipeline, each parking 5-2 on W1 tile 1 and 7-F1 on
+the next tile with a P-Wing in the inventory, at
+`~/Copyparty/MiSTer/games/NES/_rando/bigq_seed<N>.nes`:
+
+| Seed | 5-2 opens | 7-F1 opens | 7-F1's block |
+|---|---|---|---|
+| 10 | **Unused Level 5 s7** | Unused Level 5 s0 | already Tanooki |
+| 16 | **Unused Level 5 s6** | BigQ8 s4 | 3-Up → forced Tanooki |
+| 31 | **Unused Level 5 s6** | BigQ3 s5 | Frog → forced Tanooki |
+| 4 | Unused Level 5 s3 | Unused Level 5 s4 | already Tanooki |
+| 25 | Unused Level 5 s1 | BigQ6 s6 | Hammer → forced Tanooki |
+| 5 | BigQ4 s2 | BigQ8 s4 | 3-Up → forced Tanooki |
+
+Screens 6 and 7 (bold) are the ones to look at hardest — they have no ceiling
+pipe, so the player is placed *beside* the floor pipe instead of dropping out of
+a mouth. Seed 5 is the cross-world vanilla case, 5-2 opening World 4's room.
+Seeds 5, 16, 25 and 31 each exercise the 7-F1 force from a different block type.
+
+Rebuild with:
+
+```sh
+testrom --randomize --seed <N> --place 5-2 7F1 --no-walk --starting-items p-wing
+```
+
+`--no-walk` is required on a randomized base: the open-movement patch and the
+overworld writer want the same free space. Delete the target on the mount first,
+it never overwrites.
+
+**These seeds are specific to `testrom`'s option set.** Its `Options` differ from
+the CLI's defaults, which moves the shared RNG, so the same seed number picks
+different rooms under `smb3-rs`. Read the room out of the ROM (the four payload
+tables start at `FS_BIG_Q_LOOKUP + 0x8E`) rather than assuming.
+
+Parking both levels on World 1 also puts both rooms under **one** world's
+`BigQBlock_GotIt` mask, which the real seed would not necessarily do — so these
+six were picked to have distinct room screens. A pair that collided would show
+the second block already collected.
+
+To look at one Unused Level 5 room in isolation, without the randomizer, the old
+knob still works: `testrom --place 5-2 --bigq-unused5 <screen> --bigq-palette 4`.

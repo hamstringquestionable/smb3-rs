@@ -193,12 +193,27 @@ fn sweep_is_deterministic() {
 /// hashes. Force it (`touch src/lib.rs`, or `cargo clean -p smb3-rs`) before
 /// trusting any number this test prints after a bump.
 const BASELINE: [u64; SEEDS as usize] = [
-    0xBED95ABDD9439FB5, 0xDBF47F5B31DA86EF, 0xB04474783CB4D0C2, 0x74AC5BCD65AD258D,
-    0x03A4151A9BBFCF29, 0x1F35830291CF10D1, 0x2C970403032C84A6, 0x56890C44D7D2E751,
-    0xD0F5B5E94A13DD88, 0x5C83EEC7421A3608, 0x7652B197D0160E55, 0x0D99057DED830981,
-    0xB8D7424F73B99BF1, 0x1DC2D6E4F10E3616, 0x883D33A2E3BB6E7C, 0xED0DEA0D8520786C,
-    0x650CEA1C0A0A5996, 0x8EDA0264B99A185F, 0x181B0A493C5FEC2C, 0xF39CB84027935889,
+    0x4E4C8A191F5685C7, 0x6D91B1182546B2D4, 0x8403DC76A349DC67, 0x95FC1C166FD2A0CE,
+    0x3F1E17841E6D5AB2, 0x47A2E17C29871737, 0xF77056FB954617FD, 0x2250FCDE919E6056,
+    0x2D974E1A5ECBC04D, 0xF362BD31A8DC2C35, 0x99D8920302472BD0, 0x5CAF93CE5AE276D4,
+    0x45BEDB9C8B63FECE, 0xB6F19EA114E6B2B7, 0xD16BE93B4EE4DC2F, 0x274C352583A7F603,
+    0x33C8141F38F97F65, 0x0BA66E9654F61197, 0xD473ECE6B78193ED, 0x759AEB0B7C3C6DD3,
 ];
+///
+/// Re-captured 2026-08-27 for the Big [?] bonus-room shuffle, which is always
+/// on. Every seed moves, for two reasons that are both intended:
+///
+/// 1. `qol::big_q`'s lookup routine grew from 106 to 207 bytes (slot seeding
+///    plus four new 13-entry payload tables), and the Big [?] exit path's
+///    `JMP PRG026_AA8A` at 0x34A84 now jumps into it.
+/// 2. `big_q_rooms::shuffle` draws twice from the shared RNG and rewrites the
+///    per-row area/arrival tables, and 7-F1's drawn block is forced to Tanooki.
+///
+/// **Overworld topology is untouched**, which is the thing worth checking here.
+/// The pass runs after `write_overworld`, so it cannot move a map tile — and
+/// that was verified rather than argued: the 8 map grids were hashed for all 20
+/// seeds with the `shuffle` call live and with it stubbed to return an empty
+/// vec, and the two sets are identical. The ROM bytes differ, the maps do not.
 
 #[test]
 fn output_matches_baseline() {

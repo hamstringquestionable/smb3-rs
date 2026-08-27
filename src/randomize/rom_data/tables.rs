@@ -693,13 +693,10 @@ pub(crate) const BETA_PATCHES: &[(usize, u8)] = &[
 ///
 /// Rooms 0 and 1 are unreachable in vanilla: W1's area is empty, and W2's holds
 /// a 3-Up room that no level opens (no W1/W2 level has a Big [?] pipe).
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const BIG_Q_AREA_LAYOUTS: usize = 0x3491B;
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const BIG_Q_AREA_OBJECTS: usize = 0x3492B;
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const BIG_Q_AREA_TILESETS: usize = 0x3493B;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_arch = "wasm32"))] // only testrom iterates all eight areas
 pub(crate) const BIG_Q_AREA_COUNT: usize = 8;
 
 /// 5-2's Big [?] Block junction command — slot 4 of its entry area, the screen
@@ -734,14 +731,10 @@ pub(crate) const W52_BIG_Q_JUNCTION: usize = 0x1A807;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const BIGQ5_SLOT3_JUNCTION: usize = 0x1B479;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const UNUSED5_LAYOUT_PTR: u16 = 0xB754;
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const UNUSED5_OBJECT_PTR: u16 = 0xD401;
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const UNUSED5_TILESET: u8 = 2;
 /// PRG bank holding the layout, for `prg_bank_cpu_to_file`.
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const UNUSED5_LAYOUT_BANK: usize = 21;
 /// Its header's BG-palette index (byte 5 bits 0-2) in vanilla.
 ///

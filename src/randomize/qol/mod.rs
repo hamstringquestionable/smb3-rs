@@ -2,7 +2,7 @@
 //! per-option by the randomizer. Each submodule owns one cohesive feature area.
 
 mod beta;
-mod big_q;
+pub(crate) mod big_q;
 mod canoe;
 mod canoe_summon;
 mod cards;

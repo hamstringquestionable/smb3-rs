@@ -36,6 +36,40 @@ fn normalized(mut o: Options) -> Options {
     o
 }
 
+/// 7-F1 cannot be beaten without flight, and which bonus room its Big [?] pipe
+/// opens is now drawn per seed — so the block in *whatever room it drew* has to
+/// be a flight suit, and the contents roll has to leave that byte alone.
+///
+/// The failure mode is silent: reorder `big_q_rooms` and `randomize_big_q_blocks`
+/// and the protection still "runs", it just names a stale offset. So this walks
+/// the drawn room's own object stream rather than trusting a constant.
+#[test]
+fn w7f1_block_is_always_a_flight_suit() {
+    let Some(base) = make_test_rom() else { return };
+    let mut opts = test_options();
+    opts.big_q_blocks = true;
+
+    for seed in 1..=40u64 {
+        let mut rom = base.clone();
+        randomize(&mut rom, seed, &opts);
+
+        // Row 8 of the lookup table is 7-F1; its area and the arrival's screen
+        // nibble name the room it drew.
+        let base_off = randomize::rom_data::FS_BIG_Q_LOOKUP;
+        let area = rom.read_byte(base_off + randomize::qol::big_q::OFF_ROOM + 8);
+        let screen = rom.read_byte(base_off + randomize::qol::big_q::OFF_ARR_X + 8) & 0x0F;
+
+        let block = randomize::big_q_rooms::block_offset(&rom, area, screen)
+            .unwrap_or_else(|| panic!("seed {seed}: 7-F1 drew area {area} screen {screen}, \
+                                       which holds no Big [?] block"));
+        assert_eq!(
+            rom.read_byte(block),
+            randomize::big_q_rooms::BIGQBLOCK_TANOOKI,
+            "seed {seed}: 7-F1's room (area {area} screen {screen}) does not hand out flight",
+        );
+    }
+}
+
 #[test]
 fn mystery_anchor_trampoline_written() {
     let Some(mut rom) = make_test_rom() else {
