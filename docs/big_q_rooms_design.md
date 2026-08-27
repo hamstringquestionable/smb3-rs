@@ -216,19 +216,146 @@ Writing a return copies the host's own vanilla return bytes, a spot already
 proven safe in that host, into the drawn room's slot. Whichever room a host
 draws, its players come back exactly where they always did.
 
+## Design: seed the slots instead of finding the junctions (2026-08-27)
+
+Everything hard about this feature came from one decision — that the arrival and
+return positions are read out of `Level_JctXLHStart` / `Level_JctYLHStart`, whose
+contents are written by parsing a layout command stream. That forced us to
+locate a group-7 command inside a variable-size stream, per tileset, with no
+byte-level signature distinguishing a Big [?] junction from any other. Two
+sessions of searching produced a candidate table with one verified row.
+
+**We do not have to read from there.** The slot arrays are plain RAM. If we
+write the bytes we want into the slot the engine is about to read, the engine
+does the rest — no layout command is located, parsed or edited.
+
+### Why level identity is a sufficient key
+
+Inside `LevelJct_BigQuestionBlock` we already know the junction is a Big [?] one,
+because that is the routine we are in. A level has at most one Big [?] pipe. So
+the level alone identifies the pipe — the screen it stands on is not needed, and
+neither is its junction command. `qol::big_q` already resolves level identity
+here; this design widens what that lookup returns.
+
+### The two hooks
+
+Both sit on code only a Big [?] junction reaches, so no shared path changes.
+
+**Entry** — inside the existing lookup routine, on a table match, before it
+returns the area index in `Y`. At that moment `X` is the matched row:
+
+```asm
+    LDA BQ_ARRIVE_Y,X     ; byte1 of the arrival (Y index | pipe dir)
+    STA $7EB6             ; scratch (no zero page is free - see memory)
+    LDA BQ_ARRIVE_X,X     ; byte2 (col << 4 | screen)
+    LDY <Player_XHi       ; the slot the BQ entry path will read
+    STA Level_JctXLHStart,Y
+    LDA $7EB6
+    STA Level_JctYLHStart,Y
+    ; ... existing: LDA BQ_ROOM,X / TAY / SEC / RTS
+```
+
+The BQ entry path then reads those two slots exactly as it always did, and every
+line of arithmetic after it is untouched.
+
+**Exit** — at `PRG026_AA5A`, after the pointer restores and before the
+`JMP PRG026_AA8A`. `Level_ObjPtrOrig_AddrL/H` has just been restored to the
+host's pointer, so it is the same key pass 1 already scans:
+
+```asm
+    ; copy Level_ObjPtrOrig -> $7EB2/$7EB3, JSR bq_scan
+    ; on match, X = row:
+    LDA BQ_RETURN_Y,X
+    STA $7EB6
+    LDA BQ_RETURN_X,X
+    LDY <Player_XHi       ; the room screen - bonus areas are horizontal
+    STA Level_JctXLHStart,Y
+    LDA $7EB6
+    STA Level_JctYLHStart,Y
+```
+
+`bq_scan` is reused as-is; it already takes its key from `$7EB2/$7EB3`.
+
+### What this removes
+
+- **Locating the 11 host junction commands.** Not needed at all. The one open
+  blocker disappears.
+- **Spare `Coin` commands in Unused Level 5.** No return junctions are written
+  into it, so its byte-tight layout is never touched.
+- **The one-host-per-room cap.** The return is keyed by host, not by the room's
+  single slot, so two hosts may share a room screen.
+- **The frozen-screen problem.** The arrival is ours, so the room is a free
+  choice per host rather than whatever vanilla's byte2 said.
+
+Net effect: 19 rooms, 11 hosts, unconstrained draw. Only the per-world
+`BigQBlock_GotIt` screen rule survives, and that one was never binding.
+
+### Cost
+
+Two 13-byte tables per leg (arrival byte1/byte2, return byte1/byte2) = 52 bytes,
+plus roughly 20 bytes of seeding at each hook and the `bq_scan` key copy at the
+exit — **an estimated ~100 bytes**, to be measured, not trusted. It lands in
+PRG026 beside the existing routine (2603 free, largest gap 2537), which is also
+the bank the routine already runs in. `BIG_Q_ROUTINE_LEN` grows from 106 and the
+`FS_BIG_Q_LOOKUP` allocation must grow with it; the routine derives its internal
+absolute operands from its own base, so it is not origin-locked and can move.
+
+### Risks and open checks
+
+- **Vertical hosts.** `PRG026_AA9A` indexes vertical levels through
+  `LevelJct_GetVScreenH` rather than `Player_XHi`, while the Big [?] *entry* path
+  uses `Player_XHi` unconditionally. Entry is therefore safe, but the exit seed
+  writes to `Player_XHi` and the read may use a different index if a bonus area
+  is ever vertical. All eight vanilla areas and Unused Level 5 are horizontal,
+  so this holds today — it needs a guard or a comment, not a fix.
+- **`Level_7Vertical` on the return.** The arrival byte1's bit 7 sets vertical
+  mode. Seeding a return for a vertical host has to reproduce whatever the
+  vanilla return command carried, which the part-1 table already records.
+- **Two hosts, one room.** Now allowed, but both then share one
+  `BigQBlock_GotIt` bit if they are in the same world. The per-world screen rule
+  still applies.
+- The `asm::check` in the same commit, per CLAUDE.md, with `.allocation` and
+  `.origin`.
+
+### Why this generalises
+
+Lobby shuffle rewrites junction commands in place, which is why it needed a
+hand-maintained table of offsets and why 5-2's slot-4 command had to be excluded
+by hand. This design overrides the *read* instead of editing the *data*. For the
+further junction shuffling planned later, the override pattern never inherits
+the layout-parsing problem — the cost is one hook per junction handler, and the
+handlers are already separate routines (`LevelJct_General`,
+`LevelJct_GenericExit`, `LevelJct_SpecialToadHouse`,
+`LevelJct_BigQuestionBlock`).
+
+The catch to keep in view: `LevelJct_General` is shared by every ordinary
+junction, so a general shuffle cannot seed slots from there without a key that
+distinguishes one pipe from another — and at that point `Player_XHi` is all the
+engine knows. Big [?] is easy precisely because its handler is exclusive.
+
 ## Next step when this resumes
 
-1. **Disambiguate 6-9** — two commands in its area aim at BigQ6 s3; only one is
-   the bonus pipe. A testrom run answers it.
-2. **Find spare commands in Unused Level 5.** Only rooms drawn from it need one
-   (vanilla rooms already carry a return command to overwrite in place), so the
-   need is 0-8 per seed. The doc claims 10 of its 15 `Coin` commands sit in the
-   unreachable sealed chamber on screen 4; two are registered in
-   `UNUSED5_SPARE_COMMANDS`.
+Implement the seed-the-slots design above. In order:
 
-Then the pass itself: 19-room pool (11 vanilla + 8 Unused Level 5), drawn
-without replacement, skipping any screen already taken within the same
-post-builder world. Vanilla rooms need no new bytes.
+1. **Widen the lookup routine** — two arrival tables, the entry seed, and grow
+   `FS_BIG_Q_LOOKUP` to fit. Measure the real byte count; the ~100 figure is an
+   estimate. `asm::check` with `.allocation` and `.origin` in the same commit.
+2. **Add the exit hook** at `PRG026_AA5A` with the two return tables.
+3. **Harvest what the tables need** — per room: arrival byte1/byte2. The 11
+   vanilla rooms' values are in the part-2 candidate table, the 8 Unused Level 5
+   values are `UNUSED5_ARRIVALS` in `testrom.rs`. Per host: return byte1/byte2,
+   all in the part-1 table. **Note the candidate table is now only needed for its
+   arrival bytes, not for its junction offsets** — a wrong offset no longer
+   matters because nothing is written there.
+4. **The pass itself** — 19-room pool, draw without replacement, respect the
+   per-world `BigQBlock_GotIt` screen rule, always on, no option. Runs after
+   `qol::fix_big_q_block_rooms` (whose routine it fills in) and before
+   `randomize_big_q_blocks`.
+5. **7-F1** — exclude its drawn room's block offset from the contents roll.
+   Every Unused Level 5 block is already a Tanooki, so no value needs forcing.
+
+The old blockers — locating host junctions, finding spare commands in Unused
+Level 5 — are dropped by the design and do not need resolving.
 
 ## Playtest ROMs
 
