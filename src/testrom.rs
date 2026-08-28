@@ -380,6 +380,10 @@ pub struct TestRomSpec {
     /// vanilla 6 is the placeholder palette — monochrome. Only read when
     /// `big_q_unused5` is set.
     pub big_q_palette: Option<u8>,
+    /// Override the arrival for `big_q_unused5` as `(col, Y-start index)`.
+    /// Y indices are into `LevelJct_YLHStarts`: 0 = row 0, 4 = row 15,
+    /// 5 = row 20, 6 = row 23.
+    pub big_q_aim: Option<(u8, u8)>,
     /// Enemy slots to overwrite outright. Applied last, so they win over the
     /// randomizer's own choices on a `--randomize` base.
     pub set_enemies: Vec<EnemyOverride>,
@@ -519,7 +523,12 @@ const UNUSED5_SPARE_COMMANDS: [(usize, [u8; 3], u8); 2] =
 /// collapses all four pipe-1/pipe-2 end tiles ($AD-$B0) onto the Big [?]
 /// junction type. Loaded normally these same pipes exit to the world map, which
 /// is what TCRF describes.
-fn big_q_unused5(rom: &mut Rom, screen: u8, palette: Option<u8>) -> Result<Vec<String>, String> {
+fn big_q_unused5(
+    rom: &mut Rom,
+    screen: u8,
+    palette: Option<u8>,
+    aim: Option<(u8, u8)>,
+) -> Result<Vec<String>, String> {
     // Read the rooms out of the level's own object stream rather than
     // hardcoding them: entries are [id, (screen << 4) | col, row].
     let seg = rom_data::enemy_ptr_to_file_offset(rom_data::UNUSED5_OBJECT_PTR);
@@ -544,7 +553,11 @@ fn big_q_unused5(rom: &mut Rom, screen: u8, palette: Option<u8>) -> Result<Vec<S
                     .join(", ")
             )
         })?;
-    let (col, y_idx) = UNUSED5_ARRIVALS[scr as usize];
+    // `aim` overrides the table so a bad landing can be re-aimed without a
+    // rebuild-edit-rebuild loop. Screens 6 and 7 have no ceiling pipe and their
+    // table entries drop the player through the floor, so finding a spot that
+    // works means trying several — see docs/big_q_rooms_design.md.
+    let (col, y_idx) = aim.unwrap_or(UNUSED5_ARRIVALS[scr as usize]);
 
     for room in 0..rom_data::BIG_Q_AREA_COUNT {
         rom.write_range(
@@ -879,7 +892,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
 
     // 3a. Big [?] Block bonus rooms from the unreferenced test level.
     if let Some(screen) = spec.big_q_unused5 {
-        report.extend(big_q_unused5(&mut rom, screen, spec.big_q_palette)?);
+        report.extend(big_q_unused5(&mut rom, screen, spec.big_q_palette, spec.big_q_aim)?);
     }
 
     // 4. Open the map up.
@@ -1041,6 +1054,7 @@ mod tests {
             include_beta: false,
             big_q_unused5: None,
             big_q_palette: None,
+            big_q_aim: None,
             set_enemies: Vec::new(),
         }
     }

@@ -155,6 +155,12 @@ struct Cli {
           value_parser = clap::value_parser!(u8).range(0..=7))]
     bigq_palette: u8,
 
+    /// Override where --bigq-unused5 puts the player, as "COL,YIDX". Y index
+    /// is into LevelJct_YLHStarts: 0 = row 0, 4 = row 15, 5 = row 20,
+    /// 6 = row 23. Use when a room's table entry lands badly.
+    #[arg(long, value_name = "COL,YIDX")]
+    bigq_aim: Option<String>,
+
     /// List valid --starting-items names and exit.
     #[arg(long)]
     list_items: bool,
@@ -303,6 +309,20 @@ fn main() {
         }
     };
 
+    // "COL,YIDX" -> (col, Y-start index). This overrides where --bigq-unused5
+    // drops the player, which is how a badly-landing room gets re-aimed.
+    let big_q_aim = cli.bigq_aim.as_deref().map(|a| {
+        let (c, y) = a
+            .split_once(',')
+            .unwrap_or_else(|| die(format!("--bigq-aim wants \"COL,YIDX\", got \"{a}\"")));
+        let col: u8 = c.trim().parse().unwrap_or_else(|_| die(format!("bad column \"{c}\"")));
+        let y_idx: u8 = y.trim().parse().unwrap_or_else(|_| die(format!("bad Y index \"{y}\"")));
+        if col > 15 || y_idx > 7 {
+            die("--bigq-aim: column is 0-15, Y index 0-7".to_string());
+        }
+        (col, y_idx)
+    });
+
     let placements: Vec<Placement> = cli
         .place
         .iter()
@@ -367,6 +387,7 @@ fn main() {
         include_beta: cli.beta,
         big_q_unused5: cli.bigq_unused5,
         big_q_palette: Some(cli.bigq_palette),
+        big_q_aim,
         set_enemies,
     };
 
