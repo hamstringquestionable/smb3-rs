@@ -74,7 +74,9 @@ room you have seen in World 5.
 
 ## Plan
 
-Pool: 14 vanilla rooms + 8 from Unused Level 5 = 22 rooms for 11 host levels.
+Pool as shipped: 11 vanilla rooms + 6 from Unused Level 5 = 17 rooms for 11
+host levels. (This section's original 22 counted the spare vanilla rooms, whose
+arrivals were never authored, and all eight Unused Level 5 rooms.)
 
 Data to assemble:
 
@@ -363,25 +365,44 @@ Two things resolved along the way that the earlier sections got wrong:
   exit seed writes at `Player_XHi` and is correct as long as bonus areas stay
   horizontal, which all eight vanilla ones and Unused Level 5 are.
 
+## Unused Level 5 screens 6 and 7 are held back
+
+Playtested 2026-08-27 and **both dropped the player through the floor** — he
+appears in the wall and falls to his death. They are the only two rooms with no
+ceiling pipe, so their arrivals were aimed "beside the floor pipe" at Y index 6,
+row 23. That is the pipe body's row, not ground:
+
+```
+--- screen 6 ---            --- screen 7 ---
+0F 61 E4 04  row 15 col 1   0F 71 E1 07  row 15 col 1 len 7
+37 61 B1     row 23 col 1   17 76 E1 09  row 23 col 6 len 9
+             ^ the pipe     37 72 B1     row 23 col 2  ^ the pipe
+```
+
+The arrivals put him at col 3 (s6) and col 5 (s7), both at row 23. Screen 6 has
+nothing at row 23 except the pipe itself; screen 7's row-23 run starts at col 6.
+They are also the only two rooms using Y index 6 — every room that works uses
+0, 4 or 5 — which was the signal to treat them as suspect before shipping.
+
+**Re-aiming them needs the room's tile grid, not its command list.** The layout
+commands say where a generator starts, not which tiles end up solid, and
+`level_sim.py` only knows tileset 1. Until something can answer "is (col, row)
+solid in a fortress-tileset room", these two stay out and the pool is 17.
+
 ## Playtest ROMs
 
-Six seeds through the real pipeline, each parking 5-2 on W1 tile 1 and 7-F1 on
-the next tile with a P-Wing in the inventory, at
-`~/Copyparty/MiSTer/games/NES/_rando/bigq_seed<N>.nes`:
+Five seeds through the real pipeline, each parking 5-2 on W1 tile 1 and 7-F1 on
+the next tile with a P-Wing, at
+`~/Copyparty/MiSTer/games/NES/_rando/bigq_seed<N>.nes`. Between them they cover
+**all six** Unused Level 5 rooms still in the pool, plus two 7-F1 forces:
 
 | Seed | 5-2 opens | 7-F1 opens | 7-F1's block |
 |---|---|---|---|
-| 10 | **Unused Level 5 s7** | Unused Level 5 s0 | already Tanooki |
-| 16 | **Unused Level 5 s6** | BigQ8 s4 | 3-Up → forced Tanooki |
-| 31 | **Unused Level 5 s6** | BigQ3 s5 | Frog → forced Tanooki |
+| 10 | Unused Level 5 s2 | Unused Level 5 s0 | already Tanooki |
 | 4 | Unused Level 5 s3 | Unused Level 5 s4 | already Tanooki |
 | 25 | Unused Level 5 s1 | BigQ6 s6 | Hammer → forced Tanooki |
-| 5 | BigQ4 s2 | BigQ8 s4 | 3-Up → forced Tanooki |
-
-Screens 6 and 7 (bold) are the ones to look at hardest — they have no ceiling
-pipe, so the player is placed *beside* the floor pipe instead of dropping out of
-a mouth. Seed 5 is the cross-world vanilla case, 5-2 opening World 4's room.
-Seeds 5, 16, 25 and 31 each exercise the 7-F1 force from a different block type.
+| 26 | Unused Level 5 s5 | Unused Level 5 s3 | already Tanooki |
+| 24 | Unused Level 5 s2 | BigQ6 s3 | 3-Up → forced Tanooki |
 
 Rebuild with:
 
@@ -393,15 +414,16 @@ testrom --randomize --seed <N> --place 5-2 7F1 --no-walk --starting-items p-wing
 overworld writer want the same free space. Delete the target on the mount first,
 it never overwrites.
 
-**These seeds are specific to `testrom`'s option set.** Its `Options` differ from
-the CLI's defaults, which moves the shared RNG, so the same seed number picks
-different rooms under `smb3-rs`. Read the room out of the ROM (the four payload
-tables start at `FS_BIG_Q_LOOKUP + 0x8E`) rather than assuming.
+**These seed numbers are specific to `testrom`'s option set.** Its `Options`
+differ from the CLI's defaults, which moves the shared RNG, so the same seed
+picks different rooms under `smb3-rs`. Read the room out of the ROM — the four
+payload tables start at `FS_BIG_Q_LOOKUP + 0x8E` — rather than assuming.
 
-Parking both levels on World 1 also puts both rooms under **one** world's
-`BigQBlock_GotIt` mask, which the real seed would not necessarily do — so these
-six were picked to have distinct room screens. A pair that collided would show
-the second block already collected.
+Parking both levels on World 1 puts both rooms under **one** world's
+`BigQBlock_GotIt` mask, which the real seed would not necessarily do, so these
+five were picked to have distinct room screens. A colliding pair would show the
+second block already collected.
 
-To look at one Unused Level 5 room in isolation, without the randomizer, the old
-knob still works: `testrom --place 5-2 --bigq-unused5 <screen> --bigq-palette 4`.
+To look at one Unused Level 5 room in isolation, without the randomizer:
+`testrom --place 5-2 --bigq-unused5 <screen> --bigq-palette 4`. That knob still
+reaches screens 6 and 7, which the randomizer no longer draws.

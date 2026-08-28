@@ -13,9 +13,9 @@ deploys.
 
 - **Big ? Block bonus rooms are shuffled.** Every level with a Big ? pipe now
   draws from a pool of 19 rooms instead of always opening its own — the 11
-  vanilla rooms plus 8 from "Unused Level 5", a complete set of eight bonus
-  rooms left in the ROM and reachable by nothing. Vanilla's 15 rooms are only
-  10 distinct layouts, so this roughly doubles what you can walk into. 7-F1's
+  vanilla rooms plus 6 from "Unused Level 5", a set of bonus rooms left in the
+  ROM and reachable by nothing. Vanilla's 15 rooms are only 10 distinct
+  layouts, so this markedly widens what you can walk into. 7-F1's
   block is still always a flight suit, whichever room it draws, because the
   level needs one.
 
