@@ -478,8 +478,12 @@ const UNUSED5_ARRIVALS: [(u8, u8); 8] = [
     (1, 5),  // screen 3: ceiling pipe col 1, rows 16-21
     (2, 5),  // screen 4: ceiling pipe col 2, rows 16-21
     (7, 0),  // screen 5: ceiling pipe col 7, rows 0-2
-    (3, 6),  // screen 6: no ceiling pipe — beside the floor pipe at col 1
-    (5, 6),  // screen 7: no ceiling pipe — beside the floor pipe at col 2
+    // No ceiling pipe on these two, so there is no mouth to drop out of and
+    // the aim was found by playtesting (2026-08-28). Both were originally Y
+    // index 6 — row 23, the floor pipe's own row — which put the player inside
+    // the pipe on screen 6 and past the end of the floor on screen 7.
+    (3, 5),  // screen 6: col 3 row 20, beside the floor pipe at col 1
+    (2, 3),  // screen 7: col 2 row 11, falling into the floor pipe
 ];
 
 /// Three-byte commands in Unused Level 5 we can overwrite with a return

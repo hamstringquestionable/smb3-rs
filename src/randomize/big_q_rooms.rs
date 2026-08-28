@@ -78,9 +78,13 @@ const VANILLA_ROOMS: [Room; 11] = [
 /// Unused Level 5's eight rooms, one per screen, every block a Tanooki Suit.
 ///
 /// Arrivals aim at each room's ceiling pipe at a Y index *inside* it, so the
-/// player falls out of the mouth the way vanilla does. Screens 6 and 7 have no
-/// ceiling pipe — their only pipe is the floor one you leave by — so those land
-/// beside it instead. Dir 2 throughout, matching vanilla's Big [?] arrivals.
+/// player falls out of the mouth the way vanilla does. Dir 2 throughout,
+/// matching vanilla's Big [?] arrivals.
+///
+/// The Y index is into `LevelJct_YLHStarts`, which has only eight entries —
+/// rows 0, 4, 7, 11, 15, 20, 23, 24 — so a landing spot cannot be nudged by a
+/// row or two. That coarseness is why screens 6 and 7 took a playtest round:
+/// see their comment below.
 const UNUSED5_ROOMS: [Room; 8] = [
     room(0, 0, (0x02, 0x20), true), // ceiling pipe col 2, rows 0-1
     room(0, 1, (0x42, 0x11), true), // ceiling pipe col 1, rows 12-16
@@ -88,8 +92,12 @@ const UNUSED5_ROOMS: [Room; 8] = [
     room(0, 3, (0x52, 0x13), true), // ceiling pipe col 1, rows 16-21
     room(0, 4, (0x52, 0x24), true), // ceiling pipe col 2, rows 16-21
     room(0, 5, (0x02, 0x75), true), // ceiling pipe col 7, rows 0-2
-    room(0, 6, (0x62, 0x36), true), // no ceiling pipe — beside the floor pipe
-    room(0, 7, (0x62, 0x57), true), // no ceiling pipe — beside the floor pipe
+    // Screens 6 and 7 have no ceiling pipe, so there is no mouth to fall out
+    // of and the aim had to be found by playtesting (2026-08-28). Both were
+    // originally Y index 6 — row 23, the floor pipe's own row — which put the
+    // player in the pipe or past the end of the floor and killed him.
+    room(0, 6, (0x52, 0x36), true), // col 3 row 20: lands beside the floor pipe
+    room(0, 7, (0x32, 0x27), true), // col 2 row 11: falls into the floor pipe
 ];
 
 /// A level with a Big [?] pipe: its row in the lookup table, its entry

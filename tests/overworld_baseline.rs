@@ -193,11 +193,11 @@ fn sweep_is_deterministic() {
 /// hashes. Force it (`touch src/lib.rs`, or `cargo clean -p smb3-rs`) before
 /// trusting any number this test prints after a bump.
 const BASELINE: [u64; SEEDS as usize] = [
-    0x4E4C8A191F5685C7, 0x6D91B1182546B2D4, 0x8403DC76A349DC67, 0x95FC1C166FD2A0CE,
-    0x3F1E17841E6D5AB2, 0x47A2E17C29871737, 0xF77056FB954617FD, 0x2250FCDE919E6056,
-    0x2D974E1A5ECBC04D, 0xF362BD31A8DC2C35, 0x99D8920302472BD0, 0x5CAF93CE5AE276D4,
-    0x45BEDB9C8B63FECE, 0xB6F19EA114E6B2B7, 0xD16BE93B4EE4DC2F, 0x274C352583A7F603,
-    0x33C8141F38F97F65, 0x0BA66E9654F61197, 0xD473ECE6B78193ED, 0x759AEB0B7C3C6DD3,
+    0x5CE7A325F4E40B77, 0xEE4429463CB37B24, 0xF4D3FD6B84C89857, 0x52C24655C314BF5E,
+    0xEA3C7E36AA10E312, 0xE6A87F1D0297B837, 0x33332A4152718DBD, 0xA05870AF43203CB6,
+    0x8A6E37DA33E1B91D, 0xAF3DA8A8F53F3EC5, 0x5068CBCB2ED14BB0, 0xC01A2B0B1EA4FC04,
+    0x52A69F2C7D037BBE, 0xB6F19EA114E6B2B7, 0xD16BE93B4EE4DC2F, 0x4D7A01A04665B7A3,
+    0xD7F9BD46BA764F55, 0x2CE2B76AC0170B37, 0x3CA80801B89FC3AD, 0x273A357F0557B0A3,
 ];
 ///
 /// Re-captured 2026-08-27 for the Big [?] bonus-room shuffle, which is always
@@ -214,6 +214,11 @@ const BASELINE: [u64; SEEDS as usize] = [
 /// that was verified rather than argued: the 8 map grids were hashed for all 20
 /// seeds with the `shuffle` call live and with it stubbed to return an empty
 /// vec, and the two sets are identical. The ROM bytes differ, the maps do not.
+///
+/// Amended the same week: Unused Level 5's screens 6 and 7 got new arrival
+/// coordinates after playtesting showed the originals killed the player. Four
+/// table bytes, so every seed that draws one of those rooms moves. No RNG draw
+/// changed — the pool is the same size — so this is a pure byte difference.
 
 #[test]
 fn output_matches_baseline() {

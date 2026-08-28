@@ -377,6 +377,42 @@ Two things resolved along the way that the earlier sections got wrong:
   exit seed writes at `Player_XHi` and is correct as long as bonus areas stay
   horizontal, which all eight vanilla ones and Unused Level 5 are.
 
+## Unused Level 5 screens 6 and 7: how their aim was found
+
+These two are the only rooms with no ceiling pipe, so there is no mouth to fall
+out of and no vanilla precedent to copy. Their first coordinates — Y index 6,
+row 23, the floor pipe's own row — **killed the player**, on the vanilla-base
+`testrom` path as well as through the randomizer. The earlier note claiming all
+eight rooms were playtested did not cover where these two put you.
+
+The aim cannot be reasoned out of the layout: a command says where a generator
+starts, not which tiles end up solid, and nothing here renders a
+fortress-tileset room. It also cannot be nudged, because the Y position is a
+3-bit index into `LevelJct_YLHStarts` — only rows 0, 4, 7, 11, 15, 20, 23, 24
+are expressible. So it was found by trying, using `testrom --bigq-aim COL,YIDX`.
+
+Two rounds, playtested 2026-08-28:
+
+| Aim | Screen 6 | Screen 7 |
+|---|---|---|
+| col 10 row 15 | safe, but an arbitrary-looking spot | — |
+| col 10 row 11 | clips the ceiling, falls through | — |
+| col 1/2 row 20 (pipe column) | clipped inside the pipe | clipped inside the pipe |
+| col 8 row 20 | — | **inescapable wall** |
+| col 3 row 7 | — | safe, but incoherent |
+| col 1/2 row 15, row 11 (pipe column) | — | **row 11 chosen** |
+| col 3 / col 4 row 20 (beside pipe) | **chosen** | — |
+
+Shipped: **screen 6 → col 3, row 20** (lands beside the floor pipe) and
+**screen 7 → col 2, row 11** (falls into the floor pipe). Both are in
+`UNUSED5_ROOMS` and in `testrom.rs`'s `UNUSED5_ARRIVALS`, which are kept in
+step so the two paths agree.
+
+Worth recording because it ran against expectation: "beside the pipe" was
+predicted to fail in both rooms, on the grounds that screen 6 has nothing solid
+but the pipe and screen 7's floor run starts at col 6. It is what works on
+screen 6.
+
 ## Playtest ROMs
 
 Six seeds through the real pipeline, each parking 5-2 on W1 tile 1 and 7-F1 on
