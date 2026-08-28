@@ -13,7 +13,7 @@
 //! routine must live in a bank mapped when it runs. The always-mapped banks
 //! are effectively full — PRG031 (`$E000–$FFFF`) has 81 bytes left but a
 //! largest contiguous gap of only 30, and PRG030 (`$8000–$9FFF`) has 88 with
-//! a largest gap of 42. Swapped banks are roomier (PRG010 896, PRG026 2603,
+//! a largest gap of 42. Swapped banks are roomier (PRG010 896, PRG026 2485,
 //! and the in-level banks PRG004 426 / PRG006 1392 in one run each).
 //!
 //! Reserving some headroom in an allocation is fine and encouraged — a routine
@@ -118,7 +118,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(0x35572, 13, &["mystery_anchor"], "item redirect trampoline"),
     fs(0x3557F, 50, &["hammer_breaks_tiles"], "hammer_locks: tile check subroutine + tables"),
     fs(0x355B1, 12, &["anchor_visuals"], "items-vs-cards index guard trampoline"),
-    fs(0x355BD, 106, &["big_q_blocks"], "big_q_block: two-pass lookup routine + 13-entry tables (current-area then frozen entry)"),
+    fs(0x355BD, 224, &["big_q_blocks"], "big_q_block: two-pass lookup + slot seeding + 7 13-entry tables (224 reserved, 207 used)"),
     // PRG027 (file 0x36010, CPU $A000–$BFFF)
     fs(0x379D9, 894, &["king_quotes"], "7 quotes + hook (7×120 + 54)"),
     // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
@@ -254,9 +254,10 @@ pub(crate) const GAMEOVER_FINALIZE_SITE: usize = 0x166BA;  // 3 bytes — `STA $
 // "NOTE: Assumes Index 1 is the Airship!"
 pub(crate) const AIRSHIP_OBJ_SLOT: usize = 1;
 
-// PRG026 — two-pass Big ? Block lookup (qol/big_q.rs), relocated off the old
-// 0x35530 slot into tail free space to hold the two-pass routine + 12 entries.
-pub(crate) const FS_BIG_Q_LOOKUP: usize      = 0x355BD; // 106 bytes (CPU $B5AD)
+// PRG026 — two-pass Big ? Block lookup + spawn-slot seeding (qol/big_q.rs),
+// relocated off the old 0x35530 slot into tail free space. The $FF run this
+// sits in continues to 0x36000, so it has room to grow in place.
+pub(crate) const FS_BIG_Q_LOOKUP: usize      = 0x355BD; // 224 reserved, 207 used (CPU $B5AD)
 
 // PRG027
 pub(crate) const FS_KING_QUOTES: usize       = 0x379D9; // 894 bytes

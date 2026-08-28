@@ -372,6 +372,18 @@ pub struct TestRomSpec {
     pub hammer_breaks_bridges: bool,
     /// Include the 9 unreferenced beta stages as placeable names.
     pub include_beta: bool,
+    /// Repoint every Big [?] Block bonus area at "Unused Level 5" (the
+    /// unreferenced eight-room test level) and land 5-2's bonus pipe in the
+    /// room on this screen, 0-7. `None` leaves the vanilla areas alone.
+    pub big_q_unused5: Option<u8>,
+    /// BG palette index (0-7) to write into Unused Level 5's header. Its
+    /// vanilla 6 is the placeholder palette — monochrome. Only read when
+    /// `big_q_unused5` is set.
+    pub big_q_palette: Option<u8>,
+    /// Override the arrival for `big_q_unused5` as `(col, Y-start index)`.
+    /// Y indices are into `LevelJct_YLHStarts`: 0 = row 0, 4 = row 15,
+    /// 5 = row 20, 6 = row 23.
+    pub big_q_aim: Option<(u8, u8)>,
     /// Enemy slots to overwrite outright. Applied last, so they win over the
     /// randomizer's own choices on a `--randomize` base.
     pub set_enemies: Vec<EnemyOverride>,
@@ -443,6 +455,198 @@ fn numbered_slots(rom: &Rom, world_idx: usize, include_beta: bool) -> Vec<(u8, u
     slots.sort_unstable();
     slots.dedup_by_key(|(num, _)| *num);
     slots
+}
+
+/// Where to put the player in each of Unused Level 5's eight rooms, as
+/// `(column, Y-start index)`.
+///
+/// Six of the rooms hang a ceiling pipe over the block room; the arrival aims
+/// at that pipe's column and at a Y index *inside* the pipe, so the player
+/// falls out of its mouth the way vanilla does — 5-2's own `$73` puts the
+/// player at row 0 in BigQ5's screen 3, which is inside that room's pipe.
+/// Rooms 6 and 7 have no ceiling pipe at all (their only pipe is the floor one
+/// you leave by), so those two land beside it instead.
+///
+/// Pipe positions come from the level's own layout, decoded with the fortress
+/// tileset's command sizes; the Y index is into `LevelJct_YLHStarts` (PRG026):
+/// 0 = row 0, 4 = row 15, 5 = row 20, 6 = row 23.
+const UNUSED5_ARRIVALS: [(u8, u8); 8] = [
+    (2, 0),  // screen 0: ceiling pipe col 2, rows 0-1
+    (1, 4),  // screen 1: ceiling pipe col 1, rows 12-16
+    (2, 0),  // screen 2: ceiling pipe col 2, rows 0-1 (drift right at rows 8-9
+             //           to reach the block; the shaft drops past it otherwise)
+    (1, 5),  // screen 3: ceiling pipe col 1, rows 16-21
+    (2, 5),  // screen 4: ceiling pipe col 2, rows 16-21
+    (7, 0),  // screen 5: ceiling pipe col 7, rows 0-2
+    // No ceiling pipe on these two, so there is no mouth to drop out of and
+    // the aim was found by playtesting (2026-08-28). Both were originally Y
+    // index 6 — row 23, the floor pipe's own row — which put the player inside
+    // the pipe on screen 6 and past the end of the floor on screen 7.
+    (3, 5),  // screen 6: col 3 row 20, beside the floor pipe at col 1
+    (2, 3),  // screen 7: col 2 row 11, falling into the floor pipe
+];
+
+/// Three-byte commands in Unused Level 5 we can overwrite with a return
+/// junction, as `(file offset, the bytes that must be there, screen)`.
+///
+/// The level has no group-7 commands of its own, and its layout stream is
+/// byte-tight — it terminates at 0x2B889 and World 8's fortress layout starts
+/// at 0x2B88A — so a return junction has to *replace* a command rather than
+/// extend the stream. Both of these are a single `Coin` generator (fortress
+/// generator 22), the cheapest thing in the level to lose, and the caller picks
+/// one that is not in the room being tested so the room itself is untouched.
+const UNUSED5_SPARE_COMMANDS: [(usize, [u8; 3], u8); 2] =
+    [(0x2B78D, [0x2C, 0x03, 0x80], 0), (0x2B7C3, [0x2B, 0x21, 0x80], 2)];
+
+/// Repoint every Big [?] Block bonus area at "Unused Level 5", aim 5-2's bonus
+/// pipe at one of its eight rooms, and give that room a return junction.
+///
+/// Three things have to line up for a Big [?] pipe to open a room and bring the
+/// player home again:
+///
+/// 1. **Which area** — `LevelJct_BigQuestionBlock` loads the layout/objects
+///    pointers and the tileset from three 8-entry tables indexed by room
+///    number. Every entry is rewritten here rather than just the one 5-2 uses,
+///    so *any* Big [?] pipe in the game reaches this level no matter which
+///    world its host ended up in. That also sidesteps vanilla's `LDY World_Num`
+///    selection, which a vanilla-base test ROM still has.
+/// 2. **Where inside it** — the arrival comes from the *source* level's own
+///    junction command: byte2 is `(col << 4) | screen`, byte1 is
+///    `(Y-start index << 4) | pipe-exit dir`. See `UNUSED5_ARRIVALS`.
+/// 3. **Where it returns to** — supplied by the *bonus area*, not the host: on
+///    the way out the engine reads `Level_JctXLHStart[Player_XHi]` with the
+///    player's screen *in the bonus room*. This level defines no group-7
+///    commands, so without this write the slot holds whatever the host left
+///    there — for room 0 that is 5-2's own front door, whose byte1 bit 7 is the
+///    "destination is vertical" flag, which renders the horizontal lobby as a
+///    vertical level. The return bytes are copied from BigQ5's slot-3 command,
+///    which is vanilla's own answer for 5-2.
+///
+/// The pipe the player leaves by needs no edit: `Player_DoSpecialTiles` (PRG008
+/// $BCC4) ANDs the pipe-tile index with 1 while `LevelJctBQ_Flag` is set, which
+/// collapses all four pipe-1/pipe-2 end tiles ($AD-$B0) onto the Big [?]
+/// junction type. Loaded normally these same pipes exit to the world map, which
+/// is what TCRF describes.
+fn big_q_unused5(
+    rom: &mut Rom,
+    screen: u8,
+    palette: Option<u8>,
+    aim: Option<(u8, u8)>,
+) -> Result<Vec<String>, String> {
+    // Read the rooms out of the level's own object stream rather than
+    // hardcoding them: entries are [id, (screen << 4) | col, row].
+    let seg = rom_data::enemy_ptr_to_file_offset(rom_data::UNUSED5_OBJECT_PTR);
+    let mut rooms: Vec<(u8, u8, u8, u8)> = Vec::new();
+    let mut off = seg + 1; // skip the segment's page byte
+    while rom.read_byte(off) != 0xFF {
+        let (id, pos, row) = (rom.read_byte(off), rom.read_byte(off + 1), rom.read_byte(off + 2));
+        rooms.push((pos >> 4, pos & 0x0F, row, id));
+        off += 3;
+    }
+
+    let &(scr, block_col, block_row, id) = rooms
+        .iter()
+        .find(|(s, ..)| *s == screen)
+        .ok_or_else(|| {
+            format!(
+                "Unused Level 5 has no Big [?] room on screen {screen} (rooms: {})",
+                rooms
+                    .iter()
+                    .map(|(s, ..)| s.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })?;
+    // `aim` overrides the table so a bad landing can be re-aimed without a
+    // rebuild-edit-rebuild loop. Screens 6 and 7 have no ceiling pipe and their
+    // table entries drop the player through the floor, so finding a spot that
+    // works means trying several — see docs/big_q_rooms_design.md.
+    let (col, y_idx) = aim.unwrap_or(UNUSED5_ARRIVALS[scr as usize]);
+
+    for room in 0..rom_data::BIG_Q_AREA_COUNT {
+        rom.write_range(
+            rom_data::BIG_Q_AREA_LAYOUTS + room * 2,
+            &rom_data::UNUSED5_LAYOUT_PTR.to_le_bytes(),
+        );
+        rom.write_range(
+            rom_data::BIG_Q_AREA_OBJECTS + room * 2,
+            &rom_data::UNUSED5_OBJECT_PTR.to_le_bytes(),
+        );
+        rom.write_byte(rom_data::BIG_Q_AREA_TILESETS + room, rom_data::UNUSED5_TILESET);
+    }
+
+    // Outbound: keep 5-2's own pipe-exit direction in byte1's low nibble and
+    // its slot nibble in byte0 — the slot names 5-2's pipe screen, which is a
+    // property of 5-2 and not of the destination.
+    let dir = rom.read_byte(rom_data::W52_BIG_Q_JUNCTION + 1) & 0x0F;
+    let (now1, now2) = ((y_idx << 4) | dir, (col << 4) | scr);
+    rom.write_byte(rom_data::W52_BIG_Q_JUNCTION + 1, now1);
+    rom.write_byte(rom_data::W52_BIG_Q_JUNCTION + 2, now2);
+
+    // Inbound: a group-7 command in this room's own slot, carrying vanilla's
+    // return position for 5-2.
+    let &(victim, expect, victim_scr) = UNUSED5_SPARE_COMMANDS
+        .iter()
+        .find(|(_, _, s)| *s != scr)
+        .expect("two spare commands on different screens");
+    if rom.read_range(victim, 3) != expect {
+        return Err(format!(
+            "0x{victim:05X} is not the expected Coin command {expect:02X?} — \
+             Unused Level 5's layout is not vanilla here"
+        ));
+    }
+    let ret = [
+        0xE0 | scr,
+        rom.read_byte(rom_data::BIGQ5_SLOT3_JUNCTION + 1),
+        rom.read_byte(rom_data::BIGQ5_SLOT3_JUNCTION + 2),
+    ];
+    rom.write_range(victim, &ret);
+
+    // The header's BG palette index. Vanilla 6 is the placeholder palette every
+    // unused fortress-tileset level carries, which draws the rooms in black and
+    // white; the loader re-reads palettes from the target header on a junction,
+    // so one byte here recolours the whole area.
+    let mut pal_note = Some(format!(
+        "  BG palette: left at the level's own {} — the placeholder index, black and white",
+        rom_data::UNUSED5_VANILLA_BGPAL
+    ));
+    if let Some(pal) = palette {
+        if pal > 7 {
+            return Err(format!("BG palette index {pal} is out of range (0-7)"));
+        }
+        let hdr = rom_data::prg_bank_cpu_to_file(
+            rom_data::UNUSED5_LAYOUT_BANK,
+            rom_data::UNUSED5_LAYOUT_PTR,
+        ) + 5;
+        let was = rom.read_byte(hdr);
+        rom.write_byte(hdr, (was & !0x07) | pal);
+        pal_note = Some(format!(
+            "  BG palette: {} -> {pal} (header byte5 {was:#04X} -> {:#04X})",
+            was & 0x07,
+            (was & !0x07) | pal
+        ));
+    }
+
+    let mut report = vec![
+        format!(
+            "big [?] rooms: all {} areas -> Unused Level 5 (layout ${:04X}, objects ${:04X}, tileset {})",
+            rom_data::BIG_Q_AREA_COUNT,
+            rom_data::UNUSED5_LAYOUT_PTR,
+            rom_data::UNUSED5_OBJECT_PTR,
+            rom_data::UNUSED5_TILESET
+        ),
+        format!(
+            "  5-2's bonus pipe -> {now1:#04X} {now2:#04X}: room {scr}, arrive col {col} / \
+             Y index {y_idx} (block {id:#04X} at col {block_col}, row {block_row})"
+        ),
+        format!(
+            "  return junction {:02X?} written over the Coin at 0x{victim:05X} (screen \
+             {victim_scr}); copied from BigQ5 slot 3",
+            ret
+        ),
+    ];
+    report.extend(pal_note);
+    Ok(report)
 }
 
 /// Rewrite lock and/or water-gap tiles across all 8 world maps.
@@ -690,6 +894,11 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         }
     }
 
+    // 3a. Big [?] Block bonus rooms from the unreferenced test level.
+    if let Some(screen) = spec.big_q_unused5 {
+        report.extend(big_q_unused5(&mut rom, screen, spec.big_q_palette, spec.big_q_aim)?);
+    }
+
     // 4. Open the map up.
     let opened = open_map(&mut rom, spec.remove_locks, spec.remove_gaps);
     if opened > 0 {
@@ -847,6 +1056,9 @@ mod tests {
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             include_beta: false,
+            big_q_unused5: None,
+            big_q_palette: None,
+            big_q_aim: None,
             set_enemies: Vec::new(),
         }
     }
@@ -885,6 +1097,116 @@ mod tests {
             .find(|(num, _)| *num == 1)
             .expect("W1 has a tile 1");
         assert_eq!(rom_data::read_entry(&out, &WORLDS[0], slot.1), want);
+    }
+
+    /// `--bigq-unused5` has to line up two independent things: the three
+    /// per-world area tables (which area) and 5-2's own junction command (which
+    /// room inside it). This pins both, and pins the constants to the data they
+    /// claim to name — a wrong `UNUSED5_*` address would still write cleanly.
+    #[test]
+    fn big_q_unused5_repoints_every_area_and_aims_5_2() {
+        let Some(van) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+
+        let src = Rom::from_bytes_lax(&van, true).unwrap();
+
+        // The addresses really are Unused Level 5: an object stream of nothing
+        // but Big [?] Blocks, and a layout header whose size field spans the
+        // eight screens they sit on.
+        let obj = rom_data::enemy_ptr_to_file_offset(rom_data::UNUSED5_OBJECT_PTR);
+        let mut screens: Vec<u8> = Vec::new();
+        let mut off = obj + 1;
+        while src.read_byte(off) != 0xFF {
+            let id = src.read_byte(off);
+            assert!((0x94..=0x9A).contains(&id), "entry {id:#04X} is not a Big [?] Block");
+            screens.push(src.read_byte(off + 1) >> 4);
+            off += 3;
+        }
+        screens.sort_unstable();
+        assert_eq!(screens, (0..8).collect::<Vec<u8>>(), "one room per screen 0-7");
+
+        let lay = rom_data::prg_bank_cpu_to_file(21, rom_data::UNUSED5_LAYOUT_PTR);
+        assert_eq!(
+            src.read_range(lay, 4),
+            &[0x00, 0x00, 0x00, 0x00],
+            "a standalone area has null alt pointers"
+        );
+
+        // The header's palette nibble is where the docs say, and vanilla's value
+        // is the placeholder index shared only with `Empty`.
+        let hdr = rom_data::prg_bank_cpu_to_file(
+            rom_data::UNUSED5_LAYOUT_BANK,
+            rom_data::UNUSED5_LAYOUT_PTR,
+        ) + 5;
+        assert_eq!(src.read_byte(hdr) & 0x07, rom_data::UNUSED5_VANILLA_BGPAL);
+
+        let built = build(
+            &van,
+            &TestRomSpec { big_q_unused5: Some(5), big_q_palette: Some(4), ..spec() },
+        )
+        .unwrap();
+        let out = Rom::from_bytes_lax(&built.bytes, true).unwrap();
+
+        for room in 0..rom_data::BIG_Q_AREA_COUNT {
+            assert_eq!(
+                out.read_range(rom_data::BIG_Q_AREA_LAYOUTS + room * 2, 2),
+                &rom_data::UNUSED5_LAYOUT_PTR.to_le_bytes(),
+                "room {room} layout"
+            );
+            assert_eq!(
+                out.read_range(rom_data::BIG_Q_AREA_OBJECTS + room * 2, 2),
+                &rom_data::UNUSED5_OBJECT_PTR.to_le_bytes(),
+                "room {room} objects"
+            );
+            assert_eq!(
+                out.read_byte(rom_data::BIG_Q_AREA_TILESETS + room),
+                rom_data::UNUSED5_TILESET,
+                "room {room} tileset"
+            );
+        }
+
+        // Screen 5 arrives at column 7 (its ceiling pipe), Y index 0: byte2 =
+        // (7 << 4) | 5, byte1 = (0 << 4) | 5-2's own exit dir (2).
+        assert_eq!(out.read_byte(rom_data::W52_BIG_Q_JUNCTION + 2), 0x75);
+        assert_eq!(out.read_byte(rom_data::W52_BIG_Q_JUNCTION + 1), 0x02);
+        // The return junction went in on a screen other than the one tested,
+        // in this room's own slot, carrying BigQ5's return bytes.
+        let (victim, _, victim_scr) = UNUSED5_SPARE_COMMANDS[0];
+        assert_ne!(victim_scr, 5);
+        assert_eq!(
+            out.read_range(victim, 3),
+            &[
+                0xE5,
+                src.read_byte(rom_data::BIGQ5_SLOT3_JUNCTION + 1),
+                src.read_byte(rom_data::BIGQ5_SLOT3_JUNCTION + 2)
+            ]
+        );
+        // BigQ5's slot-3 command is the one being copied from: group 7, slot 3.
+        assert_eq!(src.read_byte(rom_data::BIGQ5_SLOT3_JUNCTION), 0xE3);
+        // Every spare command really is where it claims to be in vanilla.
+        for (off, bytes, _) in UNUSED5_SPARE_COMMANDS {
+            assert_eq!(src.read_range(off, 3), &bytes, "spare command at {off:#07X}");
+        }
+        // byte0 is untouched — its slot nibble names 5-2's own pipe screen,
+        // which is a property of 5-2 and not of the destination.
+        assert_eq!(
+            out.read_byte(rom_data::W52_BIG_Q_JUNCTION),
+            src.read_byte(rom_data::W52_BIG_Q_JUNCTION)
+        );
+        // Every arrival fits the nibble/table it is written into.
+        for &(col, y_idx) in &UNUSED5_ARRIVALS {
+            assert!(col < 16, "column {col} does not fit a nibble");
+            assert!(y_idx < 8, "Y index {y_idx} is past LevelJct_YLHStarts");
+        }
+
+        // Only the palette bits move; object palette and X-start are preserved.
+        assert_eq!(out.read_byte(hdr) & 0x07, 4);
+        assert_eq!(out.read_byte(hdr) & !0x07, src.read_byte(hdr) & !0x07);
+
+        let err = build(&van, &TestRomSpec { big_q_unused5: Some(9), ..spec() }).unwrap_err();
+        assert!(err.contains("no Big [?] room on screen 9"), "{err}");
     }
 
     /// The Coin Ship has no world pointer table entry, so the catalog cannot

@@ -679,6 +679,72 @@ pub(crate) const BETA_PATCHES: &[(usize, u8)] = &[
     (0x26DB8, 0x63), (0x26DB9, 0x20),
 ];
 
+// ---------------------------------------------------------------------------
+// Big [?] Block bonus areas
+// ---------------------------------------------------------------------------
+
+/// Per-world Big [?] Block bonus-area tables in PRG026 (`LevelJctBQ_Layout`
+/// $A90B, `_Objects` $A91B, `_Tileset` $A92B).
+///
+/// `LevelJct_BigQuestionBlock` indexes all three with a room number — vanilla
+/// uses `World_Num`; `qol::big_q` replaces that with a level-identity lookup.
+/// The layout is then read from whichever bank `PAGE_A000_BY_TILESET` maps for
+/// the tileset byte, so an area's layout does not have to live in PRG013.
+///
+/// Rooms 0 and 1 are unreachable in vanilla: W1's area is empty, and W2's holds
+/// a 3-Up room that no level opens (no W1/W2 level has a Big [?] pipe).
+pub(crate) const BIG_Q_AREA_LAYOUTS: usize = 0x3491B;
+pub(crate) const BIG_Q_AREA_OBJECTS: usize = 0x3492B;
+pub(crate) const BIG_Q_AREA_TILESETS: usize = 0x3493B;
+#[cfg(not(target_arch = "wasm32"))] // only testrom iterates all eight areas
+pub(crate) const BIG_Q_AREA_COUNT: usize = 8;
+
+/// 5-2's Big [?] Block junction command — slot 4 of its entry area, the screen
+/// its bonus pipe sits on. byte2 is `(col << 4) | screen`: where in the bonus
+/// area the pipe lands. Vanilla `$73` = screen 3, column 7, which is exactly
+/// where BigQ5's 3-Up block sits.
+///
+/// The antechamber shuffle deliberately leaves this command alone — see
+/// `antechambers.rs`, which lists only 5-2's front door `0x1A804`.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const W52_BIG_Q_JUNCTION: usize = 0x1A807;
+
+/// "Unused Level 5" (TCRF): a fortress-tileset test level holding eight Big [?]
+/// Block rooms, one per screen, every block a Tanooki Suit. Nothing in the ROM
+/// reaches it — no world pointer table entry and no header alt pointer names
+/// either address. Presumably where the rooms were mocked up before being split
+/// into the per-world areas above.
+///
+/// Its layout lives in PRG021, so a `LevelJctBQ_Tileset` entry of 2 (fortress)
+/// is what maps the right bank at $A000; the object stream is in PRG006, which
+/// the loader maps for every level regardless of tileset.
+/// BigQ5's slot-3 junction command, `E3 61 65` — the return position vanilla
+/// uses when 5-2's Big [?] pipe sends the player home (Y index 6 = row 23,
+/// screen 5, column 6).
+///
+/// A bonus area supplies its own return: on the way out, `LevelJct_
+/// BigQuestionBlock` falls into the same code the entry uses and reads
+/// `Level_JctXLHStart[Player_XHi]`, indexed by the screen the player is
+/// standing on *in the bonus room*. Every vanilla area therefore carries one
+/// group-7 command per room screen, and a room without one returns the player
+/// to whatever stale value that slot happens to hold.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const BIGQ5_SLOT3_JUNCTION: usize = 0x1B479;
+
+pub(crate) const UNUSED5_LAYOUT_PTR: u16 = 0xB754;
+pub(crate) const UNUSED5_OBJECT_PTR: u16 = 0xD401;
+pub(crate) const UNUSED5_TILESET: u8 = 2;
+/// PRG bank holding the layout, for `prg_bank_cpu_to_file`.
+pub(crate) const UNUSED5_LAYOUT_BANK: usize = 21;
+/// Its header's BG-palette index (byte 5 bits 0-2) in vanilla.
+///
+/// 6 is the placeholder: the only two fortress-tileset levels using it are this
+/// one and `Empty`. Real fortresses use 0 (most mini-fortresses), 1 (Koopaling
+/// throne rooms, with object palette 10), 3 (World 3's) or 4 (1-F, 4-F2, 5-F1,
+/// 6-F1, 7-F1, Bowser's castle).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const UNUSED5_VANILLA_BGPAL: u8 = 6;
+
 /// An FX slot (lock/bridge position and replacement tile).
 pub(crate) struct FxSlot {
     pub grid_row: usize,

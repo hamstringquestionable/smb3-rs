@@ -54,8 +54,12 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options) {
 }
 
 /// Randomize Big ? Blocks by swapping their IDs among the set of Big ? Block
-/// types. The Tanooki block in World 7-F1 is protected because flying is
-/// required to beat that level.
+/// types. BigQ7's Tanooki is left alone — it is 7-F1's vanilla room, and
+/// flying is required to beat that level.
+///
+/// This is not the whole 7-F1 guarantee any more: `big_q_rooms` draws 7-F1 a
+/// room per seed and forces *that* room's block afterwards. This protection
+/// only keeps the vanilla pairing honest.
 pub fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // All enemy classes off — only Big ? Blocks get randomized
     let no_flags = Options {

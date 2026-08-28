@@ -142,6 +142,25 @@ struct Cli {
     #[arg(long, value_name = "PTR:SLOT:ID")]
     set_enemy: Vec<String>,
 
+    /// Open "Unused Level 5" -- the unreferenced test level holding eight Big
+    /// [?] Block rooms -- from every Big [?] pipe in the game, landing 5-2's
+    /// pipe in the room on this screen (0-7). Screen 3 reproduces 5-2's
+    /// vanilla arrival column. Pair with --place 5-2.
+    #[arg(long, value_name = "SCREEN", value_parser = clap::value_parser!(u8).range(0..=7))]
+    bigq_unused5: Option<u8>,
+
+    /// BG palette (0-7) for those rooms. The level's own 6 is the placeholder
+    /// palette -- black and white. Real fortresses use 0, 1, 3 or 4.
+    #[arg(long, value_name = "INDEX", default_value_t = 0,
+          value_parser = clap::value_parser!(u8).range(0..=7))]
+    bigq_palette: u8,
+
+    /// Override where --bigq-unused5 puts the player, as "COL,YIDX". Y index
+    /// is into LevelJct_YLHStarts: 0 = row 0, 4 = row 15, 5 = row 20,
+    /// 6 = row 23. Use when a room's table entry lands badly.
+    #[arg(long, value_name = "COL,YIDX")]
+    bigq_aim: Option<String>,
+
     /// List valid --starting-items names and exit.
     #[arg(long)]
     list_items: bool,
@@ -290,6 +309,20 @@ fn main() {
         }
     };
 
+    // "COL,YIDX" -> (col, Y-start index). This overrides where --bigq-unused5
+    // drops the player, which is how a badly-landing room gets re-aimed.
+    let big_q_aim = cli.bigq_aim.as_deref().map(|a| {
+        let (c, y) = a
+            .split_once(',')
+            .unwrap_or_else(|| die(format!("--bigq-aim wants \"COL,YIDX\", got \"{a}\"")));
+        let col: u8 = c.trim().parse().unwrap_or_else(|_| die(format!("bad column \"{c}\"")));
+        let y_idx: u8 = y.trim().parse().unwrap_or_else(|_| die(format!("bad Y index \"{y}\"")));
+        if col > 15 || y_idx > 7 {
+            die("--bigq-aim: column is 0-15, Y index 0-7".to_string());
+        }
+        (col, y_idx)
+    });
+
     let placements: Vec<Placement> = cli
         .place
         .iter()
@@ -352,6 +385,9 @@ fn main() {
         hammer_breaks_locks: cli.hammer_locks,
         hammer_breaks_bridges: cli.hammer_bridges,
         include_beta: cli.beta,
+        big_q_unused5: cli.bigq_unused5,
+        big_q_palette: Some(cli.bigq_palette),
+        big_q_aim,
         set_enemies,
     };
 

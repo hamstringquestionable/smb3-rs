@@ -316,6 +316,27 @@ fn randomize_inner(
         },
     );
 
+    // Big [?] bonus-room shuffle: every level with a Big [?] pipe draws from a
+    // pool of 19 rooms (11 vanilla + 8 in the otherwise-dead "Unused Level 5").
+    // Runs after the overworld builder because the BigQBlock_GotIt "already
+    // opened" bit is per world *and* per screen, so the legal rooms for a host
+    // depend on where its level ended up — and after `write_overworld`, so the
+    // RNG it consumes cannot move the maps.
+    rom.set_tag("big_q_blocks/rooms");
+    let big_q_rooms = randomize::big_q_rooms::shuffle(rom, &mut rng);
+
+    // 7-F1 cannot be beaten without flight, so whatever room it drew has to
+    // hand out a flight suit. Forced last, which is also why it needs no
+    // cooperation from the contents roll above.
+    if let Some(off) = big_q_rooms
+        .iter()
+        .find(|a| a.name == "7-F1")
+        .and_then(|a| randomize::big_q_rooms::block_offset(rom, a.area, a.screen))
+    {
+        rom.set_tag("big_q_blocks/w7f1_flight");
+        rom.write_byte(off, randomize::big_q_rooms::BIGQBLOCK_TANOOKI);
+    }
+
     // Redraw + repack the ending credits mini-maps from the freshly-written
     // randomized world maps, then (if world order shuffled) reorder the montage
     // so each world's picture shows in the order the player traversed it. Both
