@@ -64,6 +64,20 @@ space there. Unused Level 5 carries none and needs 3 bytes per room.
   shifts the stream for everything downstream of it and rebaselines any pinned
   output. Place it deliberately in `randomizer/mod.rs`, not wherever is handy.
 
+- **Block contents stay entirely `big_q_blocks`'s job** (2026-08-27). The eight
+  Unused Level 5 blocks are all Tanooki Suits in the ROM, and they *are* already
+  swept by `randomize_object_data` — its scan covers the whole `ENEMY_DATA`
+  range, and their stream at `0x0D411` sits inside it, so it was randomizing
+  them invisibly long before anything could reach them.
+
+  Known caveat, considered and accepted: `big_q_blocks` defaults to **off**, and
+  with it off every new room hands out a Tanooki, so a host that used to give a
+  3-Up or a Frog now gives a Tanooki and the six new rooms are indistinguishable
+  by reward. Two fixes were weighed — a hand-authored spread on the six blocks,
+  or gating the whole room shuffle behind `big_q_blocks` — and both were
+  declined: in practice players rarely run without that option on. Do not
+  re-propose either without evidence that the default case actually matters.
+
 ## Why it is worth doing
 
 Vanilla's 15 Big [?] rooms are only **10 distinct layouts** — BigQ2 s1 = BigQ8
