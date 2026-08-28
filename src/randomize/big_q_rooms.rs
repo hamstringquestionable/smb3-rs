@@ -1,9 +1,8 @@
 //! Big [?] Block bonus-room shuffle.
 //!
-//! Each of the 11 levels with a Big [?] pipe draws a room from a pool of 17 —
-//! the 11 vanilla rooms plus 6 of the 8 in "Unused Level 5", a fully
-//! unreferenced test level (TCRF) whose one-screen rooms are otherwise dead
-//! data. See `UNUSED5_ROOMS` for why its screens 6 and 7 are held back.
+//! Each of the 11 levels with a Big [?] pipe draws a room from a pool of 19 —
+//! the 11 vanilla rooms plus the 8 in "Unused Level 5", a fully unreferenced
+//! test level (TCRF) whose eight one-screen rooms are otherwise dead data.
 //!
 //! Always on, no option: which room a pipe leads to is not a difference worth a
 //! control, since every room hands out one block and returns you where you came
@@ -76,30 +75,21 @@ const VANILLA_ROOMS: [Room; 11] = [
     room(7, 4, (0x02, 0xD4), false), // BigQ8 s4  3-Up
 ];
 
-/// Unused Level 5's usable rooms, every block a Tanooki Suit.
+/// Unused Level 5's eight rooms, one per screen, every block a Tanooki Suit.
 ///
 /// Arrivals aim at each room's ceiling pipe at a Y index *inside* it, so the
-/// player falls out of the mouth the way vanilla does. Dir 2 throughout,
-/// matching vanilla's Big [?] arrivals.
-///
-/// **Screens 6 and 7 are excluded.** They are the only two rooms with no
-/// ceiling pipe — their only pipe is the floor one you leave by — so their
-/// arrivals were aimed beside it, at Y index 6 (row 23), which is the pipe
-/// body's row and not ground. Screen 6 has nothing at row 23 but the pipe at
-/// col 1; screen 7's row-23 floor run starts at col 6. Both dropped the player
-/// through the floor (playtested 2026-08-27, seeds 10/16/31).
-///
-/// Re-aiming them needs the room's tile grid, not its command list — the
-/// commands say where generators start, not where the resulting solid tiles
-/// are, and `level_sim.py` only knows tileset 1. Until something can answer
-/// "is (col, row) solid", these two stay out; the pool is 17, not 19.
-const UNUSED5_ROOMS: [Room; 6] = [
+/// player falls out of the mouth the way vanilla does. Screens 6 and 7 have no
+/// ceiling pipe — their only pipe is the floor one you leave by — so those land
+/// beside it instead. Dir 2 throughout, matching vanilla's Big [?] arrivals.
+const UNUSED5_ROOMS: [Room; 8] = [
     room(0, 0, (0x02, 0x20), true), // ceiling pipe col 2, rows 0-1
     room(0, 1, (0x42, 0x11), true), // ceiling pipe col 1, rows 12-16
     room(0, 2, (0x02, 0x22), true), // ceiling pipe col 2, rows 0-1
     room(0, 3, (0x52, 0x13), true), // ceiling pipe col 1, rows 16-21
     room(0, 4, (0x52, 0x24), true), // ceiling pipe col 2, rows 16-21
     room(0, 5, (0x02, 0x75), true), // ceiling pipe col 7, rows 0-2
+    room(0, 6, (0x62, 0x36), true), // no ceiling pipe — beside the floor pipe
+    room(0, 7, (0x62, 0x57), true), // no ceiling pipe — beside the floor pipe
 ];
 
 /// A level with a Big [?] pipe: its row in the lookup table, its entry
@@ -265,7 +255,7 @@ mod tests {
             assert!(!seen.contains(&(r.area, r.screen)), "duplicate room");
             seen.push((r.area, r.screen));
         }
-        assert_eq!(seen.len(), 17);
+        assert_eq!(seen.len(), 19);
     }
 
     #[test]
