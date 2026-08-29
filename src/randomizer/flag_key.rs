@@ -375,9 +375,14 @@ mod payload {
 
         // --- Appended after v29 shipped; older keys read these as zero/off ---
         pub(super) lakitu_stays_down: bool,
+        /// Big [?] bonus-room shuffle. It shipped always-on for one beta cycle,
+        /// so keys minted in that window carry a zero here and now decode to the
+        /// vanilla rooms — deliberate, and the reason this is a plain appended
+        /// bit rather than an inverted one.
+        pub(super) shuffle_big_q_rooms: bool,
 
         // --- Reserve ---
-        // 146 bits. Adding an option is: declare it immediately above this
+        // 145 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off `B19`. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -390,7 +395,7 @@ mod payload {
         //
         // Two fields because the crate's widths stop at B128.
         #[skip] __: B128,
-        #[skip] __: B18,
+        #[skip] __: B17,
     }
 }
 
@@ -426,6 +431,7 @@ impl Options {
             hammer_vulnerable_koopalings, random_koopalings, early_sun,
             japanese_damage, infinite_mushroom_houses, fast_mushroom_house,
             faster_tail_speed, faster_frog, lakitu_stays_down, no_game_over_penalty,
+            shuffle_big_q_rooms,
             poison_mushrooms, modern_powerups, anchor_visuals,
             hammer_breaks_locks, hammer_breaks_bridges, more_hammer_rocks,
             eights_are_wild, troll_pipes, antechamber_shuffle,
@@ -471,6 +477,7 @@ impl Options {
             .with_faster_tail_speed(*faster_tail_speed)
             .with_faster_frog(*faster_frog)
             .with_lakitu_stays_down(*lakitu_stays_down)
+            .with_shuffle_big_q_rooms(*shuffle_big_q_rooms)
             .with_no_game_over_penalty(*no_game_over_penalty)
             .with_poison_mushrooms(*poison_mushrooms)
             .with_modern_powerups(*modern_powerups)
@@ -558,6 +565,7 @@ impl Options {
             faster_tail_speed: f.faster_tail_speed(),
             faster_frog: f.faster_frog(),
             lakitu_stays_down: f.lakitu_stays_down(),
+            shuffle_big_q_rooms: f.shuffle_big_q_rooms(),
             no_game_over_penalty: f.no_game_over_penalty(),
             poison_mushrooms: f.poison_mushrooms(),
             modern_powerups: f.modern_powerups(),

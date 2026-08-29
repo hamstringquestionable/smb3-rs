@@ -370,6 +370,15 @@ pub struct Options {
     /// enemies, and pick-up-able ice blocks, of somewhere to spawn.
     #[serde(default)]
     pub lakitu_stays_down: bool,
+    /// Every level with a Big [?] pipe draws its bonus room from a pool of 19 —
+    /// the 11 vanilla rooms plus 8 in "Unused Level 5", an unreferenced level
+    /// otherwise reachable by nothing. Off by default: it changes where eleven
+    /// known rooms lead, which is a content change rather than a fix.
+    ///
+    /// 7-F1 is protected either way — whichever room it opens is forced to hold
+    /// a flight suit, because the level cannot be beaten without one.
+    #[serde(default)]
+    pub shuffle_big_q_rooms: bool,
     /// Every 1-Up Mushroom is replaced with a Poison Mushroom that damages
     /// the player instead of granting a life. (MaCobra52's "All 1UPs are
     /// Poison Mushrooms" patch.) Off by default; a challenge option.
@@ -539,6 +548,7 @@ impl Default for Options {
             no_game_over_penalty: false,
             faster_frog: false,
             lakitu_stays_down: false,
+            shuffle_big_q_rooms: false,
             poison_mushrooms: false,
             modern_powerups: false,
             fire_flower: FireFlowerMode::Off,

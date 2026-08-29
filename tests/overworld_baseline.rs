@@ -193,11 +193,11 @@ fn sweep_is_deterministic() {
 /// hashes. Force it (`touch src/lib.rs`, or `cargo clean -p smb3-rs`) before
 /// trusting any number this test prints after a bump.
 const BASELINE: [u64; SEEDS as usize] = [
-    0x10A21459F3D382D4, 0xE3B9B230CB5E2FD7, 0x507C6DF8FECC0748, 0x2D1F63143211AF41,
-    0x059F26A00BD20859, 0xFFA931FD7213C6F8, 0x4AC4B084D5710E46, 0xBBC03D522F8D7B0D,
-    0x0E8A0C6DCF74974E, 0x145B0F2077100926, 0xE87B059AA0D229B3, 0xCE14C48FAD6340C3,
-    0x9CC0FFBB47133B59, 0x8840994638563498, 0x41230F8CD226BE50, 0xD6C8A68350419C68,
-    0xE07803C1078FD866, 0x15EDD16343473678, 0x314021376D017AC6, 0xE099549AF8F4640C,
+    0x10907FA9ADEAAF3F, 0x75A07E362568245D, 0x9F5B5BE6FD20755C, 0xD31EBA415DA9BAAB,
+    0xC832693B75377CB7, 0xA01F68AEE80254EF, 0x0F872B53E62D3760, 0x87D694E674CDF96F,
+    0x0D86E47E883FC7BA, 0x5D62A065ED55B22A, 0x062F138FE272DF5F, 0x22C3A5C39FCF738F,
+    0x140B2C424BA5E5AB, 0x1A191EF76661222C, 0x66E52614C84F60C6, 0x5E52087C914C8E1A,
+    0x848134F654C1572C, 0x36A081EC9E7DA639, 0xCBF672CBE2CF2F3A, 0x4769EB681AF3994F,
 ];
 ///
 /// Re-captured 2026-08-27 for the Big [?] bonus-room shuffle, which is always
@@ -219,6 +219,17 @@ const BASELINE: [u64; SEEDS as usize] = [
 /// coordinates after playtesting showed the originals killed the player. Four
 /// table bytes, so every seed that draws one of those rooms moves. No RNG draw
 /// changed — the pool is the same size — so this is a pure byte difference.
+///
+/// Re-captured 2026-08-29 again, for `shuffle_big_q_rooms`. The room shuffle is
+/// now an option and **off by default**, so the pass no longer draws its two
+/// values from the shared RNG on a default build, which shifts every module
+/// downstream of it (`credits`, `items`, `king_quotes`, `koopalings`).
+///
+/// The on-path was checked against the build this option was carved out of: for
+/// seeds 1-12, `--shuffle-big-q-rooms` reproduces `beta/next` byte for byte
+/// apart from `[stamp]` (0x19DF0..0x19E09) and `[title_screen]` (0x3E924..),
+/// both of which are derived from the flag key — and the key necessarily grew
+/// one bit. The randomization itself is untouched.
 ///
 /// Re-captured 2026-08-29 for the 7-F1 return fix: the entry and exit halves of
 /// the `qol::big_q` routine now share one `bq_lookup` subroutine, which moved

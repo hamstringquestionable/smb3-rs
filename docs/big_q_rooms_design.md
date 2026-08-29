@@ -1,7 +1,8 @@
 # Big [?] Bonus Room Shuffle — design notes
 
-**Status: implemented 2026-08-27.** Always on, no option. The `testrom
---bigq-unused5` knob remains for looking at a single room in isolation.
+**Status: implemented 2026-08-27; put behind `shuffle_big_q_rooms`, off by
+default, 2026-08-29.** The `testrom --bigq-unused5` knob remains for looking at
+a single room in isolation.
 
 Mechanism reference lives in `docs/smb3_rom_reference.md` under "Big [?] Block
 Bonus Areas" — tables, junction decode, pipe-tile types, palette indices, the
@@ -19,8 +20,8 @@ bank swap works, the block is collectable, and the pipe returns to 5-2. Palette
 
 ## What is built in the randomizer
 
-`randomize/big_q_rooms.rs` — every host draws from the 19-room pool, always on,
-no option and no flag-key bit. `qol/big_q.rs` grew the slot-seeding halves and
+`randomize/big_q_rooms.rs` — every host draws from the 19-room pool when
+`shuffle_big_q_rooms` is set. `qol/big_q.rs` grew the slot-seeding halves and
 the four payload tables the pass fills in.
 
 ## The pairing model
@@ -66,17 +67,29 @@ space there. Unused Level 5 carries none and needs 3 bytes per room.
 - **BigQ8 s1 is dropped from the pool.** It is the only spare vanilla room that
   would need new bytes, its area has no spare decoration, and it is a duplicate
   of BigQ8 s4 and BigQ2 s1 — so excluding it costs no novelty.
-- **No option at all — always on** (2026-08-26). Which room a pipe leads to is
-  not a gameplay difference worth a control: every room hands out one block and
-  returns you where you came from, so there is nothing to turn off. It joins
-  `qol::fix_big_q_block_rooms` as unconditional behavior. No `Options` field, no
-  flag-key bit, no key version bump, no web control — and `big_q_blocks` keeps
-  its current meaning (what is *in* the block) and its existing key bit,
-  untouched. Room selection and per-area palette ride together in the one pass.
+- ~~**No option at all — always on**~~ (2026-08-26) — **reversed 2026-08-29.**
+  The original argument was that which room a pipe leads to is not a difference
+  worth a control, since every room hands out one block and returns you where
+  you came from. What that missed is that it changes where *eleven rooms players
+  already know* lead, and adds six they have never seen — a content change, not
+  a refinement of one. It is now `shuffle_big_q_rooms`, **off by default**, with
+  an `Options` field, a CLI flag, a web control and an appended flag-key bit.
 
-  Consequence to keep in mind: the pass consumes RNG unconditionally, so it
-  shifts the stream for everything downstream of it and rebaselines any pinned
-  output. Place it deliberately in `randomizer/mod.rs`, not wherever is handy.
+  `big_q_blocks` is untouched and keeps its own meaning (what is *in* the block)
+  and its own key bit. Room selection and per-area palette still ride together
+  in the one pass.
+
+  **No key version bump**, because the bit is appended into the reserve. The
+  cost, accepted deliberately: keys minted during the one beta cycle when the
+  shuffle was unconditional carry a zero there, so they now decode to the
+  vanilla rooms. Inverting the bit would have preserved them, at the price of a
+  payload field whose sense is the opposite of its name forever.
+
+  Consequence to keep in mind: with the option **on** the pass consumes RNG, so
+  it shifts the stream for everything downstream and rebaselines any pinned
+  output. With it off, `vanilla_assignments()` draws nothing and writes nothing,
+  so that arm is byte-identical to a build without the feature. Place the pass
+  deliberately in `randomizer/mod.rs`, not wherever is handy.
 
 - **Block contents stay entirely `big_q_blocks`'s job** (2026-08-27). The eight
   Unused Level 5 blocks are all Tanooki Suits in the ROM, and they *are* already
