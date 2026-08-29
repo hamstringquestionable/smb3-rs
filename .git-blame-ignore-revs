@@ -1,0 +1,13 @@
+# Revisions to skip when running `git blame`.
+#
+# GitHub honours this file automatically. Locally, opt in once with:
+#
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Only add commits that provably change no behaviour — a reformat, a rename, a
+# license-header sweep. Never a refactor.
+
+# chore: format the repo with rustfmt, and have CI keep it that way
+# 100 files, whitespace only. ROM output verified identical three ways: per-file
+# hex-literal hashes, overworld_baseline, and full-ROM md5 with every option on.
+c85a590e664add7d2f98fc7536e6e6e8cb520f47

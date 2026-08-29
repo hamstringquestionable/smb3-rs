@@ -98,8 +98,8 @@ use crate::rom::Rom;
 use super::map_walker::{Reach, walk_map, walk_reachable};
 use super::node_catalog::{NodeCatalog, NodeKind};
 use super::overworld_helpers::{LOCKABLE_TILES, find_target};
-use super::rom_data::gap_tile_for;
 use super::overworld_pickup::{PickupResult, blank_tile_for};
+use super::rom_data::gap_tile_for;
 use super::rom_data::{
     self, BACKGROUND_TILES, Grid, Pos, TILE_BONUS_GAME, TILE_FORTRESS, TILE_NODE, TILE_PIPE,
     TILE_TOAD_HOUSE, TeleportEdge,
@@ -130,18 +130,18 @@ use capacity::{SPADE_BUDGET, assign_hb_sprites, promote_hb_slots};
 
 // Public API consumed by the randomizer, the writer, and the feature
 // modules that post-process the build (hands, troll pipes).
-pub use {types::SlotAssignment, types::SlotKind};
+pub(crate) use capacity::{LEVEL_SPREAD_EXPONENT, VANILLA_LEVEL_COUNT};
 pub(crate) use capacity::{
     RESERVED_DYNAMIC_SLOTS, VANILLA_PIPE_PAIRS, bfs_ordered, deal_c1_floors, distribute_levels,
     fixed_positions_for_world, prepare_capacities, redistribute_fortresses,
 };
-pub(crate) use capacity::{LEVEL_SPREAD_EXPONENT, VANILLA_LEVEL_COUNT};
 pub(crate) use route_choice::{
     C1_FLOOR, COST_LEVEL, DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice,
 };
 pub(crate) use types::{
     BuildFlags, BuildResult, BuiltWorld, CapacityPrep, LockAssignment, OverworldData, stamp_slots,
 };
+pub use {types::SlotAssignment, types::SlotKind};
 
 // The phase set and its harness surface.
 pub(crate) use connectivity::Connectivity;
@@ -158,12 +158,12 @@ pub(crate) use state::{Phase, PhaseReport, WorldState, row78_partner, run_schedu
 // Test-only measurement surface: the census/probe harness in the test
 // modules and the diagnostic dumps.
 #[cfg(test)]
+pub(crate) use capacity::{C1_FLOOR_BAND, roll_bridges_out};
+#[cfg(test)]
 pub(crate) use progression::{
     PipeClass, analyze_required_progression, classify_pipes, dump_required_progression,
     hammer_skip, island_count, level_adjacency_pairs, start_goal_express_pipe,
 };
-#[cfg(test)]
-pub(crate) use capacity::{C1_FLOOR_BAND, roll_bridges_out};
 #[cfg(test)]
 pub(crate) use route_choice::dump_route_choice;
 #[cfg(test)]
@@ -235,7 +235,6 @@ pub(crate) fn run_shaped_with_web_retries(state: &mut WorldState, rng: &mut dyn 
         state.pickup_pipes();
         run_schedule(state, &[&Connectivity, &Locks, &Shaping, &SparePipes], rng);
     }
-
 }
 
 /// Execute Phase 3: build slot assignments for all 8 worlds.
@@ -288,12 +287,22 @@ pub(crate) fn build<R: Rng>(
     // Toad houses promote first so the smaller, less flexible 22-entry budget
     // lands before spades scramble for the remaining HammerBro slots.
     promote_hb_slots(
-        rom, &mut worlds, data, rng,
-        |k| matches!(k, NodeKind::ToadHouse), SlotKind::ToadHouse, None,
+        rom,
+        &mut worlds,
+        data,
+        rng,
+        |k| matches!(k, NodeKind::ToadHouse),
+        SlotKind::ToadHouse,
+        None,
     );
     promote_hb_slots(
-        rom, &mut worlds, data, rng,
-        |k| matches!(k, NodeKind::BonusGame), SlotKind::BonusGame, Some(SPADE_BUDGET),
+        rom,
+        &mut worlds,
+        data,
+        rng,
+        |k| matches!(k, NodeKind::BonusGame),
+        SlotKind::BonusGame,
+        Some(SPADE_BUDGET),
     );
 
     // Redistribute the wandering Hammer Bro sprites across all worlds (random

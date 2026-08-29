@@ -71,7 +71,12 @@ pub(super) fn build_pipe_map(
 /// Mixed pairs (one has PIPEWAYCONTROLLER, one doesn't): PWC entry → A-side.
 /// Regular pairs (both have PWC): layout byte5 bit 6 = 0 → A-side.
 /// Fallback: (ea, eb) order preserved.
-fn classify_pipe_ab(rom: &Rom, world: &rom_data::WorldTables, ea: usize, eb: usize) -> (usize, usize) {
+fn classify_pipe_ab(
+    rom: &Rom,
+    world: &rom_data::WorldTables,
+    ea: usize,
+    eb: usize,
+) -> (usize, usize) {
     let le_a = rom_data::read_entry(rom, world, ea);
     let le_b = rom_data::read_entry(rom, world, eb);
 
@@ -110,13 +115,9 @@ fn read_dest_positions(rom: &Rom, dest_idx: usize) -> ((usize, usize), (usize, u
     let x = rom.read_byte(PIPE_MAP_X + dest_idx);
     let y = rom.read_byte(PIPE_MAP_Y + dest_idx);
 
-    let a_pos = (
-        ((y >> 4) as usize).wrapping_sub(2),
-        ((xhi >> 4) as usize) * 16 + ((x >> 4) as usize),
-    );
-    let b_pos = (
-        ((y & 0xF) as usize).wrapping_sub(2),
-        ((xhi & 0xF) as usize) * 16 + ((x & 0xF) as usize),
-    );
+    let a_pos =
+        (((y >> 4) as usize).wrapping_sub(2), ((xhi >> 4) as usize) * 16 + ((x >> 4) as usize));
+    let b_pos =
+        (((y & 0xF) as usize).wrapping_sub(2), ((xhi & 0xF) as usize) * 16 + ((x & 0xF) as usize));
     (a_pos, b_pos)
 }

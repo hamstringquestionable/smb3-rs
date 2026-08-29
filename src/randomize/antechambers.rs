@@ -147,11 +147,7 @@ struct Interior {
 /// their donations stay byte-identical.
 fn sanitize_exit_dir(byte1: u8) -> u8 {
     let dir = byte1 & 0x0F;
-    if (1..=4).contains(&dir) {
-        byte1
-    } else {
-        (byte1 & 0xF0) | 0x03
-    }
+    if (1..=4).contains(&dir) { byte1 } else { (byte1 & 0xF0) | 0x03 }
 }
 
 /// Randomly permute which interior each antechamber level's entry pipe
@@ -161,10 +157,8 @@ pub fn shuffle(rom: &mut Rom, rng: &mut ChaCha8Rng, include_beta_stages: bool) {
     // Beta antechambers only join the pool when their stages are placed. With
     // beta stages off the pool is the 11 vanilla levels and the output is
     // byte-identical to before β4 existed.
-    let pool: Vec<&Antechamber> = ANTECHAMBERS
-        .iter()
-        .filter(|a| include_beta_stages || !a.beta)
-        .collect();
+    let pool: Vec<&Antechamber> =
+        ANTECHAMBERS.iter().filter(|a| include_beta_stages || !a.beta).collect();
 
     // Snapshot all vanilla interiors before any writes, so a permutation
     // never reads a value another assignment already overwrote.
@@ -233,6 +227,7 @@ mod tests {
             let n = i as u8;
             // Header: distinct alt pointers, byte 6 = scroll bits (upper
             // nibble) + tileset, byte 8 = timer (bits 6-7) + music.
+            #[rustfmt::skip]
             let hdr = [
                 0x10 + n, 0xA0, 0x20 + n, 0xC0, // alt_layout / alt_objects
                 0x0A,                            // screens
@@ -279,8 +274,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(1);
         shuffle(&mut rom, &mut rng, true);
 
-        let mut shuffled: Vec<_> =
-            ANTECHAMBERS.iter().map(|a| interior_tuple(&rom, a)).collect();
+        let mut shuffled: Vec<_> = ANTECHAMBERS.iter().map(|a| interior_tuple(&rom, a)).collect();
         let mut expected = vanilla.clone();
         shuffled.sort();
         expected.sort();
@@ -309,8 +303,7 @@ mod tests {
     #[test]
     fn reassigned_hosts_write_donor_bytes_to_every_pipe() {
         let mut rom = make_test_rom();
-        let vanilla: Vec<_> =
-            ANTECHAMBERS.iter().map(|a| interior_tuple(&rom, a)).collect();
+        let vanilla: Vec<_> = ANTECHAMBERS.iter().map(|a| interior_tuple(&rom, a)).collect();
         let mut rng = ChaCha8Rng::seed_from_u64(1);
         shuffle(&mut rom, &mut rng, true);
 
@@ -321,10 +314,7 @@ mod tests {
             }
             // A reassigned host must carry the donor's spawn bytes on ALL
             // of its pipes, not just the front door.
-            let front = [
-                rom.read_byte(a.junctions[0] + 1),
-                rom.read_byte(a.junctions[0] + 2),
-            ];
+            let front = [rom.read_byte(a.junctions[0] + 1), rom.read_byte(a.junctions[0] + 2)];
             for &j in a.junctions {
                 assert_eq!(
                     [rom.read_byte(j + 1), rom.read_byte(j + 2)],
@@ -394,10 +384,7 @@ mod tests {
         shuffle(&mut rom_b, &mut rng_b, true);
 
         for a in &ANTECHAMBERS {
-            assert_eq!(
-                rom_a.read_range(a.header, 9),
-                rom_b.read_range(a.header, 9)
-            );
+            assert_eq!(rom_a.read_range(a.header, 9), rom_b.read_range(a.header, 9));
             for &j in a.junctions {
                 assert_eq!(rom_a.read_range(j, 3), rom_b.read_range(j, 3));
             }
@@ -410,8 +397,7 @@ mod tests {
     #[test]
     fn beta_excluded_when_flag_off() {
         let mut rom = make_test_rom();
-        let vanilla: Vec<_> =
-            ANTECHAMBERS.iter().map(|a| interior_tuple(&rom, a)).collect();
+        let vanilla: Vec<_> = ANTECHAMBERS.iter().map(|a| interior_tuple(&rom, a)).collect();
 
         let mut rng = ChaCha8Rng::seed_from_u64(1);
         shuffle(&mut rom, &mut rng, false);
@@ -429,11 +415,8 @@ mod tests {
         }
 
         // The non-beta interiors are still a permutation of the vanilla set.
-        let mut shuffled: Vec<_> = ANTECHAMBERS
-            .iter()
-            .filter(|a| !a.beta)
-            .map(|a| interior_tuple(&rom, a))
-            .collect();
+        let mut shuffled: Vec<_> =
+            ANTECHAMBERS.iter().filter(|a| !a.beta).map(|a| interior_tuple(&rom, a)).collect();
         let mut expected: Vec<_> = ANTECHAMBERS
             .iter()
             .zip(&vanilla)
@@ -465,21 +448,21 @@ mod tests {
         // the field legend away from the data.
         #[allow(clippy::type_complexity)]
         let expected: [(u16, u16, u8, &[u8], [u8; 2]); 12] = [
-            (0xA577, 0xC5BC, 3, &[0, 3], [0x68, 0x20]),    // 2-Pyr (door, dir 8)
-            (0xB6D5, 0xC863, 3, &[2], [0x52, 0x20]),       // 4-3
-            (0xB481, 0xCE4B, 8, &[0], [0x82, 0x20]),       // 5-2 (vert shaft; slot-4 0x1A807 excluded, it's the bonus-room slot)
-            (0xAC3E, 0xC29E, 1, &[0], [0x02, 0x67]),       // 5-3
-            (0xACDC, 0xC64B, 3, &[0], [0x12, 0x20]),       // 6-6
-            (0xA9D7, 0xC60E, 3, &[0], [0x02, 0x40]),       // 6-9
-            (0xAB97, 0xCD93, 8, &[0, 1], [0xF8, 0x27]),    // 7-1 (vert shaft)
-            (0xADC4, 0xCDC2, 6, &[0], [0x53, 0x20]),       // 7-4
-            (0xA5CD, 0xC171, 1, &[0], [0x52, 0x20]),       // 7-5
-            (0xB600, 0xCE56, 8, &[1], [0xF8, 0x27]),       // 7-6 (vert shaft)
-            (0xBD2F, 0xCD35, 4, &[0], [0x73, 0x20]),       // 7-7
+            (0xA577, 0xC5BC, 3, &[0, 3], [0x68, 0x20]), // 2-Pyr (door, dir 8)
+            (0xB6D5, 0xC863, 3, &[2], [0x52, 0x20]),    // 4-3
+            (0xB481, 0xCE4B, 8, &[0], [0x82, 0x20]), // 5-2 (vert shaft; slot-4 0x1A807 excluded, it's the bonus-room slot)
+            (0xAC3E, 0xC29E, 1, &[0], [0x02, 0x67]), // 5-3
+            (0xACDC, 0xC64B, 3, &[0], [0x12, 0x20]), // 6-6
+            (0xA9D7, 0xC60E, 3, &[0], [0x02, 0x40]), // 6-9
+            (0xAB97, 0xCD93, 8, &[0, 1], [0xF8, 0x27]), // 7-1 (vert shaft)
+            (0xADC4, 0xCDC2, 6, &[0], [0x53, 0x20]), // 7-4
+            (0xA5CD, 0xC171, 1, &[0], [0x52, 0x20]), // 7-5
+            (0xB600, 0xCE56, 8, &[1], [0xF8, 0x27]), // 7-6 (vert shaft)
+            (0xBD2F, 0xCD35, 4, &[0], [0x73, 0x20]), // 7-7
             // β4 alt pointers + front-door bytes are unaffected by BETA_PATCHES
             // (which touch header byte5 and layout commands elsewhere), so they
             // read vanilla-stable straight from the unpatched ROM.
-            (0xB49D, 0xC7A7, 3, &[0], [0x68, 0x20]),       // β4 (door, dir 8)
+            (0xB49D, 0xC7A7, 3, &[0], [0x68, 0x20]), // β4 (door, dir 8)
         ];
 
         for (a, (lay, obj, ts, slots, spawn)) in ANTECHAMBERS.iter().zip(expected) {

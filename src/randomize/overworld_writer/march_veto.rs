@@ -41,8 +41,8 @@
 //!   and 0x17419-0x17420) and fires before either table-scan regime, so the
 //!   two compose in both orders.
 
-use super::*;
 use super::rom_data::FS_MARCH_VETO;
+use super::*;
 
 /// Hook site: file offset of `JSR Map_Object_March_PickTravel` at CPU $B3FD
 /// (the second, landing-zone call inside `Map_MarchValidateTravel`).
@@ -112,11 +112,7 @@ pub(super) fn write_march_veto(
         }
         list.push(0x00);
     }
-    assert!(
-        list.len() <= LIST_LEN,
-        "march veto list overflow: {} > {LIST_LEN} bytes",
-        list.len()
-    );
+    assert!(list.len() <= LIST_LEN, "march veto list overflow: {} > {LIST_LEN} bytes", list.len());
     list.resize(LIST_LEN, 0x00);
 
     // Assemble the trampoline. All absolute operands are derived from

@@ -126,12 +126,8 @@ const STOMP_RISE_CODE: [u8; 26] = [
 ///
 /// The target is derived from [`FS_STOMP_RISE`] rather than written out, so
 /// moving the allocation moves the hook with it.
-const STOMP_HEIGHT_HOOK_BYTES: [u8; 4] = [
-    0x20,
-    STOMP_RISE_CPU as u8,
-    (STOMP_RISE_CPU >> 8) as u8,
-    0xEA,
-];
+const STOMP_HEIGHT_HOOK_BYTES: [u8; 4] =
+    [0x20, STOMP_RISE_CPU as u8, (STOMP_RISE_CPU >> 8) as u8, 0xEA];
 
 pub fn apply(rom: &mut Rom) {
     rom.write_byte(OVERLAP_THRESHOLD, OVERLAP_TOLERANT);
@@ -141,10 +137,10 @@ pub fn apply(rom: &mut Rom) {
 
 #[cfg(test)]
 mod tests {
+    use mos6502::Variant;
     use mos6502::cpu::CPU;
     use mos6502::instruction::{Instruction, Ricoh2a03};
     use mos6502::memory::{Bus, Memory};
-    use mos6502::Variant;
 
     use super::*;
     use crate::randomize::rom_data::asm;
@@ -264,10 +260,7 @@ mod tests {
     /// runs everywhere — including CI, where the ROM is absent.
     #[test]
     fn routine_is_well_formed() {
-        asm::check(&STOMP_RISE_CODE)
-            .allocation(FS_STOMP_RISE)
-            .origin(STOMP_RISE_CPU)
-            .assert_ok();
+        asm::check(&STOMP_RISE_CODE).allocation(FS_STOMP_RISE).origin(STOMP_RISE_CPU).assert_ok();
     }
 
     /// The hook must displace *whole* vanilla instructions — `STY Temp_Var2`
@@ -298,10 +291,7 @@ mod tests {
         // Operand of CMP #$08 at $D8E1.
         assert_eq!(v[OVERLAP_THRESHOLD], 0x08);
         // STY Temp_Var2; LDA Objects_Y,X at $D22E.
-        assert_eq!(
-            &v[STOMP_HEIGHT_HOOK..STOMP_HEIGHT_HOOK + 4],
-            &[0x84, 0x01, 0xB5, 0xA3],
-        );
+        assert_eq!(&v[STOMP_HEIGHT_HOOK..STOMP_HEIGHT_HOOK + 4], &[0x84, 0x01, 0xB5, 0xA3],);
         // The PRG030 gap the routine lives in is untouched filler.
         assert!(v[FS_STOMP_RISE..FS_STOMP_RISE + STOMP_RISE_CODE.len()].iter().all(|&b| b == 0xFF));
     }
@@ -316,11 +306,10 @@ mod tests {
         apply(&mut rom);
         assert_eq!(rom.read_byte(OVERLAP_THRESHOLD), OVERLAP_TOLERANT);
         assert_eq!(rom.read_range(FS_STOMP_RISE, STOMP_RISE_CODE.len()), &STOMP_RISE_CODE);
-        assert_eq!(rom.read_range(STOMP_HEIGHT_HOOK, 3), &[
-            0x20,
-            STOMP_RISE_CPU as u8,
-            (STOMP_RISE_CPU >> 8) as u8,
-        ]);
+        assert_eq!(
+            rom.read_range(STOMP_HEIGHT_HOOK, 3),
+            &[0x20, STOMP_RISE_CPU as u8, (STOMP_RISE_CPU >> 8) as u8,]
+        );
         // Bank containment and allocation fit are checked generically by
         // `routine_is_well_formed`.
     }

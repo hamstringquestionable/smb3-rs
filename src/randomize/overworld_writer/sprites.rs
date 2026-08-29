@@ -20,18 +20,10 @@ pub(super) fn pick_w8_sprite_positions<R: Rng>(
     wa_w8: &WorldAssignments,
     rng: &mut R,
 ) -> Vec<(usize, (usize, usize))> {
-    let mut fort_positions: Vec<(usize, usize)> = wa_w8
-        .fortress
-        .iter()
-        .map(|a| a.pos)
-        .collect();
+    let mut fort_positions: Vec<(usize, usize)> = wa_w8.fortress.iter().map(|a| a.pos).collect();
     fort_positions.as_mut_slice().shuffle(rng);
 
-    let mut level_positions: Vec<(usize, usize)> = wa_w8
-        .level
-        .iter()
-        .map(|a| a.pos)
-        .collect();
+    let mut level_positions: Vec<(usize, usize)> = wa_w8.level.iter().map(|a| a.pos).collect();
     level_positions.as_mut_slice().shuffle(rng);
 
     let mut fort_iter = fort_positions.into_iter();
@@ -39,11 +31,7 @@ pub(super) fn pick_w8_sprite_positions<R: Rng>(
 
     let mut result = Vec::new();
     for &(sprite_slot, is_fortress) in W8_ARMY_SPRITES {
-        let pos = if is_fortress {
-            fort_iter.next()
-        } else {
-            level_iter.next()
-        };
+        let pos = if is_fortress { fort_iter.next() } else { level_iter.next() };
         if let Some(p) = pos {
             result.push((sprite_slot, p));
         }
@@ -64,8 +52,7 @@ pub(super) fn write_w8_sprites(rom: &mut Rom, positions: &[(usize, (usize, usize
 fn is_special_level_slot(built: &BuiltWorld, wa: &WorldAssignments, pos: (usize, usize)) -> bool {
     built.slots.iter().any(|s| {
         s.pos == pos
-            && (s.is_hand_trap
-                || (s.is_troll_pipe && !wa.demoted_troll_pipes.contains(&pos)))
+            && (s.is_hand_trap || (s.is_troll_pipe && !wa.demoted_troll_pipes.contains(&pos)))
     })
 }
 
@@ -123,19 +110,21 @@ pub(super) fn pick_plant_positions<R: Rng>(
         PiranhaMode::On => {
             // Pool indices of the released plant levels (vanilla W7 entries
             // linked to map-object sprites).
-            let plant_pool: HashSet<usize> = data.pickup.pool.iter().enumerate()
+            let plant_pool: HashSet<usize> = data
+                .pickup
+                .pool
+                .iter()
+                .enumerate()
                 .filter(|(_, pe)| {
-                    rom_data::MAP_OBJ_ENTRY_LINKS.iter()
+                    rom_data::MAP_OBJ_ENTRY_LINKS
+                        .iter()
                         .any(|&(w, _, e)| pe.world_idx == w && pe.entry_idx == e)
                 })
                 .map(|(pi, _)| pi)
                 .collect();
             for (wi, wa) in assignments.iter().enumerate() {
                 for a in &wa.level {
-                    if plant_pool.contains(&a.pool_idx)
-                        && hostable(wi, a.pos)
-                        && budgets[wi] > 0
-                    {
+                    if plant_pool.contains(&a.pool_idx) && hostable(wi, a.pos) && budgets[wi] > 0 {
                         budgets[wi] -= 1;
                         plants.push((wi, a.pos));
                     }
@@ -147,10 +136,8 @@ pub(super) fn pick_plant_positions<R: Rng>(
                 if budgets[wi] == 0 {
                     continue;
                 }
-                let candidates: Vec<(usize, usize)> = wa.level.iter()
-                    .map(|a| a.pos)
-                    .filter(|&pos| hostable(wi, pos))
-                    .collect();
+                let candidates: Vec<(usize, usize)> =
+                    wa.level.iter().map(|a| a.pos).filter(|&pos| hostable(wi, pos)).collect();
                 if let Some(&pos) = candidates.choose(rng) {
                     plants.push((wi, pos));
                 }
@@ -173,7 +160,11 @@ pub(super) fn write_plant_sprites(rom: &mut Rom, plants: &[(usize, (usize, usize
             continue; // budget said yes but no slot — should not happen
         };
         rom_data::write_map_sprite(
-            rom, wi, slot, row, col,
+            rom,
+            wi,
+            slot,
+            row,
+            col,
             super::super::piranha_rooms::PLANT_SPRITE_ID,
         );
         rom.write_byte(rom_data::map_obj_reward_offset(wi, slot), 0);

@@ -17,9 +17,8 @@ use options::*;
 // Public API re-exported by the crate root (see lib.rs).
 pub use flag_key::{current_flag_key_version, flag_key_fields, flag_key_version_of};
 pub use options::{
-    item_display_name, item_id, EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri,
-    WildChaser, ITEMS, ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY,
-    STARTING_LIVES_VALUES,
+    EnemyMode, FireFlowerMode, ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY, ITEMS,
+    Options, PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
 };
 
 #[cfg(test)]
@@ -81,9 +80,8 @@ fn randomize_inner(
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
     // Resolve random starting items up front (deterministic from seed)
-    let resolved_items: Vec<u8> = options.starting_items.iter()
-        .map(|&item| resolve_starting_item(item, &mut rng))
-        .collect();
+    let resolved_items: Vec<u8> =
+        options.starting_items.iter().map(|&item| resolve_starting_item(item, &mut rng)).collect();
 
     // Resolve the player-hidden tri-state flags up front. These draw from a
     // dedicated substream (MAYBE_SALT) so flipping a flag to `Maybe` never
@@ -269,10 +267,7 @@ fn randomize_inner(
             shuffle_hammer_bros: options.shuffle_hammer_bros,
         },
     );
-    let data = randomize::overworld_build::OverworldData {
-        pickup: &pickup,
-        catalog: &catalog,
-    };
+    let data = randomize::overworld_build::OverworldData { pickup: &pickup, catalog: &catalog };
     let mut build = randomize::overworld_build::build(
         rom,
         &data,

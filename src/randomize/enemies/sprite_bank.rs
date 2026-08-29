@@ -19,8 +19,9 @@ pub fn sprite_bank(id: u8) -> Option<SpriteBank> {
         // Boss fireball
         0x34 | 0x35 => Some(SpriteBank { chr_page: 0x05, slot: 4 }),
         // MicroGoomba, Poof, DVPlatform
-        0x01 | 0x03 | 0x04 | 0x05 | 0x0A | 0x16 | 0x1D =>
-            Some(SpriteBank { chr_page: 0x48, slot: 4 }),
+        0x01 | 0x03 | 0x04 | 0x05 | 0x0A | 0x16 | 0x1D => {
+            Some(SpriteBank { chr_page: 0x48, slot: 4 })
+        }
         0x02 => Some(SpriteBank { chr_page: 0x4C, slot: 4 }),
         // FireChomp flames
         0x08 => Some(SpriteBank { chr_page: 0x13, slot: 5 }),
@@ -34,11 +35,13 @@ pub fn sprite_bank(id: u8) -> Option<SpriteBank> {
 
         // === Group 2: PRG002 (IDs 0x24–0x47) ===
         // Platforms (various)
-        0x24 | 0x26 | 0x27 | 0x28 | 0x36 | 0x37 | 0x38 | 0x3C | 0x44 =>
-            Some(SpriteBank { chr_page: 0x0E, slot: 4 }),
+        0x24 | 0x26 | 0x27 | 0x28 | 0x36 | 0x37 | 0x38 | 0x3C | 0x44 => {
+            Some(SpriteBank { chr_page: 0x0E, slot: 4 })
+        }
         // Spike, Patooie, Nipper, NipperHopping, NipperFireBreather, BusterBeetle, PiranhaSpikeBall
-        0x29 | 0x2A | 0x33 | 0x39 | 0x3D | 0x40 | 0x46 =>
-            Some(SpriteBank { chr_page: 0x0A, slot: 4 }),
+        0x29 | 0x2A | 0x33 | 0x39 | 0x3D | 0x40 | 0x46 => {
+            Some(SpriteBank { chr_page: 0x0A, slot: 4 })
+        }
         // Goomba in Shoe
         0x2B => Some(SpriteBank { chr_page: 0x0B, slot: 4 }),
         // Cloud platform
@@ -48,8 +51,7 @@ pub fn sprite_bank(id: u8) -> Option<SpriteBank> {
         // Wood block, Rocket sled
         0x2E | 0x3A => Some(SpriteBank { chr_page: 0x13, slot: 5 }),
         // Boo, Hot Foot shy, Stretch Boos, Hot Foot
-        0x2F | 0x30 | 0x31 | 0x32 | 0x45 =>
-            Some(SpriteBank { chr_page: 0x12, slot: 4 }),
+        0x2F | 0x30 | 0x31 | 0x32 | 0x45 => Some(SpriteBank { chr_page: 0x12, slot: 4 }),
         // Fire jet left
         0x3B => Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
         // Dry Bones
@@ -67,8 +69,9 @@ pub fn sprite_bank(id: u8) -> Option<SpriteBank> {
         // Chain Chomp (freed, roaming)
         0x4F => Some(SpriteBank { chr_page: 0x0A, slot: 4 }),
         // Rotodiscs, Podoboo
-        0x51 | 0x53 | 0x5A | 0x5B | 0x5E | 0x5F | 0x60 =>
-            Some(SpriteBank { chr_page: 0x12, slot: 4 }),
+        0x51 | 0x53 | 0x5A | 0x5B | 0x5E | 0x5F | 0x60 => {
+            Some(SpriteBank { chr_page: 0x12, slot: 4 })
+        }
         0x52 => Some(SpriteBank { chr_page: 0x05, slot: 4 }),
         // Missile Bill, Fire Chomp, Wandering Hammer
         0x54 | 0x58 | 0x59 => Some(SpriteBank { chr_page: 0x0E, slot: 4 }),
@@ -89,32 +92,25 @@ pub fn sprite_bank(id: u8) -> Option<SpriteBank> {
 
         // === Group 4: PRG004 (IDs 0x6C–0x8F) ===
         // Koopas, Paratroopas, Goomba, Paragoomba, FlyingParatroopa, Cheeps
-        0x6C | 0x6D | 0x6E | 0x6F | 0x72 | 0x73 | 0x74 | 0x76 | 0x77 | 0x78 | 0x79 | 0x80 | 0x88 =>
-            Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
+        0x6C | 0x6D | 0x6E | 0x6F | 0x72 | 0x73 | 0x74 | 0x76 | 0x77 | 0x78 | 0x79 | 0x80
+        | 0x88 => Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
         // Buzzy Beetle, Spiny, Lakitu, Spiny Egg
-        0x70 | 0x71 | 0x83 | 0x84 | 0x85 =>
-            Some(SpriteBank { chr_page: 0x0B, slot: 4 }),
+        0x70 | 0x71 | 0x83 | 0x84 | 0x85 => Some(SpriteBank { chr_page: 0x0B, slot: 4 }),
         // Big enemies (all variants including Big Piranhas)
-        0x7A..=0x7F =>
-            Some(SpriteBank { chr_page: 0x3D, slot: 4 }),
+        0x7A..=0x7F => Some(SpriteBank { chr_page: 0x3D, slot: 4 }),
         // Bros (Hammer, Boomerang, Heavy, Fire)
-        0x81 | 0x82 | 0x86 | 0x87 =>
-            Some(SpriteBank { chr_page: 0x4E, slot: 4 }),
+        0x81 | 0x82 | 0x86 | 0x87 => Some(SpriteBank { chr_page: 0x4E, slot: 4 }),
         0x89 => Some(SpriteBank { chr_page: 0x0A, slot: 4 }),
         // Thwomps (all variants)
-        0x8A..=0x8F =>
-            Some(SpriteBank { chr_page: 0x12, slot: 4 }),
+        0x8A..=0x8F => Some(SpriteBank { chr_page: 0x12, slot: 4 }),
 
         // === Group 5: PRG005 (IDs 0x90–0xB3) ===
         // Moving platforms
-        0x90..=0x93 =>
-            Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
+        0x90..=0x93 => Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
         // Big ? Blocks
-        0x94..=0x9A =>
-            Some(SpriteBank { chr_page: 0x4C, slot: 4 }),
+        0x94..=0x9A => Some(SpriteBank { chr_page: 0x4C, slot: 4 }),
         // Fire jets (Podoboo fire jet, upward, down, right)
-        0x9D | 0xAC | 0xB1 | 0xB2 =>
-            Some(SpriteBank { chr_page: 0x37, slot: 5 }),
+        0x9D | 0xAC | 0xB1 | 0xB2 => Some(SpriteBank { chr_page: 0x37, slot: 5 }),
         // Podoboo fire jet variant 2
         0x9E => Some(SpriteBank { chr_page: 0x12, slot: 4 }),
         0x9F => Some(SpriteBank { chr_page: 0x0E, slot: 4 }),
@@ -122,8 +118,7 @@ pub fn sprite_bank(id: u8) -> Option<SpriteBank> {
         0xA0..=0xA7 => Some(SpriteBank { chr_page: 0x4F, slot: 5 }),
         // Muncher
         0xA8 | 0xA9 => Some(SpriteBank { chr_page: 0x5A, slot: 4 }),
-        0xAA | 0xAB | 0xAD | 0xAE | 0xB0 =>
-            Some(SpriteBank { chr_page: 0x36, slot: 4 }),
+        0xAA | 0xAB | 0xAD | 0xAE | 0xB0 => Some(SpriteBank { chr_page: 0x36, slot: 4 }),
         0xAF => Some(SpriteBank { chr_page: 0x32, slot: 4 }),
         0xB3 => Some(SpriteBank { chr_page: 0x0B, slot: 4 }),
 

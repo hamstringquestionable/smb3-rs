@@ -47,11 +47,17 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
           targets: wasm32-unknown-unknown
 
       - name: Cache cargo registry & build
         uses: Swatinem/rust-cache@v2
+
+      # `#[rustfmt::skip]` guards the 6502 listings, whose comment alignment is
+      # load-bearing — see the commit that added them. Everything else is
+      # rustfmt style per rustfmt.toml.
+      - name: Formatting
+        run: cargo fmt --check
 
       - name: Clippy (deny warnings)
         run: cargo clippy --all-targets -- -D warnings

@@ -104,10 +104,7 @@ impl WorldState {
 
     /// Number of fortress slots — also the number of lock sections.
     pub(crate) fn fort_count(&self) -> usize {
-        self.slots
-            .iter()
-            .filter(|s| s.kind == SlotKind::Fortress)
-            .count()
+        self.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count()
     }
 
     /// Blanks a phase may claim for new content: blank tile, not `fixed`,
@@ -172,8 +169,7 @@ impl WorldState {
             .filter(|lock| {
                 let mut g = open.clone();
                 g.set(lock.pos.0, lock.pos.1, lock.gap_tile);
-                !walk_reachable(&g, &self.pipe_pairs, self.start, self.world_idx)
-                    .contains(target)
+                !walk_reachable(&g, &self.pipe_pairs, self.start, self.world_idx).contains(target)
             })
             .count()
     }
@@ -190,14 +186,12 @@ impl WorldState {
     pub(crate) fn zero_gate_locks(&self) -> Vec<usize> {
         let mut open = self.grid.clone();
         stamp_slots(&mut open, &self.slots);
-        let open_len =
-            walk_reachable(&open, &self.pipe_pairs, self.start, self.world_idx).len();
+        let open_len = walk_reachable(&open, &self.pipe_pairs, self.start, self.world_idx).len();
         let mut out = Vec::new();
         for (li, lock) in self.locks.iter().enumerate() {
             let mut g = open.clone();
             g.set(lock.pos.0, lock.pos.1, lock.gap_tile);
-            let closed_len =
-                walk_reachable(&g, &self.pipe_pairs, self.start, self.world_idx).len();
+            let closed_len = walk_reachable(&g, &self.pipe_pairs, self.start, self.world_idx).len();
             if closed_len == open_len {
                 out.push(li);
             }
@@ -286,8 +280,7 @@ impl WorldState {
             let blank = blank_tile_for(&self.grid, self.world_idx, pos.0, pos.1);
             self.grid.set(pos.0, pos.1, blank);
         }
-        self.slots
-            .retain(|s| s.kind != SlotKind::Pipe || (s.pos != a && s.pos != b));
+        self.slots.retain(|s| s.kind != SlotKind::Pipe || (s.pos != a && s.pos != b));
     }
 
     /// Remove the entire pipe web: every pair, every Pipe slot, every pipe
@@ -368,11 +361,7 @@ pub(crate) trait Phase {
 
 /// Run phases in the order given. The schedule is a plain slice: reordering,
 /// omitting, or repeating a phase is entirely the caller's choice.
-pub(crate) fn run_schedule(
-    state: &mut WorldState,
-    schedule: &[&dyn Phase],
-    rng: &mut dyn RngCore,
-) {
+pub(crate) fn run_schedule(state: &mut WorldState, schedule: &[&dyn Phase], rng: &mut dyn RngCore) {
     for phase in schedule {
         let report = phase.run(state, rng);
         state.log.push(report);

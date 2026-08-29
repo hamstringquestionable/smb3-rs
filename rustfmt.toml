@@ -1,0 +1,22 @@
+# Default rustfmt style, with two deviations. Both exist to match how this
+# codebase was already written by hand, so the formatting commit stayed a
+# formatting commit rather than a rewrite.
+#
+# max_width: the patch arrays, ROM offset tables and census output lines all sit
+# in the 90-100 column band. Defaulting to 80 would have reflowed them for no
+# gain in readability.
+#
+# use_small_heuristics = "Max": rustfmt's defaults collapse a struct literal
+# only under 18 columns and a method chain under 60, which explodes things that
+# read perfectly well on one line —
+#
+#     Room { area, screen, arrive, unused5 }
+#
+# became six lines. "Max" ties those sub-widths to max_width, which cut the
+# formatting diff from +4921 net lines to +1155.
+#
+# Not configurable, and the reason for the `#[rustfmt::skip]` attributes: there
+# is no option to preserve aligned trailing comments, which is what makes the
+# 6502 arrays read as assembly listings.
+max_width = 100
+use_small_heuristics = "Max"

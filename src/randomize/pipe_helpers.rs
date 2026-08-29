@@ -6,9 +6,7 @@
 
 use crate::rom::Rom;
 
-use super::rom_data::{
-    self, PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, WORLDS,
-};
+use super::rom_data::{self, PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, WORLDS};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -169,10 +167,7 @@ pub(super) fn resort_pointer_table(rom: &mut Rom, world_idx: usize) {
     // Rebuild InitIndex: one byte per screen = offset of first entry on that screen.
     // Screens with no entries point past the end (= n) matching vanilla convention.
     for s in 0..num_screens {
-        let offset = entries
-            .iter()
-            .position(|e| e.screen == s as u8)
-            .unwrap_or(n);
+        let offset = entries.iter().position(|e| e.screen == s as u8).unwrap_or(n);
         rom.write_byte(init_file + s, offset as u8);
     }
 }

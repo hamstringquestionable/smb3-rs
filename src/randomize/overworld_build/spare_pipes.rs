@@ -65,11 +65,8 @@ impl Phase for SparePipes {
             // ungateable express) — but placement is mandatory, so fall
             // back to the full set rather than shorting the budget.
             let legal = state.legal_blanks();
-            let clear: Vec<Pos> = legal
-                .iter()
-                .copied()
-                .filter(|&p| !state.near_anchor(p))
-                .collect();
+            let clear: Vec<Pos> =
+                legal.iter().copied().filter(|&p| !state.near_anchor(p)).collect();
             let candidates = if clear.len() >= 2 { clear } else { legal };
             if candidates.len() < 2 {
                 actions.push(format!(

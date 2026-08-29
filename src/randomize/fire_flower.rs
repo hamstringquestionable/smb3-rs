@@ -178,10 +178,7 @@ mod tests {
     /// Mirror the injected 6502 routine in Rust to confirm the table index math.
     /// Only stable inputs (salt, world, layout pointer, flower screen) feed it.
     fn sim(salt: u8, world: u8, layptr: u8, xhi: u8, pool: &[u8]) -> u8 {
-        let sum = salt
-            .wrapping_add(world)
-            .wrapping_add(layptr)
-            .wrapping_add(xhi);
+        let sum = salt.wrapping_add(world).wrapping_add(layptr).wrapping_add(xhi);
         pool[(sum % pool.len() as u8) as usize]
     }
 
@@ -218,10 +215,7 @@ mod tests {
         // CMP immediate is the pool length; table follows the routine.
         assert_eq!(rom.read_byte(FS_FIRE_FLOWER + 10), 0xC9);
         assert_eq!(rom.read_byte(FS_FIRE_FLOWER + 11), POOL_ON.len() as u8);
-        assert_eq!(
-            rom.read_range(FS_FIRE_FLOWER + ROUTINE_LEN as usize, POOL_ON.len()),
-            POOL_ON,
-        );
+        assert_eq!(rom.read_range(FS_FIRE_FLOWER + ROUTINE_LEN as usize, POOL_ON.len()), POOL_ON,);
     }
 
     #[test]

@@ -37,8 +37,8 @@
 //! vanilla scan runs untouched. This composes with the `map_warp` hook at `$CE78`
 //! (Start+Select fires there first; a plain A press falls through to here).
 
-use crate::rom::Rom;
 use crate::randomize::rom_data::FS_CANOE_SUMMON;
+use crate::rom::Rom;
 
 // Hook site: the `LDA World_Map_Tile / LDY #$1A` (bytes A5 E5 A0 1A) at CPU
 // $CEC5, the setup for the special-enter-tile scan in MO_NormalMoveEnter.
@@ -190,6 +190,10 @@ mod asm_checks {
 
     #[test]
     fn canoe_summon_is_well_formed() {
-        asm::check(&CANOE_SUMMON_ROUTINE).origin(CANOE_SUMMON_CPU).allocation(FS_CANOE_SUMMON).data_from(139).assert_ok();
+        asm::check(&CANOE_SUMMON_ROUTINE)
+            .origin(CANOE_SUMMON_CPU)
+            .allocation(FS_CANOE_SUMMON)
+            .data_from(139)
+            .assert_ok();
     }
 }

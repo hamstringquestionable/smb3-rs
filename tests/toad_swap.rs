@@ -21,8 +21,7 @@ fn toad_ips_applies_to_usa_rev1_and_validates() {
 
     // Patched ROM has a different payload CRC than vanilla Rev 1, so use lax
     // mode (we're verifying iNES layout, not revision).
-    let rom = smb3_rs::rom::Rom::from_bytes_lax(&patched, true)
-        .expect("patched ROM must validate");
+    let rom = smb3_rs::rom::Rom::from_bytes_lax(&patched, true).expect("patched ROM must validate");
     assert_eq!(rom.header.prg_pages, 16);
     assert_eq!(rom.header.chr_pages, 16);
     assert_eq!(rom.header.mapper, 4);

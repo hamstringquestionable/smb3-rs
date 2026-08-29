@@ -1,7 +1,7 @@
 //! Deterministic layout fixes for the 9 beta stages.
 
-use crate::rom::Rom;
 use crate::randomize::rom_data::BETA_PATCHES;
+use crate::rom::Rom;
 
 /// Apply deterministic layout fixes for the 9 beta stages.
 ///

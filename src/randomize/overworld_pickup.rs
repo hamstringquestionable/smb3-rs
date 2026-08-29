@@ -126,9 +126,7 @@ pub(super) fn pick_up_filtered(
     let fx_assignments = rom_data::read_world_fx_assignments(rom);
 
     for (wi, world_fx) in fx_assignments.iter().enumerate() {
-        worlds.push(pick_up_world(
-            rom, catalog, wi, &mut pool, flags, pred, &fx_slots, world_fx,
-        ));
+        worlds.push(pick_up_world(rom, catalog, wi, &mut pool, flags, pred, &fx_slots, world_fx));
     }
 
     // Synthetic beta entries (world_idx == usize::MAX) have no vanilla grid
@@ -141,11 +139,7 @@ pub(super) fn pick_up_filtered(
         if !pred(entry, flags) {
             continue;
         }
-        pool.push(PoolEntry {
-            catalog_idx: ci,
-            world_idx: usize::MAX,
-            entry_idx: usize::MAX,
-        });
+        pool.push(PoolEntry { catalog_idx: ci, world_idx: usize::MAX, entry_idx: usize::MAX });
     }
 
     // Pick up the wandering Hammer Bro rewards so they can be reattached to the
@@ -207,12 +201,7 @@ fn pick_up_world(
         }
     }
 
-    ClearedWorld {
-        world_idx,
-        grid,
-        pickup_positions,
-        pool_indices,
-    }
+    ClearedWorld { world_idx, grid, pickup_positions, pool_indices }
 }
 
 // ---------------------------------------------------------------------------
@@ -255,9 +244,7 @@ const THEME_ISLAND: (u8, u8, u8, u8) = (0xAE, 0xB5, 0xAF, 0xB6);
 /// and the cloud background/border tiles. Every one is W5-exclusive in
 /// vanilla (W5 is the only world with a sky page), so one of these next to a
 /// cell is unambiguous evidence that the cell is up in the clouds.
-const SKY_TILES: &[u8] = &[
-    0xCE, 0xD0, 0xD2, 0xD7, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xE4, 0xE9,
-];
+const SKY_TILES: &[u8] = &[0xCE, 0xD0, 0xD2, 0xD7, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xE4, 0xE9];
 
 /// Walkable tiles that only ever run along the narrow island sand strips.
 /// The water bridges (0xB2, 0xB3, 0xB8, 0xB9, 0xBA) are deliberately absent:
@@ -274,9 +261,8 @@ pub(super) fn blank_tile_for(grid: &Grid, world_idx: usize, row: usize, col: usi
         return current;
     }
 
-    if let Some(&(_, _, _, tile)) = BLANK_TILE_OVERRIDES
-        .iter()
-        .find(|&&(w, r, c, _)| w == world_idx && r == row && c == col)
+    if let Some(&(_, _, _, tile)) =
+        BLANK_TILE_OVERRIDES.iter().find(|&&(w, r, c, _)| w == world_idx && r == row && c == col)
     {
         return tile;
     }
@@ -287,7 +273,12 @@ pub(super) fn blank_tile_for(grid: &Grid, world_idx: usize, row: usize, col: usi
 /// Pick a blank tile purely from neighbor analysis, ignoring per-position
 /// overrides. Used for dynamic positions (e.g. W8 army sprites) that aren't at
 /// vanilla fixed spots.
-pub(super) fn blank_tile_from_neighbors(grid: &Grid, world_idx: usize, row: usize, col: usize) -> u8 {
+pub(super) fn blank_tile_from_neighbors(
+    grid: &Grid,
+    world_idx: usize,
+    row: usize,
+    col: usize,
+) -> u8 {
     let h_tile = if col > 0 { Some(grid.get(row, col - 1)) } else { None };
     let v_tile = if row > 0 { Some(grid.get(row - 1, col)) } else { None };
 
@@ -319,12 +310,7 @@ pub(super) fn blank_tile_from_neighbors(grid: &Grid, world_idx: usize, row: usiz
 /// page. Isolated cells never fall back to island — vanilla runs standard
 /// land blanks next to plenty of island paths, so the four-way sniff would
 /// over-fire; [`ISLAND_POSITIONS`] covers the cells that need it.
-fn theme_for(
-    grid: &Grid,
-    row: usize,
-    col: usize,
-    path_neighbor: Option<u8>,
-) -> (u8, u8, u8, u8) {
+fn theme_for(grid: &Grid, row: usize, col: usize, path_neighbor: Option<u8>) -> (u8, u8, u8, u8) {
     if let Some(t) = path_neighbor {
         return if SKY_TILES.contains(&t) {
             THEME_SKY
@@ -384,7 +370,15 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
+        let result = pick_up(
+            &rom,
+            &catalog,
+            PickupFlags {
+                shuffle_spade_games: true,
+                shuffle_toad_houses: true,
+                ..Default::default()
+            },
+        );
 
         // 62 levels + 17 fortresses + 48 pipes + 151 hammer bros + 19 bonus games + 22 toad houses = 319
         // (Airships and Bowser excluded — their pointer table entries stay vanilla
@@ -393,7 +387,11 @@ mod tests {
         // (3 W3 HammerBro entries on tile $4B (boat dock) excluded — tile must stay for boat boarding)
         // (19 BonusGame entries picked up when shuffle_spade_games is true)
         // (22 ToadHouse entries picked up when shuffle_toad_houses is true)
-        assert_eq!(result.pool.len(), 319, "pool should have 319 entries (level-like + hammer bros + bonus games + toad houses, no airship/bowser/boat-dock)");
+        assert_eq!(
+            result.pool.len(),
+            319,
+            "pool should have 319 entries (level-like + hammer bros + bonus games + toad houses, no airship/bowser/boat-dock)"
+        );
     }
 
     #[test]
@@ -403,7 +401,15 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
+        let result = pick_up(
+            &rom,
+            &catalog,
+            PickupFlags {
+                shuffle_spade_games: true,
+                shuffle_toad_houses: true,
+                ..Default::default()
+            },
+        );
 
         for (pi, pe) in result.pool.iter().enumerate() {
             let entry = &catalog.entries[pe.catalog_idx];
@@ -429,7 +435,15 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
+        let result = pick_up(
+            &rom,
+            &catalog,
+            PickupFlags {
+                shuffle_spade_games: true,
+                shuffle_toad_houses: true,
+                ..Default::default()
+            },
+        );
 
         let fx_slots = rom_data::read_fx_slots(&rom);
         let fx_assignments = rom_data::read_world_fx_assignments(&rom);
@@ -446,7 +460,9 @@ mod tests {
                     assert!(
                         !rom_data::is_gap_tile(tile),
                         "W{} FX slot {si} at ({},{}) still has gap tile ${tile:02X}",
-                        wi + 1, slot.grid_row, slot.grid_col,
+                        wi + 1,
+                        slot.grid_row,
+                        slot.grid_col,
                     );
                 }
             }
@@ -460,7 +476,15 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
+        let result = pick_up(
+            &rom,
+            &catalog,
+            PickupFlags {
+                shuffle_spade_games: true,
+                shuffle_toad_houses: true,
+                ..Default::default()
+            },
+        );
 
         for entry in &catalog.entries {
             if !matches!(entry.kind, NodeKind::Start) {
@@ -484,7 +508,15 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
+        let result = pick_up(
+            &rom,
+            &catalog,
+            PickupFlags {
+                shuffle_spade_games: true,
+                shuffle_toad_houses: true,
+                ..Default::default()
+            },
+        );
 
         for cw in &result.worlds {
             for &pi in &cw.pool_indices {
@@ -513,7 +545,15 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
+        let result = pick_up(
+            &rom,
+            &catalog,
+            PickupFlags {
+                shuffle_spade_games: true,
+                shuffle_toad_houses: true,
+                ..Default::default()
+            },
+        );
 
         for cw in &result.worlds {
             eprintln!("\n=== World {} ({} picked up) ===", cw.world_idx + 1, cw.pool_indices.len());
@@ -549,8 +589,22 @@ mod tests {
     }
 
     /// Helper: write cleared grids into a ROM copy and save to disk.
-    fn dump_filtered_rom(rom: &Rom, catalog: &NodeCatalog, pred: fn(&CatalogEntry, PickupFlags) -> bool, filename: &str) {
-        let result = pick_up_filtered(rom, catalog, PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() }, pred);
+    fn dump_filtered_rom(
+        rom: &Rom,
+        catalog: &NodeCatalog,
+        pred: fn(&CatalogEntry, PickupFlags) -> bool,
+        filename: &str,
+    ) {
+        let result = pick_up_filtered(
+            rom,
+            catalog,
+            PickupFlags {
+                shuffle_spade_games: true,
+                shuffle_toad_houses: true,
+                ..Default::default()
+            },
+            pred,
+        );
         let mut data = rom.data.clone();
         for cw in &result.worlds {
             for r in 0..cw.grid.rows() {
@@ -585,17 +639,31 @@ mod tests {
             if override_tile == heuristic_tile {
                 eprintln!(
                     "  SAME  W{} ({},{})  override=${:02X}  heuristic=${:02X}  vanilla=${:02X}",
-                    wi + 1, row, col, override_tile, heuristic_tile, vanilla_tile,
+                    wi + 1,
+                    row,
+                    col,
+                    override_tile,
+                    heuristic_tile,
+                    vanilla_tile,
                 );
             } else {
                 eprintln!(
                     "  DIFF  W{} ({},{})  override=${:02X}  heuristic=${:02X}  vanilla=${:02X}",
-                    wi + 1, row, col, override_tile, heuristic_tile, vanilla_tile,
+                    wi + 1,
+                    row,
+                    col,
+                    override_tile,
+                    heuristic_tile,
+                    vanilla_tile,
                 );
                 mismatches += 1;
             }
         }
-        eprintln!("\n{} overrides, {} differ from heuristic", BLANK_TILE_OVERRIDES.len(), mismatches);
+        eprintln!(
+            "\n{} overrides, {} differ from heuristic",
+            BLANK_TILE_OVERRIDES.len(),
+            mismatches
+        );
     }
 
     #[test]
@@ -609,14 +677,22 @@ mod tests {
             None => return,
         };
         let catalog = NodeCatalog::build(&rom, false);
-        let result = pick_up(&rom, &catalog, PickupFlags {
-            shuffle_spade_games: true,
-            shuffle_toad_houses: true,
-            ..Default::default()
-        });
+        let result = pick_up(
+            &rom,
+            &catalog,
+            PickupFlags {
+                shuffle_spade_games: true,
+                shuffle_toad_houses: true,
+                ..Default::default()
+            },
+        );
         let w5 = &result.worlds[4];
         assert_eq!(w5.grid.get(6, 20), 0xD9, "W5 (6,20) override should produce sky none-tile");
-        assert_eq!(w5.grid.get(4, 30), 0xDD, "W5 (4,30) should produce sky v-tile via 0xE8 in VALID_VERT");
+        assert_eq!(
+            w5.grid.get(4, 30),
+            0xDD,
+            "W5 (4,30) should produce sky v-tile via 0xE8 in VALID_VERT"
+        );
     }
 
     #[test]
@@ -667,7 +743,8 @@ mod tests {
                     }
                     // Overrides are deliberate exceptions to the theme rule
                     // (W8 (5,8) is navy water, not a themed blank at all).
-                    if BLANK_TILE_OVERRIDES.iter().any(|&(w, r2, c2, _)| (w, r2, c2) == (wi, r, c)) {
+                    if BLANK_TILE_OVERRIDES.iter().any(|&(w, r2, c2, _)| (w, r2, c2) == (wi, r, c))
+                    {
                         continue;
                     }
                     checked += 1;
@@ -697,8 +774,23 @@ mod tests {
         let catalog = NodeCatalog::build(&rom, false);
 
         dump_filtered_rom(&rom, &catalog, |e, _| e.kind.is_level_like(), "cleared_all.nes");
-        dump_filtered_rom(&rom, &catalog, |e, _| matches!(e.kind, NodeKind::Level), "cleared_levels.nes");
-        dump_filtered_rom(&rom, &catalog, |e, _| matches!(e.kind, NodeKind::Fortress { .. }), "cleared_fortresses.nes");
-        dump_filtered_rom(&rom, &catalog, |e, _| matches!(e.kind, NodeKind::Pipe { .. }), "cleared_pipes.nes");
+        dump_filtered_rom(
+            &rom,
+            &catalog,
+            |e, _| matches!(e.kind, NodeKind::Level),
+            "cleared_levels.nes",
+        );
+        dump_filtered_rom(
+            &rom,
+            &catalog,
+            |e, _| matches!(e.kind, NodeKind::Fortress { .. }),
+            "cleared_fortresses.nes",
+        );
+        dump_filtered_rom(
+            &rom,
+            &catalog,
+            |e, _| matches!(e.kind, NodeKind::Pipe { .. }),
+            "cleared_pipes.nes",
+        );
     }
 }

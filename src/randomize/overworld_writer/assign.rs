@@ -65,9 +65,7 @@ fn take_level_slot(
     is_troll_pipe: bool,
     is_ineligible: impl Fn(usize) -> bool,
 ) -> (usize, bool) {
-    if is_troll_pipe
-        && let Some(idx) = pool.iter().position(|&pi| !is_ineligible(pi))
-    {
+    if is_troll_pipe && let Some(idx) = pool.iter().position(|&pi| !is_ineligible(pi)) {
         return (pool.remove(idx).unwrap(), false);
     }
     (pool.pop_front().expect("level pool exhausted"), is_troll_pipe)
@@ -137,12 +135,15 @@ pub(super) fn assign_pool<R: Rng>(
     // softlocking the player.
 
     // Find the 1-F pool entry.
-    let fort_1f_pos = fort_pool.iter().position(|&pi| {
-        let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
-        ce.level_entry.as_ref().is_some_and(|le| {
-            u16::from_le_bytes([le.obj_lo, le.obj_hi]) == FORTRESS_1F_OBJ_PTR
+    let fort_1f_pos = fort_pool
+        .iter()
+        .position(|&pi| {
+            let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
+            ce.level_entry
+                .as_ref()
+                .is_some_and(|le| u16::from_le_bytes([le.obj_lo, le.obj_hi]) == FORTRESS_1F_OBJ_PTR)
         })
-    }).expect("1-F fortress not found in pool");
+        .expect("1-F fortress not found in pool");
     let fort_1f_pi = fort_pool.remove(fort_1f_pos);
 
     // Collect all safe (world_idx, section) slots. World order is
@@ -205,9 +206,9 @@ pub(super) fn assign_pool<R: Rng>(
         // --- Fortress assignments (ordered by section for FX) ---
         let mut fortress = Vec::new();
         for section in 0..built.section_count {
-            if let Some(slot) = built.slots.iter().find(|s| {
-                s.kind == SlotKind::Fortress && s.section == section
-            }) {
+            if let Some(slot) =
+                built.slots.iter().find(|s| s.kind == SlotKind::Fortress && s.section == section)
+            {
                 // Check if this slot was pre-assigned (1-F safe placement).
                 let pi = match preassigned_forts.remove(&(wi, section)) {
                     Some(pre) => pre,
@@ -233,20 +234,15 @@ pub(super) fn assign_pool<R: Rng>(
         // than a pipe leading to the hand-trap behind it.
         let mut level = Vec::new();
         let mut demoted_troll_pipes: HashSet<(usize, usize)> = HashSet::new();
-        let level_slots: Vec<&_> = built.slots.iter()
-            .filter(|s| s.kind == SlotKind::Level)
-            .collect();
-        let mut ordered: Vec<&_> = level_slots.iter().copied()
-            .filter(|s| s.is_troll_pipe)
-            .collect();
+        let level_slots: Vec<&_> =
+            built.slots.iter().filter(|s| s.kind == SlotKind::Level).collect();
+        let mut ordered: Vec<&_> =
+            level_slots.iter().copied().filter(|s| s.is_troll_pipe).collect();
         ordered.extend(level_slots.iter().copied().filter(|s| !s.is_troll_pipe));
 
         for slot in ordered {
-            let (pi, demoted) = take_level_slot(
-                &mut level_pool,
-                slot.is_troll_pipe,
-                is_troll_pipe_ineligible,
-            );
+            let (pi, demoted) =
+                take_level_slot(&mut level_pool, slot.is_troll_pipe, is_troll_pipe_ineligible);
             if demoted {
                 demoted_troll_pipes.insert(slot.pos);
             }
@@ -272,11 +268,8 @@ pub(super) fn assign_pool<R: Rng>(
                 let (mut pos_a, mut pos_b) = built.pipe_pairs[pair_idx];
 
                 // Use the is_a_side flag precomputed during catalog building.
-                let (idx_a, idx_b) = if group[0].1 {
-                    (group[0].0, group[1].0)
-                } else {
-                    (group[1].0, group[0].0)
-                };
+                let (idx_a, idx_b) =
+                    if group[0].1 { (group[0].0, group[1].0) } else { (group[1].0, group[0].0) };
 
                 // Mixed pairs (one endpoint is the $5F spiral-castle tile, the
                 // other a plain pipe — only the W5 spiral) always drew the
@@ -302,12 +295,13 @@ pub(super) fn assign_pool<R: Rng>(
 
         // --- Airship (W1-W7) ---
         let airship = if wi < 7 {
-            let airship_pos = catalog.entries.iter()
+            let airship_pos = catalog
+                .entries
+                .iter()
                 .find(|e| e.world_idx == wi && matches!(e.kind, NodeKind::Airship))
                 .map(|e| e.grid_pos);
-            airship_pos.and_then(|pos| {
-                airship_pool.pop().map(|pi| Assignment { pool_idx: pi, pos })
-            })
+            airship_pos
+                .and_then(|pos| airship_pool.pop().map(|pi| Assignment { pool_idx: pi, pos }))
         } else {
             None
         };
@@ -364,7 +358,8 @@ pub(super) fn assign_pool<R: Rng>(
         // dedicated per-obj_ptr round-robin so each encounter in a world
         // has a different enemy set. Filler positions (blank tiles needing
         // valid pointer entries) use the normal cycling pool.
-        let level_like_count = fortress.len() + level.len() + pipes.len() * 2 + bonus.len() + toad.len();
+        let level_like_count =
+            fortress.len() + level.len() + pipes.len() * 2 + bonus.len() + toad.len();
         let remaining_slots = pickup.worlds[wi].pool_indices.len().saturating_sub(level_like_count);
 
         // When Hammer Bros are redistributed, the sprite positions are the new
@@ -379,7 +374,9 @@ pub(super) fn assign_pool<R: Rng>(
         let mut sprite_slots = Vec::new();
         let mut filler_slots = Vec::new();
         for slot in &built.slots {
-            if slot.kind != SlotKind::HammerBro { continue; }
+            if slot.kind != SlotKind::HammerBro {
+                continue;
+            }
             if sprite_positions.contains(&slot.pos) {
                 sprite_slots.push(slot.pos);
             } else {
@@ -390,7 +387,9 @@ pub(super) fn assign_pool<R: Rng>(
         // Assign sprite slots from per-obj_ptr round-robin.
         let mut hammer_bro = Vec::new();
         for (sprite_obj_idx, pos) in sprite_slots.iter().enumerate() {
-            if hammer_bro.len() >= remaining_slots { break; }
+            if hammer_bro.len() >= remaining_slots {
+                break;
+            }
             let key = hb_group_keys[sprite_obj_idx % hb_group_keys.len()];
             let group = hb_obj_groups.get(&key).unwrap();
             let le = group[sprite_obj_idx / hb_group_keys.len() % group.len()].clone();
@@ -399,7 +398,9 @@ pub(super) fn assign_pool<R: Rng>(
 
         // Assign filler slots from normal cycling pool.
         for pos in &filler_slots {
-            if hammer_bro.len() >= remaining_slots { break; }
+            if hammer_bro.len() >= remaining_slots {
+                break;
+            }
             hammer_bro.push(HammerBroAssignment {
                 pos: *pos,
                 level_entry: hb_level_iter.next().unwrap(),

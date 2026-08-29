@@ -1,10 +1,5 @@
+use super::capacity::{W8_HB_CAP, distribute_levels, prepare_capacities, redistribute_fortresses};
 use super::*;
-use super::capacity::{
-    W8_HB_CAP, distribute_levels, prepare_capacities,
-    redistribute_fortresses,
-};
-
-
 
 use super::types::stamp_slots;
 use crate::rom::Rom;
@@ -146,11 +141,7 @@ fn census_arm(seed: u64) -> CensusArm {
 /// here, per arm. The shared parallel body of the censuses.
 fn census_build(rom: &Rom, seed: u64) -> BuildResult {
     let arm = census_arm(seed);
-    let rom = apply_qol_variant(
-        rom,
-        arm == CensusArm::HammerRocks,
-        arm == CensusArm::EightsWild,
-    );
+    let rom = apply_qol_variant(rom, arm == CensusArm::HammerRocks, arm == CensusArm::EightsWild);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let mut catalog = NodeCatalog::build(&rom, false);
     let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
@@ -220,8 +211,7 @@ fn test_fortress_redistribution() {
         assert_eq!(total, 17, "total fortresses must be 17");
         assert_eq!(counts[7], 4, "W8 must keep 4");
         for (w, &count) in counts[..7].iter().enumerate() {
-            assert!((1..=3).contains(&count),
-                "W{} got {count} forts, expected 1-3", w + 1);
+            assert!((1..=3).contains(&count), "W{} got {count} forts, expected 1-3", w + 1);
         }
     }
 }
@@ -240,10 +230,7 @@ fn test_build_all_worlds() {
         Some(r) => r,
         None => return,
     };
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(25);
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(25);
 
     par_seeds(seeds, |seed| {
         let result = census_build(&rom, seed);
@@ -257,27 +244,45 @@ fn test_build_all_worlds() {
 
             // Forts: the allotment is a target, and the Locks phase may remove
             // an unlockable fort (rare). Every surviving fort keeps one lock.
-            assert!(forts <= result.fort_counts[wi],
-                "seed {seed} W{}: fort slots {forts} > allotted {}", wi + 1, result.fort_counts[wi]);
+            assert!(
+                forts <= result.fort_counts[wi],
+                "seed {seed} W{}: fort slots {forts} > allotted {}",
+                wi + 1,
+                result.fort_counts[wi]
+            );
             // The full vanilla pipe budget is always spent (an unplaced pair is
             // deleted content — its transit levels vanish from the game).
-            assert_eq!(pipes, VANILLA_PIPE_PAIRS[wi],
-                "seed {seed} W{}: pipe pairs {pipes} != budget {}", wi + 1, VANILLA_PIPE_PAIRS[wi]);
-            assert_eq!(locks, forts,
+            assert_eq!(
+                pipes,
+                VANILLA_PIPE_PAIRS[wi],
+                "seed {seed} W{}: pipe pairs {pipes} != budget {}",
+                wi + 1,
+                VANILLA_PIPE_PAIRS[wi]
+            );
+            assert_eq!(
+                locks,
+                forts,
                 "seed {seed} W{}: every fort must have a lock ({locks} locks, {forts} forts)",
-                wi + 1);
+                wi + 1
+            );
         }
 
-        let total_levels: usize = result.worlds.iter()
+        let total_levels: usize = result
+            .worlds
+            .iter()
             .map(|b| b.slots.iter().filter(|s| s.kind == SlotKind::Level).count())
             .sum();
-        let total_forts: usize = result.worlds.iter()
+        let total_forts: usize = result
+            .worlds
+            .iter()
             .map(|b| b.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count())
             .sum();
         // Every vanilla level must land somewhere: a level the builder fails to
         // place is content deleted from the game, invisible in a finished ROM.
-        assert_eq!(total_levels, VANILLA_LEVEL_COUNT,
-            "seed {seed}: total levels {total_levels} != {VANILLA_LEVEL_COUNT}");
+        assert_eq!(
+            total_levels, VANILLA_LEVEL_COUNT,
+            "seed {seed}: total levels {total_levels} != {VANILLA_LEVEL_COUNT}"
+        );
         // 17 allotted; the Locks phase may remove an unlockable fort (rare).
         assert!(total_forts <= 17, "seed {seed}: total forts {total_forts} > 17");
         assert!(total_forts >= 15, "seed {seed}: total forts {total_forts} suspiciously low");
@@ -314,10 +319,7 @@ fn all_world_targets_reachable() {
     };
     let qol = apply_qol_for_overworld(&raw);
     let names = ["W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8"];
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(20);
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(20);
 
     for (rom_label, rom) in [("raw", &raw), ("qol", &qol)] {
         for hb in [false, true] {
@@ -408,13 +410,17 @@ fn report_distribution_by_exponent() {
         for seed in 0..SEEDS {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let fort_counts = redistribute_fortresses(&mut rng);
-            let caps = prepare_capacities(&rom, &catalog, &pickup, &fort_counts, false, true, false)
-                .capacities;
+            let caps =
+                prepare_capacities(&rom, &catalog, &pickup, &fort_counts, false, true, false)
+                    .capacities;
 
             // Detect clamp events (a world's fair share exceeds its capacity).
-            let weights: [f64; 8] = std::array::from_fn(|wi| {
-                if caps[wi] == 0 { 0.0 } else { (caps[wi] as f64).powf(exp) }
-            });
+            let weights: [f64; 8] =
+                std::array::from_fn(
+                    |wi| {
+                        if caps[wi] == 0 { 0.0 } else { (caps[wi] as f64).powf(exp) }
+                    },
+                );
             let tw: f64 = weights.iter().sum();
             for wi in 0..8 {
                 let share = weights[wi] / tw * VANILLA_LEVEL_COUNT as f64;
@@ -431,10 +437,11 @@ fn report_distribution_by_exponent() {
                 sums[wi] += counts[wi];
             }
         }
-        let row: String = (0..8)
-            .map(|wi| format!("{:>6.1}", sums[wi] as f64 / SEEDS as f64))
-            .collect();
-        eprintln!("  {exp:<3}  {row}    clamp_events={clamp_events} underfill_seeds={underfill_seeds}");
+        let row: String =
+            (0..8).map(|wi| format!("{:>6.1}", sums[wi] as f64 / SEEDS as f64)).collect();
+        eprintln!(
+            "  {exp:<3}  {row}    clamp_events={clamp_events} underfill_seeds={underfill_seeds}"
+        );
     }
 }
 
@@ -460,7 +467,11 @@ fn hammer_bro_redistribution_invariants() {
             &rom,
             &OverworldData { pickup: &pickup, catalog: &catalog },
             &mut rng,
-            BuildFlags { shuffle_toad_houses: true, shuffle_hammer_bros: true, ..Default::default() },
+            BuildFlags {
+                shuffle_toad_houses: true,
+                shuffle_hammer_bros: true,
+                ..Default::default()
+            },
         );
 
         // The vanilla 15 encounters are always placed (W1-W6 alone have the
@@ -474,43 +485,37 @@ fn hammer_bro_redistribution_invariants() {
             // world (e.g. W7's 8 pipe pairs) can be left with no spare
             // HammerBro tile and get 0, with its share spilling elsewhere.
             let max = if w.world_idx == 7 { W8_HB_CAP } else { 3 };
-            assert!(
-                n <= max,
-                "seed {seed} W{}: {n} HB sprites (max {max})", w.world_idx + 1
-            );
+            assert!(n <= max, "seed {seed} W{}: {n} HB sprites (max {max})", w.world_idx + 1);
             // At least RESERVED_DYNAMIC_SLOTS eligible map-object slots stay
             // free for a runtime white-house spawn.
             let eligible = rom_data::eligible_hb_map_slots(&rom, w.world_idx).len();
             assert!(
                 eligible.saturating_sub(n) >= RESERVED_DYNAMIC_SLOTS,
                 "seed {seed} W{}: only {} eligible slots free after {n} HBs",
-                w.world_idx + 1, eligible.saturating_sub(n)
+                w.world_idx + 1,
+                eligible.saturating_sub(n)
             );
             // Every sprite sits on one of this world's HammerBro slot tiles.
-            let hb_tiles: HashSet<(usize, usize)> = w
-                .slots
-                .iter()
-                .filter(|s| s.kind == SlotKind::HammerBro)
-                .map(|s| s.pos)
-                .collect();
+            let hb_tiles: HashSet<(usize, usize)> =
+                w.slots.iter().filter(|s| s.kind == SlotKind::HammerBro).map(|s| s.pos).collect();
             let mut seen: HashSet<(usize, usize)> = HashSet::new();
             for sprite in &w.hb_sprites {
                 assert!(
                     hb_tiles.contains(&sprite.grid_pos),
                     "seed {seed} W{}: HB sprite at {:?} is not a HammerBro slot",
-                    w.world_idx + 1, sprite.grid_pos
+                    w.world_idx + 1,
+                    sprite.grid_pos
                 );
                 assert!(
                     seen.insert(sprite.grid_pos),
                     "seed {seed} W{}: duplicate HB sprite position {:?}",
-                    w.world_idx + 1, sprite.grid_pos
+                    w.world_idx + 1,
+                    sprite.grid_pos
                 );
             }
         }
     }
 }
-
-
 
 /// Per-world topology snapshot for the goal-open probes. Distilled from the
 /// `progression_metrics` logic: same lock-state model (grid holds locks
@@ -612,10 +617,8 @@ fn progression_metrics() {
         }
     };
 
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1000);
+    let seeds: u64 =
+        std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(1000);
 
     // --- Problem 2 accumulators ---
     let mut depth_hist = [0u64; 8]; // index = chain depth (capped at 7)
@@ -727,8 +730,7 @@ fn progression_metrics() {
                     // Forts accessible at start (all locks closed).
                     let g0 = grid_with(&HashSet::new());
                     let walk0 = walk_map(&g0, &built.pipe_pairs, start, wi);
-                    let at_start =
-                        forts.iter().filter(|p| walk0.nodes.contains(*p)).count();
+                    let at_start = forts.iter().filter(|p| walk0.nodes.contains(*p)).count();
 
                     // Census only worlds that CAN chain (2+ forts); single-fort
                     // worlds are trivially single-gate and would dilute the rate.
@@ -763,9 +765,10 @@ fn progression_metrics() {
             // ---- Problem 1: fort <-> own-lock proximity & cramping ----
             for l in &built.locks {
                 // The fort this lock opens.
-                let fort_pos = built.slots.iter().find(|s| {
-                    s.kind == SlotKind::Fortress && s.section == l.fort_section
-                });
+                let fort_pos = built
+                    .slots
+                    .iter()
+                    .find(|s| s.kind == SlotKind::Fortress && s.section == l.fort_section);
                 let Some(fp) = fort_pos.map(|s| s.pos) else { continue };
 
                 let man = fp.0.abs_diff(l.pos.0) + fp.1.abs_diff(l.pos.1);
@@ -789,7 +792,9 @@ fn progression_metrics() {
 
     let names = ["W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8"];
 
-    eprintln!("\n=== Problem 2: chain depth (rounds of beat-all-reachable to open airship), {seeds} seeds ===");
+    eprintln!(
+        "\n=== Problem 2: chain depth (rounds of beat-all-reachable to open airship), {seeds} seeds ==="
+    );
     let dtot: u64 = depth_hist.iter().sum();
     for (d, &c) in depth_hist.iter().enumerate() {
         if c == 0 {
@@ -809,13 +814,20 @@ fn progression_metrics() {
 
     eprintln!(
         "\n=== Problem 2: topology census ({census_total} worlds w/ 2+ forts; \
-         {single_fort_worlds} single-fort worlds excluded) ===");
+         {single_fort_worlds} single-fort worlds excluded) ==="
+    );
     let pc = |c: u64| 100.0 * c as f64 / census_total as f64;
     eprintln!("  goal open at start        : {b_goal_open:6} ({:5.1}%)", pc(b_goal_open));
     eprintln!("  single gate (1 req, 1 open): {b_single_gate:6} ({:5.1}%)", pc(b_single_gate));
-    eprintln!("  single gate + optional fort: {b_single_plus_optional:6} ({:5.1}%)", pc(b_single_plus_optional));
+    eprintln!(
+        "  single gate + optional fort: {b_single_plus_optional:6} ({:5.1}%)",
+        pc(b_single_plus_optional)
+    );
     eprintln!("  either-key choice (any opens): {b_either_key:6} ({:5.1}%)", pc(b_either_key));
-    eprintln!("  parallel-AND (all req, reachable together): {b_parallel_and:6} ({:5.1}%)", pc(b_parallel_and));
+    eprintln!(
+        "  parallel-AND (all req, reachable together): {b_parallel_and:6} ({:5.1}%)",
+        pc(b_parallel_and)
+    );
     eprintln!("  CHAIN (depth >= 2)        : {b_chain:6} ({:5.1}%)", pc(b_chain));
     eprintln!("  other                     : {b_other:6} ({:5.1}%)", pc(b_other));
     eprint!("  chain rate per world (2+ forts only): ");
@@ -835,9 +847,14 @@ fn progression_metrics() {
         let label = if d == 11 { "11+".to_string() } else { d.to_string() };
         eprintln!("  dist {label:>3}: {c:6} ({:5.1}%)", 100.0 * c as f64 / man_total as f64);
     }
-    eprintln!("  <=2 tiles (immediately behind): {man_le2} ({:5.1}%)", 100.0 * man_le2 as f64 / man_total as f64);
+    eprintln!(
+        "  <=2 tiles (immediately behind): {man_le2} ({:5.1}%)",
+        100.0 * man_le2 as f64 / man_total as f64
+    );
 
-    eprintln!("\n=== Problem 1: fort-side component size when its own lock is closed ({comp_total} forts) ===");
+    eprintln!(
+        "\n=== Problem 1: fort-side component size when its own lock is closed ({comp_total} forts) ==="
+    );
     for (sz, &c) in comp_hist.iter().enumerate() {
         if c == 0 {
             continue;
@@ -868,10 +885,8 @@ fn test_fortress_distribution() {
         }
     };
 
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1000);
+    let seeds: u64 =
+        std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(1000);
 
     // Per-world tallies
     let mut world_counts: [HashMap<(usize, usize), u32>; 8] = Default::default();
@@ -940,10 +955,7 @@ fn test_fortress_distribution() {
             let count = **count;
             let pct = count as f64 / total_f * 100.0;
             let bar = "#".repeat((pct as usize).min(40));
-            eprintln!(
-                "    ({:2},{:2})  {:>5} ({:5.1}%)  {bar}",
-                pos.0, pos.1, count, pct,
-            );
+            eprintln!("    ({:2},{:2})  {:>5} ({:5.1}%)  {bar}", pos.0, pos.1, count, pct,);
         }
 
         // Per-section breakdown
@@ -1019,7 +1031,12 @@ fn test_sas_w3_fixed_pipe_keeps_target_reachable() {
             },
         );
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let result = build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, BuildFlags { shuffle_toad_houses: true, ..Default::default() });
+        let result = build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
         let w3 = result.worlds.iter().find(|b| b.world_idx == 2).unwrap();
         assert!(
             analyze_required_progression(w3, false).reachable,
@@ -1229,11 +1246,7 @@ fn prog_print_pass(label: &str, worlds: &[ProgLinWorld; 8]) {
             g_access as f64 / tr,
             g_scenic as f64 / tr,
             g_redundant as f64 / tr,
-            if all_pipes > 0 {
-                g_redundant as f64 / all_pipes as f64 * 100.0
-            } else {
-                0.0
-            },
+            if all_pipes > 0 { g_redundant as f64 / all_pipes as f64 * 100.0 } else { 0.0 },
         );
     }
     if x_reach > 0 {
@@ -1247,11 +1260,7 @@ fn prog_print_pass(label: &str, worlds: &[ProgLinWorld; 8]) {
             x_access as f64 / xr,
             x_scenic as f64 / xr,
             x_redundant as f64 / xr,
-            if x_pipes > 0 {
-                x_redundant as f64 / x_pipes as f64 * 100.0
-            } else {
-                0.0
-            },
+            if x_pipes > 0 { x_redundant as f64 / x_pipes as f64 * 100.0 } else { 0.0 },
         );
     }
     let unreach: u32 = worlds.iter().map(|w| w.unreachable).sum();
@@ -1286,10 +1295,8 @@ fn test_required_progression() {
         }
     };
 
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1000);
+    let seeds: u64 =
+        std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(1000);
 
     // Base options = the shipped map. Options::default() is hand-tuned to the
     // CLI/web defaults; the full pipeline (randomize_rom_with_overworld_capture)
@@ -1359,10 +1366,7 @@ fn test_dump_required_progression() {
         }
     };
 
-    let seed: u64 = std::env::var("DUMP_SEED")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+    let seed: u64 = std::env::var("DUMP_SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
     let world_filter: Option<usize> = std::env::var("DUMP_WORLD")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
@@ -1413,11 +1417,7 @@ fn test_dump_required_progression() {
             &mut rng,
             BuildFlags { shuffle_toad_houses: true, ..Default::default() },
         );
-        let sas_label = if std::env::var("SAS").is_ok() {
-            " [SAS=1]"
-        } else {
-            ""
-        };
+        let sas_label = if std::env::var("SAS").is_ok() { " [SAS=1]" } else { "" };
         eprintln!("=== Required Progression dump (seed={seed}{sas_label}, STANDALONE) ===");
         for built in &result.worlds {
             if let Some(w) = world_filter
@@ -1436,10 +1436,9 @@ fn test_dump_required_progression() {
                     }
                     eprintln!();
                 }
-                if let (Some(start), Some(target)) = (
-                    rom_data::find_start(&built.grid),
-                    find_target(&built.grid, built.world_idx),
-                ) {
+                if let (Some(start), Some(target)) =
+                    (rom_data::find_start(&built.grid), find_target(&built.grid, built.world_idx))
+                {
                     let probe = |grid: &Grid, label: &str, pos: (usize, usize)| {
                         let r = pos.0 as i32 - 1;
                         let c = pos.1 as i32 - 1;
@@ -1451,10 +1450,17 @@ fn test_dump_required_progression() {
                         ];
                         eprintln!("  {label}={pos:?} tile=0x{:02X}", grid.get(pos.0, pos.1));
                         for (d, rr, cc) in dirs {
-                            if rr < 0 || cc < 0 || rr as usize >= grid.rows() || cc as usize >= grid.cols {
+                            if rr < 0
+                                || cc < 0
+                                || rr as usize >= grid.rows()
+                                || cc as usize >= grid.cols
+                            {
                                 eprintln!("    {d} ({rr},{cc}): off-grid");
                             } else {
-                                eprintln!("    {d} ({rr},{cc}): 0x{:02X}", grid.get(rr as usize, cc as usize));
+                                eprintln!(
+                                    "    {d} ({rr},{cc}): 0x{:02X}",
+                                    grid.get(rr as usize, cc as usize)
+                                );
                             }
                         }
                     };
@@ -1462,7 +1468,8 @@ fn test_dump_required_progression() {
                     probe(&built.grid, "target", target);
 
                     // What does walk_map see as reachable from start?
-                    let walk = walk_map(&built.grid, &built.pipe_pairs, Some(start), built.world_idx);
+                    let walk =
+                        walk_map(&built.grid, &built.pipe_pairs, Some(start), built.world_idx);
                     let mut reachable: Vec<(usize, usize)> = walk.nodes.iter().copied().collect();
                     reachable.sort();
                     eprintln!("\n  walk_map reachable from start ({} nodes):", reachable.len());
@@ -1500,15 +1507,14 @@ fn test_dump_required_progression() {
     options.palettes = false;
     options.palette_themed = false;
 
-    let (rom, result) = match crate::randomize_rom_with_overworld_capture(
-        &rom_bytes, seed, &options, None,
-    ) {
-        Ok(pair) => pair,
-        Err(e) => {
-            eprintln!("randomize_rom_with_overworld_capture failed: {e}");
-            return;
-        }
-    };
+    let (rom, result) =
+        match crate::randomize_rom_with_overworld_capture(&rom_bytes, seed, &options, None) {
+            Ok(pair) => pair,
+            Err(e) => {
+                eprintln!("randomize_rom_with_overworld_capture failed: {e}");
+                return;
+            }
+        };
 
     let sas_label = if options.swap_start_airship { " [SAS=1]" } else { "" };
     let flag_key = options.to_flag_key();
@@ -1530,7 +1536,6 @@ fn test_dump_required_progression() {
     std::fs::write(&filename, rom.output_bytes()).unwrap();
     eprintln!("\nWrote {filename}");
 }
-
 
 // ---------------------------------------------------------------------------
 // Census column arithmetic. Every per-world census prints some mix of these
@@ -1616,17 +1621,12 @@ fn test_route_census() {
         }
     };
 
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(200);
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(200);
     let slack: u32 = std::env::var("CENSUS_SLACK")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(route_choice::DEFAULT_SLACK);
-    let dump_seed: Option<u64> = std::env::var("DUMP_SEED")
-        .ok()
-        .and_then(|s| s.parse().ok());
+    let dump_seed: Option<u64> = std::env::var("DUMP_SEED").ok().and_then(|s| s.parse().ok());
 
     // Build AND analyze in the parallel closure — the route Dijkstras are a
     // real share of the census cost. Dump output (one seed) prints in-thread.
@@ -1638,16 +1638,14 @@ fn test_route_census() {
         let mut out: [Option<RouteSample>; 8] = [const { None }; 8];
         for built in &result.worlds {
             let rc = analyze_route_choice(built, slack);
-            let has_rock = (0..built.grid.rows()).any(|r| {
-                (0..built.grid.cols).any(|c| matches!(built.grid.get(r, c), 0x51 | 0x52))
-            });
+            let has_rock = (0..built.grid.rows())
+                .any(|r| (0..built.grid.cols).any(|c| matches!(built.grid.get(r, c), 0x51 | 0x52)));
             out[built.world_idx] = Some(RouteSample {
                 routes: if rc.reachable { rc.routes.len() } else { 0 },
                 c1: rc.best_cost,
                 floor: built.c1_floor,
                 reachable: rc.reachable,
-                goal_open: world_topology(built)
-                    .is_some_and(|t| t.fort_count >= 2 && t.depth == 0),
+                goal_open: world_topology(built).is_some_and(|t| t.fort_count >= 2 && t.depth == 0),
                 has_rock,
                 c1_breaks_rock: rc.routes.first().is_some_and(|r| !r.rocks.is_empty()),
                 alt_breaks_rock: rc.routes.iter().skip(1).any(|r| !r.rocks.is_empty()),
@@ -1691,9 +1689,7 @@ fn test_route_census() {
                 stat[0] += 1;
                 stat[1] += (s.c1 < s.floor) as u64;
                 stat[2] += s.floor as u64;
-                if let Some(row) =
-                    by_floor.iter_mut().find(|(f, ..)| *f == s.floor)
-                {
+                if let Some(row) = by_floor.iter_mut().find(|(f, ..)| *f == s.floor) {
                     row.1.push(s.c1);
                     row.2.push(s.routes as u32);
                     row.3 += (s.c1 < s.floor) as u64;
@@ -1871,10 +1867,7 @@ fn test_build_time() {
         }
     };
     let rom = Rom::from_bytes(&rom_bytes).unwrap();
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(20);
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(20);
 
     let mut per_seed_ms: Vec<f64> = Vec::new();
     for seed in 0..seeds {
@@ -1913,10 +1906,7 @@ fn test_walkgraph_reuse() {
         }
     };
     let rom = Rom::from_bytes(&rom_bytes).unwrap();
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(100);
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(100);
     let slack = route_choice::DEFAULT_SLACK;
 
     let (mut invariant_flips, mut variant_flips, mut lock_trials) = (0usize, 0usize, 0usize);
@@ -1968,11 +1958,8 @@ fn test_walkgraph_reuse() {
             // base stays valid and reuse must match fresh.
             if built.section_count > 0 {
                 let mut cand = built.clone();
-                let lock_pos = built
-                    .locks
-                    .first()
-                    .map(|l| l.pos)
-                    .or_else(|| walk_edge_path_tile(built));
+                let lock_pos =
+                    built.locks.first().map(|l| l.pos).or_else(|| walk_edge_path_tile(built));
                 if let Some(pos) = lock_pos {
                     cand.locks.push(super::types::LockAssignment {
                         pos,
@@ -2038,10 +2025,7 @@ fn test_render_route_choice() {
             return;
         }
     };
-    let seed: u64 = std::env::var("DUMP_SEED")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+    let seed: u64 = std::env::var("DUMP_SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
     let world_filter: Option<usize> = std::env::var("DUMP_WORLD")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
@@ -2111,10 +2095,7 @@ fn w8_bridges_out_census() {
         }
     };
     let rom = Rom::from_bytes(&rom_bytes).unwrap();
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(500);
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(500);
 
     let per_seed = par_seeds(seeds, |seed| {
         let result = census_build(&rom, seed);

@@ -67,10 +67,7 @@ pub(super) fn write_fortress_fx(
         // replacement tile lands in the wrong cell.
         let row_byte = ((ob_row + 2) as u8) << 4;
         rom.write_byte(rom_data::FX_MAP_LOC_ROW + slot, row_byte);
-        rom.write_byte(
-            rom_data::FX_MAP_LOC + slot,
-            ((col_in_screen as u8) << 4) | (screen as u8),
-        );
+        rom.write_byte(rom_data::FX_MAP_LOC + slot, ((col_in_screen as u8) << 4) | (screen as u8));
 
         // Replacement tile.
         rom.write_byte(rom_data::FX_MAP_TILE_REPLACE + slot, lock.replace_tile);
@@ -86,14 +83,13 @@ pub(super) fn write_fortress_fx(
         for (j, &b) in patterns.iter().enumerate() {
             rom.write_byte(pat_off + j, b);
         }
-
     }
 }
 
 pub(super) fn patch_fortress_fx_screen_check(rom: &mut Rom) {
     // --- Hook at $C8E6 ---
     const HOOK_OFFSET: usize = 0x148F6; // file offset of CPU $C8E6
-    rom.write_byte(HOOK_OFFSET, 0x4C);     // JMP
+    rom.write_byte(HOOK_OFFSET, 0x4C); // JMP
     rom.write_byte(HOOK_OFFSET + 1, 0x44); // lo($D544)
     rom.write_byte(HOOK_OFFSET + 2, 0xD5); // hi($D544)
 
@@ -283,7 +279,10 @@ pub(super) fn patch_fortress_fx_screen_check(rom: &mut Rom) {
         0x4C, 0x52, 0xC9,    // 76: JMP $C952         ; common
         0x4C, 0xEA, 0xC8,    // 79: JMP $C8EA         ; full animate
     ];
-    debug_assert!(code.len() == 82, "FX screen-check patch must be 82 bytes (allocation is 112, 30 reserved free)");
+    debug_assert!(
+        code.len() == 82,
+        "FX screen-check patch must be 82 bytes (allocation is 112, 30 reserved free)"
+    );
     for (i, &b) in code.iter().enumerate() {
         rom.write_byte(CODE_OFFSET + i, b);
     }

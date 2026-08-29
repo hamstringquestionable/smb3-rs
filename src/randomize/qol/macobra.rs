@@ -1,7 +1,7 @@
 //! MaCobra52 patch bundle: always-on bugfixes plus opt-in feature patches.
 
-use crate::rom::Rom;
 use crate::randomize::rom_data::{FS_FASTER_FROG, FS_HOLD_LEFT_HELPER, FS_TAIL_STAY_DEAD};
+use crate::rom::Rom;
 
 // ---------------------------------------------------------------------------
 // MaCobra patches — always-on bundle

@@ -235,10 +235,8 @@ fn point_slot0_at_unused5(rom: &mut Rom) {
     rom.write_range(rom_data::BIG_Q_AREA_OBJECTS, &rom_data::UNUSED5_OBJECT_PTR.to_le_bytes());
     rom.write_byte(rom_data::BIG_Q_AREA_TILESETS, rom_data::UNUSED5_TILESET);
 
-    let hdr = rom_data::prg_bank_cpu_to_file(
-        rom_data::UNUSED5_LAYOUT_BANK,
-        rom_data::UNUSED5_LAYOUT_PTR,
-    );
+    let hdr =
+        rom_data::prg_bank_cpu_to_file(rom_data::UNUSED5_LAYOUT_BANK, rom_data::UNUSED5_LAYOUT_PTR);
     let byte5 = rom.read_byte(hdr + 5);
     rom.write_byte(hdr + 5, (byte5 & 0xF8) | UNUSED5_BGPAL);
 }

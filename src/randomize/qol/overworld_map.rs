@@ -1,9 +1,9 @@
 //! Overworld map tile edits: rocks, W8 canoe/bridges, drawbridges, N-cards.
 
-use crate::rom::Rom;
 use crate::randomize::rom_data::{
     BRIDGE_TILE, FX_MAP_TILE_REPLACE, map_tile_offset, write_map_sprite,
 };
+use crate::rom::Rom;
 
 // W3 drawbridge map tile patches: (file offset, replacement tile).
 // Vanilla: 2× $B2 horizontal + 2× $B1 vertical. Replace with $B3
@@ -60,17 +60,36 @@ pub fn remove_rocks(rom: &mut Rom) {
 /// independently of this flag.
 const W8_CANOE_PATH_EDITS: &[(usize, usize, u8)] = &[
     // --- Screen 0: canoe docks + navy approach ---
-    (3, 8, 0x4B), (3, 10, 0x44), (3, 12, 0x44),
-    (4, 8, 0x85), (4, 10, 0x46), (4, 12, 0x46),
-    (5, 6, 0x4B), (5, 7, 0x8C), (5, 8, 0x8D), (5, 10, 0x4B), (5, 12, 0x4B),
+    (3, 8, 0x4B),
+    (3, 10, 0x44),
+    (3, 12, 0x44),
+    (4, 8, 0x85),
+    (4, 10, 0x46),
+    (4, 12, 0x46),
+    (5, 6, 0x4B),
+    (5, 7, 0x8C),
+    (5, 8, 0x8D),
+    (5, 10, 0x4B),
+    (5, 12, 0x4B),
     // --- Screen 2: extra paths ---
-    (1, 36, 0x44), (1, 37, 0x45), (1, 38, 0x45), (1, 39, 0x45), (1, 40, 0x47),
-    (1, 41, 0x45), (1, 42, 0x47), (1, 43, 0x45), (1, 44, 0x47), (1, 45, 0x45),
+    (1, 36, 0x44),
+    (1, 37, 0x45),
+    (1, 38, 0x45),
+    (1, 39, 0x45),
+    (1, 40, 0x47),
+    (1, 41, 0x45),
+    (1, 42, 0x47),
+    (1, 43, 0x45),
+    (1, 44, 0x47),
+    (1, 45, 0x45),
     (1, 46, 0x47),
-    (2, 36, 0x46), (2, 46, 0x46),
-    (3, 36, 0x4A), (3, 46, 0x48),
+    (2, 36, 0x46),
+    (2, 46, 0x46),
+    (3, 36, 0x4A),
+    (3, 46, 0x48),
     (4, 46, 0x46),
-    (5, 45, 0x45), (5, 46, 0x4A),
+    (5, 45, 0x45),
+    (5, 46, 0x4A),
 ];
 
 /// W1 shortcut edits — the rock's BEHAVIOUR is gated by `More hammer rocks`
@@ -151,8 +170,15 @@ pub fn apply_w1_shortcut(rom: &mut Rom, breakable: bool) {
 /// bridge approach becomes open water so the corridor reads as a chain of
 /// spans rather than a solid path.
 const W8_WATER_EDITS: &[(usize, usize, u8)] = &[
-    (4, 51, 0x99), (4, 52, 0xA2), (4, 53, 0x83), (4, 54, 0xA2), (4, 55, 0x83),
-    (4, 56, 0xA2), (4, 57, 0x83), (4, 58, 0xA2), (4, 59, 0x9A),
+    (4, 51, 0x99),
+    (4, 52, 0xA2),
+    (4, 53, 0x83),
+    (4, 54, 0xA2),
+    (4, 55, 0x83),
+    (4, 56, 0xA2),
+    (4, 57, 0x83),
+    (4, 58, 0xA2),
+    (4, 59, 0x9A),
 ];
 
 /// The W8 bridge approach to Bowser's castle: five spans on screen 3, row 5,
@@ -260,10 +286,7 @@ mod tests {
         // W1 (6,5) rock.
         assert_eq!(rom.read_byte(W1_HAMMER_ROCK_OFFSET), 0x51);
         // W8 (3,37) screen-2 rock.
-        assert_eq!(
-            rom.read_byte(map_tile_offset(7, 3, 37)),
-            0x51
-        );
+        assert_eq!(rom.read_byte(map_tile_offset(7, 3, 37)), 0x51);
     }
 
     #[test]

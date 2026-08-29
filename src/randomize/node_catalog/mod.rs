@@ -146,7 +146,8 @@ impl NodeCatalog {
     /// They use `world_idx = usize::MAX` and `entry_idx = usize::MAX` as
     /// sentinels (no vanilla pointer table home).
     pub(crate) fn build(rom: &Rom, include_beta_stages: bool) -> Self {
-        let mut entries = Vec::with_capacity(340 + if include_beta_stages { BETA_LEVELS.len() } else { 0 });
+        let mut entries =
+            Vec::with_capacity(340 + if include_beta_stages { BETA_LEVELS.len() } else { 0 });
 
         // First pass: classify all entries (names assigned in second pass)
         for wi in 0..8 {

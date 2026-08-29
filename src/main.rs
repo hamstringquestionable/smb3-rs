@@ -4,9 +4,8 @@ use std::path::PathBuf;
 use std::process;
 
 use smb3_rs::{
-    item_display_name, item_id, EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri,
-    WildChaser, ITEMS,
-    STARTING_LIVES_VALUES,
+    EnemyMode, FireFlowerMode, ITEMS, Options, PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser,
+    item_display_name, item_id,
 };
 
 /// Human-readable label for a tri-state flag in the run summary.
@@ -43,11 +42,7 @@ fn parse_starting_lives(s: &str) -> Result<u8, String> {
     } else {
         Err(format!(
             "must be one of {} (got {})",
-            STARTING_LIVES_VALUES
-                .iter()
-                .map(u8::to_string)
-                .collect::<Vec<_>>()
-                .join(", "),
+            STARTING_LIVES_VALUES.iter().map(u8::to_string).collect::<Vec<_>>().join(", "),
             n
         ))
     }
@@ -459,14 +454,18 @@ struct Cli {
 /// `--flags` key, which overrides everything except the cosmetic overlays).
 /// Exits with an error message on invalid starting items or flag key.
 fn build_options(cli: &Cli) -> Options {
-    let starting_items: Vec<u8> = cli.starting_items.iter().map(|name| {
-        item_id(name).unwrap_or_else(|| {
-            eprintln!("Unknown item: {name}");
-            let valid: Vec<&str> = ITEMS.iter().map(|&(n, _, _)| n).collect();
-            eprintln!("Valid: {}", valid.join(", "));
-            process::exit(1);
+    let starting_items: Vec<u8> = cli
+        .starting_items
+        .iter()
+        .map(|name| {
+            item_id(name).unwrap_or_else(|| {
+                eprintln!("Unknown item: {name}");
+                let valid: Vec<&str> = ITEMS.iter().map(|&(n, _, _)| n).collect();
+                eprintln!("Valid: {}", valid.join(", "));
+                process::exit(1);
+            })
         })
-    }).collect();
+        .collect();
     if starting_items.len() > 3 {
         eprintln!("At most 3 starting items allowed (got {})", starting_items.len());
         process::exit(1);
@@ -574,11 +573,14 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  Seed: {seed}");
     eprintln!("  Flags: {}", options.to_flag_key());
     eprintln!("  Powerups: {}", if options.powerups { "on" } else { "off" });
-    eprintln!("  Player colors: {}", match (options.palettes, options.player_color) {
-        (false, _)      => "vanilla".to_string(),
-        (true, None)    => "random".to_string(),
-        (true, Some(c)) => format!("${c:02X}"),
-    });
+    eprintln!(
+        "  Player colors: {}",
+        match (options.palettes, options.player_color) {
+            (false, _) => "vanilla".to_string(),
+            (true, None) => "random".to_string(),
+            (true, Some(c)) => format!("${c:02X}"),
+        }
+    );
     eprintln!("  World colors: {}", if options.palette_themed { "themed" } else { "vanilla" });
     eprintln!("  Remove flashing: {}", if options.remove_flashing { "on" } else { "off" });
     eprintln!("  Enemies:  {}", if options.any_enemies_active() { "on" } else { "off" });
@@ -600,21 +602,30 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  More hammer rocks: {}", tri_str(options.more_hammer_rocks));
     eprintln!("  8s are Wild: {}", tri_str(options.eights_are_wild));
     eprintln!("  Antechamber shuffle: {}", tri_str(options.antechamber_shuffle));
-    eprintln!("  Random fire flower: {}", match options.fire_flower {
-        FireFlowerMode::Off => "off",
-        FireFlowerMode::On => "on",
-        FireFlowerMode::Wild => "wild",
-    });
-    eprintln!("  Piranha shuffle: {}", match options.piranha_shuffle {
-        PiranhaMode::Off => "off",
-        PiranhaMode::On => "on",
-        PiranhaMode::Wild => "wild",
-    });
-    eprintln!("  Wild injections: {}", if options.wild_injections.is_empty() {
-        "off".to_string()
-    } else {
-        options.wild_injections.iter().map(|c| c.name()).collect::<Vec<_>>().join(" + ")
-    });
+    eprintln!(
+        "  Random fire flower: {}",
+        match options.fire_flower {
+            FireFlowerMode::Off => "off",
+            FireFlowerMode::On => "on",
+            FireFlowerMode::Wild => "wild",
+        }
+    );
+    eprintln!(
+        "  Piranha shuffle: {}",
+        match options.piranha_shuffle {
+            PiranhaMode::Off => "off",
+            PiranhaMode::On => "on",
+            PiranhaMode::Wild => "wild",
+        }
+    );
+    eprintln!(
+        "  Wild injections: {}",
+        if options.wild_injections.is_empty() {
+            "off".to_string()
+        } else {
+            options.wild_injections.iter().map(|c| c.name()).collect::<Vec<_>>().join(" + ")
+        }
+    );
     if !options.starting_items.is_empty() {
         let item_names: Vec<&str> =
             options.starting_items.iter().map(|&id| item_display_name(id)).collect();
@@ -656,10 +667,8 @@ fn main() {
     let options = build_options(&cli);
 
     let ext = if cli.patched_rom { "nes" } else { "ips" };
-    let output_path = cli
-        .output
-        .clone()
-        .unwrap_or_else(|| PathBuf::from(format!("smb3-rs_{seed}.{ext}")));
+    let output_path =
+        cli.output.clone().unwrap_or_else(|| PathBuf::from(format!("smb3-rs_{seed}.{ext}")));
 
     print_summary(&options, seed, &output_path);
 
@@ -674,7 +683,9 @@ fn main() {
         match smb3_rs::ips::apply_ips_patch(&rom_data, TOAD_IPS) {
             Ok(patched) => {
                 eprintln!("  Sprite swap: Super Toad (Blue) by JosueCr4ft");
-                eprintln!("               https://mfgg.net/index.php?act=resdb&param=02&c=7&id=38435");
+                eprintln!(
+                    "               https://mfgg.net/index.php?act=resdb&param=02&c=7&id=38435"
+                );
                 patched
             }
             Err(e) => {

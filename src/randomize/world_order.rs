@@ -1,8 +1,8 @@
 use rand::Rng;
 use rand::seq::SliceRandom;
 
-use crate::rom::Rom;
 use super::rom_data::{FS_WORLD_ORDER, WORLD_ORDER_CPU};
+use crate::rom::Rom;
 
 /// File offset of the `INC World_Num; JMP $84A0` instruction (6 bytes).
 /// Original bytes: EE 27 07 4C A0 84
@@ -84,6 +84,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8>
     // Patch the original INC World_Num site to JMP to our routine
     let routine_lo = (WORLD_ORDER_CPU & 0xFF) as u8;
     let routine_hi = ((WORLD_ORDER_CPU >> 8) & 0xFF) as u8;
+    #[rustfmt::skip]
     rom.write_range(WORLD_INC_OFFSET, &[
         0x4C, routine_lo, routine_hi, // JMP $9F10
         0xEA, 0xEA, 0xEA,            // NOP NOP NOP (pad)
@@ -92,6 +93,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8>
     // Write the lookup routine into free space
     let table_lo = (TABLE_CPU & 0xFF) as u8;
     let table_hi = ((TABLE_CPU >> 8) & 0xFF) as u8;
+    #[rustfmt::skip]
     let routine: Vec<u8> = vec![
         0xAE, 0x27, 0x07,             // LDX World_Num ($0727)
         0xBD, table_lo, table_hi,      // LDA table,X
@@ -118,6 +120,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8>
 
     // Patch map screen display (PRG010): replace LDY/INY/TYA/ORA/STA with table lookup.
     // Original 10 bytes: AC 27 07 C8 98 09 F0 8D 04 03
+    #[rustfmt::skip]
     rom.write_range(MAP_DISPLAY_OFFSET, &[
         0xAE, 0x27, 0x07,             // LDX $0727  (World_Num)
         0xBD, disp_lo, disp_hi,       // LDA $9F24,X (display tile)
@@ -127,6 +130,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8>
 
     // Patch status bar display (PRG026): replace LDX/INX/TXA/ORA/STA with table lookup.
     // Original 10 bytes: AE 27 07 E8 8A 09 F0 99 04 03
+    #[rustfmt::skip]
     rom.write_range(STATUS_DISPLAY_OFFSET, &[
         0xAE, 0x27, 0x07,             // LDX $0727  (World_Num)
         0xBD, disp_lo, disp_hi,       // LDA $9F24,X (display tile)
@@ -140,8 +144,8 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand_chacha::ChaCha8Rng;
     use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
 
     fn make_test_rom() -> Rom {
         let mut data = vec![0u8; 393232];
@@ -151,8 +155,7 @@ mod tests {
         data[6] = 0x40;
         // Write original world-init: LDA #$00 operand and STA $0160
         data[WORLD_INIT_OPERAND] = 0x00;
-        data[DEBUG_FLAG_STA_OFFSET..DEBUG_FLAG_STA_OFFSET + 3]
-            .copy_from_slice(&[0x8D, 0x60, 0x01]);
+        data[DEBUG_FLAG_STA_OFFSET..DEBUG_FLAG_STA_OFFSET + 3].copy_from_slice(&[0x8D, 0x60, 0x01]);
         // Write original INC World_Num bytes
         data[WORLD_INC_OFFSET..WORLD_INC_OFFSET + 6]
             .copy_from_slice(&[0xEE, 0x27, 0x07, 0x4C, 0xA0, 0x84]);
@@ -250,10 +253,7 @@ mod tests {
         randomize(&mut rom1, &mut rng1, 7);
         randomize(&mut rom2, &mut rng2, 7);
 
-        assert_eq!(
-            rom1.read_range(FS_WORLD_ORDER, 20),
-            rom2.read_range(FS_WORLD_ORDER, 20),
-        );
+        assert_eq!(rom1.read_range(FS_WORLD_ORDER, 20), rom2.read_range(FS_WORLD_ORDER, 20),);
     }
 
     #[test]
@@ -302,12 +302,14 @@ mod tests {
     fn test_display_patches_applied() {
         let mut rom = make_test_rom();
         // Write original bytes at display sites so we can verify they get patched
-        rom.write_range(MAP_DISPLAY_OFFSET, &[
-            0xAC, 0x27, 0x07, 0xC8, 0x98, 0x09, 0xF0, 0x8D, 0x04, 0x03,
-        ]);
-        rom.write_range(STATUS_DISPLAY_OFFSET, &[
-            0xAE, 0x27, 0x07, 0xE8, 0x8A, 0x09, 0xF0, 0x99, 0x04, 0x03,
-        ]);
+        rom.write_range(
+            MAP_DISPLAY_OFFSET,
+            &[0xAC, 0x27, 0x07, 0xC8, 0x98, 0x09, 0xF0, 0x8D, 0x04, 0x03],
+        );
+        rom.write_range(
+            STATUS_DISPLAY_OFFSET,
+            &[0xAE, 0x27, 0x07, 0xE8, 0x8A, 0x09, 0xF0, 0x99, 0x04, 0x03],
+        );
 
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         randomize(&mut rom, &mut rng, 7);
@@ -315,16 +317,16 @@ mod tests {
         // Map display: should now use LDX $0727; LDA $9F24,X; STA $0304; NOP
         let map_patch = rom.read_range(MAP_DISPLAY_OFFSET, 10);
         assert_eq!(&map_patch[0..3], &[0xAE, 0x27, 0x07]); // LDX $0727
-        assert_eq!(map_patch[3], 0xBD);                      // LDA abs,X
-        assert_eq!(&map_patch[6..9], &[0x8D, 0x04, 0x03]);  // STA $0304
-        assert_eq!(map_patch[9], 0xEA);                      // NOP
+        assert_eq!(map_patch[3], 0xBD); // LDA abs,X
+        assert_eq!(&map_patch[6..9], &[0x8D, 0x04, 0x03]); // STA $0304
+        assert_eq!(map_patch[9], 0xEA); // NOP
 
         // Status bar: should now use LDX $0727; LDA $9F24,X; STA $0304,Y; NOP
         let status_patch = rom.read_range(STATUS_DISPLAY_OFFSET, 10);
         assert_eq!(&status_patch[0..3], &[0xAE, 0x27, 0x07]); // LDX $0727
-        assert_eq!(status_patch[3], 0xBD);                      // LDA abs,X
-        assert_eq!(&status_patch[6..9], &[0x99, 0x04, 0x03]);  // STA $0304,Y
-        assert_eq!(status_patch[9], 0xEA);                      // NOP
+        assert_eq!(status_patch[3], 0xBD); // LDA abs,X
+        assert_eq!(&status_patch[6..9], &[0x99, 0x04, 0x03]); // STA $0304,Y
+        assert_eq!(status_patch[9], 0xEA); // NOP
     }
 
     #[test]

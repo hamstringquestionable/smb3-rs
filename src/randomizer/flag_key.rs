@@ -110,13 +110,36 @@ pub(super) fn base32_decode(s: &str) -> Result<Vec<u8>, String> {
         let val = match ch.to_ascii_uppercase() {
             '0' | 'O' => 0,
             '1' | 'I' | 'L' => 1,
-            '2' => 2, '3' => 3, '4' => 4, '5' => 5, '6' => 6, '7' => 7,
-            '8' => 8, '9' => 9,
-            'A' => 10, 'B' => 11, 'C' => 12, 'D' => 13, 'E' => 14, 'F' => 15,
-            'G' => 16, 'H' => 17, 'J' => 18, 'K' => 19,
-            'M' => 20, 'N' => 21, 'P' => 22, 'Q' => 23,
-            'R' => 24, 'S' => 25, 'T' => 26, 'V' => 27,
-            'W' => 28, 'X' => 29, 'Y' => 30, 'Z' => 31,
+            '2' => 2,
+            '3' => 3,
+            '4' => 4,
+            '5' => 5,
+            '6' => 6,
+            '7' => 7,
+            '8' => 8,
+            '9' => 9,
+            'A' => 10,
+            'B' => 11,
+            'C' => 12,
+            'D' => 13,
+            'E' => 14,
+            'F' => 15,
+            'G' => 16,
+            'H' => 17,
+            'J' => 18,
+            'K' => 19,
+            'M' => 20,
+            'N' => 21,
+            'P' => 22,
+            'Q' => 23,
+            'R' => 24,
+            'S' => 25,
+            'T' => 26,
+            'V' => 27,
+            'W' => 28,
+            'X' => 29,
+            'Y' => 30,
+            'Z' => 31,
             c => return Err(format!("Invalid character in flag key: '{c}'")),
         };
         buf = (buf << 5) | val as u64;
@@ -227,8 +250,7 @@ fn legacy_version_of(stripped: &str) -> Option<u8> {
     // `first()` rather than `bytes[0]`: an empty key decodes to no bytes, and
     // `then_some` would evaluate the index either way.
     let version = *bytes.first()?;
-    let is_legacy =
-        bytes.len() == LEGACY_KEY_BYTES && (1..=LAST_LEGACY_VERSION).contains(&version);
+    let is_legacy = bytes.len() == LEGACY_KEY_BYTES && (1..=LAST_LEGACY_VERSION).contains(&version);
     is_legacy.then_some(version)
 }
 
@@ -257,8 +279,7 @@ pub(super) const NOT_ENCODED: &[&str] = &[
 /// `inFlagKey` markings can be checked against what Rust actually persists
 /// instead of being documentation nobody verifies.
 pub fn flag_key_fields() -> Vec<String> {
-    let value = serde_json::to_value(Options::default())
-        .expect("Options is always serializable");
+    let value = serde_json::to_value(Options::default()).expect("Options is always serializable");
     value
         .as_object()
         .expect("Options serializes to an object")
@@ -394,8 +415,10 @@ mod payload {
         // `bytes * 8`, nothing more.
         //
         // Two fields because the crate's widths stop at B128.
-        #[skip] __: B128,
-        #[skip] __: B17,
+        #[skip]
+        __: B128,
+        #[skip]
+        __: B17,
     }
 }
 
@@ -594,7 +617,10 @@ impl Options {
             // 0 is unreachable from the encoder (it clamps to 1–7) but reachable
             // from a corrupt or newer key; take the default rather than a world
             // count the builder can't satisfy.
-            world_count: match f.world_count() { 0 => default_world_count(), n => n },
+            world_count: match f.world_count() {
+                0 => default_world_count(),
+                n => n,
+            },
             starting_items: items,
             // Not encoded: fixed to the values a shared key should never
             // override. The web app skips these fields when applying a decoded
@@ -664,12 +690,17 @@ impl Options {
 
     /// Returns true if any enemy class is enabled (not Off).
     pub fn any_enemies_active(&self) -> bool {
-        self.ground != EnemyMode::Off || self.shell != EnemyMode::Off
+        self.ground != EnemyMode::Off
+            || self.shell != EnemyMode::Off
             || self.flying != EnemyMode::Off
             || self.piranhas != EnemyMode::Off
-            || self.ghosts != EnemyMode::Off || self.thwomps != EnemyMode::Off
-            || self.rotodiscs != EnemyMode::Off || self.cannons != EnemyMode::Off
-            || self.water != EnemyMode::Off || self.bros != EnemyMode::Off
-            || self.hb_encounters != EnemyMode::Off || !self.wild_injections.is_empty()
+            || self.ghosts != EnemyMode::Off
+            || self.thwomps != EnemyMode::Off
+            || self.rotodiscs != EnemyMode::Off
+            || self.cannons != EnemyMode::Off
+            || self.water != EnemyMode::Off
+            || self.bros != EnemyMode::Off
+            || self.hb_encounters != EnemyMode::Off
+            || !self.wild_injections.is_empty()
     }
 }

@@ -13,10 +13,10 @@
 use crate::rom::Rom;
 
 mod access;
-mod free_space;
 /// Structural checks for hand-assembled 6502 patches (test-only).
 #[cfg(test)]
 pub(crate) mod asm;
+mod free_space;
 mod grid;
 mod tables;
 mod tiles;
@@ -33,7 +33,7 @@ pub use access::{ENEMY_DATA_END, ENEMY_DATA_START};
 // Part of the lib's public API: the CLI's `--write-log` dump audits free space
 // against the run it just produced.
 pub use free_space::{
-    audit_free_space, format_alloc_audit, format_bank_budget, format_free_space_report,
-    format_gaps_fitting, free_space_map, gaps_fitting, prg_bank_of, AllocUsage, BankFree, Gap,
-    FreeSpaceAlloc, FREE_SPACE_ALLOCATIONS,
+    AllocUsage, BankFree, FREE_SPACE_ALLOCATIONS, FreeSpaceAlloc, Gap, audit_free_space,
+    format_alloc_audit, format_bank_budget, format_free_space_report, format_gaps_fitting,
+    free_space_map, gaps_fitting, prg_bank_of,
 };

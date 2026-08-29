@@ -47,8 +47,8 @@ pub(super) fn find_target(grid: &Grid, world_idx: usize) -> Option<(usize, usize
 /// its lock tile and its FX pattern together rather than one of the two.
 pub(super) fn fx_patterns_for(tile: u8) -> [u8; 4] {
     match tile {
-        rom_data::BRIDGE_TILE => [0xD4, 0xD6, 0xD5, 0xD7],   // water bridge
+        rom_data::BRIDGE_TILE => [0xD4, 0xD6, 0xD5, 0xD7], // water bridge
         t if rom_data::is_vertical_path(t) => [0xFE, 0xC0, 0xFE, 0xC0], // lock (vertical)
-        _ => [0xFE, 0xFE, 0xE1, 0xE1],                        // bridge gap / sky
+        _ => [0xFE, 0xFE, 0xE1, 0xE1],                     // bridge gap / sky
     }
 }

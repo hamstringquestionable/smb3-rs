@@ -16,7 +16,7 @@ use crate::randomize::node_catalog::{EntryView, NodeCatalog};
 use crate::randomize::rom_data::{self, LevelEntry, WORLDS};
 use crate::randomize::world_order::WORLD_INIT_OPERAND;
 use crate::rom::Rom;
-use crate::{randomize_rom, Options};
+use crate::{Options, randomize_rom};
 
 /// Bytes per map screen: 9 rows × 16 columns, stored screen-major.
 const SCREEN_BYTES: usize = 144;
@@ -76,7 +76,7 @@ impl TileClass {
                 return Err(format!(
                     "unknown tile class {s:?} (lock, gap, fortress, level, pipe, \
                      toadhouse, airship, bowser, or tile:0xNN)"
-                ))
+                ));
             }
         })
     }
@@ -143,11 +143,8 @@ impl Requirement {
             None => (loc, None),
         };
 
-        let world_num: usize = world
-            .trim()
-            .trim_start_matches(['w', 'W'])
-            .parse()
-            .map_err(|_| bad())?;
+        let world_num: usize =
+            world.trim().trim_start_matches(['w', 'W']).parse().map_err(|_| bad())?;
         if !(1..=8).contains(&world_num) {
             return Err(format!("world must be 1-8 in --require {spec:?}"));
         }
@@ -155,11 +152,8 @@ impl Requirement {
 
         let screen = match screen {
             Some(s) => {
-                let n: usize = s
-                    .trim()
-                    .trim_start_matches(['s', 'S'])
-                    .parse()
-                    .map_err(|_| bad())?;
+                let n: usize =
+                    s.trim().trim_start_matches(['s', 'S']).parse().map_err(|_| bad())?;
                 let screens = rom_data::MAP_TILE_GRIDS[world_idx].screens;
                 if n >= screens {
                     return Err(format!(
@@ -232,11 +226,8 @@ pub fn search_seed(
         let rom = randomize_rom(vanilla, seed, options, None)?;
         let hits = req.find(&rom);
         if hits.len() >= req.min_count {
-            let mut report = vec![format!(
-                "seed {seed}: {} — {} match(es)",
-                req.describe(),
-                hits.len()
-            )];
+            let mut report =
+                vec![format!("seed {seed}: {} — {} match(es)", req.describe(), hits.len())];
             for (r, c) in &hits {
                 report.push(format!("  {} at W{} ({r},{c})", req.what.label(), req.world_idx + 1));
             }
@@ -254,17 +245,17 @@ pub fn search_seed(
 /// clear, which is a different code path. Printing the surroundings makes the
 /// match checkable instead of trusted.
 fn census(rom: &Rom, req: &Requirement) -> Vec<String> {
-    let classes = [
-        TileClass::Fortress,
-        TileClass::Lock,
-        TileClass::Gap,
-        TileClass::Level,
-        TileClass::Pipe,
-    ];
+    let classes =
+        [TileClass::Fortress, TileClass::Lock, TileClass::Gap, TileClass::Level, TileClass::Pipe];
     let counts: Vec<String> = classes
         .iter()
         .map(|c| {
-            let probe = Requirement { what: *c, min_count: 1, screen: req.screen, world_idx: req.world_idx };
+            let probe = Requirement {
+                what: *c,
+                min_count: 1,
+                screen: req.screen,
+                world_idx: req.world_idx,
+            };
             (c, probe.find(rom).len())
         })
         .filter(|(_, n)| *n > 0)
@@ -432,9 +423,9 @@ fn resolve(catalog: &[EntryView], name: &str) -> Result<LevelEntry, String> {
         .find(|e| norm(&e.name) == want)
         .ok_or_else(|| format!("unknown level {name:?} (try --list)"))?;
 
-    hit.level_entry.clone().ok_or_else(|| {
-        format!("{name:?} is a {} and has no level data to place", hit.kind_label)
-    })
+    hit.level_entry
+        .clone()
+        .ok_or_else(|| format!("{name:?} is a {} and has no level data to place", hit.kind_label))
 }
 
 /// Numbered-level slots in a world, ordered by level number.
@@ -446,9 +437,7 @@ fn numbered_slots(rom: &Rom, world_idx: usize, include_beta: bool) -> Vec<(u8, u
         .entry_views()
         .into_iter()
         .filter(|e| {
-            e.world_idx == world_idx
-                && e.is_numbered_level
-                && rom_data::is_numbered_level(e.tile)
+            e.world_idx == world_idx && e.is_numbered_level && rom_data::is_numbered_level(e.tile)
         })
         .map(|e| (e.tile - 2, e.entry_idx))
         .collect();
@@ -471,19 +460,19 @@ fn numbered_slots(rom: &Rom, world_idx: usize, include_beta: bool) -> Vec<(u8, u
 /// tileset's command sizes; the Y index is into `LevelJct_YLHStarts` (PRG026):
 /// 0 = row 0, 4 = row 15, 5 = row 20, 6 = row 23.
 const UNUSED5_ARRIVALS: [(u8, u8); 8] = [
-    (2, 0),  // screen 0: ceiling pipe col 2, rows 0-1
-    (1, 4),  // screen 1: ceiling pipe col 1, rows 12-16
-    (2, 0),  // screen 2: ceiling pipe col 2, rows 0-1 (drift right at rows 8-9
-             //           to reach the block; the shaft drops past it otherwise)
-    (1, 5),  // screen 3: ceiling pipe col 1, rows 16-21
-    (2, 5),  // screen 4: ceiling pipe col 2, rows 16-21
-    (7, 0),  // screen 5: ceiling pipe col 7, rows 0-2
+    (2, 0), // screen 0: ceiling pipe col 2, rows 0-1
+    (1, 4), // screen 1: ceiling pipe col 1, rows 12-16
+    (2, 0), // screen 2: ceiling pipe col 2, rows 0-1 (drift right at rows 8-9
+    //           to reach the block; the shaft drops past it otherwise)
+    (1, 5), // screen 3: ceiling pipe col 1, rows 16-21
+    (2, 5), // screen 4: ceiling pipe col 2, rows 16-21
+    (7, 0), // screen 5: ceiling pipe col 7, rows 0-2
     // No ceiling pipe on these two, so there is no mouth to drop out of and
     // the aim was found by playtesting (2026-08-28). Both were originally Y
     // index 6 — row 23, the floor pipe's own row — which put the player inside
     // the pipe on screen 6 and past the end of the floor on screen 7.
-    (3, 5),  // screen 6: col 3 row 20, beside the floor pipe at col 1
-    (2, 3),  // screen 7: col 2 row 11, falling into the floor pipe
+    (3, 5), // screen 6: col 3 row 20, beside the floor pipe at col 1
+    (2, 3), // screen 7: col 2 row 11, falling into the floor pipe
 ];
 
 /// Three-byte commands in Unused Level 5 we can overwrite with a return
@@ -544,17 +533,11 @@ fn big_q_unused5(
         off += 3;
     }
 
-    let &(scr, block_col, block_row, id) = rooms
-        .iter()
-        .find(|(s, ..)| *s == screen)
-        .ok_or_else(|| {
+    let &(scr, block_col, block_row, id) =
+        rooms.iter().find(|(s, ..)| *s == screen).ok_or_else(|| {
             format!(
                 "Unused Level 5 has no Big [?] room on screen {screen} (rooms: {})",
-                rooms
-                    .iter()
-                    .map(|(s, ..)| s.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                rooms.iter().map(|(s, ..)| s.to_string()).collect::<Vec<_>>().join(", ")
             )
         })?;
     // `aim` overrides the table so a bad landing can be re-aimed without a
@@ -690,7 +673,11 @@ fn open_map(rom: &mut Rom, remove_locks: bool, remove_gaps: bool) -> usize {
 /// bytes, which corrupts the cross-screen lock routine on any randomized ROM.
 /// Ordering can't fix it — the two genuinely want the same bytes — so the only
 /// honest options are to refuse or to drop the patch.
-fn collisions(rom: &Rom, patch: &[u8], range: Option<(usize, usize)>) -> Result<Vec<String>, String> {
+fn collisions(
+    rom: &Rom,
+    patch: &[u8],
+    range: Option<(usize, usize)>,
+) -> Result<Vec<String>, String> {
     let mut found = Vec::new();
     for rec in ips::parse_ips_records(patch)? {
         if range.is_some_and(|(lo, hi)| !(lo..hi).contains(&rec.offset)) {
@@ -728,9 +715,7 @@ fn apply_movement(
             continue;
         }
         if skip_conflicts
-            && !rom
-                .writes_in_range(rec.offset, rec.offset + rec.payload.len())
-                .is_empty()
+            && !rom.writes_in_range(rec.offset, rec.offset + rec.payload.len()).is_empty()
         {
             skipped += 1;
             continue;
@@ -859,20 +844,13 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         for placement in &spec.placements {
             let entry = resolve(&catalog, &placement.level)?;
             let (num, entry_idx) = match placement.slot {
-                Some(want) => *slots
-                    .iter()
-                    .find(|(num, _)| *num == want)
-                    .ok_or_else(|| {
-                        format!(
-                            "W{} has no numbered tile {want} (available: {})",
-                            world_idx + 1,
-                            slots
-                                .iter()
-                                .map(|(n, _)| n.to_string())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        )
-                    })?,
+                Some(want) => *slots.iter().find(|(num, _)| *num == want).ok_or_else(|| {
+                    format!(
+                        "W{} has no numbered tile {want} (available: {})",
+                        world_idx + 1,
+                        slots.iter().map(|(n, _)| n.to_string()).collect::<Vec<_>>().join(", ")
+                    )
+                })?,
                 None => {
                     let slot = *slots.get(next_free).ok_or_else(|| {
                         format!(
@@ -886,11 +864,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
                 }
             };
             rom_data::write_entry(&mut rom, world, entry_idx, &entry);
-            report.push(format!(
-                "placed {} on W{}-{num}",
-                placement.level,
-                world_idx + 1
-            ));
+            report.push(format!("placed {} on W{}-{num}", placement.level, world_idx + 1));
         }
     }
 
@@ -928,9 +902,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
             }
             let (applied, written, skipped) =
                 apply_movement(&mut rom, patch, spec.walk_skip_conflicts)?;
-            report.push(format!(
-                "open movement: {applied} records ({written} bytes)"
-            ));
+            report.push(format!("open movement: {applied} records ({written} bytes)"));
             if skipped > 0 {
                 report.push(format!(
                     "  WARNING: {skipped} record(s) skipped — they overlap randomizer \
@@ -968,11 +940,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         crate::randomize::qol::write_starting_items(&mut rom, 0, spec.starting_lives, &items);
         report.push(format!(
             "inventory: {} ({} lives)",
-            items
-                .iter()
-                .map(|&id| crate::item_display_name(id))
-                .collect::<Vec<_>>()
-                .join(", "),
+            items.iter().map(|&id| crate::item_display_name(id)).collect::<Vec<_>>().join(", "),
             spec.starting_lives
         ));
         if spec.starting_items.len() > 3 {
@@ -1142,11 +1110,9 @@ mod tests {
         ) + 5;
         assert_eq!(src.read_byte(hdr) & 0x07, rom_data::UNUSED5_VANILLA_BGPAL);
 
-        let built = build(
-            &van,
-            &TestRomSpec { big_q_unused5: Some(5), big_q_palette: Some(4), ..spec() },
-        )
-        .unwrap();
+        let built =
+            build(&van, &TestRomSpec { big_q_unused5: Some(5), big_q_palette: Some(4), ..spec() })
+                .unwrap();
         let out = Rom::from_bytes_lax(&built.bytes, true).unwrap();
 
         for room in 0..rom_data::BIG_Q_AREA_COUNT {
@@ -1363,11 +1329,9 @@ mod tests {
             return;
         };
 
-        let built = build(
-            &van,
-            &TestRomSpec { hammer_breaks_locks: true, remove_locks: false, ..spec() },
-        )
-        .unwrap();
+        let built =
+            build(&van, &TestRomSpec { hammer_breaks_locks: true, remove_locks: false, ..spec() })
+                .unwrap();
 
         let out = Rom::from_bytes_lax(&built.bytes, true).unwrap();
         let locks: Vec<u8> = rom_data::LOCK_TILES.to_vec();
@@ -1404,12 +1368,12 @@ mod tests {
     #[test]
     fn requirement_rejects_nonsense_rather_than_guessing() {
         for bad in [
-            "lock",             // no world
-            "lock@w9:s0",       // world out of range
-            "lock@w1:s7",       // W1 has 1 screen
-            "banana@w1",        // unknown class
-            "lock@w1>=0",       // pointless count
-            "tile:zz@w1",       // bad hex
+            "lock",       // no world
+            "lock@w9:s0", // world out of range
+            "lock@w1:s7", // W1 has 1 screen
+            "banana@w1",  // unknown class
+            "lock@w1>=0", // pointless count
+            "tile:zz@w1", // bad hex
         ] {
             assert!(Requirement::parse(bad).is_err(), "should have rejected {bad:?}");
         }

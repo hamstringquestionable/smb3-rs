@@ -5,7 +5,6 @@ use crate::rom::Rom;
 
 use super::rom_data::LEVEL_DATA_REGIONS;
 
-
 /// Level generator command encoding:
 ///   byte0 (Temp_Var15): bits 7-5 = generator group, bits 4-0 = Y position
 ///   byte1 (Temp_Var16): bits 7-4 = screen, bits 3-0 = X position
@@ -88,11 +87,7 @@ const AIRSHIP_QBLOCK_OFFSETS: &[usize] = &[
 fn qblock_pool(file_offset: usize, no_airship_stars: bool) -> &'static [u8] {
     let exclude_star = FLOWER_OR_LEAF_QBLOCK_OFFSETS.contains(&file_offset)
         || (no_airship_stars && AIRSHIP_QBLOCK_OFFSETS.contains(&file_offset));
-    if exclude_star {
-        QBLOCK_SHAPES_NO_STAR
-    } else {
-        QBLOCK_SHAPES
-    }
+    if exclude_star { QBLOCK_SHAPES_NO_STAR } else { QBLOCK_SHAPES }
 }
 
 /// Randomize per-level powerup block types by scanning all level data regions
@@ -184,18 +179,15 @@ mod tests {
             // leaf Q-block: byte0=0x25 (grp=1, y=5), byte1=0x2B, byte2=0x01
             0x25, 0x2B, 0x01,
             // star brick: byte0=0x28 (grp=1, y=8), byte1=0x3C, byte2=0x08
-            0x28, 0x3C, 0x08,
-            // non-powerup generator (grp=3): should NOT be touched
-            0x60, 0x0E, 0x1F,
-            // junction (grp=7): should NOT be touched
+            0x28, 0x3C, 0x08, // non-powerup generator (grp=3): should NOT be touched
+            0x60, 0x0E, 0x1F, // junction (grp=7): should NOT be touched
             0xE0, 0x52, 0x20,
             // variable-size grp=1 (byte2 upper nibble != 0): should NOT be touched
             0x37, 0x1C, 0x11,
             // wood block leaf: byte0=0x57 (grp=2, y=7, hi=1), byte1=0x28, byte2=0x05
             0x57, 0x28, 0x05,
             // note block star: byte0=0x46 (grp=2, y=6), byte1=0x37, byte2=0x03
-            0x46, 0x37, 0x03,
-            0xFF, // terminator
+            0x46, 0x37, 0x03, 0xFF, // terminator
         ];
         data[start..start + level.len()].copy_from_slice(level);
 
@@ -276,7 +268,8 @@ mod tests {
             let start_bank = (region.start - INES_HEADER) / BANK_SIZE;
             let end_bank = (region.end - 1 - INES_HEADER) / BANK_SIZE;
             assert_eq!(
-                start_bank, end_bank,
+                start_bank,
+                end_bank,
                 "region 0x{:05X}-0x{:05X} crosses PRG bank boundary 0x{:05X}",
                 region.start,
                 region.end,
@@ -337,11 +330,9 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             // GroundRun: byte0=0x1A (grp=0, y=10, hi=1), byte1=0x00, byte2=0xC0
             // dispatch = 0*15 + (0xC0>>4) - 1 = 11 → GroundRun → 4 bytes
-            0x1A, 0x00, 0xC0,
-            0x26, // extra byte (ground width)
+            0x1A, 0x00, 0xC0, 0x26, // extra byte (ground width)
             // QBLOCKLEAF: byte0=0x33 (grp=1, y=3, hi=1), byte1=0x0F, byte2=0x01
-            0x33, 0x0F, 0x01,
-            0xFF, // terminator
+            0x33, 0x0F, 0x01, 0xFF, // terminator
         ];
         data[start..start + level.len()].copy_from_slice(level);
 
@@ -395,10 +386,7 @@ mod tests {
 
         for region in LEVEL_DATA_REGIONS {
             let len = region.end - region.start;
-            assert_eq!(
-                rom1.read_range(region.start, len),
-                rom2.read_range(region.start, len),
-            );
+            assert_eq!(rom1.read_range(region.start, len), rom2.read_range(region.start, len),);
         }
     }
 }
