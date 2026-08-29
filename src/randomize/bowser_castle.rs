@@ -16,8 +16,8 @@
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
-use crate::rom::Rom;
 use super::segment_writer::{self, SegmentEntry, SegmentSpec, SortMode};
+use crate::rom::Rom;
 
 /// File offset of the segment's page/header byte (entries start at +1).
 const SEG_OFFSET: usize = 0xD61B;
@@ -57,7 +57,7 @@ const MIN_X_GAP: u8 = 2;
 /// can't be reacted to. Sit a little under vanilla to keep some variance
 /// without re-creating that no-win spawn.
 const SEG_X_MIN: u8 = 0x55;
-const SEG_X_MAX: u8 = 0xEF;  // a few past last vanilla fireball at 0xE5
+const SEG_X_MAX: u8 = 0xEF; // a few past last vanilla fireball at 0xE5
 
 /// Vanilla fixed entries (DryBones + Thwomp) — hard-coded so the composer
 /// produces the same 14-entry segment regardless of what bytes the input
@@ -75,16 +75,14 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
 
     // 1. Lasers: pick 2 distinct positions from the 9-pool.
     let picks: Vec<&(u8, u8)> = STATUE_POOL.choose_multiple(rng, LASER_COUNT).collect();
-    let lasers: Vec<SegmentEntry> = picks.into_iter()
-        .map(|&(x, y)| SegmentEntry { obj_id: LASER, x, y })
-        .collect();
+    let lasers: Vec<SegmentEntry> =
+        picks.into_iter().map(|&(x, y)| SegmentEntry { obj_id: LASER, x, y }).collect();
 
     // 2. Fireballs: greedy constraint-driven placement. The pool of
     //    anchors grows as fireballs are placed so each new fireball
     //    respects MIN_X_GAP to every prior entry.
-    let mut anchors: Vec<u8> = FIXED_ENTRIES.iter().map(|e| e.x)
-        .chain(lasers.iter().map(|e| e.x))
-        .collect();
+    let mut anchors: Vec<u8> =
+        FIXED_ENTRIES.iter().map(|e| e.x).chain(lasers.iter().map(|e| e.x)).collect();
     anchors.sort();
 
     let mut fireballs: Vec<SegmentEntry> = Vec::with_capacity(FIREBALL_COUNT);
@@ -102,13 +100,17 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
     entries.extend(lasers);
     entries.extend(fireballs);
 
-    segment_writer::write_segment(rom, &SegmentSpec {
-        file_offset: SEG_OFFSET,
-        original_count: ENTRY_COUNT,
-        entries: &entries,
-        label: Some("8-Bowser sub-area 1"),
-        sort_mode: SortMode::SortByX,
-    }).expect("bowser_castle: segment write failed");
+    segment_writer::write_segment(
+        rom,
+        &SegmentSpec {
+            file_offset: SEG_OFFSET,
+            original_count: ENTRY_COUNT,
+            entries: &entries,
+            label: Some("8-Bowser sub-area 1"),
+            sort_mode: SortMode::SortByX,
+        },
+    )
+    .expect("bowser_castle: segment write failed");
 
     rom.pop_tag();
 }
@@ -143,13 +145,15 @@ fn pick_fireball_x<R: Rng>(anchors: &[u8], rng: &mut R) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand_chacha::ChaCha8Rng;
     use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
 
     fn make_test_rom() -> Rom {
         let mut data = vec![0u8; 393232];
         data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16; data[5] = 16; data[6] = 0x40;
+        data[4] = 16;
+        data[5] = 16;
+        data[6] = 0x40;
         // Vanilla 8B sub-area 1 bytes (page byte + 14 entries).
         #[rustfmt::skip]
         let seg = &[
@@ -193,7 +197,8 @@ mod tests {
             assert_eq!(n_fireball, 9, "seed {seed}: fireball count");
 
             // Fixed entries preserve vanilla X.
-            let dry_xs: Vec<u8> = out.iter().filter(|e| e.obj_id == DRY_BONES).map(|e| e.x).collect();
+            let dry_xs: Vec<u8> =
+                out.iter().filter(|e| e.obj_id == DRY_BONES).map(|e| e.x).collect();
             assert!(dry_xs.contains(&0x04));
             assert!(dry_xs.contains(&0x0A));
             let thwomp_x = out.iter().find(|e| e.obj_id == THWOMP_SLIDE).unwrap().x;
@@ -208,14 +213,21 @@ mod tests {
 
             // Laser positions came from the pool.
             for e in out.iter().filter(|e| e.obj_id == LASER) {
-                assert!(STATUE_POOL.contains(&(e.x, e.y)),
-                        "seed {seed}: laser ({:02X},{:02X}) not in pool", e.x, e.y);
+                assert!(
+                    STATUE_POOL.contains(&(e.x, e.y)),
+                    "seed {seed}: laser ({:02X},{:02X}) not in pool",
+                    e.x,
+                    e.y
+                );
             }
 
             // Fireball Y in band.
             for e in out.iter().filter(|e| e.obj_id == FIREBALL) {
-                assert!((FIREBALL_Y_MIN..=FIREBALL_Y_MAX).contains(&e.y),
-                        "seed {seed}: fireball y={:02X} out of band", e.y);
+                assert!(
+                    (FIREBALL_Y_MIN..=FIREBALL_Y_MAX).contains(&e.y),
+                    "seed {seed}: fireball y={:02X} out of band",
+                    e.y
+                );
                 assert!(e.x >= SEG_X_MIN && e.x <= SEG_X_MAX);
             }
         }

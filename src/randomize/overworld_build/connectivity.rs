@@ -60,7 +60,8 @@ impl Phase for Connectivity {
         let islands = classify(state, &pocket, pocket_count);
 
         while state.pipe_pairs.len() < state.pipe_budget {
-            let reach = walk_reachable(&state.grid, &state.pipe_pairs, state.start, state.world_idx);
+            let reach =
+                walk_reachable(&state.grid, &state.pipe_pairs, state.start, state.world_idx);
             let blanks = blank_positions(state);
 
             let Some(island_seed) = next_island_seed(state, &reach, &blanks) else {
@@ -111,7 +112,10 @@ impl Phase for Connectivity {
             let (near, far) = if Some(rf) == row78_partner(rn) { (near, far) } else { (rn, rf) };
 
             state.add_pipe_pair(near, far);
-            actions.push(format!("pipe {near:?} <-> {far:?} (island of {} blanks)", island_candidates.len()));
+            actions.push(format!(
+                "pipe {near:?} <-> {far:?} (island of {} blanks)",
+                island_candidates.len()
+            ));
         }
 
         // Loop closer: one pair between two islands with no direct link yet
@@ -124,11 +128,8 @@ impl Phase for Connectivity {
         // (its extra pockets have no legal endpoints).
         if state.pipe_pairs.len() < state.pipe_budget && pocket_count >= 2 {
             let linked = linked_pocket_pairs(&pocket, &state.pipe_pairs);
-            let legal: Vec<Pos> = state
-                .legal_blanks()
-                .into_iter()
-                .filter(|&p| !state.near_anchor(p))
-                .collect();
+            let legal: Vec<Pos> =
+                state.legal_blanks().into_iter().filter(|&p| !state.near_anchor(p)).collect();
             let mut cands: Vec<(Pos, Pos)> = Vec::new();
             for (i, &a) in legal.iter().enumerate() {
                 let Some(&pa) = pocket.get(&a) else { continue };
@@ -202,9 +203,5 @@ fn next_island_seed(state: &WorldState, reach: &Reach, blanks: &[Pos]) -> Option
     {
         return Some(target);
     }
-    blanks
-        .iter()
-        .copied()
-        .find(|p| !reach.contains(*p) && !state.hammer_gated.contains(p))
+    blanks.iter().copied().find(|p| !reach.contains(*p) && !state.hammer_gated.contains(p))
 }
-

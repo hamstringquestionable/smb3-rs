@@ -35,12 +35,8 @@ impl Phase for HammerBroFill {
         // budget ordering (they were excluded from every earlier phase via
         // `fixed`, so no slot can already sit there; guard anyway).
         let taken: HashSet<Pos> = state.slots.iter().map(|s| s.pos).collect();
-        let pins: Vec<Pos> = state
-            .hb_sprite_pins
-            .iter()
-            .copied()
-            .filter(|p| !taken.contains(p))
-            .collect();
+        let pins: Vec<Pos> =
+            state.hb_sprite_pins.iter().copied().filter(|p| !taken.contains(p)).collect();
         for pos in &pins {
             state.slots.push(SlotAssignment {
                 pos: *pos,

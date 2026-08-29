@@ -87,14 +87,15 @@ pub(super) fn swap_tiles_above(grid: &mut Grid, world_idx: usize, catalog: &Node
     }
     // After `pick_swaps`, the Airship entry holds the OLD start position and
     // the Start entry holds the OLD airship position.
-    let Some(airship_entry) = catalog
-        .world(world_idx)
-        .find(|e| matches!(e.kind, NodeKind::Airship))
-    else { return };
-    let Some(start_entry) = catalog
-        .world(world_idx)
-        .find(|e| matches!(e.kind, NodeKind::Start))
-    else { return };
+    let Some(airship_entry) =
+        catalog.world(world_idx).find(|e| matches!(e.kind, NodeKind::Airship))
+    else {
+        return;
+    };
+    let Some(start_entry) = catalog.world(world_idx).find(|e| matches!(e.kind, NodeKind::Start))
+    else {
+        return;
+    };
     let (old_start_r, old_start_c) = airship_entry.grid_pos;
     let (old_airship_r, old_airship_c) = start_entry.grid_pos;
     if old_start_r == 0 || old_airship_r == 0 {
@@ -128,8 +129,8 @@ pub(super) fn swap_tiles_above(grid: &mut Grid, world_idx: usize, catalog: &Node
 /// water override to a generic land/sky blank.
 fn above_start_override(world_idx: usize) -> Option<u8> {
     match world_idx {
-        3 | 6 => Some(0x42),    // W4 / W7 — land path blank
-        W5_IDX => Some(0xD7),   // W5 — sky blank
+        3 | 6 => Some(0x42),  // W4 / W7 — land path blank
+        W5_IDX => Some(0xD7), // W5 — sky blank
         _ => None,
     }
 }
@@ -155,9 +156,8 @@ pub(super) fn write_swapped_world_entries(rom: &mut Rom, world_idx: usize, catal
     let rt_off = world.rowtype_offset;
     let sc_off = rt_off + world.entry_count;
 
-    for entry in catalog
-        .world(world_idx)
-        .filter(|e| matches!(e.kind, NodeKind::Airship | NodeKind::Start))
+    for entry in
+        catalog.world(world_idx).filter(|e| matches!(e.kind, NodeKind::Airship | NodeKind::Start))
     {
         let (row, col) = entry.grid_pos;
         let (screen, col_in_screen, row_nib) = grid_pos_to_dest_nibbles(row, col);
@@ -206,10 +206,10 @@ fn build_position_tables(rom: &mut Rom, catalog: &NodeCatalog) {
     let mut scrh_tbl = [0u8; 8];
 
     for wi in 0..8 {
-        let Some(start_entry) = catalog
-            .world(wi)
-            .find(|e| matches!(e.kind, NodeKind::Start))
-        else { continue };
+        let Some(start_entry) = catalog.world(wi).find(|e| matches!(e.kind, NodeKind::Start))
+        else {
+            continue;
+        };
         let (sr, sc) = start_entry.grid_pos;
         y_tbl[wi] = ((sr as u8) * 0x10).wrapping_add(0x20);
         x_tbl[wi] = ((sc % 16) as u8) * 0x10;
@@ -367,10 +367,7 @@ fn move_airship_sprites(rom: &mut Rom, catalog: &NodeCatalog) {
         if !catalog.start_airship_swapped[wi] {
             continue;
         }
-        if let Some(air_entry) = catalog
-            .world(wi)
-            .find(|e| matches!(e.kind, NodeKind::Airship))
-        {
+        if let Some(air_entry) = catalog.world(wi).find(|e| matches!(e.kind, NodeKind::Airship)) {
             let (r, c) = air_entry.grid_pos;
             rom_data::write_map_sprite_position(rom, wi, AIRSHIP_OBJ_SLOT, r, c);
         }

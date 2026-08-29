@@ -72,11 +72,7 @@ fn test_names_non_empty() {
     let catalog = NodeCatalog::build(&rom, false);
 
     for e in &catalog.entries {
-        assert!(
-            !e.name.is_empty(),
-            "W{} entry {} has empty name",
-            e.world_idx + 1, e.entry_idx,
-        );
+        assert!(!e.name.is_empty(), "W{} entry {} has empty name", e.world_idx + 1, e.entry_idx,);
     }
 }
 
@@ -97,7 +93,12 @@ fn test_grid_positions_valid() {
             assert!(
                 row < 9 && col < max_cols,
                 "W{} {} ({:?}) at ({},{}) is out of bounds (max cols {})",
-                e.world_idx + 1, e.name, e.kind, row, col, max_cols,
+                e.world_idx + 1,
+                e.name,
+                e.kind,
+                row,
+                col,
+                max_cols,
             );
         }
     }
@@ -116,7 +117,9 @@ fn test_level_entry_presence() {
             assert!(
                 e.level_entry.is_some(),
                 "W{} {} ({:?}) should have level_entry",
-                e.world_idx + 1, e.name, e.kind,
+                e.world_idx + 1,
+                e.name,
+                e.kind,
             );
         }
     }
@@ -135,7 +138,8 @@ fn test_fortress_boomboom_offsets() {
             assert!(
                 *boomboom_y_offset != 0,
                 "W{} {} has zero boomboom_y_offset",
-                e.world_idx + 1, e.name,
+                e.world_idx + 1,
+                e.name,
             );
         }
     }
@@ -152,14 +156,20 @@ fn test_kind_totals_sum_to_340() {
     // Aggregate counts plus the known vanilla fixed totals
     // (17 fortresses, 48 pipes, 7 airships, 1 bowser, 8 starts)
     // must cover all 340 pointer table entries.
-    let levels: usize = catalog.entries.iter()
-        .filter(|e| matches!(e.kind, NodeKind::Level))
-        .count();
-    let fixed: usize = catalog.entries.iter()
-        .filter(|e| matches!(
-            e.kind,
-            NodeKind::ToadHouse | NodeKind::BonusGame | NodeKind::HammerBro | NodeKind::MapObject
-        ))
+    let levels: usize =
+        catalog.entries.iter().filter(|e| matches!(e.kind, NodeKind::Level)).count();
+    let fixed: usize = catalog
+        .entries
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.kind,
+                NodeKind::ToadHouse
+                    | NodeKind::BonusGame
+                    | NodeKind::HammerBro
+                    | NodeKind::MapObject
+            )
+        })
         .count();
 
     let total = levels + 17 + 48 + 7 + 1 + 8 + fixed;
@@ -184,7 +194,8 @@ fn test_print_catalog() {
     for e in &catalog.entries {
         if e.world_idx != current_world {
             current_world = e.world_idx;
-            eprintln!("\n=== World {} ({} entries) ===",
+            eprintln!(
+                "\n=== World {} ({} entries) ===",
                 current_world + 1,
                 catalog.world(current_world).count(),
             );
@@ -192,8 +203,9 @@ fn test_print_catalog() {
 
         let kind_str = match &e.kind {
             NodeKind::Level => "Level".to_string(),
-            NodeKind::Fortress { boomboom_y_offset } =>
-                format!("Fortress(bb=0x{boomboom_y_offset:05X})"),
+            NodeKind::Fortress { boomboom_y_offset } => {
+                format!("Fortress(bb=0x{boomboom_y_offset:05X})")
+            }
             NodeKind::Pipe { dest_idx, .. } => format!("Pipe(dest={dest_idx})"),
             NodeKind::Airship => "Airship".to_string(),
             NodeKind::Bowser => "Bowser".to_string(),
@@ -214,8 +226,7 @@ fn test_print_catalog() {
 
         eprintln!(
             "  [{:2}] {:8} ({:2},{:2})  tile=${:02X}  {}  {}",
-            e.entry_idx, e.name, e.grid_pos.0, e.grid_pos.1,
-            e.tile, kind_str, entry_str,
+            e.entry_idx, e.name, e.grid_pos.0, e.grid_pos.1, e.tile, kind_str, entry_str,
         );
     }
 

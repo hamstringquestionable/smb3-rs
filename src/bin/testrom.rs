@@ -9,8 +9,8 @@ use std::process;
 
 use clap::Parser;
 
-use smb3_rs::testrom::{self, Base, EnemyOverride, Placement, TestRomSpec};
 use smb3_rs::Options;
+use smb3_rs::testrom::{self, Base, EnemyOverride, Placement, TestRomSpec};
 
 const DEFAULT_ROM: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";
 const DEFAULT_PRACTICE_IPS: &str = "patches/smb3practice_SE.ips";
@@ -235,8 +235,8 @@ fn main() {
         return;
     }
 
-    let vanilla = fs::read(&cli.rom)
-        .unwrap_or_else(|e| die(format!("reading {}: {e}", cli.rom.display())));
+    let vanilla =
+        fs::read(&cli.rom).unwrap_or_else(|e| die(format!("reading {}: {e}", cli.rom.display())));
 
     if cli.list {
         match testrom::list_levels(&vanilla, cli.beta) {
@@ -323,17 +323,11 @@ fn main() {
         (col, y_idx)
     });
 
-    let placements: Vec<Placement> = cli
-        .place
-        .iter()
-        .map(|s| parse_placement(s).unwrap_or_else(|e| die(e)))
-        .collect();
+    let placements: Vec<Placement> =
+        cli.place.iter().map(|s| parse_placement(s).unwrap_or_else(|e| die(e))).collect();
 
-    let set_enemies: Vec<EnemyOverride> = cli
-        .set_enemy
-        .iter()
-        .map(|s| parse_set_enemy(s).unwrap_or_else(|e| die(e)))
-        .collect();
+    let set_enemies: Vec<EnemyOverride> =
+        cli.set_enemy.iter().map(|s| parse_set_enemy(s).unwrap_or_else(|e| die(e))).collect();
 
     let starting_items: Vec<u8> = cli
         .starting_items
@@ -359,11 +353,11 @@ fn main() {
         .apply_ips
         .iter()
         .map(|p| {
-            let bytes = fs::read(p).unwrap_or_else(|e| die(format!("reading {}: {e}", p.display())));
-            let label = p.file_name().map_or_else(
-                || p.display().to_string(),
-                |n| n.to_string_lossy().into_owned(),
-            );
+            let bytes =
+                fs::read(p).unwrap_or_else(|e| die(format!("reading {}: {e}", p.display())));
+            let label = p
+                .file_name()
+                .map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned());
             (label, bytes)
         })
         .collect();

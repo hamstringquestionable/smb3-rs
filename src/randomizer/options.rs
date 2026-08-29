@@ -55,7 +55,9 @@ pub fn item_display_name(id: u8) -> &'static str {
 }
 
 /// Returns default starting lives (5).
-pub(super) fn default_starting_lives() -> u8 { 5 }
+pub(super) fn default_starting_lives() -> u8 {
+    5
+}
 
 /// The four valid starting-lives counts (matches the flag-key encoding
 /// and the WASM pill-toggle options).
@@ -71,15 +73,17 @@ pub(super) fn idx_to_lives(idx: u8) -> u8 {
 /// predate this layout still round-trip cleanly.
 pub(super) fn lives_to_idx(lives: u8) -> u8 {
     match lives {
-        n if n <= 2 => 0,   // → 1
-        n if n <= 12 => 1,  // → 5
-        n if n <= 59 => 2,  // → 20
-        _ => 3,             // → 99
+        n if n <= 2 => 0,  // → 1
+        n if n <= 12 => 1, // → 5
+        n if n <= 59 => 2, // → 20
+        _ => 3,            // → 99
     }
 }
 
 /// Returns default world count (7 — all worlds before Dark Land).
-pub(super) fn default_world_count() -> u8 { 7 }
+pub(super) fn default_world_count() -> u8 {
+    7
+}
 
 /// Per-class enemy randomization mode.
 ///
@@ -88,7 +92,14 @@ pub(super) fn default_world_count() -> u8 { 7 }
 /// so the flag-key decoder reads it through the checked accessor and falls back
 /// to `Off` — see `flag_key.rs`.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
     modular_bitfield::Specifier,
 )]
 #[bits = 2]
@@ -100,9 +111,13 @@ pub enum EnemyMode {
     Wild,
 }
 
-pub(super) fn default_shuffle() -> EnemyMode { EnemyMode::Shuffle }
+pub(super) fn default_shuffle() -> EnemyMode {
+    EnemyMode::Shuffle
+}
 
-pub(super) fn default_off() -> EnemyMode { EnemyMode::Off }
+pub(super) fn default_off() -> EnemyMode {
+    EnemyMode::Off
+}
 
 /// Random Fire Flower mode (issue #22). Collecting an in-level Fire Flower
 /// grants a power state derived deterministically from the world and the
@@ -110,7 +125,14 @@ pub(super) fn default_off() -> EnemyMode { EnemyMode::Off }
 /// four big-form suits (Fire/Frog/Tanooki/Hammer); `Wild` adds the Small/Big
 /// downgrade outcomes.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
     modular_bitfield::Specifier,
 )]
 #[bits = 2]
@@ -129,7 +151,14 @@ pub enum FireFlowerMode {
 /// scatters plant sprites onto ~1 random level slot per world — stepping on
 /// a plant auto-starts the level under it, vanilla W7 style.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
     modular_bitfield::Specifier,
 )]
 #[bits = 2]
@@ -189,7 +218,14 @@ impl WildChaser {
 /// ROM — the player just can't tell from the flag key which way a `Maybe`
 /// landed, so it can't be planned around.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
     modular_bitfield::Specifier,
 )]
 #[bits = 2]
@@ -213,7 +249,9 @@ impl Tri {
     }
 }
 
-pub(super) fn default_tri_on() -> Tri { Tri::On }
+pub(super) fn default_tri_on() -> Tri {
+    Tri::On
+}
 
 /// Options controlling which randomizations to apply.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

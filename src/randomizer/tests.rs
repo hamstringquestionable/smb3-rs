@@ -10,11 +10,7 @@ const TOAD_HOUSE_ITEMS_OFFSET: usize = 0x3B14B;
 /// Options safe for zeroed test ROMs.
 /// Palettes disabled because they use OS entropy (cosmetic, decoupled from seed).
 fn test_options() -> Options {
-    Options {
-        shuffle_airships: false,
-        palettes: false,
-        ..Default::default()
-    }
+    Options { shuffle_airships: false, palettes: false, ..Default::default() }
 }
 
 /// Load the real SMB3 ROM. Tests that drive the full `randomize()`
@@ -54,34 +50,38 @@ fn w7f1_block_is_always_a_flight_suit() {
     let Some(base) = make_test_rom() else { return };
 
     for shuffle_rooms in [false, true] {
-    let mut opts = test_options();
-    opts.big_q_blocks = true;
-    opts.shuffle_big_q_rooms = shuffle_rooms;
+        let mut opts = test_options();
+        opts.big_q_blocks = true;
+        opts.shuffle_big_q_rooms = shuffle_rooms;
 
-    for seed in 1..=40u64 {
-        let mut rom = base.clone();
-        randomize(&mut rom, seed, &opts);
+        for seed in 1..=40u64 {
+            let mut rom = base.clone();
+            randomize(&mut rom, seed, &opts);
 
-        // Row 8 of the lookup table is 7-F1; its area and the arrival's screen
-        // nibble name the room it drew.
-        let base_off = randomize::rom_data::FS_BIG_Q_LOOKUP;
-        let area = rom.read_byte(base_off + randomize::qol::big_q::OFF_ROOM + 8);
-        let screen = rom.read_byte(base_off + randomize::qol::big_q::OFF_ARR_X + 8) & 0x0F;
+            // Row 8 of the lookup table is 7-F1; its area and the arrival's screen
+            // nibble name the room it drew.
+            let base_off = randomize::rom_data::FS_BIG_Q_LOOKUP;
+            let area = rom.read_byte(base_off + randomize::qol::big_q::OFF_ROOM + 8);
+            let screen = rom.read_byte(base_off + randomize::qol::big_q::OFF_ARR_X + 8) & 0x0F;
 
-        let block = randomize::big_q_rooms::block_offset(&rom, area, screen)
-            .unwrap_or_else(|| panic!("seed {seed}: 7-F1 drew area {area} screen {screen}, \
-                                       which holds no Big [?] block"));
-        assert_eq!(
-            rom.read_byte(block),
-            randomize::big_q_rooms::BIGQBLOCK_TANOOKI,
-            "seed {seed}: 7-F1's room (area {area} screen {screen}) does not hand out \
+            let block =
+                randomize::big_q_rooms::block_offset(&rom, area, screen).unwrap_or_else(|| {
+                    panic!(
+                        "seed {seed}: 7-F1 drew area {area} screen {screen}, \
+                                       which holds no Big [?] block"
+                    )
+                });
+            assert_eq!(
+                rom.read_byte(block),
+                randomize::big_q_rooms::BIGQBLOCK_TANOOKI,
+                "seed {seed}: 7-F1's room (area {area} screen {screen}) does not hand out \
              flight (shuffle_big_q_rooms = {shuffle_rooms})",
-        );
-        // With the shuffle off, nothing may move 7-F1 off its vanilla room.
-        if !shuffle_rooms {
-            assert_eq!((area, screen), (6, 6), "seed {seed}: room moved with the shuffle off");
+            );
+            // With the shuffle off, nothing may move 7-F1 off its vanilla room.
+            if !shuffle_rooms {
+                assert_eq!((area, screen), (6, 6), "seed {seed}: room moved with the shuffle off");
+            }
         }
-    }
     }
 }
 
@@ -105,10 +105,16 @@ fn mystery_anchor_trampoline_written() {
     randomize(&mut rom, 0x12345678, &options);
 
     // Anchor items should remain in data tables (mystery behavior)
-    assert_eq!(rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 2), ANCHOR,
-        "Anchor should stay in item table (mystery item)");
-    assert_eq!(rom.read_byte(TOAD_HOUSE_ITEMS_OFFSET + 1), ANCHOR,
-        "Anchor should stay in item table (mystery item)");
+    assert_eq!(
+        rom.read_byte(HAMMER_BROS_ITEMS_OFFSET + 2),
+        ANCHOR,
+        "Anchor should stay in item table (mystery item)"
+    );
+    assert_eq!(
+        rom.read_byte(TOAD_HOUSE_ITEMS_OFFSET + 1),
+        ANCHOR,
+        "Anchor should stay in item table (mystery item)"
+    );
 
     // Trampoline should be written at PRG026 free space
     use crate::randomize::rom_data::FS_MYSTERY_ANCHOR as FS;
@@ -116,8 +122,10 @@ fn mystery_anchor_trampoline_written() {
     assert_eq!(rom.read_byte(FS), 0xBE, "Trampoline LDX abs,Y opcode");
     // Target powerup is at offset +8 (LDX #imm operand)
     let target = rom.read_byte(FS + 8);
-    assert!((0x01..=0x08).contains(&target),
-        "Trampoline target 0x{target:02X} should be a valid mystery pool item (1-8)");
+    assert!(
+        (0x01..=0x08).contains(&target),
+        "Trampoline target 0x{target:02X} should be a valid mystery pool item (1-8)"
+    );
 
     // DynJump table entry at 0x34564: $A5B6 (Inv_UseItem_Powerup)
     assert_eq!(rom.read_range(0x34564, 2), &[0xB6, 0xA5]);
@@ -129,11 +137,7 @@ fn mystery_anchor_trampoline_written() {
 /// but pins `world_count` to 3 and leaves `swap_start_airship` off, and both
 /// gate allocations we want exercised.
 fn audit_options() -> Options {
-    Options {
-        world_count: 7,
-        swap_start_airship: true,
-        ..all_on_options()
-    }
+    Options { world_count: 7, swap_start_airship: true, ..all_on_options() }
 }
 
 /// Cross-check `FREE_SPACE_ALLOCATIONS` against a real run: every byte written
@@ -161,15 +165,20 @@ fn free_space_audit_matches_registry() {
         .iter()
         .filter(|u| u.is_problem())
         .map(|u| {
-            let foreign: Vec<String> = u.foreign.iter()
-                .map(|(tag, n)| format!("{n} byte(s) tagged '{tag}'"))
-                .collect();
-            let over: Vec<String> = u.overruns.iter()
-                .map(|(off, len, tag)| format!("0x{off:05X}+{len} tagged '{tag}' crosses the boundary"))
+            let foreign: Vec<String> =
+                u.foreign.iter().map(|(tag, n)| format!("{n} byte(s) tagged '{tag}'")).collect();
+            let over: Vec<String> = u
+                .overruns
+                .iter()
+                .map(|(off, len, tag)| {
+                    format!("0x{off:05X}+{len} tagged '{tag}' crosses the boundary")
+                })
                 .collect();
             format!(
                 "0x{:05X} ({}, owner '{}'): {}",
-                u.alloc.offset, u.alloc.label, u.alloc.owners.join(" + "),
+                u.alloc.offset,
+                u.alloc.label,
+                u.alloc.owners.join(" + "),
                 foreign.into_iter().chain(over).collect::<Vec<_>>().join("; "),
             )
         })
@@ -188,7 +197,14 @@ fn free_space_audit_matches_registry() {
     let untouched: Vec<String> = usage
         .iter()
         .filter(|u| u.used == 0)
-        .map(|u| format!("0x{:05X} {} (owner '{}')", u.alloc.offset, u.alloc.label, u.alloc.owners.join(" + ")))
+        .map(|u| {
+            format!(
+                "0x{:05X} {} (owner '{}')",
+                u.alloc.offset,
+                u.alloc.label,
+                u.alloc.owners.join(" + ")
+            )
+        })
         .collect();
     assert!(
         untouched.is_empty(),
@@ -213,11 +229,7 @@ fn write_log_populated_after_randomize() {
 
     // Every write should have a proper tag (not "untagged")
     for record in log {
-        assert_ne!(
-            record.tag, "untagged",
-            "Write at offset 0x{:05X} has no tag",
-            record.offset
-        );
+        assert_ne!(record.tag, "untagged", "Write at offset 0x{:05X} has no tag", record.offset);
     }
 }
 
@@ -414,11 +426,7 @@ fn flag_key_invalid_chars() {
 #[test]
 fn flag_key_per_option_round_trip() {
     // Helper: clone defaults, apply mutator, encode/decode, return both.
-    fn check_round_trip(
-        label: &str,
-        mutate: impl Fn(&mut Options),
-        change_key: bool,
-    ) {
+    fn check_round_trip(label: &str, mutate: impl Fn(&mut Options), change_key: bool) {
         let default_opts = Options::default();
         let default_key = default_opts.to_flag_key();
 
@@ -454,8 +462,8 @@ fn flag_key_per_option_round_trip() {
 
     // Cosmetic: must NOT change the flag key.
     let cosmetic: Vec<OptionTweak> = vec![
-        ("palettes",        Box::new(|o| o.palettes = !o.palettes)),
-        ("palette_themed",  Box::new(|o| o.palette_themed = !o.palette_themed)),
+        ("palettes", Box::new(|o| o.palettes = !o.palettes)),
+        ("palette_themed", Box::new(|o| o.palette_themed = !o.palette_themed)),
         ("remove_flashing", Box::new(|o| o.remove_flashing = !o.remove_flashing)),
     ];
     for (label, mutate) in cosmetic {
@@ -464,26 +472,29 @@ fn flag_key_per_option_round_trip() {
 
     // Encoded booleans: toggling must change the flag key.
     let bools: Vec<OptionTweak> = vec![
-        ("powerups",                     Box::new(|o| o.powerups = !o.powerups)),
-        ("world_order",                  Box::new(|o| o.world_order = !o.world_order)),
-        ("big_q_blocks",                 Box::new(|o| o.big_q_blocks = !o.big_q_blocks)),
-        ("shuffle_airships",             Box::new(|o| o.shuffle_airships = !o.shuffle_airships)),
-        ("shuffle_hammer_bros",          Box::new(|o| o.shuffle_hammer_bros = !o.shuffle_hammer_bros)),
-        ("disable_autoscroll",           Box::new(|o| o.disable_autoscroll = !o.disable_autoscroll)),
-        ("chest_items",                  Box::new(|o| o.chest_items = !o.chest_items)),
-        ("remove_whistles",              Box::new(|o| o.remove_whistles = !o.remove_whistles)),
-        ("card_speed_clear",             Box::new(|o| o.card_speed_clear = !o.card_speed_clear)),
-        ("remove_n_cards",               Box::new(|o| o.remove_n_cards = !o.remove_n_cards)),
-        ("skip_wand_cutscene",           Box::new(|o| o.skip_wand_cutscene = !o.skip_wand_cutscene)),
-        ("adjust_boss_hitboxes",         Box::new(|o| o.adjust_boss_hitboxes = !o.adjust_boss_hitboxes)),
-        ("koopaling_hits",               Box::new(|o| o.koopaling_hits = !o.koopaling_hits)),
-        ("boomboom_hits",                Box::new(|o| o.boomboom_hits = !o.boomboom_hits)),
-        ("hammer_vulnerable_koopalings", Box::new(|o| o.hammer_vulnerable_koopalings = !o.hammer_vulnerable_koopalings)),
-        ("random_koopalings",            Box::new(|o| o.random_koopalings = !o.random_koopalings)),
-        ("include_beta_stages",          Box::new(|o| o.include_beta_stages = !o.include_beta_stages)),
-        ("shuffle_spade_games",           Box::new(|o| o.shuffle_spade_games = !o.shuffle_spade_games)),
-        ("shuffle_toad_houses",          Box::new(|o| o.shuffle_toad_houses = !o.shuffle_toad_houses)),
-        ("anchor_visuals",               Box::new(|o| o.anchor_visuals = !o.anchor_visuals)),
+        ("powerups", Box::new(|o| o.powerups = !o.powerups)),
+        ("world_order", Box::new(|o| o.world_order = !o.world_order)),
+        ("big_q_blocks", Box::new(|o| o.big_q_blocks = !o.big_q_blocks)),
+        ("shuffle_airships", Box::new(|o| o.shuffle_airships = !o.shuffle_airships)),
+        ("shuffle_hammer_bros", Box::new(|o| o.shuffle_hammer_bros = !o.shuffle_hammer_bros)),
+        ("disable_autoscroll", Box::new(|o| o.disable_autoscroll = !o.disable_autoscroll)),
+        ("chest_items", Box::new(|o| o.chest_items = !o.chest_items)),
+        ("remove_whistles", Box::new(|o| o.remove_whistles = !o.remove_whistles)),
+        ("card_speed_clear", Box::new(|o| o.card_speed_clear = !o.card_speed_clear)),
+        ("remove_n_cards", Box::new(|o| o.remove_n_cards = !o.remove_n_cards)),
+        ("skip_wand_cutscene", Box::new(|o| o.skip_wand_cutscene = !o.skip_wand_cutscene)),
+        ("adjust_boss_hitboxes", Box::new(|o| o.adjust_boss_hitboxes = !o.adjust_boss_hitboxes)),
+        ("koopaling_hits", Box::new(|o| o.koopaling_hits = !o.koopaling_hits)),
+        ("boomboom_hits", Box::new(|o| o.boomboom_hits = !o.boomboom_hits)),
+        (
+            "hammer_vulnerable_koopalings",
+            Box::new(|o| o.hammer_vulnerable_koopalings = !o.hammer_vulnerable_koopalings),
+        ),
+        ("random_koopalings", Box::new(|o| o.random_koopalings = !o.random_koopalings)),
+        ("include_beta_stages", Box::new(|o| o.include_beta_stages = !o.include_beta_stages)),
+        ("shuffle_spade_games", Box::new(|o| o.shuffle_spade_games = !o.shuffle_spade_games)),
+        ("shuffle_toad_houses", Box::new(|o| o.shuffle_toad_houses = !o.shuffle_toad_houses)),
+        ("anchor_visuals", Box::new(|o| o.anchor_visuals = !o.anchor_visuals)),
     ];
     for (label, mutate) in bools {
         check_round_trip(label, mutate, true);
@@ -493,16 +504,16 @@ fn flag_key_per_option_round_trip() {
     // mode is exercised. Defaults differ per class, so test all three modes.
     type TriSetter = Box<dyn Fn(&mut Options, EnemyMode)>;
     let tristates: Vec<(&str, TriSetter)> = vec![
-        ("ground",        Box::new(|o, m| o.ground = m)),
-        ("shell",         Box::new(|o, m| o.shell = m)),
-        ("flying",        Box::new(|o, m| o.flying = m)),
-        ("piranhas",      Box::new(|o, m| o.piranhas = m)),
-        ("ghosts",        Box::new(|o, m| o.ghosts = m)),
-        ("thwomps",       Box::new(|o, m| o.thwomps = m)),
-        ("rotodiscs",     Box::new(|o, m| o.rotodiscs = m)),
-        ("cannons",       Box::new(|o, m| o.cannons = m)),
-        ("water",         Box::new(|o, m| o.water = m)),
-        ("bros",          Box::new(|o, m| o.bros = m)),
+        ("ground", Box::new(|o, m| o.ground = m)),
+        ("shell", Box::new(|o, m| o.shell = m)),
+        ("flying", Box::new(|o, m| o.flying = m)),
+        ("piranhas", Box::new(|o, m| o.piranhas = m)),
+        ("ghosts", Box::new(|o, m| o.ghosts = m)),
+        ("thwomps", Box::new(|o, m| o.thwomps = m)),
+        ("rotodiscs", Box::new(|o, m| o.rotodiscs = m)),
+        ("cannons", Box::new(|o, m| o.cannons = m)),
+        ("water", Box::new(|o, m| o.water = m)),
+        ("bros", Box::new(|o, m| o.bros = m)),
         ("hb_encounters", Box::new(|o, m| o.hb_encounters = m)),
     ];
     for (label, set) in tristates {
@@ -512,10 +523,7 @@ fn flag_key_per_option_round_trip() {
             set(&mut mutated, mode);
             let expected = normalized(mutated.clone());
             let recovered = Options::from_flag_key(&mutated.to_flag_key()).unwrap();
-            assert_eq!(
-                recovered, expected,
-                "{label}={mode:?}: round-trip mismatch",
-            );
+            assert_eq!(recovered, expected, "{label}={mode:?}: round-trip mismatch",);
         }
     }
 
@@ -523,11 +531,11 @@ fn flag_key_per_option_round_trip() {
     // and every non-default state must change the flag key.
     type TriFlagSetter = Box<dyn Fn(&mut Options, Tri)>;
     let tri_flags: Vec<(&str, TriFlagSetter)> = vec![
-        ("hammer_breaks_locks",   Box::new(|o, t| o.hammer_breaks_locks = t)),
+        ("hammer_breaks_locks", Box::new(|o, t| o.hammer_breaks_locks = t)),
         ("hammer_breaks_bridges", Box::new(|o, t| o.hammer_breaks_bridges = t)),
-        ("troll_pipes",           Box::new(|o, t| o.troll_pipes = t)),
-        ("more_hammer_rocks",        Box::new(|o, t| o.more_hammer_rocks = t)),
-        ("eights_are_wild",       Box::new(|o, t| o.eights_are_wild = t)),
+        ("troll_pipes", Box::new(|o, t| o.troll_pipes = t)),
+        ("more_hammer_rocks", Box::new(|o, t| o.more_hammer_rocks = t)),
+        ("eights_are_wild", Box::new(|o, t| o.eights_are_wild = t)),
     ];
     for (label, set) in tri_flags {
         let default_opts = Options::default();
@@ -620,7 +628,10 @@ fn flag_key_per_option_round_trip() {
         let opts = Options { starting_items: items.clone(), ..Default::default() };
         let expected = normalized(opts.clone());
         let recovered = Options::from_flag_key(&opts.to_flag_key()).unwrap();
-        assert_eq!(recovered.starting_items, items, "starting_items={items:?}: round-trip mismatch");
+        assert_eq!(
+            recovered.starting_items, items,
+            "starting_items={items:?}: round-trip mismatch"
+        );
         assert_eq!(recovered, expected, "starting_items={items:?}: full struct mismatch");
     }
 
@@ -910,7 +921,9 @@ fn flag_key_typos_are_rejected() {
     let (mut rejected, mut same, mut different) = (0, 0, 0);
     for i in 0..body.len() {
         for &c in CROCKFORD.iter() {
-            if body.as_bytes()[i] == c { continue }
+            if body.as_bytes()[i] == c {
+                continue;
+            }
             let mut mutated: Vec<u8> = body.as_bytes().to_vec();
             mutated[i] = c;
             let candidate = format!("SMB3R-{}", String::from_utf8(mutated).unwrap());
@@ -923,7 +936,9 @@ fn flag_key_typos_are_rejected() {
     }
 
     let total = rejected + same + different;
-    println!("single-character typos: {rejected} rejected, {same} harmless, {different} silently different (of {total})");
+    println!(
+        "single-character typos: {rejected} rejected, {same} harmless, {different} silently different (of {total})"
+    );
     assert_eq!(total, body.len() * 31, "every single-character mutation is tried");
     // A CRC-8 lets through about 1 in 256 by chance. Assert well inside that
     // rather than on the nose so the test pins the property, not the arithmetic.
@@ -980,9 +995,7 @@ fn base32_matches_an_independent_crockford_implementation() {
 
     // Every payload width the format can produce, plus the envelope.
     for n in 0..=(2 + 30usize) {
-        let data: Vec<u8> = (0..n)
-            .map(|i| (i as u8).wrapping_mul(37).wrapping_add(11))
-            .collect();
+        let data: Vec<u8> = (0..n).map(|i| (i as u8).wrapping_mul(37).wrapping_add(11)).collect();
         let ours = base32_encode(&data);
         assert_eq!(ours, base32::encode(Crockford, &data), "encode differs at {n} bytes");
         assert_eq!(
@@ -1023,13 +1036,9 @@ fn base32_matches_an_independent_crockford_implementation() {
     // Compared by decoded *bytes*, not just by "both accepted it" — dropping
     // the I/L arm entirely still leaves a decodable string, so an acceptance
     // check alone sails past it (confirmed by mutating the decoder).
-    for (probe, canonical) in [
-        ("IILL", "1111"),
-        ("iIlL", "1111"),
-        ("OOOO", "0000"),
-        ("oO00", "0000"),
-        ("H1JK", "HIJK"),
-    ] {
+    for (probe, canonical) in
+        [("IILL", "1111"), ("iIlL", "1111"), ("OOOO", "0000"), ("oO00", "0000"), ("H1JK", "HIJK")]
+    {
         let expected = base32_decode(canonical).unwrap();
         assert_eq!(base32_decode(probe).unwrap(), expected, "'{probe}' must read as '{canonical}'");
         assert_eq!(
@@ -1324,7 +1333,8 @@ fn maybe_resolves_both_ways_across_seeds() {
     let on_touched: Vec<(usize, Vec<u8>)> = {
         let mut rom = make_test_rom().unwrap();
         randomize(&mut rom, 0, &on);
-        rom.write_log().iter()
+        rom.write_log()
+            .iter()
             .filter(|r| r.tag == "qol/more_hammer_rocks")
             .map(|r| (r.offset, rom.read_range(r.offset, r.len).to_vec()))
             .collect()
@@ -1336,13 +1346,20 @@ fn maybe_resolves_both_ways_across_seeds() {
     for seed in 0u64..24 {
         let mut rom = make_test_rom().unwrap();
         randomize(&mut rom, seed, &maybe);
-        let matches_on = on_touched.iter()
+        let matches_on = on_touched
+            .iter()
             .all(|(off, bytes)| rom.read_range(*off, bytes.len()) == bytes.as_slice());
-        if matches_on { saw_on = true; } else { saw_off = true; }
+        if matches_on {
+            saw_on = true;
+        } else {
+            saw_off = true;
+        }
     }
-    assert!(saw_on && saw_off,
+    assert!(
+        saw_on && saw_off,
         "more_hammer_rocks=Maybe never exercised both outcomes across 24 seeds \
-         (saw_on={saw_on}, saw_off={saw_off})");
+         (saw_on={saw_on}, saw_off={saw_off})"
+    );
 }
 
 #[test]
@@ -1381,15 +1398,15 @@ fn flag_key_round_trip_all_random_items() {
     };
     let key = opts.to_flag_key();
     let decoded = Options::from_flag_key(&key).unwrap();
-    assert_eq!(decoded.starting_items, vec![ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY]);
+    assert_eq!(
+        decoded.starting_items,
+        vec![ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY]
+    );
 }
 
 #[test]
 fn flag_key_round_trip_mixed_random_and_concrete() {
-    let opts = Options {
-        starting_items: vec![ITEM_RANDOM, 3],
-        ..Default::default()
-    };
+    let opts = Options { starting_items: vec![ITEM_RANDOM, 3], ..Default::default() };
     let key = opts.to_flag_key();
     let decoded = Options::from_flag_key(&key).unwrap();
     assert_eq!(decoded.starting_items, vec![ITEM_RANDOM, 3]);

@@ -35,10 +35,10 @@
 
 use std::collections::BTreeSet;
 
-use mos6502::instruction::{AddressingMode, Instruction, Ricoh2a03};
 use mos6502::Variant;
+use mos6502::instruction::{AddressingMode, Instruction, Ricoh2a03};
 
-use super::free_space::{prg_bank_end, FREE_SPACE_ALLOCATIONS};
+use super::free_space::{FREE_SPACE_ALLOCATIONS, prg_bank_end};
 
 /// One instruction located by the linear sweep.
 struct Decoded {
@@ -59,9 +59,7 @@ fn decode(code: &[u8]) -> Result<Vec<Decoded>, String> {
     while pc < code.len() {
         let byte = code[pc];
         let Some((instr, mode)) = Ricoh2a03::decode(byte) else {
-            return Err(format!(
-                "byte {pc} (0x{byte:02X}) is not a valid Ricoh 2A03 opcode"
-            ));
+            return Err(format!("byte {pc} (0x{byte:02X}) is not a valid Ricoh 2A03 opcode"));
         };
         let len = mode.extra_bytes() as usize + 1;
         if pc + len > code.len() {
@@ -109,14 +107,7 @@ pub struct Routine<'a> {
 
 /// Begin checking an assembled routine.
 pub fn check(code: &[u8]) -> Routine<'_> {
-    Routine {
-        code,
-        allocation: None,
-        hook: None,
-        data_from: None,
-        fragment: false,
-        origin: None,
-    }
+    Routine { code, allocation: None, hook: None, data_from: None, fragment: false, origin: None }
 }
 
 impl<'a> Routine<'a> {
@@ -189,9 +180,7 @@ impl<'a> Routine<'a> {
                 // Trailing NOPs are padding — several routines are NOP-filled out
                 // to the length of the vanilla bytes they replace — so the
                 // terminator is the last instruction that actually does something.
-                let last = instrs
-                    .iter()
-                    .rfind(|i| !matches!(i.instr, Instruction::NOP));
+                let last = instrs.iter().rfind(|i| !matches!(i.instr, Instruction::NOP));
                 match last {
                     None => problems.push("routine is empty or all NOPs".to_string()),
                     Some(last)
@@ -261,9 +250,9 @@ impl<'a> Routine<'a> {
 
         if let Some(offset) = self.allocation {
             match FREE_SPACE_ALLOCATIONS.iter().find(|a| a.offset == offset) {
-                None => problems.push(format!(
-                    "no FREE_SPACE_ALLOCATIONS row starts at 0x{offset:05X}"
-                )),
+                None => {
+                    problems.push(format!("no FREE_SPACE_ALLOCATIONS row starts at 0x{offset:05X}"))
+                }
                 Some(a) => {
                     if self.code.len() > a.size {
                         problems.push(format!(
@@ -424,10 +413,12 @@ mod tests {
         let good = [0x20, 0xB6, 0x9F, 0xEA];
         check(&code).origin(0x9FB6).hook(&vanilla, 0, &good).assert_ok();
         // The same hook after the allocation moved.
-        assert!(std::panic::catch_unwind(|| {
-            check(&code).origin(0x9FC0).hook(&vanilla, 0, &good).assert_ok()
-        })
-        .is_err());
+        assert!(
+            std::panic::catch_unwind(|| {
+                check(&code).origin(0x9FC0).hook(&vanilla, 0, &good).assert_ok()
+            })
+            .is_err()
+        );
     }
 
     #[test]

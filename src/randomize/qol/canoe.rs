@@ -1,7 +1,7 @@
 //! W3 canoe softlock fixes (respawn + map-data backup/restore).
 
-use crate::rom::Rom;
 use crate::randomize::rom_data::{FS_CANOE_BACKUP, FS_CANOE_RESPAWN, jsr_into_bank};
+use crate::rom::Rom;
 
 // Canoe softlock fix — based on "SMB3 - Canoe Softlock Fixes (Open World
 // compatible).ips". Two hooks, one JSR retarget, and two free-space
@@ -124,7 +124,10 @@ mod asm_checks {
 
     #[test]
     fn canoe_respawn_is_well_formed() {
-        asm::check(&CANOE_RESPAWN_ROUTINE).origin(CANOE_RESPAWN_CPU).allocation(FS_CANOE_RESPAWN).assert_ok();
+        asm::check(&CANOE_RESPAWN_ROUTINE)
+            .origin(CANOE_RESPAWN_CPU)
+            .allocation(FS_CANOE_RESPAWN)
+            .assert_ok();
     }
 
     #[test]

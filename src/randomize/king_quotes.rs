@@ -43,6 +43,10 @@ fn encode_quote(lines: &[&str; 6]) -> [u8; 120] {
 
 /// Pool of quotes the king can say. Each is 6 lines x 20 chars max.
 /// Characters available: A-Z, a-z, space, comma, period, apostrophe, !, ?
+// One array element per on-screen line, which is the point: each string is a
+// line the NES draws, with its own width limit. rustfmt would pack all six onto
+// one row and hide the shape of the quote. The `/king-quote` skill writes here.
+#[rustfmt::skip]
 const QUOTES: &[[&str; 6]] = &[
     [
         "Hey, why don't I",
@@ -599,6 +603,7 @@ const QUOTES: &[[&str; 6]] = &[
 ];
 
 /// Suit-specific quotes: shown when Mario visits the king wearing frog suit.
+#[rustfmt::skip]
 const FROG_QUOTES: &[[&str; 6]] = &[
     [
         "Is that a frog suit?",
@@ -707,6 +712,7 @@ const FROG_QUOTES: &[[&str; 6]] = &[
 ];
 
 /// Suit-specific quotes: shown when Mario visits the king as raccoon/tanooki.
+#[rustfmt::skip]
 const RACCOON_QUOTES: &[[&str; 6]] = &[
     [
         "Thank you,kind",
@@ -799,6 +805,7 @@ const RACCOON_QUOTES: &[[&str; 6]] = &[
 ];
 
 /// Suit-specific quotes: shown when Mario visits the king in hammer suit.
+#[rustfmt::skip]
 const HAMMER_QUOTES: &[[&str; 6]] = &[
     [
         "Hey,you!",
@@ -969,23 +976,27 @@ pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng) {
     // 47: std_hi[7]        ; data
     // Total: 54 bytes
     let mut hook: Vec<u8> = Vec::with_capacity(54);
-    hook.extend_from_slice(&[0xA5, 0xED]);                          //  0: LDA $ED
-    hook.extend_from_slice(&[0xC9, 0x04]);                          //  2: CMP #$04
-    hook.extend_from_slice(&[0xB0, 18]);                            //  4: BCS +18 → offset 24
-    hook.extend_from_slice(&[0xAC, 0x27, 0x07]);                   //  6: LDY $0727
+    hook.extend_from_slice(&[0xA5, 0xED]); //  0: LDA $ED
+    hook.extend_from_slice(&[0xC9, 0x04]); //  2: CMP #$04
+    hook.extend_from_slice(&[0xB0, 18]); //  4: BCS +18 → offset 24
+    hook.extend_from_slice(&[0xAC, 0x27, 0x07]); //  6: LDY $0727
     hook.extend_from_slice(&[0xB9, std_lo_cpu as u8, (std_lo_cpu >> 8) as u8]);
-    hook.extend_from_slice(&[0x8D, 0x0D, 0x07]);                   // 12: STA $070D
+    hook.extend_from_slice(&[0x8D, 0x0D, 0x07]); // 12: STA $070D
     hook.extend_from_slice(&[0xB9, std_hi_cpu as u8, (std_hi_cpu >> 8) as u8]);
-    hook.extend_from_slice(&[0x8D, 0x04, 0x7A]);                   // 18: STA $7A04
-    hook.extend_from_slice(&[0x4C, 0xA1, 0xA2]);                   // 21: JMP $A2A1
-    hook.push(0xA8);                                                // 24: TAY
-    hook.extend_from_slice(&[0xB9, 0x94, 0xA4]);                   // 25: LDA $A494,Y
-    hook.extend_from_slice(&[0x8D, 0x0D, 0x07]);                   // 28: STA $070D
-    hook.extend_from_slice(&[0xB9, 0x9B, 0xA4]);                   // 31: LDA $A49B,Y
-    hook.extend_from_slice(&[0x8D, 0x04, 0x7A]);                   // 34: STA $7A04
-    hook.extend_from_slice(&[0x4C, 0xA1, 0xA2]);                   // 37: JMP $A2A1
-    for addr in &std_addrs { hook.push(*addr as u8); }             // 40: std_lo[7]
-    for addr in &std_addrs { hook.push((*addr >> 8) as u8); }     // 47: std_hi[7]
+    hook.extend_from_slice(&[0x8D, 0x04, 0x7A]); // 18: STA $7A04
+    hook.extend_from_slice(&[0x4C, 0xA1, 0xA2]); // 21: JMP $A2A1
+    hook.push(0xA8); // 24: TAY
+    hook.extend_from_slice(&[0xB9, 0x94, 0xA4]); // 25: LDA $A494,Y
+    hook.extend_from_slice(&[0x8D, 0x0D, 0x07]); // 28: STA $070D
+    hook.extend_from_slice(&[0xB9, 0x9B, 0xA4]); // 31: LDA $A49B,Y
+    hook.extend_from_slice(&[0x8D, 0x04, 0x7A]); // 34: STA $7A04
+    hook.extend_from_slice(&[0x4C, 0xA1, 0xA2]); // 37: JMP $A2A1
+    for addr in &std_addrs {
+        hook.push(*addr as u8);
+    } // 40: std_lo[7]
+    for addr in &std_addrs {
+        hook.push((*addr >> 8) as u8);
+    } // 47: std_hi[7]
 
     rom.write_range(hook_file, &hook);
 
@@ -1031,14 +1042,7 @@ mod tests {
 
     #[test]
     fn encode_round_trip() {
-        let lines = [
-            "Hello,world!",
-            "Test line two.",
-            "",
-            "Line four here.",
-            "",
-            "The end.",
-        ];
+        let lines = ["Hello,world!", "Test line two.", "", "Line four here.", "", "The end."];
         let encoded = encode_quote(&lines);
         assert_eq!(encoded.len(), 120);
         // First char 'H' should be 0xB7

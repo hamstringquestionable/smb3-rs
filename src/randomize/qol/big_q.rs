@@ -1,11 +1,10 @@
 //! Big ? Block bonus-room selection by level identity (not World_Num).
 
-use crate::rom::Rom;
 use crate::randomize::rom_data::{
-    FS_BIG_Q_LOOKUP as BIG_Q_ROUTINE_OFFSET,
-    FS_BIG_Q_SAVE as BIG_Q_PRG030_OFFSET,
-    jsr_into_bank, prg_bank_file_to_cpu,
+    FS_BIG_Q_LOOKUP as BIG_Q_ROUTINE_OFFSET, FS_BIG_Q_SAVE as BIG_Q_PRG030_OFFSET, jsr_into_bank,
+    prg_bank_file_to_cpu,
 };
+use crate::rom::Rom;
 
 // Big ? Block bonus room patch: decouple room selection from World_Num.
 //
@@ -19,7 +18,7 @@ use crate::randomize::rom_data::{
 //   maps the level to its room. See build_lookup_routine.
 
 // Part A: PRG030 (fixed bank) trampoline for level init.
-const BIG_Q_PRG030_HOOK: usize = 0x3C958;  // file offset of CPY #$07
+const BIG_Q_PRG030_HOOK: usize = 0x3C958; // file offset of CPY #$07
 const BIG_Q_PRG030_JMP: [u8; 4] = [0x4C, 0x2C, 0x9F, 0xEA];
 #[rustfmt::skip]
 const BIG_Q_PRG030_ROUTINE: [u8; 20] = [
@@ -176,11 +175,7 @@ fn build_lookup_routine() -> Vec<u8> {
     build_routine_with(&BQ_ROOM, &BQ_ARRIVE, &BQ_RETURN)
 }
 
-fn build_routine_with(
-    rooms: &[u8; 13],
-    arrive: &[(u8, u8); 13],
-    ret: &[(u8, u8); 13],
-) -> Vec<u8> {
+fn build_routine_with(rooms: &[u8; 13], arrive: &[(u8, u8); 13], ret: &[(u8, u8); 13]) -> Vec<u8> {
     let base = prg_bank_file_to_cpu(26, BIG_Q_ROUTINE_OFFSET);
     let at = |off: usize| (base + off as u16).to_le_bytes();
     let (lookup, scan, hi, lo) = (at(OFF_LOOKUP), at(OFF_SCAN), at(OFF_HI), at(OFF_LO));
@@ -317,22 +312,13 @@ mod tests {
             rom.read_range(BIG_Q_PRG030_OFFSET, BIG_Q_PRG030_ROUTINE.len()),
             &BIG_Q_PRG030_ROUTINE
         );
-        assert_eq!(
-            rom.read_range(BIG_Q_HOOK_OFFSET, 3),
-            &jsr_into_bank(26, BIG_Q_ROUTINE_OFFSET)
-        );
+        assert_eq!(rom.read_range(BIG_Q_HOOK_OFFSET, 3), &jsr_into_bank(26, BIG_Q_ROUTINE_OFFSET));
         let expected = build_lookup_routine();
-        assert_eq!(
-            rom.read_range(BIG_Q_ROUTINE_OFFSET, expected.len()),
-            expected.as_slice()
-        );
+        assert_eq!(rom.read_range(BIG_Q_ROUTINE_OFFSET, expected.len()), expected.as_slice());
         // Part C names `.exit`, not the origin — `asm::check` validates branches
         // *inside* the routine and cannot see a hook that lands mid-instruction.
         let exit = prg_bank_file_to_cpu(26, BIG_Q_ROUTINE_OFFSET) + OFF_EXIT as u16;
-        assert_eq!(
-            rom.read_range(BIG_Q_EXIT_HOOK, 3),
-            &[0x4C, exit as u8, (exit >> 8) as u8]
-        );
+        assert_eq!(rom.read_range(BIG_Q_EXIT_HOOK, 3), &[0x4C, exit as u8, (exit >> 8) as u8]);
     }
 
     #[test]

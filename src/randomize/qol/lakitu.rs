@@ -106,10 +106,7 @@ mod asm_checks {
             eprintln!("SKIP: requires the ROM, which is not included in the repo");
             return;
         };
-        asm::check(&PERMA_DEATH)
-            .fragment()
-            .hook(&v, RESPAWN_BLOCK, &PERMA_DEATH)
-            .assert_ok();
+        asm::check(&PERMA_DEATH).fragment().hook(&v, RESPAWN_BLOCK, &PERMA_DEATH).assert_ok();
     }
 
     /// The bytes we replace really are the respawn block, and the address we

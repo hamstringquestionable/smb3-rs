@@ -32,8 +32,7 @@ fn crc32_ieee(data: &[u8]) -> u32 {
     !crc
 }
 
-const SUPPORTED_ROM_HELP: &str =
-    "This randomizer requires \"Super Mario Bros. 3 (USA) (Rev 1)\" — the US Rev 1 release \
+const SUPPORTED_ROM_HELP: &str = "This randomizer requires \"Super Mario Bros. 3 (USA) (Rev 1)\" — the US Rev 1 release \
      in iNES (.nes) format, with or without an iNES header. The original (Rev 0 / PRG0) release \
      is not supported because it has bugs (e.g. the World 7-1 card-graphics glitch) that the \
      randomizer's hooks rely on having been fixed. Pass --skip-rom-validation \
@@ -43,13 +42,24 @@ const SUPPORTED_ROM_HELP: &str =
 pub enum RomError {
     TooSmall(usize),
     BadMagic([u8; 4]),
-    UnexpectedPrg { expected: u8, got: u8 },
-    UnexpectedChr { expected: u8, got: u8 },
-    SizeMismatch { expected: usize, got: usize },
+    UnexpectedPrg {
+        expected: u8,
+        got: u8,
+    },
+    UnexpectedChr {
+        expected: u8,
+        got: u8,
+    },
+    SizeMismatch {
+        expected: usize,
+        got: usize,
+    },
     /// ROM payload CRC matches the older USA (Rev 0 / PRG0) release.
     WrongRevisionPrg0,
     /// ROM payload CRC matches neither Rev 0 nor Rev 1.
-    UnknownRevision { payload_crc32: u32 },
+    UnknownRevision {
+        payload_crc32: u32,
+    },
 }
 
 impl fmt::Display for RomError {
@@ -192,8 +202,8 @@ impl Rom {
     /// whatever the file claims.
     pub fn from_bytes_lax(bytes: &[u8], skip_validation: bool) -> Result<Self, RomError> {
         // Detect unheadered ROM: exact raw PRG+CHR size with no iNES magic.
-        const UNHEADERED_SIZE: usize =
-            EXPECTED_PRG_PAGES as usize * PRG_PAGE_SIZE + EXPECTED_CHR_PAGES as usize * CHR_PAGE_SIZE;
+        const UNHEADERED_SIZE: usize = EXPECTED_PRG_PAGES as usize * PRG_PAGE_SIZE
+            + EXPECTED_CHR_PAGES as usize * CHR_PAGE_SIZE;
 
         let (bytes, header_synthesized) = if bytes.len() == UNHEADERED_SIZE {
             let magic: [u8; 4] = bytes[0..4].try_into().unwrap();
@@ -258,10 +268,7 @@ impl Rom {
                 + (prg_pages as usize * PRG_PAGE_SIZE)
                 + (chr_pages as usize * CHR_PAGE_SIZE);
             if bytes.len() != expected_size {
-                return Err(RomError::SizeMismatch {
-                    expected: expected_size,
-                    got: bytes.len(),
-                });
+                return Err(RomError::SizeMismatch { expected: expected_size, got: bytes.len() });
             }
 
             // Revision check: CRC32 the unheadered payload. Header bytes are
@@ -278,12 +285,7 @@ impl Rom {
         let mapper = (flags6 >> 4) | (flags7 & 0xF0);
         let mirroring_horizontal = (flags6 & 0x01) == 0;
 
-        let header = Header {
-            prg_pages,
-            chr_pages,
-            mapper,
-            mirroring_horizontal,
-        };
+        let header = Header { prg_pages, chr_pages, mapper, mirroring_horizontal };
 
         Ok(Rom {
             original: bytes.to_vec(),
@@ -297,20 +299,12 @@ impl Rom {
 
     /// Returns the output ROM bytes, stripping the synthetic header if one was added.
     pub fn output_bytes(&self) -> &[u8] {
-        if self.header_synthesized {
-            &self.data[HEADER_SIZE..]
-        } else {
-            &self.data
-        }
+        if self.header_synthesized { &self.data[HEADER_SIZE..] } else { &self.data }
     }
 
     /// Returns the original ROM bytes, stripping the synthetic header if one was added.
     pub fn original_bytes(&self) -> &[u8] {
-        if self.header_synthesized {
-            &self.original[HEADER_SIZE..]
-        } else {
-            &self.original
-        }
+        if self.header_synthesized { &self.original[HEADER_SIZE..] } else { &self.original }
     }
 
     /// Apply an IPS patch to the working data, leaving `original` untouched.
@@ -415,11 +409,7 @@ impl Rom {
     }
 
     fn current_tag(&self) -> String {
-        if self.tag_stack.is_empty() {
-            "untagged".to_string()
-        } else {
-            self.tag_stack.join("/")
-        }
+        if self.tag_stack.is_empty() { "untagged".to_string() } else { self.tag_stack.join("/") }
     }
 
     // --- Write log queries ---
@@ -431,33 +421,22 @@ impl Rom {
 
     /// Returns all write records overlapping the byte range `[start, end)`.
     pub fn writes_in_range(&self, start: usize, end: usize) -> Vec<&WriteRecord> {
-        self.write_log
-            .iter()
-            .filter(|r| r.offset < end && r.offset + r.len > start)
-            .collect()
+        self.write_log.iter().filter(|r| r.offset < end && r.offset + r.len > start).collect()
     }
 
     /// Returns all write records whose tag starts with `prefix`.
     pub fn writes_by_tag(&self, prefix: &str) -> Vec<&WriteRecord> {
-        self.write_log
-            .iter()
-            .filter(|r| r.tag.starts_with(prefix))
-            .collect()
+        self.write_log.iter().filter(|r| r.tag.starts_with(prefix)).collect()
     }
 
     /// Returns all write records covering a specific byte offset.
     pub fn writes_at(&self, offset: usize) -> Vec<&WriteRecord> {
-        self.write_log
-            .iter()
-            .filter(|r| offset >= r.offset && offset < r.offset + r.len)
-            .collect()
+        self.write_log.iter().filter(|r| offset >= r.offset && offset < r.offset + r.len).collect()
     }
 
     /// Returns true if any write record overlaps the byte range `[start, end)`.
     pub fn has_writes_in_range(&self, start: usize, end: usize) -> bool {
-        self.write_log
-            .iter()
-            .any(|r| r.offset < end && r.offset + r.len > start)
+        self.write_log.iter().any(|r| r.offset < end && r.offset + r.len > start)
     }
 
     /// Find write collisions: offsets where one top-level tag overwrote a byte
@@ -483,7 +462,9 @@ impl Rom {
         for rec in &self.write_log {
             let top_tag = rec.tag.split('/').next().unwrap_or(&rec.tag);
             for (off, _, _) in rec.changes() {
-                if let Some(&prev) = owner.get(&off) && prev != top_tag {
+                if let Some(&prev) = owner.get(&off)
+                    && prev != top_tag
+                {
                     collisions.push((off, prev.to_string(), top_tag.to_string()));
                 }
                 owner.insert(off, top_tag);
@@ -524,8 +505,16 @@ impl Rom {
                         out,
                         "  0x{:05X}  {} -> {}",
                         rec.offset,
-                        rec.old_bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "),
-                        rec.new_bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" "),
+                        rec.old_bytes
+                            .iter()
+                            .map(|b| format!("{b:02X}"))
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                        rec.new_bytes
+                            .iter()
+                            .map(|b| format!("{b:02X}"))
+                            .collect::<Vec<_>>()
+                            .join(" "),
                     );
                 } else {
                     let _ = writeln!(
@@ -621,20 +610,14 @@ mod tests {
     fn test_wrong_prg() {
         let mut data = make_valid_rom();
         data[4] = 8;
-        assert!(matches!(
-            Rom::from_bytes(&data),
-            Err(RomError::UnexpectedPrg { .. })
-        ));
+        assert!(matches!(Rom::from_bytes(&data), Err(RomError::UnexpectedPrg { .. })));
     }
 
     #[test]
     fn test_size_mismatch() {
         let mut data = make_valid_rom();
         data.push(0xFF); // extra byte
-        assert!(matches!(
-            Rom::from_bytes(&data),
-            Err(RomError::SizeMismatch { .. })
-        ));
+        assert!(matches!(Rom::from_bytes(&data), Err(RomError::SizeMismatch { .. })));
     }
 
     #[test]
@@ -877,8 +860,12 @@ mod tests {
         let mut patch = b"PATCH".to_vec();
         patch.extend_from_slice(&[0x00, 0x01, 0x00, 0x00, 0x01, 0xAA]);
         patch.extend_from_slice(&[
-            ((len >> 16) & 0xFF) as u8, ((len >> 8) & 0xFF) as u8, (len & 0xFF) as u8,
-            0x00, 0x01, 0xBB,
+            ((len >> 16) & 0xFF) as u8,
+            ((len >> 8) & 0xFF) as u8,
+            (len & 0xFF) as u8,
+            0x00,
+            0x01,
+            0xBB,
         ]);
         patch.extend_from_slice(b"EOF");
 

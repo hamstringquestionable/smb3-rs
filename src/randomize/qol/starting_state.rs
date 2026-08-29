@@ -1,7 +1,7 @@
 //! Starting lives and inventory.
 
-use crate::rom::Rom;
 use crate::randomize::rom_data::FS_STARTING_ITEMS;
+use crate::rom::Rom;
 
 /// Starting lives value byte (LDA #imm operand).
 /// Both Mario and Luigi are initialized from this single byte.

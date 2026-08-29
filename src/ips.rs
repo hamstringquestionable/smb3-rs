@@ -28,7 +28,12 @@ fn diff_run_end(original: &[u8], modified: &[u8], from: usize, len: usize) -> us
 /// A diff run just ended at `gap_start`. If at most `MAX_ABSORBED_GAP`
 /// identical bytes sit there followed by another differing byte, return that
 /// byte's position so the caller can absorb the gap; otherwise the region ends.
-fn next_diff_after_gap(original: &[u8], modified: &[u8], gap_start: usize, len: usize) -> Option<usize> {
+fn next_diff_after_gap(
+    original: &[u8],
+    modified: &[u8],
+    gap_start: usize,
+    len: usize,
+) -> Option<usize> {
     let mut i = gap_start;
     while i < len && i - gap_start < MAX_ABSORBED_GAP && original[i] == modified[i] {
         i += 1;
@@ -321,5 +326,4 @@ mod tests {
         assert!(apply_ips_patch(&rom, b"GARBAGE").is_err());
         assert!(apply_ips_patch(&rom, b"PAT").is_err());
     }
-
 }

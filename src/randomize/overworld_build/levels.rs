@@ -42,11 +42,8 @@ impl Phase for Levels {
         let mut placed = 0usize;
 
         while placed < state.level_budget {
-            let clear: Vec<Pos> = candidates
-                .iter()
-                .copied()
-                .filter(|&c| !next_to_level(state, c))
-                .collect();
+            let clear: Vec<Pos> =
+                candidates.iter().copied().filter(|&c| !next_to_level(state, c)).collect();
             let pool = if clear.is_empty() { &candidates } else { &clear };
             let Some(&pos) = pool.choose(rng) else {
                 actions.push(format!(

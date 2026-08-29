@@ -68,9 +68,22 @@ mod tests {
     fn build_with_troll_pipes(rom: &Rom, seed: u64) -> overworld_build::BuildResult {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let catalog = node_catalog::NodeCatalog::build(rom, false);
-        let pickup = overworld_pickup::pick_up(rom, &catalog, overworld_pickup::PickupFlags { shuffle_spade_games: true, shuffle_toad_houses: true, ..Default::default() });
+        let pickup = overworld_pickup::pick_up(
+            rom,
+            &catalog,
+            overworld_pickup::PickupFlags {
+                shuffle_spade_games: true,
+                shuffle_toad_houses: true,
+                ..Default::default()
+            },
+        );
         let data = overworld_build::OverworldData { pickup: &pickup, catalog: &catalog };
-        let mut build = overworld_build::build(rom, &data, &mut rng, overworld_build::BuildFlags { shuffle_toad_houses: true, ..Default::default() });
+        let mut build = overworld_build::build(
+            rom,
+            &data,
+            &mut rng,
+            overworld_build::BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+        );
         troll_pipes::mark_troll_pipes(&mut build, &mut rng);
         build
     }
@@ -92,7 +105,11 @@ mod tests {
                 if w.world_idx == 0 {
                     assert_eq!(n, 0, "W1 should never have a troll pipe (seed {seed})");
                 } else {
-                    assert!(n <= 1, "W{} should have at most 1 troll pipe (seed {seed})", w.world_idx + 1);
+                    assert!(
+                        n <= 1,
+                        "W{} should have at most 1 troll pipe (seed {seed})",
+                        w.world_idx + 1
+                    );
                     eligible += 1;
                     marked += n;
                 }
@@ -117,7 +134,9 @@ mod tests {
         };
         let rom = Rom::from_bytes(&bytes).unwrap();
         let run = || {
-            build_with_troll_pipes(&rom, 42).worlds.iter()
+            build_with_troll_pipes(&rom, 42)
+                .worlds
+                .iter()
                 .map(|w| w.slots.iter().filter(|s| s.is_troll_pipe).count())
                 .collect::<Vec<_>>()
         };

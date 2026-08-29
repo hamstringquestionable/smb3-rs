@@ -12,8 +12,8 @@ use rand::Rng;
 use rand::seq::IndexedRandom;
 
 use crate::randomize::enemy_protections::{
-    entry_protection_at, rewrites_hammer_bro, walker_segment_rule_at,
-    EntryProtection, WalkerSegmentRule,
+    EntryProtection, WalkerSegmentRule, entry_protection_at, rewrites_hammer_bro,
+    walker_segment_rule_at,
 };
 use crate::randomize::rom_data::{
     ENEMY_DATA_END, ENEMY_DATA_START, HAMMER_BRO_ID, HB_NEEDS_SHELL_ENEMIES, LEVEL_DATA_REGIONS,
@@ -62,11 +62,18 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options) {
 pub fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // All enemy classes off — only Big ? Blocks get randomized
     let no_flags = Options {
-        ground: EnemyMode::Off, shell: EnemyMode::Off, flying: EnemyMode::Off,
-        piranhas: EnemyMode::Off, ghosts: EnemyMode::Off,
-        thwomps: EnemyMode::Off, rotodiscs: EnemyMode::Off,
-        cannons: EnemyMode::Off, water: EnemyMode::Off, bros: EnemyMode::Off,
-        hb_encounters: EnemyMode::Off, wild_injections: Vec::new(),
+        ground: EnemyMode::Off,
+        shell: EnemyMode::Off,
+        flying: EnemyMode::Off,
+        piranhas: EnemyMode::Off,
+        ghosts: EnemyMode::Off,
+        thwomps: EnemyMode::Off,
+        rotodiscs: EnemyMode::Off,
+        cannons: EnemyMode::Off,
+        water: EnemyMode::Off,
+        bros: EnemyMode::Off,
+        hb_encounters: EnemyMode::Off,
+        wild_injections: Vec::new(),
         ..Options::default()
     };
     randomize_object_data(rom, rng, true, &no_flags);
@@ -146,11 +153,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
         // Collect all entries in this segment
         let mut entries: Vec<SegmentEntry> = Vec::new();
         while i + 2 < data.len() && data[i] != 0xFF {
-            entries.push(SegmentEntry {
-                data_index: i,
-                obj_id: data[i],
-                x_pos: data[i + 1],
-            });
+            entries.push(SegmentEntry { data_index: i, obj_id: data[i], x_pos: data[i + 1] });
             i += 3;
         }
 
@@ -178,17 +181,14 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
         let injected = if injection_sites.is_empty() || is_hb_segment {
             Vec::new()
         } else {
-            inject_segment_chasers(
-                &mut data, rom, &mut entries, &injection_sites, modes, opts, rng,
-            )
+            inject_segment_chasers(&mut data, rom, &mut entries, &injection_sites, modes, opts, rng)
         };
 
         // Track Boss Bass count for this segment so the per-segment cap is
         // enforced during class swaps. An injected Bertha is already reflected
         // here — `entries` was updated in step with `data` above.
-        let mut bertha_count: u8 = entries.iter()
-            .filter(|e| BERTHA_IDS.contains(&e.obj_id))
-            .count() as u8;
+        let mut bertha_count: u8 =
+            entries.iter().filter(|e| BERTHA_IDS.contains(&e.obj_id)).count() as u8;
 
         // Split entries into proximity groups by X-position. Each group gets
         // independent CHR slot tracking — enemies more than CHR_GROUP_GAP tiles
@@ -277,9 +277,9 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                     local: (committed_slot4, committed_slot5),
                     segment: (seg_all4, seg_all5),
                 };
-                let Some(chosen) = pick_replacement(
-                    entry, protection, modes, wild_pool, chr, limits, rng,
-                ) else {
+                let Some(chosen) =
+                    pick_replacement(entry, protection, modes, wild_pool, chr, limits, rng)
+                else {
                     // No swap (protection mode off, unknown class, or no
                     // compatible candidate) — the vanilla enemy stays, so its
                     // page is a real on-screen commitment like any pick.
@@ -306,7 +306,6 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                     commit_chr_page(chosen, &mut seg_chaser4, &mut seg_chaser5);
                 }
             }
-
         }
     }
 
@@ -326,17 +325,23 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
     // scramble adjacent real data.
     let bounds = segment_writer::walk_segments(&data, 0, data.len(), &skip_ranges);
     for b in bounds {
-        let entries: Vec<WriterEntry> = (0..b.entry_count).map(|i| {
-            let off = b.file_offset + 1 + i * 3;
-            WriterEntry { obj_id: data[off], x: data[off + 1], y: data[off + 2] }
-        }).collect();
+        let entries: Vec<WriterEntry> = (0..b.entry_count)
+            .map(|i| {
+                let off = b.file_offset + 1 + i * 3;
+                WriterEntry { obj_id: data[off], x: data[off + 1], y: data[off + 2] }
+            })
+            .collect();
         let rom_offset = ENEMY_DATA_START + b.file_offset;
-        segment_writer::write_segment(rom, &segment_writer::SegmentSpec {
-            file_offset: rom_offset,
-            original_count: b.entry_count,
-            entries: &entries,
-            label: None,
-            sort_mode: SortMode::Preserve,
-        }).expect("enemies: segment write failed");
+        segment_writer::write_segment(
+            rom,
+            &segment_writer::SegmentSpec {
+                file_offset: rom_offset,
+                original_count: b.entry_count,
+                entries: &entries,
+                label: None,
+                sort_mode: SortMode::Preserve,
+            },
+        )
+        .expect("enemies: segment write failed");
     }
 }

@@ -120,6 +120,12 @@ def main():
     p("//! Hard constraint: NEVER include the pointer-table range 0x377E0-0x37807")
     p("//! in any variant group — painting those bytes corrupts the level-layout")
     p("//! CPU pointers and crashes the game on world entry.")
+    p("//!")
+    p("//! Every table below carries `#[rustfmt::skip]`: the compact four-line-per-group")
+    p("//! layout is what makes a palette table readable, and it is what `git diff` after")
+    p("//! a regeneration is meant to show. rustfmt would expand each group to seven")
+    p("//! lines and double the file. `tools/gen_palette_variants.py` emits the")
+    p("//! attributes as well — keep the two in step.")
     p("")
     p("/// A palette-group variant set at a specific file offset.")
     p("pub struct VariantGroup {")
@@ -145,6 +151,9 @@ def main():
         p(f"// {len(changed)} quartets changed by Recolored.")
         p("// " + "-" * 74)
         p("")
+        # The compact layout below is the point of this file; see the module
+        # doc comment. Keep this attribute in step with palette_variants.rs.
+        p("#[rustfmt::skip]")
         p(f"pub const {const_name}: &[VariantGroup] = &[")
         for off, v, r in changed:
             v_hex = ", ".join(f"0x{b:02X}" for b in v)

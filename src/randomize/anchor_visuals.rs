@@ -1,5 +1,5 @@
-use crate::rom::Rom;
 use super::rom_data::FS_ANCHOR_ITEM_GUARD;
+use crate::rom::Rom;
 
 // Global Item ID for the Anchor — the visual we redirect every other item to.
 // Derived patch values: `ANCHOR * 2` indexes the 14×2-byte hilite tile table,
@@ -154,9 +154,11 @@ mod tests {
         data[4] = 16;
         data[5] = 16;
         data[6] = 0x40;
-        data[INV_DRAW_PROLOGUE_OFFSET..INV_DRAW_PROLOGUE_OFFSET + 7].copy_from_slice(&VANILLA_INV_DRAW_PROLOGUE);
+        data[INV_DRAW_PROLOGUE_OFFSET..INV_DRAW_PROLOGUE_OFFSET + 7]
+            .copy_from_slice(&VANILLA_INV_DRAW_PROLOGUE);
         data[TBOX_GIVE_ITEM_OFFSET..TBOX_GIVE_ITEM_OFFSET + 3].copy_from_slice(&VANILLA_TBOX_LDA);
-        data[TOAD_HOUSE_STORE_OFFSET..TOAD_HOUSE_STORE_OFFSET + 3].copy_from_slice(&VANILLA_TOAD_LDA);
+        data[TOAD_HOUSE_STORE_OFFSET..TOAD_HOUSE_STORE_OFFSET + 3]
+            .copy_from_slice(&VANILLA_TOAD_LDA);
         Rom::from_bytes_lax(&data, true).unwrap()
     }
 
@@ -166,7 +168,10 @@ mod tests {
         apply(&mut rom);
 
         assert_eq!(rom.read_range(INV_DRAW_ITEM_INDEX_OFFSET, 3), &INV_DRAW_ITEM_INDEX_PATCH);
-        assert_eq!(rom.read_range(FS_ANCHOR_ITEM_GUARD, ANCHOR_ITEM_GUARD_BODY.len()), &ANCHOR_ITEM_GUARD_BODY);
+        assert_eq!(
+            rom.read_range(FS_ANCHOR_ITEM_GUARD, ANCHOR_ITEM_GUARD_BODY.len()),
+            &ANCHOR_ITEM_GUARD_BODY
+        );
         assert_eq!(rom.read_range(INV_HILITE_INDEX_OFFSET, 3), &INV_HILITE_INDEX_PATCH);
         assert_eq!(rom.read_range(INV_HILITE_PAL_OFFSET, 3), &INV_HILITE_PAL_PATCH);
         assert_eq!(rom.read_range(TBOX_INIT_PALETTE_OFFSET, 3), &TBOX_LDA_ANCHOR_PATCH);
@@ -194,6 +199,9 @@ mod asm_checks {
 
     #[test]
     fn anchor_item_guard_is_well_formed() {
-        asm::check(&ANCHOR_ITEM_GUARD_BODY).origin(ANCHOR_ITEM_GUARD_CPU_ADDR).allocation(FS_ANCHOR_ITEM_GUARD).assert_ok();
+        asm::check(&ANCHOR_ITEM_GUARD_BODY)
+            .origin(ANCHOR_ITEM_GUARD_CPU_ADDR)
+            .allocation(FS_ANCHOR_ITEM_GUARD)
+            .assert_ok();
     }
 }

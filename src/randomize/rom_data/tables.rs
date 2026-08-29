@@ -11,7 +11,8 @@ pub(crate) type Pos = (usize, usize);
 pub(crate) type TeleportEdge = (Pos, Pos);
 
 /// Valid horizontal path tiles (Map_Object_Valid_Left/Right in PRG010).
-pub(crate) const VALID_HORZ: &[u8] = &[0x45, 0x49, 0xB2, 0xB3, 0xAC, 0xB7, 0xB8, 0xDA, 0xB9, 0xE6, 0xE8];
+pub(crate) const VALID_HORZ: &[u8] =
+    &[0x45, 0x49, 0xB2, 0xB3, 0xAC, 0xB7, 0xB8, 0xDA, 0xB9, 0xE6, 0xE8];
 
 /// Valid vertical path tiles (Map_Object_Valid_Down/Up in PRG010).
 pub(crate) const VALID_VERT: &[u8] = &[0x46, 0xB1, 0xAA, 0xAB, 0xB0, 0xDB, 0xBA, 0xE8];
@@ -48,8 +49,8 @@ pub(crate) const W8_IDX: usize = 7;
 /// gate. A new consumer that needs canoe edges cannot bypass that gate.
 pub(crate) const CANOE_EDGES: &[(usize, TeleportEdge)] = &[
     // W3: mainland dock (6,20) → two island docks.
-    (2, ((6, 20), (5, 24))),  // mainland dock → island 1
-    (2, ((6, 20), (0, 32))),  // mainland dock → island 2
+    (2, ((6, 20), (5, 24))), // mainland dock → island 1
+    (2, ((6, 20), (0, 32))), // mainland dock → island 2
     // W8: mainland dock (5,6) → three island docks on screen 0. Only active
     // when `8s are Wild` is on (the docks/sprite aren't placed otherwise).
     // The canoe sprite floats at (5,7), immediately right of (5,6) — same
@@ -117,55 +118,66 @@ impl LevelDataRegion {
 
 /// Level data regions by tileset (file offset ranges + extra-byte dispatch info).
 pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
-    LevelDataRegion { // Underground (TS14) — same dispatch table as TS3
-        start: 0x1A587, end: 0x1C005,
+    LevelDataRegion {
+        // Underground (TS14) — same dispatch table as TS3
+        start: 0x1A587,
+        end: 0x1C005,
         extra_byte_dispatches: &[
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
-            60, 61, 62,                       // BGOrWater
-            63, 64, 65, 66, 67, 68,           // DecoGround
-            69, 70, 71,                       // DecoCeiling
+            60, 61, 62, // BGOrWater
+            63, 64, 65, 66, 67, 68, // DecoGround
+            69, 70, 71, // DecoCeiling
         ],
         randomize_note_wood: true,
     },
-    LevelDataRegion { // Plains (TS1)
-        start: 0x1E512, end: 0x20005,
+    LevelDataRegion {
+        // Plains (TS1)
+        start: 0x1E512,
+        end: 0x20005,
         extra_byte_dispatches: &[
-            11, 12,                            // GroundRun
-            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
+            11, 12, // GroundRun
+            35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
         ],
         randomize_note_wood: true,
     },
-    LevelDataRegion { // Hilly (TS3)
-        start: 0x20587, end: 0x22005,
+    LevelDataRegion {
+        // Hilly (TS3)
+        start: 0x20587,
+        end: 0x22005,
         extra_byte_dispatches: &[
             35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
-            60, 61, 62,                       // BGOrWater
-            63, 64, 65, 66, 67, 68,           // DecoGround
-            69, 70, 71,                       // DecoCeiling
+            60, 61, 62, // BGOrWater
+            63, 64, 65, 66, 67, 68, // DecoGround
+            69, 70, 71, // DecoCeiling
         ],
         randomize_note_wood: true,
     },
-    LevelDataRegion { // Ice / Sky (TS4/12)
-        start: 0x227E0, end: 0x24005,
+    LevelDataRegion {
+        // Ice / Sky (TS4/12)
+        start: 0x227E0,
+        end: 0x24005,
         extra_byte_dispatches: &[
-            0,                                 // LongWoodBlock
-            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
-            54,                                // Muncher17
-            60,                                // Group 4 variable
-            112,                               // Group 7 variable
+            0, // LongWoodBlock
+            35, 36, 37, 38, 39, 40, 41, 42,  // TopDecoBlocks
+            54,  // Muncher17
+            60,  // Group 4 variable
+            112, // Group 7 variable
         ],
         randomize_note_wood: true,
     },
-    LevelDataRegion { // Pipe / Water (TS7)
-        start: 0x24BA7, end: 0x26005,
+    LevelDataRegion {
+        // Pipe / Water (TS7)
+        start: 0x24BA7,
+        end: 0x26005,
         extra_byte_dispatches: &[
-            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
-            49,                                // OrangeBlock
-            57,                                // WaterFill
+            35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
+            49, // OrangeBlock
+            57, // WaterFill
         ],
         randomize_note_wood: true,
     },
-    LevelDataRegion { // Cloudy / Giant / Plant (TS5/11/13)
+    LevelDataRegion {
+        // Cloudy / Giant / Plant (TS5/11/13)
         // End 0x2800A, NOT 0x28C05: this region's PRG bank ($A000 = file
         // 0x26010) ends at 0x28010, and the next bank opens with the desert
         // metatile quadrant table. Walking past the bank boundary misparses
@@ -173,45 +185,52 @@ pub(crate) const LEVEL_DATA_REGIONS: &[LevelDataRegion] = &[
         // into desert metatile quadrants (stray palm-leaf tiles in desert
         // levels and HB battle scenes). Real data ends with an empty stub
         // level at 0x28000-0x28009; 0x2800A is one past its terminator.
-        start: 0x26A6F, end: 0x2800A,
+        start: 0x26A6F,
+        end: 0x2800A,
         extra_byte_dispatches: &[
-            13,                                // DoubleCloud
-            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
-            45,                                // CloudGoal
-            46,                                // RoundCloudTop
-            48,                                // CloudSpace
-            51,                                // Lava
+            13, // DoubleCloud
+            35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
+            45, // CloudGoal
+            46, // RoundCloudTop
+            48, // CloudSpace
+            51, // Lava
         ],
         randomize_note_wood: true,
     },
-    LevelDataRegion { // Desert (TS9)
-        start: 0x28F36, end: 0x2A005,
+    LevelDataRegion {
+        // Desert (TS9)
+        start: 0x28F36,
+        end: 0x2A005,
         extra_byte_dispatches: &[
-            10, 11, 12, 13,                    // DiagRect variants
-            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
+            10, 11, 12, 13, // DiagRect variants
+            35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
         ],
         randomize_note_wood: false, // shapes 1-5 = desert decorations (palms, cacti) in TS9
     },
-    LevelDataRegion { // Dungeon (TS2)
-        start: 0x2A7F7, end: 0x2C005,
+    LevelDataRegion {
+        // Dungeon (TS2)
+        start: 0x2A7F7,
+        end: 0x2C005,
         extra_byte_dispatches: &[
-            13, 14,                            // SolidBrick, BrightDiamondLong (LL21_InitLongRun)
-            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
-            46, 47,                            // Background (LoadLevel21_Background)
-            48,                                // Lava
-            57,                                // BrightDiamond (4-byte like BrightDiamondLong)
-            95, 96,                            // Group 6 handlers (empirically verified 4-byte)
+            13, 14, // SolidBrick, BrightDiamondLong (LL21_InitLongRun)
+            35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
+            46, 47, // Background (LoadLevel21_Background)
+            48, // Lava
+            57, // BrightDiamond (4-byte like BrightDiamondLong)
+            95, 96, // Group 6 handlers (empirically verified 4-byte)
         ],
         randomize_note_wood: false, // shapes 1-2 = CCBridge, 3-7 = TopDecoBlocks in TS2
     },
-    LevelDataRegion { // Ship (TS10)
-        start: 0x2EC07, end: 0x30005,
+    LevelDataRegion {
+        // Ship (TS10)
+        start: 0x2EC07,
+        end: 0x30005,
         extra_byte_dispatches: &[
-            1, 2,                              // WoodBodyLong
-            35, 36, 37, 38, 39, 40, 41, 42,   // TopDecoBlocks
-            48,                                // MetalPlate
+            1, 2, // WoodBodyLong
+            35, 36, 37, 38, 39, 40, 41, 42, // TopDecoBlocks
+            48, // MetalPlate
             // 49 (Crate) is 3-byte, NOT 4-byte — was causing W5 airship corruption
-            51,                                // DoubleTipBodyWood
+            51, // DoubleTipBodyWood
         ],
         randomize_note_wood: true,
     },
@@ -273,7 +292,7 @@ pub(crate) const FX_VADDR_L: usize = 0x147DE;
 
 pub(crate) const FX_MAP_COMP_IDX: usize = 0x147EF; // 17 x 2 bytes
 
-pub(crate) const FX_PATTERNS: usize = 0x14811;     // 17 x 4 bytes
+pub(crate) const FX_PATTERNS: usize = 0x14811; // 17 x 4 bytes
 
 pub(crate) const FX_MAP_LOC_ROW: usize = 0x14855;
 
@@ -306,10 +325,10 @@ pub(crate) const MAP_COMPLETE_BITS: [u8; 8] = [0x80, 0x40, 0x20, 0x10, 0x08, 0x0
 pub(crate) const CHEST_LEVELS: &[(usize, usize, &str)] = &[
     (0, 11, "1F (Warp Whistle)"),
     (2, 29, "3-7 (Cloud)"),
-    (4, 5,  "5-1 (Music Box)"),
+    (4, 5, "5-1 (Music Box)"),
     (6, 11, "7-P1 (chest)"),
     (6, 45, "7-P2 (chest)"),
-    (7, 5,  "8-Tank (Star)"),
+    (7, 5, "8-Tank (Star)"),
     (7, 14, "8-Hnd1 (chest)"),
     (7, 15, "8-Hnd2 (chest)"),
     (7, 16, "8-Hnd3 (chest)"),
@@ -317,9 +336,7 @@ pub(crate) const CHEST_LEVELS: &[(usize, usize, &str)] = &[
 
 /// True if the given vanilla `(world_idx, entry_idx)` is in [`CHEST_LEVELS`].
 pub(crate) fn is_chest_level(world_idx: usize, entry_idx: usize) -> bool {
-    CHEST_LEVELS
-        .iter()
-        .any(|&(w, e, _)| w == world_idx && e == entry_idx)
+    CHEST_LEVELS.iter().any(|&(w, e, _)| w == world_idx && e == entry_idx)
 }
 
 /// True if the given vanilla `(world_idx, entry_idx)` is a W8 hand level
@@ -330,15 +347,30 @@ pub(crate) fn is_hand_level(world_idx: usize, entry_idx: usize) -> bool {
 
 /// Destination byte → world index (0-based). Only paired pipe destinations.
 pub(crate) const DEST_TO_WORLD: &[(u8, usize)] = &[
-    (0x00, 4),  // W5 (spiral tower)
-    (0x01, 1),  // W2
-    (0x02, 5), (0x03, 5),  // W6
-    (0x04, 6), (0x05, 6), (0x06, 6), (0x07, 6),  // W7
-    (0x08, 6), (0x09, 6), (0x0A, 6), (0x0B, 6),  // W7
-    (0x0C, 7), (0x0D, 7), (0x0E, 7), (0x0F, 7), (0x10, 7), (0x11, 7),  // W8
-    (0x12, 2), (0x13, 2), (0x14, 2),  // W3
-    (0x15, 3), (0x16, 3),  // W4
-    (0x17, 4),  // W5
+    (0x00, 4), // W5 (spiral tower)
+    (0x01, 1), // W2
+    (0x02, 5),
+    (0x03, 5), // W6
+    (0x04, 6),
+    (0x05, 6),
+    (0x06, 6),
+    (0x07, 6), // W7
+    (0x08, 6),
+    (0x09, 6),
+    (0x0A, 6),
+    (0x0B, 6), // W7
+    (0x0C, 7),
+    (0x0D, 7),
+    (0x0E, 7),
+    (0x0F, 7),
+    (0x10, 7),
+    (0x11, 7), // W8
+    (0x12, 2),
+    (0x13, 2),
+    (0x14, 2), // W3
+    (0x15, 3),
+    (0x16, 3), // W4
+    (0x17, 4), // W5
 ];
 
 /// Per-world map tile grid info.
@@ -350,14 +382,14 @@ pub(crate) struct MapGridInfo {
 }
 
 pub(crate) const MAP_TILE_GRIDS: [MapGridInfo; 8] = [
-    MapGridInfo { file_offset: 0x185BA, columns: 16, screens: 1 },  // W1
-    MapGridInfo { file_offset: 0x1864B, columns: 32, screens: 2 },  // W2
-    MapGridInfo { file_offset: 0x1876C, columns: 48, screens: 3 },  // W3
-    MapGridInfo { file_offset: 0x1891D, columns: 32, screens: 2 },  // W4
-    MapGridInfo { file_offset: 0x18A3E, columns: 32, screens: 2 },  // W5
-    MapGridInfo { file_offset: 0x18B5F, columns: 48, screens: 3 },  // W6
-    MapGridInfo { file_offset: 0x18D10, columns: 32, screens: 2 },  // W7
-    MapGridInfo { file_offset: 0x18E31, columns: 64, screens: 4 },  // W8
+    MapGridInfo { file_offset: 0x185BA, columns: 16, screens: 1 }, // W1
+    MapGridInfo { file_offset: 0x1864B, columns: 32, screens: 2 }, // W2
+    MapGridInfo { file_offset: 0x1876C, columns: 48, screens: 3 }, // W3
+    MapGridInfo { file_offset: 0x1891D, columns: 32, screens: 2 }, // W4
+    MapGridInfo { file_offset: 0x18A3E, columns: 32, screens: 2 }, // W5
+    MapGridInfo { file_offset: 0x18B5F, columns: 48, screens: 3 }, // W6
+    MapGridInfo { file_offset: 0x18D10, columns: 32, screens: 2 }, // W7
+    MapGridInfo { file_offset: 0x18E31, columns: 64, screens: 4 }, // W8
 ];
 
 /// Pointer table locations per world.
@@ -381,12 +413,21 @@ pub(crate) const WORLDS: [WorldTables; 8] = [
 pub(crate) const FORTRESS_ENTRIES: &[(usize, usize)] = &[
     (0, 11),
     (1, 13),
-    (2, 13), (2, 34),
-    (3, 9), (3, 16),
-    (4, 12), (4, 31),
-    (5, 9), (5, 27), (5, 48),
-    (6, 5), (6, 40),
-    (7, 7), (7, 10), (7, 26), (7, 36),
+    (2, 13),
+    (2, 34),
+    (3, 9),
+    (3, 16),
+    (4, 12),
+    (4, 31),
+    (5, 9),
+    (5, 27),
+    (5, 48),
+    (6, 5),
+    (6, 40),
+    (7, 7),
+    (7, 10),
+    (7, 26),
+    (7, 36),
 ];
 
 /// ROM file offset of the Boom-Boom Y-byte for each fortress (same order as
@@ -452,9 +493,8 @@ pub(crate) fn boomboom_y_offset_for_obj(obj_ptr: u16) -> Option<usize> {
 }
 
 /// Known airship entries (world_idx, entry_idx).
-pub(crate) const AIRSHIP_ENTRIES: &[(usize, usize)] = &[
-    (0, 17), (1, 36), (2, 49), (3, 6), (4, 35), (5, 53), (6, 43),
-];
+pub(crate) const AIRSHIP_ENTRIES: &[(usize, usize)] =
+    &[(0, 17), (1, 36), (2, 49), (3, 6), (4, 35), (5, 53), (6, 43)];
 
 /// Bowser's castle entry.
 pub(crate) const BOWSER_ENTRY: (usize, usize) = (7, 40);
@@ -462,9 +502,8 @@ pub(crate) const BOWSER_ENTRY: (usize, usize) = (7, 40);
 /// Known toad house obj_ptrs. The standard format is $0700; the variant
 /// formats ($0300-$0900) select different reward pools/game types but all
 /// load a toad house screen. All share lay=$AD60.
-pub(crate) const TOAD_HOUSE_OBJ_PTRS: &[u16] = &[
-    0x0300, 0x0400, 0x0500, 0x0600, 0x0700, 0x0800, 0x0900,
-];
+pub(crate) const TOAD_HOUSE_OBJ_PTRS: &[u16] =
+    &[0x0300, 0x0400, 0x0500, 0x0600, 0x0700, 0x0800, 0x0900];
 
 /// Known hammer bro level obj_ptrs. Each world's hammer bro encounters point
 /// to one of these object streams. Multiple pointer table entries share the
@@ -523,11 +562,11 @@ pub(crate) const STOMPABLE_ENEMIES: &[u8] = &[
     0x82, // BoomerangBro
     0x86, // HeavyBro
     0x87, // FireBro
-    // NOTE: Bullet Bills (0x78/0x79) intentionally excluded — they're
-    // cannon-spawned projectiles. Placed directly in level data their XVel
-    // stays 0 (standard) or they accelerate once and lock (homing). The
-    // `cannons` class swaps the cannon IDs (0xBC/0xBD) via the BILLS sub-class
-    // instead.
+          // NOTE: Bullet Bills (0x78/0x79) intentionally excluded — they're
+          // cannon-spawned projectiles. Placed directly in level data their XVel
+          // stays 0 (standard) or they accelerate once and lock (homing). The
+          // `cannons` class swaps the cannon IDs (0xBC/0xBD) via the BILLS sub-class
+          // instead.
 ];
 
 /// Enemies allowed in 2-enemy HB Wild segments only, where the other slot is
@@ -623,15 +662,78 @@ pub(crate) struct BetaLevel {
 
 /// Nine unreferenced beta levels found in the level data banks.
 pub(crate) const BETA_LEVELS: &[BetaLevel] = &[
-    BetaLevel { tileset:  1, obj_lo: 0xAB, obj_hi: 0xC1, lay_lo: 0x4C, lay_hi: 0xA7, name: "\u{03B2}1" },
-    BetaLevel { tileset:  1, obj_lo: 0x21, obj_hi: 0xC2, lay_lo: 0xAC, lay_hi: 0xA9, name: "\u{03B2}2" },
-    BetaLevel { tileset:  3, obj_lo: 0xDC, obj_hi: 0xC6, lay_lo: 0xDD, lay_hi: 0xB0, name: "\u{03B2}3" },
-    BetaLevel { tileset:  3, obj_lo: 0x06, obj_hi: 0xC0, lay_lo: 0x42, lay_hi: 0xB4, name: "\u{03B2}4" },
-    BetaLevel { tileset:  4, obj_lo: 0xD8, obj_hi: 0xCA, lay_lo: 0xCD, lay_hi: 0xAD, name: "\u{03B2}5" },
-    BetaLevel { tileset:  8, obj_lo: 0x06, obj_hi: 0xC0, lay_lo: 0x18, lay_hi: 0xAF, name: "\u{03B2}6" },
-    BetaLevel { tileset: 12, obj_lo: 0xE5, obj_hi: 0xCB, lay_lo: 0xBF, lay_hi: 0xB2, name: "\u{03B2}7" },
-    BetaLevel { tileset: 12, obj_lo: 0xA0, obj_hi: 0xCC, lay_lo: 0xBA, lay_hi: 0xB7, name: "\u{03B2}8" },
-    BetaLevel { tileset: 13, obj_lo: 0xBD, obj_hi: 0xCE, lay_lo: 0xA9, lay_hi: 0xAC, name: "\u{03B2}9" },
+    BetaLevel {
+        tileset: 1,
+        obj_lo: 0xAB,
+        obj_hi: 0xC1,
+        lay_lo: 0x4C,
+        lay_hi: 0xA7,
+        name: "\u{03B2}1",
+    },
+    BetaLevel {
+        tileset: 1,
+        obj_lo: 0x21,
+        obj_hi: 0xC2,
+        lay_lo: 0xAC,
+        lay_hi: 0xA9,
+        name: "\u{03B2}2",
+    },
+    BetaLevel {
+        tileset: 3,
+        obj_lo: 0xDC,
+        obj_hi: 0xC6,
+        lay_lo: 0xDD,
+        lay_hi: 0xB0,
+        name: "\u{03B2}3",
+    },
+    BetaLevel {
+        tileset: 3,
+        obj_lo: 0x06,
+        obj_hi: 0xC0,
+        lay_lo: 0x42,
+        lay_hi: 0xB4,
+        name: "\u{03B2}4",
+    },
+    BetaLevel {
+        tileset: 4,
+        obj_lo: 0xD8,
+        obj_hi: 0xCA,
+        lay_lo: 0xCD,
+        lay_hi: 0xAD,
+        name: "\u{03B2}5",
+    },
+    BetaLevel {
+        tileset: 8,
+        obj_lo: 0x06,
+        obj_hi: 0xC0,
+        lay_lo: 0x18,
+        lay_hi: 0xAF,
+        name: "\u{03B2}6",
+    },
+    BetaLevel {
+        tileset: 12,
+        obj_lo: 0xE5,
+        obj_hi: 0xCB,
+        lay_lo: 0xBF,
+        lay_hi: 0xB2,
+        name: "\u{03B2}7",
+    },
+    BetaLevel {
+        tileset: 12,
+        obj_lo: 0xA0,
+        obj_hi: 0xCC,
+        lay_lo: 0xBA,
+        lay_hi: 0xB7,
+        name: "\u{03B2}8",
+    },
+    BetaLevel {
+        tileset: 13,
+        obj_lo: 0xBD,
+        obj_hi: 0xCE,
+        lay_lo: 0xA9,
+        lay_hi: 0xAC,
+        name: "\u{03B2}9",
+    },
 ];
 
 /// Deterministic layout fixes for the 9 beta stages.
@@ -647,37 +749,66 @@ pub(crate) const BETA_PATCHES: &[(usize, u8)] = &[
     // byte0 0x27→0x28 sinks the top wood block to row 8; byte0 0x47 (instead
     // of 0x48) raises the leaf to row 7. fixed_idx stays 37 (wood-leaf, tile
     // $74) since the row bits don't enter the dispatch math.
-    (0x1E782, 0x28), (0x1E785, 0x47), (0x1E787, 0x05), (0x1E916, 0x08),
+    (0x1E782, 0x28),
+    (0x1E785, 0x47),
+    (0x1E787, 0x05),
+    (0x1E916, 0x08),
     // β2 (ts1 $A9AC) — 9 patches (header: alt_layout/alt_objects redirect + command fixes)
-    (0x1E9BC, 0x48), (0x1E9BD, 0xBE), (0x1E9BE, 0x84),
-    (0x1E9E5, 0x71), (0x1E9E6, 0x80),
+    (0x1E9BC, 0x48),
+    (0x1E9BD, 0xBE),
+    (0x1E9BE, 0x84),
+    (0x1E9E5, 0x71),
+    (0x1E9E6, 0x80),
     // Convert the WOODBLOCKBOUNCE at scr=1 col=9 row=9 into a true wood-block
     // powerup (group 2 fixed, byte2=0x05 = wood-leaf, tile $74). byte0 flips
     // 0x29→0x49 (group 1→2, row=9 unchanged) and byte2 flips 0x70→0x05.
     // The byte0 change alone was tried previously and crashed — leaving byte2
     // at 0x70 reinterprets it as variable dispatch 36 in group 2, which is a
     // 4-byte command in Plains, mis-aligning the rest of the level.
-    (0x1EA02, 0x49), (0x1EA04, 0x05),
-    (0x1EA6F, 0x0D), (0x1EB34, 0x06),
+    (0x1EA02, 0x49),
+    (0x1EA04, 0x05),
+    (0x1EA6F, 0x0D),
+    (0x1EB34, 0x06),
     // β3 (ts3 $B0DD) — 2 patches
-    (0x2113F, 0x00), (0x212BA, 0x00),
+    (0x2113F, 0x00),
+    (0x212BA, 0x00),
     // β4 (ts3 $B442) — 5 patches (header: byte5 X-start + command fixes,
     // and convert hidden 1-up brick to Q-block star so the powerup randomizer reaches it).
-    (0x21457, 0x04), (0x214B2, 0x04),
-    (0x214CF, 0x2F), (0x214D0, 0x24), (0x214D1, 0x02),
+    (0x21457, 0x04),
+    (0x214B2, 0x04),
+    (0x214CF, 0x2F),
+    (0x214D0, 0x24),
+    (0x214D1, 0x02),
     // β5 (ts4 $ADCD) — 5 patches
-    (0x22F05, 0x1A), (0x22F08, 0x19), (0x22F0B, 0x1A),
-    (0x22F0F, 0x9F), (0x23004, 0x04),
+    (0x22F05, 0x1A),
+    (0x22F08, 0x19),
+    (0x22F0B, 0x1A),
+    (0x22F0F, 0x9F),
+    (0x23004, 0x04),
     // β6 (ts8 $AF18) — 20 patches (header: alt_layout/alt_objects/alt_tileset + commands)
-    (0x24F28, 0x32), (0x24F29, 0xB3), (0x24F2A, 0xD8),
-    (0x24F2B, 0xC3), (0x24F2E, 0xB1),
-    (0x25028, 0x00), (0x25029, 0x41), (0x2502B, 0x00),
-    (0x2502C, 0x41), (0x2502D, 0x23), (0x25031, 0x00),
-    (0x25032, 0x41), (0x2503A, 0x00), (0x2503B, 0x41),
-    (0x25046, 0x00), (0x25047, 0x41), (0x25063, 0x21),
-    (0x25067, 0x53), (0x25068, 0x32), (0x250D2, 0x01),
+    (0x24F28, 0x32),
+    (0x24F29, 0xB3),
+    (0x24F2A, 0xD8),
+    (0x24F2B, 0xC3),
+    (0x24F2E, 0xB1),
+    (0x25028, 0x00),
+    (0x25029, 0x41),
+    (0x2502B, 0x00),
+    (0x2502C, 0x41),
+    (0x2502D, 0x23),
+    (0x25031, 0x00),
+    (0x25032, 0x41),
+    (0x2503A, 0x00),
+    (0x2503B, 0x41),
+    (0x25046, 0x00),
+    (0x25047, 0x41),
+    (0x25063, 0x21),
+    (0x25067, 0x53),
+    (0x25068, 0x32),
+    (0x250D2, 0x01),
     // β9 (ts13 $ACA9) — 2 patches
-    (0x26DB8, 0x63), (0x26DB9, 0x20),
+    (0x26DB8, 0x63),
+    (0x26DB9, 0x20),
 ];
 
 // ---------------------------------------------------------------------------
@@ -789,7 +920,8 @@ mod fortress_table_tests {
             let entry = read_entry(&rom, &WORLDS[w], e);
             let obj_ptr = ((entry.obj_hi as u16) << 8) | entry.obj_lo as u16;
             assert_eq!(
-                obj_ptr, VANILLA_FORTRESS_OBJ_PTRS[i],
+                obj_ptr,
+                VANILLA_FORTRESS_OBJ_PTRS[i],
                 "fortress {i} (W{}[{e}]): obj_ptr mismatch",
                 w + 1
             );

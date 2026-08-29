@@ -16,8 +16,8 @@
 
 use rand::Rng;
 
-use crate::rom::Rom;
 use super::segment_writer::{self, SegmentEntry, SegmentSpec, SortMode};
+use crate::rom::Rom;
 
 const SEG_OFFSET: usize = 0xD2C9;
 const ENTRY_COUNT: usize = 26;
@@ -49,32 +49,32 @@ const PINNED_X: &[u8] = &[0x06, 0x0B];
 /// in vanilla X order. Targets (Podoboo, Ceiling Podoboo) get jittered;
 /// non-targets (DryBones, Boo) keep these exact (X, Y, ID).
 const VANILLA: &[SegmentEntry] = &[
-    SegmentEntry { obj_id: PODOBOO,         x: 0x06, y: 0x17 },
-    SegmentEntry { obj_id: PODOBOO,         x: 0x0B, y: 0x15 },
-    SegmentEntry { obj_id: PODOBOO,         x: 0x0D, y: 0x11 },
+    SegmentEntry { obj_id: PODOBOO, x: 0x06, y: 0x17 },
+    SegmentEntry { obj_id: PODOBOO, x: 0x0B, y: 0x15 },
+    SegmentEntry { obj_id: PODOBOO, x: 0x0D, y: 0x11 },
     SegmentEntry { obj_id: CEILING_PODOBOO, x: 0x12, y: 0x0F },
     SegmentEntry { obj_id: CEILING_PODOBOO, x: 0x18, y: 0x0F },
-    SegmentEntry { obj_id: PODOBOO,         x: 0x1E, y: 0x12 },
-    SegmentEntry { obj_id: PODOBOO,         x: 0x24, y: 0x16 },
-    SegmentEntry { obj_id: 0x3F,            x: 0x28, y: 0x17 }, // DryBones
-    SegmentEntry { obj_id: PODOBOO,         x: 0x2C, y: 0x15 },
-    SegmentEntry { obj_id: PODOBOO,         x: 0x2E, y: 0x11 },
-    SegmentEntry { obj_id: PODOBOO,         x: 0x32, y: 0x11 },
-    SegmentEntry { obj_id: PODOBOO,         x: 0x36, y: 0x12 },
+    SegmentEntry { obj_id: PODOBOO, x: 0x1E, y: 0x12 },
+    SegmentEntry { obj_id: PODOBOO, x: 0x24, y: 0x16 },
+    SegmentEntry { obj_id: 0x3F, x: 0x28, y: 0x17 }, // DryBones
+    SegmentEntry { obj_id: PODOBOO, x: 0x2C, y: 0x15 },
+    SegmentEntry { obj_id: PODOBOO, x: 0x2E, y: 0x11 },
+    SegmentEntry { obj_id: PODOBOO, x: 0x32, y: 0x11 },
+    SegmentEntry { obj_id: PODOBOO, x: 0x36, y: 0x12 },
     SegmentEntry { obj_id: CEILING_PODOBOO, x: 0x3A, y: 0x0F },
-    SegmentEntry { obj_id: 0x65,            x: 0x47, y: 0x17 }, // Boo
-    SegmentEntry { obj_id: PODOBOO,         x: 0x4B, y: 0x14 },
-    SegmentEntry { obj_id: PODOBOO,         x: 0x4E, y: 0x17 },
-    SegmentEntry { obj_id: PODOBOO,         x: 0x51, y: 0x14 },
+    SegmentEntry { obj_id: 0x65, x: 0x47, y: 0x17 }, // Boo
+    SegmentEntry { obj_id: PODOBOO, x: 0x4B, y: 0x14 },
+    SegmentEntry { obj_id: PODOBOO, x: 0x4E, y: 0x17 },
+    SegmentEntry { obj_id: PODOBOO, x: 0x51, y: 0x14 },
     SegmentEntry { obj_id: CEILING_PODOBOO, x: 0x56, y: 0x0F },
     SegmentEntry { obj_id: CEILING_PODOBOO, x: 0x5E, y: 0x0F },
-    SegmentEntry { obj_id: PODOBOO,         x: 0x63, y: 0x11 },
-    SegmentEntry { obj_id: 0x65,            x: 0x6F, y: 0x15 }, // Boo
-    SegmentEntry { obj_id: PODOBOO,         x: 0x6A, y: 0x10 },
-    SegmentEntry { obj_id: PODOBOO,         x: 0x71, y: 0x12 },
-    SegmentEntry { obj_id: PODOBOO,         x: 0x78, y: 0x13 },
+    SegmentEntry { obj_id: PODOBOO, x: 0x63, y: 0x11 },
+    SegmentEntry { obj_id: 0x65, x: 0x6F, y: 0x15 }, // Boo
+    SegmentEntry { obj_id: PODOBOO, x: 0x6A, y: 0x10 },
+    SegmentEntry { obj_id: PODOBOO, x: 0x71, y: 0x12 },
+    SegmentEntry { obj_id: PODOBOO, x: 0x78, y: 0x13 },
     SegmentEntry { obj_id: CEILING_PODOBOO, x: 0x79, y: 0x0F },
-    SegmentEntry { obj_id: 0x3F,            x: 0x7E, y: 0x17 }, // DryBones
+    SegmentEntry { obj_id: 0x3F, x: 0x7E, y: 0x17 }, // DryBones
 ];
 
 pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
@@ -95,11 +95,16 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
     for (i, entry) in sorted_vanilla.iter().enumerate() {
         let new_entry = if is_target(entry.obj_id) && !PINNED_X.contains(&entry.x) {
             let prev_x = out.last().map(|e| e.x).unwrap_or(SEG_X_MIN.saturating_sub(MIN_X_GAP));
-            let next_x = sorted_vanilla.get(i + 1).map(|e| e.x).unwrap_or(SEG_X_MAX.saturating_add(MIN_X_GAP));
-            let lo = prev_x.saturating_add(MIN_X_GAP)
+            let next_x = sorted_vanilla
+                .get(i + 1)
+                .map(|e| e.x)
+                .unwrap_or(SEG_X_MAX.saturating_add(MIN_X_GAP));
+            let lo = prev_x
+                .saturating_add(MIN_X_GAP)
                 .max(entry.x.saturating_sub(X_JITTER_RADIUS))
                 .max(SEG_X_MIN);
-            let hi = next_x.saturating_sub(MIN_X_GAP)
+            let hi = next_x
+                .saturating_sub(MIN_X_GAP)
                 .min(entry.x.saturating_add(X_JITTER_RADIUS))
                 .min(SEG_X_MAX);
             let new_x = if hi >= lo { rng.random_range(lo..=hi) } else { entry.x };
@@ -118,13 +123,17 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R) {
         out.push(new_entry);
     }
 
-    segment_writer::write_segment(rom, &SegmentSpec {
-        file_offset: SEG_OFFSET,
-        original_count: ENTRY_COUNT,
-        entries: &out,
-        label: Some("5-F2 sub-area 1"),
-        sort_mode: SortMode::SortByX,
-    }).expect("podoboo_gauntlet: segment write failed");
+    segment_writer::write_segment(
+        rom,
+        &SegmentSpec {
+            file_offset: SEG_OFFSET,
+            original_count: ENTRY_COUNT,
+            entries: &out,
+            label: Some("5-F2 sub-area 1"),
+            sort_mode: SortMode::SortByX,
+        },
+    )
+    .expect("podoboo_gauntlet: segment write failed");
 
     rom.pop_tag();
 }
@@ -136,15 +145,17 @@ fn is_target(obj_id: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand_chacha::ChaCha8Rng;
     use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
 
     fn make_test_rom() -> Rom {
         // Stub ROM is fine — the composer uses hard-coded VANILLA and never
         // reads bytes from the input ROM for segment structure.
         let mut data = vec![0u8; 393232];
         data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
-        data[4] = 16; data[5] = 16; data[6] = 0x40;
+        data[4] = 16;
+        data[5] = 16;
+        data[6] = 0x40;
         Rom::from_bytes_lax(&data, true).unwrap()
     }
 
@@ -158,7 +169,12 @@ mod tests {
 
             // Sorted, ascending strict.
             for w in out.windows(2) {
-                assert!(w[0].x < w[1].x, "seed {seed}: not sorted: {:02X} >= {:02X}", w[0].x, w[1].x);
+                assert!(
+                    w[0].x < w[1].x,
+                    "seed {seed}: not sorted: {:02X} >= {:02X}",
+                    w[0].x,
+                    w[1].x
+                );
             }
             // Non-targets stay at vanilla X and Y.
             let drybones: Vec<&SegmentEntry> = out.iter().filter(|e| e.obj_id == 0x3F).collect();
@@ -215,8 +231,12 @@ mod tests {
             randomize(&mut rom, &mut rng);
             let out = segment_writer::read_segment(&rom, SEG_OFFSET, ENTRY_COUNT);
             for w in out.windows(2) {
-                assert!(w[1].x - w[0].x >= MIN_X_GAP,
-                        "seed {seed}: gap too small {:02X} -> {:02X}", w[0].x, w[1].x);
+                assert!(
+                    w[1].x - w[0].x >= MIN_X_GAP,
+                    "seed {seed}: gap too small {:02X} -> {:02X}",
+                    w[0].x,
+                    w[1].x
+                );
             }
         }
     }

@@ -20,8 +20,8 @@ pub fn randomize_airships<R: Rng>(rom: &mut Rom, rng: &mut R) {
 mod tests {
     use super::*;
     use crate::randomize::rom_data::{self, WORLDS, read_word};
-    use rand_chacha::ChaCha8Rng;
     use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
 
     fn make_test_rom_with_airships() -> Rom {
         let mut data = vec![0u8; 393232];
@@ -49,19 +49,25 @@ mod tests {
         let mut rom = make_test_rom_with_airships();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
 
-        let original_lays: Vec<u16> = AIRSHIP_ENTRIES.iter().map(|&(w, i)| {
-            let world = &WORLDS[w];
-            let (_, _, layouts) = rom_data::table_offsets(world);
-            read_word(&rom, layouts + i * 2)
-        }).collect();
+        let original_lays: Vec<u16> = AIRSHIP_ENTRIES
+            .iter()
+            .map(|&(w, i)| {
+                let world = &WORLDS[w];
+                let (_, _, layouts) = rom_data::table_offsets(world);
+                read_word(&rom, layouts + i * 2)
+            })
+            .collect();
 
         randomize_airships(&mut rom, &mut rng);
 
-        let shuffled_lays: Vec<u16> = AIRSHIP_ENTRIES.iter().map(|&(w, i)| {
-            let world = &WORLDS[w];
-            let (_, _, layouts) = rom_data::table_offsets(world);
-            read_word(&rom, layouts + i * 2)
-        }).collect();
+        let shuffled_lays: Vec<u16> = AIRSHIP_ENTRIES
+            .iter()
+            .map(|&(w, i)| {
+                let world = &WORLDS[w];
+                let (_, _, layouts) = rom_data::table_offsets(world);
+                read_word(&rom, layouts + i * 2)
+            })
+            .collect();
 
         let mut orig_sorted = original_lays.clone();
         let mut shuf_sorted = shuffled_lays.clone();

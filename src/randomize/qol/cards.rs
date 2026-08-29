@@ -1,7 +1,7 @@
 //! Card (N-Spade) one-of-each speed clear.
 
-use crate::rom::Rom;
 use crate::randomize::rom_data::FS_CARD_CLEAR as CARD_TRAMPOLINE;
+use crate::rom::Rom;
 
 // Card speed clear: one-of-each detection via XOR check.
 //

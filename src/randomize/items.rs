@@ -1,8 +1,8 @@
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
-use crate::rom::Rom;
 use super::rom_data::FS_MYSTERY_ANCHOR;
+use crate::rom::Rom;
 
 const ANCHOR: u8 = 0x0A;
 
@@ -47,9 +47,8 @@ const TOAD_HOUSE_ITEMS: &[u8] = &[
 const WARP_WHISTLE: u8 = 0x0C;
 
 /// Full item pool including warp whistle (used when remove_whistles is false).
-const GOOD_ITEMS_WITH_WHISTLE: &[u8] = &[
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0B, 0x0C, 0x0D,
-];
+const GOOD_ITEMS_WITH_WHISTLE: &[u8] =
+    &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0B, 0x0C, 0x0D];
 
 // Hammer Bros map items: 8 worlds x 9 object slots = 72 bytes.
 // Non-zero entries are item rewards from defeating Hammer Bros.
@@ -69,13 +68,13 @@ const TOAD_HOUSE_ITEMS_LEN: usize = 21;
 // enemy streams by `hand_rooms::patch_clone_hand_rooms`, so each rolls
 // independently here.
 const TREASURE_CHEST_OFFSETS: &[usize] = &[
-    0x0C427, // Music Box chest
-    0x0CE9F, // Cloud chest
-    0x0D0E2, // 8-Hnd1 chest (vanilla shared sub-area)
+    0x0C427,                                   // Music Box chest
+    0x0CE9F,                                   // Cloud chest
+    0x0D0E2,                                   // 8-Hnd1 chest (vanilla shared sub-area)
     super::hand_rooms::HAND_ROOM_CLONE_A_ITEM, // 8-Hnd2 chest (clone A)
     super::hand_rooms::HAND_ROOM_CLONE_B_ITEM, // 8-Hnd3 chest (clone B)
-    0x0D36A, // Warp Whistle chest
-    0x0DA3F, // Star chest
+    0x0D36A,                                   // Warp Whistle chest
+    0x0DA3F,                                   // Star chest
 ];
 
 // Known warp whistle byte locations across all item tables.
@@ -106,11 +105,7 @@ fn map_table(rom: &mut Rom, offset: usize, len: usize, mut f: impl FnMut(u8) -> 
 /// rolled. Only pass true when the clones are installed (piranha shuffle
 /// active) — otherwise those free-space offsets hold no D6 entry.
 pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, remove_whistles: bool, piranha_chests: bool) {
-    let pool = if remove_whistles {
-        GOOD_ITEMS
-    } else {
-        GOOD_ITEMS_WITH_WHISTLE
-    };
+    let pool = if remove_whistles { GOOD_ITEMS } else { GOOD_ITEMS_WITH_WHISTLE };
 
     // Hammer Bros map items: randomize non-zero entries only (zero = no item).
     map_table(rom, HAMMER_BROS_ITEMS_OFFSET, HAMMER_BROS_ITEMS_LEN, |b| {
@@ -250,7 +245,7 @@ mod tests {
         for &offset in TREASURE_CHEST_OFFSETS {
             data[offset - 2] = 0xD6; // D6 object ID
             data[offset - 1] = 0x32; // X byte (arbitrary)
-            data[offset] = 0x09;     // Y byte (star)
+            data[offset] = 0x09; // Y byte (star)
         }
         // Make the whistle chest actually a whistle
         data[0x0D36A] = WARP_WHISTLE;
@@ -409,8 +404,7 @@ mod tests {
         // LDX #<target>
         assert_eq!(rom.read_byte(FS_MYSTERY_ANCHOR + 7), 0xA2);
         let target = rom.read_byte(FS_MYSTERY_ANCHOR + 8);
-        assert!(MYSTERY_ANCHOR_POOL.contains(&target),
-            "Target 0x{target:02X} not in mystery pool");
+        assert!(MYSTERY_ANCHOR_POOL.contains(&target), "Target 0x{target:02X} not in mystery pool");
         // STX $07F5
         assert_eq!(rom.read_range(FS_MYSTERY_ANCHOR + 9, 3), &[0x8E, 0xF5, 0x07]);
         // RTS
@@ -428,8 +422,7 @@ mod tests {
         // Hook at 0x345D8: JSR $B562
         assert_eq!(rom.read_range(0x345D8, 3), &[0x20, 0x62, 0xB5]);
         // Old PRG031 hook at 0x3E4E0 should NOT be patched (test ROM default zeros)
-        assert_eq!(rom.read_range(0x3E4E0, 3), &[0x00, 0x00, 0x00],
-            "PRG031 should be untouched");
+        assert_eq!(rom.read_range(0x3E4E0, 3), &[0x00, 0x00, 0x00], "PRG031 should be untouched");
     }
 
     #[test]
@@ -443,8 +436,7 @@ mod tests {
             seen.insert(rom.read_byte(FS_MYSTERY_ANCHOR + 8));
         }
         for &item in MYSTERY_ANCHOR_POOL {
-            assert!(seen.contains(&item),
-                "Item 0x{item:02X} never appeared in 500 seeds");
+            assert!(seen.contains(&item), "Item 0x{item:02X} never appeared in 500 seeds");
         }
     }
 

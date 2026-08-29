@@ -37,10 +37,7 @@ pub(super) struct SegmentLimits {
 impl SegmentPins {
     /// Nothing committed — the Big-?-block pass, which skips the CHR model.
     pub(super) fn none() -> Self {
-        SegmentPins {
-            all: (ChrSlot::Free, ChrSlot::Free),
-            chaser: (ChrSlot::Free, ChrSlot::Free),
-        }
+        SegmentPins { all: (ChrSlot::Free, ChrSlot::Free), chaser: (ChrSlot::Free, ChrSlot::Free) }
     }
 }
 
@@ -69,10 +66,8 @@ pub(super) fn segment_pins(
     injected: &[usize],
     skip: Option<usize>,
 ) -> SegmentPins {
-    let mut pins = SegmentPins {
-        all: (ChrSlot::Free, ChrSlot::Free),
-        chaser: (ChrSlot::Free, ChrSlot::Free),
-    };
+    let mut pins =
+        SegmentPins { all: (ChrSlot::Free, ChrSlot::Free), chaser: (ChrSlot::Free, ChrSlot::Free) };
     for entry in entries {
         if Some(entry.data_index) == skip || !is_fixed(entry, modes, injected) {
             continue;
@@ -125,14 +120,13 @@ pub(super) fn randomize_hb_wild_segment<R: Rng>(
     // would strand the player (see `rewrites_hammer_bro`). Clearability is
     // otherwise a property of the pools themselves, not of the room.
     let stompable: Cow<[u8]> = if limits.no_hammer_bro {
-        Cow::Owned(
-            STOMPABLE_ENEMIES.iter().copied().filter(|&id| id != HAMMER_BRO_ID).collect(),
-        )
+        Cow::Owned(STOMPABLE_ENEMIES.iter().copied().filter(|&id| id != HAMMER_BRO_ID).collect())
     } else {
         Cow::Borrowed(STOMPABLE_ENEMIES)
     };
 
-    let swappable: Vec<usize> = entries.iter()
+    let swappable: Vec<usize> = entries
+        .iter()
         .enumerate()
         .filter(|(_, e)| find_class_pool(e.obj_id, hb_modes).is_some())
         .map(|(idx, _)| idx)
@@ -162,7 +156,8 @@ pub(super) fn randomize_hb_wild_segment<R: Rng>(
                 commit_chr_page(ns, &mut s4, &mut s5);
                 if let Some(shell) = pick_compatible(SHELL_ENEMIES, s4, s5, rng) {
                     // Randomly assign which slot gets which
-                    let (di0, di1) = (entries[swappable[0]].data_index, entries[swappable[1]].data_index);
+                    let (di0, di1) =
+                        (entries[swappable[0]].data_index, entries[swappable[1]].data_index);
                     if rng.random_range(..2u32) == 0 {
                         swap_enemy(data, di0, ns);
                         swap_enemy(data, di1, shell);

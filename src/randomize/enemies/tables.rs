@@ -117,12 +117,12 @@ pub(super) const FIREJET_DOWN_Y_DROP: u8 = 1;
 /// cannons model) — they never merge into the global wild pool in either
 /// direction. Removing an extra member is a one-line edit on this list.
 pub(super) const PIRANHAS_WILD: &[u8] = &[
-    0x7D, // OBJ_BIGGREENPIRANHA
-    0x7F, // OBJ_BIGREDPIRANHA
-    0xA0, // OBJ_GREENPIRANHA
-    0xA2, // OBJ_REDPIRANHA
-    0xA4, // OBJ_GREENPIRANHA_FIRE
-    0xA6, // OBJ_VENUSFIRETRAP
+    0x7D,         // OBJ_BIGGREENPIRANHA
+    0x7F,         // OBJ_BIGREDPIRANHA
+    0xA0,         // OBJ_GREENPIRANHA
+    0xA2,         // OBJ_REDPIRANHA
+    0xA4,         // OBJ_GREENPIRANHA_FIRE
+    0xA6,         // OBJ_VENUSFIRETRAP
     ROCKY_WRENCH, // 0xAD — the mole; see ROCKY_WRENCH doc
     FIREJET_UP,   // 0x9D — upward fire jet; see FIREJET_UP doc
 ];
@@ -138,10 +138,10 @@ pub(super) const PIRANHASC: &[u8] = &[
 /// Wild-mode ceiling pool: the ceiling piranhas plus the downward fire jet.
 /// Self-contained (no crossover to the standard pool).
 pub(super) const PIRANHASC_WILD: &[u8] = &[
-    0xA1, // OBJ_GREENPIRANHA_FLIPPED
-    0xA3, // OBJ_REDPIRANHA_FLIPPED
-    0xA5, // OBJ_GREENPIRANHA_FIREC
-    0xA7, // OBJ_VENUSFIRETRAP_CEIL
+    0xA1,         // OBJ_GREENPIRANHA_FLIPPED
+    0xA3,         // OBJ_REDPIRANHA_FLIPPED
+    0xA5,         // OBJ_GREENPIRANHA_FIREC
+    0xA7,         // OBJ_VENUSFIRETRAP_CEIL
     FIREJET_DOWN, // 0xB2 — downward fire jet; see FIREJET_DOWN doc
 ];
 
@@ -207,14 +207,8 @@ pub(super) const HAZARD_HOTFOOT: &[u8] = &[
 
 /// All hazard categories. THWOMPS and BRO_ENEMIES are reused as-is (the bros
 /// throw continuous projectiles, unavoidable in a forced spot).
-pub(super) const HAZARD_CATEGORIES: &[&[u8]] = &[
-    THWOMPS,
-    HAZARD_LAVA_LOTUS,
-    HAZARD_PATOOIE,
-    HAZARD_NIPPER,
-    HAZARD_HOTFOOT,
-    BRO_ENEMIES,
-];
+pub(super) const HAZARD_CATEGORIES: &[&[u8]] =
+    &[THWOMPS, HAZARD_LAVA_LOTUS, HAZARD_PATOOIE, HAZARD_NIPPER, HAZARD_HOTFOOT, BRO_ENEMIES];
 
 /// The hazard category `id` belongs to (its index in [`HAZARD_CATEGORIES`]), or
 /// `None` if `id` isn't a hazard.
@@ -330,7 +324,6 @@ pub(super) const BIG_Q_BLOCKS: &[u8] = &[
     0x99, // OBJ_BIGQBLOCK_FROG
     0x9A, // OBJ_BIGQBLOCK_HAMMER
 ];
-
 
 /// Injection candidates for wild_injections mode: level-wide chasers seeded into
 /// a level's first enemy. CHR compatibility checked via `sprite_bank()` at filter
@@ -449,9 +442,7 @@ pub(super) const CHASER_IDS: &[u8] = &[
 /// element) is too distinct to randomize generically.
 pub(super) const ALL_CANNONS: &[u8] = &[
     // CFIRE_LEFT
-    0xC0, 0xC2, 0xC3, 0xC4, 0xC6, 0xC8, 0xC9, 0xCB, 0xCE,
-    // CFIRE_RIGHT
-    0xC1, 0xC5, 0xC7, 0xCA, 0xCC, 0xCD, 0xCF,
-    // CFIRE_BILLS
+    0xC0, 0xC2, 0xC3, 0xC4, 0xC6, 0xC8, 0xC9, 0xCB, 0xCE, // CFIRE_RIGHT
+    0xC1, 0xC5, 0xC7, 0xCA, 0xCC, 0xCD, 0xCF, // CFIRE_BILLS
     0xBC, 0xBD,
 ];

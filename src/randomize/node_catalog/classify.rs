@@ -56,7 +56,8 @@ pub(super) fn classify_world(
 
     // Build pipe pair map: entry_idx → dest_idx
     let dest_indices = rom_data::dest_indices_for_world(world_idx);
-    let pipe_map = build_pipe_map(rom, world_idx, &pipe_entries_by_obj, &spiral_entries, &dest_indices);
+    let pipe_map =
+        build_pipe_map(rom, world_idx, &pipe_entries_by_obj, &spiral_entries, &dest_indices);
 
     // -- Classify each entry --
     let mut result = Vec::with_capacity(n);
@@ -65,16 +66,10 @@ pub(super) fn classify_world(
         let (row, col) = rom_data::entry_grid_position(rom, world, i);
         let obj = rom_data::read_word(rom, objsets + i * 2);
         let lay = rom_data::read_word(rom, layouts + i * 2);
-        let map_tile = if row < grid.rows() && col < grid.cols {
-            grid.get(row, col)
-        } else {
-            0xFF
-        };
+        let map_tile = if row < grid.rows() && col < grid.cols { grid.get(row, col) } else { 0xFF };
 
-        let kind = classify_entry(
-            rom, world_idx, i, obj, lay, map_tile, row,
-            &map_obj_entries, &pipe_map,
-        );
+        let kind =
+            classify_entry(rom, world_idx, i, obj, lay, map_tile, row, &map_obj_entries, &pipe_map);
 
         let level_entry = if matches!(kind, NodeKind::Start) {
             None

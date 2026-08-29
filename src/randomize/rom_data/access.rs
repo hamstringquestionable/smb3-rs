@@ -40,9 +40,8 @@ pub(crate) fn map_tile_offset(world_idx: usize, row: usize, col: usize) -> usize
 }
 
 /// PRG bank loaded at CPU $A000-$BFFF for each tileset (0-18).
-pub(crate) const PAGE_A000_BY_TILESET: [usize; 19] = [
-    11, 15, 21, 16, 17, 19, 18, 18, 18, 20, 23, 19, 17, 19, 13, 26, 26, 26, 9,
-];
+pub(crate) const PAGE_A000_BY_TILESET: [usize; 19] =
+    [11, 15, 21, 16, 17, 19, 18, 18, 18, 20, 23, 19, 17, 19, 13, 26, 26, 26, 9];
 
 /// Returns true if this map entry has a real level pointer (not a toad house,
 /// bonus game, hand trap, or pipe junction).
@@ -188,18 +187,15 @@ pub(crate) fn write_entry(rom: &mut Rom, world: &WorldTables, idx: usize, entry:
 
 /// Get destination table indices that belong to a given world.
 pub(crate) fn dest_indices_for_world(world_idx: usize) -> Vec<usize> {
-    DEST_TO_WORLD
-        .iter()
-        .filter(|&&(_, w)| w == world_idx)
-        .map(|&(d, _)| d as usize)
-        .collect()
+    DEST_TO_WORLD.iter().filter(|&&(_, w)| w == world_idx).map(|&(d, _)| d as usize).collect()
 }
 
 /// Read all pipe pairs from ROM destination tables, grouped by world.
 /// Returns a map: world_idx → Vec of ((row_a, col_a), (row_b, col_b)).
 #[cfg(test)]
 pub(crate) fn read_pipe_pairs(rom: &Rom) -> std::collections::HashMap<usize, Vec<TeleportEdge>> {
-    let mut pipes_by_world: std::collections::HashMap<usize, Vec<_>> = std::collections::HashMap::new();
+    let mut pipes_by_world: std::collections::HashMap<usize, Vec<_>> =
+        std::collections::HashMap::new();
 
     for &(dest, world_idx) in DEST_TO_WORLD {
         let d = dest as usize;
@@ -235,11 +231,7 @@ pub(crate) fn read_fx_slots(rom: &Rom) -> Vec<FxSlot> {
         let col_in_screen = ((loc >> 4) & 0x0F) as usize;
         let screen = (loc & 0x0F) as usize;
 
-        slots.push(FxSlot {
-            grid_row,
-            grid_col: screen * 16 + col_in_screen,
-            replace_tile,
-        });
+        slots.push(FxSlot { grid_row, grid_col: screen * 16 + col_in_screen, replace_tile });
     }
     slots
 }
@@ -265,7 +257,12 @@ pub(crate) fn read_world_fx_assignments(rom: &Rom) -> [Vec<u8>; 8] {
 /// Resolve a master pointer table entry to a ROM file offset for a given slot.
 /// The master table holds 8 CPU-address words ($A010 bank); each points to a
 /// 9-byte per-world sub-table.
-pub(crate) fn map_obj_slot_offset(rom: &Rom, master_table: usize, world_idx: usize, slot: usize) -> usize {
+pub(crate) fn map_obj_slot_offset(
+    rom: &Rom,
+    master_table: usize,
+    world_idx: usize,
+    slot: usize,
+) -> usize {
     let cpu = read_word(rom, master_table + world_idx * 2);
     // PRG011 is bank 11; the sub-table base is `cpu`, the entry is `slot` past it.
     prg_bank_cpu_to_file(11, cpu) + slot
@@ -472,8 +469,5 @@ pub(crate) fn write_hb_sprite(
 pub(crate) fn read_non_hb_sprite_positions(rom: &Rom, world_idx: usize) -> Vec<(usize, usize)> {
     let hb: std::collections::HashSet<(usize, usize)> =
         read_hb_sprite_positions(rom, world_idx).into_iter().collect();
-    read_map_sprite_positions(rom, world_idx)
-        .into_iter()
-        .filter(|pos| !hb.contains(pos))
-        .collect()
+    read_map_sprite_positions(rom, world_idx).into_iter().filter(|pos| !hb.contains(pos)).collect()
 }
