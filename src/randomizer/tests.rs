@@ -44,11 +44,19 @@ fn normalized(mut o: Options) -> Options {
 /// and if `big_q_rooms` ever moved back above `randomize_big_q_blocks` the roll
 /// would overwrite it while everything still appeared to run. So this walks the
 /// drawn room's own object stream rather than trusting any fixed offset.
+///
+/// Run with the room shuffle both **on and off**. The contents roll exempts
+/// nothing either way, so with the shuffle off the force still has to fire —
+/// against 7-F1's vanilla room. That arm is the one a `shuffle_big_q_rooms`
+/// gate could silently drop, since skipping it looks like "the feature is off".
 #[test]
 fn w7f1_block_is_always_a_flight_suit() {
     let Some(base) = make_test_rom() else { return };
+
+    for shuffle_rooms in [false, true] {
     let mut opts = test_options();
     opts.big_q_blocks = true;
+    opts.shuffle_big_q_rooms = shuffle_rooms;
 
     for seed in 1..=40u64 {
         let mut rom = base.clone();
@@ -66,8 +74,14 @@ fn w7f1_block_is_always_a_flight_suit() {
         assert_eq!(
             rom.read_byte(block),
             randomize::big_q_rooms::BIGQBLOCK_TANOOKI,
-            "seed {seed}: 7-F1's room (area {area} screen {screen}) does not hand out flight",
+            "seed {seed}: 7-F1's room (area {area} screen {screen}) does not hand out \
+             flight (shuffle_big_q_rooms = {shuffle_rooms})",
         );
+        // With the shuffle off, nothing may move 7-F1 off its vanilla room.
+        if !shuffle_rooms {
+            assert_eq!((area, screen), (6, 6), "seed {seed}: room moved with the shuffle off");
+        }
+    }
     }
 }
 
@@ -1097,6 +1111,7 @@ fn all_off_options() -> Options {
         no_game_over_penalty: false,
         faster_frog: false,
         lakitu_stays_down: false,
+        shuffle_big_q_rooms: false,
         poison_mushrooms: false,
         modern_powerups: false,
         shuffle_spade_games: false,
@@ -1165,6 +1180,7 @@ fn all_on_options() -> Options {
         no_game_over_penalty: true,
         faster_frog: true,
         lakitu_stays_down: true,
+        shuffle_big_q_rooms: true,
         poison_mushrooms: true,
         modern_powerups: true,
         shuffle_spade_games: true,

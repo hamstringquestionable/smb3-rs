@@ -301,6 +301,10 @@ struct Cli {
     #[arg(long)]
     lakitu_stays_down: bool,
 
+    /// Shuffle which bonus room each Big ? pipe opens, drawing from 19 rooms: the 11 vanilla ones plus 8 in the unreferenced "Unused Level 5". Off by default
+    #[arg(long)]
+    shuffle_big_q_rooms: bool,
+
     /// Every 1-Up Mushroom becomes a Poison Mushroom that hurts you (MaCobra52's "All 1UPs are Poison Mushrooms" patch)
     #[arg(long)]
     poison_mushrooms: bool,
@@ -533,6 +537,7 @@ fn build_options(cli: &Cli) -> Options {
             no_game_over_penalty: cli.no_game_over_penalty,
             faster_frog: cli.faster_frog,
             lakitu_stays_down: cli.lakitu_stays_down,
+            shuffle_big_q_rooms: cli.shuffle_big_q_rooms,
             poison_mushrooms: cli.poison_mushrooms,
             modern_powerups: cli.modern_powerups,
             fire_flower: cli.fire_flower,
@@ -582,6 +587,10 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
         eprintln!("  World count: {}", options.world_count);
     }
     eprintln!("  Big ? Blocks: {}", if options.big_q_blocks { "on" } else { "off" });
+    eprintln!(
+        "  Big ? Rooms: {}",
+        if options.shuffle_big_q_rooms { "shuffled" } else { "vanilla" }
+    );
     eprintln!("  Starting Lives: {}", options.starting_lives);
     eprintln!("  Airship shuffle: {}", if options.shuffle_airships { "on" } else { "off" });
     eprintln!("  Hammer Bro shuffle: {}", if options.shuffle_hammer_bros { "on" } else { "off" });

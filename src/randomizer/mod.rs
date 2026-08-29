@@ -322,8 +322,21 @@ fn randomize_inner(
     // opened" bit is per world *and* per screen, so the legal rooms for a host
     // depend on where its level ended up — and after `write_overworld`, so the
     // RNG it consumes cannot move the maps.
-    rom.set_tag("big_q_blocks/rooms");
-    let big_q_rooms = randomize::big_q_rooms::shuffle(rom, &mut rng);
+    // Off by default. `vanilla_assignments` takes no `rng` *by signature* and
+    // writes no bytes, so with the option off every module downstream of here
+    // sees the stream it would see if this pass did not exist. It just reports
+    // where the eleven pipes already lead, so the 7-F1 protection below still
+    // knows which room to protect.
+    //
+    // Note this is not whole-ROM identity with a pre-feature build: the lookup
+    // routine `qol::fix_big_q_block_rooms` installs is unconditional and carries
+    // the slot-seeding halves either way.
+    let big_q_rooms = if options.shuffle_big_q_rooms {
+        rom.set_tag("big_q_blocks/rooms");
+        randomize::big_q_rooms::shuffle(rom, &mut rng)
+    } else {
+        randomize::big_q_rooms::vanilla_assignments()
+    };
 
     // 7-F1 cannot be beaten without flight, so whatever room it drew has to
     // hand out a flight suit. Forced last, which is also why it needs no

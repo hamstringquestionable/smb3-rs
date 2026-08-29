@@ -4,9 +4,10 @@
 //! the 11 vanilla rooms plus the 8 in "Unused Level 5", a fully unreferenced
 //! test level (TCRF) whose eight one-screen rooms are otherwise dead data.
 //!
-//! Always on, no option: which room a pipe leads to is not a difference worth a
-//! control, since every room hands out one block and returns you where you came
-//! from.
+//! Off by default, behind `shuffle_big_q_rooms`. With it off nothing here runs
+//! and no RNG is drawn — [`vanilla_assignments`] just reports where the eleven
+//! pipes already lead, so 7-F1's flight-suit protection still knows which room
+//! to force.
 //!
 //! # How a room is assigned
 //!
@@ -150,6 +151,23 @@ fn world_of(rom: &Rom, obj_ptr: u16) -> Option<usize> {
         }
     }
     None
+}
+
+/// What every host opens when the shuffle is off — read back out of the vanilla
+/// lookup tables rather than restated, so there is one source of truth for
+/// "7-F1 opens BigQ7 s6".
+///
+/// The caller still needs this: the block *contents* roll exempts nothing, so
+/// 7-F1's room has to be forced to a flight suit whether or not its room moved.
+pub(crate) fn vanilla_assignments() -> Vec<Assignment> {
+    HOSTS
+        .iter()
+        .map(|h| Assignment {
+            name: h.name,
+            area: big_q::BQ_ROOM[h.row],
+            screen: big_q::BQ_ARRIVE[h.row].1 & 0x0F,
+        })
+        .collect()
 }
 
 /// Draw a room for every Big [?] host and write the lookup tables.
