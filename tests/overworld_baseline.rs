@@ -193,11 +193,11 @@ fn sweep_is_deterministic() {
 /// hashes. Force it (`touch src/lib.rs`, or `cargo clean -p smb3-rs`) before
 /// trusting any number this test prints after a bump.
 const BASELINE: [u64; SEEDS as usize] = [
-    0x5CE7A325F4E40B77, 0xEE4429463CB37B24, 0xF4D3FD6B84C89857, 0x52C24655C314BF5E,
-    0xEA3C7E36AA10E312, 0xE6A87F1D0297B837, 0x33332A4152718DBD, 0xA05870AF43203CB6,
-    0x8A6E37DA33E1B91D, 0xAF3DA8A8F53F3EC5, 0x5068CBCB2ED14BB0, 0xC01A2B0B1EA4FC04,
-    0x52A69F2C7D037BBE, 0xB6F19EA114E6B2B7, 0xD16BE93B4EE4DC2F, 0x4D7A01A04665B7A3,
-    0xD7F9BD46BA764F55, 0x2CE2B76AC0170B37, 0x3CA80801B89FC3AD, 0x273A357F0557B0A3,
+    0x10A21459F3D382D4, 0xE3B9B230CB5E2FD7, 0x507C6DF8FECC0748, 0x2D1F63143211AF41,
+    0x059F26A00BD20859, 0xFFA931FD7213C6F8, 0x4AC4B084D5710E46, 0xBBC03D522F8D7B0D,
+    0x0E8A0C6DCF74974E, 0x145B0F2077100926, 0xE87B059AA0D229B3, 0xCE14C48FAD6340C3,
+    0x9CC0FFBB47133B59, 0x8840994638563498, 0x41230F8CD226BE50, 0xD6C8A68350419C68,
+    0xE07803C1078FD866, 0x15EDD16343473678, 0x314021376D017AC6, 0xE099549AF8F4640C,
 ];
 ///
 /// Re-captured 2026-08-27 for the Big [?] bonus-room shuffle, which is always
@@ -219,6 +219,15 @@ const BASELINE: [u64; SEEDS as usize] = [
 /// coordinates after playtesting showed the originals killed the player. Four
 /// table bytes, so every seed that draws one of those rooms moves. No RNG draw
 /// changed — the pool is the same size — so this is a pure byte difference.
+///
+/// Re-captured 2026-08-29 for the 7-F1 return fix: the entry and exit halves of
+/// the `qol::big_q` routine now share one `bq_lookup` subroutine, which moved
+/// every label and table after offset $09 and shrank it from 207 to 199 bytes.
+/// Again a pure byte difference, and again verified rather than argued — for
+/// each of these 20 seeds the pre- and post-fix ROMs were diffed byte for byte,
+/// and the only bytes that changed outside `FS_BIG_Q_LOOKUP`'s own 224-byte
+/// allocation were the exit hook's operand at 0x34A85. No map tile, pointer
+/// table or level byte moved.
 
 #[test]
 fn output_matches_baseline() {

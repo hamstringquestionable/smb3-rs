@@ -581,6 +581,17 @@ area: W1 0, W2 1, W3 3, W4 2, W5 2, W6 3, W7 2, W8 2. Eleven levels have a Big
 empty area, W2's whole area (no W1/W2 level has such a pipe) and one spare room
 each in W3/W4/W8 are never opened.
 
+**The pipe is not always in the area the level's map tile enters.** Ten of the
+eleven hosts carry their Big [?] pipe in their entry area, so `Level_ObjPtrOrig`
+at the pipe equals the pointer-table `obj_ptr`. **7-F1 does not:** its map entry
+is layout $B28E / objects $D4E4, and the junction command `E6 02 16` (0x2B47E,
+CPU $B46E) lies in the *alternate* area $B3CB, whose objects are the shared
+`Empty_ObjLayout` ($C006). Anything that identifies the host from
+`Level_ObjPtrOrig` alone therefore fails for 7-F1 and must fall back to the
+map-entry pointer saved at level init. (6-9's pipe is likewise outside its entry
+area, in the donated interior $C60E — but that pointer is distinct, so it still
+identifies the level.)
+
 **"Unused Level 5" (TCRF)** is a ninth, fully unreferenced set: eight Big [?]
 rooms, one per screen 0-7, every block a Tanooki Suit ($98).
 
