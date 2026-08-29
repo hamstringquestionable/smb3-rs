@@ -207,6 +207,7 @@ pub fn write_mystery_anchor<R: Rng>(rom: &mut Rom, rng: &mut R) {
     //   A2 xx        LDX #<target> — load mystery powerup
     //   8E F5 07     STX $07F5     — fix $07F5 for PRG031 animation state machine
     //   60           RTS
+    #[rustfmt::skip]
     let trampoline: [u8; 13] = [
         0xBE, 0x80, 0x7D,   // LDX $7D80,Y
         0xE0, 0x0A,          // CPX #$0A

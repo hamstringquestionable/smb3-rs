@@ -39,6 +39,7 @@ const CARD_CLEAR_GUARD: usize = 0x12090; // BEQ at $A080
 /// Other mixed combos and matching triples still play the normal animation.
 pub fn card_speed_clear(rom: &mut Rom) {
     // Hook: replace 5 bytes at $BCD8 with JMP $FFE0; NOP; NOP
+    #[rustfmt::skip]
     rom.write_range(CARD_HOOK, &[
         0x4C, 0xE0, 0xFF, // JMP $FFE0
         0xEA, 0xEA,        // NOP; NOP (pad to 5 bytes)
@@ -56,6 +57,7 @@ pub fn card_speed_clear(rom: &mut Rom) {
     // $FFF3: LDA #$04           ; displaced: animation state = 4
     // $FFF5: STA $9A,X          ; displaced: store state
     // $FFF7: JMP $BCE1          ; return to normal animation flow
+    #[rustfmt::skip]
     rom.write_range(CARD_TRAMPOLINE, &[
         0xB9, 0x9E, 0x7D, // LDA $7D9E,Y (displaced)
         0xD0, 0x03,        // BNE +3 (card present)

@@ -86,6 +86,7 @@ pub fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool) {
     // loop that checks 4 adjacent tiles still works on no-match fall-through.
     let lo = (HAMMER_LOCKS_SUB_CPU & 0xFF) as u8;
     let hi = (HAMMER_LOCKS_SUB_CPU >> 8) as u8;
+    #[rustfmt::skip]
     rom.write_range(HAMMER_RANGE_CHECK, &[
         0x20, lo, hi,   // JSR HammerCheckTile
         0x90, 0x08,     // BCC .found (targets $A6D2 / file 0x346E2)

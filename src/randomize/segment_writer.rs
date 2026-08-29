@@ -392,6 +392,7 @@ mod tests {
 
     #[test]
     fn walk_segments_handles_leading_terminators() {
+        #[rustfmt::skip]
         let data = [
             0xFF, 0xFF, 0xFF,  // skipped
             0x00, 0xAA, 0x10, 0x11, 0xFF,

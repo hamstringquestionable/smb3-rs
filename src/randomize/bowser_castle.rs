@@ -151,6 +151,7 @@ mod tests {
         data[0..4].copy_from_slice(&[0x4E, 0x45, 0x53, 0x1A]);
         data[4] = 16; data[5] = 16; data[6] = 0x40;
         // Vanilla 8B sub-area 1 bytes (page byte + 14 entries).
+        #[rustfmt::skip]
         let seg = &[
             0x00,                  // page byte
             0x3F, 0x04, 0x18,

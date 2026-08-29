@@ -43,6 +43,7 @@ const INV_DRAW_ITEM_INDEX_PATCH: [u8; 3] = [
 //   $B5A7: 60           RTS
 //   $B5A8: 0A 0A A8     ASL A; ASL A; TAY  ; cards: original index compute
 //   $B5AB: 60           RTS
+#[rustfmt::skip]
 const ANCHOR_ITEM_GUARD_BODY: [u8; 11] = [
     0xC0, 0x1C,           // CPY #$1C
     0xB0, 0x03,           // BCS +3

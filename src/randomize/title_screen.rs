@@ -181,6 +181,7 @@ const Y_SPACING: u8 = 24;
 /// Instruction bytes shared by the intro-skip routine (here) and the
 /// starting-items trampoline (`qol::starting_state`): set Title_State ($DE) =
 /// 6 (IntroSkip) and queue the seeded menu music via $04F5.
+#[rustfmt::skip]
 pub(super) fn intro_skip_music_bytes(seed: u64) -> [u8; 9] {
     let music = pick_menu_music(seed);
     [

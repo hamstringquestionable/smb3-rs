@@ -233,6 +233,7 @@ mod tests {
             let n = i as u8;
             // Header: distinct alt pointers, byte 6 = scroll bits (upper
             // nibble) + tileset, byte 8 = timer (bits 6-7) + music.
+            #[rustfmt::skip]
             let hdr = [
                 0x10 + n, 0xA0, 0x20 + n, 0xC0, // alt_layout / alt_objects
                 0x0A,                            // screens

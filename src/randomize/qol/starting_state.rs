@@ -33,6 +33,7 @@ pub fn write_starting_items(rom: &mut Rom, seed: u64, lives: u8, items: &[u8]) {
     let cpu = crate::randomize::rom_data::prg031_file_to_cpu(FS_STARTING_ITEMS); // $E250
     // Build trampoline: lives init + intro skip + menu music + item writes + RTS
     let mut buf = Vec::with_capacity(33);
+    #[rustfmt::skip]
     buf.extend_from_slice(&[
         0xA9, lives,         // LDA #lives
         0x8D, 0x36, 0x07,    // STA $0736
@@ -40,6 +41,7 @@ pub fn write_starting_items(rom: &mut Rom, seed: u64, lives: u8, items: &[u8]) {
     ]);
     buf.extend_from_slice(&crate::randomize::title_screen::intro_skip_music_bytes(seed));
     for (i, &item) in items.iter().take(3).enumerate() {
+        #[rustfmt::skip]
         buf.extend_from_slice(&[
             0xA9, item,                      // LDA #item
             0x8D, (0x80 + i as u8), 0x7D,    // STA $7D80+i
@@ -50,6 +52,7 @@ pub fn write_starting_items(rom: &mut Rom, seed: u64, lives: u8, items: &[u8]) {
 
     // Patch lives init: JSR $E250 + NOP×5 (overwrites the title_screen
     // intro-skip hook at 0x308E2 — see the doc comment above).
+    #[rustfmt::skip]
     rom.write_range(LIVES_INIT_BASE, &[
         0x20, cpu as u8, (cpu >> 8) as u8,   // JSR $E250
         0xEA, 0xEA, 0xEA, 0xEA, 0xEA,       // NOP ×5

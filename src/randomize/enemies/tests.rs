@@ -229,6 +229,7 @@
     fn test_chr_resets_across_segments() {
         // Two segments: first has a Spike ($0A/+4), second has a Spiny ($0B/+4).
         // They should be able to choose independently since they're in different segments.
+        #[rustfmt::skip]
         let seg = &[
             0xFF,
             0x01,             // page flag

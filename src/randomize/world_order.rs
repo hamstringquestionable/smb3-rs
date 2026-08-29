@@ -84,6 +84,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8>
     // Patch the original INC World_Num site to JMP to our routine
     let routine_lo = (WORLD_ORDER_CPU & 0xFF) as u8;
     let routine_hi = ((WORLD_ORDER_CPU >> 8) & 0xFF) as u8;
+    #[rustfmt::skip]
     rom.write_range(WORLD_INC_OFFSET, &[
         0x4C, routine_lo, routine_hi, // JMP $9F10
         0xEA, 0xEA, 0xEA,            // NOP NOP NOP (pad)
@@ -92,6 +93,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8>
     // Write the lookup routine into free space
     let table_lo = (TABLE_CPU & 0xFF) as u8;
     let table_hi = ((TABLE_CPU >> 8) & 0xFF) as u8;
+    #[rustfmt::skip]
     let routine: Vec<u8> = vec![
         0xAE, 0x27, 0x07,             // LDX World_Num ($0727)
         0xBD, table_lo, table_hi,      // LDA table,X
@@ -118,6 +120,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8>
 
     // Patch map screen display (PRG010): replace LDY/INY/TYA/ORA/STA with table lookup.
     // Original 10 bytes: AC 27 07 C8 98 09 F0 8D 04 03
+    #[rustfmt::skip]
     rom.write_range(MAP_DISPLAY_OFFSET, &[
         0xAE, 0x27, 0x07,             // LDX $0727  (World_Num)
         0xBD, disp_lo, disp_hi,       // LDA $9F24,X (display tile)
@@ -127,6 +130,7 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8>
 
     // Patch status bar display (PRG026): replace LDX/INX/TXA/ORA/STA with table lookup.
     // Original 10 bytes: AE 27 07 E8 8A 09 F0 99 04 03
+    #[rustfmt::skip]
     rom.write_range(STATUS_DISPLAY_OFFSET, &[
         0xAE, 0x27, 0x07,             // LDX $0727  (World_Num)
         0xBD, disp_lo, disp_hi,       // LDA $9F24,X (display tile)

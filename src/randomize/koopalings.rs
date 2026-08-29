@@ -108,6 +108,7 @@ pub fn koopaling_vram_clear(rom: &mut Rom) {
     // Patch site: replace 8-byte defeat finalization with JSR + NOPs + RTS
     let lo = (KOOPA_VRAM_CLEAR_CPU & 0xFF) as u8;
     let hi = (KOOPA_VRAM_CLEAR_CPU >> 8) as u8;
+    #[rustfmt::skip]
     rom.write_range(KOOPA_DEFEAT_PATCH_SITE, &[
         0x20, lo, hi,   // JSR vram_clear
         0xEA, 0xEA,     // NOP; NOP
@@ -329,6 +330,7 @@ const KOOPA_DEFEAT_CPU: u16 = 0xB193;
 ///   JMP $B18D              ; survive
 ///   JMP $B193              ; defeated
 /// ```
+#[rustfmt::skip]
 const KOOPA_HITS_CODE: [u8; 13] = [
     0xB5, 0x7F,                                                  // LDA $7F,X
     0xAC, 0x27, 0x07,                                            // LDY $0727
@@ -507,6 +509,7 @@ pub fn randomize_boomboom_hits<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // unconditionally — but keep the disassembly clean).
     let sub_lo = BOOMBOOM_HITS_SUB_CPU as u8;
     let sub_hi = (BOOMBOOM_HITS_SUB_CPU >> 8) as u8;
+    #[rustfmt::skip]
     rom.write_range(BOOMBOOM_PATCH_SITE, &[
         0x4C, sub_lo, sub_hi,           // JMP subroutine
         0xEA, 0xEA, 0xEA, 0xEA, 0xEA,   // NOP × 5

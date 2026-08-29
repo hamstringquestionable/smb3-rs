@@ -261,6 +261,7 @@ fn write_seed_helper(rom: &mut Rom) {
     // afar" restores the camera from; leaving them at the vanilla page-0 value
     // strands Mario off-page after dying in a swapped world. The finalize helper
     // below mirrors this exact store order for the game-over path.
+    #[rustfmt::skip]
     let seed_helper = [
         0xB9, (x_tbl_cpu & 0xFF) as u8, (x_tbl_cpu >> 8) as u8,       // LDA X_TABLE,Y
         0x9D, 0x7A, 0x79,                                            // STA Map_Entered_X,X   ($797A)
@@ -333,6 +334,7 @@ fn write_gameover_finalize(rom: &mut Rom) {
     // (identical to the Map_Init seeds); for unswapped / page-0 worlds they are 0,
     // so these stores are no-ops. Store order mirrors `seed_helper`.
     rom.set_tag("start_airship_swap/gameover_finalize");
+    #[rustfmt::skip]
     let finalize_helper = [
         0xAC, 0x27, 0x07,                                            // LDY World_Num ($0727)
         0xB9, (x_tbl_cpu & 0xFF) as u8, (x_tbl_cpu >> 8) as u8,      // LDA FS_SAS_X_TABLE,Y

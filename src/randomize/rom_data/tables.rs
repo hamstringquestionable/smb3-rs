@@ -22,6 +22,7 @@ pub(crate) const BACKGROUND_TILES: &[u8] = &[0xB4, 0xFF, 0x02];
 /// Valid blank node tiles — positions with these tiles are available for
 /// level/fort/pipe/HB placement. Used by both pickup (Phase 2) and build
 /// (Phase 3) to ensure consistent blank detection.
+#[rustfmt::skip]
 pub(crate) const VALID_BLANK_TILES: &[u8] = &[
     0x44, 0x47, 0x48, 0x4A,        // standard
     0xAE, 0xAF, 0xB5, 0xB6,        // island

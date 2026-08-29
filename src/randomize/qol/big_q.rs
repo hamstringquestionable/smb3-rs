@@ -21,6 +21,7 @@ use crate::randomize::rom_data::{
 // Part A: PRG030 (fixed bank) trampoline for level init.
 const BIG_Q_PRG030_HOOK: usize = 0x3C958;  // file offset of CPY #$07
 const BIG_Q_PRG030_JMP: [u8; 4] = [0x4C, 0x2C, 0x9F, 0xEA];
+#[rustfmt::skip]
 const BIG_Q_PRG030_ROUTINE: [u8; 20] = [
     0xA5, 0x65,        // LDA $65        (real obj_lo, before W8 overwrite)
     0x8D, 0xB4, 0x7E,  // STA $7EB4
@@ -189,6 +190,7 @@ fn build_routine_with(
     let xlh = JCT_XLH_START.to_le_bytes();
     let back = BIG_Q_EXIT_RETURN.to_le_bytes();
 
+    #[rustfmt::skip]
     let mut r: Vec<u8> = vec![
         // --- entry ($00): reached from the replaced `LDY World_Num` ---
         0x20, lookup[0], lookup[1], // JSR bq_lookup
