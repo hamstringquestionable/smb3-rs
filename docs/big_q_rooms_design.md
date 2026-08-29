@@ -40,11 +40,25 @@ space there. Unused Level 5 carries none and needs 3 bytes per room.
 
 - **7-F1 is not pinned.** Flight is required to beat 7-F1 because of level
   geometry, so its block must always be a flight suit — but its *room* still
-  shuffles. Resolve the pairing first, then force the block in whatever room
-  7-F1 lands in and exclude that offset from the contents roll.
-  `enemies::tables::W7F1_TANOOKI_OFFSET` becomes derived rather than constant.
-  Guard it with an invariant test over N seeds, the way the enemy protections
-  are guarded — the failure mode is silent if the passes are ever reordered.
+  shuffles. As shipped: the contents roll runs first and exempts nothing, then
+  the room draw forces the drawn room's block to a Tanooki. Because the force is
+  the **last** write to that byte it needs no cooperation from the roll, which is
+  also why the roll could stay where it was in the pipeline rather than moving
+  below the overworld builder and shifting every seed's map.
+
+  `enemies::tables::W7F1_TANOOKI_OFFSET` is gone. It exempted BigQ7's screen-6
+  block from the roll, which made sense when 7-F1 always opened that room — but
+  under the shuffle 7-F1 usually opens something else, so the exemption was
+  pinning a room for a reason that no longer applied. Measured over 15 seeds:
+  that block was Tanooki in every one regardless of who opened it, and most seeds
+  ended up with two guaranteed Tanooki rooms (that one, plus 7-F1's actual
+  room). Removed 2026-08-28.
+
+  The guard is `w7f1_block_is_always_a_flight_suit`, which reads the lookup table
+  to learn which room 7-F1 drew and walks that room's own object stream, so it
+  cannot be fooled by a stale offset. The failure mode is silent — if the room
+  draw ever moved back above the contents roll, the roll would overwrite the
+  forced byte while everything still appeared to run.
 - **No room is deleted from Unused Level 5.** The 24 bytes for eight junctions
   come from eight of its fifteen 3-byte `Coin` commands. Ten of those fifteen
   sit in the sealed chamber on screen 4 (rows 3-9, walled on all four sides and

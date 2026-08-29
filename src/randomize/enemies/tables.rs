@@ -331,14 +331,6 @@ pub(super) const BIG_Q_BLOCKS: &[u8] = &[
     0x9A, // OBJ_BIGQBLOCK_HAMMER
 ];
 
-/// File offset of the Tanooki Big ? Block in the World 7 Big ? Block room —
-/// BigQ7's second object entry, on screen 6. Flight is required to beat 7-F1,
-/// so this block must not be randomized *when 7-F1 opens this room*.
-///
-/// Which room 7-F1 opens is decided per seed by `big_q_rooms`, which passes the
-/// drawn room's block offset to `randomize_big_q_blocks`. This constant is the
-/// vanilla answer, kept as the reference the protection test pins against.
-pub(super) const W7F1_TANOOKI_OFFSET: usize = 0x0C9B7;
 
 /// Injection candidates for wild_injections mode: level-wide chasers seeded into
 /// a level's first enemy. CHR compatibility checked via `sprite_bank()` at filter

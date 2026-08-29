@@ -130,21 +130,6 @@
         ];
         data[seg1_start..seg1_start + seg1.len()].copy_from_slice(seg1);
 
-        // Place the protected W7 Big Q Tanooki at its exact file offset
-        // W7F1_TANOOKI_OFFSET = 0x0C9B7, which is the ID byte of the entry.
-        // We need: [FF] [page] [0x98, x, y] [0x41, x, y] [FF]
-        // So page byte at 0x0C9B6, entry at 0x0C9B7
-        let w7f1_seg_start = W7F1_TANOOKI_OFFSET - 2; // FF + page byte before the entry
-        data[w7f1_seg_start] = 0xFF;
-        data[w7f1_seg_start + 1] = 0x01; // page flag
-        data[W7F1_TANOOKI_OFFSET] = 0x98; // BIGQBLOCK_TANOOKI
-        data[W7F1_TANOOKI_OFFSET + 1] = 0x0A;
-        data[W7F1_TANOOKI_OFFSET + 2] = 0x13;
-        data[W7F1_TANOOKI_OFFSET + 3] = 0x41; // ENDLEVELCARD
-        data[W7F1_TANOOKI_OFFSET + 4] = 0x48;
-        data[W7F1_TANOOKI_OFFSET + 5] = 0x15;
-        data[W7F1_TANOOKI_OFFSET + 6] = 0xFF;
-
         Rom::from_bytes_lax(&data, true).unwrap()
     }
 
@@ -281,21 +266,6 @@
         assert!(
             saw_slot4_0a_in_seg2 && saw_slot4_0b_in_seg2,
             "Segment 2 should not be constrained by segment 1's CHR choice"
-        );
-    }
-
-    #[test]
-    fn test_7f1_tanooki_protected() {
-        let mut rom = make_bigq_test_rom();
-        let mut rng = ChaCha8Rng::seed_from_u64(99);
-        randomize_big_q_blocks(&mut rom, &mut rng);
-
-        // The 7-F1 Tanooki must remain 0x98
-        let protected = rom.read_byte(W7F1_TANOOKI_OFFSET);
-        assert_eq!(
-            protected, 0x98,
-            "7-F1 Tanooki was changed to 0x{:02X}!",
-            protected
         );
     }
 

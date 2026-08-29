@@ -54,12 +54,11 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, opts: &Options) {
 }
 
 /// Randomize Big ? Blocks by swapping their IDs among the set of Big ? Block
-/// types. BigQ7's Tanooki is left alone — it is 7-F1's vanilla room, and
-/// flying is required to beat that level.
+/// types. Every block rolls, including the eight in Unused Level 5.
 ///
-/// This is not the whole 7-F1 guarantee any more: `big_q_rooms` draws 7-F1 a
-/// room per seed and forces *that* room's block afterwards. This protection
-/// only keeps the vanilla pairing honest.
+/// Nothing is exempt. 7-F1 needs flight, but which room its pipe opens is drawn
+/// per seed by `big_q_rooms`, which runs after this and forces *that* room's
+/// block — so the guarantee does not depend on any offset being skipped here.
 pub fn randomize_big_q_blocks<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // All enemy classes off — only Big ? Blocks get randomized
     let no_flags = Options {
@@ -245,7 +244,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                 // Big ? blocks and Boom-Booms swap among their own kind and skip
                 // the class machinery entirely.
                 if big_q_only {
-                    if BIG_Q_BLOCKS.contains(&entry.obj_id) && file_offset != W7F1_TANOOKI_OFFSET {
+                    if BIG_Q_BLOCKS.contains(&entry.obj_id) {
                         data[entry.data_index] = *BIG_Q_BLOCKS.choose(rng).unwrap();
                     }
                     continue;
