@@ -370,11 +370,13 @@ Built as designed: two hooks, both on Big [?]-only paths, seeding
 layout command is located or edited, so neither open blocker — host junction
 offsets, spare `Coin` commands in Unused Level 5 — had to be resolved.
 
-Measured, not estimated: the routine is **207 bytes in a 224-byte allocation**,
-against the ~100 the design guessed. The guess forgot that the seeding is
-duplicated for entry and exit and that four 13-byte payload tables cost 52 on
-their own. PRG026's largest gap starts exactly where `FS_BIG_Q_LOOKUP` ends, so
-it grew in place; the bank is down to 2485 free / 2419 largest.
+Measured, not estimated: the routine is **199 bytes in a 224-byte allocation**,
+against the ~100 the design guessed. The guess forgot that four 13-byte payload
+tables cost 52 on their own. PRG026's largest gap starts exactly where
+`FS_BIG_Q_LOOKUP` ends, so it grew in place; the bank is down to 2485 free /
+2419 largest. (The first cut was 207, with the two-pass lookup written out twice;
+folding it into one `bq_lookup` subroutine fixed the 7-F1 bug below and returned
+8 bytes.)
 
 Two things resolved along the way that the earlier sections got wrong:
 
@@ -390,6 +392,46 @@ Two things resolved along the way that the earlier sections got wrong:
   *entry* path uses `Player_XHi` unconditionally. Entry is therefore safe. The
   exit seed writes at `Player_XHi` and is correct as long as bonus areas stay
   horizontal, which all eight vanilla ones and Unused Level 5 are.
+
+## 7-F1's bonus pipe is not in the area its tile enters
+
+Reported on the beta as "7-F1 crashes the player after they leave the Big ?
+room" (seed 4270776170103004, flags `SMB3R-3MMFZZVZ7T8T9ANAWSXMM28`, which draws
+Unused Level 5 s2 for 7-F1). Fixed 2026-08-29.
+
+The first cut wrote the lookup twice: the entry half scanned two sources
+(current area, then the frozen map-entry ptr), the exit half scanned only the
+current area. That asymmetry looked harmless and is not, because of one level:
+
+| | 7-F1 |
+|---|---|
+| map pointer entry | layout `$B28E`, objects `$D4E4` (W7 idx 5, tileset 2 → bank 21) |
+| that area's alt pointers | layout `$B3CB`, objects **`$C006`** (`Empty_ObjLayout`) |
+| Big ? junction command | `E6 02 16` at 0x2B47E → CPU `$B46E`, **inside `$B3CB`** |
+
+So the bonus pipe is in 7-F1's *alternate* area, and `Level_ObjPtrOrig` while
+standing there is the shared `Empty_ObjLayout`, which is no host's key. Entry
+still resolved — pass 2 reads the frozen `$D4E4` — but the exit scan missed,
+seeded nothing, and left the engine reading whatever
+`Level_JctXLHStart[Player_XHi]` happened to hold. 7-F1 is the only one of the
+eleven hosts shaped this way; every other host's pipe sits in an area whose
+object pointer is already a table key (6-9's donated interior `$C60E` is row 12).
+
+**Vanilla hid it.** Before the shuffle, 7-F1 always opened BigQ7 s6, so
+`Player_XHi` on the way out was 6 and BigQ7's own slot-6 group-7 command is
+exactly 7-F1's return. The seeding was redundant there. Point the host at any
+other room and the slot the engine reads is one nothing authored for 7-F1.
+
+The fix is `bq_lookup`: one two-pass subroutine that both halves `JSR`. Neither
+`$7EBB` nor `$7EB4` changes while a bonus room is open — `LevelJct_
+BigQuestionBlock` never calls `Level_JctInit` — so sharing it makes exit resolve
+the same row entry did, by construction rather than by matching code.
+
+**The lesson for the next junction shuffle:** a host's identity key is a
+property of the *area holding the pipe*, not of the level, and the two are not
+the same area for every level. Harvesting a junction command's offset (as the
+table above does) already tells you which area that is — compare it against the
+level's alt chain before assuming the entry pointer identifies it.
 
 ## Unused Level 5 screens 6 and 7: how their aim was found
 
@@ -460,7 +502,7 @@ it never overwrites.
 **These seeds are specific to `testrom`'s option set.** Its `Options` differ from
 the CLI's defaults, which moves the shared RNG, so the same seed number picks
 different rooms under `smb3-rs`. Read the room out of the ROM (the four payload
-tables start at `FS_BIG_Q_LOOKUP + 0x8E`) rather than assuming.
+tables start at `FS_BIG_Q_LOOKUP + 0x86`) rather than assuming.
 
 Parking both levels on World 1 also puts both rooms under **one** world's
 `BigQBlock_GotIt` mask, which the real seed would not necessarily do — so these

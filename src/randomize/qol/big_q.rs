@@ -109,17 +109,18 @@ pub(crate) const BQ_MIRROR_ROWS: [(usize, usize); 2] = [(3, 11), (6, 12)];
 // Byte offsets of the pieces inside the assembled routine. `apply_room_rooms`
 // rewrites the four payload tables in place; the seeding code and the scan
 // never change.
-const OFF_HIT: usize = 0x26;
-const OFF_SCAN: usize = 0x39;
-const OFF_EXIT: usize = 0x52;
-const OFF_HI: usize = 0x74;
-const OFF_LO: usize = 0x81;
-pub(crate) const OFF_ROOM: usize = 0x8E;
-pub(crate) const OFF_ARR_Y: usize = 0x9B;
-pub(crate) const OFF_ARR_X: usize = 0xA8;
-pub(crate) const OFF_RET_Y: usize = 0xB5;
-pub(crate) const OFF_RET_X: usize = 0xC2;
-const BIG_Q_ROUTINE_LEN: usize = 0xCF; // 207
+const OFF_HIT: usize = 0x09;
+const OFF_EXIT: usize = 0x1C;
+const OFF_LOOKUP: usize = 0x32;
+const OFF_SCAN: usize = 0x53;
+const OFF_HI: usize = 0x6C;
+const OFF_LO: usize = 0x79;
+pub(crate) const OFF_ROOM: usize = 0x86;
+pub(crate) const OFF_ARR_Y: usize = 0x93;
+pub(crate) const OFF_ARR_X: usize = 0xA0;
+pub(crate) const OFF_RET_Y: usize = 0xAD;
+pub(crate) const OFF_RET_X: usize = 0xBA;
+const BIG_Q_ROUTINE_LEN: usize = 0xC7; // 199
 
 // Zero page / RAM the routine touches.
 const PLAYER_XHI: u8 = 0x75;
@@ -159,6 +160,15 @@ const BIG_Q_EXIT_RETURN: u16 = 0xAA8A;
 /// return bytes, hooked at the Big ?-only exit path where the pointer restore
 /// has just put the host's own obj_ptr back into `Level_ObjPtrOrig`.
 ///
+/// **Both halves share `bq_lookup`, and must.** 7-F1's bonus pipe is not in the
+/// area its map tile enters — it sits in the alternate area ($B3CB), whose
+/// `Level_ObjPtrOrig` is the shared `Empty_ObjLayout` ($C006). Pass 1 misses
+/// there and only pass 2 resolves it, so an exit half that scanned the current
+/// area alone would seed nothing and hand the player back a stale slot. Sharing
+/// the subroutine also makes the two halves resolve the same row by
+/// construction: neither `$7EBB` nor `$7EB4` changes while the bonus room is
+/// open, so exit sees exactly the inputs entry saw.
+///
 /// Internal absolute operands are derived from where the routine is written, so
 /// it is not origin-locked to a hardcoded CPU address.
 fn build_lookup_routine() -> Vec<u8> {
@@ -172,7 +182,7 @@ fn build_routine_with(
 ) -> Vec<u8> {
     let base = prg_bank_file_to_cpu(26, BIG_Q_ROUTINE_OFFSET);
     let at = |off: usize| (base + off as u16).to_le_bytes();
-    let (scan, hi, lo) = (at(OFF_SCAN), at(OFF_HI), at(OFF_LO));
+    let (lookup, scan, hi, lo) = (at(OFF_LOOKUP), at(OFF_SCAN), at(OFF_HI), at(OFF_LO));
     let (room_t, arr_y, arr_x) = (at(OFF_ROOM), at(OFF_ARR_Y), at(OFF_ARR_X));
     let (ret_y, ret_x) = (at(OFF_RET_Y), at(OFF_RET_X));
     let ylh = JCT_YLH_START.to_le_bytes();
@@ -180,24 +190,13 @@ fn build_routine_with(
     let back = BIG_Q_EXIT_RETURN.to_le_bytes();
 
     let mut r: Vec<u8> = vec![
-        // --- pass 1: current area (Level_ObjPtrOrig $7EBB/$7EBC) ---
-        0xAD, 0xBB, 0x7E,       // LDA $7EBB     ; current-area obj_lo
-        0x8D, 0xB2, 0x7E,       // STA $7EB2     ; scratch lo
-        0xAD, 0xBC, 0x7E,       // LDA $7EBC     ; current-area obj_hi
-        0x8D, 0xB3, 0x7E,       // STA $7EB3     ; scratch hi
-        0x20, scan[0], scan[1], // JSR bq_scan
-        0xB0, 0x15,             // BCS .hit
-        // --- pass 2: frozen map-entry ptr ($7EB4/$7EB5, saved by Part A) ---
-        0xAD, 0xB4, 0x7E,       // LDA $7EB4     ; frozen obj_lo
-        0x8D, 0xB2, 0x7E,       // STA $7EB2
-        0xAD, 0xB5, 0x7E,       // LDA $7EB5     ; frozen obj_hi
-        0x8D, 0xB3, 0x7E,       // STA $7EB3
-        0x20, scan[0], scan[1], // JSR bq_scan
+        // --- entry ($00): reached from the replaced `LDY World_Num` ---
+        0x20, lookup[0], lookup[1], // JSR bq_lookup
         0xB0, 0x04,             // BCS .hit
         // --- fallback: World_Num ---
         0xAC, 0x27, 0x07,       // LDY $0727
         0x60,                   // RTS
-        // --- .hit ($26): X = row. Seed the arrival, return the area in Y ---
+        // --- .hit ($09): X = row. Seed the arrival, return the area in Y ---
         0xA4, PLAYER_XHI,       // LDY Player_XHi   ; the slot the engine reads
         0xBD, arr_y[0], arr_y[1], // LDA BQ_ARR_Y,X
         0x99, ylh[0], ylh[1],   // STA Level_JctYLHStart,Y
@@ -206,7 +205,32 @@ fn build_routine_with(
         0xBD, room_t[0], room_t[1], // LDA BQ_ROOM,X
         0xA8,                   // TAY
         0x60,                   // RTS
-        // --- bq_scan ($39): $7EB2/$7EB3 -> carry set + X = row on match ---
+        // --- exit seed ($1C): reached from the Big ?-only exit path. The
+        //     pointer restore just before it put the HOST's obj_ptr back. ---
+        0x20, lookup[0], lookup[1], // JSR bq_lookup
+        0x90, 0x0E,             // BCC .done   (not ours — leave vanilla alone)
+        0xA4, PLAYER_XHI,       // LDY Player_XHi   ; the room's screen
+        0xBD, ret_y[0], ret_y[1], // LDA BQ_RET_Y,X
+        0x99, ylh[0], ylh[1],   // STA Level_JctYLHStart,Y
+        0xBD, ret_x[0], ret_x[1], // LDA BQ_RET_X,X
+        0x99, xlh[0], xlh[1],   // STA Level_JctXLHStart,Y
+        0x4C, back[0], back[1], // .done: JMP PRG026_AA8A
+        // --- bq_lookup ($32): two passes -> carry set + X = row on match ---
+        // pass 1: current area (Level_ObjPtrOrig $7EBB/$7EBC)
+        0xAD, 0xBB, 0x7E,       // LDA $7EBB     ; current-area obj_lo
+        0x8D, 0xB2, 0x7E,       // STA $7EB2     ; scratch lo
+        0xAD, 0xBC, 0x7E,       // LDA $7EBC     ; current-area obj_hi
+        0x8D, 0xB3, 0x7E,       // STA $7EB3     ; scratch hi
+        0x20, scan[0], scan[1], // JSR bq_scan
+        0xB0, 0x0F,             // BCS .out
+        // pass 2: frozen map-entry ptr ($7EB4/$7EB5, saved by Part A)
+        0xAD, 0xB4, 0x7E,       // LDA $7EB4     ; frozen obj_lo
+        0x8D, 0xB2, 0x7E,       // STA $7EB2
+        0xAD, 0xB5, 0x7E,       // LDA $7EB5     ; frozen obj_hi
+        0x8D, 0xB3, 0x7E,       // STA $7EB3
+        0x4C, scan[0], scan[1], // JMP bq_scan   ; its RTS returns to our caller
+        0x60,                   // .out: RTS
+        // --- bq_scan ($53): $7EB2/$7EB3 -> carry set + X = row on match ---
         0xA2, 0x0C,             // LDX #12  (13 entries, index 0..12)
         0xAD, 0xB3, 0x7E,       // .loop: LDA $7EB3
         0xDD, hi[0], hi[1],     // CMP BQ_OBJ_HI,X
@@ -220,20 +244,6 @@ fn build_routine_with(
         0x10, 0xEB,             // BPL .loop
         0x18,                   // CLC
         0x60,                   // RTS
-        // --- exit seed ($52): reached from the Big ?-only exit path. The
-        //     pointer restore just before it put the HOST's obj_ptr back. ---
-        0xAD, 0xBB, 0x7E,       // LDA $7EBB
-        0x8D, 0xB2, 0x7E,       // STA $7EB2
-        0xAD, 0xBC, 0x7E,       // LDA $7EBC
-        0x8D, 0xB3, 0x7E,       // STA $7EB3
-        0x20, scan[0], scan[1], // JSR bq_scan
-        0x90, 0x0E,             // BCC .done   (not ours — leave vanilla alone)
-        0xA4, PLAYER_XHI,       // LDY Player_XHi   ; the room's screen
-        0xBD, ret_y[0], ret_y[1], // LDA BQ_RET_Y,X
-        0x99, ylh[0], ylh[1],   // STA Level_JctYLHStart,Y
-        0xBD, ret_x[0], ret_x[1], // LDA BQ_RET_X,X
-        0x99, xlh[0], xlh[1],   // STA Level_JctXLHStart,Y
-        0x4C, back[0], back[1], // .done: JMP PRG026_AA8A
     ];
     r.extend_from_slice(&BQ_OBJ_HI);
     r.extend_from_slice(&BQ_OBJ_LO);
@@ -243,10 +253,11 @@ fn build_routine_with(
     r.extend(ret.iter().map(|&(y, _)| y));
     r.extend(ret.iter().map(|&(_, x)| x));
     debug_assert_eq!(r.len(), BIG_Q_ROUTINE_LEN);
-    // Both `BCS .hit` displacements are written by hand above; check they still
-    // reach `.hit` rather than landing mid-instruction.
-    debug_assert_eq!(0x11 + r[0x10] as usize, OFF_HIT, "pass 1 BCS .hit");
-    debug_assert_eq!(0x22 + r[0x21] as usize, OFF_HIT, "pass 2 BCS .hit");
+    // The three hand-written branch displacements, checked against the labels
+    // they are meant to reach rather than against the byte that was typed.
+    debug_assert_eq!(0x05 + r[0x04] as usize, OFF_HIT, "entry BCS .hit");
+    debug_assert_eq!(0x21 + r[0x20] as usize, OFF_LOOKUP - 3, "exit BCC .done");
+    debug_assert_eq!(0x43 + r[0x42] as usize, OFF_SCAN - 1, "pass 1 BCS .out");
     r
 }
 
@@ -313,20 +324,42 @@ mod tests {
             rom.read_range(BIG_Q_ROUTINE_OFFSET, expected.len()),
             expected.as_slice()
         );
+        // Part C names `.exit`, not the origin — `asm::check` validates branches
+        // *inside* the routine and cannot see a hook that lands mid-instruction.
+        let exit = prg_bank_file_to_cpu(26, BIG_Q_ROUTINE_OFFSET) + OFF_EXIT as u16;
+        assert_eq!(
+            rom.read_range(BIG_Q_EXIT_HOOK, 3),
+            &[0x4C, exit as u8, (exit >> 8) as u8]
+        );
     }
 
     #[test]
     fn routine_scans_current_area_before_frozen_entry() {
         let r = build_lookup_routine();
         assert_eq!(r.len(), BIG_Q_ROUTINE_LEN);
-        assert_eq!(&r[0..3], &[0xAD, 0xBB, 0x7E], "pass 1 LDA $7EBB");
-        assert_eq!(&r[6..9], &[0xAD, 0xBC, 0x7E], "pass 1 LDA $7EBC");
-        assert_eq!(&r[17..20], &[0xAD, 0xB4, 0x7E], "pass 2 LDA $7EB4");
-        assert_eq!(&r[23..26], &[0xAD, 0xB5, 0x7E], "pass 2 LDA $7EB5");
-        assert_eq!(&r[0x22..0x26], &[0xAC, 0x27, 0x07, 0x60], "fallback LDY $0727; RTS");
+        let l = OFF_LOOKUP;
+        assert_eq!(&r[l..l + 3], &[0xAD, 0xBB, 0x7E], "pass 1 LDA $7EBB");
+        assert_eq!(&r[l + 6..l + 9], &[0xAD, 0xBC, 0x7E], "pass 1 LDA $7EBC");
+        assert_eq!(&r[l + 17..l + 20], &[0xAD, 0xB4, 0x7E], "pass 2 LDA $7EB4");
+        assert_eq!(&r[l + 23..l + 26], &[0xAD, 0xB5, 0x7E], "pass 2 LDA $7EB5");
+        assert_eq!(&r[5..OFF_HIT], &[0xAC, 0x27, 0x07, 0x60], "fallback LDY $0727; RTS");
         assert_eq!(&r[OFF_HI..OFF_LO], &BQ_OBJ_HI);
         assert_eq!(&r[OFF_LO..OFF_ROOM], &BQ_OBJ_LO);
         assert_eq!(&r[OFF_ROOM..OFF_ARR_Y], &BQ_ROOM);
+    }
+
+    /// The bug that shipped in the first cut of the room shuffle: the exit half
+    /// scanned only the current area, so 7-F1 — whose bonus pipe lives in an
+    /// alternate area with a shared `Empty_ObjLayout` pointer — never got its
+    /// return bytes seeded and came back to a stale slot. Both halves must call
+    /// the same two-pass subroutine.
+    #[test]
+    fn entry_and_exit_share_the_two_pass_lookup() {
+        let r = build_lookup_routine();
+        let lookup = prg_bank_file_to_cpu(26, BIG_Q_ROUTINE_OFFSET) + OFF_LOOKUP as u16;
+        let jsr = [0x20, lookup as u8, (lookup >> 8) as u8];
+        assert_eq!(&r[0..3], &jsr, "entry JSR bq_lookup");
+        assert_eq!(&r[OFF_EXIT..OFF_EXIT + 3], &jsr, "exit JSR bq_lookup");
     }
 
     /// The hook must name the routine's own origin. The routine's *internal*
@@ -364,6 +397,50 @@ mod asm_checks {
             .allocation(BIG_Q_ROUTINE_OFFSET)
             .origin(prg_bank_file_to_cpu(26, BIG_Q_ROUTINE_OFFSET))
             .data_from(routine.len() - 91)
+            .assert_ok();
+    }
+
+    fn vanilla() -> Option<Vec<u8>> {
+        std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()
+    }
+
+    /// All three hook sites, against the vanilla bytes they overwrite. The
+    /// structural checks above see only the routine; nothing there can tell
+    /// that a hook chopped a vanilla instruction in half and left its operand
+    /// for the CPU to run as an opcode. Split out because it needs the ROM.
+    ///
+    /// The exit hook is checked as a *fragment* starting at `OFF_EXIT`, because
+    /// `.hook` requires the hook to name the checked array's origin and this
+    /// one deliberately names a label partway into the routine.
+    #[test]
+    fn hooks_displace_whole_instructions() {
+        let Some(v) = vanilla() else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+        let base = prg_bank_file_to_cpu(26, BIG_Q_ROUTINE_OFFSET);
+        let routine = build_lookup_routine();
+
+        // Part A: PRG030 save trampoline, reached by `JMP` over `CPY #$07`.
+        asm::check(&BIG_Q_PRG030_ROUTINE)
+            .allocation(BIG_Q_PRG030_OFFSET)
+            .origin(crate::randomize::rom_data::prg030_file_to_cpu(BIG_Q_PRG030_OFFSET))
+            .hook(&v, BIG_Q_PRG030_HOOK, &BIG_Q_PRG030_JMP)
+            .assert_ok();
+
+        // Part B: the entry hook, replacing `LDY World_Num`.
+        asm::check(&routine)
+            .origin(base)
+            .data_from(routine.len() - 91)
+            .hook(&v, BIG_Q_HOOK_OFFSET, &jsr_into_bank(26, BIG_Q_ROUTINE_OFFSET))
+            .assert_ok();
+
+        // Part C: the exit hook, replacing the tail `JMP PRG026_AA8A`.
+        let exit_cpu = base + OFF_EXIT as u16;
+        let exit_jmp = [0x4C, exit_cpu as u8, (exit_cpu >> 8) as u8];
+        asm::check(&routine[OFF_EXIT..OFF_LOOKUP])
+            .origin(exit_cpu)
+            .hook(&v, BIG_Q_EXIT_HOOK, &exit_jmp)
             .assert_ok();
     }
 }

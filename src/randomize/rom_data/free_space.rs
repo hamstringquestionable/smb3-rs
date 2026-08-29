@@ -257,7 +257,7 @@ pub(crate) const AIRSHIP_OBJ_SLOT: usize = 1;
 // PRG026 — two-pass Big ? Block lookup + spawn-slot seeding (qol/big_q.rs),
 // relocated off the old 0x35530 slot into tail free space. The $FF run this
 // sits in continues to 0x36000, so it has room to grow in place.
-pub(crate) const FS_BIG_Q_LOOKUP: usize      = 0x355BD; // 224 reserved, 207 used (CPU $B5AD)
+pub(crate) const FS_BIG_Q_LOOKUP: usize      = 0x355BD; // 224 reserved, 199 used (CPU $B5AD)
 
 // PRG027
 pub(crate) const FS_KING_QUOTES: usize       = 0x379D9; // 894 bytes
