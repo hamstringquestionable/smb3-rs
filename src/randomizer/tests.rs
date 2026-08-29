@@ -40,9 +40,10 @@ fn normalized(mut o: Options) -> Options {
 /// opens is now drawn per seed — so the block in *whatever room it drew* has to
 /// be a flight suit, and the contents roll has to leave that byte alone.
 ///
-/// The failure mode is silent: reorder `big_q_rooms` and `randomize_big_q_blocks`
-/// and the protection still "runs", it just names a stale offset. So this walks
-/// the drawn room's own object stream rather than trusting a constant.
+/// The failure mode is silent: the force has to be the LAST write to that byte,
+/// and if `big_q_rooms` ever moved back above `randomize_big_q_blocks` the roll
+/// would overwrite it while everything still appeared to run. So this walks the
+/// drawn room's own object stream rather than trusting any fixed offset.
 #[test]
 fn w7f1_block_is_always_a_flight_suit() {
     let Some(base) = make_test_rom() else { return };
