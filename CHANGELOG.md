@@ -69,6 +69,13 @@ deploys.
   stuck in the ground, in a room whose exit only appears once it is cleared.
   It now starts high enough that the bottom of its dive lands *on* the floor.
 
+- Travelling through a pipe no longer kills you when the screen scrolls at the
+  same time. The game's "crushed against the left edge" check only looks at how
+  far left Mario's sprite has been pushed, and a pipe transition that squished
+  the view could push him far enough to trip it — a death with nothing on
+  screen to cause it. Pipe travel is now exempt, the same way vertical levels
+  and a finished level already were. (MaCobra52's "Pipe Screen Squish Fix".)
+
 
 ## [1.2.1] - 2026-08-26
 
