@@ -17,8 +17,9 @@ use options::*;
 // Public API re-exported by the crate root (see lib.rs).
 pub use flag_key::{current_flag_key_version, flag_key_fields, flag_key_version_of};
 pub use options::{
-    EnemyMode, FireFlowerMode, ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY, ITEMS,
-    Options, PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
+    EnemyMode, FireFlowerMode, HazardLimit, ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE,
+    ITEM_RANDOM_SUIT_ONLY, ITEMS, Options, PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser,
+    item_display_name, item_id,
 };
 
 #[cfg(test)]
@@ -211,7 +212,12 @@ fn randomize_inner(
     // of the overworld builder and the enemy/powerup passes.
     if antechamber_shuffle {
         rom.set_tag("levels/antechambers");
-        randomize::antechambers::shuffle(rom, &mut rng, options.include_beta_stages);
+        randomize::antechambers::shuffle(
+            rom,
+            &mut rng,
+            options.include_beta_stages,
+            options.friendlier_levels,
+        );
     }
 
     // Koopaling stability patches — needed whenever Koopalings may load in a
@@ -308,6 +314,7 @@ fn randomize_inner(
         randomize::overworld_writer::WriteFlags {
             shuffle_hammer_bros: options.shuffle_hammer_bros,
             piranha: options.piranha_shuffle,
+            friendlier_levels: options.friendlier_levels,
         },
     );
 

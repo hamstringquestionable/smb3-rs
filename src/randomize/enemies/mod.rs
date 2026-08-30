@@ -20,7 +20,7 @@ use crate::randomize::rom_data::{
     STOMPABLE_ENEMIES, TREASURE_BOX_APPEAR,
 };
 use crate::randomize::segment_writer::{self, SegmentEntry as WriterEntry, SortMode};
-use crate::randomizer::{EnemyMode, Options, WildChaser};
+use crate::randomizer::{EnemyMode, HazardLimit, Options, WildChaser};
 use crate::rom::Rom;
 
 mod class_modes;
@@ -167,7 +167,13 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
 
         // HB Wild: batch-assign enemies with stompability constraints.
         if is_hb_segment && opts.hb_encounters == EnemyMode::Wild && !big_q_only {
-            let limits = SegmentLimits { cap_full: false, no_hammer_bro };
+            // `hazard_cap_full: false` on purpose — `limit_hazards` is a
+            // levels-only filter. An HB room draws from its own curated pools
+            // (STOMPABLE_ENEMIES / HB_NEEDS_SHELL_ENEMIES), already chosen so
+            // the player can clear a closed room, and it has no vanilla enemy
+            // to measure "introduced" against since the room is composed from
+            // scratch.
+            let limits = SegmentLimits { cap_full: false, no_hammer_bro, hazard_cap_full: false };
             randomize_hb_wild_segment(&mut data, &entries, &hb_modes, limits, rng);
             continue;
         }
@@ -189,6 +195,15 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
         // here — `entries` was updated in step with `data` above.
         let mut bertha_count: u8 =
             entries.iter().filter(|e| BERTHA_IDS.contains(&e.obj_id)).count() as u8;
+
+        // Hazards this pass has *added* to this segment, for HazardLimit::Sparse.
+        // Starts at zero rather than counting what's already here: the rule is
+        // additive-only, so a segment Nintendo filled with nippers keeps them and
+        // still has its full budget for one more. Monotonic — a pick that
+        // replaces an added hazard with a non-hazard doesn't refund it, which
+        // keeps the budget a ceiling on introductions rather than on the
+        // final count.
+        let mut added_hazards: u8 = 0;
 
         // Split entries into proximity groups by X-position. Each group gets
         // independent CHR slot tracking — enemies more than CHR_GROUP_GAP tiles
@@ -272,6 +287,11 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                     cap_full: bertha_count.saturating_sub(was_bertha as u8)
                         >= MAX_BERTHA_PER_SEGMENT,
                     no_hammer_bro,
+                    hazard_cap_full: match opts.limit_hazards {
+                        HazardLimit::Off => false,
+                        HazardLimit::Sparse => added_hazards >= MAX_ADDED_HAZARDS_PER_SEGMENT,
+                        HazardLimit::All => true,
+                    },
                 };
                 let chr = ChrCtx {
                     local: (committed_slot4, committed_slot5),
@@ -298,6 +318,11 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
                     bertha_count = bertha_count.saturating_sub(1);
                 } else if !was_bertha && chosen_is_bertha {
                     bertha_count = bertha_count.saturating_add(1);
+                }
+                // Same predicate `keep` blocks on, so under All this never
+                // fires and under Sparse it spends the segment's one budget.
+                if hazard_excluded(chosen, entry.obj_id) {
+                    added_hazards = added_hazards.saturating_add(1);
                 }
                 swap_enemy(&mut data, entry.data_index, chosen);
                 commit_chr_page(chosen, &mut committed_slot4, &mut committed_slot5);

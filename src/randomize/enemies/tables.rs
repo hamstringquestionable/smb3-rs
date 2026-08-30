@@ -393,6 +393,22 @@ pub(super) const BERTHA_IDS: &[u8] = &[0x2D, 0x63];
 /// this was observed in 3-9 where the white block became unreachable.
 pub(super) const MAX_BERTHA_PER_SEGMENT: u8 = 2;
 
+/// Maximum number of *introduced* hazards allowed in a single enemy segment
+/// under `HazardLimit::Sparse`. Vanilla hazards don't count — only a pick that
+/// puts a hazard where the slot's vanilla enemy was a different category (see
+/// [`hazard_excluded`]), which is the same thing `HazardLimit::All` forbids
+/// outright.
+///
+/// One, so the player can still meet a Ptooie or a nipper and learn to handle
+/// it, but never walks into a wall of them.
+///
+/// The budget is per `$FF`-bounded enemy run, not per level. That is usually
+/// the same thing, but several levels can enter one run at different
+/// `enemy_ptr`s (see the `SortMode::Preserve` note in `mod.rs`), and there they
+/// share the one budget. Stricter than per-level, which is the safe direction
+/// for a flag whose whole job is "fewer surprises".
+pub(super) const MAX_ADDED_HAZARDS_PER_SEGMENT: u8 = 1;
+
 /// Maximum X-tile gap between consecutive enemies (sorted by X) before they
 /// are split into separate CHR groups. Enemies more than one screen apart
 /// can never be visible simultaneously, so they don't need compatible CHR pages.

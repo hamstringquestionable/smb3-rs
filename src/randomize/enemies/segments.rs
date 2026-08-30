@@ -22,9 +22,12 @@ pub(super) struct SegmentPins {
 }
 
 /// Placement limits that hold for every entry in one segment, whatever pool
-/// that entry draws from. Both are properties of the *room*, not the slot,
-/// which is why they ride alongside the per-entry protections rather than
-/// being expressed as `EntryRule`s.
+/// that entry draws from. The first two are properties of the *room*, not the
+/// slot, which is why they ride alongside the per-entry protections rather
+/// than being expressed as `EntryRule`s. `hazard_cap_full` is the one
+/// run-scoped member: it rides here because `pick_replacement`'s `keep` is the
+/// single place every pick funnels through, so one field there covers the
+/// class pools, the wild pool and all four protection paths at once.
 #[derive(Clone, Copy)]
 pub(super) struct SegmentLimits {
     /// The Big Bertha cap is already reached — no new bertha here.
@@ -32,6 +35,12 @@ pub(super) struct SegmentLimits {
     /// No `$81` here: this room rewrites one into an unkillable object. See
     /// `enemy_protections::rewrites_hammer_bro`.
     pub(super) no_hammer_bro: bool,
+    /// This segment's introduced-hazard budget is spent, so no pick may put a
+    /// hazard where the vanilla enemy wasn't already one of the same category.
+    /// Always true under `HazardLimit::All`, always false under
+    /// `HazardLimit::Off`, and under `Sparse` it flips once the segment has
+    /// gained [`MAX_ADDED_HAZARDS_PER_SEGMENT`] of them.
+    pub(super) hazard_cap_full: bool,
 }
 
 impl SegmentPins {

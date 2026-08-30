@@ -15,9 +15,9 @@ use rom::Rom;
 
 pub use ips::apply_ips_patch;
 pub use randomizer::{
-    EnemyMode, FireFlowerMode, ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY, ITEMS,
-    Options, PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser, current_flag_key_version,
-    flag_key_fields, flag_key_version_of, item_display_name, item_id,
+    EnemyMode, FireFlowerMode, HazardLimit, ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE,
+    ITEM_RANDOM_SUIT_ONLY, ITEMS, Options, PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser,
+    current_flag_key_version, flag_key_fields, flag_key_version_of, item_display_name, item_id,
 };
 
 /// Validate a ROM blob without doing any randomization. Returns Ok if the bytes

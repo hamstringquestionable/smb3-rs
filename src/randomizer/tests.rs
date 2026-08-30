@@ -1082,6 +1082,8 @@ fn fnv1a(data: &[u8]) -> u64 {
 fn all_off_options() -> Options {
     Options {
         fire_flower: FireFlowerMode::Off,
+        friendlier_levels: false,
+        limit_hazards: HazardLimit::Off,
         piranha_shuffle: PiranhaMode::Off,
         powerups: false,
         palettes: false,
@@ -1151,6 +1153,8 @@ fn all_off_options() -> Options {
 fn all_on_options() -> Options {
     Options {
         fire_flower: FireFlowerMode::On,
+        limit_hazards: HazardLimit::All,
+        friendlier_levels: true,
         piranha_shuffle: PiranhaMode::On,
         powerups: true,
         palettes: false,

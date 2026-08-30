@@ -29,13 +29,19 @@
 use rand::seq::SliceRandom;
 use rand_chacha::ChaCha8Rng;
 
+use super::rom_data;
 use crate::rom::Rom;
 
 /// One antechamber-pattern level. The vanilla entries are emitted by
 /// `tools/rom_map.py --antechamber`; beta stages are added by hand (that
 /// detector only scans pointer-table levels, so it can't see them).
 struct Antechamber {
-    /// Vanilla level name, for panic messages.
+    /// Vanilla level name. Used in panic messages, and **load-bearing**: it is
+    /// matched against `FRIENDLIER_BLOCKED_LEVELS` to decide whether Friendlier
+    /// Levels withholds this level from the pool. That makes it the same
+    /// namespace as `NodeCatalog` names — `antechamber_names_are_catalog_names`
+    /// enforces it, so adding a name to the blocklist reaches both the level
+    /// deck and this pool without any further wiring.
     name: &'static str,
     /// File offset of the entry area's 9-byte layout header.
     header: usize,
@@ -153,12 +159,31 @@ fn sanitize_exit_dir(byte1: u8) -> u8 {
 /// Randomly permute which interior each antechamber level's entry pipe
 /// leads to. Identity assignments are allowed (a level may keep its own
 /// interior) and skip their writes entirely.
-pub fn shuffle(rom: &mut Rom, rng: &mut ChaCha8Rng, include_beta_stages: bool) {
+pub fn shuffle(
+    rom: &mut Rom,
+    rng: &mut ChaCha8Rng,
+    include_beta_stages: bool,
+    friendlier_levels: bool,
+) {
     // Beta antechambers only join the pool when their stages are placed. With
     // beta stages off the pool is the 11 vanilla levels and the output is
     // byte-identical to before β4 existed.
-    let pool: Vec<&Antechamber> =
-        ANTECHAMBERS.iter().filter(|a| include_beta_stages || !a.beta).collect();
+    //
+    // Friendlier Levels withdraws its blocked levels here as well, and that is
+    // a correctness requirement rather than tidiness. Blocking removes a
+    // level's *lobby* from the map; this pass moves *interiors*, and the
+    // assignment below is a full permutation. Leave a blocked level in and
+    // both halves go wrong at once: its interior is donated to a lobby the
+    // player can still reach, so it gets played anyway, and whatever was
+    // donated to the blocked lobby sits behind a door that was never placed,
+    // dropping an unrelated level from the seed. Three of the blocked levels
+    // (5-3, 6-6, 7-5) are in this pool, so the pool goes 11 -> 8, or 12 -> 9
+    // with beta stages on.
+    let pool: Vec<&Antechamber> = ANTECHAMBERS
+        .iter()
+        .filter(|a| include_beta_stages || !a.beta)
+        .filter(|a| !friendlier_levels || !rom_data::is_friendlier_blocked(a.name))
+        .collect();
 
     // Snapshot all vanilla interiors before any writes, so a permutation
     // never reads a value another assignment already overwrote.
@@ -272,7 +297,7 @@ mod tests {
         let vanilla: Vec<_> = ANTECHAMBERS.iter().map(|a| interior_tuple(&rom, a)).collect();
 
         let mut rng = ChaCha8Rng::seed_from_u64(1);
-        shuffle(&mut rom, &mut rng, true);
+        shuffle(&mut rom, &mut rng, true, false);
 
         let mut shuffled: Vec<_> = ANTECHAMBERS.iter().map(|a| interior_tuple(&rom, a)).collect();
         let mut expected = vanilla.clone();
@@ -285,7 +310,7 @@ mod tests {
     fn host_local_bytes_are_preserved() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(1);
-        shuffle(&mut rom, &mut rng, true);
+        shuffle(&mut rom, &mut rng, true, false);
 
         for (i, a) in ANTECHAMBERS.iter().enumerate() {
             let n = i as u8;
@@ -305,7 +330,7 @@ mod tests {
         let mut rom = make_test_rom();
         let vanilla: Vec<_> = ANTECHAMBERS.iter().map(|a| interior_tuple(&rom, a)).collect();
         let mut rng = ChaCha8Rng::seed_from_u64(1);
-        shuffle(&mut rom, &mut rng, true);
+        shuffle(&mut rom, &mut rng, true, false);
 
         for (a, before) in ANTECHAMBERS.iter().zip(&vanilla) {
             let moved = interior_tuple(&rom, a) != *before;
@@ -356,7 +381,7 @@ mod tests {
         // Force the permutation so some other level hosts this donor: shuffle
         // until a non-identity assignment lands the donor somewhere.
         let mut rng = ChaCha8Rng::seed_from_u64(3);
-        shuffle(&mut rom, &mut rng, true);
+        shuffle(&mut rom, &mut rng, true, false);
 
         // Wherever the donor's interior went, its junctions must read dir 3
         // (0xF3) — never the raw 0xF8 — and keep the arrival column 0x27.
@@ -380,8 +405,8 @@ mod tests {
         let mut rom_b = make_test_rom();
         let mut rng_a = ChaCha8Rng::seed_from_u64(42);
         let mut rng_b = ChaCha8Rng::seed_from_u64(42);
-        shuffle(&mut rom_a, &mut rng_a, true);
-        shuffle(&mut rom_b, &mut rng_b, true);
+        shuffle(&mut rom_a, &mut rng_a, true, false);
+        shuffle(&mut rom_b, &mut rng_b, true, false);
 
         for a in &ANTECHAMBERS {
             assert_eq!(rom_a.read_range(a.header, 9), rom_b.read_range(a.header, 9));
@@ -400,7 +425,7 @@ mod tests {
         let vanilla: Vec<_> = ANTECHAMBERS.iter().map(|a| interior_tuple(&rom, a)).collect();
 
         let mut rng = ChaCha8Rng::seed_from_u64(1);
-        shuffle(&mut rom, &mut rng, false);
+        shuffle(&mut rom, &mut rng, false, false);
 
         // Every beta entry is untouched.
         for (a, before) in ANTECHAMBERS.iter().zip(&vanilla) {
@@ -426,6 +451,82 @@ mod tests {
         shuffled.sort();
         expected.sort();
         assert_eq!(shuffled, expected, "vanilla interiors still permute");
+    }
+
+    /// Friendlier Levels withholds its blocked levels from this pool, and the
+    /// reason is correctness, not tidiness. Blocking removes a level's lobby
+    /// from the map while this pass moves interiors; leaving a blocked level
+    /// in would donate its interior to a reachable lobby (so it gets played
+    /// anyway) and strand whatever was donated to the blocked lobby behind a
+    /// door that was never placed (so an unrelated level vanishes).
+    #[test]
+    fn friendlier_blocked_levels_are_withheld() {
+        let mut rom = make_test_rom();
+        let vanilla: Vec<_> = ANTECHAMBERS.iter().map(|a| interior_tuple(&rom, a)).collect();
+
+        let mut rng = ChaCha8Rng::seed_from_u64(1);
+        shuffle(&mut rom, &mut rng, true, true);
+
+        let blocked = |a: &Antechamber| rom_data::is_friendlier_blocked(a.name);
+
+        // At least one of the pool is actually blocked, or this test proves
+        // nothing — 5-3, 6-6 and 7-5 are in both lists today.
+        assert!(ANTECHAMBERS.iter().any(blocked), "no blocked level is in the antechamber pool");
+
+        for (a, before) in ANTECHAMBERS.iter().zip(&vanilla) {
+            if blocked(a) {
+                assert_eq!(
+                    interior_tuple(&rom, a),
+                    *before,
+                    "{}: blocked interior was reassigned",
+                    a.name
+                );
+            }
+        }
+
+        // What remains is still a permutation of itself: no interior is lost
+        // to a withheld host, and none is duplicated.
+        let mut shuffled: Vec<_> =
+            ANTECHAMBERS.iter().filter(|a| !blocked(a)).map(|a| interior_tuple(&rom, a)).collect();
+        let mut expected: Vec<_> = ANTECHAMBERS
+            .iter()
+            .zip(&vanilla)
+            .filter(|(a, _)| !blocked(a))
+            .map(|(_, before)| before.clone())
+            .collect();
+        shuffled.sort();
+        expected.sort();
+        assert_eq!(shuffled, expected, "remaining interiors still permute among themselves");
+    }
+
+    /// `Antechamber.name` and `NodeCatalog` names must be one namespace.
+    ///
+    /// Friendlier Levels reaches both the level deck and this pool by matching
+    /// `FRIENDLIER_BLOCKED_LEVELS` against a name — `CatalogEntry.name` on the
+    /// deck side, `Antechamber.name` here. Nothing in the type system ties
+    /// those two tables together, so a level spelled differently in the two
+    /// places would be dropped from the deck while its interior kept
+    /// circulating in this pool: blocked in name only, and costing an
+    /// unrelated level its interior. Asserting the whole pool resolves is what
+    /// lets the blocklist be extended without touching either filter.
+    #[test]
+    fn antechamber_names_are_catalog_names() {
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+        let rom = Rom::from_bytes(&bytes).unwrap();
+        // Beta stages on: β4 only exists as a catalog entry with that flag set.
+        let catalog = crate::randomize::node_catalog::NodeCatalog::build(&rom, true);
+
+        for a in &ANTECHAMBERS {
+            assert!(
+                catalog.entries.iter().any(|e| e.name == a.name),
+                "antechamber {:?} has no NodeCatalog entry of that name — the \
+                 Friendlier Levels blocklist could never match it",
+                a.name,
+            );
+        }
     }
 
     /// Guard the hardcoded offsets against the real ROM: every entry must

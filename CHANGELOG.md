@@ -11,6 +11,44 @@ deploys.
 
 ### Added
 
+- **Limit Hazards** (new option: Off / Some / All, off by default). Stops enemy
+  swaps from dropping a hazard into a level that wasn't built for one — nippers,
+  Ptooies, thwomps, Hot Foots and Bros. Hazards Nintendo placed are always kept,
+  and a slot that held one can still shuffle within its own kind, so this only
+  ever removes surprises the randomizer added. **Some** allows the occasional
+  one so you still learn to handle them; **All** allows none. Measured over 250
+  seeds of the Max Chaos preset, the unfiltered game gains ~140 hazards a seed
+  with as many as 25 in a single stretch of level; Some cuts that to ~52 and
+  never more than one.
+
+  Only in-level enemies are affected. Hammer Bro mini-battles keep their own
+  curated pools, and Wild Injections are unchanged.
+
+- **Friendlier Levels** (new option, off by default). Keeps the roughest levels
+  out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta
+  stages when those are on, and otherwise to a second visit to a level already
+  in the seed, so the map is exactly as full as it always was.
+
+  With lobby shuffle on, the held-back levels sit that out too. Blocking a level
+  removes its *front door*, and the lobby shuffle moves *interiors*
+  independently — so a blocked level left in that pool would have its interior
+  donated to a door you can still open, while whatever was donated to the
+  blocked door became unreachable, quietly costing you an unrelated level.
+
+  It also makes two fortresses — 7F2, then 8F1 — optional rather than absent.
+  They stay on the map and stay beatable, but land behind a lock the world can
+  be finished without, so you can walk past them. Forts can't be held out of the
+  pool the way levels can (every fort needs a lock, and the full roster is an
+  invariant), and there has to be a spare bypassable lock going: 1-F always
+  claims the first one, since its secret exit can leave a lock shut forever.
+  Measured over 300 seeds, 99% have room for both; in the rest 8F1 stays
+  required.
+
+- **Beginner Friendly** preset now uses Limit Hazards (All) and Friendlier
+  Levels, and has its Ghosts class turned back on. The class was previously
+  disabled outright just to stop Boo → Hot Foot; blocking that directly brings
+  Boo ↔ Dry Bones variety back.
+
 - **Shuffle Big ? Rooms** (new option, off by default). Every level with a Big ?
   pipe draws from a pool of 19 rooms instead of always opening its own — the 11
   vanilla rooms plus 8 from "Unused Level 5", a complete set of eight bonus

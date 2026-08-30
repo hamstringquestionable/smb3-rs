@@ -166,6 +166,196 @@ fn test_troll_pipes_never_assigned_hand_levels() {
     }
 }
 
+/// Friendlier Levels must (a) actually keep the blocked levels off the map and
+/// (b) leave the deck long enough to deal. The draw is a bare
+/// `pop_front().expect(...)` against a fixed `VANILLA_LEVEL_COUNT` of slots, so
+/// a short deck panics rather than degrading — which makes the count assertion
+/// as load-bearing as the blocklist one.
+///
+/// Both beta arms are checked because they refill differently: with beta stages
+/// on the deck is already oversized and absorbs the removals, so no duplicate
+/// is needed; with them off every removal becomes a duplicate.
+#[test]
+fn test_friendlier_levels_blocks_and_refills() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+
+    for beta in [false, true] {
+        let catalog = node_catalog::NodeCatalog::build(&rom, beta);
+        let pickup = standard_pickup(&rom, &catalog);
+
+        for seed in 0u64..16 {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let build = overworld_build::build(
+                &rom,
+                &OverworldData { pickup: &pickup, catalog: &catalog },
+                &mut rng,
+                standard_build_flags(),
+            );
+            let assignments = assign_pool(
+                &rom,
+                &build,
+                &OverworldData { pickup: &pickup, catalog: &catalog },
+                &mut rng,
+                WriteFlags { friendlier_levels: true, ..Default::default() },
+            );
+
+            let placed: Vec<usize> =
+                assignments.iter().flat_map(|wa| wa.level.iter().map(|a| a.pool_idx)).collect();
+
+            assert_eq!(
+                placed.len(),
+                overworld_build::VANILLA_LEVEL_COUNT,
+                "beta={beta} seed {seed}: dealt {} levels, expected {}",
+                placed.len(),
+                overworld_build::VANILLA_LEVEL_COUNT,
+            );
+
+            let mut seen: HashMap<usize, usize> = HashMap::new();
+            for pi in &placed {
+                let ce = &catalog.entries[pickup.pool[*pi].catalog_idx];
+                assert!(
+                    !rom_data::is_friendlier_blocked(&ce.name),
+                    "beta={beta} seed {seed}: blocked level {} was placed",
+                    ce.name,
+                );
+                *seen.entry(*pi).or_insert(0) += 1;
+            }
+
+            // Nothing is dealt three times, and nothing holding a one-off item
+            // is dealt twice.
+            for (&pi, &n) in &seen {
+                let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
+                assert!(n <= 2, "beta={beta} seed {seed}: {} dealt {n} times", ce.name);
+                if n > 1 {
+                    assert!(
+                        !rom_data::is_chest_level(ce.world_idx, ce.entry_idx)
+                            && !rom_data::is_hand_level(ce.world_idx, ce.entry_idx),
+                        "beta={beta} seed {seed}: {} holds a one-off item and was dealt twice",
+                        ce.name,
+                    );
+                }
+            }
+
+            // Beta stages absorb the removals; without them the shortfall is
+            // made up with duplicates, one per blocked level.
+            let dupes = placed.len() - seen.len();
+            let expected = if beta { 0 } else { rom_data::FRIENDLIER_BLOCKED_LEVELS.len() };
+            assert_eq!(dupes, expected, "beta={beta} seed {seed}: {dupes} duplicates");
+        }
+    }
+}
+
+/// Friendlier Levels' fortress half: 7F2 then 8F1 are parked on
+/// secret-exit-safe slots so their locks can stay shut, leaving them beatable
+/// but off the critical path.
+///
+/// Two invariants, and between them they pin the whole degradation story:
+///
+///  - Supply. 1-F takes a safe slot first and unconditionally (its secret exit
+///    makes a non-safe slot a softlock, not an inconvenience), so with `s` safe
+///    locks in the seed the ladder can place `min(2, s - 1)`. Asserting the
+///    exact count is what proves the ladder never steals 1-F's slot and never
+///    silently gives up while supply remains.
+///  - Order. 8F1 is only served once 7F2 is, so a short seed always costs the
+///    tail of the ladder rather than a random one of the two.
+#[test]
+fn test_friendlier_levels_fort_ladder() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let pickup = standard_pickup(&rom, &catalog);
+
+    let mut placed_hist = [0usize; 3];
+    for seed in 0u64..120 {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let build = overworld_build::build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            standard_build_flags(),
+        );
+
+        // Safe fort slots, as (world, section) — the same set assign_pool draws
+        // from. Every fort has a lock, so a fort NOT on one of these is
+        // required by construction.
+        let safe: HashSet<(usize, usize)> = (0..8)
+            .flat_map(|wi| {
+                build.worlds[wi]
+                    .locks
+                    .iter()
+                    .filter(|l| l.secret_exit_safe)
+                    .map(move |l| (wi, l.fort_section))
+            })
+            .collect();
+
+        let assignments = assign_pool(
+            &rom,
+            &build,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            WriteFlags { friendlier_levels: true, ..Default::default() },
+        );
+
+        // Which of the ladder forts landed on a safe slot.
+        let mut on_safe: HashSet<&str> = HashSet::new();
+        for (wi, wa) in assignments.iter().enumerate() {
+            for a in &wa.fortress {
+                let name = &catalog.entries[pickup.pool[a.pool_idx].catalog_idx].name;
+                let Some(slot) = build.worlds[wi]
+                    .slots
+                    .iter()
+                    .find(|s| s.kind == overworld_build::SlotKind::Fortress && s.pos == a.pos)
+                else {
+                    continue;
+                };
+                if safe.contains(&(wi, slot.section))
+                    && rom_data::FRIENDLIER_OPTIONAL_FORTS.contains(&name.as_str())
+                {
+                    on_safe.insert(
+                        rom_data::FRIENDLIER_OPTIONAL_FORTS
+                            .iter()
+                            .find(|n| *n == name)
+                            .expect("just matched"),
+                    );
+                }
+            }
+        }
+
+        let expected = safe.len().saturating_sub(1).min(rom_data::FRIENDLIER_OPTIONAL_FORTS.len());
+        assert_eq!(
+            on_safe.len(),
+            expected,
+            "seed {seed}: {} safe locks, so the ladder should place {expected}, placed {:?}",
+            safe.len(),
+            on_safe,
+        );
+
+        // Ladder order: nothing is served before the entry ahead of it.
+        for pair in rom_data::FRIENDLIER_OPTIONAL_FORTS.windows(2) {
+            if on_safe.contains(pair[1]) {
+                assert!(
+                    on_safe.contains(pair[0]),
+                    "seed {seed}: {} got a safe slot before {}",
+                    pair[1],
+                    pair[0],
+                );
+            }
+        }
+
+        placed_hist[on_safe.len()] += 1;
+    }
+
+    eprintln!(
+        "fort ladder over 120 seeds: both optional {}, one {}, neither {}",
+        placed_hist[2], placed_hist[1], placed_hist[0],
+    );
+}
+
 #[test]
 fn test_write_deterministic() {
     let rom = match load_rom() {
@@ -877,7 +1067,11 @@ fn test_march_veto_pipeline_writes_registry() {
         &build,
         &data,
         &mut rng,
-        WriteFlags { piranha: PiranhaMode::Wild, shuffle_hammer_bros: true },
+        WriteFlags {
+            piranha: PiranhaMode::Wild,
+            shuffle_hammer_bros: true,
+            friendlier_levels: false,
+        },
     );
 
     assert_veto_hook_installed(&out);

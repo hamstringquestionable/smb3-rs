@@ -251,3 +251,70 @@ fn test_print_catalog() {
     }
     eprintln!("  Total:       {}", catalog.entries.len());
 }
+
+/// Every name in `FRIENDLIER_BLOCKED_LEVELS` must resolve, or the option
+/// silently blocks nothing. The list is written in catalog names (the ones
+/// `testrom --list` prints) precisely so it can be read against the game, and
+/// this is the guard that makes a typo fail loudly instead of quietly.
+///
+/// Chest and hand levels are barred outright: the player has to reach those to
+/// collect a one-off inventory item, so removing one from the pool would put
+/// the item out of reach entirely.
+#[test]
+fn friendlier_blocklist_resolves() {
+    let Some(rom) = load_rom() else {
+        eprintln!("reference ROM not present — skipping friendlier_blocklist_resolves");
+        return;
+    };
+    let catalog = NodeCatalog::build(&rom, false);
+
+    for &name in crate::randomize::rom_data::FRIENDLIER_BLOCKED_LEVELS {
+        let hits: Vec<&CatalogEntry> = catalog
+            .entries
+            .iter()
+            .filter(|e| e.name == name && matches!(e.kind, NodeKind::Level))
+            .collect();
+        assert_eq!(
+            hits.len(),
+            1,
+            "{name}: expected exactly one Level entry, found {} — typo, or the name is not a level",
+            hits.len(),
+        );
+        let e = hits[0];
+        assert!(
+            !crate::randomize::rom_data::is_chest_level(e.world_idx, e.entry_idx),
+            "{name} is a chest level — blocking it puts its inventory item out of reach",
+        );
+        assert!(
+            !crate::randomize::rom_data::is_hand_level(e.world_idx, e.entry_idx),
+            "{name} is a hand level — blocking it puts its item drop out of reach",
+        );
+    }
+}
+
+/// Same guard as `friendlier_blocklist_resolves`, for the fortress ladder.
+///
+/// Worth its own test because the naming convention differs and that is the
+/// easy mistake: forts are `7F2` / `8F1` (from the ordinal suffix), with no
+/// dash, while levels are `7-8`. A misspelled entry never matches any pool
+/// member, so the fort silently stays required and nothing else complains.
+#[test]
+fn friendlier_optional_forts_resolve() {
+    let Some(rom) = load_rom() else {
+        eprintln!("reference ROM not present — skipping friendlier_optional_forts_resolve");
+        return;
+    };
+    let catalog = NodeCatalog::build(&rom, false);
+
+    for &name in crate::randomize::rom_data::FRIENDLIER_OPTIONAL_FORTS {
+        let hits = catalog
+            .entries
+            .iter()
+            .filter(|e| e.name == name && matches!(e.kind, NodeKind::Fortress { .. }))
+            .count();
+        assert_eq!(
+            hits, 1,
+            "{name}: expected exactly one Fortress entry, found {hits} — typo, or not a fortress",
+        );
+    }
+}

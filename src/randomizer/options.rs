@@ -170,6 +170,48 @@ pub enum PiranhaMode {
     Wild,
 }
 
+/// How hard to stop the randomizer from *introducing* hazards.
+///
+/// A "hazard" is one of the `HAZARD_CATEGORIES` — thwomps, Lava Lotus,
+/// Ptooie, nippers, Hot Foot, bros — the same taxonomy the curated
+/// `ExcludeHazards` entries use. The rule is additive-only in every mode: a
+/// hazard is only blocked where the slot's *vanilla* enemy wasn't the same
+/// category, so designed-in hazards survive and within-category shuffle (e.g.
+/// thwomp variants) still works. Nothing is ever removed from vanilla.
+///
+/// `Sparse` is the trainer rung: a level may gain the occasional hazard, never
+/// a wall of them. `All` blocks every introduction.
+///
+/// Only affects in-level enemy picks. Hammer Bro map encounters draw from
+/// their own curated pools (see `randomize_hb_wild_segment`) and are left
+/// alone, as are wild-injection chasers, which aren't in the taxonomy.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
+#[serde(rename_all = "snake_case")]
+pub enum HazardLimit {
+    /// Vanilla behavior — the randomizer may introduce hazards freely.
+    #[default]
+    Off,
+    /// At most `MAX_ADDED_HAZARDS_PER_SEGMENT` introduced hazard per room.
+    ///
+    /// Named `Sparse` rather than `Some` so it never reads as `Option::Some`
+    /// at a match site; the serde/CLI/web value stays "some".
+    #[serde(rename = "some")]
+    Sparse,
+    /// Never introduce a hazard.
+    All,
+}
+
 /// A level-wide chaser the wild-injection pass can seed into a level. The
 /// option is the *set* of these the player allowed — an empty set is off.
 ///
@@ -529,6 +571,15 @@ pub struct Options {
     /// All enemies in Hammer Bro encounter segments
     #[serde(default = "default_off")]
     pub hb_encounters: EnemyMode,
+    /// How hard to stop the class swaps from introducing a hazard the level
+    /// wasn't designed with. See [`HazardLimit`].
+    #[serde(default)]
+    pub limit_hazards: HazardLimit,
+    /// Hold the harshest levels out of the shuffle pool, refilling it with
+    /// beta stages (when they are on) and then with duplicates of the levels
+    /// that remain. See `FRIENDLIER_BLOCKED_LEVELS` for the list.
+    #[serde(default)]
+    pub friendlier_levels: bool,
     /// Which level-wide chasers may be seeded into a fraction of real levels
     /// (CHR-compatible). Empty = off. See [`WildChaser`].
     #[serde(default)]
@@ -607,6 +658,8 @@ impl Default for Options {
             water: EnemyMode::Shuffle,
             bros: EnemyMode::Shuffle,
             hb_encounters: EnemyMode::Off,
+            limit_hazards: HazardLimit::Off,
+            friendlier_levels: false,
             wild_injections: Vec::new(),
             starting_lives: default_starting_lives(),
             starting_items: Vec::new(),

@@ -334,6 +334,47 @@ pub(crate) const CHEST_LEVELS: &[(usize, usize, &str)] = &[
     (7, 16, "8-Hnd3 (chest)"),
 ];
 
+/// Levels held back from the shuffle pool by the **Friendlier Levels** option:
+/// the ones judged too punishing to hand a newcomer at random. Keyed by
+/// `NodeCatalog` name, which is what `testrom --list` prints, so this list can
+/// be checked against the game by eye.
+///
+/// Every name must resolve to exactly one `NodeKind::Level` and must not be a
+/// chest or hand level — `friendlier_blocklist_resolves` asserts both, so a
+/// typo here fails a test rather than silently blocking nothing.
+///
+/// Three of these (5-3, 6-6, 7-5) are also antechamber hosts. Blocking a level
+/// removes its *lobby*; the lobby shuffle moves *interiors* independently, so
+/// these are withheld from that pool too (see `antechambers::shuffle`) — else
+/// the blocked interior gets donated to a reachable lobby and played anyway,
+/// while whatever was donated to the blocked lobby is lost from the seed.
+pub(crate) const FRIENDLIER_BLOCKED_LEVELS: &[&str] = &["2-3", "5-3", "6-6", "7-5", "7-8", "8-1"];
+
+/// True if `name` is in [`FRIENDLIER_BLOCKED_LEVELS`].
+pub(crate) fn is_friendlier_blocked(name: &str) -> bool {
+    FRIENDLIER_BLOCKED_LEVELS.contains(&name)
+}
+
+/// Fortresses **Friendlier Levels** tries to make optional, in the order it
+/// tries. Keyed by `NodeCatalog` name — note forts are named `7F2` / `8F1`,
+/// with no dash, unlike the levels above.
+///
+/// A fortress can't be held out of its pool the way a level can: every fort
+/// has a lock (asserted in `overworld_build::tests`) and the full roster is a
+/// redeal-screened invariant, so removals never ship. Instead these are parked
+/// on a slot whose lock is `secret_exit_safe` — one the world stays completable
+/// without — which leaves the fort on the map and beatable but no longer on the
+/// critical path.
+///
+/// **Ordered, and the order is the whole point.** 1-F claims a safe slot first
+/// and unconditionally: its secret exit permanently prevents the lock FX, so a
+/// non-safe slot is a softlock rather than an inconvenience. These two are only
+/// preferences — the fort works normally, and a player who skips it can always
+/// come back — so they take what is left, in this order. Measured over 300
+/// seeds, 99% have the three safe slots this wants; in the rest the tail of the
+/// ladder simply stays required.
+pub(crate) const FRIENDLIER_OPTIONAL_FORTS: &[&str] = &["7F2", "8F1"];
+
 /// True if the given vanilla `(world_idx, entry_idx)` is in [`CHEST_LEVELS`].
 pub(crate) fn is_chest_level(world_idx: usize, entry_idx: usize) -> bool {
     CHEST_LEVELS.iter().any(|&(w, e, _)| w == world_idx && e == entry_idx)
