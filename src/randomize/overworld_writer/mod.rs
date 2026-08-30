@@ -11,7 +11,9 @@ use crate::PiranhaMode;
 use crate::rom::Rom;
 
 use super::node_catalog::NodeKind;
-use super::overworld_build::{BuildResult, BuiltWorld, OverworldData, SlotKind, bfs_ordered};
+use super::overworld_build::{
+    BuildResult, BuiltWorld, OverworldData, SlotKind, VANILLA_LEVEL_COUNT, bfs_ordered,
+};
 use super::overworld_helpers;
 use super::pipe_helpers;
 use super::rom_data::{
@@ -132,4 +134,7 @@ pub(crate) fn write_overworld<R: Rng>(
 pub(crate) struct WriteFlags {
     pub shuffle_hammer_bros: bool,
     pub piranha: PiranhaMode,
+    /// Friendlier Levels: drop `FRIENDLIER_BLOCKED_LEVELS` from the level deck
+    /// and refill it with duplicates of what remains.
+    pub friendlier_levels: bool,
 }

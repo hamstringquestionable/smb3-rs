@@ -24,9 +24,21 @@ deploys.
   Only in-level enemies are affected. Hammer Bro mini-battles keep their own
   curated pools, and Wild Injections are unchanged.
 
-- **Beginner Friendly** preset now uses Limit Hazards (All) and has its Ghosts
-  class turned back on. The class was previously disabled outright just to stop
-  Boo → Hot Foot; blocking that directly brings Boo ↔ Dry Bones variety back.
+- **Friendlier Levels** (new option, off by default). Keeps the roughest levels
+  out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta
+  stages when those are on, and otherwise to a second visit to a level already
+  in the seed, so the map is exactly as full as it always was.
+
+  With lobby shuffle on, the held-back levels sit that out too. Blocking a level
+  removes its *front door*, and the lobby shuffle moves *interiors*
+  independently — so a blocked level left in that pool would have its interior
+  donated to a door you can still open, while whatever was donated to the
+  blocked door became unreachable, quietly costing you an unrelated level.
+
+- **Beginner Friendly** preset now uses Limit Hazards (All) and Friendlier
+  Levels, and has its Ghosts class turned back on. The class was previously
+  disabled outright just to stop Boo → Hot Foot; blocking that directly brings
+  Boo ↔ Dry Bones variety back.
 
 - **Shuffle Big ? Rooms** (new option, off by default). Every level with a Big ?
   pipe draws from a pool of 19 rooms instead of always opening its own — the 11

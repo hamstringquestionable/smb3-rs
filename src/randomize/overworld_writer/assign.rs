@@ -78,7 +78,7 @@ pub(super) fn assign_pool<R: Rng>(
     rng: &mut R,
     flags: WriteFlags,
 ) -> Vec<WorldAssignments> {
-    let WriteFlags { shuffle_hammer_bros, .. } = flags;
+    let WriteFlags { shuffle_hammer_bros, friendlier_levels, .. } = flags;
     let pickup = data.pickup;
     let catalog = data.catalog;
     // Partition pool by kind.
@@ -167,6 +167,48 @@ pub(super) fn assign_pool<R: Rng>(
         fort_pool.push(fort_1f_pi);
     }
 
+    // A level that hands out a one-off inventory item: the chest levels
+    // (rom_data::CHEST_LEVELS — 3-7 Cloud, 5-1 Music Box, 8-Tank Star; 1F is
+    // listed too but is a fortress and never fills a regular-level slot) and
+    // the W8 hand rooms (8-Hnd1/2/3). Two rules key off this:
+    //
+    //  - Never dealt twice. A second copy hands the item out twice.
+    //  - Never disguised as a troll pipe. Those don't clear when beaten, so
+    //    the hand rooms could be farmed for items, and a chest level hidden
+    //    behind a pipe tile is missed by players who skip them.
+    let holds_unique_item = |pi: usize| -> bool {
+        let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
+        rom_data::is_hand_level(ce.world_idx, ce.entry_idx)
+            || rom_data::is_chest_level(ce.world_idx, ce.entry_idx)
+    };
+
+    // Friendlier Levels: hold the harshest levels out of the deck, then refill
+    // it so the draw still reaches VANILLA_LEVEL_COUNT.
+    //
+    // Refilling is mandatory, not cosmetic: the builder places exactly
+    // VANILLA_LEVEL_COUNT levels every seed and the draw below is a bare
+    // `pop_front().expect(...)`, so a short deck panics. Beta stages already
+    // leave the deck oversized (they are appended without raising the number
+    // drawn), so they absorb the removals first and only the shortfall becomes
+    // duplicates — which is why `short` is a saturating subtraction rather
+    // than the blocklist length.
+    //
+    // A duplicate is just the same pool index dealt twice. The writer reads
+    // the level entry through it, so both slots get the same level; nothing
+    // needs a synthetic catalog entry.
+    if friendlier_levels {
+        level_pool.retain(|&pi| {
+            !rom_data::is_friendlier_blocked(&catalog.entries[pickup.pool[pi].catalog_idx].name)
+        });
+        let sources: Vec<usize> =
+            level_pool.iter().copied().filter(|&pi| !holds_unique_item(pi)).collect();
+        let short = VANILLA_LEVEL_COUNT.saturating_sub(level_pool.len());
+        // Without replacement, so no level is dealt a third time. `sources` is
+        // far larger than `short` for any sane blocklist; the deck-length
+        // assertion in the tests is what holds that true.
+        level_pool.extend(sources.choose_multiple(rng, short).copied());
+    }
+
     // Shuffle remaining fortress and level pools.
     fort_pool.as_mut_slice().shuffle(rng);
     level_pool.as_mut_slice().shuffle(rng);
@@ -179,24 +221,6 @@ pub(super) fn assign_pool<R: Rng>(
 
     let mut fort_iter = fort_pool.into_iter();
     let mut level_pool: VecDeque<usize> = level_pool.into();
-
-    // Troll pipes don't clear when beaten, so a slot stamped as a troll pipe
-    // can be replayed infinitely. We exclude two families of levels from the
-    // troll-pipe assignment pool:
-    //
-    //  - W8 Hand levels (8-Hnd1/2/3): short bonus rooms that drop items, so
-    //    re-entering the pipe would let the player farm items.
-    //
-    //  - Chest levels (rom_data::CHEST_LEVELS): the player needs to find these
-    //    levels to collect the inventory item. Disguising them as pipes hides
-    //    them from players who skip pipe-look tiles. Includes 3-7 (Cloud),
-    //    5-1 (Music Box), 8-Tank (Star). 1F is also in the list but is a
-    //    fortress, never a regular-level slot.
-    let is_troll_pipe_ineligible = |pi: usize| -> bool {
-        let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
-        rom_data::is_hand_level(ce.world_idx, ce.entry_idx)
-            || rom_data::is_chest_level(ce.world_idx, ce.entry_idx)
-    };
 
     let mut assignments: Vec<WorldAssignments> = Vec::with_capacity(8);
 
@@ -242,7 +266,7 @@ pub(super) fn assign_pool<R: Rng>(
 
         for slot in ordered {
             let (pi, demoted) =
-                take_level_slot(&mut level_pool, slot.is_troll_pipe, is_troll_pipe_ineligible);
+                take_level_slot(&mut level_pool, slot.is_troll_pipe, holds_unique_item);
             if demoted {
                 demoted_troll_pipes.insert(slot.pos);
             }

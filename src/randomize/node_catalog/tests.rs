@@ -251,3 +251,43 @@ fn test_print_catalog() {
     }
     eprintln!("  Total:       {}", catalog.entries.len());
 }
+
+/// Every name in `FRIENDLIER_BLOCKED_LEVELS` must resolve, or the option
+/// silently blocks nothing. The list is written in catalog names (the ones
+/// `testrom --list` prints) precisely so it can be read against the game, and
+/// this is the guard that makes a typo fail loudly instead of quietly.
+///
+/// Chest and hand levels are barred outright: the player has to reach those to
+/// collect a one-off inventory item, so removing one from the pool would put
+/// the item out of reach entirely.
+#[test]
+fn friendlier_blocklist_resolves() {
+    let Some(rom) = load_rom() else {
+        eprintln!("reference ROM not present — skipping friendlier_blocklist_resolves");
+        return;
+    };
+    let catalog = NodeCatalog::build(&rom, false);
+
+    for &name in crate::randomize::rom_data::FRIENDLIER_BLOCKED_LEVELS {
+        let hits: Vec<&CatalogEntry> = catalog
+            .entries
+            .iter()
+            .filter(|e| e.name == name && matches!(e.kind, NodeKind::Level))
+            .collect();
+        assert_eq!(
+            hits.len(),
+            1,
+            "{name}: expected exactly one Level entry, found {} — typo, or the name is not a level",
+            hits.len(),
+        );
+        let e = hits[0];
+        assert!(
+            !crate::randomize::rom_data::is_chest_level(e.world_idx, e.entry_idx),
+            "{name} is a chest level — blocking it puts its inventory item out of reach",
+        );
+        assert!(
+            !crate::randomize::rom_data::is_hand_level(e.world_idx, e.entry_idx),
+            "{name} is a hand level — blocking it puts its item drop out of reach",
+        );
+    }
+}

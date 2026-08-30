@@ -413,6 +413,11 @@ struct Cli {
     #[arg(long, default_value = "off", value_parser = parse_hazard_limit)]
     limit_hazards: HazardLimit,
 
+    /// Hold the harshest levels out of the shuffle pool (2-3, 5-3, 6-6, 7-5,
+    /// 7-8, 8-1), refilling with beta stages and duplicates of what remains
+    #[arg(long)]
+    friendlier_levels: bool,
+
     /// Seed a level-wide chaser into a fraction of levels. A comma-separated
     /// set of `sun`, `lakitu`, `bass`; or `all`; or `off` (default). A level
     /// whose CHR can't fit an allowed chaser is skipped rather than given one
@@ -575,6 +580,7 @@ fn build_options(cli: &Cli) -> Options {
             bros: cli.bros,
             hb_encounters: cli.hb_encounters,
             limit_hazards: cli.limit_hazards,
+            friendlier_levels: cli.friendlier_levels,
             wild_injections: cli.wild_injections.0.clone(),
             starting_lives: cli.starting_lives,
             starting_items,
@@ -608,6 +614,7 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
             HazardLimit::All => "all",
         }
     );
+    eprintln!("  Friendlier levels: {}", if options.friendlier_levels { "on" } else { "off" });
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
     if options.world_order && options.world_count < 7 {
         eprintln!("  World count: {}", options.world_count);

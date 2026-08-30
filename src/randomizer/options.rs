@@ -575,6 +575,11 @@ pub struct Options {
     /// wasn't designed with. See [`HazardLimit`].
     #[serde(default)]
     pub limit_hazards: HazardLimit,
+    /// Hold the harshest levels out of the shuffle pool, refilling it with
+    /// beta stages (when they are on) and then with duplicates of the levels
+    /// that remain. See `FRIENDLIER_BLOCKED_LEVELS` for the list.
+    #[serde(default)]
+    pub friendlier_levels: bool,
     /// Which level-wide chasers may be seeded into a fraction of real levels
     /// (CHR-compatible). Empty = off. See [`WildChaser`].
     #[serde(default)]
@@ -654,6 +659,7 @@ impl Default for Options {
             bros: EnemyMode::Shuffle,
             hb_encounters: EnemyMode::Off,
             limit_hazards: HazardLimit::Off,
+            friendlier_levels: false,
             wild_injections: Vec::new(),
             starting_lives: default_starting_lives(),
             starting_items: Vec::new(),

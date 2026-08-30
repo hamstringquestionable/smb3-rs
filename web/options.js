@@ -349,6 +349,10 @@ export const SCHEMA = [
 		label: "HB Encounters",
 		tip: "All enemies in overworld Hammer Bro mini-battles",
 		group: "enemies", inFlagKey: true },
+	{ id: "friendlier_levels", type: "bool", default: false,
+		label: "Friendlier Levels",
+		tip: "Keeps the roughest levels out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta stages if you have those on, otherwise to a second visit to a level already in the seed.",
+		group: "map", inFlagKey: true },
 	{ id: "limit_hazards", type: "tri", options: OFF_SOME_ALL, default: "off",
 		label: "Limit Hazards",
 		tip: "Stops swaps from dropping nippers, Ptooies, thwomps, Hot Foots or Bros into levels that weren't built for them. Some allows the occasional one, All allows none. Hazards that were always there stay put.",
@@ -552,7 +556,7 @@ export const PRESETS = [
 			hammer_vulnerable_koopalings: true,
 		} },
 	{ id: "beginner", label: "Beginner Friendly",
-		tip: "Gentler ruleset: extra lives and items, no added hazards, no game-over penalty, no hand traps or troll pipes.",
+		tip: "Gentler ruleset: extra lives and items, no added hazards, the roughest levels sat out, no game-over penalty, no hand traps or troll pipes.",
 		overrides: {
 			starting_lives: 20, starting_items: [1, 2, 3],
 			infinite_mushroom_houses: true, fast_mushroom_house: true,
@@ -567,6 +571,7 @@ export const PRESETS = [
 			// that directly, so the class goes back on and Boo <-> Dry Bones
 			// variety comes with it.
 			limit_hazards: "all", ghosts: "shuffle", hb_encounters: "shuffle",
+			friendlier_levels: true,
 			world_order: true, random_koopalings: true,
 			hammer_vulnerable_koopalings: true,
 		} },

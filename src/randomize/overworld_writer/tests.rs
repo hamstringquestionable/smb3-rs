@@ -166,6 +166,88 @@ fn test_troll_pipes_never_assigned_hand_levels() {
     }
 }
 
+/// Friendlier Levels must (a) actually keep the blocked levels off the map and
+/// (b) leave the deck long enough to deal. The draw is a bare
+/// `pop_front().expect(...)` against a fixed `VANILLA_LEVEL_COUNT` of slots, so
+/// a short deck panics rather than degrading — which makes the count assertion
+/// as load-bearing as the blocklist one.
+///
+/// Both beta arms are checked because they refill differently: with beta stages
+/// on the deck is already oversized and absorbs the removals, so no duplicate
+/// is needed; with them off every removal becomes a duplicate.
+#[test]
+fn test_friendlier_levels_blocks_and_refills() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+
+    for beta in [false, true] {
+        let catalog = node_catalog::NodeCatalog::build(&rom, beta);
+        let pickup = standard_pickup(&rom, &catalog);
+
+        for seed in 0u64..16 {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let build = overworld_build::build(
+                &rom,
+                &OverworldData { pickup: &pickup, catalog: &catalog },
+                &mut rng,
+                standard_build_flags(),
+            );
+            let assignments = assign_pool(
+                &rom,
+                &build,
+                &OverworldData { pickup: &pickup, catalog: &catalog },
+                &mut rng,
+                WriteFlags { friendlier_levels: true, ..Default::default() },
+            );
+
+            let placed: Vec<usize> =
+                assignments.iter().flat_map(|wa| wa.level.iter().map(|a| a.pool_idx)).collect();
+
+            assert_eq!(
+                placed.len(),
+                overworld_build::VANILLA_LEVEL_COUNT,
+                "beta={beta} seed {seed}: dealt {} levels, expected {}",
+                placed.len(),
+                overworld_build::VANILLA_LEVEL_COUNT,
+            );
+
+            let mut seen: HashMap<usize, usize> = HashMap::new();
+            for pi in &placed {
+                let ce = &catalog.entries[pickup.pool[*pi].catalog_idx];
+                assert!(
+                    !rom_data::is_friendlier_blocked(&ce.name),
+                    "beta={beta} seed {seed}: blocked level {} was placed",
+                    ce.name,
+                );
+                *seen.entry(*pi).or_insert(0) += 1;
+            }
+
+            // Nothing is dealt three times, and nothing holding a one-off item
+            // is dealt twice.
+            for (&pi, &n) in &seen {
+                let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
+                assert!(n <= 2, "beta={beta} seed {seed}: {} dealt {n} times", ce.name);
+                if n > 1 {
+                    assert!(
+                        !rom_data::is_chest_level(ce.world_idx, ce.entry_idx)
+                            && !rom_data::is_hand_level(ce.world_idx, ce.entry_idx),
+                        "beta={beta} seed {seed}: {} holds a one-off item and was dealt twice",
+                        ce.name,
+                    );
+                }
+            }
+
+            // Beta stages absorb the removals; without them the shortfall is
+            // made up with duplicates, one per blocked level.
+            let dupes = placed.len() - seen.len();
+            let expected = if beta { 0 } else { rom_data::FRIENDLIER_BLOCKED_LEVELS.len() };
+            assert_eq!(dupes, expected, "beta={beta} seed {seed}: {dupes} duplicates");
+        }
+    }
+}
+
 #[test]
 fn test_write_deterministic() {
     let rom = match load_rom() {
@@ -877,7 +959,11 @@ fn test_march_veto_pipeline_writes_registry() {
         &build,
         &data,
         &mut rng,
-        WriteFlags { piranha: PiranhaMode::Wild, shuffle_hammer_bros: true },
+        WriteFlags {
+            piranha: PiranhaMode::Wild,
+            shuffle_hammer_bros: true,
+            friendlier_levels: false,
+        },
     );
 
     assert_veto_hook_installed(&out);

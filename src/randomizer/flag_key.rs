@@ -404,9 +404,11 @@ mod payload {
         /// Hazard-introduction limit. Zero is `Off`, so an older key decodes
         /// to the unrestricted picks it was minted with.
         pub(super) limit_hazards: HazardLimit,
+        /// Friendlier Levels: hold the harshest levels out of the shuffle pool.
+        pub(super) friendlier_levels: bool,
 
         // --- Reserve ---
-        // 143 bits. Adding an option is: declare it immediately above this
+        // 142 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off `B19`. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -421,7 +423,7 @@ mod payload {
         #[skip]
         __: B128,
         #[skip]
-        __: B15,
+        __: B14,
     }
 }
 
@@ -462,7 +464,7 @@ impl Options {
             hammer_breaks_locks, hammer_breaks_bridges, more_hammer_rocks,
             eights_are_wild, troll_pipes, antechamber_shuffle,
             ground, shell, flying, piranhas, ghosts, thwomps, rotodiscs,
-            cannons, water, bros, hb_encounters, limit_hazards,
+            cannons, water, bros, hb_encounters, limit_hazards, friendlier_levels,
             fire_flower, piranha_shuffle, wild_injections,
             starting_lives, world_count, starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
@@ -526,6 +528,7 @@ impl Options {
             .with_bros(*bros)
             .with_hb_encounters(*hb_encounters)
             .with_limit_hazards(*limit_hazards)
+            .with_friendlier_levels(*friendlier_levels)
             .with_fire_flower(*fire_flower)
             .with_piranha_shuffle(*piranha_shuffle)
             .with_wild_sun(has(WildChaser::Sun))
@@ -615,6 +618,7 @@ impl Options {
             bros: f.bros_or_err().unwrap_or_default(),
             hb_encounters: f.hb_encounters_or_err().unwrap_or_default(),
             limit_hazards: f.limit_hazards_or_err().unwrap_or_default(),
+            friendlier_levels: f.friendlier_levels(),
             fire_flower: f.fire_flower_or_err().unwrap_or_default(),
             piranha_shuffle: f.piranha_shuffle_or_err().unwrap_or_default(),
             wild_injections: chasers,

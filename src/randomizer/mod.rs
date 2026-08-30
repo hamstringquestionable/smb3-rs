@@ -212,7 +212,12 @@ fn randomize_inner(
     // of the overworld builder and the enemy/powerup passes.
     if antechamber_shuffle {
         rom.set_tag("levels/antechambers");
-        randomize::antechambers::shuffle(rom, &mut rng, options.include_beta_stages);
+        randomize::antechambers::shuffle(
+            rom,
+            &mut rng,
+            options.include_beta_stages,
+            options.friendlier_levels,
+        );
     }
 
     // Koopaling stability patches — needed whenever Koopalings may load in a
@@ -309,6 +314,7 @@ fn randomize_inner(
         randomize::overworld_writer::WriteFlags {
             shuffle_hammer_bros: options.shuffle_hammer_bros,
             piranha: options.piranha_shuffle,
+            friendlier_levels: options.friendlier_levels,
         },
     );
 
