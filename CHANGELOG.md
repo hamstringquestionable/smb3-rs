@@ -62,6 +62,13 @@ deploys.
 
 ### Fixed
 
+- One of the new Big [?] Block bonus rooms could take your powerup and give
+  nothing back. Its block sits across the room from where the pipe drops you,
+  reachable only by steering mid-fall; miss that and you land in a pit with
+  nothing to climb and no way to try again — the room is spent. Two coins in
+  the shaft are music blocks now, so the floor is a setback instead of a dead
+  end. Only affects seeds with Big [?] room shuffle turned on.
+
 - A randomized Hammer Bro encounter can no longer trap you in the floor. The
   flying red Paratroopa ignores level geometry and sinks about seven tiles
   below where it starts, so on a Bro's ground row it spent half its cycle

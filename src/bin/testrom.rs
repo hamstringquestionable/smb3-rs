@@ -161,6 +161,13 @@ struct Cli {
     #[arg(long, value_name = "COL,YIDX")]
     bigq_aim: Option<String>,
 
+    /// Retype screen 2's two coins as note blocks, so a player who rides its
+    /// shaft to the floor can still climb to the Big [?] block instead of
+    /// spending the room. Optionally takes their positions as "ROW,COL;ROW,COL";
+    /// bare, it uses what a randomized ROM ships. Needs --bigq-unused5.
+    #[arg(long, value_name = "ROW,COL;ROW,COL", num_args = 0..=1)]
+    bigq_notes: Option<Option<String>>,
+
     /// List valid --starting-items names and exit.
     #[arg(long)]
     list_items: bool,
@@ -323,6 +330,24 @@ fn main() {
         (col, y_idx)
     });
 
+    // "ROW,COL;ROW,COL" -> the two note-block positions --bigq-notes writes over
+    // screen 2's coins. Ranges are checked in testrom.rs, next to the write.
+    let big_q_notes = cli.bigq_notes.as_ref().map(|given| {
+        let Some(n) = given.as_deref() else { return testrom::unused5_screen2_notes() };
+        let pair = |p: &str| -> (u8, u8) {
+            p.split_once(',')
+                .and_then(|(r, c)| Some((r.trim().parse().ok()?, c.trim().parse().ok()?)))
+                .unwrap_or_else(|| die(format!("--bigq-notes wants \"ROW,COL\", got \"{p}\"")))
+        };
+        let (a, b) = n
+            .split_once(';')
+            .unwrap_or_else(|| die(format!("--bigq-notes wants two ROW,COL pairs, got \"{n}\"")));
+        [pair(a), pair(b)]
+    });
+    if big_q_notes.is_some() && cli.bigq_unused5.is_none() {
+        die("--bigq-notes needs --bigq-unused5".to_string());
+    }
+
     let placements: Vec<Placement> =
         cli.place.iter().map(|s| parse_placement(s).unwrap_or_else(|e| die(e))).collect();
 
@@ -381,6 +406,7 @@ fn main() {
         include_beta: cli.beta,
         big_q_unused5: cli.bigq_unused5,
         big_q_palette: Some(cli.bigq_palette),
+        big_q_notes,
         big_q_aim,
         set_enemies,
     };

@@ -600,6 +600,18 @@ rooms, one per screen 0-7, every block a Tanooki Suit ($98).
 | Layout | 0x2B764 | $B754 | PRG021 (fortress tileset 2) | 294 |
 | Objects | 0x0D411 | $D401 | PRG006 | 26 |
 
+**Screen 2 is shipped modified.** Its two `Coin` commands at 0x2B7C0 and
+0x2B7C3 are retyped to note blocks (`LoadLevel_BlockRun`, byte2 `$80` → `$60`)
+and moved to rows 20/15 whenever a Big [?] host draws an Unused Level 5 room —
+see `SCREEN2_NOTES` in `big_q_rooms.rs`. Vanilla screen 2 arrives down a shaft
+(columns 1-4) that runs unbroken to the floor while its block sits at row 10,
+column 10, so a player who does not drift right through the rows 8-10 gap during
+the fall lands with nothing to climb and leaves the room unspendable. The note
+blocks are the climb. `$2E` is solid here because solidity is
+`tile >= Tile_AttrTable[quadrant]` and tileset 2's quadrant-0 root is `$11`;
+`Level_ActionTiles` handles the bounce and is tileset-independent. No vanilla
+fortress-tileset level places one, so this is the first.
+
 Neither address appears in the world pointer tables (0x19438–0x19C00) or as a
 header alt pointer. Loaded normally its pipes exit to the world map, which is
 what TCRF describes; reached through a Big [?] junction the flag rule above
