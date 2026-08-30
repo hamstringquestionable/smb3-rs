@@ -1557,7 +1557,11 @@ mod tests {
         let Some(van) = vanilla() else { return };
         let err = build(
             &van,
-            &TestRomSpec { big_q_unused5: Some(2), big_q_notes: Some([(27, 1), (12, 4)]), ..spec() },
+            &TestRomSpec {
+                big_q_unused5: Some(2),
+                big_q_notes: Some([(27, 1), (12, 4)]),
+                ..spec()
+            },
         )
         .unwrap_err();
         assert!(err.contains("row is 0-26"), "{err}");
