@@ -1558,7 +1558,9 @@ fn flyer_raise_covers_its_full_dive() {
 #[test]
 fn closed_bro_rooms_raise_the_floor_ignoring_flyer() {
     let Some(base) = load_reference_rom() else {
-        eprintln!("reference ROM absent — skipping closed_bro_rooms_raise_the_floor_ignoring_flyer");
+        eprintln!(
+            "reference ROM absent — skipping closed_bro_rooms_raise_the_floor_ignoring_flyer"
+        );
         return;
     };
 
