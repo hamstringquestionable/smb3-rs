@@ -12,6 +12,7 @@
 //! testing, and lock testing are all combinations rather than named modes.
 
 use crate::ips;
+use crate::randomize::big_q_rooms;
 use crate::randomize::node_catalog::{EntryView, NodeCatalog};
 use crate::randomize::rom_data::{self, LevelEntry, WORLDS};
 use crate::randomize::world_order::WORLD_INIT_OPERAND;
@@ -375,6 +376,9 @@ pub struct TestRomSpec {
     /// Y indices are into `LevelJct_YLHStarts`: 0 = row 0, 4 = row 15,
     /// 5 = row 20, 6 = row 23.
     pub big_q_aim: Option<(u8, u8)>,
+    /// Turn screen 2's two coins into note blocks at these `(row, col)`
+    /// positions. Only read when `big_q_unused5` is set.
+    pub big_q_notes: Option<[(u8, u8); 2]>,
     /// Enemy slots to overwrite outright. Applied last, so they win over the
     /// randomizer's own choices on a `--randomize` base.
     pub set_enemies: Vec<EnemyOverride>,
@@ -462,8 +466,9 @@ fn numbered_slots(rom: &Rom, world_idx: usize, include_beta: bool) -> Vec<(u8, u
 const UNUSED5_ARRIVALS: [(u8, u8); 8] = [
     (2, 0), // screen 0: ceiling pipe col 2, rows 0-1
     (1, 4), // screen 1: ceiling pipe col 1, rows 12-16
-    (2, 0), // screen 2: ceiling pipe col 2, rows 0-1 (drift right at rows 8-9
-    //           to reach the block; the shaft drops past it otherwise)
+    (2, 0), // screen 2: ceiling pipe col 2, rows 0-1. Drifting right at rows
+    //           8-9 reaches the block directly; ride the shaft to the floor
+    //           instead and the note blocks are the way back up.
     (1, 5), // screen 3: ceiling pipe col 1, rows 16-21
     (2, 5), // screen 4: ceiling pipe col 2, rows 16-21
     (7, 0), // screen 5: ceiling pipe col 7, rows 0-2
@@ -484,8 +489,45 @@ const UNUSED5_ARRIVALS: [(u8, u8); 8] = [
 /// extend the stream. Both of these are a single `Coin` generator (fortress
 /// generator 22), the cheapest thing in the level to lose, and the caller picks
 /// one that is not in the room being tested so the room itself is untouched.
+///
+/// The second spare is one of screen 4's ten decorative coins rather than one of
+/// screen 2's two, because a randomized ROM spends screen 2's pair on note
+/// blocks — see `big_q_rooms::write_screen2_notes`.
 const UNUSED5_SPARE_COMMANDS: [(usize, [u8; 3], u8); 2] =
-    [(0x2B78D, [0x2C, 0x03, 0x80], 0), (0x2B7C3, [0x2B, 0x21, 0x80], 2)];
+    [(0x2B78D, [0x2C, 0x03, 0x80], 0), (0x2B813, [0x27, 0x4C, 0x80], 4)];
+
+/// The positions `--bigq-notes` uses when given none — what a randomized ROM
+/// ships, so a bare `--bigq-notes` reproduces the real thing rather than a
+/// testrom-only variant.
+pub fn unused5_screen2_notes() -> [(u8, u8); 2] {
+    big_q_rooms::screen2_notes()
+}
+
+/// Retype screen 2's two coins as note blocks and move them to `at`.
+///
+/// The write itself is `big_q_rooms`, which is what a randomized ROM runs; this
+/// only adds the base check and the range check, because a test ROM is built
+/// from whatever base the caller passed and should say so rather than corrupt
+/// a stream it did not recognise.
+fn big_q_screen2_notes(rom: &mut Rom, at: [(u8, u8); 2]) -> Result<Vec<String>, String> {
+    for (off, expect) in big_q_rooms::screen2_coins() {
+        if rom.read_range(off, 3) != expect {
+            return Err(format!(
+                "0x{off:05X} is not the expected Coin command {expect:02X?} — \
+                 Unused Level 5's layout is not vanilla here"
+            ));
+        }
+    }
+    for (row, col) in at {
+        if row > 26 || col > 15 {
+            return Err(format!("--bigq-notes: row is 0-26, column 0-15, got {row},{col}"));
+        }
+    }
+    big_q_rooms::place_screen2_notes(rom, at);
+    Ok(vec![format!(
+        "  screen 2: coins -> note blocks at (row, col) {at:?}; block is at row 10, col 10"
+    )])
+}
 
 /// Repoint every Big [?] Block bonus area at "Unused Level 5", aim 5-2's bonus
 /// pipe at one of its eight rooms, and give that room a return junction.
@@ -871,6 +913,10 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     // 3a. Big [?] Block bonus rooms from the unreferenced test level.
     if let Some(screen) = spec.big_q_unused5 {
         report.extend(big_q_unused5(&mut rom, screen, spec.big_q_palette, spec.big_q_aim)?);
+        // After the return junction, which never claims a screen 2 command.
+        if let Some(at) = spec.big_q_notes {
+            report.extend(big_q_screen2_notes(&mut rom, at)?);
+        }
     }
 
     // 4. Open the map up.
@@ -1027,6 +1073,7 @@ mod tests {
             big_q_unused5: None,
             big_q_palette: None,
             big_q_aim: None,
+            big_q_notes: None,
             set_enemies: Vec::new(),
         }
     }
@@ -1154,6 +1201,19 @@ mod tests {
         // Every spare command really is where it claims to be in vanilla.
         for (off, bytes, _) in UNUSED5_SPARE_COMMANDS {
             assert_eq!(src.read_range(off, 3), &bytes, "spare command at {off:#07X}");
+        }
+        // ...and so are the two coins --bigq-notes overwrites. A wrong offset
+        // here would silently retype some other room's tile.
+        for (off, bytes) in big_q_rooms::screen2_coins() {
+            assert_eq!(src.read_range(off, 3), &bytes, "screen 2 coin at {off:#07X}");
+        }
+        // The return junction must never land on one of them, or the note
+        // blocks and the way home would fight over the same three bytes.
+        for (coin, _) in big_q_rooms::screen2_coins() {
+            assert!(
+                UNUSED5_SPARE_COMMANDS.iter().all(|&(spare, ..)| spare != coin),
+                "spare command {coin:#07X} is also a screen 2 coin"
+            );
         }
         // byte0 is untouched — its slot nibble names 5-2's own pipe screen,
         // which is a property of 5-2 and not of the destination.
@@ -1461,5 +1521,49 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("start") || err.contains("unknown"), "got: {err}");
+    }
+
+    #[test]
+    fn big_q_notes_retypes_screen_2s_coins_as_note_blocks() {
+        let Some(van) = vanilla() else { return };
+        let built = build(
+            &van,
+            &TestRomSpec {
+                big_q_unused5: Some(2),
+                big_q_notes: Some(big_q_rooms::screen2_notes()),
+                ..spec()
+            },
+        )
+        .unwrap();
+        let out = Rom::from_bytes_lax(&built.bytes, true).unwrap();
+
+        for (i, (off, _)) in big_q_rooms::screen2_coins().into_iter().enumerate() {
+            let (row, col) = big_q_rooms::screen2_notes()[i];
+            let cmd = out.read_range(off, 3);
+            // byte2 $60 is LoadLevel_BlockRun's note block, run length 1.
+            assert_eq!(cmd[2], 0x60, "block type at {off:#07X}");
+            // Round-trip the position back out of bytes 0 and 1.
+            assert_eq!((cmd[0] & 0x0F) + 16 * ((cmd[0] >> 4) & 1), row, "row at {off:#07X}");
+            assert_eq!(cmd[1] & 0x0F, col, "column at {off:#07X}");
+            assert_eq!(cmd[1] >> 4, 2, "screen at {off:#07X}");
+            // Group 1 — the group whose variable-size base makes $6 a note
+            // block. A different group would decode as another generator.
+            assert_eq!(cmd[0] >> 5, 1, "generator group at {off:#07X}");
+        }
+    }
+
+    #[test]
+    fn big_q_notes_refuses_a_position_off_the_screen() {
+        let Some(van) = vanilla() else { return };
+        let err = build(
+            &van,
+            &TestRomSpec {
+                big_q_unused5: Some(2),
+                big_q_notes: Some([(27, 1), (12, 4)]),
+                ..spec()
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("row is 0-26"), "{err}");
     }
 }
