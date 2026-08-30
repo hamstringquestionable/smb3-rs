@@ -1,0 +1,78 @@
+name: Close referenced issues
+
+# GitHub only auto-closes issues when a PR merges into the *default* branch
+# (`main`). Feature work here targets `beta/next`, so a `Closes #N` line in a
+# PR body does nothing at merge time and the issue silently stays open —
+# confirmed on PR #175 / issue #48, and the reason issues #121-#124 were all
+# closed by hand. This restores the behaviour everyone expects.
+#
+# Nothing here touches the site: `ci.yml` owns `push` and gates its `build` and
+# `deploy` jobs on `github.event_name == 'push'`, and `pull_request: closed`
+# never fires those. Kept as its own file rather than folded into `ci.yml`
+# because it is the only workflow that needs `issues: write`.
+#
+# Known gap: a PR from a *fork* gets a read-only `GITHUB_TOKEN` whatever the
+# `permissions` block says, so its issues still need closing by hand. Fixing
+# that means `pull_request_target`, which runs with repo write access against
+# an untrusted head — not worth it while every PR here comes from this repo.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: ['beta/next']
+
+# Least privilege: this workflow only ever closes and comments on issues.
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  close:
+    # `types: [closed]` fires for abandoned PRs too — only a merge is a fix.
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close issues this PR says it closes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          # Via env, not inlined into the script: a PR body is untrusted input
+          # and `${{ }}` interpolation would splice it into the shell.
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+
+          # GitHub's own closing keywords, applied to the PR body and to every
+          # commit message in the PR. Matches `Closes #12`, `fixed  #12`,
+          # `RESOLVES #12`. Cross-repo (`owner/repo#12`) and URL forms are
+          # deliberately not handled — `issues: write` is scoped to this repo.
+          keywords='close[sd]?|fix(e[sd])?|resolve[sd]?'
+
+          commits=$(gh pr view "$PR" --repo "$REPO" --json commits \
+                      --jq '.commits[] | .messageHeadline + "\n" + .messageBody')
+
+          issues=$(printf '%s\n%s\n' "$BODY" "$commits" \
+                     | grep -oEi "(${keywords})[[:space:]]+#[0-9]+" \
+                     | grep -oE '[0-9]+' \
+                     | sort -un || true)
+
+          if [ -z "$issues" ]; then
+            echo "No closing keywords in PR #${PR}."
+            exit 0
+          fi
+
+          for n in $issues; do
+            state=$(gh issue view "$n" --repo "$REPO" --json state --jq .state 2>/dev/null || echo MISSING)
+            # A pull request shares the issue number space, so `#12` may name a
+            # PR. Skipping anything that is not an open issue also covers an
+            # already-closed issue and a typo'd number.
+            if [ "$state" != "OPEN" ]; then
+              echo "Skipping #${n} (state: ${state})."
+              continue
+            fi
+            echo "Closing #${n}."
+            gh issue close "$n" --repo "$REPO" --reason completed \
+              --comment "Landed on \`beta/next\` in #${PR} (${SHA}). It ships with the next release."
+          done
