@@ -192,27 +192,35 @@ fn sweep_is_deterministic() {
 /// `Cargo.toml` here, so the first recapture attempt printed a stale binary's
 /// hashes. Force it (`touch src/lib.rs`, or `cargo clean -p smb3-rs`) before
 /// trusting any number this test prints after a bump.
+///
+/// Re-captured 2026-08-30 for the pipe screen-squish fix: the always-on
+/// MaCobra bundle gained a 9-byte splice at 0x10476 (PRG008 $A466) that exempts
+/// pipe travel from the left-edge crush death. It consumes no RNG, so nothing
+/// downstream shifted — verified rather than argued: for all 20 of these seeds
+/// the pre- and post-fix ROMs were diffed byte for byte (`--no-palettes
+/// --patched-rom`) and the diff is exactly 0x10476..0x1047F on every one of
+/// them, with no second span. No map tile, pointer table or level byte moved.
 const BASELINE: [u64; SEEDS as usize] = [
-    0x10907FA9ADEAAF3F,
-    0x75A07E362568245D,
-    0x9F5B5BE6FD20755C,
-    0xD31EBA415DA9BAAB,
-    0xC832693B75377CB7,
-    0xA01F68AEE80254EF,
-    0x0F872B53E62D3760,
-    0x87D694E674CDF96F,
-    0x0D86E47E883FC7BA,
-    0x5D62A065ED55B22A,
-    0x062F138FE272DF5F,
-    0x22C3A5C39FCF738F,
-    0x140B2C424BA5E5AB,
-    0x1A191EF76661222C,
-    0x66E52614C84F60C6,
-    0x5E52087C914C8E1A,
-    0x848134F654C1572C,
-    0x36A081EC9E7DA639,
-    0xCBF672CBE2CF2F3A,
-    0x4769EB681AF3994F,
+    0x3926E260625D06D4,
+    0x0399EDF5AD3BF8B6,
+    0x03356435C6932BEF,
+    0xBE9CAE2B19A02134,
+    0xBC76F9C04B292A04,
+    0xC54586417213FADC,
+    0xFF69C69E11BC2ACF,
+    0xA33D0B6973781EBC,
+    0x2B66E3F87BAC7CA5,
+    0x070AD7D88A7E8209,
+    0x5D42687C16575B04,
+    0xE0ADF6480E23B948,
+    0x8B37FB382962FB68,
+    0x7DC91D42C5A48B5F,
+    0x8223703FC418305D,
+    0x8289DA9476BA4485,
+    0x1723298F6A43537F,
+    0xDF04A58F323073D2,
+    0xE8B54FB806F8D03D,
+    0xBB22752C7DB88528,
 ];
 ///
 /// Re-captured 2026-08-27 for the Big [?] bonus-room shuffle, which is always
