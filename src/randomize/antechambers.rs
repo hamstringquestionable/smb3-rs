@@ -36,7 +36,12 @@ use crate::rom::Rom;
 /// `tools/rom_map.py --antechamber`; beta stages are added by hand (that
 /// detector only scans pointer-table levels, so it can't see them).
 struct Antechamber {
-    /// Vanilla level name, for panic messages.
+    /// Vanilla level name. Used in panic messages, and **load-bearing**: it is
+    /// matched against `FRIENDLIER_BLOCKED_LEVELS` to decide whether Friendlier
+    /// Levels withholds this level from the pool. That makes it the same
+    /// namespace as `NodeCatalog` names — `antechamber_names_are_catalog_names`
+    /// enforces it, so adding a name to the blocklist reaches both the level
+    /// deck and this pool without any further wiring.
     name: &'static str,
     /// File offset of the entry area's 9-byte layout header.
     header: usize,
@@ -492,6 +497,36 @@ mod tests {
         shuffled.sort();
         expected.sort();
         assert_eq!(shuffled, expected, "remaining interiors still permute among themselves");
+    }
+
+    /// `Antechamber.name` and `NodeCatalog` names must be one namespace.
+    ///
+    /// Friendlier Levels reaches both the level deck and this pool by matching
+    /// `FRIENDLIER_BLOCKED_LEVELS` against a name — `CatalogEntry.name` on the
+    /// deck side, `Antechamber.name` here. Nothing in the type system ties
+    /// those two tables together, so a level spelled differently in the two
+    /// places would be dropped from the deck while its interior kept
+    /// circulating in this pool: blocked in name only, and costing an
+    /// unrelated level its interior. Asserting the whole pool resolves is what
+    /// lets the blocklist be extended without touching either filter.
+    #[test]
+    fn antechamber_names_are_catalog_names() {
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+        let rom = Rom::from_bytes(&bytes).unwrap();
+        // Beta stages on: β4 only exists as a catalog entry with that flag set.
+        let catalog = crate::randomize::node_catalog::NodeCatalog::build(&rom, true);
+
+        for a in &ANTECHAMBERS {
+            assert!(
+                catalog.entries.iter().any(|e| e.name == a.name),
+                "antechamber {:?} has no NodeCatalog entry of that name — the \
+                 Friendlier Levels blocklist could never match it",
+                a.name,
+            );
+        }
     }
 
     /// Guard the hardcoded offsets against the real ROM: every entry must
