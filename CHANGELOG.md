@@ -60,6 +60,15 @@ deploys.
   Flag keys shared during the beta, when this ran unconditionally, now decode
   with it **off** — tick the box to get those seeds back.
 
+### Fixed
+
+- A randomized Hammer Bro encounter can no longer trap you in the floor. The
+  flying red Paratroopa ignores level geometry and sinks about seven tiles
+  below where it starts, so on a Bro's ground row it spent half its cycle
+  inside the floor — and hitting it as it climbed back out could leave you
+  stuck in the ground, in a room whose exit only appears once it is cleared.
+  It now starts high enough that the bottom of its dive lands *on* the floor.
+
 
 ## [1.2.1] - 2026-08-26
 

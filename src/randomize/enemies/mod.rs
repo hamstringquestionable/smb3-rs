@@ -158,12 +158,13 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
         }
 
         // A treasure box in the room means `Level_Event = 7`, which arms the
-        // Hammer Bro placeholder rewrite. Decided once from the segment's own
-        // vanilla contents, before any pick, so both paths below agree.
-        let no_hammer_bro = rewrites_hammer_bro(
-            seg_file_offset,
-            entries.iter().any(|e| e.obj_id == TREASURE_BOX_APPEAR),
-        );
+        // Hammer Bro placeholder rewrite — and also that the room is *closed*:
+        // the player cannot leave until it is empty, which is what makes a
+        // floor-ignoring enemy a softlock rather than a nuisance (see
+        // `place_hb_pick`). Decided once from the segment's own vanilla
+        // contents, before any pick, so every path below agrees.
+        let closed_room = entries.iter().any(|e| e.obj_id == TREASURE_BOX_APPEAR);
+        let no_hammer_bro = rewrites_hammer_bro(seg_file_offset, closed_room);
 
         // HB Wild: batch-assign enemies with stompability constraints.
         if is_hb_segment && opts.hb_encounters == EnemyMode::Wild && !big_q_only {
@@ -174,7 +175,7 @@ fn randomize_object_data<R: Rng>(rom: &mut Rom, rng: &mut R, big_q_only: bool, o
             // to measure "introduced" against since the room is composed from
             // scratch.
             let limits = SegmentLimits { cap_full: false, no_hammer_bro, hazard_cap_full: false };
-            randomize_hb_wild_segment(&mut data, &entries, &hb_modes, limits, rng);
+            randomize_hb_wild_segment(&mut data, &entries, &hb_modes, limits, closed_room, rng);
             continue;
         }
 
