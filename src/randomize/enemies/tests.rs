@@ -1033,6 +1033,16 @@ struct PlacementStats {
     /// bypass it), so this must stay 0 — any nonzero count is a violation.
     bertha_cap_exceeded: u64,
     max_berthas_in_seg: u8,
+    /// Hazards this run introduced: a pick that put a hazard where the
+    /// vanilla enemy was a different category. Must be 0 under
+    /// `HazardLimit::All`; under `Sparse` it is capped per segment, not
+    /// globally, so this is a diagnostic there rather than an invariant.
+    hazards_added: u64,
+    /// Segment-instances (seed × segment) that exceeded
+    /// `MAX_ADDED_HAZARDS_PER_SEGMENT` under `HazardLimit::Sparse`. Hard
+    /// invariant — must stay 0.
+    hazard_cap_exceeded: u64,
+    max_hazards_added_in_seg: u8,
     /// new_id -> times placed (only counts actual swaps)
     histogram: std::collections::BTreeMap<u8, u64>,
 }
@@ -1124,6 +1134,7 @@ fn check_invariants(
         };
 
         let mut bertha_in_seg = 0u8;
+        let mut hazards_added_in_seg = 0u8;
         for i in 0..b.entry_count {
             let off = b.file_offset + 1 + i * 3; // +1 skips the page flag
             let orig = vanilla[off];
@@ -1183,6 +1194,21 @@ fn check_invariants(
                     bad("HB-wild swap not in the HB wild pool".into());
                 }
                 continue;
+            }
+
+            // --- Limit Hazards (site A: in-level class swaps) ---
+            //
+            // Counted here, after the injectable and HB-batch branches have
+            // taken their exits: neither goes through `pick_replacement`'s
+            // `keep`, and an injectable slot's `orig` is the vanilla enemy
+            // rather than the injected id, so measuring it against `orig`
+            // would be meaningless. Chasers aren't hazards anyway.
+            if hazard_excluded(new, orig) {
+                stats.hazards_added += 1;
+                hazards_added_in_seg = hazards_added_in_seg.saturating_add(1);
+                if opts.limit_hazards == HazardLimit::All {
+                    bad("limit_hazards=all but a new hazard category was introduced".into());
+                }
             }
 
             let prot = entry_protection_at(fo);
@@ -1255,6 +1281,20 @@ fn check_invariants(
             }
         }
 
+        // Added-hazard cap, the Sparse rung's hard invariant. Only meaningful
+        // under Sparse: Off has no cap and All is checked per entry above.
+        stats.max_hazards_added_in_seg = stats.max_hazards_added_in_seg.max(hazards_added_in_seg);
+        if opts.limit_hazards == HazardLimit::Sparse
+            && hazards_added_in_seg > MAX_ADDED_HAZARDS_PER_SEGMENT
+        {
+            stats.hazard_cap_exceeded += 1;
+            out.push(format!(
+                "seed {seed} @ seg {:#07X}: {hazards_added_in_seg} added hazards, cap is {}",
+                ENEMY_DATA_START + b.file_offset,
+                MAX_ADDED_HAZARDS_PER_SEGMENT,
+            ));
+        }
+
         // Bertha cap: hard invariant now that the predicate pipeline applies
         // it to every pick (it used to be bypassed by the Force*/ExcludeHazards
         // branches — see PlacementStats::bertha_cap_exceeded).
@@ -1309,6 +1349,14 @@ fn run_preset(label: &str, opts: &Options, seeds: u64, base: &Rom, vanilla: &[u8
         "bertha-cap exceeded in {} segment-instances (max {} berthas/seg)",
         stats.bertha_cap_exceeded, stats.max_berthas_in_seg,
     );
+    eprintln!(
+        "hazards added: {} total ({}/seed), max {} in one segment; \
+         cap exceeded in {} segment-instances",
+        stats.hazards_added,
+        stats.hazards_added / stats.seeds.max(1),
+        stats.max_hazards_added_in_seg,
+        stats.hazard_cap_exceeded,
+    );
     eprintln!("placement histogram (id: total placements over all seeds):");
     for (id, n) in &stats.histogram {
         eprintln!("  0x{id:02X}: {n}");
@@ -1327,6 +1375,24 @@ fn enemy_invariant_baseline() {
     let mut violations = Vec::new();
     violations.extend(run_preset("Recommended", &preset_recommended(), 250, &base, &vanilla));
     violations.extend(run_preset("Max Chaos", &preset_max_chaos(), 250, &base, &vanilla));
+    // Both Limit Hazards rungs run the *whole* preset suite above, not a
+    // narrower one: the point is that turning the filter on doesn't cost any
+    // of the existing protections. Max Chaos is the arm that matters — every
+    // class Wild is what puts all 18 hazard ids in the pool to begin with.
+    violations.extend(run_preset(
+        "Max Chaos + limit_hazards=all",
+        &Options { limit_hazards: HazardLimit::All, ..preset_max_chaos() },
+        250,
+        &base,
+        &vanilla,
+    ));
+    violations.extend(run_preset(
+        "Max Chaos + limit_hazards=some",
+        &Options { limit_hazards: HazardLimit::Sparse, ..preset_max_chaos() },
+        250,
+        &base,
+        &vanilla,
+    ));
 
     assert!(
         violations.is_empty(),

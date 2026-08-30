@@ -11,6 +11,23 @@ deploys.
 
 ### Added
 
+- **Limit Hazards** (new option: Off / Some / All, off by default). Stops enemy
+  swaps from dropping a hazard into a level that wasn't built for one — nippers,
+  Ptooies, thwomps, Hot Foots and Bros. Hazards Nintendo placed are always kept,
+  and a slot that held one can still shuffle within its own kind, so this only
+  ever removes surprises the randomizer added. **Some** allows the occasional
+  one so you still learn to handle them; **All** allows none. Measured over 250
+  seeds of the Max Chaos preset, the unfiltered game gains ~140 hazards a seed
+  with as many as 25 in a single stretch of level; Some cuts that to ~52 and
+  never more than one.
+
+  Only in-level enemies are affected. Hammer Bro mini-battles keep their own
+  curated pools, and Wild Injections are unchanged.
+
+- **Beginner Friendly** preset now uses Limit Hazards (All) and has its Ghosts
+  class turned back on. The class was previously disabled outright just to stop
+  Boo → Hot Foot; blocking that directly brings Boo ↔ Dry Bones variety back.
+
 - **Shuffle Big ? Rooms** (new option, off by default). Every level with a Big ?
   pipe draws from a pool of 19 rooms instead of always opening its own — the 11
   vanilla rooms plus 8 from "Unused Level 5", a complete set of eight bonus

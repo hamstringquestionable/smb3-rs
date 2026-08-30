@@ -160,7 +160,12 @@ pub(super) fn pick_replacement<R: Rng>(
         // committed anywhere in the segment, not just this group — it
         // follows the player into all of them (see CHASER_IDS).
         let chaser_clash = CHASER_IDS.contains(&id) && !is_chr_compatible(id, seg4, seg5);
-        !(over_cap || bad_giant || chaser_clash || hb_rewritten)
+        // This segment's hazard budget is spent (always, under HazardLimit::All).
+        // Additive-only, exactly like the curated ExcludeHazards entries: a
+        // hazard sharing the vanilla enemy's category is still allowed, so
+        // designed-in hazards survive and thwomp-variant shuffle keeps working.
+        let added_hazard = limits.hazard_cap_full && hazard_excluded(id, entry.obj_id);
+        !(over_cap || bad_giant || chaser_clash || hb_rewritten || added_hazard)
     };
     // (A piranha slot can't become a hazard: the piranha pools are
     // self-contained and contain none — verified by the harness's

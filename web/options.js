@@ -68,6 +68,15 @@ const WILD_INJECTION_TOGGLES = [
 	{ value: "bass", label: "Bass" },
 ];
 
+// Off / Some / All pill for Limit Hazards. Values match the Rust `HazardLimit`
+// enum's serde representation ("some" is the `Sparse` variant, renamed there
+// only so it never reads as `Option::Some`).
+const OFF_SOME_ALL = [
+	{ value: "off", label: "Off" },
+	{ value: "some", label: "Some" },
+	{ value: "all", label: "All" },
+];
+
 // Off / On / Wild pill for Random Fire Flower. "Wild" widens the pool to also
 // include the Small/Big downgrade outcomes. Values match the Rust
 // `FireFlowerMode` enum's serde representation.
@@ -340,6 +349,10 @@ export const SCHEMA = [
 		label: "HB Encounters",
 		tip: "All enemies in overworld Hammer Bro mini-battles",
 		group: "enemies", inFlagKey: true },
+	{ id: "limit_hazards", type: "tri", options: OFF_SOME_ALL, default: "off",
+		label: "Limit Hazards",
+		tip: "Stops swaps from dropping nippers, Ptooies, thwomps, Hot Foots or Bros into levels that weren't built for them. Some allows the occasional one, All allows none. Hazards that were always there stay put.",
+		group: "enemies", inFlagKey: true },
 	{ id: "wild_injections", type: "toggles", options: WILD_INJECTION_TOGGLES,
 		default: [],
 		label: "Wild Injections",
@@ -539,7 +552,7 @@ export const PRESETS = [
 			hammer_vulnerable_koopalings: true,
 		} },
 	{ id: "beginner", label: "Beginner Friendly",
-		tip: "Gentler ruleset: extra lives and items, no game-over penalty, no hand traps or troll pipes.",
+		tip: "Gentler ruleset: extra lives and items, no added hazards, no game-over penalty, no hand traps or troll pipes.",
 		overrides: {
 			starting_lives: 20, starting_items: [1, 2, 3],
 			infinite_mushroom_houses: true, fast_mushroom_house: true,
@@ -549,7 +562,11 @@ export const PRESETS = [
 			hands_levels: false, troll_pipes: "off",
 			shuffle_spade_games: false, more_hammer_rocks: "on",
 			hammer_breaks_locks: "on", big_q_blocks: true,
-			ghosts: "off", hb_encounters: "shuffle",
+			// `ghosts` was "off" purely to stop Boo -> Hot Foot, the only
+			// hazard that class can produce in Shuffle. limit_hazards blocks
+			// that directly, so the class goes back on and Boo <-> Dry Bones
+			// variety comes with it.
+			limit_hazards: "all", ghosts: "shuffle", hb_encounters: "shuffle",
 			world_order: true, random_koopalings: true,
 			hammer_vulnerable_koopalings: true,
 		} },

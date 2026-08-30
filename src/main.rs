@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::process;
 
 use smb3_rs::{
-    EnemyMode, FireFlowerMode, ITEMS, Options, PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser,
-    item_display_name, item_id,
+    EnemyMode, FireFlowerMode, HazardLimit, ITEMS, Options, PiranhaMode, STARTING_LIVES_VALUES,
+    Tri, WildChaser, item_display_name, item_id,
 };
 
 /// Human-readable label for a tri-state flag in the run summary.
@@ -65,6 +65,16 @@ fn parse_fire_flower(s: &str) -> Result<FireFlowerMode, String> {
         "on" => Ok(FireFlowerMode::On),
         "wild" => Ok(FireFlowerMode::Wild),
         _ => Err("valid values: off, on, wild".to_string()),
+    }
+}
+
+/// clap value parser for `--limit-hazards` (off/some/all).
+fn parse_hazard_limit(s: &str) -> Result<HazardLimit, String> {
+    match s {
+        "off" => Ok(HazardLimit::Off),
+        "some" => Ok(HazardLimit::Sparse),
+        "all" => Ok(HazardLimit::All),
+        _ => Err("valid values: off, some, all".to_string()),
     }
 }
 
@@ -398,6 +408,11 @@ struct Cli {
     #[arg(long, default_value = "off", value_parser = parse_enemy_mode)]
     hb_encounters: EnemyMode,
 
+    /// Stop swaps introducing hazards a level wasn't built with: off, some
+    /// (one per room), or all (default: off)
+    #[arg(long, default_value = "off", value_parser = parse_hazard_limit)]
+    limit_hazards: HazardLimit,
+
     /// Seed a level-wide chaser into a fraction of levels. A comma-separated
     /// set of `sun`, `lakitu`, `bass`; or `all`; or `off` (default). A level
     /// whose CHR can't fit an allowed chaser is skipped rather than given one
@@ -559,6 +574,7 @@ fn build_options(cli: &Cli) -> Options {
             water: cli.water,
             bros: cli.bros,
             hb_encounters: cli.hb_encounters,
+            limit_hazards: cli.limit_hazards,
             wild_injections: cli.wild_injections.0.clone(),
             starting_lives: cli.starting_lives,
             starting_items,
@@ -584,6 +600,14 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  World colors: {}", if options.palette_themed { "themed" } else { "vanilla" });
     eprintln!("  Remove flashing: {}", if options.remove_flashing { "on" } else { "off" });
     eprintln!("  Enemies:  {}", if options.any_enemies_active() { "on" } else { "off" });
+    eprintln!(
+        "  Limit hazards: {}",
+        match options.limit_hazards {
+            HazardLimit::Off => "off",
+            HazardLimit::Sparse => "some (the occasional one)",
+            HazardLimit::All => "all",
+        }
+    );
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
     if options.world_order && options.world_count < 7 {
         eprintln!("  World count: {}", options.world_count);
