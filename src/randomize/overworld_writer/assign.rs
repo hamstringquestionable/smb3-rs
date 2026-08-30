@@ -160,11 +160,45 @@ pub(super) fn assign_pool<R: Rng>(
     // that's fine — the player must use the normal exit (beat Boom-Boom)
     // to open the lock.
     let mut preassigned_forts: HashMap<(usize, usize), usize> = HashMap::new();
-    if let Some(&(safe_wi, safe_section)) = safe_slots.choose(rng) {
-        preassigned_forts.insert((safe_wi, safe_section), fort_1f_pi);
+    if let Some(&slot) = safe_slots.choose(rng) {
+        safe_slots.retain(|&s| s != slot);
+        preassigned_forts.insert(slot, fort_1f_pi);
     } else {
         // No safe slot available — return 1-F to the regular pool.
         fort_pool.push(fort_1f_pi);
+    }
+
+    // Friendlier Levels, fortress half: park the harshest forts on the safe
+    // slots 1-F did not take, so their locks can stay shut and the player can
+    // route around them.
+    //
+    // A ladder rather than a set, because supply is finite and 1-F has already
+    // taken one. `FRIENDLIER_OPTIONAL_FORTS` is walked in order and each entry
+    // takes a remaining safe slot; when they run out the rest of the ladder is
+    // simply left required. Measured over 300 seeds, 99% offer the three safe
+    // slots this wants and none offered fewer than two, so in practice only the
+    // tail ever misses.
+    //
+    // Unlike 1-F this is a preference, never a correctness requirement: these
+    // forts open their locks normally, so a missed slot costs the player a
+    // detour rather than the run. That is also why it is fine that
+    // `secret_exit_safe` is computed one lock at a time — two safe locks in one
+    // world are not *jointly* guaranteed safe, but nothing here is ever sealed
+    // permanently, so the player can always go back and beat one.
+    if friendlier_levels {
+        for &name in rom_data::FRIENDLIER_OPTIONAL_FORTS {
+            let Some(&slot) = safe_slots.choose(rng) else {
+                break; // no safe slots left — the rest of the ladder stays required
+            };
+            let Some(pos) = fort_pool
+                .iter()
+                .position(|&pi| catalog.entries[pickup.pool[pi].catalog_idx].name == name)
+            else {
+                continue; // not in the pool this run
+            };
+            safe_slots.retain(|&s| s != slot);
+            preassigned_forts.insert(slot, fort_pool.remove(pos));
+        }
     }
 
     // A level that hands out a one-off inventory item: the chest levels

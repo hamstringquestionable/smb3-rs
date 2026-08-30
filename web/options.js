@@ -351,7 +351,7 @@ export const SCHEMA = [
 		group: "enemies", inFlagKey: true },
 	{ id: "friendlier_levels", type: "bool", default: false,
 		label: "Friendlier Levels",
-		tip: "Keeps the roughest levels out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta stages if you have those on, otherwise to a second visit to a level already in the seed.",
+		tip: "Keeps the roughest levels out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta stages if you have those on, otherwise to a second visit to a level already in the seed. Two fortresses, 7F2 and 8F1, are usually made optional rather than removed: still there, still beatable, just not in your way.",
 		group: "map", inFlagKey: true },
 	{ id: "limit_hazards", type: "tri", options: OFF_SOME_ALL, default: "off",
 		label: "Limit Hazards",

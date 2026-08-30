@@ -35,6 +35,15 @@ deploys.
   donated to a door you can still open, while whatever was donated to the
   blocked door became unreachable, quietly costing you an unrelated level.
 
+  It also makes two fortresses — 7F2, then 8F1 — optional rather than absent.
+  They stay on the map and stay beatable, but land behind a lock the world can
+  be finished without, so you can walk past them. Forts can't be held out of the
+  pool the way levels can (every fort needs a lock, and the full roster is an
+  invariant), and there has to be a spare bypassable lock going: 1-F always
+  claims the first one, since its secret exit can leave a lock shut forever.
+  Measured over 300 seeds, 99% have room for both; in the rest 8F1 stays
+  required.
+
 - **Beginner Friendly** preset now uses Limit Hazards (All) and Friendlier
   Levels, and has its Ghosts class turned back on. The class was previously
   disabled outright just to stop Boo → Hot Foot; blocking that directly brings
