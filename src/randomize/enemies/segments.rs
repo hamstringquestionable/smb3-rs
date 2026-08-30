@@ -117,11 +117,28 @@ pub(super) fn chr_groups(entries: &[SegmentEntry]) -> Vec<Vec<usize>> {
 /// 2-enemy segments: `HB_NONSTOMPABLE_ODDS` chance for the non-stompable path
 /// (one from HB_NEEDS_SHELL_ENEMIES + one from SHELL_ENEMIES), otherwise both
 /// stompable.
+/// Write one HB Wild pick, raising the single enemy in the pool whose AI
+/// ignores the floor. See [`HB_FLYER_RAISE_ROWS`] for why 7 rows.
+///
+/// `closed_room` gates it: the raise exists to keep a treasure-box room
+/// clearable, and applying it to W8's open 7-7 layout would only leave its
+/// enemies floating.
+fn place_hb_pick(data: &mut [u8], id_index: usize, id: u8, closed_room: bool) {
+    swap_enemy(data, id_index, id);
+    if closed_room && id == FLYING_RED_PARATROOPA {
+        // The y byte is the absolute tile row as (page << 4) | row, so a plain
+        // subtraction moves it. Saturating is belt-and-braces: every bro room
+        // spawns its enemies on row 20 or below.
+        data[id_index + 2] = data[id_index + 2].saturating_sub(HB_FLYER_RAISE_ROWS);
+    }
+}
+
 pub(super) fn randomize_hb_wild_segment<R: Rng>(
     data: &mut [u8],
     entries: &[SegmentEntry],
     hb_modes: &ClassModes,
     limits: SegmentLimits,
+    closed_room: bool,
     rng: &mut R,
 ) {
     // A Hammer Bro is a placeholder the engine rewrites into something
@@ -152,7 +169,7 @@ pub(super) fn randomize_hb_wild_segment<R: Rng>(
 
     if swappable.len() == 1 {
         if let Some(chosen) = pick_compatible(&stompable, slot4, slot5, rng) {
-            swap_enemy(data, entries[swappable[0]].data_index, chosen);
+            place_hb_pick(data, entries[swappable[0]].data_index, chosen, closed_room);
         }
     } else if swappable.len() == 2 {
         // Roll whether this segment gets a non-stompable enemy
@@ -168,23 +185,23 @@ pub(super) fn randomize_hb_wild_segment<R: Rng>(
                     let (di0, di1) =
                         (entries[swappable[0]].data_index, entries[swappable[1]].data_index);
                     if rng.random_range(..2u32) == 0 {
-                        swap_enemy(data, di0, ns);
-                        swap_enemy(data, di1, shell);
+                        place_hb_pick(data, di0, ns, closed_room);
+                        place_hb_pick(data, di1, shell, closed_room);
                     } else {
-                        swap_enemy(data, di0, shell);
-                        swap_enemy(data, di1, ns);
+                        place_hb_pick(data, di0, shell, closed_room);
+                        place_hb_pick(data, di1, ns, closed_room);
                     }
                 }
             }
         } else {
             // Both from stompable pool
             if let Some(first) = pick_compatible(&stompable, slot4, slot5, rng) {
-                swap_enemy(data, entries[swappable[0]].data_index, first);
+                place_hb_pick(data, entries[swappable[0]].data_index, first, closed_room);
                 let mut s4 = slot4;
                 let mut s5 = slot5;
                 commit_chr_page(first, &mut s4, &mut s5);
                 if let Some(second) = pick_compatible(&stompable, s4, s5, rng) {
-                    swap_enemy(data, entries[swappable[1]].data_index, second);
+                    place_hb_pick(data, entries[swappable[1]].data_index, second, closed_room);
                 }
             }
         }

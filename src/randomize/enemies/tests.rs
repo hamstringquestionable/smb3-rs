@@ -1485,6 +1485,147 @@ fn treasure_box_rooms_never_get_a_hammer_bro() {
     }
 }
 
+/// [`HB_FLYER_RAISE_ROWS`] has to cover the flyer's whole dive, so pin it to
+/// the engine rather than to arithmetic done once in a comment: run
+/// `ObjNorm_FlyingRedTroopa` (prg004) and measure.
+///
+/// The routine is a self-contained integrator — it reads no level state, so it
+/// can be executed here the way `stomp_fairness` executes its patch. Each
+/// frame: the object loop decrements `Objects_Timer` (prg000, `PRG000_C975`),
+/// the routine applies Y velocity, and while that timer is expired every 4th
+/// frame accelerates by `ParaTroopaFly_Accel[Var3 & 1]` until Y velocity hits
+/// `ParaTroopaFly_Limit[Var3 & 1]`, which flips the direction and reloads the
+/// timer with $30. Nothing ever consults the floor.
+#[test]
+fn flyer_raise_covers_its_full_dive() {
+    const ACCEL: [i8; 2] = [1, -1];
+    const LIMIT: [u8; 2] = [0x10, 0xF0];
+
+    // Sub-pixel position (1/16 px), relative to the spawn row. A fresh object
+    // slot starts every one of these at zero.
+    let (mut pos, mut vel, mut timer, mut var3, mut var4) = (0i32, 0u8, 0u8, 0u8, 0u8);
+    let (mut lowest, mut highest) = (0i32, 0i32);
+    for _ in 0..4000 {
+        timer = timer.saturating_sub(1);
+        pos += i32::from(vel as i8);
+        lowest = lowest.max(pos);
+        highest = highest.min(pos);
+        if timer != 0 {
+            continue;
+        }
+        var4 = var4.wrapping_add(1);
+        if var4 & 3 != 0 {
+            continue;
+        }
+        let dir = usize::from(var3 & 1);
+        vel = vel.wrapping_add_signed(ACCEL[dir]);
+        if vel == LIMIT[dir] {
+            var3 = var3.wrapping_add(1);
+            timer = 0x30;
+        }
+    }
+
+    // The flight is one-sided: it only ever descends from where it spawned.
+    // That is what makes raising the spawn a complete fix — a symmetric
+    // flyer would poke through the ceiling instead.
+    assert_eq!(highest, 0, "flyer rose above its spawn row — a raise cannot bound it");
+
+    let dive_rows = lowest.div_euclid(16 * 16); // 1/16 px -> 16px tile rows
+    let raise = i32::from(HB_FLYER_RAISE_ROWS);
+    assert!(
+        raise > dive_rows,
+        "HB_FLYER_RAISE_ROWS = {raise} does not clear a {}px dive — the flyer still \
+         reaches the floor",
+        lowest / 16,
+    );
+    assert!(
+        raise <= dive_rows + 1,
+        "HB_FLYER_RAISE_ROWS = {raise} overshoots a {}px dive; it wastes room height",
+        lowest / 16,
+    );
+}
+
+/// A closed bro room's exit only appears once the room is empty, so an enemy
+/// the player cannot reach is a softlock. `OBJ_FLYINGREDPARATROOPA` ($6F) is
+/// the one member of the HB pools whose AI never calls `Object_Move`: it
+/// descends up to 111px from its spawn row, straight through the floor, and a
+/// player who collides with it on the way back up can end up stuck in the
+/// floor tile. `place_hb_pick` raises it [`HB_FLYER_RAISE_ROWS`] so the bottom
+/// of that dive lands back on the row the vanilla bro stood on.
+///
+/// Checks all three halves: the raise happens, it is the *only* y byte the HB
+/// pass writes in those rooms, and the case actually occurs over the sweep.
+#[test]
+fn closed_bro_rooms_raise_the_floor_ignoring_flyer() {
+    let Some(base) = load_reference_rom() else {
+        eprintln!(
+            "reference ROM absent — skipping closed_bro_rooms_raise_the_floor_ignoring_flyer"
+        );
+        return;
+    };
+
+    // Vanilla (segment start, entry id-byte offsets) for every closed bro
+    // room: an HB-ruled segment whose enemy data holds the treasure box.
+    let mut rooms: Vec<(usize, Vec<usize>)> = Vec::new();
+    let data = base.read_range(ENEMY_DATA_START, ENEMY_DATA_END - ENEMY_DATA_START).to_vec();
+    let mut i = 0;
+    while i < data.len() {
+        if data[i] == 0xFF {
+            i += 1;
+            continue;
+        }
+        let start = ENEMY_DATA_START + i;
+        i += 1;
+        let mut ids = Vec::new();
+        while i + 2 < data.len() && data[i] != 0xFF {
+            ids.push(ENEMY_DATA_START + i);
+            i += 3;
+        }
+        let closed = ids.iter().any(|&o| base.read_range(o, 1)[0] == TREASURE_BOX_APPEAR);
+        if closed && walker_segment_rule_at(start) == WalkerSegmentRule::HammerBro {
+            rooms.push((start, ids));
+        }
+    }
+    assert!(rooms.len() >= 7, "expected the vanilla bro rooms, got {}", rooms.len());
+
+    // The raise must not compound with the tall-enemy nudge `swap_enemy`
+    // applies, or the flyer would end up a row higher than the cycle needs.
+    assert!(
+        !TALL_ENEMIES.contains(&FLYING_RED_PARATROOPA),
+        "flyer became tall — the raise now stacks with the tall nudge",
+    );
+
+    let mut opts = preset_recommended();
+    opts.hb_encounters = EnemyMode::Wild;
+    let mut flyers_seen = 0usize;
+    for seed in 0..200u64 {
+        let mut rom = base.clone();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        randomize(&mut rom, &mut rng, &opts);
+        for (start, ids) in &rooms {
+            for &off in ids {
+                let new_id = rom.read_range(off, 1)[0];
+                let raise = if new_id == FLYING_RED_PARATROOPA {
+                    flyers_seen += 1;
+                    HB_FLYER_RAISE_ROWS
+                } else {
+                    0
+                };
+                // The only other y write in these rooms is `swap_enemy`'s
+                // one-row nudge for a tall pick.
+                let tall = u8::from(TALL_ENEMIES.contains(&new_id));
+                assert_eq!(
+                    rom.read_range(off + 2, 1)[0],
+                    base.read_range(off + 2, 1)[0] - tall - raise,
+                    "seed {seed}: 0x{new_id:02X} at {off:#07X} in bro room {start:#07X} sits on \
+                     the wrong row — a flyer left on the bro's row sinks through the floor",
+                );
+            }
+        }
+    }
+    assert!(flyers_seen > 0, "no flyer was ever dealt into a bro room — the test proves nothing");
+}
+
 /// Every cannon-fire family member carries the CHR bank its engine
 /// behavior demands (see the cfire arm in `sprite_bank`): bills and
 /// goomba pipes spawn $4F/+5 children; the cannonball family (plus the

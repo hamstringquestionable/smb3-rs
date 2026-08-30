@@ -382,6 +382,27 @@ pub(super) const WILD_INJECTION_CHANCE: u8 = 102;
 /// of two stompables. 5/31 ≈ 16%.
 pub(super) const HB_NONSTOMPABLE_ODDS: (u32, u32) = (5, 31);
 
+/// `OBJ_FLYINGREDPARATROOPA`. Its AI (`ObjNorm_FlyingRedTroopa`, prg004) moves
+/// it by Y velocity alone and never calls `Object_Move`, so no floor stops it.
+pub(super) const FLYING_RED_PARATROOPA: u8 = 0x6F;
+
+/// Rows to raise a [`FLYING_RED_PARATROOPA`] dealt into a closed bro room.
+///
+/// Its flight is asymmetric: from where it spawns it only ever *descends*,
+/// accelerating 1 unit every 4th frame to a $10 (1px/frame) limit, holding
+/// that for $30 frames, then reversing — 111px, just under 7 tiles, before it
+/// returns to the spawn row and repeats. It never rises above where it started.
+///
+/// Left on the row a bro stood on it therefore sinks through the floor, and a
+/// player who collides with it as it climbs back out can be pushed into the
+/// floor tile and stuck there — a softlock, since a bro room's exit only
+/// appears once the room is cleared. Raising the spawn 7 rows puts the *bottom*
+/// of that cycle back on the vanilla bro's row, which is a standing position by
+/// construction. Every bro room places its enemies on rows 20-24 with the floor
+/// at row 26, so the raised spawn (rows 13-17) is still inside the visible
+/// window and the enemy stays fightable at the bottom of each dive.
+pub(super) const HB_FLYER_RAISE_ROWS: u8 = 7;
+
 /// Large "Big Bertha" fish that exhaust sprite slots when stacked: the leaping
 /// eater (0x2D, the injected "Boss Bass") and the cheep-spitting birther (0x63).
 /// Both are sprite-heavy, so the per-segment cap counts them together.
