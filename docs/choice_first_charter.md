@@ -675,3 +675,155 @@ dealt floor either way. Reproduce with:
 CENSUS_SEEDS=3000 cargo test --release --lib w8_bridges_out -- --ignored --nocapture
 BRIDGES_OUT=3 CENSUS_SEEDS=600 cargo test --release --lib w8_bridges_out -- --ignored --nocapture
 ```
+
+## Forts on the forced path — the baseline (2026-08-31)
+
+"A fort on the mandatory walking path is a wasted lock" is the charter's
+cardinal sin (above) and issue #163's whole subject, but until now nothing
+measured it on the world the builder actually ships. Two columns now do, both
+in `test_builder_shaping_census` (and `forced%` also at placement time in
+`test_builder_forts_census`):
+
+- **`forced%`** — `WorldState::forced_forts`, the strict form. Wall the fort
+  off with **every lock in the world open** and ask whether the goal is still
+  reachable. If it is not, the fort tile is a cut vertex: the player plays it
+  because it is in the way, and its lock opens with no decision made.
+- **`onC1%`** — the fort merely sits on the cheapest route. The weaker
+  symptom: the player *could* have walked around and chose not to, so a cheap
+  decision did happen. This is the number the pre-rebuild builder scored ~53%
+  on.
+
+Locks open is what separates the geometry question from the key question. The
+first version of the metric kept the fort's lock shut and ran the
+completability fixpoint; it called **61-93%** of forts forced, because it
+counted every world whose goal gate that fort opens — which is the charter's
+*good* structure ("which fort is the key?"), already counted by `gGate`.
+
+**Baseline, 1000 seeds, realistic flag mix:**
+
+| World | forced% dumb | forced% shaped | onC1% dumb | onC1% shaped |
+|---|---|---|---|---|
+| W1 | 47 | 35 | 76 | 83 |
+| W2 | 30 | 28 | 60 | 67 |
+| W3 | 22 | 22 | 48 | 63 |
+| W4 | 17 | 22 | 50 | 77 |
+| W5 | 20 | 17 | 61 | 74 |
+| W6 | 37 | 35 | 58 | 59 |
+| W7 | 18 | 19 | 50 | 77 |
+| W8 | 13 | 12 | 56 | 64 |
+
+Fort-weighted, that is roughly **24% → 22% forced** and **57% → 70% on the
+cheapest route**: the shaping loop leaves the strict number about where
+uniform placement put it, and drives the weak one up by ~13 points. The second
+half is expected rather than surprising — cost mode raises C1 by moving
+content *onto* the trunk (`try_level_move` says so in its own doc), and
+`try_fort_lock` accepts on routes/C1, never on off-path-ness. Note also that
+the loop only ever runs while `routes_needy || cheap`: a world with two in-band
+routes above its floor breaks out "satisfied" with every fort on the trunk,
+because nothing in the diagnosis asks.
+
+W1 and W6 are the outliers at both ends of the pipeline, and W1 is the world
+with no pipe budget at all — the lever that would de-force a fort is the one
+it does not have.
+
+**Caveats.**
+
+- Rocks read as walls to the map walker, so a fort avoidable only by spending
+  a hammer counts as forced. Deliberately conservative — the scorer prices a
+  rock at 8 points but models no hammer supply — and the reason `forced%` can
+  exceed `onC1%` in rocky worlds (W1, W6). A cut vertex is otherwise on every
+  route by construction.
+- Neither number is a defect count, and neither has a target. Per "What the
+  map must communicate", a lock still reports its fort and the world's fort
+  count however the fort was reached, and terrain can leave no alternative.
+  This section is the starting point #163 asks for, not a goal.
+
+```sh
+CENSUS_SEEDS=1000 cargo test --release --lib test_builder_shaping_census -- --nocapture
+CENSUS_SEEDS=1000 cargo test --release --lib test_builder_forts_census -- --ignored --nocapture
+```
+
+### The ceiling: can placement even comply? (2026-08-31)
+
+`test_builder_forced_blanks_census` measures the pool rather than the draw —
+of the legal blanks the `Forts` phase actually sees (production order:
+connectivity → levels), how many are cut vertices, and are there enough
+non-forced ones to hold the world's forts? 1000 seeds:
+
+| World | forts | blanks | free | forcedB% | tight% | forcedB% +spares |
+|---|---|---|---|---|---|---|
+| W1 | 1.86 | 10.9 | 5.9 | 46 | 0 | 46 |
+| W2 | 1.85 | 30.7 | 19.5 | 37 | 0 | 29 |
+| W3 | 1.87 | 28.1 | 19.8 | 30 | 0 | 24 |
+| W4 | 1.85 | 16.6 | 13.5 | 19 | 0 | 16 |
+| W5 | 1.87 | 23.9 | 19.1 | 20 | 0 | 20 |
+| W6 | 1.86 | 37.4 | 21.1 | 44 | 0 | 37 |
+| W7 | 1.84 | 16.0 | 13.3 | 17 | 0 | 17 |
+| W8 | 4.00 | 20.1 | 17.7 | 12 | 0 | 13 |
+
+Three readings:
+
+1. **`forcedB%` tracks the dumb arm's `forced%` almost exactly** (46/47,
+   19/17, 20/20, 17/18, 12/13). Placement is behaving precisely like the dice,
+   which is the knob-free skeleton working as designed — and it means the
+   whole of `forced%` is placement, not some later phase's doing.
+2. **`tight%` is 0 in every world, every seed.** The free pool is never
+   smaller than the fort budget; even W1, the worst world at 46% forced and
+   the only one with no pipe budget to fix it, still averages 5.9 non-forced
+   blanks for 1.86 forts. **There is no structural floor.** An off-path
+   preference is not a nudge here — it can be a near-hard rule with a
+   deliberate rare exception, which is what "never say never" asks for anyway.
+3. **Spare pipes are a weak second lever.** Spending the full remaining budget
+   moves `forcedB%` by 6-8 points in W2/W3/W6 and by nothing at all in
+   W1/W5/W7/W8. Worth taking where it falls out; not worth reordering the
+   pipeline for.
+
+Risk to carry into the fix: a fort off the trunk stops contributing its +5 to
+C1, so worlds that currently reach the floor partly *because* a fort was in
+the way will lean harder on the shaping loop (more level moves onto the trunk,
+longer builds). Measure C1, linear%, and build time alongside `forced%`.
+
+### The fix, and what it cost (2026-08-31)
+
+`Forts` now refuses a blank the player cannot walk around: one call to
+`WorldState::forced_positions` over `legal_blanks()`, asked once per phase
+because the answer cannot change as content lands. `try_fort_lock` filters
+its relocation targets the same way (hoisted, since that rung never touches
+the pipe web) and `try_pipe_move` rejects a rewiring that strands a fort on
+the path — a pipe *added* can only remove a cut vertex, but a mouth *taken
+away* can create one under a fort that was safe when it was placed.
+
+No rate and no fallback rule: `tight%` = 0 says the safe pool is never empty,
+so the "place it anyway" branch exists only to keep a future map from
+deadlocking, and it logs when it fires.
+
+**Result, 1000 seeds:** `forced%` **22% → 0.0%** in six worlds, 0.4% in W4 and
+0.2% in W7. The residue is the pipe-web redeal, which restores the placement
+snapshot and re-runs `Connectivity` with the forts frozen, so a fresh web can
+force one — deliberately left unguarded at that rate rather than adding a term
+to the redeal key for one fort in 250. `onC1%` fell too without being targeted
+(70% → 64% fort-weighted), since a blank off the cut vertices tends to be off
+the cheapest route as well.
+
+**The cost, `test_route_census` at 1000 seeds, before → after:**
+
+| | before | after |
+|---|---|---|
+| mean routes/world | 2.537 | **2.595** |
+| linear% | 6.91 | **6.22** |
+| C1 mean | 19.4 | 19.2 |
+| below own dealt floor | 0.34% | 0.39% |
+| goal-open | 3.0% | 2.7% |
+| build time (shaped) | 52.1 ms/seed | 52.5 ms/seed |
+
+The feared trade did not materialise: C1 gives up 0.2 points, and choice
+improves rather than regressing (W1 linear 9% → 4% is the biggest single
+move). Per-world linear% is flat or better everywhere except W4 (12 → 14) and
+W3 (5 → 6). Build time absorbs the extra BFS inside noise — the walker was
+never the expensive part, route enumeration is.
+
+Two columns moved that are not targets and are recorded so a later reader
+does not rediscover them as a surprise: W1 `zero-gate%` 3 → 8, and W7
+`goal-open%` 14 → 19. Both are charter non-defects (a decorative lock still
+reports its fort; a goal-open world above its floor is fine), and both follow
+from the same cause — forts off the trunk gate less of the map.

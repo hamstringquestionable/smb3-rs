@@ -199,6 +199,90 @@ impl WorldState {
         out
     }
 
+    /// Forts the player cannot walk around — the charter's "fort on the
+    /// forced path" in its strict form. Wall the fort off (the player
+    /// refuses to play it) with every lock in the world OPEN, and ask
+    /// whether the goal is still reachable. If it is not, the fort tile is
+    /// a cut vertex: no route avoids it, the player plays it because it is
+    /// in the way, and its lock opens as a side effect — no decision was
+    /// ever offered. Returns fort ids (`SlotAssignment::section`).
+    ///
+    /// **Every lock open is the point, not a shortcut.** It isolates the
+    /// GEOMETRY question from the key question. A fort the player must beat
+    /// because its lock is the only way through is the charter's good
+    /// structure — they had to go find the key — and the closed-lock
+    /// version of this test cannot tell the two apart (measured: it called
+    /// 61-93% of forts forced, mostly goal gates). That case is already
+    /// counted by [`Self::goal_gate_locks`].
+    ///
+    /// Distinct from a fort merely sitting on the CHEAPEST route: that one
+    /// could have been walked around, so taking it was a (cheap) decision.
+    /// Distinct again from [`Self::zero_gate_locks`] — a forced fort's lock
+    /// can wall off half the world and still be free to open.
+    ///
+    /// Rocks read as walls here, the map walker's model, so a fort avoidable
+    /// only by spending a hammer on a rock counts as forced — deliberately
+    /// conservative (the hammer is a real cost the scorer cannot price: it
+    /// does charge a rock 8 points but models no hammer supply). This is
+    /// why forced% can exceed the on-cheapest-route rate in rocky worlds.
+    ///
+    /// A census instrument, not a defect count: per the charter's "What the
+    /// map must communicate", a lock still reports its fort and its count
+    /// whatever the fort cost, and terrain (W1's zero pipe budget, a world
+    /// with no off-trunk blanks) can leave no alternative.
+    #[cfg(test)]
+    pub(crate) fn forced_forts(&self) -> Vec<usize> {
+        let forts: Vec<(usize, Pos)> = self
+            .slots
+            .iter()
+            .filter(|s| s.kind == SlotKind::Fortress)
+            .map(|s| (s.section, s.pos))
+            .collect();
+        let positions: Vec<Pos> = forts.iter().map(|&(_, pos)| pos).collect();
+        let forced: HashSet<Pos> = self.forced_positions(&positions).into_iter().collect();
+        forts.iter().filter(|(_, pos)| forced.contains(pos)).map(|&(id, _)| id).collect()
+    }
+
+    /// Which of `candidates` are cut vertices between the start and the
+    /// goal — the test [`Self::forced_forts`] is built from, exposed so a
+    /// census can ask it of empty blanks ("could a fort placed HERE have
+    /// been avoided?") as well as of placed forts.
+    ///
+    /// **The answer does not depend on what is placed.** Content only ever
+    /// occupies node tiles and every node tile is walkable to the map walker
+    /// (`VALID_BLANK_TILES` and the stamped slot tiles are all disjoint from
+    /// `BACKGROUND_TILES`); only locks change walkability, and they are held
+    /// open here. So this is a property of the terrain plus the pipe web
+    /// alone, fixed the moment connectivity finishes. Adding a pipe can only
+    /// ever REMOVE a cut vertex, never create one — which makes a fort
+    /// placed off a forced blank a guarantee that survives every later
+    /// phase, not a preference that decays. That invariance is what lets
+    /// [`Forts`] call this ONCE for the whole phase rather than per placement.
+    pub(crate) fn forced_positions(&self, candidates: &[Pos]) -> Vec<Pos> {
+        // Any BACKGROUND_TILES member reads as a wall to the walker. The
+        // wall is written into a scratch grid and taken back out again; no
+        // value here ever reaches the ROM.
+        const WALL: u8 = BACKGROUND_TILES[0];
+
+        let Some(target) = self.target else { return Vec::new() };
+        let mut g = self.grid.clone();
+        stamp_slots(&mut g, &self.slots);
+        for lock in &self.locks {
+            g.set(lock.pos.0, lock.pos.1, lock.replace_tile);
+        }
+
+        let mut out = Vec::new();
+        for &pos in candidates {
+            let was = g.get(pos.0, pos.1);
+            g.set(pos.0, pos.1, WALL);
+            if !walk_reachable(&g, &self.pipe_pairs, self.start, self.world_idx).contains(target) {
+                out.push(pos);
+            }
+            g.set(pos.0, pos.1, was);
+        }
+        out
+    }
+
     /// Order-free completability — the locks invariant. Close every lock,
     /// beat every fort the walker can reach, open those forts' locks,
     /// repeat to a fixpoint. Valid iff the goal is reached AND every fort

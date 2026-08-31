@@ -11,6 +11,13 @@ deploys.
 
 ### Changed
 
+- **Fortresses no longer sit where you cannot walk around them.** A fortress in
+  the middle of the only road is a wasted lock — you play it because it is in
+  the way, and the lock it opens was never a decision. Fortresses now take a
+  spot you could have walked past, so going to find one is a choice you make.
+  Measured across 1000 seeds, unavoidable fortresses went from 22% to under
+  0.5%, and worlds came out with slightly more routes rather than fewer.
+
 - **The level clock now counts real seconds.** Vanilla steps the timer every 41
   frames, so a unit was 0.68 s and the clock ran about 47% fast — a "300" level
   was really about 3:25, not five minutes. The divider is now 60 frames, giving

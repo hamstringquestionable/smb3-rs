@@ -502,6 +502,11 @@ fn try_fort_lock(
     let trunk: HashSet<Pos> =
         before.rc.routes.first().map(|r| r.path.iter().copied().collect()).unwrap_or_default();
 
+    // Blanks the player could not walk around, hoisted out of both loops:
+    // this rung never touches terrain or the pipe web, and nothing else
+    // decides who is a cut vertex, so one answer serves every trial.
+    let no_go: HashSet<Pos> = state.forced_positions(&state.legal_blanks()).into_iter().collect();
+
     let mut fort_indices: Vec<usize> = state
         .slots
         .iter()
@@ -524,7 +529,8 @@ fn try_fort_lock(
             if evals >= FORTLOCK_TRIES {
                 break;
             }
-            let candidates = state.legal_blanks();
+            let candidates: Vec<Pos> =
+                state.legal_blanks().into_iter().filter(|p| !no_go.contains(p)).collect();
             let Some(&new_pos) = candidates.choose(rng) else { break };
             state.slots[fi].pos = new_pos;
             evals += 1;
@@ -685,7 +691,10 @@ fn try_pipe_move(
             state.pipe_pairs[pi] = if move_a { (new_pos, keep) } else { (keep, new_pos) };
             evals += 1;
 
-            if all_content_reachable(state) && place_locks_gating(state, rng, true) {
+            if all_content_reachable(state)
+                && !any_fort_forced(state)
+                && place_locks_gating(state, rng, true)
+            {
                 let after = measure_world(state);
                 // Cost-only rung: there is no choice gain to claim, so the
                 // verdict is `accepted`'s cost branch alone — exactly the
@@ -719,6 +728,16 @@ fn try_pipe_move(
 /// snake along the trunk.
 fn spaced(state: &WorldState, targets: Vec<Pos>) -> Vec<Pos> {
     targets.into_iter().filter(|&p| !super::levels::next_to_level(state, p)).collect()
+}
+
+/// True when some fort now sits where the player cannot walk around it. The
+/// [`Forts`] placement rule, re-checked after a move that REWIRES the pipe
+/// web: adding a pipe can only ever remove a cut vertex, but taking a mouth
+/// away can create one under a fort that was safe when it was placed.
+fn any_fort_forced(state: &WorldState) -> bool {
+    let forts: Vec<Pos> =
+        state.slots.iter().filter(|s| s.kind == SlotKind::Fortress).map(|s| s.pos).collect();
+    !state.forced_positions(&forts).is_empty()
 }
 
 /// Every slot and the goal walk-reachable from start on the all-open world
