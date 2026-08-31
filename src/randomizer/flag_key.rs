@@ -406,9 +406,11 @@ mod payload {
         pub(super) limit_hazards: HazardLimit,
         /// Friendlier Levels: hold the harshest levels out of the shuffle pool.
         pub(super) friendlier_levels: bool,
+        /// Bro encounters run on a 10-second clock.
+        pub(super) bro_battle_timer: bool,
 
         // --- Reserve ---
-        // 142 bits. Adding an option is: declare it immediately above this
+        // 141 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off `B19`. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -423,7 +425,7 @@ mod payload {
         #[skip]
         __: B128,
         #[skip]
-        __: B14,
+        __: B13,
     }
 }
 
@@ -465,6 +467,7 @@ impl Options {
             eights_are_wild, troll_pipes, antechamber_shuffle,
             ground, shell, flying, piranhas, ghosts, thwomps, rotodiscs,
             cannons, water, bros, hb_encounters, limit_hazards, friendlier_levels,
+            bro_battle_timer,
             fire_flower, piranha_shuffle, wild_injections,
             starting_lives, world_count, starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
@@ -529,6 +532,7 @@ impl Options {
             .with_hb_encounters(*hb_encounters)
             .with_limit_hazards(*limit_hazards)
             .with_friendlier_levels(*friendlier_levels)
+            .with_bro_battle_timer(*bro_battle_timer)
             .with_fire_flower(*fire_flower)
             .with_piranha_shuffle(*piranha_shuffle)
             .with_wild_sun(has(WildChaser::Sun))
@@ -579,6 +583,7 @@ impl Options {
             disable_autoscroll: f.disable_autoscroll(),
             include_beta_stages: f.include_beta_stages(),
             swap_start_airship: f.swap_start_airship(),
+            bro_battle_timer: f.bro_battle_timer(),
             limit_bro_movement: f.limit_bro_movement(),
             remove_n_cards: f.remove_n_cards(),
             card_speed_clear: f.card_speed_clear(),

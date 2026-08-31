@@ -201,26 +201,26 @@ fn sweep_is_deterministic() {
 /// --patched-rom`) and the diff is exactly 0x10476..0x1047F on every one of
 /// them, with no second span. No map tile, pointer table or level byte moved.
 const BASELINE: [u64; SEEDS as usize] = [
-    0x3926E260625D06D4,
-    0x0399EDF5AD3BF8B6,
-    0x03356435C6932BEF,
-    0xBE9CAE2B19A02134,
-    0xBC76F9C04B292A04,
-    0xC54586417213FADC,
-    0xFF69C69E11BC2ACF,
-    0xA33D0B6973781EBC,
-    0x2B66E3F87BAC7CA5,
-    0x070AD7D88A7E8209,
-    0x5D42687C16575B04,
-    0xE0ADF6480E23B948,
-    0x8B37FB382962FB68,
-    0x7DC91D42C5A48B5F,
-    0x8223703FC418305D,
-    0x8289DA9476BA4485,
-    0x1723298F6A43537F,
-    0xDF04A58F323073D2,
-    0xE8B54FB806F8D03D,
-    0xBB22752C7DB88528,
+    0x4E4FF90634A36EFE,
+    0x7EF158B7AB964F24,
+    0xBB1600149FDEE681,
+    0x19755D9D3A20D976,
+    0x6780286C3D945042,
+    0x32DCF84F7F8CC8CE,
+    0xAD44D169D22366F9,
+    0xDC4E49DFCA9316BA,
+    0x3ADFD185C3D96617,
+    0x85F50EE60B7813EB,
+    0x21C742BD48684712,
+    0xCDAAC2C715B4FD06,
+    0x8E4AE5BD2732E71E,
+    0x6F227C0E53E246CD,
+    0x87C947524987DD2B,
+    0x679C101E1A2CF5CB,
+    0xB8B5AB92808F8EDD,
+    0xEC8D879A476CE504,
+    0x0D55993F9D2E99CB,
+    0x5B841B69FF6AFAB6,
 ];
 ///
 /// Re-captured 2026-08-27 for the Big [?] bonus-room shuffle, which is always
@@ -262,6 +262,15 @@ const BASELINE: [u64; SEEDS as usize] = [
 /// and the only bytes that changed outside `FS_BIG_Q_LOOKUP`'s own 224-byte
 /// allocation were the exit hook's operand at 0x34A85. No map tile, pointer
 /// table or level byte moved.
+///
+/// Re-captured 2026-08-30 for `qol::level_clock`: the level clock's frame
+/// divider is now 60 rather than vanilla's 41, so a unit is a real second. It
+/// is two immediate operands (0x34FC6, 0x3C517) and is applied to every seed,
+/// so every hash moved. Verified rather than argued, the same way as the
+/// entries above: for each of these 20 seeds the generated ROM had those two
+/// bytes reverted to `$28` and re-hashed, and all 20 then reproduced the
+/// previous baseline exactly — so those two bytes are the entire diff. No map
+/// tile, pointer table or level byte moved.
 
 #[test]
 fn output_matches_baseline() {

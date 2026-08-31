@@ -456,6 +456,13 @@ fn randomize_inner(
     rom.set_tag("stomp_fairness");
     randomize::stomp_fairness::apply(rom);
 
+    // One unit on the level clock is 41 frames in vanilla (~0.68 s), so the
+    // displayed time runs ~47% fast. Always applied: the divider is simply the
+    // wrong number, and a clock that reads seconds is what the status bar
+    // already claims to show.
+    rom.set_tag("qol/real_time_clock");
+    randomize::qol::apply_real_time_clock(rom);
+
     // Adjust Bowser and Koopaling hitboxes.
     if options.adjust_boss_hitboxes {
         rom.set_tag("koopalings/adjust_boss_hitboxes");
@@ -484,6 +491,12 @@ fn randomize_inner(
     if options.early_sun {
         rom.set_tag("qol/early_sun");
         randomize::qol::apply_early_sun(rom);
+    }
+
+    // Bro encounters run on a 10-second clock instead of their header's time.
+    if options.bro_battle_timer {
+        rom.set_tag("qol/bro_battle_timer");
+        randomize::qol::apply_bro_battle_timer(rom);
     }
 
     // "Limit Bro Movement" — gate the wandering Hammer Bros' overworld roaming.

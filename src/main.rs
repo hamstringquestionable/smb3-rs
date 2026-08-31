@@ -278,6 +278,10 @@ struct Cli {
     #[arg(long)]
     limit_bro_movement: bool,
 
+    /// Hammer / Boomerang / Heavy / Fire Bro encounters start with a 10-second clock
+    #[arg(long)]
+    bro_battle_timer: bool,
+
     /// Damage drops to Small Mario or kills outright instead of demoting tier-by-tier (MaCobra52's "Japanese damage system" patch)
     #[arg(long)]
     japanese_damage: bool,
@@ -549,6 +553,7 @@ fn build_options(cli: &Cli) -> Options {
             hammer_breaks_bridges: cli.hammer_breaks_bridges,
             early_sun: cli.early_sun,
             limit_bro_movement: cli.limit_bro_movement,
+            bro_battle_timer: cli.bro_battle_timer,
             japanese_damage: cli.japanese_damage,
             infinite_mushroom_houses: cli.infinite_mushroom_houses,
             fast_mushroom_house: cli.fast_mushroom_house,

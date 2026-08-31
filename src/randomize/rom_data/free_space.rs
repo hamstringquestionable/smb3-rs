@@ -12,7 +12,7 @@
 //! The aggregate free-space number is misleading: space is per-bank, and a
 //! routine must live in a bank mapped when it runs. The always-mapped banks
 //! are effectively full — PRG031 (`$E000–$FFFF`) has 81 bytes left but a
-//! largest contiguous gap of only 30, and PRG030 (`$8000–$9FFF`) has 88 with
+//! largest contiguous gap of only 30, and PRG030 (`$8000–$9FFF`) has 58 with
 //! a largest gap of 42. Swapped banks are roomier (PRG010 896, PRG026 2485,
 //! and the in-level banks PRG004 426 / PRG006 1392 in one run each).
 //!
@@ -104,6 +104,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     // PRG030 (fixed bank, always mapped $8000–$9FFF, file 0x3C010)
     fs(0x3DF20, 28, &["world_order"], "routine + tables"),
     fs(0x3DF3C, 20, &["big_q_blocks"], "big_q_block: save obj_ptr trampoline"),
+    fs(
+        0x3DF70,
+        30,
+        &["bro_battle_timer"],
+        "bro_timer: 10-second clock for bro encounters (30 reserved, 25 used)",
+    ),
     fs(
         0x3DFC6,
         32,
@@ -226,6 +232,20 @@ pub(crate) const FS_WORLD_ORDER: usize = 0x3DF20; // 28 bytes
 pub(crate) const WORLD_ORDER_CPU: u16 = super::prg030_file_to_cpu(FS_WORLD_ORDER);
 
 pub(crate) const FS_BIG_Q_SAVE: usize = 0x3DF3C; // 20 bytes
+
+// The 30-byte run at 0x3DF70 ($9F60-$9F7D) is the "probably unused space"
+// southbird's `prg030.asm` shows between `PRG030_SUB_9F50`'s `RTS` and
+// `IntIRQ_32PixelPartition_Part5` at $9F7E. Both neighbours are IRQ raster
+// helpers, but nothing falls through into the gap — the one above ends in
+// `RTS`, the one below is entered by jump — so code parked here never runs and
+// cannot disturb their cycle counts. It is unreferenced: a PRG-wide scan of
+// absolute-addressing opcodes finds no operand in $9F60-$9F7D (the nine
+// byte-pair matches all sit inside CHR/tile data tables in banks 1, 13, 16, 19
+// and 21, none of them preceded by an addressing opcode).
+pub(crate) const FS_BRO_TIMER: usize = 0x3DF70; // 30 reserved, 25 used
+
+/// CPU address of the bro-encounter clock routine ($9F60).
+pub(crate) const BRO_TIMER_CPU: u16 = super::prg030_file_to_cpu(FS_BRO_TIMER);
 
 // PRG031
 pub(crate) const FS_SEED_HASH_ROUTINE: usize = 0x3E924; // 25 bytes
@@ -896,6 +916,7 @@ mod free_space_tests {
         for &(off, name) in &[
             (FS_WORLD_ORDER, "FS_WORLD_ORDER"),
             (FS_BIG_Q_SAVE, "FS_BIG_Q_SAVE"),
+            (FS_BRO_TIMER, "FS_BRO_TIMER"),
             (FS_SEED_HASH_ROUTINE, "FS_SEED_HASH_ROUTINE"),
             (FS_SEED_HASH_DATA, "FS_SEED_HASH_DATA"),
             (FS_INTRO_SKIP, "FS_INTRO_SKIP"),
@@ -1042,6 +1063,7 @@ mod free_space_tests {
         // so a regression here would silently retarget every PRG030/031 hook.
         assert_eq!(prg030_file_to_cpu(0x3C010), 0x8000);
         assert_eq!(prg030_file_to_cpu(FS_WORLD_ORDER), 0x9F10);
+        assert_eq!(prg030_file_to_cpu(FS_BRO_TIMER), 0x9F60);
         assert_eq!(prg030_file_to_cpu(FS_STOMP_RISE), 0x9FB6);
         assert_eq!(prg031_file_to_cpu(0x3E010), 0xE000);
     }
