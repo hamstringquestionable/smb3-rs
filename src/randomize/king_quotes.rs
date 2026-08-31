@@ -600,6 +600,22 @@ const QUOTES: &[[&str; 6]] = &[
         "",
         "",
     ],
+    [
+        "Don't have negative",
+        "thoughts.",
+        "",
+        "Remember your",
+        "mantra.",
+        "",
+    ],
+    [
+        "If you listen",
+        "closely, you can",
+        "hear DemonBattler",
+        "screaming in the",
+        "distance.",
+        "",
+    ],
 ];
 
 /// Suit-specific quotes: shown when Mario visits the king wearing frog suit.
@@ -708,6 +724,14 @@ const FROG_QUOTES: &[[&str; 6]] = &[
         "Wait.Bad example.",
         "",
         "",
+    ],
+    [
+        "Don't forget to",
+        "start your timer,",
+        "HumanMustard.",
+        "",
+        "Oh, too late.",
+        "Sorry, viewers!",
     ],
 ];
 
