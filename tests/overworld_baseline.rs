@@ -200,27 +200,46 @@ fn sweep_is_deterministic() {
 /// the pre- and post-fix ROMs were diffed byte for byte (`--no-palettes
 /// --patched-rom`) and the diff is exactly 0x10476..0x1047F on every one of
 /// them, with no second span. No map tile, pointer table or level byte moved.
+///
+/// Re-captured 2026-08-31 for the off-path fort rule (`Forts` may no longer
+/// take a blank the player cannot walk around; `try_fort_lock` and
+/// `try_pipe_move` hold the same line). Overworld topology changes on
+/// purpose. TWO causes are folded into this recapture and both are named
+/// here on purpose:
+///
+/// 1. The baseline was ALREADY stale at HEAD — PR #205 (three new king rescue
+///    quotes) rewrites quote text in every ROM and did not recapture, so all
+///    20 seeds had already moved before this change was written.
+/// 2. This change itself, which moves fortresses and therefore locks, C1, and
+///    the shaping decisions downstream of them.
+///
+/// Verified by pinning, the way the v28 and dealt-C1-floor recaptures were:
+/// neutralising all three guards (an empty forced set in `Forts` and in
+/// `try_fort_lock`, `any_fort_forced` returning false) reproduced the HEAD
+/// hashes EXACTLY, all 20 seeds. So cause 2 is the guards alone — the new
+/// `WorldState::forced_positions` and the census columns that read it change
+/// no output — and cause 1 is inherited, not created here.
 const BASELINE: [u64; SEEDS as usize] = [
-    0x4E4FF90634A36EFE,
-    0x7EF158B7AB964F24,
-    0xBB1600149FDEE681,
-    0x19755D9D3A20D976,
-    0x6780286C3D945042,
-    0x32DCF84F7F8CC8CE,
-    0xAD44D169D22366F9,
-    0xDC4E49DFCA9316BA,
-    0x3ADFD185C3D96617,
-    0x85F50EE60B7813EB,
-    0x21C742BD48684712,
-    0xCDAAC2C715B4FD06,
-    0x8E4AE5BD2732E71E,
-    0x6F227C0E53E246CD,
-    0x87C947524987DD2B,
-    0x679C101E1A2CF5CB,
-    0xB8B5AB92808F8EDD,
-    0xEC8D879A476CE504,
-    0x0D55993F9D2E99CB,
-    0x5B841B69FF6AFAB6,
+    0x29A3EEA5BF4AE51F,
+    0xDF1B453A02F3E8CE,
+    0x3C30C7E62A89E412,
+    0x6590EB228FFFFFAD,
+    0xD9824148CFCFB18E,
+    0x13FB87791F7E5643,
+    0x2259781019F56587,
+    0x05E4347FD69DA9A9,
+    0xC149AFCA80118085,
+    0xB2C7DFD9A190A0B5,
+    0x1D86758E9A78E98E,
+    0xE05F91CBFC3F6720,
+    0xF29978C2C9D3AF59,
+    0xE7AC193883E470EC,
+    0xCDA7E9922AB91CCC,
+    0x32D1C6748C543C3C,
+    0xF801670EA1CCA280,
+    0x14D567EBB4188B77,
+    0xCBA0C0826565F4C1,
+    0x78E3B157D38E6082,
 ];
 ///
 /// Re-captured 2026-08-27 for the Big [?] bonus-room shuffle, which is always

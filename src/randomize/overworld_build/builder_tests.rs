@@ -525,7 +525,10 @@ fn test_builder_levels_census() {
 /// levels → spare pipes → forts). The headline number is on-route%: how
 /// often a random fort lands on the cheapest route — where the player pays
 /// its 5 points no matter what, and its future lock gates nothing (the
-/// "on-path fort = decorative lock" thesis, baselined). Runs the realistic
+/// "on-path fort = decorative lock" thesis, baselined). forced% is the
+/// strict form of the same thesis (`WorldState::forced_forts`): the goal is
+/// unreachable without this fort, so no route choice could have avoided it.
+/// Runs the realistic
 /// flag mix (see [`census_ctx`]). `CENSUS_SEEDS` seeds (default 100).
 ///
 /// `#[ignore]`d (2026-08-07): a baseline instrument, not a gate — it
@@ -542,6 +545,7 @@ fn test_builder_forts_census() {
 
     let mut placed_sum = [0usize; 8];
     let mut on_route = [0usize; 8];
+    let mut forced = [0usize; 8];
     let mut fort_count = [0usize; 8];
     let mut c1_sum = [0u64; 8];
     let mut routes_sum = [0usize; 8];
@@ -569,6 +573,7 @@ fn test_builder_forts_census() {
                 let path: HashSet<Pos> = cheap.path.iter().copied().collect();
                 on_route[world_idx] += forts.iter().filter(|p| path.contains(p)).count();
             }
+            forced[world_idx] += state.forced_forts().len();
             fort_count[world_idx] += forts.len();
             c1_sum[world_idx] += u64::from(measure.c1);
             routes_sum[world_idx] += measure.routes_in_band;
@@ -579,18 +584,113 @@ fn test_builder_forts_census() {
     }
 
     println!("forts census ({seeds} seeds, uniform placement, full dumb pipeline, flag-mix arms)");
-    println!("world  budget  placed  on-route%  C1(mean)  routes  linear%");
+    println!("world  budget  placed  on-route%  forced%  C1(mean)  routes  linear%");
     let n = seeds as f64;
     for world_idx in 0..8 {
         println!(
-            "  W{}   {:>5} {:>7.2} {:>9.0}% {:>9.1} {:>7.2} {:>7.0}%",
+            "  W{}   {:>5} {:>7.2} {:>9.0}% {:>7.0}% {:>9.1} {:>7.2} {:>7.0}%",
             world_idx + 1,
             budget[world_idx],
             placed_sum[world_idx] as f64 / n,
             100.0 * on_route[world_idx] as f64 / fort_count[world_idx].max(1) as f64,
+            100.0 * forced[world_idx] as f64 / fort_count[world_idx].max(1) as f64,
             c1_sum[world_idx] as f64 / n,
             routes_sum[world_idx] as f64 / n,
             100.0 * linear[world_idx] as f64 / n,
+        );
+    }
+}
+
+/// Forced-blank ceiling: can fort placement even comply with the charter's
+/// "forts stay off the path" rule? A fort is forced exactly when it sits on
+/// a cut-vertex blank (see `WorldState::forced_positions` — the answer is a
+/// property of terrain + pipe web alone, decided before any content lands),
+/// so this measures the pool the Forts phase draws from rather than where it
+/// happened to draw.
+///
+/// Production order: connectivity → levels, then measure, because that is
+/// what `Forts` actually sees. The `+spares` columns re-measure with the
+/// full pipe budget spent — spare pipes run AFTER shaping in production, and
+/// a pipe can only ever remove a cut vertex, so the difference is what the
+/// world's own remaining budget would buy if the fort phase could see it.
+///
+/// Columns: blanks/free = mean legal blanks and mean NON-forced ones at fort
+/// time; forcedB% = share of the pool that is forced; tight% = seeds where
+/// the free blanks cannot cover the world's fort budget, so at least one
+/// fort MUST be forced whatever the builder prefers — the structural floor.
+/// Runs the realistic flag mix (see [`census_ctx`]). `CENSUS_SEEDS` seeds
+/// (default 100).
+///
+/// `#[ignore]`d: a baseline instrument, not a gate — no assertions.
+#[test]
+#[ignore]
+fn test_builder_forced_blanks_census() {
+    let Some(raw) = load_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(100);
+
+    #[derive(Default, Clone, Copy)]
+    struct Tally {
+        blanks: usize,
+        forced: usize,
+        free_sum: usize,
+        tight: usize,
+    }
+
+    let mut pre = [Tally::default(); 8];
+    let mut post = [Tally::default(); 8];
+    let mut budget_sum = [0usize; 8];
+
+    let measure = |t: &mut Tally, state: &WorldState| -> usize {
+        let blanks = state.legal_blanks();
+        let forced = state.forced_positions(&blanks).len();
+        t.blanks += blanks.len();
+        t.forced += forced;
+        let free = blanks.len() - forced;
+        t.free_sum += free;
+        free
+    };
+
+    for seed in 0..seeds {
+        let ctx = census_ctx(&raw, seed);
+        for world_idx in 0..8 {
+            let mut state = ctx.world(world_idx);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            budget_sum[world_idx] += state.fort_budget;
+
+            run_schedule(&mut state, &[&Connectivity, &Levels], &mut rng);
+            if measure(&mut pre[world_idx], &state) < state.fort_budget {
+                pre[world_idx].tight += 1;
+            }
+
+            run_schedule(&mut state, &[&SparePipes], &mut rng);
+            if measure(&mut post[world_idx], &state) < state.fort_budget {
+                post[world_idx].tight += 1;
+            }
+        }
+    }
+
+    println!("forced-blank census ({seeds} seeds, production order through levels, flag-mix arms)");
+    println!(
+        "world  forts  blanks  free  forcedB%  tight%  |  +spares: blanks  free  forcedB%  tight%"
+    );
+    let n = seeds as f64;
+    for world_idx in 0..8 {
+        let (a, b) = (&pre[world_idx], &post[world_idx]);
+        println!(
+            "  W{}   {:>5.2} {:>7.1} {:>5.1} {:>8.0}% {:>6.0}%  | {:>15.1} {:>5.1} {:>8.0}% {:>6.0}%",
+            world_idx + 1,
+            budget_sum[world_idx] as f64 / n,
+            a.blanks as f64 / n,
+            a.free_sum as f64 / n,
+            100.0 * a.forced as f64 / a.blanks.max(1) as f64,
+            100.0 * a.tight as f64 / n,
+            b.blanks as f64 / n,
+            b.free_sum as f64 / n,
+            100.0 * b.forced as f64 / b.blanks.max(1) as f64,
+            100.0 * b.tight as f64 / n,
         );
     }
 }
@@ -747,6 +847,15 @@ fn test_builder_shaping_census() {
         zero_gate: usize,
         goal_gates: usize,
         locks: usize,
+        // Forts, and the two on-path symptoms the charter's "forts stay off
+        // the path" rule is about: `forced` = the player cannot reach the
+        // goal without this fort, so its lock opens with no decision made;
+        // `on_c1` = it merely sits on the cheapest route (avoidable, so the
+        // player chose it). forced is a subset of on_c1 in practice, never
+        // by construction.
+        forts: usize,
+        forced: usize,
+        on_c1: usize,
         goal_open: usize,
         pipes: usize,
         // Adjacent-level pairs (orthogonal 2-tile neighbors — visually
@@ -775,6 +884,9 @@ fn test_builder_shaping_census() {
                 zero_gate: 0,
                 goal_gates: 0,
                 locks: 0,
+                forts: 0,
+                forced: 0,
+                on_c1: 0,
                 goal_open: 0,
                 pipes: 0,
                 adjacent_levels: 0,
@@ -812,6 +924,16 @@ fn test_builder_shaping_census() {
         t.zero_gate += state.zero_gate_locks().len();
         t.goal_gates += state.goal_gate_locks();
         t.locks += state.locks.len();
+        t.forts += state.fort_count();
+        t.forced += state.forced_forts().len();
+        if let Some(cheap) = m.rc.routes.first() {
+            let path: HashSet<Pos> = cheap.path.iter().copied().collect();
+            t.on_c1 += state
+                .slots
+                .iter()
+                .filter(|s| s.kind == SlotKind::Fortress && path.contains(&s.pos))
+                .count();
+        }
         t.pipes += state.pipe_pairs.len();
         let levels: Vec<Pos> =
             state.slots.iter().filter(|s| s.kind == SlotKind::Level).map(|s| s.pos).collect();
@@ -948,13 +1070,13 @@ fn test_builder_shaping_census() {
         "shaping A/B census ({seeds} seeds, dumb skeleton vs diagnosis-driven shaping, flag-mix arms)"
     );
     println!(
-        "world  arm     C1(mean)  C1min  C1<12%  routes  linear%  uniq  C2-C1  noalt%  zero-gate%  gGate  goal-open%  pipes  touched%  lr(acc:rej)  ab(acc:rej)  gs(acc:rej)  fl(acc:rej)  lm(acc:rej)  pm(acc:rej)  redeals"
+        "world  arm     C1(mean)  C1min  C1<12%  routes  linear%  uniq  C2-C1  noalt%  zero-gate%  forced%  onC1%  gGate  goal-open%  pipes  touched%  lr(acc:rej)  ab(acc:rej)  gs(acc:rej)  fl(acc:rej)  lm(acc:rej)  pm(acc:rej)  redeals"
     );
     let n = seeds as f64;
     for world_idx in 0..8 {
         for (arm, t) in [("dumb", &dumb[world_idx]), ("shaped", &shaped[world_idx])] {
             let base = format!(
-                "  W{}   {arm:<7} {:>7.1} {:>6} {:>6.0}% {:>7.2} {:>7.0}% {:>5.2} {:>6.2} {:>6.0}% {:>9.0}% {:>5.2} {:>9.0}% {:>6.2} adjL={:.2}",
+                "  W{}   {arm:<7} {:>7.1} {:>6} {:>6.0}% {:>7.2} {:>7.0}% {:>5.2} {:>6.2} {:>6.0}% {:>9.0}% {:>6.1}% {:>5.0}% {:>5.2} {:>9.0}% {:>6.2} adjL={:.2}",
                 world_idx + 1,
                 t.c1 as f64 / n,
                 t.c1_min,
@@ -965,6 +1087,8 @@ fn test_builder_shaping_census() {
                 t.gap_sum as f64 / t.gapped.max(1) as f64,
                 100.0 * t.noalt as f64 / n,
                 100.0 * t.zero_gate as f64 / t.locks.max(1) as f64,
+                100.0 * t.forced as f64 / t.forts.max(1) as f64,
+                100.0 * t.on_c1 as f64 / t.forts.max(1) as f64,
                 t.goal_gates as f64 / n,
                 100.0 * t.goal_open as f64 / n,
                 t.pipes as f64 / n,
