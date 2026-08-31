@@ -290,6 +290,62 @@ Bonus room: at **0x1FCA3** (CPU $BC93), entered via junction.
 will misalign every command after the first extra-byte routine, producing wrong results.
 The level simulator at `tools/level_sim.py` handles this correctly.
 
+#### A Level Tile's Solidity and Palette Both Come From Its ID
+
+Neither is stored per metatile — the 1024-byte quadrant table in each metatile
+bank holds CHR indices and nothing else. Both fall out of the tile ID:
+
+**Palette = the top 2 bits.** `$00-$3F` → palette 0, `$40-$7F` → 1, `$80-$BF` →
+2, `$C0-$FF` → 3. Plains is the clean demonstration: the white big blocks,
+clouds and note blocks are all `$00-$3F` (palette 0, white), while the orange big
+blocks, bricks and coins are all `$40-$7F` (palette 1, orange/gold). This is why
+`TILEA_GNOTE` ($BC) is "the same note block, coloured wrong" — it is an
+otherwise-identical tile parked in a different quadrant.
+
+**Solid = `tile >= Tile_AttrTable[quadrant]`.** Each tileset supplies eight
+threshold bytes — four for the downward/ground check, four for the upward/ceiling
+check — sitting immediately after the quadrant table at bank + 0x400.
+`Level_CheckGndLR_TileGTAttr` (PRG008) does the compare. Tileset 2's set is
+`11 5A 9B E2 11 5A 9B E2`; tileset 1's is `25 50 A0 E2 2D 53 AD F0`. Spot-checks
+against tileset 2: coin `$40` is quadrant 1 with root `$5A`, so not solid;
+brick `$67` is, solid brick `$9C` is, bright diamond `$E4` is.
+
+Two consequences worth remembering:
+
+- **A "common" tile is not automatically solid in every tileset.** The threshold
+  moves per tileset, so the same ID can be solid in one and background in
+  another. Check the root before reusing a tile in a new tileset.
+- **`Level_SlopeSetByQuad` is a red herring for this question.** It is rooted on
+  the same thresholds and looks like a solidity table, but
+  `Player_DetectSolids` only consults it when `Level_SlopeEn` is set *and* the
+  tileset is 3 (Hills) or 14 (Underground). Reading it for any other tileset
+  produces nonsense — it claims the fortress bright diamond is a 45° slope.
+
+#### `LoadLevel_BlockRun` — byte2's High Nibble Picks the Block
+
+Group 1, variable-size dispatches 15-22, shared across every tileset via
+`LoadLevel_Blocks` (PRG014). The low nibble is run length minus one, so `$60` is
+one note block and `$63` is a run of four. Retyping a placed block is a
+one-nibble edit that changes no offsets:
+
+| byte2 | Tile | Block |
+|-------|------|-------|
+| `$1X` | `$67` | Brick |
+| `$2X` | `$63` | ? block with a coin |
+| `$3X` | `$6B` | Brick with a coin |
+| `$4X` | `$79` | Wood block |
+| `$5X` | `$BC` | Green note block |
+| `$6X` | `$2E` | Note block |
+| `$7X` | `$72` | Bouncing wood block |
+| `$8X` | `$40` | Coin |
+
+`Level_ActionTiles` (PRG008) gives these their behaviour on a flat tile-ID
+compare, so it is tileset-independent — but the hit-enable mask differs: note
+blocks are `%0011` (top and bottom), bouncing wood blocks are `%1100` (sides
+only), green note blocks `%1111`. A note block is the one to reach for when the
+player must land on it. Coins are the only entry that consults collected-coin
+memory (`LoadLevel_CheckBGHMem`), so retyping one away also drops that check.
+
 **Group 1 power blocks found in 1-1 (verified by simulator):**
 
 | ROM Offset | Bytes | Tile | Screen | Row | Col |
