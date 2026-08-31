@@ -362,6 +362,8 @@ pub struct TestRomSpec {
     pub hammer_breaks_locks: bool,
     /// Let the Hammer item break water-gap (bridge) tiles on the map.
     pub hammer_breaks_bridges: bool,
+    /// Put bro encounters on the 10-second clock (`bro_battle_timer`).
+    pub bro_battle_timer: bool,
     /// Include the 9 unreferenced beta stages as placeable names.
     pub include_beta: bool,
     /// Repoint every Big [?] Block bonus area at "Unused Level 5" (the
@@ -802,7 +804,9 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         if matches!(spec.base, Base::Vanilla) {
             rom.set_tag("stomp_fairness");
             crate::randomize::stomp_fairness::apply(&mut rom);
-            report.push("always-on patches: stomp_fairness".to_string());
+            rom.set_tag("qol/real_time_clock");
+            crate::randomize::qol::apply_real_time_clock(&mut rom);
+            report.push("always-on patches: stomp_fairness, real_time_clock".to_string());
         } else {
             report.push("always-on patches: already present (randomized base)".to_string());
         }
@@ -977,6 +981,14 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         report.push(format!("hammer breaks: {what}"));
     }
 
+    // 6b. Bro-encounter clock. Same reasoning as the hammer patch above: it is
+    //     applied directly so a vanilla-base ROM can walk into W1's Hammer Bro
+    //     and see the 10-second clock without randomizing anything.
+    if spec.bro_battle_timer {
+        crate::randomize::qol::apply_bro_battle_timer(&mut rom);
+        report.push("bro battle timer: 10".to_string());
+    }
+
     // 7. Starting inventory. Last, mirroring the randomizer's own ordering —
     //    the trampoline overwrites title-screen bytes and must win.
     if !spec.starting_items.is_empty() {
@@ -1069,6 +1081,7 @@ mod tests {
             starting_lives: 5,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
+            bro_battle_timer: false,
             include_beta: false,
             big_q_unused5: None,
             big_q_palette: None,

@@ -101,7 +101,7 @@ struct Cli {
     #[arg(long)]
     keep_gaps: bool,
 
-    /// Apply the always-on gameplay patches (currently stomp fairness) to a
+    /// Apply the always-on gameplay patches (stomp fairness, real-time clock) to a
     /// vanilla base. Use when playtesting one of them — a plain vanilla base
     /// does not contain them, so the test silently exercises vanilla instead.
     /// Ignored on a --randomize base, which already has them.
@@ -126,6 +126,10 @@ struct Cli {
     /// Starting lives (only applied alongside --starting-items).
     #[arg(long, default_value_t = 5)]
     starting_lives: u8,
+
+    /// Put bro encounters (Hammer / Boomerang / Heavy / Fire) on a 10-second clock.
+    #[arg(long)]
+    bro_battle_timer: bool,
 
     /// Let the Hammer item break fortress lock tiles on the map.
     #[arg(long)]
@@ -401,6 +405,7 @@ fn main() {
         remove_gaps: !cli.keep_gaps,
         starting_items,
         starting_lives: cli.starting_lives,
+        bro_battle_timer: cli.bro_battle_timer,
         hammer_breaks_locks: cli.hammer_locks,
         hammer_breaks_bridges: cli.hammer_bridges,
         include_beta: cli.beta,

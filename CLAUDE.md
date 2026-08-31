@@ -95,7 +95,7 @@ is the one to read:
 | Bank | Mapped at | Free left | Largest single gap |
 |------|-----------|-----------|--------------------|
 | PRG031 | `$E000–$FFFF`, always | 81 | **30** |
-| PRG030 | `$8000–$9FFF`, always | 88 | 42 |
+| PRG030 | `$8000–$9FFF`, always | 58 | 42 |
 | PRG001 | swapped, in-level (object AI) | 60 | 38 |
 | PRG003 | swapped, in-level (object AI) | 5 | 5 |
 | PRG004 | swapped, in-level (object AI, group 3) | 426 | 426 |

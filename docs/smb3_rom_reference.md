@@ -93,6 +93,127 @@ Each range contains the level layout generators for that tileset/theme.
 | 7 | `aaabbbbb` | a = friction factor (3 bits); b = BG banks / CHR selection (5 bits) |
 | 8 | `aa00bbbb` | a = timer seed (2 bits, indexed); b = music track selection (4 bits) |
 
+#### The Level Clock
+
+The header's "timer seed" is a 2-bit **index**, not a time. `LevelLoad` (PRG030
+`$98B4`) folds bits 6-7 of byte 8 down to 0-3 and reads `GamePlay_TimeStart`
+(PRG030 `$97A8`, file `0x3D7B8`, bytes `3, 4, 2, 0`), storing the result in
+`Level_TimerMSD` — the *leading digit only*:
+
+```asm
+$98B4: B1 61       LDA [Level_LayPtr_AddrL],Y
+$98B6: 29 C0       AND #%11000000
+$98B8: 18 2A 2A 2A CLC; ROL A; ROL A; ROL A
+$98BC: AA          TAX
+$98BD: BD A8 97    LDA GamePlay_TimeStart,X
+$98C0: 8D EE 05    STA Level_TimerMSD
+$98C3: D0 03       BNE $98C8              ; non-zero -> done
+$98C5: EE F3 05    INC Level_TimerEn      ; index 3 (value 0) disables the clock
+```
+
+So a header can ask for 300, 400, 200 or unlimited and nothing else. Any other
+time has to be written into the digits directly.
+
+| Address | Symbol | Notes |
+|---|---|---|
+| `$05EE` | `Level_TimerMSD` | Hundreds digit — the only one the header sets |
+| `$05EF` | `Level_TimerMid` | Tens |
+| `$05F0` | `Level_TimerLSD` | Units |
+| `$05F1` | `Level_TimerTick` | Frame countdown, reloaded with `$28` |
+| `$05F3` | `Level_TimerEn` | Any of bits 0-6 stops the countdown (the check is `AND #$7F`); bit 7 alone only freezes level animations |
+
+**A clock unit is not a second — it is 41 frames, ≈ 0.68 s at 60.0988 Hz.**
+`StatusBar_Fill_Time` (PRG026 `$AF9D`) does `DEC Level_TimerTick / BPL`,
+reloading `$28` when it passes zero. So the clock runs about **47% fast**: a
+300 level is ~3 minutes 25 seconds of real time, not five minutes.
+
+**Most of that is deliberate.** `$28` is 40, and 40 frames is exactly 2/3 s at
+60.0988 Hz — a round decimal, not a hardware-derived constant. The European
+(PAL, 50.007 Hz) build stores the same `$28` (at `0x34FC8`; the routine shifts
+3 bytes, the value does not), so it was not scaled to a refresh rate, and
+41/50.007 = 0.82 s is no nearer a second than NTSC. A 1.5x clock is how the era
+put a big round "300" on the status bar for a ~3-minute level. Only the *41st*
+frame is accidental: `DEC`/`BPL` tests after decrementing, so the divider sits
+one extra frame at `$FF` before reloading — 2.4% on top of the intended 50%.
+
+Measured on FCEUX (vanilla PRG1, World 1-1, frame-counted between digit steps):
+
+| Condition | frames/unit | min | max | s/unit |
+|---|---|---|---|---|
+| screen scrolling | **41.00** | 41 | 41 | **0.682** |
+| standing still | 46.80 | 41 | 70 | 0.779 |
+
+The rate is exact while the game is scrolling. It is *only* standing still that
+stutters, and the reason is that the countdown is reached through a rendering
+call the gameplay loop is allowed to skip (PRG030 `$8F5A`):
+
+```asm
+LDA Scroll_ToVRAMHi        ; scroll column pending
+BNE skip
+LDA Scroll_ToVRAMHA
+BNE skip
+LDA Level_SkipStatusBarUpd
+BNE skip
+LDA <Graphics_Queue        ; a video update is queued
+BNE skip
+...
+LDA InvFlip_Counter        ; inventory flipping
+BNE skip_updatevalues
+JSR StatusBar_UpdateValues ; <- the only path to the clock
+```
+
+Timekeeping riding on a render call is the design flaw, but in practice the skip
+is rare enough that 41 frames is the real rate. **Do not assume scrolling slows
+it down — measurement says the opposite.**
+
+**Making it real seconds is a two-byte change.** Both reload sites are `LDA #$28`
+immediates — PRG026 `$AFB5` (file `0x34FC5`, operand `0x34FC6`) and PRG030
+`$8506` (file `0x3C516`, operand `0x3C517`). Writing `$3B` (59) makes the
+`DEC`/`BPL` span 60 frames. Measured with exactly that patch applied:
+
+| Condition | frames/unit | min | max | s/unit |
+|---|---|---|---|---|
+| screen scrolling | **60.00** | 60 | 60 | **0.998** |
+| standing still | 69.67 | 60 | 89 | 1.159 |
+
+Accurate to 0.2% in motion. The idle stutter is the same proportional artefact
+vanilla already has, not something the patch introduces. Because the header
+times were chosen against a deliberately fast clock, every level becomes more
+generous in real terms — a 300 level goes from ~3:25 to 5:00 — so it is a
+change of intent, not a correctness fix. The randomizer applies it
+unconditionally (`qol::level_clock`), on the grounds that a unit that equals a
+second is a unit other features can state directly; `qol::bro_timer` is the
+first to rely on it.
+
+**Retiming the four header slots is three data bytes**, but only in multiples of
+100: `GamePlay_TimeStart` entries go straight into the hundreds digit. Slot 3
+(`00`) is the unlimited path and is used by 381 level headers, so only three
+slots are real times; slot 1 (400) is used by 4 headers and is the cheap one to
+repurpose. To reproduce vanilla's *real* durations on the fixed clock you would
+need 137 / 205 / 273, which needs a tens digit — a parallel 4-byte table plus
+~9 bytes folded into the existing `$98C0` hook, since `X` still holds the timer
+index there.
+
+**Lag stretches a unit, before and after the patch.** `Counter_1` ($15) is
+incremented in the NMI handler (`prg031.asm`), so it counts real frames; the
+divider is only touched from the main loop, which is paced by
+`GraphicsBuf_Prep_And_WaitVSync`. A frame that overruns VBlank therefore costs
+the clock a tick, and a unit becomes longer in wall-clock terms. Correcting
+*that* is a different patch: drive the countdown from `Counter_1` deltas
+(`LDA <Counter_1 / SBC last / STA last`) so skipped and lagged frames are
+absorbed rather than lost. It needs ~25 bytes of free space and one spare RAM
+byte — `Unused699` ($0699) is a candidate, written once in PRG030 and read
+nowhere.
+
+Only three places write the digits: the countdown itself, `DoTimeBonus`
+(PRG000 `$C412`, the post-goal drain that converts leftover time to score), and
+the blanket `Clear_RAM_thru_ZeroPage` with `LDY #$06` that wipes `$0000-$06FF`
+on every path from a level back to the map. Nothing zeroes `Level_TimerMid` /
+`Level_TimerLSD` at level *load* — they are simply already 0 because of that
+clear. The same clear is why `Map_EnterViaID` (`$1E`, the map-object id the
+player walked in through) cannot leak from one level into the next, even though
+the ROM writes it in exactly one place (PRG011 `$B6D8`) and never clears it.
+
 ### Level Tile Generator Format
 
 Levels use "tile generators" (variable/fixed-size construction routines), not raw tile grids.

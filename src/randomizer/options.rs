@@ -403,6 +403,10 @@ pub struct Options {
     /// for the vanilla pre-attack delay. (MaCobra52's "Early Sun" patch.)
     #[serde(default)]
     pub early_sun: bool,
+    /// Bro encounters (Hammer / Boomerang / Heavy / Fire) start with a
+    /// 10-second clock instead of their level header's time setting.
+    #[serde(default)]
+    pub bro_battle_timer: bool,
     /// Restrict wandering Hammer Bros to overworld path tiles by converting
     /// the map-object landing-tile blacklist into a path-tile whitelist.
     /// ("SMB3 - Limit Bro Movement" patch.)
@@ -629,6 +633,7 @@ impl Default for Options {
             hammer_breaks_locks: Tri::Off,
             hammer_breaks_bridges: Tri::Off,
             early_sun: false,
+            bro_battle_timer: false,
             limit_bro_movement: false,
             japanese_damage: false,
             infinite_mushroom_houses: false,

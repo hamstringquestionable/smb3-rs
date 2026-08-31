@@ -9,7 +9,32 @@ deploys.
 
 ## [Unreleased]
 
+### Changed
+
+- **The level clock now counts real seconds.** Vanilla steps the timer every 41
+  frames, so a unit was 0.68 s and the clock ran about 47% fast — a "300" level
+  was really about 3:25, not five minutes. The divider is now 60 frames, giving
+  a measured 0.998 s per unit, on every seed.
+
+  The reason is less about the clock than about what it lets us build: a timer
+  that reads seconds is a unit other options can use. **Bro Battle Timer** below
+  says ten seconds and means ten seconds, and anything timed added later gets
+  that for free.
+
+  Worth being straight that the fast clock was a *choice*, not a bug — the
+  stored divider is 40, exactly 2/3 s at 60 Hz, and the PAL release uses the
+  same value, so it was never scaled to a refresh rate. Levels are therefore
+  more generous in real terms than Nintendo shipped, though running the clock
+  out was already a rare way to lose a seed.
+
 ### Added
+
+- **Bro Battle Timer** (new option, off by default). Walking into a Hammer,
+  Boomerang, Heavy or Fire Bro starts the clock at 10 instead of the arena's
+  usual 200 — and with the clock fix above, ten really is ten seconds. Miss it
+  and the fight takes the life instead. Only encounters entered through a bro
+  sprite are affected; every other level, including World 8's full-length
+  Hammer Bro entry, keeps its own time.
 
 - **Limit Hazards** (new option: Off / Some / All, off by default). Stops enemy
   swaps from dropping a hazard into a level that wasn't built for one — nippers,

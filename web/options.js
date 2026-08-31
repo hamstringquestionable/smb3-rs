@@ -372,6 +372,10 @@ export const SCHEMA = [
 		tip: "Angry Sun starts attacking immediately on spawn.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "enemies", inFlagKey: true },
+	{ id: "bro_battle_timer", type: "bool", default: false,
+		label: "Bro Battle Timer",
+		tip: "Walk into a Hammer, Boomerang, Heavy or Fire Bro and the clock starts at 10. Clear the room fast or the fight clears you.",
+		group: "enemies", inFlagKey: true },
 
 	// --- Bosses ---
 	{ id: "random_koopalings", type: "bool", default: false,
