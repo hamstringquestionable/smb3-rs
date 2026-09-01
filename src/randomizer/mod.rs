@@ -406,9 +406,11 @@ fn randomize_inner(
     rom.set_tag("metatile/6a_freeze");
     randomize::overworld_writer::patch_metatile_6a_freeze(rom);
 
-    // Randomize king quotes (always on — cosmetic flavor text)
+    // Randomize king quotes. Always called, even when the option is off: the
+    // module draws its quotes unconditionally and only the ROM writes are
+    // gated, so toggling this cannot shift the seed stream for anything below.
     rom.set_tag("king_quotes");
-    randomize::king_quotes::randomize(rom, &mut rng);
+    randomize::king_quotes::randomize(rom, &mut rng, options.king_quotes);
 
     // Cosmetic: render every item visual (reserve grid, Toad House chests,
     // in-level treasure boxes) as the Anchor sprite.

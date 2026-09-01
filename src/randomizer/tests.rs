@@ -29,6 +29,7 @@ fn normalized(mut o: Options) -> Options {
     o.palettes = true;
     o.palette_themed = false;
     o.remove_flashing = true;
+    o.king_quotes = true;
     o
 }
 
@@ -466,6 +467,7 @@ fn flag_key_per_option_round_trip() {
         ("palettes", Box::new(|o| o.palettes = !o.palettes)),
         ("palette_themed", Box::new(|o| o.palette_themed = !o.palette_themed)),
         ("remove_flashing", Box::new(|o| o.remove_flashing = !o.remove_flashing)),
+        ("king_quotes", Box::new(|o| o.king_quotes = !o.king_quotes)),
     ];
     for (label, mutate) in cosmetic {
         check_round_trip(label, mutate, false);
@@ -1092,6 +1094,7 @@ fn all_off_options() -> Options {
         palette_themed: false,
         player_color: None,
         remove_flashing: false,
+        king_quotes: false,
         world_order: false,
         world_count: 7,
         big_q_blocks: false,
@@ -1165,6 +1168,7 @@ fn all_on_options() -> Options {
         palette_themed: false,
         player_color: None,
         remove_flashing: true,
+        king_quotes: true,
         world_order: true,
         world_count: 3,
         big_q_blocks: true,
@@ -1279,6 +1283,66 @@ fn test_full_determinism() {
             hash1, hash2,
             "{name}: hash mismatch between runs (0x{hash1:016X} vs 0x{hash2:016X})"
         );
+    }
+}
+
+/// Turning king quotes off must not move a single byte the module doesn't own.
+///
+/// The whole point of the option is that it gates ROM writes and nothing else:
+/// `king_quotes::randomize` draws all four of its picks before the early
+/// return, so the seed stream is identical either way and every downstream
+/// module sees the same RNG. If someone later moves a `choose` call below that
+/// return, every byte after king_quotes in the pipeline shifts and this fails.
+///
+/// The owned-byte set comes from the write log rather than being restated as
+/// offsets here, so it tracks the module instead of drifting away from it.
+#[test]
+fn king_quotes_off_only_skips_its_own_writes() {
+    let seed = 4242u64;
+    let mut on = test_options();
+    on.king_quotes = true;
+    let mut off = test_options();
+    off.king_quotes = false;
+
+    let Some(mut rom_on) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    randomize(&mut rom_on, seed, &on);
+
+    let Some(mut rom_off) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    randomize(&mut rom_off, seed, &off);
+
+    // Off writes nothing at all — vanilla's king text survives untouched.
+    let off_writes = rom_off.writes_by_tag("king_quotes");
+    assert!(
+        off_writes.is_empty(),
+        "king_quotes off still wrote {} range(s) — the gate leaked",
+        off_writes.len()
+    );
+
+    let owned: std::collections::HashSet<usize> = rom_on
+        .writes_by_tag("king_quotes")
+        .iter()
+        .flat_map(|rec| rec.changes().map(|(off, _, _)| off))
+        .collect();
+    assert!(!owned.is_empty(), "king_quotes on changed nothing — test is not exercising anything");
+
+    let a = rom_on.output_bytes();
+    let b = rom_off.output_bytes();
+    assert_eq!(a.len(), b.len(), "ROM length changed with the toggle");
+    for i in 0..a.len() {
+        if a[i] != b[i] {
+            assert!(
+                owned.contains(&i),
+                "offset 0x{i:05X} differs (0x{:02X} vs 0x{:02X}) outside the bytes \
+                 king_quotes wrote — toggling it shifted the seed stream",
+                a[i], b[i]
+            );
+        }
     }
 }
 

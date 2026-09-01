@@ -360,6 +360,12 @@ pub struct Options {
     /// the flag key and consumes no RNG.
     #[serde(default = "default_true")]
     pub remove_flashing: bool,
+    /// Replace the king's rescue dialogue with a randomized quote. Off falls
+    /// back to vanilla's own king text — the module still draws its quotes from
+    /// the RNG either way and only skips the ROM writes, so the seed stream is
+    /// identical with this on or off. Cosmetic — not encoded in the flag key.
+    #[serde(default = "default_true")]
+    pub king_quotes: bool,
     #[serde(default)]
     pub world_order: bool,
     /// Number of worlds before Dark Land (1–7, default 7).
@@ -650,6 +656,7 @@ impl Default for Options {
             palette_themed: false,
             player_color: None,
             remove_flashing: true,
+            king_quotes: true,
             world_order: false,
             world_count: default_world_count(),
             big_q_blocks: false,

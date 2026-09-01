@@ -173,6 +173,11 @@ struct Cli {
     #[arg(long)]
     keep_flashing: bool,
 
+    /// Keep vanilla's own king rescue dialogue instead of a randomized quote.
+    /// Cosmetic; not in the flag key, and consumes the same RNG either way.
+    #[arg(long)]
+    vanilla_king_quotes: bool,
+
     /// Recolor levels, enemies, and world maps with a random theme (world
     /// colors). Independent of player colors.
     /// Cosmetic; not encoded in the flag key.
@@ -530,6 +535,11 @@ fn build_options(cli: &Cli) -> Options {
                 if cli.keep_flashing {
                     opts.remove_flashing = false;
                 }
+                // Same for king_quotes — cosmetic, default-on, absent from the
+                // key; --vanilla-king-quotes overlays it off.
+                if cli.vanilla_king_quotes {
+                    opts.king_quotes = false;
+                }
                 // Same for skip_rom_validation — a property of the input ROM.
                 if cli.skip_rom_validation {
                     opts.skip_rom_validation = true;
@@ -548,6 +558,7 @@ fn build_options(cli: &Cli) -> Options {
             palette_themed: cli.themed_palettes,
             player_color: cli.player_color,
             remove_flashing: !cli.keep_flashing,
+            king_quotes: !cli.vanilla_king_quotes,
             world_order: cli.world_order,
             world_count: cli.world_count,
             big_q_blocks: cli.big_q_blocks,
@@ -629,6 +640,7 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     );
     eprintln!("  World colors: {}", if options.palette_themed { "themed" } else { "vanilla" });
     eprintln!("  Remove flashing: {}", if options.remove_flashing { "on" } else { "off" });
+    eprintln!("  King quotes: {}", if options.king_quotes { "random" } else { "vanilla" });
     eprintln!("  Enemies:  {}", if options.any_enemies_active() { "on" } else { "off" });
     eprintln!(
         "  Limit hazards: {}",

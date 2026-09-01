@@ -532,6 +532,10 @@ export const SCHEMA = [
 		tip: "Stop the full-screen flashing and fading effects. On by default so the game is safer for players sensitive to flashing lights.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "cosmetic", inFlagKey: false },
+	{ id: "king_quotes", type: "bool", default: true,
+		label: "King quotes",
+		tip: "Give each rescued king a new thing to say. Turn this off and the kings say what they say in the original game.",
+		group: "cosmetic", inFlagKey: false },
 ];
 
 // Hardcoded fields sent to Rust that aren't user-facing.
