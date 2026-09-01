@@ -13,10 +13,21 @@
 //! construction. So a single reader describes any ROM, and the vanilla
 //! constants become one possible *output* rather than a parallel truth.
 //!
-//! This is the foundation for making the world count variable. Nothing is
-//! rewired to it yet — `layout_matches_the_vanilla_constants` pins that the
-//! reader agrees with the constants on a vanilla ROM, so call sites can be
-//! migrated a few at a time without a flag day.
+//! The overworld pipeline is wired to this. [`NodeCatalog`] carries the layout
+//! it was read against, and the pickup, build and write phases take it from
+//! there rather than indexing the constants — which is why the catalog is the
+//! right home for it: every later phase already receives one.
+//!
+//! Passes that run *before* any re-partitioning — the QoL map patches,
+//! `credits`, testrom's `open_map` — legitimately keep using the constants,
+//! because the vanilla layout is exactly what they are addressing.
+//!
+//! `layout_matches_the_vanilla_constants` pins that the reader agrees with the
+//! constants on a vanilla ROM. That is what makes the migration safe, and it
+//! was checked the strong way: a seeded randomizer run produces a
+//! byte-identical ROM before and after.
+//!
+//! [`NodeCatalog`]: crate::randomize::node_catalog::NodeCatalog
 
 use crate::rom::Rom;
 
@@ -81,14 +92,6 @@ impl MapLayout {
     }
 
     /// The vanilla eight-world layout, read from a vanilla ROM.
-    //
-    // Reason(dead_code): this module is Phase 3's foundation, landed and
-    // pinned by tests *before* the 46 call sites that will consume it are
-    // migrated — staging the risk rather than doing a flag day. `read` and
-    // `get` already have a real consumer in `mega_map::read_grid`; these two
-    // are the part of the API the migration needs, and are exercised by
-    // `layout_matches_the_vanilla_constants` until it happens.
-    #[allow(dead_code)]
     pub fn vanilla(rom: &Rom) -> Self {
         Self::read(rom, &[0, 1, 2, 3, 4, 5, 6, 7])
     }
@@ -97,9 +100,50 @@ impl MapLayout {
         self.worlds.iter().find(|w| w.slot == slot)
     }
 
+    /// The layout of a live world, panicking if the slot is dead.
+    ///
+    /// The mechanical replacement for `WORLDS[slot]` / `MAP_TILE_GRIDS[slot]`.
+    /// Panicking is deliberate: indexing a dead slot is a bug in the caller's
+    /// iteration, and the world-merge experiment showed that quietly reading a
+    /// dead world's aliased tables produces plausible garbage rather than a
+    /// crash — duplicated levels, entries at impossible rows — which is far
+    /// harder to trace than a panic naming the slot.
+    pub fn world(&self, slot: usize) -> &WorldLayout {
+        self.get(slot).unwrap_or_else(|| panic!("map layout has no live world in slot {slot}"))
+    }
+
+    /// This world as a [`WorldTables`], so the existing `read_entry` /
+    /// `table_offsets` helpers keep their signatures. The mechanical
+    /// replacement for `&WORLDS[slot]`.
+    pub fn tables(&self, slot: usize) -> super::WorldTables {
+        let w = self.world(slot);
+        super::WorldTables { rowtype_offset: w.rowtype_offset, entry_count: w.entry_count }
+    }
+
+    /// The live world slots, ascending. Replaces `0..8`.
+    pub fn slots(&self) -> impl Iterator<Item = usize> + '_ {
+        self.worlds.iter().map(|w| w.slot)
+    }
+
+    /// Read a live world's tile grid.
+    ///
+    /// The layout-aware [`read_tile_grid`], which sizes itself from the
+    /// vanilla constants and so reads the wrong offsets at the wrong stride
+    /// once the map has been re-partitioned.
+    pub fn read_grid(&self, rom: &Rom, slot: usize) -> super::Grid {
+        let w = self.world(slot);
+        let tiles = (0..ROWS)
+            .map(|r| (0..w.columns()).map(|c| rom.read_byte(w.tile_offset(r, c))).collect())
+            .collect();
+        super::Grid { tiles, cols: w.columns(), eights_are_wild: false }
+    }
+
     /// How many worlds the game actually has. The point of the whole exercise:
     /// consumers ask this instead of assuming eight.
-    #[allow(dead_code)] // Reason: see `vanilla` above.
+    // Reason(dead_code): the iteration sites migrated so far use `slots()`.
+    // This is the count they need once the per-world budgets in
+    // `overworld_build::capacity` stop being `[T; 8]`, which is the next step.
+    #[allow(dead_code)]
     pub fn world_count(&self) -> usize {
         self.worlds.len()
     }

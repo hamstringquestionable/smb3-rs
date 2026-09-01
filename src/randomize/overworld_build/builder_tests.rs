@@ -76,7 +76,8 @@ fn census_ctx(raw: &Rom, seed: u64) -> CensusCtx {
         _ => (false, false),
     };
     let rom = qol_variant(raw, hammer_rocks, eights_wild);
-    let mut catalog = NodeCatalog::build(&rom, false);
+    let mut catalog =
+        NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
     let mut roll_rng = ChaCha8Rng::seed_from_u64(seed);
     start_airship_swap::pick_swaps(&mut catalog, &mut roll_rng);
     let shuffle_toad_houses = roll_rng.random_bool(0.5);
@@ -212,7 +213,8 @@ fn test_builder_vanilla_worlds() {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
-    let catalog = NodeCatalog::build(&rom, false);
+    let catalog =
+        NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
 
     println!("vanilla worlds (raw ROM, scorer points: level 3 / fort 5 / pipe 1 / rock 8)");
     println!("world  levels forts pipes locks |  C1  routes  uniq  detours  goal-open");
@@ -1227,7 +1229,8 @@ fn test_builder_progression_census() {
     }
 
     // Vanilla ground truth: constant per world, measured once.
-    let catalog = NodeCatalog::build(&raw, false);
+    let catalog =
+        NodeCatalog::build(&raw, &crate::randomize::rom_data::MapLayout::vanilla(&raw), false);
     let mut vanilla = [ProgTally::default(); 8];
     for (world_idx, t) in vanilla.iter_mut().enumerate() {
         tally(t, &from_vanilla(&raw, &catalog, world_idx).to_built());
@@ -1459,7 +1462,8 @@ fn test_builder_diversity_census() {
     };
     let rom = base_qol(&rom);
     let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(20);
-    let catalog = NodeCatalog::build(&rom, false);
+    let catalog =
+        NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
     let pickup = pick_up(&rom, &catalog, PickupFlags::default());
 
     // Shipping arm: one build() per seed yields all 8 worlds.
@@ -1655,7 +1659,8 @@ fn test_builder_probe_vanilla_world() {
     };
     let world: usize = std::env::var("CENSUS_WORLD").ok().and_then(|s| s.parse().ok()).unwrap_or(2);
     let slack: u32 = std::env::var("CENSUS_SLACK").ok().and_then(|s| s.parse().ok()).unwrap_or(12);
-    let catalog = NodeCatalog::build(&rom, false);
+    let catalog =
+        NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
     let state = from_vanilla(&rom, &catalog, world - 1);
     let rc = analyze_route_choice(&state.to_built(), slack);
     println!("vanilla W{world} wide band (slack {slack}): best={}", rc.best_cost);
@@ -1865,7 +1870,8 @@ fn test_builder_island_roles() {
     };
     use super::islands::IslandRole::{Corridor, Entry, Final, Routing, Utility};
     let rom = base_qol(&raw);
-    let catalog = NodeCatalog::build(&rom, false);
+    let catalog =
+        NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
     // Toad-house / hammer-bro shuffle ON: those tiles get picked up as
     // placeable blanks, which is the anatomy the role model was calibrated
     // on (the flags-off variant shrinks three W7 islands by one tile each).

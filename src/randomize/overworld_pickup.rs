@@ -171,7 +171,7 @@ fn pick_up_world(
     fx_slots: &[FxSlot],
     world_fx: &[u8],
 ) -> ClearedWorld {
-    let mut grid = rom_data::read_tile_grid(rom, world_idx);
+    let mut grid = catalog.layout.read_grid(rom, world_idx);
 
     // Pre-open all vanilla FX gap tiles so the grid is fully connected.
     open_fx_gaps(&mut grid, fx_slots, world_fx);
@@ -369,7 +369,8 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom, false);
+        let catalog =
+            NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
         let result = pick_up(
             &rom,
             &catalog,
@@ -400,7 +401,8 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom, false);
+        let catalog =
+            NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
         let result = pick_up(
             &rom,
             &catalog,
@@ -434,7 +436,8 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom, false);
+        let catalog =
+            NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
         let result = pick_up(
             &rom,
             &catalog,
@@ -475,7 +478,8 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom, false);
+        let catalog =
+            NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
         let result = pick_up(
             &rom,
             &catalog,
@@ -507,7 +511,8 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom, false);
+        let catalog =
+            NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
         let result = pick_up(
             &rom,
             &catalog,
@@ -544,7 +549,8 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom, false);
+        let catalog =
+            NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
         let result = pick_up(
             &rom,
             &catalog,
@@ -676,7 +682,8 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom, false);
+        let catalog =
+            NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
         let result = pick_up(
             &rom,
             &catalog,
@@ -771,7 +778,8 @@ mod tests {
             Some(r) => r,
             None => return,
         };
-        let catalog = NodeCatalog::build(&rom, false);
+        let catalog =
+            NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
 
         dump_filtered_rom(&rom, &catalog, |e, _| e.kind.is_level_like(), "cleared_all.nes");
         dump_filtered_rom(

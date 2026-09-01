@@ -92,7 +92,11 @@ struct Candidate {
 /// levels only (`NodeKind::Level`), de-duped by enemy-data location so a shared
 /// enemy set is a single candidate.
 fn collect_candidates(rom: &Rom, data: &[u8], opts: &Options) -> Vec<Candidate> {
-    let catalog = NodeCatalog::build(rom, opts.include_beta_stages);
+    let catalog = NodeCatalog::build(
+        rom,
+        &crate::randomize::rom_data::MapLayout::vanilla(rom),
+        opts.include_beta_stages,
+    );
     let mut out = Vec::new();
     let mut seen: HashSet<usize> = HashSet::new();
     for e in &catalog.entries {

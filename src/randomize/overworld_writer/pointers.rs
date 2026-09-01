@@ -28,7 +28,7 @@ pub(super) fn write_pointer_entries(
 ) {
     let pickup = data.pickup;
     let catalog = data.catalog;
-    let world = &WORLDS[world_idx];
+    let world = &catalog.layout.tables(world_idx);
     let n = world.entry_count;
     let rt = world.rowtype_offset;
     let sc = rt + n;

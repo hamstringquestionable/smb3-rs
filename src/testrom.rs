@@ -417,7 +417,7 @@ fn norm(name: &str) -> String {
 /// randomizer has since moved it.
 fn source_catalog(vanilla: &[u8], include_beta: bool) -> Result<Vec<EntryView>, String> {
     let rom = Rom::from_bytes_lax(vanilla, true).map_err(|e| e.to_string())?;
-    Ok(NodeCatalog::build(&rom, include_beta).entry_views())
+    Ok(NodeCatalog::build(&rom, &rom_data::MapLayout::vanilla(&rom), include_beta).entry_views())
 }
 
 /// Resolve a level name to the data that travels with it when placed.
@@ -444,14 +444,17 @@ fn resolve(catalog: &[EntryView], name: &str) -> Result<LevelEntry, String> {
 /// Read from the *target* ROM so this works on a randomized base, where the
 /// numbered tiles no longer sit where vanilla put them.
 fn numbered_slots(rom: &Rom, world_idx: usize, include_beta: bool) -> Vec<(u8, usize)> {
-    let mut slots: Vec<(u8, usize)> = NodeCatalog::build(rom, include_beta)
-        .entry_views()
-        .into_iter()
-        .filter(|e| {
-            e.world_idx == world_idx && e.is_numbered_level && rom_data::is_numbered_level(e.tile)
-        })
-        .map(|e| (e.tile - 2, e.entry_idx))
-        .collect();
+    let mut slots: Vec<(u8, usize)> =
+        NodeCatalog::build(rom, &rom_data::MapLayout::vanilla(rom), include_beta)
+            .entry_views()
+            .into_iter()
+            .filter(|e| {
+                e.world_idx == world_idx
+                    && e.is_numbered_level
+                    && rom_data::is_numbered_level(e.tile)
+            })
+            .map(|e| (e.tile - 2, e.entry_idx))
+            .collect();
     slots.sort_unstable();
     slots.dedup_by_key(|(num, _)| *num);
     slots

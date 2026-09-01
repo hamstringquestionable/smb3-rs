@@ -1060,7 +1060,8 @@ fn injectable_offsets(
     use crate::randomize::node_catalog::{NodeCatalog, NodeKind};
     use crate::randomize::rom_data::enemy_ptr_to_file_offset;
     let mut set = std::collections::HashSet::new();
-    let catalog = NodeCatalog::build(base, false);
+    let catalog =
+        NodeCatalog::build(base, &crate::randomize::rom_data::MapLayout::vanilla(base), false);
     for e in &catalog.entries {
         if !matches!(e.kind, NodeKind::Level) {
             continue;
@@ -1734,7 +1735,8 @@ fn wild_injection_rework_guarantees() {
     };
     let len = ENEMY_DATA_END - ENEMY_DATA_START;
     let vanilla = base.read_range(ENEMY_DATA_START, len).to_vec();
-    let catalog = NodeCatalog::build(&base, false);
+    let catalog =
+        NodeCatalog::build(&base, &crate::randomize::rom_data::MapLayout::vanilla(&base), false);
 
     // Count occurrences of `id` across a level's first $FF run.
     let run_count = |obj_ptr: u16, data: &[u8], id: u8| -> usize {
@@ -1862,7 +1864,8 @@ fn injected_chaser_counts(base: &Rom, opts: &Options, seeds: u64) -> [u32; 3] {
 
     let len = ENEMY_DATA_END - ENEMY_DATA_START;
     let vanilla = base.read_range(ENEMY_DATA_START, len).to_vec();
-    let catalog = NodeCatalog::build(base, false);
+    let catalog =
+        NodeCatalog::build(base, &crate::randomize::rom_data::MapLayout::vanilla(base), false);
     let mut counts = [0u32; 3];
     for seed in 0..seeds {
         let mut rom = base.clone();
@@ -2005,7 +2008,8 @@ fn wild_injected_lakitu_height_varies() {
     };
     let len = ENEMY_DATA_END - ENEMY_DATA_START;
     let vanilla = base.read_range(ENEMY_DATA_START, len).to_vec();
-    let catalog = NodeCatalog::build(&base, false);
+    let catalog =
+        NodeCatalog::build(&base, &crate::randomize::rom_data::MapLayout::vanilla(&base), false);
 
     let opts = Options {
         wild_injections: vec![WildChaser::Sun, WildChaser::Lakitu],
@@ -2056,7 +2060,8 @@ fn wild_injection_favors_sun() {
     };
     let len = ENEMY_DATA_END - ENEMY_DATA_START;
     let vanilla = base.read_range(ENEMY_DATA_START, len).to_vec();
-    let catalog = NodeCatalog::build(&base, false);
+    let catalog =
+        NodeCatalog::build(&base, &crate::randomize::rom_data::MapLayout::vanilla(&base), false);
 
     let opts = Options {
         wild_injections: vec![WildChaser::Sun, WildChaser::Lakitu],

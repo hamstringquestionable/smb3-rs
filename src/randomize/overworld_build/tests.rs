@@ -62,7 +62,8 @@ fn apply_qol_variant(rom: &Rom, hammer_rocks: bool, eights_wild: bool) -> Rom {
 /// applies per-seed start↔airship swap before pickup runs, matching the
 /// real pipeline in `randomizer.rs` when `swap_start_airship` is on.
 fn build_catalog_pickup(rom: &Rom, seed: u64) -> (NodeCatalog, PickupResult) {
-    let mut catalog = NodeCatalog::build(rom, false);
+    let mut catalog =
+        NodeCatalog::build(rom, &crate::randomize::rom_data::MapLayout::vanilla(rom), false);
     if std::env::var("SAS").is_ok() {
         let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
         super::super::start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
@@ -143,7 +144,8 @@ fn census_build(rom: &Rom, seed: u64) -> BuildResult {
     let arm = census_arm(seed);
     let rom = apply_qol_variant(rom, arm == CensusArm::HammerRocks, arm == CensusArm::EightsWild);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    let mut catalog = NodeCatalog::build(&rom, false);
+    let mut catalog =
+        NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
     let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
     super::super::start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
     let pickup = super::super::overworld_pickup::pick_up(
@@ -325,7 +327,11 @@ fn all_world_targets_reachable() {
         for hb in [false, true] {
             for sas in [false, true] {
                 for seed in 0..seeds {
-                    let mut catalog = NodeCatalog::build(rom, false);
+                    let mut catalog = NodeCatalog::build(
+                        rom,
+                        &crate::randomize::rom_data::MapLayout::vanilla(rom),
+                        false,
+                    );
                     let mut rng = ChaCha8Rng::seed_from_u64(seed);
                     if sas {
                         super::super::start_airship_swap::pick_swaps(&mut catalog, &mut rng);
@@ -453,7 +459,8 @@ fn hammer_bro_redistribution_invariants() {
     };
     for seed in 0..32u64 {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let catalog = NodeCatalog::build(&rom, false);
+        let catalog =
+            NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
         let pickup = super::super::overworld_pickup::pick_up(
             &rom,
             &catalog,
@@ -1018,7 +1025,8 @@ fn test_sas_w3_fixed_pipe_keeps_target_reachable() {
     let rom = apply_qol_for_overworld(&rom);
     // Previously-unreachable SAS W3 seeds (from the SAS=1 progression sweep).
     for seed in [123u64, 385, 515, 559, 629] {
-        let mut catalog = NodeCatalog::build(&rom, false);
+        let mut catalog =
+            NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
         let mut swap_rng = ChaCha8Rng::seed_from_u64(seed);
         super::super::start_airship_swap::pick_swaps(&mut catalog, &mut swap_rng);
         let pickup = super::super::overworld_pickup::pick_up(

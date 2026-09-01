@@ -1,4 +1,5 @@
 use super::*;
+use crate::randomize::rom_data::WORLDS;
 use crate::randomize::{
     map_walker, node_catalog, overworld_build, overworld_pickup, piranha_rooms, qol, troll_pipes,
 };
@@ -38,7 +39,11 @@ fn test_pool_assignment_exhaustive() {
         Some(r) => r,
         None => return,
     };
-    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let catalog = node_catalog::NodeCatalog::build(
+        &rom,
+        &crate::randomize::rom_data::MapLayout::vanilla(&rom),
+        false,
+    );
     let pickup = standard_pickup(&rom, &catalog);
     let mut rng = ChaCha8Rng::seed_from_u64(42);
     let build = overworld_build::build(
@@ -118,7 +123,11 @@ fn test_troll_pipes_never_assigned_hand_levels() {
         Some(r) => r,
         None => return,
     };
-    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let catalog = node_catalog::NodeCatalog::build(
+        &rom,
+        &crate::randomize::rom_data::MapLayout::vanilla(&rom),
+        false,
+    );
     let pickup = standard_pickup(&rom, &catalog);
 
     for seed in 0u64..32 {
@@ -183,7 +192,11 @@ fn test_friendlier_levels_blocks_and_refills() {
     };
 
     for beta in [false, true] {
-        let catalog = node_catalog::NodeCatalog::build(&rom, beta);
+        let catalog = node_catalog::NodeCatalog::build(
+            &rom,
+            &crate::randomize::rom_data::MapLayout::vanilla(&rom),
+            beta,
+        );
         let pickup = standard_pickup(&rom, &catalog);
 
         for seed in 0u64..16 {
@@ -271,7 +284,11 @@ fn test_deja_vu_repeats_levels() {
     };
 
     for beta in [false, true] {
-        let catalog = node_catalog::NodeCatalog::build(&rom, beta);
+        let catalog = node_catalog::NodeCatalog::build(
+            &rom,
+            &crate::randomize::rom_data::MapLayout::vanilla(&rom),
+            beta,
+        );
         let pickup = standard_pickup(&rom, &catalog);
 
         for mode in [DejaVuMode::Double, DejaVuMode::Wild] {
@@ -389,7 +406,11 @@ fn test_friendlier_levels_fort_ladder() {
         Some(r) => r,
         None => return,
     };
-    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let catalog = node_catalog::NodeCatalog::build(
+        &rom,
+        &crate::randomize::rom_data::MapLayout::vanilla(&rom),
+        false,
+    );
     let pickup = standard_pickup(&rom, &catalog);
 
     let mut placed_hist = [0usize; 3];
@@ -484,7 +505,11 @@ fn test_write_deterministic() {
         Some(r) => r,
         None => return,
     };
-    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let catalog = node_catalog::NodeCatalog::build(
+        &rom,
+        &crate::randomize::rom_data::MapLayout::vanilla(&rom),
+        false,
+    );
     let pickup = standard_pickup(&rom, &catalog);
 
     let mut rom1 = rom.clone();
@@ -517,7 +542,11 @@ fn test_w8_sprites_moved() {
         Some(r) => r,
         None => return,
     };
-    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let catalog = node_catalog::NodeCatalog::build(
+        &rom,
+        &crate::randomize::rom_data::MapLayout::vanilla(&rom),
+        false,
+    );
     let pickup = standard_pickup(&rom, &catalog);
     let mut rng = ChaCha8Rng::seed_from_u64(42);
     let build = overworld_build::build(
@@ -554,7 +583,11 @@ fn test_fx_slots_valid() {
         Some(r) => r,
         None => return,
     };
-    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let catalog = node_catalog::NodeCatalog::build(
+        &rom,
+        &crate::randomize::rom_data::MapLayout::vanilla(&rom),
+        false,
+    );
     let pickup = standard_pickup(&rom, &catalog);
     let mut rng = ChaCha8Rng::seed_from_u64(42);
     let build = overworld_build::build(
@@ -597,7 +630,11 @@ fn test_hammer_bro_redistribution_written() {
         None => return,
     };
     for seed in 0..16u64 {
-        let catalog = node_catalog::NodeCatalog::build(&rom, false);
+        let catalog = node_catalog::NodeCatalog::build(
+            &rom,
+            &crate::randomize::rom_data::MapLayout::vanilla(&rom),
+            false,
+        );
         let pickup = overworld_pickup::pick_up(
             &rom,
             &catalog,
@@ -670,7 +707,11 @@ fn test_pointer_table_sorted() {
         Some(r) => r,
         None => return,
     };
-    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let catalog = node_catalog::NodeCatalog::build(
+        &rom,
+        &crate::randomize::rom_data::MapLayout::vanilla(&rom),
+        false,
+    );
     let pickup = standard_pickup(&rom, &catalog);
     let mut rng = ChaCha8Rng::seed_from_u64(42);
     let build = overworld_build::build(
@@ -728,7 +769,11 @@ fn test_no_uncovered_blank_nodes() {
         Some(r) => r,
         None => return,
     };
-    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let catalog = node_catalog::NodeCatalog::build(
+        &rom,
+        &crate::randomize::rom_data::MapLayout::vanilla(&rom),
+        false,
+    );
     let pickup = standard_pickup(&rom, &catalog);
 
     for seed in [42u64, 123, 999, 7777, 31337] {
@@ -799,7 +844,11 @@ fn test_generate_rom() {
             return;
         }
     };
-    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let catalog = node_catalog::NodeCatalog::build(
+        &rom,
+        &crate::randomize::rom_data::MapLayout::vanilla(&rom),
+        false,
+    );
     let pickup = standard_pickup(&rom, &catalog);
 
     for seed in [42u64, 123, 999] {
@@ -986,7 +1035,11 @@ fn test_troll_pipes_never_assigned_piranha_levels() {
     // Piranha-active pipeline: sprites cleared, catalog entries released.
     let mut prepped = rom.clone();
     piranha_rooms::clear_vanilla_plants(&mut prepped);
-    let mut catalog = node_catalog::NodeCatalog::build(&prepped, false);
+    let mut catalog = node_catalog::NodeCatalog::build(
+        &prepped,
+        &crate::randomize::rom_data::MapLayout::vanilla(&prepped),
+        false,
+    );
     catalog.release_map_objects();
     let pickup = standard_pickup(&prepped, &catalog);
 
@@ -1160,7 +1213,11 @@ fn test_march_veto_pipeline_writes_registry() {
     };
     let mut prepped = rom.clone();
     piranha_rooms::clear_vanilla_plants(&mut prepped);
-    let mut catalog = node_catalog::NodeCatalog::build(&prepped, false);
+    let mut catalog = node_catalog::NodeCatalog::build(
+        &prepped,
+        &crate::randomize::rom_data::MapLayout::vanilla(&prepped),
+        false,
+    );
     catalog.release_map_objects();
     let pickup = overworld_pickup::pick_up(
         &prepped,

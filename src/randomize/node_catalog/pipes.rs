@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::rom::Rom;
 
-use crate::randomize::rom_data::{self, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, WORLDS};
+use crate::randomize::rom_data::{self, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y};
 
 // ---------------------------------------------------------------------------
 // Pipe pair matching
@@ -19,12 +19,13 @@ use crate::randomize::rom_data::{self, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, WOR
 /// doesn't — e.g. W5 spiral castle), the PWC entry is the A-side.
 pub(super) fn build_pipe_map(
     rom: &Rom,
+    layout: &rom_data::MapLayout,
     world_idx: usize,
     pipe_entries_by_obj: &HashMap<u16, Vec<usize>>,
     spiral_entries: &[usize],
     dest_indices: &[usize],
 ) -> HashMap<usize, (usize, bool)> {
-    let world = &WORLDS[world_idx];
+    let world = &layout.tables(world_idx);
     let mut result: HashMap<usize, (usize, bool)> = HashMap::new();
 
     // Collect all pipe pairs: (entry_a, entry_b)

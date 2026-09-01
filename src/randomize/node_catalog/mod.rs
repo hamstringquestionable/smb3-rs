@@ -136,6 +136,13 @@ pub(crate) struct NodeCatalog {
     /// objective lives at the start coords). Index 7 (W8) is always false —
     /// Bowser's castle has no slot-1 airship sprite to move.
     pub(super) start_airship_swapped: [bool; 8],
+    /// The map layout this catalog was read against.
+    ///
+    /// Carried on the catalog so every later phase gets it for free — the
+    /// pickup, build and write phases all already receive the catalog. Keyed
+    /// by engine slot, so arrays like `start_airship_swapped` stay `[T; 8]`;
+    /// only *iteration* has to ask which slots are live.
+    pub(crate) layout: rom_data::MapLayout,
 }
 
 impl NodeCatalog {
@@ -145,14 +152,18 @@ impl NodeCatalog {
     /// unreferenced beta levels are appended after the 340 vanilla entries.
     /// They use `world_idx = usize::MAX` and `entry_idx = usize::MAX` as
     /// sentinels (no vanilla pointer table home).
-    pub(crate) fn build(rom: &Rom, include_beta_stages: bool) -> Self {
+    pub(crate) fn build(
+        rom: &Rom,
+        layout: &rom_data::MapLayout,
+        include_beta_stages: bool,
+    ) -> Self {
         let mut entries =
             Vec::with_capacity(340 + if include_beta_stages { BETA_LEVELS.len() } else { 0 });
 
         // First pass: classify all entries (names assigned in second pass)
-        for wi in 0..8 {
-            let grid = rom_data::read_tile_grid(rom, wi);
-            let world_entries = classify_world(rom, wi, &grid);
+        for wi in layout.slots().collect::<Vec<_>>() {
+            let grid = layout.read_grid(rom, wi);
+            let world_entries = classify_world(rom, layout, wi, &grid);
 
             for (entry_idx, kind, grid_pos, tile, level_entry) in world_entries {
                 entries.push(CatalogEntry {
@@ -191,7 +202,7 @@ impl NodeCatalog {
         // Second pass: assign names (beta entries already have names set)
         assign_names(&mut entries);
 
-        NodeCatalog { entries, start_airship_swapped: [false; 8] }
+        NodeCatalog { entries, start_airship_swapped: [false; 8], layout: layout.clone() }
     }
 
     /// Reclassify map-object-linked entries (the W7 piranha plant levels) as

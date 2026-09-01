@@ -18,7 +18,7 @@ use super::overworld_helpers;
 use super::pipe_helpers;
 use super::rom_data::{
     self, FORTRESS_1F_OBJ_PTR, FX_MAP_COMP_IDX, FX_PATTERNS, FX_VADDR_H, FX_VADDR_L,
-    MAP_COMPLETE_BITS, TILE_BONUS_GAME, TILE_PIPE, WORLDS,
+    MAP_COMPLETE_BITS, TILE_BONUS_GAME, TILE_PIPE,
 };
 
 mod assign;

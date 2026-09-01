@@ -173,7 +173,7 @@ const HAMMER_GATED_POCKETS: &[(usize, Pos)] = &[
 /// the closed state lives only in the `locks` overlay.
 #[cfg(test)]
 pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -> WorldState {
-    let mut grid = rom_data::read_tile_grid(rom, world_idx);
+    let mut grid = catalog.layout.read_grid(rom, world_idx);
     let slots = vanilla_slots(rom, catalog, world_idx);
     let fort_count = slots.iter().filter(|s| s.kind == SlotKind::Fortress).count();
     let locks = vanilla_locks(rom, &grid, world_idx, fort_count);

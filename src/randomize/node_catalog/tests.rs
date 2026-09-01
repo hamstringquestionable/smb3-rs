@@ -17,7 +17,8 @@ fn test_total_count() {
         Some(r) => r,
         None => return,
     };
-    let catalog = NodeCatalog::build(&rom, false);
+    let catalog =
+        NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
     let expected: usize = WORLDS.iter().map(|w| w.entry_count).sum();
     assert_eq!(catalog.entries.len(), expected, "expected {expected} total entries");
 }
@@ -28,7 +29,8 @@ fn test_kind_counts() {
         Some(r) => r,
         None => return,
     };
-    let catalog = NodeCatalog::build(&rom, false);
+    let catalog =
+        NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
 
     let count = |pred: fn(&NodeKind) -> bool| -> usize {
         catalog.entries.iter().filter(|e| pred(&e.kind)).count()
@@ -47,7 +49,8 @@ fn test_pipe_pairs_consistent() {
         Some(r) => r,
         None => return,
     };
-    let catalog = NodeCatalog::build(&rom, false);
+    let catalog =
+        NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
 
     // Every dest_idx should appear exactly twice
     let mut dest_counts: HashMap<usize, usize> = HashMap::new();
@@ -69,7 +72,8 @@ fn test_names_non_empty() {
         Some(r) => r,
         None => return,
     };
-    let catalog = NodeCatalog::build(&rom, false);
+    let catalog =
+        NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
 
     for e in &catalog.entries {
         assert!(!e.name.is_empty(), "W{} entry {} has empty name", e.world_idx + 1, e.entry_idx,);
@@ -82,7 +86,8 @@ fn test_grid_positions_valid() {
         Some(r) => r,
         None => return,
     };
-    let catalog = NodeCatalog::build(&rom, false);
+    let catalog =
+        NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
 
     for e in &catalog.entries {
         let (row, col) = e.grid_pos;
@@ -110,7 +115,8 @@ fn test_level_entry_presence() {
         Some(r) => r,
         None => return,
     };
-    let catalog = NodeCatalog::build(&rom, false);
+    let catalog =
+        NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
 
     for e in &catalog.entries {
         if e.kind.is_level_like() {
@@ -131,7 +137,8 @@ fn test_fortress_boomboom_offsets() {
         Some(r) => r,
         None => return,
     };
-    let catalog = NodeCatalog::build(&rom, false);
+    let catalog =
+        NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
 
     for e in &catalog.entries {
         if let NodeKind::Fortress { boomboom_y_offset } = &e.kind {
@@ -151,7 +158,8 @@ fn test_kind_totals_sum_to_340() {
         Some(r) => r,
         None => return,
     };
-    let catalog = NodeCatalog::build(&rom, false);
+    let catalog =
+        NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
 
     // Aggregate counts plus the known vanilla fixed totals
     // (17 fortresses, 48 pipes, 7 airships, 1 bowser, 8 starts)
@@ -188,7 +196,8 @@ fn test_print_catalog() {
             return;
         }
     };
-    let catalog = NodeCatalog::build(&rom, false);
+    let catalog =
+        NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
 
     let mut current_world = usize::MAX;
     for e in &catalog.entries {
@@ -266,7 +275,8 @@ fn friendlier_blocklist_resolves() {
         eprintln!("reference ROM not present — skipping friendlier_blocklist_resolves");
         return;
     };
-    let catalog = NodeCatalog::build(&rom, false);
+    let catalog =
+        NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
 
     for &name in crate::randomize::rom_data::FRIENDLIER_BLOCKED_LEVELS {
         let hits: Vec<&CatalogEntry> = catalog
@@ -304,7 +314,8 @@ fn friendlier_optional_forts_resolve() {
         eprintln!("reference ROM not present — skipping friendlier_optional_forts_resolve");
         return;
     };
-    let catalog = NodeCatalog::build(&rom, false);
+    let catalog =
+        NodeCatalog::build(&rom, &crate::randomize::rom_data::MapLayout::vanilla(&rom), false);
 
     for &name in crate::randomize::rom_data::FRIENDLIER_OPTIONAL_FORTS {
         let hits = catalog

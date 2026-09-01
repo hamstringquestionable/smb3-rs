@@ -151,7 +151,7 @@ pub(super) fn write_tile_grid<R: Rng>(
     // Write grid to ROM.
     for r in 0..grid.rows() {
         for c in 0..grid.cols {
-            let offset = rom_data::map_tile_offset(wi, r, c);
+            let offset = catalog.layout.world(wi).tile_offset(r, c);
             rom.write_byte(offset, grid.get(r, c));
         }
     }

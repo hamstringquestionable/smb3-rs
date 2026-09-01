@@ -9,7 +9,7 @@ use super::pipes::build_pipe_map;
 use super::{NodeKind, RawClassifiedEntry};
 use crate::randomize::rom_data::{
     self, AIRSHIP_ENTRIES, BOWSER_ENTRY, FORTRESS_ENTRIES, HAMMER_BRO_OBJ_PTRS,
-    MAP_OBJ_ENTRY_LINKS, TILE_START, TOAD_HOUSE_OBJ_PTRS, WORLDS,
+    MAP_OBJ_ENTRY_LINKS, TILE_START, TOAD_HOUSE_OBJ_PTRS,
 };
 
 // ---------------------------------------------------------------------------
@@ -26,10 +26,11 @@ const W5_SPIRAL_ENTRIES: &[(usize, usize)] = &[(4, 10), (4, 21)];
 /// Returns: Vec of (entry_idx, kind, grid_pos, tile, level_entry).
 pub(super) fn classify_world(
     rom: &Rom,
+    layout: &rom_data::MapLayout,
     world_idx: usize,
     grid: &rom_data::Grid,
 ) -> Vec<RawClassifiedEntry> {
-    let world = &WORLDS[world_idx];
+    let world = &layout.tables(world_idx);
     let n = world.entry_count;
     let (_scrcol, objsets, layouts) = rom_data::table_offsets(world);
 
@@ -56,8 +57,14 @@ pub(super) fn classify_world(
 
     // Build pipe pair map: entry_idx → dest_idx
     let dest_indices = rom_data::dest_indices_for_world(world_idx);
-    let pipe_map =
-        build_pipe_map(rom, world_idx, &pipe_entries_by_obj, &spiral_entries, &dest_indices);
+    let pipe_map = build_pipe_map(
+        rom,
+        layout,
+        world_idx,
+        &pipe_entries_by_obj,
+        &spiral_entries,
+        &dest_indices,
+    );
 
     // -- Classify each entry --
     let mut result = Vec::with_capacity(n);
@@ -68,8 +75,18 @@ pub(super) fn classify_world(
         let lay = rom_data::read_word(rom, layouts + i * 2);
         let map_tile = if row < grid.rows() && col < grid.cols { grid.get(row, col) } else { 0xFF };
 
-        let kind =
-            classify_entry(rom, world_idx, i, obj, lay, map_tile, row, &map_obj_entries, &pipe_map);
+        let kind = classify_entry(
+            rom,
+            layout,
+            world_idx,
+            i,
+            obj,
+            lay,
+            map_tile,
+            row,
+            &map_obj_entries,
+            &pipe_map,
+        );
 
         let level_entry = if matches!(kind, NodeKind::Start) {
             None
@@ -90,6 +107,7 @@ pub(super) fn classify_world(
 #[allow(clippy::too_many_arguments)]
 fn classify_entry(
     rom: &Rom,
+    layout: &rom_data::MapLayout,
     world_idx: usize,
     entry_idx: usize,
     obj: u16,
@@ -116,7 +134,7 @@ fn classify_entry(
 
     // 4. Fortress
     if FORTRESS_ENTRIES.contains(&(world_idx, entry_idx)) {
-        let entry = rom_data::read_entry(rom, &WORLDS[world_idx], entry_idx);
+        let entry = rom_data::read_entry(rom, &layout.tables(world_idx), entry_idx);
         let obj_ptr = (entry.obj_hi as u16) << 8 | entry.obj_lo as u16;
         let boomboom_y_offset = rom_data::boomboom_y_offset_for_obj(obj_ptr).unwrap_or(0);
         return NodeKind::Fortress { boomboom_y_offset };

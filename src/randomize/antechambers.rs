@@ -517,7 +517,11 @@ mod tests {
         };
         let rom = Rom::from_bytes(&bytes).unwrap();
         // Beta stages on: β4 only exists as a catalog entry with that flag set.
-        let catalog = crate::randomize::node_catalog::NodeCatalog::build(&rom, true);
+        let catalog = crate::randomize::node_catalog::NodeCatalog::build(
+            &rom,
+            &crate::randomize::rom_data::MapLayout::vanilla(&rom),
+            true,
+        );
 
         for a in &ANTECHAMBERS {
             assert!(

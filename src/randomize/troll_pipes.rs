@@ -67,7 +67,11 @@ mod tests {
     /// pipes, returning the finished build.
     fn build_with_troll_pipes(rom: &Rom, seed: u64) -> overworld_build::BuildResult {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let catalog = node_catalog::NodeCatalog::build(rom, false);
+        let catalog = node_catalog::NodeCatalog::build(
+            rom,
+            &crate::randomize::rom_data::MapLayout::vanilla(rom),
+            false,
+        );
         let pickup = overworld_pickup::pick_up(
             rom,
             &catalog,

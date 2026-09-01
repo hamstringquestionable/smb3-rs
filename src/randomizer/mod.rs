@@ -251,7 +251,12 @@ fn randomize_inner(
     }
 
     rom.set_tag("overworld/builder");
-    let mut catalog = randomize::node_catalog::NodeCatalog::build(rom, options.include_beta_stages);
+    // The map layout the rest of the pipeline addresses through. Read from the
+    // ROM rather than assumed, so a re-partitioned map (see `mega_map`) is
+    // described by whatever is actually there. Vanilla's eight worlds today.
+    let layout = randomize::rom_data::MapLayout::vanilla(rom);
+    let mut catalog =
+        randomize::node_catalog::NodeCatalog::build(rom, &layout, options.include_beta_stages);
     // Piranha shuffle: free the two W7 plant levels into the pool. The sprite
     // clear must precede the builder — capacity/eligibility reads sprite
     // state straight from the ROM.
