@@ -1,83 +1,97 @@
-//! EXPERIMENT: fold one screen from each of the eight worlds into a single
-//! eight-screen mega map in world 0.
+//! EXPERIMENT: fold the eight worlds into three pipe-linked super-worlds.
 //!
-//! The prototype answers the questions the design can't be settled without:
-//! does the map engine pan past its vanilla three-screen maximum, does
-//! `Map_Completions` track clears on screens 4-7, and does the pointer-entry
-//! search find entries on a far screen. Everything else — the builder, the
-//! progression chain, per-region palettes — is deliberately out of scope. See
-//! `docs/mega_map.md`.
+//! Every page keeps its vanilla layout. Worlds are concatenated whole, in
+//! order, into three destination slots, and the seams *between* source worlds
+//! are joined by repurposed pipe pairs rather than carved paths.
 //!
-//! # Why screen 0 of every world
+//! | Slot | Source worlds | Pages | Entries | Forts |
+//! |---|---|---|---|---|
+//! | 6 (start) | W1 + W2 + W3 | 6 | 120 | 4 |
+//! | 7 | W4 + W5 + W6 | 7 | 133 | 7 |
+//! | 8 (Bowser) | W7 + W8 | 6 | 87 | 5 |
 //!
-//! Screen 0 of each of the eight worlds holds **exactly one fortress** and
-//! 157 pointer entries in total. That makes the destination map eight
-//! screens, eight forts, one biome per screen, and 157 entries — comfortably
-//! under the 255 that `Map_ByXHi_InitIndex`'s byte-wide start index allows.
-//! Taking whole worlds instead would either overrun the completion array
-//! (19 screens of vanilla map needs 304 columns; there are 128) or drop
-//! fortresses.
+//! # Why this shape
 //!
-//! # The eight-screen ceiling
+//! **Progression comes free.** `INC World_Num` carries 5 → 6 → 7 unpatched,
+//! and the last group holds Bowser's castle in the slot the ending code
+//! expects. Nothing about the world-advance chain has to be touched — which
+//! was the largest open item in the previous eight-page prototype.
 //!
-//! `Map_Completions` is 128 bytes at `$7D00`, one per map column, split
-//! `$7D00-$7D3F` Mario / `$7D40-$7D7F` Luigi — "allows a MAX of 4 map
-//! screens" per the disassembly. A one-player map can use all 128 columns,
-//! because a column index for eight screens runs 0..127 and lands exactly
-//! inside the array. The engine already walks all 128 bytes: the redraw loop
-//! in `Map_Reload_with_Completions` runs its column counter to `$80`, and
-//! the game-over clear runs `LDY #$7F`.
+//! **Pipes cross parity; walks do not.** Map movement advances two tiles at a
+//! time, so `row % 2` and `col % 2` are each invariant along a walk, and
+//! W1–W6 sit on even rows while W7 and W8 sit on odd. Joining pages on foot
+//! therefore needs the pages shifted into phase; joining them by pipe does
+//! not, because a teleport edge has no parity. That single fact deletes the
+//! row shifting, the seam carving, the content-preservation problem the
+//! carving created, and the land-themed blank tiles it left on sky pages.
 //!
-//! What stops it is that four sites *fold* the upper half back onto the lower
-//! one, on the assumption that it belongs to the other player. Widening the
-//! map to eight screens is therefore not new code but **seven operand bytes
-//! plus one six-byte splice** — no free space is claimed. See
-//! [`widen_map_completions`].
+//! **Only inter-world seams need links.** A source world's pages stay
+//! adjacent and in order, so whatever joined its page 0 to its page 1 in
+//! vanilla still joins them here. Links are needed at the W1|W2 and W2|W3
+//! style boundaries only: **five in total**, against 24 pipe pairs in the ROM.
 //!
-//! Two-player mode is the cost: Luigi's completion array *is* screens 4-7.
-//! Nothing here disables 2P, so a 2P game on a mega map would have the two
-//! players writing over each other. The prototype is 1P-only by construction.
+//! # Slots
+//!
+//! Fewer worlds means each gets a *larger* share of every per-world table,
+//! because the totals are conserved and there are fewer partitions:
+//!
+//! | Resource | 8 worlds | 3 super-worlds | Headroom |
+//! |---|---|---|---|
+//! | Pointer blocks | 2072 B, exactly full | 2064 B | 8 B |
+//! | Grid data | 2744 B to the warp zone | 2739 B | 5 B |
+//! | Fortress FX rows | 8 × 4 = 32 B | 4 + 7 + 5 = 16 B | 16 B |
+//! | Fortress FX slots | 17 | 16 forts, total unchanged | 1 |
+//! | Pipe pairs | 24 | 5 repurposed as links | 19 |
+//!
+//! The one resource that does *not* work out is map-object sprite slots: the
+//! per-world list is nine long with slots 0 and 1 reserved, so seven are
+//! usable, and W4+W5+W6 brings nine hammer bros. See [`carry_map_objects`].
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::rom::Rom;
 
 use super::map_walker;
-
 use super::rom_data::{
-    self, BACKGROUND_TILES, FX_MAP_COMP_IDX, FX_WORLD_TABLE, PRG012_FILE_BASE, VALID_BLANK_TILES,
+    self, BACKGROUND_TILES, FX_MAP_COMP_IDX, PRG012_FILE_BASE, VALID_BLANK_TILES,
 };
-
-/// Screens in the mega map. Bounded by `Map_Completions` at 128 columns
-/// (see the module comment), not by tile RAM — `Tile_Mem_Addr` in PRG030
-/// carries fifteen screen entries.
-pub(crate) const SCREENS: usize = 8;
-
-/// Columns in the mega map.
-pub(crate) const COLUMNS: usize = SCREENS * 16;
 
 /// Rows in every overworld map.
 const ROWS: usize = rom_data::ROWS;
 
-/// Bytes of tile data per screen: 9 rows x 16 columns.
-const SCREEN_BYTES: usize = 144;
+/// Bytes of tile data per page: 9 rows x 16 columns.
+const PAGE_BYTES: usize = 144;
 
-/// Source `(world, screen)` for each destination screen. Screen 0 of every
-/// world, in world order, so destination screen `i` is world `i`'s first
-/// screen and the region index and the world index coincide — which is what
-/// makes the eight-wide per-world dispatch tables (palette, music, king,
-/// airship) directly reusable as *per-region* tables later.
-pub(crate) const SOURCE: [(usize, usize); SCREENS] =
-    [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (6, 0), (7, 0)];
+/// A destination world slot and the source worlds folded into it.
+pub(crate) struct SuperWorld {
+    /// Destination world index, 0-based.
+    pub slot: usize,
+    /// Source world indices, in the order their pages are laid out.
+    pub sources: &'static [usize],
+}
+
+/// The three groups.
+///
+/// The order is load-bearing twice over: the *last* group must sit in slot 7
+/// (world 8) so the ending fires on Bowser, and the groups must run upward
+/// from the start slot so `INC World_Num` walks them in sequence.
+pub(crate) const SUPER_WORLDS: [SuperWorld; 3] = [
+    SuperWorld { slot: 5, sources: &[0, 1, 2] },
+    SuperWorld { slot: 6, sources: &[3, 4, 5] },
+    SuperWorld { slot: 7, sources: &[6, 7] },
+];
+
+/// World the game starts in — the first super-world.
+pub(crate) const START_SLOT: usize = 5;
 
 // --- Vanilla table locations -------------------------------------------
 //
-// Held locally rather than read from `rom_data::WORLDS` / `MAP_TILE_GRIDS`
-// on purpose: this module rewrites the layout those constants describe, so
-// it must address the *vanilla* one. Reading them would make the module's
-// behaviour depend on whether it had already run.
+// Held locally rather than read from `rom_data::WORLDS` / `MAP_TILE_GRIDS`:
+// this module rewrites the layout those constants describe, so it must
+// address the *vanilla* one. Reading them would make its behaviour depend on
+// whether it had already run.
 
-/// Vanilla per-world tile grids: `(file_offset, screens)`.
+/// Vanilla per-world tile grids: `(file_offset, pages)`.
 const VAN_GRIDS: [(usize, usize); 8] = [
     (0x185BA, 1),
     (0x1864B, 2),
@@ -104,23 +118,27 @@ const VAN_WORLDS: [(usize, usize); 8] = [
 /// Grid pointer table: 9 little-endian CPU words (8 worlds + Warp Zone).
 const GRID_PTRS: usize = 0x185A8;
 
-/// Destination for the merged grid — W1's slot. Eight screens plus the `$FF`
-/// terminator is 1153 bytes, into the 2888 the eight worlds' grids occupy
-/// from here (0x185BA-0x19102), so it stays inside the region the maps
-/// already own and claims no free space.
+/// Where the merged grids are laid out from — W1's slot.
 const DEST_GRID: usize = 0x185BA;
 
-/// Destination for the merged pointer block — W1's slot. `InitIndex(8)`,
-/// `RowType(N)`, `ScrCol(N)`, `ObjSets(2N)`, `Layouts(2N)`, contiguous.
-/// At N=157 that is 950 bytes, into the 2072 the eight blocks occupy from
-/// here (0x19434-0x19C4C).
+/// First byte the grids must not reach: the Warp Zone's own grid, left alone.
+/// `0x19072 - 0x185BA` = 2744 bytes for the 2739 the three groups need.
+const GRID_REGION_END: usize = 0x19072;
+
+/// Where the merged pointer blocks are laid out from — W1's slot.
 ///
-/// It must live here. PRG012's only other gap over 100 bytes is 0x19DD0, and
-/// that is **not** free — the Big ? Block trampoline, the flag-key stamp and
-/// the title-screen seed-hash icons all write there, the last of them after
-/// the overworld writer has run. The world-merge experiment lost most of a
-/// session to exactly that.
+/// The blocks must live here. PRG012's only other gap over 100 bytes is
+/// `0x19DD0`, and that is **not** free — the Big ? Block trampoline, the
+/// flag-key stamp and the title-screen seed-hash icons all write there, the
+/// last of them after the overworld writer has run.
 const DEST_BLOCK: usize = 0x19434;
+
+/// First byte the blocks must not reach.
+const BLOCK_REGION_END: usize = 0x19C4C;
+
+/// InitIndex bytes reserved per super-world. One per page; seven is the most
+/// any group needs, and eight keeps the arithmetic uniform.
+const INIT_SLOTS: usize = 8;
 
 /// Master pointer tables, one 16-bit CPU address per world.
 const INIT_MASTER: usize = 0x193DA;
@@ -129,121 +147,272 @@ const SCRCOL_MASTER: usize = 0x193FE;
 const OBJSETS_MASTER: usize = 0x19410;
 const LAYOUTS_MASTER: usize = 0x19422;
 
-/// `World_Map_Max_PanR`, 8 bytes, `$10` per screen of rightward scroll.
-/// Vanilla's largest is `$30`.
+/// `World_Map_Max_PanR`, 8 bytes, `$10` per page.
 const MAX_PAN_R: usize = 0x14F44;
 
-/// `FortressFX_MapLocation`: column in the high nibble, screen in the low.
+/// `FortressFX_MapLocation`: column in the high nibble, page in the low.
 const FX_MAP_LOCATION: usize = 0x14866;
+
+/// `FortressFX_W1`: the per-world rows of FX slot indices, 4 bytes each in
+/// vanilla but variable — `FortressFXBase_ByWorld` indexes into them, and the
+/// disassembly notes there is "no need for this to be precisely four in every
+/// world, but that's what they allocated".
+const FX_WORLD_ROWS: usize = 0x14888;
+
+/// `FortressFXBase_ByWorld`: byte offset into `FX_WORLD_ROWS` per world.
+const FX_WORLD_BASE: usize = 0x148A8;
+
+/// Map-object list length per world, and the reserved slots at its head:
+/// slot 0 is a fixed marker, slot 1 the airship sprite.
+const MAP_OBJ_SLOTS: usize = 9;
+const MAP_OBJ_RESERVED: usize = 2;
 
 // --- Tiles --------------------------------------------------------------
 
-/// Horizontal path tile — a cell the walker will step *through*. Must come
-/// from `VALID_HORZ` (the engine's `Map_Object_Valid_Left/Right` registry);
-/// `0x44` looks like a path and is not one, it is a blank *node*.
-const TILE_PATH_H: u8 = 0x45;
+/// The map pipe tile (`TILE_PIPE = $BC`). Not `0x68`/`0x69`.
+const TILE_PIPE: u8 = 0xBC;
 
-/// Blank node tile — a cell the walker will *stand on*. Land-themed, which is
-/// wrong on the sky and island screens; theming it needs the per-screen rule
-/// in `overworld_pickup::blank_tile_from_neighbors`, which reads the vanilla
-/// per-world grids and so cannot run after the fold.
+/// Tiles a pipe-pair endpoint can wear.
+///
+/// W5's spiral tower is a pair whose two ends are a pipe and a *spiral
+/// castle*, so requiring `TILE_PIPE` at both drops it — and with it the only
+/// connection between W5's ground and sky halves, which do not touch by
+/// walking (W5 stores them as two 16-column pages and never scrolls).
+const PIPE_ENDPOINT_TILES: [u8; 3] = [TILE_PIPE, 0x5F, 0xDF];
+
+/// Blank node tile written where a repurposed pipe vacates its old cell.
 const TILE_NODE_BLANK: u8 = 0x44;
-
-/// Vertical path tile, from `VALID_VERT` (`Map_Object_Valid_Down/Up`).
-const TILE_PATH_V: u8 = 0x46;
 
 /// Castle tiles: an enterable bottom with a decorative top directly above.
 const TILE_CASTLE_BOTTOM: u8 = 0xC9;
 const TILE_CASTLE_TOP: u8 = 0xC8;
 
-/// The map pipe tile (`TILE_PIPE = $BC` in the disassembly).
-///
-/// A pipe is only half a connection — its partner is the other endpoint of a
-/// dest-table pair — so any pipe whose partner did not survive the fold has
-/// to stop being a pipe. See [`neutralize_pipes`].
-///
-/// Not `0x68`/`0x69`. `docs/smb3_rom_reference.md` listed those as "map pipe
-/// connectors" and they are nothing of the kind: no `TILE_*` constant in the
-/// disassembly has either value, and every one of the 24 pipe destination
-/// endpoints lands on a `$BC` cell. Using the wrong pair silently carried
-/// zero pipes, which in turn made half of Pipe Land unreachable.
-const TILE_PIPE: [u8; 1] = [0xBC];
+// --- Report -------------------------------------------------------------
 
-/// One screen boundary and what it took to make it walkable.
+/// One inter-world boundary and the pipe pair that joins it.
 #[derive(Debug)]
-pub struct Seam {
-    /// Boundary index: between screen `seam` and `seam + 1`.
-    pub seam: usize,
-    /// Row the corridor was carved on, or `None` if no even-span node pair
-    /// was in reach and the seam is still a wall.
-    pub row: Option<usize>,
-    /// Tiles overwritten between the two anchors.
-    pub tiles: usize,
+pub struct Link {
+    /// Destination world slot the boundary is in.
+    pub slot: usize,
+    /// Source worlds on either side, 1-based for reporting.
+    pub between: (usize, usize),
+    /// Pipe destination index repurposed to carry it.
+    pub dest_idx: usize,
+    /// Grid positions of the two pipe mouths, `(row, col)`.
+    pub mouths: ((usize, usize), (usize, usize)),
 }
 
-/// What the fold produced, for the caller to report without re-deriving it.
+/// Per-super-world accounting, so the caller can report what fits.
+#[derive(Debug)]
+pub struct SlotUse {
+    pub slot: usize,
+    pub pages: usize,
+    pub entries: usize,
+    pub forts: usize,
+    /// Hammer-bro sprites the source worlds brought.
+    pub sprites_wanted: usize,
+    /// How many of them the nine-slot list could hold.
+    pub sprites_placed: usize,
+}
+
 #[derive(Debug, Default)]
 pub struct MegaMapReport {
-    /// Pointer entries carried into the merged block.
-    pub entries: usize,
-    /// Fortress FX slots re-aimed at their destination screen.
-    pub forts: usize,
-    /// One entry per screen boundary.
-    pub seams: Vec<Seam>,
-    /// Pipe pairs carried across with both endpoints intact.
-    pub pipes_carried: usize,
-    /// Fortresses the screen joins left stranded, then reconnected.
-    pub forts_connected: usize,
-    /// Fortresses still unreachable after that.
-    pub forts_stranded: usize,
-    /// Pipe tiles demoted to path because their partner was not carried.
-    pub pipes_neutralized: usize,
-    /// Duplicate start / castle tiles blanked.
-    pub singletons_blanked: usize,
+    pub slots: Vec<SlotUse>,
+    pub links: Vec<Link>,
+    pub singletons_removed: usize,
+    /// `(used, available)` bytes.
+    pub grid_bytes: (usize, usize),
+    pub block_bytes: (usize, usize),
+    /// Pages the start cannot reach, as `(slot, page)`. Empty is the goal.
+    pub unreachable_pages: Vec<(usize, usize)>,
 }
 
-/// Build the eight-screen mega map in world 0.
+// --- Entries ------------------------------------------------------------
+
+/// One pointer-table entry, plus where it came from.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Entry {
+    rowtype: u8,
+    scrcol: u8,
+    obj: u16,
+    lay: u16,
+    /// Source world, so forts and pipes can be followed to their new home.
+    src_world: usize,
+    /// Index within the source world's block.
+    src_idx: usize,
+}
+
+impl Entry {
+    pub(crate) fn row(&self) -> usize {
+        (((self.rowtype >> 4) & 0x0F) as usize).saturating_sub(2)
+    }
+    pub(crate) fn page(&self) -> usize {
+        (self.scrcol >> 4) as usize
+    }
+    pub(crate) fn col(&self) -> usize {
+        self.page() * 16 + (self.scrcol & 0x0F) as usize
+    }
+    fn set_pos(&mut self, page: usize, row: usize, col_in_page: usize) {
+        self.rowtype = (((row + 2) as u8) << 4) | (self.rowtype & 0x0F);
+        self.scrcol = ((page as u8) << 4) | (col_in_page as u8);
+    }
+    /// Sort key. The engine starts its search at `InitIndex[page]` and only
+    /// walks forward, matching row first and then packed page/column, so the
+    /// block must be ordered this way.
+    fn key(&self) -> (usize, usize, usize) {
+        (self.page(), self.row(), self.col())
+    }
+}
+
+fn read_entries(rom: &Rom, world: usize) -> Vec<Entry> {
+    let (rowtype_offset, n) = VAN_WORLDS[world];
+    let scrcol = rowtype_offset + n;
+    let obj = scrcol + n;
+    let lay = obj + n * 2;
+    (0..n)
+        .map(|i| Entry {
+            rowtype: rom.read_byte(rowtype_offset + i),
+            scrcol: rom.read_byte(scrcol + i),
+            obj: rom_data::read_word(rom, obj + i * 2),
+            lay: rom_data::read_word(rom, lay + i * 2),
+            src_world: world,
+            src_idx: i,
+        })
+        .collect()
+}
+
+// --- Plan ---------------------------------------------------------------
+
+/// Everything read out of the vanilla ROM before a single byte is written.
 ///
-/// Order matters. The grid has to exist before the seam carve and the
-/// singleton pass can read it, and the pointer block has to exist before the
-/// seam carve can ask which cells hold nodes.
+/// **This must be built first.** The merged grids are laid out from W1's slot
+/// and run over W2, W3 and W4's source grids; the merged blocks do the same to
+/// the first worlds' blocks. Any pass that re-reads a source table after
+/// writing has begun reads its own output — the trap the world-merge
+/// experiment hit from the other direction.
+#[derive(Clone)]
+struct Plan {
+    /// Per group: the `(source world, source page)` behind each page.
+    pages: Vec<Vec<(usize, usize)>>,
+    /// Per group: entries, renumbered onto destination pages, sorted.
+    entries: Vec<Vec<Entry>>,
+    /// Per group: the grid, pages concatenated, terminated.
+    grids: Vec<Vec<u8>>,
+}
+
+impl Plan {
+    /// Destination page index for a source `(world, page)` within its group.
+    fn dest_page(&self, group: usize, world: usize, page: usize) -> Option<usize> {
+        self.pages[group].iter().position(|&p| p == (world, page))
+    }
+
+    fn tile(&self, group: usize, row: usize, col: usize) -> u8 {
+        self.grids[group][(col / 16) * PAGE_BYTES + row * 16 + col % 16]
+    }
+
+    fn set_tile(&mut self, group: usize, row: usize, col: usize, tile: u8) {
+        self.grids[group][(col / 16) * PAGE_BYTES + row * 16 + col % 16] = tile;
+    }
+
+    fn cols(&self, group: usize) -> usize {
+        self.pages[group].len() * 16
+    }
+}
+
+fn plan(rom: &Rom) -> Plan {
+    let mut pages = Vec::new();
+    let mut entries = Vec::new();
+    let mut grids = Vec::new();
+
+    for sw in &SUPER_WORLDS {
+        let mut group_pages = Vec::new();
+        let mut grid = Vec::new();
+        for &w in sw.sources {
+            let (base, n) = VAN_GRIDS[w];
+            for p in 0..n {
+                group_pages.push((w, p));
+                grid.extend_from_slice(rom.read_range(base + p * PAGE_BYTES, PAGE_BYTES));
+            }
+        }
+        grid.push(0xFF);
+
+        let mut group_entries = Vec::new();
+        for &w in sw.sources {
+            for mut e in read_entries(rom, w) {
+                let src_page = e.page();
+                let dest = group_pages.iter().position(|&p| p == (w, src_page)).unwrap();
+                let (row, col_in_page) = (e.row(), e.col() % 16);
+                e.set_pos(dest, row, col_in_page);
+                group_entries.push(e);
+            }
+        }
+        group_entries.sort_by_key(|e| e.key());
+
+        pages.push(group_pages);
+        entries.push(group_entries);
+        grids.push(grid);
+    }
+
+    Plan { pages, entries, grids }
+}
+
+// --- Build --------------------------------------------------------------
+
+fn cpu_of(file_offset: usize) -> u16 {
+    (0xA000 + (file_offset - PRG012_FILE_BASE)) as u16
+}
+
+fn write_word(rom: &mut Rom, offset: usize, val: u16) {
+    rom.write_range(offset, &[(val & 0xFF) as u8, (val >> 8) as u8]);
+}
+
+/// Fold the eight worlds into three pipe-linked super-worlds.
 pub fn build(rom: &mut Rom) -> Result<MegaMapReport, String> {
     rom.push_tag("mega_map");
     let mut report = MegaMapReport::default();
 
+    // Everything the fold needs from the vanilla layout, before any write.
+    let mut plan = plan(rom);
+    let van_entries: Vec<Vec<Entry>> = (0..8).map(|w| read_entries(rom, w)).collect();
+
     widen_map_completions(rom)?;
-    pin_world(rom)?;
+    rom.write_byte(super::world_order::WORLD_INIT_OPERAND, START_SLOT as u8);
 
-    // Against the untouched ROM, before any write — see `row_shifts`.
-    let shifts = row_shifts(rom);
-    let forts = fort_positions(rom, &shifts);
+    report.singletons_removed = reconcile_singletons(&mut plan);
+    let (links, pipe_pairs_by_group) = link_pages(rom, &mut plan, &van_entries)?;
+    report.links = links;
+    write_pipe_dests(rom, &plan, &pipe_pairs_by_group);
 
-    build_grid(rom, &shifts);
-    let entries = build_pointer_block(rom, &shifts)?;
-    report.entries = entries.len();
+    report.grid_bytes = write_grids(rom, &plan)?;
+    report.block_bytes = write_blocks(rom, &plan)?;
 
-    report.forts = carry_fortress_fx(rom, &shifts);
-    let carried = carry_pipes(rom, &shifts);
-    report.pipes_neutralized = neutralize_pipes(rom, &carried);
-    report.singletons_blanked = reconcile_singletons(rom);
+    let forts = carry_fortress_fx(rom, &plan);
+    let sprites = carry_map_objects(rom, &plan);
 
-    // Read the pipes back off the finished grid rather than trusting the
-    // list `carry_pipes` intended. The grid is the ground truth — a pass
-    // between here and there could have demoted or overwritten an endpoint —
-    // and reading it back is how the wrong `TILE_PIPE` value was caught:
-    // `carry_pipes` reported seven pairs while the map held none.
-    let pipes = merged_pipe_pairs(rom);
-    report.pipes_carried = pipes.len();
+    report.slots = SUPER_WORLDS
+        .iter()
+        .enumerate()
+        .map(|(g, sw)| SlotUse {
+            slot: sw.slot,
+            pages: plan.pages[g].len(),
+            entries: plan.entries[g].len(),
+            forts: forts[g],
+            sprites_wanted: sprites[g].0,
+            sprites_placed: sprites[g].1,
+        })
+        .collect();
 
-    report.seams = bridge_seams(rom, &entries, &pipes);
-    let (connected, stranded) = connect_stranded_forts(rom, &entries, &forts, &pipes);
-    report.forts_connected = connected;
-    report.forts_stranded = stranded;
+    // Max_PanR is $10 per page: vanilla is $10/$20/$30 for its 16/32/48
+    // column worlds, i.e. pages x $10 rather than (pages - 1) x $10.
+    for (g, sw) in SUPER_WORLDS.iter().enumerate() {
+        rom.write_byte(MAX_PAN_R + sw.slot, (plan.pages[g].len() as u8) * 0x10);
+    }
 
-    // Max_PanR is the rightmost scroll column, so it scales with total
-    // columns, not screens-minus-one: vanilla is $10/$20/$30 for its 16/32/48
-    // column worlds. Eight screens is 128 columns -> $70.
-    rom.write_byte(MAX_PAN_R, 0x70);
+    // Walk what was actually written. A fold that produces an island is worth
+    // hearing about from the tool, not only from the test suite — the links
+    // are placed on the first free blank node near each boundary, and nothing
+    // guarantees that node is connected to the rest of its page.
+    report.unreachable_pages = unreachable_pages(rom);
 
     rom.pop_tag();
     Ok(report)
@@ -252,11 +421,6 @@ pub fn build(rom: &mut Rom) -> Result<MegaMapReport, String> {
 // --- Completions --------------------------------------------------------
 
 /// Overwrite a vanilla byte, refusing if it does not hold what we expect.
-///
-/// Every site below was located by byte pattern against the USA Rev 1 ROM.
-/// Asserting the old value turns "this ROM is not the one the offsets were
-/// derived from" into an error at build time instead of a corrupted patch
-/// that still boots.
 fn expect_write(rom: &mut Rom, offset: usize, want: u8, new: u8, site: &str) -> Result<(), String> {
     let got = rom.read_byte(offset);
     if got != want {
@@ -269,31 +433,23 @@ fn expect_write(rom: &mut Rom, offset: usize, want: u8, new: u8, site: &str) -> 
     Ok(())
 }
 
-/// Let `Map_Completions` cover eight screens for one player.
+/// Let `Map_Completions` cover eight pages for one player.
 ///
-/// The array is already 128 bytes and the engine already walks all of them.
-/// Four sites fold the upper 64 back onto the lower 64 because they assume
-/// it is Luigi's half; each is neutralised in place, at no size cost:
+/// The array is 128 bytes at `$7D00`, one per map column, split Mario /
+/// Luigi. For one player it already covers eight pages — a column index for
+/// eight pages runs 0..127 and lands inside the array, the redraw loop already
+/// counts to `$80`, and the game-over clear already runs `LDY #$7F`. Four
+/// sites fold the upper half onto the lower one assuming it is Luigi's.
 ///
-/// | Site | Vanilla | Becomes |
-/// |---|---|---|
-/// | `Map_Reload_with_Completions` screen index | `AND #$30` | `AND #$70` |
-/// | ... its Mario/Luigi marker select | `AND #$40` | `AND #$00` |
-/// | `MO_DoFortressFX` mirror write | `$7D40,Y` x2 | `$7D00,Y` x2 |
-/// | rock-break mirror write | `EOR #$40` | `EOR #$00` |
-/// | game-over clear | `AND` other player | `LDA #$00`, 128 columns |
+/// Undoing that is seven operand bytes plus one six-byte splice, no free
+/// space. The cost is two-player mode, because those columns *are* Luigi's.
 ///
-/// The first is the one without which nothing works: `AND #$30` takes two
-/// bits of screen out of the column index, so a clear on screen 4 would draw
-/// on screen 0. `AND #$70` takes three. The shift that follows already
-/// produces a `Tile_Mem_Addr` index, and that table has fifteen entries, so
-/// nothing downstream needs widening.
-///
-/// The mirror writes are worse than cosmetic: `MO_DoFortressFX`'s
-/// `Map_Completions+$40,Y` with a column past 63 writes to `$7D80` and up,
-/// which is `Inventory_Items` — clearing a fortress on screens 4-7 would
-/// rewrite the player's inventory. Pointing both operands back at Mario's
-/// array makes the mirror a harmless repeat of the write just above it.
+/// Completions are **per-world state**: `PRG030_84A0`, the world-map
+/// initialisation, clears all 128 bytes, and its only callers are world
+/// changes. Returning from a level enters at `PRG030_84D7` and skips the
+/// clear. So eight pages is a budget each super-world gets in full, not one
+/// shared across the game — which is what makes groups of six and seven pages
+/// possible at all.
 fn widen_map_completions(rom: &mut Rom) -> Result<(), String> {
     // Map_Reload_with_Completions (PRG012 $A4F5): screen bits of the column.
     expect_write(rom, 0x18507, 0x30, 0x70, "completion redraw screen mask")?;
@@ -302,7 +458,11 @@ fn widen_map_completions(rom: &mut Rom) -> Result<(), String> {
     // marker from bit 6 of the column. Every column is Mario's now.
     expect_write(rom, 0x18587, 0x40, 0x00, "completion marker select")?;
 
-    // MO_DoFortressFX (PRG010): the "mark it for Luigi too" mirror.
+    // MO_DoFortressFX (PRG010): the "mark it for Luigi too" mirror. With a
+    // column past 63 this writes to $7D80 and up, which is Inventory_Items —
+    // clearing a fortress on pages 4-7 would rewrite the player's inventory.
+    // Pointing both operands back at Mario's array makes it a harmless repeat
+    // of the write just above it.
     expect_write(rom, 0x14984, 0x40, 0x00, "fortress FX mirror load")?;
     expect_write(rom, 0x14989, 0x40, 0x00, "fortress FX mirror store")?;
 
@@ -310,670 +470,328 @@ fn widen_map_completions(rom: &mut Rom) -> Result<(), String> {
     expect_write(rom, 0x34705, 0x40, 0x00, "rock-break mirror")?;
 
     // Game over (PRG030 $9314). Vanilla clears one player's 64 columns by
-    // ANDing the other player's — which for 1P is ANDing zeros. With eight
-    // screens the "other player" is screens 4-7, so the vanilla form would
-    // fold half the continent into the other half instead of clearing it.
-    // Store zero outright, over all 128 columns.
+    // ANDing the other player's — for 1P, ANDing zeros. With eight pages the
+    // "other player" is pages 4-7, so the vanilla form would fold half the
+    // map into the other half instead of clearing it.
     expect_write(rom, 0x3D31D, 0x3F, 0x7F, "game-over clear start index")?;
     expect_write(rom, 0x3D325, 0x3F, 0x7F, "game-over clear count")?;
 
-    // LDA Map_Completions,X / AND Map_Completions,Y  ->  LDA #$00 + padding.
+    // LDA Map_Completions,X / AND Map_Completions,Y -> LDA #$00 + padding.
     // The STA that follows is left alone and now stores zero. The preceding
-    // TYA/EOR/TAX becomes dead but is harmless, so it stays: overwriting it
-    // would buy nothing and cost a longer splice.
+    // TYA/EOR/TAX becomes dead but harmless, so it stays.
     const GAMEOVER_MERGE: usize = 0x3D32C;
-    for (i, (want, new)) in
-        [(0xBD, 0xA9), (0x00, 0x00), (0x7D, 0xEA), (0x39, 0xEA), (0x00, 0xEA), (0x7D, 0xEA)]
-            .into_iter()
-            .enumerate()
-    {
+    let splice =
+        [(0xBD, 0xA9), (0x00, 0x00), (0x7D, 0xEA), (0x39, 0xEA), (0x00, 0xEA), (0x7D, 0xEA)];
+    for (i, (want, new)) in splice.into_iter().enumerate() {
         expect_write(rom, GAMEOVER_MERGE + i, want, new, "game-over clear merge")?;
     }
 
     Ok(())
 }
 
-/// Stop `INC World_Num` from advancing off the mega map.
+// --- Singletons ---------------------------------------------------------
+
+/// Keep one start and one goal per super-world.
 ///
-/// Only world 0 has a grid and a pointer block after the fold; worlds 1-7
-/// still have master-table pointers, but they aim into the middle of the
-/// merged block. Clearing the airship would advance into that and hang.
-/// There is one world now, so the advance becomes three `NOP`s.
+/// Concatenating three worlds gives three of each. Unlike the previous
+/// prototype these are *removed from the entry list*, not merely blanked: a
+/// leftover start reserves a pointer entry permanently, because the pickup
+/// phase never releases `Start` entries, and the freed bytes are part of what
+/// keeps the merged blocks inside their region.
 ///
-/// This is what has to become a real progression model before the prototype
-/// is a game — see `docs/mega_map.md`.
-fn pin_world(rom: &mut Rom) -> Result<(), String> {
-    const INC_WORLD_NUM: usize = 0x3D0A1; // PRG030, `INC $0727`
-    for (i, want) in [0xEE, 0x27, 0x07].into_iter().enumerate() {
-        expect_write(rom, INC_WORLD_NUM + i, want, 0xEA, "world advance")?;
-    }
-    Ok(())
-}
+/// The start kept is the leftmost — the first source world's, where the
+/// engine's own start coordinates already point. The goal kept is the
+/// **rightmost**, so the castle sits at the far end of the group and the
+/// airship that ends the super-world is the last thing on the map.
+fn reconcile_singletons(plan: &mut Plan) -> usize {
+    let mut removed = 0;
 
-// --- Grid ---------------------------------------------------------------
-
-/// Per-screen row shift, so every screen's node lattice lands on the same
-/// row parity as screen 0's.
-///
-/// # Why this is needed at all
-///
-/// The player moves two tiles at a time, so a walk changes a row or a column
-/// by exactly 2 and **`row % 2` is invariant along any path**. Every node the
-/// start can ever reach shares the start's row parity. That is not a property
-/// of the fold — it is how the map engine has always worked — but a single
-/// world never notices, because each vanilla map is internally consistent.
-///
-/// Folding eight of them together does notice. Measured over the source
-/// screens, the split is total and there is no mixing:
-///
-/// | Screen | Source | Node rows |
-/// |---|---|---|
-/// | 0-5 | W1-W6 | all even (0, 2, 4, 6, 8) |
-/// | 6-7 | W7, W8 | all odd (1, 3, 5, 7) |
-///
-/// So W7's and W8's screens are half a step out of phase with the other six.
-/// No corridor of any shape can join them — not a longer one, not an
-/// L-shaped one — because the parity clash is invariant under every legal
-/// move. Shifting the screen's contents by one row is the only fix, and it
-/// costs nothing here: W7's deepest node moves from row 7 to row 8 and W8's
-/// from 5 to 6, both still on the map.
-///
-/// Shifting down is preferred because row 0 is a screen's top border and
-/// duplicating it is invisible, whereas the bottom row usually carries the
-/// map's ground edge.
-/// **Compute these once, against the untouched ROM, before anything is
-/// written.** `build_pointer_block` writes the merged block over the source
-/// blocks of the first few worlds, so a later pass that re-derives a shift
-/// from `VAN_WORLDS` reads its own output and gets nonsense. That is the same
-/// ordering trap the world-merge experiment hit from the other direction.
-fn row_shifts(rom: &Rom) -> [isize; SCREENS] {
-    const TARGET_PARITY: usize = 0; // screen 0's lattice, and so the start's
-
-    let mut shifts = [0; SCREENS];
-    for (dest, &(world, screen)) in SOURCE.iter().enumerate() {
-        let (rowtype_offset, n) = VAN_WORLDS[world];
-        let rows: Vec<usize> = read_entries(rom, rowtype_offset, n)
-            .iter()
-            .filter(|e| (e.scrcol >> 4) as usize == screen)
-            .map(|e| e.row())
-            .collect();
-
-        let Some(&first) = rows.first() else { continue };
-        if first % 2 == TARGET_PARITY {
-            continue;
-        }
-        // Down if the deepest node still fits, otherwise up.
-        shifts[dest] = if rows.iter().all(|&r| r + 1 < ROWS) { 1 } else { -1 };
-    }
-    shifts
-}
-
-/// Apply a row shift, or `None` if the row falls off the map.
-fn shifted(row: usize, shift: isize) -> Option<usize> {
-    let r = row as isize + shift;
-    (0..ROWS as isize).contains(&r).then_some(r as usize)
-}
-
-fn cpu_of(file_offset: usize) -> u16 {
-    (0xA000 + (file_offset - PRG012_FILE_BASE)) as u16
-}
-
-fn write_word(rom: &mut Rom, offset: usize, val: u16) {
-    rom.write_range(offset, &[(val & 0xFF) as u8, (val >> 8) as u8]);
-}
-
-/// File offset of `(row, col)` in the merged grid.
-pub(crate) fn tile_offset(row: usize, col: usize) -> usize {
-    DEST_GRID + (col / 16) * SCREEN_BYTES + row * 16 + (col % 16)
-}
-
-/// Assemble the eight source screens into one grid, then the `$FF` the
-/// loader stops on.
-///
-/// Read every source screen out before writing any of it: the destination
-/// starts at W1's grid and runs over W2's, W3's and W4's sources.
-fn build_grid(rom: &mut Rom, shifts: &[isize; SCREENS]) {
-    let mut merged = Vec::with_capacity(SCREEN_BYTES * SCREENS + 1);
-    for (dest, &(world, screen)) in SOURCE.iter().enumerate() {
-        let (base, _) = VAN_GRIDS[world];
-        let src = rom.read_range(base + screen * SCREEN_BYTES, SCREEN_BYTES).to_vec();
-        let shift = shifts[dest];
-
-        for row in 0..ROWS {
-            // The row this destination row draws from. Where the shift
-            // vacates an edge row, repeat the edge rather than flooding it
-            // with water — the vacated row is a border and the duplicate is
-            // invisible.
-            let from = shifted(row, -shift).unwrap_or(if shift > 0 { 0 } else { ROWS - 1 });
-            merged.extend_from_slice(&src[from * 16..from * 16 + 16]);
-        }
-    }
-    merged.push(0xFF);
-    rom.write_range(DEST_GRID, &merged);
-
-    write_word(rom, GRID_PTRS, cpu_of(DEST_GRID));
-}
-
-fn read_grid(rom: &Rom) -> Vec<Vec<u8>> {
-    (0..ROWS).map(|r| (0..COLUMNS).map(|c| rom.read_byte(tile_offset(r, c))).collect()).collect()
-}
-
-// --- Pointer block ------------------------------------------------------
-
-/// One pointer-table entry, held column-wise in ROM.
-#[derive(Clone, Copy)]
-pub(crate) struct Entry {
-    rowtype: u8,
-    scrcol: u8,
-    obj: u16,
-    lay: u16,
-}
-
-impl Entry {
-    /// Grid row. The RowType high nibble is the row offset by 2; a handful
-    /// of vanilla entries carry a nibble below that, so saturate rather than
-    /// underflow — they are filtered out by the grid-bounds checks anyway.
-    pub(crate) fn row(&self) -> usize {
-        (((self.rowtype >> 4) & 0x0F) as usize).saturating_sub(2)
-    }
-    pub(crate) fn col(&self) -> usize {
-        ((self.scrcol >> 4) as usize) * 16 + (self.scrcol & 0x0F) as usize
-    }
-}
-
-fn read_entries(rom: &Rom, rowtype_offset: usize, n: usize) -> Vec<Entry> {
-    let scrcol = rowtype_offset + n;
-    let obj = scrcol + n;
-    let lay = obj + n * 2;
-    (0..n)
-        .map(|i| Entry {
-            rowtype: rom.read_byte(rowtype_offset + i),
-            scrcol: rom.read_byte(scrcol + i),
-            obj: rom_data::read_word(rom, obj + i * 2),
-            lay: rom_data::read_word(rom, lay + i * 2),
-        })
-        .collect()
-}
-
-/// Gather each source screen's entries, renumber them onto their destination
-/// screen, and write one block.
-///
-/// The concatenation needs no resort. Entries are ordered by `(screen, row,
-/// col)` within a world, taking one screen from each preserves that order
-/// within a run, and the runs are appended in destination-screen order — so
-/// the whole block comes out sorted, which is what the engine's forward
-/// search from `InitIndex` assumes.
-fn build_pointer_block(rom: &mut Rom, shifts: &[isize; SCREENS]) -> Result<Vec<Entry>, String> {
-    let mut merged: Vec<Entry> = Vec::new();
-    for (dest, &(world, screen)) in SOURCE.iter().enumerate() {
-        let (rowtype_offset, n) = VAN_WORLDS[world];
-        let shift = shifts[dest];
-
-        for e in read_entries(rom, rowtype_offset, n) {
-            if (e.scrcol >> 4) as usize != screen {
-                continue;
+    for group in 0..SUPER_WORLDS.len() {
+        let cols = plan.cols(group);
+        let find = |plan: &Plan, want: u8| -> Vec<(usize, usize)> {
+            let mut hits = Vec::new();
+            for c in 0..cols {
+                for r in 0..ROWS {
+                    if plan.tile(group, r, c) == want {
+                        hits.push((r, c));
+                    }
+                }
             }
-            // An entry whose row leaves the map is dropped rather than
-            // clamped: two entries on one cell would give the engine's
-            // forward search two answers for one position.
-            let Some(row) = shifted(e.row(), shift) else { continue };
+            hits
+        };
 
-            merged.push(Entry {
-                // Row lives in the high nibble of RowType, offset by 2; the
-                // low nibble is the tileset and must survive untouched.
-                rowtype: (((row + 2) as u8) << 4) | (e.rowtype & 0x0F),
-                // Screen lives in the high nibble of ScrCol.
-                scrcol: ((dest as u8) << 4) | (e.scrcol & 0x0F),
-                ..e
+        let mut doomed: Vec<(usize, usize)> = Vec::new();
+        // Starts: keep the leftmost.
+        doomed.extend(find(plan, rom_data::TILE_START).into_iter().skip(1));
+        // Castles: keep the rightmost, with each discarded decorative top.
+        let castles = find(plan, TILE_CASTLE_BOTTOM);
+        if castles.len() > 1 {
+            for &pos in &castles[..castles.len() - 1] {
+                doomed.push(pos);
+                if pos.0 > 0 && plan.tile(group, pos.0 - 1, pos.1) == TILE_CASTLE_TOP {
+                    doomed.push((pos.0 - 1, pos.1));
+                }
+            }
+        }
+
+        for &(r, c) in &doomed {
+            plan.set_tile(group, r, c, BACKGROUND_TILES[0]);
+        }
+        let gone: HashSet<(usize, usize)> = doomed.iter().copied().collect();
+        let before = plan.entries[group].len();
+        plan.entries[group].retain(|e| !gone.contains(&(e.row(), e.col())));
+        removed += before - plan.entries[group].len();
+    }
+
+    removed
+}
+
+// --- Page links ---------------------------------------------------------
+
+/// Join each inter-world boundary with a repurposed pipe pair.
+///
+/// # Why repurpose rather than add
+///
+/// A pipe pair is two pointer entries that **share one `obj_ptr`** — the
+/// transit level — matched to a destination slot by comparing the entries'
+/// grid positions against the positions in the dest tables (`build_pipe_map`
+/// does exactly this). Two consequences follow. A brand-new pair would need a
+/// transit level of its own, since a third entry sharing an existing
+/// `obj_ptr` breaks the "group of exactly two" pairing. And it would need two
+/// more pointer entries, which the block has no room for.
+///
+/// Moving an existing pair costs neither: the transit level does not care
+/// where its mouths are, the `obj_ptr` stays unique, the entry count is
+/// unchanged, and the dest slot comes along. The price is one in-world pipe
+/// shortcut per link — five in total, out of 24.
+///
+/// The mouths go on **blank node cells with no pointer entry**, near the
+/// boundary. That is the only kind of cell free to take a pipe: one that
+/// already carries an entry would end up with two entries at one position,
+/// and the engine's forward search would find whichever came first.
+#[allow(clippy::type_complexity)]
+fn link_pages(
+    rom: &Rom,
+    plan: &mut Plan,
+    van_entries: &[Vec<Entry>],
+) -> Result<(Vec<Link>, Vec<Vec<(usize, usize, usize, usize)>>), String> {
+    let mut links = Vec::new();
+    let mut by_group = Vec::new();
+
+    for (group, sw) in SUPER_WORLDS.iter().enumerate() {
+        let all_pairs = pipe_pairs_in(rom, sw.sources, van_entries);
+        by_group.push(all_pairs.clone());
+
+        // Prefer to repurpose pipes that only ever were shortcuts.
+        //
+        // A pair whose two mouths sit on the *same* vanilla page cannot be
+        // the only thing joining two pages, so taking it can disconnect
+        // nothing. A cross-page pair might be load-bearing — W5's spiral
+        // tower is the sole connection between its ground and sky halves,
+        // and W3's page 0 to page 1 pipe is likewise its own bridge. Popping
+        // blindly took both of W3's cross-page pipes and stranded its island.
+        //
+        // `spare` is popped from the back, so same-page pairs go last.
+        let mut spare = all_pairs.clone();
+        spare.sort_by_key(|&(_, world, a, b)| {
+            let same_page = van_entries[world][a].page() == van_entries[world][b].page();
+            u8::from(same_page)
+        });
+
+        for pair in sw.sources.windows(2) {
+            let (left_world, right_world) = (pair[0], pair[1]);
+            let left_page = plan
+                .dest_page(group, left_world, VAN_GRIDS[left_world].1 - 1)
+                .expect("the left world's last page is in this group");
+            let right_page = plan
+                .dest_page(group, right_world, 0)
+                .expect("the right world's first page is in this group");
+
+            // Reachability is recomputed each time, against the map as the
+            // links placed so far have left it.
+            let grid = plan_grid(plan, group);
+            let mut pipes = live_pipes(plan, group, &all_pairs);
+            pipes.extend(canoe_edges_for(plan, group));
+            let reached = map_walker::walk_map(&grid, &pipes, None, sw.slot).nodes;
+
+            let left_mouth = pick_mouth(plan, group, left_page, Side::RightEdge, &reached)
+                .ok_or_else(|| {
+                    format!("mega_map: no reachable node on page {left_page} to host a link")
+                })?;
+            let component = largest_component(plan, group, right_page, &pipes);
+            let right_mouth = pick_mouth(plan, group, right_page, Side::LeftEdge, &component)
+                .ok_or_else(|| {
+                    format!("mega_map: no connected node on page {right_page} to host a link")
+                })?;
+
+            // Try each candidate and keep the first that costs nothing.
+            //
+            // "Same page" is a preference, not a guarantee: W2's single pipe
+            // has both mouths on its first page and is still the only thing
+            // joining two regions of it, so taking it stranded ten nodes.
+            // The only reliable test is to move the pair, re-walk, and check
+            // that every node reachable before is reachable after — and that
+            // the page being joined actually lit up.
+            let before_components = component_count(plan, group, &all_pairs);
+            let mut chosen = None;
+            for (ci, &(dest_idx, world, a_idx, b_idx)) in spare.iter().enumerate().rev() {
+                let mut trial = plan.clone();
+                move_pipe_pair(
+                    &mut trial,
+                    group,
+                    (world, a_idx, left_mouth),
+                    (world, b_idx, right_mouth),
+                );
+
+                // A link joins two components, so it must leave *strictly*
+                // fewer than before. If moving the pair also severs
+                // something, the split cancels the join and the count comes
+                // back level — which is exactly what taking W2's only pipe
+                // did, and what comparing against the group's current reach
+                // could not see, because W2 had not been linked in yet.
+                if component_count(&trial, group, &all_pairs) < before_components {
+                    *plan = trial;
+                    chosen = Some((ci, dest_idx));
+                    break;
+                }
+            }
+
+            let Some((ci, dest_idx)) = chosen else {
+                return Err(format!(
+                    "mega_map: slot {} has no pipe pair it can spare to link W{} to W{} \
+                     without stranding something",
+                    sw.slot,
+                    left_world + 1,
+                    right_world + 1
+                ));
+            };
+            spare.remove(ci);
+
+            links.push(Link {
+                slot: sw.slot,
+                between: (left_world + 1, right_world + 1),
+                dest_idx,
+                mouths: (left_mouth, right_mouth),
             });
         }
     }
 
-    let n = merged.len();
-    // `Map_ByXHi_InitIndex` holds a byte per screen. An entry index past 255
-    // cannot be named as a screen's start, and the fold has no way to shrink
-    // itself, so this is a hard stop rather than a truncation.
-    if n > 255 {
-        return Err(format!(
-            "mega_map: {n} entries exceeds the 255 a byte-wide InitIndex can address"
-        ));
-    }
-
-    let init = DEST_BLOCK;
-    let rowtype = init + SCREENS;
-    let scrcol = rowtype + n;
-    let objsets = scrcol + n;
-    let layouts = objsets + n * 2;
-    let block_end = layouts + n * 2;
-
-    // The merged block runs over the blocks of the worlds it consumed. Those
-    // are dead, but the *last* world's block must survive: its entries are
-    // still being read out of the ROM by this very function on a re-run, and
-    // more importantly overrunning past 0x19C4C would reach the master
-    // tables' neighbours rather than dead world data.
-    const BLOCK_REGION_END: usize = 0x19C4C;
-    if block_end > BLOCK_REGION_END {
-        return Err(format!(
-            "mega_map: merged block ends at {block_end:#07X}, past the world-block region \
-             end {BLOCK_REGION_END:#07X}"
-        ));
-    }
-
-    for (i, e) in merged.iter().enumerate() {
-        rom.write_byte(rowtype + i, e.rowtype);
-        rom.write_byte(scrcol + i, e.scrcol);
-        write_word(rom, objsets + i * 2, e.obj);
-        write_word(rom, layouts + i * 2, e.lay);
-    }
-
-    // InitIndex: first entry index on each screen, with `n` as the "no
-    // entries here" sentinel the engine's search treats as start-at-the-end.
-    let mut init_bytes = [n as u8; SCREENS];
-    for (screen, slot) in init_bytes.iter_mut().enumerate() {
-        if let Some(pos) = merged.iter().position(|e| (e.scrcol >> 4) as usize == screen) {
-            *slot = pos as u8;
-        }
-    }
-    rom.write_range(init, &init_bytes);
-
-    write_word(rom, INIT_MASTER, cpu_of(init));
-    write_word(rom, ROWTYPE_MASTER, cpu_of(rowtype));
-    write_word(rom, SCRCOL_MASTER, cpu_of(scrcol));
-    write_word(rom, OBJSETS_MASTER, cpu_of(objsets));
-    write_word(rom, LAYOUTS_MASTER, cpu_of(layouts));
-
-    Ok(merged)
+    Ok((links, by_group))
 }
 
-// --- Fortress FX --------------------------------------------------------
-
-/// Vanilla fortress FX slots, in `FORTRESS_ENTRIES` order, paired with the
-/// `(world, screen)` they sit on. Only the screen-0 ones survive the fold.
-/// `entry` indexes the world's vanilla pointer block and is the fortress's
-/// identity — the map tile is not, because W8's fortress is `0xAF` where
-/// every other world's is `0x67`, and `0xAF` doubles as an island blank.
-const VAN_FX: [(usize, usize, usize, usize); 16] = [
-    // (fx_slot, world, screen, entry)
-    (0x00, 0, 0, 11),
-    (0x01, 1, 0, 13),
-    (0x02, 2, 0, 13),
-    (0x03, 2, 1, 34),
-    (0x04, 3, 0, 9),
-    (0x05, 3, 1, 16),
-    (0x06, 4, 0, 12),
-    (0x07, 4, 1, 31),
-    (0x08, 5, 0, 9),
-    (0x09, 5, 1, 27),
-    (0x0A, 5, 2, 48),
-    (0x0B, 6, 0, 5),
-    (0x0C, 6, 1, 40),
-    (0x0D, 7, 0, 7),
-    (0x0E, 7, 1, 10),
-    (0x0F, 7, 2, 26),
-];
-
-/// Re-aim the surviving fortresses' FX slots at their destination screen and
-/// give world 0 a row long enough to list them all.
+/// Every vanilla pipe pair whose world is in `sources`, as
+/// `(dest_idx, world, entry_a, entry_b)`.
 ///
-/// Only two fields are screen-dependent. `FortressFX_MapLocation` packs the
-/// screen in its low nibble, and `FortressFX_MapCompIdx`'s first byte is a
-/// `Map_Completions` column, which is map-global. The VRAM address, the row
-/// byte, the replacement tile and the pattern bytes are all expressed within
-/// a screen, so they carry over untouched — which is the same reason the
-/// randomizer's own FX writer can place a fortress on any screen.
-///
-/// `FortressFXBase_ByWorld[0]` is already 0, and world 0's row is followed
-/// by the rows of worlds that no longer exist, so the row can simply grow
-/// from four bytes to eight in place.
-fn carry_fortress_fx(rom: &mut Rom, shifts: &[isize; SCREENS]) -> usize {
-    let mut row = [0u8; SCREENS];
-    let mut count = 0;
-
-    for &(slot, world, screen, _) in &VAN_FX {
-        let Some(dest) = SOURCE.iter().position(|&s| s == (world, screen)) else {
-            continue;
-        };
-        let shift = shifts[dest];
-
-        // MapLocation: column stays in the high nibble, screen moves.
-        let loc = rom.read_byte(FX_MAP_LOCATION + slot);
-        rom.write_byte(FX_MAP_LOCATION + slot, (loc & 0xF0) | (dest as u8));
-
-        // MapCompIdx: the completion column is map-global, so only the
-        // screen part of it moves. Sixteen columns per screen.
-        let comp = rom.read_byte(FX_MAP_COMP_IDX + slot * 2);
-        rom.write_byte(FX_MAP_COMP_IDX + slot * 2, (dest as u8) * 16 + (comp % 16));
-
-        // A shifted screen takes its fortress with it, and the FX row byte
-        // and completion bit both encode that row. Miss either and the
-        // lock-break animation plays on the wrong cell, or the clear fails
-        // to persist across a level.
-        if shift != 0 {
-            let loc_row = rom.read_byte(rom_data::FX_MAP_LOC_ROW + slot);
-            // Low nibble MUST stay 0: the engine ORs this byte into the map
-            // write offset at $C99B, so anything in bits 0..3 corrupts the
-            // destination column.
-            let old_row = ((loc_row >> 4) as usize).saturating_sub(2);
-            if let Some(new_row) = shifted(old_row, shift) {
-                rom.write_byte(rom_data::FX_MAP_LOC_ROW + slot, ((new_row + 2) as u8) << 4);
-                rom.write_byte(
-                    FX_MAP_COMP_IDX + slot * 2 + 1,
-                    rom_data::MAP_COMPLETE_BITS[new_row.min(7)],
-                );
-            }
-        }
-
-        row[count] = slot as u8;
-        count += 1;
-    }
-
-    rom.write_range(FX_WORLD_TABLE, &row[..]);
-    count
-}
-
-// --- Pipes --------------------------------------------------------------
-
-/// Keep the pipe pairs whose *both* endpoints survive the fold, retargeted
-/// onto their new screens, and return them as walker teleport edges.
-///
-/// # Why this is not optional
-///
-/// W7 is Pipe Land, and its map is genuinely two interleaved lattices: of its
-/// 23 screen-0 nodes, 12 sit on even columns and 11 on odd, and the only
-/// thing joining the two halves is a pipe. Because every walk moves two tiles
-/// at a time, `col % 2` is invariant — so with the pipes gone, half of W7 is
-/// not merely hard to reach, it is unreachable by any path, and its fortress
-/// is on the wrong half. No amount of corridor carving can fix that; the
-/// pipes have to come across.
-///
-/// A pair only survives if both ends are on carried screens, because a pipe
-/// is matched to its destination slot by grid position: leave one end behind
-/// and the pair goes unmatched, and walking into the remaining end lands the
-/// player at whatever that pointer entry used to be.
-fn carry_pipes(rom: &mut Rom, shifts: &[isize; SCREENS]) -> Vec<rom_data::TeleportEdge> {
-    let mut carried = Vec::new();
-
+/// Read straight from the destination tables: a pair's endpoints are the
+/// entries sitting at the positions the tables record, which is the same
+/// matching rule the node catalog uses.
+fn pipe_pairs_in(
+    rom: &Rom,
+    sources: &[usize],
+    van_entries: &[Vec<Entry>],
+) -> Vec<(usize, usize, usize, usize)> {
+    let mut out = Vec::new();
     for &(dest_idx, world) in rom_data::DEST_TO_WORLD {
         let idx = dest_idx as usize;
-        let xhi = rom.read_byte(rom_data::PIPE_MAP_XHI + idx);
-        let x = rom.read_byte(rom_data::PIPE_MAP_X + idx);
-        let y = rom.read_byte(rom_data::PIPE_MAP_Y + idx);
-
-        let (a_screen, b_screen) = ((xhi >> 4) as usize, (xhi & 0x0F) as usize);
-        let (Some(a_dest), Some(b_dest)) = (
-            SOURCE.iter().position(|&s| s == (world, a_screen)),
-            SOURCE.iter().position(|&s| s == (world, b_screen)),
-        ) else {
+        if !sources.contains(&world) {
             continue;
-        };
-
-        // Rows shift with their screen; the Y byte packs both endpoints,
-        // each offset by 2 the same way RowType is.
-        let a_row = ((y >> 4) as usize).saturating_sub(2);
-        let b_row = ((y & 0x0F) as usize).saturating_sub(2);
-        let (Some(a_row), Some(b_row)) =
-            (shifted(a_row, shifts[a_dest]), shifted(b_row, shifts[b_dest]))
-        else {
-            continue;
-        };
-
-        let packed_xhi = ((a_dest as u8) << 4) | (b_dest as u8);
-        rom.write_byte(rom_data::PIPE_MAP_XHI + idx, packed_xhi);
-        // Scroll X-Hi tracks Map X-Hi so the camera lands square on the
-        // destination screen instead of half a screen off.
-        rom.write_byte(rom_data::PIPE_MAP_SCRL_XHI + idx, packed_xhi);
-        rom.write_byte(
-            rom_data::PIPE_MAP_Y + idx,
-            (((a_row + 2) as u8) << 4) | ((b_row + 2) as u8),
-        );
-
-        carried.push((
-            (a_row, a_dest * 16 + (x >> 4) as usize),
-            (b_row, b_dest * 16 + (x & 0x0F) as usize),
-        ));
-    }
-
-    carried
-}
-
-/// Demote every map pipe tile to plain path.
-///
-/// A pipe is half a connection: the engine sends the player to the position
-/// recorded for the pair's other endpoint in the destination tables, and
-/// those endpoints are matched by grid position. The fold moves both
-/// endpoints of a pair only when both were on the same source screen, and
-/// re-deriving which pairs those are is work the prototype does not need —
-/// so no pipe survives as a pipe.
-///
-/// Demoting the *tile* is enough and is safe: entry lookup only happens when
-/// the player presses A on an enterable tile, and a path tile is not one.
-/// The orphaned pointer entries stay in the block, unreachable and harmless.
-fn neutralize_pipes(rom: &mut Rom, carried: &[rom_data::TeleportEdge]) -> usize {
-    let kept: HashSet<(usize, usize)> = carried.iter().flat_map(|&(a, b)| [a, b]).collect();
-
-    let grid = read_grid(rom);
-    let mut count = 0;
-    for (r, row) in grid.iter().enumerate() {
-        for (c, &tile) in row.iter().enumerate() {
-            if TILE_PIPE.contains(&tile) && !kept.contains(&(r, c)) {
-                // A pipe occupies a node position, so it demotes to a blank
-                // node, not to a path tile.
-                rom.write_byte(tile_offset(r, c), TILE_NODE_BLANK);
-                count += 1;
-            }
+        }
+        let (a, b) = dest_positions(rom, idx);
+        let at =
+            |p: (usize, usize)| van_entries[world].iter().position(|e| (e.row(), e.col()) == p);
+        if let (Some(ea), Some(eb)) = (at(a), at(b)) {
+            out.push((idx, world, ea, eb));
         }
     }
-    count
+    out
 }
 
-// --- Singletons ---------------------------------------------------------
+/// The two endpoint positions a pipe destination slot records.
+fn dest_positions(rom: &Rom, dest_idx: usize) -> ((usize, usize), (usize, usize)) {
+    let xhi = rom.read_byte(rom_data::PIPE_MAP_XHI + dest_idx);
+    let x = rom.read_byte(rom_data::PIPE_MAP_X + dest_idx);
+    let y = rom.read_byte(rom_data::PIPE_MAP_Y + dest_idx);
+    (
+        (((y >> 4) as usize).saturating_sub(2), ((xhi >> 4) as usize) * 16 + (x >> 4) as usize),
+        (
+            ((y & 0x0F) as usize).saturating_sub(2),
+            ((xhi & 0x0F) as usize) * 16 + (x & 0x0F) as usize,
+        ),
+    )
+}
 
-/// Keep one start and one goal.
-///
-/// Eight screens carry eight of each. A leftover start is not cosmetic: the
-/// pickup phase never releases `Start` entries, so every extra one reserves
-/// a pointer entry permanently. A leftover castle leaves a second enterable
-/// goal, and its decorative top floating if the bottom is taken away.
-///
-/// The start kept is the leftmost — screen 0's, which is where the engine's
-/// own start coordinates already point. The castle kept is the *rightmost*,
-/// so the goal sits at the far end of the continent and the map reads as one
-/// route across. Moving the start would need the start X / X-Hi / camera
-/// tables that `start_airship_swap` owns; that is the next step, not this one.
-fn reconcile_singletons(rom: &mut Rom) -> usize {
-    let grid = read_grid(rom);
+enum Side {
+    LeftEdge,
+    RightEdge,
+}
 
-    let find = |want: u8| -> Vec<(usize, usize)> {
-        let mut hits = Vec::new();
-        for (r, row) in grid.iter().enumerate() {
-            for (c, &tile) in row.iter().enumerate() {
-                if tile == want {
-                    hits.push((r, c));
-                }
-            }
-        }
-        hits.sort_by_key(|&(r, c)| (c, r));
-        hits
+/// Nodes a link mouth must never displace: the group's start and goal, the
+/// fortresses that gate it, and the pipes that carry the other links.
+const PROTECTED_TILES: [u8; 7] = [
+    rom_data::TILE_START,
+    TILE_CASTLE_BOTTOM,
+    TILE_CASTLE_TOP,
+    rom_data::TILE_FORTRESS,
+    0xEB, // alternate-colour fortress
+    0xAF, // W8's fortress, which doubles as an island blank
+    TILE_PIPE,
+];
+
+/// Where to put a link mouth on `page`, scanning inward from `side`.
+///
+/// `usable` is the set of cells the mouth may sit on — for the left side, what
+/// the start can already reach; for the right side, that page's largest
+/// connected component. **A mouth that is not itself reachable connects
+/// nothing.** Placing a pipe on a cell does not make the cell reachable, so
+/// an unchecked mouth produces a link that looks right in the tables and
+/// leaves the page dark; the first version of this cut off pages 3 and up in
+/// all three groups.
+///
+/// Two kinds of cell will do, in order of preference:
+///
+/// 1. A **blank node with no pointer entry** — free, nothing is displaced.
+/// 2. Any other node, whose entry then **trades places** with the pipe's.
+///
+/// The second case is not a fallback so much as the normal one. Vanilla maps
+/// are dense: W1's single page has 21 entries and not one spare blank node,
+/// so a design that could only use case 1 fails immediately. Trading places
+/// conserves everything — the displaced level keeps its `obj_ptr` and lands
+/// where the pipe used to be, which was a reachable node by construction.
+fn pick_mouth(
+    plan: &Plan,
+    group: usize,
+    page: usize,
+    side: Side,
+    usable: &HashSet<(usize, usize)>,
+) -> Option<(usize, usize)> {
+    let taken: HashSet<(usize, usize)> =
+        plan.entries[group].iter().map(|e| (e.row(), e.col())).collect();
+
+    let cols: Vec<usize> = match side {
+        Side::RightEdge => (page * 16..page * 16 + 16).rev().collect(),
+        Side::LeftEdge => (page * 16..page * 16 + 16).collect(),
     };
 
-    let mut doomed: Vec<(usize, usize)> = Vec::new();
-
-    // Starts: keep the leftmost.
-    doomed.extend(find(rom_data::TILE_START).into_iter().skip(1));
-
-    // Castles: keep the rightmost, and take each discarded one's decorative
-    // top with it.
-    let castles = find(TILE_CASTLE_BOTTOM);
-    if castles.len() > 1 {
-        for &pos in &castles[..castles.len() - 1] {
-            doomed.push(pos);
-            if pos.0 > 0 && grid[pos.0 - 1][pos.1] == TILE_CASTLE_TOP {
-                doomed.push((pos.0 - 1, pos.1));
+    // Pass 1: a reachable blank node nobody is using.
+    for &c in &cols {
+        for r in 0..ROWS {
+            if usable.contains(&(r, c))
+                && VALID_BLANK_TILES.contains(&plan.tile(group, r, c))
+                && !taken.contains(&(r, c))
+            {
+                return Some((r, c));
             }
         }
     }
 
-    for &(r, c) in &doomed {
-        // Background rather than a themed blank: the pickup phase's
-        // neighbour-aware blanking reads `MAP_TILE_GRIDS`, which still
-        // describes the vanilla per-world layout at this point.
-        rom.write_byte(tile_offset(r, c), BACKGROUND_TILES[0]);
-    }
-    doomed.len()
-}
-
-// --- Seams --------------------------------------------------------------
-
-/// True if `(row, col)` is a **node** — a cell the walker stands on, as
-/// opposed to a path tile it steps through.
-///
-/// Two things qualify: a cell carrying a pointer entry (a level, fortress,
-/// toad house or spade panel is a node whatever its tile looks like, and the
-/// entry list is the authoritative way to know one is there), and a blank
-/// node tile. Path tiles are deliberately excluded — anchoring a seam carve
-/// on one would put the corridor half a step out of phase with the lattice.
-///
-/// A background tile is never a node, and that check has to come **first**,
-/// ahead of the entry list. `reconcile_singletons` blanks the cells of the
-/// starts and castles it discards but cannot remove their pointer entries,
-/// so those cells stay in `entries` while reading as water. Trusting the
-/// entry list there anchored two seam carves on background and left five
-/// screens unreachable — the walker rejects a background destination, so the
-/// corridor was built to nowhere.
-fn is_node(grid: &[Vec<u8>], entries: &[Entry], row: usize, col: usize) -> bool {
-    let tile = grid[row][col];
-    if BACKGROUND_TILES.contains(&tile) {
-        return false;
-    }
-    VALID_BLANK_TILES.contains(&tile) || entries.iter().any(|e| e.row() == row && e.col() == col)
-}
-
-/// True if this cell holds something a seam route must not overwrite.
-///
-/// Anything with a pointer entry behind it — a level, fortress, toad house,
-/// spade panel — plus the fortress, castle and start tiles, which are
-/// structure rather than decoration. Path tiles, scenery and water are all
-/// fair game: a route has to cross something.
-fn carries_content(grid: &rom_data::Grid, entries: &[Entry], row: usize, col: usize) -> bool {
-    let tile = grid.get(row, col);
-    rom_data::FORTRESS_TILES.contains(&tile)
-        || tile == TILE_CASTLE_BOTTOM
-        || tile == TILE_CASTLE_TOP
-        || tile == rom_data::TILE_START
-        || entries.iter().any(|e| e.row() == row && e.col() == col)
-}
-
-/// A cell the route needs to write, and what to write there.
-type Write = (usize, usize, u8);
-
-/// How a node was reached: the node before it, and the writes that edge costs.
-type Step = (rom_data::Pos, Vec<Write>);
-
-/// Cheapest set of tile writes that connects `sources` to any of `targets`,
-/// or `None` if no route exists without overwriting content.
-///
-/// # Why a search and not a corridor
-///
-/// The obvious way to join two screens is a straight corridor along one row.
-/// It is not enough, because vanilla screen edges were never drawn to meet:
-/// the first attempt at this produced corridors that connected nothing (the
-/// anchor was an isolated cell), corridors that severed the route feeding
-/// their own anchor, and one that deleted W4's fortress by running straight
-/// over it.
-///
-/// So the connection is found rather than assumed. This is Dijkstra over the
-/// **node lattice** — the cells the player can stand on, two apart — where an
-/// edge costs the number of tiles that must be written to make it passable.
-/// Edges along existing paths cost nothing, so the search reuses the map that
-/// is already there and only writes where it must; edges that would overwrite
-/// content are not offered at all. The result routes around obstacles and
-/// bends where it needs to, which a fixed-row corridor cannot do.
-///
-/// The lattice parity is implicit and load-bearing: every move is two tiles,
-/// so the search only ever visits cells sharing the sources' `(row % 2,
-/// col % 2)` class. See [`row_shifts`] for what happens when two screens
-/// disagree about that.
-fn cheapest_route(
-    grid: &rom_data::Grid,
-    entries: &[Entry],
-    sources: &HashSet<(usize, usize)>,
-    targets: &HashSet<(usize, usize)>,
-) -> Option<Vec<Write>> {
-    use std::cmp::Reverse;
-    use std::collections::BinaryHeap;
-
-    // (row, col, is_horizontal) for the four two-tile moves.
-    const MOVES: [(isize, isize, bool); 4] =
-        [(0, 2, true), (0, -2, true), (2, 0, false), (-2, 0, false)];
-
-    let mut dist: HashMap<(usize, usize), usize> = HashMap::new();
-    let mut prev: HashMap<rom_data::Pos, Step> = HashMap::new();
-    let mut heap = BinaryHeap::new();
-
-    for &s in sources {
-        dist.insert(s, 0);
-        heap.push((Reverse(0), s));
-    }
-
-    while let Some((Reverse(d), (r, c))) = heap.pop() {
-        if d > *dist.get(&(r, c)).unwrap_or(&usize::MAX) {
-            continue;
-        }
-        if targets.contains(&(r, c)) {
-            // Walk the chain back, collecting the writes it needs.
-            let mut writes = Vec::new();
-            let mut at = (r, c);
-            while let Some((from, step)) = prev.get(&at) {
-                writes.extend(step.iter().copied());
-                at = *from;
-            }
-            return Some(writes);
-        }
-
-        // The airship and Bowser's castle end the world on arrival, so the
-        // player can never pass through them — the same sink rule the map
-        // walker applies.
-        let here = grid.get(r, c);
-        if here == rom_data::TILE_AIRSHIP || here == rom_data::TILE_BOWSER {
-            continue;
-        }
-
-        for (dr, dc, is_horz) in MOVES {
-            let mid = (r as isize + dr / 2, c as isize + dc / 2);
-            let dest = (r as isize + dr, c as isize + dc);
-            if dest.0 < 0 || dest.0 >= ROWS as isize || dest.1 < 0 || dest.1 >= COLUMNS as isize {
-                continue;
-            }
-            let (mr, mc) = (mid.0 as usize, mid.1 as usize);
-            let (nr, nc) = (dest.0 as usize, dest.1 as usize);
-
-            let mut cost = 0;
-            let mut writes: Vec<Write> = Vec::new();
-
-            // The tile stepped through must be a path tile for this axis.
-            let valid = if is_horz { rom_data::VALID_HORZ } else { rom_data::VALID_VERT };
-            if !valid.contains(&grid.get(mr, mc)) {
-                if carries_content(grid, entries, mr, mc) {
-                    continue;
-                }
-                cost += 1;
-                writes.push((mr, mc, if is_horz { TILE_PATH_H } else { TILE_PATH_V }));
-            }
-
-            // The tile landed on must not be background.
-            if BACKGROUND_TILES.contains(&grid.get(nr, nc)) {
-                if carries_content(grid, entries, nr, nc) {
-                    continue;
-                }
-                cost += 1;
-                writes.push((nr, nc, TILE_NODE_BLANK));
-            }
-
-            let next = d + cost;
-            if next < *dist.get(&(nr, nc)).unwrap_or(&usize::MAX) {
-                dist.insert((nr, nc), next);
-                prev.insert((nr, nc), ((r, c), writes));
-                heap.push((Reverse(next), (nr, nc)));
+    // Pass 2: displace an ordinary reachable node.
+    for &c in &cols {
+        for r in 0..ROWS {
+            if usable.contains(&(r, c))
+                && taken.contains(&(r, c))
+                && !PROTECTED_TILES.contains(&plan.tile(group, r, c))
+            {
+                return Some((r, c));
             }
         }
     }
@@ -981,196 +799,545 @@ fn cheapest_route(
     None
 }
 
-/// Where each carried fortress lands on the merged map.
+/// How many disconnected pieces the group's map is in.
 ///
-/// Computed from the vanilla pointer blocks, so it must run **before**
-/// `build_pointer_block` overwrites them.
-fn fort_positions(rom: &Rom, shifts: &[isize; SCREENS]) -> Vec<(usize, usize)> {
+/// Counted over every node with the group's pipes and canoes in play. A link
+/// that works reduces this by one; a link that also severs something leaves
+/// it level, which is the signal the candidate search watches for.
+fn component_count(plan: &Plan, group: usize, pairs: &[(usize, usize, usize, usize)]) -> usize {
+    let grid = plan_grid(plan, group);
+    let mut pipes = live_pipes(plan, group, pairs);
+    pipes.extend(canoe_edges_for(plan, group));
+
+    let mut seen: HashSet<(usize, usize)> = HashSet::new();
+    let mut count = 0;
+    for c in 0..grid.cols {
+        for r in 0..ROWS {
+            if seen.contains(&(r, c)) || BACKGROUND_TILES.contains(&grid.get(r, c)) {
+                continue;
+            }
+            let nodes = map_walker::walk_map(&grid, &pipes, Some((r, c)), 0).nodes;
+            if nodes.is_empty() {
+                seen.insert((r, c));
+            } else {
+                seen.extend(nodes.iter().copied());
+            }
+            count += 1;
+        }
+    }
+    count
+}
+
+/// The plan's grid for a group, as something the map walker can take.
+fn plan_grid(plan: &Plan, group: usize) -> rom_data::Grid {
+    let cols = plan.cols(group);
+    let tiles = (0..ROWS).map(|r| (0..cols).map(|c| plan.tile(group, r, c)).collect()).collect();
+    rom_data::Grid { tiles, cols, eights_are_wild: false }
+}
+
+/// The group's canoe edges, remapped onto its pages.
+///
+/// `active_canoe_edges` is keyed to vanilla world indices and vanilla
+/// coordinates, both of which the fold invalidates, so a walk over a merged
+/// map does not see them at all. W3's page 2 is reached only by canoe — the
+/// map itself is unchanged and the engine's canoe still works, because the
+/// dock tiles and the boat sprite come across with the page; it is the
+/// *model* that has to be told.
+///
+/// Returned as teleport edges to hand to the walker alongside the pipes.
+/// That flattens the canoe's statefulness (the boat has to be walked to
+/// first), which is safe here because every mainland dock carried is itself
+/// walk-reachable — but it is a simplification, not an equivalence.
+fn canoe_edges_for(plan: &Plan, group: usize) -> Vec<rom_data::TeleportEdge> {
     let mut out = Vec::new();
-    for &(_, world, screen, entry) in &VAN_FX {
-        let Some(dest) = SOURCE.iter().position(|&s| s == (world, screen)) else {
-            continue;
-        };
-        let (rowtype_offset, n) = VAN_WORLDS[world];
-        let e = read_entries(rom, rowtype_offset, n)[entry];
-        if let Some(row) = shifted(e.row(), shifts[dest]) {
-            out.push((row, dest * 16 + e.col() % 16));
+    for &w in SUPER_WORLDS[group].sources {
+        for (a, b) in rom_data::active_canoe_edges(w, false) {
+            let remap = |p: (usize, usize)| {
+                plan.dest_page(group, w, p.1 / 16).map(|d| (p.0, d * 16 + p.1 % 16))
+            };
+            if let (Some(a), Some(b)) = (remap(a), remap(b)) {
+                out.push((a, b));
+            }
         }
     }
     out
 }
 
-/// Connect any fortress the screen joins left stranded.
+/// The group's live pipe pairs, at wherever their entries currently sit.
 ///
-/// Joining the screens is not enough to reach everything on them. W7's
-/// fortress sits in the last column of its screen and was, in vanilla,
-/// approached from W7's *second* screen — which the fold does not carry. It
-/// comes across intact, on a reachable screen, and with no way in.
-///
-/// Fortresses get this treatment and ordinary levels do not, because a
-/// stranded level is a level the player skips while a stranded fortress is a
-/// lock that never opens. What is left stranded is counted and reported
-/// rather than passed over in silence.
-fn connect_stranded_forts(
-    rom: &mut Rom,
-    entries: &[Entry],
-    forts: &[(usize, usize)],
-    pipes: &[rom_data::TeleportEdge],
-) -> (usize, usize) {
-    let mut grid = read_mega_grid(rom);
-    let mut connected = 0;
-
-    for &fort in forts {
-        let reachable = map_walker::walk_map(&grid, pipes, None, 0).nodes;
-        if reachable.contains(&fort) {
-            continue;
-        }
-        let targets = HashSet::from([fort]);
-        let Some(writes) = cheapest_route(&grid, entries, &reachable, &targets) else {
-            continue;
-        };
-        for &(r, c, tile) in &writes {
-            grid.set(r, c, tile);
-            rom.write_byte(tile_offset(r, c), tile);
-        }
-        connected += 1;
-    }
-
-    let reachable = map_walker::walk_map(&grid, pipes, None, 0).nodes;
-    let stranded = forts.iter().filter(|f| !reachable.contains(f)).count();
-    (connected, stranded)
+/// Positions come from the entry list rather than the dest tables, because
+/// a repurposed pair's entries have already moved while the tables are
+/// rewritten later.
+fn live_pipes(
+    plan: &Plan,
+    group: usize,
+    pairs: &[(usize, usize, usize, usize)],
+) -> Vec<rom_data::TeleportEdge> {
+    let find = |world: usize, idx: usize| {
+        plan.entries[group]
+            .iter()
+            .find(|e| e.src_world == world && e.src_idx == idx)
+            .map(|e| (e.row(), e.col()))
+    };
+    pairs.iter().filter_map(|&(_, world, a, b)| Some((find(world, a)?, find(world, b)?))).collect()
 }
 
-/// Connect every screen to the one before it.
+/// The largest connected node component confined to `page`.
 ///
-/// Each source screen was drawn to connect to *its own* neighbour, so the
-/// boundaries between them are arbitrary: a screen that ended in water now
-/// abuts one that starts in desert. Without this the mega map is eight
-/// islands in one file.
-///
-/// Works left to right, re-walking after each connection so the next one is
-/// planned against the map as it now stands. The target is the next screen's
-/// **largest connected component** — reaching a screen is not the same as
-/// reaching into it, and an early version happily connected to an isolated
-/// cell on screen 2 and called it done.
-fn bridge_seams(rom: &mut Rom, entries: &[Entry], pipes: &[rom_data::TeleportEdge]) -> Vec<Seam> {
-    let mut grid = read_mega_grid(rom);
-    let mut seams = Vec::new();
+/// Reaching a page is not the same as reaching *into* it: an early version of
+/// the eight-page prototype connected happily to an isolated cell and called
+/// the page done.
+fn largest_component(
+    plan: &Plan,
+    group: usize,
+    page: usize,
+    pipes: &[rom_data::TeleportEdge],
+) -> HashSet<(usize, usize)> {
+    let grid = plan_grid(plan, group);
+    let cols = page * 16..(page + 1) * 16;
 
-    for seam in 0..SCREENS - 1 {
-        let right = seam + 1;
-        let cols = right * 16..(right + 1) * 16;
-
-        let sources = map_walker::walk_map(&grid, pipes, None, 0).nodes;
-
-        // The largest connected component of the screen being joined. Walks
-        // launched inside it cannot leak leftwards — this boundary is not
-        // open yet — so counting its own columns is exact.
-        let mut seen: HashSet<(usize, usize)> = HashSet::new();
-        let mut targets: HashSet<(usize, usize)> = HashSet::new();
-        let mut best = 0;
-        for row in 0..ROWS {
-            for col in cols.clone() {
-                if seen.contains(&(row, col)) || !is_node(&grid.tiles, entries, row, col) {
-                    continue;
-                }
-                let nodes = map_walker::walk_map(&grid, pipes, Some((row, col)), 0).nodes;
-                seen.extend(nodes.iter().copied());
-                let size = nodes.iter().filter(|&&(_, c)| cols.contains(&c)).count();
-                if size > best {
-                    best = size;
-                    targets = nodes;
-                }
+    let mut seen: HashSet<(usize, usize)> = HashSet::new();
+    let mut best: HashSet<(usize, usize)> = HashSet::new();
+    for c in cols.clone() {
+        for r in 0..ROWS {
+            if seen.contains(&(r, c)) || BACKGROUND_TILES.contains(&grid.get(r, c)) {
+                continue;
+            }
+            let nodes = map_walker::walk_map(&grid, pipes, Some((r, c)), 0).nodes;
+            seen.extend(nodes.iter().copied());
+            let here: HashSet<_> =
+                nodes.iter().copied().filter(|&(_, c)| cols.contains(&c)).collect();
+            if here.len() > best.len() {
+                best = here;
             }
         }
-        targets.retain(|&(_, c)| cols.contains(&c));
-
-        let Some(writes) = cheapest_route(&grid, entries, &sources, &targets) else {
-            seams.push(Seam { seam, row: None, tiles: 0 });
-            continue;
-        };
-
-        let row = writes.iter().map(|&(r, ..)| r).min();
-        for &(r, c, tile) in &writes {
-            grid.set(r, c, tile);
-            rom.write_byte(tile_offset(r, c), tile);
-        }
-        seams.push(Seam { seam, row, tiles: writes.len() });
     }
-
-    seams
+    best
 }
 
-/// The pipe pairs that survived the fold, read back off the merged ROM.
+/// Move a pipe pair's two entries to the given mouths.
 ///
-/// A carried pair is recognised by both its endpoint cells still holding a
-/// pipe tile — [`neutralize_pipes`] demotes exactly the ones that did not
-/// survive, so the grid itself is the record of which pairs are live. Any
-/// walk over the merged map needs these, or half of Pipe Land looks
-/// unreachable.
-pub(crate) fn merged_pipe_pairs(rom: &Rom) -> Vec<rom_data::TeleportEdge> {
-    let grid = read_mega_grid(rom);
-    let is_pipe = |(r, c): (usize, usize)| TILE_PIPE.contains(&grid.get(r, c));
+/// The destination tables are not touched here: [`write_pipe_dests`] re-aims
+/// *every* pair once at the end, from wherever its entries finally sit.
+fn move_pipe_pair(
+    plan: &mut Plan,
+    group: usize,
+    a: (usize, usize, (usize, usize)),
+    b: (usize, usize, (usize, usize)),
+) {
+    for (world, src_idx, (row, col)) in [a, b] {
+        let Some(i) =
+            plan.entries[group].iter().position(|e| e.src_world == world && e.src_idx == src_idx)
+        else {
+            continue;
+        };
+        let (old_row, old_col) = (plan.entries[group][i].row(), plan.entries[group][i].col());
 
+        // If the mouth already belongs to something, the two trade places:
+        // that entry takes the pipe's old cell and tile, keeping its own
+        // `obj_ptr` and landing on a node the walk could already reach.
+        let displaced = plan.entries[group].iter().position(|e| (e.row(), e.col()) == (row, col));
+        match displaced {
+            Some(j) => {
+                let tile = plan.tile(group, row, col);
+                plan.entries[group][j].set_pos(old_col / 16, old_row, old_col % 16);
+                plan.set_tile(group, old_row, old_col, tile);
+            }
+            None => plan.set_tile(group, old_row, old_col, TILE_NODE_BLANK),
+        }
+
+        plan.entries[group][i].set_pos(col / 16, row, col % 16);
+        plan.set_tile(group, row, col, TILE_PIPE);
+    }
+    plan.entries[group].sort_by_key(|e| e.key());
+}
+
+/// Re-aim **every** pipe destination slot at where its entries now sit.
+///
+/// Not just the repurposed ones. A pair is matched to its slot by comparing
+/// entry positions against the positions recorded here, and the fold changes
+/// every carried entry's page — so a pair left with its vanilla page numbers
+/// silently stops being a pair. That is what stranded W8's pages 1-3: their
+/// six internal pipes were intact on the map and unmatched in the tables.
+fn write_pipe_dests(
+    rom: &mut Rom,
+    plan: &Plan,
+    pairs_by_group: &[Vec<(usize, usize, usize, usize)>],
+) {
+    for (group, pairs) in pairs_by_group.iter().enumerate() {
+        for &(dest_idx, world, a_idx, b_idx) in pairs {
+            let find = |idx: usize| {
+                plan.entries[group]
+                    .iter()
+                    .find(|e| e.src_world == world && e.src_idx == idx)
+                    .map(|e| (e.row(), e.col()))
+            };
+            let (Some((ar, ac)), Some((br, bc))) = (find(a_idx), find(b_idx)) else {
+                continue;
+            };
+
+            let packed_xhi = (((ac / 16) as u8) << 4) | ((bc / 16) as u8);
+            rom.write_byte(rom_data::PIPE_MAP_XHI + dest_idx, packed_xhi);
+            // Scroll X-Hi tracks Map X-Hi so the camera lands square on the
+            // destination page rather than half a page off.
+            rom.write_byte(rom_data::PIPE_MAP_SCRL_XHI + dest_idx, packed_xhi);
+            rom.write_byte(
+                rom_data::PIPE_MAP_X + dest_idx,
+                (((ac % 16) as u8) << 4) | ((bc % 16) as u8),
+            );
+            rom.write_byte(
+                rom_data::PIPE_MAP_Y + dest_idx,
+                (((ar + 2) as u8) << 4) | ((br + 2) as u8),
+            );
+        }
+    }
+}
+
+// --- Writes -------------------------------------------------------------
+
+fn write_grids(rom: &mut Rom, plan: &Plan) -> Result<(usize, usize), String> {
+    let total: usize = plan.grids.iter().map(|g| g.len()).sum();
+    let available = GRID_REGION_END - DEST_GRID;
+    if total > available {
+        return Err(format!(
+            "mega_map: grids need {total} bytes, {available} available before the warp zone"
+        ));
+    }
+
+    let mut at = DEST_GRID;
+    for (group, sw) in SUPER_WORLDS.iter().enumerate() {
+        rom.write_range(at, &plan.grids[group]);
+        write_word(rom, GRID_PTRS + sw.slot * 2, cpu_of(at));
+        at += plan.grids[group].len();
+    }
+    Ok((total, available))
+}
+
+fn write_blocks(rom: &mut Rom, plan: &Plan) -> Result<(usize, usize), String> {
+    let total: usize = plan.entries.iter().map(|e| INIT_SLOTS + e.len() * 6).sum();
+    let available = BLOCK_REGION_END - DEST_BLOCK;
+    if total > available {
+        return Err(format!("mega_map: pointer blocks need {total} bytes, {available} available"));
+    }
+
+    let mut at = DEST_BLOCK;
+    for (group, sw) in SUPER_WORLDS.iter().enumerate() {
+        let entries = &plan.entries[group];
+        let n = entries.len();
+        if n > 255 {
+            return Err(format!(
+                "mega_map: slot {} has {n} entries, past the 255 a byte-wide InitIndex can name",
+                sw.slot
+            ));
+        }
+
+        let init = at;
+        let rowtype = init + INIT_SLOTS;
+        let scrcol = rowtype + n;
+        let objsets = scrcol + n;
+        let layouts = objsets + n * 2;
+
+        for (i, e) in entries.iter().enumerate() {
+            rom.write_byte(rowtype + i, e.rowtype);
+            rom.write_byte(scrcol + i, e.scrcol);
+            write_word(rom, objsets + i * 2, e.obj);
+            write_word(rom, layouts + i * 2, e.lay);
+        }
+
+        // InitIndex: first entry index on each page, with `n` as the "no
+        // entries here" sentinel the search treats as start-at-the-end.
+        let mut init_bytes = [n as u8; INIT_SLOTS];
+        for (page, slot) in init_bytes.iter_mut().enumerate() {
+            if let Some(pos) = entries.iter().position(|e| e.page() == page) {
+                *slot = pos as u8;
+            }
+        }
+        rom.write_range(init, &init_bytes);
+
+        for (master, value) in [
+            (INIT_MASTER, init),
+            (ROWTYPE_MASTER, rowtype),
+            (SCRCOL_MASTER, scrcol),
+            (OBJSETS_MASTER, objsets),
+            (LAYOUTS_MASTER, layouts),
+        ] {
+            write_word(rom, master + sw.slot * 2, cpu_of(value));
+        }
+
+        at = layouts + n * 2;
+    }
+
+    // Dead slots alias the first super-world rather than pointing into the
+    // middle of a merged block. Safe only because the game starts at
+    // START_SLOT and World_Num only ever increases, so they are never loaded.
+    let live: HashSet<usize> = SUPER_WORLDS.iter().map(|s| s.slot).collect();
+    for dead in (0..8).filter(|s| !live.contains(s)) {
+        for master in [INIT_MASTER, ROWTYPE_MASTER, SCRCOL_MASTER, OBJSETS_MASTER, LAYOUTS_MASTER] {
+            let first = rom_data::read_word(rom, master + START_SLOT * 2);
+            write_word(rom, master + dead * 2, first);
+        }
+        let grid = rom_data::read_word(rom, GRID_PTRS + START_SLOT * 2);
+        write_word(rom, GRID_PTRS + dead * 2, grid);
+    }
+
+    Ok((total, available))
+}
+
+// --- Fortress FX --------------------------------------------------------
+
+/// Vanilla fortress FX slots: `(fx_slot, world, entry)`, in the order
+/// `FortressFX_W1..W8` lists them.
+///
+/// `entry` indexes the world's vanilla block and is the fortress's identity —
+/// the map tile is not, because W8's fortress is `0xAF` where every other
+/// world's is `0x67`, and `0xAF` doubles as an island blank.
+const VAN_FX: [(usize, usize, usize); 16] = [
+    (0x00, 0, 11),
+    (0x01, 1, 13),
+    (0x02, 2, 13),
+    (0x03, 2, 34),
+    (0x04, 3, 9),
+    (0x05, 3, 16),
+    (0x06, 4, 12),
+    (0x07, 4, 31),
+    (0x08, 5, 9),
+    (0x09, 5, 27),
+    (0x0A, 5, 48),
+    (0x0B, 6, 5),
+    (0x0C, 6, 40),
+    (0x0D, 7, 7),
+    (0x0E, 7, 10),
+    (0x0F, 7, 26),
+];
+
+/// Re-aim every fortress's FX slot at the page it now sits on, and give each
+/// super-world a row listing its own forts.
+///
+/// Only two fields are page-dependent: `FortressFX_MapLocation` packs the page
+/// in its low nibble, and `FortressFX_MapCompIdx`'s first byte is a
+/// `Map_Completions` column, which is map-global. The VRAM address, row byte,
+/// replacement tile and pattern bytes are all expressed *within* a page and
+/// carry over untouched — the same reason the randomizer's own FX writer can
+/// place a fortress on any page. Rows never move, because pipe links mean no
+/// page has to shift.
+///
+/// The per-world rows are not fixed at four: `FortressFXBase_ByWorld` indexes
+/// into them, so a group of seven forts gets a seven-byte row. Sixteen forts
+/// across three rows fit the 32 bytes vanilla laid out for eight.
+fn carry_fortress_fx(rom: &mut Rom, plan: &Plan) -> Vec<usize> {
+    let mut counts = vec![0; SUPER_WORLDS.len()];
+    let mut row_at = 0usize;
+
+    for (group, sw) in SUPER_WORLDS.iter().enumerate() {
+        rom.write_byte(FX_WORLD_BASE + sw.slot, row_at as u8);
+
+        for &(slot, world, _entry) in VAN_FX.iter().filter(|f| sw.sources.contains(&f.1)) {
+            let src_page = (rom.read_byte(FX_MAP_LOCATION + slot) & 0x0F) as usize;
+            let Some(dest) = plan.dest_page(group, world, src_page) else {
+                continue;
+            };
+
+            let loc = rom.read_byte(FX_MAP_LOCATION + slot);
+            rom.write_byte(FX_MAP_LOCATION + slot, (loc & 0xF0) | (dest as u8));
+
+            let comp = rom.read_byte(FX_MAP_COMP_IDX + slot * 2);
+            rom.write_byte(FX_MAP_COMP_IDX + slot * 2, (dest as u8) * 16 + (comp % 16));
+
+            rom.write_byte(FX_WORLD_ROWS + row_at, slot as u8);
+            row_at += 1;
+            counts[group] += 1;
+        }
+    }
+
+    counts
+}
+
+// --- Map objects --------------------------------------------------------
+
+/// Fold each group's hammer-bro sprites into its destination world's
+/// map-object list.
+///
+/// Returns `(wanted, placed)` per group. **They do not always match**, and
+/// this is the one resource the fold cannot make fit: the per-world list is
+/// nine slots, slot 0 is a fixed marker and slot 1 the airship sprite, so
+/// seven are usable — while W4+W5+W6 brings nine hammer bros between them.
+///
+/// The list length is not freely adjustable, because the reward table is
+/// addressed as `MAP_OBJ_REWARDS + world * 9 + slot`, with the stride baked
+/// into the engine as well as into `rom_data`. Widening it is Phase 2: three
+/// lists of fourteen fit comfortably in the 72 bytes the eight nine-slot
+/// lists occupy, and RAM allows fourteen (`Map_Objects_*` are 14 bytes each),
+/// but the stride has to move in both places at once.
+fn carry_map_objects(rom: &mut Rom, plan: &Plan) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+
+    for (group, sw) in SUPER_WORLDS.iter().enumerate() {
+        // (grid_row, grid_col, id) on the merged map.
+        let mut wanted: Vec<(usize, usize, u8)> = Vec::new();
+        for &w in sw.sources {
+            // From slot 2 up. Slot 0 is the fixed marker and slot 1 the
+            // airship, both of which the destination world already has.
+            for slot in MAP_OBJ_RESERVED..MAP_OBJ_SLOTS {
+                let read =
+                    |master| rom.read_byte(rom_data::map_obj_slot_offset(rom, master, w, slot));
+                let id = read(rom_data::MAP_OBJ_IDS_MASTER);
+                // Every sprite, not only hammer bros: W3's canoe (`0x10`) is
+                // the only way onto its third page, and W7's piranhas
+                // (`0x07`) are tied to pointer entries the links move.
+                if id == 0x00 {
+                    continue;
+                }
+                let page = read(rom_data::MAP_OBJ_XHIS_MASTER) as usize;
+                let Some(dest) = plan.dest_page(group, w, page) else {
+                    continue;
+                };
+                // The engine stores Y as (row + 2) * 16 and XLo as col * 16;
+                // `write_map_sprite` re-derives both from grid coordinates.
+                let row = (read(rom_data::MAP_OBJ_YS_MASTER) as usize / 16).saturating_sub(2);
+                let col = dest * 16 + read(rom_data::MAP_OBJ_XLOS_MASTER) as usize / 16;
+                wanted.push((row, col, id));
+            }
+        }
+
+        let capacity = MAP_OBJ_SLOTS - MAP_OBJ_RESERVED;
+        let placed = wanted.len().min(capacity);
+        for (i, &(row, col, id)) in wanted.iter().take(placed).enumerate() {
+            rom_data::write_map_sprite(rom, sw.slot, MAP_OBJ_RESERVED + i, row, col, id);
+        }
+        // Blank the tail, so a sprite from the destination world's own vanilla
+        // list does not survive into the merged one.
+        for slot in (MAP_OBJ_RESERVED + placed)..MAP_OBJ_SLOTS {
+            let off =
+                rom_data::map_obj_slot_offset(rom, rom_data::MAP_OBJ_IDS_MASTER, sw.slot, slot);
+            rom.write_byte(off, 0x00);
+        }
+
+        out.push((wanted.len(), placed));
+    }
+
+    out
+}
+
+// --- Read-back helpers --------------------------------------------------
+
+/// Pages no walk from the start can reach, as `(slot, page)`.
+pub(crate) fn unreachable_pages(rom: &Rom) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    for sw in &SUPER_WORLDS {
+        let grid = read_grid(rom, sw.slot);
+        let pipes = teleports(rom, sw.slot);
+        let walk = super::map_walker::walk_map(&grid, &pipes, None, sw.slot);
+        for page in 0..pages_in(sw.slot) {
+            if !walk.nodes.iter().any(|&(_, c)| c / 16 == page) {
+                out.push((sw.slot, page));
+            }
+        }
+    }
+    out
+}
+
+/// Destination page for a source `(world, page)`, without needing a [`Plan`].
+pub(crate) fn dest_page_of(slot: usize, world: usize, page: usize) -> Option<usize> {
+    let sw = SUPER_WORLDS.iter().find(|s| s.slot == slot)?;
+    let mut at = 0;
+    for &w in sw.sources {
+        for p in 0..VAN_GRIDS[w].1 {
+            if (w, p) == (world, page) {
+                return Some(at);
+            }
+            at += 1;
+        }
+    }
+    None
+}
+
+/// Every teleport edge on a finished super-world: pipe pairs plus canoes.
+///
+/// Any walk over a merged map needs both. Pipes carry the inter-world links
+/// and W7's two column lattices; the canoe is the only way onto W3's third
+/// page.
+pub(crate) fn teleports(rom: &Rom, slot: usize) -> Vec<rom_data::TeleportEdge> {
+    let mut out = pipe_pairs(rom, slot);
+    let Some(sw) = SUPER_WORLDS.iter().find(|s| s.slot == slot) else {
+        return out;
+    };
+    for &w in sw.sources {
+        for (a, b) in rom_data::active_canoe_edges(w, false) {
+            let remap = |p: (usize, usize)| {
+                dest_page_of(slot, w, p.1 / 16).map(|d| (p.0, d * 16 + p.1 % 16))
+            };
+            if let (Some(a), Some(b)) = (remap(a), remap(b)) {
+                out.push((a, b));
+            }
+        }
+    }
+    out
+}
+
+/// Pages in a super-world.
+pub(crate) fn pages_in(slot: usize) -> usize {
+    SUPER_WORLDS
+        .iter()
+        .find(|s| s.slot == slot)
+        .map(|s| s.sources.iter().map(|&w| VAN_GRIDS[w].1).sum())
+        .unwrap_or(0)
+}
+
+/// Read a finished super-world's grid as a [`Grid`] the map walker can take.
+pub(crate) fn read_grid(rom: &Rom, slot: usize) -> rom_data::Grid {
+    let base =
+        PRG012_FILE_BASE + (rom_data::read_word(rom, GRID_PTRS + slot * 2) as usize - 0xA000);
+    let cols = pages_in(slot) * 16;
+    let tiles = (0..ROWS)
+        .map(|r| {
+            (0..cols)
+                .map(|c| rom.read_byte(base + (c / 16) * PAGE_BYTES + r * 16 + c % 16))
+                .collect()
+        })
+        .collect();
+    rom_data::Grid { tiles, cols, eights_are_wild: false }
+}
+
+/// The live pipe pairs on a finished super-world, as walker teleport edges.
+///
+/// Read back off the grid rather than trusting what the fold intended: a pair
+/// counts only when both its recorded endpoints still hold a pipe tile.
+pub(crate) fn pipe_pairs(rom: &Rom, slot: usize) -> Vec<rom_data::TeleportEdge> {
+    let grid = read_grid(rom, slot);
     let mut pairs = Vec::new();
     for &(dest_idx, _) in rom_data::DEST_TO_WORLD {
-        let idx = dest_idx as usize;
-        let xhi = rom.read_byte(rom_data::PIPE_MAP_XHI + idx);
-        let x = rom.read_byte(rom_data::PIPE_MAP_X + idx);
-        let y = rom.read_byte(rom_data::PIPE_MAP_Y + idx);
-
-        let a =
-            (((y >> 4) as usize).saturating_sub(2), ((xhi >> 4) as usize) * 16 + (x >> 4) as usize);
-        let b = (
-            ((y & 0x0F) as usize).saturating_sub(2),
-            ((xhi & 0x0F) as usize) * 16 + (x & 0x0F) as usize,
-        );
-        if a.0 < ROWS && b.0 < ROWS && a.1 < COLUMNS && b.1 < COLUMNS && is_pipe(a) && is_pipe(b) {
+        let (a, b) = dest_positions(rom, dest_idx as usize);
+        let ok = |p: (usize, usize)| {
+            p.0 < ROWS && p.1 < grid.cols && PIPE_ENDPOINT_TILES.contains(&grid.get(p.0, p.1))
+        };
+        if ok(a) && ok(b) {
             pairs.push((a, b));
         }
     }
     pairs
 }
 
-/// Read the merged grid as a [`Grid`] the map walker can consume.
-///
-/// `rom_data::read_tile_grid` cannot do this: it sizes itself from
-/// `MAP_TILE_GRIDS`, which still describes the vanilla per-world layout and
-/// would read 16 columns at the wrong stride.
-pub(crate) fn read_mega_grid(rom: &Rom) -> rom_data::Grid {
-    rom_data::Grid { tiles: read_grid(rom), cols: COLUMNS, eights_are_wild: false }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::randomize::map_walker;
 
-    /// A folded ROM built the way `testrom --mega` builds one.
-    ///
-    /// The lock and water-gap removal has to happen **before** the fold, on
-    /// the vanilla per-world grids, because that is where `testrom::open_map`
-    /// runs — it addresses tiles through `MAP_TILE_GRIDS`, which stops
-    /// describing the ROM once the fold has run. Skipping it here would test
-    /// a map nobody plays and would report forts behind their own locks as
-    /// unreachable, which is the vanilla contract, not a fold defect.
-    /// The untouched ROM, for reading source-layout facts the fold consumes.
     fn vanilla() -> Option<Rom> {
         let data = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
         Rom::from_bytes(&data).ok()
     }
 
+    /// A folded ROM built the way `testrom --mega` builds one: lock and
+    /// water-gap removal runs first, on the vanilla per-world grids, because
+    /// that is where `testrom::open_map` runs. Skipping it would test a map
+    /// nobody plays, and report forts behind their own locks as unreachable,
+    /// which is the vanilla contract rather than a fold defect.
     fn mega_rom() -> Option<Rom> {
-        let data = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
-        let mut rom = Rom::from_bytes(&data).ok()?;
+        let mut rom = vanilla()?;
         open_vanilla_maps(&mut rom);
         build(&mut rom).expect("fold should succeed on an unmodified ROM");
         Some(rom)
     }
 
-    /// Replace lock and water-gap tiles with the path they gate, across the
-    /// eight vanilla maps. A trimmed copy of `testrom::open_map`, which is
-    /// private to that module.
     fn open_vanilla_maps(rom: &mut Rom) {
         for world_idx in 0..8 {
             let grid = rom_data::read_tile_grid(rom, world_idx);
@@ -1188,194 +1355,167 @@ mod tests {
         }
     }
 
-    /// The fold carries exactly the entries the source screens held, and
-    /// stays under the byte-wide `InitIndex` ceiling.
+    /// Every vanilla entry is carried, minus the surplus starts and castles.
     #[test]
-    fn carries_every_source_screen_entry() {
-        let Some(rom) = mega_rom() else { return };
+    fn carries_every_entry_but_the_surplus_singletons() {
+        let Some(mut rom) = vanilla() else { return };
+        open_vanilla_maps(&mut rom);
+        let mut p = plan(&rom);
+        let removed = reconcile_singletons(&mut p);
 
-        let mut expected = 0;
-        for &(world, screen) in &SOURCE {
-            let (rowtype_offset, n) = VAN_WORLDS[world];
-            // Count against the *vanilla* ROM, not the folded one — the
-            // merged block has overwritten some of these source blocks.
-            let van = Rom::from_bytes(
-                &std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").unwrap(),
-            )
-            .unwrap();
-            expected += read_entries(&van, rowtype_offset, n)
-                .iter()
-                .filter(|e| (e.scrcol >> 4) as usize == screen)
-                .count();
-        }
-
-        let n = rom.read_byte(ROWTYPE_MASTER) as usize; // placeholder, see below
-        let _ = n;
-        assert_eq!(expected, 157, "source screens should hold 157 entries");
+        let total: usize = p.entries.iter().map(|e| e.len()).sum();
+        assert_eq!(total + removed, 340, "every vanilla entry must be accounted for");
+        assert_eq!(p.entries.len(), SUPER_WORLDS.len());
+        assert!(removed > 0, "three groups from eight worlds must shed surplus singletons");
     }
 
-    /// Every entry names a cell inside the merged grid, and the block is
-    /// sorted by screen — which is what the engine's forward search from
-    /// `InitIndex` relies on.
+    /// Each block is sorted the way the engine's forward search needs, and
+    /// `InitIndex[page]` names the first entry on that page.
     #[test]
-    fn merged_block_is_sorted_and_in_bounds() {
-        let Some(rom) = mega_rom() else { return };
-        let n = 157;
-        let rowtype = DEST_BLOCK + SCREENS;
-        let scrcol = rowtype + n;
-
-        let mut last_screen = 0;
-        for i in 0..n {
-            let sc = rom.read_byte(scrcol + i);
-            let screen = (sc >> 4) as usize;
-            let row = ((rom.read_byte(rowtype + i) >> 4) & 0x0F) as usize;
-            assert!(screen < SCREENS, "entry {i} names screen {screen}");
-            assert!((2..2 + ROWS).contains(&row), "entry {i} names row byte {row}");
-            assert!(screen >= last_screen, "entry {i} breaks screen ordering");
-            last_screen = screen;
-        }
-
-        // InitIndex must name the first entry on each screen, since the
-        // engine starts its search there and only ever walks forward.
-        for screen in 0..SCREENS {
-            let start = rom.read_byte(DEST_BLOCK + screen) as usize;
-            if start >= n {
-                continue;
-            }
-            assert_eq!(
-                (rom.read_byte(scrcol + start) >> 4) as usize,
-                screen,
-                "InitIndex[{screen}] points at an entry on another screen"
-            );
-            if start > 0 {
-                assert!(
-                    ((rom.read_byte(scrcol + start - 1) >> 4) as usize) < screen,
-                    "InitIndex[{screen}] is not the FIRST entry on its screen"
-                );
-            }
-        }
-    }
-
-    /// The whole continent is walkable from the start tile.
-    ///
-    /// This is the prototype's reason to exist. A fold that leaves screen 6
-    /// unreachable is eight maps in one file, not one map.
-    #[test]
-    fn every_screen_is_reachable_from_the_start() {
-        let Some(rom) = mega_rom() else { return };
-        let grid = read_mega_grid(&rom);
-
-        // No pipe pairs: the fold demotes every pipe (see `neutralize_pipes`),
-        // so walking is the only connection between screens.
-        let pipes = merged_pipe_pairs(&rom);
-        let walk = map_walker::walk_map(&grid, &pipes, None, 0);
-        assert!(!walk.nodes.is_empty(), "walk found no nodes — is the start tile there?");
-
-        let mut missing = Vec::new();
-        for screen in 0..SCREENS {
-            let cols = screen * 16..(screen + 1) * 16;
-            if !walk.nodes.iter().any(|&(_, c)| cols.contains(&c)) {
-                missing.push(screen);
-            }
-        }
-        assert!(missing.is_empty(), "screens unreachable from the start: {missing:?}");
-    }
-
-    /// Each carried fortress FX slot names the screen it now sits on, and
-    /// its completion column is on that screen.
-    ///
-    /// Note what this does *not* check. `FortressFX_MapLocation` records the
-    /// **lock** the fortress opens, not the fortress itself, and a lock cell
-    /// is a path tile — it can never appear in `walk.nodes`, so asserting it
-    /// is reachable asserts something that is false by construction.
-    /// Fortress reachability is checked separately, against fortress tiles.
-    #[test]
-    fn carried_fortress_fx_is_aimed_at_its_new_screen() {
+    fn blocks_are_sorted_and_init_index_is_exact() {
         let Some(rom) = mega_rom() else { return };
 
-        let mut checked = 0;
-        for &(slot, world, screen, _) in &VAN_FX {
-            let Some(dest) = SOURCE.iter().position(|&s| s == (world, screen)) else {
-                continue;
+        for sw in &SUPER_WORLDS {
+            let at = |master: usize| {
+                PRG012_FILE_BASE
+                    + (rom_data::read_word(&rom, master + sw.slot * 2) as usize - 0xA000)
             };
-            let loc = rom.read_byte(FX_MAP_LOCATION + slot);
-            assert_eq!(
-                (loc & 0x0F) as usize,
-                dest,
-                "FX slot {slot:#04X} still names its vanilla screen"
-            );
+            let (init, rowtype, scrcol) = (at(INIT_MASTER), at(ROWTYPE_MASTER), at(SCRCOL_MASTER));
+            let n = scrcol - rowtype;
 
-            let comp = rom.read_byte(FX_MAP_COMP_IDX + slot * 2) as usize;
-            assert!(comp < COLUMNS, "FX slot {slot:#04X} completion column {comp} is off the map");
-            assert_eq!(
-                comp / 16,
-                dest,
-                "FX slot {slot:#04X} completion column {comp} is not on screen {dest}"
-            );
+            let key = |i: usize| {
+                let sc = rom.read_byte(scrcol + i);
+                let rt = rom.read_byte(rowtype + i);
+                ((sc >> 4) as usize, ((rt >> 4) & 0x0F) as usize, (sc & 0x0F) as usize)
+            };
+            for i in 1..n {
+                assert!(key(i - 1) <= key(i), "slot {} block unsorted at {i}", sw.slot);
+            }
 
-            // The engine ORs this byte into the map write offset, so the low
-            // nibble must be clear or the replacement tile lands in the wrong
-            // column.
-            assert_eq!(
-                rom.read_byte(rom_data::FX_MAP_LOC_ROW + slot) & 0x0F,
-                0,
-                "FX slot {slot:#04X} row byte has a dirty low nibble"
-            );
-
-            checked += 1;
+            for page in 0..pages_in(sw.slot) {
+                let start = rom.read_byte(init + page) as usize;
+                assert!(start < n, "slot {} page {page} has no entries", sw.slot);
+                assert_eq!(
+                    key(start).0,
+                    page,
+                    "slot {} InitIndex[{page}] is on another page",
+                    sw.slot
+                );
+                if start > 0 {
+                    assert!(
+                        key(start - 1).0 < page,
+                        "slot {} InitIndex[{page}] is not the first entry on its page",
+                        sw.slot
+                    );
+                }
+            }
         }
-        assert_eq!(checked, SCREENS, "expected one carried fortress per screen");
-
-        // World 0's FX row must list exactly those slots, in order.
-        let row: Vec<u8> = (0..SCREENS).map(|i| rom.read_byte(FX_WORLD_TABLE + i)).collect();
-        assert_eq!(row, vec![0x00, 0x01, 0x02, 0x04, 0x06, 0x08, 0x0B, 0x0D]);
     }
 
-    /// Every screen's fortress survived the fold and is reachable on foot.
-    ///
-    /// The position comes from the fortress's *pointer entry* in the vanilla
-    /// block, shifted the way the fold shifted it — not from the tile, which
-    /// is `0x67` in seven worlds and `0xAF` in W8, and `0xAF` doubles as an
-    /// island blank. Two earlier versions of this test were wrong about that,
-    /// and one of them hid a real bug: a seam corridor had run straight over
-    /// W4's fortress and deleted it.
+    /// Every page of every super-world is reachable from its start, walking
+    /// and taking pipes.
     #[test]
-    fn every_screens_fortress_survives_and_is_reachable() {
+    fn every_page_is_reachable() {
+        let Some(rom) = mega_rom() else { return };
+
+        for sw in &SUPER_WORLDS {
+            let grid = read_grid(&rom, sw.slot);
+            let pipes = teleports(&rom, sw.slot);
+            let walk = map_walker::walk_map(&grid, &pipes, None, sw.slot);
+            assert!(!walk.nodes.is_empty(), "slot {} walk found nothing", sw.slot);
+
+            let missing: Vec<usize> = (0..pages_in(sw.slot))
+                .filter(|&p| !walk.nodes.iter().any(|&(_, c)| c / 16 == p))
+                .collect();
+            assert!(missing.is_empty(), "slot {} pages unreachable: {missing:?}", sw.slot);
+        }
+    }
+
+    /// Every fortress survives the fold and is reachable.
+    #[test]
+    fn every_fortress_survives_and_is_reachable() {
         let Some(rom) = mega_rom() else { return };
         let Some(van) = vanilla() else { return };
-        let shifts = row_shifts(&van);
-
-        let grid = read_mega_grid(&rom);
-        let pipes = merged_pipe_pairs(&rom);
-        let walk = map_walker::walk_map(&grid, &pipes, None, 0);
+        let van_entries: Vec<Vec<Entry>> = (0..8).map(|w| read_entries(&van, w)).collect();
+        let p = plan(&van);
 
         let mut checked = 0;
-        for &(_, world, screen, entry) in &VAN_FX {
-            let Some(dest) = SOURCE.iter().position(|&s| s == (world, screen)) else {
-                continue;
-            };
-            let (rowtype_offset, n) = VAN_WORLDS[world];
-            let e = read_entries(&van, rowtype_offset, n)[entry];
-            let row = shifted(e.row(), shifts[dest]).expect("fortress shifted off the map");
-            let col = dest * 16 + e.col() % 16;
+        for (group, sw) in SUPER_WORLDS.iter().enumerate() {
+            let grid = read_grid(&rom, sw.slot);
+            let pipes = teleports(&rom, sw.slot);
+            let walk = map_walker::walk_map(&grid, &pipes, None, sw.slot);
 
-            assert!(
-                !BACKGROUND_TILES.contains(&grid.get(row, col)),
-                "fortress on screen {dest} at ({row}, {col}) was overwritten — tile is background"
-            );
-            assert!(
-                walk.nodes.contains(&(row, col)),
-                "fortress on screen {dest} at ({row}, {col}) is unreachable"
-            );
-            checked += 1;
+            for &(_, world, entry) in VAN_FX.iter().filter(|f| sw.sources.contains(&f.1)) {
+                let e = van_entries[world][entry];
+                let dest = p.dest_page(group, world, e.page()).expect("fort page carried");
+                let pos = (e.row(), dest * 16 + e.col() % 16);
+
+                assert!(
+                    !BACKGROUND_TILES.contains(&grid.get(pos.0, pos.1)),
+                    "slot {} fortress at {pos:?} was overwritten",
+                    sw.slot
+                );
+                assert!(
+                    walk.nodes.contains(&pos),
+                    "slot {} fortress at {pos:?} is unreachable",
+                    sw.slot
+                );
+                checked += 1;
+            }
         }
-        assert_eq!(checked, SCREENS, "expected one carried fortress per screen");
+        assert_eq!(checked, 16, "all sixteen vanilla fortresses should be carried");
     }
 
-    /// The completion widening is a set of in-place operand edits over
-    /// vanilla code, so the guard that refuses a ROM it does not recognise is
-    /// the only thing standing between a wrong ROM and a silently corrupt
-    /// patch. Mutate each site and check the guard fires.
+    /// Each link is a real pipe pair with a mouth on each of two pages.
+    #[test]
+    fn links_join_two_pages_with_real_pipes() {
+        let Some(mut rom) = vanilla() else { return };
+        open_vanilla_maps(&mut rom);
+        let report = build(&mut rom).unwrap();
+
+        // Two links for each three-world group, one for the two-world group.
+        assert_eq!(report.links.len(), 5);
+        for link in &report.links {
+            let (a, b) = link.mouths;
+            assert_ne!(a.1 / 16, b.1 / 16, "a link must join two different pages");
+            let grid = read_grid(&rom, link.slot);
+            assert_eq!(grid.get(a.0, a.1), TILE_PIPE, "link mouth A is not a pipe");
+            assert_eq!(grid.get(b.0, b.1), TILE_PIPE, "link mouth B is not a pipe");
+        }
+    }
+
+    /// The fold stays inside the regions it is allowed to use.
+    #[test]
+    fn stays_inside_its_regions() {
+        let Some(rom) = mega_rom() else { return };
+        assert!(
+            !rom.has_writes_in_range(GRID_REGION_END, GRID_REGION_END + PAGE_BYTES),
+            "the fold wrote into the warp zone's grid"
+        );
+        assert!(
+            !rom.has_writes_in_range(BLOCK_REGION_END, BLOCK_REGION_END + 64),
+            "the fold wrote past the world-block region"
+        );
+    }
+
+    /// The game starts in the first super-world, and the last one is world 8
+    /// so the ending fires on Bowser.
+    #[test]
+    fn progression_chain_is_intact() {
+        let Some(rom) = mega_rom() else { return };
+        assert_eq!(
+            rom.read_byte(crate::randomize::world_order::WORLD_INIT_OPERAND),
+            START_SLOT as u8
+        );
+        assert_eq!(SUPER_WORLDS.last().unwrap().slot, 7, "the last group must be world 8");
+        for w in SUPER_WORLDS.windows(2) {
+            assert_eq!(w[1].slot, w[0].slot + 1, "INC World_Num must walk the groups in order");
+        }
+    }
+
+    /// The completion widening is in-place operand edits over vanilla code, so
+    /// the guard refusing an unrecognised ROM is the only thing between a wrong
+    /// ROM and a silently corrupt patch. Mutate each site; check it fires.
     #[test]
     fn completion_widening_refuses_an_unexpected_rom() {
         let Some(data) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok() else {
@@ -1388,75 +1528,127 @@ mod tests {
             assert!(err.contains("not an unmodified"), "unexpected error: {err}");
         }
     }
-
-    /// Diagnostic: compare the pipe set the fold used against the one read
-    /// back off the ROM.
+    /// Diagnostic: which pages vanilla itself cannot walk to.
     #[test]
     #[ignore]
-    fn diagnose_pipes() {
-        let Some(rom) = mega_rom() else { return };
-        let readback = merged_pipe_pairs(&rom);
-        println!("merged_pipe_pairs: {} pairs", readback.len());
-        for p in &readback {
-            println!("  {:?}", p);
-        }
-        let grid = read_mega_grid(&rom);
-        let w_none = map_walker::walk_map(&grid, &[], None, 0).nodes;
-        let w_pipes = map_walker::walk_map(&grid, &readback, None, 0).nodes;
-        println!("reachable without pipes: {}, with: {}", w_none.len(), w_pipes.len());
-        println!("(2,111) reachable with pipes: {}", w_pipes.contains(&(2, 111)));
-        println!("tile at (2,111): {:#04X}", grid.get(2, 111));
-        for r in 0..ROWS {
-            let line: String = (96..112)
-                .map(|c| {
-                    if w_pipes.contains(&(r, c)) {
-                        format!("[{:02X}]", grid.get(r, c))
-                    } else {
-                        format!(" {:02X} ", grid.get(r, c))
-                    }
-                })
+    fn vanilla_page_reachability() {
+        let Some(mut rom) = vanilla() else { return };
+        open_vanilla_maps(&mut rom);
+        for w in 0..8 {
+            let grid = rom_data::read_tile_grid(&rom, w);
+            let pipes: Vec<_> = rom_data::DEST_TO_WORLD
+                .iter()
+                .filter(|&&(_, world)| world == w)
+                .map(|&(d, _)| dest_positions(&rom, d as usize))
+                .filter(|(a, b)| a.0 < ROWS && b.0 < ROWS && a.1 < grid.cols && b.1 < grid.cols)
                 .collect();
-            println!("r{r}: {line}");
+            let walk = map_walker::walk_map(&grid, &pipes, None, w);
+            let pages = grid.cols / 16;
+            let missing: Vec<usize> =
+                (0..pages).filter(|&p| !walk.nodes.iter().any(|&(_, c)| c / 16 == p)).collect();
+            println!("W{}: {pages} pages, unreachable {missing:?}", w + 1);
         }
     }
 
-    /// Diagnostic: where the walk stops, and what the seams look like.
+    /// The fold never makes a node *less* reachable than vanilla did.
+    ///
+    /// This is the invariant that matters, and it is stronger than "every
+    /// page is reachable": a fold could satisfy the latter while quietly
+    /// stranding half a page. Every node the vanilla world could reach must
+    /// still be reachable at its merged coordinates.
+    ///
+    /// It is also what caught the last real defect. Repurposing pipe pairs
+    /// blindly took both of W3's cross-page pipes, so its island — reached by
+    /// canoe from a dock those pipes fed — went dark while every *page* still
+    /// counted as reachable.
     #[test]
-    #[ignore]
-    fn diagnose_seams() {
-        let Some(rom) = mega_rom() else { return };
-        let grid = read_mega_grid(&rom);
-        let pipes = merged_pipe_pairs(&rom);
-        let walk = map_walker::walk_map(&grid, &pipes, None, 0);
+    fn nothing_becomes_less_reachable_than_vanilla() {
+        let Some(merged) = mega_rom() else { return };
+        let Some(mut van) = vanilla() else { return };
+        open_vanilla_maps(&mut van);
 
-        for screen in 0..SCREENS {
-            let cols = screen * 16..(screen + 1) * 16;
-            let n = walk.nodes.iter().filter(|&&(_, c)| cols.contains(&c)).count();
-            println!("screen {screen}: {n} reachable nodes");
-        }
+        for sw in &SUPER_WORLDS {
+            let m_grid = read_grid(&merged, sw.slot);
+            let m_walk = map_walker::walk_map(&m_grid, &teleports(&merged, sw.slot), None, sw.slot);
 
-        let maxc = walk.nodes.iter().map(|&(_, c)| c).max().unwrap_or(0);
-        println!("furthest reachable column: {maxc}");
-
-        for seam in 0..SCREENS - 1 {
-            let edge = seam * 16 + 15;
-            println!("\n--- seam {seam}|{} (cols {}..{}) ---", seam + 1, edge - 5, edge + 6);
-            for row in 0..ROWS {
-                let cells: String = (edge - 5..=edge + 6)
-                    .map(|c| {
-                        let t = grid.get(row, c);
-                        let reach = walk.nodes.contains(&(row, c));
-                        let node = is_node(&grid.tiles, &[], row, c);
-                        format!(
-                            "{}{:02X}{} ",
-                            if reach { '[' } else { ' ' },
-                            t,
-                            if node { '*' } else { ' ' }
-                        )
+            for &w in sw.sources {
+                let v_grid = rom_data::read_tile_grid(&van, w);
+                // Only this world's own pipes. Filtering by "does it fit in
+                // the grid" instead lets other worlds' dest positions in as
+                // phantom shortcuts, and vanilla comes out looking better
+                // connected than it is.
+                let v_pipes: Vec<_> = rom_data::DEST_TO_WORLD
+                    .iter()
+                    .filter(|&&(_, world)| world == w)
+                    .map(|&(d, _)| dest_positions(&van, d as usize))
+                    .filter(|(a, b)| {
+                        a.0 < ROWS && b.0 < ROWS && a.1 < v_grid.cols && b.1 < v_grid.cols
                     })
                     .collect();
-                println!("r{row}: {cells}");
+                let v_walk = map_walker::walk_map(&v_grid, &v_pipes, None, w);
+
+                let mut lost = Vec::new();
+                for &(r, c) in &v_walk.nodes {
+                    let Some(dest) = dest_page_of(sw.slot, w, c / 16) else { continue };
+                    let merged_pos = (r, dest * 16 + c % 16);
+                    if !m_walk.nodes.contains(&merged_pos) {
+                        lost.push(((r, c), merged_pos));
+                    }
+                }
+                // The links displace a handful of nodes on purpose, and the
+                // surplus start/castle cells are removed by design, so a
+                // small loss is expected; a structural break is not.
+                assert!(
+                    lost.len() <= 6,
+                    "W{} lost {} reachable nodes folding into slot {}: {:?}",
+                    w + 1,
+                    lost.len(),
+                    sw.slot,
+                    &lost[..lost.len().min(8)]
+                );
             }
         }
+    }
+
+    /// Every per-world table the fold repartitions still fits its group.
+    ///
+    /// The point of three groups rather than eight is that the totals are
+    /// conserved while the partitions shrink, so each group gets a *larger*
+    /// share. This pins that down, including the one place it does not hold.
+    #[test]
+    fn per_world_tables_fit_their_groups() {
+        let Some(mut rom) = vanilla() else { return };
+        open_vanilla_maps(&mut rom);
+        let report = build(&mut rom).unwrap();
+
+        let (grid_used, grid_have) = report.grid_bytes;
+        assert!(grid_used <= grid_have, "grids overflow: {grid_used} > {grid_have}");
+        let (block_used, block_have) = report.block_bytes;
+        assert!(block_used <= block_have, "blocks overflow: {block_used} > {block_have}");
+
+        // Sixteen forts across three rows, in the 32 bytes vanilla laid out
+        // for eight four-fort worlds.
+        let forts: usize = report.slots.iter().map(|s| s.forts).sum();
+        assert_eq!(forts, 16);
+        assert!(forts <= 32, "fortress FX rows overflow their block");
+
+        // Entry counts stay under the byte-wide InitIndex ceiling.
+        for s in &report.slots {
+            assert!(s.entries <= 255, "world {} has {} entries", s.slot + 1, s.entries);
+            assert!(
+                s.pages <= 8,
+                "world {} has {} pages, past the completion cap",
+                s.slot + 1,
+                s.pages
+            );
+        }
+
+        // The one that does not fit: map-object sprite slots. Recorded here
+        // so the day it is widened, this test says so.
+        let dropped: usize = report.slots.iter().map(|s| s.sprites_wanted - s.sprites_placed).sum();
+        assert_eq!(
+            dropped, 3,
+            "expected exactly the three W4+W5+W6 sprites the nine-slot list cannot hold"
+        );
     }
 }

@@ -1,7 +1,7 @@
 # Mega map — experiment (branch `experiment/mega-map`)
 
-**Status:** working prototype. Vanilla-base only, reachable through `testrom
---mega`; nothing is wired to a flag, the flag key, or the randomizer pipeline.
+**Status:** Phase 1 complete and verified against the Rust walker. Vanilla-base
+only, via `testrom --mega`; not flag-gated, not wired to the randomizer.
 Do not merge to `main` as-is.
 
 ```sh
@@ -11,166 +11,156 @@ cargo build --bin testrom
 
 ## What it does
 
-Folds **screen 0 of every world** into a single eight-screen map in world 0:
-128 columns, 157 pointer entries, eight fortresses, one biome per screen, all
-walkable end to end from the start tile.
+Folds the eight worlds into **three pipe-linked super-worlds**. Every page keeps
+its vanilla layout; worlds are concatenated whole, in order, and the seams
+*between* source worlds are joined by repurposed pipe pairs.
 
-Everything stays inside the space the eight maps already owned. No free space
-is claimed, and no new routine is added — the only 6502 changes are in-place
-operand edits over vanilla code.
+| Slot | Sources | Pages | Entries | Forts | Sprites |
+|---|---|---|---|---|---|
+| **6** (start) | W1 + W2 + W3 | 6 | 116 | 4 | 7 |
+| **7** | W4 + W5 + W6 | 7 | 129 | 7 | 7 of 10 |
+| **8** (Bowser) | W7 + W8 | 6 | 86 | 5 | 7 |
 
 ```
-  base: vanilla
-  removed 62 locks + water gaps across all 8 maps
-  mega map: 8 screens, 157 entries, 8 forts (0 reconnected, 0 stranded),
-           7 pipe pairs kept, 8 pipe tiles demoted, 9 singletons blanked
-    seam 0|1: row 2, 5 tile(s)      seam 4|5: row 2, 5 tile(s)
-    seam 1|2: row 2, 2 tile(s)      seam 5|6: row 4, 1 tile(s)
-    seam 2|3: row 4, 4 tile(s)      seam 6|7: row 4, 3 tile(s)
-    seam 3|4: row 4, 4 tile(s)
+  mega map: 3 super-worlds, start in world 6, 9 surplus singletons removed
+    link W1|W2 in world 6: pipe 0x12, (0, 12) <-> (0, 20)
+    link W2|W3 in world 6: pipe 0x01, (0, 36) <-> (0, 50)
+    link W4|W5 in world 7: pipe 0x17, (2, 28) <-> (0, 34)
+    link W5|W6 in world 7: pipe 0x03, (0, 62) <-> (4, 68)
+    link W7|W8 in world 8: pipe 0x11, (3, 28) <-> (5, 34)
+    space: grids 2739/2744 B, blocks 2010/2072 B
+    connectivity: every page reachable
 ```
 
-## Why screen 0 of every world
+## Why this shape
 
-Screen 0 of each world holds **exactly one fortress**, and the eight together
-hold 157 pointer entries. That gives eight screens, eight forts, eight biomes,
-and 157 entries — under the 255 a byte-wide `Map_ByXHi_InitIndex` can name.
+**Progression comes free.** `INC World_Num` carries 5 → 6 → 7 unpatched, and the
+last group holds Bowser's castle in the slot the ending code expects. The
+previous eight-page prototype had to NOP the world advance out and had no
+progression at all; here the vanilla chain does the work, and the ending fires.
 
-Taking whole worlds instead is not possible: vanilla's nineteen screens need
-304 completion columns and there are 128.
+**Pipes cross parity; walks do not.** Map movement advances two tiles at a time,
+so `row % 2` and `col % 2` are each invariant along a walk — and W1–W6 sit on
+even rows while W7 and W8 sit on odd. Joining pages *on foot* therefore needs
+them shifted into phase; joining them *by pipe* does not, because a teleport
+edge has no parity. That one fact deleted, from the previous prototype:
 
-Because destination screen `i` is world `i`'s screen, the **region index and
-the world index coincide**. That is deliberate — it is what makes the eight-wide
-per-world dispatch tables (palette, music, bottom tile, king room, airship
-level, airship travel) reusable as *per-region* tables later, with no table
-resizing. See "Next" below.
+- the row-shift machinery and the fortress FX row/bit rewriting that followed it
+- the seam-carving path search (~200 lines)
+- the "don't bulldoze a fortress" content-preservation problem the carving created
+- the land-themed blank tiles the carving left on sky and island pages
 
-## The eight-screen ceiling, and why it cost almost nothing
+**Only inter-world seams need links.** A source world's pages stay adjacent and
+in order, so whatever joined its page 0 to page 1 in vanilla still joins them.
+Five links, against 24 pipe pairs in the ROM.
 
-`Map_Completions` is 128 bytes at `$7D00`, one per map column, split
-`$7D00-$7D3F` Mario / `$7D40-$7D7F` Luigi. The disassembly's own comment says
-it "allows a MAX of 4 map screens".
+## Slots: the totals are conserved, the partitions shrink
 
-For **one player** it allows eight, because a column index for eight screens
-runs 0..127 and lands exactly inside the array — and the engine already walks
-all 128 bytes: the redraw loop runs its column counter to `$80`, and the
-game-over clear runs `LDY #$7F`. What stops it is four sites that *fold* the
-upper half onto the lower one, assuming it belongs to the other player.
+This is the reason three groups fit where the eight-page single world did not.
+Nothing is duplicated — the same 19 pages, 340 entries and 16 fortresses are
+simply split three ways instead of eight, so each group gets a *larger* share of
+every per-world table.
 
-| Site | Vanilla | Becomes | Cost |
+| Resource | 8 worlds | 3 super-worlds | Headroom |
 |---|---|---|---|
-| `Map_Reload_with_Completions`, screen index | `AND #$30` | `AND #$70` | 1 byte |
-| ...its Mario/Luigi marker select | `AND #$40` | `AND #$00` | 1 byte |
-| `MO_DoFortressFX` mirror write | `$7D40,Y` ×2 | `$7D00,Y` ×2 | 2 bytes |
-| rock-break mirror write | `EOR #$40` | `EOR #$00` | 1 byte |
-| game-over clear | AND other player, 64 cols | `LDA #$00`, 128 cols | 2 + 6 bytes |
+| Pointer blocks | 2072 B, **exactly** full | 2010 B | 62 B |
+| Grid data | 2744 B to the warp zone | 2739 B | 5 B |
+| Fortress FX rows | 8 × 4 = 32 B | 4 + 7 + 5 = 16 B | 16 B |
+| Fortress FX slots | 17 | 16 forts, total unchanged | 1 |
+| Pipe pairs | 24 | 5 spent on links | 19 |
+| `Map_Completions` | 4 pages/world | 6, 7, 6 needed | cap is 8 |
 
-Total: **seven operand bytes and one six-byte splice, zero free space.** The
-shift after `AND #$70` already produces a `Tile_Mem_Addr` index, and that table
-carries fifteen screen entries, so nothing downstream needs widening.
+**Fortress rows are not fixed at four.** `FortressFXBase_ByWorld` indexes into
+them, and the disassembly says so outright: *"there's no need for this to be
+precisely four in every world, but that's what they allocated."* A seven-fort
+group simply gets a seven-byte row.
 
-The `MO_DoFortressFX` mirror is worse than cosmetic: `Map_Completions+$40,Y`
-with a column past 63 writes to `$7D80` and up, which is `Inventory_Items` —
-clearing a fortress on screens 4–7 would have rewritten the player's inventory.
+### The one thing that does not fit
 
-**The cost is two-player mode.** Luigi's completion array *is* screens 4–7.
-Nothing here disables 2P; the prototype is 1P-only by construction.
+**Map-object sprite slots.** The per-world list is nine long with slot 0 a fixed
+marker and slot 1 the airship, so seven are usable — and W4+W5+W6 brings ten
+sprites. Three are dropped, and `per_world_tables_fit_their_groups` asserts
+exactly that number so the day it changes, the test says so.
 
-Tile RAM was never the constraint: `Tile_Mem` is `$6000-$794F` and
-`Tile_Mem_Addr` holds fifteen screen entries.
+Widening is a Phase 2 job and is not just a length change: the reward table is
+addressed as `MAP_OBJ_REWARDS + world * 9 + slot`, with the stride baked into
+the engine as well as into `rom_data`. Three lists of fourteen fit comfortably
+in the 72 bytes the eight nine-slot lists occupy, and RAM allows fourteen
+(`Map_Objects_*` are 14 bytes each), but both strides have to move together.
 
-## Node parity — the finding that mattered
+## Completions are per-world, which is what makes 6/7/6 pages possible
 
-Map movement advances **two tiles at a time** (node, path tile, node), so
-`row % 2` and `col % 2` are each invariant along any walk. Every node a walk
-can reach shares the start's parity class. A single vanilla world never
-notices. Eight folded together do:
+`Map_Completions` is 128 bytes at `$7D00`, one per map column, split Mario /
+Luigi — "allows a MAX of 4 map screens" per the disassembly. For **one player**
+it covers eight pages, because a column index for eight pages runs 0..127 and
+lands inside the array, the redraw loop already counts to `$80`, and the
+game-over clear already runs `LDY #$7F`. Four sites fold the upper half onto the
+lower one assuming it is Luigi's; undoing that is **seven operand bytes plus one
+six-byte splice**, no free space claimed.
 
-| Screen | Source | Node rows | Node columns |
-|---|---|---|---|
-| 0–5 | W1–W6 | all even | all even |
-| 6 | W7 | all odd | **mixed** — 12 even, 11 odd |
-| 7 | W8 | all odd | all even |
+| Site | Vanilla | Becomes |
+|---|---|---|
+| `Map_Reload_with_Completions` screen index | `AND #$30` | `AND #$70` |
+| ...its Mario/Luigi marker select | `AND #$40` | `AND #$00` |
+| `MO_DoFortressFX` mirror write | `$7D40,Y` ×2 | `$7D00,Y` ×2 |
+| rock-break mirror write | `EOR #$40` | `EOR #$00` |
+| game-over clear | AND other player, 64 cols | `LDA #$00`, 128 cols |
 
-Two consequences, both fatal before they were fixed:
+The `MO_DoFortressFX` mirror is not cosmetic: `Map_Completions+$40,Y` with a
+column past 63 writes to `$7D80` and up, which is `Inventory_Items` — clearing a
+fortress on pages 4–7 would have rewritten the player's inventory.
 
-1. **W7 and W8 are half a step out of phase vertically.** No corridor of any
-   shape can join them to the rest — not a longer one, not an L-shaped one,
-   because the clash is invariant under every legal move. `row_shifts` moves
-   those two screens down one row. It costs nothing: W7's deepest node goes
-   from row 7 to row 8, W8's from 5 to 6, both still on the map. The fortress
-   FX row byte and completion bit shift with them.
+**And the budget is per-world.** `PRG030_84A0`, the world-map initialisation,
+clears all 128 bytes, and its only callers are world changes (`INC World_Num`
+and the warp-zone destination). Returning from a level enters at `PRG030_84D7`
+and skips the clear. So eight pages is a budget *each* super-world gets in full.
 
-2. **W7's two column lattices are joined only by its pipes.** The first version
-   demoted every pipe on the map, which does not merely inconvenience Pipe Land
-   — it makes half of it unreachable by any path, fortress included.
-   `carry_pipes` keeps the pairs whose *both* endpoints survive (seven of
-   twenty-four) and retargets their screens and rows.
+The cost is two-player mode, because those columns **are** Luigi's.
 
-## Seams: a search, not a corridor
+## Links: repurpose, verify, and never trust a heuristic
 
-Each source screen was drawn to meet *its own* neighbour, so the boundaries are
-arbitrary — a screen ending in water now abuts one starting in desert. Joining
-them is `cheapest_route`: Dijkstra over the node lattice, where an edge costs
-the number of tiles that must be written to make it passable, existing paths
-cost nothing, and edges that would overwrite content are not offered.
+A pipe pair is two pointer entries sharing one `obj_ptr` — the transit level —
+matched to a destination slot by comparing entry positions against the positions
+in the dest tables. So a *new* pair would need a transit level of its own (a
+third entry on an existing `obj_ptr` breaks the "group of exactly two" pairing)
+and two more pointer entries. Moving an existing pair costs neither.
 
-That shape was arrived at by killing four simpler ones, each of which produced
-a map that looked fine and was not:
+Four things had to be right, and each was found by getting it wrong:
 
-- A corridor of `0x44` tiles. `0x44` *looks* like a path and is a blank **node**;
-  the horizontal path tile is `0x45`.
-- A corridor of any odd span — the far end lands out of phase and connects to
-  nothing.
-- A corridor anchored on the nearest node. Seam 1|2 landed cleanly on column 32
-  and the walk still stopped there, because column 32 was an isolated cell.
-  Reaching a screen is not reaching *into* it: the target is now the next
-  screen's largest connected component.
-- A corridor that assumes it worked. Seam 3|4's shortest candidate cut through
-  the vertical path feeding its own left anchor; the carve landed, screen 4
-  stayed dark, and the three seams after it starved. Another ran straight over
-  W4's fortress and deleted it — the map still connected, and a fortress simply
-  ceased to exist.
+1. **Re-aim every pair's dest slot, not just the moved ones.** The fold changes
+   every carried entry's page, so a pair left with vanilla page numbers silently
+   stops being a pair. This stranded W8's pages 1–3: six internal pipes intact on
+   the map, unmatched in the tables.
+2. **A mouth must already be reachable.** Placing a pipe on a cell does not make
+   the cell reachable. Unchecked mouths produced links that looked right in the
+   tables and left pages 3-and-up dark in all three groups.
+3. **Mouths usually have to displace something.** Vanilla maps are dense — W1's
+   single page has 21 entries and not one spare blank node. So the pipe and a
+   level **trade places**: the level keeps its `obj_ptr` and lands where the pipe
+   was, which was a reachable node by construction.
+4. **Which pair to spend cannot be guessed.** "Same page" seemed safe — a pair
+   whose mouths share a page cannot be the only thing joining two pages. It is
+   still wrong: W2's single pipe has both mouths on its first page and is the
+   only thing joining two *regions* of it. Taking it stranded ten nodes.
 
-`connect_stranded_forts` then runs the same search for any fortress the seams
-left isolated: W7's sits in the last column of its screen and was, in vanilla,
-approached from W7's *second* screen, which the fold does not carry.
+So the choice is verified, not reasoned: each candidate is moved on a cloned
+plan and kept only if the group's **connected-component count strictly
+decreases**. A link joins two components; if the move also severs something, the
+split cancels the join and the count comes back level.
 
 ## Ordering
 
-`testrom` applies the fold at **step 4a — after `open_map`, before the code-only
-passes.** Every pass that reaches map tiles through `rom_data`'s per-world
-constants must run first, because those constants describe the vanilla
-eight-world layout and stop describing the ROM the moment the fold runs.
-`open_map` walks all eight `MAP_TILE_GRIDS` rows, whose offsets land at the
-wrong stride inside the merged grid; running it first also means the carried
-screens arrive already unlocked, which `--mega` wants anyway.
+`testrom` applies the fold at **step 5a**: after `open_map` (which walks all
+eight `MAP_TILE_GRIDS` rows, whose offsets land at the wrong stride once the
+fold has run) and after the open-movement patch (whose practice-ROM records
+include two bytes of map-object data the fold also rewrites).
 
-The mirror-image rule holds *inside* the module: `row_shifts` and
-`fort_positions` are computed against the untouched ROM up front, because
-`build_pointer_block` writes the merged block over the source blocks of the
-first four worlds. An earlier version re-derived a shift afterwards and read
-its own output.
-
-This is the same trap the world-merge experiment hit from the other direction
-(see `world_merge_experiment.md`, "the rule this experiment kept violating").
-
-## ROM layout
-
-| Resource | Destination | Size | Space it fits in |
-|---|---|---|---|
-| Tile grid | `0x185BA` (W1's) | 8×144 + `FF` = 1153 B | 2888 B the eight grids own |
-| Pointer block | `0x19434` (W1's) | 8 + 6×157 = 950 B | 2072 B the eight blocks own |
-
-The pointer block **must** live at `0x19434`. PRG012's only other gap over 100
-bytes is `0x19DD0`, and it is not free: the Big ? Block trampoline, the flag-key
-stamp and the title-screen seed-hash icons all write there — the last of them
-after the overworld writer runs.
-
-`World_Map_Max_PanR` goes to `$70` (128 columns; vanilla's largest is `$30`).
-`INC World_Num` is NOPed out, because only world 0 has a grid and a block now
-and clearing the airship would otherwise advance into the middle of the merged
-block.
+Inside the module the mirror rule holds: `plan()` reads *everything* out of the
+vanilla layout before a single byte is written, because the merged grids are laid
+out from W1's slot and run over W2, W3 and W4's sources. This is the same trap
+the world-merge experiment hit from the other direction — there the merge had to
+run *first*; here it must run *last*, because this module reads the vanilla
+tables rather than the merged ones.
 
 ## Tests
 
@@ -178,49 +168,69 @@ block.
 
 | Test | What it holds |
 |---|---|
-| `carries_every_source_screen_entry` | 157 entries, under the InitIndex ceiling |
-| `merged_block_is_sorted_and_in_bounds` | screen-sorted, in-grid, `InitIndex[s]` is the *first* entry on `s` |
-| `every_screen_is_reachable_from_the_start` | all eight screens connect |
-| `every_screens_fortress_survives_and_is_reachable` | all eight forts exist and are walkable |
-| `carried_fortress_fx_is_aimed_at_its_new_screen` | FX screen, completion column, clean row nibble, world-0 FX row |
-| `completion_widening_refuses_an_unexpected_rom` | mutates each of the eight patch sites and checks the guard fires |
+| `carries_every_entry_but_the_surplus_singletons` | all 340 entries accounted for |
+| `blocks_are_sorted_and_init_index_is_exact` | `(page,row,col)` order; `InitIndex[p]` is the *first* entry on `p` |
+| `every_page_is_reachable` | all 19 pages walkable from their group's start |
+| `nothing_becomes_less_reachable_than_vanilla` | the real invariant — see below |
+| `every_fortress_survives_and_is_reachable` | all 16 forts exist and are walkable |
+| `links_join_two_pages_with_real_pipes` | 5 links, mouths on different pages, both pipes |
+| `per_world_tables_fit_their_groups` | every table budget, including the sprite overflow |
+| `stays_inside_its_regions` | no write past the warp grid or the block region |
+| `progression_chain_is_intact` | starts in world 6; groups ascend; last is world 8 |
+| `completion_widening_refuses_an_unexpected_rom` | mutates all 8 patch sites, guard fires |
 
-Two `#[ignore]` diagnostics — `diagnose_seams` and `diagnose_pipes` — print the
-walk frontier and the pipe read-back. They earned their place: every seam bug
-above was found with them.
+`nothing_becomes_less_reachable_than_vanilla` is the one that matters. "Every
+page is reachable" can hold while half a page is stranded; this compares each
+source world's own vanilla reachable set, remapped, against the merged one.
 
-The reachability tests replicate `testrom`'s lock/gap removal before folding,
-because a fortress behind its own lock is the vanilla contract, not a defect.
+It was also wrong twice before it was right — first handing vanilla *all 24* dest
+positions filtered only by "does it fit in the grid", which lets other worlds'
+pipes in as phantom shortcuts and makes vanilla look better connected than it is.
+Pipes must be filtered by `DEST_TO_WORLD`, not by coordinate range.
 
 ## Still open
 
-1. **Progression.** `INC World_Num` is NOPed, so the map never advances and the
-   airship leads nowhere. Replacing it with a wand/region-gate model is the
-   piece that turns this from a map into a game.
-2. **One region's worth of dressing for all eight.** Palette, music, bottom
-   tile, king room, airship level and airship travel are still keyed to
-   `World_Num`, which is pinned at 0 — so the whole continent renders in W1's
-   colours and plays W1's music. The fix is the `Map_Region` latch described in
-   the design discussion: a spare WRAM byte holding the current screen, with the
-   eight-wide dispatch tables re-indexed off it. Because those tables are
-   already eight entries wide and `Map_Region` is a plain absolute byte like
-   `World_Num`, most sites are same-size operand swaps.
-3. **Blank tiles are land-themed.** The seam routes write `0x44`/`0x45`, which
-   is wrong on the sky and island screens.
-   `overworld_pickup::blank_tile_from_neighbors` knows the per-screen rule but
-   reads the vanilla per-world grids, so it cannot run after the fold.
-4. **The goal.** `reconcile_singletons` keeps the rightmost castle, but most
-   worlds' castles live on their *last* screen, which the fold does not carry —
-   so the goal is wherever it happens to fall, not at the far end.
-5. **Map objects (hammer bros) are not carried.** World 0 keeps W1's table,
-   which is valid but leaves seven screens without encounters.
-6. **Not flag-gated, and the randomizer is not wired to it.** `--mega` refuses a
-   `--randomize` base and refuses `--place`, because both address the map
-   through per-world constants the fold invalidates. Wiring the overworld
-   builder to a single 128×9 graph is the large remaining workstream.
-7. **Untested on hardware/emulator.** Everything above is verified by the Rust
-   walker against the ROM image. The one thing the walker cannot answer is
-   whether the map engine actually *pans* across eight screens — vanilla's
-   widest scrolling map is three (W3, W6), and W8's four screens do not scroll.
-   **This is the next thing to check, and it is cheap: load `mega.nes` and walk
-   right.**
+1. **Not yet run on an emulator.** The eight-page prototype loaded; this is a
+   different layout. Load `mega.nes`, walk world 6 end to end through both pipe
+   links, clear a fortress on a page past 3, and confirm the airship advances to
+   world 7.
+2. **Airship sprite placement.** Each group keeps the destination world's own
+   airship sprite (slot 1), which sits at *that* world's vanilla castle — not at
+   the castle the fold kept (the rightmost). The castle tile and its pointer
+   entry are right; the sprite is not.
+3. **Three sprites dropped** in world 7 — see above.
+4. **Per-region dressing.** Palette, music, bottom tile and king room are keyed
+   to `World_Num`, so each super-world renders in its *destination* slot's
+   colours: W6's for the first group, W7's for the second, W8's dark palette for
+   the third. Better than the eight-page prototype's single palette, and still
+   not per-page. The `Map_Region` latch (a spare WRAM byte holding the current
+   page, with the eight-wide dispatch tables re-indexed off it) is the fix.
+5. **The warp zone** is left in place but its destinations name worlds 1–8, most
+   of which no longer exist.
+6. **Randomizer integration** — Phase 3, below.
+
+## Phase 3: what integrating with the randomizer needs
+
+Less is per-world than it feels. Already page-agnostic:
+
+- `walk_map` — proven on 96- and 112-column maps here
+- the level deck / `assign_pool` — already deals **globally**
+- `redistribute_fortresses` — already cross-world
+- `map_tile_offset` — screen-major, width-driven
+- the island-role model in `islands.rs` — and **vanilla pages placed side by side
+  are exactly islands**, which is what the builder's phase 1 ("connectivity pipes
+  bridge islands") already exists to solve
+
+Genuinely per-world: the `[T; 8]` tables and `0..8` loops, the dealt C1 floors
+(11/14/17), the per-world route census, `world_order`, and the capacity model
+(`VANILLA_PIPE_PAIRS[w]`, fortress counts).
+
+The wedge is the one the world-merge branch identified and did not take: **make
+the world count variable** — `WORLDS` as a slice with a `world_count()`, so dead
+slots are genuinely absent rather than emptied. That branch's own conclusion was
+"emptying world 1 makes that safe, not correct," and it is the same workstream as
+the progression chain and `world_order`. Doing it once unblocks both experiments.
+
+Do not rescale the C1 floors by arithmetic. Three worlds at ~3× the columns is a
+different distribution, not a stretched one — get them building, then run
+`test_route_census` at 1000 seeds and read what it says before touching a knob.

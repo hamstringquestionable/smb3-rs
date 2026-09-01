@@ -942,51 +942,6 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         report.push("locks: kept".to_string());
     }
 
-    // 4a. Mega map. **After** every pass that reaches map tiles through
-    //     `rom_data`'s per-world constants, and before every pass that only
-    //     touches code.
-    //
-    //     Those constants describe the vanilla eight-world layout and stop
-    //     describing this ROM the moment the fold runs — `open_map` above
-    //     walks all eight `MAP_TILE_GRIDS` rows, whose offsets land at the
-    //     wrong stride inside the merged grid. Folding last means the source
-    //     screens are already unlocked and un-gapped when they are carried,
-    //     which is what `--mega` wants anyway. The world-merge experiment hit
-    //     the mirror image of this bug and fixed it by moving the merge to the
-    //     *front*; the difference is that this module reads the vanilla tables
-    //     rather than the merged ones.
-    if spec.mega_map {
-        if !matches!(spec.base, Base::Vanilla) {
-            return Err("--mega needs a vanilla base: it rewrites the map grids and pointer \n                               blocks the randomizer addresses through per-world constants."
-                .to_string());
-        }
-        if spec.place_all.is_some() || !spec.placements.is_empty() {
-            return Err("--mega cannot be combined with --place: numbered-tile lookup reads \n                               WORLDS[0].entry_count, which the fold makes wrong (21 -> 157)."
-                .to_string());
-        }
-        let m = crate::randomize::mega_map::build(&mut rom)?;
-        report.push(format!(
-            "mega map: {} screens, {} entries, {} forts ({} reconnected, {} stranded),\n           \
-             {} pipe pairs kept, {} pipe tiles demoted, {} singletons blanked",
-            crate::randomize::mega_map::SCREENS,
-            m.entries,
-            m.forts,
-            m.forts_connected,
-            m.forts_stranded,
-            m.pipes_carried,
-            m.pipes_neutralized,
-            m.singletons_blanked
-        ));
-        for s in &m.seams {
-            let (a, b) = (s.seam, s.seam + 1);
-            match s.row {
-                Some(row) => report.push(format!("  seam {a}|{b}: row {row}, {} tile(s)", s.tiles)),
-                None => report
-                    .push(format!("  seam {a}|{b}: NOT carved — no even-span node pair in reach")),
-            }
-        }
-    }
-
     // 5. Open movement (walk over level/fortress/lock tiles).
     match &spec.movement_patch {
         Some(patch) => {
@@ -1012,6 +967,79 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
             }
         }
         None => report.push("open movement: off".to_string()),
+    }
+
+    // 5a. Mega map. **After** every pass that reaches map tiles through
+    //     `rom_data`'s per-world constants, and before every pass that only
+    //     touches code, and after the open-movement patch, whose practice-ROM
+    //     records include two bytes of map-object data the fold also rewrites.
+    //
+    //     Those constants describe the vanilla eight-world layout and stop
+    //     describing this ROM the moment the fold runs — `open_map` above
+    //     walks all eight `MAP_TILE_GRIDS` rows, whose offsets land at the
+    //     wrong stride inside the merged grid. Folding last means the source
+    //     screens are already unlocked and un-gapped when they are carried,
+    //     which is what `--mega` wants anyway. The world-merge experiment hit
+    //     the mirror image of this bug and fixed it by moving the merge to the
+    //     *front*; the difference is that this module reads the vanilla tables
+    //     rather than the merged ones.
+    if spec.mega_map {
+        if !matches!(spec.base, Base::Vanilla) {
+            return Err("--mega needs a vanilla base: it rewrites the map grids and pointer \n                               blocks the randomizer addresses through per-world constants."
+                .to_string());
+        }
+        if spec.place_all.is_some() || !spec.placements.is_empty() {
+            return Err("--mega cannot be combined with --place: numbered-tile lookup reads \n                               WORLDS[0].entry_count, which the fold makes wrong (21 -> 157)."
+                .to_string());
+        }
+        let m = crate::randomize::mega_map::build(&mut rom)?;
+        report.push(format!(
+            "mega map: {} super-worlds, start in world {}, {} surplus singletons removed",
+            m.slots.len(),
+            crate::randomize::mega_map::START_SLOT + 1,
+            m.singletons_removed
+        ));
+        for s in &m.slots {
+            let sprites = if s.sprites_placed == s.sprites_wanted {
+                format!("{} sprites", s.sprites_placed)
+            } else {
+                format!(
+                    "{}/{} sprites — {} DROPPED, list holds 7",
+                    s.sprites_placed,
+                    s.sprites_wanted,
+                    s.sprites_wanted - s.sprites_placed
+                )
+            };
+            report.push(format!(
+                "  world {}: {} pages, {} entries, {} forts, {sprites}",
+                s.slot + 1,
+                s.pages,
+                s.entries,
+                s.forts
+            ));
+        }
+        for l in &m.links {
+            report.push(format!(
+                "  link W{}|W{} in world {}: pipe {:#04x}, {:?} <-> {:?}",
+                l.between.0,
+                l.between.1,
+                l.slot + 1,
+                l.dest_idx,
+                l.mouths.0,
+                l.mouths.1
+            ));
+        }
+        report.push(format!(
+            "  space: grids {}/{} B, blocks {}/{} B",
+            m.grid_bytes.0, m.grid_bytes.1, m.block_bytes.0, m.block_bytes.1
+        ));
+        if m.unreachable_pages.is_empty() {
+            report.push("  connectivity: every page reachable".to_string());
+        } else {
+            for (slot, page) in &m.unreachable_pages {
+                report.push(format!("  UNREACHABLE: world {} page {page}", slot + 1));
+            }
+        }
     }
 
     // 6. Hammer tile-breaking. Applied here rather than via `Options` so it
