@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::process;
 
 use smb3_rs::{
-    EnemyMode, FireFlowerMode, HazardLimit, ITEMS, Options, PiranhaMode, STARTING_LIVES_VALUES,
-    Tri, WildChaser, item_display_name, item_id,
+    DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, ITEMS, Options, PiranhaMode,
+    STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
 };
 
 /// Human-readable label for a tri-state flag in the run summary.
@@ -75,6 +75,16 @@ fn parse_hazard_limit(s: &str) -> Result<HazardLimit, String> {
         "some" => Ok(HazardLimit::Sparse),
         "all" => Ok(HazardLimit::All),
         _ => Err("valid values: off, some, all".to_string()),
+    }
+}
+
+/// clap value parser for `--deja-vu` (off/double/wild).
+fn parse_deja_vu(s: &str) -> Result<DejaVuMode, String> {
+    match s {
+        "off" => Ok(DejaVuMode::Off),
+        "double" => Ok(DejaVuMode::Double),
+        "wild" => Ok(DejaVuMode::Wild),
+        _ => Err("valid values: off, double, wild".to_string()),
     }
 }
 
@@ -422,6 +432,14 @@ struct Cli {
     #[arg(long)]
     friendlier_levels: bool,
 
+    /// Deja Vu: let one level appear on more than one map tile — off, double,
+    /// or wild (default: off). `double` puts two copies of every level in the
+    /// deck; `wild` deals with replacement, so a level can appear any number of
+    /// times or not at all. Levels holding a one-off item are dealt once either
+    /// way. (MaCobra52's idea.)
+    #[arg(long, default_value = "off", value_parser = parse_deja_vu)]
+    deja_vu: DejaVuMode,
+
     /// Seed a level-wide chaser into a fraction of levels. A comma-separated
     /// set of `sun`, `lakitu`, `bass`; or `all`; or `off` (default). A level
     /// whose CHR can't fit an allowed chaser is skipped rather than given one
@@ -586,6 +604,7 @@ fn build_options(cli: &Cli) -> Options {
             hb_encounters: cli.hb_encounters,
             limit_hazards: cli.limit_hazards,
             friendlier_levels: cli.friendlier_levels,
+            deja_vu: cli.deja_vu,
             wild_injections: cli.wild_injections.0.clone(),
             starting_lives: cli.starting_lives,
             starting_items,
@@ -620,6 +639,14 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
         }
     );
     eprintln!("  Friendlier levels: {}", if options.friendlier_levels { "on" } else { "off" });
+    eprintln!(
+        "  Deja Vu: {}",
+        match options.deja_vu {
+            DejaVuMode::Off => "off",
+            DejaVuMode::Double => "double",
+            DejaVuMode::Wild => "wild",
+        }
+    );
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
     if options.world_order && options.world_count < 7 {
         eprintln!("  World count: {}", options.world_count);

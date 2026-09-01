@@ -212,6 +212,44 @@ pub enum HazardLimit {
     All,
 }
 
+/// How many times a single level may appear on the finished map.
+///
+/// The writer deals levels out of a deck (see `assign_pool`), so this is deck
+/// surgery and nothing more: the map is already decided by the time it runs.
+///
+/// `Double` deals a second copy of every level, so any one of them can land on
+/// two tiles. `Wild` rebuilds the deck by drawing with replacement, so a level
+/// can land any number of times — or none at all.
+///
+/// Levels holding a one-off inventory item (the chest levels and the W8 hand
+/// rooms) are exempt in both modes: they are dealt exactly once, because a
+/// second copy would hand the same item out twice and no copy would put it out
+/// of reach.
+///
+/// (MaCobra52's idea.)
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
+#[serde(rename_all = "snake_case")]
+pub enum DejaVuMode {
+    /// Every level appears at most once — vanilla shuffle behavior.
+    #[default]
+    Off,
+    /// Two copies of each level in the deck; a level can appear twice.
+    Double,
+    /// Draw with replacement; a level can appear any number of times, or none.
+    Wild,
+}
+
 /// A level-wide chaser the wild-injection pass can seed into a level. The
 /// option is the *set* of these the player allowed — an empty set is off.
 ///
@@ -584,6 +622,9 @@ pub struct Options {
     /// that remain. See `FRIENDLIER_BLOCKED_LEVELS` for the list.
     #[serde(default)]
     pub friendlier_levels: bool,
+    /// How many times one level may appear on the map. See [`DejaVuMode`].
+    #[serde(default)]
+    pub deja_vu: DejaVuMode,
     /// Which level-wide chasers may be seeded into a fraction of real levels
     /// (CHR-compatible). Empty = off. See [`WildChaser`].
     #[serde(default)]
@@ -665,6 +706,7 @@ impl Default for Options {
             hb_encounters: EnemyMode::Off,
             limit_hazards: HazardLimit::Off,
             friendlier_levels: false,
+            deja_vu: DejaVuMode::Off,
             wild_injections: Vec::new(),
             starting_lives: default_starting_lives(),
             starting_items: Vec::new(),
