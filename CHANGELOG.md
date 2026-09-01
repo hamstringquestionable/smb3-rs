@@ -79,6 +79,15 @@ deploys.
 
 - **Three new king rescue quotes** join the pool the kings draw from.
 
+- The version manifest now publishes the **flag-key format version**, which lets
+  the racetime seed bot reject a stale key *before* it posts the seed link.
+  Previously it could only check a key's shape, and keys older than the current
+  format carry no checksum — so a leftover key from an older randomizer sailed
+  through, the bot posted the link, and every racer's browser then refused the
+  key and fell back to whatever settings they happened to have. Racers in the
+  same race could end up playing different rulesets with nothing on screen to
+  say so. The bot now answers with which version the key is from.
+
 ### Changed
 
 - **Fortresses no longer sit where you cannot walk around them.** A fortress in

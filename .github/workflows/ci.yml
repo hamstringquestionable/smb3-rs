@@ -260,7 +260,37 @@ jobs:
           ARR=$(ls versions-repo/v 2>/dev/null | sort -Vr | sed 's/.*/"&"/' | paste -sd, -)
           CUR=$(ls versions-repo/v 2>/dev/null | sort -V | tail -1)
           CUR=${CUR:-$VER}   # empty archive (first ever run): fall back to main's version
-          printf '{"current":"%s","versions":[%s]}\n' "$CUR" "$ARR" > _site/versions.json
+
+          # `flagKeyVersion` is the flag-key FORMAT version the app at the root
+          # reads. It is what lets the racetime seed bot
+          # (github.com/../smb3r-seedbot) reject a racer's stale key before it
+          # posts the seed link, instead of posting a link that every racer's
+          # browser then refuses — leaving each of them to generate from their
+          # own leftover settings. Pre-v29 keys carry no checksum, so the bot's
+          # structural checks cannot catch them; only a version comparison can.
+          # Absent or non-integer, the bot soft-fails to structural checks only,
+          # which is the behaviour this replaces.
+          #
+          # Read from main-src, NOT from the archive, and the difference from
+          # `CUR` above is deliberate. The two answer different questions:
+          # `current` names an archive entry the picker will link to, so it MUST
+          # come from the archive or it links a 404. `flagKeyVersion` describes
+          # the code that will actually accept or reject the key at `/`, and the
+          # root is staged from main-src (see "Stage main into _site/"), so
+          # main-src is the honest source. In the window where main is ahead of
+          # the archive these disagree, and each is still right about its own
+          # question.
+          FKV=$(sed -n 's/.*FLAG_KEY_VERSION: u8 = \([0-9]*\).*/\1/p' \
+                  main-src/src/randomizer/flag_key.rs | head -1)
+          if [ -z "$FKV" ]; then
+            echo "::error::Could not read FLAG_KEY_VERSION from src/randomizer/flag_key.rs."
+            echo "::error::If the constant was renamed or moved, update this step to match."
+            exit 1
+          fi
+          echo "Flag-key format version: $FKV"
+
+          printf '{"current":"%s","flagKeyVersion":%s,"versions":[%s]}\n' \
+            "$CUR" "$FKV" "$ARR" > _site/versions.json
           cat _site/versions.json
 
       - name: Upload artifact
