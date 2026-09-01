@@ -1,6 +1,6 @@
 # Mega map — experiment (branch `experiment/mega-map`)
 
-**Status:** Phase 1 complete and verified against the Rust walker. Vanilla-base
+**Status:** Phases 1 and 2 complete, verified against the Rust walker. Vanilla-base
 only, via `testrom --mega`; not flag-gated, not wired to the randomizer.
 Do not merge to `main` as-is.
 
@@ -82,7 +82,7 @@ marker and slot 1 the airship, so seven are usable — and W4+W5+W6 brings ten
 sprites. Three are dropped, and `per_world_tables_fit_their_groups` asserts
 exactly that number so the day it changes, the test says so.
 
-Widening is a Phase 2 job and is not just a length change: the reward table is
+Widening is still open and is not just a length change: the reward table is
 addressed as `MAP_OBJ_REWARDS + world * 9 + slot`, with the stride baked into
 the engine as well as into `rom_data`. Three lists of fourteen fit comfortably
 in the 72 bytes the eight nine-slot lists occupy, and RAM allows fourteen
@@ -209,6 +209,45 @@ Pipes must be filtered by `DEST_TO_WORLD`, not by coordinate range.
    of which no longer exist.
 6. **Randomizer integration** — Phase 3, below.
 
+## Phase 2 (done): the layout is read from the ROM, not hardcoded
+
+`rom_data::MapLayout` describes any ROM's map layout by reading it back out of
+the master pointer tables, rather than asserting the vanilla shape from
+`WORLDS` and `MAP_TILE_GRIDS`. Everything those constants say is already in the
+ROM: the masters give each world's block, and `entry_count` falls out of the gap
+between the RowType and ScrCol pointers, which are adjacent by construction.
+
+Two subtleties worth keeping:
+
+- **Page count comes from the entries, not from the grid data.** Scanning for
+  the grid's `0xFF` terminator is wrong, because `0xFF` is also a real map tile
+  (the border) and a scan can stop early. Every page carries at least one entry
+  in both vanilla and the fold, so the highest page any entry names is the last.
+- **Liveness cannot be inferred.** A folded ROM aims its dead slots at a live
+  world's tables rather than at garbage — safe precisely because they are never
+  loaded, but it means the caller has to say which slots are real.
+
+`layout_matches_the_vanilla_constants` pins the reader against the constants on
+a vanilla ROM. That is what lets the 46 call sites migrate a few at a time
+instead of in a flag day: while it holds, the two describe the same thing.
+`mega_map::read_grid` is the first real consumer, and reading geometry back from
+the ROM makes its verification stronger — it now checks what was *written*
+rather than agreeing with its own intent.
+
+### Also in Phase 2: the fold no longer needs locks removed first
+
+`plan_grid` holds locks and water gaps **open** while planning links. Only for
+planning; the grid written keeps every lock. A lock is a gate the player opens,
+not a wall, so treating one as impassable measures the wrong map — it splits a
+world into regions that are not really separate, and then no pipe can be spared
+without appearing to strand something.
+
+This was found by calling the fold from a test that did not pre-remove locks: it
+failed with "no pipe pair it can spare to link W2 to W3". `testrom` removes
+locks first and the randomizer does not, so the fold had a hidden dependency on
+its only caller. Same rule the fortress-forcedness work settled on — hold locks
+open, or you measure goal gates.
+
 ## Phase 3: what integrating with the randomizer needs
 
 Less is per-world than it feels. Already page-agnostic:
@@ -226,8 +265,10 @@ Genuinely per-world: the `[T; 8]` tables and `0..8` loops, the dealt C1 floors
 (`VANILLA_PIPE_PAIRS[w]`, fortress counts).
 
 The wedge is the one the world-merge branch identified and did not take: **make
-the world count variable** — `WORLDS` as a slice with a `world_count()`, so dead
-slots are genuinely absent rather than emptied. That branch's own conclusion was
+the world count variable**. Phase 2 landed the foundation — `MapLayout` already
+has `world_count()` and knows which slots are live. What remains is migrating
+the 46 references to `WORLDS` / `MAP_TILE_GRIDS` across 17 files to take a
+`&MapLayout` instead, so dead slots are genuinely absent rather than emptied. That branch's own conclusion was
 "emptying world 1 makes that safe, not correct," and it is the same workstream as
 the progression chain and `world_order`. Doing it once unblocks both experiments.
 

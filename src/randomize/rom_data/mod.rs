@@ -18,12 +18,15 @@ mod access;
 pub(crate) mod asm;
 mod free_space;
 mod grid;
+/// The map layout as the ROM describes it, rather than as constants assume.
+mod layout;
 mod tables;
 mod tiles;
 
 pub(crate) use access::*;
 pub(crate) use free_space::*;
 pub(crate) use grid::*;
+pub(crate) use layout::*;
 pub(crate) use tables::*;
 pub(crate) use tiles::*;
 

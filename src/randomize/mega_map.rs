@@ -828,10 +828,29 @@ fn component_count(plan: &Plan, group: usize, pairs: &[(usize, usize, usize, usi
     count
 }
 
-/// The plan's grid for a group, as something the map walker can take.
+/// The plan's grid for a group, as the map walker can take it, **with locks
+/// and water gaps held open**.
+///
+/// Planning only — the grid actually written keeps every lock. A lock is a
+/// gate the player opens, not a wall, so treating one as impassable while
+/// deciding where links go measures the wrong map: it splits a world into
+/// regions that are not really separate, and then no pipe can be spared
+/// without appearing to strand something. Same rule the fortress-forcedness
+/// work settled on — hold locks open, or you measure goal gates.
+///
+/// Without this the fold only worked on a ROM whose locks had already been
+/// removed, which is what `testrom` does and what the randomizer does not.
 fn plan_grid(plan: &Plan, group: usize) -> rom_data::Grid {
     let cols = plan.cols(group);
-    let tiles = (0..ROWS).map(|r| (0..cols).map(|c| plan.tile(group, r, c)).collect()).collect();
+    let open = |tile: u8| {
+        if rom_data::is_lock(tile) || rom_data::is_water_gap(tile) {
+            rom_data::path_for_gap_tile(tile).unwrap_or(tile)
+        } else {
+            tile
+        }
+    };
+    let tiles =
+        (0..ROWS).map(|r| (0..cols).map(|c| open(plan.tile(group, r, c))).collect()).collect();
     rom_data::Grid { tiles, cols, eights_are_wild: false }
 }
 
@@ -1284,18 +1303,18 @@ pub(crate) fn pages_in(slot: usize) -> usize {
 }
 
 /// Read a finished super-world's grid as a [`Grid`] the map walker can take.
+///
+/// Geometry comes from [`rom_data::MapLayout`], which reads it back out of the
+/// ROM's own pointer tables — so this describes what was actually **written**
+/// rather than what [`SUPER_WORLDS`] intended. A fold that got a page count
+/// wrong shows up here instead of being papered over by agreeing with itself.
 pub(crate) fn read_grid(rom: &Rom, slot: usize) -> rom_data::Grid {
-    let base =
-        PRG012_FILE_BASE + (rom_data::read_word(rom, GRID_PTRS + slot * 2) as usize - 0xA000);
-    let cols = pages_in(slot) * 16;
+    let layout = rom_data::MapLayout::read(rom, &[slot]);
+    let w = layout.get(slot).expect("the slot was just read");
     let tiles = (0..ROWS)
-        .map(|r| {
-            (0..cols)
-                .map(|c| rom.read_byte(base + (c / 16) * PAGE_BYTES + r * 16 + c % 16))
-                .collect()
-        })
+        .map(|r| (0..w.columns()).map(|c| rom.read_byte(w.tile_offset(r, c))).collect())
         .collect();
-    rom_data::Grid { tiles, cols, eights_are_wild: false }
+    rom_data::Grid { tiles, cols: w.columns(), eights_are_wild: false }
 }
 
 /// The live pipe pairs on a finished super-world, as walker teleport edges.
