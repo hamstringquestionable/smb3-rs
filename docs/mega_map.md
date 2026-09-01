@@ -148,6 +148,31 @@ plan and kept only if the group's **connected-component count strictly
 decreases**. A link joins two components; if the move also severs something, the
 split cancels the join and the count comes back level.
 
+## Start and goal: two things the tile does not carry
+
+Both found by looking at the map in an emulator, and neither is visible in the
+tile data.
+
+**The spawn coordinate is a per-world table.** `Map_Y_Starts` is eight bytes
+indexed by `World_Num` — "Map Y start positions, World 1-8 (X is always $20)" —
+so a group living in slot 6 spawned Mario at **W6's** row while its start panel
+sat at W1's. Vanilla's rows all differ (`$40 $A0 $A0 $40 $80 $60 $30 $50`), so
+there is no row to inherit. `aim_spawn_at_the_kept_start` writes the row of the
+start tile the fold actually kept: slots 6/7/8 become `$40 / $40 / $30`.
+
+Only the row was wrong, and that is the tell: X and X-Hi are not in a table at
+all, the engine hardcodes `$20` — column 2 of page 0. Every vanilla start
+happens to sit there and the kept start is always the leftmost, so it holds; but
+it is an engine assumption rather than data the fold controls, so it is checked
+and errors out rather than being trusted. Moving a start off column 2 needs the
+X / X-Hi / scroll tables `start_airship_swap` adds.
+
+**The last group had two goals.** W7's airship castle (`0xC9`) *and* W8's Bowser
+castle (`0xCC`) are both enterable, and clearing an airship castle runs
+`INC World_Num` — so a player reaching W7's castle on page 1 would have finished
+world 8 early and advanced into world 9, the warp zone. When Bowser is present
+he is the goal and every airship castle in the group goes.
+
 ## Ordering
 
 `testrom` applies the fold at **step 5a**: after `open_map` (which walks all
@@ -177,6 +202,8 @@ tables rather than the merged ones.
 | `per_world_tables_fit_their_groups` | every table budget, including the sprite overflow |
 | `stays_inside_its_regions` | no write past the warp grid or the block region |
 | `progression_chain_is_intact` | starts in world 6; groups ascend; last is world 8 |
+| `spawn_lands_on_the_start_tile` | `Map_Y_Starts[slot]` names the kept start's row |
+| `each_group_has_exactly_one_goal` | one airship castle per group; the last has Bowser and none |
 | `completion_widening_refuses_an_unexpected_rom` | mutates all 8 patch sites, guard fires |
 
 `nothing_becomes_less_reachable_than_vanilla` is the one that matters. "Every

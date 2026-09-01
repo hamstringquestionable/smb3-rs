@@ -379,6 +379,7 @@ pub fn build(rom: &mut Rom) -> Result<MegaMapReport, String> {
     rom.write_byte(super::world_order::WORLD_INIT_OPERAND, START_SLOT as u8);
 
     report.singletons_removed = reconcile_singletons(&mut plan);
+    aim_spawn_at_the_kept_start(rom, &plan)?;
     let (links, pipe_pairs_by_group) = link_pages(rom, &mut plan, &van_entries)?;
     report.links = links;
     write_pipe_dests(rom, &plan, &pipe_pairs_by_group);
@@ -523,10 +524,20 @@ fn reconcile_singletons(plan: &mut Plan) -> usize {
         let mut doomed: Vec<(usize, usize)> = Vec::new();
         // Starts: keep the leftmost.
         doomed.extend(find(plan, rom_data::TILE_START).into_iter().skip(1));
-        // Castles: keep the rightmost, with each discarded decorative top.
+        // Goals: keep exactly one, and it must be the one that ends the group.
+        //
+        // Normally that is the rightmost airship castle. The last group is the
+        // exception: it holds W8's Bowser castle, a *different* tile
+        // (`TILE_BOWSER`), and W7's airship castle as well. Both are
+        // enterable, and clearing an airship castle runs `INC World_Num` — so
+        // leaving W7's in place lets the player finish the final group early
+        // and advance into world 9, the warp zone. When Bowser is present he
+        // is the goal and every airship castle goes.
         let castles = find(plan, TILE_CASTLE_BOTTOM);
-        if castles.len() > 1 {
-            for &pos in &castles[..castles.len() - 1] {
+        let has_bowser = !find(plan, rom_data::TILE_BOWSER).is_empty();
+        let keep = if has_bowser { 0 } else { 1 };
+        if castles.len() > keep {
+            for &pos in &castles[..castles.len() - keep] {
                 doomed.push(pos);
                 if pos.0 > 0 && plan.tile(group, pos.0 - 1, pos.1) == TILE_CASTLE_TOP {
                     doomed.push((pos.0 - 1, pos.1));
@@ -544,6 +555,59 @@ fn reconcile_singletons(plan: &mut Plan) -> usize {
     }
 
     removed
+}
+
+/// Point each super-world's spawn at the start tile the fold actually kept.
+///
+/// The start *tile* and the spawn *coordinate* are two different things, and
+/// only the tile moves with the map. `Map_Y_Starts` is an eight-byte per-world
+/// table indexed by `World_Num` — "Map Y start positions, World 1-8 (X is
+/// always $20)" — so a group living in slot 6 spawns Mario wherever **W6**
+/// started, not where its own start tile is. Vanilla's rows differ per world
+/// (`$40 $A0 $A0 $40 $80 $60 $30 $50`), so the mismatch shows as Mario
+/// standing off the path, one or more rows from the start panel.
+///
+/// The row is taken from the surviving tile rather than copied from the first
+/// source world's byte, so it stays correct if `reconcile_singletons` ever
+/// keeps a different start.
+///
+/// X and X-Hi are **not** in a table — the engine hardcodes `$20`, column 2 of
+/// page 0. Every vanilla start happens to sit there, and the kept start is
+/// always the leftmost, so it holds here; but it is an assumption the engine
+/// makes rather than data the fold controls, so it is checked rather than
+/// trusted. Moving a start off column 2 needs the X / X-Hi / scroll tables
+/// that `start_airship_swap` adds.
+fn aim_spawn_at_the_kept_start(rom: &mut Rom, plan: &Plan) -> Result<(), String> {
+    /// Column the engine hardcodes for the map spawn (`$20` = column 2).
+    const SPAWN_COL: usize = 2;
+
+    for (group, sw) in SUPER_WORLDS.iter().enumerate() {
+        let mut found = None;
+        for c in 0..plan.cols(group) {
+            for r in 0..ROWS {
+                if plan.tile(group, r, c) == rom_data::TILE_START {
+                    found = Some((r, c));
+                }
+            }
+        }
+
+        let Some((row, col)) = found else {
+            return Err(format!("mega_map: slot {} has no start tile", sw.slot));
+        };
+        if col != SPAWN_COL {
+            return Err(format!(
+                "mega_map: slot {} start tile is at column {col}, but the engine spawns at \
+                 column {SPAWN_COL} — moving it needs the start_airship_swap X tables",
+                sw.slot
+            ));
+        }
+
+        // Y is the grid row offset by 2, times 16 — the same encoding map
+        // sprite positions use.
+        rom.write_byte(rom_data::MAP_Y_STARTS_OFF + sw.slot, ((row + 2) * 16) as u8);
+    }
+
+    Ok(())
 }
 
 // --- Page links ---------------------------------------------------------
@@ -1669,5 +1733,79 @@ mod tests {
             dropped, 3,
             "expected exactly the three W4+W5+W6 sprites the nine-slot list cannot hold"
         );
+    }
+
+    /// Mario spawns on the start tile, not on whatever row the destination
+    /// slot's vanilla world used.
+    ///
+    /// `Map_Y_Starts` is indexed by `World_Num`, so before this was fixed a
+    /// group in slot 6 spawned at W6's row while its start panel sat at W1's.
+    /// Vanilla's rows are all different, so the fold cannot inherit one.
+    #[test]
+    fn spawn_lands_on_the_start_tile() {
+        let Some(rom) = mega_rom() else { return };
+
+        for sw in &SUPER_WORLDS {
+            let grid = read_grid(&rom, sw.slot);
+            let start = (0..ROWS)
+                .flat_map(|r| (0..grid.cols).map(move |c| (r, c)))
+                .find(|&(r, c)| grid.get(r, c) == rom_data::TILE_START)
+                .unwrap_or_else(|| panic!("slot {} has no start tile", sw.slot));
+
+            let y = rom.read_byte(rom_data::MAP_Y_STARTS_OFF + sw.slot) as usize;
+            let spawn_row = (y / 16).saturating_sub(2);
+            assert_eq!(
+                spawn_row, start.0,
+                "slot {} spawns at row {spawn_row}, start tile is at row {}",
+                sw.slot, start.0
+            );
+            // The engine hardcodes X = $20, column 2 of page 0.
+            assert_eq!(start.1, 2, "slot {} start tile is off the hardcoded spawn column", sw.slot);
+        }
+
+        // And exactly one start survives per group.
+        for sw in &SUPER_WORLDS {
+            let grid = read_grid(&rom, sw.slot);
+            let starts = (0..ROWS)
+                .flat_map(|r| (0..grid.cols).map(move |c| (r, c)))
+                .filter(|&(r, c)| grid.get(r, c) == rom_data::TILE_START)
+                .count();
+            assert_eq!(starts, 1, "slot {} has {starts} start tiles", sw.slot);
+        }
+    }
+
+    /// Each group has exactly one goal, and the last one's is Bowser.
+    ///
+    /// Clearing an airship castle runs `INC World_Num`. The final group holds
+    /// W7's airship castle as well as W8's Bowser, so leaving both lets the
+    /// player finish early and advance into world 9, the warp zone.
+    #[test]
+    fn each_group_has_exactly_one_goal() {
+        let Some(rom) = mega_rom() else { return };
+
+        for (i, sw) in SUPER_WORLDS.iter().enumerate() {
+            let grid = read_grid(&rom, sw.slot);
+            let count = |want: u8| {
+                (0..ROWS)
+                    .flat_map(|r| (0..grid.cols).map(move |c| (r, c)))
+                    .filter(|&(r, c)| grid.get(r, c) == want)
+                    .count()
+            };
+            let airships = count(TILE_CASTLE_BOTTOM);
+            let bowsers = count(rom_data::TILE_BOWSER);
+            let last = i == SUPER_WORLDS.len() - 1;
+
+            if last {
+                assert_eq!(bowsers, 1, "the last group must hold Bowser");
+                assert_eq!(
+                    airships, 0,
+                    "slot {} still has an airship castle that would advance past world 8",
+                    sw.slot
+                );
+            } else {
+                assert_eq!(bowsers, 0, "slot {} should not hold Bowser", sw.slot);
+                assert_eq!(airships, 1, "slot {} has {airships} airship castles", sw.slot);
+            }
+        }
     }
 }
