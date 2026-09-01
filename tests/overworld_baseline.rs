@@ -220,26 +220,26 @@ fn sweep_is_deterministic() {
 /// `WorldState::forced_positions` and the census columns that read it change
 /// no output — and cause 1 is inherited, not created here.
 const BASELINE: [u64; SEEDS as usize] = [
-    0x29A3EEA5BF4AE51F,
-    0xDF1B453A02F3E8CE,
-    0x3C30C7E62A89E412,
-    0x6590EB228FFFFFAD,
-    0xD9824148CFCFB18E,
-    0x13FB87791F7E5643,
-    0x2259781019F56587,
-    0x05E4347FD69DA9A9,
-    0xC149AFCA80118085,
-    0xB2C7DFD9A190A0B5,
-    0x1D86758E9A78E98E,
-    0xE05F91CBFC3F6720,
-    0xF29978C2C9D3AF59,
-    0xE7AC193883E470EC,
-    0xCDA7E9922AB91CCC,
-    0x32D1C6748C543C3C,
-    0xF801670EA1CCA280,
-    0x14D567EBB4188B77,
-    0xCBA0C0826565F4C1,
-    0x78E3B157D38E6082,
+    0xFD3FFDA78CEBE40B,
+    0x537A3227F1E2FFB6,
+    0x9ED28342952A8D20,
+    0x3AE3AF6E96DDA7C9,
+    0x3712E83EFC34B620,
+    0x6CB36AAE8DCA2679,
+    0x5347FC554F8DBC63,
+    0x0F1BAD9250CC2665,
+    0xE9B53E297E11748D,
+    0x0D94E4766BD79E3D,
+    0xACD46A9D5F37C0C6,
+    0xCAABC56562F82B88,
+    0xF03CC97B45307A4D,
+    0xEB78E7B7E9A6996A,
+    0x1C67E99EE6BF458E,
+    0x655975B0A768C930,
+    0xC3D739C461564CFC,
+    0x6AA516C7728E6E4F,
+    0x02EF1B2DA0673419,
+    0x7D1F5E1B09905D72,
 ];
 ///
 /// Re-captured 2026-08-27 for the Big [?] bonus-room shuffle, which is always
@@ -290,6 +290,19 @@ const BASELINE: [u64; SEEDS as usize] = [
 /// bytes reverted to `$28` and re-hashed, and all 20 then reproduced the
 /// previous baseline exactly — so those two bytes are the entire diff. No map
 /// tile, pointer table or level byte moved.
+///
+/// Re-captured 2026-09-01 for the **1.3.0 version bump** and nothing else. The
+/// hash folds `CARGO_PKG_VERSION`, so 1.2.1 -> 1.3.0 rewrites every seed's
+/// title-screen verification icons and with them all 20 whole-ROM hashes. That
+/// is the version guard working as designed, not a randomization change.
+///
+/// Attribution is by byte diff, the same way as the entries above: seeds 1-3
+/// were generated with `--no-palettes --patched-rom` at 1.2.1 and again at
+/// 1.3.0, and every differing byte in all three lands inside
+/// `FS_SEED_HASH_DATA` (0x3E93D + 40) and nowhere else — 9 to 11 bytes per
+/// seed, all within the icon payload. No RNG draw moved, so no module
+/// downstream shifted; the flag-key stamp at 0x19DF0 is byte-identical, since
+/// the key does not carry the release version.
 
 #[test]
 fn output_matches_baseline() {
