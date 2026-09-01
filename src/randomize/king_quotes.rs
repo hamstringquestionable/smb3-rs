@@ -1091,6 +1091,47 @@ mod tests {
         assert_eq!(encoded[19], 0xFE);
     }
 
+    /// The `enabled` gate must not change how much RNG the module consumes.
+    ///
+    /// This is the same property `king_quotes_off_only_skips_its_own_writes`
+    /// checks end-to-end, asserted at the module boundary instead. The two are
+    /// not redundant: the ROM-level test can only observe a divergence where
+    /// something downstream actually *draws*, so on a configuration that
+    /// happens to draw nothing after this point it would pass while the module
+    /// was quietly consuming a different number of values. This one compares
+    /// the generator state itself and holds regardless.
+    #[test]
+    fn enabled_gate_does_not_change_rng_consumption() {
+        use rand::{RngCore, SeedableRng};
+
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+
+        // Several seeds: choose_multiple picks its sampling strategy from the
+        // pool sizes, not the seed, but the draw counts are worth checking on
+        // more than one stream.
+        for seed in 0..16u64 {
+            let mut rom_on = Rom::from_bytes(&bytes).expect("test ROM parses");
+            let mut rng_on = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_on, &mut rng_on, true);
+
+            let mut rom_off = Rom::from_bytes(&bytes).expect("test ROM parses");
+            let mut rng_off = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_off, &mut rng_off, false);
+
+            // Identical position in the stream => identical continuations.
+            let tail_on: Vec<u64> = (0..8).map(|_| rng_on.next_u64()).collect();
+            let tail_off: Vec<u64> = (0..8).map(|_| rng_off.next_u64()).collect();
+            assert_eq!(
+                tail_on, tail_off,
+                "seed {seed}: the rng is at a different position with quotes off — a draw \
+                 moved below the early return, so every later module shifts"
+            );
+        }
+    }
+
     #[test]
     fn pool_has_enough_quotes() {
         assert!(

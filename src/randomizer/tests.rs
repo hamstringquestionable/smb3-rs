@@ -1294,56 +1294,84 @@ fn test_full_determinism() {
 /// module sees the same RNG. If someone later moves a `choose` call below that
 /// return, every byte after king_quotes in the pipeline shifts and this fails.
 ///
+/// Swept over configurations as well as seeds, because "accidentally consumed
+/// some RNG" is not a property of the module alone — a divergence only shows up
+/// where something downstream is actually *drawing*, and which modules draw
+/// depends on which options are on. One seed on one config would sample a
+/// single path through the pipeline.
+///
+/// `CENSUS_SEEDS` sets the seeds per configuration (default 3, to keep CI
+/// fast). The 500-seed sweep is the one that means something:
+///
+/// ```sh
+/// CENSUS_SEEDS=500 cargo test --release --lib king_quotes_off
+/// ```
+///
 /// The owned-byte set comes from the write log rather than being restated as
 /// offsets here, so it tracks the module instead of drifting away from it.
 #[test]
 fn king_quotes_off_only_skips_its_own_writes() {
-    let seed = 4242u64;
-    let mut on = test_options();
-    on.king_quotes = true;
-    let mut off = test_options();
-    off.king_quotes = false;
-
-    let Some(mut rom_on) = make_test_rom() else {
+    if make_test_rom().is_none() {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
-    };
-    randomize(&mut rom_on, seed, &on);
+    }
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(3);
 
-    let Some(mut rom_off) = make_test_rom() else {
-        eprintln!("SKIP: requires the ROM, which is not included in the repo");
-        return;
-    };
-    randomize(&mut rom_off, seed, &off);
+    // Every config here must keep `palettes` off — palettes draw from OS
+    // randomness, not the seed, so they would differ between the two runs on
+    // their own and drown the signal. All three helpers already do.
+    let configs: Vec<(&str, Options)> =
+        vec![("defaults", test_options()), ("all_on", all_on_options()), ("all_off", all_off_options())];
 
-    // Off writes nothing at all — vanilla's king text survives untouched.
-    let off_writes = rom_off.writes_by_tag("king_quotes");
-    assert!(
-        off_writes.is_empty(),
-        "king_quotes off still wrote {} range(s) — the gate leaked",
-        off_writes.len()
-    );
+    let mut compared = 0usize;
+    for (name, base) in &configs {
+        assert!(!base.palettes, "{name}: palettes must be off or this test is nondeterministic");
+        let mut on = base.clone();
+        on.king_quotes = true;
+        let mut off = base.clone();
+        off.king_quotes = false;
 
-    let owned: std::collections::HashSet<usize> = rom_on
-        .writes_by_tag("king_quotes")
-        .iter()
-        .flat_map(|rec| rec.changes().map(|(off, _, _)| off))
-        .collect();
-    assert!(!owned.is_empty(), "king_quotes on changed nothing — test is not exercising anything");
+        for seed in 1..=seeds {
+            let mut rom_on = make_test_rom().unwrap();
+            randomize(&mut rom_on, seed, &on);
+            let mut rom_off = make_test_rom().unwrap();
+            randomize(&mut rom_off, seed, &off);
 
-    let a = rom_on.output_bytes();
-    let b = rom_off.output_bytes();
-    assert_eq!(a.len(), b.len(), "ROM length changed with the toggle");
-    for i in 0..a.len() {
-        if a[i] != b[i] {
+            // Off writes nothing at all — vanilla's king text survives untouched.
+            let off_writes = rom_off.writes_by_tag("king_quotes");
             assert!(
-                owned.contains(&i),
-                "offset 0x{i:05X} differs (0x{:02X} vs 0x{:02X}) outside the bytes \
-                 king_quotes wrote — toggling it shifted the seed stream",
-                a[i], b[i]
+                off_writes.is_empty(),
+                "{name}/seed {seed}: king_quotes off still wrote {} range(s) — the gate leaked",
+                off_writes.len()
             );
+
+            let owned: std::collections::HashSet<usize> = rom_on
+                .writes_by_tag("king_quotes")
+                .iter()
+                .flat_map(|rec| rec.changes().map(|(off, _, _)| off))
+                .collect();
+            assert!(
+                !owned.is_empty(),
+                "{name}/seed {seed}: king_quotes on changed nothing — nothing is being exercised"
+            );
+
+            let a = rom_on.output_bytes();
+            let b = rom_off.output_bytes();
+            assert_eq!(a.len(), b.len(), "{name}/seed {seed}: ROM length changed with the toggle");
+            for i in 0..a.len() {
+                if a[i] != b[i] {
+                    assert!(
+                        owned.contains(&i),
+                        "{name}/seed {seed}: offset 0x{i:05X} differs (0x{:02X} vs 0x{:02X}) \
+                         outside the bytes king_quotes wrote — toggling it shifted the seed stream",
+                        a[i], b[i]
+                    );
+                }
+            }
+            compared += 1;
         }
     }
+    assert_eq!(compared, configs.len() * seeds as usize);
 }
 
 #[test]
