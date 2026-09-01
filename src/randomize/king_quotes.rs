@@ -951,30 +951,46 @@ fn cpu_addr(file_offset: usize) -> u16 {
 const QUOTE_SELECT_PATCH: usize = 0x362A3;
 
 /// Write randomized king quotes into the ROM.
-pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng) {
-    // --- 1. Write 7 unique standard quotes into free space ---
+///
+/// `enabled` gates the ROM writes only. Every RNG draw this module makes
+/// happens above the early return, so a run with quotes off consumes exactly
+/// the same seed stream as one with them on and nothing downstream shifts.
+/// Keep it that way: never move a `choose` call below the return.
+pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng, enabled: bool) {
+    // --- 1. Draw every quote, whether or not we are going to write one ---
     // choose_multiple samples without replacement, so the 7 quotes are unique.
+    // It draws inside the call, not lazily as the returned iterator is walked —
+    // so what keeps the stream stable is calling it, not collecting it.
+    let std_picks: Vec<&[&str; 6]> = QUOTES.choose_multiple(rng, 7).collect();
+    let frog_pick = FROG_QUOTES.choose(rng).unwrap();
+    let raccoon_pick = RACCOON_QUOTES.choose(rng).unwrap();
+    let hammer_pick = HAMMER_QUOTES.choose(rng).unwrap();
+
+    // Off leaves vanilla's own king text in place — the kings still speak, they
+    // just say what they say in the original game. Nothing reads the free-space
+    // block or the hook below unless the select-site patch lands, so skipping
+    // all of it is enough; there is nothing to blank.
+    if !enabled {
+        return;
+    }
+
+    // --- 2. Write 7 unique standard quotes into free space ---
     let mut std_addrs = Vec::with_capacity(7);
-    for (world, quote) in QUOTES.choose_multiple(rng, 7).enumerate() {
+    for (world, quote) in std_picks.iter().enumerate() {
         let encoded = encode_quote(quote);
         let file_offset = KING_QUOTE_BASE + world * 120;
         rom.write_range(file_offset, &encoded);
         std_addrs.push(cpu_addr(file_offset));
     }
 
-    // --- 2. Write suit-specific quotes to vanilla slots ---
+    // --- 3. Write suit-specific quotes to vanilla slots ---
     // The vanilla pointer table at $A494/$A49B already maps forms 4/5/6
     // to these addresses, so we just replace the content.
-    let frog_pick = FROG_QUOTES.choose(rng).unwrap();
     rom.write_range(FROG_QUOTE_OFFSET, &encode_quote(frog_pick));
-
-    let raccoon_pick = RACCOON_QUOTES.choose(rng).unwrap();
     rom.write_range(RACCOON_QUOTE_OFFSET, &encode_quote(raccoon_pick));
-
-    let hammer_pick = HAMMER_QUOTES.choose(rng).unwrap();
     rom.write_range(HAMMER_QUOTE_OFFSET, &encode_quote(hammer_pick));
 
-    // --- 3. Write ASM hook for per-world standard quotes ---
+    // --- 4. Write ASM hook for per-world standard quotes ---
     // Hook goes right after the 7 quote blocks in free space.
     let hook_file = KING_QUOTE_BASE + 7 * 120;
     let hook_cpu = cpu_addr(hook_file);
@@ -1024,7 +1040,7 @@ pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng) {
 
     rom.write_range(hook_file, &hook);
 
-    // --- 4. Patch original site: JMP hook + NOP fill ---
+    // --- 5. Patch original site: JMP hook + NOP fill ---
     let mut patch = [0xEA_u8; 14];
     patch[0] = 0x4C;
     patch[1] = hook_cpu as u8;
@@ -1073,6 +1089,47 @@ mod tests {
         assert_eq!(encoded[0], 0xB7);
         // Space padding at end of short lines
         assert_eq!(encoded[19], 0xFE);
+    }
+
+    /// The `enabled` gate must not change how much RNG the module consumes.
+    ///
+    /// This is the same property `king_quotes_off_only_skips_its_own_writes`
+    /// checks end-to-end, asserted at the module boundary instead. The two are
+    /// not redundant: the ROM-level test can only observe a divergence where
+    /// something downstream actually *draws*, so on a configuration that
+    /// happens to draw nothing after this point it would pass while the module
+    /// was quietly consuming a different number of values. This one compares
+    /// the generator state itself and holds regardless.
+    #[test]
+    fn enabled_gate_does_not_change_rng_consumption() {
+        use rand::{RngCore, SeedableRng};
+
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+
+        // Several seeds: choose_multiple picks its sampling strategy from the
+        // pool sizes, not the seed, but the draw counts are worth checking on
+        // more than one stream.
+        for seed in 0..16u64 {
+            let mut rom_on = Rom::from_bytes(&bytes).expect("test ROM parses");
+            let mut rng_on = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_on, &mut rng_on, true);
+
+            let mut rom_off = Rom::from_bytes(&bytes).expect("test ROM parses");
+            let mut rng_off = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_off, &mut rng_off, false);
+
+            // Identical position in the stream => identical continuations.
+            let tail_on: Vec<u64> = (0..8).map(|_| rng_on.next_u64()).collect();
+            let tail_off: Vec<u64> = (0..8).map(|_| rng_off.next_u64()).collect();
+            assert_eq!(
+                tail_on, tail_off,
+                "seed {seed}: the rng is at a different position with quotes off — a draw \
+                 moved below the early return, so every later module shifts"
+            );
+        }
     }
 
     #[test]

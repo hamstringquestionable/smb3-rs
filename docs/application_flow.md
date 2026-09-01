@@ -173,7 +173,7 @@ flowchart TD
         PO3["[always] write 0x1FABC = A9 01 EA (anchor always-on) +<br/>items::write_mystery_anchor · tags airship_lock, items/mystery_anchor"]
         PO4["[always] patch_double_digit_metatiles  · tag metatile/double_digit"]
         PO5["[always] patch_metatile_6a_freeze  · tag metatile/6a_freeze"]
-        PO6["[always] king_quotes::randomize (main rng)  · tag king_quotes"]
+        PO6["[always] king_quotes::randomize (main rng)  · tag king_quotes<br/>(draws always; king_quotes? gates only the writes)"]
         PO7{"anchor_visuals?"}
         PO7y["anchor_visuals::apply  · tag anchor_visuals"]
         PO0 --> PO1

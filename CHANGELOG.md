@@ -36,6 +36,12 @@ deploys.
 
 ### Added
 
+- **King quotes** (new option, on by default). The kings' rescue dialogue is
+  randomized, as it always has been; turn this off and they say what they say in
+  the original game instead. Cosmetic, so it is not carried in the flag key —
+  and the seed is unaffected either way, so two players on the same key get the
+  same game whichever way each of them sets it.
+
 - **Deja Vu** (new option, off by default; MaCobra52's idea). Lets the same
   level show up on more than one tile. *Double* puts a second copy of every
   level in the deck, so some appear twice and others sit the seed out. *Wild*
