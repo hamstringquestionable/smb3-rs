@@ -78,7 +78,7 @@ pub(super) fn assign_pool<R: Rng>(
     rng: &mut R,
     flags: WriteFlags,
 ) -> Vec<WorldAssignments> {
-    let WriteFlags { shuffle_hammer_bros, friendlier_levels, .. } = flags;
+    let WriteFlags { shuffle_hammer_bros, friendlier_levels, deja_vu, .. } = flags;
     let pickup = data.pickup;
     let catalog = data.catalog;
     // Partition pool by kind.
@@ -216,30 +216,77 @@ pub(super) fn assign_pool<R: Rng>(
             || rom_data::is_chest_level(ce.world_idx, ce.entry_idx)
     };
 
-    // Friendlier Levels: hold the harshest levels out of the deck, then refill
-    // it so the draw still reaches VANILLA_LEVEL_COUNT.
+    // --- Deck surgery -------------------------------------------------
     //
-    // Refilling is mandatory, not cosmetic: the builder places exactly
+    // Three steps, in this order: Friendlier Levels takes levels *out*, Deja Vu
+    // decides how many copies of what is left go *in*, and then the deck is
+    // topped back up if either left it short.
+    //
+    // The top-up is mandatory, not cosmetic: the builder places exactly
     // VANILLA_LEVEL_COUNT levels every seed and the draw below is a bare
-    // `pop_front().expect(...)`, so a short deck panics. Beta stages already
-    // leave the deck oversized (they are appended without raising the number
-    // drawn), so they absorb the removals first and only the shortfall becomes
-    // duplicates — which is why `short` is a saturating subtraction rather
-    // than the blocklist length.
+    // `pop_front().expect(...)`, so a short deck panics.
     //
     // A duplicate is just the same pool index dealt twice. The writer reads
     // the level entry through it, so both slots get the same level; nothing
     // needs a synthetic catalog entry.
+
+    // Friendlier Levels: hold the harshest levels out of the deck.
     if friendlier_levels {
         level_pool.retain(|&pi| {
             !rom_data::is_friendlier_blocked(&catalog.entries[pickup.pool[pi].catalog_idx].name)
         });
-        let sources: Vec<usize> =
-            level_pool.iter().copied().filter(|&pi| !holds_unique_item(pi)).collect();
-        let short = VANILLA_LEVEL_COUNT.saturating_sub(level_pool.len());
+    }
+
+    // Deja Vu: let levels repeat. Both modes redeal the deck to exactly
+    // VANILLA_LEVEL_COUNT cards, so the whole deck is dealt and the redeal is
+    // what the player sees rather than a shuffle-and-truncate after it.
+    //
+    // The deck is seeded with the levels holding a one-off inventory item, one
+    // copy each, and they are then held out of the redeal. That is the only way
+    // to keep both halves of their rule true at once: never dealt twice (the
+    // item would be handed out twice) and never dropped (it would be out of
+    // reach). Everything else is fair game.
+    //
+    // `sources` is never empty — the pool is dozens of levels and only a
+    // handful hold an item.
+    if deja_vu != DejaVuMode::Off {
+        let (mut deck, sources): (Vec<usize>, Vec<usize>) =
+            level_pool.iter().copied().partition(|&pi| holds_unique_item(pi));
+        let want = VANILLA_LEVEL_COUNT.saturating_sub(deck.len());
+        match deja_vu {
+            // Double: two copies of every level in the bag, dealt without
+            // replacement. A level lands on at most two tiles, and the levels
+            // the deal misses sit the seed out.
+            DejaVuMode::Double => {
+                let mut bag: Vec<usize> = sources.iter().chain(sources.iter()).copied().collect();
+                bag.as_mut_slice().shuffle(rng);
+                bag.truncate(want);
+                deck.extend(bag);
+            }
+            // Wild: drawn with replacement, so nothing caps how many tiles one
+            // level can take.
+            _ => {
+                for _ in 0..want {
+                    deck.push(*sources.choose(rng).expect("no repeatable levels in pool"));
+                }
+            }
+        }
+        level_pool = deck;
+    }
+
+    // Top the deck back up to the number of slots the builder placed. Only
+    // Friendlier Levels can leave it short, and only with Deja Vu off or beta
+    // stages off: beta stages already leave the deck oversized (they are
+    // appended without raising the number drawn) so they absorb the removals
+    // first, and either Deja Vu mode refills it well past the line. That is why
+    // `short` is a saturating subtraction rather than the blocklist length.
+    let short = VANILLA_LEVEL_COUNT.saturating_sub(level_pool.len());
+    if short > 0 {
         // Without replacement, so no level is dealt a third time. `sources` is
         // far larger than `short` for any sane blocklist; the deck-length
         // assertion in the tests is what holds that true.
+        let sources: Vec<usize> =
+            level_pool.iter().copied().filter(|&pi| !holds_unique_item(pi)).collect();
         level_pool.extend(sources.choose_multiple(rng, short).copied());
     }
 

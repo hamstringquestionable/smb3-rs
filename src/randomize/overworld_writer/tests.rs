@@ -248,6 +248,128 @@ fn test_friendlier_levels_blocks_and_refills() {
     }
 }
 
+/// Deja Vu deck surgery, both modes and both beta arms.
+///
+/// Three things the deck has to keep true no matter how it is redealt:
+///
+///  - The deal still fills every slot. The draw is a bare
+///    `pop_front().expect(...)` against a fixed `VANILLA_LEVEL_COUNT`, so a
+///    short deck panics rather than degrading.
+///  - A level holding a one-off inventory item is dealt exactly once — never
+///    twice (the item would be handed out twice) and never zero times (it
+///    would be unreachable).
+///  - The mode does what it says: `Double` caps a level at two tiles, `Wild`
+///    does not.
+///
+/// Both beta arms are checked because they change the deck length before Deja
+/// Vu ever sees it: with beta stages on it starts oversized.
+#[test]
+fn test_deja_vu_repeats_levels() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+
+    for beta in [false, true] {
+        let catalog = node_catalog::NodeCatalog::build(&rom, beta);
+        let pickup = standard_pickup(&rom, &catalog);
+
+        for mode in [DejaVuMode::Double, DejaVuMode::Wild] {
+            // Wild only has to *allow* unbounded repeats, so the "it repeats at
+            // all" check is over the whole seed range rather than per seed.
+            let mut max_copies = 0usize;
+
+            for seed in 0u64..16 {
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                let build = overworld_build::build(
+                    &rom,
+                    &OverworldData { pickup: &pickup, catalog: &catalog },
+                    &mut rng,
+                    standard_build_flags(),
+                );
+                let assignments = assign_pool(
+                    &rom,
+                    &build,
+                    &OverworldData { pickup: &pickup, catalog: &catalog },
+                    &mut rng,
+                    WriteFlags { deja_vu: mode, ..Default::default() },
+                );
+
+                let placed: Vec<usize> =
+                    assignments.iter().flat_map(|wa| wa.level.iter().map(|a| a.pool_idx)).collect();
+
+                assert_eq!(
+                    placed.len(),
+                    overworld_build::VANILLA_LEVEL_COUNT,
+                    "beta={beta} {mode:?} seed {seed}: dealt {} levels",
+                    placed.len(),
+                );
+
+                let mut seen: HashMap<usize, usize> = HashMap::new();
+                for &pi in &placed {
+                    *seen.entry(pi).or_insert(0) += 1;
+                }
+
+                for (&pi, &n) in &seen {
+                    let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
+                    let unique = rom_data::is_chest_level(ce.world_idx, ce.entry_idx)
+                        || rom_data::is_hand_level(ce.world_idx, ce.entry_idx);
+                    if unique {
+                        assert_eq!(
+                            n, 1,
+                            "beta={beta} {mode:?} seed {seed}: {} holds a one-off item and was dealt {n} times",
+                            ce.name,
+                        );
+                    }
+                    if mode == DejaVuMode::Double {
+                        assert!(
+                            n <= 2,
+                            "beta={beta} {mode:?} seed {seed}: {} dealt {n} times",
+                            ce.name,
+                        );
+                    }
+                    max_copies = max_copies.max(n);
+                }
+
+                // Every one-off item still reaches the map.
+                for &pi in &level_pool_unique_items(&catalog, &pickup) {
+                    assert!(
+                        seen.contains_key(&pi),
+                        "beta={beta} {mode:?} seed {seed}: {} holds a one-off item and was not dealt",
+                        catalog.entries[pickup.pool[pi].catalog_idx].name,
+                    );
+                }
+            }
+
+            assert!(
+                max_copies >= 2,
+                "beta={beta} {mode:?}: no level was ever repeated across 16 seeds",
+            );
+        }
+    }
+}
+
+/// The regular-level pool entries that hand out a one-off inventory item —
+/// the chest levels and the W8 hand rooms. (1-F is a chest level too but is a
+/// fortress, so it never sits in the level pool.)
+fn level_pool_unique_items(
+    catalog: &node_catalog::NodeCatalog,
+    pickup: &overworld_pickup::PickupResult,
+) -> Vec<usize> {
+    pickup
+        .pool
+        .iter()
+        .enumerate()
+        .filter(|(_, pe)| {
+            let ce = &catalog.entries[pe.catalog_idx];
+            matches!(ce.kind, NodeKind::Level)
+                && (rom_data::is_chest_level(ce.world_idx, ce.entry_idx)
+                    || rom_data::is_hand_level(ce.world_idx, ce.entry_idx))
+        })
+        .map(|(pi, _)| pi)
+        .collect()
+}
+
 /// Friendlier Levels' fortress half: 7F2 then 8F1 are parked on
 /// secret-exit-safe slots so their locks can stay shut, leaving them beatable
 /// but off the critical path.
@@ -1071,6 +1193,7 @@ fn test_march_veto_pipeline_writes_registry() {
             piranha: PiranhaMode::Wild,
             shuffle_hammer_bros: true,
             friendlier_levels: false,
+            deja_vu: DejaVuMode::Off,
         },
     );
 

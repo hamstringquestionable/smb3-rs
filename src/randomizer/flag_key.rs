@@ -408,9 +408,12 @@ mod payload {
         pub(super) friendlier_levels: bool,
         /// Bro encounters run on a 10-second clock.
         pub(super) bro_battle_timer: bool,
+        /// How many times one level may appear on the map. Zero is `Off`, so an
+        /// older key decodes to the once-each deal it was minted with.
+        pub(super) deja_vu: DejaVuMode,
 
         // --- Reserve ---
-        // 141 bits. Adding an option is: declare it immediately above this
+        // 139 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off `B19`. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -425,7 +428,7 @@ mod payload {
         #[skip]
         __: B128,
         #[skip]
-        __: B13,
+        __: B11,
     }
 }
 
@@ -467,7 +470,7 @@ impl Options {
             eights_are_wild, troll_pipes, antechamber_shuffle,
             ground, shell, flying, piranhas, ghosts, thwomps, rotodiscs,
             cannons, water, bros, hb_encounters, limit_hazards, friendlier_levels,
-            bro_battle_timer,
+            bro_battle_timer, deja_vu,
             fire_flower, piranha_shuffle, wild_injections,
             starting_lives, world_count, starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
@@ -533,6 +536,7 @@ impl Options {
             .with_limit_hazards(*limit_hazards)
             .with_friendlier_levels(*friendlier_levels)
             .with_bro_battle_timer(*bro_battle_timer)
+            .with_deja_vu(*deja_vu)
             .with_fire_flower(*fire_flower)
             .with_piranha_shuffle(*piranha_shuffle)
             .with_wild_sun(has(WildChaser::Sun))
@@ -624,6 +628,7 @@ impl Options {
             hb_encounters: f.hb_encounters_or_err().unwrap_or_default(),
             limit_hazards: f.limit_hazards_or_err().unwrap_or_default(),
             friendlier_levels: f.friendlier_levels(),
+            deja_vu: f.deja_vu_or_err().unwrap_or_default(),
             fire_flower: f.fire_flower_or_err().unwrap_or_default(),
             piranha_shuffle: f.piranha_shuffle_or_err().unwrap_or_default(),
             wild_injections: chasers,

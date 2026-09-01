@@ -36,6 +36,13 @@ deploys.
 
 ### Added
 
+- **Deja Vu** (new option, off by default; MaCobra52's idea). Lets the same
+  level show up on more than one tile. *Double* puts a second copy of every
+  level in the deck, so some appear twice and others sit the seed out. *Wild*
+  deals with replacement — a level can turn up any number of times, or never.
+  Levels that hand out a one-off item (the chest levels and the World 8 hand
+  rooms) still appear exactly once in both modes.
+
 - **Bro Battle Timer** (new option, off by default). Walking into a Hammer,
   Boomerang, Heavy or Fire Bro starts the clock at 10 instead of the arena's
   usual 200 — and with the clock fix above, ten really is ten seconds. Miss it

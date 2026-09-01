@@ -86,6 +86,14 @@ const OFF_ON_WILD = [
 	{ value: "wild", label: "Wild" },
 ];
 
+// Off / Double / Wild pill for Deja Vu. Values match the Rust `DejaVuMode`
+// enum's serde representation.
+const OFF_DOUBLE_WILD = [
+	{ value: "off", label: "Off" },
+	{ value: "double", label: "Double" },
+	{ value: "wild", label: "Wild" },
+];
+
 // Categories rendered as <fieldset> sections, in order.
 export const GROUPS = [
 	{ id: "map", label: "Map" },
@@ -352,6 +360,11 @@ export const SCHEMA = [
 	{ id: "friendlier_levels", type: "bool", default: false,
 		label: "Friendlier Levels",
 		tip: "Keeps the roughest levels out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta stages if you have those on, otherwise to a second visit to a level already in the seed. Two fortresses, 7F2 and 8F1, are usually made optional rather than removed: still there, still beatable, just not in your way.",
+		group: "map", inFlagKey: true },
+	{ id: "deja_vu", type: "tri", options: OFF_DOUBLE_WILD, default: "off",
+		label: "Deja Vu", flavor: "Haven't we been here?",
+		tip: "Let the same level show up on more than one tile. Double: every level gets a second copy in the deck, so some show up twice and others sit the seed out. Wild: no limit — a level can turn up over and over, or never. Levels that hand you an item still appear exactly once.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "map", inFlagKey: true },
 	{ id: "limit_hazards", type: "tri", options: OFF_SOME_ALL, default: "off",
 		label: "Limit Hazards",

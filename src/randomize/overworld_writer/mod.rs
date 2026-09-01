@@ -7,8 +7,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use rand::Rng;
 use rand::seq::{IndexedRandom, SliceRandom};
 
-use crate::PiranhaMode;
 use crate::rom::Rom;
+use crate::{DejaVuMode, PiranhaMode};
 
 use super::node_catalog::NodeKind;
 use super::overworld_build::{
@@ -134,6 +134,8 @@ pub(crate) fn write_overworld<R: Rng>(
 pub(crate) struct WriteFlags {
     pub shuffle_hammer_bros: bool,
     pub piranha: PiranhaMode,
+    /// Deja Vu: how many times one level may appear on the map.
+    pub deja_vu: DejaVuMode,
     /// Friendlier Levels: drop `FRIENDLIER_BLOCKED_LEVELS` from the level deck
     /// and refill it with duplicates of what remains.
     pub friendlier_levels: bool,

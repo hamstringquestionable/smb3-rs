@@ -1084,6 +1084,7 @@ fn all_off_options() -> Options {
     Options {
         fire_flower: FireFlowerMode::Off,
         friendlier_levels: false,
+        deja_vu: DejaVuMode::Off,
         limit_hazards: HazardLimit::Off,
         piranha_shuffle: PiranhaMode::Off,
         powerups: false,
@@ -1157,6 +1158,7 @@ fn all_on_options() -> Options {
         fire_flower: FireFlowerMode::On,
         limit_hazards: HazardLimit::All,
         friendlier_levels: true,
+        deja_vu: DejaVuMode::Wild,
         piranha_shuffle: PiranhaMode::On,
         powerups: true,
         palettes: false,
