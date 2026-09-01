@@ -381,6 +381,11 @@ pub struct TestRomSpec {
     /// Turn screen 2's two coins into note blocks at these `(row, col)`
     /// positions. Only read when `big_q_unused5` is set.
     pub big_q_notes: Option<[(u8, u8); 2]>,
+    /// Fold screen 0 of every world into a single eight-screen mega map in
+    /// world 0 (experiment). Vanilla base only — it rewrites the map grids and
+    /// pointer blocks the randomizer's own overworld pass would then be
+    /// addressing through per-world constants that no longer describe the ROM.
+    pub mega_map: bool,
     /// Enemy slots to overwrite outright. Applied last, so they win over the
     /// randomizer's own choices on a `--randomize` base.
     pub set_enemies: Vec<EnemyOverride>,
@@ -937,6 +942,51 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         report.push("locks: kept".to_string());
     }
 
+    // 4a. Mega map. **After** every pass that reaches map tiles through
+    //     `rom_data`'s per-world constants, and before every pass that only
+    //     touches code.
+    //
+    //     Those constants describe the vanilla eight-world layout and stop
+    //     describing this ROM the moment the fold runs — `open_map` above
+    //     walks all eight `MAP_TILE_GRIDS` rows, whose offsets land at the
+    //     wrong stride inside the merged grid. Folding last means the source
+    //     screens are already unlocked and un-gapped when they are carried,
+    //     which is what `--mega` wants anyway. The world-merge experiment hit
+    //     the mirror image of this bug and fixed it by moving the merge to the
+    //     *front*; the difference is that this module reads the vanilla tables
+    //     rather than the merged ones.
+    if spec.mega_map {
+        if !matches!(spec.base, Base::Vanilla) {
+            return Err("--mega needs a vanilla base: it rewrites the map grids and pointer \n                               blocks the randomizer addresses through per-world constants."
+                .to_string());
+        }
+        if spec.place_all.is_some() || !spec.placements.is_empty() {
+            return Err("--mega cannot be combined with --place: numbered-tile lookup reads \n                               WORLDS[0].entry_count, which the fold makes wrong (21 -> 157)."
+                .to_string());
+        }
+        let m = crate::randomize::mega_map::build(&mut rom)?;
+        report.push(format!(
+            "mega map: {} screens, {} entries, {} forts ({} reconnected, {} stranded),\n           \
+             {} pipe pairs kept, {} pipe tiles demoted, {} singletons blanked",
+            crate::randomize::mega_map::SCREENS,
+            m.entries,
+            m.forts,
+            m.forts_connected,
+            m.forts_stranded,
+            m.pipes_carried,
+            m.pipes_neutralized,
+            m.singletons_blanked
+        ));
+        for s in &m.seams {
+            let (a, b) = (s.seam, s.seam + 1);
+            match s.row {
+                Some(row) => report.push(format!("  seam {a}|{b}: row {row}, {} tile(s)", s.tiles)),
+                None => report
+                    .push(format!("  seam {a}|{b}: NOT carved — no even-span node pair in reach")),
+            }
+        }
+    }
+
     // 5. Open movement (walk over level/fortress/lock tiles).
     match &spec.movement_patch {
         Some(patch) => {
@@ -1087,6 +1137,7 @@ mod tests {
             big_q_palette: None,
             big_q_aim: None,
             big_q_notes: None,
+            mega_map: false,
             set_enemies: Vec::new(),
         }
     }

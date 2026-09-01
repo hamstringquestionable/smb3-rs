@@ -108,6 +108,13 @@ struct Cli {
     #[arg(long)]
     patches: bool,
 
+    /// EXPERIMENT: fold screen 0 of all eight worlds into one eight-screen
+    /// mega map in world 0 — 157 entries, eight fortresses, seams carved so
+    /// the whole continent is walkable. Vanilla base only, and not combinable
+    /// with --place.
+    #[arg(long)]
+    mega: bool,
+
     /// Skip the open-movement patch, so tiles must be entered and cleared.
     #[arg(long)]
     no_walk: bool,
@@ -413,6 +420,7 @@ fn main() {
         big_q_palette: Some(cli.bigq_palette),
         big_q_notes,
         big_q_aim,
+        mega_map: cli.mega,
         set_enemies,
     };
 

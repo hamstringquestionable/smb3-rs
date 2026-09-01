@@ -2242,10 +2242,11 @@ world_start + (C // 16) * 144 + R * 16 + (C % 16)
 | 0x50 | Toad house / special | Toad houses and special map nodes |
 | 0x5F | Path tile | Rare path variant |
 | 0x67 | Fortress tile | Mini-fortress entrance |
-| 0x68, 0x69 | Pipe tiles | Map pipe connectors |
+| 0x68, 0x69 | *(not pipes — see below)* | Appear under pointer entries; no `TILE_*` constant in the disassembly has either value |
 | 0xAE, 0xAF | Fortress parts | Alternate fortress tiles |
 | 0xB4 | Background (void) | Empty space / water fill (no entries land here) |
-| 0xB5, 0xBB, 0xBC | Path/level tiles | Various level-associated tiles |
+| 0xB5, 0xBB | Path/level tiles | Various level-associated tiles |
+| **0xBC** | **Pipe** | `TILE_PIPE` — **the** map pipe tile |
 | 0xC9 | Airship dock | Airship landing tile |
 | 0xCC | Bowser's castle | Final castle tile |
 | 0xD9, 0xDC–0xDE | Dark Land tiles | W8-specific level tiles |
@@ -2254,6 +2255,30 @@ world_start + (C // 16) * 144 + R * 16 + (C % 16)
 | 0xE8 | Bonus game tile | Spade panel / N-Spade |
 | 0xEB | Fortress tile | Alternate fortress |
 | 0xFF | Border / unused | Map edge |
+
+**The map pipe tile is `0xBC`, not `0x68`/`0x69`.** This table previously named
+the latter pair "map pipe connectors". They are not: no `TILE_*` constant in
+`smb3.asm` takes either value, and all 24 pipe-destination endpoints (`0x046AA`
+family) land on a `0xBC` cell — verified against every entry, 2026-09-01. The
+authoritative list of tile constants is `smb3.asm` around line 3580
+(`TILE_MARIOCOMP_P` through `TILE_ALTFORT`); prefer it over this summary table
+when the two disagree.
+
+**Map-node parity.** Map movement advances two tiles at a time — node, path
+tile, node — so `row % 2` and `col % 2` are each invariant along any walk, and
+every node a walk can reach shares the start's parity class. A single vanilla
+world never notices, being internally consistent, but the property is real and
+bites anything that relocates or joins map screens:
+
+| World | Screen-0 node rows | Screen-0 node columns |
+|---|---|---|
+| W1–W6 | all even | all even |
+| W7 | all odd | **mixed** — 12 even, 11 odd |
+| W8 | all odd | all even |
+
+W7's mixed columns are not an anomaly: Pipe Land's two column lattices are
+joined only by its pipes, so with the pipes removed, half the world is
+unreachable by any path rather than merely inconvenient.
 
 ### World Map Functionality (PRG010: 0x14010–0x1600F)
 

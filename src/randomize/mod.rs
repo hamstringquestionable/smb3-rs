@@ -16,6 +16,7 @@ pub mod koopalings;
 pub mod level_helpers;
 pub mod levels;
 pub mod map_walker;
+pub mod mega_map;
 pub mod node_catalog;
 pub mod overworld_build;
 pub mod overworld_helpers;
