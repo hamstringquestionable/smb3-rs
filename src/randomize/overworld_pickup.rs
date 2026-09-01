@@ -47,6 +47,24 @@ pub(crate) struct ClearedWorld {
     pub pool_indices: Vec<usize>,
 }
 
+impl ClearedWorld {
+    /// A world that is not in the layout: no grid, nothing picked up.
+    ///
+    /// Zero columns is deliberate. Every capacity measure derives from the
+    /// grid or from `pool_indices`, so an empty world scores zero everywhere
+    /// and simply never wins a placement — no `if slot_is_dead` branches, which
+    /// the world-merge experiment found to be an unbounded and silently
+    /// forgettable opt-out list.
+    fn empty(world_idx: usize) -> Self {
+        ClearedWorld {
+            world_idx,
+            grid: Grid { tiles: Vec::new(), cols: 0, eights_are_wild: false },
+            pickup_positions: Vec::new(),
+            pool_indices: Vec::new(),
+        }
+    }
+}
+
 /// Complete Phase 2 output: cleared grids + global shuffle pool.
 pub(crate) struct PickupResult {
     /// Per-world cleared grids (indexed 0..8).
@@ -125,8 +143,24 @@ pub(super) fn pick_up_filtered(
     let fx_slots = rom_data::read_fx_slots(rom);
     let fx_assignments = rom_data::read_world_fx_assignments(rom);
 
+    // `worlds` stays **dense over the eight engine slots**, with a dead slot
+    // holding an empty world rather than being absent. A dozen sites index it
+    // positionally as `worlds[world_idx]`, and its own doc comment promises
+    // "indexed 0..8" — so keeping the shape and emptying the dead entries is
+    // both far less churn and the safer failure: an empty world contributes no
+    // capacity, so `distribute_levels` hands it nothing without needing to know
+    // it is dead.
+    //
+    // This is the world-merge lesson applied the right way round. There the
+    // danger was a dead world *aliasing* a live one's tables, which reads as
+    // plausible content; here the dead entries are genuinely empty, so nothing
+    // can be picked up from them twice.
     for (wi, world_fx) in fx_assignments.iter().enumerate() {
-        worlds.push(pick_up_world(rom, catalog, wi, &mut pool, flags, pred, &fx_slots, world_fx));
+        worlds.push(if catalog.layout.get(wi).is_some() {
+            pick_up_world(rom, catalog, wi, &mut pool, flags, pred, &fx_slots, world_fx)
+        } else {
+            ClearedWorld::empty(wi)
+        });
     }
 
     // Synthetic beta entries (world_idx == usize::MAX) have no vanilla grid
@@ -800,5 +834,45 @@ mod tests {
             |e, _| matches!(e.kind, NodeKind::Pipe { .. }),
             "cleared_pipes.nes",
         );
+    }
+
+    /// Pickup survives a layout with fewer than eight worlds.
+    ///
+    /// The whole point of the slot-dense shape: dead slots hold an empty world
+    /// rather than being absent, so the dozen positional `worlds[world_idx]`
+    /// sites keep working and capacity measures score them zero without any
+    /// site needing to know they are dead.
+    #[test]
+    fn pickup_handles_a_three_world_layout() {
+        let Some(mut rom) = load_rom() else { return };
+        crate::randomize::mega_map::build(&mut rom).expect("fold");
+
+        let live: Vec<usize> =
+            crate::randomize::mega_map::SUPER_WORLDS.iter().map(|s| s.slot).collect();
+        let layout = rom_data::MapLayout::read(&rom, &live);
+        let catalog = NodeCatalog::build(&rom, &layout, false);
+        let result = pick_up(&rom, &catalog, PickupFlags::default());
+
+        // Dense over the engine's eight slots regardless of how many are live.
+        assert_eq!(result.worlds.len(), 8);
+        for (slot, w) in result.worlds.iter().enumerate() {
+            assert_eq!(w.world_idx, slot);
+            if live.contains(&slot) {
+                assert!(w.grid.cols > 0, "live slot {slot} has no grid");
+                assert!(!w.pool_indices.is_empty(), "live slot {slot} picked nothing up");
+            } else {
+                assert_eq!(w.grid.cols, 0, "dead slot {slot} has a grid");
+                assert!(w.pool_indices.is_empty(), "dead slot {slot} picked something up");
+            }
+        }
+
+        // Everything in the pool came from a live world.
+        for entry in &result.pool {
+            assert!(
+                entry.world_idx == usize::MAX || live.contains(&entry.world_idx),
+                "pool entry from dead world {}",
+                entry.world_idx
+            );
+        }
     }
 }
