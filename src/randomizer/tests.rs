@@ -1320,8 +1320,11 @@ fn king_quotes_off_only_skips_its_own_writes() {
     // Every config here must keep `palettes` off — palettes draw from OS
     // randomness, not the seed, so they would differ between the two runs on
     // their own and drown the signal. All three helpers already do.
-    let configs: Vec<(&str, Options)> =
-        vec![("defaults", test_options()), ("all_on", all_on_options()), ("all_off", all_off_options())];
+    let configs: Vec<(&str, Options)> = vec![
+        ("defaults", test_options()),
+        ("all_on", all_on_options()),
+        ("all_off", all_off_options()),
+    ];
 
     let mut compared = 0usize;
     for (name, base) in &configs {
@@ -1364,7 +1367,8 @@ fn king_quotes_off_only_skips_its_own_writes() {
                         owned.contains(&i),
                         "{name}/seed {seed}: offset 0x{i:05X} differs (0x{:02X} vs 0x{:02X}) \
                          outside the bytes king_quotes wrote — toggling it shifted the seed stream",
-                        a[i], b[i]
+                        a[i],
+                        b[i]
                     );
                 }
             }
