@@ -130,6 +130,32 @@ pub(crate) fn path_for_gap_tile(tile: u8) -> Option<u8> {
     }
 }
 
+/// The path a **breakable rock** opens into, or `None` for anything else.
+///
+/// Deliberately separate from [`path_for_gap_tile`]. Both name gates the
+/// engine can remove — `Map_Removable_Tiles` lists `TILE_ROCKBREAKH` and
+/// `TILE_ROCKBREAKV` right alongside the locks — but they are opened by
+/// different things and `path_for_gap_tile`'s callers act on that difference.
+/// `testrom`'s `--keep-locks` / `open_map`, in particular, must not start
+/// bulldozing rocks just because a connectivity model wants them held open.
+///
+/// **`0x53` is excluded on purpose.** It is a permanent wall and is
+/// pixel-identical to `0x52` — same CHR quad, same palette page — so it works
+/// as a decoy the player cannot distinguish by looking. Opening it here would
+/// model a route that does not exist.
+///
+/// Use this wherever connectivity is being *measured* rather than written:
+/// a breakable rock is a gate, and treating one as a wall splits a world into
+/// regions that are not really separate. Mirrors `BREAKABLE_ROCKS` in
+/// `route_choice`, which applies the same pair to the route metric.
+pub(crate) fn path_for_breakable_rock(tile: u8) -> Option<u8> {
+    match tile {
+        0x51 => Some(0x45), // breaks into horizontal path
+        0x52 => Some(0x46), // breaks into vertical path
+        _ => None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Node tiles
 //

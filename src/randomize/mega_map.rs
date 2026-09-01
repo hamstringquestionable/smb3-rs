@@ -673,17 +673,31 @@ fn link_pages(
 
             // Reachability is recomputed each time, against the map as the
             // links placed so far have left it.
-            let grid = plan_grid(plan, group);
             let mut pipes = live_pipes(plan, group, &all_pairs);
             pipes.extend(canoe_edges_for(plan, group));
-            let reached = map_walker::walk_map(&grid, &pipes, None, sw.slot).nodes;
 
-            let left_mouth = pick_mouth(plan, group, left_page, Side::RightEdge, &reached)
+            // Ungated is a strong preference, not a requirement. A mouth the
+            // player can reach without opening anything keeps the seam itself
+            // ungated, which is what stops a gate on one side depending on a
+            // fortress on the other. But gating *within* a world is ordinary
+            // vanilla — W3's own pages are full of it — so demanding it
+            // outright simply fails to place a link at all on a locks-intact
+            // map. Try shut first, fall back to open.
+            let closed = plan_grid(plan, group, Gates::Closed);
+            let open = plan_grid(plan, group, Gates::Open);
+            let reached_closed = map_walker::walk_map(&closed, &pipes, None, sw.slot).nodes;
+            let reached_open = map_walker::walk_map(&open, &pipes, None, sw.slot).nodes;
+
+            let left_mouth = pick_mouth(plan, group, left_page, Side::RightEdge, &reached_closed)
+                .or_else(|| pick_mouth(plan, group, left_page, Side::RightEdge, &reached_open))
                 .ok_or_else(|| {
                     format!("mega_map: no reachable node on page {left_page} to host a link")
                 })?;
-            let component = largest_component(plan, group, right_page, &pipes);
+
+            let component = largest_component(plan, group, right_page, &pipes, Gates::Closed);
+            let component_open = largest_component(plan, group, right_page, &pipes, Gates::Open);
             let right_mouth = pick_mouth(plan, group, right_page, Side::LeftEdge, &component)
+                .or_else(|| pick_mouth(plan, group, right_page, Side::LeftEdge, &component_open))
                 .ok_or_else(|| {
                     format!("mega_map: no connected node on page {right_page} to host a link")
                 })?;
@@ -869,7 +883,7 @@ fn pick_mouth(
 /// that works reduces this by one; a link that also severs something leaves
 /// it level, which is the signal the candidate search watches for.
 fn component_count(plan: &Plan, group: usize, pairs: &[(usize, usize, usize, usize)]) -> usize {
-    let grid = plan_grid(plan, group);
+    let grid = plan_grid(plan, group, Gates::Open);
     let mut pipes = live_pipes(plan, group, pairs);
     pipes.extend(canoe_edges_for(plan, group));
 
@@ -892,8 +906,36 @@ fn component_count(plan: &Plan, group: usize, pairs: &[(usize, usize, usize, usi
     count
 }
 
-/// The plan's grid for a group, as the map walker can take it, **with locks
-/// and water gaps held open**.
+/// Whether a planning walk may pass through removable gates.
+///
+/// The two uses want opposite answers, which is the whole reason this is a
+/// parameter:
+///
+/// - **Where may a link mouth go?** `Closed`. A mouth behind a lock or a rock
+///   makes the seam itself gated — the player cannot cross to the next source
+///   world until they have opened something, and if what opens it lies beyond
+///   the seam that is a deadlock. Gating is the builder's job to do
+///   deliberately, not an accident of where a mouth landed.
+/// - **Did moving this pipe sever anything?** `Open`. A gate is not a
+///   severance; counting one as a broken component fragments W2 and W3 so
+///   badly that no pipe can be spared at all.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Gates {
+    Open,
+    Closed,
+}
+
+/// The plan's grid for a group, as the map walker can take it.
+///
+/// Rocks belong here for the same reason locks do — the engine's
+/// `Map_Removable_Tiles` lists `TILE_ROCKBREAKH`/`TILE_ROCKBREAKV` right
+/// alongside the locks, and `route_choice` already prices them as passable.
+/// Leaving them shut fragmented the planning graph badly: W2 and W3's pages
+/// are rock-heavy, so link mouths could only be placed in whichever region
+/// happened to be rock-free.
+///
+/// `0x53` stays shut. It is a permanent wall, and pixel-identical to `0x52` on
+/// purpose, so opening it would model a route the player cannot take.
 ///
 /// Planning only — the grid actually written keeps every lock. A lock is a
 /// gate the player opens, not a wall, so treating one as impassable while
@@ -904,14 +946,13 @@ fn component_count(plan: &Plan, group: usize, pairs: &[(usize, usize, usize, usi
 ///
 /// Without this the fold only worked on a ROM whose locks had already been
 /// removed, which is what `testrom` does and what the randomizer does not.
-fn plan_grid(plan: &Plan, group: usize) -> rom_data::Grid {
+fn plan_grid(plan: &Plan, group: usize, gates: Gates) -> rom_data::Grid {
     let cols = plan.cols(group);
-    let open = |tile: u8| {
-        if rom_data::is_lock(tile) || rom_data::is_water_gap(tile) {
-            rom_data::path_for_gap_tile(tile).unwrap_or(tile)
-        } else {
-            tile
-        }
+    let open = |tile: u8| match gates {
+        Gates::Closed => tile,
+        Gates::Open => rom_data::path_for_gap_tile(tile)
+            .or_else(|| rom_data::path_for_breakable_rock(tile))
+            .unwrap_or(tile),
     };
     let tiles =
         (0..ROWS).map(|r| (0..cols).map(|c| open(plan.tile(group, r, c))).collect()).collect();
@@ -975,8 +1016,9 @@ fn largest_component(
     group: usize,
     page: usize,
     pipes: &[rom_data::TeleportEdge],
+    gates: Gates,
 ) -> HashSet<(usize, usize)> {
-    let grid = plan_grid(plan, group);
+    let grid = plan_grid(plan, group, gates);
     let cols = page * 16..(page + 1) * 16;
 
     let mut seen: HashSet<(usize, usize)> = HashSet::new();
@@ -1805,6 +1847,110 @@ mod tests {
             } else {
                 assert_eq!(bowsers, 0, "slot {} should not hold Bowser", sw.slot);
                 assert_eq!(airships, 1, "slot {} has {airships} airship castles", sw.slot);
+            }
+        }
+    }
+
+    /// Diagnostic: islands each super-world would hand the connectivity phase,
+    /// against the pipe budget it would inherit.
+    ///
+    /// `connectivity.rs` spends one pair per island, so `islands - 1` bridges
+    /// are needed; `spare_pipes` then insists every remaining pair is placed.
+    /// If a group has fewer pairs than islands it cannot be made traversable
+    /// from its own budget.
+    #[test]
+    #[ignore]
+    fn island_budget_for_the_builder() {
+        use crate::randomize::overworld_build::VANILLA_PIPE_PAIRS;
+
+        let Some(mut rom) = vanilla() else { return };
+        build(&mut rom).expect("fold");
+
+        println!("group  pages  islands  bridges_needed  pipe_budget  slack");
+        for sw in &SUPER_WORLDS {
+            let grid = read_grid(&rom, sw.slot);
+            // What connectivity faces: no pipes at all. Canoes stay, since
+            // they are terrain the walker already models.
+            let canoes: Vec<_> = teleports(&rom, sw.slot)
+                .into_iter()
+                .filter(|&(a, b)| {
+                    !PIPE_ENDPOINT_TILES.contains(&grid.get(a.0, a.1))
+                        || !PIPE_ENDPOINT_TILES.contains(&grid.get(b.0, b.1))
+                })
+                .collect();
+
+            // Count regions that hold CONTENT, not every cluster of scenery.
+            // An island only needs bridging if something the player must
+            // reach is on it, and the pointer entries are what that means.
+            let layout = rom_data::MapLayout::read(&rom, &[sw.slot]);
+            let w = layout.get(sw.slot).unwrap();
+            let scrcol = w.rowtype_offset + w.entry_count;
+            let content: HashSet<(usize, usize)> = (0..w.entry_count)
+                .map(|i| {
+                    let rt = rom.read_byte(w.rowtype_offset + i);
+                    let sc = rom.read_byte(scrcol + i);
+                    (
+                        (((rt >> 4) & 0x0F) as usize).saturating_sub(2),
+                        (sc >> 4) as usize * 16 + (sc & 0x0F) as usize,
+                    )
+                })
+                .collect();
+
+            let mut seen: HashSet<(usize, usize)> = HashSet::new();
+            let mut islands: usize = 0;
+            for &cell in &content {
+                if seen.contains(&cell) {
+                    continue;
+                }
+                let nodes = map_walker::walk_map(&grid, &canoes, Some(cell), sw.slot).nodes;
+                seen.extend(nodes.iter().copied());
+                islands += 1;
+            }
+
+            let budget: usize = sw.sources.iter().map(|&w| VANILLA_PIPE_PAIRS[w]).sum();
+            let needed = islands.saturating_sub(1);
+            println!(
+                "  {}      {}      {islands}        {needed}              {budget}         {}",
+                sw.slot + 1,
+                pages_in(sw.slot),
+                budget as isize - needed as isize
+            );
+        }
+    }
+
+    /// Link mouths are reachable with every gate still shut.
+    ///
+    /// A mouth behind a lock or a breakable rock makes the seam itself gated:
+    /// the player cannot cross into the next source world until they open
+    /// something, and if what opens it lies beyond the seam that is a
+    /// deadlock. Gating is the builder's job to do deliberately, not an
+    /// accident of where a mouth landed.
+    ///
+    /// This is exactly what regressed when breakable rocks were first held
+    /// open for *all* planning walks: the W2|W3 mouth moved to a cell behind a
+    /// rock and world 6's pages 3-5 went dark.
+    #[test]
+    fn link_mouths_are_reachable_without_opening_any_gate() {
+        // The shipped artifact: testrom removes locks before folding.
+        let Some(mut rom) = vanilla() else { return };
+        open_vanilla_maps(&mut rom);
+        let report = build(&mut rom).unwrap();
+
+        for sw in &SUPER_WORLDS {
+            // read_grid is the as-written map: nothing held open.
+            let grid = read_grid(&rom, sw.slot);
+            let walk = map_walker::walk_map(&grid, &teleports(&rom, sw.slot), None, sw.slot);
+
+            for link in report.links.iter().filter(|l| l.slot == sw.slot) {
+                for mouth in [link.mouths.0, link.mouths.1] {
+                    assert!(
+                        walk.nodes.contains(&mouth),
+                        "slot {} link W{}|W{} has a mouth at {mouth:?} that is gated shut",
+                        sw.slot,
+                        link.between.0,
+                        link.between.1
+                    );
+                }
             }
         }
     }
