@@ -1,13 +1,25 @@
 # Mega map — experiment (branch `experiment/mega-map`)
 
-**Status:** Phases 1-3 complete — the randomizer builds completable folded maps. Vanilla-base
-only, via `testrom --mega`; not flag-gated, not wired to the randomizer.
-Do not merge to `main` as-is.
+**Status:** working and playable. The randomizer builds completable folded maps
+with the normal option set. Branch-only, 11 commits, **not pushed**; the option
+is deliberately absent from the flag key. Do not merge to `main` as-is.
 
 ```sh
-cargo build --bin testrom
-./target/debug/testrom --mega --output mega.nes
+# randomize onto a folded map
+smb3-rs <rom> --seed N --mega-map --patched-rom -o out.nes
+smb3-rs <rom> --flags <KEY> --mega-map --seed N --patched-rom -o out.nes
+
+# playtest build (open movement clashes with randomizer patches; --no-walk)
+testrom --randomize --flags <KEY> --mega --seed N --no-walk \
+        --starting-items hammer,leaf,fire --output out.nes
+
+# fold a vanilla base only, for engine-level testing
+testrom --mega --output out.nes
 ```
+
+**Palettes are not seed-derived** (OS randomness — see `NOT_ENCODED`), so two
+builds of one seed differ in palette bytes. Add `--no-palettes` for a
+byte-reproducible ROM; that is also what every refactor here was verified with.
 
 ## What it does
 
@@ -19,16 +31,16 @@ its vanilla layout; worlds are concatenated whole, in order, and the seams
 |---|---|---|---|---|---|
 | **6** (start) | W1 + W2 + W3 | 6 | 116 | 4 | 7 |
 | **7** | W4 + W5 + W6 | 7 | 129 | 7 | 7 of 10 |
-| **8** (Bowser) | W7 + W8 | 6 | 86 | 5 | 7 |
+| **8** (Bowser) | W7 + W8 | 6 | 85 | 6 | 7 |
 
 ```
-  mega map: 3 super-worlds, start in world 6, 9 surplus singletons removed
+  mega map: 3 super-worlds, start in world 6, 10 surplus singletons removed
     link W1|W2 in world 6: pipe 0x12, (0, 12) <-> (0, 20)
     link W2|W3 in world 6: pipe 0x01, (0, 36) <-> (0, 50)
     link W4|W5 in world 7: pipe 0x17, (2, 28) <-> (0, 34)
     link W5|W6 in world 7: pipe 0x03, (0, 62) <-> (4, 68)
     link W7|W8 in world 8: pipe 0x11, (3, 28) <-> (5, 34)
-    space: grids 2739/2744 B, blocks 2010/2072 B
+    space: grids 2739/2744 B, blocks 2004/2072 B
     connectivity: every page reachable
 ```
 
@@ -57,16 +69,16 @@ Five links, against 24 pipe pairs in the ROM.
 ## Slots: the totals are conserved, the partitions shrink
 
 This is the reason three groups fit where the eight-page single world did not.
-Nothing is duplicated — the same 19 pages, 340 entries and 16 fortresses are
+Nothing is duplicated — the same 19 pages, 340 entries and 17 fortresses are
 simply split three ways instead of eight, so each group gets a *larger* share of
 every per-world table.
 
 | Resource | 8 worlds | 3 super-worlds | Headroom |
 |---|---|---|---|
-| Pointer blocks | 2072 B, **exactly** full | 2010 B | 62 B |
+| Pointer blocks | 2072 B, **exactly** full | 2004 B | 68 B |
 | Grid data | 2744 B to the warp zone | 2739 B | 5 B |
-| Fortress FX rows | 8 × 4 = 32 B | 4 + 7 + 5 = 16 B | 16 B |
-| Fortress FX slots | 17 | 16 forts, total unchanged | 1 |
+| Fortress FX rows | 8 × 4 = 32 B | 4 + 7 + 6 = 17 B | 15 B |
+| Fortress FX slots | 17 | 17 forts, total unchanged | 0 |
 | Pipe pairs | 24 | 5 spent on links | 19 |
 | `Map_Completions` | 4 pages/world | 6, 7, 6 needed | cap is 8 |
 
@@ -197,7 +209,7 @@ tables rather than the merged ones.
 | `blocks_are_sorted_and_init_index_is_exact` | `(page,row,col)` order; `InitIndex[p]` is the *first* entry on `p` |
 | `every_page_is_reachable` | all 19 pages walkable from their group's start |
 | `nothing_becomes_less_reachable_than_vanilla` | the real invariant — see below |
-| `every_fortress_survives_and_is_reachable` | all 16 forts exist and are walkable |
+| `every_fortress_survives_and_is_reachable` | all 17 forts exist and are walkable |
 | `links_join_two_pages_with_real_pipes` | 5 links, mouths on different pages, both pipes |
 | `per_world_tables_fit_their_groups` | every table budget, including the sprite overflow |
 | `stays_inside_its_regions` | no write past the warp grid or the block region |
@@ -215,26 +227,19 @@ positions filtered only by "does it fit in the grid", which lets other worlds'
 pipes in as phantom shortcuts and makes vanilla look better connected than it is.
 Pipes must be filtered by `DEST_TO_WORLD`, not by coordinate range.
 
-## Still open
+## Known gaps in the fold itself
 
-1. **Not yet run on an emulator.** The eight-page prototype loaded; this is a
-   different layout. Load `mega.nes`, walk world 6 end to end through both pipe
-   links, clear a fortress on a page past 3, and confirm the airship advances to
-   world 7.
-2. **Airship sprite placement.** Each group keeps the destination world's own
-   airship sprite (slot 1), which sits at *that* world's vanilla castle — not at
-   the castle the fold kept (the rightmost). The castle tile and its pointer
-   entry are right; the sprite is not.
-3. **Three sprites dropped** in world 7 — see above.
-4. **Per-region dressing.** Palette, music, bottom tile and king room are keyed
-   to `World_Num`, so each super-world renders in its *destination* slot's
-   colours: W6's for the first group, W7's for the second, W8's dark palette for
-   the third. Better than the eight-page prototype's single palette, and still
-   not per-page. The `Map_Region` latch (a spare WRAM byte holding the current
-   page, with the eight-wide dispatch tables re-indexed off it) is the fix.
-5. **The warp zone** is left in place but its destinations name worlds 1–8, most
-   of which no longer exist.
-6. **Randomizer integration** — Phase 3, below.
+Distinct from the "what next" list at the end — these are things the fold does
+imperfectly rather than work not started.
+
+- **Airship sprite placement.** Each group keeps the destination world's own
+  airship sprite (map-object slot 1), which sits at *that* world's vanilla
+  castle rather than at the castle the fold kept (the rightmost). The castle
+  tile and its pointer entry are right; the sprite is not.
+- **Three sprites dropped** in the W4+W5+W6 group — seven usable map-object
+  slots against ten. `per_world_tables_fit_their_groups` asserts the number, so
+  the day it changes the test says so.
+- **The warp zone** is left in place, its destinations naming worlds 1-8.
 
 ## Phase 2 (done): the layout is read from the ROM, not hardcoded
 
@@ -275,7 +280,7 @@ locks first and the randomizer does not, so the fold had a hidden dependency on
 its only caller. Same rule the fortress-forcedness work settled on — hold locks
 open, or you measure goal gates.
 
-## Phase 3 (done, with one blocker): the randomizer runs on a folded map
+## Phase 3 (done): the randomizer runs on a folded map
 
 `--mega-map` on the CLI (and `Options::mega_map`) folds the map **before the
 catalog** and after every QoL map pass — the QoL patches carry fixed vanilla
@@ -360,6 +365,66 @@ connectivity with locks and breakable rocks open, or measure something else.
 
 With the asymmetry removed, `mega_map_builds_completable_super_worlds` passes:
 eight seeds, three super-worlds each, every goal reachable from its start.
+
+## Flags
+
+The whole option set applies. A kitchen sink — world order, start/airship swap,
+8s are Wild, troll pipes, piranha shuffle, more hammer rocks, hammer breaks
+locks and bridges, antechamber shuffle, big-Q rooms and blocks, beta stages,
+wild injections, random fire flower, poison mushrooms, modern powerups, anchor
+visuals — builds clean, and
+`mega_map_builds_completable_super_worlds` runs four arms (plain, start/airship
+swap, 8s-are-Wild + piranha, beta stages) asserting every goal stays reachable.
+
+Three flag-level things had to be fixed, all of the same family — *something
+keyed to eight worlds*:
+
+- **`--flags` clobbered `--mega-map`.** The option is not in the key, so
+  decoding reset it to false. It overlays a decoded key now, like
+  `palette_themed` and the other non-encoded options.
+- **`open_map` iterated the vanilla `MAP_TILE_GRIDS`**, so on an
+  already-folded ROM removing locks would scribble path tiles through the
+  merged grids at the wrong stride. It takes a `MapLayout`.
+- **World order shuffled all eight worlds.** Found in play: start in world 6,
+  clear it, arrive in world 4. The next-world table is indexed by `World_Num`,
+  so it sent the player into a dead slot. It takes the live world list now,
+  shuffling only the worlds before the goal. World order also gets the *last*
+  say on the starting world — the fold runs later and stamps its own, so the
+  orchestrator restores world order's choice afterwards, which lets it
+  legitimately permute which super-world comes first.
+
+Still unverified: **`--world-count`** ("worlds before Dark Land, 1-7") now
+clamps to the two non-goal super-worlds, so values above 2 silently do nothing.
+Coherent, but it probably wants a clearer meaning here.
+
+## Picking this back up
+
+Everything is committed on `experiment/mega-map`; the tree is clean. Nothing is
+pushed, and the ROMs under `roms/` are gitignored — all regenerable from the
+commands at the top.
+
+The next things, roughly in order of value:
+
+1. **Play it.** The engine-level questions are settled (it pans, completions
+   track, progression chains W6→W7→W8) but nobody has played a full folded seed
+   through to Bowser.
+2. **Per-region dressing.** Palette, music, bottom tile, king room and airship
+   level are keyed to `World_Num`, so each super-world wears its *destination*
+   slot's clothes — W6's, W7's, W8's — rather than one set per page. The
+   `Map_Region` latch (a spare WRAM byte holding the current page, with the
+   eight-wide dispatch tables re-indexed off it) is the fix, and it is mostly
+   same-size operand swaps.
+3. **Three sprites dropped** in the W4+W5+W6 group: seven usable map-object
+   slots against ten sprites. Widening needs the reward stride
+   (`MAP_OBJ_REWARDS + world * 9 + slot`) moved in the engine *and* `rom_data`
+   together.
+4. **Re-measure the C1 floors.** The 11/14/17 band was derived for maps of
+   16-64 columns; a super-world is 96-112. `deal_c1_floors` already takes its
+   arity from the layout, but the *values* want a census of the new shape.
+   `redistribute_fortresses` likewise keeps the layout's own roster off the
+   vanilla eight rather than inventing a distribution.
+5. **The warp zone** still names worlds 1-8, most of which no longer exist.
+6. **Flag key encoding**, if this ever ships.
 
 ## Phase 3 notes: what integrating with the randomizer needed
 
