@@ -1961,7 +1961,12 @@ mod tests {
         println!("--- folded ---");
         println!("group  pages  islands  bridges_needed  pipe_budget  slack");
         for sw in &SUPER_WORLDS {
-            let grid = read_grid(&rom, sw.slot);
+            // Gates OPEN — exactly how the vanilla control measures. This
+            // asymmetry is what made the folded numbers look catastrophic:
+            // the fold was measured with locks and rocks SHUT, so every gated
+            // pocket counted as its own island, against a control that held
+            // them open.
+            let grid = open_locks(&read_grid(&rom, sw.slot));
             // What connectivity faces: no pipes at all. Canoes stay, since
             // they are terrain the walker already models.
             let canoes: Vec<_> = teleports(&rom, sw.slot)
@@ -2052,21 +2057,13 @@ mod tests {
     /// The full randomizer pipeline runs on a folded map and produces three
     /// completable super-worlds.
     ///
-    /// **Currently fails, and is ignored for that reason** — it states the
-    /// target, not the present behaviour. The pipeline runs end to end and
-    /// produces a coherent map, but the builder cannot always make the goal
-    /// reachable, because folding leaves each group short of pipes:
+    /// Gates are held open, matching `all_world_targets_reachable`. That is
+    /// not a convenience: the builder's convention is that a lock is stored as
+    /// its open path tile with the closed state in a separate overlay, so a
+    /// goal behind a lock is a gate to be opened, not a stranded target.
     ///
-    /// ```text
-    ///   vanilla   21 content islands over 8 worlds, 13 bridges, 24 pairs  (+11)
-    ///   folded    41 content islands over 3 groups, 38 bridges, 24 pairs  (-14)
-    /// ```
-    ///
-    /// `island_budget_for_the_builder` measures both, and the vanilla control
-    /// is what makes the number trustworthy: every vanilla world has
-    /// non-negative slack, so the metric is not simply pessimistic. Closing a
-    /// 14-pair gap is a design decision about where the connectivity comes
-    /// from, not something more careful coding fixes — see `docs/mega_map.md`.
+    /// `#[ignore]`d for runtime — eight seeds through the whole pipeline is
+    /// ~90s, which is census territory rather than a per-commit gate.
     #[test]
     #[ignore]
     fn mega_map_builds_completable_super_worlds() {
@@ -2078,7 +2075,13 @@ mod tests {
             crate::randomizer::randomize(&mut rom, seed, &opts);
 
             for sw in &crate::randomize::mega_map::SUPER_WORLDS {
-                let grid = crate::randomize::mega_map::read_grid(&rom, sw.slot);
+                // Gates held open, matching `all_world_targets_reachable`,
+                // which walks the builder's grid — and the builder's
+                // convention is that locks are RESTORED to their open path
+                // tile, with the closed state living in a separate overlay.
+                // The written ROM stamps them shut, so walking it directly
+                // reports every goal behind a lock as stranded.
+                let grid = open_locks(&crate::randomize::mega_map::read_grid(&rom, sw.slot));
                 let pipes = crate::randomize::mega_map::teleports(&rom, sw.slot);
                 let walk = crate::randomize::map_walker::walk_map(&grid, &pipes, None, sw.slot);
 

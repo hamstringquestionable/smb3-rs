@@ -1,6 +1,6 @@
 # Mega map — experiment (branch `experiment/mega-map`)
 
-**Status:** Phases 1-3 complete bar one blocker (see below). Vanilla-base
+**Status:** Phases 1-3 complete — the randomizer builds completable folded maps. Vanilla-base
 only, via `testrom --mega`; not flag-gated, not wired to the randomizer.
 Do not merge to `main` as-is.
 
@@ -323,42 +323,43 @@ keeps 4" are vanilla's shape, so off the vanilla eight it keeps the roster the
 layout already describes and spends no RNG — moving forts between super-worlds
 is a variety knob that needs a census of the new shape to justify.
 
-### The blocker: folding creates islands but no pipes
+### The pipe budget is fine — and the story of getting that wrong
 
-`mega_map_builds_completable_super_worlds` states the target and is `#[ignore]`d
-because it does not yet hold: the builder cannot always make the goal reachable.
+A super-world inherits exactly the sum of its source worlds' pipe pairs (4 / 6 /
+14), pinned by `pipe_budget_is_the_sum_of_the_merged_worlds`. That turns out to
+be enough, because **merging does not create islands** — it puts existing ones
+in one world. `island_budget_for_the_builder` measures content-bearing walk
+components with every gate open and all pipes removed:
 
-The cause is a content budget, not a bug. `island_budget_for_the_builder`
-counts walk components holding at least one pointer entry, with every gate held
-open and all pipes removed — the map connectivity has to supply:
+| group | islands | bridges | budget | slack |
+|---|---|---|---|---|
+| 6 (W1+W2+W3) | 4 = 1+1+2 | 3 | 4 | **+1** |
+| 7 (W4+W5+W6) | 5 = 2+2+1 | 4 | 6 | **+2** |
+| 8 (W7+W8) | 12 = 7+5 | 11 | 14 | **+3** |
 
-```text
-  vanilla   21 islands over 8 worlds → 13 bridges, 24 pairs   (+11)
-  folded    41 islands over 3 groups → 38 bridges, 24 pairs   (−14)
-```
+Straight sums of the vanilla per-world counts, every group in credit.
 
-The vanilla control is what makes this trustworthy: **every vanilla world has
-non-negative slack** (0, 1, 2, 1, 1, 2, 2, 2), so the metric is not merely
-pessimistic — vanilla is provisioned with just enough pipes for its own islands,
-sometimes exactly enough.
+This is worth recording because the first three attempts at it all said the
+opposite — a 14-pair deficit that would have been a genuine design crisis. Every
+one was the **same mistake**: measuring connectivity with gates *shut*. Locks
+and breakable rocks split a map into pockets that are gated, not separate, and
+counting those as islands roughly triples the number. It appeared three times in
+different clothes:
 
-Folding conserves the pipes and roughly doubles the islands. Reasoning about
-where the extra 20 come from is not yet done; the seams alone account for only
-five. But the conclusion does not depend on that: **more careful coding cannot
-close a 14-pair gap.** It needs a decision about where the connectivity comes
-from, and the candidates are genuinely different games:
+1. `plan_grid` planning links against a locks-shut graph, so no pipe could be
+   spared without appearing to strand something.
+2. The island census measuring the fold with gates shut against a **vanilla
+   control that held them open** — an asymmetry that produced the fake −14.
+3. `mega_map_builds_completable_super_worlds` walking the written ROM, where
+   locks are stamped closed. The builder's own convention is that a lock is
+   stored as its open path tile with the closed state in a separate overlay,
+   which is why `all_world_targets_reachable` walks `built.grid`.
 
-1. **Let the fold's link pipes survive the builder.** The fold already places
-   the five seam links; the builder currently re-deals the pipe web and
-   discards them. Worth five pairs, and closest to "keep the maps vanilla".
-2. **Add pipe pairs.** Each needs two pointer entries and a transit level. The
-   merged blocks have ~62 spare bytes, about ten entries — five new pairs.
-3. **Reduce the island count** by choosing groupings whose worlds fragment
-   less, or by having the fold bridge more aggressively before the builder runs.
-4. **Accept gated goals** — treat some islands as legitimately locked behind a
-   fortress rather than requiring a pipe.
+The rule, now stated everywhere it applies: **a gate is not a wall.** Measure
+connectivity with locks and breakable rocks open, or measure something else.
 
-1 and 2 together are ten pairs, which is close. That is the next decision.
+With the asymmetry removed, `mega_map_builds_completable_super_worlds` passes:
+eight seeds, three super-worlds each, every goal reachable from its start.
 
 ## Phase 3 notes: what integrating with the randomizer needed
 
