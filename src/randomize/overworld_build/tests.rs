@@ -206,9 +206,11 @@ fn test_bridges_out_roll() {
 
 #[test]
 fn test_fortress_redistribution() {
+    let Some(rom) = load_rom() else { return };
+    let layout = rom_data::MapLayout::vanilla(&rom);
     let mut rng = ChaCha8Rng::seed_from_u64(42);
     for _ in 0..100 {
-        let counts = redistribute_fortresses(&mut rng);
+        let counts = redistribute_fortresses(&layout, &mut rng);
         let total: usize = counts.iter().sum();
         assert_eq!(total, 17, "total fortresses must be 17");
         assert_eq!(counts[7], 4, "W8 must keep 4");
@@ -415,7 +417,7 @@ fn report_distribution_by_exponent() {
         let mut underfill_seeds = 0usize; // seeds where total placed < 62
         for seed in 0..SEEDS {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let fort_counts = redistribute_fortresses(&mut rng);
+            let fort_counts = redistribute_fortresses(&catalog.layout, &mut rng);
             let caps =
                 prepare_capacities(&rom, &catalog, &pickup, &fort_counts, false, true, false)
                     .capacities;

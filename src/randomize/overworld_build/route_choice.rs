@@ -310,15 +310,31 @@ thread_local! {
 /// Bits (MSB→LSB): row 88..96, col 80..88, mask 16..80, boat code 0..16.
 type PackedState = u128;
 
+/// Column stride for the flat, direct-indexed buffers below.
+///
+/// **128, not 64.** Vanilla's widest map is W8 at 64 columns, and this was
+/// that number — but a folded map (`mega_map`) runs to seven pages, and 64
+/// silently indexed past the end of `adj_span`. 128 is the engine's real
+/// ceiling: `Map_Completions` is one byte per column over 128 columns, so no
+/// map can be wider whatever the layout.
+///
+/// A fixed stride rather than the grid's own width keeps the per-pop
+/// adjacency lookup a plain load. It also has to stay within `boat_code`'s
+/// 16-bit field: `1 + 8 * 128 + 127 = 1153`, comfortably under 65535.
+const COL_STRIDE: usize = 128;
+
 fn boat_code(boat: Option<Pos>) -> u128 {
     match boat {
         None => 0,
-        Some((r, c)) => 1 + (r as u128) * 64 + c as u128,
+        Some((r, c)) => 1 + (r as u128) * COL_STRIDE as u128 + c as u128,
     }
 }
 
 fn pack(pos: Pos, mask: u64, boat: u128) -> PackedState {
-    debug_assert!(pos.0 < 256 && pos.1 < 64 && boat < 1 << 16);
+    // The column field is eight bits wide (see `unpack_pos`), so it has always
+    // had room for 128; the bound just tracked vanilla's widest map. `boat`
+    // tops out at `1 + 8 * COL_STRIDE + 127 = 1153`, well inside its 16.
+    debug_assert!(pos.0 < 256 && pos.1 < COL_STRIDE && boat < 1 << 16);
     ((pos.0 as u128) << 88) | ((pos.1 as u128) << 80) | ((mask as u128) << 16) | boat
 }
 
@@ -531,11 +547,15 @@ impl WalkGraph {
             /// Rock bit charged and set on first crossing.
             rock: Option<u32>,
         }
-        // Direct-indexed: node (r, c) → span into a flat edge list, row-major at
-        // a fixed 64-column stride (grids are at most 64 wide) — the per-pop
-        // adjacency lookup is then a plain load. Per-node edge order is
-        // preserved; node order in the flat list is irrelevant.
-        let mut adj_span: Vec<(u32, u32)> = vec![(0, 0); rows * 64];
+        // Direct-indexed: node (r, c) → span into a flat edge list, row-major
+        // at a fixed [`COL_STRIDE`] — the per-pop adjacency lookup is then a
+        // plain load. Per-node edge order is preserved; node order in the flat
+        // list is irrelevant.
+        debug_assert!(
+            walk.edges.keys().all(|p| p.1 < COL_STRIDE),
+            "a node sits past the column stride"
+        );
+        let mut adj_span: Vec<(u32, u32)> = vec![(0, 0); rows * COL_STRIDE];
         let mut adj_edges: Vec<CompiledEdge> = Vec::with_capacity(4 * walk.edges.len());
         for (&p, es) in &walk.edges {
             let span_start = adj_edges.len() as u32;
@@ -556,7 +576,7 @@ impl WalkGraph {
                     rock: None,
                 }),
             }));
-            adj_span[p.0 * 64 + p.1] = (span_start, adj_edges.len() as u32 - span_start);
+            adj_span[p.0 * COL_STRIDE + p.1] = (span_start, adj_edges.len() as u32 - span_start);
         }
 
         // Dijkstra over packed (pos, cleared-mask, boat) states. We do NOT stop
@@ -614,7 +634,7 @@ impl WalkGraph {
                 }
             };
 
-            let (span_start, span_len) = adj_span[pos.0 * 64 + pos.1];
+            let (span_start, span_len) = adj_span[pos.0 * COL_STRIDE + pos.1];
             for e in &adj_edges[span_start as usize..(span_start + span_len) as usize] {
                 // Lock: crossable only once its fort's section is open.
                 if let Some(sec) = e.lock_sec

@@ -560,11 +560,15 @@ mod tests {
 
     #[test]
     fn test_dest_indices_for_world() {
-        assert_eq!(rom_data::dest_indices_for_world(0).len(), 0); // W1: no pipes
-        assert_eq!(rom_data::dest_indices_for_world(1).len(), 1); // W2: 1 pair
-        assert_eq!(rom_data::dest_indices_for_world(4).len(), 2); // W5: 1 regular + 1 spiral tower
-        assert_eq!(rom_data::dest_indices_for_world(6).len(), 8); // W7: 8 pairs
-        assert_eq!(rom_data::dest_indices_for_world(7).len(), 6); // W8: 6 pairs
+        // Counted straight off the table: `dest_indices_for_world` now hangs
+        // off `MapLayout`, and this is a claim about the vanilla data itself,
+        // so it should not need a ROM to check.
+        let count = |w: usize| rom_data::DEST_TO_WORLD.iter().filter(|&&(_, x)| x == w).count();
+        assert_eq!(count(0), 0); // W1: no pipes
+        assert_eq!(count(1), 1); // W2: 1 pair
+        assert_eq!(count(4), 2); // W5: 1 regular + 1 spiral tower
+        assert_eq!(count(6), 8); // W7: 8 pairs
+        assert_eq!(count(7), 6); // W8: 6 pairs
     }
 
     #[test]

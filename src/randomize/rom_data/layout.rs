@@ -43,6 +43,15 @@ const SCRCOL_MASTER: usize = 0x193FE;
 /// Bytes of tile data per page: 9 rows x 16 columns.
 const PAGE_BYTES: usize = ROWS * 16;
 
+/// `FortressFX_W1` — the per-world rows of FX slot indices.
+const FX_WORLD_ROWS: usize = 0x14888;
+/// `FortressFXBase_ByWorld` — byte offset into `FX_WORLD_ROWS` per world.
+const FX_WORLD_BASE: usize = 0x148A8;
+
+/// W5's spiral tower entries. It pairs like a pipe, so the pipe matcher needs
+/// to know about it, but it wears castle tiles rather than pipe tiles.
+const VANILLA_SPIRAL_ENTRIES: [(usize, usize); 2] = [(4, 10), (4, 21)];
+
 /// One world's map layout as the ROM actually describes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WorldLayout {
@@ -73,10 +82,30 @@ impl WorldLayout {
     }
 }
 
-/// The live worlds of a ROM.
+/// How to remap a `(world, entry)` pair when the map is re-partitioned.
+pub(crate) type EntryRemap = std::collections::HashMap<(usize, usize), (usize, usize)>;
+
+/// The live worlds of a ROM, and which of their entries are what.
+///
+/// The entry tables live here rather than staying constants because they are
+/// keyed by `(world, entry_idx)` — the one thing a fold changes about every
+/// carried entry. `BOOMBOOM_Y_OFFSETS` is deliberately absent: it is keyed by
+/// `obj_ptr`, which the fold preserves, so it needs no remapping at all.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MapLayout {
     pub worlds: Vec<WorldLayout>,
+    /// Entries that are fortresses.
+    pub fortress_entries: Vec<(usize, usize)>,
+    /// Entries that are airships — a world's goal.
+    pub airship_entries: Vec<(usize, usize)>,
+    /// The Bowser castle entry.
+    pub bowser_entry: (usize, usize),
+    /// W5's spiral tower pair, which pairs like a pipe but wears castle tiles.
+    pub spiral_entries: Vec<(usize, usize)>,
+    /// `(world, map-object slot, entry)` for sprites pinned to an entry.
+    pub map_obj_entry_links: Vec<(usize, usize, usize)>,
+    /// `(pipe destination index, world)`.
+    pub dest_to_world: Vec<(u8, usize)>,
 }
 
 impl MapLayout {
@@ -87,8 +116,67 @@ impl MapLayout {
     /// garbage, which is safe precisely because they are never loaded — but it
     /// means the ROM alone cannot say which are which. The caller knows.
     pub fn read(rom: &Rom, live: &[usize]) -> Self {
-        let worlds = live.iter().map(|&slot| read_world(rom, slot)).collect();
-        MapLayout { worlds }
+        MapLayout {
+            worlds: live.iter().map(|&slot| read_world(rom, slot)).collect(),
+            fortress_entries: super::FORTRESS_ENTRIES.to_vec(),
+            airship_entries: super::AIRSHIP_ENTRIES.to_vec(),
+            bowser_entry: super::BOWSER_ENTRY,
+            spiral_entries: VANILLA_SPIRAL_ENTRIES.to_vec(),
+            map_obj_entry_links: super::MAP_OBJ_ENTRY_LINKS.to_vec(),
+            dest_to_world: super::DEST_TO_WORLD.to_vec(),
+        }
+    }
+
+    /// Move every entry table through a fold's `(world, entry)` remap.
+    ///
+    /// An entry the remap does not mention was not carried, and drops out —
+    /// which is correct: a fortress on a page the fold left behind is not a
+    /// fortress on this map. Positions are untouched; the fold preserves each
+    /// entry's `obj_ptr`, so only its address changes.
+    pub fn remapped(mut self, remap: &EntryRemap) -> Self {
+        let one = |v: &Vec<(usize, usize)>| -> Vec<(usize, usize)> {
+            v.iter().filter_map(|k| remap.get(k).copied()).collect()
+        };
+        self.fortress_entries = one(&self.fortress_entries);
+        self.airship_entries = one(&self.airship_entries);
+        self.spiral_entries = one(&self.spiral_entries);
+        self.bowser_entry = remap.get(&self.bowser_entry).copied().unwrap_or(self.bowser_entry);
+        self.map_obj_entry_links = self
+            .map_obj_entry_links
+            .iter()
+            .filter_map(|&(w, slot, e)| remap.get(&(w, e)).map(|&(nw, ne)| (nw, slot, ne)))
+            .collect();
+        // A pipe destination belongs to whichever world its endpoints landed
+        // in; both endpoints of a pair always move together.
+        self.dest_to_world = self
+            .dest_to_world
+            .iter()
+            .filter_map(|&(d, w)| {
+                remap.iter().find(|((sw, _), _)| *sw == w).map(|(_, &(nw, _))| (d, nw))
+            })
+            .collect();
+        self
+    }
+
+    /// Pipe destination indices belonging to a world.
+    pub fn dest_indices_for_world(&self, slot: usize) -> Vec<usize> {
+        self.dest_to_world.iter().filter(|&&(_, w)| w == slot).map(|&(d, _)| d as usize).collect()
+    }
+
+    /// FX slot indices per world, read from the ROM's own row table.
+    ///
+    /// Replaces the constant-driven reader, which assumed four bytes per world
+    /// at a fixed stride. `FortressFXBase_ByWorld` gives each world's row
+    /// offset directly, so packed rows of any length work — which is what a
+    /// fold produces when one group owns seven fortresses.
+    pub fn world_fx_assignments(&self, rom: &Rom) -> [Vec<u8>; 8] {
+        let mut out: [Vec<u8>; 8] = Default::default();
+        for slot in self.slots() {
+            let forts = self.fortress_entries.iter().filter(|&&(w, _)| w == slot).count();
+            let base = rom.read_byte(FX_WORLD_BASE + slot) as usize;
+            out[slot] = (0..forts).map(|i| rom.read_byte(FX_WORLD_ROWS + base + i)).collect();
+        }
+        out
     }
 
     /// The vanilla eight-world layout, read from a vanilla ROM.

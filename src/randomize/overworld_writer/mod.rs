@@ -81,6 +81,14 @@ pub(crate) fn write_overworld<R: Rng>(
 
     let mut fx_slot = 0usize;
     for (wi, wa) in assignments.iter().enumerate() {
+        // Dead slots have an empty built world and master pointers aliasing a
+        // live one's, so writing them would stamp garbage through the alias.
+        // One authoritative check against the layout — not the open-ended
+        // `if wi == DEAD_WORLD` list the world-merge experiment warned about,
+        // because the layout is the single place that knows.
+        if data.catalog.layout.get(wi).is_none() {
+            continue;
+        }
         let built = &build.worlds[wi];
         let sprite_mask = &sprite_masks[wi];
 
@@ -92,7 +100,7 @@ pub(crate) fn write_overworld<R: Rng>(
         // (the main writer pass leaves both untouched) before the resort so
         // the engine's runtime lookup finds the right entry per tile.
         super::start_airship_swap::write_swapped_world_entries(rom, wi, data.catalog);
-        pipe_helpers::resort_pointer_table(rom, wi);
+        pipe_helpers::resort_pointer_table(rom, &data.catalog.layout, wi);
         // Do not sync map object sprite positions: the overworld builder never
         // moves MapObject entries (W7 piranhas), so vanilla sprite positions are
         // correct.  The sync function uses fixed indices that become invalid

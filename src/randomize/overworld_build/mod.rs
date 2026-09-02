@@ -106,6 +106,8 @@ use super::rom_data::{
 };
 
 mod capacity;
+#[cfg(test)]
+pub(crate) use capacity::VANILLA_PIPE_PAIRS;
 mod connectivity;
 mod forts;
 mod hammer_bros;
@@ -132,7 +134,7 @@ use capacity::{SPADE_BUDGET, assign_hb_sprites, promote_hb_slots};
 // modules that post-process the build (hands, troll pipes).
 pub(crate) use capacity::{LEVEL_SPREAD_EXPONENT, VANILLA_LEVEL_COUNT};
 pub(crate) use capacity::{
-    RESERVED_DYNAMIC_SLOTS, VANILLA_PIPE_PAIRS, bfs_ordered, deal_c1_floors, distribute_levels,
+    RESERVED_DYNAMIC_SLOTS, bfs_ordered, deal_c1_floors, distribute_levels,
     fixed_positions_for_world, prepare_capacities, redistribute_fortresses,
 };
 pub(crate) use route_choice::{

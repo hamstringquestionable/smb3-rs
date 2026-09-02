@@ -8,6 +8,23 @@ pub(super) const SPADE_BUDGET: usize = 19;
 
 /// Number of pipe pairs (not endpoints) per world in the vanilla ROM — each
 /// world's pipe budget.
+/// How many pipe pairs a world ships, from the layout rather than the table.
+///
+/// `VANILLA_PIPE_PAIRS` is indexed by slot but *describes vanilla worlds*, so
+/// it goes wrong the moment a slot holds different content: a folded slot 6
+/// holds W4+W5+W6 with six pairs between them, and the table would hand it
+/// W7's eight. Too many and the spare-pipes phase places pairs that do not
+/// exist; too few and connectivity cannot bridge the map — which is exactly
+/// how a folded world 7 came out with its goal unreachable.
+pub(crate) fn pipe_budget(layout: &rom_data::MapLayout, slot: usize) -> usize {
+    layout.dest_indices_for_world(slot).len()
+}
+
+// Reason(dead_code): superseded in production by `pipe_budget`, which reads
+// the count from the layout so a re-partitioned slot gets its own pairs rather
+// than the vanilla world's. Kept as the vanilla reference the census and
+// builder tests assert against.
+#[allow(dead_code)]
 pub(crate) const VANILLA_PIPE_PAIRS: [usize; 8] = [
     0, // W1
     1, // W2
@@ -332,7 +349,7 @@ pub(crate) fn prepare_capacities(
 
     let mut capacities = [0usize; 8];
     for wi in 0..8 {
-        let pipe_endpoints = VANILLA_PIPE_PAIRS[wi] * 2;
+        let pipe_endpoints = pipe_budget(&catalog.layout, wi) * 2;
         let blanks = find_blank_slots(&patched_grids[wi], &fixed_positions[wi]).len();
         let grid_capacity = blanks.saturating_sub(pipe_endpoints + fort_counts[wi]);
         let ptr_slots = pickup.worlds[wi].pool_indices.len();
@@ -433,7 +450,12 @@ const C1_FLOOR_MAX_PAIRS: usize = 4;
 /// is no deal that can violate it and no magic total to keep in step. `k`
 /// may roll 0, leaving a seed flat at the centre; that costs nothing (it is
 /// simply today's behaviour for that seed) and keeps the roll unstructured.
-pub(crate) fn deal_c1_floors<R: Rng>(rng: &mut R) -> [u32; 8] {
+///
+/// **The band's values are tuned for eight vanilla-sized worlds.** The deal
+/// generalises to any world count, but 11/14/17 was measured against maps of
+/// 16-64 columns; a folded super-world is 96-112, so the numbers want
+/// re-deriving from a census of that shape rather than rescaling by hand.
+pub(crate) fn deal_c1_floors<R: Rng>(layout: &rom_data::MapLayout, rng: &mut R) -> [u32; 8] {
     // A/B arm: `C1_FLOOR_FLAT=1` restores the single global floor, so the
     // census can measure the deal against the shape it replaced without
     // needing two checkouts. Test-only — never reaches the CLI or WASM.
@@ -442,19 +464,56 @@ pub(crate) fn deal_c1_floors<R: Rng>(rng: &mut R) -> [u32; 8] {
         return [C1_FLOOR; 8];
     }
     let [low, centre, high] = C1_FLOOR_BAND;
+    let slots: Vec<usize> = layout.slots().collect();
     let pairs = rng.random_range(0..=C1_FLOOR_MAX_PAIRS);
-    let mut floors = [centre; 8];
+    // Every low is paid for by a high, so a pair needs two worlds to land in.
+    // At eight worlds `C1_FLOOR_MAX_PAIRS` is exactly half, so the clamp is a
+    // no-op and the vanilla deal is unchanged.
+    let pairs = pairs.min(slots.len() / 2);
+
+    let mut dealt = vec![centre; slots.len()];
     for i in 0..pairs {
-        floors[i] = low;
-        floors[pairs + i] = high;
+        dealt[i] = low;
+        dealt[pairs + i] = high;
     }
-    floors.shuffle(rng);
+    dealt.shuffle(rng);
+
+    let mut floors = [centre; 8];
+    for (slot, floor) in slots.iter().zip(dealt) {
+        floors[*slot] = floor;
+    }
     floors
 }
 
 /// Distribute 13 fortresses across W1-W7 (each gets 1-3), W8 keeps 4.
-pub(crate) fn redistribute_fortresses<R: Rng>(rng: &mut R) -> [usize; 8] {
+///
+/// # Off the vanilla eight
+///
+/// This shape is vanilla's, in every detail: the goal world is slot 7, the
+/// other seven share thirteen forts, and the 1-3 span is what fits a map of
+/// 16-64 columns. None of it survives a re-partitioned map — a folded
+/// super-world is three worlds' worth of content, so a cap of 3 would strand
+/// most of the roster with nowhere to go.
+///
+/// So off the vanilla eight it **keeps the roster the layout already
+/// describes** and spends no RNG. That is the conservative reading: the fold
+/// placed 4/7/6 because that is what its source worlds brought, and moving
+/// forts between super-worlds is a variety knob — it needs a census of the new
+/// shape to justify a distribution, not a guess. Until that census exists,
+/// redistributing would be inventing a number.
+pub(crate) fn redistribute_fortresses<R: Rng>(
+    layout: &rom_data::MapLayout,
+    rng: &mut R,
+) -> [usize; 8] {
     let mut counts = [0usize; 8];
+
+    if layout.world_count() != 8 {
+        for &(world, _) in &layout.fortress_entries {
+            counts[world] += 1;
+        }
+        return counts;
+    }
+
     counts[7] = 4; // W8 always keeps 4
 
     // Start each of W1-W7 with 1 fortress (= 7 used), leaving 6 to distribute

@@ -141,7 +141,7 @@ pub(super) fn pick_up_filtered(
     let mut worlds = Vec::with_capacity(8);
 
     let fx_slots = rom_data::read_fx_slots(rom);
-    let fx_assignments = rom_data::read_world_fx_assignments(rom);
+    let fx_assignments = catalog.layout.world_fx_assignments(rom);
 
     // `worlds` stays **dense over the eight engine slots**, with a dead slot
     // holding an empty world rather than being absent. A dozen sites index it
@@ -483,7 +483,7 @@ mod tests {
         );
 
         let fx_slots = rom_data::read_fx_slots(&rom);
-        let fx_assignments = rom_data::read_world_fx_assignments(&rom);
+        let fx_assignments = rom_data::MapLayout::vanilla(&rom).world_fx_assignments(&rom);
 
         for (wi, world_fx) in fx_assignments.iter().enumerate() {
             let grid = &result.worlds[wi].grid;
@@ -667,7 +667,7 @@ mod tests {
         };
 
         let fx_slots = rom_data::read_fx_slots(&rom);
-        let fx_assignments = rom_data::read_world_fx_assignments(&rom);
+        let fx_assignments = rom_data::MapLayout::vanilla(&rom).world_fx_assignments(&rom);
         let mut mismatches = 0;
         for &(wi, row, col, override_tile) in BLANK_TILE_OVERRIDES {
             let mut grid = rom_data::read_tile_grid(&rom, wi);

@@ -1,6 +1,6 @@
 # Mega map — experiment (branch `experiment/mega-map`)
 
-**Status:** Phases 1 and 2 complete, verified against the Rust walker. Vanilla-base
+**Status:** Phases 1-3 complete bar one blocker (see below). Vanilla-base
 only, via `testrom --mega`; not flag-gated, not wired to the randomizer.
 Do not merge to `main` as-is.
 
@@ -275,7 +275,92 @@ locks first and the randomizer does not, so the fold had a hidden dependency on
 its only caller. Same rule the fortress-forcedness work settled on — hold locks
 open, or you measure goal gates.
 
-## Phase 3: what integrating with the randomizer needs
+## Phase 3 (done, with one blocker): the randomizer runs on a folded map
+
+`--mega-map` on the CLI (and `Options::mega_map`) folds the map **before the
+catalog** and after every QoL map pass — the QoL patches carry fixed vanilla
+coordinates, so they must land on the vanilla grids and be carried across, while
+the catalog and everything after it must see the folded layout.
+
+The whole pipeline runs: catalog, pickup, build, write. It produces a coherent
+map — content spread across all six or seven pages, start on its panel, goal at
+the far end. A vanilla run stays byte-identical (`de503b5a`, seed 12345
+`--no-palettes`), which is how every step was checked.
+
+`mega_map` is **not in the flag key**. The key is versioned and shared with the
+seed bot, and a seed built with this is not comparable to one without, so it
+wants its own decision about encoding once the shape settles rather than a bit
+spent while it is an experiment.
+
+### What the migration actually cost
+
+Much less than the 46-reference estimate, because engine slots stay 0–7: arrays
+keyed *by slot* stay `[T; 8]`, and only iteration and layout lookups changed.
+`MapLayout` grew the `(world, entry)`-keyed tables — fortresses, airships,
+Bowser, the spiral pair, sprite links, pipe destinations — and `mega_map` emits
+an `EntryRemap` they are moved through. `BOOMBOOM_Y_OFFSETS` needed nothing: it
+is keyed by `obj_ptr`, which the fold preserves.
+
+Four vanilla assumptions surfaced only when a folded map hit them:
+
+- **`adj_span` indexed at a hardcoded 64-column stride** ("grids are at most 64
+  wide"). Now `COL_STRIDE = 128`, the engine's real ceiling — `Map_Completions`
+  is one byte per column over 128 columns, so no map can be wider.
+- **`pack()`'s debug assert** carried the same 64. The column field was always
+  eight bits wide; only the bound was stale. It fires in tests and not in
+  release, so a release run had been silently packing out-of-range columns.
+- **`VANILLA_PIPE_PAIRS[slot]`** is indexed by slot but *describes vanilla
+  worlds*, so a folded slot 6 was handed W7's eight pairs when it really has
+  six. Now `pipe_budget()` counts them from the layout.
+- **`VAN_FX` had 16 rows against `FORTRESS_ENTRIES`' 17** — hand-written
+  duplication that silently dropped W8's fourth fortress, so its FX never
+  fired. Derived from the table now: the FX slot index *is* the index into it.
+
+`redistribute_fortresses` and `deal_c1_floors` are the two budgets keyed by
+world *count* rather than by slot. The floor deal generalises cleanly (and is a
+no-op at eight). Fortress redistribution does not: its 1–3 span and its "W8
+keeps 4" are vanilla's shape, so off the vanilla eight it keeps the roster the
+layout already describes and spends no RNG — moving forts between super-worlds
+is a variety knob that needs a census of the new shape to justify.
+
+### The blocker: folding creates islands but no pipes
+
+`mega_map_builds_completable_super_worlds` states the target and is `#[ignore]`d
+because it does not yet hold: the builder cannot always make the goal reachable.
+
+The cause is a content budget, not a bug. `island_budget_for_the_builder`
+counts walk components holding at least one pointer entry, with every gate held
+open and all pipes removed — the map connectivity has to supply:
+
+```text
+  vanilla   21 islands over 8 worlds → 13 bridges, 24 pairs   (+11)
+  folded    41 islands over 3 groups → 38 bridges, 24 pairs   (−14)
+```
+
+The vanilla control is what makes this trustworthy: **every vanilla world has
+non-negative slack** (0, 1, 2, 1, 1, 2, 2, 2), so the metric is not merely
+pessimistic — vanilla is provisioned with just enough pipes for its own islands,
+sometimes exactly enough.
+
+Folding conserves the pipes and roughly doubles the islands. Reasoning about
+where the extra 20 come from is not yet done; the seams alone account for only
+five. But the conclusion does not depend on that: **more careful coding cannot
+close a 14-pair gap.** It needs a decision about where the connectivity comes
+from, and the candidates are genuinely different games:
+
+1. **Let the fold's link pipes survive the builder.** The fold already places
+   the five seam links; the builder currently re-deals the pipe web and
+   discards them. Worth five pairs, and closest to "keep the maps vanilla".
+2. **Add pipe pairs.** Each needs two pointer entries and a transit level. The
+   merged blocks have ~62 spare bytes, about ten entries — five new pairs.
+3. **Reduce the island count** by choosing groupings whose worlds fragment
+   less, or by having the fold bridge more aggressively before the builder runs.
+4. **Accept gated goals** — treat some islands as legitimately locked behind a
+   fortress rather than requiring a pipe.
+
+1 and 2 together are ten pairs, which is close. That is the next decision.
+
+## Phase 3 notes: what integrating with the randomizer needed
 
 Less is per-world than it feels. Already page-agnostic:
 

@@ -554,6 +554,17 @@ pub struct Options {
     /// Include ~9 unreferenced beta levels in the overworld shuffle pool.
     #[serde(default)]
     pub include_beta_stages: bool,
+    /// EXPERIMENT: fold the eight worlds into three pipe-linked super-worlds
+    /// before the overworld builder runs, so it shapes three ~100-column maps
+    /// instead of eight small ones.
+    ///
+    /// Deliberately **not** in the flag key. The key is versioned and shared
+    /// with the seed bot, and this changes the map so profoundly that a seed
+    /// built with it is not comparable to one without — it wants its own
+    /// decision about key encoding once the shape settles, not a bit spent
+    /// while it is still an experiment.
+    #[serde(default)]
+    pub mega_map: bool,
     /// Antechamber shuffle: the ten levels that open with an entry area
     /// piping into the level's interior (4-3, 5-2, 5-3, 6-6, 6-9, 7-1,
     /// 7-4, 7-5, 7-6, 7-7) get their interiors randomly permuted, so one
@@ -676,6 +687,7 @@ impl Default for Options {
             hammer_vulnerable_koopalings: false,
             random_koopalings: false,
             include_beta_stages: false,
+            mega_map: false,
             antechamber_shuffle: Tri::Off,
             piranha_shuffle: PiranhaMode::Off,
             hammer_breaks_locks: Tri::Off,

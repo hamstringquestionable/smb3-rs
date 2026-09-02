@@ -371,6 +371,11 @@ struct Cli {
     #[arg(long)]
     include_beta_stages: bool,
 
+    /// EXPERIMENT: fold the eight worlds into three pipe-linked super-worlds
+    /// before the overworld builder runs. Not encoded in the flag key.
+    #[arg(long)]
+    mega_map: bool,
+
     /// For each W1-W7, independently coin-flip to swap Mario's start tile with
     /// the airship tile. W8 is never swapped. Off by default.
     #[arg(long)]
@@ -600,6 +605,7 @@ fn build_options(cli: &Cli) -> Options {
             hands_levels: !cli.no_hands_levels,
             troll_pipes: cli.troll_pipes,
             include_beta_stages: cli.include_beta_stages,
+            mega_map: cli.mega_map,
             swap_start_airship: cli.swap_start_airship,
             anchor_visuals: cli.anchor_visuals,
             ground: cli.ground,

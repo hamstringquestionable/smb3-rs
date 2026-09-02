@@ -185,11 +185,6 @@ pub(crate) fn write_entry(rom: &mut Rom, world: &WorldTables, idx: usize, entry:
     rom.write_byte(lay_off + 1, entry.lay_hi);
 }
 
-/// Get destination table indices that belong to a given world.
-pub(crate) fn dest_indices_for_world(world_idx: usize) -> Vec<usize> {
-    DEST_TO_WORLD.iter().filter(|&&(_, w)| w == world_idx).map(|&(d, _)| d as usize).collect()
-}
-
 /// Read all pipe pairs from ROM destination tables, grouped by world.
 /// Returns a map: world_idx → Vec of ((row_a, col_a), (row_b, col_b)).
 #[cfg(test)]
@@ -234,24 +229,6 @@ pub(crate) fn read_fx_slots(rom: &Rom) -> Vec<FxSlot> {
         slots.push(FxSlot { grid_row, grid_col: screen * 16 + col_in_screen, replace_tile });
     }
     slots
-}
-
-/// Read FortressFX_W1-W8: which FX slots each world uses.
-/// Returns array of 8 Vecs, one per world.
-///
-/// Each world has 4 bytes in the table, but only the first N are meaningful
-/// where N = number of fortresses in that world. The rest are zero-padded.
-/// We use the fortress count from FORTRESS_ENTRIES to know how many to read.
-pub(crate) fn read_world_fx_assignments(rom: &Rom) -> [Vec<u8>; 8] {
-    let mut assignments: [Vec<u8>; 8] = Default::default();
-    for (wi, assignment) in assignments.iter_mut().enumerate() {
-        let fort_count = FORTRESS_ENTRIES.iter().filter(|&&(w, _)| w == wi).count();
-        let base = FX_WORLD_TABLE + wi * 4;
-        for i in 0..fort_count.min(4) {
-            assignment.push(rom.read_byte(base + i));
-        }
-    }
-    assignments
 }
 
 /// Resolve a master pointer table entry to a ROM file offset for a given slot.

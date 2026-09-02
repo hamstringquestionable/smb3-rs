@@ -29,7 +29,7 @@ pub(crate) fn allot_budgets(
     flags: &BuildFlags,
     mut rng: &mut dyn RngCore,
 ) -> ([usize; 8], [usize; 8], [u32; 8]) {
-    let fort_counts = redistribute_fortresses(&mut rng);
+    let fort_counts = redistribute_fortresses(&catalog.layout, &mut rng);
     let CapacityPrep { capacities, .. } = prepare_capacities(
         rom,
         catalog,
@@ -41,7 +41,7 @@ pub(crate) fn allot_budgets(
     );
     let level_counts =
         distribute_levels(&capacities, VANILLA_LEVEL_COUNT, LEVEL_SPREAD_EXPONENT, &mut rng);
-    let c1_floors = deal_c1_floors(&mut rng);
+    let c1_floors = deal_c1_floors(&catalog.layout, &mut rng);
     (level_counts, fort_counts, c1_floors)
 }
 
@@ -60,7 +60,10 @@ pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
         target: find_target(&built.grid, built.world_idx),
         fixed: HashSet::new(),
         hammer_gated: HashSet::new(),
-        pipe_budget: VANILLA_PIPE_PAIRS[built.world_idx],
+        // A finished world has spent its whole budget: `spare_pipes` treats
+        // placement as mandatory, since an unplaced pair is deleted content.
+        // So the pairs on the map *are* the budget, and this needs no layout.
+        pipe_budget: built.pipe_pairs.len(),
         level_budget: built.slots.iter().filter(|s| s.kind == SlotKind::Level).count(),
         fort_budget: built.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count(),
         c1_floor: C1_FLOOR,
@@ -144,7 +147,7 @@ pub(crate) fn from_pickup(
         target,
         fixed,
         hammer_gated,
-        pipe_budget: VANILLA_PIPE_PAIRS[world_idx],
+        pipe_budget: capacity::pipe_budget(&catalog.layout, world_idx),
         level_budget,
         fort_budget,
         c1_floor: C1_FLOOR,
@@ -194,7 +197,7 @@ pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -
         target,
         fixed: HashSet::new(),
         hammer_gated: HashSet::new(),
-        pipe_budget: VANILLA_PIPE_PAIRS[world_idx],
+        pipe_budget: capacity::pipe_budget(&catalog.layout, world_idx),
         level_budget,
         fort_budget,
         c1_floor: C1_FLOOR,

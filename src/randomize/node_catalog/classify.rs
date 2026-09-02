@@ -7,16 +7,7 @@ use crate::rom::Rom;
 
 use super::pipes::build_pipe_map;
 use super::{NodeKind, RawClassifiedEntry};
-use crate::randomize::rom_data::{
-    self, AIRSHIP_ENTRIES, BOWSER_ENTRY, FORTRESS_ENTRIES, HAMMER_BRO_OBJ_PTRS,
-    MAP_OBJ_ENTRY_LINKS, TILE_START, TOAD_HOUSE_OBJ_PTRS,
-};
-
-// ---------------------------------------------------------------------------
-// W5 Spiral Tower entries (functionally a pipe pair using dest index 0)
-// ---------------------------------------------------------------------------
-
-const W5_SPIRAL_ENTRIES: &[(usize, usize)] = &[(4, 10), (4, 21)];
+use crate::randomize::rom_data::{self, HAMMER_BRO_OBJ_PTRS, TILE_START, TOAD_HOUSE_OBJ_PTRS};
 
 // ---------------------------------------------------------------------------
 // Per-world classification
@@ -37,7 +28,8 @@ pub(super) fn classify_world(
     // -- Pre-compute sets for classification --
 
     // Map-object-linked entries
-    let map_obj_entries: HashSet<usize> = MAP_OBJ_ENTRY_LINKS
+    let map_obj_entries: HashSet<usize> = layout
+        .map_obj_entry_links
         .iter()
         .filter(|&&(w, _, _)| w == world_idx)
         .map(|&(_, _, entry_idx)| entry_idx)
@@ -48,7 +40,7 @@ pub(super) fn classify_world(
     let mut spiral_entries: Vec<usize> = Vec::new();
     for i in 0..n {
         let obj = rom_data::read_word(rom, objsets + i * 2);
-        if W5_SPIRAL_ENTRIES.contains(&(world_idx, i)) {
+        if layout.spiral_entries.contains(&(world_idx, i)) {
             spiral_entries.push(i);
         } else if rom_data::has_enemy_id(rom, obj, 0x25) {
             pipe_entries_by_obj.entry(obj).or_default().push(i);
@@ -56,7 +48,7 @@ pub(super) fn classify_world(
     }
 
     // Build pipe pair map: entry_idx → dest_idx
-    let dest_indices = rom_data::dest_indices_for_world(world_idx);
+    let dest_indices = layout.dest_indices_for_world(world_idx);
     let pipe_map = build_pipe_map(
         rom,
         layout,
@@ -123,17 +115,17 @@ fn classify_entry(
     }
 
     // 2. Bowser's castle
-    if (world_idx, entry_idx) == BOWSER_ENTRY {
+    if (world_idx, entry_idx) == layout.bowser_entry {
         return NodeKind::Bowser;
     }
 
     // 3. Airship
-    if AIRSHIP_ENTRIES.contains(&(world_idx, entry_idx)) {
+    if layout.airship_entries.contains(&(world_idx, entry_idx)) {
         return NodeKind::Airship;
     }
 
     // 4. Fortress
-    if FORTRESS_ENTRIES.contains(&(world_idx, entry_idx)) {
+    if layout.fortress_entries.contains(&(world_idx, entry_idx)) {
         let entry = rom_data::read_entry(rom, &layout.tables(world_idx), entry_idx);
         let obj_ptr = (entry.obj_hi as u16) << 8 | entry.obj_lo as u16;
         let boomboom_y_offset = rom_data::boomboom_y_offset_for_obj(obj_ptr).unwrap_or(0);

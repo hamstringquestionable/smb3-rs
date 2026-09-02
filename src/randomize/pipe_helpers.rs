@@ -6,7 +6,7 @@
 
 use crate::rom::Rom;
 
-use super::rom_data::{self, PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, WORLDS};
+use super::rom_data::{self, PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -102,8 +102,8 @@ pub(super) fn write_pipe_dest(
 ///
 /// The game scans entries per-screen from InitIndex[screen], matching row first
 /// then column. Entries must be sorted for the lookup to work correctly.
-pub(super) fn resort_pointer_table(rom: &mut Rom, world_idx: usize) {
-    let world = &WORLDS[world_idx];
+pub(super) fn resort_pointer_table(rom: &mut Rom, layout: &rom_data::MapLayout, world_idx: usize) {
+    let world = &layout.tables(world_idx);
     let n = world.entry_count;
     let rt = world.rowtype_offset;
     let sc = rt + n;

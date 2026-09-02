@@ -39,8 +39,8 @@
 //! |---|---|---|---|
 //! | Pointer blocks | 2072 B, exactly full | 2064 B | 8 B |
 //! | Grid data | 2744 B to the warp zone | 2739 B | 5 B |
-//! | Fortress FX rows | 8 × 4 = 32 B | 4 + 7 + 5 = 16 B | 16 B |
-//! | Fortress FX slots | 17 | 16 forts, total unchanged | 1 |
+//! | Fortress FX rows | 8 × 4 = 32 B | 4 + 7 + 6 = 17 B | 15 B |
+//! | Fortress FX slots | 17 | 17 forts, total unchanged | 0 |
 //! | Pipe pairs | 24 | 5 repurposed as links | 19 |
 //!
 //! The one resource that does *not* work out is map-object sprite slots: the
@@ -225,6 +225,13 @@ pub struct MegaMapReport {
     pub block_bytes: (usize, usize),
     /// Pages the start cannot reach, as `(slot, page)`. Empty is the goal.
     pub unreachable_pages: Vec<(usize, usize)>,
+    /// Where every carried entry ended up: `(src world, src entry) ->
+    /// (slot, entry)`.
+    ///
+    /// This is what the `(world, entry)`-keyed tables have to be moved
+    /// through — fortresses, airships, Bowser, the spiral pair, sprite links,
+    /// pipe destinations. An entry absent from the map was not carried.
+    pub entry_remap: rom_data::EntryRemap,
 }
 
 // --- Entries ------------------------------------------------------------
@@ -414,6 +421,15 @@ pub fn build(rom: &mut Rom) -> Result<MegaMapReport, String> {
     // are placed on the first free blank node near each boundary, and nothing
     // guarantees that node is connected to the rest of its page.
     report.unreachable_pages = unreachable_pages(rom);
+    report.entry_remap = plan
+        .entries
+        .iter()
+        .enumerate()
+        .flat_map(|(g, entries)| {
+            let slot = SUPER_WORLDS[g].slot;
+            entries.iter().enumerate().map(move |(i, e)| ((e.src_world, e.src_idx), (slot, i)))
+        })
+        .collect();
 
     rom.pop_tag();
     Ok(report)
@@ -1210,30 +1226,25 @@ fn write_blocks(rom: &mut Rom, plan: &Plan) -> Result<(usize, usize), String> {
 
 // --- Fortress FX --------------------------------------------------------
 
-/// Vanilla fortress FX slots: `(fx_slot, world, entry)`, in the order
-/// `FortressFX_W1..W8` lists them.
+/// Vanilla fortress FX slots as `(fx_slot, world, entry)`.
 ///
-/// `entry` indexes the world's vanilla block and is the fortress's identity —
-/// the map tile is not, because W8's fortress is `0xAF` where every other
-/// world's is `0x67`, and `0xAF` doubles as an island blank.
-const VAN_FX: [(usize, usize, usize); 16] = [
-    (0x00, 0, 11),
-    (0x01, 1, 13),
-    (0x02, 2, 13),
-    (0x03, 2, 34),
-    (0x04, 3, 9),
-    (0x05, 3, 16),
-    (0x06, 4, 12),
-    (0x07, 4, 31),
-    (0x08, 5, 9),
-    (0x09, 5, 27),
-    (0x0A, 5, 48),
-    (0x0B, 6, 5),
-    (0x0C, 6, 40),
-    (0x0D, 7, 7),
-    (0x0E, 7, 10),
-    (0x0F, 7, 26),
-];
+/// **Derived, not listed.** `FortressFX_W1..W8` hands out slots in exactly
+/// `FORTRESS_ENTRIES` order — W1 takes slot 0, W2 slot 1, W3 slots 2-3, and so
+/// on to W8's 0x0D-0x10 — so the slot index *is* the index into that table.
+/// Writing the pairs out by hand duplicated it and got it wrong: the list had
+/// 16 rows against the table's 17, silently dropping W8's fourth fortress, so
+/// its FX never fired.
+///
+/// `entry` is the fortress's identity rather than its map tile, which is
+/// `0x67` in seven worlds and `0xAF` in W8 — and `0xAF` doubles as an island
+/// blank.
+fn van_fx() -> Vec<(usize, usize, usize)> {
+    rom_data::FORTRESS_ENTRIES
+        .iter()
+        .enumerate()
+        .map(|(slot, &(world, entry))| (slot, world, entry))
+        .collect()
+}
 
 /// Re-aim every fortress's FX slot at the page it now sits on, and give each
 /// super-world a row listing its own forts.
@@ -1256,7 +1267,7 @@ fn carry_fortress_fx(rom: &mut Rom, plan: &Plan) -> Vec<usize> {
     for (group, sw) in SUPER_WORLDS.iter().enumerate() {
         rom.write_byte(FX_WORLD_BASE + sw.slot, row_at as u8);
 
-        for &(slot, world, _entry) in VAN_FX.iter().filter(|f| sw.sources.contains(&f.1)) {
+        for (slot, world, _entry) in van_fx().into_iter().filter(|f| sw.sources.contains(&f.1)) {
             let src_page = (rom.read_byte(FX_MAP_LOCATION + slot) & 0x0F) as usize;
             let Some(dest) = plan.dest_page(group, world, src_page) else {
                 continue;
@@ -1570,7 +1581,7 @@ mod tests {
             let pipes = teleports(&rom, sw.slot);
             let walk = map_walker::walk_map(&grid, &pipes, None, sw.slot);
 
-            for &(_, world, entry) in VAN_FX.iter().filter(|f| sw.sources.contains(&f.1)) {
+            for (_, world, entry) in van_fx().into_iter().filter(|f| sw.sources.contains(&f.1)) {
                 let e = van_entries[world][entry];
                 let dest = p.dest_page(group, world, e.page()).expect("fort page carried");
                 let pos = (e.row(), dest * 16 + e.col() % 16);
@@ -1588,7 +1599,7 @@ mod tests {
                 checked += 1;
             }
         }
-        assert_eq!(checked, 16, "all sixteen vanilla fortresses should be carried");
+        assert_eq!(checked, 17, "all seventeen vanilla fortresses should be carried");
     }
 
     /// Each link is a real pipe pair with a mouth on each of two pages.
@@ -1754,7 +1765,7 @@ mod tests {
         // Sixteen forts across three rows, in the 32 bytes vanilla laid out
         // for eight four-fort worlds.
         let forts: usize = report.slots.iter().map(|s| s.forts).sum();
-        assert_eq!(forts, 16);
+        assert_eq!(forts, 17);
         assert!(forts <= 32, "fortress FX rows overflow their block");
 
         // Entry counts stay under the byte-wide InitIndex ceiling.
@@ -1851,6 +1862,63 @@ mod tests {
         }
     }
 
+    /// A grid with every removable gate opened. Connectivity has to be
+    /// measured with gates held open, or merely-gated regions read as
+    /// separate islands.
+    fn open_locks(grid: &rom_data::Grid) -> rom_data::Grid {
+        let tiles = (0..ROWS)
+            .map(|r| {
+                (0..grid.cols)
+                    .map(|c| {
+                        let t = grid.get(r, c);
+                        rom_data::path_for_gap_tile(t)
+                            .or_else(|| rom_data::path_for_breakable_rock(t))
+                            .unwrap_or(t)
+                    })
+                    .collect()
+            })
+            .collect();
+        rom_data::Grid { tiles, cols: grid.cols, eights_are_wild: false }
+    }
+
+    /// Walk components holding at least one pointer entry.
+    ///
+    /// Content is what has to be reachable; a cluster of scenery does not need
+    /// a bridge, and counting one inflates the number badly.
+    fn content_islands(
+        rom: &Rom,
+        grid: &rom_data::Grid,
+        teleports: &[rom_data::TeleportEdge],
+        slot: usize,
+        rowtype_offset: usize,
+        entry_count: usize,
+    ) -> usize {
+        let scrcol = rowtype_offset + entry_count;
+        let content: Vec<(usize, usize)> = (0..entry_count)
+            .map(|i| {
+                let rt = rom.read_byte(rowtype_offset + i);
+                let sc = rom.read_byte(scrcol + i);
+                (
+                    (((rt >> 4) & 0x0F) as usize).saturating_sub(2),
+                    (sc >> 4) as usize * 16 + (sc & 0x0F) as usize,
+                )
+            })
+            .filter(|&(r, c)| r < ROWS && c < grid.cols)
+            .collect();
+
+        let mut seen: HashSet<(usize, usize)> = HashSet::new();
+        let mut islands = 0;
+        for &cell in &content {
+            if seen.contains(&cell) {
+                continue;
+            }
+            seen.extend(map_walker::walk_map(grid, teleports, Some(cell), slot).nodes);
+            seen.insert(cell);
+            islands += 1;
+        }
+        islands
+    }
+
     /// Diagnostic: islands each super-world would hand the connectivity phase,
     /// against the pipe budget it would inherit.
     ///
@@ -1861,11 +1929,36 @@ mod tests {
     #[test]
     #[ignore]
     fn island_budget_for_the_builder() {
-        use crate::randomize::overworld_build::VANILLA_PIPE_PAIRS;
-
         let Some(mut rom) = vanilla() else { return };
         build(&mut rom).expect("fold");
 
+        // Vanilla control. The metric only means anything if vanilla itself
+        // satisfies it: each world is traversable, so its own pipe budget must
+        // cover its own islands.
+        let Some(mut van) = vanilla() else { return };
+        open_vanilla_maps(&mut van);
+        let van_layout = rom_data::MapLayout::vanilla(&van);
+        println!("--- vanilla control ---");
+        println!("world  islands  bridges  budget  slack");
+        let mut van_islands = 0;
+        for w in 0..8 {
+            // Same source on both sides of the comparison.
+            let budget = van_layout.dest_indices_for_world(w).len();
+            let grid = open_locks(&rom_data::read_tile_grid(&van, w));
+            let canoes = rom_data::active_canoe_edges(w, false);
+            let t = van_layout.tables(w);
+            let n = content_islands(&van, &grid, &canoes, w, t.rowtype_offset, t.entry_count);
+            van_islands += n;
+            println!(
+                "  {}      {n}       {}       {budget}      {}",
+                w + 1,
+                n.saturating_sub(1),
+                budget as isize - n.saturating_sub(1) as isize
+            );
+        }
+        println!("vanilla total: {van_islands} islands, {} bridges, 24 pairs", van_islands - 8);
+
+        println!("--- folded ---");
         println!("group  pages  islands  bridges_needed  pipe_budget  slack");
         for sw in &SUPER_WORLDS {
             let grid = read_grid(&rom, sw.slot);
@@ -1907,7 +2000,8 @@ mod tests {
                 islands += 1;
             }
 
-            let budget: usize = sw.sources.iter().map(|&w| VANILLA_PIPE_PAIRS[w]).sum();
+            let budget: usize =
+                sw.sources.iter().map(|&w| van_layout.dest_indices_for_world(w).len()).sum();
             let needed = islands.saturating_sub(1);
             println!(
                 "  {}      {}      {islands}        {needed}              {budget}         {}",
@@ -1953,5 +2047,87 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The full randomizer pipeline runs on a folded map and produces three
+    /// completable super-worlds.
+    ///
+    /// **Currently fails, and is ignored for that reason** — it states the
+    /// target, not the present behaviour. The pipeline runs end to end and
+    /// produces a coherent map, but the builder cannot always make the goal
+    /// reachable, because folding leaves each group short of pipes:
+    ///
+    /// ```text
+    ///   vanilla   21 content islands over 8 worlds, 13 bridges, 24 pairs  (+11)
+    ///   folded    41 content islands over 3 groups, 38 bridges, 24 pairs  (-14)
+    /// ```
+    ///
+    /// `island_budget_for_the_builder` measures both, and the vanilla control
+    /// is what makes the number trustworthy: every vanilla world has
+    /// non-negative slack, so the metric is not simply pessimistic. Closing a
+    /// 14-pair gap is a design decision about where the connectivity comes
+    /// from, not something more careful coding fixes — see `docs/mega_map.md`.
+    #[test]
+    #[ignore]
+    fn mega_map_builds_completable_super_worlds() {
+        let Some(base) = vanilla() else { return };
+
+        for seed in 0..8u64 {
+            let mut rom = base.clone();
+            let opts = crate::Options { mega_map: true, ..Default::default() };
+            crate::randomizer::randomize(&mut rom, seed, &opts);
+
+            for sw in &crate::randomize::mega_map::SUPER_WORLDS {
+                let grid = crate::randomize::mega_map::read_grid(&rom, sw.slot);
+                let pipes = crate::randomize::mega_map::teleports(&rom, sw.slot);
+                let walk = crate::randomize::map_walker::walk_map(&grid, &pipes, None, sw.slot);
+
+                assert!(
+                    !walk.nodes.is_empty(),
+                    "seed {seed} slot {}: no walk from the start",
+                    sw.slot
+                );
+
+                let goal = crate::randomize::overworld_helpers::find_target(&grid, sw.slot);
+                let goal = goal
+                    .unwrap_or_else(|| panic!("seed {seed} slot {}: no goal on the map", sw.slot));
+                assert!(
+                    walk.nodes.contains(&goal),
+                    "seed {seed} slot {}: goal at {goal:?} is unreachable",
+                    sw.slot
+                );
+            }
+        }
+    }
+
+    /// A super-world's pipe budget is exactly the sum of its source worlds'.
+    ///
+    /// `VANILLA_PIPE_PAIRS` is indexed by slot but describes *vanilla* worlds,
+    /// so it handed a folded slot 6 W7's eight pairs when it really holds
+    /// W4+W5+W6's six. The budget now comes from the remapped layout, which
+    /// re-homes each pipe destination onto the slot its endpoints landed in.
+    #[test]
+    fn pipe_budget_is_the_sum_of_the_merged_worlds() {
+        let Some(mut rom) = vanilla() else { return };
+        let van = rom_data::MapLayout::vanilla(&rom);
+        let want: Vec<usize> = SUPER_WORLDS
+            .iter()
+            .map(|sw| sw.sources.iter().map(|&w| van.dest_indices_for_world(w).len()).sum())
+            .collect();
+
+        let report = build(&mut rom).expect("fold");
+        let live: Vec<usize> = SUPER_WORLDS.iter().map(|s| s.slot).collect();
+        let folded = rom_data::MapLayout::read(&rom, &live).remapped(&report.entry_remap);
+
+        for (sw, want) in SUPER_WORLDS.iter().zip(want) {
+            assert_eq!(
+                folded.dest_indices_for_world(sw.slot).len(),
+                want,
+                "slot {} should inherit its sources' pipes",
+                sw.slot
+            );
+        }
+        // And none are lost along the way.
+        assert_eq!(folded.dest_to_world.len(), rom_data::DEST_TO_WORLD.len());
     }
 }

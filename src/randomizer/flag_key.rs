@@ -272,6 +272,12 @@ pub(super) const NOT_ENCODED: &[&str] = &[
     "remove_flashing",     // cosmetic/accessibility; static patch, no RNG
     "king_quotes",         // cosmetic flavor text; draws its RNG either way
     "skip_rom_validation", // operational (CLI/WASM input handling), not randomization
+    // EXPERIMENT: folds the map into three super-worlds. Left out of the key
+    // deliberately — the key is versioned and shared with the seed bot, and a
+    // seed built with this is not comparable to one without, so it wants its
+    // own decision about encoding once the shape settles rather than a bit
+    // spent while it is still an experiment.
+    "mega_map",
 ];
 
 /// The `Options` field names this build encodes into the flag key.
@@ -459,7 +465,7 @@ impl Options {
             powerups, world_order, big_q_blocks, chest_items, remove_whistles,
             shuffle_airships, shuffle_hammer_bros, shuffle_spade_games,
             shuffle_toad_houses, hands_levels, disable_autoscroll,
-            include_beta_stages, swap_start_airship, limit_bro_movement,
+            include_beta_stages, mega_map: _, swap_start_airship, limit_bro_movement,
             remove_n_cards, card_speed_clear, skip_wand_cutscene,
             adjust_boss_hitboxes, koopaling_hits, boomboom_hits,
             hammer_vulnerable_koopalings, random_koopalings, early_sun,
@@ -587,6 +593,7 @@ impl Options {
             hands_levels: f.hands_levels(),
             disable_autoscroll: f.disable_autoscroll(),
             include_beta_stages: f.include_beta_stages(),
+            mega_map: false,
             swap_start_airship: f.swap_start_airship(),
             bro_battle_timer: f.bro_battle_timer(),
             limit_bro_movement: f.limit_bro_movement(),

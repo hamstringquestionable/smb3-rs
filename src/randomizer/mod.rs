@@ -250,11 +250,38 @@ fn randomize_inner(
         randomize::koopalings::random_koopalings(rom, &mut rng);
     }
 
+    // EXPERIMENT: fold the eight worlds into three pipe-linked super-worlds.
+    //
+    // **Before the catalog and after every QoL map pass.** The QoL patches
+    // (rocks, drawbridges, big-Q rooms, the W8 water page) carry fixed vanilla
+    // coordinates, so they must land on the vanilla grids and be carried
+    // across by the fold; the catalog and everything after it must see the
+    // folded layout. Folding here is what puts the builder in front of three
+    // ~100-column maps instead of eight small ones.
+    let mega = if options.mega_map {
+        rom.set_tag("mega_map");
+        // `randomize` returns `()`, and threading `Result` through it would
+        // change the public API (`generate_patch`, the WASM glue) — a
+        // deliberate change, not a side effect of an experiment flag. Until
+        // then a fold failure is a hard stop rather than a silently unfolded
+        // map, which would be far worse: the option would appear to work.
+        Some(randomize::mega_map::build(rom).expect("mega_map fold failed"))
+    } else {
+        None
+    };
+
     rom.set_tag("overworld/builder");
     // The map layout the rest of the pipeline addresses through. Read from the
-    // ROM rather than assumed, so a re-partitioned map (see `mega_map`) is
-    // described by whatever is actually there. Vanilla's eight worlds today.
-    let layout = randomize::rom_data::MapLayout::vanilla(rom);
+    // ROM rather than assumed, so a re-partitioned map is described by
+    // whatever is actually there.
+    let layout = match &mega {
+        Some(m) => {
+            let live: Vec<usize> =
+                randomize::mega_map::SUPER_WORLDS.iter().map(|s| s.slot).collect();
+            randomize::rom_data::MapLayout::read(rom, &live).remapped(&m.entry_remap)
+        }
+        None => randomize::rom_data::MapLayout::vanilla(rom),
+    };
     let mut catalog =
         randomize::node_catalog::NodeCatalog::build(rom, &layout, options.include_beta_stages);
     // Piranha shuffle: free the two W7 plant levels into the pool. The sprite
