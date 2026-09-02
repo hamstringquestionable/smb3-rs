@@ -189,7 +189,15 @@ fn randomize_inner(
     // repacked, since it permutes the picture pointers those steps rewrite).
     let credits_progression = if options.world_order {
         rom.set_tag("world_order");
-        Some(randomize::world_order::randomize(rom, &mut rng, options.world_count))
+        // Which worlds exist. A folded map has three, at slots 5-7; shuffling
+        // the full eight there builds a next-world table that sends the player
+        // from a live world into a dead one.
+        let live: Vec<u8> = if options.mega_map {
+            randomize::mega_map::SUPER_WORLDS.iter().map(|s| s.slot as u8).collect()
+        } else {
+            (0..8).collect()
+        };
+        Some(randomize::world_order::randomize(rom, &mut rng, options.world_count, &live))
     } else {
         None
     };
@@ -269,6 +277,13 @@ fn randomize_inner(
     } else {
         None
     };
+
+    // World order picked the starting world, and the fold has since stamped
+    // its own over the top — it runs later and cannot know. Give world order
+    // the last say; the fold's spawn rows are per-slot, so any group can start.
+    if let Some(progression) = &credits_progression {
+        rom.write_byte(randomize::world_order::WORLD_INIT_OPERAND, progression[0]);
+    }
 
     rom.set_tag("overworld/builder");
     // The map layout the rest of the pipeline addresses through. Read from the

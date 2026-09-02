@@ -2162,4 +2162,50 @@ mod tests {
         // And none are lost along the way.
         assert_eq!(folded.dest_to_world.len(), rom_data::DEST_TO_WORLD.len());
     }
+
+    /// With world order on, the progression visits only live worlds.
+    ///
+    /// The next-world table is indexed by `World_Num`, so shuffling the full
+    /// eight on a folded map sends the player from a live world into a dead
+    /// one — observed in play: start in world 6, clear it, arrive in world 4.
+    ///
+    /// #[ignore]d for runtime (twelve full randomizer runs, ~140s), not
+    /// because it is soft: reverting the live-set fix makes it fail.
+    #[test]
+    #[ignore]
+    fn world_order_chains_only_live_worlds() {
+        let Some(base) = vanilla() else { return };
+        let live: Vec<u8> = SUPER_WORLDS.iter().map(|s| s.slot as u8).collect();
+
+        for seed in 0..12u64 {
+            let mut rom = base.clone();
+            let opts = crate::Options { mega_map: true, world_order: true, ..Default::default() };
+            crate::randomizer::randomize(&mut rom, seed, &opts);
+
+            // Walk the chain the engine will walk: start world, then the
+            // next-world table until it points at itself.
+            let start = rom.read_byte(crate::randomize::world_order::WORLD_INIT_OPERAND);
+            assert!(live.contains(&start), "seed {seed}: starts in dead world {start}");
+
+            let mut at = start;
+            let mut seen = vec![at];
+            for _ in 0..8 {
+                let next = crate::randomize::world_order::next_world_of(&rom, at);
+                if next == at {
+                    break;
+                }
+                assert!(
+                    live.contains(&next),
+                    "seed {seed}: world {at} advances to dead world {next}"
+                );
+                at = next;
+                seen.push(at);
+            }
+            assert_eq!(
+                *seen.last().unwrap(),
+                *live.last().unwrap(),
+                "seed {seed}: chain {seen:?} does not end at the goal world"
+            );
+        }
+    }
 }

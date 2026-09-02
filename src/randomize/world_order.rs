@@ -28,6 +28,19 @@ const DEBUG_FLAG_STA_OFFSET: usize = 0x30CC7;
 /// CPU address of the lookup table (routine + 12 bytes).
 const TABLE_CPU: u16 = WORLD_ORDER_CPU + 12;
 
+/// File offset of the next-world lookup table, 8 bytes indexed by `World_Num`.
+#[cfg(test)]
+const TABLE_OFFSET: usize = FS_WORLD_ORDER + 12;
+
+/// Which world the progression advances to after `world`.
+///
+/// Reads the table this module wrote, so it describes the ROM rather than
+/// re-deriving the shuffle. A world that points at itself is the goal.
+#[cfg(test)]
+pub(crate) fn next_world_of(rom: &Rom, world: u8) -> u8 {
+    rom.read_byte(TABLE_OFFSET + world as usize)
+}
+
 /// File offset of the display-number table (8 bytes, right after next-world table).
 /// PRG030 is always mapped at $8000–$9FFF (MMC3 fixed bank in mode 1), so CPU $9F24
 /// is accessible from any bank configuration.
@@ -55,14 +68,22 @@ const STATUS_DISPLAY_OFFSET: usize = 0x350D7;
 /// (first entry is the starting world, last is always 7/Dark Land). With
 /// `world_count` < 7 this is shorter than 8 (unvisited worlds are omitted).
 /// Callers such as [`super::credits`] use it to align the ending montage.
-pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8> {
-    let world_count = world_count.clamp(1, 7) as usize;
+///
+/// `live` names the worlds that exist, ascending, with the goal world last.
+/// It is `0..=7` for a vanilla ROM; a folded map (`Options::mega_map`) has
+/// only three, and shuffling the full eight there produced a next-world table
+/// sending the player from a live world into a dead one — start in world 6,
+/// clear it, arrive in world 4.
+pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8, live: &[u8]) -> Vec<u8> {
+    // The last live world is the goal — it holds Bowser and the ending — so
+    // only the ones before it are shuffled, and the count cannot exceed them.
+    let (head, goal) = live.split_at(live.len() - 1);
+    let world_count = (world_count.clamp(1, 7) as usize).min(head.len());
 
-    // Build shuffled world order: shuffle worlds 0-6, take first world_count, append world 7
-    let mut pool: Vec<u8> = (0..7).collect();
+    let mut pool: Vec<u8> = head.to_vec();
     pool.as_mut_slice().shuffle(rng);
     let mut worlds: Vec<u8> = pool[..world_count].to_vec();
-    worlds.push(7);
+    worlds.push(goal[0]);
 
     // Patch the starting world: change `LDA #$00` operand to starting world.
     rom.write_byte(WORLD_INIT_OPERAND, worlds[0]);
@@ -78,8 +99,8 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8>
     for i in 0..world_count {
         next_world[worlds[i] as usize] = worlds[i + 1];
     }
-    // World 7 (last) -> 7 (stays, game ends before this matters)
-    next_world[7] = 7;
+    // The goal world points at itself; the game ends before it matters.
+    next_world[goal[0] as usize] = goal[0];
 
     // Patch the original INC World_Num site to JMP to our routine
     let routine_lo = (WORLD_ORDER_CPU & 0xFF) as u8;
@@ -143,6 +164,9 @@ pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8>
 
 #[cfg(test)]
 mod tests {
+    /// The vanilla eight, in order — the live set for every test here.
+    const ALL_WORLDS: [u8; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
+
     use super::*;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
@@ -168,7 +192,7 @@ mod tests {
     fn test_world_order_patches_inc() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng, 7);
+        randomize(&mut rom, &mut rng, 7, &ALL_WORLDS);
 
         // Original INC site should now be JMP + NOPs
         assert_eq!(rom.read_byte(WORLD_INC_OFFSET), 0x4C); // JMP
@@ -179,7 +203,7 @@ mod tests {
     fn test_world_order_table_valid() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng, 7);
+        randomize(&mut rom, &mut rng, 7, &ALL_WORLDS);
 
         // Read the lookup table and check three things: world 7 maps to
         // itself, every entry is a valid world number, and following the
@@ -210,7 +234,7 @@ mod tests {
     fn test_starting_world_patched() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng, 7);
+        randomize(&mut rom, &mut rng, 7, &ALL_WORLDS);
 
         // Starting world is the operand of `LDA #XX` at WORLD_INIT_OPERAND
         let start_world = rom.read_byte(WORLD_INIT_OPERAND);
@@ -233,7 +257,7 @@ mod tests {
     fn test_debug_flag_nopped() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng, 7);
+        randomize(&mut rom, &mut rng, 7, &ALL_WORLDS);
 
         // STA $0160 (Debug_Flag) should be NOPed out
         assert_eq!(
@@ -250,8 +274,8 @@ mod tests {
         let mut rng1 = ChaCha8Rng::seed_from_u64(99);
         let mut rng2 = ChaCha8Rng::seed_from_u64(99);
 
-        randomize(&mut rom1, &mut rng1, 7);
-        randomize(&mut rom2, &mut rng2, 7);
+        randomize(&mut rom1, &mut rng1, 7, &ALL_WORLDS);
+        randomize(&mut rom2, &mut rng2, 7, &ALL_WORLDS);
 
         assert_eq!(rom1.read_range(FS_WORLD_ORDER, 20), rom2.read_range(FS_WORLD_ORDER, 20),);
     }
@@ -260,7 +284,7 @@ mod tests {
     fn test_routine_structure() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng, 7);
+        randomize(&mut rom, &mut rng, 7, &ALL_WORLDS);
 
         let routine = rom.read_range(FS_WORLD_ORDER, 12);
         // LDX $0727
@@ -277,7 +301,7 @@ mod tests {
     fn test_display_table_covers_all_worlds() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng, 7);
+        randomize(&mut rom, &mut rng, 7, &ALL_WORLDS);
 
         let display = rom.read_range(DISPLAY_TABLE_OFFSET, 8);
 
@@ -312,7 +336,7 @@ mod tests {
         );
 
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng, 7);
+        randomize(&mut rom, &mut rng, 7, &ALL_WORLDS);
 
         // Map display: should now use LDX $0727; LDA $9F24,X; STA $0304; NOP
         let map_patch = rom.read_range(MAP_DISPLAY_OFFSET, 10);
@@ -333,7 +357,7 @@ mod tests {
     fn test_world_count_3() {
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng, 3);
+        randomize(&mut rom, &mut rng, 3, &ALL_WORLDS);
 
         let table = rom.read_range(FS_WORLD_ORDER + 12, 8);
 
