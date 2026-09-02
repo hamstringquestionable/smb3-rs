@@ -549,6 +549,12 @@ fn build_options(cli: &Cli) -> Options {
                 if cli.skip_rom_validation {
                     opts.skip_rom_validation = true;
                 }
+                // mega_map is an experiment and deliberately absent from the
+                // key, so --mega-map has to overlay on a decoded one — a key
+                // shared by a player has nothing to say about it either way.
+                if cli.mega_map {
+                    opts.mega_map = true;
+                }
                 opts
             }
             Err(e) => {

@@ -2069,36 +2069,65 @@ mod tests {
     fn mega_map_builds_completable_super_worlds() {
         let Some(base) = vanilla() else { return };
 
-        for seed in 0..8u64 {
-            let mut rom = base.clone();
-            let opts = crate::Options { mega_map: true, ..Default::default() };
-            crate::randomizer::randomize(&mut rom, seed, &opts);
+        // Flag arms, not just defaults. A folded map has to survive the
+        // options players actually turn on, and several of them touch the
+        // overworld directly — the start/airship swap rewrites spawn
+        // coordinates, `8s are Wild` adds W8 canoe edges, piranha shuffle
+        // frees W7's plant levels into the pool, troll pipes marks a pipe per
+        // world.
+        let arms: [(&str, crate::Options); 4] = [
+            ("default", crate::Options { mega_map: true, ..Default::default() }),
+            (
+                "swap_start_airship",
+                crate::Options { mega_map: true, swap_start_airship: true, ..Default::default() },
+            ),
+            (
+                "eights_wild + piranha",
+                crate::Options {
+                    mega_map: true,
+                    eights_are_wild: crate::Tri::On,
+                    piranha_shuffle: crate::PiranhaMode::On,
+                    ..Default::default()
+                },
+            ),
+            (
+                "beta stages",
+                crate::Options { mega_map: true, include_beta_stages: true, ..Default::default() },
+            ),
+        ];
 
-            for sw in &crate::randomize::mega_map::SUPER_WORLDS {
-                // Gates held open, matching `all_world_targets_reachable`,
-                // which walks the builder's grid — and the builder's
-                // convention is that locks are RESTORED to their open path
-                // tile, with the closed state living in a separate overlay.
-                // The written ROM stamps them shut, so walking it directly
-                // reports every goal behind a lock as stranded.
-                let grid = open_locks(&crate::randomize::mega_map::read_grid(&rom, sw.slot));
-                let pipes = crate::randomize::mega_map::teleports(&rom, sw.slot);
-                let walk = crate::randomize::map_walker::walk_map(&grid, &pipes, None, sw.slot);
+        for (arm, opts) in &arms {
+            for seed in 0..4u64 {
+                let mut rom = base.clone();
+                crate::randomizer::randomize(&mut rom, seed, opts);
 
-                assert!(
-                    !walk.nodes.is_empty(),
-                    "seed {seed} slot {}: no walk from the start",
-                    sw.slot
-                );
+                for sw in &crate::randomize::mega_map::SUPER_WORLDS {
+                    // Gates held open, matching `all_world_targets_reachable`,
+                    // which walks the builder's grid — and the builder's
+                    // convention is that locks are RESTORED to their open path
+                    // tile, with the closed state living in a separate overlay.
+                    // The written ROM stamps them shut, so walking it directly
+                    // reports every goal behind a lock as stranded.
+                    let grid = open_locks(&crate::randomize::mega_map::read_grid(&rom, sw.slot));
+                    let pipes = crate::randomize::mega_map::teleports(&rom, sw.slot);
+                    let walk = crate::randomize::map_walker::walk_map(&grid, &pipes, None, sw.slot);
 
-                let goal = crate::randomize::overworld_helpers::find_target(&grid, sw.slot);
-                let goal = goal
-                    .unwrap_or_else(|| panic!("seed {seed} slot {}: no goal on the map", sw.slot));
-                assert!(
-                    walk.nodes.contains(&goal),
-                    "seed {seed} slot {}: goal at {goal:?} is unreachable",
-                    sw.slot
-                );
+                    assert!(
+                        !walk.nodes.is_empty(),
+                        "{arm} seed {seed} slot {}: no walk from the start",
+                        sw.slot
+                    );
+
+                    let goal = crate::randomize::overworld_helpers::find_target(&grid, sw.slot);
+                    let goal = goal.unwrap_or_else(|| {
+                        panic!("{arm} seed {seed} slot {}: no goal on the map", sw.slot)
+                    });
+                    assert!(
+                        walk.nodes.contains(&goal),
+                        "{arm} seed {seed} slot {}: goal at {goal:?} is unreachable",
+                        sw.slot
+                    );
+                }
             }
         }
     }

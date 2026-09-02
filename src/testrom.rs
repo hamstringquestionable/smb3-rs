@@ -684,8 +684,18 @@ fn big_q_unused5(
     Ok(report)
 }
 
-/// Rewrite lock and/or water-gap tiles across all 8 world maps.
-fn open_map(rom: &mut Rom, remove_locks: bool, remove_gaps: bool) -> usize {
+/// Rewrite lock and/or water-gap tiles across every live world map.
+///
+/// Takes a layout rather than iterating the constants: on a ROM the randomizer
+/// has already folded (`Options::mega_map`), `MAP_TILE_GRIDS`' per-world
+/// offsets land at the wrong stride inside the merged grids, and this would
+/// scribble path tiles through the middle of the map.
+fn open_map(
+    rom: &mut Rom,
+    layout: &rom_data::MapLayout,
+    remove_locks: bool,
+    remove_gaps: bool,
+) -> usize {
     let mut swaps: Vec<(u8, u8)> = Vec::new();
     for tile in 0u8..=0xFF {
         let wanted = (remove_locks && rom_data::is_lock(tile))
@@ -699,15 +709,16 @@ fn open_map(rom: &mut Rom, remove_locks: bool, remove_gaps: bool) -> usize {
     }
 
     let mut changed = 0;
-    for world_idx in 0..8 {
-        let grid = rom_data::read_tile_grid(rom, world_idx);
+    for world_idx in layout.slots().collect::<Vec<_>>() {
+        let grid = layout.read_grid(rom, world_idx);
+        let w = layout.world(world_idx);
         for row in 0..grid.rows() {
             for col in 0..grid.cols {
                 let tile = grid.get(row, col);
                 if let Some(&(_, path)) = swaps.iter().find(|(lock, _)| *lock == tile) {
-                    // Grids are stored screen-major (144 bytes per screen), so
+                    // Grids are stored screen-major (144 bytes per page), so
                     // the offset is not `base + row * columns + col`.
-                    rom.write_byte(rom_data::map_tile_offset(world_idx, row, col), path);
+                    rom.write_byte(w.tile_offset(row, col), path);
                     changed += 1;
                 }
             }
@@ -932,14 +943,24 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     }
 
     // 4. Open the map up.
-    let opened = open_map(&mut rom, spec.remove_locks, spec.remove_gaps);
+    // Which worlds exist depends on whether the randomizer already folded the
+    // map: a folded ROM has three live slots at 5-7, a vanilla one has eight.
+    let map_layout = match &spec.base {
+        Base::Randomized { options, .. } if options.mega_map => {
+            let live: Vec<usize> =
+                crate::randomize::mega_map::SUPER_WORLDS.iter().map(|s| s.slot).collect();
+            rom_data::MapLayout::read(&rom, &live)
+        }
+        _ => rom_data::MapLayout::vanilla(&rom),
+    };
+    let opened = open_map(&mut rom, &map_layout, spec.remove_locks, spec.remove_gaps);
     if opened > 0 {
         let what = match (spec.remove_locks, spec.remove_gaps) {
             (true, true) => "locks + water gaps",
             (true, false) => "locks",
             _ => "water gaps",
         };
-        report.push(format!("removed {opened} {what} across all 8 maps"));
+        report.push(format!("removed {opened} {what} across {} map(s)", map_layout.world_count()));
     }
     if !spec.remove_locks {
         report.push("locks: kept".to_string());
@@ -986,11 +1007,10 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     //     the mirror image of this bug and fixed it by moving the merge to the
     //     *front*; the difference is that this module reads the vanilla tables
     //     rather than the merged ones.
-    if spec.mega_map {
-        if !matches!(spec.base, Base::Vanilla) {
-            return Err("--mega needs a vanilla base: it rewrites the map grids and pointer \n                               blocks the randomizer addresses through per-world constants."
-                .to_string());
-        }
+    // On a randomized base the randomizer performs the fold itself (see
+    // `Options::mega_map`), so there is nothing to do here — this pass exists
+    // to fold a *vanilla* base for engine-level playtesting.
+    if spec.mega_map && matches!(spec.base, Base::Vanilla) {
         if spec.place_all.is_some() || !spec.placements.is_empty() {
             return Err("--mega cannot be combined with --place: numbered-tile lookup reads \n                               WORLDS[0].entry_count, which the fold makes wrong (21 -> 157)."
                 .to_string());

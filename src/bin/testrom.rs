@@ -279,11 +279,16 @@ fn main() {
     }
 
     let base = if randomize {
-        let options = match &cli.flags {
+        let mut options = match &cli.flags {
             Some(key) => Options::from_flag_key(key)
                 .unwrap_or_else(|e| die(format!("invalid --flags value: {e}"))),
             None => Options::default(),
         };
+        // `mega_map` is not in the flag key, so it overlays a decoded one —
+        // the same treatment the cosmetic options get in the main CLI.
+        if cli.mega {
+            options.mega_map = true;
+        }
 
         let seed = match &cli.require {
             Some(spec) => {
