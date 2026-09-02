@@ -2,6 +2,7 @@
 //! mutates, and the phase unit itself.
 
 use super::*;
+use capacity::is_completion_unsafe;
 
 /// Everything true about one world mid-build. A phase receives this, changes
 /// it, and the next phase sees the result — there is no other channel.
@@ -107,21 +108,46 @@ impl WorldState {
         self.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count()
     }
 
-    /// Blanks a phase may claim for new content: blank tile, not `fixed`,
-    /// not already a slot, not a hammer-gated pocket, and not the row-7/8
-    /// completion-bit partner of existing content OR of a lock (rows 7 and 8
-    /// share one completion bit per column — a ROM mechanic; stacked
-    /// completable content marks each other beaten, and a lock consumes that
-    /// shared bit too). The lock barring only matters to the shaping moves —
-    /// the dumb placement phases all run before any lock exists.
-    pub(crate) fn legal_blanks(&self) -> Vec<Pos> {
-        let taken: HashSet<Pos> = self.slots.iter().map(|s| s.pos).collect();
-        let barred: HashSet<Pos> = self
-            .slots
+    /// Cells whose shared row-7/8 completion bit is already spoken for.
+    ///
+    /// Rows 7 and 8 share ONE bit per column, and `Map_Reload_with_Completions`
+    /// reads row 7 FIRST: only when row 7's tile matches nothing completable
+    /// does it drop to row 8 (`PRG012_A55C`). So whatever the engine catches
+    /// at (7,c) swallows the bit, and content at (8,c) is never marked, never
+    /// crumbled, and never removed on reload.
+    ///
+    /// Three things claim the bit:
+    /// * placed content — a level / fortress / spade / toad house slot;
+    /// * a lock, which is a `Map_Removable_Tiles` entry. That only matters to
+    ///   the shaping moves; every dumb placement phase runs before any lock
+    ///   exists;
+    /// * **map terrain the engine reads as completable**, which is not a slot
+    ///   at all and so was missed. W2's oasis (`TILE_POOL`, `$BF`) at (7,6) is
+    ///   the live case: it survives pickup as scenery and sits exactly on the
+    ///   page-2 `Tile_Attributes_TS0` threshold, so it swallowed the bit of
+    ///   whatever landed at (8,6) — a level that never showed beaten, a
+    ///   fortress that never crumbled, or a lock that grew back on reload.
+    pub(crate) fn row78_barred(&self) -> HashSet<Pos> {
+        let terrain = |from: usize, to: usize| {
+            (0..self.grid.cols)
+                .filter(move |&c| is_completion_unsafe(self.grid.get(from, c)))
+                .map(move |c| (to, c))
+        };
+        self.slots
             .iter()
             .filter_map(|s| row78_partner(s.pos))
             .chain(self.locks.iter().filter_map(|l| row78_partner(l.pos)))
-            .collect();
+            .chain(terrain(7, 8))
+            .chain(terrain(8, 7))
+            .collect()
+    }
+
+    /// Blanks a phase may claim for new content: blank tile, not `fixed`,
+    /// not already a slot, not a hammer-gated pocket, and not row-7/8 barred
+    /// (see [`WorldState::row78_barred`]).
+    pub(crate) fn legal_blanks(&self) -> Vec<Pos> {
+        let taken: HashSet<Pos> = self.slots.iter().map(|s| s.pos).collect();
+        let barred = self.row78_barred();
         let mut out = Vec::new();
         for r in 0..self.grid.rows() {
             for c in 0..self.grid.cols {

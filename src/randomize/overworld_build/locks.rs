@@ -503,7 +503,10 @@ fn rank_candidates(
 /// of completable content — a lock consumes that shared completion bit too.
 fn lock_candidates(state: &WorldState) -> Vec<(Pos, u8)> {
     let locked: HashSet<Pos> = state.locks.iter().map(|l| l.pos).collect();
-    let content: HashSet<Pos> = state.slots.iter().map(|s| s.pos).collect();
+    // Row-7/8 partners of content AND of completable terrain. A lock is a
+    // `Map_Removable_Tiles` entry, so it is redrawn from the shared bit on
+    // every map reload — one placed under W2's oasis would grow back.
+    let barred = state.row78_barred();
     // The W8 bridge approach is dealt, never ranked. Excluding it here is what
     // pins the count to the roll from both ends: a seed that rolled 0 keeps
     // the row intact, and a seed that rolled 2 cannot pick up a third span
@@ -519,9 +522,7 @@ fn lock_candidates(state: &WorldState) -> Vec<(Pos, u8)> {
             {
                 continue;
             }
-            if let Some(partner) = row78_partner(pos)
-                && content.contains(&partner)
-            {
+            if barred.contains(&pos) {
                 continue;
             }
             out.push((pos, tile));
