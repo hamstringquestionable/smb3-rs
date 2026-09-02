@@ -114,6 +114,7 @@ mod hammer_bros;
 mod islands;
 mod levels;
 mod locks;
+mod march;
 mod metrics;
 mod progression;
 mod route_choice;

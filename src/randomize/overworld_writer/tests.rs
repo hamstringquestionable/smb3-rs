@@ -703,7 +703,7 @@ fn test_hammer_bro_redistribution_written() {
 
 /// Rows 7 and 8 share ONE completion bit per column, and
 /// `Map_Reload_with_Completions` reads row 7 FIRST — it only drops to row 8
-/// (`PRG012_A55C`) when row 7's tile matches nothing completable. So anything
+/// (`PRG012_A55C`) when row 7's tile matched nothing completable. So anything
 /// the engine catches at (7,c) swallows the bit, and content at (8,c) is
 /// never marked beaten, never crumbled and never removed on reload.
 ///
