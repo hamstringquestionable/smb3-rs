@@ -9,6 +9,14 @@ deploys.
 
 ## [Unreleased]
 
+### Fixed
+
+- Wandering Hammer Bros are spread further apart on the world map. They were
+  being placed as close as two tiles, which is exactly one of their marching
+  steps — a bro could land on top of another, and the game makes both of them
+  march again, so a crowded world could keep marching for a very long time
+  before handing you back your turn.
+
 ## [1.3.0] - 2026-09-05
 
 ### Added
