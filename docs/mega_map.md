@@ -397,6 +397,29 @@ Still unverified: **`--world-count`** ("worlds before Dark Land, 1-7") now
 clamps to the two non-goal super-worlds, so values above 2 silently do nothing.
 Coherent, but it probably wants a clearer meaning here.
 
+### The start ↔ airship swap is suppressed under the fold
+
+Found in play, and it is the fifth instance of the same family — *something
+keyed to eight worlds*. `build_position_tables` frames the camera against
+`MAP_TILE_GRIDS[slot].columns`, the **vanilla** world that used to live in the
+slot (48 / 32 / 64), while the super-world actually there is 96 / 112 / 96 wide.
+Its `col.clamp(0, cols - 16)` therefore pins the camera up to four pages left
+of a swapped start. `W5_IDX`'s static-screen special case is keyed to slot 4,
+which no folded map uses, so all three groups take the smooth-scroll branch
+whether that suits them or not.
+
+`--mega-map` turns the option off rather than shipping that, and
+`start_airship_swap_is_suppressed_by_the_fold` pins both halves: the folded ROM
+keeps vanilla's `STA $0724,X` at `MAP_INIT_SCROLL_SITE`, and an unfolded one
+with the same option still patches it — so the test cannot pass by SAS having
+quietly stopped working everywhere.
+
+Skipping `pick_swaps` also skips its seven coin flips and shifts the stream.
+That is fine: no folded seed is comparable to an unfolded one anyway.
+
+The fix, when it is worth doing, is the one `open_map` already had: the four
+`FS_SAS_*` tables take a `MapLayout` instead of the vanilla constants.
+
 ## Picking this back up
 
 Everything is committed on `experiment/mega-map`; the tree is clean. Nothing is

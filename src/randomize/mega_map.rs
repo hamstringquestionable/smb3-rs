@@ -2054,6 +2054,51 @@ mod tests {
         }
     }
 
+    /// `--mega-map` turns the start ↔ airship swap off, and leaves the engine
+    /// untouched when it does.
+    ///
+    /// SAS frames the camera against `MAP_TILE_GRIDS[slot].columns` — the
+    /// *vanilla* world that used to live in the slot (48 / 32 / 64) rather
+    /// than the super-world actually there (96 / 112 / 96) — so its
+    /// `col.clamp(0, cols - 16)` pins the camera up to four pages left of a
+    /// swapped start. Rather than ship that, the option is suppressed until
+    /// the four `FS_SAS_*` tables take a `MapLayout`.
+    ///
+    /// Witnessed at `MAP_INIT_SCROLL_SITE`, which SAS overwrites with a `JSR`
+    /// to its seed helper: if the vanilla `STA $0724,X` is still there, none
+    /// of the scaffolding ran.
+    #[test]
+    fn start_airship_swap_is_suppressed_by_the_fold() {
+        let Some(base) = vanilla() else { return };
+        let vanilla_site: Vec<u8> =
+            (0..3).map(|i| base.read_byte(rom_data::MAP_INIT_SCROLL_SITE + i)).collect();
+
+        for seed in 0..4u64 {
+            let mut folded = base.clone();
+            crate::randomizer::randomize(
+                &mut folded,
+                seed,
+                &crate::Options { mega_map: true, swap_start_airship: true, ..Default::default() },
+            );
+            let site: Vec<u8> =
+                (0..3).map(|i| folded.read_byte(rom_data::MAP_INIT_SCROLL_SITE + i)).collect();
+            assert_eq!(site, vanilla_site, "seed {seed}: SAS scaffolding ran on a folded map");
+        }
+
+        // And the suppression is specific to the fold: unfolded, the same
+        // option still patches the site. Without this the assert above would
+        // pass just as happily if SAS had quietly stopped working entirely.
+        let mut unfolded = base.clone();
+        crate::randomizer::randomize(
+            &mut unfolded,
+            1,
+            &crate::Options { swap_start_airship: true, ..Default::default() },
+        );
+        let site: Vec<u8> =
+            (0..3).map(|i| unfolded.read_byte(rom_data::MAP_INIT_SCROLL_SITE + i)).collect();
+        assert_ne!(site, vanilla_site, "SAS did not patch Map_Init on an unfolded map");
+    }
+
     /// The full randomizer pipeline runs on a folded map and produces three
     /// completable super-worlds.
     ///
@@ -2071,15 +2116,22 @@ mod tests {
 
         // Flag arms, not just defaults. A folded map has to survive the
         // options players actually turn on, and several of them touch the
-        // overworld directly — the start/airship swap rewrites spawn
-        // coordinates, `8s are Wild` adds W8 canoe edges, piranha shuffle
-        // frees W7's plant levels into the pool, troll pipes marks a pipe per
-        // world.
+        // overworld directly — `8s are Wild` adds W8 canoe edges, piranha
+        // shuffle frees W7's plant levels into the pool, the hammer-bro /
+        // toad-house / spade shuffles all redistribute map content. The
+        // start ↔ airship swap is NOT an arm: the fold suppresses it (see
+        // `start_airship_swap_is_suppressed_by_the_fold`).
         let arms: [(&str, crate::Options); 4] = [
             ("default", crate::Options { mega_map: true, ..Default::default() }),
             (
-                "swap_start_airship",
-                crate::Options { mega_map: true, swap_start_airship: true, ..Default::default() },
+                "hammer bros + toad houses + spades",
+                crate::Options {
+                    mega_map: true,
+                    shuffle_hammer_bros: true,
+                    shuffle_toad_houses: true,
+                    shuffle_spade_games: true,
+                    ..Default::default()
+                },
             ),
             (
                 "eights_wild + piranha",

@@ -98,6 +98,22 @@ fn randomize_inner(
     let eights_are_wild = options.eights_are_wild.resolve(&mut maybe_rng);
     let antechamber_shuffle = options.antechamber_shuffle.resolve(&mut maybe_rng);
 
+    // EXPERIMENT: the start ↔ airship swap does not survive a folded map, so
+    // `--mega-map` turns it off rather than shipping a broken camera.
+    //
+    // `build_position_tables` frames the camera against
+    // `MAP_TILE_GRIDS[slot].columns`, which describes the *vanilla* world that
+    // used to live in that slot — 48, 32 and 64 columns for slots 5/6/7 —
+    // while the super-worlds actually there are 96, 112 and 96 wide. The
+    // clamp to `cols - 16` therefore pins the camera up to four pages left of
+    // a swapped start. (`W5_IDX`'s static-screen special case is keyed to a
+    // slot no folded map uses, too.) Fixing it means the four `FS_SAS_*`
+    // tables taking a `MapLayout` like `open_map` already does.
+    //
+    // Skipping `pick_swaps` also skips its seven coin flips, which shifts the
+    // stream — harmless, since no folded seed is comparable to an unfolded one.
+    let swap_start_airship = options.swap_start_airship && !options.mega_map;
+
     // QoL map patches run first so all subsequent overworld operations
     // (fortress redistribution, pipe shuffle, lock shuffle) see the final
     // map connectivity and store correct replacement tiles.
@@ -308,7 +324,7 @@ fn randomize_inner(
         randomize::piranha_rooms::clear_vanilla_plants(rom);
         catalog.release_map_objects();
     }
-    if options.swap_start_airship {
+    if swap_start_airship {
         randomize::start_airship_swap::pick_swaps(&mut catalog, &mut rng);
     }
     let pickup = randomize::overworld_pickup::pick_up(
