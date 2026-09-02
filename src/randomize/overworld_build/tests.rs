@@ -495,6 +495,32 @@ fn hammer_bro_redistribution_invariants() {
                 w.world_idx + 1,
                 eligible.saturating_sub(n)
             );
+            // Sprites are spread in the MARCH graph, not on the grid: a
+            // march is exactly 2 tiles, so a pair inside
+            // MIN_HB_SEPARATION_LEGS can land on each other and re-march,
+            // which is what makes a crowded world march for a very long time
+            // (see `march.rs`). Placement relaxes the floor rather than
+            // failing, so this is best-effort in principle — but 200 seeds
+            // produced zero violations, so a hard assert is the useful shape.
+            let blocked: HashSet<(usize, usize)> =
+                w.slots.iter().filter(|s| s.kind != SlotKind::HammerBro).map(|s| s.pos).collect();
+            for (i, a) in w.hb_sprites.iter().enumerate() {
+                let dist = super::march::march_distances(&w.grid, &blocked, a.grid_pos);
+                for b in &w.hb_sprites[i + 1..] {
+                    // Absent = the two can never reach each other, the best
+                    // outcome available.
+                    if let Some(&legs) = dist.get(&b.grid_pos) {
+                        assert!(
+                            legs >= super::march::MIN_HB_SEPARATION_LEGS,
+                            "seed {seed} W{}: HB sprites {:?} and {:?} are {legs} march legs apart",
+                            w.world_idx + 1,
+                            a.grid_pos,
+                            b.grid_pos
+                        );
+                    }
+                }
+            }
+
             // Every sprite sits on one of this world's HammerBro slot tiles.
             let hb_tiles: HashSet<(usize, usize)> =
                 w.slots.iter().filter(|s| s.kind == SlotKind::HammerBro).map(|s| s.pos).collect();
