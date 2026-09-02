@@ -11,6 +11,14 @@ deploys.
 
 ### Fixed
 
+- Levels, fortresses and locks no longer land on the map cell whose completion
+  bit is already taken by scenery. Rows 7 and 8 of a world map share one bit
+  per column, and the game checks row 7 first — so World 2's oasis, which sits
+  on row 7 and counts as scenery rather than a level, quietly swallowed the bit
+  for anything placed directly below it. A level there could never show beaten,
+  a fortress never crumbled, and a lock grew back every time you re-entered
+  the world.
+
 - Wandering Hammer Bros are spread further apart on the world map. They were
   being placed as close as two tiles, which is exactly one of their marching
   steps — a bro could land on top of another, and the game makes both of them

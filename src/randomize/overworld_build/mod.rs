@@ -159,7 +159,7 @@ pub(crate) use state::{Phase, PhaseReport, WorldState, row78_partner, run_schedu
 // Test-only measurement surface: the census/probe harness in the test
 // modules and the diagnostic dumps.
 #[cfg(test)]
-pub(crate) use capacity::{C1_FLOOR_BAND, roll_bridges_out};
+pub(crate) use capacity::{C1_FLOOR_BAND, is_completion_unsafe, roll_bridges_out};
 #[cfg(test)]
 pub(crate) use progression::{
     PipeClass, analyze_required_progression, classify_pipes, dump_required_progression,

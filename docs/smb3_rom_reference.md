@@ -3176,19 +3176,57 @@ matched by the special-tiles table (`$A447`), the page thresholds (`$A400`), or
 `Map_Removable_Tiles`.  If the row 7 tile IS caught, it gets replaced and the row 8
 tile is never reached.
 
+**The write side shares the bit for the same reason.** `Map_MarkLevelComplete`
+(PRG011 `$BA20`) resolves the player's row by scanning `Map_CompleteY` — `.byte
+$20, $30, $40, $50, $60, $70, $80`, **seven entries, rows 0-6 only** — and on no
+match falls through to `LDY #$07`. `World_Map_Y` for row 7 is `$90` and for row 8
+`$A0`, so *both* land on index 7 and `Map_CompleteBit[7]` = `$01`. Rows 0-6 each
+own a distinct bit (`$80 $40 $20 $10 $08 $04 $02`); `$01` is the only shared one
+on the whole map. That is what bounds the blast radius of any stray completion:
+a bit claimed at rows 0-6 can only ever affect the cell that claimed it.
+
+**What can claim a bit at all.** `Map_MarkLevelComplete` has exactly one caller,
+the level-clear FX in PRG011, and that block is gated at `PRG011_A9FE` on **the
+tile the player is standing on**: it must be in `Map_ForcePoofTiles` (toad house,
+spade, hand trap, dancing flower, alt toad house) or pass `CMP Tile_AttrTable+4,Y
+/ BGE` for its quadrant. A Hammer Bro rides a plain path tile (`$44/$47/$48/$4A`,
+quadrant 1, threshold `$67`), which fails that test — so **beating a Hammer Bro
+never marks a tile complete, claims no bit, and stamps no M/L**, wherever the bro
+was placed or marched to. Vanilla relies on this: W2 pointer entry 24 is a Hammer
+Bro at `(8, 6)`, directly under the oasis that owns column 6's `$01` bit.
+
+(The march does *try* to keep bros off enterable tiles — `PRG011_B415` sets
+`Map_March_Count` to `$40` for a 4-tile hop when the 2-tile landing is
+enterable-class — but it is best-effort: the +4 landing is never re-validated and
+an already-`$40` counter lands regardless. It is not a guarantee, and nothing
+here needs it to be.)
+
 Tiles that block the row 8 fallthrough (completion-unsafe at row 7):
 - Special: `$50, $E8, $E6, $BD, $E0`
 - Fortress: `$67, $EB` (→ `Map_Removable_Tiles` path)
 - Page thresholds: page0 ≥ `$03`, page1 ≥ `$67`, page2 ≥ `$BF`, page3 ≥ `$E9`
 - Removable: `$51, $52, $54, $67, $EB, $E4, $56, $9D`
 
-**Randomizer constraints:**
-- `find_blank_slots` skips row 8 positions where the existing row 7 tile is
-  completion-unsafe (prevents the builder from placing a level there).
-- `populate_sections` enforces that no two completable tiles (Level, Fortress, Pipe)
-  are orthogonally adjacent — this prevents both the row 7/8 bit collision and
-  visually cluttered numbered tiles.
-- `place_locks` skips row 7 candidates to avoid the `$01` bit collision with row 8.
+**Randomizer constraints:** one source of truth, `WorldState::row78_barred`
+(`overworld_build/state.rs`), read by `legal_blanks`, `lock_candidates` and the
+hammer-bro fill. It bars the partner cell of all **three** things that claim
+the shared bit:
+
+- placed content — a Level / Fortress / BonusGame / ToadHouse slot;
+- a lock, which is a `Map_Removable_Tiles` entry and so is redrawn from the bit
+  on every map reload;
+- **map terrain the engine reads as completable** — scenery, not a pointer
+  entry, which is how it went missed. W2's oasis (`TILE_POOL`, `$BF`) at
+  `(7, 6)` is the live case: it survives pickup and lands exactly on the page-2
+  `Tile_Attributes_TS0` threshold, so before 2026-09-01 seeds put a level or a
+  fortress at `(8, 6)` that could never show beaten, and a lock there would
+  have grown back on reload.
+
+`row78_completion_bit_is_never_double_claimed` (`overworld_writer/tests.rs`)
+asserts it on the *written* ROM, where terrain, content and locks are finally
+the same kind of thing — the view the engine has. The check needs both rows
+completion-unsafe: a Hammer Bro rides a plain path tile the pass never touches,
+and W6's `$EA` scenery band occupies both rows with no entry on either.
 
 **Vanilla FX positions:** Bridges ($56), water gaps ($9D), and sky gaps ($E4) should only
 appear at the 13 vanilla FX positions. Locks ($54) can be placed on any path tile.
