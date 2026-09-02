@@ -179,7 +179,7 @@ pub(super) fn pick_up_filtered(
     // Pick up the wandering Hammer Bro rewards so they can be reattached to the
     // redistributed encounters in the build/write phases.
     let hb_reward_pool = if flags.shuffle_hammer_bros {
-        rom_data::collect_hb_sprite_rewards(rom)
+        rom_data::collect_hb_sprite_rewards(rom, &catalog.layout.slots().collect::<Vec<_>>())
     } else {
         Vec::new()
     };

@@ -695,7 +695,7 @@ fn test_hammer_bro_redistribution_written() {
 
         // The 15 encounters' rewards are all present and non-zero (the
         // vanilla rewards are all real items, just redistributed).
-        let rewards = rom_data::collect_hb_sprite_rewards(&test_rom);
+        let rewards = rom_data::collect_hb_sprite_rewards(&test_rom, &(0..8).collect::<Vec<_>>());
         assert_eq!(rewards.len(), 15, "seed {seed}: {} HB rewards written != 15", rewards.len());
         assert!(rewards.iter().all(|&r| r != 0), "seed {seed}: a written HB reward is zero");
     }

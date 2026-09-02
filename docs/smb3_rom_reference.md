@@ -3502,15 +3502,31 @@ credits reorder (which permutes those same pointers).
 **Map-object reward table (`0x16190`)** is a flat block laid out **parallel to the
 map-object slot tables**: 9 bytes per world, indexed by the same slot index as
 `Map_List_Object_IDs`. `reward[world*9 + slot]` is the Global Item ID awarded for
-clearing the encounter at that slot. Non-encounter slots (Mario marker slot 0,
-canoe, W8 army) hold `0x00`. Every Hammer-Bro slot (obj id `0x03–0x06`) and both
-W7 piranha slots (obj id `0x07`) carry a nonzero reward. **The reward is keyed to
-`(world, slot)`, not to the level/`obj_ptr` under the sprite** — so relocating a
-map-object sprite to a different `(world, slot)` requires copying its reward byte
-to the destination slot, or the moved encounter takes the destination slot's
-vanilla reward. Vanilla HB rewards: W1 Leaf; W2 Star/Tanooki/Hammer; W3
-Tanooki/Leaf; W4 Mushroom/Leaf/FireFlower; W5 FireFlower/Star/Leaf; W6
-Tanooki/Mushroom/Leaf.
+clearing the encounter at that slot. Non-encounter slots (the HELP bubble at
+slot 0, canoe, W8 army) hold `0x00`. Every Hammer-Bro slot (obj id `0x03–0x06`)
+and both W7 piranha slots (obj id `0x07`) carry a nonzero reward. **The reward is
+keyed to `(world, slot)`, not to the level/`obj_ptr` under the sprite** — so
+relocating a map-object sprite to a different `(world, slot)` requires copying
+its reward byte to the destination slot, or the moved encounter takes the
+destination slot's vanilla reward. Vanilla HB rewards: W1 Leaf; W2
+Star/Tanooki/Hammer; W3 Tanooki/Leaf; W4 Mushroom/Leaf/FireFlower; W5
+FireFlower/Star/Leaf; W6 Tanooki/Mushroom/Leaf.
+
+Note the asymmetry that makes the copy easy to forget: position and id live in
+per-world sub-tables reached through master pointers (`Map_List_Object_*`),
+while the reward is this flat stride. Moving a sprite through
+`write_map_sprite` therefore moves two of the three and silently leaves the
+third — exactly what the mega-map fold did, giving carried Hammer Bros past
+slot 4 the destination world's vanilla `$00` (an encounter awarding nothing).
+
+**Reserved slots.** Slot 0 holds `MAPOBJ_HELP` (`$01`), the HELP bubble: pure
+decoration, since `PRG011_B657` returns from the map-object interaction handler
+as soon as it sees the id. Slot 1 is the airship's in W1–W7 — and **reads
+`$00` in every vanilla world**, because the engine populates it at runtime.
+That emptiness is a trap: a writer scanning for `id == 0x00` will happily park
+a Hammer Bro on top of the airship. W8 has no airship and may use slot 1.
+`MAPOBJ_TOTALINIT = $08` is a max *index*, not a count — `LDY #8 / DEY / BPL`
+initialises all nine slots.
 
 ---
 

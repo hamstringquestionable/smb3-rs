@@ -355,21 +355,37 @@ pub(crate) fn map_obj_reward_offset(world_idx: usize, slot: usize) -> usize {
     MAP_OBJ_REWARDS + world_idx * 9 + slot
 }
 
-/// First map-object slot usable for sprite placement in a world. Slot 0
-/// always holds a fixed non-HB marker (`id 0x01`) and is reserved; slot 1
-/// (the airship sprite slot) is reserved in W1-W7 but usable in W8, which has
-/// no airship.
-pub(crate) fn first_usable_map_obj_slot(world_idx: usize) -> usize {
-    if world_idx == W8_IDX { 1 } else { 2 }
+/// Map-object slots no sprite writer may claim, for reasons the slot's own
+/// contents do not show.
+///
+/// Two, and they are reserved for different reasons:
+///
+/// * **Slot 0** holds the decorative HELP bubble, and is reserved *while it
+///   does*. The mega-map fold spends it for an eighth usable slot, so the
+///   marker is read rather than assumed — "is slot 0 taken" is a question the
+///   ROM already answers, and nothing has to track who cleared it.
+/// * **Slot 1** is the airship's, in W1-W7. It reads as empty (`$00`) in every
+///   vanilla world because the engine populates it at runtime, which is
+///   exactly why the emptiness cannot be trusted: a Hammer Bro written here
+///   would share the slot with the airship. W8 has no airship and may use it.
+fn is_reserved_map_obj_slot(rom: &Rom, world_idx: usize, slot: usize) -> bool {
+    match slot {
+        0 => {
+            rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, 0)) == MAPOBJ_HELP
+        }
+        AIRSHIP_OBJ_SLOT => world_idx != W8_IDX,
+        _ => false,
+    }
 }
 
 /// Map-object slot indices that can host a redistributed Hammer Bro sprite in
-/// this world (see [`first_usable_map_obj_slot`] for the reserved low slots).
+/// this world (see [`is_reserved_map_obj_slot`] for what is held back).
 /// A slot qualifies if it is empty (`0x00`) or currently holds a Hammer Bro
 /// (`0x03-0x06`, which redistribution clears) — so the result is identical
 /// before and after [`clear_hb_sprites`].
 pub(crate) fn eligible_hb_map_slots(rom: &Rom, world_idx: usize) -> Vec<usize> {
-    (first_usable_map_obj_slot(world_idx)..9)
+    (0..9)
+        .filter(|&slot| !is_reserved_map_obj_slot(rom, world_idx, slot))
         .filter(|&slot| {
             let id = rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot));
             id == 0x00 || is_hb_sprite_id(id)
@@ -380,9 +396,14 @@ pub(crate) fn eligible_hb_map_slots(rom: &Rom, world_idx: usize) -> Vec<usize> {
 /// Collect the reward byte of every Hammer-Bro map-object sprite (id
 /// `0x03-0x06`) across all worlds, in `(world, slot)` order. These travel with
 /// the encounters when Hammer Bros are redistributed.
-pub(crate) fn collect_hb_sprite_rewards(rom: &Rom) -> Vec<u8> {
+///
+/// `live` names the world slots that actually exist. A dead slot's sprite
+/// sub-table is still there (only the map/pointer masters get re-aimed by a
+/// fold), so reading `0..8` on a re-partitioned map counts every carried
+/// encounter twice — once where it now lives and once where it came from.
+pub(crate) fn collect_hb_sprite_rewards(rom: &Rom, live: &[usize]) -> Vec<u8> {
     let mut rewards = Vec::new();
-    for world_idx in 0..8 {
+    for &world_idx in live {
         for slot in 0..9 {
             let id = rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot));
             if is_hb_sprite_id(id) {
@@ -410,7 +431,7 @@ pub(crate) fn clear_hb_sprites(rom: &mut Rom, world_idx: usize) {
 /// writer (which fills eligible slots from the bottom) and the reserved
 /// dynamic-spawn buffer.
 pub(crate) fn last_empty_map_obj_slot(rom: &Rom, world_idx: usize) -> Option<usize> {
-    (first_usable_map_obj_slot(world_idx)..9).rev().find(|&slot| {
+    (0..9).rev().filter(|&slot| !is_reserved_map_obj_slot(rom, world_idx, slot)).find(|&slot| {
         rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot)) == 0x00
     })
 }

@@ -648,6 +648,12 @@ pub(crate) const MAP_OBJ_XLOS_MASTER: usize = 0x16040;
 /// Master pointer table for Map_List_Object_IDs.
 pub(crate) const MAP_OBJ_IDS_MASTER: usize = 0x16050;
 
+/// Map-object id `$01`, the HELP bubble (`MAPOBJ_HELP` in the disassembly).
+/// Slot 0 of every vanilla world. Decoration only: `PRG011_B657` returns from
+/// the map-object interaction handler as soon as it sees this id, so the
+/// object is drawn and animated and does nothing else.
+pub(crate) const MAPOBJ_HELP: u8 = 0x01;
+
 /// Map object → pointer table entry linkage.
 /// (world_idx, object_slot, pointer_table_entry_idx)
 /// W7 piranha plants: stationary overworld sprites whose positions must

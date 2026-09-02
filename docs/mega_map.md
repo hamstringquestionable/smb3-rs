@@ -29,9 +29,9 @@ its vanilla layout; worlds are concatenated whole, in order, and the seams
 
 | Slot | Sources | Pages | Entries | Forts | Sprites |
 |---|---|---|---|---|---|
-| **6** (start) | W1 + W2 + W3 | 6 | 116 | 4 | 7 |
-| **7** | W4 + W5 + W6 | 7 | 129 | 7 | 7 of 10 |
-| **8** (Bowser) | W7 + W8 | 6 | 85 | 6 | 7 |
+| **6** (start) | W1 + W2 + W3 | 6 | 116 | 4 | 8 |
+| **7** | W4 + W5 + W6 | 7 | 129 | 7 | 8 of 10 |
+| **8** (Bowser) | W7 + W8 | 6 | 85 | 6 | 8 |
 
 ```
   mega map: 3 super-worlds, start in world 6, 10 surplus singletons removed
@@ -89,16 +89,39 @@ group simply gets a seven-byte row.
 
 ### The one thing that does not fit
 
-**Map-object sprite slots.** The per-world list is nine long with slot 0 a fixed
-marker and slot 1 the airship, so seven are usable — and W4+W5+W6 brings ten
-sprites. Three are dropped, and `per_world_tables_fit_their_groups` asserts
-exactly that number so the day it changes, the test says so.
+**Map-object sprite slots.** The per-world list is nine long, so W4+W5+W6's ten
+sprites do not fit however the reserved slots are counted.
+`per_world_tables_fit_their_groups` asserts the drop count, so the day it
+changes the test says so.
 
-Widening is still open and is not just a length change: the reward table is
-addressed as `MAP_OBJ_REWARDS + world * 9 + slot`, with the stride baked into
-the engine as well as into `rom_data`. Three lists of fourteen fit comfortably
-in the 72 bytes the eight nine-slot lists occupy, and RAM allows fourteen
-(`Map_Objects_*` are 14 bytes each), but both strides have to move together.
+**Slot 0's HELP bubble is spent to make it eight rather than seven.** Vanilla
+reserves two slots: slot 0 holds `MAPOBJ_HELP` (`$01`) and slot 1 the airship.
+The bubble is decoration and nothing else — `PRG011_B657` returns from the
+map-object interaction handler the moment it sees the id, so the object is
+drawn, animated, and never interacted with. Under a fold, where three source
+worlds compete for one nine-slot list, an animation is not worth a Hammer Bro.
+Group 7's drop goes 3 → 2.
+
+Only the fold spends it, so a normal seed keeps the bubble on every map. The
+mechanism is deliberately not a flag: `is_reserved_map_obj_slot` asks whether
+slot 0 *still holds the marker*, which is a question the ROM answers, so
+nothing has to track who cleared it.
+
+Slot 1 stays reserved, and the reason is worth writing down because it is
+invisible in the data: **every vanilla world's slot 1 reads `$00`**. The
+airship map object is populated at runtime, not from the table, so "empty" is
+exactly what a reserved slot looks like here — the first cut of this change
+freed slot 0 by lowering a `first_usable_map_obj_slot` bound, and the writer
+promptly parked a Fire Bro on top of the airship. W8 has no airship and may use
+the slot, which is the one case the old bound existed to express.
+
+Widening past eight is still open and is not just a length change: the reward
+table is addressed as `MAP_OBJ_REWARDS + world * 9 + slot`, with the stride
+baked into the engine as well as into `rom_data`. Three lists of fourteen fit
+comfortably in the 72 bytes the eight nine-slot lists occupy, and RAM allows
+fourteen (`Map_Objects_*` are 14 bytes each), but both strides have to move
+together. (`MAPOBJ_TOTALINIT = $08` is a max *index*, not a count —
+`LDY #8 / DEY / BPL` initialises all nine slots.)
 
 ## Completions are per-world, which is what makes 6/7/6 pages possible
 
@@ -232,13 +255,24 @@ Pipes must be filtered by `DEST_TO_WORLD`, not by coordinate range.
 Distinct from the "what next" list at the end — these are things the fold does
 imperfectly rather than work not started.
 
+- **Hammer Bro rewards travel with the sprite** (fixed). Position and id live
+  in per-world sub-tables reached through a master pointer; the reward byte is
+  a flat `MAP_OBJ_REWARDS + world * 9 + slot`. Carrying a sprite moved the
+  first two and not the third, so a bro landing past slot 4 inherited the
+  destination world's vanilla `$00` — an encounter that hands out nothing.
+  Reported from play as "hammer bros giving out empty items". The pool
+  `collect_hb_sprite_rewards` builds was polluted the same way, and now reads
+  only live world slots: dead slots keep their vanilla sprite sub-tables (only
+  the map/pointer masters get re-aimed), so `0..8` counted every carried
+  encounter twice.
 - **Airship sprite placement.** Each group keeps the destination world's own
   airship sprite (map-object slot 1), which sits at *that* world's vanilla
   castle rather than at the castle the fold kept (the rightmost). The castle
   tile and its pointer entry are right; the sprite is not.
-- **Three sprites dropped** in the W4+W5+W6 group — seven usable map-object
-  slots against ten. `per_world_tables_fit_their_groups` asserts the number, so
-  the day it changes the test says so.
+- **Two sprites dropped** in the W4+W5+W6 group — eight usable map-object slots
+  against ten, after slot 0's HELP bubble was reclaimed.
+  `per_world_tables_fit_their_groups` asserts the number, so the day it changes
+  the test says so.
 - **The warp zone** is left in place, its destinations naming worlds 1-8.
 
 ## Phase 2 (done): the layout is read from the ROM, not hardcoded
@@ -437,8 +471,8 @@ The next things, roughly in order of value:
    `Map_Region` latch (a spare WRAM byte holding the current page, with the
    eight-wide dispatch tables re-indexed off it) is the fix, and it is mostly
    same-size operand swaps.
-3. **Three sprites dropped** in the W4+W5+W6 group: seven usable map-object
-   slots against ten sprites. Widening needs the reward stride
+3. **Two sprites dropped** in the W4+W5+W6 group: eight usable map-object slots
+   against ten sprites. Widening past eight needs the reward stride
    (`MAP_OBJ_REWARDS + world * 9 + slot`) moved in the engine *and* `rom_data`
    together.
 4. **Re-measure the C1 floors.** The 11/14/17 band was derived for maps of

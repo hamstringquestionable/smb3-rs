@@ -44,8 +44,9 @@
 //! | Pipe pairs | 24 | 5 repurposed as links | 19 |
 //!
 //! The one resource that does *not* work out is map-object sprite slots: the
-//! per-world list is nine long with slots 0 and 1 reserved, so seven are
-//! usable, and W4+W5+W6 brings nine hammer bros. See [`carry_map_objects`].
+//! per-world list is nine long and slot 1 is the airship, so eight are usable
+//! — while W4+W5+W6 brings ten sprites. The fold spends slot 0's HELP bubble
+//! to get that eighth. See [`carry_map_objects`].
 
 use std::collections::HashSet;
 
@@ -165,7 +166,24 @@ const FX_WORLD_BASE: usize = 0x148A8;
 /// Map-object list length per world, and the reserved slots at its head:
 /// slot 0 is a fixed marker, slot 1 the airship sprite.
 const MAP_OBJ_SLOTS: usize = 9;
-const MAP_OBJ_RESERVED: usize = 2;
+/// The airship sprite's slot — the only one the fold keeps back. Slot 0's
+/// `MAPOBJ_HELP` bubble is spent (see [`USABLE_MAP_OBJ_SLOTS`]).
+const AIRSHIP_MAP_OBJ_SLOT: usize = 1;
+
+/// Slots the fold may fill, in fill order.
+///
+/// Vanilla reserves two: slot 0 holds `MAPOBJ_HELP` (`$01`) and slot 1 the
+/// airship. The HELP bubble is **decoration only** — `PRG011_B657` returns
+/// from the map-object interaction handler the moment it sees the id, so the
+/// object is drawn and animated and does nothing else. Under a fold, where
+/// three source worlds' sprites compete for one nine-slot list, an animation
+/// is not worth a Hammer Bro: spending it takes the W4+W5+W6 group from three
+/// dropped sprites to two.
+///
+/// Only the fold spends it. A normal seed keeps the bubble on every map, and
+/// `is_reserved_map_obj_slot` decides which world is which by reading the
+/// marker rather than being told.
+const USABLE_MAP_OBJ_SLOTS: [usize; 8] = [0, 2, 3, 4, 5, 6, 7, 8];
 
 // --- Tiles --------------------------------------------------------------
 
@@ -1295,8 +1313,9 @@ fn carry_fortress_fx(rom: &mut Rom, plan: &Plan) -> Vec<usize> {
 ///
 /// Returns `(wanted, placed)` per group. **They do not always match**, and
 /// this is the one resource the fold cannot make fit: the per-world list is
-/// nine slots, slot 0 is a fixed marker and slot 1 the airship sprite, so
-/// seven are usable — while W4+W5+W6 brings nine hammer bros between them.
+/// nine slots and slot 1 is the airship sprite, so eight are usable — while
+/// W4+W5+W6 brings ten sprites between them. Slot 0's HELP bubble is the
+/// eighth, reclaimed here; see [`USABLE_MAP_OBJ_SLOTS`].
 ///
 /// The list length is not freely adjustable, because the reward table is
 /// addressed as `MAP_OBJ_REWARDS + world * 9 + slot`, with the stride baked
@@ -1304,23 +1323,32 @@ fn carry_fortress_fx(rom: &mut Rom, plan: &Plan) -> Vec<usize> {
 /// lists of fourteen fit comfortably in the 72 bytes the eight nine-slot
 /// lists occupy, and RAM allows fourteen (`Map_Objects_*` are 14 bytes each),
 /// but the stride has to move in both places at once.
+///
+/// **The reward byte travels with the sprite.** Position and id live in
+/// per-world sub-tables reached through a master pointer, but the reward is a
+/// flat `MAP_OBJ_REWARDS + world * 9 + slot` — a different address space, so
+/// moving a sprite does not move what it hands out. Leaving it behind gave a
+/// carried Hammer Bro whatever the destination slot happened to hold in
+/// vanilla, which past slot 4 is `$00`: an encounter that awards nothing.
 fn carry_map_objects(rom: &mut Rom, plan: &Plan) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
 
     for (group, sw) in SUPER_WORLDS.iter().enumerate() {
-        // (grid_row, grid_col, id) on the merged map.
-        let mut wanted: Vec<(usize, usize, u8)> = Vec::new();
+        // (grid_row, grid_col, id, reward) on the merged map.
+        let mut wanted: Vec<(usize, usize, u8, u8)> = Vec::new();
         for &w in sw.sources {
             // From slot 2 up. Slot 0 is the fixed marker and slot 1 the
             // airship, both of which the destination world already has.
-            for slot in MAP_OBJ_RESERVED..MAP_OBJ_SLOTS {
+            for slot in (0..MAP_OBJ_SLOTS).filter(|&s| s != AIRSHIP_MAP_OBJ_SLOT) {
                 let read =
                     |master| rom.read_byte(rom_data::map_obj_slot_offset(rom, master, w, slot));
                 let id = read(rom_data::MAP_OBJ_IDS_MASTER);
                 // Every sprite, not only hammer bros: W3's canoe (`0x10`) is
                 // the only way onto its third page, and W7's piranhas
-                // (`0x07`) are tied to pointer entries the links move.
-                if id == 0x00 {
+                // (`0x07`) are tied to pointer entries the links move. The
+                // HELP bubble is the one thing not carried — that is the slot
+                // being reclaimed.
+                if id == 0x00 || id == rom_data::MAPOBJ_HELP {
                     continue;
                 }
                 let page = read(rom_data::MAP_OBJ_XHIS_MASTER) as usize;
@@ -1331,21 +1359,26 @@ fn carry_map_objects(rom: &mut Rom, plan: &Plan) -> Vec<(usize, usize)> {
                 // `write_map_sprite` re-derives both from grid coordinates.
                 let row = (read(rom_data::MAP_OBJ_YS_MASTER) as usize / 16).saturating_sub(2);
                 let col = dest * 16 + read(rom_data::MAP_OBJ_XLOS_MASTER) as usize / 16;
-                wanted.push((row, col, id));
+                let reward = rom.read_byte(rom_data::map_obj_reward_offset(w, slot));
+                wanted.push((row, col, id, reward));
             }
         }
 
-        let capacity = MAP_OBJ_SLOTS - MAP_OBJ_RESERVED;
-        let placed = wanted.len().min(capacity);
-        for (i, &(row, col, id)) in wanted.iter().take(placed).enumerate() {
-            rom_data::write_map_sprite(rom, sw.slot, MAP_OBJ_RESERVED + i, row, col, id);
+        let placed = wanted.len().min(USABLE_MAP_OBJ_SLOTS.len());
+        for (&slot, &(row, col, id, reward)) in USABLE_MAP_OBJ_SLOTS.iter().zip(wanted.iter()) {
+            rom_data::write_map_sprite(rom, sw.slot, slot, row, col, id);
+            rom.write_byte(rom_data::map_obj_reward_offset(sw.slot, slot), reward);
         }
-        // Blank the tail, so a sprite from the destination world's own vanilla
-        // list does not survive into the merged one.
-        for slot in (MAP_OBJ_RESERVED + placed)..MAP_OBJ_SLOTS {
+        // Blank the rest, so a sprite from the destination world's own vanilla
+        // list does not survive into the merged one — reward included, or a
+        // stale one would be handed to whatever the builder puts there later.
+        // Slot 0 is blanked here too when the group brought nothing to fill
+        // it, which is what retires the HELP bubble.
+        for &slot in &USABLE_MAP_OBJ_SLOTS[placed..] {
             let off =
                 rom_data::map_obj_slot_offset(rom, rom_data::MAP_OBJ_IDS_MASTER, sw.slot, slot);
             rom.write_byte(off, 0x00);
+            rom.write_byte(rom_data::map_obj_reward_offset(sw.slot, slot), 0x00);
         }
 
         out.push((wanted.len(), placed));
@@ -1780,12 +1813,25 @@ mod tests {
         }
 
         // The one that does not fit: map-object sprite slots. Recorded here
-        // so the day it is widened, this test says so.
+        // so the day it is widened, this test says so. Was three before the
+        // fold reclaimed slot 0's HELP bubble for an eighth usable slot.
         let dropped: usize = report.slots.iter().map(|s| s.sprites_wanted - s.sprites_placed).sum();
         assert_eq!(
-            dropped, 3,
-            "expected exactly the three W4+W5+W6 sprites the nine-slot list cannot hold"
+            dropped, 2,
+            "expected exactly the two W4+W5+W6 sprites the nine-slot list cannot hold"
         );
+
+        // And the bubble really is gone from every group, rather than the
+        // count having moved for some other reason.
+        for sw in &SUPER_WORLDS {
+            let id = rom.read_byte(rom_data::map_obj_slot_offset(
+                &rom,
+                rom_data::MAP_OBJ_IDS_MASTER,
+                sw.slot,
+                0,
+            ));
+            assert_ne!(id, rom_data::MAPOBJ_HELP, "slot {} still holds the HELP bubble", sw.slot);
+        }
     }
 
     /// Mario spawns on the start tile, not on whatever row the destination
