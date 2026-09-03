@@ -3090,6 +3090,123 @@ TILE_ALTFORT, TILE_ALTLOCK, TILE_LOCKHORZ ($56), TILE_RIVERVERT`. These tiles ar
 during `Map_Reload_with_Completions` and replaced with their `Map_RemoveTo_Tiles`
 counterparts when the corresponding completion bit is set.
 
+### World transitions and per-world map state
+
+*(Researched 2026-09-03 for the world-maze experiment. Every address below was
+verified against the ROM, not read off the disassembly's labels.)*
+
+**A world map is never saved — it is recomputed.** Three things combine:
+
+| Piece | Where | Mutable? |
+|---|---|---|
+| The layout | ROM, PRG012 grid data | no |
+| The working copy | `Tile_Mem` `$6000-$794F` | rebuilt on every map load |
+| The delta | `Map_Completions` `$7D00-$7D7F` | the only persistent record |
+
+`Map_Reload_with_Completions` (PRG012) decompresses the world's grid from ROM
+into `Tile_Mem`, then replays the bitfield over the top: for each set bit it
+swaps the tile at that cell via `Map_Removable_Tiles` → `Map_RemoveTo_Tiles`.
+Since the lock and fortress tiles are in that table, **setting a completion bit
+is sufficient to make a lock open or a fortress crumble** — no tile write
+needed. That is how vanilla persists both across an ordinary map reload.
+
+Consequence for any "return to a world" feature: retaining a world's map state
+is exactly retaining its 128 bytes of `Map_Completions`. Nothing else about the
+map is state.
+
+**The bitfield walks BOTH halves.** The loop runs to `CMP #$80` — all 128 bytes,
+Mario's and Luigi's — and folds the column index with `AND #$30`, which aliases
+Luigi's `$40-$7F` bytes onto the same four screens as Mario's. The disassembly
+says so at the fold:
+
+```asm
+	; Note: Loop goes through both Players sets of completion bits, but
+	; this AND will basically cause 2 passes across the map...
+	AND #$30
+```
+
+So Luigi's half is **not** private storage even in a one-player game: whatever is
+in it is drawn onto the map.
+
+**Who writes which half.** Per-run progress goes to the current player only;
+*permanent map alterations* are mirrored to both, so they survive a game over:
+
+| Writer | Halves | Disassembly comment |
+|---|---|---|
+| Level clear, `PRG011_BA67` | current player | — |
+| Fortress clear, `PRG011_BA7C` | **both** | "Fortress only... mark complete on both Players (so it remains after Game Over)" |
+| Lock bust / bridge build, `MO_DoFortressFX` | **both** | "Mark lock busted / bridge built (Luigi)" |
+| Rock break, `Map_SetCompletion_By_Poof` (PRG026) | **both** | "Rock removal sets completion bit for BOTH Players!" |
+
+`PRG030_9314` then ANDs the two halves on game over, which is precisely what
+keeps forts and locks broken while wiping plain level clears.
+
+**There is exactly one world-init entry, and it wipes the bitfield.**
+`PRG030_84A0` (file `0x3C4B0`), reached only from the airship-cleared path
+(`INC World_Num`) and the warp zone (`World_Num = Map_Warp_PrevWorld`). It never
+returns — it falls through into `WorldMap_Loop`. Its first act maps PRG010 into
+`$C000` and PRG011 into `$A000`; then, at CPU `$84CD` (file `0x3C4DD`), ten
+bytes and three whole instructions:
+
+```asm
+	LDY #$7F
+	LDA #$00
+	STA Map_Completions,Y
+	DEY
+	BPL -6
+```
+
+Nothing branches into the middle of it, and PRG010 is already mapped when it
+runs, so it is a clean hook site for anything that wants to bank the state
+instead of destroying it. `Map_Reload_with_Completions` is called much later in
+the same routine, so a restore placed here is picked up with no redraw work.
+
+**Fortress FX addressing** (PRG010, all confirmed):
+
+| Address | Meaning |
+|---|---|
+| `$C878` | `FortressFX_W1` — packed per-world rows of FX slot numbers |
+| `$C898` | `FortressFXBase_ByWorld` — byte offset of each world's row |
+| `$C7DF` | `FortressFX_MapCompIdx` — `(column, row bit)` per slot |
+| `$C8E3` | resolved slot stored into `Map_DoFortressFX` (`$0745`) |
+| `$C8E6` | 4 bytes, `LDA #$01 / STA Map_ClearLevelFXCnt` — the standard hook site |
+| `$C8EA` | resume point: full animation |
+| `$C952` | data-only path (map data + `Map_Completions`, no VRAM) |
+| `$C9C9` | **already-busted exit** — zeroes `$0745` and `$20`, `INC Map_Operation`, `JMP $CF29`. The clean "nothing to do" bail-out. |
+
+Lookup is `FortressFX_W1[FortressFXBase_ByWorld[world] + ordinal - 1]`, where the
+ordinal is the high nibble of the fortress's Boom-Boom Y byte. Rows are packed,
+not strided — vanilla's bases happen to be `world * 4`, which is a coincidence
+of vanilla's four-per-world allocation, not a rule.
+
+**Other map RAM confirmed this session:** `Pad_Holding` = `$17`, `Pad_Input` =
+`$18` (zero page), `World_Num` = `$0727`, `Map_NoLoseTurn` = `$796E`,
+`Map_WasInPipeway` = `$7973`, `MO_NormalMoveEnter` (map operation `$D`, the
+normal standing-on-the-map state) at CPU `$CDCA` = file `0x14DDA`.
+
+### Free SRAM
+
+`$6000-$7FFF` is MMC3 work RAM. Beyond the named variables, the disassembly
+declares **384 bytes** as bare anonymous `.ds` runs. Largest first:
+
+| Range | Bytes |
+|---|---|
+| `$7A73-$7ADF` | 109 |
+| `$7997-$79FF` | 105 |
+| `$7BD0-$7C1F` | 80 |
+| `$7E9E-$7EB5` | 24 |
+| *(15 smaller runs)* | 66 |
+
+The top two are each referenced **nowhere** in the disassembly but their own
+declaration, and unlike the context-reused zero-page blocks — which the
+disassembly marks with explicit `.org`s — this is plain untouched SRAM. Both are
+in use by `world_persist` on `experiment/world-maze` and behave as free.
+
+Named-but-unused entries are additional candidates, notably `THouse_OpenByID`
+(`$7F2E-$7F3D`, 16 bytes, "UNUSED would keep track of chests opened for a given
+Toad House ID") and `Map_Unused7EEA`.
+
+
 **CRITICAL — Gap tile selection must match path orientation:**
 The `Map_RemoveTo_Tiles` replacements are hardcoded: `$54` → `$46` (vertical path),
 `$56` → `$45` (horizontal path). When placing an obstacle on the map, the gap tile
