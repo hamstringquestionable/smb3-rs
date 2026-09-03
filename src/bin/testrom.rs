@@ -103,6 +103,11 @@ struct Cli {
     #[arg(long)]
     cross_world_locks: bool,
 
+    /// World-maze POC: a pipe taken in World 1 comes out on World 2's map.
+    /// Combine with --place <pipe> <tile>. Implies --world-persist.
+    #[arg(long)]
+    pipe_portal: bool,
+
     /// Leave lock tiles in place (default: removed).
     #[arg(long)]
     keep_locks: bool,
@@ -413,6 +418,7 @@ fn main() {
         walk_skip_conflicts: cli.walk_skip_conflicts,
         world_persist: cli.world_persist,
         cross_world_locks: cli.cross_world_locks,
+        pipe_portal: cli.pipe_portal,
         remove_locks: !cli.keep_locks,
         remove_gaps: !cli.keep_gaps,
         starting_items,

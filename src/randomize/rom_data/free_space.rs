@@ -196,6 +196,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "MaCobra NGO routine (macobra.rs NGO_ROUTINE_OFFSET)",
     ),
     fs(0x17D70, 107, &["march_veto"], "landing-veto trampoline + per-world coord registry"),
+    fs(
+        0x17DDB,
+        32,
+        &["world_persist"],
+        "world_persist POC: pipe portal, W1 pipe exits into W2 (32 reserved, 27 used)",
+    ),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     fs(0x0382A, 23, &["koopalings"], "koopa_hits: subroutine + defeat JMP + threshold table"),
     fs(0x03841, 13, &["koopalings"], "koopa_collision_guard: skip collision bitmap during invuln"),
@@ -386,6 +392,8 @@ pub(crate) const FS_WORLD_PERSIST_JUMP: usize = 0x155EC; // 40 reserved, 35 used
 pub(crate) const FS_CROSS_WORLD_FX: usize = 0x15614; // 56 reserved, 47 used
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_CROSS_WORLD_TABLE: usize = 0x1564C; // 24 reserved, 17 used
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const FS_PIPE_PORTAL: usize = 0x17DDB; // 32 reserved, 27 used
 
 pub(crate) const FS_CANOE_RESPAWN: usize = 0x15DF0; // 35 bytes
 pub(crate) const FS_MAP_WARP: usize = 0x15E13; // 162 bytes (CPU $DE03)
@@ -975,6 +983,7 @@ mod free_space_tests {
             (FS_WORLD_PERSIST_JUMP, "FS_WORLD_PERSIST_JUMP"),
             (FS_CROSS_WORLD_FX, "FS_CROSS_WORLD_FX"),
             (FS_CROSS_WORLD_TABLE, "FS_CROSS_WORLD_TABLE"),
+            (FS_PIPE_PORTAL, "FS_PIPE_PORTAL"),
             (FS_CANOE_RESPAWN, "FS_CANOE_RESPAWN"),
             (FS_CANOE_SUMMON, "FS_CANOE_SUMMON"),
             (FS_CANOE_BACKUP, "FS_CANOE_BACKUP"),

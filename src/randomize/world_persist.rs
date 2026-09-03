@@ -80,7 +80,8 @@
 use crate::rom::Rom;
 
 use super::rom_data::{
-    self, FS_CROSS_WORLD_FX, FS_CROSS_WORLD_TABLE, FS_WORLD_PERSIST_JUMP, FS_WORLD_PERSIST_SWAP,
+    self, FS_CROSS_WORLD_FX, FS_CROSS_WORLD_TABLE, FS_PIPE_PORTAL, FS_WORLD_PERSIST_JUMP,
+    FS_WORLD_PERSIST_SWAP,
 };
 
 // CPU addresses of the two routines. PRG010 is mapped at $C000 whenever
@@ -91,6 +92,9 @@ const SWAP_COMPLETIONS_CPU: u16 = (0xC000 + FS_WORLD_PERSIST_SWAP - 0x14010) as 
 const WORLD_JUMP_CHECK_CPU: u16 = (0xC000 + FS_WORLD_PERSIST_JUMP - 0x14010) as u16;
 const CROSS_WORLD_FX_CPU: u16 = (0xC000 + FS_CROSS_WORLD_FX - 0x14010) as u16;
 const SLOT_WORLD_CPU: u16 = (0xC000 + FS_CROSS_WORLD_TABLE - 0x14010) as u16;
+// PRG011 is mapped at $A000 during the map, and `PRG011_ABBE` is its own code,
+// so CPU = $A000 + (file - 0x16010).
+const PIPE_PORTAL_CPU: u16 = (0xA000 + FS_PIPE_PORTAL - 0x16010) as u16;
 
 // --- Engine symbols -----------------------------------------------------
 //
@@ -256,7 +260,7 @@ fn slot_world_table() -> Vec<u8> {
 /// `cross_world_locks` additionally swaps World 1's and World 2's fortress FX
 /// row entries, so each world's fortress opens the *other* world's lock, and
 /// installs the routine that routes the completion into the right world's bank.
-pub(crate) fn apply(rom: &mut Rom, cross_world_locks: bool) {
+pub(crate) fn apply(rom: &mut Rom, cross_world_locks: bool, pipe_portal: bool) {
     rom.push_tag("world_persist");
 
     rom.write_range(FS_WORLD_PERSIST_SWAP, &SWAP_COMPLETIONS);
@@ -282,6 +286,9 @@ pub(crate) fn apply(rom: &mut Rom, cross_world_locks: bool) {
 
     if cross_world_locks {
         apply_cross_world_locks(rom);
+    }
+    if pipe_portal {
+        apply_pipe_portal(rom);
     }
 
     rom.pop_tag();
@@ -409,6 +416,96 @@ fn apply_cross_world_locks(rom: &mut Rom) {
     let w2_row = rom.read_byte(rom_data::FX_WORLD_TABLE + 4);
     rom.write_byte(rom_data::FX_WORLD_TABLE, w2_row);
     rom.write_byte(rom_data::FX_WORLD_TABLE + 4, w1_row);
+}
+
+// --- Pipe portal (POC round 3) ---------------------------------------------
+
+/// `Map_WasInPipeway` — set by `ObjInit_PipewayCtlr` when you enter a pipe
+/// transit room, and read on the way back out.
+const MAP_WAS_IN_PIPEWAY: u16 = 0x7973;
+
+/// Hook site inside `PRG011_ABBE` (CPU `$ABC2` = file 0x16BD2).
+///
+/// A map pipe is not a warp: pressing A on it enters a one-screen room with a
+/// pipe at each end, and `OBJ_PIPEWAYCONTROLLER` (`$25`) inside that room
+/// writes your map arrival coordinates from `PipewayCtlr_MapXHi/MapX/MapY` —
+/// which this project already writes as `PIPE_MAP_XHI/X/Y`, the same 24-entry
+/// tables. Walk across, take the far pipe, and you come out somewhere else on
+/// the map.
+///
+/// `PRG011_ABBE` is where the map finishes that return, and it is the single
+/// place `Map_WasInPipeway` is consumed:
+///
+/// ```text
+/// $ABBE   A5 20       LDA Map_ClearLevelFXCnt
+///         D0 0A       BNE $ABCC              ; poof still playing
+/// $ABC2   A9 00       LDA #$00
+///         8D 73 79    STA Map_WasInPipeway   ; <- displaced, two instructions
+///         A9 08       LDA #$08
+///         8D 29 07    STA Map_Operation
+/// ```
+///
+/// Hooking here rather than at `MO_NormalMoveEnter` is forced: the flag is
+/// cleared right here, so by the time map operation `$D` runs it reads zero.
+///
+/// It is also why a pipe stays re-enterable — `PRG011_AB61` tests the same flag
+/// and skips the mark-complete pass entirely when it is set, so a transit room
+/// never counts as a cleared level.
+const PIPE_HOOK_OFFSET: usize = 0x16BD2;
+const PIPE_HOOK_LEN: usize = 5;
+
+/// Vanilla bytes at [`PIPE_HOOK_OFFSET`].
+#[cfg(test)]
+#[rustfmt::skip]
+const PIPE_HOOK_VANILLA: [u8; PIPE_HOOK_LEN] = [
+    0xA9, 0x00,             // LDA #$00
+    0x8D, 0x73, 0x79,       // STA Map_WasInPipeway
+];
+
+/// Come out of a pipe in another world.
+///
+/// The POC's whole claim: a transit room's far pipe can deposit you on a
+/// different world's map. World 1 has no pipe destinations of its own
+/// (`DEST_TO_WORLD` gives it none), so in a ROM with one placed there, any
+/// pipeway return while `World_Num` is 0 is that portal — no table needed.
+///
+/// Falls through to the two displaced instructions when it is an ordinary pipe,
+/// so every vanilla pipe in W2-W8 behaves exactly as before.
+///
+/// `LDX #$FF / TXS` for the same reason as the button trigger: `$84A0` never
+/// returns, and this fires several frames deep inside the map update.
+#[rustfmt::skip]
+const PIPE_PORTAL: [u8; 27] = [
+    0xAD, MAP_WAS_IN_PIPEWAY as u8,
+          (MAP_WAS_IN_PIPEWAY >> 8) as u8,                  //  0: LDA Map_WasInPipeway
+    0xF0, 0x10,                                             //  3: BEQ +16 → not a pipe
+    0xAD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,          //  5: LDA World_Num
+    0xD0, 0x0B,                                             //  8: BNE +11 → not World 1
+
+    // ----- the portal: leave for World 2 -----
+    0xA9, 0x01,                                             // 10: LDA #$01
+    0x8D, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,          // 12: STA World_Num
+    0xA2, 0xFF,                                             // 15: LDX #$FF
+    0x9A,                                                   // 17: TXS
+    0x4C, WORLD_MAP_INIT_CPU as u8,
+          (WORLD_MAP_INIT_CPU >> 8) as u8,                  // 18: JMP $84A0 (never returns)
+
+    // ----- ordinary pipe: the displaced instructions -----
+    0xA9, 0x00,                                             // 21: LDA #$00
+    0x8D, MAP_WAS_IN_PIPEWAY as u8,
+          (MAP_WAS_IN_PIPEWAY >> 8) as u8,                  // 23: STA Map_WasInPipeway
+    0x60,                                                   // 26: RTS
+];
+
+/// Install the pipe portal: a pipe taken in World 1 comes out in World 2.
+fn apply_pipe_portal(rom: &mut Rom) {
+    rom.write_range(FS_PIPE_PORTAL, &PIPE_PORTAL);
+
+    let mut hook = [0xEA_u8; PIPE_HOOK_LEN];
+    hook[0] = 0x20; // JSR
+    hook[1] = PIPE_PORTAL_CPU as u8;
+    hook[2] = (PIPE_PORTAL_CPU >> 8) as u8;
+    rom.write_range(PIPE_HOOK_OFFSET, &hook);
 }
 
 #[cfg(test)]
@@ -553,7 +650,7 @@ mod asm_checks {
         assert_ne!(before.0, before.1, "vanilla must differ, or the test proves nothing");
 
         let mut patched = rom.clone();
-        apply(&mut patched, true);
+        apply(&mut patched, true, false);
         assert_eq!(patched.read_byte(rom_data::FX_WORLD_TABLE), before.1, "W1 fort -> W2 lock");
         assert_eq!(patched.read_byte(rom_data::FX_WORLD_TABLE + 4), before.0, "W2 fort -> W1 lock");
     }
@@ -563,7 +660,7 @@ mod asm_checks {
     fn cross_world_is_opt_in() {
         let Some(rom) = load_vanilla() else { return };
         let mut patched = rom.clone();
-        apply(&mut patched, false);
+        apply(&mut patched, false, false);
         assert_eq!(
             patched.read_range(FX_HOOK_OFFSET, FX_HOOK_LEN),
             FX_HOOK_VANILLA,
@@ -573,6 +670,60 @@ mod asm_checks {
             patched.read_byte(rom_data::FX_WORLD_TABLE),
             rom.read_byte(rom_data::FX_WORLD_TABLE),
             "the FX rows must not move unless asked for"
+        );
+    }
+
+    #[test]
+    fn pipe_portal_is_well_formed() {
+        asm::check(&PIPE_PORTAL).allocation(FS_PIPE_PORTAL).origin(PIPE_PORTAL_CPU).assert_ok();
+    }
+
+    /// The pipeway hook displaces two whole instructions, and the routine
+    /// replays them on the ordinary-pipe path — dropping them would leave
+    /// `Map_WasInPipeway` set, and `PRG011_AB61` would then skip the
+    /// mark-complete pass for every level entered afterwards.
+    #[test]
+    fn pipe_hook_displaces_whole_instructions_and_replays_them() {
+        let Some(rom) = load_vanilla() else { return };
+        let vanilla = rom.read_range(PIPE_HOOK_OFFSET, PIPE_HOOK_LEN);
+        assert_eq!(vanilla, PIPE_HOOK_VANILLA, "PRG011_ABBE has moved");
+        assert_eq!(
+            PIPE_PORTAL[21..26],
+            PIPE_HOOK_VANILLA,
+            "the ordinary-pipe path must replay what the hook overwrote"
+        );
+
+        let mut jsr = [0xEA_u8; PIPE_HOOK_LEN];
+        jsr[0] = 0x20;
+        jsr[1] = PIPE_PORTAL_CPU as u8;
+        jsr[2] = (PIPE_PORTAL_CPU >> 8) as u8;
+        asm::check(&PIPE_PORTAL)
+            .allocation(FS_PIPE_PORTAL)
+            .origin(PIPE_PORTAL_CPU)
+            .hook(&PIPE_HOOK_VANILLA, 0, &jsr)
+            .assert_ok();
+    }
+
+    /// World 1 owns no pipe destinations, which is what lets the portal be
+    /// identified by `World_Num` alone with no table. If that ever changes,
+    /// the POC's shortcut is wrong and this says so.
+    #[test]
+    fn world_one_has_no_vanilla_pipe_destinations() {
+        let w1: Vec<u8> =
+            rom_data::DEST_TO_WORLD.iter().filter(|&&(_, w)| w == 0).map(|&(d, _)| d).collect();
+        assert!(w1.is_empty(), "W1 gained pipe destinations {w1:?} — the portal needs a table now");
+    }
+
+    /// Without the flag, `PRG011_ABBE` is untouched.
+    #[test]
+    fn pipe_portal_is_opt_in() {
+        let Some(rom) = load_vanilla() else { return };
+        let mut patched = rom.clone();
+        apply(&mut patched, false, false);
+        assert_eq!(
+            patched.read_range(PIPE_HOOK_OFFSET, PIPE_HOOK_LEN),
+            PIPE_HOOK_VANILLA,
+            "the pipeway hook must not be installed unless asked for"
         );
     }
 
