@@ -585,7 +585,7 @@ const PORTAL_EXIT: [u8; 32] = [
 ];
 
 /// Offset of the destination-world operand inside [`PORTAL_EXIT`].
-const PORTAL_DEST_OPERAND: usize = 16;
+pub(crate) const PORTAL_DEST_OPERAND: usize = 16;
 
 /// Capture the pipeway's arrival coordinates just before `Map_Init` erases them.
 ///

@@ -1007,7 +1007,13 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     //     whether the engine re-renders a world's completions, and a randomized
     //     map only adds variables.
     if spec.world_persist || spec.cross_world_locks || spec.pipe_portal.is_some() {
-        crate::randomize::world_persist::apply(&mut rom, spec.cross_world_locks, spec.pipe_portal);
+        crate::randomize::world_persist::apply(
+            &mut rom,
+            spec.cross_world_locks,
+            // The flag is 1-based like every other world argument here;
+            // `World_Num` is 0-based.
+            spec.pipe_portal.map(|w| w - 1),
+        );
         report.push("world persist: SELECT+START jumps W1<->W2, completions banked".to_string());
         if spec.cross_world_locks {
             report.push("cross-world locks: W1 fort opens W2's lock, and vice versa".to_string());
@@ -1426,6 +1432,27 @@ mod tests {
 
     /// Locks must survive `--keep-locks` even when the hammer can break them —
     /// that combination is the whole point of lock-FX testing.
+    /// `--pipe-portal N` is 1-based; `World_Num` is 0-based. The unit test on
+    /// `apply` passes an already-converted index, so it cannot see this — and
+    /// the first cut shipped with the conversion missing, sending World 2 to
+    /// World 3. Check the byte that actually lands in the ROM.
+    #[test]
+    fn pipe_portal_world_is_converted_to_a_zero_based_index() {
+        let Some(van) = vanilla() else { return };
+        for world in 2u8..=8 {
+            let rom = build(&van, &TestRomSpec { pipe_portal: Some(world), ..spec() })
+                .expect("build with a pipe portal");
+            let operand = crate::randomize::rom_data::FS_PORTAL_EXIT
+                + crate::randomize::world_persist::PORTAL_DEST_OPERAND;
+            assert_eq!(
+                rom.bytes[operand],
+                world - 1,
+                "--pipe-portal {world} must write World_Num {}",
+                world - 1
+            );
+        }
+    }
+
     #[test]
     fn hammer_breaks_locks_leaves_the_locks_in_place() {
         let Some(van) = vanilla() else {
