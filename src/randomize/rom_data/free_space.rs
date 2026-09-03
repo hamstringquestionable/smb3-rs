@@ -103,6 +103,12 @@ const fn fs(
 pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     // PRG030 (fixed bank, always mapped $8000–$9FFF, file 0x3C010)
     fs(0x3DF20, 28, &["world_order"], "routine + tables"),
+    fs(
+        0x3DFE6,
+        40,
+        &["world_persist"],
+        "world_persist POC: pipe portal exit trigger (40 reserved, 32 used)",
+    ),
     fs(0x3DF3C, 20, &["big_q_blocks"], "big_q_block: save obj_ptr trampoline"),
     fs(
         0x3DF70,
@@ -162,27 +168,33 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     fs(
         0x155EC,
-        40,
+        48,
         &["world_persist"],
-        "world_persist POC: SELECT+START world-jump trampoline (40 reserved, 35 used)",
+        "world_persist POC: SELECT+START world-jump trampoline (48 reserved, 40 used)",
     ),
     fs(
-        0x15614,
+        0x1561C,
         56,
         &["world_persist"],
         "world_persist POC: cross-world lock router (56 reserved, 47 used)",
     ),
     fs(
-        0x1564C,
+        0x15654,
         24,
         &["world_persist"],
         "world_persist POC: FX slot -> world table (24 reserved, 17 used)",
     ),
     fs(
-        0x15664,
+        0x1566C,
         64,
         &["world_persist"],
         "world_persist POC: arrival-position restore after Map_Init (64 reserved, 56 used)",
+    ),
+    fs(
+        0x156AC,
+        48,
+        &["world_persist"],
+        "world_persist POC: arrival stash, Map_Init trampoline (48 reserved, 38 used)",
     ),
     fs(0x15DF0, 35, &["fix_canoe_softlock"], "canoe_fix: death respawn position save"),
     fs(0x15E13, 162, &["map_warp"], "2P Start+Select warp-to-partner routine"),
@@ -202,12 +214,6 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "MaCobra NGO routine (macobra.rs NGO_ROUTINE_OFFSET)",
     ),
     fs(0x17D70, 107, &["march_veto"], "landing-veto trampoline + per-world coord registry"),
-    fs(
-        0x17DDB,
-        72,
-        &["world_persist"],
-        "world_persist POC: pipe portal, W1 pipe exits into W2 (72 reserved, 60 used)",
-    ),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     fs(0x0382A, 23, &["koopalings"], "koopa_hits: subroutine + defeat JMP + threshold table"),
     fs(0x03841, 13, &["koopalings"], "koopa_collision_guard: skip collision bitmap during invuln"),
@@ -393,15 +399,17 @@ pub(crate) const FS_FX_SCREEN_CHECK: usize = 0x15554; // 112 reserved, 82 used
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_WORLD_PERSIST_SWAP: usize = 0x155C4; // 40 reserved, 32 used
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_WORLD_PERSIST_JUMP: usize = 0x155EC; // 40 reserved, 35 used
+pub(crate) const FS_WORLD_PERSIST_JUMP: usize = 0x155EC; // 48 reserved, 40 used
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_CROSS_WORLD_FX: usize = 0x15614; // 56 reserved, 47 used
+pub(crate) const FS_CROSS_WORLD_FX: usize = 0x1561C; // 56 reserved, 47 used
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_CROSS_WORLD_TABLE: usize = 0x1564C; // 24 reserved, 17 used
+pub(crate) const FS_CROSS_WORLD_TABLE: usize = 0x15654; // 24 reserved, 17 used
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_PIPE_PORTAL: usize = 0x17DDB; // 72 reserved, 60 used
+pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x1566C; // 64 reserved, 56 used
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x15664; // 64 reserved, 56 used
+pub(crate) const FS_STASH_ARRIVAL: usize = 0x156AC; // 48 reserved, 38 used
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const FS_PORTAL_EXIT: usize = 0x3DFE6; // 40 reserved, 32 used
 
 pub(crate) const FS_CANOE_RESPAWN: usize = 0x15DF0; // 35 bytes
 pub(crate) const FS_MAP_WARP: usize = 0x15E13; // 162 bytes (CPU $DE03)
@@ -991,8 +999,9 @@ mod free_space_tests {
             (FS_WORLD_PERSIST_JUMP, "FS_WORLD_PERSIST_JUMP"),
             (FS_CROSS_WORLD_FX, "FS_CROSS_WORLD_FX"),
             (FS_CROSS_WORLD_TABLE, "FS_CROSS_WORLD_TABLE"),
-            (FS_PIPE_PORTAL, "FS_PIPE_PORTAL"),
             (FS_RESTORE_ARRIVAL, "FS_RESTORE_ARRIVAL"),
+            (FS_STASH_ARRIVAL, "FS_STASH_ARRIVAL"),
+            (FS_PORTAL_EXIT, "FS_PORTAL_EXIT"),
             (FS_CANOE_RESPAWN, "FS_CANOE_RESPAWN"),
             (FS_CANOE_SUMMON, "FS_CANOE_SUMMON"),
             (FS_CANOE_BACKUP, "FS_CANOE_BACKUP"),

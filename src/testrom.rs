@@ -374,7 +374,7 @@ pub struct TestRomSpec {
     /// **World-maze POC.** Take a pipe in World 1 and come out on World 2's
     /// map. Pair with `--place <pipe> <tile>` to put a transit room on a W1
     /// tile; W1 has no pipes of its own, so any pipeway return there is it.
-    pub pipe_portal: bool,
+    pub pipe_portal: Option<u8>,
     /// Put bro encounters on the 10-second clock (`bro_battle_timer`).
     pub bro_battle_timer: bool,
     /// Include the 9 unreferenced beta stages as placeable names.
@@ -1006,14 +1006,14 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     //     tested on a plain vanilla map, which is the point — the question is
     //     whether the engine re-renders a world's completions, and a randomized
     //     map only adds variables.
-    if spec.world_persist || spec.cross_world_locks || spec.pipe_portal {
+    if spec.world_persist || spec.cross_world_locks || spec.pipe_portal.is_some() {
         crate::randomize::world_persist::apply(&mut rom, spec.cross_world_locks, spec.pipe_portal);
         report.push("world persist: SELECT+START jumps W1<->W2, completions banked".to_string());
         if spec.cross_world_locks {
             report.push("cross-world locks: W1 fort opens W2's lock, and vice versa".to_string());
         }
-        if spec.pipe_portal {
-            report.push("pipe portal: a pipe taken in W1 comes out on W2's map".to_string());
+        if let Some(w) = spec.pipe_portal {
+            report.push(format!("pipe portal: a pipe taken in W1 comes out on W{w}'s map"));
         }
     }
 
@@ -1111,7 +1111,7 @@ mod tests {
             hammer_breaks_bridges: false,
             world_persist: false,
             cross_world_locks: false,
-            pipe_portal: false,
+            pipe_portal: None,
             bro_battle_timer: false,
             include_beta: false,
             big_q_unused5: None,
