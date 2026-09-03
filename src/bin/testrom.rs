@@ -98,6 +98,11 @@ struct Cli {
     #[arg(long)]
     world_persist: bool,
 
+    /// World-maze POC: make W1's fortress open W2's lock and W2's fortress open
+    /// W1's lock. Implies --world-persist.
+    #[arg(long)]
+    cross_world_locks: bool,
+
     /// Leave lock tiles in place (default: removed).
     #[arg(long)]
     keep_locks: bool,
@@ -407,6 +412,7 @@ fn main() {
         always_on_patches: cli.patches,
         walk_skip_conflicts: cli.walk_skip_conflicts,
         world_persist: cli.world_persist,
+        cross_world_locks: cli.cross_world_locks,
         remove_locks: !cli.keep_locks,
         remove_gaps: !cli.keep_gaps,
         starting_items,

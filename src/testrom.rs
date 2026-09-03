@@ -367,6 +367,10 @@ pub struct TestRomSpec {
     /// between World 1 and World 2. Beat a level, jump, jump back — the level
     /// should still be beaten. See `randomize::world_persist`.
     pub world_persist: bool,
+    /// **World-maze POC.** Swap World 1's and World 2's fortress FX row
+    /// entries so each opens the *other* world's lock, and route the
+    /// completion into that world's bank. Implies `world_persist`.
+    pub cross_world_locks: bool,
     /// Put bro encounters on the 10-second clock (`bro_battle_timer`).
     pub bro_battle_timer: bool,
     /// Include the 9 unreferenced beta stages as placeable names.
@@ -998,9 +1002,12 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     //     tested on a plain vanilla map, which is the point — the question is
     //     whether the engine re-renders a world's completions, and a randomized
     //     map only adds variables.
-    if spec.world_persist {
-        crate::randomize::world_persist::apply(&mut rom);
+    if spec.world_persist || spec.cross_world_locks {
+        crate::randomize::world_persist::apply(&mut rom, spec.cross_world_locks);
         report.push("world persist: SELECT+START jumps W1<->W2, completions banked".to_string());
+        if spec.cross_world_locks {
+            report.push("cross-world locks: W1 fort opens W2's lock, and vice versa".to_string());
+        }
     }
 
     // 7. Starting inventory. Last, mirroring the randomizer's own ordering —
@@ -1096,6 +1103,7 @@ mod tests {
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             world_persist: false,
+            cross_world_locks: false,
             bro_battle_timer: false,
             include_beta: false,
             big_q_unused5: None,

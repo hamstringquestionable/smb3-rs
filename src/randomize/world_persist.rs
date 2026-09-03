@@ -79,7 +79,9 @@
 
 use crate::rom::Rom;
 
-use super::rom_data::{FS_WORLD_PERSIST_JUMP, FS_WORLD_PERSIST_SWAP};
+use super::rom_data::{
+    self, FS_CROSS_WORLD_FX, FS_CROSS_WORLD_TABLE, FS_WORLD_PERSIST_JUMP, FS_WORLD_PERSIST_SWAP,
+};
 
 // CPU addresses of the two routines. PRG010 is mapped at $C000 whenever
 // either hook runs — `$84A0` maps it itself, and `MO_NormalMoveEnter` lives
@@ -87,6 +89,8 @@ use super::rom_data::{FS_WORLD_PERSIST_JUMP, FS_WORLD_PERSIST_SWAP};
 // other PRG010 patches (`map_warp.rs`, `canoe_summon.rs`).
 const SWAP_COMPLETIONS_CPU: u16 = (0xC000 + FS_WORLD_PERSIST_SWAP - 0x14010) as u16;
 const WORLD_JUMP_CHECK_CPU: u16 = (0xC000 + FS_WORLD_PERSIST_JUMP - 0x14010) as u16;
+const CROSS_WORLD_FX_CPU: u16 = (0xC000 + FS_CROSS_WORLD_FX - 0x14010) as u16;
+const SLOT_WORLD_CPU: u16 = (0xC000 + FS_CROSS_WORLD_TABLE - 0x14010) as u16;
 
 // --- Engine symbols -----------------------------------------------------
 //
@@ -236,9 +240,23 @@ const WORLD_JUMP_CHECK: [u8; 35] = [
 
 // --- Writer -------------------------------------------------------------
 
+/// Which FX slot belongs to which world, one byte per slot.
+///
+/// Derived from `FORTRESS_ENTRIES` rather than written out: the FX slots are in
+/// that table's order — W1 takes slot 0, W2 slot 1, W3 slots 2-3 — which is the
+/// same fact `mega_map::van_fx` leans on, and the same one a hand-written list
+/// got wrong there by dropping a row.
+fn slot_world_table() -> Vec<u8> {
+    rom_data::FORTRESS_ENTRIES.iter().map(|&(world, _)| world as u8).collect()
+}
+
 /// Install the POC: bank completions across world transitions, and add the
 /// SELECT+START jump.
-pub(crate) fn apply(rom: &mut Rom) {
+///
+/// `cross_world_locks` additionally swaps World 1's and World 2's fortress FX
+/// row entries, so each world's fortress opens the *other* world's lock, and
+/// installs the routine that routes the completion into the right world's bank.
+pub(crate) fn apply(rom: &mut Rom, cross_world_locks: bool) {
     rom.push_tag("world_persist");
 
     rom.write_range(FS_WORLD_PERSIST_SWAP, &SWAP_COMPLETIONS);
@@ -262,7 +280,135 @@ pub(crate) fn apply(rom: &mut Rom) {
     hook[2] = (WORLD_JUMP_CHECK_CPU >> 8) as u8;
     rom.write_range(NORMAL_MOVE_OFFSET, &hook);
 
+    if cross_world_locks {
+        apply_cross_world_locks(rom);
+    }
+
     rom.pop_tag();
+}
+
+// --- Cross-world locks (POC round 2) ---------------------------------------
+
+/// `FortressFX_MapCompIdx` at CPU `$C7DF` — `(column, row bit)` per FX slot.
+const FX_MAP_COMP_IDX_CPU: u16 = 0xC7DF;
+
+/// `MO_DoFortressFX`'s "nothing to do" exit (CPU `$C9C9`), vanilla's own
+/// already-busted branch target. It zeroes `Map_DoFortressFX` and
+/// `Map_ClearLevelFXCnt`, bumps `Map_Operation`, and returns to the map update —
+/// exactly the bookkeeping a lock on another map needs, with no animation.
+const FX_DONE_CPU: u16 = 0xC9C9;
+
+/// Where `MO_DoFortressFX` resumes after the hook (CPU `$C8EA`).
+const FX_RESUME_CPU: u16 = 0xC8EA;
+
+/// Hook site inside `MO_DoFortressFX`, CPU `$C8E6` = file 0x148F6.
+///
+/// `$C8E3` has just resolved the FX slot into `Map_DoFortressFX` (`$0745`) via
+/// `FortressFXBase_ByWorld` + the Boom-Boom ordinal, and nothing has happened
+/// yet — no poof, no graphics buffer, no completion write. The four bytes here
+/// are two whole instructions:
+///
+/// ```text
+/// A9 01       LDA #$01
+/// 85 20       STA Map_ClearLevelFXCnt
+/// ```
+///
+/// This is the same site the shipped `fx_screen_check` patch takes, for the
+/// same reason. They are not applied together: that one comes from the
+/// randomizer, and this POC builds on a vanilla base.
+const FX_HOOK_OFFSET: usize = 0x148F6;
+const FX_HOOK_LEN: usize = 4;
+
+/// Vanilla bytes at [`FX_HOOK_OFFSET`].
+#[cfg(test)]
+#[rustfmt::skip]
+const FX_HOOK_VANILLA: [u8; FX_HOOK_LEN] = [
+    0xA9, 0x01,             // LDA #$01
+    0x85, 0x20,             // STA Map_ClearLevelFXCnt
+];
+
+/// Send a fortress's lock-break to a lock in *another* world.
+///
+/// The design claim this tests: a lock does not have to sit in its fortress's
+/// own world. Vanilla already breaks locks it cannot show — a fortress on page
+/// 0 opening a lock on page 2 gets no animation, just a map-data and
+/// `Map_Completions` update — so a lock on another *map* is that case one level
+/// further out.
+///
+/// It turns out to need no tile writing at all. `Map_Removable_Tiles` (PRG012)
+/// lists `TILE_LOCKVERT`, `TILE_LOCKHORZ` and `TILE_ALTLOCK` alongside the
+/// rocks, and `Map_Reload_with_Completions` swaps each one for its
+/// `Map_RemoveTo_Tiles` counterpart wherever the completion bit is set. That is
+/// how vanilla keeps a busted lock busted across a map reload — so **setting
+/// the bit in the destination world's parked bank is the whole mechanic**. The
+/// lock is simply gone when that world is next loaded.
+///
+/// Both parked halves get the bit, mirroring what vanilla does for every other
+/// permanent alteration (see the module docs).
+///
+/// `Map_DoFortressFX` (`$0745`) holds the resolved slot by the time this runs,
+/// and `$0B` is free scratch — `$C9C9` reads neither it nor `$0A`.
+#[rustfmt::skip]
+const CROSS_WORLD_FX: [u8; 47] = [
+    0xAC, 0x45, 0x07,                                       //  0: LDY $0745    ; FX slot
+    0xB9, 0, 0,                                             //  3: LDA SLOT_WORLD,Y   (patched)
+    0xCD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,          //  6: CMP World_Num
+    0xF0, 0x1D,                                             //  9: BEQ +29 → same world
+
+    // ----- the lock lives on the other map: stamp its parked banks -----
+    0x98,                                                   // 11: TYA
+    0x0A,                                                   // 12: ASL A
+    0xA8,                                                   // 13: TAY          ; Y = slot * 2
+    0xBE, FX_MAP_COMP_IDX_CPU as u8,
+          (FX_MAP_COMP_IDX_CPU >> 8) as u8,                 // 14: LDX $C7DF,Y  ; column
+    0xC8,                                                   // 17: INY
+    0xB9, FX_MAP_COMP_IDX_CPU as u8,
+          (FX_MAP_COMP_IDX_CPU >> 8) as u8,                 // 18: LDA $C7DF,Y  ; row bit
+    0x85, 0x0B,                                             // 21: STA $0B      ; keep the bit
+    0x1D, PARKED_MARIO as u8, (PARKED_MARIO >> 8) as u8,    // 23: ORA PARKED_MARIO,X
+    0x9D, PARKED_MARIO as u8, (PARKED_MARIO >> 8) as u8,    // 26: STA PARKED_MARIO,X
+    0xA5, 0x0B,                                             // 29: LDA $0B
+    0x1D, PARKED_LUIGI as u8, (PARKED_LUIGI >> 8) as u8,    // 31: ORA PARKED_LUIGI,X
+    0x9D, PARKED_LUIGI as u8, (PARKED_LUIGI >> 8) as u8,    // 34: STA PARKED_LUIGI,X
+    0x4C, FX_DONE_CPU as u8, (FX_DONE_CPU >> 8) as u8,      // 37: JMP $C9C9    ; no animation here
+
+    // ----- same world: the two displaced instructions, then carry on -----
+    0xA9, 0x01,                                             // 40: LDA #$01
+    0x85, 0x20,                                             // 42: STA Map_ClearLevelFXCnt
+    0x4C, FX_RESUME_CPU as u8, (FX_RESUME_CPU >> 8) as u8,  // 44: JMP $C8EA
+];
+
+/// Offset of the `SLOT_WORLD` table operand inside [`CROSS_WORLD_FX`].
+const SLOT_WORLD_OPERAND: usize = 4;
+
+/// Point each of World 1's and World 2's fortresses at the other's lock.
+///
+/// Two byte writes do the aiming. `FortressFXBase_ByWorld` puts W1's row at
+/// byte 0 and W2's at byte 4, each world has exactly one fortress, and the
+/// Boom-Boom ordinal is 1 — so `FortressFX_W1[0]` and `[4]` are the two entries
+/// those fortresses read, holding FX slots 0 and 1 (W1's lock and W2's lock).
+/// Swapping them is the whole redirection; [`CROSS_WORLD_FX`] then notices the
+/// slot belongs to another world and banks the completion instead of animating.
+fn apply_cross_world_locks(rom: &mut Rom) {
+    let table = slot_world_table();
+    let mut routine = CROSS_WORLD_FX;
+    routine[SLOT_WORLD_OPERAND] = SLOT_WORLD_CPU as u8;
+    routine[SLOT_WORLD_OPERAND + 1] = (SLOT_WORLD_CPU >> 8) as u8;
+    rom.write_range(FS_CROSS_WORLD_FX, &routine);
+    rom.write_range(FS_CROSS_WORLD_TABLE, &table);
+
+    let mut hook = [0xEA_u8; FX_HOOK_LEN];
+    hook[0] = 0x4C; // JMP — the hook replaces both displaced instructions, and
+    hook[1] = CROSS_WORLD_FX_CPU as u8; // the routine replays them on the
+    hook[2] = (CROSS_WORLD_FX_CPU >> 8) as u8; // same-world path.
+    rom.write_range(FX_HOOK_OFFSET, &hook);
+
+    // Swap the two row entries. Read-then-write rather than hardcoding 0 and 1,
+    // so this stays correct if the base ROM ever arrives with them elsewhere.
+    let w1_row = rom.read_byte(rom_data::FX_WORLD_TABLE);
+    let w2_row = rom.read_byte(rom_data::FX_WORLD_TABLE + 4);
+    rom.write_byte(rom_data::FX_WORLD_TABLE, w2_row);
+    rom.write_byte(rom_data::FX_WORLD_TABLE + 4, w1_row);
 }
 
 #[cfg(test)]
@@ -346,6 +492,87 @@ mod asm_checks {
             u16::from_le_bytes([WORLD_JUMP_CHECK[32], WORLD_JUMP_CHECK[33]]),
             0x84A0,
             "trigger must JMP PRG030_84A0, the world-map init"
+        );
+    }
+
+    #[test]
+    fn cross_world_fx_is_well_formed() {
+        let mut routine = CROSS_WORLD_FX;
+        routine[SLOT_WORLD_OPERAND] = SLOT_WORLD_CPU as u8;
+        routine[SLOT_WORLD_OPERAND + 1] = (SLOT_WORLD_CPU >> 8) as u8;
+        asm::check(&routine).allocation(FS_CROSS_WORLD_FX).origin(CROSS_WORLD_FX_CPU).assert_ok();
+    }
+
+    /// The FX hook displaces two whole instructions, and the routine replays
+    /// them on the same-world path. Losing them would leave
+    /// `Map_ClearLevelFXCnt` clear, and the poof would never start.
+    #[test]
+    fn fx_hook_displaces_whole_instructions_and_replays_them() {
+        let Some(rom) = load_vanilla() else { return };
+        let vanilla = rom.read_range(FX_HOOK_OFFSET, FX_HOOK_LEN);
+        assert_eq!(vanilla, FX_HOOK_VANILLA, "MO_DoFortressFX's hook site has moved");
+        assert_eq!(
+            CROSS_WORLD_FX[40..44],
+            FX_HOOK_VANILLA,
+            "the same-world path must replay the instructions the hook overwrote"
+        );
+
+        let mut routine = CROSS_WORLD_FX;
+        routine[SLOT_WORLD_OPERAND] = SLOT_WORLD_CPU as u8;
+        routine[SLOT_WORLD_OPERAND + 1] = (SLOT_WORLD_CPU >> 8) as u8;
+        let mut jsr = [0xEA_u8; FX_HOOK_LEN];
+        jsr[0] = 0x4C;
+        jsr[1] = CROSS_WORLD_FX_CPU as u8;
+        jsr[2] = (CROSS_WORLD_FX_CPU >> 8) as u8;
+        asm::check(&routine)
+            .allocation(FS_CROSS_WORLD_FX)
+            .origin(CROSS_WORLD_FX_CPU)
+            .hook(&FX_HOOK_VANILLA, 0, &jsr)
+            .assert_ok();
+    }
+
+    /// One byte per FX slot, and each names the world that slot's lock is on.
+    #[test]
+    fn slot_world_table_covers_every_fx_slot() {
+        let table = slot_world_table();
+        assert_eq!(table.len(), 17, "17 FX slots, 17 entries");
+        assert!(table.iter().all(|&w| w < 8), "every entry names a real world");
+        assert_eq!(table[0], 0, "slot 0 is W1's lock");
+        assert_eq!(table[1], 1, "slot 1 is W2's lock");
+        assert!(table.len() <= 24, "table must fit its allocation");
+    }
+
+    /// The swap really crosses the two worlds over, and it is an involution —
+    /// applying it twice would put them back, which is the sort of thing a
+    /// read-then-write can get wrong by reading its own output.
+    #[test]
+    fn fx_rows_are_actually_swapped() {
+        let Some(rom) = load_vanilla() else { return };
+        let before =
+            (rom.read_byte(rom_data::FX_WORLD_TABLE), rom.read_byte(rom_data::FX_WORLD_TABLE + 4));
+        assert_ne!(before.0, before.1, "vanilla must differ, or the test proves nothing");
+
+        let mut patched = rom.clone();
+        apply(&mut patched, true);
+        assert_eq!(patched.read_byte(rom_data::FX_WORLD_TABLE), before.1, "W1 fort -> W2 lock");
+        assert_eq!(patched.read_byte(rom_data::FX_WORLD_TABLE + 4), before.0, "W2 fort -> W1 lock");
+    }
+
+    /// Without the flag, `MO_DoFortressFX` and the FX rows are untouched.
+    #[test]
+    fn cross_world_is_opt_in() {
+        let Some(rom) = load_vanilla() else { return };
+        let mut patched = rom.clone();
+        apply(&mut patched, false);
+        assert_eq!(
+            patched.read_range(FX_HOOK_OFFSET, FX_HOOK_LEN),
+            FX_HOOK_VANILLA,
+            "the FX hook must not be installed unless asked for"
+        );
+        assert_eq!(
+            patched.read_byte(rom_data::FX_WORLD_TABLE),
+            rom.read_byte(rom_data::FX_WORLD_TABLE),
+            "the FX rows must not move unless asked for"
         );
     }
 

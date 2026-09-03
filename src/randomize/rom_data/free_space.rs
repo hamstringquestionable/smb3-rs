@@ -166,6 +166,18 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["world_persist"],
         "world_persist POC: SELECT+START world-jump trampoline (40 reserved, 35 used)",
     ),
+    fs(
+        0x15614,
+        56,
+        &["world_persist"],
+        "world_persist POC: cross-world lock router (56 reserved, 47 used)",
+    ),
+    fs(
+        0x1564C,
+        24,
+        &["world_persist"],
+        "world_persist POC: FX slot -> world table (24 reserved, 17 used)",
+    ),
     fs(0x15DF0, 35, &["fix_canoe_softlock"], "canoe_fix: death respawn position save"),
     fs(0x15E13, 162, &["map_warp"], "2P Start+Select warp-to-partner routine"),
     fs(0x15EB5, 151, &["canoe_summon"], "A-on-dock call-the-boat routine + offset tables"),
@@ -370,6 +382,10 @@ pub(crate) const FS_FX_SCREEN_CHECK: usize = 0x15554; // 112 reserved, 82 used
 pub(crate) const FS_WORLD_PERSIST_SWAP: usize = 0x155C4; // 40 reserved, 32 used
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_WORLD_PERSIST_JUMP: usize = 0x155EC; // 40 reserved, 35 used
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const FS_CROSS_WORLD_FX: usize = 0x15614; // 56 reserved, 47 used
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const FS_CROSS_WORLD_TABLE: usize = 0x1564C; // 24 reserved, 17 used
 
 pub(crate) const FS_CANOE_RESPAWN: usize = 0x15DF0; // 35 bytes
 pub(crate) const FS_MAP_WARP: usize = 0x15E13; // 162 bytes (CPU $DE03)
@@ -957,6 +973,8 @@ mod free_space_tests {
             (FS_FX_SCREEN_CHECK, "FS_FX_SCREEN_CHECK"),
             (FS_WORLD_PERSIST_SWAP, "FS_WORLD_PERSIST_SWAP"),
             (FS_WORLD_PERSIST_JUMP, "FS_WORLD_PERSIST_JUMP"),
+            (FS_CROSS_WORLD_FX, "FS_CROSS_WORLD_FX"),
+            (FS_CROSS_WORLD_TABLE, "FS_CROSS_WORLD_TABLE"),
             (FS_CANOE_RESPAWN, "FS_CANOE_RESPAWN"),
             (FS_CANOE_SUMMON, "FS_CANOE_SUMMON"),
             (FS_CANOE_BACKUP, "FS_CANOE_BACKUP"),
