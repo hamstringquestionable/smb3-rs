@@ -93,6 +93,11 @@ struct Cli {
     #[arg(short, long, value_parser = clap::value_parser!(u8).range(1..=8))]
     world: Option<u8>,
 
+    /// World-maze POC: keep each world's map progress across transitions, and
+    /// add a SELECT+START trigger on the map that jumps between W1 and W2.
+    #[arg(long)]
+    world_persist: bool,
+
     /// Leave lock tiles in place (default: removed).
     #[arg(long)]
     keep_locks: bool,
@@ -401,6 +406,7 @@ fn main() {
         movement_patch,
         always_on_patches: cli.patches,
         walk_skip_conflicts: cli.walk_skip_conflicts,
+        world_persist: cli.world_persist,
         remove_locks: !cli.keep_locks,
         remove_gaps: !cli.keep_gaps,
         starting_items,

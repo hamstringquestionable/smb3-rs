@@ -362,6 +362,11 @@ pub struct TestRomSpec {
     pub hammer_breaks_locks: bool,
     /// Let the Hammer item break water-gap (bridge) tiles on the map.
     pub hammer_breaks_bridges: bool,
+    /// **World-maze POC.** Bank `Map_Completions` across world transitions
+    /// instead of wiping it, and add a SELECT+START map trigger that jumps
+    /// between World 1 and World 2. Beat a level, jump, jump back — the level
+    /// should still be beaten. See `randomize::world_persist`.
+    pub world_persist: bool,
     /// Put bro encounters on the 10-second clock (`bro_battle_timer`).
     pub bro_battle_timer: bool,
     /// Include the 9 unreferenced beta stages as placeable names.
@@ -989,6 +994,15 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         report.push("bro battle timer: 10".to_string());
     }
 
+    // 6c. World-maze persistence POC. Direct like the two above so it can be
+    //     tested on a plain vanilla map, which is the point — the question is
+    //     whether the engine re-renders a world's completions, and a randomized
+    //     map only adds variables.
+    if spec.world_persist {
+        crate::randomize::world_persist::apply(&mut rom);
+        report.push("world persist: SELECT+START jumps W1<->W2, completions banked".to_string());
+    }
+
     // 7. Starting inventory. Last, mirroring the randomizer's own ordering —
     //    the trampoline overwrites title-screen bytes and must win.
     if !spec.starting_items.is_empty() {
@@ -1081,6 +1095,7 @@ mod tests {
             starting_lives: 5,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
+            world_persist: false,
             bro_battle_timer: false,
             include_beta: false,
             big_q_unused5: None,

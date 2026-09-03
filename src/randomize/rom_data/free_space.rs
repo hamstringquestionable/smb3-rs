@@ -154,6 +154,18 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["fx_screen_check"],
         "cross-screen lock patch (Fred's algorithm + darkness gate)",
     ),
+    fs(
+        0x155C4,
+        24,
+        &["world_persist"],
+        "world_persist POC: completion swap (24 reserved, 19 used)",
+    ),
+    fs(
+        0x155DC,
+        40,
+        &["world_persist"],
+        "world_persist POC: SELECT+START world-jump trampoline (40 reserved, 35 used)",
+    ),
     fs(0x15DF0, 35, &["fix_canoe_softlock"], "canoe_fix: death respawn position save"),
     fs(0x15E13, 162, &["map_warp"], "2P Start+Select warp-to-partner routine"),
     fs(0x15EB5, 151, &["canoe_summon"], "A-on-dock call-the-boat routine + offset tables"),
@@ -346,6 +358,18 @@ pub(crate) const FS_KING_QUOTES: usize = 0x379D9; // 894 bytes
 // Fred's visibility algorithm plus the busted / darkness gates (issue #131).
 // The $FF run this sits in continues to 0x15810, so there is room to grow.
 pub(crate) const FS_FX_SCREEN_CHECK: usize = 0x15554; // 112 reserved, 82 used
+
+// World-maze POC. Sits in the tail of the same $FF run as
+// FS_FX_SCREEN_CHECK, which reserves 112 from 0x15554 and leaves the run
+// going to 0x15810.
+// Gated like `world_persist` itself: only `testrom` applies that patch, and
+// the CI wasm clippy pass flags a constant nothing on that target can read.
+// The FREE_SPACE_ALLOCATIONS rows below are NOT gated — the accounting has to
+// be complete on every target, or the per-bank budget lies on one of them.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const FS_WORLD_PERSIST_SWAP: usize = 0x155C4; // 24 reserved, 19 used
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const FS_WORLD_PERSIST_JUMP: usize = 0x155DC; // 40 reserved, 35 used
 
 pub(crate) const FS_CANOE_RESPAWN: usize = 0x15DF0; // 35 bytes
 pub(crate) const FS_MAP_WARP: usize = 0x15E13; // 162 bytes (CPU $DE03)
@@ -931,6 +955,8 @@ mod free_space_tests {
             (FS_ANCHOR_ITEM_GUARD, "FS_ANCHOR_ITEM_GUARD"),
             (FS_KING_QUOTES, "FS_KING_QUOTES"),
             (FS_FX_SCREEN_CHECK, "FS_FX_SCREEN_CHECK"),
+            (FS_WORLD_PERSIST_SWAP, "FS_WORLD_PERSIST_SWAP"),
+            (FS_WORLD_PERSIST_JUMP, "FS_WORLD_PERSIST_JUMP"),
             (FS_CANOE_RESPAWN, "FS_CANOE_RESPAWN"),
             (FS_CANOE_SUMMON, "FS_CANOE_SUMMON"),
             (FS_CANOE_BACKUP, "FS_CANOE_BACKUP"),

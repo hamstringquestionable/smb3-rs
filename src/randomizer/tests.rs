@@ -158,6 +158,12 @@ fn free_space_audit_matches_registry() {
         return;
     };
     randomize(&mut rom, 0xA11C0DE, &audit_options());
+    // `world_persist` is reachable only from `testrom`, so `randomize` never
+    // writes it and it would sit at zero used, tripping the exercised-check
+    // below. Apply it here rather than exempting it: that check exists because
+    // an un-exercised allocation is an unaudited one, and "only testrom turns
+    // it on" is not the same as "it doesn't claim ROM bytes".
+    crate::randomize::world_persist::apply(&mut rom);
 
     let usage = audit_free_space(&rom);
     println!("{}", format_free_space_report(&rom));

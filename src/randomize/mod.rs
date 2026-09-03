@@ -36,3 +36,8 @@ pub mod stomp_fairness;
 pub mod title_screen;
 pub mod troll_pipes;
 pub mod world_order;
+/// World-maze persistence POC. Native-only for the same reason as
+/// [`crate::testrom`]: nothing but `testrom` applies it, so on wasm the whole
+/// module is dead and CI's wasm clippy pass says so.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod world_persist;
