@@ -178,6 +178,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["world_persist"],
         "world_persist POC: FX slot -> world table (24 reserved, 17 used)",
     ),
+    fs(
+        0x15664,
+        64,
+        &["world_persist"],
+        "world_persist POC: arrival-position restore after Map_Init (64 reserved, 56 used)",
+    ),
     fs(0x15DF0, 35, &["fix_canoe_softlock"], "canoe_fix: death respawn position save"),
     fs(0x15E13, 162, &["map_warp"], "2P Start+Select warp-to-partner routine"),
     fs(0x15EB5, 151, &["canoe_summon"], "A-on-dock call-the-boat routine + offset tables"),
@@ -198,9 +204,9 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(0x17D70, 107, &["march_veto"], "landing-veto trampoline + per-world coord registry"),
     fs(
         0x17DDB,
-        32,
+        72,
         &["world_persist"],
-        "world_persist POC: pipe portal, W1 pipe exits into W2 (32 reserved, 27 used)",
+        "world_persist POC: pipe portal, W1 pipe exits into W2 (72 reserved, 60 used)",
     ),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     fs(0x0382A, 23, &["koopalings"], "koopa_hits: subroutine + defeat JMP + threshold table"),
@@ -393,7 +399,9 @@ pub(crate) const FS_CROSS_WORLD_FX: usize = 0x15614; // 56 reserved, 47 used
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_CROSS_WORLD_TABLE: usize = 0x1564C; // 24 reserved, 17 used
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_PIPE_PORTAL: usize = 0x17DDB; // 32 reserved, 27 used
+pub(crate) const FS_PIPE_PORTAL: usize = 0x17DDB; // 72 reserved, 60 used
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x15664; // 64 reserved, 56 used
 
 pub(crate) const FS_CANOE_RESPAWN: usize = 0x15DF0; // 35 bytes
 pub(crate) const FS_MAP_WARP: usize = 0x15E13; // 162 bytes (CPU $DE03)
@@ -984,6 +992,7 @@ mod free_space_tests {
             (FS_CROSS_WORLD_FX, "FS_CROSS_WORLD_FX"),
             (FS_CROSS_WORLD_TABLE, "FS_CROSS_WORLD_TABLE"),
             (FS_PIPE_PORTAL, "FS_PIPE_PORTAL"),
+            (FS_RESTORE_ARRIVAL, "FS_RESTORE_ARRIVAL"),
             (FS_CANOE_RESPAWN, "FS_CANOE_RESPAWN"),
             (FS_CANOE_SUMMON, "FS_CANOE_SUMMON"),
             (FS_CANOE_BACKUP, "FS_CANOE_BACKUP"),

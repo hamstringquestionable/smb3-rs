@@ -80,8 +80,8 @@
 use crate::rom::Rom;
 
 use super::rom_data::{
-    self, FS_CROSS_WORLD_FX, FS_CROSS_WORLD_TABLE, FS_PIPE_PORTAL, FS_WORLD_PERSIST_JUMP,
-    FS_WORLD_PERSIST_SWAP,
+    self, FS_CROSS_WORLD_FX, FS_CROSS_WORLD_TABLE, FS_PIPE_PORTAL, FS_RESTORE_ARRIVAL,
+    FS_WORLD_PERSIST_JUMP, FS_WORLD_PERSIST_SWAP,
 };
 
 // CPU addresses of the two routines. PRG010 is mapped at $C000 whenever
@@ -95,6 +95,7 @@ const SLOT_WORLD_CPU: u16 = (0xC000 + FS_CROSS_WORLD_TABLE - 0x14010) as u16;
 // PRG011 is mapped at $A000 during the map, and `PRG011_ABBE` is its own code,
 // so CPU = $A000 + (file - 0x16010).
 const PIPE_PORTAL_CPU: u16 = (0xA000 + FS_PIPE_PORTAL - 0x16010) as u16;
+const RESTORE_ARRIVAL_CPU: u16 = (0xC000 + FS_RESTORE_ARRIVAL - 0x14010) as u16;
 
 // --- Engine symbols -----------------------------------------------------
 //
@@ -126,6 +127,39 @@ const WORLD_NUM: u16 = 0x0727;
 /// 64 bytes taken from each; 41 and 45 left.
 const PARKED_MARIO: u16 = 0x7997;
 const PARKED_LUIGI: u16 = 0x7A73;
+
+/// Where the pipeway's arrival coordinates wait out `Map_Init`.
+///
+/// Six bytes in the tail of the `$7997` run, past the 64 the Mario bank takes.
+const ARRIVAL_Y: u16 = 0x79D7;
+const ARRIVAL_XHI: u16 = 0x79D8;
+const ARRIVAL_X: u16 = 0x79D9;
+const ARRIVAL_SCRL: u16 = 0x79DA;
+const ARRIVAL_SCRH: u16 = 0x79DB;
+const ARRIVAL_FLAG: u16 = 0x79DC;
+
+/// The player's map position, as `Map_Init` writes it (PRG011). Every one of
+/// these is set from `Map_Y_Starts` and friends, so every one has to be
+/// rewritten to land somewhere else:
+///
+/// ```text
+/// LDA Map_Y_Starts,Y
+/// STA Map_Entered_Y,X / STA Map_Previous_Y,X
+/// ... STA Map_Entered_X,X / STA Map_Previous_X,X
+/// ... STA Map_Entered_XHi,X / STA Map_Previous_XHi,X
+/// ... STA Map_Prev_XOff2,X / STA Map_Prev_XHi2,X
+/// ... STA Map_Prev_XOff,X  / STA Map_Prev_XHi,X
+/// ```
+const MAP_ENTERED_Y: u16 = 0x7976;
+const MAP_ENTERED_XHI: u16 = 0x7978;
+const MAP_ENTERED_X: u16 = 0x797A;
+const MAP_PREVIOUS_Y: u16 = 0x797E;
+const MAP_PREVIOUS_XHI: u16 = 0x7980;
+const MAP_PREVIOUS_X: u16 = 0x7982;
+const MAP_PREV_XOFF2: u16 = 0x7986;
+const MAP_PREV_XHI2: u16 = 0x7988;
+const MAP_PREV_XOFF: u16 = 0x0722;
+const MAP_PREV_XHI: u16 = 0x0724;
 
 /// CPU address of `PRG030_84A0`, "initialize the world map". Reached from
 /// exactly two places — the airship-cleared path (`INC World_Num`) and the warp
@@ -177,7 +211,7 @@ const NORMAL_MOVE_VANILLA: [u8; NORMAL_MOVE_LEN] = [
 /// `LDX abs,Y` (`$BE`) is what keeps each half's exchange to 13 bytes rather
 /// than a two-pass copy through a scratch buffer.
 #[rustfmt::skip]
-const SWAP_COMPLETIONS: [u8; 32] = [
+const SWAP_COMPLETIONS: [u8; 34] = [
     0xA0, 0x3F,                                             //  0: LDY #$3F  ; 64 columns, down
     // Mario's half
     0xB9, 0x00, 0x7D,                                       //  2: LDA $7D00,Y       ; loop
@@ -194,7 +228,52 @@ const SWAP_COMPLETIONS: [u8; 32] = [
     0x99, 0x40, 0x7D,                                       // 25: STA $7D40,Y
     0x88,                                                   // 28: DEY
     0x10, 0xE3,                                             // 29: BPL -29 → loop
-    0x60,                                                   // 31: RTS
+    // `Map_Init` has already run by the time the wipe would have, so this is
+    // also the place to put the player back where a portal aimed them.
+    0x4C, RESTORE_ARRIVAL_CPU as u8,
+          (RESTORE_ARRIVAL_CPU >> 8) as u8,                 // 31: JMP RestoreArrival
+];
+
+/// Put the player where the portal aimed them, after `Map_Init` has had its say.
+///
+/// `Map_Init` writes the destination world's start into ten variables, so
+/// landing anywhere else means rewriting all ten — five values, each in two
+/// places. The values themselves are whatever `ObjNorm_PipewayCtlr` computed
+/// on the way out of the transit room, copied byte for byte: those bytes are
+/// what vanilla uses to place you on a same-world pipe return, so their
+/// encoding is right by construction and needs no arithmetic here.
+///
+/// A no-op unless the pipe portal set the flag, which is why this can sit
+/// unconditionally at the end of the completion swap.
+#[rustfmt::skip]
+const RESTORE_ARRIVAL: [u8; 56] = [
+    0xAD, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,        //  0: LDA ARRIVAL_FLAG
+    0xF0, 0x32,                                                 //  3: BEQ +50 → done
+    0xA9, 0x00,                                                 //  5: LDA #$00
+    0x8D, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,        //  7: STA ARRIVAL_FLAG
+
+    0xAD, ARRIVAL_Y as u8, (ARRIVAL_Y >> 8) as u8,              // 10: LDA ARRIVAL_Y
+    0x8D, MAP_ENTERED_Y as u8, (MAP_ENTERED_Y >> 8) as u8,      // 13: STA Map_Entered_Y
+    0x8D, MAP_PREVIOUS_Y as u8, (MAP_PREVIOUS_Y >> 8) as u8,    // 16: STA Map_Previous_Y
+
+    0xAD, ARRIVAL_X as u8, (ARRIVAL_X >> 8) as u8,              // 19: LDA ARRIVAL_X
+    0x8D, MAP_ENTERED_X as u8, (MAP_ENTERED_X >> 8) as u8,      // 22: STA Map_Entered_X
+    0x8D, MAP_PREVIOUS_X as u8, (MAP_PREVIOUS_X >> 8) as u8,    // 25: STA Map_Previous_X
+
+    0xAD, ARRIVAL_XHI as u8, (ARRIVAL_XHI >> 8) as u8,          // 28: LDA ARRIVAL_XHI
+    0x8D, MAP_ENTERED_XHI as u8, (MAP_ENTERED_XHI >> 8) as u8,  // 31: STA Map_Entered_XHi
+    0x8D, MAP_PREVIOUS_XHI as u8,
+          (MAP_PREVIOUS_XHI >> 8) as u8,                        // 34: STA Map_Previous_XHi
+
+    0xAD, ARRIVAL_SCRL as u8, (ARRIVAL_SCRL >> 8) as u8,        // 37: LDA ARRIVAL_SCRL
+    0x8D, MAP_PREV_XOFF as u8, (MAP_PREV_XOFF >> 8) as u8,      // 40: STA Map_Prev_XOff
+    0x8D, MAP_PREV_XOFF2 as u8, (MAP_PREV_XOFF2 >> 8) as u8,    // 43: STA Map_Prev_XOff2
+
+    0xAD, ARRIVAL_SCRH as u8, (ARRIVAL_SCRH >> 8) as u8,        // 46: LDA ARRIVAL_SCRH
+    0x8D, MAP_PREV_XHI as u8, (MAP_PREV_XHI >> 8) as u8,        // 49: STA Map_Prev_XHi
+    0x8D, MAP_PREV_XHI2 as u8, (MAP_PREV_XHI2 >> 8) as u8,      // 52: STA Map_Prev_XHi2
+
+    0x60,                                                       // 55: RTS   ; done
 ];
 
 /// Trigger: hold SELECT, press START on the map to jump to the other world.
@@ -264,6 +343,7 @@ pub(crate) fn apply(rom: &mut Rom, cross_world_locks: bool, pipe_portal: bool) {
     rom.push_tag("world_persist");
 
     rom.write_range(FS_WORLD_PERSIST_SWAP, &SWAP_COMPLETIONS);
+    rom.write_range(FS_RESTORE_ARRIVAL, &RESTORE_ARRIVAL);
     rom.write_range(FS_WORLD_PERSIST_JUMP, &WORLD_JUMP_CHECK);
 
     // Replace the wipe with `JSR SwapCompletions`, padding the rest of the
@@ -475,26 +555,44 @@ const PIPE_HOOK_VANILLA: [u8; PIPE_HOOK_LEN] = [
 /// `LDX #$FF / TXS` for the same reason as the button trigger: `$84A0` never
 /// returns, and this fires several frames deep inside the map update.
 #[rustfmt::skip]
-const PIPE_PORTAL: [u8; 27] = [
+const PIPE_PORTAL: [u8; 60] = [
     0xAD, MAP_WAS_IN_PIPEWAY as u8,
           (MAP_WAS_IN_PIPEWAY >> 8) as u8,                  //  0: LDA Map_WasInPipeway
-    0xF0, 0x10,                                             //  3: BEQ +16 → not a pipe
+    0xF0, 0x31,                                             //  3: BEQ +49 → not a pipe
     0xAD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,          //  5: LDA World_Num
-    0xD0, 0x0B,                                             //  8: BNE +11 → not World 1
+    0xD0, 0x2C,                                             //  8: BNE +44 → not World 1
 
-    // ----- the portal: leave for World 2 -----
-    0xA9, 0x01,                                             // 10: LDA #$01
-    0x8D, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,          // 12: STA World_Num
-    0xA2, 0xFF,                                             // 15: LDX #$FF
-    0x9A,                                                   // 17: TXS
+    // ----- stash what the pipeway controller worked out -----
+    // Copied verbatim: these are the bytes vanilla uses to place you on a
+    // same-world pipe return, so the encoding is right by construction.
+    // `Map_Init` is about to overwrite all of them.
+    0xAD, MAP_ENTERED_Y as u8, (MAP_ENTERED_Y >> 8) as u8,  // 10: LDA Map_Entered_Y
+    0x8D, ARRIVAL_Y as u8, (ARRIVAL_Y >> 8) as u8,          // 13: STA ARRIVAL_Y
+    0xAD, MAP_ENTERED_XHI as u8,
+          (MAP_ENTERED_XHI >> 8) as u8,                     // 16: LDA Map_Entered_XHi
+    0x8D, ARRIVAL_XHI as u8, (ARRIVAL_XHI >> 8) as u8,      // 19: STA ARRIVAL_XHI
+    0xAD, MAP_ENTERED_X as u8, (MAP_ENTERED_X >> 8) as u8,  // 22: LDA Map_Entered_X
+    0x8D, ARRIVAL_X as u8, (ARRIVAL_X >> 8) as u8,          // 25: STA ARRIVAL_X
+    0xAD, MAP_PREV_XOFF as u8, (MAP_PREV_XOFF >> 8) as u8,  // 28: LDA Map_Prev_XOff
+    0x8D, ARRIVAL_SCRL as u8, (ARRIVAL_SCRL >> 8) as u8,    // 31: STA ARRIVAL_SCRL
+    0xAD, MAP_PREV_XHI as u8, (MAP_PREV_XHI >> 8) as u8,    // 34: LDA Map_Prev_XHi
+    0x8D, ARRIVAL_SCRH as u8, (ARRIVAL_SCRH >> 8) as u8,    // 37: STA ARRIVAL_SCRH
+
+    // `A` is still 1 after the flag, and World 2 is world index 1 — so the
+    // destination write is a bare STA rather than another LDA #$01.
+    0xA9, 0x01,                                             // 40: LDA #$01
+    0x8D, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,    // 42: STA ARRIVAL_FLAG
+    0x8D, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,          // 45: STA World_Num  (= World 2)
+    0xA2, 0xFF,                                             // 48: LDX #$FF
+    0x9A,                                                   // 50: TXS
     0x4C, WORLD_MAP_INIT_CPU as u8,
-          (WORLD_MAP_INIT_CPU >> 8) as u8,                  // 18: JMP $84A0 (never returns)
+          (WORLD_MAP_INIT_CPU >> 8) as u8,                  // 51: JMP $84A0 (never returns)
 
     // ----- ordinary pipe: the displaced instructions -----
-    0xA9, 0x00,                                             // 21: LDA #$00
+    0xA9, 0x00,                                             // 54: LDA #$00
     0x8D, MAP_WAS_IN_PIPEWAY as u8,
-          (MAP_WAS_IN_PIPEWAY >> 8) as u8,                  // 23: STA Map_WasInPipeway
-    0x60,                                                   // 26: RTS
+          (MAP_WAS_IN_PIPEWAY >> 8) as u8,                  // 56: STA Map_WasInPipeway
+    0x60,                                                   // 59: RTS
 ];
 
 /// Install the pipe portal: a pipe taken in World 1 comes out in World 2.
@@ -674,6 +772,53 @@ mod asm_checks {
     }
 
     #[test]
+    fn restore_arrival_is_well_formed() {
+        asm::check(&RESTORE_ARRIVAL)
+            .allocation(FS_RESTORE_ARRIVAL)
+            .origin(RESTORE_ARRIVAL_CPU)
+            .assert_ok();
+    }
+
+    /// The swap must reach the restore, or a portal's arrival is silently
+    /// dropped and you land on the destination world's start tile — which is
+    /// the version of this that is worse than no transit room at all.
+    #[test]
+    fn swap_falls_through_to_the_arrival_restore() {
+        assert_eq!(SWAP_COMPLETIONS[31], 0x4C, "the completion swap must end in a JMP, not an RTS");
+        assert_eq!(
+            u16::from_le_bytes([SWAP_COMPLETIONS[32], SWAP_COMPLETIONS[33]]),
+            RESTORE_ARRIVAL_CPU,
+            "and it must jump to the arrival restore"
+        );
+    }
+
+    /// Every variable `Map_Init` sets from `Map_Y_Starts` has to be rewritten.
+    /// Missing one leaves the player half-moved — drawn at the portal's tile
+    /// but resuming at the world's start after a death, or vice versa.
+    #[test]
+    fn restore_covers_every_position_variable_map_init_writes() {
+        let written: Vec<u16> = RESTORE_ARRIVAL
+            .windows(3)
+            .filter(|w| w[0] == 0x8D)
+            .map(|w| u16::from_le_bytes([w[1], w[2]]))
+            .collect();
+        for (addr, name) in [
+            (MAP_ENTERED_Y, "Map_Entered_Y"),
+            (MAP_ENTERED_X, "Map_Entered_X"),
+            (MAP_ENTERED_XHI, "Map_Entered_XHi"),
+            (MAP_PREVIOUS_Y, "Map_Previous_Y"),
+            (MAP_PREVIOUS_X, "Map_Previous_X"),
+            (MAP_PREVIOUS_XHI, "Map_Previous_XHi"),
+            (MAP_PREV_XOFF, "Map_Prev_XOff"),
+            (MAP_PREV_XHI, "Map_Prev_XHi"),
+            (MAP_PREV_XOFF2, "Map_Prev_XOff2"),
+            (MAP_PREV_XHI2, "Map_Prev_XHi2"),
+        ] {
+            assert!(written.contains(&addr), "restore never writes {name} (${addr:04X})");
+        }
+    }
+
+    #[test]
     fn pipe_portal_is_well_formed() {
         asm::check(&PIPE_PORTAL).allocation(FS_PIPE_PORTAL).origin(PIPE_PORTAL_CPU).assert_ok();
     }
@@ -688,7 +833,7 @@ mod asm_checks {
         let vanilla = rom.read_range(PIPE_HOOK_OFFSET, PIPE_HOOK_LEN);
         assert_eq!(vanilla, PIPE_HOOK_VANILLA, "PRG011_ABBE has moved");
         assert_eq!(
-            PIPE_PORTAL[21..26],
+            PIPE_PORTAL[54..59],
             PIPE_HOOK_VANILLA,
             "the ordinary-pipe path must replay what the hook overwrote"
         );
