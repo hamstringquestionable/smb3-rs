@@ -28,14 +28,36 @@
 //! array holds the right bits by then the tiles should come back beaten with no
 //! further work. That is the hypothesis under test.
 //!
-//! It deliberately does **not** solve storage for eight worlds. Two worlds need
-//! no new RAM at all, because one-player mode never touches Luigi's half: the
-//! live world sits at `$7D00` and the other world parks at `$7D40`, so a
-//! transition is just a 64-byte **swap**. Eight worlds need 512 bytes against a
-//! largest free SRAM run of 105 (`$7997–$79FF`, which nothing in the
-//! disassembly references), so the real version has to store one bit per
-//! completable cell against a randomizer-emitted table rather than raw columns.
-//! That is arithmetic, and it is not what this POC is for.
+//! **Luigi's half of `Map_Completions` is not spare storage.** The first cut of
+//! this POC parked the other world at `$7D40` on the theory that one-player mode
+//! never touches it. It does. Three sites mirror a completion into the *other*
+//! player's array unconditionally, because a permanent map alteration has to
+//! survive a game over:
+//!
+//! - `PRG011_BA7C`, level clear — "Fortress only... mark complete on both
+//!   Players (so it remains after Game Over)"
+//! - `MO_DoFortressFX` (PRG010) — "Mark lock busted / bridge built (Luigi)",
+//!   `Map_Completions+$40,Y`
+//! - `Map_SetCompletion_By_Poof` (PRG026) — "Rock removal sets completion bit
+//!   for BOTH Players!"
+//!
+//! So clearing a fortress, busting a lock or smashing a rock in the live world
+//! stamped the parked world's bank, and the next swap carried that stamp onto a
+//! map it had nothing to do with — a completed tile appearing in World 2 at the
+//! column World 1's was on. The parked bank now lives in genuinely unused SRAM
+//! instead, which has the side benefit of proving that region is really free.
+//!
+//! What is still *not* banked is the Luigi mirror itself: it tracks whichever
+//! world is live, and `PRG030_9314` ANDs the two halves on game over — that is
+//! how vanilla keeps forts and locks broken while losing plain level clears.
+//! Correct for the live world, wrong for a parked one, and the eight-world
+//! version has to bank both halves or restructure that path.
+//!
+//! It deliberately does **not** solve storage for eight worlds: 8 x 64 = 512
+//! bytes (1024 with the mirror) against a largest free SRAM run of 105, so the
+//! real version has to store one bit per completable cell against a
+//! randomizer-emitted table rather than raw columns. That is arithmetic, and it
+//! is not what this POC is for.
 //!
 //! Also knowingly unhandled here: the player respawns at the world's start tile
 //! rather than where they left, the per-world flags `$84A0` resets
@@ -71,6 +93,18 @@ const PAD_SELECT: u8 = 0x20;
 /// `World_Num`, 0-based.
 const WORLD_NUM: u16 = 0x0727;
 
+/// Where the non-live world's completion array parks.
+///
+/// `$7997-$79FF` is 105 bytes the disassembly declares as a bare `.ds 105
+/// unused`, and it is the *only* mention of any address in that range in the
+/// whole disassembly — nothing reads or writes it. Unlike the context-reused
+/// zero-page blocks, which the disassembly marks with explicit `.org`s, this is
+/// plain untouched SRAM. Using it here is deliberate: the eight-world version
+/// depends on that region being free, so the POC may as well prove it.
+///
+/// 64 bytes taken, 41 left.
+const PARKED_BANK: u16 = 0x7997;
+
 /// CPU address of `PRG030_84A0`, "initialize the world map". Reached from
 /// exactly two places — the airship-cleared path (`INC World_Num`) and the warp
 /// zone (`World_Num = Map_Warp_PrevWorld`) — and it never returns: it falls
@@ -104,29 +138,28 @@ const NORMAL_MOVE_VANILLA: [u8; NORMAL_MOVE_LEN] = [
 
 // --- Routines -----------------------------------------------------------
 
-/// Swap Mario's completion array with Luigi's.
+/// Exchange the live world's completion array with the parked world's.
 ///
-/// The whole two-world POC. `$7D00` is the live world; `$7D40` parks the other
-/// one. One-player mode never reads Luigi's half — the mega-map fold spent it
-/// the same way to reach eight map pages — so this costs no RAM at all.
+/// The whole two-world POC. `$7D00` is the live world, [`PARKED_BANK`] holds the
+/// other one, and a transition is a 64-byte swap.
 ///
 /// Called in place of the wipe, so A/X/Y are all free: the wipe itself
 /// clobbered A and Y, and the next thing `$84A0` does is `JSR
 /// Sprite_RAM_Clear`.
 ///
-/// `LDX abs,Y` (`$BE`) is what makes the swap 19 bytes rather than a
-/// two-pass copy through a scratch buffer.
+/// `LDX abs,Y` (`$BE`) is what makes the swap 19 bytes rather than a two-pass
+/// copy through a scratch buffer.
 #[rustfmt::skip]
 const SWAP_COMPLETIONS: [u8; 19] = [
-    0xA0, 0x3F,             //  0: LDY #$3F        ; 64 columns, counting down
-    0xB9, 0x00, 0x7D,       //  2: LDA $7D00,Y     ; loop: Mario's byte
-    0xBE, 0x40, 0x7D,       //  5: LDX $7D40,Y     ; the parked world's byte
-    0x99, 0x40, 0x7D,       //  8: STA $7D40,Y
-    0x8A,                   // 11: TXA
-    0x99, 0x00, 0x7D,       // 12: STA $7D00,Y
-    0x88,                   // 15: DEY
-    0x10, 0xF0,             // 16: BPL -16 → loop
-    0x60,                   // 18: RTS
+    0xA0, 0x3F,                                              //  0: LDY #$3F  ; 64 columns, down
+    0xB9, 0x00, 0x7D,                                        //  2: LDA $7D00,Y      ; loop
+    0xBE, PARKED_BANK as u8, (PARKED_BANK >> 8) as u8,       //  5: LDX PARKED_BANK,Y
+    0x99, PARKED_BANK as u8, (PARKED_BANK >> 8) as u8,       //  8: STA PARKED_BANK,Y
+    0x8A,                                                    // 11: TXA
+    0x99, 0x00, 0x7D,                                        // 12: STA $7D00,Y
+    0x88,                                                    // 15: DEY
+    0x10, 0xF0,                                              // 16: BPL -16 → loop
+    0x60,                                                    // 18: RTS
 ];
 
 /// Trigger: hold SELECT, press START on the map to jump to the other world.
