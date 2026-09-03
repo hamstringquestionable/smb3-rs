@@ -87,6 +87,14 @@ them, and the disassembly says so outright: *"there's no need for this to be
 precisely four in every world, but that's what they allocated."* A seven-fort
 group simply gets a seven-byte row.
 
+The randomizer's own FX writer has to read that base rather than assume the
+stride, and for a while it did not: `write_fortress_fx` wrote each row at
+`world_idx * 4`, which under the fold is past all three live rows. The engine
+kept reading the values `carry_fortress_fx` had left, so a fortress opened the
+*next* lock along and the last one opened a slot nobody had filled — a lock no
+fortress could break (seed 90247). `MapLayout::fx_row` now hands out the base
+and the room available, and `folded_fx_rows_land_at_their_real_bases` guards it.
+
 ### The one thing that does not fit
 
 **Map-object sprite slots.** The per-world list is nine long, so W4+W5+W6's ten

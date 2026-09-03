@@ -21,14 +21,25 @@ pub(super) fn write_fortress_fx(
         .filter_map(|lock| wa.fortress.get(lock.fort_section).map(|fa| (lock, fa)))
         .collect();
 
-    // Write FX world table (up to 4 slots per world).
-    let fx_base = rom_data::FX_WORLD_TABLE + world_idx * 4;
-    for i in 0..4 {
-        if i < locked_forts.len() {
-            rom.write_byte(fx_base + i, (*fx_slot + i) as u8);
-        } else {
-            rom.write_byte(fx_base + i, 0x00);
-        }
+    // Write the world's FX row: one slot number per lock, in fortress-ordinal
+    // order, zero-padded to the row's capacity.
+    //
+    // The row's offset comes from `FortressFXBase_ByWorld`, not from
+    // `world_idx * 4`. The stride version was right only because vanilla's
+    // eight rows happen to be four bytes each; under the mega-map fold the
+    // rows are packed 4/7/6, so it wrote past the live rows into dead space
+    // and the engine went on reading the values carried over from before the
+    // fold. A folded world's later fortresses then aimed at FX slots this
+    // pass never filled — a lock nothing could open.
+    let (fx_base, fx_cap) = data.catalog.layout.fx_row(rom, world_idx);
+    assert!(
+        locked_forts.len() <= fx_cap,
+        "world {world_idx} has {} locks but only {fx_cap} bytes of FX row space",
+        locked_forts.len()
+    );
+    for i in 0..fx_cap {
+        let byte = if i < locked_forts.len() { (*fx_slot + i) as u8 } else { 0x00 };
+        rom.write_byte(fx_base + i, byte);
     }
 
     for (ordinal_0, (lock, fort_a)) in locked_forts.iter().enumerate() {

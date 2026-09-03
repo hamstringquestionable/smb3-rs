@@ -300,8 +300,6 @@ pub(crate) const FX_MAP_LOC: usize = 0x14866;
 
 pub(crate) const FX_MAP_TILE_REPLACE: usize = 0x14877;
 
-pub(crate) const FX_WORLD_TABLE: usize = 0x14888;
-
 /// Map_Complete_Bits lookup table: maps grid row to completion bit.
 /// Row 0 = $80, row 1 = $40, ..., row 7 = $01.
 pub(crate) const MAP_COMPLETE_BITS: [u8; 8] = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];

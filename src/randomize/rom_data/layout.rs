@@ -44,9 +44,12 @@ const SCRCOL_MASTER: usize = 0x193FE;
 const PAGE_BYTES: usize = ROWS * 16;
 
 /// `FortressFX_W1` — the per-world rows of FX slot indices.
-const FX_WORLD_ROWS: usize = 0x14888;
+pub(crate) const FX_WORLD_ROWS: usize = 0x14888;
 /// `FortressFXBase_ByWorld` — byte offset into `FX_WORLD_ROWS` per world.
 const FX_WORLD_BASE: usize = 0x148A8;
+/// Bytes of row space between `FortressFX_W1` and the base table that follows
+/// it — vanilla's eight rows of four.
+const FX_WORLD_ROWS_LEN: usize = FX_WORLD_BASE - FX_WORLD_ROWS;
 
 /// W5's spiral tower entries. It pairs like a pipe, so the pipe matcher needs
 /// to know about it, but it wears castle tiles rather than pipe tiles.
@@ -163,6 +166,34 @@ impl MapLayout {
         self.dest_to_world.iter().filter(|&&(_, w)| w == slot).map(|&(d, _)| d as usize).collect()
     }
 
+    /// How many fortress entries a world owns — the live length of its FX row.
+    pub fn fortress_count(&self, slot: usize) -> usize {
+        self.fortress_entries.iter().filter(|&&(w, _)| w == slot).count()
+    }
+
+    /// One world's fortress-FX row: the file offset of its first byte, and how
+    /// many bytes may be written there before the next world's row starts.
+    ///
+    /// Rows are *packed*, not strided. Vanilla's bases happen to be `slot * 4`,
+    /// which is why a hardcoded stride survived this long, but the mega-map
+    /// fold lays three rows of 4/7/6 back to back — a fixed stride then writes
+    /// into dead space and the engine keeps reading the pre-fold row.
+    ///
+    /// The capacity reaches to the next live row (or the end of the region for
+    /// the last one), so a world with fewer locks than row space can zero-pad
+    /// the tail the way vanilla's own rows are padded, with no risk of a long
+    /// row trampling its neighbour.
+    pub fn fx_row(&self, rom: &Rom, slot: usize) -> (usize, usize) {
+        let base = rom.read_byte(FX_WORLD_BASE + slot) as usize;
+        let next = self
+            .slots()
+            .map(|s| rom.read_byte(FX_WORLD_BASE + s) as usize)
+            .filter(|&b| b > base)
+            .min()
+            .unwrap_or(FX_WORLD_ROWS_LEN);
+        (FX_WORLD_ROWS + base, next - base)
+    }
+
     /// FX slot indices per world, read from the ROM's own row table.
     ///
     /// Replaces the constant-driven reader, which assumed four bytes per world
@@ -172,9 +203,8 @@ impl MapLayout {
     pub fn world_fx_assignments(&self, rom: &Rom) -> [Vec<u8>; 8] {
         let mut out: [Vec<u8>; 8] = Default::default();
         for slot in self.slots() {
-            let forts = self.fortress_entries.iter().filter(|&&(w, _)| w == slot).count();
-            let base = rom.read_byte(FX_WORLD_BASE + slot) as usize;
-            out[slot] = (0..forts).map(|i| rom.read_byte(FX_WORLD_ROWS + base + i)).collect();
+            let (base, _) = self.fx_row(rom, slot);
+            out[slot] = (0..self.fortress_count(slot)).map(|i| rom.read_byte(base + i)).collect();
         }
         out
     }

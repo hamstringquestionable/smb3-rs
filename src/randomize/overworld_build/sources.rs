@@ -179,7 +179,7 @@ pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -
     let mut grid = catalog.layout.read_grid(rom, world_idx);
     let slots = vanilla_slots(rom, catalog, world_idx);
     let fort_count = slots.iter().filter(|s| s.kind == SlotKind::Fortress).count();
-    let locks = vanilla_locks(rom, &grid, world_idx, fort_count);
+    let locks = vanilla_locks(rom, &catalog.layout, &grid, world_idx, fort_count);
     for lock in &locks {
         grid.set(lock.pos.0, lock.pos.1, lock.replace_tile);
     }
@@ -280,13 +280,15 @@ fn vanilla_pipe_pairs(catalog: &NodeCatalog, world_idx: usize) -> Vec<TeleportEd
 #[cfg(test)]
 fn vanilla_locks(
     rom: &Rom,
+    layout: &rom_data::MapLayout,
     grid: &Grid,
     world_idx: usize,
     fort_count: usize,
 ) -> Vec<LockAssignment> {
+    let (fx_base, fx_cap) = layout.fx_row(rom, world_idx);
     let mut locks = Vec::new();
-    for ordinal in 0..fort_count.min(4) {
-        let slot = rom.read_byte(rom_data::FX_WORLD_TABLE + world_idx * 4 + ordinal) as usize;
+    for ordinal in 0..fort_count.min(fx_cap) {
+        let slot = rom.read_byte(fx_base + ordinal) as usize;
         let row = (rom.read_byte(rom_data::FX_MAP_LOC_ROW + slot) >> 4) as usize - 2;
         let loc = rom.read_byte(rom_data::FX_MAP_LOC + slot);
         let col = (loc & 0x0F) as usize * 16 + (loc >> 4) as usize;

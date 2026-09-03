@@ -612,7 +612,12 @@ fn test_fx_slots_valid() {
     // total lock count of all earlier worlds. Assert the exact bytes.
     let mut expected_slot = 0usize;
     for wi in 0..8 {
-        let fx_base = rom_data::FX_WORLD_TABLE + wi * 4;
+        // Row offset and length come from the layout, not a `wi * 4` stride —
+        // vanilla's rows are four bytes each, but the reader is the same one
+        // the writer uses, so this test still fails if a row lands elsewhere.
+        let (fx_base, fx_cap) = catalog.layout.fx_row(&test_rom, wi);
+        assert_eq!(fx_base, rom_data::FX_WORLD_ROWS + wi * 4, "W{} FX row offset", wi + 1);
+        assert_eq!(fx_cap, 4, "W{} FX row capacity", wi + 1);
         let lock_count = build.worlds[wi].locks.len();
         assert!(lock_count <= 4, "W{}: {lock_count} locks exceed 4 FX entries", wi + 1);
         for i in 0..4 {
@@ -1399,4 +1404,64 @@ fn test_march_veto_composes_with_limit_bro_movement() {
     // Fold-in regression: the old bros_no_hands hook site ($B425) must stay
     // vanilla — hand-trap avoidance now lives in the veto trampoline.
     assert_eq!(veto_first.read_range(0x17435, 3), &[0xD9, 0x98, 0x7E]);
+}
+
+/// A folded world's FX row lands where `FortressFXBase_ByWorld` says it does.
+///
+/// The regression this guards: `write_fortress_fx` used to address the row as
+/// `world_idx * 4` with a fixed four entries. Vanilla's rows are exactly that,
+/// so nothing complained — but the mega-map fold packs three rows of 4/7/6 at
+/// bases 0/4/11, and slots 5/6/7 sent the writer to bytes 20/24/28, past every
+/// live row. The engine kept reading the values `carry_fortress_fx` left
+/// there, so the seven-fortress world's later forts fired FX slots this pass
+/// never filled: locks with no fortress able to open them (seed 90247).
+#[test]
+fn folded_fx_rows_land_at_their_real_bases() {
+    let Some(rom) = load_rom() else { return };
+    let rom_bytes = rom.original_bytes().to_vec();
+
+    for seed in 0..4u64 {
+        let options = crate::randomizer::Options { mega_map: true, ..Default::default() };
+        let (out, build) =
+            crate::randomize_rom_with_overworld_capture(&rom_bytes, seed, &options, None)
+                .expect("mega-map randomize");
+
+        let live: Vec<usize> =
+            crate::randomize::mega_map::SUPER_WORLDS.iter().map(|s| s.slot).collect();
+        let layout = rom_data::MapLayout::read(&out, &live);
+
+        // Same running counter the writer uses, in the same world order.
+        let mut expected_slot = 0usize;
+        let mut written: Vec<(usize, usize)> = Vec::new();
+        for &wi in &live {
+            let (base, cap) = layout.fx_row(&out, wi);
+            let lock_count = build.worlds[wi].locks.len();
+            assert!(
+                lock_count <= cap,
+                "seed {seed} W{}: {lock_count} locks exceed {cap} bytes of FX row",
+                wi + 1
+            );
+            for i in 0..lock_count {
+                assert_eq!(
+                    out.read_byte(base + i),
+                    (expected_slot + i) as u8,
+                    "seed {seed} W{} FX row entry {i}",
+                    wi + 1
+                );
+            }
+            written.push((base, lock_count));
+            expected_slot += lock_count;
+        }
+
+        // Rows are packed, so a row that overran would land inside its
+        // neighbour rather than in dead space — check they stay disjoint.
+        for (a, &(base_a, len_a)) in written.iter().enumerate() {
+            for &(base_b, len_b) in written.iter().skip(a + 1) {
+                assert!(
+                    base_a + len_a <= base_b || base_b + len_b <= base_a,
+                    "seed {seed}: FX rows at {base_a:#X}(+{len_a}) and {base_b:#X}(+{len_b}) overlap"
+                );
+            }
+        }
+    }
 }
