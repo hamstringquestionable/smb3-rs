@@ -47,17 +47,29 @@
 //! column World 1's was on. The parked bank now lives in genuinely unused SRAM
 //! instead, which has the side benefit of proving that region is really free.
 //!
-//! What is still *not* banked is the Luigi mirror itself: it tracks whichever
-//! world is live, and `PRG030_9314` ANDs the two halves on game over — that is
-//! how vanilla keeps forts and locks broken while losing plain level clears.
-//! Correct for the live world, wrong for a parked one, and the eight-world
-//! version has to bank both halves or restructure that path.
+//! **And the mirror is not private to Luigi either — the map reload applies
+//! both halves.** `Map_Reload_with_Completions` loops to `CMP #$80`, all 128
+//! bytes, folding the column index with `AND #$30`, which aliases Luigi's bytes
+//! onto the same four screens as Mario's. Its own comment says so:
 //!
-//! It deliberately does **not** solve storage for eight worlds: 8 x 64 = 512
-//! bytes (1024 with the mirror) against a largest free SRAM run of 105, so the
-//! real version has to store one bit per completable cell against a
-//! randomizer-emitted table rather than raw columns. That is arithmetic, and it
-//! is not what this POC is for.
+//! ```text
+//! ; Note: Loop goes through both Players sets of completion bits, but
+//! ; this AND will basically cause 2 passes across the map...
+//! ```
+//!
+//! So banking only Mario's half still leaked: a fortress cleared in World 1 left
+//! its mirrored bit at `$7D40 + col`, and World 2's reload applied it to
+//! whatever sat at that column — a pyramid, in the case this was found from.
+//! Both halves are banked now, which also leaves the live world's game-over
+//! semantics intact: `PRG030_9314` ANDs the two, and that is exactly how vanilla
+//! keeps forts and locks broken while wiping plain level clears.
+//!
+//! It deliberately does **not** solve storage for eight worlds: 8 x 128 = 1024
+//! bytes against 384 of declared-unused SRAM, so the real version has to store
+//! bits per completable cell against a randomizer-emitted table rather than raw
+//! columns — two bits, since the mirror is a real distinction the engine makes
+//! and not a copy. At ~40 cells per world that is comfortable. Arithmetic, and
+//! not what this POC is for.
 //!
 //! Also knowingly unhandled here: the player respawns at the world's start tile
 //! rather than where they left, the per-world flags `$84A0` resets
@@ -93,17 +105,19 @@ const PAD_SELECT: u8 = 0x20;
 /// `World_Num`, 0-based.
 const WORLD_NUM: u16 = 0x0727;
 
-/// Where the non-live world's completion array parks.
+/// Where the non-live world's completion arrays park — one bank per half.
 ///
-/// `$7997-$79FF` is 105 bytes the disassembly declares as a bare `.ds 105
-/// unused`, and it is the *only* mention of any address in that range in the
-/// whole disassembly — nothing reads or writes it. Unlike the context-reused
-/// zero-page blocks, which the disassembly marks with explicit `.org`s, this is
-/// plain untouched SRAM. Using it here is deliberate: the eight-world version
-/// depends on that region being free, so the POC may as well prove it.
+/// The disassembly declares 384 bytes of SRAM as bare anonymous `.ds` runs, and
+/// these are its two largest: `$7997-$79FF` (105) and `$7A73-$7ADF` (109). In
+/// each case that declaration is the *only* mention of any address in the range
+/// anywhere in the disassembly — nothing reads or writes them. Unlike the
+/// context-reused zero-page blocks, which the disassembly marks with explicit
+/// `.org`s, this is plain untouched SRAM. Using it here is deliberate: the
+/// eight-world version depends on that budget, so the POC may as well prove it.
 ///
-/// 64 bytes taken, 41 left.
-const PARKED_BANK: u16 = 0x7997;
+/// 64 bytes taken from each; 41 and 45 left.
+const PARKED_MARIO: u16 = 0x7997;
+const PARKED_LUIGI: u16 = 0x7A73;
 
 /// CPU address of `PRG030_84A0`, "initialize the world map". Reached from
 /// exactly two places — the airship-cleared path (`INC World_Num`) and the warp
@@ -138,28 +152,41 @@ const NORMAL_MOVE_VANILLA: [u8; NORMAL_MOVE_LEN] = [
 
 // --- Routines -----------------------------------------------------------
 
-/// Exchange the live world's completion array with the parked world's.
+/// Exchange the live world's completion arrays with the parked world's.
 ///
-/// The whole two-world POC. `$7D00` is the live world, [`PARKED_BANK`] holds the
-/// other one, and a transition is a 64-byte swap.
+/// The whole two-world POC. `$7D00`/`$7D40` are the live world's Mario and
+/// mirror halves; [`PARKED_MARIO`]/[`PARKED_LUIGI`] hold the other one's.
+///
+/// **Both halves, not just Mario's.** The mirror is not scratch state: the map
+/// reload applies it as a second pass, and the game-over merge ANDs the two.
+/// Banking one and leaving the other is what made a World 1 fortress light up a
+/// tile in World 2.
 ///
 /// Called in place of the wipe, so A/X/Y are all free: the wipe itself
 /// clobbered A and Y, and the next thing `$84A0` does is `JSR
 /// Sprite_RAM_Clear`.
 ///
-/// `LDX abs,Y` (`$BE`) is what makes the swap 19 bytes rather than a two-pass
-/// copy through a scratch buffer.
+/// `LDX abs,Y` (`$BE`) is what keeps each half's exchange to 13 bytes rather
+/// than a two-pass copy through a scratch buffer.
 #[rustfmt::skip]
-const SWAP_COMPLETIONS: [u8; 19] = [
-    0xA0, 0x3F,                                              //  0: LDY #$3F  ; 64 columns, down
-    0xB9, 0x00, 0x7D,                                        //  2: LDA $7D00,Y      ; loop
-    0xBE, PARKED_BANK as u8, (PARKED_BANK >> 8) as u8,       //  5: LDX PARKED_BANK,Y
-    0x99, PARKED_BANK as u8, (PARKED_BANK >> 8) as u8,       //  8: STA PARKED_BANK,Y
-    0x8A,                                                    // 11: TXA
-    0x99, 0x00, 0x7D,                                        // 12: STA $7D00,Y
-    0x88,                                                    // 15: DEY
-    0x10, 0xF0,                                              // 16: BPL -16 → loop
-    0x60,                                                    // 18: RTS
+const SWAP_COMPLETIONS: [u8; 32] = [
+    0xA0, 0x3F,                                             //  0: LDY #$3F  ; 64 columns, down
+    // Mario's half
+    0xB9, 0x00, 0x7D,                                       //  2: LDA $7D00,Y       ; loop
+    0xBE, PARKED_MARIO as u8, (PARKED_MARIO >> 8) as u8,    //  5: LDX PARKED_MARIO,Y
+    0x99, PARKED_MARIO as u8, (PARKED_MARIO >> 8) as u8,    //  8: STA PARKED_MARIO,Y
+    0x8A,                                                   // 11: TXA
+    0x99, 0x00, 0x7D,                                       // 12: STA $7D00,Y
+    // The mirror half — permanent alterations live here too, and the reload
+    // applies it as a second pass over the same four screens.
+    0xB9, 0x40, 0x7D,                                       // 15: LDA $7D40,Y
+    0xBE, PARKED_LUIGI as u8, (PARKED_LUIGI >> 8) as u8,    // 18: LDX PARKED_LUIGI,Y
+    0x99, PARKED_LUIGI as u8, (PARKED_LUIGI >> 8) as u8,    // 21: STA PARKED_LUIGI,Y
+    0x8A,                                                   // 24: TXA
+    0x99, 0x40, 0x7D,                                       // 25: STA $7D40,Y
+    0x88,                                                   // 28: DEY
+    0x10, 0xE3,                                             // 29: BPL -29 → loop
+    0x60,                                                   // 31: RTS
 ];
 
 /// Trigger: hold SELECT, press START on the map to jump to the other world.

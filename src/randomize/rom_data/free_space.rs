@@ -156,12 +156,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     fs(
         0x155C4,
-        24,
+        40,
         &["world_persist"],
-        "world_persist POC: completion swap (24 reserved, 19 used)",
+        "world_persist POC: both-halves completion swap (40 reserved, 32 used)",
     ),
     fs(
-        0x155DC,
+        0x155EC,
         40,
         &["world_persist"],
         "world_persist POC: SELECT+START world-jump trampoline (40 reserved, 35 used)",
@@ -367,9 +367,9 @@ pub(crate) const FS_FX_SCREEN_CHECK: usize = 0x15554; // 112 reserved, 82 used
 // The FREE_SPACE_ALLOCATIONS rows below are NOT gated — the accounting has to
 // be complete on every target, or the per-bank budget lies on one of them.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_WORLD_PERSIST_SWAP: usize = 0x155C4; // 24 reserved, 19 used
+pub(crate) const FS_WORLD_PERSIST_SWAP: usize = 0x155C4; // 40 reserved, 32 used
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_WORLD_PERSIST_JUMP: usize = 0x155DC; // 40 reserved, 35 used
+pub(crate) const FS_WORLD_PERSIST_JUMP: usize = 0x155EC; // 40 reserved, 35 used
 
 pub(crate) const FS_CANOE_RESPAWN: usize = 0x15DF0; // 35 bytes
 pub(crate) const FS_MAP_WARP: usize = 0x15E13; // 162 bytes (CPU $DE03)
