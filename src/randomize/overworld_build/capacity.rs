@@ -91,7 +91,7 @@ pub(super) fn find_blank_slots(
 /// 2. Fortress: $67, $EB
 /// 3. Page threshold: page0 >= $03, page1 >= $67, page2 >= $BF, page3 >= $E9
 /// 4. Map_Removable_Tiles: $51, $52, $54, $67, $EB, $E4, $56, $9D
-pub(super) fn is_completion_unsafe(tile: u8) -> bool {
+pub(crate) fn is_completion_unsafe(tile: u8) -> bool {
     const SPECIAL: [u8; 5] = [0x50, 0xE8, 0xE6, 0xBD, 0xE0];
     const REMOVABLE: [u8; 8] = [0x51, 0x52, 0x54, 0x67, 0xEB, 0xE4, 0x56, 0x9D];
     const THRESHOLDS: [u8; 4] = [0x03, 0x67, 0xBF, 0xE9];

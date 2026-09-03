@@ -4,6 +4,11 @@ pub mod autoscroll;
 pub mod beta_tornado;
 pub mod big_q_rooms;
 pub mod bowser_castle;
+/// World-maze phase 1: the packed per-world completion-bit storage the
+/// two-world swap in [`world_persist`] has to become. Native-only for the same
+/// reason as that module — nothing on wasm reaches it yet.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod completion_bits;
 pub mod credits;
 pub mod enemies;
 pub mod enemy_protections;

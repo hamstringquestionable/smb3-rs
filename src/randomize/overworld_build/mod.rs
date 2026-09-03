@@ -135,6 +135,10 @@ pub(crate) use capacity::{
     RESERVED_DYNAMIC_SLOTS, VANILLA_PIPE_PAIRS, bfs_ordered, deal_c1_floors, distribute_levels,
     fixed_positions_for_world, prepare_capacities, redistribute_fortresses,
 };
+// The engine mirror `completion_bits` packs against — see that module and the
+// note in `rom_data::tiles` on why a table mirror stays with its reader.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use capacity::is_completion_unsafe;
 pub(crate) use route_choice::{
     C1_FLOOR, COST_LEVEL, DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice,
 };
