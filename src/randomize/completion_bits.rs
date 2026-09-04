@@ -41,11 +41,10 @@
 //! otherwise.
 //!
 //! The mask folds the pair into the one bit they share, which is faithful: one
-//! bit is one bit however many tiles claim it. What the fold cannot do is stop
-//! two cells from wanting it, and the builder's guard against that
-//! (`state::row78_partner`, applied in `legal_blanks`) only bars a *placed
-//! node's* partner — it does not look at what the vanilla grid already has
-//! there. `row78_collision_census` below measures the gap.
+//! bit is one bit however many tiles claim it. Keeping two pieces of *content*
+//! off the pair is the builder's job, not this module's —
+//! `WorldState::row78_barred` does it, over placed slots, locks and completable
+//! terrain alike. `row78_collision_census` below watches that from this side.
 //!
 //! # Two planes, not one
 //!
@@ -287,17 +286,22 @@ mod tests {
     /// engine can act on in *both* rows has one bit for two jobs. Row 7 wins:
     /// `PRG012_A55C` only steps down to row 8 when row 7's tile is not one it
     /// recognises. So a level panel placed at row 8 under a completable row-7
-    /// tile is marked beaten on the tile above it and never on itself.
+    /// tile would be marked beaten on the tile above it and never on itself.
     ///
-    /// The packed model is unaffected — one bit is one bit however many tiles
-    /// claim it, which is why this is a census and not an assertion. It is here
-    /// because building the mask is what surfaced the collision, and it is the
-    /// cheapest place to keep watching it.
+    /// `WorldState::row78_barred` is what prevents that, and
+    /// `row78_completion_bit_is_never_double_claimed` asserts it on the written
+    /// ROM. This is the same invariant seen from the storage side: the mask
+    /// folds the pair onto one bit, so a shortfall against the plain cell count
+    /// *is* a collision, found without knowing anything about placement.
+    /// Cheap, and independent — if the two ever disagree, one of them is wrong.
     ///
-    /// `decor` collisions are two scenery tiles that merely score as
-    /// completable (World 6's `$EA` ice runs the length of both rows); nothing
-    /// ever sets their bit, so they cost nothing. `LIVE` collisions have placed
-    /// content on one side and are the ones that reach a player.
+    /// A count of zero is not the pass condition. `decor` collisions are two
+    /// scenery tiles that merely score as completable — World 6's `$EA` ice
+    /// band runs the length of both rows — and nothing ever sets their bit, so
+    /// they cost nothing and the builder rightly leaves them alone. **`LIVE`
+    /// collisions, with placed content on one side, are the failure**: 47 of
+    /// them over 150 builds before the terrain claimant was handled (PR #212),
+    /// zero after.
     ///
     /// ```sh
     /// CENSUS_SEEDS=50 cargo test --release --lib row78_collision_census \

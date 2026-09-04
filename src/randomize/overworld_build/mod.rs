@@ -112,6 +112,7 @@ mod hammer_bros;
 mod islands;
 mod levels;
 mod locks;
+mod march;
 mod metrics;
 mod progression;
 mod route_choice;
@@ -135,8 +136,9 @@ pub(crate) use capacity::{
     RESERVED_DYNAMIC_SLOTS, VANILLA_PIPE_PAIRS, bfs_ordered, deal_c1_floors, distribute_levels,
     fixed_positions_for_world, prepare_capacities, redistribute_fortresses,
 };
-// The engine mirror `completion_bits` packs against — see that module and the
-// note in `rom_data::tiles` on why a table mirror stays with its reader.
+// The engine mirror the row-7/8 rule and `completion_bits` both read — see the
+// note in `rom_data::tiles` on why a table mirror stays with its reader. Not a
+// test-only export any more: `completion_bits` packs against it at build time.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use capacity::is_completion_unsafe;
 pub(crate) use route_choice::{

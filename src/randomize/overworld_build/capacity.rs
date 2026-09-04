@@ -576,44 +576,12 @@ pub(super) fn distribute_hb_sprites<R: Rng>(
     counts
 }
 
-/// Pick `count` positions from `candidates`, preferring spread: greedily accept
-/// a shuffled candidate when it is not adjacent (Chebyshev distance >= 2) to an
-/// already-chosen one, then top up from the remainder if spacing left us short.
-pub(super) fn pick_spread_positions<R: Rng>(
-    candidates: &[(usize, usize)],
-    count: usize,
-    rng: &mut R,
-) -> Vec<(usize, usize)> {
-    let count = count.min(candidates.len());
-    let mut shuffled = candidates.to_vec();
-    shuffled.shuffle(rng);
-
-    let mut chosen: Vec<(usize, usize)> = Vec::with_capacity(count);
-    for &pos in &shuffled {
-        if chosen.len() == count {
-            break;
-        }
-        let far = chosen.iter().all(|&(r, c)| r.abs_diff(pos.0).max(c.abs_diff(pos.1)) >= 2);
-        if far {
-            chosen.push(pos);
-        }
-    }
-    // Spacing may have rejected too many; top up from the rest.
-    for &pos in &shuffled {
-        if chosen.len() == count {
-            break;
-        }
-        if !chosen.contains(&pos) {
-            chosen.push(pos);
-        }
-    }
-    chosen
-}
-
 /// Decide redistributed Hammer Bro sprite positions + rewards for every world.
-/// Selects from each world's final `HammerBro` slot tiles (light anti-clump)
-/// and pairs each with a reward picked up from the vanilla encounters. Stores
-/// the result in `worlds[wi].hb_sprites`; the writer stamps the ROM tables.
+/// Selects from each world's final `HammerBro` slot tiles, spread apart in the
+/// march graph so the sprites do not keep landing on each other (see
+/// [`super::march`]), and pairs each with a reward picked up from the vanilla
+/// encounters. Stores the result in `worlds[wi].hb_sprites`; the writer stamps
+/// the ROM tables.
 pub(super) fn assign_hb_sprites<R: Rng>(
     rom: &Rom,
     pickup: &PickupResult,
@@ -624,6 +592,9 @@ pub(super) fn assign_hb_sprites<R: Rng>(
     // (where the ROM can store a sprite), and the HammerBro tiles to spawn on.
     let mut caps = [0usize; 8];
     let mut hb_tiles: Vec<Vec<(usize, usize)>> = Vec::with_capacity(8);
+    // Positions the writer will stamp as nodes — impassable to a marching
+    // sprite even though they are still blank path tiles on the build grid.
+    let mut blocked: Vec<HashSet<Pos>> = Vec::with_capacity(8);
     for wi in 0..8 {
         let tiles: Vec<(usize, usize)> = worlds[wi]
             .slots
@@ -637,6 +608,14 @@ pub(super) fn assign_hb_sprites<R: Rng>(
         let world_max = if wi == 7 { W8_HB_CAP } else { MAX_HB_PER_WORLD };
         caps[wi] = world_max.min(map_slots).min(tiles.len());
         hb_tiles.push(tiles);
+        blocked.push(
+            worlds[wi]
+                .slots
+                .iter()
+                .filter(|s| s.kind != SlotKind::HammerBro)
+                .map(|s| s.pos)
+                .collect(),
+        );
     }
 
     // Place the vanilla number of encounters, clamped to total capacity.
@@ -649,7 +628,13 @@ pub(super) fn assign_hb_sprites<R: Rng>(
     let mut reward_iter = rewards.into_iter();
 
     for wi in 0..8 {
-        let positions = pick_spread_positions(&hb_tiles[wi], counts[wi], rng);
+        let positions = super::march::pick_spread_positions(
+            &hb_tiles[wi],
+            counts[wi],
+            &worlds[wi].grid,
+            &blocked[wi],
+            rng,
+        );
         worlds[wi].hb_sprites = positions
             .into_iter()
             .map(|grid_pos| HbSprite { grid_pos, reward: reward_iter.next().unwrap_or(0) })

@@ -664,6 +664,95 @@ fn test_hammer_bro_redistribution_written() {
     }
 }
 
+/// Rows 7 and 8 share ONE completion bit per column, and
+/// `Map_Reload_with_Completions` reads row 7 FIRST — it only drops to row 8
+/// (`PRG012_A55C`) when row 7's tile matched nothing completable. So anything
+/// the engine catches at (7,c) swallows the bit, and content at (8,c) is
+/// never marked beaten, never crumbled and never removed on reload.
+///
+/// The builder barred the partner of every placed *slot* and lock, which
+/// missed the third claimant: **map terrain**. W2's oasis (`TILE_POOL`, `$BF`)
+/// sits at (7,6), is scenery rather than a pointer entry, and lands exactly on
+/// the page-2 `Tile_Attributes_TS0` threshold — so seeds put a level or a
+/// fortress at (8,6) that could never show beaten, and a lock there would have
+/// grown back on every map reload.
+///
+/// Asserted on the written ROM rather than on `BuildResult`, because that is
+/// where a lock is a tile and terrain, content and locks are finally the same
+/// kind of thing — exactly the view the engine has.
+#[test]
+fn row78_completion_bit_is_never_double_claimed() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+
+    for seed in 0..20u64 {
+        let catalog = node_catalog::NodeCatalog::build(&rom, false);
+        let pickup = overworld_pickup::pick_up(
+            &rom,
+            &catalog,
+            overworld_pickup::PickupFlags {
+                shuffle_spade_games: true,
+                shuffle_toad_houses: true,
+                shuffle_hammer_bros: true,
+            },
+        );
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let data = OverworldData { pickup: &pickup, catalog: &catalog };
+        let build = overworld_build::build(
+            &rom,
+            &data,
+            &mut rng,
+            overworld_build::BuildFlags {
+                shuffle_toad_houses: true,
+                shuffle_hammer_bros: true,
+                ..Default::default()
+            },
+        );
+
+        let mut test_rom = rom.clone();
+        write_overworld(
+            &mut test_rom,
+            &build,
+            &data,
+            &mut rng,
+            WriteFlags { shuffle_hammer_bros: true, ..Default::default() },
+        );
+
+        for wi in 0..8 {
+            let grid = rom_data::read_tile_grid(&test_rom, wi);
+            let tables = &rom_data::WORLDS[wi];
+            let entries: std::collections::HashSet<(usize, usize)> = (0..tables.entry_count)
+                .map(|i| rom_data::entry_grid_position(&test_rom, tables, i))
+                .collect();
+
+            for c in 0..grid.cols {
+                let row8 = grid.get(8, c);
+                if !overworld_build::is_completion_unsafe(grid.get(7, c))
+                    || !overworld_build::is_completion_unsafe(row8)
+                {
+                    // Either row 7 leaves the bit alone, or row 8 never wanted
+                    // it (a Hammer Bro rides a plain path tile the completion
+                    // pass does not touch). Two adjacent scenery tiles that
+                    // both read as completable — W6's `$EA` band — are the
+                    // same harmless case: no entry, no bit, nothing to lose.
+                    continue;
+                }
+                // Row 7 owns the bit. Anything at (8,c) that needs it — a
+                // pointer entry, or a lock the reload would redraw — is lost.
+                assert!(
+                    !entries.contains(&(8, c)) && !rom_data::LOCK_TILES.contains(&row8),
+                    "seed {seed} W{}: (7,{c})={:02X} claims the completion bit that \
+                     (8,{c})={row8:02X} needs",
+                    wi + 1,
+                    grid.get(7, c),
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn test_pointer_table_sorted() {
     let rom = match load_rom() {

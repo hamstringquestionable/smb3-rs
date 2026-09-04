@@ -220,26 +220,26 @@ fn sweep_is_deterministic() {
 /// `WorldState::forced_positions` and the census columns that read it change
 /// no output — and cause 1 is inherited, not created here.
 const BASELINE: [u64; SEEDS as usize] = [
-    0xFD3FFDA78CEBE40B,
-    0x537A3227F1E2FFB6,
-    0x9ED28342952A8D20,
-    0x3AE3AF6E96DDA7C9,
-    0x3712E83EFC34B620,
-    0x6CB36AAE8DCA2679,
-    0x5347FC554F8DBC63,
-    0x0F1BAD9250CC2665,
-    0xE9B53E297E11748D,
-    0x0D94E4766BD79E3D,
-    0xACD46A9D5F37C0C6,
-    0xCAABC56562F82B88,
-    0xF03CC97B45307A4D,
-    0xEB78E7B7E9A6996A,
-    0x1C67E99EE6BF458E,
-    0x655975B0A768C930,
-    0xC3D739C461564CFC,
-    0x6AA516C7728E6E4F,
-    0x02EF1B2DA0673419,
-    0x7D1F5E1B09905D72,
+    0xF17348EF0F2985C4,
+    0x621B8CB191263D06,
+    0x3BC07223110FE783,
+    0x22A6675215EBB035,
+    0x3DDF3EE3E904481D,
+    0x03862663D70C5745,
+    0x0E218D655154A03A,
+    0x2BDEA6043EEBB68D,
+    0x265B62CA0F64A752,
+    0xB53B04E61C42ED3F,
+    0xB620B46CDCEAF254,
+    0x42C8186A666CCDB0,
+    0xB7D9B39039E6D3B1,
+    0x1A1E3F733F719BC9,
+    0xD7BD60F947AAE514,
+    0x5DD7D64B3C5D7414,
+    0x1D055DB28774D936,
+    0x457C53E6D3E815A4,
+    0x7B786C0C3C0C731F,
+    0x1BDE02C1D3F3DD8B,
 ];
 ///
 /// Re-captured 2026-08-27 for the Big [?] bonus-room shuffle, which is always
@@ -303,6 +303,23 @@ const BASELINE: [u64; SEEDS as usize] = [
 /// seed, all within the icon payload. No RNG draw moved, so no module
 /// downstream shifted; the flag-key stamp at 0x19DF0 is byte-identical, since
 /// the key does not carry the release version.
+///
+/// Re-captured 2026-09-01 for the Hammer-Bro march spacing. Wandering sprites
+/// were spread by Chebyshev distance with a floor of 2 — which is exactly one
+/// march leg, so a bro could land on another and force both to march again.
+/// Spacing now runs on the march graph (`overworld_build::march`) with a floor
+/// of 3 legs, so the chosen tiles moved.
+///
+/// Attribution is by byte diff, the same way as the entries above: seeds 1-3
+/// were generated with `--no-palettes --patched-rom` before and after. Every
+/// one of the 71 / 27 / 66 changed bytes lands in one of two regions and
+/// nowhere else — the per-world map-object sub-tables reached through
+/// `MAP_OBJ_*_MASTER` (6 / 3 / 5 bytes, the sprite coordinates themselves) and
+/// the world pointer tables inside `WORLDS[..].rowtype_offset` (65 / 24 / 61
+/// bytes, because `assign` splits HammerBro slots into sprite slots and filler
+/// slots and feeds the two different pools). No map tile grid byte, no
+/// map-object reward byte, no level byte and no flag-key byte moved, and the
+/// RNG draw count is unchanged, so nothing downstream shifted.
 
 #[test]
 fn output_matches_baseline() {
