@@ -485,10 +485,16 @@ mod tests {
                     worst_at = (seed, name, map.base_table());
                 }
                 let raw: usize = (0..8).map(|w| map.mask(w).len()).sum();
-                let nonzero: usize =
-                    (0..8).map(|w| map.mask(w).iter().filter(|b| **b != 0).count()).sum();
+                // The presence bitmap is sized per world — World 1's 16
+                // columns need two bytes, not World 8's eight.
+                let sparse: usize = (0..8)
+                    .map(|w| {
+                        let m = map.mask(w);
+                        m.len().div_ceil(8) + m.iter().filter(|b| **b != 0).count()
+                    })
+                    .sum();
                 stencil_raw = stencil_raw.max(raw);
-                stencil_sparse = stencil_sparse.max(8 * 8 + nonzero);
+                stencil_sparse = stencil_sparse.max(sparse);
             }
         }
 
