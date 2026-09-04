@@ -367,10 +367,12 @@ pub struct TestRomSpec {
     /// between World 1 and World 2. Beat a level, jump, jump back — the level
     /// should still be beaten. See `randomize::world_persist`.
     pub world_persist: bool,
-    /// **World-maze POC.** Take a pipe in World 1 and come out on World 2's
-    /// map. Pair with `--place <pipe> <tile>` to put a transit room on a W1
-    /// tile; W1 has no pipes of its own, so any pipeway return there is it.
-    pub pipe_portal: Option<u8>,
+    /// **World-maze POC.** Cross-world portals, as `(source world, destination
+    /// world)` pairs, both 1-based. Each entry claims one pipe end in the
+    /// source world, so a world can hold several going to different places;
+    /// [`resolve_portals`] says which pipe each one landed on. Arrival is the
+    /// destination world's own start tile.
+    pub portals: Vec<(u8, u8)>,
     /// Put bro encounters on the 10-second clock (`bro_battle_timer`).
     pub bro_battle_timer: bool,
     /// Include the 9 unreferenced beta stages as placeable names.
@@ -787,6 +789,79 @@ fn apply_movement(
     Ok((applied, written, skipped))
 }
 
+/// Turn `--portal SRC>DST` pairs into the portals `world_persist` installs,
+/// alongside the map tile each one is reached from.
+///
+/// A portal is a property of a transit room *end*: entering the pipe on one
+/// side of the room walks you to the far pipe, and the far pipe is the end that
+/// gets read. So claiming a portal means marking the end opposite the tile the
+/// player steps on, and the tile reported is that opposite end's.
+///
+/// Ends are handed out B-then-A per room, rooms in ascending order, so a second
+/// `--portal` from the same world claims the other end of the same room rather
+/// than colliding with the first. That is deliberate rejection-free
+/// bookkeeping, not a placement policy — this is a playtest ROM, and which pipe
+/// is which only has to be stated, not chosen well.
+#[allow(clippy::type_complexity)]
+// Reason: three parallel facts about one portal, used once at the call site to
+// build a report line. A named struct would be read exactly nowhere else.
+fn resolve_portals(
+    rom: &Rom,
+    specs: &[(u8, u8)],
+) -> Result<Vec<(crate::randomize::world_persist::Portal, usize, (usize, usize))>, String> {
+    use crate::randomize::world_persist::{PORTAL_MAX, Portal};
+
+    if specs.len() > PORTAL_MAX {
+        return Err(format!("{} portals: the ROM holds at most {PORTAL_MAX}", specs.len()));
+    }
+
+    let mut taken: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    let mut out = Vec::new();
+
+    for &(src, dst) in specs {
+        let src_idx = src as usize - 1;
+        let dst_idx = dst as usize - 1;
+
+        // Every end of every room this world owns, B before A.
+        let ends: Vec<(usize, bool)> = rom_data::dest_indices_for_world(src_idx)
+            .into_iter()
+            .flat_map(|d| [(d, false), (d, true)])
+            .collect();
+        if ends.is_empty() {
+            return Err(format!(
+                "W{src} owns no pipe destinations, so it has no pipe to make a portal of. \
+                 Pick a world that does, or place a transit room there first."
+            ));
+        }
+        let nth = taken.entry(src_idx).or_insert(0);
+        let Some(&(dest_idx, end_a)) = ends.get(*nth) else {
+            return Err(format!(
+                "W{src} has only {} pipe end(s) and {} portals were asked of it",
+                ends.len(),
+                *nth + 1
+            ));
+        };
+        *nth += 1;
+
+        // The tile the player steps on is the *other* end of the room.
+        let (a_pos, b_pos) = rom_data::read_dest_positions(rom, dest_idx);
+        let src_pos = if end_a { b_pos } else { a_pos };
+
+        // Arrive where a normal world transition would: `Map_Init` stamps
+        // `Map_Y_Starts[world]` and a hard-coded X of $20, which is column 2 of
+        // screen 0. Always a real tile, in every world.
+        let y_start = rom.read_byte(rom_data::MAP_Y_STARTS_OFF + dst_idx);
+        let dest_pos = ((y_start >> 4) as usize - 2, 2);
+
+        out.push((
+            Portal { dest_idx, end_a, dest_world: dst_idx as u8, dest_pos },
+            src_idx,
+            src_pos,
+        ));
+    }
+    Ok(out)
+}
+
 /// Build a test ROM from vanilla bytes and a spec.
 pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     let mut report = Vec::new();
@@ -1002,18 +1077,27 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     //     tested on a plain vanilla map, which is the point — the question is
     //     whether the engine re-renders a world's completions, and a randomized
     //     map only adds variables.
-    if spec.world_persist || spec.pipe_portal.is_some() {
+    if spec.world_persist || !spec.portals.is_empty() {
+        let portals = resolve_portals(&rom, &spec.portals)?;
         crate::randomize::world_persist::apply(
             &mut rom,
-            // The flag is 1-based like every other world argument here;
-            // `World_Num` is 0-based.
-            spec.pipe_portal.map(|w| w - 1),
+            &portals.iter().map(|p| p.0).collect::<Vec<_>>(),
         );
         report.push(
             "world persist: SELECT+START cycles all 8 worlds, completions packed".to_string(),
         );
-        if let Some(w) = spec.pipe_portal {
-            report.push(format!("pipe portal: a pipe taken in W1 comes out on W{w}'s map"));
+        // Which pipe each portal landed on is not something the caller can
+        // predict, and a portal you cannot find is a portal you cannot test.
+        for (portal, src_world, src_pos) in &portals {
+            report.push(format!(
+                "portal: W{} pipe at row {} col {} -> W{} row {} col {}",
+                src_world + 1,
+                src_pos.0,
+                src_pos.1,
+                portal.dest_world + 1,
+                portal.dest_pos.0,
+                portal.dest_pos.1,
+            ));
         }
     }
 
@@ -1110,7 +1194,7 @@ mod tests {
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             world_persist: false,
-            pipe_portal: None,
+            portals: Vec::new(),
             bro_battle_timer: false,
             include_beta: false,
             big_q_unused5: None,
@@ -1139,7 +1223,7 @@ mod tests {
             &v,
             &TestRomSpec {
                 world_persist: true,
-                pipe_portal: Some(3),
+                portals: vec![(2, 3)],
                 remove_locks: true,
                 placements: vec![Placement { slot: Some(1), level: "6F1".into() }],
                 ..spec()
@@ -1458,25 +1542,54 @@ mod tests {
 
     /// Locks must survive `--keep-locks` even when the hammer can break them —
     /// that combination is the whole point of lock-FX testing.
-    /// `--pipe-portal N` is 1-based; `World_Num` is 0-based. The unit test on
+    /// `--portal SRC>DST` is 1-based; `World_Num` is 0-based. The unit test on
     /// `apply` passes an already-converted index, so it cannot see this — and
-    /// the first cut shipped with the conversion missing, sending World 2 to
-    /// World 3. Check the byte that actually lands in the ROM.
+    /// the first cut of the portal shipped with the conversion missing, sending
+    /// World 2 to World 3. Check the byte that actually lands in the ROM.
     #[test]
-    fn pipe_portal_world_is_converted_to_a_zero_based_index() {
+    fn portal_worlds_are_converted_to_zero_based_indices() {
         let Some(van) = vanilla() else { return };
-        for world in 2u8..=8 {
-            let rom = build(&van, &TestRomSpec { pipe_portal: Some(world), ..spec() })
-                .expect("build with a pipe portal");
-            let operand = crate::randomize::rom_data::FS_PORTAL_EXIT
-                + crate::randomize::world_persist::PORTAL_DEST_OPERAND;
+        for world in 1u8..=8 {
+            // W2 owns pipe destinations in vanilla; W1 does not, which is why
+            // the source is fixed and only the destination sweeps.
+            let rom = build(&van, &TestRomSpec { portals: vec![(2, world)], ..spec() })
+                .expect("build with a portal");
+            let table = crate::randomize::rom_data::FS_PORTAL_ARRIVAL
+                + crate::randomize::world_persist::PORTAL_TABLE_OFF;
             assert_eq!(
-                rom.bytes[operand],
+                rom.bytes[table],
                 world - 1,
-                "--pipe-portal {world} must write World_Num {}",
+                "--portal 2>{world} must write World_Num {}",
                 world - 1
             );
         }
+    }
+
+    /// Two portals out of one world claim two different pipe ends, and the
+    /// report names the tile each is reached from. Asking for more than a
+    /// world can supply is an error, not a silent overwrite of the first.
+    #[test]
+    fn a_world_can_hold_more_than_one_portal() {
+        let Some(van) = vanilla() else { return };
+
+        let built = build(&van, &TestRomSpec { portals: vec![(7, 1), (7, 3)], ..spec() })
+            .expect("build with two portals out of W7");
+        let lines: Vec<&String> =
+            built.report.iter().filter(|l| l.starts_with("portal:")).collect();
+        assert_eq!(lines.len(), 2, "report: {:?}", built.report);
+        assert_ne!(lines[0], lines[1], "both portals claimed the same pipe end");
+
+        let table = crate::randomize::rom_data::FS_PORTAL_ARRIVAL
+            + crate::randomize::world_persist::PORTAL_TABLE_OFF;
+        assert_eq!(built.bytes[table], 0, "portal 0 -> W1");
+        assert_eq!(built.bytes[table + 1], 2, "portal 1 -> W3");
+
+        // W2 owns three destinations, so six ends; a seventh has nowhere to go.
+        let too_many: Vec<(u8, u8)> = (0..7).map(|_| (2u8, 5u8)).collect();
+        assert!(
+            build(&van, &TestRomSpec { portals: too_many, ..spec() }).is_err(),
+            "asking a world for more pipe ends than it has must fail loudly"
+        );
     }
 
     #[test]

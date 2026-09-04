@@ -15,6 +15,24 @@ use smb3_rs::testrom::{self, Base, EnemyOverride, Placement, TestRomSpec};
 const DEFAULT_ROM: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";
 const DEFAULT_PRACTICE_IPS: &str = "patches/smb3practice_SE.ips";
 
+/// Parse a `SRC:DST` portal argument, both worlds 1-8.
+///
+/// `>` reads better and is accepted, but `:` is the documented spelling because
+/// an unquoted `--portal 2>5` is a shell redirect, not an argument.
+fn parse_portal(s: &str) -> Result<(u8, u8), String> {
+    let (src, dst) =
+        s.split_once([':', '>']).ok_or_else(|| format!("'{s}': expected SRC:DST, e.g. 2:5"))?;
+    let world = |t: &str| -> Result<u8, String> {
+        t.trim()
+            .trim_start_matches(['w', 'W'])
+            .parse::<u8>()
+            .ok()
+            .filter(|n| (1..=8).contains(n))
+            .ok_or_else(|| format!("'{t}': world must be 1-8"))
+    };
+    Ok((world(src)?, world(dst)?))
+}
+
 #[derive(Parser)]
 #[command(
     name = "testrom",
@@ -98,10 +116,12 @@ struct Cli {
     #[arg(long)]
     world_persist: bool,
 
-    /// World-maze POC: a pipe taken in World 1 comes out on this world's map,
-    /// 1-8. Combine with --place <pipe>. Implies --world-persist.
-    #[arg(long, value_name = "WORLD", value_parser = clap::value_parser!(u8).range(1..=8))]
-    pipe_portal: Option<u8>,
+    /// World-maze POC: a cross-world portal, as SRC:DST (e.g. --portal 2:5).
+    /// Repeatable, and repeating a source world claims another of its pipes.
+    /// The build report says which pipe each one landed on. Implies
+    /// --world-persist.
+    #[arg(long, value_name = "SRC:DST", value_parser = parse_portal)]
+    portal: Vec<(u8, u8)>,
 
     /// Leave lock tiles in place (default: removed).
     #[arg(long)]
@@ -423,7 +443,7 @@ fn main() {
         always_on_patches: cli.patches,
         walk_skip_conflicts: cli.walk_skip_conflicts,
         world_persist: cli.world_persist,
-        pipe_portal: cli.pipe_portal,
+        portals: cli.portal.clone(),
         remove_locks: !cli.keep_locks,
         remove_gaps: !cli.keep_gaps,
         starting_items,

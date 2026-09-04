@@ -163,7 +163,18 @@ fn free_space_audit_matches_registry() {
     // below. Apply it here rather than exempting it: that check exists because
     // an un-exercised allocation is an unaudited one, and "only testrom turns
     // it on" is not the same as "it doesn't claim ROM bytes".
-    crate::randomize::world_persist::apply(&mut rom, Some(1));
+    // A portal too, and not an empty list: the portal hooks, the arrival stash
+    // and its table are their own allocations, and an empty list installs none
+    // of them.
+    crate::randomize::world_persist::apply(
+        &mut rom,
+        &[crate::randomize::world_persist::Portal {
+            dest_idx: 1,
+            end_a: false,
+            dest_world: 1,
+            dest_pos: (2, 2),
+        }],
+    );
 
     let usage = audit_free_space(&rom);
     println!("{}", format_free_space_report(&rom));

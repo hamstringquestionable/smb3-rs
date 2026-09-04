@@ -107,7 +107,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x3DFE6,
         40,
         &["world_persist"],
-        "world_persist POC: pipe portal exit trigger (40 reserved, 32 used)",
+        "world-maze: portal exit trigger, PRG030 (40 reserved, 35 used)",
     ),
     fs(0x3DF3C, 20, &["big_q_blocks"], "big_q_block: save obj_ptr trampoline"),
     fs(
@@ -179,12 +179,6 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "world_persist POC: arrival-position restore after Map_Init (64 reserved, 56 used)",
     ),
     fs(
-        0x156AC,
-        48,
-        &["world_persist"],
-        "world_persist POC: arrival stash, Map_Init trampoline (48 reserved, 38 used)",
-    ),
-    fs(
         0x156DC,
         128,
         &["completion_bits"],
@@ -251,6 +245,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "MaCobra NGO routine (macobra.rs NGO_ROUTINE_OFFSET)",
     ),
     fs(0x17D70, 107, &["march_veto"], "landing-veto trampoline + per-world coord registry"),
+    fs(
+        0x17DDB,
+        160,
+        &["world_persist"],
+        "world-maze: portal arrival stash + 6 x 16 portal table (160 reserved, 147 used)",
+    ),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     fs(0x0382A, 23, &["koopalings"], "koopa_hits: subroutine + defeat JMP + threshold table"),
     fs(0x03841, 13, &["koopalings"], "koopa_collision_guard: skip collision bitmap during invuln"),
@@ -442,9 +442,18 @@ pub(crate) const FS_WORLD_PERSIST_JUMP: usize = 0x155EC; // 48 reserved, 40 used
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x1566C; // 64 reserved, 56 used
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_STASH_ARRIVAL: usize = 0x156AC; // 48 reserved, 38 used
+pub(crate) const FS_PORTAL_EXIT: usize = 0x3DFE6; // 40 reserved, 35 used
+
+// The portal arrival stash and the table it reads, together because the stash
+// addresses the table absolutely and so is origin-locked to it.
+//
+// PRG011, not PRG010. Both banks are mapped when this runs -- `$84A0` sets
+// PAGE_A000 = 11 and PAGE_C000 = 10 four instructions before the hook site --
+// and PRG010 has no run left that holds 147 bytes, while `prg011.asm` ends with
+// "Rest of ROM bank was empty" and leaves 565 unbroken from here to the bank
+// end. The stash also has to reach `Map_Init`, which is PRG011's own code.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_PORTAL_EXIT: usize = 0x3DFE6; // 40 reserved, 32 used
+pub(crate) const FS_PORTAL_ARRIVAL: usize = 0x17DDB; // 160 reserved, 147 used
 
 // World-maze phase 1: the completion-bit stencil, derived on the console.
 // The $FF run FS_FX_SCREEN_CHECK opened continues past FS_STASH_ARRIVAL to
@@ -1059,7 +1068,7 @@ mod free_space_tests {
             (FS_FX_SCREEN_CHECK, "FS_FX_SCREEN_CHECK"),
             (FS_WORLD_PERSIST_JUMP, "FS_WORLD_PERSIST_JUMP"),
             (FS_RESTORE_ARRIVAL, "FS_RESTORE_ARRIVAL"),
-            (FS_STASH_ARRIVAL, "FS_STASH_ARRIVAL"),
+            (FS_PORTAL_ARRIVAL, "FS_PORTAL_ARRIVAL"),
             (FS_PORTAL_EXIT, "FS_PORTAL_EXIT"),
             (FS_MASK_BUILD, "FS_MASK_BUILD"),
             (FS_IS_COMPLETABLE, "FS_IS_COMPLETABLE"),

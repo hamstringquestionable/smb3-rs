@@ -190,6 +190,23 @@ pub(crate) fn dest_indices_for_world(world_idx: usize) -> Vec<usize> {
     DEST_TO_WORLD.iter().filter(|&&(_, w)| w == world_idx).map(|&(d, _)| d as usize).collect()
 }
 
+/// Read one transit room's two map endpoints, as `(grid_row, grid_col)` each.
+///
+/// Upper nibble is the A side, lower is the B side, and a row nibble is
+/// `grid_row + 2` — the engine's own encoding, shared by all four destination
+/// tables.
+pub(crate) fn read_dest_positions(rom: &Rom, dest_idx: usize) -> ((usize, usize), (usize, usize)) {
+    let xhi = rom.read_byte(PIPE_MAP_XHI + dest_idx);
+    let x = rom.read_byte(PIPE_MAP_X + dest_idx);
+    let y = rom.read_byte(PIPE_MAP_Y + dest_idx);
+
+    let a_pos =
+        (((y >> 4) as usize).wrapping_sub(2), ((xhi >> 4) as usize) * 16 + ((x >> 4) as usize));
+    let b_pos =
+        (((y & 0xF) as usize).wrapping_sub(2), ((xhi & 0xF) as usize) * 16 + ((x & 0xF) as usize));
+    (a_pos, b_pos)
+}
+
 /// Read all pipe pairs from ROM destination tables, grouped by world.
 /// Returns a map: world_idx → Vec of ((row_a, col_a), (row_b, col_b)).
 #[cfg(test)]
@@ -198,21 +215,7 @@ pub(crate) fn read_pipe_pairs(rom: &Rom) -> std::collections::HashMap<usize, Vec
         std::collections::HashMap::new();
 
     for &(dest, world_idx) in DEST_TO_WORLD {
-        let d = dest as usize;
-        let xhi = rom.read_byte(PIPE_MAP_XHI + d);
-        let x = rom.read_byte(PIPE_MAP_X + d);
-        let y = rom.read_byte(PIPE_MAP_Y + d);
-
-        let a_scr = ((xhi >> 4) & 0x0F) as usize;
-        let b_scr = (xhi & 0x0F) as usize;
-        let a_col = ((x >> 4) & 0x0F) as usize;
-        let b_col = (x & 0x0F) as usize;
-        let a_row_nib = ((y >> 4) & 0x0F) as usize;
-        let b_row_nib = (y & 0x0F) as usize;
-
-        let a_pos = (a_row_nib.wrapping_sub(2), a_scr * 16 + a_col);
-        let b_pos = (b_row_nib.wrapping_sub(2), b_scr * 16 + b_col);
-
+        let (a_pos, b_pos) = read_dest_positions(rom, dest as usize);
         pipes_by_world.entry(world_idx).or_default().push((a_pos, b_pos));
     }
 
