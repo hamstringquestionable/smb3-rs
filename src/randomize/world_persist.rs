@@ -304,27 +304,59 @@ const WORLD_JUMP_CHECK: [u8; 48] = [
 /// any cross-world portals.
 ///
 /// The storage itself is [`completion_bits`]; this module contributes the debug
-/// jump that cycles worlds and the telepads that cross between them. The arrival restore is written into the
+/// telepads that cross between them. The SELECT+START debug jump is
+/// deliberately *not* here — see [`apply_debug_world_jump`]. The arrival restore is written into the
 /// padding `completion_bits` leaves at the wipe site, so it runs on the same
 /// pass and after `Map_Init` has had its say.
 pub(crate) fn apply(rom: &mut Rom, telepads: &[Telepad]) {
-    // Must come first: it owns the wipe site, and this module writes into the
-    // bytes it leaves behind.
+    // Must come first: it owns the wipe site, and the arrival restore below
+    // writes into the padding it leaves.
     completion_bits::apply(rom);
+
+    if telepads.is_empty() {
+        return;
+    }
 
     rom.push_tag("world_persist");
 
+    // The arrival path, which only a telepad ever raises the flag for.
     rom.write_range(FS_RESTORE_ARRIVAL, &RESTORE_ARRIVAL);
-    rom.write_range(FS_WORLD_PERSIST_JUMP, &WORLD_JUMP_CHECK);
-
-    // Second half of the displaced wipe: `completion_bits` put its own call in
-    // the first three bytes and NOPs in the rest. Seven wasted bytes is not the
-    // standard this project holds patches to; a shipped version would
-    // restructure the surrounding init instead of padding it.
+    // Second half of the displaced wipe: `completion_bits` puts its own call in
+    // the first three bytes and NOPs the rest, and the restore goes in the
+    // padding. Four bytes stay wasted; reclaiming them means restructuring
+    // `$84A0` itself, which is not worth it for four bytes.
     rom.write_range(
         WIPE_OFFSET + 3,
         &[0x20, RESTORE_ARRIVAL_CPU as u8, (RESTORE_ARRIVAL_CPU >> 8) as u8],
     );
+
+    let rows: Vec<(u8, (usize, usize))> =
+        telepads.iter().map(|t| (t.dest_world, t.dest_pos)).collect();
+    write_arrival_tables(rom, &rows);
+    install_map_init_trampoline(rom);
+    apply_telepads(rom, telepads, 0);
+
+    rom.pop_tag();
+}
+
+/// The SELECT+START world-jump — **a debug trigger, and testrom's alone.**
+///
+/// Hold SELECT and press START on the map and it cycles through all eight
+/// worlds. That is how the persistence was exercised before telepads existed,
+/// and it is still the fastest way to check a world's progress survives a
+/// transition without playing to a pad.
+///
+/// **It is split out of [`apply`] because a shipped ROM must not carry it.**
+/// When these modules stop being native-only, `apply` is what the randomizer
+/// calls; this stays behind with `testrom`. Keeping them in one function meant
+/// a shipped maze would have handed every player a world-select.
+///
+/// Requires [`apply`] to have run: the jump raises `TRANSITION_FLAG`, which
+/// means nothing until `completion_bits` has installed the swap that reads it.
+pub(crate) fn apply_debug_world_jump(rom: &mut Rom) {
+    rom.push_tag("world_persist_debug_jump");
+
+    rom.write_range(FS_WORLD_PERSIST_JUMP, &WORLD_JUMP_CHECK);
 
     // Hook MO_NormalMoveEnter for the trigger.
     let mut hook = [0xEA_u8; NORMAL_MOVE_LEN];
@@ -332,14 +364,6 @@ pub(crate) fn apply(rom: &mut Rom, telepads: &[Telepad]) {
     hook[1] = WORLD_JUMP_CHECK_CPU as u8;
     hook[2] = (WORLD_JUMP_CHECK_CPU >> 8) as u8;
     rom.write_range(NORMAL_MOVE_OFFSET, &hook);
-
-    if !telepads.is_empty() {
-        let rows: Vec<(u8, (usize, usize))> =
-            telepads.iter().map(|t| (t.dest_world, t.dest_pos)).collect();
-        write_arrival_tables(rom, &rows);
-        install_map_init_trampoline(rom);
-        apply_telepads(rom, telepads, 0);
-    }
 
     rom.pop_tag();
 }
@@ -766,7 +790,10 @@ mod asm_checks {
     fn the_wipe_site_calls_the_arrival_restore() {
         let Some(rom) = load_vanilla() else { return };
         let mut patched = rom.clone();
-        apply(&mut patched, &[]);
+        apply(
+            &mut patched,
+            &[Telepad { world: 1, dest_world: 6, dest_pos: (5, 12), src_pos: (0, 4) }],
+        );
         let wipe = patched.read_range(WIPE_OFFSET, WIPE_LEN);
         assert_eq!(wipe[3], 0x20, "the arrival restore must be called, not fallen into");
         assert_eq!(
@@ -999,6 +1026,50 @@ mod asm_checks {
             patched.read_range(MAP_INIT_CALL_OFFSET, MAP_INIT_CALL_LEN),
             [0x20, MAP_INIT_CPU as u8, (MAP_INIT_CPU >> 8) as u8],
             "no pads: Map_Init must still be called directly"
+        );
+    }
+
+    /// **The shipping half must not carry the debug trigger.** `apply` is what
+    /// the randomizer will call once these modules stop being native-only;
+    /// [`apply_debug_world_jump`] stays with `testrom`. They used to be one
+    /// function, which would have handed every player a SELECT+START
+    /// world-select.
+    #[test]
+    fn the_persistence_does_not_install_the_debug_world_jump() {
+        let Some(rom) = load_vanilla() else { return };
+        let pad = Telepad { world: 1, dest_world: 6, dest_pos: (5, 12), src_pos: (0, 4) };
+
+        // A full maze ROM: persistence, arrivals, pads — and no world-jump.
+        let mut shipped = rom.clone();
+        apply(&mut shipped, &[pad]);
+        assert_eq!(
+            shipped.read_range(NORMAL_MOVE_OFFSET, NORMAL_MOVE_LEN),
+            NORMAL_MOVE_VANILLA,
+            "MO_NormalMoveEnter must be untouched without the debug jump"
+        );
+        assert!(
+            shipped
+                .read_range(FS_WORLD_PERSIST_JUMP, WORLD_JUMP_CHECK.len())
+                .iter()
+                .all(|&b| b == 0xFF),
+            "the jump routine must not be written either"
+        );
+
+        // And asking for it puts both halves in.
+        let mut debug = shipped.clone();
+        apply_debug_world_jump(&mut debug);
+        assert_eq!(
+            debug.read_byte(NORMAL_MOVE_OFFSET),
+            0x20,
+            "the debug jump hooks MO_NormalMoveEnter"
+        );
+        assert_eq!(
+            u16::from_le_bytes([
+                debug.read_byte(NORMAL_MOVE_OFFSET + 1),
+                debug.read_byte(NORMAL_MOVE_OFFSET + 2)
+            ]),
+            WORLD_JUMP_CHECK_CPU,
+            "and the hook names the jump routine"
         );
     }
 

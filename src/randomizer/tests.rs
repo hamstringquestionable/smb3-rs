@@ -175,6 +175,9 @@ fn free_space_audit_matches_registry() {
             src_pos: (2, 2),
         }],
     );
+    // And the debug jump, which is its own allocation and no longer rides
+    // along with the persistence.
+    crate::randomize::world_persist::apply_debug_world_jump(&mut rom);
 
     let usage = audit_free_space(&rom);
     println!("{}", format_free_space_report(&rom));

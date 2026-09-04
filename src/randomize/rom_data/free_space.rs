@@ -163,8 +163,8 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(
         0x155EC,
         48,
-        &["world_persist"],
-        "world_persist POC: SELECT+START world-jump trampoline (48 reserved, 40 used)",
+        &["world_persist_debug_jump"],
+        "testrom debug: SELECT+START world-jump trampoline (48 reserved, 40 used)",
     ),
     fs(
         0x1566C,
@@ -438,6 +438,9 @@ pub(crate) const FS_FX_SCREEN_CHECK: usize = 0x15554; // 112 reserved, 82 used
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_PACK_WORLD: usize = 0x155C4; // 40 reserved, 33 used
 #[cfg(not(target_arch = "wasm32"))]
+// The SELECT+START world-jump is a testrom debug trigger with its own owner
+// tag, deliberately: it is the one part of the world maze a shipped ROM must
+// not carry, and a separate owner is what makes that visible in the audit.
 pub(crate) const FS_WORLD_PERSIST_JUMP: usize = 0x155EC; // 48 reserved, 40 used
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x1566C; // 64 reserved, 56 used

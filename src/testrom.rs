@@ -1076,6 +1076,12 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     if spec.world_persist || !spec.telepads.is_empty() {
         let telepads = resolve_telepads(&rom, &spec.telepads)?;
         crate::randomize::world_persist::apply(&mut rom, &telepads);
+        // The world-jump is a debug trigger and lives outside `apply`, so a
+        // shipped maze never carries it. `--telepad` alone does not want it.
+        if spec.world_persist {
+            crate::randomize::world_persist::apply_debug_world_jump(&mut rom);
+            report.push("world jump: SELECT+START cycles all 8 worlds".to_string());
+        }
         for pad in &telepads {
             report.push(format!(
                 "telepad: W{} row {} col {}  ->  W{} row {} col {}",
@@ -1087,9 +1093,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
                 pad.dest_pos.1,
             ));
         }
-        report.push(
-            "world persist: SELECT+START cycles all 8 worlds, completions packed".to_string(),
-        );
+        report.push("world persist: completions packed per world".to_string());
     }
 
     // 7. Starting inventory. Last, mirroring the randomizer's own ordering —
