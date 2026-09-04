@@ -1881,6 +1881,51 @@ mod tests {
         assert_eq!(moved, spec_portals.len(), "one repointed far mouth per pipe");
     }
 
+    /// **The open-movement patch is applied before the world-maze patches, so
+    /// they would silently win any overlap.** The movement patch's own
+    /// collision check runs at step 5 and cannot see writes that come later, so
+    /// it is blind in exactly this direction.
+    ///
+    /// Both are testrom-only and the order between them is fixed, so this is
+    /// checkable: rebuild with both on and confirm every record the movement
+    /// patch placed is still there afterwards.
+    #[test]
+    fn the_world_maze_patches_do_not_clobber_open_movement() {
+        let Some(van) = vanilla() else { return };
+        let Ok(patch) = std::fs::read("patches/smb3practice_SE.ips") else {
+            eprintln!("SKIP: requires patches/smb3practice_SE.ips");
+            return;
+        };
+
+        let built = build(
+            &van,
+            &TestRomSpec {
+                movement_patch: Some(patch.clone()),
+                world_persist: true,
+                telepads: vec![(3, 3), (1, 3), (2, 7)],
+                portals: vec![(2, 4)],
+                ..spec()
+            },
+        )
+        .expect("build with open movement and the whole world-maze stack");
+
+        let (lo, hi) = MOVEMENT_RECORD_RANGE;
+        let mut checked = 0;
+        for rec in crate::ips::parse_ips_records(&patch).expect("parse practice IPS") {
+            if rec.offset < lo || rec.offset >= hi {
+                continue;
+            }
+            checked += 1;
+            assert_eq!(
+                &built.bytes[rec.offset..rec.offset + rec.payload.len()],
+                &rec.payload[..],
+                "a world-maze patch overwrote the open-movement record at {:#07X}",
+                rec.offset
+            );
+        }
+        assert!(checked > 0, "no movement records land in PRG010/011 — the range is wrong");
+    }
+
     /// Locks must survive `--keep-locks` even when the hammer can break them —
     /// that combination is the whole point of lock-FX testing.
     #[test]
