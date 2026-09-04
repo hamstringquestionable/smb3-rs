@@ -103,7 +103,7 @@ is the one to read:
 | PRG006 | `$C000–$DFFF`, in-level (enemy data) | 1392 | 1392 |
 | PRG007 | swapped, in-level (object AI) | 27 | 27 |
 | PRG010 | `$C000–$DFFF`, map | 240 | 80 |
-| PRG011 | `$A000–$BFFF`, map | 454 | 341 |
+| PRG011 | `$A000–$BFFF`, map | 390 | 277 |
 | PRG025 | `$C000–$DFFF`, title screen | 2771 | 2759 |
 | PRG026 | `$A000–$BFFF`, map/inventory | 2485 | 2419 |
 

@@ -659,54 +659,97 @@ const PAD_HOOK_VANILLA: [u8; PAD_HOOK_LEN] = [
     0x8D, 0x29, 0x07,       // STA Map_Operation
 ];
 
-/// One pad per world, so the table is indexed by `World_Num` directly.
-/// Nine entries, not eight: `World_Num` reaches `$08` for the warp zone.
-const PAD_WORLDS: usize = 9;
+/// The player's live map position, zero page, two bytes each (Mario/Luigi).
+///
+/// `Map_GetTile` is the authority on what these mean: screen is
+/// `World_Map_XHi`, column is `World_Map_X >> 4`, row is
+/// `(World_Map_Y - 16) >> 4`. The low nibbles are sub-tile pixels, so a key
+/// must mask them off rather than compare raw.
+const WORLD_MAP_Y: u8 = 0x75;
+const WORLD_MAP_XHI: u8 = 0x77;
+const WORLD_MAP_X: u8 = 0x79;
 
-/// Offset of the per-world pad table inside [`PAD_ENTER`]. The routine's code
-/// is 40 bytes; the `ordinary` label the two branches aim at is at 34, which is
-/// a different number and was briefly the same one by mistake.
-const PAD_TABLE_OFF: usize = 40;
+/// Offset of the pad key tables inside [`PAD_ENTER`].
+const PAD_TABLE_OFF: usize = 66;
 
-/// Teleport instead of entering the tile, when the tile is a pad.
+/// Three parallel key tables, sixteen rows — one per shared arrival id. A row
+/// says "a pad standing here uses this id", so the id *is* the row index and no
+/// pairing table is needed: arrival row `i` holds where pad row `i` sends you.
+///
+/// `PAD_WORLD` doubles as the row's presence flag: `$FF` is no world, so an
+/// unclaimed row can never match and costs no test of its own.
+const PAD_WORLD_CPU: u16 = PAD_ENTER_CPU + PAD_TABLE_OFF as u16;
+const PAD_Y_CPU: u16 = PAD_WORLD_CPU + PORTAL_MAX as u16;
+const PAD_X_CPU: u16 = PAD_Y_CPU + PORTAL_MAX as u16;
+
+/// Teleport instead of entering the tile, when the tile is a pad the table
+/// knows about.
 ///
 /// **It writes the portal id into `Map_Entered_XHi` and jumps to `$84A0`**,
-/// which is exactly what a pipe portal leaves behind for
-/// [`STASH_ARRIVAL`] to find — so the whole arrival path, the completion pack
-/// and unpack, and [`RESTORE_ARRIVAL`] are reused with no change at all. A pad
-/// is a different way to *reach* the transition, not a different transition.
+/// which is exactly what a pipe portal leaves behind for [`STASH_ARRIVAL`] to
+/// find — so the whole arrival path, the completion pack and unpack, and
+/// [`RESTORE_ARRIVAL`] are reused with no change at all. A pad is a different
+/// way to *reach* the transition, not a different transition.
 ///
 /// No transit room, so no destination-table slot: the twenty-four rooms stay
 /// entirely with vanilla's intra-world pipes.
+///
+/// The key is `(World_Num, row, screen and column)` rather than the world
+/// alone, so a world can hold as many pads as there are free arrival ids. The
+/// column and screen share one byte — `World_Map_X & $F0` never collides with
+/// `World_Map_XHi`, which is a screen index of 0..3.
 #[rustfmt::skip]
-const PAD_ENTER: [u8; PAD_TABLE_OFF + PAD_WORLDS] = [
+const PAD_ENTER: [u8; PAD_TABLE_OFF + 3 * PORTAL_MAX] = [
     0xA5, WORLD_MAP_TILE,                                   //  0: LDA World_Map_Tile
     0xC9, TILE_BONUS_GAME,                                  //  2: CMP #pad tile
-    0xD0, 0x1C,                                             //  4: BNE +28 -> ordinary
-    0xAE, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,          //  6: LDX World_Num
-    0xBD, (PAD_ENTER_CPU + PAD_TABLE_OFF as u16) as u8,
-          ((PAD_ENTER_CPU + PAD_TABLE_OFF as u16) >> 8) as u8,  //  9: LDA PAD_ID,X
-    0x30, 0x14,                                             // 12: BMI +20 -> ordinary ($FF = no pad)
+    0xD0, 0x24,                                             //  4: BNE +36 -> ordinary
     0xAE, PLAYER_CURRENT as u8,
-          (PLAYER_CURRENT >> 8) as u8,                      // 14: LDX Player_Current
+          (PLAYER_CURRENT >> 8) as u8,                      //  6: LDX Player_Current
+    0xA0, (PORTAL_MAX - 1) as u8,                           //  9: LDY #15
+
+    // ----- scan the key tables (11) -----
+    0xAD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,          // 11: LDA World_Num
+    0xD9, PAD_WORLD_CPU as u8, (PAD_WORLD_CPU >> 8) as u8,  // 14: CMP PAD_WORLD,Y
+    0xD0, 0x14,                                             // 17: BNE +20 -> next
+    0xB5, WORLD_MAP_Y,                                      // 19: LDA World_Map_Y,X
+    0x29, 0xF0,                                             // 21: AND #$F0     ; drop sub-tile
+    0xD9, PAD_Y_CPU as u8, (PAD_Y_CPU >> 8) as u8,          // 23: CMP PAD_Y,Y
+    0xD0, 0x0B,                                             // 26: BNE +11 -> next
+    0xB5, WORLD_MAP_X,                                      // 28: LDA World_Map_X,X
+    0x29, 0xF0,                                             // 30: AND #$F0     ; column
+    0x15, WORLD_MAP_XHI,                                    // 32: ORA World_Map_XHi,X  ; screen
+    0xD9, PAD_X_CPU as u8, (PAD_X_CPU >> 8) as u8,          // 34: CMP PAD_X,Y
+    0xF0, 0x09,                                             // 37: BEQ +9 -> found
+
+    // ----- next (39) -----
+    0x88,                                                   // 39: DEY
+    0x10, 0xE1,                                             // 40: BPL -31 -> scan
+
+    // ----- ordinary: the displaced instructions (42) -----
+    0xA9, 0x10,                                             // 42: LDA #$10
+    0x8D, MAP_OPERATION as u8, (MAP_OPERATION >> 8) as u8,  // 44: STA Map_Operation
+    0x60,                                                   // 47: RTS
+
+    // ----- found (48): Y is the arrival id -----
+    0x98,                                                   // 48: TYA
     0x9D, MAP_ENTERED_XHI as u8,
-          (MAP_ENTERED_XHI >> 8) as u8,                     // 17: STA Map_Entered_XHi,X  ; the id
-    0xA9, 0x01,                                             // 20: LDA #$01
-    0x8D, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,    // 22: STA ARRIVAL_FLAG
+          (MAP_ENTERED_XHI >> 8) as u8,                     // 49: STA Map_Entered_XHi,X  ; the id
+    0xA9, 0x01,                                             // 52: LDA #$01
+    0x8D, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,    // 54: STA ARRIVAL_FLAG
     0x8D, TRANSITION_FLAG as u8,
-          (TRANSITION_FLAG >> 8) as u8,                     // 25: STA TRANSITION_FLAG
-    0xA2, 0xFF,                                             // 28: LDX #$FF
-    0x9A,                                                   // 30: TXS
+          (TRANSITION_FLAG >> 8) as u8,                     // 57: STA TRANSITION_FLAG
+    0xA2, 0xFF,                                             // 60: LDX #$FF
+    0x9A,                                                   // 62: TXS
     0x4C, WORLD_MAP_INIT_CPU as u8,
-          (WORLD_MAP_INIT_CPU >> 8) as u8,                  // 31: JMP $84A0 (never returns)
+          (WORLD_MAP_INIT_CPU >> 8) as u8,                  // 63: JMP $84A0 (never returns)
 
-    // ----- ordinary: the displaced instructions -----
-    0xA9, 0x10,                                             // 34: LDA #$10
-    0x8D, MAP_OPERATION as u8, (MAP_OPERATION >> 8) as u8,  // 36: STA Map_Operation
-    0x60,                                                   // 39: RTS
-
-    // ----- PAD_ID, indexed by World_Num; $FF = this world has no pad -----
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,   // 40: PAD_ID
+    // ----- PAD_WORLD (66), PAD_Y (82), PAD_X (98); $FF world = unclaimed -----
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
 /// A pad: which world it stands in, and where it puts you.
@@ -724,9 +767,9 @@ pub(crate) struct Telepad {
     pub dest_world: u8,
     /// Where to arrive on that world's map, as `(grid_row, grid_col)`.
     pub dest_pos: (usize, usize),
-    /// Where the pad stands, as `(grid_row, grid_col)`. Not read by the patch —
-    /// the hook matches on the tile, not the position — but a pad the player
-    /// cannot find is a pad they cannot test, so the caller reports it.
+    /// Where the pad stands, as `(grid_row, grid_col)`. **Load-bearing**: it is
+    /// the key the routine matches the player's live position against, which is
+    /// what lets one world hold several pads.
     pub src_pos: (usize, usize),
 }
 
@@ -736,7 +779,14 @@ fn apply_telepads(rom: &mut Rom, telepads: &[Telepad], first_id: usize) {
     let mut code = PAD_ENTER;
     for (n, pad) in telepads.iter().enumerate() {
         let id = first_id + n;
-        code[PAD_TABLE_OFF + pad.world as usize] = id as u8;
+        let (row, col) = pad.src_pos;
+        // `Map_GetTile`'s own arithmetic, run backwards: row is
+        // `(World_Map_Y - 16) >> 4`, so the masked Y a pad sits at is
+        // `(row + 1) << 4`; the column is `World_Map_X >> 4` and the screen is
+        // `World_Map_XHi`, which the routine folds into one byte.
+        code[PAD_TABLE_OFF + id] = pad.world;
+        code[PAD_TABLE_OFF + PORTAL_MAX + id] = ((row + 1) << 4) as u8;
+        code[PAD_TABLE_OFF + 2 * PORTAL_MAX + id] = (((col % 16) << 4) | (col / 16)) as u8;
     }
     rom.write_range(FS_PAD_ENTER, &code);
 
@@ -1102,7 +1152,7 @@ mod asm_checks {
             "PRG010_CEA7 has moved"
         );
         assert_eq!(
-            PAD_ENTER[34..39],
+            PAD_ENTER[42..47],
             PAD_HOOK_VANILLA,
             "the ordinary path must replay what the hook overwrote"
         );
@@ -1119,22 +1169,32 @@ mod asm_checks {
             .assert_ok();
     }
 
-    /// The table the routine indexes is its own, and `World_Num` reaches `$08`
-    /// — nine entries, not eight. An eight-byte table would read the first
-    /// instruction of nothing in particular for the warp zone.
+    /// The three tables the scan indexes are its own, and they are laid out
+    /// where the constants say. The addresses are computed from
+    /// [`PAD_TABLE_OFF`]: get it wrong and the routine scans its own
+    /// instructions, which decodes and runs perfectly well.
     #[test]
-    fn pad_table_is_indexed_by_world_num_and_covers_the_warp_zone() {
-        assert_eq!(PAD_ENTER[9], 0xBD, "offset 9 is not an LDA abs,X");
-        assert_eq!(
-            u16::from_le_bytes([PAD_ENTER[10], PAD_ENTER[11]]),
-            PAD_ENTER_CPU + PAD_TABLE_OFF as u16,
-            "the routine must index its own table"
-        );
-        assert_eq!(PAD_WORLDS, 9, "World_Num reaches $08 for the warp zone");
-        assert_eq!(PAD_ENTER.len(), PAD_TABLE_OFF + PAD_WORLDS);
+    fn the_pad_scan_reads_its_own_key_tables() {
+        let operand = |at: usize| {
+            assert_eq!(PAD_ENTER[at], 0xD9, "offset {at} is not a CMP abs,Y");
+            u16::from_le_bytes([PAD_ENTER[at + 1], PAD_ENTER[at + 2]])
+        };
+        let first = PAD_ENTER_CPU + PAD_TABLE_OFF as u16;
+        let last = first + (3 * PORTAL_MAX - 1) as u16;
+        for (at, want, name) in
+            [(14, PAD_WORLD_CPU, "PAD_WORLD"), (23, PAD_Y_CPU, "PAD_Y"), (34, PAD_X_CPU, "PAD_X")]
+        {
+            let got = operand(at);
+            assert_eq!(got, want, "offset {at} should read {name}");
+            assert!(
+                (first..=last).contains(&got),
+                "{name} at ${got:04X} is outside the tables (${first:04X}-${last:04X})"
+            );
+        }
+        assert_eq!(PAD_ENTER.len(), PAD_TABLE_OFF + 3 * PORTAL_MAX);
         assert!(
-            PAD_ENTER[PAD_TABLE_OFF..].iter().all(|&b| b == 0xFF),
-            "every world starts with no pad"
+            PAD_ENTER[PAD_TABLE_OFF..PAD_TABLE_OFF + PORTAL_MAX].iter().all(|&b| b == 0xFF),
+            "every row starts unclaimed, and $FF is a world nothing can be in"
         );
     }
 
@@ -1170,12 +1230,16 @@ mod asm_checks {
             "the level-exit hook belongs to pipe portals, not pads"
         );
 
-        // The per-world table names the shared arrival ids, in order.
+        // The key tables describe where each pad stands, row index = arrival id.
         let table = FS_PAD_ENTER + PAD_TABLE_OFF;
-        assert_eq!(patched.read_byte(table), 0, "W1's pad uses arrival id 0");
-        assert_eq!(patched.read_byte(table + 4), 1, "W5's pad uses arrival id 1");
-        for w in [1usize, 2, 3, 5, 6, 7, 8] {
-            assert_eq!(patched.read_byte(table + w), 0xFF, "W{} has no pad", w + 1);
+        assert_eq!(patched.read_byte(table), 0, "row 0 is W1's pad");
+        assert_eq!(patched.read_byte(table + PORTAL_MAX), 0x50, "W1 pad row 4 -> (4+1)<<4");
+        assert_eq!(patched.read_byte(table + 2 * PORTAL_MAX), 0x80, "W1 pad col 8, screen 0");
+        assert_eq!(patched.read_byte(table + 1), 4, "row 1 is W5's pad");
+        assert_eq!(patched.read_byte(table + PORTAL_MAX + 1), 0x70, "W5 pad row 6");
+        assert_eq!(patched.read_byte(table + 2 * PORTAL_MAX + 1), 0x60, "W5 pad col 6, screen 0");
+        for row in 2..PORTAL_MAX {
+            assert_eq!(patched.read_byte(table + row), 0xFF, "row {row} is unclaimed");
         }
 
         // And those ids land where the pads aim.
@@ -1200,8 +1264,13 @@ mod asm_checks {
         assert_eq!(patched.read_byte(arrivals + 1), 5, "id 1 is the pad's");
         assert_eq!(
             patched.read_byte(FS_PAD_ENTER + PAD_TABLE_OFF),
-            1,
-            "W1's pad must name id 1, not id 0"
+            0xFF,
+            "row 0 belongs to the portal's id and must stay unclaimed"
+        );
+        assert_eq!(
+            patched.read_byte(FS_PAD_ENTER + PAD_TABLE_OFF + 1),
+            0,
+            "the pad must occupy row 1, matching arrival id 1"
         );
     }
 
@@ -1297,23 +1366,34 @@ mod asm_checks {
         panic!("PAD_ENTER ran away");
     }
 
-    /// Set up a CPU with the routine, its table, and the machine state the
+    /// Set up a CPU with the routine, its key tables, and the machine state the
     /// engine would have when a player presses A on a tile.
+    ///
+    /// `at` is where the player is standing, `pads` the rows to claim as
+    /// `(row index / arrival id, world, grid position)`.
     fn pad_cpu(
         tile: u8,
         world: u8,
         player: u8,
-        pad_id: Option<u8>,
+        at: (usize, usize),
+        sub_tile: u8,
+        pads: &[(usize, u8, (usize, usize))],
     ) -> mos6502::cpu::CPU<Memory, Ricoh2a03> {
         let mut code = PAD_ENTER;
-        if let Some(id) = pad_id {
-            code[PAD_TABLE_OFF + world as usize] = id;
+        for &(id, w, (row, col)) in pads {
+            code[PAD_TABLE_OFF + id] = w;
+            code[PAD_TABLE_OFF + PORTAL_MAX + id] = ((row + 1) << 4) as u8;
+            code[PAD_TABLE_OFF + 2 * PORTAL_MAX + id] = (((col % 16) << 4) | (col / 16)) as u8;
         }
         let mut mem = Memory::new();
         mem.set_bytes(PAD_ENTER_CPU, &code);
         mem.set_byte(WORLD_MAP_TILE as u16, tile);
         mem.set_byte(WORLD_NUM, world);
         mem.set_byte(PLAYER_CURRENT, player);
+        // The engine's own encoding, plus a sub-tile offset the key must ignore.
+        mem.set_byte(WORLD_MAP_Y as u16 + player as u16, (((at.0 + 1) << 4) as u8) | sub_tile);
+        mem.set_byte(WORLD_MAP_X as u16 + player as u16, (((at.1 % 16) << 4) as u8) | sub_tile);
+        mem.set_byte(WORLD_MAP_XHI as u16 + player as u16, (at.1 / 16) as u8);
         // Poison what the routine should write, so "unchanged" is visible.
         mem.set_byte(MAP_ENTERED_XHI, 0xAA);
         mem.set_byte(MAP_ENTERED_XHI + 1, 0xAA);
@@ -1326,44 +1406,81 @@ mod asm_checks {
     /// Standing on a pad teleports: it hands the arrival id to the place
     /// `STASH_ARRIVAL` reads, raises both flags, and never sets `Map_Operation`
     /// — the map must not also start an enter-level effect.
+    ///
+    /// Run with a sub-tile pixel offset on both axes, because the player's
+    /// position is a pixel coordinate and the key has to mask it off.
     #[test]
     fn a_pad_hands_over_its_id_and_teleports() {
-        for (world, player, id) in [(0u8, 0u8, 0u8), (4, 1, 5), (8, 0, 15)] {
-            let mut cpu = pad_cpu(TILE_BONUS_GAME, world, player, Some(id));
-            assert!(call_pad_enter(&mut cpu), "W{} pad did not teleport", world + 1);
+        let pads = &[(0usize, 0u8, (4usize, 8usize)), (5, 4, (6, 22)), (15, 8, (0, 47))];
+        for &(id, world, at) in pads {
+            for sub_tile in [0x00, 0x0F] {
+                let mut cpu = pad_cpu(TILE_BONUS_GAME, world, id as u8 % 2, at, sub_tile, pads);
+                let player = id as u8 % 2;
+                assert!(
+                    call_pad_enter(&mut cpu),
+                    "W{} pad at {at:?} did not teleport (sub-tile {sub_tile:#04X})",
+                    world + 1
+                );
+                assert_eq!(
+                    cpu.memory.get_byte(MAP_ENTERED_XHI + player as u16),
+                    id as u8,
+                    "the arrival id must land in the current player's Map_Entered_XHi"
+                );
+                assert_eq!(
+                    cpu.memory.get_byte(MAP_ENTERED_XHI + (1 - player) as u16),
+                    0xAA,
+                    "and not in the other player's"
+                );
+                assert_eq!(cpu.memory.get_byte(ARRIVAL_FLAG), 1, "ARRIVAL_FLAG");
+                assert_eq!(cpu.memory.get_byte(TRANSITION_FLAG), 1, "TRANSITION_FLAG");
+                assert_eq!(
+                    cpu.memory.get_byte(MAP_OPERATION),
+                    0xAA,
+                    "Map_Operation must not be touched on the teleport path"
+                );
+            }
+        }
+    }
+
+    /// **One world, several pads** — the thing keying on `World_Num` could not
+    /// do. Three pads in World 3, each reached from its own tile.
+    #[test]
+    fn one_world_can_hold_several_pads() {
+        let pads = &[
+            (0usize, 2u8, (1usize, 3usize)),
+            (1, 2, (5, 19)),
+            (2, 2, (8, 40)),
+            (3, 6, (5, 19)), // same tile, different world: must not be confused
+        ];
+        for &(id, world, at) in pads {
+            let mut cpu = pad_cpu(TILE_BONUS_GAME, world, 0, at, 0, pads);
+            assert!(call_pad_enter(&mut cpu), "pad {id} at {at:?} did not teleport");
             assert_eq!(
-                cpu.memory.get_byte(MAP_ENTERED_XHI + player as u16),
-                id,
-                "the arrival id must land in the current player's Map_Entered_XHi"
-            );
-            assert_eq!(
-                cpu.memory.get_byte(MAP_ENTERED_XHI + (1 - player) as u16),
-                0xAA,
-                "and not in the other player's"
-            );
-            assert_eq!(cpu.memory.get_byte(ARRIVAL_FLAG), 1, "ARRIVAL_FLAG");
-            assert_eq!(cpu.memory.get_byte(TRANSITION_FLAG), 1, "TRANSITION_FLAG");
-            assert_eq!(
-                cpu.memory.get_byte(MAP_OPERATION),
-                0xAA,
-                "Map_Operation must not be touched on the teleport path"
+                cpu.memory.get_byte(MAP_ENTERED_XHI),
+                id as u8,
+                "W{} pad at {at:?} must use arrival id {id}",
+                world + 1
             );
         }
     }
 
-    /// Any other tile enters its level exactly as vanilla did, and a pad tile
-    /// in a world with no pad does too. Both are the paths a mistake makes
-    /// teleport, and both leave the flags alone.
+    /// Any other tile enters its level as vanilla did; so does a pad tile the
+    /// table does not know about, whether because the world has no pads at all
+    /// or because this is the wrong tile in a world that does. Each is a path a
+    /// mistake makes teleport, and each must leave the flags alone.
     #[test]
-    fn a_tile_that_is_not_a_pad_enters_its_level() {
-        let cases: [(&str, u8, Option<u8>); 4] = [
-            ("an ordinary level panel", 0x03, Some(0)),
-            ("a fortress", 0x67, Some(0)),
-            ("a pipe", 0xBC, Some(0)),
-            ("a pad tile in a world with no pad", TILE_BONUS_GAME, None),
+    fn a_tile_that_is_not_a_known_pad_enters_its_level() {
+        let pads = &[(0usize, 2u8, (5usize, 19usize))];
+        let cases: [(&str, u8, u8, (usize, usize)); 6] = [
+            ("an ordinary level panel", 0x03, 2, (5, 19)),
+            ("a fortress", 0x67, 2, (5, 19)),
+            ("a pipe", 0xBC, 2, (5, 19)),
+            ("a pad tile in a world with no pads", TILE_BONUS_GAME, 5, (5, 19)),
+            ("a pad tile one row off", TILE_BONUS_GAME, 2, (4, 19)),
+            ("a pad tile on the wrong screen", TILE_BONUS_GAME, 2, (5, 3)),
         ];
-        for (what, tile, pad_id) in cases {
-            let mut cpu = pad_cpu(tile, 3, 0, pad_id);
+        for (what, tile, world, at) in cases {
+            let mut cpu = pad_cpu(tile, world, 0, at, 0, pads);
             assert!(!call_pad_enter(&mut cpu), "{what} teleported");
             assert_eq!(cpu.memory.get_byte(MAP_OPERATION), 0x10, "{what}: Map_Operation");
             assert_eq!(cpu.memory.get_byte(ARRIVAL_FLAG), 0xAA, "{what}: ARRIVAL_FLAG touched");
@@ -1378,25 +1495,6 @@ mod asm_checks {
                 "{what}: Map_Entered_XHi touched"
             );
         }
-    }
-
-    /// The table is indexed by `World_Num`, not by the player. Indexing by the
-    /// wrong one still decodes, still teleports somewhere, and is wrong — it
-    /// took an executed test to see it.
-    #[test]
-    fn the_pad_table_is_indexed_by_the_world() {
-        let mut code = PAD_ENTER;
-        code[PAD_TABLE_OFF] = 0xFF; // world 0: no pad
-        code[PAD_TABLE_OFF + 6] = 3; // world 7: pad using id 3
-        let mut mem = Memory::new();
-        mem.set_bytes(PAD_ENTER_CPU, &code);
-        mem.set_byte(WORLD_MAP_TILE as u16, TILE_BONUS_GAME);
-        mem.set_byte(WORLD_NUM, 6);
-        mem.set_byte(PLAYER_CURRENT, 0); // would select world 0's $FF if misindexed
-        mem.set_byte(MAP_OPERATION, 0xAA);
-        let mut cpu = mos6502::cpu::CPU::new(mem, Ricoh2a03);
-        assert!(call_pad_enter(&mut cpu), "W7's pad did not teleport");
-        assert_eq!(cpu.memory.get_byte(MAP_ENTERED_XHI), 3, "W7's pad uses id 3");
     }
 
     fn load_vanilla() -> Option<Rom> {

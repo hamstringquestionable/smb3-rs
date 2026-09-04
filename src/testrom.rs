@@ -797,36 +797,57 @@ fn apply_movement(
 /// Turn `--telepad A:B` pairs into a pad in each world, aimed at each other.
 ///
 /// A pad is a *tile*, not a level: the enter hook fires on `World_Map_Tile`
-/// before any pointer entry is consulted. So a pad costs no transit room, no
-/// destination-table slot and no pipe — which is the whole reason to prefer it
-/// over a portal pipe. It does still occupy the tile it stands on.
+/// and the player's map position, before any pointer entry is consulted. So a
+/// pad costs no transit room, no destination-table slot and no pipe — which is
+/// the whole reason to prefer it over a portal pipe.
 ///
-/// The POC puts pads on each world's first spade panel, because that tile is
-/// already enterable, already on the path, and is in the engine's own
-/// `Map_Completable_Tiles` — so if the divert leaked into the level-clear path,
-/// the pad would turn into an M/L panel and say so.
+/// Pads stand on spade panels, taken in catalog order so a world can host as
+/// many as it owns — W3 has five, W1 one, W8 none. That tile is already
+/// enterable, already on the path, and is in the engine's own
+/// `Map_Completable_Tiles`; a hardware playtest confirmed it stays a spade
+/// panel after teleporting in either direction, which is what says the divert
+/// never reaches the level-clear path.
 fn resolve_telepads(
     rom: &Rom,
     specs: &[(u8, u8)],
 ) -> Result<Vec<crate::randomize::world_persist::Telepad>, String> {
-    use crate::randomize::world_persist::Telepad;
+    use crate::randomize::world_persist::{PORTAL_MAX, Telepad};
     if specs.is_empty() {
         return Ok(Vec::new());
     }
+    if specs.len() * 2 > PORTAL_MAX {
+        return Err(format!(
+            "{} telepad pairs need {} arrival ids; the ROM holds {PORTAL_MAX}",
+            specs.len(),
+            specs.len() * 2
+        ));
+    }
 
     let spades = NodeCatalog::build(rom, false).bonus_game_views();
-    let pad_in = |world: usize| -> Result<(usize, usize), String> {
-        spades
-            .iter()
-            .find(|(w, _)| *w == world)
-            .map(|(_, pos)| *pos)
-            .ok_or_else(|| format!("W{} has no spade panel to stand a telepad on", world + 1))
+    let mut taken: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    let mut claim = |world: usize| -> Result<(usize, usize), String> {
+        let owned: Vec<(usize, usize)> =
+            spades.iter().filter(|(w, _)| *w == world).map(|(_, pos)| *pos).collect();
+        if owned.is_empty() {
+            return Err(format!("W{} has no spade panel to stand a telepad on", world + 1));
+        }
+        let nth = taken.entry(world).or_insert(0);
+        let pos = *owned.get(*nth).ok_or_else(|| {
+            format!(
+                "W{} owns only {} spade panel(s) and {} telepads were asked of it",
+                world + 1,
+                owned.len(),
+                *nth + 1
+            )
+        })?;
+        *nth += 1;
+        Ok(pos)
     };
 
     let mut out = Vec::new();
     for &(a, b) in specs {
         let (aw, bw) = (a as usize - 1, b as usize - 1);
-        let (a_pos, b_pos) = (pad_in(aw)?, pad_in(bw)?);
+        let (a_pos, b_pos) = (claim(aw)?, claim(bw)?);
         out.push(Telepad {
             world: aw as u8,
             dest_world: bw as u8,

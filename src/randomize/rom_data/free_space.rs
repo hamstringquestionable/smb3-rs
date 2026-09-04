@@ -253,9 +253,9 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     fs(
         0x17E7B,
-        64,
+        128,
         &["world_persist"],
-        "world-maze: telepad enter hook + per-world pad table (64 reserved, 49 used)",
+        "world-maze: telepad enter hook + 3 x 16 pad key table (128 reserved, 114 used)",
     ),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     fs(0x0382A, 23, &["koopalings"], "koopa_hits: subroutine + defeat JMP + threshold table"),
@@ -465,7 +465,7 @@ pub(crate) const FS_PORTAL_ARRIVAL: usize = 0x17DDB; // 160 reserved, 147 used
 // unlike the pipe portal's level-exit trigger this pays no always-mapped-bank
 // rent at all — it can sit in PRG011 beside the arrival stash it feeds.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_PAD_ENTER: usize = 0x17E7B; // 64 reserved, 49 used
+pub(crate) const FS_PAD_ENTER: usize = 0x17E7B; // 128 reserved, 114 used
 
 // World-maze phase 1: the completion-bit stencil, derived on the console.
 // The $FF run FS_FX_SCREEN_CHECK opened continues past FS_STASH_ARRIVAL to
