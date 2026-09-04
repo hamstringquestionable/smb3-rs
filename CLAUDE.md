@@ -109,10 +109,18 @@ is the one to read:
 
 PRG000 and PRG002 have no `$FF` filler left at all.
 
-The always-mapped banks are effectively full. A patch that must run regardless of
-the current bank has one 42-byte gap in PRG030 and nothing over 30 bytes in
-PRG031, so past that a trampoline into a swapped bank is the only option — and
-that costs bytes too.
+The always-mapped banks are effectively full, and PRG030's last usable run is
+gone: its largest gap is now **16 bytes**, PRG031's is 30. The 42-byte run
+PRG030 used to offer is claimed by `FS_PORTAL_EXIT`, the world-maze pipe
+portal's level-exit trigger — which has to live there because at level exit the
+banks belong to the level. So a patch that must run regardless of the current
+bank has nowhere left to go without a trampoline into a swapped bank, and that
+costs bytes too.
+
+**A hook on the world map is not in this position.** `$84A0` maps PRG010 into
+`$C000` and PRG011 into `$A000` for the whole map, so map-side code can be
+placed there instead — hundreds of bytes rather than sixteen. Check where your
+hook actually runs before paying always-mapped rent for it.
 
 **Do not hand-edit these numbers — regenerate them.** `smb3-rs <rom>
 --free-space` prints the whole per-bank budget without randomizing (the same
