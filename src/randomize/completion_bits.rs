@@ -242,7 +242,8 @@ fn popcount(mask: &[u8]) -> usize {
 // *and* PRG010 (still at `$C000`, holding this code) are all reachable at once.
 
 use super::rom_data::{
-    FS_IS_COMPLETABLE, FS_MASK_BUILD, FS_PACK_PLANE, FS_UNPACK_PLANE, FS_WORLD_COLS,
+    FS_COMPLETION_BASES, FS_IS_COMPLETABLE, FS_MASK_BUILD, FS_PACK_PLANE, FS_PACK_WORLD,
+    FS_SWAP_AT_RELOAD, FS_UNPACK_PLANE, FS_UNPACK_WORLD, FS_WIPE_REPLACEMENT, FS_WORLD_COLS,
 };
 
 /// Where the derived stencil lands: 64 bytes, one per possible map column.
@@ -269,6 +270,11 @@ const IS_COMPLETABLE_CPU: u16 = prg010_cpu(FS_IS_COMPLETABLE);
 const WORLD_COLS_CPU: u16 = prg010_cpu(FS_WORLD_COLS);
 const PACK_PLANE_CPU: u16 = prg010_cpu(FS_PACK_PLANE);
 const UNPACK_PLANE_CPU: u16 = prg010_cpu(FS_UNPACK_PLANE);
+const PACK_WORLD_CPU: u16 = prg010_cpu(FS_PACK_WORLD);
+const UNPACK_WORLD_CPU: u16 = prg010_cpu(FS_UNPACK_WORLD);
+const WIPE_REPLACEMENT_CPU: u16 = prg010_cpu(FS_WIPE_REPLACEMENT);
+const SWAP_AT_RELOAD_CPU: u16 = prg010_cpu(FS_SWAP_AT_RELOAD);
+const BASES_CPU: u16 = prg010_cpu(FS_COMPLETION_BASES);
 
 // --- PRG012 symbols, all verified by matching their bytes in the ROM rather
 // --- than read off the disassembly's labels.
@@ -477,6 +483,31 @@ pub(crate) const PLANE_RESERVE: usize = 48;
 /// Bits still unread in, or unwritten to, the byte being transferred.
 const BITCNT: u16 = 0x7AB5;
 
+/// The world whose completions are currently live in `$7D00`.
+///
+/// `World_Num` cannot answer this at the hook: both of vanilla's paths into
+/// `PRG030_84A0` set it to the *destination* first — `INC World_Num` on the
+/// airship, `LDA Map_Warp_PrevWorld / STA World_Num` in the warp zone — so by
+/// the time the map re-initialises, the world being left has no name. One byte
+/// remembers it, and the raw swap the POC used needed none only because with
+/// two worlds "the other one" is unambiguous.
+const LIVE_WORLD: u16 = 0x7ABC;
+
+/// Set by the routines that transition between worlds; cleared once acted on.
+///
+/// The `Map_Completions` wipe this replaces was also vanilla's new-game reset,
+/// so removing it means a fresh game would otherwise inherit whatever SRAM
+/// held. The title screen falls *through* into `PRG030_84A0` while every
+/// transition jumps to it, and the jumps this POC uses are all our own code, so
+/// they raise the flag on the way past — see `world_persist`'s `WORLD_JUMP_CHECK`
+/// and `PORTAL_EXIT`. Absent the flag, the replacement resets instead of packing.
+///
+/// **Vanilla's own two jumps are not flagged.** The airship-cleared path and the
+/// warp zone would each be read as a new game and reset every world. Neither
+/// occurs in a maze, so the POC does not need them; closing the gap means a
+/// trampoline in PRG030, whose airship-side site `world_order` already claims.
+pub(crate) const TRANSITION_FLAG: u16 = 0x7ABD;
+
 /// Compress one `Map_Completions` half into a world's plane.
 ///
 /// `A` is the starting byte index — `base_table[world]` for Mario's half,
@@ -599,17 +630,218 @@ const UNPACK_PLANE: [u8; 66] = [
     0x60,                                   // 65: RTS
 ];
 
-/// Write the console-side routines into PRG010.
+// --- Engine symbols outside PRG012 ---
+
+/// `World_Num`, 0-based.
+const WORLD_NUM: u16 = 0x0727;
+/// `PAGE_A000` — the MMC3 page latched into `$A000` by the next
+/// `PRGROM_Change_A000`.
+const PAGE_A000: u16 = 0x0720;
+/// `PRGROM_Change_A000`, in the always-mapped PRG031.
+const PRGROM_CHANGE_A000: u16 = 0xFFC2;
+/// `Map_Reload_with_Completions` (PRG012) — the call this displaces.
+const MAP_RELOAD: u16 = 0xA45D;
+
+/// Bytes of packed state in total: both planes, back to back.
+const PACKED_LEN: usize = 2 * PLANE_RESERVE;
+
+/// Transfer one world's *pair* of planes, Mario's and the mirror's.
 ///
-/// Split out from any hook so the stencil can be exercised — and audited —
-/// before anything calls it. Wiring it into `PRG030_84A0` is the next step.
+/// `A` is the world index. Builds the stencil first, then runs the plane
+/// routine twice — `$7D00` into `base_table[world]`, then `$7D40` into
+/// `base_table[world] + PLANE_RESERVE`. Only the low byte of the source
+/// pointer differs between the two, which is why the pair costs so little.
+///
+/// The base is stacked across the first call because the plane routine uses
+/// `X` as its own output cursor.
+macro_rules! xfer_world {
+    ($plane:expr) => {
+        [
+            0x48, //  0: PHA           ; keep the world
+            0x20,
+            MASK_BUILD_CPU as u8,
+            (MASK_BUILD_CPU >> 8) as u8, //  1: JSR MASK_BUILD
+            0x68,                        //  4: PLA
+            0xAA,                        //  5: TAX
+            0xA9,
+            0x7D, //  6: LDA #$7D
+            0x85,
+            ZP_SRC + 1, //  8: STA ZP_SRC+1
+            0xA9,
+            0x00, // 10: LDA #$00
+            0x85,
+            ZP_SRC, // 12: STA ZP_SRC    ; -> $7D00
+            0xBD,
+            BASES_CPU as u8,
+            (BASES_CPU >> 8) as u8, // 14: LDA Bases,X
+            0x48,                   // 17: PHA
+            0x20,
+            $plane as u8,
+            ($plane >> 8) as u8, // 18: JSR <plane>
+            0xA9,
+            0x40, // 21: LDA #$40
+            0x85,
+            ZP_SRC, // 23: STA ZP_SRC    ; -> $7D40
+            0x68,   // 25: PLA
+            0x18,   // 26: CLC
+            0x69,
+            PLANE_RESERVE as u8, // 27: ADC #PLANE_RESERVE
+            0x20,
+            $plane as u8,
+            ($plane >> 8) as u8, // 29: JSR <plane>
+            0x60,                // 32: RTS
+        ]
+    };
+}
+
+/// Compress a world out of `$7D00` into its slice. See [`xfer_world!`].
+const PACK_WORLD: [u8; 33] = xfer_world!(PACK_PLANE_CPU);
+/// Expand a world's slice back into `$7D00`. See [`xfer_world!`].
+const UNPACK_WORLD: [u8; 33] = xfer_world!(UNPACK_PLANE_CPU);
+
+/// What stands where `PRG030_84A0`'s `Map_Completions` wipe used to.
+///
+/// The wipe has to go, because packing the world you are *leaving* needs
+/// `$7D00` intact and the wipe runs fourteen instructions before the hook that
+/// would read it. What it did still has to happen on a new game, though, which
+/// is what [`TRANSITION_FLAG`] separates:
+///
+/// * **transition** — bank PRG012 in, pack [`LIVE_WORLD`] out of `$7D00`, put
+///   PRG011 back. `$7D00` is left stale; the hook at `$85BB` overwrites it with
+///   the world being entered before anything reads it.
+/// * **new game** — zero the packed region and all 128 bytes of
+///   `Map_Completions`, which is exactly what the displaced wipe did.
+///
+/// Either way `LIVE_WORLD` ends up naming the world about to be shown.
+///
+/// PRG012 has to be banked and unbanked around the pack because the stencil is
+/// derived from the map grid, and at this point in the init `$A000` still holds
+/// PRG011 for `Map_Init`'s benefit.
+#[rustfmt::skip]
+const WIPE_REPLACEMENT: [u8; 60] = [
+    0xAD, TRANSITION_FLAG as u8,
+          (TRANSITION_FLAG >> 8) as u8,             //  0: LDA TRANSITION_FLAG
+    0xD0, 0x15,                                     //  3: BNE +21 -> transition
+
+    // --- new game: reset everything the wipe used to ---
+    0xA9, 0x00,                                     //  5: LDA #$00
+    0xA2, (PACKED_LEN - 1) as u8,                   //  7: LDX #PACKED_LEN-1
+    0x9D, PACKED as u8, (PACKED >> 8) as u8,        //  9: STA PACKED,X       ; loop
+    0xCA,                                           // 12: DEX
+    0x10, 0xFA,                                     // 13: BPL -6
+    0xA2, 0x7F,                                     // 15: LDX #$7F
+    0x9D, 0x00, 0x7D,                               // 17: STA $7D00,X       ; loop
+    0xCA,                                           // 20: DEX
+    0x10, 0xFA,                                     // 21: BPL -6
+    0x4C, 0, 0,                                     // 23: JMP done          ; patched
+
+    // --- transition: pack the world being left ---
+    0xA9, 0x00,                                     // 26: LDA #$00
+    0x8D, TRANSITION_FLAG as u8,
+          (TRANSITION_FLAG >> 8) as u8,             // 28: STA TRANSITION_FLAG
+    0xA9, 0x0C,                                     // 31: LDA #12
+    0x8D, PAGE_A000 as u8, (PAGE_A000 >> 8) as u8,  // 33: STA PAGE_A000
+    0x20, PRGROM_CHANGE_A000 as u8,
+          (PRGROM_CHANGE_A000 >> 8) as u8,          // 36: JSR PRGROM_Change_A000
+    0xAD, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, // 39: LDA LIVE_WORLD
+    0x20, PACK_WORLD_CPU as u8,
+          (PACK_WORLD_CPU >> 8) as u8,              // 42: JSR PACK_WORLD
+    0xA9, 0x0B,                                     // 45: LDA #11
+    0x8D, PAGE_A000 as u8, (PAGE_A000 >> 8) as u8,  // 47: STA PAGE_A000
+    0x20, PRGROM_CHANGE_A000 as u8,
+          (PRGROM_CHANGE_A000 >> 8) as u8,          // 50: JSR PRGROM_Change_A000
+
+    0xAD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,  // 53: LDA World_Num     ; done
+    0x8D, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, // 56: STA LIVE_WORLD
+    0x60,                                           // 59: RTS
+];
+
+/// Offset of the `JMP done` operand inside [`WIPE_REPLACEMENT`].
+const WIPE_JMP_OPERAND: usize = 24;
+/// Where that `JMP` lands.
+const WIPE_DONE_OFFSET: u16 = 53;
+
+/// The hook itself: expand the world being entered, then let the engine draw it.
+///
+/// Replaces `JSR Map_Reload_with_Completions` at `$85BB`. That call is the only
+/// point in the map init where PRG012 (the grid and the tile tables), PRG010
+/// (this code) and a settled `World_Num` are all available at once — and it is
+/// immediately before the routine that reads `Map_Completions`, so the array
+/// only has to be right for the length of one `JSR`.
+#[rustfmt::skip]
+const SWAP_AT_RELOAD: [u8; 10] = [
+    0xAD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,  // 0: LDA World_Num
+    0x20, UNPACK_WORLD_CPU as u8,
+          (UNPACK_WORLD_CPU >> 8) as u8,            // 3: JSR UNPACK_WORLD
+    0x20, MAP_RELOAD as u8, (MAP_RELOAD >> 8) as u8, // 6: JSR Map_Reload_with_Completions
+    0x60,                                           // 9: RTS
+];
+
+/// The `Map_Completions` wipe in `PRG030_84A0`: CPU `$84CD`, ten bytes, three
+/// whole instructions, nothing branching into the middle.
+const WIPE_OFFSET: usize = 0x3C4DD;
+const WIPE_LEN: usize = 10;
+
+/// `JSR Map_Reload_with_Completions` in `PRG030_84A0`: CPU `$85BB`, three bytes.
+const RELOAD_CALL_OFFSET: usize = 0x3C5CB;
+
+/// Vanilla bytes at the two hook sites, for the hook checks.
+#[cfg(test)]
+#[rustfmt::skip]
+const WIPE_VANILLA: [u8; WIPE_LEN] = [
+    0xA0, 0x7F,             // LDY #$7F
+    0xA9, 0x00,             // LDA #$00
+    0x99, 0x00, 0x7D,       // STA Map_Completions,Y
+    0x88,                   // DEY
+    0x10, 0xFA,             // BPL -6
+];
+#[cfg(test)]
+const RELOAD_CALL_VANILLA: [u8; 3] = [0x20, 0x5D, 0xA4];
+
+/// Install packed per-world completions: the routines, the seed's base table,
+/// and the two hooks in `PRG030_84A0`.
+///
+/// **Run this last.** The base table is derived from the map grids as they
+/// stand in the ROM, so anything that still means to move a map tile has to
+/// have moved it already.
+///
+/// The wipe site is left with seven bytes of `NOP` after the call. That is
+/// wasteful by this project's standards and deliberate here: `world_persist`
+/// writes its arrival restore into three of them, and a shipped version would
+/// restructure the surrounding init rather than pad it.
 pub(crate) fn apply(rom: &mut Rom) {
+    let bases = CompletionMap::from_rom(rom).base_table();
+
     rom.push_tag("completion_bits");
     rom.write_range(FS_MASK_BUILD, &MASK_BUILD);
     rom.write_range(FS_IS_COMPLETABLE, &IS_COMPLETABLE);
     rom.write_range(FS_WORLD_COLS, &WORLD_COLS);
     rom.write_range(FS_PACK_PLANE, &PACK_PLANE);
     rom.write_range(FS_UNPACK_PLANE, &UNPACK_PLANE);
+    rom.write_range(FS_PACK_WORLD, &PACK_WORLD);
+    rom.write_range(FS_UNPACK_WORLD, &UNPACK_WORLD);
+    rom.write_range(FS_COMPLETION_BASES, &bases);
+
+    let mut wipe_replacement = WIPE_REPLACEMENT;
+    let done = WIPE_REPLACEMENT_CPU + WIPE_DONE_OFFSET;
+    wipe_replacement[WIPE_JMP_OPERAND] = done as u8;
+    wipe_replacement[WIPE_JMP_OPERAND + 1] = (done >> 8) as u8;
+    rom.write_range(FS_WIPE_REPLACEMENT, &wipe_replacement);
+    rom.write_range(FS_SWAP_AT_RELOAD, &SWAP_AT_RELOAD);
+
+    // Hook 1: the wipe becomes a call to the replacement.
+    let mut wipe = [0xEA_u8; WIPE_LEN];
+    wipe[0] = 0x20; // JSR
+    wipe[1] = WIPE_REPLACEMENT_CPU as u8;
+    wipe[2] = (WIPE_REPLACEMENT_CPU >> 8) as u8;
+    rom.write_range(WIPE_OFFSET, &wipe);
+
+    // Hook 2: the reload call now expands the world first.
+    rom.write_range(
+        RELOAD_CALL_OFFSET,
+        &[0x20, SWAP_AT_RELOAD_CPU as u8, (SWAP_AT_RELOAD_CPU >> 8) as u8],
+    );
+
     rom.pop_tag();
 }
 
@@ -931,6 +1163,9 @@ mod tests {
         mem.set_bytes(WORLD_COLS_CPU, &WORLD_COLS);
         mem.set_bytes(PACK_PLANE_CPU, &PACK_PLANE);
         mem.set_bytes(UNPACK_PLANE_CPU, &UNPACK_PLANE);
+        mem.set_bytes(PACK_WORLD_CPU, &PACK_WORLD);
+        mem.set_bytes(UNPACK_WORLD_CPU, &UNPACK_WORLD);
+        mem.set_bytes(BASES_CPU, &CompletionMap::from_rom(rom).base_table());
         // PRG012, whole bank — the tables and every world's grid, at the
         // addresses the routine names.
         let prg012: Vec<u8> =
@@ -1050,6 +1285,18 @@ mod tests {
         asm::check(&MASK_BUILD).allocation(FS_MASK_BUILD).origin(MASK_BUILD_CPU).assert_ok();
         asm::check(&PACK_PLANE).allocation(FS_PACK_PLANE).origin(PACK_PLANE_CPU).assert_ok();
         asm::check(&UNPACK_PLANE).allocation(FS_UNPACK_PLANE).origin(UNPACK_PLANE_CPU).assert_ok();
+        asm::check(&PACK_WORLD).allocation(FS_PACK_WORLD).origin(PACK_WORLD_CPU).assert_ok();
+        asm::check(&UNPACK_WORLD).allocation(FS_UNPACK_WORLD).origin(UNPACK_WORLD_CPU).assert_ok();
+        asm::check(&SWAP_AT_RELOAD)
+            .allocation(FS_SWAP_AT_RELOAD)
+            .origin(SWAP_AT_RELOAD_CPU)
+            .assert_ok();
+
+        let mut wipe = WIPE_REPLACEMENT;
+        let done = WIPE_REPLACEMENT_CPU + WIPE_DONE_OFFSET;
+        wipe[WIPE_JMP_OPERAND] = done as u8;
+        wipe[WIPE_JMP_OPERAND + 1] = (done >> 8) as u8;
+        asm::check(&wipe).allocation(FS_WIPE_REPLACEMENT).origin(WIPE_REPLACEMENT_CPU).assert_ok();
     }
     /// Run a routine that ends in a single `RTS` and stop when it gets there.
     fn run_to_rts(cpu: &mut CPU<Memory, Ricoh2a03>, entry: u16, end: u16, what: &str) {
@@ -1252,5 +1499,187 @@ mod tests {
             }
         }
         eprintln!("worst plane: {worst} of {PLANE_RESERVE} reserved");
+    }
+    /// **The whole storage layer, in and out, on the console.**
+    ///
+    /// `PACK_WORLD` then `UNPACK_WORLD` for the same world has to be the
+    /// identity on every bit the stencil owns, for both halves at once — which
+    /// is the only place the mirror's `+PLANE_RESERVE` offset is exercised.
+    /// A pack that wrote the mirror over Mario's slice would still round-trip
+    /// each half on its own; it fails here.
+    #[test]
+    fn world_round_trips_on_the_cpu() {
+        let Ok(rom_bytes) = std::fs::read(ROM_PATH) else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        for seed in 0..seeds() {
+            let options =
+                crate::Options { palettes: false, palette_themed: false, ..Default::default() };
+            let Ok((rom, _)) =
+                crate::randomize_rom_with_overworld_capture(&rom_bytes, seed, &options, None)
+            else {
+                continue;
+            };
+            let map = CompletionMap::from_rom(&rom);
+            let mut cpu = cpu_with_routines(&rom);
+            for w in 0..8 {
+                let mario = fill_half(seed, w, 2);
+                let mirror = fill_half(seed ^ 0xABCD, w, 2);
+                for (i, &b) in mario.iter().enumerate() {
+                    cpu.memory.set_byte(0x7D00 + i as u16, b);
+                }
+                for (i, &b) in mirror.iter().enumerate() {
+                    cpu.memory.set_byte(0x7D40 + i as u16, b);
+                }
+                // Poison the whole region: a pack that writes outside this
+                // world's two slices is invisible to the round trip, because
+                // unpack reads back through the same offset it wrote. It shows
+                // up here as a byte that should not have moved.
+                for i in 0..PACKED_LEN {
+                    cpu.memory.set_byte(PACKED + i as u16, 0xAA);
+                }
+                cpu.registers.accumulator = w as u8;
+                run_to_rts(
+                    &mut cpu,
+                    PACK_WORLD_CPU,
+                    PACK_WORLD_CPU + PACK_WORLD.len() as u16 - 1,
+                    "PACK_WORLD",
+                );
+                let base = map.base(w);
+                let len = map.plane_bytes(w);
+                for i in 0..PACKED_LEN {
+                    let inside = (base..base + len).contains(&i)
+                        || (base + PLANE_RESERVE..base + PLANE_RESERVE + len).contains(&i);
+                    if !inside {
+                        assert_eq!(
+                            cpu.memory.get_byte(PACKED + i as u16),
+                            0xAA,
+                            "seed {seed} W{}: pack wrote outside its slices, at +{i}",
+                            w + 1,
+                        );
+                    }
+                }
+                // Scrub both halves so only the packed copy can supply them.
+                for i in 0..128u16 {
+                    cpu.memory.set_byte(0x7D00 + i, 0xAA);
+                }
+                cpu.registers.accumulator = w as u8;
+                run_to_rts(
+                    &mut cpu,
+                    UNPACK_WORLD_CPU,
+                    UNPACK_WORLD_CPU + UNPACK_WORLD.len() as u16 - 1,
+                    "UNPACK_WORLD",
+                );
+                let mask = map.mask(w);
+                for (col, &m) in mask.iter().enumerate() {
+                    assert_eq!(
+                        cpu.memory.get_byte(0x7D00 + col as u16),
+                        mario[col] & m,
+                        "seed {seed} W{} column {col}: Mario half",
+                        w + 1,
+                    );
+                    assert_eq!(
+                        cpu.memory.get_byte(0x7D40 + col as u16),
+                        mirror[col] & m,
+                        "seed {seed} W{} column {col}: mirror half",
+                        w + 1,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Both hooks displace whole instructions, and the bytes they displace are
+    /// what this module claims.
+    #[test]
+    fn hooks_displace_whole_instructions() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        assert_eq!(
+            rom.read_range(WIPE_OFFSET, WIPE_LEN),
+            WIPE_VANILLA,
+            "the Map_Completions wipe has moved"
+        );
+        assert_eq!(
+            rom.read_range(RELOAD_CALL_OFFSET, RELOAD_CALL_VANILLA.len()),
+            RELOAD_CALL_VANILLA,
+            "the Map_Reload_with_Completions call has moved"
+        );
+
+        let mut wipe = WIPE_REPLACEMENT;
+        let done = WIPE_REPLACEMENT_CPU + WIPE_DONE_OFFSET;
+        wipe[WIPE_JMP_OPERAND] = done as u8;
+        wipe[WIPE_JMP_OPERAND + 1] = (done >> 8) as u8;
+        let mut jsr = [0xEA_u8; WIPE_LEN];
+        jsr[0] = 0x20;
+        jsr[1] = WIPE_REPLACEMENT_CPU as u8;
+        jsr[2] = (WIPE_REPLACEMENT_CPU >> 8) as u8;
+        asm::check(&wipe)
+            .allocation(FS_WIPE_REPLACEMENT)
+            .origin(WIPE_REPLACEMENT_CPU)
+            .hook(&WIPE_VANILLA, 0, &jsr)
+            .assert_ok();
+
+        asm::check(&SWAP_AT_RELOAD)
+            .allocation(FS_SWAP_AT_RELOAD)
+            .origin(SWAP_AT_RELOAD_CPU)
+            .hook(
+                &RELOAD_CALL_VANILLA,
+                0,
+                &[0x20, SWAP_AT_RELOAD_CPU as u8, (SWAP_AT_RELOAD_CPU >> 8) as u8],
+            )
+            .assert_ok();
+    }
+
+    /// The hook has to *replace* the reload call, not skip it — the routine
+    /// makes the call itself once the world is expanded.
+    #[test]
+    fn the_hook_still_reloads_the_map() {
+        assert_eq!(SWAP_AT_RELOAD[6], 0x20, "the displaced JSR must be replayed");
+        assert_eq!(
+            u16::from_le_bytes([SWAP_AT_RELOAD[7], SWAP_AT_RELOAD[8]]),
+            u16::from_le_bytes([RELOAD_CALL_VANILLA[1], RELOAD_CALL_VANILLA[2]]),
+            "and it must call the same routine vanilla did"
+        );
+    }
+
+    /// The packed region and the stencil scratch must not overlap each other,
+    /// the counters, or `world_persist`'s arrival variables — they share two
+    /// SRAM runs and nothing in the build would notice a collision.
+    #[test]
+    fn sram_allocations_do_not_overlap() {
+        let mut used: Vec<(u16, u16, &str)> = vec![
+            (PACKED, PACKED + PACKED_LEN as u16, "packed planes"),
+            (MASK_SCRATCH, MASK_SCRATCH + 64, "stencil scratch"),
+            (COL_IDX, COL_IDX + 1, "COL_IDX"),
+            (COLS_LEFT, COLS_LEFT + 1, "COLS_LEFT"),
+            (BITCNT, BITCNT + 1, "BITCNT"),
+            (LIVE_WORLD, LIVE_WORLD + 1, "LIVE_WORLD"),
+            (TRANSITION_FLAG, TRANSITION_FLAG + 1, "TRANSITION_FLAG"),
+            (0x7AB6, 0x7ABC, "world_persist arrival vars"),
+        ];
+        used.sort();
+        for pair in used.windows(2) {
+            assert!(
+                pair[0].1 <= pair[1].0,
+                "{} ({:#06X}..{:#06X}) overlaps {} ({:#06X}..{:#06X})",
+                pair[0].2,
+                pair[0].0,
+                pair[0].1,
+                pair[1].2,
+                pair[1].0,
+                pair[1].1,
+            );
+        }
+        // Both runs are the ones the POC proved free at runtime. Const-folded,
+        // but stated here because moving either allocation out of its run is
+        // otherwise silent.
+        const {
+            assert!(PACKED >= 0x7997 && PACKED as usize + PACKED_LEN <= 0x7A00);
+            assert!(MASK_SCRATCH >= 0x7A73 && TRANSITION_FLAG <= 0x7ADF);
+        }
     }
 }

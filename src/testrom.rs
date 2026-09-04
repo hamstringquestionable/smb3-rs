@@ -367,10 +367,6 @@ pub struct TestRomSpec {
     /// between World 1 and World 2. Beat a level, jump, jump back — the level
     /// should still be beaten. See `randomize::world_persist`.
     pub world_persist: bool,
-    /// **World-maze POC.** Swap World 1's and World 2's fortress FX row
-    /// entries so each opens the *other* world's lock, and route the
-    /// completion into that world's bank. Implies `world_persist`.
-    pub cross_world_locks: bool,
     /// **World-maze POC.** Take a pipe in World 1 and come out on World 2's
     /// map. Pair with `--place <pipe> <tile>` to put a transit room on a W1
     /// tile; W1 has no pipes of its own, so any pipeway return there is it.
@@ -1006,18 +1002,16 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     //     tested on a plain vanilla map, which is the point — the question is
     //     whether the engine re-renders a world's completions, and a randomized
     //     map only adds variables.
-    if spec.world_persist || spec.cross_world_locks || spec.pipe_portal.is_some() {
+    if spec.world_persist || spec.pipe_portal.is_some() {
         crate::randomize::world_persist::apply(
             &mut rom,
-            spec.cross_world_locks,
             // The flag is 1-based like every other world argument here;
             // `World_Num` is 0-based.
             spec.pipe_portal.map(|w| w - 1),
         );
-        report.push("world persist: SELECT+START jumps W1<->W2, completions banked".to_string());
-        if spec.cross_world_locks {
-            report.push("cross-world locks: W1 fort opens W2's lock, and vice versa".to_string());
-        }
+        report.push(
+            "world persist: SELECT+START cycles all 8 worlds, completions packed".to_string(),
+        );
         if let Some(w) = spec.pipe_portal {
             report.push(format!("pipe portal: a pipe taken in W1 comes out on W{w}'s map"));
         }
@@ -1116,7 +1110,6 @@ mod tests {
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
             world_persist: false,
-            cross_world_locks: false,
             pipe_portal: None,
             bro_battle_timer: false,
             include_beta: false,
@@ -1126,6 +1119,39 @@ mod tests {
             big_q_notes: None,
             set_enemies: Vec::new(),
         }
+    }
+
+    /// The packed base table is derived from the map grids when
+    /// `completion_bits::apply` runs, and re-derived from them on the console
+    /// at every world load. If anything moves a map tile *after* that point,
+    /// the two disagree and a world's progress comes back attached to the wrong
+    /// cells — silently, and only on the console.
+    ///
+    /// A full test-ROM build is the place to catch it: `--remove-locks` alone
+    /// turns 62 completion-unsafe tiles into path.
+    #[test]
+    fn packed_base_table_matches_the_finished_map() {
+        let Some(v) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let built = build(
+            &v,
+            &TestRomSpec {
+                world_persist: true,
+                pipe_portal: Some(3),
+                remove_locks: true,
+                placements: vec![Placement { slot: Some(1), level: "6F1".into() }],
+                ..spec()
+            },
+        )
+        .expect("build");
+        let rom = Rom::from_bytes_lax(&built.bytes, true).expect("parse");
+        let want = crate::randomize::completion_bits::CompletionMap::from_rom(&rom).base_table();
+        let got: Vec<u8> = (0..9)
+            .map(|i| rom.read_byte(crate::randomize::rom_data::FS_COMPLETION_BASES + i))
+            .collect();
+        assert_eq!(got, want, "the emitted base table no longer matches the finished map grids");
     }
 
     #[test]

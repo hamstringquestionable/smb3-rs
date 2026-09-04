@@ -163,10 +163,7 @@ fn free_space_audit_matches_registry() {
     // below. Apply it here rather than exempting it: that check exists because
     // an un-exercised allocation is an unaudited one, and "only testrom turns
     // it on" is not the same as "it doesn't claim ROM bytes".
-    crate::randomize::world_persist::apply(&mut rom, true, Some(1));
-    // Same situation, one step earlier: the stencil routines have no hook yet,
-    // so nothing in a normal run writes them.
-    crate::randomize::completion_bits::apply(&mut rom);
+    crate::randomize::world_persist::apply(&mut rom, Some(1));
 
     let usage = audit_free_space(&rom);
     println!("{}", format_free_space_report(&rom));

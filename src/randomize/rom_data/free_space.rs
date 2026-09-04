@@ -163,26 +163,14 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(
         0x155C4,
         40,
-        &["world_persist"],
-        "world_persist POC: both-halves completion swap (40 reserved, 32 used)",
+        &["completion_bits"],
+        "world-maze: pack one world, both planes (40 reserved, 33 used)",
     ),
     fs(
         0x155EC,
         48,
         &["world_persist"],
         "world_persist POC: SELECT+START world-jump trampoline (48 reserved, 40 used)",
-    ),
-    fs(
-        0x1561C,
-        56,
-        &["world_persist"],
-        "world_persist POC: cross-world lock router (56 reserved, 47 used)",
-    ),
-    fs(
-        0x15654,
-        24,
-        &["world_persist"],
-        "world_persist POC: FX slot -> world table (24 reserved, 17 used)",
     ),
     fs(
         0x1566C,
@@ -220,6 +208,30 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         80,
         &["completion_bits"],
         "world-maze: expand one Map_Completions half (80 reserved, 66 used)",
+    ),
+    fs(
+        0x15804,
+        12,
+        &["completion_bits"],
+        "world-maze: per-world plane offsets, emitted per seed (12 reserved, 9 used)",
+    ),
+    fs(
+        0x15F9C,
+        40,
+        &["completion_bits"],
+        "world-maze: unpack one world, both planes (40 reserved, 33 used)",
+    ),
+    fs(
+        0x15FC4,
+        64,
+        &["completion_bits"],
+        "world-maze: the Map_Completions wipe, replaced (64 reserved, 60 used)",
+    ),
+    fs(
+        0x16004,
+        12,
+        &["completion_bits"],
+        "world-maze: unpack-then-reload at the hook (12 reserved, 10 used)",
     ),
     fs(0x15DF0, 35, &["fix_canoe_softlock"], "canoe_fix: death respawn position save"),
     fs(0x15E13, 162, &["map_warp"], "2P Start+Select warp-to-partner routine"),
@@ -421,14 +433,12 @@ pub(crate) const FS_FX_SCREEN_CHECK: usize = 0x15554; // 112 reserved, 82 used
 // the CI wasm clippy pass flags a constant nothing on that target can read.
 // The FREE_SPACE_ALLOCATIONS rows below are NOT gated — the accounting has to
 // be complete on every target, or the per-bank budget lies on one of them.
+// Was FS_WORLD_PERSIST_SWAP, the POC's two-world raw bank swap. Retired when
+// the packed path replaced it; the gap now holds PACK_WORLD.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_WORLD_PERSIST_SWAP: usize = 0x155C4; // 40 reserved, 32 used
+pub(crate) const FS_PACK_WORLD: usize = 0x155C4; // 40 reserved, 33 used
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_WORLD_PERSIST_JUMP: usize = 0x155EC; // 48 reserved, 40 used
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_CROSS_WORLD_FX: usize = 0x1561C; // 56 reserved, 47 used
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_CROSS_WORLD_TABLE: usize = 0x15654; // 24 reserved, 17 used
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x1566C; // 64 reserved, 56 used
 #[cfg(not(target_arch = "wasm32"))]
@@ -453,6 +463,15 @@ pub(crate) const FS_PACK_PLANE: usize = 0x15794; // 112 reserved, 89 used
 // $FF running to the bank end at 0x16010.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_UNPACK_PLANE: usize = 0x15F4C; // 80 reserved, 66 used
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const FS_COMPLETION_BASES: usize = 0x15804; // 12 reserved, 9 used
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const FS_UNPACK_WORLD: usize = 0x15F9C; // 40 reserved, 33 used
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const FS_WIPE_REPLACEMENT: usize = 0x15FC4; // 64 reserved, 60 used
+// Runs to 0x16010, the end of PRG010.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const FS_SWAP_AT_RELOAD: usize = 0x16004; // 12 reserved, 10 used
 
 pub(crate) const FS_CANOE_RESPAWN: usize = 0x15DF0; // 35 bytes
 pub(crate) const FS_MAP_WARP: usize = 0x15E13; // 162 bytes (CPU $DE03)
@@ -1038,16 +1057,20 @@ mod free_space_tests {
             (FS_ANCHOR_ITEM_GUARD, "FS_ANCHOR_ITEM_GUARD"),
             (FS_KING_QUOTES, "FS_KING_QUOTES"),
             (FS_FX_SCREEN_CHECK, "FS_FX_SCREEN_CHECK"),
-            (FS_WORLD_PERSIST_SWAP, "FS_WORLD_PERSIST_SWAP"),
             (FS_WORLD_PERSIST_JUMP, "FS_WORLD_PERSIST_JUMP"),
-            (FS_CROSS_WORLD_FX, "FS_CROSS_WORLD_FX"),
-            (FS_CROSS_WORLD_TABLE, "FS_CROSS_WORLD_TABLE"),
             (FS_RESTORE_ARRIVAL, "FS_RESTORE_ARRIVAL"),
             (FS_STASH_ARRIVAL, "FS_STASH_ARRIVAL"),
             (FS_PORTAL_EXIT, "FS_PORTAL_EXIT"),
             (FS_MASK_BUILD, "FS_MASK_BUILD"),
             (FS_IS_COMPLETABLE, "FS_IS_COMPLETABLE"),
             (FS_WORLD_COLS, "FS_WORLD_COLS"),
+            (FS_PACK_PLANE, "FS_PACK_PLANE"),
+            (FS_UNPACK_PLANE, "FS_UNPACK_PLANE"),
+            (FS_PACK_WORLD, "FS_PACK_WORLD"),
+            (FS_COMPLETION_BASES, "FS_COMPLETION_BASES"),
+            (FS_UNPACK_WORLD, "FS_UNPACK_WORLD"),
+            (FS_WIPE_REPLACEMENT, "FS_WIPE_REPLACEMENT"),
+            (FS_SWAP_AT_RELOAD, "FS_SWAP_AT_RELOAD"),
             (FS_CANOE_RESPAWN, "FS_CANOE_RESPAWN"),
             (FS_CANOE_SUMMON, "FS_CANOE_SUMMON"),
             (FS_CANOE_BACKUP, "FS_CANOE_BACKUP"),

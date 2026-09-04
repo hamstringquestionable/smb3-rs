@@ -79,19 +79,16 @@
 
 use crate::rom::Rom;
 
+use super::completion_bits::{self, TRANSITION_FLAG};
 use super::rom_data::{
-    self, FS_CROSS_WORLD_FX, FS_CROSS_WORLD_TABLE, FS_PORTAL_EXIT, FS_RESTORE_ARRIVAL,
-    FS_STASH_ARRIVAL, FS_WORLD_PERSIST_JUMP, FS_WORLD_PERSIST_SWAP,
+    FS_PORTAL_EXIT, FS_RESTORE_ARRIVAL, FS_STASH_ARRIVAL, FS_WORLD_PERSIST_JUMP,
 };
 
 // CPU addresses of the two routines. PRG010 is mapped at $C000 whenever
 // either hook runs — `$84A0` maps it itself, and `MO_NormalMoveEnter` lives
 // in it — so CPU = $C000 + (file - 0x14010), the same arithmetic as the
 // other PRG010 patches (`map_warp.rs`, `canoe_summon.rs`).
-const SWAP_COMPLETIONS_CPU: u16 = (0xC000 + FS_WORLD_PERSIST_SWAP - 0x14010) as u16;
 const WORLD_JUMP_CHECK_CPU: u16 = (0xC000 + FS_WORLD_PERSIST_JUMP - 0x14010) as u16;
-const CROSS_WORLD_FX_CPU: u16 = (0xC000 + FS_CROSS_WORLD_FX - 0x14010) as u16;
-const SLOT_WORLD_CPU: u16 = (0xC000 + FS_CROSS_WORLD_TABLE - 0x14010) as u16;
 // PRG011 is mapped at $A000 during the map, and `PRG011_ABBE` is its own code,
 // so CPU = $A000 + (file - 0x16010).
 const RESTORE_ARRIVAL_CPU: u16 = (0xC000 + FS_RESTORE_ARRIVAL - 0x14010) as u16;
@@ -116,29 +113,17 @@ const PAD_SELECT: u8 = 0x20;
 /// `World_Num`, 0-based.
 const WORLD_NUM: u16 = 0x0727;
 
-/// Where the non-live world's completion arrays park — one bank per half.
-///
-/// The disassembly declares 384 bytes of SRAM as bare anonymous `.ds` runs, and
-/// these are its two largest: `$7997-$79FF` (105) and `$7A73-$7ADF` (109). In
-/// each case that declaration is the *only* mention of any address in the range
-/// anywhere in the disassembly — nothing reads or writes them. Unlike the
-/// context-reused zero-page blocks, which the disassembly marks with explicit
-/// `.org`s, this is plain untouched SRAM. Using it here is deliberate: the
-/// eight-world version depends on that budget, so the POC may as well prove it.
-///
-/// 64 bytes taken from each; 41 and 45 left.
-const PARKED_MARIO: u16 = 0x7997;
-const PARKED_LUIGI: u16 = 0x7A73;
-
 /// Where the pipeway's arrival coordinates wait out `Map_Init`.
 ///
-/// Six bytes in the tail of the `$7997` run, past the 64 the Mario bank takes.
-const ARRIVAL_Y: u16 = 0x79D7;
-const ARRIVAL_XHI: u16 = 0x79D8;
-const ARRIVAL_X: u16 = 0x79D9;
-const ARRIVAL_SCRL: u16 = 0x79DA;
-const ARRIVAL_SCRH: u16 = 0x79DB;
-const ARRIVAL_FLAG: u16 = 0x79DC;
+/// Six bytes in the `$7A73` run, past the stencil scratch and its counters.
+/// They used to sit at `$79D7`, inside what is now
+/// [`completion_bits`]' packed region.
+const ARRIVAL_Y: u16 = 0x7AB6;
+const ARRIVAL_XHI: u16 = 0x7AB7;
+const ARRIVAL_X: u16 = 0x7AB8;
+const ARRIVAL_SCRL: u16 = 0x7AB9;
+const ARRIVAL_SCRH: u16 = 0x7ABA;
+const ARRIVAL_FLAG: u16 = 0x7ABB;
 
 /// The player's map position, as `Map_Init` writes it (PRG011). Every one of
 /// these is set from `Map_Y_Starts` and friends, so every one has to be
@@ -171,6 +156,10 @@ const WORLD_MAP_INIT_CPU: u16 = 0x84A0;
 
 /// The 10-byte `Map_Completions` wipe inside `PRG030_84A0` (CPU `$84CD`).
 const WIPE_OFFSET: usize = 0x3C4DD;
+/// Length of that run. `completion_bits` writes its own call into the first
+/// three bytes and pads the rest; the arrival restore goes into the padding, so
+/// only the tests here need the length.
+#[cfg(test)]
 const WIPE_LEN: usize = 10;
 
 /// `MO_NormalMoveEnter` (CPU `$CDCA`) — map operation `$D`, the normal
@@ -195,46 +184,6 @@ const NORMAL_MOVE_VANILLA: [u8; NORMAL_MOVE_LEN] = [
 ];
 
 // --- Routines -----------------------------------------------------------
-
-/// Exchange the live world's completion arrays with the parked world's.
-///
-/// The whole two-world POC. `$7D00`/`$7D40` are the live world's Mario and
-/// mirror halves; [`PARKED_MARIO`]/[`PARKED_LUIGI`] hold the other one's.
-///
-/// **Both halves, not just Mario's.** The mirror is not scratch state: the map
-/// reload applies it as a second pass, and the game-over merge ANDs the two.
-/// Banking one and leaving the other is what made a World 1 fortress light up a
-/// tile in World 2.
-///
-/// Called in place of the wipe, so A/X/Y are all free: the wipe itself
-/// clobbered A and Y, and the next thing `$84A0` does is `JSR
-/// Sprite_RAM_Clear`.
-///
-/// `LDX abs,Y` (`$BE`) is what keeps each half's exchange to 13 bytes rather
-/// than a two-pass copy through a scratch buffer.
-#[rustfmt::skip]
-const SWAP_COMPLETIONS: [u8; 34] = [
-    0xA0, 0x3F,                                             //  0: LDY #$3F  ; 64 columns, down
-    // Mario's half
-    0xB9, 0x00, 0x7D,                                       //  2: LDA $7D00,Y       ; loop
-    0xBE, PARKED_MARIO as u8, (PARKED_MARIO >> 8) as u8,    //  5: LDX PARKED_MARIO,Y
-    0x99, PARKED_MARIO as u8, (PARKED_MARIO >> 8) as u8,    //  8: STA PARKED_MARIO,Y
-    0x8A,                                                   // 11: TXA
-    0x99, 0x00, 0x7D,                                       // 12: STA $7D00,Y
-    // The mirror half — permanent alterations live here too, and the reload
-    // applies it as a second pass over the same four screens.
-    0xB9, 0x40, 0x7D,                                       // 15: LDA $7D40,Y
-    0xBE, PARKED_LUIGI as u8, (PARKED_LUIGI >> 8) as u8,    // 18: LDX PARKED_LUIGI,Y
-    0x99, PARKED_LUIGI as u8, (PARKED_LUIGI >> 8) as u8,    // 21: STA PARKED_LUIGI,Y
-    0x8A,                                                   // 24: TXA
-    0x99, 0x40, 0x7D,                                       // 25: STA $7D40,Y
-    0x88,                                                   // 28: DEY
-    0x10, 0xE3,                                             // 29: BPL -29 → loop
-    // `Map_Init` has already run by the time the wipe would have, so this is
-    // also the place to put the player back where a portal aimed them.
-    0x4C, RESTORE_ARRIVAL_CPU as u8,
-          (RESTORE_ARRIVAL_CPU >> 8) as u8,                 // 31: JMP RestoreArrival
-];
 
 /// Put the player where the portal aimed them, after `Map_Init` has had its say.
 ///
@@ -298,7 +247,7 @@ const RESTORE_ARRIVAL: [u8; 56] = [
 /// because nothing above the map loop is ever coming back — vanilla does the
 /// same `DEX / TXS` at reset for the same reason.
 #[rustfmt::skip]
-const WORLD_JUMP_CHECK: [u8; 40] = [
+const WORLD_JUMP_CHECK: [u8; 48] = [
     // ----- displaced from MO_NormalMoveEnter -----
     0xA9, 0x00,             //  0: LDA #$00
     0x8D, 0x6E, 0x79,       //  2: STA Map_NoLoseTurn
@@ -307,62 +256,61 @@ const WORLD_JUMP_CHECK: [u8; 40] = [
     // Mid-scroll the map is between states and a jump from here misbehaves.
     // `PRG010_CDDC` tests the same counter one instruction later.
     0xAD, MAP_PAN_COUNT as u8, (MAP_PAN_COUNT >> 8) as u8,  //  8: LDA Map_Pan_Count
-    0xD0, 0x1A,             // 11: BNE +26 → done
+    0xD0, 0x22,             // 11: BNE +34 -> done
 
     // ----- SELECT held + START pressed? -----
     0xA5, PAD_HOLDING,      // 13: LDA Pad_Holding
-    0x29, PAD_SELECT,       // 10: AND #PAD_SELECT
-    0xF0, 0x14,             // 12: BEQ +20 → done
-    0xA5, PAD_INPUT,        // 14: LDA Pad_Input
-    0x29, PAD_START,        // 16: AND #PAD_START
-    0xF0, 0x0E,             // 18: BEQ +14 → done
+    0x29, PAD_SELECT,       // 15: AND #PAD_SELECT
+    0xF0, 0x1C,             // 17: BEQ +28 -> done
+    0xA5, PAD_INPUT,        // 19: LDA Pad_Input
+    0x29, PAD_START,        // 21: AND #PAD_START
+    0xF0, 0x16,             // 23: BEQ +22 -> done
 
-    // ----- jump: ping-pong World_Num bit 0, restart the map -----
-    0xAD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,          // 20: LDA World_Num
-    0x49, 0x01,                                             // 23: EOR #$01
-    0x8D, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,          // 25: STA World_Num
-    0xA2, 0xFF,             // 28: LDX #$FF
-    0x9A,                   // 30: TXS              ; see doc comment
-    0x4C, WORLD_MAP_INIT_CPU as u8, (WORLD_MAP_INIT_CPU >> 8) as u8,  // 31: JMP $84A0 (never returns)
+    // ----- jump: next world, wrapping at 8, and restart the map -----
+    0xA9, 0x01,             // 25: LDA #$01          ; this is a transition,
+    0x8D, TRANSITION_FLAG as u8,
+          (TRANSITION_FLAG >> 8) as u8,              // 27: STA TRANSITION_FLAG
+                                                    //     not a new game
+    0xAD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,  // 30: LDA World_Num
+    0x18,                   // 33: CLC
+    0x69, 0x01,             // 34: ADC #$01
+    0x29, 0x07,             // 36: AND #$07          ; all eight, not a ping-pong
+    0x8D, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,  // 38: STA World_Num
+    0xA2, 0xFF,             // 41: LDX #$FF
+    0x9A,                   // 43: TXS               ; see doc comment
+    0x4C, WORLD_MAP_INIT_CPU as u8,
+          (WORLD_MAP_INIT_CPU >> 8) as u8,           // 44: JMP $84A0 (never returns)
 
-    0x60,                   // 34: RTS              ; done
+    0x60,                   // 47: RTS               ; done
 ];
 
 // --- Writer -------------------------------------------------------------
 
-/// Which FX slot belongs to which world, one byte per slot.
+/// Install the POC: packed per-world completions, plus the SELECT+START jump.
 ///
-/// Derived from `FORTRESS_ENTRIES` rather than written out: the FX slots are in
-/// that table's order — W1 takes slot 0, W2 slot 1, W3 slots 2-3 — which is the
-/// same fact `mega_map::van_fx` leans on, and the same one a hand-written list
-/// got wrong there by dropping a row.
-fn slot_world_table() -> Vec<u8> {
-    rom_data::FORTRESS_ENTRIES.iter().map(|&(world, _)| world as u8).collect()
-}
+/// The storage itself is [`completion_bits`]; this module contributes the
+/// debug jump that cycles worlds and, with `pipe_portal`, the portal that lands
+/// you on another world's map. The arrival restore is written into the padding
+/// `completion_bits` leaves at the wipe site, so it runs on the same pass and
+/// after `Map_Init` has had its say.
+pub(crate) fn apply(rom: &mut Rom, pipe_portal: Option<u8>) {
+    // Must come first: it owns the wipe site, and this module writes into the
+    // bytes it leaves behind.
+    completion_bits::apply(rom);
 
-/// Install the POC: bank completions across world transitions, and add the
-/// SELECT+START jump.
-///
-/// `cross_world_locks` additionally swaps World 1's and World 2's fortress FX
-/// row entries, so each world's fortress opens the *other* world's lock, and
-/// installs the routine that routes the completion into the right world's bank.
-pub(crate) fn apply(rom: &mut Rom, cross_world_locks: bool, pipe_portal: Option<u8>) {
     rom.push_tag("world_persist");
 
-    rom.write_range(FS_WORLD_PERSIST_SWAP, &SWAP_COMPLETIONS);
     rom.write_range(FS_RESTORE_ARRIVAL, &RESTORE_ARRIVAL);
     rom.write_range(FS_WORLD_PERSIST_JUMP, &WORLD_JUMP_CHECK);
 
-    // Replace the wipe with `JSR SwapCompletions`, padding the rest of the
-    // displaced run with NOPs. Three bytes for seven wasted is not the standard
-    // this project holds patches to; a shipped version would restructure the
-    // surrounding init instead. It stays here because a POC that rearranges
-    // `$84A0` is a POC testing two things at once.
-    let mut wipe = [0xEA_u8; WIPE_LEN];
-    wipe[0] = 0x20; // JSR
-    wipe[1] = SWAP_COMPLETIONS_CPU as u8;
-    wipe[2] = (SWAP_COMPLETIONS_CPU >> 8) as u8;
-    rom.write_range(WIPE_OFFSET, &wipe);
+    // Second half of the displaced wipe: `completion_bits` put its own call in
+    // the first three bytes and NOPs in the rest. Seven wasted bytes is not the
+    // standard this project holds patches to; a shipped version would
+    // restructure the surrounding init instead of padding it.
+    rom.write_range(
+        WIPE_OFFSET + 3,
+        &[0x20, RESTORE_ARRIVAL_CPU as u8, (RESTORE_ARRIVAL_CPU >> 8) as u8],
+    );
 
     // Hook MO_NormalMoveEnter for the trigger.
     let mut hook = [0xEA_u8; NORMAL_MOVE_LEN];
@@ -371,138 +319,11 @@ pub(crate) fn apply(rom: &mut Rom, cross_world_locks: bool, pipe_portal: Option<
     hook[2] = (WORLD_JUMP_CHECK_CPU >> 8) as u8;
     rom.write_range(NORMAL_MOVE_OFFSET, &hook);
 
-    if cross_world_locks {
-        apply_cross_world_locks(rom);
-    }
     if let Some(dest_world) = pipe_portal {
         apply_pipe_portal(rom, dest_world);
     }
 
     rom.pop_tag();
-}
-
-// --- Cross-world locks (POC round 2) ---------------------------------------
-
-/// `FortressFX_MapCompIdx` at CPU `$C7DF` — `(column, row bit)` per FX slot.
-const FX_MAP_COMP_IDX_CPU: u16 = 0xC7DF;
-
-/// `MO_DoFortressFX`'s "nothing to do" exit (CPU `$C9C9`), vanilla's own
-/// already-busted branch target. It zeroes `Map_DoFortressFX` and
-/// `Map_ClearLevelFXCnt`, bumps `Map_Operation`, and returns to the map update —
-/// exactly the bookkeeping a lock on another map needs, with no animation.
-const FX_DONE_CPU: u16 = 0xC9C9;
-
-/// Where `MO_DoFortressFX` resumes after the hook (CPU `$C8EA`).
-const FX_RESUME_CPU: u16 = 0xC8EA;
-
-/// Hook site inside `MO_DoFortressFX`, CPU `$C8E6` = file 0x148F6.
-///
-/// `$C8E3` has just resolved the FX slot into `Map_DoFortressFX` (`$0745`) via
-/// `FortressFXBase_ByWorld` + the Boom-Boom ordinal, and nothing has happened
-/// yet — no poof, no graphics buffer, no completion write. The four bytes here
-/// are two whole instructions:
-///
-/// ```text
-/// A9 01       LDA #$01
-/// 85 20       STA Map_ClearLevelFXCnt
-/// ```
-///
-/// This is the same site the shipped `fx_screen_check` patch takes, for the
-/// same reason. They are not applied together: that one comes from the
-/// randomizer, and this POC builds on a vanilla base.
-const FX_HOOK_OFFSET: usize = 0x148F6;
-const FX_HOOK_LEN: usize = 4;
-
-/// Vanilla bytes at [`FX_HOOK_OFFSET`].
-#[cfg(test)]
-#[rustfmt::skip]
-const FX_HOOK_VANILLA: [u8; FX_HOOK_LEN] = [
-    0xA9, 0x01,             // LDA #$01
-    0x85, 0x20,             // STA Map_ClearLevelFXCnt
-];
-
-/// Send a fortress's lock-break to a lock in *another* world.
-///
-/// The design claim this tests: a lock does not have to sit in its fortress's
-/// own world. Vanilla already breaks locks it cannot show — a fortress on page
-/// 0 opening a lock on page 2 gets no animation, just a map-data and
-/// `Map_Completions` update — so a lock on another *map* is that case one level
-/// further out.
-///
-/// It turns out to need no tile writing at all. `Map_Removable_Tiles` (PRG012)
-/// lists `TILE_LOCKVERT`, `TILE_LOCKHORZ` and `TILE_ALTLOCK` alongside the
-/// rocks, and `Map_Reload_with_Completions` swaps each one for its
-/// `Map_RemoveTo_Tiles` counterpart wherever the completion bit is set. That is
-/// how vanilla keeps a busted lock busted across a map reload — so **setting
-/// the bit in the destination world's parked bank is the whole mechanic**. The
-/// lock is simply gone when that world is next loaded.
-///
-/// Both parked halves get the bit, mirroring what vanilla does for every other
-/// permanent alteration (see the module docs).
-///
-/// `Map_DoFortressFX` (`$0745`) holds the resolved slot by the time this runs,
-/// and `$0B` is free scratch — `$C9C9` reads neither it nor `$0A`.
-#[rustfmt::skip]
-const CROSS_WORLD_FX: [u8; 47] = [
-    0xAC, 0x45, 0x07,                                       //  0: LDY $0745    ; FX slot
-    0xB9, 0, 0,                                             //  3: LDA SLOT_WORLD,Y   (patched)
-    0xCD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,          //  6: CMP World_Num
-    0xF0, 0x1D,                                             //  9: BEQ +29 → same world
-
-    // ----- the lock lives on the other map: stamp its parked banks -----
-    0x98,                                                   // 11: TYA
-    0x0A,                                                   // 12: ASL A
-    0xA8,                                                   // 13: TAY          ; Y = slot * 2
-    0xBE, FX_MAP_COMP_IDX_CPU as u8,
-          (FX_MAP_COMP_IDX_CPU >> 8) as u8,                 // 14: LDX $C7DF,Y  ; column
-    0xC8,                                                   // 17: INY
-    0xB9, FX_MAP_COMP_IDX_CPU as u8,
-          (FX_MAP_COMP_IDX_CPU >> 8) as u8,                 // 18: LDA $C7DF,Y  ; row bit
-    0x85, 0x0B,                                             // 21: STA $0B      ; keep the bit
-    0x1D, PARKED_MARIO as u8, (PARKED_MARIO >> 8) as u8,    // 23: ORA PARKED_MARIO,X
-    0x9D, PARKED_MARIO as u8, (PARKED_MARIO >> 8) as u8,    // 26: STA PARKED_MARIO,X
-    0xA5, 0x0B,                                             // 29: LDA $0B
-    0x1D, PARKED_LUIGI as u8, (PARKED_LUIGI >> 8) as u8,    // 31: ORA PARKED_LUIGI,X
-    0x9D, PARKED_LUIGI as u8, (PARKED_LUIGI >> 8) as u8,    // 34: STA PARKED_LUIGI,X
-    0x4C, FX_DONE_CPU as u8, (FX_DONE_CPU >> 8) as u8,      // 37: JMP $C9C9    ; no animation here
-
-    // ----- same world: the two displaced instructions, then carry on -----
-    0xA9, 0x01,                                             // 40: LDA #$01
-    0x85, 0x20,                                             // 42: STA Map_ClearLevelFXCnt
-    0x4C, FX_RESUME_CPU as u8, (FX_RESUME_CPU >> 8) as u8,  // 44: JMP $C8EA
-];
-
-/// Offset of the `SLOT_WORLD` table operand inside [`CROSS_WORLD_FX`].
-const SLOT_WORLD_OPERAND: usize = 4;
-
-/// Point each of World 1's and World 2's fortresses at the other's lock.
-///
-/// Two byte writes do the aiming. `FortressFXBase_ByWorld` puts W1's row at
-/// byte 0 and W2's at byte 4, each world has exactly one fortress, and the
-/// Boom-Boom ordinal is 1 — so `FortressFX_W1[0]` and `[4]` are the two entries
-/// those fortresses read, holding FX slots 0 and 1 (W1's lock and W2's lock).
-/// Swapping them is the whole redirection; [`CROSS_WORLD_FX`] then notices the
-/// slot belongs to another world and banks the completion instead of animating.
-fn apply_cross_world_locks(rom: &mut Rom) {
-    let table = slot_world_table();
-    let mut routine = CROSS_WORLD_FX;
-    routine[SLOT_WORLD_OPERAND] = SLOT_WORLD_CPU as u8;
-    routine[SLOT_WORLD_OPERAND + 1] = (SLOT_WORLD_CPU >> 8) as u8;
-    rom.write_range(FS_CROSS_WORLD_FX, &routine);
-    rom.write_range(FS_CROSS_WORLD_TABLE, &table);
-
-    let mut hook = [0xEA_u8; FX_HOOK_LEN];
-    hook[0] = 0x4C; // JMP — the hook replaces both displaced instructions, and
-    hook[1] = CROSS_WORLD_FX_CPU as u8; // the routine replays them on the
-    hook[2] = (CROSS_WORLD_FX_CPU >> 8) as u8; // same-world path.
-    rom.write_range(FX_HOOK_OFFSET, &hook);
-
-    // Swap the two row entries. Read-then-write rather than hardcoding 0 and 1,
-    // so this stays correct if the base ROM ever arrives with them elsewhere.
-    let w1_row = rom.read_byte(rom_data::FX_WORLD_TABLE);
-    let w2_row = rom.read_byte(rom_data::FX_WORLD_TABLE + 4);
-    rom.write_byte(rom_data::FX_WORLD_TABLE, w2_row);
-    rom.write_byte(rom_data::FX_WORLD_TABLE + 4, w1_row);
 }
 
 // --- Pipe portal (POC round 3) ---------------------------------------------
@@ -562,26 +383,30 @@ const MAP_INIT_CPU: u16 = 0xA1D8;
 /// The destination world is patched into the operand at
 /// [`PORTAL_DEST_OPERAND`], so `--pipe-portal-world` can aim it anywhere.
 #[rustfmt::skip]
-const PORTAL_EXIT: [u8; 32] = [
+const PORTAL_EXIT: [u8; 37] = [
     0xAD, MAP_WAS_IN_PIPEWAY as u8,
           (MAP_WAS_IN_PIPEWAY >> 8) as u8,                  //  0: LDA Map_WasInPipeway
-    0xF0, 0x15,                                             //  3: BEQ +21 → not a pipe
+    0xF0, 0x1A,                                             //  3: BEQ +26 -> not a pipe
     0xAD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,          //  5: LDA World_Num
-    0xD0, 0x10,                                             //  8: BNE +16 → not World 1
+    0xD0, 0x15,                                             //  8: BNE +21 -> not World 1
 
     0xA9, 0x01,                                             // 10: LDA #$01
     0x8D, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,    // 12: STA ARRIVAL_FLAG
     0xA9, 0x01,                                             // 15: LDA #dest   (patched)
     0x8D, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,          // 17: STA World_Num
-    0xA2, 0xFF,                                             // 20: LDX #$FF
-    0x9A,                                                   // 22: TXS
+    0xA9, 0x01,                                             // 20: LDA #$01    ; a transition,
+    0x8D, TRANSITION_FLAG as u8,
+          (TRANSITION_FLAG >> 8) as u8,                     // 22: STA TRANSITION_FLAG
+                                                            //     not a new game
+    0xA2, 0xFF,                                             // 25: LDX #$FF
+    0x9A,                                                   // 27: TXS
     0x4C, WORLD_MAP_INIT_CPU as u8,
-          (WORLD_MAP_INIT_CPU >> 8) as u8,                  // 23: JMP $84A0 (never returns)
+          (WORLD_MAP_INIT_CPU >> 8) as u8,                  // 28: JMP $84A0 (never returns)
 
     // ----- ordinary exit: the displaced instructions -----
-    0xA9, 0xC0,                                             // 26: LDA #$C0
-    0x8D, 0x00, 0x01,                                       // 28: STA Update_Select
-    0x60,                                                   // 31: RTS
+    0xA9, 0xC0,                                             // 31: LDA #$C0
+    0x8D, 0x00, 0x01,                                       // 33: STA Update_Select
+    0x60,                                                   // 36: RTS
 ];
 
 /// Offset of the destination-world operand inside [`PORTAL_EXIT`].
@@ -637,14 +462,6 @@ mod asm_checks {
     use crate::randomize::rom_data::asm;
 
     #[test]
-    fn swap_completions_is_well_formed() {
-        asm::check(&SWAP_COMPLETIONS)
-            .allocation(FS_WORLD_PERSIST_SWAP)
-            .origin(SWAP_COMPLETIONS_CPU)
-            .assert_ok();
-    }
-
-    #[test]
     fn world_jump_check_is_well_formed() {
         asm::check(&WORLD_JUMP_CHECK)
             .allocation(FS_WORLD_PERSIST_JUMP)
@@ -658,25 +475,20 @@ mod asm_checks {
     fn hooks_displace_whole_instructions() {
         let Some(rom) = load_vanilla() else { return };
 
-        let wipe = rom.read_range(WIPE_OFFSET, WIPE_LEN).to_vec();
-        assert_eq!(
-            wipe,
-            vec![0xA0, 0x7F, 0xA9, 0x00, 0x99, 0x00, 0x7D, 0x88, 0x10, 0xFA],
-            "the Map_Completions wipe is not where this module thinks it is"
-        );
+        // `completion_bits` owns the wipe site now; this module only writes
+        // the arrival restore into the padding it leaves.
+        let mut patched = rom.clone();
+        completion_bits::apply(&mut patched);
+        let wipe = patched.read_range(WIPE_OFFSET, WIPE_LEN).to_vec();
 
         let mv = rom.read_range(NORMAL_MOVE_OFFSET, NORMAL_MOVE_LEN);
         assert_eq!(mv, NORMAL_MOVE_VANILLA, "MO_NormalMoveEnter has moved");
 
-        let mut jsr_swap = [0xEA_u8; WIPE_LEN];
-        jsr_swap[0] = 0x20;
-        jsr_swap[1] = SWAP_COMPLETIONS_CPU as u8;
-        jsr_swap[2] = (SWAP_COMPLETIONS_CPU >> 8) as u8;
-        asm::check(&SWAP_COMPLETIONS)
-            .allocation(FS_WORLD_PERSIST_SWAP)
-            .origin(SWAP_COMPLETIONS_CPU)
-            .hook(&wipe, 0, &jsr_swap)
-            .assert_ok();
+        assert_eq!(
+            &wipe[3..6],
+            &[0xEA, 0xEA, 0xEA],
+            "completion_bits must leave NOPs at the wipe site for the arrival restore"
+        );
 
         let mut jsr_check = [0xEA_u8; NORMAL_MOVE_LEN];
         jsr_check[0] = 0x20;
@@ -707,92 +519,11 @@ mod asm_checks {
         // Decoding is what proves it: `asm::check` walks instruction
         // boundaries, so a `JMP` found at 31 really is the final instruction
         // and not an operand read as an opcode.
-        assert_eq!(WORLD_JUMP_CHECK[36], 0x4C, "trigger must end in a JMP");
+        assert_eq!(WORLD_JUMP_CHECK[44], 0x4C, "trigger must end in a JMP");
         assert_eq!(
-            u16::from_le_bytes([WORLD_JUMP_CHECK[37], WORLD_JUMP_CHECK[38]]),
+            u16::from_le_bytes([WORLD_JUMP_CHECK[45], WORLD_JUMP_CHECK[46]]),
             0x84A0,
             "trigger must JMP PRG030_84A0, the world-map init"
-        );
-    }
-
-    #[test]
-    fn cross_world_fx_is_well_formed() {
-        let mut routine = CROSS_WORLD_FX;
-        routine[SLOT_WORLD_OPERAND] = SLOT_WORLD_CPU as u8;
-        routine[SLOT_WORLD_OPERAND + 1] = (SLOT_WORLD_CPU >> 8) as u8;
-        asm::check(&routine).allocation(FS_CROSS_WORLD_FX).origin(CROSS_WORLD_FX_CPU).assert_ok();
-    }
-
-    /// The FX hook displaces two whole instructions, and the routine replays
-    /// them on the same-world path. Losing them would leave
-    /// `Map_ClearLevelFXCnt` clear, and the poof would never start.
-    #[test]
-    fn fx_hook_displaces_whole_instructions_and_replays_them() {
-        let Some(rom) = load_vanilla() else { return };
-        let vanilla = rom.read_range(FX_HOOK_OFFSET, FX_HOOK_LEN);
-        assert_eq!(vanilla, FX_HOOK_VANILLA, "MO_DoFortressFX's hook site has moved");
-        assert_eq!(
-            CROSS_WORLD_FX[40..44],
-            FX_HOOK_VANILLA,
-            "the same-world path must replay the instructions the hook overwrote"
-        );
-
-        let mut routine = CROSS_WORLD_FX;
-        routine[SLOT_WORLD_OPERAND] = SLOT_WORLD_CPU as u8;
-        routine[SLOT_WORLD_OPERAND + 1] = (SLOT_WORLD_CPU >> 8) as u8;
-        let mut jsr = [0xEA_u8; FX_HOOK_LEN];
-        jsr[0] = 0x4C;
-        jsr[1] = CROSS_WORLD_FX_CPU as u8;
-        jsr[2] = (CROSS_WORLD_FX_CPU >> 8) as u8;
-        asm::check(&routine)
-            .allocation(FS_CROSS_WORLD_FX)
-            .origin(CROSS_WORLD_FX_CPU)
-            .hook(&FX_HOOK_VANILLA, 0, &jsr)
-            .assert_ok();
-    }
-
-    /// One byte per FX slot, and each names the world that slot's lock is on.
-    #[test]
-    fn slot_world_table_covers_every_fx_slot() {
-        let table = slot_world_table();
-        assert_eq!(table.len(), 17, "17 FX slots, 17 entries");
-        assert!(table.iter().all(|&w| w < 8), "every entry names a real world");
-        assert_eq!(table[0], 0, "slot 0 is W1's lock");
-        assert_eq!(table[1], 1, "slot 1 is W2's lock");
-        assert!(table.len() <= 24, "table must fit its allocation");
-    }
-
-    /// The swap really crosses the two worlds over, and it is an involution —
-    /// applying it twice would put them back, which is the sort of thing a
-    /// read-then-write can get wrong by reading its own output.
-    #[test]
-    fn fx_rows_are_actually_swapped() {
-        let Some(rom) = load_vanilla() else { return };
-        let before =
-            (rom.read_byte(rom_data::FX_WORLD_TABLE), rom.read_byte(rom_data::FX_WORLD_TABLE + 4));
-        assert_ne!(before.0, before.1, "vanilla must differ, or the test proves nothing");
-
-        let mut patched = rom.clone();
-        apply(&mut patched, true, None);
-        assert_eq!(patched.read_byte(rom_data::FX_WORLD_TABLE), before.1, "W1 fort -> W2 lock");
-        assert_eq!(patched.read_byte(rom_data::FX_WORLD_TABLE + 4), before.0, "W2 fort -> W1 lock");
-    }
-
-    /// Without the flag, `MO_DoFortressFX` and the FX rows are untouched.
-    #[test]
-    fn cross_world_is_opt_in() {
-        let Some(rom) = load_vanilla() else { return };
-        let mut patched = rom.clone();
-        apply(&mut patched, false, None);
-        assert_eq!(
-            patched.read_range(FX_HOOK_OFFSET, FX_HOOK_LEN),
-            FX_HOOK_VANILLA,
-            "the FX hook must not be installed unless asked for"
-        );
-        assert_eq!(
-            patched.read_byte(rom_data::FX_WORLD_TABLE),
-            rom.read_byte(rom_data::FX_WORLD_TABLE),
-            "the FX rows must not move unless asked for"
         );
     }
 
@@ -804,16 +535,24 @@ mod asm_checks {
             .assert_ok();
     }
 
-    /// The swap must reach the restore, or a portal's arrival is silently
-    /// dropped and you land on the destination world's start tile — which is
+    /// The arrival restore must actually be reached, or a portal's arrival is
+    /// silently dropped and you land on the destination world's start tile —
     /// the version of this that is worse than no transit room at all.
+    ///
+    /// It rides in the padding `completion_bits` leaves at the wipe site, which
+    /// is a shared 10-byte run and exactly the kind of arrangement that breaks
+    /// quietly when either side moves.
     #[test]
-    fn swap_falls_through_to_the_arrival_restore() {
-        assert_eq!(SWAP_COMPLETIONS[31], 0x4C, "the completion swap must end in a JMP, not an RTS");
+    fn the_wipe_site_calls_the_arrival_restore() {
+        let Some(rom) = load_vanilla() else { return };
+        let mut patched = rom.clone();
+        apply(&mut patched, None);
+        let wipe = patched.read_range(WIPE_OFFSET, WIPE_LEN);
+        assert_eq!(wipe[3], 0x20, "the arrival restore must be called, not fallen into");
         assert_eq!(
-            u16::from_le_bytes([SWAP_COMPLETIONS[32], SWAP_COMPLETIONS[33]]),
+            u16::from_le_bytes([wipe[4], wipe[5]]),
             RESTORE_ARRIVAL_CPU,
-            "and it must jump to the arrival restore"
+            "and the call must name the restore"
         );
     }
 
@@ -870,7 +609,7 @@ mod asm_checks {
             "PRG030_9097 has moved"
         );
         assert_eq!(
-            PORTAL_EXIT[26..31],
+            PORTAL_EXIT[31..36],
             EXIT_HOOK_VANILLA,
             "the ordinary-exit path must replay what the hook overwrote"
         );
@@ -906,7 +645,7 @@ mod asm_checks {
         let Some(rom) = load_vanilla() else { return };
         for world in 1u8..8 {
             let mut patched = rom.clone();
-            apply(&mut patched, false, Some(world));
+            apply(&mut patched, Some(world));
             assert_eq!(
                 patched.read_byte(FS_PORTAL_EXIT + PORTAL_DEST_OPERAND),
                 world,
@@ -921,7 +660,7 @@ mod asm_checks {
     fn pipe_portal_is_opt_in() {
         let Some(rom) = load_vanilla() else { return };
         let mut patched = rom.clone();
-        apply(&mut patched, false, None);
+        apply(&mut patched, None);
         assert_eq!(
             patched.read_range(EXIT_HOOK_OFFSET, EXIT_HOOK_LEN),
             EXIT_HOOK_VANILLA,
@@ -939,8 +678,11 @@ mod asm_checks {
     /// the POC's shortcut is wrong and this says so.
     #[test]
     fn world_one_has_no_vanilla_pipe_destinations() {
-        let w1: Vec<u8> =
-            rom_data::DEST_TO_WORLD.iter().filter(|&&(_, w)| w == 0).map(|&(d, _)| d).collect();
+        let w1: Vec<u8> = crate::randomize::rom_data::DEST_TO_WORLD
+            .iter()
+            .filter(|&&(_, w)| w == 0)
+            .map(|&(d, _)| d)
+            .collect();
         assert!(w1.is_empty(), "W1 gained pipe destinations {w1:?} — the portal needs a table now");
     }
 

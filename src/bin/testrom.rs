@@ -98,11 +98,6 @@ struct Cli {
     #[arg(long)]
     world_persist: bool,
 
-    /// World-maze POC: make W1's fortress open W2's lock and W2's fortress open
-    /// W1's lock. Implies --world-persist.
-    #[arg(long)]
-    cross_world_locks: bool,
-
     /// World-maze POC: a pipe taken in World 1 comes out on this world's map,
     /// 1-8. Combine with --place <pipe>. Implies --world-persist.
     #[arg(long, value_name = "WORLD", value_parser = clap::value_parser!(u8).range(1..=8))]
@@ -417,7 +412,6 @@ fn main() {
         always_on_patches: cli.patches,
         walk_skip_conflicts: cli.walk_skip_conflicts,
         world_persist: cli.world_persist,
-        cross_world_locks: cli.cross_world_locks,
         pipe_portal: cli.pipe_portal,
         remove_locks: !cli.keep_locks,
         remove_gaps: !cli.keep_gaps,
