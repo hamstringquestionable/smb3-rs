@@ -241,7 +241,9 @@ fn popcount(mask: &[u8]) -> usize {
 // which is the only point in the init where the grid *and* the tile tables
 // *and* PRG010 (still at `$C000`, holding this code) are all reachable at once.
 
-use super::rom_data::{FS_IS_COMPLETABLE, FS_MASK_BUILD, FS_WORLD_COLS};
+use super::rom_data::{
+    FS_IS_COMPLETABLE, FS_MASK_BUILD, FS_PACK_PLANE, FS_UNPACK_PLANE, FS_WORLD_COLS,
+};
 
 /// Where the derived stencil lands: 64 bytes, one per possible map column.
 ///
@@ -265,6 +267,8 @@ const fn prg010_cpu(file: usize) -> u16 {
 const MASK_BUILD_CPU: u16 = prg010_cpu(FS_MASK_BUILD);
 const IS_COMPLETABLE_CPU: u16 = prg010_cpu(FS_IS_COMPLETABLE);
 const WORLD_COLS_CPU: u16 = prg010_cpu(FS_WORLD_COLS);
+const PACK_PLANE_CPU: u16 = prg010_cpu(FS_PACK_PLANE);
+const UNPACK_PLANE_CPU: u16 = prg010_cpu(FS_UNPACK_PLANE);
 
 // --- PRG012 symbols, all verified by matching their bytes in the ROM rather
 // --- than read off the disassembly's labels.
@@ -300,6 +304,15 @@ const ZP_BIT: u8 = 0x03;
 /// `Temp_Var5` — the tile, stashed so the threshold test can index on its top
 /// two bits and still compare against the whole byte.
 const ZP_TILE: u8 = 0x04;
+
+// The transfer routines run after the stencil is built and reuse the same five
+// bytes for their own purposes. Named separately because they mean different
+// things, aliased deliberately because there is no sixth safe byte.
+
+/// `Temp_Var1`/`Temp_Var2` — the `Map_Completions` half being transferred.
+const ZP_SRC: u8 = 0x00;
+/// `Temp_Var5` — the byte of packed bits in flight.
+const ZP_ACC: u8 = 0x04;
 
 /// Map columns per world. Fixed ROM geometry — one, two, three or four screens
 /// of sixteen — and not something the randomizer moves, so it is a constant
@@ -446,6 +459,146 @@ const MASK_BUILD: [u8; 110] = [
     0x60,                                   // 109: RTS
 ];
 
+/// Where a world's packed planes live: Mario's at `PACKED`, the mirror's
+/// [`PLANE_RESERVE`] bytes further on, each world at its own base-table offset.
+///
+/// `$7997-$79FF` is the second of the two SRAM runs the POC proved free at
+/// runtime. One absolute base covers both planes because the mirror is reached
+/// by a starting index of `base + PLANE_RESERVE`, never by a second address.
+const PACKED: u16 = 0x7997;
+
+/// Bytes reserved for one plane — all eight worlds' slices end to end.
+///
+/// The measured worst case over 150 builds is 42; the margin is deliberate,
+/// since a seed that needed one byte more would silently write into the mirror.
+/// `packed_planes_fit_their_reserve` holds the line.
+pub(crate) const PLANE_RESERVE: usize = 48;
+
+/// Bits still unread in, or unwritten to, the byte being transferred.
+const BITCNT: u16 = 0x7AB5;
+
+/// Compress one `Map_Completions` half into a world's plane.
+///
+/// `A` is the starting byte index — `base_table[world]` for Mario's half,
+/// plus [`PLANE_RESERVE`] for the mirror. `Temp_Var1`/`2` point at the half
+/// being read, and [`MASK_SCRATCH`] and `COL_IDX` must be what [`MASK_BUILD`]
+/// left for the same world.
+///
+/// The stencil says which of the 512 bits can ever be set; this takes exactly
+/// those, most significant first, and packs them end to end. A column whose
+/// mask is zero — half of them — skips its inner loop entirely.
+///
+/// The tail byte is left-aligned by shifting it up by the count still
+/// outstanding, so [`UNPACK_PLANE`] can read it back with the same
+/// most-significant-first walk and never has to know where the stream stopped.
+#[rustfmt::skip]
+const PACK_PLANE: [u8; 89] = [
+    0xAA,                                   //  0: TAX             ; plane byte index
+    0xA9, 0x00,                             //  1: LDA #$00
+    0x85, ZP_ACC,                           //  3: STA ZP_ACC
+    0xA9, 0x08,                             //  5: LDA #$08
+    0x8D, BITCNT as u8, (BITCNT >> 8) as u8, //  7: STA BITCNT
+    0xA0, 0x00,                             // 10: LDY #$00        ; column
+
+    0xB9, MASK_SCRATCH as u8,
+          (MASK_SCRATCH >> 8) as u8,        // 12: LDA MASK_SCRATCH,Y   ; col_loop
+    0xF0, 0x2E,                             // 15: BEQ +46 -> nextcol   ; owns nothing
+    0x85, ZP_MASK,                          // 17: STA ZP_MASK
+    0xA9, 0x80,                             // 19: LDA #$80
+    0x85, ZP_BIT,                           // 21: STA ZP_BIT
+
+    0xA5, ZP_MASK,                          // 23: LDA ZP_MASK          ; bit_loop
+    0x25, ZP_BIT,                           // 25: AND ZP_BIT
+    0xF0, 0x1E,                             // 27: BEQ +30 -> nobit     ; not owned
+    0x18,                                   // 29: CLC
+    0xB1, ZP_SRC,                           // 30: LDA (ZP_SRC),Y
+    0x25, ZP_BIT,                           // 32: AND ZP_BIT
+    0xF0, 0x01,                             // 34: BEQ +1               ; leave carry clear
+    0x38,                                   // 36: SEC
+    0x26, ZP_ACC,                           // 37: ROL ZP_ACC           ; shift the bit in
+    0xCE, BITCNT as u8, (BITCNT >> 8) as u8, // 39: DEC BITCNT
+    0xD0, 0x0F,                             // 42: BNE +15 -> nobit     ; byte not full
+    0xA5, ZP_ACC,                           // 44: LDA ZP_ACC
+    0x9D, PACKED as u8, (PACKED >> 8) as u8, // 46: STA PACKED,X
+    0xE8,                                   // 49: INX
+    0xA9, 0x08,                             // 50: LDA #$08
+    0x8D, BITCNT as u8, (BITCNT >> 8) as u8, // 52: STA BITCNT
+    0xA9, 0x00,                             // 55: LDA #$00
+    0x85, ZP_ACC,                           // 57: STA ZP_ACC
+
+    0x46, ZP_BIT,                           // 59: LSR ZP_BIT           ; nobit
+    0xD0, 0xD8,                             // 61: BNE -40 -> bit_loop
+
+    0xC8,                                   // 63: INY                  ; nextcol
+    0xCC, COL_IDX as u8, (COL_IDX >> 8) as u8, // 64: CPY COL_IDX
+    0xD0, 0xC7,                             // 67: BNE -57 -> col_loop
+
+    // --- the tail: left-align whatever is outstanding and store it ---
+    0xAD, BITCNT as u8, (BITCNT >> 8) as u8, // 69: LDA BITCNT
+    0xC9, 0x08,                             // 72: CMP #$08
+    0xF0, 0x0C,                             // 74: BEQ +12 -> done      ; nothing pending
+    0x06, ZP_ACC,                           // 76: ASL ZP_ACC           ; flush_loop
+    0xCE, BITCNT as u8, (BITCNT >> 8) as u8, // 78: DEC BITCNT
+    0xD0, 0xF9,                             // 81: BNE -7 -> flush_loop
+    0xA5, ZP_ACC,                           // 83: LDA ZP_ACC
+    0x9D, PACKED as u8, (PACKED >> 8) as u8, // 85: STA PACKED,X
+    0x60,                                   // 88: RTS                  ; done
+];
+
+/// Expand a world's plane back into one `Map_Completions` half.
+///
+/// The mirror of [`PACK_PLANE`], with the same entry conditions.
+///
+/// **Every column is written, including the ones that own nothing.** The half
+/// still holds the world you just left, so a column skipped rather than cleared
+/// would carry its bits across — which is the failure the whole scheme exists
+/// to avoid, and it would look like progress appearing in a world you had never
+/// played.
+///
+/// `BITCNT` starts at zero so the first `DEC` goes negative and forces the
+/// first byte to be fetched; after that it counts 7 down to 0 across each
+/// byte's eight bits.
+#[rustfmt::skip]
+const UNPACK_PLANE: [u8; 66] = [
+    0xAA,                                   //  0: TAX             ; plane byte index
+    0xA9, 0x00,                             //  1: LDA #$00
+    0x8D, BITCNT as u8, (BITCNT >> 8) as u8, //  3: STA BITCNT      ; forces a fetch
+    0xA0, 0x00,                             //  6: LDY #$00        ; column
+
+    0xA9, 0x00,                             //  8: LDA #$00        ; col_loop
+    0x91, ZP_SRC,                           // 10: STA (ZP_SRC),Y  ; clear it first
+    0xB9, MASK_SCRATCH as u8,
+          (MASK_SCRATCH >> 8) as u8,        // 12: LDA MASK_SCRATCH,Y
+    0xF0, 0x2A,                             // 15: BEQ +42 -> nextcol
+    0x85, ZP_MASK,                          // 17: STA ZP_MASK
+    0xA9, 0x80,                             // 19: LDA #$80
+    0x85, ZP_BIT,                           // 21: STA ZP_BIT
+
+    0xA5, ZP_MASK,                          // 23: LDA ZP_MASK          ; bit_loop
+    0x25, ZP_BIT,                           // 25: AND ZP_BIT
+    0xF0, 0x1A,                             // 27: BEQ +26 -> nobit
+    0xCE, BITCNT as u8, (BITCNT >> 8) as u8, // 29: DEC BITCNT
+    0x10, 0x0B,                             // 32: BPL +11 -> have      ; still loaded
+    0xBD, PACKED as u8, (PACKED >> 8) as u8, // 34: LDA PACKED,X
+    0x85, ZP_ACC,                           // 37: STA ZP_ACC
+    0xE8,                                   // 39: INX
+    0xA9, 0x07,                             // 40: LDA #$07
+    0x8D, BITCNT as u8, (BITCNT >> 8) as u8, // 42: STA BITCNT
+    0x06, ZP_ACC,                           // 45: ASL ZP_ACC           ; have
+    0x90, 0x06,                             // 47: BCC +6 -> nobit
+    0xB1, ZP_SRC,                           // 49: LDA (ZP_SRC),Y
+    0x05, ZP_BIT,                           // 51: ORA ZP_BIT
+    0x91, ZP_SRC,                           // 53: STA (ZP_SRC),Y
+
+    0x46, ZP_BIT,                           // 55: LSR ZP_BIT           ; nobit
+    0xD0, 0xDC,                             // 57: BNE -36 -> bit_loop
+
+    0xC8,                                   // 59: INY                  ; nextcol
+    0xCC, COL_IDX as u8, (COL_IDX >> 8) as u8, // 60: CPY COL_IDX
+    0xD0, 0xC7,                             // 63: BNE -57 -> col_loop
+    0x60,                                   // 65: RTS
+];
+
 /// Write the console-side routines into PRG010.
 ///
 /// Split out from any hook so the stencil can be exercised — and audited —
@@ -455,6 +608,8 @@ pub(crate) fn apply(rom: &mut Rom) {
     rom.write_range(FS_MASK_BUILD, &MASK_BUILD);
     rom.write_range(FS_IS_COMPLETABLE, &IS_COMPLETABLE);
     rom.write_range(FS_WORLD_COLS, &WORLD_COLS);
+    rom.write_range(FS_PACK_PLANE, &PACK_PLANE);
+    rom.write_range(FS_UNPACK_PLANE, &UNPACK_PLANE);
     rom.pop_tag();
 }
 
@@ -774,6 +929,8 @@ mod tests {
         mem.set_bytes(MASK_BUILD_CPU, &MASK_BUILD);
         mem.set_bytes(IS_COMPLETABLE_CPU, &IS_COMPLETABLE);
         mem.set_bytes(WORLD_COLS_CPU, &WORLD_COLS);
+        mem.set_bytes(PACK_PLANE_CPU, &PACK_PLANE);
+        mem.set_bytes(UNPACK_PLANE_CPU, &UNPACK_PLANE);
         // PRG012, whole bank — the tables and every world's grid, at the
         // addresses the routine names.
         let prg012: Vec<u8> =
@@ -891,5 +1048,209 @@ mod tests {
             .origin(IS_COMPLETABLE_CPU)
             .assert_ok();
         asm::check(&MASK_BUILD).allocation(FS_MASK_BUILD).origin(MASK_BUILD_CPU).assert_ok();
+        asm::check(&PACK_PLANE).allocation(FS_PACK_PLANE).origin(PACK_PLANE_CPU).assert_ok();
+        asm::check(&UNPACK_PLANE).allocation(FS_UNPACK_PLANE).origin(UNPACK_PLANE_CPU).assert_ok();
+    }
+    /// Run a routine that ends in a single `RTS` and stop when it gets there.
+    fn run_to_rts(cpu: &mut CPU<Memory, Ricoh2a03>, entry: u16, end: u16, what: &str) {
+        cpu.registers.program_counter = entry;
+        cpu.registers.stack_pointer = mos6502::registers::StackPointer(0xFF);
+        for _ in 0..400_000 {
+            if cpu.registers.program_counter == end {
+                let op = cpu.memory.get_byte(end);
+                if matches!(Ricoh2a03::decode(op), Some((Instruction::RTS, _))) {
+                    return;
+                }
+            }
+            cpu.single_step();
+        }
+        panic!("{what} ran away");
+    }
+
+    /// A deterministic filler for a `Map_Completions` half.
+    ///
+    /// Not `rand`: the point is that a failure is reproducible from the seed
+    /// and the world alone, without a captured array to compare against.
+    fn fill_half(seed: u64, world: usize, fill: u8) -> [u8; HALF_LEN] {
+        let mut half = [0u8; HALF_LEN];
+        let mut x = seed.wrapping_mul(0x9E37_79B9).wrapping_add(world as u64 + 1);
+        for (i, b) in half.iter_mut().enumerate() {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            *b = match fill {
+                0 => 0x00,
+                1 => 0xFF,
+                2 => (x >> 33) as u8,
+                _ => {
+                    if i % 2 == 0 {
+                        0xAA
+                    } else {
+                        0x55
+                    }
+                }
+            };
+        }
+        half
+    }
+
+    /// Set a world up on the CPU exactly as the hook will: build the stencil,
+    /// then load the half to be transferred.
+    fn stage_world(cpu: &mut CPU<Memory, Ricoh2a03>, world: usize, half: &[u8; HALF_LEN]) {
+        build_mask_on_cpu(cpu, world);
+        for (i, &b) in half.iter().enumerate() {
+            cpu.memory.set_byte(0x7D00 + i as u16, b);
+        }
+        cpu.memory.set_byte(ZP_SRC as u16, 0x00);
+        cpu.memory.set_byte(ZP_SRC as u16 + 1, 0x7D);
+    }
+
+    /// `MASK_BUILD` must leave `COL_IDX` holding the world's column count —
+    /// the transfer routines bound their walk with it rather than reloading.
+    #[test]
+    fn mask_build_leaves_the_column_count() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let mut cpu = cpu_with_routines(&rom);
+        for (w, &cols) in WORLD_COLS.iter().enumerate() {
+            build_mask_on_cpu(&mut cpu, w);
+            assert_eq!(cpu.memory.get_byte(COL_IDX), cols, "W{}: COL_IDX after MASK_BUILD", w + 1,);
+        }
+    }
+
+    /// **`PACK_PLANE` on the console must agree with [`CompletionMap::pack`].**
+    ///
+    /// Run over the whole pipeline the hook will run — stencil, then compress —
+    /// on maps the randomizer produces, with four fills including all-ones. The
+    /// all-ones case is the one that catches a bit-order slip: every unowned bit
+    /// is set too, so mistaking one for owned shifts the entire stream.
+    #[test]
+    fn pack_plane_matches_rust() {
+        let Ok(rom_bytes) = std::fs::read(ROM_PATH) else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        for seed in 0..seeds() {
+            let options =
+                crate::Options { palettes: false, palette_themed: false, ..Default::default() };
+            let Ok((rom, _)) =
+                crate::randomize_rom_with_overworld_capture(&rom_bytes, seed, &options, None)
+            else {
+                continue;
+            };
+            let map = CompletionMap::from_rom(&rom);
+            let mut cpu = cpu_with_routines(&rom);
+            for w in 0..8 {
+                for fill in 0..4u8 {
+                    let half = fill_half(seed, w, fill);
+                    stage_world(&mut cpu, w, &half);
+                    let base = map.base(w);
+                    for i in 0..PLANE_RESERVE {
+                        cpu.memory.set_byte(PACKED + i as u16, 0xAA); // poison
+                    }
+                    cpu.registers.accumulator = base as u8;
+                    run_to_rts(
+                        &mut cpu,
+                        PACK_PLANE_CPU,
+                        PACK_PLANE_CPU + PACK_PLANE.len() as u16 - 1,
+                        "PACK_PLANE",
+                    );
+                    let got: Vec<u8> = (0..map.plane_bytes(w))
+                        .map(|i| cpu.memory.get_byte(PACKED + (base + i) as u16))
+                        .collect();
+                    assert_eq!(
+                        got,
+                        map.pack(w, &half),
+                        "seed {seed} W{} fill {fill}: 6502 pack disagrees",
+                        w + 1,
+                    );
+                }
+            }
+        }
+    }
+
+    /// **`UNPACK_PLANE` must undo it, and must clear what it does not own.**
+    ///
+    /// The half is pre-loaded with the *previous* world's data rather than
+    /// zeroes, which is the real situation once the wipe is gone: a column the
+    /// routine skips instead of clearing carries progress into a world it never
+    /// belonged to.
+    #[test]
+    fn unpack_plane_matches_rust() {
+        let Ok(rom_bytes) = std::fs::read(ROM_PATH) else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        for seed in 0..seeds() {
+            let options =
+                crate::Options { palettes: false, palette_themed: false, ..Default::default() };
+            let Ok((rom, _)) =
+                crate::randomize_rom_with_overworld_capture(&rom_bytes, seed, &options, None)
+            else {
+                continue;
+            };
+            let map = CompletionMap::from_rom(&rom);
+            let mut cpu = cpu_with_routines(&rom);
+            for w in 0..8 {
+                for fill in 0..4u8 {
+                    let half = fill_half(seed, w, fill);
+                    let plane = map.pack(w, &half);
+                    let base = map.base(w);
+                    for (i, &b) in plane.iter().enumerate() {
+                        cpu.memory.set_byte(PACKED + (base + i) as u16, b);
+                    }
+                    // Stale data from the world just left.
+                    let stale = fill_half(seed ^ 0xFFFF, w, 1);
+                    stage_world(&mut cpu, w, &stale);
+                    cpu.registers.accumulator = base as u8;
+                    run_to_rts(
+                        &mut cpu,
+                        UNPACK_PLANE_CPU,
+                        UNPACK_PLANE_CPU + UNPACK_PLANE.len() as u16 - 1,
+                        "UNPACK_PLANE",
+                    );
+                    let want = map.unpack(w, &plane);
+                    let got: Vec<u8> = (0..WORLD_COLS[w] as u16)
+                        .map(|i| cpu.memory.get_byte(0x7D00 + i))
+                        .collect();
+                    assert_eq!(
+                        got,
+                        want[..WORLD_COLS[w] as usize],
+                        "seed {seed} W{} fill {fill}: 6502 unpack disagrees",
+                        w + 1,
+                    );
+                }
+            }
+        }
+    }
+
+    /// No seed may need more than the plane reserve, or a world's Mario slice
+    /// would run into the mirror region and take the other plane's bits with it.
+    #[test]
+    fn packed_planes_fit_their_reserve() {
+        let Ok(rom_bytes) = std::fs::read(ROM_PATH) else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let mut worst = 0usize;
+        for (name, arm) in arms() {
+            for seed in 0..seeds() {
+                let mut options =
+                    crate::Options { palettes: false, palette_themed: false, ..Default::default() };
+                arm(&mut options);
+                let Ok((rom, _)) =
+                    crate::randomize_rom_with_overworld_capture(&rom_bytes, seed, &options, None)
+                else {
+                    continue;
+                };
+                let need = CompletionMap::from_rom(&rom).mirror_offset();
+                assert!(
+                    need <= PLANE_RESERVE,
+                    "{name} seed {seed}: a plane needs {need} bytes, reserve is {PLANE_RESERVE}",
+                );
+                worst = worst.max(need);
+            }
+        }
+        eprintln!("worst plane: {worst} of {PLANE_RESERVE} reserved");
     }
 }

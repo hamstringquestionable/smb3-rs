@@ -209,6 +209,18 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "world-maze: the engine's own completable-tile test, as a subroutine",
     ),
     fs(0x1578C, 8, &["completion_bits"], "world-maze: map columns per world"),
+    fs(
+        0x15794,
+        112,
+        &["completion_bits"],
+        "world-maze: compress one Map_Completions half (112 reserved, 89 used)",
+    ),
+    fs(
+        0x15F4C,
+        80,
+        &["completion_bits"],
+        "world-maze: expand one Map_Completions half (80 reserved, 66 used)",
+    ),
     fs(0x15DF0, 35, &["fix_canoe_softlock"], "canoe_fix: death respawn position save"),
     fs(0x15E13, 162, &["map_warp"], "2P Start+Select warp-to-partner routine"),
     fs(0x15EB5, 151, &["canoe_summon"], "A-on-dock call-the-boat routine + offset tables"),
@@ -435,6 +447,12 @@ pub(crate) const FS_MASK_BUILD: usize = 0x156DC; // 128 reserved
 pub(crate) const FS_IS_COMPLETABLE: usize = 0x1575C; // 48 reserved
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_WORLD_COLS: usize = 0x1578C; // 8 reserved
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const FS_PACK_PLANE: usize = 0x15794; // 112 reserved, 89 used
+// The tail of PRG010, picking up where FS_CANOE_SUMMON stops: 196 bytes of
+// $FF running to the bank end at 0x16010.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const FS_UNPACK_PLANE: usize = 0x15F4C; // 80 reserved, 66 used
 
 pub(crate) const FS_CANOE_RESPAWN: usize = 0x15DF0; // 35 bytes
 pub(crate) const FS_MAP_WARP: usize = 0x15E13; // 162 bytes (CPU $DE03)
