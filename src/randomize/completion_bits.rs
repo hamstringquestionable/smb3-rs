@@ -711,16 +711,24 @@ const UNPACK_WORLD: [u8; 33] = xfer_world!(UNPACK_PLANE_CPU);
 ///   the world being entered before anything reads it. **`LIVE_WORLD` is left
 ///   naming the world just packed** — that is what lets the reload hook tell a
 ///   world change from a redraw.
-/// * **new game** — zero the packed region and all 128 bytes of
-///   `Map_Completions`, exactly what the displaced wipe did, and claim the
-///   world so the reload hook does not then expand a slice over it.
+/// * **new game** — zero the packed region and set `LIVE_WORLD` to `$FF`, a
+///   world that cannot exist. That forces the reload hook to see a change and
+///   expand the freshly-zeroed plane over `$7D00`, which clears it just as the
+///   displaced wipe did.
+///
+/// **Nothing here writes `Map_Completions`.** The first cut zeroed all 128
+/// bytes on the new-game arm, which is one destructive branch more than the
+/// two-world POC ever had — the POC replaced the wipe with a pure swap and so
+/// could not lose a bit down any path. A branch that erases live progress, gated
+/// on a flag only this patch's own jump routines set, is a trap: every route
+/// into `PRG030_84A0` that nobody thought of wipes the run.
 ///
 /// PRG012 has to be banked and unbanked around the pack because the stencil is
 /// derived from the map grid, and at this point in the init `$A000` still holds
 /// PRG011 for `Map_Init`'s benefit. The restore is a tail `JMP` into
 /// `PRGROM_Change_A000`, which returns for us.
 #[rustfmt::skip]
-const WIPE_REPLACEMENT: [u8; 57] = [
+const WIPE_REPLACEMENT: [u8; 48] = [
     0xAD, TRANSITION_FLAG as u8,
           (TRANSITION_FLAG >> 8) as u8,             //  0: LDA TRANSITION_FLAG
     0xF0, 0x1B,                                     //  3: BEQ +27 -> new game
@@ -741,19 +749,15 @@ const WIPE_REPLACEMENT: [u8; 57] = [
     0x4C, PRGROM_CHANGE_A000 as u8,
           (PRGROM_CHANGE_A000 >> 8) as u8,          // 29: JMP PRGROM_Change_A000  ; tail call
 
-    // --- new game: reset everything the wipe used to ---
+    // --- new game: clear the store, and let the reload hook do the rest ---
     0xA9, 0x00,                                     // 32: LDA #$00
     0xA2, (PACKED_LEN - 1) as u8,                   // 34: LDX #PACKED_LEN-1
     0x9D, PACKED as u8, (PACKED >> 8) as u8,        // 36: STA PACKED,X       ; loop
     0xCA,                                           // 39: DEX
     0x10, 0xFA,                                     // 40: BPL -6
-    0xA2, 0x7F,                                     // 42: LDX #$7F
-    0x9D, 0x00, 0x7D,                               // 44: STA $7D00,X       ; loop
-    0xCA,                                           // 47: DEX
-    0x10, 0xFA,                                     // 48: BPL -6
-    0xAD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,  // 50: LDA World_Num
-    0x8D, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, // 53: STA LIVE_WORLD
-    0x60,                                           // 56: RTS
+    0xA9, 0xFF,                                     // 42: LDA #$FF
+    0x8D, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, // 44: STA LIVE_WORLD
+    0x60,                                           // 47: RTS
 ];
 
 /// Expand the world being entered — **but only when it changed** — then let the
@@ -1688,9 +1692,18 @@ mod tests {
         // --- new game: World 1, flag clear, so the replacement resets ---
         cpu.memory.set_byte(WORLD_NUM, 0);
         cpu.memory.set_byte(TRANSITION_FLAG, 0);
+        // A new game leaves $7D00 alone and instead parks LIVE_WORLD at $FF, so
+        // the reload hook expands the freshly-zeroed plane over it.
+        cpu.memory.set_byte(0x7D04, 0x80); // stale progress from a previous run
         call_routine(&mut cpu, WIPE_REPLACEMENT_CPU, "reset");
-        assert_eq!(cpu.memory.get_byte(LIVE_WORLD), 0, "reset must claim World 1");
+        assert_eq!(cpu.memory.get_byte(LIVE_WORLD), 0xFF, "reset must invalidate LIVE_WORLD");
         call_routine(&mut cpu, SWAP_AT_RELOAD_CPU, "enter W1");
+        assert_eq!(cpu.memory.get_byte(LIVE_WORLD), 0, "and the reload hook claims World 1");
+        assert_eq!(
+            cpu.memory.get_byte(0x7D04),
+            0x00,
+            "a new game must not inherit the previous run's completions",
+        );
 
         // --- beat something: set a bit World 1 actually owns ---
         let (col, mask) = map
