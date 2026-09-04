@@ -462,6 +462,13 @@ mod tests {
 
         let mut worst = 0usize;
         let mut worst_at = (0u64, "", [0u8; 9]);
+        // The stencil is ROM data, not SRAM, but its size decides whether the
+        // console re-derives it or reads it — so it is measured here too. Raw
+        // is one mask byte per column each world actually has; the alternative
+        // is a per-world 8-byte "which columns are non-zero" bitmap plus one
+        // byte per non-zero column.
+        let mut stencil_raw = 0usize;
+        let mut stencil_sparse = 0usize;
         for (name, arm) in arms() {
             for seed in 0..seeds() {
                 let mut options =
@@ -477,6 +484,11 @@ mod tests {
                     worst = map.total_bytes();
                     worst_at = (seed, name, map.base_table());
                 }
+                let raw: usize = (0..8).map(|w| map.mask(w).len()).sum();
+                let nonzero: usize =
+                    (0..8).map(|w| map.mask(w).iter().filter(|b| **b != 0).count()).sum();
+                stencil_raw = stencil_raw.max(raw);
+                stencil_sparse = stencil_sparse.max(8 * 8 + nonzero);
             }
         }
 
@@ -484,6 +496,7 @@ mod tests {
         eprintln!("worst packed region: {worst} bytes (seed {seed}, arm {name})");
         eprintln!("  base table {table:?}  (both planes: 2 x {} bytes)", table[8]);
         eprintln!("  against {LARGEST_RUNS} bytes in the two proven-free SRAM runs");
+        eprintln!("stencil, if emitted as ROM data: {stencil_raw} raw, {stencil_sparse} sparse");
         assert!(
             worst <= LARGEST_RUNS,
             "packed completion region needs {worst} bytes, more than the {LARGEST_RUNS} \
