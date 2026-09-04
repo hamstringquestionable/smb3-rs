@@ -701,39 +701,40 @@ const UNPACK_WORLD: [u8; 33] = xfer_world!(UNPACK_PLANE_CPU);
 
 /// What stands where `PRG030_84A0`'s `Map_Completions` wipe used to.
 ///
-/// The wipe has to go, because packing the world you are *leaving* needs
-/// `$7D00` intact and the wipe runs fourteen instructions before the hook that
-/// would read it. What it did still has to happen on a new game, though, which
-/// is what [`TRANSITION_FLAG`] separates:
+/// **It must never destroy `Map_Completions`. That is the whole rule, and
+/// breaking it is what the first two playtests failed on.**
 ///
-/// * **transition** — bank PRG012 in, pack [`LIVE_WORLD`] out of `$7D00`, put
-///   PRG011 back. `$7D00` is left stale; [`SWAP_AT_RELOAD`] overwrites it with
-///   the world being entered before anything reads it. **`LIVE_WORLD` is left
-///   naming the world just packed** — that is what lets the reload hook tell a
-///   world change from a redraw.
-/// * **new game** — zero the packed region and set `LIVE_WORLD` to `$FF`, a
-///   world that cannot exist. That forces the reload hook to see a change and
-///   expand the freshly-zeroed plane over `$7D00`, which clears it just as the
-///   displaced wipe did.
+/// `PRG030_84A0` is entered far more often than a world change. Vanilla wipes
+/// the array every time and can afford to, because vanilla only ever moves
+/// forward through worlds — a wiped completion array is never read back. A maze
+/// returns to worlds, so every one of those entries has to leave the array
+/// alone.
 ///
-/// **Nothing here writes `Map_Completions`.** The first cut zeroed all 128
-/// bytes on the new-game arm, which is one destructive branch more than the
-/// two-world POC ever had — the POC replaced the wipe with a pure swap and so
-/// could not lose a bit down any path. A branch that erases live progress, gated
-/// on a flag only this patch's own jump routines set, is a trap: every route
-/// into `PRG030_84A0` that nobody thought of wipes the run.
+/// The two-world POC got this right by construction: it replaced the wipe with
+/// a *swap*, which cannot lose a bit down any path. This replaced it with a
+/// *branch*, and the arm taken on every non-transition entry was destructive —
+/// first by zeroing the array outright, then by parking [`LIVE_WORLD`] out of
+/// range so [`SWAP_AT_RELOAD`] expanded a freshly-zeroed plane over it. Both
+/// erased the level you had just beaten, on the walk back to the map.
+///
+/// So: pack the outgoing world when [`TRANSITION_FLAG`] says a jump is under
+/// way, and otherwise **return without touching anything**.
 ///
 /// PRG012 has to be banked and unbanked around the pack because the stencil is
 /// derived from the map grid, and at this point in the init `$A000` still holds
 /// PRG011 for `Map_Init`'s benefit. The restore is a tail `JMP` into
 /// `PRGROM_Change_A000`, which returns for us.
+///
+/// **Knowingly unhandled, exactly as in the POC:** a cold boot with dirty SRAM,
+/// and a game over into a new game, both inherit whatever the store held. The
+/// POC listed the same gap. Closing it needs a signal that means "new game",
+/// and "the transition flag is clear" is emphatically not that signal.
 #[rustfmt::skip]
-const WIPE_REPLACEMENT: [u8; 48] = [
+const WIPE_REPLACEMENT: [u8; 33] = [
     0xAD, TRANSITION_FLAG as u8,
           (TRANSITION_FLAG >> 8) as u8,             //  0: LDA TRANSITION_FLAG
-    0xF0, 0x1B,                                     //  3: BEQ +27 -> new game
+    0xF0, 0x1B,                                     //  3: BEQ +27 -> leave it alone
 
-    // --- transition: pack the world being left ---
     0xA9, 0x00,                                     //  5: LDA #$00
     0x8D, TRANSITION_FLAG as u8,
           (TRANSITION_FLAG >> 8) as u8,             //  7: STA TRANSITION_FLAG
@@ -749,15 +750,7 @@ const WIPE_REPLACEMENT: [u8; 48] = [
     0x4C, PRGROM_CHANGE_A000 as u8,
           (PRGROM_CHANGE_A000 >> 8) as u8,          // 29: JMP PRGROM_Change_A000  ; tail call
 
-    // --- new game: clear the store, and let the reload hook do the rest ---
-    0xA9, 0x00,                                     // 32: LDA #$00
-    0xA2, (PACKED_LEN - 1) as u8,                   // 34: LDX #PACKED_LEN-1
-    0x9D, PACKED as u8, (PACKED >> 8) as u8,        // 36: STA PACKED,X       ; loop
-    0xCA,                                           // 39: DEX
-    0x10, 0xFA,                                     // 40: BPL -6
-    0xA9, 0xFF,                                     // 42: LDA #$FF
-    0x8D, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, // 44: STA LIVE_WORLD
-    0x60,                                           // 47: RTS
+    0x60,                                           // 32: RTS   ; leave it alone
 ];
 
 /// Expand the world being entered — **but only when it changed** — then let the
@@ -1689,21 +1682,11 @@ mod tests {
             cpu.memory.set_byte(PACKED + i as u16, 0xAA);
         }
 
-        // --- new game: World 1, flag clear, so the replacement resets ---
+        // --- settle on World 1 with no jump pending ---
         cpu.memory.set_byte(WORLD_NUM, 0);
         cpu.memory.set_byte(TRANSITION_FLAG, 0);
-        // A new game leaves $7D00 alone and instead parks LIVE_WORLD at $FF, so
-        // the reload hook expands the freshly-zeroed plane over it.
-        cpu.memory.set_byte(0x7D04, 0x80); // stale progress from a previous run
-        call_routine(&mut cpu, WIPE_REPLACEMENT_CPU, "reset");
-        assert_eq!(cpu.memory.get_byte(LIVE_WORLD), 0xFF, "reset must invalidate LIVE_WORLD");
+        call_routine(&mut cpu, WIPE_REPLACEMENT_CPU, "settle");
         call_routine(&mut cpu, SWAP_AT_RELOAD_CPU, "enter W1");
-        assert_eq!(cpu.memory.get_byte(LIVE_WORLD), 0, "and the reload hook claims World 1");
-        assert_eq!(
-            cpu.memory.get_byte(0x7D04),
-            0x00,
-            "a new game must not inherit the previous run's completions",
-        );
 
         // --- beat something: set a bit World 1 actually owns ---
         let (col, mask) = map
@@ -1747,5 +1730,46 @@ mod tests {
             bit,
             "World 1 column {col} bit {bit:#04X} was lost on the way round",
         );
+    }
+    /// **`PRG030_84A0` is entered far more often than a world changes**, and
+    /// every one of those entries must leave `Map_Completions` exactly as it
+    /// found it. Vanilla wipes it there and can afford to, because vanilla only
+    /// moves forward through worlds; a maze returns to them.
+    ///
+    /// This is the invariant both playtest failures broke — first by zeroing
+    /// the array on the non-transition arm, then by parking `LIVE_WORLD` out of
+    /// range so the reload hook expanded a zeroed plane over it. Either way the
+    /// level you just beat was gone before you pressed anything.
+    #[test]
+    fn a_non_transition_entry_never_touches_completions() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let mut cpu = cpu_with_routines(&rom);
+        cpu.memory.set_byte(PRGROM_CHANGE_A000, 0x60);
+        cpu.memory.set_byte(MAP_RELOAD, 0x60);
+
+        // Mid-world state: progress on the map, no jump pending.
+        let live: Vec<u8> = (0..128u16).map(|i| (i.wrapping_mul(37) ^ 0x5A) as u8).collect();
+        for (i, &b) in live.iter().enumerate() {
+            cpu.memory.set_byte(0x7D00 + i as u16, b);
+        }
+        cpu.memory.set_byte(WORLD_NUM, 3);
+        cpu.memory.set_byte(LIVE_WORLD, 3);
+        cpu.memory.set_byte(TRANSITION_FLAG, 0);
+
+        // Entering a level, coming back, losing a life — all of them land here.
+        for pass in 0..4 {
+            call_routine(&mut cpu, WIPE_REPLACEMENT_CPU, "wipe replacement");
+            call_routine(&mut cpu, SWAP_AT_RELOAD_CPU, "reload hook");
+            for i in 0..128u16 {
+                assert_eq!(
+                    cpu.memory.get_byte(0x7D00 + i),
+                    live[i as usize],
+                    "pass {pass}: byte {i} of Map_Completions was disturbed",
+                );
+            }
+        }
     }
 }
