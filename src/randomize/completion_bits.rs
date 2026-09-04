@@ -707,74 +707,83 @@ const UNPACK_WORLD: [u8; 33] = xfer_world!(UNPACK_PLANE_CPU);
 /// is what [`TRANSITION_FLAG`] separates:
 ///
 /// * **transition** — bank PRG012 in, pack [`LIVE_WORLD`] out of `$7D00`, put
-///   PRG011 back. `$7D00` is left stale; the hook at `$85BB` overwrites it with
-///   the world being entered before anything reads it.
+///   PRG011 back. `$7D00` is left stale; [`SWAP_AT_RELOAD`] overwrites it with
+///   the world being entered before anything reads it. **`LIVE_WORLD` is left
+///   naming the world just packed** — that is what lets the reload hook tell a
+///   world change from a redraw.
 /// * **new game** — zero the packed region and all 128 bytes of
-///   `Map_Completions`, which is exactly what the displaced wipe did.
-///
-/// Either way `LIVE_WORLD` ends up naming the world about to be shown.
+///   `Map_Completions`, exactly what the displaced wipe did, and claim the
+///   world so the reload hook does not then expand a slice over it.
 ///
 /// PRG012 has to be banked and unbanked around the pack because the stencil is
 /// derived from the map grid, and at this point in the init `$A000` still holds
-/// PRG011 for `Map_Init`'s benefit.
+/// PRG011 for `Map_Init`'s benefit. The restore is a tail `JMP` into
+/// `PRGROM_Change_A000`, which returns for us.
 #[rustfmt::skip]
-const WIPE_REPLACEMENT: [u8; 60] = [
+const WIPE_REPLACEMENT: [u8; 57] = [
     0xAD, TRANSITION_FLAG as u8,
           (TRANSITION_FLAG >> 8) as u8,             //  0: LDA TRANSITION_FLAG
-    0xD0, 0x15,                                     //  3: BNE +21 -> transition
-
-    // --- new game: reset everything the wipe used to ---
-    0xA9, 0x00,                                     //  5: LDA #$00
-    0xA2, (PACKED_LEN - 1) as u8,                   //  7: LDX #PACKED_LEN-1
-    0x9D, PACKED as u8, (PACKED >> 8) as u8,        //  9: STA PACKED,X       ; loop
-    0xCA,                                           // 12: DEX
-    0x10, 0xFA,                                     // 13: BPL -6
-    0xA2, 0x7F,                                     // 15: LDX #$7F
-    0x9D, 0x00, 0x7D,                               // 17: STA $7D00,X       ; loop
-    0xCA,                                           // 20: DEX
-    0x10, 0xFA,                                     // 21: BPL -6
-    0x4C, 0, 0,                                     // 23: JMP done          ; patched
+    0xF0, 0x1B,                                     //  3: BEQ +27 -> new game
 
     // --- transition: pack the world being left ---
-    0xA9, 0x00,                                     // 26: LDA #$00
+    0xA9, 0x00,                                     //  5: LDA #$00
     0x8D, TRANSITION_FLAG as u8,
-          (TRANSITION_FLAG >> 8) as u8,             // 28: STA TRANSITION_FLAG
-    0xA9, 0x0C,                                     // 31: LDA #12
-    0x8D, PAGE_A000 as u8, (PAGE_A000 >> 8) as u8,  // 33: STA PAGE_A000
+          (TRANSITION_FLAG >> 8) as u8,             //  7: STA TRANSITION_FLAG
+    0xA9, 0x0C,                                     // 10: LDA #12
+    0x8D, PAGE_A000 as u8, (PAGE_A000 >> 8) as u8,  // 12: STA PAGE_A000
     0x20, PRGROM_CHANGE_A000 as u8,
-          (PRGROM_CHANGE_A000 >> 8) as u8,          // 36: JSR PRGROM_Change_A000
-    0xAD, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, // 39: LDA LIVE_WORLD
+          (PRGROM_CHANGE_A000 >> 8) as u8,          // 15: JSR PRGROM_Change_A000
+    0xAD, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, // 18: LDA LIVE_WORLD
     0x20, PACK_WORLD_CPU as u8,
-          (PACK_WORLD_CPU >> 8) as u8,              // 42: JSR PACK_WORLD
-    0xA9, 0x0B,                                     // 45: LDA #11
-    0x8D, PAGE_A000 as u8, (PAGE_A000 >> 8) as u8,  // 47: STA PAGE_A000
-    0x20, PRGROM_CHANGE_A000 as u8,
-          (PRGROM_CHANGE_A000 >> 8) as u8,          // 50: JSR PRGROM_Change_A000
+          (PACK_WORLD_CPU >> 8) as u8,              // 21: JSR PACK_WORLD
+    0xA9, 0x0B,                                     // 24: LDA #11
+    0x8D, PAGE_A000 as u8, (PAGE_A000 >> 8) as u8,  // 26: STA PAGE_A000
+    0x4C, PRGROM_CHANGE_A000 as u8,
+          (PRGROM_CHANGE_A000 >> 8) as u8,          // 29: JMP PRGROM_Change_A000  ; tail call
 
-    0xAD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,  // 53: LDA World_Num     ; done
-    0x8D, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, // 56: STA LIVE_WORLD
-    0x60,                                           // 59: RTS
+    // --- new game: reset everything the wipe used to ---
+    0xA9, 0x00,                                     // 32: LDA #$00
+    0xA2, (PACKED_LEN - 1) as u8,                   // 34: LDX #PACKED_LEN-1
+    0x9D, PACKED as u8, (PACKED >> 8) as u8,        // 36: STA PACKED,X       ; loop
+    0xCA,                                           // 39: DEX
+    0x10, 0xFA,                                     // 40: BPL -6
+    0xA2, 0x7F,                                     // 42: LDX #$7F
+    0x9D, 0x00, 0x7D,                               // 44: STA $7D00,X       ; loop
+    0xCA,                                           // 47: DEX
+    0x10, 0xFA,                                     // 48: BPL -6
+    0xAD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,  // 50: LDA World_Num
+    0x8D, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, // 53: STA LIVE_WORLD
+    0x60,                                           // 56: RTS
 ];
 
-/// Offset of the `JMP done` operand inside [`WIPE_REPLACEMENT`].
-const WIPE_JMP_OPERAND: usize = 24;
-/// Where that `JMP` lands.
-const WIPE_DONE_OFFSET: u16 = 53;
-
-/// The hook itself: expand the world being entered, then let the engine draw it.
+/// Expand the world being entered — **but only when it changed** — then let the
+/// engine draw it.
 ///
 /// Replaces `JSR Map_Reload_with_Completions` at `$85BB`. That call is the only
 /// point in the map init where PRG012 (the grid and the tile tables), PRG010
-/// (this code) and a settled `World_Num` are all available at once — and it is
-/// immediately before the routine that reads `Map_Completions`, so the array
-/// only has to be right for the length of one `JSR`.
+/// (this code) and a settled `World_Num` are all available at once.
+///
+/// **The guard is not an optimisation, it is the whole correctness of this
+/// hook.** `PRG030_84A0` has a second entry at `$84D7` that skips the wipe and
+/// runs everything after it, and the map loop jumps there on every turn end —
+/// entering a level, returning from one, losing a life. Vanilla depends on that
+/// to *keep* completions. Unpacking unconditionally puts the slice saved when
+/// the world was entered back over `$7D00`, so a level beaten since then is
+/// erased on the walk back to the map. This was the first playtest failure.
+///
+/// [`WIPE_REPLACEMENT`] leaves `LIVE_WORLD` naming the world it just packed, so
+/// a real transition is exactly `World_Num != LIVE_WORLD`; a redraw is exactly
+/// equality.
 #[rustfmt::skip]
-const SWAP_AT_RELOAD: [u8; 10] = [
-    0xAD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,  // 0: LDA World_Num
+const SWAP_AT_RELOAD: [u8; 18] = [
+    0xAD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,  //  0: LDA World_Num
+    0xCD, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, //  3: CMP LIVE_WORLD
+    0xF0, 0x06,                                     //  6: BEQ +6 -> reload   ; a redraw
+    0x8D, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, //  8: STA LIVE_WORLD    ; A survives
     0x20, UNPACK_WORLD_CPU as u8,
-          (UNPACK_WORLD_CPU >> 8) as u8,            // 3: JSR UNPACK_WORLD
-    0x20, MAP_RELOAD as u8, (MAP_RELOAD >> 8) as u8, // 6: JSR Map_Reload_with_Completions
-    0x60,                                           // 9: RTS
+          (UNPACK_WORLD_CPU >> 8) as u8,            // 11: JSR UNPACK_WORLD
+    0x20, MAP_RELOAD as u8, (MAP_RELOAD >> 8) as u8, // 14: JSR Map_Reload...  ; reload
+    0x60,                                           // 17: RTS
 ];
 
 /// The `Map_Completions` wipe in `PRG030_84A0`: CPU `$84CD`, ten bytes, three
@@ -822,11 +831,7 @@ pub(crate) fn apply(rom: &mut Rom) {
     rom.write_range(FS_UNPACK_WORLD, &UNPACK_WORLD);
     rom.write_range(FS_COMPLETION_BASES, &bases);
 
-    let mut wipe_replacement = WIPE_REPLACEMENT;
-    let done = WIPE_REPLACEMENT_CPU + WIPE_DONE_OFFSET;
-    wipe_replacement[WIPE_JMP_OPERAND] = done as u8;
-    wipe_replacement[WIPE_JMP_OPERAND + 1] = (done >> 8) as u8;
-    rom.write_range(FS_WIPE_REPLACEMENT, &wipe_replacement);
+    rom.write_range(FS_WIPE_REPLACEMENT, &WIPE_REPLACEMENT);
     rom.write_range(FS_SWAP_AT_RELOAD, &SWAP_AT_RELOAD);
 
     // Hook 1: the wipe becomes a call to the replacement.
@@ -849,9 +854,8 @@ pub(crate) fn apply(rom: &mut Rom) {
 mod tests {
     use super::*;
 
-    use mos6502::Variant;
     use mos6502::cpu::CPU;
-    use mos6502::instruction::{Instruction, Ricoh2a03};
+    use mos6502::instruction::Ricoh2a03;
     use mos6502::memory::{Bus, Memory};
 
     use crate::randomize::rom_data::asm;
@@ -1166,6 +1170,8 @@ mod tests {
         mem.set_bytes(PACK_WORLD_CPU, &PACK_WORLD);
         mem.set_bytes(UNPACK_WORLD_CPU, &UNPACK_WORLD);
         mem.set_bytes(BASES_CPU, &CompletionMap::from_rom(rom).base_table());
+        mem.set_bytes(WIPE_REPLACEMENT_CPU, &WIPE_REPLACEMENT);
+        mem.set_bytes(SWAP_AT_RELOAD_CPU, &SWAP_AT_RELOAD);
         // PRG012, whole bank — the tables and every world's grid, at the
         // addresses the routine names.
         let prg012: Vec<u8> =
@@ -1181,23 +1187,10 @@ mod tests {
         for i in 0..64u16 {
             cpu.memory.set_byte(MASK_SCRATCH + i, 0xAA);
         }
-        cpu.registers.program_counter = MASK_BUILD_CPU;
         cpu.registers.accumulator = world as u8;
-        cpu.registers.stack_pointer = mos6502::registers::StackPointer(0xFF);
-
-        // Generous: ~64 columns x 9 rows x ~15 instructions, plus the call
-        // overhead. The bound only has to catch a runaway, not be tight.
-        for _ in 0..400_000 {
-            let op = cpu.memory.get_byte(cpu.registers.program_counter);
-            if cpu.registers.program_counter == MASK_BUILD_CPU + MASK_BUILD.len() as u16 - 1
-                && matches!(Ricoh2a03::decode(op), Some((Instruction::RTS, _)))
-            {
-                let cols = WORLD_COLS[world] as u16;
-                return (0..cols).map(|i| cpu.memory.get_byte(MASK_SCRATCH + i)).collect();
-            }
-            cpu.single_step();
-        }
-        panic!("MASK_BUILD ran away on world {}", world + 1);
+        call_routine(cpu, MASK_BUILD_CPU, "MASK_BUILD");
+        let cols = WORLD_COLS[world] as u16;
+        (0..cols).map(|i| cpu.memory.get_byte(MASK_SCRATCH + i)).collect()
     }
 
     /// **The equivalence test.** The 6502 routine and [`world_mask`] must agree
@@ -1292,22 +1285,31 @@ mod tests {
             .origin(SWAP_AT_RELOAD_CPU)
             .assert_ok();
 
-        let mut wipe = WIPE_REPLACEMENT;
-        let done = WIPE_REPLACEMENT_CPU + WIPE_DONE_OFFSET;
-        wipe[WIPE_JMP_OPERAND] = done as u8;
-        wipe[WIPE_JMP_OPERAND + 1] = (done >> 8) as u8;
-        asm::check(&wipe).allocation(FS_WIPE_REPLACEMENT).origin(WIPE_REPLACEMENT_CPU).assert_ok();
+        asm::check(&WIPE_REPLACEMENT)
+            .allocation(FS_WIPE_REPLACEMENT)
+            .origin(WIPE_REPLACEMENT_CPU)
+            .assert_ok();
     }
-    /// Run a routine that ends in a single `RTS` and stop when it gets there.
-    fn run_to_rts(cpu: &mut CPU<Memory, Ricoh2a03>, entry: u16, end: u16, what: &str) {
+    /// Address the harness treats as "the routine returned".
+    ///
+    /// Nothing is mapped there; the run stops the moment `PC` reaches it.
+    const SENTINEL: u16 = 0x0F00;
+
+    /// Call a routine the way the engine would, and stop when it returns.
+    ///
+    /// A return address is pushed so *any* exit works — plain `RTS`, or the
+    /// tail `JMP PRGROM_Change_A000` the wipe replacement ends with. Watching
+    /// for an `RTS` at a known offset instead would silently miss the tail
+    /// call, which is exactly the shape that hid the first playtest bug.
+    fn call_routine(cpu: &mut CPU<Memory, Ricoh2a03>, entry: u16, what: &str) {
+        let ret = SENTINEL.wrapping_sub(1);
+        cpu.memory.set_byte(0x01FF, (ret >> 8) as u8);
+        cpu.memory.set_byte(0x01FE, ret as u8);
+        cpu.registers.stack_pointer = mos6502::registers::StackPointer(0xFD);
         cpu.registers.program_counter = entry;
-        cpu.registers.stack_pointer = mos6502::registers::StackPointer(0xFF);
         for _ in 0..400_000 {
-            if cpu.registers.program_counter == end {
-                let op = cpu.memory.get_byte(end);
-                if matches!(Ricoh2a03::decode(op), Some((Instruction::RTS, _))) {
-                    return;
-                }
+            if cpu.registers.program_counter == SENTINEL {
+                return;
             }
             cpu.single_step();
         }
@@ -1396,12 +1398,7 @@ mod tests {
                         cpu.memory.set_byte(PACKED + i as u16, 0xAA); // poison
                     }
                     cpu.registers.accumulator = base as u8;
-                    run_to_rts(
-                        &mut cpu,
-                        PACK_PLANE_CPU,
-                        PACK_PLANE_CPU + PACK_PLANE.len() as u16 - 1,
-                        "PACK_PLANE",
-                    );
+                    call_routine(&mut cpu, PACK_PLANE_CPU, "PACK_PLANE");
                     let got: Vec<u8> = (0..map.plane_bytes(w))
                         .map(|i| cpu.memory.get_byte(PACKED + (base + i) as u16))
                         .collect();
@@ -1450,12 +1447,7 @@ mod tests {
                     let stale = fill_half(seed ^ 0xFFFF, w, 1);
                     stage_world(&mut cpu, w, &stale);
                     cpu.registers.accumulator = base as u8;
-                    run_to_rts(
-                        &mut cpu,
-                        UNPACK_PLANE_CPU,
-                        UNPACK_PLANE_CPU + UNPACK_PLANE.len() as u16 - 1,
-                        "UNPACK_PLANE",
-                    );
+                    call_routine(&mut cpu, UNPACK_PLANE_CPU, "UNPACK_PLANE");
                     let want = map.unpack(w, &plane);
                     let got: Vec<u8> = (0..WORLD_COLS[w] as u16)
                         .map(|i| cpu.memory.get_byte(0x7D00 + i))
@@ -1540,12 +1532,7 @@ mod tests {
                     cpu.memory.set_byte(PACKED + i as u16, 0xAA);
                 }
                 cpu.registers.accumulator = w as u8;
-                run_to_rts(
-                    &mut cpu,
-                    PACK_WORLD_CPU,
-                    PACK_WORLD_CPU + PACK_WORLD.len() as u16 - 1,
-                    "PACK_WORLD",
-                );
+                call_routine(&mut cpu, PACK_WORLD_CPU, "PACK_WORLD");
                 let base = map.base(w);
                 let len = map.plane_bytes(w);
                 for i in 0..PACKED_LEN {
@@ -1565,12 +1552,7 @@ mod tests {
                     cpu.memory.set_byte(0x7D00 + i, 0xAA);
                 }
                 cpu.registers.accumulator = w as u8;
-                run_to_rts(
-                    &mut cpu,
-                    UNPACK_WORLD_CPU,
-                    UNPACK_WORLD_CPU + UNPACK_WORLD.len() as u16 - 1,
-                    "UNPACK_WORLD",
-                );
+                call_routine(&mut cpu, UNPACK_WORLD_CPU, "UNPACK_WORLD");
                 let mask = map.mask(w);
                 for (col, &m) in mask.iter().enumerate() {
                     assert_eq!(
@@ -1609,15 +1591,11 @@ mod tests {
             "the Map_Reload_with_Completions call has moved"
         );
 
-        let mut wipe = WIPE_REPLACEMENT;
-        let done = WIPE_REPLACEMENT_CPU + WIPE_DONE_OFFSET;
-        wipe[WIPE_JMP_OPERAND] = done as u8;
-        wipe[WIPE_JMP_OPERAND + 1] = (done >> 8) as u8;
         let mut jsr = [0xEA_u8; WIPE_LEN];
         jsr[0] = 0x20;
         jsr[1] = WIPE_REPLACEMENT_CPU as u8;
         jsr[2] = (WIPE_REPLACEMENT_CPU >> 8) as u8;
-        asm::check(&wipe)
+        asm::check(&WIPE_REPLACEMENT)
             .allocation(FS_WIPE_REPLACEMENT)
             .origin(WIPE_REPLACEMENT_CPU)
             .hook(&WIPE_VANILLA, 0, &jsr)
@@ -1638,9 +1616,9 @@ mod tests {
     /// makes the call itself once the world is expanded.
     #[test]
     fn the_hook_still_reloads_the_map() {
-        assert_eq!(SWAP_AT_RELOAD[6], 0x20, "the displaced JSR must be replayed");
+        assert_eq!(SWAP_AT_RELOAD[14], 0x20, "the displaced JSR must be replayed");
         assert_eq!(
-            u16::from_le_bytes([SWAP_AT_RELOAD[7], SWAP_AT_RELOAD[8]]),
+            u16::from_le_bytes([SWAP_AT_RELOAD[15], SWAP_AT_RELOAD[16]]),
             u16::from_le_bytes([RELOAD_CALL_VANILLA[1], RELOAD_CALL_VANILLA[2]]),
             "and it must call the same routine vanilla did"
         );
@@ -1681,5 +1659,80 @@ mod tests {
             assert!(PACKED >= 0x7997 && PACKED as usize + PACKED_LEN <= 0x7A00);
             assert!(MASK_SCRATCH >= 0x7A73 && TRANSITION_FLAG <= 0x7ADF);
         }
+    }
+    /// **The playtest, on the emulated CPU.** Beat something in World 1, cycle
+    /// all eight worlds, and it must still be beaten.
+    ///
+    /// This drives the two hook routines rather than the transfer routines, so
+    /// it covers what the earlier tests deliberately did not: the transition
+    /// flag, `LIVE_WORLD`, and the fact that `WIPE_REPLACEMENT` reads `$7D00`
+    /// for the world being *left* while `SWAP_AT_RELOAD` writes it for the one
+    /// being entered.
+    #[test]
+    fn a_beaten_level_survives_a_full_cycle() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let map = CompletionMap::from_rom(&rom);
+        let mut cpu = cpu_with_routines(&rom);
+        // The banking calls are no-ops here: PRG012 is already at $A000 for
+        // the whole test, which is the arrangement they exist to produce.
+        cpu.memory.set_byte(PRGROM_CHANGE_A000, 0x60);
+        // And the reload is the engine's, not ours.
+        cpu.memory.set_byte(MAP_RELOAD, 0x60);
+        for i in 0..PACKED_LEN {
+            cpu.memory.set_byte(PACKED + i as u16, 0xAA);
+        }
+
+        // --- new game: World 1, flag clear, so the replacement resets ---
+        cpu.memory.set_byte(WORLD_NUM, 0);
+        cpu.memory.set_byte(TRANSITION_FLAG, 0);
+        call_routine(&mut cpu, WIPE_REPLACEMENT_CPU, "reset");
+        assert_eq!(cpu.memory.get_byte(LIVE_WORLD), 0, "reset must claim World 1");
+        call_routine(&mut cpu, SWAP_AT_RELOAD_CPU, "enter W1");
+
+        // --- beat something: set a bit World 1 actually owns ---
+        let (col, mask) = map
+            .mask(0)
+            .iter()
+            .enumerate()
+            .find(|&(_, &m)| m != 0)
+            .map(|(c, &m)| (c, m))
+            .expect("World 1 owns at least one completion bit");
+        let bit = 1u8 << mask.trailing_zeros();
+        cpu.memory.set_byte(0x7D00 + col as u16, bit);
+
+        // --- the turn ends: the map re-inits at $84D7, skipping the wipe ---
+        //
+        // This is what the first playtest failed on. `PRG030_87A9` jumps to
+        // `$84D7` on every turn end — entering a level, coming back from one,
+        // losing a life — which runs everything after the wipe, this hook
+        // included, with no pack in front of it. Expanding unconditionally puts
+        // the slice saved on entry back over the bit just earned.
+        for _ in 0..3 {
+            call_routine(&mut cpu, SWAP_AT_RELOAD_CPU, "redraw");
+            assert_eq!(
+                cpu.memory.get_byte(0x7D00 + col as u16) & bit,
+                bit,
+                "a redraw of the same world must not expand a stale slice over it",
+            );
+        }
+
+        // --- cycle: 1 -> 2 -> ... -> 8 -> 1 ---
+        for step in 1..=8u8 {
+            let dest = step % 8;
+            cpu.memory.set_byte(TRANSITION_FLAG, 1); // what the jump routine does
+            cpu.memory.set_byte(WORLD_NUM, dest);
+            call_routine(&mut cpu, WIPE_REPLACEMENT_CPU, "leave");
+            call_routine(&mut cpu, SWAP_AT_RELOAD_CPU, "enter");
+            assert_eq!(cpu.memory.get_byte(LIVE_WORLD), dest, "after step {step}");
+        }
+
+        assert_eq!(
+            cpu.memory.get_byte(0x7D00 + col as u16) & bit,
+            bit,
+            "World 1 column {col} bit {bit:#04X} was lost on the way round",
+        );
     }
 }

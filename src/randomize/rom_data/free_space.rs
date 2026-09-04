@@ -217,21 +217,21 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     fs(
         0x15F9C,
-        40,
+        36,
         &["completion_bits"],
-        "world-maze: unpack one world, both planes (40 reserved, 33 used)",
+        "world-maze: unpack one world, both planes (36 reserved, 33 used)",
     ),
     fs(
-        0x15FC4,
-        64,
+        0x15FC0,
+        60,
         &["completion_bits"],
-        "world-maze: the Map_Completions wipe, replaced (64 reserved, 60 used)",
+        "world-maze: the Map_Completions wipe, replaced (60 reserved, 57 used)",
     ),
     fs(
-        0x16004,
-        12,
+        0x15FFC,
+        20,
         &["completion_bits"],
-        "world-maze: unpack-then-reload at the hook (12 reserved, 10 used)",
+        "world-maze: unpack-on-change, then reload, at the hook (20 reserved, 18 used)",
     ),
     fs(0x15DF0, 35, &["fix_canoe_softlock"], "canoe_fix: death respawn position save"),
     fs(0x15E13, 162, &["map_warp"], "2P Start+Select warp-to-partner routine"),
@@ -466,12 +466,12 @@ pub(crate) const FS_UNPACK_PLANE: usize = 0x15F4C; // 80 reserved, 66 used
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_COMPLETION_BASES: usize = 0x15804; // 12 reserved, 9 used
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_UNPACK_WORLD: usize = 0x15F9C; // 40 reserved, 33 used
+pub(crate) const FS_UNPACK_WORLD: usize = 0x15F9C; // 36 reserved, 33 used
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_WIPE_REPLACEMENT: usize = 0x15FC4; // 64 reserved, 60 used
+pub(crate) const FS_WIPE_REPLACEMENT: usize = 0x15FC0; // 60 reserved, 57 used
 // Runs to 0x16010, the end of PRG010.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_SWAP_AT_RELOAD: usize = 0x16004; // 12 reserved, 10 used
+pub(crate) const FS_SWAP_AT_RELOAD: usize = 0x15FFC; // 20 reserved, 18 used
 
 pub(crate) const FS_CANOE_RESPAWN: usize = 0x15DF0; // 35 bytes
 pub(crate) const FS_MAP_WARP: usize = 0x15E13; // 162 bytes (CPU $DE03)
