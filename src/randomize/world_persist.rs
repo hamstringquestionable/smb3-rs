@@ -347,6 +347,7 @@ pub(crate) fn apply(rom: &mut Rom, portals: &[Portal], telepads: &[Telepad]) {
             .chain(telepads.iter().map(|t| (t.dest_world, t.dest_pos)))
             .collect();
         write_arrival_tables(rom, &rows);
+        install_map_init_trampoline(rom);
     }
     if !portals.is_empty() {
         apply_portals(rom, portals);
@@ -599,8 +600,18 @@ fn apply_portals(rom: &mut Rom, portals: &[Portal]) {
     hook[2] = (PORTAL_EXIT_CPU >> 8) as u8;
     rom.write_range(EXIT_HOOK_OFFSET, &hook);
     rom.write_range(FS_PORTAL_EXIT, &PORTAL_EXIT);
+}
 
-    // `JSR Map_Init` -> `JSR StashArrival`, which calls Map_Init itself.
+/// Replace `$84A0`'s `JSR Map_Init` with the call to [`STASH_ARRIVAL`].
+///
+/// **Every arrival needs this, whichever mechanism raised the flag.** It used
+/// to live inside [`apply_portals`], which meant a ROM with telepads and no
+/// pipe portals never installed it: the pad raised `ARRIVAL_FLAG`, nothing
+/// resolved the id, `World_Num` never changed — so the "teleport" landed you in
+/// the world you left — and [`RESTORE_ARRIVAL`] then wrote the untouched,
+/// reset-cleared arrival bytes into all ten position variables, parking the
+/// player off the map with nowhere to walk. Found on hardware.
+fn install_map_init_trampoline(rom: &mut Rom) {
     let mut trampoline = [0u8; MAP_INIT_CALL_LEN];
     trampoline[0] = 0x20; // JSR
     trampoline[1] = STASH_ARRIVAL_CPU as u8;
@@ -1191,6 +1202,53 @@ mod asm_checks {
             patched.read_byte(FS_PAD_ENTER + PAD_TABLE_OFF),
             1,
             "W1's pad must name id 1, not id 0"
+        );
+    }
+
+    /// **Every mechanism that raises `ARRIVAL_FLAG` needs the `Map_Init`
+    /// trampoline**, and nothing that does not raise it should get one.
+    ///
+    /// The trampoline used to be written inside `apply_portals`, so a ROM with
+    /// telepads and no pipe portals never installed it: the pad raised the
+    /// flag, `STASH_ARRIVAL` never ran, `World_Num` never changed — the
+    /// teleport landed you in the world you left — and `RESTORE_ARRIVAL` then
+    /// wrote the reset-cleared arrival bytes into all ten position variables,
+    /// parking the player off the map. Found on hardware, by walking into a
+    /// World 2 pad and arriving in World 2's top corner with nowhere to go.
+    ///
+    /// The old tests could not see it: one asserted the *pipe* hook was absent
+    /// for a pad-only ROM, which was true and beside the point. A shared
+    /// prerequisite filed under one caller is invisible to per-caller tests.
+    #[test]
+    fn every_arrival_mechanism_installs_the_map_init_trampoline() {
+        let Some(rom) = load_vanilla() else { return };
+        let vanilla_call = [0x20, MAP_INIT_CPU as u8, (MAP_INIT_CPU >> 8) as u8];
+        let trampoline = [0x20, STASH_ARRIVAL_CPU as u8, (STASH_ARRIVAL_CPU >> 8) as u8];
+
+        let portal = Portal { dest_idx: 1, end_a: false, dest_world: 2, dest_pos: (4, 9) };
+        let pad = Telepad { world: 1, dest_world: 6, dest_pos: (5, 12), src_pos: (0, 4) };
+
+        for (what, portals, pads) in [
+            ("pipe portals only", &[portal][..], &[][..]),
+            ("telepads only", &[][..], &[pad][..]),
+            ("both", &[portal][..], &[pad][..]),
+        ] {
+            let mut patched = rom.clone();
+            apply(&mut patched, portals, pads);
+            assert_eq!(
+                patched.read_range(MAP_INIT_CALL_OFFSET, MAP_INIT_CALL_LEN),
+                trampoline,
+                "{what}: $84AD must call STASH_ARRIVAL, or nothing resolves the arrival id"
+            );
+        }
+
+        // And with neither, `Map_Init` is still called directly.
+        let mut patched = rom.clone();
+        apply(&mut patched, &[], &[]);
+        assert_eq!(
+            patched.read_range(MAP_INIT_CALL_OFFSET, MAP_INIT_CALL_LEN),
+            vanilla_call,
+            "no arrivals: Map_Init must still be called directly"
         );
     }
 
