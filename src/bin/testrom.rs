@@ -123,6 +123,12 @@ struct Cli {
     #[arg(long, value_name = "SRC:DST", value_parser = parse_portal)]
     portal: Vec<(u8, u8)>,
 
+    /// World-maze POC: a telepad pair, as A:B (e.g. --telepad 1:5). Stands on
+    /// each world's first spade panel and teleports straight across with no
+    /// transit room. Repeatable. Implies --world-persist.
+    #[arg(long, value_name = "A:B", value_parser = parse_portal)]
+    telepad: Vec<(u8, u8)>,
+
     /// Leave lock tiles in place (default: removed).
     #[arg(long)]
     keep_locks: bool,
@@ -444,6 +450,7 @@ fn main() {
         walk_skip_conflicts: cli.walk_skip_conflicts,
         world_persist: cli.world_persist,
         portals: cli.portal.clone(),
+        telepads: cli.telepad.clone(),
         remove_locks: !cli.keep_locks,
         remove_gaps: !cli.keep_gaps,
         starting_items,

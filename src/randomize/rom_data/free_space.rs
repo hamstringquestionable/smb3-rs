@@ -251,6 +251,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["world_persist"],
         "world-maze: portal arrival stash + 6 x 16 portal table (160 reserved, 147 used)",
     ),
+    fs(
+        0x17E7B,
+        64,
+        &["world_persist"],
+        "world-maze: telepad enter hook + per-world pad table (64 reserved, 49 used)",
+    ),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     fs(0x0382A, 23, &["koopalings"], "koopa_hits: subroutine + defeat JMP + threshold table"),
     fs(0x03841, 13, &["koopalings"], "koopa_collision_guard: skip collision bitmap during invuln"),
@@ -454,6 +460,12 @@ pub(crate) const FS_PORTAL_EXIT: usize = 0x3DFE6; // 40 reserved, 35 used
 // end. The stash also has to reach `Map_Init`, which is PRG011's own code.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_PORTAL_ARRIVAL: usize = 0x17DDB; // 160 reserved, 147 used
+
+// The telepad enter hook. PRG010 is mapped at $C000 whenever the map runs, so
+// unlike the pipe portal's level-exit trigger this pays no always-mapped-bank
+// rent at all — it can sit in PRG011 beside the arrival stash it feeds.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const FS_PAD_ENTER: usize = 0x17E7B; // 64 reserved, 49 used
 
 // World-maze phase 1: the completion-bit stencil, derived on the console.
 // The $FF run FS_FX_SCREEN_CHECK opened continues past FS_STASH_ARRIVAL to
@@ -1069,6 +1081,7 @@ mod free_space_tests {
             (FS_WORLD_PERSIST_JUMP, "FS_WORLD_PERSIST_JUMP"),
             (FS_RESTORE_ARRIVAL, "FS_RESTORE_ARRIVAL"),
             (FS_PORTAL_ARRIVAL, "FS_PORTAL_ARRIVAL"),
+            (FS_PAD_ENTER, "FS_PAD_ENTER"),
             (FS_PORTAL_EXIT, "FS_PORTAL_EXIT"),
             (FS_MASK_BUILD, "FS_MASK_BUILD"),
             (FS_IS_COMPLETABLE, "FS_IS_COMPLETABLE"),

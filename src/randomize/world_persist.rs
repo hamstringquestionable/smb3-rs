@@ -84,8 +84,8 @@ use crate::rom::Rom;
 use super::completion_bits::{self, TRANSITION_FLAG};
 use super::pipe_helpers;
 use super::rom_data::{
-    FS_PORTAL_ARRIVAL, FS_PORTAL_EXIT, FS_RESTORE_ARRIVAL, FS_WORLD_PERSIST_JUMP, PIPE_MAP_XHI,
-    PIPE_MAP_Y,
+    FS_PAD_ENTER, FS_PORTAL_ARRIVAL, FS_PORTAL_EXIT, FS_RESTORE_ARRIVAL, FS_WORLD_PERSIST_JUMP,
+    PIPE_MAP_XHI, PIPE_MAP_Y, TILE_BONUS_GAME,
 };
 
 // CPU addresses of the two routines. PRG010 is mapped at $C000 whenever
@@ -99,6 +99,7 @@ const RESTORE_ARRIVAL_CPU: u16 = (0xC000 + FS_RESTORE_ARRIVAL - 0x14010) as u16;
 // PRG011 is mapped at $A000 for the whole map init, so the stash and its
 // table live there: PRG010 has no run left that holds them.
 const STASH_ARRIVAL_CPU: u16 = (0xA000 + FS_PORTAL_ARRIVAL - 0x16010) as u16;
+const PAD_ENTER_CPU: u16 = (0xA000 + FS_PAD_ENTER - 0x16010) as u16;
 // PRG030 is fixed at $8000-$9FFF, always mapped — file 0x3C010 is its $8000.
 const PORTAL_EXIT_CPU: u16 = (0x8000 + FS_PORTAL_EXIT - 0x3C010) as u16;
 
@@ -306,11 +307,11 @@ const WORLD_JUMP_CHECK: [u8; 48] = [
 /// any cross-world portals.
 ///
 /// The storage itself is [`completion_bits`]; this module contributes the debug
-/// jump that cycles worlds and, given a non-empty `portals`, the pipe ends that
-/// come out on another world's map. The arrival restore is written into the
+/// jump that cycles worlds, the pipe ends that come out on another world's map,
+/// and the telepads that skip the pipe entirely. The arrival restore is written into the
 /// padding `completion_bits` leaves at the wipe site, so it runs on the same
 /// pass and after `Map_Init` has had its say.
-pub(crate) fn apply(rom: &mut Rom, portals: &[Portal]) {
+pub(crate) fn apply(rom: &mut Rom, portals: &[Portal], telepads: &[Telepad]) {
     // Must come first: it owns the wipe site, and this module writes into the
     // bytes it leaves behind.
     completion_bits::apply(rom);
@@ -336,8 +337,22 @@ pub(crate) fn apply(rom: &mut Rom, portals: &[Portal]) {
     hook[2] = (WORLD_JUMP_CHECK_CPU >> 8) as u8;
     rom.write_range(NORMAL_MOVE_OFFSET, &hook);
 
+    // One id space, shared: pipe portals take the low ids, pads the rest. The
+    // arrival tables are written once from both, because a row does not care
+    // which mechanism reaches it.
+    if !portals.is_empty() || !telepads.is_empty() {
+        let rows: Vec<(u8, (usize, usize))> = portals
+            .iter()
+            .map(|p| (p.dest_world, p.dest_pos))
+            .chain(telepads.iter().map(|t| (t.dest_world, t.dest_pos)))
+            .collect();
+        write_arrival_tables(rom, &rows);
+    }
     if !portals.is_empty() {
         apply_portals(rom, portals);
+    }
+    if !telepads.is_empty() {
+        apply_telepads(rom, telepads, portals.len());
     }
 
     rom.pop_tag();
@@ -532,43 +547,51 @@ fn write_dest_nibble(rom: &mut Rom, off: usize, end_a: bool, value: u8) {
     rom.write_byte(off, merged);
 }
 
-/// Install the portals: the two hooks, the stash, and its tables.
-fn apply_portals(rom: &mut Rom, portals: &[Portal]) {
+/// Write the six arrival tables: one row per portal id, whatever reached it.
+///
+/// Pipe portals and telepads share this table and therefore share the sixteen
+/// ids. The row says only *where you come out*; how you got there — walking a
+/// transit room or stepping on a pad — is the caller's business.
+fn write_arrival_tables(rom: &mut Rom, rows: &[(u8, (usize, usize))]) {
     assert!(
-        portals.len() <= PORTAL_MAX,
-        "{} portals: the id rides in a nibble, so {PORTAL_MAX} is the ceiling",
-        portals.len()
+        rows.len() <= PORTAL_MAX,
+        "{} arrivals: the id rides in a nibble, so {PORTAL_MAX} is the ceiling",
+        rows.len()
     );
 
     rom.write_range(FS_PORTAL_ARRIVAL, &STASH_ARRIVAL);
 
-    // Unused ids are zeroed rather than left as $FF filler. No pipe can carry
+    // Unused ids are zeroed rather than left as $FF filler. Nothing can carry
     // one, but a table that reads as "world 255" if anything ever does is a
     // worse failure than one that reads as World 1.
     let mut tables = [0u8; PORTAL_TABLE_LEN];
-    for (id, portal) in portals.iter().enumerate() {
-        let (screen, col, row_nib) =
-            pipe_helpers::grid_pos_to_dest_nibbles(portal.dest_pos.0, portal.dest_pos.1);
+    for (id, &(dest_world, dest_pos)) in rows.iter().enumerate() {
+        let (screen, col, row_nib) = pipe_helpers::grid_pos_to_dest_nibbles(dest_pos.0, dest_pos.1);
         // W5 and W8 snap per screen and must never carry the centre flag.
-        let discrete = portal.dest_world == 4 || portal.dest_world == 7;
+        let discrete = dest_world == 4 || dest_world == 7;
         let scrl = pipe_helpers::scroll_nibble(screen, col, discrete);
 
         // The engine's own encodings, matching what `ObjNorm_PipewayCtlr`
         // would have stored: row and column in the upper nibble, screen bare,
         // and the scroll nibble split the way its ASL/ROL run splits it —
         // bit 3 becomes `Map_Prev_XOff`, bits 2-0 become `Map_Prev_XHi`.
-        tables[id] = portal.dest_world;
+        tables[id] = dest_world;
         tables[PORTAL_MAX + id] = row_nib << 4;
         tables[2 * PORTAL_MAX + id] = screen;
         tables[3 * PORTAL_MAX + id] = col << 4;
         tables[4 * PORTAL_MAX + id] = (scrl & 0x8) << 4;
         tables[5 * PORTAL_MAX + id] = scrl & 0x7;
+    }
+    rom.write_range(FS_PORTAL_ARRIVAL + PORTAL_TABLE_OFF, &tables);
+}
 
-        // And mark the destination itself, so the pipe announces what it is.
+/// Install the pipe portals: the two hooks and the destination-table marks.
+fn apply_portals(rom: &mut Rom, portals: &[Portal]) {
+    for (id, portal) in portals.iter().enumerate() {
+        // Mark the destination itself, so the pipe announces what it is.
         write_dest_nibble(rom, PIPE_MAP_Y + portal.dest_idx, portal.end_a, PORTAL_ROW_MARK);
         write_dest_nibble(rom, PIPE_MAP_XHI + portal.dest_idx, portal.end_a, id as u8);
     }
-    rom.write_range(FS_PORTAL_ARRIVAL + PORTAL_TABLE_OFF, &tables);
 
     let mut hook = [0xEA_u8; EXIT_HOOK_LEN];
     hook[0] = 0x20; // JSR
@@ -585,8 +608,139 @@ fn apply_portals(rom: &mut Rom, portals: &[Portal]) {
     rom.write_range(MAP_INIT_CALL_OFFSET, &trampoline);
 }
 
+// --- Telepads ---------------------------------------------------------------
+
+/// `Map_Operation` — the map's state machine. `$10` starts the enter-level
+/// effect.
+const MAP_OPERATION: u16 = 0x0729;
+
+/// `World_Map_Tile` (zero page `$E5`) — the tile the player is standing on.
+/// Set by `Map_GetTile`, and live at the hook below because every path into it
+/// has just compared it.
+const WORLD_MAP_TILE: u8 = 0xE5;
+
+/// `PRG010_CEA7` — "begin enter level effect" (CPU `$CEA7` = file 0x14EB7).
+/// Its five bytes are two whole instructions:
+///
+/// ```text
+/// A9 10       LDA #$10
+/// 8D 29 07    STA Map_Operation
+/// ```
+///
+/// **The one place that knows you have committed to entering a tile**, reached
+/// from three branches: the two-player-versus fall-through, the special-tile
+/// list, and the ordinary `Tile_AttrTable+4` threshold. All three have just
+/// tested `World_Map_Tile`, so it is live.
+///
+/// **This is in PRG010, and that is the point.** The pipe portal's trigger had
+/// to live in PRG030 — the always-mapped bank with eighteen free bytes — because
+/// at level exit the banks belong to the level. A hook on the map has PRG010 at
+/// `$C000` and PRG011 at `$A000` by construction, so a telepad pays no
+/// always-mapped rent at all.
+const PAD_HOOK_OFFSET: usize = 0x14EB7;
+const PAD_HOOK_LEN: usize = 5;
+
+/// Vanilla bytes at [`PAD_HOOK_OFFSET`].
+#[cfg(test)]
+#[rustfmt::skip]
+const PAD_HOOK_VANILLA: [u8; PAD_HOOK_LEN] = [
+    0xA9, 0x10,             // LDA #$10
+    0x8D, 0x29, 0x07,       // STA Map_Operation
+];
+
+/// One pad per world, so the table is indexed by `World_Num` directly.
+/// Nine entries, not eight: `World_Num` reaches `$08` for the warp zone.
+const PAD_WORLDS: usize = 9;
+
+/// Offset of the per-world pad table inside [`PAD_ENTER`]. The routine's code
+/// is 40 bytes; the `ordinary` label the two branches aim at is at 34, which is
+/// a different number and was briefly the same one by mistake.
+const PAD_TABLE_OFF: usize = 40;
+
+/// Teleport instead of entering the tile, when the tile is a pad.
+///
+/// **It writes the portal id into `Map_Entered_XHi` and jumps to `$84A0`**,
+/// which is exactly what a pipe portal leaves behind for
+/// [`STASH_ARRIVAL`] to find — so the whole arrival path, the completion pack
+/// and unpack, and [`RESTORE_ARRIVAL`] are reused with no change at all. A pad
+/// is a different way to *reach* the transition, not a different transition.
+///
+/// No transit room, so no destination-table slot: the twenty-four rooms stay
+/// entirely with vanilla's intra-world pipes.
+#[rustfmt::skip]
+const PAD_ENTER: [u8; PAD_TABLE_OFF + PAD_WORLDS] = [
+    0xA5, WORLD_MAP_TILE,                                   //  0: LDA World_Map_Tile
+    0xC9, TILE_BONUS_GAME,                                  //  2: CMP #pad tile
+    0xD0, 0x1C,                                             //  4: BNE +28 -> ordinary
+    0xAE, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,          //  6: LDX World_Num
+    0xBD, (PAD_ENTER_CPU + PAD_TABLE_OFF as u16) as u8,
+          ((PAD_ENTER_CPU + PAD_TABLE_OFF as u16) >> 8) as u8,  //  9: LDA PAD_ID,X
+    0x30, 0x14,                                             // 12: BMI +20 -> ordinary ($FF = no pad)
+    0xAE, PLAYER_CURRENT as u8,
+          (PLAYER_CURRENT >> 8) as u8,                      // 14: LDX Player_Current
+    0x9D, MAP_ENTERED_XHI as u8,
+          (MAP_ENTERED_XHI >> 8) as u8,                     // 17: STA Map_Entered_XHi,X  ; the id
+    0xA9, 0x01,                                             // 20: LDA #$01
+    0x8D, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,    // 22: STA ARRIVAL_FLAG
+    0x8D, TRANSITION_FLAG as u8,
+          (TRANSITION_FLAG >> 8) as u8,                     // 25: STA TRANSITION_FLAG
+    0xA2, 0xFF,                                             // 28: LDX #$FF
+    0x9A,                                                   // 30: TXS
+    0x4C, WORLD_MAP_INIT_CPU as u8,
+          (WORLD_MAP_INIT_CPU >> 8) as u8,                  // 31: JMP $84A0 (never returns)
+
+    // ----- ordinary: the displaced instructions -----
+    0xA9, 0x10,                                             // 34: LDA #$10
+    0x8D, MAP_OPERATION as u8, (MAP_OPERATION >> 8) as u8,  // 36: STA Map_Operation
+    0x60,                                                   // 39: RTS
+
+    // ----- PAD_ID, indexed by World_Num; $FF = this world has no pad -----
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,   // 40: PAD_ID
+];
+
+/// A pad: which world it stands in, and where it puts you.
+///
+/// The tile itself is [`TILE_BONUS_GAME`] — the spade panel. Deliberately, for
+/// the POC: it is in the engine's own `Map_Completable_Tiles`, so if anything
+/// were to mark this cell complete the pad would be replaced by an M/L panel
+/// and stop working. Diverting at *enter* time means `MO_DoLevelClear` never
+/// runs, and this is the tile that would show it if that were wrong.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Telepad {
+    /// The world the pad stands in, 0-based.
+    pub world: u8,
+    /// The destination world, 0-based.
+    pub dest_world: u8,
+    /// Where to arrive on that world's map, as `(grid_row, grid_col)`.
+    pub dest_pos: (usize, usize),
+    /// Where the pad stands, as `(grid_row, grid_col)`. Not read by the patch —
+    /// the hook matches on the tile, not the position — but a pad the player
+    /// cannot find is a pad they cannot test, so the caller reports it.
+    pub src_pos: (usize, usize),
+}
+
+/// Install the telepads: the enter hook, its per-world table, and the arrival
+/// rows they share with the pipe portals.
+fn apply_telepads(rom: &mut Rom, telepads: &[Telepad], first_id: usize) {
+    let mut code = PAD_ENTER;
+    for (n, pad) in telepads.iter().enumerate() {
+        let id = first_id + n;
+        code[PAD_TABLE_OFF + pad.world as usize] = id as u8;
+    }
+    rom.write_range(FS_PAD_ENTER, &code);
+
+    let mut hook = [0xEA_u8; PAD_HOOK_LEN];
+    hook[0] = 0x20; // JSR
+    hook[1] = PAD_ENTER_CPU as u8;
+    hook[2] = (PAD_ENTER_CPU >> 8) as u8;
+    rom.write_range(PAD_HOOK_OFFSET, &hook);
+}
+
 #[cfg(test)]
 mod asm_checks {
+    use mos6502::instruction::Ricoh2a03;
+    use mos6502::memory::{Bus, Memory};
+
     use super::*;
     use crate::randomize::rom_data::asm;
 
@@ -675,7 +829,7 @@ mod asm_checks {
     fn the_wipe_site_calls_the_arrival_restore() {
         let Some(rom) = load_vanilla() else { return };
         let mut patched = rom.clone();
-        apply(&mut patched, &[]);
+        apply(&mut patched, &[], &[]);
         let wipe = patched.read_range(WIPE_OFFSET, WIPE_LEN);
         assert_eq!(wipe[3], 0x20, "the arrival restore must be called, not fallen into");
         assert_eq!(
@@ -830,7 +984,7 @@ mod asm_checks {
             Portal { dest_idx: 3, end_a: false, dest_world: 2, dest_pos: (3, 14) },
         ];
         let mut patched = rom.clone();
-        apply(&mut patched, &portals);
+        apply(&mut patched, &portals, &[]);
 
         let base = FS_PORTAL_ARRIVAL + PORTAL_TABLE_OFF;
         let cell = |t: usize, id: usize| patched.read_byte(base + t * PORTAL_MAX + id);
@@ -904,7 +1058,7 @@ mod asm_checks {
     fn portals_are_opt_in() {
         let Some(rom) = load_vanilla() else { return };
         let mut patched = rom.clone();
-        apply(&mut patched, &[]);
+        apply(&mut patched, &[], &[]);
         assert_eq!(
             patched.read_range(EXIT_HOOK_OFFSET, EXIT_HOOK_LEN),
             EXIT_HOOK_VANILLA,
@@ -915,6 +1069,276 @@ mod asm_checks {
             [0x20, MAP_INIT_CPU as u8, (MAP_INIT_CPU >> 8) as u8],
             "Map_Init must still be called directly unless asked for"
         );
+    }
+
+    #[test]
+    fn pad_enter_is_well_formed() {
+        asm::check(&PAD_ENTER)
+            .allocation(FS_PAD_ENTER)
+            .origin(PAD_ENTER_CPU)
+            .data_from(PAD_TABLE_OFF)
+            .assert_ok();
+    }
+
+    /// The pad hook displaces two whole instructions and replays them, so a
+    /// tile that is not a pad enters its level exactly as before.
+    #[test]
+    fn pad_hook_displaces_whole_instructions() {
+        let Some(rom) = load_vanilla() else { return };
+        assert_eq!(
+            rom.read_range(PAD_HOOK_OFFSET, PAD_HOOK_LEN),
+            PAD_HOOK_VANILLA,
+            "PRG010_CEA7 has moved"
+        );
+        assert_eq!(
+            PAD_ENTER[34..39],
+            PAD_HOOK_VANILLA,
+            "the ordinary path must replay what the hook overwrote"
+        );
+
+        let mut jsr = [0xEA_u8; PAD_HOOK_LEN];
+        jsr[0] = 0x20;
+        jsr[1] = PAD_ENTER_CPU as u8;
+        jsr[2] = (PAD_ENTER_CPU >> 8) as u8;
+        asm::check(&PAD_ENTER)
+            .allocation(FS_PAD_ENTER)
+            .origin(PAD_ENTER_CPU)
+            .data_from(PAD_TABLE_OFF)
+            .hook(&PAD_HOOK_VANILLA, 0, &jsr)
+            .assert_ok();
+    }
+
+    /// The table the routine indexes is its own, and `World_Num` reaches `$08`
+    /// — nine entries, not eight. An eight-byte table would read the first
+    /// instruction of nothing in particular for the warp zone.
+    #[test]
+    fn pad_table_is_indexed_by_world_num_and_covers_the_warp_zone() {
+        assert_eq!(PAD_ENTER[9], 0xBD, "offset 9 is not an LDA abs,X");
+        assert_eq!(
+            u16::from_le_bytes([PAD_ENTER[10], PAD_ENTER[11]]),
+            PAD_ENTER_CPU + PAD_TABLE_OFF as u16,
+            "the routine must index its own table"
+        );
+        assert_eq!(PAD_WORLDS, 9, "World_Num reaches $08 for the warp zone");
+        assert_eq!(PAD_ENTER.len(), PAD_TABLE_OFF + PAD_WORLDS);
+        assert!(
+            PAD_ENTER[PAD_TABLE_OFF..].iter().all(|&b| b == 0xFF),
+            "every world starts with no pad"
+        );
+    }
+
+    /// **A telepad costs no transit room.** That is the entire reason to prefer
+    /// it over a portal pipe, so it is asserted rather than assumed: the four
+    /// pipe destination tables must come out byte-identical to vanilla.
+    #[test]
+    fn a_telepad_spends_no_pipe_and_no_transit_room() {
+        let Some(rom) = load_vanilla() else { return };
+        let pads = [
+            Telepad { world: 0, dest_world: 4, dest_pos: (6, 6), src_pos: (4, 8) },
+            Telepad { world: 4, dest_world: 0, dest_pos: (4, 8), src_pos: (6, 6) },
+        ];
+        let mut patched = rom.clone();
+        apply(&mut patched, &[], &pads);
+
+        for (base, name) in [
+            (PIPE_MAP_XHI, "PIPE_MAP_XHI"),
+            (PIPE_MAP_Y, "PIPE_MAP_Y"),
+            (crate::randomize::rom_data::PIPE_MAP_X, "PIPE_MAP_X"),
+            (crate::randomize::rom_data::PIPE_MAP_SCRL_XHI, "PIPE_MAP_SCRL_XHI"),
+        ] {
+            assert_eq!(
+                patched.read_range(base, 24),
+                rom.read_range(base, 24),
+                "{name} changed — a telepad must not spend a transit room"
+            );
+        }
+        // And the pipe portal's own level-exit hook is not installed either.
+        assert_eq!(
+            patched.read_range(EXIT_HOOK_OFFSET, EXIT_HOOK_LEN),
+            EXIT_HOOK_VANILLA,
+            "the level-exit hook belongs to pipe portals, not pads"
+        );
+
+        // The per-world table names the shared arrival ids, in order.
+        let table = FS_PAD_ENTER + PAD_TABLE_OFF;
+        assert_eq!(patched.read_byte(table), 0, "W1's pad uses arrival id 0");
+        assert_eq!(patched.read_byte(table + 4), 1, "W5's pad uses arrival id 1");
+        for w in [1usize, 2, 3, 5, 6, 7, 8] {
+            assert_eq!(patched.read_byte(table + w), 0xFF, "W{} has no pad", w + 1);
+        }
+
+        // And those ids land where the pads aim.
+        let arrivals = FS_PORTAL_ARRIVAL + PORTAL_TABLE_OFF;
+        assert_eq!(patched.read_byte(arrivals), 4, "id 0 -> W5");
+        assert_eq!(patched.read_byte(arrivals + 1), 0, "id 1 -> W1");
+    }
+
+    /// Pipe portals and pads share one sixteen-row arrival table, and the pads
+    /// take the ids after the portals. Getting the offset wrong sends a pad to
+    /// a pipe's destination, which is a plausible-looking wrong answer.
+    #[test]
+    fn pads_take_the_ids_after_the_portals() {
+        let Some(rom) = load_vanilla() else { return };
+        let portals = [Portal { dest_idx: 1, end_a: false, dest_world: 2, dest_pos: (4, 9) }];
+        let pads = [Telepad { world: 0, dest_world: 5, dest_pos: (3, 7), src_pos: (4, 8) }];
+        let mut patched = rom.clone();
+        apply(&mut patched, &portals, &pads);
+
+        let arrivals = FS_PORTAL_ARRIVAL + PORTAL_TABLE_OFF;
+        assert_eq!(patched.read_byte(arrivals), 2, "id 0 is the portal's");
+        assert_eq!(patched.read_byte(arrivals + 1), 5, "id 1 is the pad's");
+        assert_eq!(
+            patched.read_byte(FS_PAD_ENTER + PAD_TABLE_OFF),
+            1,
+            "W1's pad must name id 1, not id 0"
+        );
+    }
+
+    /// Without pads, the map's enter-level path is untouched.
+    #[test]
+    fn telepads_are_opt_in() {
+        let Some(rom) = load_vanilla() else { return };
+        let mut patched = rom.clone();
+        apply(&mut patched, &[], &[]);
+        assert_eq!(
+            patched.read_range(PAD_HOOK_OFFSET, PAD_HOOK_LEN),
+            PAD_HOOK_VANILLA,
+            "the enter-level hook must not be installed unless asked for"
+        );
+    }
+
+    // --- Executing the pad routine -------------------------------------
+    //
+    // `asm::check` proves the bytes decode; it cannot see that they compute the
+    // right thing, and four planted mutations inside the array survived every
+    // structural test. This routine is the rare one that can be *run*: it calls
+    // nothing, touching only `World_Map_Tile`, `World_Num`, its own table,
+    // `Player_Current` and three RAM bytes. So run it.
+
+    /// Where `call_pad_enter` parks its return address; reaching it means the
+    /// routine took the ordinary path and returned.
+    const PAD_SENTINEL: u16 = 0x0F00;
+
+    /// Run `PAD_ENTER` and say whether it teleported (reached `$84A0`) or
+    /// returned to the caller.
+    fn call_pad_enter(cpu: &mut mos6502::cpu::CPU<Memory, Ricoh2a03>) -> bool {
+        let ret = PAD_SENTINEL.wrapping_sub(1);
+        cpu.memory.set_byte(0x01FF, (ret >> 8) as u8);
+        cpu.memory.set_byte(0x01FE, ret as u8);
+        cpu.registers.stack_pointer = mos6502::registers::StackPointer(0xFD);
+        cpu.registers.program_counter = PAD_ENTER_CPU;
+        for _ in 0..10_000 {
+            match cpu.registers.program_counter {
+                WORLD_MAP_INIT_CPU => return true,
+                PAD_SENTINEL => return false,
+                _ => {
+                    cpu.single_step();
+                }
+            }
+        }
+        panic!("PAD_ENTER ran away");
+    }
+
+    /// Set up a CPU with the routine, its table, and the machine state the
+    /// engine would have when a player presses A on a tile.
+    fn pad_cpu(
+        tile: u8,
+        world: u8,
+        player: u8,
+        pad_id: Option<u8>,
+    ) -> mos6502::cpu::CPU<Memory, Ricoh2a03> {
+        let mut code = PAD_ENTER;
+        if let Some(id) = pad_id {
+            code[PAD_TABLE_OFF + world as usize] = id;
+        }
+        let mut mem = Memory::new();
+        mem.set_bytes(PAD_ENTER_CPU, &code);
+        mem.set_byte(WORLD_MAP_TILE as u16, tile);
+        mem.set_byte(WORLD_NUM, world);
+        mem.set_byte(PLAYER_CURRENT, player);
+        // Poison what the routine should write, so "unchanged" is visible.
+        mem.set_byte(MAP_ENTERED_XHI, 0xAA);
+        mem.set_byte(MAP_ENTERED_XHI + 1, 0xAA);
+        mem.set_byte(ARRIVAL_FLAG, 0xAA);
+        mem.set_byte(TRANSITION_FLAG, 0xAA);
+        mem.set_byte(MAP_OPERATION, 0xAA);
+        mos6502::cpu::CPU::new(mem, Ricoh2a03)
+    }
+
+    /// Standing on a pad teleports: it hands the arrival id to the place
+    /// `STASH_ARRIVAL` reads, raises both flags, and never sets `Map_Operation`
+    /// — the map must not also start an enter-level effect.
+    #[test]
+    fn a_pad_hands_over_its_id_and_teleports() {
+        for (world, player, id) in [(0u8, 0u8, 0u8), (4, 1, 5), (8, 0, 15)] {
+            let mut cpu = pad_cpu(TILE_BONUS_GAME, world, player, Some(id));
+            assert!(call_pad_enter(&mut cpu), "W{} pad did not teleport", world + 1);
+            assert_eq!(
+                cpu.memory.get_byte(MAP_ENTERED_XHI + player as u16),
+                id,
+                "the arrival id must land in the current player's Map_Entered_XHi"
+            );
+            assert_eq!(
+                cpu.memory.get_byte(MAP_ENTERED_XHI + (1 - player) as u16),
+                0xAA,
+                "and not in the other player's"
+            );
+            assert_eq!(cpu.memory.get_byte(ARRIVAL_FLAG), 1, "ARRIVAL_FLAG");
+            assert_eq!(cpu.memory.get_byte(TRANSITION_FLAG), 1, "TRANSITION_FLAG");
+            assert_eq!(
+                cpu.memory.get_byte(MAP_OPERATION),
+                0xAA,
+                "Map_Operation must not be touched on the teleport path"
+            );
+        }
+    }
+
+    /// Any other tile enters its level exactly as vanilla did, and a pad tile
+    /// in a world with no pad does too. Both are the paths a mistake makes
+    /// teleport, and both leave the flags alone.
+    #[test]
+    fn a_tile_that_is_not_a_pad_enters_its_level() {
+        let cases: [(&str, u8, Option<u8>); 4] = [
+            ("an ordinary level panel", 0x03, Some(0)),
+            ("a fortress", 0x67, Some(0)),
+            ("a pipe", 0xBC, Some(0)),
+            ("a pad tile in a world with no pad", TILE_BONUS_GAME, None),
+        ];
+        for (what, tile, pad_id) in cases {
+            let mut cpu = pad_cpu(tile, 3, 0, pad_id);
+            assert!(!call_pad_enter(&mut cpu), "{what} teleported");
+            assert_eq!(cpu.memory.get_byte(MAP_OPERATION), 0x10, "{what}: Map_Operation");
+            assert_eq!(cpu.memory.get_byte(ARRIVAL_FLAG), 0xAA, "{what}: ARRIVAL_FLAG touched");
+            assert_eq!(
+                cpu.memory.get_byte(TRANSITION_FLAG),
+                0xAA,
+                "{what}: TRANSITION_FLAG touched"
+            );
+            assert_eq!(
+                cpu.memory.get_byte(MAP_ENTERED_XHI),
+                0xAA,
+                "{what}: Map_Entered_XHi touched"
+            );
+        }
+    }
+
+    /// The table is indexed by `World_Num`, not by the player. Indexing by the
+    /// wrong one still decodes, still teleports somewhere, and is wrong — it
+    /// took an executed test to see it.
+    #[test]
+    fn the_pad_table_is_indexed_by_the_world() {
+        let mut code = PAD_ENTER;
+        code[PAD_TABLE_OFF] = 0xFF; // world 0: no pad
+        code[PAD_TABLE_OFF + 6] = 3; // world 7: pad using id 3
+        let mut mem = Memory::new();
+        mem.set_bytes(PAD_ENTER_CPU, &code);
+        mem.set_byte(WORLD_MAP_TILE as u16, TILE_BONUS_GAME);
+        mem.set_byte(WORLD_NUM, 6);
+        mem.set_byte(PLAYER_CURRENT, 0); // would select world 0's $FF if misindexed
+        mem.set_byte(MAP_OPERATION, 0xAA);
+        let mut cpu = mos6502::cpu::CPU::new(mem, Ricoh2a03);
+        assert!(call_pad_enter(&mut cpu), "W7's pad did not teleport");
+        assert_eq!(cpu.memory.get_byte(MAP_ENTERED_XHI), 3, "W7's pad uses id 3");
     }
 
     fn load_vanilla() -> Option<Rom> {

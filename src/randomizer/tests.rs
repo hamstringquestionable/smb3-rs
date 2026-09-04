@@ -174,6 +174,12 @@ fn free_space_audit_matches_registry() {
             dest_world: 1,
             dest_pos: (2, 2),
         }],
+        &[crate::randomize::world_persist::Telepad {
+            world: 0,
+            dest_world: 1,
+            dest_pos: (2, 2),
+            src_pos: (2, 2),
+        }],
     );
 
     let usage = audit_free_space(&rom);

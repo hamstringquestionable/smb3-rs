@@ -271,6 +271,19 @@ impl NodeCatalog {
             .collect()
     }
 
+    /// Every spade / bonus-game panel, as `(world, grid position)`.
+    ///
+    /// Native-only: its sole consumer is the `testrom` builder's telepads,
+    /// which stand on these tiles.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn bonus_game_views(&self) -> Vec<(usize, (usize, usize))> {
+        self.entries
+            .iter()
+            .filter(|e| matches!(e.kind, NodeKind::BonusGame))
+            .map(|e| (e.world_idx, e.grid_pos))
+            .collect()
+    }
+
     /// Collect unique real HammerBro levels (obj >= 0xC000).
     /// Excludes toad house / bonus game pointer formats.
     pub(super) fn unique_hammer_bro_levels(&self) -> Vec<rom_data::LevelEntry> {

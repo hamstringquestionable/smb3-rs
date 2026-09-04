@@ -367,6 +367,11 @@ pub struct TestRomSpec {
     /// between World 1 and World 2. Beat a level, jump, jump back — the level
     /// should still be beaten. See `randomize::world_persist`.
     pub world_persist: bool,
+    /// **World-maze POC.** Telepads, as `(world A, world B)` pairs, both
+    /// 1-based. A pad in each world; stepping on one teleports straight to the
+    /// other with no transit room. Uses the world's first spade panel as the
+    /// pad tile, so it spends no pipe and no destination-table slot.
+    pub telepads: Vec<(u8, u8)>,
     /// **World-maze POC.** Cross-world portals, as `(source world, destination
     /// world)` pairs, both 1-based. Each entry claims one pipe end in the
     /// source world, so a world can hold several going to different places;
@@ -789,6 +794,55 @@ fn apply_movement(
     Ok((applied, written, skipped))
 }
 
+/// Turn `--telepad A:B` pairs into a pad in each world, aimed at each other.
+///
+/// A pad is a *tile*, not a level: the enter hook fires on `World_Map_Tile`
+/// before any pointer entry is consulted. So a pad costs no transit room, no
+/// destination-table slot and no pipe — which is the whole reason to prefer it
+/// over a portal pipe. It does still occupy the tile it stands on.
+///
+/// The POC puts pads on each world's first spade panel, because that tile is
+/// already enterable, already on the path, and is in the engine's own
+/// `Map_Completable_Tiles` — so if the divert leaked into the level-clear path,
+/// the pad would turn into an M/L panel and say so.
+fn resolve_telepads(
+    rom: &Rom,
+    specs: &[(u8, u8)],
+) -> Result<Vec<crate::randomize::world_persist::Telepad>, String> {
+    use crate::randomize::world_persist::Telepad;
+    if specs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let spades = NodeCatalog::build(rom, false).bonus_game_views();
+    let pad_in = |world: usize| -> Result<(usize, usize), String> {
+        spades
+            .iter()
+            .find(|(w, _)| *w == world)
+            .map(|(_, pos)| *pos)
+            .ok_or_else(|| format!("W{} has no spade panel to stand a telepad on", world + 1))
+    };
+
+    let mut out = Vec::new();
+    for &(a, b) in specs {
+        let (aw, bw) = (a as usize - 1, b as usize - 1);
+        let (a_pos, b_pos) = (pad_in(aw)?, pad_in(bw)?);
+        out.push(Telepad {
+            world: aw as u8,
+            dest_world: bw as u8,
+            dest_pos: b_pos,
+            src_pos: a_pos,
+        });
+        out.push(Telepad {
+            world: bw as u8,
+            dest_world: aw as u8,
+            dest_pos: a_pos,
+            src_pos: b_pos,
+        });
+    }
+    Ok(out)
+}
+
 /// One cross-world pipe: a single transit room whose two mouths sit in
 /// different worlds.
 struct PortalLink {
@@ -1149,7 +1203,8 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     //     tested on a plain vanilla map, which is the point — the question is
     //     whether the engine re-renders a world's completions, and a randomized
     //     map only adds variables.
-    if spec.world_persist || !spec.portals.is_empty() {
+    if spec.world_persist || !spec.portals.is_empty() || !spec.telepads.is_empty() {
+        let telepads = resolve_telepads(&rom, &spec.telepads)?;
         let links = resolve_portals(&rom, &spec.portals)?;
         // Move each far mouth onto the room it now belongs to, before the
         // marks go in — the resolver read the pristine tables to decide.
@@ -1157,7 +1212,18 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
             rom_data::write_entry(&mut rom, &rom_data::WORLDS[*world_idx], *entry_idx, level);
         }
         let portals: Vec<_> = links.iter().flat_map(|l| [l.a, l.b]).collect();
-        crate::randomize::world_persist::apply(&mut rom, &portals);
+        crate::randomize::world_persist::apply(&mut rom, &portals, &telepads);
+        for pad in &telepads {
+            report.push(format!(
+                "telepad: W{} row {} col {}  ->  W{} row {} col {}",
+                pad.world + 1,
+                pad.src_pos.0,
+                pad.src_pos.1,
+                pad.dest_world + 1,
+                pad.dest_pos.0,
+                pad.dest_pos.1,
+            ));
+        }
         report.push(
             "world persist: SELECT+START cycles all 8 worlds, completions packed".to_string(),
         );
@@ -1273,6 +1339,7 @@ mod tests {
             hammer_breaks_bridges: false,
             world_persist: false,
             portals: Vec::new(),
+            telepads: Vec::new(),
             bro_battle_timer: false,
             include_beta: false,
             big_q_unused5: None,
