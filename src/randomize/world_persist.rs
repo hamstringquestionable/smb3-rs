@@ -661,10 +661,22 @@ const PAD_HOOK_VANILLA: [u8; PAD_HOOK_LEN] = [
 
 /// The player's live map position, zero page, two bytes each (Mario/Luigi).
 ///
-/// `Map_GetTile` is the authority on what these mean: screen is
-/// `World_Map_XHi`, column is `World_Map_X >> 4`, row is
-/// `(World_Map_Y - 16) >> 4`. The low nibbles are sub-tile pixels, so a key
-/// must mask them off rather than compare raw.
+/// **`World_Map_Y & $F0` is `Map_Entered_Y`** — the same `(grid_row + 2) << 4`
+/// the pipe destination tables and the arrival rows use, so a pad's row key is
+/// just `grid_pos_to_dest_nibbles`' row nibble and there is one encoding here,
+/// not two. `GameOver_AlignToStartY` is the proof: it stores `Map_Y_Starts,Y`
+/// straight into `World_Map_Y` with no adjustment.
+///
+/// Reading that off `Map_GetTile` alone gets it wrong by exactly one row.
+/// The routine does `SUB #16 / AND #$F0`, which looks like `(row + 1) << 4` —
+/// but it only adds `$100` to the screen base while the grid actually starts at
+/// `+$110`, and that missing `$10` is a whole row. The first cut of the pad key
+/// made that mistake and every pad quietly entered its spade game instead of
+/// teleporting.
+///
+/// Column is `World_Map_X >> 4` and screen is `World_Map_XHi`. All of these are
+/// pixel coordinates, so the low nibbles are sub-tile offsets and a key must
+/// mask them off rather than compare raw.
 const WORLD_MAP_Y: u8 = 0x75;
 const WORLD_MAP_XHI: u8 = 0x77;
 const WORLD_MAP_X: u8 = 0x79;
@@ -779,14 +791,15 @@ fn apply_telepads(rom: &mut Rom, telepads: &[Telepad], first_id: usize) {
     let mut code = PAD_ENTER;
     for (n, pad) in telepads.iter().enumerate() {
         let id = first_id + n;
-        let (row, col) = pad.src_pos;
-        // `Map_GetTile`'s own arithmetic, run backwards: row is
-        // `(World_Map_Y - 16) >> 4`, so the masked Y a pad sits at is
-        // `(row + 1) << 4`; the column is `World_Map_X >> 4` and the screen is
-        // `World_Map_XHi`, which the routine folds into one byte.
+        // The same encoder the arrival rows use, because `World_Map_Y & $F0` is
+        // `Map_Entered_Y` and `World_Map_X & $F0` is `Map_Entered_X`. One
+        // source of truth for the map's coordinate encoding, and it is the one
+        // the portals already proved on hardware.
+        let (screen, col, row_nib) =
+            pipe_helpers::grid_pos_to_dest_nibbles(pad.src_pos.0, pad.src_pos.1);
         code[PAD_TABLE_OFF + id] = pad.world;
-        code[PAD_TABLE_OFF + PORTAL_MAX + id] = ((row + 1) << 4) as u8;
-        code[PAD_TABLE_OFF + 2 * PORTAL_MAX + id] = (((col % 16) << 4) | (col / 16)) as u8;
+        code[PAD_TABLE_OFF + PORTAL_MAX + id] = row_nib << 4;
+        code[PAD_TABLE_OFF + 2 * PORTAL_MAX + id] = (col << 4) | screen;
     }
     rom.write_range(FS_PAD_ENTER, &code);
 
@@ -1233,10 +1246,10 @@ mod asm_checks {
         // The key tables describe where each pad stands, row index = arrival id.
         let table = FS_PAD_ENTER + PAD_TABLE_OFF;
         assert_eq!(patched.read_byte(table), 0, "row 0 is W1's pad");
-        assert_eq!(patched.read_byte(table + PORTAL_MAX), 0x50, "W1 pad row 4 -> (4+1)<<4");
+        assert_eq!(patched.read_byte(table + PORTAL_MAX), 0x60, "W1 pad row 4 -> (4+2)<<4");
         assert_eq!(patched.read_byte(table + 2 * PORTAL_MAX), 0x80, "W1 pad col 8, screen 0");
         assert_eq!(patched.read_byte(table + 1), 4, "row 1 is W5's pad");
-        assert_eq!(patched.read_byte(table + PORTAL_MAX + 1), 0x70, "W5 pad row 6");
+        assert_eq!(patched.read_byte(table + PORTAL_MAX + 1), 0x80, "W5 pad row 6");
         assert_eq!(patched.read_byte(table + 2 * PORTAL_MAX + 1), 0x60, "W5 pad col 6, screen 0");
         for row in 2..PORTAL_MAX {
             assert_eq!(patched.read_byte(table + row), 0xFF, "row {row} is unclaimed");
@@ -1366,6 +1379,65 @@ mod asm_checks {
         panic!("PAD_ENTER ran away");
     }
 
+    /// **The row key, checked against the engine's own bytes rather than
+    /// against my arithmetic.**
+    ///
+    /// `GameOver_AlignToStartY` stores `Map_Y_Starts[world]` straight into
+    /// `World_Map_Y`, and `Map_Init` forces `World_Map_X` to `$20`. So for
+    /// every world the key `apply` writes for the START tile's grid position
+    /// must come out as exactly those bytes. The grid position is read from the
+    /// map layout and the bytes from the engine's own tables, so nothing here
+    /// shares a source with the encoder under test — and it goes through
+    /// `apply`, because the bug was in how the pad table *used* the encoding.
+    ///
+    /// This is the test that was missing. The first cut derived the key from
+    /// `Map_GetTile`'s `SUB #16` and landed one row short — and the CPU fixture
+    /// computed the player's position the same wrong way, so it agreed with the
+    /// bug and every pad silently entered its spade game instead. A fixture
+    /// that shares the code's assumption cannot test that assumption.
+    #[test]
+    fn the_pad_row_key_matches_the_engine_own_start_bytes() {
+        let Some(rom) = load_vanilla() else { return };
+        for world in 0..8 {
+            let grid = crate::randomize::rom_data::read_tile_grid(&rom, world);
+            let start = (0..crate::randomize::rom_data::ROWS)
+                .flat_map(|r| (0..grid.cols).map(move |c| (r, c)))
+                .find(|&(r, c)| grid.get(r, c) == crate::randomize::rom_data::TILE_START)
+                .unwrap_or_else(|| panic!("W{} has no START tile", world + 1));
+
+            // Through `apply`, not through the encoder: the bug was in how the
+            // pad table used the encoding, and a test that recomputes the
+            // encoding itself would have agreed with it.
+            let pad =
+                Telepad { world: world as u8, dest_world: 0, dest_pos: (2, 2), src_pos: start };
+            let mut patched = rom.clone();
+            apply(&mut patched, &[], &[pad]);
+            let key = patched.read_byte(FS_PAD_ENTER + PAD_TABLE_OFF + PORTAL_MAX);
+            let engine = rom.read_byte(crate::randomize::rom_data::MAP_Y_STARTS_OFF + world);
+
+            // The column and screen have their own engine oracle: `Map_Init`
+            // forces `World_Map_X` to $20 for every world, and
+            // `GameOver_ReturnToStartX` calls $20 "the fixed start point X".
+            // That is column 2 of screen 0, so the packed key must be $20 too.
+            assert_eq!(start.1, 2, "W{}'s START tile is not at column 2", world + 1);
+            assert_eq!(
+                patched.read_byte(FS_PAD_ENTER + PAD_TABLE_OFF + 2 * PORTAL_MAX),
+                0x20,
+                "W{}: the engine puts the player at World_Map_X $20 on screen 0, so the packed \
+                 column-and-screen key must be $20",
+                world + 1
+            );
+            assert_eq!(
+                key,
+                engine,
+                "W{}: START is at grid row {}, so the pad row key is ${key:02X}, but the engine \
+                 puts the player at World_Map_Y ${engine:02X}",
+                world + 1,
+                start.0
+            );
+        }
+    }
+
     /// Set up a CPU with the routine, its key tables, and the machine state the
     /// engine would have when a player presses A on a tile.
     ///
@@ -1380,10 +1452,11 @@ mod asm_checks {
         pads: &[(usize, u8, (usize, usize))],
     ) -> mos6502::cpu::CPU<Memory, Ricoh2a03> {
         let mut code = PAD_ENTER;
-        for &(id, w, (row, col)) in pads {
+        for &(id, w, at) in pads {
+            let (screen, col, row_nib) = pipe_helpers::grid_pos_to_dest_nibbles(at.0, at.1);
             code[PAD_TABLE_OFF + id] = w;
-            code[PAD_TABLE_OFF + PORTAL_MAX + id] = ((row + 1) << 4) as u8;
-            code[PAD_TABLE_OFF + 2 * PORTAL_MAX + id] = (((col % 16) << 4) | (col / 16)) as u8;
+            code[PAD_TABLE_OFF + PORTAL_MAX + id] = row_nib << 4;
+            code[PAD_TABLE_OFF + 2 * PORTAL_MAX + id] = (col << 4) | screen;
         }
         let mut mem = Memory::new();
         mem.set_bytes(PAD_ENTER_CPU, &code);
@@ -1391,9 +1464,10 @@ mod asm_checks {
         mem.set_byte(WORLD_NUM, world);
         mem.set_byte(PLAYER_CURRENT, player);
         // The engine's own encoding, plus a sub-tile offset the key must ignore.
-        mem.set_byte(WORLD_MAP_Y as u16 + player as u16, (((at.0 + 1) << 4) as u8) | sub_tile);
-        mem.set_byte(WORLD_MAP_X as u16 + player as u16, (((at.1 % 16) << 4) as u8) | sub_tile);
-        mem.set_byte(WORLD_MAP_XHI as u16 + player as u16, (at.1 / 16) as u8);
+        let (screen, col, row_nib) = pipe_helpers::grid_pos_to_dest_nibbles(at.0, at.1);
+        mem.set_byte(WORLD_MAP_Y as u16 + player as u16, (row_nib << 4) | sub_tile);
+        mem.set_byte(WORLD_MAP_X as u16 + player as u16, (col << 4) | sub_tile);
+        mem.set_byte(WORLD_MAP_XHI as u16 + player as u16, screen);
         // Poison what the routine should write, so "unchanged" is visible.
         mem.set_byte(MAP_ENTERED_XHI, 0xAA);
         mem.set_byte(MAP_ENTERED_XHI + 1, 0xAA);
