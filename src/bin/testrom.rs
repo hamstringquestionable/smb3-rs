@@ -119,6 +119,17 @@ struct Cli {
     patches: bool,
 
     /// Skip the open-movement patch, so tiles must be entered and cleared.
+    ///
+    /// **Required for anything that tests map completion.** Open movement is 13
+    /// bytes at PRG010 `$CDBC` — the map power-up palette tables, which the
+    /// engine's enterable-tile scan overruns into (`prg010.asm` documents the
+    /// bug at `Map_EnterSpecialTiles`). The patched values include `$07` and
+    /// `$08`, which are level-panel tiles, so panels match the "enterable
+    /// special tile" list and the engine takes a branch that never calls
+    /// `Map_MarkLevelComplete`. Completions are then silently never recorded:
+    /// the M still appears — painted straight into nametable 2 — while
+    /// `Map_Completions` stays zero, and nothing reads it back until a map
+    /// rebuild. This cost a full session before it was found.
     #[arg(long)]
     no_walk: bool,
 
