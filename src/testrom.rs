@@ -820,12 +820,22 @@ struct PortalLink {
 /// entering it walks you back out of the other end to the tile you left — the
 /// vanilla round trip, with a world change in the middle.
 ///
-/// The unclaimed mouths keep working as they did: entering one still reads the
-/// end nobody marked, which still names its vanilla partner. A cross-world pipe
-/// makes its vanilla pair one-way rather than orphaning it.
+/// **A room hosts at most one portal, and the other end must stay vanilla.**
+/// Inside the transit room you can always turn round and go back down the pipe
+/// you arrived through, and that reads *that* end — which in vanilla names the
+/// tile you came from, so you come back out where you entered. Marking both
+/// ends makes your entry pipe the *other* link's portal, and backing out drops
+/// you in a third world instead of home. Found on hardware: W7's room carried
+/// A -> W3 and B -> W6, so arriving from W3 and stepping back into the pipe
+/// behind you landed you in World 6.
 ///
-/// Ends are handed out B-then-A per room, rooms ascending, so a second link out
-/// of a world claims the same room's other mouth rather than colliding. That is
+/// With one end marked, all three moves are right: the A-side tile crosses
+/// worlds, backing out of the entry pipe returns you to the A-side tile you
+/// came from, and the B-side tile still walks through to the A-side tile the
+/// way it always did. A cross-world pipe makes its vanilla pair one-way rather
+/// than orphaning it.
+///
+/// Rooms are handed out in ascending order, one link each. That is
 /// rejection-free bookkeeping, not a placement policy — a playtest ROM only has
 /// to *state* which pipe is which.
 fn resolve_portals(rom: &Rom, specs: &[(u8, u8)]) -> Result<Vec<PortalLink>, String> {
@@ -841,13 +851,12 @@ fn resolve_portals(rom: &Rom, specs: &[(u8, u8)]) -> Result<Vec<PortalLink>, Str
 
     let mut taken: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
 
-    // Claim the next unused end in a world, and say which tile is its mouth.
+    // Claim the next unused transit room in a world, and say which tile is its
+    // mouth. Always end B, so the mouth is the A-side tile and end A is left
+    // vanilla for the walk back out of the entry pipe.
     let claim = |world: usize, taken: &mut std::collections::HashMap<usize, usize>| {
-        let ends: Vec<(usize, bool)> = rom_data::dest_indices_for_world(world)
-            .into_iter()
-            .flat_map(|d| [(d, false), (d, true)])
-            .collect();
-        if ends.is_empty() {
+        let rooms = rom_data::dest_indices_for_world(world);
+        if rooms.is_empty() {
             return Err(format!(
                 "W{} owns no pipe destinations, so it has no pipe to cross worlds with. \
                  Pick a world that does, or place a transit room there first.",
@@ -855,17 +864,19 @@ fn resolve_portals(rom: &Rom, specs: &[(u8, u8)]) -> Result<Vec<PortalLink>, Str
             ));
         }
         let nth = taken.entry(world).or_insert(0);
-        let Some(&(dest_idx, end_a)) = ends.get(*nth) else {
+        let Some(&dest_idx) = rooms.get(*nth) else {
             return Err(format!(
-                "W{} has only {} pipe end(s) and {} were asked of it",
+                "W{} owns only {} transit room(s) and {} were asked of it; a room can host \
+                 one cross-world pipe, because the other end has to stay vanilla for the \
+                 walk back out",
                 world + 1,
-                ends.len(),
+                rooms.len(),
                 *nth + 1
             ));
         };
         *nth += 1;
-        let (a_pos, b_pos) = rom_data::read_dest_positions(rom, dest_idx);
-        Ok((dest_idx, end_a, if end_a { b_pos } else { a_pos }))
+        let (a_pos, _) = rom_data::read_dest_positions(rom, dest_idx);
+        Ok((dest_idx, false, a_pos))
     };
 
     let mut out = Vec::new();
@@ -1573,37 +1584,35 @@ mod tests {
         }
     }
 
-    /// Locks must survive `--keep-locks` even when the hammer can break them —
-    /// that combination is the whole point of lock-FX testing.
-    /// `--portal SRC>DST` is 1-based; `World_Num` is 0-based. The unit test on
+    /// `--portal SRC:DST` is 1-based; `World_Num` is 0-based. The unit test on
     /// `apply` passes an already-converted index, so it cannot see this — and
     /// the first cut of the portal shipped with the conversion missing, sending
     /// World 2 to World 3. Check the byte that actually lands in the ROM.
     #[test]
     fn portal_worlds_are_converted_to_zero_based_indices() {
         let Some(van) = vanilla() else { return };
-        for world in 2u8..=8 {
-            // W2 owns pipe destinations in vanilla; W1 owns none, so it cannot
-            // be either end of a cross-world pipe on this base.
-            let rom = build(&van, &TestRomSpec { portals: vec![(2, world)], ..spec() })
-                .expect("build with a portal");
+        // W7 owns eight transit rooms, so it can be one end of every link asked
+        // here; W1 owns none, so it cannot be either end on this base.
+        for world in (2u8..=8).filter(|&w| w != 7) {
+            let rom = build(&van, &TestRomSpec { portals: vec![(7, world)], ..spec() })
+                .expect("build with a cross-world pipe");
             let table = crate::randomize::rom_data::FS_PORTAL_ARRIVAL
                 + crate::randomize::world_persist::PORTAL_TABLE_OFF;
-            // A link is two portals: id 0 leaves W2 for the destination, id 1
+            // A link is two portals: id 0 leaves W7 for the destination, id 1
             // is the way back.
             assert_eq!(
                 rom.bytes[table],
                 world - 1,
-                "--portal 2:{world} must send id 0 to World_Num {}",
+                "--portal 7:{world} must send id 0 to World_Num {}",
                 world - 1
             );
-            assert_eq!(rom.bytes[table + 1], 1, "and id 1 must come back to W2");
+            assert_eq!(rom.bytes[table + 1], 6, "and id 1 must come back to W7");
         }
     }
 
-    /// Two links out of one world claim two different pipe ends, and the
-    /// report names both mouths of each. Asking for more than a world can
-    /// supply is an error, not a silent overwrite of the first.
+    /// Two links out of one world claim two different transit rooms, and the
+    /// report names both mouths of each. Asking for more rooms than a world
+    /// owns is an error, not a silent overwrite of the first.
     #[test]
     fn a_world_can_hold_more_than_one_cross_world_pipe() {
         let Some(van) = vanilla() else { return };
@@ -1613,10 +1622,8 @@ mod tests {
         let lines: Vec<&String> =
             built.report.iter().filter(|l| l.starts_with("cross-world pipe:")).collect();
         assert_eq!(lines.len(), 2, "report: {:?}", built.report);
-        assert_ne!(lines[0], lines[1], "both links claimed the same pipe end");
+        assert_ne!(lines[0], lines[1], "both links claimed the same pipe");
 
-        // W2 owns one room and W3 three, so the two links cannot have taken the
-        // same W7 end either — check the ids rather than trusting the strings.
         let table = crate::randomize::rom_data::FS_PORTAL_ARRIVAL
             + crate::randomize::world_persist::PORTAL_TABLE_OFF;
         assert_eq!(built.bytes[table], 1, "link 1 out of W7 -> W2");
@@ -1624,12 +1631,44 @@ mod tests {
         assert_eq!(built.bytes[table + 2], 2, "link 2 out of W7 -> W3");
         assert_eq!(built.bytes[table + 3], 6, "link 2 back -> W7");
 
-        // W2 owns one room, so two ends; a second link touching W2 has nowhere
-        // to go.
+        // W2 owns one transit room, so it can be one end of one pipe.
         assert!(
-            build(&van, &TestRomSpec { portals: vec![(2, 5), (2, 6), (2, 7)], ..spec() }).is_err(),
-            "asking a world for more pipe ends than it has must fail loudly"
+            build(&van, &TestRomSpec { portals: vec![(2, 5), (2, 6)], ..spec() }).is_err(),
+            "asking a world for more transit rooms than it owns must fail loudly"
         );
+    }
+
+    /// **No transit room may carry two portals.** Inside the room you can turn
+    /// round and go back down the pipe you arrived through, and that reads
+    /// *that* end — vanilla's way of putting you back where you entered. Mark
+    /// both ends and your entry pipe becomes the other link's portal, so
+    /// backing out lands you in a third world.
+    ///
+    /// Found on hardware, not by a test: W7's room carried A -> W3 and B -> W6,
+    /// and stepping back into the pipe behind you after arriving from W3 put
+    /// you in World 6. Asserted against the destination tables in the built
+    /// ROM, which is where the damage showed.
+    #[test]
+    fn no_transit_room_carries_two_portals() {
+        let Some(van) = vanilla() else { return };
+        // The shape that broke it: five links over six worlds, several of them
+        // sharing a world, which is what made the resolver reach for a second
+        // end of a room it had already used.
+        let built = build(
+            &van,
+            &TestRomSpec { portals: vec![(2, 4), (4, 6), (6, 7), (7, 3), (3, 8)], ..spec() },
+        )
+        .expect("build the maze");
+
+        let mark = crate::randomize::world_persist::PORTAL_ROW_MARK;
+        let mut marked = 0;
+        for d in 0..24 {
+            let y = built.bytes[rom_data::PIPE_MAP_Y + d];
+            let ends = usize::from(y >> 4 == mark) + usize::from(y & 0x0F == mark);
+            assert!(ends < 2, "transit room {d} carries two portals; backing out would teleport");
+            marked += ends;
+        }
+        assert_eq!(marked, 10, "five two-way pipes are ten portal ends");
     }
 
     /// Both mouths of a cross-world pipe must be pipe tiles, and each direction
@@ -1698,6 +1737,8 @@ mod tests {
         );
     }
 
+    /// Locks must survive `--keep-locks` even when the hammer can break them —
+    /// that combination is the whole point of lock-FX testing.
     #[test]
     fn hammer_breaks_locks_leaves_the_locks_in_place() {
         let Some(van) = vanilla() else {

@@ -361,7 +361,7 @@ const MAP_PAN_COUNT: u16 = 0x0710;
 /// value the engine cannot itself produce, which is what lets the
 /// always-mapped bank answer "is this a portal?" with a two-byte compare
 /// instead of a table it has no room for.
-const PORTAL_ROW_MARK: u8 = 0xF;
+pub(crate) const PORTAL_ROW_MARK: u8 = 0xF;
 
 /// How many portals a ROM can hold.
 ///
