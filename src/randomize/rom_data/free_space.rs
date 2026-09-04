@@ -103,12 +103,6 @@ const fn fs(
 pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     // PRG030 (fixed bank, always mapped $8000–$9FFF, file 0x3C010)
     fs(0x3DF20, 28, &["world_order"], "routine + tables"),
-    fs(
-        0x3DFE6,
-        40,
-        &["world_persist"],
-        "world-maze: portal exit trigger, PRG030 (40 reserved, 35 used)",
-    ),
     fs(0x3DF3C, 20, &["big_q_blocks"], "big_q_block: save obj_ptr trampoline"),
     fs(
         0x3DF70,
@@ -447,8 +441,6 @@ pub(crate) const FS_PACK_WORLD: usize = 0x155C4; // 40 reserved, 33 used
 pub(crate) const FS_WORLD_PERSIST_JUMP: usize = 0x155EC; // 48 reserved, 40 used
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x1566C; // 64 reserved, 56 used
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_PORTAL_EXIT: usize = 0x3DFE6; // 40 reserved, 35 used
 
 // The portal arrival stash and the table it reads, together because the stash
 // addresses the table absolutely and so is origin-locked to it.
@@ -1082,7 +1074,6 @@ mod free_space_tests {
             (FS_RESTORE_ARRIVAL, "FS_RESTORE_ARRIVAL"),
             (FS_PORTAL_ARRIVAL, "FS_PORTAL_ARRIVAL"),
             (FS_PAD_ENTER, "FS_PAD_ENTER"),
-            (FS_PORTAL_EXIT, "FS_PORTAL_EXIT"),
             (FS_MASK_BUILD, "FS_MASK_BUILD"),
             (FS_IS_COMPLETABLE, "FS_IS_COMPLETABLE"),
             (FS_WORLD_COLS, "FS_WORLD_COLS"),

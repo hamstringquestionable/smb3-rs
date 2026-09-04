@@ -124,25 +124,6 @@ pub(crate) struct EntryView {
     pub level_entry: Option<LevelEntry>,
 }
 
-/// One mouth of a pipe pair, flattened for the test-ROM builder.
-///
-/// `entry_views` cannot carry this: it drops `NodeKind`, and a cross-world pipe
-/// needs the pairing — which transit room a mouth belongs to, and which side of
-/// that room it spawns you on.
-///
-/// Native-only, matching the `testrom` module that consumes it.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) struct PipeView {
-    pub world_idx: usize,
-    pub entry_idx: usize,
-    /// Index into the four pipe destination tables: which transit room.
-    pub dest_idx: usize,
-    /// True for the A endpoint, whose position is the tables' upper nibble.
-    pub is_a_side: bool,
-    pub grid_pos: (usize, usize),
-    pub level_entry: Option<LevelEntry>,
-}
-
 // ---------------------------------------------------------------------------
 // Node catalog
 // ---------------------------------------------------------------------------
@@ -245,28 +226,6 @@ impl NodeCatalog {
                 kind_label: e.kind.label(),
                 is_numbered_level: matches!(e.kind, NodeKind::Level),
                 level_entry: e.level_entry.clone(),
-            })
-            .collect()
-    }
-
-    /// Every pipe mouth in the game, in catalog order.
-    ///
-    /// Native-only: its sole consumer is the `testrom` builder's cross-world
-    /// pipes, which need to know which mouths share a transit room.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn pipe_views(&self) -> Vec<PipeView> {
-        self.entries
-            .iter()
-            .filter_map(|e| match e.kind {
-                NodeKind::Pipe { dest_idx, is_a_side } => Some(PipeView {
-                    world_idx: e.world_idx,
-                    entry_idx: e.entry_idx,
-                    dest_idx,
-                    is_a_side,
-                    grid_pos: e.grid_pos,
-                    level_entry: e.level_entry.clone(),
-                }),
-                _ => None,
             })
             .collect()
     }

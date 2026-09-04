@@ -84,8 +84,7 @@ use crate::rom::Rom;
 use super::completion_bits::{self, TRANSITION_FLAG};
 use super::pipe_helpers;
 use super::rom_data::{
-    FS_PAD_ENTER, FS_PORTAL_ARRIVAL, FS_PORTAL_EXIT, FS_RESTORE_ARRIVAL, FS_WORLD_PERSIST_JUMP,
-    PIPE_MAP_XHI, PIPE_MAP_Y, TILE_BONUS_GAME,
+    FS_PAD_ENTER, FS_PORTAL_ARRIVAL, FS_RESTORE_ARRIVAL, FS_WORLD_PERSIST_JUMP, TILE_BONUS_GAME,
 };
 
 // CPU addresses of the two routines. PRG010 is mapped at $C000 whenever
@@ -100,8 +99,6 @@ const RESTORE_ARRIVAL_CPU: u16 = (0xC000 + FS_RESTORE_ARRIVAL - 0x14010) as u16;
 // table live there: PRG010 has no run left that holds them.
 const STASH_ARRIVAL_CPU: u16 = (0xA000 + FS_PORTAL_ARRIVAL - 0x16010) as u16;
 const PAD_ENTER_CPU: u16 = (0xA000 + FS_PAD_ENTER - 0x16010) as u16;
-// PRG030 is fixed at $8000-$9FFF, always mapped — file 0x3C010 is its $8000.
-const PORTAL_EXIT_CPU: u16 = (0x8000 + FS_PORTAL_EXIT - 0x3C010) as u16;
 
 // --- Engine symbols -----------------------------------------------------
 //
@@ -307,11 +304,10 @@ const WORLD_JUMP_CHECK: [u8; 48] = [
 /// any cross-world portals.
 ///
 /// The storage itself is [`completion_bits`]; this module contributes the debug
-/// jump that cycles worlds, the pipe ends that come out on another world's map,
-/// and the telepads that skip the pipe entirely. The arrival restore is written into the
+/// jump that cycles worlds and the telepads that cross between them. The arrival restore is written into the
 /// padding `completion_bits` leaves at the wipe site, so it runs on the same
 /// pass and after `Map_Init` has had its say.
-pub(crate) fn apply(rom: &mut Rom, portals: &[Portal], telepads: &[Telepad]) {
+pub(crate) fn apply(rom: &mut Rom, telepads: &[Telepad]) {
     // Must come first: it owns the wipe site, and this module writes into the
     // bytes it leaves behind.
     completion_bits::apply(rom);
@@ -337,23 +333,12 @@ pub(crate) fn apply(rom: &mut Rom, portals: &[Portal], telepads: &[Telepad]) {
     hook[2] = (WORLD_JUMP_CHECK_CPU >> 8) as u8;
     rom.write_range(NORMAL_MOVE_OFFSET, &hook);
 
-    // One id space, shared: pipe portals take the low ids, pads the rest. The
-    // arrival tables are written once from both, because a row does not care
-    // which mechanism reaches it.
-    if !portals.is_empty() || !telepads.is_empty() {
-        let rows: Vec<(u8, (usize, usize))> = portals
-            .iter()
-            .map(|p| (p.dest_world, p.dest_pos))
-            .chain(telepads.iter().map(|t| (t.dest_world, t.dest_pos)))
-            .collect();
+    if !telepads.is_empty() {
+        let rows: Vec<(u8, (usize, usize))> =
+            telepads.iter().map(|t| (t.dest_world, t.dest_pos)).collect();
         write_arrival_tables(rom, &rows);
         install_map_init_trampoline(rom);
-    }
-    if !portals.is_empty() {
-        apply_portals(rom, portals);
-    }
-    if !telepads.is_empty() {
-        apply_telepads(rom, telepads, portals.len());
+        apply_telepads(rom, telepads, 0);
     }
 
     rom.pop_tag();
@@ -361,23 +346,8 @@ pub(crate) fn apply(rom: &mut Rom, portals: &[Portal], telepads: &[Telepad]) {
 
 // --- Pipe portal ------------------------------------------------------------
 
-/// `Map_WasInPipeway` — set by `ObjInit_PipewayCtlr` when you enter a pipe
-/// transit room, and still set when the level exits.
-const MAP_WAS_IN_PIPEWAY: u16 = 0x7973;
-
 /// `Map_Pan_Count` — non-zero while the map is scrolling.
 const MAP_PAN_COUNT: u16 = 0x0710;
-
-/// The `Map_Entered_Y` value that marks a pipe destination as a portal.
-///
-/// `ObjNorm_PipewayCtlr` stores `Map_Entered_Y` as `row_nibble << 4`, and a
-/// row nibble is `grid_row + 2` — so vanilla's 24 destinations top out at `$A`
-/// (`0x046DA` in this ROM: the largest nibble in the table is 10) and nothing
-/// from `$B` up is reachable by a real map coordinate. `$F0` is therefore a
-/// value the engine cannot itself produce, which is what lets the
-/// always-mapped bank answer "is this a portal?" with a two-byte compare
-/// instead of a table it has no room for.
-pub(crate) const PORTAL_ROW_MARK: u8 = 0xF;
 
 /// How many portals a ROM can hold.
 ///
@@ -404,30 +374,6 @@ const PORTAL_SCRH_CPU: u16 = PORTAL_SCRL_CPU + PORTAL_MAX as u16;
 /// Total bytes of table.
 const PORTAL_TABLE_LEN: usize = 6 * PORTAL_MAX;
 
-/// `PRG030_9097`, "Exiting to map somehow" — the common return-from-level path
-/// (CPU `$9097` = file 0x3D0A7). Its first five bytes are two whole
-/// instructions:
-///
-/// ```text
-/// A9 C0       LDA #$C0
-/// 8D 00 01    STA Update_Select
-/// ```
-///
-/// **This is why the trigger moved here from `PRG011_ABBE`.** That hook fired
-/// after the origin world's map had already been reloaded, faded in and drawn,
-/// so jumping from it flashed World 1 for a frame before World 2's intro. Here,
-/// the origin map is never built at all.
-const EXIT_HOOK_OFFSET: usize = 0x3D0A7;
-const EXIT_HOOK_LEN: usize = 5;
-
-/// Vanilla bytes at [`EXIT_HOOK_OFFSET`].
-#[cfg(test)]
-#[rustfmt::skip]
-const EXIT_HOOK_VANILLA: [u8; EXIT_HOOK_LEN] = [
-    0xA9, 0xC0,             // LDA #$C0
-    0x8D, 0x00, 0x01,       // STA Update_Select
-];
-
 /// `JSR Map_Init` inside `PRG030_84A0` (CPU `$84AD` = file 0x3C4BD).
 ///
 /// The trampoline site for the stash. `Map_Init` is what overwrites the
@@ -439,47 +385,6 @@ const MAP_INIT_CALL_LEN: usize = 3;
 
 /// `Map_Init` itself (PRG011, CPU `$A1D8`).
 const MAP_INIT_CPU: u16 = 0xA1D8;
-
-/// Leave for another world on the way out of a transit room.
-///
-/// Lives in PRG030, which is always mapped — it has to, because the banks at
-/// level exit belong to the level, not the map.
-///
-/// **It does not decide *which* world.** All it answers is "was that pipe a
-/// portal", which [`PORTAL_ROW_MARK`] makes a compare against a constant. The
-/// destination, and the tile to arrive on, are looked up by [`STASH_ARRIVAL`]
-/// once the map init has banked PRG011 in — which is the only reason more than
-/// one portal fits at all: PRG030's tail has two bytes left after this routine,
-/// nowhere near a per-portal table.
-///
-/// Setting `World_Num` there rather than here is safe because `$84A0`'s first
-/// four instructions are bank switches and read nothing.
-#[rustfmt::skip]
-const PORTAL_EXIT: [u8; 35] = [
-    0xAD, MAP_WAS_IN_PIPEWAY as u8,
-          (MAP_WAS_IN_PIPEWAY >> 8) as u8,                  //  0: LDA Map_WasInPipeway
-    0xF0, 0x18,                                             //  3: BEQ +24 -> not a pipe
-    0xAE, PLAYER_CURRENT as u8,
-          (PLAYER_CURRENT >> 8) as u8,                      //  5: LDX Player_Current
-    0xBD, MAP_ENTERED_Y as u8, (MAP_ENTERED_Y >> 8) as u8,  //  8: LDA Map_Entered_Y,X
-    0xC9, PORTAL_ROW_MARK << 4,                             // 11: CMP #$F0
-    0xD0, 0x0E,                                             // 13: BNE +14 -> ordinary pipe
-
-    0xA9, 0x01,                                             // 15: LDA #$01
-    0x8D, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,    // 17: STA ARRIVAL_FLAG
-    0x8D, TRANSITION_FLAG as u8,
-          (TRANSITION_FLAG >> 8) as u8,                     // 20: STA TRANSITION_FLAG
-                                                            //     a transition, not a new game
-    0xA2, 0xFF,                                             // 23: LDX #$FF
-    0x9A,                                                   // 25: TXS
-    0x4C, WORLD_MAP_INIT_CPU as u8,
-          (WORLD_MAP_INIT_CPU >> 8) as u8,                  // 26: JMP $84A0 (never returns)
-
-    // ----- ordinary exit: the displaced instructions -----
-    0xA9, 0xC0,                                             // 29: LDA #$C0
-    0x8D, 0x00, 0x01,                                       // 31: STA Update_Select
-    0x60,                                                   // 34: RTS
-];
 
 /// Resolve the portal and park its arrival, just before `Map_Init` runs.
 ///
@@ -494,7 +399,7 @@ const PORTAL_EXIT: [u8; 35] = [
 /// put the destination's screen nibble. It is masked to `$0F` by the engine, so
 /// indexing six 16-byte tables with it needs no bound of its own.
 ///
-/// A no-op unless [`PORTAL_EXIT`] set the flag, which is why it can sit on a
+/// A no-op unless a telepad set the flag, which is why it can sit on a
 /// path every map init takes.
 #[rustfmt::skip]
 const STASH_ARRIVAL: [u8; PORTAL_TABLE_OFF] = [
@@ -521,32 +426,6 @@ const STASH_ARRIVAL: [u8; PORTAL_TABLE_OFF] = [
 
     0x4C, MAP_INIT_CPU as u8, (MAP_INIT_CPU >> 8) as u8,        // 48: JMP Map_Init
 ];
-
-/// One cross-world portal: a pipe end that comes out on another world's map.
-///
-/// A portal is a property of a *transit room end*, not of a map tile. Entering
-/// the pipe on the A-side tile walks you to the room's far pipe, and the far
-/// pipe is what `ObjNorm_PipewayCtlr` reads — so making the A-side tile a
-/// portal means marking end **B**.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Portal {
-    /// Which transit room: an index into the four pipe destination tables.
-    pub dest_idx: usize,
-    /// Which end of that room — `true` is the A side, the tables' upper nibble.
-    pub end_a: bool,
-    /// Destination world, 0-based.
-    pub dest_world: u8,
-    /// Where to arrive on that world's map, as `(grid_row, grid_col)`.
-    pub dest_pos: (usize, usize),
-}
-
-/// Overwrite one nibble of a pipe destination table byte, leaving the other end
-/// alone. Upper nibble is end A, lower is end B — the engine's own convention.
-fn write_dest_nibble(rom: &mut Rom, off: usize, end_a: bool, value: u8) {
-    let byte = rom.read_byte(off);
-    let merged = if end_a { (value << 4) | (byte & 0x0F) } else { (byte & 0xF0) | (value & 0x0F) };
-    rom.write_byte(off, merged);
-}
 
 /// Write the six arrival tables: one row per portal id, whatever reached it.
 ///
@@ -586,27 +465,11 @@ fn write_arrival_tables(rom: &mut Rom, rows: &[(u8, (usize, usize))]) {
     rom.write_range(FS_PORTAL_ARRIVAL + PORTAL_TABLE_OFF, &tables);
 }
 
-/// Install the pipe portals: the two hooks and the destination-table marks.
-fn apply_portals(rom: &mut Rom, portals: &[Portal]) {
-    for (id, portal) in portals.iter().enumerate() {
-        // Mark the destination itself, so the pipe announces what it is.
-        write_dest_nibble(rom, PIPE_MAP_Y + portal.dest_idx, portal.end_a, PORTAL_ROW_MARK);
-        write_dest_nibble(rom, PIPE_MAP_XHI + portal.dest_idx, portal.end_a, id as u8);
-    }
-
-    let mut hook = [0xEA_u8; EXIT_HOOK_LEN];
-    hook[0] = 0x20; // JSR
-    hook[1] = PORTAL_EXIT_CPU as u8;
-    hook[2] = (PORTAL_EXIT_CPU >> 8) as u8;
-    rom.write_range(EXIT_HOOK_OFFSET, &hook);
-    rom.write_range(FS_PORTAL_EXIT, &PORTAL_EXIT);
-}
-
 /// Replace `$84A0`'s `JSR Map_Init` with the call to [`STASH_ARRIVAL`].
 ///
 /// **Every arrival needs this, whichever mechanism raised the flag.** It used
-/// to live inside [`apply_portals`], which meant a ROM with telepads and no
-/// pipe portals never installed it: the pad raised `ARRIVAL_FLAG`, nothing
+/// to live inside the pipe portal's installer, which meant a ROM with telepads
+/// and no portals never installed it: the pad raised `ARRIVAL_FLAG`, nothing
 /// resolved the id, `World_Num` never changed — so the "teleport" landed you in
 /// the world you left — and [`RESTORE_ARRIVAL`] then wrote the untouched,
 /// reset-cleared arrival bytes into all ten position variables, parking the
@@ -682,7 +545,7 @@ const WORLD_MAP_XHI: u8 = 0x77;
 const WORLD_MAP_X: u8 = 0x79;
 
 /// Offset of the pad key tables inside [`PAD_ENTER`].
-const PAD_TABLE_OFF: usize = 66;
+pub(crate) const PAD_TABLE_OFF: usize = 66;
 
 /// Three parallel key tables, sixteen rows — one per shared arrival id. A row
 /// says "a pad standing here uses this id", so the id *is* the row index and no
@@ -903,7 +766,7 @@ mod asm_checks {
     fn the_wipe_site_calls_the_arrival_restore() {
         let Some(rom) = load_vanilla() else { return };
         let mut patched = rom.clone();
-        apply(&mut patched, &[], &[]);
+        apply(&mut patched, &[]);
         let wipe = patched.read_range(WIPE_OFFSET, WIPE_LEN);
         assert_eq!(wipe[3], 0x20, "the arrival restore must be called, not fallen into");
         assert_eq!(
@@ -937,11 +800,6 @@ mod asm_checks {
         ] {
             assert!(written.contains(&addr), "restore never writes {name} (${addr:04X})");
         }
-    }
-
-    #[test]
-    fn portal_exit_is_well_formed() {
-        asm::check(&PORTAL_EXIT).allocation(FS_PORTAL_EXIT).origin(PORTAL_EXIT_CPU).assert_ok();
     }
 
     /// The stash and its six tables share one allocation, so the check has to
@@ -995,154 +853,6 @@ mod asm_checks {
                 "{name} at ${got:04X} is outside the tables (${first:04X}-${last:04X})"
             );
         }
-    }
-
-    /// Both hooks displace whole instructions, and each replacement carries on
-    /// where the original left off: the exit hook replays its two, and the
-    /// stash calls the `Map_Init` it displaced.
-    #[test]
-    fn portal_hooks_displace_whole_instructions() {
-        let Some(rom) = load_vanilla() else { return };
-        assert_eq!(
-            rom.read_range(EXIT_HOOK_OFFSET, EXIT_HOOK_LEN),
-            EXIT_HOOK_VANILLA,
-            "PRG030_9097 has moved"
-        );
-        assert_eq!(
-            PORTAL_EXIT[29..34],
-            EXIT_HOOK_VANILLA,
-            "the ordinary-exit path must replay what the hook overwrote"
-        );
-
-        let call = rom.read_range(MAP_INIT_CALL_OFFSET, MAP_INIT_CALL_LEN);
-        assert_eq!(
-            call,
-            [0x20, MAP_INIT_CPU as u8, (MAP_INIT_CPU >> 8) as u8],
-            "$84AD is not the JSR Map_Init this trampoline replaces"
-        );
-        assert_eq!(
-            STASH_ARRIVAL[48..51],
-            [0x4C, MAP_INIT_CPU as u8, (MAP_INIT_CPU >> 8) as u8],
-            "the stash must still call the Map_Init it displaced"
-        );
-
-        let mut jsr = [0xEA_u8; EXIT_HOOK_LEN];
-        jsr[0] = 0x20;
-        jsr[1] = PORTAL_EXIT_CPU as u8;
-        jsr[2] = (PORTAL_EXIT_CPU >> 8) as u8;
-        asm::check(&PORTAL_EXIT)
-            .allocation(FS_PORTAL_EXIT)
-            .origin(PORTAL_EXIT_CPU)
-            .hook(&EXIT_HOOK_VANILLA, 0, &jsr)
-            .assert_ok();
-    }
-
-    /// A portal's destination and arrival land in the six tables, at the id
-    /// the pipe carries — and the pipe itself carries the marker and that id.
-    ///
-    /// Checked through `apply`, not against the encoder, because the failure
-    /// this guards against is the two halves disagreeing: a table row the
-    /// console reads at an id no pipe ever produces is invisible to any test
-    /// that only looks at one side.
-    #[test]
-    fn a_portal_writes_its_table_row_and_marks_its_pipe() {
-        let Some(rom) = load_vanilla() else { return };
-
-        // Two rooms, two ends, so the nibble merge is exercised in both
-        // directions; and a third arrival far enough right to set the camera's
-        // centre flag, which is the only case that distinguishes the two halves
-        // of the scroll nibble.
-        let portals = [
-            Portal { dest_idx: 1, end_a: false, dest_world: 2, dest_pos: (4, 9) },
-            Portal { dest_idx: 12, end_a: true, dest_world: 7, dest_pos: (0, 30) },
-            Portal { dest_idx: 3, end_a: false, dest_world: 2, dest_pos: (3, 14) },
-        ];
-        let mut patched = rom.clone();
-        apply(&mut patched, &portals, &[]);
-
-        let base = FS_PORTAL_ARRIVAL + PORTAL_TABLE_OFF;
-        let cell = |t: usize, id: usize| patched.read_byte(base + t * PORTAL_MAX + id);
-
-        // id 0: World 3 (0-based 2), grid (4, 9) -> screen 0, col 9, row nib 6.
-        assert_eq!(cell(0, 0), 2, "dest world");
-        assert_eq!(cell(1, 0), 0x60, "Map_Entered_Y = (row + 2) << 4");
-        assert_eq!(cell(2, 0), 0, "Map_Entered_XHi = screen");
-        assert_eq!(cell(3, 0), 0x90, "Map_Entered_X = col << 4");
-
-        // id 1: World 8, grid (0, 30) -> screen 1, col 14, row nib 2. Column 14
-        // is 224px in, past the pan-right trigger — so a smooth-scrolling world
-        // would centre the camera here and W8 must not, because its screens
-        // snap. That is the only shape in which the discrete rule is visible.
-        assert_eq!(cell(0, 1), 7, "dest world");
-        assert_eq!(cell(1, 1), 0x20, "Map_Entered_Y");
-        assert_eq!(cell(2, 1), 1, "Map_Entered_XHi");
-        assert_eq!(cell(3, 1), 0xE0, "Map_Entered_X");
-        assert_eq!(cell(4, 1), 0x00, "Map_Prev_XOff — never centred in W5/W8");
-        assert_eq!(cell(5, 1), 1, "Map_Prev_XHi = scroll screen");
-
-        // id 2: World 3, grid (3, 14) -> column 14 is 224px in, past the
-        // pan-right trigger, so the camera centres. `ObjNorm_PipewayCtlr`
-        // splits that nibble's bit 3 out to `Map_Prev_XOff` as $80 and leaves
-        // bits 2-0 as the scroll screen — the split has to be pre-done here.
-        assert_eq!(cell(4, 2), 0x80, "Map_Prev_XOff — the centre flag, at bit 7");
-        assert_eq!(cell(5, 2), 0, "Map_Prev_XHi = scroll screen");
-
-        // Unclaimed ids are zeroed, not left as $FF filler.
-        for id in portals.len()..PORTAL_MAX {
-            for t in 0..6 {
-                assert_eq!(cell(t, id), 0, "table {t} id {id} should be zeroed");
-            }
-        }
-
-        // And the pipes announce themselves: marker in the row nibble, id in
-        // the screen nibble, the other end of each byte untouched.
-        let y1 = patched.read_byte(PIPE_MAP_Y + 1);
-        assert_eq!(y1 & 0x0F, PORTAL_ROW_MARK, "dest 1 end B row marker");
-        assert_eq!(y1 >> 4, rom.read_byte(PIPE_MAP_Y + 1) >> 4, "end A must be untouched");
-        assert_eq!(patched.read_byte(PIPE_MAP_XHI + 1) & 0x0F, 0, "dest 1 end B carries id 0");
-
-        let y12 = patched.read_byte(PIPE_MAP_Y + 12);
-        assert_eq!(y12 >> 4, PORTAL_ROW_MARK, "dest 12 end A row marker");
-        assert_eq!(y12 & 0x0F, rom.read_byte(PIPE_MAP_Y + 12) & 0x0F, "end B must be untouched");
-        assert_eq!(patched.read_byte(PIPE_MAP_XHI + 12) >> 4, 1, "dest 12 end A carries id 1");
-    }
-
-    /// The marker has to be a row nibble no real destination can hold, or an
-    /// ordinary pipe teleports. This reads the ROM's own table rather than
-    /// trusting the reasoning.
-    #[test]
-    fn the_portal_marker_is_unreachable_by_a_real_destination() {
-        let Some(rom) = load_vanilla() else { return };
-        for d in 0..24 {
-            let y = rom.read_byte(PIPE_MAP_Y + d);
-            assert_ne!(y >> 4, PORTAL_ROW_MARK, "dest {d} end A already uses the marker row");
-            assert_ne!(y & 0x0F, PORTAL_ROW_MARK, "dest {d} end B already uses the marker row");
-        }
-        // And no map is deep enough to reach it: a row nibble is grid_row + 2,
-        // over a grid that is nine rows tall in every world.
-        assert!(
-            crate::randomize::rom_data::ROWS - 1 + 2 < PORTAL_ROW_MARK as usize,
-            "a world grew tall enough to produce the marker row"
-        );
-    }
-
-    /// Without the flag, neither the level-exit path nor `$84A0`'s call to
-    /// `Map_Init` is touched.
-    #[test]
-    fn portals_are_opt_in() {
-        let Some(rom) = load_vanilla() else { return };
-        let mut patched = rom.clone();
-        apply(&mut patched, &[], &[]);
-        assert_eq!(
-            patched.read_range(EXIT_HOOK_OFFSET, EXIT_HOOK_LEN),
-            EXIT_HOOK_VANILLA,
-            "the level-exit hook must not be installed unless asked for"
-        );
-        assert_eq!(
-            patched.read_range(MAP_INIT_CALL_OFFSET, MAP_INIT_CALL_LEN),
-            [0x20, MAP_INIT_CPU as u8, (MAP_INIT_CPU >> 8) as u8],
-            "Map_Init must still be called directly unless asked for"
-        );
     }
 
     #[test]
@@ -1211,37 +921,41 @@ mod asm_checks {
         );
     }
 
-    /// **A telepad costs no transit room.** That is the entire reason to prefer
-    /// it over a portal pipe, so it is asserted rather than assumed: the four
-    /// pipe destination tables must come out byte-identical to vanilla.
+    /// **Nothing the world maze writes touches the ROM's pipe data.** That was
+    /// the whole reason the pipe portal was retired in favour of pads, so it is
+    /// asserted rather than assumed: all four pipe destination tables and every
+    /// world pointer table must come out byte-identical to vanilla.
     #[test]
-    fn a_telepad_spends_no_pipe_and_no_transit_room() {
+    fn the_maze_leaves_every_pipe_alone() {
         let Some(rom) = load_vanilla() else { return };
         let pads = [
             Telepad { world: 0, dest_world: 4, dest_pos: (6, 6), src_pos: (4, 8) },
             Telepad { world: 4, dest_world: 0, dest_pos: (4, 8), src_pos: (6, 6) },
         ];
         let mut patched = rom.clone();
-        apply(&mut patched, &[], &pads);
+        apply(&mut patched, &pads);
 
+        use crate::randomize::rom_data::{PIPE_MAP_SCRL_XHI, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y};
         for (base, name) in [
             (PIPE_MAP_XHI, "PIPE_MAP_XHI"),
             (PIPE_MAP_Y, "PIPE_MAP_Y"),
-            (crate::randomize::rom_data::PIPE_MAP_X, "PIPE_MAP_X"),
-            (crate::randomize::rom_data::PIPE_MAP_SCRL_XHI, "PIPE_MAP_SCRL_XHI"),
+            (PIPE_MAP_X, "PIPE_MAP_X"),
+            (PIPE_MAP_SCRL_XHI, "PIPE_MAP_SCRL_XHI"),
         ] {
             assert_eq!(
                 patched.read_range(base, 24),
                 rom.read_range(base, 24),
-                "{name} changed — a telepad must not spend a transit room"
+                "{name} changed — a telepad must spend no transit room"
             );
         }
-        // And the pipe portal's own level-exit hook is not installed either.
-        assert_eq!(
-            patched.read_range(EXIT_HOOK_OFFSET, EXIT_HOOK_LEN),
-            EXIT_HOOK_VANILLA,
-            "the level-exit hook belongs to pipe portals, not pads"
-        );
+        for world in &crate::randomize::rom_data::WORLDS {
+            let n = world.entry_count * 5;
+            assert_eq!(
+                patched.read_range(world.rowtype_offset, n),
+                rom.read_range(world.rowtype_offset, n),
+                "a world pointer table changed — a telepad repoints nothing"
+            );
+        }
 
         // The key tables describe where each pad stands, row index = arrival id.
         let table = FS_PAD_ENTER + PAD_TABLE_OFF;
@@ -1254,83 +968,37 @@ mod asm_checks {
         for row in 2..PORTAL_MAX {
             assert_eq!(patched.read_byte(table + row), 0xFF, "row {row} is unclaimed");
         }
-
-        // And those ids land where the pads aim.
-        let arrivals = FS_PORTAL_ARRIVAL + PORTAL_TABLE_OFF;
-        assert_eq!(patched.read_byte(arrivals), 4, "id 0 -> W5");
-        assert_eq!(patched.read_byte(arrivals + 1), 0, "id 1 -> W1");
     }
 
-    /// Pipe portals and pads share one sixteen-row arrival table, and the pads
-    /// take the ids after the portals. Getting the offset wrong sends a pad to
-    /// a pipe's destination, which is a plausible-looking wrong answer.
-    #[test]
-    fn pads_take_the_ids_after_the_portals() {
-        let Some(rom) = load_vanilla() else { return };
-        let portals = [Portal { dest_idx: 1, end_a: false, dest_world: 2, dest_pos: (4, 9) }];
-        let pads = [Telepad { world: 0, dest_world: 5, dest_pos: (3, 7), src_pos: (4, 8) }];
-        let mut patched = rom.clone();
-        apply(&mut patched, &portals, &pads);
-
-        let arrivals = FS_PORTAL_ARRIVAL + PORTAL_TABLE_OFF;
-        assert_eq!(patched.read_byte(arrivals), 2, "id 0 is the portal's");
-        assert_eq!(patched.read_byte(arrivals + 1), 5, "id 1 is the pad's");
-        assert_eq!(
-            patched.read_byte(FS_PAD_ENTER + PAD_TABLE_OFF),
-            0xFF,
-            "row 0 belongs to the portal's id and must stay unclaimed"
-        );
-        assert_eq!(
-            patched.read_byte(FS_PAD_ENTER + PAD_TABLE_OFF + 1),
-            0,
-            "the pad must occupy row 1, matching arrival id 1"
-        );
-    }
-
-    /// **Every mechanism that raises `ARRIVAL_FLAG` needs the `Map_Init`
-    /// trampoline**, and nothing that does not raise it should get one.
+    /// **A pad needs the `Map_Init` trampoline**, and without pads nothing
+    /// should install one.
     ///
-    /// The trampoline used to be written inside `apply_portals`, so a ROM with
-    /// telepads and no pipe portals never installed it: the pad raised the
-    /// flag, `STASH_ARRIVAL` never ran, `World_Num` never changed — the
-    /// teleport landed you in the world you left — and `RESTORE_ARRIVAL` then
-    /// wrote the reset-cleared arrival bytes into all ten position variables,
-    /// parking the player off the map. Found on hardware, by walking into a
-    /// World 2 pad and arriving in World 2's top corner with nowhere to go.
-    ///
-    /// The old tests could not see it: one asserted the *pipe* hook was absent
-    /// for a pad-only ROM, which was true and beside the point. A shared
-    /// prerequisite filed under one caller is invisible to per-caller tests.
+    /// The trampoline is what resolves the arrival id and sets `World_Num`. It
+    /// used to be written inside the pipe portal's installer, so a ROM with
+    /// telepads and no portals never got it: the pad raised `ARRIVAL_FLAG`,
+    /// nothing resolved the id, `World_Num` never changed — the teleport landed
+    /// you in the world you left — and `RESTORE_ARRIVAL` then wrote the
+    /// reset-cleared arrival bytes into all ten position variables, parking the
+    /// player off the map. Found on hardware.
     #[test]
-    fn every_arrival_mechanism_installs_the_map_init_trampoline() {
+    fn a_telepad_installs_the_map_init_trampoline() {
         let Some(rom) = load_vanilla() else { return };
-        let vanilla_call = [0x20, MAP_INIT_CPU as u8, (MAP_INIT_CPU >> 8) as u8];
-        let trampoline = [0x20, STASH_ARRIVAL_CPU as u8, (STASH_ARRIVAL_CPU >> 8) as u8];
-
-        let portal = Portal { dest_idx: 1, end_a: false, dest_world: 2, dest_pos: (4, 9) };
         let pad = Telepad { world: 1, dest_world: 6, dest_pos: (5, 12), src_pos: (0, 4) };
 
-        for (what, portals, pads) in [
-            ("pipe portals only", &[portal][..], &[][..]),
-            ("telepads only", &[][..], &[pad][..]),
-            ("both", &[portal][..], &[pad][..]),
-        ] {
-            let mut patched = rom.clone();
-            apply(&mut patched, portals, pads);
-            assert_eq!(
-                patched.read_range(MAP_INIT_CALL_OFFSET, MAP_INIT_CALL_LEN),
-                trampoline,
-                "{what}: $84AD must call STASH_ARRIVAL, or nothing resolves the arrival id"
-            );
-        }
-
-        // And with neither, `Map_Init` is still called directly.
         let mut patched = rom.clone();
-        apply(&mut patched, &[], &[]);
+        apply(&mut patched, &[pad]);
         assert_eq!(
             patched.read_range(MAP_INIT_CALL_OFFSET, MAP_INIT_CALL_LEN),
-            vanilla_call,
-            "no arrivals: Map_Init must still be called directly"
+            [0x20, STASH_ARRIVAL_CPU as u8, (STASH_ARRIVAL_CPU >> 8) as u8],
+            "$84AD must call STASH_ARRIVAL, or nothing resolves the arrival id"
+        );
+
+        let mut patched = rom.clone();
+        apply(&mut patched, &[]);
+        assert_eq!(
+            patched.read_range(MAP_INIT_CALL_OFFSET, MAP_INIT_CALL_LEN),
+            [0x20, MAP_INIT_CPU as u8, (MAP_INIT_CPU >> 8) as u8],
+            "no pads: Map_Init must still be called directly"
         );
     }
 
@@ -1339,7 +1007,7 @@ mod asm_checks {
     fn telepads_are_opt_in() {
         let Some(rom) = load_vanilla() else { return };
         let mut patched = rom.clone();
-        apply(&mut patched, &[], &[]);
+        apply(&mut patched, &[]);
         assert_eq!(
             patched.read_range(PAD_HOOK_OFFSET, PAD_HOOK_LEN),
             PAD_HOOK_VANILLA,
@@ -1411,7 +1079,7 @@ mod asm_checks {
             let pad =
                 Telepad { world: world as u8, dest_world: 0, dest_pos: (2, 2), src_pos: start };
             let mut patched = rom.clone();
-            apply(&mut patched, &[], &[pad]);
+            apply(&mut patched, &[pad]);
             let key = patched.read_byte(FS_PAD_ENTER + PAD_TABLE_OFF + PORTAL_MAX);
             let engine = rom.read_byte(crate::randomize::rom_data::MAP_Y_STARTS_OFF + world);
 

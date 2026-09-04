@@ -15,13 +15,13 @@ use smb3_rs::testrom::{self, Base, EnemyOverride, Placement, TestRomSpec};
 const DEFAULT_ROM: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";
 const DEFAULT_PRACTICE_IPS: &str = "patches/smb3practice_SE.ips";
 
-/// Parse a `SRC:DST` portal argument, both worlds 1-8.
+/// Parse an `A:B` world-pair argument, both worlds 1-8.
 ///
 /// `>` reads better and is accepted, but `:` is the documented spelling because
 /// an unquoted `--portal 2>5` is a shell redirect, not an argument.
-fn parse_portal(s: &str) -> Result<(u8, u8), String> {
+fn parse_world_pair(s: &str) -> Result<(u8, u8), String> {
     let (src, dst) =
-        s.split_once([':', '>']).ok_or_else(|| format!("'{s}': expected SRC:DST, e.g. 2:5"))?;
+        s.split_once([':', '>']).ok_or_else(|| format!("'{s}': expected A:B, e.g. 2:5"))?;
     let world = |t: &str| -> Result<u8, String> {
         t.trim()
             .trim_start_matches(['w', 'W'])
@@ -116,17 +116,10 @@ struct Cli {
     #[arg(long)]
     world_persist: bool,
 
-    /// World-maze POC: a cross-world portal, as SRC:DST (e.g. --portal 2:5).
-    /// Repeatable, and repeating a source world claims another of its pipes.
-    /// The build report says which pipe each one landed on. Implies
-    /// --world-persist.
-    #[arg(long, value_name = "SRC:DST", value_parser = parse_portal)]
-    portal: Vec<(u8, u8)>,
-
     /// World-maze POC: a telepad pair, as A:B (e.g. --telepad 1:5). Stands on
     /// each world's first spade panel and teleports straight across with no
     /// transit room. Repeatable. Implies --world-persist.
-    #[arg(long, value_name = "A:B", value_parser = parse_portal)]
+    #[arg(long, value_name = "A:B", value_parser = parse_world_pair)]
     telepad: Vec<(u8, u8)>,
 
     /// Leave lock tiles in place (default: removed).
@@ -449,7 +442,6 @@ fn main() {
         always_on_patches: cli.patches,
         walk_skip_conflicts: cli.walk_skip_conflicts,
         world_persist: cli.world_persist,
-        portals: cli.portal.clone(),
         telepads: cli.telepad.clone(),
         remove_locks: !cli.keep_locks,
         remove_gaps: !cli.keep_gaps,
