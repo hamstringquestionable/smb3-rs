@@ -196,6 +196,19 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["world_persist"],
         "world_persist POC: arrival stash, Map_Init trampoline (48 reserved, 38 used)",
     ),
+    fs(
+        0x156DC,
+        128,
+        &["completion_bits"],
+        "world-maze: derive a world's completion-bit stencil from its map grid",
+    ),
+    fs(
+        0x1575C,
+        48,
+        &["completion_bits"],
+        "world-maze: the engine's own completable-tile test, as a subroutine",
+    ),
+    fs(0x1578C, 8, &["completion_bits"], "world-maze: map columns per world"),
     fs(0x15DF0, 35, &["fix_canoe_softlock"], "canoe_fix: death respawn position save"),
     fs(0x15E13, 162, &["map_warp"], "2P Start+Select warp-to-partner routine"),
     fs(0x15EB5, 151, &["canoe_summon"], "A-on-dock call-the-boat routine + offset tables"),
@@ -410,6 +423,18 @@ pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x1566C; // 64 reserved, 56 used
 pub(crate) const FS_STASH_ARRIVAL: usize = 0x156AC; // 48 reserved, 38 used
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_PORTAL_EXIT: usize = 0x3DFE6; // 40 reserved, 32 used
+
+// World-maze phase 1: the completion-bit stencil, derived on the console.
+// The $FF run FS_FX_SCREEN_CHECK opened continues past FS_STASH_ARRIVAL to
+// 0x15810 unbroken, and `prg010.asm` ends with "Rest of ROM bank was empty"
+// after the DMC samples, so nothing reads it. PRG010 is mapped at $C000 for
+// the whole world-map init, which is where these run.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const FS_MASK_BUILD: usize = 0x156DC; // 128 reserved
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const FS_IS_COMPLETABLE: usize = 0x1575C; // 48 reserved
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const FS_WORLD_COLS: usize = 0x1578C; // 8 reserved
 
 pub(crate) const FS_CANOE_RESPAWN: usize = 0x15DF0; // 35 bytes
 pub(crate) const FS_MAP_WARP: usize = 0x15E13; // 162 bytes (CPU $DE03)
@@ -1002,6 +1027,9 @@ mod free_space_tests {
             (FS_RESTORE_ARRIVAL, "FS_RESTORE_ARRIVAL"),
             (FS_STASH_ARRIVAL, "FS_STASH_ARRIVAL"),
             (FS_PORTAL_EXIT, "FS_PORTAL_EXIT"),
+            (FS_MASK_BUILD, "FS_MASK_BUILD"),
+            (FS_IS_COMPLETABLE, "FS_IS_COMPLETABLE"),
+            (FS_WORLD_COLS, "FS_WORLD_COLS"),
             (FS_CANOE_RESPAWN, "FS_CANOE_RESPAWN"),
             (FS_CANOE_SUMMON, "FS_CANOE_SUMMON"),
             (FS_CANOE_BACKUP, "FS_CANOE_BACKUP"),
