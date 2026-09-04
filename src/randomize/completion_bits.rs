@@ -305,20 +305,38 @@ const MAP_TILE_LAYOUTS: u16 = 0xA598;
 const ZP_GRID: u8 = 0x00;
 /// `Temp_Var3` — the mask byte being assembled for the current column.
 const ZP_MASK: u8 = 0x02;
-/// `Temp_Var4` — the row bit, walking `$80` down to `$01`.
-const ZP_BIT: u8 = 0x03;
-/// `Temp_Var5` — the tile, stashed so the threshold test can index on its top
-/// two bits and still compare against the whole byte.
-const ZP_TILE: u8 = 0x04;
-
-// The transfer routines run after the stencil is built and reuse the same five
-// bytes for their own purposes. Named separately because they mean different
-// things, aliased deliberately because there is no sixth safe byte.
 
 /// `Temp_Var1`/`Temp_Var2` — the `Map_Completions` half being transferred.
+/// Reuses the grid pointer's bytes once the stencil is built; indirect-indexed
+/// addressing has no option but zero page.
 const ZP_SRC: u8 = 0x00;
-/// `Temp_Var5` — the byte of packed bits in flight.
-const ZP_ACC: u8 = 0x04;
+
+// --- SRAM working set ----------------------------------------------------
+//
+// **These three would be `Temp_Var4`/`Temp_Var5` if the NMI preserved them,
+// and it does not.** It pushes and pulls exactly `Temp_Var1`, `Temp_Var2` and
+// `Temp_Var3` around every frame and leaves the rest to whoever was using them.
+// Nothing in vanilla holds `Temp_Var4`/`Temp_Var5` across a frame boundary —
+// but these routines run tens of thousands of cycles, so the NMI lands inside
+// their loops several times over.
+//
+// `BIT` is the row/bit walker, and in `MASK_BUILD` it is also the *loop
+// terminator*; `ACC` is the packed byte in flight. Losing either mid-loop
+// yields a silently wrong stencil or a shifted bit stream, on hardware only —
+// an emulated CPU with no NMI reproduces none of it, which is why every test
+// passed while three playtests failed.
+//
+// The two-world POC was immune by accident: its swap used no zero page at all,
+// only `A`/`X`/`Y` and absolute-indexed addressing. See [[zero_page_not_free]].
+// The extra byte per access is the price of that immunity.
+
+/// The row bit, walking `$80` down to `$01`.
+const BIT: u16 = 0x7ABE;
+/// The byte of packed bits in flight.
+const ACC: u16 = 0x7ABF;
+/// The tile, stashed so the threshold test can index on its top two bits and
+/// still compare against the whole byte.
+const TILE: u16 = 0x7AC0;
 
 /// Map columns per world. Fixed ROM geometry — one, two, three or four screens
 /// of sixteen — and not something the randomizer moves, so it is a constant
@@ -343,35 +361,32 @@ pub(crate) const WORLD_COLS: [u8; 8] = [16, 32, 48, 32, 32, 48, 32, 64];
 /// `A` is the tile on entry and is destroyed; `Y` is preserved, which is what
 /// lets the caller keep its row offset across the call.
 #[rustfmt::skip]
-const IS_COMPLETABLE: [u8; 37] = [
-    // --- Map_Completable_Tiles: marked with an M/L outright ---
+const IS_COMPLETABLE: [u8; 39] = [
     0xA2, 0x04,                             //  0: LDX #4
     0xDD, MAP_COMPLETABLE_TILES as u8,
-          (MAP_COMPLETABLE_TILES >> 8) as u8, //  2: CMP Map_Completable_Tiles,X   ; loop
-    0xF0, 0x1C,                             //  5: BEQ +28 -> yes
+          (MAP_COMPLETABLE_TILES >> 8) as u8,     //  2: CMP Map_Completable_Tiles,X   ; loop
+    0xF0, 0x1E,                             //  5: BEQ +30 -> yes
     0xCA,                                   //  7: DEX
     0x10, 0xF8,                             //  8: BPL -8
-    // --- Map_Removable_Tiles: rocks, locks, forts, the water gap ---
     0xA2, 0x07,                             // 10: LDX #7
     0xDD, MAP_REMOVABLE_TILES as u8,
-          (MAP_REMOVABLE_TILES >> 8) as u8, // 12: CMP Map_Removable_Tiles,X      ; loop
-    0xF0, 0x12,                             // 15: BEQ +18 -> yes
+          (MAP_REMOVABLE_TILES >> 8) as u8,       // 12: CMP Map_Removable_Tiles,X     ; loop
+    0xF0, 0x14,                             // 15: BEQ +20 -> yes
     0xCA,                                   // 17: DEX
     0x10, 0xF8,                             // 18: BPL -8
-    // --- Tile_Attributes_TS0: "enterable" by page and value ---
-    0x85, ZP_TILE,                          // 20: STA ZP_TILE
-    0x29, 0xC0,                             // 22: AND #$C0
-    0x18,                                   // 24: CLC
-    0x2A,                                   // 25: ROL A
+    0x8D, TILE as u8, (TILE >> 8) as u8,        // 20: STA TILE
+    0x29, 0xC0,                             // 23: AND #$C0
+    0x18,                                   // 25: CLC
     0x2A,                                   // 26: ROL A
-    0x2A,                                   // 27: ROL A       ; A = tile >> 6
-    0xAA,                                   // 28: TAX
-    0xA5, ZP_TILE,                          // 29: LDA ZP_TILE
+    0x2A,                                   // 27: ROL A
+    0x2A,                                   // 28: ROL A       ; A = tile >> 6
+    0xAA,                                   // 29: TAX
+    0xAD, TILE as u8, (TILE >> 8) as u8,        // 30: LDA TILE
     0xDD, TILE_ATTRIBUTES_TS0 as u8,
-          (TILE_ATTRIBUTES_TS0 >> 8) as u8, // 31: CMP Tile_Attributes_TS0,X
-    0x60,                                   // 34: RTS         ; carry IS the answer
-    0x38,                                   // 35: SEC         ; yes
-    0x60,                                   // 36: RTS
+          (TILE_ATTRIBUTES_TS0 >> 8) as u8,       // 33: CMP Tile_Attributes_TS0,X
+    0x60,                                   // 36: RTS         ; carry IS the answer
+    0x38,                                   // 37: SEC         ; yes
+    0x60,                                   // 38: RTS
 ];
 
 /// Write one world's stencil — one mask byte per map column, in
@@ -389,80 +404,72 @@ const IS_COMPLETABLE: [u8; 37] = [
 /// sixteenth column, and the output index is just a running count.
 ///
 /// **Rows 7 and 8 share bit `$01`.** The row loop runs eight times because
-/// `LSR ZP_BIT` reaches zero after the eighth, and row 8 is then handled on its
+/// `LSR BIT` reaches zero after the eighth, and row 8 is then handled on its
 /// own with `ORA #$01` — the fold [`world_mask`] does with `row.min(7)`.
 #[rustfmt::skip]
-const MASK_BUILD: [u8; 110] = [
-    // --- point ZP_GRID at world A's grid, via Map_Tile_Layouts ---
+const MASK_BUILD: [u8; 113] = [
     0x0A,                                   //  0: ASL A               ; world * 2
     0xAA,                                   //  1: TAX
     0xBD, MAP_TILE_LAYOUTS as u8,
-          (MAP_TILE_LAYOUTS >> 8) as u8,    //  2: LDA Map_Tile_Layouts,X
+          (MAP_TILE_LAYOUTS >> 8) as u8,          //  2: LDA Map_Tile_Layouts,X
     0x85, ZP_GRID,                          //  5: STA ZP_GRID
     0xBD, (MAP_TILE_LAYOUTS + 1) as u8,
-          ((MAP_TILE_LAYOUTS + 1) >> 8) as u8, //  7: LDA Map_Tile_Layouts+1,X
+          ((MAP_TILE_LAYOUTS + 1) >> 8) as u8,     //  7: LDA Map_Tile_Layouts+1,X
     0x85, ZP_GRID + 1,                      // 10: STA ZP_GRID+1
     0x8A,                                   // 12: TXA
     0x4A,                                   // 13: LSR A               ; world again
     0xAA,                                   // 14: TAX
-    0xBD, WORLD_COLS_CPU as u8,
-          (WORLD_COLS_CPU >> 8) as u8,      // 15: LDA WorldCols,X
-    0x8D, COLS_LEFT as u8, (COLS_LEFT >> 8) as u8, // 18: STA COLS_LEFT
+    0xBD, WORLD_COLS_CPU as u8, (WORLD_COLS_CPU >> 8) as u8, // 15: LDA WorldCols,X
+    0x8D, COLS_LEFT as u8, (COLS_LEFT >> 8) as u8,           // 18: STA COLS_LEFT
     0xA9, 0x00,                             // 21: LDA #$00
-    0x8D, COL_IDX as u8, (COL_IDX >> 8) as u8,     // 23: STA COL_IDX
+    0x8D, COL_IDX as u8, (COL_IDX >> 8) as u8,               // 23: STA COL_IDX
 
-    // --- one column ---
     0xA9, 0x80,                             // 26: LDA #$80            ; col_loop
-    0x85, ZP_BIT,                           // 28: STA ZP_BIT
-    0xA9, 0x00,                             // 30: LDA #$00
-    0x85, ZP_MASK,                          // 32: STA ZP_MASK
-    0xAD, COL_IDX as u8, (COL_IDX >> 8) as u8, // 34: LDA COL_IDX
-    0x29, 0x0F,                             // 37: AND #$0F            ; column in screen
-    0xA8,                                   // 39: TAY                 ; Y = row 0 offset
+    0x8D, BIT as u8, (BIT >> 8) as u8,                       // 28: STA BIT
+    0xA9, 0x00,                             // 31: LDA #$00
+    0x85, ZP_MASK,                          // 33: STA ZP_MASK
+    0xAD, COL_IDX as u8, (COL_IDX >> 8) as u8,               // 35: LDA COL_IDX
+    0x29, 0x0F,                             // 38: AND #$0F            ; column in screen
+    0xA8,                                   // 40: TAY                 ; Y = row 0 offset
 
-    // --- rows 0..7, one bit each ---
-    0xB1, ZP_GRID,                          // 40: LDA (ZP_GRID),Y     ; row_loop
+    0xB1, ZP_GRID,                          // 41: LDA (ZP_GRID),Y     ; row_loop
     0x20, IS_COMPLETABLE_CPU as u8,
-          (IS_COMPLETABLE_CPU >> 8) as u8,  // 42: JSR IsCompletable
-    0x90, 0x06,                             // 45: BCC +6
-    0xA5, ZP_MASK,                          // 47: LDA ZP_MASK
-    0x05, ZP_BIT,                           // 49: ORA ZP_BIT
-    0x85, ZP_MASK,                          // 51: STA ZP_MASK
-    0x98,                                   // 53: TYA
-    0x18,                                   // 54: CLC
-    0x69, 0x10,                             // 55: ADC #16             ; next row
-    0xA8,                                   // 57: TAY
-    0x46, ZP_BIT,                           // 58: LSR ZP_BIT
-    0xD0, 0xEA,                             // 60: BNE -22 -> row_loop ; 8 rows, then 0
+          (IS_COMPLETABLE_CPU >> 8) as u8,        // 43: JSR IsCompletable
+    0x90, 0x07,                             // 46: BCC +7
+    0xA5, ZP_MASK,                          // 48: LDA ZP_MASK
+    0x0D, BIT as u8, (BIT >> 8) as u8,                       // 50: ORA BIT
+    0x85, ZP_MASK,                          // 53: STA ZP_MASK
+    0x98,                                   // 55: TYA
+    0x18,                                   // 56: CLC
+    0x69, 0x10,                             // 57: ADC #16             ; next row
+    0xA8,                                   // 59: TAY
+    0x4E, BIT as u8, (BIT >> 8) as u8,                       // 60: LSR BIT
+    0xD0, 0xE8,                             // 63: BNE -24 -> row_loop ; 8 rows, then 0
 
-    // --- row 8, sharing row 7's bit ---
-    0xB1, ZP_GRID,                          // 62: LDA (ZP_GRID),Y     ; Y = col + 128
+    0xB1, ZP_GRID,                          // 65: LDA (ZP_GRID),Y     ; Y = col + 128
     0x20, IS_COMPLETABLE_CPU as u8,
-          (IS_COMPLETABLE_CPU >> 8) as u8,  // 64: JSR IsCompletable
-    0x90, 0x06,                             // 67: BCC +6
-    0xA5, ZP_MASK,                          // 69: LDA ZP_MASK
-    0x09, 0x01,                             // 71: ORA #$01
-    0x85, ZP_MASK,                          // 73: STA ZP_MASK
+          (IS_COMPLETABLE_CPU >> 8) as u8,        // 67: JSR IsCompletable
+    0x90, 0x06,                             // 70: BCC +6
+    0xA5, ZP_MASK,                          // 72: LDA ZP_MASK
+    0x09, 0x01,                             // 74: ORA #$01
+    0x85, ZP_MASK,                          // 76: STA ZP_MASK
 
-    // --- store it, and move to the next column ---
-    0xAE, COL_IDX as u8, (COL_IDX >> 8) as u8, // 75: LDX COL_IDX
-    0xA5, ZP_MASK,                          // 78: LDA ZP_MASK
-    0x9D, MASK_SCRATCH as u8,
-          (MASK_SCRATCH >> 8) as u8,        // 80: STA MASK_SCRATCH,X
-    0xEE, COL_IDX as u8, (COL_IDX >> 8) as u8, // 83: INC COL_IDX
-    0xAD, COL_IDX as u8, (COL_IDX >> 8) as u8, // 86: LDA COL_IDX
-    0x29, 0x0F,                             // 89: AND #$0F
-    0xD0, 0x0B,                             // 91: BNE +11 -> next     ; still this screen
-    // sixteenth column: the next screen starts 144 bytes on
-    0xA5, ZP_GRID,                          // 93: LDA ZP_GRID
-    0x18,                                   // 95: CLC
-    0x69, 0x90,                             // 96: ADC #144
-    0x85, ZP_GRID,                          // 98: STA ZP_GRID
-    0x90, 0x02,                             // 100: BCC +2
-    0xE6, ZP_GRID + 1,                      // 102: INC ZP_GRID+1
-    0xCE, COLS_LEFT as u8, (COLS_LEFT >> 8) as u8, // 104: DEC COLS_LEFT   ; next
-    0xD0, 0xAD,                             // 107: BNE -83 -> col_loop
-    0x60,                                   // 109: RTS
+    0xAE, COL_IDX as u8, (COL_IDX >> 8) as u8,               // 78: LDX COL_IDX
+    0xA5, ZP_MASK,                          // 81: LDA ZP_MASK
+    0x9D, MASK_SCRATCH as u8, (MASK_SCRATCH >> 8) as u8,     // 83: STA MASK_SCRATCH,X
+    0xEE, COL_IDX as u8, (COL_IDX >> 8) as u8,               // 86: INC COL_IDX
+    0xAD, COL_IDX as u8, (COL_IDX >> 8) as u8,               // 89: LDA COL_IDX
+    0x29, 0x0F,                             // 92: AND #$0F
+    0xD0, 0x0B,                             // 94: BNE +11 -> next     ; still this screen
+    0xA5, ZP_GRID,                          // 96: LDA ZP_GRID
+    0x18,                                   // 98: CLC
+    0x69, 0x90,                             // 99: ADC #144
+    0x85, ZP_GRID,                          // 101: STA ZP_GRID
+    0x90, 0x02,                             // 103: BCC +2
+    0xE6, ZP_GRID + 1,                      // 105: INC ZP_GRID+1
+    0xCE, COLS_LEFT as u8, (COLS_LEFT >> 8) as u8,           // 107: DEC COLS_LEFT   ; next
+    0xD0, 0xAA,                             // 110: BNE -86 -> col_loop
+    0x60,                                   // 112: RTS
 ];
 
 /// Where a world's packed planes live: Mario's at `PACKED`, the mirror's
@@ -523,57 +530,55 @@ pub(crate) const TRANSITION_FLAG: u16 = 0x7ABD;
 /// outstanding, so [`UNPACK_PLANE`] can read it back with the same
 /// most-significant-first walk and never has to know where the stream stopped.
 #[rustfmt::skip]
-const PACK_PLANE: [u8; 89] = [
+const PACK_PLANE: [u8; 99] = [
     0xAA,                                   //  0: TAX             ; plane byte index
     0xA9, 0x00,                             //  1: LDA #$00
-    0x85, ZP_ACC,                           //  3: STA ZP_ACC
-    0xA9, 0x08,                             //  5: LDA #$08
-    0x8D, BITCNT as u8, (BITCNT >> 8) as u8, //  7: STA BITCNT
-    0xA0, 0x00,                             // 10: LDY #$00        ; column
+    0x8D, ACC as u8, (ACC >> 8) as u8,                       //  3: STA ACC
+    0xA9, 0x08,                             //  6: LDA #$08
+    0x8D, BITCNT as u8, (BITCNT >> 8) as u8,                 //  8: STA BITCNT
+    0xA0, 0x00,                             // 11: LDY #$00        ; column
 
-    0xB9, MASK_SCRATCH as u8,
-          (MASK_SCRATCH >> 8) as u8,        // 12: LDA MASK_SCRATCH,Y   ; col_loop
-    0xF0, 0x2E,                             // 15: BEQ +46 -> nextcol   ; owns nothing
-    0x85, ZP_MASK,                          // 17: STA ZP_MASK
-    0xA9, 0x80,                             // 19: LDA #$80
-    0x85, ZP_BIT,                           // 21: STA ZP_BIT
+    0xB9, MASK_SCRATCH as u8, (MASK_SCRATCH >> 8) as u8,     // 13: LDA MASK_SCRATCH,Y  ; col_loop
+    0xF0, 0x35,                             // 16: BEQ +53 -> nextcol  ; owns nothing
+    0x85, ZP_MASK,                          // 18: STA ZP_MASK
+    0xA9, 0x80,                             // 20: LDA #$80
+    0x8D, BIT as u8, (BIT >> 8) as u8,                       // 22: STA BIT
 
-    0xA5, ZP_MASK,                          // 23: LDA ZP_MASK          ; bit_loop
-    0x25, ZP_BIT,                           // 25: AND ZP_BIT
-    0xF0, 0x1E,                             // 27: BEQ +30 -> nobit     ; not owned
-    0x18,                                   // 29: CLC
-    0xB1, ZP_SRC,                           // 30: LDA (ZP_SRC),Y
-    0x25, ZP_BIT,                           // 32: AND ZP_BIT
-    0xF0, 0x01,                             // 34: BEQ +1               ; leave carry clear
-    0x38,                                   // 36: SEC
-    0x26, ZP_ACC,                           // 37: ROL ZP_ACC           ; shift the bit in
-    0xCE, BITCNT as u8, (BITCNT >> 8) as u8, // 39: DEC BITCNT
-    0xD0, 0x0F,                             // 42: BNE +15 -> nobit     ; byte not full
-    0xA5, ZP_ACC,                           // 44: LDA ZP_ACC
-    0x9D, PACKED as u8, (PACKED >> 8) as u8, // 46: STA PACKED,X
-    0xE8,                                   // 49: INX
-    0xA9, 0x08,                             // 50: LDA #$08
-    0x8D, BITCNT as u8, (BITCNT >> 8) as u8, // 52: STA BITCNT
-    0xA9, 0x00,                             // 55: LDA #$00
-    0x85, ZP_ACC,                           // 57: STA ZP_ACC
+    0xA5, ZP_MASK,                          // 25: LDA ZP_MASK         ; bit_loop
+    0x2D, BIT as u8, (BIT >> 8) as u8,                       // 27: AND BIT
+    0xF0, 0x22,                             // 30: BEQ +34 -> nobit    ; not owned
+    0x18,                                   // 32: CLC
+    0xB1, ZP_SRC,                           // 33: LDA (ZP_SRC),Y
+    0x2D, BIT as u8, (BIT >> 8) as u8,                       // 35: AND BIT
+    0xF0, 0x01,                             // 38: BEQ +1              ; leave carry clear
+    0x38,                                   // 40: SEC
+    0x2E, ACC as u8, (ACC >> 8) as u8,                       // 41: ROL ACC             ; shift it in
+    0xCE, BITCNT as u8, (BITCNT >> 8) as u8,                 // 44: DEC BITCNT
+    0xD0, 0x11,                             // 47: BNE +17 -> nobit    ; byte not full
+    0xAD, ACC as u8, (ACC >> 8) as u8,                       // 49: LDA ACC
+    0x9D, PACKED as u8, (PACKED >> 8) as u8,                 // 52: STA PACKED,X
+    0xE8,                                   // 55: INX
+    0xA9, 0x08,                             // 56: LDA #$08
+    0x8D, BITCNT as u8, (BITCNT >> 8) as u8,                 // 58: STA BITCNT
+    0xA9, 0x00,                             // 61: LDA #$00
+    0x8D, ACC as u8, (ACC >> 8) as u8,                       // 63: STA ACC
 
-    0x46, ZP_BIT,                           // 59: LSR ZP_BIT           ; nobit
-    0xD0, 0xD8,                             // 61: BNE -40 -> bit_loop
+    0x4E, BIT as u8, (BIT >> 8) as u8,                       // 66: LSR BIT             ; nobit
+    0xD0, 0xD2,                             // 69: BNE -46 -> bit_loop
 
-    0xC8,                                   // 63: INY                  ; nextcol
-    0xCC, COL_IDX as u8, (COL_IDX >> 8) as u8, // 64: CPY COL_IDX
-    0xD0, 0xC7,                             // 67: BNE -57 -> col_loop
+    0xC8,                                   // 71: INY                 ; nextcol
+    0xCC, COL_IDX as u8, (COL_IDX >> 8) as u8,               // 72: CPY COL_IDX
+    0xD0, 0xC0,                             // 75: BNE -64 -> col_loop
 
-    // --- the tail: left-align whatever is outstanding and store it ---
-    0xAD, BITCNT as u8, (BITCNT >> 8) as u8, // 69: LDA BITCNT
-    0xC9, 0x08,                             // 72: CMP #$08
-    0xF0, 0x0C,                             // 74: BEQ +12 -> done      ; nothing pending
-    0x06, ZP_ACC,                           // 76: ASL ZP_ACC           ; flush_loop
-    0xCE, BITCNT as u8, (BITCNT >> 8) as u8, // 78: DEC BITCNT
-    0xD0, 0xF9,                             // 81: BNE -7 -> flush_loop
-    0xA5, ZP_ACC,                           // 83: LDA ZP_ACC
-    0x9D, PACKED as u8, (PACKED >> 8) as u8, // 85: STA PACKED,X
-    0x60,                                   // 88: RTS                  ; done
+    0xAD, BITCNT as u8, (BITCNT >> 8) as u8,                 // 77: LDA BITCNT
+    0xC9, 0x08,                             // 80: CMP #$08
+    0xF0, 0x0E,                             // 82: BEQ +14 -> done     ; nothing pending
+    0x0E, ACC as u8, (ACC >> 8) as u8,                       // 84: ASL ACC             ; flush_loop
+    0xCE, BITCNT as u8, (BITCNT >> 8) as u8,                 // 87: DEC BITCNT
+    0xD0, 0xF8,                             // 90: BNE -8 -> flush_loop
+    0xAD, ACC as u8, (ACC >> 8) as u8,                       // 92: LDA ACC
+    0x9D, PACKED as u8, (PACKED >> 8) as u8,                 // 95: STA PACKED,X
+    0x60,                                   // 98: RTS                 ; done
 ];
 
 /// Expand a world's plane back into one `Map_Completions` half.
@@ -590,44 +595,43 @@ const PACK_PLANE: [u8; 89] = [
 /// first byte to be fetched; after that it counts 7 down to 0 across each
 /// byte's eight bits.
 #[rustfmt::skip]
-const UNPACK_PLANE: [u8; 66] = [
+const UNPACK_PLANE: [u8; 72] = [
     0xAA,                                   //  0: TAX             ; plane byte index
     0xA9, 0x00,                             //  1: LDA #$00
-    0x8D, BITCNT as u8, (BITCNT >> 8) as u8, //  3: STA BITCNT      ; forces a fetch
+    0x8D, BITCNT as u8, (BITCNT >> 8) as u8,                 //  3: STA BITCNT   ; forces a fetch
     0xA0, 0x00,                             //  6: LDY #$00        ; column
 
     0xA9, 0x00,                             //  8: LDA #$00        ; col_loop
     0x91, ZP_SRC,                           // 10: STA (ZP_SRC),Y  ; clear it first
-    0xB9, MASK_SCRATCH as u8,
-          (MASK_SCRATCH >> 8) as u8,        // 12: LDA MASK_SCRATCH,Y
-    0xF0, 0x2A,                             // 15: BEQ +42 -> nextcol
+    0xB9, MASK_SCRATCH as u8, (MASK_SCRATCH >> 8) as u8,     // 12: LDA MASK_SCRATCH,Y
+    0xF0, 0x30,                             // 15: BEQ +48 -> nextcol
     0x85, ZP_MASK,                          // 17: STA ZP_MASK
     0xA9, 0x80,                             // 19: LDA #$80
-    0x85, ZP_BIT,                           // 21: STA ZP_BIT
+    0x8D, BIT as u8, (BIT >> 8) as u8,                       // 21: STA BIT
 
-    0xA5, ZP_MASK,                          // 23: LDA ZP_MASK          ; bit_loop
-    0x25, ZP_BIT,                           // 25: AND ZP_BIT
-    0xF0, 0x1A,                             // 27: BEQ +26 -> nobit
-    0xCE, BITCNT as u8, (BITCNT >> 8) as u8, // 29: DEC BITCNT
-    0x10, 0x0B,                             // 32: BPL +11 -> have      ; still loaded
-    0xBD, PACKED as u8, (PACKED >> 8) as u8, // 34: LDA PACKED,X
-    0x85, ZP_ACC,                           // 37: STA ZP_ACC
-    0xE8,                                   // 39: INX
-    0xA9, 0x07,                             // 40: LDA #$07
-    0x8D, BITCNT as u8, (BITCNT >> 8) as u8, // 42: STA BITCNT
-    0x06, ZP_ACC,                           // 45: ASL ZP_ACC           ; have
-    0x90, 0x06,                             // 47: BCC +6 -> nobit
-    0xB1, ZP_SRC,                           // 49: LDA (ZP_SRC),Y
-    0x05, ZP_BIT,                           // 51: ORA ZP_BIT
-    0x91, ZP_SRC,                           // 53: STA (ZP_SRC),Y
+    0xA5, ZP_MASK,                          // 24: LDA ZP_MASK         ; bit_loop
+    0x2D, BIT as u8, (BIT >> 8) as u8,                       // 26: AND BIT
+    0xF0, 0x1D,                             // 29: BEQ +29 -> nobit
+    0xCE, BITCNT as u8, (BITCNT >> 8) as u8,                 // 31: DEC BITCNT
+    0x10, 0x0C,                             // 34: BPL +12 -> have     ; still loaded
+    0xBD, PACKED as u8, (PACKED >> 8) as u8,                 // 36: LDA PACKED,X
+    0x8D, ACC as u8, (ACC >> 8) as u8,                       // 39: STA ACC
+    0xE8,                                   // 42: INX
+    0xA9, 0x07,                             // 43: LDA #$07
+    0x8D, BITCNT as u8, (BITCNT >> 8) as u8,                 // 45: STA BITCNT
+    0x0E, ACC as u8, (ACC >> 8) as u8,                       // 48: ASL ACC             ; have
+    0x90, 0x07,                             // 51: BCC +7 -> nobit
+    0xB1, ZP_SRC,                           // 53: LDA (ZP_SRC),Y
+    0x0D, BIT as u8, (BIT >> 8) as u8,                       // 55: ORA BIT
+    0x91, ZP_SRC,                           // 58: STA (ZP_SRC),Y
 
-    0x46, ZP_BIT,                           // 55: LSR ZP_BIT           ; nobit
-    0xD0, 0xDC,                             // 57: BNE -36 -> bit_loop
+    0x4E, BIT as u8, (BIT >> 8) as u8,                       // 60: LSR BIT             ; nobit
+    0xD0, 0xD7,                             // 63: BNE -41 -> bit_loop
 
-    0xC8,                                   // 59: INY                  ; nextcol
-    0xCC, COL_IDX as u8, (COL_IDX >> 8) as u8, // 60: CPY COL_IDX
-    0xD0, 0xC7,                             // 63: BNE -57 -> col_loop
-    0x60,                                   // 65: RTS
+    0xC8,                                   // 65: INY                 ; nextcol
+    0xCC, COL_IDX as u8, (COL_IDX >> 8) as u8,               // 66: CPY COL_IDX
+    0xD0, 0xC1,                             // 69: BNE -63 -> col_loop
+    0x60,                                   // 71: RTS
 ];
 
 // --- Engine symbols outside PRG012 ---
@@ -1635,6 +1639,9 @@ mod tests {
             (LIVE_WORLD, LIVE_WORLD + 1, "LIVE_WORLD"),
             (TRANSITION_FLAG, TRANSITION_FLAG + 1, "TRANSITION_FLAG"),
             (0x7AB6, 0x7ABC, "world_persist arrival vars"),
+            (BIT, BIT + 1, "BIT"),
+            (ACC, ACC + 1, "ACC"),
+            (TILE, TILE + 1, "TILE"),
         ];
         used.sort();
         for pair in used.windows(2) {
@@ -1654,7 +1661,7 @@ mod tests {
         // otherwise silent.
         const {
             assert!(PACKED >= 0x7997 && PACKED as usize + PACKED_LEN <= 0x7A00);
-            assert!(MASK_SCRATCH >= 0x7A73 && TRANSITION_FLAG <= 0x7ADF);
+            assert!(MASK_SCRATCH >= 0x7A73 && TILE <= 0x7ADF);
         }
     }
     /// **The playtest, on the emulated CPU.** Beat something in World 1, cycle
@@ -1769,6 +1776,59 @@ mod tests {
                     live[i as usize],
                     "pass {pass}: byte {i} of Map_Completions was disturbed",
                 );
+            }
+        }
+    }
+    /// **No routine here may keep state in zero page above `Temp_Var3`.**
+    ///
+    /// The NMI pushes and pulls exactly `Temp_Var1`, `Temp_Var2` and
+    /// `Temp_Var3` around every frame and leaves everything else to whoever was
+    /// using it. These routines run tens of thousands of cycles, so the NMI
+    /// lands inside their loops repeatedly — anything held in `$03` or above is
+    /// destroyed mid-loop, on hardware, invisibly.
+    ///
+    /// Nothing in the emulated-CPU tests can see this: there is no NMI there.
+    /// Three playtests failed on it while every test passed, so the rule is
+    /// enforced structurally instead — decode each routine and reject any
+    /// zero-page operand outside the protected three.
+    #[test]
+    fn no_routine_parks_state_in_unprotected_zero_page() {
+        use mos6502::Variant;
+        use mos6502::instruction::AddressingMode;
+
+        const PROTECTED: u8 = 0x02; // Temp_Var1..Temp_Var3 = $00..$02
+        let routines: [(&str, &[u8]); 6] = [
+            ("IS_COMPLETABLE", &IS_COMPLETABLE),
+            ("MASK_BUILD", &MASK_BUILD),
+            ("PACK_PLANE", &PACK_PLANE),
+            ("UNPACK_PLANE", &UNPACK_PLANE),
+            ("PACK_WORLD", &PACK_WORLD),
+            ("UNPACK_WORLD", &UNPACK_WORLD),
+        ];
+
+        for (name, code) in routines {
+            let mut pc = 0usize;
+            while pc < code.len() {
+                let (instr, mode) =
+                    Ricoh2a03::decode(code[pc]).unwrap_or_else(|| panic!("{name}: bad opcode"));
+                let len = mode.extra_bytes() as usize + 1;
+                let zero_page = matches!(
+                    mode,
+                    AddressingMode::ZeroPage
+                        | AddressingMode::ZeroPageX
+                        | AddressingMode::ZeroPageY
+                        | AddressingMode::IndexedIndirectX
+                        | AddressingMode::IndirectIndexedY
+                );
+                if zero_page {
+                    let operand = code[pc + 1];
+                    assert!(
+                        operand <= PROTECTED,
+                        "{name} byte {pc}: {instr:?} touches zero page ${operand:02X}, which the \
+                         NMI does not preserve — only $00..${PROTECTED:02X} survive a frame",
+                    );
+                }
+                pc += len;
             }
         }
     }
