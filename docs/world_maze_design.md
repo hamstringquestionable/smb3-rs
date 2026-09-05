@@ -15,7 +15,7 @@ the global verifier and the null-model census — is done**; see "The null-model
 baselines" for the numbers everything after it is argued against.
 
 **Where phase 1 lives:** `world_persist.rs` (the `$84A0` hooks, the arrival
-tables, `PAD_ENTER` and its position key, the debug world jump) and
+tables, `PAD_ENTER` and its position key) and
 `completion_bits.rs` (the packed per-world store, the derived stencil, the pack
 and expand routines). Both carry the mechanism detail in module rustdoc; this
 document does not repeat it. The engine-level facts they rest on are in
@@ -23,12 +23,24 @@ document does not repeat it. The engine-level facts they rest on are in
 "World-map graphics: CHR banks and unused metatiles". Playtest ROMs come from
 `testrom`.
 
-**Where step 2's verifier lives:** `src/randomize/maze/` — `GlobalState` and
-the global fixpoint in `mod.rs`, the null model's uniform pad placer in
-`pads.rs`, the acceptance tests and censuses in `tests.rs`. The cross-world
-walker sits beside `walk_reachable` in `map_walker.rs`. The whole thing is
-`#[cfg(test)]`: it is a measurement instrument with no production caller, and
-the gate comes off when the generator wires in.
+**Where phase 2 lives.** The generator is `src/randomize/maze/`:
+
+| File | What |
+|---|---|
+| `mod.rs` | `GlobalState`, the global fixpoint, `generate` and its solvability fallback |
+| `walk.rs` | the two cross-world walkers — reachability, and the level-cost Dijkstra |
+| `graph.rs` | the world-graph pass: spine, pad budget, roles, the `Knobs` |
+| `roles.rs` | what a pad is for, and which terrain can host it |
+| `fill.rs` | the key-assignment swap search |
+| `metrics.rs` | how many levels a run beats, and how many it cannot avoid |
+| `writer.rs` | converters to the specs the ROM side takes |
+| `pads.rs` | the null model's uniform placer, kept as the baseline |
+
+The ROM side is `world_persist.rs` (arrivals, `PAD_ENTER`), `completion_bits.rs`
+(the packed store, the new-game signal), `maze_state.rs` (the SRAM map),
+`world_travel.rs` (whistle fast travel, the visited marker), `wand_gate.rs` and
+`foreign_locks.rs`. Ordering between them is stated once, in
+`randomizer::randomize_inner`.
 
 ## Settled decisions
 
@@ -49,7 +61,19 @@ the gate comes off when the generator wires in.
 - **`world_order` loses its permutation meaning and keeps its table.** What
   survives is "which world does clearing this world's airship send you to", plus
   the display renumbering, so the player always knows how far along the spine
-  they are. `world_count` gains meaning (maze size).
+  they are. The maze **forces `world_order` on**, because that table *is* the
+  spine and the wand counter chains through the routine it installs.
+- **`world_count` keeps exactly the meaning it already has**, and it turned out
+  to need no new definition. `world_order::randomize` with `world_count < 7`
+  returns a shorter order; the worlds it leaves out are still built, still on
+  the ROM and still full of content, but no airship leads into them. In maze
+  mode that makes them **optional bonus content reachable only by telepad** —
+  which is as close as the terrain gets to the pad-only island the charter
+  wanted, and it costs nothing to support. Solvability is scoped to the worlds
+  the spine names (`GlobalState::in_maze`), exactly as a shorter game means
+  fewer worlds in standard mode. `a_short_spine_still_finishes` pins it.
+- **`maze_wands` (K) is a player-facing option**; the two generator biases are
+  not. See "Knobs".
 
 ## Topology
 
@@ -87,6 +111,19 @@ Over eight grids with cross-world edges it becomes both the global verifier and,
 run incrementally, the generator.
 
 ### The decomposition
+
+**The forward fill was replaced by a swap search, and the reason is structural.**
+The forward fill's first step needs a fortress inside the start region with
+every lock closed — and the per-world builder deliberately puts forts *off* the
+forced path, so the start region frequently holds none. A stalled forward fill
+has to fall back to an arbitrary assignment for the remaining gates, which is
+the retry loop it was meant to avoid. `maze/fill.rs` instead starts from the
+builder's own assignment — every lock opened by a fort in its own world, already
+known completable — and swaps the forts of two locks, keeping a swap only when
+the maze is still solvable *and* no world's start region became a trap. It
+cannot fail (the worst case is the assignment it started from) and it preserves
+the fort/lock bijection for free, because a swap exchanges two forts between two
+locks.
 
 The obstacle to solvability-by-construction is that `locks.rs` today does two
 jobs in one pass: it **places** a lock *and* **pairs** it with a fort, because
@@ -135,10 +172,8 @@ count and a set of roles:
 
 - **Hub pad** — in the start region, zero-key reachable. How a world satisfies
   invariant 3 when its airship path is gated.
-- **Island pad** — deliberately in a region no walk reaches: an island, past a
-  water gap, behind a lock. The pad-only fortress, and the shape the mode is
-  for.
-- **Gated pad** — reachable, but behind a lock. A shortcut that opens later.
+- ~~**Island pad**~~ — see "The island pad, and why v1 does not have one" below.
+- **Shortcut pad** — reachable, but behind a lock. A shortcut that opens later.
 
 All three are queries against machinery that exists: `islands.rs` knows island
 regions, `forced_positions` knows cut vertices, `locks.rs` knows what is behind
@@ -151,6 +186,35 @@ Two consequences:
 - **The role allocator needs a fallback.** Not every world's terrain has an
   island — W1 does not. So a role is a request, not a contract, and the
   distribution of granted roles is a census output.
+
+### The island pad, and why v1 does not have one
+
+The charter's headline shape was a pad landing in a region no walk reaches — a
+pad-only island holding a fortress for a required lock. `maze_terrain_pools_census`
+says finished worlds contain **no such region at all**: **0 island landings in
+800 world-seeds**, in every world.
+
+The reason is two existing phases doing their jobs. `Connectivity` bridges every
+island with a pipe (and CLAUDE.md records that every world's map needs fewer
+pipes than its budget to fully connect), and `HammerBroFill` then claims every
+reachable blank. Between them nothing is left that a walk cannot get to.
+
+So an island pad cannot be a query over a finished world. It would need the pad
+placed **inside** the per-world pass, before `Connectivity`, with connectivity
+told to leave one island unbridged — and then `Locks` and `Shaping`, which guard
+on `completable()`, would have to believe in the pad as an edge. That is a
+gated change to `connectivity.rs` and to what the per-world walker sees, and it
+is a lever whose pool is currently empty rather than small.
+
+**What v1 ships instead is the gated landing.** A pad that lands behind a lock
+still takes the player somewhere they could not have walked to; the gate is a
+key rather than terrain. The pool is large (mean 7.4 gated sites per world), it
+needs no builder change, and the cross-world lock — a fortress whose key is in
+another world — delivers the "go somewhere else to open this" experience the
+island pad was reaching for.
+
+`WorldTerrain::island_sites` and `island_landings` stay in the code as the
+evidence, and as the assertion that they are still empty.
 
 ### Boundary conditions
 
@@ -172,14 +236,58 @@ whole point of the mode.
 
 ### Knobs
 
-**Fort-selection distance bias** is the main dial. When the fill assigns a fort
-to a lock, the candidate set is every reachable fort in every world: nearest
-gives local, vanilla-ish locks; a different world gives a maze; furthest gives
-maximum backtracking. One number, spanning the whole range. Resist adding a
-second until a census demands it.
+There are **two**, and both are defaults-are-null: at their default value each
+does nothing, so a census with defaults reproduces the null-model baseline and
+any movement is attributable to a single dial.
 
-**Key depth within a sphere** is the secondary dial: placing a key in the oldest
-reachable region gives long backtracks, the newest gives a corridor.
+**`fort_distance_bias`** is the main one. `-1.0` keeps a lock's fort near it
+(local, vanilla-ish); `0.0` accepts any solvable reassignment, which is the
+null; `+1.0` pushes keys as far along the spine as the graph allows, which means
+into other worlds. Magnitude is a probability rather than a switch, so the dial
+is continuous.
+
+**`foreign_landing_bias`** decides how often a pad lands in a world other than
+its own. `0.0` makes every pad a same-world hop (position keying gives those for
+free); `1.0` makes every pad a crossing. This is what decides whether the eight
+worlds are a graph or eight rooms with local shortcuts.
+
+**`maze_wands` (K) is the one that reached the option screen**, and the sweep is
+why. It is not a length dial, it is a **floor** (`maze_wand_gate_sweep`, 40
+seeds per K, zero unwinnable at every K):
+
+| K | mean levels beaten | min | median | max |
+|---|---|---|---|---|
+| 0 | 26.6 | **1** | 29 | 42 |
+| 1 | 26.8 | 7 | 29 | 42 |
+| 2 | 27.3 | 13 | 28 | 42 |
+| **3** | **27.8** | **16** | **28** | 42 |
+| 5 | 29.8 | 16 | 29 | 42 |
+| 7 | 36.4 | 24 | 38 | 45 |
+
+At K=0 a telepad chain can drop the player beside the castle and some seeds
+finish in a **single level** — the charter's "a telepad chain to World 8
+trivialises the game", at its worst. K=3 raises the floor to 16 while the
+*median run is unchanged*: the degenerate tail costs nothing to remove. The
+floor then plateaus at 16 through K=5 and only moves again at 6-7, by which
+point the median has climbed to 33 and 38. **3 is where the dial stops buying
+and starts charging**, and it is the default.
+
+The two generator biases stay internal constants. They move the mean by about
+one level where K moves the floor by fifteen, so by the same discipline they
+have not earned a control the player has to understand.
+
+**Two knobs that were considered and rejected**, both on the discipline that a
+knob has to be earned:
+
+- **Lock density** — "what fraction of lock sites are live gates". It cannot
+  exist: every fortress must have exactly one lock (a lock breaking is the only
+  feedback that says which fort did it, and a world's lock count is how the
+  player deduces its fort count), so the assignment is a bijection and the count
+  is not a free parameter.
+- **Key depth within a sphere** — the charter's proposed secondary dial. It is
+  subsumed by `fort_distance_bias`: spine distance already orders keys from
+  "same room" to "three worlds back", and a second dial over the same axis would
+  need a census to tell the two apart before it earned its name.
 
 ### Choice survives at two scales
 
@@ -260,13 +368,14 @@ Four findings, and they redraw the plan:
    honest: a failure there means the maze walker or the fixpoint is wrong, not
    the map. The generator's job is *shape*, not *validity*.
 
-2. **Invariant 3 is a real placement obligation, not a cheap guard.** It was
-   expected to hold nearly always ("every world has an airship and the builder
-   already guarantees start → target"). It holds barely half the time, because
-   the per-world guarantee is start → target *with locks openable*, and
-   invariant 3 asks for it *with every lock closed*. That gap is the whole
-   measurement. It needs a placement phase — either an ungated airship approach
-   or a hub pad in the start region.
+2. **Invariant 3 as the charter worded it is a real placement obligation — but
+   the charter worded it too strictly.** "An exit reachable with zero keys"
+   holds barely half the time (55.4%), because the per-world guarantee is start
+   → target *with locks openable* and the invariant asked for it *with every
+   lock closed*. But a fortress inside the start region **is** a key the player
+   can go and get, and the property that actually prevents a soft-lock —
+   ungated exit **or** a fort that opens one — holds **100% of 800
+   world-seeds**. The rule is a cheap guard; the pad budget stays free.
 
 3. **Uniform pads are a pure shortcut, and they gut the game.** They cut the
    sphere count nearly in half (10.79 → 6.01) in 99.5% of seeds, and drop the
@@ -289,10 +398,14 @@ Four findings, and they redraw the plan:
    spoiler log is `Spheres::spoiler`. Shipped with the crude uniform pad placer
    in `maze/pads.rs`.
 2. ~~**Census the null model.**~~ **DONE** — the table above.
-3. **World-graph pass** — spine order, pad counts and roles per world, id
-   budget allocation against the 16.
-4. **Pad placement** in the per-world pass, by role.
-5. **The key-assignment fill**, with the distance bias.
+3. ~~**World-graph pass**~~ **DONE** — `maze/graph.rs`. Spine order, pad counts
+   and roles per world, and the id budget spent in strict priority order:
+   safety pads first, then shortcut, then free.
+4. ~~**Pad placement** by role~~ **DONE** — `maze/roles.rs`. On finished worlds
+   rather than in the per-world pass; see "The island pad" for why that is
+   enough, and what it costs.
+5. ~~**The key-assignment fill**~~ **DONE** — `maze/fill.rs`, as a swap search
+   rather than a forward fill; see below.
 
 ### Step 1 in detail
 
@@ -363,8 +476,32 @@ Two semantics the walker had to get right, neither of which is in the sketch:
 1. **Global completability.** The fixpoint reaches the castle and every fortress
    is beatable — no fort sealed behind its own lock, now across all worlds.
 2. **Zero hammers.** Solvable with `has_hammer = false`.
-3. **The start-region rule.** *Every world's start-tile region must contain at
-   least one exit reachable with zero keys* — its airship, or a pad out.
+3. **The start-region rule** — *a player who arrives in a world must be able to
+   leave it again.* **Revised 2026-09-05, and weakened deliberately.**
+
+   The charter asked for an exit reachable with **zero keys**. Measured, that
+   holds only 55.8% of the time, and the target is ungated by terrain alone in
+   just 7.8% of worlds — so as stated it is a placement obligation on every
+   world, not a cheap guard.
+
+   It is also stricter than safety needs. A fortress inside the start region is
+   a key the player can go and get; what actually soft-locks is a start region
+   with **no ungated exit AND no fortress that opens one**. `start_region_escapable`
+   asks that instead, counting only the world's OWN forts (the worst case: a
+   player arriving for the first time has beaten nothing here, and a lock the
+   fill paired with a foreign fort can never be opened from the inside).
+
+   The generator treats it as a hard invariant: hub pads are the first claim on
+   the 16 arrival ids, the fill re-checks it on every swap, and anything still
+   failing gets a rescue pad from whatever budget is left.
+
+   **Measured, the correct form holds 800 of 800 world-seeds — 100%**, against
+   55.4% for the charter's wording (`start_region_exit_rate`). So the
+   start-region rule is a **cheap guard, not a placement phase**: the machinery
+   stays because a safety property with no enforcement is a bug waiting for a
+   rare seed, but it claims no pads in practice and the whole 16-id budget is
+   free for maze shaping. The generator census confirms it from the other side —
+   **0 hub pads requested** across every arm.
 
    This is the whole of the game-over and whistle safety story, and it is much
    narrower than "the pad island must be escapable". Dying on a pad-only island
@@ -406,16 +543,17 @@ leaving?" at the hook: **both of vanilla's paths into `PRG030_84A0` set
 `World_Num` to the destination first** — `INC World_Num` on the airship,
 `LDA Map_Warp_PrevWorld / STA World_Num` in the warp zone.
 
-### The two hooks, and the bug they had
+### The two hooks, and the bug they had — **FIXED 2026-09-05**
 
 | Hook | Where | Fires when |
 |---|---|---|
-| pack (`WIPE_REPLACEMENT`) | the displaced wipe, early in `$84A0` | `TRANSITION_FLAG` set |
+| pack (`WIPE_REPLACEMENT`) | the displaced wipe, early in `$84A0` | ~~`TRANSITION_FLAG` set~~ → `World_Num != LIVE_WORLD` |
 | expand (`SWAP_AT_RELOAD`) | later in the same init | `World_Num != LIVE_WORLD` |
+| new game (`NEW_GAME_INIT`) | the title screen's game-start init | always, once, when a game begins |
 
-Those are two different definitions of "a transition happened", and they
-disagree on exactly vanilla's own two world-change paths, neither of which
-raises the flag.
+They used to be two different definitions of "a transition happened", and they
+disagreed on exactly vanilla's own two world-change paths, neither of which
+raised the flag.
 
 Observed on `maze_J`: clearing an airship packs nothing (flag clear, pack
 returns untouched, `LIVE_WORLD` still names the world being left), then the
@@ -452,8 +590,31 @@ compare.**
   correct), set `LIVE_WORLD = World_Num`.
 - Both hooks then test `World_Num != LIVE_WORLD`. `TRANSITION_FLAG` is deleted,
   along with the requirement to have found every path that changes worlds.
-  `PAD_ENTER` and `WORLD_JUMP_CHECK` hand back the bytes that raised it, and the
-  airship path needs no PRG030 rent at all.
+  `PAD_ENTER` and the debug world jump hand back the bytes that raised it, and
+  the airship path needs no PRG030 rent at all.
+
+**As built (2026-09-05).** `NEW_GAME_INIT` is 25 bytes at `FS_NEW_GAME_INIT =
+0x33FC8`, CPU `$DFB8` in PRG025, sited immediately *before* `FS_TITLE_MUTE`
+rather than at the head of PRG025's free run — a bundled third-party title hack
+writes from the first `$FF` it finds, which is `0x33529`, so the head of that
+run is not a safe place to live. `WIPE_REPLACEMENT` shrank 33 → 31 bytes and
+`PAD_ENTER` 114 → 111. `$7ABD`, which held `TRANSITION_FLAG`, is free SRAM
+again.
+
+**The routine had to do a fifth thing the plan did not list: zero `$7D00`.**
+With compare-based hooks, the *first* `$84A0` of a new game compares **equal**,
+so `SWAP_AT_RELOAD` never expands a plane over the live array either — and
+vanilla's own wipe is gone, because that is the instruction the pack hook
+replaced. Without the explicit zeroing a new game opens with the previous run's
+completions lit in its starting world and packs them into the store at the first
+transition.
+
+**The test that would have caught the original bug now exists**:
+`clearing_an_airship_packs_the_world_it_leaves` reads the engine's own `INC
+World_Num` out of the ROM, executes it, then drives both hooks and asserts the
+outgoing world's bit reached its packed plane. There was no test on the airship
+path before, which is why a flag-versus-compare mismatch survived to a
+playtest.
 
 This also closes the standing "cold boot with dirty SRAM / game over into a new
 game inherits the store" hole, since nothing can happen before Start is pressed.
@@ -692,7 +853,7 @@ the verifier (step 1) and run in `src/randomize/maze/tests.rs`.
 | `every_start_region_has_an_exit` | invariant 3, per world per seed, with all locks closed — **exists** as `start_region_exit_rate`, and currently *measures* 55.8% rather than asserting; it becomes an assert when a placement phase owns it |
 | `wands_are_collectable` | at least K airships reachable without passing the goal gate — **exists** as `GlobalState::wands_are_collectable`, asserted at K=7 on a spine-only maze |
 | `pad_ids_fit` | pad count <= `PORTAL_MAX`, and every pad owns a distinct arrival row — **exists** |
-| `packed_planes_fit_their_reserve` | **exists today** — must still pass once the wand-gate byte joins `Map_Removable_Tiles` |
+| `packed_planes_fit_their_reserve` | **exists today**. The wand gate does NOT join `Map_Removable_Tiles` (see "The wand gate"), so it costs the store nothing — but the **pads do**: a pad tile is a spade panel and that is in `Map_Completable_Tiles`. `the_pads_still_fit_the_packed_store` measures a worst case of **43 of 48** with the budget fully spent, against 42 without pads. Five bytes of margin left, and the failure mode is silent — the planes would run into the arrival variables that sit immediately after them |
 | `the_maze_leaves_every_pipe_alone` | **exists today** — pipe tables and world pointer tables stay byte-identical |
 
 Census outputs, none of which have a measured baseline yet: sphere count,

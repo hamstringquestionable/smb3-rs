@@ -242,8 +242,9 @@ fn popcount(mask: &[u8]) -> usize {
 // *and* PRG010 (still at `$C000`, holding this code) are all reachable at once.
 
 use super::rom_data::{
-    FS_COMPLETION_BASES, FS_IS_COMPLETABLE, FS_MASK_BUILD, FS_PACK_PLANE, FS_PACK_WORLD,
-    FS_SWAP_AT_RELOAD, FS_UNPACK_PLANE, FS_UNPACK_WORLD, FS_WIPE_REPLACEMENT, FS_WORLD_COLS,
+    FS_COMPLETION_BASES, FS_IS_COMPLETABLE, FS_MASK_BUILD, FS_NEW_GAME_INIT, FS_PACK_PLANE,
+    FS_PACK_WORLD, FS_SWAP_AT_RELOAD, FS_UNPACK_PLANE, FS_UNPACK_WORLD, FS_WIPE_REPLACEMENT,
+    FS_WORLD_COLS,
 };
 
 /// Where the derived stencil lands: 64 bytes, one per possible map column.
@@ -500,20 +501,13 @@ const BITCNT: u16 = 0x7AB5;
 /// two worlds "the other one" is unambiguous.
 const LIVE_WORLD: u16 = 0x7ABC;
 
-/// Set by the routines that transition between worlds; cleared once acted on.
-///
-/// The `Map_Completions` wipe this replaces was also vanilla's new-game reset,
-/// so removing it means a fresh game would otherwise inherit whatever SRAM
-/// held. The title screen falls *through* into `PRG030_84A0` while every
-/// transition jumps to it, and the jumps this POC uses are all our own code, so
-/// they raise the flag on the way past — see `world_persist`'s `WORLD_JUMP_CHECK`
-/// and `PORTAL_EXIT`. Absent the flag, the replacement resets instead of packing.
-///
-/// **Vanilla's own two jumps are not flagged.** The airship-cleared path and the
-/// warp zone would each be read as a new game and reset every world. Neither
-/// occurs in a maze, so the POC does not need them; closing the gap means a
-/// trampoline in PRG030, whose airship-side site `world_order` already claims.
-pub(crate) const TRANSITION_FLAG: u16 = 0x7ABD;
+// `$7ABD` used to hold `TRANSITION_FLAG`, the byte the pack hook fired on. It
+// is free SRAM again: both hooks now test `World_Num != LIVE_WORLD`, which is
+// the same question asked of state the engine already maintains, and
+// [`NEW_GAME_INIT`] is what makes that test unambiguous. The flag's failure mode
+// was structural — it only knew about the transitions we remembered to flag, so
+// vanilla's own airship and warp-zone paths packed nothing and dropped the
+// outgoing world's progress on the floor.
 
 /// Compress one `Map_Completions` half into a world's plane.
 ///
@@ -721,40 +715,49 @@ const UNPACK_WORLD: [u8; 33] = xfer_world!(UNPACK_PLANE_CPU);
 /// range so [`SWAP_AT_RELOAD`] expanded a freshly-zeroed plane over it. Both
 /// erased the level you had just beaten, on the walk back to the map.
 ///
-/// So: pack the outgoing world when [`TRANSITION_FLAG`] says a jump is under
-/// way, and otherwise **return without touching anything**.
+/// So: pack the outgoing world when the world is actually changing, and
+/// otherwise **return without touching anything**.
+///
+/// **The trigger is `World_Num != LIVE_WORLD`, the same test
+/// [`SWAP_AT_RELOAD`] uses.** It used to be a `TRANSITION_FLAG` byte our own
+/// jumps raised, and that is what the bug was: vanilla's two world-change paths
+/// — `INC World_Num` on an airship clear, `LDA Map_Warp_PrevWorld` in the warp
+/// zone — raise no flag, so the pack was skipped while the expand hook, which
+/// already compared, went ahead and laid the destination's plane over `$7D00`.
+/// The world being left was discarded having never been packed. Two definitions
+/// of "a transition happened" can only ever disagree; there is now one.
+///
+/// Both call sites reach this with `World_Num` already set to the destination —
+/// `$84A0` is entered *after* the airship, the warp zone or `STASH_ARRIVAL` has
+/// stored it — and `LIVE_WORLD` still naming the world being left. Equality is
+/// therefore exactly a redraw, and [`NEW_GAME_INIT`] is what stops a fresh game
+/// looking like one: it stamps `LIVE_WORLD = World_Num` before the title screen
+/// falls through into `$84A0`, so the first entry of a new game compares equal
+/// and packs nothing over a store it has just zeroed.
 ///
 /// PRG012 has to be banked and unbanked around the pack because the stencil is
 /// derived from the map grid, and at this point in the init `$A000` still holds
 /// PRG011 for `Map_Init`'s benefit. The restore is a tail `JMP` into
 /// `PRGROM_Change_A000`, which returns for us.
-///
-/// **Knowingly unhandled, exactly as in the POC:** a cold boot with dirty SRAM,
-/// and a game over into a new game, both inherit whatever the store held. The
-/// POC listed the same gap. Closing it needs a signal that means "new game",
-/// and "the transition flag is clear" is emphatically not that signal.
 #[rustfmt::skip]
-const WIPE_REPLACEMENT: [u8; 33] = [
-    0xAD, TRANSITION_FLAG as u8,
-          (TRANSITION_FLAG >> 8) as u8,             //  0: LDA TRANSITION_FLAG
-    0xF0, 0x1B,                                     //  3: BEQ +27 -> leave it alone
+const WIPE_REPLACEMENT: [u8; 31] = [
+    0xAD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,   //  0: LDA World_Num
+    0xCD, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, //  3: CMP LIVE_WORLD
+    0xF0, 0x16,                                     //  6: BEQ +22 -> leave it alone
 
-    0xA9, 0x00,                                     //  5: LDA #$00
-    0x8D, TRANSITION_FLAG as u8,
-          (TRANSITION_FLAG >> 8) as u8,             //  7: STA TRANSITION_FLAG
-    0xA9, 0x0C,                                     // 10: LDA #12
-    0x8D, PAGE_A000 as u8, (PAGE_A000 >> 8) as u8,  // 12: STA PAGE_A000
+    0xA9, 0x0C,                                     //  8: LDA #12
+    0x8D, PAGE_A000 as u8, (PAGE_A000 >> 8) as u8,  // 10: STA PAGE_A000
     0x20, PRGROM_CHANGE_A000 as u8,
-          (PRGROM_CHANGE_A000 >> 8) as u8,          // 15: JSR PRGROM_Change_A000
-    0xAD, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, // 18: LDA LIVE_WORLD
+          (PRGROM_CHANGE_A000 >> 8) as u8,          // 13: JSR PRGROM_Change_A000
+    0xAD, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, // 16: LDA LIVE_WORLD
     0x20, PACK_WORLD_CPU as u8,
-          (PACK_WORLD_CPU >> 8) as u8,              // 21: JSR PACK_WORLD
-    0xA9, 0x0B,                                     // 24: LDA #11
-    0x8D, PAGE_A000 as u8, (PAGE_A000 >> 8) as u8,  // 26: STA PAGE_A000
+          (PACK_WORLD_CPU >> 8) as u8,              // 19: JSR PACK_WORLD
+    0xA9, 0x0B,                                     // 22: LDA #11
+    0x8D, PAGE_A000 as u8, (PAGE_A000 >> 8) as u8,  // 24: STA PAGE_A000
     0x4C, PRGROM_CHANGE_A000 as u8,
-          (PRGROM_CHANGE_A000 >> 8) as u8,          // 29: JMP PRGROM_Change_A000  ; tail call
+          (PRGROM_CHANGE_A000 >> 8) as u8,          // 27: JMP PRGROM_Change_A000  ; tail call
 
-    0x60,                                           // 32: RTS   ; leave it alone
+    0x60,                                           // 30: RTS   ; leave it alone
 ];
 
 /// Expand the world being entered — **but only when it changed** — then let the
@@ -787,10 +790,91 @@ const SWAP_AT_RELOAD: [u8; 18] = [
     0x60,                                           // 17: RTS
 ];
 
+// --- The new-game signal ------------------------------------------------
+
+/// `Debug_Flag` (`$0160`). Vanilla's title-menu init stores `A` here right
+/// after storing it to `World_Num`, so with `A` = 0 the flag is cleared as a
+/// side effect of starting a game.
+const DEBUG_FLAG: u16 = 0x0160;
+
+/// PRG025 is at `$C000` for the whole title screen — `PRG030`'s title entry
+/// loads page 24 into `$A000` and page 25 into `$C000` before
+/// `Do_Title_Screen`, and neither bank re-banks — so a file offset in it is
+/// `$C000 + (file - 0x32010)`. Same arithmetic `title_screen`'s mute toggle
+/// uses.
+const NEW_GAME_INIT_CPU: u16 = (0xC000 + FS_NEW_GAME_INIT - 0x32010) as u16;
+
+/// **The signal that a new game is starting, and the reason both hooks can
+/// compare instead of consulting a flag.**
+///
+/// With `TRANSITION_FLAG` gone, "clear flag, worlds differ" is no longer
+/// available to mean "a new game", and something has to be — the title screen
+/// falls *through* into `PRG030_84A0` rather than jumping to it, so without a
+/// signal a new game and a transition are the same event seen from the hook.
+///
+/// The site is the title menu's own game-start init, `LDA #$00 / STA World_Num
+/// / STA Debug_Flag` at file `0x30CC2` (PRG024, CPU `$ACB2`). The `STA
+/// Debug_Flag` at `0x30CC7` is exactly three bytes and nothing branches into
+/// it — the following `RTS` at `0x30CCA` *is* a branch target (`PRG024_ACBA`),
+/// which is why the replacement has to be three bytes and a `JSR` is the only
+/// thing that fits. `world_order` already overwrites those same three bytes
+/// with `NOP`s, so the two must not both run: see
+/// [`world_order::DEBUG_FLAG_STA_OFFSET`](super::world_order::DEBUG_FLAG_STA_OFFSET)
+/// and [`apply`]'s ordering note.
+///
+/// On entry `A` holds whatever the site loaded into `World_Num` — 0 in vanilla,
+/// the shuffled starting world when `world_order` patched the operand — so
+/// stamping `LIVE_WORLD` from it costs nothing and is correct either way.
+///
+/// Four things, in the one place they are unambiguous:
+///
+/// * `LIVE_WORLD = World_Num`, so the first `$84A0` of the new game compares
+///   equal and neither hook touches anything.
+/// * the packed store is zeroed, so a cold boot with dirty SRAM or a game over
+///   into a new game cannot inherit the previous run's progress. That was the
+///   POC's standing hole and it closes here.
+/// * `$7D00` is zeroed. Vanilla's own wipe did this and it is gone, and because
+///   the first entry now compares *equal*, nothing expands a plane over the
+///   live array either — so without this a new game would open with the last
+///   run's completions still lit in its starting world.
+/// * `Debug_Flag = 0`, the displaced instruction's own effect, kept explicitly
+///   rather than argued away — `A` is already zero for the loops, so it is
+///   three bytes.
+///
+/// The two loops cannot be one: the store is at `$7997` and the live array at
+/// `$7D00`, and `A` stays zero across both so only the index and the base
+/// change.
+#[rustfmt::skip]
+const NEW_GAME_INIT: [u8; 25] = [
+    0x8D, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, //  0: STA LIVE_WORLD  ; A = World_Num
+    0xA9, 0x00,                                     //  3: LDA #$00
+    0x8D, DEBUG_FLAG as u8, (DEBUG_FLAG >> 8) as u8, //  5: STA Debug_Flag  ; what we displaced
+
+    0xA2, (PACKED_LEN - 1) as u8,                   //  8: LDX #95
+    0x9D, PACKED as u8, (PACKED >> 8) as u8,        // 10: STA PACKED,X     ; store_loop
+    0xCA,                                           // 13: DEX
+    0x10, 0xFA,                                     // 14: BPL -6 -> store_loop
+
+    0xA2, 0x7F,                                     // 16: LDX #127
+    0x9D, 0x00, 0x7D,                               // 18: STA Map_Completions,X ; live_loop
+    0xCA,                                           // 21: DEX
+    0x10, 0xFA,                                     // 22: BPL -6 -> live_loop
+
+    0x60,                                           // 24: RTS
+];
+
 /// The `Map_Completions` wipe in `PRG030_84A0`: CPU `$84CD`, ten bytes, three
 /// whole instructions, nothing branching into the middle.
 const WIPE_OFFSET: usize = 0x3C4DD;
 const WIPE_LEN: usize = 10;
+
+/// `STA Debug_Flag` in the title menu's game-start init — the three bytes
+/// [`NEW_GAME_INIT`]'s call replaces. Named from `world_order`, which patches
+/// the same site, rather than repeated here.
+const NEW_GAME_HOOK_OFFSET: usize = super::world_order::DEBUG_FLAG_STA_OFFSET;
+/// Vanilla bytes there: `STA $0160`.
+#[cfg(test)]
+const NEW_GAME_HOOK_VANILLA: [u8; 3] = [0x8D, 0x60, 0x01];
 
 /// `JSR Map_Reload_with_Completions` in `PRG030_84A0`: CPU `$85BB`, three bytes.
 const RELOAD_CALL_OFFSET: usize = 0x3C5CB;
@@ -809,11 +893,20 @@ const WIPE_VANILLA: [u8; WIPE_LEN] = [
 const RELOAD_CALL_VANILLA: [u8; 3] = [0x20, 0x5D, 0xA4];
 
 /// Install packed per-world completions: the routines, the seed's base table,
-/// and the two hooks in `PRG030_84A0`.
+/// the new-game signal, and the two hooks in `PRG030_84A0`.
 ///
 /// **Run this last.** The base table is derived from the map grids as they
 /// stand in the ROM, so anything that still means to move a map tile has to
 /// have moved it already.
+///
+/// **And in particular, run it after [`super::world_order::randomize`].** Both
+/// write the three bytes at
+/// [`DEBUG_FLAG_STA_OFFSET`](super::world_order::DEBUG_FLAG_STA_OFFSET):
+/// `world_order` `NOP`s them out because it patches the shared `LDA #$00`
+/// operand into a starting world and will not have that value land in
+/// `Debug_Flag`, and this writes the `JSR` to [`NEW_GAME_INIT`]. Last writer
+/// wins, and the `JSR` has to be it — it stores 0 to `Debug_Flag` itself, so it
+/// subsumes what the `NOP`s were protecting.
 ///
 /// The wipe site is left with seven bytes of `NOP` after the call. That is
 /// wasteful by this project's standards and deliberate here: `world_persist`
@@ -834,6 +927,7 @@ pub(crate) fn apply(rom: &mut Rom) {
 
     rom.write_range(FS_WIPE_REPLACEMENT, &WIPE_REPLACEMENT);
     rom.write_range(FS_SWAP_AT_RELOAD, &SWAP_AT_RELOAD);
+    rom.write_range(FS_NEW_GAME_INIT, &NEW_GAME_INIT);
 
     // Hook 1: the wipe becomes a call to the replacement.
     let mut wipe = [0xEA_u8; WIPE_LEN];
@@ -846,6 +940,12 @@ pub(crate) fn apply(rom: &mut Rom) {
     rom.write_range(
         RELOAD_CALL_OFFSET,
         &[0x20, SWAP_AT_RELOAD_CPU as u8, (SWAP_AT_RELOAD_CPU >> 8) as u8],
+    );
+
+    // Hook 3: the title menu's `STA Debug_Flag` becomes the new-game signal.
+    rom.write_range(
+        NEW_GAME_HOOK_OFFSET,
+        &[0x20, NEW_GAME_INIT_CPU as u8, (NEW_GAME_INIT_CPU >> 8) as u8],
     );
 
     rom.pop_tag();
@@ -1290,6 +1390,10 @@ mod tests {
             .allocation(FS_WIPE_REPLACEMENT)
             .origin(WIPE_REPLACEMENT_CPU)
             .assert_ok();
+        asm::check(&NEW_GAME_INIT)
+            .allocation(FS_NEW_GAME_INIT)
+            .origin(NEW_GAME_INIT_CPU)
+            .assert_ok();
     }
     /// Address the harness treats as "the routine returned".
     ///
@@ -1611,6 +1715,101 @@ mod tests {
                 &[0x20, SWAP_AT_RELOAD_CPU as u8, (SWAP_AT_RELOAD_CPU >> 8) as u8],
             )
             .assert_ok();
+
+        // The new-game signal, whose site is the tightest of the three: three
+        // bytes exactly, because `PRG024_ACBA` — the `RTS` immediately after —
+        // is a live branch target and cannot be displaced.
+        assert_eq!(
+            rom.read_range(NEW_GAME_HOOK_OFFSET, NEW_GAME_HOOK_VANILLA.len()),
+            NEW_GAME_HOOK_VANILLA,
+            "the title menu's STA Debug_Flag has moved"
+        );
+        assert_eq!(
+            rom.read_byte(NEW_GAME_HOOK_OFFSET + 3),
+            0x60,
+            "PRG024_ACBA must still be the RTS the menu branches to",
+        );
+        asm::check(&NEW_GAME_INIT)
+            .allocation(FS_NEW_GAME_INIT)
+            .origin(NEW_GAME_INIT_CPU)
+            .hook(
+                &NEW_GAME_HOOK_VANILLA,
+                0,
+                &[0x20, NEW_GAME_INIT_CPU as u8, (NEW_GAME_INIT_CPU >> 8) as u8],
+            )
+            .assert_ok();
+    }
+
+    /// **A new game starts from nothing.**
+    ///
+    /// The routine is a self-contained calculation — no engine calls, only
+    /// `LIVE_WORLD`, `Debug_Flag` and two RAM regions — so it is run rather
+    /// than merely decoded. Every byte it must clear is poisoned first, so
+    /// "cleared" cannot pass by accident on a zeroed fixture.
+    ///
+    /// This is what closes the POC's standing hole: a cold boot with dirty SRAM
+    /// and a game over into a new game both used to inherit whatever the store
+    /// held, because "the transition flag is clear" was never a new-game
+    /// signal.
+    #[test]
+    fn a_new_game_clears_the_store_and_names_the_live_world() {
+        // Its own memory, not `cpu_with_routines`: this routine lives in
+        // PRG025 and lands on the same `$DFxx` addresses PRG010's routines use.
+        // Two banks, one flat 64K — so they cannot share a fixture.
+        for start in [0u8, 5] {
+            let mut mem = Memory::new();
+            mem.set_bytes(NEW_GAME_INIT_CPU, &NEW_GAME_INIT);
+            for i in 0..PACKED_LEN {
+                mem.set_byte(PACKED + i as u16, 0xAA);
+            }
+            for i in 0..128u16 {
+                mem.set_byte(0x7D00 + i, 0xAA);
+            }
+            mem.set_byte(LIVE_WORLD, 0xAA);
+            mem.set_byte(DEBUG_FLAG, 0xAA);
+            // One byte past each region, so an off-by-one in either loop's
+            // index is a failure rather than an invisible extra zero.
+            mem.set_byte(PACKED + PACKED_LEN as u16, 0xAA);
+            mem.set_byte(0x7D80, 0xAA);
+            let mut cpu = CPU::new(mem, Ricoh2a03);
+
+            // What the site it replaces leaves in `A`: the operand of the
+            // shared `LDA #$00`, which `world_order` patches to a world.
+            cpu.registers.accumulator = start;
+            call_routine(&mut cpu, NEW_GAME_INIT_CPU, "NEW_GAME_INIT");
+
+            assert_eq!(
+                cpu.memory.get_byte(LIVE_WORLD),
+                start,
+                "LIVE_WORLD must name the world the new game starts in",
+            );
+            assert_eq!(
+                cpu.memory.get_byte(DEBUG_FLAG),
+                0,
+                "the displaced STA Debug_Flag's own effect must survive",
+            );
+            for i in 0..PACKED_LEN {
+                assert_eq!(
+                    cpu.memory.get_byte(PACKED + i as u16),
+                    0,
+                    "packed store byte {i} survived a new game",
+                );
+            }
+            for i in 0..128u16 {
+                assert_eq!(
+                    cpu.memory.get_byte(0x7D00 + i),
+                    0,
+                    "Map_Completions byte {i} survived a new game",
+                );
+            }
+            // And nothing beyond either region.
+            assert_eq!(
+                cpu.memory.get_byte(PACKED + PACKED_LEN as u16),
+                0xAA,
+                "the store loop ran past its {PACKED_LEN} bytes",
+            );
+            assert_eq!(cpu.memory.get_byte(0x7D80), 0xAA, "the live loop ran past $7D7F");
+        }
     }
 
     /// The hook has to *replace* the reload call, not skip it — the routine
@@ -1630,6 +1829,8 @@ mod tests {
     /// SRAM runs and nothing in the build would notice a collision.
     #[test]
     fn sram_allocations_do_not_overlap() {
+        use crate::randomize::maze_state;
+
         let mut used: Vec<(u16, u16, &str)> = vec![
             (PACKED, PACKED + PACKED_LEN as u16, "packed planes"),
             (MASK_SCRATCH, MASK_SCRATCH + 64, "stencil scratch"),
@@ -1637,11 +1838,21 @@ mod tests {
             (COLS_LEFT, COLS_LEFT + 1, "COLS_LEFT"),
             (BITCNT, BITCNT + 1, "BITCNT"),
             (LIVE_WORLD, LIVE_WORLD + 1, "LIVE_WORLD"),
-            (TRANSITION_FLAG, TRANSITION_FLAG + 1, "TRANSITION_FLAG"),
+            // $7ABD is free again — it held TRANSITION_FLAG, which the
+            // `World_Num != LIVE_WORLD` compare replaced.
             (0x7AB6, 0x7ABC, "world_persist arrival vars"),
             (BIT, BIT + 1, "BIT"),
             (ACC, ACC + 1, "ACC"),
             (TILE, TILE + 1, "TILE"),
+            // Everything from $7AC1 up belongs to the maze, and is allocated
+            // in one place so a second feature cannot silently pick a byte
+            // this module already uses. See `maze_state`.
+            (
+                maze_state::VISITED_TABLE,
+                maze_state::VISITED_TABLE + maze_state::VISITED_TABLE_LEN as u16,
+                "maze visited table",
+            ),
+            (maze_state::WAND_COUNT, maze_state::WAND_COUNT + 1, "maze wand counter"),
         ];
         used.sort();
         for pair in used.windows(2) {
@@ -1668,10 +1879,9 @@ mod tests {
     /// all eight worlds, and it must still be beaten.
     ///
     /// This drives the two hook routines rather than the transfer routines, so
-    /// it covers what the earlier tests deliberately did not: the transition
-    /// flag, `LIVE_WORLD`, and the fact that `WIPE_REPLACEMENT` reads `$7D00`
-    /// for the world being *left* while `SWAP_AT_RELOAD` writes it for the one
-    /// being entered.
+    /// it covers what the earlier tests deliberately did not: `LIVE_WORLD`, and
+    /// the fact that `WIPE_REPLACEMENT` reads `$7D00` for the world being
+    /// *left* while `SWAP_AT_RELOAD` writes it for the one being entered.
     #[test]
     fn a_beaten_level_survives_a_full_cycle() {
         let Some(rom) = vanilla() else {
@@ -1689,9 +1899,9 @@ mod tests {
             cpu.memory.set_byte(PACKED + i as u16, 0xAA);
         }
 
-        // --- settle on World 1 with no jump pending ---
+        // --- settle on World 1, which is where a new game leaves us ---
         cpu.memory.set_byte(WORLD_NUM, 0);
-        cpu.memory.set_byte(TRANSITION_FLAG, 0);
+        cpu.memory.set_byte(LIVE_WORLD, 0);
         call_routine(&mut cpu, WIPE_REPLACEMENT_CPU, "settle");
         call_routine(&mut cpu, SWAP_AT_RELOAD_CPU, "enter W1");
 
@@ -1723,9 +1933,13 @@ mod tests {
         }
 
         // --- cycle: 1 -> 2 -> ... -> 8 -> 1 ---
+        //
+        // A transition is `World_Num` changing and nothing else — which is all
+        // the engine's own paths do. There is no flag to set any more, and that
+        // is the point: a path nobody thought to flag is now indistinguishable
+        // from one that was.
         for step in 1..=8u8 {
             let dest = step % 8;
-            cpu.memory.set_byte(TRANSITION_FLAG, 1); // what the jump routine does
             cpu.memory.set_byte(WORLD_NUM, dest);
             call_routine(&mut cpu, WIPE_REPLACEMENT_CPU, "leave");
             call_routine(&mut cpu, SWAP_AT_RELOAD_CPU, "enter");
@@ -1738,6 +1952,91 @@ mod tests {
             "World 1 column {col} bit {bit:#04X} was lost on the way round",
         );
     }
+    /// **The airship transition, driven the way the engine drives it — and the
+    /// bug it used to lose your progress to.**
+    ///
+    /// Clearing an airship runs `INC World_Num` and jumps to `$84A0`. It raises
+    /// no flag, and it never did: `TRANSITION_FLAG` was set only by our own
+    /// jumps. So the pack hook returned untouched while the expand hook, which
+    /// already compared `World_Num` against `LIVE_WORLD`, went ahead and laid
+    /// the destination's plane over `$7D00` — discarding the world being left,
+    /// on every airship, every time. Observed on `maze_J`.
+    ///
+    /// The instruction is read out of the ROM at `world_order`'s own
+    /// `WORLD_INC_OFFSET` rather than written here, so the test is anchored to
+    /// the engine's bytes and not to my memory of them.
+    #[test]
+    fn clearing_an_airship_packs_the_world_it_leaves() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let map = CompletionMap::from_rom(&rom);
+        let mut cpu = cpu_with_routines(&rom);
+        cpu.memory.set_byte(PRGROM_CHANGE_A000, 0x60);
+        cpu.memory.set_byte(MAP_RELOAD, 0x60);
+
+        // `INC World_Num`, as it stands in PRG030's airship-cleared path,
+        // plus an `RTS` so the harness can call it.
+        let inc = rom.read_range(super::super::world_order::WORLD_INC_OFFSET, 3).to_vec();
+        assert_eq!(
+            inc,
+            [0xEE, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8],
+            "the airship-cleared path no longer opens with INC World_Num",
+        );
+        const AIRSHIP_STUB: u16 = 0x0400;
+        cpu.memory.set_bytes(AIRSHIP_STUB, &[inc[0], inc[1], inc[2], 0x60]);
+
+        // Live in World 1, one cell beaten.
+        cpu.memory.set_byte(WORLD_NUM, 0);
+        cpu.memory.set_byte(LIVE_WORLD, 0);
+        for i in 0..PACKED_LEN {
+            cpu.memory.set_byte(PACKED + i as u16, 0x00);
+        }
+        for i in 0..128u16 {
+            cpu.memory.set_byte(0x7D00 + i, 0x00);
+        }
+        let (col, mask) = map
+            .mask(0)
+            .iter()
+            .enumerate()
+            .find(|&(_, &m)| m != 0)
+            .map(|(c, &m)| (c, m))
+            .expect("World 1 owns at least one completion bit");
+        let bit = 1u8 << mask.trailing_zeros();
+        cpu.memory.set_byte(0x7D00 + col as u16, bit);
+
+        // Clear the airship: World_Num++ and into `$84A0`.
+        call_routine(&mut cpu, AIRSHIP_STUB, "INC World_Num");
+        assert_eq!(cpu.memory.get_byte(WORLD_NUM), 1, "the stub must advance the world");
+        call_routine(&mut cpu, WIPE_REPLACEMENT_CPU, "leave W1");
+        call_routine(&mut cpu, SWAP_AT_RELOAD_CPU, "enter W2");
+        assert_eq!(cpu.memory.get_byte(LIVE_WORLD), 1, "W2 is live now");
+
+        // The bit must be sitting in World 1's packed plane. Reading it back
+        // through `unpack` rather than comparing raw bytes keeps the assertion
+        // about the *cell*, which is what a player would notice.
+        let base = map.base(0);
+        let plane: Vec<u8> = (0..map.plane_bytes(0))
+            .map(|i| cpu.memory.get_byte(PACKED + (base + i) as u16))
+            .collect();
+        assert_eq!(
+            map.unpack(0, &plane)[col] & bit,
+            bit,
+            "the airship packed nothing: World 1 column {col} bit {bit:#04X} was dropped",
+        );
+
+        // And it comes back when you return.
+        cpu.memory.set_byte(WORLD_NUM, 0);
+        call_routine(&mut cpu, WIPE_REPLACEMENT_CPU, "leave W2");
+        call_routine(&mut cpu, SWAP_AT_RELOAD_CPU, "re-enter W1");
+        assert_eq!(
+            cpu.memory.get_byte(0x7D00 + col as u16) & bit,
+            bit,
+            "World 1 came back without the cell it had beaten",
+        );
+    }
+
     /// **`PRG030_84A0` is entered far more often than a world changes**, and
     /// every one of those entries must leave `Map_Completions` exactly as it
     /// found it. Vanilla wipes it there and can afford to, because vanilla only
@@ -1757,14 +2056,14 @@ mod tests {
         cpu.memory.set_byte(PRGROM_CHANGE_A000, 0x60);
         cpu.memory.set_byte(MAP_RELOAD, 0x60);
 
-        // Mid-world state: progress on the map, no jump pending.
+        // Mid-world state: progress on the map, and the world unchanged —
+        // which is now the whole definition of "not a transition".
         let live: Vec<u8> = (0..128u16).map(|i| (i.wrapping_mul(37) ^ 0x5A) as u8).collect();
         for (i, &b) in live.iter().enumerate() {
             cpu.memory.set_byte(0x7D00 + i as u16, b);
         }
         cpu.memory.set_byte(WORLD_NUM, 3);
         cpu.memory.set_byte(LIVE_WORLD, 3);
-        cpu.memory.set_byte(TRANSITION_FLAG, 0);
 
         // Entering a level, coming back, losing a life — all of them land here.
         for pass in 0..4 {

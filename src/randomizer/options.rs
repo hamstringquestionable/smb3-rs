@@ -85,6 +85,12 @@ pub(super) fn default_world_count() -> u8 {
     7
 }
 
+/// Wands the world maze's castle demands by default — see
+/// [`Options::maze_wands`] for the measurement that chose 3.
+pub(super) fn default_maze_wands() -> u8 {
+    crate::randomize::maze::DEFAULT_WANDS_REQUIRED
+}
+
 /// Per-class enemy randomization mode.
 ///
 /// The `Specifier` derive gives this a 2-bit flag-key encoding in declaration
@@ -371,6 +377,24 @@ pub struct Options {
     /// Number of worlds before Dark Land (1–7, default 7).
     #[serde(default = "default_world_count")]
     pub world_count: u8,
+    /// **World maze.** The eight world maps stop being a sequence and become
+    /// the rooms of one Metroidvania: telepads link them, a fortress can bust a
+    /// lock in another world, map progress survives leaving and coming back,
+    /// and the warp whistle becomes fast travel between worlds already visited.
+    /// Bowser's castle stays shut until [`Options::maze_wands`] wands are held.
+    ///
+    /// Forces `world_order` on — its table is what the airship spine reads, and
+    /// the wand counter chains through the routine it installs.
+    #[serde(default)]
+    pub world_maze: bool,
+    /// Wands the castle demands, 0–7. Only read when `world_maze` is on.
+    ///
+    /// **This is a floor, not a length dial** (`maze_wand_gate_sweep`, 40 seeds
+    /// per K): at 0 a telepad chain finishes some seeds in a *single level*; at
+    /// 3 the shortest run is 16 levels while the median is unchanged at 28. It
+    /// only starts costing the median at 6–7.
+    #[serde(default = "default_maze_wands")]
+    pub maze_wands: u8,
     #[serde(default)]
     pub big_q_blocks: bool,
     /// Shuffle airship levels across worlds 1-7.
@@ -659,6 +683,8 @@ impl Default for Options {
             king_quotes: true,
             world_order: false,
             world_count: default_world_count(),
+            world_maze: false,
+            maze_wands: default_maze_wands(),
             big_q_blocks: false,
             shuffle_airships: true,
             shuffle_hammer_bros: true,

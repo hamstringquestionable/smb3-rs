@@ -187,6 +187,13 @@ const W8_WATER_EDITS: &[(usize, usize, u8)] = &[
 /// `0xB3 -> 0x9D`) that its fortress rebuilds — the "bridge out" the builder
 /// deals per seed (`overworld_build::locks`). Single source of truth: the
 /// builder reads these positions rather than repeating the coordinates.
+///
+/// All five are stamped as bridges in every mode. In WORLD-MAZE mode only,
+/// the last of them — `rom_data::W8_WAND_GATE_POS` at (5,59) — is held out
+/// of the deal by `overworld_build::locks::free_bridge_spans`, because the
+/// maze writes its wand gate over that cell after the build. It stays stamped
+/// here either way: the corridor looks the same, and the gate goes down last,
+/// over the finished map.
 pub(crate) const W8_BRIDGE_ROW: usize = 5;
 pub(crate) const W8_BRIDGE_COLS: [usize; 5] = [51, 53, 55, 57, 59];
 

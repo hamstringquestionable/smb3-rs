@@ -199,6 +199,16 @@ struct Cli {
     #[arg(long, default_value_t = 7, value_parser = clap::value_parser!(u8).range(1..=7))]
     world_count: u8,
 
+    /// World maze: the eight maps become one Metroidvania, linked by telepads,
+    /// with cross-world locks and a whistle that fast-travels between visited
+    /// worlds. Forces --world-order on.
+    #[arg(long)]
+    world_maze: bool,
+
+    /// Wands Bowser's castle demands in world-maze mode (0-7, default 3)
+    #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u8).range(0..=7))]
+    maze_wands: u8,
+
     /// Enable Big ? Block randomization
     #[arg(long)]
     big_q_blocks: bool,
@@ -559,8 +569,13 @@ fn build_options(cli: &Cli) -> Options {
             player_color: cli.player_color,
             remove_flashing: !cli.keep_flashing,
             king_quotes: !cli.vanilla_king_quotes,
-            world_order: cli.world_order,
+            // The maze reads `world_order`'s table as its airship spine and
+            // chains the wand counter through the routine it installs, so it
+            // cannot run without it.
+            world_order: cli.world_order || cli.world_maze,
             world_count: cli.world_count,
+            world_maze: cli.world_maze,
+            maze_wands: cli.maze_wands,
             big_q_blocks: cli.big_q_blocks,
             shuffle_airships: !cli.no_shuffle_airships,
             shuffle_hammer_bros: !cli.no_shuffle_hammer_bros,
@@ -660,6 +675,9 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
         }
     );
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
+    if options.world_maze {
+        eprintln!("  World maze: on ({} wand(s) to open the castle)", options.maze_wands);
+    }
     if options.world_order && options.world_count < 7 {
         eprintln!("  World count: {}", options.world_count);
     }
@@ -673,7 +691,17 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  Hammer Bro shuffle: {}", if options.shuffle_hammer_bros { "on" } else { "off" });
     eprintln!("  Autoscroll: {}", if options.disable_autoscroll { "disabled" } else { "enabled" });
     eprintln!("  Chest items: {}", if options.chest_items { "on" } else { "off" });
-    eprintln!("  Warp whistles: {}", if options.remove_whistles { "removed" } else { "kept" });
+    eprintln!(
+        "  Warp whistles: {}",
+        match (options.world_maze, options.remove_whistles) {
+            // The maze turns the whistle into fast travel, so it is kept
+            // whatever the option says — and saying "removed" here would be a
+            // straight lie about the ROM that was just written.
+            (true, _) => "fast travel (world maze)",
+            (false, true) => "removed",
+            (false, false) => "kept",
+        }
+    );
     eprintln!("  More hammer rocks: {}", tri_str(options.more_hammer_rocks));
     eprintln!("  8s are Wild: {}", tri_str(options.eights_are_wild));
     eprintln!("  Antechamber shuffle: {}", tri_str(options.antechamber_shuffle));

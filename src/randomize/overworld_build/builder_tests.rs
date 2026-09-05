@@ -86,8 +86,12 @@ fn census_ctx(raw: &Rom, seed: u64) -> CensusCtx {
         &catalog,
         PickupFlags { shuffle_spade_games: false, shuffle_toad_houses, shuffle_hammer_bros },
     );
-    let flags =
-        BuildFlags { shuffle_toad_houses, eights_are_wild: eights_wild, shuffle_hammer_bros };
+    let flags = BuildFlags {
+        shuffle_toad_houses,
+        eights_are_wild: eights_wild,
+        shuffle_hammer_bros,
+        ..Default::default()
+    };
     let (level_counts, fort_counts, c1_floors) =
         allot_budgets(&rom, &catalog, &pickup, &flags, &mut roll_rng);
     let bridges_out = roll_bridges_out(&mut roll_rng);
@@ -140,6 +144,7 @@ fn test_builder_schedule_runs_phases_in_order() {
         ptr_slots: 0,
         bridges_out: 0,
         bridge_spans: Vec::new(),
+        wand_gate_reserved: false,
         hb_sprite_pins: Vec::new(),
         log: Vec::new(),
     };
@@ -1878,8 +1883,12 @@ fn test_builder_island_roles() {
             shuffle_hammer_bros: true,
         },
     );
-    let flags =
-        BuildFlags { shuffle_toad_houses: true, eights_are_wild: false, shuffle_hammer_bros: true };
+    let flags = BuildFlags {
+        shuffle_toad_houses: true,
+        eights_are_wild: false,
+        shuffle_hammer_bros: true,
+        ..Default::default()
+    };
     let sizes_roles = |world_idx: usize| {
         let state = from_pickup(&rom, &catalog, &pickup, world_idx, &flags);
         let (pocket, count) = super::islands::pocket_map(&state);

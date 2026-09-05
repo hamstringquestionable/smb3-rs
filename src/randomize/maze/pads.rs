@@ -14,12 +14,11 @@ use super::super::overworld_build::{SlotKind, WorldState};
 use super::super::rom_data::{self, Pos};
 use super::MazeEdge;
 
-/// Global cap on telepads. Each pad TILE owns one arrival row, and there are
-/// `PORTAL_MAX` rows; a two-way link is therefore two pads and two ids.
-pub(crate) const PAD_BUDGET: usize = super::super::world_persist::PORTAL_MAX;
-
-/// Pads per world: 0..=3, biased to 1 (the charter's distribution).
-const PAD_COUNT_WEIGHTS: [u32; 4] = [2, 5, 2, 1];
+// The budget and the per-world roll live in `graph`, which is the production
+// placer. The null model shares them deliberately: a baseline that dealt pads
+// at a different rate from the real placer would not be a baseline, it would
+// be a different experiment.
+pub(crate) use super::graph::{PAD_BUDGET, roll_count};
 
 /// Place pads across all eight worlds, uniformly at random, respecting
 /// [`PAD_BUDGET`].
@@ -51,19 +50,6 @@ pub(crate) fn place_pads_uniform<R: Rng>(worlds: &[WorldState], rng: &mut R) -> 
         }
     }
     out
-}
-
-/// Weighted 0..=3.
-pub(super) fn roll_count<R: Rng>(rng: &mut R) -> usize {
-    let total: u32 = PAD_COUNT_WEIGHTS.iter().sum();
-    let mut roll = rng.random_range(..total);
-    for (n, &w) in PAD_COUNT_WEIGHTS.iter().enumerate() {
-        if roll < w {
-            return n;
-        }
-        roll -= w;
-    }
-    0
 }
 
 /// Where a pad TILE may go in a finished world.

@@ -9,6 +9,20 @@ deploys.
 
 ## [Unreleased]
 
+### Added
+
+- **World Maze.** A new mode in which the eight world maps stop being a sequence
+  and become the rooms of one big maze. Warp pads link them, a fortress can bust
+  a lock in a *different* world, and — the part none of it works without — the
+  progress you made in a world is still there when you come back to it. The warp
+  whistle stops being a warp zone and becomes fast travel between worlds you
+  have already set foot in. Bowser's castle stays shut until you are carrying
+  enough wands, which is the new **Wands To Enter** setting (0-7, default 3).
+
+  Turning it on also turns World Order on, keeps map progress through a game
+  over, and leaves whistles in the game whatever "Remove Whistles" says — the
+  whistle is how you get around, and it can never take you anywhere new.
+
 ### Fixed
 
 - Levels, fortresses and locks no longer land on the map cell whose completion

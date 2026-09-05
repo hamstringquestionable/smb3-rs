@@ -48,7 +48,9 @@ pub(crate) fn allot_budgets(
 /// Wrap a finished `BuiltWorld` back into a `WorldState`. Start/target are
 /// re-derived from the grid the same way the builder derived them. `fixed`
 /// is empty: a finished world has nothing left to place.
-#[cfg(test)]
+///
+/// Production since the world maze: the maze is eight of these over
+/// `BuildResult::worlds`, which is the whole of how it gets its input.
 pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
     WorldState {
         world_idx: built.world_idx,
@@ -67,6 +69,7 @@ pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
         ptr_slots: 0,
         bridges_out: 0,
         bridge_spans: Vec::new(),
+        wand_gate_reserved: false,
         hb_sprite_pins: Vec::new(),
         log: Vec::new(),
     }
@@ -151,6 +154,7 @@ pub(crate) fn from_pickup(
         ptr_slots: pickup.worlds[world_idx].pool_indices.len(),
         bridges_out: 0,
         bridge_spans: Vec::new(),
+        wand_gate_reserved: flags.world_maze && world_idx == rom_data::W8_IDX,
         hb_sprite_pins,
         log: Vec::new(),
     }
@@ -201,6 +205,7 @@ pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -
         ptr_slots: 0,
         bridges_out: 0,
         bridge_spans: Vec::new(),
+        wand_gate_reserved: false,
         hb_sprite_pins: Vec::new(),
         log: Vec::new(),
     }

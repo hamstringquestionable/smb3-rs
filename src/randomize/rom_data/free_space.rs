@@ -111,6 +111,13 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "bro_timer: 10-second clock for bro encounters (30 reserved, 25 used)",
     ),
     fs(
+        0x3DFA0,
+        16,
+        &["wand_gate"],
+        "world-maze: bump the wand count on an airship clear (16 reserved, 16 used — \
+         the $FF run here is exactly 16 bytes, so this cannot grow in place)",
+    ),
+    fs(
         0x3DFC6,
         32,
         &["stomp_fairness"],
@@ -134,6 +141,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(0x3E965, 13, &["title_screen"], "intro skip + menu music routine"),
     fs(0x3FFF0, 26, &["card_speed_clear"], "XOR trampoline"),
     // PRG025 (file 0x32010, CPU $C000–$DFFF while the title screen runs)
+    fs(
+        0x33FC8,
+        40,
+        &["completion_bits"],
+        "world-maze: the title screen's new-game signal (40 reserved, 25 used)",
+    ),
     fs(0x33FF0, 32, &["title_screen"], "title menu B-to-mute toggle (32 reserved, 22 used)"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
     fs(0x35572, 13, &["mystery_anchor"], "item redirect trampoline"),
@@ -161,10 +174,16 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "world-maze: pack one world, both planes (40 reserved, 33 used)",
     ),
     fs(
-        0x155EC,
-        48,
-        &["world_persist_debug_jump"],
-        "testrom debug: SELECT+START world-jump trampoline (48 reserved, 40 used)",
+        0x19DF0,
+        64,
+        &["stamp"],
+        "flag key + seed stamp (64 reserved, up to 42 used at the largest key)",
+    ),
+    fs(
+        0x19E40,
+        128,
+        &["wand_gate"],
+        "world-maze: the wand gate's opener, two entry points (128 reserved, 29 used)",
     ),
     fs(
         0x1566C,
@@ -189,13 +208,13 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x15794,
         112,
         &["completion_bits"],
-        "world-maze: compress one Map_Completions half (112 reserved, 89 used)",
+        "world-maze: compress one Map_Completions half (112 reserved, 99 used)",
     ),
     fs(
         0x15F4C,
         80,
         &["completion_bits"],
-        "world-maze: expand one Map_Completions half (80 reserved, 66 used)",
+        "world-maze: expand one Map_Completions half (80 reserved, 72 used)",
     ),
     fs(
         0x15804,
@@ -213,13 +232,19 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x15FC0,
         60,
         &["completion_bits"],
-        "world-maze: the Map_Completions wipe, replaced (60 reserved, 57 used)",
+        "world-maze: the Map_Completions wipe, replaced (60 reserved, 31 used)",
     ),
     fs(
         0x15FFC,
         20,
         &["completion_bits"],
         "world-maze: unpack-on-change, then reload, at the hook (20 reserved, 18 used)",
+    ),
+    fs(
+        0x155EC,
+        64,
+        &["world_travel"],
+        "world-maze: mark a world visited on its start tile + start-column key table (64 reserved, 48 used)",
     ),
     fs(0x15DF0, 35, &["fix_canoe_softlock"], "canoe_fix: death respawn position save"),
     fs(0x15E13, 162, &["map_warp"], "2P Start+Select warp-to-partner routine"),
@@ -249,7 +274,20 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x17E7B,
         128,
         &["world_persist"],
-        "world-maze: telepad enter hook + 3 x 16 pad key table (128 reserved, 114 used)",
+        "world-maze: telepad enter hook + 3 x 16 pad key table (128 reserved, 111 used)",
+    ),
+    fs(
+        0x17EFB,
+        128,
+        &["world_travel"],
+        "world-maze: whistle fast travel to the next visited world (128 reserved, 34 used)",
+    ),
+    fs(
+        0x17F7B,
+        128,
+        &["foreign_locks"],
+        "world-maze: cross-world lock hook + 17 x 4 fort/plane-bit table \
+         (128 reserved, 127 used)",
     ),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     fs(0x0382A, 23, &["koopalings"], "koopa_hits: subroutine + defeat JMP + threshold table"),
@@ -338,7 +376,7 @@ pub(crate) const FS_CARD_CLEAR: usize = 0x3FFF0; // 26 bytes
 // PRG025 — the title-screen bank at $C000–$DFFF (PRG030's title entry loads
 // page 24 into $A000 and page 25 into $C000 before `Do_Title_Screen`). The
 // disassembly ends this bank with "Rest of ROM bank was empty" at 0x33529, so
-// the whole 2791-byte run to the bank end is unreferenced filler; only 32 bytes
+// the whole 2791-byte run to the bank end is unreferenced filler; only 72 bytes
 // are claimed here. Costs nothing from the always-mapped banks, which is what
 // makes this the right home for a title-only routine.
 //
@@ -350,6 +388,70 @@ pub(crate) const FS_CARD_CLEAR: usize = 0x3FFF0; // 26 bytes
 // band of garbage tiles across the title screen (`visual_patches_clear_the_free
 // _space_registry` guards the whole registry against the bundled patches now).
 pub(crate) const FS_TITLE_MUTE: usize = 0x33FF0; // 32 reserved, 22 used
+
+// The world maze's new-game signal, hooked over the title menu's
+// `STA Debug_Flag` at 0x30CC7 (PRG024 CPU $ACB7). Same bank and the same
+// reasoning as FS_TITLE_MUTE — PRG025 is at $C000 for the whole title screen —
+// and sited immediately *before* it, so the two sit at the tail of the run
+// together and a bundled title hack starting at 0x33529 still has 2719 bytes
+// of clear filler ahead of them.
+pub(crate) const FS_NEW_GAME_INIT: usize = 0x33FC8; // 40 reserved, 25 used
+
+// The five world-maze constants below are **offset reservations**: the address
+// is decided here, in one place, so the features being built alongside each
+// other cannot collide over a gap. Each one's `FREE_SPACE_ALLOCATIONS` row
+// lands with the code that writes it — the audit requires every row to be
+// exercised, so a row without a writer fails rather than sitting unproven.
+
+/// World-maze fast travel: the whistle takes the player to the next world they
+/// have already visited, wrapping. PRG011, CPU `$BEEB` — the map banks PRG011
+/// at `$A000` for its whole life, so a map-side feature pays no always-mapped
+/// rent. Sited at the head of PRG011's 277-byte tail so
+/// [`FS_MAZE_FOREIGN_LOCK`] can follow it in the same run.
+// Native-only, like every other world-maze routine constant: the mode is
+// gated to native, and CI's wasm clippy pass flags a constant nothing on that
+// target can read. The FREE_SPACE_ALLOCATIONS rows stay ungated -- the
+// accounting has to be complete on every target.
+pub(crate) const FS_MAZE_TRAVEL: usize = 0x17EFB;
+
+/// World-maze: mark a world visited when the player stands on its start tile.
+/// PRG010, CPU `$D5DC` — the head of the 128-byte run the retired debug world
+/// jump left behind, and the same bank `MO_NormalMoveEnter` runs in.
+// Native-only, like every other world-maze routine constant: the mode is
+// gated to native, and CI's wasm clippy pass flags a constant nothing on that
+// target can read. The FREE_SPACE_ALLOCATIONS rows stay ungated -- the
+// accounting has to be complete on every target.
+pub(crate) const FS_MAZE_VISITED: usize = 0x155EC;
+
+/// The flag key + seed stamp: `"S3R"`, a length byte, the flag-key bytes and
+/// the seed. **This is not new** — `randomizer::STAMP_OFFSET` has written here
+/// since long before the registry existed, with no row to say so, which is
+/// exactly how the world-maze wand gate came to be sited on top of it. Sized
+/// for the largest flag key the format can produce (3 magic + 1 length + up to
+/// 30 key bytes + 8 seed = 42) with room for the key to grow.
+pub(crate) const FS_SEED_STAMP: usize = 0x19DF0;
+
+/// World-maze: the wand gate on World 8's bridge, and the check that lifts it.
+/// PRG012, CPU `$BE30` — mapped at `$A000` whenever the map is reloaded, which
+/// is when the gate is decided. Sited AFTER [`FS_SEED_STAMP`], not at the head
+/// of the gap. The 576-byte gap here had its unreferenced
+/// check on 2026-09-05: `prg012.asm` ends with "Rest of ROM bank was empty"
+/// after the unlabelled block at `$BC4A-$BDBF`, the run is `$FF` with no
+/// exceptions, and an operand scan across PRG010/011/012/030/031 for absolute
+/// references into `$BDC0-$BFFF` found 83 hits, every one of them a misaligned
+/// read inside a data table. The preceding 374 bytes at `$BC4A-$BDBF` are
+/// unclaimed but are NOT filler — do not extend into them without their own
+/// check.
+pub(crate) const FS_MAZE_WAND_GATE: usize = 0x19E40;
+
+/// World-maze: bump the wand counter when an airship is cleared. PRG030, which
+/// is always mapped — the airship path runs there and `FS_WORLD_ORDER` next
+/// door is 28/28 full, so this needs its own row.
+pub(crate) const FS_MAZE_WAND_COUNT: usize = 0x3DFA0;
+
+/// World-maze: a fortress whose lock is in another world. PRG011, CPU `$BF6B`,
+/// immediately after [`FS_MAZE_TRAVEL`] in the same 277-byte run.
+pub(crate) const FS_MAZE_FOREIGN_LOCK: usize = 0x17F7B;
 
 pub(crate) const FS_STARTING_ITEMS: usize = 0x3E260; // 33 bytes
 
@@ -435,14 +537,10 @@ pub(crate) const FS_FX_SCREEN_CHECK: usize = 0x15554; // 112 reserved, 82 used
 // be complete on every target, or the per-bank budget lies on one of them.
 // Was FS_WORLD_PERSIST_SWAP, the POC's two-world raw bank swap. Retired when
 // the packed path replaced it; the gap now holds PACK_WORLD.
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_PACK_WORLD: usize = 0x155C4; // 40 reserved, 33 used
-#[cfg(not(target_arch = "wasm32"))]
-// The SELECT+START world-jump is a testrom debug trigger with its own owner
-// tag, deliberately: it is the one part of the world maze a shipped ROM must
-// not carry, and a separate owner is what makes that visible in the audit.
-pub(crate) const FS_WORLD_PERSIST_JUMP: usize = 0x155EC; // 48 reserved, 40 used
-#[cfg(not(target_arch = "wasm32"))]
+// 0x155EC..0x1566C is unclaimed: the SELECT+START debug world-jump used to
+// reserve the first 48 bytes of it, and removing that merged the pair into one
+// 128-byte run.
 pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x1566C; // 64 reserved, 56 used
 
 // The portal arrival stash and the table it reads, together because the stash
@@ -453,40 +551,29 @@ pub(crate) const FS_RESTORE_ARRIVAL: usize = 0x1566C; // 64 reserved, 56 used
 // and PRG010 has no run left that holds 147 bytes, while `prg011.asm` ends with
 // "Rest of ROM bank was empty" and leaves 565 unbroken from here to the bank
 // end. The stash also has to reach `Map_Init`, which is PRG011's own code.
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_PORTAL_ARRIVAL: usize = 0x17DDB; // 160 reserved, 147 used
 
 // The telepad enter hook. PRG010 is mapped at $C000 whenever the map runs, so
 // unlike the pipe portal's level-exit trigger this pays no always-mapped-bank
 // rent at all — it can sit in PRG011 beside the arrival stash it feeds.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_PAD_ENTER: usize = 0x17E7B; // 128 reserved, 114 used
+pub(crate) const FS_PAD_ENTER: usize = 0x17E7B; // 128 reserved, 111 used
 
 // World-maze phase 1: the completion-bit stencil, derived on the console.
 // The $FF run FS_FX_SCREEN_CHECK opened continues past FS_STASH_ARRIVAL to
 // 0x15810 unbroken, and `prg010.asm` ends with "Rest of ROM bank was empty"
 // after the DMC samples, so nothing reads it. PRG010 is mapped at $C000 for
 // the whole world-map init, which is where these run.
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_MASK_BUILD: usize = 0x156DC; // 128 reserved
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_IS_COMPLETABLE: usize = 0x1575C; // 48 reserved
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_WORLD_COLS: usize = 0x1578C; // 8 reserved
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_PACK_PLANE: usize = 0x15794; // 112 reserved, 89 used
+pub(crate) const FS_PACK_PLANE: usize = 0x15794; // 112 reserved, 99 used
 // The tail of PRG010, picking up where FS_CANOE_SUMMON stops: 196 bytes of
 // $FF running to the bank end at 0x16010.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_UNPACK_PLANE: usize = 0x15F4C; // 80 reserved, 66 used
-#[cfg(not(target_arch = "wasm32"))]
+pub(crate) const FS_UNPACK_PLANE: usize = 0x15F4C; // 80 reserved, 72 used
 pub(crate) const FS_COMPLETION_BASES: usize = 0x15804; // 12 reserved, 9 used
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_UNPACK_WORLD: usize = 0x15F9C; // 36 reserved, 33 used
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) const FS_WIPE_REPLACEMENT: usize = 0x15FC0; // 60 reserved, 57 used
+pub(crate) const FS_WIPE_REPLACEMENT: usize = 0x15FC0; // 60 reserved, 31 used
 // Runs to 0x16010, the end of PRG010.
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const FS_SWAP_AT_RELOAD: usize = 0x15FFC; // 20 reserved, 18 used
 
 pub(crate) const FS_CANOE_RESPAWN: usize = 0x15DF0; // 35 bytes
@@ -1073,10 +1160,16 @@ mod free_space_tests {
             (FS_ANCHOR_ITEM_GUARD, "FS_ANCHOR_ITEM_GUARD"),
             (FS_KING_QUOTES, "FS_KING_QUOTES"),
             (FS_FX_SCREEN_CHECK, "FS_FX_SCREEN_CHECK"),
-            (FS_WORLD_PERSIST_JUMP, "FS_WORLD_PERSIST_JUMP"),
+            (FS_NEW_GAME_INIT, "FS_NEW_GAME_INIT"),
+            (FS_SEED_STAMP, "FS_SEED_STAMP"),
+            (FS_MAZE_WAND_GATE, "FS_MAZE_WAND_GATE"),
+            (FS_MAZE_WAND_COUNT, "FS_MAZE_WAND_COUNT"),
             (FS_RESTORE_ARRIVAL, "FS_RESTORE_ARRIVAL"),
             (FS_PORTAL_ARRIVAL, "FS_PORTAL_ARRIVAL"),
             (FS_PAD_ENTER, "FS_PAD_ENTER"),
+            (FS_MAZE_FOREIGN_LOCK, "FS_MAZE_FOREIGN_LOCK"),
+            (FS_MAZE_VISITED, "FS_MAZE_VISITED"),
+            (FS_MAZE_TRAVEL, "FS_MAZE_TRAVEL"),
             (FS_MASK_BUILD, "FS_MASK_BUILD"),
             (FS_IS_COMPLETABLE, "FS_IS_COMPLETABLE"),
             (FS_WORLD_COLS, "FS_WORLD_COLS"),

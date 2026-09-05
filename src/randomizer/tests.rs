@@ -138,7 +138,20 @@ fn mystery_anchor_trampoline_written() {
 /// but pins `world_count` to 3 and leaves `swap_start_airship` off, and both
 /// gate allocations we want exercised.
 fn audit_options() -> Options {
-    Options { world_count: 7, swap_start_airship: true, ..all_on_options() }
+    // World maze on, because it is the configuration that writes the MOST free
+    // space: nine allocations across five banks belong to it, and every one of
+    // them used to need a hand-written `apply` call in the test body to be
+    // exercised at all. Driving them through the real pipeline is the point —
+    // the check exists because an un-exercised allocation is an unaudited one,
+    // and a hand-written call proves the routine writes bytes without proving
+    // the randomizer ever calls it.
+    Options {
+        world_count: 7,
+        swap_start_airship: true,
+        world_maze: true,
+        maze_wands: 3,
+        ..all_on_options()
+    }
 }
 
 /// Cross-check `FREE_SPACE_ALLOCATIONS` against a real run: every byte written
@@ -158,26 +171,6 @@ fn free_space_audit_matches_registry() {
         return;
     };
     randomize(&mut rom, 0xA11C0DE, &audit_options());
-    // `world_persist` is reachable only from `testrom`, so `randomize` never
-    // writes it and it would sit at zero used, tripping the exercised-check
-    // below. Apply it here rather than exempting it: that check exists because
-    // an un-exercised allocation is an unaudited one, and "only testrom turns
-    // it on" is not the same as "it doesn't claim ROM bytes".
-    // A telepad too, and not an empty list: the pad hook, the arrival stash and
-    // their tables are their own allocations, and an empty list installs none
-    // of them.
-    crate::randomize::world_persist::apply(
-        &mut rom,
-        &[crate::randomize::world_persist::Telepad {
-            world: 0,
-            dest_world: 1,
-            dest_pos: (2, 2),
-            src_pos: (2, 2),
-        }],
-    );
-    // And the debug jump, which is its own allocation and no longer rides
-    // along with the persistence.
-    crate::randomize::world_persist::apply_debug_world_jump(&mut rom);
 
     let usage = audit_free_space(&rom);
     println!("{}", format_free_space_report(&rom));
@@ -1117,6 +1110,8 @@ fn all_off_options() -> Options {
         king_quotes: false,
         world_order: false,
         world_count: 7,
+        world_maze: false,
+        maze_wands: 3,
         big_q_blocks: false,
         shuffle_airships: false,
         shuffle_hammer_bros: false,
@@ -1191,6 +1186,8 @@ fn all_on_options() -> Options {
         king_quotes: true,
         world_order: true,
         world_count: 3,
+        world_maze: true,
+        maze_wands: 5,
         big_q_blocks: true,
         shuffle_airships: true,
         shuffle_hammer_bros: true,
@@ -1571,4 +1568,63 @@ fn resolve_concrete_passthrough() {
     assert_eq!(resolve_starting_item(0, &mut rng), 0);
     assert_eq!(resolve_starting_item(5, &mut rng), 5);
     assert_eq!(resolve_starting_item(13, &mut rng), 13);
+}
+
+/// **A pad tile stands under every arrival key the ROM carries.**
+///
+/// This is the end-to-end check for the failure that already cost a playtest
+/// session once: the pad key tables and the map are written by different
+/// modules, and if they disagree by so much as a row, stepping on the pad
+/// enters the **spade game** instead of teleporting. Nothing about that is
+/// visible from either side alone — `world_persist` can prove its routine reads
+/// its own tables, and the maze can prove it stamped the tiles it meant to, and
+/// the ROM can still be wrong.
+///
+/// So this reads the finished ROM the way the engine does: decode each pad key
+/// row back into a `(world, row, col)` and demand a spade panel there.
+#[test]
+fn a_maze_rom_puts_a_pad_tile_under_every_arrival_key() {
+    use crate::randomize::rom_data::{self, TILE_BONUS_GAME};
+    use crate::randomize::world_persist::{PAD_TABLE_OFF, PORTAL_MAX};
+
+    let Some(rom) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    // Several seeds: the pad count and their worlds are rolled, so one seed
+    // proves very little about the encoding.
+    for seed in [1u64, 7, 12345, 0xA11C0DE] {
+        let mut rom = rom.clone();
+        randomize(&mut rom, seed, &Options { world_maze: true, ..audit_options() });
+
+        let table = crate::randomize::rom_data::FS_PAD_ENTER + PAD_TABLE_OFF;
+        let mut found = 0;
+        for id in 0..PORTAL_MAX {
+            let world = rom.read_byte(table + id);
+            if world == 0xFF {
+                continue; // no pad on this row
+            }
+            // The engine's own encoding, and the only one the map has:
+            // Y = (grid_row + 2) << 4; the X byte packs the column within its
+            // screen in the high nibble and the screen index in the low.
+            let y = rom.read_byte(table + PORTAL_MAX + id);
+            let x = rom.read_byte(table + 2 * PORTAL_MAX + id);
+            let row = (y >> 4) as usize - 2;
+            let col = (x & 0x0F) as usize * 16 + (x >> 4) as usize;
+            let tile = rom.read_byte(rom_data::map_tile_offset(world as usize, row, col));
+            assert_eq!(
+                tile,
+                TILE_BONUS_GAME,
+                "seed {seed}: pad {id} keys W{} ({row},{col}), but that cell is {tile:#04X}, \
+                 not a spade panel — stepping on it would enter a level, not teleport",
+                world + 1
+            );
+            found += 1;
+        }
+        assert!(found > 0, "seed {seed}: a maze ROM with no telepads at all");
+        assert!(
+            found <= PORTAL_MAX,
+            "seed {seed}: {found} pads exceeds the {PORTAL_MAX} arrival rows"
+        );
+    }
 }

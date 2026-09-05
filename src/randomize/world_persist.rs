@@ -73,27 +73,25 @@
 //!
 //! Also knowingly unhandled here: the player respawns at the world's start tile
 //! rather than where they left (a portal aims its own arrival, but leaving a
-//! world any other way does not remember where you stood), the per-world flags
-//! `$84A0` resets (`Map_Anchored`, `Map_WhiteHouse`, `Map_CoinShip`,
-//! `Map_Got13Warp`) are not banked, and vanilla's own two jumps into `$84A0`
-//! — the airship and the warp zone — do not raise `TRANSITION_FLAG`, so they
-//! still reset rather than swap.
+//! world any other way does not remember where you stood), and the per-world
+//! flags `$84A0` resets (`Map_Anchored`, `Map_WhiteHouse`, `Map_CoinShip`,
+//! `Map_Got13Warp`) are not banked.
+//!
+//! Vanilla's own two jumps into `$84A0` — the airship and the warp zone — used
+//! to be unhandled too, because the pack hook fired on a flag only our own code
+//! raised. Both are covered now: the hooks compare `World_Num` against
+//! `LIVE_WORLD`, which every path sets, and `completion_bits`' new-game signal
+//! is what keeps a fresh game from looking like a transition.
 
 use crate::rom::Rom;
 
-use super::completion_bits::{self, TRANSITION_FLAG};
+use super::completion_bits;
 use super::pipe_helpers;
-use super::rom_data::{
-    FS_PAD_ENTER, FS_PORTAL_ARRIVAL, FS_RESTORE_ARRIVAL, FS_WORLD_PERSIST_JUMP, TILE_BONUS_GAME,
-};
+use super::rom_data::{FS_PAD_ENTER, FS_PORTAL_ARRIVAL, FS_RESTORE_ARRIVAL, TILE_BONUS_GAME};
 
-// CPU addresses of the two routines. PRG010 is mapped at $C000 whenever
-// either hook runs — `$84A0` maps it itself, and `MO_NormalMoveEnter` lives
-// in it — so CPU = $C000 + (file - 0x14010), the same arithmetic as the
-// other PRG010 patches (`map_warp.rs`, `canoe_summon.rs`).
-const WORLD_JUMP_CHECK_CPU: u16 = (0xC000 + FS_WORLD_PERSIST_JUMP - 0x14010) as u16;
-// PRG011 is mapped at $A000 during the map, and `PRG011_ABBE` is its own code,
-// so CPU = $A000 + (file - 0x16010).
+// PRG010 is mapped at $C000 whenever this runs — `$84A0` maps it itself — so
+// CPU = $C000 + (file - 0x14010), the same arithmetic as the other PRG010
+// patches (`map_warp.rs`, `canoe_summon.rs`).
 const RESTORE_ARRIVAL_CPU: u16 = (0xC000 + FS_RESTORE_ARRIVAL - 0x14010) as u16;
 // PRG011 is mapped at $A000 for the whole map init, so the stash and its
 // table live there: PRG010 has no run left that holds them.
@@ -101,18 +99,6 @@ const STASH_ARRIVAL_CPU: u16 = (0xA000 + FS_PORTAL_ARRIVAL - 0x16010) as u16;
 const PAD_ENTER_CPU: u16 = (0xA000 + FS_PAD_ENTER - 0x16010) as u16;
 
 // --- Engine symbols -----------------------------------------------------
-//
-// Verified against the ROM rather than read off the disassembly's labels:
-// `$18` is the operand of the `LDA <Pad_Input / AND #$0F` direction test in
-// `MO_NormalMoveEnter`, `$17` the `Pad_Holding` test sixteen bytes later.
-
-/// `Pad_Holding` — buttons held, continuous.
-const PAD_HOLDING: u8 = 0x17;
-/// `Pad_Input` — buttons newly pressed this frame, one-shot.
-const PAD_INPUT: u8 = 0x18;
-
-const PAD_START: u8 = 0x10;
-const PAD_SELECT: u8 = 0x20;
 
 /// `World_Num`, 0-based.
 const WORLD_NUM: u16 = 0x0727;
@@ -176,27 +162,6 @@ const WIPE_OFFSET: usize = 0x3C4DD;
 #[cfg(test)]
 const WIPE_LEN: usize = 10;
 
-/// `MO_NormalMoveEnter` (CPU `$CDCA`) — map operation `$D`, the normal
-/// standing-on-the-map state, run every frame from `Map_DoOperation`. Its first
-/// eight bytes are three whole instructions:
-///
-/// ```text
-/// A9 00       LDA #$00
-/// 8D 6E 79    STA Map_NoLoseTurn
-/// 8D 73 79    STA Map_WasInPipeway
-/// ```
-const NORMAL_MOVE_OFFSET: usize = 0x14DDA;
-const NORMAL_MOVE_LEN: usize = 8;
-
-/// Vanilla bytes at [`NORMAL_MOVE_OFFSET`], for the hook check.
-#[cfg(test)]
-#[rustfmt::skip]
-const NORMAL_MOVE_VANILLA: [u8; NORMAL_MOVE_LEN] = [
-    0xA9, 0x00,             // LDA #$00
-    0x8D, 0x6E, 0x79,       // STA Map_NoLoseTurn
-    0x8D, 0x73, 0x79,       // STA Map_WasInPipeway
-];
-
 // --- Routines -----------------------------------------------------------
 
 /// Put the player where the portal aimed them, after `Map_Init` has had its say.
@@ -241,71 +206,12 @@ const RESTORE_ARRIVAL: [u8; 56] = [
     0x60,                                                       // 55: RTS   ; done
 ];
 
-/// Trigger: hold SELECT, press START on the map to jump to the other world.
-///
-/// Opens with the three instructions displaced from `MO_NormalMoveEnter`, so
-/// the hook is a plain `JSR` and the vanilla path is unchanged when the combo
-/// is not held.
-///
-/// `Pad_Holding` for SELECT and `Pad_Input` for START, rather than both
-/// one-shot: two buttons landing on the same frame is not a thing a person can
-/// do reliably. START also opens the inventory on this frame, which does not
-/// matter — `$84A0` clears `Inventory_Open` on the way through.
-///
-/// **`LDX #$FF / TXS` before the jump is load-bearing.** `$84A0` never returns;
-/// it falls into `WorldMap_Loop`. Vanilla's two call sites reach it by `JMP`
-/// from a shallow, consistent stack depth and simply abandon the frame. This
-/// trigger fires from inside `Map_DoOperation`, several frames deeper, so
-/// without resetting the stack every jump would leak a few bytes and a long
-/// ping-pong session would eventually wrap it. Resetting is correct precisely
-/// because nothing above the map loop is ever coming back — vanilla does the
-/// same `DEX / TXS` at reset for the same reason.
-#[rustfmt::skip]
-const WORLD_JUMP_CHECK: [u8; 48] = [
-    // ----- displaced from MO_NormalMoveEnter -----
-    0xA9, 0x00,             //  0: LDA #$00
-    0x8D, 0x6E, 0x79,       //  2: STA Map_NoLoseTurn
-    0x8D, 0x73, 0x79,       //  5: STA Map_WasInPipeway
-
-    // Mid-scroll the map is between states and a jump from here misbehaves.
-    // `PRG010_CDDC` tests the same counter one instruction later.
-    0xAD, MAP_PAN_COUNT as u8, (MAP_PAN_COUNT >> 8) as u8,  //  8: LDA Map_Pan_Count
-    0xD0, 0x22,             // 11: BNE +34 -> done
-
-    // ----- SELECT held + START pressed? -----
-    0xA5, PAD_HOLDING,      // 13: LDA Pad_Holding
-    0x29, PAD_SELECT,       // 15: AND #PAD_SELECT
-    0xF0, 0x1C,             // 17: BEQ +28 -> done
-    0xA5, PAD_INPUT,        // 19: LDA Pad_Input
-    0x29, PAD_START,        // 21: AND #PAD_START
-    0xF0, 0x16,             // 23: BEQ +22 -> done
-
-    // ----- jump: next world, wrapping at 8, and restart the map -----
-    0xA9, 0x01,             // 25: LDA #$01          ; this is a transition,
-    0x8D, TRANSITION_FLAG as u8,
-          (TRANSITION_FLAG >> 8) as u8,              // 27: STA TRANSITION_FLAG
-                                                    //     not a new game
-    0xAD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,  // 30: LDA World_Num
-    0x18,                   // 33: CLC
-    0x69, 0x01,             // 34: ADC #$01
-    0x29, 0x07,             // 36: AND #$07          ; all eight, not a ping-pong
-    0x8D, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,  // 38: STA World_Num
-    0xA2, 0xFF,             // 41: LDX #$FF
-    0x9A,                   // 43: TXS               ; see doc comment
-    0x4C, WORLD_MAP_INIT_CPU as u8,
-          (WORLD_MAP_INIT_CPU >> 8) as u8,           // 44: JMP $84A0 (never returns)
-
-    0x60,                   // 47: RTS               ; done
-];
-
 // --- Writer -------------------------------------------------------------
 
-/// Install the POC: packed per-world completions, the SELECT+START jump, and
-/// any cross-world portals.
+/// Install the POC: packed per-world completions and any cross-world telepads.
 ///
-/// The storage itself is [`completion_bits`]; this module contributes the debug
-/// telepads that cross between them. The SELECT+START debug jump is
-/// deliberately *not* here — see [`apply_debug_world_jump`]. The arrival restore is written into the
+/// The storage itself is [`completion_bits`]; this module contributes the
+/// telepads that cross between them. The arrival restore is written into the
 /// padding `completion_bits` leaves at the wipe site, so it runs on the same
 /// pass and after `Map_Init` has had its say.
 pub(crate) fn apply(rom: &mut Rom, telepads: &[Telepad]) {
@@ -339,39 +245,7 @@ pub(crate) fn apply(rom: &mut Rom, telepads: &[Telepad]) {
     rom.pop_tag();
 }
 
-/// The SELECT+START world-jump — **a debug trigger, and testrom's alone.**
-///
-/// Hold SELECT and press START on the map and it cycles through all eight
-/// worlds. That is how the persistence was exercised before telepads existed,
-/// and it is still the fastest way to check a world's progress survives a
-/// transition without playing to a pad.
-///
-/// **It is split out of [`apply`] because a shipped ROM must not carry it.**
-/// When these modules stop being native-only, `apply` is what the randomizer
-/// calls; this stays behind with `testrom`. Keeping them in one function meant
-/// a shipped maze would have handed every player a world-select.
-///
-/// Requires [`apply`] to have run: the jump raises `TRANSITION_FLAG`, which
-/// means nothing until `completion_bits` has installed the swap that reads it.
-pub(crate) fn apply_debug_world_jump(rom: &mut Rom) {
-    rom.push_tag("world_persist_debug_jump");
-
-    rom.write_range(FS_WORLD_PERSIST_JUMP, &WORLD_JUMP_CHECK);
-
-    // Hook MO_NormalMoveEnter for the trigger.
-    let mut hook = [0xEA_u8; NORMAL_MOVE_LEN];
-    hook[0] = 0x20; // JSR
-    hook[1] = WORLD_JUMP_CHECK_CPU as u8;
-    hook[2] = (WORLD_JUMP_CHECK_CPU >> 8) as u8;
-    rom.write_range(NORMAL_MOVE_OFFSET, &hook);
-
-    rom.pop_tag();
-}
-
 // --- Pipe portal ------------------------------------------------------------
-
-/// `Map_Pan_Count` — non-zero while the map is scrolling.
-const MAP_PAN_COUNT: u16 = 0x0710;
 
 /// How many portals a ROM can hold.
 ///
@@ -569,7 +443,7 @@ const WORLD_MAP_XHI: u8 = 0x77;
 const WORLD_MAP_X: u8 = 0x79;
 
 /// Offset of the pad key tables inside [`PAD_ENTER`].
-pub(crate) const PAD_TABLE_OFF: usize = 66;
+pub(crate) const PAD_TABLE_OFF: usize = 63;
 
 /// Three parallel key tables, sixteen rows — one per shared arrival id. A row
 /// says "a pad standing here uses this id", so the id *is* the row index and no
@@ -630,19 +504,21 @@ const PAD_ENTER: [u8; PAD_TABLE_OFF + 3 * PORTAL_MAX] = [
     0x60,                                                   // 47: RTS
 
     // ----- found (48): Y is the arrival id -----
+    //
+    // No transition flag to raise: `STASH_ARRIVAL` sets `World_Num` from the
+    // arrival row at `$84AD`, which is before the pack hook at `$84CD`, so the
+    // `World_Num != LIVE_WORLD` compare already sees the jump.
     0x98,                                                   // 48: TYA
     0x9D, MAP_ENTERED_XHI as u8,
           (MAP_ENTERED_XHI >> 8) as u8,                     // 49: STA Map_Entered_XHi,X  ; the id
     0xA9, 0x01,                                             // 52: LDA #$01
     0x8D, ARRIVAL_FLAG as u8, (ARRIVAL_FLAG >> 8) as u8,    // 54: STA ARRIVAL_FLAG
-    0x8D, TRANSITION_FLAG as u8,
-          (TRANSITION_FLAG >> 8) as u8,                     // 57: STA TRANSITION_FLAG
-    0xA2, 0xFF,                                             // 60: LDX #$FF
-    0x9A,                                                   // 62: TXS
+    0xA2, 0xFF,                                             // 57: LDX #$FF
+    0x9A,                                                   // 59: TXS
     0x4C, WORLD_MAP_INIT_CPU as u8,
-          (WORLD_MAP_INIT_CPU >> 8) as u8,                  // 63: JMP $84A0 (never returns)
+          (WORLD_MAP_INIT_CPU >> 8) as u8,                  // 60: JMP $84A0 (never returns)
 
-    // ----- PAD_WORLD (66), PAD_Y (82), PAD_X (98); $FF world = unclaimed -----
+    // ----- PAD_WORLD (63), PAD_Y (79), PAD_X (95); $FF world = unclaimed -----
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -705,69 +581,22 @@ mod asm_checks {
     use super::*;
     use crate::randomize::rom_data::asm;
 
-    #[test]
-    fn world_jump_check_is_well_formed() {
-        asm::check(&WORLD_JUMP_CHECK)
-            .allocation(FS_WORLD_PERSIST_JUMP)
-            .origin(WORLD_JUMP_CHECK_CPU)
-            .assert_ok();
-    }
-
-    /// Both hooks displace whole instructions, and the vanilla bytes they
-    /// displace are what this module claims they are.
+    /// `completion_bits` owns the wipe site; this module only writes the
+    /// arrival restore into the padding it leaves, which is a shared 10-byte
+    /// run and exactly the kind of arrangement that breaks quietly when either
+    /// side moves.
     #[test]
     fn hooks_displace_whole_instructions() {
         let Some(rom) = load_vanilla() else { return };
 
-        // `completion_bits` owns the wipe site now; this module only writes
-        // the arrival restore into the padding it leaves.
         let mut patched = rom.clone();
         completion_bits::apply(&mut patched);
         let wipe = patched.read_range(WIPE_OFFSET, WIPE_LEN).to_vec();
-
-        let mv = rom.read_range(NORMAL_MOVE_OFFSET, NORMAL_MOVE_LEN);
-        assert_eq!(mv, NORMAL_MOVE_VANILLA, "MO_NormalMoveEnter has moved");
 
         assert_eq!(
             &wipe[3..6],
             &[0xEA, 0xEA, 0xEA],
             "completion_bits must leave NOPs at the wipe site for the arrival restore"
-        );
-
-        let mut jsr_check = [0xEA_u8; NORMAL_MOVE_LEN];
-        jsr_check[0] = 0x20;
-        jsr_check[1] = WORLD_JUMP_CHECK_CPU as u8;
-        jsr_check[2] = (WORLD_JUMP_CHECK_CPU >> 8) as u8;
-        asm::check(&WORLD_JUMP_CHECK)
-            .allocation(FS_WORLD_PERSIST_JUMP)
-            .origin(WORLD_JUMP_CHECK_CPU)
-            .hook(&NORMAL_MOVE_VANILLA, 0, &jsr_check)
-            .assert_ok();
-    }
-
-    /// The displaced instructions are re-executed by the trampoline, in order.
-    /// Getting this wrong leaves `Map_NoLoseTurn` stale, which quietly stops
-    /// the player losing their turn after a level.
-    #[test]
-    fn trampoline_replays_what_it_displaced() {
-        assert_eq!(
-            WORLD_JUMP_CHECK[..NORMAL_MOVE_LEN],
-            NORMAL_MOVE_VANILLA,
-            "the trampoline must open with the instructions the hook overwrote"
-        );
-    }
-
-    /// The jump targets the real world-map init.
-    #[test]
-    fn jump_targets_world_map_init() {
-        // Decoding is what proves it: `asm::check` walks instruction
-        // boundaries, so a `JMP` found at 31 really is the final instruction
-        // and not an operand read as an opcode.
-        assert_eq!(WORLD_JUMP_CHECK[44], 0x4C, "trigger must end in a JMP");
-        assert_eq!(
-            u16::from_le_bytes([WORLD_JUMP_CHECK[45], WORLD_JUMP_CHECK[46]]),
-            0x84A0,
-            "trigger must JMP PRG030_84A0, the world-map init"
         );
     }
 
@@ -1029,50 +858,6 @@ mod asm_checks {
         );
     }
 
-    /// **The shipping half must not carry the debug trigger.** `apply` is what
-    /// the randomizer will call once these modules stop being native-only;
-    /// [`apply_debug_world_jump`] stays with `testrom`. They used to be one
-    /// function, which would have handed every player a SELECT+START
-    /// world-select.
-    #[test]
-    fn the_persistence_does_not_install_the_debug_world_jump() {
-        let Some(rom) = load_vanilla() else { return };
-        let pad = Telepad { world: 1, dest_world: 6, dest_pos: (5, 12), src_pos: (0, 4) };
-
-        // A full maze ROM: persistence, arrivals, pads — and no world-jump.
-        let mut shipped = rom.clone();
-        apply(&mut shipped, &[pad]);
-        assert_eq!(
-            shipped.read_range(NORMAL_MOVE_OFFSET, NORMAL_MOVE_LEN),
-            NORMAL_MOVE_VANILLA,
-            "MO_NormalMoveEnter must be untouched without the debug jump"
-        );
-        assert!(
-            shipped
-                .read_range(FS_WORLD_PERSIST_JUMP, WORLD_JUMP_CHECK.len())
-                .iter()
-                .all(|&b| b == 0xFF),
-            "the jump routine must not be written either"
-        );
-
-        // And asking for it puts both halves in.
-        let mut debug = shipped.clone();
-        apply_debug_world_jump(&mut debug);
-        assert_eq!(
-            debug.read_byte(NORMAL_MOVE_OFFSET),
-            0x20,
-            "the debug jump hooks MO_NormalMoveEnter"
-        );
-        assert_eq!(
-            u16::from_le_bytes([
-                debug.read_byte(NORMAL_MOVE_OFFSET + 1),
-                debug.read_byte(NORMAL_MOVE_OFFSET + 2)
-            ]),
-            WORLD_JUMP_CHECK_CPU,
-            "and the hook names the jump routine"
-        );
-    }
-
     /// Without pads, the map's enter-level path is untouched.
     #[test]
     fn telepads_are_opt_in() {
@@ -1211,14 +996,13 @@ mod asm_checks {
         mem.set_byte(MAP_ENTERED_XHI, 0xAA);
         mem.set_byte(MAP_ENTERED_XHI + 1, 0xAA);
         mem.set_byte(ARRIVAL_FLAG, 0xAA);
-        mem.set_byte(TRANSITION_FLAG, 0xAA);
         mem.set_byte(MAP_OPERATION, 0xAA);
         mos6502::cpu::CPU::new(mem, Ricoh2a03)
     }
 
     /// Standing on a pad teleports: it hands the arrival id to the place
-    /// `STASH_ARRIVAL` reads, raises both flags, and never sets `Map_Operation`
-    /// — the map must not also start an enter-level effect.
+    /// `STASH_ARRIVAL` reads, raises the arrival flag, and never sets
+    /// `Map_Operation` — the map must not also start an enter-level effect.
     ///
     /// Run with a sub-tile pixel offset on both axes, because the player's
     /// position is a pixel coordinate and the key has to mask it off.
@@ -1245,7 +1029,6 @@ mod asm_checks {
                     "and not in the other player's"
                 );
                 assert_eq!(cpu.memory.get_byte(ARRIVAL_FLAG), 1, "ARRIVAL_FLAG");
-                assert_eq!(cpu.memory.get_byte(TRANSITION_FLAG), 1, "TRANSITION_FLAG");
                 assert_eq!(
                     cpu.memory.get_byte(MAP_OPERATION),
                     0xAA,
@@ -1297,11 +1080,6 @@ mod asm_checks {
             assert!(!call_pad_enter(&mut cpu), "{what} teleported");
             assert_eq!(cpu.memory.get_byte(MAP_OPERATION), 0x10, "{what}: Map_Operation");
             assert_eq!(cpu.memory.get_byte(ARRIVAL_FLAG), 0xAA, "{what}: ARRIVAL_FLAG touched");
-            assert_eq!(
-                cpu.memory.get_byte(TRANSITION_FLAG),
-                0xAA,
-                "{what}: TRANSITION_FLAG touched"
-            );
             assert_eq!(
                 cpu.memory.get_byte(MAP_ENTERED_XHI),
                 0xAA,

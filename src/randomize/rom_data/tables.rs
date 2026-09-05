@@ -257,6 +257,49 @@ pub(crate) const TILE_BOWSER: u8 = 0xCC;
 /// Bonus game (spade/N-Spade) tile ID.
 pub(crate) const TILE_BONUS_GAME: u8 = 0xE8;
 
+/// The world maze's wand gate: the wall that stands on the last span of
+/// World 8's bridge until the player holds K of the seven wands.
+///
+/// `0xD5` is one of the four page-3 bytes that appear in no world's grid
+/// (`0xC6`, `0xC7`, `0xCF`, `0xD5`). It was picked over the other three on
+/// looks: its four metatile quadrants are all the same CHR tile, so the
+/// 16x16 reads as a regular 2x2 lattice rather than a torn scrap of
+/// coastline, and `wand_gate` repoints those quadrants at
+/// a drawn skull.
+///
+/// What makes it usable as a barrier is what it is *absent* from. The engine
+/// has no per-tile "blocks movement" flag: a tile blocks a direction by not
+/// appearing in [`VALID_HORZ`] / [`VALID_VERT`], and `0xD5` appears in
+/// neither, so it walls all four directions for free — the same way `0xE2`,
+/// the Dark Land wall it stands among, does. It is likewise in no other
+/// registry: not `Map_Removable_Tiles` (so the packed completion stencil does
+/// not grow and no completion bit can ever open it), not the rock lists (so
+/// `hammer_breaks_tiles` cannot touch it), not `LOCKABLE_TILES`, not
+/// [`VALID_BLANK_TILES`]. The only thing that opens it is
+/// `wand_gate`'s own routine.
+///
+/// Palette follows the byte's top two bits, so page 3 puts it on the same
+/// palette entry as the surrounding Dark Land masonry.
+pub(crate) const WAND_GATE_TILE: u8 = 0xD5;
+
+/// Where the wand gate stands: World 8, row 5, column 59 — the last span of
+/// the bridge approach, between the final node at (5,58) and Bowser's castle
+/// at (5,60).
+///
+/// It is the *unique* approach to the castle, which is what makes one cell
+/// enough. `TILE_BOWSER`'s other neighbours are (4,60) and (6,60), and
+/// neither of those tiles is in [`VALID_VERT`]; (5,61) is the castle's own
+/// lower-right quadrant. `wand_gate::the_gate_cell_is_the_only_approach`
+/// asserts that over a census of real builds rather than trusting the
+/// vanilla grid, because the builder may rewrite the terrain around it.
+///
+/// The cell is on the bridge row. `qol::apply_w8_bridges` stamps it like every
+/// other span, and in maze mode `overworld_build::locks` holds it out of the
+/// bridge deal so a lock cannot claim the same tile — standard mode is
+/// unchanged and still deals all five. The gate itself is written last, over
+/// the finished map.
+pub(crate) const W8_WAND_GATE_POS: Pos = (5, 59);
+
 /// Toad House placeholder tile ID. Vanilla Toad Houses use either 0x50 or
 /// 0xE0; the build phase stamps this constant when a HammerBro slot is
 /// promoted to a Toad House. The writer later overwrites the cell with the

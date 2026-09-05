@@ -138,8 +138,9 @@ pub(crate) use capacity::{
 };
 // The engine mirror the row-7/8 rule and `completion_bits` both read — see the
 // note in `rom_data::tiles` on why a table mirror stays with its reader. Not a
-// test-only export any more: `completion_bits` packs against it at build time.
-#[cfg(not(target_arch = "wasm32"))]
+// test-only export any more, and not native-only either: `completion_bits`
+// packs against it at build time, in every build, since the world maze became
+// a real option rather than a testrom-only experiment.
 pub(crate) use capacity::is_completion_unsafe;
 pub(crate) use route_choice::{
     C1_FLOOR, COST_LEVEL, DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice,
@@ -172,8 +173,9 @@ pub(crate) use progression::{
 };
 #[cfg(test)]
 pub(crate) use route_choice::dump_route_choice;
+pub(crate) use sources::from_built;
 #[cfg(test)]
-pub(crate) use sources::{from_built, from_vanilla};
+pub(crate) use sources::from_vanilla;
 
 /// Pipe-web redeals allowed beyond the first attempt when the finished
 /// world ends below the C1 floor. Retries fire only on the few percent of

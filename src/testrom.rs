@@ -362,10 +362,11 @@ pub struct TestRomSpec {
     pub hammer_breaks_locks: bool,
     /// Let the Hammer item break water-gap (bridge) tiles on the map.
     pub hammer_breaks_bridges: bool,
-    /// **World-maze POC.** Bank `Map_Completions` across world transitions
-    /// instead of wiping it, and add a SELECT+START map trigger that jumps
-    /// between World 1 and World 2. Beat a level, jump, jump back — the level
-    /// should still be beaten. See `randomize::world_persist`.
+    /// **World-maze POC.** Keep every world's map progress across transitions
+    /// — pack the world being left, expand the one being entered — instead of
+    /// wiping `Map_Completions`. Beat a level, leave the world by any route the
+    /// game offers, come back: it should still be beaten. Use `--telepad` to
+    /// have a way of leaving. See `randomize::world_persist`.
     pub world_persist: bool,
     /// **World-maze POC.** Telepads, as `(world A, world B)` pairs, both
     /// 1-based. A pad in each world; stepping on one teleports straight to the
@@ -1076,12 +1077,6 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     if spec.world_persist || !spec.telepads.is_empty() {
         let telepads = resolve_telepads(&rom, &spec.telepads)?;
         crate::randomize::world_persist::apply(&mut rom, &telepads);
-        // The world-jump is a debug trigger and lives outside `apply`, so a
-        // shipped maze never carries it. `--telepad` alone does not want it.
-        if spec.world_persist {
-            crate::randomize::world_persist::apply_debug_world_jump(&mut rom);
-            report.push("world jump: SELECT+START cycles all 8 worlds".to_string());
-        }
         for pad in &telepads {
             report.push(format!(
                 "telepad: W{} row {} col {}  ->  W{} row {} col {}",

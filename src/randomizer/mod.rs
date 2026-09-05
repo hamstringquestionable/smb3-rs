@@ -27,7 +27,7 @@ mod tests;
 
 /// Free space in PRG012 after the Big ? Block trampoline (0x19DD0 region).
 /// The trampoline uses 0x19DD0–0x19DE1; we place the 16-byte stamp at 0x19DF0.
-const STAMP_OFFSET: usize = 0x19DF0;
+use crate::randomize::rom_data::FS_SEED_STAMP as STAMP_OFFSET;
 
 /// Resolve a starting item value: sentinels (14/15/16) become random concrete
 /// items; concrete values (0–13) pass through unchanged.
@@ -187,7 +187,11 @@ fn randomize_inner(
     // World order shuffle. The credits reorder that aligns the ending montage
     // with the progression runs later (after the mini-maps are regenerated and
     // repacked, since it permutes the picture pointers those steps rewrite).
-    let credits_progression = if options.world_order {
+    // The world maze reads `world_order`'s table as its airship spine and
+    // chains the wand counter through the routine it installs, so it cannot run
+    // without it. Forced here rather than only in the CLI, because a flag key
+    // can name `world_maze` with `world_order` off.
+    let credits_progression = if options.world_order || options.world_maze {
         rom.set_tag("world_order");
         Some(randomize::world_order::randomize(rom, &mut rng, options.world_count))
     } else {
@@ -282,6 +286,7 @@ fn randomize_inner(
             shuffle_toad_houses: options.shuffle_toad_houses,
             eights_are_wild,
             shuffle_hammer_bros: options.shuffle_hammer_bros,
+            world_maze: options.world_maze,
         },
     );
     if options.hands_levels {
@@ -318,6 +323,50 @@ fn randomize_inner(
             deja_vu: options.deja_vu,
         },
     );
+
+    // World maze: the eight world maps stop being a sequence and become the
+    // rooms of one Metroidvania — telepads between them, a fortress that can
+    // bust a lock in another world, and map progress that survives leaving.
+    //
+    // **The order inside this block is the whole of its correctness.** The
+    // packed completion store derives its stencil from the map grids as they
+    // finally stand, so every write that changes a grid has to precede it: the
+    // pad tiles (spade panels, which the engine counts as completable) and the
+    // wand gate. `foreign_locks` comes after, because it asks the packer where
+    // a given cell's bit lives rather than re-deriving that arithmetic.
+    if options.world_maze {
+        rom.set_tag("world_maze");
+        // The spine IS `world_order`'s table, which is why the mode forces it
+        // on. With `world_count < 7` it is shorter than eight, and the worlds
+        // it leaves out are reachable only by telepad — see the design doc.
+        let spine: Vec<usize> = credits_progression
+            .as_ref()
+            .expect("world_maze forces world_order on")
+            .iter()
+            .map(|&w| w as usize)
+            .collect();
+        // K cannot exceed the airships the spine offers: a shorter spine means
+        // fewer than seven wands exist in the game at all.
+        let wands = options.maze_wands.min(spine.len().saturating_sub(1) as u8);
+        let (state, _report) = randomize::maze::generate(
+            &build,
+            &spine,
+            wands,
+            &randomize::maze::graph::Knobs::default(),
+            &mut rng,
+        );
+        randomize::maze::writer::stamp_pad_tiles(rom, &state);
+        rom.set_tag("wand_gate");
+        randomize::wand_gate::apply(rom, wands);
+        // Last of the grid writers, and the first thing that reads them: this
+        // installs the packed store and the telepads themselves.
+        rom.set_tag("world_persist");
+        randomize::world_persist::apply(rom, &randomize::maze::writer::telepad_specs(&state));
+        rom.set_tag("foreign_locks");
+        randomize::foreign_locks::apply(rom, &randomize::maze::writer::foreign_locks(&state));
+        rom.set_tag("world_travel");
+        randomize::world_travel::apply(rom);
+    }
 
     // Big [?] bonus-room shuffle: every level with a Big [?] pipe draws from a
     // pool of 19 rooms (11 vanilla + 8 in the otherwise-dead "Unused Level 5").
@@ -381,12 +430,26 @@ fn randomize_inner(
         randomize::piranha_rooms::install_treasure_sets(rom);
     }
 
+    // The world maze turns the whistle into fast travel between worlds already
+    // visited, so it is a tool the mode is built around rather than a sequence
+    // break to remove. `remove_whistles` keeps its INTENT — "no skipping ahead"
+    // — and only changes mechanism: a maze whistle can never reach anywhere new.
+    let remove_whistles = options.remove_whistles && !options.world_maze;
     if options.chest_items {
         rom.set_tag("items");
-        randomize::items::randomize(rom, &mut rng, options.remove_whistles, piranha_active);
-    } else if options.remove_whistles {
+        randomize::items::randomize(rom, &mut rng, remove_whistles, piranha_active);
+    } else if remove_whistles {
         rom.set_tag("items/whistles");
         randomize::items::remove_whistles_only(rom, &mut rng);
+    }
+    // The maze needs a whistle to EXIST, not merely to be possible: it is the
+    // fast-travel item, and without one a player who dies into a world they
+    // cannot finish has no way out but the airship. Pinned after the item roll,
+    // because the roll would otherwise overwrite the slot. Consumes no RNG, so
+    // turning the mode on does not move any later module's stream.
+    if options.world_maze {
+        rom.set_tag("world_maze/whistle");
+        randomize::items::pin_whistle(rom);
     }
 
     // Set starting lives (patched later by starting_items trampoline if items present)
@@ -537,7 +600,11 @@ fn randomize_inner(
 
     // MaCobra52's "No Game Over Penalty" — keep reserve inventory and
     // map progress after a Game Over.
-    if options.no_game_over_penalty {
+    // The maze forces it on: without it a game over wipes map completions, and
+    // in a mode built on "a world you can come back to" that is the whole point
+    // undone. It also makes the wipe uniform across all eight worlds, which
+    // removes the "which half gets wiped" question from the packed store.
+    if options.no_game_over_penalty || options.world_maze {
         rom.set_tag("qol/no_game_over_penalty");
         randomize::qol::apply_no_game_over_penalty(rom);
     }

@@ -11,7 +11,7 @@
 //! corridor scores only the slice between, and loses to fresh territory.
 //! The first candidate that keeps the world completable wins.
 //!
-//! One row is dealt rather than ranked: the five spans of the W8 bridge
+//! One row is dealt rather than ranked: the spans of the W8 bridge
 //! approach to Bowser's castle ([`deal_bridge_spans`], weights in
 //! [`capacity::BRIDGES_OUT_WEIGHTS`]). Marginal cut cannot produce a
 //! distribution there — the corridor is a chain, so one span wins the cut
@@ -334,7 +334,19 @@ fn is_bridge_span(state: &WorldState, pos: Pos) -> bool {
 }
 
 /// The spans still available to the deal: on the bridge row, still a bridge
-/// tile, and not already locked.
+/// tile, and not already locked — minus the wand-gate cell **in maze mode**.
+///
+/// [`rom_data::W8_WAND_GATE_POS`] is (5,59), the span between the last node
+/// and Bowser's castle. The world maze writes its wand gate over that cell
+/// after the build, so a lock dealt there would be two owners for one tile:
+/// the fortress clear would draw a bridge straight over the gate. With
+/// [`WorldState::wand_gate_reserved`] set it is withheld from the deal, and
+/// [`is_bridge_span`] keeps it out of the ranked candidates in every mode, so
+/// in maze mode no lock of any kind can land there.
+///
+/// The condition is the point. Standard mode deals from all five spans, as it
+/// always has — the maze must not move a baseline every future overworld
+/// change is measured against.
 fn free_bridge_spans(state: &WorldState) -> Vec<Pos> {
     if state.world_idx != rom_data::W8_IDX {
         return Vec::new();
@@ -343,6 +355,7 @@ fn free_bridge_spans(state: &WorldState) -> Vec<Pos> {
     W8_BRIDGE_COLS
         .iter()
         .map(|&c| (W8_BRIDGE_ROW, c))
+        .filter(|&p| !(state.wand_gate_reserved && p == rom_data::W8_WAND_GATE_POS))
         .filter(|&p| state.grid.get(p.0, p.1) == rom_data::BRIDGE_TILE && !locked.contains(&p))
         .collect()
 }

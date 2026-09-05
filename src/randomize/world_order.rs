@@ -6,7 +6,11 @@ use crate::rom::Rom;
 
 /// File offset of the `INC World_Num; JMP $84A0` instruction (6 bytes).
 /// Original bytes: EE 27 07 4C A0 84
-const WORLD_INC_OFFSET: usize = 0x3D0A1;
+///
+/// Exposed because it is vanilla's airship-cleared world transition, and
+/// [`super::completion_bits`] tests its persistence hooks against the engine's
+/// own bytes rather than a transcription of them.
+pub(crate) const WORLD_INC_OFFSET: usize = 0x3D0A1;
 
 /// File offset of the `LDA #$00` operand that initializes World_Num at game start.
 /// Original: `LDA #$00; STA $0727; STA $0160`. We patch the #$00 to the starting world
@@ -23,7 +27,17 @@ pub(crate) const WORLD_INIT_OPERAND: usize = 0x30CC3;
 /// We NOP this out because patching the LDA operand above would otherwise
 /// set the debug flag to the starting world number.  The reset handler
 /// clears $0160 to zero on power-on, so it's safe to skip this write.
-const DEBUG_FLAG_STA_OFFSET: usize = 0x30CC7;
+///
+/// **Shared with [`super::completion_bits`]**, which puts a three-byte `JSR`
+/// here instead — the world maze's new-game signal, and the only three-byte
+/// instruction that fits (the `RTS` at `+3` is the live branch target
+/// `PRG024_ACBA`). The two writes collide by construction, so the ordering is
+/// part of the contract: **`world_order::randomize` runs first and
+/// `completion_bits::apply` overwrites it.** That direction is the safe one —
+/// the `JSR`'s routine stores 0 to `Debug_Flag` itself, so it does the job the
+/// `NOP`s were there to protect, while the reverse would silently disable the
+/// signal.
+pub(crate) const DEBUG_FLAG_STA_OFFSET: usize = 0x30CC7;
 
 /// CPU address of the lookup table (routine + 12 bytes).
 const TABLE_CPU: u16 = WORLD_ORDER_CPU + 12;

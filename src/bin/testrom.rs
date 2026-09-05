@@ -111,8 +111,8 @@ struct Cli {
     #[arg(short, long, value_parser = clap::value_parser!(u8).range(1..=8))]
     world: Option<u8>,
 
-    /// World-maze POC: keep each world's map progress across transitions, and
-    /// add a SELECT+START trigger on the map that jumps between W1 and W2.
+    /// World-maze POC: keep each world's map progress across transitions
+    /// instead of wiping it. Pair with --telepad for a way to leave a world.
     #[arg(long)]
     world_persist: bool,
 
