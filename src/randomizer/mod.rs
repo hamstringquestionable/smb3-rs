@@ -357,10 +357,15 @@ fn randomize_inner(
         // K cannot exceed the airships the spine offers: a shorter spine means
         // fewer than seven wands exist in the game at all.
         let wands = options.maze_wands.min(spine.len().saturating_sub(1) as u8);
+        // Which fortresses really crumble — read off the map the writer just
+        // laid down, because World 8's tanks are sprites over a blanked cell
+        // and a cross-world lock keyed on one could never fire.
+        let crumbling = randomize::maze::crumbling_forts(rom, &build);
         let (state, _report) = randomize::maze::generate(
             &build,
             &spine,
             wands,
+            crumbling,
             &randomize::maze::graph::Knobs::default(),
             &mut rng,
         );

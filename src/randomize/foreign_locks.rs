@@ -347,6 +347,33 @@ fn hook_bytes() -> [u8; 3] {
     [0x20, FOREIGN_LOCK_CPU as u8, (FOREIGN_LOCK_CPU >> 8) as u8]
 }
 
+/// Decode the foreign-lock table back out of a finished ROM: one
+/// `(fortress world, completion row index, completion column)` per row.
+///
+/// The layout knowledge lives here rather than in the test that reads it, so a
+/// change to the row shape cannot leave a test quietly decoding the old one.
+///
+/// Note the row is the **completion index**, not the grid row:
+/// `Map_MarkLevelComplete` matches `World_Map_Y` against `Map_CompleteY`, which
+/// has seven entries, so grid rows 0-6 map to 0-6 and grid rows **7 and 8 both
+/// map to 7** — the shared-bit fold. A caller resolving a cell has to try both.
+#[cfg(test)]
+pub(crate) fn decode_rows(rom: &Rom) -> Vec<(usize, usize, usize)> {
+    let count = rom.read_byte(FS_MAZE_FOREIGN_LOCK + COUNT_OPERAND) as usize;
+    if count == 0 && rom.read_byte(FS_MAZE_FOREIGN_LOCK) != HOOK_VANILLA[0] {
+        return Vec::new();
+    }
+    let rows = count / ROW_LEN + 1;
+    (0..rows)
+        .map(|i| {
+            let b = FS_MAZE_FOREIGN_LOCK + CODE_LEN + i * ROW_LEN;
+            let k0 = rom.read_byte(b) as usize;
+            let k1 = rom.read_byte(b + 1) as usize;
+            (k0 & 0x07, k0 >> 3, k1 & 0x3F)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod asm_checks {
     use mos6502::cpu::CPU;

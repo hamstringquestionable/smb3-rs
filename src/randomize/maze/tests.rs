@@ -28,6 +28,23 @@ fn load_rom() -> Option<Rom> {
     Rom::from_bytes(&bytes).ok()
 }
 
+/// Every fortress, as the crumbling set. The generator tests are about
+/// placement and reachability, not about which map cells turn to rubble —
+///  owns that, on a real
+/// written ROM, because it is the only place the tiles exist.
+fn all_forts(result: &BuildResult) -> std::collections::HashSet<super::FortRef> {
+    result
+        .worlds
+        .iter()
+        .flat_map(|w| {
+            w.slots
+                .iter()
+                .filter(|s| s.kind == SlotKind::Fortress)
+                .map(move |s| super::FortRef { world: w.world_idx, section: s.section })
+        })
+        .collect()
+}
+
 fn census_seeds(default: u64) -> u64 {
     std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(default)
 }
@@ -95,7 +112,7 @@ fn census_build_swaps(raw: &Rom, seed: u64) -> ((Rom, BuildResult), [bool; 8]) {
 /// exist yet.
 fn null_model(raw: &Rom, seed: u64) -> GlobalState {
     let (_, result) = census_build(raw, seed);
-    let mut state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0);
+    let mut state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0, all_forts(&result));
     let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x9E37_79B9);
     let pads = place_pads_uniform(&state.worlds, &mut rng);
     state.add_pads(pads);
@@ -120,7 +137,7 @@ fn maze_walk_matches_the_per_world_walker() {
     let Some(raw) = load_rom() else { return };
     for seed in 0..census_seeds(4) {
         let (_, result) = census_build(&raw, seed);
-        let state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0);
+        let state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0, all_forts(&result));
 
         // Locks closed, slots stamped — the fixpoint's round-zero grids.
         let grids: Vec<Grid> = state
@@ -203,7 +220,7 @@ fn the_spine_alone_completes_the_maze() {
     let Some(raw) = load_rom() else { return };
     for seed in 0..census_seeds(8) {
         let (_, result) = census_build(&raw, seed);
-        let state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0);
+        let state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0, all_forts(&result));
         let s = state.spheres();
         assert!(s.solvable, "seed {seed}: spine-only maze unsolvable\n{}", s.spoiler());
         assert_eq!(
@@ -215,7 +232,7 @@ fn the_spine_alone_completes_the_maze() {
         // `wands_are_collectable`, at the hardest setting the dial reaches.
         // The spine visits all seven airships on the way, so K = 7 holds; the
         // number only becomes interesting once pads let the player skip ahead.
-        let hardest = GlobalState::from_build(&result, &IDENTITY_SPINE, 7);
+        let hardest = GlobalState::from_build(&result, &IDENTITY_SPINE, 7, all_forts(&result));
         assert!(
             hardest.wands_are_collectable(&hardest.spheres()),
             "seed {seed}: K=7 unsatisfiable on a spine-only maze"
@@ -389,10 +406,11 @@ fn maze_pads_vs_spine_only() {
 
     for seed in 0..seeds {
         let (_, result) = census_build(&raw, seed);
-        let plain = GlobalState::from_build(&result, &IDENTITY_SPINE, 0);
+        let plain = GlobalState::from_build(&result, &IDENTITY_SPINE, 0, all_forts(&result));
         let bare_s = plain.spheres();
 
-        let mut with_pads = GlobalState::from_build(&result, &IDENTITY_SPINE, 0);
+        let mut with_pads =
+            GlobalState::from_build(&result, &IDENTITY_SPINE, 0, all_forts(&result));
         let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x9E37_79B9);
         let pads = place_pads_uniform(&with_pads.worlds, &mut rng);
         with_pads.add_pads(pads);
@@ -453,7 +471,7 @@ fn every_placed_slot_is_reached() {
 fn pad_placer_respects_its_budget() {
     let Some(raw) = load_rom() else { return };
     let (_, result) = census_build(&raw, 1);
-    let state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0);
+    let state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0, all_forts(&result));
     for seed in 0..64u64 {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let pads = place_pads_uniform(&state.worlds, &mut rng);
@@ -502,7 +520,7 @@ fn maze_terrain_pools_census() {
 
     for seed in 0..seeds {
         let (_, result) = census_build(&raw, seed);
-        let state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0);
+        let state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0, all_forts(&result));
         for w in &state.worlds {
             let t = super::roles::classify(w, &state.locks, &state.reserved_in(w.world_idx));
             hub += t.hub_sites.len();
@@ -560,7 +578,7 @@ fn generated_k(
 ) -> (GlobalState, super::GenReport) {
     let (_, result) = census_build(raw, seed);
     let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
-    super::generate(&result, &IDENTITY_SPINE, k, knobs, &mut rng)
+    super::generate(&result, &IDENTITY_SPINE, k, all_forts(&result), knobs, &mut rng)
 }
 
 /// The generator's two hard guarantees, at every knob setting: the maze is
@@ -882,6 +900,7 @@ fn stamping_pads_writes_no_chr() {
         &result,
         &IDENTITY_SPINE,
         super::DEFAULT_WANDS_REQUIRED,
+        all_forts(&result),
         &super::graph::Knobs::default(),
         &mut rng,
     );
@@ -1288,6 +1307,7 @@ fn a_generated_maze_writes_only_pad_tiles_and_free_space() {
             &result,
             &IDENTITY_SPINE,
             super::DEFAULT_WANDS_REQUIRED,
+            all_forts(&result),
             &super::graph::Knobs::default(),
             &mut rng,
         );
@@ -1348,8 +1368,14 @@ fn a_short_spine_still_finishes() {
 
             // K cannot exceed the airships the spine actually offers.
             let k = (super::DEFAULT_WANDS_REQUIRED as usize).min(count) as u8;
-            let (state, report) =
-                super::generate(&result, &spine, k, &super::graph::Knobs::default(), &mut rng);
+            let (state, report) = super::generate(
+                &result,
+                &spine,
+                k,
+                all_forts(&result),
+                &super::graph::Knobs::default(),
+                &mut rng,
+            );
             assert!(
                 report.spheres.solvable,
                 "seed {seed} spine {spine:?}: unwinnable\n{}",
@@ -1383,6 +1409,7 @@ fn foreign_lock_rows_match_the_assignment() {
             &result,
             &IDENTITY_SPINE,
             super::DEFAULT_WANDS_REQUIRED,
+            all_forts(&result),
             &super::graph::Knobs::default(),
             &mut rng,
         );
@@ -1447,6 +1474,7 @@ fn the_pads_still_fit_the_packed_store() {
             &result,
             &IDENTITY_SPINE,
             super::DEFAULT_WANDS_REQUIRED,
+            all_forts(&result),
             &super::graph::Knobs { foreign_landing_bias: 1.0, fort_distance_bias: 1.0 },
             &mut rng,
         );
@@ -1510,6 +1538,7 @@ fn the_maze_holds_under_start_airship_swap() {
             &result,
             &IDENTITY_SPINE,
             super::DEFAULT_WANDS_REQUIRED,
+            all_forts(&result),
             &super::graph::Knobs::default(),
             &mut rng,
         );
@@ -1536,4 +1565,28 @@ fn the_maze_holds_under_start_airship_swap() {
          ({:.0}%), plus seed {full_seed} with all seven",
         100.0 * swapped_worlds as f64 / total_worlds as f64
     );
+}
+
+/// Diagnostic: what the generator thinks a fortress is, versus what the writer
+/// actually stamped there.
+#[test]
+#[ignore]
+fn dump_fortress_tiles() {
+    use crate::randomize::rom_data;
+    let Some(raw) = load_rom() else { return };
+    let seed = 4242u64;
+    let (rom, result) = census_build(&raw, seed);
+    let state = GlobalState::from_build(&result, &IDENTITY_SPINE, 3, all_forts(&result));
+    for w in &state.worlds {
+        let forts: Vec<_> = w
+            .slots
+            .iter()
+            .filter(|s| s.kind == SlotKind::Fortress)
+            .map(|s| {
+                let t = rom.read_byte(rom_data::map_tile_offset(w.world_idx, s.pos.0, s.pos.1));
+                (s.section, s.pos, format!("{t:02X}"))
+            })
+            .collect();
+        eprintln!("W{} forts (section, pos, tile-in-rom): {forts:?}", w.world_idx + 1);
+    }
 }

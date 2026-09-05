@@ -1739,3 +1739,71 @@ fn the_wasm_json_entry_path_carries_the_maze() {
         "a JSON-configured maze produced a ROM with no wand gate"
     );
 }
+
+/// **Every cross-world lock names a fortress the engine will actually crumble.**
+///
+/// The foreign-lock hook is `Map_MarkLevelComplete`'s fortress branch, gated on
+/// the tile under the player being `TILE_FORTRUBBLE` or `TILE_ALTRUBBLE`. Only
+/// `TILE_FORT`, `TILE_LARGEFORT` and `TILE_ALTFORT` ever produce those
+/// (`Map_CompleteTile` indices 8 and 9); everything else completes to a
+/// Mario/Luigi panel.
+///
+/// **World 8's tanks and battleships are the case this exists for.** They are
+/// map object sprites floating over a cell the overworld writer deliberately
+/// blanks to a path node, so beating one produces no rubble. A same-world lock
+/// does not care — it opens through `MO_DoFortressFX`, keyed on an FX slot
+/// rather than a tile — but a cross-world lock keyed on one is **dead**, and
+/// silently: the player beats the fortress and a lock in another world never
+/// opens.
+///
+/// This reads the table the ROM actually carries, because that is the artefact
+/// that has to be right; the generator's own view cannot see the map tiles and
+/// the map tiles cannot see the assignment.
+#[test]
+fn every_cross_world_lock_names_a_crumbling_fortress() {
+    use crate::randomize::foreign_locks;
+    use crate::randomize::overworld_build::SlotKind;
+    use crate::randomize::rom_data::{self, FORTRESS_TILES};
+
+    let Some(raw) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let opts = Options { world_maze: true, ..audit_options() };
+
+    let mut rows_seen = 0;
+    let mut sprite_forts = 0;
+    for seed in [1u64, 4242, 12345, 31337] {
+        let (rom, build) =
+            crate::randomize_rom_with_overworld_capture(&raw.data, seed, &opts, None)
+                .expect("randomize");
+
+        // How many fortresses are sprite-covered, so the check cannot go
+        // vacuous by the case it guards disappearing.
+        for w in &build.worlds {
+            for slot in w.slots.iter().filter(|s| s.kind == SlotKind::Fortress) {
+                let tile =
+                    rom.read_byte(rom_data::map_tile_offset(w.world_idx, slot.pos.0, slot.pos.1));
+                sprite_forts += usize::from(!FORTRESS_TILES.contains(&tile));
+            }
+        }
+
+        for (world, comp_row, col) in foreign_locks::decode_rows(&rom) {
+            rows_seen += 1;
+            // Completion index 7 is the row-7/8 fold, so try both.
+            let grid_rows: &[usize] = if comp_row == 7 { &[7, 8] } else { &[comp_row] };
+            let ok = grid_rows.iter().any(|&r| {
+                FORTRESS_TILES.contains(&rom.read_byte(rom_data::map_tile_offset(world, r, col)))
+            });
+            assert!(
+                ok,
+                "seed {seed}: a cross-world lock is keyed on W{} row {comp_row} col {col}, whose \
+                 tile never becomes rubble — beating that fortress would leave the far lock shut",
+                world + 1
+            );
+        }
+    }
+    assert!(rows_seen > 0, "no cross-world locks in any seed; the check is vacuous");
+    assert!(sprite_forts > 0, "no sprite-covered fortress seen; the case guarded is absent");
+    eprintln!("  {rows_seen} cross-world locks checked, {sprite_forts} sprite forts present");
+}

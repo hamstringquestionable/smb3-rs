@@ -1058,6 +1058,37 @@ requested pad role distribution.
   the four corner patterns, and `the_gate_writes_no_chr` asserts the whole 128KB
   CHR region comes out untouched.
 
+### Not every fortress can open a cross-world lock
+
+A foreign lock fires from `Map_MarkLevelComplete`'s fortress branch, gated on
+the tile under the player being `TILE_FORTRUBBLE` or `TILE_ALTRUBBLE`. Only
+three tiles ever produce those — `Map_CompleteTile` indices 8 and 9, reached
+from `TILE_FORT`, `TILE_LARGEFORT` and `TILE_ALTFORT`. Everything else completes
+to a Mario/Luigi panel.
+
+**World 8's tanks and battleships are the exception that matters.** They are map
+object *sprites* floating over a cell the overworld writer deliberately blanks
+to a path node — `write_tile_grid`'s sprite-mask pass, whose comment says so:
+"W8 army sprites float on top of the grid; the underlying tile must be a plain
+path node". Three of W8's four fortresses are like this in every seed.
+
+A **same-world** lock does not care: it opens through `MO_DoFortressFX`, keyed
+on an FX slot rather than on a tile. A **cross-world** lock keyed on one is
+dead, and silently — the player beats the fortress and a lock in another world
+simply never opens. Nothing in the game says why.
+
+So `maze::crumbling_forts` reads the finished map (it must run *after*
+`write_overworld`, or every fortress reads as blank) and `fill::assign_keys`
+refuses any swap that would make such a fortress open a foreign lock. Rejecting
+at assignment time rather than filtering the table later is the point: a lock
+dropped from the table is a lock that never opens at all.
+
+`every_cross_world_lock_names_a_crumbling_fortress` decodes the table out of a
+finished ROM and checks each row's cell, because the generator cannot see map
+tiles and the map tiles cannot see the assignment. It asserts sprite fortresses
+are present too, so it cannot pass by the hazard disappearing; disabling the
+gate fails it immediately.
+
 ## The state that must NOT persist
 
 Two things looked like the Hammer Bro bug and are not. Both were investigated

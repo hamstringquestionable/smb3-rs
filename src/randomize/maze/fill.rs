@@ -50,6 +50,9 @@ pub(crate) struct FillReport {
     pub proposed: usize,
     /// Swaps rejected because they made the maze unsolvable.
     pub rejected_unsolvable: usize,
+    /// Swaps rejected because they would have given a cross-world lock to a
+    /// fortress whose cell never becomes rubble — a lock that could not fire.
+    pub rejected_uncrumbling: usize,
     /// Swaps rejected because they moved the objective the wrong way.
     pub rejected_objective: usize,
     pub accepted: usize,
@@ -145,6 +148,24 @@ pub(crate) fn assign_keys<R: Rng>(
                 report.rejected_objective += 1;
                 continue;
             }
+            // A cross-world lock can only be opened by a fortress whose cell
+            // actually turns to rubble: the hook is gated on that tile, and
+            // World 8's tanks are sprites over a blanked cell. Rejecting here
+            // rather than filtering later is deliberate — a foreign lock the
+            // ROM cannot fire is not a cosmetic problem, it is a lock that
+            // never opens.
+            let opens_ok = |li: usize, st: &GlobalState| {
+                let lock = &st.locks[li];
+                lock.fort.is_none_or(|f| f.world == lock.world || st.crumbling.contains(&f))
+            };
+            if !opens_ok(a, state) || !opens_ok(b, state) {
+                let fa = state.locks[a].fort;
+                state.locks[a].fort = state.locks[b].fort;
+                state.locks[b].fort = fa;
+                report.rejected_uncrumbling += 1;
+                continue;
+            }
+
             // Two hard gates, and both have to hold or the swap goes back.
             // Solvability is the obvious one. The second is the safety
             // invariant: a swap that hands a start-region lock to a foreign
