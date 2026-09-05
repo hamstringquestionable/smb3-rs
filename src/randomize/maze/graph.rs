@@ -186,21 +186,7 @@ fn place_one<R: Rng>(
     }
     let &from = pool.choose(rng)?;
 
-    // Where it lands. The one knob that decides whether the eight worlds are a
-    // graph: a same-world hop is a shortcut, a crossing is an edge.
-    let cross = rng.random_bool(knobs.foreign_landing_bias.clamp(0.0, 1.0));
-    let dest_world = if cross {
-        let others: Vec<usize> = (0..state.worlds.len()).filter(|&o| o != world).collect();
-        *others.choose(rng)?
-    } else {
-        world
-    };
-    // A gated landing is the achievable version of the charter's island pad:
-    // the pad still takes you somewhere you could not have walked to, the gate
-    // is a lock rather than terrain.
-    let dt = &terrain[dest_world];
-    let landing_pool = if dt.gated_landings.is_empty() { &dt.landings } else { &dt.gated_landings };
-    let &to = landing_pool.choose(rng)?;
+    let (dest_world, to) = pick_landing(state, terrain, (world, from), used, knobs, rng)?;
 
     used.push((world, from));
     Some(PlacedPad {
@@ -209,6 +195,98 @@ fn place_one<R: Rng>(
         granted: t.role_of_site(from),
         foreign: dest_world != world,
     })
+}
+
+/// The shortest same-world hop worth an arrival id, in grid cells (Manhattan).
+///
+/// A pad that drops the player four tiles from where they stood spends one of
+/// sixteen arrival rows to save two moves, and reads to a player as a bug — the
+/// report that opened this was exactly that shape, and the census had a
+/// same-world hop of span **0**: a pad that teleported to its own tile.
+///
+/// Manhattan on the grid rather than a walk distance, deliberately. What makes
+/// a hop degenerate is that the player can SEE where they came from, and that
+/// is a picture, not a path. The map moves two cells at a time, so 8 is four
+/// map moves — far enough to be off-screen-ish and to feel like travel.
+pub(crate) const SAME_WORLD_MIN_SPAN: usize = 8;
+
+/// Manhattan span between two cells of the same world's grid.
+fn span(a: super::super::rom_data::Pos, b: super::super::rom_data::Pos) -> usize {
+    a.0.abs_diff(b.0) + a.1.abs_diff(b.1)
+}
+
+/// Where one pad deposits the player.
+///
+/// Three rules, and the first two are why this is a function rather than two
+/// lines inside [`place_one`]:
+///
+/// 1. **The landing must be legible.** [`super::roles::landing_candidates`] has
+///    already dropped the Hammer Bro filler slots; what this adds is the pad
+///    tiles already claimed, which are spade panels on the finished map. A pad
+///    that lands on another pad is the best arrival the mode has: it is
+///    visibly a pad, and stepping on it goes onward, so the web is navigable
+///    instead of being eight one-way trapdoors. It cannot loop — the enter hook
+///    fires on the A press that COMMITS to a tile, never on arriving at one.
+/// 2. **A same-world hop has to be a journey.** Below
+///    [`SAME_WORLD_MIN_SPAN`] the pad is worse than no pad: it spends an
+///    arrival id to move the player a few tiles they can see. When the world
+///    offers nothing far enough, the hop becomes a crossing rather than being
+///    dropped — a crossing is what the pad budget is for.
+/// 3. **A pad never lands on itself** — the span-0 case, which rule 2 already
+///    covers. Kept as its own clause so that relaxing the span rule cannot
+///    quietly bring back the pad that teleports you to where you stand.
+///
+/// The destination worlds are tried in a shuffled order so that "no legal
+/// landing in the world I rolled" degrades to another world rather than to a
+/// pad that was never placed.
+fn pick_landing<R: Rng>(
+    state: &GlobalState,
+    terrain: &[WorldTerrain],
+    from: (usize, super::super::rom_data::Pos),
+    placed: &[(usize, super::super::rom_data::Pos)],
+    knobs: &Knobs,
+    rng: &mut R,
+) -> Option<(usize, super::super::rom_data::Pos)> {
+    // The one knob that decides whether the eight worlds are a graph: a
+    // same-world hop is a shortcut, a crossing is an edge.
+    let cross = rng.random_bool(knobs.foreign_landing_bias.clamp(0.0, 1.0));
+    let mut order: Vec<usize> = (0..state.worlds.len()).filter(|&o| o != from.0).collect();
+    order.shuffle(rng);
+    if !cross {
+        order.insert(0, from.0);
+    }
+
+    for dest_world in order {
+        let pool = landing_pool(terrain, placed, from, dest_world);
+        if let Some(&to) = pool.choose(rng) {
+            return Some((dest_world, to));
+        }
+    }
+    None
+}
+
+/// Every cell in `dest_world` this pad may legally land on.
+fn landing_pool(
+    terrain: &[WorldTerrain],
+    placed: &[(usize, super::super::rom_data::Pos)],
+    from: (usize, super::super::rom_data::Pos),
+    dest_world: usize,
+) -> Vec<super::super::rom_data::Pos> {
+    let dt = &terrain[dest_world];
+    // A gated landing is the achievable version of the charter's island pad:
+    // the pad still takes you somewhere you could not have walked to, the gate
+    // is a lock rather than terrain.
+    let terrain_pool = if dt.gated_landings.is_empty() { &dt.landings } else { &dt.gated_landings };
+
+    let mut out: Vec<super::super::rom_data::Pos> =
+        placed.iter().filter(|(w, _)| *w == dest_world).map(|&(_, p)| p).collect();
+    out.extend(terrain_pool);
+    out.retain(|&p| {
+        (dest_world, p) != from && (dest_world != from.0 || span(from.1, p) >= SAME_WORLD_MIN_SPAN)
+    });
+    out.sort_unstable();
+    out.dedup();
+    out
 }
 
 /// Hub pads for worlds the fill left unable to escape their own start region.

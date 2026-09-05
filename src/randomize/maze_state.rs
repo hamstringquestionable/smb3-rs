@@ -38,9 +38,40 @@ pub(crate) const VISITED_TABLE_LEN: usize = 8;
 /// map load.
 pub(crate) const WAND_COUNT: u16 = VISITED_TABLE + VISITED_TABLE_LEN as u16;
 
+/// Which of a world's ROM-loaded map-object slots the player has already
+/// beaten: one byte per **slot**, one bit per **world**.
+///
+/// The transposition is deliberate and it is what makes both halves nearly
+/// free. Nine slots do not fit in a byte; eight worlds do. And at the one site
+/// that means "this map object was beaten" the slot index is already sitting in
+/// `Y`, so setting the bit is `ORA MAP_OBJ_DEAD,Y` with no index arithmetic at
+/// all, while the restore walks `Y` down the same nine bytes with the world's
+/// mask held in `X` for the whole loop. The obvious layout — a byte per world,
+/// a bit per slot — needs a second byte per world for the ninth slot, and index
+/// arithmetic at both ends.
+///
+/// The bit is **sticky**: only ever set, never cleared, except by the new-game
+/// signal. "Beaten" is monotone, and a runtime bonus spawn that lands in a
+/// freed slot must not read as the original object coming back to life.
+pub(crate) const MAP_OBJ_DEAD: u16 = WAND_COUNT + 1;
+
+/// Slots `Map_Init` reloads from ROM on every world entry — its loop counts
+/// `MAPOBJ_TOTALINIT` (8) down to 0, so nine. The five slots above them
+/// (`MAPOBJ_TOTAL` is 14) exist only for runtime bonus spawns `Map_Init` never
+/// reloads, so a "still beaten" bit for one of those would mean nothing.
+pub(crate) const MAP_OBJ_DEAD_LEN: usize = 9;
+
 /// First byte after everything allocated above — where the next allocation
 /// starts.
-pub(crate) const MAZE_STATE_NEXT: u16 = WAND_COUNT + 1;
+pub(crate) const MAZE_STATE_NEXT: u16 = MAP_OBJ_DEAD + MAP_OBJ_DEAD_LEN as u16;
+
+/// Every byte the maze owns, as one contiguous run.
+///
+/// The new-game signal in [`super::completion_bits`] zeroes exactly this range,
+/// which is what this module's header promises and what nothing did until the
+/// map-object store landed. A run rather than a list, so a future allocation is
+/// cleared by having been declared above and by nothing else.
+pub(crate) const MAZE_STATE_LEN: usize = (MAZE_STATE_NEXT - MAZE_STATE_START) as usize;
 
 /// The maze's own SRAM stays inside the run it was given, and behind
 /// `completion_bits`' last byte.
@@ -56,4 +87,5 @@ const _: () = {
         VISITED_TABLE + VISITED_TABLE_LEN as u16 <= WAND_COUNT,
         "the visited table overlaps the wand counter"
     );
+    assert!(WAND_COUNT < MAP_OBJ_DEAD, "the wand counter overlaps the map-object store");
 };

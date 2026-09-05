@@ -25,6 +25,29 @@ deploys.
 
 ### Fixed
 
+- **World Maze:** warp pads no longer drop you on a blank patch of map. Nearly
+  half of them used to land on a tile the map draws nothing on, which looked
+  exactly like the pad was broken. A pad now always puts you on something you
+  can see — a level, a fortress, a house, another pad, or the world's start
+  tile — and a pad that keeps you in the same world always moves you somewhere
+  you couldn't already walk to in a couple of steps. (One of them could
+  previously land you back on the tile you were standing on.)
+
+- **World Maze:** beaten Hammer Bros stay beaten. Leaving a world and coming
+  back used to bring every map object it had lost straight back, because the
+  game rebuilds them from scratch every time you enter a world — which never
+  mattered before, since you could never return.
+
+- **World Maze:** the warp whistle is no longer used up. It is the mode's fast
+  travel, and "use it again to go on to the next world" does not work if the
+  first use takes it away. It can still only reach worlds you have already set
+  foot in, so it can never skip you ahead.
+
+- **World Maze:** the decorative corners on the map's boxes are no longer
+  scrambled. The skull that was meant to block Bowser's castle was drawn over
+  the four corner pieces; the castle is now blocked by a plain ornamental block
+  instead, which is at least clearly not a wall.
+
 - Levels, fortresses and locks no longer land on the map cell whose completion
   bit is already taken by scenery. Rows 7 and 8 of a world map share one bit
   per column, and the game checks row 7 first — so World 2's oasis, which sits

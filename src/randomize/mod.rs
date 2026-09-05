@@ -22,6 +22,10 @@ pub mod king_quotes;
 pub mod koopalings;
 pub mod level_helpers;
 pub mod levels;
+/// World-maze: map objects a world has already lost stay lost. `Map_Init`
+/// rebuilds all nine of a world's object slots from ROM on every entry, so
+/// without this a beaten Hammer Bro is standing there again when you come back.
+pub mod map_objects;
 pub mod map_walker;
 /// World maze: the generator. Eight `WorldState`s, the cross-world edge set,
 /// the fixpoint that decides whether the result is winnable, and the passes

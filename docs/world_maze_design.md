@@ -177,6 +177,40 @@ Build a bounded number of progression gates and dump the rest as free gates.
 **Bound the fill by sphere count**, with a gate cap as a safety valve — sphere
 count is the player-facing quantity.
 
+### Where a pad LANDS, and why it is a rule and not a preference
+
+Found by playtest, then measured. The first cut let a pad land on any placed
+slot — and `stamp_slots` leaves `SlotKind::HammerBro` slots as plain path tiles,
+because they are `HammerBroFill`'s leftover pool rather than content. So
+**45% of all telepad landings were on a cell the map draws nothing on.** The
+player arrives somewhere legal, sees nothing, and reasonably concludes the pad
+is broken. That is the bug as it was reported.
+
+Two rules now, both measured rather than assumed:
+
+- **Landings are legible.** Filler slots are out of the pool; a pad lands on a
+  level, fortress, toad house, spade, pipe, another pad, or a start tile. A
+  start tile is a good landing rather than a dull one — touching it is what sets
+  the world's `VISITED` byte, so arriving there literally hands the player a
+  whistle route home. Filler landings went 45% → **0%**.
+- **A same-world hop is a real journey.** The minimum measured span was **0** —
+  a pad that teleports you onto the tile you are standing on. The floor is now
+  8 grid cells (4 map moves, since the map steps two cells at a time), and a
+  same-world hop that cannot reach that far **becomes a crossing** rather than
+  being dropped. Span min/median went 0/8 → 8/12.
+
+**Landing on another pad is safe, and it is now deliberate.** The question was
+whether arriving on a pad tile re-triggers it, which would hang the ROM. It does
+not: all three branches that reach `PRG010_CEA7` sit downstream of an A-button
+*edge* test, so the hook fires when the player commits to the tile they stand
+on, not on arrival — and the teleport's `JMP $84A0` returns to the idle map loop
+with A still held from the press that fired it. So a pad-to-pad link is a
+visible onward hop, and pad landings rose 7% → 9%.
+
+Neither rule moves the shape of the maze: spheres 5.80 → 5.96, sphere width
+2.93 → 2.85, pads per seed unchanged at 9.30, and the packed-plane worst case
+still 43 of 48.
+
 ### Pad roles are the per-world interface
 
 The per-world builder never learns that a world graph exists. It is handed a
@@ -904,6 +938,15 @@ requested pad role distribution.
   owns; bumped by a 16-byte routine in PRG030 chained through
   `world_order`'s `INC World_Num` replacement, which is the one site an airship
   clear always passes.
+- **The whistle is not consumed.** Vanilla's `Inv_UseItem_WarpWhistle` ends
+  with `JSR Inv_UseItem_ShiftOver`, which deletes the item — correct for a
+  one-shot warp, fatal for fast travel: one whistle would buy exactly one trip,
+  and the mode's promise is that using it again takes you on to the next world.
+  Those three bytes are NOPped in maze mode. It is safe to give away because a
+  maze whistle **can never reach anywhere new** — the cycler only visits worlds
+  whose `VISITED` byte is already set — so an unlimited whistle is unlimited
+  *backtracking*, not a sequence break. That is the same argument
+  `remove_whistles` rests on.
 - **The whistle's picker** — no picker. It cycles: each use advances to the next
   world whose `VISITED` byte is set, wrapping, and with one visited world it is
   a no-op that puts you back on your own start tile. The warp zone is not reused

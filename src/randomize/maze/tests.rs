@@ -543,6 +543,70 @@ fn maze_terrain_pools_census() {
 // The generator
 // ---------------------------------------------------------------------------
 
+/// What a pad's landing cell reads as once the map is drawn.
+///
+/// The distinction that matters is `Filler` against everything else.
+/// `stamp_slots` leaves a `HammerBro` slot as a blank path tile — it is the
+/// builder's leftover pool, not content — so a pad landing on one deposits the
+/// player on a cell that looks like nothing. Every other variant is a tile the
+/// map actually draws.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Landing {
+    /// Another pad's tile: a spade panel, and stepping on it goes onward.
+    Pad,
+    Level,
+    Fortress,
+    ToadHouse,
+    BonusGame,
+    Pipe,
+    /// The world's start tile — often plain path, but the one cell a player can
+    /// always name, and touching it is what marks the world whistle-able.
+    Start,
+    /// A blank path tile. **The defect**, and what
+    /// `every_pad_lands_somewhere_legible` bars.
+    Filler,
+}
+
+const LANDING_LABELS: [&str; 8] =
+    ["pad", "level", "fort", "house", "spade", "pipe", "start", "FILLER"];
+
+fn landing_idx(l: Landing) -> usize {
+    match l {
+        Landing::Pad => 0,
+        Landing::Level => 1,
+        Landing::Fortress => 2,
+        Landing::ToadHouse => 3,
+        Landing::BonusGame => 4,
+        Landing::Pipe => 5,
+        Landing::Start => 6,
+        Landing::Filler => 7,
+    }
+}
+
+/// Classify one landing cell. Pad tiles are tested first because a pad is
+/// stamped OVER whatever slot it took, so a pad on a Hammer Bro slot is a spade
+/// panel on the finished map and not filler at all.
+fn landing_kind(state: &GlobalState, to: (usize, (usize, usize))) -> Landing {
+    if state.pad_edges().iter().any(|&(from, _)| from == to) {
+        return Landing::Pad;
+    }
+    let w = &state.worlds[to.0];
+    if let Some(slot) = w.slots.iter().find(|s| s.pos == to.1) {
+        return match slot.kind {
+            SlotKind::Level => Landing::Level,
+            SlotKind::Fortress => Landing::Fortress,
+            SlotKind::ToadHouse => Landing::ToadHouse,
+            SlotKind::BonusGame => Landing::BonusGame,
+            SlotKind::Pipe => Landing::Pipe,
+            SlotKind::HammerBro => Landing::Filler,
+        };
+    }
+    if w.start == Some(to.1) {
+        return Landing::Start;
+    }
+    Landing::Filler
+}
+
 /// One generated maze at the given knobs.
 fn generated(raw: &Rom, seed: u64, knobs: &super::graph::Knobs) -> (GlobalState, super::GenReport) {
     generated_k(raw, seed, knobs, 0)
@@ -630,6 +694,88 @@ fn the_generator_never_ships_an_unwinnable_maze() {
     }
 }
 
+/// **Every pad lands on a cell the map draws something on, and no same-world
+/// hop is a stroll.**
+///
+/// This is the playtest report, pinned. "The first spade in W1 ported to W1 but
+/// onto a blank tile so that's not working" was two defects at once, and both
+/// are asserted here:
+///
+/// * The landing was a Hammer Bro **filler** slot. `stamp_slots` leaves those
+///   as blank path tiles — they are the leftover pool, not content — so the
+///   player was deposited on a cell that looks like nothing, with no sign they
+///   had arrived anywhere. Measured before the rule: **45% of every landing**.
+/// * The hop was **same-world and short**. The census min span was 0: a pad
+///   that teleported to its own tile. Anything under
+///   [`SAME_WORLD_MIN_SPAN`](super::graph::SAME_WORLD_MIN_SPAN) spends one of
+///   sixteen arrival rows to move the player a few tiles they can see.
+///
+/// A landing is legible when it is another pad's tile, a slot the map draws
+/// (level, fortress, pipe, house, spade), or the world's start tile — the one
+/// cell a player can always name, and the one whose touch marks the world
+/// whistle-able.
+///
+/// **Landing on a pad tile cannot loop.** The enter hook replaces
+/// `PRG010_CEA7`, and all three branches that reach it sit downstream of an
+/// A-button EDGE test (`Controller1Press`/`Controller2Press` for the 2P path,
+/// `Pad_Input AND #PAD_A` for the special-tile and attribute-table paths). It
+/// fires when the player COMMITS to the tile they stand on, never on arriving
+/// at one.
+#[test]
+fn every_pad_lands_somewhere_legible() {
+    // Spelled out rather than read off `graph::SAME_WORLD_MIN_SPAN`, and the
+    // difference is not cosmetic: the first cut of this test imported the
+    // constant, and setting that constant to 0 then left the test PASSING. A
+    // check that reads the number it is pinning pins nothing. This is the
+    // number the rule IS, so lowering the generator's constant has to fail
+    // here rather than quietly redefine the rule.
+    const MIN_SPAN: usize = 8;
+
+    let Some(raw) = load_rom() else { return };
+    let arms: [(&str, super::graph::Knobs); 3] = [
+        ("null", super::graph::Knobs::default()),
+        (
+            "all pads stay home",
+            super::graph::Knobs { foreign_landing_bias: 0.0, fort_distance_bias: 0.0 },
+        ),
+        (
+            "all pads cross",
+            super::graph::Knobs { foreign_landing_bias: 1.0, fort_distance_bias: 1.0 },
+        ),
+    ];
+    for seed in 0..census_seeds(4) {
+        for (name, knobs) in &arms {
+            let (state, _) = generated(&raw, seed, knobs);
+            for (from, to) in state.pad_edges() {
+                let kind = landing_kind(&state, to);
+                assert_ne!(
+                    kind,
+                    Landing::Filler,
+                    "seed {seed} [{name}]: the pad at W{} {:?} lands on W{} {:?}, which the map \
+                     draws nothing on — the player cannot tell they arrived anywhere",
+                    from.0 + 1,
+                    from.1,
+                    to.0 + 1,
+                    to.1
+                );
+                // A pad landing on its own tile is the span-0 case, so the
+                // span rule below covers it; there is no separate assert.
+                if from.0 == to.0 {
+                    let d = from.1.0.abs_diff(to.1.0) + from.1.1.abs_diff(to.1.1);
+                    assert!(
+                        d >= MIN_SPAN,
+                        "seed {seed} [{name}]: same-world hop W{} {:?} -> {:?} spans {d}, under \
+                         the {MIN_SPAN} that makes a pad worth its arrival id",
+                        from.0 + 1,
+                        from.1,
+                        to.1,
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// The generator census, and the one that answers "how long is this game".
 ///
 /// ```sh
@@ -671,6 +817,11 @@ fn maze_generator_census() {
         let mut asked = [0usize; 3];
         let mut got = [0usize; 3];
         let mut denied = 0usize;
+        // The landing mix: what kind of tile a pad actually deposits the
+        // player on. `FILLER` is the one that must stay 0 — see
+        // `every_pad_lands_somewhere_legible`.
+        let mut mix = [0usize; 8];
+        let mut hops: Vec<usize> = Vec::new();
         let idx = |r: super::roles::PadRole| match r {
             super::roles::PadRole::Hub => 0,
             super::roles::PadRole::Shortcut => 1,
@@ -702,6 +853,12 @@ fn maze_generator_census() {
             content.push(cost.content);
             forts.push(cost.forts);
             let p = state.pad_edges();
+            for &(from, to) in &p {
+                mix[landing_idx(landing_kind(&state, to))] += 1;
+                if from.0 == to.0 {
+                    hops.push(from.1.0.abs_diff(to.1.0) + from.1.1.abs_diff(to.1.1));
+                }
+            }
             pads.push(p.len());
             cross.push(p.iter().filter(|((a, _), (b, _))| a != b).count());
         }
@@ -717,6 +874,21 @@ fn maze_generator_census() {
             mean(&cross),
         );
         eprintln!("    roles asked hub/shortcut/free {asked:?}  granted {got:?}  denied {denied}");
+        let total: usize = mix.iter().sum();
+        let mix_str: Vec<String> = LANDING_LABELS
+            .iter()
+            .zip(mix)
+            .map(|(l, n)| format!("{l} {n} ({:.0}%)", 100.0 * n as f64 / total.max(1) as f64))
+            .collect();
+        eprintln!("    landings: {}", mix_str.join("  "));
+        hops.sort_unstable();
+        eprintln!(
+            "    same-world hops: {} of {total}, span min {:?} median {:?} mean {:.1}",
+            hops.len(),
+            hops.first(),
+            hops.get(hops.len() / 2),
+            hops.iter().sum::<usize>() as f64 / hops.len().max(1) as f64,
+        );
         assert_eq!(unreached, 0, "[{name}]: {unreached} seeds never reached the castle");
     }
     eprintln!("  levels = levels+forts a play-through beats; forts = how many of those were keys");

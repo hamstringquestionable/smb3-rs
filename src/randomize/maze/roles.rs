@@ -217,11 +217,33 @@ pub(crate) fn pad_sites(w: &WorldState, stamped: &Grid, reserved: &HashSet<Pos>)
     out
 }
 
-/// Where a pad may DEPOSIT the player: any placed slot, or the world's start
-/// tile. All of these sit on the node lattice, which the 2-tile movement model
+/// Where a pad may DEPOSIT the player: a placed slot the map actually **draws
+/// something on**, or the world's start tile.
+///
+/// **Hammer Bro slots are excluded, and that exclusion is this function's whole
+/// job.** `stamp_slots` leaves them as blank path tiles — `HammerBroFill`
+/// claims every reachable blank the other phases did not, so they are the
+/// builder's filler pool and not content. A pad landing on one deposits the
+/// player on a cell that looks like nothing, with no sign they arrived anywhere
+/// and no visible way back. That is the playtest report this rule exists for
+/// ("ported to W1 but onto a blank tile so that's not working"), and before the
+/// rule it was **45% of every landing the generator placed**. Everything else a
+/// slot can be draws a panel, a fortress, a pipe, a house or a spade.
+///
+/// The start tile stays even though it is often plain path, because it is the
+/// one cell in a world a player can always name — and touching it is what marks
+/// the world whistle-able (`world_travel`'s VISITED byte), so a landing there
+/// is the arrival that most literally hands back a way out.
+///
+/// Pad tiles are legible landings too, but they are not here: which cells hold
+/// pads is not known until the pads are placed, so the placer in
+/// [`super::graph`] adds the ones it has already claimed to this pool.
+///
+/// All of these sit on the node lattice, which the 2-tile movement model
 /// requires — an arrival on a path tile would leave the player off-grid.
 pub(crate) fn landing_candidates(w: &WorldState) -> Vec<Pos> {
-    let mut out: Vec<Pos> = w.slots.iter().map(|s| s.pos).collect();
+    let mut out: Vec<Pos> =
+        w.slots.iter().filter(|s| s.kind != SlotKind::HammerBro).map(|s| s.pos).collect();
     out.extend(w.start);
     out.sort_unstable();
     out.dedup();

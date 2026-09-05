@@ -71,6 +71,8 @@
 
 use crate::rom::Rom;
 
+use super::map_objects::{self, RESTORE_OBJECTS_CPU};
+use super::maze_state;
 use super::overworld_build::is_completion_unsafe;
 use super::rom_data::{self, Grid, MAP_COMPLETE_BITS};
 
@@ -739,26 +741,51 @@ const UNPACK_WORLD: [u8; 33] = xfer_world!(UNPACK_PLANE_CPU);
 /// derived from the map grid, and at this point in the init `$A000` still holds
 /// PRG011 for `Map_Init`'s benefit. The restore is a tail `JMP` into
 /// `PRGROM_Change_A000`, which returns for us.
+///
+/// **The `JSR` in front is [`super::map_objects`]' restore, and it is outside
+/// the compare on purpose.** Map objects are not map cells: `Map_Init` rebuilds
+/// all nine of a world's object slots from ROM thirty-two bytes before this
+/// runs, so the question that routine answers is not "did the world change" but
+/// "did `Map_Init` just run" — which is true of a game over, a whistle hop that
+/// lands where it started, and the first map of a new game as well. `$84CD` is
+/// reached by exactly the entries that ran `Map_Init` (`PRG030_84D7`, the
+/// turn-end re-init, starts after it), so the hook is right and the guard would
+/// be wrong. Chaining costs three bytes and adds no second definition of a
+/// transition; the object store is written at the moment of defeat and never
+/// packed, so it has no transition to define.
+///
+/// 60 reserved, 34 used.
 #[rustfmt::skip]
-const WIPE_REPLACEMENT: [u8; 31] = [
-    0xAD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,   //  0: LDA World_Num
-    0xCD, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, //  3: CMP LIVE_WORLD
-    0xF0, 0x16,                                     //  6: BEQ +22 -> leave it alone
+const WIPE_REPLACEMENT: [u8; 34] = [
+    0x20, RESTORE_OBJECTS_CPU as u8,
+          (RESTORE_OBJECTS_CPU >> 8) as u8,         //  0: JSR RESTORE_OBJECTS  ; every entry
 
-    0xA9, 0x0C,                                     //  8: LDA #12
-    0x8D, PAGE_A000 as u8, (PAGE_A000 >> 8) as u8,  // 10: STA PAGE_A000
+    0xAD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,   //  3: LDA World_Num
+    0xCD, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, //  6: CMP LIVE_WORLD
+    0xF0, 0x16,                                     //  9: BEQ +22 -> leave it alone
+
+    0xA9, 0x0C,                                     // 11: LDA #12
+    0x8D, PAGE_A000 as u8, (PAGE_A000 >> 8) as u8,  // 13: STA PAGE_A000
     0x20, PRGROM_CHANGE_A000 as u8,
-          (PRGROM_CHANGE_A000 >> 8) as u8,          // 13: JSR PRGROM_Change_A000
-    0xAD, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, // 16: LDA LIVE_WORLD
+          (PRGROM_CHANGE_A000 >> 8) as u8,          // 16: JSR PRGROM_Change_A000
+    0xAD, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, // 19: LDA LIVE_WORLD
     0x20, PACK_WORLD_CPU as u8,
-          (PACK_WORLD_CPU >> 8) as u8,              // 19: JSR PACK_WORLD
-    0xA9, 0x0B,                                     // 22: LDA #11
-    0x8D, PAGE_A000 as u8, (PAGE_A000 >> 8) as u8,  // 24: STA PAGE_A000
+          (PACK_WORLD_CPU >> 8) as u8,              // 22: JSR PACK_WORLD
+    0xA9, 0x0B,                                     // 25: LDA #11
+    0x8D, PAGE_A000 as u8, (PAGE_A000 >> 8) as u8,  // 27: STA PAGE_A000
     0x4C, PRGROM_CHANGE_A000 as u8,
-          (PRGROM_CHANGE_A000 >> 8) as u8,          // 27: JMP PRGROM_Change_A000  ; tail call
+          (PRGROM_CHANGE_A000 >> 8) as u8,          // 30: JMP PRGROM_Change_A000  ; tail call
 
-    0x60,                                           // 30: RTS   ; leave it alone
+    0x60,                                           // 33: RTS   ; leave it alone
 ];
+
+/// The wipe replacement's bytes, for [`super::map_objects`]' check that the
+/// restore is still called from the front of it. Exposed as a function rather
+/// than a `pub` constant so the array stays this module's to reshape.
+#[cfg(test)]
+pub(crate) fn wipe_replacement_bytes() -> &'static [u8] {
+    &WIPE_REPLACEMENT
+}
 
 /// Expand the world being entered — **but only when it changed** — then let the
 /// engine draw it.
@@ -841,11 +868,20 @@ const NEW_GAME_INIT_CPU: u16 = (0xC000 + FS_NEW_GAME_INIT - 0x32010) as u16;
 ///   rather than argued away — `A` is already zero for the loops, so it is
 ///   three bytes.
 ///
-/// The two loops cannot be one: the store is at `$7997` and the live array at
-/// `$7D00`, and `A` stays zero across both so only the index and the base
-/// change.
+/// * the maze's own SRAM — [`maze_state`](super::maze_state)'s whole
+///   `$7AC1..` run: the visited table the whistle cycles, the wand counter the
+///   goal gate compares against, and the map-object store. That module's header
+///   has always said the new-game signal is what clears it, and until the
+///   map-object store landed nothing did: a second game in one session
+///   inherited the first game's wand count and visited worlds. Clearing the run
+///   rather than a list means the next allocation is covered by having been
+///   declared there.
+///
+/// The three loops cannot be one: the store is at `$7997`, the maze's SRAM at
+/// `$7AC1` and the live array at `$7D00`, and `A` stays zero across all three
+/// so only the index and the base change.
 #[rustfmt::skip]
-const NEW_GAME_INIT: [u8; 25] = [
+const NEW_GAME_INIT: [u8; 33] = [
     0x8D, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, //  0: STA LIVE_WORLD  ; A = World_Num
     0xA9, 0x00,                                     //  3: LDA #$00
     0x8D, DEBUG_FLAG as u8, (DEBUG_FLAG >> 8) as u8, //  5: STA Debug_Flag  ; what we displaced
@@ -855,12 +891,18 @@ const NEW_GAME_INIT: [u8; 25] = [
     0xCA,                                           // 13: DEX
     0x10, 0xFA,                                     // 14: BPL -6 -> store_loop
 
-    0xA2, 0x7F,                                     // 16: LDX #127
-    0x9D, 0x00, 0x7D,                               // 18: STA Map_Completions,X ; live_loop
+    0xA2, (maze_state::MAZE_STATE_LEN - 1) as u8,   // 16: LDX #17
+    0x9D, maze_state::MAZE_STATE_START as u8,
+          (maze_state::MAZE_STATE_START >> 8) as u8, // 18: STA MAZE_STATE,X ; maze_loop
     0xCA,                                           // 21: DEX
-    0x10, 0xFA,                                     // 22: BPL -6 -> live_loop
+    0x10, 0xFA,                                     // 22: BPL -6 -> maze_loop
 
-    0x60,                                           // 24: RTS
+    0xA2, 0x7F,                                     // 24: LDX #127
+    0x9D, 0x00, 0x7D,                               // 26: STA Map_Completions,X ; live_loop
+    0xCA,                                           // 29: DEX
+    0x10, 0xFA,                                     // 30: BPL -6 -> live_loop
+
+    0x60,                                           // 32: RTS
 ];
 
 /// The `Map_Completions` wipe in `PRG030_84A0`: CPU `$84CD`, ten bytes, three
@@ -928,6 +970,12 @@ pub(crate) fn apply(rom: &mut Rom) {
     rom.write_range(FS_WIPE_REPLACEMENT, &WIPE_REPLACEMENT);
     rom.write_range(FS_SWAP_AT_RELOAD, &SWAP_AT_RELOAD);
     rom.write_range(FS_NEW_GAME_INIT, &NEW_GAME_INIT);
+
+    // The per-world map-object store. Installed from here rather than from the
+    // orchestrator because the two are one mechanism seen from two sides: this
+    // module persists what the map *grid* remembers, that one persists what the
+    // map *objects* do, and `WIPE_REPLACEMENT` above calls into it.
+    map_objects::apply(rom);
 
     // Hook 1: the wipe becomes a call to the replacement.
     let mut wipe = [0xEA_u8; WIPE_LEN];
@@ -1261,6 +1309,12 @@ mod tests {
     /// `mos6502::memory::Memory` is a flat 64K array, so "PRG010 at `$C000`"
     /// and "PRG012 at `$A000`" are just two `set_bytes` calls — the bank
     /// arrangement the hook site guarantees, reproduced literally.
+    ///
+    /// [`map_objects`]' restore is **stubbed to an `RTS`** here. It lives in
+    /// PRG011, and a flat 64K cannot hold PRG011 and PRG012 at `$A000` at once;
+    /// on the console `WIPE_REPLACEMENT` calls it before it banks PRG012 in, so
+    /// both are reachable. Its own fixture puts PRG011 there instead and drives
+    /// it properly — see `a_beaten_map_object_survives_a_round_trip`.
     fn cpu_with_routines(rom: &Rom) -> CPU<Memory, Ricoh2a03> {
         let mut mem = Memory::new();
         mem.set_bytes(MASK_BUILD_CPU, &MASK_BUILD);
@@ -1278,6 +1332,8 @@ mod tests {
         let prg012: Vec<u8> =
             (0..0x2000).map(|i| rom.read_byte(rom_data::PRG012_FILE_BASE + i)).collect();
         mem.set_bytes(0xA000, &prg012);
+        // ... and the PRG011 routine that would otherwise be under it.
+        mem.set_byte(RESTORE_OBJECTS_CPU, 0x60);
         CPU::new(mem, Ricoh2a03)
     }
 
@@ -1743,14 +1799,17 @@ mod tests {
     /// **A new game starts from nothing.**
     ///
     /// The routine is a self-contained calculation — no engine calls, only
-    /// `LIVE_WORLD`, `Debug_Flag` and two RAM regions — so it is run rather
+    /// `LIVE_WORLD`, `Debug_Flag` and three RAM regions — so it is run rather
     /// than merely decoded. Every byte it must clear is poisoned first, so
     /// "cleared" cannot pass by accident on a zeroed fixture.
     ///
     /// This is what closes the POC's standing hole: a cold boot with dirty SRAM
     /// and a game over into a new game both used to inherit whatever the store
     /// held, because "the transition flag is clear" was never a new-game
-    /// signal.
+    /// signal. The maze's own SRAM was in that hole too — the visited table,
+    /// the wand counter and the map-object store all sat uninitialised until
+    /// the third loop landed, so a second game in one session began with the
+    /// first game's wands and its beaten Hammer Bros.
     #[test]
     fn a_new_game_clears_the_store_and_names_the_live_world() {
         // Its own memory, not `cpu_with_routines`: this routine lives in
@@ -1771,6 +1830,10 @@ mod tests {
             // index is a failure rather than an invisible extra zero.
             mem.set_byte(PACKED + PACKED_LEN as u16, 0xAA);
             mem.set_byte(0x7D80, 0xAA);
+            for i in 0..maze_state::MAZE_STATE_LEN {
+                mem.set_byte(maze_state::MAZE_STATE_START + i as u16, 0xAA);
+            }
+            mem.set_byte(maze_state::MAZE_STATE_NEXT, 0xAA);
             let mut cpu = CPU::new(mem, Ricoh2a03);
 
             // What the site it replaces leaves in `A`: the operand of the
@@ -1802,11 +1865,23 @@ mod tests {
                     "Map_Completions byte {i} survived a new game",
                 );
             }
-            // And nothing beyond either region.
+            for i in 0..maze_state::MAZE_STATE_LEN {
+                assert_eq!(
+                    cpu.memory.get_byte(maze_state::MAZE_STATE_START + i as u16),
+                    0,
+                    "maze SRAM byte {i} survived a new game",
+                );
+            }
+            // And nothing beyond any of the three regions.
             assert_eq!(
                 cpu.memory.get_byte(PACKED + PACKED_LEN as u16),
                 0xAA,
                 "the store loop ran past its {PACKED_LEN} bytes",
+            );
+            assert_eq!(
+                cpu.memory.get_byte(maze_state::MAZE_STATE_NEXT),
+                0xAA,
+                "the maze loop ran past the run maze_state declares",
             );
             assert_eq!(cpu.memory.get_byte(0x7D80), 0xAA, "the live loop ran past $7D7F");
         }
@@ -1853,6 +1928,11 @@ mod tests {
                 "maze visited table",
             ),
             (maze_state::WAND_COUNT, maze_state::WAND_COUNT + 1, "maze wand counter"),
+            (
+                maze_state::MAP_OBJ_DEAD,
+                maze_state::MAP_OBJ_DEAD + maze_state::MAP_OBJ_DEAD_LEN as u16,
+                "maze map-object store",
+            ),
         ];
         used.sort();
         for pair in used.windows(2) {

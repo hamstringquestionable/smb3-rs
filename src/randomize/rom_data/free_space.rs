@@ -252,6 +252,18 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     // PRG011 (file 0x16010, CPU $A000–$BFFF during map)
     fs(0x17C87, 36, &["start_airship_swap"], "game-over twirl finalize helper"),
     fs(
+        0x17CAB,
+        24,
+        &["map_objects"],
+        "world-maze: mark a beaten map object dead (24 reserved, 22 used)",
+    ),
+    fs(
+        0x17CC3,
+        24,
+        &["map_objects"],
+        "world-maze: re-clear beaten map objects after Map_Init (24 reserved, 22 used)",
+    ),
+    fs(
         0x17D00,
         66,
         &["fix_canoe_softlock"],
@@ -452,6 +464,22 @@ pub(crate) const FS_MAZE_WAND_COUNT: usize = 0x3DFA0;
 /// World-maze: a fortress whose lock is in another world. PRG011, CPU `$BF6B`,
 /// immediately after [`FS_MAZE_TRAVEL`] in the same 277-byte run.
 pub(crate) const FS_MAZE_FOREIGN_LOCK: usize = 0x17F7B;
+
+/// World-maze: set a map object's "already beaten" bit at the one site that
+/// empties its slot. PRG011, CPU `$BC9B` — the hook is in PRG011 and the world
+/// bit comes from PRG011's own `Map_CompleteBit`, so the routine pays no
+/// always-mapped rent and borrows a table instead of shipping one.
+///
+/// Unreferenced check, 2026-09-05: `prg011.asm` ends with "Rest of ROM bank was
+/// empty" after `Map_NoAnimUpdate`'s `RTS`, and this gap sits between two rows
+/// that already claim the same filler run ([`FS_SAS_GAMEOVER_FINALIZE`] before
+/// it, [`FS_CANOE_BACKUP`] after).
+pub(crate) const FS_MAZE_OBJ_MARK: usize = 0x17CAB; // 24 reserved, 22 used
+
+/// World-maze: re-clear the map objects a world has already lost, straight
+/// after `Map_Init` reloaded all nine of them from ROM. PRG011, CPU `$BCB3`,
+/// immediately after [`FS_MAZE_OBJ_MARK`] in the same run.
+pub(crate) const FS_MAZE_OBJ_RESTORE: usize = 0x17CC3; // 24 reserved, 22 used
 
 pub(crate) const FS_STARTING_ITEMS: usize = 0x3E260; // 33 bytes
 
@@ -1170,6 +1198,8 @@ mod free_space_tests {
             (FS_MAZE_FOREIGN_LOCK, "FS_MAZE_FOREIGN_LOCK"),
             (FS_MAZE_VISITED, "FS_MAZE_VISITED"),
             (FS_MAZE_TRAVEL, "FS_MAZE_TRAVEL"),
+            (FS_MAZE_OBJ_MARK, "FS_MAZE_OBJ_MARK"),
+            (FS_MAZE_OBJ_RESTORE, "FS_MAZE_OBJ_RESTORE"),
             (FS_MASK_BUILD, "FS_MASK_BUILD"),
             (FS_IS_COMPLETABLE, "FS_IS_COMPLETABLE"),
             (FS_WORLD_COLS, "FS_WORLD_COLS"),

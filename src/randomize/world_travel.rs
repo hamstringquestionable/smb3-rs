@@ -391,6 +391,29 @@ const WHISTLE_TRAVEL: [u8; 34] = [
 /// transition rests on its `World_Num != LIVE_WORLD` hooks packing the
 /// outgoing world. Not asserted here: this module writes ROM, it cannot see
 /// what else the pipeline chose.
+/// `JSR Inv_UseItem_ShiftOver` inside `Inv_UseItem_WarpWhistle` — the three
+/// bytes that DELETE the whistle from the inventory once it is blown. CPU
+/// `$A7A9` in PRG026, which is mapped at `$A000` while the inventory is open.
+///
+/// Vanilla wants this: a whistle is a one-shot warp. **The maze does not.**
+/// Here the whistle is fast travel between worlds already visited, and the
+/// mode's whole promise is that using it again takes you on to the next one —
+/// which one whistle and one use cannot deliver. `Inv_UseItem_ShiftOver` does
+/// nothing but back the remaining items over the used one (`prg026.asm:987`),
+/// so skipping it leaves the whistle in the inventory and changes nothing else;
+/// `Inventory_ForceFlip` two instructions later still closes the panel.
+///
+/// This is safe to give away because a maze whistle **can never reach anywhere
+/// new**: the cycler only visits worlds whose `VISITED` byte is already set, so
+/// an unlimited whistle is unlimited *backtracking*, not a sequence break. That
+/// is the same argument `remove_whistles` rests on, and it is why that option
+/// keeps its intent under this mode while changing mechanism.
+const WHISTLE_CONSUME_OFFSET: usize = 0x347B9;
+
+/// What is there in vanilla, asserted before it is replaced.
+#[cfg(test)]
+const WHISTLE_CONSUME_VANILLA: [u8; 3] = [0x20, 0x1B, 0xA6];
+
 pub fn apply(rom: &mut Rom) {
     let keys = build_start_keys(rom);
 
@@ -404,6 +427,10 @@ pub fn apply(rom: &mut Rom) {
     hook[1] = MARK_VISITED_CPU as u8;
     hook[2] = (MARK_VISITED_CPU >> 8) as u8;
     rom.write_range(MARK_HOOK_OFFSET, &hook);
+
+    // Keep the whistle. See `WHISTLE_CONSUME_OFFSET`: the mode asks for
+    // repeated use, and vanilla deletes the item on the first one.
+    rom.write_range(WHISTLE_CONSUME_OFFSET, &[0xEA, 0xEA, 0xEA]);
 
     rom.write_range(FS_MAZE_TRAVEL, &WHISTLE_TRAVEL);
     // `JMP`, not `JSR`: the routine never comes back, so a return address
@@ -1078,5 +1105,51 @@ mod asm_checks {
         wrong_mask[8] = 0x0F;
         asm::check(&wrong_mask).origin(WHISTLE_TRAVEL_CPU).assert_ok();
         assert_ne!(travel(&wrong_mask, 5, &t), 0, "a wrong wrap mask must break the wraparound");
+    }
+}
+
+#[cfg(test)]
+mod whistle_reuse {
+    use super::*;
+
+    fn vanilla() -> Option<Rom> {
+        let bytes = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
+        Rom::from_bytes(&bytes).ok()
+    }
+
+    /// The site really is the `JSR Inv_UseItem_ShiftOver` the disassembly
+    /// names, read out of the ROM rather than transcribed — and it is one
+    /// whole instruction, so NOPping it displaces nothing else.
+    #[test]
+    fn the_consume_site_is_the_shift_over_call() {
+        let Some(rom) = vanilla() else { return };
+        assert_eq!(
+            rom.read_range(WHISTLE_CONSUME_OFFSET, 3),
+            WHISTLE_CONSUME_VANILLA,
+            "the whistle's consume call is not where this module thinks it is"
+        );
+        // $A61B is Inv_UseItem_ShiftOver: PRG026 at $A000, file 0x34010.
+        let target = u16::from_le_bytes([WHISTLE_CONSUME_VANILLA[1], WHISTLE_CONSUME_VANILLA[2]]);
+        assert_eq!(target, 0xA61B, "the JSR does not go to Inv_UseItem_ShiftOver");
+    }
+
+    /// A maze whistle survives being blown, and nothing else in the handler
+    /// moves. The mode asks for repeated use; vanilla deletes the item on the
+    /// first one, so this is the difference between fast travel and a
+    /// single-shot warp.
+    #[test]
+    fn the_maze_whistle_is_not_consumed() {
+        let Some(rom) = vanilla() else { return };
+        let mut patched = rom.clone();
+        apply(&mut patched);
+        assert_eq!(
+            patched.read_range(WHISTLE_CONSUME_OFFSET, 3),
+            [0xEA, 0xEA, 0xEA],
+            "the whistle is still consumed on use"
+        );
+        // The instructions either side are untouched: STX Map_WarpWind_FX
+        // before, LDA #MUS2A_WARPWHISTLE after.
+        assert_eq!(patched.read_range(WHISTLE_CONSUME_OFFSET - 2, 2), [0x86, 0x8B]);
+        assert_eq!(patched.read_range(WHISTLE_CONSUME_OFFSET + 3, 2), [0xA9, 0x0B]);
     }
 }
