@@ -5093,3 +5093,44 @@ each world's bonus room gives.
 - [Southbird SMB3 Disassembly](https://sonicepoch.com/sm3mix/disassembly.html)
 - [captainsouthbird/smb3 GitHub](https://github.com/captainsouthbird/smb3)
 - [esc0rtd3w hacking_notes.txt](https://github.com/esc0rtd3w/nes-rom-tools/blob/master/super-mario-bros-3/docs/hacking_notes.txt)
+
+### World-map graphics: CHR banks and unused metatiles
+
+*(Measured 2026-09-05 by scanning the ROM, for the world-maze wand gate.)*
+
+**The map's BG CHR is the same for all eight worlds.** `PRG030`'s map entry
+("Load world map graphics") sets `PatTable_BankSel = $14` and `+1 = $16`, so
+metatile quadrant index `i` resolves as:
+
+| index | 1KB CHR page | file offset |
+|---|---|---|
+| `$00-$3F` | `$14` | `0x40010 + 0x14*0x400 + i*16` |
+| `$40-$7F` | `$15` | … |
+| `$80-$BF` | `$16` | … |
+| `$C0-$FF` | `$17` | … |
+
+Per-world variation on the map is **palette only** (`Map_Tile_ColorSets`); no
+per-world BG bank swap exists. Map object *sprites* are a different set, pages
+`$20-$23`.
+
+**Unused capacity, measured against all eight world grids:**
+
+- 139 of the 256 tile bytes appear in some world's grid; **117 are unused**.
+- 215 of the 256 CHR indices are referenced by some metatile; 41 are drawn but
+  referenced by none — and those 41 are the alphabet, the digits, and a few
+  fragments (`4E`, `6A`, `6B`, `80-83`, `A0-A3`, `FB`). They are drawn by
+  nametable text, not by metatiles, so they are **not** free CHR slots without
+  a further check.
+- Of the unused tile bytes, 28 carry a 2x2 graphic no used tile shares. Two of
+  those are complete authored graphics replicated at all four palette pages and
+  used nowhere: `0x00/0x40/0x80/0xC0` (CHR `88 89 8A 8B`) and
+  `0x01/0x41/0x81/0xC1` (CHR `DC DD DE DF`). Both are cut *terrain* pieces — a
+  diagonal and a corner-with-blocks — not the unused skull the wiki documents,
+  which is not present in the map BG bank at all.
+
+**`0xE2` — the Dark Land wall.** Palette page 3, CHR quadrants `6C 6D / 6E 6F`,
+blocks all four movement directions, member of no behavior registry, used 155
+times in World 8. Cloning its four quadrant entries onto an unused page-3 byte
+yields a pixel-identical wall with a distinct identity — which matters because
+`Map_Removable_Tiles` membership is what makes a cell *completable*, and hence
+what sizes the world-maze packed completion store.
