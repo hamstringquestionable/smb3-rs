@@ -1692,3 +1692,50 @@ fn a_maze_player_starts_with_a_permanent_whistle() {
         "the whistle-keeping patch leaked into a non-maze seed"
     );
 }
+
+/// **The web build's entry path carries the maze.**
+///
+/// Every other maze test constructs `Options` directly. The browser does not:
+/// `wasm::parse_options` deserialises them from a JSON object the JS layer
+/// builds out of `web/options.js`. A field that is absent, misspelled, or
+/// defaulted wrongly in that direction would leave the mode silently off in the
+/// browser and on everywhere else — and no native test would notice.
+///
+/// So this walks the wasm path exactly: JSON in, flag key out, key back to
+/// options, and finally a real ROM to prove the mode actually ran.
+#[test]
+fn the_wasm_json_entry_path_carries_the_maze() {
+    // What the JS layer sends when the two controls are set.
+    let json = r#"{"world_maze":true,"maze_wands":5}"#;
+    let opts: Options = serde_json::from_str(json).expect("wasm parse_options");
+    assert!(opts.world_maze, "world_maze did not survive JSON");
+    assert_eq!(opts.maze_wands, 5, "maze_wands did not survive JSON");
+
+    // The key is how a seed is shared, so it has to carry the mode too.
+    let key = opts.to_flag_key();
+    let back = Options::from_flag_key(&key).expect("flag key round trip");
+    assert!(back.world_maze, "world_maze did not survive the flag key");
+    assert_eq!(back.maze_wands, 5, "maze_wands did not survive the flag key");
+
+    // And the defaults the JS layer seeds its form from must name the fields,
+    // or the controls have nothing to bind to.
+    let defaults = serde_json::to_string(&Options::default()).expect("default_options_json");
+    for field in ["world_maze", "maze_wands"] {
+        assert!(defaults.contains(field), "default_options_json is missing {field}");
+    }
+
+    // Finally: the mode really runs from a JSON-built Options, not just parses.
+    let Some(mut rom) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let full: Options =
+        serde_json::from_str(r#"{"world_maze":true,"maze_wands":3,"world_count":7}"#).unwrap();
+    randomize(&mut rom, 4242, &full);
+    let (row, col) = crate::randomize::rom_data::W8_WAND_GATE_POS;
+    assert_eq!(
+        rom.read_byte(crate::randomize::rom_data::map_tile_offset(7, row, col)),
+        crate::randomize::rom_data::WAND_GATE_TILE,
+        "a JSON-configured maze produced a ROM with no wand gate"
+    );
+}
