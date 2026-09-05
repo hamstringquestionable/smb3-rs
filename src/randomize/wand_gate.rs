@@ -229,88 +229,41 @@ pub(crate) const MAX_WANDS: u8 = 7;
 
 // --- The gate's graphics ------------------------------------------------
 
-/// CHR page `$16`, local tiles 0-3 — the four 8x8 patterns the gate's metatile
-/// points at, in quadrant order upper-left, lower-left, upper-right,
-/// lower-right.
+/// **Map BG CHR tiles `$80`-`$83` are NOT free**, and this constant is named
+/// after what they really are rather than what an earlier cut of this module
+/// wanted them for.
 ///
-/// Repurposing them is safe, and the check was three-part:
+/// That cut drew a 2x2 skull into them, on a three-legged argument that nothing
+/// referenced them: no metatile quadrant names them (all 1024 entries scanned);
+/// no `.byte` nametable stream on the map screen writes them (the three hits in
+/// the whole disassembly are the title logo and two level-font videos, all
+/// running a different pattern bank); and pages `$14`-`$17` belong to the map
+/// alone, with the animation rotating `$00`-`$7F` only. **All three legs were
+/// true and the conclusion was still wrong.** They are the four corners of the
+/// map's window boxes, drawn by a routine that computes the corner index — and
+/// a playtest found it at once, with the corner deco shredded.
 ///
-/// * **no metatile names them.** All 1024 quadrant entries (four 256-byte
-///   tables at `PRG012 + 0/256/512/768`) were scanned; `$80`-`$83` appear in
-///   none, for any tile byte, used or unused.
-/// * **no nametable stream names them.** Every `vaddr`-led `.byte` block in
-///   the disassembly was scanned for `$80`-`$83` as tile data. Three hit:
-///   `TitleScreen_LogoLine10` (title CHR `$78`/`$7A`), `Video_CourseClear` and
-///   `Video_YouGotCard` — and both of those run with `PatTable_BankSel+1 =
-///   $5E`, the level font bank, set at `prg002.asm:5493` and `:5645`. In the
-///   *map's* font `$80` is not a letter: `W` is `$D8`, `M` is `$BA`, `I` is
-///   `$FC`.
-/// * **page `$16` is the map's alone.** `#$16` reaches `PatTable_BankSel+1` at
-///   exactly two sites, `prg030.asm:607` and `:2906`, both map init. No
-///   `Level_BG_Pages1/2`, `PT2_Anim` or `PlantInfest_PatTablePerACnt` entry is
-///   `$16` or `$17`, and the map's own animation rotates R0 (tiles `$00`-`$7F`)
-///   only, so this pair is fixed for the map's whole life.
+/// Render them and it is plain: `$80` turns right-and-down, `$81`
+/// left-and-down, `$82` and `$83` are the bottom pair. So the gate wears
+/// [`WAND_GATE_TILE`]'s own vanilla art and this module writes no CHR at all.
 ///
-/// Vanilla draws four thin elbow fragments here — art referenced by nothing.
-/// `gate_chr_donors_are_vanilla` pins their bytes so a ROM or bank drift
-/// fails loudly instead of scribbling on live graphics.
-const GATE_CHR_TILES: [u8; 4] = [0x80, 0x81, 0x82, 0x83];
+/// The transferable lesson, and it cost a playtest: **a scan over declarative
+/// data cannot prove a tile unused, because code can compute a tile index.**
+/// Proving one free needs an emulator trace of what the map screen writes to
+/// the nametable, not a grep.
+#[cfg(test)]
+const BOX_CORNER_TILES: [u8; 4] = [0x80, 0x81, 0x82, 0x83];
 
-/// The pattern table splits at `$80`: tiles `$00`-`$7F` come from the bank in
-/// `PatTable_BankSel` (which the map ANIMATES, rotating R0 through four page
-/// pairs) and `$80`-`$FF` from `PatTable_BankSel+1`, fixed at `$16` for the
-/// map's whole life. [`GATE_CHR_TILES`] is on the fixed side, which is why the
-/// gate never flickers; the local index inside page `$16` is the tile minus
-/// this.
-const CHR_PAGE_16_FIRST_TILE: u8 = 0x80;
+/// File offset of pattern-table tile `$80`. The map BG set is pages
+/// `$14`-`$17` — one 4KB region indexed `$00`-`$FF` — so `$80` is half way in.
+#[cfg(test)]
+const MAP_CHR_BASE: usize = 0x40010 + 0x14 * 0x400;
 
-/// File offset of CHR page `$16`, local tile 0 — pattern-table tile `$80`.
-const GATE_CHR_BASE: usize = 0x40010 + 0x16 * 0x400;
-
-/// File offset of one pattern-table tile in page `$16`.
-const fn gate_chr_offset(tile: u8) -> usize {
-    GATE_CHR_BASE + (tile - CHR_PAGE_16_FIRST_TILE) as usize * 16
+/// File offset of one map BG pattern-table tile.
+#[cfg(test)]
+const fn map_chr_offset(tile: u8) -> usize {
+    MAP_CHR_BASE + tile as usize * 16
 }
-
-/// The skull, as four 8x8 patterns in quadrant order UL, LL, UR, LR.
-///
-/// ```text
-///   ................       . colour 3, the dark ground the wall uses
-///   ....########....       # colour 1, bone
-///   ..############..       o colour 2, shading
-///   .##############.       (space) colour 0, the universal black
-///   .##  ######  ##.
-///   .#    ####    #.
-///   .#    ####    #.
-///   .##  ######  ##.
-///   .#####    #####.
-///   .######  ######.
-///   .######oo######.
-///   ..############..
-///   ..# # #  # # #..
-///   ..#oooooooooo#..
-///   ....########....
-///   ................
-/// ```
-///
-/// Colour comes from the tile byte's top two bits, so page 3 of World 8's map
-/// palette: `$0F` black, `$35` bone, `$25` shadow, `$17` the masonry brown the
-/// Dark Land wall is already made of.
-#[rustfmt::skip]
-const SKULL_CHR: [[u8; 16]; 4] = [
-    // upper-left
-    [0xFF, 0xFF, 0xFF, 0xFF, 0xE7, 0xC3, 0xC3, 0xE7,
-     0xFF, 0xF0, 0xC0, 0x80, 0x80, 0x80, 0x80, 0x80],
-    // lower-left
-    [0xFC, 0xFE, 0xFE, 0xFF, 0xEA, 0xE0, 0xFF, 0xFF,
-     0x80, 0x80, 0x81, 0xC0, 0xC0, 0xDF, 0xF0, 0xFF],
-    // upper-right
-    [0xFF, 0xFF, 0xFF, 0xFF, 0xE7, 0xC3, 0xC3, 0xE7,
-     0xFF, 0x0F, 0x03, 0x01, 0x01, 0x01, 0x01, 0x01],
-    // lower-right
-    [0x3F, 0x7F, 0x7F, 0xFF, 0x57, 0x07, 0xFF, 0xFF,
-     0x01, 0x01, 0x81, 0x03, 0x03, 0xFB, 0x0F, 0xFF],
-];
 
 // --- Application --------------------------------------------------------
 
@@ -330,15 +283,25 @@ pub(crate) fn apply(rom: &mut Rom, wands_required: u8) {
     }
     let k = wands_required.min(MAX_WANDS);
 
-    // The skull, and the metatile that points at it. Quadrant tables are four
-    // 256-byte planes at PRG012 + 0/256/512/768, in UL, LL, UR, LR order.
-    for (chr, pattern) in GATE_CHR_TILES.iter().zip(SKULL_CHR.iter()) {
-        rom.write_range(gate_chr_offset(*chr), pattern);
-    }
-    for (plane, &chr) in GATE_CHR_TILES.iter().enumerate() {
-        let table = PRG012_FILE_BASE + plane * 256;
-        rom.write_byte(table + WAND_GATE_TILE as usize, chr);
-    }
+    // **No CHR is drawn.** The gate wears `WAND_GATE_TILE`'s own vanilla art —
+    // the ornamental block — and that is a retreat from a bug, recorded here so
+    // it is not walked into again.
+    //
+    // An earlier cut drew a 2x2 skull into map BG tiles `$80`-`$83` on a
+    // three-legged argument that they were unreferenced: no metatile quadrant
+    // points at them, no `.byte` nametable stream on the map screen writes
+    // them, and pages `$14`-`$17` are the map's alone. Every leg was true. The
+    // conclusion was still wrong: **they are the four corners of the map's
+    // window boxes**, written by a routine that computes the corner index
+    // rather than by a stream a scan can find, and a playtest showed the corner
+    // deco shredded. Render them and it is obvious — `$80` is a line going
+    // right and down, `$81` right-to-left and down, `$82`/`$83` the bottom
+    // pair. `the_box_corners_are_not_free_chr` pins all four.
+    //
+    // The lesson is narrower than "be careful": *a scan over declarative data
+    // cannot prove a tile unused, because code can compute a tile index.* Any
+    // future attempt needs a different instrument — an emulator trace of what
+    // the map screen actually writes to the nametable, not a grep.
 
     // The gate cell itself, over the finished map.
     let (row, col) = W8_WAND_GATE_POS;
@@ -431,14 +394,11 @@ mod tests {
         }
     }
 
-    /// The four CHR tiles the skull is drawn into are the fragments this
-    /// module measured as unreferenced. If a ROM or a bank ever disagrees,
-    /// stop — overwriting live map graphics is not recoverable at runtime.
-    ///
-    /// The vanilla contents of [`GATE_CHR_TILES`] — four thin elbow fragments that
-    /// nothing draws. Asserted before they are overwritten.
+    /// The vanilla contents of [`BOX_CORNER_TILES`]: the four corners of the
+    /// map's window boxes. Top-left turns right-and-down, top-right
+    /// left-and-down, and the bottom pair mirror them.
     #[rustfmt::skip]
-    const VANILLA_GATE_CHR: [[u8; 16]; 4] = [
+    const VANILLA_BOX_CORNERS: [[u8; 16]; 4] = [
         [0x00, 0x00, 0x00, 0x0F, 0x1F, 0x18, 0x18, 0x18,
          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
         [0x00, 0x00, 0x00, 0xF0, 0xF8, 0x18, 0x18, 0x18,
@@ -449,33 +409,36 @@ mod tests {
          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
     ];
 
+    /// **The wand gate must never touch map CHR**, and these four tiles are why.
+    ///
+    /// A regression test for a shipped bug rather than a precaution: an earlier
+    /// cut drew a skull here and the map's window corners came back shredded
+    /// from the first playtest. The three-legged "nothing references them"
+    /// argument that justified it is reproduced in [`BOX_CORNER_TILES`]'s doc —
+    /// every leg true, and a routine that computes the corner index made the
+    /// conclusion false anyway.
     #[test]
-    fn gate_chr_donors_are_vanilla() {
+    fn the_box_corners_are_not_free_chr() {
         let Some(rom) = vanilla() else { return };
-        for (chr, expect) in GATE_CHR_TILES.iter().zip(VANILLA_GATE_CHR.iter()) {
+        for (chr, expect) in BOX_CORNER_TILES.iter().zip(VANILLA_BOX_CORNERS.iter()) {
             assert_eq!(
-                rom.read_range(gate_chr_offset(*chr), 16),
+                rom.read_range(map_chr_offset(*chr), 16),
                 expect,
-                "CHR tile ${chr:02X} is not the fragment the skull replaces"
+                "CHR ${chr:02X} is not the box corner this test guards"
             );
         }
     }
 
-    /// No metatile quadrant, for any of the 256 tile bytes, names one of the
-    /// donor CHR tiles — the first leg of the unreferenced argument, kept as a
-    /// test because it is the leg a future metatile edit could break.
+    /// The gate writes no CHR at all, anywhere — broader than the corner test
+    /// above, and the honest form of the guarantee: every tile in the map's 4KB
+    /// BG set is drawn by something, so there is no safe tile to take.
     #[test]
-    fn no_metatile_points_at_the_skull_donors() {
+    fn the_gate_writes_no_chr() {
         let Some(rom) = vanilla() else { return };
-        for plane in 0..4 {
-            for tile in 0..256 {
-                let chr = rom.read_byte(PRG012_FILE_BASE + plane * 256 + tile);
-                assert!(
-                    !GATE_CHR_TILES.contains(&chr),
-                    "tile ${tile:02X} quadrant {plane} already draws CHR ${chr:02X}"
-                );
-            }
-        }
+        let mut patched = rom.clone();
+        apply(&mut patched, K);
+        const CHR: usize = 0x40010;
+        assert_eq!(patched.data[CHR..], rom.data[CHR..], "the wand gate wrote into CHR");
     }
 
     // -- what apply() writes ---------------------------------------------
@@ -497,14 +460,15 @@ mod tests {
 
         apply(&mut rom, K);
         assert_eq!(rom.read_byte(map_tile_offset(W8_IDX, row, col)), WAND_GATE_TILE);
-        for (plane, &chr) in GATE_CHR_TILES.iter().enumerate() {
+        // The metatile is untouched too: the gate wears the tile's own art.
+        let van = vanilla().unwrap();
+        for plane in 0..4 {
+            let off = PRG012_FILE_BASE + plane * 256 + WAND_GATE_TILE as usize;
             assert_eq!(
-                rom.read_byte(PRG012_FILE_BASE + plane * 256 + WAND_GATE_TILE as usize),
-                chr
+                rom.read_byte(off),
+                van.read_byte(off),
+                "quadrant {plane} of the gate tile was repointed"
             );
-        }
-        for (chr, pattern) in GATE_CHR_TILES.iter().zip(SKULL_CHR.iter()) {
-            assert_eq!(rom.read_range(gate_chr_offset(*chr), 16), pattern);
         }
     }
 

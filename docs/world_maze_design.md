@@ -931,11 +931,36 @@ requested pad role distribution.
   skips. **So a foreign lock opens on a secret exit where an FX lock does not**,
   and `ensure_secret_exit_safe`'s reasoning does not apply to foreign locks.
   Read from the disassembly, not playtested.
-- **The skull.** There is none: every drawn pattern in map BG CHR pages
-  `$14`-`$17` is terrain, panel art, masonry, the alphabet, digits or border
-  fill, and no combination assembles one. The gate uses `$D5` instead — the
-  ornamental block, which reads as visibly *not* Dark Land wall, and that is
-  better legibility than a pixel-identical clone would have been.
+- **The skull: there is none, and the attempt to draw one shipped a bug.**
+  This is worth reading before anyone tries again.
+
+  Every drawn pattern in map BG CHR pages `$14`-`$17` is terrain, panel art,
+  masonry, the alphabet, digits or border fill, and no combination assembles a
+  skull. So an attempt was made to *free* four tiles for one — `$80`-`$83` —
+  on a three-legged argument: no metatile quadrant names them (all 1024 entries
+  scanned), no `.byte` nametable stream on the map screen writes them (the three
+  hits in the whole disassembly are the title logo and two level-font videos,
+  all running a different pattern bank), and pages `$14`-`$17` belong to the map
+  alone with the animation rotating `$00`-`$7F` only.
+
+  **Every leg was true. The conclusion was wrong.** `$80`-`$83` are the four
+  corners of the map's window boxes, drawn by a routine that *computes* the
+  corner index — which no scan over declarative data can see. The first
+  playtest came back with the corner deco shredded. Render the four tiles and
+  it is obvious: `$80` turns right-and-down, `$81` left-and-down, `$82` and
+  `$83` are the bottom pair.
+
+  **The transferable lesson: a scan over declarative data cannot prove a tile
+  unused, because code can compute a tile index.** Proving one free needs an
+  emulator trace of what the map screen actually writes to the nametable, not a
+  grep. The same caution applies to the "41 drawn but metatile-unreferenced
+  tiles" figure recorded elsewhere — metatile-unreferenced is not unreferenced.
+
+  The gate therefore wears `$D5`'s own vanilla art, the ornamental block, which
+  reads as visibly *not* Dark Land wall. `wand_gate` now writes **no CHR at
+  all**, and two tests hold that line: `the_box_corners_are_not_free_chr` pins
+  the four corner patterns, and `the_gate_writes_no_chr` asserts the whole 128KB
+  CHR region comes out untouched.
 
 ## Still open
 
