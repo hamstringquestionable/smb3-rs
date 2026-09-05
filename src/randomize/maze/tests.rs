@@ -741,7 +741,10 @@ fn maze_game_length_census() {
     let mut detours = Vec::new();
 
     for seed in 0..seeds {
-        let (state, _) = generated(&raw, seed, &knobs);
+        // At the SHIPPING wand requirement, not K=0. K=0 is a legal setting but
+        // it is the one where a pad chain can finish a seed in a single level,
+        // so measuring the game's length there answers a question nobody asked.
+        let (state, _) = generated_k(&raw, seed, &knobs, super::DEFAULT_WANDS_REQUIRED);
         let cost = super::metrics::completion_cost(&state);
         played.push(cost.content);
         detours.push(cost.detours);
@@ -763,7 +766,10 @@ fn maze_game_length_census() {
     };
     let (pl, pm, ph) = stat(&played);
     let (rl, rm, rh) = stat(&required);
-    eprintln!("\n=== how long is a maze game, {seeds} seeds ===");
+    eprintln!(
+        "\n=== how long is a maze game, {seeds} seeds, K={} ===",
+        super::DEFAULT_WANDS_REQUIRED
+    );
     eprintln!("  levels in the game        {:.0}", mean(&total_levels));
     eprintln!(
         "  BEATEN on a completion    mean {:.1}  min {pl}  median {pm}  max {ph}",

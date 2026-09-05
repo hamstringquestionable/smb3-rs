@@ -9,10 +9,22 @@ grid — so every "keyed to eight worlds" assumption in the codebase stays true 
 and the worlds are linked by **telepads**, by the **airship/castle** one-way
 edge, and by **cross-world locks**.
 
-Phase 1 (persistence, arrivals, telepads) is complete and hardware-confirmed.
-This document is the design record for phase 2, the generator. Its **step 1 —
-the global verifier and the null-model census — is done**; see "The null-model
-baselines" for the numbers everything after it is argued against.
+**The mode is built and playable** (2026-09-05). `--world-maze` /
+`--maze-wands` are real options, flag-key encoded, and they work in the browser
+build as well as the CLI. Phase 1 (persistence, arrivals, telepads) was
+hardware-confirmed; phase 2 — the generator, the whistle, the wand gate and
+cross-world locks — is complete, executed on an emulated 2A03 and verified end
+to end against finished ROMs.
+
+**What has NOT happened is a playtest.** Nobody has played the assembled mode on
+hardware or in an emulator. This branch's own history is the reason to say so
+plainly: two of the telepad bugs were found only by playing, and one of them
+(the arrival trampoline) was invisible to every per-caller test because it was a
+shared prerequisite filed under one caller.
+
+This document is the design record. It keeps the decisions that were *wrong* as
+well as the ones that held, because most of what follows was settled by a
+measurement that contradicted the plan.
 
 **Where phase 1 lives:** `world_persist.rs` (the `$84A0` hooks, the arrival
 tables, `PAD_ENTER` and its position key) and
@@ -309,6 +321,29 @@ first-class output like `BuildResult`, not reconstructed afterwards.
 overworld mode is touched.
 
 
+### How long is a maze game
+
+`maze_game_length_census`, 60 seeds at the shipping K=3. The unit is content
+beaten — a level tile cannot be walked past, so "how far is the castle" is
+naturally measured in levels, and a fortress is a level you also have to play.
+
+| | mean | min | median | max |
+|---|---|---|---|---|
+| **beaten on a completion** | **26.6** | 11 | 27 | 42 |
+| strictly required | 12.9 | 2 | 12 | 21 |
+
+Of 62 levels + 17 fortresses, **a run plays about 43% of the game and about 21%
+of it is unavoidable**; ~11 of the fortresses beaten are detours the lock/key
+structure forced rather than content on the way.
+
+"Strictly required" is the cut-vertex sense: blocking that level makes the game
+unwinnable. It is much smaller than what a run beats, and the gap is the size of
+the choice the maze offers — a low required-count with a high played-count is a
+map with real alternatives, not a short one. The two are measured by different
+instruments on purpose (`required_levels` re-runs the global fixpoint 62 times
+per seed; `completion_cost` simulates a player who beats exactly what they must),
+so a bug in one does not move the other.
+
 ### How the baselines get made
 
 No knob below has a measured value, and none can until something exists to
@@ -390,7 +425,7 @@ Four findings, and they redraw the plan:
    discipline*: 40% of spheres are width 0 or 1 (a corridor), and the tail runs
    to 8+ where a whole world opens at once.
 
-### Build order
+### Build order — all five steps done
 
 1. ~~**`GlobalState`, a directed cross-world walker, and the global fixpoint —
    as a pure verifier.**~~ **DONE** (2026-09-05) — `src/randomize/maze/`, with
@@ -851,7 +886,9 @@ the verifier (step 1) and run in `src/randomize/maze/tests.rs`.
 | `maze_is_solvable` | the global fixpoint reaches the goal **and** every fortress is beatable, over N seeds — **exists** as `the_spine_alone_completes_the_maze` / `every_placed_slot_is_reached` |
 | `maze_needs_no_hammer` | the same with `has_hammer = false` — **free**: the map walker reads rocks as walls, so every run above already IS the zero-hammer run |
 | `every_start_region_has_an_exit` | invariant 3, per world per seed, with all locks closed — **exists** as `start_region_exit_rate`, and currently *measures* 55.8% rather than asserting; it becomes an assert when a placement phase owns it |
-| `wands_are_collectable` | at least K airships reachable without passing the goal gate — **exists** as `GlobalState::wands_are_collectable`, asserted at K=7 on a spine-only maze |
+| `wands_are_collectable` | at least K airships reachable without passing the goal gate — **exists**, and the guarantee test asserts a lazy player actually collects exactly K at K = 0, 3 and 7 |
+| `a_maze_rom_puts_a_pad_tile_under_every_arrival_key` | **end-to-end**: decode every pad key row out of a finished ROM and demand a spade panel there. The pad tables and the map are written by different modules, and one row of disagreement makes the pad enter the spade game instead of teleporting — the exact failure that cost a playtest session. Mutation-tested: stamping one row low fails it |
+| `the_pads_still_fit_the_packed_store` | a pad tile is completable, so 16 of them grow the packed planes. 43 of 48 at the worst measured seed |
 | `pad_ids_fit` | pad count <= `PORTAL_MAX`, and every pad owns a distinct arrival row — **exists** |
 | `packed_planes_fit_their_reserve` | **exists today**. The wand gate does NOT join `Map_Removable_Tiles` (see "The wand gate"), so it costs the store nothing — but the **pads do**: a pad tile is a spade panel and that is in `Map_Completable_Tiles`. `the_pads_still_fit_the_packed_store` measures a worst case of **43 of 48** with the budget fully spent, against 42 without pads. Five bytes of margin left, and the failure mode is silent — the planes would run into the arrival variables that sit immediately after them |
 | `the_maze_leaves_every_pipe_alone` | **exists today** — pipe tables and world pointer tables stay byte-identical |
@@ -860,38 +897,70 @@ Census outputs, none of which have a measured baseline yet: sphere count,
 sphere width distribution, sphere-0 openness, backtrack cost, granted-vs-
 requested pad role distribution.
 
-## Open questions
+## Answered (2026-09-05)
 
-- **Per-world flags `$84A0` resets** — `Map_Anchored`, `Map_WhiteHouse`,
-  `Map_CoinShip`, `Map_Got13Warp`. Vanilla never returns to a world so it does
-  not matter; a maze returns constantly. These need per-world persistence
-  alongside the completion pack.
-- **Whether K should scale with `world_count`** rather than being a flat number.
+- **Where the wand counter lives, and the hook that increments it.**
+  `maze_state::WAND_COUNT` at SRAM `$7AC9`, in the `$7AC1-$7ADF` run the maze
+  owns; bumped by a 16-byte routine in PRG030 chained through
+  `world_order`'s `INC World_Num` replacement, which is the one site an airship
+  clear always passes.
+- **The whistle's picker** — no picker. It cycles: each use advances to the next
+  world whose `VISITED` byte is set, wrapping, and with one visited world it is
+  a no-op that puts you back on your own start tile. The warp zone is not reused
+  and is now unreachable: the hook replaces `WWFX_WarpDoWind`'s
+  `World_Num = 8` outright.
+- **Does hammer-breakability key off `Map_Removable_Tiles`? No.** Vanilla's
+  hammer tests `$51`/`$52` by range (`SUB #TILE_ROCKBREAKH / CMP #$02`), and the
+  randomizer's `hammer_breaks_tiles` builds its own explicit table. **The wand
+  gate is hammer-proof by construction**, flag on or off — it does not depend on
+  a flag being off.
+- **The `0x19DD0` gap in PRG012 — unreferenced check PASSED.** `prg012.asm` ends
+  with "Rest of ROM bank was empty" after the unlabelled block at
+  `$BC4A-$BDBF`; the run is `$FF` with no exceptions; an operand scan across
+  PRG010/011/012/030/031 for absolute references into `$BDC0-$BFFF` found 83
+  hits, every one a misaligned read inside a data table. The preceding 374 bytes
+  at `$BC4A-$BDBF` are unclaimed but are NOT filler — they need their own check.
+  Note the gap's head is **not** free in a randomized ROM: `FS_SEED_STAMP` (the
+  flag key + seed stamp) sits at `0x19DF0` and had no registry row until now.
+- **Does a secret-exit fortress clear reach `PRG011_BA7C`? Yes** — and that
+  makes foreign locks behave *better* than same-world ones. On return with
+  `Map_ReturnStatus == 0` the path is `PRG030_90C4` → `MO_Wait14Ticks` →
+  `MO_DoLevelClear` → `Map_MarkLevelComplete`, and the fortress branch tests
+  which map tile was beaten, not how the level ended. `Map_DoFortressFX` is set
+  by Boom-Boom's defeat ball in PRG003, which is precisely what a secret exit
+  skips. **So a foreign lock opens on a secret exit where an FX lock does not**,
+  and `ensure_secret_exit_safe`'s reasoning does not apply to foreign locks.
+  Read from the disassembly, not playtested.
+- **The skull.** There is none: every drawn pattern in map BG CHR pages
+  `$14`-`$17` is terrain, panel art, masonry, the alphabet, digits or border
+  fill, and no combination assembles one. The gate uses `$D5` instead — the
+  ornamental block, which reads as visibly *not* Dark Land wall, and that is
+  better legibility than a pixel-identical clone would have been.
+
+## Still open
+
+- **Per-world flags `$84A0` resets** — `Map_Anchored` (`$7970`),
+  `Map_WhiteHouse` (`$7971`), `Map_CoinShip` (`$7972`), `Map_Got13Warp`
+  (`$796F`). Vanilla never returns to a world so it does not matter; a maze
+  returns constantly. All four are pure booleans at all nine live sites, so they
+  pack to **4 bytes** (one bit per world per flag) rather than 32 — but the pack
+  hook at `$84CD` runs *after* `$84A0` has already zeroed them at `$84BB`, so
+  capturing them needs a hook at or before `JSR Map_Init` (`$84AD`).
+- **Whether K should scale with `world_count`** rather than being flat. It is
+  currently clamped to the airships the spine offers, which is the safe half of
+  the answer, not the interesting one.
 - **The water gap as a real key** (repurposing the anchor into a boat snap).
-  Parked: canoe edges currently gate on dock walk-reachability in the walker,
-  and that is load-bearing, so a portable boat changes walker semantics rather
-  than just adding an item.
-- **Where the wand counter lives**, and the hook that increments it on airship
-  clear. One SRAM byte; the SRAM run at `$7997` has ~9 bytes left after the
-  packed store, and `$7A73-$7ADF` is largely unspent.
-- **The whistle's picker.** The visited bitmask is one byte and the "touched the
-  start tile" test is a position compare on the map idle frame, but the player
-  still needs to choose a world. Candidate: reuse the warp zone, whose three
-  pipes already perform world transitions and already set `World_Num`.
-- **Does hammer-breakability key off `Map_Removable_Tiles` membership, or off a
-  separate rock list?** Decides whether the cloned wand-gate byte is hammer-proof
-  by construction or only by the flag being off.
-- **The `0x19DD0` gap in PRG012 has not had the unreferenced check.** Required
-  before the relocated removable tables claim it.
-- **Does a secret-exit fortress clear reach `PRG011_BA7C`?** Decides whether
-  foreign locks open on a secret exit.
-- **Parked: hunting the unused skull graphic.** The wiki's "skull meant for the
-  world map" is not in the map BG CHR (pages `$14`-`$17`); of the 41 drawn but
-  metatile-unreferenced tiles there, all are the alphabet, digits or fragments.
-  If it exists in the final ROM it is likely a *sprite* — map objects come from
-  pages `$20`-`$23`, and the object ID list has two unused entries
-  (`MAPOBJ_UNK08`, `MAPOBJ_UNK0C`). A sprite cannot be a wall, so this is
-  decoration at best; the wand gate does not depend on it.
+  Parked: canoe edges gate on dock walk-reachability in the walker and that is
+  load-bearing, so a portable boat changes walker semantics rather than adding
+  an item.
+- **Same-world locks through the foreign-lock table.** It would free FX slots at
+  the cost of the crumble animation, but the 4-byte rows do not fit a store that
+  would then need both the packed `(byte, mask)` and the live
+  `(column, row bit)`. A bigger allocation and a change of ownership in the
+  FX-assignment code.
+- **Hardware playtest of the assembled mode.** Every piece is executed on an
+  emulated 2A03 and the ROM is structurally verified, but the whole thing has
+  not been played.
 
 ## Testing
 
