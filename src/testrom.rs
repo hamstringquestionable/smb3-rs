@@ -797,11 +797,11 @@ fn apply_movement(
 /// the whole reason to prefer it over a portal pipe.
 ///
 /// Pads stand on spade panels, taken in catalog order so a world can host as
-/// many as it owns — W3 has five, W1 one, W8 none. That tile is already
-/// enterable, already on the path, and is in the engine's own
-/// `Map_Completable_Tiles`; a hardware playtest confirmed it stays a spade
-/// panel after teleporting in either direction, which is what says the divert
-/// never reaches the level-clear path.
+/// many as it owns — W3 has five, W1 one, W8 none. A spade panel is a cell
+/// vanilla already put on the walkable lattice with a pointer entry behind it,
+/// which is why it is the convenient site; the cell is then **restamped as
+/// `TILE_TELEPAD`** by [`stamp_telepad_tiles`], exactly as the randomizer does,
+/// so a playtest ROM shows the same tile a real maze does.
 fn resolve_telepads(
     rom: &Rom,
     specs: &[(u8, u8)],
@@ -857,6 +857,30 @@ fn resolve_telepads(
         });
     }
     Ok(out)
+}
+
+/// Stamp [`TILE_TELEPAD`] over each pad's cell, and compose the metatile it
+/// wears.
+///
+/// `world_persist::PAD_ENTER` keys on `World_Map_Tile`, so a pad whose cell
+/// still holds the spade panel it was placed on is a pad that never fires — it
+/// enters the card game instead. That is the bug the randomizer's own stamp
+/// exists for, and a playtest ROM has to reproduce the shipping tile rather
+/// than an older one.
+fn stamp_telepad_tiles(rom: &mut Rom, telepads: &[crate::randomize::world_persist::Telepad]) {
+    use crate::randomize::rom_data::{
+        PRG012_FILE_BASE, TELEPAD_QUADRANTS, TILE_TELEPAD, map_tile_offset,
+    };
+    if telepads.is_empty() {
+        return;
+    }
+    for (plane, &pattern) in TELEPAD_QUADRANTS.iter().enumerate() {
+        rom.write_byte(PRG012_FILE_BASE + plane * 256 + TILE_TELEPAD as usize, pattern);
+    }
+    for pad in telepads {
+        let (row, col) = pad.src_pos;
+        rom.write_byte(map_tile_offset(pad.world as usize, row, col), TILE_TELEPAD);
+    }
 }
 
 /// Build a test ROM from vanilla bytes and a spec.
@@ -1076,6 +1100,7 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     //     map only adds variables.
     if spec.world_persist || !spec.telepads.is_empty() {
         let telepads = resolve_telepads(&rom, &spec.telepads)?;
+        stamp_telepad_tiles(&mut rom, &telepads);
         crate::randomize::world_persist::apply(&mut rom, &telepads);
         for pad in &telepads {
             report.push(format!(

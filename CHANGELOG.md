@@ -25,13 +25,15 @@ deploys.
 
 ### Fixed
 
-- **World Maze:** warp pads no longer drop you on a blank patch of map. Nearly
-  half of them used to land on a tile the map draws nothing on, which looked
-  exactly like the pad was broken. A pad now always puts you on something you
-  can see — a level, a fortress, a house, another pad, or the world's start
-  tile — and a pad that keeps you in the same world always moves you somewhere
-  you couldn't already walk to in a couple of steps. (One of them could
-  previously land you back on the tile you were standing on.)
+- **World Maze:** warp pads have their own tile, so one no longer looks exactly
+  like an N-Spade card game. They used to share the spade panel: on one seed
+  there were 28 spade tiles and only 9 were pads, so walking into one was a
+  coin flip between a warp and a card game.
+
+- **World Maze:** warp pads come in pairs and always take you to their partner.
+  They used to drop you wherever — on a blank patch of map about half the time,
+  or on a pipe in a world you'd never seen, and one could even put you back on
+  the tile you were already standing on.
 
 - **World Maze:** beaten Hammer Bros stay beaten. Leaving a world and coming
   back used to bring every map object it had lost straight back, because the

@@ -16,13 +16,14 @@ use super::super::overworld_build::{SlotKind, WorldState, stamp_slots};
 use super::super::rom_data::{self, Grid, Pos};
 use super::MazeLock;
 
-/// What a pad is for. The role constrains where the pad TILE goes; where it
-/// LANDS is a separate decision (see `graph::Knobs::foreign_landing_bias`).
+/// What a pad is for. The role constrains where a pad TILE goes; which OTHER
+/// pad it is paired with is a separate decision (see
+/// `graph::Knobs::foreign_landing_bias`).
 ///
 /// **There is no `Island` role, and that is a measurement, not an oversight.**
-/// The charter's headline shape was a pad landing in a region no walk reaches.
+/// The charter's headline shape was a pad standing in a region no walk reaches.
 /// `maze_terrain_pools_census` says finished worlds contain **no such region**:
-/// 0 island landings in 800 world-seeds, because `Connectivity` bridges every
+/// 0 island sites in 800 world-seeds, because `Connectivity` bridges every
 /// island with a pipe and `HammerBroFill` then claims every reachable blank.
 /// Building the role anyway would be a lever with an empty pool. What it would
 /// cost, and the shape that replaces it, are in `docs/world_maze_design.md`
@@ -55,16 +56,6 @@ pub(crate) struct WorldTerrain {
     /// reader, and the placer must never draw from it.
     #[cfg(test)]
     pub island_sites: Vec<Pos>,
-    /// Cells a pad may deposit the player on that no walk reaches. Same story:
-    /// measured empty, kept as the assertion that it is.
-    #[cfg(test)]
-    pub island_landings: Vec<Pos>,
-    /// Cells a pad may deposit the player on anywhere in the world.
-    pub landings: Vec<Pos>,
-    /// Landings the player cannot walk to until some lock opens. This is the
-    /// achievable version of the island pad: the pad still takes you somewhere
-    /// you could not have got to, the gate is just a lock rather than terrain.
-    pub gated_landings: Vec<Pos>,
     /// Whether the world's own target is reachable from the start with every
     /// lock closed — invariant 3's first and cheapest satisfier, and measured
     /// to happen only 7.8% of the time. Test-only: the census reads it, the
@@ -83,8 +74,7 @@ impl WorldTerrain {
     }
 
     /// Which role a tile actually satisfies, for the granted-vs-requested
-    /// census. Island is decided by the landing, not the tile, so it is not
-    /// answerable here.
+    /// census.
     pub(crate) fn role_of_site(&self, pos: Pos) -> PadRole {
         if self.hub_sites.contains(&pos) {
             PadRole::Hub
@@ -148,22 +138,11 @@ pub(crate) fn classify(
         }
     }
 
-    let landings = landing_candidates(w);
-    #[cfg(test)]
-    let island_landings: Vec<Pos> =
-        landings.iter().copied().filter(|&p| !unsealed.contains(p)).collect();
-    let gated_landings: Vec<Pos> =
-        landings.iter().copied().filter(|&p| !sealed.contains(p) && unsealed.contains(p)).collect();
-
     WorldTerrain {
         hub_sites,
         gated_sites,
         #[cfg(test)]
         island_sites,
-        #[cfg(test)]
-        island_landings,
-        landings,
-        gated_landings,
         #[cfg(test)]
         target_ungated: w.target.is_some_and(|t| sealed.contains(t)),
     }
@@ -175,20 +154,24 @@ pub(crate) fn classify(
 /// `HammerBroFill` claims every reachable blank the other phases did not — so a
 /// pad there is "an ordinary walkable cell holding the least valuable content".
 /// **Blanks the fill never claimed** are the cells the world's own walk does
-/// not reach, which is where island pads come from.
+/// not reach — measured empty, and kept as the evidence that they are.
 ///
-/// A pad tile takes no completion bit — the hardware playtest confirmed a pad
-/// on a spade panel stays a spade panel, because diverting at enter time means
-/// `MO_DoLevelClear` never runs — so the row-7/8 rule does not apply to it.
+/// The row-7/8 rule is applied here even though the pad tile no longer needs
+/// it — see the comment on `barred` below.
 pub(crate) fn pad_sites(w: &WorldState, stamped: &Grid, reserved: &HashSet<Pos>) -> Vec<Pos> {
     let taken: HashSet<Pos> = w.slots.iter().map(|s| s.pos).collect();
-    // A pad tile is a spade panel, which is in `Map_Completable_Tiles`. The
-    // engine never marks it (the hardware playtest settled that: diverting at
-    // enter time means `MO_DoLevelClear` never runs) — but the map RELOAD does
-    // not know that. Rows 7 and 8 share one completion bit and the reload reads
-    // row 7 first, so a pad stamped at (7,c) swallows the bit that content at
-    // (8,c) needs, and that content would never show beaten. Same rule, same
-    // reason, as every other placement: see `WorldState::row78_barred`.
+    // Rows 7 and 8 share completion bit `$01`, and the reload reads row 7
+    // first: a COMPLETABLE tile at (7,c) swallows the bit that content at
+    // (8,c) needs, and that content then never shows beaten (#212).
+    //
+    // `TILE_TELEPAD` is in neither `Map_Completable_Tiles` nor
+    // `Map_Removable_Tiles`, so it claims no bit and the rule does not bind on
+    // it — that is a property of the byte, not of the pad. The filter stays
+    // anyway, and deliberately: it costs a handful of sites out of a pool that
+    // averages dozens, and it is the only thing standing between a future tile
+    // change and a silent regression that shows up as one level in one world
+    // refusing to look beaten. `the_pad_tile_is_in_no_registry` is the other
+    // half of that guard.
     let barred = w.row78_barred();
     let mut out: Vec<Pos> = w
         .slots
@@ -212,39 +195,6 @@ pub(crate) fn pad_sites(w: &WorldState, stamped: &Grid, reserved: &HashSet<Pos>)
             }
         }
     }
-    out.sort_unstable();
-    out.dedup();
-    out
-}
-
-/// Where a pad may DEPOSIT the player: a placed slot the map actually **draws
-/// something on**, or the world's start tile.
-///
-/// **Hammer Bro slots are excluded, and that exclusion is this function's whole
-/// job.** `stamp_slots` leaves them as blank path tiles — `HammerBroFill`
-/// claims every reachable blank the other phases did not, so they are the
-/// builder's filler pool and not content. A pad landing on one deposits the
-/// player on a cell that looks like nothing, with no sign they arrived anywhere
-/// and no visible way back. That is the playtest report this rule exists for
-/// ("ported to W1 but onto a blank tile so that's not working"), and before the
-/// rule it was **45% of every landing the generator placed**. Everything else a
-/// slot can be draws a panel, a fortress, a pipe, a house or a spade.
-///
-/// The start tile stays even though it is often plain path, because it is the
-/// one cell in a world a player can always name — and touching it is what marks
-/// the world whistle-able (`world_travel`'s VISITED byte), so a landing there
-/// is the arrival that most literally hands back a way out.
-///
-/// Pad tiles are legible landings too, but they are not here: which cells hold
-/// pads is not known until the pads are placed, so the placer in
-/// [`super::graph`] adds the ones it has already claimed to this pool.
-///
-/// All of these sit on the node lattice, which the 2-tile movement model
-/// requires — an arrival on a path tile would leave the player off-grid.
-pub(crate) fn landing_candidates(w: &WorldState) -> Vec<Pos> {
-    let mut out: Vec<Pos> =
-        w.slots.iter().filter(|s| s.kind != SlotKind::HammerBro).map(|s| s.pos).collect();
-    out.extend(w.start);
     out.sort_unstable();
     out.dedup();
     out

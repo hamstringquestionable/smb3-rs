@@ -87,7 +87,7 @@ use crate::rom::Rom;
 
 use super::completion_bits;
 use super::pipe_helpers;
-use super::rom_data::{FS_PAD_ENTER, FS_PORTAL_ARRIVAL, FS_RESTORE_ARRIVAL, TILE_BONUS_GAME};
+use super::rom_data::{FS_PAD_ENTER, FS_PORTAL_ARRIVAL, FS_RESTORE_ARRIVAL, TILE_TELEPAD};
 
 // PRG010 is mapped at $C000 whenever this runs — `$84A0` maps it itself — so
 // CPU = $C000 + (file - 0x14010), the same arithmetic as the other PRG010
@@ -474,7 +474,7 @@ const PAD_X_CPU: u16 = PAD_Y_CPU + PORTAL_MAX as u16;
 #[rustfmt::skip]
 const PAD_ENTER: [u8; PAD_TABLE_OFF + 3 * PORTAL_MAX] = [
     0xA5, WORLD_MAP_TILE,                                   //  0: LDA World_Map_Tile
-    0xC9, TILE_BONUS_GAME,                                  //  2: CMP #pad tile
+    0xC9, TILE_TELEPAD,                                     //  2: CMP #pad tile
     0xD0, 0x24,                                             //  4: BNE +36 -> ordinary
     0xAE, PLAYER_CURRENT as u8,
           (PLAYER_CURRENT >> 8) as u8,                      //  6: LDX Player_Current
@@ -529,11 +529,15 @@ const PAD_ENTER: [u8; PAD_TABLE_OFF + 3 * PORTAL_MAX] = [
 
 /// A pad: which world it stands in, and where it puts you.
 ///
-/// The tile itself is [`TILE_BONUS_GAME`] — the spade panel. Deliberately, for
-/// the POC: it is in the engine's own `Map_Completable_Tiles`, so if anything
-/// were to mark this cell complete the pad would be replaced by an M/L panel
-/// and stop working. Diverting at *enter* time means `MO_DoLevelClear` never
-/// runs, and this is the tile that would show it if that were wrong.
+/// The tile itself is [`TILE_TELEPAD`] — a byte of the pad's own. The POC used
+/// the spade panel, deliberately, as a canary: it is in the engine's own
+/// `Map_Completable_Tiles`, so had anything ever marked a pad cell complete the
+/// tile would have turned into an M/L panel and the pad would have stopped
+/// working. It never did — diverting at *enter* time means `MO_DoLevelClear`
+/// never runs — and the canary was then costing the mode its legibility, since
+/// a map carries 19 real N-Spade card games and a player cannot tell them from
+/// pads. See [`TILE_TELEPAD`] for the byte, the shape, and what it is absent
+/// from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Telepad {
     /// The world the pad stands in, 0-based.
@@ -1011,7 +1015,7 @@ mod asm_checks {
         let pads = &[(0usize, 0u8, (4usize, 8usize)), (5, 4, (6, 22)), (15, 8, (0, 47))];
         for &(id, world, at) in pads {
             for sub_tile in [0x00, 0x0F] {
-                let mut cpu = pad_cpu(TILE_BONUS_GAME, world, id as u8 % 2, at, sub_tile, pads);
+                let mut cpu = pad_cpu(TILE_TELEPAD, world, id as u8 % 2, at, sub_tile, pads);
                 let player = id as u8 % 2;
                 assert!(
                     call_pad_enter(&mut cpu),
@@ -1049,7 +1053,7 @@ mod asm_checks {
             (3, 6, (5, 19)), // same tile, different world: must not be confused
         ];
         for &(id, world, at) in pads {
-            let mut cpu = pad_cpu(TILE_BONUS_GAME, world, 0, at, 0, pads);
+            let mut cpu = pad_cpu(TILE_TELEPAD, world, 0, at, 0, pads);
             assert!(call_pad_enter(&mut cpu), "pad {id} at {at:?} did not teleport");
             assert_eq!(
                 cpu.memory.get_byte(MAP_ENTERED_XHI),
@@ -1071,9 +1075,9 @@ mod asm_checks {
             ("an ordinary level panel", 0x03, 2, (5, 19)),
             ("a fortress", 0x67, 2, (5, 19)),
             ("a pipe", 0xBC, 2, (5, 19)),
-            ("a pad tile in a world with no pads", TILE_BONUS_GAME, 5, (5, 19)),
-            ("a pad tile one row off", TILE_BONUS_GAME, 2, (4, 19)),
-            ("a pad tile on the wrong screen", TILE_BONUS_GAME, 2, (5, 3)),
+            ("a pad tile in a world with no pads", TILE_TELEPAD, 5, (5, 19)),
+            ("a pad tile one row off", TILE_TELEPAD, 2, (4, 19)),
+            ("a pad tile on the wrong screen", TILE_TELEPAD, 2, (5, 3)),
         ];
         for (what, tile, world, at) in cases {
             let mut cpu = pad_cpu(tile, world, 0, at, 0, pads);

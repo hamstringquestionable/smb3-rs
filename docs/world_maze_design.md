@@ -104,11 +104,22 @@ monotone and lets a fixpoint serve as the solver.
 including into a region reachable *only* by pad — a pad-only island holding a
 fortress for a required lock is a deliberate and desirable shape.
 
-**The budget is 16, globally.** `PORTAL_MAX = 16` arrival rows, one per pad
-*tile*, shared with (now unused) pipe portals. A pad is one-way by construction,
-so a two-way link costs two ids. The cap is both the id encoding and the table
-bytes (six arrival tables plus three key tables). Raising it is possible in
-PRG011 at 9 bytes per row, but the design targets 16.
+**Pads are PAIRS.** Two pad tiles, one link, traversable both ways: step on A,
+arrive at B; step on B, arrive at A. There is no such thing as an unpaired pad —
+an odd leftover site is not placed at all.
+
+**The budget is 16 ids, so 8 pairs.** `PORTAL_MAX = 16` arrival rows, one per
+pad *tile*, shared with (now unused) pipe portals. Each half of a pair owns a
+row, so a pair costs two. The cap is both the id encoding and the table bytes
+(six arrival tables plus three key tables). Raising it is possible in PRG011 at
+9 bytes per row, but the design targets 16.
+
+> **A note on "one-way", because this wording cost a rewrite.** An arrival row is
+> one-way *as a mechanism* — it maps one pad tile to one destination — and that
+> is all the sentence "a two-way link costs two ids" ever meant. It is not a
+> statement about the feature. **Pads are bidirectional pairs; airships are the
+> one-way edges.** The "one-way is what stops the graph collapsing into a
+> corridor" line under Topology is about the airship spine and nothing else.
 
 **Cross-world locks.** Forward locks (fort in an earlier spine world, lock in a
 later one) are always safe. Backward locks are the interesting ones — they force
@@ -177,39 +188,74 @@ Build a bounded number of progression gates and dump the rest as free gates.
 **Bound the fill by sphere count**, with a gate cap as a safety valve — sphere
 count is the player-facing quantity.
 
-### Where a pad LANDS, and why it is a rule and not a preference
+### Where a pad LANDS: on its partner, and nowhere else
 
-Found by playtest, then measured. The first cut let a pad land on any placed
-slot — and `stamp_slots` leaves `SlotKind::HammerBro` slots as plain path tiles,
-because they are `HammerBroFill`'s leftover pool rather than content. So
-**45% of all telepad landings were on a cell the map draws nothing on.** The
-player arrives somewhere legal, sees nothing, and reasonably concludes the pad
-is broken. That is the bug as it was reported.
+Two playtest reports, one cause. First a pad dropped the player on a blank
+cell; then one dropped them on a pipe in another world; then they walked into a
+spade panel expecting a pad and got the card game.
 
-Two rules now, both measured rather than assumed:
+The first cut let a pad land on any placed slot, which was wrong twice over.
+`stamp_slots` leaves `SlotKind::HammerBro` slots as plain path tiles, so **45%
+of landings were on a cell the map draws nothing on** — but even fixing that to
+"land on visible content" was fixing the symptom. **A pad's destination is its
+partner pad**, always, and then the player can always see they have arrived and
+can always go back.
 
-- **Landings are legible.** Filler slots are out of the pool; a pad lands on a
-  level, fortress, toad house, spade, pipe, another pad, or a start tile. A
-  start tile is a good landing rather than a dull one — touching it is what sets
-  the world's `VISITED` byte, so arriving there literally hands the player a
-  whistle route home. Filler landings went 45% → **0%**.
-- **A same-world hop is a real journey.** The minimum measured span was **0** —
-  a pad that teleports you onto the tile you are standing on. The floor is now
-  8 grid cells (4 map moves, since the map steps two cells at a time), and a
-  same-world hop that cannot reach that far **becomes a crossing** rather than
-  being dropped. Span min/median went 0/8 → 8/12.
+The rules, all measured:
 
-**Landing on another pad is safe, and it is now deliberate.** The question was
-whether arriving on a pad tile re-triggers it, which would hang the ROM. It does
-not: all three branches that reach `PRG010_CEA7` sit downstream of an A-button
-*edge* test, so the hook fires when the player commits to the tile they stand
-on, not on arrival — and the teleport's `JMP $84A0` returns to the idle map loop
-with A still held from the press that fired it. So a pad-to-pad link is a
-visible onward hop, and pad landings rose 7% → 9%.
+- **Every pad is half of a pair**, mutually pointing. No pad points at itself,
+  no pad is unpaired, and the count is even and at most 16.
+- **A same-world pair spans at least 8 grid cells** (4 map moves). The minimum
+  measured span before this rule was **0** — a pad that teleported the player
+  onto the tile they were standing on. A pair that cannot reach 8 inside one
+  world becomes a crossing instead.
+- **Landing on a pad does not re-trigger it.** All three branches reaching
+  `PRG010_CEA7` sit downstream of an A-button *edge* test, so the hook fires
+  when the player commits to a tile, not when they arrive on one. This is what
+  makes pad-to-pad safe at all, and it is re-confirmed rather than assumed.
 
-Neither rule moves the shape of the maze: spheres 5.80 → 5.96, sphere width
-2.93 → 2.85, pads per seed unchanged at 9.30, and the packed-plane worst case
-still 43 of 48.
+Cost to the shape of the maze, 60 seeds/arm: spheres 5.96 → 6.27, sphere width
+2.85 → 2.71, pads per seed 9.30 → 8.63 (the dropped odd site), 97% of pairs
+cross worlds. Nothing moved enough to change what the mode is.
+
+### The pad has its own tile — `$DF`, and NOT a byte above the threshold
+
+A pad used to be a spade panel (`$E8`), inherited from the POC where pads *were*
+existing spade panels. Once the generator started stamping its own, that stopped
+being free: on one played ROM there were **28 spade tiles of which only 9 were
+pads**, World 2 had three and all three were card games, and nothing on screen
+told them apart. Two out of three "spades" were a disappointment.
+
+Pads are now `TILE_ALTSPIRAL` `$DF`. Three things had to hold at once:
+
+1. **Enterable**, or the hook never fires — via **membership in
+   `Map_EnterSpecialTiles`**, exactly as `$E8` reaches it.
+2. **NOT at or above its page's `Tile_Attributes_TS0` threshold.** This is the
+   trap, and it is worth stating loudly because the obvious choice walks into
+   it: a page-3 byte `>= $E9` *is* enterable by threshold — and the same
+   threshold is the engine's **level gate**. `MO_NormalMoveEnter` will not let
+   the player walk *off* such a tile until it is completed, allowing only a
+   reversal back the way they came ("you're not allowed to take the path until
+   you complete that level!", `prg010.asm`). A pad can never be completed, because
+   diverting at enter time means `MO_DoLevelClear` never runs. **A pad on a byte
+   `>= $E9` would permanently sever every path it stood on** — invisible on a
+   dead-end cell, fatal on a corridor.
+3. **No CHR written.** The four quadrants point at existing patterns
+   `$80`/`$82`/`$81`/`$83`, which close into a bright rectangular ring on black:
+   a lit hatch, the inverse of every filled badge the map otherwise uses. Those
+   are the same four tiles the wand-gate skull tried to *overwrite* — pointing
+   at them is free, writing them was the bug.
+
+Two constraints picked the art. Quadrants below `$80` **animate** (`Map_DoAnimations`
+swaps patterns `$00`-`$7F`), which is why `TILE_LARGEFORT` is documented as
+going visually corrupt; and **World 6's palette page 3 has colour 1 and colour 3
+both `$30`**, so anything drawn on colour 3 is invisible there. A colour-1 ring
+on colour-0 black is legible in all eight worlds.
+
+Two bonuses fell out. `$DF` is **not** in `Map_Completable_Tiles`, so a pad
+takes no packed-store bit — the worst case drops from 43 of 48 to **41 of 48**,
+and "a pad stays a pad" becomes structural rather than observational. And it is
+in `Map_Object_Forbid_LandingTiles`, so a marching Hammer Bro cannot land on one.
 
 ### Pad roles are the per-world interface
 
@@ -714,10 +760,10 @@ level clears only in the world you died in — exists only when the option is of
 
 Two couplings to remember:
 
-- **`$E8` is the telepad tile.** The patch explicitly clears completion for `$E8`
-  cells on game over. Harmless today, because diverting at enter time means
-  `MO_DoLevelClear` never runs for a pad and nothing ever marks one — but this is
-  a live dependency between an imported IPS and the maze's tile choice.
+- ~~**`$E8` is the telepad tile.**~~ **Resolved.** The patch clears completion for
+  `$50`/`$E0`/`$E8` cells on game over, which used to be a live dependency
+  between an imported IPS and the maze's tile choice. Pads are `$DF` now, which
+  the patch skips — and skipping is harmless because `$DF` is not completable.
 - **The patch's fourth write is at file `0x3D314` = CPU `$9304`**, about ten
   bytes from `PRG030_9314`, the game-over `AND` of the two completion halves that
   the packed-store design rests on. Two patches now edit the same short stretch
@@ -921,10 +967,10 @@ the verifier (step 1) and run in `src/randomize/maze/tests.rs`.
 | `maze_needs_no_hammer` | the same with `has_hammer = false` — **free**: the map walker reads rocks as walls, so every run above already IS the zero-hammer run |
 | `every_start_region_has_an_exit` | invariant 3, per world per seed, with all locks closed — **exists** as `start_region_exit_rate`, and currently *measures* 55.8% rather than asserting; it becomes an assert when a placement phase owns it |
 | `wands_are_collectable` | at least K airships reachable without passing the goal gate — **exists**, and the guarantee test asserts a lazy player actually collects exactly K at K = 0, 3 and 7 |
-| `a_maze_rom_puts_a_pad_tile_under_every_arrival_key` | **end-to-end**: decode every pad key row out of a finished ROM and demand a spade panel there. The pad tables and the map are written by different modules, and one row of disagreement makes the pad enter the spade game instead of teleporting — the exact failure that cost a playtest session. Mutation-tested: stamping one row low fails it |
-| `the_pads_still_fit_the_packed_store` | a pad tile is completable, so 16 of them grow the packed planes. 43 of 48 at the worst measured seed |
+| `a_maze_rom_puts_a_pad_tile_under_every_arrival_key` | **end-to-end**: decode every pad key row out of a finished ROM and demand a **telepad** tile there. The pad tables and the map are written by different modules, and one row of disagreement makes the pad enter the spade game instead of teleporting — the exact failure that cost a playtest session. Mutation-tested: stamping one row low fails it |
+| `the_pads_still_fit_the_packed_store` | the pad tile `$DF` is **not** completable, so pads no longer grow the packed planes at all: 41 of 48 at the worst measured seed, against 43 when pads were spade panels |
 | `pad_ids_fit` | pad count <= `PORTAL_MAX`, and every pad owns a distinct arrival row — **exists** |
-| `packed_planes_fit_their_reserve` | **exists today**. The wand gate does NOT join `Map_Removable_Tiles` (see "The wand gate"), so it costs the store nothing — but the **pads do**: a pad tile is a spade panel and that is in `Map_Completable_Tiles`. `the_pads_still_fit_the_packed_store` measures a worst case of **43 of 48** with the budget fully spent, against 42 without pads. Five bytes of margin left, and the failure mode is silent — the planes would run into the arrival variables that sit immediately after them |
+| `packed_planes_fit_their_reserve` | **exists today**, and neither the wand gate nor the pads cost it anything any more — the gate does not join `Map_Removable_Tiles`, and `$DF` is not in `Map_Completable_Tiles`. Worst case **41 of 48**, seven bytes of margin. The failure mode is silent, which is why it is asserted: the planes would run into the arrival variables sitting immediately after them |
 | `the_maze_leaves_every_pipe_alone` | **exists today** — pipe tables and world pointer tables stay byte-identical |
 
 Census outputs, none of which have a measured baseline yet: sphere count,

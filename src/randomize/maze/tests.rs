@@ -477,10 +477,9 @@ fn pad_count_roll_is_biased_to_one() {
 
 /// What terrain the roles actually have to work with. Placed before any role
 /// placer exists, because a role whose pool is empty is a design that cannot
-/// be built — and `island_sites` / `island_landings` are the ones at risk:
-/// `Connectivity` bridges islands with pipes and `HammerBroFill` claims every
-/// reachable blank, so a finished world may have nothing left that no walk
-/// reaches.
+/// be built — and `island_sites` is the one at risk: `Connectivity` bridges
+/// islands with pipes and `HammerBroFill` claims every reachable blank, so a
+/// finished world may have nothing left that no walk reaches.
 #[test]
 #[ignore]
 fn maze_terrain_pools_census() {
@@ -489,7 +488,6 @@ fn maze_terrain_pools_census() {
     let mut hub = 0usize;
     let mut gated = 0usize;
     let mut island = 0usize;
-    let mut island_land = 0usize;
     let mut ungated_target = 0usize;
     let mut worlds_with_island = 0usize;
     let mut worlds_without_hub = 0usize;
@@ -503,9 +501,8 @@ fn maze_terrain_pools_census() {
             hub += t.hub_sites.len();
             gated += t.gated_sites.len();
             island += t.island_sites.len();
-            island_land += t.island_landings.len();
             ungated_target += t.target_ungated as usize;
-            if !t.island_landings.is_empty() {
+            if !t.island_sites.is_empty() {
                 worlds_with_island += 1;
                 per_world_island[w.world_idx] += 1;
             }
@@ -520,7 +517,6 @@ fn maze_terrain_pools_census() {
     eprintln!("  hub sites      mean {:.1} per world", hub as f64 / n);
     eprintln!("  gated sites    mean {:.1}", gated as f64 / n);
     eprintln!("  island sites   mean {:.2}", island as f64 / n);
-    eprintln!("  island landings mean {:.2}", island_land as f64 / n);
     eprintln!(
         "  worlds with an island at all   {worlds_with_island}/{} = {:.1}%",
         seeds * 8,
@@ -542,70 +538,6 @@ fn maze_terrain_pools_census() {
 // ---------------------------------------------------------------------------
 // The generator
 // ---------------------------------------------------------------------------
-
-/// What a pad's landing cell reads as once the map is drawn.
-///
-/// The distinction that matters is `Filler` against everything else.
-/// `stamp_slots` leaves a `HammerBro` slot as a blank path tile — it is the
-/// builder's leftover pool, not content — so a pad landing on one deposits the
-/// player on a cell that looks like nothing. Every other variant is a tile the
-/// map actually draws.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Landing {
-    /// Another pad's tile: a spade panel, and stepping on it goes onward.
-    Pad,
-    Level,
-    Fortress,
-    ToadHouse,
-    BonusGame,
-    Pipe,
-    /// The world's start tile — often plain path, but the one cell a player can
-    /// always name, and touching it is what marks the world whistle-able.
-    Start,
-    /// A blank path tile. **The defect**, and what
-    /// `every_pad_lands_somewhere_legible` bars.
-    Filler,
-}
-
-const LANDING_LABELS: [&str; 8] =
-    ["pad", "level", "fort", "house", "spade", "pipe", "start", "FILLER"];
-
-fn landing_idx(l: Landing) -> usize {
-    match l {
-        Landing::Pad => 0,
-        Landing::Level => 1,
-        Landing::Fortress => 2,
-        Landing::ToadHouse => 3,
-        Landing::BonusGame => 4,
-        Landing::Pipe => 5,
-        Landing::Start => 6,
-        Landing::Filler => 7,
-    }
-}
-
-/// Classify one landing cell. Pad tiles are tested first because a pad is
-/// stamped OVER whatever slot it took, so a pad on a Hammer Bro slot is a spade
-/// panel on the finished map and not filler at all.
-fn landing_kind(state: &GlobalState, to: (usize, (usize, usize))) -> Landing {
-    if state.pad_edges().iter().any(|&(from, _)| from == to) {
-        return Landing::Pad;
-    }
-    let w = &state.worlds[to.0];
-    if let Some(slot) = w.slots.iter().find(|s| s.pos == to.1) {
-        return match slot.kind {
-            SlotKind::Level => Landing::Level,
-            SlotKind::Fortress => Landing::Fortress,
-            SlotKind::ToadHouse => Landing::ToadHouse,
-            SlotKind::BonusGame => Landing::BonusGame,
-            SlotKind::Pipe => Landing::Pipe,
-            SlotKind::HammerBro => Landing::Filler,
-        };
-    }
-    if w.start == Some(to.1) {
-        return Landing::Start;
-    }
-    Landing::Filler
-}
 
 /// One generated maze at the given knobs.
 fn generated(raw: &Rom, seed: u64, knobs: &super::graph::Knobs) -> (GlobalState, super::GenReport) {
@@ -694,35 +626,33 @@ fn the_generator_never_ships_an_unwinnable_maze() {
     }
 }
 
-/// **Every pad lands on a cell the map draws something on, and no same-world
-/// hop is a stroll.**
+/// **Every pad is half of a pair, and no same-world pair is a stroll.**
 ///
-/// This is the playtest report, pinned. "The first spade in W1 ported to W1 but
-/// onto a blank tile so that's not working" was two defects at once, and both
-/// are asserted here:
+/// A telepad pair is one link the player can walk both ways: two pad tiles,
+/// each pointing at the other. This asserts the whole of that shape, over both
+/// extremes of the crossing knob:
 ///
-/// * The landing was a Hammer Bro **filler** slot. `stamp_slots` leaves those
-///   as blank path tiles — they are the leftover pool, not content — so the
-///   player was deposited on a cell that looks like nothing, with no sign they
-///   had arrived anywhere. Measured before the rule: **45% of every landing**.
-/// * The hop was **same-world and short**. The census min span was 0: a pad
-///   that teleported to its own tile. Anything under
-///   [`SAME_WORLD_MIN_SPAN`](super::graph::SAME_WORLD_MIN_SPAN) spends one of
-///   sixteen arrival rows to move the player a few tiles they can see.
-///
-/// A landing is legible when it is another pad's tile, a slot the map draws
-/// (level, fortress, pipe, house, spade), or the world's start tile — the one
-/// cell a player can always name, and the one whose touch marks the world
-/// whistle-able.
+/// * a pad's destination is another pad's **tile** — never a level, a pipe, a
+///   toad house or a bare cell. The playtest report that opened this was a pad
+///   that landed on a blank, and the deeper rule it exposed is that a landing
+///   the player cannot recognise is a landing they cannot use: arriving on a
+///   pad means you can always see you arrived, and can always go on;
+/// * that pad points **back**, so no half of a pair is one-way;
+/// * no pad points at itself, and no two pads claim the same cell;
+/// * a same-world link spans at least [`MIN_SPAN`] grid cells. The census
+///   before the rule had a same-world hop of span 0 — a pad that teleported to
+///   the tile you stood on;
+/// * the total is even and inside the arrival-row budget, because a pair costs
+///   two of the sixteen rows.
 ///
 /// **Landing on a pad tile cannot loop.** The enter hook replaces
 /// `PRG010_CEA7`, and all three branches that reach it sit downstream of an
 /// A-button EDGE test (`Controller1Press`/`Controller2Press` for the 2P path,
 /// `Pad_Input AND #PAD_A` for the special-tile and attribute-table paths). It
 /// fires when the player COMMITS to the tile they stand on, never on arriving
-/// at one.
+/// at one — which is what makes a pad-to-pad graph possible at all.
 #[test]
-fn every_pad_lands_somewhere_legible() {
+fn every_pad_is_half_of_a_pair() {
     // Spelled out rather than read off `graph::SAME_WORLD_MIN_SPAN`, and the
     // difference is not cosmetic: the first cut of this test imported the
     // constant, and setting that constant to 0 then left the test PASSING. A
@@ -746,25 +676,63 @@ fn every_pad_lands_somewhere_legible() {
     for seed in 0..census_seeds(4) {
         for (name, knobs) in &arms {
             let (state, _) = generated(&raw, seed, knobs);
-            for (from, to) in state.pad_edges() {
-                let kind = landing_kind(&state, to);
+            let pads = state.pad_edges();
+            let tiles: Vec<_> = pads.iter().map(|&(from, _)| from).collect();
+
+            assert!(
+                pads.len() <= PAD_BUDGET,
+                "seed {seed} [{name}]: {} pads exceeds the {PAD_BUDGET} arrival rows",
+                pads.len()
+            );
+            assert_eq!(
+                pads.len() % 2,
+                0,
+                "seed {seed} [{name}]: {} pads is odd, so one of them is unpaired",
+                pads.len()
+            );
+
+            let mut unique = tiles.clone();
+            unique.sort_unstable();
+            unique.dedup();
+            assert_eq!(
+                unique.len(),
+                tiles.len(),
+                "seed {seed} [{name}]: two pads claim the same cell"
+            );
+
+            for &(from, to) in &pads {
                 assert_ne!(
-                    kind,
-                    Landing::Filler,
-                    "seed {seed} [{name}]: the pad at W{} {:?} lands on W{} {:?}, which the map \
-                     draws nothing on — the player cannot tell they arrived anywhere",
+                    from,
+                    to,
+                    "seed {seed} [{name}]: the pad at W{} {:?} teleports to itself",
+                    from.0 + 1,
+                    from.1
+                );
+                assert!(
+                    tiles.contains(&to),
+                    "seed {seed} [{name}]: the pad at W{} {:?} points at W{} {:?}, where no pad \
+                     stands — the player arrives somewhere they cannot leave the same way",
                     from.0 + 1,
                     from.1,
                     to.0 + 1,
                     to.1
                 );
-                // A pad landing on its own tile is the span-0 case, so the
-                // span rule below covers it; there is no separate assert.
+                let back = pads.iter().find(|&&(f, _)| f == to).map(|&(_, t)| t);
+                assert_eq!(
+                    back,
+                    Some(from),
+                    "seed {seed} [{name}]: W{} {:?} -> W{} {:?} is one-way; its partner points \
+                     somewhere else",
+                    from.0 + 1,
+                    from.1,
+                    to.0 + 1,
+                    to.1
+                );
                 if from.0 == to.0 {
                     let d = from.1.0.abs_diff(to.1.0) + from.1.1.abs_diff(to.1.1);
                     assert!(
                         d >= MIN_SPAN,
-                        "seed {seed} [{name}]: same-world hop W{} {:?} -> {:?} spans {d}, under \
+                        "seed {seed} [{name}]: same-world pair W{} {:?} <-> {:?} spans {d}, under \
                          the {MIN_SPAN} that makes a pad worth its arrival id",
                         from.0 + 1,
                         from.1,
@@ -774,6 +742,277 @@ fn every_pad_lands_somewhere_legible() {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// The pad tile
+// ---------------------------------------------------------------------------
+
+/// Engine byte tables [`TILE_TELEPAD`] must be **absent** from, as
+/// `(name, file offset, length)`.
+///
+/// Two tables it must be PRESENT in are checked separately below, because
+/// membership is what makes the byte work rather than what would break it.
+#[rustfmt::skip]
+const FORBIDDEN_TILE_TABLES: [(&str, usize, usize); 9] = [
+    // PRG012 — the map reload's own vocabulary.
+    ("Map_Removable_Tiles",            0x18447, 8),
+    ("Map_RemoveTo_Tiles",             0x1844F, 8),
+    ("Map_Completable_Tiles",          0x18457, 5),
+    ("Map_CompleteByML_Tiles",         0x1845C, 8),
+    ("Map_Bottom_Tiles",               0x18464, 9),
+    // PRG011 — completion FX and the marching map objects.
+    ("Map_ForcePoofTiles",             0x169E5, 5),
+    ("Map_MarchXtraForbidTiles",       0x173A9, 4),
+    // PRG010 — what the player may walk OVER. A pad sits on the node lattice,
+    // never on a path cell between two nodes, so it needs no membership here;
+    // `Map_CheckDoMove` validates only the tile being crossed and then moves a
+    // hardcoded two tiles, which is why every panel on the map is absent too.
+    ("Map_Object_Valid_Left/Right",    0x15258, 18),
+    ("Map_Object_Valid_Down/Up",       0x1526A, 18),
+];
+
+/// **The pad's byte is the pad's alone**, and this is the check that says so.
+///
+/// The playtest: 28 spade panels on the map, nine of them pads, so two thirds
+/// of everything that looked like a telepad was an N-Spade card game. The fix
+/// is a byte no other system claims — and "no other system" has to be checked
+/// against the engine's tables, not assumed, because a map tile's entire
+/// behaviour is table membership.
+#[test]
+fn the_pad_tile_is_in_no_registry() {
+    use crate::randomize::rom_data::{
+        BACKGROUND_TILES, FORTRESS_TILES, LOCK_TILES, TILE_AIRSHIP, TILE_BONUS_GAME, TILE_BOWSER,
+        TILE_NODE, TILE_PIPE, TILE_START, TILE_TELEPAD, TILE_TOAD_HOUSE, VALID_BLANK_TILES,
+        VALID_HORZ, VALID_VERT, WAND_GATE_TILE, WATER_GAP_TILE,
+    };
+
+    // Our own vocabulary first — these need no ROM.
+    assert!(!VALID_HORZ.contains(&TILE_TELEPAD), "the walker would treat a pad as a path cell");
+    assert!(!VALID_VERT.contains(&TILE_TELEPAD));
+    assert!(!VALID_BLANK_TILES.contains(&TILE_TELEPAD), "a slot could be placed on a pad");
+    assert!(!BACKGROUND_TILES.contains(&TILE_TELEPAD), "the walker would read a pad as a wall");
+    assert!(!FORTRESS_TILES.contains(&TILE_TELEPAD));
+    assert!(!LOCK_TILES.contains(&TILE_TELEPAD));
+    for (name, tile) in [
+        ("bonus game", TILE_BONUS_GAME),
+        ("pipe", TILE_PIPE),
+        ("toad house", TILE_TOAD_HOUSE),
+        ("airship", TILE_AIRSHIP),
+        ("bowser", TILE_BOWSER),
+        ("start", TILE_START),
+        ("wand gate", WAND_GATE_TILE),
+        ("water gap", WATER_GAP_TILE),
+        ("bfs node placeholder", TILE_NODE),
+    ] {
+        assert_ne!(TILE_TELEPAD, tile, "the pad byte is also the {name} byte");
+    }
+
+    let Some(rom) = load_rom() else { return };
+    for (name, off, len) in FORBIDDEN_TILE_TABLES {
+        for i in 0..len {
+            assert_ne!(rom.read_byte(off + i), TILE_TELEPAD, "the pad byte is in {name}");
+        }
+    }
+
+    // No world's vanilla grid uses it, so a pad can never be stamped over
+    // something that was already there and mean two things at once.
+    for world in 0..8 {
+        let grid = crate::randomize::rom_data::read_tile_grid(&rom, world);
+        for r in 0..grid.rows() {
+            for c in 0..grid.cols {
+                assert_ne!(grid.get(r, c), TILE_TELEPAD, "W{} uses the pad byte", world + 1);
+            }
+        }
+    }
+
+    // --- and the two memberships the pad NEEDS ---------------------------
+
+    // `Map_EnterSpecialTiles` (11 entries at 0x14DBF) is how the tile reaches
+    // `PRG010_CEA7`, which is where `PAD_ENTER` hangs. Without this the hook
+    // never fires and stepping on a pad does nothing at all.
+    let enter: Vec<u8> = (0..11).map(|i| rom.read_byte(0x14DBF + i)).collect();
+    assert!(enter.contains(&TILE_TELEPAD), "the pad byte is not enterable");
+
+    // `Map_Object_Forbid_LandingTiles` (17 entries at 0x17398) keeps a marching
+    // Hammer Bro off the tile. `TILE_BONUS_GAME` is in it too; this is the one
+    // registry the pad wants to be in.
+    let forbid: Vec<u8> = (0..17).map(|i| rom.read_byte(0x17398 + i)).collect();
+    assert!(forbid.contains(&TILE_TELEPAD), "a Hammer Bro could march onto a pad");
+
+    // --- and the threshold, which is a rule and not a table --------------
+
+    // `Tile_Attributes_TS0` (0x18410, four bytes indexed by `tile >> 6`) is the
+    // level gate: `MO_NormalMoveEnter` will not let the player walk OFF a tile
+    // at or above its page's threshold until it is completed. A pad can never
+    // be completed, so a pad byte at or above the threshold would sever every
+    // path it stood on.
+    let threshold = rom.read_byte(0x18410 + (TILE_TELEPAD >> 6) as usize);
+    assert!(
+        TILE_TELEPAD < threshold,
+        "the pad byte {TILE_TELEPAD:#04X} is at or above its page's enterability threshold \
+         {threshold:#04X}, so a player who walks onto a pad could never walk off it"
+    );
+}
+
+/// **Stamping pads writes no CHR**, and the four patterns it points at are the
+/// ones it means to point at.
+///
+/// The sibling of `wand_gate::the_gate_writes_no_chr`, and it exists for the
+/// same shipped bug: an earlier cut drew art into map CHR `$80`-`$83` on a
+/// three-legged argument that nothing referenced them, and they turned out to
+/// be the corners of the map's window boxes, drawn by a routine that *computes*
+/// the index. The pad wears those same four patterns — **by pointing at them**,
+/// which is free, rather than by overwriting them, which shredded the map.
+#[test]
+fn stamping_pads_writes_no_chr() {
+    use crate::randomize::rom_data::{PRG012_FILE_BASE, TELEPAD_QUADRANTS, TILE_TELEPAD};
+
+    let Some(raw) = load_rom() else { return };
+    let (rom, result) = census_build(&raw, 1);
+    let mut rng = ChaCha8Rng::seed_from_u64(0x5EED_1234);
+    let (state, _) = super::generate(
+        &result,
+        &IDENTITY_SPINE,
+        super::DEFAULT_WANDS_REQUIRED,
+        &super::graph::Knobs::default(),
+        &mut rng,
+    );
+    let mut after = rom.clone();
+    super::writer::stamp_pad_tiles(&mut after, &state);
+
+    const CHR: usize = 0x40010;
+    assert_eq!(after.data[CHR..], rom.data[CHR..], "the maze wrote into CHR");
+
+    for (plane, &pattern) in TELEPAD_QUADRANTS.iter().enumerate() {
+        let off = PRG012_FILE_BASE + plane * 256 + TILE_TELEPAD as usize;
+        assert_eq!(after.read_byte(off), pattern, "quadrant {plane} of the pad tile");
+    }
+    // The composition is the only metatile row the maze touches: no other
+    // tile's quadrants move, so nothing already on the map changes shape.
+    for tile in 0..256usize {
+        if tile == TILE_TELEPAD as usize {
+            continue;
+        }
+        for plane in 0..4 {
+            let off = PRG012_FILE_BASE + plane * 256 + tile;
+            assert_eq!(
+                after.read_byte(off),
+                rom.read_byte(off),
+                "the maze repointed quadrant {plane} of tile {tile:#04X}"
+            );
+        }
+    }
+}
+
+/// **No pad shares a tile value with a card game.** The regression test for the
+/// report.
+///
+/// "i played and beat world7 entered a spade which was in w2 and it was the
+/// spade game" — measured on that ROM, 28 spade panels and only 9 pads. The pad
+/// and the card game were the same byte, so the map could not tell the player
+/// which was which and two out of three were a disappointment.
+///
+/// This runs the **whole randomizer** and reads the finished map back, because
+/// the two tiles are stamped by different modules — the overworld writer puts
+/// down the card games, `writer::stamp_pad_tiles` puts down the pads — and a
+/// disagreement between them is exactly the failure being guarded. The pads are
+/// located the way the ROM locates them, by decoding `PAD_ENTER`'s own key
+/// rows, so a pad the tables cannot find is not a pad this test believes in
+/// either.
+///
+/// The card-game count is asserted non-zero on purpose: with `keep_n_cards`
+/// false the roaming N-Spade object is suppressed, but the 19 fixed panels stay
+/// on the map, and a run with no card games left would make this test pass
+/// vacuously.
+#[test]
+fn no_pad_shares_a_tile_with_a_card_game() {
+    use crate::randomize::rom_data::{self, TILE_BONUS_GAME, TILE_TELEPAD};
+    use crate::randomize::world_persist::{PAD_TABLE_OFF, PORTAL_MAX};
+    use crate::randomizer::{Options, randomize};
+
+    let Some(raw) = load_rom() else { return };
+    let mut total_pads = 0usize;
+    let mut total_spades = 0usize;
+    for seed in 0..census_seeds(3) {
+        let mut rom = raw.clone();
+        randomize(
+            &mut rom,
+            seed,
+            &Options { world_maze: true, palettes: false, ..Default::default() },
+        );
+
+        // Where the ROM itself thinks the pads are.
+        let table = rom_data::FS_PAD_ENTER + PAD_TABLE_OFF;
+        let mut pad_cells = Vec::new();
+        for id in 0..PORTAL_MAX {
+            let world = rom.read_byte(table + id);
+            if world == 0xFF {
+                continue; // unclaimed arrival row
+            }
+            // The engine's own encoding: Y = (grid_row + 2) << 4, and the X
+            // byte packs the column within its screen high and the screen low.
+            let y = rom.read_byte(table + PORTAL_MAX + id);
+            let x = rom.read_byte(table + 2 * PORTAL_MAX + id);
+            let row = (y >> 4) as usize - 2;
+            let col = (x & 0x0F) as usize * 16 + (x >> 4) as usize;
+            pad_cells.push((world as usize, row, col));
+        }
+        assert!(!pad_cells.is_empty(), "seed {seed}: a maze ROM with no telepads at all");
+
+        for &(world, row, col) in &pad_cells {
+            let tile = rom.read_byte(rom_data::map_tile_offset(world, row, col));
+            assert_eq!(
+                tile,
+                TILE_TELEPAD,
+                "seed {seed}: the pad keyed at W{} ({row},{col}) holds {tile:#04X}",
+                world + 1
+            );
+        }
+
+        // Now the other direction: every telepad tile on the map is a pad the
+        // tables know about, and every spade panel is a card game.
+        let mut telepads = 0usize;
+        let mut spades = 0usize;
+        for world in 0..8 {
+            let grid = rom_data::read_tile_grid(&rom, world);
+            for row in 0..grid.rows() {
+                for col in 0..grid.cols {
+                    match grid.get(row, col) {
+                        TILE_TELEPAD => {
+                            assert!(
+                                pad_cells.contains(&(world, row, col)),
+                                "seed {seed}: W{} ({row},{col}) wears the telepad tile but no \
+                                 arrival row keys it — stepping on it would do nothing",
+                                world + 1
+                            );
+                            telepads += 1;
+                        }
+                        TILE_BONUS_GAME => {
+                            assert!(
+                                !pad_cells.contains(&(world, row, col)),
+                                "seed {seed}: the pad at W{} ({row},{col}) is still a spade \
+                                 panel — the player cannot tell it from a card game",
+                                world + 1
+                            );
+                            spades += 1;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            telepads,
+            pad_cells.len(),
+            "seed {seed}: {} arrival rows but {telepads} telepad tiles on the map",
+            pad_cells.len()
+        );
+        assert!(spades > 0, "seed {seed}: no card games left, so this test proved nothing");
+        total_pads += telepads;
+        total_spades += spades;
+    }
+    eprintln!("  {total_pads} pads and {total_spades} card games over the census, no tile shared");
 }
 
 /// The generator census, and the one that answers "how long is this game".
@@ -817,10 +1056,11 @@ fn maze_generator_census() {
         let mut asked = [0usize; 3];
         let mut got = [0usize; 3];
         let mut denied = 0usize;
-        // The landing mix: what kind of tile a pad actually deposits the
-        // player on. `FILLER` is the one that must stay 0 — see
-        // `every_pad_lands_somewhere_legible`.
-        let mut mix = [0usize; 8];
+        // Pads are paired, and every landing is another pad tile, so the
+        // only things left to measure are how many pairs there are, how many
+        // of them cross, and how far a same-world pair reaches.
+        let mut pairs = 0usize;
+        let mut crossings = 0usize;
         let mut hops: Vec<usize> = Vec::new();
         let idx = |r: super::roles::PadRole| match r {
             super::roles::PadRole::Hub => 0,
@@ -853,9 +1093,13 @@ fn maze_generator_census() {
             content.push(cost.content);
             forts.push(cost.forts);
             let p = state.pad_edges();
-            for &(from, to) in &p {
-                mix[landing_idx(landing_kind(&state, to))] += 1;
-                if from.0 == to.0 {
+            // One entry per PAIR: take the half whose tile sorts first, so a
+            // link is counted once rather than from both ends.
+            for &(from, to) in p.iter().filter(|(from, to)| from < to) {
+                pairs += 1;
+                if from.0 != to.0 {
+                    crossings += 1;
+                } else {
                     hops.push(from.1.0.abs_diff(to.1.0) + from.1.1.abs_diff(to.1.1));
                 }
             }
@@ -874,17 +1118,16 @@ fn maze_generator_census() {
             mean(&cross),
         );
         eprintln!("    roles asked hub/shortcut/free {asked:?}  granted {got:?}  denied {denied}");
-        let total: usize = mix.iter().sum();
-        let mix_str: Vec<String> = LANDING_LABELS
-            .iter()
-            .zip(mix)
-            .map(|(l, n)| format!("{l} {n} ({:.0}%)", 100.0 * n as f64 / total.max(1) as f64))
-            .collect();
-        eprintln!("    landings: {}", mix_str.join("  "));
+        eprintln!(
+            "    pairs: {pairs} ({:.2}/seed), {crossings} span two worlds ({:.0}%), \
+             {} stay home",
+            pairs as f64 / seeds as f64,
+            100.0 * crossings as f64 / pairs.max(1) as f64,
+            hops.len(),
+        );
         hops.sort_unstable();
         eprintln!(
-            "    same-world hops: {} of {total}, span min {:?} median {:?} mean {:.1}",
-            hops.len(),
+            "    same-world pairs: span min {:?} median {:?} mean {:.1}",
             hops.first(),
             hops.get(hops.len() / 2),
             hops.iter().sum::<usize>() as f64 / hops.len().max(1) as f64,
@@ -1066,8 +1309,8 @@ fn a_generated_maze_writes_only_pad_tiles_and_free_space() {
                     );
                     assert_eq!(
                         after.read_byte(off),
-                        rom_data::TILE_BONUS_GAME,
-                        "seed {seed}: pad at W{} ({r},{c}) is not a spade panel",
+                        rom_data::TILE_TELEPAD,
+                        "seed {seed}: pad at W{} ({r},{c}) is not a telepad tile",
                         wi + 1
                     );
                 }

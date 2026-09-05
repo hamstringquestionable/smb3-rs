@@ -17,7 +17,7 @@ use crate::rom::Rom;
 
 use super::super::foreign_locks::ForeignLock;
 use super::super::overworld_build::SlotKind;
-use super::super::rom_data::{self, TILE_BONUS_GAME};
+use super::super::rom_data::{self, PRG012_FILE_BASE, TELEPAD_QUADRANTS, TILE_TELEPAD};
 use super::super::world_persist::Telepad;
 use super::GlobalState;
 
@@ -39,22 +39,34 @@ pub(crate) fn telepad_specs(state: &GlobalState) -> Vec<Telepad> {
         .collect()
 }
 
-/// Stamp the pad tiles onto the ROM's map grids.
+/// Stamp the pad tiles onto the ROM's map grids, and compose the metatile they
+/// wear.
 ///
-/// The tile is the spade panel [`TILE_BONUS_GAME`] (`$E8`), for three reasons
-/// that all have to hold at once: it is **enterable**, so the enter hook fires
-/// on it; it is in `VALID_VERT`, so it does not break a vertical path it sits
-/// in; and a hardware playtest confirmed a pad on one **stays a spade panel**
-/// after teleporting in either direction — diverting at enter time means
-/// `MO_DoLevelClear` never runs, so nothing marks the cell.
+/// The tile is [`TILE_TELEPAD`] (`$DF`), and it is a byte of the pad's own
+/// rather than the spade panel it used to share. The playtest that forced the
+/// change is in that constant's docs, along with every registry membership the
+/// byte needs; the short version is that a player looking at 28 spade panels
+/// cannot tell which nine of them teleport.
+///
+/// Composing the metatile is four bytes of quadrant table and **no CHR at
+/// all** — [`TELEPAD_QUADRANTS`] points at patterns the map already draws. The
+/// write is idempotent and world-independent (one metatile table serves all
+/// eight grids), so it happens once here rather than per pad.
 ///
 /// The cell keeps whatever pointer-table entry it had. That entry becomes
 /// unreachable, which is why [`super::roles::pad_sites`] only ever offers
 /// Hammer Bro filler slots and bare blanks: the least valuable content on the
 /// map, and in the filler case no content at all.
 pub(crate) fn stamp_pad_tiles(rom: &mut Rom, state: &GlobalState) {
-    for ((world, (row, col)), _) in state.pad_edges() {
-        rom.write_byte(rom_data::map_tile_offset(world, row, col), TILE_BONUS_GAME);
+    let pads = state.pad_edges();
+    if pads.is_empty() {
+        return;
+    }
+    for (plane, &pattern) in TELEPAD_QUADRANTS.iter().enumerate() {
+        rom.write_byte(PRG012_FILE_BASE + plane * 256 + TILE_TELEPAD as usize, pattern);
+    }
+    for ((world, (row, col)), _) in pads {
+        rom.write_byte(rom_data::map_tile_offset(world, row, col), TILE_TELEPAD);
     }
 }
 

@@ -5,10 +5,28 @@
 //! per-world builder, the role pools in [`roles`](super::roles) — is handed a
 //! count and a set of roles and never learns why.
 //!
+//! ## Pads come in pairs
+//!
+//! A telepad **pair** is one link the player can walk both ways: two pad tiles,
+//! each pointing at the other. That is the mode's whole shape — a pad the
+//! player cannot come back through is a trapdoor, and a maze made of trapdoors
+//! is a corridor with extra steps. `testrom --telepad A:B` has built exactly
+//! this since the POC.
+//!
+//! The charter's "a pad is one-way by construction, so a two-way link costs two
+//! ids" is a statement about the *mechanism*, not the design: each pad TILE
+//! owns one arrival row, so a pair spends two of the sixteen. `PORTAL_MAX = 16`
+//! therefore means **at most eight pairs**. (The one-way edge in the maze is
+//! the airship, and that is a different kind of edge entirely.)
+//!
+//! So this module does two things in order: **claim sites**, then **pair them
+//! up**. An odd site left over at the end is not placed at all — a pad with
+//! nothing to point at is a wasted arrival row and a dead end on the map.
+//!
 //! ## The allocation order, and why
 //!
-//! The 16 arrival ids are spent in strict priority order, because the first
-//! claim is a safety obligation and the rest are flavour:
+//! The ids are spent in strict priority order, because the first claim is a
+//! safety obligation and the rest are flavour:
 //!
 //! 1. **Hub pads**, for every world whose start region cannot be escaped with
 //!    what the player has on arrival. This is invariant 3, and it is the only
@@ -24,11 +42,12 @@
 use rand::Rng;
 use rand::seq::{IndexedRandom, SliceRandom};
 
+use super::super::rom_data::Pos;
 use super::roles::{PadRole, WorldTerrain, classify};
 use super::{GlobalState, MazeEdge};
 
 /// Global cap on telepads. Each pad TILE owns one arrival row, and there are
-/// `PORTAL_MAX` rows; a two-way link is therefore two pads and two ids.
+/// `PORTAL_MAX` rows; a pair is two tiles, so this is **eight pairs**.
 pub(crate) const PAD_BUDGET: usize = super::super::world_persist::PORTAL_MAX;
 
 /// Hard cap on pads in one world. Above this a world stops being a place and
@@ -40,11 +59,11 @@ pub(crate) const PADS_PER_WORLD_MAX: usize = 3;
 /// "The null-model baselines".
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Knobs {
-    /// How often a pad lands in a world other than its own. 0.0 makes every
-    /// pad a same-world hop (position keying gives those for free); 1.0 makes
-    /// every pad a crossing. **This is the maze knob** — it is what decides
-    /// whether the eight worlds are a graph or eight rooms with local
-    /// shortcuts.
+    /// How often a **pair** spans two worlds rather than sitting inside one.
+    /// 0.0 makes every link a same-world shortcut (position keying gives those
+    /// for free); 1.0 makes every link a crossing. **This is the maze knob** —
+    /// it is what decides whether the eight worlds are a graph or eight rooms
+    /// with local shortcuts.
     pub foreign_landing_bias: f64,
     /// Which way the key-assignment fill pushes a lock's fort. `-1.0` keeps
     /// keys local (a lock's fort is near it, vanilla-ish); `0.0` accepts any
@@ -70,6 +89,9 @@ impl Default for Knobs {
 
 /// One decided pad, with the role that was asked for beside the role the
 /// terrain actually granted.
+///
+/// `edge` points at this pad's **partner**, and the partner's own `PlacedPad`
+/// points back — the two are emitted together and never apart.
 // Reason: production consumes only `edge`. The three alongside it are the
 // granted-vs-requested distribution the charter asks for as a census output,
 // and the census is their only reader.
@@ -79,63 +101,96 @@ pub(crate) struct PlacedPad {
     pub edge: MazeEdge,
     pub requested: PadRole,
     pub granted: PadRole,
-    /// True when the landing is in a different world from the tile.
+    /// True when the partner is in a different world.
     pub foreign: bool,
+}
+
+/// A claimed pad tile, before it knows what it is paired with.
+#[derive(Clone, Copy, Debug)]
+struct Site {
+    world: usize,
+    pos: Pos,
+    requested: PadRole,
+    granted: PadRole,
+}
+
+/// The shortest same-world link worth two arrival ids, in grid cells
+/// (Manhattan).
+///
+/// A pad that drops the player four tiles from where they stood spends two of
+/// sixteen arrival rows to save two moves, and reads to a player as a bug — the
+/// report that opened this was exactly that shape, and the census had a
+/// same-world hop of span **0**: a pad that teleported to its own tile.
+///
+/// Manhattan on the grid rather than a walk distance, deliberately. What makes
+/// a hop degenerate is that the player can SEE where they came from, and that
+/// is a picture, not a path. The map moves two cells at a time, so 8 is four
+/// map moves — far enough to be off-screen-ish and to feel like travel.
+pub(crate) const SAME_WORLD_MIN_SPAN: usize = 8;
+
+/// Manhattan span between two cells of the same world's grid.
+fn span(a: Pos, b: Pos) -> usize {
+    a.0.abs_diff(b.0) + a.1.abs_diff(b.1)
 }
 
 /// Run the world-graph pass over a maze that has no pads yet.
 ///
-/// Returns the pads in the order they were claimed, so the caller can see the
-/// budget being spent on safety before flavour.
+/// Returns the pads in claim order, so the caller can see the budget being
+/// spent on safety before flavour. The length is always even: pads are emitted
+/// two at a time, as pairs.
 pub(crate) fn plan_pads<R: Rng>(state: &GlobalState, knobs: &Knobs, rng: &mut R) -> Vec<PlacedPad> {
-    let terrain: Vec<WorldTerrain> = state
+    let terrain = classify_all(state);
+    let sites = claim_sites(state, &terrain, rng);
+    pair_up(sites, knobs, rng)
+}
+
+/// Sort every world's terrain into the pools the roles draw from.
+fn classify_all(state: &GlobalState) -> Vec<WorldTerrain> {
+    state
         .worlds
         .iter()
         .map(|w| classify(w, &state.locks, &state.reserved_in(w.world_idx)))
-        .collect();
+        .collect()
+}
 
-    let mut out: Vec<PlacedPad> = Vec::new();
-    let mut budget = PAD_BUDGET;
-    let mut per_world = [0usize; 8];
-    let mut used_tiles: Vec<(usize, super::super::rom_data::Pos)> = Vec::new();
+/// Claim pad TILES — where a pad may stand, and what role it was asked for.
+///
+/// Safety first: a world whose start region cannot be escaped with what the
+/// player carries on arrival gets a hub site before anything else claims one.
+/// The rest of the budget is dealt round-robin over a shuffled world order so
+/// no world is systematically starved.
+fn claim_sites<R: Rng>(state: &GlobalState, terrain: &[WorldTerrain], rng: &mut R) -> Vec<Site> {
+    let mut out: Vec<Site> = Vec::new();
 
-    // 1. Safety first. A world whose start region cannot be escaped with what
-    //    the player carries on arrival gets a hub pad before anything else
-    //    claims an id.
     let mut needy: Vec<usize> =
         (0..state.worlds.len()).filter(|&wi| !state.start_region_escapable(wi)).collect();
     needy.shuffle(rng);
     for wi in needy {
-        if budget == 0 {
+        if out.len() == PAD_BUDGET {
             break;
         }
-        if let Some(pad) = place_one(state, &terrain, wi, PadRole::Hub, knobs, &mut used_tiles, rng)
-        {
-            out.push(pad);
-            per_world[wi] += 1;
-            budget -= 1;
+        if let Some(site) = claim_one(terrain, wi, PadRole::Hub, &out, None, rng) {
+            out.push(site);
         }
     }
 
-    // 2 and 3. The rest of the budget, dealt round-robin over a shuffled world
-    //    order so no world is systematically starved. Shortcut is asked for
-    //    first and falls back to Free, which is what "a request, not a
-    //    contract" means in code.
     let mut order: Vec<usize> = (0..state.worlds.len()).collect();
     order.shuffle(rng);
-    let mut want: Vec<usize> =
-        order.iter().map(|&wi| roll_count(rng).saturating_sub(per_world[wi])).collect();
-    while budget > 0 && want.iter().any(|&n| n > 0) {
+    let mut want: Vec<usize> = order
+        .iter()
+        .map(|&wi| roll_count(rng).saturating_sub(out.iter().filter(|s| s.world == wi).count()))
+        .collect();
+    while out.len() < PAD_BUDGET && want.iter().any(|&n| n > 0) {
         let mut spent_this_round = false;
         for (slot, &wi) in order.iter().enumerate() {
-            if budget == 0 || want[slot] == 0 || per_world[wi] >= PADS_PER_WORLD_MAX {
+            if out.len() == PAD_BUDGET || want[slot] == 0 {
                 continue;
             }
+            // Shortcut is asked for first and falls back to Free, which is what
+            // "a request, not a contract" means in code.
             let role = if rng.random_bool(0.5) { PadRole::Shortcut } else { PadRole::Free };
-            if let Some(pad) = place_one(state, &terrain, wi, role, knobs, &mut used_tiles, rng) {
-                out.push(pad);
-                per_world[wi] += 1;
-                budget -= 1;
+            if let Some(site) = claim_one(terrain, wi, role, &out, None, rng) {
+                out.push(site);
                 spent_this_round = true;
             }
             want[slot] -= 1;
@@ -164,160 +219,157 @@ pub(crate) fn roll_count<R: Rng>(rng: &mut R) -> usize {
     0
 }
 
-/// Place one pad in `world` for `role`, or `None` when the terrain cannot host
-/// it. Falls back from the role's own pool to any free site, and records which
-/// role the chosen tile actually satisfies.
-fn place_one<R: Rng>(
-    state: &GlobalState,
+/// Claim one pad tile in `world` for `role`, or `None` when the terrain cannot
+/// host it.
+///
+/// Falls back from the role's own pool to any free site, and records which role
+/// the chosen tile actually satisfies. `far_from` is the partner constraint: a
+/// site in the same world as an already-claimed half has to be
+/// [`SAME_WORLD_MIN_SPAN`] away from it.
+fn claim_one<R: Rng>(
     terrain: &[WorldTerrain],
     world: usize,
     role: PadRole,
-    knobs: &Knobs,
-    used: &mut Vec<(usize, super::super::rom_data::Pos)>,
+    claimed: &[Site],
+    far_from: Option<Pos>,
     rng: &mut R,
-) -> Option<PlacedPad> {
+) -> Option<Site> {
+    if claimed.iter().filter(|s| s.world == world).count() >= PADS_PER_WORLD_MAX {
+        return None;
+    }
     let t = &terrain[world];
-    let free = |sites: &[super::super::rom_data::Pos]| -> Vec<super::super::rom_data::Pos> {
-        sites.iter().copied().filter(|&p| !used.contains(&(world, p))).collect()
+    let free = |sites: &[Pos]| -> Vec<Pos> {
+        sites
+            .iter()
+            .copied()
+            .filter(|&p| !claimed.iter().any(|s| s.world == world && s.pos == p))
+            .filter(|&p| far_from.is_none_or(|q| span(p, q) >= SAME_WORLD_MIN_SPAN))
+            .collect()
     };
     let mut pool = free(t.sites_for(role));
     if pool.is_empty() {
         pool = free(&t.all_sites());
     }
-    let &from = pool.choose(rng)?;
-
-    let (dest_world, to) = pick_landing(state, terrain, (world, from), used, knobs, rng)?;
-
-    used.push((world, from));
-    Some(PlacedPad {
-        edge: MazeEdge::Pad { from: (world, from), to: (dest_world, to) },
-        requested: role,
-        granted: t.role_of_site(from),
-        foreign: dest_world != world,
-    })
+    let &pos = pool.choose(rng)?;
+    Some(Site { world, pos, requested: role, granted: t.role_of_site(pos) })
 }
 
-/// The shortest same-world hop worth an arrival id, in grid cells (Manhattan).
+/// Turn claimed sites into pairs, and throw away anything left over.
 ///
-/// A pad that drops the player four tiles from where they stood spends one of
-/// sixteen arrival rows to save two moves, and reads to a player as a bug — the
-/// report that opened this was exactly that shape, and the census had a
-/// same-world hop of span **0**: a pad that teleported to its own tile.
-///
-/// Manhattan on the grid rather than a walk distance, deliberately. What makes
-/// a hop degenerate is that the player can SEE where they came from, and that
-/// is a picture, not a path. The map moves two cells at a time, so 8 is four
-/// map moves — far enough to be off-screen-ish and to feel like travel.
-pub(crate) const SAME_WORLD_MIN_SPAN: usize = 8;
-
-/// Manhattan span between two cells of the same world's grid.
-fn span(a: super::super::rom_data::Pos, b: super::super::rom_data::Pos) -> usize {
-    a.0.abs_diff(b.0) + a.1.abs_diff(b.1)
-}
-
-/// Where one pad deposits the player.
-///
-/// Three rules, and the first two are why this is a function rather than two
-/// lines inside [`place_one`]:
-///
-/// 1. **The landing must be legible.** [`super::roles::landing_candidates`] has
-///    already dropped the Hammer Bro filler slots; what this adds is the pad
-///    tiles already claimed, which are spade panels on the finished map. A pad
-///    that lands on another pad is the best arrival the mode has: it is
-///    visibly a pad, and stepping on it goes onward, so the web is navigable
-///    instead of being eight one-way trapdoors. It cannot loop — the enter hook
-///    fires on the A press that COMMITS to a tile, never on arriving at one.
-/// 2. **A same-world hop has to be a journey.** Below
-///    [`SAME_WORLD_MIN_SPAN`] the pad is worse than no pad: it spends an
-///    arrival id to move the player a few tiles they can see. When the world
-///    offers nothing far enough, the hop becomes a crossing rather than being
-///    dropped — a crossing is what the pad budget is for.
-/// 3. **A pad never lands on itself** — the span-0 case, which rule 2 already
-///    covers. Kept as its own clause so that relaxing the span rule cannot
-///    quietly bring back the pad that teleports you to where you stand.
-///
-/// The destination worlds are tried in a shuffled order so that "no legal
-/// landing in the world I rolled" degrades to another world rather than to a
-/// pad that was never placed.
-fn pick_landing<R: Rng>(
-    state: &GlobalState,
-    terrain: &[WorldTerrain],
-    from: (usize, super::super::rom_data::Pos),
-    placed: &[(usize, super::super::rom_data::Pos)],
-    knobs: &Knobs,
-    rng: &mut R,
-) -> Option<(usize, super::super::rom_data::Pos)> {
-    // The one knob that decides whether the eight worlds are a graph: a
-    // same-world hop is a shortcut, a crossing is an edge.
-    let cross = rng.random_bool(knobs.foreign_landing_bias.clamp(0.0, 1.0));
-    let mut order: Vec<usize> = (0..state.worlds.len()).filter(|&o| o != from.0).collect();
-    order.shuffle(rng);
-    if !cross {
-        order.insert(0, from.0);
+/// Each site is offered the kind of partner [`Knobs::foreign_landing_bias`]
+/// rolled — another world, or its own — and falls back to the other kind rather
+/// than going unpaired, because a crossing is what the budget is for and an
+/// unpaired site is nothing at all.
+fn pair_up<R: Rng>(sites: Vec<Site>, knobs: &Knobs, rng: &mut R) -> Vec<PlacedPad> {
+    let mut pool = sites;
+    pool.shuffle(rng);
+    let mut out = Vec::new();
+    while let Some(a) = pool.pop() {
+        let cross = rng.random_bool(knobs.foreign_landing_bias.clamp(0.0, 1.0));
+        // No legal partner left: `a` is dropped rather than shipped pointing
+        // nowhere.
+        let Some(i) = choose_partner(&pool, &a, cross, rng) else { continue };
+        let b = pool.remove(i);
+        out.push(half(a, b));
+        out.push(half(b, a));
     }
-
-    for dest_world in order {
-        let pool = landing_pool(terrain, placed, from, dest_world);
-        if let Some(&to) = pool.choose(rng) {
-            return Some((dest_world, to));
-        }
-    }
-    None
-}
-
-/// Every cell in `dest_world` this pad may legally land on.
-fn landing_pool(
-    terrain: &[WorldTerrain],
-    placed: &[(usize, super::super::rom_data::Pos)],
-    from: (usize, super::super::rom_data::Pos),
-    dest_world: usize,
-) -> Vec<super::super::rom_data::Pos> {
-    let dt = &terrain[dest_world];
-    // A gated landing is the achievable version of the charter's island pad:
-    // the pad still takes you somewhere you could not have walked to, the gate
-    // is a lock rather than terrain.
-    let terrain_pool = if dt.gated_landings.is_empty() { &dt.landings } else { &dt.gated_landings };
-
-    let mut out: Vec<super::super::rom_data::Pos> =
-        placed.iter().filter(|(w, _)| *w == dest_world).map(|&(_, p)| p).collect();
-    out.extend(terrain_pool);
-    out.retain(|&p| {
-        (dest_world, p) != from && (dest_world != from.0 || span(from.1, p) >= SAME_WORLD_MIN_SPAN)
-    });
-    out.sort_unstable();
-    out.dedup();
     out
+}
+
+/// Index into `pool` of a site `a` may be paired with, preferring the rolled
+/// kind and settling for the other.
+fn choose_partner<R: Rng>(pool: &[Site], a: &Site, cross: bool, rng: &mut R) -> Option<usize> {
+    let legal = |b: &Site| b.world != a.world || span(a.pos, b.pos) >= SAME_WORLD_MIN_SPAN;
+    let pick = |f: &dyn Fn(&Site) -> bool, rng: &mut R| -> Option<usize> {
+        let candidates: Vec<usize> =
+            pool.iter().enumerate().filter(|(_, b)| f(b)).map(|(i, _)| i).collect();
+        candidates.choose(rng).copied()
+    };
+    pick(&|b: &Site| legal(b) && (b.world != a.world) == cross, rng).or_else(|| pick(&legal, rng))
+}
+
+/// One half of a pair: the pad standing at `from`, aimed at its partner.
+fn half(from: Site, to: Site) -> PlacedPad {
+    PlacedPad {
+        edge: MazeEdge::Pad { from: (from.world, from.pos), to: (to.world, to.pos) },
+        requested: from.requested,
+        granted: from.granted,
+        foreign: to.world != from.world,
+    }
 }
 
 /// Hub pads for worlds the fill left unable to escape their own start region.
 ///
 /// Separate from [`plan_pads`] because it runs after the key assignment, on
-/// whatever budget survived it. A world that gets nothing here is reported, not
-/// silently shipped.
+/// whatever budget survived it. A rescue costs **two** ids, not one, because a
+/// pad has to have a partner to be a pad at all — so a world with only one id
+/// left gets nothing, and is reported rather than silently shipped.
 pub(crate) fn rescue_pads<R: Rng>(
     state: &GlobalState,
     worlds: &[usize],
     knobs: &Knobs,
     rng: &mut R,
 ) -> Vec<PlacedPad> {
-    let terrain: Vec<WorldTerrain> = state
-        .worlds
+    let terrain = classify_all(state);
+    // Everything already standing counts against the budget and the per-world
+    // cap, whichever pass placed it.
+    let mut claimed: Vec<Site> = state
+        .pad_edges()
         .iter()
-        .map(|w| classify(w, &state.locks, &state.reserved_in(w.world_idx)))
+        .map(|&((world, pos), _)| Site {
+            world,
+            pos,
+            requested: PadRole::Free,
+            granted: PadRole::Free,
+        })
         .collect();
-    let mut used: Vec<(usize, super::super::rom_data::Pos)> =
-        state.pad_edges().iter().map(|&(from, _)| from).collect();
-    let mut budget = PAD_BUDGET.saturating_sub(state.pad_edges().len());
 
     let mut out = Vec::new();
     for &wi in worlds {
-        if budget == 0 {
+        if claimed.len() + 2 > PAD_BUDGET {
             break;
         }
-        if let Some(pad) = place_one(state, &terrain, wi, PadRole::Hub, knobs, &mut used, rng) {
-            out.push(pad);
-            budget -= 1;
+        let Some(hub) = claim_one(&terrain, wi, PadRole::Hub, &claimed, None, rng) else {
+            continue;
+        };
+        claimed.push(hub);
+        match claim_partner(state, &terrain, &hub, knobs, &claimed, rng) {
+            Some(partner) => {
+                claimed.push(partner);
+                out.push(half(hub, partner));
+                out.push(half(partner, hub));
+            }
+            // Nowhere to point: hand the site back rather than ship a pad that
+            // leads nowhere.
+            None => {
+                claimed.pop();
+            }
         }
     }
     out
+}
+
+/// A partner tile for a rescue hub, in a world chosen the way
+/// [`Knobs::foreign_landing_bias`] asks and falling through to any world that
+/// can host one.
+fn claim_partner<R: Rng>(
+    state: &GlobalState,
+    terrain: &[WorldTerrain],
+    hub: &Site,
+    knobs: &Knobs,
+    claimed: &[Site],
+    rng: &mut R,
+) -> Option<Site> {
+    let cross = rng.random_bool(knobs.foreign_landing_bias.clamp(0.0, 1.0));
+    let mut order: Vec<usize> = (0..state.worlds.len()).filter(|&o| o != hub.world).collect();
+    order.shuffle(rng);
+    if cross {
+        order.push(hub.world);
+    } else {
+        order.insert(0, hub.world);
+    }
+    order.into_iter().find_map(|wi| {
+        let far = (wi == hub.world).then_some(hub.pos);
+        claim_one(terrain, wi, PadRole::Free, claimed, far, rng)
+    })
 }

@@ -257,15 +257,100 @@ pub(crate) const TILE_BOWSER: u8 = 0xCC;
 /// Bonus game (spade/N-Spade) tile ID.
 pub(crate) const TILE_BONUS_GAME: u8 = 0xE8;
 
+/// The world maze's telepad: the tile a player steps on to be teleported.
+///
+/// **It used to be [`TILE_BONUS_GAME`], and that was the bug.** A playtest
+/// found it: 28 spade panels on the map, only 9 of them pads, so two out of
+/// three "telepads" were an N-Spade card game. A pad the player cannot pick out
+/// of the map is not a mechanic, it is a lottery — so the pad gets a byte of
+/// its own, and a shape nothing else on the map wears (see
+/// [`TELEPAD_QUADRANTS`]).
+///
+/// `0xDF` is `TILE_ALTSPIRAL`, the alternate-colour World 5 spiral castle. It
+/// appears in **no world's grid**, in vanilla or after the builder. Everything
+/// the pad needs is a property it already has:
+///
+/// * **Enterable.** The enter hook (`world_persist::PAD_ENTER`) replaces
+///   `PRG010_CEA7`, and a tile only gets there by being in
+///   `Map_EnterSpecialTiles` or by clearing its palette page's threshold in
+///   `Tile_AttrTable+4`. `0xDF` is `Map_EnterSpecialTiles[6]`, so it is
+///   enterable by membership — exactly how `0xE8` was, and with no table to
+///   grow.
+/// * **Bypassable.** Page 3's threshold is `0xE9` (`Tile_Attributes_TS0` =
+///   `03 67 BF E9`), and `0xDF` is under it. That matters more than it looks:
+///   `MO_NormalMoveEnter` refuses to let the player walk *off* a tile at or
+///   above the threshold until it is completed, so a pad byte `>= 0xE9` would
+///   sever every path it stood on — a pad can never be completed. Under the
+///   threshold it behaves like the spade panel did: walk on, walk off, or
+///   press A.
+/// * **Not completable, and not removable.** It is in neither
+///   `Map_Completable_Tiles` nor `Map_Removable_Tiles`, so it takes no bit in
+///   the packed completion store (`0xE8` did) and no stray bit can turn it into
+///   something else. The hardware playtest's finding — a pad stays a pad,
+///   because diverting at enter time means `MO_DoLevelClear` never runs — now
+///   holds by construction rather than by observation.
+/// * **Canoe-proof.** `Map_CheckDoMove`'s canoe range check rejects anything
+///   `>= TILE_VERTPATHWLU` (`0xAA`), and `0xDF` is above it.
+/// * **March-proof.** It is in `Map_Object_Forbid_LandingTiles`, so a
+///   wandering Hammer Bro will not land on a pad. `0xE8` is in that list too;
+///   this is the one registry membership the pad *wants*.
+///
+/// Walking ONTO a pad needs nothing: `Map_CheckDoMove` validates only the
+/// tile the player moves *over* (the path cell between two nodes) and then
+/// moves a hardcoded two tiles, so a destination cell's own byte is never
+/// tested. That is why the fortress, the toad house and the spade panel all
+/// sit on the node lattice without appearing in [`VALID_HORZ`] /
+/// [`VALID_VERT`], and the pad is the same shape.
+pub(crate) const TILE_TELEPAD: u8 = 0xDF;
+
+/// The four metatile quadrants [`TILE_TELEPAD`] is composed from, in the ROM's
+/// plane order: **NW, SW, NE, SE**.
+///
+/// **No CHR is written.** These are four patterns the map already draws — the
+/// corners of its window boxes — pointed at rather than overwritten. Assembled
+/// as a 2x2 they close into a bright rectangular ring on a black field, which
+/// is a shape no other map metatile has: every panel on the map is a *filled*
+/// bright badge (the spade, the toad house, `START`), and the pad is the
+/// inverse — a hole with a lit rim, on the one colour terrain never uses.
+///
+/// The closest thing to it is `TILE_HANDTRAP`, which is a bright badge with a
+/// ring drawn *inside* it, and the two are inverses rather than lookalikes: the
+/// pad is mostly black where the hand trap is mostly white. Hand traps also
+/// live only in World 8.
+///
+/// Two constraints picked these four out of the 256:
+///
+/// * **They are in the static half of the map's CHR.** `Map_DoAnimations`
+///   swaps the 2KB at PPU `$0000` — patterns `$00`-`$7F` — between pages `$14`,
+///   `$70`, `$72` and `$74` four times a second. A quadrant pointing below
+///   `$80` animates, which is why `TILE_LARGEFORT` is documented as "usually
+///   gets visually corrupt by map animation". `$80`-`$83` live in pages
+///   `$16`/`$17`, which nothing swaps.
+/// * **They use colours 0 and 1 only.** Palette page 3 is not the same in
+///   every world, and in World 6 colour 1 and colour 3 are *both* `$30`
+///   (white) — art drawn on colour 3 would be invisible there. Colour 0 is the
+///   universal backdrop (`$0F`, black) in all eight, so a colour-1 ring on it
+///   contrasts everywhere.
+///
+/// There is an irony worth recording: `$80`-`$83` are the four tiles an earlier
+/// cut of `wand_gate` tried to overwrite with a skull, on a scan that could not
+/// see the routine computing their index. The playtest came back with the map's
+/// window corners shredded. They are safe to *read*; it is writing them that
+/// was the bug.
+pub(crate) const TELEPAD_QUADRANTS: [u8; 4] = [0x80, 0x82, 0x81, 0x83];
+
 /// The world maze's wand gate: the wall that stands on the last span of
 /// World 8's bridge until the player holds K of the seven wands.
 ///
-/// `0xD5` is one of the four page-3 bytes that appear in no world's grid
-/// (`0xC6`, `0xC7`, `0xCF`, `0xD5`). It was picked over the other three on
-/// looks: its four metatile quadrants are all the same CHR tile, so the
-/// 16x16 reads as a regular 2x2 lattice rather than a torn scrap of
-/// coastline, and `wand_gate` repoints those quadrants at
-/// a drawn skull.
+/// `0xD5` is one of the page-3 bytes that appear in no world's grid. Below the
+/// page's `0xE9` threshold those are `0xC0`, `0xC1`, `0xC6`, `0xC7`, `0xCF`,
+/// `0xD5`, `0xDF`, `0xE3` and `0xE7` — the last two spoken for by
+/// `Map_RemoveTo_Tiles` and `Map_Bottom_Tiles`, and `0xDF` now by
+/// [`TILE_TELEPAD`]. It was picked on
+/// looks: its four metatile quadrants are all the same CHR tile, so the 16x16
+/// reads as a regular 2x2 lattice rather than a torn scrap of coastline, and it
+/// wears that art unaltered — `wand_gate` writes no CHR and repoints no
+/// quadrant.
 ///
 /// What makes it usable as a barrier is what it is *absent* from. The engine
 /// has no per-tile "blocks movement" flag: a tile blocks a direction by not

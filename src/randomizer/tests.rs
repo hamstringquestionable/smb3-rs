@@ -1584,7 +1584,7 @@ fn resolve_concrete_passthrough() {
 /// row back into a `(world, row, col)` and demand a spade panel there.
 #[test]
 fn a_maze_rom_puts_a_pad_tile_under_every_arrival_key() {
-    use crate::randomize::rom_data::{self, TILE_BONUS_GAME};
+    use crate::randomize::rom_data::{self, TILE_TELEPAD};
     use crate::randomize::world_persist::{PAD_TABLE_OFF, PORTAL_MAX};
 
     let Some(rom) = make_test_rom() else {
@@ -1614,9 +1614,9 @@ fn a_maze_rom_puts_a_pad_tile_under_every_arrival_key() {
             let tile = rom.read_byte(rom_data::map_tile_offset(world as usize, row, col));
             assert_eq!(
                 tile,
-                TILE_BONUS_GAME,
+                TILE_TELEPAD,
                 "seed {seed}: pad {id} keys W{} ({row},{col}), but that cell is {tile:#04X}, \
-                 not a spade panel — stepping on it would enter a level, not teleport",
+                 not a telepad — stepping on it would enter a level, not teleport",
                 world + 1
             );
             found += 1;
