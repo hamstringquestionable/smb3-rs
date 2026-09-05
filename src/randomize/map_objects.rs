@@ -101,6 +101,104 @@
 //! `foreign_locks` already leans on the same table through the instruction it
 //! displaces. Eight bytes of PRG011 saved, and the assignment is MSB-first
 //! because the borrowed table is.
+//!
+//! # Two neighbours that look like the same bug and are not
+//!
+//! Both were raised as "same bug class, do them while the machinery is out".
+//! Both were measured and **deliberately left alone**; the reasoning is here
+//! rather than in a commit message because the next reader will have the same
+//! idea.
+//!
+//! ## The king rescue: the resurrection is load-bearing
+//!
+//! `TAndK_WaitPlayerButtonA` (PRG024, `$A268`) clears slot 0 and sets slot 1:
+//!
+//! ```text
+//! LDA <Pad_Input / BPL rts
+//! LDA Map_Objects_IDs
+//! BEQ standard_exit          ; HELP bubble gone -> just walk back out
+//! LDA #$03 / STA Level_JctCtl        ; "switch to airship"
+//! LDA #MAPOBJ_EMPTY   / STA Map_Objects_IDs      ; no more HELP bubble
+//! LDA #MAPOBJ_AIRSHIP / STA Map_Objects_IDs+1    ; airship is in town
+//! ```
+//!
+//! Persisting that would stop the HELP bubble reappearing in a world whose
+//! king was already rescued. It would also **break the spine**, and that is not
+//! a guess:
+//!
+//! * The tile the maze calls the airship — `TILE_AIRSHIP` `$C9` — does not
+//!   enter the airship. All seven `AIRSHIP_ENTRIES` share one object stream,
+//!   `$D2AF`, whose entire contents is a single `OBJ_TOADANDKING` (`$D5`). The
+//!   dock tile enters the **king's room**, and the king's room chains into the
+//!   airship through `Level_JctCtl = 3`.
+//! * That chain is taken only while `Map_Objects_IDs[0]` is non-zero. Once it
+//!   is cleared the same tile takes the `standard_exit` arm — dialog, then back
+//!   to the map — and the airship is reachable only by walking onto the
+//!   marching object in slot 1.
+//! * That object's route is `Map_Airship_Dest_YSets` / `XSets` in PRG011:
+//!   **vanilla coordinates**, which nothing in the randomizer rewrites, on a
+//!   map the randomizer redrew. And `maze/walk.rs` models the spine edge as
+//!   leaving `TILE_AIRSHIP`; it knows nothing about a marching object.
+//!
+//! So `Map_Init` restoring the HELP bubble is exactly what makes the spine edge
+//! repeatable across visits — the property the design charter rests reachability
+//! on. Persisting the rescue would trade a cosmetic complaint for a maze that
+//! can be unwinnable. `the_spine_edge_needs_the_help_bubble_back` pins the two
+//! ROM facts, and `the_restore_can_only_ever_clear_an_id` pins that this module
+//! is structurally incapable of interfering.
+//!
+//! One pre-existing sharp edge found on the way, and worth knowing: **within a
+//! single visit, dying on the airship takes the dock tile out of service** —
+//! slot 0 is already clear, so re-entering `$C9` walks you straight back out
+//! and the marching airship at vanilla coordinates is the only way in. Leaving
+//! the world and returning resets it. The resurrection is the mitigation.
+//!
+//! ## The four per-world flags
+//!
+//! `Map_Got13Warp` (`$796F`), `Map_Anchored` (`$7970`), `Map_WhiteHouse`
+//! (`$7971`) and `Map_CoinShip` (`$7972`) are all reset on world entry, and all
+//! four are cleared **before** the `$84CD` hook — so this module's restore point
+//! would work for them and a pack there would not, exactly as for the objects:
+//!
+//! | Flag | Cleared at | Set at |
+//! |---|---|---|
+//! | `Map_Got13Warp` | `$84BB` (`8D 6F 79`), inline | `ObjNorm_WarpHide`, PRG001, in-level |
+//! | `Map_Anchored` | `$84BE` (`8D 70 79`), inline, and game over `$9304`-ish | inventory Anchor use, PRG026 |
+//! | `Map_WhiteHouse` | inside `Map_Init` | `MapBonusChk_WhiteToadHouse`, PRG011 |
+//! | `Map_CoinShip` | inside `Map_Init` | `MapBonusChk_CoinShip`, PRG011 |
+//!
+//! None was persisted, and each has its own reason:
+//!
+//! * **`Map_Got13Warp` is not map state.** It is read in exactly one place,
+//!   `ObjInit_WarpHide` (PRG001), to suppress the hidden toad house *inside
+//!   level 1-3*. Every other in-level item respawns when a level is replayed,
+//!   which the maze does constantly; persisting this one would make a single
+//!   hidden door uniquely non-respawning, which is less consistent rather than
+//!   more. The whistle is not consumed on use in this mode either, so there is
+//!   nothing to farm.
+//! * **`Map_Anchored` qualifies an object that does not exist.** It only
+//!   freezes the marching airship, and slot 1 is `MAPOBJ_EMPTY` in every world's
+//!   ROM table — the airship object exists only after the king scene, within the
+//!   same visit, during which nothing clears the flag. Restoring it on entry
+//!   would restore a fact about nothing.
+//! * **`Map_CoinShip` is already capped by this module.**
+//!   `MapBonusChk_CoinShip` converts a slot holding `MAPOBJ_HAMMERBRO` (`$03`
+//!   only — the other three bro types never qualify, which is why the coin ship
+//!   is a World 1/3/5/6 thing). Once a world's Hammer Bros are beaten they stay
+//!   beaten, so the scan finds nothing and no further coin ship can appear
+//!   there. Persisting the flag would only forbid a *second* coin ship on a
+//!   *second* Hammer Bro, and each one already costs the Hammer Bro's own
+//!   reward.
+//! * **`Map_WhiteHouse` is a slow faucet on an axis this mode does not
+//!   ration.** Re-earning it needs `Map_BonusType == 1` — armed by an
+//!   `OBJ_BONUSCONTROLLER` inside one particular level — plus the coin count,
+//!   plus a world hop, for one item that any toad house also gives. Against
+//!   roughly 30 bytes of PRG011, in the bank this module already spends from,
+//!   in a mode that forces No Game Over Penalty and unlimited whistles.
+//!
+//! If any of these is revisited, the shape is the one above: the flag is
+//! monotone per world, so a bit per world set at the site that raises it plus a
+//! replay from the `$84CD` restore is the pattern, and no pack is possible.
 
 use crate::rom::Rom;
 
@@ -365,6 +463,134 @@ mod tests {
                 pc += mode.extra_bytes() as usize + 1;
             }
         }
+    }
+
+    /// `OBJ_TOADANDKING` — the in-level object that runs the Toad-and-King
+    /// scene, and the whole content of every world's airship entry.
+    const OBJ_TOADANDKING: u8 = 0xD5;
+    /// `MAPOBJ_HELP` and `MAPOBJ_EMPTY`.
+    const MAPOBJ_HELP: u8 = 0x01;
+    const MAPOBJ_EMPTY: u8 = 0x00;
+
+    /// **The spine edge is repeatable only because the HELP bubble comes
+    /// back**, which is why the king rescue is not persisted — see the module
+    /// header. Two ROM facts carry that argument, and both are pinned here so
+    /// nobody "fixes" the bubble and takes the airship with it.
+    ///
+    /// The dock tile the maze uses as its spine target does not enter the
+    /// airship: it enters the king's room, which chains onward through
+    /// `Level_JctCtl = 3` — and only while `Map_Objects_IDs[0]` is non-zero.
+    #[test]
+    fn the_spine_edge_needs_the_help_bubble_back() {
+        let Ok(rom_bytes) = std::fs::read(ROM_PATH) else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let van = Rom::from_bytes(&rom_bytes).expect("vanilla ROM parses");
+
+        for &(w, e) in rom_data::AIRSHIP_ENTRIES {
+            let entry = rom_data::read_entry(&van, &rom_data::WORLDS[w], e);
+            let obj = u16::from_le_bytes([entry.obj_lo, entry.obj_hi]);
+            assert!(
+                rom_data::has_enemy_id(&van, obj, OBJ_TOADANDKING),
+                "W{}: the airship entry (obj ${obj:04X}) no longer hosts the Toad-and-King \
+                 scene — the dock tile's chain into the airship is what the HELP bubble gates",
+                w + 1,
+            );
+        }
+
+        let mut options =
+            crate::Options { palettes: false, palette_themed: false, ..Default::default() };
+        options.world_maze = true;
+        options.world_order = true;
+        let maze = crate::randomize_rom(&rom_bytes, 7, &options, None).ok();
+
+        // Both ROMs, and the count is asserted: a maze build that quietly
+        // failed would leave this checking vanilla twice.
+        let roms: Vec<&Rom> = [Some(&van), maze.as_ref()].into_iter().flatten().collect();
+        assert_eq!(roms.len(), 2, "the maze build failed, so only vanilla was checked");
+        for rom in roms {
+            for w in 0..8usize {
+                let id = |slot: usize| {
+                    rom.read_byte(rom_data::map_obj_slot_offset(
+                        rom,
+                        rom_data::MAP_OBJ_IDS_MASTER,
+                        w,
+                        slot,
+                    ))
+                };
+                assert_eq!(
+                    id(0),
+                    MAPOBJ_HELP,
+                    "W{}: slot 0 must still be the HELP bubble — it is the engine's own \
+                     \"have I sent you to the airship yet\" flag",
+                    w + 1,
+                );
+                // W8 has no airship, so its slot 1 is fair game for the builder
+                // (`first_usable_map_obj_slot`); W1-W7 must leave it empty for
+                // the rescue to fill.
+                if w != 7 {
+                    assert_eq!(
+                        id(1),
+                        MAPOBJ_EMPTY,
+                        "W{}: slot 1 must be empty until the king scene puts the airship there",
+                        w + 1,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Does `code` ever store a non-zero value into `Map_Objects_IDs`?
+    ///
+    /// A conservative read: the last `LDA #imm` before the store has to be
+    /// zero. Anything cleverer would be a way for a wrong routine to pass.
+    fn stores_only_zero_into_ids(code: &[u8]) -> bool {
+        use mos6502::Variant;
+
+        let mut last_imm: Option<u8> = None;
+        let mut pc = 0usize;
+        while pc < code.len() {
+            let (_instr, mode) = Ricoh2a03::decode(code[pc]).expect("routine decodes");
+            if code[pc] == 0xA9 {
+                last_imm = Some(code[pc + 1]);
+            }
+            if matches!(code[pc], 0x8D | 0x99 | 0x9D) {
+                let target = u16::from_le_bytes([code[pc + 1], code[pc + 2]]);
+                if (MAP_OBJECTS_IDS..MAP_OBJECTS_IDS + 14).contains(&target)
+                    && last_imm != Some(MAPOBJ_EMPTY)
+                {
+                    return false;
+                }
+            }
+            pc += mode.extra_bytes() as usize + 1;
+        }
+        true
+    }
+
+    /// **The restore may only ever empty a slot, never fill one.**
+    ///
+    /// It runs on every full map init, so a routine that could write an ID
+    /// would be the one piece of code able to conjure or suppress an airship —
+    /// exactly the failure the king rescue was skipped to avoid. Structural
+    /// rather than behavioural, because the dangerous version would pass every
+    /// round-trip test above and only show on the seed where it mattered.
+    #[test]
+    fn the_restore_can_only_ever_clear_an_id() {
+        assert!(stores_only_zero_into_ids(&RESTORE_OBJECTS));
+    }
+
+    /// **Wrong stored value.** Make the restore write `MAPOBJ_AIRSHIP` instead
+    /// of `MAPOBJ_EMPTY` and the structural check has to notice.
+    #[test]
+    fn mutation_a_restore_that_writes_an_id_is_caught() {
+        let mut bad = RESTORE_OBJECTS;
+        assert_eq!(bad[13], 0xA9, "byte 13 is no longer the LDA # this mutates");
+        bad[14] = 0x02; // MAPOBJ_AIRSHIP
+        assert!(
+            !stores_only_zero_into_ids(&bad),
+            "a restore that fills a slot instead of emptying it went unnoticed",
+        );
     }
 
     // --- The emulated 2A03 --------------------------------------------------

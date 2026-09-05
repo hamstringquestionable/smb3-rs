@@ -1005,15 +1005,80 @@ requested pad role distribution.
   the four corner patterns, and `the_gate_writes_no_chr` asserts the whole 128KB
   CHR region comes out untouched.
 
+## The state that must NOT persist
+
+Two things looked like the Hammer Bro bug and are not. Both were investigated
+after the first playtest and deliberately left alone; the first would have
+broken the game.
+
+### The king rescue, and why the HELP bubble has to come back
+
+`TILE_AIRSHIP $C9` **does not enter the airship.** All seven `AIRSHIP_ENTRIES`
+share one object stream, `$D2AF`, whose entire content is a single
+`OBJ_TOADANDKING`. What happens next is decided by
+`TAndK_WaitPlayerButtonA` (PRG024 `$A260`), and it branches on **slot 0**:
+
+```text
+LDA Map_Objects_IDs        ; the HELP bubble
+BEQ standard_exit          ; gone -> dialog, back to the map
+LDA #$03 / STA Level_JctCtl ; present -> "switch to airship"  <-- the spine edge
+LDA #MAPOBJ_EMPTY  / STA Map_Objects_IDs
+LDA #MAPOBJ_AIRSHIP / STA Map_Objects_IDs+1
+```
+
+So the HELP bubble **is** the switch that makes the dock tile the spine edge.
+Persisting the rescue — keeping slot 0 clear across visits, which is what the
+"the bubble came back, that looks wrong" complaint asks for — would make every
+world's airship dock a **permanent dead end**. The airship would then be
+reachable only by walking onto the marching object in slot 1, whose route comes
+from `Map_Airship_Dest_YSets`/`XSets` in PRG011: **vanilla coordinates, which
+nothing in the randomizer rewrites, on a map the randomizer redrew.** And
+`maze/walk.rs` models the spine as an edge leaving `TILE_AIRSHIP`; it knows
+nothing about a marching object. That is a solvability regression bought with a
+cosmetic complaint.
+
+`Map_Init` restoring the bubble is therefore **load-bearing**: it is what makes
+the spine edge repeatable across visits, which is the property this document's
+monotone-reachability argument rests on. The bubble is not claiming the king is
+unrescued; it is saying "this world's airship edge is live", which is true, and
+true of every world always.
+
+`the_spine_edge_needs_the_help_bubble_back` pins it, and
+`the_restore_can_only_ever_clear_an_id` decodes `RESTORE_OBJECTS` to prove the
+module is *incapable* of conjuring or suppressing an airship.
+
+**A pre-existing sharp edge found on the way**, which the maze mitigates rather
+than causes: within one visit, dying on the airship leaves slot 0 already clear,
+so re-entering `$C9` walks you straight back out and the vanilla-coordinate
+marching airship is the only way in. Leaving the world and returning resets it —
+which standard mode cannot do and the maze can.
+
+### The four per-world flags — each declined on its own evidence
+
+All four are cleared *before* the `$84CD` restore hook (`Map_WhiteHouse` and
+`Map_CoinShip` inside `Map_Init` at `$84AD`; `Map_Got13Warp` and `Map_Anchored`
+inline at `$84BB`/`$84BE`), so a restore there would work and a pack there could
+not — the same shape as the objects. The machinery was not the obstacle; none of
+them is worth the bytes:
+
+- **`Map_Got13Warp` is not map state.** Its one reader is `ObjInit_WarpHide`
+  (PRG001), which suppresses the hidden toad house **inside level 1-3**. Every
+  other in-level item respawns on a replay, which this mode does constantly;
+  persisting this one would make a single hidden door uniquely non-respawning.
+- **`Map_Anchored` qualifies an object that does not exist.** It freezes the
+  marching airship, and slot 1 is `MAPOBJ_EMPTY` on every world entry.
+- **`Map_CoinShip` is already capped by the object fix.** `MapBonusChk_CoinShip`
+  converts a slot holding `MAPOBJ_HAMMERBRO`; once a world's bros stay beaten,
+  the scan finds nothing and no further coin ship can appear there.
+- **`Map_WhiteHouse` is a slow faucet on an axis this mode does not ration.**
+  Re-earning it needs a `Map_BonusType` arm, the coin count, and a world hop,
+  for one item any toad house also gives — against ~30 bytes of PRG011 in a mode
+  that already forces No Game Over Penalty and unlimited whistles.
+
 ## Still open
 
-- **Per-world flags `$84A0` resets** — `Map_Anchored` (`$7970`),
-  `Map_WhiteHouse` (`$7971`), `Map_CoinShip` (`$7972`), `Map_Got13Warp`
-  (`$796F`). Vanilla never returns to a world so it does not matter; a maze
-  returns constantly. All four are pure booleans at all nine live sites, so they
-  pack to **4 bytes** (one bit per world per flag) rather than 32 — but the pack
-  hook at `$84CD` runs *after* `$84A0` has already zeroed them at `$84BB`, so
-  capturing them needs a hook at or before `JSR Map_Init` (`$84AD`).
+- ~~**Per-world flags `$84A0` resets**~~ — **investigated and declined**, all
+  four, see "The state that must NOT persist" below.
 - **Whether K should scale with `world_count`** rather than being flat. It is
   currently clamped to the airships the spine offers, which is the safe half of
   the answer, not the interesting one.
