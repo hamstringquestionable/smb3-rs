@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SMB3 CHR Picker (debug)</title>
+<style>
+body { background: #141428; color: #e0e0e0; font-family: ui-monospace, Menlo, monospace; padding: 1rem; margin: 0; }
+h1 { color: #5c94fc; margin: 0 0 0.5rem; font-size: 1rem; }
+h1 small { color: #9a9ab0; font-weight: normal; }
+.panel { position: fixed; top: 1rem; right: 1rem; width: 300px; background: #1c1c38; border: 1px solid #2a2a50; padding: 0.75rem; font-size: 0.75rem; max-height: 95vh; overflow-y: auto; }
+.panel h2 { color: #e44434; font-size: 0.85rem; margin: 0.5rem 0 0.3rem; }
+.pick { color: #6dce56; word-break: break-all; }
+canvas#grid { image-rendering: pixelated; cursor: crosshair; background: #0a0a1a; border: 1px solid #2a2a50; display: block; }
+.wrap { margin-right: 320px; }
+.recent { font-size: 0.7rem; color: #c0c0d0; }
+.recent .row { display: flex; align-items: center; gap: 0.5rem; padding: 0.2rem 0; border-bottom: 1px solid #2a2a50; }
+.recent canvas { image-rendering: pixelated; background: #0a0a1a; border: 1px solid #2a2a50; }
+.recent .meta { flex: 1; }
+button { background: #1c1c38; border: 1px solid #2a2a50; color: #e0e0e0; padding: 0.25rem 0.5rem; cursor: pointer; font-family: inherit; font-size: 0.75rem; }
+input[type=text], input[type=number], select { background: #0a0a1a; border: 1px solid #2a2a50; color: #e0e0e0; padding: 0.2rem; font-family: inherit; font-size: 0.75rem; }
+.row { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.4rem; }
+.coord { color: #ffd; }
+.note { color: #777; font-size: 0.7rem; margin-bottom: 0.4rem; }
+.swatch { width: 52px; height: 34px; border: 2px solid #2a2a50; border-radius: 3px; padding: 0; cursor: pointer; font-family: inherit; font-size: 0.65rem; font-weight: bold; }
+.swatch.active { border-color: #6dce56; }
+.palgrid { display: grid; grid-template-columns: repeat(16, 1fr); gap: 1px; margin-bottom: 0.4rem; }
+.palcell { aspect-ratio: 1; border: 1px solid #0a0a1a; padding: 0; cursor: pointer; }
+.palcell.current { border-color: #6dce56; border-width: 2px; }
+</style>
+</head>
+<body>
+<h1>SMB3 CHR Picker <small>— drag a rectangle around a sprite. Tiles are shown as 8×16 pairs, the way SMB3 stores sprite art.</small></h1>
+
+<div class="wrap"><canvas id="grid"></canvas></div>
+
+<div class="panel">
+  <h2>ROM</h2>
+  <div class="row"><input type="file" id="rom-input" accept=".nes"></div>
+  <div class="note" id="rom-status">loading cached ROM…</div>
+
+  <h2>View</h2>
+  <div class="row">
+    <label><input type="checkbox" id="hashMode"> title hash icons only</label>
+  </div>
+  <div class="row" id="hashPageRow" hidden>
+    <label>page <select id="hashPage"></select></label>
+  </div>
+  <div class="note" id="hashNote" hidden>Only these four 1&nbsp;KB pages are
+  reachable from a title-screen sprite — the banks are fixed, so nothing else can
+  be referenced. Picks come out as <code>ICON_TILES</code> rows.</div>
+  <div class="row" id="pageRow">
+    <label>page <input type="number" id="page" value="0" min="0" max="127" style="width:56px"></label>
+    <label>count <input type="number" id="pageCount" value="8" min="1" max="32" style="width:48px"></label>
+  </div>
+  <div class="row">
+    <label>pairs/row <input type="number" id="stride" value="16" min="1" max="64" style="width:56px"></label>
+    <label>scale <input type="number" id="scale" value="4" min="1" max="10" style="width:44px"></label>
+  </div>
+  <div class="note">1 KB page = 64 tiles = 32 pairs. Nudge pairs/row until a tall
+  sprite lines up into a column — the stride only affects the display, never the
+  tile numbers a pick records.</div>
+
+  <h2>Palette</h2>
+  <div class="row" id="swatches"></div>
+  <div id="palgrid" class="palgrid" hidden></div>
+  <div class="note">Click a slot, then a color. Slot 0 is the backdrop — it
+  always renders transparent, whatever it's set to.</div>
+  <div class="row">
+    <input type="text" id="palette" value="0F,16,27,36" size="14">
+    <select id="palPreset">
+      <option value="">presets…</option>
+      <option value="0F,16,27,36">fire / red</option>
+      <option value="0F,16,30,27">mario</option>
+      <option value="0F,1A,30,27">green shell</option>
+      <option value="0F,0F,30,16">grey / white</option>
+      <option value="0F,06,16,36">brown</option>
+      <option value="0F,12,16,30">blue</option>
+      <option value="0F,17,28,30">gold</option>
+    </select>
+  </div>
+
+  <h2>Label for next pick</h2>
+  <div class="row"><input type="text" id="label" placeholder="e.g. hammer_breaks_locks" style="flex:1"></div>
+  <div class="row"><label><input type="checkbox" id="mirror"> mirror (symmetric sprite)</label></div>
+  <div class="note">Several sprites are stored as one half only and drawn twice,
+  h-flipped — so only half of them exists in CHR. Tick this and drag just that
+  half; the pick comes out as the whole sprite, twice as wide.</div>
+
+  <h2>Cursor</h2>
+  <div id="cursor" class="coord">—</div>
+
+  <h2>Last pick</h2>
+  <div id="last" class="pick">—</div>
+
+  <h2>Picks <span id="pickCount" style="color:#9a9ab0">(0)</span></h2>
+  <div id="recent" class="recent"></div>
+  <div style="margin-top:0.5rem">
+    <button id="copy">Copy as JSON</button> <button id="clear">Clear</button>
+  </div>
+</div>
+
+<script type="module">
+// Picks CHR sprites out of the user's own ROM and emits the `icon:` specs
+// web/options.js consumes: { tiles: [...row-major], cols, palette }.
+//
+// Why the pair layout: SMB3 draws sprites in 8x16 mode, so the art is stored
+// as (even tile = top half, odd tile = bottom half). Laid out as a flat 16-wide
+// tile grid — what chr-viewer.html shows — every sprite's halves sit side by
+// side and nothing is recognizable. Here each cell is one 8x16 pair.
+import { NES_PALETTE, decodeTile, resolvePalette, renderTiles } from "./chr.js";
+
+const TILES_PER_PAGE = 64; // 1 KB CHR page
+const TOTAL_TILES = 8192;  // 128 KB of CHR
+
+const cv = document.getElementById("grid");
+const ctx = cv.getContext("2d");
+const romInput = document.getElementById("rom-input");
+const romStatus = document.getElementById("rom-status");
+const pageEl = document.getElementById("page");
+const pageCountEl = document.getElementById("pageCount");
+const strideEl = document.getElementById("stride");
+const scaleEl = document.getElementById("scale");
+const paletteEl = document.getElementById("palette");
+const palPresetEl = document.getElementById("palPreset");
+const swatchesEl = document.getElementById("swatches");
+const palGridEl = document.getElementById("palgrid");
+const labelEl = document.getElementById("label");
+const mirrorEl = document.getElementById("mirror");
+const hashModeEl = document.getElementById("hashMode");
+const hashPageEl = document.getElementById("hashPage");
+const hashPageRow = document.getElementById("hashPageRow");
+const hashNote = document.getElementById("hashNote");
+const pageRow = document.getElementById("pageRow");
+const cursorEl = document.getElementById("cursor");
+const lastEl = document.getElementById("last");
+const recentEl = document.getElementById("recent");
+const pickCountEl = document.getElementById("pickCount");
+
+let rom = null;
+const picks = [];
+let drag = null; // { c0, r0, c1, r1 } in pair-cell coords
+
+// ROM cache via IndexedDB (mirrors app.js / chr-viewer.html)
+const DB = "smb3-rs", STORE = "rom";
+function openDb() {
+	return new Promise((res, rej) => {
+		const r = indexedDB.open(DB, 1);
+		r.onupgradeneeded = () => r.result.createObjectStore(STORE);
+		r.onsuccess = () => res(r.result);
+		r.onerror = () => rej(r.error);
+	});
+}
+async function loadCachedRom() {
+	const db = await openDb();
+	return new Promise((res) => {
+		const tx = db.transaction(STORE, "readonly");
+		const r = tx.objectStore(STORE).get("data");
+		r.onsuccess = () => res(r.result || null);
+		r.onerror = () => res(null);
+	});
+}
+
+loadCachedRom().then((bytes) => {
+	if (bytes) {
+		rom = bytes;
+		romStatus.textContent = "using ROM cached by the randomizer page";
+		render();
+	} else {
+		romStatus.textContent = "no cached ROM — pick a .nes file above";
+	}
+}).catch(() => { romStatus.textContent = "no cached ROM — pick a .nes file above"; });
+
+romInput.addEventListener("change", (e) => {
+	const file = e.target.files[0];
+	if (!file) return;
+	const reader = new FileReader();
+	reader.onload = () => {
+		rom = new Uint8Array(reader.result);
+		romStatus.textContent = file.name;
+		render();
+	};
+	reader.readAsArrayBuffer(file);
+});
+
+// The text box stays the single source of truth for the working palette; the
+// swatches and the 64-color grid read and write it.
+function palValues() {
+	const v = paletteEl.value.split(",").map((p) => parseInt(p.trim(), 16) & 0x3F);
+	while (v.length < 4) v.push(0x0F);
+	return v.slice(0, 4).map((c) => (Number.isNaN(c) ? 0x0F : c));
+}
+
+function setPalValues(v) {
+	paletteEl.value = v.map(hex2).join(",");
+	refreshPalette();
+}
+
+function hex2(c) {
+	return c.toString(16).toUpperCase().padStart(2, "0");
+}
+
+function palette() {
+	return resolvePalette(palValues());
+}
+
+let palSlot = null; // which slot the color grid is editing, or null when closed
+
+// Saved picks keep their own palette snapshot, so only the browse grid redraws.
+function refreshPalette() {
+	renderSwatches();
+	renderPalGrid();
+	render();
+}
+
+function renderSwatches() {
+	const v = palValues();
+	swatchesEl.replaceChildren();
+	v.forEach((c, i) => {
+		const [r, g, b] = NES_PALETTE[c];
+		const btn = document.createElement("button");
+		btn.className = `swatch${palSlot === i ? " active" : ""}`;
+		btn.style.background = `rgb(${r},${g},${b})`;
+		// Luminance picks readable label text over any of the 64 colors.
+		btn.style.color = r * 0.299 + g * 0.587 + b * 0.114 > 140 ? "#000" : "#fff";
+		btn.textContent = `${i}: ${hex2(c)}`;
+		btn.title = i === 0 ? "slot 0 — always renders transparent" : `slot ${i}`;
+		btn.addEventListener("click", () => {
+			palSlot = palSlot === i ? null : i;
+			renderSwatches();
+			renderPalGrid();
+		});
+		swatchesEl.append(btn);
+	});
+}
+
+function renderPalGrid() {
+	palGridEl.hidden = palSlot === null;
+	if (palSlot === null) return;
+	const current = palValues()[palSlot];
+	palGridEl.replaceChildren();
+	for (let c = 0; c < 64; c++) {
+		const [r, g, b] = NES_PALETTE[c];
+		const cell = document.createElement("button");
+		cell.className = `palcell${c === current ? " current" : ""}`;
+		cell.style.background = `rgb(${r},${g},${b})`;
+		cell.title = `$${hex2(c)}`;
+		cell.addEventListener("click", () => {
+			const v = palValues();
+			v[palSlot] = c;
+			setPalValues(v);
+		});
+		palGridEl.append(cell);
+	}
+}
+
+// The four 1 KB CHR pages a title-screen sprite can address, in slot order.
+// PRG030's reset path fixes MMC3 R2-R5 to these, so an OAM tile ID's top two
+// bits pick one of them and nothing outside this set is reachable. Order
+// matters — the index here *is* the tile ID's high bits.
+const HASH_PAGES = [0x20, 0x21, 0x04, 0x7F];
+
+function hashMode() {
+	return hashModeEl.checked;
+}
+
+// Absolute CHR tile -> the OAM tile ID that names it on the title screen, or
+// null if it isn't on an addressable page. ICON_TILES stores the odd (pattern
+// table 1) ID, whose top half is the even tile before it.
+function oamTileId(absTop) {
+	const slot = HASH_PAGES.indexOf(Math.floor(absTop / TILES_PER_PAGE));
+	if (slot < 0) return null;
+	return (slot << 6) | (absTop % TILES_PER_PAGE) | 1;
+}
+
+function view() {
+	const page = hashMode() ? HASH_PAGES[+hashPageEl.value || 0] : Math.max(0, +pageEl.value || 0);
+	const firstTile = page * TILES_PER_PAGE;
+	const count = hashMode() ? 1 : +pageCountEl.value || 1;
+	const tiles = Math.min(count * TILES_PER_PAGE, TOTAL_TILES - firstTile);
+	const stride = Math.max(1, +strideEl.value || 16);
+	const pairs = Math.floor(tiles / 2);
+	return {
+		firstTile,
+		stride,
+		pairs,
+		rows: Math.ceil(pairs / stride),
+		scale: Math.max(1, +scaleEl.value || 4),
+	};
+}
+
+// Absolute CHR tile id of the top half of pair cell (col, row) in the view.
+function pairTile(v, col, row) {
+	return v.firstTile + (row * v.stride + col) * 2;
+}
+
+function render() {
+	if (!rom) return;
+	const v = view();
+	const pal = palette();
+	cv.width = v.stride * 8;
+	cv.height = v.rows * 16;
+	cv.style.width = `${cv.width * v.scale}px`;
+	cv.style.height = `${cv.height * v.scale}px`;
+	ctx.clearRect(0, 0, cv.width, cv.height);
+	for (let i = 0; i < v.pairs; i++) {
+		const col = i % v.stride, row = Math.floor(i / v.stride);
+		const top = v.firstTile + i * 2;
+		ctx.putImageData(decodeTile(rom, top, pal), col * 8, row * 16);
+		ctx.putImageData(decodeTile(rom, top + 1, pal), col * 8, row * 16 + 8);
+	}
+	drawOverlay(v);
+}
+
+// Selection rectangles are drawn in a second pass at display scale, so they
+// stay 1px crisp instead of being blown up with the art.
+function drawOverlay(v) {
+	const box = document.getElementById("overlay") ?? makeOverlay();
+	box.width = cv.width * v.scale;
+	box.height = cv.height * v.scale;
+	box.style.left = `${cv.offsetLeft}px`;
+	box.style.top = `${cv.offsetTop}px`;
+	const octx = box.getContext("2d");
+	octx.clearRect(0, 0, box.width, box.height);
+	const cell = { w: 8 * v.scale, h: 16 * v.scale };
+	octx.lineWidth = 2;
+	for (const p of picks) {
+		if (p.view.firstTile !== v.firstTile || p.view.stride !== v.stride) continue;
+		octx.strokeStyle = "rgba(255,68,68,0.9)";
+		octx.strokeRect(p.view.col * cell.w, p.view.row * cell.h, p.cols * cell.w, p.pairRows * cell.h);
+	}
+	if (drag) {
+		const r = normRect(drag);
+		octx.strokeStyle = "rgba(108,206,86,0.95)";
+		octx.strokeRect(r.c * cell.w, r.r * cell.h, r.cols * cell.w, r.rows * cell.h);
+	}
+}
+
+function makeOverlay() {
+	const box = document.createElement("canvas");
+	box.id = "overlay";
+	box.style.position = "absolute";
+	box.style.pointerEvents = "none";
+	cv.parentElement.style.position = "relative";
+	cv.parentElement.appendChild(box);
+	return box;
+}
+
+function cellFromEvent(e) {
+	const v = view();
+	const rect = cv.getBoundingClientRect();
+	return {
+		c: Math.max(0, Math.min(v.stride - 1, Math.floor((e.clientX - rect.left) / (8 * v.scale)))),
+		r: Math.max(0, Math.min(v.rows - 1, Math.floor((e.clientY - rect.top) / (16 * v.scale)))),
+	};
+}
+
+function normRect(d) {
+	const c = Math.min(d.c0, d.c1), r = Math.min(d.r0, d.r1);
+	return { c, r, cols: Math.abs(d.c1 - d.c0) + 1, rows: Math.abs(d.r1 - d.r0) + 1 };
+}
+
+cv.addEventListener("mousemove", (e) => {
+	const p = cellFromEvent(e);
+	const v = view();
+	const t = pairTile(v, p.c, p.r);
+	cursorEl.textContent = `pair (${p.c}, ${p.r}) → tiles ${t}/${t + 1} (0x${t.toString(16).toUpperCase()})`;
+	if (drag) { drag.c1 = p.c; drag.r1 = p.r; drawOverlay(v); }
+});
+
+cv.addEventListener("mousedown", (e) => {
+	e.preventDefault();
+	if (!rom) return;
+	const p = cellFromEvent(e);
+	drag = { c0: p.c, r0: p.r, c1: p.c, r1: p.r };
+	drawOverlay(view());
+});
+
+cv.addEventListener("mouseup", (e) => {
+	if (!drag) return;
+	const p = cellFromEvent(e);
+	drag.c1 = p.c; drag.r1 = p.r;
+	const r = normRect(drag);
+	drag = null;
+	addPick(r);
+});
+
+cv.addEventListener("mouseleave", () => { if (drag) { drag = null; drawOverlay(view()); } });
+
+// A pick becomes an options.js icon spec: 8x8 tiles listed row-major. Each
+// selected pair row contributes two tile rows — the even (top) halves, then
+// the odd (bottom) halves.
+//
+// With mirror on, you drag only the half that exists in CHR and the pick is
+// widened to the whole sprite here: each row gets its own reverse appended, and
+// `flipRight` h-flips that added half at render time.
+function addPick(r) {
+	const v = view();
+	const mirror = mirrorEl.checked;
+	// Mirror appends the selection reversed. In hash mode a one-pair pick is
+	// appended as-is instead, because a hash icon is always two halves wide —
+	// so the preview shows the doubled icon the emitted row describes.
+	const doubleSingle = hashMode() && r.cols === 1 && !mirror;
+	const tiles = [];
+	for (let row = 0; row < r.rows; row++) {
+		for (const half of [0, 1]) {
+			const line = [];
+			for (let col = 0; col < r.cols; col++) {
+				line.push(pairTile(v, r.c + col, r.r + row) + half);
+			}
+			if (mirror) tiles.push(...line, ...[...line].reverse());
+			else if (doubleSingle) tiles.push(...line, ...line);
+			else tiles.push(...line);
+		}
+	}
+	const pal = palValues();
+	// In hash mode also record the pick as ICON_TILES names it: the left and
+	// right halves' OAM tile IDs, and the attribute byte that h-flips the right
+	// one. A mirrored pick uses the same tile twice, which is what 0x40 means.
+	// A hash icon is 16x16 — two 8x16 halves side by side — so a pick is either
+	// two pairs across, or one pair used for both halves. In the one-pair case
+	// the second half is that same tile again, drawn flipped or not; reading the
+	// pair next door would silently pull in art that wasn't selected.
+	const left = pairTile(v, r.c, r.r);
+	const single = r.cols === 1;
+	const oam = hashMode()
+		? {
+			left: oamTileId(left),
+			right: oamTileId(single ? left : pairTile(v, r.c + 1, r.r)),
+			attr: mirror ? 0x40 : 0x00,
+			doubled: single,
+			shapeOk: r.rows === 1 && r.cols <= 2,
+		}
+		: null;
+	picks.push({
+		label: labelEl.value.trim(),
+		tiles,
+		cols: r.cols * (mirror || doubleSingle ? 2 : 1),
+		palette: pal,
+		flipRight: mirror,
+		pairRows: r.rows,
+		oam,
+		view: { firstTile: v.firstTile, stride: v.stride, col: r.c, row: r.r },
+	});
+	lastEl.textContent = specText(picks[picks.length - 1]);
+	labelEl.value = "";
+	refreshRecent();
+	drawOverlay(v);
+}
+
+const rustHex = (v) => `0x${hex2(v)}`;
+
+function specText(p) {
+	if (p.oam) {
+		if (p.oam.left == null || p.oam.right == null) {
+			return `// ${p.label || "pick"}: not on an addressable page`;
+		}
+		const why = p.oam.shapeOk
+			? ""
+			: "  // NOT 16x16 — select one or two pairs on a single row";
+		const how = p.oam.doubled ? (p.oam.attr ? " (half, mirrored)" : " (half, doubled)") : "";
+		const note = p.label || how ? ` // ${p.label}${how}` : "";
+		return `(${rustHex(p.oam.left)}, ${rustHex(p.oam.right)}, ${rustHex(p.oam.attr)}),${note}${why}`;
+	}
+	const pal = p.palette.map(rustHex).join(", ");
+	const head = p.label ? `${p.label}: ` : "";
+	const flip = p.flipRight ? ", flipRight: true" : "";
+	return `${head}{ tiles: [${p.tiles.join(", ")}], cols: ${p.cols}, palette: [${pal}]${flip} }`;
+}
+
+function refreshRecent() {
+	pickCountEl.textContent = `(${picks.length})`;
+	recentEl.replaceChildren();
+	for (let i = picks.length - 1; i >= 0; i--) {
+		const p = picks[i];
+		const row = document.createElement("div");
+		row.className = "row";
+		const prev = document.createElement("canvas");
+		renderTiles(prev, rom, p.tiles, p.cols, resolvePalette(p.palette), p.flipRight);
+		prev.style.width = `${prev.width * 2}px`;
+		prev.style.height = `${prev.height * 2}px`;
+		const meta = document.createElement("div");
+		meta.className = "meta";
+		meta.textContent = p.label || `${p.cols}×${p.pairRows} @ ${p.tiles[0]}`;
+		const del = document.createElement("button");
+		del.textContent = "×";
+		del.addEventListener("click", () => { picks.splice(i, 1); refreshRecent(); drawOverlay(view()); });
+		row.append(prev, meta, del);
+		recentEl.appendChild(row);
+	}
+}
+
+document.getElementById("copy").addEventListener("click", () => {
+	navigator.clipboard.writeText(picks.map(specText).join("\n"));
+});
+document.getElementById("clear").addEventListener("click", () => {
+	picks.length = 0;
+	lastEl.textContent = "—";
+	refreshRecent();
+	drawOverlay(view());
+});
+palPresetEl.addEventListener("change", () => {
+	if (palPresetEl.value) { paletteEl.value = palPresetEl.value; refreshPalette(); }
+});
+paletteEl.addEventListener("input", refreshPalette);
+for (const el of [pageEl, pageCountEl, strideEl, scaleEl]) {
+	el.addEventListener("input", render);
+}
+
+// Title-hash mode: the only pages a title sprite can name, labelled by what
+// each slot holds so it's obvious where to look.
+const HASH_PAGE_LABELS = ["items & UI", "Mario/Luigi + UI", "score popups", "items (leaf, mushroom…)"];
+HASH_PAGES.forEach((page, slot) => {
+	const opt = document.createElement("option");
+	opt.value = String(slot);
+	opt.textContent = `$${page.toString(16).toUpperCase().padStart(2, "0")} — ${HASH_PAGE_LABELS[slot]}`;
+	hashPageEl.append(opt);
+});
+hashPageEl.value = "3"; // $7F, where most of the current icon set lives
+
+function syncHashMode() {
+	const on = hashMode();
+	hashPageRow.hidden = !on;
+	hashNote.hidden = !on;
+	pageRow.hidden = on;
+	if (on) strideEl.value = "8"; // 8 pairs/row lines a 64-tile page into 4 rows
+	render();
+}
+hashModeEl.addEventListener("change", syncHashMode);
+hashPageEl.addEventListener("change", render);
+
+renderSwatches();
+</script>
+</body>
+</html>
