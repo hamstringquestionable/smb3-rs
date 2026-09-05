@@ -55,6 +55,12 @@ fn qol_variant(rom: &Rom, hammer_rocks: bool, eights_wild: bool) -> Rom {
 /// swap rolled per world. The maze must hold on every map the builder can
 /// produce, not on one arm of it.
 fn census_build(raw: &Rom, seed: u64) -> (Rom, BuildResult) {
+    census_build_swaps(raw, seed).0
+}
+
+/// The same, also reporting which worlds start↔airship swap took — so a test
+/// can see how much of that arm a seed actually exercised instead of assuming.
+fn census_build_swaps(raw: &Rom, seed: u64) -> ((Rom, BuildResult), [bool; 8]) {
     let (hammer_rocks, eights_wild) = match seed % 4 {
         2 => (true, false),
         3 => (false, true),
@@ -80,7 +86,8 @@ fn census_build(raw: &Rom, seed: u64) -> (Rom, BuildResult) {
             ..Default::default()
         },
     );
-    (rom, result)
+    let swaps = catalog.start_airship_swapped;
+    ((rom, result), swaps)
 }
 
 /// The null model: an unmodified eight-world build, the identity spine, and
@@ -1457,4 +1464,76 @@ fn the_pads_still_fit_the_packed_store() {
         );
     }
     eprintln!("  worst packed plane with pads: {worst} of {PLANE_RESERVE} (seed {worst_seed})");
+}
+
+/// **The maze holds under start↔airship swap**, including on seeds where every
+/// eligible world is swapped.
+///
+/// SAS moves both anchors the maze is built on: the spine edge leaves the
+/// airship tile and lands on the destination's start tile, and both of those
+/// move. It has already produced one maze bug — the visited marker assumed
+/// every world starts at column 2 of screen 0, which SAS falsifies for up to
+/// five worlds in eight, silently dropping them out of the whistle cycle.
+///
+/// The censuses roll SAS per world at 50/50, so they cover it on average and
+/// never at the extreme. This walks up the seeds until it has seen a fully
+/// swapped seed and asserts the guarantees on every one along the way — and
+/// fails if it never found one, so it cannot quietly stop testing the thing it
+/// is named after.
+#[test]
+fn the_maze_holds_under_start_airship_swap() {
+    let Some(raw) = load_rom() else { return };
+    let mut swapped_worlds = 0usize;
+    let mut total_worlds = 0usize;
+
+    // A fully swapped seed is a 1-in-128 event, so finding one by building
+    // mazes until it turns up would cost a hundred builds for one data point.
+    // `pick_swaps` needs only a catalog, so scan for the seed cheaply and then
+    // pay for that one build.
+    let full_seed = (0u64..4096)
+        .find(|&seed| {
+            let mut catalog = NodeCatalog::build(&raw, false);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            start_airship_swap::pick_swaps(&mut catalog, &mut rng);
+            catalog.start_airship_swapped.iter().filter(|&&b| b).count() == 7
+        })
+        .expect("no seed in 4096 swaps all seven worlds — pick_swaps has changed");
+
+    for seed in (0..census_seeds(24)).chain(std::iter::once(full_seed)) {
+        let ((_, result), swaps) = census_build_swaps(&raw, seed);
+        let n = swaps.iter().filter(|&&b| b).count();
+        swapped_worlds += n;
+        total_worlds += 7; // pick_swaps covers W1-W7; W8 keeps Bowser's castle
+
+        let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5A5A_5A5A);
+        let (state, report) = super::generate(
+            &result,
+            &IDENTITY_SPINE,
+            super::DEFAULT_WANDS_REQUIRED,
+            &super::graph::Knobs::default(),
+            &mut rng,
+        );
+        assert!(
+            report.spheres.solvable,
+            "seed {seed} ({n} worlds swapped): unwinnable\n{}",
+            report.spheres.spoiler()
+        );
+        assert!(
+            report.unsafe_worlds.is_empty(),
+            "seed {seed} ({n} swapped): worlds that can strand a player: {:?}",
+            report.unsafe_worlds
+        );
+        let cost = super::metrics::completion_cost(&state);
+        assert!(cost.reached, "seed {seed} ({n} swapped): no completion path");
+
+        // W8 is never swapped, so the wand gate's chokepoint argument is
+        // untouched — assert it rather than leave it implied.
+        assert!(!swaps[7], "seed {seed}: W8 was swapped; the wand gate assumes it is not");
+    }
+
+    eprintln!(
+        "  start↔airship swap: {swapped_worlds}/{total_worlds} eligible worlds swapped \
+         ({:.0}%), plus seed {full_seed} with all seven",
+        100.0 * swapped_worlds as f64 / total_worlds as f64
+    );
 }
