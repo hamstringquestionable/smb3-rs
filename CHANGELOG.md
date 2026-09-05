@@ -40,10 +40,11 @@ deploys.
   game rebuilds them from scratch every time you enter a world — which never
   mattered before, since you could never return.
 
-- **World Maze:** the warp whistle is no longer used up. It is the mode's fast
-  travel, and "use it again to go on to the next world" does not work if the
-  first use takes it away. It can still only reach worlds you have already set
-  foot in, so it can never skip you ahead.
+- **World Maze:** you start with a warp whistle and you keep it for good. It is
+  the mode's fast travel, so it is yours from the first frame rather than
+  something to go and find, and blowing it no longer uses it up. It can still
+  only take you to worlds you have already set foot in, so it can never skip
+  you ahead.
 
 - **World Maze:** the decorative corners on the map's boxes are no longer
   scrambled. The skull that was meant to block Bowser's castle was drawn over

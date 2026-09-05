@@ -408,7 +408,7 @@ const WHISTLE_TRAVEL: [u8; 34] = [
 /// an unlimited whistle is unlimited *backtracking*, not a sequence break. That
 /// is the same argument `remove_whistles` rests on, and it is why that option
 /// keeps its intent under this mode while changing mechanism.
-const WHISTLE_CONSUME_OFFSET: usize = 0x347B9;
+pub(crate) const WHISTLE_CONSUME_OFFSET: usize = 0x347B9;
 
 /// What is there in vanilla, asserted before it is replaced.
 #[cfg(test)]

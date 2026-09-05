@@ -81,8 +81,17 @@ fn randomize_inner(
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
     // Resolve random starting items up front (deterministic from seed)
-    let resolved_items: Vec<u8> =
+    let mut resolved_items: Vec<u8> =
         options.starting_items.iter().map(|&item| resolve_starting_item(item, &mut rng)).collect();
+    // The maze starts the player holding its fast-travel item. It is never
+    // consumed (`world_travel` NOPs the engine's own `Inv_UseItem_ShiftOver`),
+    // so this one whistle is the player's whole travel budget for the run —
+    // which is why the mode does not also hide one in a toad house. Added
+    // AFTER the roll so it takes no RNG: turning the mode on cannot move any
+    // later module's stream.
+    if options.world_maze {
+        resolved_items = randomize::items::with_starting_whistle(resolved_items);
+    }
 
     // Resolve the player-hidden tri-state flags up front. These draw from a
     // dedicated substream (MAYBE_SALT) so flipping a flag to `Maybe` never
@@ -442,16 +451,6 @@ fn randomize_inner(
         rom.set_tag("items/whistles");
         randomize::items::remove_whistles_only(rom, &mut rng);
     }
-    // The maze needs a whistle to EXIST, not merely to be possible: it is the
-    // fast-travel item, and without one a player who dies into a world they
-    // cannot finish has no way out but the airship. Pinned after the item roll,
-    // because the roll would otherwise overwrite the slot. Consumes no RNG, so
-    // turning the mode on does not move any later module's stream.
-    if options.world_maze {
-        rom.set_tag("world_maze/whistle");
-        randomize::items::pin_whistle(rom);
-    }
-
     // Set starting lives (patched later by starting_items trampoline if items present)
     rom.set_tag("qol/starting_lives");
     randomize::qol::set_starting_lives(rom, options.starting_lives);
@@ -630,7 +629,10 @@ fn randomize_inner(
     // identical intro-skip + menu-music bytes (shared
     // `title_screen::intro_skip_music_bytes`), so behavior is unchanged;
     // title_screen's FS_INTRO_SKIP routine is left in ROM unreferenced.
-    if !options.starting_items.is_empty() {
+    // Gated on the RESOLVED list, not the requested one: maze mode adds a
+    // whistle to an otherwise-empty inventory, and gating on the request would
+    // have dropped it silently.
+    if !resolved_items.is_empty() {
         rom.set_tag("qol/starting_items");
         randomize::qol::write_starting_items(rom, seed, options.starting_lives, &resolved_items);
     }

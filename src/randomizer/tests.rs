@@ -1628,3 +1628,67 @@ fn a_maze_rom_puts_a_pad_tile_under_every_arrival_key() {
         );
     }
 }
+
+/// **The maze player starts holding a whistle, and it survives being blown.**
+///
+/// Two halves of one promise, and they live in different modules, so this is
+/// the only place that can check the promise itself: `items` puts the whistle
+/// in the starting inventory and `world_travel` stops the engine consuming it.
+/// Either one alone leaves the mode with fast travel the player either never
+/// has or gets to use exactly once.
+///
+/// Read out of the finished ROM rather than from the options, because the
+/// inventory is written by a trampoline that takes the list through two hands.
+#[test]
+fn a_maze_player_starts_with_a_permanent_whistle() {
+    use crate::randomize::rom_data::FS_STARTING_ITEMS;
+
+    const WHISTLE: u8 = 0x0C;
+    let Some(rom) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+
+    for (label, opts) in [
+        (
+            "no requested items",
+            Options { world_maze: true, starting_items: vec![], ..audit_options() },
+        ),
+        (
+            "three requested",
+            Options { world_maze: true, starting_items: vec![0x01, 0x02, 0x03], ..audit_options() },
+        ),
+    ] {
+        let mut rom = rom.clone();
+        randomize(&mut rom, 12345, &opts);
+
+        // The trampoline emits `LDA #item / STA $7D80+i` per slot; find the
+        // whistle by its immediate, next to a store into the inventory.
+        let tramp = rom.read_range(FS_STARTING_ITEMS, 64);
+        let carries_whistle = tramp
+            .windows(5)
+            .any(|w| w[0] == 0xA9 && w[1] == WHISTLE && w[2] == 0x8D && w[4] == 0x7D);
+        assert!(carries_whistle, "[{label}] the maze's starting inventory has no whistle in it");
+
+        // And blowing it must not take it away.
+        assert_eq!(
+            rom.read_range(crate::randomize::world_travel::WHISTLE_CONSUME_OFFSET, 3),
+            [0xEA, 0xEA, 0xEA],
+            "[{label}] the whistle is still consumed on use"
+        );
+    }
+
+    // Without the maze, neither half applies — otherwise this test would pass
+    // for a reason that has nothing to do with the mode.
+    let mut plain = rom.clone();
+    randomize(
+        &mut plain,
+        12345,
+        &Options { world_maze: false, starting_items: vec![], ..audit_options() },
+    );
+    assert_ne!(
+        plain.read_range(crate::randomize::world_travel::WHISTLE_CONSUME_OFFSET, 3),
+        [0xEA, 0xEA, 0xEA],
+        "the whistle-keeping patch leaked into a non-maze seed"
+    );
+}

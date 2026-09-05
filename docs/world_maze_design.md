@@ -984,6 +984,13 @@ requested pad role distribution.
   owns; bumped by a 16-byte routine in PRG030 chained through
   `world_order`'s `INC World_Num` replacement, which is the one site an airship
   clear always passes.
+- **The player starts holding the whistle, and keeps it.** It is the mode's
+  fast travel, so it is granted at the first frame rather than hidden: an
+  earlier cut pinned one into a toad-house chest to guarantee it existed, which
+  made the mode's core tool something to go and find. `items::with_starting_whistle`
+  puts it in an empty inventory slot, appends while there is room, and otherwise
+  displaces the LAST requested item — so a player who asked for three things
+  gets two of them plus the one the mode cannot work without.
 - **The whistle is not consumed.** Vanilla's `Inv_UseItem_WarpWhistle` ends
   with `JSR Inv_UseItem_ShiftOver`, which deletes the item — correct for a
   one-shot warp, fatal for fast travel: one whistle would buy exactly one trip,

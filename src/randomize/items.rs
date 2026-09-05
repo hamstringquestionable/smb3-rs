@@ -46,6 +46,36 @@ const TOAD_HOUSE_ITEMS: &[u8] = &[
 
 const WARP_WHISTLE: u8 = 0x0C;
 
+/// Put the warp whistle in the player's starting inventory.
+///
+/// The world maze hands its fast-travel item over at the first frame instead
+/// of hiding it, and `world_travel` stops the engine consuming it, so this one
+/// whistle is the whole of the player's travel budget for the run. Finding a
+/// second would be pointless, which is why the mode no longer pins one into a
+/// toad house.
+///
+/// Slot rule: take an empty slot if there is one, else append while there is
+/// room, else replace the **last** requested item. A player who asked for three
+/// specific things gets two of them plus the one the mode cannot work without —
+/// and the last slot is the cheapest to take, because `write_starting_items`
+/// fills them in order.
+///
+/// Idempotent: a player who already asked for a whistle keeps their layout.
+pub(crate) fn with_starting_whistle(mut items: Vec<u8>) -> Vec<u8> {
+    if items.contains(&WARP_WHISTLE) {
+        return items;
+    }
+    match items.iter().position(|&i| i == 0) {
+        Some(empty) => items[empty] = WARP_WHISTLE,
+        None if items.len() < MAX_STARTING_ITEMS => items.push(WARP_WHISTLE),
+        None => items[MAX_STARTING_ITEMS - 1] = WARP_WHISTLE,
+    }
+    items
+}
+
+/// Inventory slots the starting-items trampoline writes.
+const MAX_STARTING_ITEMS: usize = 3;
+
 /// Full item pool including warp whistle (used when remove_whistles is false).
 const GOOD_ITEMS_WITH_WHISTLE: &[u8] =
     &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0B, 0x0C, 0x0D];
@@ -157,39 +187,6 @@ pub fn remove_whistles_only<R: Rng>(rom: &mut Rom, rng: &mut R) {
             rom.write_byte(offset, *GOOD_ITEMS.choose(rng).unwrap());
         }
     }
-}
-
-/// Where [`pin_whistle`] puts the guaranteed whistle: Toad House 0, slot 0.
-///
-/// One of the three vanilla whistle sources in [`WHISTLE_OFFSETS`], and the
-/// one with the fewest strings attached:
-///
-/// * **This one** is a chest in a toad house — a plain walk-in pickup with no
-///   hidden room and no boss, and the overworld builder promotes toad houses
-///   onto the map in every world.
-/// * `0x1619D` is the W2 Hammer Bro's drop. The builder reassigns hammer-bro
-///   sprites freely, so which encounter carries slot `W2 obj[4]` is not a
-///   property this module can see.
-/// * `0x0D36A` is the 1-F chest, which sits in a room the player has to leave
-///   the main route to reach.
-///
-/// Change this constant to move the guarantee; nothing else here needs to
-/// know which source it is.
-pub const WHISTLE_PIN_OFFSET: usize = TOAD_HOUSE_ITEMS_OFFSET;
-
-/// Force a warp whistle to exist.
-///
-/// Modes that give the whistle a job — world-maze fast travel is the first —
-/// need one to be *guaranteed*, not merely possible: [`randomize`] rolls the
-/// toad-house chests from a pool that has never contained the whistle, and
-/// even the whistle-permitting pool only makes it likely. This pins one source
-/// back to the whistle after the roll.
-///
-/// **Call it after [`randomize`] and after [`remove_whistles_only`]**, or the
-/// item roll writes over the pin. It consumes no RNG, so it cannot move the
-/// seed.
-pub fn pin_whistle(rom: &mut Rom) {
-    rom.write_byte(WHISTLE_PIN_OFFSET, WARP_WHISTLE);
 }
 
 /// Mystery anchor pool — items 1–8 share the Inv_UseItem_Powerup handler
@@ -422,41 +419,25 @@ mod tests {
         }
     }
 
-    /// The pin survives a full item roll — which is the whole point, since
-    /// the toad-house pool it overwrites has never contained a whistle.
+    /// The maze's whistle guarantee, which replaced a pin into a toad-house
+    /// chest: the player simply starts holding one.
+    ///
+    /// The slot rule matters because a player can already have asked for three
+    /// items and the mode needs a fourth thing to be true.
     #[test]
-    fn test_pin_whistle_survives_randomize() {
-        let mut rom = make_test_rom();
-        let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng, true, false);
-        assert_ne!(
-            rom.read_byte(WHISTLE_PIN_OFFSET),
-            WARP_WHISTLE,
-            "the roll should have removed the whistle; the fixture is not exercising the pin"
-        );
-
-        pin_whistle(&mut rom);
-        assert_eq!(rom.read_byte(WHISTLE_PIN_OFFSET), WARP_WHISTLE);
-        assert!(
-            WHISTLE_OFFSETS.contains(&WHISTLE_PIN_OFFSET),
-            "the pin must name a source the item tables really read"
-        );
-    }
-
-    /// It touches one byte and consumes no RNG, so it cannot move the seed.
-    #[test]
-    fn test_pin_whistle_touches_only_its_own_byte() {
-        let mut rom = make_test_rom();
-        // The fixture already puts a whistle in this slot, so roll it away
-        // first — otherwise the write is a no-op and the test is vacuous.
-        let mut rng = ChaCha8Rng::seed_from_u64(42);
-        randomize(&mut rom, &mut rng, true, false);
-
-        let before = rom.read_range(0, 393232).to_vec();
-        pin_whistle(&mut rom);
-        let after = rom.read_range(0, 393232).to_vec();
-        let differing: Vec<usize> = (0..before.len()).filter(|&i| before[i] != after[i]).collect();
-        assert_eq!(differing, vec![WHISTLE_PIN_OFFSET]);
+    fn starting_whistle_takes_the_cheapest_slot() {
+        // Nothing requested: the whistle is the whole inventory.
+        assert_eq!(with_starting_whistle(vec![]), vec![WARP_WHISTLE]);
+        // Room to spare: appended, nothing displaced.
+        assert_eq!(with_starting_whistle(vec![0x01]), vec![0x01, WARP_WHISTLE]);
+        // An empty slot is preferred over appending or displacing.
+        assert_eq!(with_starting_whistle(vec![0x01, 0x00, 0x03]), vec![0x01, WARP_WHISTLE, 0x03]);
+        // Full: the LAST request gives way, not the first.
+        assert_eq!(with_starting_whistle(vec![0x01, 0x02, 0x03]), vec![0x01, 0x02, WARP_WHISTLE]);
+        // Idempotent — a player who asked for a whistle keeps their layout.
+        for already in [vec![WARP_WHISTLE], vec![0x01, WARP_WHISTLE, 0x03]] {
+            assert_eq!(with_starting_whistle(already.clone()), already);
+        }
     }
 
     #[test]
