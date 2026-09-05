@@ -14,8 +14,7 @@
 //!
 //! A lock that no fortress opens teaches the player the wrong rule about every
 //! other lock on the map. So the gate is a *wall*, standing among World 8's
-//! own masonry: [`rom_data::WAND_GATE_TILE`] (`$D5`), a tile byte no world's
-//! grid uses. The engine has no per-tile "blocks movement" flag — a tile
+//! own masonry: [`WAND_GATE_TILE`] (`$D5`), a tile byte no world's grid uses. The engine has no per-tile "blocks movement" flag — a tile
 //! blocks a direction by being absent from `Map_Object_Valid_Left/Right/Up/
 //! Down` — so an unused byte walls all four directions for nothing. It is in
 //! no other registry either, which is the point: it is not in
@@ -30,8 +29,8 @@
 //! *record* anything: it re-derives the gate every time the map is drawn, by
 //! stamping a bridge tile over the gate cell in `Tile_Mem` when the wand count
 //! is high enough. The wand counter is the only state, and it lives in SRAM
-//! ([`maze_state::WAND_COUNT`]). Game over, Continue and re-entering World 8
-//! are all automatically correct because there is nothing to get out of sync.
+//! ([`WAND_COUNT`]). Game over, Continue and re-entering World 8 are all
+//! automatically correct because there is nothing to get out of sync.
 //!
 //! The alternative — adding `$D5` to `Map_Removable_Tiles` and setting a
 //! completion bit — was measured and rejected: those tables are byte-adjacent
@@ -90,12 +89,12 @@ const fn prg012_cpu(file: usize) -> u16 {
     (0xA000 + (file - PRG012_FILE_BASE)) as u16
 }
 
-/// Where [`WAND_GATE`] is assembled to run. `$BE30`.
+/// Where [`wand_gate_routine`]'s output is assembled to run. `$BE30`.
 const WAND_GATE_CPU: u16 = prg012_cpu(FS_MAZE_WAND_GATE);
 
-/// Where [`wand_bump`]'s output is assembled to run. `$9F90`, PRG030, which is
-/// always mapped — the airship transition runs there with an arbitrary bank at
-/// `$A000`.
+/// Where [`wand_bump_routine`]'s output is assembled to run. `$9F90`, PRG030,
+/// which is always mapped — the airship transition runs there with an
+/// arbitrary bank at `$A000`.
 const WAND_BUMP_CPU: u16 = prg030_file_to_cpu(FS_MAZE_WAND_COUNT);
 
 /// `Map_Reload_with_Completions` (PRG012), the routine that rebuilds
@@ -253,7 +252,7 @@ pub(crate) const MAX_WANDS: u8 = 7;
 ///   only, so this pair is fixed for the map's whole life.
 ///
 /// Vanilla draws four thin elbow fragments here — art referenced by nothing.
-/// [`gate_chr_donors_are_vanilla`] pins their bytes so a ROM or bank drift
+/// `gate_chr_donors_are_vanilla` pins their bytes so a ROM or bank drift
 /// fails loudly instead of scribbling on live graphics.
 const GATE_CHR_TILES: [u8; 4] = [0x80, 0x81, 0x82, 0x83];
 

@@ -814,6 +814,27 @@ the cheapest route as well.
 | C1 mean | 19.4 | 19.2 |
 | below own dealt floor | 0.34% | 0.39% |
 | goal-open | 3.0% | 2.7% |
+
+**These numbers are one commit stale, and the drift is accounted for.** PR #212
+("a completable map tile at row 7 must bar its row-8 partner") landed after this
+table was recorded and adds a terrain clause to `WorldState::row78_barred`,
+which bars cells the placement phases used to be free to take. Measured at 1000
+seeds, with only that clause reverted and nothing else changed:
+
+| | this table | with #212 |
+|---|---|---|
+| routes/world | 2.595 | 2.587 |
+| linear% | 6.22 | 6.19 |
+| goal-open | **2.7%** | **3.3%** |
+| C1 below its dealt floor | 0.39% | 0.36% |
+
+Reverting the clause reproduces `2.595 / 6.22% / 2.7%` exactly, so the
+attribution is measured rather than inferred. Routes, linear% and the sub-floor
+rate all move the *right* way or not at all; goal-open is the one that moved,
+and a goal-open world above its floor is a charter non-defect (see the note
+below this table). Nothing in the world-maze work touches it — the maze's only
+builder line is inert unless `wand_gate_reserved` is set, and W8's bridge deal
+is byte-identical over 2000 seeds with the maze off.
 | build time (shaped) | 52.1 ms/seed | 52.5 ms/seed |
 
 The feared trade did not materialise: C1 gives up 0.2 points, and choice

@@ -2366,12 +2366,20 @@ Each tile byte is rendered as 4 CHR pattern indices forming a 2×2 metatile (16�
 The bank is **shared across all 8 worlds** — re-skinning a tile changes its appearance in
 every world.
 
+**The order is UL / LL / UR / LR — column-major, not row-major.** This table
+said NW/NE/SW/SE until 2026-09-05, which transposes the off-diagonal; the same
+file already had it right at the desert-metatile note above ("UL/LL/UR/LR × 256,
+same layout as the world-map table at 0x18010"). `prg012.asm:14-18` says so, and
+the ROM settles it: `TILE_HORZPATH $45` is `FE E1 FE E1`, which under UL/LL/UR/LR
+is a blank top row over a path bottom row — a horizontal path. Under
+NW/NE/SW/SE it would be a vertical stripe down the right-hand edge.
+
 | Quadrant | File offset | Size |
 |---|---|---|
-| NW | `0x18010 + tile` | 256 bytes |
-| NE | `0x18110 + tile` | 256 bytes |
-| SW | `0x18210 + tile` | 256 bytes |
-| SE | `0x18310 + tile` | 256 bytes |
+| upper-left | `0x18010 + tile` | 256 bytes |
+| **lower-left** | `0x18110 + tile` | 256 bytes |
+| **upper-right** | `0x18210 + tile` | 256 bytes |
+| lower-right | `0x18310 + tile` | 256 bytes |
 
 Total: 4 × 256 = 1024 bytes (matches the doc's "1024-byte maps" per metatile bank).
 
