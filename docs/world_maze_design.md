@@ -10,7 +10,9 @@ and the worlds are linked by **telepads**, by the **airship/castle** one-way
 edge, and by **cross-world locks**.
 
 Phase 1 (persistence, arrivals, telepads) is complete and hardware-confirmed.
-This document is the design record for phase 2, the generator.
+This document is the design record for phase 2, the generator. Its **step 1 —
+the global verifier and the null-model census — is done**; see "The null-model
+baselines" for the numbers everything after it is argued against.
 
 **Where phase 1 lives:** `world_persist.rs` (the `$84A0` hooks, the arrival
 tables, `PAD_ENTER` and its position key, the debug world jump) and
@@ -20,6 +22,13 @@ document does not repeat it. The engine-level facts they rest on are in
 `smb3_rom_reference.md` under "World transitions and per-world map state" and
 "World-map graphics: CHR banks and unused metatiles". Playtest ROMs come from
 `testrom`.
+
+**Where step 2's verifier lives:** `src/randomize/maze/` — `GlobalState` and
+the global fixpoint in `mod.rs`, the null model's uniform pad placer in
+`pads.rs`, the acceptance tests and censuses in `tests.rs`. The cross-world
+walker sits beside `walk_reachable` in `map_walker.rs`. The whole thing is
+`#[cfg(test)]`: it is a measurement instrument with no production caller, and
+the gate comes off when the generator wires in.
 
 ## Settled decisions
 
@@ -223,16 +232,63 @@ This mirrors `forts.rs`, which measured uniform placement (24% of forts forced)
 before adding its single preference, and it is the ladder discipline: one lever,
 measured, kept or discarded.
 
+### The null-model baselines — MEASURED (2026-09-05, 200 seeds)
+
+`maze_null_model_census` and `maze_pads_vs_spine_only`, over the same flag arms
+the overworld census uses (50% base / 25% more-hammer-rocks / 25% 8s-are-wild,
+start↔airship swap rolled per world):
+
+| Quantity | Null model |
+|---|---|
+| solvable | **100%** |
+| spheres | mean 6.01 (min 3, max 12) |
+| sphere width | 0:17% 1:23% 2:17% 3:12% 4:10% 5:7% 6:5% 7:3% 8+:7% |
+| sphere-0 openness | 18.7% of all content reachable with zero keys |
+| goal sphere | mean 3.46 (max 11) |
+| wands before goal | mean 5.76 of 7 |
+| pads placed | mean 9.25, max 16 |
+| **invariant 3** | **55.8%** (893 of 1600 world-seeds) |
+| spheres, spine only (no pads) | mean 10.79 |
+| pads shortened the game | **99.5%** of seeds |
+
+Four findings, and they redraw the plan:
+
+1. **Solvability is not the problem, and was never going to be.** The per-world
+   builder already guarantees each world completable from its own start, and
+   the spine deposits the player on exactly that start — so the null model is
+   solvable by construction. `the_spine_alone_completes_the_maze` keeps that
+   honest: a failure there means the maze walker or the fixpoint is wrong, not
+   the map. The generator's job is *shape*, not *validity*.
+
+2. **Invariant 3 is a real placement obligation, not a cheap guard.** It was
+   expected to hold nearly always ("every world has an airship and the builder
+   already guarantees start → target"). It holds barely half the time, because
+   the per-world guarantee is start → target *with locks openable*, and
+   invariant 3 asks for it *with every lock closed*. That gap is the whole
+   measurement. It needs a placement phase — either an ungated airship approach
+   or a hub pad in the start region.
+
+3. **Uniform pads are a pure shortcut, and they gut the game.** They cut the
+   sphere count nearly in half (10.79 → 6.01) in 99.5% of seeds, and drop the
+   wands collectable before the castle from 7 to 5.76. That is the charter's
+   "a telepad chain to World 8 trivialises the game", now with a number on it.
+   Roles are therefore load-bearing rather than a refinement: a pad web placed
+   without them *removes* progression instead of adding it.
+
+4. **The progression-gate machinery is smaller than planned.** Sphere count is
+   already 6, not the 4 the doc guessed a fill would be needed to reach — the
+   per-world lock chains supply it. What is missing is not depth but *width
+   discipline*: 40% of spheres are width 0 or 1 (a corridor), and the tail runs
+   to 8+ where a whole world opens at once.
+
 ### Build order
 
-1. **`GlobalState`, a directed cross-world walker, and the global fixpoint — as
-   a pure verifier.** Frontier becomes `(world, row, col)`; pad edges are
-   directed teleports; the spine is one directed edge per world. Point it at
-   eight existing per-world builds with hand-specified pads and ask "is this
-   solvable, and what are the spheres?" This is where the spoiler log gets
-   built, and it is independently useful before any generator exists. Ship it
-   with the crude uniform pad placer so there is a null model to point it at.
-2. **Census the null model**, and only then choose which lever to add first.
+1. ~~**`GlobalState`, a directed cross-world walker, and the global fixpoint —
+   as a pure verifier.**~~ **DONE** (2026-09-05) — `src/randomize/maze/`, with
+   the cross-world walker beside `walk_reachable` in `map_walker.rs`. The
+   spoiler log is `Spheres::spoiler`. Shipped with the crude uniform pad placer
+   in `maze/pads.rs`.
+2. ~~**Census the null model.**~~ **DONE** — the table above.
 3. **World-graph pass** — spine order, pad counts and roles per world, id
    budget allocation against the 16.
 4. **Pad placement** in the per-world pass, by role.
@@ -273,6 +329,34 @@ outside `build()`'s per-world loop without a small accessor — `WorldState` is
 `pub(crate)` within `overworld_build` and its construction currently happens
 inside that loop. A ten-minute problem, but it is the thing most likely to make
 step 1 touch a file this document says it will not.
+
+#### What step 1 actually cost (2026-09-05)
+
+**The integration unknown was a non-problem.** `from_built` already wraps a
+`BuiltWorld` back into a `WorldState`, so the maze is eight calls to it over
+`BuildResult::worlds` — no accessor, no plumbing, and no file this document said
+would be left alone was touched. The only change outside `src/randomize/maze/`
+is the cross-world walker appended to `map_walker.rs`.
+
+**The walker is a copy, and the copy is guarded.** `maze_reach_from` duplicates
+`reach_from`'s 2-tile move expansion rather than sharing it, because sharing
+means editing the walker every overworld census depends on. What stops the copy
+drifting is `maze_walk_matches_the_per_world_walker`: over every world of every
+census seed it asserts the maze walker, given the eight worlds and no links,
+reproduces `walk_reachable` cell for cell — and reaches nothing at all in the
+other seven. The oracle is the shipping walker, not a hand-written expectation.
+
+Two semantics the walker had to get right, neither of which is in the sketch:
+
+- **The target tile is a walk sink, but the spine edge leaves it.** `reach_from`
+  refuses to expand out of `TILE_AIRSHIP` / `TILE_BOWSER` at all. The maze
+  version skips only the *directional* moves and still fires outgoing links —
+  an airship you cannot walk through is still an airship you can clear.
+- **Canoes become a fixpoint, not a pre-pass.** `canoes_reachable` asks "can the
+  player walk to a dock from the start, without canoes". Across worlds a pad can
+  drop the player straight onto a dock in a world they have no other route into,
+  so canoe activation is re-tested after each pass until it stops changing.
+  Monotone, so it runs at most once per world with water.
 
 ## Invariants
 
@@ -598,16 +682,16 @@ struct Sphere {
 
 ## Acceptance criteria
 
-What a build has to prove, and where. None of these exist yet; they are the
-first thing to write after the verifier.
+What a build has to prove, and where. The rows marked **exists** landed with
+the verifier (step 1) and run in `src/randomize/maze/tests.rs`.
 
 | Check | Statement |
 |---|---|
-| `maze_is_solvable` | the global fixpoint reaches the goal **and** every fortress is beatable, over N seeds |
-| `maze_needs_no_hammer` | the same with `has_hammer = false` |
-| `every_start_region_has_an_exit` | invariant 3, per world per seed, with all locks closed |
-| `wands_are_collectable` | at least K airships reachable without passing the goal gate |
-| `pad_ids_fit` | pad count <= `PORTAL_MAX`, and every pad owns a distinct arrival row |
+| `maze_is_solvable` | the global fixpoint reaches the goal **and** every fortress is beatable, over N seeds — **exists** as `the_spine_alone_completes_the_maze` / `every_placed_slot_is_reached` |
+| `maze_needs_no_hammer` | the same with `has_hammer = false` — **free**: the map walker reads rocks as walls, so every run above already IS the zero-hammer run |
+| `every_start_region_has_an_exit` | invariant 3, per world per seed, with all locks closed — **exists** as `start_region_exit_rate`, and currently *measures* 55.8% rather than asserting; it becomes an assert when a placement phase owns it |
+| `wands_are_collectable` | at least K airships reachable without passing the goal gate — **exists** as `GlobalState::wands_are_collectable`, asserted at K=7 on a spine-only maze |
+| `pad_ids_fit` | pad count <= `PORTAL_MAX`, and every pad owns a distinct arrival row — **exists** |
 | `packed_planes_fit_their_reserve` | **exists today** — must still pass once the wand-gate byte joins `Map_Removable_Tiles` |
 | `the_maze_leaves_every_pipe_alone` | **exists today** — pipe tables and world pointer tables stay byte-identical |
 

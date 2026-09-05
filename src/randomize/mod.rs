@@ -21,6 +21,12 @@ pub mod koopalings;
 pub mod level_helpers;
 pub mod levels;
 pub mod map_walker;
+/// World-maze phase 2, step 1: the global verifier — eight `WorldState`s, the
+/// cross-world edge set, and the fixpoint that turns them into a spoiler log.
+/// A measurement instrument with no production caller, hence `cfg(test)`; see
+/// the module doc and `docs/world_maze_design.md`.
+#[cfg(test)]
+mod maze;
 pub mod node_catalog;
 pub mod overworld_build;
 pub mod overworld_helpers;

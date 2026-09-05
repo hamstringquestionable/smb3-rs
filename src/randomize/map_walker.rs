@@ -369,6 +369,192 @@ pub(super) fn walk_reachable(
 }
 
 // ---------------------------------------------------------------------------
+// Cross-world walk (world maze)
+// ---------------------------------------------------------------------------
+//
+// The maze walker is written BESIDE `walk_reachable`, not in place of it.
+// Standard mode's walker is load-bearing for every overworld census, and the
+// maze needs exactly two things it does not have: a world-indexed frontier and
+// DIRECTED teleport edges. Keeping them apart leaves standard mode untouched,
+// for the same reason the maze gets its own key-assignment pass instead of
+// re-entering `locks.rs`.
+//
+// The cost of that choice is a copy of the 2-tile move expansion below.
+// `maze_walk_matches_the_per_world_walker` is what stops the copy drifting:
+// over every world of every census seed it asserts the maze walker, given one
+// world and no links, reproduces `walk_reachable` cell for cell.
+
+/// A cell addressed across all eight grids.
+#[cfg(test)]
+pub(super) type MazePos = (usize, (usize, usize));
+
+/// One world as the maze walker sees it: the grid it walks and the intra-world
+/// teleport (pipe) edges on it. Deliberately not a `WorldState` — the walker
+/// has no business knowing about slots, locks or budgets, and the caller
+/// stamps whatever it wants seen onto the grid before calling.
+#[cfg(test)]
+pub(super) struct MazeWorld<'a> {
+    pub grid: &'a Grid,
+    pub pipe_pairs: &'a [TeleportEdge],
+}
+
+/// Reachability across every world at once: one [`Reach`] per world.
+#[cfg(test)]
+pub(super) struct MazeReach {
+    per_world: Vec<Reach>,
+}
+
+#[cfg(test)]
+impl MazeReach {
+    pub(super) fn contains(&self, (world, pos): MazePos) -> bool {
+        self.per_world[world].contains(pos)
+    }
+
+    /// Reachable cells in one world.
+    pub(super) fn world_len(&self, world: usize) -> usize {
+        self.per_world[world].len()
+    }
+}
+
+/// Walk every world at once from a single starting cell.
+///
+/// **`worlds` is indexed by world index** — always all eight, in ROM order.
+/// The canoe tables are keyed on world index (the coordinates are not
+/// world-unique), so a partial or reordered slice would silently walk the
+/// wrong water.
+///
+/// `links` are DIRECTED `(from, to)` teleports: a telepad is one-way by
+/// construction, and the airship spine is one-way by design. That is the only
+/// structural difference from a pipe pair, which `walk_reachable` already
+/// models as a bidirectional teleport.
+#[cfg(test)]
+pub(super) fn walk_maze(
+    worlds: &[MazeWorld],
+    links: &[(MazePos, MazePos)],
+    start: MazePos,
+) -> MazeReach {
+    let mut link_lookup: HashMap<MazePos, Vec<MazePos>> = HashMap::new();
+    for &(from, to) in links {
+        link_lookup.entry(from).or_default().push(to);
+    }
+    let pipe_lookups: Vec<TeleportLookup> =
+        worlds.iter().map(|w| teleport_lookup(w.pipe_pairs)).collect();
+
+    // Canoes are stateful and per world: the boat is usable only once the
+    // player can walk to its mainland dock without it. Across worlds that is a
+    // fixpoint rather than the single pre-pass `canoes_reachable` does — a pad
+    // can drop the player straight onto a dock in a world they have no other
+    // route into. Enabling a canoe only ever GROWS the reachable set, so the
+    // loop is monotone and runs at most once per world with canoes.
+    let mut canoe_on = vec![false; worlds.len()];
+    loop {
+        let reach = maze_reach_from(worlds, &pipe_lookups, &canoe_on, &link_lookup, start);
+        let mut changed = false;
+        for (wi, world) in worlds.iter().enumerate() {
+            if canoe_on[wi] {
+                continue;
+            }
+            let docks = rom_data::active_canoe_edges(wi, world.grid.eights_are_wild);
+            if docks.iter().any(|&(dock, _)| reach.per_world[wi].contains(dock)) {
+                canoe_on[wi] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            return reach;
+        }
+    }
+}
+
+/// One pass of the maze BFS with a fixed canoe state. Mirrors [`reach_from`]'s
+/// traversal exactly; see the module note above on why it is a copy.
+#[cfg(test)]
+fn maze_reach_from(
+    worlds: &[MazeWorld],
+    pipe_lookups: &[TeleportLookup],
+    canoe_on: &[bool],
+    link_lookup: &HashMap<MazePos, Vec<MazePos>>,
+    start: MazePos,
+) -> MazeReach {
+    let canoe_lookups: Vec<TeleportLookup> = worlds
+        .iter()
+        .enumerate()
+        .map(|(wi, w)| {
+            if canoe_on[wi] {
+                teleport_lookup(&rom_data::active_canoe_edges(wi, w.grid.eights_are_wild))
+            } else {
+                TeleportLookup::new()
+            }
+        })
+        .collect();
+
+    let mut per_world: Vec<Reach> =
+        worlds.iter().map(|w| Reach::new(w.grid.rows(), w.grid.cols)).collect();
+    let mut queue = VecDeque::new();
+    per_world[start.0].insert(start.1);
+    queue.push_back(start);
+
+    while let Some((wi, (r, c))) = queue.pop_front() {
+        let grid = worlds[wi].grid;
+        let tile_here = grid.get(r, c);
+        // The target tile is a walk sink exactly as in `reach_from` — but the
+        // spine edge LEAVES it, so links still fire from here. That is the
+        // whole of the difference: an airship you cannot walk through is
+        // still an airship you can clear.
+        let is_sink =
+            (tile_here == TILE_AIRSHIP || tile_here == TILE_BOWSER) && (wi, (r, c)) != start;
+
+        if !is_sink {
+            for &(dr, dc, is_horz) in &DIRECTIONS {
+                let pr = r as i16 + dr as i16;
+                let pc = c as i16 + dc as i16;
+                if pr < 0 || pr >= grid.rows() as i16 || pc < 0 || pc >= grid.cols as i16 {
+                    continue;
+                }
+                let (pr, pc) = (pr as usize, pc as usize);
+                let path_tile = grid.get(pr, pc);
+                let valid = if is_horz { VALID_HORZ } else { VALID_VERT };
+                if !valid.contains(&path_tile) {
+                    continue;
+                }
+                let nr = r as i16 + 2 * dr as i16;
+                let nc = c as i16 + 2 * dc as i16;
+                if nr < 0 || nr >= grid.rows() as i16 || nc < 0 || nc >= grid.cols as i16 {
+                    continue;
+                }
+                let (nr, nc) = (nr as usize, nc as usize);
+                if BACKGROUND_TILES.contains(&grid.get(nr, nc)) {
+                    continue;
+                }
+                if per_world[wi].insert((nr, nc)) {
+                    queue.push_back((wi, (nr, nc)));
+                }
+            }
+
+            for lookup in [&pipe_lookups[wi], &canoe_lookups[wi]] {
+                if let Some(dests) = lookup.get(&(r, c)) {
+                    for &dest in dests {
+                        if per_world[wi].insert(dest) {
+                            queue.push_back((wi, dest));
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(dests) = link_lookup.get(&(wi, (r, c))) {
+            for &(dw, dpos) in dests {
+                if per_world[dw].insert(dpos) {
+                    queue.push_back((dw, dpos));
+                }
+            }
+        }
+    }
+
+    MazeReach { per_world }
+}
+
+// ---------------------------------------------------------------------------
 // Chokepoint detection
 // ---------------------------------------------------------------------------
 
