@@ -9,6 +9,153 @@ deploys.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-05
+
+### Added
+
+- **King quotes** (new option, on by default). The kings' rescue dialogue is
+  randomized, as it always has been; turn this off and they say what they say in
+  the original game instead. Cosmetic, so it is not carried in the flag key —
+  and the seed is unaffected either way, so two players on the same key get the
+  same game whichever way each of them sets it.
+
+- **Deja Vu** (new option, off by default; MaCobra52's idea). Lets the same
+  level show up on more than one tile. *Double* puts a second copy of every
+  level in the deck, so some appear twice and others sit the seed out. *Wild*
+  deals with replacement — a level can turn up any number of times, or never.
+  Levels that hand out a one-off item (the chest levels and the World 8 hand
+  rooms) still appear exactly once in both modes.
+
+- **Bro Battle Timer** (new option, off by default). Walking into a Hammer,
+  Boomerang, Heavy or Fire Bro starts the clock at 10 instead of the arena's
+  usual 200 — and with the clock fix in this release, ten really is ten
+  seconds. Miss it and the fight takes the life instead. Only encounters
+  entered through a bro sprite are affected; every other level, including
+  World 8's full-length Hammer Bro entry, keeps its own time.
+
+- **Limit Hazards** (new option: Off / Some / All, off by default). Stops enemy
+  swaps from dropping a hazard into a level that wasn't built for one — nippers,
+  Ptooies, thwomps, Hot Foots and Bros. Hazards Nintendo placed are always kept,
+  and a slot that held one can still shuffle within its own kind, so this only
+  ever removes surprises the randomizer added. **Some** allows the occasional
+  one so you still learn to handle them; **All** allows none. Measured over 250
+  seeds of the Max Chaos preset, the unfiltered game gains ~140 hazards a seed
+  with as many as 25 in a single stretch of level; Some cuts that to ~52 and
+  never more than one.
+
+  Only in-level enemies are affected. Hammer Bro mini-battles keep their own
+  curated pools, and Wild Injections are unchanged.
+
+- **Friendlier Levels** (new option, off by default). Keeps the roughest levels
+  out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta
+  stages when those are on, and otherwise to a second visit to a level already
+  in the seed, so the map is exactly as full as it always was.
+
+  With lobby shuffle on, the held-back levels sit that out too. Blocking a level
+  removes its *front door*, and the lobby shuffle moves *interiors*
+  independently — so a blocked level left in that pool would have its interior
+  donated to a door you can still open, while whatever was donated to the
+  blocked door became unreachable, quietly costing you an unrelated level.
+
+  It also makes two fortresses — 7F2, then 8F1 — optional rather than absent.
+  They stay on the map and stay beatable, but land behind a lock the world can
+  be finished without, so you can walk past them. Forts can't be held out of the
+  pool the way levels can (every fort needs a lock, and the full roster is an
+  invariant), and there has to be a spare bypassable lock going: 1-F always
+  claims the first one, since its secret exit can leave a lock shut forever.
+  Measured over 300 seeds, 99% have room for both; in the rest 8F1 stays
+  required.
+
+- **Shuffle Big ? Rooms** (new option, off by default). Every level with a Big ?
+  pipe draws from a pool of 19 rooms instead of always opening its own — the 11
+  vanilla rooms plus 8 from "Unused Level 5", a complete set of eight bonus
+  rooms left in the ROM and reachable by nothing. Vanilla's 15 rooms are only
+  10 distinct layouts, so this roughly doubles what you can walk into. 7-F1's
+  block is still always a flight suit, whichever room it draws, because the
+  level needs one.
+
+  Flag keys shared during the beta, when this ran unconditionally, now decode
+  with it **off** — tick the box to get those seeds back.
+
+- **Three new king rescue quotes** join the pool the kings draw from.
+
+- The version manifest now publishes the **flag-key format version**, which lets
+  the racetime seed bot reject a stale key *before* it posts the seed link.
+  Previously it could only check a key's shape, and keys older than the current
+  format carry no checksum — so a leftover key from an older randomizer sailed
+  through, the bot posted the link, and every racer's browser then refused the
+  key and fell back to whatever settings they happened to have. Racers in the
+  same race could end up playing different rulesets with nothing on screen to
+  say so. The bot now answers with which version the key is from.
+
+### Changed
+
+- **Fortresses no longer sit where you cannot walk around them.** A fortress in
+  the middle of the only road is a wasted lock — you play it because it is in
+  the way, and the lock it opens was never a decision. Fortresses now take a
+  spot you could have walked past, so going to find one is a choice you make.
+  Measured across 1000 seeds, unavoidable fortresses went from 22% to under
+  0.5%, and worlds came out with slightly more routes rather than fewer.
+
+- **The level clock now counts real seconds.** Vanilla steps the timer every 41
+  frames, so a unit was 0.68 s and the clock ran about 47% fast — a "300" level
+  was really about 3:25, not five minutes. The divider is now 60 frames, giving
+  a measured 0.998 s per unit, on every seed.
+
+  The reason is less about the clock than about what it lets us build: a timer
+  that reads seconds is a unit other options can use. **Bro Battle Timer**
+  says ten seconds and means ten seconds, and anything timed added later gets
+  that for free.
+
+  Worth being straight that the fast clock was a *choice*, not a bug — the
+  stored divider is 40, exactly 2/3 s at 60 Hz, and the PAL release uses the
+  same value, so it was never scaled to a refresh rate. Levels are therefore
+  more generous in real terms than Nintendo shipped, though running the clock
+  out was already a rare way to lose a seed.
+
+- **Beginner Friendly** preset now uses Limit Hazards (All) and Friendlier
+  Levels, and has its Ghosts class turned back on. The class was previously
+  disabled outright just to stop Boo → Hot Foot; blocking that directly brings
+  Boo ↔ Dry Bones variety back.
+
+### Fixed
+
+- Levels, fortresses and locks no longer land on the map cell whose completion
+  bit is already taken by scenery. Rows 7 and 8 of a world map share one bit
+  per column, and the game checks row 7 first — so World 2's oasis, which sits
+  on row 7 and counts as scenery rather than a level, quietly swallowed the bit
+  for anything placed directly below it. A level there could never show beaten,
+  a fortress never crumbled, and a lock grew back every time you re-entered
+  the world.
+
+- Wandering Hammer Bros are spread further apart on the world map. They were
+  being placed as close as two tiles, which is exactly one of their marching
+  steps — a bro could land on top of another, and the game makes both of them
+  march again, so a crowded world could keep marching for a very long time
+  before handing you back your turn.
+
+- One of the new Big [?] Block bonus rooms could take your powerup and give
+  nothing back. Its block sits across the room from where the pipe drops you,
+  reachable only by steering mid-fall; miss that and you land in a pit with
+  nothing to climb and no way to try again — the room is spent. Two coins in
+  the shaft are music blocks now, so the floor is a setback instead of a dead
+  end. Only affects seeds with Big [?] room shuffle turned on.
+
+- A randomized Hammer Bro encounter can no longer trap you in the floor. The
+  flying red Paratroopa ignores level geometry and sinks about seven tiles
+  below where it starts, so on a Bro's ground row it spent half its cycle
+  inside the floor — and hitting it as it climbed back out could leave you
+  stuck in the ground, in a room whose exit only appears once it is cleared.
+  It now starts high enough that the bottom of its dive lands *on* the floor.
+
+- Travelling through a pipe no longer kills you when the screen scrolls at the
+  same time. The game's "crushed against the left edge" check only looks at how
+  far left Mario's sprite has been pushed, and a pipe transition that squished
+  the view could push him far enough to trip it — a death with nothing on
+  screen to cause it. Pipe travel is now exempt, the same way vertical levels
+  and a finished level already were. (MaCobra52's "Pipe Screen Squish Fix".)
+
+
 ## [1.2.1] - 2026-08-26
 
 ### Fixed

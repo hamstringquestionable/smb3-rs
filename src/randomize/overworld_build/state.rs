@@ -2,6 +2,7 @@
 //! mutates, and the phase unit itself.
 
 use super::*;
+use capacity::is_completion_unsafe;
 
 /// Everything true about one world mid-build. A phase receives this, changes
 /// it, and the next phase sees the result — there is no other channel.
@@ -104,27 +105,49 @@ impl WorldState {
 
     /// Number of fortress slots — also the number of lock sections.
     pub(crate) fn fort_count(&self) -> usize {
-        self.slots
-            .iter()
-            .filter(|s| s.kind == SlotKind::Fortress)
-            .count()
+        self.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count()
     }
 
-    /// Blanks a phase may claim for new content: blank tile, not `fixed`,
-    /// not already a slot, not a hammer-gated pocket, and not the row-7/8
-    /// completion-bit partner of existing content OR of a lock (rows 7 and 8
-    /// share one completion bit per column — a ROM mechanic; stacked
-    /// completable content marks each other beaten, and a lock consumes that
-    /// shared bit too). The lock barring only matters to the shaping moves —
-    /// the dumb placement phases all run before any lock exists.
-    pub(crate) fn legal_blanks(&self) -> Vec<Pos> {
-        let taken: HashSet<Pos> = self.slots.iter().map(|s| s.pos).collect();
-        let barred: HashSet<Pos> = self
-            .slots
+    /// Cells whose shared row-7/8 completion bit is already spoken for.
+    ///
+    /// Rows 7 and 8 share ONE bit per column, and `Map_Reload_with_Completions`
+    /// reads row 7 FIRST: only when row 7's tile matches nothing completable
+    /// does it drop to row 8 (`PRG012_A55C`). So whatever the engine catches
+    /// at (7,c) swallows the bit, and content at (8,c) is never marked, never
+    /// crumbled, and never removed on reload.
+    ///
+    /// Three things claim the bit:
+    /// * placed content — a level / fortress / spade / toad house slot;
+    /// * a lock, which is a `Map_Removable_Tiles` entry. That only matters to
+    ///   the shaping moves; every dumb placement phase runs before any lock
+    ///   exists;
+    /// * **map terrain the engine reads as completable**, which is not a slot
+    ///   at all and so was missed. W2's oasis (`TILE_POOL`, `$BF`) at (7,6) is
+    ///   the live case: it survives pickup as scenery and sits exactly on the
+    ///   page-2 `Tile_Attributes_TS0` threshold, so it swallowed the bit of
+    ///   whatever landed at (8,6) — a level that never showed beaten, a
+    ///   fortress that never crumbled, or a lock that grew back on reload.
+    pub(crate) fn row78_barred(&self) -> HashSet<Pos> {
+        let terrain = |from: usize, to: usize| {
+            (0..self.grid.cols)
+                .filter(move |&c| is_completion_unsafe(self.grid.get(from, c)))
+                .map(move |c| (to, c))
+        };
+        self.slots
             .iter()
             .filter_map(|s| row78_partner(s.pos))
             .chain(self.locks.iter().filter_map(|l| row78_partner(l.pos)))
-            .collect();
+            .chain(terrain(7, 8))
+            .chain(terrain(8, 7))
+            .collect()
+    }
+
+    /// Blanks a phase may claim for new content: blank tile, not `fixed`,
+    /// not already a slot, not a hammer-gated pocket, and not row-7/8 barred
+    /// (see [`WorldState::row78_barred`]).
+    pub(crate) fn legal_blanks(&self) -> Vec<Pos> {
+        let taken: HashSet<Pos> = self.slots.iter().map(|s| s.pos).collect();
+        let barred = self.row78_barred();
         let mut out = Vec::new();
         for r in 0..self.grid.rows() {
             for c in 0..self.grid.cols {
@@ -172,8 +195,7 @@ impl WorldState {
             .filter(|lock| {
                 let mut g = open.clone();
                 g.set(lock.pos.0, lock.pos.1, lock.gap_tile);
-                !walk_reachable(&g, &self.pipe_pairs, self.start, self.world_idx)
-                    .contains(target)
+                !walk_reachable(&g, &self.pipe_pairs, self.start, self.world_idx).contains(target)
             })
             .count()
     }
@@ -190,17 +212,99 @@ impl WorldState {
     pub(crate) fn zero_gate_locks(&self) -> Vec<usize> {
         let mut open = self.grid.clone();
         stamp_slots(&mut open, &self.slots);
-        let open_len =
-            walk_reachable(&open, &self.pipe_pairs, self.start, self.world_idx).len();
+        let open_len = walk_reachable(&open, &self.pipe_pairs, self.start, self.world_idx).len();
         let mut out = Vec::new();
         for (li, lock) in self.locks.iter().enumerate() {
             let mut g = open.clone();
             g.set(lock.pos.0, lock.pos.1, lock.gap_tile);
-            let closed_len =
-                walk_reachable(&g, &self.pipe_pairs, self.start, self.world_idx).len();
+            let closed_len = walk_reachable(&g, &self.pipe_pairs, self.start, self.world_idx).len();
             if closed_len == open_len {
                 out.push(li);
             }
+        }
+        out
+    }
+
+    /// Forts the player cannot walk around — the charter's "fort on the
+    /// forced path" in its strict form. Wall the fort off (the player
+    /// refuses to play it) with every lock in the world OPEN, and ask
+    /// whether the goal is still reachable. If it is not, the fort tile is
+    /// a cut vertex: no route avoids it, the player plays it because it is
+    /// in the way, and its lock opens as a side effect — no decision was
+    /// ever offered. Returns fort ids (`SlotAssignment::section`).
+    ///
+    /// **Every lock open is the point, not a shortcut.** It isolates the
+    /// GEOMETRY question from the key question. A fort the player must beat
+    /// because its lock is the only way through is the charter's good
+    /// structure — they had to go find the key — and the closed-lock
+    /// version of this test cannot tell the two apart (measured: it called
+    /// 61-93% of forts forced, mostly goal gates). That case is already
+    /// counted by [`Self::goal_gate_locks`].
+    ///
+    /// Distinct from a fort merely sitting on the CHEAPEST route: that one
+    /// could have been walked around, so taking it was a (cheap) decision.
+    /// Distinct again from [`Self::zero_gate_locks`] — a forced fort's lock
+    /// can wall off half the world and still be free to open.
+    ///
+    /// Rocks read as walls here, the map walker's model, so a fort avoidable
+    /// only by spending a hammer on a rock counts as forced — deliberately
+    /// conservative (the hammer is a real cost the scorer cannot price: it
+    /// does charge a rock 8 points but models no hammer supply). This is
+    /// why forced% can exceed the on-cheapest-route rate in rocky worlds.
+    ///
+    /// A census instrument, not a defect count: per the charter's "What the
+    /// map must communicate", a lock still reports its fort and its count
+    /// whatever the fort cost, and terrain (W1's zero pipe budget, a world
+    /// with no off-trunk blanks) can leave no alternative.
+    #[cfg(test)]
+    pub(crate) fn forced_forts(&self) -> Vec<usize> {
+        let forts: Vec<(usize, Pos)> = self
+            .slots
+            .iter()
+            .filter(|s| s.kind == SlotKind::Fortress)
+            .map(|s| (s.section, s.pos))
+            .collect();
+        let positions: Vec<Pos> = forts.iter().map(|&(_, pos)| pos).collect();
+        let forced: HashSet<Pos> = self.forced_positions(&positions).into_iter().collect();
+        forts.iter().filter(|(_, pos)| forced.contains(pos)).map(|&(id, _)| id).collect()
+    }
+
+    /// Which of `candidates` are cut vertices between the start and the
+    /// goal — the test [`Self::forced_forts`] is built from, exposed so a
+    /// census can ask it of empty blanks ("could a fort placed HERE have
+    /// been avoided?") as well as of placed forts.
+    ///
+    /// **The answer does not depend on what is placed.** Content only ever
+    /// occupies node tiles and every node tile is walkable to the map walker
+    /// (`VALID_BLANK_TILES` and the stamped slot tiles are all disjoint from
+    /// `BACKGROUND_TILES`); only locks change walkability, and they are held
+    /// open here. So this is a property of the terrain plus the pipe web
+    /// alone, fixed the moment connectivity finishes. Adding a pipe can only
+    /// ever REMOVE a cut vertex, never create one — which makes a fort
+    /// placed off a forced blank a guarantee that survives every later
+    /// phase, not a preference that decays. That invariance is what lets
+    /// [`Forts`] call this ONCE for the whole phase rather than per placement.
+    pub(crate) fn forced_positions(&self, candidates: &[Pos]) -> Vec<Pos> {
+        // Any BACKGROUND_TILES member reads as a wall to the walker. The
+        // wall is written into a scratch grid and taken back out again; no
+        // value here ever reaches the ROM.
+        const WALL: u8 = BACKGROUND_TILES[0];
+
+        let Some(target) = self.target else { return Vec::new() };
+        let mut g = self.grid.clone();
+        stamp_slots(&mut g, &self.slots);
+        for lock in &self.locks {
+            g.set(lock.pos.0, lock.pos.1, lock.replace_tile);
+        }
+
+        let mut out = Vec::new();
+        for &pos in candidates {
+            let was = g.get(pos.0, pos.1);
+            g.set(pos.0, pos.1, WALL);
+            if !walk_reachable(&g, &self.pipe_pairs, self.start, self.world_idx).contains(target) {
+                out.push(pos);
+            }
+            g.set(pos.0, pos.1, was);
         }
         out
     }
@@ -286,8 +390,7 @@ impl WorldState {
             let blank = blank_tile_for(&self.grid, self.world_idx, pos.0, pos.1);
             self.grid.set(pos.0, pos.1, blank);
         }
-        self.slots
-            .retain(|s| s.kind != SlotKind::Pipe || (s.pos != a && s.pos != b));
+        self.slots.retain(|s| s.kind != SlotKind::Pipe || (s.pos != a && s.pos != b));
     }
 
     /// Remove the entire pipe web: every pair, every Pipe slot, every pipe
@@ -368,11 +471,7 @@ pub(crate) trait Phase {
 
 /// Run phases in the order given. The schedule is a plain slice: reordering,
 /// omitting, or repeating a phase is entirely the caller's choice.
-pub(crate) fn run_schedule(
-    state: &mut WorldState,
-    schedule: &[&dyn Phase],
-    rng: &mut dyn RngCore,
-) {
+pub(crate) fn run_schedule(state: &mut WorldState, schedule: &[&dyn Phase], rng: &mut dyn RngCore) {
     for phase in schedule {
         let report = phase.run(state, rng);
         state.log.push(report);

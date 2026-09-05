@@ -30,11 +30,8 @@ use crate::rom::Rom;
 /// the guard: it checks every `enemy_ptr` in the ROM against the walker's
 /// segment starts, so a new `$FF` insertion with no row here — or a row
 /// whose end is wrong — fails a test instead of going latent.
-pub const SPOILED_SEGMENT_RANGES: &[Range<usize>] = &[
-    0x0CFE2..0x0CFE7,
-    0x0D037..0x0D041,
-    0x0D102..0x0D107,
-];
+pub const SPOILED_SEGMENT_RANGES: &[Range<usize>] =
+    &[0x0CFE2..0x0CFE7, 0x0D037..0x0D041, 0x0D102..0x0D107];
 
 /// Disable all autoscrollers except 5-9 (parabeetle ride).
 ///
@@ -81,17 +78,13 @@ const PATCHES: &[(usize, &[u8])] = &[
     (0x0CA74, &[0x00]),
     (0x0CB63, &[0x00]),
     (0x0CC44, &[0x00]),
-
     // Airship W1 area: enemy data rewrite (4 bytes)
     (0x0CC6C, &[0x69, 0x18, 0x36, 0x6C]),
-
     // More D3 removals
     (0x0CD28, &[0x00]),
     (0x0CDD3, &[0x00]),
-
     // Airship W2 area: enemy data rewrite (7 bytes)
     (0x0CDE7, &[0x13, 0x6A, 0x63, 0x12, 0x6A, 0x69, 0x16]),
-
     // 3-7 coin heaven autoscroll is INTENTIONALLY left intact (matches the
     // reference IPS). Vanilla uses the autoscroll as a risk/reward penalty
     // for going after the Cloud chest; removing it makes going for the chest
@@ -101,79 +94,66 @@ const PATCHES: &[(usize, &[u8])] = &[
 
     // D3 removal
     (0x0CF51, &[0x00]),
-
     // Segment terminator insertion
     (0x0CFE3, &[0xFF]),
-
     // Enemy data structure rewrite (6 bytes)
     (0x0D038, &[0xFF, 0x00, 0x12, 0xFF, 0x01, 0xFF]),
-
     // Segment terminator
     (0x0D103, &[0xFF]),
-
     // D3 removal
     (0x0D6B7, &[0x00]),
-
     // Airship enemy data: cannon/fire objects repositioned (9 bytes)
-    (0x0D6DB, &[
-        0xBC, 0x5A, 0x0E, 0xCA, 0x5D, 0x0A, 0xC9, 0x5F, 0x10,
-    ]),
-
+    (0x0D6DB, &[0xBC, 0x5A, 0x0E, 0xCA, 0x5D, 0x0A, 0xC9, 0x5F, 0x10]),
     // Airship enemy data: more repositioned objects + terminator (18 bytes)
-    (0x0D6EA, &[
-        0xC8, 0x65, 0x10, 0xCB, 0x66, 0x0A, 0xC8, 0x68, 0x10,
-        0xCB, 0x6A, 0x0A, 0xBC, 0x70, 0x0C, 0xFF, 0x00, 0x00,
-    ]),
-
+    (
+        0x0D6EA,
+        &[
+            0xC8, 0x65, 0x10, 0xCB, 0x66, 0x0A, 0xC8, 0x68, 0x10, 0xCB, 0x6A, 0x0A, 0xBC, 0x70,
+            0x0C, 0xFF, 0x00, 0x00,
+        ],
+    ),
     // D3 removals
     (0x0D72D, &[0x00]),
     (0x0D768, &[0x00]),
-
     // Airship enemy data: repositioned objects (6 bytes)
     (0x0D789, &[0xC8, 0x3C, 0x10, 0xCA, 0x3F, 0x0A]),
-
     // D3 removal
     (0x0D7A9, &[0x00]),
-
     // Airship enemy data: page flag + header-like bytes (5 bytes)
     (0x0D7B3, &[0x14, 0x11, 0xAA, 0x15, 0x0F]),
-
     // Airship W6 area: large enemy data rewrite — new enemy set for
     // free-scroll play with repositioned cannons, fire jets, etc. (45 bytes)
-    (0x0D7CA, &[
-        0xBE, 0x3A, 0x0B, 0xB2, 0x3D, 0x0E, 0xAC, 0x3F, 0x11,
-        0xB1, 0x49, 0x0A, 0xB2, 0x4A, 0x0E, 0xB1, 0x52, 0x11,
-        0xB2, 0x55, 0x0C, 0xAC, 0x57, 0x0E, 0x9D, 0x58, 0x11,
-        0x9D, 0x62, 0x11, 0xB1, 0x68, 0x10, 0xAC, 0x6A, 0x0D,
-        0xB1, 0x6B, 0x0B, 0xAA, 0x77, 0x13, 0xFF, 0x00, 0x00,
-    ]),
-
+    (
+        0x0D7CA,
+        &[
+            0xBE, 0x3A, 0x0B, 0xB2, 0x3D, 0x0E, 0xAC, 0x3F, 0x11, 0xB1, 0x49, 0x0A, 0xB2, 0x4A,
+            0x0E, 0xB1, 0x52, 0x11, 0xB2, 0x55, 0x0C, 0xAC, 0x57, 0x0E, 0x9D, 0x58, 0x11, 0x9D,
+            0x62, 0x11, 0xB1, 0x68, 0x10, 0xAC, 0x6A, 0x0D, 0xB1, 0x6B, 0x0B, 0xAA, 0x77, 0x13,
+            0xFF, 0x00, 0x00,
+        ],
+    ),
     // Airship W7 area: page flag + header-like bytes (5 bytes)
     (0x0D7FD, &[0x11, 0x11, 0xAA, 0x13, 0x0F]),
-
     // Airship W7 area: enemy data with cloud/event objects (18 bytes)
-    (0x0D825, &[
-        0x00, 0x00, 0x0C, 0xB8, 0x01, 0x03, 0xAE, 0x14, 0x08,
-        0xAA, 0x15, 0x0A, 0x9D, 0x17, 0x07, 0x9D, 0x1E, 0x07,
-    ]),
-
+    (
+        0x0D825,
+        &[
+            0x00, 0x00, 0x0C, 0xB8, 0x01, 0x03, 0xAE, 0x14, 0x08, 0xAA, 0x15, 0x0A, 0x9D, 0x17,
+            0x07, 0x9D, 0x1E, 0x07,
+        ],
+    ),
     // More repositioned objects (6 bytes)
     (0x0D849, &[0xAE, 0x5A, 0x0A, 0xBE, 0x5B, 0x0D]),
-
     // More repositioned objects (6 bytes)
     (0x0D858, &[0xAA, 0x8A, 0x0D, 0xBE, 0x8B, 0x09]),
-
     // D3 removal
     (0x0D878, &[0x00]),
-
     // Autoscroll type change: airship path -> horizontal (0x50)
     (0x0D8DF, &[0x50]),
-
     // D3 removals
     (0x0D92D, &[0x00]),
     (0x0D980, &[0x00]),
     (0x0DA15, &[0x00]),
-
     // =========================================================================
     // Level pointer table redirects (PRG012: 0x18010–0x1A00F)
     // Each world's airship entry gets its ByRowType, ObjSets, and
@@ -181,91 +161,80 @@ const PATCHES: &[(usize, &[u8])] = &[
     // =========================================================================
 
     // --- World 1 airship pointer redirect ---
-    (0x19449, &[0x8A]),                 // ByRowType
-    (0x19484, &[0xEA, 0xD6]),           // ObjSets (enemy data CPU addr)
-    (0x194AE, &[0xB7, 0xAD]),           // LevelLayouts (layout CPU addr)
-
+    (0x19449, &[0x8A]),       // ByRowType
+    (0x19484, &[0xEA, 0xD6]), // ObjSets (enemy data CPU addr)
+    (0x194AE, &[0xB7, 0xAD]), // LevelLayouts (layout CPU addr)
     // --- World 2 airship pointer redirect ---
-    (0x194DE, &[0x6A]),                 // ByRowType
-    (0x19560, &[0x1C, 0xD7]),           // ObjSets
-    (0x195BE, &[0xAB, 0xAE]),           // LevelLayouts
-
+    (0x194DE, &[0x6A]),       // ByRowType
+    (0x19560, &[0x1C, 0xD7]), // ObjSets
+    (0x195BE, &[0xAB, 0xAE]), // LevelLayouts
     // --- World 3 airship pointer redirect ---
-    (0x19609, &[0x8A]),                 // ByRowType
-    (0x196A2, &[0x57, 0xD7]),           // ObjSets
-    (0x1970A, &[0x09, 0xB0]),           // LevelLayouts
-
+    (0x19609, &[0x8A]),       // ByRowType
+    (0x196A2, &[0x57, 0xD7]), // ObjSets
+    (0x1970A, &[0x09, 0xB0]), // LevelLayouts
     // --- World 4 airship pointer redirect ---
-    (0x1971A, &[0x6A]),                 // ByRowType
-    (0x19764, &[0x98, 0xD7]),           // ObjSets
-    (0x197A8, &[0x3A, 0xB1]),           // LevelLayouts
-
+    (0x1971A, &[0x6A]),       // ByRowType
+    (0x19764, &[0x98, 0xD7]), // ObjSets
+    (0x197A8, &[0x3A, 0xB1]), // LevelLayouts
     // --- World 5 airship pointer redirect ---
-    (0x19807, &[0xAA]),                 // ByRowType
-    (0x1987E, &[0xA6, 0xD6]),           // ObjSets
-    (0x198D2, &[0x97, 0xAC]),           // LevelLayouts
-
+    (0x19807, &[0xAA]),       // ByRowType
+    (0x1987E, &[0xA6, 0xD6]), // ObjSets
+    (0x198D2, &[0x97, 0xAC]), // LevelLayouts
     // --- World 6 airship pointer redirect ---
-    (0x19919, &[0x6A]),                 // ByRowType
-    (0x199C0, &[0xE5, 0xD7]),           // ObjSets
-    (0x19A32, &[0xB3, 0xB2]),           // LevelLayouts
-
+    (0x19919, &[0x6A]),       // ByRowType
+    (0x199C0, &[0xE5, 0xD7]), // ObjSets
+    (0x19A32, &[0xB3, 0xB2]), // LevelLayouts
     // --- World 7 airship pointer redirect ---
-    (0x19A69, &[0x9A]),                 // ByRowType
-    (0x19AF0, &[0x14, 0xD8]),           // ObjSets
-    (0x19B4C, &[0x89, 0xB4]),           // LevelLayouts
-
+    (0x19A69, &[0x9A]),       // ByRowType
+    (0x19AF0, &[0x14, 0xD8]), // ObjSets
+    (0x19B4C, &[0x89, 0xB4]), // LevelLayouts
     // =========================================================================
     // Additional level header patches (fortress/ship sub-areas)
     // Set bit 5 of byte4 for Y-start adjustment (0x8C -> 0xAC)
     // =========================================================================
     (0x23162, &[0xAC]),
     (0x23B00, &[0xAC]),
-
     // =========================================================================
     // Level layout data rewrites (pipe/water level data region)
     // New tile generator data for reworked airship levels.
     // =========================================================================
 
     // Airship level tile generators — repeated metatile pattern (28 bytes)
-    (0x24DE0, &[
-        0x6A, 0x00, 0x8F, 0x6A, 0x10, 0x8F, 0x6A, 0x20, 0x8F,
-        0x6A, 0x30, 0x8F, 0x6A, 0x40, 0x8F, 0x6A, 0x50, 0x8F,
-        0x6A, 0x60, 0x8F, 0x6A, 0x70, 0x8F, 0x6A, 0x80, 0x8F,
-        0x6A,
-    ]),
-
+    (
+        0x24DE0,
+        &[
+            0x6A, 0x00, 0x8F, 0x6A, 0x10, 0x8F, 0x6A, 0x20, 0x8F, 0x6A, 0x30, 0x8F, 0x6A, 0x40,
+            0x8F, 0x6A, 0x50, 0x8F, 0x6A, 0x60, 0x8F, 0x6A, 0x70, 0x8F, 0x6A, 0x80, 0x8F, 0x6A,
+        ],
+    ),
     // Airship level tile generators — platform/geometry data (85 bytes)
-    (0x24E6A, &[
-        0x6C, 0x4D, 0x80, 0x6D, 0x46, 0x80, 0x6E, 0x49, 0x80,
-        0x6E, 0x4F, 0x80, 0x6F, 0x41, 0x80, 0x6F, 0x4C, 0x80,
-        0x70, 0x4E, 0x80, 0x71, 0x4A, 0x80, 0x72, 0x44, 0x80,
-        0x75, 0x48, 0x80, 0x76, 0x4C, 0x80, 0x77, 0x4A, 0x80,
-        0x77, 0x4E, 0x80, 0x78, 0x45, 0x80, 0x78, 0x4D, 0x80,
-        0x79, 0x42, 0x80, 0x79, 0x48, 0x80, 0x6D, 0x51, 0x80,
-        0x6D, 0x5A, 0x80, 0x6F, 0x51, 0x80, 0x6F, 0x56, 0x80,
-        0x70, 0x53, 0x80, 0x73, 0x59, 0x80, 0x75, 0x50, 0x80,
-        0x76, 0x53, 0x80, 0x77, 0x51, 0x80, 0x77, 0x56, 0x80,
-        0x77, 0x5C, 0x80, 0x79,
-    ]),
-
+    (
+        0x24E6A,
+        &[
+            0x6C, 0x4D, 0x80, 0x6D, 0x46, 0x80, 0x6E, 0x49, 0x80, 0x6E, 0x4F, 0x80, 0x6F, 0x41,
+            0x80, 0x6F, 0x4C, 0x80, 0x70, 0x4E, 0x80, 0x71, 0x4A, 0x80, 0x72, 0x44, 0x80, 0x75,
+            0x48, 0x80, 0x76, 0x4C, 0x80, 0x77, 0x4A, 0x80, 0x77, 0x4E, 0x80, 0x78, 0x45, 0x80,
+            0x78, 0x4D, 0x80, 0x79, 0x42, 0x80, 0x79, 0x48, 0x80, 0x6D, 0x51, 0x80, 0x6D, 0x5A,
+            0x80, 0x6F, 0x51, 0x80, 0x6F, 0x56, 0x80, 0x70, 0x53, 0x80, 0x73, 0x59, 0x80, 0x75,
+            0x50, 0x80, 0x76, 0x53, 0x80, 0x77, 0x51, 0x80, 0x77, 0x56, 0x80, 0x77, 0x5C, 0x80,
+            0x79,
+        ],
+    ),
     // =========================================================================
     // Airship level header patches (ship level data: 0x2EC07–0x30005)
     // For each W1-W7 airship: byte4 (Y-start) -> 0xAA, byte5 (X-start) -> 0x0A
     // This positions Mario correctly and disables scroll-path camera mode.
     // =========================================================================
-    (0x2ECAD, &[0xAA, 0x0A]),  // W1 airship header byte4+5
-    (0x2EDCD, &[0xAA, 0x0A]),  // W2 airship header byte4+5
-    (0x2EEC1, &[0xAA, 0x0A]),  // W3 airship header byte4+5
-    (0x2F01F, &[0xAA, 0x0A]),  // W4 airship header byte4+5
-    (0x2F150, &[0xAA, 0x0A]),  // W5 airship header byte4+5
-    (0x2F2C9, &[0xAA, 0x0A]),  // W6 airship header byte4+5
-    (0x2F49F, &[0xAA, 0x0A]),  // W7 airship header byte4+5
-
+    (0x2ECAD, &[0xAA, 0x0A]), // W1 airship header byte4+5
+    (0x2EDCD, &[0xAA, 0x0A]), // W2 airship header byte4+5
+    (0x2EEC1, &[0xAA, 0x0A]), // W3 airship header byte4+5
+    (0x2F01F, &[0xAA, 0x0A]), // W4 airship header byte4+5
+    (0x2F150, &[0xAA, 0x0A]), // W5 airship header byte4+5
+    (0x2F2C9, &[0xAA, 0x0A]), // W6 airship header byte4+5
+    (0x2F49F, &[0xAA, 0x0A]), // W7 airship header byte4+5
     // Extra ship sub-area byte5 patches (clear X-start bits)
     (0x2F62E, &[0x0A]),
     (0x2FC2C, &[0x0A]),
-
     // =========================================================================
     // PRG030 code patch: disable scroll-path camera logic
     // =========================================================================
@@ -296,7 +265,8 @@ mod tests {
         for &(offset, data) in PATCHES.iter() {
             let actual = rom.read_range(offset, data.len());
             assert_eq!(
-                actual, data,
+                actual,
+                data,
                 "Patch at 0x{:05X} ({} bytes) was not applied correctly",
                 offset,
                 data.len()
@@ -328,11 +298,7 @@ mod tests {
         }
 
         // The D3 should still be there
-        assert_eq!(
-            rom.read_byte(level_5_9_offset),
-            0xD3,
-            "Level 5-9 autoscroll must be preserved"
-        );
+        assert_eq!(rom.read_byte(level_5_9_offset), 0xD3, "Level 5-9 autoscroll must be preserved");
     }
 
     #[test]
@@ -340,11 +306,9 @@ mod tests {
         let mut rom = make_test_rom();
 
         // Set up original airship header values
-        let airship_offsets = [
-            0x2ECAD, 0x2EDCD, 0x2EEC1, 0x2F01F, 0x2F150, 0x2F2C9, 0x2F49F,
-        ];
+        let airship_offsets = [0x2ECAD, 0x2EDCD, 0x2EEC1, 0x2F01F, 0x2F150, 0x2F2C9, 0x2F49F];
         for &offset in &airship_offsets {
-            rom.write_byte(offset, 0x8A);     // original byte4
+            rom.write_byte(offset, 0x8A); // original byte4
             rom.write_byte(offset + 1, 0xEA); // original byte5
         }
 
@@ -372,9 +336,8 @@ mod tests {
 
         // D3 removal offsets (single-byte 0x00 patches in enemy data range)
         let d3_offsets = [
-            0x0CA74, 0x0CB63, 0x0CC44, 0x0CD28, 0x0CDD3, 0x0CF51,
-            0x0D6B7, 0x0D72D, 0x0D768, 0x0D7A9, 0x0D878,
-            0x0D92D, 0x0D980, 0x0DA15,
+            0x0CA74, 0x0CB63, 0x0CC44, 0x0CD28, 0x0CDD3, 0x0CF51, 0x0D6B7, 0x0D72D, 0x0D768,
+            0x0D7A9, 0x0D878, 0x0D92D, 0x0D980, 0x0DA15,
         ];
 
         // Place D3 at each offset
@@ -421,11 +384,7 @@ mod tests {
 
         disable_autoscroll(&mut rom);
 
-        assert_eq!(
-            rom.read_byte(0x3D7AD),
-            0x80,
-            "PRG030 scroll-path disable patch not applied"
-        );
+        assert_eq!(rom.read_byte(0x3D7AD), 0x80, "PRG030 scroll-path disable patch not applied");
     }
 
     #[test]
@@ -467,10 +426,8 @@ mod tests {
     #[test]
     fn test_no_overlapping_patches() {
         // Ensure no patches overlap each other (which would indicate a bug)
-        let mut ranges: Vec<(usize, usize)> = PATCHES
-            .iter()
-            .map(|&(offset, data)| (offset, offset + data.len()))
-            .collect();
+        let mut ranges: Vec<(usize, usize)> =
+            PATCHES.iter().map(|&(offset, data)| (offset, offset + data.len())).collect();
         ranges.sort_by_key(|&(start, _)| start);
 
         for i in 1..ranges.len() {
@@ -495,10 +452,7 @@ mod tests {
 
         // All patched regions should be identical
         for &(offset, data) in PATCHES.iter() {
-            assert_eq!(
-                rom1.read_range(offset, data.len()),
-                rom2.read_range(offset, data.len()),
-            );
+            assert_eq!(rom1.read_range(offset, data.len()), rom2.read_range(offset, data.len()),);
         }
     }
 
@@ -570,7 +524,7 @@ mod tests {
     /// Every `enemy_ptr` the ROM names: the per-world pointer tables plus the
     /// level headers (the latter reach sub-areas the tables don't).
     fn all_enemy_entry_points(rom: &Rom) -> Vec<u16> {
-        use crate::randomize::rom_data::{read_entry, WORLDS};
+        use crate::randomize::rom_data::{WORLDS, read_entry};
 
         let mut pts: Vec<u16> = crate::randomize::enemies::enemy_entry_points(rom);
         for world in &WORLDS {
@@ -594,13 +548,9 @@ mod tests {
     /// start, an empty stream (`$FF` right after the page byte — which is
     /// what a neutralized autoscroll becomes, and what the block's leading
     /// placeholders already were in vanilla), or inside a skip range.
-    fn adrift_entry_points(
-        rom: &Rom,
-        entry_points: &[u16],
-        skip: &[Range<usize>],
-    ) -> Vec<String> {
+    fn adrift_entry_points(rom: &Rom, entry_points: &[u16], skip: &[Range<usize>]) -> Vec<String> {
         use crate::randomize::rom_data::{
-            enemy_ptr_to_file_offset, ENEMY_DATA_END, ENEMY_DATA_START,
+            ENEMY_DATA_END, ENEMY_DATA_START, enemy_ptr_to_file_offset,
         };
         use crate::randomize::segment_writer::walk_segments;
 

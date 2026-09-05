@@ -9,14 +9,14 @@ pub(super) const SPADE_BUDGET: usize = 19;
 /// Number of pipe pairs (not endpoints) per world in the vanilla ROM — each
 /// world's pipe budget.
 pub(crate) const VANILLA_PIPE_PAIRS: [usize; 8] = [
-    0,  // W1
-    1,  // W2
-    3,  // W3
-    2,  // W4
-    2,  // W5 (includes spiral tower)
-    2,  // W6
-    8,  // W7
-    6,  // W8
+    0, // W1
+    1, // W2
+    3, // W3
+    2, // W4
+    2, // W5 (includes spiral tower)
+    2, // W6
+    8, // W7
+    6, // W8
 ];
 
 /// Total action levels distributed across the 8 worlds (the vanilla count).
@@ -38,10 +38,7 @@ pub(crate) fn bfs_ordered(
     world_idx: usize,
 ) -> Vec<((usize, usize), usize)> {
     let result = walk_map(grid, pipe_pairs, start_pos, world_idx);
-    let mut ordered: Vec<((usize, usize), usize)> = result
-        .distances
-        .into_iter()
-        .collect();
+    let mut ordered: Vec<((usize, usize), usize)> = result.distances.into_iter().collect();
     // Sort by distance, then by position for determinism (HashMap has no order).
     ordered.sort_by_key(|&((r, c), d)| (d, r, c));
     ordered
@@ -94,7 +91,7 @@ pub(super) fn find_blank_slots(
 /// 2. Fortress: $67, $EB
 /// 3. Page threshold: page0 >= $03, page1 >= $67, page2 >= $BF, page3 >= $E9
 /// 4. Map_Removable_Tiles: $51, $52, $54, $67, $EB, $E4, $56, $9D
-pub(super) fn is_completion_unsafe(tile: u8) -> bool {
+pub(crate) fn is_completion_unsafe(tile: u8) -> bool {
     const SPECIAL: [u8; 5] = [0x50, 0xE8, 0xE6, 0xBD, 0xE0];
     const REMOVABLE: [u8; 8] = [0x51, 0x52, 0x54, 0x67, 0xEB, 0xE4, 0x56, 0x9D];
     const THRESHOLDS: [u8; 4] = [0x03, 0x67, 0xBF, 0xE9];
@@ -115,7 +112,10 @@ pub(super) fn is_completion_unsafe(tile: u8) -> bool {
 /// completion-check routine — the input to `is_row78_conflict`. This covers
 /// both completion-unsafe grid tiles and placed Level/Fortress/BonusGame slots
 /// (which will be stamped as completion-unsafe tiles by the writer).
-pub(super) fn completable_positions(grid: &Grid, slots: &[SlotAssignment]) -> HashSet<(usize, usize)> {
+pub(super) fn completable_positions(
+    grid: &Grid,
+    slots: &[SlotAssignment],
+) -> HashSet<(usize, usize)> {
     let mut set: HashSet<(usize, usize)> = HashSet::new();
     for r in 0..grid.rows() {
         for c in 0..grid.cols {
@@ -167,9 +167,8 @@ pub(super) fn promote_hb_slots<R: Rng>(
 
     let mut candidates_by_world: Vec<Vec<(usize, usize)>> = Vec::with_capacity(worlds.len());
     for (wi, w) in worlds.iter().enumerate() {
-        let sprite_positions: HashSet<(usize, usize)> = rom_data::read_hb_sprite_positions(rom, wi)
-            .into_iter()
-            .collect();
+        let sprite_positions: HashSet<(usize, usize)> =
+            rom_data::read_hb_sprite_positions(rom, wi).into_iter().collect();
 
         let completable = completable_positions(&w.grid, &w.slots);
 
@@ -224,11 +223,8 @@ pub(super) fn promote_hb_slots<R: Rng>(
     }
 
     for (wi, w) in worlds.iter_mut().enumerate() {
-        let chosen: HashSet<(usize, usize)> = candidates_by_world[wi]
-            .iter()
-            .take(budget[wi])
-            .copied()
-            .collect();
+        let chosen: HashSet<(usize, usize)> =
+            candidates_by_world[wi].iter().take(budget[wi]).copied().collect();
         for slot in w.slots.iter_mut() {
             if slot.kind == SlotKind::HammerBro && chosen.contains(&slot.pos) {
                 slot.kind = target_kind.clone();
@@ -329,7 +325,9 @@ pub(crate) fn prepare_capacities(
     }
 
     let fixed_positions: Vec<HashSet<(usize, usize)>> = (0..8)
-        .map(|wi| fixed_positions_for_world(rom, catalog, wi, shuffle_toad_houses, shuffle_hammer_bros))
+        .map(|wi| {
+            fixed_positions_for_world(rom, catalog, wi, shuffle_toad_houses, shuffle_hammer_bros)
+        })
         .collect();
 
     let mut capacities = [0usize; 8];
@@ -342,11 +340,7 @@ pub(crate) fn prepare_capacities(
         capacities[wi] = grid_capacity.min(ptr_capacity);
     }
 
-    CapacityPrep {
-        patched_grids,
-        fixed_positions,
-        capacities,
-    }
+    CapacityPrep { patched_grids, fixed_positions, capacities }
 }
 
 /// Distribute `total` levels across worlds by compressed capacity.
@@ -371,11 +365,7 @@ pub(crate) fn distribute_levels<R: Rng>(
     }
 
     let weights: [f64; 8] = std::array::from_fn(|wi| {
-        if capacities[wi] == 0 {
-            0.0
-        } else {
-            (capacities[wi] as f64).powf(exponent)
-        }
+        if capacities[wi] == 0 { 0.0 } else { (capacities[wi] as f64).powf(exponent) }
     });
     let total_w: f64 = weights.iter().sum();
     if total_w == 0.0 {
@@ -564,7 +554,11 @@ pub(super) const W8_HB_CAP: usize = 1;
 /// 1-3, bounded by `caps` (free map-object slots and available HammerBro
 /// tiles). Seeds every world with one (capacity permitting), then hands out the
 /// rest at random — mirrors [`redistribute_fortresses`].
-pub(super) fn distribute_hb_sprites<R: Rng>(caps: &[usize; 8], total: usize, rng: &mut R) -> [usize; 8] {
+pub(super) fn distribute_hb_sprites<R: Rng>(
+    caps: &[usize; 8],
+    total: usize,
+    rng: &mut R,
+) -> [usize; 8] {
     let mut counts = [0usize; 8];
     for wi in 0..8 {
         counts[wi] = caps[wi].min(1);
@@ -582,46 +576,12 @@ pub(super) fn distribute_hb_sprites<R: Rng>(caps: &[usize; 8], total: usize, rng
     counts
 }
 
-/// Pick `count` positions from `candidates`, preferring spread: greedily accept
-/// a shuffled candidate when it is not adjacent (Chebyshev distance >= 2) to an
-/// already-chosen one, then top up from the remainder if spacing left us short.
-pub(super) fn pick_spread_positions<R: Rng>(
-    candidates: &[(usize, usize)],
-    count: usize,
-    rng: &mut R,
-) -> Vec<(usize, usize)> {
-    let count = count.min(candidates.len());
-    let mut shuffled = candidates.to_vec();
-    shuffled.shuffle(rng);
-
-    let mut chosen: Vec<(usize, usize)> = Vec::with_capacity(count);
-    for &pos in &shuffled {
-        if chosen.len() == count {
-            break;
-        }
-        let far = chosen
-            .iter()
-            .all(|&(r, c)| r.abs_diff(pos.0).max(c.abs_diff(pos.1)) >= 2);
-        if far {
-            chosen.push(pos);
-        }
-    }
-    // Spacing may have rejected too many; top up from the rest.
-    for &pos in &shuffled {
-        if chosen.len() == count {
-            break;
-        }
-        if !chosen.contains(&pos) {
-            chosen.push(pos);
-        }
-    }
-    chosen
-}
-
 /// Decide redistributed Hammer Bro sprite positions + rewards for every world.
-/// Selects from each world's final `HammerBro` slot tiles (light anti-clump)
-/// and pairs each with a reward picked up from the vanilla encounters. Stores
-/// the result in `worlds[wi].hb_sprites`; the writer stamps the ROM tables.
+/// Selects from each world's final `HammerBro` slot tiles, spread apart in the
+/// march graph so the sprites do not keep landing on each other (see
+/// [`super::march`]), and pairs each with a reward picked up from the vanilla
+/// encounters. Stores the result in `worlds[wi].hb_sprites`; the writer stamps
+/// the ROM tables.
 pub(super) fn assign_hb_sprites<R: Rng>(
     rom: &Rom,
     pickup: &PickupResult,
@@ -632,6 +592,9 @@ pub(super) fn assign_hb_sprites<R: Rng>(
     // (where the ROM can store a sprite), and the HammerBro tiles to spawn on.
     let mut caps = [0usize; 8];
     let mut hb_tiles: Vec<Vec<(usize, usize)>> = Vec::with_capacity(8);
+    // Positions the writer will stamp as nodes — impassable to a marching
+    // sprite even though they are still blank path tiles on the build grid.
+    let mut blocked: Vec<HashSet<Pos>> = Vec::with_capacity(8);
     for wi in 0..8 {
         let tiles: Vec<(usize, usize)> = worlds[wi]
             .slots
@@ -640,12 +603,19 @@ pub(super) fn assign_hb_sprites<R: Rng>(
             .map(|s| s.pos)
             .collect();
         // Leave RESERVED_DYNAMIC_SLOTS empty for runtime bonus spawns.
-        let map_slots = rom_data::eligible_hb_map_slots(rom, wi)
-            .len()
-            .saturating_sub(RESERVED_DYNAMIC_SLOTS);
+        let map_slots =
+            rom_data::eligible_hb_map_slots(rom, wi).len().saturating_sub(RESERVED_DYNAMIC_SLOTS);
         let world_max = if wi == 7 { W8_HB_CAP } else { MAX_HB_PER_WORLD };
         caps[wi] = world_max.min(map_slots).min(tiles.len());
         hb_tiles.push(tiles);
+        blocked.push(
+            worlds[wi]
+                .slots
+                .iter()
+                .filter(|s| s.kind != SlotKind::HammerBro)
+                .map(|s| s.pos)
+                .collect(),
+        );
     }
 
     // Place the vanilla number of encounters, clamped to total capacity.
@@ -658,13 +628,16 @@ pub(super) fn assign_hb_sprites<R: Rng>(
     let mut reward_iter = rewards.into_iter();
 
     for wi in 0..8 {
-        let positions = pick_spread_positions(&hb_tiles[wi], counts[wi], rng);
+        let positions = super::march::pick_spread_positions(
+            &hb_tiles[wi],
+            counts[wi],
+            &worlds[wi].grid,
+            &blocked[wi],
+            rng,
+        );
         worlds[wi].hb_sprites = positions
             .into_iter()
-            .map(|grid_pos| HbSprite {
-                grid_pos,
-                reward: reward_iter.next().unwrap_or(0),
-            })
+            .map(|grid_pos| HbSprite { grid_pos, reward: reward_iter.next().unwrap_or(0) })
             .collect();
     }
 }

@@ -108,6 +108,7 @@ pub fn koopaling_vram_clear(rom: &mut Rom) {
     // Patch site: replace 8-byte defeat finalization with JSR + NOPs + RTS
     let lo = (KOOPA_VRAM_CLEAR_CPU & 0xFF) as u8;
     let hi = (KOOPA_VRAM_CLEAR_CPU >> 8) as u8;
+    #[rustfmt::skip]
     rom.write_range(KOOPA_DEFEAT_PATCH_SITE, &[
         0x20, lo, hi,   // JSR vram_clear
         0xEA, 0xEA,     // NOP; NOP
@@ -188,8 +189,8 @@ pub fn hammer_vulnerable_koopalings(rom: &mut Rom) {
 /// Source: fcoughlin (Fred).
 /// See docs/smb3_rom_reference.md § "Map_Unused7EEA".
 const KOOPALING_REMAP_SITES: &[usize] = &[
-    0x02E30, 0x02ED4, 0x02F3B, 0x02FAE, 0x02FE5, 0x02FF6,
-    0x03020, 0x03181, 0x03372, 0x033E8, 0x03612,
+    0x02E30, 0x02ED4, 0x02F3B, 0x02FAE, 0x02FE5, 0x02FF6, 0x03020, 0x03181, 0x03372, 0x033E8,
+    0x03612,
 ];
 const KOOPALING_REMAP_LUT: usize = 0x16018;
 
@@ -329,6 +330,7 @@ const KOOPA_DEFEAT_CPU: u16 = 0xB193;
 ///   JMP $B18D              ; survive
 ///   JMP $B193              ; defeated
 /// ```
+#[rustfmt::skip]
 const KOOPA_HITS_CODE: [u8; 13] = [
     0xB5, 0x7F,                                                  // LDA $7F,X
     0xAC, 0x27, 0x07,                                            // LDY $0727
@@ -361,18 +363,20 @@ pub fn randomize_koopaling_hits<R: Rng>(rom: &mut Rom, rng: &mut R) {
 
     // Write JMP defeat right after the subroutine (at sub + 13)
     let defeat_jmp_offset = super::rom_data::FS_KOOPA_HITS_SUB + 13;
-    rom.write_range(defeat_jmp_offset, &[
-        0x4C, KOOPA_DEFEAT_CPU as u8, (KOOPA_DEFEAT_CPU >> 8) as u8,
-    ]);
+    rom.write_range(
+        defeat_jmp_offset,
+        &[0x4C, KOOPA_DEFEAT_CPU as u8, (KOOPA_DEFEAT_CPU >> 8) as u8],
+    );
 
     // Build per-world threshold table: worlds 0–6 get random 1–5
     let table: [u8; 7] = std::array::from_fn(|_| rng.random_range(1..=5));
     rom.write_range(super::rom_data::FS_KOOPA_HITS_TABLE, &table);
 
     // Patch stomp call site: replace LDA $7F,X; CMP #$03 (3 bytes) with JMP subroutine
-    rom.write_range(KOOPA_PATCH_SITE, &[
-        0x4C, KOOPA_HITS_SUB_CPU as u8, (KOOPA_HITS_SUB_CPU >> 8) as u8,
-    ]);
+    rom.write_range(
+        KOOPA_PATCH_SITE,
+        &[0x4C, KOOPA_HITS_SUB_CPU as u8, (KOOPA_HITS_SUB_CPU >> 8) as u8],
+    );
 
     // Write fireball preset subroutine (12 bytes):
     //   LDY $0727        ; World_Num
@@ -507,6 +511,7 @@ pub fn randomize_boomboom_hits<R: Rng>(rom: &mut Rom, rng: &mut R) {
     // unconditionally — but keep the disassembly clean).
     let sub_lo = BOOMBOOM_HITS_SUB_CPU as u8;
     let sub_hi = (BOOMBOOM_HITS_SUB_CPU >> 8) as u8;
+    #[rustfmt::skip]
     rom.write_range(BOOMBOOM_PATCH_SITE, &[
         0x4C, sub_lo, sub_hi,           // JMP subroutine
         0xEA, 0xEA, 0xEA, 0xEA, 0xEA,   // NOP × 5
@@ -572,11 +577,14 @@ mod tests {
         randomize_koopaling_hits(&mut rom, &mut rng);
 
         // Patch site: JMP $B81A
-        assert_eq!(rom.read_range(KOOPA_PATCH_SITE, 3), &[
-            0x4C,
-            crate::randomize::rom_data::KOOPA_HITS_SUB_CPU as u8,
-            (crate::randomize::rom_data::KOOPA_HITS_SUB_CPU >> 8) as u8,
-        ]);
+        assert_eq!(
+            rom.read_range(KOOPA_PATCH_SITE, 3),
+            &[
+                0x4C,
+                crate::randomize::rom_data::KOOPA_HITS_SUB_CPU as u8,
+                (crate::randomize::rom_data::KOOPA_HITS_SUB_CPU >> 8) as u8,
+            ]
+        );
         // Subroutine written
         assert_eq!(
             rom.read_range(crate::randomize::rom_data::FS_KOOPA_HITS_SUB, 13),
@@ -603,10 +611,10 @@ mod tests {
 
     #[test]
     fn test_randomize_boomboom_hits() {
-        use rand::SeedableRng;
         use crate::randomize::rom_data::{
             BOOMBOOM_HITS_SUB_CPU, FS_BOOMBOOM_HITS_SUB, FS_BOOMBOOM_HITS_TABLE,
         };
+        use rand::SeedableRng;
 
         let mut rom = make_test_rom();
         let mut rng = ChaCha8Rng::seed_from_u64(42);
@@ -614,19 +622,18 @@ mod tests {
 
         // Patch site: JMP subroutine + 5 NOPs.
         assert_eq!(rom.read_byte(BOOMBOOM_PATCH_SITE), 0x4C);
-        assert_eq!(rom.read_range(BOOMBOOM_PATCH_SITE + 1, 2), &[
-            BOOMBOOM_HITS_SUB_CPU as u8,
-            (BOOMBOOM_HITS_SUB_CPU >> 8) as u8,
-        ]);
+        assert_eq!(
+            rom.read_range(BOOMBOOM_PATCH_SITE + 1, 2),
+            &[BOOMBOOM_HITS_SUB_CPU as u8, (BOOMBOOM_HITS_SUB_CPU >> 8) as u8,]
+        );
         assert_eq!(rom.read_range(BOOMBOOM_PATCH_SITE + 3, 5), &[0xEA; 5]);
 
         // Subroutine head: INC $7CD2,X ; INC $9A,X ; and it ends in JMP $AE82.
         assert_eq!(rom.read_range(FS_BOOMBOOM_HITS_SUB, 5), &[0xFE, 0xD2, 0x7C, 0xF6, 0x9A]);
-        assert_eq!(rom.read_range(FS_BOOMBOOM_HITS_SUB + 41, 3), &[
-            0x4C,
-            BOOMBOOM_DEATH_CPU as u8,
-            (BOOMBOOM_DEATH_CPU >> 8) as u8,
-        ]);
+        assert_eq!(
+            rom.read_range(FS_BOOMBOOM_HITS_SUB + 41, 3),
+            &[0x4C, BOOMBOOM_DEATH_CPU as u8, (BOOMBOOM_DEATH_CPU >> 8) as u8,]
+        );
 
         // Threshold table: 16 entries, each a valid 1–5 hit count.
         let table = rom.read_range(FS_BOOMBOOM_HITS_TABLE, 16);
@@ -680,10 +687,7 @@ mod tests {
 
         // Ring attack: all three sites rewritten to the SAME identity, drawn
         // from the pool {0,1,2,3,4,6} (Lemmy/0x05 excluded).
-        let ring: Vec<u8> = KOOPALING_RING_CMP_SITES
-            .iter()
-            .map(|&s| rom.read_byte(s))
-            .collect();
+        let ring: Vec<u8> = KOOPALING_RING_CMP_SITES.iter().map(|&s| rom.read_byte(s)).collect();
         assert!(
             ring.iter().all(|&id| id == ring[0]),
             "ring sites must all hold the same identity, got {ring:02X?}"
@@ -713,6 +717,9 @@ mod asm_checks {
 
     #[test]
     fn koopa_hits_is_well_formed() {
-        asm::check(&KOOPA_HITS_CODE).allocation(crate::randomize::rom_data::FS_KOOPA_HITS_SUB).fragment().assert_ok();
+        asm::check(&KOOPA_HITS_CODE)
+            .allocation(crate::randomize::rom_data::FS_KOOPA_HITS_SUB)
+            .fragment()
+            .assert_ok();
     }
 }

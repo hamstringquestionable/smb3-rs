@@ -40,13 +40,13 @@ pub(super) fn swap_enemy(data: &mut [u8], id_index: usize, new_id: u8) {
 
 /// Pick a random CHR-compatible enemy from `pool`, or `None` if nothing fits.
 pub(super) fn pick_compatible<R: Rng>(
-    pool: &[u8], slot4: ChrSlot, slot5: ChrSlot, rng: &mut R,
+    pool: &[u8],
+    slot4: ChrSlot,
+    slot5: ChrSlot,
+    rng: &mut R,
 ) -> Option<u8> {
-    let compatible: Vec<u8> = pool
-        .iter()
-        .copied()
-        .filter(|&c| is_chr_compatible(c, slot4, slot5))
-        .collect();
+    let compatible: Vec<u8> =
+        pool.iter().copied().filter(|&c| is_chr_compatible(c, slot4, slot5)).collect();
     compatible.choose(rng).copied()
 }
 
@@ -57,7 +57,10 @@ pub(super) fn pick_compatible<R: Rng>(
 /// a bucket with no compatible member under the current slot commitments is
 /// skipped for this draw. Returns `None` only if no bucket has any fit.
 pub(super) fn pick_bucket_first<R: Rng>(
-    buckets: &[&[u8]], slot4: ChrSlot, slot5: ChrSlot, rng: &mut R,
+    buckets: &[&[u8]],
+    slot4: ChrSlot,
+    slot5: ChrSlot,
+    rng: &mut R,
 ) -> Option<u8> {
     let eligible: Vec<&[u8]> = buckets
         .iter()
@@ -93,25 +96,30 @@ pub(super) fn pick_replacement<R: Rng>(
     // otherwise it's the normal class pool, picked via the
     // wild/piranha/plain strategy. `None` => no swap for this entry.
     let picked: Option<(Option<u8>, Cow<[u8]>)> = match protection {
-        Some(EntryProtection::ForceShell) if modes.shell != EnemyMode::Off => Some((
-            pick_compatible(SHELL_ENEMIES, slot4, slot5, rng),
-            Cow::Borrowed(SHELL_ENEMIES),
-        )),
-        Some(EntryProtection::ForceStompable) => {
-            find_class_pool(entry.obj_id, modes).map(|pool| {
-                let sp: Vec<u8> = pool.slice(wild_pool).iter().copied()
-                    .filter(|id| STOMPABLE_ENEMIES.contains(id)).collect();
-                let pick = pick_compatible(&sp, slot4, slot5, rng);
-                (pick, Cow::Owned(sp))
-            })
+        Some(EntryProtection::ForceShell) if modes.shell != EnemyMode::Off => {
+            Some((pick_compatible(SHELL_ENEMIES, slot4, slot5, rng), Cow::Borrowed(SHELL_ENEMIES)))
         }
+        Some(EntryProtection::ForceStompable) => find_class_pool(entry.obj_id, modes).map(|pool| {
+            let sp: Vec<u8> = pool
+                .slice(wild_pool)
+                .iter()
+                .copied()
+                .filter(|id| STOMPABLE_ENEMIES.contains(id))
+                .collect();
+            let pick = pick_compatible(&sp, slot4, slot5, rng);
+            (pick, Cow::Owned(sp))
+        }),
         Some(EntryProtection::ExcludeHazards) => {
             find_class_pool(entry.obj_id, modes).map(|pool| {
                 // Drop hazards, but keep any of the same category as the
                 // vanilla enemy here (additive-only: don't strip a
                 // designed-in hazard, only block introducing a new one).
-                let fp: Vec<u8> = pool.slice(wild_pool).iter().copied()
-                    .filter(|&id| !hazard_excluded(id, entry.obj_id)).collect();
+                let fp: Vec<u8> = pool
+                    .slice(wild_pool)
+                    .iter()
+                    .copied()
+                    .filter(|&id| !hazard_excluded(id, entry.obj_id))
+                    .collect();
                 let pick = pick_compatible(&fp, slot4, slot5, rng);
                 (pick, Cow::Owned(fp))
             })
@@ -123,13 +131,9 @@ pub(super) fn pick_replacement<R: Rng>(
                     // Category-equal: piranha / upward jet / wrench each
                     // get a uniform turn. Giant red (0x7F) only when this
                     // slot already held one (keep filter covers the rest).
-                    let bucket: &[u8] = if entry.obj_id == GIANT_RED_PIRANHA {
-                        PIRANHAS
-                    } else {
-                        PIRANHAS_NO_RED
-                    };
-                    pick_bucket_first(&[bucket, BUCKET_UP_JET, BUCKET_WRENCH],
-                        slot4, slot5, rng)
+                    let bucket: &[u8] =
+                        if entry.obj_id == GIANT_RED_PIRANHA { PIRANHAS } else { PIRANHAS_NO_RED };
+                    pick_bucket_first(&[bucket, BUCKET_UP_JET, BUCKET_WRENCH], slot4, slot5, rng)
                 }
                 ClassPool::PiranhaCeil => {
                     pick_bucket_first(&[PIRANHASC, BUCKET_DOWN_JET], slot4, slot5, rng)
@@ -156,7 +160,12 @@ pub(super) fn pick_replacement<R: Rng>(
         // committed anywhere in the segment, not just this group — it
         // follows the player into all of them (see CHASER_IDS).
         let chaser_clash = CHASER_IDS.contains(&id) && !is_chr_compatible(id, seg4, seg5);
-        !(over_cap || bad_giant || chaser_clash || hb_rewritten)
+        // This segment's hazard budget is spent (always, under HazardLimit::All).
+        // Additive-only, exactly like the curated ExcludeHazards entries: a
+        // hazard sharing the vanilla enemy's category is still allowed, so
+        // designed-in hazards survive and thwomp-variant shuffle keeps working.
+        let added_hazard = limits.hazard_cap_full && hazard_excluded(id, entry.obj_id);
+        !(over_cap || bad_giant || chaser_clash || hb_rewritten || added_hazard)
     };
     // (A piranha slot can't become a hazard: the piranha pools are
     // self-contained and contain none — verified by the harness's
@@ -168,8 +177,7 @@ pub(super) fn pick_replacement<R: Rng>(
     match primary {
         Some(id) if keep(id) => Some(id),
         _ => {
-            let filtered: Vec<u8> =
-                base_pool.iter().copied().filter(|&id| keep(id)).collect();
+            let filtered: Vec<u8> = base_pool.iter().copied().filter(|&id| keep(id)).collect();
             pick_compatible(&filtered, slot4, slot5, rng)
         }
     }

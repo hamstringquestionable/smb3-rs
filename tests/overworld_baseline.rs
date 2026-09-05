@@ -15,7 +15,7 @@
 //! Skipped when the ROM is absent, like the other ROM-dependent tests — the
 //! ROM is gitignored and CI has no copy.
 
-use smb3_rs::{generate_patched_rom, Options};
+use smb3_rs::{Options, generate_patched_rom};
 
 const ROM_PATH: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";
 const SEEDS: u64 = 20;
@@ -192,13 +192,134 @@ fn sweep_is_deterministic() {
 /// `Cargo.toml` here, so the first recapture attempt printed a stale binary's
 /// hashes. Force it (`touch src/lib.rs`, or `cargo clean -p smb3-rs`) before
 /// trusting any number this test prints after a bump.
+///
+/// Re-captured 2026-08-30 for the pipe screen-squish fix: the always-on
+/// MaCobra bundle gained a 9-byte splice at 0x10476 (PRG008 $A466) that exempts
+/// pipe travel from the left-edge crush death. It consumes no RNG, so nothing
+/// downstream shifted — verified rather than argued: for all 20 of these seeds
+/// the pre- and post-fix ROMs were diffed byte for byte (`--no-palettes
+/// --patched-rom`) and the diff is exactly 0x10476..0x1047F on every one of
+/// them, with no second span. No map tile, pointer table or level byte moved.
+///
+/// Re-captured 2026-08-31 for the off-path fort rule (`Forts` may no longer
+/// take a blank the player cannot walk around; `try_fort_lock` and
+/// `try_pipe_move` hold the same line). Overworld topology changes on
+/// purpose. TWO causes are folded into this recapture and both are named
+/// here on purpose:
+///
+/// 1. The baseline was ALREADY stale at HEAD — PR #205 (three new king rescue
+///    quotes) rewrites quote text in every ROM and did not recapture, so all
+///    20 seeds had already moved before this change was written.
+/// 2. This change itself, which moves fortresses and therefore locks, C1, and
+///    the shaping decisions downstream of them.
+///
+/// Verified by pinning, the way the v28 and dealt-C1-floor recaptures were:
+/// neutralising all three guards (an empty forced set in `Forts` and in
+/// `try_fort_lock`, `any_fort_forced` returning false) reproduced the HEAD
+/// hashes EXACTLY, all 20 seeds. So cause 2 is the guards alone — the new
+/// `WorldState::forced_positions` and the census columns that read it change
+/// no output — and cause 1 is inherited, not created here.
 const BASELINE: [u64; SEEDS as usize] = [
-    0xBED95ABDD9439FB5, 0xDBF47F5B31DA86EF, 0xB04474783CB4D0C2, 0x74AC5BCD65AD258D,
-    0x03A4151A9BBFCF29, 0x1F35830291CF10D1, 0x2C970403032C84A6, 0x56890C44D7D2E751,
-    0xD0F5B5E94A13DD88, 0x5C83EEC7421A3608, 0x7652B197D0160E55, 0x0D99057DED830981,
-    0xB8D7424F73B99BF1, 0x1DC2D6E4F10E3616, 0x883D33A2E3BB6E7C, 0xED0DEA0D8520786C,
-    0x650CEA1C0A0A5996, 0x8EDA0264B99A185F, 0x181B0A493C5FEC2C, 0xF39CB84027935889,
+    0xF17348EF0F2985C4,
+    0x621B8CB191263D06,
+    0x3BC07223110FE783,
+    0x22A6675215EBB035,
+    0x3DDF3EE3E904481D,
+    0x03862663D70C5745,
+    0x0E218D655154A03A,
+    0x2BDEA6043EEBB68D,
+    0x265B62CA0F64A752,
+    0xB53B04E61C42ED3F,
+    0xB620B46CDCEAF254,
+    0x42C8186A666CCDB0,
+    0xB7D9B39039E6D3B1,
+    0x1A1E3F733F719BC9,
+    0xD7BD60F947AAE514,
+    0x5DD7D64B3C5D7414,
+    0x1D055DB28774D936,
+    0x457C53E6D3E815A4,
+    0x7B786C0C3C0C731F,
+    0x1BDE02C1D3F3DD8B,
 ];
+///
+/// Re-captured 2026-08-27 for the Big [?] bonus-room shuffle, which is always
+/// on. Every seed moves, for two reasons that are both intended:
+///
+/// 1. `qol::big_q`'s lookup routine grew from 106 to 207 bytes (slot seeding
+///    plus four new 13-entry payload tables), and the Big [?] exit path's
+///    `JMP PRG026_AA8A` at 0x34A84 now jumps into it.
+/// 2. `big_q_rooms::shuffle` draws twice from the shared RNG and rewrites the
+///    per-row area/arrival tables, and 7-F1's drawn block is forced to Tanooki.
+///
+/// **Overworld topology is untouched**, which is the thing worth checking here.
+/// The pass runs after `write_overworld`, so it cannot move a map tile — and
+/// that was verified rather than argued: the 8 map grids were hashed for all 20
+/// seeds with the `shuffle` call live and with it stubbed to return an empty
+/// vec, and the two sets are identical. The ROM bytes differ, the maps do not.
+///
+/// Amended the same week: Unused Level 5's screens 6 and 7 got new arrival
+/// coordinates after playtesting showed the originals killed the player. Four
+/// table bytes, so every seed that draws one of those rooms moves. No RNG draw
+/// changed — the pool is the same size — so this is a pure byte difference.
+///
+/// Re-captured 2026-08-29 again, for `shuffle_big_q_rooms`. The room shuffle is
+/// now an option and **off by default**, so the pass no longer draws its two
+/// values from the shared RNG on a default build, which shifts every module
+/// downstream of it (`credits`, `items`, `king_quotes`, `koopalings`).
+///
+/// The on-path was checked against the build this option was carved out of: for
+/// seeds 1-12, `--shuffle-big-q-rooms` reproduces `beta/next` byte for byte
+/// apart from `[stamp]` (0x19DF0..0x19E09) and `[title_screen]` (0x3E924..),
+/// both of which are derived from the flag key — and the key necessarily grew
+/// one bit. The randomization itself is untouched.
+///
+/// Re-captured 2026-08-29 for the 7-F1 return fix: the entry and exit halves of
+/// the `qol::big_q` routine now share one `bq_lookup` subroutine, which moved
+/// every label and table after offset $09 and shrank it from 207 to 199 bytes.
+/// Again a pure byte difference, and again verified rather than argued — for
+/// each of these 20 seeds the pre- and post-fix ROMs were diffed byte for byte,
+/// and the only bytes that changed outside `FS_BIG_Q_LOOKUP`'s own 224-byte
+/// allocation were the exit hook's operand at 0x34A85. No map tile, pointer
+/// table or level byte moved.
+///
+/// Re-captured 2026-08-30 for `qol::level_clock`: the level clock's frame
+/// divider is now 60 rather than vanilla's 41, so a unit is a real second. It
+/// is two immediate operands (0x34FC6, 0x3C517) and is applied to every seed,
+/// so every hash moved. Verified rather than argued, the same way as the
+/// entries above: for each of these 20 seeds the generated ROM had those two
+/// bytes reverted to `$28` and re-hashed, and all 20 then reproduced the
+/// previous baseline exactly — so those two bytes are the entire diff. No map
+/// tile, pointer table or level byte moved.
+///
+/// Re-captured 2026-09-01 for the **1.3.0 version bump** and nothing else. The
+/// hash folds `CARGO_PKG_VERSION`, so 1.2.1 -> 1.3.0 rewrites every seed's
+/// title-screen verification icons and with them all 20 whole-ROM hashes. That
+/// is the version guard working as designed, not a randomization change.
+///
+/// Attribution is by byte diff, the same way as the entries above: seeds 1-3
+/// were generated with `--no-palettes --patched-rom` at 1.2.1 and again at
+/// 1.3.0, and every differing byte in all three lands inside
+/// `FS_SEED_HASH_DATA` (0x3E93D + 40) and nowhere else — 9 to 11 bytes per
+/// seed, all within the icon payload. No RNG draw moved, so no module
+/// downstream shifted; the flag-key stamp at 0x19DF0 is byte-identical, since
+/// the key does not carry the release version.
+///
+/// Re-captured 2026-09-01 for the Hammer-Bro march spacing. Wandering sprites
+/// were spread by Chebyshev distance with a floor of 2 — which is exactly one
+/// march leg, so a bro could land on another and force both to march again.
+/// Spacing now runs on the march graph (`overworld_build::march`) with a floor
+/// of 3 legs, so the chosen tiles moved.
+///
+/// Attribution is by byte diff, the same way as the entries above: seeds 1-3
+/// were generated with `--no-palettes --patched-rom` before and after. Every
+/// one of the 71 / 27 / 66 changed bytes lands in one of two regions and
+/// nowhere else — the per-world map-object sub-tables reached through
+/// `MAP_OBJ_*_MASTER` (6 / 3 / 5 bytes, the sprite coordinates themselves) and
+/// the world pointer tables inside `WORLDS[..].rowtype_offset` (65 / 24 / 61
+/// bytes, because `assign` splits HammerBro slots into sprite slots and filler
+/// slots and feeds the two different pools). No map tile grid byte, no
+/// map-object reward byte, no level byte and no flag-key byte moved, and the
+/// RNG draw count is unchanged, so nothing downstream shifted.
 
 #[test]
 fn output_matches_baseline() {
@@ -207,7 +328,9 @@ fn output_matches_baseline() {
         return;
     };
     if BASELINE.iter().all(|h| *h == 0) {
-        panic!("BASELINE is unpopulated — run `cargo test print_baseline -- --ignored --nocapture`");
+        panic!(
+            "BASELINE is unpopulated — run `cargo test print_baseline -- --ignored --nocapture`"
+        );
     }
     let got = hashes(&rom);
     let mismatched: Vec<usize> = (0..SEEDS as usize).filter(|i| got[*i] != BASELINE[*i]).collect();

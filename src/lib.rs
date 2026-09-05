@@ -15,10 +15,9 @@ use rom::Rom;
 
 pub use ips::apply_ips_patch;
 pub use randomizer::{
-    current_flag_key_version, flag_key_fields, flag_key_version_of,
-    item_display_name, item_id, EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri,
-    WildChaser, ITEMS, STARTING_LIVES_VALUES,
-    ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY,
+    DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE,
+    ITEM_RANDOM_SUIT_ONLY, ITEMS, Options, PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser,
+    current_flag_key_version, flag_key_fields, flag_key_version_of, item_display_name, item_id,
 };
 
 /// Validate a ROM blob without doing any randomization. Returns Ok if the bytes
@@ -29,9 +28,7 @@ pub use randomizer::{
 /// Exposed for callers that want to fail fast at upload time (e.g. the web UI
 /// validates as soon as the user picks a file, before they hit Generate).
 pub fn validate_rom_bytes(bytes: &[u8], skip_validation: bool) -> Result<(), String> {
-    Rom::from_bytes_lax(bytes, skip_validation)
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    Rom::from_bytes_lax(bytes, skip_validation).map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// Parse, validate, optionally apply a visual patch, randomize, and return the
@@ -44,8 +41,8 @@ pub fn randomize_rom(
     options: &Options,
     visual_patch: Option<&[u8]>,
 ) -> Result<Rom, String> {
-    let mut rom = Rom::from_bytes_lax(rom_data, options.skip_rom_validation)
-        .map_err(|e| e.to_string())?;
+    let mut rom =
+        Rom::from_bytes_lax(rom_data, options.skip_rom_validation).map_err(|e| e.to_string())?;
     if let Some(patch) = visual_patch {
         rom.apply_ips_patch(patch, "visual_patch")?;
     }
@@ -88,8 +85,8 @@ pub(crate) fn randomize_rom_with_overworld_capture(
     options: &Options,
     visual_patch: Option<&[u8]>,
 ) -> Result<(Rom, randomize::overworld_build::BuildResult), String> {
-    let mut rom = Rom::from_bytes_lax(rom_data, options.skip_rom_validation)
-        .map_err(|e| e.to_string())?;
+    let mut rom =
+        Rom::from_bytes_lax(rom_data, options.skip_rom_validation).map_err(|e| e.to_string())?;
     if let Some(patch) = visual_patch {
         rom.apply_ips_patch(patch, "visual_patch")?;
     }

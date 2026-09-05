@@ -10,9 +10,9 @@
 //! for losing the autoscroll-as-risk gating on the chest. Removed in
 //! favour of making the coin heaven reachable only from 3-7.
 
-use crate::rom::Rom;
 use super::rom_data::FS_HAND_ROOMS;
 use super::segment_writer::{self, SegmentSpec, SortMode};
+use crate::rom::Rom;
 
 /// File offset of the original Hand sub-area enemy stream (11 bytes:
 /// 1 page byte + 3 enemy entries × 3 bytes + 1 terminator). CPU $D0CF.
@@ -32,7 +32,7 @@ const CLONE_B_CPU: u16 = 0xDA6F; // file 0x0DA7F
 /// Y-byte file offsets of the OBJ_TREASURESET (0xD6) entry in each clone.
 /// Layout within an 11-byte stream: [page][D6 X Y][52 X Y][BA X Y][FF],
 /// so the first entry's Y-byte sits at offset +3.
-pub(super) const HAND_ROOM_CLONE_A_ITEM: usize = FS_HAND_ROOMS + 3;      // 0x0DA77
+pub(super) const HAND_ROOM_CLONE_A_ITEM: usize = FS_HAND_ROOMS + 3; // 0x0DA77
 pub(super) const HAND_ROOM_CLONE_B_ITEM: usize = FS_HAND_ROOMS + 11 + 3; // 0x0DA82
 
 /// Clone the shared Hand sub-area enemy stream so 8-Hnd2 and 8-Hnd3 each
@@ -47,17 +47,21 @@ pub fn patch_clone_hand_rooms(rom: &mut Rom) {
     let page_byte = rom.read_byte(HAND_ROOM_SRC);
     let src_entries = segment_writer::read_segment(rom, HAND_ROOM_SRC, 3);
     for (dst, label) in [
-        (FS_HAND_ROOMS,                      "8-Hnd2 cloned treasure room"),
-        (FS_HAND_ROOMS + HAND_ROOM_LEN,      "8-Hnd3 cloned treasure room"),
+        (FS_HAND_ROOMS, "8-Hnd2 cloned treasure room"),
+        (FS_HAND_ROOMS + HAND_ROOM_LEN, "8-Hnd3 cloned treasure room"),
     ] {
         rom.write_byte(dst, page_byte);
-        segment_writer::write_segment(rom, &SegmentSpec {
-            file_offset: dst,
-            original_count: 3,
-            entries: &src_entries,
-            label: Some(label),
-            sort_mode: SortMode::SortByX,
-        }).expect("hand_rooms: clone write failed");
+        segment_writer::write_segment(
+            rom,
+            &SegmentSpec {
+                file_offset: dst,
+                original_count: 3,
+                entries: &src_entries,
+                label: Some(label),
+                sort_mode: SortMode::SortByX,
+            },
+        )
+        .expect("hand_rooms: clone write failed");
         rom.write_byte(dst + HAND_ROOM_LEN - 1, 0xFF);
     }
     rom.write_range(HND2_HDR + 2, &CLONE_A_CPU.to_le_bytes());
@@ -77,19 +81,14 @@ mod tests {
         data[5] = 16;
         data[6] = 0x40;
 
-        let src: [u8; HAND_ROOM_LEN] = [
-            0x01,
-            0xD6, 0x0C, 0x03,
-            0x52, 0x0D, 0x15,
-            0xBA, 0x0E, 0x15,
-            0xFF,
-        ];
+        let src: [u8; HAND_ROOM_LEN] =
+            [0x01, 0xD6, 0x0C, 0x03, 0x52, 0x0D, 0x15, 0xBA, 0x0E, 0x15, 0xFF];
         data[HAND_ROOM_SRC..HAND_ROOM_SRC + HAND_ROOM_LEN].copy_from_slice(&src);
 
         // Vanilla Hand headers: all three share alt_layout=$BE17,
         // alt_objects=$D0CF, alt_tileset=11.
         for hdr in [HND2_HDR, HND3_HDR] {
-            data[hdr]     = 0x17;
+            data[hdr] = 0x17;
             data[hdr + 1] = 0xBE;
             data[hdr + 2] = 0xCF;
             data[hdr + 3] = 0xD0;

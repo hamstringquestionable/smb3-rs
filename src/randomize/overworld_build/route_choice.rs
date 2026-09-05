@@ -24,8 +24,8 @@
 //! domination filter then drops any route that only plays an EXTRA level for no
 //! benefit (a within-slack detour), so those don't masquerade as real choices.
 
-use super::*;
 use super::types::{BuiltWorld, SlotKind, stamp_slots};
+use super::*;
 use crate::randomize::map_walker::WalkResult;
 
 use std::cmp::Reverse;
@@ -750,11 +750,8 @@ impl WalkGraph {
         detours.sort_by(by_cost_then_levels);
         detours.truncate(MAX_DETOURS);
         let tied_at_best = kept.iter().filter(|r| r.cost == best_cost).count();
-        let runner_up_gap = kept
-            .iter()
-            .map(|r| r.cost)
-            .find(|&c| c > best_cost)
-            .map(|c| c - best_cost);
+        let runner_up_gap =
+            kept.iter().map(|r| r.cost).find(|&c| c > best_cost).map(|c| c - best_cost);
 
         RouteChoice {
             reachable: true,
@@ -877,14 +874,11 @@ pub(crate) fn render_route_choice(built: &BuiltWorld, slack: u32) -> String {
                     'S'
                 } else if Some(p) == target {
                     goal_ch
-                } else if nodes.contains(&p) && matches!(kind_at.get(&p), Some(SlotKind::Fortress)) {
+                } else if nodes.contains(&p) && matches!(kind_at.get(&p), Some(SlotKind::Fortress))
+                {
                     'F'
                 } else if let Some(&n) = order.get(&p) {
-                    if n <= 9 {
-                        (b'0' + n as u8) as char
-                    } else {
-                        (b'a' + (n - 10) as u8) as char
-                    }
+                    if n <= 9 { (b'0' + n as u8) as char } else { (b'a' + (n - 10) as u8) as char }
                 } else if pipes.contains(&p) {
                     'P'
                 } else if mids.contains(&p) {

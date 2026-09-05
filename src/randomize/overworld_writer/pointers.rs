@@ -35,11 +35,8 @@ pub(super) fn write_pointer_entries(
 
     // Reusable entry_idx values: pointer table slots vacated during Phase 2 pickup.
     let cw = &pickup.worlds[world_idx];
-    let available_slots: Vec<usize> = cw
-        .pool_indices
-        .iter()
-        .map(|&pi| pickup.pool[pi].entry_idx)
-        .collect();
+    let available_slots: Vec<usize> =
+        cw.pool_indices.iter().map(|&pi| pickup.pool[pi].entry_idx).collect();
 
     // Collect all assignments as (pool_idx, pos) for level-like entries.
     let mut all: Vec<(usize, (usize, usize))> = Vec::new();
@@ -83,10 +80,8 @@ pub(super) fn write_pointer_entries(
 
         let pe = &pickup.pool[pool_idx];
         let ce = &catalog.entries[pe.catalog_idx];
-        let level_entry = ce
-            .level_entry
-            .as_ref()
-            .expect("assigned pool entry must have level_entry");
+        let level_entry =
+            ce.level_entry.as_ref().expect("assigned pool entry must have level_entry");
 
         rom_data::write_entry(rom, world, entry_idx, level_entry);
         write_entry_pos(rom, rt, sc, entry_idx, pos, level_entry.tileset);
@@ -124,11 +119,21 @@ pub(super) fn write_pointer_entries(
         // (airship, Bowser, map objects like piranhas, start). These already
         // have valid pointer table entries from vanilla, so filling them
         // wastes a slot that should go to a real uncovered blank.
-        let already_has_entry: HashSet<(usize, usize)> = catalog.entries.iter()
-            .filter(|e| e.world_idx == world_idx && !matches!(e.kind,
-                NodeKind::Level | NodeKind::Fortress { .. }
-                | NodeKind::Pipe { .. } | NodeKind::HammerBro
-                | NodeKind::BonusGame | NodeKind::ToadHouse))
+        let already_has_entry: HashSet<(usize, usize)> = catalog
+            .entries
+            .iter()
+            .filter(|e| {
+                e.world_idx == world_idx
+                    && !matches!(
+                        e.kind,
+                        NodeKind::Level
+                            | NodeKind::Fortress { .. }
+                            | NodeKind::Pipe { .. }
+                            | NodeKind::HammerBro
+                            | NodeKind::BonusGame
+                            | NodeKind::ToadHouse
+                    )
+            })
             .map(|e| e.grid_pos)
             .collect();
         let mut uncovered_blanks: Vec<(usize, usize)> = Vec::new();

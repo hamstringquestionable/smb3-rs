@@ -1,7 +1,7 @@
 //! MaCobra52 patch bundle: always-on bugfixes plus opt-in feature patches.
 
-use crate::rom::Rom;
 use crate::randomize::rom_data::{FS_FASTER_FROG, FS_HOLD_LEFT_HELPER, FS_TAIL_STAY_DEAD};
+use crate::rom::Rom;
 
 // ---------------------------------------------------------------------------
 // MaCobra patches — always-on bundle
@@ -150,6 +150,47 @@ const HOLD_LEFT_TAIL_BYTES: [u8; 12] =
 const TAIL_STAY_DEAD_ROUTINE: [u8; 8] = [0xA9, 0xFF, 0x9D, 0x59, 0x06, 0x4C, 0x0B, 0xBA];
 const TAIL_STAY_DEAD_HOOK_OFFSET: usize = 0x07E4A;
 const TAIL_STAY_DEAD_HOOK_BYTES: [u8; 2] = [0xF9, 0xA5]; // JMP $A5F9 operand
+
+// Pipe screen-squish fix (by MaCobra52) — "Pipe Screen Squish Fix.ips".
+// Bug: travelling through a pipe while the screen scrolls can shove
+// Player_SpriteX into $F8..$FF, which the in-level "crushed against the left
+// edge" check reads as a real crush and kills the player. That check lives in
+// the per-frame Player update (PRG008, CPU $A45A):
+//
+//     $A45A: LDA Player_SpriteX / CMP #$F8 / BCC $A472  ; not shoved left, done
+//     $A460: LDA Level_7Vertical
+//     $A463: ORA Player_EndLevel
+//     $A466: BNE $A472                                  ; exempt -> no death
+//     $A468: JSR Player_Die
+//
+// The fix adds a third exemption term, Player_InPipe ($058C in the gameplay
+// context), so pipe travel joins vertical levels and completed levels in being
+// exempt. This is the engine's own idiom for "suppress while in a pipe" —
+// vanilla already does the same `ORA Player_InPipe` in PRG007 and PRG026. The
+// flag is self-clearing: Player_DrawAndDoActions29 zeroes it every frame and
+// only re-INCs it when the pipe path returns normally.
+//
+// One 9-byte splice at file 0x10476 ($A466), reproduced verbatim from the IPS:
+//
+//     $A466: 0D 8C 05   ORA Player_InPipe   ; new
+//     $A469: D0 07      BNE $A472           ; was `D0 0A` at $A466
+//     $A46B: 20 7C DA   JSR Player_Die
+//     $A46E: EA         NOP                 ; slack
+//     ($A46F: JMP $A44D — untouched)
+//
+// The 3 bytes are paid for out of the vanilla `LDA #$01 / STA Player_IsDying`
+// that followed the JSR: Player_Die (PRG000) already sets Player_IsDying = 1
+// itself and nothing runs in between, so those 4 bytes were dead. Net cost to
+// the ROM free-space budget is zero — the patch never leaves PRG008's existing
+// footprint, so it claims no FREE_SPACE_ALLOCATIONS row.
+const PIPE_SQUISH_FIX_OFFSET: usize = 0x10476;
+#[rustfmt::skip]
+const PIPE_SQUISH_FIX_BYTES: [u8; 9] = [
+    0x0D, 0x8C, 0x05, // ORA Player_InPipe
+    0xD0, 0x07,       // BNE $A472
+    0x20, 0x7C, 0xDA, // JSR Player_Die
+    0xEA,             // NOP
+];
 
 // ---------------------------------------------------------------------------
 // MaCobra patches — opt-in features
@@ -503,6 +544,10 @@ pub fn apply_macobra_patches(rom: &mut Rom) {
     rom.write_range(FS_TAIL_STAY_DEAD, &TAIL_STAY_DEAD_ROUTINE);
     rom.write_range(TAIL_STAY_DEAD_HOOK_OFFSET, &TAIL_STAY_DEAD_HOOK_BYTES);
 
+    // Pipe screen-squish fix: exempt pipe travel from the "crushed against the
+    // left edge" death check, so scrolling inside a pipe cannot fake a crush.
+    rom.write_range(PIPE_SQUISH_FIX_OFFSET, &PIPE_SQUISH_FIX_BYTES);
+
     // NOTE: MaCobra's "Bros don't stop on hands" (issue #14) used to live
     // here; it is subsumed by the overworld writer's march-veto trampoline
     // (overworld_writer/march_veto.rs), which rejects hand-trap landings
@@ -636,6 +681,39 @@ mod tests {
     }
 
     #[test]
+    fn test_macobra_pipe_squish_fix_writes() {
+        let mut rom = make_test_rom();
+        apply_macobra_patches(&mut rom);
+
+        assert_eq!(
+            rom.read_range(PIPE_SQUISH_FIX_OFFSET, PIPE_SQUISH_FIX_BYTES.len()),
+            &PIPE_SQUISH_FIX_BYTES
+        );
+    }
+
+    /// The splice starts at CPU $A466 and its `BNE` must reach $A472 (the
+    /// always-run tail), the same exit the two vanilla exemption terms take.
+    /// A miscounted operand here would land mid-instruction instead.
+    #[test]
+    fn test_pipe_squish_branch_reaches_the_tail() {
+        // PRG008 maps to $A000; file 0x10476 - 0x10 header - 0x10000 bank = $A466.
+        let splice_cpu = 0xA000 + (PIPE_SQUISH_FIX_OFFSET - 0x10 - 0x10000);
+        assert_eq!(splice_cpu, 0xA466);
+
+        // ORA abs (3) + BNE (2) => the branch's own PC-after is $A46B.
+        assert_eq!(PIPE_SQUISH_FIX_BYTES[0], 0x0D, "expected ORA abs");
+        assert_eq!(
+            u16::from_le_bytes([PIPE_SQUISH_FIX_BYTES[1], PIPE_SQUISH_FIX_BYTES[2]]),
+            0x058C,
+            "ORA operand must be Player_InPipe"
+        );
+        assert_eq!(PIPE_SQUISH_FIX_BYTES[3], 0xD0, "expected BNE");
+        let after_branch = splice_cpu + 5;
+        let target = after_branch + PIPE_SQUISH_FIX_BYTES[4] as usize;
+        assert_eq!(target, 0xA472, "BNE must land on PRG008_A472");
+    }
+
+    #[test]
     fn test_modern_powerups_writes() {
         let mut rom = make_test_rom();
         apply_modern_powerups(&mut rom);
@@ -693,6 +771,13 @@ mod asm_checks {
     #[test]
     fn no_game_over_is_well_formed() {
         asm::check(&NGO_ROUTINE).allocation(NGO_ROUTINE_OFFSET).assert_ok();
+    }
+
+    #[test]
+    fn pipe_squish_fix_is_well_formed() {
+        // Spliced in place over vanilla and continues into the untouched
+        // `JMP $A44D` that follows, so it is a fragment, not a whole routine.
+        asm::check(&PIPE_SQUISH_FIX_BYTES).fragment().assert_ok();
     }
 
     #[test]

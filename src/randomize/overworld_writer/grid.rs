@@ -18,8 +18,7 @@ pub(super) fn write_tile_grid<R: Rng>(
     // Stamp fortress tiles — pick per-fortress from the game's fortress
     // tile set (see rom_data::FORTRESS_TILES).
     for a in &wa.fortress {
-        let tile =
-            rom_data::FORTRESS_TILES[rng.random_range(..rom_data::FORTRESS_TILES.len())];
+        let tile = rom_data::FORTRESS_TILES[rng.random_range(..rom_data::FORTRESS_TILES.len())];
         grid.set(a.pos.0, a.pos.1, tile);
     }
 
@@ -64,12 +63,8 @@ pub(super) fn write_tile_grid<R: Rng>(
     }
 
     // Stamp level tiles in BFS order from start.
-    let level_pos_set: HashMap<(usize, usize), usize> = wa
-        .level
-        .iter()
-        .enumerate()
-        .map(|(i, a)| (a.pos, i))
-        .collect();
+    let level_pos_set: HashMap<(usize, usize), usize> =
+        wa.level.iter().enumerate().map(|(i, a)| (a.pos, i)).collect();
 
     let start_pos = rom_data::find_start(&grid);
     let bfs = bfs_ordered(&grid, &built.pipe_pairs, start_pos, built.world_idx);
@@ -79,9 +74,8 @@ pub(super) fn write_tile_grid<R: Rng>(
     // patched by patch_double_digit_metatiles). $69 (pyramid) is a level-20+
     // fallback with no valid display.
     const LEVEL_TILES: [u8; 20] = [
-        0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
-        0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14,
-        0x15, 0x69,
+        0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11,
+        0x12, 0x13, 0x14, 0x15, 0x69,
     ];
 
     // 0xE6 (HANDTRAP) — visible hand-trap tile. Stamped instead of a level
@@ -96,12 +90,8 @@ pub(super) fn write_tile_grid<R: Rng>(
     // Map_Operation = $10 "enter level" path used by level number tiles, so
     // the slot's level pointer entry loads as a regular level.
     const TILE_TROLL_PIPE: u8 = 0xBC;
-    let hand_trap_positions: HashSet<(usize, usize)> = built
-        .slots
-        .iter()
-        .filter(|s| s.is_hand_trap)
-        .map(|s| s.pos)
-        .collect();
+    let hand_trap_positions: HashSet<(usize, usize)> =
+        built.slots.iter().filter(|s| s.is_hand_trap).map(|s| s.pos).collect();
     let troll_pipe_positions: HashSet<(usize, usize)> = built
         .slots
         .iter()
@@ -126,7 +116,9 @@ pub(super) fn write_tile_grid<R: Rng>(
     };
 
     for &(pos, _dist) in &bfs {
-        if let Some(&la_idx) = level_pos_set.get(&pos) && !assigned[la_idx] {
+        if let Some(&la_idx) = level_pos_set.get(&pos)
+            && !assigned[la_idx]
+        {
             let tile = pick_level_tile(pos);
             grid.set(pos.0, pos.1, tile);
             assigned[la_idx] = true;
@@ -151,7 +143,8 @@ pub(super) fn write_tile_grid<R: Rng>(
     // a plain path node, not a fortress/level tile. Skip BLANK_TILE_OVERRIDES
     // since sprite positions are dynamic (not the vanilla fixed positions).
     for &pos in sprite_mask {
-        let tile = crate::randomize::overworld_pickup::blank_tile_from_neighbors(&grid, wi, pos.0, pos.1);
+        let tile =
+            crate::randomize::overworld_pickup::blank_tile_from_neighbors(&grid, wi, pos.0, pos.1);
         grid.set(pos.0, pos.1, tile);
     }
 

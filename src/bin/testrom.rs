@@ -9,8 +9,8 @@ use std::process;
 
 use clap::Parser;
 
-use smb3_rs::testrom::{self, Base, EnemyOverride, Placement, TestRomSpec};
 use smb3_rs::Options;
+use smb3_rs::testrom::{self, Base, EnemyOverride, Placement, TestRomSpec};
 
 const DEFAULT_ROM: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";
 const DEFAULT_PRACTICE_IPS: &str = "patches/smb3practice_SE.ips";
@@ -101,7 +101,7 @@ struct Cli {
     #[arg(long)]
     keep_gaps: bool,
 
-    /// Apply the always-on gameplay patches (currently stomp fairness) to a
+    /// Apply the always-on gameplay patches (stomp fairness, real-time clock) to a
     /// vanilla base. Use when playtesting one of them — a plain vanilla base
     /// does not contain them, so the test silently exercises vanilla instead.
     /// Ignored on a --randomize base, which already has them.
@@ -127,6 +127,10 @@ struct Cli {
     #[arg(long, default_value_t = 5)]
     starting_lives: u8,
 
+    /// Put bro encounters (Hammer / Boomerang / Heavy / Fire) on a 10-second clock.
+    #[arg(long)]
+    bro_battle_timer: bool,
+
     /// Let the Hammer item break fortress lock tiles on the map.
     #[arg(long)]
     hammer_locks: bool,
@@ -141,6 +145,32 @@ struct Cli {
     /// room the randomizer's pools would never put it in.
     #[arg(long, value_name = "PTR:SLOT:ID")]
     set_enemy: Vec<String>,
+
+    /// Open "Unused Level 5" -- the unreferenced test level holding eight Big
+    /// [?] Block rooms -- from every Big [?] pipe in the game, landing 5-2's
+    /// pipe in the room on this screen (0-7). Screen 3 reproduces 5-2's
+    /// vanilla arrival column. Pair with --place 5-2.
+    #[arg(long, value_name = "SCREEN", value_parser = clap::value_parser!(u8).range(0..=7))]
+    bigq_unused5: Option<u8>,
+
+    /// BG palette (0-7) for those rooms. The level's own 6 is the placeholder
+    /// palette -- black and white. Real fortresses use 0, 1, 3 or 4.
+    #[arg(long, value_name = "INDEX", default_value_t = 0,
+          value_parser = clap::value_parser!(u8).range(0..=7))]
+    bigq_palette: u8,
+
+    /// Override where --bigq-unused5 puts the player, as "COL,YIDX". Y index
+    /// is into LevelJct_YLHStarts: 0 = row 0, 4 = row 15, 5 = row 20,
+    /// 6 = row 23. Use when a room's table entry lands badly.
+    #[arg(long, value_name = "COL,YIDX")]
+    bigq_aim: Option<String>,
+
+    /// Retype screen 2's two coins as note blocks, so a player who rides its
+    /// shaft to the floor can still climb to the Big [?] block instead of
+    /// spending the room. Optionally takes their positions as "ROW,COL;ROW,COL";
+    /// bare, it uses what a randomized ROM ships. Needs --bigq-unused5.
+    #[arg(long, value_name = "ROW,COL;ROW,COL", num_args = 0..=1)]
+    bigq_notes: Option<Option<String>>,
 
     /// List valid --starting-items names and exit.
     #[arg(long)]
@@ -216,8 +246,8 @@ fn main() {
         return;
     }
 
-    let vanilla = fs::read(&cli.rom)
-        .unwrap_or_else(|e| die(format!("reading {}: {e}", cli.rom.display())));
+    let vanilla =
+        fs::read(&cli.rom).unwrap_or_else(|e| die(format!("reading {}: {e}", cli.rom.display())));
 
     if cli.list {
         match testrom::list_levels(&vanilla, cli.beta) {
@@ -290,17 +320,43 @@ fn main() {
         }
     };
 
-    let placements: Vec<Placement> = cli
-        .place
-        .iter()
-        .map(|s| parse_placement(s).unwrap_or_else(|e| die(e)))
-        .collect();
+    // "COL,YIDX" -> (col, Y-start index). This overrides where --bigq-unused5
+    // drops the player, which is how a badly-landing room gets re-aimed.
+    let big_q_aim = cli.bigq_aim.as_deref().map(|a| {
+        let (c, y) = a
+            .split_once(',')
+            .unwrap_or_else(|| die(format!("--bigq-aim wants \"COL,YIDX\", got \"{a}\"")));
+        let col: u8 = c.trim().parse().unwrap_or_else(|_| die(format!("bad column \"{c}\"")));
+        let y_idx: u8 = y.trim().parse().unwrap_or_else(|_| die(format!("bad Y index \"{y}\"")));
+        if col > 15 || y_idx > 7 {
+            die("--bigq-aim: column is 0-15, Y index 0-7".to_string());
+        }
+        (col, y_idx)
+    });
 
-    let set_enemies: Vec<EnemyOverride> = cli
-        .set_enemy
-        .iter()
-        .map(|s| parse_set_enemy(s).unwrap_or_else(|e| die(e)))
-        .collect();
+    // "ROW,COL;ROW,COL" -> the two note-block positions --bigq-notes writes over
+    // screen 2's coins. Ranges are checked in testrom.rs, next to the write.
+    let big_q_notes = cli.bigq_notes.as_ref().map(|given| {
+        let Some(n) = given.as_deref() else { return testrom::unused5_screen2_notes() };
+        let pair = |p: &str| -> (u8, u8) {
+            p.split_once(',')
+                .and_then(|(r, c)| Some((r.trim().parse().ok()?, c.trim().parse().ok()?)))
+                .unwrap_or_else(|| die(format!("--bigq-notes wants \"ROW,COL\", got \"{p}\"")))
+        };
+        let (a, b) = n
+            .split_once(';')
+            .unwrap_or_else(|| die(format!("--bigq-notes wants two ROW,COL pairs, got \"{n}\"")));
+        [pair(a), pair(b)]
+    });
+    if big_q_notes.is_some() && cli.bigq_unused5.is_none() {
+        die("--bigq-notes needs --bigq-unused5".to_string());
+    }
+
+    let placements: Vec<Placement> =
+        cli.place.iter().map(|s| parse_placement(s).unwrap_or_else(|e| die(e))).collect();
+
+    let set_enemies: Vec<EnemyOverride> =
+        cli.set_enemy.iter().map(|s| parse_set_enemy(s).unwrap_or_else(|e| die(e))).collect();
 
     let starting_items: Vec<u8> = cli
         .starting_items
@@ -326,11 +382,11 @@ fn main() {
         .apply_ips
         .iter()
         .map(|p| {
-            let bytes = fs::read(p).unwrap_or_else(|e| die(format!("reading {}: {e}", p.display())));
-            let label = p.file_name().map_or_else(
-                || p.display().to_string(),
-                |n| n.to_string_lossy().into_owned(),
-            );
+            let bytes =
+                fs::read(p).unwrap_or_else(|e| die(format!("reading {}: {e}", p.display())));
+            let label = p
+                .file_name()
+                .map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned());
             (label, bytes)
         })
         .collect();
@@ -349,9 +405,14 @@ fn main() {
         remove_gaps: !cli.keep_gaps,
         starting_items,
         starting_lives: cli.starting_lives,
+        bro_battle_timer: cli.bro_battle_timer,
         hammer_breaks_locks: cli.hammer_locks,
         hammer_breaks_bridges: cli.hammer_bridges,
         include_beta: cli.beta,
+        big_q_unused5: cli.bigq_unused5,
+        big_q_palette: Some(cli.bigq_palette),
+        big_q_notes,
+        big_q_aim,
         set_enemies,
     };
 

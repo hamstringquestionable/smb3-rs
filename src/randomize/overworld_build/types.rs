@@ -57,9 +57,7 @@ pub(crate) fn stamp_slots(grid: &mut Grid, slots: &[SlotAssignment]) {
     for slot in slots {
         match slot.kind {
             SlotKind::Fortress => grid.set(slot.pos.0, slot.pos.1, TILE_FORTRESS),
-            SlotKind::Level
-                if BACKGROUND_TILES.contains(&grid.get(slot.pos.0, slot.pos.1)) =>
-            {
+            SlotKind::Level if BACKGROUND_TILES.contains(&grid.get(slot.pos.0, slot.pos.1)) => {
                 grid.set(slot.pos.0, slot.pos.1, TILE_NODE);
             }
             SlotKind::BonusGame => grid.set(slot.pos.0, slot.pos.1, TILE_BONUS_GAME),

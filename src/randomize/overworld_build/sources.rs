@@ -61,16 +61,8 @@ pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
         fixed: HashSet::new(),
         hammer_gated: HashSet::new(),
         pipe_budget: VANILLA_PIPE_PAIRS[built.world_idx],
-        level_budget: built
-            .slots
-            .iter()
-            .filter(|s| s.kind == SlotKind::Level)
-            .count(),
-        fort_budget: built
-            .slots
-            .iter()
-            .filter(|s| s.kind == SlotKind::Fortress)
-            .count(),
+        level_budget: built.slots.iter().filter(|s| s.kind == SlotKind::Level).count(),
+        fort_budget: built.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count(),
         c1_floor: C1_FLOOR,
         ptr_slots: 0,
         bridges_out: 0,
@@ -183,10 +175,7 @@ const HAMMER_GATED_POCKETS: &[(usize, Pos)] = &[
 pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -> WorldState {
     let mut grid = rom_data::read_tile_grid(rom, world_idx);
     let slots = vanilla_slots(rom, catalog, world_idx);
-    let fort_count = slots
-        .iter()
-        .filter(|s| s.kind == SlotKind::Fortress)
-        .count();
+    let fort_count = slots.iter().filter(|s| s.kind == SlotKind::Fortress).count();
     let locks = vanilla_locks(rom, &grid, world_idx, fort_count);
     for lock in &locks {
         grid.set(lock.pos.0, lock.pos.1, lock.replace_tile);
@@ -269,10 +258,8 @@ fn vanilla_pipe_pairs(catalog: &NodeCatalog, world_idx: usize) -> Vec<TeleportEd
             }
         }
     }
-    let mut pairs: Vec<TeleportEdge> = by_dest
-        .into_values()
-        .filter_map(|(a, b)| Some((a?, b?)))
-        .collect();
+    let mut pairs: Vec<TeleportEdge> =
+        by_dest.into_values().filter_map(|(a, b)| Some((a?, b?))).collect();
     // HashMap iteration order is arbitrary; sort for a deterministic state.
     pairs.sort();
     pairs
@@ -288,7 +275,12 @@ fn vanilla_pipe_pairs(catalog: &NodeCatalog, world_idx: usize) -> Vec<TeleportEd
 /// the writer (`fortress_fx.rs`): row byte = (row+2)<<4; loc byte =
 /// (col_in_screen<<4) | screen.
 #[cfg(test)]
-fn vanilla_locks(rom: &Rom, grid: &Grid, world_idx: usize, fort_count: usize) -> Vec<LockAssignment> {
+fn vanilla_locks(
+    rom: &Rom,
+    grid: &Grid,
+    world_idx: usize,
+    fort_count: usize,
+) -> Vec<LockAssignment> {
     let mut locks = Vec::new();
     for ordinal in 0..fort_count.min(4) {
         let slot = rom.read_byte(rom_data::FX_WORLD_TABLE + world_idx * 4 + ordinal) as usize;

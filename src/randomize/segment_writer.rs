@@ -91,9 +91,11 @@ impl std::fmt::Display for WriteError {
             }
         }
         match self {
-            WriteError::CountMismatch { offset, label, expected, got } =>
-                write!(f, "{}: count mismatch (expected {expected}, got {got})",
-                    name(*offset, label)),
+            WriteError::CountMismatch { offset, label, expected, got } => write!(
+                f,
+                "{}: count mismatch (expected {expected}, got {got})",
+                name(*offset, label)
+            ),
         }
     }
 }
@@ -101,14 +103,16 @@ impl std::fmt::Display for WriteError {
 /// Read all entries from an existing segment.
 pub fn read_segment(rom: &Rom, file_offset: usize, count: usize) -> Vec<SegmentEntry> {
     let base = file_offset + 1;
-    (0..count).map(|i| {
-        let off = base + i * 3;
-        SegmentEntry {
-            obj_id: rom.read_byte(off),
-            x: rom.read_byte(off + 1),
-            y: rom.read_byte(off + 2),
-        }
-    }).collect()
+    (0..count)
+        .map(|i| {
+            let off = base + i * 3;
+            SegmentEntry {
+                obj_id: rom.read_byte(off),
+                x: rom.read_byte(off + 1),
+                y: rom.read_byte(off + 2),
+            }
+        })
+        .collect()
 }
 
 /// Validate `entries`, optionally sort by X per `spec.sort_mode`, and
@@ -173,9 +177,8 @@ pub fn walk_segments(
     end: usize,
     skip_ranges: &[core::ops::Range<usize>],
 ) -> Vec<SegmentBounds> {
-    let in_skip = |i: usize| -> Option<usize> {
-        skip_ranges.iter().find(|r| r.contains(&i)).map(|r| r.end)
-    };
+    let in_skip =
+        |i: usize| -> Option<usize> { skip_ranges.iter().find(|r| r.contains(&i)).map(|r| r.end) };
     let mut bounds = Vec::new();
     let mut i = start;
     while i < end {
@@ -244,8 +247,14 @@ mod tests {
 
     fn make_rom() -> Rom {
         let mut bytes = vec![0u8; 0x60010];
-        bytes[0] = b'N'; bytes[1] = b'E'; bytes[2] = b'S'; bytes[3] = 0x1A;
-        bytes[4] = 16; bytes[5] = 16; bytes[6] = 0x40; bytes[7] = 0x10;
+        bytes[0] = b'N';
+        bytes[1] = b'E';
+        bytes[2] = b'S';
+        bytes[3] = 0x1A;
+        bytes[4] = 16;
+        bytes[5] = 16;
+        bytes[6] = 0x40;
+        bytes[7] = 0x10;
         Rom::from_bytes_lax(&bytes, true).unwrap()
     }
 
@@ -259,7 +268,11 @@ mod tests {
         }
     }
 
-    fn spec_preserve<'a>(file_offset: usize, count: usize, entries: &'a [SegmentEntry]) -> SegmentSpec<'a> {
+    fn spec_preserve<'a>(
+        file_offset: usize,
+        count: usize,
+        entries: &'a [SegmentEntry],
+    ) -> SegmentSpec<'a> {
         SegmentSpec {
             file_offset,
             original_count: count,
@@ -366,22 +379,12 @@ mod tests {
         // Build a synthetic byte stream: page1, 3 entries, FF, page2, 2 entries, FF, FF (empty), page3, 1 entry, FF
         let data = [
             // segment 1: page byte + 3 entries
-            0x00,
-            0xAA, 0x10, 0x11,
-            0xBB, 0x20, 0x12,
-            0xCC, 0x30, 0x13,
-            0xFF,
+            0x00, 0xAA, 0x10, 0x11, 0xBB, 0x20, 0x12, 0xCC, 0x30, 0x13, 0xFF,
             // segment 2: page byte + 2 entries
-            0x01,
-            0xDD, 0x40, 0x14,
-            0xEE, 0x50, 0x15,
-            0xFF,
+            0x01, 0xDD, 0x40, 0x14, 0xEE, 0x50, 0x15, 0xFF,
             // empty (just terminator) — must be skipped
-            0xFF,
-            // segment 3: page byte + 1 entry
-            0x00,
-            0x66, 0x70, 0x16,
-            0xFF,
+            0xFF, // segment 3: page byte + 1 entry
+            0x00, 0x66, 0x70, 0x16, 0xFF,
         ];
         let bounds = walk_segments(&data, 0, data.len(), &[]);
         assert_eq!(bounds.len(), 3);
@@ -392,6 +395,7 @@ mod tests {
 
     #[test]
     fn walk_segments_handles_leading_terminators() {
+        #[rustfmt::skip]
         let data = [
             0xFF, 0xFF, 0xFF,  // skipped
             0x00, 0xAA, 0x10, 0x11, 0xFF,

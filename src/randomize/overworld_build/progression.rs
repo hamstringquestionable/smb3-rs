@@ -14,7 +14,9 @@ use super::types::{BuiltWorld, SlotKind, stamp_slots};
 pub(crate) enum PathNodeKind {
     Start,
     Level,
-    Fortress { section: usize },
+    Fortress {
+        section: usize,
+    },
     Pipe,
     HammerBro,
     ToadHouse,
@@ -70,11 +72,8 @@ pub(crate) fn analyze_required_progression(
     }
     // Try (no break) ∪ {break each section}. Minimise total fort+level clears.
     let mut best = analyze_with_pre_opened(built, None);
-    let mut best_cost = if best.reachable {
-        best.forts_required + best.levels_required
-    } else {
-        usize::MAX
-    };
+    let mut best_cost =
+        if best.reachable { best.forts_required + best.levels_required } else { usize::MAX };
     for section in 0..built.section_count {
         let mut candidate = analyze_with_pre_opened(built, Some(section));
         if !candidate.reachable {
@@ -148,10 +147,8 @@ pub(super) fn analyze_with_pre_opened_mask(
     //     that island).
     let canoe_edges: Vec<((usize, usize), (usize, usize))> =
         rom_data::active_canoe_edges(built.world_idx, built.grid.eights_are_wild);
-    let canoe_pair_set: HashSet<((usize, usize), (usize, usize))> = canoe_edges
-        .iter()
-        .flat_map(|&(a, b)| [(a, b), (b, a)])
-        .collect();
+    let canoe_pair_set: HashSet<((usize, usize), (usize, usize))> =
+        canoe_edges.iter().flat_map(|&(a, b)| [(a, b), (b, a)]).collect();
     let initial_boat: Option<(usize, usize)> = canoe_edges.first().map(|&(a, _)| a);
 
     // 4. Dijkstra over (position, mask, boat_pos). Cost = node entries so far.
@@ -203,11 +200,7 @@ pub(super) fn analyze_with_pre_opened_mask(
         // its section bit; standard Dijkstra decrease-key + heap push.
         let mut relax = |dest: (usize, usize), boat_after: Option<(usize, usize)>| {
             let (edge_cost, is_fort) = entry_cost(dest);
-            let new_mask = if is_fort {
-                mask | (1u32 << section_at[&dest])
-            } else {
-                mask
-            };
+            let new_mask = if is_fort { mask | (1u32 << section_at[&dest]) } else { mask };
             let key = (dest, new_mask, boat_after);
             let new_cost = cost + edge_cost;
             if new_cost < *dist.get(&key).unwrap_or(&usize::MAX) {
@@ -266,9 +259,7 @@ pub(super) fn analyze_with_pre_opened_mask(
             return PathNodeKind::Target;
         }
         match kind_at.get(&pos) {
-            Some(SlotKind::Fortress) => PathNodeKind::Fortress {
-                section: section_at[&pos],
-            },
+            Some(SlotKind::Fortress) => PathNodeKind::Fortress { section: section_at[&pos] },
             Some(SlotKind::Level) => PathNodeKind::Level,
             Some(SlotKind::Pipe) => PathNodeKind::Pipe,
             Some(SlotKind::HammerBro) => PathNodeKind::HammerBro,
@@ -372,12 +363,8 @@ pub(crate) fn level_adjacency_pairs(built: &BuiltWorld) -> usize {
         return 0;
     };
     let walk = walk_map(&grid, &built.pipe_pairs, Some(start), built.world_idx);
-    let level_pos: HashSet<(usize, usize)> = built
-        .slots
-        .iter()
-        .filter(|s| s.kind == SlotKind::Level)
-        .map(|s| s.pos)
-        .collect();
+    let level_pos: HashSet<(usize, usize)> =
+        built.slots.iter().filter(|s| s.kind == SlotKind::Level).map(|s| s.pos).collect();
     let mut pairs: HashSet<((usize, usize), (usize, usize))> = HashSet::new();
     for (&a, edges) in &walk.edges {
         if !level_pos.contains(&a) {
@@ -387,11 +374,7 @@ pub(crate) fn level_adjacency_pairs(built: &BuiltWorld) -> usize {
             // path_pos.is_some() ⇒ a walk edge (physical adjacency), not a
             // pipe/canoe teleport.
             if edge.path_pos.is_some() && level_pos.contains(&edge.dest) {
-                let key = if a <= edge.dest {
-                    (a, edge.dest)
-                } else {
-                    (edge.dest, a)
-                };
+                let key = if a <= edge.dest { (a, edge.dest) } else { (edge.dest, a) };
                 pairs.insert(key);
             }
         }
@@ -548,11 +531,7 @@ pub(crate) fn start_goal_express_pipe(built: &BuiltWorld) -> Option<bool> {
 pub(crate) fn island_count(built: &BuiltWorld) -> usize {
     let mut grid = built.grid.clone();
     stamp_slots(&mut grid, &built.slots);
-    let mut key: Vec<(usize, usize)> = built
-        .pipe_pairs
-        .iter()
-        .flat_map(|&(a, b)| [a, b])
-        .collect();
+    let mut key: Vec<(usize, usize)> = built.pipe_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
     if let Some(s) = rom_data::find_start(&grid) {
         key.push(s);
     }
@@ -609,11 +588,7 @@ pub(crate) fn dump_required_progression(built: &BuiltWorld) {
         built.section_count,
         built.locks.len(),
         built.pipe_pairs.len(),
-        if canoes.is_empty() {
-            String::new()
-        } else {
-            format!("  canoes={}", canoes.len())
-        },
+        if canoes.is_empty() { String::new() } else { format!("  canoes={}", canoes.len()) },
     );
 
     // Inventory of fortress positions per section, so the lock annotations
@@ -631,10 +606,7 @@ pub(crate) fn dump_required_progression(built: &BuiltWorld) {
     }
     eprintln!("  locks:");
     for lock in &built.locks {
-        eprintln!(
-            "    ({}, {}) opened by section {}",
-            lock.pos.0, lock.pos.1, lock.fort_section,
-        );
+        eprintln!("    ({}, {}) opened by section {}", lock.pos.0, lock.pos.1, lock.fort_section,);
     }
     eprintln!("  pipe pairs:");
     for &(a, b) in &built.pipe_pairs {
@@ -643,18 +615,15 @@ pub(crate) fn dump_required_progression(built: &BuiltWorld) {
     if !canoes.is_empty() {
         eprintln!("  canoe routes (boat starts at the first endpoint):");
         for (a, b) in &canoes {
-            eprintln!("    ({},{}) -> ({},{}) (and reverse, while boat is at far side)", a.0, a.1, b.0, b.1);
+            eprintln!(
+                "    ({},{}) -> ({},{}) (and reverse, while boat is at far side)",
+                a.0, a.1, b.0, b.1
+            );
         }
     }
 
-    let pipe_set: EdgeSet = built.pipe_pairs
-        .iter()
-        .flat_map(|&(a, b)| [(a, b), (b, a)])
-        .collect();
-    let canoe_set: EdgeSet = canoes
-        .iter()
-        .flat_map(|&(a, b)| [(a, b), (b, a)])
-        .collect();
+    let pipe_set: EdgeSet = built.pipe_pairs.iter().flat_map(|&(a, b)| [(a, b), (b, a)]).collect();
+    let canoe_set: EdgeSet = canoes.iter().flat_map(|&(a, b)| [(a, b), (b, a)]).collect();
 
     print_progression("Without hammer", &no_hammer, &pipe_set, &canoe_set);
     print_progression("With hammer (1 lock max)", &with_hammer, &pipe_set, &canoe_set);
@@ -692,10 +661,7 @@ pub(super) fn print_progression(
         eprintln!("    TARGET UNREACHABLE");
         return;
     }
-    eprintln!(
-        "    level streak: {}  |  goal stack: {}",
-        p.level_streak, p.goal_stack,
-    );
+    eprintln!("    level streak: {}  |  goal stack: {}", p.level_streak, p.goal_stack,);
     let mut lock_iter = p.locks_crossed.iter().peekable();
     for (i, (pos, kind)) in p.path.iter().enumerate() {
         let tag = match kind {

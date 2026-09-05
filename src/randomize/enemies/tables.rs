@@ -117,12 +117,12 @@ pub(super) const FIREJET_DOWN_Y_DROP: u8 = 1;
 /// cannons model) — they never merge into the global wild pool in either
 /// direction. Removing an extra member is a one-line edit on this list.
 pub(super) const PIRANHAS_WILD: &[u8] = &[
-    0x7D, // OBJ_BIGGREENPIRANHA
-    0x7F, // OBJ_BIGREDPIRANHA
-    0xA0, // OBJ_GREENPIRANHA
-    0xA2, // OBJ_REDPIRANHA
-    0xA4, // OBJ_GREENPIRANHA_FIRE
-    0xA6, // OBJ_VENUSFIRETRAP
+    0x7D,         // OBJ_BIGGREENPIRANHA
+    0x7F,         // OBJ_BIGREDPIRANHA
+    0xA0,         // OBJ_GREENPIRANHA
+    0xA2,         // OBJ_REDPIRANHA
+    0xA4,         // OBJ_GREENPIRANHA_FIRE
+    0xA6,         // OBJ_VENUSFIRETRAP
     ROCKY_WRENCH, // 0xAD — the mole; see ROCKY_WRENCH doc
     FIREJET_UP,   // 0x9D — upward fire jet; see FIREJET_UP doc
 ];
@@ -138,10 +138,10 @@ pub(super) const PIRANHASC: &[u8] = &[
 /// Wild-mode ceiling pool: the ceiling piranhas plus the downward fire jet.
 /// Self-contained (no crossover to the standard pool).
 pub(super) const PIRANHASC_WILD: &[u8] = &[
-    0xA1, // OBJ_GREENPIRANHA_FLIPPED
-    0xA3, // OBJ_REDPIRANHA_FLIPPED
-    0xA5, // OBJ_GREENPIRANHA_FIREC
-    0xA7, // OBJ_VENUSFIRETRAP_CEIL
+    0xA1,         // OBJ_GREENPIRANHA_FLIPPED
+    0xA3,         // OBJ_REDPIRANHA_FLIPPED
+    0xA5,         // OBJ_GREENPIRANHA_FIREC
+    0xA7,         // OBJ_VENUSFIRETRAP_CEIL
     FIREJET_DOWN, // 0xB2 — downward fire jet; see FIREJET_DOWN doc
 ];
 
@@ -207,14 +207,8 @@ pub(super) const HAZARD_HOTFOOT: &[u8] = &[
 
 /// All hazard categories. THWOMPS and BRO_ENEMIES are reused as-is (the bros
 /// throw continuous projectiles, unavoidable in a forced spot).
-pub(super) const HAZARD_CATEGORIES: &[&[u8]] = &[
-    THWOMPS,
-    HAZARD_LAVA_LOTUS,
-    HAZARD_PATOOIE,
-    HAZARD_NIPPER,
-    HAZARD_HOTFOOT,
-    BRO_ENEMIES,
-];
+pub(super) const HAZARD_CATEGORIES: &[&[u8]] =
+    &[THWOMPS, HAZARD_LAVA_LOTUS, HAZARD_PATOOIE, HAZARD_NIPPER, HAZARD_HOTFOOT, BRO_ENEMIES];
 
 /// The hazard category `id` belongs to (its index in [`HAZARD_CATEGORIES`]), or
 /// `None` if `id` isn't a hazard.
@@ -331,11 +325,6 @@ pub(super) const BIG_Q_BLOCKS: &[u8] = &[
     0x9A, // OBJ_BIGQBLOCK_HAMMER
 ];
 
-/// File offset of the Tanooki Big ? Block in the World 7 Big ? Block room.
-/// This block must NOT be randomized — flying/Tanooki is required to beat 7-F1.
-/// The W7 room is at enemy_ptr 0xC9A3; the Tanooki is the second entry.
-pub(super) const W7F1_TANOOKI_OFFSET: usize = 0x0C9B7;
-
 /// Injection candidates for wild_injections mode: level-wide chasers seeded into
 /// a level's first enemy. CHR compatibility checked via `sprite_bank()` at filter
 /// time.
@@ -393,6 +382,27 @@ pub(super) const WILD_INJECTION_CHANCE: u8 = 102;
 /// of two stompables. 5/31 ≈ 16%.
 pub(super) const HB_NONSTOMPABLE_ODDS: (u32, u32) = (5, 31);
 
+/// `OBJ_FLYINGREDPARATROOPA`. Its AI (`ObjNorm_FlyingRedTroopa`, prg004) moves
+/// it by Y velocity alone and never calls `Object_Move`, so no floor stops it.
+pub(super) const FLYING_RED_PARATROOPA: u8 = 0x6F;
+
+/// Rows to raise a [`FLYING_RED_PARATROOPA`] dealt into a closed bro room.
+///
+/// Its flight is asymmetric: from where it spawns it only ever *descends*,
+/// accelerating 1 unit every 4th frame to a $10 (1px/frame) limit, holding
+/// that for $30 frames, then reversing — 111px, just under 7 tiles, before it
+/// returns to the spawn row and repeats. It never rises above where it started.
+///
+/// Left on the row a bro stood on it therefore sinks through the floor, and a
+/// player who collides with it as it climbs back out can be pushed into the
+/// floor tile and stuck there — a softlock, since a bro room's exit only
+/// appears once the room is cleared. Raising the spawn 7 rows puts the *bottom*
+/// of that cycle back on the vanilla bro's row, which is a standing position by
+/// construction. Every bro room places its enemies on rows 20-24 with the floor
+/// at row 26, so the raised spawn (rows 13-17) is still inside the visible
+/// window and the enemy stays fightable at the bottom of each dive.
+pub(super) const HB_FLYER_RAISE_ROWS: u8 = 7;
+
 /// Large "Big Bertha" fish that exhaust sprite slots when stacked: the leaping
 /// eater (0x2D, the injected "Boss Bass") and the cheep-spitting birther (0x63).
 /// Both are sprite-heavy, so the per-segment cap counts them together.
@@ -403,6 +413,22 @@ pub(super) const BERTHA_IDS: &[u8] = &[0x2D, 0x63];
 /// exhaustion that can prevent other objects (e.g. white blocks) from spawning —
 /// this was observed in 3-9 where the white block became unreachable.
 pub(super) const MAX_BERTHA_PER_SEGMENT: u8 = 2;
+
+/// Maximum number of *introduced* hazards allowed in a single enemy segment
+/// under `HazardLimit::Sparse`. Vanilla hazards don't count — only a pick that
+/// puts a hazard where the slot's vanilla enemy was a different category (see
+/// [`hazard_excluded`]), which is the same thing `HazardLimit::All` forbids
+/// outright.
+///
+/// One, so the player can still meet a Ptooie or a nipper and learn to handle
+/// it, but never walks into a wall of them.
+///
+/// The budget is per `$FF`-bounded enemy run, not per level. That is usually
+/// the same thing, but several levels can enter one run at different
+/// `enemy_ptr`s (see the `SortMode::Preserve` note in `mod.rs`), and there they
+/// share the one budget. Stricter than per-level, which is the safe direction
+/// for a flag whose whole job is "fewer surprises".
+pub(super) const MAX_ADDED_HAZARDS_PER_SEGMENT: u8 = 1;
 
 /// Maximum X-tile gap between consecutive enemies (sorted by X) before they
 /// are split into separate CHR groups. Enemies more than one screen apart
@@ -453,9 +479,7 @@ pub(super) const CHASER_IDS: &[u8] = &[
 /// element) is too distinct to randomize generically.
 pub(super) const ALL_CANNONS: &[u8] = &[
     // CFIRE_LEFT
-    0xC0, 0xC2, 0xC3, 0xC4, 0xC6, 0xC8, 0xC9, 0xCB, 0xCE,
-    // CFIRE_RIGHT
-    0xC1, 0xC5, 0xC7, 0xCA, 0xCC, 0xCD, 0xCF,
-    // CFIRE_BILLS
+    0xC0, 0xC2, 0xC3, 0xC4, 0xC6, 0xC8, 0xC9, 0xCB, 0xCE, // CFIRE_RIGHT
+    0xC1, 0xC5, 0xC7, 0xCA, 0xCC, 0xCD, 0xCF, // CFIRE_BILLS
     0xBC, 0xBD,
 ];

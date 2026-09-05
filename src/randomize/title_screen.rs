@@ -156,9 +156,7 @@ const MENU_MUSIC_TRACKS: [u8; 16] = [
 /// `compute_hash` so changes to the music list don't shift seed-verification
 /// icons.
 pub(super) fn pick_menu_music(seed: u64) -> u8 {
-    let h = seed
-        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-        .wrapping_add(0xBF58_476D_1CE4_E5B9);
+    let h = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(0xBF58_476D_1CE4_E5B9);
     MENU_MUSIC_TRACKS[(h % MENU_MUSIC_TRACKS.len() as u64) as usize]
 }
 
@@ -181,6 +179,7 @@ const Y_SPACING: u8 = 24;
 /// Instruction bytes shared by the intro-skip routine (here) and the
 /// starting-items trampoline (`qol::starting_state`): set Title_State ($DE) =
 /// 6 (IntroSkip) and queue the seeded menu music via $04F5.
+#[rustfmt::skip]
 pub(super) fn intro_skip_music_bytes(seed: u64) -> [u8; 9] {
     let music = pick_menu_music(seed);
     [
@@ -559,10 +558,7 @@ mod tests {
 
         // JSR $DFE0 in place of the vanilla JSR Title_3Glow.
         assert_eq!(rom.read_range(MUTE_HOOK_OFFSET, 3), &[0x20, 0xE0, 0xDF]);
-        assert_eq!(
-            rom.read_range(MUTE_ROUTINE_OFFSET, 22),
-            &mute_routine(pick_menu_music(42))[..]
-        );
+        assert_eq!(rom.read_range(MUTE_ROUTINE_OFFSET, 22), &mute_routine(pick_menu_music(42))[..]);
     }
 
     #[test]
@@ -601,12 +597,8 @@ mod tests {
                 return;
             }
         }
-        let missing: Vec<_> = seen
-            .iter()
-            .enumerate()
-            .filter(|&(_, &s)| !s)
-            .map(|(i, _)| i)
-            .collect();
+        let missing: Vec<_> =
+            seen.iter().enumerate().filter(|&(_, &s)| !s).map(|(i, _)| i).collect();
         panic!("icons never selected across 200k seeds: {missing:?}");
     }
 }
@@ -647,10 +639,10 @@ mod asm_checks {
     /// so the whole thing can be executed rather than merely decoded. Stops at
     /// the `JMP`, which would otherwise run off into unloaded memory.
     fn run_mute(pad: u8, playing: u8, music: u8) -> (u8, u8) {
+        use mos6502::Variant;
         use mos6502::cpu::CPU;
         use mos6502::instruction::{Instruction, Ricoh2a03};
         use mos6502::memory::{Bus, Memory};
-        use mos6502::Variant;
 
         let code = mute_routine(music);
         let mut mem = Memory::new();
@@ -683,15 +675,11 @@ mod asm_checks {
             for pad in 0..=u8::MAX {
                 let (fanfare, theme) = run_mute(pad, playing, MUSIC);
                 let want = match (pad & 0x40 != 0, playing != 0) {
-                    (false, _) => (0x00, 0x00),  // B not pressed: queue nothing
-                    (true, true) => (0x80, 0x00), // audible: MUS1_STOPMUSIC
+                    (false, _) => (0x00, 0x00),     // B not pressed: queue nothing
+                    (true, true) => (0x80, 0x00),   // audible: MUS1_STOPMUSIC
                     (true, false) => (0x00, MUSIC), // silent: restore the track
                 };
-                assert_eq!(
-                    (fanfare, theme),
-                    want,
-                    "pad {pad:#04X}, SndCur_Music2 {playing:#04X}",
-                );
+                assert_eq!((fanfare, theme), want, "pad {pad:#04X}, SndCur_Music2 {playing:#04X}",);
             }
         }
     }

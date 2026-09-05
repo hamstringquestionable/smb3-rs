@@ -42,15 +42,25 @@ impl ClassModes {
     /// Build the dynamic wild pool: collect all IDs from classes set to Wild.
     pub(super) fn build_wild_pool(&self) -> Vec<u8> {
         let mut pool = Vec::new();
-        if self.ground == EnemyMode::Wild { pool.extend_from_slice(GROUND_ENEMIES); }
-        if self.shell == EnemyMode::Wild { pool.extend_from_slice(SHELL_ENEMIES); }
-        if self.flying == EnemyMode::Wild { pool.extend_from_slice(FLYING_ENEMIES); }
+        if self.ground == EnemyMode::Wild {
+            pool.extend_from_slice(GROUND_ENEMIES);
+        }
+        if self.shell == EnemyMode::Wild {
+            pool.extend_from_slice(SHELL_ENEMIES);
+        }
+        if self.flying == EnemyMode::Wild {
+            pool.extend_from_slice(FLYING_ENEMIES);
+        }
         // Piranhas are intentionally NOT added to the global wild pool. Like
         // cfire, they are self-contained in Wild mode: a piranha slot swaps
         // only within piranha-kind (standard + Rocky Wrench, or ceiling), and
         // no other class can ever turn into a piranha. See find_class_pool.
-        if self.ghosts == EnemyMode::Wild { pool.extend_from_slice(GHOST_ENEMIES); }
-        if self.thwomps == EnemyMode::Wild { pool.extend_from_slice(THWOMPS); }
+        if self.ghosts == EnemyMode::Wild {
+            pool.extend_from_slice(GHOST_ENEMIES);
+        }
+        if self.thwomps == EnemyMode::Wild {
+            pool.extend_from_slice(THWOMPS);
+        }
         if self.rotodiscs == EnemyMode::Wild {
             pool.extend_from_slice(ROTODISCS_SINGLE);
             pool.extend_from_slice(ROTODISCS_DUAL);
@@ -81,8 +91,12 @@ impl ClassModes {
         // but other classes never swap TO cfire — total cfire count stays
         // ≤ vanilla and projectile emitters only appear where Nintendo put
         // them.
-        if self.water == EnemyMode::Wild { pool.extend_from_slice(WATER_ENEMIES); }
-        if self.bros == EnemyMode::Wild { pool.extend_from_slice(BRO_ENEMIES); }
+        if self.water == EnemyMode::Wild {
+            pool.extend_from_slice(WATER_ENEMIES);
+        }
+        if self.bros == EnemyMode::Wild {
+            pool.extend_from_slice(BRO_ENEMIES);
+        }
         pool
     }
 }
@@ -175,7 +189,11 @@ pub(super) fn find_class_pool(id: u8, modes: &ClassModes) -> Option<ClassPool> {
         return match modes.piranhas {
             EnemyMode::Off => None,
             EnemyMode::Shuffle => {
-                if PIRANHAS.contains(&id) { Some(ClassPool::Class(PIRANHAS)) } else { None }
+                if PIRANHAS.contains(&id) {
+                    Some(ClassPool::Class(PIRANHAS))
+                } else {
+                    None
+                }
             }
             EnemyMode::Wild => Some(ClassPool::PiranhaStd),
         };
@@ -184,7 +202,11 @@ pub(super) fn find_class_pool(id: u8, modes: &ClassModes) -> Option<ClassPool> {
         return match modes.piranhas {
             EnemyMode::Off => None,
             EnemyMode::Shuffle => {
-                if PIRANHASC.contains(&id) { Some(ClassPool::Class(PIRANHASC)) } else { None }
+                if PIRANHASC.contains(&id) {
+                    Some(ClassPool::Class(PIRANHASC))
+                } else {
+                    None
+                }
             }
             EnemyMode::Wild => Some(ClassPool::PiranhaCeil),
         };

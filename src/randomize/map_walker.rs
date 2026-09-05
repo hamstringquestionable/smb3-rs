@@ -12,14 +12,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::rom::Rom;
 
 use super::rom_data::{
-    self, BACKGROUND_TILES, TILE_AIRSHIP, TILE_BOWSER, VALID_HORZ, VALID_VERT,
-    Grid, TeleportEdge,
+    self, BACKGROUND_TILES, Grid, TILE_AIRSHIP, TILE_BOWSER, TeleportEdge, VALID_HORZ, VALID_VERT,
 };
 
 #[cfg(test)]
 use super::rom_data::Pos;
-
-
 
 /// Movement directions: (delta_row, delta_col, is_horizontal).
 const DIRECTIONS: [(i8, i8, bool); 4] = [
@@ -212,10 +209,10 @@ fn walk_from(
             }
 
             path_tiles.insert((pr, pc));
-            edges.entry((r, c)).or_default().push(Edge {
-                dest: (nr, nc),
-                path_pos: Some((pr, pc)),
-            });
+            edges
+                .entry((r, c))
+                .or_default()
+                .push(Edge { dest: (nr, nc), path_pos: Some((pr, pc)) });
 
             if !nodes.contains(&(nr, nc)) {
                 nodes.insert((nr, nc));
@@ -229,10 +226,7 @@ fn walk_from(
         for lookup in [pipe_lookup, canoe_lookup] {
             if let Some(dests) = lookup.get(&(r, c)) {
                 for &dest in dests {
-                    edges.entry((r, c)).or_default().push(Edge {
-                        dest,
-                        path_pos: None,
-                    });
+                    edges.entry((r, c)).or_default().push(Edge { dest, path_pos: None });
                     if !nodes.contains(&dest) {
                         nodes.insert(dest);
                         distances.insert(dest, distances[&(r, c)] + 1);
@@ -266,11 +260,7 @@ pub(super) struct Reach {
 
 impl Reach {
     fn new(rows: usize, cols: usize) -> Self {
-        Reach {
-            bits: vec![0; rows * cols / 64 + 1],
-            cols,
-            count: 0,
-        }
+        Reach { bits: vec![0; rows * cols / 64 + 1], cols, count: 0 }
     }
 
     /// Set the bit for `(r, c)`; returns true if it was newly set.
@@ -434,8 +424,8 @@ pub(super) fn find_chokepoints(result: &WalkResult) -> HashSet<(usize, usize)> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::rom_data;
+    use super::*;
 
     #[test]
     fn test_find_start_all_worlds() {
@@ -448,11 +438,7 @@ mod tests {
         for wi in 0..8 {
             let grid = rom_data::read_tile_grid(&rom, wi);
             let start = rom_data::find_start(&grid);
-            assert!(
-                start.is_some(),
-                "World {} should have a START tile",
-                wi + 1
-            );
+            assert!(start.is_some(), "World {} should have a START tile", wi + 1);
         }
     }
 
@@ -520,11 +506,7 @@ mod tests {
         // Gather every active canoe edge (all worlds, `8s are Wild` on so the
         // W8 edges are included) via the single accessor.
         let all_edges: Vec<(usize, (Pos, Pos))> = (0..8)
-            .flat_map(|w| {
-                rom_data::active_canoe_edges(w, true)
-                    .into_iter()
-                    .map(move |e| (w, e))
-            })
+            .flat_map(|w| rom_data::active_canoe_edges(w, true).into_iter().map(move |e| (w, e)))
             .collect();
         // A world with no canoe edges at all: walking it must never produce
         // canoe connectivity regardless of which coordinates are reachable.
@@ -541,11 +523,8 @@ mod tests {
             // The island dock `b` is left isolated, so it can only be reached
             // via a canoe hop — never by walking. `eights_are_wild` on so the
             // W8 edges resolve.
-            let mut grid = Grid {
-                tiles: vec![vec![0xB4u8; 48]; 9],
-                cols: 48,
-                eights_are_wild: true,
-            };
+            let mut grid =
+                Grid { tiles: vec![vec![0xB4u8; 48]; 9], cols: 48, eights_are_wild: true };
             let start = (a.0, a.1 - 2);
             grid.set(a.0, a.1 - 1, 0x45); // VALID_HORZ path tile
             grid.set(a.0, a.1, 0x45); // mainland dock node (non-background)
@@ -601,10 +580,6 @@ mod tests {
         let chokepoints = find_chokepoints(&result);
 
         // W1 has a linear path structure with many chokepoints
-        assert!(
-            !chokepoints.is_empty(),
-            "W1 should have chokepoints (linear map)"
-        );
+        assert!(!chokepoints.is_empty(), "W1 should have chokepoints (linear map)");
     }
-
 }

@@ -69,9 +69,7 @@ impl Phase for Locks {
         let mut pending = state.bridge_spans.clone();
 
         for fort_id in fort_ids {
-            if let Some(cut) =
-                claim_bridge_span(state, &open, &open_reach, &mut pending, fort_id)
-            {
+            if let Some(cut) = claim_bridge_span(state, &open, &open_reach, &mut pending, fort_id) {
                 let pos = state.locks.last().expect("just pushed").pos;
                 actions.push(format!("lock for fort {fort_id} at {pos:?} (dealt bridge)"));
                 covered.extend(cut);
@@ -153,10 +151,7 @@ pub(crate) fn ensure_secret_exit_safe(
     let mut actions = Vec::new();
     let phase = "secret_exit_safety";
 
-    if worlds
-        .iter()
-        .any(|w| w.locks.iter().any(|l| l.secret_exit_safe))
-    {
+    if worlds.iter().any(|w| w.locks.iter().any(|l| l.secret_exit_safe)) {
         actions.push("already satisfied: uniform placement produced a safe lock".into());
         return PhaseReport { phase, actions };
     }
@@ -186,8 +181,13 @@ pub(crate) fn ensure_secret_exit_safe(
                 .filter(|(i, _)| *i != li)
                 .flat_map(|(_, l)| {
                     cut_set(
-                        &open, &open_reach, &state.pipe_pairs, state.start, state.world_idx,
-                        l.pos, l.replace_tile,
+                        &open,
+                        &open_reach,
+                        &state.pipe_pairs,
+                        state.start,
+                        state.world_idx,
+                        l.pos,
+                        l.replace_tile,
                     )
                 })
                 .collect();
@@ -262,12 +262,8 @@ pub(crate) fn place_locks_gating(
     stamp_slots(&mut open, &state.slots);
     let open_reach = walk_reachable(&open, &state.pipe_pairs, state.start, state.world_idx);
 
-    let mut fort_ids: Vec<usize> = state
-        .slots
-        .iter()
-        .filter(|s| s.kind == SlotKind::Fortress)
-        .map(|s| s.section)
-        .collect();
+    let mut fort_ids: Vec<usize> =
+        state.slots.iter().filter(|s| s.kind == SlotKind::Fortress).map(|s| s.section).collect();
     fort_ids.shuffle(rng);
     let mut pending = state.bridge_spans.clone();
 
@@ -334,9 +330,7 @@ const BRIDGE_TILES: [u8; 3] = [0xB3, 0xB1, 0xB2];
 /// False in every other world: W1 and W4-W6 have vanilla bridges too, and
 /// those stay ordinary lock sites that earn their place on marginal cut.
 fn is_bridge_span(state: &WorldState, pos: Pos) -> bool {
-    state.world_idx == rom_data::W8_IDX
-        && pos.0 == W8_BRIDGE_ROW
-        && W8_BRIDGE_COLS.contains(&pos.1)
+    state.world_idx == rom_data::W8_IDX && pos.0 == W8_BRIDGE_ROW && W8_BRIDGE_COLS.contains(&pos.1)
 }
 
 /// The spans still available to the deal: on the bridge row, still a bridge
@@ -379,7 +373,12 @@ fn deal_bridge_spans(
     if let Some(target) = state.target
         && let Some(i) = spans.iter().position(|&pos| {
             cut_set(
-                open, open_reach, &state.pipe_pairs, state.start, state.world_idx, pos,
+                open,
+                open_reach,
+                &state.pipe_pairs,
+                state.start,
+                state.world_idx,
+                pos,
                 state.grid.get(pos.0, pos.1),
             )
             .contains(&target)
@@ -418,7 +417,13 @@ fn claim_bridge_span(
         });
         if state.completable() {
             let cut = cut_set(
-                open, open_reach, &state.pipe_pairs, state.start, state.world_idx, pos, tile,
+                open,
+                open_reach,
+                &state.pipe_pairs,
+                state.start,
+                state.world_idx,
+                pos,
+                tile,
             );
             pending.remove(i);
             return Some(cut);
@@ -474,7 +479,13 @@ fn rank_candidates(
         .into_iter()
         .map(|(pos, tile)| {
             let cut = cut_set(
-                open, open_reach, &state.pipe_pairs, state.start, state.world_idx, pos, tile,
+                open,
+                open_reach,
+                &state.pipe_pairs,
+                state.start,
+                state.world_idx,
+                pos,
+                tile,
             );
             (pos, tile, cut)
         })
@@ -492,7 +503,10 @@ fn rank_candidates(
 /// of completable content — a lock consumes that shared completion bit too.
 fn lock_candidates(state: &WorldState) -> Vec<(Pos, u8)> {
     let locked: HashSet<Pos> = state.locks.iter().map(|l| l.pos).collect();
-    let content: HashSet<Pos> = state.slots.iter().map(|s| s.pos).collect();
+    // Row-7/8 partners of content AND of completable terrain. A lock is a
+    // `Map_Removable_Tiles` entry, so it is redrawn from the shared bit on
+    // every map reload — one placed under W2's oasis would grow back.
+    let barred = state.row78_barred();
     // The W8 bridge approach is dealt, never ranked. Excluding it here is what
     // pins the count to the roll from both ends: a seed that rolled 0 keeps
     // the row intact, and a seed that rolled 2 cannot pick up a third span
@@ -508,9 +522,7 @@ fn lock_candidates(state: &WorldState) -> Vec<(Pos, u8)> {
             {
                 continue;
             }
-            if let Some(partner) = row78_partner(pos)
-                && content.contains(&partner)
-            {
+            if barred.contains(&pos) {
                 continue;
             }
             out.push((pos, tile));

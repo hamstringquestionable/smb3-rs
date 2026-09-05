@@ -16,11 +16,15 @@ fn standard_pickup(
     rom: &Rom,
     catalog: &node_catalog::NodeCatalog,
 ) -> overworld_pickup::PickupResult {
-    overworld_pickup::pick_up(rom, catalog, overworld_pickup::PickupFlags {
-        shuffle_spade_games: true,
-        shuffle_toad_houses: true,
-        ..Default::default()
-    })
+    overworld_pickup::pick_up(
+        rom,
+        catalog,
+        overworld_pickup::PickupFlags {
+            shuffle_spade_games: true,
+            shuffle_toad_houses: true,
+            ..Default::default()
+        },
+    )
 }
 
 /// Standard test build flags: toad houses shuffled.
@@ -37,10 +41,21 @@ fn test_pool_assignment_exhaustive() {
     let catalog = node_catalog::NodeCatalog::build(&rom, false);
     let pickup = standard_pickup(&rom, &catalog);
     let mut rng = ChaCha8Rng::seed_from_u64(42);
-    let build = overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, standard_build_flags());
+    let build = overworld_build::build(
+        &rom,
+        &OverworldData { pickup: &pickup, catalog: &catalog },
+        &mut rng,
+        standard_build_flags(),
+    );
 
     let mut rng2 = ChaCha8Rng::seed_from_u64(99);
-    let assignments = assign_pool(&rom, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng2, WriteFlags::default());
+    let assignments = assign_pool(
+        &rom,
+        &build,
+        &OverworldData { pickup: &pickup, catalog: &catalog },
+        &mut rng2,
+        WriteFlags::default(),
+    );
 
     // Collect all assigned pool indices.
     let mut used: Vec<usize> = Vec::new();
@@ -73,21 +88,23 @@ fn test_pool_assignment_exhaustive() {
     let total_used = used.len();
     used.sort();
     used.dedup();
-    assert_eq!(
-        used.len(),
-        total_used,
-        "duplicate pool assignments detected",
-    );
+    assert_eq!(used.len(), total_used, "duplicate pool assignments detected",);
 
     // Per-world assignment count must not exceed available pointer table slots.
     for (wi, wa) in assignments.iter().enumerate() {
-        let level_like = wa.fortress.len() + wa.level.len() + wa.pipes.len() * 2 + wa.bonus.len() + wa.toad.len();
+        let level_like = wa.fortress.len()
+            + wa.level.len()
+            + wa.pipes.len() * 2
+            + wa.bonus.len()
+            + wa.toad.len();
         let total = level_like + wa.hammer_bro.len();
         let available = pickup.worlds[wi].pool_indices.len();
         assert!(
             total <= available,
             "W{}: {} assignments exceed {} available pointer table slots",
-            wi + 1, total, available,
+            wi + 1,
+            total,
+            available,
         );
     }
 }
@@ -106,29 +123,359 @@ fn test_troll_pipes_never_assigned_hand_levels() {
 
     for seed in 0u64..32 {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let mut build = overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, standard_build_flags());
+        let mut build = overworld_build::build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            standard_build_flags(),
+        );
         troll_pipes::mark_troll_pipes(&mut build, &mut rng);
 
-        let troll_positions: HashSet<(usize, (usize, usize))> = build.worlds.iter()
-            .flat_map(|w| w.slots.iter()
-                .filter(|s| s.is_troll_pipe)
-                .map(move |s| (w.world_idx, s.pos)))
+        let troll_positions: HashSet<(usize, (usize, usize))> = build
+            .worlds
+            .iter()
+            .flat_map(|w| {
+                w.slots.iter().filter(|s| s.is_troll_pipe).map(move |s| (w.world_idx, s.pos))
+            })
             .collect();
 
-        let assignments = assign_pool(&rom, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, WriteFlags::default());
+        let assignments = assign_pool(
+            &rom,
+            &build,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            WriteFlags::default(),
+        );
 
         for (wi, wa) in assignments.iter().enumerate() {
             for a in &wa.level {
-                if !troll_positions.contains(&(wi, a.pos)) { continue; }
+                if !troll_positions.contains(&(wi, a.pos)) {
+                    continue;
+                }
                 let ce = &catalog.entries[pickup.pool[a.pool_idx].catalog_idx];
                 assert!(
                     !rom_data::is_hand_level(ce.world_idx, ce.entry_idx),
                     "seed {seed}: W{} troll pipe at {:?} got hand level (W{} entry {})",
-                    wi + 1, a.pos, ce.world_idx + 1, ce.entry_idx,
+                    wi + 1,
+                    a.pos,
+                    ce.world_idx + 1,
+                    ce.entry_idx,
                 );
             }
         }
     }
+}
+
+/// Friendlier Levels must (a) actually keep the blocked levels off the map and
+/// (b) leave the deck long enough to deal. The draw is a bare
+/// `pop_front().expect(...)` against a fixed `VANILLA_LEVEL_COUNT` of slots, so
+/// a short deck panics rather than degrading — which makes the count assertion
+/// as load-bearing as the blocklist one.
+///
+/// Both beta arms are checked because they refill differently: with beta stages
+/// on the deck is already oversized and absorbs the removals, so no duplicate
+/// is needed; with them off every removal becomes a duplicate.
+#[test]
+fn test_friendlier_levels_blocks_and_refills() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+
+    for beta in [false, true] {
+        let catalog = node_catalog::NodeCatalog::build(&rom, beta);
+        let pickup = standard_pickup(&rom, &catalog);
+
+        for seed in 0u64..16 {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let build = overworld_build::build(
+                &rom,
+                &OverworldData { pickup: &pickup, catalog: &catalog },
+                &mut rng,
+                standard_build_flags(),
+            );
+            let assignments = assign_pool(
+                &rom,
+                &build,
+                &OverworldData { pickup: &pickup, catalog: &catalog },
+                &mut rng,
+                WriteFlags { friendlier_levels: true, ..Default::default() },
+            );
+
+            let placed: Vec<usize> =
+                assignments.iter().flat_map(|wa| wa.level.iter().map(|a| a.pool_idx)).collect();
+
+            assert_eq!(
+                placed.len(),
+                overworld_build::VANILLA_LEVEL_COUNT,
+                "beta={beta} seed {seed}: dealt {} levels, expected {}",
+                placed.len(),
+                overworld_build::VANILLA_LEVEL_COUNT,
+            );
+
+            let mut seen: HashMap<usize, usize> = HashMap::new();
+            for pi in &placed {
+                let ce = &catalog.entries[pickup.pool[*pi].catalog_idx];
+                assert!(
+                    !rom_data::is_friendlier_blocked(&ce.name),
+                    "beta={beta} seed {seed}: blocked level {} was placed",
+                    ce.name,
+                );
+                *seen.entry(*pi).or_insert(0) += 1;
+            }
+
+            // Nothing is dealt three times, and nothing holding a one-off item
+            // is dealt twice.
+            for (&pi, &n) in &seen {
+                let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
+                assert!(n <= 2, "beta={beta} seed {seed}: {} dealt {n} times", ce.name);
+                if n > 1 {
+                    assert!(
+                        !rom_data::is_chest_level(ce.world_idx, ce.entry_idx)
+                            && !rom_data::is_hand_level(ce.world_idx, ce.entry_idx),
+                        "beta={beta} seed {seed}: {} holds a one-off item and was dealt twice",
+                        ce.name,
+                    );
+                }
+            }
+
+            // Beta stages absorb the removals; without them the shortfall is
+            // made up with duplicates, one per blocked level.
+            let dupes = placed.len() - seen.len();
+            let expected = if beta { 0 } else { rom_data::FRIENDLIER_BLOCKED_LEVELS.len() };
+            assert_eq!(dupes, expected, "beta={beta} seed {seed}: {dupes} duplicates");
+        }
+    }
+}
+
+/// Deja Vu deck surgery, both modes and both beta arms.
+///
+/// Three things the deck has to keep true no matter how it is redealt:
+///
+///  - The deal still fills every slot. The draw is a bare
+///    `pop_front().expect(...)` against a fixed `VANILLA_LEVEL_COUNT`, so a
+///    short deck panics rather than degrading.
+///  - A level holding a one-off inventory item is dealt exactly once — never
+///    twice (the item would be handed out twice) and never zero times (it
+///    would be unreachable).
+///  - The mode does what it says: `Double` caps a level at two tiles, `Wild`
+///    does not.
+///
+/// Both beta arms are checked because they change the deck length before Deja
+/// Vu ever sees it: with beta stages on it starts oversized.
+#[test]
+fn test_deja_vu_repeats_levels() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+
+    for beta in [false, true] {
+        let catalog = node_catalog::NodeCatalog::build(&rom, beta);
+        let pickup = standard_pickup(&rom, &catalog);
+
+        for mode in [DejaVuMode::Double, DejaVuMode::Wild] {
+            // Wild only has to *allow* unbounded repeats, so the "it repeats at
+            // all" check is over the whole seed range rather than per seed.
+            let mut max_copies = 0usize;
+
+            for seed in 0u64..16 {
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                let build = overworld_build::build(
+                    &rom,
+                    &OverworldData { pickup: &pickup, catalog: &catalog },
+                    &mut rng,
+                    standard_build_flags(),
+                );
+                let assignments = assign_pool(
+                    &rom,
+                    &build,
+                    &OverworldData { pickup: &pickup, catalog: &catalog },
+                    &mut rng,
+                    WriteFlags { deja_vu: mode, ..Default::default() },
+                );
+
+                let placed: Vec<usize> =
+                    assignments.iter().flat_map(|wa| wa.level.iter().map(|a| a.pool_idx)).collect();
+
+                assert_eq!(
+                    placed.len(),
+                    overworld_build::VANILLA_LEVEL_COUNT,
+                    "beta={beta} {mode:?} seed {seed}: dealt {} levels",
+                    placed.len(),
+                );
+
+                let mut seen: HashMap<usize, usize> = HashMap::new();
+                for &pi in &placed {
+                    *seen.entry(pi).or_insert(0) += 1;
+                }
+
+                for (&pi, &n) in &seen {
+                    let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
+                    let unique = rom_data::is_chest_level(ce.world_idx, ce.entry_idx)
+                        || rom_data::is_hand_level(ce.world_idx, ce.entry_idx);
+                    if unique {
+                        assert_eq!(
+                            n, 1,
+                            "beta={beta} {mode:?} seed {seed}: {} holds a one-off item and was dealt {n} times",
+                            ce.name,
+                        );
+                    }
+                    if mode == DejaVuMode::Double {
+                        assert!(
+                            n <= 2,
+                            "beta={beta} {mode:?} seed {seed}: {} dealt {n} times",
+                            ce.name,
+                        );
+                    }
+                    max_copies = max_copies.max(n);
+                }
+
+                // Every one-off item still reaches the map.
+                for &pi in &level_pool_unique_items(&catalog, &pickup) {
+                    assert!(
+                        seen.contains_key(&pi),
+                        "beta={beta} {mode:?} seed {seed}: {} holds a one-off item and was not dealt",
+                        catalog.entries[pickup.pool[pi].catalog_idx].name,
+                    );
+                }
+            }
+
+            assert!(
+                max_copies >= 2,
+                "beta={beta} {mode:?}: no level was ever repeated across 16 seeds",
+            );
+        }
+    }
+}
+
+/// The regular-level pool entries that hand out a one-off inventory item —
+/// the chest levels and the W8 hand rooms. (1-F is a chest level too but is a
+/// fortress, so it never sits in the level pool.)
+fn level_pool_unique_items(
+    catalog: &node_catalog::NodeCatalog,
+    pickup: &overworld_pickup::PickupResult,
+) -> Vec<usize> {
+    pickup
+        .pool
+        .iter()
+        .enumerate()
+        .filter(|(_, pe)| {
+            let ce = &catalog.entries[pe.catalog_idx];
+            matches!(ce.kind, NodeKind::Level)
+                && (rom_data::is_chest_level(ce.world_idx, ce.entry_idx)
+                    || rom_data::is_hand_level(ce.world_idx, ce.entry_idx))
+        })
+        .map(|(pi, _)| pi)
+        .collect()
+}
+
+/// Friendlier Levels' fortress half: 7F2 then 8F1 are parked on
+/// secret-exit-safe slots so their locks can stay shut, leaving them beatable
+/// but off the critical path.
+///
+/// Two invariants, and between them they pin the whole degradation story:
+///
+///  - Supply. 1-F takes a safe slot first and unconditionally (its secret exit
+///    makes a non-safe slot a softlock, not an inconvenience), so with `s` safe
+///    locks in the seed the ladder can place `min(2, s - 1)`. Asserting the
+///    exact count is what proves the ladder never steals 1-F's slot and never
+///    silently gives up while supply remains.
+///  - Order. 8F1 is only served once 7F2 is, so a short seed always costs the
+///    tail of the ladder rather than a random one of the two.
+#[test]
+fn test_friendlier_levels_fort_ladder() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let pickup = standard_pickup(&rom, &catalog);
+
+    let mut placed_hist = [0usize; 3];
+    for seed in 0u64..120 {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let build = overworld_build::build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            standard_build_flags(),
+        );
+
+        // Safe fort slots, as (world, section) — the same set assign_pool draws
+        // from. Every fort has a lock, so a fort NOT on one of these is
+        // required by construction.
+        let safe: HashSet<(usize, usize)> = (0..8)
+            .flat_map(|wi| {
+                build.worlds[wi]
+                    .locks
+                    .iter()
+                    .filter(|l| l.secret_exit_safe)
+                    .map(move |l| (wi, l.fort_section))
+            })
+            .collect();
+
+        let assignments = assign_pool(
+            &rom,
+            &build,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            WriteFlags { friendlier_levels: true, ..Default::default() },
+        );
+
+        // Which of the ladder forts landed on a safe slot.
+        let mut on_safe: HashSet<&str> = HashSet::new();
+        for (wi, wa) in assignments.iter().enumerate() {
+            for a in &wa.fortress {
+                let name = &catalog.entries[pickup.pool[a.pool_idx].catalog_idx].name;
+                let Some(slot) = build.worlds[wi]
+                    .slots
+                    .iter()
+                    .find(|s| s.kind == overworld_build::SlotKind::Fortress && s.pos == a.pos)
+                else {
+                    continue;
+                };
+                if safe.contains(&(wi, slot.section))
+                    && rom_data::FRIENDLIER_OPTIONAL_FORTS.contains(&name.as_str())
+                {
+                    on_safe.insert(
+                        rom_data::FRIENDLIER_OPTIONAL_FORTS
+                            .iter()
+                            .find(|n| *n == name)
+                            .expect("just matched"),
+                    );
+                }
+            }
+        }
+
+        let expected = safe.len().saturating_sub(1).min(rom_data::FRIENDLIER_OPTIONAL_FORTS.len());
+        assert_eq!(
+            on_safe.len(),
+            expected,
+            "seed {seed}: {} safe locks, so the ladder should place {expected}, placed {:?}",
+            safe.len(),
+            on_safe,
+        );
+
+        // Ladder order: nothing is served before the entry ahead of it.
+        for pair in rom_data::FRIENDLIER_OPTIONAL_FORTS.windows(2) {
+            if on_safe.contains(pair[1]) {
+                assert!(
+                    on_safe.contains(pair[0]),
+                    "seed {seed}: {} got a safe slot before {}",
+                    pair[1],
+                    pair[0],
+                );
+            }
+        }
+
+        placed_hist[on_safe.len()] += 1;
+    }
+
+    eprintln!(
+        "fort ladder over 120 seeds: both optional {}, one {}, neither {}",
+        placed_hist[2], placed_hist[1], placed_hist[0],
+    );
 }
 
 #[test]
@@ -146,8 +493,19 @@ fn test_write_deterministic() {
     for pass in 0..2 {
         let target = if pass == 0 { &mut rom1 } else { &mut rom2 };
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        let build = overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, standard_build_flags());
-        write_overworld(target, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, WriteFlags::default());
+        let build = overworld_build::build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            standard_build_flags(),
+        );
+        write_overworld(
+            target,
+            &build,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            WriteFlags::default(),
+        );
     }
 
     assert_eq!(rom1.data, rom2.data, "same seed must produce identical output");
@@ -162,10 +520,21 @@ fn test_w8_sprites_moved() {
     let catalog = node_catalog::NodeCatalog::build(&rom, false);
     let pickup = standard_pickup(&rom, &catalog);
     let mut rng = ChaCha8Rng::seed_from_u64(42);
-    let build = overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, standard_build_flags());
+    let build = overworld_build::build(
+        &rom,
+        &OverworldData { pickup: &pickup, catalog: &catalog },
+        &mut rng,
+        standard_build_flags(),
+    );
 
     let mut test_rom = rom.clone();
-    write_overworld(&mut test_rom, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, WriteFlags::default());
+    write_overworld(
+        &mut test_rom,
+        &build,
+        &OverworldData { pickup: &pickup, catalog: &catalog },
+        &mut rng,
+        WriteFlags::default(),
+    );
 
     // Read W8 sprite positions after write.
     let positions = rom_data::read_map_sprite_positions(&test_rom, 7);
@@ -188,10 +557,21 @@ fn test_fx_slots_valid() {
     let catalog = node_catalog::NodeCatalog::build(&rom, false);
     let pickup = standard_pickup(&rom, &catalog);
     let mut rng = ChaCha8Rng::seed_from_u64(42);
-    let build = overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, standard_build_flags());
+    let build = overworld_build::build(
+        &rom,
+        &OverworldData { pickup: &pickup, catalog: &catalog },
+        &mut rng,
+        standard_build_flags(),
+    );
 
     let mut test_rom = rom.clone();
-    write_overworld(&mut test_rom, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, WriteFlags::default());
+    write_overworld(
+        &mut test_rom,
+        &build,
+        &OverworldData { pickup: &pickup, catalog: &catalog },
+        &mut rng,
+        WriteFlags::default(),
+    );
 
     // write_fortress_fx hands out FX slots as one running index across
     // worlds in write order: world wi's table holds slots
@@ -204,11 +584,7 @@ fn test_fx_slots_valid() {
         assert!(lock_count <= 4, "W{}: {lock_count} locks exceed 4 FX entries", wi + 1);
         for i in 0..4 {
             let want = if i < lock_count { (expected_slot + i) as u8 } else { 0 };
-            assert_eq!(
-                test_rom.read_byte(fx_base + i),
-                want,
-                "W{} FX table entry {i}", wi + 1,
-            );
+            assert_eq!(test_rom.read_byte(fx_base + i), want, "W{} FX table entry {i}", wi + 1,);
         }
         expected_slot += lock_count;
     }
@@ -233,10 +609,25 @@ fn test_hammer_bro_redistribution_written() {
         );
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let data = OverworldData { pickup: &pickup, catalog: &catalog };
-        let build = overworld_build::build(&rom, &data, &mut rng, overworld_build::BuildFlags { shuffle_toad_houses: true, shuffle_hammer_bros: true, ..Default::default() });
+        let build = overworld_build::build(
+            &rom,
+            &data,
+            &mut rng,
+            overworld_build::BuildFlags {
+                shuffle_toad_houses: true,
+                shuffle_hammer_bros: true,
+                ..Default::default()
+            },
+        );
 
         let mut test_rom = rom.clone();
-        write_overworld(&mut test_rom, &build, &data, &mut rng, WriteFlags { shuffle_hammer_bros: true, ..Default::default() });
+        write_overworld(
+            &mut test_rom,
+            &build,
+            &data,
+            &mut rng,
+            WriteFlags { shuffle_hammer_bros: true, ..Default::default() },
+        );
 
         // Each world's written HB sprite count matches the build decision,
         // and every sprite landed on the position the builder chose.
@@ -246,8 +637,10 @@ fn test_hammer_bro_redistribution_written() {
             let decided: std::collections::HashSet<(usize, usize)> =
                 build.worlds[wi].hb_sprites.iter().map(|s| s.grid_pos).collect();
             assert_eq!(
-                written, decided,
-                "seed {seed} W{}: written HB sprite positions != build decision", wi + 1
+                written,
+                decided,
+                "seed {seed} W{}: written HB sprite positions != build decision",
+                wi + 1
             );
 
             // After writing HBs, at least 2 eligible map-object slots remain
@@ -258,7 +651,8 @@ fn test_hammer_bro_redistribution_written() {
             let empty = eligible - written.len();
             assert!(
                 empty >= 2,
-                "seed {seed} W{}: only {empty} empty map-object slots left", wi + 1
+                "seed {seed} W{}: only {empty} empty map-object slots left",
+                wi + 1
             );
         }
 
@@ -267,6 +661,95 @@ fn test_hammer_bro_redistribution_written() {
         let rewards = rom_data::collect_hb_sprite_rewards(&test_rom);
         assert_eq!(rewards.len(), 15, "seed {seed}: {} HB rewards written != 15", rewards.len());
         assert!(rewards.iter().all(|&r| r != 0), "seed {seed}: a written HB reward is zero");
+    }
+}
+
+/// Rows 7 and 8 share ONE completion bit per column, and
+/// `Map_Reload_with_Completions` reads row 7 FIRST — it only drops to row 8
+/// (`PRG012_A55C`) when row 7's tile matched nothing completable. So anything
+/// the engine catches at (7,c) swallows the bit, and content at (8,c) is
+/// never marked beaten, never crumbled and never removed on reload.
+///
+/// The builder barred the partner of every placed *slot* and lock, which
+/// missed the third claimant: **map terrain**. W2's oasis (`TILE_POOL`, `$BF`)
+/// sits at (7,6), is scenery rather than a pointer entry, and lands exactly on
+/// the page-2 `Tile_Attributes_TS0` threshold — so seeds put a level or a
+/// fortress at (8,6) that could never show beaten, and a lock there would have
+/// grown back on every map reload.
+///
+/// Asserted on the written ROM rather than on `BuildResult`, because that is
+/// where a lock is a tile and terrain, content and locks are finally the same
+/// kind of thing — exactly the view the engine has.
+#[test]
+fn row78_completion_bit_is_never_double_claimed() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+
+    for seed in 0..20u64 {
+        let catalog = node_catalog::NodeCatalog::build(&rom, false);
+        let pickup = overworld_pickup::pick_up(
+            &rom,
+            &catalog,
+            overworld_pickup::PickupFlags {
+                shuffle_spade_games: true,
+                shuffle_toad_houses: true,
+                shuffle_hammer_bros: true,
+            },
+        );
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let data = OverworldData { pickup: &pickup, catalog: &catalog };
+        let build = overworld_build::build(
+            &rom,
+            &data,
+            &mut rng,
+            overworld_build::BuildFlags {
+                shuffle_toad_houses: true,
+                shuffle_hammer_bros: true,
+                ..Default::default()
+            },
+        );
+
+        let mut test_rom = rom.clone();
+        write_overworld(
+            &mut test_rom,
+            &build,
+            &data,
+            &mut rng,
+            WriteFlags { shuffle_hammer_bros: true, ..Default::default() },
+        );
+
+        for wi in 0..8 {
+            let grid = rom_data::read_tile_grid(&test_rom, wi);
+            let tables = &rom_data::WORLDS[wi];
+            let entries: std::collections::HashSet<(usize, usize)> = (0..tables.entry_count)
+                .map(|i| rom_data::entry_grid_position(&test_rom, tables, i))
+                .collect();
+
+            for c in 0..grid.cols {
+                let row8 = grid.get(8, c);
+                if !overworld_build::is_completion_unsafe(grid.get(7, c))
+                    || !overworld_build::is_completion_unsafe(row8)
+                {
+                    // Either row 7 leaves the bit alone, or row 8 never wanted
+                    // it (a Hammer Bro rides a plain path tile the completion
+                    // pass does not touch). Two adjacent scenery tiles that
+                    // both read as completable — W6's `$EA` band — are the
+                    // same harmless case: no entry, no bit, nothing to lose.
+                    continue;
+                }
+                // Row 7 owns the bit. Anything at (8,c) that needs it — a
+                // pointer entry, or a lock the reload would redraw — is lost.
+                assert!(
+                    !entries.contains(&(8, c)) && !rom_data::LOCK_TILES.contains(&row8),
+                    "seed {seed} W{}: (7,{c})={:02X} claims the completion bit that \
+                     (8,{c})={row8:02X} needs",
+                    wi + 1,
+                    grid.get(7, c),
+                );
+            }
+        }
     }
 }
 
@@ -279,10 +762,21 @@ fn test_pointer_table_sorted() {
     let catalog = node_catalog::NodeCatalog::build(&rom, false);
     let pickup = standard_pickup(&rom, &catalog);
     let mut rng = ChaCha8Rng::seed_from_u64(42);
-    let build = overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, standard_build_flags());
+    let build = overworld_build::build(
+        &rom,
+        &OverworldData { pickup: &pickup, catalog: &catalog },
+        &mut rng,
+        standard_build_flags(),
+    );
 
     let mut test_rom = rom.clone();
-    write_overworld(&mut test_rom, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, WriteFlags::default());
+    write_overworld(
+        &mut test_rom,
+        &build,
+        &OverworldData { pickup: &pickup, catalog: &catalog },
+        &mut rng,
+        WriteFlags::default(),
+    );
 
     // Verify each world's pointer table is sorted by (screen, row, col).
     for (wi, world) in WORLDS.iter().enumerate() {
@@ -302,7 +796,13 @@ fn test_pointer_table_sorted() {
             assert!(
                 key >= prev,
                 "W{} entry {i} not sorted: ({},{},{}) < ({},{},{})",
-                wi + 1, key.0, key.1, key.2, prev.0, prev.1, prev.2,
+                wi + 1,
+                key.0,
+                key.1,
+                key.2,
+                prev.0,
+                prev.1,
+                prev.2,
             );
             prev = key;
         }
@@ -322,21 +822,30 @@ fn test_no_uncovered_blank_nodes() {
 
     for seed in [42u64, 123, 999, 7777, 31337] {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let build = overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, standard_build_flags());
+        let build = overworld_build::build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            standard_build_flags(),
+        );
 
         let mut test_rom = rom.clone();
         qol::fix_w3_drawbridges(&mut test_rom);
         qol::remove_rocks(&mut test_rom);
         qol::fix_big_q_block_rooms(&mut test_rom);
-        write_overworld(&mut test_rom, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, WriteFlags::default());
+        write_overworld(
+            &mut test_rom,
+            &build,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            WriteFlags::default(),
+        );
 
         let pipes_by_world = rom_data::read_pipe_pairs(&test_rom);
 
         for (wi, world) in WORLDS.iter().enumerate() {
             let grid = rom_data::read_tile_grid(&test_rom, wi);
-            let pipe_pairs = pipes_by_world.get(&wi)
-                .cloned()
-                .unwrap_or_default();
+            let pipe_pairs = pipes_by_world.get(&wi).cloned().unwrap_or_default();
             let walk = map_walker::walk_map(&grid, &pipe_pairs, None, wi);
 
             // Collect positions that have pointer table entries.
@@ -384,7 +893,12 @@ fn test_generate_rom() {
 
     for seed in [42u64, 123, 999] {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let build = overworld_build::build(&rom, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, standard_build_flags());
+        let build = overworld_build::build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            standard_build_flags(),
+        );
 
         let mut out = rom.clone();
 
@@ -393,7 +907,13 @@ fn test_generate_rom() {
         qol::remove_rocks(&mut out);
         qol::fix_big_q_block_rooms(&mut out);
 
-        write_overworld(&mut out, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, WriteFlags::default());
+        write_overworld(
+            &mut out,
+            &build,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            WriteFlags::default(),
+        );
 
         let filename = format!("writer_test_seed{seed}.nes");
         std::fs::write(&filename, &out.data).unwrap();
@@ -419,18 +939,30 @@ fn test_piranha_shuffle_plants_written() {
         (0..9)
             .filter(|&slot| {
                 out.read_byte(rom_data::map_obj_slot_offset(
-                    out, rom_data::MAP_OBJ_IDS_MASTER, wi, slot,
+                    out,
+                    rom_data::MAP_OBJ_IDS_MASTER,
+                    wi,
+                    slot,
                 )) == 0x07
             })
             .map(|slot| {
                 let y = out.read_byte(rom_data::map_obj_slot_offset(
-                    out, rom_data::MAP_OBJ_YS_MASTER, wi, slot,
+                    out,
+                    rom_data::MAP_OBJ_YS_MASTER,
+                    wi,
+                    slot,
                 )) as usize;
                 let xhi = out.read_byte(rom_data::map_obj_slot_offset(
-                    out, rom_data::MAP_OBJ_XHIS_MASTER, wi, slot,
+                    out,
+                    rom_data::MAP_OBJ_XHIS_MASTER,
+                    wi,
+                    slot,
                 )) as usize;
                 let xlo = out.read_byte(rom_data::map_obj_slot_offset(
-                    out, rom_data::MAP_OBJ_XLOS_MASTER, wi, slot,
+                    out,
+                    rom_data::MAP_OBJ_XLOS_MASTER,
+                    wi,
+                    slot,
                 )) as usize;
                 (slot, (y / 16 - 2, xhi * 16 + xlo / 16))
             })
@@ -446,63 +978,61 @@ fn test_piranha_shuffle_plants_written() {
     for mode in [PiranhaMode::On, PiranhaMode::Wild] {
         let mut met = false;
         for seed in 42..47u64 {
-        let mut out = rom.clone();
-        let options = Options {
-            piranha_shuffle: mode,
-            palettes: false,
-            ..Default::default()
-        };
-        crate::randomizer::randomize(&mut out, seed, &options);
+            let mut out = rom.clone();
+            let options = Options { piranha_shuffle: mode, palettes: false, ..Default::default() };
+            crate::randomizer::randomize(&mut out, seed, &options);
 
-        let mut total_plants = 0;
-        for wi in 0..8 {
-            let empty = (0..9)
-                .filter(|&slot| {
-                    out.read_byte(rom_data::map_obj_slot_offset(
-                        &out, rom_data::MAP_OBJ_IDS_MASTER, wi, slot,
-                    )) == 0x00
-                })
-                .count();
-            assert!(
-                empty >= overworld_build::RESERVED_DYNAMIC_SLOTS,
-                "{mode:?}: W{} has only {empty} empty map-object slots",
-                wi + 1,
-            );
-
-            for (slot, (row, col)) in plant_slots(&out, wi) {
-                total_plants += 1;
-                assert_eq!(
-                    out.read_byte(rom_data::map_obj_reward_offset(wi, slot)),
-                    0,
-                    "{mode:?}: relocated plant carries a reward byte",
-                );
-                // Under-tile is a path node, not a numbered level tile.
-                let tile = out.read_byte(rom_data::map_tile_offset(wi, row, col));
+            let mut total_plants = 0;
+            for wi in 0..8 {
+                let empty = (0..9)
+                    .filter(|&slot| {
+                        out.read_byte(rom_data::map_obj_slot_offset(
+                            &out,
+                            rom_data::MAP_OBJ_IDS_MASTER,
+                            wi,
+                            slot,
+                        )) == 0x00
+                    })
+                    .count();
                 assert!(
-                    !(0x03..=0x15).contains(&tile),
-                    "{mode:?}: W{} plant at ({row},{col}) sits on level tile {tile:#04x}",
+                    empty >= overworld_build::RESERVED_DYNAMIC_SLOTS,
+                    "{mode:?}: W{} has only {empty} empty map-object slots",
                     wi + 1,
                 );
-                // A pointer entry (the level the plant fronts) exists there.
-                let world = &rom_data::WORLDS[wi];
-                let found = (0..world.entry_count).any(|i| {
-                    rom_data::entry_grid_position(&out, world, i) == (row, col)
-                });
-                assert!(
-                    found,
-                    "{mode:?}: W{} plant at ({row},{col}) has no pointer entry",
-                    wi + 1,
-                );
+
+                for (slot, (row, col)) in plant_slots(&out, wi) {
+                    total_plants += 1;
+                    assert_eq!(
+                        out.read_byte(rom_data::map_obj_reward_offset(wi, slot)),
+                        0,
+                        "{mode:?}: relocated plant carries a reward byte",
+                    );
+                    // Under-tile is a path node, not a numbered level tile.
+                    let tile = out.read_byte(rom_data::map_tile_offset(wi, row, col));
+                    assert!(
+                        !(0x03..=0x15).contains(&tile),
+                        "{mode:?}: W{} plant at ({row},{col}) sits on level tile {tile:#04x}",
+                        wi + 1,
+                    );
+                    // A pointer entry (the level the plant fronts) exists there.
+                    let world = &rom_data::WORLDS[wi];
+                    let found = (0..world.entry_count)
+                        .any(|i| rom_data::entry_grid_position(&out, world, i) == (row, col));
+                    assert!(
+                        found,
+                        "{mode:?}: W{} plant at ({row},{col}) has no pointer entry",
+                        wi + 1,
+                    );
+                }
             }
-        }
-        met = match mode {
-            PiranhaMode::On => (1..=2).contains(&total_plants),
-            PiranhaMode::Wild => total_plants >= 6,
-            PiranhaMode::Off => unreachable!(),
-        };
-        if met {
-            break;
-        }
+            met = match mode {
+                PiranhaMode::On => (1..=2).contains(&total_plants),
+                PiranhaMode::Wild => total_plants >= 6,
+                PiranhaMode::Off => unreachable!(),
+            };
+            if met {
+                break;
+            }
         }
         assert!(
             met,
@@ -516,7 +1046,10 @@ fn test_piranha_shuffle_plants_written() {
     crate::randomizer::randomize(&mut out, 42, &options);
     for &(wi, slot, _) in rom_data::MAP_OBJ_ENTRY_LINKS {
         let id = out.read_byte(rom_data::map_obj_slot_offset(
-            &out, rom_data::MAP_OBJ_IDS_MASTER, wi, slot,
+            &out,
+            rom_data::MAP_OBJ_IDS_MASTER,
+            wi,
+            slot,
         ));
         assert_eq!(id, 0x07, "Off: vanilla plant missing at W{} slot {slot}", wi + 1);
         assert_ne!(
@@ -547,25 +1080,43 @@ fn test_troll_pipes_never_assigned_piranha_levels() {
     let pickup = standard_pickup(&prepped, &catalog);
 
     // Both released plant levels must be in the pool at all.
-    let pooled_piranhas = pickup.pool.iter()
-        .filter(|pe| rom_data::MAP_OBJ_ENTRY_LINKS.iter()
-            .any(|&(w, _, e)| pe.world_idx == w && pe.entry_idx == e))
+    let pooled_piranhas = pickup
+        .pool
+        .iter()
+        .filter(|pe| {
+            rom_data::MAP_OBJ_ENTRY_LINKS
+                .iter()
+                .any(|&(w, _, e)| pe.world_idx == w && pe.entry_idx == e)
+        })
         .count();
     assert_eq!(pooled_piranhas, 2, "released plant levels missing from pool");
 
     for seed in 0u64..32 {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let mut build = overworld_build::build(&prepped, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, standard_build_flags());
+        let mut build = overworld_build::build(
+            &prepped,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            standard_build_flags(),
+        );
         troll_pipes::mark_troll_pipes(&mut build, &mut rng);
 
-        let troll_positions: HashSet<(usize, (usize, usize))> = build.worlds.iter()
-            .flat_map(|w| w.slots.iter()
-                .filter(|s| s.is_troll_pipe)
-                .map(move |s| (w.world_idx, s.pos)))
+        let troll_positions: HashSet<(usize, (usize, usize))> = build
+            .worlds
+            .iter()
+            .flat_map(|w| {
+                w.slots.iter().filter(|s| s.is_troll_pipe).map(move |s| (w.world_idx, s.pos))
+            })
             .collect();
 
         let flags = WriteFlags { piranha: PiranhaMode::Wild, ..Default::default() };
-        let assignments = assign_pool(&prepped, &build, &OverworldData { pickup: &pickup, catalog: &catalog }, &mut rng, flags);
+        let assignments = assign_pool(
+            &prepped,
+            &build,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            flags,
+        );
 
         for (wi, wa) in assignments.iter().enumerate() {
             for a in &wa.level {
@@ -578,7 +1129,10 @@ fn test_troll_pipes_never_assigned_piranha_levels() {
                 assert!(
                     !rom_data::is_chest_level(ce.world_idx, ce.entry_idx),
                     "seed {seed}: W{} troll pipe at {:?} got chest level (W{} entry {})",
-                    wi + 1, a.pos, ce.world_idx + 1, ce.entry_idx,
+                    wi + 1,
+                    a.pos,
+                    ce.world_idx + 1,
+                    ce.entry_idx,
                 );
             }
         }
@@ -719,10 +1273,18 @@ fn test_march_veto_pipeline_writes_registry() {
         },
     );
     let mut out = prepped.clone();
-    write_overworld(&mut out, &build, &data, &mut rng, WriteFlags {
-        piranha: PiranhaMode::Wild,
-        shuffle_hammer_bros: true,
-    });
+    write_overworld(
+        &mut out,
+        &build,
+        &data,
+        &mut rng,
+        WriteFlags {
+            piranha: PiranhaMode::Wild,
+            shuffle_hammer_bros: true,
+            friendlier_levels: false,
+            deja_vu: DejaVuMode::Off,
+        },
+    );
 
     assert_veto_hook_installed(&out);
     let registry = read_veto_registry(&out);

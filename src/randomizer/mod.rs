@@ -17,9 +17,9 @@ use options::*;
 // Public API re-exported by the crate root (see lib.rs).
 pub use flag_key::{current_flag_key_version, flag_key_fields, flag_key_version_of};
 pub use options::{
-    item_display_name, item_id, EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri,
-    WildChaser, ITEMS, ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY,
-    STARTING_LIVES_VALUES,
+    DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE,
+    ITEM_RANDOM_SUIT_ONLY, ITEMS, Options, PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser,
+    item_display_name, item_id,
 };
 
 #[cfg(test)]
@@ -81,9 +81,8 @@ fn randomize_inner(
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
     // Resolve random starting items up front (deterministic from seed)
-    let resolved_items: Vec<u8> = options.starting_items.iter()
-        .map(|&item| resolve_starting_item(item, &mut rng))
-        .collect();
+    let resolved_items: Vec<u8> =
+        options.starting_items.iter().map(|&item| resolve_starting_item(item, &mut rng)).collect();
 
     // Resolve the player-hidden tri-state flags up front. These draw from a
     // dedicated substream (MAYBE_SALT) so flipping a flag to `Maybe` never
@@ -213,7 +212,12 @@ fn randomize_inner(
     // of the overworld builder and the enemy/powerup passes.
     if antechamber_shuffle {
         rom.set_tag("levels/antechambers");
-        randomize::antechambers::shuffle(rom, &mut rng, options.include_beta_stages);
+        randomize::antechambers::shuffle(
+            rom,
+            &mut rng,
+            options.include_beta_stages,
+            options.friendlier_levels,
+        );
     }
 
     // Koopaling stability patches — needed whenever Koopalings may load in a
@@ -269,10 +273,7 @@ fn randomize_inner(
             shuffle_hammer_bros: options.shuffle_hammer_bros,
         },
     );
-    let data = randomize::overworld_build::OverworldData {
-        pickup: &pickup,
-        catalog: &catalog,
-    };
+    let data = randomize::overworld_build::OverworldData { pickup: &pickup, catalog: &catalog };
     let mut build = randomize::overworld_build::build(
         rom,
         &data,
@@ -313,8 +314,44 @@ fn randomize_inner(
         randomize::overworld_writer::WriteFlags {
             shuffle_hammer_bros: options.shuffle_hammer_bros,
             piranha: options.piranha_shuffle,
+            friendlier_levels: options.friendlier_levels,
+            deja_vu: options.deja_vu,
         },
     );
+
+    // Big [?] bonus-room shuffle: every level with a Big [?] pipe draws from a
+    // pool of 19 rooms (11 vanilla + 8 in the otherwise-dead "Unused Level 5").
+    // Runs after the overworld builder because the BigQBlock_GotIt "already
+    // opened" bit is per world *and* per screen, so the legal rooms for a host
+    // depend on where its level ended up — and after `write_overworld`, so the
+    // RNG it consumes cannot move the maps.
+    // Off by default. `vanilla_assignments` takes no `rng` *by signature* and
+    // writes no bytes, so with the option off every module downstream of here
+    // sees the stream it would see if this pass did not exist. It just reports
+    // where the eleven pipes already lead, so the 7-F1 protection below still
+    // knows which room to protect.
+    //
+    // Note this is not whole-ROM identity with a pre-feature build: the lookup
+    // routine `qol::fix_big_q_block_rooms` installs is unconditional and carries
+    // the slot-seeding halves either way.
+    let big_q_rooms = if options.shuffle_big_q_rooms {
+        rom.set_tag("big_q_blocks/rooms");
+        randomize::big_q_rooms::shuffle(rom, &mut rng)
+    } else {
+        randomize::big_q_rooms::vanilla_assignments()
+    };
+
+    // 7-F1 cannot be beaten without flight, so whatever room it drew has to
+    // hand out a flight suit. Forced last, which is also why it needs no
+    // cooperation from the contents roll above.
+    if let Some(off) = big_q_rooms
+        .iter()
+        .find(|a| a.name == "7-F1")
+        .and_then(|a| randomize::big_q_rooms::block_offset(rom, a.area, a.screen))
+    {
+        rom.set_tag("big_q_blocks/w7f1_flight");
+        rom.write_byte(off, randomize::big_q_rooms::BIGQBLOCK_TANOOKI);
+    }
 
     // Redraw + repack the ending credits mini-maps from the freshly-written
     // randomized world maps, then (if world order shuffled) reorder the montage
@@ -369,9 +406,11 @@ fn randomize_inner(
     rom.set_tag("metatile/6a_freeze");
     randomize::overworld_writer::patch_metatile_6a_freeze(rom);
 
-    // Randomize king quotes (always on — cosmetic flavor text)
+    // Randomize king quotes. Always called, even when the option is off: the
+    // module draws its quotes unconditionally and only the ROM writes are
+    // gated, so toggling this cannot shift the seed stream for anything below.
     rom.set_tag("king_quotes");
-    randomize::king_quotes::randomize(rom, &mut rng);
+    randomize::king_quotes::randomize(rom, &mut rng, options.king_quotes);
 
     // Cosmetic: render every item visual (reserve grid, Toad House chests,
     // in-level treasure boxes) as the Anchor sprite.
@@ -420,6 +459,13 @@ fn randomize_inner(
     rom.set_tag("stomp_fairness");
     randomize::stomp_fairness::apply(rom);
 
+    // One unit on the level clock is 41 frames in vanilla (~0.68 s), so the
+    // displayed time runs ~47% fast. Always applied: the divider is simply the
+    // wrong number, and a clock that reads seconds is what the status bar
+    // already claims to show.
+    rom.set_tag("qol/real_time_clock");
+    randomize::qol::apply_real_time_clock(rom);
+
     // Adjust Bowser and Koopaling hitboxes.
     if options.adjust_boss_hitboxes {
         rom.set_tag("koopalings/adjust_boss_hitboxes");
@@ -448,6 +494,12 @@ fn randomize_inner(
     if options.early_sun {
         rom.set_tag("qol/early_sun");
         randomize::qol::apply_early_sun(rom);
+    }
+
+    // Bro encounters run on a 10-second clock instead of their header's time.
+    if options.bro_battle_timer {
+        rom.set_tag("qol/bro_battle_timer");
+        randomize::qol::apply_bro_battle_timer(rom);
     }
 
     // "Limit Bro Movement" — gate the wandering Hammer Bros' overworld roaming.

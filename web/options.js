@@ -68,12 +68,29 @@ const WILD_INJECTION_TOGGLES = [
 	{ value: "bass", label: "Bass" },
 ];
 
+// Off / Some / All pill for Limit Hazards. Values match the Rust `HazardLimit`
+// enum's serde representation ("some" is the `Sparse` variant, renamed there
+// only so it never reads as `Option::Some`).
+const OFF_SOME_ALL = [
+	{ value: "off", label: "Off" },
+	{ value: "some", label: "Some" },
+	{ value: "all", label: "All" },
+];
+
 // Off / On / Wild pill for Random Fire Flower. "Wild" widens the pool to also
 // include the Small/Big downgrade outcomes. Values match the Rust
 // `FireFlowerMode` enum's serde representation.
 const OFF_ON_WILD = [
 	{ value: "off", label: "Off" },
 	{ value: "on", label: "On" },
+	{ value: "wild", label: "Wild" },
+];
+
+// Off / Double / Wild pill for Deja Vu. Values match the Rust `DejaVuMode`
+// enum's serde representation.
+const OFF_DOUBLE_WILD = [
+	{ value: "off", label: "Off" },
+	{ value: "double", label: "Double" },
 	{ value: "wild", label: "Wild" },
 ];
 
@@ -340,6 +357,19 @@ export const SCHEMA = [
 		label: "HB Encounters",
 		tip: "All enemies in overworld Hammer Bro mini-battles",
 		group: "enemies", inFlagKey: true },
+	{ id: "friendlier_levels", type: "bool", default: false,
+		label: "Friendlier Levels",
+		tip: "Keeps the roughest levels out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta stages if you have those on, otherwise to a second visit to a level already in the seed. Two fortresses, 7F2 and 8F1, are usually made optional rather than removed: still there, still beatable, just not in your way.",
+		group: "map", inFlagKey: true },
+	{ id: "deja_vu", type: "tri", options: OFF_DOUBLE_WILD, default: "off",
+		label: "Deja Vu", flavor: "Haven't we been here?",
+		tip: "Let the same level show up on more than one tile. Double: every level gets a second copy in the deck, so some show up twice and others sit the seed out. Wild: no limit — a level can turn up over and over, or never. Levels that hand you an item still appear exactly once.",
+		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
+		group: "map", inFlagKey: true },
+	{ id: "limit_hazards", type: "tri", options: OFF_SOME_ALL, default: "off",
+		label: "Limit Hazards",
+		tip: "Stops swaps from dropping nippers, Ptooies, thwomps, Hot Foots or Bros into levels that weren't built for them. Some allows the occasional one, All allows none. Hazards that were always there stay put.",
+		group: "enemies", inFlagKey: true },
 	{ id: "wild_injections", type: "toggles", options: WILD_INJECTION_TOGGLES,
 		default: [],
 		label: "Wild Injections",
@@ -354,6 +384,10 @@ export const SCHEMA = [
 		label: "Early Sun",
 		tip: "Angry Sun starts attacking immediately on spawn.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
+		group: "enemies", inFlagKey: true },
+	{ id: "bro_battle_timer", type: "bool", default: false,
+		label: "Bro Battle Timer",
+		tip: "Walk into a Hammer, Boomerang, Heavy or Fire Bro and the clock starts at 10. Clear the room fast or the fight clears you.",
 		group: "enemies", inFlagKey: true },
 
 	// --- Bosses ---
@@ -413,6 +447,11 @@ export const SCHEMA = [
 	{ id: "big_q_blocks", type: "bool", default: false,
 		label: "Big ? Blocks",
 		tip: "Randomize the contents of Big ? Blocks in bonus rooms",
+		icon: BIG_Q,
+		group: "items", inFlagKey: true },
+	{ id: "shuffle_big_q_rooms", type: "bool", default: false,
+		label: "Shuffle Big ? Rooms",
+		tip: "Big ? pipes lead somewhere else — including eight bonus rooms that were left in the game and never used.",
 		icon: BIG_Q,
 		group: "items", inFlagKey: true },
 	{ id: "remove_whistles", type: "bool", default: true,
@@ -493,6 +532,10 @@ export const SCHEMA = [
 		tip: "Stop the full-screen flashing and fading effects. On by default so the game is safer for players sensitive to flashing lights.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "cosmetic", inFlagKey: false },
+	{ id: "king_quotes", type: "bool", default: true,
+		label: "King quotes",
+		tip: "Give each rescued king a new thing to say. Turn this off and the kings say what they say in the original game.",
+		group: "cosmetic", inFlagKey: false },
 ];
 
 // Hardcoded fields sent to Rust that aren't user-facing.
@@ -534,7 +577,7 @@ export const PRESETS = [
 			hammer_vulnerable_koopalings: true,
 		} },
 	{ id: "beginner", label: "Beginner Friendly",
-		tip: "Gentler ruleset: extra lives and items, no game-over penalty, no hand traps or troll pipes.",
+		tip: "Gentler ruleset: extra lives and items, no added hazards, the roughest levels sat out, no game-over penalty, no hand traps or troll pipes.",
 		overrides: {
 			starting_lives: 20, starting_items: [1, 2, 3],
 			infinite_mushroom_houses: true, fast_mushroom_house: true,
@@ -544,7 +587,12 @@ export const PRESETS = [
 			hands_levels: false, troll_pipes: "off",
 			shuffle_spade_games: false, more_hammer_rocks: "on",
 			hammer_breaks_locks: "on", big_q_blocks: true,
-			ghosts: "off", hb_encounters: "shuffle",
+			// `ghosts` was "off" purely to stop Boo -> Hot Foot, the only
+			// hazard that class can produce in Shuffle. limit_hazards blocks
+			// that directly, so the class goes back on and Boo <-> Dry Bones
+			// variety comes with it.
+			limit_hazards: "all", ghosts: "shuffle", hb_encounters: "shuffle",
+			friendlier_levels: true,
 			world_order: true, random_koopalings: true,
 			hammer_vulnerable_koopalings: true,
 		} },

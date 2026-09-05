@@ -1,13 +1,11 @@
-use rand::seq::IndexedRandom;
 use rand::Rng;
+use rand::seq::IndexedRandom;
 
 use crate::randomize::palette_variants::{
-    VariantGroup,
-    PLAINS_SLOT3_VARIANTS, SLOT0_MAP_VARIANTS, SLOT1_MAP_VARIANTS, SLOT2_VARIANTS,
-    SLOT4_VARIANTS, SLOT5_VARIANTS, SLOT6_VARIANTS, SLOT7_VARIANTS, SLOT_TAIL_VARIANTS,
-    SLICE1_WATER_VARIANTS, SLICE2_VARIANTS, SLICE3_GIANT_VARIANTS,
-    SLICE4_HEAD_VARIANTS, SLICE4_POST_VARIANTS, SLICE4_TAIL_VARIANTS,
-    POOL_VARIANTS, ROTATE_ONLY_QUARTETS,
+    PLAINS_SLOT3_VARIANTS, POOL_VARIANTS, ROTATE_ONLY_QUARTETS, SLICE1_WATER_VARIANTS,
+    SLICE2_VARIANTS, SLICE3_GIANT_VARIANTS, SLICE4_HEAD_VARIANTS, SLICE4_POST_VARIANTS,
+    SLICE4_TAIL_VARIANTS, SLOT_TAIL_VARIANTS, SLOT0_MAP_VARIANTS, SLOT1_MAP_VARIANTS,
+    SLOT2_VARIANTS, SLOT4_VARIANTS, SLOT5_VARIANTS, SLOT6_VARIANTS, SLOT7_VARIANTS, VariantGroup,
 };
 use crate::rom::Rom;
 
@@ -81,11 +79,8 @@ pub fn apply_player_scheme(rom: &mut Rom, anchor: u8) {
     // vanilla red if a patch made the body achromatic (Dr. Mario's white
     // coat), so the accents still rotate sensibly.
     let current_body = rom.read_byte(PALETTE_RANGES[0].0 + 1);
-    let origin_hue = if is_chromatic(current_body) {
-        current_body & 0x0F
-    } else {
-        VANILLA_MARIO_HUE
-    };
+    let origin_hue =
+        if is_chromatic(current_body) { current_body & 0x0F } else { VANILLA_MARIO_HUE };
     let delta = ((anchor & 0x0F) + 12 - origin_hue) % 12;
 
     for &(offset, _name) in PALETTE_RANGES {
@@ -205,9 +200,9 @@ const THEME_GROUPS: &[ThemeGroup] = &[
 /// must belong to a group (enforced by test); unknown offsets get None and
 /// are left unrotated.
 fn theme_group_for(offset: usize) -> Option<usize> {
-    THEME_GROUPS.iter().position(|g| {
-        g.ranges.iter().any(|&(start, end)| (start..end).contains(&offset))
-    })
+    THEME_GROUPS
+        .iter()
+        .position(|g| g.ranges.iter().any(|&(start, end)| (start..end).contains(&offset)))
 }
 
 /// Themed palette randomization across all tilesets.
@@ -243,13 +238,10 @@ pub fn randomize_themed<R: Rng>(rom: &mut Rom, rng: &mut R) {
 
     // Roll one shift per theme group, in declaration order (deterministic
     // for a given RNG stream).
-    let group_shifts: Vec<u8> = THEME_GROUPS
-        .iter()
-        .map(|g| *g.shifts.choose(rng).unwrap())
-        .collect();
-    let shift_for = |offset: usize| -> u8 {
-        theme_group_for(offset).map_or(0, |gi| group_shifts[gi])
-    };
+    let group_shifts: Vec<u8> =
+        THEME_GROUPS.iter().map(|g| *g.shifts.choose(rng).unwrap()).collect();
+    let shift_for =
+        |offset: usize| -> u8 { theme_group_for(offset).map_or(0, |gi| group_shifts[gi]) };
 
     for region in THEMED_REGIONS {
         apply_variant_groups(rom, region, shift_for, rng);
@@ -301,8 +293,8 @@ fn apply_variant_groups<R: Rng>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand_chacha::ChaCha8Rng;
     use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
 
     fn make_test_rom() -> Rom {
         let mut data = vec![0u8; 393232];
@@ -342,7 +334,10 @@ mod tests {
             randomize(&mut rom, &mut rng, None);
 
             let mario_body = rom.read_byte(0x10539 + 1);
-            assert!(is_chromatic(mario_body), "seed {seed}: anchor {mario_body:#04x} not chromatic");
+            assert!(
+                is_chromatic(mario_body),
+                "seed {seed}: anchor {mario_body:#04x} not chromatic"
+            );
 
             // Rebuild the scheme from the observed anchor; it must match.
             let mut expected = make_wardrobe_rom();
@@ -368,10 +363,7 @@ mod tests {
         randomize(&mut rom2, &mut rng2, None);
 
         for &(offset, _) in PALETTE_RANGES {
-            assert_eq!(
-                rom1.read_range(offset, 4),
-                rom2.read_range(offset, 4),
-            );
+            assert_eq!(rom1.read_range(offset, 4), rom2.read_range(offset, 4),);
         }
     }
 
@@ -546,7 +538,10 @@ mod tests {
         }
         // Non-chromatic bytes pass through at every shift: grays/whites
         // (hue 0), blacks/forbidden (hue D-F), and anything above 0x3C.
-        for &b in &[0x00u8, 0x10, 0x20, 0x30, 0x0D, 0x0E, 0x0F, 0x1D, 0x2F, 0x3D, 0x3F, 0x40, 0x99, 0xAD, 0xFF] {
+        for &b in &[
+            0x00u8, 0x10, 0x20, 0x30, 0x0D, 0x0E, 0x0F, 0x1D, 0x2F, 0x3D, 0x3F, 0x40, 0x99, 0xAD,
+            0xFF,
+        ] {
             for shift in 0u8..12 {
                 assert_eq!(rotate_hue(b, shift), b, "{b:#04x} must pass through");
             }
@@ -621,11 +616,7 @@ mod tests {
         // A shift of 3+ steps sends skies magenta / grass purple.
         for tg in THEME_GROUPS {
             assert!(!tg.shifts.is_empty(), "group '{}' has no shifts", tg.name);
-            assert!(
-                tg.shifts.contains(&0),
-                "group '{}' must always allow vanilla hues",
-                tg.name
-            );
+            assert!(tg.shifts.contains(&0), "group '{}' must always allow vanilla hues", tg.name);
             for &s in tg.shifts {
                 assert!(
                     matches!(s, 0 | 1 | 2 | 10 | 11),
@@ -643,38 +634,35 @@ mod tests {
         // canary bytes (all >= 0x40, so hue rotation passes them through) in
         // each covered range and check them after running the randomizer.
         const REGIONS: &[(usize, usize, u8)] = &[
-            (0x36BE4, 0x36C1C, 0x40),  // slot 0 (W6 map)
-            (0x36C1C, 0x36C54, 0x50),  // slot 1 (W7 map)
-            (0x36C54, 0x36C8C, 0xA0),  // slot 2
-            (0x36C8C, 0x36CC4, 0xC0),  // slot 3
-            (0x36CC4, 0x36CFC, 0xD0),  // slot 4
-            (0x36CFC, 0x36D34, 0xE0),  // slot 5
-            (0x36D34, 0x36D6C, 0x90),  // slot 6
-            (0x36D6C, 0x36DA6, 0x80),  // slot 7
-            (0x36DA8, 0x36E20, 0x40),  // slot tail
-            (0x36E20, 0x37000, 0x50),  // pool
-            (0x37000, 0x37200, 0x70),  // slice 1
-            (0x37200, 0x37400, 0x60),  // slice 2
-            (0x37400, 0x37600, 0x50),  // slice 3
-            (0x37600, 0x377E0, 0xB0),  // slice 4 head
-            (0x37808, 0x37846, 0xC0),  // slice 4 tail
-            (0x37844, 0x37850, 0x40),  // slice 4 post
+            (0x36BE4, 0x36C1C, 0x40), // slot 0 (W6 map)
+            (0x36C1C, 0x36C54, 0x50), // slot 1 (W7 map)
+            (0x36C54, 0x36C8C, 0xA0), // slot 2
+            (0x36C8C, 0x36CC4, 0xC0), // slot 3
+            (0x36CC4, 0x36CFC, 0xD0), // slot 4
+            (0x36CFC, 0x36D34, 0xE0), // slot 5
+            (0x36D34, 0x36D6C, 0x90), // slot 6
+            (0x36D6C, 0x36DA6, 0x80), // slot 7
+            (0x36DA8, 0x36E20, 0x40), // slot tail
+            (0x36E20, 0x37000, 0x50), // pool
+            (0x37000, 0x37200, 0x70), // slice 1
+            (0x37200, 0x37400, 0x60), // slice 2
+            (0x37400, 0x37600, 0x50), // slice 3
+            (0x37600, 0x377E0, 0xB0), // slice 4 head
+            (0x37808, 0x37846, 0xC0), // slice 4 tail
+            (0x37844, 0x37850, 0x40), // slice 4 post
         ];
 
         let mut rom = make_test_rom();
         for &(start, end, base) in REGIONS {
-            let canary: Vec<u8> =
-                (0..(end - start)).map(|i| base | (i as u8 & 0x0F)).collect();
+            let canary: Vec<u8> = (0..(end - start)).map(|i| base | (i as u8 & 0x0F)).collect();
             rom.write_range(start, &canary);
         }
 
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         randomize_themed(&mut rom, &mut rng);
 
-        let curated_offsets: std::collections::HashSet<usize> = all_variant_groups()
-            .iter()
-            .flat_map(|g| (0..4).map(move |k| g.offset + k))
-            .collect();
+        let curated_offsets: std::collections::HashSet<usize> =
+            all_variant_groups().iter().flat_map(|g| (0..4).map(move |k| g.offset + k)).collect();
 
         for &(start, end, base) in REGIONS {
             for off in start..end {
@@ -700,10 +688,8 @@ mod tests {
     fn rotate_only_quartets_are_disjoint_and_safe() {
         // Rotate-only quartets must not overlap any variant group (they'd
         // double-write) and must not touch the pointer-table crash trap.
-        let curated_offsets: std::collections::HashSet<usize> = all_variant_groups()
-            .iter()
-            .flat_map(|g| (0..4).map(move |k| g.offset + k))
-            .collect();
+        let curated_offsets: std::collections::HashSet<usize> =
+            all_variant_groups().iter().flat_map(|g| (0..4).map(move |k| g.offset + k)).collect();
 
         for &offset in ROTATE_ONLY_QUARTETS {
             for k in 0..4 {
@@ -713,10 +699,7 @@ mod tests {
                 );
             }
             let overlaps_ptr = offset + 4 > 0x377E0 && offset < 0x37808;
-            assert!(
-                !overlaps_ptr,
-                "rotate-only quartet {offset:#08x} overlaps pointer table"
-            );
+            assert!(!overlaps_ptr, "rotate-only quartet {offset:#08x} overlaps pointer table");
         }
     }
 

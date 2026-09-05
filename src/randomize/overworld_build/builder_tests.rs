@@ -7,7 +7,6 @@ use super::*;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-
 use super::super::overworld_pickup::{PickupFlags, PickupResult as Pickup, pick_up};
 use super::super::qol;
 use super::super::start_airship_swap;
@@ -85,36 +84,19 @@ fn census_ctx(raw: &Rom, seed: u64) -> CensusCtx {
     let pickup = pick_up(
         &rom,
         &catalog,
-        PickupFlags {
-            shuffle_spade_games: false,
-            shuffle_toad_houses,
-            shuffle_hammer_bros,
-        },
+        PickupFlags { shuffle_spade_games: false, shuffle_toad_houses, shuffle_hammer_bros },
     );
-    let flags = BuildFlags {
-        shuffle_toad_houses,
-        eights_are_wild: eights_wild,
-        shuffle_hammer_bros,
-    };
+    let flags =
+        BuildFlags { shuffle_toad_houses, eights_are_wild: eights_wild, shuffle_hammer_bros };
     let (level_counts, fort_counts, c1_floors) =
         allot_budgets(&rom, &catalog, &pickup, &flags, &mut roll_rng);
     let bridges_out = roll_bridges_out(&mut roll_rng);
-    CensusCtx {
-        rom,
-        catalog,
-        pickup,
-        flags,
-        level_counts,
-        fort_counts,
-        c1_floors,
-        bridges_out,
-    }
+    CensusCtx { rom, catalog, pickup, flags, level_counts, fort_counts, c1_floors, bridges_out }
 }
 
 impl CensusCtx {
     fn world(&self, world_idx: usize) -> WorldState {
-        let mut state =
-            from_pickup(&self.rom, &self.catalog, &self.pickup, world_idx, &self.flags);
+        let mut state = from_pickup(&self.rom, &self.catalog, &self.pickup, world_idx, &self.flags);
         state.level_budget = self.level_counts[world_idx];
         state.fort_budget = self.fort_counts[world_idx];
         state.c1_floor = self.c1_floors[world_idx];
@@ -133,10 +115,7 @@ impl Phase for Recorder {
         self.0
     }
     fn run(&self, state: &mut WorldState, _rng: &mut dyn RngCore) -> PhaseReport {
-        PhaseReport {
-            phase: self.0,
-            actions: vec![format!("ran on world {}", state.world_idx)],
-        }
+        PhaseReport { phase: self.0, actions: vec![format!("ran on world {}", state.world_idx)] }
     }
 }
 
@@ -266,11 +245,7 @@ fn test_builder_vanilla_worlds() {
         if measure.rc.routes.len() > 5 {
             println!("         ... {} more routes", measure.rc.routes.len() - 5);
         }
-        assert!(
-            measure.reachable,
-            "vanilla W{} goal must be reachable",
-            world_idx + 1
-        );
+        assert!(measure.reachable, "vanilla W{} goal must be reachable", world_idx + 1);
     }
 }
 
@@ -285,10 +260,7 @@ fn test_builder_current_builder_worlds() {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(20);
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(20);
 
     #[derive(Default, Clone, Copy)]
     struct Tally {
@@ -318,12 +290,7 @@ fn test_builder_current_builder_worlds() {
         for built in &result.worlds {
             let state = from_built(built);
             let m = measure_world(&state);
-            assert!(
-                m.reachable,
-                "seed {} W{} goal must be reachable",
-                seed,
-                built.world_idx + 1
-            );
+            assert!(m.reachable, "seed {} W{} goal must be reachable", seed, built.world_idx + 1);
             let t = &mut tallies[built.world_idx];
             t.c1 += u64::from(m.c1);
             t.c1_min = t.c1_min.min(m.c1);
@@ -389,10 +356,7 @@ fn test_builder_connectivity_census() {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(100);
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(100);
 
     let mut pipes_sum = [0usize; 8];
     let mut stranded_sum = [0usize; 8];
@@ -464,10 +428,7 @@ fn test_builder_levels_census() {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(100);
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(100);
 
     let mut placed_sum = [0usize; 8];
     let mut short = [0usize; 8];
@@ -488,12 +449,8 @@ fn test_builder_levels_census() {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             run_schedule(&mut state, &[&Connectivity, &Levels], &mut rng);
 
-            let levels: Vec<Pos> = state
-                .slots
-                .iter()
-                .filter(|s| s.kind == SlotKind::Level)
-                .map(|s| s.pos)
-                .collect();
+            let levels: Vec<Pos> =
+                state.slots.iter().filter(|s| s.kind == SlotKind::Level).map(|s| s.pos).collect();
             placed_sum[world_idx] += levels.len();
             if levels.len() < state.level_budget {
                 short[world_idx] += 1;
@@ -568,7 +525,10 @@ fn test_builder_levels_census() {
 /// levels → spare pipes → forts). The headline number is on-route%: how
 /// often a random fort lands on the cheapest route — where the player pays
 /// its 5 points no matter what, and its future lock gates nothing (the
-/// "on-path fort = decorative lock" thesis, baselined). Runs the realistic
+/// "on-path fort = decorative lock" thesis, baselined). forced% is the
+/// strict form of the same thesis (`WorldState::forced_forts`): the goal is
+/// unreachable without this fort, so no route choice could have avoided it.
+/// Runs the realistic
 /// flag mix (see [`census_ctx`]). `CENSUS_SEEDS` seeds (default 100).
 ///
 /// `#[ignore]`d (2026-08-07): a baseline instrument, not a gate — it
@@ -581,13 +541,11 @@ fn test_builder_forts_census() {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(100);
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(100);
 
     let mut placed_sum = [0usize; 8];
     let mut on_route = [0usize; 8];
+    let mut forced = [0usize; 8];
     let mut fort_count = [0usize; 8];
     let mut c1_sum = [0u64; 8];
     let mut routes_sum = [0usize; 8];
@@ -615,6 +573,7 @@ fn test_builder_forts_census() {
                 let path: HashSet<Pos> = cheap.path.iter().copied().collect();
                 on_route[world_idx] += forts.iter().filter(|p| path.contains(p)).count();
             }
+            forced[world_idx] += state.forced_forts().len();
             fort_count[world_idx] += forts.len();
             c1_sum[world_idx] += u64::from(measure.c1);
             routes_sum[world_idx] += measure.routes_in_band;
@@ -625,18 +584,113 @@ fn test_builder_forts_census() {
     }
 
     println!("forts census ({seeds} seeds, uniform placement, full dumb pipeline, flag-mix arms)");
-    println!("world  budget  placed  on-route%  C1(mean)  routes  linear%");
+    println!("world  budget  placed  on-route%  forced%  C1(mean)  routes  linear%");
     let n = seeds as f64;
     for world_idx in 0..8 {
         println!(
-            "  W{}   {:>5} {:>7.2} {:>9.0}% {:>9.1} {:>7.2} {:>7.0}%",
+            "  W{}   {:>5} {:>7.2} {:>9.0}% {:>7.0}% {:>9.1} {:>7.2} {:>7.0}%",
             world_idx + 1,
             budget[world_idx],
             placed_sum[world_idx] as f64 / n,
             100.0 * on_route[world_idx] as f64 / fort_count[world_idx].max(1) as f64,
+            100.0 * forced[world_idx] as f64 / fort_count[world_idx].max(1) as f64,
             c1_sum[world_idx] as f64 / n,
             routes_sum[world_idx] as f64 / n,
             100.0 * linear[world_idx] as f64 / n,
+        );
+    }
+}
+
+/// Forced-blank ceiling: can fort placement even comply with the charter's
+/// "forts stay off the path" rule? A fort is forced exactly when it sits on
+/// a cut-vertex blank (see `WorldState::forced_positions` — the answer is a
+/// property of terrain + pipe web alone, decided before any content lands),
+/// so this measures the pool the Forts phase draws from rather than where it
+/// happened to draw.
+///
+/// Production order: connectivity → levels, then measure, because that is
+/// what `Forts` actually sees. The `+spares` columns re-measure with the
+/// full pipe budget spent — spare pipes run AFTER shaping in production, and
+/// a pipe can only ever remove a cut vertex, so the difference is what the
+/// world's own remaining budget would buy if the fort phase could see it.
+///
+/// Columns: blanks/free = mean legal blanks and mean NON-forced ones at fort
+/// time; forcedB% = share of the pool that is forced; tight% = seeds where
+/// the free blanks cannot cover the world's fort budget, so at least one
+/// fort MUST be forced whatever the builder prefers — the structural floor.
+/// Runs the realistic flag mix (see [`census_ctx`]). `CENSUS_SEEDS` seeds
+/// (default 100).
+///
+/// `#[ignore]`d: a baseline instrument, not a gate — no assertions.
+#[test]
+#[ignore]
+fn test_builder_forced_blanks_census() {
+    let Some(raw) = load_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(100);
+
+    #[derive(Default, Clone, Copy)]
+    struct Tally {
+        blanks: usize,
+        forced: usize,
+        free_sum: usize,
+        tight: usize,
+    }
+
+    let mut pre = [Tally::default(); 8];
+    let mut post = [Tally::default(); 8];
+    let mut budget_sum = [0usize; 8];
+
+    let measure = |t: &mut Tally, state: &WorldState| -> usize {
+        let blanks = state.legal_blanks();
+        let forced = state.forced_positions(&blanks).len();
+        t.blanks += blanks.len();
+        t.forced += forced;
+        let free = blanks.len() - forced;
+        t.free_sum += free;
+        free
+    };
+
+    for seed in 0..seeds {
+        let ctx = census_ctx(&raw, seed);
+        for world_idx in 0..8 {
+            let mut state = ctx.world(world_idx);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            budget_sum[world_idx] += state.fort_budget;
+
+            run_schedule(&mut state, &[&Connectivity, &Levels], &mut rng);
+            if measure(&mut pre[world_idx], &state) < state.fort_budget {
+                pre[world_idx].tight += 1;
+            }
+
+            run_schedule(&mut state, &[&SparePipes], &mut rng);
+            if measure(&mut post[world_idx], &state) < state.fort_budget {
+                post[world_idx].tight += 1;
+            }
+        }
+    }
+
+    println!("forced-blank census ({seeds} seeds, production order through levels, flag-mix arms)");
+    println!(
+        "world  forts  blanks  free  forcedB%  tight%  |  +spares: blanks  free  forcedB%  tight%"
+    );
+    let n = seeds as f64;
+    for world_idx in 0..8 {
+        let (a, b) = (&pre[world_idx], &post[world_idx]);
+        println!(
+            "  W{}   {:>5.2} {:>7.1} {:>5.1} {:>8.0}% {:>6.0}%  | {:>15.1} {:>5.1} {:>8.0}% {:>6.0}%",
+            world_idx + 1,
+            budget_sum[world_idx] as f64 / n,
+            a.blanks as f64 / n,
+            a.free_sum as f64 / n,
+            100.0 * a.forced as f64 / a.blanks.max(1) as f64,
+            100.0 * a.tight as f64 / n,
+            b.blanks as f64 / n,
+            b.free_sum as f64 / n,
+            100.0 * b.forced as f64 / b.blanks.max(1) as f64,
+            100.0 * b.tight as f64 / n,
         );
     }
 }
@@ -656,10 +710,7 @@ fn test_builder_locks_census() {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(100);
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(100);
 
     let mut fort_sum = [0usize; 8];
     let mut lock_sum = [0usize; 8];
@@ -700,12 +751,8 @@ fn test_builder_locks_census() {
             fort_sum[world_idx] += state.fort_count();
             lock_sum[world_idx] += state.locks.len();
             safe_sum[world_idx] += state.locks.iter().filter(|l| l.secret_exit_safe).count();
-            removed_sum[world_idx] += state
-                .log
-                .iter()
-                .flat_map(|r| &r.actions)
-                .filter(|a| a.contains("REMOVED"))
-                .count();
+            removed_sum[world_idx] +=
+                state.log.iter().flat_map(|r| &r.actions).filter(|a| a.contains("REMOVED")).count();
 
             zero_gate[world_idx] += state.zero_gate_locks().len();
 
@@ -722,7 +769,9 @@ fn test_builder_locks_census() {
     }
 
     println!("full-skeleton census ({seeds} seeds, all five dumb phases, flag-mix arms)");
-    println!("world  forts  locks  removed%  safe%  goal-open%  zero-gate%  C1(mean)  routes  linear%");
+    println!(
+        "world  forts  locks  removed%  safe%  goal-open%  zero-gate%  C1(mean)  routes  linear%"
+    );
     let n = seeds as f64;
     for world_idx in 0..8 {
         println!(
@@ -744,11 +793,7 @@ fn test_builder_locks_census() {
     // One narrated example: W4, seed 0 — a two-fort world end to end.
     let mut state = census_ctx(&raw, 0).world(3);
     let mut rng = ChaCha8Rng::seed_from_u64(0);
-    run_schedule(
-        &mut state,
-        &[&Connectivity, &Levels, &SparePipes, &Forts, &Locks],
-        &mut rng,
-    );
+    run_schedule(&mut state, &[&Connectivity, &Levels, &SparePipes, &Forts, &Locks], &mut rng);
     println!("example (W4, seed 0):");
     for report in &state.log {
         for action in &report.actions {
@@ -777,10 +822,7 @@ fn test_builder_shaping_census() {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(100);
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(100);
 
     #[derive(Clone, Copy)]
     struct ArmTally {
@@ -805,6 +847,15 @@ fn test_builder_shaping_census() {
         zero_gate: usize,
         goal_gates: usize,
         locks: usize,
+        // Forts, and the two on-path symptoms the charter's "forts stay off
+        // the path" rule is about: `forced` = the player cannot reach the
+        // goal without this fort, so its lock opens with no decision made;
+        // `on_c1` = it merely sits on the cheapest route (avoidable, so the
+        // player chose it). forced is a subset of on_c1 in practice, never
+        // by construction.
+        forts: usize,
+        forced: usize,
+        on_c1: usize,
         goal_open: usize,
         pipes: usize,
         // Adjacent-level pairs (orthogonal 2-tile neighbors — visually
@@ -833,6 +884,9 @@ fn test_builder_shaping_census() {
                 zero_gate: 0,
                 goal_gates: 0,
                 locks: 0,
+                forts: 0,
+                forced: 0,
+                on_c1: 0,
                 goal_open: 0,
                 pipes: 0,
                 adjacent_levels: 0,
@@ -870,13 +924,19 @@ fn test_builder_shaping_census() {
         t.zero_gate += state.zero_gate_locks().len();
         t.goal_gates += state.goal_gate_locks();
         t.locks += state.locks.len();
+        t.forts += state.fort_count();
+        t.forced += state.forced_forts().len();
+        if let Some(cheap) = m.rc.routes.first() {
+            let path: HashSet<Pos> = cheap.path.iter().copied().collect();
+            t.on_c1 += state
+                .slots
+                .iter()
+                .filter(|s| s.kind == SlotKind::Fortress && path.contains(&s.pos))
+                .count();
+        }
         t.pipes += state.pipe_pairs.len();
-        let levels: Vec<Pos> = state
-            .slots
-            .iter()
-            .filter(|s| s.kind == SlotKind::Level)
-            .map(|s| s.pos)
-            .collect();
+        let levels: Vec<Pos> =
+            state.slots.iter().filter(|s| s.kind == SlotKind::Level).map(|s| s.pos).collect();
         let adjacent = |a: Pos, b: Pos| {
             let (dr, dc) = (a.0.abs_diff(b.0), a.1.abs_diff(b.1));
             (dr == 2 && dc == 0) || (dr == 0 && dc == 2)
@@ -894,8 +954,12 @@ fn test_builder_shaping_census() {
             for j in i + 1..levels.len() {
                 if adjacent(levels[i], levels[j]) {
                     let (mut ri, mut rj) = (i, j);
-                    while comp[ri] != ri { ri = comp[ri]; }
-                    while comp[rj] != rj { rj = comp[rj]; }
+                    while comp[ri] != ri {
+                        ri = comp[ri];
+                    }
+                    while comp[rj] != rj {
+                        rj = comp[rj];
+                    }
                     comp[ri] = rj;
                 }
             }
@@ -903,7 +967,9 @@ fn test_builder_shaping_census() {
         let mut sizes: HashMap<usize, usize> = HashMap::new();
         for i in 0..levels.len() {
             let mut r = i;
-            while comp[r] != r { r = comp[r]; }
+            while comp[r] != r {
+                r = comp[r];
+            }
             *sizes.entry(r).or_default() += 1;
         }
         let max_chain = sizes.values().copied().max().unwrap_or(0);
@@ -967,8 +1033,7 @@ fn test_builder_shaping_census() {
 
             // A web redeal re-runs the shaping phase, so counts aggregate
             // over every attempt's report; redeals = attempts - 1.
-            let shaping_reports =
-                || state.log.iter().filter(|r| r.phase == "shaping");
+            let shaping_reports = || state.log.iter().filter(|r| r.phase == "shaping");
             assert!(shaping_reports().count() > 0, "shaping always reports");
             redeals[world_idx] += shaping_reports().count() - 1;
             let count = |needle: &str| {
@@ -1001,13 +1066,17 @@ fn test_builder_shaping_census() {
         }
     }
 
-    println!("shaping A/B census ({seeds} seeds, dumb skeleton vs diagnosis-driven shaping, flag-mix arms)");
-    println!("world  arm     C1(mean)  C1min  C1<12%  routes  linear%  uniq  C2-C1  noalt%  zero-gate%  gGate  goal-open%  pipes  touched%  lr(acc:rej)  ab(acc:rej)  gs(acc:rej)  fl(acc:rej)  lm(acc:rej)  pm(acc:rej)  redeals");
+    println!(
+        "shaping A/B census ({seeds} seeds, dumb skeleton vs diagnosis-driven shaping, flag-mix arms)"
+    );
+    println!(
+        "world  arm     C1(mean)  C1min  C1<12%  routes  linear%  uniq  C2-C1  noalt%  zero-gate%  forced%  onC1%  gGate  goal-open%  pipes  touched%  lr(acc:rej)  ab(acc:rej)  gs(acc:rej)  fl(acc:rej)  lm(acc:rej)  pm(acc:rej)  redeals"
+    );
     let n = seeds as f64;
     for world_idx in 0..8 {
         for (arm, t) in [("dumb", &dumb[world_idx]), ("shaped", &shaped[world_idx])] {
             let base = format!(
-                "  W{}   {arm:<7} {:>7.1} {:>6} {:>6.0}% {:>7.2} {:>7.0}% {:>5.2} {:>6.2} {:>6.0}% {:>9.0}% {:>5.2} {:>9.0}% {:>6.2} adjL={:.2}",
+                "  W{}   {arm:<7} {:>7.1} {:>6} {:>6.0}% {:>7.2} {:>7.0}% {:>5.2} {:>6.2} {:>6.0}% {:>9.0}% {:>6.1}% {:>5.0}% {:>5.2} {:>9.0}% {:>6.2} adjL={:.2}",
                 world_idx + 1,
                 t.c1 as f64 / n,
                 t.c1_min,
@@ -1018,6 +1087,8 @@ fn test_builder_shaping_census() {
                 t.gap_sum as f64 / t.gapped.max(1) as f64,
                 100.0 * t.noalt as f64 / n,
                 100.0 * t.zero_gate as f64 / t.locks.max(1) as f64,
+                100.0 * t.forced as f64 / t.forts.max(1) as f64,
+                100.0 * t.on_c1 as f64 / t.forts.max(1) as f64,
                 t.goal_gates as f64 / n,
                 100.0 * t.goal_open as f64 / n,
                 t.pipes as f64 / n,
@@ -1047,7 +1118,9 @@ fn test_builder_shaping_census() {
                     redeals[world_idx],
                 );
             } else {
-                println!("{base}        -        -         -         -         -         -         -        -");
+                println!(
+                    "{base}        -        -         -         -         -         -         -        -"
+                );
             }
         }
     }
@@ -1061,11 +1134,7 @@ fn test_builder_shaping_census() {
     // dumb pipeline, so shaping should have work to do.
     let mut state = census_ctx(&raw, 0).world(7);
     let mut rng = ChaCha8Rng::seed_from_u64(0);
-    run_schedule(
-        &mut state,
-        &[&Connectivity, &Levels, &Forts, &Locks, &Shaping],
-        &mut rng,
-    );
+    run_schedule(&mut state, &[&Connectivity, &Levels, &Forts, &Locks, &Shaping], &mut rng);
     println!("example (W8, seed 0, shaped arm):");
     for report in &state.log {
         for action in &report.actions {
@@ -1093,10 +1162,7 @@ fn test_builder_progression_census() {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(100);
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(100);
 
     #[derive(Default, Clone, Copy)]
     struct ProgTally {
@@ -1167,9 +1233,7 @@ fn test_builder_progression_census() {
         tally(t, &from_vanilla(&raw, &catalog, world_idx).to_built());
     }
 
-    println!(
-        "progression census ({seeds} seeds, no-hammer required-progression, flag-mix arms)"
-    );
+    println!("progression census ({seeds} seeds, no-hammer required-progression, flag-mix arms)");
     println!("world  arm      forts-req  lvls-req  streak  streak>=2%  goalstk  goalstk>=2%");
     for world_idx in 0..8 {
         for (arm, t) in [
@@ -1208,10 +1272,7 @@ fn test_builder_secret_exit_safety() {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(100);
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(100);
 
     for arm in ["dumb", "shaped"] {
         let mut natural = 0usize;
@@ -1235,9 +1296,7 @@ fn test_builder_secret_exit_safety() {
                 })
                 .collect();
 
-            let safe_before = worlds
-                .iter()
-                .any(|w| w.locks.iter().any(|l| l.secret_exit_safe));
+            let safe_before = worlds.iter().any(|w| w.locks.iter().any(|l| l.secret_exit_safe));
             let report = ensure_secret_exit_safe(&mut worlds, &mut rng);
 
             if safe_before {
@@ -1247,9 +1306,7 @@ fn test_builder_secret_exit_safety() {
                 println!("[{arm}] seed {seed}: backstop acted — {:?}", report.actions);
             }
             assert!(
-                worlds
-                    .iter()
-                    .any(|w| w.locks.iter().any(|l| l.secret_exit_safe)),
+                worlds.iter().any(|w| w.locks.iter().any(|l| l.secret_exit_safe)),
                 "[{arm}] seed {seed}: no secret-exit-safe lock in any world after backstop"
             );
             // The flags the invariant relied on must be honest: safe means
@@ -1283,12 +1340,8 @@ struct SeedShape {
 
 impl SeedShape {
     fn of(state: &WorldState) -> SeedShape {
-        let positions: Vec<Pos> = state
-            .slots
-            .iter()
-            .filter(|s| s.kind == SlotKind::Level)
-            .map(|s| s.pos)
-            .collect();
+        let positions: Vec<Pos> =
+            state.slots.iter().filter(|s| s.kind == SlotKind::Level).map(|s| s.pos).collect();
         let measure = measure_world(state);
         SeedShape {
             levels: positions.iter().copied().collect(),
@@ -1323,7 +1376,10 @@ fn mean_nearest_neighbor(positions: &[Pos]) -> f64 {
 }
 
 /// Jaccard distance between two position sets: 0 = identical, 1 = disjoint.
-fn jaccard_distance(a: &std::collections::BTreeSet<Pos>, b: &std::collections::BTreeSet<Pos>) -> f64 {
+fn jaccard_distance(
+    a: &std::collections::BTreeSet<Pos>,
+    b: &std::collections::BTreeSet<Pos>,
+) -> f64 {
     let union = a.union(b).count();
     if union == 0 {
         return 0.0;
@@ -1402,10 +1458,7 @@ fn test_builder_diversity_census() {
         return;
     };
     let rom = base_qol(&rom);
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(20);
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(20);
     let catalog = NodeCatalog::build(&rom, false);
     let pickup = pick_up(&rom, &catalog, PickupFlags::default());
 
@@ -1437,8 +1490,7 @@ fn test_builder_diversity_census() {
     println!("world  arm       layout-div  route-div  NN(mean±sd)  salt-r");
     for (world_idx, shipping_shapes) in shipping.iter().enumerate() {
         let budgeted_world = |seed: u64| {
-            let mut state =
-                from_pickup(&rom, &catalog, &pickup, world_idx, &BuildFlags::default());
+            let mut state = from_pickup(&rom, &catalog, &pickup, world_idx, &BuildFlags::default());
             let (level_counts, fort_counts, c1_floors) = &allotments[seed as usize];
             state.level_budget = level_counts[world_idx];
             state.fort_budget = fort_counts[world_idx];
@@ -1470,11 +1522,9 @@ fn test_builder_diversity_census() {
             })
             .collect();
 
-        for (arm, shapes) in [
-            ("dumb", &dumb_shapes),
-            ("shaped", &shaped_shapes),
-            ("build", shipping_shapes),
-        ] {
+        for (arm, shapes) in
+            [("dumb", &dumb_shapes), ("shaped", &shaped_shapes), ("build", shipping_shapes)]
+        {
             let (layout, route, nn_mean, nn_sd, salt_r) = diversity_row(shapes);
             println!(
                 "  W{}   {arm:<9} {layout:>9.2} {route:>10.2}  {nn_mean:>5.2} ±{nn_sd:4.2} {salt_r:>7.2}",
@@ -1511,10 +1561,7 @@ fn test_builder_spare_pipes_census() {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(100);
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(100);
 
     let mut spares = [0usize; 8];
     let mut create = [0usize; 8];
@@ -1613,10 +1660,22 @@ fn test_builder_probe_vanilla_world() {
     let rc = analyze_route_choice(&state.to_built(), slack);
     println!("vanilla W{world} wide band (slack {slack}): best={}", rc.best_cost);
     for r in &rc.routes {
-        println!("  kept route: cost={:2} levels={} forts={} rocks={}", r.cost, r.levels.len(), r.forts, r.rocks.len());
+        println!(
+            "  kept route: cost={:2} levels={} forts={} rocks={}",
+            r.cost,
+            r.levels.len(),
+            r.forts,
+            r.rocks.len()
+        );
     }
     for d in &rc.detours {
-        println!("  dominated:  cost={:2} levels={} forts={} rocks={}", d.cost, d.levels.len(), d.forts, d.rocks.len());
+        println!(
+            "  dominated:  cost={:2} levels={} forts={} rocks={}",
+            d.cost,
+            d.levels.len(),
+            d.forts,
+            d.rocks.len()
+        );
     }
     println!("{}", route_choice::render_route_choice(&state.to_built(), slack));
 }
@@ -1693,10 +1752,7 @@ fn test_builder_output_completable() {
             }
             any_safe |= built.locks.iter().any(|l| l.secret_exit_safe);
         }
-        assert!(
-            any_safe,
-            "seed {seed}: no secret-exit-safe lock in any world"
-        );
+        assert!(any_safe, "seed {seed}: no secret-exit-safe lock in any world");
     }
 }
 
@@ -1775,14 +1831,10 @@ fn test_builder_bridge_lock_rate() {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             run_shaped_with_web_retries(&mut state, &mut rng);
             total_locks[world_idx] += state.locks.len();
-            bridge_locks[world_idx] += state
-                .locks
-                .iter()
-                .filter(|l| BRIDGE.contains(&l.replace_tile))
-                .count();
-            let has_bridge = (0..state.grid.rows()).any(|r| {
-                (0..state.grid.cols).any(|c| BRIDGE.contains(&state.grid.get(r, c)))
-            });
+            bridge_locks[world_idx] +=
+                state.locks.iter().filter(|l| BRIDGE.contains(&l.replace_tile)).count();
+            let has_bridge = (0..state.grid.rows())
+                .any(|r| (0..state.grid.cols).any(|c| BRIDGE.contains(&state.grid.get(r, c))));
             if has_bridge {
                 worlds_with_bridge_tile[world_idx] += 1;
             }
@@ -1826,11 +1878,8 @@ fn test_builder_island_roles() {
             shuffle_hammer_bros: true,
         },
     );
-    let flags = BuildFlags {
-        shuffle_toad_houses: true,
-        eights_are_wild: false,
-        shuffle_hammer_bros: true,
-    };
+    let flags =
+        BuildFlags { shuffle_toad_houses: true, eights_are_wild: false, shuffle_hammer_bros: true };
     let sizes_roles = |world_idx: usize| {
         let state = from_pickup(&rom, &catalog, &pickup, world_idx, &flags);
         let (pocket, count) = super::islands::pocket_map(&state);
@@ -1912,14 +1961,8 @@ fn test_world_linearity_probe() {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
-    let seeds: u64 = std::env::var("CENSUS_SEEDS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(200);
-    let world: usize = std::env::var("CENSUS_WORLD")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(7);
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(200);
+    let world: usize = std::env::var("CENSUS_WORLD").ok().and_then(|s| s.parse().ok()).unwrap_or(7);
     let world_idx = world - 1;
 
     #[derive(Default)]
@@ -2020,8 +2063,7 @@ fn test_world_linearity_probe() {
                 }
             }
         }
-        let mut sizes: std::collections::HashMap<usize, usize> =
-            std::collections::HashMap::new();
+        let mut sizes: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
         for i in 0..node_list.len() {
             *sizes.entry(find(&mut comp, i)).or_default() += 1;
         }
@@ -2051,10 +2093,8 @@ fn test_world_linearity_probe() {
 
         // Pipe mouths that landed on the START island — the user's
         // shortcut-concentration question.
-        let start_root = state
-            .start
-            .and_then(|s| index.get(&s).copied())
-            .map(|i| find(&mut comp, i));
+        let start_root =
+            state.start.and_then(|s| index.get(&s).copied()).map(|i| find(&mut comp, i));
         let start_mouths = built
             .pipe_pairs
             .iter()
@@ -2108,11 +2148,7 @@ fn test_world_linearity_probe() {
         // arm_balance / level_move can use to discriminate routes.
         if let Some(r) = m.rc.routes.first() {
             let path: HashSet<Pos> = r.path.iter().copied().collect();
-            t.trunk_blanks_sum += state
-                .legal_blanks()
-                .iter()
-                .filter(|p| path.contains(*p))
-                .count();
+            t.trunk_blanks_sum += state.legal_blanks().iter().filter(|p| path.contains(*p)).count();
             t.trunk_levels_sum += state
                 .slots
                 .iter()
@@ -2133,17 +2169,12 @@ fn test_world_linearity_probe() {
                 let exclusive: Vec<Pos> = wide
                     .routes
                     .first()
-                    .map(|r| {
-                        r.path.iter().copied().filter(|p| !dpath.contains(p)).collect()
-                    })
+                    .map(|r| r.path.iter().copied().filter(|p| !dpath.contains(p)).collect())
                     .unwrap_or_default();
                 if !exclusive.is_empty() {
                     t.noalt_exclusive += 1;
                 }
-                if exclusive
-                    .iter()
-                    .any(|&(r, c)| LOCKABLE_TILES.contains(&grid.get(r, c)))
-                {
+                if exclusive.iter().any(|&(r, c)| LOCKABLE_TILES.contains(&grid.get(r, c))) {
                     t.noalt_goldable += 1;
                 }
             }
@@ -2170,7 +2201,9 @@ fn test_world_linearity_probe() {
     }
 
     println!("W{world} probe ({seeds} seeds, shaped arm, split by start pos):");
-    println!("start      n  linear%  noalt%  C1    routes  uniq  beta  beta(lin)  beta(multi)  beta0%  nodes  dist  blanks  pockets  maxpkt  pipes(cross:intra)");
+    println!(
+        "start      n  linear%  noalt%  C1    routes  uniq  beta  beta(lin)  beta(multi)  beta0%  nodes  dist  blanks  pockets  maxpkt  pipes(cross:intra)"
+    );
     for (start, t) in &arms {
         let n = t.n as f64;
         println!(
@@ -2225,11 +2258,8 @@ fn test_world_linearity_probe() {
     let (pocket, count) = super::islands::pocket_map(&fresh);
     println!("fresh W{world} island inventory ({count} islands):");
     for id in 0..count {
-        let members: Vec<Pos> = pocket
-            .iter()
-            .filter(|&(_, &p)| p == id)
-            .map(|(&pos, _)| pos)
-            .collect();
+        let members: Vec<Pos> =
+            pocket.iter().filter(|&(_, &p)| p == id).map(|(&pos, _)| pos).collect();
         let bridges = members
             .iter()
             .filter(|&&(r, c)| [0xB3u8, 0xB1, 0xB2].contains(&fresh.grid.get(r, c)))

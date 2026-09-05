@@ -14,7 +14,7 @@
 //! derived helpers (`entry_protection_at`, `walker_segment_rule_at`)
 //! — never the table directly.
 
-use super::rom_data::{enemy_ptr_to_file_offset, HAMMER_BRO_OBJ_PTRS};
+use super::rom_data::{HAMMER_BRO_OBJ_PTRS, enemy_ptr_to_file_offset};
 
 /// One logical level or sub-area with protections that affect enemy
 /// randomization.
@@ -75,7 +75,6 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         walker_segment: WalkerSegmentRule::Skip,
         entries: &[],
     },
-
     // --- Individual gameplay-critical entries (walker skips, no whole-level block) ---
     LevelProtection {
         label: "8-1 (FlyingRedParatroopa required for progression; Boo restricted from path-blocking hazards)",
@@ -98,7 +97,6 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
             EntryRule { offset: 0x0CAB4, rule: EntryProtection::SkipSwap }, // scr=7 col=1
         ],
     },
-
     // --- Shell-locked entries (shells needed to break bricks for progression) ---
     LevelProtection {
         label: "2-Pyr sub-area (Buzzy Beetles needed to break bricks)",
@@ -144,7 +142,6 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
             EntryRule { offset: 0x0C60E, rule: EntryProtection::ForceShell }, // GreenTroopa scr=4 col=10
         ],
     },
-
     // --- Stompable-locked entries ---
     LevelProtection {
         label: "6-6 sub-area (floor spikes — non-stompable swap would corner player)",
@@ -156,7 +153,6 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
             EntryRule { offset: 0x0C6AD, rule: EntryProtection::ForceStompable }, // Spike scr=10 col=4
         ],
     },
-
     // --- Bro-fight rooms reached by a non-bro map object ---
     // A treasure-box room is cleared to be left, so it needs the bro-fight
     // pool: every enemy in it must be permanently killable. These two are
@@ -175,7 +171,6 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
         walker_segment: WalkerSegmentRule::HammerBro,
         entries: &[],
     },
-
     // --- Hazard-excluded entries (no Patooie/Lavalotus on player walking path) ---
     LevelProtection {
         label: "7F2 Boom-Boom sub-area (tight boss arena)",
@@ -204,7 +199,6 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
             EntryRule { offset: 0x0C1A6, rule: EntryProtection::ExcludeHazards }, // ParatroopaGreenHop scr=5 col=4
         ],
     },
-
     LevelProtection {
         label: "β4 sub-area (narrow corridor — hazards on Buzzy Beetle path unfair)",
         enemy_ptr: 0xC7A7,
@@ -218,7 +212,6 @@ pub(super) const LEVEL_PROTECTIONS: &[LevelProtection] = &[
             EntryRule { offset: 0x0C7D0, rule: EntryProtection::ExcludeHazards }, // BuzzyBeatle scr=3 col=4
         ],
     },
-
     LevelProtection {
         label: "4F1 (narrow-hallway fort — a hazard anywhere blocks the only path)",
         enemy_ptr: 0xD528,
@@ -372,9 +365,7 @@ pub(super) fn entry_protection_at(file_offset: usize) -> Option<EntryProtection>
 /// 8-Tank sub-area blamed tileset 10, which was a misdiagnosis of this.
 pub(super) fn rewrites_hammer_bro(segment_file_offset: usize, has_treasure_box: bool) -> bool {
     has_treasure_box
-        && !HAMMER_BRO_OBJ_PTRS
-            .iter()
-            .any(|&p| enemy_ptr_to_file_offset(p) == segment_file_offset)
+        && !HAMMER_BRO_OBJ_PTRS.iter().any(|&p| enemy_ptr_to_file_offset(p) == segment_file_offset)
 }
 
 /// Walker rule for the segment whose page byte sits at this absolute file
@@ -382,8 +373,10 @@ pub(super) fn rewrites_hammer_bro(segment_file_offset: usize, has_treasure_box: 
 pub(super) fn walker_segment_rule_at(segment_file_offset: usize) -> WalkerSegmentRule {
     LEVEL_PROTECTIONS
         .iter()
-        .find(|l| l.walker_segment != WalkerSegmentRule::Default
-            && enemy_ptr_to_file_offset(l.enemy_ptr) == segment_file_offset)
+        .find(|l| {
+            l.walker_segment != WalkerSegmentRule::Default
+                && enemy_ptr_to_file_offset(l.enemy_ptr) == segment_file_offset
+        })
         .map_or(WalkerSegmentRule::Default, |l| l.walker_segment)
 }
 
@@ -402,7 +395,8 @@ mod tests {
             for entry in level.entries {
                 assert!(
                     seen.insert(entry.offset),
-                    "offset 0x{:05X} appears in multiple entries", entry.offset
+                    "offset 0x{:05X} appears in multiple entries",
+                    entry.offset
                 );
             }
         }
@@ -414,7 +408,8 @@ mod tests {
         for level in LEVEL_PROTECTIONS {
             assert!(
                 seen.insert(level.enemy_ptr),
-                "enemy_ptr 0x{:04X} appears in multiple LevelProtection rows", level.enemy_ptr
+                "enemy_ptr 0x{:04X} appears in multiple LevelProtection rows",
+                level.enemy_ptr
             );
         }
     }

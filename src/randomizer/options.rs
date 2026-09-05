@@ -55,7 +55,9 @@ pub fn item_display_name(id: u8) -> &'static str {
 }
 
 /// Returns default starting lives (5).
-pub(super) fn default_starting_lives() -> u8 { 5 }
+pub(super) fn default_starting_lives() -> u8 {
+    5
+}
 
 /// The four valid starting-lives counts (matches the flag-key encoding
 /// and the WASM pill-toggle options).
@@ -71,15 +73,17 @@ pub(super) fn idx_to_lives(idx: u8) -> u8 {
 /// predate this layout still round-trip cleanly.
 pub(super) fn lives_to_idx(lives: u8) -> u8 {
     match lives {
-        n if n <= 2 => 0,   // → 1
-        n if n <= 12 => 1,  // → 5
-        n if n <= 59 => 2,  // → 20
-        _ => 3,             // → 99
+        n if n <= 2 => 0,  // → 1
+        n if n <= 12 => 1, // → 5
+        n if n <= 59 => 2, // → 20
+        _ => 3,            // → 99
     }
 }
 
 /// Returns default world count (7 — all worlds before Dark Land).
-pub(super) fn default_world_count() -> u8 { 7 }
+pub(super) fn default_world_count() -> u8 {
+    7
+}
 
 /// Per-class enemy randomization mode.
 ///
@@ -88,7 +92,14 @@ pub(super) fn default_world_count() -> u8 { 7 }
 /// so the flag-key decoder reads it through the checked accessor and falls back
 /// to `Off` — see `flag_key.rs`.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
     modular_bitfield::Specifier,
 )]
 #[bits = 2]
@@ -100,9 +111,13 @@ pub enum EnemyMode {
     Wild,
 }
 
-pub(super) fn default_shuffle() -> EnemyMode { EnemyMode::Shuffle }
+pub(super) fn default_shuffle() -> EnemyMode {
+    EnemyMode::Shuffle
+}
 
-pub(super) fn default_off() -> EnemyMode { EnemyMode::Off }
+pub(super) fn default_off() -> EnemyMode {
+    EnemyMode::Off
+}
 
 /// Random Fire Flower mode (issue #22). Collecting an in-level Fire Flower
 /// grants a power state derived deterministically from the world and the
@@ -110,7 +125,14 @@ pub(super) fn default_off() -> EnemyMode { EnemyMode::Off }
 /// four big-form suits (Fire/Frog/Tanooki/Hammer); `Wild` adds the Small/Big
 /// downgrade outcomes.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
     modular_bitfield::Specifier,
 )]
 #[bits = 2]
@@ -129,7 +151,14 @@ pub enum FireFlowerMode {
 /// scatters plant sprites onto ~1 random level slot per world — stepping on
 /// a plant auto-starts the level under it, vanilla W7 style.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
     modular_bitfield::Specifier,
 )]
 #[bits = 2]
@@ -138,6 +167,86 @@ pub enum PiranhaMode {
     #[default]
     Off,
     On,
+    Wild,
+}
+
+/// How hard to stop the randomizer from *introducing* hazards.
+///
+/// A "hazard" is one of the `HAZARD_CATEGORIES` — thwomps, Lava Lotus,
+/// Ptooie, nippers, Hot Foot, bros — the same taxonomy the curated
+/// `ExcludeHazards` entries use. The rule is additive-only in every mode: a
+/// hazard is only blocked where the slot's *vanilla* enemy wasn't the same
+/// category, so designed-in hazards survive and within-category shuffle (e.g.
+/// thwomp variants) still works. Nothing is ever removed from vanilla.
+///
+/// `Sparse` is the trainer rung: a level may gain the occasional hazard, never
+/// a wall of them. `All` blocks every introduction.
+///
+/// Only affects in-level enemy picks. Hammer Bro map encounters draw from
+/// their own curated pools (see `randomize_hb_wild_segment`) and are left
+/// alone, as are wild-injection chasers, which aren't in the taxonomy.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
+#[serde(rename_all = "snake_case")]
+pub enum HazardLimit {
+    /// Vanilla behavior — the randomizer may introduce hazards freely.
+    #[default]
+    Off,
+    /// At most `MAX_ADDED_HAZARDS_PER_SEGMENT` introduced hazard per room.
+    ///
+    /// Named `Sparse` rather than `Some` so it never reads as `Option::Some`
+    /// at a match site; the serde/CLI/web value stays "some".
+    #[serde(rename = "some")]
+    Sparse,
+    /// Never introduce a hazard.
+    All,
+}
+
+/// How many times a single level may appear on the finished map.
+///
+/// The writer deals levels out of a deck (see `assign_pool`), so this is deck
+/// surgery and nothing more: the map is already decided by the time it runs.
+///
+/// `Double` deals a second copy of every level, so any one of them can land on
+/// two tiles. `Wild` rebuilds the deck by drawing with replacement, so a level
+/// can land any number of times — or none at all.
+///
+/// Levels holding a one-off inventory item (the chest levels and the W8 hand
+/// rooms) are exempt in both modes: they are dealt exactly once, because a
+/// second copy would hand the same item out twice and no copy would put it out
+/// of reach.
+///
+/// (MaCobra52's idea.)
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
+#[serde(rename_all = "snake_case")]
+pub enum DejaVuMode {
+    /// Every level appears at most once — vanilla shuffle behavior.
+    #[default]
+    Off,
+    /// Two copies of each level in the deck; a level can appear twice.
+    Double,
+    /// Draw with replacement; a level can appear any number of times, or none.
     Wild,
 }
 
@@ -189,7 +298,14 @@ impl WildChaser {
 /// ROM — the player just can't tell from the flag key which way a `Maybe`
 /// landed, so it can't be planned around.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
     modular_bitfield::Specifier,
 )]
 #[bits = 2]
@@ -213,7 +329,9 @@ impl Tri {
     }
 }
 
-pub(super) fn default_tri_on() -> Tri { Tri::On }
+pub(super) fn default_tri_on() -> Tri {
+    Tri::On
+}
 
 /// Options controlling which randomizations to apply.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -242,6 +360,12 @@ pub struct Options {
     /// the flag key and consumes no RNG.
     #[serde(default = "default_true")]
     pub remove_flashing: bool,
+    /// Replace the king's rescue dialogue with a randomized quote. Off falls
+    /// back to vanilla's own king text — the module still draws its quotes from
+    /// the RNG either way and only skips the ROM writes, so the seed stream is
+    /// identical with this on or off. Cosmetic — not encoded in the flag key.
+    #[serde(default = "default_true")]
+    pub king_quotes: bool,
     #[serde(default)]
     pub world_order: bool,
     /// Number of worlds before Dark Land (1–7, default 7).
@@ -323,6 +447,10 @@ pub struct Options {
     /// for the vanilla pre-attack delay. (MaCobra52's "Early Sun" patch.)
     #[serde(default)]
     pub early_sun: bool,
+    /// Bro encounters (Hammer / Boomerang / Heavy / Fire) start with a
+    /// 10-second clock instead of their level header's time setting.
+    #[serde(default)]
+    pub bro_battle_timer: bool,
     /// Restrict wandering Hammer Bros to overworld path tiles by converting
     /// the map-object landing-tile blacklist into a path-tile whitelist.
     /// ("SMB3 - Limit Bro Movement" patch.)
@@ -370,6 +498,15 @@ pub struct Options {
     /// enemies, and pick-up-able ice blocks, of somewhere to spawn.
     #[serde(default)]
     pub lakitu_stays_down: bool,
+    /// Every level with a Big [?] pipe draws its bonus room from a pool of 19 —
+    /// the 11 vanilla rooms plus 8 in "Unused Level 5", an unreferenced level
+    /// otherwise reachable by nothing. Off by default: it changes where eleven
+    /// known rooms lead, which is a content change rather than a fix.
+    ///
+    /// 7-F1 is protected either way — whichever room it opens is forced to hold
+    /// a flight suit, because the level cannot be beaten without one.
+    #[serde(default)]
+    pub shuffle_big_q_rooms: bool,
     /// Every 1-Up Mushroom is replaced with a Poison Mushroom that damages
     /// the player instead of granting a life. (MaCobra52's "All 1UPs are
     /// Poison Mushrooms" patch.) Off by default; a challenge option.
@@ -482,6 +619,18 @@ pub struct Options {
     /// All enemies in Hammer Bro encounter segments
     #[serde(default = "default_off")]
     pub hb_encounters: EnemyMode,
+    /// How hard to stop the class swaps from introducing a hazard the level
+    /// wasn't designed with. See [`HazardLimit`].
+    #[serde(default)]
+    pub limit_hazards: HazardLimit,
+    /// Hold the harshest levels out of the shuffle pool, refilling it with
+    /// beta stages (when they are on) and then with duplicates of the levels
+    /// that remain. See `FRIENDLIER_BLOCKED_LEVELS` for the list.
+    #[serde(default)]
+    pub friendlier_levels: bool,
+    /// How many times one level may appear on the map. See [`DejaVuMode`].
+    #[serde(default)]
+    pub deja_vu: DejaVuMode,
     /// Which level-wide chasers may be seeded into a fraction of real levels
     /// (CHR-compatible). Empty = off. See [`WildChaser`].
     #[serde(default)]
@@ -507,6 +656,7 @@ impl Default for Options {
             palette_themed: false,
             player_color: None,
             remove_flashing: true,
+            king_quotes: true,
             world_order: false,
             world_count: default_world_count(),
             big_q_blocks: false,
@@ -531,6 +681,7 @@ impl Default for Options {
             hammer_breaks_locks: Tri::Off,
             hammer_breaks_bridges: Tri::Off,
             early_sun: false,
+            bro_battle_timer: false,
             limit_bro_movement: false,
             japanese_damage: false,
             infinite_mushroom_houses: false,
@@ -539,6 +690,7 @@ impl Default for Options {
             no_game_over_penalty: false,
             faster_frog: false,
             lakitu_stays_down: false,
+            shuffle_big_q_rooms: false,
             poison_mushrooms: false,
             modern_powerups: false,
             fire_flower: FireFlowerMode::Off,
@@ -559,6 +711,9 @@ impl Default for Options {
             water: EnemyMode::Shuffle,
             bros: EnemyMode::Shuffle,
             hb_encounters: EnemyMode::Off,
+            limit_hazards: HazardLimit::Off,
+            friendlier_levels: false,
+            deja_vu: DejaVuMode::Off,
             wild_injections: Vec::new(),
             starting_lives: default_starting_lives(),
             starting_items: Vec::new(),

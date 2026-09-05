@@ -15,9 +15,9 @@
 //! defaults reproduce the vanilla sprite rewards (P-Wing / Mushroom) and
 //! `items::randomize` re-rolls them when chest randomization is on.
 
-use crate::rom::Rom;
 use super::rom_data::{self, FS_PIRANHA_ROOMS, MAP_OBJ_ENTRY_LINKS};
 use super::segment_writer::{self, SegmentEntry, SegmentSpec, SortMode};
+use crate::rom::Rom;
 
 /// The map-object sprite id of a stationary piranha plant.
 pub(super) const PLANT_SPRITE_ID: u8 = 0x07;
@@ -69,29 +69,41 @@ pub fn install_treasure_sets(rom: &mut Rom) {
     rom.push_tag("piranha_rooms");
 
     for (src, hdr, cpu, dst, item, label) in [
-        (P1_ROOM_SRC, P1_HDR, CLONE_P1_CPU, FS_PIRANHA_ROOMS, P1_DEFAULT_ITEM,
-         "7-P1 cloned treasure room"),
-        (P2_ROOM_SRC, P2_HDR, CLONE_P2_CPU, FS_PIRANHA_ROOMS + CLONE_LEN, P2_DEFAULT_ITEM,
-         "7-P2 cloned treasure room"),
+        (
+            P1_ROOM_SRC,
+            P1_HDR,
+            CLONE_P1_CPU,
+            FS_PIRANHA_ROOMS,
+            P1_DEFAULT_ITEM,
+            "7-P1 cloned treasure room",
+        ),
+        (
+            P2_ROOM_SRC,
+            P2_HDR,
+            CLONE_P2_CPU,
+            FS_PIRANHA_ROOMS + CLONE_LEN,
+            P2_DEFAULT_ITEM,
+            "7-P2 cloned treasure room",
+        ),
     ] {
         let page_byte = rom.read_byte(src);
         let src_entries = segment_writer::read_segment(rom, src, 2);
         // D6 goes one column left of the treasure box so it spawns first
         // (mirrors the vanilla Hand-room layout).
-        let d6 = SegmentEntry {
-            obj_id: 0xD6,
-            x: src_entries[0].x.saturating_sub(1),
-            y: item,
-        };
+        let d6 = SegmentEntry { obj_id: 0xD6, x: src_entries[0].x.saturating_sub(1), y: item };
         let entries = [d6, src_entries[0], src_entries[1]];
         rom.write_byte(dst, page_byte);
-        segment_writer::write_segment(rom, &SegmentSpec {
-            file_offset: dst,
-            original_count: 3,
-            entries: &entries,
-            label: Some(label),
-            sort_mode: SortMode::SortByX,
-        }).expect("piranha_rooms: clone write failed");
+        segment_writer::write_segment(
+            rom,
+            &SegmentSpec {
+                file_offset: dst,
+                original_count: 3,
+                entries: &entries,
+                label: Some(label),
+                sort_mode: SortMode::SortByX,
+            },
+        )
+        .expect("piranha_rooms: clone write failed");
         rom.write_byte(dst + CLONE_LEN - 1, 0xFF);
         rom.write_range(hdr + 2, &cpu.to_le_bytes());
     }
@@ -133,10 +145,9 @@ mod tests {
         let mut rom = make_test_rom();
         install_treasure_sets(&mut rom);
 
-        for (dst, item) in [
-            (FS_PIRANHA_ROOMS, P1_DEFAULT_ITEM),
-            (FS_PIRANHA_ROOMS + CLONE_LEN, P2_DEFAULT_ITEM),
-        ] {
+        for (dst, item) in
+            [(FS_PIRANHA_ROOMS, P1_DEFAULT_ITEM), (FS_PIRANHA_ROOMS + CLONE_LEN, P2_DEFAULT_ITEM)]
+        {
             assert_eq!(
                 rom.read_range(dst, CLONE_LEN).to_vec(),
                 vec![0x01, 0xD6, 0x0A, item, 0x52, 0x0B, 0x13, 0xBA, 0x0C, 0x13, 0xFF],

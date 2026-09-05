@@ -48,10 +48,7 @@ impl Island {
     /// Spread-mouths preference applies: traversal should cross the
     /// island instead of entering and leaving through the same corner.
     pub(super) fn wants_spread_mouths(&self) -> bool {
-        matches!(
-            self.role,
-            IslandRole::Routing | IslandRole::Corridor | IslandRole::Final
-        )
+        matches!(self.role, IslandRole::Routing | IslandRole::Corridor | IslandRole::Final)
     }
 }
 
@@ -162,11 +159,7 @@ pub(super) fn island_mouths(
     pipe_pairs: &[TeleportEdge],
     id: usize,
 ) -> Vec<Pos> {
-    pipe_pairs
-        .iter()
-        .flat_map(|&(a, b)| [a, b])
-        .filter(|p| pocket.get(p) == Some(&id))
-        .collect()
+    pipe_pairs.iter().flat_map(|&(a, b)| [a, b]).filter(|p| pocket.get(p) == Some(&id)).collect()
 }
 
 /// Spread-mouths refinement: `picked` was chosen uniformly (that keeps the
@@ -199,11 +192,7 @@ pub(super) fn spread_mouth(
         .map(|&m| walk_map(&state.grid, &[], Some(m), state.world_idx).distances)
         .collect();
     let score = |p: Pos| -> usize {
-        dist_maps
-            .iter()
-            .map(|d| d.get(&p).copied().unwrap_or(0))
-            .min()
-            .unwrap_or(0)
+        dist_maps.iter().map(|d| d.get(&p).copied().unwrap_or(0)).min().unwrap_or(0)
     };
     let mut best = picked;
     let mut best_score = score(picked);

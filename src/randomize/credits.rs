@@ -33,8 +33,8 @@
 
 use rand::Rng;
 
-use crate::rom::Rom;
 use super::rom_data::{self, Grid, ROWS, TILE_BOWSER};
+use crate::rom::Rom;
 
 // All offsets are file offsets into the PRG024/PRG025 title-screen/endings
 // banks (file 0x30010 / 0x32010). Each names an 8-entry table indexed by world

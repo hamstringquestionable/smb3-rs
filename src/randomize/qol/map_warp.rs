@@ -26,8 +26,8 @@
 //! `Map_Completions` — so a lock is open for both or neither, and warping can
 //! never land past a barrier the partner didn't already open for everyone.
 
-use crate::rom::Rom;
 use crate::randomize::rom_data::FS_MAP_WARP;
+use crate::rom::Rom;
 
 // Hook site: PRG010 `PRG010_CE78`, the "player not moving" input handler inside
 // MO_NormalMoveEnter (Map_Operation $0D). X already holds Player_Current here.
@@ -179,10 +179,7 @@ mod tests {
 
         // Hook: JSR to the routine's CPU address, then NOP padding.
         let [lo, hi] = MAP_WARP_CPU.to_le_bytes();
-        assert_eq!(
-            rom.read_range(MAP_IDLE_INPUT_HOOK, 6),
-            &[0x20, lo, hi, 0xEA, 0xEA, 0xEA]
-        );
+        assert_eq!(rom.read_range(MAP_IDLE_INPUT_HOOK, 6), &[0x20, lo, hi, 0xEA, 0xEA, 0xEA]);
         // Routine: starts with `LDA Total_Players`, ends with `JMP $84D7`.
         assert_eq!(rom.read_range(FS_MAP_WARP, 3), &[0xAD, 0x2B, 0x07]);
         assert_eq!(

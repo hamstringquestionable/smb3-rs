@@ -1,7 +1,7 @@
 //! Hammer item also breaks fortress locks / water-gap bridges.
 
-use crate::rom::Rom;
 use crate::randomize::rom_data::{self, FS_HAMMER_LOCKS, prg_bank_file_to_cpu};
+use crate::rom::Rom;
 
 // Make the hammer item also break fortress lock tiles and/or water-gap
 // bridge locks on the overworld map.
@@ -36,8 +36,8 @@ pub fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool) {
     // Build tables dynamically based on which flags are set.
     // Always include rocks (2 entries), then conditionally add locks (3) and bridge (1).
     let mut breakable: Vec<u8> = vec![0x51, 0x52]; // rocks
-    let mut replace:   Vec<u8> = vec![0x45, 0x46];
-    let mut tilefix:   Vec<u8> = vec![0x00, 0x01];
+    let mut replace: Vec<u8> = vec![0x45, 0x46];
+    let mut tilefix: Vec<u8> = vec![0x00, 0x01];
 
     // `replace` is derived from `path_for_gap_tile` rather than written out
     // again: it is the same lock→path mapping the FX restore uses, and a third
@@ -46,9 +46,7 @@ pub fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool) {
     if locks {
         for &lock in &rom_data::LOCK_TILES {
             breakable.push(lock);
-            replace.push(
-                rom_data::path_for_gap_tile(lock).expect("a lock tile always inverts"),
-            );
+            replace.push(rom_data::path_for_gap_tile(lock).expect("a lock tile always inverts"));
         }
         tilefix.extend_from_slice(&[0x01, 0x00, 0x00]);
     }
@@ -86,6 +84,7 @@ pub fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool) {
     // loop that checks 4 adjacent tiles still works on no-match fall-through.
     let lo = (HAMMER_LOCKS_SUB_CPU & 0xFF) as u8;
     let hi = (HAMMER_LOCKS_SUB_CPU >> 8) as u8;
+    #[rustfmt::skip]
     rom.write_range(HAMMER_RANGE_CHECK, &[
         0x20, lo, hi,   // JSR HammerCheckTile
         0x90, 0x08,     // BCC .found (targets $A6D2 / file 0x346E2)

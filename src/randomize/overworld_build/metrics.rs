@@ -63,10 +63,8 @@ fn mean_exclusive_levels(rc: &RouteChoice) -> f64 {
     if alternatives.is_empty() {
         return 0.0;
     }
-    let total_exclusive: usize = alternatives
-        .iter()
-        .map(|route| route.levels.difference(&cheapest.levels).count())
-        .sum();
+    let total_exclusive: usize =
+        alternatives.iter().map(|route| route.levels.difference(&cheapest.levels).count()).sum();
     total_exclusive as f64 / alternatives.len() as f64
 }
 

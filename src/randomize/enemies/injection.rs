@@ -77,10 +77,7 @@ pub(super) type InjectionSites = std::collections::HashMap<usize, u16>;
 /// set is a single candidate. Consumes no RNG and reads no CHR state — it is
 /// pure level geography, which is why it can run before the walk.
 pub(super) fn collect_injection_sites(rom: &Rom, data: &[u8], opts: &Options) -> InjectionSites {
-    collect_candidates(rom, data, opts)
-        .into_iter()
-        .map(|c| (c.first_idx, c.obj_ptr))
-        .collect()
+    collect_candidates(rom, data, opts).into_iter().map(|c| (c.first_idx, c.obj_ptr)).collect()
 }
 
 /// One candidate level for injection: its enemy-data location as an index into
@@ -117,11 +114,7 @@ fn collect_candidates(rom: &Rom, data: &[u8], opts: &Options) -> Vec<Candidate> 
         }
         // Skip the leading page-flag byte if present (real obj_ids never
         // overlap 0x00/0x01, so the value is an unambiguous discriminator).
-        let first_idx = if matches!(data[page_idx], 0x00 | 0x01) {
-            page_idx + 1
-        } else {
-            page_idx
-        };
+        let first_idx = if matches!(data[page_idx], 0x00 | 0x01) { page_idx + 1 } else { page_idx };
         if first_idx >= data.len() || data[first_idx] == 0xFF {
             continue; // empty level
         }
@@ -171,9 +164,7 @@ fn pick_injection<R: Rng>(
         .collect();
     // Favor the sun over the harder two when more than one fits.
     eligible
-        .choose_weighted(rng, |&id| {
-            if id == ANGRY_SUN_ID { SUN_INJECTION_WEIGHT } else { 1 }
-        })
+        .choose_weighted(rng, |&id| if id == ANGRY_SUN_ID { SUN_INJECTION_WEIGHT } else { 1 })
         .ok()
         .copied()
 }

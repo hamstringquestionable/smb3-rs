@@ -12,8 +12,8 @@
 //! The aggregate free-space number is misleading: space is per-bank, and a
 //! routine must live in a bank mapped when it runs. The always-mapped banks
 //! are effectively full — PRG031 (`$E000–$FFFF`) has 81 bytes left but a
-//! largest contiguous gap of only 30, and PRG030 (`$8000–$9FFF`) has 88 with
-//! a largest gap of 42. Swapped banks are roomier (PRG010 896, PRG026 2603,
+//! largest contiguous gap of only 30, and PRG030 (`$8000–$9FFF`) has 58 with
+//! a largest gap of 42. Swapped banks are roomier (PRG010 896, PRG026 2485,
 //! and the in-level banks PRG004 426 / PRG006 1392 in one run each).
 //!
 //! Reserving some headroom in an allocation is fine and encouraged — a routine
@@ -104,12 +104,33 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     // PRG030 (fixed bank, always mapped $8000–$9FFF, file 0x3C010)
     fs(0x3DF20, 28, &["world_order"], "routine + tables"),
     fs(0x3DF3C, 20, &["big_q_blocks"], "big_q_block: save obj_ptr trampoline"),
-    fs(0x3DFC6, 32, &["stomp_fairness"], "stomp_rise: rise-aware stomp height (32 reserved, 26 used)"),
+    fs(
+        0x3DF70,
+        30,
+        &["bro_battle_timer"],
+        "bro_timer: 10-second clock for bro encounters (30 reserved, 25 used)",
+    ),
+    fs(
+        0x3DFC6,
+        32,
+        &["stomp_fairness"],
+        "stomp_rise: rise-aware stomp height (32 reserved, 26 used)",
+    ),
     // PRG031 (always mapped $E000–$FFFF, file 0x3E010)
     fs(0x3E924, 25, &["title_screen"], "sprite copy routine"),
     fs(0x3E93D, 40, &["title_screen"], "sprite data table"),
-    fs(0x3E260, 33, &["starting_items"], "lives + intro skip + menu music + inventory init trampoline"),
-    fs(0x3E281, 69, &["start_airship_swap"], "4 tables (X/XHi/ScrL/ScrH × 8) + Map_Init seed helper"),
+    fs(
+        0x3E260,
+        33,
+        &["starting_items"],
+        "lives + intro skip + menu music + inventory init trampoline",
+    ),
+    fs(
+        0x3E281,
+        69,
+        &["start_airship_swap"],
+        "4 tables (X/XHi/ScrL/ScrH × 8) + Map_Init seed helper",
+    ),
     fs(0x3E965, 13, &["title_screen"], "intro skip + menu music routine"),
     fs(0x3FFF0, 26, &["card_speed_clear"], "XOR trampoline"),
     // PRG025 (file 0x32010, CPU $C000–$DFFF while the title screen runs)
@@ -118,38 +139,83 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(0x35572, 13, &["mystery_anchor"], "item redirect trampoline"),
     fs(0x3557F, 50, &["hammer_breaks_tiles"], "hammer_locks: tile check subroutine + tables"),
     fs(0x355B1, 12, &["anchor_visuals"], "items-vs-cards index guard trampoline"),
-    fs(0x355BD, 106, &["big_q_blocks"], "big_q_block: two-pass lookup routine + 13-entry tables (current-area then frozen entry)"),
+    fs(
+        0x355BD,
+        224,
+        &["big_q_blocks"],
+        "big_q_block: two-pass lookup + slot seeding + 7 13-entry tables (224 reserved, 207 used)",
+    ),
     // PRG027 (file 0x36010, CPU $A000–$BFFF)
     fs(0x379D9, 894, &["king_quotes"], "7 quotes + hook (7×120 + 54)"),
     // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
-    fs(0x15554, 112, &["fx_screen_check"], "cross-screen lock patch (Fred's algorithm + darkness gate)"),
+    fs(
+        0x15554,
+        112,
+        &["fx_screen_check"],
+        "cross-screen lock patch (Fred's algorithm + darkness gate)",
+    ),
     fs(0x15DF0, 35, &["fix_canoe_softlock"], "canoe_fix: death respawn position save"),
     fs(0x15E13, 162, &["map_warp"], "2P Start+Select warp-to-partner routine"),
     fs(0x15EB5, 151, &["canoe_summon"], "A-on-dock call-the-boat routine + offset tables"),
     // PRG011 (file 0x16010, CPU $A000–$BFFF during map)
     fs(0x17C87, 36, &["start_airship_swap"], "game-over twirl finalize helper"),
-    fs(0x17D00, 66, &["fix_canoe_softlock"], "canoe_fix: backup/restore subroutines (CANOE_BACKUP_ROUTINE)"),
-    fs(0x17D50, 26, &["no_game_over_penalty"], "MaCobra NGO routine (macobra.rs NGO_ROUTINE_OFFSET)"),
+    fs(
+        0x17D00,
+        66,
+        &["fix_canoe_softlock"],
+        "canoe_fix: backup/restore subroutines (CANOE_BACKUP_ROUTINE)",
+    ),
+    fs(
+        0x17D50,
+        26,
+        &["no_game_over_penalty"],
+        "MaCobra NGO routine (macobra.rs NGO_ROUTINE_OFFSET)",
+    ),
     fs(0x17D70, 107, &["march_veto"], "landing-veto trampoline + per-world coord registry"),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     fs(0x0382A, 23, &["koopalings"], "koopa_hits: subroutine + defeat JMP + threshold table"),
     fs(0x03841, 13, &["koopalings"], "koopa_collision_guard: skip collision bitmap during invuln"),
     fs(0x0384E, 16, &["koopalings"], "koopa_vram_clear: clear VRAM buffer on defeat"),
-    fs(0x0385E, 12, &["koopalings"], "koopa_fire_preset: set stomp counter from threshold table for fireball defeat"),
+    fs(
+        0x0385E,
+        12,
+        &["koopalings"],
+        "koopa_fire_preset: set stomp counter from threshold table for fireball defeat",
+    ),
     fs(0x03FD0, 22, &["koopalings"], "koopa_y_clamp: clamp Koopaling Y position to screen"),
     fs(0x03FE6, 36, &["fire_flower"], "position-hash suit routine + pool table"),
-    fs(0x02713, 17, &["poison_mushrooms"], "object $0A init+hit stubs (Norm reuses 1-Up; reclaimed dead Obj0A code)"),
+    fs(
+        0x02713,
+        17,
+        &["poison_mushrooms"],
+        "object $0A init+hit stubs (Norm reuses 1-Up; reclaimed dead Obj0A code)",
+    ),
     fs(0x02724, 31, &["poison_mushrooms"], "1-up block-spawn hook (position-hash $0B->$0A)"),
     // PRG003 (file 0x06010, CPU $A000–$BFFF) — object AI bank (Boom-Boom lives here)
-    fs(0x06609, 8, &["macobra"], "tail_stay_dead: MaCobra respawn-suppress routine (CPU $A5F9 gap)"),
+    fs(
+        0x06609,
+        8,
+        &["macobra"],
+        "tail_stay_dead: MaCobra respawn-suppress routine (CPU $A5F9 gap)",
+    ),
     fs(0x07FCF, 16, &["boomboom"], "boomboom_hits: per-fortress threshold table"),
     fs(0x07FDF, 44, &["boomboom"], "boomboom_hits: decoupled stomp-count subroutine"),
     // PRG006 (file 0x0C010, CPU $C000–$DFFF) — level enemy data bank
     // `items` co-owns both clone blocks: the cloning module builds the stream,
     // then item randomization rewrites the OBJ_TREASURESET byte inside it
     // (items.rs reads the offsets from HAND_ROOM_CLONE_*_ITEM / P*_ROOM_ITEM).
-    fs(0x0DA74, 22, &["hand_rooms", "items"], "2 cloned enemy streams for unique 8-Hnd treasure rooms"),
-    fs(0x0DA8A, 22, &["piranha_rooms", "items"], "2 cloned chest-room streams with OBJ_TREASURESET for 7-P1/7-P2"),
+    fs(
+        0x0DA74,
+        22,
+        &["hand_rooms", "items"],
+        "2 cloned enemy streams for unique 8-Hnd treasure rooms",
+    ),
+    fs(
+        0x0DA8A,
+        22,
+        &["piranha_rooms", "items"],
+        "2 cloned chest-room streams with OBJ_TREASURESET for 7-P1/7-P2",
+    ),
     // PRG029 (file 0x3A010, CPU $C000–$DFFF) — swim physics bank
     fs(0x3A600, 24, &["faster_frog"], "Frog-Suit swim-speed boost routine"),
     // PRG000 (file 0x00010) — dead code at CPU $C918 (bytes skipped by the
@@ -158,23 +224,37 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
 ];
 
 // PRG030
-pub(crate) const FS_WORLD_ORDER: usize       = 0x3DF20; // 28 bytes
+pub(crate) const FS_WORLD_ORDER: usize = 0x3DF20; // 28 bytes
 
 /// CPU address of the world-order routine ($9F10). PRG030 is the MMC3 fixed
 /// bank at $8000-$9FFF (file 0x3C010), so `prg_bank_file_to_cpu` (which assumes
 /// the $A000 window) does not apply — `prg030_file_to_cpu` is its counterpart.
-pub(crate) const WORLD_ORDER_CPU: u16        = super::prg030_file_to_cpu(FS_WORLD_ORDER);
+pub(crate) const WORLD_ORDER_CPU: u16 = super::prg030_file_to_cpu(FS_WORLD_ORDER);
 
-pub(crate) const FS_BIG_Q_SAVE: usize        = 0x3DF3C; // 20 bytes
+pub(crate) const FS_BIG_Q_SAVE: usize = 0x3DF3C; // 20 bytes
+
+// The 30-byte run at 0x3DF70 ($9F60-$9F7D) is the "probably unused space"
+// southbird's `prg030.asm` shows between `PRG030_SUB_9F50`'s `RTS` and
+// `IntIRQ_32PixelPartition_Part5` at $9F7E. Both neighbours are IRQ raster
+// helpers, but nothing falls through into the gap — the one above ends in
+// `RTS`, the one below is entered by jump — so code parked here never runs and
+// cannot disturb their cycle counts. It is unreferenced: a PRG-wide scan of
+// absolute-addressing opcodes finds no operand in $9F60-$9F7D (the nine
+// byte-pair matches all sit inside CHR/tile data tables in banks 1, 13, 16, 19
+// and 21, none of them preceded by an addressing opcode).
+pub(crate) const FS_BRO_TIMER: usize = 0x3DF70; // 30 reserved, 25 used
+
+/// CPU address of the bro-encounter clock routine ($9F60).
+pub(crate) const BRO_TIMER_CPU: u16 = super::prg030_file_to_cpu(FS_BRO_TIMER);
 
 // PRG031
 pub(crate) const FS_SEED_HASH_ROUTINE: usize = 0x3E924; // 25 bytes
 
-pub(crate) const FS_SEED_HASH_DATA: usize    = 0x3E93D; // 40 bytes
+pub(crate) const FS_SEED_HASH_DATA: usize = 0x3E93D; // 40 bytes
 
-pub(crate) const FS_INTRO_SKIP: usize        = 0x3E965; // 13 bytes
+pub(crate) const FS_INTRO_SKIP: usize = 0x3E965; // 13 bytes
 
-pub(crate) const FS_CARD_CLEAR: usize        = 0x3FFF0; // 26 bytes
+pub(crate) const FS_CARD_CLEAR: usize = 0x3FFF0; // 26 bytes
 
 // PRG025 — the title-screen bank at $C000–$DFFF (PRG030's title entry loads
 // page 24 into $A000 and page 25 into $C000 before `Do_Title_Screen`). The
@@ -190,9 +270,9 @@ pub(crate) const FS_CARD_CLEAR: usize        = 0x3FFF0; // 26 bytes
 // routine used to sit right on top of the first one, so a Peach seed drew a
 // band of garbage tiles across the title screen (`visual_patches_clear_the_free
 // _space_registry` guards the whole registry against the bundled patches now).
-pub(crate) const FS_TITLE_MUTE: usize        = 0x33FF0; // 32 reserved, 22 used
+pub(crate) const FS_TITLE_MUTE: usize = 0x33FF0; // 32 reserved, 22 used
 
-pub(crate) const FS_STARTING_ITEMS: usize    = 0x3E260; // 33 bytes
+pub(crate) const FS_STARTING_ITEMS: usize = 0x3E260; // 33 bytes
 
 // PRG031 — start_airship_swap engine scaffolding. One ~69-byte block: 4 × 8-byte
 // per-world tables followed by a single assembled seed subroutine. PRG031 is
@@ -200,32 +280,32 @@ pub(crate) const FS_STARTING_ITEMS: usize    = 0x3E260; // 33 bytes
 // read the tables regardless of which bank is at $A000. NOTE: the PRG031 free run
 // at 0x3E281 ends at 0x3E2D0 (real code follows) — only 79 bytes; do not grow this
 // block past that ceiling.
-pub(crate) const FS_SAS_BLOCK: usize             = 0x3E281;       // 69 bytes used (79 max)
+pub(crate) const FS_SAS_BLOCK: usize = 0x3E281; // 69 bytes used (79 max)
 
-pub(crate) const FS_SAS_X_TABLE: usize           = FS_SAS_BLOCK;       // 8 bytes — Mario X-low pixel per world
+pub(crate) const FS_SAS_X_TABLE: usize = FS_SAS_BLOCK; // 8 bytes — Mario X-low pixel per world
 
-pub(crate) const FS_SAS_XHI_TABLE: usize         = FS_SAS_BLOCK + 8;   // 8 bytes — Mario screen index per world
+pub(crate) const FS_SAS_XHI_TABLE: usize = FS_SAS_BLOCK + 8; // 8 bytes — Mario screen index per world
 
-pub(crate) const FS_SAS_SCRL_TABLE: usize        = FS_SAS_BLOCK + 16;  // 8 bytes — camera scroll low per world ($0722 / $7986)
+pub(crate) const FS_SAS_SCRL_TABLE: usize = FS_SAS_BLOCK + 16; // 8 bytes — camera scroll low per world ($0722 / $7986)
 
-pub(crate) const FS_SAS_SCRH_TABLE: usize        = FS_SAS_BLOCK + 24;  // 8 bytes — camera scroll high per world ($0724 / $7988)
+pub(crate) const FS_SAS_SCRH_TABLE: usize = FS_SAS_BLOCK + 24; // 8 bytes — camera scroll high per world ($0724 / $7988)
 
 // Single Map_Init seed subroutine: writes Mario's start position plus the primary
 // AND secondary scroll backups from the four tables (replaces the former x/xhi
 // helper pair). Reached via `JSR` from the Map_Init scroll-store site.
-pub(crate) const FS_SAS_SEED_HELPER: usize       = FS_SAS_BLOCK + 32;  // 37 bytes
+pub(crate) const FS_SAS_SEED_HELPER: usize = FS_SAS_BLOCK + 32; // 37 bytes
 
 // The game-over twirl finalize helper lives in PRG011 free space (not FS_SAS_BLOCK
 // — that PRG031 run has no room for it). PRG011 is the hook's own bank, so the JSR
 // is bank-local; the helper still reads the FS_SAS_* tables in always-resident
 // PRG031.
-pub(crate) const FS_SAS_GAMEOVER_FINALIZE: usize = 0x17C87;  // PRG011, 36 bytes — stamps World_Map_X/XHi + primary/secondary scroll backup + live Horz_Scroll/Hi at twirl finalize (clean gap before FS_CANOE_BACKUP)
+pub(crate) const FS_SAS_GAMEOVER_FINALIZE: usize = 0x17C87; // PRG011, 36 bytes — stamps World_Map_X/XHi + primary/secondary scroll backup + live Horz_Scroll/Hi at twirl finalize (clean gap before FS_CANOE_BACKUP)
 
 // Vanilla 8-byte Map_Y_Starts table (per-world Mario spawn Y-pixel). Lives in
 // PRG030's world-enter routine. The start_airship_swap module rewrites this
 // in place so swapped worlds spawn Mario at the airship row instead of the
 // vanilla start row.
-pub(crate) const MAP_Y_STARTS_OFF: usize  = 0x3C39A;
+pub(crate) const MAP_Y_STARTS_OFF: usize = 0x3C39A;
 
 // Map_Init inline patch site in PRG011 (CPU $A237). The start_airship_swap module
 // replaces the vanilla `STA $0724,X` scroll-store with `JSR seed_helper`, which
@@ -233,7 +313,7 @@ pub(crate) const MAP_Y_STARTS_OFF: usize  = 0x3C39A;
 // earlier vanilla `LDA #$20 / STA $797A,X / STA $7982,X` X-low store at 0x16257 is
 // left intact — the seed helper re-stamps $797A/$7982 later in the same loop
 // iteration (before any draw), so the vanilla value is harmlessly overwritten.
-pub(crate) const MAP_INIT_SCROLL_SITE: usize = 0x1627E;   // 3 bytes — `STA $0724,X`
+pub(crate) const MAP_INIT_SCROLL_SITE: usize = 0x1627E; // 3 bytes — `STA $0724,X`
 
 // GameOver_TwirlToStart finalize hook in PRG011 (CPU $A6AA). The twirl is a
 // delta-animation: it spirals Mario back to the start by a per-frame X/Y delta,
@@ -248,46 +328,47 @@ pub(crate) const MAP_INIT_SCROLL_SITE: usize = 0x1627E;   // 3 bytes — `STA $0
 // tables. The displaced `STA $7988` (A=0) is intentionally dropped: the helper now
 // stamps $7988 with the start screen instead of zeroing it (nothing between the
 // hook and the following copies reads it).
-pub(crate) const GAMEOVER_FINALIZE_SITE: usize = 0x166BA;  // 3 bytes — `STA $7988,X` (Map_Prev_XHi2,X)
+pub(crate) const GAMEOVER_FINALIZE_SITE: usize = 0x166BA; // 3 bytes — `STA $7988,X` (Map_Prev_XHi2,X)
 
 // Map_Object slot 1 == the airship sprite per southbird's disassembly:
 // "NOTE: Assumes Index 1 is the Airship!"
 pub(crate) const AIRSHIP_OBJ_SLOT: usize = 1;
 
-// PRG026 — two-pass Big ? Block lookup (qol/big_q.rs), relocated off the old
-// 0x35530 slot into tail free space to hold the two-pass routine + 12 entries.
-pub(crate) const FS_BIG_Q_LOOKUP: usize      = 0x355BD; // 106 bytes (CPU $B5AD)
+// PRG026 — two-pass Big ? Block lookup + spawn-slot seeding (qol/big_q.rs),
+// relocated off the old 0x35530 slot into tail free space. The $FF run this
+// sits in continues to 0x36000, so it has room to grow in place.
+pub(crate) const FS_BIG_Q_LOOKUP: usize = 0x355BD; // 224 reserved, 199 used (CPU $B5AD)
 
 // PRG027
-pub(crate) const FS_KING_QUOTES: usize       = 0x379D9; // 894 bytes
+pub(crate) const FS_KING_QUOTES: usize = 0x379D9; // 894 bytes
 
 // PRG010
 // Fred's visibility algorithm plus the busted / darkness gates (issue #131).
 // The $FF run this sits in continues to 0x15810, so there is room to grow.
-pub(crate) const FS_FX_SCREEN_CHECK: usize   = 0x15554; // 112 reserved, 82 used
+pub(crate) const FS_FX_SCREEN_CHECK: usize = 0x15554; // 112 reserved, 82 used
 
-pub(crate) const FS_CANOE_RESPAWN: usize     = 0x15DF0; // 35 bytes
-pub(crate) const FS_MAP_WARP: usize          = 0x15E13; // 162 bytes (CPU $DE03)
+pub(crate) const FS_CANOE_RESPAWN: usize = 0x15DF0; // 35 bytes
+pub(crate) const FS_MAP_WARP: usize = 0x15E13; // 162 bytes (CPU $DE03)
 
 // Canoe "call the boat" routine (CPU $DEA5). ORIGIN-LOCKED: the assembled bytes
 // contain self-referential absolute addresses (JMP $DEB7, and the ADC $DF2D/31/35
 // offset-table reads), so this MUST live at exactly 0x15EB5. See canoe_summon.rs.
-pub(crate) const FS_CANOE_SUMMON: usize      = 0x15EB5; // 151 bytes (CPU $DEA5)
+pub(crate) const FS_CANOE_SUMMON: usize = 0x15EB5; // 151 bytes (CPU $DEA5)
 
 // PRG011
-pub(crate) const FS_CANOE_BACKUP: usize      = 0x17D00; // 66 bytes
+pub(crate) const FS_CANOE_BACKUP: usize = 0x17D00; // 66 bytes
 
 // March landing-veto trampoline + per-world coordinate registry (CPU $BD60).
 // 59-byte routine + 8-byte per-world offset table + 40-byte address list.
 // Hooked from Map_MarchValidateTravel's landing-zone PickTravel call at
 // $B3FD; keeps wandering map objects off plant/army nodes and hand traps.
 // Sits just past the 26-byte NGO routine (macobra.rs NGO_ROUTINE_OFFSET).
-pub(crate) const FS_MARCH_VETO: usize        = 0x17D70; // 107 bytes (CPU $BD60)
+pub(crate) const FS_MARCH_VETO: usize = 0x17D70; // 107 bytes (CPU $BD60)
 
 // PRG026 (cont.)
-pub(crate) const FS_MYSTERY_ANCHOR: usize    = 0x35572; // 13 bytes
+pub(crate) const FS_MYSTERY_ANCHOR: usize = 0x35572; // 13 bytes
 
-pub(crate) const FS_HAMMER_LOCKS: usize      = 0x3557F; // 50 bytes
+pub(crate) const FS_HAMMER_LOCKS: usize = 0x3557F; // 50 bytes
 
 pub(crate) const FS_ANCHOR_ITEM_GUARD: usize = 0x355B1; // 12 bytes (CPU $B5A1)
 
@@ -302,41 +383,41 @@ pub(crate) const FS_ANCHOR_ITEM_GUARD: usize = 0x355B1; // 12 bytes (CPU $B5A1)
 // PRG010 and PRG012, disassembled as data by southbird, not code. They sit
 // outside this reservation either way, but anyone taking the remaining 42 bytes
 // should confirm that before trusting the top of the gap.)
-pub(crate) const FS_STOMP_RISE: usize        = 0x3DFC6; // 32 reserved, 26 used
+pub(crate) const FS_STOMP_RISE: usize = 0x3DFC6; // 32 reserved, 26 used
 
 /// CPU address of the rise-aware stomp-height routine ($9FB6).
-pub(crate) const STOMP_RISE_CPU: u16         = super::prg030_file_to_cpu(FS_STOMP_RISE);
+pub(crate) const STOMP_RISE_CPU: u16 = super::prg030_file_to_cpu(FS_STOMP_RISE);
 
 // PRG001 (file 0x02010, CPU $A000–$BFFF)
 // Koopaling stomp handler is ObjHit_Koopaling in prg001.asm (southbird disassembly).
-pub(crate) const FS_KOOPA_HITS_SUB: usize    = 0x0382A; // 13 code + 3 JMP + 7 table = 23 bytes
+pub(crate) const FS_KOOPA_HITS_SUB: usize = 0x0382A; // 13 code + 3 JMP + 7 table = 23 bytes
 
-pub(crate) const FS_KOOPA_HITS_TABLE: usize  = 0x0383A; // 7 bytes (sub + 16)
+pub(crate) const FS_KOOPA_HITS_TABLE: usize = 0x0383A; // 7 bytes (sub + 16)
 
 /// CPU address of the subroutine: $A000 + (0x0382A - 0x02010) = $B81A
-pub(crate) const KOOPA_HITS_SUB_CPU: u16     = 0xB81A;
+pub(crate) const KOOPA_HITS_SUB_CPU: u16 = 0xB81A;
 
 /// CPU address of the threshold table: $A000 + (0x0383A - 0x02010) = $B82A
-pub(crate) const KOOPA_HITS_TABLE_CPU: u16   = 0xB82A;
+pub(crate) const KOOPA_HITS_TABLE_CPU: u16 = 0xB82A;
 
 // Koopaling collision guard — skip collision bitmap update during invulnerability.
 // Source: Fred's Koopaling fixes.
 pub(crate) const FS_KOOPA_COLLISION_GUARD: usize = 0x03841; // 13 bytes
 
-pub(crate) const KOOPA_COLLISION_GUARD_CPU: u16  = 0xB831;  // $A000 + (0x03841 - 0x02010)
+pub(crate) const KOOPA_COLLISION_GUARD_CPU: u16 = 0xB831; // $A000 + (0x03841 - 0x02010)
 
 // Koopaling defeat VRAM buffer clear — zero $0300/$0301 on defeat to prevent
 // stale PPU writes during wand/king transition in non-native worlds.
 // Source: Fred's Koopaling fixes.
 pub(crate) const FS_KOOPA_VRAM_CLEAR: usize = 0x0384E; // 16 bytes
 
-pub(crate) const KOOPA_VRAM_CLEAR_CPU: u16  = 0xB83E;  // $A000 + (0x0384E - 0x02010)
+pub(crate) const KOOPA_VRAM_CLEAR_CPU: u16 = 0xB83E; // $A000 + (0x0384E - 0x02010)
 
 // Koopaling Y-position clamp — keep bouncing Koopalings on screen in non-native rooms.
 // Source: Fred's Koopaling fixes.
 pub(crate) const FS_KOOPA_Y_CLAMP: usize = 0x03FD0; // 22 bytes
 
-pub(crate) const KOOPA_Y_CLAMP_CPU: u16  = 0xBFC0;  // $A000 + (0x03FD0 - 0x02010)
+pub(crate) const KOOPA_Y_CLAMP_CPU: u16 = 0xBFC0; // $A000 + (0x03FD0 - 0x02010)
 
 // Random Fire Flower (issue #22) — injected routine that derives the granted
 // power state from a seed-derived salt (the shuffled starting world) + the
@@ -345,9 +426,9 @@ pub(crate) const KOOPA_Y_CLAMP_CPU: u16  = 0xBFC0;  // $A000 + (0x03FD0 - 0x0201
 // after koopa_y_clamp (which ends at 0x3FE6). Up to 36 bytes: 26-byte routine +
 // a 4- or 6-byte pool table. ObjHit_FireFlower runs with PRG001 banked at
 // $A000, so the JSR from the hook is bank-local.
-pub(crate) const FS_FIRE_FLOWER: usize     = 0x03FE6;
+pub(crate) const FS_FIRE_FLOWER: usize = 0x03FE6;
 
-pub(crate) const FIRE_FLOWER_SUB_CPU: u16  = 0xBFD6; // $A000 + (0x03FE6 - 0x02010)
+pub(crate) const FIRE_FLOWER_SUB_CPU: u16 = 0xBFD6; // $A000 + (0x03FE6 - 0x02010)
 
 // Poison Mushroom object (ID $0A) — Init + Hit override stubs written over the
 // dead vanilla Obj0A handler region ($A703-$A77D, never spawned by any level or
@@ -368,7 +449,7 @@ pub(crate) const FS_POISON_HOOK: usize = 0x02724; // CPU $A714
 // fireball→stomp handoff always triggers defeat after INC.
 pub(crate) const FS_KOOPA_FIRE_PRESET: usize = 0x0385E; // 12 bytes
 
-pub(crate) const KOOPA_FIRE_PRESET_CPU: u16  = 0xB84E;  // $A000 + (0x0385E - 0x02010)
+pub(crate) const KOOPA_FIRE_PRESET_CPU: u16 = 0xB84E; // $A000 + (0x0385E - 0x02010)
 
 // PRG003 (file 0x06010, CPU $A000–$BFFF) — Boom-Boom stomp-count randomization.
 // The Boom-Boom boss AI (ObjInit_BoomBoom, BoomBoom_HitTest, the DynJump state
@@ -384,11 +465,11 @@ pub(crate) const FS_TAIL_STAY_DEAD: usize = 0x06609; // 8 bytes (CPU $A5F9)
 
 pub(crate) const FS_BOOMBOOM_HITS_TABLE: usize = 0x07FCF; // 16 bytes (CPU $BFBF)
 
-pub(crate) const BOOMBOOM_HITS_TABLE_CPU: u16  = 0xBFBF;  // $A000 + (0x07FCF - 0x06010)
+pub(crate) const BOOMBOOM_HITS_TABLE_CPU: u16 = 0xBFBF; // $A000 + (0x07FCF - 0x06010)
 
-pub(crate) const FS_BOOMBOOM_HITS_SUB: usize   = 0x07FDF; // 44 bytes (CPU $BFCF)
+pub(crate) const FS_BOOMBOOM_HITS_SUB: usize = 0x07FDF; // 44 bytes (CPU $BFCF)
 
-pub(crate) const BOOMBOOM_HITS_SUB_CPU: u16    = 0xBFCF;  // $A000 + (0x07FDF - 0x06010)
+pub(crate) const BOOMBOOM_HITS_SUB_CPU: u16 = 0xBFCF; // $A000 + (0x07FDF - 0x06010)
 
 // PRG006 — duplicated enemy streams for the W8 Hand sub-areas. Each clone is
 // 11 bytes (page byte + 3 enemy entries + 0xFF terminator); two clones give
@@ -683,12 +764,19 @@ pub fn format_alloc_audit(rom: &Rom) -> String {
     let mut out = String::new();
 
     let problems: Vec<&AllocUsage> = usage.iter().filter(|u| u.is_problem()).collect();
-    let _ = writeln!(out, "\n--- Free space: {} allocations, {} problem(s) ---", usage.len(), problems.len());
+    let _ = writeln!(
+        out,
+        "\n--- Free space: {} allocations, {} problem(s) ---",
+        usage.len(),
+        problems.len()
+    );
     for u in &problems {
         let _ = writeln!(
             out,
             "  !! 0x{:05X} {} (owner {})",
-            u.alloc.offset, u.alloc.label, u.alloc.owners.join(" + "),
+            u.alloc.offset,
+            u.alloc.label,
+            u.alloc.owners.join(" + "),
         );
         for (tag, n) in &u.foreign {
             let _ = writeln!(out, "     foreign write: {n} byte(s) tagged {tag}");
@@ -710,8 +798,12 @@ pub fn format_alloc_audit(rom: &Rom) -> String {
         let _ = writeln!(
             out,
             "  PRG{:03} 0x{:05X}  {:>4}/{:<4}      {}{}",
-            prg_bank_of(u.alloc.offset), u.alloc.offset, u.used, u.alloc.size,
-            u.alloc.owners.join(" + "), note,
+            prg_bank_of(u.alloc.offset),
+            u.alloc.offset,
+            u.used,
+            u.alloc.size,
+            u.alloc.owners.join(" + "),
+            note,
         );
     }
     let _ = writeln!(
@@ -805,7 +897,12 @@ mod free_space_tests {
                 assert!(
                     a_end <= b.offset || b_end <= a.offset,
                     "free space overlap: '{}' (0x{:05X}..0x{:05X}) vs '{}' (0x{:05X}..0x{:05X})",
-                    a.label, a.offset, a_end, b.label, b.offset, b_end,
+                    a.label,
+                    a.offset,
+                    a_end,
+                    b.label,
+                    b.offset,
+                    b_end,
                 );
             }
         }
@@ -819,6 +916,7 @@ mod free_space_tests {
         for &(off, name) in &[
             (FS_WORLD_ORDER, "FS_WORLD_ORDER"),
             (FS_BIG_Q_SAVE, "FS_BIG_Q_SAVE"),
+            (FS_BRO_TIMER, "FS_BRO_TIMER"),
             (FS_SEED_HASH_ROUTINE, "FS_SEED_HASH_ROUTINE"),
             (FS_SEED_HASH_DATA, "FS_SEED_HASH_DATA"),
             (FS_INTRO_SKIP, "FS_INTRO_SKIP"),
@@ -921,12 +1019,16 @@ mod free_space_tests {
             if free != m.free_ff || gap != m.largest_gap() {
                 wrong.push(format!(
                     "  PRG{bank:03}: table says {free} free / {gap} gap, measured {} / {}",
-                    m.free_ff, m.largest_gap(),
+                    m.free_ff,
+                    m.largest_gap(),
                 ));
             }
         }
 
-        assert!(rows >= 8, "parsed only {rows} bank rows from CLAUDE.md — did the table's shape change?");
+        assert!(
+            rows >= 8,
+            "parsed only {rows} bank rows from CLAUDE.md — did the table's shape change?"
+        );
         assert!(
             wrong.is_empty(),
             "CLAUDE.md's per-bank free-space table is stale:\n{}\n\n\
@@ -961,6 +1063,7 @@ mod free_space_tests {
         // so a regression here would silently retarget every PRG030/031 hook.
         assert_eq!(prg030_file_to_cpu(0x3C010), 0x8000);
         assert_eq!(prg030_file_to_cpu(FS_WORLD_ORDER), 0x9F10);
+        assert_eq!(prg030_file_to_cpu(FS_BRO_TIMER), 0x9F60);
         assert_eq!(prg030_file_to_cpu(FS_STOMP_RISE), 0x9FB6);
         assert_eq!(prg031_file_to_cpu(0x3E010), 0xE000);
     }

@@ -4,9 +4,8 @@ use std::path::PathBuf;
 use std::process;
 
 use smb3_rs::{
-    item_display_name, item_id, EnemyMode, FireFlowerMode, Options, PiranhaMode, Tri,
-    WildChaser, ITEMS,
-    STARTING_LIVES_VALUES,
+    DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, ITEMS, Options, PiranhaMode,
+    STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
 };
 
 /// Human-readable label for a tri-state flag in the run summary.
@@ -43,11 +42,7 @@ fn parse_starting_lives(s: &str) -> Result<u8, String> {
     } else {
         Err(format!(
             "must be one of {} (got {})",
-            STARTING_LIVES_VALUES
-                .iter()
-                .map(u8::to_string)
-                .collect::<Vec<_>>()
-                .join(", "),
+            STARTING_LIVES_VALUES.iter().map(u8::to_string).collect::<Vec<_>>().join(", "),
             n
         ))
     }
@@ -70,6 +65,26 @@ fn parse_fire_flower(s: &str) -> Result<FireFlowerMode, String> {
         "on" => Ok(FireFlowerMode::On),
         "wild" => Ok(FireFlowerMode::Wild),
         _ => Err("valid values: off, on, wild".to_string()),
+    }
+}
+
+/// clap value parser for `--limit-hazards` (off/some/all).
+fn parse_hazard_limit(s: &str) -> Result<HazardLimit, String> {
+    match s {
+        "off" => Ok(HazardLimit::Off),
+        "some" => Ok(HazardLimit::Sparse),
+        "all" => Ok(HazardLimit::All),
+        _ => Err("valid values: off, some, all".to_string()),
+    }
+}
+
+/// clap value parser for `--deja-vu` (off/double/wild).
+fn parse_deja_vu(s: &str) -> Result<DejaVuMode, String> {
+    match s {
+        "off" => Ok(DejaVuMode::Off),
+        "double" => Ok(DejaVuMode::Double),
+        "wild" => Ok(DejaVuMode::Wild),
+        _ => Err("valid values: off, double, wild".to_string()),
     }
 }
 
@@ -157,6 +172,11 @@ struct Cli {
     /// accessibility patch is on by default). Cosmetic; not in the flag key.
     #[arg(long)]
     keep_flashing: bool,
+
+    /// Keep vanilla's own king rescue dialogue instead of a randomized quote.
+    /// Cosmetic; not in the flag key, and consumes the same RNG either way.
+    #[arg(long)]
+    vanilla_king_quotes: bool,
 
     /// Recolor levels, enemies, and world maps with a random theme (world
     /// colors). Independent of player colors.
@@ -273,6 +293,10 @@ struct Cli {
     #[arg(long)]
     limit_bro_movement: bool,
 
+    /// Hammer / Boomerang / Heavy / Fire Bro encounters start with a 10-second clock
+    #[arg(long)]
+    bro_battle_timer: bool,
+
     /// Damage drops to Small Mario or kills outright instead of demoting tier-by-tier (MaCobra52's "Japanese damage system" patch)
     #[arg(long)]
     japanese_damage: bool,
@@ -300,6 +324,10 @@ struct Cli {
     /// Defeated Lakitus stay down instead of coming back
     #[arg(long)]
     lakitu_stays_down: bool,
+
+    /// Shuffle which bonus room each Big ? pipe opens, drawing from 19 rooms: the 11 vanilla ones plus 8 in the unreferenced "Unused Level 5". Off by default
+    #[arg(long)]
+    shuffle_big_q_rooms: bool,
 
     /// Every 1-Up Mushroom becomes a Poison Mushroom that hurts you (MaCobra52's "All 1UPs are Poison Mushrooms" patch)
     #[arg(long)]
@@ -399,6 +427,24 @@ struct Cli {
     #[arg(long, default_value = "off", value_parser = parse_enemy_mode)]
     hb_encounters: EnemyMode,
 
+    /// Stop swaps introducing hazards a level wasn't built with: off, some
+    /// (one per room), or all (default: off)
+    #[arg(long, default_value = "off", value_parser = parse_hazard_limit)]
+    limit_hazards: HazardLimit,
+
+    /// Hold the harshest levels out of the shuffle pool (2-3, 5-3, 6-6, 7-5,
+    /// 7-8, 8-1), refilling with beta stages and duplicates of what remains
+    #[arg(long)]
+    friendlier_levels: bool,
+
+    /// Deja Vu: let one level appear on more than one map tile — off, double,
+    /// or wild (default: off). `double` puts two copies of every level in the
+    /// deck; `wild` deals with replacement, so a level can appear any number of
+    /// times or not at all. Levels holding a one-off item are dealt once either
+    /// way. (MaCobra52's idea.)
+    #[arg(long, default_value = "off", value_parser = parse_deja_vu)]
+    deja_vu: DejaVuMode,
+
     /// Seed a level-wide chaser into a fraction of levels. A comma-separated
     /// set of `sun`, `lakitu`, `bass`; or `all`; or `off` (default). A level
     /// whose CHR can't fit an allowed chaser is skipped rather than given one
@@ -455,14 +501,18 @@ struct Cli {
 /// `--flags` key, which overrides everything except the cosmetic overlays).
 /// Exits with an error message on invalid starting items or flag key.
 fn build_options(cli: &Cli) -> Options {
-    let starting_items: Vec<u8> = cli.starting_items.iter().map(|name| {
-        item_id(name).unwrap_or_else(|| {
-            eprintln!("Unknown item: {name}");
-            let valid: Vec<&str> = ITEMS.iter().map(|&(n, _, _)| n).collect();
-            eprintln!("Valid: {}", valid.join(", "));
-            process::exit(1);
+    let starting_items: Vec<u8> = cli
+        .starting_items
+        .iter()
+        .map(|name| {
+            item_id(name).unwrap_or_else(|| {
+                eprintln!("Unknown item: {name}");
+                let valid: Vec<&str> = ITEMS.iter().map(|&(n, _, _)| n).collect();
+                eprintln!("Valid: {}", valid.join(", "));
+                process::exit(1);
+            })
         })
-    }).collect();
+        .collect();
     if starting_items.len() > 3 {
         eprintln!("At most 3 starting items allowed (got {})", starting_items.len());
         process::exit(1);
@@ -485,6 +535,11 @@ fn build_options(cli: &Cli) -> Options {
                 if cli.keep_flashing {
                     opts.remove_flashing = false;
                 }
+                // Same for king_quotes — cosmetic, default-on, absent from the
+                // key; --vanilla-king-quotes overlays it off.
+                if cli.vanilla_king_quotes {
+                    opts.king_quotes = false;
+                }
                 // Same for skip_rom_validation — a property of the input ROM.
                 if cli.skip_rom_validation {
                     opts.skip_rom_validation = true;
@@ -503,6 +558,7 @@ fn build_options(cli: &Cli) -> Options {
             palette_themed: cli.themed_palettes,
             player_color: cli.player_color,
             remove_flashing: !cli.keep_flashing,
+            king_quotes: !cli.vanilla_king_quotes,
             world_order: cli.world_order,
             world_count: cli.world_count,
             big_q_blocks: cli.big_q_blocks,
@@ -526,6 +582,7 @@ fn build_options(cli: &Cli) -> Options {
             hammer_breaks_bridges: cli.hammer_breaks_bridges,
             early_sun: cli.early_sun,
             limit_bro_movement: cli.limit_bro_movement,
+            bro_battle_timer: cli.bro_battle_timer,
             japanese_damage: cli.japanese_damage,
             infinite_mushroom_houses: cli.infinite_mushroom_houses,
             fast_mushroom_house: cli.fast_mushroom_house,
@@ -533,6 +590,7 @@ fn build_options(cli: &Cli) -> Options {
             no_game_over_penalty: cli.no_game_over_penalty,
             faster_frog: cli.faster_frog,
             lakitu_stays_down: cli.lakitu_stays_down,
+            shuffle_big_q_rooms: cli.shuffle_big_q_rooms,
             poison_mushrooms: cli.poison_mushrooms,
             modern_powerups: cli.modern_powerups,
             fire_flower: cli.fire_flower,
@@ -555,6 +613,9 @@ fn build_options(cli: &Cli) -> Options {
             water: cli.water,
             bros: cli.bros,
             hb_encounters: cli.hb_encounters,
+            limit_hazards: cli.limit_hazards,
+            friendlier_levels: cli.friendlier_levels,
+            deja_vu: cli.deja_vu,
             wild_injections: cli.wild_injections.0.clone(),
             starting_lives: cli.starting_lives,
             starting_items,
@@ -569,19 +630,44 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  Seed: {seed}");
     eprintln!("  Flags: {}", options.to_flag_key());
     eprintln!("  Powerups: {}", if options.powerups { "on" } else { "off" });
-    eprintln!("  Player colors: {}", match (options.palettes, options.player_color) {
-        (false, _)      => "vanilla".to_string(),
-        (true, None)    => "random".to_string(),
-        (true, Some(c)) => format!("${c:02X}"),
-    });
+    eprintln!(
+        "  Player colors: {}",
+        match (options.palettes, options.player_color) {
+            (false, _) => "vanilla".to_string(),
+            (true, None) => "random".to_string(),
+            (true, Some(c)) => format!("${c:02X}"),
+        }
+    );
     eprintln!("  World colors: {}", if options.palette_themed { "themed" } else { "vanilla" });
     eprintln!("  Remove flashing: {}", if options.remove_flashing { "on" } else { "off" });
+    eprintln!("  King quotes: {}", if options.king_quotes { "random" } else { "vanilla" });
     eprintln!("  Enemies:  {}", if options.any_enemies_active() { "on" } else { "off" });
+    eprintln!(
+        "  Limit hazards: {}",
+        match options.limit_hazards {
+            HazardLimit::Off => "off",
+            HazardLimit::Sparse => "some (the occasional one)",
+            HazardLimit::All => "all",
+        }
+    );
+    eprintln!("  Friendlier levels: {}", if options.friendlier_levels { "on" } else { "off" });
+    eprintln!(
+        "  Deja Vu: {}",
+        match options.deja_vu {
+            DejaVuMode::Off => "off",
+            DejaVuMode::Double => "double",
+            DejaVuMode::Wild => "wild",
+        }
+    );
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });
     if options.world_order && options.world_count < 7 {
         eprintln!("  World count: {}", options.world_count);
     }
     eprintln!("  Big ? Blocks: {}", if options.big_q_blocks { "on" } else { "off" });
+    eprintln!(
+        "  Big ? Rooms: {}",
+        if options.shuffle_big_q_rooms { "shuffled" } else { "vanilla" }
+    );
     eprintln!("  Starting Lives: {}", options.starting_lives);
     eprintln!("  Airship shuffle: {}", if options.shuffle_airships { "on" } else { "off" });
     eprintln!("  Hammer Bro shuffle: {}", if options.shuffle_hammer_bros { "on" } else { "off" });
@@ -591,21 +677,30 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     eprintln!("  More hammer rocks: {}", tri_str(options.more_hammer_rocks));
     eprintln!("  8s are Wild: {}", tri_str(options.eights_are_wild));
     eprintln!("  Antechamber shuffle: {}", tri_str(options.antechamber_shuffle));
-    eprintln!("  Random fire flower: {}", match options.fire_flower {
-        FireFlowerMode::Off => "off",
-        FireFlowerMode::On => "on",
-        FireFlowerMode::Wild => "wild",
-    });
-    eprintln!("  Piranha shuffle: {}", match options.piranha_shuffle {
-        PiranhaMode::Off => "off",
-        PiranhaMode::On => "on",
-        PiranhaMode::Wild => "wild",
-    });
-    eprintln!("  Wild injections: {}", if options.wild_injections.is_empty() {
-        "off".to_string()
-    } else {
-        options.wild_injections.iter().map(|c| c.name()).collect::<Vec<_>>().join(" + ")
-    });
+    eprintln!(
+        "  Random fire flower: {}",
+        match options.fire_flower {
+            FireFlowerMode::Off => "off",
+            FireFlowerMode::On => "on",
+            FireFlowerMode::Wild => "wild",
+        }
+    );
+    eprintln!(
+        "  Piranha shuffle: {}",
+        match options.piranha_shuffle {
+            PiranhaMode::Off => "off",
+            PiranhaMode::On => "on",
+            PiranhaMode::Wild => "wild",
+        }
+    );
+    eprintln!(
+        "  Wild injections: {}",
+        if options.wild_injections.is_empty() {
+            "off".to_string()
+        } else {
+            options.wild_injections.iter().map(|c| c.name()).collect::<Vec<_>>().join(" + ")
+        }
+    );
     if !options.starting_items.is_empty() {
         let item_names: Vec<&str> =
             options.starting_items.iter().map(|&id| item_display_name(id)).collect();
@@ -647,10 +742,8 @@ fn main() {
     let options = build_options(&cli);
 
     let ext = if cli.patched_rom { "nes" } else { "ips" };
-    let output_path = cli
-        .output
-        .clone()
-        .unwrap_or_else(|| PathBuf::from(format!("smb3-rs_{seed}.{ext}")));
+    let output_path =
+        cli.output.clone().unwrap_or_else(|| PathBuf::from(format!("smb3-rs_{seed}.{ext}")));
 
     print_summary(&options, seed, &output_path);
 
@@ -665,7 +758,9 @@ fn main() {
         match smb3_rs::ips::apply_ips_patch(&rom_data, TOAD_IPS) {
             Ok(patched) => {
                 eprintln!("  Sprite swap: Super Toad (Blue) by JosueCr4ft");
-                eprintln!("               https://mfgg.net/index.php?act=resdb&param=02&c=7&id=38435");
+                eprintln!(
+                    "               https://mfgg.net/index.php?act=resdb&param=02&c=7&id=38435"
+                );
                 patched
             }
             Err(e) => {

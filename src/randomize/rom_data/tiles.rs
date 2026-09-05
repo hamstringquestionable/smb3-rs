@@ -103,10 +103,10 @@ pub(crate) fn is_vertical_path(tile: u8) -> bool {
 /// visible.
 pub(crate) fn gap_tile_for(tile: u8) -> u8 {
     match tile {
-        BRIDGE_TILE => WATER_GAP_TILE,         // bridge → water gap
-        0xDA => 0xE4,                          // sky path → sky lock
-        t if is_vertical_path(t) => 0x54,      // vertical path → vertical lock
-        _ => 0x56,                             // horizontal path → horizontal lock
+        BRIDGE_TILE => WATER_GAP_TILE,    // bridge → water gap
+        0xDA => 0xE4,                     // sky path → sky lock
+        t if is_vertical_path(t) => 0x54, // vertical path → vertical lock
+        _ => 0x56,                        // horizontal path → horizontal lock
     }
 }
 
@@ -122,9 +122,9 @@ pub(crate) fn gap_tile_for(tile: u8) -> u8 {
 /// Returns `None` for a tile that is not a gap tile.
 pub(crate) fn path_for_gap_tile(tile: u8) -> Option<u8> {
     match tile {
-        0x54 => Some(0x46),           // vertical lock   → vertical path
-        0x56 => Some(0x45),           // horizontal lock → horizontal path
-        0xE4 => Some(0xDA),           // sky lock        → sky path
+        0x54 => Some(0x46),                  // vertical lock   → vertical path
+        0x56 => Some(0x45),                  // horizontal lock → horizontal path
+        0xE4 => Some(0xDA),                  // sky lock        → sky path
         WATER_GAP_TILE => Some(BRIDGE_TILE), // water gap → bridge
         _ => None,
     }

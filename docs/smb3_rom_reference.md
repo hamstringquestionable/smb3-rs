@@ -93,6 +93,127 @@ Each range contains the level layout generators for that tileset/theme.
 | 7 | `aaabbbbb` | a = friction factor (3 bits); b = BG banks / CHR selection (5 bits) |
 | 8 | `aa00bbbb` | a = timer seed (2 bits, indexed); b = music track selection (4 bits) |
 
+#### The Level Clock
+
+The header's "timer seed" is a 2-bit **index**, not a time. `LevelLoad` (PRG030
+`$98B4`) folds bits 6-7 of byte 8 down to 0-3 and reads `GamePlay_TimeStart`
+(PRG030 `$97A8`, file `0x3D7B8`, bytes `3, 4, 2, 0`), storing the result in
+`Level_TimerMSD` — the *leading digit only*:
+
+```asm
+$98B4: B1 61       LDA [Level_LayPtr_AddrL],Y
+$98B6: 29 C0       AND #%11000000
+$98B8: 18 2A 2A 2A CLC; ROL A; ROL A; ROL A
+$98BC: AA          TAX
+$98BD: BD A8 97    LDA GamePlay_TimeStart,X
+$98C0: 8D EE 05    STA Level_TimerMSD
+$98C3: D0 03       BNE $98C8              ; non-zero -> done
+$98C5: EE F3 05    INC Level_TimerEn      ; index 3 (value 0) disables the clock
+```
+
+So a header can ask for 300, 400, 200 or unlimited and nothing else. Any other
+time has to be written into the digits directly.
+
+| Address | Symbol | Notes |
+|---|---|---|
+| `$05EE` | `Level_TimerMSD` | Hundreds digit — the only one the header sets |
+| `$05EF` | `Level_TimerMid` | Tens |
+| `$05F0` | `Level_TimerLSD` | Units |
+| `$05F1` | `Level_TimerTick` | Frame countdown, reloaded with `$28` |
+| `$05F3` | `Level_TimerEn` | Any of bits 0-6 stops the countdown (the check is `AND #$7F`); bit 7 alone only freezes level animations |
+
+**A clock unit is not a second — it is 41 frames, ≈ 0.68 s at 60.0988 Hz.**
+`StatusBar_Fill_Time` (PRG026 `$AF9D`) does `DEC Level_TimerTick / BPL`,
+reloading `$28` when it passes zero. So the clock runs about **47% fast**: a
+300 level is ~3 minutes 25 seconds of real time, not five minutes.
+
+**Most of that is deliberate.** `$28` is 40, and 40 frames is exactly 2/3 s at
+60.0988 Hz — a round decimal, not a hardware-derived constant. The European
+(PAL, 50.007 Hz) build stores the same `$28` (at `0x34FC8`; the routine shifts
+3 bytes, the value does not), so it was not scaled to a refresh rate, and
+41/50.007 = 0.82 s is no nearer a second than NTSC. A 1.5x clock is how the era
+put a big round "300" on the status bar for a ~3-minute level. Only the *41st*
+frame is accidental: `DEC`/`BPL` tests after decrementing, so the divider sits
+one extra frame at `$FF` before reloading — 2.4% on top of the intended 50%.
+
+Measured on FCEUX (vanilla PRG1, World 1-1, frame-counted between digit steps):
+
+| Condition | frames/unit | min | max | s/unit |
+|---|---|---|---|---|
+| screen scrolling | **41.00** | 41 | 41 | **0.682** |
+| standing still | 46.80 | 41 | 70 | 0.779 |
+
+The rate is exact while the game is scrolling. It is *only* standing still that
+stutters, and the reason is that the countdown is reached through a rendering
+call the gameplay loop is allowed to skip (PRG030 `$8F5A`):
+
+```asm
+LDA Scroll_ToVRAMHi        ; scroll column pending
+BNE skip
+LDA Scroll_ToVRAMHA
+BNE skip
+LDA Level_SkipStatusBarUpd
+BNE skip
+LDA <Graphics_Queue        ; a video update is queued
+BNE skip
+...
+LDA InvFlip_Counter        ; inventory flipping
+BNE skip_updatevalues
+JSR StatusBar_UpdateValues ; <- the only path to the clock
+```
+
+Timekeeping riding on a render call is the design flaw, but in practice the skip
+is rare enough that 41 frames is the real rate. **Do not assume scrolling slows
+it down — measurement says the opposite.**
+
+**Making it real seconds is a two-byte change.** Both reload sites are `LDA #$28`
+immediates — PRG026 `$AFB5` (file `0x34FC5`, operand `0x34FC6`) and PRG030
+`$8506` (file `0x3C516`, operand `0x3C517`). Writing `$3B` (59) makes the
+`DEC`/`BPL` span 60 frames. Measured with exactly that patch applied:
+
+| Condition | frames/unit | min | max | s/unit |
+|---|---|---|---|---|
+| screen scrolling | **60.00** | 60 | 60 | **0.998** |
+| standing still | 69.67 | 60 | 89 | 1.159 |
+
+Accurate to 0.2% in motion. The idle stutter is the same proportional artefact
+vanilla already has, not something the patch introduces. Because the header
+times were chosen against a deliberately fast clock, every level becomes more
+generous in real terms — a 300 level goes from ~3:25 to 5:00 — so it is a
+change of intent, not a correctness fix. The randomizer applies it
+unconditionally (`qol::level_clock`), on the grounds that a unit that equals a
+second is a unit other features can state directly; `qol::bro_timer` is the
+first to rely on it.
+
+**Retiming the four header slots is three data bytes**, but only in multiples of
+100: `GamePlay_TimeStart` entries go straight into the hundreds digit. Slot 3
+(`00`) is the unlimited path and is used by 381 level headers, so only three
+slots are real times; slot 1 (400) is used by 4 headers and is the cheap one to
+repurpose. To reproduce vanilla's *real* durations on the fixed clock you would
+need 137 / 205 / 273, which needs a tens digit — a parallel 4-byte table plus
+~9 bytes folded into the existing `$98C0` hook, since `X` still holds the timer
+index there.
+
+**Lag stretches a unit, before and after the patch.** `Counter_1` ($15) is
+incremented in the NMI handler (`prg031.asm`), so it counts real frames; the
+divider is only touched from the main loop, which is paced by
+`GraphicsBuf_Prep_And_WaitVSync`. A frame that overruns VBlank therefore costs
+the clock a tick, and a unit becomes longer in wall-clock terms. Correcting
+*that* is a different patch: drive the countdown from `Counter_1` deltas
+(`LDA <Counter_1 / SBC last / STA last`) so skipped and lagged frames are
+absorbed rather than lost. It needs ~25 bytes of free space and one spare RAM
+byte — `Unused699` ($0699) is a candidate, written once in PRG030 and read
+nowhere.
+
+Only three places write the digits: the countdown itself, `DoTimeBonus`
+(PRG000 `$C412`, the post-goal drain that converts leftover time to score), and
+the blanket `Clear_RAM_thru_ZeroPage` with `LDY #$06` that wipes `$0000-$06FF`
+on every path from a level back to the map. Nothing zeroes `Level_TimerMid` /
+`Level_TimerLSD` at level *load* — they are simply already 0 because of that
+clear. The same clear is why `Map_EnterViaID` (`$1E`, the map-object id the
+player walked in through) cannot leak from one level into the next, even though
+the ROM writes it in exactly one place (PRG011 `$B6D8`) and never clears it.
+
 ### Level Tile Generator Format
 
 Levels use "tile generators" (variable/fixed-size construction routines), not raw tile grids.
@@ -289,6 +410,62 @@ Bonus room: at **0x1FCA3** (CPU $BC93), entered via junction.
 `TopDecoBlocks` (dispatches 35-42) read an extra byte. Parsing all commands as 3 bytes
 will misalign every command after the first extra-byte routine, producing wrong results.
 The level simulator at `tools/level_sim.py` handles this correctly.
+
+#### A Level Tile's Solidity and Palette Both Come From Its ID
+
+Neither is stored per metatile — the 1024-byte quadrant table in each metatile
+bank holds CHR indices and nothing else. Both fall out of the tile ID:
+
+**Palette = the top 2 bits.** `$00-$3F` → palette 0, `$40-$7F` → 1, `$80-$BF` →
+2, `$C0-$FF` → 3. Plains is the clean demonstration: the white big blocks,
+clouds and note blocks are all `$00-$3F` (palette 0, white), while the orange big
+blocks, bricks and coins are all `$40-$7F` (palette 1, orange/gold). This is why
+`TILEA_GNOTE` ($BC) is "the same note block, coloured wrong" — it is an
+otherwise-identical tile parked in a different quadrant.
+
+**Solid = `tile >= Tile_AttrTable[quadrant]`.** Each tileset supplies eight
+threshold bytes — four for the downward/ground check, four for the upward/ceiling
+check — sitting immediately after the quadrant table at bank + 0x400.
+`Level_CheckGndLR_TileGTAttr` (PRG008) does the compare. Tileset 2's set is
+`11 5A 9B E2 11 5A 9B E2`; tileset 1's is `25 50 A0 E2 2D 53 AD F0`. Spot-checks
+against tileset 2: coin `$40` is quadrant 1 with root `$5A`, so not solid;
+brick `$67` is, solid brick `$9C` is, bright diamond `$E4` is.
+
+Two consequences worth remembering:
+
+- **A "common" tile is not automatically solid in every tileset.** The threshold
+  moves per tileset, so the same ID can be solid in one and background in
+  another. Check the root before reusing a tile in a new tileset.
+- **`Level_SlopeSetByQuad` is a red herring for this question.** It is rooted on
+  the same thresholds and looks like a solidity table, but
+  `Player_DetectSolids` only consults it when `Level_SlopeEn` is set *and* the
+  tileset is 3 (Hills) or 14 (Underground). Reading it for any other tileset
+  produces nonsense — it claims the fortress bright diamond is a 45° slope.
+
+#### `LoadLevel_BlockRun` — byte2's High Nibble Picks the Block
+
+Group 1, variable-size dispatches 15-22, shared across every tileset via
+`LoadLevel_Blocks` (PRG014). The low nibble is run length minus one, so `$60` is
+one note block and `$63` is a run of four. Retyping a placed block is a
+one-nibble edit that changes no offsets:
+
+| byte2 | Tile | Block |
+|-------|------|-------|
+| `$1X` | `$67` | Brick |
+| `$2X` | `$63` | ? block with a coin |
+| `$3X` | `$6B` | Brick with a coin |
+| `$4X` | `$79` | Wood block |
+| `$5X` | `$BC` | Green note block |
+| `$6X` | `$2E` | Note block |
+| `$7X` | `$72` | Bouncing wood block |
+| `$8X` | `$40` | Coin |
+
+`Level_ActionTiles` (PRG008) gives these their behaviour on a flat tile-ID
+compare, so it is tileset-independent — but the hit-enable mask differs: note
+blocks are `%0011` (top and bottom), bouncing wood blocks are `%1100` (sides
+only), green note blocks `%1111`. A note block is the one to reach for when the
+player must land on it. Coins are the only entry that consults collected-coin
+memory (`LoadLevel_CheckBGHMem`), so retyping one away also drops that check.
 
 **Group 1 power blocks found in 1-1 (verified by simulator):**
 
@@ -493,6 +670,167 @@ in a `100xx` pipe bypass the header chain entirely on exit.
 byte 4's vertical-start (bits 5-7) and byte 8's timer (bits 6-7) — the running
 clock persists across junctions — while music (byte 8 bits 0-3), init action
 (byte 7 bits 5-7), palettes, and size are re-read from the target header.
+
+#### Big [?] Block Bonus Areas
+
+Sources: southbird disasm `prg026.asm` (`LevelJct_BigQuestionBlock`),
+`prg008.asm` (`Player_DoSpecialTiles`, `PipeEntryPrepare`), `prg005.asm`
+(`ObjInit_BigQBlock`), `prg030.asm` (`LevelLoad`), `smb3.asm` tile constants.
+
+Eight bonus *areas* — not eight rooms. Each is a multi-screen level that may
+hold several one-screen rooms, and the screen you land on picks the room.
+
+| Table | File offset | CPU (PRG026) | Size |
+|---|---|---|---|
+| `LevelJctBQ_Layout` | 0x3491B | $A90B | 8 words |
+| `LevelJctBQ_Objects` | 0x3492B | $A91B | 8 words |
+| `LevelJctBQ_Tileset` | 0x3493B | $A92B | 8 bytes (all 14 in vanilla) |
+
+**Which area** — `LevelJct_BigQuestionBlock` indexes all three with `LDY
+World_Num` (the randomizer replaces this with a level-identity lookup, see
+`qol/big_q.rs`). The layout is read from whichever bank `PAGE_A000_ByTileset`
+maps for the tileset byte, so an area's layout need not live in PRG013; the
+object stream always comes from PRG006, which `LevelLoad` maps unconditionally
+(`LDA #6 / STA PAGE_C000`) right before `JSR LevelLoad_CopyObjectList`.
+
+**Which room inside it** — the arrival position comes from the *source* level's
+own junction command (see "Junction Spawn Positions"): `Level_JctXLHStart[slot]`
+= `(col << 4) | screen`. 5-2's slot-4 command at **0x1A807** is `E4 02 73`, and
+BigQ5's 3-Up block sits at screen 3 column 7. An object entry's X-byte
+(`(screen << 4) | col`) and the junction's byte2 are nibble-swaps of each other,
+which makes "aim this pipe at that block" a one-byte edit.
+
+**The return position is supplied by the bonus area, not the host.** On the way
+out, `LevelJct_BigQuestionBlock` restores the layout pointers and then falls into
+the same code the entry uses, reading `Level_JctXLHStart[Player_XHi]` — indexed
+by the screen the player occupies *in the bonus room*. Every vanilla area
+therefore carries one group-7 command per room screen, and the slots line up
+exactly with where its blocks are:
+
+| Area | Block screens | Junction slots |
+|---|---|---|
+| BigQ2 | 1 | 1, 4 |
+| BigQ3 | 1, 4, 5 | 1, 4, 5 |
+| BigQ4 | 2, 3 | 2, 3 |
+| BigQ5 | 3, 7 | 3 (`61 65`), 7 (`42 E5`) |
+| BigQ6 | 3, 5, 6 | 3, 5, 6 |
+| BigQ7 | 4, 6 | 4, 6 |
+| BigQ8 | 1, 4 | 4 |
+
+A room whose screen has no such command returns the player to whatever stale
+value that slot happens to hold — and if that value has byte1 bit 7 set, the
+host area is re-entered in vertical mode, giving correct collision with the
+wrong graphics.
+
+**Getting back out needs no special tile.** `LevelJctBQ_Flag` is toggled on
+entry and off on exit. While it is set, the vertical-pipe path ANDs the pipe
+tile index with 1 (`PRG008_BCC4`, just before `PRG008_BCD6`) and the horizontal
+path forces type 0 (just before `PRG008_BCA4`), which collapses all four
+vertical pipe-1/pipe-2 end tiles onto the Big [?] junction type — so *any*
+ordinary pipe in the room returns the player to the host level.
+
+**Outside a bonus area the pipe type is the metatile.** The engine computes
+`$B0 - tile` and uses the result >> 1 as the type:
+
+| Tile | Name | Junction type |
+|---|---|---|
+| $AD / $AE | `TILE1_PIPETB1_L/R` | alt level (exit to map, or general junction) |
+| $AF / $B0 | `TILE1_PIPETB2_L/R` | **Big [?] area** (JctCtl=2) |
+| $B1 / $B2 | `TILE1_PIPETB3_L/R` | not enterable |
+| $B3 / $B4 | `TILE1_PIPETB4_L/R` | within-level transit |
+| $BD / $BE | `TILE3_PIPETB5_L/R` | exit to common end area (gated per tileset) |
+| $B5 | `TILE1_PIPEH1_B` | horizontal, alt level |
+
+`PipeTile_EnableByTileset` (PRG008, indexed by `Level_TilesetIdx`) gates only
+the last two rows; $AD-$B4 are live in every tileset.
+
+So converting an ordinary pipe into a Big [?] pipe is a layout edit ($AD/$AE →
+$AF/$B0) **plus** a group-7 junction command at `slot == the pipe's screen` —
+without one, the arrival reads a stale slot from a previous parse.
+
+**One block per screen, once per world.** `BigQBlock_GotIt` is an 8-bit mask
+indexed by the block's `Objects_XHi` — its *screen* — cleared on world entry,
+game over, and map re-init. Two rooms on the same screen number share one bit.
+
+**Vanilla reaches 11 of the 15 blocks.** Counting `OBJ_BIGQBLOCK_*` entries per
+area: W1 0, W2 1, W3 3, W4 2, W5 2, W6 3, W7 2, W8 2. Eleven levels have a Big
+[?] pipe (3-5, 3-9, 4-F2, 5-2, 5-5, 6-3, 6-9, 6-10, 7-F1, 7-8, 8-1), so W1's
+empty area, W2's whole area (no W1/W2 level has such a pipe) and one spare room
+each in W3/W4/W8 are never opened.
+
+**The pipe is not always in the area the level's map tile enters.** Ten of the
+eleven hosts carry their Big [?] pipe in their entry area, so `Level_ObjPtrOrig`
+at the pipe equals the pointer-table `obj_ptr`. **7-F1 does not:** its map entry
+is layout $B28E / objects $D4E4, and the junction command `E6 02 16` (0x2B47E,
+CPU $B46E) lies in the *alternate* area $B3CB, whose objects are the shared
+`Empty_ObjLayout` ($C006). Anything that identifies the host from
+`Level_ObjPtrOrig` alone therefore fails for 7-F1 and must fall back to the
+map-entry pointer saved at level init. (6-9's pipe is likewise outside its entry
+area, in the donated interior $C60E — but that pointer is distinct, so it still
+identifies the level.)
+
+**"Unused Level 5" (TCRF)** is a ninth, fully unreferenced set: eight Big [?]
+rooms, one per screen 0-7, every block a Tanooki Suit ($98).
+
+| Part | File offset | CPU | Bank | Bytes |
+|---|---|---|---|---|
+| Layout | 0x2B764 | $B754 | PRG021 (fortress tileset 2) | 294 |
+| Objects | 0x0D411 | $D401 | PRG006 | 26 |
+
+**Screen 2 is shipped modified.** Its two `Coin` commands at 0x2B7C0 and
+0x2B7C3 are retyped to note blocks (`LoadLevel_BlockRun`, byte2 `$80` → `$60`)
+and moved to rows 20/15 whenever a Big [?] host draws an Unused Level 5 room —
+see `SCREEN2_NOTES` in `big_q_rooms.rs`. Vanilla screen 2 arrives down a shaft
+(columns 1-4) that runs unbroken to the floor while its block sits at row 10,
+column 10, so a player who does not drift right through the rows 8-10 gap during
+the fall lands with nothing to climb and leaves the room unspendable. The note
+blocks are the climb. `$2E` is solid here because solidity is
+`tile >= Tile_AttrTable[quadrant]` and tileset 2's quadrant-0 root is `$11`;
+`Level_ActionTiles` handles the bounce and is tileset-independent. No vanilla
+fortress-tileset level places one, so this is the first.
+
+Neither address appears in the world pointer tables (0x19438–0x19C00) or as a
+header alt pointer. Loaded normally its pipes exit to the world map, which is
+what TCRF describes; reached through a Big [?] junction the flag rule above
+turns them into return pipes. `testrom --bigq-unused5 <screen>` points all
+eight table entries at it and aims 5-2's pipe at one room.
+
+Unlike the per-world areas it carries **no group-7 commands at all**, so it
+supplies no return position — see `UNUSED5_ARRIVALS` and
+`UNUSED5_SPARE_COMMANDS` in `testrom.rs` for the arrival aims and for how a
+return junction is written into it. Its layout stream is byte-tight (terminator
+at 0x2B889, World 8's fortress layout at 0x2B88A), so a junction command has to
+replace an existing command. Per-room command budgets, from parsing the stream
+with the fortress tileset's sizes:
+
+| Screen | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|---|
+| Commands | 10 | 5 | 10 | 4 | 21 | 22 | 4 | 8 |
+| Bytes | 35 | 18 | 36 | 14 | 66 | 69 | 15 | 31 |
+
+Wiring all eight rooms costs 24 bytes, so deleting any one of screens 0, 2, 4, 5
+or 7 pays for the other seven with room to spare.
+
+**Its palette index is the placeholder.** Header byte 5 bits 0-2 select the BG
+palette within the tileset, and the loader re-reads palettes from the target
+header on a junction — so one byte recolours the whole area. Unused Level 5
+carries index 6, which in the fortress tileset is shared with exactly one other
+level, `Empty`; that is why it renders in black and white. Indices real
+fortress-tileset levels use:
+
+| Index | Used by |
+|---|---|
+| 0 | most mini-fortresses — 3-F1, 4-F1, 8-F, the W5 towers, several alt areas |
+| 1 | Koopaling throne rooms (1-K … 7-K), paired with object palette 10 |
+| 3 | World 3's fortresses (3-F2, 3-F1A, 3-F2A) |
+| 4 | 1-F, 4-F2, 5-F1/F2, 6-F1, 7-F1/F2, 8-FA, Bowser's castle |
+| 6 | `Empty` and this level only — the placeholder |
+
+**Variable-command sizes are per tileset.** `game.xml` in the southbird disasm
+carries them: a `<generator>` whose `<param>` is commented `<!-- 1 -->` reads a
+fourth byte. Fortress (tileset 2) four-byte generators are 13, 14, 35-42, 46-48,
+57; Plains is 11, 12, 35-42. Parsing a layout with the wrong set desyncs
+silently and the stream still appears to terminate.
 
 #### OBJ_TREASURESET (0xD6) — Treasure Box Items
 
@@ -2838,19 +3176,57 @@ matched by the special-tiles table (`$A447`), the page thresholds (`$A400`), or
 `Map_Removable_Tiles`.  If the row 7 tile IS caught, it gets replaced and the row 8
 tile is never reached.
 
+**The write side shares the bit for the same reason.** `Map_MarkLevelComplete`
+(PRG011 `$BA20`) resolves the player's row by scanning `Map_CompleteY` — `.byte
+$20, $30, $40, $50, $60, $70, $80`, **seven entries, rows 0-6 only** — and on no
+match falls through to `LDY #$07`. `World_Map_Y` for row 7 is `$90` and for row 8
+`$A0`, so *both* land on index 7 and `Map_CompleteBit[7]` = `$01`. Rows 0-6 each
+own a distinct bit (`$80 $40 $20 $10 $08 $04 $02`); `$01` is the only shared one
+on the whole map. That is what bounds the blast radius of any stray completion:
+a bit claimed at rows 0-6 can only ever affect the cell that claimed it.
+
+**What can claim a bit at all.** `Map_MarkLevelComplete` has exactly one caller,
+the level-clear FX in PRG011, and that block is gated at `PRG011_A9FE` on **the
+tile the player is standing on**: it must be in `Map_ForcePoofTiles` (toad house,
+spade, hand trap, dancing flower, alt toad house) or pass `CMP Tile_AttrTable+4,Y
+/ BGE` for its quadrant. A Hammer Bro rides a plain path tile (`$44/$47/$48/$4A`,
+quadrant 1, threshold `$67`), which fails that test — so **beating a Hammer Bro
+never marks a tile complete, claims no bit, and stamps no M/L**, wherever the bro
+was placed or marched to. Vanilla relies on this: W2 pointer entry 24 is a Hammer
+Bro at `(8, 6)`, directly under the oasis that owns column 6's `$01` bit.
+
+(The march does *try* to keep bros off enterable tiles — `PRG011_B415` sets
+`Map_March_Count` to `$40` for a 4-tile hop when the 2-tile landing is
+enterable-class — but it is best-effort: the +4 landing is never re-validated and
+an already-`$40` counter lands regardless. It is not a guarantee, and nothing
+here needs it to be.)
+
 Tiles that block the row 8 fallthrough (completion-unsafe at row 7):
 - Special: `$50, $E8, $E6, $BD, $E0`
 - Fortress: `$67, $EB` (→ `Map_Removable_Tiles` path)
 - Page thresholds: page0 ≥ `$03`, page1 ≥ `$67`, page2 ≥ `$BF`, page3 ≥ `$E9`
 - Removable: `$51, $52, $54, $67, $EB, $E4, $56, $9D`
 
-**Randomizer constraints:**
-- `find_blank_slots` skips row 8 positions where the existing row 7 tile is
-  completion-unsafe (prevents the builder from placing a level there).
-- `populate_sections` enforces that no two completable tiles (Level, Fortress, Pipe)
-  are orthogonally adjacent — this prevents both the row 7/8 bit collision and
-  visually cluttered numbered tiles.
-- `place_locks` skips row 7 candidates to avoid the `$01` bit collision with row 8.
+**Randomizer constraints:** one source of truth, `WorldState::row78_barred`
+(`overworld_build/state.rs`), read by `legal_blanks`, `lock_candidates` and the
+hammer-bro fill. It bars the partner cell of all **three** things that claim
+the shared bit:
+
+- placed content — a Level / Fortress / BonusGame / ToadHouse slot;
+- a lock, which is a `Map_Removable_Tiles` entry and so is redrawn from the bit
+  on every map reload;
+- **map terrain the engine reads as completable** — scenery, not a pointer
+  entry, which is how it went missed. W2's oasis (`TILE_POOL`, `$BF`) at
+  `(7, 6)` is the live case: it survives pickup and lands exactly on the page-2
+  `Tile_Attributes_TS0` threshold, so before 2026-09-01 seeds put a level or a
+  fortress at `(8, 6)` that could never show beaten, and a lock there would
+  have grown back on reload.
+
+`row78_completion_bit_is_never_double_claimed` (`overworld_writer/tests.rs`)
+asserts it on the *written* ROM, where terrain, content and locks are finally
+the same kind of thing — the view the engine has. The check needs both rows
+completion-unsafe: a Hammer Bro rides a plain path tile the pass never touches,
+and W6's `$EA` scenery band occupies both rows with no entry on either.
 
 **Vanilla FX positions:** Bridges ($56), water gaps ($9D), and sky gaps ($E4) should only
 appear at the 13 vanilla FX positions. Locks ($54) can be placed on any path tile.

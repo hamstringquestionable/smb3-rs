@@ -35,12 +35,8 @@ impl Phase for HammerBroFill {
         // budget ordering (they were excluded from every earlier phase via
         // `fixed`, so no slot can already sit there; guard anyway).
         let taken: HashSet<Pos> = state.slots.iter().map(|s| s.pos).collect();
-        let pins: Vec<Pos> = state
-            .hb_sprite_pins
-            .iter()
-            .copied()
-            .filter(|p| !taken.contains(p))
-            .collect();
+        let pins: Vec<Pos> =
+            state.hb_sprite_pins.iter().copied().filter(|p| !taken.contains(p)).collect();
         for pos in &pins {
             state.slots.push(SlotAssignment {
                 pos: *pos,
@@ -61,12 +57,7 @@ impl Phase for HammerBroFill {
         // Candidates: legal blanks, walk-reachable, nearest-to-start first.
         let legal: HashSet<Pos> = state.legal_blanks().into_iter().collect();
         let ordered = bfs_ordered(&state.grid, &state.pipe_pairs, state.start, state.world_idx);
-        let mut barred: HashSet<Pos> = state
-            .slots
-            .iter()
-            .filter_map(|s| row78_partner(s.pos))
-            .chain(state.locks.iter().filter_map(|l| row78_partner(l.pos)))
-            .collect();
+        let mut barred: HashSet<Pos> = state.row78_barred();
         let mut placed = 0usize;
         for (pos, _) in ordered {
             if placed >= budget {

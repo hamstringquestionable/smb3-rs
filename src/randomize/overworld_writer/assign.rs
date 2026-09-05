@@ -65,9 +65,7 @@ fn take_level_slot(
     is_troll_pipe: bool,
     is_ineligible: impl Fn(usize) -> bool,
 ) -> (usize, bool) {
-    if is_troll_pipe
-        && let Some(idx) = pool.iter().position(|&pi| !is_ineligible(pi))
-    {
+    if is_troll_pipe && let Some(idx) = pool.iter().position(|&pi| !is_ineligible(pi)) {
         return (pool.remove(idx).unwrap(), false);
     }
     (pool.pop_front().expect("level pool exhausted"), is_troll_pipe)
@@ -80,7 +78,7 @@ pub(super) fn assign_pool<R: Rng>(
     rng: &mut R,
     flags: WriteFlags,
 ) -> Vec<WorldAssignments> {
-    let WriteFlags { shuffle_hammer_bros, .. } = flags;
+    let WriteFlags { shuffle_hammer_bros, friendlier_levels, deja_vu, .. } = flags;
     let pickup = data.pickup;
     let catalog = data.catalog;
     // Partition pool by kind.
@@ -137,12 +135,15 @@ pub(super) fn assign_pool<R: Rng>(
     // softlocking the player.
 
     // Find the 1-F pool entry.
-    let fort_1f_pos = fort_pool.iter().position(|&pi| {
-        let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
-        ce.level_entry.as_ref().is_some_and(|le| {
-            u16::from_le_bytes([le.obj_lo, le.obj_hi]) == FORTRESS_1F_OBJ_PTR
+    let fort_1f_pos = fort_pool
+        .iter()
+        .position(|&pi| {
+            let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
+            ce.level_entry
+                .as_ref()
+                .is_some_and(|le| u16::from_le_bytes([le.obj_lo, le.obj_hi]) == FORTRESS_1F_OBJ_PTR)
         })
-    }).expect("1-F fortress not found in pool");
+        .expect("1-F fortress not found in pool");
     let fort_1f_pi = fort_pool.remove(fort_1f_pos);
 
     // Collect all safe (world_idx, section) slots. World order is
@@ -159,11 +160,134 @@ pub(super) fn assign_pool<R: Rng>(
     // that's fine — the player must use the normal exit (beat Boom-Boom)
     // to open the lock.
     let mut preassigned_forts: HashMap<(usize, usize), usize> = HashMap::new();
-    if let Some(&(safe_wi, safe_section)) = safe_slots.choose(rng) {
-        preassigned_forts.insert((safe_wi, safe_section), fort_1f_pi);
+    if let Some(&slot) = safe_slots.choose(rng) {
+        safe_slots.retain(|&s| s != slot);
+        preassigned_forts.insert(slot, fort_1f_pi);
     } else {
         // No safe slot available — return 1-F to the regular pool.
         fort_pool.push(fort_1f_pi);
+    }
+
+    // Friendlier Levels, fortress half: park the harshest forts on the safe
+    // slots 1-F did not take, so their locks can stay shut and the player can
+    // route around them.
+    //
+    // A ladder rather than a set, because supply is finite and 1-F has already
+    // taken one. `FRIENDLIER_OPTIONAL_FORTS` is walked in order and each entry
+    // takes a remaining safe slot; when they run out the rest of the ladder is
+    // simply left required. Measured over 300 seeds, 99% offer the three safe
+    // slots this wants and none offered fewer than two, so in practice only the
+    // tail ever misses.
+    //
+    // Unlike 1-F this is a preference, never a correctness requirement: these
+    // forts open their locks normally, so a missed slot costs the player a
+    // detour rather than the run. That is also why it is fine that
+    // `secret_exit_safe` is computed one lock at a time — two safe locks in one
+    // world are not *jointly* guaranteed safe, but nothing here is ever sealed
+    // permanently, so the player can always go back and beat one.
+    if friendlier_levels {
+        for &name in rom_data::FRIENDLIER_OPTIONAL_FORTS {
+            let Some(&slot) = safe_slots.choose(rng) else {
+                break; // no safe slots left — the rest of the ladder stays required
+            };
+            let Some(pos) = fort_pool
+                .iter()
+                .position(|&pi| catalog.entries[pickup.pool[pi].catalog_idx].name == name)
+            else {
+                continue; // not in the pool this run
+            };
+            safe_slots.retain(|&s| s != slot);
+            preassigned_forts.insert(slot, fort_pool.remove(pos));
+        }
+    }
+
+    // A level that hands out a one-off inventory item: the chest levels
+    // (rom_data::CHEST_LEVELS — 3-7 Cloud, 5-1 Music Box, 8-Tank Star; 1F is
+    // listed too but is a fortress and never fills a regular-level slot) and
+    // the W8 hand rooms (8-Hnd1/2/3). Two rules key off this:
+    //
+    //  - Never dealt twice. A second copy hands the item out twice.
+    //  - Never disguised as a troll pipe. Those don't clear when beaten, so
+    //    the hand rooms could be farmed for items, and a chest level hidden
+    //    behind a pipe tile is missed by players who skip them.
+    let holds_unique_item = |pi: usize| -> bool {
+        let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
+        rom_data::is_hand_level(ce.world_idx, ce.entry_idx)
+            || rom_data::is_chest_level(ce.world_idx, ce.entry_idx)
+    };
+
+    // --- Deck surgery -------------------------------------------------
+    //
+    // Three steps, in this order: Friendlier Levels takes levels *out*, Deja Vu
+    // decides how many copies of what is left go *in*, and then the deck is
+    // topped back up if either left it short.
+    //
+    // The top-up is mandatory, not cosmetic: the builder places exactly
+    // VANILLA_LEVEL_COUNT levels every seed and the draw below is a bare
+    // `pop_front().expect(...)`, so a short deck panics.
+    //
+    // A duplicate is just the same pool index dealt twice. The writer reads
+    // the level entry through it, so both slots get the same level; nothing
+    // needs a synthetic catalog entry.
+
+    // Friendlier Levels: hold the harshest levels out of the deck.
+    if friendlier_levels {
+        level_pool.retain(|&pi| {
+            !rom_data::is_friendlier_blocked(&catalog.entries[pickup.pool[pi].catalog_idx].name)
+        });
+    }
+
+    // Deja Vu: let levels repeat. Both modes redeal the deck to exactly
+    // VANILLA_LEVEL_COUNT cards, so the whole deck is dealt and the redeal is
+    // what the player sees rather than a shuffle-and-truncate after it.
+    //
+    // The deck is seeded with the levels holding a one-off inventory item, one
+    // copy each, and they are then held out of the redeal. That is the only way
+    // to keep both halves of their rule true at once: never dealt twice (the
+    // item would be handed out twice) and never dropped (it would be out of
+    // reach). Everything else is fair game.
+    //
+    // `sources` is never empty — the pool is dozens of levels and only a
+    // handful hold an item.
+    if deja_vu != DejaVuMode::Off {
+        let (mut deck, sources): (Vec<usize>, Vec<usize>) =
+            level_pool.iter().copied().partition(|&pi| holds_unique_item(pi));
+        let want = VANILLA_LEVEL_COUNT.saturating_sub(deck.len());
+        match deja_vu {
+            // Double: two copies of every level in the bag, dealt without
+            // replacement. A level lands on at most two tiles, and the levels
+            // the deal misses sit the seed out.
+            DejaVuMode::Double => {
+                let mut bag: Vec<usize> = sources.iter().chain(sources.iter()).copied().collect();
+                bag.as_mut_slice().shuffle(rng);
+                bag.truncate(want);
+                deck.extend(bag);
+            }
+            // Wild: drawn with replacement, so nothing caps how many tiles one
+            // level can take.
+            _ => {
+                for _ in 0..want {
+                    deck.push(*sources.choose(rng).expect("no repeatable levels in pool"));
+                }
+            }
+        }
+        level_pool = deck;
+    }
+
+    // Top the deck back up to the number of slots the builder placed. Only
+    // Friendlier Levels can leave it short, and only with Deja Vu off or beta
+    // stages off: beta stages already leave the deck oversized (they are
+    // appended without raising the number drawn) so they absorb the removals
+    // first, and either Deja Vu mode refills it well past the line. That is why
+    // `short` is a saturating subtraction rather than the blocklist length.
+    let short = VANILLA_LEVEL_COUNT.saturating_sub(level_pool.len());
+    if short > 0 {
+        // Without replacement, so no level is dealt a third time. `sources` is
+        // far larger than `short` for any sane blocklist; the deck-length
+        // assertion in the tests is what holds that true.
+        let sources: Vec<usize> =
+            level_pool.iter().copied().filter(|&pi| !holds_unique_item(pi)).collect();
+        level_pool.extend(sources.choose_multiple(rng, short).copied());
     }
 
     // Shuffle remaining fortress and level pools.
@@ -179,24 +303,6 @@ pub(super) fn assign_pool<R: Rng>(
     let mut fort_iter = fort_pool.into_iter();
     let mut level_pool: VecDeque<usize> = level_pool.into();
 
-    // Troll pipes don't clear when beaten, so a slot stamped as a troll pipe
-    // can be replayed infinitely. We exclude two families of levels from the
-    // troll-pipe assignment pool:
-    //
-    //  - W8 Hand levels (8-Hnd1/2/3): short bonus rooms that drop items, so
-    //    re-entering the pipe would let the player farm items.
-    //
-    //  - Chest levels (rom_data::CHEST_LEVELS): the player needs to find these
-    //    levels to collect the inventory item. Disguising them as pipes hides
-    //    them from players who skip pipe-look tiles. Includes 3-7 (Cloud),
-    //    5-1 (Music Box), 8-Tank (Star). 1F is also in the list but is a
-    //    fortress, never a regular-level slot.
-    let is_troll_pipe_ineligible = |pi: usize| -> bool {
-        let ce = &catalog.entries[pickup.pool[pi].catalog_idx];
-        rom_data::is_hand_level(ce.world_idx, ce.entry_idx)
-            || rom_data::is_chest_level(ce.world_idx, ce.entry_idx)
-    };
-
     let mut assignments: Vec<WorldAssignments> = Vec::with_capacity(8);
 
     for wi in 0..8 {
@@ -205,9 +311,9 @@ pub(super) fn assign_pool<R: Rng>(
         // --- Fortress assignments (ordered by section for FX) ---
         let mut fortress = Vec::new();
         for section in 0..built.section_count {
-            if let Some(slot) = built.slots.iter().find(|s| {
-                s.kind == SlotKind::Fortress && s.section == section
-            }) {
+            if let Some(slot) =
+                built.slots.iter().find(|s| s.kind == SlotKind::Fortress && s.section == section)
+            {
                 // Check if this slot was pre-assigned (1-F safe placement).
                 let pi = match preassigned_forts.remove(&(wi, section)) {
                     Some(pre) => pre,
@@ -233,20 +339,15 @@ pub(super) fn assign_pool<R: Rng>(
         // than a pipe leading to the hand-trap behind it.
         let mut level = Vec::new();
         let mut demoted_troll_pipes: HashSet<(usize, usize)> = HashSet::new();
-        let level_slots: Vec<&_> = built.slots.iter()
-            .filter(|s| s.kind == SlotKind::Level)
-            .collect();
-        let mut ordered: Vec<&_> = level_slots.iter().copied()
-            .filter(|s| s.is_troll_pipe)
-            .collect();
+        let level_slots: Vec<&_> =
+            built.slots.iter().filter(|s| s.kind == SlotKind::Level).collect();
+        let mut ordered: Vec<&_> =
+            level_slots.iter().copied().filter(|s| s.is_troll_pipe).collect();
         ordered.extend(level_slots.iter().copied().filter(|s| !s.is_troll_pipe));
 
         for slot in ordered {
-            let (pi, demoted) = take_level_slot(
-                &mut level_pool,
-                slot.is_troll_pipe,
-                is_troll_pipe_ineligible,
-            );
+            let (pi, demoted) =
+                take_level_slot(&mut level_pool, slot.is_troll_pipe, holds_unique_item);
             if demoted {
                 demoted_troll_pipes.insert(slot.pos);
             }
@@ -272,11 +373,8 @@ pub(super) fn assign_pool<R: Rng>(
                 let (mut pos_a, mut pos_b) = built.pipe_pairs[pair_idx];
 
                 // Use the is_a_side flag precomputed during catalog building.
-                let (idx_a, idx_b) = if group[0].1 {
-                    (group[0].0, group[1].0)
-                } else {
-                    (group[1].0, group[0].0)
-                };
+                let (idx_a, idx_b) =
+                    if group[0].1 { (group[0].0, group[1].0) } else { (group[1].0, group[0].0) };
 
                 // Mixed pairs (one endpoint is the $5F spiral-castle tile, the
                 // other a plain pipe — only the W5 spiral) always drew the
@@ -302,12 +400,13 @@ pub(super) fn assign_pool<R: Rng>(
 
         // --- Airship (W1-W7) ---
         let airship = if wi < 7 {
-            let airship_pos = catalog.entries.iter()
+            let airship_pos = catalog
+                .entries
+                .iter()
                 .find(|e| e.world_idx == wi && matches!(e.kind, NodeKind::Airship))
                 .map(|e| e.grid_pos);
-            airship_pos.and_then(|pos| {
-                airship_pool.pop().map(|pi| Assignment { pool_idx: pi, pos })
-            })
+            airship_pos
+                .and_then(|pos| airship_pool.pop().map(|pi| Assignment { pool_idx: pi, pos }))
         } else {
             None
         };
@@ -364,7 +463,8 @@ pub(super) fn assign_pool<R: Rng>(
         // dedicated per-obj_ptr round-robin so each encounter in a world
         // has a different enemy set. Filler positions (blank tiles needing
         // valid pointer entries) use the normal cycling pool.
-        let level_like_count = fortress.len() + level.len() + pipes.len() * 2 + bonus.len() + toad.len();
+        let level_like_count =
+            fortress.len() + level.len() + pipes.len() * 2 + bonus.len() + toad.len();
         let remaining_slots = pickup.worlds[wi].pool_indices.len().saturating_sub(level_like_count);
 
         // When Hammer Bros are redistributed, the sprite positions are the new
@@ -379,7 +479,9 @@ pub(super) fn assign_pool<R: Rng>(
         let mut sprite_slots = Vec::new();
         let mut filler_slots = Vec::new();
         for slot in &built.slots {
-            if slot.kind != SlotKind::HammerBro { continue; }
+            if slot.kind != SlotKind::HammerBro {
+                continue;
+            }
             if sprite_positions.contains(&slot.pos) {
                 sprite_slots.push(slot.pos);
             } else {
@@ -390,7 +492,9 @@ pub(super) fn assign_pool<R: Rng>(
         // Assign sprite slots from per-obj_ptr round-robin.
         let mut hammer_bro = Vec::new();
         for (sprite_obj_idx, pos) in sprite_slots.iter().enumerate() {
-            if hammer_bro.len() >= remaining_slots { break; }
+            if hammer_bro.len() >= remaining_slots {
+                break;
+            }
             let key = hb_group_keys[sprite_obj_idx % hb_group_keys.len()];
             let group = hb_obj_groups.get(&key).unwrap();
             let le = group[sprite_obj_idx / hb_group_keys.len() % group.len()].clone();
@@ -399,7 +503,9 @@ pub(super) fn assign_pool<R: Rng>(
 
         // Assign filler slots from normal cycling pool.
         for pos in &filler_slots {
-            if hammer_bro.len() >= remaining_slots { break; }
+            if hammer_bro.len() >= remaining_slots {
+                break;
+            }
             hammer_bro.push(HammerBroAssignment {
                 pos: *pos,
                 level_entry: hb_level_iter.next().unwrap(),

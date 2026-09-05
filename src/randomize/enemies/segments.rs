@@ -22,9 +22,12 @@ pub(super) struct SegmentPins {
 }
 
 /// Placement limits that hold for every entry in one segment, whatever pool
-/// that entry draws from. Both are properties of the *room*, not the slot,
-/// which is why they ride alongside the per-entry protections rather than
-/// being expressed as `EntryRule`s.
+/// that entry draws from. The first two are properties of the *room*, not the
+/// slot, which is why they ride alongside the per-entry protections rather
+/// than being expressed as `EntryRule`s. `hazard_cap_full` is the one
+/// run-scoped member: it rides here because `pick_replacement`'s `keep` is the
+/// single place every pick funnels through, so one field there covers the
+/// class pools, the wild pool and all four protection paths at once.
 #[derive(Clone, Copy)]
 pub(super) struct SegmentLimits {
     /// The Big Bertha cap is already reached — no new bertha here.
@@ -32,15 +35,18 @@ pub(super) struct SegmentLimits {
     /// No `$81` here: this room rewrites one into an unkillable object. See
     /// `enemy_protections::rewrites_hammer_bro`.
     pub(super) no_hammer_bro: bool,
+    /// This segment's introduced-hazard budget is spent, so no pick may put a
+    /// hazard where the vanilla enemy wasn't already one of the same category.
+    /// Always true under `HazardLimit::All`, always false under
+    /// `HazardLimit::Off`, and under `Sparse` it flips once the segment has
+    /// gained [`MAX_ADDED_HAZARDS_PER_SEGMENT`] of them.
+    pub(super) hazard_cap_full: bool,
 }
 
 impl SegmentPins {
     /// Nothing committed — the Big-?-block pass, which skips the CHR model.
     pub(super) fn none() -> Self {
-        SegmentPins {
-            all: (ChrSlot::Free, ChrSlot::Free),
-            chaser: (ChrSlot::Free, ChrSlot::Free),
-        }
+        SegmentPins { all: (ChrSlot::Free, ChrSlot::Free), chaser: (ChrSlot::Free, ChrSlot::Free) }
     }
 }
 
@@ -69,10 +75,8 @@ pub(super) fn segment_pins(
     injected: &[usize],
     skip: Option<usize>,
 ) -> SegmentPins {
-    let mut pins = SegmentPins {
-        all: (ChrSlot::Free, ChrSlot::Free),
-        chaser: (ChrSlot::Free, ChrSlot::Free),
-    };
+    let mut pins =
+        SegmentPins { all: (ChrSlot::Free, ChrSlot::Free), chaser: (ChrSlot::Free, ChrSlot::Free) };
     for entry in entries {
         if Some(entry.data_index) == skip || !is_fixed(entry, modes, injected) {
             continue;
@@ -113,11 +117,28 @@ pub(super) fn chr_groups(entries: &[SegmentEntry]) -> Vec<Vec<usize>> {
 /// 2-enemy segments: `HB_NONSTOMPABLE_ODDS` chance for the non-stompable path
 /// (one from HB_NEEDS_SHELL_ENEMIES + one from SHELL_ENEMIES), otherwise both
 /// stompable.
+/// Write one HB Wild pick, raising the single enemy in the pool whose AI
+/// ignores the floor. See [`HB_FLYER_RAISE_ROWS`] for why 7 rows.
+///
+/// `closed_room` gates it: the raise exists to keep a treasure-box room
+/// clearable, and applying it to W8's open 7-7 layout would only leave its
+/// enemies floating.
+fn place_hb_pick(data: &mut [u8], id_index: usize, id: u8, closed_room: bool) {
+    swap_enemy(data, id_index, id);
+    if closed_room && id == FLYING_RED_PARATROOPA {
+        // The y byte is the absolute tile row as (page << 4) | row, so a plain
+        // subtraction moves it. Saturating is belt-and-braces: every bro room
+        // spawns its enemies on row 20 or below.
+        data[id_index + 2] = data[id_index + 2].saturating_sub(HB_FLYER_RAISE_ROWS);
+    }
+}
+
 pub(super) fn randomize_hb_wild_segment<R: Rng>(
     data: &mut [u8],
     entries: &[SegmentEntry],
     hb_modes: &ClassModes,
     limits: SegmentLimits,
+    closed_room: bool,
     rng: &mut R,
 ) {
     // A Hammer Bro is a placeholder the engine rewrites into something
@@ -125,14 +146,13 @@ pub(super) fn randomize_hb_wild_segment<R: Rng>(
     // would strand the player (see `rewrites_hammer_bro`). Clearability is
     // otherwise a property of the pools themselves, not of the room.
     let stompable: Cow<[u8]> = if limits.no_hammer_bro {
-        Cow::Owned(
-            STOMPABLE_ENEMIES.iter().copied().filter(|&id| id != HAMMER_BRO_ID).collect(),
-        )
+        Cow::Owned(STOMPABLE_ENEMIES.iter().copied().filter(|&id| id != HAMMER_BRO_ID).collect())
     } else {
         Cow::Borrowed(STOMPABLE_ENEMIES)
     };
 
-    let swappable: Vec<usize> = entries.iter()
+    let swappable: Vec<usize> = entries
+        .iter()
         .enumerate()
         .filter(|(_, e)| find_class_pool(e.obj_id, hb_modes).is_some())
         .map(|(idx, _)| idx)
@@ -149,7 +169,7 @@ pub(super) fn randomize_hb_wild_segment<R: Rng>(
 
     if swappable.len() == 1 {
         if let Some(chosen) = pick_compatible(&stompable, slot4, slot5, rng) {
-            swap_enemy(data, entries[swappable[0]].data_index, chosen);
+            place_hb_pick(data, entries[swappable[0]].data_index, chosen, closed_room);
         }
     } else if swappable.len() == 2 {
         // Roll whether this segment gets a non-stompable enemy
@@ -162,25 +182,26 @@ pub(super) fn randomize_hb_wild_segment<R: Rng>(
                 commit_chr_page(ns, &mut s4, &mut s5);
                 if let Some(shell) = pick_compatible(SHELL_ENEMIES, s4, s5, rng) {
                     // Randomly assign which slot gets which
-                    let (di0, di1) = (entries[swappable[0]].data_index, entries[swappable[1]].data_index);
+                    let (di0, di1) =
+                        (entries[swappable[0]].data_index, entries[swappable[1]].data_index);
                     if rng.random_range(..2u32) == 0 {
-                        swap_enemy(data, di0, ns);
-                        swap_enemy(data, di1, shell);
+                        place_hb_pick(data, di0, ns, closed_room);
+                        place_hb_pick(data, di1, shell, closed_room);
                     } else {
-                        swap_enemy(data, di0, shell);
-                        swap_enemy(data, di1, ns);
+                        place_hb_pick(data, di0, shell, closed_room);
+                        place_hb_pick(data, di1, ns, closed_room);
                     }
                 }
             }
         } else {
             // Both from stompable pool
             if let Some(first) = pick_compatible(&stompable, slot4, slot5, rng) {
-                swap_enemy(data, entries[swappable[0]].data_index, first);
+                place_hb_pick(data, entries[swappable[0]].data_index, first, closed_room);
                 let mut s4 = slot4;
                 let mut s5 = slot5;
                 commit_chr_page(first, &mut s4, &mut s5);
                 if let Some(second) = pick_compatible(&stompable, s4, s5, rng) {
-                    swap_enemy(data, entries[swappable[1]].data_index, second);
+                    place_hb_pick(data, entries[swappable[1]].data_index, second, closed_room);
                 }
             }
         }

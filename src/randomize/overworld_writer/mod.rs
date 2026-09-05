@@ -8,10 +8,12 @@ use rand::Rng;
 use rand::seq::{IndexedRandom, SliceRandom};
 
 use crate::rom::Rom;
-use crate::PiranhaMode;
+use crate::{DejaVuMode, PiranhaMode};
 
 use super::node_catalog::NodeKind;
-use super::overworld_build::{bfs_ordered, BuildResult, BuiltWorld, OverworldData, SlotKind};
+use super::overworld_build::{
+    BuildResult, BuiltWorld, OverworldData, SlotKind, VANILLA_LEVEL_COUNT, bfs_ordered,
+};
 use super::overworld_helpers;
 use super::pipe_helpers;
 use super::rom_data::{
@@ -19,14 +21,14 @@ use super::rom_data::{
     MAP_COMPLETE_BITS, TILE_BONUS_GAME, TILE_PIPE, WORLDS,
 };
 
-mod types;
 mod assign;
-mod grid;
-mod pointers;
 mod fortress_fx;
+mod grid;
 mod march_veto;
 mod metatiles;
+mod pointers;
 mod sprites;
+mod types;
 
 use assign::{assign_pool, interleave_hb_by_obj_ptr};
 use fortress_fx::{patch_fortress_fx_screen_check, write_fortress_fx};
@@ -63,9 +65,8 @@ pub(crate) fn write_overworld<R: Rng>(
     // Piranha plant sprite placements (piranha shuffle). Decided before the
     // tile pass for the same reason as the army sprites: the level slot under
     // a plant gets a connectivity-aware path node instead of a number tile.
-    let plant_positions = pick_plant_positions(
-        rom, build, data, &assignments, &w8_sprite_pos_set, flags, rng,
-    );
+    let plant_positions =
+        pick_plant_positions(rom, build, data, &assignments, &w8_sprite_pos_set, flags, rng);
 
     // Per-world sprite-covered positions for the tile pass.
     let mut sprite_masks: Vec<HashSet<(usize, usize)>> = vec![HashSet::new(); 8];
@@ -133,4 +134,9 @@ pub(crate) fn write_overworld<R: Rng>(
 pub(crate) struct WriteFlags {
     pub shuffle_hammer_bros: bool,
     pub piranha: PiranhaMode,
+    /// Deja Vu: how many times one level may appear on the map.
+    pub deja_vu: DejaVuMode,
+    /// Friendlier Levels: drop `FRIENDLIER_BLOCKED_LEVELS` from the level deck
+    /// and refill it with duplicates of what remains.
+    pub friendlier_levels: bool,
 }

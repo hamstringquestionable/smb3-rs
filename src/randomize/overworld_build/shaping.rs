@@ -134,11 +134,7 @@ fn meets_floor(m: &WorldMeasure, floor: u32) -> bool {
 /// false — one new pipe can create two brand-new cheap routes at once, so
 /// "routes rose" held while C1 crashed 18 -> 5, on ~8% of all worlds.
 fn accepted(before: &WorldMeasure, after: &WorldMeasure, floor: u32, gain: bool) -> bool {
-    if before.c1 < floor {
-        after.c1 > before.c1
-    } else {
-        gain && meets_floor(after, floor)
-    }
+    if before.c1 < floor { after.c1 > before.c1 } else { gain && meets_floor(after, floor) }
 }
 
 pub(crate) struct Shaping;
@@ -200,13 +196,11 @@ impl Phase for Shaping {
                     routes_needy && state.pipe_pairs.len() < state.pipe_budget,
                     routes_needy, // arm balance finds its own wide runner-up
                     routes_needy && state.fort_count() > 0,
-                    true, // level move checks its own sources/targets
+                    true,  // level move checks its own sources/targets
                     false, // pipe move is a cost tool only
                 ]
             };
-            let Some(rung) = (0..6)
-                .find(|&r| available[r] && rejects[r] < ESCALATE_AFTER)
-            else {
+            let Some(rung) = (0..6).find(|&r| available[r] && rejects[r] < ESCALATE_AFTER) else {
                 break "stuck: no move available";
             };
 
@@ -334,11 +328,7 @@ fn try_arm_balance(
         let alt: HashSet<Pos> = r.path.iter().copied().collect();
         let targets: Vec<Pos> = spaced(
             state,
-            blanks
-                .iter()
-                .copied()
-                .filter(|p| cheap.contains(p) && !alt.contains(p))
-                .collect(),
+            blanks.iter().copied().filter(|p| cheap.contains(p) && !alt.contains(p)).collect(),
         );
         (!targets.is_empty()).then_some((r, targets))
     });
@@ -358,9 +348,7 @@ fn try_arm_balance(
         .map(|(i, _)| i)
         .collect();
     if sources.is_empty() {
-        return Err(format!(
-            "arm_balance REJECT: gap {gap_before}, no off-cheap levels to move",
-        ));
+        return Err(format!("arm_balance REJECT: gap {gap_before}, no off-cheap levels to move",));
     }
 
     let saved_slots = state.slots.clone();
@@ -451,11 +439,8 @@ fn try_gated_shortcut(
     for _ in 0..SHORTCUT_TRIES {
         // Anchor-adjacent blanks are barred for pipe endpoints — same rule
         // as connectivity and spare pipes (an ungateable express).
-        let candidates: Vec<Pos> = state
-            .legal_blanks()
-            .into_iter()
-            .filter(|&p| !state.near_anchor(p))
-            .collect();
+        let candidates: Vec<Pos> =
+            state.legal_blanks().into_iter().filter(|&p| !state.near_anchor(p)).collect();
         let picked: Vec<Pos> = candidates.choose_multiple(rng, 2).copied().collect();
         let [a, b] = picked[..] else { break };
         if Some(b) == row78_partner(a) {
@@ -514,12 +499,13 @@ fn try_fort_lock(
     let saved_slots = state.slots.clone();
     let saved_locks = state.locks.clone();
 
-    let trunk: HashSet<Pos> = before
-        .rc
-        .routes
-        .first()
-        .map(|r| r.path.iter().copied().collect())
-        .unwrap_or_default();
+    let trunk: HashSet<Pos> =
+        before.rc.routes.first().map(|r| r.path.iter().copied().collect()).unwrap_or_default();
+
+    // Blanks the player could not walk around, hoisted out of both loops:
+    // this rung never touches terrain or the pipe web, and nothing else
+    // decides who is a cut vertex, so one answer serves every trial.
+    let no_go: HashSet<Pos> = state.forced_positions(&state.legal_blanks()).into_iter().collect();
 
     let mut fort_indices: Vec<usize> = state
         .slots
@@ -543,7 +529,8 @@ fn try_fort_lock(
             if evals >= FORTLOCK_TRIES {
                 break;
             }
-            let candidates = state.legal_blanks();
+            let candidates: Vec<Pos> =
+                state.legal_blanks().into_iter().filter(|p| !no_go.contains(p)).collect();
             let Some(&new_pos) = candidates.choose(rng) else { break };
             state.slots[fi].pos = new_pos;
             evals += 1;
@@ -588,12 +575,8 @@ fn try_level_move(
     before: &WorldMeasure,
 ) -> Result<String, String> {
     let floor = state.c1_floor;
-    let trunk: HashSet<Pos> = before
-        .rc
-        .routes
-        .first()
-        .map(|r| r.path.iter().copied().collect())
-        .unwrap_or_default();
+    let trunk: HashSet<Pos> =
+        before.rc.routes.first().map(|r| r.path.iter().copied().collect()).unwrap_or_default();
 
     let sources: Vec<usize> = state
         .slots
@@ -602,14 +585,8 @@ fn try_level_move(
         .filter(|(_, s)| s.kind == SlotKind::Level && !trunk.contains(&s.pos))
         .map(|(i, _)| i)
         .collect();
-    let targets: Vec<Pos> = spaced(
-        state,
-        state
-            .legal_blanks()
-            .into_iter()
-            .filter(|p| trunk.contains(p))
-            .collect(),
-    );
+    let targets: Vec<Pos> =
+        spaced(state, state.legal_blanks().into_iter().filter(|p| trunk.contains(p)).collect());
     if sources.is_empty() || targets.is_empty() {
         return Err(format!(
             "level_move REJECT: {} off-route levels, {} on-route blanks — nothing to work with",
@@ -642,9 +619,7 @@ fn try_level_move(
         }
         state.slots = saved_slots.clone();
     }
-    Err(format!(
-        "level_move REJECT: no on-trunk relocation improves ({evals} evals)",
-    ))
+    Err(format!("level_move REJECT: no on-trunk relocation improves ({evals} evals)",))
 }
 
 /// The pipe-web rung (cost mode only): relocate ONE endpoint of an existing
@@ -673,12 +648,8 @@ fn try_pipe_move(
     let saved_locks = state.locks.clone();
     let saved_pairs = state.pipe_pairs.clone();
 
-    let trunk: HashSet<Pos> = before
-        .rc
-        .routes
-        .first()
-        .map(|r| r.path.iter().copied().collect())
-        .unwrap_or_default();
+    let trunk: HashSet<Pos> =
+        before.rc.routes.first().map(|r| r.path.iter().copied().collect()).unwrap_or_default();
 
     let mut pair_indices: Vec<usize> = (0..state.pipe_pairs.len()).collect();
     pair_indices.shuffle(rng);
@@ -705,27 +676,25 @@ fn try_pipe_move(
             if evals >= PIPEMOVE_TRIES {
                 break;
             }
-            let candidates: Vec<Pos> = state
-                .legal_blanks()
-                .into_iter()
-                .filter(|&p| !state.near_anchor(p))
-                .collect();
+            let candidates: Vec<Pos> =
+                state.legal_blanks().into_iter().filter(|&p| !state.near_anchor(p)).collect();
             let Some(&new_pos) = candidates.choose(rng) else { break };
 
             let blank = blank_tile_for(&state.grid, state.world_idx, old.0, old.1);
             state.grid.set(old.0, old.1, blank);
             state.grid.set(new_pos.0, new_pos.1, TILE_PIPE);
-            if let Some(slot) = state
-                .slots
-                .iter_mut()
-                .find(|s| s.kind == SlotKind::Pipe && s.pos == old)
+            if let Some(slot) =
+                state.slots.iter_mut().find(|s| s.kind == SlotKind::Pipe && s.pos == old)
             {
                 slot.pos = new_pos;
             }
             state.pipe_pairs[pi] = if move_a { (new_pos, keep) } else { (keep, new_pos) };
             evals += 1;
 
-            if all_content_reachable(state) && place_locks_gating(state, rng, true) {
+            if all_content_reachable(state)
+                && !any_fort_forced(state)
+                && place_locks_gating(state, rng, true)
+            {
                 let after = measure_world(state);
                 // Cost-only rung: there is no choice gain to claim, so the
                 // verdict is `accepted`'s cost branch alone — exactly the
@@ -746,10 +715,7 @@ fn try_pipe_move(
             state.pipe_pairs = saved_pairs.clone();
         }
     }
-    Err(format!(
-        "pipe_move REJECT: no relocation lifts C1 {} ({evals} full evals)",
-        before.c1,
-    ))
+    Err(format!("pipe_move REJECT: no relocation lifts C1 {} ({evals} full evals)", before.c1,))
 }
 
 /// The level-spacing invariant, mover side: a RELOCATION never lands a
@@ -761,10 +727,17 @@ fn try_pipe_move(
 /// tiles as valid targets that process assembles the whole budget into a
 /// snake along the trunk.
 fn spaced(state: &WorldState, targets: Vec<Pos>) -> Vec<Pos> {
-    targets
-        .into_iter()
-        .filter(|&p| !super::levels::next_to_level(state, p))
-        .collect()
+    targets.into_iter().filter(|&p| !super::levels::next_to_level(state, p)).collect()
+}
+
+/// True when some fort now sits where the player cannot walk around it. The
+/// [`Forts`] placement rule, re-checked after a move that REWIRES the pipe
+/// web: adding a pipe can only ever remove a cut vertex, but taking a mouth
+/// away can create one under a fort that was safe when it was placed.
+fn any_fort_forced(state: &WorldState) -> bool {
+    let forts: Vec<Pos> =
+        state.slots.iter().filter(|s| s.kind == SlotKind::Fortress).map(|s| s.pos).collect();
+    !state.forced_positions(&forts).is_empty()
 }
 
 /// Every slot and the goal walk-reachable from start on the all-open world

@@ -278,12 +278,7 @@ fn flat_keys(body: &str) -> Vec<String> {
 /// the WASM `default_options_json()` export ships to the web app.
 fn options_fields() -> BTreeSet<String> {
     let value = serde_json::to_value(Options::default()).expect("Options serializes");
-    value
-        .as_object()
-        .expect("Options serializes to an object")
-        .keys()
-        .cloned()
-        .collect()
+    value.as_object().expect("Options serializes to an object").keys().cloned().collect()
 }
 
 /// The tripwire. Everything else compares sets that this file extracts; if the

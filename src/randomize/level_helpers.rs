@@ -20,10 +20,8 @@ pub(super) fn shuffle_entries<R: Rng>(rom: &mut Rom, rng: &mut R, indices: &[(us
         return;
     }
 
-    let mut entries: Vec<LevelEntry> = indices
-        .iter()
-        .map(|&(w, i)| rom_data::read_entry(rom, &WORLDS[w], i))
-        .collect();
+    let mut entries: Vec<LevelEntry> =
+        indices.iter().map(|&(w, i)| rom_data::read_entry(rom, &WORLDS[w], i)).collect();
 
     entries.as_mut_slice().shuffle(rng);
 

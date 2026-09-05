@@ -43,6 +43,10 @@ fn encode_quote(lines: &[&str; 6]) -> [u8; 120] {
 
 /// Pool of quotes the king can say. Each is 6 lines x 20 chars max.
 /// Characters available: A-Z, a-z, space, comma, period, apostrophe, !, ?
+// One array element per on-screen line, which is the point: each string is a
+// line the NES draws, with its own width limit. rustfmt would pack all six onto
+// one row and hide the shape of the quote. The `/king-quote` skill writes here.
+#[rustfmt::skip]
 const QUOTES: &[[&str; 6]] = &[
     [
         "Hey, why don't I",
@@ -596,9 +600,26 @@ const QUOTES: &[[&str; 6]] = &[
         "",
         "",
     ],
+    [
+        "Don't have negative",
+        "thoughts.",
+        "",
+        "Remember your",
+        "mantra.",
+        "",
+    ],
+    [
+        "If you listen",
+        "closely, you can",
+        "hear DemonBattler",
+        "screaming in the",
+        "distance.",
+        "",
+    ],
 ];
 
 /// Suit-specific quotes: shown when Mario visits the king wearing frog suit.
+#[rustfmt::skip]
 const FROG_QUOTES: &[[&str; 6]] = &[
     [
         "Is that a frog suit?",
@@ -704,9 +725,18 @@ const FROG_QUOTES: &[[&str; 6]] = &[
         "",
         "",
     ],
+    [
+        "Don't forget to",
+        "start your timer,",
+        "HumanMustard.",
+        "",
+        "Oh, too late.",
+        "Sorry, viewers!",
+    ],
 ];
 
 /// Suit-specific quotes: shown when Mario visits the king as raccoon/tanooki.
+#[rustfmt::skip]
 const RACCOON_QUOTES: &[[&str; 6]] = &[
     [
         "Thank you,kind",
@@ -799,6 +829,7 @@ const RACCOON_QUOTES: &[[&str; 6]] = &[
 ];
 
 /// Suit-specific quotes: shown when Mario visits the king in hammer suit.
+#[rustfmt::skip]
 const HAMMER_QUOTES: &[[&str; 6]] = &[
     [
         "Hey,you!",
@@ -920,30 +951,46 @@ fn cpu_addr(file_offset: usize) -> u16 {
 const QUOTE_SELECT_PATCH: usize = 0x362A3;
 
 /// Write randomized king quotes into the ROM.
-pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng) {
-    // --- 1. Write 7 unique standard quotes into free space ---
+///
+/// `enabled` gates the ROM writes only. Every RNG draw this module makes
+/// happens above the early return, so a run with quotes off consumes exactly
+/// the same seed stream as one with them on and nothing downstream shifts.
+/// Keep it that way: never move a `choose` call below the return.
+pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng, enabled: bool) {
+    // --- 1. Draw every quote, whether or not we are going to write one ---
     // choose_multiple samples without replacement, so the 7 quotes are unique.
+    // It draws inside the call, not lazily as the returned iterator is walked —
+    // so what keeps the stream stable is calling it, not collecting it.
+    let std_picks: Vec<&[&str; 6]> = QUOTES.choose_multiple(rng, 7).collect();
+    let frog_pick = FROG_QUOTES.choose(rng).unwrap();
+    let raccoon_pick = RACCOON_QUOTES.choose(rng).unwrap();
+    let hammer_pick = HAMMER_QUOTES.choose(rng).unwrap();
+
+    // Off leaves vanilla's own king text in place — the kings still speak, they
+    // just say what they say in the original game. Nothing reads the free-space
+    // block or the hook below unless the select-site patch lands, so skipping
+    // all of it is enough; there is nothing to blank.
+    if !enabled {
+        return;
+    }
+
+    // --- 2. Write 7 unique standard quotes into free space ---
     let mut std_addrs = Vec::with_capacity(7);
-    for (world, quote) in QUOTES.choose_multiple(rng, 7).enumerate() {
+    for (world, quote) in std_picks.iter().enumerate() {
         let encoded = encode_quote(quote);
         let file_offset = KING_QUOTE_BASE + world * 120;
         rom.write_range(file_offset, &encoded);
         std_addrs.push(cpu_addr(file_offset));
     }
 
-    // --- 2. Write suit-specific quotes to vanilla slots ---
+    // --- 3. Write suit-specific quotes to vanilla slots ---
     // The vanilla pointer table at $A494/$A49B already maps forms 4/5/6
     // to these addresses, so we just replace the content.
-    let frog_pick = FROG_QUOTES.choose(rng).unwrap();
     rom.write_range(FROG_QUOTE_OFFSET, &encode_quote(frog_pick));
-
-    let raccoon_pick = RACCOON_QUOTES.choose(rng).unwrap();
     rom.write_range(RACCOON_QUOTE_OFFSET, &encode_quote(raccoon_pick));
-
-    let hammer_pick = HAMMER_QUOTES.choose(rng).unwrap();
     rom.write_range(HAMMER_QUOTE_OFFSET, &encode_quote(hammer_pick));
 
-    // --- 3. Write ASM hook for per-world standard quotes ---
+    // --- 4. Write ASM hook for per-world standard quotes ---
     // Hook goes right after the 7 quote blocks in free space.
     let hook_file = KING_QUOTE_BASE + 7 * 120;
     let hook_cpu = cpu_addr(hook_file);
@@ -969,27 +1016,31 @@ pub fn randomize(rom: &mut Rom, rng: &mut ChaCha8Rng) {
     // 47: std_hi[7]        ; data
     // Total: 54 bytes
     let mut hook: Vec<u8> = Vec::with_capacity(54);
-    hook.extend_from_slice(&[0xA5, 0xED]);                          //  0: LDA $ED
-    hook.extend_from_slice(&[0xC9, 0x04]);                          //  2: CMP #$04
-    hook.extend_from_slice(&[0xB0, 18]);                            //  4: BCS +18 → offset 24
-    hook.extend_from_slice(&[0xAC, 0x27, 0x07]);                   //  6: LDY $0727
+    hook.extend_from_slice(&[0xA5, 0xED]); //  0: LDA $ED
+    hook.extend_from_slice(&[0xC9, 0x04]); //  2: CMP #$04
+    hook.extend_from_slice(&[0xB0, 18]); //  4: BCS +18 → offset 24
+    hook.extend_from_slice(&[0xAC, 0x27, 0x07]); //  6: LDY $0727
     hook.extend_from_slice(&[0xB9, std_lo_cpu as u8, (std_lo_cpu >> 8) as u8]);
-    hook.extend_from_slice(&[0x8D, 0x0D, 0x07]);                   // 12: STA $070D
+    hook.extend_from_slice(&[0x8D, 0x0D, 0x07]); // 12: STA $070D
     hook.extend_from_slice(&[0xB9, std_hi_cpu as u8, (std_hi_cpu >> 8) as u8]);
-    hook.extend_from_slice(&[0x8D, 0x04, 0x7A]);                   // 18: STA $7A04
-    hook.extend_from_slice(&[0x4C, 0xA1, 0xA2]);                   // 21: JMP $A2A1
-    hook.push(0xA8);                                                // 24: TAY
-    hook.extend_from_slice(&[0xB9, 0x94, 0xA4]);                   // 25: LDA $A494,Y
-    hook.extend_from_slice(&[0x8D, 0x0D, 0x07]);                   // 28: STA $070D
-    hook.extend_from_slice(&[0xB9, 0x9B, 0xA4]);                   // 31: LDA $A49B,Y
-    hook.extend_from_slice(&[0x8D, 0x04, 0x7A]);                   // 34: STA $7A04
-    hook.extend_from_slice(&[0x4C, 0xA1, 0xA2]);                   // 37: JMP $A2A1
-    for addr in &std_addrs { hook.push(*addr as u8); }             // 40: std_lo[7]
-    for addr in &std_addrs { hook.push((*addr >> 8) as u8); }     // 47: std_hi[7]
+    hook.extend_from_slice(&[0x8D, 0x04, 0x7A]); // 18: STA $7A04
+    hook.extend_from_slice(&[0x4C, 0xA1, 0xA2]); // 21: JMP $A2A1
+    hook.push(0xA8); // 24: TAY
+    hook.extend_from_slice(&[0xB9, 0x94, 0xA4]); // 25: LDA $A494,Y
+    hook.extend_from_slice(&[0x8D, 0x0D, 0x07]); // 28: STA $070D
+    hook.extend_from_slice(&[0xB9, 0x9B, 0xA4]); // 31: LDA $A49B,Y
+    hook.extend_from_slice(&[0x8D, 0x04, 0x7A]); // 34: STA $7A04
+    hook.extend_from_slice(&[0x4C, 0xA1, 0xA2]); // 37: JMP $A2A1
+    for addr in &std_addrs {
+        hook.push(*addr as u8);
+    } // 40: std_lo[7]
+    for addr in &std_addrs {
+        hook.push((*addr >> 8) as u8);
+    } // 47: std_hi[7]
 
     rom.write_range(hook_file, &hook);
 
-    // --- 4. Patch original site: JMP hook + NOP fill ---
+    // --- 5. Patch original site: JMP hook + NOP fill ---
     let mut patch = [0xEA_u8; 14];
     patch[0] = 0x4C;
     patch[1] = hook_cpu as u8;
@@ -1031,20 +1082,54 @@ mod tests {
 
     #[test]
     fn encode_round_trip() {
-        let lines = [
-            "Hello,world!",
-            "Test line two.",
-            "",
-            "Line four here.",
-            "",
-            "The end.",
-        ];
+        let lines = ["Hello,world!", "Test line two.", "", "Line four here.", "", "The end."];
         let encoded = encode_quote(&lines);
         assert_eq!(encoded.len(), 120);
         // First char 'H' should be 0xB7
         assert_eq!(encoded[0], 0xB7);
         // Space padding at end of short lines
         assert_eq!(encoded[19], 0xFE);
+    }
+
+    /// The `enabled` gate must not change how much RNG the module consumes.
+    ///
+    /// This is the same property `king_quotes_off_only_skips_its_own_writes`
+    /// checks end-to-end, asserted at the module boundary instead. The two are
+    /// not redundant: the ROM-level test can only observe a divergence where
+    /// something downstream actually *draws*, so on a configuration that
+    /// happens to draw nothing after this point it would pass while the module
+    /// was quietly consuming a different number of values. This one compares
+    /// the generator state itself and holds regardless.
+    #[test]
+    fn enabled_gate_does_not_change_rng_consumption() {
+        use rand::{RngCore, SeedableRng};
+
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM, which is not included in the repo");
+            return;
+        };
+
+        // Several seeds: choose_multiple picks its sampling strategy from the
+        // pool sizes, not the seed, but the draw counts are worth checking on
+        // more than one stream.
+        for seed in 0..16u64 {
+            let mut rom_on = Rom::from_bytes(&bytes).expect("test ROM parses");
+            let mut rng_on = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_on, &mut rng_on, true);
+
+            let mut rom_off = Rom::from_bytes(&bytes).expect("test ROM parses");
+            let mut rng_off = ChaCha8Rng::seed_from_u64(seed);
+            randomize(&mut rom_off, &mut rng_off, false);
+
+            // Identical position in the stream => identical continuations.
+            let tail_on: Vec<u64> = (0..8).map(|_| rng_on.next_u64()).collect();
+            let tail_off: Vec<u64> = (0..8).map(|_| rng_off.next_u64()).collect();
+            assert_eq!(
+                tail_on, tail_off,
+                "seed {seed}: the rng is at a different position with quotes off — a draw \
+                 moved below the early return, so every later module shifts"
+            );
+        }
     }
 
     #[test]

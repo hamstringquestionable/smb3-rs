@@ -110,13 +110,36 @@ pub(super) fn base32_decode(s: &str) -> Result<Vec<u8>, String> {
         let val = match ch.to_ascii_uppercase() {
             '0' | 'O' => 0,
             '1' | 'I' | 'L' => 1,
-            '2' => 2, '3' => 3, '4' => 4, '5' => 5, '6' => 6, '7' => 7,
-            '8' => 8, '9' => 9,
-            'A' => 10, 'B' => 11, 'C' => 12, 'D' => 13, 'E' => 14, 'F' => 15,
-            'G' => 16, 'H' => 17, 'J' => 18, 'K' => 19,
-            'M' => 20, 'N' => 21, 'P' => 22, 'Q' => 23,
-            'R' => 24, 'S' => 25, 'T' => 26, 'V' => 27,
-            'W' => 28, 'X' => 29, 'Y' => 30, 'Z' => 31,
+            '2' => 2,
+            '3' => 3,
+            '4' => 4,
+            '5' => 5,
+            '6' => 6,
+            '7' => 7,
+            '8' => 8,
+            '9' => 9,
+            'A' => 10,
+            'B' => 11,
+            'C' => 12,
+            'D' => 13,
+            'E' => 14,
+            'F' => 15,
+            'G' => 16,
+            'H' => 17,
+            'J' => 18,
+            'K' => 19,
+            'M' => 20,
+            'N' => 21,
+            'P' => 22,
+            'Q' => 23,
+            'R' => 24,
+            'S' => 25,
+            'T' => 26,
+            'V' => 27,
+            'W' => 28,
+            'X' => 29,
+            'Y' => 30,
+            'Z' => 31,
             c => return Err(format!("Invalid character in flag key: '{c}'")),
         };
         buf = (buf << 5) | val as u64;
@@ -227,8 +250,7 @@ fn legacy_version_of(stripped: &str) -> Option<u8> {
     // `first()` rather than `bytes[0]`: an empty key decodes to no bytes, and
     // `then_some` would evaluate the index either way.
     let version = *bytes.first()?;
-    let is_legacy =
-        bytes.len() == LEGACY_KEY_BYTES && (1..=LAST_LEGACY_VERSION).contains(&version);
+    let is_legacy = bytes.len() == LEGACY_KEY_BYTES && (1..=LAST_LEGACY_VERSION).contains(&version);
     is_legacy.then_some(version)
 }
 
@@ -248,6 +270,7 @@ pub(super) const NOT_ENCODED: &[&str] = &[
     "palette_themed",      // cosmetic
     "player_color",        // cosmetic
     "remove_flashing",     // cosmetic/accessibility; static patch, no RNG
+    "king_quotes",         // cosmetic flavor text; draws its RNG either way
     "skip_rom_validation", // operational (CLI/WASM input handling), not randomization
 ];
 
@@ -257,8 +280,7 @@ pub(super) const NOT_ENCODED: &[&str] = &[
 /// `inFlagKey` markings can be checked against what Rust actually persists
 /// instead of being documentation nobody verifies.
 pub fn flag_key_fields() -> Vec<String> {
-    let value = serde_json::to_value(Options::default())
-        .expect("Options is always serializable");
+    let value = serde_json::to_value(Options::default()).expect("Options is always serializable");
     value
         .as_object()
         .expect("Options serializes to an object")
@@ -375,9 +397,24 @@ mod payload {
 
         // --- Appended after v29 shipped; older keys read these as zero/off ---
         pub(super) lakitu_stays_down: bool,
+        /// Big [?] bonus-room shuffle. It shipped always-on for one beta cycle,
+        /// so keys minted in that window carry a zero here and now decode to the
+        /// vanilla rooms — deliberate, and the reason this is a plain appended
+        /// bit rather than an inverted one.
+        pub(super) shuffle_big_q_rooms: bool,
+        /// Hazard-introduction limit. Zero is `Off`, so an older key decodes
+        /// to the unrestricted picks it was minted with.
+        pub(super) limit_hazards: HazardLimit,
+        /// Friendlier Levels: hold the harshest levels out of the shuffle pool.
+        pub(super) friendlier_levels: bool,
+        /// Bro encounters run on a 10-second clock.
+        pub(super) bro_battle_timer: bool,
+        /// How many times one level may appear on the map. Zero is `Off`, so an
+        /// older key decodes to the once-each deal it was minted with.
+        pub(super) deja_vu: DejaVuMode,
 
         // --- Reserve ---
-        // 146 bits. Adding an option is: declare it immediately above this
+        // 139 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off `B19`. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -389,8 +426,10 @@ mod payload {
         // `bytes * 8`, nothing more.
         //
         // Two fields because the crate's widths stop at B128.
-        #[skip] __: B128,
-        #[skip] __: B18,
+        #[skip]
+        __: B128,
+        #[skip]
+        __: B11,
     }
 }
 
@@ -426,16 +465,18 @@ impl Options {
             hammer_vulnerable_koopalings, random_koopalings, early_sun,
             japanese_damage, infinite_mushroom_houses, fast_mushroom_house,
             faster_tail_speed, faster_frog, lakitu_stays_down, no_game_over_penalty,
+            shuffle_big_q_rooms,
             poison_mushrooms, modern_powerups, anchor_visuals,
             hammer_breaks_locks, hammer_breaks_bridges, more_hammer_rocks,
             eights_are_wild, troll_pipes, antechamber_shuffle,
             ground, shell, flying, piranhas, ghosts, thwomps, rotodiscs,
-            cannons, water, bros, hb_encounters,
+            cannons, water, bros, hb_encounters, limit_hazards, friendlier_levels,
+            bro_battle_timer, deja_vu,
             fire_flower, piranha_shuffle, wild_injections,
             starting_lives, world_count, starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
             palettes: _, palette_themed: _, player_color: _,
-            remove_flashing: _, skip_rom_validation: _,
+            remove_flashing: _, king_quotes: _, skip_rom_validation: _,
         } = self;
 
         let item = |i: usize| starting_items.get(i).copied().unwrap_or(0);
@@ -471,6 +512,7 @@ impl Options {
             .with_faster_tail_speed(*faster_tail_speed)
             .with_faster_frog(*faster_frog)
             .with_lakitu_stays_down(*lakitu_stays_down)
+            .with_shuffle_big_q_rooms(*shuffle_big_q_rooms)
             .with_no_game_over_penalty(*no_game_over_penalty)
             .with_poison_mushrooms(*poison_mushrooms)
             .with_modern_powerups(*modern_powerups)
@@ -492,6 +534,10 @@ impl Options {
             .with_water(*water)
             .with_bros(*bros)
             .with_hb_encounters(*hb_encounters)
+            .with_limit_hazards(*limit_hazards)
+            .with_friendlier_levels(*friendlier_levels)
+            .with_bro_battle_timer(*bro_battle_timer)
+            .with_deja_vu(*deja_vu)
             .with_fire_flower(*fire_flower)
             .with_piranha_shuffle(*piranha_shuffle)
             .with_wild_sun(has(WildChaser::Sun))
@@ -542,6 +588,7 @@ impl Options {
             disable_autoscroll: f.disable_autoscroll(),
             include_beta_stages: f.include_beta_stages(),
             swap_start_airship: f.swap_start_airship(),
+            bro_battle_timer: f.bro_battle_timer(),
             limit_bro_movement: f.limit_bro_movement(),
             remove_n_cards: f.remove_n_cards(),
             card_speed_clear: f.card_speed_clear(),
@@ -558,6 +605,7 @@ impl Options {
             faster_tail_speed: f.faster_tail_speed(),
             faster_frog: f.faster_frog(),
             lakitu_stays_down: f.lakitu_stays_down(),
+            shuffle_big_q_rooms: f.shuffle_big_q_rooms(),
             no_game_over_penalty: f.no_game_over_penalty(),
             poison_mushrooms: f.poison_mushrooms(),
             modern_powerups: f.modern_powerups(),
@@ -579,6 +627,9 @@ impl Options {
             water: f.water_or_err().unwrap_or_default(),
             bros: f.bros_or_err().unwrap_or_default(),
             hb_encounters: f.hb_encounters_or_err().unwrap_or_default(),
+            limit_hazards: f.limit_hazards_or_err().unwrap_or_default(),
+            friendlier_levels: f.friendlier_levels(),
+            deja_vu: f.deja_vu_or_err().unwrap_or_default(),
             fire_flower: f.fire_flower_or_err().unwrap_or_default(),
             piranha_shuffle: f.piranha_shuffle_or_err().unwrap_or_default(),
             wild_injections: chasers,
@@ -586,7 +637,10 @@ impl Options {
             // 0 is unreachable from the encoder (it clamps to 1–7) but reachable
             // from a corrupt or newer key; take the default rather than a world
             // count the builder can't satisfy.
-            world_count: match f.world_count() { 0 => default_world_count(), n => n },
+            world_count: match f.world_count() {
+                0 => default_world_count(),
+                n => n,
+            },
             starting_items: items,
             // Not encoded: fixed to the values a shared key should never
             // override. The web app skips these fields when applying a decoded
@@ -595,6 +649,7 @@ impl Options {
             palette_themed: false,
             player_color: None,
             remove_flashing: true,
+            king_quotes: true,
             skip_rom_validation: false,
         }
     }
@@ -656,12 +711,17 @@ impl Options {
 
     /// Returns true if any enemy class is enabled (not Off).
     pub fn any_enemies_active(&self) -> bool {
-        self.ground != EnemyMode::Off || self.shell != EnemyMode::Off
+        self.ground != EnemyMode::Off
+            || self.shell != EnemyMode::Off
             || self.flying != EnemyMode::Off
             || self.piranhas != EnemyMode::Off
-            || self.ghosts != EnemyMode::Off || self.thwomps != EnemyMode::Off
-            || self.rotodiscs != EnemyMode::Off || self.cannons != EnemyMode::Off
-            || self.water != EnemyMode::Off || self.bros != EnemyMode::Off
-            || self.hb_encounters != EnemyMode::Off || !self.wild_injections.is_empty()
+            || self.ghosts != EnemyMode::Off
+            || self.thwomps != EnemyMode::Off
+            || self.rotodiscs != EnemyMode::Off
+            || self.cannons != EnemyMode::Off
+            || self.water != EnemyMode::Off
+            || self.bros != EnemyMode::Off
+            || self.hb_encounters != EnemyMode::Off
+            || !self.wild_injections.is_empty()
     }
 }
