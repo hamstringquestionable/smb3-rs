@@ -211,7 +211,7 @@ const FILL_ATTR_CALL_OFFSET: usize = 0x3C5CE;
 /// `world_order` case the replayed `JMP` leaves and the trailing `JMP` is
 /// unreachable; in the vanilla case it lands on the `JMP $84A0` that follows.
 fn wand_bump_routine(displaced: [u8; 3]) -> [u8; 16] {
-    let resume = (WORLD_INC_OFFSET - 0x3C010 + 0x8000 + 3) as u16;
+    let resume = prg030_file_to_cpu(WORLD_INC_OFFSET) + 3;
     #[rustfmt::skip]
     let code = [
         0xAD, WAND_COUNT as u8, (WAND_COUNT >> 8) as u8, // LDA WAND_COUNT
@@ -733,7 +733,7 @@ mod execution {
     const RESUME_MARK: u16 = 0x0302;
 
     fn run_bump(displaced: [u8; 3], start: u8) -> (u8, u8) {
-        let resume = (WORLD_INC_OFFSET - 0x3C010 + 0x8000 + 3) as u16;
+        let resume = prg030_file_to_cpu(WORLD_INC_OFFSET) + 3;
         let mut mem = Memory::new();
         mem.set_bytes(WAND_BUMP_CPU, &super::wand_bump_routine(displaced));
         mem.set_bytes(resume, &[0xEE, RESUME_MARK as u8, (RESUME_MARK >> 8) as u8, 0x60]);
@@ -785,7 +785,7 @@ mod execution {
     }
 
     fn bump_differs(code: &[u8; 16], displaced: [u8; 3]) -> bool {
-        let resume = (WORLD_INC_OFFSET - 0x3C010 + 0x8000 + 3) as u16;
+        let resume = prg030_file_to_cpu(WORLD_INC_OFFSET) + 3;
         for start in 0..=255u8 {
             let mut mem = Memory::new();
             mem.set_bytes(WAND_BUMP_CPU, code);

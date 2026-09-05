@@ -57,7 +57,7 @@
 //! is stored separately and byte-aligned per world: all eight Mario planes
 //! first, then all eight mirror planes at a fixed offset.
 //!
-//! # What this module does not do
+
 //!
 //! It emits the tables; it does not write them to the ROM and it does not
 //! replace the two-world swap at `$84CD`. That is the next step, and it needs
@@ -1057,18 +1057,6 @@ mod tests {
         n
     }
 
-    /// One bit per completable cell, and no bit without one.
-    ///
-    /// The mask folds row 8 onto row 7's `$01`, so it can only agree with a
-    /// straight cell count while the builder's `is_row78_conflict` invariant
-    /// holds. That makes this an assertion about two things at once, which is
-    /// the point: a column carrying a completable cell in *both* row 7 and row
-    /// 8 is a map the engine cannot represent, and it would show up here as a
-    /// bit shortfall rather than as a mystery on a player's cartridge.
-    ///
-    /// ```sh
-    /// CENSUS_SEEDS=200 cargo test --release --lib bit_per_completable_cell
-    /// ```
     /// Where two map cells are fighting over one completion bit.
     ///
     /// Rows 7 and 8 share bit `$01` per column, so a column holding a cell the

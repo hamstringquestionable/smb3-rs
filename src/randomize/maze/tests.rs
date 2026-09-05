@@ -1,17 +1,20 @@
-//! The maze verifier's own tests, and the null-model census.
+//! The maze generator's own tests, and its censuses.
 //!
-//! The census is the point of build-order step 1: it produces the baselines
-//! ("what happens if we connect eight worlds and change nothing else") that
-//! every later lever has to be argued as a delta against. Nothing here has a
-//! target number yet — that is the whole reason it exists.
+//! Two kinds of thing live here and they are not the same kind. The `#[test]`s
+//! assert properties a failure of which is a bug — the maze is finishable, no
+//! world can strand a player, every pad is half of a pair. The `#[ignore]`d
+//! censuses measure shape, have no target numbers, and exist so a knob can be
+//! argued as a delta against something.
+//!
+//! The null-model census that opened this file is gone with the uniform placer
+//! it measured; see the note in the parent module.
 
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use rand_chacha::ChaCha8Rng;
 
-use super::graph::PAD_BUDGET;
-use super::pads::place_pads_uniform;
-use super::{GlobalState, IDENTITY_SPINE, MazeEdge};
+use super::graph::{Knobs, PAD_BUDGET};
+use super::{GenReport, GlobalState, IDENTITY_SPINE, MazeEdge};
 use crate::randomize::map_walker::walk_reachable;
 use crate::randomize::maze::walk::{MazeWorld, walk_maze};
 use crate::randomize::node_catalog::NodeCatalog;
@@ -29,9 +32,10 @@ fn load_rom() -> Option<Rom> {
 }
 
 /// Every fortress, as the crumbling set. The generator tests are about
-/// placement and reachability, not about which map cells turn to rubble —
-///  owns that, on a real
-/// written ROM, because it is the only place the tiles exist.
+/// placement and reachability, not about which map cells turn to rubble;
+/// `randomizer::tests::every_cross_world_lock_names_a_crumbling_fortress` owns
+/// that question, on a written ROM, because that is the only place the tiles
+/// exist.
 fn all_forts(result: &BuildResult) -> std::collections::HashSet<super::FortRef> {
     result
         .worlds
@@ -107,16 +111,18 @@ fn census_build_swaps(raw: &Rom, seed: u64) -> ((Rom, BuildResult), [bool; 8]) {
     ((rom, result), swaps)
 }
 
-/// The null model: an unmodified eight-world build, the identity spine, and
-/// uniform-random pads. K = 0 (a pure maze) because the wand gate does not
-/// exist yet.
-fn null_model(raw: &Rom, seed: u64) -> GlobalState {
-    let (_, result) = census_build(raw, seed);
-    let mut state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0, all_forts(&result));
-    let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x9E37_79B9);
-    let pads = place_pads_uniform(&state.worlds, &mut rng);
-    state.add_pads(pads);
-    state
+/// One generated maze, and the ROM its eight worlds were built from — which
+/// the tests that read a stamped map back need beside the state.
+///
+/// This is the shape everything below measures: the identity spine, the real
+/// pad placer, the real key fill. There is no second placer to compare it to
+/// any more (see the parent module's note on the null model).
+fn generated(raw: &Rom, seed: u64, knobs: &Knobs, k: u8) -> (Rom, GlobalState, GenReport) {
+    let (rom, result) = census_build(raw, seed);
+    let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+    let (state, report) =
+        super::generate(&result, &IDENTITY_SPINE, k, all_forts(&result), knobs, &mut rng);
+    (rom, state, report)
 }
 
 // ---------------------------------------------------------------------------
@@ -189,24 +195,6 @@ fn maze_walk_matches_the_per_world_walker() {
 // Acceptance
 // ---------------------------------------------------------------------------
 
-/// `pad_ids_fit`: the pad count never exceeds the 16 arrival rows, and every
-/// pad owns a distinct one — the key tables are indexed by arrival id, so two
-/// pads on one tile would be two rows claiming the same key.
-#[test]
-fn pad_ids_fit() {
-    let Some(raw) = load_rom() else { return };
-    for seed in 0..census_seeds(8) {
-        let state = null_model(&raw, seed);
-        let pads = state.pad_edges();
-        assert!(pads.len() <= PAD_BUDGET, "seed {seed}: {} pads > {PAD_BUDGET}", pads.len());
-        let mut tiles: Vec<_> = pads.iter().map(|&(from, _)| from).collect();
-        tiles.sort_unstable();
-        let before = tiles.len();
-        tiles.dedup();
-        assert_eq!(before, tiles.len(), "seed {seed}: two pads share one tile");
-    }
-}
-
 /// The spine alone must reach every world and finish the game. This is the
 /// instrument's own calibration as much as a property: the per-world builder
 /// already guarantees each world is completable from its own start, and the
@@ -246,10 +234,10 @@ fn the_spine_alone_completes_the_maze() {
 /// The charter asked for an exit reachable with **zero keys**. That is stricter
 /// than safety needs: a fortress inside the start region is a key the player
 /// can go and get, and what actually soft-locks is a start region with no
-/// ungated exit AND no fortress that opens one. If the strict form is rare and
-/// the correct one is near-universal, the start-region rule is a cheap guard
-/// rather than a placement phase — which decides how much of the 16-pad budget
-/// safety has to reserve.
+/// ungated exit AND no fortress that opens one. The strict form was measured at
+/// ~56% on the null model against 100% for the correct one, which is what made
+/// the start-region rule a cheap guard rather than a placement phase — and why
+/// the 16-pad budget is free for maze shaping.
 #[test]
 fn start_region_exit_rate() {
     let Some(raw) = load_rom() else { return };
@@ -259,7 +247,7 @@ fn start_region_exit_rate() {
     let mut total = 0usize;
     let mut trapped = Vec::new();
     for seed in 0..seeds {
-        let state = null_model(&raw, seed);
+        let (_, state, _) = generated(&raw, seed, &Knobs::default(), 0);
         for wi in 0..8 {
             total += 1;
             strict += usize::from(state.start_region_has_exit(wi));
@@ -293,149 +281,6 @@ fn start_region_exit_rate() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// The null-model census
-// ---------------------------------------------------------------------------
-
-/// The baseline the charter asks for. No target numbers: this measures what
-/// eight connected worlds do with nothing else changed, and every later lever
-/// is argued as a delta against it.
-///
-/// ```sh
-/// CENSUS_SEEDS=200 cargo test --release --lib maze_null_model_census \
-///     -- --ignored --nocapture
-/// ```
-#[test]
-#[ignore]
-fn maze_null_model_census() {
-    let Some(raw) = load_rom() else { return };
-    let seeds = census_seeds(50);
-
-    let mut solvable = 0usize;
-    let mut sphere_counts: Vec<usize> = Vec::new();
-    let mut width_hist = [0usize; 8];
-    let mut wide_widths = 0usize;
-    let mut sphere0_content = Vec::new();
-    let mut pad_counts: Vec<usize> = Vec::new();
-    let mut foreign_locks = 0usize;
-    let mut wands_at_goal: Vec<usize> = Vec::new();
-    let mut goal_spheres: Vec<usize> = Vec::new();
-    let mut invariant3 = 0usize;
-
-    for seed in 0..seeds {
-        let state = null_model(&raw, seed);
-        let s = state.spheres();
-        if s.solvable {
-            solvable += 1;
-        }
-        sphere_counts.push(s.spheres.len());
-        for sphere in &s.spheres {
-            match width_hist.get_mut(sphere.width) {
-                Some(slot) => *slot += 1,
-                None => wide_widths += 1,
-            }
-        }
-        let all_content: usize = s.spheres.iter().map(|x| x.reached.len()).sum();
-        if all_content > 0 {
-            sphere0_content.push(100.0 * s.spheres[0].reached.len() as f64 / all_content as f64);
-        }
-        pad_counts.push(state.pad_edges().len());
-        foreign_locks += state.locks.iter().filter(|l| l.is_foreign()).count();
-        wands_at_goal.push(s.wands_at_goal);
-        goal_spheres.extend(s.goal_sphere);
-        invariant3 += (0..8).filter(|&wi| state.start_region_has_exit(wi)).count();
-
-        if seed == 0 {
-            eprintln!("seed 0 spoiler:\n{}", s.spoiler());
-        }
-    }
-
-    let mean = |v: &[usize]| v.iter().sum::<usize>() as f64 / v.len().max(1) as f64;
-    eprintln!("\n=== world-maze null model, {seeds} seeds ===");
-    eprintln!("  spine: identity (W1->..->W8), pads uniform, locks all local, K=0");
-    eprintln!(
-        "  solvable            {solvable}/{seeds} = {:.1}%",
-        100.0 * solvable as f64 / seeds as f64
-    );
-    eprintln!(
-        "  spheres             mean {:.2}  min {}  max {}",
-        mean(&sphere_counts),
-        sphere_counts.iter().min().copied().unwrap_or(0),
-        sphere_counts.iter().max().copied().unwrap_or(0),
-    );
-    let total_spheres: usize = width_hist.iter().sum::<usize>() + wide_widths;
-    eprint!("  sphere width        ");
-    for (w, &n) in width_hist.iter().enumerate() {
-        eprint!("{w}:{:.0}% ", 100.0 * n as f64 / total_spheres.max(1) as f64);
-    }
-    eprintln!("8+:{:.0}%", 100.0 * wide_widths as f64 / total_spheres.max(1) as f64);
-    eprintln!(
-        "  sphere-0 openness   {:.1}% of all content reachable with zero keys",
-        sphere0_content.iter().sum::<f64>() / sphere0_content.len().max(1) as f64
-    );
-    eprintln!(
-        "  goal sphere         mean {:.2}  max {}",
-        mean(&goal_spheres),
-        goal_spheres.iter().max().copied().unwrap_or(0),
-    );
-    eprintln!("  wands before goal   mean {:.2}", mean(&wands_at_goal));
-    eprintln!(
-        "  pads placed         mean {:.2}  max {}  (budget {PAD_BUDGET})",
-        mean(&pad_counts),
-        pad_counts.iter().max().copied().unwrap_or(0),
-    );
-    eprintln!("  foreign locks       {foreign_locks} (the fill does not exist yet, so 0 is right)");
-    eprintln!(
-        "  invariant 3         {invariant3}/{} = {:.1}%",
-        seeds * 8,
-        100.0 * invariant3 as f64 / (seeds * 8) as f64
-    );
-}
-
-/// How much a pad web actually changes the null model — the first question the
-/// census cannot answer on its own, because the spine already solves the game.
-/// Prints the spine-only sphere structure beside the padded one.
-#[test]
-#[ignore]
-fn maze_pads_vs_spine_only() {
-    let Some(raw) = load_rom() else { return };
-    let seeds = census_seeds(50);
-    let mut bare = Vec::new();
-    let mut padded = Vec::new();
-    let mut pad_shortcuts = 0usize;
-
-    for seed in 0..seeds {
-        let (_, result) = census_build(&raw, seed);
-        let plain = GlobalState::from_build(&result, &IDENTITY_SPINE, 0, all_forts(&result));
-        let bare_s = plain.spheres();
-
-        let mut with_pads =
-            GlobalState::from_build(&result, &IDENTITY_SPINE, 0, all_forts(&result));
-        let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x9E37_79B9);
-        let pads = place_pads_uniform(&with_pads.worlds, &mut rng);
-        with_pads.add_pads(pads);
-        let pad_s = with_pads.spheres();
-
-        // A pad that crosses worlds is a shortcut only if it lands somewhere
-        // the spine would not have reached by then; the sphere count falling
-        // is the cheap proxy the null model can afford.
-        if pad_s.spheres.len() < bare_s.spheres.len() {
-            pad_shortcuts += 1;
-        }
-        bare.push(bare_s.spheres.len());
-        padded.push(pad_s.spheres.len());
-    }
-
-    let mean = |v: &[usize]| v.iter().sum::<usize>() as f64 / v.len().max(1) as f64;
-    eprintln!("\n=== pads vs spine-only, {seeds} seeds ===");
-    eprintln!("  spheres, spine only  mean {:.2}", mean(&bare));
-    eprintln!("  spheres, with pads   mean {:.2}", mean(&padded));
-    eprintln!(
-        "  pads shortened it    {pad_shortcuts}/{seeds} = {:.1}%",
-        100.0 * pad_shortcuts as f64 / seeds as f64
-    );
-}
-
 /// Content the maze holds, as the verifier sees it — a sanity read on the
 /// wrapper rather than on the maze: every level, fort and pad the build placed
 /// has to appear in the spoiler log's reached set of a solvable seed, or the
@@ -444,7 +289,7 @@ fn maze_pads_vs_spine_only() {
 fn every_placed_slot_is_reached() {
     let Some(raw) = load_rom() else { return };
     for seed in 0..census_seeds(4) {
-        let state = null_model(&raw, seed);
+        let (_, state, _) = generated(&raw, seed, &Knobs::default(), 0);
         let s = state.spheres();
         assert!(s.solvable, "seed {seed}: unsolvable\n{}", s.spoiler());
 
@@ -465,46 +310,34 @@ fn every_placed_slot_is_reached() {
     }
 }
 
-/// The pad placer's own shape: counts land in 0..=3, and the budget binds
-/// globally rather than per world.
-#[test]
-fn pad_placer_respects_its_budget() {
-    let Some(raw) = load_rom() else { return };
-    let (_, result) = census_build(&raw, 1);
-    let state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0, all_forts(&result));
-    for seed in 0..64u64 {
-        let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let pads = place_pads_uniform(&state.worlds, &mut rng);
-        assert!(pads.len() <= PAD_BUDGET);
-        let mut per_world = [0usize; 8];
-        for pad in &pads {
-            let MazeEdge::Pad { from, .. } = *pad else { panic!("placer emitted a non-pad edge") };
-            per_world[from.0] += 1;
-        }
-        for (wi, &n) in per_world.iter().enumerate() {
-            assert!(n <= 3, "seed {seed} W{}: {n} pads, max is 3", wi + 1);
-        }
-    }
-}
-
 /// The weighted roll is reachable at every count and biased to 1.
 #[test]
 fn pad_count_roll_is_biased_to_one() {
     let mut rng = ChaCha8Rng::seed_from_u64(9);
     let mut hist = [0usize; 4];
     for _ in 0..40_000 {
-        hist[super::pads::roll_count(&mut rng)] += 1;
+        hist[super::graph::roll_count(&mut rng)] += 1;
     }
     assert!(hist.iter().all(|&n| n > 0), "every count 0..=3 must be reachable: {hist:?}");
     let most = hist.iter().enumerate().max_by_key(|&(_, n)| n).map(|(i, _)| i);
     assert_eq!(most, Some(1), "1 pad must be the modal count: {hist:?}");
 }
 
-/// What terrain the roles actually have to work with. Placed before any role
-/// placer exists, because a role whose pool is empty is a design that cannot
-/// be built — and `island_sites` is the one at risk: `Connectivity` bridges
-/// islands with pipes and `HammerBroFill` claims every reachable blank, so a
-/// finished world may have nothing left that no walk reaches.
+/// What terrain the roles actually have to work with — measured before any role
+/// placer existed, because a role whose pool is empty is a design that cannot
+/// be built.
+///
+/// `island_sites` is the pool the charter's headline shape needed: a cell no
+/// walk reaches, which only a pad can put a player on. It was measured **empty
+/// over 800 world-seeds**, which is why there is no `Island` pad role — see
+/// `docs/world_maze_design.md`, "The island pad, and why v1 does not have one".
+///
+/// **It is no longer empty**, and this census is where that shows: 26 sites in
+/// 160 world-seeds at the time of writing, concentrated in a couple of worlds.
+/// The placer still never draws from the pool (`WorldTerrain::all_sites` offers
+/// hub and gated only), so nothing is broken by it — but the measurement the
+/// role was declined on has moved, and whether to build the role is a design
+/// call, not a cleanup. Printed rather than asserted for that reason.
 #[test]
 #[ignore]
 fn maze_terrain_pools_census() {
@@ -514,7 +347,6 @@ fn maze_terrain_pools_census() {
     let mut gated = 0usize;
     let mut island = 0usize;
     let mut ungated_target = 0usize;
-    let mut worlds_with_island = 0usize;
     let mut worlds_without_hub = 0usize;
     let mut per_world_island = [0usize; 8];
 
@@ -526,11 +358,8 @@ fn maze_terrain_pools_census() {
             hub += t.hub_sites.len();
             gated += t.gated_sites.len();
             island += t.island_sites.len();
+            per_world_island[w.world_idx] += t.island_sites.len();
             ungated_target += t.target_ungated as usize;
-            if !t.island_sites.is_empty() {
-                worlds_with_island += 1;
-                per_world_island[w.world_idx] += 1;
-            }
             if t.hub_sites.is_empty() {
                 worlds_without_hub += 1;
             }
@@ -541,13 +370,10 @@ fn maze_terrain_pools_census() {
     eprintln!("\n=== maze terrain pools, {seeds} seeds ({} world-seeds) ===", seeds * 8);
     eprintln!("  hub sites      mean {:.1} per world", hub as f64 / n);
     eprintln!("  gated sites    mean {:.1}", gated as f64 / n);
-    eprintln!("  island sites   mean {:.2}", island as f64 / n);
     eprintln!(
-        "  worlds with an island at all   {worlds_with_island}/{} = {:.1}%",
-        seeds * 8,
-        100.0 * worlds_with_island as f64 / n
+        "  island sites   {island} total, mean {:.2}, by world {per_world_island:?}",
+        island as f64 / n
     );
-    eprintln!("    by world: {per_world_island:?}");
     eprintln!(
         "  worlds with NO hub site        {worlds_without_hub}/{} = {:.1}%",
         seeds * 8,
@@ -564,23 +390,6 @@ fn maze_terrain_pools_census() {
 // The generator
 // ---------------------------------------------------------------------------
 
-/// One generated maze at the given knobs.
-fn generated(raw: &Rom, seed: u64, knobs: &super::graph::Knobs) -> (GlobalState, super::GenReport) {
-    generated_k(raw, seed, knobs, 0)
-}
-
-/// The same, at a chosen wand requirement.
-fn generated_k(
-    raw: &Rom,
-    seed: u64,
-    knobs: &super::graph::Knobs,
-    k: u8,
-) -> (GlobalState, super::GenReport) {
-    let (_, result) = census_build(raw, seed);
-    let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
-    super::generate(&result, &IDENTITY_SPINE, k, all_forts(&result), knobs, &mut rng)
-}
-
 /// The generator's two hard guarantees, at every knob setting: the maze is
 /// finishable and no world can strand a player who arrives in it.
 ///
@@ -590,13 +399,10 @@ fn generated_k(
 #[test]
 fn the_generator_never_ships_an_unwinnable_maze() {
     let Some(raw) = load_rom() else { return };
-    let arms: [(&str, super::graph::Knobs); 3] = [
-        ("null", super::graph::Knobs::default()),
-        ("local keys", super::graph::Knobs { fort_distance_bias: -1.0, ..Default::default() }),
-        (
-            "far keys, all pads cross",
-            super::graph::Knobs { fort_distance_bias: 1.0, foreign_landing_bias: 1.0 },
-        ),
+    let arms: [(&str, Knobs); 3] = [
+        ("null", Knobs::default()),
+        ("local keys", Knobs { fort_distance_bias: -1.0, ..Default::default() }),
+        ("far keys, all pads cross", Knobs { fort_distance_bias: 1.0, foreign_landing_bias: 1.0 }),
     ];
     for seed in 0..census_seeds(4) {
         for (name, knobs) in &arms {
@@ -604,7 +410,7 @@ fn the_generator_never_ships_an_unwinnable_maze() {
             // reachable castle unenterable, so the guarantee has to hold with
             // it wide open and with it demanding every wand in the game.
             for k in [0u8, super::DEFAULT_WANDS_REQUIRED, 7] {
-                let (state, report) = generated_k(&raw, seed, knobs, k);
+                let (_, state, report) = generated(&raw, seed, knobs, k);
                 let name = &format!("{name}, K={k}");
                 assert!(
                     report.spheres.solvable,
@@ -687,20 +493,14 @@ fn every_pad_is_half_of_a_pair() {
     const MIN_SPAN: usize = 8;
 
     let Some(raw) = load_rom() else { return };
-    let arms: [(&str, super::graph::Knobs); 3] = [
-        ("null", super::graph::Knobs::default()),
-        (
-            "all pads stay home",
-            super::graph::Knobs { foreign_landing_bias: 0.0, fort_distance_bias: 0.0 },
-        ),
-        (
-            "all pads cross",
-            super::graph::Knobs { foreign_landing_bias: 1.0, fort_distance_bias: 1.0 },
-        ),
+    let arms: [(&str, Knobs); 3] = [
+        ("null", Knobs::default()),
+        ("all pads stay home", Knobs { foreign_landing_bias: 0.0, fort_distance_bias: 0.0 }),
+        ("all pads cross", Knobs { foreign_landing_bias: 1.0, fort_distance_bias: 1.0 }),
     ];
     for seed in 0..census_seeds(4) {
         for (name, knobs) in &arms {
-            let (state, _) = generated(&raw, seed, knobs);
+            let (_, state, _) = generated(&raw, seed, knobs, 0);
             let pads = state.pad_edges();
             let tiles: Vec<_> = pads.iter().map(|&(from, _)| from).collect();
 
@@ -724,6 +524,21 @@ fn every_pad_is_half_of_a_pair() {
                 tiles.len(),
                 "seed {seed} [{name}]: two pads claim the same cell"
             );
+
+            // Above the per-world cap a world stops being a place and starts
+            // being a switchboard.
+            let mut per_world = [0usize; 8];
+            for &(world, _) in &tiles {
+                per_world[world] += 1;
+            }
+            for (wi, &n) in per_world.iter().enumerate() {
+                assert!(
+                    n <= super::graph::PADS_PER_WORLD_MAX,
+                    "seed {seed} [{name}] W{}: {n} pads, cap is {}",
+                    wi + 1,
+                    super::graph::PADS_PER_WORLD_MAX
+                );
+            }
 
             for &(from, to) in &pads {
                 assert_ne!(
@@ -894,16 +709,7 @@ fn stamping_pads_writes_no_chr() {
     use crate::randomize::rom_data::{PRG012_FILE_BASE, TELEPAD_QUADRANTS, TILE_TELEPAD};
 
     let Some(raw) = load_rom() else { return };
-    let (rom, result) = census_build(&raw, 1);
-    let mut rng = ChaCha8Rng::seed_from_u64(0x5EED_1234);
-    let (state, _) = super::generate(
-        &result,
-        &IDENTITY_SPINE,
-        super::DEFAULT_WANDS_REQUIRED,
-        all_forts(&result),
-        &super::graph::Knobs::default(),
-        &mut rng,
-    );
+    let (rom, state, _) = generated(&raw, 1, &Knobs::default(), super::DEFAULT_WANDS_REQUIRED);
     let mut after = rom.clone();
     super::writer::stamp_pad_tiles(&mut after, &state);
 
@@ -1052,14 +858,11 @@ fn no_pad_shares_a_tile_with_a_card_game() {
 fn maze_generator_census() {
     let Some(raw) = load_rom() else { return };
     let seeds = census_seeds(50);
-    let arms: [(&str, super::graph::Knobs); 4] = [
-        ("null (bias 0)", super::graph::Knobs::default()),
-        ("local keys (-1)", super::graph::Knobs { fort_distance_bias: -1.0, ..Default::default() }),
-        ("far keys (+1)", super::graph::Knobs { fort_distance_bias: 1.0, ..Default::default() }),
-        (
-            "far keys + all pads cross",
-            super::graph::Knobs { fort_distance_bias: 1.0, foreign_landing_bias: 1.0 },
-        ),
+    let arms: [(&str, Knobs); 4] = [
+        ("null (bias 0)", Knobs::default()),
+        ("local keys (-1)", Knobs { fort_distance_bias: -1.0, ..Default::default() }),
+        ("far keys (+1)", Knobs { fort_distance_bias: 1.0, ..Default::default() }),
+        ("far keys + all pads cross", Knobs { fort_distance_bias: 1.0, foreign_landing_bias: 1.0 }),
     ];
 
     eprintln!("\n=== world-maze generator, {seeds} seeds per arm ===");
@@ -1095,7 +898,7 @@ fn maze_generator_census() {
         };
 
         for seed in 0..seeds {
-            let (state, report) = generated(&raw, seed, knobs);
+            let (_, state, report) = generated(&raw, seed, knobs, 0);
             for pad in &report.pads {
                 asked[idx(pad.requested)] += 1;
                 got[idx(pad.granted)] += 1;
@@ -1175,7 +978,7 @@ fn maze_generator_census() {
 fn maze_game_length_census() {
     let Some(raw) = load_rom() else { return };
     let seeds = census_seeds(20);
-    let knobs = super::graph::Knobs::default();
+    let knobs = Knobs::default();
     let mut played = Vec::new();
     let mut required = Vec::new();
     let mut total_levels = Vec::new();
@@ -1185,7 +988,7 @@ fn maze_game_length_census() {
         // At the SHIPPING wand requirement, not K=0. K=0 is a legal setting but
         // it is the one where a pad chain can finish a seed in a single level,
         // so measuring the game's length there answers a question nobody asked.
-        let (state, _) = generated_k(&raw, seed, &knobs, super::DEFAULT_WANDS_REQUIRED);
+        let (_, state, _) = generated(&raw, seed, &knobs, super::DEFAULT_WANDS_REQUIRED);
         let cost = super::metrics::completion_cost(&state);
         played.push(cost.content);
         detours.push(cost.detours);
@@ -1244,7 +1047,7 @@ fn maze_game_length_census() {
 fn maze_wand_gate_sweep() {
     let Some(raw) = load_rom() else { return };
     let seeds = census_seeds(30);
-    let knobs = super::graph::Knobs::default();
+    let knobs = Knobs::default();
 
     eprintln!("\n=== the wand gate, {seeds} seeds per K ===");
     eprintln!(
@@ -1257,7 +1060,7 @@ fn maze_wand_gate_sweep() {
         let mut unwinnable = 0usize;
         let mut no_path = 0usize;
         for seed in 0..seeds {
-            let (state, report) = generated_k(&raw, seed, &knobs, k);
+            let (_, state, report) = generated(&raw, seed, &knobs, k);
             if !report.spheres.solvable {
                 unwinnable += 1;
                 continue;
@@ -1301,16 +1104,8 @@ fn a_generated_maze_writes_only_pad_tiles_and_free_space() {
 
     let Some(raw) = load_rom() else { return };
     for seed in 0..census_seeds(3) {
-        let (rom, result) = census_build(&raw, seed);
-        let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
-        let (state, _) = super::generate(
-            &result,
-            &IDENTITY_SPINE,
-            super::DEFAULT_WANDS_REQUIRED,
-            all_forts(&result),
-            &super::graph::Knobs::default(),
-            &mut rng,
-        );
+        let (rom, state, _) =
+            generated(&raw, seed, &Knobs::default(), super::DEFAULT_WANDS_REQUIRED);
 
         let mut after = rom.clone();
         super::writer::stamp_pad_tiles(&mut after, &state);
@@ -1373,7 +1168,7 @@ fn a_short_spine_still_finishes() {
                 &spine,
                 k,
                 all_forts(&result),
-                &super::graph::Knobs::default(),
+                &Knobs::default(),
                 &mut rng,
             );
             assert!(
@@ -1403,16 +1198,7 @@ fn a_short_spine_still_finishes() {
 fn foreign_lock_rows_match_the_assignment() {
     let Some(raw) = load_rom() else { return };
     for seed in 0..census_seeds(4) {
-        let (_, result) = census_build(&raw, seed);
-        let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
-        let (state, _) = super::generate(
-            &result,
-            &IDENTITY_SPINE,
-            super::DEFAULT_WANDS_REQUIRED,
-            all_forts(&result),
-            &super::graph::Knobs::default(),
-            &mut rng,
-        );
+        let (_, state, _) = generated(&raw, seed, &Knobs::default(), super::DEFAULT_WANDS_REQUIRED);
         let rows = super::writer::foreign_locks(&state);
 
         assert_eq!(
@@ -1449,16 +1235,18 @@ fn foreign_lock_rows_match_the_assignment() {
 
 /// **The pads must not overflow the packed completion store.**
 ///
-/// A pad tile is a spade panel (`TILE_BONUS_GAME`), and that tile is in the
-/// engine's `Map_Completable_Tiles` — so every pad the generator stamps adds a
-/// cell to the stencil and a bit to both planes. `PLANE_RESERVE` is 48 bytes
-/// against a measured worst case of 42, so there are six bytes of margin and 16
-/// pads could claim two of them.
+/// `TILE_TELEPAD` (`$DF`) is in neither `Map_Completable_Tiles` nor
+/// `Map_Removable_Tiles`, so a pad claims no stencil cell and no plane bit —
+/// one of the reasons that byte was chosen over the spade panel it replaced.
+/// When a pad WAS a spade panel every one of them grew both planes and the
+/// worst measured case sat at 43 of `PLANE_RESERVE`'s 48 bytes; it is 41 now.
+/// This runs the knobs that place the most pads, so if the property ever
+/// quietly stops holding the count moves here first.
 ///
-/// The failure mode if this ever stops holding is not a crash: the planes would
-/// silently run past their reserve into the arrival variables that live
-/// immediately after them, and the symptom would be a corrupted teleport
-/// several worlds later. That is why this is an assert and not a census.
+/// The failure mode is not a crash: the planes would silently run past their
+/// reserve into the arrival variables that live immediately after them, and the
+/// symptom would be a corrupted teleport several worlds later. That is why this
+/// is an assert and not a census.
 #[test]
 fn the_pads_still_fit_the_packed_store() {
     use crate::randomize::completion_bits::{CompletionMap, PLANE_RESERVE};
@@ -1467,17 +1255,9 @@ fn the_pads_still_fit_the_packed_store() {
     let mut worst = 0usize;
     let mut worst_seed = 0;
     for seed in 0..census_seeds(12) {
-        let (rom, result) = census_build(&raw, seed);
-        let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
         // The knobs that place the most pads: every id spent, all crossing.
-        let (state, _) = super::generate(
-            &result,
-            &IDENTITY_SPINE,
-            super::DEFAULT_WANDS_REQUIRED,
-            all_forts(&result),
-            &super::graph::Knobs { foreign_landing_bias: 1.0, fort_distance_bias: 1.0 },
-            &mut rng,
-        );
+        let knobs = Knobs { foreign_landing_bias: 1.0, fort_distance_bias: 1.0 };
+        let (rom, state, _) = generated(&raw, seed, &knobs, super::DEFAULT_WANDS_REQUIRED);
         let mut after = rom.clone();
         super::writer::stamp_pad_tiles(&mut after, &state);
         let used = CompletionMap::from_rom(&after).mirror_offset();
@@ -1539,7 +1319,7 @@ fn the_maze_holds_under_start_airship_swap() {
             &IDENTITY_SPINE,
             super::DEFAULT_WANDS_REQUIRED,
             all_forts(&result),
-            &super::graph::Knobs::default(),
+            &Knobs::default(),
             &mut rng,
         );
         assert!(
@@ -1565,28 +1345,4 @@ fn the_maze_holds_under_start_airship_swap() {
          ({:.0}%), plus seed {full_seed} with all seven",
         100.0 * swapped_worlds as f64 / total_worlds as f64
     );
-}
-
-/// Diagnostic: what the generator thinks a fortress is, versus what the writer
-/// actually stamped there.
-#[test]
-#[ignore]
-fn dump_fortress_tiles() {
-    use crate::randomize::rom_data;
-    let Some(raw) = load_rom() else { return };
-    let seed = 4242u64;
-    let (rom, result) = census_build(&raw, seed);
-    let state = GlobalState::from_build(&result, &IDENTITY_SPINE, 3, all_forts(&result));
-    for w in &state.worlds {
-        let forts: Vec<_> = w
-            .slots
-            .iter()
-            .filter(|s| s.kind == SlotKind::Fortress)
-            .map(|s| {
-                let t = rom.read_byte(rom_data::map_tile_offset(w.world_idx, s.pos.0, s.pos.1));
-                (s.section, s.pos, format!("{t:02X}"))
-            })
-            .collect();
-        eprintln!("W{} forts (section, pos, tile-in-rom): {forts:?}", w.world_idx + 1);
-    }
 }

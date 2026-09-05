@@ -19,9 +19,8 @@
 
 use std::collections::HashSet;
 
-use super::super::overworld_build::{SlotKind, stamp_slots};
-use super::super::rom_data::Grid;
-use super::walk::{MazePos, MazeWorld, walk_maze, walk_maze_cost};
+use super::super::overworld_build::SlotKind;
+use super::walk::{MazePos, walk_maze, walk_maze_cost};
 use super::{FortRef, GlobalState};
 
 /// A play-through's price, in content beaten.
@@ -60,15 +59,7 @@ pub(crate) struct CompletionCost {
 /// exponential; the bound is tight enough to answer "about how long is this
 /// game" and it is honest about which way it errs.
 pub(crate) fn completion_cost(state: &GlobalState) -> CompletionCost {
-    let bases: Vec<Grid> = state
-        .worlds
-        .iter()
-        .map(|w| {
-            let mut g = w.grid.clone();
-            stamp_slots(&mut g, &w.slots);
-            g
-        })
-        .collect();
+    let bases = state.base_grids(&HashSet::new());
     let links = state.links();
 
     // Content cells, and which of them is a fortress.
@@ -102,27 +93,8 @@ pub(crate) fn completion_cost(state: &GlobalState) -> CompletionCost {
     let mut out = CompletionCost::default();
 
     loop {
-        let grids: Vec<Grid> = bases
-            .iter()
-            .enumerate()
-            .map(|(wi, base)| {
-                let mut g = base.clone();
-                for lock in state.locks.iter().filter(|l| l.world == wi) {
-                    let opens = lock.fort.is_none_or(|f| beaten.contains(&f));
-                    g.set(
-                        lock.pos.0,
-                        lock.pos.1,
-                        if opens { lock.replace_tile } else { lock.gap_tile },
-                    );
-                }
-                g
-            })
-            .collect();
-        let view: Vec<MazeWorld> = grids
-            .iter()
-            .zip(&state.worlds)
-            .map(|(grid, w)| MazeWorld { grid, pipe_pairs: &w.pipe_pairs })
-            .collect();
+        let grids = state.locked_grids(&bases, &beaten);
+        let view = state.view(&grids);
         let reach = walk_maze(&view, &links, state.start);
         let cost = walk_maze_cost(&view, &links, state.start, &reach, |p| {
             u32::from(charged.contains(&p) && !cleared.contains(&p))

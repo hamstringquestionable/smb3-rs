@@ -132,34 +132,6 @@ impl MazeCost {
     }
 }
 
-/// Which worlds' canoes are usable, as a fixpoint over the whole maze.
-fn canoe_fixpoint(
-    worlds: &[MazeWorld],
-    links: &LinkLookup,
-    start: MazePos,
-) -> (Vec<Vec<bool>>, Vec<usize>, Vec<bool>) {
-    let pipes: Vec<TeleportLookup> = worlds.iter().map(|w| teleport_lookup(w.pipe_pairs)).collect();
-    let cols: Vec<usize> = worlds.iter().map(|w| w.grid.cols).collect();
-    let mut canoe_on = vec![false; worlds.len()];
-    loop {
-        let seen = reach_pass(worlds, &pipes, &canoe_on, links, start, &cols);
-        let mut changed = false;
-        for (wi, world) in worlds.iter().enumerate() {
-            if canoe_on[wi] {
-                continue;
-            }
-            let docks = rom_data::active_canoe_edges(wi, world.grid.eights_are_wild);
-            if docks.iter().any(|&((r, c), _)| seen[wi][r * cols[wi] + c]) {
-                canoe_on[wi] = true;
-                changed = true;
-            }
-        }
-        if !changed {
-            return (seen, cols, canoe_on);
-        }
-    }
-}
-
 /// Directed links, indexed for lookup.
 type LinkLookup = HashMap<MazePos, Vec<MazePos>>;
 
@@ -256,23 +228,17 @@ fn reach_pass(
     queue.push_back(start);
 
     while let Some((wi, pos)) = queue.pop_front() {
-        let push = |dw: usize, dpos: Pos, seen: &mut Vec<Vec<bool>>, q: &mut VecDeque<MazePos>| {
+        let mut push = |dw: usize, dpos: Pos| {
             let i = dpos.0 * cols[dw] + dpos.1;
             if !seen[dw][i] {
                 seen[dw][i] = true;
-                q.push_back((dw, dpos));
+                queue.push_back((dw, dpos));
             }
         };
-        let mut local = Vec::new();
-        expand(worlds[wi].grid, pos, &pipes[wi], &canoes[wi], (wi, pos) == start, |p| {
-            local.push(p)
-        });
-        for p in local {
-            push(wi, p, &mut seen, &mut queue);
-        }
+        expand(worlds[wi].grid, pos, &pipes[wi], &canoes[wi], (wi, pos) == start, |p| push(wi, p));
         if let Some(dests) = links.get(&(wi, pos)) {
             for &(dw, dpos) in dests {
-                push(dw, dpos, &mut seen, &mut queue);
+                push(dw, dpos);
             }
         }
     }
@@ -296,8 +262,31 @@ pub(crate) fn walk_maze(
     start: MazePos,
 ) -> MazeReach {
     let lookup = link_lookup(links);
-    let (per_world, cols, canoe_on) = canoe_fixpoint(worlds, &lookup, start);
-    MazeReach { per_world, cols, canoe_on }
+    let pipes: Vec<TeleportLookup> = worlds.iter().map(|w| teleport_lookup(w.pipe_pairs)).collect();
+    let cols: Vec<usize> = worlds.iter().map(|w| w.grid.cols).collect();
+
+    // The canoe fixpoint. A pad can drop the player straight onto a dock in a
+    // world they have no other route into, so each pass may switch a boat on
+    // that the previous one could not reach; enabling one only ever grows the
+    // reachable set, so this converges in at most one round per world.
+    let mut canoe_on = vec![false; worlds.len()];
+    loop {
+        let per_world = reach_pass(worlds, &pipes, &canoe_on, &lookup, start, &cols);
+        let mut changed = false;
+        for (wi, world) in worlds.iter().enumerate() {
+            if canoe_on[wi] {
+                continue;
+            }
+            let docks = rom_data::active_canoe_edges(wi, world.grid.eights_are_wild);
+            if docks.iter().any(|&((r, c), _)| per_world[wi][r * cols[wi] + c]) {
+                canoe_on[wi] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            return MazeReach { per_world, cols, canoe_on };
+        }
+    }
 }
 
 /// The same walk, priced. `cost(cell)` is what stepping ONTO that cell costs —
@@ -334,11 +323,7 @@ pub(crate) fn walk_maze_cost(
         if c > best[wi][pos.0 * cols[wi] + pos.1] {
             continue;
         }
-        let relax = |dw: usize,
-                     dpos: Pos,
-                     best: &mut Vec<Vec<u32>>,
-                     prev: &mut Vec<Vec<Option<MazePos>>>,
-                     heap: &mut BinaryHeap<_>| {
+        let mut relax = |dw: usize, dpos: Pos| {
             let next = c + cost((dw, dpos));
             let i = dpos.0 * cols[dw] + dpos.1;
             if next < best[dw][i] {
@@ -347,16 +332,10 @@ pub(crate) fn walk_maze_cost(
                 heap.push(std::cmp::Reverse((next, (dw, dpos))));
             }
         };
-        let mut local = Vec::new();
-        expand(worlds[wi].grid, pos, &pipes[wi], &canoes[wi], (wi, pos) == start, |p| {
-            local.push(p)
-        });
-        for p in local {
-            relax(wi, p, &mut best, &mut prev, &mut heap);
-        }
+        expand(worlds[wi].grid, pos, &pipes[wi], &canoes[wi], (wi, pos) == start, |p| relax(wi, p));
         if let Some(dests) = lookup.get(&(wi, pos)) {
             for &(dw, dpos) in dests {
-                relax(dw, dpos, &mut best, &mut prev, &mut heap);
+                relax(dw, dpos);
             }
         }
     }

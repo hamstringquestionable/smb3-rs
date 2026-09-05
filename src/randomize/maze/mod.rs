@@ -1,12 +1,8 @@
-//! World maze — the global verifier (design phase 2, build-order step 1).
+//! World maze — the generator, and the fixpoint that decides whether what it
+//! generated is winnable.
 //!
-//! `docs/world_maze_design.md` is the design record; this module is its first
-//! executable piece. Nothing here writes to the ROM, and nothing in the
-//! randomizer calls it — it is a **measurement instrument**, which is why the
-//! whole module is `#[cfg(test)]`. That also sidesteps the ungating trap the
-//! phase-1 modules hit: unreferenced code fails CI's wasm clippy pass, and
-//! `#[allow(dead_code)]` is not an answer this project accepts. The gate
-//! question arrives with the generator, not before it.
+//! `docs/world_maze_design.md` is the design record. [`generate`] is the entry
+//! point a shipped run calls; everything else here is what it is built out of.
 //!
 //! ## What it does
 //!
@@ -25,13 +21,15 @@
 //! The map walker reads rocks as walls, so this **is** the zero-hammer run
 //! (invariant 2) and no separate mode is needed for it.
 //!
-//! ## The null model
+//! ## The null model is history, not code
 //!
-//! [`pads`] holds the crude uniform pad placer. Together with an unmodified
-//! eight-world [`build`](crate::randomize::overworld_build::build) and the
-//! identity spine it makes the null model the charter asks for: "what happens
-//! if we connect eight worlds and change nothing else". Its census is the
-//! baseline every later lever is argued as a delta against.
+//! Build-order step 1 shipped a uniform pad placer so the charter's null-model
+//! baselines could be measured ("what happens if we connect eight worlds and
+//! change nothing else"). Those numbers are in the design doc and the placer is
+//! **deleted**: it emitted unpaired one-way pads landing on arbitrary slots, a
+//! shape [`graph`] can no longer produce, so a census over it measured a maze
+//! this module cannot emit. The baseline every later lever was argued against
+//! is the table in the doc, not a second placer kept alive to reproduce it.
 
 use rand::Rng;
 
@@ -50,10 +48,6 @@ pub(crate) mod graph;
 /// answer.
 #[cfg(test)]
 pub(crate) mod metrics;
-/// The null model's uniform pad placer — the baseline every role-aware
-/// placement is argued as a delta against, and nothing production calls.
-#[cfg(test)]
-pub(crate) mod pads;
 pub(crate) mod roles;
 #[cfg(test)]
 mod tests;
@@ -174,14 +168,16 @@ pub(crate) struct GlobalState {
     /// happens to land there, that content is a bonus.
     pub in_maze: [bool; 8],
     /// Cells no pad may stand on: the wandering Hammer Bro sprites' home
-    /// tiles. A pad tile is a spade panel and a wandering sprite that marches
-    /// onto one is a bug report waiting to happen, so the two never share a
-    /// cell. `BuiltWorld::hb_sprites` is the only place these are known —
-    /// `from_built` does not carry them onto the `WorldState`.
+    /// tiles. `TILE_TELEPAD` is in `Map_Object_Forbid_LandingTiles`, so a
+    /// marching bro cannot land on a pad — but its home cell comes from the
+    /// sprite table rather than from a march, so a pad stamped there would
+    /// start the game with a sprite parked on it. `BuiltWorld::hb_sprites` is
+    /// the only place these are known — `from_built` does not carry them onto
+    /// the `WorldState`.
     pub reserved: HashSet<MazePos>,
-    /// K of 7 — the difficulty dial. Recorded, not yet enforced: the wand gate
-    /// is a cloned wall tile that does not exist yet, so [`Spheres`] REPORTS
-    /// how many wands are collectable before the goal instead of gating on it.
+    /// K of 7 — the difficulty dial, and [`Self::spheres`] gates on it: the
+    /// goal does not count as reached until K wands are collectable, which is
+    /// exact because the gate cell is the only way into the castle.
     pub wands_required: u8,
 }
 
@@ -253,7 +249,7 @@ impl GlobalState {
     }
 
     /// Add telepads. Each pad tile owns one arrival row, so the count is
-    /// bounded by [`pads::PAD_BUDGET`].
+    /// bounded by [`graph::PAD_BUDGET`].
     pub(crate) fn add_pads(&mut self, pads: Vec<MazeEdge>) {
         self.edges.extend(pads);
     }
@@ -344,7 +340,7 @@ impl GlobalState {
     /// "would the game still be winnable without this level?" a one-line
     /// question (see [`metrics::required_levels`]). Any `BACKGROUND_TILES`
     /// member reads as a wall to the walker; the value never reaches the ROM.
-    fn base_grids(&self, blocked: &HashSet<MazePos>) -> Vec<Grid> {
+    pub(crate) fn base_grids(&self, blocked: &HashSet<MazePos>) -> Vec<Grid> {
         self.worlds
             .iter()
             .map(|w| {
@@ -355,6 +351,36 @@ impl GlobalState {
                 }
                 g
             })
+            .collect()
+    }
+
+    /// [`Self::base_grids`] with every lock stamped as `open` leaves it. The
+    /// fixpoint and [`metrics::completion_cost`] both step through the same
+    /// sequence of these, one per fort set, and they have to agree about what
+    /// a given set of beaten forts makes walkable.
+    pub(crate) fn locked_grids(&self, bases: &[Grid], open: &HashSet<FortRef>) -> Vec<Grid> {
+        bases
+            .iter()
+            .enumerate()
+            .map(|(wi, base)| {
+                let mut g = base.clone();
+                for lock in self.locks.iter().filter(|l| l.world == wi) {
+                    // An uninstalled lock (`fort: None`) is open path.
+                    let opens = lock.fort.is_none_or(|f| open.contains(&f));
+                    let tile = if opens { lock.replace_tile } else { lock.gap_tile };
+                    g.set(lock.pos.0, lock.pos.1, tile);
+                }
+                g
+            })
+            .collect()
+    }
+
+    /// The eight grids as the maze walkers take them.
+    pub(crate) fn view<'a>(&'a self, grids: &'a [Grid]) -> Vec<MazeWorld<'a>> {
+        grids
+            .iter()
+            .zip(&self.worlds)
+            .map(|(grid, w)| MazeWorld { grid, pipe_pairs: &w.pipe_pairs })
             .collect()
     }
 
@@ -385,29 +411,8 @@ impl GlobalState {
         let mut wands_at_goal = 0;
 
         loop {
-            let grids: Vec<Grid> = bases
-                .iter()
-                .enumerate()
-                .map(|(wi, base)| {
-                    let mut g = base.clone();
-                    for lock in self.locks.iter().filter(|l| l.world == wi) {
-                        // An uninstalled lock (`fort: None`) is open path.
-                        let opens = lock.fort.is_none_or(|f| open.contains(&f));
-                        g.set(
-                            lock.pos.0,
-                            lock.pos.1,
-                            if opens { lock.replace_tile } else { lock.gap_tile },
-                        );
-                    }
-                    g
-                })
-                .collect();
-            let view: Vec<MazeWorld> = grids
-                .iter()
-                .zip(&self.worlds)
-                .map(|(grid, w)| MazeWorld { grid, pipe_pairs: &w.pipe_pairs })
-                .collect();
-            let reach = walk_maze(&view, &links, self.start);
+            let grids = self.locked_grids(&bases, &open);
+            let reach = walk_maze(&self.view(&grids), &links, self.start);
 
             let reached: Vec<MazePos> = content
                 .iter()
@@ -484,6 +489,11 @@ impl GlobalState {
         spheres.wands_at_goal >= self.wands_required as usize
     }
 
+    /// This world's reserved cells, as plain positions.
+    pub(crate) fn reserved_in(&self, world: usize) -> HashSet<Pos> {
+        self.reserved.iter().filter(|(w, _)| *w == world).map(|&(_, p)| p).collect()
+    }
+
     /// **The safety invariant that replaces the charter's invariant 3.**
     ///
     /// Can the player get out of `world`'s start region with nothing but what
@@ -504,11 +514,6 @@ impl GlobalState {
     /// the safe one: a lock the key-assignment fill paired with a foreign fort
     /// can never be opened from inside, and a player arriving for the first
     /// time has beaten nothing here.
-    /// This world's reserved cells, as plain positions.
-    pub(crate) fn reserved_in(&self, world: usize) -> HashSet<Pos> {
-        self.reserved.iter().filter(|(w, _)| *w == world).map(|&(_, p)| p).collect()
-    }
-
     pub(crate) fn start_region_escapable(&self, world: usize) -> bool {
         let w = &self.worlds[world];
         let mut base = w.grid.clone();
@@ -752,7 +757,14 @@ pub(crate) fn generate<R: Rng>(
     if !spheres.solvable || !unsafe_worlds.is_empty() {
         state = GlobalState::from_build(result, spine, wands_required, crumbling);
         spheres = state.spheres();
-        unsafe_worlds.clear();
+        // RECOMPUTE, do not clear. The fallback drops the pads, and a hub pad
+        // is the only rescue an unsafe start region has — so the fallback can
+        // make escapability WORSE, and clearing the list here would report a
+        // clean bill for the one case that needed reporting. This branch is
+        // unreachable today (0 hub pads requested in every census arm, 100%
+        // escapable), which is exactly why it must not lie if it ever fires.
+        unsafe_worlds =
+            (0..state.worlds.len()).filter(|&wi| !state.start_region_escapable(wi)).collect();
     }
 
     (state, GenReport { spheres, fill, pads, unsafe_worlds })

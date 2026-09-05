@@ -102,7 +102,7 @@
 use crate::rom::Rom;
 
 use super::completion_bits::{CompletionMap, HALF_LEN, PLANE_RESERVE};
-use super::rom_data::{FS_MAZE_FOREIGN_LOCK, MAP_COMPLETE_BITS};
+use super::rom_data::{FS_COMPLETION_BASES, FS_MAZE_FOREIGN_LOCK, MAP_COMPLETE_BITS};
 
 // --- Engine symbols -----------------------------------------------------
 
@@ -319,6 +319,31 @@ pub fn apply(rom: &mut Rom, locks: &[ForeignLock]) {
     }
 
     let map = CompletionMap::from_rom(rom);
+
+    // **The ordering guard, and it catches three rules at once.**
+    //
+    // This module derives each lock's `(plane byte, bit)` by re-reading the map
+    // grids, while `completion_bits` has already emitted a base table from the
+    // grids as IT saw them. Those two views agree only if the grids have not
+    // moved in between — so comparing them here catches, in four lines:
+    //
+    // * a grid write landing after `completion_bits::apply` ran;
+    // * this module running BEFORE it;
+    // * `completion_bits` never having run at all, in which case the region is
+    //   still `$FF` filler and the compare fails loudly.
+    //
+    // Every one of those is otherwise silent: the offsets would simply address
+    // the wrong cells, and a cross-world lock would open something else. An
+    // ordering rule that only a comment knows is a bug waiting for a refactor.
+    let emitted = rom.read_range(FS_COMPLETION_BASES, 9);
+    assert_eq!(
+        emitted,
+        map.base_table(),
+        "the packed-store base table in the ROM disagrees with the map this module just read. \
+         Either a grid was written after `completion_bits::apply`, or this ran before it, or it \
+         never ran. See `randomizer::randomize_inner` for the order."
+    );
+
     let rows = table_rows(&map, locks);
     if rows.is_empty() {
         return;
@@ -767,6 +792,12 @@ mod asm_checks {
                 rom_data::LOCK_TILES[0],
             );
         }
+        // Install the packed store LAST, exactly as the pipeline does: every
+        // grid write has to precede it, and  now asserts that the base
+        // table in the ROM still describes the map it reads. A fixture that
+        // skipped this would be testing  against a precondition the
+        // real pipeline never presents it with.
+        completion_bits::apply(&mut out);
         out
     }
 

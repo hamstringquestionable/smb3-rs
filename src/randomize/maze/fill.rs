@@ -37,7 +37,27 @@ use rand::Rng;
 use rand::seq::SliceRandom;
 
 use super::graph::Knobs;
-use super::{FortRef, GlobalState};
+use super::{FortRef, GlobalState, MazeLock};
+
+/// Exchange the forts of two locks — the fill's only move, and its own undo.
+/// The fort/lock bijection survives for free, because a swap trades two forts
+/// between two locks rather than handing one out.
+///
+/// Takes the lock slice rather than the whole state so it stays disjoint from
+/// the `state.worlds` borrow the distance objective holds.
+fn swap_forts(locks: &mut [MazeLock], a: usize, b: usize) {
+    let fa = locks[a].fort;
+    locks[a].fort = locks[b].fort;
+    locks[b].fort = fa;
+}
+
+/// A cross-world lock can only be opened by a fortress whose cell actually
+/// turns to rubble: the hook is gated on that tile, and World 8's tanks are
+/// sprites over a blanked cell.
+fn opens_ok(st: &GlobalState, li: usize) -> bool {
+    let lock = &st.locks[li];
+    lock.fort.is_none_or(|f| f.world == lock.world || st.crumbling.contains(&f))
+}
 
 /// How many swaps the fill proposes per lock. Each proposal costs one global
 /// fixpoint, so this is the fill's whole cost model: `locks * PROPOSALS_PER_LOCK`
@@ -86,7 +106,7 @@ pub(crate) fn assign_keys<R: Rng>(
     for (i, &w) in spine.iter().enumerate() {
         spine_pos[w] = i;
     }
-    let distance = |lock: &super::MazeLock, fort: FortRef| -> usize {
+    let distance = |lock: &MazeLock, fort: FortRef| -> usize {
         if fort.world == lock.world {
             // Same world: a few points for grid separation, so a local key is
             // not entirely flat. Halved because two tiles apart on one grid is
@@ -120,10 +140,7 @@ pub(crate) fn assign_keys<R: Rng>(
                 continue;
             }
             report.proposed += 1;
-
-            let fa = state.locks[a].fort;
-            state.locks[a].fort = state.locks[b].fort;
-            state.locks[b].fort = fa;
+            swap_forts(&mut state.locks, a, b);
 
             let after = total(state);
             // bias 0 accepts any solvable swap — a random walk over the
@@ -142,26 +159,15 @@ pub(crate) fn assign_keys<R: Rng>(
             let p = if bias == 0.0 { 1.0 } else { bias.abs() };
             let take = wanted && rng.random_bool(p);
             if !take {
-                let fa = state.locks[a].fort;
-                state.locks[a].fort = state.locks[b].fort;
-                state.locks[b].fort = fa;
+                swap_forts(&mut state.locks, a, b);
                 report.rejected_objective += 1;
                 continue;
             }
-            // A cross-world lock can only be opened by a fortress whose cell
-            // actually turns to rubble: the hook is gated on that tile, and
-            // World 8's tanks are sprites over a blanked cell. Rejecting here
-            // rather than filtering later is deliberate — a foreign lock the
-            // ROM cannot fire is not a cosmetic problem, it is a lock that
-            // never opens.
-            let opens_ok = |li: usize, st: &GlobalState| {
-                let lock = &st.locks[li];
-                lock.fort.is_none_or(|f| f.world == lock.world || st.crumbling.contains(&f))
-            };
-            if !opens_ok(a, state) || !opens_ok(b, state) {
-                let fa = state.locks[a].fort;
-                state.locks[a].fort = state.locks[b].fort;
-                state.locks[b].fort = fa;
+            // Rejecting an uncrumbling fortress here rather than filtering the
+            // table later is deliberate — a foreign lock the ROM cannot fire is
+            // not a cosmetic problem, it is a lock that never opens.
+            if !opens_ok(state, a) || !opens_ok(state, b) {
+                swap_forts(&mut state.locks, a, b);
                 report.rejected_uncrumbling += 1;
                 continue;
             }
@@ -177,9 +183,7 @@ pub(crate) fn assign_keys<R: Rng>(
             let safe =
                 state.start_region_escapable(wa) && (wb == wa || state.start_region_escapable(wb));
             if !safe || !state.spheres().solvable {
-                let fa = state.locks[a].fort;
-                state.locks[a].fort = state.locks[b].fort;
-                state.locks[b].fort = fa;
+                swap_forts(&mut state.locks, a, b);
                 report.rejected_unsolvable += 1;
                 continue;
             }

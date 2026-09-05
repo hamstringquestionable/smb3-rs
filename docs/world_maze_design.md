@@ -46,7 +46,6 @@ document does not repeat it. The engine-level facts they rest on are in
 | `fill.rs` | the key-assignment swap search |
 | `metrics.rs` | how many levels a run beats, and how many it cannot avoid |
 | `writer.rs` | converters to the specs the ROM side takes |
-| `pads.rs` | the null model's uniform placer, kept as the baseline |
 
 The ROM side is `world_persist.rs` (arrivals, `PAD_ENTER`), `completion_bits.rs`
 (the packed store, the new-game signal), `maze_state.rs` (the SRAM map),
@@ -281,32 +280,133 @@ Two consequences:
 
 ### The island pad, and why v1 does not have one
 
-The charter's headline shape was a pad landing in a region no walk reaches — a
-pad-only island holding a fortress for a required lock. `maze_terrain_pools_census`
-says finished worlds contain **no such region at all**: **0 island landings in
-800 world-seeds**, in every world.
+**Corrected 2026-09-05, because the first version of this section got its own
+evidence wrong.** It said "0 island landings in 800 world-seeds" and concluded
+the terrain offered nothing to build on. The number was real but it measured the
+wrong thing, and the conclusion happened to survive for a different reason.
 
-The reason is two existing phases doing their jobs. `Connectivity` bridges every
-island with a pipe (and CLAUDE.md records that every world's map needs fewer
-pipes than its budget to fully connect), and `HammerBroFill` then claims every
-reachable blank. Between them nothing is left that a walk cannot get to.
+What is actually true, measured over the same 800 world-seeds
+(`maze_terrain_pools_census`):
 
-So an island pad cannot be a query over a finished world. It would need the pad
-placed **inside** the per-world pass, before `Connectivity`, with connectivity
-told to leave one island unbridged — and then `Locks` and `Shaping`, which guard
-on `completable()`, would have to believe in the pad as an edge. That is a
-gated change to `connectivity.rs` and to what the per-world walker sees, and it
-is a lever whose pool is currently empty rather than small.
+```
+island sites   128 total, mean 0.16, by world [0, 0, 100, 22, 0, 0, 6, 0]
+```
 
-**What v1 ships instead is the gated landing.** A pad that lands behind a lock
-still takes the player somewhere they could not have walked to; the gate is a
-key rather than terrain. The pool is large (mean 7.4 gated sites per world), it
-needs no builder change, and the cross-world lock — a fortress whose key is in
-another world — delivers the "go somewhere else to open this" experience the
-island pad was reaching for.
+So cells no walk reaches **do** exist — 100 in World 3, 22 in World 4, 6 in
+World 7, which are the canoe-and-water worlds. `Connectivity` bridges islands
+with pipes up to a budget, and what is left over is this. A pad tile could stand
+on one.
 
-`WorldTerrain::island_sites` and `island_landings` stay in the code as the
-evidence, and as the assertion that they are still empty.
+**And pairing made it mechanically possible for the first time.** When pads were
+independent one-way edges an island pad was incoherent — you could arrive
+somewhere with no way back. A pair puts one half on the island and one on
+reachable ground, and the island is enterable and leavable by construction.
+
+**It still is not worth building, and this is the honest reason:** an island
+holds no *content*. `HammerBroFill` claims every reachable blank and the content
+phases run before any pad exists, so an unreachable region is an unreachable
+region full of nothing. Landing there gets the player an empty cell and a pad
+home. To make it the charter's "pad-only island holding a fortress for a
+required lock", the pad has to be placed **inside** the per-world pass, before
+`Levels` and `Forts`, with `Connectivity` told to leave that island unbridged
+and `Locks`/`Shaping` — which guard on `completable()` — taught to believe in
+the pad as an edge.
+
+That is the real cost, and it was always the real cost; the earlier "the pool is
+empty" framing made it look cheaper to dismiss than it is. `WorldTerrain::island_sites`
+is kept and measured so the number stays visible, and `all_sites()` excludes it
+so the placer can never draw one by accident.
+
+### Where a pad LANDS: on its partner, and nowhere else
+
+Two playtest reports, one cause. First a pad dropped the player on a blank
+cell; then one dropped them on a pipe in another world; then they walked into a
+spade panel expecting a pad and got the card game.
+
+The first cut let a pad land on any placed slot, which was wrong twice over.
+`stamp_slots` leaves `SlotKind::HammerBro` slots as plain path tiles, so **45%
+of landings were on a cell the map draws nothing on** — but even fixing that to
+"land on visible content" was fixing the symptom. **A pad's destination is its
+partner pad**, always, and then the player can always see they have arrived and
+can always go back.
+
+The rules, all measured:
+
+- **Every pad is half of a pair**, mutually pointing. No pad points at itself,
+  no pad is unpaired, and the count is even and at most 16.
+- **A same-world pair spans at least 8 grid cells** (4 map moves). The minimum
+  measured span before this rule was **0** — a pad that teleported the player
+  onto the tile they were standing on. A pair that cannot reach 8 inside one
+  world becomes a crossing instead.
+- **Landing on a pad does not re-trigger it.** All three branches reaching
+  `PRG010_CEA7` sit downstream of an A-button *edge* test, so the hook fires
+  when the player commits to a tile, not when they arrive on one. This is what
+  makes pad-to-pad safe at all, and it is re-confirmed rather than assumed.
+
+Cost to the shape of the maze, 60 seeds/arm: spheres 5.96 → 6.27, sphere width
+2.85 → 2.71, pads per seed 9.30 → 8.63 (the dropped odd site), 97% of pairs
+cross worlds. Nothing moved enough to change what the mode is.
+
+### The pad has its own tile — `$DF`, and NOT a byte above the threshold
+
+A pad used to be a spade panel (`$E8`), inherited from the POC where pads *were*
+existing spade panels. Once the generator started stamping its own, that stopped
+being free: on one played ROM there were **28 spade tiles of which only 9 were
+pads**, World 2 had three and all three were card games, and nothing on screen
+told them apart. Two out of three "spades" were a disappointment.
+
+Pads are now `TILE_ALTSPIRAL` `$DF`. Three things had to hold at once:
+
+1. **Enterable**, or the hook never fires — via **membership in
+   `Map_EnterSpecialTiles`**, exactly as `$E8` reaches it.
+2. **NOT at or above its page's `Tile_Attributes_TS0` threshold.** This is the
+   trap, and it is worth stating loudly because the obvious choice walks into
+   it: a page-3 byte `>= $E9` *is* enterable by threshold — and the same
+   threshold is the engine's **level gate**. `MO_NormalMoveEnter` will not let
+   the player walk *off* such a tile until it is completed, allowing only a
+   reversal back the way they came ("you're not allowed to take the path until
+   you complete that level!", `prg010.asm`). A pad can never be completed, because
+   diverting at enter time means `MO_DoLevelClear` never runs. **A pad on a byte
+   `>= $E9` would permanently sever every path it stood on** — invisible on a
+   dead-end cell, fatal on a corridor.
+3. **No CHR written.** The four quadrants point at existing patterns
+   `$80`/`$82`/`$81`/`$83`, which close into a bright rectangular ring on black:
+   a lit hatch, the inverse of every filled badge the map otherwise uses. Those
+   are the same four tiles the wand-gate skull tried to *overwrite* — pointing
+   at them is free, writing them was the bug.
+
+Two constraints picked the art. Quadrants below `$80` **animate** (`Map_DoAnimations`
+swaps patterns `$00`-`$7F`), which is why `TILE_LARGEFORT` is documented as
+going visually corrupt; and **World 6's palette page 3 has colour 1 and colour 3
+both `$30`**, so anything drawn on colour 3 is invisible there. A colour-1 ring
+on colour-0 black is legible in all eight worlds.
+
+Two bonuses fell out. `$DF` is **not** in `Map_Completable_Tiles`, so a pad
+takes no packed-store bit — the worst case drops from 43 of 48 to **41 of 48**,
+and "a pad stays a pad" becomes structural rather than observational. And it is
+in `Map_Object_Forbid_LandingTiles`, so a marching Hammer Bro cannot land on one.
+
+### Pad roles are the per-world interface
+
+The per-world builder never learns that a world graph exists. It is handed a
+count and a set of roles:
+
+- **Hub pad** — in the start region, zero-key reachable. How a world satisfies
+  invariant 3 when its airship path is gated.
+- ~~**Island pad**~~ — see "The island pad, and why v1 does not have one" below.
+- **Shortcut pad** — reachable, but behind a lock. A shortcut that opens later.
+
+All three are queries against machinery that exists: `islands.rs` knows island
+regions, `forced_positions` knows cut vertices, `locks.rs` knows what is behind
+a lock.
+
+Two consequences:
+
+- **Pads are placed before forts and locks** in the per-world pass. A pad
+  arrival is what makes an island region eligible to hold content at all.
+- **The role allocator needs a fallback.** Not every world's terrain has an
+  island — W1 does not. So a role is a request, not a contract, and the
+  distribution of granted roles is a census output.
 
 ### Boundary conditions
 
@@ -430,7 +530,15 @@ No knob below has a measured value, and none can until something exists to
 measure. The way out is the one the current builder used: **measure a null
 model first, then add one lever at a time.**
 
-The null model is the crudest thing that is still a maze:
+**The null model's instrument is gone; its numbers are the record.** The
+uniform placer in `maze/pads.rs` was deleted once the real placer existed,
+because it emitted *unpaired one-way* pads landing on arbitrary slots — a shape
+the generator can no longer produce, and one the design doc itself records as a
+playtest bug. A census over it measured a maze this code cannot emit, which is a
+trap rather than a baseline. The table below stays: it is what every later lever
+was argued against.
+
+The null model was the crudest thing that is still a maze:
 
 - eight per-world builds, unchanged (`overworld_build::build` as it stands);
 - the spine assumed — world *i*'s airship goes to world *i+1*, which needs no
@@ -511,7 +619,7 @@ Four findings, and they redraw the plan:
    as a pure verifier.**~~ **DONE** (2026-09-05) — `src/randomize/maze/`, with
    the cross-world walker beside `walk_reachable` in `map_walker.rs`. The
    spoiler log is `Spheres::spoiler`. Shipped with the crude uniform pad placer
-   in `maze/pads.rs`.
+   in `maze/pads.rs`, since **deleted** — see below.
 2. ~~**Census the null model.**~~ **DONE** — the table above.
 3. ~~**World-graph pass**~~ **DONE** — `maze/graph.rs`. Spine order, pad counts
    and roles per world, and the id budget spent in strict priority order:
@@ -969,7 +1077,7 @@ the verifier (step 1) and run in `src/randomize/maze/tests.rs`.
 | `wands_are_collectable` | at least K airships reachable without passing the goal gate — **exists**, and the guarantee test asserts a lazy player actually collects exactly K at K = 0, 3 and 7 |
 | `a_maze_rom_puts_a_pad_tile_under_every_arrival_key` | **end-to-end**: decode every pad key row out of a finished ROM and demand a **telepad** tile there. The pad tables and the map are written by different modules, and one row of disagreement makes the pad enter the spade game instead of teleporting — the exact failure that cost a playtest session. Mutation-tested: stamping one row low fails it |
 | `the_pads_still_fit_the_packed_store` | the pad tile `$DF` is **not** completable, so pads no longer grow the packed planes at all: 41 of 48 at the worst measured seed, against 43 when pads were spade panels |
-| `pad_ids_fit` | pad count <= `PORTAL_MAX`, and every pad owns a distinct arrival row — **exists** |
+| `every_pad_is_half_of_a_pair` | every pad's destination is another pad's tile and that pad points back; none points at itself; the count is even and at most 16; every same-world pair spans at least 8 cells. Subsumes the old `pad_ids_fit` — **exists** |
 | `packed_planes_fit_their_reserve` | **exists today**, and neither the wand gate nor the pads cost it anything any more — the gate does not join `Map_Removable_Tiles`, and `$DF` is not in `Map_Completable_Tiles`. Worst case **41 of 48**, seven bytes of margin. The failure mode is silent, which is why it is asserted: the planes would run into the arrival variables sitting immediately after them |
 | `the_maze_leaves_every_pipe_alone` | **exists today** — pipe tables and world pointer tables stay byte-identical |
 

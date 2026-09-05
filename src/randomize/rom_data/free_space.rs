@@ -145,7 +145,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x33FC8,
         40,
         &["completion_bits"],
-        "world-maze: the title screen's new-game signal (40 reserved, 25 used)",
+        "world-maze: the title screen's new-game signal (40 reserved, 33 used)",
     ),
     fs(0x33FF0, 32, &["title_screen"], "title menu B-to-mute toggle (32 reserved, 22 used)"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
@@ -232,7 +232,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x15FC0,
         60,
         &["completion_bits"],
-        "world-maze: the Map_Completions wipe, replaced (60 reserved, 31 used)",
+        "world-maze: the Map_Completions wipe, replaced (60 reserved, 34 used)",
     ),
     fs(
         0x15FFC,
@@ -407,7 +407,7 @@ pub(crate) const FS_TITLE_MUTE: usize = 0x33FF0; // 32 reserved, 22 used
 // and sited immediately *before* it, so the two sit at the tail of the run
 // together and a bundled title hack starting at 0x33529 still has 2719 bytes
 // of clear filler ahead of them.
-pub(crate) const FS_NEW_GAME_INIT: usize = 0x33FC8; // 40 reserved, 25 used
+pub(crate) const FS_NEW_GAME_INIT: usize = 0x33FC8; // 40 reserved, 33 used
 
 // The five world-maze constants below are **offset reservations**: the address
 // is decided here, in one place, so the features being built alongside each
@@ -600,7 +600,7 @@ pub(crate) const FS_PACK_PLANE: usize = 0x15794; // 112 reserved, 99 used
 pub(crate) const FS_UNPACK_PLANE: usize = 0x15F4C; // 80 reserved, 72 used
 pub(crate) const FS_COMPLETION_BASES: usize = 0x15804; // 12 reserved, 9 used
 pub(crate) const FS_UNPACK_WORLD: usize = 0x15F9C; // 36 reserved, 33 used
-pub(crate) const FS_WIPE_REPLACEMENT: usize = 0x15FC0; // 60 reserved, 31 used
+pub(crate) const FS_WIPE_REPLACEMENT: usize = 0x15FC0; // 60 reserved, 34 used
 // Runs to 0x16010, the end of PRG010.
 pub(crate) const FS_SWAP_AT_RELOAD: usize = 0x15FFC; // 20 reserved, 18 used
 

@@ -408,10 +408,12 @@ mod tests {
             crate::Options { palettes: false, palette_themed: false, ..Default::default() };
         options.world_maze = true;
         options.world_order = true;
-        let Ok(patched) = crate::randomize_rom(&rom_bytes, 7, &options, None) else {
-            eprintln!("SKIP: the maze build failed for this seed");
-            return;
-        };
+        // NOT a soft skip. The whole point of this half is that a WORLD-MAZE
+        // run does not write over the bit table; letting a failed build fall
+        // through would leave the test passing having checked vanilla only,
+        // which is the vacuity that has bitten this feature twice.
+        let patched = crate::randomize_rom(&rom_bytes, 7, &options, None)
+            .expect("the maze build failed, so only vanilla was checked");
         assert_eq!(
             patched.read_range(MAP_COMPLETE_BIT_FILE, 8),
             MAP_COMPLETE_BITS,

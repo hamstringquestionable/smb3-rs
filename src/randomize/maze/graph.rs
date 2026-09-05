@@ -246,7 +246,7 @@ fn claim_one<R: Rng>(
             .filter(|&p| far_from.is_none_or(|q| span(p, q) >= SAME_WORLD_MIN_SPAN))
             .collect()
     };
-    let mut pool = free(t.sites_for(role));
+    let mut pool = free(&t.sites_for(role));
     if pool.is_empty() {
         pool = free(&t.all_sites());
     }

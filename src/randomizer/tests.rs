@@ -1807,3 +1807,69 @@ fn every_cross_world_lock_names_a_crumbling_fortress() {
     assert!(sprite_forts > 0, "no sprite-covered fortress seen; the case guarded is absent");
     eprintln!("  {rows_seen} cross-world locks checked, {sprite_forts} sprite forts present");
 }
+
+/// **The `// N reserved, M used` figures in the registry must be true.**
+///
+/// Every `FREE_SPACE_ALLOCATIONS` row carries its size in prose, and prose does
+/// not compile. Two of them had silently drifted by the time this test was
+/// written — `FS_NEW_GAME_INIT` said 25 where the routine had grown to 33, and
+/// `FS_WIPE_REPLACEMENT` said 31 against 34 — because both grew a caller after
+/// the row was written. Worse, `completion_bits`' own module comment had the
+/// right number while the registry had the wrong one, which is the arrangement
+/// most likely to mislead: two sources, one stale, no way to tell which.
+///
+/// Nothing enforced them. `free_space_audit_matches_registry` proves nobody
+/// overran or wrote where they should not; `free_space_doc_table_is_current`
+/// proves CLAUDE.md's per-bank table is fresh. Neither reads these strings.
+/// The audit already computes the real figure, so this is only a matter of
+/// asking.
+///
+/// The rule is **a label may not understate**, not "a label must match". Some
+/// rows honestly state a maximum rather than one run's figure — the flag-key
+/// stamp says "up to 42 used at the largest key", the cross-world lock table
+/// sizes itself for 17 rows — and a seed that writes fewer bytes is not a bug.
+/// Understating is the direction that hurts: it makes an allocation look
+/// roomier than it is, which is how the next feature gets sited on top of
+/// something.
+#[test]
+fn registry_used_figures_are_current() {
+    use crate::randomize::rom_data::audit_free_space;
+
+    let Some(mut rom) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    randomize(&mut rom, 0xA11C0DE, &audit_options());
+
+    // `N reserved, M used`, in the label. Rows without the phrase opt out —
+    // some genuinely have nothing to say — but a row that states a figure is
+    // held to it.
+    let stated = |label: &str| -> Option<usize> {
+        let at = label.find(" used")?;
+        let head = &label[..at];
+        let start = head.rfind(|c: char| !c.is_ascii_digit())? + 1;
+        head[start..].parse().ok()
+    };
+
+    let mut checked = 0;
+    let mut wrong = Vec::new();
+    for u in audit_free_space(&rom) {
+        let Some(says) = stated(u.alloc.label) else { continue };
+        checked += 1;
+        if says < u.used {
+            wrong.push(format!(
+                "  0x{:05X} ({}): label says {says} used, the run wrote {}",
+                u.alloc.offset, u.alloc.label, u.used
+            ));
+        }
+    }
+
+    assert!(checked >= 20, "only {checked} rows state a used figure; the parse is broken");
+    assert!(
+        wrong.is_empty(),
+        "these registry rows claim FEWER bytes than the randomizer actually wrote, \
+         so the allocation looks roomier than it is:\n{}\n\
+         Regenerate from `smb3-rs <rom> --write-log`, do not hand-count.",
+        wrong.join("\n")
+    );
+}

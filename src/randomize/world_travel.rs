@@ -75,7 +75,8 @@ use crate::rom::Rom;
 
 use super::maze_state::{VISITED_TABLE, VISITED_TABLE_LEN};
 use super::rom_data::{
-    FS_MAZE_TRAVEL, FS_MAZE_VISITED, MAP_Y_STARTS_OFF, find_start, read_tile_grid,
+    FS_MAZE_TRAVEL, FS_MAZE_VISITED, MAP_Y_STARTS_OFF, find_start, prg030_file_to_cpu,
+    read_tile_grid,
 };
 
 // --- Addresses ----------------------------------------------------------
@@ -93,18 +94,12 @@ const fn prg011_cpu(file: usize) -> u16 {
     (0xA000 + (file - 0x16010)) as u16
 }
 
-/// PRG030 is the fixed bank at `$8000-$9FFF` and is always mapped, which is
-/// what lets PRG010 code read `Map_Y_Starts` directly.
-const fn prg030_cpu(file: usize) -> u16 {
-    (0x8000 + (file - 0x3C010)) as u16
-}
-
 const MARK_VISITED_CPU: u16 = prg010_cpu(FS_MAZE_VISITED);
 const WHISTLE_TRAVEL_CPU: u16 = prg011_cpu(FS_MAZE_TRAVEL);
 
 /// `Map_Y_Starts` — the per-world start row, `$838A`. Read at runtime rather
 /// than baked in, because `start_airship_swap` rewrites the table.
-const MAP_Y_STARTS_CPU: u16 = prg030_cpu(MAP_Y_STARTS_OFF);
+const MAP_Y_STARTS_CPU: u16 = prg030_file_to_cpu(MAP_Y_STARTS_OFF);
 
 /// `Player_Current` — 0 Mario, 1 Luigi. Every world-map position variable is a
 /// two-byte array indexed by it.
@@ -377,20 +372,6 @@ const WHISTLE_TRAVEL: [u8; 34] = [
 
 // --- Writer -------------------------------------------------------------
 
-/// Install both halves of whistle fast travel.
-///
-/// **Must run after the overworld writer** — see the module doc; the start-key
-/// table is derived from the map in the ROM, and [`build_start_keys`] panics
-/// rather than emit one that disagrees with `Map_Y_Starts`.
-///
-/// Order between the two routines does not matter — they share no bytes and no
-/// hook site — but both are required: the cycler with no marker can only ever
-/// stay put, and the marker with no cycler writes a table nothing reads.
-///
-/// **Depends on `completion_bits` being installed**, because the whole
-/// transition rests on its `World_Num != LIVE_WORLD` hooks packing the
-/// outgoing world. Not asserted here: this module writes ROM, it cannot see
-/// what else the pipeline chose.
 /// `JSR Inv_UseItem_ShiftOver` inside `Inv_UseItem_WarpWhistle` — the three
 /// bytes that DELETE the whistle from the inventory once it is blown. CPU
 /// `$A7A9` in PRG026, which is mapped at `$A000` while the inventory is open.
@@ -414,6 +395,20 @@ pub(crate) const WHISTLE_CONSUME_OFFSET: usize = 0x347B9;
 #[cfg(test)]
 const WHISTLE_CONSUME_VANILLA: [u8; 3] = [0x20, 0x1B, 0xA6];
 
+/// Install both halves of whistle fast travel.
+///
+/// **Must run after the overworld writer** — see the module doc; the start-key
+/// table is derived from the map in the ROM, and [`build_start_keys`] panics
+/// rather than emit one that disagrees with `Map_Y_Starts`.
+///
+/// Order between the two routines does not matter — they share no bytes and no
+/// hook site — but both are required: the cycler with no marker can only ever
+/// stay put, and the marker with no cycler writes a table nothing reads.
+///
+/// **Depends on `completion_bits` being installed**, because the whole
+/// transition rests on its `World_Num != LIVE_WORLD` hooks packing the
+/// outgoing world. Not asserted here: this module writes ROM, it cannot see
+/// what else the pipeline chose.
 pub fn apply(rom: &mut Rom) {
     let keys = build_start_keys(rom);
 

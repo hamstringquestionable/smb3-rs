@@ -20,14 +20,22 @@ use super::MazeLock;
 /// pad it is paired with is a separate decision (see
 /// `graph::Knobs::foreign_landing_bias`).
 ///
-/// **There is no `Island` role, and that is a measurement, not an oversight.**
+/// **There is no `Island` role, and that was a measurement, not an oversight.**
 /// The charter's headline shape was a pad standing in a region no walk reaches.
-/// `maze_terrain_pools_census` says finished worlds contain **no such region**:
-/// 0 island sites in 800 world-seeds, because `Connectivity` bridges every
-/// island with a pipe and `HammerBroFill` then claims every reachable blank.
-/// Building the role anyway would be a lever with an empty pool. What it would
-/// cost, and the shape that replaces it, are in `docs/world_maze_design.md`
-/// under "The island pad, and why v1 does not have one".
+/// `maze_terrain_pools_census` found finished worlds contained **no such
+/// region** — 0 island sites in 800 world-seeds, because `Connectivity` bridges
+/// every island with a pipe and `HammerBroFill` then claims every reachable
+/// blank — so the role would have been a lever with an empty pool. What it
+/// would cost, and the shape that replaces it, are in
+/// `docs/world_maze_design.md` under "The island pad, and why v1 does not have
+/// one".
+///
+/// **Re-measured 2026-09-05, the pool is no longer empty**: 128 sites in 800
+/// world-seeds, mean 0.16 per world, and lopsided — 100 of them in World 3, 22
+/// in World 4, 6 in World 7, none anywhere else. The census prints it. Nothing
+/// draws from the pool ([`WorldTerrain::all_sites`] offers hub and gated only),
+/// so this breaks nothing; it means the evidence the role was declined on has
+/// moved and the decision is worth revisiting rather than assuming.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum PadRole {
     /// Tile in the start region, reachable with zero keys. This is how a world
@@ -49,11 +57,13 @@ pub(crate) struct WorldTerrain {
     pub hub_sites: Vec<Pos>,
     /// Pad tiles reachable only once some lock opens.
     pub gated_sites: Vec<Pos>,
-    /// Pad tiles no walk reaches at all, even with every lock open. Measured
-    /// empty on finished terrain; kept because it is the evidence for that,
-    /// and because it must stay empty — a pad site nothing can step on is a
-    /// wasted arrival id. Test-only: `maze_terrain_pools_census` is the only
-    /// reader, and the placer must never draw from it.
+    /// Pad tiles no walk reaches at all, even with every lock open — the pool
+    /// the charter's island pad would have drawn from. Once measured empty,
+    /// now 0.16 per world and concentrated in W3/W4 (see [`PadRole`]).
+    ///
+    /// **The placer must never draw from it**: a pad site nothing can step on
+    /// is a wasted arrival id, and half a pair that can never be used from one
+    /// end. Test-only, because `maze_terrain_pools_census` is its only reader.
     #[cfg(test)]
     pub island_sites: Vec<Pos>,
     /// Whether the world's own target is reachable from the start with every
@@ -87,11 +97,17 @@ impl WorldTerrain {
 
     /// The pool a role draws its tile from, or `None` when the terrain cannot
     /// grant it. A role is a request, not a contract.
-    pub(crate) fn sites_for(&self, role: PadRole) -> &[Pos] {
+    pub(crate) fn sites_for(&self, role: PadRole) -> Vec<Pos> {
         match role {
-            PadRole::Hub => &self.hub_sites,
-            PadRole::Shortcut => &self.gated_sites,
-            PadRole::Free => &self.hub_sites,
+            PadRole::Hub => self.hub_sites.clone(),
+            PadRole::Shortcut => self.gated_sites.clone(),
+            // "No constraint" has to mean it. This returned `hub_sites` until
+            // 2026-09-05, which made `Free` a second name for `Hub` — the
+            // census showed the consequence plainly: of every pad ever placed,
+            // **not one** was granted `Free`, because a hub site was always
+            // available to satisfy it first. An owned `Vec` costs an allocation
+            // per placement and buys a variant that does what it says.
+            PadRole::Free => self.all_sites(),
         }
     }
 }
