@@ -1,6 +1,7 @@
 # Fortress FX table redesign
 
-**Status:** design only, nothing implemented. Written 2026-09-06 on
+**Status:** stage 0 landed (a Rust-only derivation proof); no ROM change yet.
+Written 2026-09-06 on
 `experiment/world-maze`, revised 2026-09-06 after a second design pass, so a
 fresh session can pick it up cold.
 
@@ -95,6 +96,102 @@ map bank, and it is adjacent to its consumer.
 | `MapTileReplace` (17) | the current tile, via `Map_Removable_Tiles` -> `Map_RemoveTo_Tiles` |
 
 That is 153 of the 187 bytes of slot data redundant with the target position.
+
+**Stage 0 measured this** (2026-09-06, `overworld_writer::fortress_fx::derivation`).
+The answer is "mostly, and the exceptions are worth knowing":
+
+- **`VAddrH/L` and `MapCompIdx` (68 bytes) always derive** — vanilla and every
+  randomized ROM, no exceptions. Stage 1 can delete both outright.
+- **`Patterns` (68 bytes) always derive** from the metatile quadrants, with one
+  vanilla slot excepted: `$0F`, W8's dark screen, stores `FF FF FF FF` ("all
+  black square in the dark") rather than the quadrants of the tile it writes.
+  That slot's patterns carry information the target cell does not. Our writer
+  never reproduced it — `fx_patterns_for` has no darkness case — so nothing is
+  lost by deriving them; the `World_8_Dark` gate in the screen check already
+  covers that page.
+- **`fx_patterns_for`'s three hand-written cases agree exactly** with the
+  quadrants of the three plain tiles `Map_RemoveTo_Tiles` names. It is a
+  hand-copy of a table the ROM already holds, and stage 1 deletes it.
+- **`MapTileReplace` does *not* derive**, and this is the one real decision
+  stage 1 has to make. See below. Vanilla has a single instance of its own:
+  slot `$08` (W6, row 4 col 13) sits on plain ground — the corridor around it is
+  `$42/$45/$47` and no `$DA` appears anywhere on that screen — yet it stores
+  `$DA`, the *sky* path, which is what the adjacent slot `$07` legitimately
+  stores for the game's one real sky lock (W5, cell `$E4`, cloud neighbours).
+  Deriving fixes it. Nobody has seen it because `$45` and `$DA` share CHR
+  quadrants and the effect writes no attribute byte, so the frame is right
+  either way and the reload restores `$45`.
+
+### The replacement tile is where the derivation actually breaks
+
+`Map_Removable_Tiles` pairs each obstacle with the path its own terrain wants:
+`$54 -> $46` and `$56 -> $45` for ground, `$E4 -> $DA` for sky, `$9D -> $B3` for
+water. The sky pair exists exactly so a lock in the clouds reveals a cloud path
+rather than a ground one.
+
+The builder, however, stores the *original* tile it covered — a drawbridge, a
+path variant, a sky path — so the stored byte is frequently a tile the engine's
+table cannot name. Measured over 200 seeds: **562 of 3362 slots (16.7%) keep a
+variant**; `$B7`, `$BA` and `$DB` are the common ones.
+
+The patterns give the game away — they are the **plain** tile's quadrants in
+every case, variant or not. So today's ROM already shows three different tiles
+at one cell over time: the plain graphic during the effect, the variant once map
+RAM is redrawn, and the plain tile again after the next map load, because
+`Map_Reload_with_Completions` maps `$54` back to `$46` regardless. The variant
+survives only until the player leaves the map.
+
+Deriving the write from `Map_RemoveTo_Tiles` therefore does not lose a stable
+behaviour — it makes all three agree on the plain tile, which is what a reload
+produces anyway.
+
+### Decision: stage 1 derives, and the terrain mismatch stays (2026-09-06)
+
+The interesting case is sky. `smb3.asm` names the whole vocabulary:
+
+```
+TILE_LOCKVERT    = $54  ->  TILE_VERTPATH    = $46
+TILE_LOCKHORZ    = $56  ->  TILE_HORZPATH    = $45
+TILE_ALTLOCK     = $E4  ->  TILE_HORZPATHSKY = $DA
+TILE_VERTPATHSKY = $DB  <-  nothing removes to it
+```
+
+`$DB` exists, so the *destination* is not the missing piece — the missing piece
+is a **gap tile** for it. `$E4` is the only sky lock and it is hard-paired to
+the horizontal sky path, because Nintendo never needed a vertical one. So when
+the builder locks a `$DB` cell it writes `$54`, a ground lock in the clouds, and
+the reload later reveals `$46`, a ground path in the clouds. Measured: **126 of
+3362 slots over 200 seeds (3.7%)**.
+
+That mismatch is **not created by this rework** — the reload has it today. What
+stage 1 changes is that it becomes visible immediately rather than one map load
+later, since the effect stops writing the correct `$DB` first.
+
+**Decided: leave it.** Deriving is the right long-term shape precisely because
+the gap tile *should* determine the terrain: once a sky-vertical gap tile
+exists, derivation is automatically correct everywhere, whereas a per-entry tile
+byte would let the effect and the reload drift apart again — the same
+two-sources-of-truth shape this whole rework exists to remove. Expanding
+`Map_Removable_Tiles` for that tile is a **future enhancement** (stage 3), not a
+stage 1 obligation.
+
+Two things it would need, recorded so the enhancement starts warm:
+
+- a new metatile for the lock itself — `$54` and `$56` differ by which sides the
+  path stubs attach to and `$E4` is the horizontal shape, so this is art, not
+  just a table row;
+- a new row in the removable tables, which the disassembly explicitly invites:
+  `MRT_END ; marker to calculate size -- allows user expansion of
+  Map_Removable_Tiles`, and the loop bound at `prg012.asm:359` assembles from
+  that marker rather than being a hardcoded `7`.
+
+A zero-ROM-cost interim exists if the mismatch ever looks worse than it reads —
+have the builder decline to lock `$DB` cells. It costs lock sites in W5's sky,
+so it moves route choice and would need the two deep censuses, which is why it
+is not the default.
+
+The census in `randomized_fx_tile_and_patterns_diverge_only_by_path_variant` is
+the number to re-measure if any of this is revisited.
 
 ---
 
@@ -390,13 +487,17 @@ row-7/8 shared-bit rule (#212) into play for the new tile. It is not a free knob
 
 ## Suggested staging
 
-1. **Stage 0 — prove the derivation in Rust.** A test that walks vanilla plus N
-   randomized ROMs and asserts every slot's `VAddrH/L`, `MapCompIdx`,
-   `Patterns`, `MapLocationRow`/`MapLocation` and `MapTileReplace` equals the
-   value computed from `(world, row, col)` and the removable-tile mapping. Turns
-   "153 of 187 bytes are redundant" from a claim into a machine-checked fact,
-   and will say whether `fx_patterns_for`'s three hand-written cases actually
-   agree with `Map_RemoveTo_Tiles`. Zero ROM risk.
+1. **Stage 0 — prove the derivation in Rust. Done** (2026-09-06). Four tests in
+   `overworld_writer::fortress_fx::derivation`, no ROM bytes touched:
+   `rust_gap_tile_mapping_agrees_with_the_engines_removable_tables` checks the
+   Rust copy of the mapping against the engine's own tables;
+   `vanilla_fx_slot_data_is_derivable_from_its_target_cell` pins vanilla's two
+   exceptions as exact strings; `fx_position_bytes_are_always_derived_from_the_target_cell`
+   asserts the 68 arithmetic bytes over vanilla plus N randomized ROMs; and
+   `randomized_fx_tile_and_patterns_diverge_only_by_path_variant` pins the shape
+   of the one divergence and prints its census (`CENSUS_SEEDS` raises the seed
+   count, default 8). Findings are folded into "Most of that is cached
+   arithmetic" above.
 2. **Stage 1 — one ROM change.** The entry table and 48-byte mirror in the freed
    `$C7BD` block, the scan in `Map_MarkLevelComplete`, a rewritten
    `MO_DoFortressFX`, a rewritten screen check, `foreign_locks` absorbed, the
@@ -411,7 +512,9 @@ row-7/8 shared-bit rule (#212) into play for the new tile. It is not a free knob
 3. **Stage 2 — builder capabilities** (out of scope here): fort deja vu, the
    per-world fort cap, levels-as-keys.
 4. **Stage 3 — expand `Map_Removable_Tiles`** for new obstacle types, with its
-   own stencil census.
+   own stencil census. Its first customer is the sky vertical lock (see
+   "Decision: stage 1 derives" above) — a terrain mismatch that predates this
+   rework and was explicitly left in place.
 
 **Ordering rule that matters: nothing from stage 2 before stage 1 lands**, or
 fort deja vu ships the Y-byte clobber.

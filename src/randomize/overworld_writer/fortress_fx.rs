@@ -298,3 +298,385 @@ pub(super) fn patch_fortress_fx_screen_check(rom: &mut Rom) {
         rom.write_byte(CODE_OFFSET + i, b);
     }
 }
+
+/// Stage 0 of the fortress-FX rework (`docs/fx_table_redesign.md`): prove in
+/// Rust that a slot's stored data is redundant with its target cell.
+///
+/// The redesign's premise is that 153 of the 187 bytes of per-slot FX data are
+/// cached arithmetic over `(world, row, col)` plus the engine's own
+/// removable-tile mapping. That is a claim until something checks it, so this
+/// module decodes each slot's target cell from its *own* position bytes and
+/// re-derives every other byte from it, on vanilla and on randomized output.
+///
+/// It writes nothing. The value is the exception list: every slot that does
+/// *not* derive is pinned below with the reason, so stage 1 knows exactly what
+/// it changes rather than discovering it in a playtest.
+#[cfg(test)]
+mod derivation {
+    use crate::randomize::rom_data::{
+        self, FX_MAP_COMP_IDX, FX_PATTERNS, FX_VADDR_H, FX_VADDR_L, MAP_COMPLETE_BITS,
+        PRG012_FILE_BASE,
+    };
+    use crate::rom::Rom;
+
+    /// `Map_Removable_Tiles` / `Map_RemoveTo_Tiles`, CPU `$A437`/`$A43F` in
+    /// PRG012 (mapped at `$A000`), 8 parallel entries each. These are the
+    /// engine's own answer to "what does this obstacle become", used by
+    /// `Map_Reload_with_Completions` on every map load.
+    const MAP_REMOVABLE_TILES: usize = PRG012_FILE_BASE + 0x437;
+    const MAP_REMOVE_TO_TILES: usize = PRG012_FILE_BASE + 0x43F;
+    const REMOVABLE_COUNT: usize = 8;
+
+    /// The metatile quadrant tables are stored UL, LL, UR, LR — four 256-byte
+    /// planes from [`PRG012_FILE_BASE`]. `FortressFX_Patterns` stores the same
+    /// four bytes in *row* order (UL, UR, LL, LR), which is the order the
+    /// effect queues them into `Graphics_Buffer`.
+    const PATTERN_QUADRANT_ORDER: [usize; 4] = [0, 2, 1, 3];
+
+    /// What the engine turns `tile` into when its obstacle is cleared, or
+    /// `None` if the engine does not consider it removable.
+    fn remove_to(rom: &Rom, tile: u8) -> Option<u8> {
+        (0..REMOVABLE_COUNT)
+            .find(|&i| rom.read_byte(MAP_REMOVABLE_TILES + i) == tile)
+            .map(|i| rom.read_byte(MAP_REMOVE_TO_TILES + i))
+    }
+
+    /// The four CHR patterns that draw `tile`, read from the metatile quadrant
+    /// tables in `FortressFX_Patterns` order.
+    fn metatile_patterns(rom: &Rom, tile: u8) -> [u8; 4] {
+        PATTERN_QUADRANT_ORDER.map(|q| rom.read_byte(PRG012_FILE_BASE + q * 256 + tile as usize))
+    }
+
+    /// The `(row, col)` a slot points at, decoded from
+    /// `FortressFX_MapLocationRow`/`MapLocation` — the key the redesign keeps.
+    /// Which world it lives in is *not* recorded anywhere in the slot tables.
+    fn target_cell(rom: &Rom, slot: usize) -> (usize, usize) {
+        let loc_row = rom.read_byte(rom_data::FX_MAP_LOC_ROW + slot);
+        let loc = rom.read_byte(rom_data::FX_MAP_LOC + slot);
+        let row = (loc_row >> 4) as usize - 2;
+        let col = (loc & 0x0F) as usize * 16 + (loc >> 4) as usize;
+        (row, col)
+    }
+
+    /// Every stored byte of `slot` that does not equal the value derived from
+    /// the slot's own target cell, as `(field, detail)` pairs.
+    ///
+    /// `world_idx` is needed only to read the map tile under the lock.
+    fn mismatches(rom: &Rom, slot: usize, world_idx: usize) -> Vec<(&'static str, String)> {
+        let loc_row = rom.read_byte(rom_data::FX_MAP_LOC_ROW + slot);
+        let (row, col) = target_cell(rom, slot);
+        let col_in_screen = col % 16;
+
+        let mut out = Vec::new();
+
+        // The key itself: the engine ORs this low nibble into the map-data
+        // write column at $C99B, so it must be zero (see the writer above).
+        if loc_row & 0x0F != 0 {
+            out.push(("map_loc_row", format!("low nibble {:#04X} is not 0", loc_row & 0x0F)));
+        }
+
+        // VRAM address — no screen term; screens alias onto one nametable
+        // window (docs/fx_table_redesign.md).
+        let vram = 0x2880 + row * 64 + col_in_screen * 2;
+        let (want_h, want_l) = ((vram >> 8) as u8, (vram & 0xFF) as u8);
+        let (got_h, got_l) = (rom.read_byte(FX_VADDR_H + slot), rom.read_byte(FX_VADDR_L + slot));
+        if (got_h, got_l) != (want_h, want_l) {
+            out.push((
+                "vaddr",
+                format!("stored {got_h:02X}{got_l:02X}, derived {want_h:02X}{want_l:02X}"),
+            ));
+        }
+
+        // Map_Completions index — the column is the map column and the bit is
+        // Map_CompleteBit[row.min(7)], the table the engine already indexes in
+        // Map_MarkLevelComplete. Rows 7 and 8 share bit $01 (#212).
+        let (want_col, want_bit) = (col as u8, MAP_COMPLETE_BITS[row.min(7)]);
+        let (got_col, got_bit) = (
+            rom.read_byte(FX_MAP_COMP_IDX + slot * 2),
+            rom.read_byte(FX_MAP_COMP_IDX + slot * 2 + 1),
+        );
+        if (got_col, got_bit) != (want_col, want_bit) {
+            out.push((
+                "map_comp_idx",
+                format!(
+                    "stored ({got_col:#04X}, {got_bit:#04X}), derived ({want_col:#04X}, {want_bit:#04X})"
+                ),
+            ));
+        }
+
+        // Replacement tile — the engine's removable-tile mapping applied to
+        // the tile currently sitting at the target cell.
+        let replace = rom.read_byte(rom_data::FX_MAP_TILE_REPLACE + slot);
+        let current = rom.read_byte(rom_data::map_tile_offset(world_idx, row, col));
+        match remove_to(rom, current) {
+            Some(derived) if derived == replace => {}
+            Some(derived) => out.push((
+                "map_tile_replace",
+                format!("cell holds {current:#04X}, stored {replace:#04X}, derived {derived:#04X}"),
+            )),
+            None => out.push((
+                "map_tile_replace",
+                format!("cell holds {current:#04X}, which is not in Map_Removable_Tiles"),
+            )),
+        }
+
+        // Patterns — the metatile quadrants of the replacement tile. Checked
+        // against the *stored* replacement so a tile mismatch above does not
+        // also show up here as a second, derived failure.
+        let want_pat = metatile_patterns(rom, replace);
+        let got_pat: [u8; 4] = core::array::from_fn(|j| rom.read_byte(FX_PATTERNS + slot * 4 + j));
+        if got_pat != want_pat {
+            out.push((
+                "patterns",
+                format!("tile {replace:#04X}: stored {got_pat:02X?}, derived {want_pat:02X?}"),
+            ));
+        }
+
+        out
+    }
+
+    /// Report [`mismatches`] for a run of slots, tagged with the slot number.
+    fn scan(rom: &Rom, slots_by_world: &[(usize, usize)]) -> Vec<String> {
+        let mut found = Vec::new();
+        for &(slot, world_idx) in slots_by_world {
+            for (field, detail) in mismatches(rom, slot, world_idx) {
+                found.push(format!("slot {slot:#04X} ({field}): {detail}"));
+            }
+        }
+        found
+    }
+
+    fn load_rom() -> Option<Rom> {
+        let data = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes").ok()?;
+        Rom::from_bytes(&data).ok()
+    }
+
+    /// Vanilla's 17 slots, in the order `FortressFX_W1..W8` hands them out.
+    fn vanilla_slots_by_world() -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        for wi in 0..8 {
+            let n = rom_data::FORTRESS_ENTRIES.iter().filter(|&&(w, _)| w == wi).count();
+            for _ in 0..n {
+                out.push((out.len(), wi));
+            }
+        }
+        out
+    }
+
+    /// Build `seeds` randomized ROMs and hand each to `visit`, along with the
+    /// slots it wrote and the world each belongs to.
+    ///
+    /// Slot-to-world comes from the build rather than from `FortressFX_W1..W8`
+    /// because that table *cannot* express it: `0x00` means both "slot 0" and
+    /// "unused", so World 1's row reads `[0,0,0,0]` whether it holds one lock
+    /// or none. Removing that ambiguity is one of the redesign's motivations.
+    /// The writer hands out one running slot index across worlds in world
+    /// order, which `test_fx_slots_valid` pins.
+    fn for_each_randomized_rom(
+        rom: &Rom,
+        seeds: u64,
+        mut visit: impl FnMut(&Rom, &[(usize, usize)]),
+    ) {
+        use crate::randomize::overworld_writer::{WriteFlags, write_overworld};
+        use crate::randomize::{node_catalog, overworld_build, overworld_pickup};
+        use rand::SeedableRng;
+        use rand_chacha::ChaCha8Rng;
+
+        for seed in 0..seeds {
+            let catalog = node_catalog::NodeCatalog::build(rom, false);
+            let pickup = overworld_pickup::pick_up(
+                rom,
+                &catalog,
+                overworld_pickup::PickupFlags {
+                    shuffle_spade_games: true,
+                    shuffle_toad_houses: true,
+                    ..Default::default()
+                },
+            );
+            let data = overworld_build::OverworldData { pickup: &pickup, catalog: &catalog };
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            let build = overworld_build::build(
+                rom,
+                &data,
+                &mut rng,
+                overworld_build::BuildFlags { shuffle_toad_houses: true, ..Default::default() },
+            );
+
+            let mut out = rom.clone();
+            let _ = write_overworld(&mut out, &build, &data, &mut rng, WriteFlags::default());
+
+            let mut slots_by_world = Vec::new();
+            for (wi, world) in build.worlds.iter().enumerate() {
+                for _ in 0..world.locks.len() {
+                    slots_by_world.push((slots_by_world.len(), wi));
+                }
+            }
+            visit(&out, &slots_by_world);
+        }
+    }
+
+    /// Seeds for the randomized pass; `CENSUS_SEEDS` raises it.
+    fn census_seeds() -> u64 {
+        std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(8)
+    }
+
+    /// `path_for_gap_tile` is a hand-written copy of the engine's own
+    /// `Map_Removable_Tiles` -> `Map_RemoveTo_Tiles` pairing. If the two ever
+    /// disagreed, the builder would restore a different tile than the map
+    /// reload does, so check the copy against the source.
+    #[test]
+    fn rust_gap_tile_mapping_agrees_with_the_engines_removable_tables() {
+        let Some(rom) = load_rom() else { return };
+        for gap in [0x54u8, 0x56, 0xE4, rom_data::WATER_GAP_TILE] {
+            assert_eq!(
+                rom_data::path_for_gap_tile(gap),
+                remove_to(&rom, gap),
+                "gap tile {gap:#04X}: path_for_gap_tile disagrees with Map_RemoveTo_Tiles"
+            );
+        }
+    }
+
+    /// Vanilla derives cleanly except in two places, both pinned here so a
+    /// change to either is a test failure rather than a surprise.
+    ///
+    /// * **Slot `$0F` patterns.** W8's dark screen. Vanilla stores
+    ///   `FF FF FF FF` — the disassembly's own comment says "Makes an all
+    ///   black square in the dark" — instead of the quadrants of the tile it
+    ///   writes into map RAM (`$46`). This is the one slot whose patterns
+    ///   carry information the target cell does not. Our writer does not
+    ///   reproduce it: `fx_patterns_for` has no darkness case, so a randomized
+    ///   W8 lock on the dark screen already draws the ordinary path tile and
+    ///   relies on the `World_8_Dark` gate in
+    ///   [`patch_fortress_fx_screen_check`] instead.
+    /// * **Slot `$08` replacement tile.** The removable table pairs each
+    ///   obstacle with the path its terrain wants — `$56 -> $45` on the
+    ///   ground, `$E4 -> $DA` in the sky — so a cloud lock reveals a cloud
+    ///   path. W6 `(row 4, col 13)` is plain ground: it holds `$56`, its
+    ///   corridor is `$42/$45/$47`, and `$DA` appears nowhere on that screen.
+    ///   The slot nevertheless stores `$DA`, the sky answer, which is what the
+    ///   *preceding* slot `$07` legitimately stores for the game's one real
+    ///   sky lock (W5, cell `$E4`, cloud neighbours) — the value looks carried
+    ///   down a row when the table was authored. It has stayed invisible
+    ///   because `$45` and `$DA` share CHR quadrants and the effect writes no
+    ///   attribute byte, so the frame is correct either way, and the reload
+    ///   maps `$56` back to `$45` regardless. Deriving fixes it.
+    const VANILLA_EXCEPTIONS: &[&str] = &[
+        "slot 0x08 (map_tile_replace): cell holds 0x56, stored 0xDA, derived 0x45",
+        "slot 0x0F (patterns): tile 0x46: stored [FF, FF, FF, FF], derived [FE, C0, FE, C0]",
+    ];
+
+    #[test]
+    fn vanilla_fx_slot_data_is_derivable_from_its_target_cell() {
+        let Some(rom) = load_rom() else { return };
+        let slots = vanilla_slots_by_world();
+
+        // The slot-to-world mapping is reconstructed from FORTRESS_ENTRIES;
+        // check it against the ROM's own FortressFX_W1..W8 before trusting it.
+        let from_rom: Vec<u8> =
+            rom_data::read_world_fx_assignments(&rom).into_iter().flatten().collect();
+        let derived: Vec<u8> = slots.iter().map(|&(slot, _)| slot as u8).collect();
+        assert_eq!(from_rom, derived, "FortressFX_W1..W8 does not hand out slots 0..16 in order");
+
+        let found = scan(&rom, &slots);
+        assert_eq!(
+            found, VANILLA_EXCEPTIONS,
+            "vanilla FX slots derive from their target cell except for the pinned exceptions"
+        );
+    }
+
+    /// The 68 bytes of `VAddrH/L` and `MapCompIdx` are pure arithmetic over the
+    /// target cell, in vanilla and in every randomized ROM. Nothing the builder
+    /// does perturbs them, so stage 1 can delete both tables outright.
+    #[test]
+    fn fx_position_bytes_are_always_derived_from_the_target_cell() {
+        let Some(rom) = load_rom() else { return };
+        const POSITION_FIELDS: [&str; 3] = ["map_loc_row", "vaddr", "map_comp_idx"];
+
+        let mut offenders = Vec::new();
+        let mut check = |rom: &Rom, slots: &[(usize, usize)], label: &str| {
+            for &(slot, wi) in slots {
+                for (field, detail) in mismatches(rom, slot, wi) {
+                    if POSITION_FIELDS.contains(&field) {
+                        offenders.push(format!("{label} slot {slot:#04X} ({field}): {detail}"));
+                    }
+                }
+            }
+        };
+        check(&rom, &vanilla_slots_by_world(), "vanilla");
+        for_each_randomized_rom(&rom, census_seeds(), |out, slots| check(out, slots, "randomized"));
+
+        assert!(offenders.is_empty(), "position-derived FX bytes diverged: {offenders:#?}");
+    }
+
+    /// Randomized output does **not** derive its replacement tile, and stage 1
+    /// has to decide what to do about it. This pins exactly how it diverges.
+    ///
+    /// The builder keeps the *original* path tile under a lock — a drawbridge,
+    /// a sky path, a path variant — while `Map_Removable_Tiles` knows only the
+    /// plain path of each orientation (`$54 -> $46`, `$56 -> $45`). So the
+    /// stored replacement is a variant that the engine's table cannot name.
+    ///
+    /// The patterns give the game away: they are the *plain* tile's quadrants,
+    /// not the stored variant's, because `fx_patterns_for` is a hand-written
+    /// copy of exactly three plain tiles. Today's ROM therefore shows three
+    /// different tiles at one cell over time — the plain graphic during the
+    /// effect, the variant once map RAM is redrawn, and the plain tile again
+    /// after the next map load turns `$54` back into `$46`. Deriving the write
+    /// from `Map_RemoveTo_Tiles`, as the redesign does, collapses all three to
+    /// the plain tile and loses the variant; extending the removable tables is
+    /// the alternative (stage 3).
+    #[test]
+    fn randomized_fx_tile_and_patterns_diverge_only_by_path_variant() {
+        let Some(rom) = load_rom() else { return };
+        let seeds = census_seeds();
+
+        let mut census: std::collections::BTreeMap<(u8, u8), usize> = Default::default();
+        let (mut slots_seen, mut derived) = (0usize, 0usize);
+
+        for_each_randomized_rom(&rom, seeds, |out, slots| {
+            for &(slot, wi) in slots {
+                slots_seen += 1;
+                let (row, col) = target_cell(out, slot);
+                let cell = out.read_byte(rom_data::map_tile_offset(wi, row, col));
+                let stored = out.read_byte(rom_data::FX_MAP_TILE_REPLACE + slot);
+                let plain = remove_to(out, cell).unwrap_or_else(|| {
+                    panic!("slot {slot:#04X}: cell tile {cell:#04X} is not removable")
+                });
+                let patterns: [u8; 4] =
+                    core::array::from_fn(|j| out.read_byte(FX_PATTERNS + slot * 4 + j));
+
+                // Whatever the stored tile is, the patterns drawn are the
+                // plain tile's. That is the fact that makes the 68-byte
+                // pattern table deletable.
+                assert_eq!(
+                    patterns,
+                    metatile_patterns(out, plain),
+                    "slot {slot:#04X}: patterns must be the quadrants of {plain:#04X}"
+                );
+
+                if stored == plain {
+                    derived += 1;
+                    continue;
+                }
+                // The one licensed divergence: the stored tile is the path
+                // variant this lock was placed over.
+                assert_eq!(
+                    rom_data::gap_tile_for(stored),
+                    cell,
+                    "slot {slot:#04X}: stored {stored:#04X} is not the path under gap {cell:#04X}"
+                );
+                *census.entry((cell, stored)).or_default() += 1;
+            }
+        });
+
+        assert!(slots_seen > 0, "no FX slots were written across {seeds} seeds");
+        let variants: usize = census.values().sum();
+        println!(
+            "fx tile derivation over {seeds} seeds: {slots_seen} slots, \
+             {derived} derive from Map_RemoveTo_Tiles, {variants} keep a path variant"
+        );
+        for ((cell, stored), n) in &census {
+            println!("  gap {cell:#04X} -> stored {stored:#04X}  x{n}");
+        }
+    }
+}
