@@ -38,6 +38,8 @@ use sprites::{
     pick_plant_positions, pick_w8_sprite_positions, write_hb_sprites, write_plant_sprites,
     write_w8_sprites,
 };
+use std::sync::LazyLock;
+
 use types::{Assignment, HammerBroAssignment, PipeAssignment, WorldAssignments};
 
 // Public API consumed by the randomizer.
@@ -53,7 +55,7 @@ pub(crate) fn write_overworld<R: Rng>(
     data: &OverworldData,
     rng: &mut R,
     flags: WriteFlags,
-) {
+) -> FortressFx {
     let assignments = assign_pool(rom, build, data, rng, flags);
 
     // Compute W8 army sprite target positions before writing tiles,
@@ -86,7 +88,7 @@ pub(crate) fn write_overworld<R: Rng>(
 
         write_tile_grid(rom, built, wa, data, sprite_mask, rng);
         write_pointer_entries(rom, wi, built, wa, data, &mut hb_fallback_iter);
-        write_fortress_fx(rom, wi, built, wa, data, &mut fx_slot);
+        write_fortress_fx(rom, wi, built, wa, data, &mut fx_slot, &NO_SUPPRESSION);
         write_pipe_dests(rom, wi, wa);
         // For swapped worlds, rewrite the Airship + Start entry coordinates
         // (the main writer pass leaves both untouched) before the resort so
@@ -123,6 +125,57 @@ pub(crate) fn write_overworld<R: Rng>(
     // No-op when the option was off (no worlds got flagged in pick_swaps).
     if data.catalog.start_airship_swapped.iter().any(|&b| b) {
         super::start_airship_swap::write_engine_scaffolding(rom, data.catalog);
+    }
+
+    FortressFx { assignments }
+}
+
+/// No locks suppressed — what every non-maze run passes.
+static NO_SUPPRESSION: LazyLock<HashSet<(usize, usize)>> = LazyLock::new(HashSet::new);
+
+/// A handle that can re-run the fortress-FX pass after the fact.
+///
+/// **Why the pass is re-runnable at all.** The world maze only learns which
+/// locks a *foreign* fortress opens after [`write_overworld`] has finished:
+/// `crumbling_forts` reads the grids this very pass lays down, so the decision
+/// cannot be made earlier without duplicating the writer's sprite-mask logic.
+/// Re-running is safe because `write_fortress_fx` takes no RNG and overwrites
+/// the same table bytes it wrote the first time — including the Boom-Boom
+/// Y-byte, which masks off the old ordinal before writing the new one.
+///
+/// Slots the second pass does not reach keep the bytes the first pass left. That
+/// is deliberate and matches vanilla: the per-world table at `FX_WORLD_TABLE` is
+/// rewritten in full, so nothing points at them, and the original pass never
+/// cleared its own unused tail either.
+pub(crate) struct FortressFx {
+    assignments: Vec<WorldAssignments>,
+}
+
+impl FortressFx {
+    /// Re-run the FX pass, omitting the named lock cells.
+    ///
+    /// `suppress` is indexed by world. A lock listed here loses its local
+    /// fortress key outright — see [`write_fortress_fx`].
+    pub(crate) fn suppress_locks(
+        &self,
+        rom: &mut Rom,
+        build: &BuildResult,
+        data: &OverworldData,
+        suppress: &[HashSet<(usize, usize)>],
+    ) {
+        let mut fx_slot = 0usize;
+        for (wi, wa) in self.assignments.iter().enumerate() {
+            let none = HashSet::new();
+            write_fortress_fx(
+                rom,
+                wi,
+                &build.worlds[wi],
+                wa,
+                data,
+                &mut fx_slot,
+                suppress.get(wi).unwrap_or(&none),
+            );
+        }
     }
 }
 

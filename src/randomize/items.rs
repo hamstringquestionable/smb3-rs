@@ -44,37 +44,7 @@ const TOAD_HOUSE_ITEMS: &[u8] = &[
     0x09, // Starman
 ];
 
-const WARP_WHISTLE: u8 = 0x0C;
-
-/// Put the warp whistle in the player's starting inventory.
-///
-/// The world maze hands its fast-travel item over at the first frame instead
-/// of hiding it, and `world_travel` stops the engine consuming it, so this one
-/// whistle is the whole of the player's travel budget for the run. Finding a
-/// second would be pointless, which is why the mode no longer pins one into a
-/// toad house.
-///
-/// Slot rule: take an empty slot if there is one, else append while there is
-/// room, else replace the **last** requested item. A player who asked for three
-/// specific things gets two of them plus the one the mode cannot work without —
-/// and the last slot is the cheapest to take, because `write_starting_items`
-/// fills them in order.
-///
-/// Idempotent: a player who already asked for a whistle keeps their layout.
-pub(crate) fn with_starting_whistle(mut items: Vec<u8>) -> Vec<u8> {
-    if items.contains(&WARP_WHISTLE) {
-        return items;
-    }
-    match items.iter().position(|&i| i == 0) {
-        Some(empty) => items[empty] = WARP_WHISTLE,
-        None if items.len() < MAX_STARTING_ITEMS => items.push(WARP_WHISTLE),
-        None => items[MAX_STARTING_ITEMS - 1] = WARP_WHISTLE,
-    }
-    items
-}
-
-/// Inventory slots the starting-items trampoline writes.
-const MAX_STARTING_ITEMS: usize = 3;
+pub(crate) const WARP_WHISTLE: u8 = 0x0C;
 
 /// Full item pool including warp whistle (used when remove_whistles is false).
 const GOOD_ITEMS_WITH_WHISTLE: &[u8] =
@@ -416,27 +386,6 @@ mod tests {
         );
         for &offset in TREASURE_CHEST_OFFSETS {
             assert_eq!(rom1.read_byte(offset), rom2.read_byte(offset));
-        }
-    }
-
-    /// The maze's whistle guarantee, which replaced a pin into a toad-house
-    /// chest: the player simply starts holding one.
-    ///
-    /// The slot rule matters because a player can already have asked for three
-    /// items and the mode needs a fourth thing to be true.
-    #[test]
-    fn starting_whistle_takes_the_cheapest_slot() {
-        // Nothing requested: the whistle is the whole inventory.
-        assert_eq!(with_starting_whistle(vec![]), vec![WARP_WHISTLE]);
-        // Room to spare: appended, nothing displaced.
-        assert_eq!(with_starting_whistle(vec![0x01]), vec![0x01, WARP_WHISTLE]);
-        // An empty slot is preferred over appending or displacing.
-        assert_eq!(with_starting_whistle(vec![0x01, 0x00, 0x03]), vec![0x01, WARP_WHISTLE, 0x03]);
-        // Full: the LAST request gives way, not the first.
-        assert_eq!(with_starting_whistle(vec![0x01, 0x02, 0x03]), vec![0x01, 0x02, WARP_WHISTLE]);
-        // Idempotent — a player who asked for a whistle keeps their layout.
-        for already in [vec![WARP_WHISTLE], vec![0x01, WARP_WHISTLE, 0x03]] {
-            assert_eq!(with_starting_whistle(already.clone()), already);
         }
     }
 

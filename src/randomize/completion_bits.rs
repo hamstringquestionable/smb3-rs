@@ -884,11 +884,26 @@ const NEW_GAME_INIT_CPU: u16 = (0xC000 + FS_NEW_GAME_INIT - 0x32010) as u16;
 ///   rather than a list means the next allocation is covered by having been
 ///   declared there.
 ///
+/// * the warp whistle, into the **fourth** inventory slot. The mode's fast
+///   travel is useless if the player cannot reach it, so it is theirs from the
+///   first frame. It lands here rather than in the starting-items trampoline
+///   for two reasons. `write_starting_items` fills slots 0-2 and the UI offers
+///   exactly three, so a whistle competing for those slots silently ate the
+///   player's third choice; and that trampoline is full — 33 of 33 bytes, with
+///   `start_airship_swap` starting at the next byte and 128-byte DMC filler
+///   ahead of it that a sample's length register can legally run into. Slot 3
+///   is free: `Inventory_Items` is 28 slots (`$7D80..$7D9B`), so this displaces
+///   nothing and stops short of `Inventory_Cards`.
+///
+/// The whistle write is last on purpose. `A` must stay zero across the three
+/// loops, and this is the one place it is free again.
+///
 /// The three loops cannot be one: the store is at `$7997`, the maze's SRAM at
 /// `$7AC1` and the live array at `$7D00`, and `A` stays zero across all three
-/// so only the index and the base change.
+/// so only the index and the base change. None of them reaches the inventory —
+/// the live array stops at `$7D7F`, one byte below it.
 #[rustfmt::skip]
-const NEW_GAME_INIT: [u8; 33] = [
+const NEW_GAME_INIT: [u8; 38] = [
     0x8D, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, //  0: STA LIVE_WORLD  ; A = World_Num
     0xA9, 0x00,                                     //  3: LDA #$00
     0x8D, DEBUG_FLAG as u8, (DEBUG_FLAG >> 8) as u8, //  5: STA Debug_Flag  ; what we displaced
@@ -909,8 +924,17 @@ const NEW_GAME_INIT: [u8; 33] = [
     0xCA,                                           // 29: DEX
     0x10, 0xFA,                                     // 30: BPL -6 -> live_loop
 
-    0x60,                                           // 32: RTS
+    0xA9, super::items::WARP_WHISTLE,               // 32: LDA #$0C
+    0x8D, INVENTORY_SLOT_4 as u8,
+          (INVENTORY_SLOT_4 >> 8) as u8,            // 34: STA Inventory_Items+3
+    0x60,                                           // 37: RTS
 ];
+
+/// `Inventory_Items + 3` — the fourth of Mario's 28 item slots (`$7D80..$7D9B`,
+/// four rows of seven; `Inventory_Cards` follows at `$7D9C`). The starting-items
+/// trampoline writes slots 0-2 and the UI offers exactly three, so this one is
+/// the first the player can never have asked for.
+const INVENTORY_SLOT_4: u16 = 0x7D83;
 
 /// The `Map_Completions` wipe in `PRG030_84A0`: CPU `$84CD`, ten bytes, three
 /// whole instructions, nothing branching into the middle.

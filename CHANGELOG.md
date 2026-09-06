@@ -25,6 +25,17 @@ deploys.
 
 ### Fixed
 
+- **World Maze:** a fortress in another world now really is the only way to
+  open a cross-world lock. Those locks kept their original fortress as a second
+  key, sitting a few tiles away in the same world, and you would always find
+  that one first — so every cross-world lock in the game was decoration. Found
+  by playing World 2: three fortresses, three locks, all three opening locally.
+
+- **World Maze:** the warp whistle you start with no longer costs you a
+  starting item. It went into the third inventory slot, and since you can ask
+  for three items, asking for three meant getting two and a whistle. It sits in
+  the fourth slot now, which nothing else can claim.
+
 - **World Maze:** warp pads have their own tile, so one no longer looks exactly
   like an N-Spade card game. They used to share the spade panel: on one seed
   there were 28 spade tiles and only 9 were pads, so walking into one was a

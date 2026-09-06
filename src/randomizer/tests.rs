@@ -1635,46 +1635,65 @@ fn a_maze_rom_puts_a_pad_tile_under_every_arrival_key() {
     }
 }
 
-/// **The maze player starts holding a whistle, and it survives being blown.**
+/// **The maze player starts holding a whistle, it survives being blown, and it
+/// does not cost them a starting item.**
 ///
-/// Two halves of one promise, and they live in different modules, so this is
-/// the only place that can check the promise itself: `items` puts the whistle
-/// in the starting inventory and `world_travel` stops the engine consuming it.
-/// Either one alone leaves the mode with fast travel the player either never
-/// has or gets to use exactly once.
+/// Three halves of one promise, in three modules, so this is the only place
+/// that can check the promise itself: `completion_bits` puts the whistle in
+/// inventory slot 3 at the new-game signal, `world_travel` stops the engine
+/// consuming it, and `qol::starting_state` still owns slots 0-2.
 ///
-/// Read out of the finished ROM rather than from the options, because the
-/// inventory is written by a trampoline that takes the list through two hands.
+/// The third clause is the regression. The whistle used to be merged into the
+/// player's starting-items list, and since the CLI and the web UI both offer
+/// exactly three, a player who asked for three got two of them plus a whistle
+/// — the mode quietly ate a choice. Slot 3 is a slot the UI cannot request,
+/// so the two no longer compete.
+///
+/// Read out of the finished ROM rather than from the options, because the two
+/// writes are emitted by different patches into different banks.
 #[test]
 fn a_maze_player_starts_with_a_permanent_whistle() {
-    use crate::randomize::rom_data::FS_STARTING_ITEMS;
+    use crate::randomize::rom_data::{FS_NEW_GAME_INIT, FS_STARTING_ITEMS};
 
     const WHISTLE: u8 = 0x0C;
+    // `LDA #item / STA $7D80+slot`, the shape both patches emit.
+    fn writes_slot(code: &[u8], item: u8, slot: u8) -> bool {
+        code.windows(5).any(|w| w == [0xA9, item, 0x8D, 0x80 + slot, 0x7D])
+    }
+
     let Some(rom) = make_test_rom() else {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
 
-    for (label, opts) in [
-        (
-            "no requested items",
-            Options { world_maze: true, starting_items: vec![], ..audit_options() },
-        ),
-        (
-            "three requested",
-            Options { world_maze: true, starting_items: vec![0x01, 0x02, 0x03], ..audit_options() },
-        ),
-    ] {
+    for (label, requested) in
+        [("no requested items", vec![]), ("three requested", vec![0x01, 0x02, 0x03])]
+    {
+        let opts =
+            Options { world_maze: true, starting_items: requested.clone(), ..audit_options() };
         let mut rom = rom.clone();
         randomize(&mut rom, 12345, &opts);
 
-        // The trampoline emits `LDA #item / STA $7D80+i` per slot; find the
-        // whistle by its immediate, next to a store into the inventory.
-        let tramp = rom.read_range(FS_STARTING_ITEMS, 64);
-        let carries_whistle = tramp
-            .windows(5)
-            .any(|w| w[0] == 0xA9 && w[1] == WHISTLE && w[2] == 0x8D && w[4] == 0x7D);
-        assert!(carries_whistle, "[{label}] the maze's starting inventory has no whistle in it");
+        let new_game = rom.read_range(FS_NEW_GAME_INIT, 40);
+        assert!(
+            writes_slot(new_game, WHISTLE, 3),
+            "[{label}] the new-game init puts no whistle in inventory slot 3"
+        );
+
+        // The player's own choices keep slots 0-2, and the whistle stays out of
+        // the trampoline entirely — that is the bug this guards.
+        let tramp = rom.read_range(FS_STARTING_ITEMS, 40);
+        for (slot, &item) in requested.iter().enumerate() {
+            assert!(
+                writes_slot(tramp, item, slot as u8),
+                "[{label}] requested item {item:#04X} lost its slot {slot} to the whistle"
+            );
+        }
+        assert!(
+            !tramp.windows(2).any(|w| w == [0xA9, WHISTLE]),
+            "[{label}] the whistle is back in the starting-items trampoline, where it \
+             competes with the three the UI offers"
+        );
 
         // And blowing it must not take it away.
         assert_eq!(
@@ -1684,7 +1703,7 @@ fn a_maze_player_starts_with_a_permanent_whistle() {
         );
     }
 
-    // Without the maze, neither half applies — otherwise this test would pass
+    // Without the maze, none of it applies — otherwise this test would pass
     // for a reason that has nothing to do with the mode.
     let mut plain = rom.clone();
     randomize(
@@ -1878,4 +1897,61 @@ fn registry_used_figures_are_current() {
          Regenerate from `smb3-rs <rom> --write-log`, do not hand-count.",
         wrong.join("\n")
     );
+}
+
+/// **Every lock has exactly one key.**
+///
+/// This is the identity that was false for the whole life of the world maze,
+/// and no test noticed because both halves were separately self-consistent.
+///
+/// The overworld writer pairs each lock with a fortress in its own world and
+/// buys it an FX slot; the slot is the local key, carrying both the crumble
+/// animation and the `Map_Completions` write that persists it. The maze then
+/// re-keys some of those locks to a fortress in another world and writes
+/// `foreign_locks` rows for them — but adding a row never removed the local
+/// pairing. A re-keyed lock therefore had *two* keys, the local one sitting a
+/// few tiles away and always found first, so every cross-world lock in the game
+/// was decoration and the mode's difficulty model described a map that did not
+/// exist. A World 2 playthrough found it: three fortresses, three locks, all
+/// three opening locally.
+///
+/// The count is readable straight off the ROM. FX slots are handed out
+/// contiguously from 0 across all eight worlds, so the highest index in
+/// `FX_WORLD_TABLE` is one below the number in use, and the foreign-lock table
+/// carries its own row count. Those two must partition the locks the builder
+/// placed — never overlap them.
+#[test]
+fn every_maze_lock_has_exactly_one_key() {
+    use crate::randomize::rom_data::FX_WORLD_TABLE;
+
+    let Some(raw) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+
+    for seed in [7u64, 12345, 999, 20260905] {
+        let opts = Options { world_maze: true, ..audit_options() };
+        let (rom, build) =
+            crate::randomize_rom_with_overworld_capture(raw.output_bytes(), seed, &opts, None)
+                .expect("maze seed should randomize");
+
+        let placed: usize = build.worlds.iter().map(|w| w.locks.len()).sum();
+        let foreign = crate::randomize::foreign_locks::decode_rows(&rom).len();
+
+        // Slots run 0..n contiguously, so the largest index names the last one.
+        let top = (0..8 * 4)
+            .map(|i| rom.read_byte(FX_WORLD_TABLE + i) as usize)
+            .max()
+            .expect("the table is not empty");
+        let local = if top == 0 && foreign == placed { 0 } else { top + 1 };
+
+        assert_eq!(
+            local + foreign,
+            placed,
+            "seed {seed}: {placed} locks were placed but {local} have a local key and \
+             {foreign} a foreign one. Over the total means a re-keyed lock kept its \
+             local fortress as well, which makes the cross-world lock decoration."
+        );
+        assert!(foreign > 0, "seed {seed}: no cross-world locks at all");
+    }
 }

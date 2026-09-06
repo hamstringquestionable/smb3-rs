@@ -2,6 +2,15 @@
 
 use super::*;
 
+/// `suppress` names lock cells in this world that must NOT get an FX slot.
+///
+/// The world maze uses it to take a lock's **local** key away. A cross-world
+/// lock is opened by a fortress in another world through
+/// [`foreign_locks`](crate::randomize::foreign_locks), and until this existed
+/// the lock kept its original local fortress as well — two keys, the near one
+/// always found first, and the mode's headline mechanic reduced to decoration.
+/// Dropping the FX slot drops both halves of the local key at once: the crumble
+/// animation and the `Map_Completions` bit write that persists it.
 pub(super) fn write_fortress_fx(
     rom: &mut Rom,
     world_idx: usize,
@@ -9,6 +18,7 @@ pub(super) fn write_fortress_fx(
     wa: &WorldAssignments,
     data: &OverworldData,
     fx_slot: &mut usize,
+    suppress: &HashSet<(usize, usize)>,
 ) {
     let pickup = data.pickup;
     let catalog = data.catalog;
@@ -18,6 +28,7 @@ pub(super) fn write_fortress_fx(
     let locked_forts: Vec<_> = built
         .locks
         .iter()
+        .filter(|lock| !suppress.contains(&lock.pos))
         .filter_map(|lock| wa.fortress.get(lock.fort_section).map(|fa| (lock, fa)))
         .collect();
 

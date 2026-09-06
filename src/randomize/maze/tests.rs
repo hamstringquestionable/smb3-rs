@@ -1197,7 +1197,9 @@ fn a_short_spine_still_finishes() {
 #[test]
 fn foreign_lock_rows_match_the_assignment() {
     let Some(raw) = load_rom() else { return };
-    for seed in 0..census_seeds(4) {
+    let (mut foreign, mut seeds_with_any) = (0u64, 0u64);
+    let seeds = census_seeds(4);
+    for seed in 0..seeds {
         let (_, state, _) = generated(&raw, seed, &Knobs::default(), super::DEFAULT_WANDS_REQUIRED);
         let rows = super::writer::foreign_locks(&state);
 
@@ -1206,6 +1208,8 @@ fn foreign_lock_rows_match_the_assignment() {
             state.locks.iter().filter(|l| l.is_foreign()).count(),
             "seed {seed}: a foreign lock was dropped on the way to the ROM"
         );
+        foreign += rows.len() as u64;
+        seeds_with_any += u64::from(!rows.is_empty());
         for row in &rows {
             assert_ne!(
                 row.fort_world, row.lock_world,
@@ -1231,6 +1235,21 @@ fn foreign_lock_rows_match_the_assignment() {
             );
         }
     }
+    // **The consistency checks above all pass vacuously at zero rows**, which is
+    // how this test sat green while nobody could confirm the mode's headline
+    // feature existed. Measured over 200 seeds when this was added: every seed
+    // had at least one, 51.5% of all locks were foreign, median 9 per seed. The
+    // floor is set far below that — this guards "the feature is switched on",
+    // not the distribution, which `maze_null_model_baselines` owns.
+    assert_eq!(
+        seeds_with_any, seeds,
+        "only {seeds_with_any} of {seeds} seeds have a cross-world lock — the mode's \
+         headline shape is not being generated"
+    );
+    assert!(
+        foreign >= seeds * 2,
+        "{foreign} cross-world locks over {seeds} seeds is below the floor of 2/seed"
+    );
 }
 
 /// **The pads must not overflow the packed completion store.**

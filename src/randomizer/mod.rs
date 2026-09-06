@@ -81,18 +81,8 @@ fn randomize_inner(
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
     // Resolve random starting items up front (deterministic from seed)
-    let mut resolved_items: Vec<u8> =
+    let resolved_items: Vec<u8> =
         options.starting_items.iter().map(|&item| resolve_starting_item(item, &mut rng)).collect();
-    // The maze starts the player holding its fast-travel item. It is never
-    // consumed (`world_travel` NOPs the engine's own `Inv_UseItem_ShiftOver`),
-    // so this one whistle is the player's whole travel budget for the run —
-    // which is why the mode does not also hide one in a toad house. Added
-    // AFTER the roll so it takes no RNG: turning the mode on cannot move any
-    // later module's stream.
-    if options.world_maze {
-        resolved_items = randomize::items::with_starting_whistle(resolved_items);
-    }
-
     // Resolve the player-hidden tri-state flags up front. These draw from a
     // dedicated substream (MAYBE_SALT) so flipping a flag to `Maybe` never
     // perturbs the main `rng` sequence — a seed with no `Maybe` flags is
@@ -320,7 +310,7 @@ fn randomize_inner(
         *slot = Some(build.clone());
     }
     rom.set_tag("overworld_writer");
-    randomize::overworld_writer::write_overworld(
+    let fortress_fx = randomize::overworld_writer::write_overworld(
         rom,
         &build,
         &data,
@@ -380,6 +370,28 @@ fn randomize_inner(
             &randomize::maze::graph::Knobs::default(),
             &mut rng,
         );
+        // **Take the local key away from every cross-world lock.**
+        //
+        // The overworld writer paired each lock with a fortress in its own
+        // world and gave that pair an FX slot. The maze then re-keys some of
+        // those locks to a fortress in ANOTHER world — but adding a
+        // foreign-lock row does not remove the local pairing, so until this
+        // ran a re-keyed lock had two keys and the near one was always found
+        // first. Every cross-world lock in the game was decoration, and the
+        // mode's difficulty model was computed against a map that did not
+        // exist. A World 2 playthrough found it: three fortresses, three
+        // locks, all three opening locally.
+        //
+        // Re-running the FX pass is what removes it, and it has to happen here
+        // rather than in the writer because `crumbling_forts` above reads the
+        // grids that pass laid down. It consumes no RNG, so nothing downstream
+        // shifts.
+        let mut suppress = vec![std::collections::HashSet::new(); 8];
+        for lock in state.locks.iter().filter(|l| l.is_foreign()) {
+            suppress[lock.world].insert(lock.pos);
+        }
+        fortress_fx.suppress_locks(rom, &build, &data, &suppress);
+
         randomize::maze::writer::stamp_pad_tiles(rom, &state);
         rom.set_tag("wand_gate");
         randomize::wand_gate::apply(rom, wands);
