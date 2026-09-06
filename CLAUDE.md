@@ -103,7 +103,7 @@ is the one to read:
 | PRG006 | `$C000–$DFFF`, in-level (enemy data) | 1392 | 1392 |
 | PRG007 | swapped, in-level (object AI) | 27 | 27 |
 | PRG010 | `$C000–$DFFF`, map | 224 | 64 |
-| PRG011 | `$A000–$BFFF`, map | 86 | 37 |
+| PRG011 | `$A000–$BFFF`, map | 166 | 101 |
 | PRG025 | `$C000–$DFFF`, title screen | 2731 | 2719 |
 | PRG012 | `$A000–$BFFF`, map reload | 716 | 336 |
 | PRG026 | `$A000–$BFFF`, map/inventory | 2485 | 2419 |
@@ -146,6 +146,21 @@ at `$D505`, so the whole run from 0x33529 to the bank end is filler. That bank
 is mapped at `$C000` for the entire title screen (PRG030's title entry loads
 page 24 into `$A000` and page 25 into `$C000`), which makes it the right home
 for title-only code instead of the nearly-full always-mapped banks.
+
+**The scan cannot see reclaimed vanilla code, so the table understates PRG010.**
+The fortress-FX rework (2026-09-06) retired vanilla's `MO_DoFortressFX` and its
+seven slot tables by repointing one word of the map-operation jump table,
+freeing `$C7BD..$C9D5` — 537 contiguous bytes, the largest run in the map bank.
+Those bytes were never `$FF`, so `--free-space` counts none of them. The
+registry row is the record instead: `FS_FORTRESS_FX` claims the whole run at
+537 reserved / 484 used, leaving **53 spare bytes the per-bank table above does
+not know about**. The same is true of every allocation sited on retired vanilla
+code — check `FREE_SPACE_ALLOCATIONS` alongside the scan, not instead of it.
+
+**Repointing a jump-table vector is the cheapest way to reclaim a large run**
+in this ROM: one word, and a whole subsystem's code *and* data become free at
+once. It is worth asking, before writing a trampoline, whether the vanilla
+routine you are working around is reached from exactly one vector.
 
 ### Size techniques that have actually paid off here
 

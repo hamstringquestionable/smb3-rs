@@ -34,7 +34,7 @@ fn test_kind_counts() {
         catalog.entries.iter().filter(|e| pred(&e.kind)).count()
     };
 
-    assert_eq!(count(|k| matches!(k, NodeKind::Fortress { .. })), 17, "fortresses");
+    assert_eq!(count(|k| matches!(k, NodeKind::Fortress)), 17, "fortresses");
     assert_eq!(count(|k| matches!(k, NodeKind::Airship)), 7, "airships");
     assert_eq!(count(|k| matches!(k, NodeKind::Bowser)), 1, "bowser");
     assert_eq!(count(|k| matches!(k, NodeKind::Start)), 8, "starts");
@@ -125,6 +125,13 @@ fn test_level_entry_presence() {
     }
 }
 
+/// Every catalogued fortress can be traced back to its Boom-Boom record.
+///
+/// The catalog no longer *carries* the offset — the fortress-FX rework retired
+/// the ordinal that needed it — but `overworld_build::sources` still resolves
+/// one through the entry's `obj_ptr` to read vanilla's ordinals, and
+/// `lock_keys::apply` masks all 17. A fortress the pairing cannot name would
+/// leave a stale ordinal armed.
 #[test]
 fn test_fortress_boomboom_offsets() {
     let rom = match load_rom() {
@@ -134,14 +141,17 @@ fn test_fortress_boomboom_offsets() {
     let catalog = NodeCatalog::build(&rom, false);
 
     for e in &catalog.entries {
-        if let NodeKind::Fortress { boomboom_y_offset } = &e.kind {
-            assert!(
-                *boomboom_y_offset != 0,
-                "W{} {} has zero boomboom_y_offset",
-                e.world_idx + 1,
-                e.name,
-            );
+        if !matches!(e.kind, NodeKind::Fortress) {
+            continue;
         }
+        let le = e.level_entry.as_ref().expect("a fortress has level_entry");
+        let obj_ptr = ((le.obj_hi as u16) << 8) | le.obj_lo as u16;
+        assert!(
+            crate::randomize::rom_data::boomboom_y_offset_for_obj(obj_ptr).is_some(),
+            "W{} {} has no Boom-Boom record",
+            e.world_idx + 1,
+            e.name,
+        );
     }
 }
 
@@ -203,9 +213,7 @@ fn test_print_catalog() {
 
         let kind_str = match &e.kind {
             NodeKind::Level => "Level".to_string(),
-            NodeKind::Fortress { boomboom_y_offset } => {
-                format!("Fortress(bb=0x{boomboom_y_offset:05X})")
-            }
+            NodeKind::Fortress => "Fortress".to_string(),
             NodeKind::Pipe { dest_idx, .. } => format!("Pipe(dest={dest_idx})"),
             NodeKind::Airship => "Airship".to_string(),
             NodeKind::Bowser => "Bowser".to_string(),
@@ -235,7 +243,7 @@ fn test_print_catalog() {
     type KindPredicate = (&'static str, fn(&NodeKind) -> bool);
     let kind_names: &[KindPredicate] = &[
         ("Level", |k| matches!(k, NodeKind::Level)),
-        ("Fortress", |k| matches!(k, NodeKind::Fortress { .. })),
+        ("Fortress", |k| matches!(k, NodeKind::Fortress)),
         ("Pipe", |k| matches!(k, NodeKind::Pipe { .. })),
         ("Airship", |k| matches!(k, NodeKind::Airship)),
         ("Bowser", |k| matches!(k, NodeKind::Bowser)),
@@ -310,7 +318,7 @@ fn friendlier_optional_forts_resolve() {
         let hits = catalog
             .entries
             .iter()
-            .filter(|e| e.name == name && matches!(e.kind, NodeKind::Fortress { .. }))
+            .filter(|e| e.name == name && matches!(e.kind, NodeKind::Fortress))
             .count();
         assert_eq!(
             hits, 1,

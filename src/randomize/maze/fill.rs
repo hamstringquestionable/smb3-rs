@@ -51,14 +51,6 @@ fn swap_forts(locks: &mut [MazeLock], a: usize, b: usize) {
     locks[b].fort = fa;
 }
 
-/// A cross-world lock can only be opened by a fortress whose cell actually
-/// turns to rubble: the hook is gated on that tile, and World 8's tanks are
-/// sprites over a blanked cell.
-fn opens_ok(st: &GlobalState, li: usize) -> bool {
-    let lock = &st.locks[li];
-    lock.fort.is_none_or(|f| f.world == lock.world || st.crumbling.contains(&f))
-}
-
 /// How many swaps the fill proposes per lock. Each proposal costs one global
 /// fixpoint, so this is the fill's whole cost model: `locks * PROPOSALS_PER_LOCK`
 /// fixpoints, ~17 * 8 = 136 on a normal seed.
@@ -70,9 +62,6 @@ pub(crate) struct FillReport {
     pub proposed: usize,
     /// Swaps rejected because they made the maze unsolvable.
     pub rejected_unsolvable: usize,
-    /// Swaps rejected because they would have given a cross-world lock to a
-    /// fortress whose cell never becomes rubble — a lock that could not fire.
-    pub rejected_uncrumbling: usize,
     /// Swaps rejected because they moved the objective the wrong way.
     pub rejected_objective: usize,
     pub accepted: usize,
@@ -163,15 +152,6 @@ pub(crate) fn assign_keys<R: Rng>(
                 report.rejected_objective += 1;
                 continue;
             }
-            // Rejecting an uncrumbling fortress here rather than filtering the
-            // table later is deliberate — a foreign lock the ROM cannot fire is
-            // not a cosmetic problem, it is a lock that never opens.
-            if !opens_ok(state, a) || !opens_ok(state, b) {
-                swap_forts(&mut state.locks, a, b);
-                report.rejected_uncrumbling += 1;
-                continue;
-            }
-
             // Two hard gates, and both have to hold or the swap goes back.
             // Solvability is the obvious one. The second is the safety
             // invariant: a swap that hands a start-region lock to a foreign

@@ -310,7 +310,7 @@ fn randomize_inner(
         *slot = Some(build.clone());
     }
     rom.set_tag("overworld_writer");
-    let fortress_fx = randomize::overworld_writer::write_overworld(
+    let lock_pairing = randomize::overworld_writer::write_overworld(
         rom,
         &build,
         &data,
@@ -323,6 +323,13 @@ fn randomize_inner(
         },
     );
 
+    // Set by the world maze, read by `lock_keys` below. When the maze runs it
+    // owns the WHOLE lock/fortress assignment, not just the cross-world half —
+    // its fill starts from the builder's pairing and swaps from there, so the
+    // two cannot be mixed. `None` means no maze ran and the builder's pairing
+    // stands.
+    let mut maze_lock_keys: Option<Vec<randomize::lock_keys::LockEntry>> = None;
+
     // World maze: the eight world maps stop being a sequence and become the
     // rooms of one Metroidvania — telepads between them, a fortress that can
     // bust a lock in another world, and map progress that survives leaving.
@@ -330,9 +337,9 @@ fn randomize_inner(
     // **The order inside this block is the whole of its correctness.** The
     // packed completion store derives its stencil from the map grids as they
     // finally stand, so every write that changes a grid runs first — the pad
-    // tiles and the wand gate — and `foreign_locks` runs last, because it asks
-    // the packer where a given cell's bit lives rather than re-deriving that
-    // arithmetic.
+    // tiles and the wand gate — and `lock_keys` runs last (just past the end of
+    // this block), because it asks the packer where a given cell's bit lives
+    // rather than re-deriving that arithmetic.
     //
     // Today the two grid writers are in fact bit-neutral, so only the tail of
     // that order is load-bearing. A cell claims a completion bit by being in
@@ -358,39 +365,31 @@ fn randomize_inner(
         // K cannot exceed the airships the spine offers: a shorter spine means
         // fewer than seven wands exist in the game at all.
         let wands = options.maze_wands.min(spine.len().saturating_sub(1) as u8);
-        // Which fortresses really crumble — read off the map the writer just
-        // laid down, because World 8's tanks are sprites over a blanked cell
-        // and a cross-world lock keyed on one could never fire.
-        let crumbling = randomize::maze::crumbling_forts(rom, &build);
         let (state, _report) = randomize::maze::generate(
             &build,
             &spine,
             wands,
-            crumbling,
             &randomize::maze::graph::Knobs::default(),
             &mut rng,
         );
-        // **Take the local key away from every cross-world lock.**
+        // **The maze owns the whole lock/fortress assignment, not half of it.**
         //
-        // The overworld writer paired each lock with a fortress in its own
-        // world and gave that pair an FX slot. The maze then re-keys some of
-        // those locks to a fortress in ANOTHER world — but adding a
-        // foreign-lock row does not remove the local pairing, so until this
-        // ran a re-keyed lock had two keys and the near one was always found
-        // first. Every cross-world lock in the game was decoration, and the
-        // mode's difficulty model was computed against a map that did not
-        // exist. A World 2 playthrough found it: three fortresses, three
-        // locks, all three opening locally.
+        // `fill` starts from the overworld builder's pairing — every lock opened
+        // by a fortress in its own world — and moves by *swapping* the forts of
+        // two locks, keeping a swap only while the maze stays solvable. So the
+        // result is a permutation of the builder's, and it is a bijection at
+        // every step: one lock per fortress, the charter's map-legibility rule.
         //
-        // Re-running the FX pass is what removes it, and it has to happen here
-        // rather than in the writer because `crumbling_forts` above reads the
-        // grids that pass laid down. It consumes no RNG, so nothing downstream
-        // shifts.
-        let mut suppress = vec![std::collections::HashSet::new(); 8];
-        for lock in state.locks.iter().filter(|l| l.is_foreign()) {
-            suppress[lock.world].insert(lock.pos);
-        }
-        fortress_fx.suppress_locks(rom, &build, &data, &suppress);
+        // Taking only the cross-world half of that and leaving the rest to the
+        // builder's original pairing loses every swap that happened to leave
+        // both locks in their own worlds — 33.1% of same-world locks over 60
+        // seeds — and lets a fortress that kept a stale local lock while gaining
+        // a foreign one open two. Both halves travel together or neither does.
+        //
+        // This happens here rather than in the writer because the maze reads
+        // the grids that pass laid down. It consumes no RNG, so nothing
+        // downstream shifts.
+        maze_lock_keys = Some(randomize::maze::writer::lock_keys(&state));
 
         randomize::maze::writer::stamp_pad_tiles(rom, &state);
         rom.set_tag("wand_gate");
@@ -399,11 +398,22 @@ fn randomize_inner(
         // installs the packed store and the telepads themselves.
         rom.set_tag("world_persist");
         randomize::world_persist::apply(rom, &randomize::maze::writer::telepad_specs(&state));
-        rom.set_tag("foreign_locks");
-        randomize::foreign_locks::apply(rom, &randomize::maze::writer::foreign_locks(&state));
         rom.set_tag("world_travel");
         randomize::world_travel::apply(rom);
     }
+
+    // Every lock in the game, home and away, in one table — and with it the
+    // rewritten fortress-FX effect that reads it. This is unconditional: the
+    // effect replaces vanilla's outright, so a run that skipped it would leave
+    // map operation 8 resolving slots out of tables this run has overwritten.
+    //
+    // It runs after the maze block because that is where the assignment is
+    // decided when the mode is on. Away entries additionally need
+    // `world_persist` to have installed the packed store already, since their
+    // bit is looked up through it.
+    rom.set_tag("lock_keys");
+    let lock_entries = maze_lock_keys.unwrap_or_else(|| lock_pairing.lock_entries(&build));
+    randomize::lock_keys::apply(rom, &lock_entries);
 
     // Big [?] bonus-room shuffle: every level with a Big [?] pipe draws from a
     // pool of 19 rooms (11 vanilla + 8 in the otherwise-dead "Unused Level 5").

@@ -93,7 +93,7 @@ pub(super) fn assign_pool<R: Rng>(
     for (pi, pe) in pickup.pool.iter().enumerate() {
         let entry = &catalog.entries[pe.catalog_idx];
         match &entry.kind {
-            NodeKind::Fortress { .. } => fort_pool.push(pi),
+            NodeKind::Fortress => fort_pool.push(pi),
             NodeKind::Level => level_pool.push(pi),
             NodeKind::Airship => airship_pool.push(pi),
             NodeKind::Bowser => {

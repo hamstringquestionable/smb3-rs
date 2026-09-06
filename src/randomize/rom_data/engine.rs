@@ -80,3 +80,13 @@ pub(crate) const WORLD_MAP_INIT_CPU: u16 = 0x84A0;
 /// `Map_Reload_with_Completions` (PRG012, CPU `$A45D`) — the routine that
 /// rebuilds `Tile_Mem` from the ROM grid and replays the completion bitfield.
 pub(crate) const MAP_RELOAD_CPU: u16 = 0xA45D;
+
+/// `Map_CompleteBit` (PRG011, CPU `$BA2D`) — `$80 $40 $20 $10 $08 $04 $02 $01`,
+/// the engine's own row-bit lookup. `Map_MarkLevelComplete` indexes it with the
+/// completion row; `map_objects` borrows it as a *world*-bit lookup, and
+/// `lock_keys` uses it for its original purpose.
+///
+/// Verified against the ROM by `the_engine_still_has_the_bit_table_we_borrow`
+/// rather than trusted from the disassembly's label. PRG011 is mapped at
+/// `$A000` for the whole map, so both banks that name it can reach it.
+pub(crate) const MAP_COMPLETE_BIT_CPU: u16 = 0xBA2D;

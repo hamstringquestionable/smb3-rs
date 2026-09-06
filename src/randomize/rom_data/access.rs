@@ -249,13 +249,12 @@ pub(crate) fn read_fx_slots(rom: &Rom) -> Vec<FxSlot> {
     for i in 0..17 {
         let loc_row = rom.read_byte(FX_MAP_LOC_ROW + i);
         let loc = rom.read_byte(FX_MAP_LOC + i);
-        let replace_tile = rom.read_byte(FX_MAP_TILE_REPLACE + i);
 
         let grid_row = ((loc_row >> 4) as usize).wrapping_sub(2);
         let col_in_screen = ((loc >> 4) & 0x0F) as usize;
         let screen = (loc & 0x0F) as usize;
 
-        slots.push(FxSlot { grid_row, grid_col: screen * 16 + col_in_screen, replace_tile });
+        slots.push(FxSlot { grid_row, grid_col: screen * 16 + col_in_screen });
     }
     slots
 }

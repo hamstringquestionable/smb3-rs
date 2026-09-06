@@ -414,18 +414,23 @@ pub(crate) const PIPE_MAP_Y: usize = 0x046DA;
 pub(crate) const PIPE_MAP_SCRL_XHI: usize = 0x046F2;
 
 // FX table offsets (17 slots)
+#[cfg(test)]
 pub(crate) const FX_VADDR_H: usize = 0x147CD;
 
+#[cfg(test)]
 pub(crate) const FX_VADDR_L: usize = 0x147DE;
 
+#[cfg(test)]
 pub(crate) const FX_MAP_COMP_IDX: usize = 0x147EF; // 17 x 2 bytes
 
+#[cfg(test)]
 pub(crate) const FX_PATTERNS: usize = 0x14811; // 17 x 4 bytes
 
 pub(crate) const FX_MAP_LOC_ROW: usize = 0x14855;
 
 pub(crate) const FX_MAP_LOC: usize = 0x14866;
 
+#[cfg(test)]
 pub(crate) const FX_MAP_TILE_REPLACE: usize = 0x14877;
 
 pub(crate) const FX_WORLD_TABLE: usize = 0x14888;
@@ -602,6 +607,10 @@ pub(crate) const FORTRESS_ENTRIES: &[(usize, usize)] = &[
 /// ROM file offset of the Boom-Boom Y-byte for each fortress (same order as
 /// FORTRESS_ENTRIES). The Y-byte upper nibble encodes the fortress ordinal
 /// (1-based Map_DoFortressFX value); the lower nibble is spawn Y position.
+/// Test-only since the fortress-FX rework. Production writes no enemy data at
+/// all: the `(?)` orb still arms the effect and all 17 vanilla Boom-Booms
+/// already carry a non-zero Y-nibble, so the trigger needs no help.
+#[cfg(test)]
 pub(crate) const BOOMBOOM_Y_OFFSETS: [usize; 17] = [
     0x0D35F, // W1[11]
     0x0D262, // W2[13]
@@ -628,9 +637,15 @@ pub(crate) const BOOMBOOM_Y_OFFSETS: [usize; 17] = [
 pub(crate) const FORTRESS_1F_OBJ_PTR: u16 = 0xD32B;
 
 /// Vanilla fortress obj_ptrs (same order as FORTRESS_ENTRIES).
+///
+/// Test-only since the fortress-FX rework: production no longer needs to reach
+/// one fortress's Boom-Boom record, because `lock_keys::apply` masks the spawn
+/// Y-nibble of all 17 unconditionally. What is left is the vanilla-layout
+/// reference reader in `overworld_build::sources`.
 /// The obj_ptr identifies the fortress level's enemy data stream in PRG006.
 /// After level shuffle, the obj_ptr at a slot still points to the same enemy
 /// data — only the pointer table entries move, not the data itself.
+#[cfg(test)]
 pub(crate) const VANILLA_FORTRESS_OBJ_PTRS: [u16; 17] = [
     0xD32B, // W1[11]
     0xD222, // W2[13]
@@ -653,6 +668,7 @@ pub(crate) const VANILLA_FORTRESS_OBJ_PTRS: [u16; 17] = [
 
 /// Given an obj_ptr found at a fortress slot, return the Boom-Boom Y-byte
 /// ROM file offset for that fortress's enemy data.
+#[cfg(test)]
 pub(crate) fn boomboom_y_offset_for_obj(obj_ptr: u16) -> Option<usize> {
     VANILLA_FORTRESS_OBJ_PTRS
         .iter()
@@ -1046,11 +1062,18 @@ pub(crate) const UNUSED5_LAYOUT_BANK: usize = 21;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const UNUSED5_VANILLA_BGPAL: u8 = 6;
 
-/// An FX slot (lock/bridge position and replacement tile).
+/// Where one of vanilla's 17 fortress-FX slots points.
+///
+/// Read from the *source* ROM only. The randomizer no longer writes these
+/// tables — `lock_keys` replaced them — but `overworld_pickup` still asks
+/// vanilla which cells are lock gaps so it can open them before placement.
+///
+/// The slot's stored replacement tile is deliberately not carried: what a gap
+/// opens to is derived from the tile standing on it (`path_for_gap_tile`), and
+/// vanilla has one slot where the two disagree. See `open_fx_gaps`.
 pub(crate) struct FxSlot {
     pub grid_row: usize,
     pub grid_col: usize,
-    pub replace_tile: u8,
 }
 
 #[cfg(test)]

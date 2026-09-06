@@ -1,12 +1,25 @@
 # Fortress FX table redesign
 
-**Status:** stage 0 landed (a Rust-only derivation proof); no ROM change yet.
-Written 2026-09-06 on
-`experiment/world-maze`, revised 2026-09-06 after a second design pass, so a
-fresh session can pick it up cold.
+**Status:** **stage 1 landed** 2026-09-06 on `experiment/world-maze`. The slot
+tables and vanilla's `MO_DoFortressFX` are gone; every lock in the game is one
+entry in one position-keyed table, found at map operation 8 from the player's
+own cell. Not yet playtested on hardware.
+
+> **Correction, same day.** The first cut keyed on `Map_MarkLevelComplete`'s
+> fortress branch — the site the maze's cross-world locks already used — and
+> that branch is gated on the tile under the player being rubble. Three of World
+> 8's four fortresses are covered by army sprites over a cell the writer blanks
+> to a path node, so **17.6% of all locks in every seed were silently dead**, in
+> standard mode as well as maze. The fix was to stop inventing a trigger and use
+> vanilla's: the `(?)` orb arms `Map_DoFortressFX` exactly as it always did, and
+> both halves of `MO_DoLevelClear` — the map-cell clear and the map-object poof —
+> set `Map_Operation = 8` at one shared exit (`PRG011_ABBE`). A tank and a stone
+> fortress reach the effect identically. See "The trigger" below.
 
 **Read first:** `docs/world_maze_design.md` for the mode this serves, and
-`src/randomize/overworld_writer/fortress_fx.rs` for the code being replaced.
+`src/randomize/lock_keys.rs` for the mechanism as built. What is left of the
+old writer is `overworld_writer/fortress_fx.rs`, now a dozen lines that pair a
+lock with a fortress and nothing else.
 
 ---
 
@@ -194,6 +207,63 @@ The census in `randomized_fx_tile_and_patterns_diverge_only_by_path_variant` is
 the number to re-measure if any of this is revisited.
 
 ---
+
+## The trigger: vanilla's, not a new one
+
+**`MO_DoLevelClear` has one exit and it always reaches op 8.**
+
+```asm
+PRG011_ABBE:
+    LDA <Map_ClearLevelFXCnt
+    BNE PRG011_ABCC
+    LDA #$00
+    STA Map_WasInPipeway
+    LDA #$08
+    STA Map_Operation          ; op 8 = MO_DoFortressFX
+```
+
+The fortress path (`AA58`) falls through to `AB61`, which scans for a map object
+and then jumps to `ABBE`. The map-object path (`ABB7`, emptying the slot) falls
+directly into `ABBE`. Neither is special-cased.
+
+So the arming stays vanilla's: `ObjInit_BoomBoom` copies the enemy record's
+Y-nibble into `Objects_Var4`, the `(?)` orb stores it into `Map_DoFortressFX`,
+op 8 runs when it is non-zero. **All 17 vanilla Boom-Booms already carry a
+non-zero nibble and every build pairs its 17 fortresses with 17 locks, one each
+— so this rework writes no enemy data at all.** The "zero the Boom-Boom nibbles"
+forced inclusion below is retired; it only made sense while the orb path was
+being retired with it.
+
+What position keying supplies is the *target*, and it takes it from where the
+player is standing when op 8 runs:
+
+```asm
+LDX Player_Current
+LDA <World_Map_Y,X
+AND #$F0                ; (row + 2) << 4 -- Map_Entered_Y's own encoding
+ORA World_Num           ; key0
+STA <Temp_Var1
+LDA <World_Map_X,X
+AND #$F0                ; col within screen << 4
+ORA <World_Map_XHi,X    ; | screen -- key1
+STA <Temp_Var2
+```
+
+Nine instructions, no table lookup, and **strictly better than the key the
+`$BA86` hook handed over**: `Map_MarkLevelComplete` computes a *completion* row
+through the seven-entry `Map_CompleteY`, folding grid rows 7 and 8 onto one
+index. Reading `World_Map_Y` keeps every row distinct.
+
+Consequences, all of them subtractive:
+
+- **No hook anywhere.** `FS_LOCK_SCAN`'s 128 bytes in PRG011 go back; the mirror
+  takes 48 of them and 80 are unclaimed.
+- **`crumbling` is deleted** — `GlobalState::crumbling`, `crumbling_forts`,
+  `fill::opens_ok`, `FillReport::rejected_uncrumbling`. A cross-world lock can be
+  keyed to a tank now, which the old hook forbade.
+- **Away locks are silent.** The scan runs before the flash, so an away hit sets
+  its bit and advances without flashing or drawing a poof at a position the entry
+  does not carry.
 
 ## The design
 
@@ -402,6 +472,37 @@ One thing worth doing that ships no feature:
 
 ### The one-to-one invariant
 
+> **The rule is right; the ROM was not obeying it.** Stage 1 asserted this and
+> the assertion fired immediately, which looked at first like the rule being
+> wrong. It was not — it had found a real bug in how the ROM was assembled.
+>
+> `maze::fill` maintains the bijection deliberately: it seeds `GlobalState.locks`
+> from the builder's per-world pairing and its only move is `swap_forts`, which
+> trades two locks' forts. `state.locks` is therefore always one lock per
+> fortress. The builder's own pairing is injective too, since no two locks in a
+> world share a fortress section.
+>
+> What broke it was **assembly**. The ROM took foreign locks from the maze's
+> `state` and everything else from the *builder's original* pairing, with
+> suppression keyed on "is this lock foreign". But suppression asks about the
+> **lock** while what gets taken away is the **fortress**. After two swaps —
+> `A↔C` then `A↔B` — lock `A` is home again and unsuppressed, so it falls back
+> to the builder's key `a1`; meanwhile the maze has given `a1` to foreign lock
+> `C`. One fortress, two locks, and lock `A`'s real key never reaches the ROM at
+> all.
+>
+> Measured before the fix: **33.1% of same-world locks (164 of 496) were opened
+> by the wrong fortress, in 59 of 60 seeds.** The ROM therefore did not match the
+> assignment the maze's own solvability verifier had checked.
+>
+> **The fix is that the maze owns the whole assignment**, not half of it:
+> `maze::writer::lock_keys` emits every lock, suppression is deleted, and
+> `assert_one_key_per_lock` is the strict one-to-one rule in both directions.
+> Verified over 300 maze seeds. `lock_key_rows_match_the_whole_assignment` checks
+> the bijection on the rows handed to the ROM.
+
+The original text follows, for the reasoning that is still current.
+
 **A fortress will never open two locks** (design decision, 2026-09-06). Combined
 with the existing maze rule that a lock has exactly one key, the table is a
 partial **one-to-one** map between completable cells:
@@ -498,17 +599,49 @@ row-7/8 shared-bit rule (#212) into play for the new tile. It is not a free knob
    of the one divergence and prints its census (`CENSUS_SEEDS` raises the seed
    count, default 8). Findings are folded into "Most of that is cached
    arithmetic" above.
-2. **Stage 1 — one ROM change.** The entry table and 48-byte mirror in the freed
-   `$C7BD` block, the scan in `Map_MarkLevelComplete`, a rewritten
-   `MO_DoFortressFX`, a rewritten screen check, `foreign_locks` absorbed, the
-   Boom-Boom nibbles zeroed, the W8 bridge channel replaced, and the one-to-one
-   invariant asserted.
+2. **Stage 1 — one ROM change. Done** (2026-09-06), in
+   `src/randomize/lock_keys.rs`. What landed, and where it differs from the plan
+   above:
+
+   * **The whole routine moved**, rather than being patched in place. The map
+     operation table's `.word` at file `0x144D2` is the only thing in the ROM
+     that names `MO_DoFortressFX`, and every label inside it is internal, so
+     repointing that one word frees the 236 bytes of tables at `$C7BD` **and**
+     the 301-byte routine at `$C8A9` — one contiguous 537-byte run, by far the
+     largest in the map bank. The screen check stopped being a hook and became
+     inline code, which also returned its 112-byte allocation at `$D544`; the
+     entry table lives there now.
+   * **The target reaches the effect in RAM, not in a table.** `$0743`/`$0744`
+     are the two bytes the disassembly marks unused immediately below
+     `Map_DoFortressFX` at `$0745`; nothing in the ROM names them. The scan
+     writes the target row byte and column there and sets the flag, and map
+     operation 8 reads all three one frame later.
+   * **`$0743` packs two facts about the row.** High nibble `(row + 2) << 4`,
+     the `Map_Entered_Y` encoding the map-data write index wants; low nibble the
+     completion row `row.min(7)`, which indexes `Map_CompleteBit`. The nibble
+     was free because the engine only ever read the high half, and deriving the
+     clamp on the console would have cost more bytes than the pack saves.
+   * **Home and away are split positionally, not by a flag bit.** Away entries
+     come first and the scan's only test is `CPX #boundary` against its own
+     descending index — four bytes, no bit stolen from a key, and the boundary
+     is a patched immediate like the count beside it.
+   * **The W8 bridge handshake is gone rather than replaced.** `open_fx_gaps`
+     now derives what a gap opens to from the tile standing on it, so a cell
+     already showing a bridge is simply not a gap and nothing is written. That
+     also fixes vanilla slot `$08` (see above) as a side effect.
+   * **`NodeKind::Fortress` lost its `boomboom_y_offset`.** With the orb path
+     retired the field had one remaining reader, a test, which resolves the
+     offset through the entry's `obj_ptr` instead.
+
+   Sizes: effect 398 of 489 reserved, scan 82 of 128, mirror 48, entry table 28
+   entries in 112 bytes (today's ceiling is the 17-card fortress deck).
 
    *The original plan had an intermediate "derive the data, keep the slot
    addressing" step. Dropped: it carries real 6502 risk for no player-visible
    gain, and the derivation code would be written twice — once indexed by slot,
    once by position. The branch is the safety net; the intermediate ROM state is
    not worth its own commit.*
+
 3. **Stage 2 — builder capabilities** (out of scope here): fort deja vu, the
    per-world fort cap, levels-as-keys.
 4. **Stage 3 — expand `Map_Removable_Tiles`** for new obstacle types, with its

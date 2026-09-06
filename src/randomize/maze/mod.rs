@@ -38,7 +38,6 @@ use std::collections::HashSet;
 use super::map_walker::walk_reachable;
 use super::overworld_build::{BuildResult, SlotKind, WorldState, from_built, stamp_slots};
 use super::rom_data::{self, Grid, Pos};
-use crate::rom::Rom;
 use walk::{MazePos, MazeWorld, walk_maze};
 
 pub(crate) mod fill;
@@ -92,14 +91,6 @@ pub(crate) struct MazeLock {
     pub fort: Option<FortRef>,
 }
 
-impl MazeLock {
-    /// A lock whose fort lives in another world — the mode's headline shape.
-    /// Derived, never stored.
-    pub(crate) fn is_foreign(&self) -> bool {
-        self.fort.is_some_and(|f| f.world != self.world)
-    }
-}
-
 /// The airship order every null-model measurement uses: worlds in ROM order.
 /// The last entry must hold Bowser's castle, which is the goal.
 ///
@@ -144,23 +135,6 @@ pub(crate) struct GlobalState {
     pub locks: Vec<MazeLock>,
     pub start: MazePos,
     pub goal: MazePos,
-    /// Fortresses whose map cell really becomes rubble when beaten.
-    ///
-    /// **Only these may open a cross-world lock.** The foreign-lock hook is
-    /// `Map_MarkLevelComplete`'s fortress branch, gated on the tile under the
-    /// player being `TILE_FORTRUBBLE` or `TILE_ALTRUBBLE` — and only
-    /// `TILE_FORT`, `TILE_LARGEFORT` and `TILE_ALTFORT` ever produce those
-    /// (`Map_CompleteTile` indices 8 and 9); everything else completes to a
-    /// Mario/Luigi panel.
-    ///
-    /// World 8's tanks and battleships are the case that matters. They are map
-    /// object **sprites** floating over a cell the overworld writer
-    /// deliberately blanks to a path node, so beating one produces no rubble.
-    /// A same-world lock does not care — it opens through `MO_DoFortressFX`,
-    /// which is keyed on an FX slot rather than on a tile — but a cross-world
-    /// lock keyed on one would be **dead**, and silently: the player beats the
-    /// fortress and a lock in another world simply never opens.
-    pub crumbling: HashSet<FortRef>,
     /// Which worlds the spine names. **A world off the spine is not part of
     /// the game**, exactly as `world_count` means in standard mode: it is still
     /// built, still on the ROM and still full of content, but nothing requires
@@ -186,15 +160,7 @@ impl GlobalState {
     ///
     /// Locks keep the fort the per-world builder paired them with — that is
     /// the null model: no key-assignment fill, so every lock stays local.
-    /// `crumbling` names the fortresses whose map cell becomes rubble — see
-    /// the field. Pass an empty set to forbid cross-world locks entirely; pass
-    /// every fortress only in a test that does not care.
-    pub(crate) fn from_build(
-        result: &BuildResult,
-        spine: &[usize],
-        wands_required: u8,
-        crumbling: HashSet<FortRef>,
-    ) -> Self {
+    pub(crate) fn from_build(result: &BuildResult, spine: &[usize], wands_required: u8) -> Self {
         assert!(spine.len() >= 2, "a spine needs a start and a castle");
         let worlds: Vec<WorldState> = result.worlds.iter().map(from_built).collect();
         for (i, w) in worlds.iter().enumerate() {
@@ -235,17 +201,7 @@ impl GlobalState {
             in_maze[w] = true;
         }
 
-        GlobalState {
-            worlds,
-            edges,
-            locks,
-            start,
-            goal,
-            in_maze,
-            crumbling,
-            reserved,
-            wands_required,
-        }
+        GlobalState { worlds, edges, locks, start, goal, in_maze, reserved, wands_required }
     }
 
     /// Add telepads. Each pad tile owns one arrival row, so the count is
@@ -684,30 +640,6 @@ pub(crate) struct GenReport {
     pub unsafe_worlds: Vec<usize>,
 }
 
-/// Which fortresses of a finished build actually crumble, read off the map the
-/// overworld writer just laid down.
-///
-/// Must be called **after** `write_overworld`: before it, the grids still hold
-/// the pickup phase's blanks and every fortress would read as uncrumbling.
-///
-/// The distinction it captures is World 8's tanks and battleships — map object
-/// sprites floating over a cell the writer deliberately blanks to a path node.
-/// See [`GlobalState::crumbling`] for why a cross-world lock cannot use one.
-pub(crate) fn crumbling_forts(rom: &Rom, result: &BuildResult) -> HashSet<FortRef> {
-    result
-        .worlds
-        .iter()
-        .flat_map(|w| {
-            w.slots.iter().filter(|s| s.kind == SlotKind::Fortress).filter_map(move |s| {
-                let tile = rom.read_byte(rom_data::map_tile_offset(w.world_idx, s.pos.0, s.pos.1));
-                rom_data::FORTRESS_TILES
-                    .contains(&tile)
-                    .then_some(FortRef { world: w.world_idx, section: s.section })
-            })
-        })
-        .collect()
-}
-
 /// Build a maze from eight finished worlds.
 ///
 /// The order is not arbitrary. Pads are planned first, because the fill's
@@ -720,11 +652,10 @@ pub(crate) fn generate<R: Rng>(
     result: &BuildResult,
     spine: &[usize],
     wands_required: u8,
-    crumbling: HashSet<FortRef>,
     knobs: &graph::Knobs,
     rng: &mut R,
 ) -> (GlobalState, GenReport) {
-    let mut state = GlobalState::from_build(result, spine, wands_required, crumbling.clone());
+    let mut state = GlobalState::from_build(result, spine, wands_required);
 
     let pads = graph::plan_pads(&state, knobs, rng);
     state.add_pads(pads.iter().map(|p| p.edge).collect());
@@ -755,7 +686,7 @@ pub(crate) fn generate<R: Rng>(
     // pads, the spine alone. `the_spine_alone_completes_the_maze` is what makes
     // that a guarantee rather than a hope.
     if !spheres.solvable || !unsafe_worlds.is_empty() {
-        state = GlobalState::from_build(result, spine, wands_required, crumbling);
+        state = GlobalState::from_build(result, spine, wands_required);
         spheres = state.spheres();
         // RECOMPUTE, do not clear. The fallback drops the pads, and a hub pad
         // is the only rescue an unsafe start region has — so the fallback can

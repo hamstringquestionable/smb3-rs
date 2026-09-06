@@ -12,9 +12,6 @@ pub mod credits;
 pub mod enemies;
 pub mod enemy_protections;
 pub mod fire_flower;
-/// World-maze cross-world locks: a fortress in one world that busts a lock in
-/// another, by setting its completion bit in [`completion_bits`]' packed store.
-pub mod foreign_locks;
 pub mod hand_rooms;
 pub mod hands_levels;
 pub mod items;
@@ -22,6 +19,10 @@ pub mod king_quotes;
 pub mod koopalings;
 pub mod level_helpers;
 pub mod levels;
+/// Every lock a fortress opens, keyed by where the player is standing rather
+/// than by a slot index. Replaces vanilla's fortress-FX tables outright, and
+/// absorbs what used to be a second, differently-keyed cross-world mechanism.
+pub mod lock_keys;
 /// World-maze: map objects a world has already lost stay lost. `Map_Init`
 /// rebuilds all nine of a world's object slots from ROM on every entry, so
 /// without this a beaten Hammer Bro is standing there again when you come back.

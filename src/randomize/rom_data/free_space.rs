@@ -162,11 +162,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(0x379D9, 894, &["king_quotes"], "7 quotes + hook (7×120 + 54)"),
     // PRG010 (file 0x14010, CPU $C000–$DFFF during map)
     fs(
-        0x15554,
-        112,
-        &["fx_screen_check"],
-        "cross-screen lock patch (Fred's algorithm + darkness gate)",
+        0x147CD,
+        537,
+        &["lock_keys"],
+        "MO_DoFortressFX, rewritten position-keyed (537 reserved, 484 used)",
     ),
+    fs(0x15554, 112, &["lock_keys"], "position-keyed lock table: 28 entries of (fortress, lock)"),
     fs(
         0x155C4,
         40,
@@ -294,13 +295,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["world_travel"],
         "world-maze: whistle fast travel to the next visited world (128 reserved, 34 used)",
     ),
-    fs(
-        0x17F7B,
-        128,
-        &["foreign_locks"],
-        "world-maze: cross-world lock hook + 17 x 4 fort/plane-bit table \
-         (128 reserved, 127 used)",
-    ),
+    fs(0x17F7B, 48, &["lock_keys"], "removable-tile + CHR-quadrant mirror of PRG012"),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     fs(0x0382A, 23, &["koopalings"], "koopa_hits: subroutine + defeat JMP + threshold table"),
     fs(0x03841, 13, &["koopalings"], "koopa_collision_guard: skip collision bitmap during invuln"),
@@ -419,7 +414,7 @@ pub(crate) const FS_NEW_GAME_INIT: usize = 0x33FC8; // 40 reserved, 38 used
 /// have already visited, wrapping. PRG011, CPU `$BEEB` — the map banks PRG011
 /// at `$A000` for its whole life, so a map-side feature pays no always-mapped
 /// rent. Sited at the head of PRG011's 277-byte tail so
-/// [`FS_MAZE_FOREIGN_LOCK`] can follow it in the same run.
+/// [`FS_LOCK_MIRROR`] can follow it in the same run.
 // Native-only, like every other world-maze routine constant: the mode is
 // gated to native, and CI's wasm clippy pass flags a constant nothing on that
 // target can read. The FREE_SPACE_ALLOCATIONS rows stay ungated -- the
@@ -461,9 +456,13 @@ pub(crate) const FS_MAZE_WAND_GATE: usize = 0x19E40;
 /// door is 28/28 full, so this needs its own row.
 pub(crate) const FS_MAZE_WAND_COUNT: usize = 0x3DFA0;
 
-/// World-maze: a fortress whose lock is in another world. PRG011, CPU `$BF6B`,
-/// immediately after [`FS_MAZE_TRAVEL`] in the same 277-byte run.
-pub(crate) const FS_MAZE_FOREIGN_LOCK: usize = 0x17F7B;
+/// The removable-tile and CHR-quadrant mirror of PRG012, which is not banked in
+/// during map play. PRG011, CPU `$BF6B`, immediately after [`FS_MAZE_TRAVEL`] in
+/// the same 277-byte run; both map banks are mapped for the whole map, so the
+/// PRG010 effect reads it freely. Sited here rather than beside the routine so
+/// the routine has the whole freed fortress-FX block to grow into. 48 of the
+/// run's 128 bytes; the remaining 80 are unclaimed.
+pub(crate) const FS_LOCK_MIRROR: usize = 0x17F7B;
 
 /// World-maze: set a map object's "already beaten" bit at the one site that
 /// empties its slot. PRG011, CPU `$BC9B` — the hook is in PRG011 and the world
@@ -552,12 +551,25 @@ pub(crate) const FS_BIG_Q_LOOKUP: usize = 0x355BD; // 224 reserved, 199 used (CP
 pub(crate) const FS_KING_QUOTES: usize = 0x379D9; // 894 bytes
 
 // PRG010
-// Fred's visibility algorithm plus the busted / darkness gates (issue #131).
-// The $FF run this sits in continues to 0x15810, so there is room to grow.
-pub(crate) const FS_FX_SCREEN_CHECK: usize = 0x15554; // 112 reserved, 82 used
+// The position-keyed lock table (`lock_keys`). It inherited the run Fred's
+// screen-check patch used to hold: that check is now inline in a routine we
+// own, so its 112 bytes went to the table instead. The $FF run continues to
+// 0x15810, so there is room to grow.
+pub(crate) const FS_LOCK_ENTRIES: usize = 0x15554; // 112 reserved, 4 per lock
+
+// NOT $FF filler — this is the vanilla fortress-FX subsystem, retired
+// wholesale. `lock_keys::MAP_OP8_VECTOR` (the one word in the ROM that names
+// `MO_DoFortressFX`) is repointed into FS_FORTRESS_FX, at which point the 236
+// bytes of slot tables at $C7BD and the 301-byte routine at $C8A9 are
+// unreferenced. Nothing else reaches into either: every label inside the
+// routine is internal to it, and the tables were read only by the routine.
+// Together they are one 537-byte contiguous run, by far the largest in the map
+// bank, and the routine takes all of it — the mirror lives in PRG011 so this
+// one can grow without anything moving.
+pub(crate) const FS_FORTRESS_FX: usize = 0x147CD; // 537 reserved, 484 used
 
 // World-maze POC. Sits in the tail of the same $FF run as
-// FS_FX_SCREEN_CHECK, which reserves 112 from 0x15554 and leaves the run
+// FS_LOCK_ENTRIES, which reserves 112 from 0x15554 and leaves the run
 // going to 0x15810.
 // Gated like `world_persist` itself: only `testrom` applies that patch, and
 // the CI wasm clippy pass flags a constant nothing on that target can read.
@@ -587,7 +599,7 @@ pub(crate) const FS_PORTAL_ARRIVAL: usize = 0x17DDB; // 160 reserved, 147 used
 pub(crate) const FS_PAD_ENTER: usize = 0x17E7B; // 128 reserved, 111 used
 
 // World-maze phase 1: the completion-bit stencil, derived on the console.
-// The $FF run FS_FX_SCREEN_CHECK opened continues past FS_STASH_ARRIVAL to
+// The $FF run FS_LOCK_ENTRIES opened continues past FS_STASH_ARRIVAL to
 // 0x15810 unbroken, and `prg010.asm` ends with "Rest of ROM bank was empty"
 // after the DMC samples, so nothing reads it. PRG010 is mapped at $C000 for
 // the whole world-map init, which is where these run.
@@ -1187,7 +1199,7 @@ mod free_space_tests {
             (FS_HAMMER_LOCKS, "FS_HAMMER_LOCKS"),
             (FS_ANCHOR_ITEM_GUARD, "FS_ANCHOR_ITEM_GUARD"),
             (FS_KING_QUOTES, "FS_KING_QUOTES"),
-            (FS_FX_SCREEN_CHECK, "FS_FX_SCREEN_CHECK"),
+            (FS_LOCK_ENTRIES, "FS_LOCK_ENTRIES"),
             (FS_NEW_GAME_INIT, "FS_NEW_GAME_INIT"),
             (FS_SEED_STAMP, "FS_SEED_STAMP"),
             (FS_MAZE_WAND_GATE, "FS_MAZE_WAND_GATE"),
@@ -1195,7 +1207,7 @@ mod free_space_tests {
             (FS_RESTORE_ARRIVAL, "FS_RESTORE_ARRIVAL"),
             (FS_PORTAL_ARRIVAL, "FS_PORTAL_ARRIVAL"),
             (FS_PAD_ENTER, "FS_PAD_ENTER"),
-            (FS_MAZE_FOREIGN_LOCK, "FS_MAZE_FOREIGN_LOCK"),
+            (FS_LOCK_MIRROR, "FS_LOCK_MIRROR"),
             (FS_MAZE_VISITED, "FS_MAZE_VISITED"),
             (FS_MAZE_TRAVEL, "FS_MAZE_TRAVEL"),
             (FS_MAZE_OBJ_MARK, "FS_MAZE_OBJ_MARK"),

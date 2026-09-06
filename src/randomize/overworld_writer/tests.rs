@@ -548,8 +548,16 @@ fn test_w8_sprites_moved() {
     }
 }
 
+/// Every lock the build placed gets exactly one entry, naming a fortress that
+/// really stands where the entry says.
+///
+/// This replaces `test_fx_slots_valid`, which pinned the byte layout of
+/// `FortressFX_W1..W8` — a table the fortress-FX rework deleted, along with the
+/// four-locks-per-world ceiling it imposed. What is left to check is the
+/// pairing itself, which is the only thing the builder knows and the console
+/// cannot derive.
 #[test]
-fn test_fx_slots_valid() {
+fn every_lock_is_paired_with_its_fortress() {
     let rom = match load_rom() {
         Some(r) => r,
         None => return,
@@ -557,36 +565,36 @@ fn test_fx_slots_valid() {
     let catalog = node_catalog::NodeCatalog::build(&rom, false);
     let pickup = standard_pickup(&rom, &catalog);
     let mut rng = ChaCha8Rng::seed_from_u64(42);
-    let build = overworld_build::build(
-        &rom,
-        &OverworldData { pickup: &pickup, catalog: &catalog },
-        &mut rng,
-        standard_build_flags(),
-    );
+    let data = OverworldData { pickup: &pickup, catalog: &catalog };
+    let build = overworld_build::build(&rom, &data, &mut rng, standard_build_flags());
 
     let mut test_rom = rom.clone();
-    write_overworld(
-        &mut test_rom,
-        &build,
-        &OverworldData { pickup: &pickup, catalog: &catalog },
-        &mut rng,
-        WriteFlags::default(),
-    );
+    let fx = write_overworld(&mut test_rom, &build, &data, &mut rng, WriteFlags::default());
+    let entries = fx.lock_entries(&build);
 
-    // write_fortress_fx hands out FX slots as one running index across
-    // worlds in write order: world wi's table holds slots
-    // [start, start + lock_count) followed by zeroes, where start is the
-    // total lock count of all earlier worlds. Assert the exact bytes.
-    let mut expected_slot = 0usize;
-    for wi in 0..8 {
-        let fx_base = rom_data::FX_WORLD_TABLE + wi * 4;
-        let lock_count = build.worlds[wi].locks.len();
-        assert!(lock_count <= 4, "W{}: {lock_count} locks exceed 4 FX entries", wi + 1);
-        for i in 0..4 {
-            let want = if i < lock_count { (expected_slot + i) as u8 } else { 0 };
-            assert_eq!(test_rom.read_byte(fx_base + i), want, "W{} FX table entry {i}", wi + 1,);
-        }
-        expected_slot += lock_count;
+    let placed: usize = build.worlds.iter().map(|w| w.locks.len()).sum();
+    assert_eq!(entries.len(), placed, "every placed lock needs a key");
+
+    for e in &entries {
+        assert_eq!(e.key_world, e.target_world, "a non-maze run has no cross-world locks");
+        let world = &build.worlds[e.key_world];
+        assert!(
+            world.locks.iter().any(|l| l.pos == e.target_pos),
+            "W{} entry targets ({},{}), which holds no lock",
+            e.key_world + 1,
+            e.target_pos.0,
+            e.target_pos.1
+        );
+        assert!(
+            world
+                .slots
+                .iter()
+                .any(|s| s.pos == e.key_pos && s.kind == overworld_build::SlotKind::Fortress),
+            "W{} entry is keyed on ({},{}), which holds no fortress",
+            e.key_world + 1,
+            e.key_pos.0,
+            e.key_pos.1
+        );
     }
 }
 

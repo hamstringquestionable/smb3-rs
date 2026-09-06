@@ -1765,28 +1765,24 @@ fn the_wasm_json_entry_path_carries_the_maze() {
     );
 }
 
-/// **Every cross-world lock names a fortress the engine will actually crumble.**
+/// **Every lock is keyed to a fortress the player can actually clear — and a
+/// sprite-covered one counts.**
 ///
-/// The foreign-lock hook is `Map_MarkLevelComplete`'s fortress branch, gated on
-/// the tile under the player being `TILE_FORTRUBBLE` or `TILE_ALTRUBBLE`. Only
-/// `TILE_FORT`, `TILE_LARGEFORT` and `TILE_ALTFORT` ever produce those
-/// (`Map_CompleteTile` indices 8 and 9); everything else completes to a
-/// Mario/Luigi panel.
+/// This replaces `every_cross_world_lock_names_a_crumbling_fortress`, which
+/// asserted the opposite and had to. Under the old cross-world hook the key was
+/// `Map_MarkLevelComplete`'s fortress branch, gated on the tile under the player
+/// being rubble, so a fortress hidden under a World 8 tank could not open a lock
+/// in another world. Position keying at map operation 8 has no such gate: both
+/// halves of `MO_DoLevelClear` set `Map_Operation = 8` at one shared exit, so a
+/// tank and a stone fortress reach the effect identically.
 ///
-/// **World 8's tanks and battleships are the case this exists for.** They are
-/// map object sprites floating over a cell the overworld writer deliberately
-/// blanks to a path node, so beating one produces no rubble. A same-world lock
-/// does not care — it opens through `MO_DoFortressFX`, keyed on an FX slot
-/// rather than a tile — but a cross-world lock keyed on one is **dead**, and
-/// silently: the player beats the fortress and a lock in another world never
-/// opens.
-///
-/// This reads the table the ROM actually carries, because that is the artefact
-/// that has to be right; the generator's own view cannot see the map tiles and
-/// the map tiles cannot see the assignment.
+/// Three of World 8's four fortresses get an army sprite, so this is not an edge
+/// case — it is 17.6% of all locks. The count is printed rather than merely
+/// asserted, because "no sprite-covered fortress was keyed" would mean the
+/// capability had quietly gone away again.
 #[test]
-fn every_cross_world_lock_names_a_crumbling_fortress() {
-    use crate::randomize::foreign_locks;
+fn every_lock_is_keyed_to_a_fortress_slot() {
+    use crate::randomize::lock_keys;
     use crate::randomize::overworld_build::SlotKind;
     use crate::randomize::rom_data::{self, FORTRESS_TILES};
 
@@ -1794,43 +1790,49 @@ fn every_cross_world_lock_names_a_crumbling_fortress() {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
         return;
     };
-    let opts = Options { world_maze: true, ..audit_options() };
 
-    let mut rows_seen = 0;
-    let mut sprite_forts = 0;
-    for seed in [1u64, 4242, 12345, 31337] {
-        let (rom, build) =
-            crate::randomize_rom_with_overworld_capture(&raw.data, seed, &opts, None)
-                .expect("randomize");
+    let (mut checked, mut sprite_keyed, mut away_seen) = (0usize, 0usize, 0usize);
+    for maze in [false, true] {
+        let opts = Options { world_maze: maze, ..audit_options() };
+        for seed in [1u64, 4242, 12345, 31337] {
+            let (rom, build) =
+                crate::randomize_rom_with_overworld_capture(&raw.data, seed, &opts, None)
+                    .expect("randomize");
 
-        // How many fortresses are sprite-covered, so the check cannot go
-        // vacuous by the case it guards disappearing.
-        for w in &build.worlds {
-            for slot in w.slots.iter().filter(|s| s.kind == SlotKind::Fortress) {
-                let tile =
-                    rom.read_byte(rom_data::map_tile_offset(w.world_idx, slot.pos.0, slot.pos.1));
-                sprite_forts += usize::from(!FORTRESS_TILES.contains(&tile));
+            for entry in lock_keys::decode_entries(&rom) {
+                checked += 1;
+                away_seen += usize::from(entry.away);
+                let world = &build.worlds[entry.key_world];
+                assert!(
+                    world
+                        .slots
+                        .iter()
+                        .any(|s| s.pos == entry.key_pos && s.kind == SlotKind::Fortress),
+                    "maze={maze} seed {seed}: a lock is keyed on W{} {:?}, which is not a \
+                     fortress slot — nothing there would ever arm the effect",
+                    entry.key_world + 1,
+                    entry.key_pos
+                );
+                let tile = rom.read_byte(rom_data::map_tile_offset(
+                    entry.key_world,
+                    entry.key_pos.0,
+                    entry.key_pos.1,
+                ));
+                sprite_keyed += usize::from(!FORTRESS_TILES.contains(&tile));
             }
         }
-
-        for (world, comp_row, col) in foreign_locks::decode_rows(&rom) {
-            rows_seen += 1;
-            // Completion index 7 is the row-7/8 fold, so try both.
-            let grid_rows: &[usize] = if comp_row == 7 { &[7, 8] } else { &[comp_row] };
-            let ok = grid_rows.iter().any(|&r| {
-                FORTRESS_TILES.contains(&rom.read_byte(rom_data::map_tile_offset(world, r, col)))
-            });
-            assert!(
-                ok,
-                "seed {seed}: a cross-world lock is keyed on W{} row {comp_row} col {col}, whose \
-                 tile never becomes rubble — beating that fortress would leave the far lock shut",
-                world + 1
-            );
-        }
     }
-    assert!(rows_seen > 0, "no cross-world locks in any seed; the check is vacuous");
-    assert!(sprite_forts > 0, "no sprite-covered fortress seen; the case guarded is absent");
-    eprintln!("  {rows_seen} cross-world locks checked, {sprite_forts} sprite forts present");
+    assert!(checked > 0, "no locks in any seed; the check is vacuous");
+    assert!(away_seen > 0, "no cross-world locks in any maze seed");
+    assert!(
+        sprite_keyed > 0,
+        "no lock is keyed to a sprite-covered fortress — either World 8's army sprites stopped \
+         landing on fortresses, or the tile gate is back and those locks are dead again"
+    );
+    eprintln!(
+        "  {checked} locks checked, {sprite_keyed} keyed to a sprite-covered fortress, \
+         {away_seen} cross-world"
+    );
 }
 
 /// **The `// N reserved, M used` figures in the registry must be true.**
@@ -1915,14 +1917,18 @@ fn registry_used_figures_are_current() {
 /// exist. A World 2 playthrough found it: three fortresses, three locks, all
 /// three opening locally.
 ///
-/// The count is readable straight off the ROM. FX slots are handed out
-/// contiguously from 0 across all eight worlds, so the highest index in
-/// `FX_WORLD_TABLE` is one below the number in use, and the foreign-lock table
-/// carries its own row count. Those two must partition the locks the builder
-/// placed — never overlap them.
+/// The count is readable straight off the ROM: home and away entries share one
+/// table now, so they must partition the locks the builder placed — never
+/// overlap them, and never leave one out.
+///
+/// Since the fortress-FX rework the build-time [`lock_keys::apply`] would panic
+/// on a lock with two keys before a ROM was ever produced. This still earns its
+/// place: it measures the *finished artefact*, so it also catches an entry lost
+/// between the writer and the ROM, and it is what pins that away locks exist at
+/// all rather than the mode quietly emitting none.
 #[test]
 fn every_maze_lock_has_exactly_one_key() {
-    use crate::randomize::rom_data::FX_WORLD_TABLE;
+    use crate::randomize::lock_keys;
 
     let Some(raw) = make_test_rom() else {
         eprintln!("SKIP: requires the ROM, which is not included in the repo");
@@ -1936,22 +1942,18 @@ fn every_maze_lock_has_exactly_one_key() {
                 .expect("maze seed should randomize");
 
         let placed: usize = build.worlds.iter().map(|w| w.locks.len()).sum();
-        let foreign = crate::randomize::foreign_locks::decode_rows(&rom).len();
-
-        // Slots run 0..n contiguously, so the largest index names the last one.
-        let top = (0..8 * 4)
-            .map(|i| rom.read_byte(FX_WORLD_TABLE + i) as usize)
-            .max()
-            .expect("the table is not empty");
-        let local = if top == 0 && foreign == placed { 0 } else { top + 1 };
+        let entries = lock_keys::decode_entries(&rom);
+        let away = entries.iter().filter(|e| e.away).count();
 
         assert_eq!(
-            local + foreign,
+            entries.len(),
             placed,
-            "seed {seed}: {placed} locks were placed but {local} have a local key and \
-             {foreign} a foreign one. Over the total means a re-keyed lock kept its \
-             local fortress as well, which makes the cross-world lock decoration."
+            "seed {seed}: {placed} locks were placed but the table holds {} entries \
+             ({away} of them cross-world). Over the total means a re-keyed lock kept its \
+             local fortress as well, which makes the cross-world lock decoration; under \
+             it means a lock no fortress opens.",
+            entries.len()
         );
-        assert!(foreign > 0, "seed {seed}: no cross-world locks at all");
+        assert!(away > 0, "seed {seed}: no cross-world locks at all");
     }
 }

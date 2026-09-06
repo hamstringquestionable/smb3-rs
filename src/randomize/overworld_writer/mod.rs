@@ -10,16 +10,13 @@ use rand::seq::{IndexedRandom, SliceRandom};
 use crate::rom::Rom;
 use crate::{DejaVuMode, PiranhaMode};
 
+use super::lock_keys::LockEntry;
 use super::node_catalog::NodeKind;
 use super::overworld_build::{
     BuildResult, BuiltWorld, OverworldData, SlotKind, VANILLA_LEVEL_COUNT, bfs_ordered,
 };
-use super::overworld_helpers;
 use super::pipe_helpers;
-use super::rom_data::{
-    self, FORTRESS_1F_OBJ_PTR, FX_MAP_COMP_IDX, FX_PATTERNS, FX_VADDR_H, FX_VADDR_L,
-    MAP_COMPLETE_BITS, TILE_BONUS_GAME, TILE_PIPE, WORLDS,
-};
+use super::rom_data::{self, FORTRESS_1F_OBJ_PTR, TILE_BONUS_GAME, TILE_PIPE, WORLDS};
 
 mod assign;
 mod fortress_fx;
@@ -31,14 +28,13 @@ mod sprites;
 mod types;
 
 use assign::{assign_pool, interleave_hb_by_obj_ptr};
-use fortress_fx::{patch_fortress_fx_screen_check, write_fortress_fx};
+use fortress_fx::collect_lock_entries;
 use grid::write_tile_grid;
 use pointers::{write_pipe_dests, write_pointer_entries};
 use sprites::{
     pick_plant_positions, pick_w8_sprite_positions, write_hb_sprites, write_plant_sprites,
     write_w8_sprites,
 };
-use std::sync::LazyLock;
 
 use types::{Assignment, HammerBroAssignment, PipeAssignment, WorldAssignments};
 
@@ -55,7 +51,7 @@ pub(crate) fn write_overworld<R: Rng>(
     data: &OverworldData,
     rng: &mut R,
     flags: WriteFlags,
-) -> FortressFx {
+) -> LockPairing {
     let assignments = assign_pool(rom, build, data, rng, flags);
 
     // Compute W8 army sprite target positions before writing tiles,
@@ -81,14 +77,12 @@ pub(crate) fn write_overworld<R: Rng>(
     let hb_fallback_levels = interleave_hb_by_obj_ptr(data.catalog.unique_hammer_bro_levels(), rng);
     let mut hb_fallback_iter = hb_fallback_levels.iter().cycle().cloned();
 
-    let mut fx_slot = 0usize;
     for (wi, wa) in assignments.iter().enumerate() {
         let built = &build.worlds[wi];
         let sprite_mask = &sprite_masks[wi];
 
         write_tile_grid(rom, built, wa, data, sprite_mask, rng);
         write_pointer_entries(rom, wi, built, wa, data, &mut hb_fallback_iter);
-        write_fortress_fx(rom, wi, built, wa, data, &mut fx_slot, &NO_SUPPRESSION);
         write_pipe_dests(rom, wi, wa);
         // For swapped worlds, rewrite the Airship + Start entry coordinates
         // (the main writer pass leaves both untouched) before the resort so
@@ -108,74 +102,52 @@ pub(crate) fn write_overworld<R: Rng>(
     // Keep wandering map objects (Hammer Bros) off plant/army nodes — a bro
     // parked on one would replay the level after it's beaten. Also vetoes
     // hand-trap landings (subsumes the former bros_no_hands patch).
-    // Sub-tagged like fx_screen_check below: it claims free space, so the write
-    // log has to name it for the free-space audit and collision reports.
+    // Sub-tagged: it claims free space, so the write log has to name it for
+    // the free-space audit and collision reports.
     rom.push_tag("march_veto");
     march_veto::write_march_veto(rom, &w8_sprite_positions, &plant_positions);
     rom.pop_tag();
     if flags.shuffle_hammer_bros {
         write_hb_sprites(rom, build, rng);
     }
-    // Sub-tagged for the same reason as march_veto above.
-    rom.push_tag("fx_screen_check");
-    patch_fortress_fx_screen_check(rom);
-    rom.pop_tag();
-
     // Apply engine-side scaffolding for the per-world start ↔ airship swap.
     // No-op when the option was off (no worlds got flagged in pick_swaps).
     if data.catalog.start_airship_swapped.iter().any(|&b| b) {
         super::start_airship_swap::write_engine_scaffolding(rom, data.catalog);
     }
 
-    FortressFx { assignments }
+    LockPairing { assignments }
 }
 
-/// No locks suppressed — what every non-maze run passes.
-static NO_SUPPRESSION: LazyLock<HashSet<(usize, usize)>> = LazyLock::new(HashSet::new);
-
-/// A handle that can re-run the fortress-FX pass after the fact.
+/// A handle that answers "which fortress opens which lock" after the fact.
 ///
-/// **Why the pass is re-runnable at all.** The world maze only learns which
-/// locks a *foreign* fortress opens after [`write_overworld`] has finished:
-/// `crumbling_forts` reads the grids this very pass lays down, so the decision
-/// cannot be made earlier without duplicating the writer's sprite-mask logic.
-/// Re-running is safe because `write_fortress_fx` takes no RNG and overwrites
-/// the same table bytes it wrote the first time — including the Boom-Boom
-/// Y-byte, which masks off the old ordinal before writing the new one.
+/// **Why the answer is not simply written during the pass.** The world maze
+/// replaces this pairing wholesale, and it can only do so after
+/// [`write_overworld`] has finished: `crumbling_forts` reads the grids this very
+/// pass lays down, so the decision cannot be made earlier without duplicating
+/// the writer's sprite-mask logic. Holding the assignments and producing the
+/// pairing on demand keeps that late decision cheap, and it takes no RNG, so
+/// nothing downstream shifts.
 ///
-/// Slots the second pass does not reach keep the bytes the first pass left. That
-/// is deliberate and matches vanilla: the per-world table at `FX_WORLD_TABLE` is
-/// rewritten in full, so nothing points at them, and the original pass never
-/// cleared its own unused tail either.
-pub(crate) struct FortressFx {
+/// The pairing is *input* to [`super::lock_keys::apply`], which owns every byte
+/// the console reads. Nothing here writes ROM.
+pub(crate) struct LockPairing {
     assignments: Vec<WorldAssignments>,
 }
 
-impl FortressFx {
-    /// Re-run the FX pass, omitting the named lock cells.
+impl LockPairing {
+    /// Every `(fortress, lock)` pair the build placed, one per lock.
     ///
-    /// `suppress` is indexed by world. A lock listed here loses its local
-    /// fortress key outright — see [`write_fortress_fx`].
-    pub(crate) fn suppress_locks(
-        &self,
-        rom: &mut Rom,
-        build: &BuildResult,
-        data: &OverworldData,
-        suppress: &[HashSet<(usize, usize)>],
-    ) {
-        let mut fx_slot = 0usize;
+    /// Injective in both directions: a lock names one fortress section, and no
+    /// two locks in a world share a section. In maze mode this is only the
+    /// *starting* assignment — `maze::fill` permutes it and
+    /// `maze::writer::lock_keys` emits the result instead of this.
+    pub(crate) fn lock_entries(&self, build: &BuildResult) -> Vec<LockEntry> {
+        let mut out = Vec::new();
         for (wi, wa) in self.assignments.iter().enumerate() {
-            let none = HashSet::new();
-            write_fortress_fx(
-                rom,
-                wi,
-                &build.worlds[wi],
-                wa,
-                data,
-                &mut fx_slot,
-                suppress.get(wi).unwrap_or(&none),
-            );
+            collect_lock_entries(wi, &build.worlds[wi], wa, &mut out);
         }
+        out
     }
 }
 

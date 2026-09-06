@@ -25,6 +25,18 @@ deploys.
 
 ### Fixed
 
+- A fortress on World 6 opened its lock onto a cloud path in the middle of plain
+  ground. Vanilla's table stored the sky tile for a lock nowhere near the sky —
+  the value looks copied down a row when the table was written — and the wrong
+  graphic showed until you next entered the world.
+
+- **World Maze:** the fortress that opens a lock is now the one the maze
+  actually chose. A third of the locks that stayed in their own world were
+  opened by a different fortress than the generator had planned, and a fortress
+  could end up breaking two locks at once — one of them a lock it was never
+  meant to touch. The map you played was not the map the generator checked was
+  solvable.
+
 - **World Maze:** a fortress in another world now really is the only way to
   open a cross-world lock. Those locks kept their original fortress as a second
   key, sitting a few tiles away in the same world, and you would always find

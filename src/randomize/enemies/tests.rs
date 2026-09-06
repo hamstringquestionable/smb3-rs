@@ -1771,7 +1771,7 @@ fn wild_injection_rework_guarantees() {
 
             // Boss levels are excluded by type — a chaser at their first
             // enemy can only be a vanilla-native one, never injected.
-            if matches!(e.kind, NodeKind::Fortress { .. } | NodeKind::Airship | NodeKind::Bowser) {
+            if matches!(e.kind, NodeKind::Fortress | NodeKind::Airship | NodeKind::Bowser) {
                 if INJ.contains(&pid) {
                     assert_eq!(
                         Some(pid),

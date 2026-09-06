@@ -205,7 +205,9 @@ use crate::rom::Rom;
 use super::maze_state::{MAP_OBJ_DEAD, MAP_OBJ_DEAD_LEN};
 #[cfg(test)]
 use super::rom_data::NMI_SAFE_MAX;
-use super::rom_data::{FS_MAZE_OBJ_MARK, FS_MAZE_OBJ_RESTORE, WORLD_NUM, prg011_file_to_cpu};
+use super::rom_data::{
+    FS_MAZE_OBJ_MARK, FS_MAZE_OBJ_RESTORE, MAP_COMPLETE_BIT_CPU, WORLD_NUM, prg011_file_to_cpu,
+};
 
 // --- Engine symbols ---------------------------------------------------------
 //
@@ -214,12 +216,6 @@ use super::rom_data::{FS_MAZE_OBJ_MARK, FS_MAZE_OBJ_RESTORE, WORLD_NUM, prg011_f
 /// `Map_Objects_IDs` — 14 slots, `$00` meaning "nothing here".
 const MAP_OBJECTS_IDS: u16 = 0x7F15;
 
-/// `Map_CompleteBit` (PRG011) — `$80 $40 $20 $10 $08 $04 $02 $01`, the engine's
-/// own row-bit lookup, borrowed here as a world-bit lookup.
-///
-/// Verified against the ROM by `the_engine_still_has_the_bit_table_we_borrow`
-/// rather than trusted from the disassembly's label.
-const MAP_COMPLETE_BIT_CPU: u16 = 0xBA2D;
 /// File offset of the same table, for that test.
 #[cfg(test)]
 const MAP_COMPLETE_BIT_FILE: usize = 0x17A3D;

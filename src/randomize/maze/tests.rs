@@ -31,24 +31,6 @@ fn load_rom() -> Option<Rom> {
     Rom::from_bytes(&bytes).ok()
 }
 
-/// Every fortress, as the crumbling set. The generator tests are about
-/// placement and reachability, not about which map cells turn to rubble;
-/// `randomizer::tests::every_cross_world_lock_names_a_crumbling_fortress` owns
-/// that question, on a written ROM, because that is the only place the tiles
-/// exist.
-fn all_forts(result: &BuildResult) -> std::collections::HashSet<super::FortRef> {
-    result
-        .worlds
-        .iter()
-        .flat_map(|w| {
-            w.slots
-                .iter()
-                .filter(|s| s.kind == SlotKind::Fortress)
-                .map(move |s| super::FortRef { world: w.world_idx, section: s.section })
-        })
-        .collect()
-}
-
 fn census_seeds(default: u64) -> u64 {
     std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(default)
 }
@@ -120,8 +102,7 @@ fn census_build_swaps(raw: &Rom, seed: u64) -> ((Rom, BuildResult), [bool; 8]) {
 fn generated(raw: &Rom, seed: u64, knobs: &Knobs, k: u8) -> (Rom, GlobalState, GenReport) {
     let (rom, result) = census_build(raw, seed);
     let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
-    let (state, report) =
-        super::generate(&result, &IDENTITY_SPINE, k, all_forts(&result), knobs, &mut rng);
+    let (state, report) = super::generate(&result, &IDENTITY_SPINE, k, knobs, &mut rng);
     (rom, state, report)
 }
 
@@ -143,7 +124,7 @@ fn maze_walk_matches_the_per_world_walker() {
     let Some(raw) = load_rom() else { return };
     for seed in 0..census_seeds(4) {
         let (_, result) = census_build(&raw, seed);
-        let state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0, all_forts(&result));
+        let state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0);
 
         // Locks closed, slots stamped — the fixpoint's round-zero grids.
         let grids: Vec<Grid> = state
@@ -208,7 +189,7 @@ fn the_spine_alone_completes_the_maze() {
     let Some(raw) = load_rom() else { return };
     for seed in 0..census_seeds(8) {
         let (_, result) = census_build(&raw, seed);
-        let state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0, all_forts(&result));
+        let state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0);
         let s = state.spheres();
         assert!(s.solvable, "seed {seed}: spine-only maze unsolvable\n{}", s.spoiler());
         assert_eq!(
@@ -220,7 +201,7 @@ fn the_spine_alone_completes_the_maze() {
         // `wands_are_collectable`, at the hardest setting the dial reaches.
         // The spine visits all seven airships on the way, so K = 7 holds; the
         // number only becomes interesting once pads let the player skip ahead.
-        let hardest = GlobalState::from_build(&result, &IDENTITY_SPINE, 7, all_forts(&result));
+        let hardest = GlobalState::from_build(&result, &IDENTITY_SPINE, 7);
         assert!(
             hardest.wands_are_collectable(&hardest.spheres()),
             "seed {seed}: K=7 unsatisfiable on a spine-only maze"
@@ -352,7 +333,7 @@ fn maze_terrain_pools_census() {
 
     for seed in 0..seeds {
         let (_, result) = census_build(&raw, seed);
-        let state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0, all_forts(&result));
+        let state = GlobalState::from_build(&result, &IDENTITY_SPINE, 0);
         for w in &state.worlds {
             let t = super::roles::classify(w, &state.locks, &state.reserved_in(w.world_idx));
             hub += t.hub_sites.len();
@@ -1163,14 +1144,7 @@ fn a_short_spine_still_finishes() {
 
             // K cannot exceed the airships the spine actually offers.
             let k = (super::DEFAULT_WANDS_REQUIRED as usize).min(count) as u8;
-            let (state, report) = super::generate(
-                &result,
-                &spine,
-                k,
-                all_forts(&result),
-                &Knobs::default(),
-                &mut rng,
-            );
+            let (state, report) = super::generate(&result, &spine, k, &Knobs::default(), &mut rng);
             assert!(
                 report.spheres.solvable,
                 "seed {seed} spine {spine:?}: unwinnable\n{}",
@@ -1187,60 +1161,77 @@ fn a_short_spine_still_finishes() {
     }
 }
 
-/// The foreign-lock rows the ROM side is handed describe locks the maze
-/// actually made foreign, and nothing else.
+/// **The rows the ROM side is handed are the maze's whole assignment**, not the
+/// cross-world half of it.
 ///
-/// The failure this guards is silent and expensive: a row for a SAME-world lock
-/// would set its completion bit twice — once through the fortress FX path the
-/// engine already runs, once through the foreign-lock hook — and a row naming
-/// the wrong fortress would bust a lock the player never earned.
+/// The failure this guards is silent and expensive, and it shipped: the ROM used
+/// to take only `is_foreign()` locks from here and let the *overworld builder's*
+/// original pairing stand for the rest. `fill` starts from that pairing and
+/// moves by swapping two locks' forts, so every swap that left both locks in
+/// their own worlds was discarded on the way to the cartridge — and a fortress
+/// whose lock had been swapped away kept emitting the stale local key, so it
+/// opened two. Measured before the fix: 33.1% of same-world locks were opened
+/// by the wrong fortress, in 59 of 60 seeds.
+///
+/// So this checks the assignment as a whole: one row per lock, each naming the
+/// fortress `fill` actually chose, and the fort/lock bijection intact.
 #[test]
-fn foreign_lock_rows_match_the_assignment() {
+fn lock_key_rows_match_the_whole_assignment() {
     let Some(raw) = load_rom() else { return };
     let (mut foreign, mut seeds_with_any) = (0u64, 0u64);
     let seeds = census_seeds(4);
     for seed in 0..seeds {
         let (_, state, _) = generated(&raw, seed, &Knobs::default(), super::DEFAULT_WANDS_REQUIRED);
-        let rows = super::writer::foreign_locks(&state);
+        let rows = super::writer::lock_keys(&state);
 
         assert_eq!(
             rows.len(),
-            state.locks.iter().filter(|l| l.is_foreign()).count(),
-            "seed {seed}: a foreign lock was dropped on the way to the ROM"
+            state.locks.iter().filter(|l| l.fort.is_some()).count(),
+            "seed {seed}: a lock was dropped on the way to the ROM"
         );
-        foreign += rows.len() as u64;
-        seeds_with_any += u64::from(!rows.is_empty());
+
+        // The bijection `fill` maintains has to survive the trip: one fortress
+        // opens one lock, one lock has one fortress.
+        let mut keys: Vec<_> = rows.iter().map(|r| (r.key_world, r.key_pos)).collect();
+        let mut targets: Vec<_> = rows.iter().map(|r| (r.target_world, r.target_pos)).collect();
+        keys.sort_unstable();
+        targets.sort_unstable();
+        let (before_k, before_t) = (keys.len(), targets.len());
+        keys.dedup();
+        targets.dedup();
+        assert_eq!(keys.len(), before_k, "seed {seed}: a fortress opens two locks");
+        assert_eq!(targets.len(), before_t, "seed {seed}: a lock has two fortresses");
+
+        foreign += rows.iter().filter(|r| r.key_world != r.target_world).count() as u64;
+        seeds_with_any += u64::from(rows.iter().any(|r| r.key_world != r.target_world));
         for row in &rows {
-            assert_ne!(
-                row.fort_world, row.lock_world,
-                "seed {seed}: a same-world lock reached the foreign-lock table"
-            );
             // The named cell really holds that fortress, and the lock really
             // sits where the row says.
-            let fort = state.worlds[row.fort_world]
+            let fort = state.worlds[row.key_world]
                 .slots
                 .iter()
-                .find(|s| s.pos == row.fort_pos)
+                .find(|s| s.pos == row.key_pos)
                 .expect("fort row names a cell with no slot");
             assert_eq!(fort.kind, SlotKind::Fortress, "seed {seed}: fort row names a non-fortress");
             let lock = state
                 .locks
                 .iter()
-                .find(|l| l.world == row.lock_world && l.pos == row.lock_pos)
+                .find(|l| l.world == row.target_world && l.pos == row.target_pos)
                 .expect("lock row names a cell with no lock");
             assert_eq!(
                 lock.fort.map(|f| (f.world, f.section)),
-                Some((row.fort_world, fort.section)),
+                Some((row.key_world, fort.section)),
                 "seed {seed}: the row pairs a lock with a fortress that does not open it"
             );
         }
     }
-    // **The consistency checks above all pass vacuously at zero rows**, which is
-    // how this test sat green while nobody could confirm the mode's headline
-    // feature existed. Measured over 200 seeds when this was added: every seed
-    // had at least one, 51.5% of all locks were foreign, median 9 per seed. The
-    // floor is set far below that — this guards "the feature is switched on",
-    // not the distribution, which `maze_null_model_baselines` owns.
+    // **The cross-world checks pass vacuously at zero foreign rows**, which is
+    // how the old version of this test sat green while nobody could confirm the
+    // mode's headline feature existed. Measured over 200 seeds when that was
+    // added: every seed had at least one, 51.5% of all locks were foreign,
+    // median 9 per seed. The floor is set far below that — this guards "the
+    // feature is switched on", not the distribution, which
+    // `maze_null_model_baselines` owns.
     assert_eq!(
         seeds_with_any, seeds,
         "only {seeds_with_any} of {seeds} seeds have a cross-world lock — the mode's \
@@ -1337,7 +1328,6 @@ fn the_maze_holds_under_start_airship_swap() {
             &result,
             &IDENTITY_SPINE,
             super::DEFAULT_WANDS_REQUIRED,
-            all_forts(&result),
             &Knobs::default(),
             &mut rng,
         );
