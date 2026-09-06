@@ -1180,6 +1180,110 @@ them is worth the bytes:
   for one item any toad house also gives — against ~30 bytes of PRG011 in a mode
   that already forces No Game Over Penalty and unlimited whistles.
 
+## Measured 2026-09-06: the key-assignment fill rests on a false premise
+
+Interrogating the cross-world lock system turned up one wrong fact holding up
+one algorithm. Recorded here because the redesign it implies is larger than a
+fix.
+
+**`maze::fill` justified the swap search with a stall that cannot happen.** Its
+header said the charter's constructive forward fill "needs a fortress inside the
+start region with every lock closed — and the per-world builder deliberately
+puts forts *off* the forced path, so the start region frequently holds none".
+
+A lock is opened by beating its fortress, and reaching that fortress cannot
+require opening the lock it opens, so the chain must bottom out at a fortress
+reachable with everything shut. Measured: **480 of 480 worlds over 60 seeds**
+have one, up to four. Off the *forced path* is not the same as behind a lock,
+and the argument slid between them.
+
+**And the fill does not stall under a policy that looks one step ahead:**
+
+| | first-frontier | territory-ordered |
+|---|---|---|
+| stalled | 17/60 (28%) | **0/60** |
+| mean keys to choose from | 4.17 | **6.04** |
+| a cross-world key was available | 74% | **87%** |
+
+**What the mistake costs is intent.** A swap search can only permute what it
+inherits, so it has nothing to aim with — `Knobs::fort_distance_bias` defaults
+to `0.0`, which the code calls a uniform random walk. A cross-world key is
+available at 87% of a constructive fill's steps and nothing asks for one, so a
+foreign lock is emergent rather than designed. Nothing measures whether one
+actually **forces a crossing**, either: `FillReport` counts `foreign_locks` and
+`foreign_span` (how far the key is), never "the player had to go there". A lock
+whose fortress sits in a world the spine visits anyway gates nothing and is
+counted as a success.
+
+The formula the mode is after is the W8 multi-page shape one scale up: *a lock
+in one world, no fortress reachable to open it, a telepad to another world, beat
+a fortress there, come back.* A constructive fill produces that directly; a
+random walk produces it by luck.
+
+**What the swap search does buy is worth keeping**: it cannot fail, because it
+starts from the per-world builder's assignment, which is known good. Any
+replacement can keep that as a fallback.
+
+### The deeper shape: the maze is a post-pass, not a build phase
+
+Four of the five defects found on 2026-09-06 share one root — the maze mutates a
+finished map rather than participating in building it:
+
+| defect | root |
+|---|---|
+| `maze::writer` emitted only `is_foreign()` locks, so **33.1% of same-world locks were opened by the wrong fortress** (59/60 seeds) | two producers' views of one assignment, spliced |
+| pad tiles and the wand gate written over grid cells the writer had committed | decide-after-write |
+| `secret_exit_safe` is a per-world verdict computed before telepads exist | safety computed before the connectivity that decides it |
+| the swap search itself | can only permute an assignment it inherited |
+
+The proposed direction is to build all eight worlds as one problem — internal
+connectivity (pipes) and external connectivity (pads) placed together, then
+content, then locks against the graph that results — the way the standard-mode
+builder already treats a single world. Pads become a connectivity phase instead
+of a post-hoc addition, and a lock can be placed *because* a pad puts its key in
+another world.
+
+**Today's fortress-FX rework is what makes that possible.** The old per-world
+caps (4 locks, 17 global slots) came from the Boom-Boom ordinal nibble; with
+position keying a world can hold more locks than it has fortresses and take its
+keys from anywhere. See `docs/fx_table_redesign.md`.
+
+### 1-F, and what "safe" has to mean
+
+1-F's secret exit hands out an item and skips the crystal ball: the fortress is
+beaten and the lock stays shut. **That is a choice the mode keeps** — sometimes
+the lock is worth more than the item — so the requirement is that it can never
+end the run, not that it cannot happen.
+
+`assign.rs` satisfies that in standard mode by parking 1-F on a lock the builder
+marked `secret_exit_safe`, now pinned by
+`one_f_lands_on_a_lock_that_can_stay_shut` (40/40). In maze mode the fill
+permutes the pairing and the flag is a *per-world* verdict, so the question has
+to be re-asked of the whole graph.
+
+The right predicate is **weaker than `Spheres::solvable`**: castle reachable and
+at least K airship docks reachable, with the lock held shut for the whole
+fixpoint. `solvable` additionally demands every fortress be beatable, but a
+fortress stranded behind a lock the player *chose* not to open is fine — they can
+go back. Using the strict test would reject nearly everything.
+
+A worry that did **not** survive measurement: a required telepad landing behind
+the sealed lock. Pads are emitted as two directed halves, so a pad behind a
+sealed lock still works as an entrance and extra connectivity only adds
+reachability. **0 over-promises at every K.**
+
+What does move is the size of the sealable pool, because the airship clause is
+K-sensitive:
+
+| K | locks sealable, of 680 |
+|---|---|
+| 0 | 554 (81%) |
+| 3 (default) | 551 (81%) |
+| 7 | **389 (57%)** |
+
+So the check has to be made at the shipping K, and the risk concentrates at high
+wand counts — which is also the hardest setting. Nothing asks today.
+
 ## Still open
 
 - ~~**Per-world flags `$84A0` resets**~~ — **investigated and declined**, all

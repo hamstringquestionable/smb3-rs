@@ -386,9 +386,20 @@ fn randomize_inner(
         // seeds — and lets a fortress that kept a stale local lock while gaining
         // a foreign one open two. Both halves travel together or neither does.
         //
-        // This happens here rather than in the writer because the maze reads
-        // the grids that pass laid down. It consumes no RNG, so nothing
-        // downstream shifts.
+        // **`maze::generate` does not need to be here.** It takes a
+        // `BuildResult` and no `&Rom` — it is a pure function of the builder's
+        // model — so the decision could be made before `write_overworld` runs.
+        // What forces this block to sit *after* the writer is the writing:
+        // `stamp_pad_tiles` and `wand_gate::apply` lay tiles over the grids the
+        // writer just committed, and `world_persist` derives the packed store's
+        // stencil from the result. The decision is only here because it is next
+        // to its own writes.
+        //
+        // That is worth revisiting, because it is what makes the builder's
+        // placement guarantees un-repairable: the map is already on the
+        // cartridge by the time the fill permutes the array those guarantees
+        // live in (see the 1-F secret-exit case). It consumes no RNG, so
+        // nothing downstream shifts either way.
         maze_lock_keys = Some(randomize::maze::writer::lock_keys(&state));
 
         randomize::maze::writer::stamp_pad_tiles(rom, &state);

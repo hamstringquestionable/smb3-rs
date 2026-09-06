@@ -1355,3 +1355,332 @@ fn the_maze_holds_under_start_airship_swap() {
         100.0 * swapped_worlds as f64 / total_worlds as f64
     );
 }
+
+/// **Every world has a fortress reachable with every lock closed.**
+///
+/// This is the fact [`super::fill`] was written against the negation of. Its
+/// header justified the swap search by claiming the charter's constructive fill
+/// "needs a fortress inside the start region with every lock closed — and the
+/// per-world builder deliberately puts forts *off* the forced path, so the
+/// start region frequently holds none."
+///
+/// It cannot hold none. A lock is opened by beating its fortress, and reaching
+/// that fortress cannot require opening the lock it opens — so the chain has to
+/// bottom out at a fortress reachable with everything shut. Measured when this
+/// was written: **480 of 480 worlds over 60 seeds**, never fewer than one, and
+/// up to four.
+///
+/// The builder does put forts off the *forced path*, which is a different
+/// property — `forced_fort_metric` measures it and it is working as designed.
+/// The doc slid from "off the forced path" to "behind a lock" and a whole
+/// algorithm was chosen on the difference.
+#[test]
+fn every_world_has_a_fortress_in_its_start_region() {
+    use crate::randomize::map_walker::walk_reachable;
+    use crate::randomize::overworld_build::{SlotKind, from_built, stamp_slots};
+
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(8);
+    let mut hist = [0usize; 8];
+    for seed in 0..seeds {
+        let (_, result) = census_build(&raw, seed);
+        for w in &result.worlds {
+            let mut g = w.grid.clone();
+            stamp_slots(&mut g, &w.slots);
+            for lock in &w.locks {
+                g.set(lock.pos.0, lock.pos.1, lock.gap_tile);
+            }
+            let ws = from_built(w);
+            let reach = walk_reachable(&g, &w.pipe_pairs, ws.start, w.world_idx);
+            let n = w
+                .slots
+                .iter()
+                .filter(|s| s.kind == SlotKind::Fortress)
+                .filter(|s| reach.contains(s.pos))
+                .count();
+            assert!(
+                n > 0,
+                "seed {seed} W{}: no fortress is reachable with every lock closed, so no lock \
+                 could ever be opened",
+                w.world_idx + 1
+            );
+            hist[n.min(7)] += 1;
+        }
+    }
+    eprintln!("  forts reachable with all locks closed: {hist:?} (index = count)");
+}
+
+/// **A fortress opens exactly one lock, and a lock has exactly one fortress.**
+///
+/// The charter's map-legibility rule — a lock breaking is the only feedback that
+/// says which fortress did it — and the reason a world's lock count tells the
+/// player its fort count. The builder gets it by construction (no two locks in a
+/// world share a `fort_section`) and `maze::fill` preserves it (a swap trades
+/// two forts rather than handing one out), but neither states it, and the ROM
+/// broke it once by splicing the two halves together.
+#[test]
+fn fort_and_lock_are_one_to_one() {
+    use crate::randomize::overworld_build::SlotKind;
+
+    let Some(raw) = load_rom() else { return };
+    for seed in 0..census_seeds(8) {
+        let (_, result) = census_build(&raw, seed);
+        for w in &result.worlds {
+            let forts = w.slots.iter().filter(|s| s.kind == SlotKind::Fortress).count();
+            assert_eq!(
+                w.locks.len(),
+                forts,
+                "seed {seed} W{}: {} locks against {forts} fortresses",
+                w.world_idx + 1,
+                w.locks.len()
+            );
+            let mut sections: Vec<usize> = w.locks.iter().map(|l| l.fort_section).collect();
+            sections.sort_unstable();
+            let before = sections.len();
+            sections.dedup();
+            assert_eq!(
+                sections.len(),
+                before,
+                "seed {seed} W{}: two locks share a fortress",
+                w.world_idx + 1
+            );
+        }
+    }
+}
+
+/// **The charter's constructive fill does not stall — the swap search works
+/// around a problem that is not there.**
+///
+/// [`super::fill`] chose a swap search because a forward fill "can stall, and on
+/// this map it stalls often". Measured, with the frontier taken in arbitrary
+/// order it stalls on 28% of seeds; ordering the frontier by how much territory
+/// opening a gate reveals takes that to **zero**, and improves everything else
+/// at the same time:
+///
+/// | | first-frontier | territory-ordered |
+/// |---|---|---|
+/// | stalled | 17/60 | **0/60** |
+/// | mean keys to choose from | 4.17 | **6.04** |
+/// | a cross-world key was available | 74% | **87%** |
+///
+/// The second column is the mode's own formula — a lock whose key is in another
+/// world, so the player must follow a telepad — available at 87% of steps and
+/// aimed at by nothing today: `Knobs::fort_distance_bias` defaults to `0.0`,
+/// which the code itself calls a random walk.
+///
+/// ```sh
+/// CENSUS_SEEDS=200 cargo test --release --lib forward_fill -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn forward_fill_terminates_when_ordered_by_territory() {
+    use super::super::rom_data::Pos;
+    use super::walk::walk_maze;
+    use super::{FortRef, GlobalState};
+    use std::collections::HashSet;
+
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(60);
+    // Never beaten, so an unassigned lock stays shut.
+    let placeholder = FortRef { world: 0, section: 255 };
+
+    for smart in [false, true] {
+        let (mut ok, mut stalled) = (0usize, 0usize);
+        let (mut steps, mut choice_sum, mut had_cross, mut chose_cross) =
+            (0usize, 0usize, 0usize, 0usize);
+
+        for seed in 0..seeds {
+            let (_, result) = census_build(&raw, seed);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+            let mut state =
+                GlobalState::from_build(&result, &IDENTITY_SPINE, super::DEFAULT_WANDS_REQUIRED);
+            let pads = super::graph::plan_pads(&state, &Knobs::default(), &mut rng);
+            state.add_pads(pads.iter().map(|p| p.edge).collect());
+
+            for l in state.locks.iter_mut() {
+                l.fort = Some(placeholder);
+            }
+            let forts: Vec<(FortRef, Pos)> = state
+                .worlds
+                .iter()
+                .flat_map(|w| {
+                    w.slots
+                        .iter()
+                        .filter(|s| s.kind == SlotKind::Fortress)
+                        .map(|s| (FortRef { world: w.world_idx, section: s.section }, s.pos))
+                })
+                .collect();
+
+            let links = state.links();
+            let mut open: HashSet<FortRef> = HashSet::new();
+            let mut used: HashSet<FortRef> = HashSet::new();
+            let mut assigned = vec![false; state.locks.len()];
+            let stall;
+
+            loop {
+                let bases = state.base_grids(&HashSet::new());
+                let grids = state.locked_grids(&bases, &open);
+                let reach = walk_maze(&state.view(&grids), &links, state.start);
+
+                for (f, pos) in &forts {
+                    if !open.contains(f) && reach.contains((f.world, *pos)) {
+                        open.insert(*f);
+                    }
+                }
+                let available: Vec<FortRef> = forts
+                    .iter()
+                    .map(|(f, _)| *f)
+                    .filter(|f| open.contains(f) && !used.contains(f))
+                    .collect();
+
+                let frontier: Vec<usize> = (0..state.locks.len())
+                    .filter(|&i| !assigned[i])
+                    .filter(|&i| {
+                        let l = &state.locks[i];
+                        let (r, c) = l.pos;
+                        let g = &grids[l.world];
+                        let mut n: Vec<(usize, usize)> = vec![];
+                        if r > 0 {
+                            n.push((r - 1, c));
+                        }
+                        if c > 0 {
+                            n.push((r, c - 1));
+                        }
+                        if r + 1 < g.rows() {
+                            n.push((r + 1, c));
+                        }
+                        if c + 1 < g.cols {
+                            n.push((r, c + 1));
+                        }
+                        n.into_iter().any(|p| reach.contains((l.world, p)))
+                    })
+                    .collect();
+
+                if frontier.is_empty() {
+                    stall = !assigned.iter().all(|&a| a);
+                    break;
+                }
+                if available.is_empty() {
+                    stall = true;
+                    break;
+                }
+
+                // Which frontier gate to open next.
+                let li = if smart {
+                    let base: usize = (0..state.worlds.len()).map(|w| reach.world_len(w)).sum();
+                    let probe = *open.iter().next().expect("a fort is always beatable first");
+                    let mut best = (usize::MIN, frontier[0]);
+                    for &i in &frontier {
+                        let saved = state.locks[i].fort;
+                        state.locks[i].fort = Some(probe);
+                        let g2 = state.locked_grids(&bases, &open);
+                        let r2 = walk_maze(&state.view(&g2), &links, state.start);
+                        state.locks[i].fort = saved;
+                        let gain: usize =
+                            (0..state.worlds.len()).map(|w| r2.world_len(w)).sum::<usize>() - base;
+                        if gain > best.0 {
+                            best = (gain, i);
+                        }
+                    }
+                    best.1
+                } else {
+                    frontier[0]
+                };
+
+                let lw = state.locks[li].world;
+                let cross: Vec<FortRef> =
+                    available.iter().copied().filter(|f| f.world != lw).collect();
+                steps += 1;
+                choice_sum += available.len();
+                had_cross += usize::from(!cross.is_empty());
+                let pick = if cross.is_empty() { available[0] } else { cross[0] };
+                chose_cross += usize::from(pick.world != lw);
+
+                state.locks[li].fort = Some(pick);
+                used.insert(pick);
+                assigned[li] = true;
+            }
+            if stall {
+                stalled += 1;
+            } else {
+                ok += 1;
+            }
+        }
+
+        let policy = if smart { "territory-ordered" } else { "first-frontier" };
+        println!("\n{policy} forward fill over {seeds} seeds:");
+        println!(
+            "   completed  {ok}   STALLED {stalled}  ({:.0}% stall)",
+            100.0 * stalled as f64 / seeds as f64
+        );
+        println!(
+            "   {steps} steps, mean {:.2} keys to choose from; cross-world available {:.0}%, taken {:.0}%",
+            choice_sum as f64 / steps as f64,
+            100.0 * had_cross as f64 / steps as f64,
+            100.0 * chose_cross as f64 / steps as f64
+        );
+    }
+}
+
+/// **A lock the per-world builder calls sealable is sealable for the whole
+/// maze — and how many locks are sealable at all depends on K.**
+///
+/// `secret_exit_safe` is computed by the per-world builder as "this world stays
+/// completable with that lock sealed forever", *before any telepad exists*. The
+/// worry was that a pad could land behind such a lock and make it load-bearing
+/// after all. It cannot: pads are emitted as two directed halves, so a pad
+/// behind a sealed lock still works as an *entrance*, and extra connectivity
+/// only ever adds reachability. Measured: **0 over-promises at every K**.
+///
+/// What does move is the size of the sealable pool, because the counterfactual
+/// asks "castle reachable AND at least K airship docks reachable". A stranded
+/// *fortress* is fine — the player chose not to open that lock and can go back —
+/// but a stranded *airship* is only affordable while wands are spare:
+///
+/// | K | globally sealable, of 680 |
+/// |---|---|
+/// | 0 | 554 (81%) |
+/// | 3 (default) | 551 (81%) |
+/// | 7 | **389 (57%)** |
+///
+/// So 1-F's lock needs checking at the shipping K, not at any K — and nothing
+/// asks today.
+#[test]
+#[ignore]
+fn per_world_sealable_locks_are_sealable_for_the_maze() {
+    use super::GlobalState;
+
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(40);
+    for k in [0u8, 3, 7] {
+        let (mut locks, mut per_world, mut global, mut both, mut lost) = (0usize, 0, 0, 0, 0);
+
+        for seed in 0..seeds {
+            let (_, result) = census_build(&raw, seed);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+            let mut state = GlobalState::from_build(&result, &IDENTITY_SPINE, k);
+            // Pads first, exactly as `generate` does.
+            let pads = super::graph::plan_pads(&state, &Knobs::default(), &mut rng);
+            state.add_pads(pads.iter().map(|p| p.edge).collect());
+
+            for (li, l) in state.locks.iter().enumerate() {
+                let pw = result.worlds[l.world]
+                    .locks
+                    .iter()
+                    .find(|b| b.pos == l.pos)
+                    .is_some_and(|b| b.secret_exit_safe);
+                let gl = state.winnable_with_lock_sealed(li);
+                locks += 1;
+                per_world += usize::from(pw);
+                global += usize::from(gl);
+                both += usize::from(pw && gl);
+                lost += usize::from(pw && !gl);
+            }
+        }
+        println!("\n{locks} locks over {seeds} seeds, pads placed:");
+        println!("   per-world secret_exit_safe   {per_world}");
+        println!("   globally sealed-safe         {global}");
+        println!("   both                         {both}");
+        println!("   per-world says safe, maze says NOT: {lost}  <-- the over-promise");
+    }
+}

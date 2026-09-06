@@ -314,15 +314,27 @@ impl GlobalState {
     /// fixpoint and [`metrics::completion_cost`] both step through the same
     /// sequence of these, one per fort set, and they have to agree about what
     /// a given set of beaten forts makes walkable.
+    #[cfg(test)]
     pub(crate) fn locked_grids(&self, bases: &[Grid], open: &HashSet<FortRef>) -> Vec<Grid> {
+        self.locked_grids_sealed(bases, open, None)
+    }
+
+    /// [`Self::locked_grids`] with one lock held shut whatever opens it — the
+    /// counterfactual [`Self::winnable_with_lock_sealed`] asks.
+    pub(crate) fn locked_grids_sealed(
+        &self,
+        bases: &[Grid],
+        open: &HashSet<FortRef>,
+        sealed: Option<usize>,
+    ) -> Vec<Grid> {
         bases
             .iter()
             .enumerate()
             .map(|(wi, base)| {
                 let mut g = base.clone();
-                for lock in self.locks.iter().filter(|l| l.world == wi) {
+                for (li, lock) in self.locks.iter().enumerate().filter(|(_, l)| l.world == wi) {
                     // An uninstalled lock (`fort: None`) is open path.
-                    let opens = lock.fort.is_none_or(|f| open.contains(&f));
+                    let opens = Some(li) != sealed && lock.fort.is_none_or(|f| open.contains(&f));
                     let tile = if opens { lock.replace_tile } else { lock.gap_tile };
                     g.set(lock.pos.0, lock.pos.1, tile);
                 }
@@ -354,6 +366,10 @@ impl GlobalState {
     /// The fixpoint with some cells walled off — the counterfactual
     /// [`metrics::required_levels`] asks 62 times per seed.
     pub(crate) fn spheres_with_blocked(&self, blocked: &HashSet<MazePos>) -> Spheres {
+        self.spheres_inner(blocked, None)
+    }
+
+    fn spheres_inner(&self, blocked: &HashSet<MazePos>, sealed: Option<usize>) -> Spheres {
         let bases = self.base_grids(blocked);
         let links = self.links();
         let forts = self.forts();
@@ -367,7 +383,7 @@ impl GlobalState {
         let mut wands_at_goal = 0;
 
         loop {
-            let grids = self.locked_grids(&bases, &open);
+            let grids = self.locked_grids_sealed(&bases, &open, sealed);
             let reach = walk_maze(&self.view(&grids), &links, self.start);
 
             let reached: Vec<MazePos> = content
@@ -434,6 +450,27 @@ impl GlobalState {
             goal_sphere,
             wands_at_goal,
         }
+    }
+
+    /// **Can the player still reach the castle if `lock` is never opened?**
+    ///
+    /// This is the question 1-F's secret exit asks. That exit hands out an item
+    /// and skips the crystal ball, so the fortress is beaten but the lock stays
+    /// shut — a real choice, and one the mode keeps. What it must never be is a
+    /// choice that ends the run.
+    ///
+    /// **Deliberately weaker than [`Spheres::solvable`]**, and the difference is
+    /// the whole point. `solvable` also demands that *every* fortress be
+    /// beatable, because content sealed out of the game is a bug. But a fortress
+    /// stranded behind a lock the player *chose* not to open is not sealed out —
+    /// they can go back and beat it. Using the strict test here would reject
+    /// almost every assignment and send the fill thrashing.
+    ///
+    /// The wand gate is still honoured: `goal_sphere` is only set once `K`
+    /// wands are collectable, so this asks "reachable *and* enterable".
+    #[cfg(test)]
+    pub(crate) fn winnable_with_lock_sealed(&self, lock: usize) -> bool {
+        self.spheres_inner(&HashSet::new(), Some(lock)).goal_sphere.is_some()
     }
 
     /// `wands_are_collectable`: is a K-of-7 gate on the castle satisfiable —

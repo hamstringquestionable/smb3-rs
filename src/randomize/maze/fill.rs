@@ -13,12 +13,37 @@
 //! assign a frontier gate a key **from the already-reachable set**, so
 //! solvability is by construction with no retry.
 //!
-//! That construction can stall, and on this map it stalls often. Its first step
-//! needs a fortress inside the start region with every lock closed — and the
-//! per-world builder deliberately puts forts *off* the forced path, so the
-//! start region frequently holds none. A stalled forward fill has to fall back
-//! to an arbitrary assignment for the remaining gates, which is exactly the
-//! retry loop it was meant to avoid.
+//! **The reason recorded here for rejecting it was wrong, twice over, and this
+//! note is kept as the correction rather than deleted.** It read:
+//!
+//! > That construction can stall, and on this map it stalls often. Its first
+//! > step needs a fortress inside the start region with every lock closed — and
+//! > the per-world builder deliberately puts forts *off* the forced path, so
+//! > the start region frequently holds none.
+//!
+//! * **The first step never fails.** A lock is opened by beating its fortress,
+//!   and reaching that fortress cannot require opening the lock it opens, so
+//!   every world's start region must contain one. Measured **480 of 480 worlds
+//!   over 60 seeds**, never fewer than one and up to four
+//!   (`every_world_has_a_fortress_in_its_start_region`). The builder does put
+//!   forts off the *forced path*, which is a different property; the argument
+//!   slid from that to "behind a lock".
+//! * **It does not stall often, under a policy that looks one step ahead.**
+//!   Taking the frontier in arbitrary order stalls on 28% of seeds; ordering it
+//!   by how much territory opening a gate reveals stalls on **none**, and comes
+//!   with more keys in hand at every step
+//!   (`forward_fill_terminates_when_ordered_by_territory`).
+//!
+//! The cost of the mistake is that a swap search has **nothing to aim with**. A
+//! cross-world key — the mode's entire formula — is available at 87% of the
+//! constructive fill's steps, and `Knobs::fort_distance_bias` defaults to `0.0`,
+//! which is a uniform random walk over solvable assignments. Foreign locks come
+//! out emergent rather than designed, and nothing measures whether one actually
+//! forces the player to cross.
+//!
+//! What the swap search does buy is real and should survive any replacement: it
+//! **cannot fail**, because the assignment it starts from is already known good.
+//! A constructive fill can keep that by falling back to the same assignment.
 //!
 //! So the fill starts from an assignment that is **already known good** — the
 //! per-world builder's, where every lock is opened by a fort in its own world

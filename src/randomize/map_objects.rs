@@ -60,8 +60,9 @@
 //! world the player is standing in. `$ABBE` — the shared exit the poof and
 //! skid-back paths branch to — is left untouched.
 //!
-//! The airship (`MAPOBJ_AIRSHIP`) never reaches it: the engine branches away
-//! two instructions earlier and increments `Map_Operation` instead. So a world
+//! The airship (`MAPOBJ_AIRSHIP`) never reaches it: `$AB94` compares the slot's
+//! ID against it and `$AB96` branches past the whole poof, 33 bytes and eleven
+//! instructions before the hook, incrementing `Map_Operation` instead. So a world
 //! keeps its airship object however many times it is entered, which is what the
 //! spine needs.
 //!
@@ -111,7 +112,7 @@
 //!
 //! ## The king rescue: the resurrection is load-bearing
 //!
-//! `TAndK_WaitPlayerButtonA` (PRG024, `$A268`) clears slot 0 and sets slot 1:
+//! `TAndK_WaitPlayerButtonA` (PRG024, `$A261`) clears slot 0 and sets slot 1:
 //!
 //! ```text
 //! LDA <Pad_Input / BPL rts

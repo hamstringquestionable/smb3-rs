@@ -1957,3 +1957,71 @@ fn every_maze_lock_has_exactly_one_key() {
         assert!(away > 0, "seed {seed}: no cross-world locks at all");
     }
 }
+
+/// **1-F's lock can always be left shut.**
+///
+/// 1-F's secret exit hands out an item and skips the crystal ball, so the
+/// fortress is beaten and the lock does *not* open. That is a real choice — the
+/// item or the lock — and the mode keeps it. What it must never be is a choice
+/// that ends the run, so `assign.rs` parks 1-F on a fortress whose lock the
+/// builder marked `secret_exit_safe`: the world stays completable with it sealed
+/// forever.
+///
+/// Nothing asserted that until now. Measured at 40/40 seeds when this was
+/// written.
+///
+/// **Standard mode only, deliberately.** `maze::fill` permutes which fortress
+/// opens which lock, and `secret_exit_safe` is a *per-world* verdict computed
+/// before telepads exist — so in maze mode the property has to be re-asked of
+/// the whole graph at the shipping wand count, which nothing does yet. See
+/// `maze::tests::per_world_sealable_locks_are_sealable_for_the_maze` for the
+/// size of that gap (57% of locks are sealable at K=7 against 81% at K=3).
+#[test]
+fn one_f_lands_on_a_lock_that_can_stay_shut() {
+    use crate::randomize::lock_keys;
+    use crate::randomize::rom_data::{self, FORTRESS_1F_OBJ_PTR, WORLDS};
+
+    let Some(raw) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let mut checked = 0usize;
+    for seed in [1u64, 4242, 12345, 31337] {
+        let opts = Options { world_maze: false, ..audit_options() };
+        let (rom, build) =
+            crate::randomize_rom_with_overworld_capture(raw.output_bytes(), seed, &opts, None)
+                .expect("randomize");
+
+        // Where did the 1-F fortress level end up?
+        let mut at: Option<(usize, (usize, usize))> = None;
+        for (wi, w) in WORLDS.iter().enumerate() {
+            for idx in 0..w.entry_count {
+                let e = rom_data::read_entry(&rom, w, idx);
+                if u16::from_le_bytes([e.obj_lo, e.obj_hi]) == FORTRESS_1F_OBJ_PTR {
+                    at = Some((wi, rom_data::entry_grid_position(&rom, w, idx)));
+                }
+            }
+        }
+        let Some((fw, fpos)) = at else { continue };
+
+        // Which lock does the fortress standing there open?
+        let entry = lock_keys::decode_entries(&rom)
+            .into_iter()
+            .find(|e| e.key_world == fw && e.key_pos == fpos)
+            .unwrap_or_else(|| panic!("seed {seed}: 1-F at W{} {fpos:?} opens no lock", fw + 1));
+        let target = entry.target.expect("a non-maze run has only home entries");
+        let lock = build.worlds[fw]
+            .locks
+            .iter()
+            .find(|l| l.pos == target)
+            .unwrap_or_else(|| panic!("seed {seed}: 1-F's entry names {target:?}, not a lock"));
+        assert!(
+            lock.secret_exit_safe,
+            "seed {seed}: 1-F opens the lock at W{} {target:?}, which the builder did NOT mark \
+             safe to leave shut — taking the secret exit could strand the run",
+            fw + 1
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "1-F was never placed; the check is vacuous");
+}
