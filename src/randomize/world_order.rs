@@ -56,6 +56,20 @@ const MAP_DISPLAY_OFFSET: usize = 0x14372;
 /// Original: LDX $0727; INX; TXA; ORA #$F0; STA $0304,Y (10 bytes at 0x350D7).
 const STATUS_DISPLAY_OFFSET: usize = 0x350D7;
 
+/// The two vanilla sites this module overwrites, and what must still be there.
+///
+/// **These turn an ordering rule into a panic.** Both bytes are shared with the
+/// world maze: `wand_gate` chains its wand counter through the `JMP` written at
+/// [`WORLD_INC_OFFSET`], and `completion_bits` puts its new-game signal over the
+/// three bytes at [`DEBUG_FLAG_STA_OFFSET`]. Both of those must run AFTER this
+/// module, and until now nothing said so except a comment in each of them.
+/// Last-writer-wins is silent in the wrong order: the maze's hooks would simply
+/// be overwritten and the mode would half-work.
+const VANILLA_SITES: [(usize, &[u8], &str); 2] = [
+    (WORLD_INC_OFFSET, &[0xEE, 0x27, 0x07], "INC World_Num (the airship transition)"),
+    (DEBUG_FLAG_STA_OFFSET, &[0x8D, 0x60, 0x01], "STA Debug_Flag (the title-screen init)"),
+];
+
 /// Randomize the world progression order.
 ///
 /// Patches the `INC World_Num` instruction to instead use a lookup table
@@ -70,6 +84,17 @@ const STATUS_DISPLAY_OFFSET: usize = 0x350D7;
 /// `world_count` < 7 this is shorter than 8 (unvisited worlds are omitted).
 /// Callers such as [`super::credits`] use it to align the ending montage.
 pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8> {
+    for (offset, want, what) in VANILLA_SITES {
+        assert_eq!(
+            rom.read_range(offset, want.len()),
+            want,
+            "0x{offset:05X} no longer holds vanilla's {what}, so something has already \
+             patched it. `world_order::randomize` must run BEFORE `wand_gate` and \
+             `completion_bits`, which both chain through bytes it writes — see \
+             `randomizer::randomize_inner` for the order."
+        );
+    }
+
     let world_count = world_count.clamp(1, 7) as usize;
 
     // Build shuffled world order: shuffle worlds 0-6, take first world_count, append world 7

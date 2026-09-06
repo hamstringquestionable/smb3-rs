@@ -102,15 +102,17 @@
 use crate::rom::Rom;
 
 use super::completion_bits::{CompletionMap, HALF_LEN, PLANE_RESERVE};
-use super::rom_data::{FS_COMPLETION_BASES, FS_MAZE_FOREIGN_LOCK, MAP_COMPLETE_BITS};
+#[cfg(test)]
+use super::rom_data::NMI_SAFE_MAX;
+use super::rom_data::{
+    FS_COMPLETION_BASES, FS_MAZE_FOREIGN_LOCK, MAP_COMPLETE_BITS, MAP_COMPLETIONS, WORLD_NUM,
+    prg_bank_cpu_to_file, prg011_file_to_cpu,
+};
 
 // --- Engine symbols -----------------------------------------------------
-
-/// `Map_Completions` (`$7D00`) — Mario's 64 columns then the permanent mirror.
-const MAP_COMPLETIONS: u16 = 0x7D00;
-
-/// `World_Num`, 0-based.
-const WORLD_NUM: u16 = 0x0727;
+//
+// `Map_Completions` and `World_Num` are `rom_data::engine`'s; the two zero-page
+// scratch bytes are this hook's own argument and are made here.
 
 /// `Temp_Var1` (`$00`) — scratch `Map_MarkLevelComplete` already destroys on
 /// this very path (it builds the column into it at `$BA53`), so borrowing it is
@@ -136,11 +138,11 @@ const PACKED_MIRROR: u16 = PACKED + PLANE_RESERVE as u16;
 // --- Siting -------------------------------------------------------------
 
 /// PRG011 is mapped at `$A000` for the whole map, which is where the hook runs.
-const FOREIGN_LOCK_CPU: u16 = (0xA000 + FS_MAZE_FOREIGN_LOCK - 0x16010) as u16;
+const FOREIGN_LOCK_CPU: u16 = prg011_file_to_cpu(FS_MAZE_FOREIGN_LOCK);
 
 /// `STA Map_Completions,Y` at CPU `$BA86`, the last instruction of the fortress
 /// branch.
-const HOOK_OFFSET: usize = 0x16010 + (0xBA86 - 0xA000);
+const HOOK_OFFSET: usize = prg_bank_cpu_to_file(11, 0xBA86);
 
 /// What stands there in vanilla. Three bytes, one instruction, one `JSR`.
 #[cfg(test)]
@@ -382,10 +384,18 @@ fn hook_bytes() -> [u8; 3] {
 /// `Map_MarkLevelComplete` matches `World_Map_Y` against `Map_CompleteY`, which
 /// has seven entries, so grid rows 0-6 map to 0-6 and grid rows **7 and 8 both
 /// map to 7** — the shared-bit fold. A caller resolving a cell has to try both.
+///
+/// **"No locks" and "one lock" both read a count of zero**, because the scan
+/// walks backwards from `(rows - 1) * 4`. So a count of zero has to be
+/// disambiguated by whether the routine is installed at all, and the way to ask
+/// that is against [`FOREIGN_LOCK`]'s own first byte — an un-patched ROM holds
+/// `$FF` filler there. (`HOOK_VANILLA[0]` would answer the same question today
+/// only by coincidence: the routine opens by replaying the instruction it
+/// displaced, so the two bytes happen to be the same `$99`.)
 #[cfg(test)]
 pub(crate) fn decode_rows(rom: &Rom) -> Vec<(usize, usize, usize)> {
     let count = rom.read_byte(FS_MAZE_FOREIGN_LOCK + COUNT_OPERAND) as usize;
-    if count == 0 && rom.read_byte(FS_MAZE_FOREIGN_LOCK) != HOOK_VANILLA[0] {
+    if count == 0 && rom.read_byte(FS_MAZE_FOREIGN_LOCK) != FOREIGN_LOCK[0] {
         return Vec::new();
     }
     let rows = count / ROW_LEN + 1;
@@ -440,6 +450,12 @@ mod asm_checks {
             .allocation(FS_MAZE_FOREIGN_LOCK)
             .origin(FOREIGN_LOCK_CPU)
             .data_from(CODE_LEN)
+            // `Temp_Var13` is above the three the NMI preserves, and is named
+            // rather than tolerated: vanilla's own `Map_MarkLevelComplete`
+            // holds it live across this very window, so borrowing it is
+            // exactly as safe as what it displaced. Anything else in the page
+            // would be a bug. See `asm::Routine::zero_page`.
+            .zero_page(NMI_SAFE_MAX, &[TEMP_VAR13])
             .assert_ok();
     }
 
@@ -451,6 +467,12 @@ mod asm_checks {
             .allocation(FS_MAZE_FOREIGN_LOCK)
             .origin(FOREIGN_LOCK_CPU)
             .data_from(CODE_LEN)
+            // `Temp_Var13` is above the three the NMI preserves, and is named
+            // rather than tolerated: vanilla's own `Map_MarkLevelComplete`
+            // holds it live across this very window, so borrowing it is
+            // exactly as safe as what it displaced. Anything else in the page
+            // would be a bug. See `asm::Routine::zero_page`.
+            .zero_page(NMI_SAFE_MAX, &[TEMP_VAR13])
             .assert_ok();
     }
 
@@ -484,6 +506,7 @@ mod asm_checks {
             .allocation(FS_MAZE_FOREIGN_LOCK)
             .origin(FOREIGN_LOCK_CPU)
             .data_from(CODE_LEN)
+            .zero_page(NMI_SAFE_MAX, &[TEMP_VAR13])
             .hook(&HOOK_VANILLA, 0, &hook_bytes())
             .assert_ok();
     }

@@ -87,31 +87,27 @@ use crate::rom::Rom;
 
 use super::completion_bits;
 use super::pipe_helpers;
-use super::rom_data::{FS_PAD_ENTER, FS_PORTAL_ARRIVAL, FS_RESTORE_ARRIVAL, TILE_TELEPAD};
+#[cfg(test)]
+use super::rom_data::NMI_SAFE_MAX;
+use super::rom_data::{
+    FS_PAD_ENTER, FS_PORTAL_ARRIVAL, FS_RESTORE_ARRIVAL, PLAYER_CURRENT, TILE_TELEPAD,
+    WORLD_MAP_INIT_CPU, WORLD_MAP_TILE, WORLD_MAP_X, WORLD_MAP_XHI, WORLD_MAP_Y, WORLD_NUM,
+    prg010_file_to_cpu, prg011_file_to_cpu,
+};
 
-// PRG010 is mapped at $C000 whenever this runs — `$84A0` maps it itself — so
-// CPU = $C000 + (file - 0x14010), the same arithmetic as the other PRG010
-// patches (`map_warp.rs`, `canoe_summon.rs`).
-const RESTORE_ARRIVAL_CPU: u16 = (0xC000 + FS_RESTORE_ARRIVAL - 0x14010) as u16;
+// PRG010 is mapped at $C000 whenever this runs — `$84A0` maps it itself — the
+// same bank as the other map patches (`map_warp.rs`, `canoe_summon.rs`).
+const RESTORE_ARRIVAL_CPU: u16 = prg010_file_to_cpu(FS_RESTORE_ARRIVAL);
 // PRG011 is mapped at $A000 for the whole map init, so the stash and its
 // table live there: PRG010 has no run left that holds them.
-const STASH_ARRIVAL_CPU: u16 = (0xA000 + FS_PORTAL_ARRIVAL - 0x16010) as u16;
-const PAD_ENTER_CPU: u16 = (0xA000 + FS_PAD_ENTER - 0x16010) as u16;
+const STASH_ARRIVAL_CPU: u16 = prg011_file_to_cpu(FS_PORTAL_ARRIVAL);
+const PAD_ENTER_CPU: u16 = prg011_file_to_cpu(FS_PAD_ENTER);
 
 // --- Engine symbols -----------------------------------------------------
-
-/// `World_Num`, 0-based.
-const WORLD_NUM: u16 = 0x0727;
-
-/// `Player_Current` — 0 Mario, 1 Luigi. Every `Map_Entered_*` is a two-byte
-/// array indexed by it, so reading one back means holding it in X first.
-///
-/// Not read off a label: the disassembly declares `Map_Prev_XOff` and
-/// `Map_Prev_XHi` as two bytes each at `$0722` and `$0724`, then
-/// `Player_Current` and `World_Num` as one byte each. `World_Num` is `$0727`
-/// and is verified by the patches that already write it, which puts
-/// `Player_Current` at `$0726`.
-const PLAYER_CURRENT: u16 = 0x0726;
+//
+// `World_Num`, `Player_Current`, `World_Map_Tile`, the three live position
+// bytes and `$84A0` are all `rom_data::engine`'s; only the addresses this
+// module *chose* are declared here.
 
 /// Where the pipeway's arrival coordinates wait out `Map_Init`.
 ///
@@ -147,12 +143,6 @@ const MAP_PREV_XOFF2: u16 = 0x7986;
 const MAP_PREV_XHI2: u16 = 0x7988;
 const MAP_PREV_XOFF: u16 = 0x0722;
 const MAP_PREV_XHI: u16 = 0x0724;
-
-/// CPU address of `PRG030_84A0`, "initialize the world map". Reached from
-/// exactly two places — the airship-cleared path (`INC World_Num`) and the warp
-/// zone (`World_Num = Map_Warp_PrevWorld`) — and it never returns: it falls
-/// through into `WorldMap_Loop`.
-const WORLD_MAP_INIT_CPU: u16 = 0x84A0;
 
 /// The 10-byte `Map_Completions` wipe inside `PRG030_84A0` (CPU `$84CD`).
 const WIPE_OFFSET: usize = 0x3C4DD;
@@ -240,26 +230,35 @@ pub(crate) fn apply(rom: &mut Rom, telepads: &[Telepad]) {
         telepads.iter().map(|t| (t.dest_world, t.dest_pos)).collect();
     write_arrival_tables(rom, &rows);
     install_map_init_trampoline(rom);
-    apply_telepads(rom, telepads, 0);
+    apply_telepads(rom, telepads);
 
     rom.pop_tag();
 }
 
-// --- Pipe portal ------------------------------------------------------------
+// --- The arrival path -------------------------------------------------------
+//
+// **The `PORTAL_*` names are historical, and the code under them is live.**
+// This was the pipe portal: a transit room whose exit put the player in another
+// world. Telepads replaced it and nothing writes a pipe portal any more — but a
+// pad reaches the transition the portal's way, by leaving an arrival id in
+// `Map_Entered_XHi` for [`STASH_ARRIVAL`] to resolve, so the whole arrival path
+// below is a pad's path now. The names are kept because six modules outside
+// this file spell them.
 
-/// How many portals a ROM can hold.
+/// How many arrivals a ROM can hold — so, with pads in pairs, eight pads.
 ///
-/// A ceiling the encoding imposes, not a budget: the portal's id travels in the
-/// destination's *screen* nibble, which `ObjNorm_PipewayCtlr` masks with
+/// A ceiling the encoding imposes, not a budget: the arrival id travels in the
+/// destination's *screen* nibble, which `ObjNorm_PipewayCtlr` masked with
 /// `AND #$0F` on the way into `Map_Entered_XHi`. Sixteen is every value that
 /// field can carry, so [`STASH_ARRIVAL`] can index its tables with no bounds
-/// check at all.
+/// check at all. Raising it means widening the id, six arrival tables and three
+/// key tables — nine bytes a row in PRG011.
 pub(crate) const PORTAL_MAX: usize = 16;
 
 /// Length of [`STASH_ARRIVAL`]'s code, and so the offset of its first table.
 pub(crate) const PORTAL_TABLE_OFF: usize = 51;
 
-/// The six per-portal tables, in the order [`STASH_ARRIVAL`] reads them.
+/// The six per-arrival tables, in the order [`STASH_ARRIVAL`] reads them.
 /// Parallel arrays rather than 6-byte rows: indexing a row would cost a
 /// multiply, indexing a column costs nothing.
 const PORTAL_WORLD_CPU: u16 = STASH_ARRIVAL_CPU + PORTAL_TABLE_OFF as u16;
@@ -284,7 +283,7 @@ const MAP_INIT_CALL_LEN: usize = 3;
 /// `Map_Init` itself (PRG011, CPU `$A1D8`).
 const MAP_INIT_CPU: u16 = 0xA1D8;
 
-/// Resolve the portal and park its arrival, just before `Map_Init` runs.
+/// Resolve the arrival id and park its coordinates, just before `Map_Init` runs.
 ///
 /// Replaces `$84A0`'s own `JSR Map_Init` and calls it afterwards. That window
 /// is the only one where all three things are true at once: `World_Num` can
@@ -293,9 +292,10 @@ const MAP_INIT_CPU: u16 = 0xA1D8;
 /// `$84CD` has not run yet — it packs `LIVE_WORLD`, not `World_Num`, so
 /// changing the latter here cannot make it pack the wrong world.
 ///
-/// The portal's id arrives in `Map_Entered_XHi`, where `ObjNorm_PipewayCtlr`
-/// put the destination's screen nibble. It is masked to `$0F` by the engine, so
-/// indexing six 16-byte tables with it needs no bound of its own.
+/// The id arrives in `Map_Entered_XHi` — where [`PAD_ENTER`] leaves it, and
+/// where the retired pipe portal's `ObjNorm_PipewayCtlr` left the destination's
+/// screen nibble. Either way it is four bits, so indexing six 16-byte tables
+/// with it needs no bound of its own.
 ///
 /// A no-op unless a telepad set the flag, which is why it can sit on a
 /// path every map init takes.
@@ -325,11 +325,12 @@ const STASH_ARRIVAL: [u8; PORTAL_TABLE_OFF] = [
     0x4C, MAP_INIT_CPU as u8, (MAP_INIT_CPU >> 8) as u8,        // 48: JMP Map_Init
 ];
 
-/// Write the six arrival tables: one row per portal id, whatever reached it.
+/// Write the six arrival tables: one row per arrival id.
 ///
-/// Pipe portals and telepads share this table and therefore share the sixteen
-/// ids. The row says only *where you come out*; how you got there — walking a
-/// transit room or stepping on a pad — is the caller's business.
+/// The row says only *where you come out*. Today the only thing that reaches an
+/// arrival is a telepad — pad `n`'s key row and arrival row are both row `n` —
+/// but the table knows nothing about pads, which is why the retired pipe portal
+/// could share it and why anything else could.
 fn write_arrival_tables(rom: &mut Rom, rows: &[(u8, (usize, usize))]) {
     assert!(
         rows.len() <= PORTAL_MAX,
@@ -386,11 +387,6 @@ fn install_map_init_trampoline(rom: &mut Rom) {
 /// effect.
 const MAP_OPERATION: u16 = 0x0729;
 
-/// `World_Map_Tile` (zero page `$E5`) — the tile the player is standing on.
-/// Set by `Map_GetTile`, and live at the hook below because every path into it
-/// has just compared it.
-const WORLD_MAP_TILE: u8 = 0xE5;
-
 /// `PRG010_CEA7` — "begin enter level effect" (CPU `$CEA7` = file 0x14EB7).
 /// Its five bytes are two whole instructions:
 ///
@@ -419,28 +415,6 @@ const PAD_HOOK_VANILLA: [u8; PAD_HOOK_LEN] = [
     0xA9, 0x10,             // LDA #$10
     0x8D, 0x29, 0x07,       // STA Map_Operation
 ];
-
-/// The player's live map position, zero page, two bytes each (Mario/Luigi).
-///
-/// **`World_Map_Y & $F0` is `Map_Entered_Y`** — the same `(grid_row + 2) << 4`
-/// the pipe destination tables and the arrival rows use, so a pad's row key is
-/// just `grid_pos_to_dest_nibbles`' row nibble and there is one encoding here,
-/// not two. `GameOver_AlignToStartY` is the proof: it stores `Map_Y_Starts,Y`
-/// straight into `World_Map_Y` with no adjustment.
-///
-/// Reading that off `Map_GetTile` alone gets it wrong by exactly one row.
-/// The routine does `SUB #16 / AND #$F0`, which looks like `(row + 1) << 4` —
-/// but it only adds `$100` to the screen base while the grid actually starts at
-/// `+$110`, and that missing `$10` is a whole row. The first cut of the pad key
-/// made that mistake and every pad quietly entered its spade game instead of
-/// teleporting.
-///
-/// Column is `World_Map_X >> 4` and screen is `World_Map_XHi`. All of these are
-/// pixel coordinates, so the low nibbles are sub-tile offsets and a key must
-/// mask them off rather than compare raw.
-const WORLD_MAP_Y: u8 = 0x75;
-const WORLD_MAP_XHI: u8 = 0x77;
-const WORLD_MAP_X: u8 = 0x79;
 
 /// Offset of the pad key tables inside [`PAD_ENTER`].
 pub(crate) const PAD_TABLE_OFF: usize = 63;
@@ -552,12 +526,13 @@ pub(crate) struct Telepad {
     pub src_pos: (usize, usize),
 }
 
-/// Install the telepads: the enter hook, its per-world table, and the arrival
-/// rows they share with the pipe portals.
-fn apply_telepads(rom: &mut Rom, telepads: &[Telepad], first_id: usize) {
+/// Install the telepads: the enter hook, its key tables, and the hook site.
+///
+/// A pad's index in `telepads` **is** its arrival id, so pad `n`'s key row and
+/// arrival row are both row `n` — see [`PAD_ENTER`]'s tables.
+fn apply_telepads(rom: &mut Rom, telepads: &[Telepad]) {
     let mut code = PAD_ENTER;
-    for (n, pad) in telepads.iter().enumerate() {
-        let id = first_id + n;
+    for (id, pad) in telepads.iter().enumerate() {
         // The same encoder the arrival rows use, because `World_Map_Y & $F0` is
         // `Map_Entered_Y` and `World_Map_X & $F0` is `Map_Entered_X`. One
         // source of truth for the map's coordinate encoding, and it is the one
@@ -577,6 +552,36 @@ fn apply_telepads(rom: &mut Rom, telepads: &[Telepad], first_id: usize) {
     rom.write_range(PAD_HOOK_OFFSET, &hook);
 }
 
+/// Decode the pad key tables back out of a finished ROM: one
+/// `(world, grid row, grid column)` per claimed row, in arrival-id order.
+///
+/// The layout knowledge lives here rather than in the tests that read it, so a
+/// change to the key encoding cannot leave one quietly decoding the old shape —
+/// the same argument as [`super::foreign_locks::decode_rows`], and the same
+/// reason: three separate copies of this decode had already grown.
+///
+/// [`apply_telepads`] deals ids from 0 upward, so a claimed row can never
+/// follow an unclaimed one and the vector index is the arrival id. `$FF` in
+/// `PAD_WORLD` is the row's "unclaimed" flag — there is no world 255 — so an
+/// un-patched ROM full of `$FF` filler decodes to nothing.
+#[cfg(test)]
+pub(crate) fn decode_pad_rows(rom: &Rom) -> Vec<(usize, usize, usize)> {
+    let table = FS_PAD_ENTER + PAD_TABLE_OFF;
+    (0..PORTAL_MAX)
+        .filter(|id| rom.read_byte(table + id) != 0xFF)
+        .map(|id| {
+            let world = rom.read_byte(table + id) as usize;
+            // Y is `(grid_row + 2) << 4`; the X byte packs the column within
+            // its screen in the high nibble and the screen index in the low.
+            let y = rom.read_byte(table + PORTAL_MAX + id);
+            let x = rom.read_byte(table + 2 * PORTAL_MAX + id);
+            let row = (y >> 4) as usize - 2;
+            let col = (x & 0x0F) as usize * 16 + (x >> 4) as usize;
+            (world, row, col)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod asm_checks {
     use mos6502::instruction::Ricoh2a03;
@@ -588,9 +593,10 @@ mod asm_checks {
     /// `completion_bits` owns the wipe site; this module only writes the
     /// arrival restore into the padding it leaves, which is a shared 10-byte
     /// run and exactly the kind of arrangement that breaks quietly when either
-    /// side moves.
+    /// side moves. Nothing is hooked or displaced here — the assertion is that
+    /// the other module left the three NOPs the restore's call goes into.
     #[test]
-    fn hooks_displace_whole_instructions() {
+    fn completion_bits_leaves_room_for_the_arrival_restore() {
         let Some(rom) = load_vanilla() else { return };
 
         let mut patched = rom.clone();
@@ -609,6 +615,7 @@ mod asm_checks {
         asm::check(&RESTORE_ARRIVAL)
             .allocation(FS_RESTORE_ARRIVAL)
             .origin(RESTORE_ARRIVAL_CPU)
+            .zero_page(NMI_SAFE_MAX, &[])
             .assert_ok();
     }
 
@@ -674,6 +681,7 @@ mod asm_checks {
             .allocation(FS_PORTAL_ARRIVAL)
             .origin(STASH_ARRIVAL_CPU)
             .data_from(PORTAL_TABLE_OFF)
+            .zero_page(NMI_SAFE_MAX, &[])
             .assert_ok();
     }
 
@@ -721,6 +729,11 @@ mod asm_checks {
             .allocation(FS_PAD_ENTER)
             .origin(PAD_ENTER_CPU)
             .data_from(PAD_TABLE_OFF)
+            // The tile byte and the three live position bytes are engine
+            // variables the scan reads; it writes nothing to zero page at all.
+            // Named rather than bounded, or a bound of `$E5` would permit the
+            // whole page. See `asm::Routine::zero_page`.
+            .zero_page(NMI_SAFE_MAX, &[WORLD_MAP_TILE, WORLD_MAP_Y, WORLD_MAP_XHI, WORLD_MAP_X])
             .assert_ok();
     }
 
@@ -748,6 +761,7 @@ mod asm_checks {
             .allocation(FS_PAD_ENTER)
             .origin(PAD_ENTER_CPU)
             .data_from(PAD_TABLE_OFF)
+            .zero_page(NMI_SAFE_MAX, &[WORLD_MAP_TILE, WORLD_MAP_Y, WORLD_MAP_XHI, WORLD_MAP_X])
             .hook(&PAD_HOOK_VANILLA, 0, &jsr)
             .assert_ok();
     }

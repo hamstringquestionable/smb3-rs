@@ -48,8 +48,9 @@ deploys.
 
 - **World Maze:** the decorative corners on the map's boxes are no longer
   scrambled. The skull that was meant to block Bowser's castle was drawn over
-  the four corner pieces; the castle is now blocked by a plain ornamental block
-  instead, which is at least clearly not a wall.
+  the four corner pieces; the castle is now blocked by a piece of World 8's own
+  masonry instead, which reads as a wall rather than as a lock you have missed
+  the key for.
 
 - Levels, fortresses and locks no longer land on the map cell whose completion
   bit is already taken by scenery. Rows 7 and 8 of a world map share one bit

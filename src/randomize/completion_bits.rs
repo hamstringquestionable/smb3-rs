@@ -57,17 +57,15 @@
 //! is stored separately and byte-aligned per world: all eight Mario planes
 //! first, then all eight mirror planes at a fixed offset.
 //!
-
+//! # Rust side and 6502 side
 //!
-//! It emits the tables; it does not write them to the ROM and it does not
-//! replace the two-world swap at `$84CD`. That is the next step, and it needs
-//! the 6502 twin this module is the reference for.
-
-// Reason: every item here is the reference twin for the 6502 pack/unpack that
-// replaces the two-world swap at `$84CD`, plus the tables that patch will read.
-// The tests below exercise all of it; the ROM-writing consumer lands with the
-// 6502 side.
-#![allow(dead_code)]
+//! [`CompletionMap`] is the reference twin: it derives the mask, the base table
+//! and the pack/unpack in Rust, where they can be checked against every seed's
+//! grids. [`apply`] writes the 6502 half — the emitted tables plus the routines
+//! that replace the two-world swap at `$84CD` — and the tests below run those
+//! routines on an emulated 2A03 against this twin. The twin's own
+//! [`CompletionMap::unpack`] and its measuring accessors are `#[cfg(test)]`,
+//! because on the console that direction is `UNPACK_PLANE`'s job.
 
 use crate::rom::Rom;
 
@@ -116,11 +114,17 @@ impl CompletionMap {
     }
 
     /// World `w`'s column mask — one byte per map column.
+    ///
+    /// Test-only: the mask is an intermediate the 6502 side rebuilds for itself
+    /// from [`Self::base_table`] and the stencil, so nothing in a build reads it.
+    #[cfg(test)]
     pub(crate) fn mask(&self, world: usize) -> &[u8] {
         &self.masks[world]
     }
 
-    /// How many bits world `w` needs in one plane.
+    /// How many bits world `w` needs in one plane. Test-only — the packer
+    /// counts its own bits as it goes.
+    #[cfg(test)]
     pub(crate) fn bits(&self, world: usize) -> usize {
         popcount(&self.masks[world])
     }
@@ -138,11 +142,17 @@ impl CompletionMap {
 
     /// Distance from a world's Mario plane to its mirror plane — the length of
     /// the whole Mario region, since the planes are stored one after the other.
+    ///
+    /// Test-only: the routines take it from `base_table[8]`, which is the same
+    /// number by construction.
+    #[cfg(test)]
     pub(crate) fn mirror_offset(&self) -> usize {
         self.bases[8] as usize
     }
 
-    /// Total SRAM the packed region needs, both planes.
+    /// Total SRAM the packed region needs, both planes. Test-only: it is what
+    /// the capacity censuses measure against `PLANE_RESERVE`.
+    #[cfg(test)]
     pub(crate) fn total_bytes(&self) -> usize {
         2 * self.mirror_offset()
     }
@@ -180,6 +190,10 @@ impl CompletionMap {
     }
 
     /// Expand world `w`'s plane back into a full `Map_Completions` half.
+    ///
+    /// Test-only, and deliberately so: on the console this direction is
+    /// `UNPACK_PLANE`'s job, and this twin exists to be checked against it.
+    #[cfg(test)]
     pub(crate) fn unpack(&self, world: usize, plane: &[u8]) -> [u8; HALF_LEN] {
         let mut half = [0u8; HALF_LEN];
         let mut k = 0;
@@ -243,10 +257,12 @@ fn popcount(mask: &[u8]) -> usize {
 // which is the only point in the init where the grid *and* the tile tables
 // *and* PRG010 (still at `$C000`, holding this code) are all reachable at once.
 
+#[cfg(test)]
+use super::rom_data::NMI_SAFE_MAX;
 use super::rom_data::{
     FS_COMPLETION_BASES, FS_IS_COMPLETABLE, FS_MASK_BUILD, FS_NEW_GAME_INIT, FS_PACK_PLANE,
     FS_PACK_WORLD, FS_SWAP_AT_RELOAD, FS_UNPACK_PLANE, FS_UNPACK_WORLD, FS_WIPE_REPLACEMENT,
-    FS_WORLD_COLS,
+    FS_WORLD_COLS, MAP_RELOAD_CPU, WORLD_NUM, prg010_file_to_cpu,
 };
 
 /// Where the derived stencil lands: 64 bytes, one per possible map column.
@@ -261,23 +277,16 @@ const COL_IDX: u16 = 0x7AB3;
 /// Columns left to walk in this world.
 const COLS_LEFT: u16 = 0x7AB4;
 
-/// PRG010 is mapped at `$C000` for the whole world-map init, so a file offset
-/// in it is `$C000 + (file - 0x14010)` — the same arithmetic `world_persist`,
-/// `map_warp` and `canoe_summon` use.
-const fn prg010_cpu(file: usize) -> u16 {
-    (0xC000 + (file - 0x14010)) as u16
-}
-
-const MASK_BUILD_CPU: u16 = prg010_cpu(FS_MASK_BUILD);
-const IS_COMPLETABLE_CPU: u16 = prg010_cpu(FS_IS_COMPLETABLE);
-const WORLD_COLS_CPU: u16 = prg010_cpu(FS_WORLD_COLS);
-const PACK_PLANE_CPU: u16 = prg010_cpu(FS_PACK_PLANE);
-const UNPACK_PLANE_CPU: u16 = prg010_cpu(FS_UNPACK_PLANE);
-const PACK_WORLD_CPU: u16 = prg010_cpu(FS_PACK_WORLD);
-const UNPACK_WORLD_CPU: u16 = prg010_cpu(FS_UNPACK_WORLD);
-const WIPE_REPLACEMENT_CPU: u16 = prg010_cpu(FS_WIPE_REPLACEMENT);
-const SWAP_AT_RELOAD_CPU: u16 = prg010_cpu(FS_SWAP_AT_RELOAD);
-const BASES_CPU: u16 = prg010_cpu(FS_COMPLETION_BASES);
+const MASK_BUILD_CPU: u16 = prg010_file_to_cpu(FS_MASK_BUILD);
+const IS_COMPLETABLE_CPU: u16 = prg010_file_to_cpu(FS_IS_COMPLETABLE);
+const WORLD_COLS_CPU: u16 = prg010_file_to_cpu(FS_WORLD_COLS);
+const PACK_PLANE_CPU: u16 = prg010_file_to_cpu(FS_PACK_PLANE);
+const UNPACK_PLANE_CPU: u16 = prg010_file_to_cpu(FS_UNPACK_PLANE);
+const PACK_WORLD_CPU: u16 = prg010_file_to_cpu(FS_PACK_WORLD);
+const UNPACK_WORLD_CPU: u16 = prg010_file_to_cpu(FS_UNPACK_WORLD);
+const WIPE_REPLACEMENT_CPU: u16 = prg010_file_to_cpu(FS_WIPE_REPLACEMENT);
+const SWAP_AT_RELOAD_CPU: u16 = prg010_file_to_cpu(FS_SWAP_AT_RELOAD);
+const BASES_CPU: u16 = prg010_file_to_cpu(FS_COMPLETION_BASES);
 
 // --- PRG012 symbols, all verified by matching their bytes in the ROM rather
 // --- than read off the disassembly's labels.
@@ -631,16 +640,14 @@ const UNPACK_PLANE: [u8; 72] = [
 ];
 
 // --- Engine symbols outside PRG012 ---
+//
+// `World_Num` and `Map_Reload_with_Completions` are `rom_data::engine`'s.
 
-/// `World_Num`, 0-based.
-const WORLD_NUM: u16 = 0x0727;
 /// `PAGE_A000` — the MMC3 page latched into `$A000` by the next
 /// `PRGROM_Change_A000`.
 const PAGE_A000: u16 = 0x0720;
 /// `PRGROM_Change_A000`, in the always-mapped PRG031.
 const PRGROM_CHANGE_A000: u16 = 0xFFC2;
-/// `Map_Reload_with_Completions` (PRG012) — the call this displaces.
-const MAP_RELOAD: u16 = 0xA45D;
 
 /// Bytes of packed state in total: both planes, back to back.
 const PACKED_LEN: usize = 2 * PLANE_RESERVE;
@@ -813,7 +820,7 @@ const SWAP_AT_RELOAD: [u8; 18] = [
     0x8D, LIVE_WORLD as u8, (LIVE_WORLD >> 8) as u8, //  8: STA LIVE_WORLD    ; A survives
     0x20, UNPACK_WORLD_CPU as u8,
           (UNPACK_WORLD_CPU >> 8) as u8,            // 11: JSR UNPACK_WORLD
-    0x20, MAP_RELOAD as u8, (MAP_RELOAD >> 8) as u8, // 14: JSR Map_Reload...  ; reload
+    0x20, MAP_RELOAD_CPU as u8, (MAP_RELOAD_CPU >> 8) as u8, // 14: JSR Map_Reload...  ; reload
     0x60,                                           // 17: RTS
 ];
 
@@ -1237,6 +1244,7 @@ mod tests {
         // `world_persist` POC already proved free at runtime.
         const LARGEST_RUNS: usize = 109 + 105;
 
+        let mut builds = 0usize;
         let mut worst = 0usize;
         let mut worst_at = (0u64, "", [0u8; 9]);
         // The stencil is ROM data, not SRAM, but its size decides whether the
@@ -1256,6 +1264,7 @@ mod tests {
                 else {
                     continue;
                 };
+                builds += 1;
                 let map = CompletionMap::from_rom(&rom);
                 if map.total_bytes() > worst {
                     worst = map.total_bytes();
@@ -1275,7 +1284,11 @@ mod tests {
             }
         }
 
+        // Every seed above may `continue` past a failed build, and a census
+        // that measured nothing would otherwise pass green.
+        assert!(builds > 0, "no seed in any arm built — the census measured nothing");
         let (seed, name, table) = worst_at;
+        eprintln!("{builds} builds measured");
         eprintln!("worst packed region: {worst} bytes (seed {seed}, arm {name})");
         eprintln!("  base table {table:?}  (both planes: 2 x {} bytes)", table[8]);
         eprintln!("  against {LARGEST_RUNS} bytes in the two proven-free SRAM runs");
@@ -1416,27 +1429,55 @@ mod tests {
 
     #[test]
     fn routines_are_well_formed() {
+        // Every routine here names no engine zero-page variable at all: the
+        // only zero page any of them touches is `ZP_SRC`/`ZP_MASK`, which are
+        // the three `Temp_Var`s the NMI preserves. See `asm::Routine::zero_page`
+        // for why that is the rule and what it cost to learn.
         asm::check(&IS_COMPLETABLE)
             .allocation(FS_IS_COMPLETABLE)
             .origin(IS_COMPLETABLE_CPU)
+            .zero_page(NMI_SAFE_MAX, &[])
             .assert_ok();
-        asm::check(&MASK_BUILD).allocation(FS_MASK_BUILD).origin(MASK_BUILD_CPU).assert_ok();
-        asm::check(&PACK_PLANE).allocation(FS_PACK_PLANE).origin(PACK_PLANE_CPU).assert_ok();
-        asm::check(&UNPACK_PLANE).allocation(FS_UNPACK_PLANE).origin(UNPACK_PLANE_CPU).assert_ok();
-        asm::check(&PACK_WORLD).allocation(FS_PACK_WORLD).origin(PACK_WORLD_CPU).assert_ok();
-        asm::check(&UNPACK_WORLD).allocation(FS_UNPACK_WORLD).origin(UNPACK_WORLD_CPU).assert_ok();
+        asm::check(&MASK_BUILD)
+            .allocation(FS_MASK_BUILD)
+            .origin(MASK_BUILD_CPU)
+            .zero_page(NMI_SAFE_MAX, &[])
+            .assert_ok();
+        asm::check(&PACK_PLANE)
+            .allocation(FS_PACK_PLANE)
+            .origin(PACK_PLANE_CPU)
+            .zero_page(NMI_SAFE_MAX, &[])
+            .assert_ok();
+        asm::check(&UNPACK_PLANE)
+            .allocation(FS_UNPACK_PLANE)
+            .origin(UNPACK_PLANE_CPU)
+            .zero_page(NMI_SAFE_MAX, &[])
+            .assert_ok();
+        asm::check(&PACK_WORLD)
+            .allocation(FS_PACK_WORLD)
+            .origin(PACK_WORLD_CPU)
+            .zero_page(NMI_SAFE_MAX, &[])
+            .assert_ok();
+        asm::check(&UNPACK_WORLD)
+            .allocation(FS_UNPACK_WORLD)
+            .origin(UNPACK_WORLD_CPU)
+            .zero_page(NMI_SAFE_MAX, &[])
+            .assert_ok();
         asm::check(&SWAP_AT_RELOAD)
             .allocation(FS_SWAP_AT_RELOAD)
             .origin(SWAP_AT_RELOAD_CPU)
+            .zero_page(NMI_SAFE_MAX, &[])
             .assert_ok();
 
         asm::check(&WIPE_REPLACEMENT)
             .allocation(FS_WIPE_REPLACEMENT)
             .origin(WIPE_REPLACEMENT_CPU)
+            .zero_page(NMI_SAFE_MAX, &[])
             .assert_ok();
         asm::check(&NEW_GAME_INIT)
             .allocation(FS_NEW_GAME_INIT)
             .origin(NEW_GAME_INIT_CPU)
+            .zero_page(NMI_SAFE_MAX, &[])
             .assert_ok();
     }
     /// Address the harness treats as "the routine returned".
@@ -1528,6 +1569,7 @@ mod tests {
             eprintln!("SKIP: requires the ROM");
             return;
         };
+        let mut builds = 0usize;
         for seed in 0..seeds() {
             let options =
                 crate::Options { palettes: false, palette_themed: false, ..Default::default() };
@@ -1536,6 +1578,7 @@ mod tests {
             else {
                 continue;
             };
+            builds += 1;
             let map = CompletionMap::from_rom(&rom);
             let mut cpu = cpu_with_routines(&rom);
             for w in 0..8 {
@@ -1560,6 +1603,7 @@ mod tests {
                 }
             }
         }
+        assert!(builds > 0, "every seed failed to build — the census compared nothing");
     }
 
     /// **`UNPACK_PLANE` must undo it, and must clear what it does not own.**
@@ -1574,6 +1618,7 @@ mod tests {
             eprintln!("SKIP: requires the ROM");
             return;
         };
+        let mut builds = 0usize;
         for seed in 0..seeds() {
             let options =
                 crate::Options { palettes: false, palette_themed: false, ..Default::default() };
@@ -1582,6 +1627,7 @@ mod tests {
             else {
                 continue;
             };
+            builds += 1;
             let map = CompletionMap::from_rom(&rom);
             let mut cpu = cpu_with_routines(&rom);
             for w in 0..8 {
@@ -1610,6 +1656,7 @@ mod tests {
                 }
             }
         }
+        assert!(builds > 0, "every seed failed to build — the census compared nothing");
     }
 
     /// No seed may need more than the plane reserve, or a world's Mario slice
@@ -1620,6 +1667,7 @@ mod tests {
             eprintln!("SKIP: requires the ROM");
             return;
         };
+        let mut builds = 0usize;
         let mut worst = 0usize;
         for (name, arm) in arms() {
             for seed in 0..seeds() {
@@ -1631,6 +1679,7 @@ mod tests {
                 else {
                     continue;
                 };
+                builds += 1;
                 let need = CompletionMap::from_rom(&rom).mirror_offset();
                 assert!(
                     need <= PLANE_RESERVE,
@@ -1639,7 +1688,10 @@ mod tests {
                 worst = worst.max(need);
             }
         }
-        eprintln!("worst plane: {worst} of {PLANE_RESERVE} reserved");
+        // A plane running into the mirror region is silent on a cartridge, so
+        // the census must not be allowed to measure nothing and pass.
+        assert!(builds > 0, "no seed in any arm built — the census measured nothing");
+        eprintln!("worst plane: {worst} of {PLANE_RESERVE} reserved, over {builds} builds");
     }
     /// **The whole storage layer, in and out, on the console.**
     ///
@@ -1654,6 +1706,7 @@ mod tests {
             eprintln!("SKIP: requires the ROM");
             return;
         };
+        let mut builds = 0usize;
         for seed in 0..seeds() {
             let options =
                 crate::Options { palettes: false, palette_themed: false, ..Default::default() };
@@ -1662,6 +1715,7 @@ mod tests {
             else {
                 continue;
             };
+            builds += 1;
             let map = CompletionMap::from_rom(&rom);
             let mut cpu = cpu_with_routines(&rom);
             for w in 0..8 {
@@ -1719,6 +1773,7 @@ mod tests {
                 }
             }
         }
+        assert!(builds > 0, "every seed failed to build — the round trip ran on nothing");
     }
 
     /// Both hooks displace whole instructions, and the bytes they displace are
@@ -1962,7 +2017,7 @@ mod tests {
         // the whole test, which is the arrangement they exist to produce.
         cpu.memory.set_byte(PRGROM_CHANGE_A000, 0x60);
         // And the reload is the engine's, not ours.
-        cpu.memory.set_byte(MAP_RELOAD, 0x60);
+        cpu.memory.set_byte(MAP_RELOAD_CPU, 0x60);
         for i in 0..PACKED_LEN {
             cpu.memory.set_byte(PACKED + i as u16, 0xAA);
         }
@@ -2042,7 +2097,7 @@ mod tests {
         let map = CompletionMap::from_rom(&rom);
         let mut cpu = cpu_with_routines(&rom);
         cpu.memory.set_byte(PRGROM_CHANGE_A000, 0x60);
-        cpu.memory.set_byte(MAP_RELOAD, 0x60);
+        cpu.memory.set_byte(MAP_RELOAD_CPU, 0x60);
 
         // `INC World_Num`, as it stands in PRG030's airship-cleared path,
         // plus an `RTS` so the harness can call it.
@@ -2122,7 +2177,7 @@ mod tests {
         };
         let mut cpu = cpu_with_routines(&rom);
         cpu.memory.set_byte(PRGROM_CHANGE_A000, 0x60);
-        cpu.memory.set_byte(MAP_RELOAD, 0x60);
+        cpu.memory.set_byte(MAP_RELOAD_CPU, 0x60);
 
         // Mid-world state: progress on the map, and the world unchanged —
         // which is now the whole definition of "not a transition".
@@ -2143,59 +2198,6 @@ mod tests {
                     live[i as usize],
                     "pass {pass}: byte {i} of Map_Completions was disturbed",
                 );
-            }
-        }
-    }
-    /// **No routine here may keep state in zero page above `Temp_Var3`.**
-    ///
-    /// The NMI pushes and pulls exactly `Temp_Var1`, `Temp_Var2` and
-    /// `Temp_Var3` around every frame and leaves everything else to whoever was
-    /// using it. These routines run tens of thousands of cycles, so the NMI
-    /// lands inside their loops repeatedly — anything held in `$03` or above is
-    /// destroyed mid-loop, on hardware, invisibly.
-    ///
-    /// Nothing in the emulated-CPU tests can see this: there is no NMI there.
-    /// Three playtests failed on it while every test passed, so the rule is
-    /// enforced structurally instead — decode each routine and reject any
-    /// zero-page operand outside the protected three.
-    #[test]
-    fn no_routine_parks_state_in_unprotected_zero_page() {
-        use mos6502::Variant;
-        use mos6502::instruction::AddressingMode;
-
-        const PROTECTED: u8 = 0x02; // Temp_Var1..Temp_Var3 = $00..$02
-        let routines: [(&str, &[u8]); 6] = [
-            ("IS_COMPLETABLE", &IS_COMPLETABLE),
-            ("MASK_BUILD", &MASK_BUILD),
-            ("PACK_PLANE", &PACK_PLANE),
-            ("UNPACK_PLANE", &UNPACK_PLANE),
-            ("PACK_WORLD", &PACK_WORLD),
-            ("UNPACK_WORLD", &UNPACK_WORLD),
-        ];
-
-        for (name, code) in routines {
-            let mut pc = 0usize;
-            while pc < code.len() {
-                let (instr, mode) =
-                    Ricoh2a03::decode(code[pc]).unwrap_or_else(|| panic!("{name}: bad opcode"));
-                let len = mode.extra_bytes() as usize + 1;
-                let zero_page = matches!(
-                    mode,
-                    AddressingMode::ZeroPage
-                        | AddressingMode::ZeroPageX
-                        | AddressingMode::ZeroPageY
-                        | AddressingMode::IndexedIndirectX
-                        | AddressingMode::IndirectIndexedY
-                );
-                if zero_page {
-                    let operand = code[pc + 1];
-                    assert!(
-                        operand <= PROTECTED,
-                        "{name} byte {pc}: {instr:?} touches zero page ${operand:02X}, which the \
-                         NMI does not preserve — only $00..${PROTECTED:02X} survive a frame",
-                    );
-                }
-                pc += len;
             }
         }
     }

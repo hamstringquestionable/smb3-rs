@@ -74,44 +74,22 @@
 use crate::rom::Rom;
 
 use super::maze_state::{VISITED_TABLE, VISITED_TABLE_LEN};
+#[cfg(test)]
+use super::rom_data::NMI_SAFE_MAX;
 use super::rom_data::{
-    FS_MAZE_TRAVEL, FS_MAZE_VISITED, MAP_Y_STARTS_OFF, find_start, prg030_file_to_cpu,
-    read_tile_grid,
+    FS_MAZE_TRAVEL, FS_MAZE_VISITED, MAP_Y_STARTS_OFF, PLAYER_CURRENT, WORLD_MAP_INIT_CPU,
+    WORLD_MAP_X, WORLD_MAP_XHI, WORLD_MAP_Y, WORLD_NUM, find_start, prg010_file_to_cpu,
+    prg011_file_to_cpu, prg030_file_to_cpu, read_tile_grid,
 };
 
 // --- Addresses ----------------------------------------------------------
 
-/// PRG010 is mapped at `$C000` for the whole world map, so a file offset in it
-/// is `$C000 + (file - 0x14010)` — the arithmetic `world_persist`,
-/// `completion_bits`, `map_warp` and `canoe_summon` all use.
-const fn prg010_cpu(file: usize) -> u16 {
-    (0xC000 + (file - 0x14010)) as u16
-}
-
-/// PRG011 is mapped at `$A000` for the whole world map, by construction: the
-/// map init sets `PAGE_A000 = 11` before anything here can run.
-const fn prg011_cpu(file: usize) -> u16 {
-    (0xA000 + (file - 0x16010)) as u16
-}
-
-const MARK_VISITED_CPU: u16 = prg010_cpu(FS_MAZE_VISITED);
-const WHISTLE_TRAVEL_CPU: u16 = prg011_cpu(FS_MAZE_TRAVEL);
+const MARK_VISITED_CPU: u16 = prg010_file_to_cpu(FS_MAZE_VISITED);
+const WHISTLE_TRAVEL_CPU: u16 = prg011_file_to_cpu(FS_MAZE_TRAVEL);
 
 /// `Map_Y_Starts` — the per-world start row, `$838A`. Read at runtime rather
 /// than baked in, because `start_airship_swap` rewrites the table.
 const MAP_Y_STARTS_CPU: u16 = prg030_file_to_cpu(MAP_Y_STARTS_OFF);
-
-/// `Player_Current` — 0 Mario, 1 Luigi. Every world-map position variable is a
-/// two-byte array indexed by it.
-const PLAYER_CURRENT: u16 = 0x0726;
-/// `World_Num`, 0-based.
-const WORLD_NUM: u16 = 0x0727;
-
-/// The player's live map position, zero page, two bytes each (Mario/Luigi).
-/// Pixel coordinates, so the low nibbles are sub-tile offsets.
-const WORLD_MAP_Y: u8 = 0x75;
-const WORLD_MAP_XHI: u8 = 0x77;
-const WORLD_MAP_X: u8 = 0x79;
 
 /// `Map_WarpWind_FX` (`$8B`) — the whistle's own state machine. Zeroed on the
 /// way out, or the wind effect keeps advancing over a map that has already
@@ -134,11 +112,6 @@ const MAP_WAS_IN_PIPEWAY: u16 = 0x7973;
 /// itself is decided by `world_persist` and this is a mirror of one constant,
 /// pinned by `arrival_flag_matches_world_persist`.
 const ARRIVAL_FLAG: u16 = 0x7ABB;
-
-/// `PRG030_84A0`, "initialize the world map". Always mapped. **Never
-/// returns** — it falls through into `WorldMap_Loop` — which is why every
-/// caller resets the stack first.
-const WORLD_MAP_INIT_CPU: u16 = 0x84A0;
 
 // --- Part 1: the visited marker -----------------------------------------
 
@@ -476,6 +449,11 @@ mod asm_checks {
             .allocation(FS_MAZE_VISITED)
             .origin(MARK_VISITED_CPU)
             .data_from(MARK_TABLE_OFF)
+            // The three live position bytes are engine variables it reads and
+            // never writes; it parks nothing of its own in the page. Naming
+            // them keeps the bound at the NMI-safe three rather than raising
+            // it to `$79` and permitting everything below.
+            .zero_page(NMI_SAFE_MAX, &[WORLD_MAP_Y, WORLD_MAP_XHI, WORLD_MAP_X])
             .assert_ok();
     }
 
@@ -484,6 +462,9 @@ mod asm_checks {
         asm::check(&WHISTLE_TRAVEL)
             .allocation(FS_MAZE_TRAVEL)
             .origin(WHISTLE_TRAVEL_CPU)
+            // `Map_WarpWind_FX` is the engine's own whistle state, cleared on
+            // the way out; nothing else in the page is touched.
+            .zero_page(NMI_SAFE_MAX, &[MAP_WARPWIND_FX])
             .assert_ok();
     }
 

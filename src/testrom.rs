@@ -1590,16 +1590,18 @@ mod tests {
             built.report.iter().filter(|l| l.starts_with("telepad:")).collect();
         assert_eq!(lines.len(), 4, "report: {:?}", built.report);
 
-        let table = crate::randomize::rom_data::FS_PAD_ENTER
-            + crate::randomize::world_persist::PAD_TABLE_OFF;
-        let max = crate::randomize::world_persist::PORTAL_MAX;
-        // Rows 0 and 2 are W3's two pads; their keys must differ, or both pairs
-        // claimed the same tile.
-        assert_eq!(built.bytes[table], 2, "row 0 stands in W3");
-        assert_eq!(built.bytes[table + 2], 2, "row 2 stands in W3");
+        // Decoded through `world_persist`, which owns the key layout, so a
+        // change to the row shape cannot leave this quietly reading the old one.
+        let out = Rom::from_bytes_lax(&built.bytes, true).unwrap();
+        let pads = crate::randomize::world_persist::decode_pad_rows(&out);
+        assert_eq!(pads.len(), 4, "two pairs is four pad rows");
+        // Rows 0 and 2 are W3's two pads; their cells must differ, or both
+        // pairs claimed the same tile.
+        assert_eq!(pads[0].0, 2, "row 0 stands in W3");
+        assert_eq!(pads[2].0, 2, "row 2 stands in W3");
         assert_ne!(
-            (built.bytes[table + max], built.bytes[table + 2 * max]),
-            (built.bytes[table + max + 2], built.bytes[table + 2 * max + 2]),
+            (pads[0].1, pads[0].2),
+            (pads[2].1, pads[2].2),
             "both W3 pads claimed the same spade panel"
         );
 

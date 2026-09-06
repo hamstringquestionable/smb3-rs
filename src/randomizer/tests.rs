@@ -1573,15 +1573,21 @@ fn resolve_concrete_passthrough() {
 /// **A pad tile stands under every arrival key the ROM carries.**
 ///
 /// This is the end-to-end check for the failure that already cost a playtest
-/// session once: the pad key tables and the map are written by different
-/// modules, and if they disagree by so much as a row, stepping on the pad
-/// enters the **spade game** instead of teleporting. Nothing about that is
-/// visible from either side alone — `world_persist` can prove its routine reads
-/// its own tables, and the maze can prove it stamped the tiles it meant to, and
-/// the ROM can still be wrong.
+/// session once. The pad key tables and the map are written by different
+/// modules, and the key table is what the travel routine actually consults, so
+/// a disagreement of one row breaks it in whichever direction the mismatch
+/// runs: a pad tile whose cell is in no key row is scenery the player can stand
+/// on and nothing more, and a key row pointing at a cell that holds some other
+/// tile teleports out of a place with no pad drawn on it. The playtest hit the
+/// first shape back when pads were spade panels, so the pad did the spade game
+/// instead — the tile is `TILE_TELEPAD` now and the symptom would be quieter,
+/// which is the argument for testing it rather than playing it.
 ///
-/// So this reads the finished ROM the way the engine does: decode each pad key
-/// row back into a `(world, row, col)` and demand a spade panel there.
+/// Neither side can see this alone: `world_persist` can prove its routine reads
+/// its own tables, the maze can prove it stamped the tiles it meant to, and the
+/// ROM can still be wrong. So this reads the finished ROM the way the engine
+/// does — decode each pad key row back into a `(world, row, col)` and demand a
+/// pad tile there.
 #[test]
 fn a_maze_rom_puts_a_pad_tile_under_every_arrival_key() {
     use crate::randomize::rom_data::{self, TILE_TELEPAD};

@@ -6,9 +6,10 @@
 //!
 //! Split into submodules: `free_space` (allocation registry), `tables` (static
 //! data), `grid` (the overworld grid), `access` (typed read/write helpers),
-//! `tiles` (overworld tile classification — the single producer for "which
-//! bytes mean what"). All items are re-exported flat so callers keep using
-//! `rom_data::ITEM`.
+//! `engine` (RAM addresses and vanilla routine entry points the 6502 patches
+//! name), `tiles` (overworld tile classification — the single producer for
+//! "which bytes mean what"). All items are re-exported flat so callers keep
+//! using `rom_data::ITEM`.
 
 use crate::rom::Rom;
 
@@ -16,12 +17,14 @@ mod access;
 /// Structural checks for hand-assembled 6502 patches (test-only).
 #[cfg(test)]
 pub(crate) mod asm;
+mod engine;
 mod free_space;
 mod grid;
 mod tables;
 mod tiles;
 
 pub(crate) use access::*;
+pub(crate) use engine::*;
 pub(crate) use free_space::*;
 pub(crate) use grid::*;
 pub(crate) use tables::*;

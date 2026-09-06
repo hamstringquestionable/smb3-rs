@@ -339,10 +339,21 @@ fn randomize_inner(
     //
     // **The order inside this block is the whole of its correctness.** The
     // packed completion store derives its stencil from the map grids as they
-    // finally stand, so every write that changes a grid has to precede it: the
-    // pad tiles (spade panels, which the engine counts as completable) and the
-    // wand gate. `foreign_locks` comes after, because it asks the packer where
-    // a given cell's bit lives rather than re-deriving that arithmetic.
+    // finally stand, so every write that changes a grid runs first — the pad
+    // tiles and the wand gate — and `foreign_locks` runs last, because it asks
+    // the packer where a given cell's bit lives rather than re-deriving that
+    // arithmetic.
+    //
+    // Today the two grid writers are in fact bit-neutral, so only the tail of
+    // that order is load-bearing. A cell claims a completion bit by being in
+    // `Map_Removable_Tiles` or `Map_Completable_Tiles`, and `TILE_TELEPAD` and
+    // `WAND_GATE_TILE` are in neither — `the_pad_tile_is_in_no_registry` and
+    // `the_gate_tile_is_in_no_registry` pin that — while the cells they
+    // overwrite are hammer-bro slots, blanks and the W8 bridge, which are in
+    // neither either. The head of the order is kept anyway: it costs nothing,
+    // and the day someone picks a tile that does claim a bit, the alternative
+    // is a stencil that disagrees with the map by one bit somewhere past the
+    // world it happened in.
     if options.world_maze {
         rom.set_tag("world_maze");
         // The spine IS `world_order`'s table, which is why the mode forces it

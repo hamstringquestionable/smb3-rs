@@ -1345,6 +1345,15 @@ mod free_space_tests {
         assert_eq!(prg030_file_to_cpu(FS_BRO_TIMER), 0x9F60);
         assert_eq!(prg030_file_to_cpu(FS_STOMP_RISE), 0x9FB6);
         assert_eq!(prg031_file_to_cpu(0x3E010), 0xE000);
+
+        // The two map banks. PRG010 sits at $C000 and needs its own converter
+        // for the same reason; PRG011 is the ordinary $A000 window, and this
+        // pins the named form against the generic one it delegates to.
+        assert_eq!(prg010_file_to_cpu(0x14010), 0xC000);
+        assert_eq!(prg011_file_to_cpu(0x16010), 0xA000);
+        for file in [0x16010, 0x17000, 0x17E7B, 0x1800F] {
+            assert_eq!(prg011_file_to_cpu(file), prg_bank_file_to_cpu(11, file));
+        }
     }
 
     #[test]

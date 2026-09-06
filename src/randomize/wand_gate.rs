@@ -76,8 +76,8 @@ use crate::rom::Rom;
 
 use super::maze_state::WAND_COUNT;
 use super::rom_data::{
-    BRIDGE_TILE, FS_MAZE_WAND_COUNT, FS_MAZE_WAND_GATE, PRG012_FILE_BASE, W8_IDX, W8_WAND_GATE_POS,
-    WAND_GATE_TILE, map_tile_offset, prg030_file_to_cpu,
+    BRIDGE_TILE, FS_MAZE_WAND_COUNT, FS_MAZE_WAND_GATE, MAP_RELOAD_CPU, PRG012_FILE_BASE, W8_IDX,
+    W8_WAND_GATE_POS, WAND_GATE_TILE, WORLD_NUM, map_tile_offset, prg030_file_to_cpu,
 };
 use super::world_order::WORLD_INC_OFFSET;
 
@@ -97,17 +97,10 @@ const WAND_GATE_CPU: u16 = prg012_cpu(FS_MAZE_WAND_GATE);
 /// arbitrary bank at `$A000`.
 const WAND_BUMP_CPU: u16 = prg030_file_to_cpu(FS_MAZE_WAND_COUNT);
 
-/// `Map_Reload_with_Completions` (PRG012), the routine that rebuilds
-/// `Tile_Mem` from the ROM grid and replays the completion bitfield.
-const MAP_RELOAD_CPU: u16 = 0xA45D;
-
 /// `Fill_Tile_AttrTable_ByTileset` (PRG030, always mapped) — the eight-byte
 /// attribute copy the init path runs immediately after the reload. The gate
 /// displaces this call and replays it.
 const FILL_ATTR_CPU: u16 = 0x951B;
-
-/// `World_Num`, 0-based; World 8 is 7.
-const WORLD_NUM: u16 = 0x0727;
 
 /// The gate cell's address in `Tile_Mem`.
 ///
@@ -384,14 +377,70 @@ mod tests {
         }
         // ...and no world's vanilla grid uses it, so nothing else can be
         // standing on it when the gate goes down.
+        assert_eq!(gate_bytes_in(&rom, false), 0, "a vanilla grid uses the gate byte");
+    }
+
+    /// The same claim against the grids the player will actually walk, which
+    /// is the version that matters: the overworld writer redraws every world
+    /// wholesale, so "vanilla does not use `$D5`" says nothing about what a
+    /// built map holds. A second `$D5` anywhere would turn into a bridge the
+    /// moment the wand count was reached, on a cell nothing chose.
+    #[test]
+    fn a_built_maze_uses_the_gate_byte_exactly_once() {
+        let Ok(rom_bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let seeds: u64 =
+            std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(8);
+        let mut built = 0usize;
+        for seed in 0..seeds {
+            let options = crate::Options {
+                world_maze: true,
+                maze_wands: K,
+                palettes: false,
+                palette_themed: false,
+                ..Default::default()
+            };
+            let Ok((rom, _)) =
+                crate::randomize_rom_with_overworld_capture(&rom_bytes, seed, &options, None)
+            else {
+                continue;
+            };
+            built += 1;
+            assert_eq!(
+                rom.read_byte(map_tile_offset(W8_IDX, W8_WAND_GATE_POS.0, W8_WAND_GATE_POS.1)),
+                WAND_GATE_TILE,
+                "seed {seed}: the gate cell is not the gate byte",
+            );
+            assert_eq!(
+                gate_bytes_in(&rom, true),
+                0,
+                "seed {seed}: a built map holds the gate byte somewhere other than the gate cell",
+            );
+        }
+        assert!(built > 0, "no seed built — the census measured nothing");
+    }
+
+    /// How many cells across all eight grids hold [`WAND_GATE_TILE`], not
+    /// counting the gate cell itself when `skip_gate` is set.
+    fn gate_bytes_in(rom: &Rom, skip_gate: bool) -> usize {
+        let mut found = 0;
         for world in 0..8 {
-            let grid = crate::randomize::rom_data::read_tile_grid(&rom, world);
+            let grid = crate::randomize::rom_data::read_tile_grid(rom, world);
             for r in 0..grid.rows() {
                 for c in 0..grid.cols {
-                    assert_ne!(grid.get(r, c), WAND_GATE_TILE, "W{} uses the gate byte", world + 1);
+                    if skip_gate && world == W8_IDX && (r, c) == W8_WAND_GATE_POS {
+                        continue;
+                    }
+                    if grid.get(r, c) == WAND_GATE_TILE {
+                        eprintln!("gate byte at W{} ({r},{c})", world + 1);
+                        found += 1;
+                    }
                 }
             }
         }
+        found
     }
 
     /// The vanilla contents of [`BOX_CORNER_TILES`]: the four corners of the
@@ -529,9 +578,7 @@ mod tests {
 
     /// `world_order` and this module share the airship hook site, and the
     /// order is one-way: `world_order` first. Applied that way the site holds
-    /// our `JMP` and `world_order`'s own `JMP` is replayed inside the routine;
-    /// applied the other way round `world_order` overwrites us and the counter
-    /// is dead. This asserts the working order and documents the broken one.
+    /// our `JMP` and `world_order`'s own `JMP` is replayed inside the routine.
     #[test]
     fn the_bump_hook_survives_world_order() {
         use rand::SeedableRng;
@@ -553,16 +600,38 @@ mod tests {
             world_order_jmp,
             "world_order's jump must be replayed, or the world never changes"
         );
+    }
+
+    /// ...and the broken order is now impossible rather than merely forbidden:
+    /// `world_order::randomize` checks the airship site still holds vanilla's
+    /// `INC World_Num` before it writes, so running it after this module
+    /// panics instead of silently overwriting the bump hook and leaving the
+    /// wand counter dead.
+    ///
+    /// `catch_unwind` rather than `#[should_panic]`, because the test has to
+    /// skip where the ROM is absent and a `should_panic` test that returns
+    /// early fails.
+    #[test]
+    fn applying_world_order_after_the_bump_hook_panics() {
+        use rand::SeedableRng;
+        let Some(rom) = vanilla() else { return };
 
         let mut wrong = rom.clone();
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(7);
         apply(&mut wrong, K);
-        crate::randomize::world_order::randomize(&mut wrong, &mut rng, 7);
-        assert_ne!(
-            wrong.read_range(WORLD_INC_OFFSET, 3),
-            &jmp_free(0x4C, WAND_BUMP_CPU),
-            "this is the broken order the module doc forbids; if it ever stops \
-             breaking, the ordering rule can be dropped"
+        let err = std::panic::catch_unwind(move || {
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(7);
+            crate::randomize::world_order::randomize(&mut wrong, &mut rng, 7);
+        })
+        .expect_err("world_order must refuse a site wand_gate has already patched");
+
+        let msg = err
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| err.downcast_ref::<&str>().copied())
+            .unwrap_or("");
+        assert!(
+            msg.contains("must run BEFORE"),
+            "the panic must name the ordering rule, got: {msg}"
         );
     }
 }
@@ -767,29 +836,27 @@ mod execution {
     fn a_broken_counter_fails_the_counter_tests() {
         let displaced = [0xEE, 0x27, 0x07];
         let good = super::wand_bump_routine(displaced);
-        assert!(
-            !bump_differs(&good, displaced),
-            "the check is vacuous if the real routine fails it"
-        );
+        assert!(!bump_differs(&good), "the check is vacuous if the real routine fails it");
 
         // Byte 4 is the `CMP #7` operand: raise it and the counter runs past
         // seven, which the saturate case catches.
         let mut no_cap = good;
         no_cap[4] = 0xFF;
-        assert!(bump_differs(&no_cap, displaced), "a missing saturate must be caught");
+        assert!(bump_differs(&no_cap), "a missing saturate must be caught");
 
         // Bytes 13-15 are the tail `JMP`: aim it elsewhere and nothing resumes.
         let mut no_chain = good;
         no_chain[13] = 0xEA; // NOP, so the routine falls into whatever follows
-        assert!(bump_differs(&no_chain, displaced), "a lost chain must be caught");
+        assert!(bump_differs(&no_chain), "a lost chain must be caught");
     }
 
-    fn bump_differs(code: &[u8; 16], displaced: [u8; 3]) -> bool {
+    /// Whatever the displaced bytes were is already baked into `code`, so this
+    /// takes only the assembled routine.
+    fn bump_differs(code: &[u8; 16]) -> bool {
         let resume = prg030_file_to_cpu(WORLD_INC_OFFSET) + 3;
         for start in 0..=255u8 {
             let mut mem = Memory::new();
             mem.set_bytes(WAND_BUMP_CPU, code);
-            let _ = displaced;
             mem.set_bytes(resume, &[0xEE, RESUME_MARK as u8, (RESUME_MARK >> 8) as u8, 0x60]);
             mem.set_bytes(0x9F10, &[0xEE, RESUME_MARK as u8, (RESUME_MARK >> 8) as u8, 0x60]);
             let mut cpu = CPU::new(mem, Ricoh2a03);
@@ -961,7 +1028,8 @@ mod chokepoint {
         }
         assert!(
             standard_saw_it,
-            "standard mode never dealt the gate span in {seeds} seeds \u{2014} the reservation              has leaked out of maze mode, or the deal has changed"
+            "standard mode never dealt the gate span in {seeds} seeds — the reservation has \
+             leaked out of maze mode, or the deal has changed"
         );
     }
 

@@ -203,12 +203,13 @@
 use crate::rom::Rom;
 
 use super::maze_state::{MAP_OBJ_DEAD, MAP_OBJ_DEAD_LEN};
-use super::rom_data::{FS_MAZE_OBJ_MARK, FS_MAZE_OBJ_RESTORE};
+#[cfg(test)]
+use super::rom_data::NMI_SAFE_MAX;
+use super::rom_data::{FS_MAZE_OBJ_MARK, FS_MAZE_OBJ_RESTORE, WORLD_NUM, prg011_file_to_cpu};
 
 // --- Engine symbols ---------------------------------------------------------
-
-/// `World_Num`, 0-based.
-const WORLD_NUM: u16 = 0x0727;
+//
+// `World_Num` is `rom_data::engine`'s.
 
 /// `Map_Objects_IDs` — 14 slots, `$00` meaning "nothing here".
 const MAP_OBJECTS_IDS: u16 = 0x7F15;
@@ -223,15 +224,8 @@ const MAP_COMPLETE_BIT_CPU: u16 = 0xBA2D;
 #[cfg(test)]
 const MAP_COMPLETE_BIT_FILE: usize = 0x17A3D;
 
-/// PRG011 is mapped at `$A000` for the whole world map, so a file offset in it
-/// is `$A000 + (file - 0x16010)` — the arithmetic `world_travel`,
-/// `world_persist` and `foreign_locks` all use.
-const fn prg011_cpu(file: usize) -> u16 {
-    (0xA000 + (file - 0x16010)) as u16
-}
-
-const MARK_DEAD_CPU: u16 = prg011_cpu(FS_MAZE_OBJ_MARK);
-pub(crate) const RESTORE_OBJECTS_CPU: u16 = prg011_cpu(FS_MAZE_OBJ_RESTORE);
+const MARK_DEAD_CPU: u16 = prg011_file_to_cpu(FS_MAZE_OBJ_MARK);
+pub(crate) const RESTORE_OBJECTS_CPU: u16 = prg011_file_to_cpu(FS_MAZE_OBJ_RESTORE);
 
 // --- The hook site ----------------------------------------------------------
 
@@ -351,10 +345,19 @@ mod tests {
 
     #[test]
     fn routines_are_well_formed() {
-        asm::check(&MARK_DEAD).allocation(FS_MAZE_OBJ_MARK).origin(MARK_DEAD_CPU).assert_ok();
+        // Neither routine names an engine zero-page variable, and neither
+        // parks anything of its own there — so nothing here can be destroyed
+        // by the NMI mid-loop. Same rule and same reason as `completion_bits`;
+        // see `asm::Routine::zero_page`.
+        asm::check(&MARK_DEAD)
+            .allocation(FS_MAZE_OBJ_MARK)
+            .origin(MARK_DEAD_CPU)
+            .zero_page(NMI_SAFE_MAX, &[])
+            .assert_ok();
         asm::check(&RESTORE_OBJECTS)
             .allocation(FS_MAZE_OBJ_RESTORE)
             .origin(RESTORE_OBJECTS_CPU)
+            .zero_page(NMI_SAFE_MAX, &[])
             .assert_ok();
     }
 
@@ -394,7 +397,7 @@ mod tests {
         };
         let van = Rom::from_bytes(&rom_bytes).expect("vanilla ROM parses");
         assert_eq!(
-            prg011_cpu(MAP_COMPLETE_BIT_FILE),
+            prg011_file_to_cpu(MAP_COMPLETE_BIT_FILE),
             MAP_COMPLETE_BIT_CPU,
             "Map_CompleteBit's file offset and CPU address disagree",
         );
@@ -433,38 +436,6 @@ mod tests {
             [0x20, RESTORE_OBJECTS_CPU as u8, (RESTORE_OBJECTS_CPU >> 8) as u8],
             "WIPE_REPLACEMENT must open with JSR RESTORE_OBJECTS, before its own compare",
         );
-    }
-
-    /// Neither routine touches zero page, so nothing here can be destroyed by
-    /// the NMI mid-loop. Same rule, and same reason, as `completion_bits`'
-    /// `no_routine_parks_state_in_unprotected_zero_page`.
-    #[test]
-    fn no_routine_touches_zero_page() {
-        use mos6502::Variant;
-        use mos6502::instruction::AddressingMode;
-
-        for (name, code) in
-            [("MARK_DEAD", &MARK_DEAD[..]), ("RESTORE_OBJECTS", &RESTORE_OBJECTS[..])]
-        {
-            let mut pc = 0usize;
-            while pc < code.len() {
-                let (instr, mode) =
-                    Ricoh2a03::decode(code[pc]).unwrap_or_else(|| panic!("{name}: bad opcode"));
-                assert!(
-                    !matches!(
-                        mode,
-                        AddressingMode::ZeroPage
-                            | AddressingMode::ZeroPageX
-                            | AddressingMode::ZeroPageY
-                            | AddressingMode::IndexedIndirectX
-                            | AddressingMode::IndirectIndexedY
-                    ),
-                    "{name} byte {pc}: {instr:?} reaches zero page, which the NMI does not \
-                     preserve above Temp_Var3",
-                );
-                pc += mode.extra_bytes() as usize + 1;
-            }
-        }
     }
 
     /// `OBJ_TOADANDKING` — the in-level object that runs the Toad-and-King
