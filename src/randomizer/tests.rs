@@ -2062,10 +2062,10 @@ fn map_object_slot_budget() {
     let mut home_sum = [0usize; 8];
     let mut away_sum = [0usize; 8];
     let (mut short, mut short_rare) = (0usize, 0usize);
-    let (mut short_help, mut short_both) = (0usize, 0usize);
+    let mut short_both = 0usize;
     let mut plants_sum = [0usize; 8];
     let (mut need_now, mut need_plants) = (0usize, 0usize);
-    let (mut need_help, mut need_all) = (0usize, 0usize);
+    let mut need_all = 0usize;
 
     for seed in 0..seeds {
         // Wild is the heaviest arm: `all_on_options` already sets it, and it is
@@ -2083,13 +2083,28 @@ fn map_object_slot_budget() {
                         != 0
                 })
                 .count();
-            // Free slots a marker could take: total, minus occupied, minus the
-            // dynamic-spawn buffer, minus slot 1 where it is reserved.
-            let reserved_low = usize::from(wi != rom_data::W8_IDX);
-            let free = 9usize
-                .saturating_sub(used)
-                .saturating_sub(RESERVED_DYNAMIC_SLOTS)
-                .saturating_sub(reserved_low);
+            // Free slots a marker could take.
+            //
+            // **Slots 0 and 1 count as free.** Vanilla reserves them — slot 0
+            // holds the HELP bubble, which `TAndK_WaitPlayerButtonA` reads as a
+            // one-shot "this world's airship is still available" token, and
+            // slot 1 is where that routine then writes the airship. Neither
+            // happens in a shipped ROM: `autoscroll::disable_autoscroll`
+            // repoints every world's airship entry away from the shared
+            // Toad-and-King object stream ($D2AF) to its own reworked level, so
+            // the cutscene never loads, the token is never read and the airship
+            // is never written. The bubble is left as decoration.
+            //
+            // That holds while autoscroll removal is on, which is the default
+            // (`--keep-autoscroll` puts the cutscene and the dependency back).
+            // `audit_options` has it on.
+            // Slot 0 always reads as "used" (the HELP bubble is still there),
+            // so add it back; slot 1 is already empty in every world's table.
+            let help_slot = usize::from(
+                rom.read_byte(rom_data::map_obj_slot_offset(&rom, MAP_OBJ_IDS_MASTER, wi, 0)) != 0,
+            );
+            let free =
+                9usize.saturating_sub(used).saturating_sub(RESERVED_DYNAMIC_SLOTS) + help_slot;
             free_min[wi] = free_min[wi].min(free);
             free_sum[wi] += free;
             let locks = build.worlds[wi].locks.len();
@@ -2110,13 +2125,12 @@ fn map_object_slot_budget() {
             if free < home.min(away) {
                 short_rare += 1;
             }
-            // What-if: HELP's slot 0 reclaimed (~7 bytes of NOPs in
-            // `TAndK_WaitPlayerButtonA`, which also makes the airship dock
-            // unconditionally repeatable), and our own 2-slot buffer dropped.
-            if free + 1 < home.min(away) {
-                short_help += 1;
-            }
-            if free + 3 < home.min(away) {
+            // What-if: our own 2-slot runtime buffer dropped as well. It is
+            // there because nothing clears slots 9-13 on world entry, so a
+            // runtime spawn that landed in one persists; clearing them in the
+            // restore hook `map_objects` already runs on every `Map_Init` would
+            // make the buffer redundant (~10 bytes).
+            if free + RESERVED_DYNAMIC_SLOTS < home.min(away) {
                 short_both += 1;
             }
 
@@ -2135,8 +2149,7 @@ fn map_object_slot_budget() {
             for (budget, tally) in [
                 (free, &mut need_now),
                 (free + plants, &mut need_plants),
-                (free + plants + 1, &mut need_help),
-                (free + plants + 3, &mut need_all),
+                (free + plants + RESERVED_DYNAMIC_SLOTS, &mut need_all),
             ] {
                 if budget < away {
                     *tally += 1;
@@ -2164,13 +2177,11 @@ fn map_object_slot_budget() {
     println!("world-seeds where free < every lock:   {short} of {}", seeds as usize * 8);
     let n = seeds as usize * 8;
     println!("world-seeds short, marking the RARER kind:");
-    println!("   as things stand            {short_rare} of {n}");
-    println!("   + HELP's slot freed        {short_help} of {n}");
-    println!("   + our 2-slot buffer too    {short_both} of {n}");
+    println!("   as things stand                 {short_rare} of {n}");
+    println!("   + the 2-slot buffer dropped     {short_both} of {n}");
     println!("\nmarking every FOREIGN lock (unmarked = key is home):");
     println!("   as things stand                     {need_now} of {n}");
     println!("   + markers budgeted before plants    {need_plants} of {n}");
-    println!("   + HELP's slot                       {need_help} of {n}");
-    println!("   + our 2-slot buffer                 {need_all} of {n}");
+    println!("   + the 2-slot buffer dropped         {need_all} of {n}");
     println!("plants placed per world: {:?}", plants_sum.map(|v| v as f64 / seeds as f64));
 }

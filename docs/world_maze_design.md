@@ -1148,6 +1148,27 @@ Two things looked like the Hammer Bro bug and are not. Both were investigated
 after the first playtest and deliberately left alone; the first would have
 broken the game.
 
+### CORRECTION (2026-09-07): the HELP bubble is not load-bearing in a shipped ROM
+
+The section below is true of **vanilla** and false of what we ship.
+`autoscroll::disable_autoscroll` repoints every world's airship entry away from
+the shared Toad-and-King object stream (`$D2AF`) to its own reworked level —
+verified on a generated ROM, W1 `AF D2` -> `57 D7`. So the cutscene never loads,
+`TAndK_WaitPlayerButtonA` never runs, the slot-0 token is never read, and nothing
+writes the airship into slot 1. The spine edge works because the dock *is* the
+airship level, not because the bubble came back.
+
+`the_spine_edge_needs_the_help_bubble_back` asserted this only against vanilla
+and so passed without ever looking at our output; it is now
+`the_spine_edge_no_longer_needs_the_help_bubble` and checks both halves.
+
+**The consequence is a budget.** Map-object slots 0 and 1 are free in a normal
+seed — two per world — which is what makes a hovering marker over each lock
+affordable. Measured (`randomizer::tests::map_object_slot_budget`, 30 seeds):
+free slots go from ~2.8/0.0 to ~4.8/1.0 (W1-7/W8). It holds while autoscroll
+removal is on, which is the default; `--keep-autoscroll` restores the vanilla
+dependency, so any slot policy must key off that flag rather than assume.
+
 ### The king rescue, and why the HELP bubble has to come back
 
 `TILE_AIRSHIP $C9` **does not enter the airship.** All seven `AIRSHIP_ENTRIES`

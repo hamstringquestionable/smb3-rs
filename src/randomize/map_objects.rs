@@ -442,16 +442,32 @@ mod tests {
     const MAPOBJ_HELP: u8 = 0x01;
     const MAPOBJ_EMPTY: u8 = 0x00;
 
-    /// **The spine edge is repeatable only because the HELP bubble comes
-    /// back**, which is why the king rescue is not persisted — see the module
-    /// header. Two ROM facts carry that argument, and both are pinned here so
-    /// nobody "fixes" the bubble and takes the airship with it.
+    /// **In vanilla the spine edge runs through the HELP bubble. In a shipped
+    /// ROM it does not** — and this used to assert only the first half.
     ///
-    /// The dock tile the maze uses as its spine target does not enter the
-    /// airship: it enters the king's room, which chains onward through
-    /// `Level_JctCtl = 3` — and only while `Map_Objects_IDs[0]` is non-zero.
+    /// Vanilla's airship dock does not enter the airship: it enters the king's
+    /// room, whose Toad-and-King object chains onward through
+    /// `Level_JctCtl = 3`, but only while `Map_Objects_IDs[0]` is non-zero. So
+    /// slot 0 is a one-shot "have I sent you to the airship yet" token and slot
+    /// 1 is where that routine parks the airship.
+    ///
+    /// **`autoscroll::disable_autoscroll` retires that whole chain.** It
+    /// repoints every world's airship entry away from the shared Toad-and-King
+    /// stream (`$D2AF`) to its own reworked level, so the cutscene never loads,
+    /// the token is never read, and nothing writes the airship into slot 1. The
+    /// bubble is left standing as decoration. That is the default;
+    /// `--keep-autoscroll` puts the dependency back.
+    ///
+    /// The consequence is a budget, not a bug: slots 0 and 1 are **free for a
+    /// map-object marker** in a normal seed, which is two per world and the
+    /// difference between World 8 having room for one and having room for
+    /// three. See `randomizer::tests::map_object_slot_budget`.
+    ///
+    /// The original claim is kept as the vanilla half, because it is why the
+    /// code reads the way it does — but it is no longer the reason the maze's
+    /// spine works.
     #[test]
-    fn the_spine_edge_needs_the_help_bubble_back() {
+    fn the_spine_edge_no_longer_needs_the_help_bubble() {
         let Ok(rom_bytes) = std::fs::read(ROM_PATH) else {
             eprintln!("SKIP: requires the ROM");
             return;
@@ -473,7 +489,23 @@ mod tests {
             crate::Options { palettes: false, palette_themed: false, ..Default::default() };
         options.world_maze = true;
         options.world_order = true;
+        assert!(options.disable_autoscroll, "this test assumes the shipping default");
         let maze = crate::randomize_rom(&rom_bytes, 7, &options, None).ok();
+
+        // The half that was missing: our OUTPUT does not run that chain.
+        if let Some(maze) = maze.as_ref() {
+            for &(w, e) in rom_data::AIRSHIP_ENTRIES {
+                let entry = rom_data::read_entry(maze, &rom_data::WORLDS[w], e);
+                let obj = u16::from_le_bytes([entry.obj_lo, entry.obj_hi]);
+                assert!(
+                    !rom_data::has_enemy_id(maze, obj, OBJ_TOADANDKING),
+                    "W{}: the shipped airship entry still hosts the Toad-and-King scene \
+                     (obj ${obj:04X}) — then slot 0 IS load-bearing after all, and the marker \
+                     budget in `map_object_slot_budget` is wrong by two slots per world",
+                    w + 1,
+                );
+            }
+        }
 
         // Both ROMs, and the count is asserted: a maze build that quietly
         // failed would leave this checking vanilla twice.
@@ -496,9 +528,12 @@ mod tests {
                      \"have I sent you to the airship yet\" flag",
                     w + 1,
                 );
-                // W8 has no airship, so its slot 1 is fair game for the builder
-                // (`first_usable_map_obj_slot`); W1-W7 must leave it empty for
-                // the rescue to fill.
+                // Slot 1 is empty in every world's ROM table. W8 has no
+                // airship so the builder already uses it
+                // (`first_usable_map_obj_slot`); W1-W7 leave it alone. Note
+                // that is now caution rather than necessity — with the
+                // cutscene retired above, nothing ever writes the airship
+                // there.
                 if w != 7 {
                     assert_eq!(
                         id(1),
