@@ -443,7 +443,9 @@ struct Cli {
     limit_hazards: HazardLimit,
 
     /// Hold the harshest levels out of the shuffle pool (2-3, 5-3, 6-6, 7-5,
-    /// 7-8, 8-1), refilling with beta stages and duplicates of what remains
+    /// 7-8, 8-1), refilling with beta stages and duplicates of what remains.
+    /// Forts 7F2 and 8F1 are made optional rather than removed, unless
+    /// `--deja-vu-forts` is on, which removes them too
     #[arg(long)]
     friendlier_levels: bool,
 
@@ -454,6 +456,15 @@ struct Cli {
     /// way. (MaCobra52's idea.)
     #[arg(long, default_value = "off", value_parser = parse_deja_vu)]
     deja_vu: DejaVuMode,
+
+    /// Deja Vu counts fortresses too, in whatever mode `--deja-vu` is set to.
+    /// Ignored with `--deja-vu off`, and on its own it changes nothing — there
+    /// are as many fortresses as fortress tiles. It bites with
+    /// `--friendlier-levels`, which then drops 7F2 and 8F1 from the map and
+    /// lets a fort you have already beaten take their tiles. 1-F never
+    /// repeats: it holds the warp whistle and its secret exit skips Boom-Boom
+    #[arg(long)]
+    deja_vu_forts: bool,
 
     /// Seed a level-wide chaser into a fraction of levels. A comma-separated
     /// set of `sun`, `lakitu`, `bass`; or `all`; or `off` (default). A level
@@ -631,6 +642,7 @@ fn build_options(cli: &Cli) -> Options {
             limit_hazards: cli.limit_hazards,
             friendlier_levels: cli.friendlier_levels,
             deja_vu: cli.deja_vu,
+            deja_vu_forts: cli.deja_vu_forts,
             wild_injections: cli.wild_injections.0.clone(),
             starting_lives: cli.starting_lives,
             starting_items,
@@ -667,11 +679,16 @@ fn print_summary(options: &Options, seed: u64, output_path: &std::path::Path) {
     );
     eprintln!("  Friendlier levels: {}", if options.friendlier_levels { "on" } else { "off" });
     eprintln!(
-        "  Deja Vu: {}",
+        "  Deja Vu: {}{}",
         match options.deja_vu {
             DejaVuMode::Off => "off",
             DejaVuMode::Double => "double",
             DejaVuMode::Wild => "wild",
+        },
+        if options.deja_vu != DejaVuMode::Off && options.deja_vu_forts {
+            " (forts too)"
+        } else {
+            ""
         }
     );
     eprintln!("  World order: {}", if options.world_order { "on" } else { "off" });

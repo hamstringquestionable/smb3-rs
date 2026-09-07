@@ -11,6 +11,14 @@ deploys.
 
 ### Added
 
+- **Deja Vu counts fortresses.** A fourth pill on the Deja Vu row, toggling on
+  its own rather than as a fourth mode. With Friendlier Levels on as well, the
+  two roughest forts — 7F2 and 8F1 — leave the map entirely instead of being
+  parked out of the way, and the tiles they held go to a fortress you have
+  already beaten. 1F never repeats: it holds the warp whistle, and its secret
+  exit is the one that skips Boom-Boom. On its own the pill changes nothing —
+  there are exactly as many fortresses as there are fortress tiles.
+
 - **World Maze.** A new mode in which the eight world maps stop being a sequence
   and become the rooms of one big maze. Warp pads link them, a fortress can bust
   a lock in a *different* world, and — the part none of it works without — the

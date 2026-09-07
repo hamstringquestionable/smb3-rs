@@ -650,11 +650,28 @@ pub struct Options {
     /// Hold the harshest levels out of the shuffle pool, refilling it with
     /// beta stages (when they are on) and then with duplicates of the levels
     /// that remain. See `FRIENDLIER_BLOCKED_LEVELS` for the list.
+    ///
+    /// It has a fortress half too, `FRIENDLIER_OPTIONAL_FORTS`: 7F2 and 8F1 are
+    /// parked on secret-exit-safe slots so their locks can stay shut — or, with
+    /// [`Options::deja_vu_forts`] on, removed from the map outright.
     #[serde(default)]
     pub friendlier_levels: bool,
     /// How many times one level may appear on the map. See [`DejaVuMode`].
     #[serde(default)]
     pub deja_vu: DejaVuMode,
+    /// Deja Vu counts fortresses too. A modifier on [`Options::deja_vu`]
+    /// rather than an option of its own: it is ignored when that is off, and
+    /// takes its mode from it when it is on.
+    ///
+    /// On its own it still changes nothing — the builder places at most 17
+    /// fortress slots against a pool of exactly 17, so the deck is never
+    /// short. What makes it bite is Friendlier Levels, which with this on
+    /// drops 7F2 and 8F1 from the deck instead of parking them on
+    /// secret-exit-safe slots; the tiles they vacate take a second copy of a
+    /// fortress that stayed. 1-F is never that copy — it holds the warp
+    /// whistle and it is the one fortress whose secret exit skips Boom-Boom.
+    #[serde(default)]
+    pub deja_vu_forts: bool,
     /// Which level-wide chasers may be seeded into a fraction of real levels
     /// (CHR-compatible). Empty = off. See [`WildChaser`].
     #[serde(default)]
@@ -740,6 +757,7 @@ impl Default for Options {
             limit_hazards: HazardLimit::Off,
             friendlier_levels: false,
             deja_vu: DejaVuMode::Off,
+            deja_vu_forts: false,
             wild_injections: Vec::new(),
             starting_lives: default_starting_lives(),
             starting_items: Vec::new(),
