@@ -444,8 +444,8 @@ struct Cli {
 
     /// Hold the harshest levels out of the shuffle pool (2-3, 5-3, 6-6, 7-5,
     /// 7-8, 8-1), refilling with beta stages and duplicates of what remains.
-    /// Forts 7F2 and 8F1 are made optional rather than removed, unless
-    /// `--deja-vu-forts` is on, which removes them too
+    /// Forts 7F2 and 8F1 are held out the same way, so they do not appear at
+    /// all, and their tiles take a second visit to a fort that stayed
     #[arg(long)]
     friendlier_levels: bool,
 
@@ -457,12 +457,10 @@ struct Cli {
     #[arg(long, default_value = "off", value_parser = parse_deja_vu)]
     deja_vu: DejaVuMode,
 
-    /// Deja Vu counts fortresses too, in whatever mode `--deja-vu` is set to.
-    /// Ignored with `--deja-vu off`, and on its own it changes nothing — there
-    /// are as many fortresses as fortress tiles. It bites with
-    /// `--friendlier-levels`, which then drops 7F2 and 8F1 from the map and
-    /// lets a fort you have already beaten take their tiles. 1-F never
-    /// repeats: it holds the warp whistle and its secret exit skips Boom-Boom
+    /// Deja Vu counts fortresses too, in whatever mode `--deja-vu` is set to,
+    /// so a fortress can take two map tiles or none. Ignored with `--deja-vu
+    /// off`. 1-F is always dealt exactly once: it holds the warp whistle, and
+    /// its secret exit skips Boom-Boom
     #[arg(long)]
     deja_vu_forts: bool,
 

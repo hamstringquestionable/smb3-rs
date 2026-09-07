@@ -194,8 +194,7 @@ pub(crate) struct WriteFlags {
     /// Read only when `deja_vu` is on.
     pub deja_vu_forts: bool,
     /// Friendlier Levels: drop `FRIENDLIER_BLOCKED_LEVELS` from the level deck
-    /// and refill it with duplicates of what remains. Its fortress half parks
-    /// `FRIENDLIER_OPTIONAL_FORTS` on secret-exit-safe slots, or drops them from
-    /// the fortress deck when `deja_vu_forts` is on to catch them.
+    /// and `FRIENDLIER_BLOCKED_FORTS` from the fortress deck, refilling both
+    /// with duplicates of what remains.
     pub friendlier_levels: bool,
 }
