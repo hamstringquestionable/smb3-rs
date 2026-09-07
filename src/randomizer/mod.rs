@@ -502,29 +502,25 @@ fn randomize_inner(
         randomize::piranha_rooms::install_treasure_sets(rom);
     }
 
-    // The world maze turns the whistle into fast travel between worlds already
-    // visited, so it is a tool the mode is built around rather than a sequence
-    // break to remove. `remove_whistles` keeps its INTENT — "no skipping ahead"
-    // — and only changes mechanism: a maze whistle can never reach anywhere new.
+    // The maze turns the whistle into fast travel between worlds already
+    // visited, so `remove_whistles`' intent — "no skipping ahead" — is moot
+    // here: a maze whistle can never reach anywhere new.
     //
-    // **Do not make this true for the maze without reworking game over first.**
-    // The whistle is not a convenience here, it is a safety property. The
-    // generator no longer enforces the start-region rule (see
-    // `maze::fill::assign_keys`), so a world's start region may have no walk-out
-    // at all — and game over, airship arrival and whistle travel all deposit the
-    // player on exactly that tile. What stops that stranding anyone is that the
-    // whistle is never consumed, survives a game over, and always has the
-    // spine's first world to return to.
+    // **Forced ON in the maze, not off.** The mode grants a permanent whistle
+    // of its own — `completion_bits`' new-game init writes one into inventory
+    // slot 3, and it is never consumed — so a whistle in a chest, a Hammer Bro
+    // drop or a Toad House is a duplicate of an item the player cannot run out
+    // of: it occupies a slot and does nothing.
     //
-    // If the whistle ever goes, the replacement is to make **game over return
-    // the player to the spine's first world** rather than the one they died in.
-    // Vanilla lands them in place via `GameOver_AlignToStartY`
-    // (`LDA Map_Y_Starts,Y / STA <World_Map_Y,X`), so the change is to set
-    // `World_Num` to the spine head on the continue path before the map
-    // re-inits. That is also the transition signal the packed completion store
-    // already tests (`World_Num != LIVE_WORLD`), so the persistence hooks would
-    // fire correctly for free — the same route whistle travel takes.
-    let remove_whistles = options.remove_whistles && !options.world_maze;
+    // This used to force the flag OFF, which put whistles *back* into the item
+    // pool for the one mode with no use for them, and ignored the player's
+    // setting in the process (it defaults to on).
+    //
+    // Note this flag has **no bearing on the maze's own whistle** — that comes
+    // from the new-game init, not the item pool — and so none on the safety
+    // property that whistle carries. See `world_travel` for that, and for what
+    // would have to change if the mode ever shipped without one.
+    let remove_whistles = options.remove_whistles || options.world_maze;
     if options.chest_items {
         rom.set_tag("items");
         randomize::items::randomize(rom, &mut rng, remove_whistles, piranha_active);

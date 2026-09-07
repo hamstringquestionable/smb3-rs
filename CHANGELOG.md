@@ -36,6 +36,14 @@ deploys.
 
 ### Fixed
 
+- **World Maze: warp whistles stopped cluttering chests.** The mode already
+  gives you a whistle you can never lose or use up, but it was also forcing
+  "Remove Warp Whistles" off — putting whistles back into the chest, Hammer Bro
+  and Toad House pools, where each one was a duplicate of an item you already
+  had, taking up an inventory slot. Measured about 1.6 wasted whistles a seed.
+  The setting is now always on in the maze, and your own choice is no longer
+  quietly ignored.
+
 - **World Maze: taking 1-F's secret exit could end a run.** 1-F's secret exit
   hands you an item and leaves the lock shut, so the game deliberately picks a
   lock you can afford to leave shut. The maze then re-paired every fortress with
