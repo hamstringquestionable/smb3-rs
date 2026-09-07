@@ -853,7 +853,7 @@ function updateChangesSummary() {
 		row.className = "change-row";
 		const labelSpan = document.createElement("span");
 		labelSpan.className = "change-label";
-		labelSpan.textContent = entry.label;
+		labelSpan.textContent = entry.summaryLabel ?? entry.label;
 		const valueSpan = document.createElement("strong");
 		valueSpan.className = "change-value";
 		valueSpan.textContent = formatValue(entry, current);

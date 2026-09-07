@@ -349,6 +349,134 @@ fn test_deja_vu_repeats_levels() {
     }
 }
 
+/// Deja Vu's fortress half, both modes.
+///
+/// The fortress deck is a **top-up, not a redeal**, and the trigger is
+/// Friendlier Levels: 7F2 and 8F1 leave the deck, and the slots they vacate
+/// take a second copy of a fortress that stayed. With a full deck there is no
+/// shortfall and the flag changes nothing, which the first assertion pins.
+///
+/// What has to stay true once it does fire:
+///
+///  - Every fortress slot still gets a fortress, and the same number of them as
+///    the flag-off deal. The draw is a bare `expect`, so a card lost in the
+///    top-up is a panic rather than a missing fortress.
+///  - The removed pair is gone, and nothing else is.
+///  - 1-F is dealt exactly once. It hands over the warp whistle and its secret
+///    exit skips Boom-Boom, so a second copy is both a duplicated item and a
+///    lock nobody can open.
+///  - The mode carries over: `Double` caps a fortress at two tiles, `Wild` does
+///    not.
+///
+/// The pairing itself is checked elsewhere — `lock_keys::assert_one_key_per_lock`
+/// is what says two tiles holding the same fortress still key two locks, and it
+/// holds because a key is a map position, not a level.
+#[test]
+fn test_deja_vu_repeats_fortresses() {
+    let rom = match load_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let pickup = standard_pickup(&rom, &catalog);
+
+    let fort_1f: Vec<usize> = pickup
+        .pool
+        .iter()
+        .enumerate()
+        .filter(|(_, pe)| {
+            let ce = &catalog.entries[pe.catalog_idx];
+            matches!(ce.kind, NodeKind::Fortress)
+                && rom_data::is_chest_level(ce.world_idx, ce.entry_idx)
+        })
+        .map(|(pi, _)| pi)
+        .collect();
+    assert_eq!(fort_1f.len(), 1, "expected exactly one chest-holding fortress (1-F)");
+
+    let deal = |seed: u64, flags: WriteFlags| {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let build = overworld_build::build(
+            &rom,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            standard_build_flags(),
+        );
+        let assignments = assign_pool(
+            &rom,
+            &build,
+            &OverworldData { pickup: &pickup, catalog: &catalog },
+            &mut rng,
+            flags,
+        );
+        assignments
+            .iter()
+            .flat_map(|wa| wa.fortress.iter().map(|a| a.pool_idx))
+            .collect::<Vec<usize>>()
+    };
+
+    for mode in [DejaVuMode::Double, DejaVuMode::Wild] {
+        // Wild only has to *allow* unbounded repeats, so "it repeats at all" is
+        // asserted over the seed range rather than per seed.
+        let mut max_copies = 0usize;
+        let mut ever_repeated = false;
+
+        for seed in 0u64..16 {
+            // Without Friendlier Levels the deck is full, so the flag is inert
+            // — same forts, same order, same RNG stream.
+            assert_eq!(
+                deal(seed, WriteFlags { deja_vu: mode, deja_vu_forts: true, ..Default::default() }),
+                deal(seed, WriteFlags { deja_vu: mode, ..Default::default() }),
+                "{mode:?} seed {seed}: the fort flag moved a deal with a full deck",
+            );
+
+            let flags = WriteFlags {
+                deja_vu: mode,
+                deja_vu_forts: true,
+                friendlier_levels: true,
+                ..Default::default()
+            };
+            let placed = deal(seed, flags);
+            assert_eq!(
+                placed.len(),
+                deal(seed, WriteFlags { friendlier_levels: true, ..Default::default() }).len(),
+                "{mode:?} seed {seed}: the top-up changed how many fortresses were placed",
+            );
+
+            let mut seen: HashMap<usize, usize> = HashMap::new();
+            for &pi in &placed {
+                *seen.entry(pi).or_insert(0) += 1;
+            }
+
+            assert_eq!(
+                seen.get(&fort_1f[0]).copied().unwrap_or(0),
+                1,
+                "{mode:?} seed {seed}: 1-F was dealt {:?} times, not once",
+                seen.get(&fort_1f[0]),
+            );
+
+            for (&pi, &n) in &seen {
+                let name = &catalog.entries[pickup.pool[pi].catalog_idx].name;
+                assert!(
+                    !rom_data::FRIENDLIER_OPTIONAL_FORTS.contains(&name.as_str()),
+                    "{mode:?} seed {seed}: {name} should have left the deck but was dealt",
+                );
+                if mode == DejaVuMode::Double {
+                    assert!(n <= 2, "{mode:?} seed {seed}: {name} dealt {n} times");
+                }
+                max_copies = max_copies.max(n);
+            }
+
+            // Every fortress left in the deck is still dealt: the shortfall is
+            // exactly the duplicates, so distinct + dupes accounts for all of
+            // them and nothing sat the seed out.
+            ever_repeated |= placed.len() > seen.len();
+        }
+
+        assert!(ever_repeated, "{mode:?}: no seed ever produced a duplicate fortress");
+        assert!(max_copies >= 2, "{mode:?}: no fortress was ever repeated across 16 seeds");
+    }
+}
+
 /// The regular-level pool entries that hand out a one-off inventory item —
 /// the chest levels and the W8 hand rooms. (1-F is a chest level too but is a
 /// fortress, so it never sits in the level pool.)
@@ -370,9 +498,11 @@ fn level_pool_unique_items(
         .collect()
 }
 
-/// Friendlier Levels' fortress half: 7F2 then 8F1 are parked on
+/// Friendlier Levels' fortress half, parking path: 7F2 then 8F1 go on
 /// secret-exit-safe slots so their locks can stay shut, leaving them beatable
-/// but off the critical path.
+/// but off the critical path. This is what runs with `deja_vu_forts` off, which
+/// is the default here; `test_deja_vu_repeats_fortresses` covers the removal
+/// path that flag switches on instead.
 ///
 /// Two invariants, and between them they pin the whole degradation story:
 ///
@@ -1291,6 +1421,7 @@ fn test_march_veto_pipeline_writes_registry() {
             shuffle_hammer_bros: true,
             friendlier_levels: false,
             deja_vu: DejaVuMode::Off,
+            deja_vu_forts: false,
         },
     );
 

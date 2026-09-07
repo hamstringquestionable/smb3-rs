@@ -320,6 +320,7 @@ fn randomize_inner(
             piranha: options.piranha_shuffle,
             friendlier_levels: options.friendlier_levels,
             deja_vu: options.deja_vu,
+            deja_vu_forts: options.deja_vu_forts,
         },
     );
 

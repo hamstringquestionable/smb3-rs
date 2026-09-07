@@ -78,7 +78,7 @@ pub(super) fn assign_pool<R: Rng>(
     rng: &mut R,
     flags: WriteFlags,
 ) -> Vec<WorldAssignments> {
-    let WriteFlags { shuffle_hammer_bros, friendlier_levels, deja_vu, .. } = flags;
+    let WriteFlags { shuffle_hammer_bros, friendlier_levels, deja_vu, deja_vu_forts, .. } = flags;
     let pickup = data.pickup;
     let catalog = data.catalog;
     // Partition pool by kind.
@@ -168,9 +168,31 @@ pub(super) fn assign_pool<R: Rng>(
         fort_pool.push(fort_1f_pi);
     }
 
-    // Friendlier Levels, fortress half: park the harshest forts on the safe
-    // slots 1-F did not take, so their locks can stay shut and the player can
-    // route around them.
+    // Whether a fortress may be dealt to more than one tile this run. It gates
+    // the branch below, because taking a fort *out* of the deck is only safe
+    // when something can be dealt twice to fill the hole it leaves.
+    let forts_may_repeat = deja_vu != DejaVuMode::Off && deja_vu_forts;
+
+    // Friendlier Levels, fortress half, with Deja Vu's fort flag on: 7F2 and
+    // 8F1 leave the deck outright, the way `FRIENDLIER_BLOCKED_LEVELS` leaves
+    // the level deck. The slots they vacate are refilled below with a second
+    // copy of a fortress that stayed — which is exactly what beta stages and
+    // duplicate levels do for the level half.
+    //
+    // This is the only thing that ever shortens the fortress deck, and so the
+    // only reason the top-up below has anything to do: the builder places at
+    // most 17 fortress slots against a pool of exactly 17.
+    if friendlier_levels && forts_may_repeat {
+        fort_pool.retain(|&pi| {
+            !rom_data::FRIENDLIER_OPTIONAL_FORTS
+                .contains(&catalog.entries[pickup.pool[pi].catalog_idx].name.as_str())
+        });
+    }
+
+    // Friendlier Levels, fortress half, otherwise: park the harshest forts on
+    // the safe slots 1-F did not take, so their locks can stay shut and the
+    // player can route around them. Still there, still beatable, just not in
+    // the way — which is what the option promises when it cannot remove them.
     //
     // A ladder rather than a set, because supply is finite and 1-F has already
     // taken one. `FRIENDLIER_OPTIONAL_FORTS` is walked in order and each entry
@@ -185,7 +207,7 @@ pub(super) fn assign_pool<R: Rng>(
     // `secret_exit_safe` is computed one lock at a time — two safe locks in one
     // world are not *jointly* guaranteed safe, but nothing here is ever sealed
     // permanently, so the player can always go back and beat one.
-    if friendlier_levels {
+    if friendlier_levels && !forts_may_repeat {
         for &name in rom_data::FRIENDLIER_OPTIONAL_FORTS {
             let Some(&slot) = safe_slots.choose(rng) else {
                 break; // no safe slots left — the rest of the ladder stays required
@@ -288,6 +310,61 @@ pub(super) fn assign_pool<R: Rng>(
         let sources: Vec<usize> =
             level_pool.iter().copied().filter(|&pi| !holds_unique_item(pi)).collect();
         level_pool.extend(sources.choose_multiple(rng, short).copied());
+    }
+
+    // Deja Vu, fortress half. The deck reaches this point already built —
+    // 1-F lifted onto its safe slot, Friendlier Levels' pair taken out — and
+    // this only mutates what is left, the same order the level deck runs in.
+    //
+    // Unlike the level deck this is a **top-up, not a redeal**: every fortress
+    // still in the deck is dealt once, and only the slots left over after that
+    // get a second copy of something. A fortress that sat a seed out would take
+    // its Boom-Boom room off the map entirely, and there are 17 of them against
+    // 62 levels — the level deck can afford to drop a card, this one cannot.
+    //
+    // So a shortfall is what creates repeats, and Friendlier Levels is the only
+    // thing that creates a shortfall. `deja_vu` still picks the mode; the fort
+    // flag only says whether forts join in.
+    //
+    // 1-F is never a source. It hands over the warp whistle (a second copy
+    // hands it over twice) and it is the one fortress whose secret exit skips
+    // Boom-Boom, so a duplicate could land on a slot whose lock it can never
+    // open. When a safe slot existed it was pre-assigned and is not in this
+    // deck at all; when none did it is here as a single card and stays one.
+    if forts_may_repeat {
+        // Exactly the number of `fort_iter.next()` calls the deal below makes:
+        // one per (world, section) that has a fortress slot and was not
+        // pre-assigned. Mirrors that loop rather than counting slots, so the
+        // two cannot drift.
+        let to_fill = build
+            .worlds
+            .iter()
+            .enumerate()
+            .flat_map(|(wi, built)| (0..built.section_count).map(move |sec| (wi, built, sec)))
+            .filter(|&(wi, built, sec)| {
+                built.slots.iter().any(|s| s.kind == SlotKind::Fortress && s.section == sec)
+                    && !preassigned_forts.contains_key(&(wi, sec))
+            })
+            .count();
+        let short = to_fill.saturating_sub(fort_pool.len());
+        let sources: Vec<usize> =
+            fort_pool.iter().copied().filter(|&pi| pi != fort_1f_pi).collect();
+        if short > 0 && !sources.is_empty() {
+            match deja_vu {
+                // Double: without replacement, so no fortress reaches a third
+                // tile. The shortfall can never outrun the pool — it is at most
+                // the two forts taken out of that same pool.
+                DejaVuMode::Double => {
+                    fort_pool.extend(sources.choose_multiple(rng, short).copied());
+                }
+                // Wild: with replacement, so nothing caps the copies.
+                _ => {
+                    for _ in 0..short {
+                        fort_pool.push(*sources.choose(rng).expect("sources is non-empty"));
+                    }
+                }
+            }
+        }
     }
 
     // Shuffle remaining fortress and level pools.

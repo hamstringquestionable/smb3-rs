@@ -412,6 +412,15 @@ mod payload {
         /// How many times one level may appear on the map. Zero is `Off`, so an
         /// older key decodes to the once-each deal it was minted with.
         pub(super) deja_vu: DejaVuMode,
+        /// Deja Vu counts fortresses too. Written verbatim rather than zeroed
+        /// when `deja_vu` is off, which is the opposite of what `maze_wands`
+        /// does below — that field was normalized to keep an *existing* key
+        /// string from moving, and this one is new and false by default, so it
+        /// costs nothing either way. Verbatim wins on the tie: it keeps the
+        /// bool exhaustiveness guard (`flag_key_encodes_every_bool_option`)
+        /// honest, and it round-trips a pill the sender had lit. The writer,
+        /// not the key, is what ignores it with the mode off.
+        pub(super) deja_vu_forts: bool,
         /// World maze: the eight maps become one Metroidvania.
         pub(super) world_maze: bool,
         /// Wands the maze's castle demands, 0-7 — and **only written when
@@ -421,7 +430,7 @@ mod payload {
         pub(super) maze_wands: B3,
 
         // --- Reserve ---
-        // 135 bits. Adding an option is: declare it immediately above this
+        // 134 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off `B19`. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -436,7 +445,7 @@ mod payload {
         #[skip]
         __: B128,
         #[skip]
-        __: B7,
+        __: B6,
     }
 }
 
@@ -478,7 +487,7 @@ impl Options {
             eights_are_wild, troll_pipes, antechamber_shuffle,
             ground, shell, flying, piranhas, ghosts, thwomps, rotodiscs,
             cannons, water, bros, hb_encounters, limit_hazards, friendlier_levels,
-            bro_battle_timer, deja_vu,
+            bro_battle_timer, deja_vu, deja_vu_forts,
             fire_flower, piranha_shuffle, wild_injections,
             starting_lives, world_count, world_maze, maze_wands, starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
@@ -545,6 +554,7 @@ impl Options {
             .with_friendlier_levels(*friendlier_levels)
             .with_bro_battle_timer(*bro_battle_timer)
             .with_deja_vu(*deja_vu)
+            .with_deja_vu_forts(*deja_vu_forts)
             .with_fire_flower(*fire_flower)
             .with_piranha_shuffle(*piranha_shuffle)
             .with_wild_sun(has(WildChaser::Sun))
@@ -643,6 +653,7 @@ impl Options {
             limit_hazards: f.limit_hazards_or_err().unwrap_or_default(),
             friendlier_levels: f.friendlier_levels(),
             deja_vu: f.deja_vu_or_err().unwrap_or_default(),
+            deja_vu_forts: f.deja_vu_forts(),
             fire_flower: f.fire_flower_or_err().unwrap_or_default(),
             piranha_shuffle: f.piranha_shuffle_or_err().unwrap_or_default(),
             wild_injections: chasers,

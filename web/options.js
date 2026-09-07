@@ -4,7 +4,8 @@
 //   - Flag-key apply (writing options back to the DOM)
 //   - Settings persistence (localStorage)
 //   - Live flag-key updates (universal change listener)
-//   - Sub-option visibility (enabledWhen)
+//   - Sub-option visibility (enabledWhen — a value, or a list meaning "any of")
+//   - Pills that ride on another entry's group (pillOf)
 //
 // Adding a new option = one schema entry. The renderer, serializer,
 // applier, and listener pick it up automatically. A load-time parity
@@ -370,13 +371,19 @@ export const SCHEMA = [
 		group: "enemies", inFlagKey: true },
 	{ id: "friendlier_levels", type: "bool", default: false,
 		label: "Friendlier Levels",
-		tip: "Keeps the roughest levels out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta stages if you have those on, otherwise to a second visit to a level already in the seed. Two fortresses, 7F2 and 8F1, are usually made optional rather than removed: still there, still beatable, just not in your way.",
+		tip: "Keeps the roughest levels out of the shuffle — 2-3, 5-3, 6-6, 7-5, 7-8 and 8-1. Their slots go to beta stages if you have those on, otherwise to a second visit to a level already in the seed. Two fortresses, 7F2 and 8F1, are usually made optional rather than removed: still there, still beatable, just not in your way. Turn on Deja Vu\u2019s Forts pill and they go too.",
 		group: "map", inFlagKey: true },
 	{ id: "deja_vu", type: "tri", options: OFF_DOUBLE_WILD, default: "off",
 		label: "Deja Vu", flavor: "Haven't we been here?",
 		tip: "Let the same level show up on more than one tile. Double: every level gets a second copy in the deck, so some show up twice and others sit the seed out. Wild: no limit — a level can turn up over and over, or never. Levels that hand you an item still appear exactly once.",
 		credit: { name: "MaCobra52", url: "https://github.com/macobra52" },
 		group: "map", inFlagKey: true },
+	{ id: "deja_vu_forts", type: "bool", default: false, pillOf: "deja_vu",
+		label: "Forts",
+		summaryLabel: "Deja Vu (forts)",
+		tip: "Deja Vu counts fortresses too. Needs Friendlier Levels to bite: 7F2 and 8F1 drop off the map and a fort you have already beaten takes their place. 1F never repeats.",
+		group: "map", inFlagKey: true,
+		enabledWhen: { deja_vu: ["double", "wild"] } },
 	{ id: "limit_hazards", type: "tri", options: OFF_SOME_ALL, default: "off",
 		label: "Limit Hazards",
 		tip: "Stops swaps from dropping nippers, Ptooies, thwomps, Hot Foots or Bros into levels that weren't built for them. Some allows the occasional one, All allows none. Hazards that were always there stay put.",
@@ -902,8 +909,29 @@ function renderTri(entry) {
 		}));
 		group.appendChild(el("label", { for: inputId }, opt.label));
 	}
+	for (const flag of pillFlagsFor(entry)) {
+		group.appendChild(pillFlagInput(flag));
+		group.appendChild(
+			el("label", { for: domId(flag.id), class: "pill-flag", title: flag.tip }, flag.label),
+		);
+	}
 	wrap.appendChild(group);
 	return wrap;
+}
+
+// A `bool` entry with `pillOf: "<other id>"` is not a row of its own: its
+// single pill rides along on that entry's group, lighting independently of
+// the exclusive choice beside it. Everything else about it — flag-key bit,
+// preset key, saved setting, changes summary — is an ordinary bool.
+function pillFlagsFor(entry) {
+	return SCHEMA.filter(e => e.pillOf === entry.id);
+}
+
+function pillFlagInput(flag) {
+	return el("input", {
+		type: "checkbox", name: radioName(flag.id), id: domId(flag.id),
+		value: "on", checked: !!flag.default,
+	});
 }
 
 // A pill group where the non-"off" pills toggle independently: check Sun,
@@ -1104,7 +1132,7 @@ export function renderOptions(rootEl, hosts = {}) {
 		if (group.note) {
 			fieldset.appendChild(el("p", { class: "note group-note" }, group.note));
 		}
-		const entries = SCHEMA.filter(s => s.group === group.id && !s.host);
+		const entries = SCHEMA.filter(s => s.group === group.id && !s.host && !s.pillOf);
 		for (const entry of entries) {
 			fieldset.appendChild(renderEntry(entry));
 		}
@@ -1124,6 +1152,10 @@ export function renderOptions(rootEl, hosts = {}) {
 export function readValue(entry) {
 	switch (entry.type) {
 		case "bool": {
+			if (entry.pillOf) {
+				const node = document.getElementById(domId(entry.id));
+				return node ? node.checked : entry.default;
+			}
 			const checked = document.querySelector(`input[name="${radioName(entry.id)}"]:checked`);
 			return checked ? checked.value === "on" : entry.default;
 		}
@@ -1164,6 +1196,11 @@ export function writeValue(entry, value) {
 	if (value === undefined) return;
 	switch (entry.type) {
 		case "bool": {
+			if (entry.pillOf) {
+				const node = document.getElementById(domId(entry.id));
+				if (node) node.checked = !!value;
+				break;
+			}
 			const target = !!value ? "on" : "off";
 			const e = document.querySelector(`input[name="${radioName(entry.id)}"][value="${target}"]`);
 			if (e) e.checked = true;
@@ -1288,9 +1325,16 @@ export function applyEnabledWhen() {
 		const enabled = Object.entries(entry.enabledWhen).every(
 			([id, want]) => {
 				const e = SCHEMA.find(s => s.id === id);
-				return e && readValue(e) === want;
+				if (!e) return false;
+				const v = readValue(e);
+				// A list means "any of these" — deja_vu_forts rides on two of
+				// its host's three states, not one.
+				return Array.isArray(want) ? want.includes(v) : v === want;
 			},
 		);
+		// A pill that cannot be lit is not lit: turning its host off clears it,
+		// so the row never shows a flag that changes nothing.
+		if (!enabled && entry.pillOf) writeValue(entry, false);
 		applyEntryEnabled(entry, enabled);
 	}
 }
@@ -1301,6 +1345,12 @@ function applyEntryEnabled(entry, enabled) {
 		const elNode = document.getElementById(id);
 		if (!elNode) continue;
 		elNode.disabled = !enabled;
+		if (entry.pillOf) {
+			// Its wrapper is the host's pill group — greying that out would
+			// grey out the choice it rides on. Only its own label dims.
+			elNode.nextElementSibling?.classList.toggle("pill-disabled", !enabled);
+			continue;
+		}
 		// Walk up to the wrapping label/div so the visual styling matches today
 		const wrap = elNode.closest("label, .radio-group-vertical, .pill-group");
 		if (wrap) wrap.classList.toggle("disabled", !enabled);
@@ -1312,6 +1362,7 @@ function entryDomIds(entry) {
 		case "select":
 			return [domId(entry.id)];
 		case "bool":
+			if (entry.pillOf) return [domId(entry.id)];
 			return BOOL_OPTIONS.map(o => `${domId(entry.id)}-${o.value}`);
 		case "tri":
 		case "radio":
@@ -1340,6 +1391,7 @@ function entryDomIds(entry) {
 export function applyRowStates() {
 	for (const entry of SCHEMA) {
 		if (!["bool", "tri", "toggles"].includes(entry.type)) continue;
+		if (entry.pillOf) continue; // no row of its own — its host tints for it
 		const ids = entryDomIds(entry);
 		const first = document.getElementById(ids[0]);
 		if (!first) continue;
@@ -1391,7 +1443,7 @@ export function saveSettings() {
 		const settings = {};
 		for (const entry of SCHEMA) {
 			const v = readValue(entry);
-			if (entry.type === "bool") {
+			if (entry.type === "bool" && !entry.pillOf) {
 				settings[`radio:${radioName(entry.id)}`] = v ? "on" : "off";
 			} else if (entry.type === "toggles") {
 				// Own key prefix: the value is a list, which no single input

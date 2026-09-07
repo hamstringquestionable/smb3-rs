@@ -642,8 +642,14 @@ row-7/8 shared-bit rule (#212) into play for the new tile. It is not a free knob
    once by position. The branch is the safety net; the intermediate ROM state is
    not worth its own commit.*
 
-3. **Stage 2 — builder capabilities** (out of scope here): fort deja vu, the
-   per-world fort cap, levels-as-keys.
+3. **Stage 2 — builder capabilities** (out of scope here): the per-world fort
+   cap, levels-as-keys. **Fort deja vu landed** (2026-09-07) as
+   `Options::deja_vu_forts`: a fortress on two map cells is two `LockEntry`
+   keys, because a key is a position, so the Y-byte clobber this rework was
+   worried about is simply not reachable any more. It is a top-up rather than a
+   redeal — every fortress is dealt once and only a *short* deck produces
+   repeats — so Friendlier Levels dropping 7F2/8F1 is what makes it visible at
+   all.
 4. **Stage 3 — expand `Map_Removable_Tiles`** for new obstacle types, with its
    own stencil census. Its first customer is the sky vertical lock (see
    "Decision: stage 1 derives" above) — a terrain mismatch that predates this

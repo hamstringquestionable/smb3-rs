@@ -488,24 +488,33 @@ pub(crate) fn is_friendlier_blocked(name: &str) -> bool {
     FRIENDLIER_BLOCKED_LEVELS.contains(&name)
 }
 
-/// Fortresses **Friendlier Levels** tries to make optional, in the order it
-/// tries. Keyed by `NodeCatalog` name — note forts are named `7F2` / `8F1`,
-/// with no dash, unlike the levels above.
+/// The two fortresses **Friendlier Levels** gets out of the player's way, in
+/// the order it tries them. Keyed by `NodeCatalog` name — note forts are named
+/// `7F2` / `8F1`, with no dash, unlike the levels above.
 ///
-/// A fortress can't be held out of its pool the way a level can: every fort
-/// has a lock (asserted in `overworld_build::tests`) and the full roster is a
-/// redeal-screened invariant, so removals never ship. Instead these are parked
-/// on a slot whose lock is `secret_exit_safe` — one the world stays completable
-/// without — which leaves the fort on the map and beatable but no longer on the
-/// critical path.
+/// **Two paths, and which one runs depends on `Options::deja_vu_forts`.**
 ///
-/// **Ordered, and the order is the whole point.** 1-F claims a safe slot first
-/// and unconditionally: its secret exit permanently prevents the lock FX, so a
-/// non-safe slot is a softlock rather than an inconvenience. These two are only
-/// preferences — the fort works normally, and a player who skips it can always
-/// come back — so they take what is left, in this order. Measured over 300
-/// seeds, 99% have the three safe slots this wants; in the rest the tail of the
-/// ladder simply stays required.
+/// *Removed*, when Deja Vu's fort flag is on: they leave the fortress deck the
+/// way `FRIENDLIER_BLOCKED_LEVELS` leaves the level deck, and the tiles they
+/// vacate take a second copy of a fortress that stayed. This is the only thing
+/// in the randomizer that shortens the fortress deck, and it needs that flag
+/// because nothing else can refill it — the deck is drawn with a bare `expect`
+/// and the builder places at most 17 fortress slots against a pool of exactly
+/// 17, so a card removed with no duplicate to replace it is a panic.
+///
+/// *Parked*, otherwise: every fort has a lock (asserted in
+/// `overworld_build::tests`) and the full roster has to be dealt, so instead
+/// these go on a slot whose lock is `secret_exit_safe` — one the world stays
+/// completable without — which leaves the fort on the map and beatable but no
+/// longer on the critical path.
+///
+/// **The parked path is ordered, and the order is the whole point.** 1-F claims
+/// a safe slot first and unconditionally: its secret exit permanently prevents
+/// the lock FX, so a non-safe slot is a softlock rather than an inconvenience.
+/// These two are only preferences — the fort works normally, and a player who
+/// skips it can always come back — so they take what is left, in this order.
+/// Measured over 300 seeds, 99% have the three safe slots this wants; in the
+/// rest the tail of the ladder simply stays required.
 pub(crate) const FRIENDLIER_OPTIONAL_FORTS: &[&str] = &["7F2", "8F1"];
 
 /// True if the given vanilla `(world_idx, entry_idx)` is in [`CHEST_LEVELS`].
