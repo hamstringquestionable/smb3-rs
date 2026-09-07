@@ -38,11 +38,9 @@ deploys.
   bridge it becomes are the wrong color until you leave the map and come back —
   there was no room left in that palette, and the number seemed worth more.
 
-- **World Maze: locks now tell you whether their key is nearby.** A marker sits
-  on any lock the world's own fortresses can open; a lock without one is opened
-  from somewhere else. That's the difference between searching a world you can
-  finish and searching a world you can't, and cross-world keys got much more
-  common in this release.
+  This replaces the marker that briefly sat on locks a world could open itself.
+  The number says everything the marker did and then says where, so the map gets
+  its sprites back.
 
 - **World Maze: World 8 loses its wandering Hammer Bro.** Dark Land is the only
   world whose map is already crowded with tanks, a battleship and an airship,

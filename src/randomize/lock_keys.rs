@@ -245,11 +245,23 @@ pub(crate) const REMOVABLE_PAIRS: &[(u8, u8)] = &[
 
 /// **A lock that says which world holds the fortress that opens it.**
 ///
-/// The rule is the one `maze::writer::stamp_lock_hints` already uses for its
-/// sprite: a digit when the key is somewhere else, a plain lock when it is
-/// here. This only sharpens the answer from "elsewhere" to "world N" — so
+/// A digit when the key is in another world, a plain lock when it is here — so
 /// outside the maze, where every lock is local, not one of these tiles is ever
 /// written.
+///
+/// **This replaced the map-object hint rather than joining it.** `maze::writer`
+/// used to park a HELP bubble on every *local* lock, marking that set because it
+/// was the smaller one and the nine per-world sprite slots could not afford the
+/// other. A tile has no such budget, so the marked set can be the informative
+/// one, and the sprite became a second way of saying strictly less. Its slots go
+/// back to the map.
+///
+/// The property that carried over with it: **absence has to mean exactly one
+/// thing.** A local lock left unmarked for want of a slot used to be
+/// indistinguishable from a cross-world one, which is what
+/// `lock_hint_slots_are_never_short` existed to prevent. Here it is
+/// `the_obstacle_table_never_overflows` asserting that every away lock gets its
+/// digit.
 ///
 /// **Indexed `[orientation][world]`**, where orientation matches
 /// [`HINT_REVEALS`]. The tile indices are the undefined tails that
@@ -1296,7 +1308,6 @@ mod asm_checks {
             return;
         };
         let mut worst = 0usize;
-        let mut degraded = 0usize;
         for seed in 0..seeds() {
             let options = crate::Options {
                 world_maze: true,
@@ -1333,19 +1344,16 @@ mod asm_checks {
                     }
                 }
             }
-            assert!(numbered <= away, "seed {seed}: more numbered cells than away locks");
-            if numbered < away {
-                degraded += away - numbered;
-                assert_eq!(
-                    used,
-                    REMOVABLE_COUNT,
-                    "seed {seed}: {} away lock(s) kept a plain tile with {used} of \
-                     {REMOVABLE_COUNT} rows used — the guard fired with room to spare",
-                    away - numbered
-                );
-            }
+            // **Absence of a digit has to mean one thing.** Every away lock
+            // carries its number, so a lock without one is local — which is
+            // what let the older map-object hint go. A stamp that silently
+            // failed would make absence ambiguous, and nothing else would say.
+            assert_eq!(
+                numbered, away,
+                "seed {seed}: {away} away locks but {numbered} numbered cells"
+            );
         }
-        eprintln!("worst row count {worst}/{REMOVABLE_COUNT}, {degraded} locks degraded");
+        eprintln!("worst row count {worst}/{REMOVABLE_COUNT}");
     }
 
     /// The helper decodes, fits its allocation, and its self-reference resolves.
