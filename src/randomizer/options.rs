@@ -651,9 +651,10 @@ pub struct Options {
     /// beta stages (when they are on) and then with duplicates of the levels
     /// that remain. See `FRIENDLIER_BLOCKED_LEVELS` for the list.
     ///
-    /// It has a fortress half too, `FRIENDLIER_OPTIONAL_FORTS`: 7F2 and 8F1 are
-    /// parked on secret-exit-safe slots so their locks can stay shut — or, with
-    /// [`Options::deja_vu_forts`] on, removed from the map outright.
+    /// It has a fortress half too, `FRIENDLIER_BLOCKED_FORTS`: 7F2 and 8F1 are
+    /// held out of the fortress deck the same way, so they do not appear on the
+    /// map at all, and their tiles take a second visit to a fortress that
+    /// stayed.
     #[serde(default)]
     pub friendlier_levels: bool,
     /// How many times one level may appear on the map. See [`DejaVuMode`].
@@ -663,13 +664,13 @@ pub struct Options {
     /// rather than an option of its own: it is ignored when that is off, and
     /// takes its mode from it when it is on.
     ///
-    /// On its own it still changes nothing — the builder places at most 17
-    /// fortress slots against a pool of exactly 17, so the deck is never
-    /// short. What makes it bite is Friendlier Levels, which with this on
-    /// drops 7F2 and 8F1 from the deck instead of parking them on
-    /// secret-exit-safe slots; the tiles they vacate take a second copy of a
-    /// fortress that stayed. 1-F is never that copy — it holds the warp
-    /// whistle and it is the one fortress whose secret exit skips Boom-Boom.
+    /// It redeals the fortress deck exactly as `deja_vu` redeals the level
+    /// deck — `Double` builds a bag of two copies of each and deals it without
+    /// replacement, `Wild` draws with replacement — so a fortress can take two
+    /// tiles, or none. 1-F is the one card that is seeded into every deal and
+    /// never a source: it holds the warp whistle, and it is the one fortress
+    /// whose secret exit skips Boom-Boom, so a copy could land on a lock it can
+    /// never open.
     #[serde(default)]
     pub deja_vu_forts: bool,
     /// Which level-wide chasers may be seeded into a fraction of real levels

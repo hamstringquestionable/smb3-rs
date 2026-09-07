@@ -12,12 +12,11 @@ deploys.
 ### Added
 
 - **Deja Vu counts fortresses.** A fourth pill on the Deja Vu row, toggling on
-  its own rather than as a fourth mode. With Friendlier Levels on as well, the
-  two roughest forts — 7F2 and 8F1 — leave the map entirely instead of being
-  parked out of the way, and the tiles they held go to a fortress you have
-  already beaten. 1F never repeats: it holds the warp whistle, and its secret
-  exit is the one that skips Boom-Boom. On its own the pill changes nothing —
-  there are exactly as many fortresses as there are fortress tiles.
+  its own rather than as a fourth mode. Fortresses are then dealt the way levels
+  are: Double gives every fort a second copy in the deck, so some turn up twice
+  and others sit the seed out, and Wild lifts the limit. 1F is the exception in
+  both — always exactly once, because it is holding the warp whistle and its
+  secret exit is the one that skips Boom-Boom.
 
 - **World Maze.** A new mode in which the eight world maps stop being a sequence
   and become the rooms of one big maze. Warp pads link them, a fortress can bust
@@ -32,6 +31,15 @@ deploys.
   whistle is how you get around, and it can never take you anywhere new.
 
 ### Changed
+
+- **Friendlier Levels drops 7F2 and 8F1 for real.** They used to be made
+  *optional* — still on the map, still beatable, just parked behind a lock the
+  world could be finished without. That was a workaround for not being able to
+  take a fortress out of the deck at all. Now they are held out the same way the
+  blocked levels are: not on the map, and their tiles go to a second visit to a
+  fortress that stayed. Measured over 120 seeds, that is two second visits in
+  88% of seeds and one in 7%; the rest are maps the builder gave fewer fortress
+  tiles to begin with.
 
 - **World Maze: a fortress now shows where its lock is.** The three fortress
   designs used to be picked at random for variety; now the one a fortress wears
