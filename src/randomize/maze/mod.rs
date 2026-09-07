@@ -468,7 +468,6 @@ impl GlobalState {
     ///
     /// The wand gate is still honoured: `goal_sphere` is only set once `K`
     /// wands are collectable, so this asks "reachable *and* enterable".
-    #[cfg(test)]
     pub(crate) fn winnable_with_lock_sealed(&self, lock: usize) -> bool {
         self.spheres_inner(&HashSet::new(), Some(lock)).goal_sphere.is_some()
     }
@@ -669,6 +668,9 @@ impl Spheres {
 #[derive(Clone, Debug)]
 pub(crate) struct GenReport {
     pub spheres: Spheres,
+    /// Whether 1-F's lock can be left shut — see
+    /// [`fill::keep_one_f_sealable`].
+    pub one_f: fill::OneF,
     pub fill: fill::FillReport,
     pub pads: Vec<graph::PlacedPad>,
     /// Worlds whose start region cannot be escaped with what the player
@@ -690,6 +692,7 @@ pub(crate) fn generate<R: Rng>(
     spine: &[usize],
     wands_required: u8,
     knobs: &graph::Knobs,
+    one_f: Option<FortRef>,
     rng: &mut R,
 ) -> (GlobalState, GenReport) {
     let mut state = GlobalState::from_build(result, spine, wands_required);
@@ -697,7 +700,7 @@ pub(crate) fn generate<R: Rng>(
     let pads = graph::plan_pads(&state, knobs, rng);
     state.add_pads(pads.iter().map(|p| p.edge).collect());
 
-    let fill = fill::assign_keys(&mut state, spine, knobs, rng);
+    let fill = fill::assign_keys(&mut state, spine, knobs, one_f, rng);
 
     // Last-resort safety. `plan_pads` already gave a hub pad to every world
     // that needed one; a world still failing here either had no free site or
@@ -735,5 +738,9 @@ pub(crate) fn generate<R: Rng>(
             (0..state.worlds.len()).filter(|&wi| !state.start_region_escapable(wi)).collect();
     }
 
-    (state, GenReport { spheres, fill, pads, unsafe_worlds })
+    // Last, and after the fallback above, so it judges the assignment that
+    // actually ships. Consumes no RNG.
+    let one_f = fill::keep_one_f_sealable(&mut state, one_f);
+
+    (state, GenReport { spheres, fill, pads, unsafe_worlds, one_f })
 }

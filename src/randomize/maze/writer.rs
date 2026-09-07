@@ -70,6 +70,33 @@ pub(crate) fn stamp_pad_tiles(rom: &mut Rom, state: &GlobalState) {
     }
 }
 
+/// Open every lock the maze decided not to install.
+///
+/// [`MazeLock::fort`](super::MazeLock::fort) documents `None` as "the lock is
+/// not installed — the tile is left as open path", and calls that the harmless
+/// case so a half-finished assignment degrades to a more open maze rather than
+/// an unwinnable one. **That was not true until this existed.**
+/// `overworld_writer::grid` stamps `gap_tile` from the *builder's* lock list,
+/// unconditionally and before the maze decides anything, so an uninstalled lock
+/// shipped as a gate with no key — a permanently sealed gate, which is the one
+/// thing the generator must never produce.
+///
+/// Writing `replace_tile` is the whole of it: that byte is what the builder
+/// recorded as "what this cell looks like once the lock is gone", and it is the
+/// same byte `Map_RemoveTo_Tiles` would have swapped in.
+///
+/// Must run **before** `world_persist::apply`, like the other grid writers: the
+/// packed completion store derives its stencil from the finished grids, and a
+/// lock tile claims a bit that a path tile does not.
+pub(crate) fn open_uninstalled_locks(rom: &mut Rom, state: &GlobalState) {
+    for lock in state.locks.iter().filter(|l| l.fort.is_none()) {
+        rom.write_byte(
+            rom_data::map_tile_offset(lock.world, lock.pos.0, lock.pos.1),
+            lock.replace_tile,
+        );
+    }
+}
+
 /// **Every** lock in the maze, paired with the fortress that opens it, in the
 /// shape the ROM side takes.
 ///

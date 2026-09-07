@@ -10,7 +10,7 @@
 //! it measured; see the note in the parent module.
 
 use rand::SeedableRng;
-use rand::seq::SliceRandom;
+use rand::seq::{IndexedRandom, SliceRandom};
 use rand_chacha::ChaCha8Rng;
 
 use super::graph::{Knobs, PAD_BUDGET};
@@ -102,7 +102,7 @@ fn census_build_swaps(raw: &Rom, seed: u64) -> ((Rom, BuildResult), [bool; 8]) {
 fn generated(raw: &Rom, seed: u64, knobs: &Knobs, k: u8) -> (Rom, GlobalState, GenReport) {
     let (rom, result) = census_build(raw, seed);
     let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
-    let (state, report) = super::generate(&result, &IDENTITY_SPINE, k, knobs, &mut rng);
+    let (state, report) = super::generate(&result, &IDENTITY_SPINE, k, knobs, None, &mut rng);
     (rom, state, report)
 }
 
@@ -1144,7 +1144,8 @@ fn a_short_spine_still_finishes() {
 
             // K cannot exceed the airships the spine actually offers.
             let k = (super::DEFAULT_WANDS_REQUIRED as usize).min(count) as u8;
-            let (state, report) = super::generate(&result, &spine, k, &Knobs::default(), &mut rng);
+            let (state, report) =
+                super::generate(&result, &spine, k, &Knobs::default(), None, &mut rng);
             assert!(
                 report.spheres.solvable,
                 "seed {seed} spine {spine:?}: unwinnable\n{}",
@@ -1329,6 +1330,7 @@ fn the_maze_holds_under_start_airship_swap() {
             &IDENTITY_SPINE,
             super::DEFAULT_WANDS_REQUIRED,
             &Knobs::default(),
+            None,
             &mut rng,
         );
         assert!(
@@ -1683,4 +1685,209 @@ fn per_world_sealable_locks_are_sealable_for_the_maze() {
         println!("   both                         {both}");
         println!("   per-world says safe, maze says NOT: {lost}  <-- the over-promise");
     }
+}
+
+/// **In maze mode, 1-F's safety verdict describes a pairing that no longer
+/// exists.**
+///
+/// `assign.rs` parks the 1-F fortress on a slot whose lock the per-world
+/// builder marked `secret_exit_safe`, and `randomizer::tests::
+/// one_f_lands_on_a_lock_that_can_stay_shut` pins that for standard mode. Then
+/// [`fill`](super::fill) re-pairs every fortress with a different lock. The
+/// fortress 1-F is standing on now opens *some other lock* — one nothing ever
+/// asked the question of, in either sense.
+///
+/// So this is not the over-promise
+/// [`per_world_sealable_locks_are_sealable_for_the_maze`] measures (a verdict
+/// that was true per world and false for the graph). It is a verdict about the
+/// wrong lock.
+///
+/// The model here is faithful to `assign.rs`: choose uniformly among the locks
+/// the builder marked safe, take that lock's fortress as 1-F's slot, run the
+/// real fill, then ask what that fortress opens afterwards and whether the maze
+/// survives it staying shut — at the shipping wand count, since sealability is
+/// K-sensitive.
+///
+/// ```sh
+/// CENSUS_SEEDS=60 cargo test --release --lib one_f_after_the_fill \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn one_f_after_the_fill() {
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(60);
+    let k = super::DEFAULT_WANDS_REQUIRED;
+
+    let (mut checked, mut moved, mut unsafe_after, mut had_safe) = (0usize, 0usize, 0usize, 0usize);
+    let mut outcome: std::collections::BTreeMap<String, usize> = Default::default();
+
+    for seed in 0..seeds {
+        let (_, result) = census_build(&raw, seed);
+        // `assign.rs`'s own pool: every lock the builder marked safe, in world
+        // order, one chosen uniformly.
+        let safe: Vec<(usize, usize)> = (0..8)
+            .flat_map(|wi| {
+                result.worlds[wi]
+                    .locks
+                    .iter()
+                    .filter(|l| l.secret_exit_safe)
+                    .map(move |l| (wi, l.fort_section))
+            })
+            .collect();
+        let Some(&(fw, fs)) = safe.choose(&mut ChaCha8Rng::seed_from_u64(seed ^ 0xF1)) else {
+            continue; // no safe slot: 1-F goes back in the pool, nothing to check
+        };
+        had_safe += 1;
+        let one_f = super::FortRef { world: fw, section: fs };
+        // The lock that fortress opened when the slot was chosen.
+        let before = result.worlds[fw]
+            .locks
+            .iter()
+            .find(|l| l.fort_section == fs)
+            .map(|l| (fw, l.pos))
+            .expect("the safe slot came from a lock");
+
+        let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+        let (state, report) =
+            super::generate(&result, &IDENTITY_SPINE, k, &Knobs::default(), Some(one_f), &mut rng);
+        outcome.entry(format!("{:?}", report.one_f)).and_modify(|n| *n += 1).or_insert(1usize);
+
+        let Some(li) = state.locks.iter().position(|l| l.fort == Some(one_f)) else {
+            continue; // the fortress opens nothing at all
+        };
+        checked += 1;
+        let after = (state.locks[li].world, state.locks[li].pos);
+        if after != before {
+            moved += 1;
+        }
+        if !state.winnable_with_lock_sealed(li) {
+            unsafe_after += 1;
+        }
+    }
+
+    println!("\n=== 1-F after the maze fill, {seeds} seeds, K={k} ===");
+    println!("{had_safe} seeds offered a safe slot; {checked} had 1-F opening a lock afterwards");
+    println!("  the lock it opens CHANGED: {moved}");
+    println!("  and cannot be left shut without ending the run: {unsafe_after}  <-- the bug");
+    println!("  keep_one_f_sealable said: {outcome:?}");
+}
+
+/// **1-F's lock can always be left shut, in maze mode too.**
+///
+/// The standard-mode half of this is
+/// `randomizer::tests::one_f_lands_on_a_lock_that_can_stay_shut`, which checks
+/// the builder's per-world `secret_exit_safe` flag. That flag is not enough
+/// here for two independent reasons, and both were measured before this test
+/// was written:
+///
+/// * `maze::fill` re-pairs every fortress with a different lock, so the flag
+///   ends up describing a lock 1-F no longer opens — the lock moved in **55 of
+///   60 seeds**, and in **7 of 60** the one it landed on could not be sealed.
+/// * `secret_exit_safe` is a *per-world* verdict, and the maze asks a bigger
+///   question. It over-promises on 19% of locks at K=3 and 43% at K=7.
+///
+/// So the property is asserted of the shipping graph at the shipping wand
+/// count, not of the flag. K=7 is in the arm list deliberately: it is where
+/// sealability is scarcest and where a regression would show first.
+#[test]
+fn one_f_can_always_decline_its_lock() {
+    let Some(raw) = load_rom() else { return };
+    let mut checked = 0usize;
+    for seed in 0..census_seeds(8) {
+        let (_, result) = census_build(&raw, seed);
+        // `assign_pool`'s own pool and its own uniform draw.
+        let safe: Vec<(usize, usize)> = (0..8)
+            .flat_map(|wi| {
+                result.worlds[wi]
+                    .locks
+                    .iter()
+                    .filter(|l| l.secret_exit_safe)
+                    .map(move |l| (wi, l.fort_section))
+            })
+            .collect();
+        let Some(&(fw, fs)) = safe.choose(&mut ChaCha8Rng::seed_from_u64(seed ^ 0xF1)) else {
+            continue;
+        };
+        let one_f = super::FortRef { world: fw, section: fs };
+
+        for k in [super::DEFAULT_WANDS_REQUIRED, 7] {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+            let (state, report) = super::generate(
+                &result,
+                &IDENTITY_SPINE,
+                k,
+                &Knobs::default(),
+                Some(one_f),
+                &mut rng,
+            );
+            let Some(li) = state.locks.iter().position(|l| l.fort == Some(one_f)) else {
+                // The lock was removed outright, which is the documented
+                // fallback: no gate, so nothing to strand the player.
+                assert_eq!(
+                    report.one_f,
+                    super::fill::OneF::Opened,
+                    "seed {seed} K={k}: 1-F opens no lock, but the report does not say it was opened"
+                );
+                checked += 1;
+                continue;
+            };
+            assert!(
+                state.winnable_with_lock_sealed(li),
+                "seed {seed} K={k}: 1-F opens the lock at W{} {:?}, which cannot be left shut — \
+                 taking its secret exit ends the run ({:?})",
+                state.locks[li].world + 1,
+                state.locks[li].pos,
+                report.one_f,
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "1-F was never placed; the check is vacuous");
+}
+
+/// **An uninstalled lock ships as open path, not as a sealed gate.**
+///
+/// `MazeLock::fort = None` is documented as the harmless case — a half-finished
+/// assignment should degrade to a more open maze, never an unwinnable one — and
+/// it was not true until `writer::open_uninstalled_locks` existed.
+/// `overworld_writer::grid` stamps `gap_tile` from the *builder's* lock list,
+/// unconditionally and before the maze decides anything, so the cell reaches the
+/// ROM as a gate whatever the maze concluded.
+///
+/// This is the path `fill::OneF::Opened` takes, and it fires on roughly one seed
+/// in sixty — far too rare to be covered by chance, so the situation is
+/// constructed rather than searched for.
+#[test]
+fn an_uninstalled_lock_becomes_open_path() {
+    let Some(raw) = load_rom() else { return };
+    let (mut rom, mut state, _) =
+        generated(&raw, 1, &Knobs::default(), super::DEFAULT_WANDS_REQUIRED);
+    assert!(!state.locks.is_empty(), "seed 1 placed no locks; the check would be vacuous");
+
+    let lock = state.locks[0].clone();
+    let offset = crate::randomize::rom_data::map_tile_offset(lock.world, lock.pos.0, lock.pos.1);
+    assert_ne!(lock.gap_tile, lock.replace_tile, "a lock whose two tiles agree proves nothing");
+
+    // What `overworld_writer::grid` puts there, for every lock, always.
+    rom.write_byte(offset, lock.gap_tile);
+    state.locks[0].fort = None;
+
+    // The lock contributes no key, which is the half that already worked...
+    let keys = super::writer::lock_keys(&state);
+    assert!(
+        !keys.iter().any(|e| e.target_world == lock.world && e.target_pos == lock.pos),
+        "an uninstalled lock emitted a key entry"
+    );
+    // ...and this is the half that did not: without it the cell stays a gate
+    // that nothing in the game can ever open.
+    super::writer::open_uninstalled_locks(&mut rom, &state);
+    assert_eq!(
+        rom.read_byte(offset),
+        lock.replace_tile,
+        "W{} {:?} shipped as gap tile {:#04X} with no key — a permanently sealed gate",
+        lock.world + 1,
+        lock.pos,
+        lock.gap_tile,
+    );
 }

@@ -94,6 +94,8 @@ pub(crate) struct FillReport {
     pub foreign_locks: usize,
     /// Spine distance between a foreign lock and its fort, summed.
     pub foreign_span: usize,
+    /// Swap proposals declined because they would have moved 1-F's pair.
+    pub pinned_skips: usize,
 }
 
 /// Reassign which fortress opens which lock, biased by
@@ -104,12 +106,26 @@ pub(crate) fn assign_keys<R: Rng>(
     state: &mut GlobalState,
     spine: &[usize],
     knobs: &Knobs,
+    one_f: Option<FortRef>,
     rng: &mut R,
 ) -> FillReport {
     let mut report = FillReport::default();
     if state.locks.len() < 2 {
         return report;
     }
+
+    // The one pair the fill may not touch. `assign_pool` has already written
+    // the 1-F fortress level onto this slot on the strength of its lock being
+    // safe to leave shut; permuting that pairing is what makes the verdict
+    // describe a lock 1-F no longer opens (measured: the lock changed in 55 of
+    // 60 seeds, and 7 of 60 ended up unsealable).
+    //
+    // Pinning is not the whole fix, because `secret_exit_safe` is a per-world
+    // verdict and the maze asks a bigger question — see
+    // [`keep_one_f_sealable`], which checks the pinned pair and repairs it when
+    // the per-world flag over-promised.
+    let pinned: Option<usize> =
+        one_f.and_then(|f| state.locks.iter().position(|l| l.fort == Some(f)));
 
     // Spine position, so "far" means far along the player's route rather than
     // far in ROM order. A key three worlds back is a long walk; a key in the
@@ -151,6 +167,10 @@ pub(crate) fn assign_keys<R: Rng>(
             let [a, b] = w else { continue };
             let (a, b) = (*a, *b);
             if state.locks[a].fort == state.locks[b].fort {
+                continue;
+            }
+            if Some(a) == pinned || Some(b) == pinned {
+                report.pinned_skips += 1;
                 continue;
             }
             report.proposed += 1;
@@ -205,5 +225,89 @@ pub(crate) fn assign_keys<R: Rng>(
             report.foreign_span += spine_pos[f.world].abs_diff(spine_pos[lock.world]);
         }
     }
+
+    for lock in &state.locks {
+        if let Some(f) = lock.fort
+            && f.world != lock.world
+        {
+            report.foreign_locks += 1;
+            report.foreign_span += spine_pos[f.world].abs_diff(spine_pos[lock.world]);
+        }
+    }
     report
+}
+
+/// What honouring 1-F's slot came to on one seed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum OneF {
+    /// No 1-F fortress on the map, or it opens nothing — nothing to protect.
+    Absent,
+    /// The pinned pair survived and the maze agrees it can stay shut.
+    Held,
+    /// The per-world verdict over-promised; 1-F was re-paired with a lock the
+    /// maze can seal.
+    Repaired,
+    /// No lock in the game can be left shut while 1-F stands where it does, so
+    /// 1-F's lock was **removed** instead — the gate becomes open path and the
+    /// fortress opens nothing. That costs the map-legibility rule (a fortress
+    /// whose beat says nothing) on the rare seed, and buys back the only
+    /// failure a maze cannot recover from.
+    Opened,
+}
+
+/// **1-F's lock must be one the player can decline to open.**
+///
+/// Its secret exit hands out an item and skips the crystal ball, so the
+/// fortress is beaten and the lock stays shut. That is a choice the mode keeps
+/// — sometimes the lock is worth more than the item — and the only requirement
+/// is that taking it can never end the run.
+///
+/// Pinning the pair through the fill is necessary but not sufficient.
+/// `secret_exit_safe` is the **per-world** verdict `WorldState::completable_
+/// sealed` gives, and the maze asks a bigger question: with that lock sealed
+/// forever, is the castle still reachable *and* are K airship docks still
+/// reachable, across all eight worlds. Measured, the per-world flag
+/// over-promises on 19% of locks at K=3 and 43% at K=7
+/// (`per_world_sealable_locks_are_sealable_for_the_maze`), because sealing a
+/// lock can strand an airship the wand count needs.
+///
+/// So: check the pinned pair, and if the flag over-promised, hand 1-F a
+/// different lock. Its fortress SLOT cannot move — `assign_pool` has already
+/// written that level into the pointer tables — but which lock that fortress
+/// opens is still the maze's to decide, and a swap keeps the fort/lock
+/// bijection for free.
+///
+/// **Consumes no RNG**, deliberately: it runs after every other decision, and a
+/// draw here would shift every downstream feature's stream on the seeds that
+/// happen to need a repair.
+pub(crate) fn keep_one_f_sealable(state: &mut GlobalState, one_f: Option<FortRef>) -> OneF {
+    let Some(fort) = one_f else { return OneF::Absent };
+    let Some(li) = state.locks.iter().position(|l| l.fort == Some(fort)) else {
+        return OneF::Absent;
+    };
+    if state.winnable_with_lock_sealed(li) {
+        return OneF::Held;
+    }
+    for lj in 0..state.locks.len() {
+        if lj == li {
+            continue;
+        }
+        swap_forts(&mut state.locks, li, lj);
+        // After the swap 1-F opens `lj`, so `lj` is the lock that has to be
+        // sealable — and the maze still has to work with everything open.
+        let (wa, wb) = (state.locks[li].world, state.locks[lj].world);
+        let safe =
+            state.start_region_escapable(wa) && (wb == wa || state.start_region_escapable(wb));
+        if safe && state.spheres().solvable && state.winnable_with_lock_sealed(lj) {
+            return OneF::Repaired;
+        }
+        swap_forts(&mut state.locks, li, lj);
+    }
+    // Nothing in the game can be sealed while 1-F stands here. Take the lock
+    // out rather than ship a secret exit that ends the run: removing a gate
+    // only ever adds reachability, so solvability and every start region are
+    // safe by construction. `writer::open_uninstalled_locks` is what makes the
+    // tile agree.
+    state.locks[li].fort = None;
+    OneF::Opened
 }

@@ -142,6 +142,35 @@ impl LockPairing {
     /// two locks in a world share a section. In maze mode this is only the
     /// *starting* assignment — `maze::fill` permutes it and
     /// `maze::writer::lock_keys` emits the result instead of this.
+    /// Where the 1-F fortress ended up, as `(world, fort_section)`.
+    ///
+    /// 1-F's secret exit hands out an item and skips the crystal ball, so the
+    /// fortress is beaten and its lock stays shut. [`assign::assign_pool`]
+    /// parks it on a slot whose lock the builder marked `secret_exit_safe`, but
+    /// it chooses **uniformly among those slots with its own RNG** — so a later
+    /// pass that wants to honour the choice has to be told which slot it was.
+    /// Re-deriving it would just pick a different one.
+    ///
+    /// The world maze is that pass: `maze::fill` re-pairs every fortress with a
+    /// different lock, which throws away the verdict this slot was chosen for.
+    ///
+    /// `fortress` is indexed by section, the same key
+    /// `LockAssignment::fort_section` uses, so the index IS the answer.
+    pub(crate) fn one_f_slot(&self, data: &OverworldData) -> Option<(usize, usize)> {
+        for (wi, wa) in self.assignments.iter().enumerate() {
+            for (section, a) in wa.fortress.iter().enumerate() {
+                let entry = &data.catalog.entries[data.pickup.pool[a.pool_idx].catalog_idx];
+                let is_1f = entry.level_entry.as_ref().is_some_and(|le| {
+                    u16::from_le_bytes([le.obj_lo, le.obj_hi]) == FORTRESS_1F_OBJ_PTR
+                });
+                if is_1f {
+                    return Some((wi, section));
+                }
+            }
+        }
+        None
+    }
+
     pub(crate) fn lock_entries(&self, build: &BuildResult) -> Vec<LockEntry> {
         let mut out = Vec::new();
         for (wi, wa) in self.assignments.iter().enumerate() {

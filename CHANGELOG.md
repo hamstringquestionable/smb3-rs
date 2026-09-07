@@ -25,6 +25,14 @@ deploys.
 
 ### Fixed
 
+- **World Maze: taking 1-F's secret exit could end a run.** 1-F's secret exit
+  hands you an item and leaves the lock shut, so the game deliberately picks a
+  lock you can afford to leave shut. The maze then re-paired every fortress with
+  a different lock, so the lock 1-F actually opened was one nobody had checked —
+  and in about one seed in eight it was a lock the run could not continue
+  without. 1-F now keeps its checked pairing, and the check is made against the
+  whole maze rather than a single world.
+
 - A fortress on World 6 opened its lock onto a cloud path in the middle of plain
   ground. Vanilla's table stored the sky tile for a lock nowhere near the sky —
   the value looks copied down a row when the table was written — and the wrong

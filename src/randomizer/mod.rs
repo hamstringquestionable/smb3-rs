@@ -365,11 +365,21 @@ fn randomize_inner(
         // K cannot exceed the airships the spine offers: a shorter spine means
         // fewer than seven wands exist in the game at all.
         let wands = options.maze_wands.min(spine.len().saturating_sub(1) as u8);
+        // Which fortress slot `assign_pool` gave 1-F, so the fill leaves that
+        // one pairing alone. It picks uniformly among the slots the builder
+        // marked `secret_exit_safe`, with its own RNG, so this has to be read
+        // back rather than re-derived — and without it the fill re-pairs the
+        // fortress with a lock nobody ever vetted (measured: the lock moved in
+        // 55 of 60 seeds, and in 7 of 60 the secret exit ended the run).
+        let one_f = lock_pairing
+            .one_f_slot(&data)
+            .map(|(world, section)| randomize::maze::FortRef { world, section });
         let (state, _report) = randomize::maze::generate(
             &build,
             &spine,
             wands,
             &randomize::maze::graph::Knobs::default(),
+            one_f,
             &mut rng,
         );
         // **The maze owns the whole lock/fortress assignment, not half of it.**
@@ -402,6 +412,10 @@ fn randomize_inner(
         // nothing downstream shifts either way.
         maze_lock_keys = Some(randomize::maze::writer::lock_keys(&state));
 
+        // Before `world_persist` for the same reason as every other grid
+        // writer: the packed store's stencil is derived from the finished
+        // grids.
+        randomize::maze::writer::open_uninstalled_locks(rom, &state);
         randomize::maze::writer::stamp_pad_tiles(rom, &state);
         rom.set_tag("wand_gate");
         randomize::wand_gate::apply(rom, wands);
