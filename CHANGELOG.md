@@ -31,6 +31,12 @@ deploys.
   World 8 — the ones that open the way to Bowser. Worth knowing before you
   decide a fortress isn't worth the detour.
 
+- **World Maze: a lock now tells you which world its key is in.** A lock opened
+  from another world wears that world's number; a lock with no number is opened
+  by a fortress in the world you're standing in. So a locked path is no longer a
+  question, it's a destination. (Locks that sit on a bridge keep the plain water
+  gap and fall back on the older nearby-or-not marker.)
+
 - **World Maze: locks now tell you whether their key is nearby.** A marker sits
   on any lock the world's own fortresses can open; a lock without one is opened
   from somewhere else. That's the difference between searching a world you can

@@ -214,6 +214,11 @@ const PRG012_SCAN_COUNT: usize = PRG012_FILE_BASE + 0x54B;
 /// * **It must be walkable the way the corridor runs.** `Map_Object_Valid_*`
 ///   decides that; see `rom_data::gap_tile_for`, which picks the obstacle from
 ///   the path tile underneath for exactly this reason.
+///
+/// These are the base rows — terrain rather than choices: the rocks, the three
+/// fortress variants, the water gap, and the three plain locks a lock wears when
+/// its fortress is in the same world. [`obstacle_vocabulary`] adds the numbered
+/// locks on top, and [`removable_rows`] picks the ones a given map earns.
 #[rustfmt::skip]
 pub(crate) const REMOVABLE_PAIRS: &[(u8, u8)] = &[
     (0x51, 0x45), // rock (horizontal) -> horizontal path
@@ -236,10 +241,80 @@ pub(crate) const REMOVABLE_PAIRS: &[(u8, u8)] = &[
     (0x6A, 0x60), // large fortress    -> rubble
 ];
 
-/// How many entries the scan walks. Read by [`super::completion_bits`] too — its
-/// `IS_COMPLETABLE` runs the engine's own scan over this same table, so the two
-/// counts must be one fact.
-pub(crate) const REMOVABLE_COUNT: usize = REMOVABLE_PAIRS.len();
+// --- Numbered locks -----------------------------------------------------
+
+/// **A lock that says which world holds the fortress that opens it.**
+///
+/// The rule is the one `maze::writer::stamp_lock_hints` already uses for its
+/// sprite: a digit when the key is somewhere else, a plain lock when it is
+/// here. This only sharpens the answer from "elsewhere" to "world N" — so
+/// outside the maze, where every lock is local, not one of these tiles is ever
+/// written.
+///
+/// **Indexed `[orientation][world]`**, where orientation matches
+/// [`HINT_REVEALS`]. The tile indices are the undefined tails that
+/// [`ML_RANGE`]'s bounds released: `$6B-$7A` in page 1, `$EC-$F3` in page 3.
+/// Page matters — it *is* the palette, and a row whose two tiles disagree about
+/// it draws the revealed path in the lock's colors until the next map reload.
+/// So the horizontal and vertical sets sit in page 1 with `$45`/`$46`, and the
+/// sky set in page 3 with `$DA`, exactly as `$56` and `$E4` already do.
+const HINT_TILES: [[u8; 8]; 3] = [
+    [0x6B, 0x6C, 0x6D, 0x6E, 0x6F, 0x70, 0x71, 0x72], // horizontal
+    [0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A], // vertical
+    [0xEC, 0xED, 0xEE, 0xEF, 0xF0, 0xF1, 0xF2, 0xF3], // sky
+];
+
+/// What each orientation's numbered lock reveals, and the plain lock it stands
+/// in for. Same order as [`HINT_TILES`].
+const HINT_REVEALS: [(u8, u8); 3] = [
+    (0x56, 0x45), // horizontal lock -> horizontal path
+    (0x54, 0x46), // vertical lock   -> vertical path
+    (0xE4, 0xDA), // sky lock        -> sky path
+];
+
+/// The metatile: the padlock's three surviving quadrants, then the digit.
+///
+/// `$B6 $B8 $B7` are the lock's upper-left, upper-right and lower-left. The
+/// lower-right is the level panel's own digit quadrant, which is why this costs
+/// no CHR at all — the patterns are already in the bank, drawn by every numbered
+/// level on the map. It replaces the padlock's bottom-right corner, and the
+/// digit arrives framed by the panel's border, reading as a tag on the lock.
+const HINT_LOCK_QUADRANTS: [u8; 3] = [0xB6, 0xB8, 0xB7];
+
+/// The level panels' lower-right quadrants for worlds 1-8: the digit glyphs.
+///
+/// Pinned to the ROM by `the_digit_quadrants_are_the_panels_own`, which reads
+/// them back out of metatiles `$03..$0A` rather than trusting this list.
+const HINT_DIGITS: [u8; 8] = [0x8F, 0xA4, 0xA5, 0xA6, 0xA7, 0xC8, 0xC9, 0xCA];
+
+/// Slots in the removable table, and so in the mirror.
+///
+/// **Fixed, and deliberately not "however many this seed needs".** Holding the
+/// length constant keeps every scan count a compile-time constant — vanilla's
+/// `LDX #` at `$A54B`, `FORTRESS_FX`'s, and `IS_COMPLETABLE`'s — so none of them
+/// has to be patched per run and none can drift. Unused slots repeat row 0,
+/// which is harmless: a duplicate can only be matched by a tile the original
+/// already matches, and to the same replacement.
+///
+/// 24 is what the mirror's run holds: 149 bytes of `$FF` at [`FS_LOCK_MIRROR`]
+/// to the end of PRG011, at six bytes an entry.
+pub(crate) const REMOVABLE_COUNT: usize = 24;
+
+/// Every obstacle tile that could ever be written, base rows and numbered locks
+/// together.
+///
+/// This is the *vocabulary*, not the table. `is_completion_unsafe` asks about
+/// tile bytes rather than about a particular seed, so it needs all of them; the
+/// table written to the ROM holds only the ones a given map actually uses.
+pub(crate) fn obstacle_vocabulary() -> Vec<(u8, u8)> {
+    let mut out = REMOVABLE_PAIRS.to_vec();
+    for (o, tiles) in HINT_TILES.iter().enumerate() {
+        for &tile in tiles {
+            out.push((tile, HINT_REVEALS[o].1));
+        }
+    }
+    out
+}
 
 // --- The M/L range ------------------------------------------------------
 
@@ -674,21 +749,20 @@ fn away_target(map: &CompletionMap, world: usize, pos: (usize, usize)) -> Option
 /// Move `Map_Removable_Tiles` / `Map_RemoveTo_Tiles` out of the wall they are
 /// built into, and point vanilla's scan at the copy.
 ///
-/// **This changes no behavior.** The bytes written are [`REMOVABLE_PAIRS`],
-/// which `the_relocated_tables_match_vanilla` pins to the ROM's own eight
-/// entries, and the scan count is unchanged. What it buys is headroom: at the
-/// vanilla address the next byte belongs to `Map_Completable_Tiles`, so the
-/// table could not gain an entry without overwriting a live one.
+/// At the vanilla address the next byte belongs to `Map_Completable_Tiles`, so
+/// the table could not gain an entry without overwriting a live one. Here it
+/// can, and `rows` is what goes in it.
 ///
 /// Three writes. The two tables (into a fixed stride, so the second never has to
 /// move again), then the two absolute operands at `$A54D` and `$A557`, then the
 /// `LDX #` at `$A54B` that sizes the descending scan.
 ///
-/// Idempotent: it writes a value derived from Rust, never from the ROM, so
-/// running twice is running once. Vanilla's bytes are deliberately left where
-/// they are — nothing reads them afterwards, and leaving them makes the
-/// relocation auditable against an unpatched ROM.
-pub(crate) fn relocate_removable_tables(rom: &mut Rom) {
+/// Idempotent: `rows` is derived from the map, never from the table, so running
+/// twice is running once. Vanilla's bytes are deliberately left where they are —
+/// nothing reads them afterwards, and leaving them makes the relocation
+/// auditable against an unpatched ROM.
+pub(crate) fn relocate_removable_tables(rom: &mut Rom, rows: &[(u8, u8)]) {
+    assert_eq!(rows.len(), REMOVABLE_COUNT, "the table is a fixed {REMOVABLE_COUNT} slots");
     const {
         assert!(
             REMOVABLE_COUNT <= REMOVABLE_STRIDE,
@@ -696,7 +770,7 @@ pub(crate) fn relocate_removable_tables(rom: &mut Rom) {
              overwritten. Raise REMOVABLE_STRIDE and the allocation with it."
         )
     };
-    for (i, &(from, to)) in REMOVABLE_PAIRS.iter().enumerate() {
+    for (i, &(from, to)) in rows.iter().enumerate() {
         rom.write_byte(MAP_REMOVABLE_TILES + i, from);
         rom.write_byte(MAP_REMOVE_TO_TILES + i, to);
     }
@@ -710,7 +784,104 @@ pub(crate) fn relocate_removable_tables(rom: &mut Rom) {
     install_ml_range(rom);
 }
 
-/// Bound the top of each page's M/L window, and point the reload's test at the
+/// **A row for every obstacle actually standing on the map, and nothing else.**
+///
+/// The vocabulary is larger than the table — 33 possible obstacles against 24
+/// slots — and that is fine, because no single map can wear more than a few of
+/// it. The bound is not a hope:
+///
+/// * At most 2 rocks, 3 fortress variants and 1 water gap. That is 6.
+/// * **Every lock contributes at most one row.** The home locks share the three
+///   plain rows between them however many there are; each away lock adds its
+///   `(world, orientation)` variant, and locks that agree on both share one. A
+///   build pairs its 17 fortresses with 17 locks, so lock rows are capped at 17.
+///
+/// 6 + 17 = 23, against 24 slots. The assert below is the guard if that ever
+/// stops being true — a truncated table would silently leave a lock unopenable,
+/// which is the worst failure this feature has.
+///
+/// Reading it off the finished grids rather than tracking it through placement
+/// means the table describes the map that shipped, not the map we intended.
+pub(crate) fn removable_rows(rom: &Rom) -> Vec<(u8, u8)> {
+    let mut present = [false; 256];
+    for world in 0..8 {
+        let info = &rom_data::MAP_TILE_GRIDS[world];
+        for screen in 0..info.screens {
+            for row in 0..9 {
+                for col in 0..16 {
+                    let off = rom_data::map_tile_offset(world, row, screen * 16 + col);
+                    present[rom.read_byte(off) as usize] = true;
+                }
+            }
+        }
+    }
+
+    let mut rows: Vec<(u8, u8)> =
+        obstacle_vocabulary().into_iter().filter(|&(tile, _)| present[tile as usize]).collect();
+    assert!(
+        rows.len() <= REMOVABLE_COUNT,
+        "{} obstacles on the map but only {REMOVABLE_COUNT} table slots — some lock would \
+         never open. See `removable_rows` for why this was thought impossible.",
+        rows.len()
+    );
+
+    // Unused slots repeat the first row rather than sitting as `$FF`: the scan
+    // is sized by a constant and walks every slot, and `$FF` is a real tile.
+    let pad = *rows.first().unwrap_or(&REMOVABLE_PAIRS[0]);
+    rows.resize(REMOVABLE_COUNT, pad);
+    rows
+}
+
+/// Give every away lock a numbered tile, and define the metatiles it needs.
+///
+/// An away lock is one whose fortress stands in another world, which outside the
+/// maze never happens — so this is a no-op for an ordinary seed, and not one
+/// numbered tile is defined.
+///
+/// The digit is the *fortress's* world, because that is the question the player
+/// is asking: not where am I, but where do I have to go. A local lock keeps the
+/// plain tile, and the absence of a digit is itself the answer.
+fn stamp_numbered_locks(rom: &mut Rom, entries: &[LockEntry]) {
+    for e in entries.iter().filter(|e| e.is_away()) {
+        let off = rom_data::map_tile_offset(e.target_world, e.target_pos.0, e.target_pos.1);
+        let plain = rom.read_byte(off);
+        let Some(orientation) = HINT_REVEALS.iter().position(|&(lock, _)| lock == plain) else {
+            // **The water gap keeps its plain tile, and has to.** A lock landing
+            // on a bridge wears `$9D`, which is page 2 — and page 2 has no
+            // undefined metatile indices at all, so there is nowhere to put a
+            // numbered variant that reveals `$B3` without crossing a palette
+            // page. Those locks fall back on the maze's sprite hint, which says
+            // "elsewhere" without saying where.
+            //
+            // Anything else here is either this function run twice or a pairing
+            // bug, and neither should pass quietly.
+            debug_assert!(
+                plain == rom_data::WATER_GAP_TILE
+                    || HINT_TILES.iter().any(|set| set.contains(&plain)),
+                "away lock at {:?} in W{} wears {plain:#04X}, which is no lock tile",
+                e.target_pos,
+                e.target_world + 1
+            );
+            continue;
+        };
+        let tile = HINT_TILES[orientation][e.key_world];
+        rom.write_byte(off, tile);
+        write_hint_metatile(rom, tile, e.key_world);
+    }
+}
+
+/// Define one numbered lock's metatile: three quadrants of padlock and a digit.
+///
+/// The quadrant planes are stored **UL, LL, UR, LR** — not in row order — which
+/// is the same trap [`PATTERN_QUADRANT_ORDER`] exists for on the read side.
+fn write_hint_metatile(rom: &mut Rom, tile: u8, world: usize) {
+    let [ul, ur, ll] = HINT_LOCK_QUADRANTS;
+    for (plane, pattern) in [ul, ll, ur, HINT_DIGITS[world]].into_iter().enumerate() {
+        rom.write_byte(PRG012_FILE_BASE + plane * 256 + tile as usize, pattern);
+    }
+}
+
+/// Bound the top of each page's M/L range, and point the reload's test at the
 /// helper that does it.
 ///
 /// The splice is the same length as what it replaces, so the `BCS` behind it
@@ -755,7 +926,13 @@ fn mirror_bytes(rom: &Rom) -> [u8; MIRROR_LEN] {
 /// They were independent before this rework and had to agree by inspection. Now
 /// they are checked, every run, for free.
 fn assert_mirror_agrees_with_rust(mirror: &[u8; MIRROR_LEN]) {
+    // Only the gap tiles this map actually wears: the table now carries a row
+    // per obstacle present, so a seed with no water gap has no `$9D` row and
+    // there is nothing to agree about.
     for gap in [0x54u8, 0x56, 0xE4, rom_data::WATER_GAP_TILE] {
+        if !mirror[..REMOVABLE_COUNT].contains(&gap) {
+            continue;
+        }
         let from_mirror =
             (0..REMOVABLE_COUNT).find(|&i| mirror[i] == gap).map(|i| mirror[REMOVABLE_COUNT + i]);
         assert_eq!(
@@ -824,8 +1001,11 @@ fn assert_one_key_per_lock(entries: &[LockEntry]) {
 pub fn apply(rom: &mut Rom, entries: &[LockEntry]) {
     assert_one_key_per_lock(entries);
 
-    // Before the mirror, which reads the tables through their new address.
-    relocate_removable_tables(rom);
+    // Order matters and is one-way. The numbered tiles are stamped onto the map
+    // first, because `removable_rows` reads the map to decide what the table
+    // needs; the table is written next, because `mirror_bytes` reads the table.
+    stamp_numbered_locks(rom, entries);
+    relocate_removable_tables(rom, &removable_rows(rom));
 
     let mirror = mirror_bytes(rom);
     assert_mirror_agrees_with_rust(&mirror);
@@ -1056,7 +1236,8 @@ mod asm_checks {
             "the reload's M/L test is not the `CMP $A400,X` / `BCS` this replaces"
         );
 
-        relocate_removable_tables(&mut rom);
+        let rows = removable_rows(&rom);
+        relocate_removable_tables(&mut rom, &rows);
 
         let after = rom.read_range(PRG012_ML_TEST, 5);
         assert_eq!(after[0], 0x20, "JSR");
@@ -1116,9 +1297,10 @@ mod asm_checks {
             eprintln!("SKIP: requires the ROM");
             return;
         };
-        relocate_removable_tables(&mut rom);
+        let rows = removable_rows(&rom);
+        relocate_removable_tables(&mut rom, &rows);
 
-        for (i, &(from, to)) in REMOVABLE_PAIRS.iter().enumerate() {
+        for (i, &(from, to)) in rows.iter().enumerate() {
             assert_eq!(rom.read_byte(MAP_REMOVABLE_TILES + i), from, "removable[{i}]");
             assert_eq!(rom.read_byte(MAP_REMOVE_TO_TILES + i), to, "remove_to[{i}]");
         }
@@ -1251,15 +1433,16 @@ mod asm_checks {
         };
         // The mirror is built from the tables at their randomized address, so
         // this has to stand where `apply` stands: after the relocation.
-        relocate_removable_tables(&mut rom);
+        let rows = removable_rows(&rom);
+        relocate_removable_tables(&mut rom, &rows);
         let mirror = mirror_bytes(&rom);
         assert_mirror_agrees_with_rust(&mirror);
 
-        // The mirror is a copy of the tables, so it must carry every row of
-        // them — including the ones past vanilla's eight.
-        // `the_relocated_tables_match_vanilla` is what pins those eight to the
+        // The mirror is a copy of the table, so it must carry exactly the rows
+        // this map earned — no more, in the same order.
+        // `the_relocated_tables_match_vanilla` is what pins the base rows to the
         // ROM; this only has to prove the copy is faithful and complete.
-        let (obstacles, revealed): (Vec<u8>, Vec<u8>) = REMOVABLE_PAIRS.iter().copied().unzip();
+        let (obstacles, revealed): (Vec<u8>, Vec<u8>) = rows.iter().copied().unzip();
         assert_eq!(&mirror[..REMOVABLE_COUNT], obstacles, "the mirror's obstacle half is wrong");
         assert_eq!(
             &mirror[REMOVABLE_COUNT..2 * REMOVABLE_COUNT],

@@ -1358,9 +1358,10 @@ mod tests {
         // nothing there — the scan would match no obstacle and the stencil would
         // silently come back short. Idempotent, so the randomized arms below are
         // unaffected.
-        let mut rom = rom.clone();
-        super::super::lock_keys::relocate_removable_tables(&mut rom);
-        let rom = &rom;
+        let mut owned = rom.clone();
+        let rows = super::super::lock_keys::removable_rows(&owned);
+        super::super::lock_keys::relocate_removable_tables(&mut owned, &rows);
+        let rom = &owned;
 
         let mut mem = Memory::new();
         mem.set_bytes(MASK_BUILD_CPU, &MASK_BUILD);
@@ -1415,16 +1416,36 @@ mod tests {
         let rom = Rom::from_bytes(&bytes).expect("vanilla ROM parses");
         let mut cpu = cpu_with_routines(&rom);
 
+        // The obstacle table is per-map, so the two are not equal over all 256
+        // bytes and should not be: Rust answers for the whole *vocabulary*
+        // because the builder asks before anything is stamped, while the ROM
+        // carries rows only for obstacles this map actually wears. The two
+        // claims that matter are both directional.
+        let table: Vec<u8> = super::super::lock_keys::removable_rows(&rom)
+            .into_iter()
+            .map(|(obstacle, _)| obstacle)
+            .collect();
+
         for tile in 0..=255u8 {
             cpu.registers.accumulator = tile;
             call_routine(&mut cpu, IS_COMPLETABLE_CPU, "IS_COMPLETABLE");
             let on_cpu = cpu.registers.status.contains(mos6502::registers::Status::PS_CARRY);
-            assert_eq!(
-                on_cpu,
-                is_completion_unsafe(tile),
-                "tile {tile:#04X}: 6502 says {on_cpu}, Rust says {}",
-                is_completion_unsafe(tile)
+            let in_rust = is_completion_unsafe(tile);
+
+            // **Never a false positive.** A tile the console treats as
+            // completable but Rust does not is a cell the builder thought safe
+            // and the engine will act on — which is how a row 7/8 collision
+            // gets shipped.
+            assert!(
+                !(on_cpu && !in_rust),
+                "tile {tile:#04X}: 6502 says completable, Rust does not"
             );
+
+            // And for anything with a row in this ROM's table, exact agreement.
+            if table.contains(&tile) {
+                assert!(on_cpu, "tile {tile:#04X} has a table row but the 6502 says no");
+                assert!(in_rust, "tile {tile:#04X} has a table row but Rust says no");
+            }
         }
     }
 

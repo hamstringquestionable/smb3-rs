@@ -191,7 +191,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         64,
         &["lock_keys"],
         "Map_Removable_Tiles / Map_RemoveTo_Tiles, relocated so they can grow \
-         (64 reserved = 32 entries per table, 41 used — 9 entries in each half, \
+         (64 reserved = 32 entries per table, 56 used — 24 entries in each half, \
          spanning the stride between them)",
     ),
     fs(
@@ -310,7 +310,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["world_travel"],
         "world-maze: whistle fast travel to the next visited world (128 reserved, 34 used)",
     ),
-    fs(0x17F7B, 54, &["lock_keys"], "removable-tile + CHR-quadrant mirror of PRG012"),
+    fs(
+        0x17F7B,
+        144,
+        &["lock_keys"],
+        "removable-tile + CHR-quadrant mirror of PRG012 (24 entries x 6 bytes; the run holds 149)",
+    ),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     fs(0x0382A, 23, &["koopalings"], "koopa_hits: subroutine + defeat JMP + threshold table"),
     fs(0x03841, 13, &["koopalings"], "koopa_collision_guard: skip collision bitmap during invuln"),

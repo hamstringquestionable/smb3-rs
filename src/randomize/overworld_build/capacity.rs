@@ -117,7 +117,10 @@ pub(crate) fn is_completion_unsafe(tile: u8) -> bool {
     if tile >= THRESHOLDS[page] && tile < lock_keys::ML_RANGE_UPPER[page] {
         return true;
     }
-    lock_keys::REMOVABLE_PAIRS.iter().any(|&(obstacle, _)| obstacle == tile)
+    // The whole vocabulary, not the rows a given seed emits: this predicate is
+    // asked during the *build*, before anything is stamped, and it is asked
+    // about tile bytes rather than about a map.
+    lock_keys::obstacle_vocabulary().iter().any(|&(obstacle, _)| obstacle == tile)
 }
 
 /// Collect positions whose tile/slot would be "caught" by the game's
