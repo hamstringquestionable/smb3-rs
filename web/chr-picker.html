@@ -42,6 +42,16 @@ input[type=text], input[type=number], select { background: #0a0a1a; border: 1px 
   <div class="row">
     <label><input type="checkbox" id="hashMode"> title hash icons only</label>
   </div>
+  <div class="row">
+    <label><input type="checkbox" id="mapMode"> world-map sprites only</label>
+  </div>
+  <div class="note" id="mapNote" hidden>Every tile a <strong>world-map</strong>
+  sprite can name — CHR <code>$20-$23</code>, pattern table 1. Every byte in
+  <code>MapObject_Pat1/2</code> is odd, and in 8&times;16 mode bit&nbsp;0 selects
+  that table, so a pick's OAM byte is <em>odd</em>. The map's terrain metatiles
+  index the same 256 tiles, which is why almost nothing is spare: used by neither
+  terrain nor any object are just <strong>five</strong> pairs —
+  <code>$81 $83 $A1 $A3 $F3</code>.</div>
   <div class="row" id="hashPageRow" hidden>
     <label>page <select id="hashPage"></select></label>
   </div>
@@ -127,6 +137,8 @@ const palGridEl = document.getElementById("palgrid");
 const labelEl = document.getElementById("label");
 const mirrorEl = document.getElementById("mirror");
 const hashModeEl = document.getElementById("hashMode");
+const mapModeEl = document.getElementById("mapMode");
+const mapNote = document.getElementById("mapNote");
 const hashPageEl = document.getElementById("hashPage");
 const hashPageRow = document.getElementById("hashPageRow");
 const hashNote = document.getElementById("hashNote");
@@ -263,6 +275,25 @@ function hashMode() {
 	return hashModeEl.checked;
 }
 
+// The four 1 KB pages the world map draws from. Every tile byte in
+// `MapObject_Pat1/2` is ODD, and in 8x16 mode bit 0 selects pattern table 1 —
+// so map objects draw from $1000-$1FFF, which is these pages. The map's
+// terrain metatiles index the same 256 tiles, which is why so few are spare.
+const MAP_SPRITE_FIRST_PAGE = 0x20;
+const MAP_SPRITE_PAGES = 4;
+
+function mapMode() {
+	return mapModeEl.checked;
+}
+
+// OAM tile byte that names a pair on the world map: pattern table 1, so the
+// low bit is SET. The pair is tiles (byte & 0xFE) and that + 1.
+function mapOamTile(absTop) {
+	const idx = absTop - MAP_SPRITE_FIRST_PAGE * TILES_PER_PAGE;
+	if (idx < 0 || idx >= MAP_SPRITE_PAGES * TILES_PER_PAGE) return null;
+	return (idx & 0xfe) | 1;
+}
+
 // Absolute CHR tile -> the OAM tile ID that names it on the title screen, or
 // null if it isn't on an addressable page. ICON_TILES stores the odd (pattern
 // table 1) ID, whose top half is the even tile before it.
@@ -273,9 +304,13 @@ function oamTileId(absTop) {
 }
 
 function view() {
-	const page = hashMode() ? HASH_PAGES[+hashPageEl.value || 0] : Math.max(0, +pageEl.value || 0);
+	const page = hashMode()
+		? HASH_PAGES[+hashPageEl.value || 0]
+		: mapMode()
+			? MAP_SPRITE_FIRST_PAGE
+			: Math.max(0, +pageEl.value || 0);
 	const firstTile = page * TILES_PER_PAGE;
-	const count = hashMode() ? 1 : +pageCountEl.value || 1;
+	const count = hashMode() ? 1 : mapMode() ? MAP_SPRITE_PAGES : +pageCountEl.value || 1;
 	const tiles = Math.min(count * TILES_PER_PAGE, TOTAL_TILES - firstTile);
 	const stride = Math.max(1, +strideEl.value || 16);
 	const pairs = Math.floor(tiles / 2);
@@ -439,6 +474,7 @@ function addPick(r) {
 		flipRight: mirror,
 		pairRows: r.rows,
 		oam,
+		mapOam: mapMode() ? mapOamTile(left) : null,
 		view: { firstTile: v.firstTile, stride: v.stride, col: r.c, row: r.r },
 	});
 	lastEl.textContent = specText(picks[picks.length - 1]);
@@ -450,6 +486,10 @@ function addPick(r) {
 const rustHex = (v) => `0x${hex2(v)}`;
 
 function specText(p) {
+	if (p.mapOam != null) {
+		const note = p.label ? ` // ${p.label}` : "";
+		return `OAM tile ${rustHex(p.mapOam)}  (CHR ${rustHex(p.tiles[0])}/${rustHex(p.tiles[0] + 1)})${note}`;
+	}
 	if (p.oam) {
 		if (p.oam.left == null || p.oam.right == null) {
 			return `// ${p.label || "pick"}: not on an addressable page`;
@@ -519,13 +559,30 @@ hashPageEl.value = "3"; // $7F, where most of the current icon set lives
 
 function syncHashMode() {
 	const on = hashMode();
+	if (on) {
+		mapModeEl.checked = false;
+		mapNote.hidden = true;
+	}
 	hashPageRow.hidden = !on;
 	hashNote.hidden = !on;
-	pageRow.hidden = on;
+	pageRow.hidden = on || mapMode();
 	if (on) strideEl.value = "8"; // 8 pairs/row lines a 64-tile page into 4 rows
 	render();
 }
 hashModeEl.addEventListener("change", syncHashMode);
+
+function syncMapMode() {
+	const on = mapMode();
+	mapNote.hidden = !on;
+	pageRow.hidden = on || hashMode();
+	if (on) {
+		hashModeEl.checked = false;
+		syncHashMode();
+		strideEl.value = "16"; // 16 pairs/row = 8 rows for the whole 256 tiles
+	}
+	render();
+}
+mapModeEl.addEventListener("change", syncMapMode);
 hashPageEl.addEventListener("change", render);
 
 renderSwatches();

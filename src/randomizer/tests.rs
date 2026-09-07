@@ -2025,3 +2025,152 @@ fn one_f_lands_on_a_lock_that_can_stay_shut() {
     }
     assert!(checked > 0, "1-F was never placed; the check is vacuous");
 }
+
+/// **How many map-object slots are actually free, under real options?**
+///
+/// A floating marker sprite — HELP is the model: static, non-interactive, never
+/// defeated — would need one slot per lock in the world it marks. Vanilla's
+/// tables say 4-7 free per world, but vanilla is the wrong instrument: the
+/// Hammer Bro shuffle redistributes 1-3 bros per world, piranha shuffle plants
+/// sprites, and World 8 carries tanks, a battleship and an airship on top.
+///
+/// Slot accounting, from `rom_data::access`: nine slots (0-8); slot 0 always
+/// holds HELP; slot 1 is the runtime airship spawn, reserved in W1-W7 and free
+/// in W8; `RESERVED_DYNAMIC_SLOTS` = 2 are kept empty everywhere for a
+/// level-triggered white mushroom house.
+///
+/// ```sh
+/// CENSUS_SEEDS=30 cargo test --release --lib map_object_slot_budget \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn map_object_slot_budget() {
+    use crate::randomize::overworld_build::RESERVED_DYNAMIC_SLOTS;
+    use crate::randomize::rom_data::{self, MAP_OBJ_IDS_MASTER};
+
+    let Some(raw) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(20);
+
+    // min/sum/worst-case-zero per world
+    let mut free_min = [usize::MAX; 8];
+    let mut free_sum = [0usize; 8];
+    let mut locks_sum = [0usize; 8];
+    let mut home_sum = [0usize; 8];
+    let mut away_sum = [0usize; 8];
+    let (mut short, mut short_rare) = (0usize, 0usize);
+    let (mut short_help, mut short_both) = (0usize, 0usize);
+    let mut plants_sum = [0usize; 8];
+    let (mut need_now, mut need_plants) = (0usize, 0usize);
+    let (mut need_help, mut need_all) = (0usize, 0usize);
+
+    for seed in 0..seeds {
+        // Wild is the heaviest arm: `all_on_options` already sets it, and it is
+        // the one that plants the most sprites.
+        let opts = audit_options();
+        let (rom, build) =
+            crate::randomize_rom_with_overworld_capture(raw.output_bytes(), seed, &opts, None)
+                .expect("maze seed should randomize");
+        let entries = crate::randomize::lock_keys::decode_entries(&rom);
+
+        for wi in 0..8 {
+            let used = (0..9)
+                .filter(|&slot| {
+                    rom.read_byte(rom_data::map_obj_slot_offset(&rom, MAP_OBJ_IDS_MASTER, wi, slot))
+                        != 0
+                })
+                .count();
+            // Free slots a marker could take: total, minus occupied, minus the
+            // dynamic-spawn buffer, minus slot 1 where it is reserved.
+            let reserved_low = usize::from(wi != rom_data::W8_IDX);
+            let free = 9usize
+                .saturating_sub(used)
+                .saturating_sub(RESERVED_DYNAMIC_SLOTS)
+                .saturating_sub(reserved_low);
+            free_min[wi] = free_min[wi].min(free);
+            free_sum[wi] += free;
+            let locks = build.worlds[wi].locks.len();
+            locks_sum[wi] += locks;
+            // A "home" entry decodes its target, and its key is in the same
+            // world; everything else in this world is foreign. Absence carries
+            // meaning either way, so only the RARER kind needs a marker.
+            let home = entries
+                .iter()
+                .filter(|e| !e.away && e.key_world == wi && e.target.is_some())
+                .count();
+            let away = locks.saturating_sub(home);
+            home_sum[wi] += home;
+            away_sum[wi] += away;
+            if free < locks {
+                short += 1;
+            }
+            if free < home.min(away) {
+                short_rare += 1;
+            }
+            // What-if: HELP's slot 0 reclaimed (~7 bytes of NOPs in
+            // `TAndK_WaitPlayerButtonA`, which also makes the airship dock
+            // unconditionally repeatable), and our own 2-slot buffer dropped.
+            if free + 1 < home.min(away) {
+                short_help += 1;
+            }
+            if free + 3 < home.min(away) {
+                short_both += 1;
+            }
+
+            // The shipping proposal: a marker on every FOREIGN lock, naming the
+            // world its key is in; unmarked means the key is home. Markers are
+            // budgeted before piranha plants, which already yield gracefully —
+            // `pick_plant_positions` is best-effort and a skipped plant just
+            // leaves a normal numbered level tile.
+            let plants = (0..9)
+                .filter(|&slot| {
+                    rom.read_byte(rom_data::map_obj_slot_offset(&rom, MAP_OBJ_IDS_MASTER, wi, slot))
+                        == 0x07
+                })
+                .count();
+            plants_sum[wi] += plants;
+            for (budget, tally) in [
+                (free, &mut need_now),
+                (free + plants, &mut need_plants),
+                (free + plants + 1, &mut need_help),
+                (free + plants + 3, &mut need_all),
+            ] {
+                if budget < away {
+                    *tally += 1;
+                }
+            }
+        }
+    }
+
+    println!("\n=== map-object slots free for markers, {seeds} seeds ===");
+    println!(
+        "{:<6}{:>10}{:>10}{:>10}{:>10}{:>10}",
+        "world", "free min", "free avg", "locks", "local", "foreign"
+    );
+    for wi in 0..8 {
+        println!(
+            "W{:<5}{:>10}{:>10.2}{:>10.2}{:>10.2}{:>10.2}",
+            wi + 1,
+            free_min[wi],
+            free_sum[wi] as f64 / seeds as f64,
+            locks_sum[wi] as f64 / seeds as f64,
+            home_sum[wi] as f64 / seeds as f64,
+            away_sum[wi] as f64 / seeds as f64,
+        );
+    }
+    println!("world-seeds where free < every lock:   {short} of {}", seeds as usize * 8);
+    let n = seeds as usize * 8;
+    println!("world-seeds short, marking the RARER kind:");
+    println!("   as things stand            {short_rare} of {n}");
+    println!("   + HELP's slot freed        {short_help} of {n}");
+    println!("   + our 2-slot buffer too    {short_both} of {n}");
+    println!("\nmarking every FOREIGN lock (unmarked = key is home):");
+    println!("   as things stand                     {need_now} of {n}");
+    println!("   + markers budgeted before plants    {need_plants} of {n}");
+    println!("   + HELP's slot                       {need_help} of {n}");
+    println!("   + our 2-slot buffer                 {need_all} of {n}");
+    println!("plants placed per world: {:?}", plants_sum.map(|v| v as f64 / seeds as f64));
+}
