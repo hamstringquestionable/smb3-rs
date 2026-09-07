@@ -143,7 +143,8 @@ pub(crate) fn open_uninstalled_locks(rom: &mut Rom, state: &GlobalState) {
 ///
 /// Runs after `write_overworld`, which stamped the random pick, and before
 /// `world_persist` derives its stencil. The stencil is unaffected either way:
-/// all three tiles claim a bit.
+/// all three tiles claim a bit — and a cell this skips is left exactly as the
+/// writer left it, so it cannot drift either.
 pub(crate) fn stamp_fort_tiles(rom: &mut Rom, state: &GlobalState) {
     for lock in &state.locks {
         let Some(fort) = lock.fort else { continue };
@@ -155,6 +156,18 @@ pub(crate) fn stamp_fort_tiles(rom: &mut Rom, state: &GlobalState) {
         else {
             continue; // `lock_keys` is the one that panics on this
         };
+        // **Recolour a fortress tile; never create one.** World 8's army
+        // sprites are placed on fortress positions
+        // (`overworld_writer::sprites::pick_w8_sprite_positions` draws from
+        // `wa.fortress`), and the writer deliberately blanks the cell under a
+        // sprite so the tank or battleship reads as the content there. Stamping
+        // a fortress tile back would undo that and put a fortress under the
+        // sprite. Those forts simply go unlabelled — the sprite is the visual,
+        // and there is nowhere to say it.
+        let offset = rom_data::map_tile_offset(fort.world, pos.0, pos.1);
+        if !rom_data::FORTRESS_TILES.contains(&rom.read_byte(offset)) {
+            continue;
+        }
         let tile = if lock.world == fort.world {
             rom_data::TILE_FORTRESS
         } else if lock.world == rom_data::W8_IDX {
@@ -162,7 +175,7 @@ pub(crate) fn stamp_fort_tiles(rom: &mut Rom, state: &GlobalState) {
         } else {
             TILE_FORT_AWAY_LOCK
         };
-        rom.write_byte(rom_data::map_tile_offset(fort.world, pos.0, pos.1), tile);
+        rom.write_byte(offset, tile);
     }
 }
 
