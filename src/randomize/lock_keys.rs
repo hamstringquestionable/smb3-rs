@@ -784,6 +784,42 @@ pub(crate) fn relocate_removable_tables(rom: &mut Rom, rows: &[(u8, u8)]) {
     install_ml_range(rom);
 }
 
+/// Which of the 256 tile bytes appear anywhere on the eight finished maps.
+///
+/// The single producer of that question. Two features ask it — the removable
+/// table and the hammer's breakable table — and they must agree, because a tile
+/// one of them knows about and the other does not is a lock that one thing can
+/// open and another cannot.
+pub(crate) fn tiles_on_map(rom: &Rom) -> [bool; 256] {
+    let mut present = [false; 256];
+    for world in 0..8 {
+        let info = &rom_data::MAP_TILE_GRIDS[world];
+        for screen in 0..info.screens {
+            for row in 0..9 {
+                for col in 0..16 {
+                    let off = rom_data::map_tile_offset(world, row, screen * 16 + col);
+                    present[rom.read_byte(off) as usize] = true;
+                }
+            }
+        }
+    }
+    present
+}
+
+/// A numbered lock's `(revealed tile, break-animation index)`, or `None` if this
+/// is not one.
+///
+/// The animation index is the hammer's, and the vertical set is the odd one out
+/// — the same `1, 0, 0` the plain locks use, for the same reason.
+pub(crate) fn numbered_lock(tile: u8) -> Option<(u8, u8)> {
+    HINT_TILES.iter().position(|set| set.contains(&tile)).map(|orientation| {
+        (HINT_REVEALS[orientation].1, u8::from(orientation == VERTICAL_ORIENTATION))
+    })
+}
+
+/// The index of the vertical set in [`HINT_TILES`] / [`HINT_REVEALS`].
+const VERTICAL_ORIENTATION: usize = 1;
+
 /// **A row for every obstacle actually standing on the map, and nothing else.**
 ///
 /// The vocabulary is larger than the table — 33 possible obstacles against 24
@@ -803,18 +839,7 @@ pub(crate) fn relocate_removable_tables(rom: &mut Rom, rows: &[(u8, u8)]) {
 /// Reading it off the finished grids rather than tracking it through placement
 /// means the table describes the map that shipped, not the map we intended.
 pub(crate) fn removable_rows(rom: &Rom) -> Vec<(u8, u8)> {
-    let mut present = [false; 256];
-    for world in 0..8 {
-        let info = &rom_data::MAP_TILE_GRIDS[world];
-        for screen in 0..info.screens {
-            for row in 0..9 {
-                for col in 0..16 {
-                    let off = rom_data::map_tile_offset(world, row, screen * 16 + col);
-                    present[rom.read_byte(off) as usize] = true;
-                }
-            }
-        }
-    }
+    let present = tiles_on_map(rom);
 
     let mut rows: Vec<(u8, u8)> =
         obstacle_vocabulary().into_iter().filter(|&(tile, _)| present[tile as usize]).collect();

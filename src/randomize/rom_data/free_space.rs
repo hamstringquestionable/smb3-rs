@@ -150,7 +150,14 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(0x33FF0, 32, &["title_screen"], "title menu B-to-mute toggle (32 reserved, 22 used)"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
     fs(0x35572, 13, &["mystery_anchor"], "item redirect trampoline"),
-    fs(0x3557F, 50, &["hammer_breaks_tiles"], "hammer_locks: tile check subroutine + tables"),
+    fs(0x3557F, 50, &["hammer_breaks_tiles"], "hammer_locks: tile check subroutine (32 used)"),
+    fs(
+        0x3569D,
+        96,
+        &["hammer_breaks_tiles"],
+        "hammer_locks: breakable / replacement / animation tables, three per entry \
+         (96 reserved, up to 72 used)",
+    ),
     fs(0x355B1, 12, &["anchor_visuals"], "items-vs-cards index guard trampoline"),
     fs(
         0x355BD,
@@ -701,6 +708,21 @@ pub(crate) const FS_MARCH_VETO: usize = 0x17D70; // 107 bytes (CPU $BD60)
 pub(crate) const FS_MYSTERY_ANCHOR: usize = 0x35572; // 13 bytes
 
 pub(crate) const FS_HAMMER_LOCKS: usize = 0x3557F; // 50 bytes
+
+/// The hammer check's three parallel tables — breakable tile, what it becomes,
+/// which break animation — sited apart from the routine that reads them.
+///
+/// **They had to move out.** They used to sit immediately after the 32 bytes of
+/// code inside [`FS_HAMMER_LOCKS`], which held six entries and no more, and
+/// `FS_ANCHOR_VISUALS` starts at the next byte so the allocation cannot grow.
+/// The tables are addressed by absolute operands the routine computes, so they
+/// are free to live anywhere in PRG026; the code is the origin-locked half and
+/// stays where it is.
+///
+/// Sized for the widest table a map can need — the same bound
+/// `lock_keys::removable_rows` proves, since a hammer breaks the same obstacles
+/// the fortresses do. Same `$FF` run as the three allocations before it.
+pub(crate) const FS_HAMMER_TABLES: usize = 0x3569D;
 
 pub(crate) const FS_ANCHOR_ITEM_GUARD: usize = 0x355B1; // 12 bytes (CPU $B5A1)
 
