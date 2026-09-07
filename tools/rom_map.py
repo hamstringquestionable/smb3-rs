@@ -2980,10 +2980,16 @@ def render_level_lookup(rom, query):
 #      it appears in. Each registry adds a behavior to a tile.
 
 # Metatile pattern bank (PRG012 / bank 0x0C).
-TILE_BANK_NW = 0x18010   # 256 bytes: NW (top-left) CHR index per tile
-TILE_BANK_NE = 0x18110   # 256 bytes: NE
-TILE_BANK_SW = 0x18210   # 256 bytes: SW
-TILE_BANK_SE = 0x18310   # 256 bytes: SE
+# World-map metatile quadrants. The order is UL / LL / UR / LR — COLUMN-major.
+# These were named NW/NE/SW/SE until 2026-09-05, which transposes the
+# off-diagonal, so `--tile` printed each metatile's corners mirrored about its
+# diagonal. prg012.asm:14-18 gives the order, and TILE_HORZPATH $45 = FE E1 FE E1
+# settles it: under UL/LL/UR/LR that is a blank top row over a path bottom row,
+# which is what a horizontal path looks like.
+TILE_BANK_UL = 0x18010   # 256 bytes: upper-left CHR index per tile
+TILE_BANK_LL = 0x18110   # 256 bytes: lower-left
+TILE_BANK_UR = 0x18210   # 256 bytes: upper-right
+TILE_BANK_LR = 0x18310   # 256 bytes: lower-right
 
 # Direction-walk tables (PRG010). Each is 9 bytes — listing tile bytes
 # walkable in that direction. Padded with duplicates if fewer than 9.
@@ -3039,10 +3045,10 @@ def render_tile_lookup(rom, query):
     if not (0 <= tile <= 0xFF):
         return f"Tile byte must be 0x00..0xFF (got 0x{tile:X})"
 
-    nw = rom[TILE_BANK_NW + tile]
-    ne = rom[TILE_BANK_NE + tile]
-    sw = rom[TILE_BANK_SW + tile]
-    se = rom[TILE_BANK_SE + tile]
+    ul = rom[TILE_BANK_UL + tile]
+    ll = rom[TILE_BANK_LL + tile]
+    ur = rom[TILE_BANK_UR + tile]
+    lr = rom[TILE_BANK_LR + tile]
     palette_page = tile >> 6  # high 2 bits
 
     enter_tiles = list(rom[ENTER_TILES_OFF:ENTER_TILES_OFF + 11])
@@ -3071,15 +3077,15 @@ def render_tile_lookup(rom, query):
         if positions:
             usage.append((wi, positions))
 
-    # Find visually identical siblings (same NW/NE/SW/SE pattern)
+    # Find visually identical siblings (same four quadrants)
     siblings = []
     for other in range(256):
         if other == tile:
             continue
-        if (rom[TILE_BANK_NW + other] == nw and
-            rom[TILE_BANK_NE + other] == ne and
-            rom[TILE_BANK_SW + other] == sw and
-            rom[TILE_BANK_SE + other] == se):
+        if (rom[TILE_BANK_UL + other] == ul and
+            rom[TILE_BANK_LL + other] == ll and
+            rom[TILE_BANK_UR + other] == ur and
+            rom[TILE_BANK_LR + other] == lr):
             siblings.append(other)
 
     L = []
@@ -3110,10 +3116,10 @@ def render_tile_lookup(rom, query):
     # Visual pattern
     L.append(f"")
     L.append(f"  {WHITE}Visual (metatile bank 0x0C):{RESET}")
-    L.append(f"    NW=0x{nw:02X}  NE=0x{ne:02X}")
-    L.append(f"    SW=0x{sw:02X}  SE=0x{se:02X}")
-    L.append(f"    file offsets: 0x{TILE_BANK_NW + tile:05X} 0x{TILE_BANK_NE + tile:05X} "
-             f"0x{TILE_BANK_SW + tile:05X} 0x{TILE_BANK_SE + tile:05X}")
+    L.append(f"    {ul:02X} {ur:02X}   (upper-left, upper-right)")
+    L.append(f"    {ll:02X} {lr:02X}   (lower-left, lower-right)")
+    L.append(f"    file offsets: 0x{TILE_BANK_UL + tile:05X} 0x{TILE_BANK_LL + tile:05X} "
+             f"0x{TILE_BANK_UR + tile:05X} 0x{TILE_BANK_LR + tile:05X}")
     if siblings:
         L.append(f"    visually identical to: " +
                  ", ".join(f"0x{b:02X}" for b in siblings) +

@@ -2202,3 +2202,110 @@ struct W8Sample {
     floor: u32,
     routes: usize,
 }
+
+/// How many completion bits an eight-world map actually needs.
+///
+/// The world-maze design banks a world's map state as one bit per *completable
+/// cell* rather than as the engine's 64-column bitmap, because 8 x 128 bytes of
+/// raw `Map_Completions` does not fit the 384 bytes of free SRAM. The RAM
+/// budget is therefore set by the worst world across seeds, not by vanilla's
+/// layout — and the randomizer does not hold per-world capacity fixed, so
+/// eyeballing vanilla is not good enough.
+///
+/// Counts cells the engine's own completion routine would act on.
+/// [`capacity::is_completion_unsafe`] mirrors that classification:
+/// `Map_Completable_Tiles`, the `Tile_Attributes_TS0` level-panel threshold,
+/// and `Map_Removable_Tiles` — which is exactly the set of cells
+/// `Map_Reload_with_Completions` can change, and so exactly the set that needs
+/// a bit.
+///
+/// ```sh
+/// CENSUS_SEEDS=200 cargo test --release --lib completion_bit_census -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn completion_bit_census() {
+    let Ok(rom_bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+        eprintln!("SKIP: requires the ROM");
+        return;
+    };
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(25);
+
+    // Arms chosen for what moves the *cell count*, not the routing: extra
+    // rocks and the W8 water page add removable tiles, and the promotion
+    // flags change how many map tiles end up as enterable panels.
+    type Arm = (&'static str, fn(&mut crate::Options));
+    let arms: [Arm; 3] = [
+        ("defaults", |_| {}),
+        ("rocks+8s-wild", |o| {
+            o.more_hammer_rocks = crate::Tri::On;
+            o.eights_are_wild = crate::Tri::On;
+        }),
+        ("all-promotions", |o| {
+            o.more_hammer_rocks = crate::Tri::On;
+            o.eights_are_wild = crate::Tri::On;
+            o.shuffle_spade_games = true;
+            o.shuffle_toad_houses = true;
+            o.shuffle_hammer_bros = true;
+            o.include_beta_stages = true;
+        }),
+    ];
+
+    let mut worst_world = [0usize; 8];
+    let mut worst_total = 0usize;
+    let mut worst_total_seed = (0u64, "");
+
+    for (name, arm) in arms {
+        let mut arm_worst_world = [0usize; 8];
+        let mut arm_worst_total = 0usize;
+        for seed in 0..seeds {
+            // Palettes are OS-random, and they move no tiles — off so a seed
+            // means the same map every run.
+            let mut options =
+                crate::Options { palettes: false, palette_themed: false, ..Default::default() };
+            arm(&mut options);
+            let Ok((rom, _)) =
+                crate::randomize_rom_with_overworld_capture(&rom_bytes, seed, &options, None)
+            else {
+                continue;
+            };
+            let mut total = 0;
+            for w in 0..8 {
+                let grid = rom_data::read_tile_grid(&rom, w);
+                let mut n = 0;
+                for row in 0..grid.rows() {
+                    for col in 0..grid.cols {
+                        if capacity::is_completion_unsafe(grid.get(row, col)) {
+                            n += 1;
+                        }
+                    }
+                }
+                arm_worst_world[w] = arm_worst_world[w].max(n);
+                worst_world[w] = worst_world[w].max(n);
+                total += n;
+            }
+            arm_worst_total = arm_worst_total.max(total);
+            if total > worst_total {
+                worst_total = total;
+                worst_total_seed = (seed, name);
+            }
+        }
+        eprintln!("{name:>16}: per-world max {arm_worst_world:?}  total max {arm_worst_total}");
+    }
+
+    let bytes_1bit = worst_total.div_ceil(8);
+    let bytes_2bit = (worst_total * 2).div_ceil(8);
+    let packed: usize = worst_world.iter().map(|n| n.div_ceil(8)).sum();
+    eprintln!();
+    eprintln!(
+        "worst total {worst_total} cells (seed {}, arm {})",
+        worst_total_seed.0, worst_total_seed.1
+    );
+    eprintln!("per-world worst: {worst_world:?}  (sum {})", worst_world.iter().sum::<usize>());
+    eprintln!();
+    eprintln!("  1 bit/cell, worlds packed by a base table : {bytes_1bit} bytes");
+    eprintln!("  2 bits/cell (both players), packed        : {bytes_2bit} bytes");
+    eprintln!("  1 bit/cell, per-world byte-aligned slices : {packed} bytes");
+    eprintln!("  raw Map_Completions banking               : {} bytes", 8 * 128);
+    eprintln!("  free SRAM measured                        : 384 bytes");
+}

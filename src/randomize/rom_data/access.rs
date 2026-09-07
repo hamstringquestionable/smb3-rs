@@ -56,7 +56,7 @@ pub(crate) fn is_level_pointer(obj_ptr: u16, lay_ptr: u16) -> bool {
 /// bytes, which silently mis-aims any JSR/JMP operand derived from it — the
 /// root cause of issue #14. Use this (and [`jsr_into_bank`]) instead of
 /// open-coding the formula so the header offset lives in exactly one place.
-pub(crate) fn prg_bank_cpu_to_file(bank: usize, cpu_addr: u16) -> usize {
+pub(crate) const fn prg_bank_cpu_to_file(bank: usize, cpu_addr: u16) -> usize {
     bank * 0x2000 + 0x10 + (cpu_addr as usize - 0xA000)
 }
 
@@ -81,6 +81,27 @@ pub(crate) const fn prg031_file_to_cpu(file_offset: usize) -> u16 {
 /// root cause, and a transcribed operand cannot drift back into agreement.
 pub(crate) const fn prg030_file_to_cpu(file_offset: usize) -> u16 {
     (0x8000 + (file_offset - 0x3C010)) as u16
+}
+
+/// Convert a file offset in PRG010 to its CPU address.
+///
+/// PRG010 is mapped at `$C000` for the whole world map — `PRG030_84A0`'s first
+/// act is `LDA #10 / STA PAGE_C000` — so map-side code can live there with no
+/// trampoline. The window is `$C000`, not `$A000`, which is why
+/// [`prg_bank_file_to_cpu`] does not apply.
+pub(crate) const fn prg010_file_to_cpu(file_offset: usize) -> u16 {
+    (0xC000 + (file_offset - 0x14010)) as u16
+}
+
+/// Convert a file offset in PRG011 to its CPU address.
+///
+/// PRG011 is mapped at `$A000` for the whole world map, by construction: the
+/// map init sets `PAGE_A000 = 11` before anything there can run. That is the
+/// ordinary `$A000` window, so this is [`prg_bank_file_to_cpu`] with the bank
+/// filled in — worth its own name because five map-side modules were each
+/// open-coding the arithmetic.
+pub(crate) const fn prg011_file_to_cpu(file_offset: usize) -> u16 {
+    prg_bank_file_to_cpu(11, file_offset)
 }
 
 /// Build a 3-byte `JSR <target>` where `target` is given as a *file offset*
@@ -190,6 +211,23 @@ pub(crate) fn dest_indices_for_world(world_idx: usize) -> Vec<usize> {
     DEST_TO_WORLD.iter().filter(|&&(_, w)| w == world_idx).map(|&(d, _)| d as usize).collect()
 }
 
+/// Read one transit room's two map endpoints, as `(grid_row, grid_col)` each.
+///
+/// Upper nibble is the A side, lower is the B side, and a row nibble is
+/// `grid_row + 2` — the engine's own encoding, shared by all four destination
+/// tables.
+pub(crate) fn read_dest_positions(rom: &Rom, dest_idx: usize) -> ((usize, usize), (usize, usize)) {
+    let xhi = rom.read_byte(PIPE_MAP_XHI + dest_idx);
+    let x = rom.read_byte(PIPE_MAP_X + dest_idx);
+    let y = rom.read_byte(PIPE_MAP_Y + dest_idx);
+
+    let a_pos =
+        (((y >> 4) as usize).wrapping_sub(2), ((xhi >> 4) as usize) * 16 + ((x >> 4) as usize));
+    let b_pos =
+        (((y & 0xF) as usize).wrapping_sub(2), ((xhi & 0xF) as usize) * 16 + ((x & 0xF) as usize));
+    (a_pos, b_pos)
+}
+
 /// Read all pipe pairs from ROM destination tables, grouped by world.
 /// Returns a map: world_idx → Vec of ((row_a, col_a), (row_b, col_b)).
 #[cfg(test)]
@@ -198,21 +236,7 @@ pub(crate) fn read_pipe_pairs(rom: &Rom) -> std::collections::HashMap<usize, Vec
         std::collections::HashMap::new();
 
     for &(dest, world_idx) in DEST_TO_WORLD {
-        let d = dest as usize;
-        let xhi = rom.read_byte(PIPE_MAP_XHI + d);
-        let x = rom.read_byte(PIPE_MAP_X + d);
-        let y = rom.read_byte(PIPE_MAP_Y + d);
-
-        let a_scr = ((xhi >> 4) & 0x0F) as usize;
-        let b_scr = (xhi & 0x0F) as usize;
-        let a_col = ((x >> 4) & 0x0F) as usize;
-        let b_col = (x & 0x0F) as usize;
-        let a_row_nib = ((y >> 4) & 0x0F) as usize;
-        let b_row_nib = (y & 0x0F) as usize;
-
-        let a_pos = (a_row_nib.wrapping_sub(2), a_scr * 16 + a_col);
-        let b_pos = (b_row_nib.wrapping_sub(2), b_scr * 16 + b_col);
-
+        let (a_pos, b_pos) = read_dest_positions(rom, dest as usize);
         pipes_by_world.entry(world_idx).or_default().push((a_pos, b_pos));
     }
 
@@ -225,13 +249,12 @@ pub(crate) fn read_fx_slots(rom: &Rom) -> Vec<FxSlot> {
     for i in 0..17 {
         let loc_row = rom.read_byte(FX_MAP_LOC_ROW + i);
         let loc = rom.read_byte(FX_MAP_LOC + i);
-        let replace_tile = rom.read_byte(FX_MAP_TILE_REPLACE + i);
 
         let grid_row = ((loc_row >> 4) as usize).wrapping_sub(2);
         let col_in_screen = ((loc >> 4) & 0x0F) as usize;
         let screen = (loc & 0x0F) as usize;
 
-        slots.push(FxSlot { grid_row, grid_col: screen * 16 + col_in_screen, replace_tile });
+        slots.push(FxSlot { grid_row, grid_col: screen * 16 + col_in_screen });
     }
     slots
 }

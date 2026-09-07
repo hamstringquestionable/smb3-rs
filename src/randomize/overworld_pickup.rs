@@ -340,11 +340,29 @@ fn theme_for(grid: &Grid, row: usize, col: usize, path_neighbor: Option<u8>) -> 
 
 /// Replace vanilla FX gap tiles with their underlying path tiles, making the
 /// grid fully connected before placement.
+///
+/// **The path comes from the tile standing there, not from the FX slot.** The
+/// slot's own `replace_tile` says the same thing for sixteen of vanilla's
+/// seventeen. The odd one out is slot `$08`, W6 `(4, 13)`: it stores the sky
+/// path `$DA` for a lock sitting on plain ground, which is what the *preceding*
+/// slot legitimately stores for the game's one real sky lock — the value looks
+/// carried down a row when the table was authored
+/// (`fortress_fx::derivation` pins it).
+///
+/// It also settles a handshake that used to run the other way. `apply_w8_bridges`
+/// stamps a bridge over W8 `(5, 53)`, which is where slot 16 sits, and had to
+/// poke `BRIDGE_TILE` into `FortressFX_MapTileReplace` so this loop would not
+/// paint a plain path over it. Asking the grid instead answers correctly with
+/// no channel at all: a cell already showing an open tile is not a gap, so
+/// nothing is written.
 fn open_fx_gaps(grid: &mut Grid, fx_slots: &[FxSlot], world_fx: &[u8]) {
     for &slot_idx in world_fx {
         let slot = &fx_slots[slot_idx as usize];
-        if slot.grid_row < grid.rows() && slot.grid_col < grid.cols {
-            grid.set(slot.grid_row, slot.grid_col, slot.replace_tile);
+        if slot.grid_row >= grid.rows() || slot.grid_col >= grid.cols {
+            continue;
+        }
+        if let Some(path) = rom_data::path_for_gap_tile(grid.get(slot.grid_row, slot.grid_col)) {
+            grid.set(slot.grid_row, slot.grid_col, path);
         }
     }
 }
@@ -574,7 +592,7 @@ mod tests {
             let entry = &catalog.entries[pe.catalog_idx];
             let label = match &entry.kind {
                 NodeKind::Level => "Level",
-                NodeKind::Fortress { .. } => "Fortress",
+                NodeKind::Fortress => "Fortress",
                 NodeKind::Pipe { .. } => "Pipe",
                 NodeKind::Airship => "Airship",
                 NodeKind::Bowser => "Bowser",
@@ -783,7 +801,7 @@ mod tests {
         dump_filtered_rom(
             &rom,
             &catalog,
-            |e, _| matches!(e.kind, NodeKind::Fortress { .. }),
+            |e, _| matches!(e.kind, NodeKind::Fortress),
             "cleared_fortresses.nes",
         );
         dump_filtered_rom(

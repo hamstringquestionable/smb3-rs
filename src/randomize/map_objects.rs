@@ -1,0 +1,1061 @@
+//! World-maze: map objects a world has already lost stay lost.
+//!
+//! # The bug
+//!
+//! A wandering Hammer Bro was beaten in World 1, the player left for another
+//! world and came back — and the Hammer Bro was standing there again.
+//!
+//! [`super::completion_bits`] persists `Map_Completions`, which covers every
+//! cell the *map grid* can mark: cleared levels, busted locks, smashed rocks,
+//! bridged gaps. Map objects are not map cells. They are nine parallel-array
+//! slots that `Map_Init` (PRG011, `$A1D8`) **reloads from ROM on every world
+//! entry**, and vanilla never cared because vanilla never returns you to a
+//! world. The maze returns constantly, so every re-entry resurrects everything
+//! the world had lost.
+//!
+//! # The slots
+//!
+//! Five parallel arrays, `MAPOBJ_TOTAL` = 14 entries each:
+//!
+//! | Array | Address | Length |
+//! |---|---|---|
+//! | `Map_Objects_Itm` | `$7956` | 13 |
+//! | `Map_Objects_Y` | `$7EEB` | 14 |
+//! | `Map_Objects_XLo` | `$7EF9` | 14 |
+//! | `Map_Objects_XHi` | `$7F07` | 14 |
+//! | `Map_Objects_IDs` | `$7F15` | 14 |
+//!
+//! plus `Map_Objects_Vis` (`$0587`, 15) and the `Map_Object_Act*` display
+//! shadows, both re-derived every frame.
+//!
+//! **Only the ID needs to survive**, and only as one bit of it. `Map_Init`
+//! copies Y / XLo / XHi / ID / Item for slots 8 down to 0 out of the world's
+//! `Map_List_Object_*` tables — nine slots, `MAPOBJ_TOTALINIT` + 1 — so
+//! position is restored from ROM and then re-randomised by the marching anyway.
+//! What is destroyed and never recomputed is "is this one still here": the
+//! defeat site writes `MAPOBJ_EMPTY` into the ID and nothing else, and
+//! `MapObject_DrawSleepEnter`'s `DynJump` sends ID 0 straight to an `RTS`. One
+//! bit per slot per world is therefore the whole of the state.
+//!
+//! Slots 9-13 are runtime-only: `Map_FindEmptyObjectSlot` can hand one out for
+//! an N-Spade or a White Toad House, and `Map_Init` never reloads them. A bit
+//! for one of those would mean nothing, so the mark routine bounds itself at
+//! nine — and that bound is also what keeps it from writing past the store.
+//!
+//! # Where an object is beaten
+//!
+//! `MO_DoLevelClear` (PRG011). On the way back from a level it scans all 14
+//! slots for one under the player's feet, runs the seven-tick poof, and then:
+//!
+//! ```text
+//! $ABB5  A9 00        LDA #MAPOBJ_EMPTY
+//! $ABB7  99 15 7F     STA Map_Objects_IDs,Y      <- displaced
+//! $ABBA  85 20        STA Map_ClearLevelFXCnt
+//! $ABBC  85 D7        STA Map_HideObj
+//! ```
+//!
+//! That single `STA` is the one event in the engine that means "the player beat
+//! a map object", so it is the hook: three bytes for three bytes, one whole
+//! instruction, `Y` already holding the slot and `World_Num` still naming the
+//! world the player is standing in. `$ABBE` — the shared exit the poof and
+//! skid-back paths branch to — is left untouched.
+//!
+//! The airship (`MAPOBJ_AIRSHIP`) never reaches it: `$AB94` compares the slot's
+//! ID against it and `$AB96` branches past the whole poof, 33 bytes and eleven
+//! instructions before the hook, incrementing `Map_Operation` instead. So a world
+//! keeps its airship object however many times it is entered, which is what the
+//! spine needs.
+//!
+//! # Where it is restored, and why not at the pack hook
+//!
+//! **The pack hook cannot see this state.** `completion_bits`' pack runs at
+//! `$84CD`, and `PRG030_84A0` calls `Map_Init` at `$84AD` — thirty-two bytes
+//! earlier. By the time the pack fires, the outgoing world's slots have already
+//! been overwritten with the *destination* world's fresh objects. Packing there
+//! would pack the wrong world, and a fix that looked right would fix nothing.
+//!
+//! So there is nothing to pack. The bit is written at the moment of defeat,
+//! where the world is unambiguous, and the store is only ever `ORA`'d into —
+//! monotone, which also means a bonus object occupying a slot the original
+//! object was beaten out of cannot un-beat it.
+//!
+//! What is left is a **restore**, and it belongs exactly where `Map_Init` has
+//! just refilled the slots. That is every entry through `$84A0`'s front door
+//! and no other, which is precisely the set of entries that reach `$84CD` —
+//! `PRG030_84D7`, the turn-end re-init the map loop jumps to on every level
+//! entry and return, skips both. So the restore is chained onto the front of
+//! [`super::completion_bits::WIPE_REPLACEMENT`], three bytes, reusing a hook
+//! rather than inventing one.
+//!
+//! **It is deliberately *not* behind that routine's `World_Num != LIVE_WORLD`
+//! test.** The pack asks "did the world change"; the restore asks "did
+//! `Map_Init` just run", and those differ on a game over, on a whistle hop that
+//! lands back where it started, and on the first map of a new game. All three
+//! reload the objects and all three need the re-clear. Running it on a
+//! same-world entry is free: clearing an already-empty slot is a no-op.
+//!
+//! # The world bit comes from the engine
+//!
+//! Both routines need `1 << world` and neither ships a table for it:
+//! `Map_CompleteBit` (PRG011, `$BA2D`) is the engine's own eight-entry
+//! `$80 $40 ... $01`, it sits in the bank both routines run in, and
+//! `foreign_locks` already leans on the same table through the instruction it
+//! displaces. Eight bytes of PRG011 saved, and the assignment is MSB-first
+//! because the borrowed table is.
+//!
+//! # Two neighbours that look like the same bug and are not
+//!
+//! Both were raised as "same bug class, do them while the machinery is out".
+//! Both were measured and **deliberately left alone**; the reasoning is here
+//! rather than in a commit message because the next reader will have the same
+//! idea.
+//!
+//! ## The king rescue: the resurrection is load-bearing
+//!
+//! `TAndK_WaitPlayerButtonA` (PRG024, `$A261`) clears slot 0 and sets slot 1:
+//!
+//! ```text
+//! LDA <Pad_Input / BPL rts
+//! LDA Map_Objects_IDs
+//! BEQ standard_exit          ; HELP bubble gone -> just walk back out
+//! LDA #$03 / STA Level_JctCtl        ; "switch to airship"
+//! LDA #MAPOBJ_EMPTY   / STA Map_Objects_IDs      ; no more HELP bubble
+//! LDA #MAPOBJ_AIRSHIP / STA Map_Objects_IDs+1    ; airship is in town
+//! ```
+//!
+//! Persisting that would stop the HELP bubble reappearing in a world whose
+//! king was already rescued. It would also **break the spine**, and that is not
+//! a guess:
+//!
+//! * The tile the maze calls the airship — `TILE_AIRSHIP` `$C9` — does not
+//!   enter the airship. All seven `AIRSHIP_ENTRIES` share one object stream,
+//!   `$D2AF`, whose entire contents is a single `OBJ_TOADANDKING` (`$D5`). The
+//!   dock tile enters the **king's room**, and the king's room chains into the
+//!   airship through `Level_JctCtl = 3`.
+//! * That chain is taken only while `Map_Objects_IDs[0]` is non-zero. Once it
+//!   is cleared the same tile takes the `standard_exit` arm — dialog, then back
+//!   to the map — and the airship is reachable only by walking onto the
+//!   marching object in slot 1.
+//! * That object's route is `Map_Airship_Dest_YSets` / `XSets` in PRG011:
+//!   **vanilla coordinates**, which nothing in the randomizer rewrites, on a
+//!   map the randomizer redrew. And `maze/walk.rs` models the spine edge as
+//!   leaving `TILE_AIRSHIP`; it knows nothing about a marching object.
+//!
+//! So `Map_Init` restoring the HELP bubble is exactly what makes the spine edge
+//! repeatable across visits — the property the design charter rests reachability
+//! on. Persisting the rescue would trade a cosmetic complaint for a maze that
+//! can be unwinnable. `the_spine_edge_needs_the_help_bubble_back` pins the two
+//! ROM facts, and `the_restore_can_only_ever_clear_an_id` pins that this module
+//! is structurally incapable of interfering.
+//!
+//! One pre-existing sharp edge found on the way, and worth knowing: **within a
+//! single visit, dying on the airship takes the dock tile out of service** —
+//! slot 0 is already clear, so re-entering `$C9` walks you straight back out
+//! and the marching airship at vanilla coordinates is the only way in. Leaving
+//! the world and returning resets it. The resurrection is the mitigation.
+//!
+//! ## The four per-world flags
+//!
+//! `Map_Got13Warp` (`$796F`), `Map_Anchored` (`$7970`), `Map_WhiteHouse`
+//! (`$7971`) and `Map_CoinShip` (`$7972`) are all reset on world entry, and all
+//! four are cleared **before** the `$84CD` hook — so this module's restore point
+//! would work for them and a pack there would not, exactly as for the objects:
+//!
+//! | Flag | Cleared at | Set at |
+//! |---|---|---|
+//! | `Map_Got13Warp` | `$84BB` (`8D 6F 79`), inline | `ObjNorm_WarpHide`, PRG001, in-level |
+//! | `Map_Anchored` | `$84BE` (`8D 70 79`), inline, and game over `$9304`-ish | inventory Anchor use, PRG026 |
+//! | `Map_WhiteHouse` | inside `Map_Init` | `MapBonusChk_WhiteToadHouse`, PRG011 |
+//! | `Map_CoinShip` | inside `Map_Init` | `MapBonusChk_CoinShip`, PRG011 |
+//!
+//! None was persisted, and each has its own reason:
+//!
+//! * **`Map_Got13Warp` is not map state.** It is read in exactly one place,
+//!   `ObjInit_WarpHide` (PRG001), to suppress the hidden toad house *inside
+//!   level 1-3*. Every other in-level item respawns when a level is replayed,
+//!   which the maze does constantly; persisting this one would make a single
+//!   hidden door uniquely non-respawning, which is less consistent rather than
+//!   more. The whistle is not consumed on use in this mode either, so there is
+//!   nothing to farm.
+//! * **`Map_Anchored` qualifies an object that does not exist.** It only
+//!   freezes the marching airship, and slot 1 is `MAPOBJ_EMPTY` in every world's
+//!   ROM table — the airship object exists only after the king scene, within the
+//!   same visit, during which nothing clears the flag. Restoring it on entry
+//!   would restore a fact about nothing.
+//! * **`Map_CoinShip` is already capped by this module.**
+//!   `MapBonusChk_CoinShip` converts a slot holding `MAPOBJ_HAMMERBRO` (`$03`
+//!   only — the other three bro types never qualify, which is why the coin ship
+//!   is a World 1/3/5/6 thing). Once a world's Hammer Bros are beaten they stay
+//!   beaten, so the scan finds nothing and no further coin ship can appear
+//!   there. Persisting the flag would only forbid a *second* coin ship on a
+//!   *second* Hammer Bro, and each one already costs the Hammer Bro's own
+//!   reward.
+//! * **`Map_WhiteHouse` is a slow faucet on an axis this mode does not
+//!   ration.** Re-earning it needs `Map_BonusType == 1` — armed by an
+//!   `OBJ_BONUSCONTROLLER` inside one particular level — plus the coin count,
+//!   plus a world hop, for one item that any toad house also gives. Against
+//!   roughly 30 bytes of PRG011, in the bank this module already spends from,
+//!   in a mode that forces No Game Over Penalty and unlimited whistles.
+//!
+//! If any of these is revisited, the shape is the one above: the flag is
+//! monotone per world, so a bit per world set at the site that raises it plus a
+//! replay from the `$84CD` restore is the pattern, and no pack is possible.
+
+use crate::rom::Rom;
+
+use super::maze_state::{MAP_OBJ_DEAD, MAP_OBJ_DEAD_LEN};
+#[cfg(test)]
+use super::rom_data::NMI_SAFE_MAX;
+use super::rom_data::{
+    FS_MAZE_OBJ_MARK, FS_MAZE_OBJ_RESTORE, MAP_COMPLETE_BIT_CPU, WORLD_NUM, prg011_file_to_cpu,
+};
+
+// --- Engine symbols ---------------------------------------------------------
+//
+// `World_Num` is `rom_data::engine`'s.
+
+/// `Map_Objects_IDs` — 14 slots, `$00` meaning "nothing here".
+const MAP_OBJECTS_IDS: u16 = 0x7F15;
+
+/// File offset of the same table, for that test.
+#[cfg(test)]
+const MAP_COMPLETE_BIT_FILE: usize = 0x17A3D;
+
+const MARK_DEAD_CPU: u16 = prg011_file_to_cpu(FS_MAZE_OBJ_MARK);
+pub(crate) const RESTORE_OBJECTS_CPU: u16 = prg011_file_to_cpu(FS_MAZE_OBJ_RESTORE);
+
+// --- The hook site ----------------------------------------------------------
+
+/// `STA Map_Objects_IDs,Y` in `MO_DoLevelClear` (PRG011, CPU `$ABB7`).
+const MARK_HOOK_OFFSET: usize = 0x016BC7;
+#[cfg(test)]
+const MARK_HOOK_LEN: usize = 3;
+
+/// Vanilla bytes there: `STA $7F15,Y`.
+#[cfg(test)]
+const MARK_HOOK_VANILLA: [u8; MARK_HOOK_LEN] = [0x99, 0x15, 0x7F];
+
+/// `LDA #MAPOBJ_EMPTY`, the two bytes immediately before the hook.
+///
+/// [`MARK_DEAD`] restores `A` with an `LDA #$00` rather than juggling the
+/// stack, so it owes the caller a value — the caller's next two instructions
+/// are `STA Map_ClearLevelFXCnt` and `STA Map_HideObj`, both of which need the
+/// zero. `the_hook_site_still_loads_zero` reads these bytes out of the ROM so
+/// the debt is checked and not assumed.
+#[cfg(test)]
+const MARK_HOOK_PRELUDE: [u8; 2] = [0xA9, 0x00];
+
+// --- The routines -----------------------------------------------------------
+
+/// Empty the slot the way vanilla did, then remember that it happened.
+///
+/// 24 reserved, 22 used.
+///
+/// On entry `A` is `MAPOBJ_EMPTY` and `Y` is the slot; `X` is dead (the caller
+/// reloads it) and `A` must come back zero. The store goes first so the arm
+/// that skips the bookkeeping cannot skip the store, and so the routine is
+/// vanilla's instruction with a tail rather than a replacement for it.
+///
+/// The `CPY #9` guard is the store's bound as much as it is a statement about
+/// meaning: `Map_FindEmptyObjectSlot` scans upward with no ceiling of its own,
+/// so a bonus object can sit at slot 9-13, and `STA MAP_OBJ_DEAD,Y` with `Y` up
+/// there would write past the nine bytes into whatever the maze allocates next.
+#[rustfmt::skip]
+const MARK_DEAD: [u8; 22] = [
+    0x99, MAP_OBJECTS_IDS as u8, (MAP_OBJECTS_IDS >> 8) as u8, //  0: STA Map_Objects_IDs,Y
+    0xC0, MAP_OBJ_DEAD_LEN as u8,                             //  3: CPY #9
+    0xB0, 0x0E,                                               //  5: BCS +14 -> done
+    0xAE, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,            //  7: LDX World_Num
+    0xBD, MAP_COMPLETE_BIT_CPU as u8,
+          (MAP_COMPLETE_BIT_CPU >> 8) as u8,                  // 10: LDA Map_CompleteBit,X
+    0x19, MAP_OBJ_DEAD as u8, (MAP_OBJ_DEAD >> 8) as u8,      // 13: ORA MAP_OBJ_DEAD,Y
+    0x99, MAP_OBJ_DEAD as u8, (MAP_OBJ_DEAD >> 8) as u8,      // 16: STA MAP_OBJ_DEAD,Y
+    0xA9, 0x00,                                               // 19: LDA #$00   ; A owed to caller
+    0x60,                                                     // 33: RTS        ; done
+];
+
+/// Re-empty every slot this world has already lost.
+///
+/// 36 reserved, 34 used.
+///
+/// Called from the front of [`super::completion_bits::WIPE_REPLACEMENT`], so
+/// `Map_Init` has just refilled all nine slots out of ROM and `World_Num` names
+/// the world being drawn.
+///
+/// # Slots 9-13 are emptied first, and nothing else in the ROM does that
+///
+/// `Map_Init` reloads slots 8 down to 0 (`MAPOBJ_TOTALINIT`) and never touches
+/// the five above them. Those are the runtime pool: `Map_FindEmptyObjectSlot`
+/// hands one out when an N-Spade, a coin ship or a white mushroom house has to
+/// appear. Nothing clears them on a world change — the only clear-all-14 in the
+/// ROM is on the warp-zone path, which `world_travel` replaces — so a bonus
+/// object that landed in slot 9 is still sitting there in the next world, drawn
+/// at the old world's coordinates. That is the vanilla white-house-follows-you
+/// quirk, and vanilla gets away with it because you never go back.
+///
+/// **The maze does not**, and it matters twice over. The object reappears in
+/// worlds it has nothing to do with, possibly on terrain that world has no
+/// business drawing it on; and until the pool is known-empty, the two slots
+/// `RESERVED_DYNAMIC_SLOTS` holds back cannot be released — with slots 2-13 all
+/// occupied, `Map_FindEmptyObjectSlot` (`LDY #$02`, `INY`, **no bound**) walks
+/// straight off the end of the arrays and the caller stamps map-object data
+/// over whatever follows `$7F22`.
+///
+/// Clearing them here fixes both, and here is the only place that can: it is
+/// the one hook that fires on exactly every `Map_Init`.
+///
+/// **Maze-only, deliberately.** Standard mode keeps the quirk — a free item
+/// house tagging along into the next world is a lucky break, not a defect, and
+/// nobody asked to have it taken away. `X` holds that world's bit for the whole loop, which
+/// is why the store is indexed by slot rather than by world — see
+/// [`MAP_OBJ_DEAD`].
+///
+/// Walks slot 8 down to 0 because `DEY`/`BPL` is two bytes cheaper than
+/// counting up to a bound, and the store's nine bytes are the only bound there
+/// is.
+#[rustfmt::skip]
+const RESTORE_OBJECTS: [u8; 34] = [
+    // Empty the runtime pool, slots 13 down to 9. Only `A` and `Y` are
+    // touched, and the restore below sets both for itself.
+    0xA0, 0x0D,                                               //  0: LDY #13
+    0xA9, 0x00,                                               //  2: LDA #$00
+    0x99, MAP_OBJECTS_IDS as u8, (MAP_OBJECTS_IDS >> 8) as u8, //  4: STA Map_Objects_IDs,Y ; loop
+    0x88,                                                     //  7: DEY
+    0xC0, (MAP_OBJ_DEAD_LEN) as u8,                           //  8: CPY #9
+    0xB0, 0xF8,                                               // 10: BCS -8 -> loop
+
+    0xAE, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,            // 12: LDX World_Num
+    0xA0, (MAP_OBJ_DEAD_LEN - 1) as u8,                       // 15: LDY #8
+
+    0xB9, MAP_OBJ_DEAD as u8, (MAP_OBJ_DEAD >> 8) as u8,      // 17: LDA MAP_OBJ_DEAD,Y  ; loop
+    0x3D, MAP_COMPLETE_BIT_CPU as u8,
+          (MAP_COMPLETE_BIT_CPU >> 8) as u8,                  // 20: AND Map_CompleteBit,X
+    0xF0, 0x05,                                               // 23: BEQ +5 -> next
+    0xA9, 0x00,                                               // 25: LDA #$00
+    0x99, MAP_OBJECTS_IDS as u8, (MAP_OBJECTS_IDS >> 8) as u8, // 27: STA Map_Objects_IDs,Y
+
+    0x88,                                                     // 30: DEY                 ; next
+    0x10, 0xF0,                                               // 31: BPL -16 -> loop
+    0x60,                                                     // 21: RTS
+];
+
+// --- Writer -----------------------------------------------------------------
+
+/// Install both routines and the defeat hook.
+///
+/// The restore's *call* is not here: it is the first three bytes of
+/// [`super::completion_bits::WIPE_REPLACEMENT`], because that is the routine
+/// that owns the `$84CD` hook. `the_wipe_replacement_calls_the_restore` is what
+/// keeps the two ends together.
+pub(crate) fn apply(rom: &mut Rom) {
+    rom.push_tag("map_objects");
+    rom.write_range(FS_MAZE_OBJ_MARK, &MARK_DEAD);
+    rom.write_range(FS_MAZE_OBJ_RESTORE, &RESTORE_OBJECTS);
+    rom.write_range(MARK_HOOK_OFFSET, &[0x20, MARK_DEAD_CPU as u8, (MARK_DEAD_CPU >> 8) as u8]);
+    rom.pop_tag();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use mos6502::cpu::CPU;
+    use mos6502::instruction::Ricoh2a03;
+    use mos6502::memory::{Bus, Memory};
+
+    use crate::randomize::completion_bits;
+    use crate::randomize::rom_data::{self, MAP_COMPLETE_BITS, asm};
+
+    const ROM_PATH: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";
+
+    fn vanilla() -> Option<Rom> {
+        let bytes = std::fs::read(ROM_PATH).ok()?;
+        Some(Rom::from_bytes(&bytes).expect("vanilla ROM parses"))
+    }
+
+    // --- Static checks ------------------------------------------------------
+
+    #[test]
+    fn routines_are_well_formed() {
+        // Neither routine names an engine zero-page variable, and neither
+        // parks anything of its own there — so nothing here can be destroyed
+        // by the NMI mid-loop. Same rule and same reason as `completion_bits`;
+        // see `asm::Routine::zero_page`.
+        asm::check(&MARK_DEAD)
+            .allocation(FS_MAZE_OBJ_MARK)
+            .origin(MARK_DEAD_CPU)
+            .zero_page(NMI_SAFE_MAX, &[])
+            .assert_ok();
+        asm::check(&RESTORE_OBJECTS)
+            .allocation(FS_MAZE_OBJ_RESTORE)
+            .origin(RESTORE_OBJECTS_CPU)
+            .zero_page(NMI_SAFE_MAX, &[])
+            .assert_ok();
+    }
+
+    /// The defeat hook displaces one whole instruction, and the two bytes in
+    /// front of it are still the `LDA #$00` the routine's exit relies on.
+    #[test]
+    fn the_hook_displaces_whole_instructions() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        assert_eq!(
+            rom.read_range(MARK_HOOK_OFFSET, MARK_HOOK_LEN),
+            MARK_HOOK_VANILLA,
+            "MO_DoLevelClear's STA Map_Objects_IDs,Y has moved",
+        );
+        assert_eq!(
+            rom.read_range(MARK_HOOK_OFFSET - MARK_HOOK_PRELUDE.len(), MARK_HOOK_PRELUDE.len()),
+            MARK_HOOK_PRELUDE,
+            "the site no longer loads MAPOBJ_EMPTY, so MARK_DEAD's LDA #$00 exit is wrong",
+        );
+        asm::check(&MARK_DEAD)
+            .allocation(FS_MAZE_OBJ_MARK)
+            .origin(MARK_DEAD_CPU)
+            .hook(&MARK_HOOK_VANILLA, 0, &[0x20, MARK_DEAD_CPU as u8, (MARK_DEAD_CPU >> 8) as u8])
+            .assert_ok();
+    }
+
+    /// The world bit is read out of the engine's table rather than a table of
+    /// our own, so the table has to still be there — in vanilla, and in a
+    /// finished world-maze ROM, which is the one that runs the code.
+    #[test]
+    fn the_engine_still_has_the_bit_table_we_borrow() {
+        let Ok(rom_bytes) = std::fs::read(ROM_PATH) else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let van = Rom::from_bytes(&rom_bytes).expect("vanilla ROM parses");
+        assert_eq!(
+            prg011_file_to_cpu(MAP_COMPLETE_BIT_FILE),
+            MAP_COMPLETE_BIT_CPU,
+            "Map_CompleteBit's file offset and CPU address disagree",
+        );
+        assert_eq!(
+            van.read_range(MAP_COMPLETE_BIT_FILE, 8),
+            MAP_COMPLETE_BITS,
+            "Map_CompleteBit is not where PRG011 says it is",
+        );
+
+        let mut options =
+            crate::Options { palettes: false, palette_themed: false, ..Default::default() };
+        options.world_maze = true;
+        options.world_order = true;
+        // NOT a soft skip. The whole point of this half is that a WORLD-MAZE
+        // run does not write over the bit table; letting a failed build fall
+        // through would leave the test passing having checked vanilla only,
+        // which is the vacuity that has bitten this feature twice.
+        let patched = crate::randomize_rom(&rom_bytes, 7, &options, None)
+            .expect("the maze build failed, so only vanilla was checked");
+        assert_eq!(
+            patched.read_range(MAP_COMPLETE_BIT_FILE, 8),
+            MAP_COMPLETE_BITS,
+            "a world-maze run wrote over the bit table both routines index",
+        );
+    }
+
+    /// The restore has to be *called*, and from the one hook that fires exactly
+    /// when `Map_Init` has refilled the slots. It sits in front of
+    /// `WIPE_REPLACEMENT`'s transition test on purpose — a game over, a whistle
+    /// hop that lands where it started and a new game all reload the objects
+    /// without changing `World_Num`.
+    #[test]
+    fn the_wipe_replacement_calls_the_restore() {
+        assert_eq!(
+            completion_bits::wipe_replacement_bytes()[..3],
+            [0x20, RESTORE_OBJECTS_CPU as u8, (RESTORE_OBJECTS_CPU >> 8) as u8],
+            "WIPE_REPLACEMENT must open with JSR RESTORE_OBJECTS, before its own compare",
+        );
+    }
+
+    /// `OBJ_TOADANDKING` — the in-level object that runs the Toad-and-King
+    /// scene, and the whole content of every world's airship entry.
+    const OBJ_TOADANDKING: u8 = 0xD5;
+    /// `MAPOBJ_HELP` and `MAPOBJ_EMPTY`.
+    const MAPOBJ_HELP: u8 = 0x01;
+    const MAPOBJ_EMPTY: u8 = 0x00;
+
+    /// **In vanilla the spine edge runs through the HELP bubble. In a shipped
+    /// ROM it does not** — and this used to assert only the first half.
+    ///
+    /// Vanilla's airship dock does not enter the airship: it enters the king's
+    /// room, whose Toad-and-King object chains onward through
+    /// `Level_JctCtl = 3`, but only while `Map_Objects_IDs[0]` is non-zero. So
+    /// slot 0 is a one-shot "have I sent you to the airship yet" token and slot
+    /// 1 is where that routine parks the airship.
+    ///
+    /// **`autoscroll::disable_autoscroll` retires that whole chain.** It
+    /// repoints every world's airship entry away from the shared Toad-and-King
+    /// stream (`$D2AF`) to its own reworked level, so the cutscene never loads,
+    /// the token is never read, and nothing writes the airship into slot 1. The
+    /// bubble is left standing as decoration. That is the default;
+    /// `--keep-autoscroll` puts the dependency back.
+    ///
+    /// The consequence is a budget, not a bug: slots 0 and 1 are **free for a
+    /// map-object marker** in a normal seed, which is two per world and the
+    /// difference between World 8 having room for one and having room for
+    /// three. See `randomizer::tests::map_object_slot_budget`.
+    ///
+    /// The original claim is kept as the vanilla half, because it is why the
+    /// code reads the way it does — but it is no longer the reason the maze's
+    /// spine works.
+    #[test]
+    fn the_spine_edge_no_longer_needs_the_help_bubble() {
+        let Ok(rom_bytes) = std::fs::read(ROM_PATH) else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let van = Rom::from_bytes(&rom_bytes).expect("vanilla ROM parses");
+
+        for &(w, e) in rom_data::AIRSHIP_ENTRIES {
+            let entry = rom_data::read_entry(&van, &rom_data::WORLDS[w], e);
+            let obj = u16::from_le_bytes([entry.obj_lo, entry.obj_hi]);
+            assert!(
+                rom_data::has_enemy_id(&van, obj, OBJ_TOADANDKING),
+                "W{}: the airship entry (obj ${obj:04X}) no longer hosts the Toad-and-King \
+                 scene — the dock tile's chain into the airship is what the HELP bubble gates",
+                w + 1,
+            );
+        }
+
+        let mut options =
+            crate::Options { palettes: false, palette_themed: false, ..Default::default() };
+        options.world_maze = true;
+        options.world_order = true;
+        assert!(options.disable_autoscroll, "this test assumes the shipping default");
+        let maze = crate::randomize_rom(&rom_bytes, 7, &options, None).ok();
+
+        // The half that was missing: our OUTPUT does not run that chain.
+        if let Some(maze) = maze.as_ref() {
+            for &(w, e) in rom_data::AIRSHIP_ENTRIES {
+                let entry = rom_data::read_entry(maze, &rom_data::WORLDS[w], e);
+                let obj = u16::from_le_bytes([entry.obj_lo, entry.obj_hi]);
+                assert!(
+                    !rom_data::has_enemy_id(maze, obj, OBJ_TOADANDKING),
+                    "W{}: the shipped airship entry still hosts the Toad-and-King scene \
+                     (obj ${obj:04X}) — then slot 0 IS load-bearing after all, and the marker \
+                     budget in `map_object_slot_budget` is wrong by two slots per world",
+                    w + 1,
+                );
+            }
+        }
+
+        // Both ROMs, and the count is asserted: a maze build that quietly
+        // failed would leave this checking vanilla twice.
+        let roms: Vec<&Rom> = [Some(&van), maze.as_ref()].into_iter().flatten().collect();
+        assert_eq!(roms.len(), 2, "the maze build failed, so only vanilla was checked");
+        for rom in roms {
+            for w in 0..8usize {
+                let id = |slot: usize| {
+                    rom.read_byte(rom_data::map_obj_slot_offset(
+                        rom,
+                        rom_data::MAP_OBJ_IDS_MASTER,
+                        w,
+                        slot,
+                    ))
+                };
+                assert_eq!(
+                    id(0),
+                    MAPOBJ_HELP,
+                    "W{}: slot 0 must still be the HELP bubble — it is the engine's own \
+                     \"have I sent you to the airship yet\" flag",
+                    w + 1,
+                );
+                // Slot 1 is empty in every world's ROM table. W8 has no
+                // airship so the builder already uses it
+                // (`first_usable_map_obj_slot`); W1-W7 leave it alone. Note
+                // that is now caution rather than necessity — with the
+                // cutscene retired above, nothing ever writes the airship
+                // there.
+                if w != 7 {
+                    assert_eq!(
+                        id(1),
+                        MAPOBJ_EMPTY,
+                        "W{}: slot 1 must be empty until the king scene puts the airship there",
+                        w + 1,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Does `code` ever store a non-zero value into `Map_Objects_IDs`?
+    ///
+    /// A conservative read: the last `LDA #imm` before the store has to be
+    /// zero. Anything cleverer would be a way for a wrong routine to pass.
+    fn stores_only_zero_into_ids(code: &[u8]) -> bool {
+        use mos6502::Variant;
+
+        let mut last_imm: Option<u8> = None;
+        let mut pc = 0usize;
+        while pc < code.len() {
+            let (_instr, mode) = Ricoh2a03::decode(code[pc]).expect("routine decodes");
+            if code[pc] == 0xA9 {
+                last_imm = Some(code[pc + 1]);
+            }
+            if matches!(code[pc], 0x8D | 0x99 | 0x9D) {
+                let target = u16::from_le_bytes([code[pc + 1], code[pc + 2]]);
+                if (MAP_OBJECTS_IDS..MAP_OBJECTS_IDS + 14).contains(&target)
+                    && last_imm != Some(MAPOBJ_EMPTY)
+                {
+                    return false;
+                }
+            }
+            pc += mode.extra_bytes() as usize + 1;
+        }
+        true
+    }
+
+    /// **The restore may only ever empty a slot, never fill one.**
+    ///
+    /// It runs on every full map init, so a routine that could write an ID
+    /// would be the one piece of code able to conjure or suppress an airship —
+    /// exactly the failure the king rescue was skipped to avoid. Structural
+    /// rather than behavioural, because the dangerous version would pass every
+    /// round-trip test above and only show on the seed where it mattered.
+    #[test]
+    fn the_restore_can_only_ever_clear_an_id() {
+        assert!(stores_only_zero_into_ids(&RESTORE_OBJECTS));
+    }
+
+    /// **Wrong stored value.** Make the restore write `MAPOBJ_AIRSHIP` instead
+    /// of `MAPOBJ_EMPTY` and the structural check has to notice.
+    #[test]
+    fn mutation_a_restore_that_writes_an_id_is_caught() {
+        let mut bad = RESTORE_OBJECTS;
+        assert_eq!(bad[25], 0xA9, "byte 25 is no longer the LDA # this mutates");
+        bad[26] = 0x02; // MAPOBJ_AIRSHIP
+        assert!(
+            !stores_only_zero_into_ids(&bad),
+            "a restore that fills a slot instead of emptying it went unnoticed",
+        );
+    }
+
+    // --- The emulated 2A03 --------------------------------------------------
+
+    /// Address the harness treats as "the routine returned".
+    const SENTINEL: u16 = 0x0F00;
+
+    fn call_routine(cpu: &mut CPU<Memory, Ricoh2a03>, entry: u16, what: &str) {
+        let ret = SENTINEL.wrapping_sub(1);
+        cpu.memory.set_byte(0x01FF, (ret >> 8) as u8);
+        cpu.memory.set_byte(0x01FE, ret as u8);
+        cpu.registers.stack_pointer = mos6502::registers::StackPointer(0xFD);
+        cpu.registers.program_counter = entry;
+        for _ in 0..100_000 {
+            if cpu.registers.program_counter == SENTINEL {
+                return;
+            }
+            cpu.single_step();
+        }
+        panic!("{what} ran away");
+    }
+
+    /// A CPU holding the two routines at their real origins over PRG011's real
+    /// contents, so `Map_CompleteBit` is the engine's bytes and not a fixture.
+    ///
+    /// `mark` and `restore` are passed in rather than read from the consts so
+    /// the mutation tests can plant a wrong byte and drive the same harness.
+    fn cpu_with(rom: &Rom, mark: &[u8], restore: &[u8]) -> CPU<Memory, Ricoh2a03> {
+        let mut mem = Memory::new();
+        let prg011: Vec<u8> = (0..0x2000).map(|i| rom.read_byte(0x16010 + i)).collect();
+        mem.set_bytes(0xA000, &prg011);
+        mem.set_bytes(MARK_DEAD_CPU, mark);
+        mem.set_bytes(RESTORE_OBJECTS_CPU, restore);
+        CPU::new(mem, Ricoh2a03)
+    }
+
+    /// Load a world's nine slots the way `Map_Init` does — from the ROM's own
+    /// per-world ID table, so the fixture is the map the engine would build.
+    fn map_init(cpu: &mut CPU<Memory, Ricoh2a03>, rom: &Rom, world: usize) {
+        cpu.memory.set_byte(WORLD_NUM, world as u8);
+        for slot in 0..MAP_OBJ_DEAD_LEN {
+            let id = rom.read_byte(rom_data::map_obj_slot_offset(
+                rom,
+                rom_data::MAP_OBJ_IDS_MASTER,
+                world,
+                slot,
+            ));
+            cpu.memory.set_byte(MAP_OBJECTS_IDS + slot as u16, id);
+        }
+        // The five runtime-only slots start empty, as they do after a reset.
+        for slot in MAP_OBJ_DEAD_LEN..14 {
+            cpu.memory.set_byte(MAP_OBJECTS_IDS + slot as u16, 0);
+        }
+    }
+
+    fn ids(cpu: &mut CPU<Memory, Ricoh2a03>) -> Vec<u8> {
+        (0..14u16).map(|i| cpu.memory.get_byte(MAP_OBJECTS_IDS + i)).collect()
+    }
+
+    /// Beat the object in `slot` the way `MO_DoLevelClear` does: `A` =
+    /// `MAPOBJ_EMPTY`, `Y` = the slot, then the displaced instruction's
+    /// replacement.
+    fn beat(cpu: &mut CPU<Memory, Ricoh2a03>, slot: u8) {
+        cpu.registers.accumulator = 0;
+        cpu.registers.index_y = slot;
+        call_routine(cpu, MARK_DEAD_CPU, "MARK_DEAD");
+        assert_eq!(
+            cpu.registers.accumulator, 0,
+            "MARK_DEAD owes the caller A = MAPOBJ_EMPTY for the two stores that follow",
+        );
+    }
+
+    /// The first slot of `world` that holds a real, beatable object — the
+    /// airship is exempted by the engine, and slot 0 is the HELP bubble.
+    fn a_beatable_slot(rom: &Rom, world: usize) -> Option<u8> {
+        (2..MAP_OBJ_DEAD_LEN as u8).find(|&slot| {
+            rom.read_byte(rom_data::map_obj_slot_offset(
+                rom,
+                rom_data::MAP_OBJ_IDS_MASTER,
+                world,
+                slot as usize,
+            )) != 0
+        })
+    }
+
+    /// **The playtest, on the emulated CPU.** Beat a Hammer Bro in World 1,
+    /// leave for World 2, come back — and it is still gone.
+    ///
+    /// Driven through the real hooks, the way `completion_bits`'
+    /// `a_beaten_level_survives_a_full_cycle` drives its own: a transition is
+    /// `World_Num` changing and `Map_Init` reloading, and nothing else.
+    #[test]
+    fn a_beaten_map_object_survives_a_round_trip() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let mut cpu = cpu_with(&rom, &MARK_DEAD, &RESTORE_OBJECTS);
+        for i in 0..MAP_OBJ_DEAD_LEN as u16 {
+            cpu.memory.set_byte(MAP_OBJ_DEAD + i, 0);
+        }
+
+        // --- arrive in World 1 ---
+        map_init(&mut cpu, &rom, 0);
+        call_routine(&mut cpu, RESTORE_OBJECTS_CPU, "enter W1");
+        let slot = a_beatable_slot(&rom, 0).expect("World 1 has a Hammer Bro");
+        assert_ne!(cpu.memory.get_byte(MAP_OBJECTS_IDS + slot as u16), 0);
+
+        // --- beat it ---
+        beat(&mut cpu, slot);
+        assert_eq!(cpu.memory.get_byte(MAP_OBJECTS_IDS + slot as u16), 0, "the poof still empties");
+
+        // --- off to World 2, which must be untouched ---
+        map_init(&mut cpu, &rom, 1);
+        call_routine(&mut cpu, RESTORE_OBJECTS_CPU, "enter W2");
+        let want: Vec<u8> = {
+            let mut fresh = cpu_with(&rom, &MARK_DEAD, &RESTORE_OBJECTS);
+            map_init(&mut fresh, &rom, 1);
+            ids(&mut fresh)
+        };
+        assert_eq!(ids(&mut cpu), want, "World 2's objects were disturbed by World 1's loss");
+
+        // --- and back ---
+        map_init(&mut cpu, &rom, 0);
+        call_routine(&mut cpu, RESTORE_OBJECTS_CPU, "re-enter W1");
+        assert_eq!(
+            cpu.memory.get_byte(MAP_OBJECTS_IDS + slot as u16),
+            0,
+            "World 1 slot {slot} came back to life",
+        );
+        // Everything else in World 1 is exactly as `Map_Init` left it.
+        for other in 0..MAP_OBJ_DEAD_LEN {
+            if other as u8 == slot {
+                continue;
+            }
+            let id = rom.read_byte(rom_data::map_obj_slot_offset(
+                &rom,
+                rom_data::MAP_OBJ_IDS_MASTER,
+                0,
+                other,
+            ));
+            assert_eq!(
+                cpu.memory.get_byte(MAP_OBJECTS_IDS + other as u16),
+                id,
+                "World 1 slot {other} was cleared and should not have been",
+            );
+        }
+    }
+
+    /// Every world, every slot, one at a time: the bit that comes back is the
+    /// bit that went in, and no other world's slots move.
+    ///
+    /// This is the test that a wrong world bit fails — an index that ignored
+    /// `World_Num` would clear the same slot in all eight worlds.
+    #[test]
+    fn each_world_keeps_its_own_losses() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        for world in 0..8usize {
+            for slot in 0..MAP_OBJ_DEAD_LEN as u8 {
+                let mut cpu = cpu_with(&rom, &MARK_DEAD, &RESTORE_OBJECTS);
+                for i in 0..MAP_OBJ_DEAD_LEN as u16 {
+                    cpu.memory.set_byte(MAP_OBJ_DEAD + i, 0);
+                }
+                map_init(&mut cpu, &rom, world);
+                beat(&mut cpu, slot);
+
+                for other in 0..8usize {
+                    map_init(&mut cpu, &rom, other);
+                    call_routine(&mut cpu, RESTORE_OBJECTS_CPU, "enter");
+                    for s in 0..MAP_OBJ_DEAD_LEN {
+                        let fresh = rom.read_byte(rom_data::map_obj_slot_offset(
+                            &rom,
+                            rom_data::MAP_OBJ_IDS_MASTER,
+                            other,
+                            s,
+                        ));
+                        let cleared = other == world && s as u8 == slot;
+                        assert_eq!(
+                            cpu.memory.get_byte(MAP_OBJECTS_IDS + s as u16),
+                            if cleared { 0 } else { fresh },
+                            "beat W{} slot {slot}, then entered W{}: slot {s} is wrong",
+                            world + 1,
+                            other + 1,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// A slot above the eight `Map_Init` reloads is still stored and still
+    /// restored. Slot 8 is the one a byte-per-world layout would have had to
+    /// drop, and the randomizer places Hammer Bros there
+    /// (`eligible_hb_map_slots` runs to 9).
+    #[test]
+    fn the_ninth_slot_is_stored_too() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let mut cpu = cpu_with(&rom, &MARK_DEAD, &RESTORE_OBJECTS);
+        for i in 0..MAP_OBJ_DEAD_LEN as u16 {
+            cpu.memory.set_byte(MAP_OBJ_DEAD + i, 0);
+        }
+        cpu.memory.set_byte(WORLD_NUM, 5);
+        // Pretend the builder put something at slot 8, as it may.
+        cpu.memory.set_byte(MAP_OBJECTS_IDS + 8, 0x03);
+        beat(&mut cpu, 8);
+        assert_ne!(
+            cpu.memory.get_byte(MAP_OBJ_DEAD + 8),
+            0,
+            "slot 8 was beaten and nothing was stored",
+        );
+
+        cpu.memory.set_byte(MAP_OBJECTS_IDS + 8, 0x03);
+        call_routine(&mut cpu, RESTORE_OBJECTS_CPU, "re-enter");
+        assert_eq!(cpu.memory.get_byte(MAP_OBJECTS_IDS + 8), 0, "slot 8 came back");
+    }
+
+    /// A runtime-only slot is out of the store's range, and must be left
+    /// alone rather than written past the end of it.
+    ///
+    /// `Map_FindEmptyObjectSlot` scans upward with no ceiling, so an N-Spade
+    /// can land at slot 9-13; `Map_Init` never reloads those, so remembering
+    /// one would mean nothing and storing it would land in whatever the maze
+    /// allocates after the nine bytes.
+    #[test]
+    fn a_runtime_only_slot_is_not_stored() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        for slot in MAP_OBJ_DEAD_LEN as u8..14 {
+            let mut cpu = cpu_with(&rom, &MARK_DEAD, &RESTORE_OBJECTS);
+            // Poison the store and the eight bytes after it: a write to either
+            // is a failure, and the ones past the end are the dangerous half.
+            for i in 0..(MAP_OBJ_DEAD_LEN as u16 + 8) {
+                cpu.memory.set_byte(MAP_OBJ_DEAD + i, 0xAA);
+            }
+            cpu.memory.set_byte(WORLD_NUM, 3);
+            cpu.memory.set_byte(MAP_OBJECTS_IDS + slot as u16, 0x09);
+            beat(&mut cpu, slot);
+            assert_eq!(
+                cpu.memory.get_byte(MAP_OBJECTS_IDS + slot as u16),
+                0,
+                "slot {slot} must still be emptied — that is vanilla's instruction",
+            );
+            for i in 0..(MAP_OBJ_DEAD_LEN as u16 + 8) {
+                assert_eq!(
+                    cpu.memory.get_byte(MAP_OBJ_DEAD + i),
+                    0xAA,
+                    "beating runtime slot {slot} wrote byte {i} of the maze store",
+                );
+            }
+        }
+    }
+
+    /// The bit is sticky. A White Toad House that lands in the slot a Hammer
+    /// Bro was beaten out of must not un-beat the Hammer Bro on the next
+    /// entry — which is exactly what a "pack the live IDs on the way out"
+    /// design would have done.
+    #[test]
+    fn a_bonus_object_in_a_freed_slot_does_not_revive_it() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let mut cpu = cpu_with(&rom, &MARK_DEAD, &RESTORE_OBJECTS);
+        for i in 0..MAP_OBJ_DEAD_LEN as u16 {
+            cpu.memory.set_byte(MAP_OBJ_DEAD + i, 0);
+        }
+        map_init(&mut cpu, &rom, 0);
+        let slot = a_beatable_slot(&rom, 0).expect("World 1 has a Hammer Bro");
+        beat(&mut cpu, slot);
+        // `Map_FindEmptyObjectSlot` hands the freed slot to a White Toad House.
+        cpu.memory.set_byte(MAP_OBJECTS_IDS + slot as u16, 0x0A);
+
+        map_init(&mut cpu, &rom, 0);
+        call_routine(&mut cpu, RESTORE_OBJECTS_CPU, "re-enter W1");
+        assert_eq!(
+            cpu.memory.get_byte(MAP_OBJECTS_IDS + slot as u16),
+            0,
+            "the store forgot slot {slot} because something else stood in it",
+        );
+    }
+
+    // --- Mutation tests -----------------------------------------------------
+    //
+    // Each plants one wrong byte and demands a named test above go red. A
+    // guard nobody has watched fail is a guard nobody has tested.
+
+    /// Drive `each_world_keeps_its_own_losses`' core claim over the given
+    /// routines, returning whether it held.
+    fn worlds_stay_separate(rom: &Rom, mark: &[u8], restore: &[u8]) -> bool {
+        let mut cpu = cpu_with(rom, mark, restore);
+        for i in 0..MAP_OBJ_DEAD_LEN as u16 {
+            cpu.memory.set_byte(MAP_OBJ_DEAD + i, 0);
+        }
+        map_init(&mut cpu, rom, 0);
+        let slot = a_beatable_slot(rom, 0).expect("World 1 has a Hammer Bro");
+        cpu.registers.accumulator = 0;
+        cpu.registers.index_y = slot;
+        call_routine(&mut cpu, MARK_DEAD_CPU, "MARK_DEAD");
+
+        // World 2 keeps everything, World 1 loses exactly that slot.
+        map_init(&mut cpu, rom, 1);
+        call_routine(&mut cpu, RESTORE_OBJECTS_CPU, "enter W2");
+        let w2_intact = (0..MAP_OBJ_DEAD_LEN).all(|s| {
+            cpu.memory.get_byte(MAP_OBJECTS_IDS + s as u16)
+                == rom.read_byte(rom_data::map_obj_slot_offset(
+                    rom,
+                    rom_data::MAP_OBJ_IDS_MASTER,
+                    1,
+                    s,
+                ))
+        });
+        map_init(&mut cpu, rom, 0);
+        call_routine(&mut cpu, RESTORE_OBJECTS_CPU, "re-enter W1");
+        let w1_lost = cpu.memory.get_byte(MAP_OBJECTS_IDS + slot as u16) == 0;
+        w2_intact && w1_lost
+    }
+
+    /// **Wrong bit index.** Index the world-bit table with the *slot* instead
+    /// of the world (`AND Map_CompleteBit,Y`) and every world starts sharing
+    /// World 1's losses.
+    #[test]
+    fn mutation_a_slot_indexed_world_bit_is_caught() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        assert!(
+            worlds_stay_separate(&rom, &MARK_DEAD, &RESTORE_OBJECTS),
+            "the unmutated routines must pass, or the mutation proves nothing",
+        );
+        let mut bad = RESTORE_OBJECTS;
+        bad[20] = 0x39; // AND abs,Y instead of AND abs,X
+        assert!(
+            !worlds_stay_separate(&rom, &MARK_DEAD, &bad),
+            "a slot-indexed world bit went unnoticed",
+        );
+    }
+
+    /// **Wrong loop bound.** Start the restore at slot 7 and the ninth slot is
+    /// never re-cleared.
+    #[test]
+    fn mutation_a_short_restore_loop_is_caught() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let ninth_is_restored = |restore: &[u8]| {
+            let mut cpu = cpu_with(&rom, &MARK_DEAD, restore);
+            for i in 0..MAP_OBJ_DEAD_LEN as u16 {
+                cpu.memory.set_byte(MAP_OBJ_DEAD + i, 0);
+            }
+            cpu.memory.set_byte(WORLD_NUM, 5);
+            cpu.memory.set_byte(MAP_OBJECTS_IDS + 8, 0x03);
+            cpu.registers.accumulator = 0;
+            cpu.registers.index_y = 8;
+            call_routine(&mut cpu, MARK_DEAD_CPU, "MARK_DEAD");
+            cpu.memory.set_byte(MAP_OBJECTS_IDS + 8, 0x03);
+            call_routine(&mut cpu, RESTORE_OBJECTS_CPU, "re-enter");
+            cpu.memory.get_byte(MAP_OBJECTS_IDS + 8) == 0
+        };
+        assert!(ninth_is_restored(&RESTORE_OBJECTS), "the unmutated loop must reach slot 8");
+        let mut bad = RESTORE_OBJECTS;
+        bad[16] = 0x07; // LDY #7
+        assert!(!ninth_is_restored(&bad), "a restore loop one slot short went unnoticed");
+    }
+
+    /// **The runtime pool comes out empty.** Slots 9-13 are the five
+    /// `Map_Init` never touches, and nothing else in the ROM clears them on a
+    /// world change — so without this the maze carries a bonus object into
+    /// worlds it has nothing to do with, and the two slots
+    /// `RESERVED_DYNAMIC_SLOTS` holds back can never be released.
+    #[test]
+    fn the_restore_empties_the_runtime_pool() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let pool_cleared = |restore: &[u8]| {
+            let mut cpu = cpu_with(&rom, &MARK_DEAD, restore);
+            for i in 9..14u16 {
+                cpu.memory.set_byte(MAP_OBJECTS_IDS + i, 0x0A); // a white toad house
+            }
+            cpu.memory.set_byte(WORLD_NUM, 3);
+            call_routine(&mut cpu, RESTORE_OBJECTS_CPU, "restore");
+            (9..14u16).all(|i| cpu.memory.get_byte(MAP_OBJECTS_IDS + i) == 0)
+        };
+        assert!(pool_cleared(&RESTORE_OBJECTS), "slots 9-13 must come out empty");
+
+        let mut bad = RESTORE_OBJECTS;
+        assert_eq!(bad[8], 0xC0, "byte 8 is no longer the CPY # this mutates");
+        bad[9] = 14; // CPY #14 -> the loop falls out after a single slot
+        assert!(!pool_cleared(&bad), "a pool clear that stops early went unnoticed");
+    }
+
+    /// **Wrong mark bound.** Widen the guard to `CPY #14` and beating a
+    /// runtime-only slot writes past the nine bytes of store.
+    #[test]
+    fn mutation_a_wide_mark_guard_is_caught() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let stays_in_bounds = |mark: &[u8]| {
+            let mut cpu = cpu_with(&rom, mark, &RESTORE_OBJECTS);
+            for i in 0..(MAP_OBJ_DEAD_LEN as u16 + 8) {
+                cpu.memory.set_byte(MAP_OBJ_DEAD + i, 0xAA);
+            }
+            cpu.memory.set_byte(WORLD_NUM, 3);
+            cpu.registers.accumulator = 0;
+            cpu.registers.index_y = 11;
+            call_routine(&mut cpu, MARK_DEAD_CPU, "MARK_DEAD");
+            (0..(MAP_OBJ_DEAD_LEN as u16 + 8))
+                .all(|i| cpu.memory.get_byte(MAP_OBJ_DEAD + i) == 0xAA)
+        };
+        assert!(stays_in_bounds(&MARK_DEAD), "the unmutated guard must hold");
+        let mut bad = MARK_DEAD;
+        bad[4] = 14; // CPY #MAPOBJ_TOTAL
+        assert!(!stays_in_bounds(&bad), "a guard that admits the runtime slots went unnoticed");
+    }
+}

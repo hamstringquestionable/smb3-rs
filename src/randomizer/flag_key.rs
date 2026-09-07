@@ -44,7 +44,7 @@ pub(super) const MAYBE_SALT: u64 = 0x4D41_5942_455F_5631; // "MAYBE_V1"
 
 /// Bytes of payload the format can address, past the two-byte envelope.
 ///
-/// 93 bits are spent today, leaving 147 in reserve — years of headroom at the
+/// 97 bits are spent today, leaving 143 in reserve — years of headroom at the
 /// rate this project has actually added options (the layout was bumped six
 /// times in the 38 days to 2026-08-06). It is deliberately generous rather than
 /// "one more byte than we need": running out of reserve is the one thing that
@@ -412,9 +412,16 @@ mod payload {
         /// How many times one level may appear on the map. Zero is `Off`, so an
         /// older key decodes to the once-each deal it was minted with.
         pub(super) deja_vu: DejaVuMode,
+        /// World maze: the eight maps become one Metroidvania.
+        pub(super) world_maze: bool,
+        /// Wands the maze's castle demands, 0-7 — and **only written when
+        /// `world_maze` is on**, so a key from a seed that never touches the
+        /// mode is byte-for-byte what it was before this field existed. Zero is
+        /// a real value with the maze on (a pure maze, no gate).
+        pub(super) maze_wands: B3,
 
         // --- Reserve ---
-        // 139 bits. Adding an option is: declare it immediately above this
+        // 135 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off `B19`. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -429,7 +436,7 @@ mod payload {
         #[skip]
         __: B128,
         #[skip]
-        __: B11,
+        __: B7,
     }
 }
 
@@ -473,7 +480,7 @@ impl Options {
             cannons, water, bros, hb_encounters, limit_hazards, friendlier_levels,
             bro_battle_timer, deja_vu,
             fire_flower, piranha_shuffle, wild_injections,
-            starting_lives, world_count, starting_items,
+            starting_lives, world_count, world_maze, maze_wands, starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
             palettes: _, palette_themed: _, player_color: _,
             remove_flashing: _, king_quotes: _, skip_rom_validation: _,
@@ -545,6 +552,12 @@ impl Options {
             .with_wild_bass(has(WildChaser::Bass))
             .with_starting_lives(lives_to_idx(*starting_lives))
             .with_world_count((*world_count).clamp(1, 7))
+            .with_world_maze(*world_maze)
+            // Zero unless the maze is on. The field is meaningless with it
+            // off, and encoding its default anyway would have moved the
+            // default key string for every seed that never touches the mode —
+            // which is a flag-key compatibility event bought for nothing.
+            .with_maze_wands(if *world_maze { (*maze_wands).min(7) } else { 0 })
             .with_starting_item_0(sanitize_item(item(0)))
             .with_starting_item_1(sanitize_item(item(1)))
             .with_starting_item_2(sanitize_item(item(2)))
@@ -637,6 +650,11 @@ impl Options {
             // 0 is unreachable from the encoder (it clamps to 1–7) but reachable
             // from a corrupt or newer key; take the default rather than a world
             // count the builder can't satisfy.
+            world_maze: f.world_maze(),
+            // 0 is a REAL value with the maze on — a pure maze, no gate on the
+            // castle — so it is taken at face value there. With the maze off
+            // the field was never encoded, so the default is the honest read.
+            maze_wands: if f.world_maze() { f.maze_wands() } else { default_maze_wands() },
             world_count: match f.world_count() {
                 0 => default_world_count(),
                 n => n,

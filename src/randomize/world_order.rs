@@ -6,7 +6,11 @@ use crate::rom::Rom;
 
 /// File offset of the `INC World_Num; JMP $84A0` instruction (6 bytes).
 /// Original bytes: EE 27 07 4C A0 84
-const WORLD_INC_OFFSET: usize = 0x3D0A1;
+///
+/// Exposed because it is vanilla's airship-cleared world transition, and
+/// [`super::completion_bits`] tests its persistence hooks against the engine's
+/// own bytes rather than a transcription of them.
+pub(crate) const WORLD_INC_OFFSET: usize = 0x3D0A1;
 
 /// File offset of the `LDA #$00` operand that initializes World_Num at game start.
 /// Original: `LDA #$00; STA $0727; STA $0160`. We patch the #$00 to the starting world
@@ -23,7 +27,17 @@ pub(crate) const WORLD_INIT_OPERAND: usize = 0x30CC3;
 /// We NOP this out because patching the LDA operand above would otherwise
 /// set the debug flag to the starting world number.  The reset handler
 /// clears $0160 to zero on power-on, so it's safe to skip this write.
-const DEBUG_FLAG_STA_OFFSET: usize = 0x30CC7;
+///
+/// **Shared with [`super::completion_bits`]**, which puts a three-byte `JSR`
+/// here instead — the world maze's new-game signal, and the only three-byte
+/// instruction that fits (the `RTS` at `+3` is the live branch target
+/// `PRG024_ACBA`). The two writes collide by construction, so the ordering is
+/// part of the contract: **`world_order::randomize` runs first and
+/// `completion_bits::apply` overwrites it.** That direction is the safe one —
+/// the `JSR`'s routine stores 0 to `Debug_Flag` itself, so it does the job the
+/// `NOP`s were there to protect, while the reverse would silently disable the
+/// signal.
+pub(crate) const DEBUG_FLAG_STA_OFFSET: usize = 0x30CC7;
 
 /// CPU address of the lookup table (routine + 12 bytes).
 const TABLE_CPU: u16 = WORLD_ORDER_CPU + 12;
@@ -42,6 +56,20 @@ const MAP_DISPLAY_OFFSET: usize = 0x14372;
 /// Original: LDX $0727; INX; TXA; ORA #$F0; STA $0304,Y (10 bytes at 0x350D7).
 const STATUS_DISPLAY_OFFSET: usize = 0x350D7;
 
+/// The two vanilla sites this module overwrites, and what must still be there.
+///
+/// **These turn an ordering rule into a panic.** Both bytes are shared with the
+/// world maze: `wand_gate` chains its wand counter through the `JMP` written at
+/// [`WORLD_INC_OFFSET`], and `completion_bits` puts its new-game signal over the
+/// three bytes at [`DEBUG_FLAG_STA_OFFSET`]. Both of those must run AFTER this
+/// module, and until now nothing said so except a comment in each of them.
+/// Last-writer-wins is silent in the wrong order: the maze's hooks would simply
+/// be overwritten and the mode would half-work.
+const VANILLA_SITES: [(usize, &[u8], &str); 2] = [
+    (WORLD_INC_OFFSET, &[0xEE, 0x27, 0x07], "INC World_Num (the airship transition)"),
+    (DEBUG_FLAG_STA_OFFSET, &[0x8D, 0x60, 0x01], "STA Debug_Flag (the title-screen init)"),
+];
+
 /// Randomize the world progression order.
 ///
 /// Patches the `INC World_Num` instruction to instead use a lookup table
@@ -56,6 +84,17 @@ const STATUS_DISPLAY_OFFSET: usize = 0x350D7;
 /// `world_count` < 7 this is shorter than 8 (unvisited worlds are omitted).
 /// Callers such as [`super::credits`] use it to align the ending montage.
 pub fn randomize<R: Rng>(rom: &mut Rom, rng: &mut R, world_count: u8) -> Vec<u8> {
+    for (offset, want, what) in VANILLA_SITES {
+        assert_eq!(
+            rom.read_range(offset, want.len()),
+            want,
+            "0x{offset:05X} no longer holds vanilla's {what}, so something has already \
+             patched it. `world_order::randomize` must run BEFORE `wand_gate` and \
+             `completion_bits`, which both chain through bytes it writes — see \
+             `randomizer::randomize_inner` for the order."
+        );
+    }
+
     let world_count = world_count.clamp(1, 7) as usize;
 
     // Build shuffled world order: shuffle worlds 0-6, take first world_count, append world 7

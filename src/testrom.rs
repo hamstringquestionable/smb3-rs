@@ -362,6 +362,17 @@ pub struct TestRomSpec {
     pub hammer_breaks_locks: bool,
     /// Let the Hammer item break water-gap (bridge) tiles on the map.
     pub hammer_breaks_bridges: bool,
+    /// **World-maze POC.** Keep every world's map progress across transitions
+    /// — pack the world being left, expand the one being entered — instead of
+    /// wiping `Map_Completions`. Beat a level, leave the world by any route the
+    /// game offers, come back: it should still be beaten. Use `--telepad` to
+    /// have a way of leaving. See `randomize::world_persist`.
+    pub world_persist: bool,
+    /// **World-maze POC.** Telepads, as `(world A, world B)` pairs, both
+    /// 1-based. A pad in each world; stepping on one teleports straight to the
+    /// other with no transit room. Uses the world's first spade panel as the
+    /// pad tile, so it spends no pipe and no destination-table slot.
+    pub telepads: Vec<(u8, u8)>,
     /// Put bro encounters on the 10-second clock (`bro_battle_timer`).
     pub bro_battle_timer: bool,
     /// Include the 9 unreferenced beta stages as placeable names.
@@ -778,6 +789,100 @@ fn apply_movement(
     Ok((applied, written, skipped))
 }
 
+/// Turn `--telepad A:B` pairs into a pad in each world, aimed at each other.
+///
+/// A pad is a *tile*, not a level: the enter hook fires on `World_Map_Tile`
+/// and the player's map position, before any pointer entry is consulted. So a
+/// pad costs no transit room, no destination-table slot and no pipe — which is
+/// the whole reason to prefer it over a portal pipe.
+///
+/// Pads stand on spade panels, taken in catalog order so a world can host as
+/// many as it owns — W3 has five, W1 one, W8 none. A spade panel is a cell
+/// vanilla already put on the walkable lattice with a pointer entry behind it,
+/// which is why it is the convenient site; the cell is then **restamped as
+/// `TILE_TELEPAD`** by [`stamp_telepad_tiles`], exactly as the randomizer does,
+/// so a playtest ROM shows the same tile a real maze does.
+fn resolve_telepads(
+    rom: &Rom,
+    specs: &[(u8, u8)],
+) -> Result<Vec<crate::randomize::world_persist::Telepad>, String> {
+    use crate::randomize::world_persist::{PORTAL_MAX, Telepad};
+    if specs.is_empty() {
+        return Ok(Vec::new());
+    }
+    if specs.len() * 2 > PORTAL_MAX {
+        return Err(format!(
+            "{} telepad pairs need {} arrival ids; the ROM holds {PORTAL_MAX}",
+            specs.len(),
+            specs.len() * 2
+        ));
+    }
+
+    let spades = NodeCatalog::build(rom, false).bonus_game_views();
+    let mut taken: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    let mut claim = |world: usize| -> Result<(usize, usize), String> {
+        let owned: Vec<(usize, usize)> =
+            spades.iter().filter(|(w, _)| *w == world).map(|(_, pos)| *pos).collect();
+        if owned.is_empty() {
+            return Err(format!("W{} has no spade panel to stand a telepad on", world + 1));
+        }
+        let nth = taken.entry(world).or_insert(0);
+        let pos = *owned.get(*nth).ok_or_else(|| {
+            format!(
+                "W{} owns only {} spade panel(s) and {} telepads were asked of it",
+                world + 1,
+                owned.len(),
+                *nth + 1
+            )
+        })?;
+        *nth += 1;
+        Ok(pos)
+    };
+
+    let mut out = Vec::new();
+    for &(a, b) in specs {
+        let (aw, bw) = (a as usize - 1, b as usize - 1);
+        let (a_pos, b_pos) = (claim(aw)?, claim(bw)?);
+        out.push(Telepad {
+            world: aw as u8,
+            dest_world: bw as u8,
+            dest_pos: b_pos,
+            src_pos: a_pos,
+        });
+        out.push(Telepad {
+            world: bw as u8,
+            dest_world: aw as u8,
+            dest_pos: a_pos,
+            src_pos: b_pos,
+        });
+    }
+    Ok(out)
+}
+
+/// Stamp [`TILE_TELEPAD`] over each pad's cell, and compose the metatile it
+/// wears.
+///
+/// `world_persist::PAD_ENTER` keys on `World_Map_Tile`, so a pad whose cell
+/// still holds the spade panel it was placed on is a pad that never fires — it
+/// enters the card game instead. That is the bug the randomizer's own stamp
+/// exists for, and a playtest ROM has to reproduce the shipping tile rather
+/// than an older one.
+fn stamp_telepad_tiles(rom: &mut Rom, telepads: &[crate::randomize::world_persist::Telepad]) {
+    use crate::randomize::rom_data::{
+        PRG012_FILE_BASE, TELEPAD_QUADRANTS, TILE_TELEPAD, map_tile_offset,
+    };
+    if telepads.is_empty() {
+        return;
+    }
+    for (plane, &pattern) in TELEPAD_QUADRANTS.iter().enumerate() {
+        rom.write_byte(PRG012_FILE_BASE + plane * 256 + TILE_TELEPAD as usize, pattern);
+    }
+    for pad in telepads {
+        let (row, col) = pad.src_pos;
+        rom.write_byte(map_tile_offset(pad.world as usize, row, col), TILE_TELEPAD);
+    }
+}
+
 /// Build a test ROM from vanilla bytes and a spec.
 pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     let mut report = Vec::new();
@@ -989,6 +1094,28 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         report.push("bro battle timer: 10".to_string());
     }
 
+    // 6c. World-maze persistence POC. Direct like the two above so it can be
+    //     tested on a plain vanilla map, which is the point — the question is
+    //     whether the engine re-renders a world's completions, and a randomized
+    //     map only adds variables.
+    if spec.world_persist || !spec.telepads.is_empty() {
+        let telepads = resolve_telepads(&rom, &spec.telepads)?;
+        stamp_telepad_tiles(&mut rom, &telepads);
+        crate::randomize::world_persist::apply(&mut rom, &telepads);
+        for pad in &telepads {
+            report.push(format!(
+                "telepad: W{} row {} col {}  ->  W{} row {} col {}",
+                pad.world + 1,
+                pad.src_pos.0,
+                pad.src_pos.1,
+                pad.dest_world + 1,
+                pad.dest_pos.0,
+                pad.dest_pos.1,
+            ));
+        }
+        report.push("world persist: completions packed per world".to_string());
+    }
+
     // 7. Starting inventory. Last, mirroring the randomizer's own ordering —
     //    the trampoline overwrites title-screen bytes and must win.
     if !spec.starting_items.is_empty() {
@@ -1081,6 +1208,8 @@ mod tests {
             starting_lives: 5,
             hammer_breaks_locks: false,
             hammer_breaks_bridges: false,
+            world_persist: false,
+            telepads: Vec::new(),
             bro_battle_timer: false,
             include_beta: false,
             big_q_unused5: None,
@@ -1089,6 +1218,38 @@ mod tests {
             big_q_notes: None,
             set_enemies: Vec::new(),
         }
+    }
+
+    /// The packed base table is derived from the map grids when
+    /// `completion_bits::apply` runs, and re-derived from them on the console
+    /// at every world load. If anything moves a map tile *after* that point,
+    /// the two disagree and a world's progress comes back attached to the wrong
+    /// cells — silently, and only on the console.
+    ///
+    /// A full test-ROM build is the place to catch it: `--remove-locks` alone
+    /// turns 62 completion-unsafe tiles into path.
+    #[test]
+    fn packed_base_table_matches_the_finished_map() {
+        let Some(v) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let built = build(
+            &v,
+            &TestRomSpec {
+                world_persist: true,
+                remove_locks: true,
+                placements: vec![Placement { slot: Some(1), level: "6F1".into() }],
+                ..spec()
+            },
+        )
+        .expect("build");
+        let rom = Rom::from_bytes_lax(&built.bytes, true).expect("parse");
+        let want = crate::randomize::completion_bits::CompletionMap::from_rom(&rom).base_table();
+        let got: Vec<u8> = (0..9)
+            .map(|i| rom.read_byte(crate::randomize::rom_data::FS_COMPLETION_BASES + i))
+            .collect();
+        assert_eq!(got, want, "the emitted base table no longer matches the finished map grids");
     }
 
     #[test]
@@ -1391,6 +1552,69 @@ mod tests {
                 world_idx + 1
             );
         }
+    }
+
+    /// `--telepad A:B` is 1-based; `World_Num` is 0-based. The unit test on
+    /// `apply` passes already-converted indices, so it cannot see this — and the
+    /// first cut of the portal shipped with the conversion missing, sending
+    /// World 2 to World 3. Check the bytes that actually land in the ROM.
+    #[test]
+    fn telepad_worlds_are_converted_to_zero_based_indices() {
+        let Some(van) = vanilla() else { return };
+        // W3 owns five spade panels, so it can be one end of every pair asked
+        // here; W8 owns none and cannot hold a pad at all.
+        for world in (1u8..=7).filter(|&w| w != 3) {
+            let rom = build(&van, &TestRomSpec { telepads: vec![(3, world)], ..spec() })
+                .expect("build with a telepad pair");
+            let table = crate::randomize::rom_data::FS_PORTAL_ARRIVAL
+                + crate::randomize::world_persist::PORTAL_TABLE_OFF;
+            // A pair is two arrivals: id 0 leaves W3, id 1 comes back.
+            assert_eq!(
+                rom.bytes[table],
+                world - 1,
+                "--telepad 3:{world} must send id 0 to World_Num {}",
+                world - 1
+            );
+            assert_eq!(rom.bytes[table + 1], 2, "and id 1 must come back to W3");
+        }
+    }
+
+    /// A world hosts as many pads as it owns spade panels, and asking for more
+    /// is an error rather than a silent reuse of one tile.
+    #[test]
+    fn a_world_can_hold_more_than_one_telepad() {
+        let Some(van) = vanilla() else { return };
+        let built = build(&van, &TestRomSpec { telepads: vec![(3, 1), (3, 2)], ..spec() })
+            .expect("build with two telepad pairs out of W3");
+        let lines: Vec<&String> =
+            built.report.iter().filter(|l| l.starts_with("telepad:")).collect();
+        assert_eq!(lines.len(), 4, "report: {:?}", built.report);
+
+        // Decoded through `world_persist`, which owns the key layout, so a
+        // change to the row shape cannot leave this quietly reading the old one.
+        let out = Rom::from_bytes_lax(&built.bytes, true).unwrap();
+        let pads = crate::randomize::world_persist::decode_pad_rows(&out);
+        assert_eq!(pads.len(), 4, "two pairs is four pad rows");
+        // Rows 0 and 2 are W3's two pads; their cells must differ, or both
+        // pairs claimed the same tile.
+        assert_eq!(pads[0].0, 2, "row 0 stands in W3");
+        assert_eq!(pads[2].0, 2, "row 2 stands in W3");
+        assert_ne!(
+            (pads[0].1, pads[0].2),
+            (pads[2].1, pads[2].2),
+            "both W3 pads claimed the same spade panel"
+        );
+
+        // W1 owns one spade panel, so it can be one end of one pair.
+        assert!(
+            build(&van, &TestRomSpec { telepads: vec![(1, 3), (1, 3)], ..spec() }).is_err(),
+            "asking a world for more spade panels than it owns must fail loudly"
+        );
+        // W8 owns none at all.
+        assert!(
+            build(&van, &TestRomSpec { telepads: vec![(8, 3)], ..spec() }).is_err(),
+            "W8 has no spade panel and cannot hold a pad"
+        );
     }
 
     /// Locks must survive `--keep-locks` even when the hammer can break them —

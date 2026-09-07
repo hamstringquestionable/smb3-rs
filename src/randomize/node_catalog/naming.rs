@@ -29,7 +29,7 @@ const ORDINAL_SLOTS: usize = 6;
 /// Slot index + name abbreviation for kinds that get ordinal suffixes.
 fn ordinal_slot(kind: &NodeKind) -> Option<(usize, &'static str)> {
     match kind {
-        NodeKind::Fortress { .. } => Some((0, "F")),
+        NodeKind::Fortress => Some((0, "F")),
         NodeKind::Pipe { .. } => Some((1, "Pi")),
         NodeKind::ToadHouse => Some((2, "TH")),
         NodeKind::BonusGame => Some((3, "BG")),

@@ -95,15 +95,17 @@ is the one to read:
 | Bank | Mapped at | Free left | Largest single gap |
 |------|-----------|-----------|--------------------|
 | PRG031 | `$E000–$FFFF`, always | 81 | **30** |
-| PRG030 | `$8000–$9FFF`, always | 58 | 42 |
+| PRG030 | `$8000–$9FFF`, always | 42 | 42 |
 | PRG001 | swapped, in-level (object AI) | 60 | 38 |
 | PRG003 | swapped, in-level (object AI) | 5 | 5 |
 | PRG004 | swapped, in-level (object AI, group 3) | 426 | 426 |
 | PRG005 | swapped, in-level (object AI) | 58 | 58 |
 | PRG006 | `$C000–$DFFF`, in-level (enemy data) | 1392 | 1392 |
 | PRG007 | swapped, in-level (object AI) | 27 | 27 |
-| PRG010 | `$C000–$DFFF`, map | 896 | 588 |
-| PRG025 | `$C000–$DFFF`, title screen | 2771 | 2759 |
+| PRG010 | `$C000–$DFFF`, map | 224 | 64 |
+| PRG011 | `$A000–$BFFF`, map | 154 | 101 |
+| PRG025 | `$C000–$DFFF`, title screen | 2731 | 2719 |
+| PRG012 | `$A000–$BFFF`, map reload | 716 | 336 |
 | PRG026 | `$A000–$BFFF`, map/inventory | 2485 | 2419 |
 
 PRG000 and PRG002 have no `$FF` filler left at all.
@@ -112,6 +114,14 @@ The always-mapped banks are effectively full. A patch that must run regardless o
 the current bank has one 42-byte gap in PRG030 and nothing over 30 bytes in
 PRG031, so past that a trampoline into a swapped bank is the only option — and
 that costs bytes too.
+
+**Check where your hook actually runs before paying that rent.** A hook on the
+world map does not need an always-mapped bank at all: `$84A0` maps PRG010 into
+`$C000` and PRG011 into `$A000` for the whole map, so map-side code has hundreds
+of bytes available instead of PRG030's 42. The world-maze telepad hook is there
+for exactly this reason; the pipe-portal version it replaced had to sit in
+PRG030 because at *level exit* the banks belong to the level, and it consumed
+this bank's only usable run while it existed.
 
 **Do not hand-edit these numbers — regenerate them.** `smb3-rs <rom>
 --free-space` prints the whole per-bank budget without randomizing (the same
@@ -136,6 +146,21 @@ at `$D505`, so the whole run from 0x33529 to the bank end is filler. That bank
 is mapped at `$C000` for the entire title screen (PRG030's title entry loads
 page 24 into `$A000` and page 25 into `$C000`), which makes it the right home
 for title-only code instead of the nearly-full always-mapped banks.
+
+**The scan cannot see reclaimed vanilla code, so the table understates PRG010.**
+The fortress-FX rework (2026-09-06) retired vanilla's `MO_DoFortressFX` and its
+seven slot tables by repointing one word of the map-operation jump table,
+freeing `$C7BD..$C9D5` — 537 contiguous bytes, the largest run in the map bank.
+Those bytes were never `$FF`, so `--free-space` counts none of them. The
+registry row is the record instead: `FS_FORTRESS_FX` claims the whole run at
+537 reserved / 484 used, leaving **53 spare bytes the per-bank table above does
+not know about**. The same is true of every allocation sited on retired vanilla
+code — check `FREE_SPACE_ALLOCATIONS` alongside the scan, not instead of it.
+
+**Repointing a jump-table vector is the cheapest way to reclaim a large run**
+in this ROM: one word, and a whole subsystem's code *and* data become free at
+once. It is worth asking, before writing a trampoline, whether the vanilla
+routine you are working around is reached from exactly one vector.
 
 ### Size techniques that have actually paid off here
 

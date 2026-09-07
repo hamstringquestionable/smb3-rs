@@ -48,7 +48,9 @@ pub(crate) fn allot_budgets(
 /// Wrap a finished `BuiltWorld` back into a `WorldState`. Start/target are
 /// re-derived from the grid the same way the builder derived them. `fixed`
 /// is empty: a finished world has nothing left to place.
-#[cfg(test)]
+///
+/// Production since the world maze: the maze is eight of these over
+/// `BuildResult::worlds`, which is the whole of how it gets its input.
 pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
     WorldState {
         world_idx: built.world_idx,
@@ -67,6 +69,7 @@ pub(crate) fn from_built(built: &BuiltWorld) -> WorldState {
         ptr_slots: 0,
         bridges_out: 0,
         bridge_spans: Vec::new(),
+        wand_gate_reserved: false,
         hb_sprite_pins: Vec::new(),
         log: Vec::new(),
     }
@@ -122,7 +125,7 @@ pub(crate) fn from_pickup(
     let fort_budget = catalog
         .entries
         .iter()
-        .filter(|e| e.world_idx == world_idx && matches!(e.kind, NodeKind::Fortress { .. }))
+        .filter(|e| e.world_idx == world_idx && matches!(e.kind, NodeKind::Fortress))
         .count();
     let hb_sprite_pins = if flags.shuffle_hammer_bros {
         Vec::new()
@@ -151,6 +154,7 @@ pub(crate) fn from_pickup(
         ptr_slots: pickup.worlds[world_idx].pool_indices.len(),
         bridges_out: 0,
         bridge_spans: Vec::new(),
+        wand_gate_reserved: flags.world_maze && world_idx == rom_data::W8_IDX,
         hb_sprite_pins,
         log: Vec::new(),
     }
@@ -201,6 +205,7 @@ pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -
         ptr_slots: 0,
         bridges_out: 0,
         bridge_spans: Vec::new(),
+        wand_gate_reserved: false,
         hb_sprite_pins: Vec::new(),
         log: Vec::new(),
     }
@@ -218,10 +223,20 @@ fn vanilla_slots(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -> Vec<Slot
     for entry in catalog.entries.iter().filter(|e| e.world_idx == world_idx) {
         let (kind, section) = match &entry.kind {
             NodeKind::Level => (SlotKind::Level, 0),
-            NodeKind::Fortress { boomboom_y_offset } => {
-                // The Boom-Boom Y-byte's upper nibble is the fortress's
-                // 1-based FX ordinal within its world; sections are 0-based.
-                let ordinal = (rom.read_byte(*boomboom_y_offset) >> 4) as usize;
+            NodeKind::Fortress => {
+                // Vanilla's Boom-Boom Y-byte carries the fortress's 1-based FX
+                // ordinal within its world in its upper nibble; sections are
+                // 0-based. This reads the *source* ROM, which still has it —
+                // `lock_keys::apply` masks the nibble off the output.
+                let ordinal = entry
+                    .level_entry
+                    .as_ref()
+                    .and_then(|le| {
+                        rom_data::boomboom_y_offset_for_obj(
+                            ((le.obj_hi as u16) << 8) | le.obj_lo as u16,
+                        )
+                    })
+                    .map_or(0, |off| (rom.read_byte(off) >> 4) as usize);
                 (SlotKind::Fortress, ordinal.saturating_sub(1))
             }
             NodeKind::Pipe { .. } => (SlotKind::Pipe, 0),

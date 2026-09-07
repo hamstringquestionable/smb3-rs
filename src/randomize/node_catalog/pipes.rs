@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::rom::Rom;
 
-use crate::randomize::rom_data::{self, PIPE_MAP_X, PIPE_MAP_XHI, PIPE_MAP_Y, WORLDS};
+use crate::randomize::rom_data::{self, WORLDS};
 
 // ---------------------------------------------------------------------------
 // Pipe pair matching
@@ -53,7 +53,7 @@ pub(super) fn build_pipe_map(
         let eb_pos = rom_data::entry_grid_position(rom, world, eb);
 
         for &d in dest_indices {
-            let (da, db) = read_dest_positions(rom, d);
+            let (da, db) = rom_data::read_dest_positions(rom, d);
             if (ea_pos == da && eb_pos == db) || (ea_pos == db && eb_pos == da) {
                 let (a_entry, b_entry) = classify_pipe_ab(rom, world, ea, eb);
                 result.insert(a_entry, (d, true));
@@ -107,17 +107,4 @@ fn classify_pipe_ab(
 
     // Fallback: preserve original order.
     (ea, eb)
-}
-
-/// Read the A and B endpoint positions from the pipe destination tables.
-fn read_dest_positions(rom: &Rom, dest_idx: usize) -> ((usize, usize), (usize, usize)) {
-    let xhi = rom.read_byte(PIPE_MAP_XHI + dest_idx);
-    let x = rom.read_byte(PIPE_MAP_X + dest_idx);
-    let y = rom.read_byte(PIPE_MAP_Y + dest_idx);
-
-    let a_pos =
-        (((y >> 4) as usize).wrapping_sub(2), ((xhi >> 4) as usize) * 16 + ((x >> 4) as usize));
-    let b_pos =
-        (((y & 0xF) as usize).wrapping_sub(2), ((xhi & 0xF) as usize) * 16 + ((x & 0xF) as usize));
-    (a_pos, b_pos)
 }

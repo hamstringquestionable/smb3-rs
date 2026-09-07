@@ -2366,12 +2366,20 @@ Each tile byte is rendered as 4 CHR pattern indices forming a 2×2 metatile (16�
 The bank is **shared across all 8 worlds** — re-skinning a tile changes its appearance in
 every world.
 
+**The order is UL / LL / UR / LR — column-major, not row-major.** This table
+said NW/NE/SW/SE until 2026-09-05, which transposes the off-diagonal; the same
+file already had it right at the desert-metatile note above ("UL/LL/UR/LR × 256,
+same layout as the world-map table at 0x18010"). `prg012.asm:14-18` says so, and
+the ROM settles it: `TILE_HORZPATH $45` is `FE E1 FE E1`, which under UL/LL/UR/LR
+is a blank top row over a path bottom row — a horizontal path. Under
+NW/NE/SW/SE it would be a vertical stripe down the right-hand edge.
+
 | Quadrant | File offset | Size |
 |---|---|---|
-| NW | `0x18010 + tile` | 256 bytes |
-| NE | `0x18110 + tile` | 256 bytes |
-| SW | `0x18210 + tile` | 256 bytes |
-| SE | `0x18310 + tile` | 256 bytes |
+| upper-left | `0x18010 + tile` | 256 bytes |
+| **lower-left** | `0x18110 + tile` | 256 bytes |
+| **upper-right** | `0x18210 + tile` | 256 bytes |
+| lower-right | `0x18310 + tile` | 256 bytes |
 
 Total: 4 × 256 = 1024 bytes (matches the doc's "1024-byte maps" per metatile bank).
 
@@ -3089,6 +3097,123 @@ table that lists tile IDs eligible for removal during map completion processing:
 TILE_ALTFORT, TILE_ALTLOCK, TILE_LOCKHORZ ($56), TILE_RIVERVERT`. These tiles are checked
 during `Map_Reload_with_Completions` and replaced with their `Map_RemoveTo_Tiles`
 counterparts when the corresponding completion bit is set.
+
+### World transitions and per-world map state
+
+*(Researched 2026-09-03 for the world-maze experiment. Every address below was
+verified against the ROM, not read off the disassembly's labels.)*
+
+**A world map is never saved — it is recomputed.** Three things combine:
+
+| Piece | Where | Mutable? |
+|---|---|---|
+| The layout | ROM, PRG012 grid data | no |
+| The working copy | `Tile_Mem` `$6000-$794F` | rebuilt on every map load |
+| The delta | `Map_Completions` `$7D00-$7D7F` | the only persistent record |
+
+`Map_Reload_with_Completions` (PRG012) decompresses the world's grid from ROM
+into `Tile_Mem`, then replays the bitfield over the top: for each set bit it
+swaps the tile at that cell via `Map_Removable_Tiles` → `Map_RemoveTo_Tiles`.
+Since the lock and fortress tiles are in that table, **setting a completion bit
+is sufficient to make a lock open or a fortress crumble** — no tile write
+needed. That is how vanilla persists both across an ordinary map reload.
+
+Consequence for any "return to a world" feature: retaining a world's map state
+is exactly retaining its 128 bytes of `Map_Completions`. Nothing else about the
+map is state.
+
+**The bitfield walks BOTH halves.** The loop runs to `CMP #$80` — all 128 bytes,
+Mario's and Luigi's — and folds the column index with `AND #$30`, which aliases
+Luigi's `$40-$7F` bytes onto the same four screens as Mario's. The disassembly
+says so at the fold:
+
+```asm
+	; Note: Loop goes through both Players sets of completion bits, but
+	; this AND will basically cause 2 passes across the map...
+	AND #$30
+```
+
+So Luigi's half is **not** private storage even in a one-player game: whatever is
+in it is drawn onto the map.
+
+**Who writes which half.** Per-run progress goes to the current player only;
+*permanent map alterations* are mirrored to both, so they survive a game over:
+
+| Writer | Halves | Disassembly comment |
+|---|---|---|
+| Level clear, `PRG011_BA67` | current player | — |
+| Fortress clear, `PRG011_BA7C` | **both** | "Fortress only... mark complete on both Players (so it remains after Game Over)" |
+| Lock bust / bridge build, `MO_DoFortressFX` | **both** | "Mark lock busted / bridge built (Luigi)" |
+| Rock break, `Map_SetCompletion_By_Poof` (PRG026) | **both** | "Rock removal sets completion bit for BOTH Players!" |
+
+`PRG030_9314` then ANDs the two halves on game over, which is precisely what
+keeps forts and locks broken while wiping plain level clears.
+
+**There is exactly one world-init entry, and it wipes the bitfield.**
+`PRG030_84A0` (file `0x3C4B0`), reached only from the airship-cleared path
+(`INC World_Num`) and the warp zone (`World_Num = Map_Warp_PrevWorld`). It never
+returns — it falls through into `WorldMap_Loop`. Its first act maps PRG010 into
+`$C000` and PRG011 into `$A000`; then, at CPU `$84CD` (file `0x3C4DD`), ten
+bytes and three whole instructions:
+
+```asm
+	LDY #$7F
+	LDA #$00
+	STA Map_Completions,Y
+	DEY
+	BPL -6
+```
+
+Nothing branches into the middle of it, and PRG010 is already mapped when it
+runs, so it is a clean hook site for anything that wants to bank the state
+instead of destroying it. `Map_Reload_with_Completions` is called much later in
+the same routine, so a restore placed here is picked up with no redraw work.
+
+**Fortress FX addressing** (PRG010, all confirmed):
+
+| Address | Meaning |
+|---|---|
+| `$C878` | `FortressFX_W1` — packed per-world rows of FX slot numbers |
+| `$C898` | `FortressFXBase_ByWorld` — byte offset of each world's row |
+| `$C7DF` | `FortressFX_MapCompIdx` — `(column, row bit)` per slot |
+| `$C8E3` | resolved slot stored into `Map_DoFortressFX` (`$0745`) |
+| `$C8E6` | 4 bytes, `LDA #$01 / STA Map_ClearLevelFXCnt` — the standard hook site |
+| `$C8EA` | resume point: full animation |
+| `$C952` | data-only path (map data + `Map_Completions`, no VRAM) |
+| `$C9C9` | **already-busted exit** — zeroes `$0745` and `$20`, `INC Map_Operation`, `JMP $CF29`. The clean "nothing to do" bail-out. |
+
+Lookup is `FortressFX_W1[FortressFXBase_ByWorld[world] + ordinal - 1]`, where the
+ordinal is the high nibble of the fortress's Boom-Boom Y byte. Rows are packed,
+not strided — vanilla's bases happen to be `world * 4`, which is a coincidence
+of vanilla's four-per-world allocation, not a rule.
+
+**Other map RAM confirmed this session:** `Pad_Holding` = `$17`, `Pad_Input` =
+`$18` (zero page), `World_Num` = `$0727`, `Map_NoLoseTurn` = `$796E`,
+`Map_WasInPipeway` = `$7973`, `MO_NormalMoveEnter` (map operation `$D`, the
+normal standing-on-the-map state) at CPU `$CDCA` = file `0x14DDA`.
+
+### Free SRAM
+
+`$6000-$7FFF` is MMC3 work RAM. Beyond the named variables, the disassembly
+declares **384 bytes** as bare anonymous `.ds` runs. Largest first:
+
+| Range | Bytes |
+|---|---|
+| `$7A73-$7ADF` | 109 |
+| `$7997-$79FF` | 105 |
+| `$7BD0-$7C1F` | 80 |
+| `$7E9E-$7EB5` | 24 |
+| *(15 smaller runs)* | 66 |
+
+The top two are each referenced **nowhere** in the disassembly but their own
+declaration, and unlike the context-reused zero-page blocks — which the
+disassembly marks with explicit `.org`s — this is plain untouched SRAM. Both are
+in use by `world_persist` on `experiment/world-maze` and behave as free.
+
+Named-but-unused entries are additional candidates, notably `THouse_OpenByID`
+(`$7F2E-$7F3D`, 16 bytes, "UNUSED would keep track of chests opened for a given
+Toad House ID") and `Map_Unused7EEA`.
+
 
 **CRITICAL — Gap tile selection must match path orientation:**
 The `Map_RemoveTo_Tiles` replacements are hardcoded: `$54` → `$46` (vertical path),
@@ -4976,3 +5101,44 @@ each world's bonus room gives.
 - [Southbird SMB3 Disassembly](https://sonicepoch.com/sm3mix/disassembly.html)
 - [captainsouthbird/smb3 GitHub](https://github.com/captainsouthbird/smb3)
 - [esc0rtd3w hacking_notes.txt](https://github.com/esc0rtd3w/nes-rom-tools/blob/master/super-mario-bros-3/docs/hacking_notes.txt)
+
+### World-map graphics: CHR banks and unused metatiles
+
+*(Measured 2026-09-05 by scanning the ROM, for the world-maze wand gate.)*
+
+**The map's BG CHR is the same for all eight worlds.** `PRG030`'s map entry
+("Load world map graphics") sets `PatTable_BankSel = $14` and `+1 = $16`, so
+metatile quadrant index `i` resolves as:
+
+| index | 1KB CHR page | file offset |
+|---|---|---|
+| `$00-$3F` | `$14` | `0x40010 + 0x14*0x400 + i*16` |
+| `$40-$7F` | `$15` | … |
+| `$80-$BF` | `$16` | … |
+| `$C0-$FF` | `$17` | … |
+
+Per-world variation on the map is **palette only** (`Map_Tile_ColorSets`); no
+per-world BG bank swap exists. Map object *sprites* are a different set, pages
+`$20-$23`.
+
+**Unused capacity, measured against all eight world grids:**
+
+- 139 of the 256 tile bytes appear in some world's grid; **117 are unused**.
+- 215 of the 256 CHR indices are referenced by some metatile; 41 are drawn but
+  referenced by none — and those 41 are the alphabet, the digits, and a few
+  fragments (`4E`, `6A`, `6B`, `80-83`, `A0-A3`, `FB`). They are drawn by
+  nametable text, not by metatiles, so they are **not** free CHR slots without
+  a further check.
+- Of the unused tile bytes, 28 carry a 2x2 graphic no used tile shares. Two of
+  those are complete authored graphics replicated at all four palette pages and
+  used nowhere: `0x00/0x40/0x80/0xC0` (CHR `88 89 8A 8B`) and
+  `0x01/0x41/0x81/0xC1` (CHR `DC DD DE DF`). Both are cut *terrain* pieces — a
+  diagonal and a corner-with-blocks — not the unused skull the wiki documents,
+  which is not present in the map BG bank at all.
+
+**`0xE2` — the Dark Land wall.** Palette page 3, CHR quadrants `6C 6D / 6E 6F`,
+blocks all four movement directions, member of no behavior registry, used 155
+times in World 8. Cloning its four quadrant entries onto an unused page-3 byte
+yields a pixel-identical wall with a distinct identity — which matters because
+`Map_Removable_Tiles` membership is what makes a cell *completable*, and hence
+what sizes the world-maze packed completion store.

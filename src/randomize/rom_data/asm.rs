@@ -50,6 +50,9 @@ struct Decoded {
     /// `true` when the operand is a full 16-bit address, which is what makes a
     /// routine origin-locked. See [`Routine::origin`].
     absolute: bool,
+    /// `true` when the operand is a zero-page address. See
+    /// [`Routine::zero_page`].
+    zero_page: bool,
 }
 
 /// Walk `code` as a straight-line instruction stream.
@@ -82,6 +85,14 @@ fn decode(code: &[u8]) -> Result<Vec<Decoded>, String> {
                     | AddressingMode::Indirect
                     | AddressingMode::BuggyIndirect
             ),
+            zero_page: matches!(
+                mode,
+                AddressingMode::ZeroPage
+                    | AddressingMode::ZeroPageX
+                    | AddressingMode::ZeroPageY
+                    | AddressingMode::IndexedIndirectX
+                    | AddressingMode::IndirectIndexedY
+            ),
         });
         pc += len;
     }
@@ -103,11 +114,20 @@ pub struct Routine<'a> {
     data_from: Option<usize>,
     fragment: bool,
     origin: Option<u16>,
+    zero_page: Option<(u8, &'a [u8])>,
 }
 
 /// Begin checking an assembled routine.
 pub fn check(code: &[u8]) -> Routine<'_> {
-    Routine { code, allocation: None, hook: None, data_from: None, fragment: false, origin: None }
+    Routine {
+        code,
+        allocation: None,
+        hook: None,
+        data_from: None,
+        fragment: false,
+        origin: None,
+        zero_page: None,
+    }
 }
 
 impl<'a> Routine<'a> {
@@ -169,6 +189,34 @@ impl<'a> Routine<'a> {
         self
     }
 
+    /// The zero page this routine is allowed to reach: everything at or below
+    /// `nmi_safe_max`, plus each byte named in `engine_vars`.
+    ///
+    /// **The NMI pushes and pulls exactly `Temp_Var1`, `Temp_Var2` and
+    /// `Temp_Var3` (`$00`-`$02`) around every frame and leaves the rest of the
+    /// page to whoever was using it.** A routine that runs for tens of
+    /// thousands of cycles has the NMI landing inside its loops repeatedly, so
+    /// anything it parks in `$03` or above is destroyed mid-loop, on hardware,
+    /// invisibly. Nothing in an emulated-CPU test can see it — there is no NMI
+    /// there — and three playtests failed on it while every test passed. So it
+    /// is enforced structurally instead, which is what this is.
+    ///
+    /// `engine_vars` is the escape hatch that keeps the rule tight rather than
+    /// vacuous. Map-side routines legitimately *read* engine variables high in
+    /// the page (`World_Map_Y` at `$75`, `World_Map_Tile` at `$E5`), and a
+    /// single "at most `$E5`" bound would permit everything. Naming them
+    /// instead means the bound stays at the protected three and every byte
+    /// outside it is one somebody wrote down on purpose. `foreign_locks`
+    /// borrows `Temp_Var13` (`$0C`) the same way, because vanilla's own
+    /// `Map_MarkLevelComplete` holds it live across the same window.
+    ///
+    /// Reads count as well as writes: a routine has no business reading a
+    /// zero-page byte it neither owns nor named.
+    pub fn zero_page(mut self, nmi_safe_max: u8, engine_vars: &'a [u8]) -> Self {
+        self.zero_page = Some((nmi_safe_max, engine_vars));
+        self
+    }
+
     /// Run every configured check, panicking with all failures at once.
     pub fn assert_ok(self) {
         let mut problems: Vec<String> = Vec::new();
@@ -217,6 +265,21 @@ impl<'a> Routine<'a> {
                         problems.push(format!(
                             "{:?} at byte {} branches to byte {target}, which is \
                              mid-instruction",
+                            i.instr, i.start
+                        ));
+                    }
+                }
+
+                if let Some((max, named)) = self.zero_page {
+                    for i in instrs.iter().filter(|i| i.zero_page) {
+                        let operand = code[i.start + 1];
+                        if operand <= max || named.contains(&operand) {
+                            continue;
+                        }
+                        problems.push(format!(
+                            "{:?} at byte {} reaches zero page ${operand:02X}, which the NMI \
+                             does not preserve — only $00..${max:02X} survive a frame, plus \
+                             the engine variables this routine names",
                             i.instr, i.start
                         ));
                     }
@@ -419,6 +482,41 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    /// The zero-page rule: the protected three pass, anything above them
+    /// fails, and a named engine variable passes anyway.
+    #[test]
+    fn zero_page_rule_bounds_and_names() {
+        // LDA $01 / STA $02 / RTS — all inside the NMI-safe three.
+        let safe = [0xA5, 0x01, 0x85, 0x02, 0x60];
+        check(&safe).zero_page(0x02, &[]).assert_ok();
+        // STA $30 — state parked where the NMI will destroy it.
+        let unsafe_ = [0xA9, 0x00, 0x85, 0x30, 0x60];
+        assert!(
+            std::panic::catch_unwind(|| check(&unsafe_).zero_page(0x02, &[]).assert_ok()).is_err()
+        );
+        // ...unless it is an engine variable the routine names.
+        check(&unsafe_).zero_page(0x02, &[0x30]).assert_ok();
+        // And with no rule configured, nothing is checked.
+        check(&unsafe_).assert_ok();
+    }
+
+    /// The rule must see indexed and indirect zero page too — `LDA $75,X` is
+    /// how every map routine reaches the per-player position bytes.
+    #[test]
+    fn zero_page_rule_sees_indexed_and_indirect_modes() {
+        for code in [
+            [0xB5, 0x75, 0x60], // LDA $75,X
+            [0x91, 0x75, 0x60], // STA ($75),Y
+            [0xA1, 0x75, 0x60], // LDA ($75,X)
+        ] {
+            assert!(
+                std::panic::catch_unwind(|| check(&code).zero_page(0x02, &[]).assert_ok()).is_err(),
+                "{code:02X?} slipped past the zero-page rule"
+            );
+            check(&code).zero_page(0x02, &[0x75]).assert_ok();
+        }
     }
 
     #[test]

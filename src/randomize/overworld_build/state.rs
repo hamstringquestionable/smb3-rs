@@ -74,6 +74,16 @@ pub(crate) struct WorldState {
     /// as 51/53). A pipe-web redeal re-enters [`Locks`] and does draw again,
     /// which is right: the new web moves where the corridor is entered.
     pub bridge_spans: Vec<Pos>,
+    /// Hold W8's wand-gate cell out of the bridge deal and out of the ranked
+    /// lock candidates. True only in world-maze mode, and only for W8: the
+    /// maze writes its gate over `rom_data::W8_WAND_GATE_POS` after the build,
+    /// and a lock dealt there would be a gap the fortress rebuilds *and* a
+    /// gate the wand count opens.
+    ///
+    /// It is a flag rather than an unconditional rule because W8 otherwise
+    /// deals five bridge spans and the maze would silently make that four for
+    /// every seed anyone has ever generated. Standard mode does not move.
+    pub wand_gate_reserved: bool,
     /// Vanilla wandering-sprite positions that MUST become HammerBro slots
     /// (a sprite starts there and can be encountered immediately, so the
     /// tile needs a pointer entry). Empty when hammer-bro shuffle is on —

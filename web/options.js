@@ -305,6 +305,17 @@ export const SCHEMA = [
 		tip: "Number of worlds before Dark Land (fewer = shorter game)",
 		group: "map", inFlagKey: true,
 		enabledWhen: { world_order: true } },
+	{ id: "world_maze", type: "bool", default: false,
+		label: "World Maze",
+		tip: "The eight maps become one big maze. Warp pads link them, a fortress can open a lock in another world, and your progress in a world is still there when you come back. Turns World Order on.",
+		group: "map", inFlagKey: true },
+	{ id: "maze_wands", type: "tri", numeric: true,
+		options: [0,1,2,3,4,5,6,7].map(n => ({ value: n, label: String(n) })),
+		default: 3,
+		label: "Wands To Enter",
+		tip: "Wands needed before Bowser's castle will open. Fewer is a shorter game; 0 lets you walk straight in if you find a way there.",
+		group: "map", inFlagKey: true,
+		enabledWhen: { world_maze: true } },
 
 	// --- Enemies ---
 	{ id: "ground", type: "tri", options: TRI, default: "shuffle",

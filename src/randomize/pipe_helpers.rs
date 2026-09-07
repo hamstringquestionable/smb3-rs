@@ -51,7 +51,7 @@ pub(super) fn grid_pos_to_dest_nibbles(grid_row: usize, grid_col: usize) -> (u8,
 /// never be set for these worlds or it shifts the camera 128px right, cutting
 /// off half the visible screen. Vanilla confirms: no W5/W8 pipe scroll
 /// nibbles ever use the center flag.
-fn scroll_nibble(screen: u8, col_in_screen: u8, discrete_screens: bool) -> u8 {
+pub(super) fn scroll_nibble(screen: u8, col_in_screen: u8, discrete_screens: bool) -> u8 {
     if discrete_screens {
         return screen;
     }

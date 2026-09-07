@@ -136,6 +136,12 @@ pub(crate) use capacity::{
     RESERVED_DYNAMIC_SLOTS, VANILLA_PIPE_PAIRS, bfs_ordered, deal_c1_floors, distribute_levels,
     fixed_positions_for_world, prepare_capacities, redistribute_fortresses,
 };
+// The engine mirror the row-7/8 rule and `completion_bits` both read — see the
+// note in `rom_data::tiles` on why a table mirror stays with its reader. Not a
+// test-only export any more, and not native-only either: `completion_bits`
+// packs against it at build time, in every build, since the world maze became
+// a real option rather than a testrom-only experiment.
+pub(crate) use capacity::is_completion_unsafe;
 pub(crate) use route_choice::{
     C1_FLOOR, COST_LEVEL, DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice,
 };
@@ -159,7 +165,7 @@ pub(crate) use state::{Phase, PhaseReport, WorldState, row78_partner, run_schedu
 // Test-only measurement surface: the census/probe harness in the test
 // modules and the diagnostic dumps.
 #[cfg(test)]
-pub(crate) use capacity::{C1_FLOOR_BAND, is_completion_unsafe, roll_bridges_out};
+pub(crate) use capacity::{C1_FLOOR_BAND, roll_bridges_out};
 #[cfg(test)]
 pub(crate) use progression::{
     PipeClass, analyze_required_progression, classify_pipes, dump_required_progression,
@@ -167,8 +173,9 @@ pub(crate) use progression::{
 };
 #[cfg(test)]
 pub(crate) use route_choice::dump_route_choice;
+pub(crate) use sources::from_built;
 #[cfg(test)]
-pub(crate) use sources::{from_built, from_vanilla};
+pub(crate) use sources::from_vanilla;
 
 /// Pipe-web redeals allowed beyond the first attempt when the finished
 /// world ends below the C1 floor. Retries fire only on the few percent of
@@ -311,7 +318,7 @@ pub(crate) fn build<R: Rng>(
     // slots it selects from are final (Toad House / spade promotion already
     // consumed any it needed). Decided here; the writer stamps the ROM tables.
     if flags.shuffle_hammer_bros {
-        assign_hb_sprites(rom, data.pickup, &mut worlds, rng);
+        assign_hb_sprites(rom, data.pickup, &mut worlds, flags.world_maze, rng);
     }
 
     BuildResult { worlds, fort_counts }

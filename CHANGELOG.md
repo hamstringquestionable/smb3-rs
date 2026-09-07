@@ -9,6 +9,110 @@ deploys.
 
 ## [Unreleased]
 
+### Added
+
+- **World Maze.** A new mode in which the eight world maps stop being a sequence
+  and become the rooms of one big maze. Warp pads link them, a fortress can bust
+  a lock in a *different* world, and — the part none of it works without — the
+  progress you made in a world is still there when you come back to it. The warp
+  whistle stops being a warp zone and becomes fast travel between worlds you
+  have already set foot in. Bowser's castle stays shut until you are carrying
+  enough wands, which is the new **Wands To Enter** setting (0-7, default 3).
+
+  Turning it on also turns World Order on, keeps map progress through a game
+  over, and leaves whistles in the game whatever "Remove Whistles" says — the
+  whistle is how you get around, and it can never take you anywhere new.
+
+### Changed
+
+- **World Maze: locks now tell you whether their key is nearby.** A marker sits
+  on any lock the world's own fortresses can open; a lock without one is opened
+  from somewhere else. That's the difference between searching a world you can
+  finish and searching a world you can't, and cross-world keys got much more
+  common in this release.
+
+- **World Maze: World 8 loses its wandering Hammer Bro.** Dark Land is the only
+  world whose map is already crowded with tanks, a battleship and an airship,
+  and the mode needs that room to show you things on the map. The encounter
+  isn't lost — it moves to a world with space. Standard mode is unchanged.
+
+- **World Maze: a lock's key is now far more often in another world.** The maze
+  used to decide which fortress opens which lock by shuffling an assignment it
+  inherited, which meant it could only ever trade one crossing for another —
+  and the trade was usually rejected. It now picks each key deliberately, from
+  the fortresses you can already reach when the gate goes down. Cross-world
+  locks go from about half to about three quarters, and the locks guarding
+  Bowser's bridge — the ones most worth sending you elsewhere for — from a third
+  to nearly three quarters. Maze maps will feel noticeably less self-contained.
+
+### Fixed
+
+- **World Maze: warp whistles stopped cluttering chests.** The mode already
+  gives you a whistle you can never lose or use up, but it was also forcing
+  "Remove Warp Whistles" off — putting whistles back into the chest, Hammer Bro
+  and Toad House pools, where each one was a duplicate of an item you already
+  had, taking up an inventory slot. Measured about 1.6 wasted whistles a seed.
+  The setting is now always on in the maze, and your own choice is no longer
+  quietly ignored.
+
+- **World Maze: taking 1-F's secret exit could end a run.** 1-F's secret exit
+  hands you an item and leaves the lock shut, so the game deliberately picks a
+  lock you can afford to leave shut. The maze then re-paired every fortress with
+  a different lock, so the lock 1-F actually opened was one nobody had checked —
+  and in about one seed in eight it was a lock the run could not continue
+  without. 1-F now keeps its checked pairing, and the check is made against the
+  whole maze rather than a single world.
+
+- A fortress on World 6 opened its lock onto a cloud path in the middle of plain
+  ground. Vanilla's table stored the sky tile for a lock nowhere near the sky —
+  the value looks copied down a row when the table was written — and the wrong
+  graphic showed until you next entered the world.
+
+- **World Maze:** the fortress that opens a lock is now the one the maze
+  actually chose. A third of the locks that stayed in their own world were
+  opened by a different fortress than the generator had planned, and a fortress
+  could end up breaking two locks at once — one of them a lock it was never
+  meant to touch. The map you played was not the map the generator checked was
+  solvable.
+
+- **World Maze:** a fortress in another world now really is the only way to
+  open a cross-world lock. Those locks kept their original fortress as a second
+  key, sitting a few tiles away in the same world, and you would always find
+  that one first — so every cross-world lock in the game was decoration. Found
+  by playing World 2: three fortresses, three locks, all three opening locally.
+
+- **World Maze:** the warp whistle you start with no longer costs you a
+  starting item. It went into the third inventory slot, and since you can ask
+  for three items, asking for three meant getting two and a whistle. It sits in
+  the fourth slot now, which nothing else can claim.
+
+- **World Maze:** warp pads have their own tile, so one no longer looks exactly
+  like an N-Spade card game. They used to share the spade panel: on one seed
+  there were 28 spade tiles and only 9 were pads, so walking into one was a
+  coin flip between a warp and a card game.
+
+- **World Maze:** warp pads come in pairs and always take you to their partner.
+  They used to drop you wherever — on a blank patch of map about half the time,
+  or on a pipe in a world you'd never seen, and one could even put you back on
+  the tile you were already standing on.
+
+- **World Maze:** beaten Hammer Bros stay beaten. Leaving a world and coming
+  back used to bring every map object it had lost straight back, because the
+  game rebuilds them from scratch every time you enter a world — which never
+  mattered before, since you could never return.
+
+- **World Maze:** you start with a warp whistle and you keep it for good. It is
+  the mode's fast travel, so it is yours from the first frame rather than
+  something to go and find, and blowing it no longer uses it up. It can still
+  only take you to worlds you have already set foot in, so it can never skip
+  you ahead.
+
+- **World Maze:** the decorative corners on the map's boxes are no longer
+  scrambled. The skull that was meant to block Bowser's castle was drawn over
+  the four corner pieces; the castle is now blocked by a piece of World 8's own
+  masonry instead, which reads as a wall rather than as a lock you have missed
+  the key for.
+
 ## [1.3.0] - 2026-09-05
 
 ### Added

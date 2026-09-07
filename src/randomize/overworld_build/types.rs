@@ -18,6 +18,12 @@ pub(crate) struct BuildFlags {
     pub shuffle_toad_houses: bool,
     pub eights_are_wild: bool,
     pub shuffle_hammer_bros: bool,
+    /// World-maze mode. The builder's own behaviour is unchanged by it with
+    /// one exception: W8's wand-gate cell is held out of the lock passes,
+    /// because the maze writes a gate over that cell after the build and a
+    /// lock there would be two owners for one tile. Standard mode must not
+    /// move, so this is a flag rather than an unconditional rule.
+    pub world_maze: bool,
 }
 
 /// What kind of node occupies a grid slot.

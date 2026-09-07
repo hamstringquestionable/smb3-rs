@@ -27,7 +27,7 @@ mod tests;
 
 /// Free space in PRG012 after the Big ? Block trampoline (0x19DD0 region).
 /// The trampoline uses 0x19DD0–0x19DE1; we place the 16-byte stamp at 0x19DF0.
-const STAMP_OFFSET: usize = 0x19DF0;
+use crate::randomize::rom_data::FS_SEED_STAMP as STAMP_OFFSET;
 
 /// Resolve a starting item value: sentinels (14/15/16) become random concrete
 /// items; concrete values (0–13) pass through unchanged.
@@ -83,7 +83,6 @@ fn randomize_inner(
     // Resolve random starting items up front (deterministic from seed)
     let resolved_items: Vec<u8> =
         options.starting_items.iter().map(|&item| resolve_starting_item(item, &mut rng)).collect();
-
     // Resolve the player-hidden tri-state flags up front. These draw from a
     // dedicated substream (MAYBE_SALT) so flipping a flag to `Maybe` never
     // perturbs the main `rng` sequence — a seed with no `Maybe` flags is
@@ -187,7 +186,11 @@ fn randomize_inner(
     // World order shuffle. The credits reorder that aligns the ending montage
     // with the progression runs later (after the mini-maps are regenerated and
     // repacked, since it permutes the picture pointers those steps rewrite).
-    let credits_progression = if options.world_order {
+    // The world maze reads `world_order`'s table as its airship spine and
+    // chains the wand counter through the routine it installs, so it cannot run
+    // without it. Forced here rather than only in the CLI, because a flag key
+    // can name `world_maze` with `world_order` off.
+    let credits_progression = if options.world_order || options.world_maze {
         rom.set_tag("world_order");
         Some(randomize::world_order::randomize(rom, &mut rng, options.world_count))
     } else {
@@ -282,6 +285,7 @@ fn randomize_inner(
             shuffle_toad_houses: options.shuffle_toad_houses,
             eights_are_wild,
             shuffle_hammer_bros: options.shuffle_hammer_bros,
+            world_maze: options.world_maze,
         },
     );
     if options.hands_levels {
@@ -306,7 +310,7 @@ fn randomize_inner(
         *slot = Some(build.clone());
     }
     rom.set_tag("overworld_writer");
-    randomize::overworld_writer::write_overworld(
+    let lock_pairing = randomize::overworld_writer::write_overworld(
         rom,
         &build,
         &data,
@@ -318,6 +322,128 @@ fn randomize_inner(
             deja_vu: options.deja_vu,
         },
     );
+
+    // Set by the world maze, read by `lock_keys` below. When the maze runs it
+    // owns the WHOLE lock/fortress assignment, not just the cross-world half —
+    // its fill starts from the builder's pairing and swaps from there, so the
+    // two cannot be mixed. `None` means no maze ran and the builder's pairing
+    // stands.
+    let mut maze_lock_keys: Option<Vec<randomize::lock_keys::LockEntry>> = None;
+
+    // World maze: the eight world maps stop being a sequence and become the
+    // rooms of one Metroidvania — telepads between them, a fortress that can
+    // bust a lock in another world, and map progress that survives leaving.
+    //
+    // **The order inside this block is the whole of its correctness.** The
+    // packed completion store derives its stencil from the map grids as they
+    // finally stand, so every write that changes a grid runs first — the pad
+    // tiles and the wand gate — and `lock_keys` runs last (just past the end of
+    // this block), because it asks the packer where a given cell's bit lives
+    // rather than re-deriving that arithmetic.
+    //
+    // Today the two grid writers are in fact bit-neutral, so only the tail of
+    // that order is load-bearing. A cell claims a completion bit by being in
+    // `Map_Removable_Tiles` or `Map_Completable_Tiles`, and `TILE_TELEPAD` and
+    // `WAND_GATE_TILE` are in neither — `the_pad_tile_is_in_no_registry` and
+    // `the_gate_tile_is_in_no_registry` pin that — while the cells they
+    // overwrite are hammer-bro slots, blanks and the W8 bridge, which are in
+    // neither either. The head of the order is kept anyway: it costs nothing,
+    // and the day someone picks a tile that does claim a bit, the alternative
+    // is a stencil that disagrees with the map by one bit somewhere past the
+    // world it happened in.
+    if options.world_maze {
+        rom.set_tag("world_maze");
+        // The spine IS `world_order`'s table, which is why the mode forces it
+        // on. With `world_count < 7` it is shorter than eight, and the worlds
+        // it leaves out are reachable only by telepad — see the design doc.
+        let spine: Vec<usize> = credits_progression
+            .as_ref()
+            .expect("world_maze forces world_order on")
+            .iter()
+            .map(|&w| w as usize)
+            .collect();
+        // K cannot exceed the airships the spine offers: a shorter spine means
+        // fewer than seven wands exist in the game at all.
+        let wands = options.maze_wands.min(spine.len().saturating_sub(1) as u8);
+        // Which fortress slot `assign_pool` gave 1-F, so the fill leaves that
+        // one pairing alone. It picks uniformly among the slots the builder
+        // marked `secret_exit_safe`, with its own RNG, so this has to be read
+        // back rather than re-derived — and without it the fill re-pairs the
+        // fortress with a lock nobody ever vetted (measured: the lock moved in
+        // 55 of 60 seeds, and in 7 of 60 the secret exit ended the run).
+        let one_f = lock_pairing
+            .one_f_slot(&data)
+            .map(|(world, section)| randomize::maze::FortRef { world, section });
+        let (state, _report) = randomize::maze::generate(
+            &build,
+            &spine,
+            wands,
+            &randomize::maze::graph::Knobs::default(),
+            one_f,
+            &mut rng,
+        );
+        // **The maze owns the whole lock/fortress assignment, not half of it.**
+        //
+        // `fill` starts from the overworld builder's pairing — every lock opened
+        // by a fortress in its own world — and moves by *swapping* the forts of
+        // two locks, keeping a swap only while the maze stays solvable. So the
+        // result is a permutation of the builder's, and it is a bijection at
+        // every step: one lock per fortress, the charter's map-legibility rule.
+        //
+        // Taking only the cross-world half of that and leaving the rest to the
+        // builder's original pairing loses every swap that happened to leave
+        // both locks in their own worlds — 33.1% of same-world locks over 60
+        // seeds — and lets a fortress that kept a stale local lock while gaining
+        // a foreign one open two. Both halves travel together or neither does.
+        //
+        // **`maze::generate` does not need to be here.** It takes a
+        // `BuildResult` and no `&Rom` — it is a pure function of the builder's
+        // model — so the decision could be made before `write_overworld` runs.
+        // What forces this block to sit *after* the writer is the writing:
+        // `stamp_pad_tiles` and `wand_gate::apply` lay tiles over the grids the
+        // writer just committed, and `world_persist` derives the packed store's
+        // stencil from the result. The decision is only here because it is next
+        // to its own writes.
+        //
+        // That is worth revisiting, because it is what makes the builder's
+        // placement guarantees un-repairable: the map is already on the
+        // cartridge by the time the fill permutes the array those guarantees
+        // live in (see the 1-F secret-exit case). It consumes no RNG, so
+        // nothing downstream shifts either way.
+        maze_lock_keys = Some(randomize::maze::writer::lock_keys(&state));
+
+        // Before `world_persist` for the same reason as every other grid
+        // writer: the packed store's stencil is derived from the finished
+        // grids.
+        randomize::maze::writer::open_uninstalled_locks(rom, &state);
+        randomize::maze::writer::stamp_pad_tiles(rom, &state);
+        // A hint sprite over every lock whose key is in another world; absence
+        // says the key is here. Map objects are not map cells, so this is
+        // outside the grid-writer ordering above — but it must follow
+        // `write_overworld`, which is what fills the slots it counts as spare.
+        randomize::maze::writer::stamp_lock_hints(rom, &state);
+        rom.set_tag("wand_gate");
+        randomize::wand_gate::apply(rom, wands);
+        // Last of the grid writers, and the first thing that reads them: this
+        // installs the packed store and the telepads themselves.
+        rom.set_tag("world_persist");
+        randomize::world_persist::apply(rom, &randomize::maze::writer::telepad_specs(&state));
+        rom.set_tag("world_travel");
+        randomize::world_travel::apply(rom);
+    }
+
+    // Every lock in the game, home and away, in one table — and with it the
+    // rewritten fortress-FX effect that reads it. This is unconditional: the
+    // effect replaces vanilla's outright, so a run that skipped it would leave
+    // map operation 8 resolving slots out of tables this run has overwritten.
+    //
+    // It runs after the maze block because that is where the assignment is
+    // decided when the mode is on. Away entries additionally need
+    // `world_persist` to have installed the packed store already, since their
+    // bit is looked up through it.
+    rom.set_tag("lock_keys");
+    let lock_entries = maze_lock_keys.unwrap_or_else(|| lock_pairing.lock_entries(&build));
+    randomize::lock_keys::apply(rom, &lock_entries);
 
     // Big [?] bonus-room shuffle: every level with a Big [?] pipe draws from a
     // pool of 19 rooms (11 vanilla + 8 in the otherwise-dead "Unused Level 5").
@@ -381,14 +507,32 @@ fn randomize_inner(
         randomize::piranha_rooms::install_treasure_sets(rom);
     }
 
+    // The maze turns the whistle into fast travel between worlds already
+    // visited, so `remove_whistles`' intent — "no skipping ahead" — is moot
+    // here: a maze whistle can never reach anywhere new.
+    //
+    // **Forced ON in the maze, not off.** The mode grants a permanent whistle
+    // of its own — `completion_bits`' new-game init writes one into inventory
+    // slot 3, and it is never consumed — so a whistle in a chest, a Hammer Bro
+    // drop or a Toad House is a duplicate of an item the player cannot run out
+    // of: it occupies a slot and does nothing.
+    //
+    // This used to force the flag OFF, which put whistles *back* into the item
+    // pool for the one mode with no use for them, and ignored the player's
+    // setting in the process (it defaults to on).
+    //
+    // Note this flag has **no bearing on the maze's own whistle** — that comes
+    // from the new-game init, not the item pool — and so none on the safety
+    // property that whistle carries. See `world_travel` for that, and for what
+    // would have to change if the mode ever shipped without one.
+    let remove_whistles = options.remove_whistles || options.world_maze;
     if options.chest_items {
         rom.set_tag("items");
-        randomize::items::randomize(rom, &mut rng, options.remove_whistles, piranha_active);
-    } else if options.remove_whistles {
+        randomize::items::randomize(rom, &mut rng, remove_whistles, piranha_active);
+    } else if remove_whistles {
         rom.set_tag("items/whistles");
         randomize::items::remove_whistles_only(rom, &mut rng);
     }
-
     // Set starting lives (patched later by starting_items trampoline if items present)
     rom.set_tag("qol/starting_lives");
     randomize::qol::set_starting_lives(rom, options.starting_lives);
@@ -537,7 +681,11 @@ fn randomize_inner(
 
     // MaCobra52's "No Game Over Penalty" — keep reserve inventory and
     // map progress after a Game Over.
-    if options.no_game_over_penalty {
+    // The maze forces it on: without it a game over wipes map completions, and
+    // in a mode built on "a world you can come back to" that is the whole point
+    // undone. It also makes the wipe uniform across all eight worlds, which
+    // removes the "which half gets wiped" question from the packed store.
+    if options.no_game_over_penalty || options.world_maze {
         rom.set_tag("qol/no_game_over_penalty");
         randomize::qol::apply_no_game_over_penalty(rom);
     }
@@ -563,7 +711,10 @@ fn randomize_inner(
     // identical intro-skip + menu-music bytes (shared
     // `title_screen::intro_skip_music_bytes`), so behavior is unchanged;
     // title_screen's FS_INTRO_SKIP routine is left in ROM unreferenced.
-    if !options.starting_items.is_empty() {
+    // Gated on the RESOLVED list, not the requested one: maze mode adds a
+    // whistle to an otherwise-empty inventory, and gating on the request would
+    // have dropped it silently.
+    if !resolved_items.is_empty() {
         rom.set_tag("qol/starting_items");
         randomize::qol::write_starting_items(rom, seed, options.starting_lives, &resolved_items);
     }
