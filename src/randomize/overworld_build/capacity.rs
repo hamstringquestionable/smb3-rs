@@ -550,6 +550,25 @@ pub(crate) const RESERVED_DYNAMIC_SLOTS: usize = 2;
 /// it minimal so dynamic spawns always have headroom there.
 pub(super) const W8_HB_CAP: usize = 1;
 
+/// The same cap in world-maze mode: **none**.
+///
+/// The maze wants to hover a marker over each lock saying where its key is, and
+/// W8 is the only world that cannot afford them. It holds four locks — the most
+/// of any world, and ~3 of them take their key from elsewhere — against a
+/// map-object table already carrying two tanks, a battleship and an airship.
+/// Measured (`randomizer::tests::map_object_slot_budget`, 30 seeds) it has
+/// **1.00 free slots** where the others have ~4.8.
+///
+/// Its single wandering Hammer Bro is the cheapest slot in the game to buy
+/// back: W8 is the one world already dense with map objects, so one fewer is
+/// the least visible loss available, and the encounter is not lost — the total
+/// is conserved and redistributed to worlds with room.
+///
+/// Maze-only, deliberately. Standard mode's overworld must not move, and this
+/// is a flag rather than an unconditional rule for the same reason W8's
+/// wand-gate cell is (see [`BuildFlags::world_maze`](super::BuildFlags)).
+pub(super) const W8_HB_CAP_MAZE: usize = 0;
+
 /// Distribute `total` Hammer Bro sprites across the 8 worlds: each world gets
 /// 1-3, bounded by `caps` (free map-object slots and available HammerBro
 /// tiles). Seeds every world with one (capacity permitting), then hands out the
@@ -586,6 +605,7 @@ pub(super) fn assign_hb_sprites<R: Rng>(
     rom: &Rom,
     pickup: &PickupResult,
     worlds: &mut [BuiltWorld],
+    world_maze: bool,
     rng: &mut R,
 ) {
     // Per-world capacity: bounded by the cosmetic max, the free map-object slots
@@ -605,7 +625,11 @@ pub(super) fn assign_hb_sprites<R: Rng>(
         // Leave RESERVED_DYNAMIC_SLOTS empty for runtime bonus spawns.
         let map_slots =
             rom_data::eligible_hb_map_slots(rom, wi).len().saturating_sub(RESERVED_DYNAMIC_SLOTS);
-        let world_max = if wi == 7 { W8_HB_CAP } else { MAX_HB_PER_WORLD };
+        let world_max = match (wi == 7, world_maze) {
+            (true, true) => W8_HB_CAP_MAZE,
+            (true, false) => W8_HB_CAP,
+            (false, _) => MAX_HB_PER_WORLD,
+        };
         caps[wi] = world_max.min(map_slots).min(tiles.len());
         hb_tiles.push(tiles);
         blocked.push(

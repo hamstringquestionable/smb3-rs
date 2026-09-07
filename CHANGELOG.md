@@ -25,6 +25,11 @@ deploys.
 
 ### Changed
 
+- **World Maze: World 8 loses its wandering Hammer Bro.** Dark Land is the only
+  world whose map is already crowded with tanks, a battleship and an airship,
+  and the mode needs that room to show you things on the map. The encounter
+  isn't lost — it moves to a world with space. Standard mode is unchanged.
+
 - **World Maze: a lock's key is now far more often in another world.** The maze
   used to decide which fortress opens which lock by shuffling an assignment it
   inherited, which meant it could only ever trade one crossing for another —

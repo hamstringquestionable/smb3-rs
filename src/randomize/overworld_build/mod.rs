@@ -318,7 +318,7 @@ pub(crate) fn build<R: Rng>(
     // slots it selects from are final (Toad House / spade promotion already
     // consumed any it needed). Decided here; the writer stamps the ROM tables.
     if flags.shuffle_hammer_bros {
-        assign_hb_sprites(rom, data.pickup, &mut worlds, rng);
+        assign_hb_sprites(rom, data.pickup, &mut worlds, flags.world_maze, rng);
     }
 
     BuildResult { worlds, fort_counts }
