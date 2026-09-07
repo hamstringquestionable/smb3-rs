@@ -2293,8 +2293,13 @@ fn fort_tile_encoding_census() {
 ///
 /// The tile was cosmetic before — `overworld_writer::grid` picks among the
 /// three at random — so nothing else pins it, and a stray writer could put a
-/// fortress tile back without anyone noticing. This reads the bytes that reach
-/// the grid rather than the decision that produced them.
+/// fortress tile back without anyone noticing.
+///
+/// The second half is the one that bites. World 8's army sprites are placed on
+/// **fortress** positions, and the writer blanks the cell beneath so the tank
+/// or battleship reads as the content there. `stamp_fort_tiles` must recolour
+/// an existing fortress tile and never create one, or it puts a fortress back
+/// under the sprite.
 #[test]
 fn a_fortress_tile_says_where_its_lock_is() {
     use super::super::rom_data::{self, W8_IDX};
@@ -2302,45 +2307,79 @@ fn a_fortress_tile_says_where_its_lock_is() {
     let Some(raw) = load_rom() else { return };
     let mut checked = 0usize;
     let mut seen = [0usize; 3];
+    let mut covered_checked = 0usize;
+
     for seed in 0..census_seeds(8) {
         let (rom, state, _) =
             generated(&raw, seed, &Knobs::default(), super::DEFAULT_WANDS_REQUIRED);
         let mut rom = rom;
+
+        // Where each fortress stands, and what the tile under it is.
+        let forts: Vec<(super::FortRef, (usize, usize))> = state
+            .worlds
+            .iter()
+            .flat_map(|w| {
+                w.slots
+                    .iter()
+                    .filter(|s| s.kind == SlotKind::Fortress)
+                    .map(|s| (super::FortRef { world: w.world_idx, section: s.section }, s.pos))
+            })
+            .collect();
+
+        // Stand in for the overworld writer: a fortress tile on every fortress
+        // cell, except one left blank as an army sprite would leave it.
+        let covered = forts.first().copied();
+        for (f, pos) in &forts {
+            let tile = if Some((*f, *pos)) == covered {
+                rom_data::VALID_BLANK_TILES[0]
+            } else {
+                rom_data::TILE_FORTRESS
+            };
+            rom.write_byte(rom_data::map_tile_offset(f.world, pos.0, pos.1), tile);
+        }
+
         super::writer::stamp_fort_tiles(&mut rom, &state);
 
-        for lock in &state.locks {
-            let Some(fort) = lock.fort else { continue };
-            let Some(pos) = state.worlds[fort.world]
-                .slots
-                .iter()
-                .find(|s| s.section == fort.section && s.kind == SlotKind::Fortress)
-                .map(|s| s.pos)
-            else {
+        for (f, pos) in &forts {
+            let got = rom.read_byte(rom_data::map_tile_offset(f.world, pos.0, pos.1));
+            if Some((*f, *pos)) == covered {
+                assert_eq!(
+                    got,
+                    rom_data::VALID_BLANK_TILES[0],
+                    "seed {seed}: W{} {pos:?} was blank — an army sprite's cell — and a fortress \
+                     tile was stamped over it",
+                    f.world + 1,
+                );
+                covered_checked += 1;
                 continue;
-            };
-            let (want, why, bucket) = if lock.world == fort.world {
+            }
+            let Some(lock) = state.locks.iter().find(|l| l.fort == Some(*f)) else { continue };
+            let (want, why, bucket) = if lock.world == f.world {
                 (0x67u8, "its lock is in this world", 0)
             } else if lock.world == W8_IDX {
                 (0x6A, "its lock is in World 8", 2)
             } else {
                 (0xEB, "its lock is in another world", 1)
             };
-            let got = rom.read_byte(rom_data::map_tile_offset(fort.world, pos.0, pos.1));
             assert_eq!(
                 got,
                 want,
                 "seed {seed}: the fortress at W{} {pos:?} wears {got:#04X} but {why}, which is \
                  {want:#04X} — the tile is a claim now, not decoration",
-                fort.world + 1,
+                f.world + 1,
             );
             seen[bucket] += 1;
             checked += 1;
         }
     }
     assert!(checked > 0, "no fortresses checked; the test is vacuous");
-    // All three states must actually occur, or two of them are untested.
+    assert!(covered_checked > 0, "the sprite-covered case never ran");
     for (bucket, name) in [(0, "$67 local"), (1, "$EB elsewhere"), (2, "$6A World 8")] {
         assert!(seen[bucket] > 0, "no fortress exercised {name}; that state is unchecked");
     }
-    println!("{checked} fortresses: {} local, {} elsewhere, {} World 8", seen[0], seen[1], seen[2]);
+    println!(
+        "{checked} fortresses: {} local, {} elsewhere, {} World 8; {covered_checked} \
+         sprite-covered cells left alone",
+        seen[0], seen[1], seen[2],
+    );
 }
