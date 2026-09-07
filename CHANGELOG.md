@@ -25,6 +25,12 @@ deploys.
 
 ### Changed
 
+- **World Maze: locks now tell you whether their key is nearby.** A marker sits
+  on any lock the world's own fortresses can open; a lock without one is opened
+  from somewhere else. That's the difference between searching a world you can
+  finish and searching a world you can't, and cross-world keys got much more
+  common in this release.
+
 - **World Maze: World 8 loses its wandering Hammer Bro.** Dark Land is the only
   world whose map is already crowded with tanks, a battleship and an airship,
   and the mode needs that room to show you things on the map. The encounter

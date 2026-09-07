@@ -2185,3 +2185,87 @@ fn map_object_slot_budget() {
     println!("   + the 2-slot buffer dropped         {need_all} of {n}");
     println!("plants placed per world: {:?}", plants_sum.map(|v| v as f64 / seeds as f64));
 }
+
+/// **A lock whose key is here is never left unmarked for want of a slot.**
+///
+/// The hint says "the fortress that opens this lock is in this world" by being
+/// there, and says "it is elsewhere" by being absent. That only works while
+/// absence has one meaning: a local lock that went unmarked because the world
+/// had no free map-object slot would look exactly like a cross-world one, and
+/// the player has no way to tell which they are looking at.
+///
+/// So this is the property the design rests on, and it is measured rather than
+/// assumed. Nine ROM-loaded slots a world, most taken by Hammer Bros, piranha
+/// plants and World 8's military — see
+/// `randomizer::tests::map_object_slot_budget` for the budget it draws on, and
+/// why marking the *local* locks is the affordable way round.
+#[test]
+fn lock_hint_slots_are_never_short() {
+    use crate::randomize::lock_keys;
+    use crate::randomize::rom_data::{
+        self, MAP_OBJ_IDS_MASTER, MAP_OBJ_XHIS_MASTER, MAP_OBJ_XLOS_MASTER, MAP_OBJ_YS_MASTER,
+    };
+
+    let Some(raw) = make_test_rom() else {
+        eprintln!("SKIP: requires the ROM, which is not included in the repo");
+        return;
+    };
+    let seeds: u64 = std::env::var("CENSUS_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(12);
+
+    let mut local_total = 0usize;
+    for seed in 0..seeds {
+        let opts = audit_options();
+        let (rom, build) =
+            crate::randomize_rom_with_overworld_capture(raw.output_bytes(), seed, &opts, None)
+                .expect("maze seed should randomize");
+        let entries = lock_keys::decode_entries(&rom);
+
+        for wi in 0..8 {
+            // A "home" entry decodes its target and its key is in this world.
+            let local: Vec<(usize, usize)> = entries
+                .iter()
+                .filter(|e| !e.away && e.key_world == wi)
+                .filter_map(|e| e.target)
+                .collect();
+
+            // Grid positions of every map object wearing the hint id. Pixel
+            // coordinates, reversing `write_map_sprite_position`.
+            let at = |table: usize, slot: usize| -> u8 {
+                rom.read_byte(rom_data::map_obj_slot_offset(&rom, table, wi, slot))
+            };
+            let mut marked: Vec<(usize, usize)> = Vec::new();
+            for slot in 0..9 {
+                if at(MAP_OBJ_IDS_MASTER, slot) != 0x01 {
+                    continue;
+                }
+                let y = at(MAP_OBJ_YS_MASTER, slot) as usize;
+                if y < 32 {
+                    continue; // above the grid: not one of ours
+                }
+                let row = y / 16 - 2;
+                let col = at(MAP_OBJ_XHIS_MASTER, slot) as usize * 16
+                    + at(MAP_OBJ_XLOS_MASTER, slot) as usize / 16;
+                marked.push((row, col));
+            }
+
+            for pos in &local {
+                assert!(
+                    marked.contains(pos),
+                    "seed {seed} W{}: the lock at {pos:?} is opened by a fortress in this world \
+                     and has no hint sprite. An unmarked lock is supposed to mean the key is \
+                     ELSEWHERE, so this one lies — free map-object slots ran out.",
+                    wi + 1,
+                );
+                assert!(
+                    build.worlds[wi].locks.iter().any(|l| l.pos == *pos),
+                    "seed {seed} W{}: {pos:?} decoded as a lock target but the builder placed \
+                     no lock there",
+                    wi + 1,
+                );
+            }
+            local_total += local.len();
+        }
+    }
+    assert!(local_total > 0, "no same-world locks in {seeds} seeds — the check is vacuous");
+    println!("{local_total} same-world locks all marked, over {seeds} seeds");
+}

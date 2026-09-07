@@ -417,6 +417,11 @@ fn randomize_inner(
         // grids.
         randomize::maze::writer::open_uninstalled_locks(rom, &state);
         randomize::maze::writer::stamp_pad_tiles(rom, &state);
+        // A hint sprite over every lock whose key is in another world; absence
+        // says the key is here. Map objects are not map cells, so this is
+        // outside the grid-writer ordering above — but it must follow
+        // `write_overworld`, which is what fills the slots it counts as spare.
+        randomize::maze::writer::stamp_lock_hints(rom, &state);
         rom.set_tag("wand_gate");
         randomize::wand_gate::apply(rom, wands);
         // Last of the grid writers, and the first thing that reads them: this
