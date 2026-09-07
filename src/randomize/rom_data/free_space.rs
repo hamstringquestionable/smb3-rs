@@ -191,8 +191,14 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         64,
         &["lock_keys"],
         "Map_Removable_Tiles / Map_RemoveTo_Tiles, relocated so they can grow \
-         (64 reserved = 32 entries per table, 40 used — 8 entries in each half, \
+         (64 reserved = 32 entries per table, 41 used — 9 entries in each half, \
          spanning the stride between them)",
+    ),
+    fs(
+        0x19F00,
+        32,
+        &["lock_keys"],
+        "ml_range: the reload's M/L test as a per-page range (32 reserved, 15 used)",
     ),
     fs(
         0x1566C,
@@ -304,7 +310,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["world_travel"],
         "world-maze: whistle fast travel to the next visited world (128 reserved, 34 used)",
     ),
-    fs(0x17F7B, 48, &["lock_keys"], "removable-tile + CHR-quadrant mirror of PRG012"),
+    fs(0x17F7B, 54, &["lock_keys"], "removable-tile + CHR-quadrant mirror of PRG012"),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     fs(0x0382A, 23, &["koopalings"], "koopa_hits: subroutine + defeat JMP + threshold table"),
     fs(0x03841, 13, &["koopalings"], "koopa_collision_guard: skip collision bitmap during invuln"),
@@ -481,6 +487,25 @@ pub(crate) const FS_MAZE_WAND_COUNT: usize = 0x3DFA0;
 /// Two parallel tables of [`REMOVABLE_STRIDE`] entries: removable at `+0`,
 /// remove-to at `+REMOVABLE_STRIDE`. 64 reserved, 16 used.
 pub(crate) const FS_MAP_REMOVABLE: usize = 0x19EC0;
+
+/// The M/L-range helper: `Map_Reload_with_Completions`' "is this completed tile
+/// flipped to a Mario/Luigi marker" test, turned from a per-page *threshold*
+/// into a per-page *range*. PRG012, CPU `$BEF0`, immediately after
+/// [`FS_MAP_REMOVABLE`] in the same checked gap — and PRG012 is what both
+/// callers already require at `$A000`.
+///
+/// **Why a range.** `Tile_Attributes_TS0` says "at or above this, flip it", and
+/// every undefined metatile index in the ROM is above one — which is exactly why
+/// those ranges were free. Bounding the top of each page's window releases the
+/// undefined tail to the *obstacle* role: such a tile falls through to the
+/// removable scan instead of becoming an M/L panel.
+///
+/// It changes only that one test. The `+4` row of the same table — enterable,
+/// and whether a clear FX plays — is read from the RAM copy at `$7E98` by four
+/// other sites and is untouched, so level entry cannot be affected.
+///
+/// 32 reserved, 15 used (11 code + a 4-byte bound table).
+pub(crate) const FS_ML_RANGE: usize = 0x19F00;
 
 /// Entries reserved in each half of [`FS_MAP_REMOVABLE`].
 ///
@@ -1237,6 +1262,7 @@ mod free_space_tests {
             (FS_SEED_STAMP, "FS_SEED_STAMP"),
             (FS_MAZE_WAND_GATE, "FS_MAZE_WAND_GATE"),
             (FS_MAP_REMOVABLE, "FS_MAP_REMOVABLE"),
+            (FS_ML_RANGE, "FS_ML_RANGE"),
             (FS_MAZE_WAND_COUNT, "FS_MAZE_WAND_COUNT"),
             (FS_RESTORE_ARRIVAL, "FS_RESTORE_ARRIVAL"),
             (FS_PORTAL_ARRIVAL, "FS_PORTAL_ARRIVAL"),

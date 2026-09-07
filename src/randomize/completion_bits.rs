@@ -292,9 +292,14 @@ const BASES_CPU: u16 = prg010_file_to_cpu(FS_COMPLETION_BASES);
 // --- PRG012 symbols, all verified by matching their bytes in the ROM rather
 // --- than read off the disassembly's labels.
 
-/// `Tile_Attributes_TS0` — four "lowest enterable tile" thresholds, indexed by
-/// the tile's top two bits. `03 67 BF E9`.
-const TILE_ATTRIBUTES_TS0: u16 = 0xA400;
+/// `lock_keys::ML_RANGE` — the reload's "flip this to an M/L marker" test,
+/// bounded top and bottom per page. It reads `Tile_Attributes_TS0` at `$A400`
+/// itself, which is why this routine no longer names that table.
+///
+/// The `JSR` is legal here for the same reason the `CMP` was: this routine lives
+/// in PRG010 but runs with PRG012 at `$A000`, and it already reads two PRG012
+/// tables at absolute addresses. The hook note above is what guarantees it.
+const ML_RANGE_CPU: u16 = super::lock_keys::ML_RANGE_CPU;
 /// `Map_Removable_Tiles` — the two rocks, three locks, two fortress variants and
 /// the water gap.
 ///
@@ -400,8 +405,8 @@ const IS_COMPLETABLE: [u8; 39] = [
     0x2A,                                   // 28: ROL A       ; A = tile >> 6
     0xAA,                                   // 29: TAX
     0xAD, TILE as u8, (TILE >> 8) as u8,        // 30: LDA TILE
-    0xDD, TILE_ATTRIBUTES_TS0 as u8,
-          (TILE_ATTRIBUTES_TS0 >> 8) as u8,       // 33: CMP Tile_Attributes_TS0,X
+    0x20, ML_RANGE_CPU as u8,
+          (ML_RANGE_CPU >> 8) as u8,              // 33: JSR ML_RANGE   ; the reload's own range test
     0x60,                                   // 36: RTS         ; carry IS the answer
     0x38,                                   // 37: SEC         ; yes
     0x60,                                   // 38: RTS
@@ -1389,6 +1394,38 @@ mod tests {
         call_routine(cpu, MASK_BUILD_CPU, "MASK_BUILD");
         let cols = WORLD_COLS[world] as u16;
         (0..cols).map(|i| cpu.memory.get_byte(MASK_SCRATCH + i)).collect()
+    }
+
+    /// **The other equivalence test, and the stricter one.** `mask_build_matches_rust`
+    /// below compares the two implementations over maps the randomizer produces,
+    /// which only ever exercises the ~40 tile bytes those maps contain. This runs
+    /// `IS_COMPLETABLE` on the CPU for **every** byte, against
+    /// [`is_completion_unsafe`].
+    ///
+    /// That matters now that the M/L test is a window rather than a threshold:
+    /// the tiles the window newly *excludes* are exactly the ones no map places,
+    /// so a disagreement about them is invisible to any test driven by real
+    /// grids — right up until an obstacle variant is defined there.
+    #[test]
+    fn is_completable_matches_rust_for_every_tile() {
+        let Ok(bytes) = std::fs::read(ROM_PATH) else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let rom = Rom::from_bytes(&bytes).expect("vanilla ROM parses");
+        let mut cpu = cpu_with_routines(&rom);
+
+        for tile in 0..=255u8 {
+            cpu.registers.accumulator = tile;
+            call_routine(&mut cpu, IS_COMPLETABLE_CPU, "IS_COMPLETABLE");
+            let on_cpu = cpu.registers.status.contains(mos6502::registers::Status::PS_CARRY);
+            assert_eq!(
+                on_cpu,
+                is_completion_unsafe(tile),
+                "tile {tile:#04X}: 6502 says {on_cpu}, Rust says {}",
+                is_completion_unsafe(tile)
+            );
+        }
     }
 
     /// **The equivalence test.** The 6502 routine and [`world_mask`] must agree

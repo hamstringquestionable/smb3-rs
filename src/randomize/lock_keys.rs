@@ -101,8 +101,9 @@ use super::completion_bits::{CompletionMap, HALF_LEN, PLANE_RESERVE};
 use super::rom_data::NMI_SAFE_MAX;
 use super::rom_data::{
     self, FS_COMPLETION_BASES, FS_FORTRESS_FX, FS_LOCK_ENTRIES, FS_LOCK_MIRROR, FS_MAP_REMOVABLE,
-    MAP_COMPLETE_BIT_CPU, MAP_COMPLETE_BITS, MAP_COMPLETIONS, PLAYER_CURRENT, PRG012_FILE_BASE,
-    REMOVABLE_STRIDE, WORLD_NUM, prg_bank_file_to_cpu, prg010_file_to_cpu, prg011_file_to_cpu,
+    FS_ML_RANGE, MAP_COMPLETE_BIT_CPU, MAP_COMPLETE_BITS, MAP_COMPLETIONS, PLAYER_CURRENT,
+    PRG012_FILE_BASE, REMOVABLE_STRIDE, WORLD_NUM, prg_bank_file_to_cpu, prg010_file_to_cpu,
+    prg011_file_to_cpu,
 };
 
 // --- Siting -------------------------------------------------------------
@@ -113,14 +114,15 @@ use super::rom_data::{
 /// keeping it out of PRG010 leaves the whole freed fortress-FX block to the
 /// routine, which is the thing that grows.
 const MIRROR_CPU: u16 = prg011_file_to_cpu(FS_LOCK_MIRROR);
-/// `Map_Removable_Tiles`, mirrored: 8 obstacle tiles.
+/// `Map_Removable_Tiles`, mirrored: every obstacle tile.
 const MIRROR_REMOVABLE: u16 = MIRROR_CPU;
 /// `Map_RemoveTo_Tiles`, mirrored: what each obstacle becomes.
-const MIRROR_REMOVE_TO: u16 = MIRROR_CPU + 8;
+const MIRROR_REMOVE_TO: u16 = MIRROR_CPU + REMOVABLE_COUNT as u16;
 /// Four CHR quadrants per remove-to tile, in the order the effect queues them.
-const MIRROR_PATTERNS: u16 = MIRROR_CPU + 16;
-/// Bytes the mirror occupies.
-const MIRROR_LEN: usize = 48;
+const MIRROR_PATTERNS: u16 = MIRROR_CPU + 2 * REMOVABLE_COUNT as u16;
+/// Bytes the mirror occupies: six per entry, and it is packed rather than
+/// strided because the whole thing is rewritten from Rust every run.
+const MIRROR_LEN: usize = REMOVABLE_COUNT * 6;
 
 /// The replacement `MO_DoFortressFX`, at the head of the freed block.
 const FORTRESS_FX_CPU: u16 = prg010_file_to_cpu(FS_FORTRESS_FX);
@@ -213,7 +215,7 @@ const PRG012_SCAN_COUNT: usize = PRG012_FILE_BASE + 0x54B;
 ///   decides that; see `rom_data::gap_tile_for`, which picks the obstacle from
 ///   the path tile underneath for exactly this reason.
 #[rustfmt::skip]
-const REMOVABLE_PAIRS: &[(u8, u8)] = &[
+pub(crate) const REMOVABLE_PAIRS: &[(u8, u8)] = &[
     (0x51, 0x45), // rock (horizontal) -> horizontal path
     (0x52, 0x46), // rock (vertical)   -> vertical path
     (0x54, 0x46), // lock (vertical)   -> vertical path
@@ -222,12 +224,82 @@ const REMOVABLE_PAIRS: &[(u8, u8)] = &[
     (0xE4, 0xDA), // alt lock          -> sky path
     (0x56, 0x45), // lock (horizontal) -> horizontal path
     (0x9D, 0xB3), // river             -> bridge
+    // --- past vanilla's eight -------------------------------------------
+    //
+    // `TILE_LARGEFORT`, which vanilla defines and never places. It has a
+    // fortress's crumble sound and rubble in `prg011` (`:1823`, `:1832`) but no
+    // completion path at all: `prg012`'s reload special-cases only `$67` and
+    // `$EB`, and `$6A` was in neither table, so it took the threshold branch and
+    // reloaded as a Mario/Luigi panel. This randomizer *does* place it
+    // (`FORTRESS_TILES`), and [`ML_RANGE`]'s upper bound is what lets the row be
+    // reached.
+    (0x6A, 0x60), // large fortress    -> rubble
 ];
 
 /// How many entries the scan walks. Read by [`super::completion_bits`] too — its
 /// `IS_COMPLETABLE` runs the engine's own scan over this same table, so the two
 /// counts must be one fact.
 pub(crate) const REMOVABLE_COUNT: usize = REMOVABLE_PAIRS.len();
+
+// --- The M/L range ------------------------------------------------------
+
+/// `Tile_Attributes_TS0`, CPU `$A400` in PRG012: four thresholds indexed by the
+/// tile's top two bits, `03 67 BF E9`, then the same four again at `+4`.
+///
+/// The duplication is not redundancy — the two rows are read from different
+/// storage and answer different questions. `+0` is read straight from ROM by
+/// the one site [`ML_RANGE`] replaces. `+4` is read through the RAM copy at
+/// `$7E94` (filled per tileset by `prg030.asm:3597`) by four other sites: level
+/// entry, the clear-FX selection, and two more. Nothing here touches `+4`.
+const TILE_ATTRIBUTES_TS0: u16 = 0xA400;
+
+/// Where the helper lands, and where its bound table lands inside it.
+pub(crate) const ML_RANGE_CPU: u16 = prg_bank_file_to_cpu(12, FS_ML_RANGE);
+const ML_RANGE_UPPER_CPU: u16 = ML_RANGE_CPU + 11;
+
+/// The `CMP Tile_Attributes_TS0,X` at `$A545` that this replaces, and the `BCS`
+/// after it. Five bytes; `JSR` + the same `BCS` is also five, and because the
+/// `JSR` is the same length as the `CMP` the branch lands at the same address
+/// and its operand does not change.
+const PRG012_ML_TEST: usize = PRG012_FILE_BASE + 0x545;
+/// What stands there in vanilla: `CMP $A400,X` / `BCS $A570`.
+const PRG012_ML_TEST_VANILLA: [u8; 5] = [0xDD, 0x00, 0xA4, 0xB0, 0x26];
+
+/// **The first tile of each page that is no longer flipped to an M/L marker.**
+///
+/// One past the last real tile in each page, so nothing vanilla places moves out
+/// of the window: `$15` closes page 0's panels (including the nine authored
+/// variants it never uses), `$6A` closes page 1 at the large fortress — which is
+/// how that tile reaches the removable scan instead — `$BF` is page 2's only
+/// entry, and page 3 ends at `$EB`, the alt fortress.
+///
+/// What falls outside is exactly the undefined tail of each page: `$16-$3F`,
+/// `$6A-$7F`, `$EC-$FF`. Nothing is placed there today, which is why this
+/// changes no build — and it is the whole point, because an obstacle tile has to
+/// fall through to the removable scan rather than becoming a panel.
+pub(crate) const ML_RANGE_UPPER: [u8; 4] = [0x16, 0x6A, 0xC0, 0xEC];
+
+/// Is this completed tile flipped to a Mario/Luigi marker?
+///
+/// `A` is the tile and `X` its page (`tile >> 6`) on entry — both already in
+/// hand at the call site. Carry is the answer, which is what lets a three-byte
+/// `JSR` stand in for the three-byte `CMP` it replaces and leave the `BCS`
+/// behind it untouched.
+///
+/// `X` and `Y` survive: the caller keeps its grid offset in `Y` across the call,
+/// and `X` is the page it computed. Only `A` and the flags are spent.
+///
+/// 32 reserved, 15 used.
+#[rustfmt::skip]
+const ML_RANGE: [u8; 15] = [
+    0xDD, ML_RANGE_UPPER_CPU as u8, (ML_RANGE_UPPER_CPU >> 8) as u8, //  0: CMP UPPER,X   ; past this page's window?
+    0xB0, 0x04,                                                     //  3: BCS no
+    0xDD, TILE_ATTRIBUTES_TS0 as u8, (TILE_ATTRIBUTES_TS0 >> 8) as u8, //  5: CMP Tile_Attributes_TS0,X
+    0x60,                                                           //  8: RTS   ; carry IS the answer
+    0x18,                                                           //  9: CLC   ; no
+    0x60,                                                           // 10: RTS
+    ML_RANGE_UPPER[0], ML_RANGE_UPPER[1], ML_RANGE_UPPER[2], ML_RANGE_UPPER[3], // 11: UPPER
+];
 
 /// The metatile quadrant tables are stored UL, LL, UR, LR — four 256-byte planes
 /// from [`PRG012_FILE_BASE`]. The effect queues them in *row* order
@@ -355,7 +427,7 @@ const FORTRESS_FX: [u8; 484] = [
     0x05, 0x0A,                                    // 170: ORA <T11
     0xA8,                                          // 172: TAY   ; Y = the cell's index in its screen's page
     0xB1, 0x0E,                                    // 173: LDA [T15],Y   ; the tile standing there now
-    0xA2, 0x07,                                    // 175: LDX #$07
+    0xA2, (REMOVABLE_COUNT - 1) as u8,             // 175: LDX #(entries - 1)
     0xDD, MIRROR_REMOVABLE as u8, (MIRROR_REMOVABLE >> 8) as u8,                              // 177: CMP MIRROR_REMOVABLE,X
     0xF0, 0x06,                                    // 180: BEQ found
     0xCA,                                          // 182: DEX
@@ -634,6 +706,25 @@ pub(crate) fn relocate_removable_tables(rom: &mut Rom) {
     rom.write_range(PRG012_REMOVABLE_OPERAND, &removable_cpu.to_le_bytes());
     rom.write_range(PRG012_REMOVE_TO_OPERAND, &remove_to_cpu.to_le_bytes());
     rom.write_byte(PRG012_SCAN_COUNT, (REMOVABLE_COUNT - 1) as u8);
+
+    install_ml_range(rom);
+}
+
+/// Bound the top of each page's M/L window, and point the reload's test at the
+/// helper that does it.
+///
+/// The splice is the same length as what it replaces, so the `BCS` behind it
+/// keeps both its address and its operand — this is a three-byte instruction
+/// swapped for another three-byte instruction, not a relocation.
+///
+/// Idempotent, and it reads nothing from the ROM.
+fn install_ml_range(rom: &mut Rom) {
+    rom.write_range(FS_ML_RANGE, &ML_RANGE);
+    let mut splice = [0u8; 5];
+    splice[0] = 0x20; // JSR
+    splice[1..3].copy_from_slice(&ML_RANGE_CPU.to_le_bytes());
+    splice[3..].copy_from_slice(&PRG012_ML_TEST_VANILLA[3..]); // the same BCS
+    rom.write_range(PRG012_ML_TEST, &splice);
 }
 
 /// The 48 bytes of PRG012 the effect cannot reach: the removable-tile pairing
@@ -904,7 +995,111 @@ mod asm_checks {
                 (rom.read_byte(MAP_REMOVABLE_VANILLA + i), rom.read_byte(MAP_REMOVE_TO_VANILLA + i))
             })
             .collect();
-        assert_eq!(REMOVABLE_PAIRS, want, "REMOVABLE_PAIRS no longer matches the ROM's own table");
+        assert_eq!(
+            &REMOVABLE_PAIRS[..8],
+            want,
+            "the first eight rows no longer match the ROM's own table"
+        );
+
+        // Anything past the eighth is ours, and every one of them has to obey
+        // the two rules the doc comment states — otherwise the effect draws the
+        // revealed tile in the wrong palette, or reveals something the player
+        // cannot walk on.
+        for &(obstacle, revealed) in &REMOVABLE_PAIRS[8..] {
+            assert_eq!(
+                obstacle >> 6,
+                revealed >> 6,
+                "{obstacle:#04X} -> {revealed:#04X} crosses a palette page"
+            );
+            // Only an obstacle that blocks a *corridor* has to reveal something
+            // walkable. A fortress reveals rubble, which is a node the player is
+            // already standing on — `Map_CheckDoMove` never tests a destination
+            // cell's own byte, so rubble does not belong to either direction
+            // list and must not be held to one.
+            if rom_data::is_gap_tile(obstacle) {
+                assert!(
+                    rom_data::VALID_HORZ.contains(&revealed)
+                        || rom_data::VALID_VERT.contains(&revealed),
+                    "{obstacle:#04X} blocks a corridor but reveals {revealed:#04X}, \
+                     which is walkable in no direction"
+                );
+            }
+        }
+    }
+
+    /// The helper decodes, fits its allocation, and its self-reference resolves.
+    #[test]
+    fn the_ml_range_helper_is_well_formed() {
+        asm::check(&ML_RANGE)
+            .allocation(rom_data::FS_ML_RANGE)
+            // `CMP UPPER,X` names a table inside the routine.
+            .origin(ML_RANGE_CPU)
+            .data_from(11)
+            .assert_ok();
+    }
+
+    /// The splice replaces one whole instruction with another of the same
+    /// length, which is what lets the `BCS` behind it keep both its address and
+    /// its operand.
+    ///
+    /// If vanilla's five bytes were ever not what this expects, the `JSR` would
+    /// land mid-instruction and the reload would execute an operand.
+    #[test]
+    fn the_ml_range_splice_lands_on_an_instruction() {
+        let Some(mut rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        assert_eq!(
+            rom.read_range(PRG012_ML_TEST, 5),
+            PRG012_ML_TEST_VANILLA,
+            "the reload's M/L test is not the `CMP $A400,X` / `BCS` this replaces"
+        );
+
+        relocate_removable_tables(&mut rom);
+
+        let after = rom.read_range(PRG012_ML_TEST, 5);
+        assert_eq!(after[0], 0x20, "JSR");
+        assert_eq!(&after[1..3], ML_RANGE_CPU.to_le_bytes(), "JSR names the helper");
+        assert_eq!(
+            &after[3..],
+            &PRG012_ML_TEST_VANILLA[3..],
+            "the BCS behind the splice moved, so its operand is now wrong"
+        );
+        assert_eq!(rom.read_range(rom_data::FS_ML_RANGE, ML_RANGE.len()), ML_RANGE);
+    }
+
+    /// **The bounds are one past the last tile any vanilla map places.**
+    ///
+    /// That is the whole safety argument for narrowing the M/L test: no tile the
+    /// game actually uses falls outside its page's window, so no cell changes
+    /// behavior. Checked against the eight grids rather than asserted, because
+    /// the claim is about the ROM and not about our intent.
+    #[test]
+    fn the_ml_bounds_exclude_nothing_the_maps_use() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        for world in 0..8 {
+            let info = &rom_data::MAP_TILE_GRIDS[world];
+            for screen in 0..info.screens {
+                for row in 0..9 {
+                    for col in 0..16 {
+                        let tile =
+                            rom.read_byte(rom_data::map_tile_offset(world, row, screen * 16 + col));
+                        let page = (tile >> 6) as usize;
+                        assert!(
+                            tile < ML_RANGE_UPPER[page],
+                            "W{} places {tile:#04X}, at or above its page bound {:#04X} — \
+                             narrowing the M/L test would change how that cell completes",
+                            world + 1,
+                            ML_RANGE_UPPER[page]
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// The relocation's three writes, checked where they land rather than where
@@ -1060,24 +1255,24 @@ mod asm_checks {
         let mirror = mirror_bytes(&rom);
         assert_mirror_agrees_with_rust(&mirror);
 
-        // Vanilla's eight, spelled out. A change here means the engine's
-        // vocabulary of obstacles moved, which is the stage 3 project.
+        // The mirror is a copy of the tables, so it must carry every row of
+        // them — including the ones past vanilla's eight.
+        // `the_relocated_tables_match_vanilla` is what pins those eight to the
+        // ROM; this only has to prove the copy is faithful and complete.
+        let (obstacles, revealed): (Vec<u8>, Vec<u8>) = REMOVABLE_PAIRS.iter().copied().unzip();
+        assert_eq!(&mirror[..REMOVABLE_COUNT], obstacles, "the mirror's obstacle half is wrong");
         assert_eq!(
-            &mirror[..8],
-            &[0x51, 0x52, 0x54, 0x67, 0xEB, 0xE4, 0x56, 0x9D],
-            "Map_Removable_Tiles is not where or what this expects"
-        );
-        assert_eq!(
-            &mirror[8..16],
-            &[0x45, 0x46, 0x46, 0x60, 0xE3, 0xDA, 0x45, 0xB3],
-            "Map_RemoveTo_Tiles is not where or what this expects"
+            &mirror[REMOVABLE_COUNT..2 * REMOVABLE_COUNT],
+            revealed,
+            "the mirror's remove-to half is wrong"
         );
         for i in 0..REMOVABLE_COUNT {
             let to = mirror[REMOVABLE_COUNT + i] as usize;
             let want: [u8; 4] =
                 PATTERN_QUADRANT_ORDER.map(|q| rom.read_byte(PRG012_FILE_BASE + q * 256 + to));
+            let base = 2 * REMOVABLE_COUNT + i * 4;
             assert_eq!(
-                &mirror[16 + i * 4..20 + i * 4],
+                &mirror[base..base + 4],
                 &want,
                 "entry {i} does not carry the quadrants of {to:#04X}"
             );

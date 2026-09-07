@@ -1,5 +1,7 @@
 //! Step 0: per-world capacity budgeting and Hammer-Bro sprite distribution.
 
+use crate::randomize::lock_keys;
+
 use super::*;
 
 use super::types::{BuiltWorld, CapacityPrep, HbSprite, OverworldData, SlotKind};
@@ -87,25 +89,35 @@ pub(super) fn find_blank_slots(
 /// and to prevent lock placement at row 7 when row 8 has a level.
 ///
 /// The game checks (in order):
-/// 1. Special tiles: $50, $E8, $E6, $BD, $E0
-/// 2. Fortress: $67, $EB
-/// 3. Page threshold: page0 >= $03, page1 >= $67, page2 >= $BF, page3 >= $E9
-/// 4. Map_Removable_Tiles: $51, $52, $54, $67, $EB, $E4, $56, $9D
+/// 1. `Map_Completable_Tiles`: $50, $E8, $E6, $BD, $E0 — flipped to an M/L.
+/// 2. Fortress: $67, $EB — routed straight to the removable scan.
+/// 3. The page's M/L **window**: `Tile_Attributes_TS0` at the bottom,
+///    [`lock_keys::ML_RANGE_UPPER`] at the top.
+/// 4. `Map_Removable_Tiles`: [`lock_keys::REMOVABLE_PAIRS`].
+///
+/// **Step 3 is a window rather than a threshold because we made it one.** In
+/// vanilla it is `tile >= threshold`, and every undefined metatile index sits
+/// above one; `lock_keys::ML_RANGE` bounds the top so that tail can carry
+/// obstacles instead. The window's upper bounds are one past the last tile any
+/// vanilla map places, so this predicate's answer is unchanged for every tile
+/// that actually appears — which is what makes the change census-neutral.
 pub(crate) fn is_completion_unsafe(tile: u8) -> bool {
+    /// `Map_Completable_Tiles`, CPU `$A447`.
     const SPECIAL: [u8; 5] = [0x50, 0xE8, 0xE6, 0xBD, 0xE0];
-    const REMOVABLE: [u8; 8] = [0x51, 0x52, 0x54, 0x67, 0xEB, 0xE4, 0x56, 0x9D];
+    /// `Tile_Attributes_TS0`'s `+0` row, CPU `$A400`. The bottom of each
+    /// window; `lock_keys::ML_RANGE_UPPER` is the top.
     const THRESHOLDS: [u8; 4] = [0x03, 0x67, 0xBF, 0xE9];
 
-    // 0x67/0xEB/0x6A are also caught by the threshold check below, but kept
-    // explicit here for readability — fortress tiles are the primary case.
-    if SPECIAL.contains(&tile) || tile == 0x67 || tile == 0xEB || tile == 0x6A {
+    if SPECIAL.contains(&tile) {
         return true;
     }
+    // The fortress tiles need no case of their own: all three are rows in
+    // REMOVABLE_PAIRS, which the last line covers.
     let page = (tile >> 6) as usize;
-    if tile >= THRESHOLDS[page] {
+    if tile >= THRESHOLDS[page] && tile < lock_keys::ML_RANGE_UPPER[page] {
         return true;
     }
-    REMOVABLE.contains(&tile)
+    lock_keys::REMOVABLE_PAIRS.iter().any(|&(obstacle, _)| obstacle == tile)
 }
 
 /// Collect positions whose tile/slot would be "caught" by the game's
