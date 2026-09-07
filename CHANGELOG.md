@@ -37,9 +37,7 @@ deploys.
   world could be finished without. That was a workaround for not being able to
   take a fortress out of the deck at all. Now they are held out the same way the
   blocked levels are: not on the map, and their tiles go to a second visit to a
-  fortress that stayed. Measured over 120 seeds, that is two second visits in
-  88% of seeds and one in 7%; the rest are maps the builder gave fewer fortress
-  tiles to begin with.
+  fortress that stayed — two of them, on every seed.
 
 - **World Maze: a fortress now shows where its lock is.** The three fortress
   designs used to be picked at random for variety; now the one a fortress wears

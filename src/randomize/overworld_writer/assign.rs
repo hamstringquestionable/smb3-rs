@@ -174,9 +174,11 @@ pub(super) fn assign_pool<R: Rng>(
     // (world, section) that has a fortress slot and was not pre-assigned.
     // Mirrors that loop rather than counting slots, so the two cannot drift.
     //
-    // It is not a constant. The builder places **14-17** fortress slots
-    // (measured over 200 seeds) against a vanilla roster of 17, so the deck is
-    // sized to the map rather than the other way round.
+    // The builder places the full 17-fort roster on every seed measured, so this
+    // is 17 minus 1-F's pre-assignment in practice. It is derived rather than
+    // written as a constant anyway: the deal below is a bare `expect`, and a
+    // deck sized to an assumption instead of to the map is how that becomes a
+    // panic.
     let fort_slots = build
         .worlds
         .iter()

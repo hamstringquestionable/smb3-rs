@@ -11,6 +11,31 @@ fn load_rom() -> Option<Rom> {
     Rom::from_bytes(&data).ok()
 }
 
+/// The ROM as the builder actually sees it in production.
+///
+/// `randomizer.rs` runs these QoL patches *before* the overworld builder, and
+/// they move map tiles — rocks off the pipe shortcuts, the W3 drawbridges, the
+/// always-on W8 screen-3 water page. A builder run against plain vanilla is
+/// therefore building a map no player ever gets, and it shows: on the unprepped
+/// ROM the builder places **14-17** fortress slots depending on the seed, and on
+/// the prepped one it places **17 every time**, which is what
+/// `redistribute_fortresses` deals.
+///
+/// `overworld_build::tests::load_rom` has always done this; this module's
+/// `load_rom` above never has. The fortress tests below use this one, because a
+/// census taken on a map the game does not produce is worth nothing. Fixing the
+/// rest of the module is a separate job — several tests here pin values
+/// measured against the unprepped map.
+fn load_prepped_rom() -> Option<Rom> {
+    let mut out = load_rom()?;
+    qol::fix_w3_drawbridges(&mut out);
+    qol::remove_rocks(&mut out);
+    qol::apply_w1_shortcut(&mut out, false);
+    qol::apply_w8_bridges(&mut out);
+    qol::fix_big_q_block_rooms(&mut out);
+    Some(out)
+}
+
 /// Standard test pickup: spade games + toad houses shuffled.
 fn standard_pickup(
     rom: &Rom,
@@ -390,7 +415,7 @@ fn fort_1f_pool_idx(
 /// holds because a key is a map position, not a level.
 #[test]
 fn test_deja_vu_repeats_fortresses() {
-    let rom = match load_rom() {
+    let rom = match load_prepped_rom() {
         Some(r) => r,
         None => return,
     };
@@ -447,6 +472,12 @@ fn test_deja_vu_repeats_fortresses() {
                     slots,
                     "{mode:?} friendlier={friendlier} seed {seed}: {} forts for {slots} slots",
                     placed.len(),
+                );
+                assert_eq!(
+                    slots,
+                    rom_data::FORTRESS_ENTRIES.len(),
+                    "{mode:?} friendlier={friendlier} seed {seed}: builder placed {slots} \
+                     fortress slots, not the full roster",
                 );
 
                 let mut seen: HashMap<usize, usize> = HashMap::new();
@@ -535,7 +566,7 @@ fn level_pool_unique_items(
 /// than from a redeal — `test_deja_vu_repeats_fortresses` covers that arm.
 #[test]
 fn test_friendlier_levels_blocks_forts() {
-    let rom = match load_rom() {
+    let rom = match load_prepped_rom() {
         Some(r) => r,
         None => return,
     };
@@ -570,7 +601,16 @@ fn test_friendlier_levels_blocks_forts() {
         let placed: Vec<usize> =
             assignments.iter().flat_map(|wa| wa.fortress.iter().map(|a| a.pool_idx)).collect();
 
+        // Two separate claims. Every fortress slot got a fortress — and the
+        // builder placed the whole roster in the first place, which is what
+        // `redistribute_fortresses` deals (13 + World 8's 4) and what the
+        // prepped map reliably yields.
         assert_eq!(placed.len(), slots, "seed {seed}: {} forts for {slots} slots", placed.len());
+        assert_eq!(
+            slots,
+            rom_data::FORTRESS_ENTRIES.len(),
+            "seed {seed}: builder placed {slots} fortress slots, not the full roster",
+        );
 
         let mut seen: HashMap<usize, usize> = HashMap::new();
         for &pi in &placed {
@@ -599,9 +639,13 @@ fn test_friendlier_levels_blocks_forts() {
                 catalog.entries[pickup.pool[pi].catalog_idx].name,
             );
         }
-        assert!(
-            dupes <= rom_data::FRIENDLIER_BLOCKED_FORTS.len(),
-            "seed {seed}: {dupes} duplicate forts, more than the removal freed",
+        // Exactly the removal's worth, not merely at most: the roster is full
+        // and two cards came out, so two tiles must take a second visit. An
+        // inequality here would have hidden the builder dropping a fort.
+        assert_eq!(
+            dupes,
+            rom_data::FRIENDLIER_BLOCKED_FORTS.len(),
+            "seed {seed}: {dupes} duplicate forts, expected one per removed fort",
         );
         dupe_hist[dupes] += 1;
     }
