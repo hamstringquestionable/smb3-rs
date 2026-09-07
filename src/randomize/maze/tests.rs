@@ -398,10 +398,25 @@ fn the_generator_never_ships_an_unwinnable_maze() {
                     "seed {seed} [{name}]: unwinnable\n{}",
                     report.spheres.spoiler()
                 );
+                // **Sphere 0 must beat a fortress.** This replaces the
+                // start-region rule, which was retired when the constructive
+                // fill landed: that rule asked whether each world could be
+                // walked out of using only its OWN fortresses, which rejects
+                // the mode's own formula (pad out, beat a fortress, come back)
+                // and is not what strands anyone. The whistle is never
+                // consumed and always reaches the spine's first world, so a
+                // stranded start region costs a hop.
+                //
+                // What WOULD strand a player is the first tile of the game
+                // offering nothing at all: no fortress reachable means no gate
+                // can open and the run cannot begin. That is the real property,
+                // and it is the one the fill guarantees by construction.
                 assert!(
-                    report.unsafe_worlds.is_empty(),
-                    "seed {seed} [{name}]: worlds that can strand a player: {:?}",
-                    report.unsafe_worlds
+                    report.spheres.goal_sphere == Some(0)
+                        || report.spheres.spheres.first().is_some_and(|s0| !s0.beaten.is_empty()),
+                    "seed {seed} [{name}]: sphere 0 beats no fortress — nothing to do from the \
+                     start tile\n{}",
+                    report.spheres.spoiler()
                 );
                 // Every fortress keeps exactly one lock — the charter's
                 // map-legibility rule, and what lets a world's lock count tell the
@@ -1152,9 +1167,9 @@ fn a_short_spine_still_finishes() {
                 report.spheres.spoiler()
             );
             assert!(
-                report.unsafe_worlds.is_empty(),
-                "seed {seed} spine {spine:?}: worlds that can strand a player: {:?}",
-                report.unsafe_worlds
+                report.spheres.goal_sphere == Some(0)
+                    || report.spheres.spheres.first().is_some_and(|s0| !s0.beaten.is_empty()),
+                "seed {seed} spine {spine:?}: sphere 0 beats no fortress"
             );
             let cost = super::metrics::completion_cost(&state);
             assert!(cost.reached, "seed {seed} spine {spine:?}: no completion path");
@@ -1339,9 +1354,10 @@ fn the_maze_holds_under_start_airship_swap() {
             report.spheres.spoiler()
         );
         assert!(
-            report.unsafe_worlds.is_empty(),
-            "seed {seed} ({n} swapped): worlds that can strand a player: {:?}",
-            report.unsafe_worlds
+            report.spheres.goal_sphere == Some(0)
+                || report.spheres.spheres.first().is_some_and(|s0| !s0.beaten.is_empty()),
+            "seed {seed} ({n} swapped): sphere 0 beats no fortress — nothing to do from the \
+             start tile"
         );
         let cost = super::metrics::completion_cost(&state);
         assert!(cost.reached, "seed {seed} ({n} swapped): no completion path");
@@ -1687,6 +1703,115 @@ fn per_world_sealable_locks_are_sealable_for_the_maze() {
     }
 }
 
+/// **Does a foreign lock ever force the player to cross worlds?**
+///
+/// The mode's formula is *a lock in one world, no reachable fortress to open
+/// it, a telepad to another world, beat a fortress there, come back.*
+/// `FillReport` counts `foreign_locks` and how far the key sits, and neither
+/// answers it: a lock whose fortress happens to live in a world the spine
+/// visits anyway gates nothing, and is counted as a success.
+///
+/// A lock **forces a crossing** when its fortress is unreachable with every
+/// pad deleted — the player had no route to that key except a telepad.
+/// `Spheres::unbeaten` is exactly that set, so the whole measurement is one
+/// extra fixpoint per seed plus one per pad pair.
+///
+/// The counterfactual drops the *edge*, never the tile: `links()` is built
+/// from `edges` alone and never consults the blocked set, so
+/// `spheres_with_blocked` cannot express "this pad is gone".
+///
+/// ```sh
+/// CENSUS_SEEDS=60 cargo test --release --lib forced_crossing_census \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn forced_crossing_census() {
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(60);
+    let k = super::DEFAULT_WANDS_REQUIRED;
+    let knobs = Knobs::default();
+
+    let (mut locks, mut foreign, mut forced, mut forced_foreign) = (0usize, 0usize, 0usize, 0usize);
+    let (mut reaches_goal, mut fully_solves) = (0usize, 0usize);
+    let (mut pairs, mut required, mut deepens) = (0usize, 0usize, 0usize);
+    let (mut depth_full, mut depth_free) = (Vec::new(), Vec::new());
+
+    for seed in 0..seeds {
+        let (_, mut state, _) = generated(&raw, seed, &knobs, k);
+        let all_edges = state.edges.clone();
+        let full = state.spheres();
+        depth_full.push(full.spheres.len());
+
+        // The whole pad web deleted: what the spine alone can still do.
+        state.edges.retain(|e| matches!(e, MazeEdge::Airship { .. }));
+        let spine_only = state.spheres();
+        depth_free.push(spine_only.spheres.len());
+        reaches_goal += usize::from(spine_only.goal_sphere.is_some());
+        fully_solves += usize::from(spine_only.solvable);
+        // Which fortresses the spine can deliver AT ALL. Asked with every
+        // lock held open (`fort: None` is an uninstalled lock) so the answer
+        // is terrain and the spine, nothing else. Asking it of the finished
+        // maze instead would count a cascade: one broken link strands every
+        // fortress downstream of it, and none of those were "forced" by a
+        // key placement.
+        let installed: Vec<Option<super::FortRef>> = state.locks.iter().map(|l| l.fort).collect();
+        for l in state.locks.iter_mut() {
+            l.fort = None;
+        }
+        let open_no_pads = state.spheres();
+        for (l, f) in state.locks.iter_mut().zip(&installed) {
+            l.fort = *f;
+        }
+        state.edges.clone_from(&all_edges);
+
+        for l in &state.locks {
+            locks += 1;
+            let Some(f) = l.fort else { continue };
+            let is_foreign = f.world != l.world;
+            foreign += usize::from(is_foreign);
+            if open_no_pads.unbeaten.contains(&f) {
+                forced += 1;
+                forced_foreign += usize::from(is_foreign);
+            }
+        }
+
+        // One pair at a time: is this link load-bearing, a shortcut past a
+        // gate, or inert?
+        let web: Vec<_> = state.pad_edges().into_iter().filter(|(a, b)| a < b).collect();
+        for &(a, b) in &web {
+            pairs += 1;
+            state.edges.retain(|e| match *e {
+                MazeEdge::Pad { from, to } => (from, to) != (a, b) && (from, to) != (b, a),
+                MazeEdge::Airship { .. } => true,
+            });
+            let cut = state.spheres();
+            if cut.goal_sphere.is_none() {
+                required += 1;
+            } else if cut.goal_sphere > full.goal_sphere {
+                deepens += 1;
+            }
+            state.edges.clone_from(&all_edges);
+        }
+    }
+
+    let mean = |v: &[usize]| v.iter().sum::<usize>() as f64 / v.len().max(1) as f64;
+    println!("\n=== forced crossings, {seeds} seeds, K={k}, default knobs ===");
+    println!("locks {locks}, of which {foreign} take their key from another world");
+    println!(
+        "  key behind a pad (fortress unreachable by terrain+spine): {forced}, {forced_foreign} of them foreign"
+    );
+    println!(
+        "spine alone: reaches the castle in {reaches_goal}/{seeds}, fully solves {fully_solves}/{seeds}"
+    );
+    println!(
+        "sphere depth: with pads {:.2}, spine only {:.2}",
+        mean(&depth_full),
+        mean(&depth_free)
+    );
+    println!("pad pairs {pairs}: {required} required, {deepens} were shortcuts past a gate");
+}
+
 /// **In maze mode, 1-F's safety verdict describes a pairing that no longer
 /// exists.**
 ///
@@ -1890,4 +2015,202 @@ fn an_uninstalled_lock_becomes_open_path() {
         lock.pos,
         lock.gap_tile,
     );
+}
+
+/// **Where does the World 8 bridge lock get its key, and would a constructive
+/// fill change that?**
+///
+/// The bridge is the final approach to Bowser's castle, and its locks are the
+/// most interesting ones to key from somewhere else: World 8 is last on the
+/// spine, so a key in *any* other world is a forward key and always safe.
+///
+/// The hypothesis this measures is that the swap search cannot take that trade
+/// even though it is free. Its only move is a **swap**, so making a bridge lock
+/// foreign necessarily makes some other lock foreign *in the opposite
+/// direction* — an early-world lock keyed to a World 8 fortress, which is a
+/// backward lock and frequently unsolvable. The pair is accepted or rejected as
+/// a unit, so the safe half is lost with the unsafe one.
+///
+/// A constructive fill has no such coupling: it hands each lock a key from
+/// whatever is reachable when it is assigned, with no second lock involved.
+///
+/// Both arms run on the same seeds and the same pads, so the only difference is
+/// the assignment policy.
+///
+/// **The numbers above are history.** `generate` now ships the constructive
+/// fill, so arm 1 no longer measures the swap search — the recorded
+/// swap-search figures are 37% bridge / 51% overall, and what killed them was
+/// not the search but the start-region rule it was made to satisfy. Retiring
+/// that rule (see `fill::assign_keys`) is what moved the bridge to 73%.
+///
+/// ```sh
+/// CENSUS_SEEDS=60 cargo test --release --lib w8_bridge_keys \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn w8_bridge_keys() {
+    use super::super::qol::{W8_BRIDGE_COLS, W8_BRIDGE_ROW};
+    use super::super::rom_data::{Pos, W8_IDX};
+    use super::walk::walk_maze;
+    use std::collections::HashSet;
+
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(60);
+    let k = super::DEFAULT_WANDS_REQUIRED;
+    let is_bridge = |world: usize, pos: Pos| {
+        world == W8_IDX && pos.0 == W8_BRIDGE_ROW && W8_BRIDGE_COLS.contains(&pos.1)
+    };
+
+    // (bridge locks, of those foreign) and (all locks, of those foreign)
+    let mut swap = (0usize, 0usize, 0usize, 0usize);
+    let mut ctor = (0usize, 0usize, 0usize, 0usize);
+    let mut ctor_neutral = (0usize, 0usize, 0usize, 0usize);
+    let mut ctor_stalled = 0usize;
+
+    for seed in 0..seeds {
+        let (_, result) = census_build(&raw, seed);
+
+        // --- arm 1: whatever `generate` ships today ---
+        let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+        let (state, _) =
+            super::generate(&result, &IDENTITY_SPINE, k, &Knobs::default(), None, &mut rng);
+        for l in &state.locks {
+            let foreign = l.fort.is_some_and(|f| f.world != l.world);
+            swap.2 += 1;
+            swap.3 += usize::from(foreign);
+            if is_bridge(l.world, l.pos) {
+                swap.0 += 1;
+                swap.1 += usize::from(foreign);
+            }
+        }
+
+        // --- arms 2 and 3: the constructive fill, same seed, same pads.
+        // `prefer_cross` is the POLICY; running it both ways is what separates
+        // "the algorithm can aim" from "we told it where to aim".
+        for (prefer_cross, tally) in [(true, &mut ctor), (false, &mut ctor_neutral)] {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+            let mut st = GlobalState::from_build(&result, &IDENTITY_SPINE, k);
+            let pads = super::graph::plan_pads(&st, &Knobs::default(), &mut rng);
+            st.add_pads(pads.iter().map(|p| p.edge).collect());
+
+            // A fortress that is never beaten, so an unassigned lock stays shut.
+            let placeholder = super::FortRef { world: 0, section: 255 };
+            for l in st.locks.iter_mut() {
+                l.fort = Some(placeholder);
+            }
+            let forts: Vec<(super::FortRef, Pos)> =
+                st.worlds
+                    .iter()
+                    .flat_map(|w| {
+                        w.slots.iter().filter(|s| s.kind == SlotKind::Fortress).map(|s| {
+                            (super::FortRef { world: w.world_idx, section: s.section }, s.pos)
+                        })
+                    })
+                    .collect();
+            let links = st.links();
+            let (mut open, mut used) = (HashSet::new(), HashSet::new());
+            let mut assigned = vec![false; st.locks.len()];
+
+            loop {
+                let bases = st.base_grids(&HashSet::new());
+                let grids = st.locked_grids(&bases, &open);
+                let reach = walk_maze(&st.view(&grids), &links, st.start);
+                for (f, pos) in &forts {
+                    if !open.contains(f) && reach.contains((f.world, *pos)) {
+                        open.insert(*f);
+                    }
+                }
+                let available: Vec<super::FortRef> = forts
+                    .iter()
+                    .map(|(f, _)| *f)
+                    .filter(|f| open.contains(f) && !used.contains(f))
+                    .collect();
+                let frontier: Vec<usize> = (0..st.locks.len())
+                    .filter(|&i| !assigned[i])
+                    .filter(|&i| {
+                        let l = &st.locks[i];
+                        let (r, c) = l.pos;
+                        let g = &grids[l.world];
+                        let mut n = Vec::new();
+                        if r > 0 {
+                            n.push((r - 1, c));
+                        }
+                        if c > 0 {
+                            n.push((r, c - 1));
+                        }
+                        if r + 1 < g.rows() {
+                            n.push((r + 1, c));
+                        }
+                        if c + 1 < g.cols {
+                            n.push((r, c + 1));
+                        }
+                        n.into_iter().any(|p| reach.contains((l.world, p)))
+                    })
+                    .collect();
+                if frontier.is_empty() || available.is_empty() {
+                    if !assigned.iter().all(|&a| a) {
+                        ctor_stalled += 1;
+                    }
+                    break;
+                }
+                // Territory-ordered: open the gate that reveals the most.
+                let base: usize = (0..st.worlds.len()).map(|w| reach.world_len(w)).sum();
+                let probe = *open.iter().next().expect("a fort is always beatable first");
+                let mut best = (usize::MIN, frontier[0]);
+                for &i in &frontier {
+                    let saved = st.locks[i].fort;
+                    st.locks[i].fort = Some(probe);
+                    let g2 = st.locked_grids(&bases, &open);
+                    let r2 = walk_maze(&st.view(&g2), &links, st.start);
+                    st.locks[i].fort = saved;
+                    let gain: usize =
+                        (0..st.worlds.len()).map(|w| r2.world_len(w)).sum::<usize>() - base;
+                    if gain > best.0 {
+                        best = (gain, i);
+                    }
+                }
+                let li = best.1;
+                let lw = st.locks[li].world;
+                let cross: Vec<super::FortRef> =
+                    available.iter().copied().filter(|f| f.world != lw).collect();
+                let pick = if !prefer_cross || cross.is_empty() { available[0] } else { cross[0] };
+                st.locks[li].fort = Some(pick);
+                used.insert(pick);
+                assigned[li] = true;
+            }
+
+            for (i, l) in st.locks.iter().enumerate() {
+                if !assigned[i] {
+                    continue; // never assigned; would ship uninstalled
+                }
+                let foreign = l.fort.is_some_and(|f| f.world != l.world);
+                tally.2 += 1;
+                tally.3 += usize::from(foreign);
+                if is_bridge(l.world, l.pos) {
+                    tally.0 += 1;
+                    tally.1 += usize::from(foreign);
+                }
+            }
+        }
+    }
+
+    let pct = |n: usize, d: usize| 100.0 * n as f64 / d.max(1) as f64;
+    println!("\n=== W8 bridge keys, {seeds} seeds, K={k} ===");
+    for (name, m) in [
+        ("shipped generator", swap),
+        ("constructive (neutral)", ctor_neutral),
+        ("constructive (prefer cross)", ctor),
+    ] {
+        println!(
+            "{name:<24} bridge locks {:>3}, foreign {:>3} ({:>4.0}%)   |   all locks {:>4}, foreign {:>4} ({:>4.0}%)",
+            m.0,
+            m.1,
+            pct(m.1, m.0),
+            m.2,
+            m.3,
+            pct(m.3, m.2),
+        );
+    }
+    println!("constructive fill stalled on {ctor_stalled}/{seeds} seeds (both policies counted)");
 }

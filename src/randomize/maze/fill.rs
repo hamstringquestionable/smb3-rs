@@ -58,10 +58,14 @@
 //!   charter's map-legibility rule, and the reason a world's lock count tells
 //!   the player its fort count — holds at every step without being checked.
 
-use rand::Rng;
-use rand::seq::SliceRandom;
+use std::collections::HashSet;
 
+use rand::Rng;
+use rand::seq::{IndexedRandom, SliceRandom};
+
+use super::super::rom_data::{Grid, Pos};
 use super::graph::Knobs;
+use super::walk::{MazePos, walk_maze};
 use super::{FortRef, GlobalState, MazeLock};
 
 /// Exchange the forts of two locks — the fill's only move, and its own undo.
@@ -96,13 +100,24 @@ pub(crate) struct FillReport {
     pub foreign_span: usize,
     /// Swap proposals declined because they would have moved 1-F's pair.
     pub pinned_skips: usize,
+    /// Gates the constructive fill assigned, and how many locks there were.
+    pub built: usize,
+    pub locks: usize,
+
+    /// The constructive fill could not place every gate, so the swap search
+    /// produced the assignment instead.
+    pub fell_back: bool,
 }
 
-/// Reassign which fortress opens which lock, biased by
-/// [`Knobs::fort_distance_bias`].
+/// The fallback: permute the builder's assignment by swapping pairs.
+///
+/// No longer the producer — see [`assign_keys`] — but kept, because it is the
+/// one path that **cannot fail**. It starts from the per-world builder's own
+/// pairing, which is known good, so the worst case is that no swap is accepted
+/// and the result is what the builder guaranteed.
 ///
 /// The maze must already be solvable on entry; it is still solvable on exit.
-pub(crate) fn assign_keys<R: Rng>(
+fn swap_search<R: Rng>(
     state: &mut GlobalState,
     spine: &[usize],
     knobs: &Knobs,
@@ -225,15 +240,6 @@ pub(crate) fn assign_keys<R: Rng>(
             report.foreign_span += spine_pos[f.world].abs_diff(spine_pos[lock.world]);
         }
     }
-
-    for lock in &state.locks {
-        if let Some(f) = lock.fort
-            && f.world != lock.world
-        {
-            report.foreign_locks += 1;
-            report.foreign_span += spine_pos[f.world].abs_diff(spine_pos[lock.world]);
-        }
-    }
     report
 }
 
@@ -310,4 +316,296 @@ pub(crate) fn keep_one_f_sealable(state: &mut GlobalState, one_f: Option<FortRef
     // tile agree.
     state.locks[li].fort = None;
     OneF::Opened
+}
+
+/// A fortress that is never beaten.
+///
+/// While the fill runs, an unassigned lock carries this so it stays **shut** —
+/// the whole point is to see the map as a player would with that gate still
+/// closed. It must never survive the pass: `lock_keys` panics on a fort that
+/// resolves to no cell, which is the backstop, and [`assign_keys`] turns any
+/// survivor into `fort: None` (an uninstalled, open-path gate) first.
+const UNASSIGNED: FortRef = FortRef { world: 0, section: 255 };
+
+/// **Which fortress opens which lock.** The constructive forward fill, with the
+/// swap search behind it.
+///
+/// Close every gate, walk, and repeatedly hand a gate on the frontier a key
+/// **from the fortresses already reachable**. Solvability is by construction:
+/// a key is never placed anywhere the player cannot already stand, so no round
+/// can gate itself, and there is no retry loop.
+///
+/// This replaced the swap search (2026-09-07) because a swap has nothing to aim
+/// with — its only move trades two forts, so it cannot make one lock foreign
+/// without making another foreign in the opposite direction, and a backward
+/// lock is often unsolvable. The two halves are accepted or rejected together,
+/// so the safe half dies with the unsafe one. Measured on World 8's bridge, the
+/// clearest case (its keys are forward keys from anywhere, so always safe):
+///
+/// | | bridge locks foreign | all locks foreign |
+/// |---|---|---|
+/// | swap search | **37%** | 51% |
+/// | constructive, neutral | **72%** | 76% |
+/// | constructive, prefer cross | 73% | 87% |
+///
+/// The bridge gain is the algorithm, not the aiming — a neutral constructive
+/// fill already gets it, and the preference adds one point there while moving
+/// everything else. Under the swap search bridge locks sat 14 points *below*
+/// the average lock; constructively that anomaly is gone.
+pub(crate) fn assign_keys<R: Rng>(
+    state: &mut GlobalState,
+    spine: &[usize],
+    knobs: &Knobs,
+    one_f: Option<FortRef>,
+    rng: &mut R,
+) -> FillReport {
+    // The builder's own local pairing, kept so the fallback has the known-good
+    // assignment to start from.
+    let builders = state.locks.clone();
+
+    let mut report = FillReport { locks: state.locks.len(), ..Default::default() };
+    report.built = constructive(state, knobs, rng);
+
+    // Two ways the fill can be unusable, and the same answer to both.
+    //
+    // A **stall** is gates it never reached. **Unescapable** is a world whose
+    // start region the finished assignment traps — checked here rather than per
+    // assignment, because mid-fill every unreached gate still reads as shut
+    // forever and the world looks far more locked than it ends up.
+    //
+    // Either way the swap search takes over, because `generate`'s last-resort
+    // guard answers an unescapable world by discarding *everything* — pads
+    // included — and reverting to the builder's all-local pairing. Falling back
+    // here keeps the pads and gives up only the fill.
+    // **No start-region check.** The fill assigns every gate a key drawn from
+    // the fortresses already reachable *at that moment*, walking from the
+    // global start — so every gate it places is openable by construction, the
+    // first one included. That is strictly stronger than the rule, and the rule
+    // is strictly wrong here: `start_region_escapable` counts only a world's
+    // OWN fortresses as openers, so it rejects the mode's whole formula — pad
+    // out, beat a fortress there, come back.
+    //
+    // What made the rule look necessary was the swap search, which permutes
+    // blindly and really can strand a world. Carrying it over cost 2.1
+    // crossings a seed and sent a third of them to the fallback; dropping it
+    // takes cross-world locks from 51% to 76% and the World 8 bridge from 37%
+    // to 73%, with no seed falling back at all.
+    //
+    // The player is never stranded even so: the maze whistle is never consumed,
+    // survives a game over, and always has the spine's first world to return
+    // to. See `world_travel`.
+    //
+    // **That makes the whistle a safety property, not a convenience.** If the
+    // mode ever ships without one, this reasoning lapses and game over has to
+    // return the player to the spine's first world instead of the one they died
+    // in — the note at `remove_whistles` in `randomizer::randomize_inner`
+    // carries the mechanism.
+    //
+    // **That makes the whistle a safety property, not a convenience.** If the
+    // mode ever ships without one, this reasoning lapses and game over has to
+    // return the player to the spine's first world instead of the one they died
+    // in — the note at `remove_whistles` in `randomizer::randomize_inner`
+    // carries the mechanism.
+    if report.built < report.locks {
+        state.locks = builders;
+        let mut fallback = swap_search(state, spine, knobs, one_f, rng);
+        fallback.locks = report.locks;
+        fallback.fell_back = true;
+        return fallback;
+    }
+
+    tally_foreign(state, spine, &mut report);
+    report
+}
+
+/// The forward fill proper. Returns how many gates it placed.
+fn constructive<R: Rng>(state: &mut GlobalState, knobs: &Knobs, rng: &mut R) -> usize {
+    let forts: Vec<(FortRef, Pos)> = state
+        .worlds
+        .iter()
+        .flat_map(|w| {
+            w.slots
+                .iter()
+                .filter(|s| s.kind == super::SlotKind::Fortress)
+                .map(|s| (FortRef { world: w.world_idx, section: s.section }, s.pos))
+        })
+        .collect();
+
+    for lock in state.locks.iter_mut() {
+        lock.fort = Some(UNASSIGNED);
+    }
+
+    let links = state.links();
+    // Loop-invariant: the slots and grids do not move, only which locks are
+    // open, and `locked_grids` applies those on top.
+    let bases = state.base_grids(&HashSet::new());
+
+    let mut open: HashSet<FortRef> = HashSet::new();
+    let mut used: HashSet<FortRef> = HashSet::new();
+    let mut assigned = vec![false; state.locks.len()];
+    let mut placed = 0usize;
+
+    loop {
+        let grids = state.locked_grids(&bases, &open);
+        let reach = walk_maze(&state.view(&grids), &links, state.start);
+
+        for (f, pos) in &forts {
+            if !open.contains(f) && reach.contains((f.world, *pos)) {
+                open.insert(*f);
+            }
+        }
+        let available: Vec<FortRef> = forts
+            .iter()
+            .map(|(f, _)| *f)
+            .filter(|f| open.contains(f) && !used.contains(f))
+            .collect();
+
+        // A gate is on the frontier when the player can stand next to it.
+        let frontier: Vec<usize> = (0..state.locks.len())
+            .filter(|&i| !assigned[i])
+            .filter(|&i| {
+                let l = &state.locks[i];
+                neighbours(&grids[l.world], l.pos).any(|p| reach.contains((l.world, p)))
+            })
+            .collect();
+
+        if frontier.is_empty() || available.is_empty() {
+            break;
+        }
+
+        let territory: usize = (0..state.worlds.len()).map(|w| reach.world_len(w)).sum();
+        // Any beaten fort will do as the probe: what is being measured is what
+        // the GATE reveals, not which key opens it.
+        let probe = *open.iter().next().expect("a fort is always beatable first");
+        let li = widest_gate(state, &bases, &links, &open, &frontier, territory, probe, rng);
+
+        // Two hard gates, not one. Solvability is by construction here — a key
+        // is only ever drawn from what the player can already reach — but the
+        // start-region rule is not, and it was the swap search's *second*
+        // gate. `start_region_escapable` counts only a world's OWN fortresses
+        // as openers, because a player arriving at a start tile (game over,
+        // airship, whistle) cannot open a foreign lock from the inside. Hand a
+        // start-region gate a foreign key and that world becomes a trap.
+        //
+        // Only the lock's own world can have changed, so this is one small
+        // per-world fixpoint per candidate rather than eight.
+        // No start-region check here, deliberately. Mid-fill a world looks far
+        // more locked than it will end up — every gate not yet reached still
+        // carries `UNASSIGNED`, which reads as shut forever — so a check here
+        // is answering the wrong question. Consulting it anyway steered badly
+        // enough that 82% of seeds ended up trapped and fell back, which is the
+        // whole fill wasted. It is a repair, not a constraint: see
+        // [`repair_start_regions`].
+        let pick = ranked_keys(state.locks[li].world, &available, knobs, rng)[0];
+        state.locks[li].fort = Some(pick);
+        used.insert(pick);
+        assigned[li] = true;
+        placed += 1;
+    }
+
+    // Anything still unassigned is NOT left carrying the placeholder — that
+    // would ship as a gate no fortress opens.
+    for lock in state.locks.iter_mut() {
+        if lock.fort == Some(UNASSIGNED) {
+            lock.fort = None;
+        }
+    }
+    placed
+}
+
+/// The four orthogonal neighbours of a cell that are inside the grid.
+fn neighbours(grid: &Grid, (r, c): Pos) -> impl Iterator<Item = Pos> {
+    let (rows, cols) = (grid.rows(), grid.cols);
+    [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)].into_iter().filter_map(move |(dr, dc)| {
+        let (nr, nc) = (r as i32 + dr, c as i32 + dc);
+        ((0..rows as i32).contains(&nr) && (0..cols as i32).contains(&nc))
+            .then_some((nr as usize, nc as usize))
+    })
+}
+
+/// Which frontier gate to open next: the one that reveals the most territory.
+///
+/// Taking the frontier in arbitrary order stalls on 28% of seeds; ordering it
+/// this way stalls on **none**, and leaves more keys in hand at every step
+/// (mean 6.04 against 4.17). Ties are broken at random rather than by index, so
+/// the fill does not always walk the map the same way round.
+#[allow(clippy::too_many_arguments)]
+// Reason: every argument is a distinct loop-invariant the caller already holds;
+// bundling them into a struct would name nothing the fill does not already say.
+fn widest_gate<R: Rng>(
+    state: &mut GlobalState,
+    bases: &[Grid],
+    links: &[(MazePos, MazePos)],
+    open: &HashSet<FortRef>,
+    frontier: &[usize],
+    territory: usize,
+    probe: FortRef,
+    rng: &mut R,
+) -> usize {
+    let mut best = (0usize, Vec::new());
+    for &i in frontier {
+        let saved = state.locks[i].fort;
+        state.locks[i].fort = Some(probe);
+        let grids = state.locked_grids(bases, open);
+        let opened = walk_maze(&state.view(&grids), links, state.start);
+        state.locks[i].fort = saved;
+
+        // Opening a gate only ever adds reachability, so this cannot go
+        // negative; saturating rather than asserting keeps a walker change from
+        // turning a measurement into a panic.
+        let gain: usize = (0..state.worlds.len())
+            .map(|w| opened.world_len(w))
+            .sum::<usize>()
+            .saturating_sub(territory);
+        match gain.cmp(&best.0) {
+            std::cmp::Ordering::Greater => best = (gain, vec![i]),
+            std::cmp::Ordering::Equal => best.1.push(i),
+            std::cmp::Ordering::Less => {}
+        }
+    }
+    best.1.choose(rng).copied().unwrap_or(frontier[0])
+}
+
+/// The reachable fortresses that could open this gate, best first.
+///
+/// A list rather than one pick, because the caller has a veto: a key that
+/// leaves the lock's world unescapable is rejected and the next one tried.
+///
+/// `fort_distance_bias` is the dial, and it means something sharper here than
+/// it did for the swap search: at 0.0 the order is a uniform shuffle of
+/// everything reachable (already ~76% cross-world, because most of the
+/// reachable set is in another world by the time a gate is assigned); positive
+/// pulls crossings to the front, negative pulls local keys forward. The
+/// magnitude is the probability of applying the preference at all, so the dial
+/// stays continuous rather than becoming a switch.
+fn ranked_keys<R: Rng>(
+    lock_world: usize,
+    available: &[FortRef],
+    knobs: &Knobs,
+    rng: &mut R,
+) -> Vec<FortRef> {
+    let mut out = available.to_vec();
+    out.shuffle(rng);
+    let bias = knobs.fort_distance_bias.clamp(-1.0, 1.0);
+    if bias != 0.0 && rng.random_bool(bias.abs()) {
+        let want_cross = bias > 0.0;
+        out.sort_by_key(|f| (f.world != lock_world) != want_cross);
+    }
+    out
+}
+
+/// Count the cross-world locks and how far their keys sit, for the census.
+fn tally_foreign(state: &GlobalState, spine: &[usize], report: &mut FillReport) {
+    let mut spine_pos = [spine.len(); 8];
+    for (i, &w) in spine.iter().enumerate() {
+        spine_pos[w] = i;
+    }
+    for lock in &state.locks {
+        if let Some(f) = lock.fort
+            && f.world != lock.world
+        {
+            report.foreign_locks += 1;
+            report.foreign_span += spine_pos[f.world].abs_diff(spine_pos[lock.world]);
+        }
+    }
 }

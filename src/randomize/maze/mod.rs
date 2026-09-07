@@ -313,8 +313,8 @@ impl GlobalState {
     /// [`Self::base_grids`] with every lock stamped as `open` leaves it. The
     /// fixpoint and [`metrics::completion_cost`] both step through the same
     /// sequence of these, one per fort set, and they have to agree about what
-    /// a given set of beaten forts makes walkable.
-    #[cfg(test)]
+    /// a given set of beaten forts makes walkable. The constructive fill steps
+    /// through the same sequence a third time.
     pub(crate) fn locked_grids(&self, bases: &[Grid], open: &HashSet<FortRef>) -> Vec<Grid> {
         self.locked_grids_sealed(bases, open, None)
     }
@@ -702,9 +702,27 @@ pub(crate) fn generate<R: Rng>(
 
     let fill = fill::assign_keys(&mut state, spine, knobs, one_f, rng);
 
-    // Last-resort safety. `plan_pads` already gave a hub pad to every world
-    // that needed one; a world still failing here either had no free site or
-    // ran out of budget, and both are census outputs rather than errors.
+    // A world whose start region has no walk-out still gets offered a pad,
+    // because an extra edge can only help — but it is **no longer a reason to
+    // throw the assignment away**, and that change is the whole reason the
+    // constructive fill is usable.
+    //
+    // The rule existed because game over, airship arrival and whistle travel
+    // all deposit the player on a start tile. Two things retire it:
+    //
+    // * **The fill cannot strand anyone.** Every gate takes its key from a
+    //   fortress already reachable from the global start at the moment it is
+    //   placed, so every gate it writes is openable — which is strictly
+    //   stronger than the rule. `start_region_escapable` counts only a world's
+    //   OWN fortresses as openers, so it rejects the mode's own formula: pad
+    //   out, beat a fortress there, come back.
+    // * **The whistle is the escape hatch anyway.** It is never consumed,
+    //   survives a game over (nothing on that path clears `Inventory_Items`),
+    //   and the cycler always has the spine's first world to return to.
+    //
+    // Enforced, it cost 2.1 crossings a seed and sent a third of seeds to the
+    // fallback; retired, cross-world locks go 51% -> 76% and the World 8
+    // bridge 37% -> 73%, with nothing falling back.
     let mut unsafe_worlds: Vec<usize> =
         (0..state.worlds.len()).filter(|&wi| !state.start_region_escapable(wi)).collect();
     if !unsafe_worlds.is_empty() {
@@ -725,7 +743,7 @@ pub(crate) fn generate<R: Rng>(
     // solvable BY CONSTRUCTION: the per-world builder's own local locks, no
     // pads, the spine alone. `the_spine_alone_completes_the_maze` is what makes
     // that a guarantee rather than a hope.
-    if !spheres.solvable || !unsafe_worlds.is_empty() {
+    if !spheres.solvable {
         state = GlobalState::from_build(result, spine, wands_required);
         spheres = state.spheres();
         // RECOMPUTE, do not clear. The fallback drops the pads, and a hub pad

@@ -23,6 +23,17 @@ deploys.
   over, and leaves whistles in the game whatever "Remove Whistles" says — the
   whistle is how you get around, and it can never take you anywhere new.
 
+### Changed
+
+- **World Maze: a lock's key is now far more often in another world.** The maze
+  used to decide which fortress opens which lock by shuffling an assignment it
+  inherited, which meant it could only ever trade one crossing for another —
+  and the trade was usually rejected. It now picks each key deliberately, from
+  the fortresses you can already reach when the gate goes down. Cross-world
+  locks go from about half to about three quarters, and the locks guarding
+  Bowser's bridge — the ones most worth sending you elsewhere for — from a third
+  to nearly three quarters. Maze maps will feel noticeably less self-contained.
+
 ### Fixed
 
 - **World Maze: taking 1-F's secret exit could end a run.** 1-F's secret exit

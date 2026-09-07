@@ -85,8 +85,8 @@ impl MazeReach {
 
     /// Reachable cells in one world. Test-only: it exists so
     /// `maze_walk_matches_the_per_world_walker` can assert that walking one
-    /// world with no links reaches nothing in the other seven.
-    #[cfg(test)]
+    /// world with no links reaches nothing in the other seven. Also the
+    /// constructive fill's territory measure — how much a gate reveals.
     pub(crate) fn world_len(&self, world: usize) -> usize {
         self.per_world[world].iter().filter(|&&b| b).count()
     }

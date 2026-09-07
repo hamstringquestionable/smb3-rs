@@ -10,12 +10,28 @@
 //! | [`WHISTLE_TRAVEL`] | PRG011 | once, at the whistle's world switch |
 //!
 //! **A world counts as visited once the player stands on its start tile.**
-//! That is the whole of the safety story, and it is invariant 3's doing:
-//! `docs/world_maze_design.md` requires a world's start region to be
-//! escapable, and game over, airship arrival and whistle travel all deposit
-//! the player on a start tile. So a destination the marker has certified is a
-//! destination the player can leave again, and a world only ever pad-hopped
-//! into an island of is correctly not whistle-able.
+//!
+//! **The dependency here inverted on 2026-09-07 and the old wording said the
+//! opposite.** It used to read that invariant 3 — every world's start region
+//! escapable — is what made a whistle destination safe to travel to. That rule
+//! is retired (see `maze::fill::assign_keys`): the constructive fill gives every
+//! gate a key already reachable from the global start, which is strictly
+//! stronger, and the rule additionally rejected the mode's own formula by
+//! refusing to count foreign fortresses.
+//!
+//! So it is now the other way round: **the whistle is what makes a trapped
+//! start region survivable**, and that makes this module a safety property
+//! rather than a convenience. Game over, airship arrival and whistle travel all
+//! deposit the player on a start tile that may have no walk-out; what saves
+//! them is that the whistle is never consumed, survives a game over, and always
+//! has the spine's first world to return to.
+//!
+//! Two consequences worth keeping in view. A world only ever pad-hopped into
+//! the middle of is still correctly not whistle-able — the marker fires on the
+//! start tile, not on arrival. And if the mode is ever shipped without a
+//! whistle, game over has to return the player to the spine's first world
+//! instead of the one they died in; the note at `remove_whistles` in
+//! `randomizer::randomize_inner` carries the mechanism.
 //!
 //! # Why a position compare and not `Map_GetTile`
 //!

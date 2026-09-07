@@ -607,6 +607,38 @@ Two semantics the walker had to get right, neither of which is in the sketch:
   so canoe activation is re-tested after each pass until it stops changing.
   Monotone, so it runs at most once per world with water.
 
+## Invariant 3 is RETIRED (2026-09-07)
+
+*"Every world's start-tile region must contain at least one exit reachable with
+zero keys"* is no longer enforced, and `start_region_escapable` is no longer a
+generation gate. Two independent reasons, and the second is why it is safe
+rather than merely convenient:
+
+1. **The constructive fill cannot strand anyone.** Every gate takes its key from
+   a fortress already reachable *from the global start* at the moment it is
+   placed, so every gate it writes is openable — strictly stronger than the
+   rule. The rule also counts only a world's OWN fortresses as openers, so it
+   rejected the mode's own formula: pad out, beat a fortress there, come back.
+2. **The whistle is the escape hatch.** Never consumed, survives a game over
+   (nothing on that path clears `Inventory_Items`), and the cycler always has
+   the spine's first world to return to. A trapped start region costs a hop.
+
+**What enforcing it cost, measured over 60 seeds:** 2.1 crossings per seed
+forced back to local keys, 33% of seeds falling back to the swap search, and —
+because `generate` answered one stranded world by discarding *everything* —
+seeds shipping with no cross-world locks at all. Retired: cross-world locks
+51% -> 76%, the World 8 bridge 37% -> 73%, nothing falling back.
+
+**The replacement assertion is *sphere 0 must beat a fortress*** — the run has
+to be able to begin. Three tests carry it.
+
+**The whistle is now a safety property.** If the mode ever ships without one,
+game over must return the player to the spine's first world rather than the one
+they died in: set `World_Num` to the spine head on the continue path before the
+map re-inits (vanilla lands them in place via `GameOver_AlignToStartY`). That is
+also the transition signal the packed completion store already tests
+(`World_Num != LIVE_WORLD`), so the persistence hooks fire correctly for free.
+
 ## Invariants
 
 1. **Global completability.** The fixpoint reaches the castle and every fortress
