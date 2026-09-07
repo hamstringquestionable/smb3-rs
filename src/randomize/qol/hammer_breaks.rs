@@ -37,6 +37,33 @@ const HAMMER_LOCKS_SUB_CPU: u16 = prg_bank_file_to_cpu(26, FS_HAMMER_LOCKS);
 /// Bytes reserved for the three parallel tables; must match the registry row.
 const HAMMER_TABLES_RESERVED: usize = 96;
 
+/// Append every numbered lock standing on the finished map, of one kind.
+///
+/// **Or the hammer refuses exactly the locks that carry a hint.** Those tiles
+/// are `lock_keys`' invention rather than vanilla's, so `LOCK_TILES` does not
+/// name them; they are read off the map instead, the same way the removable
+/// table is. Safe because this runs long after `lock_keys::apply`, which is what
+/// puts them there.
+fn push_numbered(
+    rom: &Rom,
+    water: bool,
+    breakable: &mut Vec<u8>,
+    replace: &mut Vec<u8>,
+    tilefix: &mut Vec<u8>,
+) {
+    let present = lock_keys::tiles_on_map(rom);
+    for tile in 0..=255u8 {
+        if !present[tile as usize] || lock_keys::numbered_lock_is_water(tile) != water {
+            continue;
+        }
+        if let Some((revealed, anim)) = lock_keys::numbered_lock(tile) {
+            breakable.push(tile);
+            replace.push(revealed);
+            tilefix.push(anim);
+        }
+    }
+}
+
 pub fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool) {
     // Build tables dynamically based on which flags are set.
     // Always include rocks (2 entries), then conditionally add locks (3) and bridge (1).
@@ -55,22 +82,7 @@ pub fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool) {
         }
         tilefix.extend_from_slice(&[0x01, 0x00, 0x00]);
 
-        // **And the numbered locks, or the hammer refuses exactly the locks
-        // that carry a hint.** Those tiles are `lock_keys`' invention rather
-        // than vanilla's, so `LOCK_TILES` does not name them; they are read off
-        // the finished map instead, the same way the removable table is. Runs
-        // after `lock_keys::apply`, which is what puts them there.
-        let present = lock_keys::tiles_on_map(rom);
-        for tile in 0..=255u8 {
-            if !present[tile as usize] {
-                continue;
-            }
-            if let Some((revealed, anim)) = lock_keys::numbered_lock(tile) {
-                breakable.push(tile);
-                replace.push(revealed);
-                tilefix.push(anim);
-            }
-        }
+        push_numbered(rom, false, &mut breakable, &mut replace, &mut tilefix);
     }
     if bridges {
         breakable.push(rom_data::WATER_GAP_TILE);
@@ -79,6 +91,11 @@ pub fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool) {
                 .expect("the water gap always inverts"),
         );
         tilefix.push(0x00);
+
+        // A numbered water gap is still a water gap: it belongs to this switch,
+        // not the lock one, or turning locks on would quietly start breaking
+        // bridges.
+        push_numbered(rom, true, &mut breakable, &mut replace, &mut tilefix);
     }
 
     let table_len = breakable.len();
@@ -237,31 +254,55 @@ mod tests {
             eprintln!("SKIP: requires the ROM");
             return;
         };
-        let options = crate::Options {
-            world_maze: true,
-            hammer_breaks_locks: crate::Tri::On,
-            palettes: false,
-            palette_themed: false,
-            ..Default::default()
+
+        let build = |locks: crate::Tri, bridges: crate::Tri| {
+            let options = crate::Options {
+                world_maze: true,
+                hammer_breaks_locks: locks,
+                hammer_breaks_bridges: bridges,
+                palettes: false,
+                palette_themed: false,
+                ..Default::default()
+            };
+            crate::randomize_rom_with_overworld_capture(&bytes, 5, &options, None)
+                .expect("a maze seed must build")
+                .0
         };
-        let Ok((rom, _)) = crate::randomize_rom_with_overworld_capture(&bytes, 5, &options, None)
-        else {
-            panic!("a maze seed must build");
+        let breakable = |rom: &crate::rom::Rom| {
+            let n = rom.read_byte(FS_HAMMER_LOCKS + 4) as usize + 1; // the LDX # immediate
+            rom.read_range(FS_HAMMER_TABLES, n).to_vec()
         };
 
-        let on_map: Vec<u8> = (0..=255u8)
-            .filter(|&t| lock_keys::tiles_on_map(&rom)[t as usize])
-            .filter(|&t| lock_keys::numbered_lock(t).is_some())
+        let rom = build(crate::Tri::On, crate::Tri::Off);
+        let present = lock_keys::tiles_on_map(&rom);
+        let numbered: Vec<u8> = (0..=255u8)
+            .filter(|&t| present[t as usize] && lock_keys::numbered_lock(t).is_some())
             .collect();
-        assert!(!on_map.is_empty(), "seed 5 has no numbered locks, so this proves nothing");
+        assert!(!numbered.is_empty(), "seed 5 has no numbered locks, so this proves nothing");
+        assert!(
+            numbered.iter().any(|&t| lock_keys::numbered_lock_is_water(t)),
+            "seed 5 has no numbered water gap, so the split below proves nothing"
+        );
 
-        let n = rom.read_byte(FS_HAMMER_LOCKS + 4) as usize + 1; // the LDX # immediate
-        let breakable = rom.read_range(FS_HAMMER_TABLES, n);
-        for tile in on_map {
-            assert!(
-                breakable.contains(&tile),
-                "numbered lock {tile:#04X} is on the map but the hammer cannot break it"
+        // Locks on, bridges off: the path locks break, the water gaps do not.
+        // Giving a bridge gap a digit must not move it onto the other switch.
+        let table = breakable(&rom);
+        for &tile in &numbered {
+            let water = lock_keys::numbered_lock_is_water(tile);
+            assert_eq!(
+                table.contains(&tile),
+                !water,
+                "numbered {} {tile:#04X}: breakable={}, expected {}",
+                if water { "water gap" } else { "lock" },
+                table.contains(&tile),
+                !water
             );
+        }
+
+        // Both on: everything numbered breaks.
+        let table = breakable(&build(crate::Tri::On, crate::Tri::On));
+        for &tile in &numbered {
+            assert!(table.contains(&tile), "{tile:#04X} unbreakable with both switches on");
         }
     }
 

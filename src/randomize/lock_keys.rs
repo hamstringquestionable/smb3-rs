@@ -258,19 +258,44 @@ pub(crate) const REMOVABLE_PAIRS: &[(u8, u8)] = &[
 /// it draws the revealed path in the lock's colors until the next map reload.
 /// So the horizontal and vertical sets sit in page 1 with `$45`/`$46`, and the
 /// sky set in page 3 with `$DA`, exactly as `$56` and `$E4` already do.
-const HINT_TILES: [[u8; 8]; 3] = [
+const HINT_TILES: [[u8; 8]; 4] = [
     [0x6B, 0x6C, 0x6D, 0x6E, 0x6F, 0x70, 0x71, 0x72], // horizontal
     [0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A], // vertical
     [0xEC, 0xED, 0xEE, 0xEF, 0xF0, 0xF1, 0xF2, 0xF3], // sky
+    [0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xFA, 0xFB], // water gap — see below
 ];
 
 /// What each orientation's numbered lock reveals, and the plain lock it stands
 /// in for. Same order as [`HINT_TILES`].
-const HINT_REVEALS: [(u8, u8); 3] = [
+const HINT_REVEALS: [(u8, u8); 4] = [
     (0x56, 0x45), // horizontal lock -> horizontal path
     (0x54, 0x46), // vertical lock   -> vertical path
     (0xE4, 0xDA), // sky lock        -> sky path
+    (0x9D, 0xB3), // water gap       -> bridge
 ];
+
+/// **The water gap is the one variant that breaks the palette rule, on
+/// purpose.**
+///
+/// A lock landing on a bridge wears `$9D`, which is page 2 — and page 2 has no
+/// index to spare. Three tiles there are absent from every vanilla grid and all
+/// three are traps: `$80` and `$81` are `TILE_MARIOCOMP_G`/`TILE_LUIGICOMP_G`,
+/// the green completion panels the engine stamps at *runtime*, and `$B6` is a
+/// single unexamined leftover. So the variant sits in page 3 with the sky set,
+/// and reveals a page-2 bridge.
+///
+/// Two visible consequences, both accepted deliberately in exchange for the
+/// hint reaching bridge locks at all:
+///
+/// * The lock draws in palette 3 rather than the palette 2 its water sits in.
+/// * The revealed bridge keeps palette 3 until the next map reload, because the
+///   effect queues pattern bytes and never an attribute byte. Leaving the map
+///   and coming back fixes it.
+///
+/// Neither is a correctness problem — the tile byte written to the grid is
+/// `$B3`, so the bridge is a bridge, walkable and persistent. It is only ever
+/// the wrong color.
+const WATER_ORIENTATION: usize = 3;
 
 /// The metatile: the padlock's three surviving quadrants, then the digit.
 ///
@@ -817,6 +842,16 @@ pub(crate) fn numbered_lock(tile: u8) -> Option<(u8, u8)> {
     })
 }
 
+/// Is this numbered lock a water gap rather than a path lock?
+///
+/// The hammer asks, because the two are governed by different options: a bridge
+/// gap is broken under "hammer breaks bridges", a path lock under "hammer breaks
+/// locks", and giving a bridge gap a digit must not quietly move it from one
+/// switch to the other.
+pub(crate) fn numbered_lock_is_water(tile: u8) -> bool {
+    HINT_TILES[WATER_ORIENTATION].contains(&tile)
+}
+
 /// The index of the vertical set in [`HINT_TILES`] / [`HINT_REVEALS`].
 const VERTICAL_ORIENTATION: usize = 1;
 
@@ -826,15 +861,23 @@ const VERTICAL_ORIENTATION: usize = 1;
 /// slots — and that is fine, because no single map can wear more than a few of
 /// it. The bound is not a hope:
 ///
-/// * At most 2 rocks, 3 fortress variants and 1 water gap. That is 6.
-/// * **Every lock contributes at most one row.** The home locks share the three
-///   plain rows between them however many there are; each away lock adds its
-///   `(world, orientation)` variant, and locks that agree on both share one. A
-///   build pairs its 17 fortresses with 17 locks, so lock rows are capped at 17.
+/// * **Terrain: 6 rows.** Two rocks, three fortress variants, and the water gap
+///   — `$9D` is a vertical river segment and ordinary scenery, 45 cells on a
+///   water-heavy map, so its row is always spoken for whether or not any lock
+///   sits on a bridge.
+/// * **Every lock contributes at most one row.** However many home locks there
+///   are, they share the plain rows between them; each away lock adds its
+///   `(world, orientation)` variant, and locks agreeing on both share one. A
+///   build pairs its 17 fortresses with 17 locks — measured 16 or 17 across
+///   every maze seed sampled.
 ///
-/// 6 + 17 = 23, against 24 slots. The assert below is the guard if that ever
-/// stops being true — a truncated table would silently leave a lock unopenable,
-/// which is the worst failure this feature has.
+/// 6 + 17 = 23, and seed 37 reaches exactly that. One slot spare, which is
+/// enough because both terms are counts of things the builder fixes, not of
+/// things that grow with map size.
+///
+/// The assert is the guard if either term ever moves — `MAX_ENTRIES` permits 28
+/// locks, and at 19 this would overflow. It fails the build loudly, which is the
+/// right failure: a truncated table leaves a lock no fortress can open.
 ///
 /// Reading it off the finished grids rather than tracking it through placement
 /// means the table describes the map that shipped, not the map we intended.
@@ -871,18 +914,10 @@ fn stamp_numbered_locks(rom: &mut Rom, entries: &[LockEntry]) {
         let off = rom_data::map_tile_offset(e.target_world, e.target_pos.0, e.target_pos.1);
         let plain = rom.read_byte(off);
         let Some(orientation) = HINT_REVEALS.iter().position(|&(lock, _)| lock == plain) else {
-            // **The water gap keeps its plain tile, and has to.** A lock landing
-            // on a bridge wears `$9D`, which is page 2 — and page 2 has no
-            // undefined metatile indices at all, so there is nowhere to put a
-            // numbered variant that reveals `$B3` without crossing a palette
-            // page. Those locks fall back on the maze's sprite hint, which says
-            // "elsewhere" without saying where.
-            //
-            // Anything else here is either this function run twice or a pairing
-            // bug, and neither should pass quietly.
+            // Either this function run twice, or a pairing bug. Neither
+            // should pass quietly.
             debug_assert!(
-                plain == rom_data::WATER_GAP_TILE
-                    || HINT_TILES.iter().any(|set| set.contains(&plain)),
+                HINT_TILES.iter().any(|set| set.contains(&plain)),
                 "away lock at {:?} in W{} wears {plain:#04X}, which is no lock tile",
                 e.target_pos,
                 e.target_world + 1
@@ -1210,7 +1245,21 @@ mod asm_checks {
         // the two rules the doc comment states — otherwise the effect draws the
         // revealed tile in the wrong palette, or reveals something the player
         // cannot walk on.
-        for &(obstacle, revealed) in &REMOVABLE_PAIRS[8..] {
+        //
+        // The whole vocabulary, not just the base rows: a numbered lock that
+        // crossed a page or revealed a wall would be just as broken, and these
+        // are the rows nobody wrote out by hand.
+        let vocabulary = obstacle_vocabulary();
+        for &(obstacle, revealed) in &vocabulary[8..] {
+            // **The water-gap variants are a deliberate exception**, and the
+            // only one. Page 2 has no index to spare, so they sit in page 3 and
+            // reveal a page-2 bridge: the lock draws in the wrong palette, and
+            // so does the bridge until the next map reload. See
+            // [`WATER_ORIENTATION`] for why that trade was taken.
+            if HINT_TILES[WATER_ORIENTATION].contains(&obstacle) {
+                assert_eq!(revealed, rom_data::BRIDGE_TILE, "a water variant reveals a bridge");
+                continue;
+            }
             assert_eq!(
                 obstacle >> 6,
                 revealed >> 6,
@@ -1230,6 +1279,73 @@ mod asm_checks {
                 );
             }
         }
+    }
+
+    /// **The row bound holds, and every away lock gets its digit.**
+    ///
+    /// `removable_rows`' bound is arithmetic — 6 terrain rows plus at most one
+    /// per lock, against 17 locks — but both terms are measured properties of
+    /// the builder rather than enforced ones, so this walks real builds. The
+    /// second half is what catches a silent regression: a numbered tile that
+    /// failed to stamp would leave an away lock plain, and the map would simply
+    /// stop hinting without anything failing.
+    #[test]
+    fn the_obstacle_table_never_overflows() {
+        let Ok(bytes) = std::fs::read(ROM_PATH) else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let mut worst = 0usize;
+        let mut degraded = 0usize;
+        for seed in 0..seeds() {
+            let options = crate::Options {
+                world_maze: true,
+                palettes: false,
+                palette_themed: false,
+                ..Default::default()
+            };
+            let Ok((rom, _)) =
+                crate::randomize_rom_with_overworld_capture(&bytes, seed, &options, None)
+            else {
+                continue;
+            };
+            let present = tiles_on_map(&rom);
+            let used =
+                obstacle_vocabulary().into_iter().filter(|&(t, _)| present[t as usize]).count();
+            assert!(used <= REMOVABLE_COUNT, "seed {seed} needs {used} rows");
+            worst = worst.max(used);
+
+            // Every away lock should have been numbered. An away entry stores a
+            // packed-store address rather than a cell, so the check is by count:
+            // numbered cells on the map against away entries in the table.
+            let away = decode_entries(&rom).iter().filter(|e| e.away).count();
+            let mut numbered = 0usize;
+            for world in 0..8 {
+                let info = &rom_data::MAP_TILE_GRIDS[world];
+                for screen in 0..info.screens {
+                    for row in 0..9 {
+                        for col in 0..16 {
+                            let off = rom_data::map_tile_offset(world, row, screen * 16 + col);
+                            if numbered_lock(rom.read_byte(off)).is_some() {
+                                numbered += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            assert!(numbered <= away, "seed {seed}: more numbered cells than away locks");
+            if numbered < away {
+                degraded += away - numbered;
+                assert_eq!(
+                    used,
+                    REMOVABLE_COUNT,
+                    "seed {seed}: {} away lock(s) kept a plain tile with {used} of \
+                     {REMOVABLE_COUNT} rows used — the guard fired with room to spare",
+                    away - numbered
+                );
+            }
+        }
+        eprintln!("worst row count {worst}/{REMOVABLE_COUNT}, {degraded} locks degraded");
     }
 
     /// The helper decodes, fits its allocation, and its self-reference resolves.

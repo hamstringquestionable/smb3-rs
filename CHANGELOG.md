@@ -34,8 +34,9 @@ deploys.
 - **World Maze: a lock now tells you which world its key is in.** A lock opened
   from another world wears that world's number; a lock with no number is opened
   by a fortress in the world you're standing in. So a locked path is no longer a
-  question, it's a destination. (Locks that sit on a bridge keep the plain water
-  gap and fall back on the older nearby-or-not marker.)
+  question, it's a destination. A missing bridge does the same, though it and the
+  bridge it becomes are the wrong color until you leave the map and come back —
+  there was no room left in that palette, and the number seemed worth more.
 
 - **World Maze: locks now tell you whether their key is nearby.** A marker sits
   on any lock the world's own fortresses can open; a lock without one is opened
