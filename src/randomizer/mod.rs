@@ -422,6 +422,9 @@ fn randomize_inner(
         // outside the grid-writer ordering above — but it must follow
         // `write_overworld`, which is what fills the slots it counts as spare.
         randomize::maze::writer::stamp_lock_hints(rom, &state);
+        // And the same question from the fortress's end: which of the three
+        // fortress tiles it wears says where the lock it opens is.
+        randomize::maze::writer::stamp_fort_tiles(rom, &state);
         rom.set_tag("wand_gate");
         randomize::wand_gate::apply(rom, wands);
         // Last of the grid writers, and the first thing that reads them: this
