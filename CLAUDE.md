@@ -105,7 +105,7 @@ is the one to read:
 | PRG010 | `$C000–$DFFF`, map | 224 | 64 |
 | PRG011 | `$A000–$BFFF`, map | 154 | 101 |
 | PRG025 | `$C000–$DFFF`, title screen | 2731 | 2719 |
-| PRG012 | `$A000–$BFFF`, map reload | 716 | 336 |
+| PRG012 | `$A000–$BFFF`, map reload | 652 | 272 |
 | PRG026 | `$A000–$BFFF`, map/inventory | 2485 | 2419 |
 
 PRG000 and PRG002 have no `$FF` filler left at all.

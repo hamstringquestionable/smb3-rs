@@ -187,6 +187,14 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         "world-maze: the wand gate's opener, two entry points (128 reserved, 29 used)",
     ),
     fs(
+        0x19EC0,
+        64,
+        &["lock_keys"],
+        "Map_Removable_Tiles / Map_RemoveTo_Tiles, relocated so they can grow \
+         (64 reserved = 32 entries per table, 40 used — 8 entries in each half, \
+         spanning the stride between them)",
+    ),
+    fs(
         0x1566C,
         64,
         &["world_persist"],
@@ -456,6 +464,30 @@ pub(crate) const FS_MAZE_WAND_GATE: usize = 0x19E40;
 /// is always mapped — the airship path runs there and `FS_WORLD_ORDER` next
 /// door is 28/28 full, so this needs its own row.
 pub(crate) const FS_MAZE_WAND_COUNT: usize = 0x3DFA0;
+
+/// `Map_Removable_Tiles` / `Map_RemoveTo_Tiles`, relocated out of their vanilla
+/// home so they can grow. PRG012, CPU `$BEB0`, in the tail of the same
+/// `$BDC0-$BFFF` gap [`FS_MAZE_WAND_GATE`] records the unreferenced check for.
+///
+/// **The vanilla tables cannot be extended in place.** `$A437` (removable, 8),
+/// `$A43F` (remove-to, 8) and `$A447` (`Map_Completable_Tiles`, 5) are
+/// contiguous, so a ninth removable entry would land on the remove-to table's
+/// first byte. Relocating is cheap because only two instructions in the ROM name
+/// the pair — `prg012.asm:361` and `:368`, whose operands this row's writer
+/// patches — plus the `LDX #` at file `0x1855A` that sizes the scan. The
+/// fortress FX never reads them at all: it reads [`FS_LOCK_MIRROR`], which
+/// `lock_keys::mirror_bytes` rebuilds from whatever these tables hold.
+///
+/// Two parallel tables of [`REMOVABLE_STRIDE`] entries: removable at `+0`,
+/// remove-to at `+REMOVABLE_STRIDE`. 64 reserved, 16 used.
+pub(crate) const FS_MAP_REMOVABLE: usize = 0x19EC0;
+
+/// Entries reserved in each half of [`FS_MAP_REMOVABLE`].
+///
+/// Fixed rather than packed tight, so adding an obstacle variant is a byte
+/// write and a count bump instead of a relocation of the second table. Vanilla
+/// fills 8 of the 32.
+pub(crate) const REMOVABLE_STRIDE: usize = 32;
 
 /// The removable-tile and CHR-quadrant mirror of PRG012, which is not banked in
 /// during map play. PRG011, CPU `$BF6B`, immediately after [`FS_MAZE_TRAVEL`] in
@@ -1204,6 +1236,7 @@ mod free_space_tests {
             (FS_NEW_GAME_INIT, "FS_NEW_GAME_INIT"),
             (FS_SEED_STAMP, "FS_SEED_STAMP"),
             (FS_MAZE_WAND_GATE, "FS_MAZE_WAND_GATE"),
+            (FS_MAP_REMOVABLE, "FS_MAP_REMOVABLE"),
             (FS_MAZE_WAND_COUNT, "FS_MAZE_WAND_COUNT"),
             (FS_RESTORE_ARRIVAL, "FS_RESTORE_ARRIVAL"),
             (FS_PORTAL_ARRIVAL, "FS_PORTAL_ARRIVAL"),

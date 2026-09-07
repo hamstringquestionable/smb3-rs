@@ -260,9 +260,10 @@ fn popcount(mask: &[u8]) -> usize {
 #[cfg(test)]
 use super::rom_data::NMI_SAFE_MAX;
 use super::rom_data::{
-    FS_COMPLETION_BASES, FS_IS_COMPLETABLE, FS_MASK_BUILD, FS_NEW_GAME_INIT, FS_PACK_PLANE,
-    FS_PACK_WORLD, FS_SWAP_AT_RELOAD, FS_UNPACK_PLANE, FS_UNPACK_WORLD, FS_WIPE_REPLACEMENT,
-    FS_WORLD_COLS, MAP_RELOAD_CPU, WORLD_NUM, prg010_file_to_cpu,
+    FS_COMPLETION_BASES, FS_IS_COMPLETABLE, FS_MAP_REMOVABLE, FS_MASK_BUILD, FS_NEW_GAME_INIT,
+    FS_PACK_PLANE, FS_PACK_WORLD, FS_SWAP_AT_RELOAD, FS_UNPACK_PLANE, FS_UNPACK_WORLD,
+    FS_WIPE_REPLACEMENT, FS_WORLD_COLS, MAP_RELOAD_CPU, WORLD_NUM, prg_bank_file_to_cpu,
+    prg010_file_to_cpu,
 };
 
 /// Where the derived stencil lands: 64 bytes, one per possible map column.
@@ -294,9 +295,14 @@ const BASES_CPU: u16 = prg010_file_to_cpu(FS_COMPLETION_BASES);
 /// `Tile_Attributes_TS0` — four "lowest enterable tile" thresholds, indexed by
 /// the tile's top two bits. `03 67 BF E9`.
 const TILE_ATTRIBUTES_TS0: u16 = 0xA400;
-/// `Map_Removable_Tiles` — 8 entries: the two rocks, three locks, two fortress
-/// variants and the water gap.
-const MAP_REMOVABLE_TILES: u16 = 0xA437;
+/// `Map_Removable_Tiles` — the two rocks, three locks, two fortress variants and
+/// the water gap.
+///
+/// **Not `$A437`.** `lock_keys::relocate_removable_tables` moves the table so it
+/// can grow, and this routine's scan has to follow it; the count immediate below
+/// has to follow [`rom_data::REMOVABLE_STRIDE`]'s occupancy the same way. Both
+/// are pinned by `is_completable_matches_the_relocated_table`.
+const MAP_REMOVABLE_TILES: u16 = prg_bank_file_to_cpu(12, FS_MAP_REMOVABLE);
 /// `Map_Completable_Tiles` — 5 entries the engine marks with an M/L outright:
 /// both toad houses, the spade panel, the hand trap and the dancing flower.
 const MAP_COMPLETABLE_TILES: u16 = 0xA447;
@@ -380,7 +386,7 @@ const IS_COMPLETABLE: [u8; 39] = [
     0xF0, 0x1E,                             //  5: BEQ +30 -> yes
     0xCA,                                   //  7: DEX
     0x10, 0xF8,                             //  8: BPL -8
-    0xA2, 0x07,                             // 10: LDX #7
+    0xA2, (super::lock_keys::REMOVABLE_COUNT - 1) as u8, // 10: LDX #(entries - 1)
     0xDD, MAP_REMOVABLE_TILES as u8,
           (MAP_REMOVABLE_TILES >> 8) as u8,       // 12: CMP Map_Removable_Tiles,X     ; loop
     0xF0, 0x14,                             // 15: BEQ +20 -> yes
@@ -1341,6 +1347,16 @@ mod tests {
     /// both are reachable. Its own fixture puts PRG011 there instead and drives
     /// it properly — see `a_beaten_map_object_survives_a_round_trip`.
     fn cpu_with_routines(rom: &Rom) -> CPU<Memory, Ricoh2a03> {
+        // This CPU stands in for a *finished* ROM, so it has to carry the writes
+        // a finished ROM carries. `IS_COMPLETABLE` scans `Map_Removable_Tiles`
+        // at the address `lock_keys` relocates it to, and a vanilla ROM has
+        // nothing there — the scan would match no obstacle and the stencil would
+        // silently come back short. Idempotent, so the randomized arms below are
+        // unaffected.
+        let mut rom = rom.clone();
+        super::super::lock_keys::relocate_removable_tables(&mut rom);
+        let rom = &rom;
+
         let mut mem = Memory::new();
         mem.set_bytes(MASK_BUILD_CPU, &MASK_BUILD);
         mem.set_bytes(IS_COMPLETABLE_CPU, &IS_COMPLETABLE);

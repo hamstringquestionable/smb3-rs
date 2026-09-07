@@ -100,9 +100,9 @@ use super::completion_bits::{CompletionMap, HALF_LEN, PLANE_RESERVE};
 #[cfg(test)]
 use super::rom_data::NMI_SAFE_MAX;
 use super::rom_data::{
-    self, FS_COMPLETION_BASES, FS_FORTRESS_FX, FS_LOCK_ENTRIES, FS_LOCK_MIRROR,
+    self, FS_COMPLETION_BASES, FS_FORTRESS_FX, FS_LOCK_ENTRIES, FS_LOCK_MIRROR, FS_MAP_REMOVABLE,
     MAP_COMPLETE_BIT_CPU, MAP_COMPLETE_BITS, MAP_COMPLETIONS, PLAYER_CURRENT, PRG012_FILE_BASE,
-    WORLD_NUM, prg010_file_to_cpu, prg011_file_to_cpu,
+    REMOVABLE_STRIDE, WORLD_NUM, prg_bank_file_to_cpu, prg010_file_to_cpu, prg011_file_to_cpu,
 };
 
 // --- Siting -------------------------------------------------------------
@@ -168,12 +168,66 @@ const PACKED: u16 = 0x7997;
 /// The mirror plane: one [`PLANE_RESERVE`] on from Mario's.
 const PACKED_MIRROR: u16 = PACKED + PLANE_RESERVE as u16;
 
-/// `Map_Removable_Tiles` / `Map_RemoveTo_Tiles`, CPU `$A437`/`$A43F` in PRG012,
-/// 8 parallel entries each. The engine's own answer to "what does this obstacle
-/// become", used by `Map_Reload_with_Completions` on every map load.
-const MAP_REMOVABLE_TILES: usize = PRG012_FILE_BASE + 0x437;
-const MAP_REMOVE_TO_TILES: usize = PRG012_FILE_BASE + 0x43F;
-const REMOVABLE_COUNT: usize = 8;
+/// `Map_Removable_Tiles` / `Map_RemoveTo_Tiles` **as this randomizer sites
+/// them** — the engine's own answer to "what does this obstacle become", read by
+/// `Map_Reload_with_Completions` on every map load.
+///
+/// Vanilla puts the two 8-entry tables at `$A437` and `$A43F` with
+/// `Map_Completable_Tiles` immediately after at `$A447`, so neither can be
+/// extended a byte. [`relocate_removable_tables`] moves them into
+/// [`FS_MAP_REMOVABLE`] with a fixed stride and repoints the two instructions
+/// that read them; from there an obstacle variant costs one row.
+const MAP_REMOVABLE_TILES: usize = FS_MAP_REMOVABLE;
+const MAP_REMOVE_TO_TILES: usize = FS_MAP_REMOVABLE + REMOVABLE_STRIDE;
+
+/// Where vanilla keeps them. Read only by `the_relocated_tables_match_vanilla`,
+/// which is what stops [`REMOVABLE_PAIRS`] drifting from the bytes it replaces.
+#[cfg(test)]
+const MAP_REMOVABLE_VANILLA: usize = PRG012_FILE_BASE + 0x437;
+#[cfg(test)]
+const MAP_REMOVE_TO_VANILLA: usize = PRG012_FILE_BASE + 0x43F;
+
+/// `CMP Map_Removable_Tiles,X` at `$A54C` and `LDA Map_RemoveTo_Tiles,X` at
+/// `$A556` — the only two instructions in the ROM that name the tables. These
+/// are their absolute operands.
+const PRG012_REMOVABLE_OPERAND: usize = PRG012_FILE_BASE + 0x54D;
+const PRG012_REMOVE_TO_OPERAND: usize = PRG012_FILE_BASE + 0x557;
+
+/// `LDX #` at `$A54B`, which sizes vanilla's descending scan.
+const PRG012_SCAN_COUNT: usize = PRG012_FILE_BASE + 0x54B;
+
+/// Every obstacle the map can open, and what it opens into.
+///
+/// **The pairing is per tile byte, not per lock**, which is what makes an
+/// obstacle *variant* cheap: several bytes may share a replacement (`$51` and
+/// `$56` both reveal `$45`), so a new variant is a row here rather than a field
+/// on every lock.
+///
+/// Two rules constrain a row, and vanilla's eight obey both:
+///
+/// * **The replacement must keep the tile's top two bits.** The map's palette
+///   comes from those bits and the effect queues only pattern bytes — never an
+///   attribute byte — so a pair that crossed pages would draw the revealed tile
+///   in the obstacle's palette until the next map reload.
+/// * **It must be walkable the way the corridor runs.** `Map_Object_Valid_*`
+///   decides that; see `rom_data::gap_tile_for`, which picks the obstacle from
+///   the path tile underneath for exactly this reason.
+#[rustfmt::skip]
+const REMOVABLE_PAIRS: &[(u8, u8)] = &[
+    (0x51, 0x45), // rock (horizontal) -> horizontal path
+    (0x52, 0x46), // rock (vertical)   -> vertical path
+    (0x54, 0x46), // lock (vertical)   -> vertical path
+    (0x67, 0x60), // fortress          -> rubble
+    (0xEB, 0xE3), // alt fortress      -> alt rubble
+    (0xE4, 0xDA), // alt lock          -> sky path
+    (0x56, 0x45), // lock (horizontal) -> horizontal path
+    (0x9D, 0xB3), // river             -> bridge
+];
+
+/// How many entries the scan walks. Read by [`super::completion_bits`] too — its
+/// `IS_COMPLETABLE` runs the engine's own scan over this same table, so the two
+/// counts must be one fact.
+pub(crate) const REMOVABLE_COUNT: usize = REMOVABLE_PAIRS.len();
 
 /// The metatile quadrant tables are stored UL, LL, UR, LR — four 256-byte planes
 /// from [`PRG012_FILE_BASE`]. The effect queues them in *row* order
@@ -545,6 +599,43 @@ fn away_target(map: &CompletionMap, world: usize, pos: (usize, usize)) -> Option
     Some([offset as u8, mask])
 }
 
+/// Move `Map_Removable_Tiles` / `Map_RemoveTo_Tiles` out of the wall they are
+/// built into, and point vanilla's scan at the copy.
+///
+/// **This changes no behavior.** The bytes written are [`REMOVABLE_PAIRS`],
+/// which `the_relocated_tables_match_vanilla` pins to the ROM's own eight
+/// entries, and the scan count is unchanged. What it buys is headroom: at the
+/// vanilla address the next byte belongs to `Map_Completable_Tiles`, so the
+/// table could not gain an entry without overwriting a live one.
+///
+/// Three writes. The two tables (into a fixed stride, so the second never has to
+/// move again), then the two absolute operands at `$A54D` and `$A557`, then the
+/// `LDX #` at `$A54B` that sizes the descending scan.
+///
+/// Idempotent: it writes a value derived from Rust, never from the ROM, so
+/// running twice is running once. Vanilla's bytes are deliberately left where
+/// they are — nothing reads them afterwards, and leaving them makes the
+/// relocation auditable against an unpatched ROM.
+pub(crate) fn relocate_removable_tables(rom: &mut Rom) {
+    const {
+        assert!(
+            REMOVABLE_COUNT <= REMOVABLE_STRIDE,
+            "more removable entries than the stride reserves: the second table would be \
+             overwritten. Raise REMOVABLE_STRIDE and the allocation with it."
+        )
+    };
+    for (i, &(from, to)) in REMOVABLE_PAIRS.iter().enumerate() {
+        rom.write_byte(MAP_REMOVABLE_TILES + i, from);
+        rom.write_byte(MAP_REMOVE_TO_TILES + i, to);
+    }
+
+    let removable_cpu = prg_bank_file_to_cpu(12, MAP_REMOVABLE_TILES);
+    let remove_to_cpu = prg_bank_file_to_cpu(12, MAP_REMOVE_TO_TILES);
+    rom.write_range(PRG012_REMOVABLE_OPERAND, &removable_cpu.to_le_bytes());
+    rom.write_range(PRG012_REMOVE_TO_OPERAND, &remove_to_cpu.to_le_bytes());
+    rom.write_byte(PRG012_SCAN_COUNT, (REMOVABLE_COUNT - 1) as u8);
+}
+
 /// The 48 bytes of PRG012 the effect cannot reach: the removable-tile pairing
 /// and the CHR quadrants of each tile it produces.
 ///
@@ -641,6 +732,9 @@ fn assert_one_key_per_lock(entries: &[LockEntry]) {
 /// unwinnable seed; a build-time failure is the better end of that trade.
 pub fn apply(rom: &mut Rom, entries: &[LockEntry]) {
     assert_one_key_per_lock(entries);
+
+    // Before the mirror, which reads the tables through their new address.
+    relocate_removable_tables(rom);
 
     let mirror = mirror_bytes(rom);
     assert_mirror_agrees_with_rust(&mirror);
@@ -792,6 +886,70 @@ mod asm_checks {
             .assert_ok();
     }
 
+    /// [`REMOVABLE_PAIRS`] is a Rust copy of eight ROM bytes, and a copy that is
+    /// never compared is a copy that drifts. This is the comparison.
+    ///
+    /// It reads the *vanilla* addresses on purpose:
+    /// [`relocate_removable_tables`] leaves them untouched, so an unpatched ROM
+    /// and a patched one answer this identically — which is what makes the
+    /// relocation auditable rather than merely asserted.
+    #[test]
+    fn the_relocated_tables_match_vanilla() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let want: Vec<(u8, u8)> = (0..8)
+            .map(|i| {
+                (rom.read_byte(MAP_REMOVABLE_VANILLA + i), rom.read_byte(MAP_REMOVE_TO_VANILLA + i))
+            })
+            .collect();
+        assert_eq!(REMOVABLE_PAIRS, want, "REMOVABLE_PAIRS no longer matches the ROM's own table");
+    }
+
+    /// The relocation's three writes, checked where they land rather than where
+    /// they were aimed: the copy is byte-identical to vanilla's table, both
+    /// operands name the copy, and the scan count matches the entry count.
+    ///
+    /// The operand check is the one that matters. A relocated table that
+    /// nothing points at is not a bug the ROM reports — the scan would run over
+    /// whatever still sits at `$A437` and keep working, right up until an entry
+    /// is added and only half the game sees it.
+    #[test]
+    fn the_relocation_repoints_both_readers() {
+        let Some(mut rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        relocate_removable_tables(&mut rom);
+
+        for (i, &(from, to)) in REMOVABLE_PAIRS.iter().enumerate() {
+            assert_eq!(rom.read_byte(MAP_REMOVABLE_TILES + i), from, "removable[{i}]");
+            assert_eq!(rom.read_byte(MAP_REMOVE_TO_TILES + i), to, "remove_to[{i}]");
+        }
+        assert_eq!(
+            rom.read_range(PRG012_REMOVABLE_OPERAND, 2),
+            prg_bank_file_to_cpu(12, MAP_REMOVABLE_TILES).to_le_bytes(),
+            "`CMP Map_Removable_Tiles,X` still names the vanilla table"
+        );
+        assert_eq!(
+            rom.read_range(PRG012_REMOVE_TO_OPERAND, 2),
+            prg_bank_file_to_cpu(12, MAP_REMOVE_TO_TILES).to_le_bytes(),
+            "`LDA Map_RemoveTo_Tiles,X` still names the vanilla table"
+        );
+        assert_eq!(
+            rom.read_byte(PRG012_SCAN_COUNT),
+            (REMOVABLE_COUNT - 1) as u8,
+            "the scan count and the table length disagree"
+        );
+
+        // The opcodes either side of the operands: proof the patch landed on
+        // whole instructions and not mid-stream.
+        assert_eq!(rom.read_byte(PRG012_REMOVABLE_OPERAND - 1), 0xDD, "CMP abs,X");
+        assert_eq!(rom.read_byte(PRG012_REMOVE_TO_OPERAND - 1), 0xBD, "LDA abs,X");
+        assert_eq!(rom.read_byte(PRG012_SCAN_COUNT - 1), 0xA2, "LDX #");
+    }
+
     /// **The one word in the ROM that names the routine.**
     ///
     /// Repointing it is what frees vanilla's 236 bytes of slot tables and its
@@ -892,10 +1050,13 @@ mod asm_checks {
     /// The mirror is PRG012's own tables, not a hand copy of them.
     #[test]
     fn the_mirror_is_the_engines_own_answer() {
-        let Some(rom) = vanilla() else {
+        let Some(mut rom) = vanilla() else {
             eprintln!("SKIP: requires the ROM");
             return;
         };
+        // The mirror is built from the tables at their randomized address, so
+        // this has to stand where `apply` stands: after the relocation.
+        relocate_removable_tables(&mut rom);
         let mirror = mirror_bytes(&rom);
         assert_mirror_agrees_with_rust(&mirror);
 

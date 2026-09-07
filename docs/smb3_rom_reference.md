@@ -5135,6 +5135,12 @@ per-world BG bank swap exists. Map object *sprites* are a different set, pages
   `0x01/0x41/0x81/0xC1` (CHR `DC DD DE DF`). Both are cut *terrain* pieces — a
   diagonal and a corner-with-blocks — not the unused skull the wiki documents,
   which is not present in the map BG bank at all.
+- **An unplaced metatile does not free its CHR** (checked 2026-09-07). Those
+  same eight patterns are `Map_PanelCompletePats` (`prg011.asm:1650`): `88 89
+  8A 8B` is the Mario-complete panel and `DC DD DE DF` the Luigi one, written
+  straight into `Graphics_Buffer` by the level-clear FX without ever going
+  through a metatile. Freeing CHR in this bank requires checking direct pattern
+  writes and nametable text, not just metatile references.
 
 **`0xE2` — the Dark Land wall.** Palette page 3, CHR quadrants `6C 6D / 6E 6F`,
 blocks all four movement directions, member of no behavior registry, used 155
@@ -5142,3 +5148,124 @@ times in World 8. Cloning its four quadrant entries onto an unused page-3 byte
 yields a pixel-identical wall with a distinct identity — which matters because
 `Map_Removable_Tiles` membership is what makes a cell *completable*, and hence
 what sizes the world-maze packed completion store.
+
+## World-map tile behavior registries
+
+*(Measured 2026-09-07 while scoping hint-bearing lock variants. Every address
+here was read back out of the ROM, not taken from the disassembly alone.)*
+
+A world-map tile byte has no single "type". Its behavior is **membership in
+several independent registries**, and unlocking an unused tile byte for a new
+role means adding it to the ones that role needs and keeping it out of the rest.
+
+| registry | location | governs |
+|---|---|---|
+| metatile quadrants | PRG012, 4 planes of 256 from `0x18010` | the 2x2 graphic; order is UL, LL, UR, LR |
+| palette | top 2 bits of the tile index | fixed by the index — not separately editable |
+| `Map_Object_Valid_Left/Right/Down/Up` | `$D248`, file `0x15258`, 4 × 9 bytes | walkability per direction |
+| `Tile_Attributes_TS0+4` → RAM copy | see below | "enterable", and whether a clear FX plays |
+| `Tile_Attributes_TS0+0` | ROM `$A400`, file `0x18410` | M/L flip on map reload |
+| `Map_Completable_Tiles` | `$A447`, file `0x18457`, 5 bytes | re-admits below-threshold tiles to the M/L flip |
+| `Map_ForcePoofTiles` | `$A9D5`, file `0x169E5`, 5 bytes | re-admits them to the clear FX |
+| `Map_Removable_Tiles` / `Map_RemoveTo_Tiles` | `$A437`/`$A43F`, files `0x18447`/`0x1844F`, 8 + 8 | obstacle → what it becomes |
+| `Map_CompleteTile` | `$A9CA`, file `0x169DA`, 11 bytes | the immediate clear replacement (M/L panels, fortress rubble) |
+| `Map_NoLoseTurnTiles` | PRG011 | 2P turn behavior |
+
+### `Tile_Attributes_TS0` is two rows, and they live in different storage
+
+`$A400` holds eight bytes: `03 67 BF E9 03 67 BF E9`. Four thresholds indexed by
+`tile >> 6`, twice. The duplication looks redundant and is not — the two rows
+answer different questions, and are **read from different places**:
+
+- **`+0`, straight out of ROM.** One consumer: `prg012` at `$A545`
+  (file `0x18555`), `DD 00 A4 B0 26` = `CMP $A400,X` / `BCS`. This is the
+  reload's "flip this completed tile to an M/L marker" test.
+- **`+4`, via the RAM copy at `$7E94-$7E9B`** (`Tile_AttrTable`, filled by the
+  per-tileset copy loop at `prg030.asm:3597`). Four consumers read
+  `$7E98,Y`: PRG010 `$CDF8` (file `0x14E08`), PRG010 `$CEDC` (file `0x14EEC`,
+  the "press A enters a level" test), PRG011 `$AA14` (file `0x16A24`, which
+  clear FX plays), and PRG011 `$B425` (file `0x17435`, purpose not identified).
+
+So the M/L rule and the enterable rule are cleanly separable: changing ROM
+`$A400..$A403` cannot affect level entry, because entry reads the RAM copy of
+the other row.
+
+The thresholds also explain why every *undefined* metatile index is above one:
+those ranges were free precisely because nothing below the threshold was left.
+
+**Free indices, per page (all four quadrants `$FF` and absent from all eight
+vanilla grids):**
+
+| page | palette | threshold | last real tile | undefined indices |
+|---|---|---|---|---|
+| 0 | 0 | `$03` | `$15` (unused panel variants) | `$16`–`$3F` (42) |
+| 1 | 1 | `$67` | `$6A` `TILE_LARGEFORT` | `$6B`–`$7F` (21) |
+| 2 | 2 | `$BF` | `$BF` `TILE_POOL` | none |
+| 3 | 3 | `$E9` | `$EB` `TILE_ALTFORT` | `$EC`–`$FF` (20) |
+
+Above its page threshold, vanilla places only: `$67` fort, `$68` 2-Pyramid,
+`$69` 2-Quicksand (both real pointer-table entries — W2 entry 32 and 42), `$6A`
+(unused), `$E9` W5 star, `$EA` Dark Land fill (67 uses), `$EB` alt fort. A tile
+being above a threshold is often accidental — `$68`/`$69`/`$EA` are unwalkable
+or non-completing, so the classification never fires.
+
+**Turning a threshold into a range** unlocks the undefined tail of a page for
+the *obstacle* role. `$A545`'s test is exactly five bytes, so
+`JSR helper / BCS` splices in at the same size, and a helper of the form
+`CMP UPPER,X / BCS no / CMP $A400,X / RTS` (11 bytes + a 4-byte bound table)
+generalises it to all four pages. It changes only the M/L test, so nothing that
+reads the RAM copy is affected. Not sufficient for a *node* tile (a warp pad,
+say): a node is stood on, so it must also be non-enterable, which means either
+a below-threshold index — what `TILE_TELEPAD` `$DF` does — or splicing the RAM
+consumers, of which there are four.
+
+### The removable pair
+
+```
+$A437  Map_Removable_Tiles   51 52 54 67 EB E4 56 9D
+$A43F  Map_RemoveTo_Tiles    45 46 46 60 E3 DA 45 B3
+$A447  Map_Completable_Tiles 50 E8 E6 BD E0
+```
+
+Index-paired, keyed by tile byte and not by lock instance — so several
+obstacles may share a replacement (`$51`/`$56` both → `$45`), and a new obstacle
+variant is a new row rather than a per-instance field.
+
+- **Every pair preserves the top two bits.** `$54`→`$46`, `$E4`→`$DA`,
+  `$9D`→`$B3` and so on all stay inside their palette page. This is load-bearing:
+  the fortress FX queues only the four pattern bytes into `Graphics_Buffer` and
+  never writes an attribute byte, so a pair that crossed pages would draw the
+  revealed tile in the old palette until the next map reload.
+- **The replacement must also match the corridor's orientation** —
+  `Map_Object_Valid_*` decides whether the revealed tile is walkable in the
+  direction the path runs.
+- **The three tables are contiguous**, so none can be extended in place;
+  expanding means relocating. Only three instructions in the ROM name the
+  removable pair (`prg012.asm:342`, `:361`, `:368`), and the world-maze fortress
+  FX reads a PRG011 mirror rather than these bytes at all, so the relocation is
+  cheap. `LDX #$07` at file `0x1855A` sizes the vanilla scan.
+- **All three lock tiles are the same graphic.** `$54`, `$56` and `$E4` share
+  CHR quadrants `B6 B7 B8 B9`; `$54` and `$56` are pixel- *and* palette-identical
+  and differ only in what they reveal. `$E4` differs only by palette page.
+
+### Duplicated and dead entries
+
+- **`Map_ForcePoofTiles` (`$A9D5`) is byte-identical to `Map_Completable_Tiles`
+  (`$A447`)**: `50 E8 E6 BD E0`. Two copies in two banks for two questions
+  (PRG011 forces the clear FX, PRG012 forces the M/L flip), neither aware of the
+  other. All five are *below* their page threshold, which is why the lists exist:
+  without them a toad house would change tile with no FX at all.
+- **`Map_CompleteTile[10]` is unreachable.** The 11 bytes at `$A9CA` are
+  `00 01 40 41 80 81 C0 C1 60 60 E3`; the only `LDA Map_CompleteTile,X` in the
+  ROM (`prg011.asm:1845`) is reached with X = quadrant/player (0-7), `#$08` for
+  mini and large fortress, and `#$09` for alt fortress — never `#$0A`, so the
+  `$E3` alt rubble entry is dead. Harmless in vanilla: `$60` and `$E3` have
+  identical CHR quadrants, the attribute is not rewritten mid-effect, and the
+  reload re-derives `$EB`→`$E3` from `Map_RemoveTo_Tiles`.
+- **`$6A` `TILE_LARGEFORT` has no completion path.** `prg011` gives it the
+  fortress crumble sound and `$60` rubble (`:1823`, `:1832`), but `prg012`'s
+  reload special-cases only `TILE_FORT` and `TILE_ALTFORT` (`:348`), and `$6A`
+  is in neither `Map_Removable_Tiles` nor `Map_Completable_Tiles` — so it takes
+  the threshold branch and reloads as an M/L panel. Vanilla never places it;
+  this randomizer does (`FORTRESS_TILES`). The fix is one row pairing
+  `$6A` → `$60`.
