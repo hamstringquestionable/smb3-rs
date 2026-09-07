@@ -2214,3 +2214,133 @@ fn w8_bridge_keys() {
     }
     println!("constructive fill stalled on {ctor_stalled}/{seeds} seeds (both policies counted)");
 }
+
+/// **What a three-way fortress tile would actually say.**
+///
+/// The proposal: a fortress's own tile tells you where the lock it opens is —
+/// `$67` in this world, `$EB` in another, `$6A` in World 8 (the ones that open
+/// the way to the castle). Own-world wins, then W8, then elsewhere.
+///
+/// All three already exist and `overworld_writer::grid` picks among them at
+/// random, so the encoding is free; the question is whether the three buckets
+/// are populated enough to mean anything.
+///
+/// ```sh
+/// CENSUS_SEEDS=60 cargo test --release --lib fort_tile_encoding_census \
+///     -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore]
+fn fort_tile_encoding_census() {
+    use super::super::rom_data::W8_IDX;
+
+    let Some(raw) = load_rom() else { return };
+    let seeds = census_seeds(60);
+    let k = super::DEFAULT_WANDS_REQUIRED;
+
+    let (mut home, mut w8, mut away, mut none) = (0usize, 0usize, 0usize, 0usize);
+    let mut per_world = [[0usize; 3]; 8];
+
+    for seed in 0..seeds {
+        let (_, state, _) = generated(&raw, seed, &Knobs::default(), k);
+        for world in &state.worlds {
+            for slot in world.slots.iter().filter(|s| s.kind == SlotKind::Fortress) {
+                let me = super::FortRef { world: world.world_idx, section: slot.section };
+                let Some(lock) = state.locks.iter().find(|l| l.fort == Some(me)) else {
+                    none += 1;
+                    continue;
+                };
+                let bucket = if lock.world == world.world_idx {
+                    0 // $67 — the lock is here
+                } else if lock.world == W8_IDX {
+                    2 // $6A — it opens the way to the castle
+                } else {
+                    1 // $EB — somewhere else
+                };
+                per_world[world.world_idx][bucket] += 1;
+                match bucket {
+                    0 => home += 1,
+                    1 => away += 1,
+                    _ => w8 += 1,
+                }
+            }
+        }
+    }
+    let total = home + away + w8;
+    println!("\n=== fortress tile encoding, {seeds} seeds ===");
+    println!("{total} fortresses with a lock ({none} with none)");
+    let pct = |n: usize| 100.0 * n as f64 / total.max(1) as f64;
+    println!("  $67 lock is in this world : {home:>4}  ({:.0}%)", pct(home));
+    println!("  $EB lock is elsewhere     : {away:>4}  ({:.0}%)", pct(away));
+    println!("  $6A lock is in World 8    : {w8:>4}  ({:.0}%)", pct(w8));
+    println!("\n{:<6}{:>8}{:>8}{:>8}", "world", "$67", "$EB", "$6A");
+    for (wi, counts) in per_world.iter().enumerate() {
+        println!(
+            "W{:<5}{:>8.2}{:>8.2}{:>8.2}",
+            wi + 1,
+            counts[0] as f64 / seeds as f64,
+            counts[1] as f64 / seeds as f64,
+            counts[2] as f64 / seeds as f64,
+        );
+    }
+}
+
+/// **A fortress's tile says where its lock is, and never lies.**
+///
+/// `$67` the lock is in this world, `$EB` it is in another, `$6A` it is in
+/// World 8. Own world wins over World 8, so a World 8 fortress opening a World
+/// 8 lock reads `$67`.
+///
+/// The tile was cosmetic before — `overworld_writer::grid` picks among the
+/// three at random — so nothing else pins it, and a stray writer could put a
+/// fortress tile back without anyone noticing. This reads the bytes that reach
+/// the grid rather than the decision that produced them.
+#[test]
+fn a_fortress_tile_says_where_its_lock_is() {
+    use super::super::rom_data::{self, W8_IDX};
+
+    let Some(raw) = load_rom() else { return };
+    let mut checked = 0usize;
+    let mut seen = [0usize; 3];
+    for seed in 0..census_seeds(8) {
+        let (rom, state, _) =
+            generated(&raw, seed, &Knobs::default(), super::DEFAULT_WANDS_REQUIRED);
+        let mut rom = rom;
+        super::writer::stamp_fort_tiles(&mut rom, &state);
+
+        for lock in &state.locks {
+            let Some(fort) = lock.fort else { continue };
+            let Some(pos) = state.worlds[fort.world]
+                .slots
+                .iter()
+                .find(|s| s.section == fort.section && s.kind == SlotKind::Fortress)
+                .map(|s| s.pos)
+            else {
+                continue;
+            };
+            let (want, why, bucket) = if lock.world == fort.world {
+                (0x67u8, "its lock is in this world", 0)
+            } else if lock.world == W8_IDX {
+                (0x6A, "its lock is in World 8", 2)
+            } else {
+                (0xEB, "its lock is in another world", 1)
+            };
+            let got = rom.read_byte(rom_data::map_tile_offset(fort.world, pos.0, pos.1));
+            assert_eq!(
+                got,
+                want,
+                "seed {seed}: the fortress at W{} {pos:?} wears {got:#04X} but {why}, which is \
+                 {want:#04X} — the tile is a claim now, not decoration",
+                fort.world + 1,
+            );
+            seen[bucket] += 1;
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "no fortresses checked; the test is vacuous");
+    // All three states must actually occur, or two of them are untested.
+    for (bucket, name) in [(0, "$67 local"), (1, "$EB elsewhere"), (2, "$6A World 8")] {
+        assert!(seen[bucket] > 0, "no fortress exercised {name}; that state is unchecked");
+    }
+    println!("{checked} fortresses: {} local, {} elsewhere, {} World 8", seen[0], seen[1], seen[2]);
+}

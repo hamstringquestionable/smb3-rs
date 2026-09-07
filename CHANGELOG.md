@@ -25,6 +25,12 @@ deploys.
 
 ### Changed
 
+- **World Maze: a fortress now shows where its lock is.** The three fortress
+  designs used to be picked at random for variety; now the one a fortress wears
+  tells you whether the lock it opens is in this world, in another one, or in
+  World 8 — the ones that open the way to Bowser. Worth knowing before you
+  decide a fortress isn't worth the detour.
+
 - **World Maze: locks now tell you whether their key is nearby.** A marker sits
   on any lock the world's own fortresses can open; a lock without one is opened
   from somewhere else. That's the difference between searching a world you can
