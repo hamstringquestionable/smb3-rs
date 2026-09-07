@@ -271,16 +271,42 @@ const MARK_DEAD: [u8; 22] = [
     0x19, MAP_OBJ_DEAD as u8, (MAP_OBJ_DEAD >> 8) as u8,      // 13: ORA MAP_OBJ_DEAD,Y
     0x99, MAP_OBJ_DEAD as u8, (MAP_OBJ_DEAD >> 8) as u8,      // 16: STA MAP_OBJ_DEAD,Y
     0xA9, 0x00,                                               // 19: LDA #$00   ; A owed to caller
-    0x60,                                                     // 21: RTS        ; done
+    0x60,                                                     // 33: RTS        ; done
 ];
 
 /// Re-empty every slot this world has already lost.
 ///
-/// 24 reserved, 22 used.
+/// 36 reserved, 34 used.
 ///
 /// Called from the front of [`super::completion_bits::WIPE_REPLACEMENT`], so
 /// `Map_Init` has just refilled all nine slots out of ROM and `World_Num` names
-/// the world being drawn. `X` holds that world's bit for the whole loop, which
+/// the world being drawn.
+///
+/// # Slots 9-13 are emptied first, and nothing else in the ROM does that
+///
+/// `Map_Init` reloads slots 8 down to 0 (`MAPOBJ_TOTALINIT`) and never touches
+/// the five above them. Those are the runtime pool: `Map_FindEmptyObjectSlot`
+/// hands one out when an N-Spade, a coin ship or a white mushroom house has to
+/// appear. Nothing clears them on a world change — the only clear-all-14 in the
+/// ROM is on the warp-zone path, which `world_travel` replaces — so a bonus
+/// object that landed in slot 9 is still sitting there in the next world, drawn
+/// at the old world's coordinates. That is the vanilla white-house-follows-you
+/// quirk, and vanilla gets away with it because you never go back.
+///
+/// **The maze does not**, and it matters twice over. The object reappears in
+/// worlds it has nothing to do with, possibly on terrain that world has no
+/// business drawing it on; and until the pool is known-empty, the two slots
+/// `RESERVED_DYNAMIC_SLOTS` holds back cannot be released — with slots 2-13 all
+/// occupied, `Map_FindEmptyObjectSlot` (`LDY #$02`, `INY`, **no bound**) walks
+/// straight off the end of the arrays and the caller stamps map-object data
+/// over whatever follows `$7F22`.
+///
+/// Clearing them here fixes both, and here is the only place that can: it is
+/// the one hook that fires on exactly every `Map_Init`.
+///
+/// **Maze-only, deliberately.** Standard mode keeps the quirk — a free item
+/// house tagging along into the next world is a lucky break, not a defect, and
+/// nobody asked to have it taken away. `X` holds that world's bit for the whole loop, which
 /// is why the store is indexed by slot rather than by world — see
 /// [`MAP_OBJ_DEAD`].
 ///
@@ -288,19 +314,28 @@ const MARK_DEAD: [u8; 22] = [
 /// counting up to a bound, and the store's nine bytes are the only bound there
 /// is.
 #[rustfmt::skip]
-const RESTORE_OBJECTS: [u8; 22] = [
-    0xAE, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,            //  0: LDX World_Num
-    0xA0, (MAP_OBJ_DEAD_LEN - 1) as u8,                       //  3: LDY #8
+const RESTORE_OBJECTS: [u8; 34] = [
+    // Empty the runtime pool, slots 13 down to 9. Only `A` and `Y` are
+    // touched, and the restore below sets both for itself.
+    0xA0, 0x0D,                                               //  0: LDY #13
+    0xA9, 0x00,                                               //  2: LDA #$00
+    0x99, MAP_OBJECTS_IDS as u8, (MAP_OBJECTS_IDS >> 8) as u8, //  4: STA Map_Objects_IDs,Y ; loop
+    0x88,                                                     //  7: DEY
+    0xC0, (MAP_OBJ_DEAD_LEN) as u8,                           //  8: CPY #9
+    0xB0, 0xF8,                                               // 10: BCS -8 -> loop
 
-    0xB9, MAP_OBJ_DEAD as u8, (MAP_OBJ_DEAD >> 8) as u8,      //  5: LDA MAP_OBJ_DEAD,Y  ; loop
+    0xAE, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,            // 12: LDX World_Num
+    0xA0, (MAP_OBJ_DEAD_LEN - 1) as u8,                       // 15: LDY #8
+
+    0xB9, MAP_OBJ_DEAD as u8, (MAP_OBJ_DEAD >> 8) as u8,      // 17: LDA MAP_OBJ_DEAD,Y  ; loop
     0x3D, MAP_COMPLETE_BIT_CPU as u8,
-          (MAP_COMPLETE_BIT_CPU >> 8) as u8,                  //  8: AND Map_CompleteBit,X
-    0xF0, 0x05,                                               // 11: BEQ +5 -> next
-    0xA9, 0x00,                                               // 13: LDA #$00
-    0x99, MAP_OBJECTS_IDS as u8, (MAP_OBJECTS_IDS >> 8) as u8, // 15: STA Map_Objects_IDs,Y
+          (MAP_COMPLETE_BIT_CPU >> 8) as u8,                  // 20: AND Map_CompleteBit,X
+    0xF0, 0x05,                                               // 23: BEQ +5 -> next
+    0xA9, 0x00,                                               // 25: LDA #$00
+    0x99, MAP_OBJECTS_IDS as u8, (MAP_OBJECTS_IDS >> 8) as u8, // 27: STA Map_Objects_IDs,Y
 
-    0x88,                                                     // 18: DEY                 ; next
-    0x10, 0xF0,                                               // 19: BPL -16 -> loop
+    0x88,                                                     // 30: DEY                 ; next
+    0x10, 0xF0,                                               // 31: BPL -16 -> loop
     0x60,                                                     // 21: RTS
 ];
 
@@ -590,8 +625,8 @@ mod tests {
     #[test]
     fn mutation_a_restore_that_writes_an_id_is_caught() {
         let mut bad = RESTORE_OBJECTS;
-        assert_eq!(bad[13], 0xA9, "byte 13 is no longer the LDA # this mutates");
-        bad[14] = 0x02; // MAPOBJ_AIRSHIP
+        assert_eq!(bad[25], 0xA9, "byte 25 is no longer the LDA # this mutates");
+        bad[26] = 0x02; // MAPOBJ_AIRSHIP
         assert!(
             !stores_only_zero_into_ids(&bad),
             "a restore that fills a slot instead of emptying it went unnoticed",
@@ -935,7 +970,7 @@ mod tests {
             "the unmutated routines must pass, or the mutation proves nothing",
         );
         let mut bad = RESTORE_OBJECTS;
-        bad[8] = 0x39; // AND abs,Y instead of AND abs,X
+        bad[20] = 0x39; // AND abs,Y instead of AND abs,X
         assert!(
             !worlds_stay_separate(&rom, &MARK_DEAD, &bad),
             "a slot-indexed world bit went unnoticed",
@@ -966,8 +1001,36 @@ mod tests {
         };
         assert!(ninth_is_restored(&RESTORE_OBJECTS), "the unmutated loop must reach slot 8");
         let mut bad = RESTORE_OBJECTS;
-        bad[4] = 0x07; // LDY #7
+        bad[16] = 0x07; // LDY #7
         assert!(!ninth_is_restored(&bad), "a restore loop one slot short went unnoticed");
+    }
+
+    /// **The runtime pool comes out empty.** Slots 9-13 are the five
+    /// `Map_Init` never touches, and nothing else in the ROM clears them on a
+    /// world change — so without this the maze carries a bonus object into
+    /// worlds it has nothing to do with, and the two slots
+    /// `RESERVED_DYNAMIC_SLOTS` holds back can never be released.
+    #[test]
+    fn the_restore_empties_the_runtime_pool() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let pool_cleared = |restore: &[u8]| {
+            let mut cpu = cpu_with(&rom, &MARK_DEAD, restore);
+            for i in 9..14u16 {
+                cpu.memory.set_byte(MAP_OBJECTS_IDS + i, 0x0A); // a white toad house
+            }
+            cpu.memory.set_byte(WORLD_NUM, 3);
+            call_routine(&mut cpu, RESTORE_OBJECTS_CPU, "restore");
+            (9..14u16).all(|i| cpu.memory.get_byte(MAP_OBJECTS_IDS + i) == 0)
+        };
+        assert!(pool_cleared(&RESTORE_OBJECTS), "slots 9-13 must come out empty");
+
+        let mut bad = RESTORE_OBJECTS;
+        assert_eq!(bad[8], 0xC0, "byte 8 is no longer the CPY # this mutates");
+        bad[9] = 14; // CPY #14 -> the loop falls out after a single slot
+        assert!(!pool_cleared(&bad), "a pool clear that stops early went unnoticed");
     }
 
     /// **Wrong mark bound.** Widen the guard to `CPY #14` and beating a

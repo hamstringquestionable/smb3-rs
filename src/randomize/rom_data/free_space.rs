@@ -260,9 +260,10 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     ),
     fs(
         0x17CC3,
-        24,
+        36,
         &["map_objects"],
-        "world-maze: re-clear beaten map objects after Map_Init (24 reserved, 22 used)",
+        "world-maze: empty the runtime slot pool + re-clear beaten map objects \
+         after Map_Init (36 reserved, 34 used)",
     ),
     fs(
         0x17D00,
@@ -478,7 +479,7 @@ pub(crate) const FS_MAZE_OBJ_MARK: usize = 0x17CAB; // 24 reserved, 22 used
 /// World-maze: re-clear the map objects a world has already lost, straight
 /// after `Map_Init` reloaded all nine of them from ROM. PRG011, CPU `$BCB3`,
 /// immediately after [`FS_MAZE_OBJ_MARK`] in the same run.
-pub(crate) const FS_MAZE_OBJ_RESTORE: usize = 0x17CC3; // 24 reserved, 22 used
+pub(crate) const FS_MAZE_OBJ_RESTORE: usize = 0x17CC3; // 36 reserved, 34 used
 
 pub(crate) const FS_STARTING_ITEMS: usize = 0x3E260; // 33 bytes
 
