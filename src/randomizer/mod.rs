@@ -299,6 +299,51 @@ fn randomize_inner(
         // its own bytes and leak the name onto everything the writer emits.
         randomize::troll_pipes::mark_troll_pipes(&mut build, &mut rng);
     }
+
+    // World maze: the eight world maps stop being a sequence and become the
+    // rooms of one Metroidvania — telepads between them, a fortress that can
+    // bust a lock in another world, and map progress that survives leaving.
+    //
+    // **A model pass, like the two above.** `maze::generate` takes a
+    // `BuildResult` and no `&Rom` — it is a pure function of the builder's
+    // model — and `stamp_into` folds its decisions back in as grid and lock
+    // edits. The writer then emits the finished map in one pass. Its ROM-side
+    // patches are installed after the writer, further down.
+    //
+    // It used to run *after* the writer, patching tiles over grids already on
+    // the cartridge. That is what made the ordering here load-bearing, forced
+    // `completion_bits` and `world_travel` to read the ROM back to discover
+    // what had happened, and left the builder's placement guarantees
+    // un-repairable because the map was committed before the fill permuted the
+    // array those guarantees live in.
+    let maze = options.world_maze.then(|| {
+        // The spine IS `world_order`'s table, which is why the mode forces it
+        // on. With `world_count < 7` it is shorter than eight, and the worlds
+        // it leaves out are reachable only by telepad — see the design doc.
+        let spine: Vec<usize> = credits_progression
+            .as_ref()
+            .expect("world_maze forces world_order on")
+            .iter()
+            .map(|&w| w as usize)
+            .collect();
+        // K cannot exceed the airships the spine offers: a shorter spine means
+        // fewer than seven wands exist in the game at all.
+        let wands = options.maze_wands.min(spine.len().saturating_sub(1) as u8);
+        let (state, _report) = randomize::maze::generate(
+            &build,
+            &spine,
+            wands,
+            &randomize::maze::graph::Knobs::default(),
+            // The writer needs one fortress slot it can park a secret-exit
+            // level on. The maze re-pairs forts and locks, which invalidates
+            // the builder's answer, so it restores the invariant rather than
+            // being told which slot to protect.
+            randomize::overworld_build::SECRET_EXIT_SLOTS_NEEDED,
+            &mut rng,
+        );
+        randomize::maze::stamp_into(&mut build, &state);
+        (state, wands)
+    });
     // --- OVERWORLD CAPTURE POINT ---
     // Hand a clone of the finalized BuildResult (post hands/troll mutations,
     // pre-writer) to any caller that asked for it. Used by the progression
@@ -319,70 +364,29 @@ fn randomize_inner(
             shuffle_hammer_bros: options.shuffle_hammer_bros,
             piranha: options.piranha_shuffle,
             friendlier_levels: options.friendlier_levels,
+            hints: options.hints.hints_at_all(),
             deja_vu: options.deja_vu,
             deja_vu_forts: options.deja_vu_forts,
         },
     );
 
-    // Set by the world maze, read by `lock_keys` below. When the maze runs it
-    // owns the WHOLE lock/fortress assignment, not just the cross-world half —
-    // its fill starts from the builder's pairing and swaps from there, so the
-    // two cannot be mixed. `None` means no maze ran and the builder's pairing
-    // stands.
-    let mut maze_lock_keys: Option<Vec<randomize::lock_keys::LockEntry>> = None;
-
-    // World maze: the eight world maps stop being a sequence and become the
-    // rooms of one Metroidvania — telepads between them, a fortress that can
-    // bust a lock in another world, and map progress that survives leaving.
+    // The world maze's ROM side. The map itself is already written — the maze
+    // was a model pass before the writer — so what is left is the engine
+    // scaffolding the mode needs, and none of it touches a map grid.
     //
-    // **The order inside this block is the whole of its correctness.** The
-    // packed completion store derives its stencil from the map grids as they
-    // finally stand, so every write that changes a grid runs first — the pad
-    // tiles and the wand gate — and `lock_keys` runs last (just past the end of
-    // this block), because it asks the packer where a given cell's bit lives
-    // rather than re-deriving that arithmetic.
-    //
-    // Today the two grid writers are in fact bit-neutral, so only the tail of
-    // that order is load-bearing. A cell claims a completion bit by being in
-    // `Map_Removable_Tiles` or `Map_Completable_Tiles`, and `TILE_TELEPAD` and
-    // `WAND_GATE_TILE` are in neither — `the_pad_tile_is_in_no_registry` and
-    // `the_gate_tile_is_in_no_registry` pin that — while the cells they
-    // overwrite are hammer-bro slots, blanks and the W8 bridge, which are in
-    // neither either. The head of the order is kept anyway: it costs nothing,
-    // and the day someone picks a tile that does claim a bit, the alternative
-    // is a stencil that disagrees with the map by one bit somewhere past the
-    // world it happened in.
-    if options.world_maze {
+    // `lock_keys` (just past the end of this block) still runs last, because it
+    // asks the packed store where a given cell's completion bit lives rather
+    // than re-deriving that arithmetic, and `world_persist` is what installs
+    // the store.
+    let maze_lock_keys = maze.map(|(state, wands)| {
         rom.set_tag("world_maze");
-        // The spine IS `world_order`'s table, which is why the mode forces it
-        // on. With `world_count < 7` it is shorter than eight, and the worlds
-        // it leaves out are reachable only by telepad — see the design doc.
-        let spine: Vec<usize> = credits_progression
-            .as_ref()
-            .expect("world_maze forces world_order on")
-            .iter()
-            .map(|&w| w as usize)
-            .collect();
-        // K cannot exceed the airships the spine offers: a shorter spine means
-        // fewer than seven wands exist in the game at all.
-        let wands = options.maze_wands.min(spine.len().saturating_sub(1) as u8);
-        // Which fortress slot `assign_pool` gave 1-F, so the fill leaves that
-        // one pairing alone. It picks uniformly among the slots the builder
-        // marked `secret_exit_safe`, with its own RNG, so this has to be read
-        // back rather than re-derived — and without it the fill re-pairs the
-        // fortress with a lock nobody ever vetted (measured: the lock moved in
-        // 55 of 60 seeds, and in 7 of 60 the secret exit ended the run).
-        let one_f = lock_pairing
-            .one_f_slot(&data)
-            .map(|(world, section)| randomize::maze::FortRef { world, section });
-        let (state, _report) = randomize::maze::generate(
-            &build,
-            &spine,
-            wands,
-            &randomize::maze::graph::Knobs::default(),
-            one_f,
-            &mut rng,
-        );
+        randomize::maze::writer::install_pad_metatile(rom, &state);
+        rom.set_tag("wand_gate");
+        randomize::wand_gate::apply(rom, wands);
+        rom.set_tag("world_persist");
+        randomize::world_persist::apply(rom, &randomize::maze::writer::telepad_specs(&state));
+        rom.set_tag("world_travel");
+        randomize::world_travel::apply(rom);
         // **The maze owns the whole lock/fortress assignment, not half of it.**
         //
         // `fill` starts from the overworld builder's pairing — every lock opened
@@ -396,42 +400,8 @@ fn randomize_inner(
         // both locks in their own worlds — 33.1% of same-world locks over 60
         // seeds — and lets a fortress that kept a stale local lock while gaining
         // a foreign one open two. Both halves travel together or neither does.
-        //
-        // **`maze::generate` does not need to be here.** It takes a
-        // `BuildResult` and no `&Rom` — it is a pure function of the builder's
-        // model — so the decision could be made before `write_overworld` runs.
-        // What forces this block to sit *after* the writer is the writing:
-        // `stamp_pad_tiles` and `wand_gate::apply` lay tiles over the grids the
-        // writer just committed, and `world_persist` derives the packed store's
-        // stencil from the result. The decision is only here because it is next
-        // to its own writes.
-        //
-        // That is worth revisiting, because it is what makes the builder's
-        // placement guarantees un-repairable: the map is already on the
-        // cartridge by the time the fill permutes the array those guarantees
-        // live in (see the 1-F secret-exit case). It consumes no RNG, so
-        // nothing downstream shifts either way.
-        maze_lock_keys = Some(randomize::maze::writer::lock_keys(&state));
-
-        // Before `world_persist` for the same reason as every other grid
-        // writer: the packed store's stencil is derived from the finished
-        // grids.
-        randomize::maze::writer::open_uninstalled_locks(rom, &state);
-        randomize::maze::writer::stamp_pad_tiles(rom, &state);
-        // And the same question from the fortress's end: which of the three
-        // fortress tiles it wears says where the lock it opens is.
-        if options.hints.hints_at_all() {
-            randomize::maze::writer::stamp_fort_tiles(rom, &state);
-        }
-        rom.set_tag("wand_gate");
-        randomize::wand_gate::apply(rom, wands);
-        // Last of the grid writers, and the first thing that reads them: this
-        // installs the packed store and the telepads themselves.
-        rom.set_tag("world_persist");
-        randomize::world_persist::apply(rom, &randomize::maze::writer::telepad_specs(&state));
-        rom.set_tag("world_travel");
-        randomize::world_travel::apply(rom);
-    }
+        randomize::maze::writer::lock_keys(&state)
+    });
 
     // Every lock in the game, home and away, in one table — and with it the
     // rewritten fortress-FX effect that reads it. This is unconditional: the

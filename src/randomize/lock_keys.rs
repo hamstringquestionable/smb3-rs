@@ -1639,7 +1639,12 @@ mod asm_checks {
         };
         let mut sky_local = 0usize;
         let mut sky_remote = 0usize;
-        for seed in 0..seeds() {
+        // Its own floor, above the module default. The closing assertion needs
+        // BOTH sides of the sky split to occur or it proves nothing, and how
+        // many seeds that takes is a property of the seed stream rather than of
+        // this test — the module default of 10 stopped covering it when the
+        // maze moved ahead of the overworld writer and the draws shifted.
+        for seed in 0..seeds().max(24) {
             let options = crate::Options {
                 world_maze: true,
                 hints: crate::HintMode::Partial,

@@ -135,10 +135,22 @@ pub(crate) fn recompute_safety_flags(state: &mut WorldState) {
     }
 }
 
-/// Cross-world invariant: at least one lock across all worlds must be
-/// secret-exit-safe — the write phase parks the 1-F fortress level (whose
-/// secret exit skips the lock-opening FX) on a slot whose lock can stay
-/// closed forever without softlocking.
+/// How many fortress slots must be able to host a secret-exit fortress level.
+///
+/// One today, because 1-F is the only such level the deck places — Friendlier
+/// Levels drops 7F2 and 8F1 rather than placing them. It is a named constant
+/// because it is a *contract* between three parties, not a property of any one
+/// of them: the builder leaves this many behind ([`ensure_secret_exit_safe`]),
+/// the world maze restores that many after re-pairing
+/// (`maze::fill::keep_n_sealable`), and the writer consumes them
+/// (`overworld_writer::assign`). A deck that placed a second secret-exit level
+/// would raise this, and all three would follow.
+pub(crate) const SECRET_EXIT_SLOTS_NEEDED: usize = 1;
+
+/// Cross-world invariant: at least [`SECRET_EXIT_SLOTS_NEEDED`] locks across
+/// all worlds must be secret-exit-safe — the write phase parks the 1-F fortress
+/// level (whose secret exit skips the lock-opening FX) on a slot whose lock can
+/// stay closed forever without softlocking.
 ///
 /// Knob-free backstop, run after every world's schedule: if uniform
 /// placement produced no safe lock anywhere, relocate ONE existing lock —

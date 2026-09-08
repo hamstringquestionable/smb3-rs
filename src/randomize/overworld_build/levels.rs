@@ -58,6 +58,7 @@ impl Phase for Levels {
                 section: 0,
                 is_hand_trap: false,
                 is_troll_pipe: false,
+                lock_hint: LockHint::default(),
             });
             placed += 1;
             // The chosen cell is taken; its row-7/8 partner (if any) is now

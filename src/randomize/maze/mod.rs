@@ -36,7 +36,9 @@ use rand::Rng;
 use std::collections::HashSet;
 
 use super::map_walker::walk_reachable;
-use super::overworld_build::{BuildResult, SlotKind, WorldState, from_built, stamp_slots};
+use super::overworld_build::{
+    BuildResult, LockHint, SlotKind, WorldState, from_built, stamp_slots,
+};
 use super::rom_data::{self, Grid, Pos};
 use walk::{MazePos, MazeWorld, walk_maze};
 
@@ -668,9 +670,9 @@ impl Spheres {
 #[derive(Clone, Debug)]
 pub(crate) struct GenReport {
     pub spheres: Spheres,
-    /// Whether 1-F's lock can be left shut — see
-    /// [`fill::keep_one_f_sealable`].
-    pub one_f: fill::OneF,
+    /// How many locks can be left shut forever, against how many the writer
+    /// asked for — see [`fill::keep_n_sealable`].
+    pub sealable: fill::Sealable,
     pub fill: fill::FillReport,
     pub pads: Vec<graph::PlacedPad>,
     /// Worlds whose start region cannot be escaped with what the player
@@ -687,12 +689,17 @@ pub(crate) struct GenReport {
 /// Anything still unsafe afterwards gets a hub pad out of whatever budget is
 /// left — the last claim on the 16 ids, because by then it is the only one
 /// that can make a seed unplayable.
+///
+/// `sealable_locks` is the writer's invariant, passed in rather than assumed:
+/// how many locks must still be ones the player can decline to open, so a
+/// secret-exit fortress level has somewhere safe to land. See
+/// [`fill::keep_n_sealable`].
 pub(crate) fn generate<R: Rng>(
     result: &BuildResult,
     spine: &[usize],
     wands_required: u8,
     knobs: &graph::Knobs,
-    one_f: Option<FortRef>,
+    sealable_locks: usize,
     rng: &mut R,
 ) -> (GlobalState, GenReport) {
     let mut state = GlobalState::from_build(result, spine, wands_required);
@@ -700,7 +707,7 @@ pub(crate) fn generate<R: Rng>(
     let pads = graph::plan_pads(&state, knobs, rng);
     state.add_pads(pads.iter().map(|p| p.edge).collect());
 
-    let fill = fill::assign_keys(&mut state, spine, knobs, one_f, rng);
+    let fill = fill::assign_keys(&mut state, spine, knobs, rng);
 
     // A world whose start region has no walk-out still gets offered a pad,
     // because an extra edge can only help — but it is **no longer a reason to
@@ -758,7 +765,89 @@ pub(crate) fn generate<R: Rng>(
 
     // Last, and after the fallback above, so it judges the assignment that
     // actually ships. Consumes no RNG.
-    let one_f = fill::keep_one_f_sealable(&mut state, one_f);
+    let sealable = fill::keep_n_sealable(&mut state, sealable_locks);
+    // Opening a gate changes reachability, so the log has to describe the map
+    // that ships rather than the one measured before the repair.
+    if sealable.opened > 0 {
+        spheres = state.spheres();
+    }
 
-    (state, GenReport { spheres, fill, pads, unsafe_worlds, one_f })
+    (state, GenReport { spheres, fill, pads, unsafe_worlds, sealable })
+}
+
+/// Fold the maze's decisions back into the build, for the writer to write.
+///
+/// **This is why the maze runs before the writer.** Everything here used to be
+/// a ROM patch laid over grids the writer had already committed, which is what
+/// made the ordering in `randomize_inner` load-bearing and forced later steps
+/// to read the cartridge back to discover what had happened. As model edits
+/// they are picked up by `overworld_writer::grid`, which starts from
+/// `built.grid.clone()` and stamps on top, so one write pass emits the finished
+/// map and nothing has to re-derive it afterwards.
+///
+/// Three things travel:
+///
+/// * **Pad tiles.** The cell keeps its pointer-table entry; that entry becomes
+///   unreachable, which is why [`roles::pad_sites`] only ever offers Hammer Bro
+///   filler slots and bare blanks.
+/// * **Uninstalled locks** ([`MazeLock::fort`] `== None`) are dropped, so the
+///   writer never stamps a `gap_tile` there and the path tile underneath
+///   stands. Previously the writer stamped the gate from the builder's list and
+///   the maze had to paint over it — a gate with no key in the window between.
+/// * **`secret_exit_slots`**, rewritten with the maze-grade verdict. The
+///   builder's is per-world and over-promises (19% of locks at K=3, 43% at
+///   K=7); a maze fortress may also open a lock in a different world entirely,
+///   which the builder's field cannot express.
+///
+/// Consumes no RNG.
+pub(crate) fn stamp_into(build: &mut BuildResult, state: &GlobalState) {
+    for (world, built) in build.worlds.iter_mut().enumerate() {
+        for ((pad_world, (row, col)), _) in state.pad_edges() {
+            if pad_world == world {
+                built.grid.set(row, col, rom_data::TILE_TELEPAD);
+            }
+        }
+
+        let installed: HashSet<Pos> = state
+            .locks
+            .iter()
+            .filter(|l| l.world == world && l.fort.is_some())
+            .map(|l| l.pos)
+            .collect();
+        built.locks.retain(|l| installed.contains(&l.pos));
+
+        // A fortress slot is safe when the lock IT opens can stay shut — which
+        // after the fill can be a lock in another world, so this is keyed off
+        // the maze's pairing rather than off this world's lock list.
+        built.secret_exit_slots = state
+            .locks
+            .iter()
+            .enumerate()
+            .filter(|(li, l)| {
+                l.fort.is_some_and(|f| f.world == world) && state.winnable_with_lock_sealed(*li)
+            })
+            .filter_map(|(_, l)| l.fort.map(|f| f.section))
+            .collect();
+
+        // Say on each fortress where the lock it opens is. Own world wins,
+        // then World 8, then elsewhere — so a World 8 fortress opening a World
+        // 8 lock reads OwnWorld, not World8. Whether the player is told, and
+        // which tile says it, is the writer's call.
+        for slot in built.slots.iter_mut().filter(|s| s.kind == SlotKind::Fortress) {
+            let Some(lock) = state
+                .locks
+                .iter()
+                .find(|l| l.fort == Some(FortRef { world, section: slot.section }))
+            else {
+                continue;
+            };
+            slot.lock_hint = if lock.world == world {
+                LockHint::OwnWorld
+            } else if lock.world == rom_data::W8_IDX {
+                LockHint::World8
+            } else {
+                LockHint::Elsewhere
+            };
+        }
+    }
 }

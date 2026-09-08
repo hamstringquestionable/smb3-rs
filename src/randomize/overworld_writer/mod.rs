@@ -13,7 +13,7 @@ use crate::{DejaVuMode, PiranhaMode};
 use super::lock_keys::LockEntry;
 use super::node_catalog::NodeKind;
 use super::overworld_build::{
-    BuildResult, BuiltWorld, OverworldData, SlotKind, VANILLA_LEVEL_COUNT, bfs_ordered,
+    BuildResult, BuiltWorld, LockHint, OverworldData, SlotKind, VANILLA_LEVEL_COUNT, bfs_ordered,
 };
 use super::pipe_helpers;
 use super::rom_data::{self, FORTRESS_1F_OBJ_PTR, TILE_BONUS_GAME, TILE_PIPE, WORLDS};
@@ -81,7 +81,7 @@ pub(crate) fn write_overworld<R: Rng>(
         let built = &build.worlds[wi];
         let sprite_mask = &sprite_masks[wi];
 
-        write_tile_grid(rom, built, wa, data, sprite_mask, rng);
+        write_tile_grid(rom, built, wa, data, sprite_mask, flags.hints, rng);
         write_pointer_entries(rom, wi, built, wa, data, &mut hb_fallback_iter);
         write_pipe_dests(rom, wi, wa);
         // For swapped worlds, rewrite the Airship + Start entry coordinates
@@ -142,35 +142,12 @@ impl LockPairing {
     /// two locks in a world share a section. In maze mode this is only the
     /// *starting* assignment — `maze::fill` permutes it and
     /// `maze::writer::lock_keys` emits the result instead of this.
-    /// Where the 1-F fortress ended up, as `(world, fort_section)`.
     ///
-    /// 1-F's secret exit hands out an item and skips the crystal ball, so the
-    /// fortress is beaten and its lock stays shut. [`assign::assign_pool`]
-    /// parks it on a slot whose lock the builder marked `secret_exit_safe`, but
-    /// it chooses **uniformly among those slots with its own RNG** — so a later
-    /// pass that wants to honour the choice has to be told which slot it was.
-    /// Re-deriving it would just pick a different one.
-    ///
-    /// The world maze is that pass: `maze::fill` re-pairs every fortress with a
-    /// different lock, which throws away the verdict this slot was chosen for.
-    ///
-    /// `fortress` is indexed by section, the same key
-    /// `LockAssignment::fort_section` uses, so the index IS the answer.
-    pub(crate) fn one_f_slot(&self, data: &OverworldData) -> Option<(usize, usize)> {
-        for (wi, wa) in self.assignments.iter().enumerate() {
-            for (section, a) in wa.fortress.iter().enumerate() {
-                let entry = &data.catalog.entries[data.pickup.pool[a.pool_idx].catalog_idx];
-                let is_1f = entry.level_entry.as_ref().is_some_and(|le| {
-                    u16::from_le_bytes([le.obj_lo, le.obj_hi]) == FORTRESS_1F_OBJ_PTR
-                });
-                if is_1f {
-                    return Some((wi, section));
-                }
-            }
-        }
-        None
-    }
-
+    /// There is deliberately no way to ask this where 1-F ended up. The maze
+    /// used to need that, because it ran after the writer and had to protect
+    /// the pairing the writer had already committed. It now runs *before* the
+    /// writer and hands down `BuiltWorld::secret_exit_slots` instead, so which
+    /// safe slot 1-F takes is the writer's business alone.
     pub(crate) fn lock_entries(&self, build: &BuildResult) -> Vec<LockEntry> {
         let mut out = Vec::new();
         for (wi, wa) in self.assignments.iter().enumerate() {
@@ -197,4 +174,7 @@ pub(crate) struct WriteFlags {
     /// and `FRIENDLIER_BLOCKED_FORTS` from the fortress deck, refilling both
     /// with duplicates of what remains.
     pub friendlier_levels: bool,
+    /// Map hints: honour `SlotAssignment::lock_hint` when picking a fortress
+    /// tile, instead of choosing among them for variety.
+    pub hints: bool,
 }

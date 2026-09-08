@@ -148,14 +148,14 @@ pub(crate) use route_choice::{
 pub(crate) use types::{
     BuildFlags, BuildResult, BuiltWorld, CapacityPrep, LockAssignment, OverworldData, stamp_slots,
 };
-pub use {types::SlotAssignment, types::SlotKind};
+pub use {types::LockHint, types::SlotAssignment, types::SlotKind};
 
 // The phase set and its harness surface.
 pub(crate) use connectivity::Connectivity;
 pub(crate) use forts::Forts;
 pub(crate) use hammer_bros::HammerBroFill;
 pub(crate) use levels::Levels;
-pub(crate) use locks::{Locks, ensure_secret_exit_safe};
+pub(crate) use locks::{Locks, SECRET_EXIT_SLOTS_NEEDED, ensure_secret_exit_safe};
 pub(crate) use metrics::measure_world;
 pub(crate) use shaping::Shaping;
 pub(crate) use sources::{allot_budgets, from_pickup};

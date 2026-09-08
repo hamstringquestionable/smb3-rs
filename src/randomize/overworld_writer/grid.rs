@@ -8,6 +8,7 @@ pub(super) fn write_tile_grid<R: Rng>(
     wa: &WorldAssignments,
     data: &OverworldData,
     sprite_mask: &HashSet<(usize, usize)>,
+    hints_on: bool,
     rng: &mut R,
 ) {
     let pickup = data.pickup;
@@ -15,10 +16,33 @@ pub(super) fn write_tile_grid<R: Rng>(
     let wi = built.world_idx;
     let mut grid = built.grid.clone();
 
-    // Stamp fortress tiles — pick per-fortress from the game's fortress
-    // tile set (see rom_data::FORTRESS_TILES).
+    // Stamp fortress tiles. All three of `rom_data::FORTRESS_TILES` render a
+    // fortress, so the choice is free — it is cosmetic variety unless the
+    // player asked for map hints, in which case the tile says where the lock
+    // this fortress opens is. The maze supplies that fact as a `LockHint`; the
+    // byte, and whether to honour it, are decided here.
+    //
+    // A world-8 army sprite sits on some fortress cells, and the sprite pass
+    // below blanks those, so a hint there is silently dropped. That is correct:
+    // the sprite is the visual and there is nowhere to say it.
     for a in &wa.fortress {
-        let tile = rom_data::FORTRESS_TILES[rng.random_range(..rom_data::FORTRESS_TILES.len())];
+        let hint = if hints_on {
+            built
+                .slots
+                .iter()
+                .find(|s| s.kind == SlotKind::Fortress && s.pos == a.pos)
+                .map_or(LockHint::Unhinted, |s| s.lock_hint)
+        } else {
+            LockHint::Unhinted
+        };
+        let tile = match hint {
+            LockHint::OwnWorld => rom_data::TILE_FORTRESS,
+            LockHint::World8 => rom_data::TILE_FORTRESS_W8,
+            LockHint::Elsewhere => rom_data::TILE_FORTRESS_AWAY,
+            LockHint::Unhinted => {
+                rom_data::FORTRESS_TILES[rng.random_range(..rom_data::FORTRESS_TILES.len())]
+            }
+        };
         grid.set(a.pos.0, a.pos.1, tile);
     }
 

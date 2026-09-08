@@ -53,6 +53,31 @@ pub struct SlotAssignment {
     /// tile drops the player into the underlying level (uniform Map_Op = $10
     /// dispatch — no pipe-transit state).
     pub is_troll_pipe: bool,
+    /// Where the lock this fortress opens is, for the map-hint tiles. Only
+    /// meaningful on `SlotKind::Fortress` slots, and only set by the world
+    /// maze — outside it every fortress opens a lock in its own world, so
+    /// there is nothing to say.
+    pub lock_hint: LockHint,
+}
+
+/// Where the lock a fortress opens is — the *fact*, with no tile byte in it.
+///
+/// The writer turns this into one of [`rom_data::FORTRESS_TILES`], the same way
+/// it turns `is_hand_trap` and `is_troll_pipe` into their tiles. Which byte
+/// says what, whether the player asked to be told at all, and what the tile
+/// becomes once the fortress is beaten are all the writer's business; deciding
+/// which fortress opens which lock is the maze's.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum LockHint {
+    /// Nothing to say — the writer picks a fortress tile for variety.
+    #[default]
+    Unhinted,
+    /// The lock is in this fortress's own world.
+    OwnWorld,
+    /// The lock is in World 8: this fortress opens the way to the castle.
+    World8,
+    /// The lock is in some other world.
+    Elsewhere,
 }
 
 /// Stamp assigned slots onto a grid so `walk_map` sees them as nodes.
@@ -116,6 +141,20 @@ pub(crate) struct BuiltWorld {
     pub locks: Vec<LockAssignment>,
     /// Number of sections (= number of fortresses in this world).
     pub section_count: usize,
+    /// **Fortress sections here that can host a secret-exit fortress level.**
+    ///
+    /// 1-F's secret exit beats the fortress without firing the lock-opening
+    /// FX, so the lock that fortress opens stays shut forever. A section is
+    /// listed when that is survivable — the player can still finish.
+    ///
+    /// The writer consumes this and must not re-derive it. Deriving it from
+    /// `locks[..].secret_exit_safe` and `fort_section` is only correct while
+    /// every fortress opens a lock in its own world, which the world maze
+    /// stops being true: it re-pairs across worlds, and then "this world's
+    /// safe locks" and "this world's safe fortress slots" are different sets.
+    /// The builder fills this in from its per-world verdict; the maze
+    /// overwrites it with the cross-world one, which is stricter.
+    pub secret_exit_slots: Vec<usize>,
     /// Pipe pair positions placed in this world: Vec of (endpoint_a, endpoint_b).
     pub pipe_pairs: Vec<TeleportEdge>,
     /// Redistributed wandering Hammer Bro sprites for this world. Empty when

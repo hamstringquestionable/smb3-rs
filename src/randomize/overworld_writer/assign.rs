@@ -153,14 +153,12 @@ pub(super) fn assign_pool<R: Rng>(
     // This is the only pre-assignment left. Friendlier Levels used to park 7F2
     // and 8F1 on the safe slots 1-F did not take; it removes them from the deck
     // instead now, so the fort they would have displaced never happens.
+    // Taken from the build, never re-derived here: a fortress can open a lock
+    // in another world (the world maze does this on most locks), and then
+    // "locks in world W that are safe" is not "fortress slots in world W that
+    // are safe". Whoever decided the pairing owns the answer.
     let safe_slots: Vec<(usize, usize)> = (0..8)
-        .flat_map(|wi| {
-            build.worlds[wi]
-                .locks
-                .iter()
-                .filter(|lock| lock.secret_exit_safe)
-                .map(move |lock| (wi, lock.fort_section))
-        })
+        .flat_map(|wi| build.worlds[wi].secret_exit_slots.iter().map(move |&sec| (wi, sec)))
         .collect();
     let mut preassigned_forts: HashMap<(usize, usize), usize> = HashMap::new();
     if let Some(&slot) = safe_slots.choose(rng) {

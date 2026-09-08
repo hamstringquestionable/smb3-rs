@@ -1465,6 +1465,7 @@ fn test_march_veto_pipeline_writes_registry() {
         &data,
         &mut rng,
         WriteFlags {
+            hints: false,
             piranha: PiranhaMode::Wild,
             shuffle_hammer_bros: true,
             friendlier_levels: false,
