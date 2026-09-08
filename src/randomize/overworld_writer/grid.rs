@@ -10,7 +10,7 @@ pub(super) fn write_tile_grid<R: Rng>(
     sprite_mask: &HashSet<(usize, usize)>,
     hints_on: bool,
     rng: &mut R,
-) {
+) -> Grid {
     let pickup = data.pickup;
     let catalog = data.catalog;
     let wi = built.world_idx;
@@ -179,4 +179,9 @@ pub(super) fn write_tile_grid<R: Rng>(
             rom.write_byte(offset, grid.get(r, c));
         }
     }
+
+    // **And hand it back.** This is the finished map for this world, and it was
+    // built here and thrown away — so everything downstream that needed it read
+    // it back off the ROM a cell at a time. See `WrittenOverworld::grids`.
+    grid
 }

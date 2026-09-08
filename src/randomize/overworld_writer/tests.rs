@@ -1529,3 +1529,47 @@ fn test_march_veto_composes_with_limit_bro_movement() {
     // vanilla — hand-trap avoidance now lives in the veto trampoline.
     assert_eq!(veto_first.read_range(0x17435, 3), &[0xD9, 0x98, 0x7E]);
 }
+
+/// **The map the writer hands over is the map on the cartridge.**
+///
+/// `WrittenOverworld::grids` exists so `completion_bits`, `world_travel` and
+/// `lock_keys` stop reading the finished map back out of the ROM. That trades
+/// a round trip for a second copy, and the copy is only worth having while it
+/// agrees with the first — a world's packed-store slice is sized from it, so a
+/// single stale cell shifts every world after it and completion marks land in
+/// the wrong one. Silent, and several worlds into a playthrough.
+///
+/// `grids()` debug-asserts this on every call; this runs it as a test over a
+/// real build, and the mutation below proves the check can fail.
+#[test]
+fn grids_match_the_rom() {
+    let Some(rom) = load_rom() else { return };
+    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let pickup = standard_pickup(&rom, &catalog);
+
+    for seed in 0..4u64 {
+        let mut out = rom.clone();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let data = OverworldData { pickup: &pickup, catalog: &catalog };
+        let build = overworld_build::build(&rom, &data, &mut rng, standard_build_flags());
+        let written = write_overworld(&mut out, &build, &data, &mut rng, WriteFlags::default());
+
+        if let Err(why) = grids_agree_with_rom(&written.grids, &out) {
+            panic!("seed {seed}: {why}");
+        }
+
+        // The check is only worth having if it can fail. Write one map cell
+        // straight to the ROM — exactly the mistake it exists to catch — and
+        // it must notice.
+        let (row, col) = (4usize, 4usize);
+        let off = rom_data::map_tile_offset(0, row, col);
+        let was = out.read_byte(off);
+        out.write_byte(off, was ^ 0xFF);
+        assert!(
+            grids_agree_with_rom(&written.grids, &out).is_err(),
+            "seed {seed}: a map cell was changed behind the writer's back and the guard \
+             did not notice — it would not catch the bug it exists for"
+        );
+        out.write_byte(off, was);
+    }
+}

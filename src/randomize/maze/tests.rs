@@ -1110,7 +1110,12 @@ fn a_generated_maze_writes_only_pad_tiles_and_free_space() {
 
         let mut after = rom.clone();
         super::writer::install_pad_metatile(&mut after, &state);
-        crate::randomize::world_persist::apply(&mut after, &super::writer::telepad_specs(&state));
+        let grids = crate::randomize::rom_data::read_all_tile_grids(&after);
+        crate::randomize::world_persist::apply(
+            &mut after,
+            &super::writer::telepad_specs(&state),
+            &grids,
+        );
 
         // **The maze's ROM side touches no map grid at all.** Every map edit it
         // makes — pad tiles, uninstalled locks, the fortress hint tiles — is a

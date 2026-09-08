@@ -1250,16 +1250,27 @@ pub fn apply(rom: &mut Rom, entries: &[LockEntry], hints: crate::HintMode) {
     if !away.is_empty() {
         let map = CompletionMap::from_rom(rom);
 
-        // **The ordering guard, and it catches three rules at once.**
+        // **This one reads the map back on purpose, and this is the guard.**
         //
-        // This module derives each away lock's `(plane byte, bit)` by re-reading
-        // the map grids, while `completion_bits` has already emitted a base
-        // table from the grids as IT saw them. Those two views agree only if the
-        // grids have not moved in between — so comparing them here catches, in
-        // four lines: a grid write landing after `completion_bits::apply` ran;
-        // this module running BEFORE it; and `completion_bits` never having run
-        // at all, in which case the region is still `$FF` filler and the compare
-        // fails loudly. Every one of those is otherwise silent.
+        // Every other consumer of the finished map is handed it —
+        // `completion_bits` and `world_travel` take
+        // `WrittenOverworld::grids()`, so their ordering is a signature rather
+        // than a rule. This module cannot: `stamp_hint_locks` a few lines above
+        // writes map tiles *itself*, so the writer's copy is already stale by
+        // the time we get here. It has to read what is actually there.
+        //
+        // So the rule stays a rule, and this is what enforces it. Comparing our
+        // reading against the base table `completion_bits` already emitted
+        // catches, in four lines: a grid write landing after
+        // `completion_bits::apply` ran; this module running BEFORE it; and
+        // `completion_bits` never having run at all, in which case the region is
+        // still `$FF` filler and the compare fails loudly. Every one of those is
+        // otherwise silent.
+        //
+        // (The hint tiles themselves are bit-neutral — a lock tile swapped for
+        // another lock tile, both in `Map_Removable_Tiles` — which is why the
+        // two readings agree at all. If a future hint tile were not, this fires,
+        // and the fix is to stamp it into the build like every other map edit.)
         let emitted = rom.read_range(FS_COMPLETION_BASES, 9);
         assert_eq!(
             emitted,
@@ -1901,7 +1912,8 @@ mod asm_checks {
             return;
         };
         let mut patched = rom.clone();
-        completion_bits::apply(&mut patched);
+        let grids = rom_data::read_all_tile_grids(&patched);
+        completion_bits::apply(&mut patched, &grids);
 
         let sta = [0x9D, PACKED as u8, (PACKED >> 8) as u8]; // STA PACKED,X
         let lda = [0xBD, PACKED as u8, (PACKED >> 8) as u8]; // LDA PACKED,X
@@ -2114,7 +2126,8 @@ mod asm_checks {
                 rom_data::LOCK_TILES[0],
             );
         }
-        completion_bits::apply(&mut out);
+        let grids = rom_data::read_all_tile_grids(&out);
+        completion_bits::apply(&mut out, &grids);
         out
     }
 

@@ -93,14 +93,19 @@ pub(crate) struct CompletionMap {
 }
 
 impl CompletionMap {
-    /// Read every world's grid and work out its owning cells.
+    /// Work out each world's owning cells from the finished map.
     ///
-    /// Reads the **ROM** grids, never `Tile_Mem`: the live copy mutates as you
-    /// play — a cleared level becomes an M/L tile, a busted lock becomes path —
-    /// so enumerating it would shift every bit after the first change.
-    pub(crate) fn from_rom(rom: &Rom) -> Self {
-        let masks: [Vec<u8>; 8] =
-            std::array::from_fn(|w| world_mask(&rom_data::read_tile_grid(rom, w)));
+    /// The grids must be the **ROM** grids, never `Tile_Mem`: the live copy
+    /// mutates as you play — a cleared level becomes an M/L tile, a busted lock
+    /// becomes path — so enumerating it would shift every bit after the first
+    /// change.
+    ///
+    /// A pipeline caller passes `WrittenOverworld::grids()`, which is the map
+    /// the writer just committed. [`Self::from_rom`] is the reader's entry
+    /// point, for a caller that has only a finished ROM.
+    pub(crate) fn from_grids(grids: &[Grid]) -> Self {
+        assert_eq!(grids.len(), 8, "the packed store covers all eight worlds");
+        let masks: [Vec<u8>; 8] = std::array::from_fn(|w| world_mask(&grids[w]));
 
         let mut bases = [0u8; 9];
         for w in 0..8 {
@@ -111,6 +116,17 @@ impl CompletionMap {
         }
 
         Self { masks, bases }
+    }
+
+    /// The same, read back off a finished ROM.
+    ///
+    /// For callers holding only a ROM — tests, `testrom`, and
+    /// `lock_keys::apply`, which runs after this module and cross-checks its
+    /// own reading against the base table already emitted. The pipeline itself
+    /// uses [`Self::from_grids`]: re-reading what the writer just wrote is how
+    /// "run me after every grid write" became an unwritten rule.
+    pub(crate) fn from_rom(rom: &Rom) -> Self {
+        Self::from_grids(&rom_data::read_all_tile_grids(rom))
     }
 
     /// World `w`'s column mask — one byte per map column.
@@ -1008,8 +1024,8 @@ const RELOAD_CALL_VANILLA: [u8; 3] = [0x20, 0x5D, 0xA4];
 /// wasteful by this project's standards and deliberate here: `world_persist`
 /// writes its arrival restore into three of them, and a shipped version would
 /// restructure the surrounding init rather than pad it.
-pub(crate) fn apply(rom: &mut Rom) {
-    let bases = CompletionMap::from_rom(rom).base_table();
+pub(crate) fn apply(rom: &mut Rom, grids: &[Grid]) {
+    let bases = CompletionMap::from_grids(grids).base_table();
 
     rom.push_tag("completion_bits");
     rom.write_range(FS_MASK_BUILD, &MASK_BUILD);

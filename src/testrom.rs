@@ -1101,7 +1101,13 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
     if spec.world_persist || !spec.telepads.is_empty() {
         let telepads = resolve_telepads(&rom, &spec.telepads)?;
         stamp_telepad_tiles(&mut rom, &telepads);
-        crate::randomize::world_persist::apply(&mut rom, &telepads);
+        // Read the grids back, rather than being handed them: there is no
+        // overworld writer on this path — the map here is whatever the base ROM
+        // had, plus the pad tiles stamped a line above — so the ROM *is* the
+        // record. That is the reader case `CompletionMap::from_rom` exists for.
+        let grids: Vec<crate::randomize::rom_data::Grid> =
+            (0..8).map(|w| crate::randomize::rom_data::read_tile_grid(&rom, w)).collect();
+        crate::randomize::world_persist::apply(&mut rom, &telepads, &grids);
         for pad in &telepads {
             report.push(format!(
                 "telepad: W{} row {} col {}  ->  W{} row {} col {}",

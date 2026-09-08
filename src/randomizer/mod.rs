@@ -355,7 +355,7 @@ fn randomize_inner(
         *slot = Some(build.clone());
     }
     rom.set_tag("overworld_writer");
-    let lock_pairing = randomize::overworld_writer::write_overworld(
+    let written = randomize::overworld_writer::write_overworld(
         rom,
         &build,
         &data,
@@ -384,9 +384,13 @@ fn randomize_inner(
         rom.set_tag("wand_gate");
         randomize::wand_gate::apply(rom, wands);
         rom.set_tag("world_persist");
-        randomize::world_persist::apply(rom, &randomize::maze::writer::telepad_specs(&state));
+        randomize::world_persist::apply(
+            rom,
+            &randomize::maze::writer::telepad_specs(&state),
+            written.grids(rom),
+        );
         rom.set_tag("world_travel");
-        randomize::world_travel::apply(rom);
+        randomize::world_travel::apply(rom, written.grids(rom));
         // **The maze owns the whole lock/fortress assignment, not half of it.**
         //
         // `fill` starts from the overworld builder's pairing — every lock opened
@@ -421,7 +425,7 @@ fn randomize_inner(
     // still open. `lock_keys::the_digit_is_the_world_the_player_sees` asserts
     // the table is a permutation, which is what catches the wrong order.
     rom.set_tag("lock_keys");
-    let lock_entries = maze_lock_keys.unwrap_or_else(|| lock_pairing.lock_entries(&build));
+    let lock_entries = maze_lock_keys.unwrap_or_else(|| written.lock_entries(&build));
     randomize::lock_keys::apply(rom, &lock_entries, options.hints);
 
     // Big [?] bonus-room shuffle: every level with a Big [?] pipe draws from a
