@@ -79,6 +79,21 @@ deploys.
 
 ### Fixed
 
+- **World Maze: the hammer could not break a numbered lock.** The breakable-tile
+  table was built from vanilla's three lock bytes, so every lock the hint system
+  had renumbered or recoloured was immune — "Hammer Breaks Locks" quietly
+  stopped working on most of the locks in the game.
+
+- **World Maze: a fortress tile could reappear under a World 8 tank or
+  battleship.** The cell under an army sprite is deliberately left blank so the
+  sprite is what you see; the fortress recolour pass painted a fortress back
+  onto it.
+
+- **World Maze: map objects could follow you into a world they had nothing to do
+  with.** An N-Spade, coin ship or white mushroom house lives in a runtime slot
+  the game does not clear when you enter a world, so one could turn up in the
+  next world along, drawn at the coordinates it had in the last one.
+
 - **World Maze: warp whistles stopped cluttering chests.** The mode already
   gives you a whistle you can never lose or use up, but it was also forcing
   "Remove Warp Whistles" off — putting whistles back into the chest, Hammer Bro
@@ -114,9 +129,12 @@ deploys.
   by playing World 2: three fortresses, three locks, all three opening locally.
 
 - **World Maze:** the warp whistle you start with no longer costs you a
-  starting item. It went into the third inventory slot, and since you can ask
-  for three items, asking for three meant getting two and a whistle. It sits in
-  the fourth slot now, which nothing else can claim.
+  starting item, and is somewhere you can actually reach it. It went into the
+  third inventory slot, so asking for three items meant getting two and a
+  whistle; moving it to the fourth slot then put it out of reach entirely,
+  because with slot 0 empty — which it is by default — the item panel is dead:
+  no cursor, no way to use anything. The whistle owns slot 0 now and your own
+  items sit above it.
 
 - **World Maze:** warp pads have their own tile, so one no longer looks exactly
   like an N-Spade card game. They used to share the spade panel: on one seed
