@@ -260,9 +260,10 @@ fn popcount(mask: &[u8]) -> usize {
 #[cfg(test)]
 use super::rom_data::NMI_SAFE_MAX;
 use super::rom_data::{
-    FS_COMPLETION_BASES, FS_IS_COMPLETABLE, FS_MASK_BUILD, FS_NEW_GAME_INIT, FS_PACK_PLANE,
-    FS_PACK_WORLD, FS_SWAP_AT_RELOAD, FS_UNPACK_PLANE, FS_UNPACK_WORLD, FS_WIPE_REPLACEMENT,
-    FS_WORLD_COLS, MAP_RELOAD_CPU, WORLD_NUM, prg010_file_to_cpu,
+    FS_COMPLETION_BASES, FS_IS_COMPLETABLE, FS_MAP_REMOVABLE, FS_MASK_BUILD, FS_NEW_GAME_INIT,
+    FS_PACK_PLANE, FS_PACK_WORLD, FS_SWAP_AT_RELOAD, FS_UNPACK_PLANE, FS_UNPACK_WORLD,
+    FS_WIPE_REPLACEMENT, FS_WORLD_COLS, MAP_RELOAD_CPU, WORLD_NUM, prg_bank_file_to_cpu,
+    prg010_file_to_cpu,
 };
 
 /// Where the derived stencil lands: 64 bytes, one per possible map column.
@@ -291,12 +292,22 @@ const BASES_CPU: u16 = prg010_file_to_cpu(FS_COMPLETION_BASES);
 // --- PRG012 symbols, all verified by matching their bytes in the ROM rather
 // --- than read off the disassembly's labels.
 
-/// `Tile_Attributes_TS0` — four "lowest enterable tile" thresholds, indexed by
-/// the tile's top two bits. `03 67 BF E9`.
-const TILE_ATTRIBUTES_TS0: u16 = 0xA400;
-/// `Map_Removable_Tiles` — 8 entries: the two rocks, three locks, two fortress
-/// variants and the water gap.
-const MAP_REMOVABLE_TILES: u16 = 0xA437;
+/// `lock_keys::ML_RANGE` — the reload's "flip this to an M/L marker" test,
+/// bounded top and bottom per page. It reads `Tile_Attributes_TS0` at `$A400`
+/// itself, which is why this routine no longer names that table.
+///
+/// The `JSR` is legal here for the same reason the `CMP` was: this routine lives
+/// in PRG010 but runs with PRG012 at `$A000`, and it already reads two PRG012
+/// tables at absolute addresses. The hook note above is what guarantees it.
+const ML_RANGE_CPU: u16 = super::lock_keys::ML_RANGE_CPU;
+/// `Map_Removable_Tiles` — the two rocks, three locks, two fortress variants and
+/// the water gap.
+///
+/// **Not `$A437`.** `lock_keys::relocate_removable_tables` moves the table so it
+/// can grow, and this routine's scan has to follow it; the count immediate below
+/// has to follow [`rom_data::REMOVABLE_STRIDE`]'s occupancy the same way. Both
+/// are pinned by `is_completable_matches_the_relocated_table`.
+const MAP_REMOVABLE_TILES: u16 = prg_bank_file_to_cpu(12, FS_MAP_REMOVABLE);
 /// `Map_Completable_Tiles` — 5 entries the engine marks with an M/L outright:
 /// both toad houses, the spade panel, the hand trap and the dancing flower.
 const MAP_COMPLETABLE_TILES: u16 = 0xA447;
@@ -380,7 +391,7 @@ const IS_COMPLETABLE: [u8; 39] = [
     0xF0, 0x1E,                             //  5: BEQ +30 -> yes
     0xCA,                                   //  7: DEX
     0x10, 0xF8,                             //  8: BPL -8
-    0xA2, 0x07,                             // 10: LDX #7
+    0xA2, (super::lock_keys::REMOVABLE_COUNT - 1) as u8, // 10: LDX #(entries - 1)
     0xDD, MAP_REMOVABLE_TILES as u8,
           (MAP_REMOVABLE_TILES >> 8) as u8,       // 12: CMP Map_Removable_Tiles,X     ; loop
     0xF0, 0x14,                             // 15: BEQ +20 -> yes
@@ -394,8 +405,8 @@ const IS_COMPLETABLE: [u8; 39] = [
     0x2A,                                   // 28: ROL A       ; A = tile >> 6
     0xAA,                                   // 29: TAX
     0xAD, TILE as u8, (TILE >> 8) as u8,        // 30: LDA TILE
-    0xDD, TILE_ATTRIBUTES_TS0 as u8,
-          (TILE_ATTRIBUTES_TS0 >> 8) as u8,       // 33: CMP Tile_Attributes_TS0,X
+    0x20, ML_RANGE_CPU as u8,
+          (ML_RANGE_CPU >> 8) as u8,              // 33: JSR ML_RANGE   ; the reload's own range test
     0x60,                                   // 36: RTS         ; carry IS the answer
     0x38,                                   // 37: SEC         ; yes
     0x60,                                   // 38: RTS
@@ -1341,6 +1352,17 @@ mod tests {
     /// both are reachable. Its own fixture puts PRG011 there instead and drives
     /// it properly — see `a_beaten_map_object_survives_a_round_trip`.
     fn cpu_with_routines(rom: &Rom) -> CPU<Memory, Ricoh2a03> {
+        // This CPU stands in for a *finished* ROM, so it has to carry the writes
+        // a finished ROM carries. `IS_COMPLETABLE` scans `Map_Removable_Tiles`
+        // at the address `lock_keys` relocates it to, and a vanilla ROM has
+        // nothing there — the scan would match no obstacle and the stencil would
+        // silently come back short. Idempotent, so the randomized arms below are
+        // unaffected.
+        let mut owned = rom.clone();
+        let rows = super::super::lock_keys::removable_rows(&owned);
+        super::super::lock_keys::relocate_removable_tables(&mut owned, &rows);
+        let rom = &owned;
+
         let mut mem = Memory::new();
         mem.set_bytes(MASK_BUILD_CPU, &MASK_BUILD);
         mem.set_bytes(IS_COMPLETABLE_CPU, &IS_COMPLETABLE);
@@ -1373,6 +1395,58 @@ mod tests {
         call_routine(cpu, MASK_BUILD_CPU, "MASK_BUILD");
         let cols = WORLD_COLS[world] as u16;
         (0..cols).map(|i| cpu.memory.get_byte(MASK_SCRATCH + i)).collect()
+    }
+
+    /// **The other equivalence test, and the stricter one.** `mask_build_matches_rust`
+    /// below compares the two implementations over maps the randomizer produces,
+    /// which only ever exercises the ~40 tile bytes those maps contain. This runs
+    /// `IS_COMPLETABLE` on the CPU for **every** byte, against
+    /// [`is_completion_unsafe`].
+    ///
+    /// That matters now that the M/L test is a window rather than a threshold:
+    /// the tiles the window newly *excludes* are exactly the ones no map places,
+    /// so a disagreement about them is invisible to any test driven by real
+    /// grids — right up until an obstacle variant is defined there.
+    #[test]
+    fn is_completable_matches_rust_for_every_tile() {
+        let Ok(bytes) = std::fs::read(ROM_PATH) else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let rom = Rom::from_bytes(&bytes).expect("vanilla ROM parses");
+        let mut cpu = cpu_with_routines(&rom);
+
+        // The obstacle table is per-map, so the two are not equal over all 256
+        // bytes and should not be: Rust answers for the whole *vocabulary*
+        // because the builder asks before anything is stamped, while the ROM
+        // carries rows only for obstacles this map actually wears. The two
+        // claims that matter are both directional.
+        let table: Vec<u8> = super::super::lock_keys::removable_rows(&rom)
+            .into_iter()
+            .map(|(obstacle, _)| obstacle)
+            .collect();
+
+        for tile in 0..=255u8 {
+            cpu.registers.accumulator = tile;
+            call_routine(&mut cpu, IS_COMPLETABLE_CPU, "IS_COMPLETABLE");
+            let on_cpu = cpu.registers.status.contains(mos6502::registers::Status::PS_CARRY);
+            let in_rust = is_completion_unsafe(tile);
+
+            // **Never a false positive.** A tile the console treats as
+            // completable but Rust does not is a cell the builder thought safe
+            // and the engine will act on — which is how a row 7/8 collision
+            // gets shipped.
+            assert!(
+                !(on_cpu && !in_rust),
+                "tile {tile:#04X}: 6502 says completable, Rust does not"
+            );
+
+            // And for anything with a row in this ROM's table, exact agreement.
+            if table.contains(&tile) {
+                assert!(on_cpu, "tile {tile:#04X} has a table row but the 6502 says no");
+                assert!(in_rust, "tile {tile:#04X} has a table row but Rust says no");
+            }
+        }
     }
 
     /// **The equivalence test.** The 6502 routine and [`world_mask`] must agree

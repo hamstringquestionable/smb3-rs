@@ -150,7 +150,14 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
     fs(0x33FF0, 32, &["title_screen"], "title menu B-to-mute toggle (32 reserved, 22 used)"),
     // PRG026 (file 0x34010, CPU $A000–$BFFF)
     fs(0x35572, 13, &["mystery_anchor"], "item redirect trampoline"),
-    fs(0x3557F, 50, &["hammer_breaks_tiles"], "hammer_locks: tile check subroutine + tables"),
+    fs(0x3557F, 50, &["hammer_breaks_tiles"], "hammer_locks: tile check subroutine (32 used)"),
+    fs(
+        0x3569D,
+        96,
+        &["hammer_breaks_tiles"],
+        "hammer_locks: breakable / replacement / animation tables, three per entry \
+         (96 reserved, up to 72 used)",
+    ),
     fs(0x355B1, 12, &["anchor_visuals"], "items-vs-cards index guard trampoline"),
     fs(
         0x355BD,
@@ -185,6 +192,20 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         128,
         &["wand_gate"],
         "world-maze: the wand gate's opener, two entry points (128 reserved, 29 used)",
+    ),
+    fs(
+        0x19EC0,
+        64,
+        &["lock_keys"],
+        "Map_Removable_Tiles / Map_RemoveTo_Tiles, relocated so they can grow \
+         (64 reserved = 32 entries per table, 56 used — 24 entries in each half, \
+         spanning the stride between them)",
+    ),
+    fs(
+        0x19F00,
+        32,
+        &["lock_keys"],
+        "ml_range: the reload's M/L test as a per-page range (32 reserved, 15 used)",
     ),
     fs(
         0x1566C,
@@ -296,7 +317,12 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         &["world_travel"],
         "world-maze: whistle fast travel to the next visited world (128 reserved, 34 used)",
     ),
-    fs(0x17F7B, 48, &["lock_keys"], "removable-tile + CHR-quadrant mirror of PRG012"),
+    fs(
+        0x17F7B,
+        144,
+        &["lock_keys"],
+        "removable-tile + CHR-quadrant mirror of PRG012 (24 entries x 6 bytes; the run holds 149)",
+    ),
     // PRG001 (file 0x02010, CPU $A000–$BFFF)
     fs(0x0382A, 23, &["koopalings"], "koopa_hits: subroutine + defeat JMP + threshold table"),
     fs(0x03841, 13, &["koopalings"], "koopa_collision_guard: skip collision bitmap during invuln"),
@@ -456,6 +482,49 @@ pub(crate) const FS_MAZE_WAND_GATE: usize = 0x19E40;
 /// is always mapped — the airship path runs there and `FS_WORLD_ORDER` next
 /// door is 28/28 full, so this needs its own row.
 pub(crate) const FS_MAZE_WAND_COUNT: usize = 0x3DFA0;
+
+/// `Map_Removable_Tiles` / `Map_RemoveTo_Tiles`, relocated out of their vanilla
+/// home so they can grow. PRG012, CPU `$BEB0`, in the tail of the same
+/// `$BDC0-$BFFF` gap [`FS_MAZE_WAND_GATE`] records the unreferenced check for.
+///
+/// **The vanilla tables cannot be extended in place.** `$A437` (removable, 8),
+/// `$A43F` (remove-to, 8) and `$A447` (`Map_Completable_Tiles`, 5) are
+/// contiguous, so a ninth removable entry would land on the remove-to table's
+/// first byte. Relocating is cheap because only two instructions in the ROM name
+/// the pair — `prg012.asm:361` and `:368`, whose operands this row's writer
+/// patches — plus the `LDX #` at file `0x1855A` that sizes the scan. The
+/// fortress FX never reads them at all: it reads [`FS_LOCK_MIRROR`], which
+/// `lock_keys::mirror_bytes` rebuilds from whatever these tables hold.
+///
+/// Two parallel tables of [`REMOVABLE_STRIDE`] entries: removable at `+0`,
+/// remove-to at `+REMOVABLE_STRIDE`. 64 reserved, 16 used.
+pub(crate) const FS_MAP_REMOVABLE: usize = 0x19EC0;
+
+/// The M/L-range helper: `Map_Reload_with_Completions`' "is this completed tile
+/// flipped to a Mario/Luigi marker" test, turned from a per-page *threshold*
+/// into a per-page *range*. PRG012, CPU `$BEF0`, immediately after
+/// [`FS_MAP_REMOVABLE`] in the same checked gap — and PRG012 is what both
+/// callers already require at `$A000`.
+///
+/// **Why a range.** `Tile_Attributes_TS0` says "at or above this, flip it", and
+/// every undefined metatile index in the ROM is above one — which is exactly why
+/// those ranges were free. Bounding the top of each page's window releases the
+/// undefined tail to the *obstacle* role: such a tile falls through to the
+/// removable scan instead of becoming an M/L panel.
+///
+/// It changes only that one test. The `+4` row of the same table — enterable,
+/// and whether a clear FX plays — is read from the RAM copy at `$7E98` by four
+/// other sites and is untouched, so level entry cannot be affected.
+///
+/// 32 reserved, 15 used (11 code + a 4-byte bound table).
+pub(crate) const FS_ML_RANGE: usize = 0x19F00;
+
+/// Entries reserved in each half of [`FS_MAP_REMOVABLE`].
+///
+/// Fixed rather than packed tight, so adding an obstacle variant is a byte
+/// write and a count bump instead of a relocation of the second table. Vanilla
+/// fills 8 of the 32.
+pub(crate) const REMOVABLE_STRIDE: usize = 32;
 
 /// The removable-tile and CHR-quadrant mirror of PRG012, which is not banked in
 /// during map play. PRG011, CPU `$BF6B`, immediately after [`FS_MAZE_TRAVEL`] in
@@ -639,6 +708,21 @@ pub(crate) const FS_MARCH_VETO: usize = 0x17D70; // 107 bytes (CPU $BD60)
 pub(crate) const FS_MYSTERY_ANCHOR: usize = 0x35572; // 13 bytes
 
 pub(crate) const FS_HAMMER_LOCKS: usize = 0x3557F; // 50 bytes
+
+/// The hammer check's three parallel tables — breakable tile, what it becomes,
+/// which break animation — sited apart from the routine that reads them.
+///
+/// **They had to move out.** They used to sit immediately after the 32 bytes of
+/// code inside [`FS_HAMMER_LOCKS`], which held six entries and no more, and
+/// `FS_ANCHOR_VISUALS` starts at the next byte so the allocation cannot grow.
+/// The tables are addressed by absolute operands the routine computes, so they
+/// are free to live anywhere in PRG026; the code is the origin-locked half and
+/// stays where it is.
+///
+/// Sized for the widest table a map can need — the same bound
+/// `lock_keys::removable_rows` proves, since a hammer breaks the same obstacles
+/// the fortresses do. Same `$FF` run as the three allocations before it.
+pub(crate) const FS_HAMMER_TABLES: usize = 0x3569D;
 
 pub(crate) const FS_ANCHOR_ITEM_GUARD: usize = 0x355B1; // 12 bytes (CPU $B5A1)
 
@@ -1204,6 +1288,8 @@ mod free_space_tests {
             (FS_NEW_GAME_INIT, "FS_NEW_GAME_INIT"),
             (FS_SEED_STAMP, "FS_SEED_STAMP"),
             (FS_MAZE_WAND_GATE, "FS_MAZE_WAND_GATE"),
+            (FS_MAP_REMOVABLE, "FS_MAP_REMOVABLE"),
+            (FS_ML_RANGE, "FS_ML_RANGE"),
             (FS_MAZE_WAND_COUNT, "FS_MAZE_WAND_COUNT"),
             (FS_RESTORE_ARRIVAL, "FS_RESTORE_ARRIVAL"),
             (FS_PORTAL_ARRIVAL, "FS_PORTAL_ARRIVAL"),

@@ -21,10 +21,6 @@ use super::super::rom_data::{self, PRG012_FILE_BASE, TELEPAD_QUADRANTS, TILE_TEL
 use super::super::world_persist::Telepad;
 use super::GlobalState;
 
-/// The map object a lock hint wears. The HELP bubble: static, non-marching,
-/// entered by nothing, and present in every world already.
-const MAPOBJ_HINT: u8 = 0x01;
-
 /// Fortress wearing the alternate colour: the lock it opens is in another
 /// world. `Map_Removable_Tiles` turns it into rubble `$E3`, same as the
 /// default's `$60`.
@@ -177,83 +173,6 @@ pub(crate) fn stamp_fort_tiles(rom: &mut Rom, state: &GlobalState) {
         };
         rom.write_byte(offset, tile);
     }
-}
-
-/// Park a hint sprite over every lock whose fortress is in the same world.
-///
-/// One bit, and deliberately only one: *is the key here or not*. Naming the
-/// world would need a per-object tile, and the engine's draw path is ID-driven
-/// (`LDA MapObject_Pat1-3,X`, X from the object ID), so a digit means hooking
-/// the sprite draw at `$B64C` to override `Sprite_RAM` mid-render — a patch
-/// rather than a table write. The bit is what removes the wasted search; the
-/// digit only narrows a search the player was going to make anyway.
-///
-/// # Why a map object and not a tile
-///
-/// A tile variant would need a `Map_Removable_Tiles` entry, and that table has
-/// eight, both tables are adjacent so the first cannot grow without moving the
-/// second, and the loop bound is a baked `LDX #$07` — plus our own PRG011
-/// mirror. A map object needs none of that; it needs a free slot.
-///
-/// # The slots
-///
-/// Nine per world, loaded from ROM by `Map_Init`. Slots 0 and 1 look reserved
-/// and are not: `autoscroll::disable_autoscroll` repoints every airship entry
-/// away from the Toad-and-King scene, so the HELP token is never read and the
-/// airship is never written into slot 1. That is two slots per world, and it is
-/// what makes World 8 — four locks, most of them foreign, and a map already
-/// carrying two tanks, a battleship and an airship — affordable at all.
-///
-/// # Marking the LOCAL ones, and why that way round
-///
-/// A sprite means **the fortress that opens this lock is in this world**;
-/// absence means it is somewhere else. Absence carries half the message, so the
-/// marked set has to be the one that always fits — and it is the smaller one by
-/// a wide margin. The constructive fill makes ~76% of locks cross-world, so
-/// local locks average **0.4 per world** (1.0 in World 8) against ~1.4 foreign.
-/// Measured over 30 seeds, marking the local ones is never short of slots;
-/// marking the foreign ones falls short in 26 world-seeds of 240.
-///
-/// It is also the better signal of the two. A marked lock says "you can solve
-/// this one here", which is something to act on; an unmarked one says "not
-/// here", which is the common case and the one worth not wasting time on.
-///
-/// A local lock that went unmarked for want of a slot would be
-/// indistinguishable from a foreign one, so absence would mean two things at
-/// once — `lock_hint_slots_are_never_short` is what keeps that honest.
-///
-/// # What the sprite is allowed to be
-///
-/// Static, non-marching, non-interactive. HELP is the model and, for now, the
-/// implementation: it is drawn, it never moves, and nothing enters it.
-pub(crate) fn stamp_lock_hints(rom: &mut Rom, state: &GlobalState) -> usize {
-    let mut placed = 0;
-    for world in 0..state.worlds.len() {
-        // Slots this world can spare, lowest first. Slot 0 holds the HELP
-        // bubble, which is decoration now, so it counts as spare.
-        let mut spare: Vec<usize> = (0..9)
-            .filter(|&slot| {
-                let id = rom.read_byte(rom_data::map_obj_slot_offset(
-                    rom,
-                    rom_data::MAP_OBJ_IDS_MASTER,
-                    world,
-                    slot,
-                ));
-                id == 0 || id == MAPOBJ_HINT
-            })
-            .collect();
-
-        for lock in state.locks.iter().filter(|l| l.world == world) {
-            let Some(fort) = lock.fort else { continue };
-            if fort.world != lock.world {
-                continue; // key is elsewhere; absence says so
-            }
-            let Some(slot) = spare.pop() else { break };
-            rom_data::write_map_sprite(rom, world, slot, lock.pos.0, lock.pos.1, MAPOBJ_HINT);
-            placed += 1;
-        }
-    }
-    placed
 }
 
 /// **Every** lock in the maze, paired with the fortress that opens it, in the

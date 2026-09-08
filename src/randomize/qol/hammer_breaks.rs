@@ -1,6 +1,7 @@
 //! Hammer item also breaks fortress locks / water-gap bridges.
 
-use crate::randomize::rom_data::{self, FS_HAMMER_LOCKS, prg_bank_file_to_cpu};
+use crate::randomize::lock_keys;
+use crate::randomize::rom_data::{self, FS_HAMMER_LOCKS, FS_HAMMER_TABLES, prg_bank_file_to_cpu};
 use crate::rom::Rom;
 
 // Make the hammer item also break fortress lock tiles and/or water-gap
@@ -9,10 +10,11 @@ use crate::rom::Rom;
 // The vanilla hammer routine at PRG026 (file 0x346D5, CPU $A6C5) uses a
 // 7-byte range check: `SEC; SBC #$51; CMP #$02; BCC .found` which only
 // matches rock tiles $51–$52. We replace this with a JSR to a table-driven
-// subroutine in PRG026 free space whose tables are built from the flags:
-// the 2 rock tiles are always present, `locks` adds the 3 fortress lock
-// tiles, and `bridges` adds the water gap lock (0x9D → 0xB3) — so the
-// tables hold 2–6 entries.
+// subroutine in PRG026 free space whose tables are built per run: the 2 rock
+// tiles are always present, `locks` adds the 3 fortress lock tiles plus every
+// numbered lock standing on the finished map, and `bridges` adds the water gap
+// lock (0x9D → 0xB3). A vanilla-shaped map gives 2–6 entries; a world-maze map
+// can reach 23, which is why the tables have their own allocation.
 //
 // Patch site 1 — Range check (file 0x346D5, 7 bytes):
 //   `SEC; SBC #$51; CMP #$02; BCC .found` →
@@ -21,9 +23,10 @@ use crate::rom::Rom;
 // Patch site 2 — Replacement tile load (file 0x346E9, 3 bytes):
 //   `LDA $A6B1,X` → `LDA $7EB6` (load from scratch RAM set by subroutine)
 //
-// New subroutine at FS_HAMMER_LOCKS (0x3557F, CPU $B56F), up to 50 bytes:
+// New subroutine at FS_HAMMER_LOCKS (0x3557F, CPU $B56F), 32 bytes:
 //   Table-driven check of breakable tiles, stores replacement tile in $7EB6,
 //   saves/restores X via $7EB7, returns carry clear if breakable.
+//   Its three tables live apart, at FS_HAMMER_TABLES.
 
 /// File offset of the 7-byte range check in the hammer routine ($A6C5).
 const HAMMER_RANGE_CHECK: usize = 0x346D5;
@@ -31,6 +34,35 @@ const HAMMER_RANGE_CHECK: usize = 0x346D5;
 const HAMMER_REPLACE_LOAD: usize = 0x346E8;
 /// CPU address of the subroutine in PRG026 ($A000 window): $B56F.
 const HAMMER_LOCKS_SUB_CPU: u16 = prg_bank_file_to_cpu(26, FS_HAMMER_LOCKS);
+/// Bytes reserved for the three parallel tables; must match the registry row.
+const HAMMER_TABLES_RESERVED: usize = 96;
+
+/// Append every numbered lock standing on the finished map, of one kind.
+///
+/// **Or the hammer refuses exactly the locks that carry a hint.** Those tiles
+/// are `lock_keys`' invention rather than vanilla's, so `LOCK_TILES` does not
+/// name them; they are read off the map instead, the same way the removable
+/// table is. Safe because this runs long after `lock_keys::apply`, which is what
+/// puts them there.
+fn push_numbered(
+    rom: &Rom,
+    water: bool,
+    breakable: &mut Vec<u8>,
+    replace: &mut Vec<u8>,
+    tilefix: &mut Vec<u8>,
+) {
+    let present = lock_keys::tiles_on_map(rom);
+    for tile in 0..=255u8 {
+        if !present[tile as usize] || lock_keys::numbered_lock_is_water(tile) != water {
+            continue;
+        }
+        if let Some((revealed, anim)) = lock_keys::numbered_lock(tile) {
+            breakable.push(tile);
+            replace.push(revealed);
+            tilefix.push(anim);
+        }
+    }
+}
 
 pub fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool) {
     // Build tables dynamically based on which flags are set.
@@ -49,6 +81,8 @@ pub fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool) {
             replace.push(rom_data::path_for_gap_tile(lock).expect("a lock tile always inverts"));
         }
         tilefix.extend_from_slice(&[0x01, 0x00, 0x00]);
+
+        push_numbered(rom, false, &mut breakable, &mut replace, &mut tilefix);
     }
     if bridges {
         breakable.push(rom_data::WATER_GAP_TILE);
@@ -57,13 +91,28 @@ pub fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool) {
                 .expect("the water gap always inverts"),
         );
         tilefix.push(0x00);
+
+        // A numbered water gap is still a water gap: it belongs to this switch,
+        // not the lock one, or turning locks on would quietly start breaking
+        // bridges.
+        push_numbered(rom, true, &mut breakable, &mut replace, &mut tilefix);
     }
 
     let table_len = breakable.len();
     let ldx_imm = (table_len - 1) as u8;
 
-    // Table CPU addresses start right after the 32-byte code block.
-    let tbl_base = HAMMER_LOCKS_SUB_CPU + 32;
+    // The tables live in their own allocation, not behind the code. They used to
+    // follow the 32 code bytes inside `FS_HAMMER_LOCKS`, which capped them at
+    // six entries — and the next allocation begins at the byte after, so that
+    // block cannot grow. The routine reaches them through absolute operands, so
+    // only these three addresses change.
+    assert!(
+        table_len * 3 <= HAMMER_TABLES_RESERVED,
+        "{table_len} breakable tiles need {} bytes of table, and \
+         FS_HAMMER_TABLES reserves {HAMMER_TABLES_RESERVED}",
+        table_len * 3
+    );
+    let tbl_base = prg_bank_file_to_cpu(26, FS_HAMMER_TABLES);
     let breakable_cpu = tbl_base;
     let replace_cpu = tbl_base + table_len as u16;
     let tilefix_cpu = tbl_base + (table_len * 2) as u16;
@@ -104,7 +153,7 @@ pub fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool) {
     //
     // Code: 32 bytes, tables: 3 × table_len bytes.
     #[rustfmt::skip]
-    let mut subroutine: Vec<u8> = vec![
+    let subroutine: Vec<u8> = vec![
         // HammerCheckTile:
         0x8E, 0xB7, 0x7E,                                      // STX $7EB7         ; save original X
         0xA2, ldx_imm,                                          // LDX #N            ; N entries (index N..0)
@@ -124,10 +173,12 @@ pub fn hammer_breaks_tiles(rom: &mut Rom, locks: bool, bridges: bool) {
         0x18,                                                   // CLC               ; found
         0x60,                                                   // RTS
     ];
-    subroutine.extend_from_slice(&breakable);
-    subroutine.extend_from_slice(&replace);
-    subroutine.extend_from_slice(&tilefix);
     rom.write_range(FS_HAMMER_LOCKS, &subroutine);
+
+    let mut tables = breakable;
+    tables.extend_from_slice(&replace);
+    tables.extend_from_slice(&tilefix);
+    rom.write_range(FS_HAMMER_TABLES, &tables);
 }
 
 #[cfg(test)]
@@ -148,8 +199,11 @@ mod tests {
         let mut rom = crate::rom::Rom::from_bytes_lax(&bytes, true).unwrap();
         hammer_breaks_tiles(&mut rom, locks, bridges);
 
+        // A vanilla ROM carries no numbered locks, so the table is the classic
+        // rocks/locks/bridge shape — which is exactly what makes it a fair pin
+        // for the literals these replaced.
         let n = 2 + if locks { 3 } else { 0 } + usize::from(bridges);
-        let base = FS_HAMMER_LOCKS + 32;
+        let base = FS_HAMMER_TABLES;
         let read = |i: usize| rom.read_range(base + i * n, n).to_vec();
         (read(0), read(1), read(2))
     }
@@ -185,6 +239,71 @@ mod tests {
         assert_eq!(breakable, vec![0x51, 0x52, 0x54, 0x56, 0xE4, 0x9D]);
         assert_eq!(replace, vec![0x45, 0x46, 0x46, 0x45, 0xDA, 0xB3]);
         assert_eq!(tilefix, vec![0x00, 0x01, 0x01, 0x00, 0x00, 0x00]);
+    }
+
+    /// **Every numbered lock on the map is breakable.**
+    ///
+    /// The regression this exists for: the numbered tiles are `lock_keys`'
+    /// invention, so `rom_data::LOCK_TILES` does not name them, and a table
+    /// built only from that list left the hammer refusing precisely the locks
+    /// that carry a hint. Nothing else would have caught it — the plain-lock
+    /// tests above pass on a vanilla ROM, which has no numbered locks in it.
+    #[test]
+    fn the_hammer_breaks_numbered_locks_too() {
+        let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+
+        let build = |locks: crate::Tri, bridges: crate::Tri| {
+            let options = crate::Options {
+                world_maze: true,
+                hammer_breaks_locks: locks,
+                hammer_breaks_bridges: bridges,
+                palettes: false,
+                palette_themed: false,
+                ..Default::default()
+            };
+            crate::randomize_rom_with_overworld_capture(&bytes, 5, &options, None)
+                .expect("a maze seed must build")
+                .0
+        };
+        let breakable = |rom: &crate::rom::Rom| {
+            let n = rom.read_byte(FS_HAMMER_LOCKS + 4) as usize + 1; // the LDX # immediate
+            rom.read_range(FS_HAMMER_TABLES, n).to_vec()
+        };
+
+        let rom = build(crate::Tri::On, crate::Tri::Off);
+        let present = lock_keys::tiles_on_map(&rom);
+        let numbered: Vec<u8> = (0..=255u8)
+            .filter(|&t| present[t as usize] && lock_keys::numbered_lock(t).is_some())
+            .collect();
+        assert!(!numbered.is_empty(), "seed 5 has no numbered locks, so this proves nothing");
+        assert!(
+            numbered.iter().any(|&t| lock_keys::numbered_lock_is_water(t)),
+            "seed 5 has no numbered water gap, so the split below proves nothing"
+        );
+
+        // Locks on, bridges off: the path locks break, the water gaps do not.
+        // Giving a bridge gap a digit must not move it onto the other switch.
+        let table = breakable(&rom);
+        for &tile in &numbered {
+            let water = lock_keys::numbered_lock_is_water(tile);
+            assert_eq!(
+                table.contains(&tile),
+                !water,
+                "numbered {} {tile:#04X}: breakable={}, expected {}",
+                if water { "water gap" } else { "lock" },
+                table.contains(&tile),
+                !water
+            );
+        }
+
+        // Both on: everything numbered breaks.
+        let table = breakable(&build(crate::Tri::On, crate::Tri::On));
+        for &tile in &numbered {
+            assert!(table.contains(&tile), "{tile:#04X} unbreakable with both switches on");
+        }
     }
 
     /// Bridges without locks must not shift the lock entries in — the tables are

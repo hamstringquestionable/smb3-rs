@@ -418,11 +418,6 @@ fn randomize_inner(
         // grids.
         randomize::maze::writer::open_uninstalled_locks(rom, &state);
         randomize::maze::writer::stamp_pad_tiles(rom, &state);
-        // A hint sprite over every lock whose key is in another world; absence
-        // says the key is here. Map objects are not map cells, so this is
-        // outside the grid-writer ordering above — but it must follow
-        // `write_overworld`, which is what fills the slots it counts as spare.
-        randomize::maze::writer::stamp_lock_hints(rom, &state);
         // And the same question from the fortress's end: which of the three
         // fortress tiles it wears says where the lock it opens is.
         randomize::maze::writer::stamp_fort_tiles(rom, &state);
@@ -445,6 +440,14 @@ fn randomize_inner(
     // decided when the mode is on. Away entries additionally need
     // `world_persist` to have installed the packed store already, since their
     // bit is looked up through it.
+    //
+    // **And after `world_order`, which is easy to miss.** A numbered lock shows
+    // the world number the *player* sees, read from the display table that
+    // module writes. Running before it would find the table unwritten, fall
+    // through to the vanilla identity, and stamp numbers that appear nowhere in
+    // the game — silently, since the tiles are still well-formed and the locks
+    // still open. `lock_keys::the_digit_is_the_world_the_player_sees` asserts
+    // the table is a permutation, which is what catches the wrong order.
     rom.set_tag("lock_keys");
     let lock_entries = maze_lock_keys.unwrap_or_else(|| lock_pairing.lock_entries(&build));
     randomize::lock_keys::apply(rom, &lock_entries);
