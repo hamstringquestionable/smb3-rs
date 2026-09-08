@@ -650,11 +650,29 @@ pub struct Options {
     /// Hold the harshest levels out of the shuffle pool, refilling it with
     /// beta stages (when they are on) and then with duplicates of the levels
     /// that remain. See `FRIENDLIER_BLOCKED_LEVELS` for the list.
+    ///
+    /// It has a fortress half too, `FRIENDLIER_BLOCKED_FORTS`: 7F2 and 8F1 are
+    /// held out of the fortress deck the same way, so they do not appear on the
+    /// map at all, and their tiles take a second visit to a fortress that
+    /// stayed.
     #[serde(default)]
     pub friendlier_levels: bool,
     /// How many times one level may appear on the map. See [`DejaVuMode`].
     #[serde(default)]
     pub deja_vu: DejaVuMode,
+    /// Deja Vu counts fortresses too. A modifier on [`Options::deja_vu`]
+    /// rather than an option of its own: it is ignored when that is off, and
+    /// takes its mode from it when it is on.
+    ///
+    /// It redeals the fortress deck exactly as `deja_vu` redeals the level
+    /// deck — `Double` builds a bag of two copies of each and deals it without
+    /// replacement, `Wild` draws with replacement — so a fortress can take two
+    /// tiles, or none. 1-F is the one card that is seeded into every deal and
+    /// never a source: it holds the warp whistle, and it is the one fortress
+    /// whose secret exit skips Boom-Boom, so a copy could land on a lock it can
+    /// never open.
+    #[serde(default)]
+    pub deja_vu_forts: bool,
     /// Which level-wide chasers may be seeded into a fraction of real levels
     /// (CHR-compatible). Empty = off. See [`WildChaser`].
     #[serde(default)]
@@ -740,6 +758,7 @@ impl Default for Options {
             limit_hazards: HazardLimit::Off,
             friendlier_levels: false,
             deja_vu: DejaVuMode::Off,
+            deja_vu_forts: false,
             wild_injections: Vec::new(),
             starting_lives: default_starting_lives(),
             starting_items: Vec::new(),

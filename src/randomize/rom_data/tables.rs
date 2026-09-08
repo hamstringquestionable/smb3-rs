@@ -488,25 +488,33 @@ pub(crate) fn is_friendlier_blocked(name: &str) -> bool {
     FRIENDLIER_BLOCKED_LEVELS.contains(&name)
 }
 
-/// Fortresses **Friendlier Levels** tries to make optional, in the order it
-/// tries. Keyed by `NodeCatalog` name — note forts are named `7F2` / `8F1`,
-/// with no dash, unlike the levels above.
+/// Fortresses held out of the deck by the **Friendlier Levels** option, the
+/// exact counterpart of [`FRIENDLIER_BLOCKED_LEVELS`] above. Keyed by
+/// `NodeCatalog` name — note forts are named `7F2` / `8F1`, with no dash,
+/// unlike the levels.
 ///
-/// A fortress can't be held out of its pool the way a level can: every fort
-/// has a lock (asserted in `overworld_build::tests`) and the full roster is a
-/// redeal-screened invariant, so removals never ship. Instead these are parked
-/// on a slot whose lock is `secret_exit_safe` — one the world stays completable
-/// without — which leaves the fort on the map and beatable but no longer on the
-/// critical path.
+/// They do not appear on the map at all. The tiles that would have been theirs
+/// take a second visit to a fortress that stayed, which is the same bargain the
+/// level half makes and is why removing them is safe: the deck is drawn with a
+/// bare `expect` against however many fortress slots the builder placed, so a
+/// card taken out without a duplicate to replace it would panic.
 ///
-/// **Ordered, and the order is the whole point.** 1-F claims a safe slot first
-/// and unconditionally: its secret exit permanently prevents the lock FX, so a
-/// non-safe slot is a softlock rather than an inconvenience. These two are only
-/// preferences — the fort works normally, and a player who skips it can always
-/// come back — so they take what is left, in this order. Measured over 300
-/// seeds, 99% have the three safe slots this wants; in the rest the tail of the
-/// ladder simply stays required.
-pub(crate) const FRIENDLIER_OPTIONAL_FORTS: &[&str] = &["7F2", "8F1"];
+/// **1-F is not in here and could not be.** It hands over the warp whistle, and
+/// its secret exit permanently prevents the lock FX, so it has to be dealt
+/// exactly once and onto a `secret_exit_safe` slot — a correctness requirement,
+/// where these two are a preference. `assign_pool` seeds it into the deck ahead
+/// of every redeal for that reason.
+///
+/// This used to be `FRIENDLIER_OPTIONAL_FORTS`, a ladder that *parked* these
+/// two on the safe slots 1-F did not claim. That was a workaround for not being
+/// able to remove a fortress at all, and it is gone: the fort deck is now
+/// redealt like the level deck, so removal is expressible.
+pub(crate) const FRIENDLIER_BLOCKED_FORTS: &[&str] = &["7F2", "8F1"];
+
+/// True if `name` is in [`FRIENDLIER_BLOCKED_FORTS`].
+pub(crate) fn is_friendlier_blocked_fort(name: &str) -> bool {
+    FRIENDLIER_BLOCKED_FORTS.contains(&name)
+}
 
 /// True if the given vanilla `(world_idx, entry_idx)` is in [`CHEST_LEVELS`].
 pub(crate) fn is_chest_level(world_idx: usize, entry_idx: usize) -> bool {

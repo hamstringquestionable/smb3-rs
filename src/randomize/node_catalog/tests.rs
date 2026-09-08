@@ -300,21 +300,21 @@ fn friendlier_blocklist_resolves() {
     }
 }
 
-/// Same guard as `friendlier_blocklist_resolves`, for the fortress ladder.
+/// Same guard as `friendlier_blocklist_resolves`, for the blocked forts.
 ///
 /// Worth its own test because the naming convention differs and that is the
 /// easy mistake: forts are `7F2` / `8F1` (from the ordinal suffix), with no
 /// dash, while levels are `7-8`. A misspelled entry never matches any pool
 /// member, so the fort silently stays required and nothing else complains.
 #[test]
-fn friendlier_optional_forts_resolve() {
+fn friendlier_blocked_forts_resolve() {
     let Some(rom) = load_rom() else {
-        eprintln!("reference ROM not present — skipping friendlier_optional_forts_resolve");
+        eprintln!("reference ROM not present — skipping friendlier_blocked_forts_resolve");
         return;
     };
     let catalog = NodeCatalog::build(&rom, false);
 
-    for &name in crate::randomize::rom_data::FRIENDLIER_OPTIONAL_FORTS {
+    for &name in crate::randomize::rom_data::FRIENDLIER_BLOCKED_FORTS {
         let hits = catalog
             .entries
             .iter()

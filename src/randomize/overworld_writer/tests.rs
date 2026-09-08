@@ -11,6 +11,31 @@ fn load_rom() -> Option<Rom> {
     Rom::from_bytes(&data).ok()
 }
 
+/// The ROM as the builder actually sees it in production.
+///
+/// `randomizer.rs` runs these QoL patches *before* the overworld builder, and
+/// they move map tiles — rocks off the pipe shortcuts, the W3 drawbridges, the
+/// always-on W8 screen-3 water page. A builder run against plain vanilla is
+/// therefore building a map no player ever gets, and it shows: on the unprepped
+/// ROM the builder places **14-17** fortress slots depending on the seed, and on
+/// the prepped one it places **17 every time**, which is what
+/// `redistribute_fortresses` deals.
+///
+/// `overworld_build::tests::load_rom` has always done this; this module's
+/// `load_rom` above never has. The fortress tests below use this one, because a
+/// census taken on a map the game does not produce is worth nothing. Fixing the
+/// rest of the module is a separate job — several tests here pin values
+/// measured against the unprepped map.
+fn load_prepped_rom() -> Option<Rom> {
+    let mut out = load_rom()?;
+    qol::fix_w3_drawbridges(&mut out);
+    qol::remove_rocks(&mut out);
+    qol::apply_w1_shortcut(&mut out, false);
+    qol::apply_w8_bridges(&mut out);
+    qol::fix_big_q_block_rooms(&mut out);
+    Some(out)
+}
+
 /// Standard test pickup: spade games + toad houses shuffled.
 fn standard_pickup(
     rom: &Rom,
@@ -349,7 +374,161 @@ fn test_deja_vu_repeats_levels() {
     }
 }
 
-/// The regular-level pool entries that hand out a one-off inventory item —
+/// The pool index of 1-F, the one fortress that holds a chest item.
+fn fort_1f_pool_idx(
+    catalog: &node_catalog::NodeCatalog,
+    pickup: &overworld_pickup::PickupResult,
+) -> usize {
+    let found: Vec<usize> = pickup
+        .pool
+        .iter()
+        .enumerate()
+        .filter(|(_, pe)| {
+            let ce = &catalog.entries[pe.catalog_idx];
+            matches!(ce.kind, NodeKind::Fortress)
+                && rom_data::is_chest_level(ce.world_idx, ce.entry_idx)
+        })
+        .map(|(pi, _)| pi)
+        .collect();
+    assert_eq!(found.len(), 1, "expected exactly one chest-holding fortress (1-F)");
+    found[0]
+}
+
+/// Deja Vu's fortress half, both modes and both Friendlier arms.
+///
+/// This is a **redeal**, the same one the level deck gets: the deck is rebuilt
+/// to exactly the number of fortress slots on the map, so a fortress the deal
+/// misses sits the seed out. Four things have to hold no matter which arm runs:
+///
+///  - Every fortress slot still gets a fortress. The draw is a bare `expect`,
+///    so a short deck is a panic rather than a gap.
+///  - 1-F is dealt exactly once — seeded into the deck ahead of the redeal and
+///    never a source. A second copy hands the warp whistle over twice, and its
+///    secret exit skips Boom-Boom, so a copy could land on a lock it can never
+///    open.
+///  - With Friendlier Levels on, the blocked pair is gone from every arm.
+///  - The mode does what it says: `Double` caps a fortress at two tiles, `Wild`
+///    does not.
+///
+/// The pairing itself is checked elsewhere — `lock_keys::assert_one_key_per_lock`
+/// is what says two tiles holding the same fortress still key two locks, and it
+/// holds because a key is a map position, not a level.
+#[test]
+fn test_deja_vu_repeats_fortresses() {
+    let rom = match load_prepped_rom() {
+        Some(r) => r,
+        None => return,
+    };
+    let catalog = node_catalog::NodeCatalog::build(&rom, false);
+    let pickup = standard_pickup(&rom, &catalog);
+    let fort_1f = fort_1f_pool_idx(&catalog, &pickup);
+
+    for mode in [DejaVuMode::Double, DejaVuMode::Wild] {
+        for friendlier in [false, true] {
+            // Wild only has to *allow* unbounded repeats, and a fort only
+            // sometimes sits out, so both are asserted over the seed range
+            // rather than per seed.
+            let mut max_copies = 0usize;
+            let mut ever_sat_out = false;
+
+            for seed in 0u64..16 {
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                let build = overworld_build::build(
+                    &rom,
+                    &OverworldData { pickup: &pickup, catalog: &catalog },
+                    &mut rng,
+                    standard_build_flags(),
+                );
+                let slots: usize = build
+                    .worlds
+                    .iter()
+                    .map(|w| {
+                        w.slots
+                            .iter()
+                            .filter(|s| s.kind == overworld_build::SlotKind::Fortress)
+                            .count()
+                    })
+                    .sum();
+
+                let assignments = assign_pool(
+                    &rom,
+                    &build,
+                    &OverworldData { pickup: &pickup, catalog: &catalog },
+                    &mut rng,
+                    WriteFlags {
+                        deja_vu: mode,
+                        deja_vu_forts: true,
+                        friendlier_levels: friendlier,
+                        ..Default::default()
+                    },
+                );
+                let placed: Vec<usize> = assignments
+                    .iter()
+                    .flat_map(|wa| wa.fortress.iter().map(|a| a.pool_idx))
+                    .collect();
+
+                assert_eq!(
+                    placed.len(),
+                    slots,
+                    "{mode:?} friendlier={friendlier} seed {seed}: {} forts for {slots} slots",
+                    placed.len(),
+                );
+                assert_eq!(
+                    slots,
+                    rom_data::FORTRESS_ENTRIES.len(),
+                    "{mode:?} friendlier={friendlier} seed {seed}: builder placed {slots} \
+                     fortress slots, not the full roster",
+                );
+
+                let mut seen: HashMap<usize, usize> = HashMap::new();
+                for &pi in &placed {
+                    *seen.entry(pi).or_insert(0) += 1;
+                }
+
+                assert_eq!(
+                    seen.get(&fort_1f).copied().unwrap_or(0),
+                    1,
+                    "{mode:?} friendlier={friendlier} seed {seed}: 1-F dealt {:?} times, not once",
+                    seen.get(&fort_1f),
+                );
+
+                for (&pi, &n) in &seen {
+                    let name = &catalog.entries[pickup.pool[pi].catalog_idx].name;
+                    if friendlier {
+                        assert!(
+                            !rom_data::is_friendlier_blocked_fort(name),
+                            "{mode:?} seed {seed}: blocked fort {name} was placed",
+                        );
+                    }
+                    if mode == DejaVuMode::Double {
+                        assert!(
+                            n <= 2,
+                            "{mode:?} friendlier={friendlier} seed {seed}: {name} dealt {n} times",
+                        );
+                    }
+                    max_copies = max_copies.max(n);
+                }
+
+                // A redeal deals `slots` cards from a deck of `slots` distinct
+                // forts (minus any the removal took), so fewer distinct forts
+                // than cards means somebody sat the seed out.
+                ever_sat_out |= seen.len() < placed.len();
+            }
+
+            assert!(
+                max_copies >= 2,
+                "{mode:?} friendlier={friendlier}: no fortress repeated across 16 seeds",
+            );
+            assert!(
+                ever_sat_out,
+                "{mode:?} friendlier={friendlier}: no fortress ever sat a seed out, \
+                 so this is not behaving like a redeal",
+            );
+        }
+    }
+}
+
+/// The regular-level pool entries that hand out a one-off inventory item —/// The regular-level pool entries that hand out a one-off inventory item —
 /// the chest levels and the W8 hand rooms. (1-F is a chest level too but is a
 /// fortress, so it never sits in the level pool.)
 fn level_pool_unique_items(
@@ -370,29 +549,32 @@ fn level_pool_unique_items(
         .collect()
 }
 
-/// Friendlier Levels' fortress half: 7F2 then 8F1 are parked on
-/// secret-exit-safe slots so their locks can stay shut, leaving them beatable
-/// but off the critical path.
+/// Friendlier Levels' fortress half: 7F2 and 8F1 are **not on the map at all**,
+/// and the tiles that would have been theirs take a second visit to a fortress
+/// that stayed.
 ///
-/// Two invariants, and between them they pin the whole degradation story:
+/// Three things, and the third is the one that used to be impossible:
 ///
-///  - Supply. 1-F takes a safe slot first and unconditionally (its secret exit
-///    makes a non-safe slot a softlock, not an inconvenience), so with `s` safe
-///    locks in the seed the ladder can place `min(2, s - 1)`. Asserting the
-///    exact count is what proves the ladder never steals 1-F's slot and never
-///    silently gives up while supply remains.
-///  - Order. 8F1 is only served once 7F2 is, so a short seed always costs the
-///    tail of the ladder rather than a random one of the two.
+///  - Neither blocked fort is dealt, on any seed.
+///  - Every fortress slot still gets a fortress. The deal is a bare `expect`
+///    against however many slots the builder placed, so a card removed without
+///    a duplicate to replace it is a panic, not a gap.
+///  - 1-F is dealt exactly once. It hands over the warp whistle and its secret
+///    exit skips Boom-Boom, so it can be neither duplicated nor dropped.
+///
+/// Deja Vu is off here, so the duplicates come from the mandatory top-up rather
+/// than from a redeal — `test_deja_vu_repeats_fortresses` covers that arm.
 #[test]
-fn test_friendlier_levels_fort_ladder() {
-    let rom = match load_rom() {
+fn test_friendlier_levels_blocks_forts() {
+    let rom = match load_prepped_rom() {
         Some(r) => r,
         None => return,
     };
     let catalog = node_catalog::NodeCatalog::build(&rom, false);
     let pickup = standard_pickup(&rom, &catalog);
+    let fort_1f = fort_1f_pool_idx(&catalog, &pickup);
 
-    let mut placed_hist = [0usize; 3];
+    let mut dupe_hist = [0usize; 3];
     for seed in 0u64..120 {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         let build = overworld_build::build(
@@ -401,19 +583,13 @@ fn test_friendlier_levels_fort_ladder() {
             &mut rng,
             standard_build_flags(),
         );
-
-        // Safe fort slots, as (world, section) — the same set assign_pool draws
-        // from. Every fort has a lock, so a fort NOT on one of these is
-        // required by construction.
-        let safe: HashSet<(usize, usize)> = (0..8)
-            .flat_map(|wi| {
-                build.worlds[wi]
-                    .locks
-                    .iter()
-                    .filter(|l| l.secret_exit_safe)
-                    .map(move |l| (wi, l.fort_section))
+        let slots: usize = build
+            .worlds
+            .iter()
+            .map(|w| {
+                w.slots.iter().filter(|s| s.kind == overworld_build::SlotKind::Fortress).count()
             })
-            .collect();
+            .sum();
 
         let assignments = assign_pool(
             &rom,
@@ -422,59 +598,61 @@ fn test_friendlier_levels_fort_ladder() {
             &mut rng,
             WriteFlags { friendlier_levels: true, ..Default::default() },
         );
+        let placed: Vec<usize> =
+            assignments.iter().flat_map(|wa| wa.fortress.iter().map(|a| a.pool_idx)).collect();
 
-        // Which of the ladder forts landed on a safe slot.
-        let mut on_safe: HashSet<&str> = HashSet::new();
-        for (wi, wa) in assignments.iter().enumerate() {
-            for a in &wa.fortress {
-                let name = &catalog.entries[pickup.pool[a.pool_idx].catalog_idx].name;
-                let Some(slot) = build.worlds[wi]
-                    .slots
-                    .iter()
-                    .find(|s| s.kind == overworld_build::SlotKind::Fortress && s.pos == a.pos)
-                else {
-                    continue;
-                };
-                if safe.contains(&(wi, slot.section))
-                    && rom_data::FRIENDLIER_OPTIONAL_FORTS.contains(&name.as_str())
-                {
-                    on_safe.insert(
-                        rom_data::FRIENDLIER_OPTIONAL_FORTS
-                            .iter()
-                            .find(|n| *n == name)
-                            .expect("just matched"),
-                    );
-                }
-            }
-        }
-
-        let expected = safe.len().saturating_sub(1).min(rom_data::FRIENDLIER_OPTIONAL_FORTS.len());
+        // Two separate claims. Every fortress slot got a fortress — and the
+        // builder placed the whole roster in the first place, which is what
+        // `redistribute_fortresses` deals (13 + World 8's 4) and what the
+        // prepped map reliably yields.
+        assert_eq!(placed.len(), slots, "seed {seed}: {} forts for {slots} slots", placed.len());
         assert_eq!(
-            on_safe.len(),
-            expected,
-            "seed {seed}: {} safe locks, so the ladder should place {expected}, placed {:?}",
-            safe.len(),
-            on_safe,
+            slots,
+            rom_data::FORTRESS_ENTRIES.len(),
+            "seed {seed}: builder placed {slots} fortress slots, not the full roster",
         );
 
-        // Ladder order: nothing is served before the entry ahead of it.
-        for pair in rom_data::FRIENDLIER_OPTIONAL_FORTS.windows(2) {
-            if on_safe.contains(pair[1]) {
-                assert!(
-                    on_safe.contains(pair[0]),
-                    "seed {seed}: {} got a safe slot before {}",
-                    pair[1],
-                    pair[0],
-                );
-            }
+        let mut seen: HashMap<usize, usize> = HashMap::new();
+        for &pi in &placed {
+            let name = &catalog.entries[pickup.pool[pi].catalog_idx].name;
+            assert!(
+                !rom_data::is_friendlier_blocked_fort(name),
+                "seed {seed}: blocked fort {name} was placed",
+            );
+            *seen.entry(pi).or_insert(0) += 1;
         }
 
-        placed_hist[on_safe.len()] += 1;
+        assert_eq!(
+            seen.get(&fort_1f).copied().unwrap_or(0),
+            1,
+            "seed {seed}: 1-F was dealt {:?} times, not once",
+            seen.get(&fort_1f),
+        );
+
+        // The top-up draws without replacement, so nothing reaches a third
+        // tile, and it only makes up the shortfall the removal created.
+        let dupes = placed.len() - seen.len();
+        for (&pi, &n) in &seen {
+            assert!(
+                n <= 2,
+                "seed {seed}: {} dealt {n} times",
+                catalog.entries[pickup.pool[pi].catalog_idx].name,
+            );
+        }
+        // Exactly the removal's worth, not merely at most: the roster is full
+        // and two cards came out, so two tiles must take a second visit. An
+        // inequality here would have hidden the builder dropping a fort.
+        assert_eq!(
+            dupes,
+            rom_data::FRIENDLIER_BLOCKED_FORTS.len(),
+            "seed {seed}: {dupes} duplicate forts, expected one per removed fort",
+        );
+        dupe_hist[dupes] += 1;
     }
 
     eprintln!(
-        "fort ladder over 120 seeds: both optional {}, one {}, neither {}",
-        placed_hist[2], placed_hist[1], placed_hist[0],
+        "friendlier fort removal over 120 seeds: two second visits {}, one {}, none {}",
+        dupe_hist[2], dupe_hist[1], dupe_hist[0],
     );
 }
 
@@ -1291,6 +1469,7 @@ fn test_march_veto_pipeline_writes_registry() {
             shuffle_hammer_bros: true,
             friendlier_levels: false,
             deja_vu: DejaVuMode::Off,
+            deja_vu_forts: false,
         },
     );
 

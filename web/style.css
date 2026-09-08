@@ -348,6 +348,24 @@ input[type="radio"] {
     color: var(--pill-active-text, #fff);
 }
 
+/* A pill that toggles independently of the exclusive choice beside it (Deja
+   Vu's "Forts"). The heavier left edge is the only thing saying "this one is
+   not part of the pick-one group" — without it a lit Forts reads as a fourth
+   mode. */
+.pill-group label.pill-flag {
+    border-left: 2px solid #2a2a50;
+}
+
+/* Its host is off, so the flag would change nothing. Dimmed and inert rather
+   than hidden, so the row does not change shape as the host is switched. */
+.pill-group label.pill-disabled,
+.pill-group label.pill-disabled:hover {
+    opacity: 0.35;
+    cursor: default;
+    background: #1c1c38;
+    color: #9a9ab0;
+}
+
 /* "Off" selected: muted gray so an explicit off doesn't read as a hot accent. */
 .pill-group input[value="off"]:checked + label {
     background: #3a3a60;

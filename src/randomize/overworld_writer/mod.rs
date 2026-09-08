@@ -190,7 +190,11 @@ pub(crate) struct WriteFlags {
     pub piranha: PiranhaMode,
     /// Deja Vu: how many times one level may appear on the map.
     pub deja_vu: DejaVuMode,
+    /// Deja Vu, fortress half: redeal the fortress deck in the same mode.
+    /// Read only when `deja_vu` is on.
+    pub deja_vu_forts: bool,
     /// Friendlier Levels: drop `FRIENDLIER_BLOCKED_LEVELS` from the level deck
-    /// and refill it with duplicates of what remains.
+    /// and `FRIENDLIER_BLOCKED_FORTS` from the fortress deck, refilling both
+    /// with duplicates of what remains.
     pub friendlier_levels: bool,
 }
