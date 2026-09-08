@@ -21,14 +21,23 @@ pub fn set_starting_lives(rom: &mut Rom, lives: u8) {
 /// Replaces the 8-byte lives init at 0x308E0 with `JSR $E250`
 /// (FS_STARTING_ITEMS) into a routine that sets lives, does the intro skip,
 /// queues the seeded menu music, AND writes up to 3 items to inventory
-/// ($7D80+).
+/// (`Inventory_Items`, `$7D80+`).
+///
+/// `first_slot` is where those items start. It is 0 normally and **1 in the
+/// world maze**, which claims slot 0 for its permanent whistle in
+/// [`completion_bits`](crate::randomize::completion_bits)' new-game init.
+/// The inventory is a compacted list — the engine's own panel refuses to open
+/// for use at all when slot 0 is empty, and using an item memmoves the tail
+/// down over it — so the two writers must be contiguous from slot 0, never
+/// leave a hole, and the whistle is the one that has to be at the bottom
+/// because it is the one the player may hold alone.
 ///
 /// Must run AFTER title_screen: both patch the lives-init region, and this
 /// JSR overwrites title_screen's intro-skip hook at 0x308E2. The trampoline
 /// replays the identical intro-skip + menu-music bytes (shared
 /// `title_screen::intro_skip_music_bytes`), so behavior is preserved;
 /// title_screen's FS_INTRO_SKIP routine is left in ROM unreferenced.
-pub fn write_starting_items(rom: &mut Rom, seed: u64, lives: u8, items: &[u8]) {
+pub fn write_starting_items(rom: &mut Rom, seed: u64, lives: u8, items: &[u8], first_slot: u8) {
     let lives = lives.clamp(1, 99);
     let cpu = crate::randomize::rom_data::prg031_file_to_cpu(FS_STARTING_ITEMS); // $E250
     // Build trampoline: lives init + intro skip + menu music + item writes + RTS
@@ -41,10 +50,11 @@ pub fn write_starting_items(rom: &mut Rom, seed: u64, lives: u8, items: &[u8]) {
     ]);
     buf.extend_from_slice(&crate::randomize::title_screen::intro_skip_music_bytes(seed));
     for (i, &item) in items.iter().take(3).enumerate() {
+        let slot = first_slot + i as u8;
         #[rustfmt::skip]
         buf.extend_from_slice(&[
             0xA9, item,                      // LDA #item
-            0x8D, (0x80 + i as u8), 0x7D,    // STA $7D80+i
+            0x8D, (0x80 + slot), 0x7D,       // STA $7D80+slot
         ]);
     }
     buf.push(0x60); // RTS

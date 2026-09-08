@@ -1122,7 +1122,17 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         let items: Vec<u8> = spec.starting_items.iter().copied().take(3).collect();
         // Seed only drives the intro-skip menu music; any fixed value is fine
         // for a test ROM and keeps output reproducible.
-        crate::randomize::qol::write_starting_items(&mut rom, 0, spec.starting_lives, &items);
+        // Slot 0 unless the base is a maze seed, which has already put its
+        // permanent whistle there — see `write_starting_items`.
+        let maze_base =
+            matches!(&spec.base, Base::Randomized { options, .. } if options.world_maze);
+        crate::randomize::qol::write_starting_items(
+            &mut rom,
+            0,
+            spec.starting_lives,
+            &items,
+            u8::from(maze_base),
+        );
         report.push(format!(
             "inventory: {} ({} lives)",
             items.iter().map(|&id| crate::item_display_name(id)).collect::<Vec<_>>().join(", "),

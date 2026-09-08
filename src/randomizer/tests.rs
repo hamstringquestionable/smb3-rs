@@ -1643,19 +1643,26 @@ fn a_maze_rom_puts_a_pad_tile_under_every_arrival_key() {
     }
 }
 
-/// **The maze player starts holding a whistle, it survives being blown, and it
-/// does not cost them a starting item.**
+/// **The maze player starts holding a whistle, it survives being blown, it does
+/// not cost them a starting item, and they can actually get at it.**
 ///
-/// Three halves of one promise, in three modules, so this is the only place
+/// Four clauses of one promise, in three modules, so this is the only place
 /// that can check the promise itself: `completion_bits` puts the whistle in
-/// inventory slot 3 at the new-game signal, `world_travel` stops the engine
-/// consuming it, and `qol::starting_state` still owns slots 0-2.
+/// inventory **slot 0** at the new-game signal, `world_travel` stops the engine
+/// consuming it, and `qol::starting_state` takes slots 1-3 instead of 0-2 so
+/// the player's own three still fit.
 ///
-/// The third clause is the regression. The whistle used to be merged into the
-/// player's starting-items list, and since the CLI and the web UI both offer
-/// exactly three, a player who asked for three got two of them plus a whistle
-/// — the mode quietly ate a choice. Slot 3 is a slot the UI cannot request,
-/// so the two no longer compete.
+/// Two regressions live here. The whistle used to be merged into the player's
+/// starting-items list, and since the CLI and the web UI both offer exactly
+/// three, a player who asked for three got two of them plus a whistle — the
+/// mode quietly ate a choice. The fix put it in slot 3, above the player's
+/// slots 0-2, which was the second bug: the inventory is a *compacted list*,
+/// and the engine's panel returns immediately when slot 0 is empty
+/// (`PRG026_A4A1` — no cursor, no use). With fewer than three starting items,
+/// and the default is none, slot 0 was empty and the whistle the whole mode
+/// leans on was unreachable for the entire run. So the whistle takes the
+/// bottom slot — it is the one item the player is guaranteed to hold — and
+/// everything else stacks on top of it with no hole.
 ///
 /// Read out of the finished ROM rather than from the options, because the two
 /// writes are emitted by different patches into different banks.
@@ -1684,17 +1691,20 @@ fn a_maze_player_starts_with_a_permanent_whistle() {
 
         let new_game = rom.read_range(FS_NEW_GAME_INIT, 40);
         assert!(
-            writes_slot(new_game, WHISTLE, 3),
-            "[{label}] the new-game init puts no whistle in inventory slot 3"
+            writes_slot(new_game, WHISTLE, 0),
+            "[{label}] the new-game init puts no whistle in inventory slot 0 — \
+             anywhere above an empty slot 0 and the panel will not open for use"
         );
 
-        // The player's own choices keep slots 0-2, and the whistle stays out of
-        // the trampoline entirely — that is the bug this guards.
+        // The player's own choices stack on top of it, contiguously, and the
+        // whistle stays out of the trampoline entirely — the two bugs this
+        // guards.
         let tramp = rom.read_range(FS_STARTING_ITEMS, 40);
-        for (slot, &item) in requested.iter().enumerate() {
+        for (i, &item) in requested.iter().enumerate() {
+            let slot = i as u8 + 1;
             assert!(
-                writes_slot(tramp, item, slot as u8),
-                "[{label}] requested item {item:#04X} lost its slot {slot} to the whistle"
+                writes_slot(tramp, item, slot),
+                "[{label}] requested item {item:#04X} is not in slot {slot}"
             );
         }
         assert!(
@@ -1712,18 +1722,28 @@ fn a_maze_player_starts_with_a_permanent_whistle() {
     }
 
     // Without the maze, none of it applies — otherwise this test would pass
-    // for a reason that has nothing to do with the mode.
+    // for a reason that has nothing to do with the mode. And the slot shift is
+    // part of "none of it": nothing writes slot 0 outside the maze, so the
+    // player's items must start there or the panel is dead for them too.
     let mut plain = rom.clone();
     randomize(
         &mut plain,
         12345,
-        &Options { world_maze: false, starting_items: vec![], ..audit_options() },
+        &Options { world_maze: false, starting_items: vec![0x01, 0x02, 0x03], ..audit_options() },
     );
     assert_ne!(
         plain.read_range(crate::randomize::world_travel::WHISTLE_CONSUME_OFFSET, 3),
         [0xEA, 0xEA, 0xEA],
         "the whistle-keeping patch leaked into a non-maze seed"
     );
+    let plain_tramp = plain.read_range(FS_STARTING_ITEMS, 40);
+    for (slot, item) in [0x01u8, 0x02, 0x03].into_iter().enumerate() {
+        assert!(
+            writes_slot(plain_tramp, item, slot as u8),
+            "without the maze, item {item:#04X} is not in slot {slot} — a hole at \
+             slot 0 leaves the inventory panel dead"
+        );
+    }
 }
 
 /// **The web build's entry path carries the maze.**

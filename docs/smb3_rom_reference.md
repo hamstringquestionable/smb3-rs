@@ -1770,6 +1770,31 @@ PRG031 via `$07F5`. The handler also stores the item to `$07F5` at $A5D8.
 `Inv_UseItem_Anchor` ($A682) sets `Map_Anchored`, plays the anchor sound, removes the
 item from inventory, and returns — it never enters the powerup animation path.
 
+### The Inventory Is a Compacted List (PRG026)
+
+`Inventory_Items` (`$7D80`, 28 slots, four rows of seven) is not an addressed
+array — it is a **packed list with no holes**, and the engine's routines both
+assume and maintain that:
+
+- **Use** — `Inv_UseItem_ShiftOver` memmoves the whole tail down over the used
+  slot (`LDA Inventory_Items+1,Y / STA Inventory_Items,Y`, loop at
+  `PRG026_A638`, file **0x34648**, running to index 27) and zeroes the last one.
+  It shifts the tail wholesale, so it does **not** close a pre-existing hole —
+  a gap just moves down with everything else.
+- **Panel input** — `PRG026_A4A1` (file **0x344B1**) reads slot 0 first and
+  `RTS`es when it is zero. Left/right *and* the A-press "use" path both sit
+  behind that check, so **an empty slot 0 makes the whole panel inert**: no
+  cursor, no item use, even when later slots hold items.
+- **Holes above slot 0 are survivable.** Moving the highlight onto an empty slot
+  re-enters the move in the same direction (`PRG026_A4EB`, file **0x344FB**), so
+  the cursor skips gaps. Only slot 0 is fatal.
+
+**Consequence for any patch that seeds the inventory**: write from slot 0 upward
+and leave no gap. Parking an item in a high slot at new-game time — a guaranteed
+whistle, say — makes it permanently unreachable unless something else fills
+every slot beneath it. The world maze hit exactly this: its whistle sat in slot
+3 above the (by default empty) starting-item slots 0-2 and could never be used.
+
 ### Inventory Item Draw (PRG026)
 
 `Inventory_DrawItemsOrCards` at CPU **$A366** (file **0x34376**) draws every non-empty
@@ -4634,8 +4659,8 @@ velocity — faster horizontal movement = higher jump. Fall velocity is clamped 
 
 | Address | Size | Description |
 |---------|------|-------------|
-| $7D80–$7D9B | 28 bytes | Mario's items (13 slots, Global Item IDs) |
-| $7DA3–$7DBE | 28 bytes | Luigi's items (13 slots) |
+| $7D80–$7D9B | 28 bytes | Mario's items — 28 slots, 4 rows of 7, Global Item IDs. Packed from slot 0 with no holes; see "The Inventory Is a Compacted List" |
+| $7DA3–$7DBE | 28 bytes | Luigi's items (same layout) |
 | $7D9C–$7D9E | 3 bytes | Mario's goal cards (0=none, 1=mushroom, 2=flower, 3=star) |
 | $7DBF–$7DC1 | 3 bytes | Luigi's goal cards |
 | $7DA2 | 1 byte | Mario's coins |

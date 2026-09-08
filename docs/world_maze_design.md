@@ -1040,10 +1040,22 @@ requested pad role distribution.
 - **The player starts holding the whistle, and keeps it.** It is the mode's
   fast travel, so it is granted at the first frame rather than hidden: an
   earlier cut pinned one into a toad-house chest to guarantee it existed, which
-  made the mode's core tool something to go and find. `items::with_starting_whistle`
-  puts it in an empty inventory slot, appends while there is room, and otherwise
-  displaces the LAST requested item — so a player who asked for three things
-  gets two of them plus the one the mode cannot work without.
+  made the mode's core tool something to go and find. `completion_bits`'
+  new-game init writes it into **inventory slot 0**, and `qol::starting_state`
+  is told to start the player's own items at slot 1, so three requested items
+  still fit and none of them is displaced.
+
+  Slot 0 is not arbitrary. The inventory is a **compacted list**, not an
+  addressed array: the engine gives every item the first free slot, and using
+  one memmoves the tail down over it. Its panel handler reads slot 0 first and
+  returns immediately when it is empty (`PRG026_A4A1`) — no cursor, no use — so
+  a hole at the bottom is a dead panel, not a blank square. Two earlier cuts
+  fell into this. Merging the whistle into the starting-items list ate one of
+  the three the UI offers; moving it clear of them, to slot 3, meant that with
+  the default of *no* starting items the whistle sat above three empty slots
+  and could never be reached at all. The rule the two writers now share: fill
+  from slot 0 up, never leave a gap, and the whistle takes the bottom because
+  it is the one item the player is guaranteed to be holding.
 - **The whistle is not consumed.** Vanilla's `Inv_UseItem_WarpWhistle` ends
   with `JSR Inv_UseItem_ShiftOver`, which deletes the item — correct for a
   one-shot warp, fatal for fast travel: one whistle would buy exactly one trip,

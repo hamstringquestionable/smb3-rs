@@ -895,16 +895,28 @@ const NEW_GAME_INIT_CPU: u16 = (0xC000 + FS_NEW_GAME_INIT - 0x32010) as u16;
 ///   rather than a list means the next allocation is covered by having been
 ///   declared there.
 ///
-/// * the warp whistle, into the **fourth** inventory slot. The mode's fast
+/// * the warp whistle, into the **first** inventory slot. The mode's fast
 ///   travel is useless if the player cannot reach it, so it is theirs from the
-///   first frame. It lands here rather than in the starting-items trampoline
-///   for two reasons. `write_starting_items` fills slots 0-2 and the UI offers
-///   exactly three, so a whistle competing for those slots silently ate the
-///   player's third choice; and that trampoline is full — 33 of 33 bytes, with
-///   `start_airship_swap` starting at the next byte and 128-byte DMC filler
-///   ahead of it that a sample's length register can legally run into. Slot 3
-///   is free: `Inventory_Items` is 28 slots (`$7D80..$7D9B`), so this displaces
-///   nothing and stops short of `Inventory_Cards`.
+///   first frame — and slot 0 is the only slot that makes "reach it" true.
+///   The inventory is a *compacted list*, not an addressed array: the engine
+///   hands every item to the first free slot, and using one memmoves the tail
+///   down over it. Its input handler (`PRG026_A4A1`) reads slot 0 first and
+///   returns immediately when it is empty — no cursor, no use — so a hole at
+///   slot 0 is not an empty square, it is a dead panel.
+///
+///   That is why the whistle cannot sit *above* the player's own items, which
+///   is where it used to sit (slot 3). With fewer than three starting items —
+///   the default is none — slot 0 was empty, and the whistle the mode depends
+///   on could never be reached. It takes slot 0 now and
+///   [`write_starting_items`](super::qol::write_starting_items) is told to
+///   begin at slot 1, so the four writes stay contiguous either way.
+///
+///   It lands here rather than in that trampoline because the trampoline is
+///   full — 33 of 33 bytes, with `start_airship_swap` starting at the next
+///   byte and 128-byte DMC filler ahead of it that a sample's length register
+///   can legally run into. Three items plus a whistle is four of the 28 slots
+///   in `Inventory_Items` (`$7D80..$7D9B`), so this displaces nothing and
+///   stops short of `Inventory_Cards`.
 ///
 /// The whistle write is last on purpose. `A` must stay zero across the three
 /// loops, and this is the one place it is free again.
@@ -936,16 +948,16 @@ const NEW_GAME_INIT: [u8; 38] = [
     0x10, 0xFA,                                     // 30: BPL -6 -> live_loop
 
     0xA9, super::items::WARP_WHISTLE,               // 32: LDA #$0C
-    0x8D, INVENTORY_SLOT_4 as u8,
-          (INVENTORY_SLOT_4 >> 8) as u8,            // 34: STA Inventory_Items+3
+    0x8D, INVENTORY_WHISTLE_SLOT as u8,
+          (INVENTORY_WHISTLE_SLOT >> 8) as u8,      // 34: STA Inventory_Items
     0x60,                                           // 37: RTS
 ];
 
-/// `Inventory_Items + 3` — the fourth of Mario's 28 item slots (`$7D80..$7D9B`,
-/// four rows of seven; `Inventory_Cards` follows at `$7D9C`). The starting-items
-/// trampoline writes slots 0-2 and the UI offers exactly three, so this one is
-/// the first the player can never have asked for.
-const INVENTORY_SLOT_4: u16 = 0x7D83;
+/// `Inventory_Items` — the first of Mario's 28 item slots (`$7D80..$7D9B`, four
+/// rows of seven; `Inventory_Cards` follows at `$7D9C`). The panel is dead
+/// while this slot is empty, so the maze's whistle owns it and the
+/// starting-items trampoline begins at slot 1. See [`NEW_GAME_INIT`].
+const INVENTORY_WHISTLE_SLOT: u16 = 0x7D80;
 
 /// The `Map_Completions` wipe in `PRG030_84A0`: CPU `$84CD`, ten bytes, three
 /// whole instructions, nothing branching into the middle.
@@ -1968,9 +1980,12 @@ mod tests {
             mem.set_byte(LIVE_WORLD, 0xAA);
             mem.set_byte(DEBUG_FLAG, 0xAA);
             // One byte past each region, so an off-by-one in either loop's
-            // index is a failure rather than an invisible extra zero.
+            // index is a failure rather than an invisible extra zero. The live
+            // loop's fence is `$7D81`, not `$7D80` — the whistle store lands on
+            // `$7D80` after the loop and would paper over an overrun there.
             mem.set_byte(PACKED + PACKED_LEN as u16, 0xAA);
             mem.set_byte(0x7D80, 0xAA);
+            mem.set_byte(0x7D81, 0xAA);
             for i in 0..maze_state::MAZE_STATE_LEN {
                 mem.set_byte(maze_state::MAZE_STATE_START + i as u16, 0xAA);
             }
@@ -2024,7 +2039,20 @@ mod tests {
                 0xAA,
                 "the maze loop ran past the run maze_state declares",
             );
-            assert_eq!(cpu.memory.get_byte(0x7D80), 0xAA, "the live loop ran past $7D7F");
+            assert_eq!(cpu.memory.get_byte(0x7D81), 0xAA, "the live loop ran past $7D80");
+            // ...and because that fence sits one byte further out than it used
+            // to, pin the loop's own bound as well.
+            assert_eq!(NEW_GAME_INIT[25], 0x7F, "the live loop no longer stops at $7D7F");
+
+            // The whistle itself, in the one slot that makes it reachable: the
+            // inventory panel returns without opening for use while slot 0 is
+            // empty, so anywhere above a hole and the mode's fast travel is
+            // unusable for the whole run.
+            assert_eq!(
+                cpu.memory.get_byte(0x7D80),
+                crate::randomize::items::WARP_WHISTLE,
+                "the maze whistle must land in inventory slot 0",
+            );
         }
     }
 

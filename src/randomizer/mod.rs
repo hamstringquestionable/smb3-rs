@@ -720,12 +720,22 @@ fn randomize_inner(
     // identical intro-skip + menu-music bytes (shared
     // `title_screen::intro_skip_music_bytes`), so behavior is unchanged;
     // title_screen's FS_INTRO_SKIP routine is left in ROM unreferenced.
-    // Gated on the RESOLVED list, not the requested one: maze mode adds a
-    // whistle to an otherwise-empty inventory, and gating on the request would
-    // have dropped it silently.
+    //
+    // The maze owns inventory slot 0 — its permanent whistle goes there in
+    // `completion_bits`' new-game init — so the player's own items start at
+    // slot 1 there. The inventory is a compacted list and the engine's panel
+    // is dead while slot 0 is empty, so the two writers have to be contiguous
+    // from the bottom; see `write_starting_items`.
     if !resolved_items.is_empty() {
         rom.set_tag("qol/starting_items");
-        randomize::qol::write_starting_items(rom, seed, options.starting_lives, &resolved_items);
+        let first_slot = u8::from(options.world_maze);
+        randomize::qol::write_starting_items(
+            rom,
+            seed,
+            options.starting_lives,
+            &resolved_items,
+            first_slot,
+        );
     }
 
     // MaCobra patches — always-on bugfixes and fairness tweaks.
