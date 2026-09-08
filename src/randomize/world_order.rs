@@ -45,7 +45,12 @@ const TABLE_CPU: u16 = WORLD_ORDER_CPU + 12;
 /// File offset of the display-number table (8 bytes, right after next-world table).
 /// PRG030 is always mapped at $8000–$9FFF (MMC3 fixed bank in mode 1), so CPU $9F24
 /// is accessible from any bank configuration.
-const DISPLAY_TABLE_OFFSET: usize = FS_WORLD_ORDER + 20; // 12 routine + 8 next-world
+/// File offset of the display-number table (8 bytes, right after next-world table).
+///
+/// `pub(crate)` because `lock_keys` reads it: a numbered lock has to show the
+/// world the *player* sees, not the internal index, and world order makes those
+/// two different facts.
+pub(crate) const DISPLAY_TABLE_OFFSET: usize = FS_WORLD_ORDER + 20; // 12 routine + 8 next-world
 const DISPLAY_TABLE_CPU: u16 = TABLE_CPU + 8; // $9F24
 
 /// Map screen "WORLD X" display site (PRG010).

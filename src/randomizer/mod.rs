@@ -439,6 +439,14 @@ fn randomize_inner(
     // decided when the mode is on. Away entries additionally need
     // `world_persist` to have installed the packed store already, since their
     // bit is looked up through it.
+    //
+    // **And after `world_order`, which is easy to miss.** A numbered lock shows
+    // the world number the *player* sees, read from the display table that
+    // module writes. Running before it would find the table unwritten, fall
+    // through to the vanilla identity, and stamp numbers that appear nowhere in
+    // the game — silently, since the tiles are still well-formed and the locks
+    // still open. `lock_keys::the_digit_is_the_world_the_player_sees` asserts
+    // the table is a permutation, which is what catches the wrong order.
     rom.set_tag("lock_keys");
     let lock_entries = maze_lock_keys.unwrap_or_else(|| lock_pairing.lock_entries(&build));
     randomize::lock_keys::apply(rom, &lock_entries);

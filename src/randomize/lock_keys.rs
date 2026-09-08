@@ -309,16 +309,14 @@ const HINT_REVEALS: [(u8, u8); 4] = [
 /// the wrong color.
 const WATER_ORIENTATION: usize = 3;
 
-/// The metatile: the padlock's three surviving quadrants, then the digit.
-///
-/// `$B6 $B8 $B7` are the lock's upper-left, upper-right and lower-left. The
-/// lower-right is the level panel's own digit quadrant, which is why this costs
-/// no CHR at all — the patterns are already in the bank, drawn by every numbered
-/// level on the map. It replaces the padlock's bottom-right corner, and the
-/// digit arrives framed by the panel's border, reading as a tag on the lock.
-const HINT_LOCK_QUADRANTS: [u8; 3] = [0xB6, 0xB8, 0xB7];
-
 /// The level panels' lower-right quadrants for worlds 1-8: the digit glyphs.
+///
+/// **The whole art budget of this feature.** A variant is the tile it stands in
+/// for with its lower-right quadrant swapped for one of these — so a path lock
+/// stays a padlock and a bridge gap stays a river, each wearing a number. The
+/// patterns are already in the bank, drawn by every numbered level on the map,
+/// so no CHR is added and none of the 41 unreferenced patterns has to be
+/// audited.
 ///
 /// Pinned to the ROM by `the_digit_quadrants_are_the_panels_own`, which reads
 /// them back out of metatiles `$03..$0A` rather than trusting this list.
@@ -936,21 +934,50 @@ fn stamp_numbered_locks(rom: &mut Rom, entries: &[LockEntry]) {
             );
             continue;
         };
-        let tile = HINT_TILES[orientation][e.key_world];
+        // Keyed by the number shown, not the internal index, so a tile means the
+        // same thing in every seed: `$6B` is always "horizontal, world 1".
+        let shown = displayed_world(rom, e.key_world);
+        let tile = HINT_TILES[orientation][shown - 1];
         rom.write_byte(off, tile);
-        write_hint_metatile(rom, tile, e.key_world);
+        write_hint_metatile(rom, tile, plain, shown - 1);
     }
 }
 
-/// Define one numbered lock's metatile: three quadrants of padlock and a digit.
+/// The world number the *player* sees for an internal world index.
 ///
-/// The quadrant planes are stored **UL, LL, UR, LR** — not in row order — which
-/// is the same trap [`PATTERN_QUADRANT_ORDER`] exists for on the read side.
-fn write_hint_metatile(rom: &mut Rom, tile: u8, world: usize) {
-    let [ul, ur, ll] = HINT_LOCK_QUADRANTS;
-    for (plane, pattern) in [ul, ll, ur, HINT_DIGITS[world]].into_iter().enumerate() {
+/// **These are two different facts, and the maze guarantees they differ.** World
+/// order shuffles which map is reached when, and world-maze forces it on;
+/// `world_order` then rewrites both "WORLD X" display sites to read an
+/// internal → display-tile table instead of `World_Num` itself. A hint that
+/// showed the internal index would name a world whose number the player has
+/// never seen.
+///
+/// The tile is `$F0 | number`. Anything else means the table was never written —
+/// world order off, which cannot happen alongside a numbered lock today — and
+/// the vanilla identity is the right answer there.
+fn displayed_world(rom: &Rom, internal: usize) -> usize {
+    let tile = rom.read_byte(super::world_order::DISPLAY_TABLE_OFFSET + internal);
+    if (0xF1..=0xF8).contains(&tile) { (tile & 0x0F) as usize } else { internal + 1 }
+}
+
+/// Define one numbered lock's metatile: the tile it stands in for, wearing a
+/// digit in its lower-right quadrant.
+///
+/// **The art is copied from `plain` rather than written out**, which is what
+/// keeps each obstacle looking like itself: a path lock stays a padlock, and a
+/// bridge gap stays a river with a number on it rather than becoming a padlock
+/// floating in the water. It also means the three quadrants are never a second
+/// copy of bytes the ROM already holds.
+///
+/// The quadrant planes are stored **UL, LL, UR, LR** — not in row order — so
+/// planes 0-2 are the three that carry over and plane 3 is the corner the digit
+/// takes. Same trap [`PATTERN_QUADRANT_ORDER`] exists for on the read side.
+fn write_hint_metatile(rom: &mut Rom, tile: u8, plain: u8, world: usize) {
+    for plane in 0..3 {
+        let pattern = rom.read_byte(PRG012_FILE_BASE + plane * 256 + plain as usize);
         rom.write_byte(PRG012_FILE_BASE + plane * 256 + tile as usize, pattern);
     }
+    rom.write_byte(PRG012_FILE_BASE + 3 * 256 + tile as usize, HINT_DIGITS[world]);
 }
 
 /// Bound the top of each page's M/L range, and point the reload's test at the
@@ -1291,6 +1318,92 @@ mod asm_checks {
                 );
             }
         }
+    }
+
+    /// **The digit is the world the player sees, not the internal index.**
+    ///
+    /// World order renumbers the worlds and the maze forces it on, so those two
+    /// are different in essentially every seed — a lock stamped with the
+    /// internal index names a world whose number appears nowhere in the game.
+    /// Nothing else catches it: the tile is well-formed, the table has its row,
+    /// the lock opens. It is only *wrong*, and only to a player.
+    ///
+    /// Checked as a multiset, because an away entry stores a packed-store
+    /// address rather than a cell and so cannot be matched to its lock
+    /// positionally. Every away lock contributes the display number of the world
+    /// its fortress is in; every numbered cell contributes the digit it shows.
+    /// The two have to agree.
+    ///
+    /// This also pins the pipeline order it rests on — `world_order::randomize`
+    /// writes the table, `lock_keys::apply` reads it — since an unwritten table
+    /// silently falls back to the internal index and would look like this test
+    /// passing on a vanilla-numbered ROM.
+    #[test]
+    fn the_digit_is_the_world_the_player_sees() {
+        let Ok(bytes) = std::fs::read(ROM_PATH) else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let mut shuffled_seeds = 0usize;
+        for seed in 0..seeds() {
+            let options = crate::Options {
+                world_maze: true,
+                palettes: false,
+                palette_themed: false,
+                ..Default::default()
+            };
+            let Ok((rom, _)) =
+                crate::randomize_rom_with_overworld_capture(&bytes, seed, &options, None)
+            else {
+                continue;
+            };
+
+            let display: Vec<usize> = (0..8).map(|w| displayed_world(&rom, w)).collect();
+            assert_eq!(
+                display.iter().copied().collect::<std::collections::BTreeSet<_>>().len(),
+                8,
+                "seed {seed}: the display table is not a permutation — world_order either did \
+                 not run or ran after this module"
+            );
+            if display != vec![1, 2, 3, 4, 5, 6, 7, 8] {
+                shuffled_seeds += 1;
+            }
+
+            let mut want: Vec<usize> = decode_entries(&rom)
+                .iter()
+                .filter(|e| e.away)
+                .map(|e| display[e.key_world])
+                .collect();
+
+            let mut got: Vec<usize> = Vec::new();
+            for world in 0..8 {
+                let info = &rom_data::MAP_TILE_GRIDS[world];
+                for screen in 0..info.screens {
+                    for row in 0..9 {
+                        for col in 0..16 {
+                            let off = rom_data::map_tile_offset(world, row, screen * 16 + col);
+                            let tile = rom.read_byte(off);
+                            if let Some(set) = HINT_TILES.iter().find(|set| set.contains(&tile)) {
+                                got.push(set.iter().position(|&t| t == tile).unwrap() + 1);
+                            }
+                        }
+                    }
+                }
+            }
+
+            want.sort_unstable();
+            got.sort_unstable();
+            assert_eq!(
+                got, want,
+                "seed {seed}: the digits on the map are not the display numbers of the \
+                 worlds the fortresses are in"
+            );
+        }
+        assert!(
+            shuffled_seeds > 0,
+            "every sampled seed left the worlds in vanilla order, so this proves nothing about \
+             renumbering"
+        );
     }
 
     /// **The row bound holds, and every away lock gets its digit.**
