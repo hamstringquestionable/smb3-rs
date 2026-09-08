@@ -26,6 +26,12 @@ pub(super) fn write_tile_grid<R: Rng>(
     // below blanks those, so a hint there is silently dropped. That is correct:
     // the sprite is the visual and there is nowhere to say it.
     for a in &wa.fortress {
+        // **Draw first, every time, and only then decide whether to use it.**
+        // The cosmetic pick and the hinted pick must consume the same RNG or
+        // turning hints on moves every later draw — the map itself would change,
+        // not just the colour of a fortress. Hints are a display option and must
+        // not be able to move the seed.
+        let cosmetic = rom_data::FORTRESS_TILES[rng.random_range(..rom_data::FORTRESS_TILES.len())];
         let hint = if hints_on {
             built
                 .slots
@@ -39,9 +45,7 @@ pub(super) fn write_tile_grid<R: Rng>(
             LockHint::OwnWorld => rom_data::TILE_FORTRESS,
             LockHint::World8 => rom_data::TILE_FORTRESS_W8,
             LockHint::Elsewhere => rom_data::TILE_FORTRESS_AWAY,
-            LockHint::Unhinted => {
-                rom_data::FORTRESS_TILES[rng.random_range(..rom_data::FORTRESS_TILES.len())]
-            }
+            LockHint::Unhinted => cosmetic,
         };
         grid.set(a.pos.0, a.pos.1, tile);
     }
