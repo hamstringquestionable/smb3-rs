@@ -37,12 +37,18 @@
 //! Skipped when the ROM is absent, like the other ROM-dependent tests — the ROM
 //! is gitignored and CI has no copy.
 
-use smb3_rs::{Options, generate_patched_rom};
+use smb3_rs::{DejaVuMode, HintMode, Options, PiranhaMode, generate_patched_rom};
 use std::path::Path;
 
 const ROM_PATH: &str = "roms/Super Mario Bros. 3 (USA) (Rev 1).nes";
 const CAPTURE_PATH: &str = "target/rom_identity_capture.txt";
 const SEEDS: u64 = 20;
+
+/// Seeds per arm beyond the first. The default arm keeps the full [`SEEDS`]
+/// sweep; the rest exist to reach code the defaults leave switched off, and a
+/// short sweep over each buys more coverage per second than a longer one over
+/// the same arm.
+const ARM_SEEDS: u64 = 8;
 
 /// FNV-1a. Rolled by hand rather than using `DefaultHasher`, whose output is
 /// explicitly not guaranteed stable across Rust releases.
@@ -62,18 +68,75 @@ fn options() -> Options {
     Options { palettes: false, palette_themed: false, ..Options::default() }
 }
 
+/// The option arms the sweep covers, and how many seeds each gets.
+///
+/// **The defaults alone were not enough, and this records what that cost.** A
+/// refactor of the map walker — a blocked set in place of painted lock tiles —
+/// came out byte-identical on the default arm while quietly changing canoe
+/// gating. `overworld_baseline` caught it; this harness would not have. Arms
+/// two onward are the paths `Options::default()` leaves off that the overworld
+/// writer, the deck and the maze all run through.
+///
+/// **The world maze is here for a second reason.** It has no committed baseline
+/// of any other kind, has never been playtested end to end, and every guarantee
+/// it holds is a property test. An identity oracle is the only thing that will
+/// tell a future refactor that it moved the mode's output.
+fn arms() -> Vec<(&'static str, Options, u64)> {
+    let base = options;
+    vec![
+        ("default", base(), SEEDS),
+        ("piranha", Options { piranha_shuffle: PiranhaMode::Wild, ..base() }, ARM_SEEDS),
+        ("start<->airship", Options { swap_start_airship: true, ..base() }, ARM_SEEDS),
+        (
+            "deja vu",
+            Options { deja_vu: DejaVuMode::Double, deja_vu_forts: true, ..base() },
+            ARM_SEEDS,
+        ),
+        ("friendlier", Options { friendlier_levels: true, ..base() }, ARM_SEEDS),
+        ("no hb shuffle", Options { shuffle_hammer_bros: false, ..base() }, ARM_SEEDS),
+        ("beta stages", Options { include_beta_stages: true, ..base() }, ARM_SEEDS),
+        ("maze, hints some", Options { world_maze: true, ..base() }, ARM_SEEDS),
+        (
+            "maze, hints full",
+            Options { world_maze: true, hints: HintMode::Full, ..base() },
+            ARM_SEEDS,
+        ),
+        ("maze, no hints", Options { world_maze: true, hints: HintMode::Off, ..base() }, ARM_SEEDS),
+    ]
+}
+
+/// How many hashes a full sweep produces.
+fn sweep_len() -> usize {
+    arms().iter().map(|(_, _, n)| *n as usize).sum()
+}
+
+/// Which arm and seed hash `i` came from, so a failure names the thing that
+/// moved rather than an index into a list.
+fn label(i: usize) -> String {
+    let mut at = i;
+    for (name, _, n) in arms() {
+        if at < n as usize {
+            return format!("{name} seed {}", at + 1);
+        }
+        at -= n as usize;
+    }
+    format!("index {i}")
+}
+
 fn rom() -> Option<Vec<u8>> {
     std::fs::read(ROM_PATH).ok()
 }
 
 fn hashes(rom: &[u8]) -> Vec<u64> {
-    (1..=SEEDS)
-        .map(|seed| {
-            let out = generate_patched_rom(rom, seed, &options(), None)
-                .unwrap_or_else(|e| panic!("seed {seed} failed to generate: {e}"));
-            fnv1a(&out)
-        })
-        .collect()
+    let mut out = Vec::with_capacity(sweep_len());
+    for (name, opts, n) in arms() {
+        for seed in 1..=n {
+            let patched = generate_patched_rom(rom, seed, &opts, None)
+                .unwrap_or_else(|e| panic!("{name} seed {seed} failed to generate: {e}"));
+            out.push(fnv1a(&patched));
+        }
+    }
+    out
 }
 
 /// The harness is only worth anything if it is stable in the first place.
@@ -133,22 +196,24 @@ fn compare() {
         .collect();
     assert_eq!(
         before.len(),
-        SEEDS as usize,
-        "capture holds {} seeds, this tree sweeps {SEEDS} — recapture",
-        before.len()
+        sweep_len(),
+        "capture holds {} hashes, this tree sweeps {} — recapture",
+        before.len(),
+        sweep_len()
     );
 
     let after = hashes(&rom);
-    let moved: Vec<u64> =
-        (0..SEEDS as usize).filter(|i| after[*i] != before[*i]).map(|i| i as u64 + 1).collect();
+    let moved: Vec<String> =
+        (0..sweep_len()).filter(|i| after[*i] != before[*i]).map(label).collect();
     assert!(
         moved.is_empty(),
-        "{} of {SEEDS} seeds changed: {moved:?}\n\
+        "{} of {} outputs changed: {moved:?}\n\
          The ROM is not byte-identical, so this was not a pure refactor. Either \
          the change has an effect that was not intended, or it was never meant \
          to be identity-preserving — in which case attribute the difference and \
          say so, do not recapture to make this quiet.",
-        moved.len()
+        moved.len(),
+        sweep_len()
     );
     eprintln!("all {SEEDS} seeds byte-identical");
 }
