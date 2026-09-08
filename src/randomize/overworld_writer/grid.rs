@@ -1,6 +1,7 @@
 //! Step 2 — stamp the per-world map tile grids.
 
 use super::*;
+use crate::randomize::lock_keys;
 
 pub(super) fn write_tile_grid<R: Rng>(
     rom: &mut Rom,
@@ -8,7 +9,7 @@ pub(super) fn write_tile_grid<R: Rng>(
     wa: &WorldAssignments,
     data: &OverworldData,
     sprite_mask: &HashSet<(usize, usize)>,
-    hints_on: bool,
+    hints: crate::HintMode,
     rng: &mut R,
 ) -> Grid {
     let pickup = data.pickup;
@@ -32,7 +33,7 @@ pub(super) fn write_tile_grid<R: Rng>(
         // not just the colour of a fortress. Hints are a display option and must
         // not be able to move the seed.
         let cosmetic = rom_data::FORTRESS_TILES[rng.random_range(..rom_data::FORTRESS_TILES.len())];
-        let hint = if hints_on {
+        let hint = if hints.hints_at_all() {
             built
                 .slots
                 .iter()
@@ -166,9 +167,35 @@ pub(super) fn write_tile_grid<R: Rng>(
     // lock bytes are — so the walk cannot tell them apart and the builder has
     // no reason to care. The orientation exists so the lock looks right against
     // the path it stands on, which is why it is derived from that path tile.
+    //
+    // With hints on, the byte also says whether the key is in another world.
+    // The *fact* is the model's (`LockAssignment::fort` names the world); the
+    // vocabulary is `lock_keys`', which owns the metatile art and the removable
+    // pairing that must agree with it.
     for lock in &built.locks {
         let under = grid.get(lock.pos.0, lock.pos.1);
-        grid.set(lock.pos.0, lock.pos.1, rom_data::gap_tile_for(under));
+        let plain = rom_data::gap_tile_for(under);
+        let away = lock.fort.world != wi;
+        let shown = if away { lock_keys::shown_world(rom, lock.fort.world) } else { 0 };
+        grid.set(lock.pos.0, lock.pos.1, lock_keys::lock_tile(plain, away, shown, hints));
+    }
+
+    // **A local sky lock takes its own tile, and this is a sweep, not a
+    // per-lock branch.** Sky's alternate colour IS its plain tile, so a remote
+    // sky lock changes no byte — a rule keyed on the tile alone would sweep the
+    // remote ones up with the local ones (measured: 10 seeds in 30 had a sky
+    // lock and every one came back local). So the away positions are held out
+    // by name, and everything else wearing the sky lock takes the local tile.
+    if let Some((plain_sky, local)) = lock_keys::local_sky_tile(hints) {
+        let remote: HashSet<(usize, usize)> =
+            built.locks.iter().filter(|l| l.fort.world != wi).map(|l| l.pos).collect();
+        for r in 0..grid.rows() {
+            for c in 0..grid.cols {
+                if grid.get(r, c) == plain_sky && !remote.contains(&(r, c)) {
+                    grid.set(r, c, local);
+                }
+            }
+        }
     }
 
     // Overwrite sprite-covered positions with connectivity-aware path nodes.

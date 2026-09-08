@@ -64,6 +64,11 @@ pub(crate) fn read_tile_grid(rom: &Rom, world_idx: usize) -> Grid {
 /// implies. This is for `testrom` (which patches a finished ROM and has no
 /// writer), for `lock_keys` (which runs after the packed store is emitted and
 /// cross-checks its own reading against it), and for tests.
+// Native-only, and that is the point: nothing in a shipped run reads the map
+// back any more. `testrom` patches a finished ROM with no writer in the path,
+// and the tests build their own ROMs — neither exists on wasm32, where the only
+// caller would be a pipeline that no longer needs one.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn read_all_tile_grids(rom: &Rom) -> Vec<Grid> {
     (0..MAP_TILE_GRIDS.len()).map(|w| read_tile_grid(rom, w)).collect()
 }

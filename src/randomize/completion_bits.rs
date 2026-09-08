@@ -72,7 +72,9 @@ use crate::rom::Rom;
 use super::map_objects::{self, RESTORE_OBJECTS_CPU};
 use super::maze_state;
 use super::overworld_build::is_completion_unsafe;
-use super::rom_data::{self, Grid, MAP_COMPLETE_BITS};
+#[cfg(test)]
+use super::rom_data::{self};
+use super::rom_data::{Grid, MAP_COMPLETE_BITS};
 
 /// One `Map_Completions` half — 64 columns, one byte of row-bits each.
 pub(crate) const HALF_LEN: usize = 64;
@@ -120,11 +122,12 @@ impl CompletionMap {
 
     /// The same, read back off a finished ROM.
     ///
-    /// For callers holding only a ROM — tests, `testrom`, and
-    /// `lock_keys::apply`, which runs after this module and cross-checks its
-    /// own reading against the base table already emitted. The pipeline itself
-    /// uses [`Self::from_grids`]: re-reading what the writer just wrote is how
-    /// "run me after every grid write" became an unwritten rule.
+    /// **Nothing in the pipeline calls this any more.** Every consumer of the
+    /// finished map is handed it — `overworld_writer` returns what it wrote,
+    /// and the last read-back went when `lock_keys` stopped stamping map tiles.
+    /// What is left is tests and `testrom`, which patches a finished ROM with
+    /// no writer in the path, so there the ROM genuinely is the record.
+    #[cfg(test)]
     pub(crate) fn from_rom(rom: &Rom) -> Self {
         Self::from_grids(&rom_data::read_all_tile_grids(rom))
     }
@@ -1387,7 +1390,7 @@ mod tests {
         // silently come back short. Idempotent, so the randomized arms below are
         // unaffected.
         let mut owned = rom.clone();
-        let rows = super::super::lock_keys::removable_rows(&owned);
+        let rows = super::super::lock_keys::removable_rows(&rom_data::read_all_tile_grids(&owned));
         super::super::lock_keys::relocate_removable_tables(&mut owned, &rows);
         let rom = &owned;
 
@@ -1449,10 +1452,11 @@ mod tests {
         // because the builder asks before anything is stamped, while the ROM
         // carries rows only for obstacles this map actually wears. The two
         // claims that matter are both directional.
-        let table: Vec<u8> = super::super::lock_keys::removable_rows(&rom)
-            .into_iter()
-            .map(|(obstacle, _)| obstacle)
-            .collect();
+        let table: Vec<u8> =
+            super::super::lock_keys::removable_rows(&rom_data::read_all_tile_grids(&rom))
+                .into_iter()
+                .map(|(obstacle, _)| obstacle)
+                .collect();
 
         for tile in 0..=255u8 {
             cpu.registers.accumulator = tile;

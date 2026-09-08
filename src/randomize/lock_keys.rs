@@ -101,7 +101,7 @@ use super::completion_bits::{CompletionMap, HALF_LEN, PLANE_RESERVE};
 use super::rom_data::NMI_SAFE_MAX;
 use super::rom_data::{
     self, FS_COMPLETION_BASES, FS_FORTRESS_FX, FS_LOCK_ENTRIES, FS_LOCK_MIRROR, FS_MAP_REMOVABLE,
-    FS_ML_RANGE, MAP_COMPLETE_BIT_CPU, MAP_COMPLETE_BITS, MAP_COMPLETIONS, PLAYER_CURRENT,
+    FS_ML_RANGE, Grid, MAP_COMPLETE_BIT_CPU, MAP_COMPLETE_BITS, MAP_COMPLETIONS, PLAYER_CURRENT,
     PRG012_FILE_BASE, REMOVABLE_STRIDE, WORLD_NUM, prg_bank_file_to_cpu, prg010_file_to_cpu,
     prg011_file_to_cpu,
 };
@@ -868,16 +868,12 @@ pub(crate) fn relocate_removable_tables(rom: &mut Rom, rows: &[(u8, u8)]) {
 /// table and the hammer's breakable table — and they must agree, because a tile
 /// one of them knows about and the other does not is a lock that one thing can
 /// open and another cannot.
-pub(crate) fn tiles_on_map(rom: &Rom) -> [bool; 256] {
+pub(crate) fn tiles_on_map(grids: &[Grid]) -> [bool; 256] {
     let mut present = [false; 256];
-    for world in 0..8 {
-        let info = &rom_data::MAP_TILE_GRIDS[world];
-        for screen in 0..info.screens {
-            for row in 0..9 {
-                for col in 0..16 {
-                    let off = rom_data::map_tile_offset(world, row, screen * 16 + col);
-                    present[rom.read_byte(off) as usize] = true;
-                }
+    for grid in grids {
+        for r in 0..grid.rows() {
+            for c in 0..grid.cols {
+                present[grid.get(r, c) as usize] = true;
             }
         }
     }
@@ -925,6 +921,52 @@ fn hint_orientation(tile: u8) -> Option<usize> {
     (tile == ALT_LOCAL_SKY).then_some(SKY_ORIENTATION)
 }
 
+/// **The tile a lock wears, given what the map is allowed to say about it.**
+///
+/// `plain` is the obstacle the path underneath calls for
+/// (`rom_data::gap_tile_for`); `away` is whether the fortress that opens it
+/// stands in another world, which outside the world maze never happens.
+///
+/// The writer calls this while composing the grid — deciding which byte renders
+/// a cell is its job — but the vocabulary stays here, beside the metatile
+/// composition and the removable pairing that have to agree with it. Adding a
+/// tile family in one place and not the others is the trap this arrangement
+/// exists to prevent.
+///
+/// Sky is the awkward one: its alternate colour *is* its plain tile, so a
+/// remote sky lock changes no byte and a `$E4` on the finished map says nothing
+/// about which it is. [`local_sky_tile`] is the other half of that, and the
+/// reason it is a separate pass rather than a branch here.
+pub(crate) fn lock_tile(plain: u8, away: bool, shown_world: usize, hints: crate::HintMode) -> u8 {
+    if !away || !hints.hints_at_all() {
+        return plain;
+    }
+    let Some(orientation) = HINT_REVEALS.iter().position(|&(lock, _)| lock == plain) else {
+        return plain;
+    };
+    if hints.numbers_locks() {
+        HINT_TILES[orientation][shown_world - 1]
+    } else {
+        ALT_REMOTE_TILES[orientation]
+    }
+}
+
+/// The tile a **local** sky lock wears, so the alternate colour keeps meaning
+/// "elsewhere" on a sky path too. `None` when the rule does not apply.
+///
+/// Applied as a sweep over every `$E4` cell rather than per lock, because that
+/// is what it has always done — see [`local_sky_sweep_tile`]'s caller in
+/// `overworld_writer::grid`.
+pub(crate) fn local_sky_tile(hints: crate::HintMode) -> Option<(u8, u8)> {
+    (hints.hints_at_all() && !hints.numbers_locks())
+        .then_some((HINT_REVEALS[SKY_ORIENTATION].0, ALT_LOCAL_SKY))
+}
+
+/// The world number a lock should display, as the player sees it.
+pub(crate) fn shown_world(rom: &Rom, internal: usize) -> usize {
+    displayed_world(rom, internal)
+}
+
 /// Is this numbered lock a water gap rather than a path lock?
 ///
 /// The hammer asks, because the two are governed by different options: a bridge
@@ -964,8 +1006,8 @@ const VERTICAL_ORIENTATION: usize = 1;
 ///
 /// Reading it off the finished grids rather than tracking it through placement
 /// means the table describes the map that shipped, not the map we intended.
-pub(crate) fn removable_rows(rom: &Rom) -> Vec<(u8, u8)> {
-    let present = tiles_on_map(rom);
+pub(crate) fn removable_rows(grids: &[Grid]) -> Vec<(u8, u8)> {
+    let present = tiles_on_map(grids);
 
     let mut rows: Vec<(u8, u8)> =
         obstacle_vocabulary().into_iter().filter(|&(tile, _)| present[tile as usize]).collect();
@@ -983,83 +1025,31 @@ pub(crate) fn removable_rows(rom: &Rom) -> Vec<(u8, u8)> {
     rows
 }
 
-/// Give every away lock a numbered tile, and define the metatiles it needs.
+/// Define the metatile for every hint tile the map actually wears.
 ///
-/// An away lock is one whose fortress stands in another world, which outside the
-/// maze never happens — so this is a no-op for an ordinary seed, and not one
-/// numbered tile is defined.
+/// **The tiles themselves are stamped by `overworld_writer::grid`**, like every
+/// other map tile — this only supplies the art for the indices that turned up.
+/// Composing per tile rather than per lock is the same set of writes: several
+/// locks sharing a tile wrote identical bytes three times before.
 ///
-/// The digit is the *fortress's* world, because that is the question the player
-/// is asking: not where am I, but where do I have to go. A local lock keeps the
-/// plain tile, and the absence of a digit is itself the answer.
-fn stamp_hint_locks(rom: &mut Rom, entries: &[LockEntry], hints: crate::HintMode) {
-    if !hints.hints_at_all() {
-        return;
-    }
-    for e in entries.iter().filter(|e| e.is_away()) {
-        let off = rom_data::map_tile_offset(e.target_world, e.target_pos.0, e.target_pos.1);
-        let plain = rom.read_byte(off);
-        let Some(orientation) = HINT_REVEALS.iter().position(|&(lock, _)| lock == plain) else {
-            // Either this function run twice, or a pairing bug. Neither
-            // should pass quietly.
-            debug_assert!(
-                HINT_TILES.iter().any(|set| set.contains(&plain)),
-                "away lock at {:?} in W{} wears {plain:#04X}, which is no lock tile",
-                e.target_pos,
-                e.target_world + 1
-            );
-            continue;
-        };
-        if hints.numbers_locks() {
-            // Keyed by the number shown, not the internal index, so a tile means
-            // the same thing in every seed: `$6B` is always "horizontal, world 1".
-            let shown = displayed_world(rom, e.key_world);
-            let tile = HINT_TILES[orientation][shown - 1];
-            rom.write_byte(off, tile);
-            write_hint_metatile(rom, tile, plain, shown - 1);
-        } else {
-            let tile = ALT_REMOTE_TILES[orientation];
-            rom.write_byte(off, tile);
-            write_plain_metatile(rom, tile, plain);
-        }
-    }
-
-    if !hints.numbers_locks() {
-        let remote: std::collections::HashSet<(usize, (usize, usize))> = entries
-            .iter()
-            .filter(|e| e.is_away())
-            .map(|e| (e.target_world, e.target_pos))
-            .collect();
-        move_local_sky_locks(rom, &remote);
-    }
-}
-
-/// Give every *local* sky lock the page-1 tile, so the alternate colour keeps
-/// meaning "elsewhere" on a sky path too.
-///
-/// **`remote` is not an optimisation, it is the whole correctness of this.** Sky
-/// is the one orientation whose remote tile is the plain tile — `$E4` is already
-/// the alternate colour, so stamping a remote sky lock leaves the byte alone.
-/// A sweep that looked only at the tile would therefore find every sky lock
-/// still wearing `$E4`, remote ones included, and move them all to the local
-/// tile. Measured before this argument existed: 10 seeds in 30 had a sky lock,
-/// and *every one* came back local.
-fn move_local_sky_locks(
-    rom: &mut Rom,
-    remote: &std::collections::HashSet<(usize, (usize, usize))>,
-) {
-    let plain_sky = HINT_REVEALS[SKY_ORIENTATION].0;
-    for world in 0..8 {
-        let info = &rom_data::MAP_TILE_GRIDS[world];
-        for screen in 0..info.screens {
-            for row in 0..9 {
-                for col in 0..16 {
-                    let pos = (row, screen * 16 + col);
-                    let off = rom_data::map_tile_offset(world, pos.0, pos.1);
-                    if rom.read_byte(off) == plain_sky && !remote.contains(&(world, pos)) {
-                        rom.write_byte(off, ALT_LOCAL_SKY);
-                        write_plain_metatile(rom, ALT_LOCAL_SKY, plain_sky);
-                    }
+/// The art is copied from the plain lock the hint stands in for, which
+/// [`hint_orientation`] recovers, so a padlock stays a padlock and a bridge gap
+/// stays a river with a number on it.
+fn define_hint_metatiles(rom: &mut Rom, grids: &[Grid]) {
+    let mut done = [false; 256];
+    for grid in grids {
+        for r in 0..grid.rows() {
+            for c in 0..grid.cols {
+                let tile = grid.get(r, c);
+                if done[tile as usize] {
+                    continue;
+                }
+                let Some(orientation) = hint_orientation(tile) else { continue };
+                done[tile as usize] = true;
+                let plain = HINT_REVEALS[orientation].0;
+                match HINT_TILES[orientation].iter().position(|&t| t == tile) {
+                    Some(world) => write_hint_metatile(rom, tile, plain, world),
+                    None => write_plain_metatile(rom, tile, plain),
                 }
             }
         }
@@ -1229,14 +1219,18 @@ fn assert_one_key_per_lock(entries: &[LockEntry]) {
 /// If [`assert_one_key_per_lock`] is violated, or if more than [`MAX_ENTRIES`]
 /// are handed over. Truncating would leave a lock no fortress opens, which is an
 /// unwinnable seed; a build-time failure is the better end of that trade.
-pub fn apply(rom: &mut Rom, entries: &[LockEntry], hints: crate::HintMode) {
+pub(crate) fn apply(rom: &mut Rom, entries: &[LockEntry], grids: &[Grid]) {
     assert_one_key_per_lock(entries);
 
-    // Order matters and is one-way. The numbered tiles are stamped onto the map
-    // first, because `removable_rows` reads the map to decide what the table
-    // needs; the table is written next, because `mirror_bytes` reads the table.
-    stamp_hint_locks(rom, entries, hints);
-    relocate_removable_tables(rom, &removable_rows(rom));
+    // **This module no longer writes a map tile.** The lock tiles, hint
+    // variants included, are stamped by `overworld_writer::grid` from
+    // `WrittenOverworld::grids` — so `grids` is handed over rather than read
+    // back off the ROM, and the ordering rule that used to sit here ("stamp
+    // first, because `removable_rows` reads the map") is a signature now.
+    //
+    // The table is still written before `mirror_bytes`, which reads it.
+    define_hint_metatiles(rom, grids);
+    relocate_removable_tables(rom, &removable_rows(grids));
 
     let mirror = mirror_bytes(rom);
     assert_mirror_agrees_with_rust(&mirror);
@@ -1248,29 +1242,19 @@ pub fn apply(rom: &mut Rom, entries: &[LockEntry], hints: crate::HintMode) {
     let away: Vec<&LockEntry> = entries.iter().filter(|e| e.is_away()).collect();
     let mut away_count = 0usize;
     if !away.is_empty() {
-        let map = CompletionMap::from_rom(rom);
+        let map = CompletionMap::from_grids(grids);
 
-        // **This one reads the map back on purpose, and this is the guard.**
+        // **The guard on the two halves agreeing.**
         //
-        // Every other consumer of the finished map is handed it —
-        // `completion_bits` and `world_travel` take
-        // `WrittenOverworld::grids()`, so their ordering is a signature rather
-        // than a rule. This module cannot: `stamp_hint_locks` a few lines above
-        // writes map tiles *itself*, so the writer's copy is already stale by
-        // the time we get here. It has to read what is actually there.
-        //
-        // So the rule stays a rule, and this is what enforces it. Comparing our
-        // reading against the base table `completion_bits` already emitted
-        // catches, in four lines: a grid write landing after
-        // `completion_bits::apply` ran; this module running BEFORE it; and
+        // This module derives each away lock's `(plane byte, bit)` from the
+        // finished map, and `completion_bits` has already emitted a base table
+        // from it. Both are handed the same `grids` now — this module stopped
+        // writing map tiles when the writer took over stamping them — so they
+        // cannot disagree about *which* map. What the compare still catches is
+        // ordering: this module running BEFORE `completion_bits`, or
         // `completion_bits` never having run at all, in which case the region is
-        // still `$FF` filler and the compare fails loudly. Every one of those is
-        // otherwise silent.
-        //
-        // (The hint tiles themselves are bit-neutral — a lock tile swapped for
-        // another lock tile, both in `Map_Removable_Tiles` — which is why the
-        // two readings agree at all. If a future hint tile were not, this fires,
-        // and the fix is to stamp it into the build like every other map edit.)
+        // still `$FF` filler and the compare fails loudly. Both are otherwise
+        // silent.
         let emitted = rom.read_range(FS_COMPLETION_BASES, 9);
         assert_eq!(
             emitted,
@@ -1595,7 +1579,7 @@ mod asm_checks {
             else {
                 continue;
             };
-            let present = tiles_on_map(&rom);
+            let present = tiles_on_map(&rom_data::read_all_tile_grids(&rom));
             let used =
                 obstacle_vocabulary().into_iter().filter(|&(t, _)| present[t as usize]).count();
             assert!(used <= REMOVABLE_COUNT, "seed {seed} needs {used} rows");
@@ -1738,7 +1722,7 @@ mod asm_checks {
             "the reload's M/L test is not the `CMP $A400,X` / `BCS` this replaces"
         );
 
-        let rows = removable_rows(&rom);
+        let rows = removable_rows(&rom_data::read_all_tile_grids(&rom));
         relocate_removable_tables(&mut rom, &rows);
 
         let after = rom.read_range(PRG012_ML_TEST, 5);
@@ -1799,7 +1783,7 @@ mod asm_checks {
             eprintln!("SKIP: requires the ROM");
             return;
         };
-        let rows = removable_rows(&rom);
+        let rows = removable_rows(&rom_data::read_all_tile_grids(&rom));
         relocate_removable_tables(&mut rom, &rows);
 
         for (i, &(from, to)) in rows.iter().enumerate() {
@@ -1856,7 +1840,8 @@ mod asm_checks {
         );
 
         let mut patched = rom.clone();
-        apply(&mut patched, &[], crate::HintMode::Full);
+        let grids = rom_data::read_all_tile_grids(&patched);
+        apply(&mut patched, &[], &grids);
         assert_eq!(patched.read_range(MAP_OP8_VECTOR, 2), FORTRESS_FX_CPU.to_le_bytes());
     }
 
@@ -1936,7 +1921,7 @@ mod asm_checks {
         };
         // The mirror is built from the tables at their randomized address, so
         // this has to stand where `apply` stands: after the relocation.
-        let rows = removable_rows(&rom);
+        let rows = removable_rows(&rom_data::read_all_tile_grids(&rom));
         relocate_removable_tables(&mut rom, &rows);
         let mirror = mirror_bytes(&rom);
         assert_mirror_agrees_with_rust(&mirror);
@@ -1965,7 +1950,8 @@ mod asm_checks {
         }
 
         let mut patched = rom.clone();
-        apply(&mut patched, &[], crate::HintMode::Full);
+        let grids = rom_data::read_all_tile_grids(&patched);
+        apply(&mut patched, &[], &grids);
         assert_eq!(patched.read_range(FS_LOCK_MIRROR, MIRROR_LEN), mirror);
     }
 
@@ -1989,7 +1975,8 @@ mod asm_checks {
             );
         }
         let mut patched = rom.clone();
-        apply(&mut patched, &[], crate::HintMode::Full);
+        let grids = rom_data::read_all_tile_grids(&patched);
+        apply(&mut patched, &[], &grids);
         for &off in &rom_data::BOOMBOOM_Y_OFFSETS {
             assert_eq!(patched.read_byte(off), rom.read_byte(off), "{off:#07X} was written");
         }
@@ -2135,7 +2122,8 @@ mod asm_checks {
     fn one_lock(rom: &Rom, e: LockEntry) -> (Rom, Option<[u8; 2]>) {
         let base = with_locks(rom, &[e]);
         let mut patched = base.clone();
-        apply(&mut patched, &[e], crate::HintMode::Full);
+        let grids = rom_data::read_all_tile_grids(&patched);
+        apply(&mut patched, &[e], &grids);
         let payload = e.is_away().then(|| {
             let map = CompletionMap::from_rom(&base);
             away_target(&map, e.target_world, e.target_pos).expect("the cell owns a bit")
@@ -2479,7 +2467,8 @@ mod asm_checks {
 
         let base = with_locks(&rom, &entries);
         let mut patched = base.clone();
-        apply(&mut patched, &entries, crate::HintMode::Full);
+        let grids = rom_data::read_all_tile_grids(&patched);
+        apply(&mut patched, &entries, &grids);
         assert_eq!(decode_entries(&patched).len(), MAX_ENTRIES, "the table must be full");
         let map = CompletionMap::from_rom(&base);
 

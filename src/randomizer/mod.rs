@@ -382,7 +382,7 @@ fn randomize_inner(
             shuffle_hammer_bros: options.shuffle_hammer_bros,
             piranha: options.piranha_shuffle,
             friendlier_levels: options.friendlier_levels,
-            hints: hints.hints_at_all(),
+            hints,
             deja_vu: options.deja_vu,
             deja_vu_forts: options.deja_vu_forts,
         },
@@ -431,7 +431,11 @@ fn randomize_inner(
     rom.set_tag("lock_keys");
     // One source, both modes: `stamp_into` wrote the maze's pairing into the
     // build, so the writer's rows already carry it.
-    randomize::lock_keys::apply(rom, &randomize::overworld_writer::lock_entries(&build), hints);
+    randomize::lock_keys::apply(
+        rom,
+        &randomize::overworld_writer::lock_entries(&build),
+        written.grids(rom),
+    );
 
     // Big [?] bonus-room shuffle: every level with a Big [?] pipe draws from a
     // pool of 19 rooms (11 vanilla + 8 in the otherwise-dead "Unused Level 5").
@@ -619,7 +623,12 @@ fn randomize_inner(
     // Hammer breaks tiles on the overworld map (locks, bridges, or both).
     if hammer_breaks_locks || hammer_breaks_bridges {
         rom.set_tag("qol/hammer_breaks_tiles");
-        randomize::qol::hammer_breaks_tiles(rom, hammer_breaks_locks, hammer_breaks_bridges);
+        randomize::qol::hammer_breaks_tiles(
+            rom,
+            hammer_breaks_locks,
+            hammer_breaks_bridges,
+            written.grids(rom),
+        );
     }
 
     // MaCobra52's "Early Sun" — Angry Sun begins attacking immediately.

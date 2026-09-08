@@ -19,7 +19,6 @@ use super::pipe_helpers;
 use super::rom_data::{self, FORTRESS_1F_OBJ_PTR, Grid, TILE_BONUS_GAME, TILE_PIPE, WORLDS};
 
 mod assign;
-mod fortress_fx;
 mod grid;
 mod march_veto;
 mod metatiles;
@@ -28,7 +27,6 @@ mod sprites;
 mod types;
 
 use assign::{assign_pool, interleave_hb_by_obj_ptr};
-use fortress_fx::collect_lock_entries;
 use grid::write_tile_grid;
 use pointers::{write_pipe_dests, write_pointer_entries};
 use sprites::{
@@ -128,7 +126,34 @@ pub(crate) fn write_overworld<R: Rng>(
 /// worlds. It is *input* to [`super::lock_keys::apply`], which owns every byte
 /// the console reads; nothing here writes ROM.
 pub(crate) fn lock_entries(build: &BuildResult) -> Vec<LockEntry> {
-    collect_lock_entries(build)
+    let mut out = Vec::new();
+    for (wi, built) in build.worlds.iter().enumerate() {
+        for lock in &built.locks {
+            let fort = lock.fort;
+            let pos = build.worlds[fort.world]
+                .slots
+                .iter()
+                .find(|s| s.section == fort.section && s.kind == SlotKind::Fortress)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "lock at W{} {:?} names fortress section {} in W{}, which is not on \
+                         the map — the lock would be permanently sealed",
+                        wi + 1,
+                        lock.pos,
+                        fort.section,
+                        fort.world + 1
+                    )
+                })
+                .pos;
+            out.push(LockEntry {
+                key_world: fort.world,
+                key_pos: pos,
+                target_world: wi,
+                target_pos: lock.pos,
+            });
+        }
+    }
+    out
 }
 
 /// Do the writer's grids still describe the bytes in the ROM?
@@ -225,7 +250,8 @@ pub(crate) struct WriteFlags {
     /// and `FRIENDLIER_BLOCKED_FORTS` from the fortress deck, refilling both
     /// with duplicates of what remains.
     pub friendlier_levels: bool,
-    /// Map hints: honour `SlotAssignment::lock_hint` when picking a fortress
-    /// tile, instead of choosing among them for variety.
-    pub hints: bool,
+    /// Map hints. Resolved to `Off` without the world maze by
+    /// `randomizer::randomize_inner` — every hint is a claim about another
+    /// world, so there is nothing to say without one.
+    pub hints: crate::HintMode,
 }

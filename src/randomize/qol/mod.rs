@@ -21,7 +21,7 @@ pub use bro_timer::apply_bro_battle_timer;
 pub use canoe::fix_canoe_softlock;
 pub use canoe_summon::apply_canoe_summon;
 pub use cards::card_speed_clear;
-pub use hammer_breaks::hammer_breaks_tiles;
+pub(crate) use hammer_breaks::hammer_breaks_tiles;
 pub use lakitu::apply_lakitu_stays_down;
 pub use level_clock::apply_real_time_clock;
 pub use macobra::{
