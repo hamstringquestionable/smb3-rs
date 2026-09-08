@@ -147,7 +147,11 @@ const COUNT_OPERAND: usize = 36;
 const BOUNDARY_OPERAND: usize = 71;
 
 /// Bytes reserved for the entry table. Four per entry.
-const ENTRIES_RESERVED: usize = 112;
+///
+/// `pub(crate)` so the overworld fingerprint can hash the whole reservation
+/// without re-deriving its size — the tail past the live entries is `$FF`
+/// filler, which is stable and so hashes fine.
+pub(crate) const ENTRIES_RESERVED: usize = 112;
 
 /// How many locks a build can key. Today's ceiling is the 17-card fortress deck
 /// — and every fortress keys exactly one lock, so 17 is also the floor. The

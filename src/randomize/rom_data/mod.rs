@@ -18,6 +18,7 @@ mod access;
 #[cfg(test)]
 pub(crate) mod asm;
 mod engine;
+mod fingerprint;
 mod free_space;
 mod grid;
 mod tables;
@@ -32,6 +33,11 @@ pub(crate) use tiles::*;
 
 // Part of the lib's public API (consumed by the chr_stats integration test).
 pub use access::{ENEMY_DATA_END, ENEMY_DATA_START};
+
+// Part of the lib's public API: `tests/overworld_baseline.rs` links the library
+// as an outside consumer, so the regions it hashes have to be reachable from
+// here rather than copied into the test as offsets.
+pub use fingerprint::overworld_fingerprint;
 
 // Part of the lib's public API: the CLI's `--write-log` dump audits free space
 // against the run it just produced.
