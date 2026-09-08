@@ -346,7 +346,7 @@ fn read_sprite_positions(
 ) -> Vec<(usize, usize)> {
     let mut positions = Vec::new();
 
-    for slot in 0..9 {
+    for slot in 0..MAP_OBJ_SLOTS {
         let id_off = map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot);
         if !pred(rom.read_byte(id_off)) {
             continue;
@@ -398,7 +398,7 @@ pub(crate) const MAP_OBJ_REWARDS: usize = 0x16190;
 
 /// File offset of the reward byte for map-object `slot` in `world_idx`.
 pub(crate) fn map_obj_reward_offset(world_idx: usize, slot: usize) -> usize {
-    MAP_OBJ_REWARDS + world_idx * 9 + slot
+    MAP_OBJ_REWARDS + world_idx * MAP_OBJ_SLOTS + slot
 }
 
 /// First map-object slot usable for sprite placement in a world. Slot 0
@@ -415,7 +415,7 @@ pub(crate) fn first_usable_map_obj_slot(world_idx: usize) -> usize {
 /// (`0x03-0x06`, which redistribution clears) — so the result is identical
 /// before and after [`clear_hb_sprites`].
 pub(crate) fn eligible_hb_map_slots(rom: &Rom, world_idx: usize) -> Vec<usize> {
-    (first_usable_map_obj_slot(world_idx)..9)
+    (first_usable_map_obj_slot(world_idx)..MAP_OBJ_SLOTS)
         .filter(|&slot| {
             let id = rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot));
             id == 0x00 || is_hb_sprite_id(id)
@@ -429,7 +429,7 @@ pub(crate) fn eligible_hb_map_slots(rom: &Rom, world_idx: usize) -> Vec<usize> {
 pub(crate) fn collect_hb_sprite_rewards(rom: &Rom) -> Vec<u8> {
     let mut rewards = Vec::new();
     for world_idx in 0..8 {
-        for slot in 0..9 {
+        for slot in 0..MAP_OBJ_SLOTS {
             let id = rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot));
             if is_hb_sprite_id(id) {
                 rewards.push(rom.read_byte(map_obj_reward_offset(world_idx, slot)));
@@ -443,7 +443,7 @@ pub(crate) fn collect_hb_sprite_rewards(rom: &Rom) -> Vec<u8> {
 /// slot's id, position, and reward byte are zeroed so the tile is freed and the
 /// sprite no longer spawns. Used before writing redistributed Hammer Bros.
 pub(crate) fn clear_hb_sprites(rom: &mut Rom, world_idx: usize) {
-    for slot in 0..9 {
+    for slot in 0..MAP_OBJ_SLOTS {
         let id_off = map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot);
         if is_hb_sprite_id(rom.read_byte(id_off)) {
             clear_map_sprite(rom, world_idx, slot);
@@ -456,7 +456,7 @@ pub(crate) fn clear_hb_sprites(rom: &mut Rom, world_idx: usize) {
 /// writer (which fills eligible slots from the bottom) and the reserved
 /// dynamic-spawn buffer.
 pub(crate) fn last_empty_map_obj_slot(rom: &Rom, world_idx: usize) -> Option<usize> {
-    (first_usable_map_obj_slot(world_idx)..9).rev().find(|&slot| {
+    (first_usable_map_obj_slot(world_idx)..MAP_OBJ_SLOTS).rev().find(|&slot| {
         rom.read_byte(map_obj_slot_offset(rom, MAP_OBJ_IDS_MASTER, world_idx, slot)) == 0x00
     })
 }

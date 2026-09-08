@@ -405,6 +405,11 @@ pub(crate) const ROWS: usize = 9;
 pub(crate) const PRG012_FILE_BASE: usize = 0x18010;
 
 // Pipe destination tables (PRG002)
+
+/// Entries in each pipe destination table. The four tables are contiguous and
+/// this is also their stride, which is the check if one of them ever moves.
+pub(crate) const PIPE_DEST_LEN: usize = 24;
+
 pub(crate) const PIPE_MAP_XHI: usize = 0x046AA;
 
 pub(crate) const PIPE_MAP_X: usize = 0x046C2;
@@ -787,6 +792,11 @@ pub(crate) const HB_NEEDS_SHELL_ENEMIES: &[u8] = &[
 pub(crate) const HB_EXCLUDE_ENTRIES: &[(u16, u8)] = &[
     (0xC640, 3), // W3[41] — tileset 3 is wrong for lay 0xB3E7
 ];
+
+/// Map-object sprite slots per world. Slot 0 always holds a fixed non-HB
+/// marker and slot 1 is the airship's in W1-W7; see
+/// [`first_usable_map_obj_slot`](super::first_usable_map_obj_slot).
+pub(crate) const MAP_OBJ_SLOTS: usize = 9;
 
 /// Master pointer table for Map_List_Object_Ys (8 words, one per world).
 pub(crate) const MAP_OBJ_YS_MASTER: usize = 0x16020;

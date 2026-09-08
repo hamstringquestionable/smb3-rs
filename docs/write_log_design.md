@@ -274,10 +274,14 @@ That is weak evidence, though: the audit only sees the 36 free-space regions,
 which is a small share of what a run writes. It lowers the urgency; it does not
 clear the structural problem.
 
-**Verification:** `tests/overworld_baseline.rs` covers it. Tagging is metadata
-and must not move a single ROM byte, so all 20 seeds must stay byte-identical.
-Note that harness excludes palettes (not seed-stable) and only exercises default
-options, so pair it with the existing pinned-table tests for flag-gated passes.
+**Verification:** `tests/rom_identity.rs` covers it — `capture` on the base
+commit, `compare` after. Tagging is metadata and must not move a single ROM
+byte, so all 20 seeds must stay byte-identical, which is exactly the question
+that harness answers. (`tests/overworld_baseline.rs` is the wrong instrument
+here: it hashes the overworld alone, so it would stay green for a tagging
+change that moved bytes elsewhere.) Note the sweep excludes palettes (not
+seed-stable) and only exercises default options, so pair it with the existing
+pinned-table tests for flag-gated passes.
 
 ---
 
