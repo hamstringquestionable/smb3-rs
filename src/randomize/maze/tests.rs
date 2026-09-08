@@ -1115,6 +1115,7 @@ fn a_generated_maze_writes_only_pad_tiles_and_free_space() {
             &mut after,
             &super::writer::telepad_specs(&state),
             &grids,
+            true,
         );
 
         // **The maze's ROM side touches no map grid at all.** Every map edit it

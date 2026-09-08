@@ -103,6 +103,32 @@
 //! displaces. Eight bytes of PRG011 saved, and the assignment is MSB-first
 //! because the borrowed table is.
 //!
+//! # The HELP bubble retires with the world's castle
+//!
+//! Same shape, opposite direction: an object that should stop coming back.
+//! Slot 0 of every world is `MAPOBJ_HELP`, the bubble blinking over the king's
+//! castle, and in a shipped ROM **nothing ever clears it** — the section below
+//! explains why the routine that used to (`TAndK_WaitPlayerButtonA`) no longer
+//! runs at all. In vanilla that was invisible, because the world was behind you.
+//! In the maze you walk back past a castle you rescued hours ago and it is
+//! still calling for help.
+//!
+//! So the restore clears slot 0 in any world whose airship has been cleared,
+//! which [`super::wand_gate`]'s `WANDS_TABLE` already records — the same byte
+//! that says the world's wand is held. Ten bytes on the tail of the restore,
+//! reusing its live `X` (`World_Num`) and reaching the same `RTS`.
+//!
+//! **Gated on autoscroll removal, and that is not caution.** With
+//! `--keep-autoscroll` slot 0 is the engine's "have I sent you to the airship
+//! yet" token and the dock tile's chain into the airship reads it, so a
+//! permanently empty slot 0 would make the world's airship — the maze's spine
+//! edge — a one-shot. [`apply`] takes the flag rather than assuming the
+//! default; the tail is simply not written when the cutscene is still live.
+//!
+//! Slot 0 holds nothing else, ever: `first_usable_map_obj_slot` starts the
+//! builder at slot 2 (slot 1 in World 8), so this cannot clear a Hammer Bro or
+//! a marker. And World 8 has no airship, so its own bubble stays.
+//!
 //! # Two neighbours that look like the same bug and are not
 //!
 //! Both were raised as "same bug class, do them while the machinery is out".
@@ -203,7 +229,7 @@
 
 use crate::rom::Rom;
 
-use super::maze_state::{MAP_OBJ_DEAD, MAP_OBJ_DEAD_LEN};
+use super::maze_state::{MAP_OBJ_DEAD, MAP_OBJ_DEAD_LEN, WANDS_TABLE};
 #[cfg(test)]
 use super::rom_data::NMI_SAFE_MAX;
 use super::rom_data::{
@@ -216,6 +242,12 @@ use super::rom_data::{
 
 /// `Map_Objects_IDs` — 14 slots, `$00` meaning "nothing here".
 const MAP_OBJECTS_IDS: u16 = 0x7F15;
+
+/// `MAPOBJ_EMPTY` and `MAPOBJ_HELP` — an empty slot, and the bubble over the
+/// king's castle that sits in slot 0 of every world.
+const MAPOBJ_EMPTY: u8 = 0x00;
+#[cfg(test)]
+const MAPOBJ_HELP: u8 = 0x01;
 
 /// File offset of the same table, for that test.
 #[cfg(test)]
@@ -339,18 +371,63 @@ const RESTORE_OBJECTS: [u8; 34] = [
     0x60,                                                     // 21: RTS
 ];
 
+/// Retire the HELP bubble in a world whose airship has been cleared. Eleven
+/// bytes, spliced onto the tail of [`RESTORE_OBJECTS`] in place of its `RTS`,
+/// which it re-provides.
+///
+/// ```text
+/// $BCD4  BD C9 7A   LDA WANDS_TABLE,X    ; X = World_Num, live since offset 12
+/// $BCD7  F0 05      BEQ done             ; this world's airship still stands
+/// $BCD9  A9 00      LDA #MAPOBJ_EMPTY
+/// $BCDB  8D 15 7F   STA Map_Objects_IDs  ; slot 0, the bubble
+/// $BCDE  60  done:  RTS
+/// ```
+///
+/// `X` is the restore's own `LDX World_Num`, which the loop above leaves
+/// untouched (it indexes with `Y`), so the world costs nothing to re-read. The
+/// store is absolute rather than indexed because slot 0 is the only slot this
+/// can ever mean — see the module docs for why nothing else lives there.
+#[rustfmt::skip]
+const RETIRE_HELP_BUBBLE: [u8; 11] = [
+    0xBD, WANDS_TABLE as u8, (WANDS_TABLE >> 8) as u8,          //  0: LDA WANDS_TABLE,X
+    0xF0, 0x05,                                                 //  3: BEQ +5 -> done
+    0xA9, MAPOBJ_EMPTY,                                         //  5: LDA #MAPOBJ_EMPTY
+    0x8D, MAP_OBJECTS_IDS as u8, (MAP_OBJECTS_IDS >> 8) as u8,  //  7: STA Map_Objects_IDs
+    0x60,                                                       // 10: RTS  ; done
+];
+
+/// [`RESTORE_OBJECTS`], with [`RETIRE_HELP_BUBBLE`] spliced over its trailing
+/// `RTS` when the bubble is ours to retire. 34 bytes or 44; 48 reserved.
+fn restore_objects(retire_help_bubble: bool) -> Vec<u8> {
+    let mut code = RESTORE_OBJECTS.to_vec();
+    if retire_help_bubble {
+        assert_eq!(
+            code.pop(),
+            Some(0x60),
+            "the restore must end in the RTS the tail replaces and re-provides",
+        );
+        code.extend_from_slice(&RETIRE_HELP_BUBBLE);
+    }
+    code
+}
+
 // --- Writer -----------------------------------------------------------------
 
 /// Install both routines and the defeat hook.
+///
+/// `retire_help_bubble` is `disable_autoscroll`: with the airship cutscene
+/// retired the bubble is decoration and a cleared world stops showing it; with
+/// `--keep-autoscroll` slot 0 still gates the dock tile's chain into the
+/// airship, so it is left standing. See the module docs.
 ///
 /// The restore's *call* is not here: it is the first three bytes of
 /// [`super::completion_bits::WIPE_REPLACEMENT`], because that is the routine
 /// that owns the `$84CD` hook. `the_wipe_replacement_calls_the_restore` is what
 /// keeps the two ends together.
-pub(crate) fn apply(rom: &mut Rom) {
+pub(crate) fn apply(rom: &mut Rom, retire_help_bubble: bool) {
     rom.push_tag("map_objects");
     rom.write_range(FS_MAZE_OBJ_MARK, &MARK_DEAD);
-    rom.write_range(FS_MAZE_OBJ_RESTORE, &RESTORE_OBJECTS);
+    rom.write_range(FS_MAZE_OBJ_RESTORE, &restore_objects(retire_help_bubble));
     rom.write_range(MARK_HOOK_OFFSET, &[0x20, MARK_DEAD_CPU as u8, (MARK_DEAD_CPU >> 8) as u8]);
     rom.pop_tag();
 }
@@ -386,11 +463,22 @@ mod tests {
             .origin(MARK_DEAD_CPU)
             .zero_page(NMI_SAFE_MAX, &[])
             .assert_ok();
-        asm::check(&RESTORE_OBJECTS)
-            .allocation(FS_MAZE_OBJ_RESTORE)
-            .origin(RESTORE_OBJECTS_CPU)
-            .zero_page(NMI_SAFE_MAX, &[])
-            .assert_ok();
+        // Both shapes of the restore: with the bubble tail, and without it.
+        for retire in [false, true] {
+            asm::check(&restore_objects(retire))
+                .allocation(FS_MAZE_OBJ_RESTORE)
+                .origin(RESTORE_OBJECTS_CPU)
+                .zero_page(NMI_SAFE_MAX, &[])
+                .assert_ok();
+        }
+    }
+
+    /// The tail may only ever empty slot 0 — the same structural rule as the
+    /// loop it is spliced onto, and it is the reason the whole routine can
+    /// still claim it cannot conjure an object.
+    #[test]
+    fn the_bubble_tail_can_only_ever_clear_an_id() {
+        assert!(stores_only_zero_into_ids(&restore_objects(true)));
     }
 
     /// The defeat hook displaces one whole instruction, and the two bytes in
@@ -473,10 +561,6 @@ mod tests {
     /// `OBJ_TOADANDKING` — the in-level object that runs the Toad-and-King
     /// scene, and the whole content of every world's airship entry.
     const OBJ_TOADANDKING: u8 = 0xD5;
-    /// `MAPOBJ_HELP` and `MAPOBJ_EMPTY`.
-    const MAPOBJ_HELP: u8 = 0x01;
-    const MAPOBJ_EMPTY: u8 = 0x00;
-
     /// **In vanilla the spine edge runs through the HELP bubble. In a shipped
     /// ROM it does not** — and this used to assert only the first half.
     ///
@@ -1057,5 +1141,99 @@ mod tests {
         let mut bad = MARK_DEAD;
         bad[4] = 14; // CPY #MAPOBJ_TOTAL
         assert!(!stays_in_bounds(&bad), "a guard that admits the runtime slots went unnoticed");
+    }
+
+    // --- The HELP bubble ----------------------------------------------------
+
+    /// Draw `world` fresh out of ROM and run the restore over it, with
+    /// `wands` naming the worlds whose airships have been cleared. Returns
+    /// what slot 0 — the HELP bubble — holds afterwards.
+    fn bubble_after_entry(rom: &Rom, restore: &[u8], world: usize, wands: &[usize]) -> u8 {
+        let mut cpu = cpu_with(rom, &MARK_DEAD, restore);
+        for w in 0..8u16 {
+            cpu.memory.set_byte(WANDS_TABLE + w, u8::from(wands.contains(&(w as usize))));
+        }
+        map_init(&mut cpu, rom, world);
+        call_routine(&mut cpu, RESTORE_OBJECTS_CPU, "RESTORE_OBJECTS");
+        ids(&mut cpu)[0]
+    }
+
+    /// **The bubble stops calling for help once its castle has fallen** — in
+    /// that world, and in no other. Every world entered with every one of the
+    /// eight worlds cleared in turn.
+    #[test]
+    fn the_help_bubble_retires_with_its_own_world() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let restore = restore_objects(true);
+        for world in 0..8usize {
+            assert_eq!(
+                bubble_after_entry(&rom, &restore, world, &[]),
+                MAPOBJ_HELP,
+                "W{}: the bubble went before the airship was cleared",
+                world + 1,
+            );
+            assert_eq!(
+                bubble_after_entry(&rom, &restore, world, &[world]),
+                MAPOBJ_EMPTY,
+                "W{}: the bubble is still there after that world's airship fell",
+                world + 1,
+            );
+            for other in (0..8usize).filter(|&o| o != world) {
+                assert_eq!(
+                    bubble_after_entry(&rom, &restore, world, &[other]),
+                    MAPOBJ_HELP,
+                    "W{}: clearing W{} took this world's bubble",
+                    world + 1,
+                    other + 1,
+                );
+            }
+        }
+    }
+
+    /// **With `--keep-autoscroll` the bubble stays**, wand or no wand: slot 0
+    /// is still the engine's token for the dock tile's chain into the airship,
+    /// and emptying it for good would make the maze's spine edge a one-shot.
+    /// The tail is not written at all, which is what this pins.
+    #[test]
+    fn without_the_tail_the_bubble_never_leaves() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let restore = restore_objects(false);
+        assert_eq!(restore.len(), RESTORE_OBJECTS.len(), "the tail leaked into the plain form");
+        for world in 0..8usize {
+            assert_eq!(
+                bubble_after_entry(&rom, &restore, world, &[world]),
+                MAPOBJ_HELP,
+                "W{}: the bubble was retired with the cutscene still live",
+                world + 1,
+            );
+        }
+    }
+
+    /// **World-blind tail.** Read the wand table without `World_Num` — `LDA
+    /// WANDS_TABLE` absolute instead of `,X` — and one cleared world silences
+    /// every world's bubble.
+    #[test]
+    fn mutation_a_world_blind_bubble_tail_is_caught() {
+        let Some(rom) = vanilla() else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let mut bad = restore_objects(true);
+        let tail = RESTORE_OBJECTS.len() - 1;
+        assert_eq!(bad[tail], 0xBD, "byte {tail} is no longer the LDA abs,X this mutates");
+        bad[tail] = 0xAD; // LDA abs
+        assert_eq!(
+            bubble_after_entry(&rom, &bad, 1, &[0]),
+            MAPOBJ_EMPTY,
+            "the mutation did not change what it was supposed to change",
+        );
+        // ...which is exactly what `the_help_bubble_retires_with_its_own_world`
+        // asserts must not happen.
     }
 }

@@ -406,6 +406,10 @@ fn randomize_inner(
             rom,
             &randomize::maze::writer::telepad_specs(&state),
             written.grids(rom),
+            // The HELP bubble is only ours to retire once the airship cutscene
+            // is gone — with `--keep-autoscroll` slot 0 still gates the dock
+            // tile's chain into the airship. See `map_objects`.
+            options.disable_autoscroll,
         );
         rom.set_tag("world_travel");
         randomize::world_travel::apply(rom, written.grids(rom));

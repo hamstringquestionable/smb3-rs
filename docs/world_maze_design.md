@@ -1250,6 +1250,15 @@ airship level, not because the bubble came back.
 and so passed without ever looking at our output; it is now
 `the_spine_edge_no_longer_needs_the_help_bubble` and checks both halves.
 
+**The second consequence (2026-09-08): the bubble can be retired.** Because
+nothing reads slot 0 any more, the maze clears it on entry to a world whose
+airship has already been cleared — `map_objects::RETIRE_HELP_BUBBLE`, eleven
+bytes on the tail of the restore, keyed on the same `WANDS_TABLE` byte that
+holds the world's wand. It is written **only when autoscroll removal is on**,
+exactly as the paragraph below demands: with `--keep-autoscroll` slot 0 is the
+dock tile's token again and a permanently empty one would turn the spine edge
+into a one-shot.
+
 **The consequence is a budget.** Map-object slots 0 and 1 are free in a normal
 seed — two per world — which is what makes a hovering marker over each lock
 affordable. Measured (`randomizer::tests::map_object_slot_budget`, 30 seeds):

@@ -1111,7 +1111,12 @@ pub fn build(vanilla: &[u8], spec: &TestRomSpec) -> Result<TestRom, String> {
         // record. That is the reader case `CompletionMap::from_rom` exists for.
         let grids: Vec<crate::randomize::rom_data::Grid> =
             (0..8).map(|w| crate::randomize::rom_data::read_tile_grid(&rom, w)).collect();
-        crate::randomize::world_persist::apply(&mut rom, &telepads, &grids);
+        // No HELP-bubble retirement: this path patches whatever base ROM it
+        // was given, and on a vanilla one the airship cutscene is still live,
+        // so slot 0 is the dock tile's token. (Nothing on this path writes the
+        // wand table either, so the tail would never fire — `false` is just the
+        // honest value.)
+        crate::randomize::world_persist::apply(&mut rom, &telepads, &grids, false);
         for pad in &telepads {
             report.push(format!(
                 "telepad: W{} row {} col {}  ->  W{} row {} col {}",

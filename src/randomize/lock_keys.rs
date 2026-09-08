@@ -1898,7 +1898,7 @@ mod asm_checks {
         };
         let mut patched = rom.clone();
         let grids = rom_data::read_all_tile_grids(&patched);
-        completion_bits::apply(&mut patched, &grids);
+        completion_bits::apply(&mut patched, &grids, true);
 
         let sta = [0x9D, PACKED as u8, (PACKED >> 8) as u8]; // STA PACKED,X
         let lda = [0xBD, PACKED as u8, (PACKED >> 8) as u8]; // LDA PACKED,X
@@ -2114,7 +2114,7 @@ mod asm_checks {
             );
         }
         let grids = rom_data::read_all_tile_grids(&out);
-        completion_bits::apply(&mut out, &grids);
+        completion_bits::apply(&mut out, &grids, true);
         out
     }
 

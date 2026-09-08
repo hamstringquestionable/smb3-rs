@@ -1027,7 +1027,7 @@ const RELOAD_CALL_VANILLA: [u8; 3] = [0x20, 0x5D, 0xA4];
 /// wasteful by this project's standards and deliberate here: `world_persist`
 /// writes its arrival restore into three of them, and a shipped version would
 /// restructure the surrounding init rather than pad it.
-pub(crate) fn apply(rom: &mut Rom, grids: &[Grid]) {
+pub(crate) fn apply(rom: &mut Rom, grids: &[Grid], retire_help_bubble: bool) {
     let bases = CompletionMap::from_grids(grids).base_table();
 
     rom.push_tag("completion_bits");
@@ -1048,7 +1048,7 @@ pub(crate) fn apply(rom: &mut Rom, grids: &[Grid]) {
     // orchestrator because the two are one mechanism seen from two sides: this
     // module persists what the map *grid* remembers, that one persists what the
     // map *objects* do, and `WIPE_REPLACEMENT` above calls into it.
-    map_objects::apply(rom);
+    map_objects::apply(rom, retire_help_bubble);
 
     // Hook 1: the wipe becomes a call to the replacement.
     let mut wipe = [0xEA_u8; WIPE_LEN];
