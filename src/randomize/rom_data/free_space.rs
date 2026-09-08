@@ -114,7 +114,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x3DFA0,
         16,
         &["wand_gate"],
-        "world-maze: bump the wand count on an airship clear (16 reserved, 16 used — \
+        "world-maze: mark this world's wand on an airship clear (16 reserved, 14 used — \
          the $FF run here is exactly 16 bytes, so this cannot grow in place)",
     ),
     fs(
@@ -191,7 +191,7 @@ pub const FREE_SPACE_ALLOCATIONS: &[FreeSpaceAlloc] = &[
         0x19E40,
         128,
         &["wand_gate"],
-        "world-maze: the wand gate's opener, two entry points (128 reserved, 29 used)",
+        "world-maze: the wand gate's opener, two entry points (128 reserved, 37 used)",
     ),
     fs(
         0x19EC0,
@@ -478,9 +478,14 @@ pub(crate) const FS_SEED_STAMP: usize = 0x19DF0;
 /// check.
 pub(crate) const FS_MAZE_WAND_GATE: usize = 0x19E40;
 
-/// World-maze: bump the wand counter when an airship is cleared. PRG030, which
-/// is always mapped — the airship path runs there and `FS_WORLD_ORDER` next
-/// door is 28/28 full, so this needs its own row.
+/// World-maze: mark the cleared world's wand when an airship is cleared.
+/// PRG030, which is always mapped — the airship path runs there and
+/// `FS_WORLD_ORDER` next door is 28/28 full, so this needs its own row.
+///
+/// The routine is 14 bytes and the gap is exactly 16, which is why the wand
+/// state is a table the *gate* sums rather than a counter this site keeps: the
+/// per-world guard a counter needs did not fit here, and PRG012 (where the gate
+/// lives) has room to spare.
 pub(crate) const FS_MAZE_WAND_COUNT: usize = 0x3DFA0;
 
 /// `Map_Removable_Tiles` / `Map_RemoveTo_Tiles`, relocated out of their vanilla

@@ -1083,8 +1083,8 @@ mod asm_checks {
             "a wrong loop-back displacement must break the cycle test"
         );
 
-        // 2. The scan reads one byte past the table (WAND_COUNT's byte, in the
-        //    real map) — an off-by-one in the table address.
+        // 2. The scan reads one byte past the table (the wand table's first
+        //    byte, in the real map) — an off-by-one in the table address.
         let mut wrong_index = WHISTLE_TRAVEL;
         wrong_index[11] = wrong_index[11].wrapping_add(1);
         asm::check(&wrong_index).origin(WHISTLE_TRAVEL_CPU).assert_ok();

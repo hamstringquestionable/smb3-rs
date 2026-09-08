@@ -1087,11 +1087,24 @@ requested pad role distribution.
 
 ## Answered (2026-09-05)
 
-- **Where the wand counter lives, and the hook that increments it.**
-  `maze_state::WAND_COUNT` at SRAM `$7AC9`, in the `$7AC1-$7ADF` run the maze
-  owns; bumped by a 16-byte routine in PRG030 chained through
+- **Where the wand state lives, and the hook that records it.**
+  `maze_state::WANDS_TABLE` at SRAM `$7AC9`, eight bytes in the `$7AC1-$7ADF`
+  run the maze owns; marked by a 14-byte routine in PRG030 chained through
   `world_order`'s `INC World_Num` replacement, which is the one site an airship
   clear always passes.
+
+  **CORRECTION (2026-09-08): it was a counter, and a counter was wrong.**
+  Nothing marks an airship beaten, so the spine edge is repeatable by design —
+  and a counter bumped on every clear made a repeat clear a second wand, with
+  seven trips through one airship opening a K = 7 gate. It is now a byte per
+  world (`LDA #$01 / STA WANDS_TABLE,X`, idempotent), and the *gate* sums the
+  table on each map load instead of comparing one byte. That is 11 more bytes
+  in PRG012, which has room, and 2 fewer in PRG030, which does not — the
+  16-byte gap the marker sits in cannot grow.
+
+  The generator never needed a change: `spheres` already counted *distinct*
+  reachable airships (`wand_tiles.filter(reach.contains).count()`), so the ROM
+  now enforces what the model always assumed.
 - **The player starts holding the whistle, and keeps it.** It is the mode's
   fast travel, so it is granted at the first frame rather than hidden: an
   earlier cut pinned one into a toad-house chest to guarantee it existed, which

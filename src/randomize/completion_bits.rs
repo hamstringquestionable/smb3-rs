@@ -2116,7 +2116,11 @@ mod tests {
                 maze_state::VISITED_TABLE + maze_state::VISITED_TABLE_LEN as u16,
                 "maze visited table",
             ),
-            (maze_state::WAND_COUNT, maze_state::WAND_COUNT + 1, "maze wand counter"),
+            (
+                maze_state::WANDS_TABLE,
+                maze_state::WANDS_TABLE + maze_state::WANDS_TABLE_LEN as u16,
+                "maze wand table",
+            ),
             (
                 maze_state::MAP_OBJ_DEAD,
                 maze_state::MAP_OBJ_DEAD + maze_state::MAP_OBJ_DEAD_LEN as u16,

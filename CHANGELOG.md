@@ -79,6 +79,12 @@ deploys.
 
 ### Fixed
 
+- **World Maze: the same airship could be beaten for a second wand.** Nothing
+  marks an airship as beaten, so a world you walk back into still has one — and
+  each clear counted, which meant seven trips through one airship could open a
+  castle set to seven wands. A wand is now recorded per world, so beating the
+  same airship again is worth nothing.
+
 - **Sky locks looked wrong outside World Maze.** Hints are a World Maze feature —
   they say which world holds a fortress's lock — but the setting was being read
   on every seed, and with the default "some" it recoloured every sky lock to the

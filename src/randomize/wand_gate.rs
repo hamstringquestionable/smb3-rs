@@ -28,9 +28,25 @@
 //! the ROM grid on every map load. The opener therefore does not have to
 //! *record* anything: it re-derives the gate every time the map is drawn, by
 //! stamping a bridge tile over the gate cell in `Tile_Mem` when the wand count
-//! is high enough. The wand counter is the only state, and it lives in SRAM
-//! ([`WAND_COUNT`]). Game over, Continue and re-entering World 8 are all
+//! is high enough. That count is the only state, and it lives in SRAM
+//! ([`WANDS_TABLE`]). Game over, Continue and re-entering World 8 are all
 //! automatically correct because there is nothing to get out of sync.
+//!
+//! # One wand per airship, not one per clear
+//!
+//! The count is **not** a counter. Nothing ever marks an airship as beaten —
+//! `TILE_AIRSHIP` is in neither `Map_Removable_Tiles` nor
+//! `Map_Completable_Tiles` — and in the maze a world can be re-entered, so the
+//! spine edge is repeatable and a player can clear the same airship as often as
+//! they like. A counter bumped on each clear turned that into a second wand,
+//! and made K = 7 openable from one airship and a pad loop.
+//!
+//! So the state is a table keyed by world: eight SRAM bytes, one per world,
+//! set to 1 when that world's airship is cleared. A repeat clear writes the 1
+//! that is already there. The gate sums the table on each map load, which
+//! costs eleven bytes in a bank with room and saves two in PRG030, which has
+//! none — and the count cannot drift from the table, because there is no
+//! count to drift.
 //!
 //! The alternative — adding `$D5` to `Map_Removable_Tiles` and setting a
 //! completion bit — was measured and rejected: those tables are byte-adjacent
@@ -56,13 +72,13 @@
 //! [`super::completion_bits`]'s hook, so this module takes the instruction
 //! after it instead of fighting over the same three bytes.
 //!
-//! The counter is bumped at `world_order::WORLD_INC_OFFSET`, vanilla's
+//! The table is marked at `world_order::WORLD_INC_OFFSET`, vanilla's
 //! `INC World_Num` on the airship-cleared path. Whatever three bytes are
 //! there are captured and replayed inside the bump routine, so the hook is
 //! correct whether it sits over vanilla's `INC World_Num` or over
 //! `world_order`'s `JMP`. **That makes the ordering a one-way rule:
 //! [`apply`] must run AFTER `world_order::randomize`**, or `world_order` will
-//! overwrite the hook and the counter will never move.
+//! overwrite the hook and no wand is ever recorded.
 //!
 //! # Ordering the integration must honour
 //!
@@ -80,7 +96,7 @@
 
 use crate::rom::Rom;
 
-use super::maze_state::WAND_COUNT;
+use super::maze_state::{WANDS_TABLE, WANDS_TABLE_LEN};
 use super::rom_data::{
     BRIDGE_TILE, FS_MAZE_WAND_COUNT, FS_MAZE_WAND_GATE, MAP_RELOAD_CPU, PRG012_FILE_BASE, W8_IDX,
     W8_WAND_GATE_POS, WORLD_NUM, prg030_file_to_cpu,
@@ -130,7 +146,7 @@ const GATE_TILE_MEM: u16 = tile_mem_addr(W8_WAND_GATE_POS.0, W8_WAND_GATE_POS.1)
 
 // --- The gate opener ----------------------------------------------------
 
-/// Two entry points and one body. 29 bytes; 128 reserved.
+/// Two entry points and one body. 37 bytes; 128 reserved.
 ///
 /// ```text
 /// $BE30  20 5D A4   JSR Map_Reload_with_Completions   ; entry: return-from-level
@@ -139,13 +155,18 @@ const GATE_TILE_MEM: u16 = tile_mem_addr(W8_WAND_GATE_POS.0, W8_WAND_GATE_POS.1)
 /// gate:                                               ; ...falls through
 /// $BE39  AD 27 07   LDA  World_Num
 /// $BE3C  C9 07      CMP  #7                           ; World 8?
-/// $BE3E  D0 0C      BNE  done
-/// $BE40  AD C9 7A   LDA  WAND_COUNT
-/// $BE43  C9 kk      CMP  #K
-/// $BE45  90 05      BCC  done                         ; fewer than K wands
-/// $BE47  A9 B3      LDA  #BRIDGE_TILE
-/// $BE49  8D 7B 66   STA  $667B                        ; the gate cell
-/// $BE4C  60 done:   RTS
+/// $BE3E  D0 14      BNE  done
+/// $BE40  A2 07      LDX  #7                           ; sum the wand table
+/// $BE42  A9 00      LDA  #0
+/// $BE44  18         CLC
+/// $BE45  7D C9 7A   sum: ADC WANDS_TABLE,X
+/// $BE48  CA         DEX
+/// $BE49  10 FA      BPL  sum
+/// $BE4B  C9 kk      CMP  #K
+/// $BE4D  90 05      BCC  done                         ; fewer than K wands
+/// $BE4F  A9 B3      LDA  #BRIDGE_TILE
+/// $BE51  8D 7B 66   STA  $667B                        ; the gate cell
+/// $BE54  60  done:  RTS
 /// ```
 ///
 /// The two entries exist because the two callers of the reload displace
@@ -153,7 +174,20 @@ const GATE_TILE_MEM: u16 = tile_mem_addr(W8_WAND_GATE_POS.0, W8_WAND_GATE_POS.1)
 /// Sequencing the return-from-level entry as `JSR reload` + `JMP gate` rather
 /// than a fall-through costs three bytes and keeps the init entry from calling
 /// the reload a second time.
-fn wand_gate_routine(wands_required: u8) -> [u8; 29] {
+///
+/// **The sum is an `ADC` loop rather than a count of non-zero entries**, which
+/// is two bytes shorter and needs one register fewer: every entry is 0 or 1,
+/// so adding them *is* counting them. `CLC` up front and eight entries capped
+/// at 1 mean the carry is clear at every `ADC`, and the total (at most 8)
+/// cannot carry out — so the `CMP #K` that follows reads the sum and nothing
+/// else. It is [`wand_bump_routine`]'s `LDA #$01 / STA` that earns this:
+/// an `INC WANDS_TABLE,X` would be two bytes cheaper there and would make a
+/// twice-cleared airship add 2 here.
+///
+/// The loop is only reached on a World 8 map load — every other world leaves
+/// through `BNE done` before it — and both hook sites reload `A` and `X`
+/// immediately after the call, so clobbering them costs nothing.
+fn wand_gate_routine(wands_required: u8) -> [u8; 37] {
     let gate = WAND_GATE_CPU + 9;
     #[rustfmt::skip]
     let code = [
@@ -162,8 +196,13 @@ fn wand_gate_routine(wands_required: u8) -> [u8; 29] {
         0x20, FILL_ATTR_CPU as u8, (FILL_ATTR_CPU >> 8) as u8,   // JSR Fill_Tile_AttrTable_ByTileset
         0xAD, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,           // LDA World_Num
         0xC9, W8_IDX as u8,                                      // CMP #7
-        0xD0, 0x0C,                                              // BNE done
-        0xAD, WAND_COUNT as u8, (WAND_COUNT >> 8) as u8,         // LDA WAND_COUNT
+        0xD0, 0x14,                                              // BNE done
+        0xA2, (WANDS_TABLE_LEN - 1) as u8,                       // LDX #7
+        0xA9, 0x00,                                              // LDA #0
+        0x18,                                                    // CLC
+        0x7D, WANDS_TABLE as u8, (WANDS_TABLE >> 8) as u8,       // sum: ADC WANDS_TABLE,X
+        0xCA,                                                    // DEX
+        0x10, 0xFA,                                              // BPL sum
         0xC9, wands_required,                                    // CMP #K
         0x90, 0x05,                                              // BCC done
         0xA9, BRIDGE_TILE,                                       // LDA #BRIDGE_TILE
@@ -184,23 +223,32 @@ const FILL_ATTR_CALL_OFFSET: usize = 0x3C5CE;
 
 // --- The wand counter ---------------------------------------------------
 
-/// Bump the wand count on an airship clear, saturating at seven. 16 bytes,
-/// which is the whole gap: `0x3DFA0..0x3DFB0` is `$FF` and real code follows
-/// immediately, so this routine cannot grow in place.
+/// Record this world's wand on an airship clear. 14 bytes of the 16 the gap
+/// holds: `0x3DFA0..0x3DFB0` is `$FF` and real code follows immediately, so
+/// this routine could not have grown even by one byte.
 ///
 /// ```text
-/// $9F90  AD C9 7A   LDA WAND_COUNT
-/// $9F93  C9 07      CMP #7
-/// $9F95  B0 03      BCS skip          ; already at seven
-/// $9F97  EE C9 7A   INC WAND_COUNT
-/// $9F9A  .. .. ..   skip: <the three displaced bytes>
-/// $9F9D  4C 94 90   JMP  WORLD_INC + 3
+/// $9F90  AE 27 07   LDX World_Num     ; the world whose airship was cleared
+/// $9F93  A9 01      LDA #$01
+/// $9F95  9D C9 7A   STA WANDS_TABLE,X ; idempotent: a repeat clear rewrites 1
+/// $9F98  .. .. ..   <the three displaced bytes>
+/// $9F9B  4C 94 90   JMP WORLD_INC + 3
 /// ```
 ///
-/// The saturate is not decoration. `TILE_AIRSHIP` is in neither
-/// `Map_Removable_Tiles` nor `Map_Completable_Tiles`, so nothing ever marks an
-/// airship — in the maze, where a world can be re-entered, the spine edge is
-/// repeatable and a player can clear the same airship again.
+/// **Keyed by world, so a repeat clear is not a second wand.** `TILE_AIRSHIP`
+/// is in neither `Map_Removable_Tiles` nor `Map_Completable_Tiles`, so nothing
+/// ever marks an airship — in the maze, where a world can be re-entered, the
+/// spine edge is repeatable and a player can clear the same airship again. The
+/// counter this replaced bumped on every clear and saturated at seven, which
+/// made seven clears of one airship open a K = 7 gate.
+///
+/// `World_Num` still names the *cleared* world here: the hook sits on the
+/// airship path's world transition, and whatever advances it is replayed
+/// below, after the mark.
+///
+/// `LDA #$01 / STA` rather than `INC WANDS_TABLE,X`, at a cost of two bytes,
+/// because [`wand_gate_routine`] sums the table: an entry that a second clear
+/// pushed to 2 would be two wands again.
 ///
 /// `displaced` is whatever three bytes stood at [`WORLD_INC_OFFSET`], read
 /// from the ROM rather than transcribed. Vanilla has `INC World_Num`
@@ -209,21 +257,25 @@ const FILL_ATTR_CALL_OFFSET: usize = 0x3C5CE;
 /// replaying them and then jumping past the site is right either way. In the
 /// `world_order` case the replayed `JMP` leaves and the trailing `JMP` is
 /// unreachable; in the vanilla case it lands on the `JMP $84A0` that follows.
-fn wand_bump_routine(displaced: [u8; 3]) -> [u8; 16] {
+///
+/// `X` is free here: vanilla's next instruction is the `JMP` into the map
+/// init, and neither that path nor `world_order`'s replacement reads a
+/// register it did not load itself.
+fn wand_bump_routine(displaced: [u8; 3]) -> [u8; 14] {
     let resume = prg030_file_to_cpu(WORLD_INC_OFFSET) + 3;
     #[rustfmt::skip]
     let code = [
-        0xAD, WAND_COUNT as u8, (WAND_COUNT >> 8) as u8, // LDA WAND_COUNT
-        0xC9, MAX_WANDS,                                 // CMP #7
-        0xB0, 0x03,                                      // BCS skip
-        0xEE, WAND_COUNT as u8, (WAND_COUNT >> 8) as u8, // INC WAND_COUNT
-        displaced[0], displaced[1], displaced[2],        // skip: <displaced>
-        0x4C, resume as u8, (resume >> 8) as u8,         // JMP WORLD_INC + 3
+        0xAE, WORLD_NUM as u8, (WORLD_NUM >> 8) as u8,     // LDX World_Num
+        0xA9, 0x01,                                        // LDA #$01
+        0x9D, WANDS_TABLE as u8, (WANDS_TABLE >> 8) as u8, // STA WANDS_TABLE,X
+        displaced[0], displaced[1], displaced[2],          // <displaced>
+        0x4C, resume as u8, (resume >> 8) as u8,           // JMP WORLD_INC + 3
     ];
     code
 }
 
-/// The seven wands, one per airship.
+/// The seven wands, one per airship: [`WANDS_TABLE`] has eight slots because
+/// `World_Num` is 0-7, but World 8 holds the castle rather than an airship.
 pub(crate) const MAX_WANDS: u8 = 7;
 
 // --- The gate's graphics ------------------------------------------------
@@ -271,8 +323,8 @@ const fn map_chr_offset(tile: u8) -> usize {
 ///
 /// `wands_required` is K. **K = 0 writes nothing** — a pure maze has no goal
 /// gate, and a wall that is open from the first frame is worse than no wall.
-/// Values above [`MAX_WANDS`] are clamped, since the counter saturates there
-/// and a higher K would be a gate nothing can open.
+/// Values above [`MAX_WANDS`] are clamped: there are only seven airships, so a
+/// higher K would be a gate nothing can open.
 ///
 /// See the module docs for the two ordering rules this call has to sit inside:
 /// after `world_order::randomize`, and after the overworld writer.
@@ -314,7 +366,7 @@ pub(crate) fn apply(rom: &mut Rom, wands_required: u8) {
     rom.write_range(RELOAD_FROM_LEVEL_OFFSET, &jmp_free(0x20, WAND_GATE_CPU));
     rom.write_range(FILL_ATTR_CALL_OFFSET, &jmp_free(0x20, WAND_GATE_CPU + 6));
 
-    // The counter, and its hook. The three bytes at the airship site are
+    // The wand table's marker, and its hook. The three bytes at the airship site are
     // captured before they are overwritten — see [`wand_bump_routine`].
     let displaced: [u8; 3] = core::array::from_fn(|i| rom.read_byte(WORLD_INC_OFFSET + i));
     rom.write_range(FS_MAZE_WAND_COUNT, &wand_bump_routine(displaced));
@@ -561,12 +613,12 @@ mod tests {
         }
     }
 
-    /// K above seven would be a gate the saturating counter can never open.
+    /// K above seven would be a gate no set of airships can open.
     #[test]
     fn k_is_clamped_to_the_wand_count() {
         let Some(mut rom) = vanilla() else { return };
         apply(&mut rom, 200);
-        assert_eq!(rom.read_byte(FS_MAZE_WAND_GATE + 20), MAX_WANDS, "K must clamp to 7");
+        assert_eq!(rom.read_byte(FS_MAZE_WAND_GATE + 28), MAX_WANDS, "K must clamp to 7");
     }
 
     // -- structural checks ------------------------------------------------
@@ -636,7 +688,7 @@ mod tests {
             "the airship site must reach the bump routine"
         );
         assert_eq!(
-            correct.read_range(FS_MAZE_WAND_COUNT + 10, 3),
+            correct.read_range(FS_MAZE_WAND_COUNT + 8, 3),
             world_order_jmp,
             "world_order's jump must be replayed, or the world never changes"
         );
@@ -722,13 +774,19 @@ mod execution {
         panic!("the gate ran away");
     }
 
-    /// Run one entry point for one `(world, wands)` pair and report what the
+    /// The wand table as the routines see it, from a bitmask of cleared
+    /// worlds: bit `w` set means world `w`'s airship has been cleared.
+    fn table(held: u8) -> [u8; WANDS_TABLE_LEN] {
+        core::array::from_fn(|i| u8::from(held >> i & 1 == 1))
+    }
+
+    /// Run one entry point for one `(world, table)` pair and report what the
     /// gate cell holds afterwards, plus how many times each engine routine was
     /// reached.
-    fn run_gate(entry_offset: u16, k: u8, world: u8, wands: u8) -> (u8, u8, u8) {
+    fn run_gate(entry_offset: u16, k: u8, world: u8, wands: [u8; WANDS_TABLE_LEN]) -> (u8, u8, u8) {
         let mut cpu = cpu_with_gate(k);
         cpu.memory.set_byte(WORLD_NUM, world);
-        cpu.memory.set_byte(WAND_COUNT, wands);
+        cpu.memory.set_bytes(WANDS_TABLE, &wands);
         // Poison: a gate that is never opened leaves this visible.
         cpu.memory.set_byte(GATE_TILE_MEM, 0xAA);
         cpu.memory.set_byte(RELOAD_MARK, 0);
@@ -741,26 +799,46 @@ mod execution {
         )
     }
 
-    /// The whole input space of the gate: both entries, every world, every
-    /// counter value a byte can hold. It opens exactly when the player is in
-    /// World 8 with at least K wands, and never otherwise.
+    /// The whole input space of the gate: both entries, every world, every one
+    /// of the 256 sets of wands the table can hold. It opens exactly when the
+    /// player is in World 8 holding at least K *distinct* wands, and never
+    /// otherwise.
     #[test]
     fn the_gate_opens_only_in_world_8_at_k_wands() {
         for k in 1..=MAX_WANDS {
             for &(entry, expect_reload, expect_attr) in &[(0u16, 1u8, 0u8), (6, 0, 1)] {
                 for world in 0..8u8 {
-                    for wands in 0..=255u8 {
-                        let (cell, reload, attr) = run_gate(entry, k, world, wands);
-                        let open = world == 7 && wands >= k;
+                    for held in 0..=255u8 {
+                        let (cell, reload, attr) = run_gate(entry, k, world, table(held));
+                        let open = world == 7 && held.count_ones() >= k as u32;
                         assert_eq!(
                             cell,
                             if open { BRIDGE_TILE } else { 0xAA },
-                            "k={k} entry={entry} world={world} wands={wands}"
+                            "k={k} entry={entry} world={world} held={held:08b}"
                         );
                         assert_eq!(reload, expect_reload, "wrong reload count, entry={entry}");
                         assert_eq!(attr, expect_attr, "wrong attr count, entry={entry}");
                     }
                 }
+            }
+        }
+    }
+
+    /// The gate reads the table and never writes it — a wand it consumed would
+    /// be a wand a later map load could not count.
+    #[test]
+    fn the_gate_leaves_the_wand_table_alone() {
+        for held in 0..=255u8 {
+            let mut cpu = cpu_with_gate(1);
+            cpu.memory.set_byte(WORLD_NUM, 7);
+            cpu.memory.set_bytes(WANDS_TABLE, &table(held));
+            call(&mut cpu, WAND_GATE_CPU + 6);
+            for (i, want) in table(held).iter().enumerate() {
+                assert_eq!(
+                    cpu.memory.get_byte(WANDS_TABLE + i as u16),
+                    *want,
+                    "the gate wrote wand slot {i}, held={held:08b}"
+                );
             }
         }
     }
@@ -772,7 +850,7 @@ mod execution {
     fn the_gate_writes_exactly_one_byte() {
         let mut cpu = cpu_with_gate(1);
         cpu.memory.set_byte(WORLD_NUM, 7);
-        cpu.memory.set_byte(WAND_COUNT, 7);
+        cpu.memory.set_bytes(WANDS_TABLE, &table(0xFF));
         for i in 0..0x800u16 {
             cpu.memory.set_byte(0x6000 + i, 0x5A);
         }
@@ -783,9 +861,9 @@ mod execution {
         }
     }
 
-    /// Mutation test for the gate: a wrong compare and a wrong store address
-    /// must both be caught by the tests above. Without this, a check that
-    /// passes proves only that it ran.
+    /// Mutation test for the gate: a wrong compare, a short sum and a wrong
+    /// store address must all be caught by the tests above. Without this, a
+    /// check that passes proves only that it ran.
     #[test]
     fn a_broken_gate_fails_the_gate_tests() {
         let good = super::wand_gate_routine(3);
@@ -796,31 +874,53 @@ mod execution {
         wrong_world[13] = 6;
         assert!(differs_from_spec(&wrong_world, 3), "a wrong world compare must be caught");
 
-        // The wand compare is at byte 20 (`CMP #K`).
+        // Byte 17 is the `LDX #7` that sizes the sum: count six worlds and the
+        // wands in the last slot stop existing.
+        let mut short_sum = good;
+        short_sum[17] = 5;
+        assert!(differs_from_spec(&short_sum, 3), "a short sum must be caught");
+
+        // Byte 20 is the `CLC` that seeds the sum. Without it a stray carry
+        // adds a wand that was never collected.
+        let mut no_clc = good;
+        no_clc[20] = 0xEA; // NOP
+        assert!(differs_from_spec(&no_clc, 3), "a missing CLC must be caught");
+
+        // The wand compare is at byte 28 (`CMP #K`).
         let mut wrong_k = good;
-        wrong_k[20] = 1;
+        wrong_k[28] = 1;
         assert!(differs_from_spec(&wrong_k, 3), "a wrong K must be caught");
 
-        // The store address is at bytes 26-27.
+        // The store address is at bytes 34-35.
         let mut wrong_addr = good;
-        wrong_addr[26] = wrong_addr[26].wrapping_add(0x10); // one map row down
+        wrong_addr[34] = wrong_addr[34].wrapping_add(0x10); // one map row down
         assert!(differs_from_spec(&wrong_addr, 3), "a wrong Tile_Mem address must be caught");
     }
 
     /// Does `code` disagree with the gate's specification anywhere in the
     /// input space? Used only by the mutation test.
-    fn differs_from_spec(code: &[u8; 29], k: u8) -> bool {
+    fn differs_from_spec(code: &[u8; 37], k: u8) -> bool {
         for world in 0..8u8 {
-            for wands in 0..=8u8 {
+            for held in 0..=255u8 {
                 let mut cpu = cpu_with_gate(k);
                 cpu.memory.set_bytes(WAND_GATE_CPU, code);
                 cpu.memory.set_byte(WORLD_NUM, world);
-                cpu.memory.set_byte(WAND_COUNT, wands);
+                cpu.memory.set_bytes(WANDS_TABLE, &table(held));
                 for i in 0..0x100u16 {
                     cpu.memory.set_byte(0x6600 + i, 0xAA);
                 }
+                // The carry on entry is the caller's, so a routine that forgot
+                // to clear it must fail from both sides.
+                cpu.registers.status.set_with_mask(
+                    mos6502::registers::Status::PS_CARRY,
+                    if held & 1 == 0 {
+                        mos6502::registers::Status::PS_CARRY
+                    } else {
+                        mos6502::registers::Status::empty()
+                    },
+                );
                 call(&mut cpu, WAND_GATE_CPU + 6);
-                let open = world == 7 && wands >= k;
+                let open = world == 7 && held.count_ones() >= k as u32;
                 let want = if open { BRIDGE_TILE } else { 0xAA };
                 if cpu.memory.get_byte(GATE_TILE_MEM) != want {
                     return true;
@@ -835,92 +935,161 @@ mod execution {
         false
     }
 
-    // -- the counter -----------------------------------------------------
+    // -- the wand table --------------------------------------------------
 
     /// Where the bump routine's tail jump lands: an `INC` marker plus an `RTS`
     /// standing in for the rest of the airship transition.
     const RESUME_MARK: u16 = 0x0302;
 
-    fn run_bump(displaced: [u8; 3], start: u8) -> (u8, u8) {
+    /// Clear `world`'s airship with `before` already in the table, and report
+    /// the table afterwards plus whether the displaced code was reached.
+    fn run_bump(
+        displaced: [u8; 3],
+        world: u8,
+        before: [u8; WANDS_TABLE_LEN],
+    ) -> ([u8; WANDS_TABLE_LEN], u8) {
+        let mut cpu = bump_cpu(&super::wand_bump_routine(displaced));
+        cpu.memory.set_byte(WORLD_NUM, world);
+        cpu.memory.set_bytes(WANDS_TABLE, &before);
+        call(&mut cpu, WAND_BUMP_CPU);
+        (
+            core::array::from_fn(|i| cpu.memory.get_byte(WANDS_TABLE + i as u16)),
+            cpu.memory.get_byte(RESUME_MARK),
+        )
+    }
+
+    /// The bump routine loaded, with somewhere for both shapes of displaced
+    /// code to go.
+    fn bump_cpu(code: &[u8]) -> CPU<Memory, Ricoh2a03> {
         let resume = prg030_file_to_cpu(WORLD_INC_OFFSET) + 3;
         let mut mem = Memory::new();
-        mem.set_bytes(WAND_BUMP_CPU, &super::wand_bump_routine(displaced));
+        mem.set_bytes(WAND_BUMP_CPU, code);
         mem.set_bytes(resume, &[0xEE, RESUME_MARK as u8, (RESUME_MARK >> 8) as u8, 0x60]);
         // Vanilla's displaced `INC World_Num` needs somewhere to land, and
         // world_order's displaced `JMP $9F10` needs a routine to reach.
         mem.set_bytes(0x9F10, &[0xEE, RESUME_MARK as u8, (RESUME_MARK >> 8) as u8, 0x60]);
         let mut cpu = CPU::new(mem, Ricoh2a03);
-        cpu.memory.set_byte(WAND_COUNT, start);
         cpu.memory.set_byte(RESUME_MARK, 0);
-        call(&mut cpu, WAND_BUMP_CPU);
-        (cpu.memory.get_byte(WAND_COUNT), cpu.memory.get_byte(RESUME_MARK))
+        cpu
     }
 
-    /// The counter increments, saturates at seven, and always reaches the code
-    /// the hook displaced — over both shapes that code can take.
+    /// An airship clear marks its own world, leaves every other world's wand
+    /// alone, and always reaches the code the hook displaced — over both
+    /// shapes that code can take.
     #[test]
-    fn the_counter_bumps_saturates_and_chains() {
+    fn a_clear_marks_its_own_world_and_chains() {
         for displaced in [[0xEE, 0x27, 0x07], [0x4C, 0x10, 0x9F]] {
-            for start in 0..=255u8 {
-                let (after, resumed) = run_bump(displaced, start);
-                let want = if start >= MAX_WANDS { start } else { start + 1 };
-                assert_eq!(after, want, "start={start} displaced={displaced:02X?}");
+            for world in 0..8u8 {
+                let (after, resumed) = run_bump(displaced, world, [0; WANDS_TABLE_LEN]);
+                let mut want = [0u8; WANDS_TABLE_LEN];
+                want[world as usize] = 1;
+                assert_eq!(after, want, "world={world} displaced={displaced:02X?}");
                 assert_eq!(resumed, 1, "the displaced code was never reached");
+
+                // Wands already held survive the clear.
+                let mut held = [1u8; WANDS_TABLE_LEN];
+                held[world as usize] = 0;
+                let (after, _) = run_bump(displaced, world, held);
+                assert_eq!(after, [1u8; WANDS_TABLE_LEN], "a clear disturbed another world");
             }
         }
     }
 
-    /// Mutation test for the counter: dropping the saturate, or losing the
-    /// chain, must both fail the test above.
+    /// **The rule this module exists to hold:** an airship is never marked
+    /// beaten, so in the maze the same one can be cleared again — and the
+    /// second clear must not be a second wand.
     #[test]
-    fn a_broken_counter_fails_the_counter_tests() {
+    fn a_repeat_clear_is_not_a_second_wand() {
+        for displaced in [[0xEE, 0x27, 0x07], [0x4C, 0x10, 0x9F]] {
+            for world in 0..8u8 {
+                let (once, _) = run_bump(displaced, world, [0; WANDS_TABLE_LEN]);
+                let mut table = once;
+                for _ in 0..8 {
+                    let (again, _) = run_bump(displaced, world, table);
+                    assert_eq!(again, once, "clearing world {world} twice moved the table");
+                    table = again;
+                }
+                // ...and the gate agrees: eight clears of one airship is one
+                // wand, while two *different* airships are two.
+                assert!(!gate_opens(2, table), "repeat clears opened a K = 2 gate");
+                let other = (world + 1) % 8;
+                let (two, _) = run_bump(displaced, other, table);
+                assert!(gate_opens(2, two), "two airships did not open a K = 2 gate");
+            }
+        }
+    }
+
+    /// Does the gate open in World 8 for this table?
+    fn gate_opens(k: u8, wands: [u8; WANDS_TABLE_LEN]) -> bool {
+        run_gate(6, k, 7, wands).0 == BRIDGE_TILE
+    }
+
+    /// Mutation test for the marker: a counter instead of a per-world mark, a
+    /// mark that lands on a fixed slot, and a lost chain must all fail the
+    /// tests above.
+    #[test]
+    fn a_broken_marker_fails_the_marker_tests() {
         let displaced = [0xEE, 0x27, 0x07];
         let good = super::wand_bump_routine(displaced);
         assert!(!bump_differs(&good), "the check is vacuous if the real routine fails it");
 
-        // Byte 4 is the `CMP #7` operand: raise it and the counter runs past
-        // seven, which the saturate case catches.
-        let mut no_cap = good;
-        no_cap[4] = 0xFF;
-        assert!(bump_differs(&no_cap), "a missing saturate must be caught");
+        // `INC WANDS_TABLE,X` instead of `LDA #$01 / STA WANDS_TABLE,X`: two
+        // bytes cheaper, and a second clear of one airship counts twice. This
+        // is the regression the table was written to close.
+        let mut counting = good;
+        counting[3..8].copy_from_slice(&[
+            0xFE,
+            WANDS_TABLE as u8,
+            (WANDS_TABLE >> 8) as u8, // INC WANDS_TABLE,X
+            0xEA,
+            0xEA, // NOP NOP
+        ]);
+        assert!(bump_differs(&counting), "a counting mark must be caught");
 
-        // Bytes 13-15 are the tail `JMP`: aim it elsewhere and nothing resumes.
+        // `STA WANDS_TABLE` absolute, ignoring the world: every airship writes
+        // slot 0, so seven clears are one wand.
+        let mut unindexed = good;
+        unindexed[5] = 0x8D; // STA abs
+        assert!(bump_differs(&unindexed), "a mark that ignores World_Num must be caught");
+
+        // Bytes 11-13 are the tail `JMP`: aim it elsewhere and nothing resumes.
         let mut no_chain = good;
-        no_chain[13] = 0xEA; // NOP, so the routine falls into whatever follows
+        no_chain[11] = 0xEA; // NOP, so the routine falls into whatever follows
         assert!(bump_differs(&no_chain), "a lost chain must be caught");
     }
 
     /// Whatever the displaced bytes were is already baked into `code`, so this
-    /// takes only the assembled routine.
-    fn bump_differs(code: &[u8; 16]) -> bool {
-        let resume = prg030_file_to_cpu(WORLD_INC_OFFSET) + 3;
-        for start in 0..=255u8 {
-            let mut mem = Memory::new();
-            mem.set_bytes(WAND_BUMP_CPU, code);
-            mem.set_bytes(resume, &[0xEE, RESUME_MARK as u8, (RESUME_MARK >> 8) as u8, 0x60]);
-            mem.set_bytes(0x9F10, &[0xEE, RESUME_MARK as u8, (RESUME_MARK >> 8) as u8, 0x60]);
-            let mut cpu = CPU::new(mem, Ricoh2a03);
-            cpu.memory.set_byte(WAND_COUNT, start);
-            cpu.memory.set_byte(RESUME_MARK, 0);
-            let ret = SENTINEL.wrapping_sub(1);
-            cpu.memory.set_byte(0x01FF, (ret >> 8) as u8);
-            cpu.memory.set_byte(0x01FE, ret as u8);
-            cpu.registers.stack_pointer = mos6502::registers::StackPointer(0xFD);
-            cpu.registers.program_counter = WAND_BUMP_CPU;
-            let mut ran_away = true;
-            for _ in 0..1000 {
-                if cpu.registers.program_counter == SENTINEL {
-                    ran_away = false;
-                    break;
+    /// takes only the assembled routine. The specification: after clearing
+    /// `world`'s airship, that world's slot holds exactly 1, every other slot
+    /// is untouched, and the displaced code ran once — from any starting
+    /// table, including one where the world has already been cleared.
+    fn bump_differs(code: &[u8; 14]) -> bool {
+        for world in 0..8u8 {
+            for held in 0..=255u8 {
+                let before = table(held);
+                let mut cpu = bump_cpu(code);
+                cpu.memory.set_byte(WORLD_NUM, world);
+                cpu.memory.set_bytes(WANDS_TABLE, &before);
+                let ret = SENTINEL.wrapping_sub(1);
+                cpu.memory.set_byte(0x01FF, (ret >> 8) as u8);
+                cpu.memory.set_byte(0x01FE, ret as u8);
+                cpu.registers.stack_pointer = mos6502::registers::StackPointer(0xFD);
+                cpu.registers.program_counter = WAND_BUMP_CPU;
+                let mut ran_away = true;
+                for _ in 0..1000 {
+                    if cpu.registers.program_counter == SENTINEL {
+                        ran_away = false;
+                        break;
+                    }
+                    cpu.single_step();
                 }
-                cpu.single_step();
-            }
-            let want = if start >= MAX_WANDS { start } else { start + 1 };
-            if ran_away
-                || cpu.memory.get_byte(WAND_COUNT) != want
-                || cpu.memory.get_byte(RESUME_MARK) != 1
-            {
-                return true;
+                let mut want = before;
+                want[world as usize] = 1;
+                let after: [u8; WANDS_TABLE_LEN] =
+                    core::array::from_fn(|i| cpu.memory.get_byte(WANDS_TABLE + i as u16));
+                if ran_away || after != want || cpu.memory.get_byte(RESUME_MARK) != 1 {
+                    return true;
+                }
             }
         }
         false
