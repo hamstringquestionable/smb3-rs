@@ -1215,8 +1215,18 @@ fn lock_key_rows_match_the_whole_assignment() {
     let (mut foreign, mut seeds_with_any) = (0u64, 0u64);
     let seeds = census_seeds(4);
     for seed in 0..seeds {
-        let (_, state, _) = generated(&raw, seed, &Knobs::default(), super::DEFAULT_WANDS_REQUIRED);
-        let rows = super::writer::lock_keys(&state);
+        let (_, mut build) = census_build(&raw, seed);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5EED_1234);
+        let (state, _) = super::generate(
+            &build,
+            &IDENTITY_SPINE,
+            super::DEFAULT_WANDS_REQUIRED,
+            &Knobs::default(),
+            SEALABLE_NEEDED,
+            &mut rng,
+        );
+        super::stamp_into(&mut build, &state);
+        let rows = crate::randomize::overworld_writer::lock_entries(&build);
 
         assert_eq!(
             rows.len(),
@@ -1492,7 +1502,7 @@ fn every_world_has_a_fortress_in_its_start_region() {
 /// The charter's map-legibility rule — a lock breaking is the only feedback that
 /// says which fortress did it — and the reason a world's lock count tells the
 /// player its fort count. The builder gets it by construction (no two locks in a
-/// world share a `fort_section`) and `maze::fill` preserves it (a swap trades
+/// world share a fort section) and `maze::fill` preserves it (a swap trades
 /// two forts rather than handing one out), but neither states it, and the ROM
 /// broke it once by splicing the two halves together.
 #[test]
@@ -1511,7 +1521,7 @@ fn fort_and_lock_are_one_to_one() {
                 w.world_idx + 1,
                 w.locks.len()
             );
-            let mut sections: Vec<usize> = w.locks.iter().map(|l| l.fort_section).collect();
+            let mut sections: Vec<usize> = w.locks.iter().map(|l| l.fort.section).collect();
             sections.sort_unstable();
             let before = sections.len();
             sections.dedup();
@@ -1949,7 +1959,7 @@ fn sealable_repair_census() {
 /// * `secret_exit_safe` is a *per-world* verdict, and the maze asks a bigger
 ///   question. It over-promises on 19% of locks at K=3 and 43% at K=7.
 ///
-/// So the property is asserted of `BuiltWorld::secret_exit_slots` as the writer
+/// So the property is asserted of the safe slots as the writer
 /// will read it — after `stamp_into`, on the shipping graph, at the shipping
 /// wand count. Every slot the writer is offered must genuinely be one whose
 /// lock can stay shut, and at least [`SEALABLE_NEEDED`] must be offered at all,
@@ -1975,7 +1985,14 @@ fn one_f_can_always_decline_its_lock() {
             );
             super::stamp_into(&mut build, &state);
 
-            let offered: usize = build.worlds.iter().map(|w| w.secret_exit_slots.len()).sum();
+            let safe: Vec<super::FortRef> = build
+                .worlds
+                .iter()
+                .flat_map(|w| w.locks.iter())
+                .filter(|l| l.secret_exit_safe)
+                .map(|l| l.fort)
+                .collect();
+            let offered = safe.len();
             assert!(
                 offered >= SEALABLE_NEEDED,
                 "seed {seed} K={k}: the writer is offered {offered} secret-exit slots, needs \
@@ -1984,9 +2001,9 @@ fn one_f_can_always_decline_its_lock() {
             );
 
             // Every slot offered must survive its lock being shut forever.
-            for (wi, built) in build.worlds.iter().enumerate() {
-                for &section in &built.secret_exit_slots {
-                    let fort = super::FortRef { world: wi, section };
+            {
+                for &fort in &safe {
+                    let (wi, section) = (fort.world, fort.section);
                     let li = state.locks.iter().position(|l| l.fort == Some(fort)).unwrap_or_else(
                         || {
                             panic!(
@@ -2049,15 +2066,14 @@ fn an_uninstalled_lock_becomes_open_path() {
     );
     state.locks[0].fort = None;
 
-    // The lock contributes no key, which is the half that always worked...
-    let keys = super::writer::lock_keys(&state);
+    // The writer must not be handed a gate that nothing in the game can ever
+    // open — and with the lock gone from the build, no key row names it either.
+    super::stamp_into(&mut build, &state);
+    let keys = crate::randomize::overworld_writer::lock_entries(&build);
     assert!(
         !keys.iter().any(|e| e.target_world == lock.world && e.target_pos == lock.pos),
         "an uninstalled lock emitted a key entry"
     );
-    // ...and this is the half that did not: the writer must not be handed a
-    // gate that nothing in the game can ever open.
-    super::stamp_into(&mut build, &state);
     assert!(
         !build.worlds[lock.world].locks.iter().any(|l| l.pos == lock.pos),
         "W{} {:?} would ship as a gate with no key — a permanently sealed gate",

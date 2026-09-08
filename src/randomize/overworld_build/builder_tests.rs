@@ -1743,10 +1743,10 @@ fn test_builder_output_completable() {
             );
             for (li, lock) in built.locks.iter().enumerate() {
                 assert!(
-                    lock.fort_section < forts.len(),
+                    lock.fort.section < forts.len(),
                     "seed {seed} W{}: lock {li} points at missing fort {}",
                     wi + 1,
-                    lock.fort_section
+                    lock.fort.section
                 );
                 assert_eq!(
                     lock.secret_exit_safe,

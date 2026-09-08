@@ -474,7 +474,7 @@ impl WalkGraph {
         }
         let mut lock_section: FastMap<Pos, usize> = FastMap::default();
         for lock in &built.locks {
-            lock_section.insert(lock.pos, lock.fort_section);
+            lock_section.insert(lock.pos, lock.fort.section);
         }
 
         // Cleared-mask bit layout (u64): fort sections use bits 0..section_count,

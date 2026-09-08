@@ -572,11 +572,11 @@ fn world_topology(built: &BuiltWorld) -> Option<WorldTopology> {
     if forts.is_empty() {
         return None;
     }
-    let all_secs: HashSet<usize> = built.locks.iter().map(|l| l.fort_section).collect();
+    let all_secs: HashSet<usize> = built.locks.iter().map(|l| l.fort.section).collect();
     // Which cells are shut, given the fort-sections beaten. An open lock is
     // simply absent: locks are an overlay, so `base` already holds the path.
     let shut_with = |opened: &HashSet<usize>| -> HashSet<Pos> {
-        built.locks.iter().filter(|l| !opened.contains(&l.fort_section)).map(|l| l.pos).collect()
+        built.locks.iter().filter(|l| !opened.contains(&l.fort.section)).map(|l| l.pos).collect()
     };
 
     // Chain depth: rounds of beat-all-reachable until the goal opens.
@@ -691,12 +691,12 @@ fn progression_metrics() {
                 built
                     .locks
                     .iter()
-                    .filter(|l| !opened.contains(&l.fort_section))
+                    .filter(|l| !opened.contains(&l.fort.section))
                     .map(|l| l.pos)
                     .collect()
             };
             let all_lock_sections: HashSet<usize> =
-                built.locks.iter().map(|l| l.fort_section).collect();
+                built.locks.iter().map(|l| l.fort.section).collect();
 
             // ---- Problem 2: chain depth (round-count) ----
             if let Some(tgt) = target {
@@ -786,7 +786,7 @@ fn progression_metrics() {
                 let fort_pos = built
                     .slots
                     .iter()
-                    .find(|s| s.kind == SlotKind::Fortress && s.section == l.fort_section);
+                    .find(|s| s.kind == SlotKind::Fortress && s.section == l.fort.section);
                 let Some(fp) = fort_pos.map(|s| s.pos) else { continue };
 
                 let man = fp.0.abs_diff(l.pos.0) + fp.1.abs_diff(l.pos.1);
@@ -799,7 +799,7 @@ fn progression_metrics() {
                 // Fort-side component: only this lock closed, all others open;
                 // walk from the fort. Small => fort stuck with its own gate.
                 let mut opened = all_lock_sections.clone();
-                opened.remove(&l.fort_section);
+                opened.remove(&l.fort.section);
                 let shut = shut_with(&opened);
                 let walk = walk_map_blocked(&base, &built.pipe_pairs, Some(fp), wi, &shut);
                 comp_hist[walk.nodes.len().min(11)] += 1;
@@ -1981,7 +1981,7 @@ fn test_walkgraph_reuse() {
                 if let Some(pos) = lock_pos {
                     cand.locks.push(super::types::LockAssignment {
                         pos,
-                        fort_section: seed as usize % built.section_count,
+                        fort: FortRef { world, section: seed as usize % built.section_count },
                         secret_exit_safe: false,
                     });
                     assert!(

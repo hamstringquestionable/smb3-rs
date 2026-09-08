@@ -1,4 +1,4 @@
-//! Step 4 — pair each lock with the fortress that opens it.
+//! Pair each lock with the fortress that opens it.
 //!
 //! This step used to *write* seven parallel ROM tables indexed by a global FX
 //! slot. It now produces [`LockEntry`] values and nothing else; the tables are
@@ -14,43 +14,56 @@
 use super::*;
 use crate::randomize::lock_keys::LockEntry;
 
-/// Every `(fortress, lock)` pair this world places, appended to `out`.
+/// Every `(fortress, lock)` pair on the map, in world order.
 ///
-/// Fortress assignments are ordered by section in `assign_pool`, so a lock's
-/// `fort_section` indexes `wa.fortress` directly — and because no two locks in a
-/// world share a section, the result is one lock per fortress. That bijection is
-/// the charter's map-legibility rule (a lock breaking is the only feedback that
-/// says which fort did it) and `lock_keys::assert_one_key_per_lock` holds it.
-pub(super) fn collect_lock_entries(
-    world_idx: usize,
-    built: &BuiltWorld,
-    wa: &WorldAssignments,
-    out: &mut Vec<LockEntry>,
-) {
-    for lock in &built.locks {
-        let Some(fort) = wa.fortress.get(lock.fort_section) else {
-            continue;
-        };
-        out.push(LockEntry {
-            key_world: world_idx,
-            key_pos: fort.pos,
-            target_world: world_idx,
-            target_pos: lock.pos,
-        });
+/// **One producer, and the world maze is not a special case.** There used to be
+/// two: this one, which read `fort_section` as an index into *this* world's
+/// fortresses, and `maze::writer::lock_keys`, which could name a fortress in
+/// another world. The split was not a design choice — vanilla's fortress-FX
+/// slots were per-world tables, so a lock could only ever be opened from its
+/// own world and `LockAssignment` matched the hardware. `lock_keys` replaced
+/// those tables with one position-keyed table, and once
+/// [`LockAssignment::fort`] became a [`FortRef`] the two implementations were
+/// the same function.
+///
+/// A lock whose fortress does not resolve to a cell is the harmful case, not a
+/// skippable one: the lock would reach the ROM with nothing to open it, which
+/// is an unwinnable seed and silent if it were merely dropped.
+///
+/// The result is a bijection — one lock per fortress — which is the charter's
+/// map-legibility rule, and the reason a world's lock count tells the player
+/// its fortress count. `lock_keys::assert_one_key_per_lock` is what says so
+/// after the fact.
+pub(super) fn collect_lock_entries(build: &BuildResult) -> Vec<LockEntry> {
+    let mut out = Vec::new();
+    for (wi, built) in build.worlds.iter().enumerate() {
+        for lock in &built.locks {
+            let fort = lock.fort;
+            let pos = build.worlds[fort.world]
+                .slots
+                .iter()
+                .find(|s| s.section == fort.section && s.kind == SlotKind::Fortress)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "lock at W{} {:?} names fortress section {} in W{}, which is not on \
+                         the map — the lock would be permanently sealed",
+                        wi + 1,
+                        lock.pos,
+                        fort.section,
+                        fort.world + 1
+                    )
+                })
+                .pos;
+            out.push(LockEntry {
+                key_world: fort.world,
+                key_pos: pos,
+                target_world: wi,
+                target_pos: lock.pos,
+            });
+        }
     }
+    out
 }
-
-/// What the vanilla FX slots said, and why none of it had to be kept.
-///
-/// This was stage 0 of the rework (`docs/fx_table_redesign.md`): prove in Rust
-/// that a slot's stored data is redundant with its target cell before writing
-/// a line of 6502 that assumed it. The randomized half of that proof is gone
-/// with the tables it measured — stage 1 writes no slots — but the vanilla half
-/// still describes a ROM the randomizer *reads*: `overworld_pickup::open_fx_gaps`
-/// opens vanilla's lock gaps from these same bytes before placement.
-///
-/// The two exceptions below are pinned as exact strings so a change to either
-/// is a test failure rather than a surprise.
 #[cfg(test)]
 mod derivation {
     use crate::randomize::rom_data::{

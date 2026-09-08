@@ -14,7 +14,7 @@ pub(crate) struct WorldState {
     pub grid: Grid,
     /// What occupies each placeable node: level / fortress / pipe / filler.
     pub slots: Vec<SlotAssignment>,
-    /// Lock overlay. `fort_section` pairs each lock to the fortress that
+    /// Lock overlay. `LockAssignment::fort` pairs each lock to the fortress that
     /// opens it.
     pub locks: Vec<LockAssignment>,
     /// Teleport pipe endpoint pairs.
@@ -353,7 +353,7 @@ impl WorldState {
                 .locks
                 .iter()
                 .enumerate()
-                .filter(|(li, lock)| !(open.contains(&lock.fort_section) && Some(*li) != sealed))
+                .filter(|(li, lock)| !(open.contains(&lock.fort.section) && Some(*li) != sealed))
                 .map(|(_, lock)| lock.pos)
                 .collect();
             let reach =
@@ -433,15 +433,6 @@ impl WorldState {
             slots: self.slots.clone(),
             locks: self.locks.clone(),
             section_count: self.fort_count(),
-            // Every fortress opens a lock in its own world at this point, so
-            // the safe locks and the safe fortress slots are the same set.
-            // `maze::stamp_into` is what breaks that and rewrites this.
-            secret_exit_slots: self
-                .locks
-                .iter()
-                .filter(|l| l.secret_exit_safe)
-                .map(|l| l.fort_section)
-                .collect(),
             pipe_pairs: self.pipe_pairs.clone(),
             hb_sprites: Vec::new(),
             c1_floor: self.c1_floor,

@@ -33,11 +33,11 @@
 
 use rand::Rng;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::map_walker::walk_reachable_blocked;
 use super::overworld_build::{
-    BuildResult, LockHint, SlotKind, WorldState, from_built, stamp_slots,
+    BuildResult, FortRef, LockHint, SlotKind, WorldState, from_built, stamp_slots,
 };
 use super::rom_data::{self, Grid, Pos};
 use walk::{MazePos, MazeWorld, walk_maze};
@@ -64,16 +64,6 @@ pub(crate) enum MazeEdge {
     /// The spine: clearing `from_world`'s airship deposits the player on
     /// `to_world`'s start tile.
     Airship { from_world: usize, to_world: usize },
-}
-
-/// Which fortress opens a lock. `section` is the fort's per-world section
-/// index — the same key `LockAssignment::fort_section` uses, so no new fort
-/// numbering has to be invented (and the ROM-side foreign-lock hook keys on
-/// position, not on an id, for the same reason).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) struct FortRef {
-    pub world: usize,
-    pub section: usize,
 }
 
 /// A lock in the maze. Unlike `LockAssignment` its fort may live in any world.
@@ -173,7 +163,7 @@ impl GlobalState {
                 w.locks.iter().map(|l| MazeLock {
                     world: w.world_idx,
                     pos: l.pos,
-                    fort: Some(FortRef { world: w.world_idx, section: l.fort_section }),
+                    fort: Some(l.fort),
                 })
             })
             .collect();
@@ -800,10 +790,10 @@ pub(crate) fn generate<R: Rng>(
 ///   writer never stamps a `gap_tile` there and the path tile underneath
 ///   stands. Previously the writer stamped the gate from the builder's list and
 ///   the maze had to paint over it — a gate with no key in the window between.
-/// * **`secret_exit_slots`**, rewritten with the maze-grade verdict. The
-///   builder's is per-world and over-promises (19% of locks at K=3, 43% at
-///   K=7); a maze fortress may also open a lock in a different world entirely,
-///   which the builder's field cannot express.
+/// * **`secret_exit_safe`**, restamped with the maze-grade verdict. The
+///   builder's is a per-world question and over-promises (19% of locks at K=3,
+///   43% at K=7), because sealing a lock can strand an airship the wand count
+///   needs.
 ///
 /// Consumes no RNG.
 pub(crate) fn stamp_into(build: &mut BuildResult, state: &GlobalState) {
@@ -823,26 +813,33 @@ pub(crate) fn stamp_into(build: &mut BuildResult, state: &GlobalState) {
             }
         }
 
-        let installed: HashSet<Pos> = state
+        // Uninstalled locks are dropped; the rest take the maze's fortress,
+        // which may be in another world. This is the whole of what used to be
+        // `maze::writer::lock_keys` — the pairing travels in the model now, so
+        // the writer emits the rows for both modes.
+        let installed: HashMap<Pos, FortRef> = state
             .locks
             .iter()
-            .filter(|l| l.world == world && l.fort.is_some())
-            .map(|l| l.pos)
+            .filter(|l| l.world == world)
+            .filter_map(|l| l.fort.map(|f| (l.pos, f)))
             .collect();
-        built.locks.retain(|l| installed.contains(&l.pos));
-
-        // A fortress slot is safe when the lock IT opens can stay shut — which
-        // after the fill can be a lock in another world, so this is keyed off
-        // the maze's pairing rather than off this world's lock list.
-        built.secret_exit_slots = state
-            .locks
-            .iter()
-            .enumerate()
-            .filter(|(li, l)| {
-                l.fort.is_some_and(|f| f.world == world) && state.winnable_with_lock_sealed(*li)
-            })
-            .filter_map(|(_, l)| l.fort.map(|f| f.section))
-            .collect();
+        built.locks.retain(|l| installed.contains_key(&l.pos));
+        for lock in &mut built.locks {
+            lock.fort = installed[&lock.pos];
+            // **Restamp the verdict, do not inherit it.** `secret_exit_safe` as
+            // the builder left it asks a per-world question, and the maze asks a
+            // bigger one: with this lock sealed forever, is the castle still
+            // reachable *and* are K airship docks still reachable, across all
+            // eight worlds. The per-world flag over-promises on 19% of locks at
+            // K=3 and 43% at K=7, so shipping it unchanged hands the writer
+            // slots that would strand the player who takes 1-F's secret exit.
+            let li = state
+                .locks
+                .iter()
+                .position(|l| l.world == world && l.pos == lock.pos)
+                .expect("the lock came from this list");
+            lock.secret_exit_safe = state.winnable_with_lock_sealed(li);
+        }
 
         // Say on each fortress where the lock it opens is. Own world wins,
         // then World 8, then elsewhere — so a World 8 fortress opening a World

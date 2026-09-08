@@ -747,8 +747,8 @@ fn every_lock_is_paired_with_its_fortress() {
     let build = overworld_build::build(&rom, &data, &mut rng, standard_build_flags());
 
     let mut test_rom = rom.clone();
-    let fx = write_overworld(&mut test_rom, &build, &data, &mut rng, WriteFlags::default());
-    let entries = fx.lock_entries(&build);
+    let _ = write_overworld(&mut test_rom, &build, &data, &mut rng, WriteFlags::default());
+    let entries = lock_entries(&build);
 
     let placed: usize = build.worlds.iter().map(|w| w.locks.len()).sum();
     assert_eq!(entries.len(), placed, "every placed lock needs a key");

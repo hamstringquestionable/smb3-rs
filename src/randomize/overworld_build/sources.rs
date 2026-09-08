@@ -314,7 +314,11 @@ fn vanilla_locks(
         let loc = rom.read_byte(rom_data::FX_MAP_LOC + slot);
         let col = (loc & 0x0F) as usize * 16 + (loc >> 4) as usize;
         locks.push((
-            LockAssignment { pos: (row, col), fort_section: ordinal, secret_exit_safe: false },
+            LockAssignment {
+                pos: (row, col),
+                fort: FortRef { world: world_idx, section: ordinal },
+                secret_exit_safe: false,
+            },
             rom.read_byte(rom_data::FX_MAP_TILE_REPLACE + slot),
         ));
     }

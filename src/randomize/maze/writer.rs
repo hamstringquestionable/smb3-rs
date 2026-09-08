@@ -17,8 +17,6 @@
 
 use crate::rom::Rom;
 
-use super::super::lock_keys::LockEntry;
-use super::super::overworld_build::SlotKind;
 use super::super::rom_data::{PRG012_FILE_BASE, TELEPAD_QUADRANTS, TILE_TELEPAD};
 use super::super::world_persist::Telepad;
 use super::GlobalState;
@@ -63,67 +61,4 @@ pub(crate) fn install_pad_metatile(rom: &mut Rom, state: &GlobalState) {
     for (plane, &pattern) in TELEPAD_QUADRANTS.iter().enumerate() {
         rom.write_byte(PRG012_FILE_BASE + plane * 256 + TILE_TELEPAD as usize, pattern);
     }
-}
-
-/// **Every** lock in the maze, paired with the fortress that opens it, in the
-/// shape the ROM side takes.
-///
-/// [`LockEntry`](super::super::lock_keys::LockEntry) is flat `(world, position)`
-/// pairs rather than the maze's own types, and that is the right shape rather
-/// than a lossy one: the hook keys on the player's map position — `Y` already
-/// holds the completion column and `X` the row when `Map_MarkLevelComplete`'s
-/// fortress branch is reached — so no fort-id numbering has to be invented on
-/// either side.
-///
-/// **Same-world locks are included, and leaving them out was a bug.** This used
-/// to emit only `is_foreign()` locks, on the reasoning that the rest "already
-/// work through the fortress FX path". They did — but through the *overworld
-/// builder's* pairing, not the maze's. [`fill`](super::fill) starts from the
-/// builder's assignment and moves by swapping the forts of two locks, so a swap
-/// that left both locks in their own worlds was simply discarded on the way to
-/// the ROM: measured at 60 seeds, **33.1% of same-world locks (164 of 496, in 59
-/// of 60 seeds) were opened by the wrong fortress**, and a fortress that kept a
-/// stale local lock while gaining a foreign one opened two.
-///
-/// The fill's bijection — "every fortress has exactly one lock", the charter's
-/// map-legibility rule — only reaches the cartridge if the whole assignment
-/// travels together. `lock_keys::assert_one_key_per_lock` is what now says so.
-///
-/// A lock with no fort is not installed at all (see [`MazeLock::fort`]), so it
-/// contributes no entry; today the fill never produces one.
-pub(crate) fn lock_keys(state: &GlobalState) -> Vec<LockEntry> {
-    state
-        .locks
-        .iter()
-        .filter_map(|l| {
-            // No fort means the lock was never installed — an open path tile,
-            // not a sealed gate. That is the harmless case and it contributes
-            // no entry.
-            let fort = l.fort?;
-            // A fort that does not resolve to a cell IS the harmful case: the
-            // lock would reach the ROM with nothing to open it, which is an
-            // unwinnable seed and silent if it were merely skipped.
-            let pos = state.worlds[fort.world]
-                .slots
-                .iter()
-                .find(|s| s.section == fort.section && s.kind == SlotKind::Fortress)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "lock at W{} {:?} names fortress section {} in W{}, which is not on \
-                         the map — the lock would be permanently sealed",
-                        l.world + 1,
-                        l.pos,
-                        fort.section,
-                        fort.world + 1
-                    )
-                })
-                .pos;
-            Some(LockEntry {
-                key_world: fort.world,
-                key_pos: pos,
-                target_world: l.world,
-                target_pos: l.pos,
-            })
-        })
-        .collect()
 }

@@ -153,13 +153,24 @@ pub(super) fn assign_pool<R: Rng>(
     // This is the only pre-assignment left. Friendlier Levels used to park 7F2
     // and 8F1 on the safe slots 1-F did not take; it removes them from the deck
     // instead now, so the fort they would have displaced never happens.
-    // Taken from the build, never re-derived here: a fortress can open a lock
-    // in another world (the world maze does this on most locks), and then
-    // "locks in world W that are safe" is not "fortress slots in world W that
-    // are safe". Whoever decided the pairing owns the answer.
-    let safe_slots: Vec<(usize, usize)> = (0..8)
-        .flat_map(|wi| build.worlds[wi].secret_exit_slots.iter().map(move |&sec| (wi, sec)))
+    // A safe slot is the FORTRESS that opens a lock that can stay shut — which
+    // is not the same as "a safe lock in this world", because a fortress can
+    // open a lock in another world (the world maze does this on most locks).
+    // `LockAssignment::fort` names the world, so the lock's own world never
+    // enters into it.
+    let mut safe_slots: Vec<(usize, usize)> = build
+        .worlds
+        .iter()
+        .flat_map(|w| w.locks.iter())
+        .filter(|lock| lock.secret_exit_safe)
+        .map(|lock| (lock.fort.world, lock.fort.section))
         .collect();
+    // **In fortress order, not lock order.** These are fortress slots, so the
+    // fortress's world is the key; reading them off the locks yields them in
+    // whatever order the locks happen to sit in, which is arbitrary and — since
+    // the draw below is uniform over this list — would move 1-F for no reason.
+    // A stable sort keeps the per-world order the locks gave.
+    safe_slots.sort_by_key(|&(world, _)| world);
     let mut preassigned_forts: HashMap<(usize, usize), usize> = HashMap::new();
     if let Some(&slot) = safe_slots.choose(rng) {
         preassigned_forts.insert(slot, fort_1f_pi);

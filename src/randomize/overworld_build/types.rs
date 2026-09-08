@@ -100,13 +100,31 @@ pub(crate) fn stamp_slots(grid: &mut Grid, slots: &[SlotAssignment]) {
     }
 }
 
+/// **Which fortress opens a lock**, as `(world, section)`.
+///
+/// `section` is the fortress's per-world section index — the same numbering
+/// `SlotAssignment::section` uses, so no second fort id has to be invented.
+///
+/// The world is part of it because the ROM stopped caring about world
+/// boundaries. Vanilla's fortress-FX slots were per-world tables, so a lock
+/// could only ever name a fortress in its own world and the model matched the
+/// hardware. `lock_keys` replaced those tables with one position-keyed table
+/// (`docs/fx_table_redesign.md`), and a fortress can now open a lock anywhere.
+/// The world maze is the only thing that does so today; the builder sets its
+/// own world, and `maze::stamp_into` rewrites this with the maze's pairing.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct FortRef {
+    pub world: usize,
+    pub section: usize,
+}
+
 /// A lock/bridge placed on a path tile.
 #[derive(Clone, Debug)]
 pub(crate) struct LockAssignment {
     /// Path tile position where the lock goes.
     pub pos: (usize, usize),
-    /// Which fortress (section index) opens this lock.
-    pub fort_section: usize,
+    /// The fortress that opens it, which need not be in this world.
+    pub fort: FortRef,
     /// True if the world's target (airship/Bowser) is still reachable with
     /// this lock closed. These locks are safe for 1-F (secret exit doesn't
     /// trigger FX replacement).
@@ -137,20 +155,6 @@ pub(crate) struct BuiltWorld {
     pub locks: Vec<LockAssignment>,
     /// Number of sections (= number of fortresses in this world).
     pub section_count: usize,
-    /// **Fortress sections here that can host a secret-exit fortress level.**
-    ///
-    /// 1-F's secret exit beats the fortress without firing the lock-opening
-    /// FX, so the lock that fortress opens stays shut forever. A section is
-    /// listed when that is survivable — the player can still finish.
-    ///
-    /// The writer consumes this and must not re-derive it. Deriving it from
-    /// `locks[..].secret_exit_safe` and `fort_section` is only correct while
-    /// every fortress opens a lock in its own world, which the world maze
-    /// stops being true: it re-pairs across worlds, and then "this world's
-    /// safe locks" and "this world's safe fortress slots" are different sets.
-    /// The builder fills this in from its per-world verdict; the maze
-    /// overwrites it with the cross-world one, which is stricter.
-    pub secret_exit_slots: Vec<usize>,
     /// Pipe pair positions placed in this world: Vec of (endpoint_a, endpoint_b).
     pub pipe_pairs: Vec<TeleportEdge>,
     /// Redistributed wandering Hammer Bro sprites for this world. Empty when

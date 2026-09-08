@@ -82,7 +82,7 @@ impl Phase for Locks {
             for (pos, cut) in candidates {
                 state.locks.push(LockAssignment {
                     pos,
-                    fort_section: fort_id,
+                    fort: FortRef { world: state.world_idx, section: fort_id },
                     // Stamped by recompute_safety_flags once the set is
                     // final.
                     secret_exit_safe: false,
@@ -202,11 +202,8 @@ pub(crate) fn ensure_secret_exit_safe(
                 .collect();
             let candidates = rank_candidates(state, &open, &open_reach, &covered, rng);
             for (pos, _) in candidates {
-                state.locks[li] = LockAssignment {
-                    pos,
-                    fort_section: original.fort_section,
-                    secret_exit_safe: false,
-                };
+                state.locks[li] =
+                    LockAssignment { pos, fort: original.fort, secret_exit_safe: false };
                 if state.completable() && state.completable_sealed(Some(li)) {
                     // Relocation changed the world — every flag in it is
                     // stale, not just the moved lock's.
@@ -214,7 +211,7 @@ pub(crate) fn ensure_secret_exit_safe(
                     actions.push(format!(
                         "W{} fort {} lock relocated {:?} -> {pos:?} (secret-exit-safe)",
                         state.world_idx + 1,
-                        original.fort_section,
+                        original.fort.section,
                         original.pos,
                     ));
                     return PhaseReport { phase, actions };
@@ -304,7 +301,7 @@ pub(crate) fn place_locks_gating(
                 }
                 state.locks.push(LockAssignment {
                     pos: *pos,
-                    fort_section: fort_id,
+                    fort: FortRef { world: state.world_idx, section: fort_id },
                     secret_exit_safe: false,
                 });
                 if state.completable() {
@@ -417,7 +414,11 @@ fn claim_bridge_span(
     fort_id: usize,
 ) -> Option<HashSet<Pos>> {
     for (i, &pos) in pending.iter().enumerate() {
-        state.locks.push(LockAssignment { pos, fort_section: fort_id, secret_exit_safe: false });
+        state.locks.push(LockAssignment {
+            pos,
+            fort: FortRef { world: state.world_idx, section: fort_id },
+            secret_exit_safe: false,
+        });
         if state.completable() {
             let cut =
                 cut_set(open, open_reach, &state.pipe_pairs, state.start, state.world_idx, pos);

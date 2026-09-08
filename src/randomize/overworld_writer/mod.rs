@@ -117,7 +117,18 @@ pub(crate) fn write_overworld<R: Rng>(
         super::start_airship_swap::write_engine_scaffolding(rom, data.catalog);
     }
 
-    WrittenOverworld { assignments, grids }
+    WrittenOverworld { grids }
+}
+
+/// **Every `(fortress, lock)` pair the build placed, one per lock.**
+///
+/// A fact about the *build*, not about the writing, which is why it takes no
+/// `WrittenOverworld`: the pairing is decided before the writer runs, and in
+/// the world maze `maze::stamp_into` has already rewritten it — possibly across
+/// worlds. It is *input* to [`super::lock_keys::apply`], which owns every byte
+/// the console reads; nothing here writes ROM.
+pub(crate) fn lock_entries(build: &BuildResult) -> Vec<LockEntry> {
+    collect_lock_entries(build)
 }
 
 /// Do the writer's grids still describe the bytes in the ROM?
@@ -155,7 +166,6 @@ fn grids_agree_with_rom(grids: &[Grid], rom: &Rom) -> Result<(), String> {
 ///
 /// It was called `LockPairing` when locks were its only consumer.
 pub(crate) struct WrittenOverworld {
-    assignments: Vec<WorldAssignments>,
     /// **The map as committed, world by world.**
     ///
     /// The writer is the last thing that touches a map grid, so this is the
@@ -195,25 +205,6 @@ impl WrittenOverworld {
             grids_agree_with_rom(&self.grids, rom).unwrap_err()
         );
         &self.grids
-    }
-    /// Every `(fortress, lock)` pair the build placed, one per lock.
-    ///
-    /// Injective in both directions: a lock names one fortress section, and no
-    /// two locks in a world share a section. In maze mode this is only the
-    /// *starting* assignment — `maze::fill` permutes it and
-    /// `maze::writer::lock_keys` emits the result instead of this.
-    ///
-    /// There is deliberately no way to ask this where 1-F ended up. The maze
-    /// used to need that, because it ran after the writer and had to protect
-    /// the pairing the writer had already committed. It now runs *before* the
-    /// writer and hands down `BuiltWorld::secret_exit_slots` instead, so which
-    /// safe slot 1-F takes is the writer's business alone.
-    pub(crate) fn lock_entries(&self, build: &BuildResult) -> Vec<LockEntry> {
-        let mut out = Vec::new();
-        for (wi, wa) in self.assignments.iter().enumerate() {
-            collect_lock_entries(wi, &build.worlds[wi], wa, &mut out);
-        }
-        out
     }
 }
 

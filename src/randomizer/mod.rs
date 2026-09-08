@@ -378,7 +378,7 @@ fn randomize_inner(
     // asks the packed store where a given cell's completion bit lives rather
     // than re-deriving that arithmetic, and `world_persist` is what installs
     // the store.
-    let maze_lock_keys = maze.map(|(state, wands)| {
+    if let Some((state, wands)) = maze {
         rom.set_tag("world_maze");
         randomize::maze::writer::install_pad_metatile(rom, &state);
         rom.set_tag("wand_gate");
@@ -391,21 +391,7 @@ fn randomize_inner(
         );
         rom.set_tag("world_travel");
         randomize::world_travel::apply(rom, written.grids(rom));
-        // **The maze owns the whole lock/fortress assignment, not half of it.**
-        //
-        // `fill` starts from the overworld builder's pairing — every lock opened
-        // by a fortress in its own world — and moves by *swapping* the forts of
-        // two locks, keeping a swap only while the maze stays solvable. So the
-        // result is a permutation of the builder's, and it is a bijection at
-        // every step: one lock per fortress, the charter's map-legibility rule.
-        //
-        // Taking only the cross-world half of that and leaving the rest to the
-        // builder's original pairing loses every swap that happened to leave
-        // both locks in their own worlds — 33.1% of same-world locks over 60
-        // seeds — and lets a fortress that kept a stale local lock while gaining
-        // a foreign one open two. Both halves travel together or neither does.
-        randomize::maze::writer::lock_keys(&state)
-    });
+    }
 
     // Every lock in the game, home and away, in one table — and with it the
     // rewritten fortress-FX effect that reads it. This is unconditional: the
@@ -425,8 +411,13 @@ fn randomize_inner(
     // still open. `lock_keys::the_digit_is_the_world_the_player_sees` asserts
     // the table is a permutation, which is what catches the wrong order.
     rom.set_tag("lock_keys");
-    let lock_entries = maze_lock_keys.unwrap_or_else(|| written.lock_entries(&build));
-    randomize::lock_keys::apply(rom, &lock_entries, options.hints);
+    // One source, both modes: `stamp_into` wrote the maze's pairing into the
+    // build, so the writer's rows already carry it.
+    randomize::lock_keys::apply(
+        rom,
+        &randomize::overworld_writer::lock_entries(&build),
+        options.hints,
+    );
 
     // Big [?] bonus-room shuffle: every level with a Big [?] pipe draws from a
     // pool of 19 rooms (11 vanilla + 8 in the otherwise-dead "Unused Level 5").

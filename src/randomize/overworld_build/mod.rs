@@ -145,7 +145,8 @@ pub(crate) use route_choice::{
     C1_FLOOR, COST_LEVEL, DEFAULT_SLACK, RouteChoice, SHAPING_SLACK, analyze_route_choice,
 };
 pub(crate) use types::{
-    BuildFlags, BuildResult, BuiltWorld, CapacityPrep, LockAssignment, OverworldData, stamp_slots,
+    BuildFlags, BuildResult, BuiltWorld, CapacityPrep, FortRef, LockAssignment, OverworldData,
+    stamp_slots,
 };
 pub use {types::LockHint, types::SlotAssignment, types::SlotKind};
 
@@ -341,6 +342,10 @@ fn renumber_fort_sections(state: &mut WorldState) {
         }
     }
     for lock in &mut state.locks {
-        lock.fort_section = remap[&lock.fort_section];
+        // Renumbering is this world's business. The guard is honest rather than
+        // load-bearing: the maze is the only thing that pairs a lock with a
+        // fortress elsewhere, and it runs long after the build.
+        debug_assert_eq!(lock.fort.world, state.world_idx, "a foreign fort during the build");
+        lock.fort.section = remap[&lock.fort.section];
     }
 }
