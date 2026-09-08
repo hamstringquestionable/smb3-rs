@@ -35,7 +35,7 @@ use rand::Rng;
 
 use std::collections::HashSet;
 
-use super::map_walker::walk_reachable;
+use super::map_walker::walk_reachable_blocked;
 use super::overworld_build::{
     BuildResult, LockHint, SlotKind, WorldState, from_built, stamp_slots,
 };
@@ -81,8 +81,6 @@ pub(crate) struct FortRef {
 pub(crate) struct MazeLock {
     pub world: usize,
     pub pos: Pos,
-    pub gap_tile: u8,
-    pub replace_tile: u8,
     /// The fort that opens it.
     ///
     /// `None` means **the lock is not installed** — the tile is left as open
@@ -175,8 +173,6 @@ impl GlobalState {
                 w.locks.iter().map(|l| MazeLock {
                     world: w.world_idx,
                     pos: l.pos,
-                    gap_tile: l.gap_tile,
-                    replace_tile: l.replace_tile,
                     fort: Some(FortRef { world: w.world_idx, section: l.fort_section }),
                 })
             })
@@ -312,45 +308,53 @@ impl GlobalState {
             .collect()
     }
 
-    /// [`Self::base_grids`] with every lock stamped as `open` leaves it. The
-    /// fixpoint and [`metrics::completion_cost`] both step through the same
-    /// sequence of these, one per fort set, and they have to agree about what
-    /// a given set of beaten forts makes walkable. The constructive fill steps
+    /// Which path cells are shut, per world, given the forts beaten so far.
+    ///
+    /// The fixpoint and [`metrics::completion_cost`] both step through the same
+    /// sequence of these, one per fort set, and they have to agree about what a
+    /// given set of beaten forts makes walkable. The constructive fill steps
     /// through the same sequence a third time.
-    pub(crate) fn locked_grids(&self, bases: &[Grid], open: &HashSet<FortRef>) -> Vec<Grid> {
-        self.locked_grids_sealed(bases, open, None)
+    pub(crate) fn shut_locks(&self, open: &HashSet<FortRef>) -> Vec<HashSet<Pos>> {
+        self.shut_locks_sealed(open, None)
     }
 
     /// [`Self::locked_grids`] with one lock held shut whatever opens it — the
     /// counterfactual [`Self::winnable_with_lock_sealed`] asks.
-    pub(crate) fn locked_grids_sealed(
+    pub(crate) fn shut_locks_sealed(
         &self,
-        bases: &[Grid],
         open: &HashSet<FortRef>,
         sealed: Option<usize>,
-    ) -> Vec<Grid> {
-        bases
-            .iter()
-            .enumerate()
-            .map(|(wi, base)| {
-                let mut g = base.clone();
-                for (li, lock) in self.locks.iter().enumerate().filter(|(_, l)| l.world == wi) {
-                    // An uninstalled lock (`fort: None`) is open path.
-                    let opens = Some(li) != sealed && lock.fort.is_none_or(|f| open.contains(&f));
-                    let tile = if opens { lock.replace_tile } else { lock.gap_tile };
-                    g.set(lock.pos.0, lock.pos.1, tile);
-                }
-                g
+    ) -> Vec<HashSet<Pos>> {
+        (0..self.worlds.len())
+            .map(|wi| {
+                self.locks
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, l)| l.world == wi)
+                    .filter(|(li, lock)| {
+                        // An uninstalled lock (`fort: None`) is open path.
+                        let opens =
+                            Some(*li) != sealed && lock.fort.is_none_or(|f| open.contains(&f));
+                        !opens
+                    })
+                    .map(|(_, lock)| lock.pos)
+                    .collect()
             })
             .collect()
     }
 
-    /// The eight grids as the maze walkers take them.
-    pub(crate) fn view<'a>(&'a self, grids: &'a [Grid]) -> Vec<MazeWorld<'a>> {
+    /// The eight worlds as the maze walkers take them: a grid, its pipes, and
+    /// which of its path cells are shut.
+    pub(crate) fn view<'a>(
+        &'a self,
+        grids: &'a [Grid],
+        shut: &'a [HashSet<Pos>],
+    ) -> Vec<MazeWorld<'a>> {
         grids
             .iter()
             .zip(&self.worlds)
-            .map(|(grid, w)| MazeWorld { grid, pipe_pairs: &w.pipe_pairs })
+            .zip(shut)
+            .map(|((grid, w), blocked)| MazeWorld { grid, pipe_pairs: &w.pipe_pairs, blocked })
             .collect()
     }
 
@@ -385,8 +389,8 @@ impl GlobalState {
         let mut wands_at_goal = 0;
 
         loop {
-            let grids = self.locked_grids_sealed(&bases, &open, sealed);
-            let reach = walk_maze(&self.view(&grids), &links, self.start);
+            let shut = self.shut_locks_sealed(&open, sealed);
+            let reach = walk_maze(&self.view(&bases, &shut), &links, self.start);
 
             let reached: Vec<MazePos> = content
                 .iter()
@@ -532,13 +536,16 @@ impl GlobalState {
             .collect();
         let mut open: HashSet<usize> = HashSet::new();
         loop {
-            let mut g = base.clone();
-            for lock in self.locks.iter().filter(|l| l.world == world) {
-                let opens = lock.fort.is_none_or(|f| f.world == world && open.contains(&f.section));
-                let tile = if opens { lock.replace_tile } else { lock.gap_tile };
-                g.set(lock.pos.0, lock.pos.1, tile);
-            }
-            let reach = walk_reachable(&g, &w.pipe_pairs, w.start, world);
+            let shut: HashSet<Pos> = self
+                .locks
+                .iter()
+                .filter(|l| l.world == world)
+                .filter(|lock| {
+                    !lock.fort.is_none_or(|f| f.world == world && open.contains(&f.section))
+                })
+                .map(|lock| lock.pos)
+                .collect();
+            let reach = walk_reachable_blocked(&base, &w.pipe_pairs, w.start, world, &shut);
             if exits.iter().any(|&e| reach.contains(e)) {
                 return true;
             }
@@ -572,10 +579,9 @@ impl GlobalState {
         let w = &self.worlds[world];
         let mut g = w.grid.clone();
         stamp_slots(&mut g, &w.slots);
-        for lock in self.locks.iter().filter(|l| l.world == world) {
-            g.set(lock.pos.0, lock.pos.1, lock.gap_tile);
-        }
-        let reach = walk_reachable(&g, &w.pipe_pairs, w.start, world);
+        let shut: HashSet<Pos> =
+            self.locks.iter().filter(|l| l.world == world).map(|l| l.pos).collect();
+        let reach = walk_reachable_blocked(&g, &w.pipe_pairs, w.start, world, &shut);
         if w.target.is_some_and(|t| reach.contains(t)) {
             return true;
         }

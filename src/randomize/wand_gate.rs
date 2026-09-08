@@ -997,7 +997,9 @@ mod chokepoint {
             span_cols: w8
                 .locks
                 .iter()
-                .filter(|l| l.replace_tile == crate::randomize::rom_data::BRIDGE_TILE)
+                .filter(|l| {
+                    w8.grid.get(l.pos.0, l.pos.1) == crate::randomize::rom_data::BRIDGE_TILE
+                })
                 .map(|l| l.pos.1)
                 .collect(),
         }

@@ -1837,7 +1837,13 @@ fn test_builder_bridge_lock_rate() {
             run_shaped_with_web_retries(&mut state, &mut rng);
             total_locks[world_idx] += state.locks.len();
             bridge_locks[world_idx] +=
-                state.locks.iter().filter(|l| BRIDGE.contains(&l.replace_tile)).count();
+                // The path under a lock, read off the grid — locks are an
+                // overlay and are never stamped, so it is still there.
+                state
+                    .locks
+                    .iter()
+                    .filter(|l| BRIDGE.contains(&state.grid.get(l.pos.0, l.pos.1)))
+                    .count();
             let has_bridge = (0..state.grid.rows())
                 .any(|r| (0..state.grid.cols).any(|c| BRIDGE.contains(&state.grid.get(r, c))));
             if has_bridge {

@@ -180,10 +180,13 @@ pub(crate) fn from_vanilla(rom: &Rom, catalog: &NodeCatalog, world_idx: usize) -
     let mut grid = rom_data::read_tile_grid(rom, world_idx);
     let slots = vanilla_slots(rom, catalog, world_idx);
     let fort_count = slots.iter().filter(|s| s.kind == SlotKind::Fortress).count();
-    let locks = vanilla_locks(rom, &grid, world_idx, fort_count);
-    for lock in &locks {
-        grid.set(lock.pos.0, lock.pos.1, lock.replace_tile);
-    }
+    let locks: Vec<LockAssignment> = vanilla_locks(rom, &grid, world_idx, fort_count)
+        .into_iter()
+        .map(|(lock, under)| {
+            grid.set(lock.pos.0, lock.pos.1, under);
+            lock
+        })
+        .collect();
     let start = rom_data::find_start(&grid);
     let target = find_target(&grid, world_idx);
     let level_budget = slots.iter().filter(|s| s.kind == SlotKind::Level).count();
@@ -291,27 +294,29 @@ fn vanilla_pipe_pairs(catalog: &NodeCatalog, world_idx: usize) -> Vec<TeleportEd
 /// the writer (`fortress_fx.rs`): row byte = (row+2)<<4; loc byte =
 /// (col_in_screen<<4) | screen.
 #[cfg(test)]
+/// Vanilla's locks, each with the path tile hiding under it.
+///
+/// The tile is returned beside the lock rather than stored on it. It is needed
+/// exactly once — to put the path back on the grid, since a vanilla map carries
+/// the CLOSED tile and `gap_tile_for` cannot invert to the specific variant
+/// (a drawbridge becomes plain path). Once the grid is restored it holds the
+/// faithful tile, which is where every later reader gets it.
 fn vanilla_locks(
     rom: &Rom,
-    grid: &Grid,
+    _grid: &Grid,
     world_idx: usize,
     fort_count: usize,
-) -> Vec<LockAssignment> {
+) -> Vec<(LockAssignment, u8)> {
     let mut locks = Vec::new();
     for ordinal in 0..fort_count.min(4) {
         let slot = rom.read_byte(rom_data::FX_WORLD_TABLE + world_idx * 4 + ordinal) as usize;
         let row = (rom.read_byte(rom_data::FX_MAP_LOC_ROW + slot) >> 4) as usize - 2;
         let loc = rom.read_byte(rom_data::FX_MAP_LOC + slot);
         let col = (loc & 0x0F) as usize * 16 + (loc >> 4) as usize;
-        locks.push(LockAssignment {
-            pos: (row, col),
-            // The vanilla grid carries the CLOSED tile; the caller restores
-            // the open tile onto the grid after reading these.
-            gap_tile: grid.get(row, col),
-            replace_tile: rom.read_byte(rom_data::FX_MAP_TILE_REPLACE + slot),
-            fort_section: ordinal,
-            secret_exit_safe: false,
-        });
+        locks.push((
+            LockAssignment { pos: (row, col), fort_section: ordinal, secret_exit_safe: false },
+            rom.read_byte(rom_data::FX_MAP_TILE_REPLACE + slot),
+        ));
     }
     locks
 }

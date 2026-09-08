@@ -472,8 +472,8 @@ fn constructive<R: Rng>(state: &mut GlobalState, knobs: &Knobs, rng: &mut R) -> 
     let mut placed = 0usize;
 
     loop {
-        let grids = state.locked_grids(&bases, &open);
-        let reach = walk_maze(&state.view(&grids), &links, state.start);
+        let shut = state.shut_locks(&open);
+        let reach = walk_maze(&state.view(&bases, &shut), &links, state.start);
 
         for (f, pos) in &forts {
             if !open.contains(f) && reach.contains((f.world, *pos)) {
@@ -491,7 +491,7 @@ fn constructive<R: Rng>(state: &mut GlobalState, knobs: &Knobs, rng: &mut R) -> 
             .filter(|&i| !assigned[i])
             .filter(|&i| {
                 let l = &state.locks[i];
-                neighbours(&grids[l.world], l.pos).any(|p| reach.contains((l.world, p)))
+                neighbours(&bases[l.world], l.pos).any(|p| reach.contains((l.world, p)))
             })
             .collect();
 
@@ -572,8 +572,8 @@ fn widest_gate<R: Rng>(
     for &i in frontier {
         let saved = state.locks[i].fort;
         state.locks[i].fort = Some(probe);
-        let grids = state.locked_grids(bases, open);
-        let opened = walk_maze(&state.view(&grids), links, state.start);
+        let shut = state.shut_locks(open);
+        let opened = walk_maze(&state.view(bases, &shut), links, state.start);
         state.locks[i].fort = saved;
 
         // Opening a gate only ever adds reachability, so this cannot go

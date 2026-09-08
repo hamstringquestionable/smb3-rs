@@ -32,7 +32,7 @@
 
 #[cfg(test)]
 use std::collections::BinaryHeap;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::super::rom_data::{
     self, BACKGROUND_TILES, Grid, Pos, TILE_AIRSHIP, TILE_BOWSER, TeleportEdge, VALID_HORZ,
@@ -59,13 +59,19 @@ fn teleport_lookup(pairs: &[TeleportEdge]) -> TeleportLookup {
     lookup
 }
 
-/// One world as the maze walkers see it: the grid to walk and the intra-world
-/// teleport (pipe) edges on it. Deliberately not a `WorldState` — the walker
-/// has no business knowing about slots, locks or budgets, and the caller
-/// stamps whatever it wants seen onto the grid before calling.
+/// One world as the maze walkers see it: the grid to walk, the intra-world
+/// teleport (pipe) edges on it, and which path cells are shut. Deliberately not
+/// a `WorldState` — the walker has no business knowing about slots, locks or
+/// budgets.
+///
+/// `blocked` is how a shut lock is expressed. The caller used to paint a lock
+/// tile onto the grid instead, which worked but meant the *builder* had to know
+/// which byte renders a lock. Which byte that is depends on the path underneath
+/// and is purely cosmetic — see `map_walker::walk_reachable_blocked`.
 pub(crate) struct MazeWorld<'a> {
     pub grid: &'a Grid,
     pub pipe_pairs: &'a [TeleportEdge],
+    pub blocked: &'a HashSet<Pos>,
 }
 
 /// Reachability across every world at once.
@@ -170,6 +176,7 @@ fn expand(
     pos: Pos,
     pipes: &TeleportLookup,
     canoes: &TeleportLookup,
+    blocked: &HashSet<Pos>,
     is_start: bool,
     mut visit: impl FnMut(Pos),
 ) {
@@ -183,6 +190,9 @@ fn expand(
         let pr = r as i16 + dr as i16;
         let pc = c as i16 + dc as i16;
         if pr < 0 || pr >= grid.rows() as i16 || pc < 0 || pc >= grid.cols as i16 {
+            continue;
+        }
+        if blocked.contains(&(pr as usize, pc as usize)) {
             continue;
         }
         let path_tile = grid.get(pr as usize, pc as usize);
@@ -235,7 +245,15 @@ fn reach_pass(
                 queue.push_back((dw, dpos));
             }
         };
-        expand(worlds[wi].grid, pos, &pipes[wi], &canoes[wi], (wi, pos) == start, |p| push(wi, p));
+        expand(
+            worlds[wi].grid,
+            pos,
+            &pipes[wi],
+            &canoes[wi],
+            worlds[wi].blocked,
+            (wi, pos) == start,
+            |p| push(wi, p),
+        );
         if let Some(dests) = links.get(&(wi, pos)) {
             for &(dw, dpos) in dests {
                 push(dw, dpos);
@@ -332,7 +350,15 @@ pub(crate) fn walk_maze_cost(
                 heap.push(std::cmp::Reverse((next, (dw, dpos))));
             }
         };
-        expand(worlds[wi].grid, pos, &pipes[wi], &canoes[wi], (wi, pos) == start, |p| relax(wi, p));
+        expand(
+            worlds[wi].grid,
+            pos,
+            &pipes[wi],
+            &canoes[wi],
+            worlds[wi].blocked,
+            (wi, pos) == start,
+            |p| relax(wi, p),
+        );
         if let Some(dests) = lookup.get(&(wi, pos)) {
             for &(dw, dpos) in dests {
                 relax(dw, dpos);

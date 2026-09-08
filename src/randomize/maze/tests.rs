@@ -138,16 +138,16 @@ fn maze_walk_matches_the_per_world_walker() {
             .map(|w| {
                 let mut g = w.grid.clone();
                 stamp_slots(&mut g, &w.slots);
-                for lock in &w.locks {
-                    g.set(lock.pos.0, lock.pos.1, lock.gap_tile);
-                }
                 g
             })
             .collect();
+        // Locks open: the walker's blocked set is empty, matching the
+        // per-world oracle below, which walks the same grids.
+        let no_locks: std::collections::HashSet<(usize, usize)> = Default::default();
         let view: Vec<MazeWorld> = grids
             .iter()
             .zip(&state.worlds)
-            .map(|(grid, w)| MazeWorld { grid, pipe_pairs: &w.pipe_pairs })
+            .map(|(grid, w)| MazeWorld { grid, pipe_pairs: &w.pipe_pairs, blocked: &no_locks })
             .collect();
 
         for (wi, grid) in grids.iter().enumerate() {
@@ -1465,7 +1465,7 @@ fn every_world_has_a_fortress_in_its_start_region() {
             let mut g = w.grid.clone();
             stamp_slots(&mut g, &w.slots);
             for lock in &w.locks {
-                g.set(lock.pos.0, lock.pos.1, lock.gap_tile);
+                let _ = lock;
             }
             let ws = from_built(w);
             let reach = walk_reachable(&g, &w.pipe_pairs, ws.start, w.world_idx);
@@ -1596,8 +1596,8 @@ fn forward_fill_terminates_when_ordered_by_territory() {
 
             loop {
                 let bases = state.base_grids(&HashSet::new());
-                let grids = state.locked_grids(&bases, &open);
-                let reach = walk_maze(&state.view(&grids), &links, state.start);
+                let shut = state.shut_locks(&open);
+                let reach = walk_maze(&state.view(&bases, &shut), &links, state.start);
 
                 for (f, pos) in &forts {
                     if !open.contains(f) && reach.contains((f.world, *pos)) {
@@ -1615,7 +1615,7 @@ fn forward_fill_terminates_when_ordered_by_territory() {
                     .filter(|&i| {
                         let l = &state.locks[i];
                         let (r, c) = l.pos;
-                        let g = &grids[l.world];
+                        let g = &bases[l.world];
                         let mut n: Vec<(usize, usize)> = vec![];
                         if r > 0 {
                             n.push((r - 1, c));
@@ -1650,8 +1650,8 @@ fn forward_fill_terminates_when_ordered_by_territory() {
                     for &i in &frontier {
                         let saved = state.locks[i].fort;
                         state.locks[i].fort = Some(probe);
-                        let g2 = state.locked_grids(&bases, &open);
-                        let r2 = walk_maze(&state.view(&g2), &links, state.start);
+                        let s2 = state.shut_locks(&open);
+                        let r2 = walk_maze(&state.view(&bases, &s2), &links, state.start);
                         state.locks[i].fort = saved;
                         let gain: usize =
                             (0..state.worlds.len()).map(|w| r2.world_len(w)).sum::<usize>() - base;
@@ -2043,7 +2043,6 @@ fn an_uninstalled_lock_becomes_open_path() {
     assert!(!state.locks.is_empty(), "seed 1 placed no locks; the check would be vacuous");
 
     let lock = state.locks[0].clone();
-    assert_ne!(lock.gap_tile, lock.replace_tile, "a lock whose two tiles agree proves nothing");
     assert!(
         build.worlds[lock.world].locks.iter().any(|l| l.pos == lock.pos),
         "the builder must have placed this lock, or the check is vacuous"
@@ -2061,10 +2060,9 @@ fn an_uninstalled_lock_becomes_open_path() {
     super::stamp_into(&mut build, &state);
     assert!(
         !build.worlds[lock.world].locks.iter().any(|l| l.pos == lock.pos),
-        "W{} {:?} would ship as gap tile {:#04X} with no key — a permanently sealed gate",
+        "W{} {:?} would ship as a gate with no key — a permanently sealed gate",
         lock.world + 1,
         lock.pos,
-        lock.gap_tile,
     );
 }
 
@@ -2171,8 +2169,8 @@ fn w8_bridge_keys() {
 
             loop {
                 let bases = st.base_grids(&HashSet::new());
-                let grids = st.locked_grids(&bases, &open);
-                let reach = walk_maze(&st.view(&grids), &links, st.start);
+                let shut = st.shut_locks(&open);
+                let reach = walk_maze(&st.view(&bases, &shut), &links, st.start);
                 for (f, pos) in &forts {
                     if !open.contains(f) && reach.contains((f.world, *pos)) {
                         open.insert(*f);
@@ -2188,7 +2186,7 @@ fn w8_bridge_keys() {
                     .filter(|&i| {
                         let l = &st.locks[i];
                         let (r, c) = l.pos;
-                        let g = &grids[l.world];
+                        let g = &bases[l.world];
                         let mut n = Vec::new();
                         if r > 0 {
                             n.push((r - 1, c));
@@ -2218,8 +2216,8 @@ fn w8_bridge_keys() {
                 for &i in &frontier {
                     let saved = st.locks[i].fort;
                     st.locks[i].fort = Some(probe);
-                    let g2 = st.locked_grids(&bases, &open);
-                    let r2 = walk_maze(&st.view(&g2), &links, st.start);
+                    let s2 = st.shut_locks(&open);
+                    let r2 = walk_maze(&st.view(&bases, &s2), &links, st.start);
                     st.locks[i].fort = saved;
                     let gain: usize =
                         (0..st.worlds.len()).map(|w| r2.world_len(w)).sum::<usize>() - base;

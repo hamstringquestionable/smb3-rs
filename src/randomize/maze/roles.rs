@@ -11,7 +11,7 @@
 
 use std::collections::HashSet;
 
-use super::super::map_walker::walk_reachable;
+use super::super::map_walker::{walk_reachable, walk_reachable_blocked};
 use super::super::overworld_build::{SlotKind, WorldState, stamp_slots};
 use super::super::rom_data::{self, Grid, Pos};
 use super::MazeLock;
@@ -126,14 +126,13 @@ pub(crate) fn classify(
     let mut base = w.grid.clone();
     stamp_slots(&mut base, &w.slots);
 
-    let mut closed = base.clone();
-    let mut open = base.clone();
-    for lock in locks.iter().filter(|l| l.world == w.world_idx) {
-        closed.set(lock.pos.0, lock.pos.1, lock.gap_tile);
-        open.set(lock.pos.0, lock.pos.1, lock.replace_tile);
-    }
-    let sealed = walk_reachable(&closed, &w.pipe_pairs, w.start, w.world_idx);
-    let unsealed = walk_reachable(&open, &w.pipe_pairs, w.start, w.world_idx);
+    // Every lock shut, then every lock open. "Open" is the bare grid: locks
+    // are an overlay and never stamped, so the path tile under each is already
+    // what it reverts to.
+    let shut: HashSet<Pos> =
+        locks.iter().filter(|l| l.world == w.world_idx).map(|l| l.pos).collect();
+    let sealed = walk_reachable_blocked(&base, &w.pipe_pairs, w.start, w.world_idx, &shut);
+    let unsealed = walk_reachable(&base, &w.pipe_pairs, w.start, w.world_idx);
 
     let sites = pad_sites(w, &base, reserved);
     let mut hub_sites = Vec::new();

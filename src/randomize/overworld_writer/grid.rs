@@ -157,9 +157,14 @@ pub(super) fn write_tile_grid<R: Rng>(
         }
     }
 
-    // Stamp lock gap tiles.
+    // Stamp lock tiles. **Which byte is decided here, not by the builder.**
+    // A lock blocks by being absent from `Map_Object_Valid_*`, and all four
+    // lock bytes are — so the walk cannot tell them apart and the builder has
+    // no reason to care. The orientation exists so the lock looks right against
+    // the path it stands on, which is why it is derived from that path tile.
     for lock in &built.locks {
-        grid.set(lock.pos.0, lock.pos.1, lock.gap_tile);
+        let under = grid.get(lock.pos.0, lock.pos.1);
+        grid.set(lock.pos.0, lock.pos.1, rom_data::gap_tile_for(under));
     }
 
     // Overwrite sprite-covered positions with connectivity-aware path nodes.

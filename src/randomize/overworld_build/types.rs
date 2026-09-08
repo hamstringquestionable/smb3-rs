@@ -105,10 +105,6 @@ pub(crate) fn stamp_slots(grid: &mut Grid, slots: &[SlotAssignment]) {
 pub(crate) struct LockAssignment {
     /// Path tile position where the lock goes.
     pub pos: (usize, usize),
-    /// The blocking tile to write (0x54 vert lock, 0x56 horiz lock, 0xE4 sky lock, 0x9D water gap).
-    pub gap_tile: u8,
-    /// The original path tile (for FX restore).
-    pub replace_tile: u8,
     /// Which fortress (section index) opens this lock.
     pub fort_section: usize,
     /// True if the world's target (airship/Bowser) is still reachable with
