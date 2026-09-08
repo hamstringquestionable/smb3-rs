@@ -123,7 +123,7 @@ pub(crate) fn write_overworld<R: Rng>(
 ///
 /// **Why the answer is not simply written during the pass.** The world maze
 /// replaces this pairing wholesale, and it can only do so after
-/// [`write_overworld`] has finished: `crumbling_forts` reads the grids this very
+/// [`write_overworld`] has finished: the maze's fill reads the grids this very
 /// pass lays down, so the decision cannot be made earlier without duplicating
 /// the writer's sprite-mask logic. Holding the assignments and producing the
 /// pairing on demand keeps that late decision cheap, and it takes no RNG, so

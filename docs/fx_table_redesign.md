@@ -351,7 +351,11 @@ quadrant tables (`PRG012_FILE_BASE`, UL/LL/UR/LR x 256 — see
 is PRG011 and `$C000` is PRG010; **PRG012 is not mapped**. Neither lookup is
 reachable from `MO_DoFortressFX` without a bank swap.
 
-The fix is cheap and improves the design. Mirror into the freed PRG010 block:
+The fix is cheap and improves the design. Mirror into the freed PRG010 block —
+**though as built it went into PRG011 instead** (`FS_LOCK_MIRROR` at `0x17F7B`,
+CPU `$BF6B`, in the run the retired `Map_MarkLevelComplete` left behind, right
+after `FS_MAZE_TRAVEL`). PRG010's freed run went entirely to the effect routine
+and the entry table:
 
 | Mirror | Bytes |
 |---|---|
@@ -633,8 +637,12 @@ row-7/8 shared-bit rule (#212) into play for the new tile. It is not a free knob
      retired the field had one remaining reader, a test, which resolves the
      offset through the entry's `obj_ptr` instead.
 
-   Sizes: effect 398 of 489 reserved, scan 82 of 128, mirror 48, entry table 28
-   entries in 112 bytes (today's ceiling is the 17-card fortress deck).
+   Sizes, as built: the effect and the screen check ended up in **one**
+   allocation, so the separate "effect 398 of 489 / scan 82 of 128" figures this
+   line used to carry never reconciled with the shipped registry. Read the rows
+   instead of restating them here — `FS_FORTRESS_FX` (PRG010) is 537 reserved /
+   484 used, `FS_LOCK_MIRROR` (PRG011) 48, `FS_LOCK_ENTRIES` 112 reserved at 4
+   bytes per lock, 28 entries (today's ceiling is the 17-card fortress deck).
 
    *The original plan had an intermediate "derive the data, keep the slot
    addressing" step. Dropped: it carries real 6502 risk for no player-visible

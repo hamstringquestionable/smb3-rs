@@ -115,15 +115,20 @@ room you have seen in World 5.
 
 ## Plan
 
-Pool: 14 vanilla rooms + 8 from Unused Level 5 = 22 rooms for 11 host levels.
+~~Pool: 14 vanilla rooms + 8 from Unused Level 5 = 22 rooms for 11 host levels.~~
+**Superseded by the seed-the-slots redesign below (2026-08-27).** The shipped
+pool is **19**: the 11 vanilla rooms plus the 8 in Unused Level 5
+(`VANILLA_ROOMS: [Room; 11]` in `big_q_rooms.rs`). The 3 spare vanilla rooms
+this plan wanted authored never were — see "BigQ8 s1 is dropped from the pool"
+above for why one of them was ruled out on its own merits.
 
 Data to assemble:
 
 - **Per host (11 rows)** — junction offset and return bytes, all harvestable
   from the room vanilla pairs it with.
-- **Per room (22 rows)** — area index, screen, arrival bytes. 11 come free from
-  the vanilla hosts; the 8 for Unused Level 5 already exist as
-  `UNUSED5_ARRIVALS` in `testrom.rs`; 3 spare vanilla rooms need authoring.
+- **Per room (~~22~~ 19 rows)** — area index, screen, arrival bytes. 11 come
+  free from the vanilla hosts; the 8 for Unused Level 5 already exist as
+  `UNUSED5_ARRIVALS` in `testrom.rs`. ~~3 spare vanilla rooms need authoring.~~
 
 Constraints the pairing must enforce:
 
@@ -386,8 +391,10 @@ offsets, spare `Coin` commands in Unused Level 5 — had to be resolved.
 Measured, not estimated: the routine is **199 bytes in a 224-byte allocation**,
 against the ~100 the design guessed. The guess forgot that four 13-byte payload
 tables cost 52 on their own. PRG026's largest gap starts exactly where
-`FS_BIG_Q_LOOKUP` ends, so it grew in place; the bank is down to 2485 free /
-2419 largest. (The first cut was 207, with the two-pass lookup written out twice;
+`FS_BIG_Q_LOOKUP` ends, so it grew in place. (The bank figures this paragraph
+used to quote — 2485 free / 2419 largest — were a 2026-08-27 measurement and
+later allocations have eaten 96 bytes of it since. Don't hand-copy them; run
+`smb3-rs <rom> --free-space`.) (The first cut was 207, with the two-pass lookup written out twice;
 folding it into one `bq_lookup` subroutine fixed the 7-F1 bug below and returned
 8 bytes.)
 

@@ -5,9 +5,11 @@ entry points, the RNG streams, and **every** randomization step / patch in the
 exact order `randomize_inner` applies them. Each step is annotated with the
 `Options` field that gates it (steps with no gate are **always** applied).
 
-Source of truth: `src/lib.rs` (entry points) and `src/randomizer.rs`
-(`randomize_inner`, lines ~750–1093). Keep this diagram in sync when the
-orchestration order changes.
+Source of truth: `src/lib.rs` (entry points) and `src/randomizer/mod.rs`
+(`randomize_inner`). Keep this in sync when the orchestration order changes —
+and if you find it out of sync, regenerate the whole pipeline section from the
+function rather than patching a line, which is how it fell twenty steps behind
+once already. Last reconciled against the code: **2026-09-08**.
 
 ## Top-level entry & output
 
@@ -41,206 +43,170 @@ flowchart LR
     SEED --> R2["maybe_rng = ChaCha8Rng::seed_from_u64(seed ^ MAYBE_SALT)<br/><i>resolves Tri::Maybe flags only — kept on a<br/>separate stream so adding Maybe flags never<br/>perturbs the main sequence</i>"]
     OS["OS entropy"] --> R3["palette_rng = ChaCha8Rng::from_os_rng()<br/><i>⚠ palettes are cosmetic & NOT seed-deterministic</i>"]
 
-    R2 --> M["Resolve in fixed order (do not reorder):<br/>1. hammer_breaks_locks<br/>2. hammer_breaks_bridges<br/>3. troll_pipes<br/>4. w1_hammer_rock"]
+    R2 --> M["Resolve in fixed order (do not reorder;<br/>append future tri flags at the END):<br/>1. hammer_breaks_locks<br/>2. hammer_breaks_bridges<br/>3. troll_pipes<br/>4. more_hammer_rocks<br/>5. eights_are_wild<br/>6. antechamber_shuffle"]
     R1 --> SI["Resolve starting_items up front<br/>(sentinels 14/15/16 → concrete item)"]
 ```
 
 ## Randomization pipeline (`randomize_inner`, in order)
 
-Legend: **[always]** = unconditional · **[opt]** = gated by the named option ·
-`tag` = `rom.set_tag(...)` label used in the diff/spoiler.
+Legend: **[always]** = unconditional · **[opt `field`]** = gated by that
+`Options` field · **[tri]** = a `Tri` flag resolved on `maybe_rng` up front ·
+`tag` = the `rom.set_tag(...)` label the bytes are logged under.
 
-```mermaid
-flowchart TD
-    START(["randomize_inner start"]) --> PRE
+This is a list rather than a flowchart on purpose: it is meant to be diffed
+against `randomize_inner` top-to-bottom when the order changes, and the previous
+flowchart drifted roughly twenty steps behind the code before anyone noticed.
 
-    subgraph PRE["0 · Pre-resolve (consume RNG up front)"]
-        PRE1["resolve starting_items (main rng)"]
-        PRE2["resolve Maybe tri-flags (maybe_rng):<br/>hammer_breaks_locks · hammer_breaks_bridges<br/>troll_pipes · w1_hammer_rock"]
-        PRE1 --> PRE2
-    end
+### 0 · Pre-resolve (consume RNG up front)
 
-    PRE --> MAP
+| # | Step | Gate |
+|---|---|---|
+| 0.1 | resolve `starting_items` sentinels 14/15/16 → concrete items (**main rng**) | [always] |
+| 0.2 | resolve the six `Tri` flags on `maybe_rng`, **in this fixed order**: `hammer_breaks_locks`, `hammer_breaks_bridges`, `troll_pipes`, `more_hammer_rocks`, `eights_are_wild`, `antechamber_shuffle` | [always] |
 
-    subgraph MAP["1 · QoL map patches FIRST (so overworld sees final connectivity)"]
-        direction TB
-        Q1["[always] qol::fix_w3_drawbridges  · tag qol/drawbridges"]
-        Q2{"remove_rocks?"}
-        Q2y["qol::remove_rocks  · tag qol/rocks"]
-        Q3{"w1_hammer_rock<br/>(resolved)?"}
-        Q3y["qol::make_w1_hammer_rock  · tag qol/w1_hammer_rock"]
-        Q4["[always] qol::fix_big_q_block_rooms  · tag qol/big_q_blocks"]
-        Q1 --> Q2
-        Q2 -- yes --> Q2y --> Q3
-        Q2 -- no --> Q3
-        Q3 -- yes --> Q3y --> Q4
-        Q3 -- no --> Q4
-    end
+Appending a future `Tri` flag goes at the **end** of that list; reordering it
+changes every seed that uses `Maybe`.
 
-    MAP --> DATA
+### 1 · QoL map patches (first, so the builder sees final connectivity)
 
-    subgraph DATA["2 · Level-data prep & content randomization"]
-        direction TB
-        D1{"disable_autoscroll?"}
-        D1y["autoscroll::disable_autoscroll  · tag autoscroll<br/><i>writes pre-baked airship level data; must precede powerups/builder</i>"]
-        D2{"include_beta_stages?"}
-        D2y["qol::fix_beta_stages  · tag qol/beta_stages<br/><i>reshape beta level cmds before powerup/enemy passes</i>"]
-        D3{"powerups?"}
-        D3y["powerups::randomize (main rng, +hammer_vuln flag)  · tag powerups"]
-        D4{"palettes?"}
-        D4y["palettes::randomize / randomize_themed<br/>(palette_themed picks variant) · ⚠ OS rng · tag palettes"]
-        D5{"any_enemies_active?"}
-        D5y["enemies::randomize (per-class Off/Shuffle/Wild + wild_injections) · tag enemies"]
-        D6["[always] bowser_castle::randomize"]
-        D7["[always] podoboo_gauntlet::randomize"]
-        D8{"world_order?"}
-        D8y["world_order::randomize(world_count)  · tag world_order"]
-        D9{"big_q_blocks?"}
-        D9y["enemies::randomize_big_q_blocks  · tag enemies/big_q_blocks"]
-        D10{"shuffle_airships?"}
-        D10y["levels::randomize_airships  · tag levels/airships"]
-        D1 -- yes --> D1y --> D2
-        D1 -- no --> D2
-        D2 -- yes --> D2y --> D3
-        D2 -- no --> D3
-        D3 -- yes --> D3y --> D4
-        D3 -- no --> D4
-        D4 -- yes --> D4y --> D5
-        D4 -- no --> D5
-        D5 -- yes --> D5y --> D6
-        D5 -- no --> D6
-        D6 --> D7 --> D8
-        D8 -- yes --> D8y --> D9
-        D8 -- no --> D9
-        D9 -- yes --> D9y --> D10
-        D9 -- no --> D10
-        D10 -- yes --> D10y --> KOOP
-        D10 -- no --> KOOP
-    end
+| # | Step · tag | Gate |
+|---|---|---|
+| 1.1 | `qol::fix_w3_drawbridges` · `qol/drawbridges` | [always] |
+| 1.2 | `qol::remove_rocks` · `qol/rocks` | [always] — **no longer player-gated**; the builder relies on those tiles being open |
+| 1.3 | `qol::make_hammer_rocks` · `qol/more_hammer_rocks` | [tri `more_hammer_rocks`] |
+| 1.4 | `qol::apply_w1_shortcut(more_hammer_rocks)` · `qol/w1_shortcut` | [always] — tiles land either way, only breakability follows the roll, so the map never leaks it |
+| 1.5 | `qol::apply_w8_bridges` · `qol/w8_bridges` | [always] |
+| 1.6 | `qol::apply_w8_canoe_and_paths` · `qol/w8_canoe_and_paths` | [tri `eights_are_wild`] |
+| 1.7 | `qol::fix_big_q_block_rooms` · `qol/big_q_blocks` | [always] |
 
-    subgraph KOOP["3 · Koopaling stability & behavior"]
-        direction TB
-        K0{"koopalings_may_travel?<br/>(shuffle_airships ∨ hammer_vulnerable ∨ random_koopalings)"}
-        K0y["fix_koopaling_softlock · koopaling_collision_guard<br/>koopaling_vram_clear · koopaling_y_clamp<br/>tags koopalings/*"]
-        K1{"hammer_vulnerable_koopalings?"}
-        K1y["koopalings::hammer_vulnerable_koopalings  · tag koopalings/hammer_vulnerable"]
-        K2{"random_koopalings?"}
-        K2y["koopalings::random_koopalings (main rng)  · tag koopalings/random_identity"]
-        K0 -- yes --> K0y --> K1
-        K0 -- no --> K1
-        K1 -- yes --> K1y --> K2
-        K1 -- no --> K2
-        K2 -- yes --> K2y --> OW
-        K2 -- no --> OW
-    end
+### 2 · Level-data prep & content randomization
 
-    subgraph OW["4 · Overworld builder pipeline (tag overworld/builder)"]
-        direction TB
-        OW1["node_catalog::build(include_beta_stages)<br/><i>Phase 1: classify 340 pointer entries</i>"]
-        OW2{"swap_start_airship?"}
-        OW2y["start_airship_swap::pick_swaps (main rng)"]
-        OW3["overworld_pickup::pick_up<br/>{shuffle_spade_games, shuffle_toad_houses}<br/><i>Phase 2: clear map, build pools</i>"]
-        OW4["overworld_build::build(rng, shuffle_toad_houses)<br/><i>Phase 3: assign levels, locks, pipes, HBs</i>"]
-        OW5{"hands_levels?"}
-        OW5y["hands_levels::mark_hand_traps (build) + install_full_grab (rom) · tag hands_levels"]
-        OW6{"troll_pipes<br/>(resolved)?"}
-        OW6y["troll_pipes::mark_troll_pipes (build)  · tag troll_pipes"]
-        OWC["★ OVERWORLD CAPTURE POINT (clone BuildResult for analyzers)"]
-        OW7["overworld_writer::write_overworld<br/><i>Phase 4: single-pass ROM write</i>"]
-        OW1 --> OW2
-        OW2 -- yes --> OW2y --> OW3
-        OW2 -- no --> OW3
-        OW3 --> OW4 --> OW5
-        OW5 -- yes --> OW5y --> OW6
-        OW5 -- no --> OW6
-        OW6 -- yes --> OW6y --> OWC
-        OW6 -- no --> OWC
-        OWC --> OW7
-    end
+| # | Step · tag | Gate |
+|---|---|---|
+| 2.1 | `autoscroll::disable_autoscroll` · `autoscroll` | [opt `disable_autoscroll`] |
+| 2.2 | `qol::fix_beta_stages` · `qol/beta_stages` | [opt `include_beta_stages`] |
+| 2.3 | `powerups::randomize` · `powerups` | [opt `powerups`] |
+| 2.4 | `palettes::randomize` (player) and/or `randomize_themed` (world) · `palettes` — **OS entropy, not the seed** | [opt `palettes` ∨ `palette_themed`] |
+| 2.5 | `enemies::randomize` · `enemies` | [opt `any_enemies_active()`] |
+| 2.6 | `beta_tornado::randomize_beta9_tornado` · `beta_tornado` | [opt `include_beta_stages`] — after the enemy pass so the Tornado is final |
+| 2.7 | `bowser_castle::randomize` | [always] |
+| 2.8 | `podoboo_gauntlet::randomize` | [always] |
+| 2.9 | `world_order::randomize(world_count)` → `credits_progression` · `world_order` | [opt `world_order` **∨ `world_maze`**] — the maze reads this table as its airship spine, so it forces the pass on |
+| 2.10 | `enemies::randomize_big_q_blocks` · `enemies/big_q_blocks` | [opt `big_q_blocks`] |
+| 2.11 | `levels::randomize_airships` · `levels/airships` | [opt `shuffle_airships`] |
+| 2.12 | `antechambers::shuffle` · `levels/antechambers` | [tri `antechamber_shuffle`] — level data only, independent of the builder |
 
-    DATA --> KOOP
-    KOOP --> OW
-    OW --> POST
+### 3 · Koopaling stability & behavior
 
-    subgraph POST["5 · Post-build patches (items, metatiles, cosmetics, QoL)"]
-        direction TB
-        PO0["[always] hand_rooms::patch_clone_hand_rooms  · tag hand_rooms"]
-        PO1{"chest_items?"}
-        PO1y["items::randomize(remove_whistles)  · tag items"]
-        PO1n{"remove_whistles?"}
-        PO1ny["items::remove_whistles_only  · tag items/whistles"]
-        PO2["[always] qol::set_starting_lives  · tag qol/starting_lives"]
-        PO3["[always] write 0x1FABC = A9 01 EA (anchor always-on) +<br/>items::write_mystery_anchor · tags airship_lock, items/mystery_anchor"]
-        PO4["[always] patch_double_digit_metatiles  · tag metatile/double_digit"]
-        PO5["[always] patch_metatile_6a_freeze  · tag metatile/6a_freeze"]
-        PO6["[always] king_quotes::randomize (main rng)  · tag king_quotes<br/>(draws always; king_quotes? gates only the writes)"]
-        PO7{"anchor_visuals?"}
-        PO7y["anchor_visuals::apply  · tag anchor_visuals"]
-        PO0 --> PO1
-        PO1 -- yes --> PO1y --> PO2
-        PO1 -- no --> PO1n
-        PO1n -- yes --> PO1ny --> PO2
-        PO1n -- no --> PO2
-        PO2 --> PO3 --> PO4
-        PO4 --> PO5 --> PO6 --> PO7
-        PO7 -- yes --> PO7y --> QOL
-        PO7 -- no --> QOL
-    end
+| # | Step · tag | Gate |
+|---|---|---|
+| 3.1 | `fix_koopaling_softlock`, `koopaling_collision_guard`, `koopaling_vram_clear`, `koopaling_y_clamp` · `koopalings/*` | [opt `shuffle_airships` ∨ `hammer_vulnerable_koopalings` ∨ `random_koopalings`] |
+| 3.2 | `koopalings::hammer_vulnerable_koopalings` · `koopalings/hammer_vulnerable` | [opt `hammer_vulnerable_koopalings`] |
+| 3.3 | `koopalings::random_koopalings` · `koopalings/random_identity` | [opt `random_koopalings`] |
 
-    subgraph QOL["6 · Optional QoL / MaCobra52 toggles"]
-        direction TB
-        C1{"skip_wand_cutscene?"} -- yes --> C1y["koopalings::skip_wand_cutscene"]
-        C2{"remove_n_cards?"} -- yes --> C2y["qol::remove_n_cards"]
-        C3{"shuffle_spade_games?"} -- yes --> C3y["qol::fix_canoe_softlock"]
-        C4{"adjust_boss_hitboxes?"} -- yes --> C4y["koopalings::adjust_boss_hitboxes"]
-        C5{"koopaling_hits?"} -- yes --> C5y["koopalings::randomize_koopaling_hits (main rng)"]
-        C6{"hammer_breaks_locks ∨ bridges?"} -- yes --> C6y["qol::hammer_breaks_tiles(locks, bridges)"]
-        C7{"early_sun?"} -- yes --> C7y["qol::apply_early_sun"]
-        C8{"japanese_damage?"} -- yes --> C8y["qol::apply_japanese_damage"]
-        C9{"infinite_mushroom_houses?"} -- yes --> C9y["qol::apply_infinite_mushroom_houses"]
-        C10{"fast_mushroom_house?"} -- yes --> C10y["qol::apply_fast_mushroom_house"]
-        C11{"faster_tail_speed?"} -- yes --> C11y["qol::apply_faster_tail_speed"]
-        C12{"no_game_over_penalty?"} -- yes --> C12y["qol::apply_no_game_over_penalty"]
-        C13{"card_speed_clear?"} -- yes --> C13y["qol::card_speed_clear"]
-        C1 --> C2 --> C3 --> C4 --> C5 --> C6 --> C7 --> C8 --> C9 --> C10 --> C11 --> C12 --> C13
-        C1y -.-> C2
-        C2y -.-> C3
-        C3y -.-> C4
-        C4y -.-> C5
-        C5y -.-> C6
-        C6y -.-> C7
-        C7y -.-> C8
-        C8y -.-> C9
-        C9y -.-> C10
-        C10y -.-> C11
-        C11y -.-> C12
-        C12y -.-> C13
-    end
+### 4 · Overworld builder pipeline (tag `overworld/builder`, switching at 4.9)
 
-    POST --> QOL
-    QOL --> FINAL
+| # | Step | Gate |
+|---|---|---|
+| 4.1 | `node_catalog::NodeCatalog::build` — Phase 1: classify the 340 pointer entries | [always] |
+| 4.2 | `piranha_rooms::clear_vanilla_plants` + `catalog.release_map_objects()` · `piranha_shuffle` — frees 7-P1/7-P2 into the pool; **must precede the builder**, which reads sprite state from the ROM | [opt `piranha_shuffle != Off`] |
+| 4.3 | `start_airship_swap::pick_swaps` | [opt `swap_start_airship`] |
+| 4.4 | `overworld_pickup::pick_up{shuffle_spade_games, shuffle_toad_houses, shuffle_hammer_bros}` — Phase 2 | [always] |
+| 4.5 | `overworld_build::build{shuffle_toad_houses, eights_are_wild, shuffle_hammer_bros, world_maze}` — Phase 3 | [always] |
+| 4.6 | `hands_levels::mark_hand_traps` + `install_full_grab` · `hands_levels` | [opt `hands_levels`] |
+| 4.7 | `troll_pipes::mark_troll_pipes` — **deliberately untagged**: it mutates `build` only, and a tag here would leak onto everything the writer emits | [tri `troll_pipes`] |
+| 4.8 | ★ **OVERWORLD CAPTURE POINT** — clone the finished `BuildResult` for analyzers. Keep it immediately before the writer | [opt caller asked] |
+| 4.9 | `overworld_writer::write_overworld{shuffle_hammer_bros, piranha, friendlier_levels, deja_vu, deja_vu_forts}` → `lock_pairing` — Phase 4 · **tag switches to `overworld_writer`** | [always] |
 
-    subgraph FINAL["7 · Title screen, starting items, always-on patches, stamp"]
-        direction TB
-        F1{"!skip_rom_validation?"}
-        F1y["title_screen::write_seed_hash(seed, options)<br/><i>hooks STA $0736 @ 0x308E2; assumes vanilla offsets</i> · tag title_screen"]
-        F2{"starting_items<br/>non-empty?"}
-        F2y["qol::write_starting_items (trampoline; runs AFTER title_screen,<br/>preserves intro-skip hook) · tag qol/starting_items"]
-        F3["[always] qol::apply_macobra_patches  · tag qol/macobra"]
-        F4{"faster_frog?"}
-        F4y["qol::apply_faster_frog (MUST follow macobra patches) · tag qol/faster_frog"]
-        F5["[always] stamp flag-key + seed @ STAMP_OFFSET 0x19DF0 (~22-26 bytes; key length varies) · tag stamp"]
-        F1 -- yes --> F1y --> F2
-        F1 -- no --> F2
-        F2 -- yes --> F2y --> F3
-        F2 -- no --> F3
-        F3 --> F4
-        F4 -- yes --> F4y --> F5
-        F4 -- no --> F5
-    end
+### 5 · World maze (tag `world_maze`) — [opt `world_maze`]
 
-    FINAL --> DONE(["return → diff/output in lib.rs"])
-```
+**The order inside this block is the whole of its correctness.** The packed
+completion store derives its stencil from the map grids as they finally stand,
+so every grid writer runs before `world_persist`, and `lock_keys` (§6) runs
+after it.
+
+| # | Step | Notes |
+|---|---|---|
+| 5.1 | spine ← `credits_progression`; `wands = min(maze_wands, spine.len()-1)` | a shorter spine means fewer than seven wands exist at all |
+| 5.2 | `one_f` ← `lock_pairing.one_f_slot(&data)` | read back, never re-derived — the builder picked it with its own RNG among `secret_exit_safe` slots |
+| 5.3 | `maze::generate(...)` → `state` | a pure function of the builder's model; it sits here only to be next to its own writes |
+| 5.4 | `maze::writer::lock_keys(&state)` → `maze_lock_keys` | **the maze owns the whole lock/fortress assignment**, not just the cross-world half |
+| 5.5 | `maze::writer::open_uninstalled_locks` | |
+| 5.6 | `maze::writer::stamp_pad_tiles` | grid writer |
+| 5.7 | `maze::writer::stamp_fort_tiles` | [opt `hints.hints_at_all()`] |
+| 5.8 | `wand_gate::apply(wands)` · `wand_gate` | grid writer |
+| 5.9 | `world_persist::apply(telepad_specs)` · `world_persist` | last grid writer and first grid reader: installs the packed store + telepads |
+| 5.10 | `world_travel::apply` · `world_travel` | |
+
+### 6 · Locks, rooms, credits
+
+| # | Step · tag | Gate |
+|---|---|---|
+| 6.1 | `lock_keys::apply(lock_entries, hints)` · `lock_keys` | **[always]** — the effect replaces vanilla's fortress-FX outright, so skipping it would leave map operation 8 reading tables this run overwrote. Entries come from the maze when it ran, else from `lock_pairing`. Must follow **`world_order`** (numbered locks show the world number the *player* sees) and, in maze runs, `world_persist` |
+| 6.2 | `big_q_rooms::shuffle` · `big_q_blocks/rooms`, else `vanilla_assignments()` (no RNG, no writes) | [opt `shuffle_big_q_rooms`] |
+| 6.3 | force 7-F1's drawn room to hand out a flight suit · `big_q_blocks/w7f1_flight` | [always, when 7-F1's room is found] — 7-F1 cannot be beaten without flight |
+| 6.4 | `credits::render_world_maps` · `credits/world_maps` | [always] — redraws the ending mini-maps from the freshly written maps |
+| 6.5 | `credits::reorder_world_pictures` · `credits/world_order` | [when `credits_progression`] — after the repack, which it permutes |
+
+### 7 · Items & always-on writes
+
+| # | Step · tag | Gate |
+|---|---|---|
+| 7.1 | `hand_rooms::patch_clone_hand_rooms` · `hand_rooms` | [always] — **before** `items::randomize` so cloned Hand streams exist when chests roll |
+| 7.2 | `piranha_rooms::install_treasure_sets` · `piranha_rooms` | [opt piranha active] — same reason |
+| 7.3 | `items::randomize(remove_whistles, piranha)` · `items`, else `items::remove_whistles_only` · `items/whistles` | [opt `chest_items`] / [else when `remove_whistles`]. Note `remove_whistles = options.remove_whistles ∨ world_maze` — the maze **forces it on**, because its own permanent whistle makes a chest whistle a dead duplicate |
+| 7.4 | `qol::set_starting_lives` · `qol/starting_lives` | [always] |
+| 7.5 | `items::write_mystery_anchor` · `items/mystery_anchor` | [always] |
+| 7.6 | `patch_double_digit_metatiles` · `metatile/double_digit` | [always] |
+| 7.7 | `patch_metatile_6a_freeze` · `metatile/6a_freeze` | [always] |
+| 7.8 | `king_quotes::randomize` · `king_quotes` | [always] — **draws from the main rng unconditionally**; the `king_quotes` option gates only the writes |
+| 7.9 | `anchor_visuals::apply` · `anchor_visuals` | [opt `anchor_visuals`] |
+
+### 8 · QoL toggles and always-on patches
+
+Applied in this order. The ones marked [always] are not player-visible options —
+they are fixes and fairness patches the project ships unconditionally.
+
+| # | Step · tag | Gate |
+|---|---|---|
+| 8.1 | `koopalings::skip_wand_cutscene` · `koopalings/skip_wand_cutscene` | [opt `skip_wand_cutscene`] |
+| 8.2 | `qol::remove_n_cards` · `qol/remove_n_cards` | [opt `remove_n_cards`] |
+| 8.3 | `qol::fix_canoe_softlock` · `qol/fix_canoe_softlock` | **[always]** |
+| 8.4 | `qol::apply_map_warp` · `qol/map_warp` | **[always]** |
+| 8.5 | `qol::apply_canoe_summon` · `qol/canoe_summon` | **[always]** |
+| 8.6 | `stomp_fairness::apply` · `stomp_fairness` | **[always]** |
+| 8.7 | `qol::apply_real_time_clock` · `qol/real_time_clock` | **[always]** |
+| 8.8 | `koopalings::adjust_boss_hitboxes` · `koopalings/adjust_boss_hitboxes` | [opt `adjust_boss_hitboxes`] |
+| 8.9 | `koopalings::randomize_koopaling_hits` · `koopalings/random_hits` | [opt `koopaling_hits`] |
+| 8.10 | `koopalings::randomize_boomboom_hits` · `boomboom/random_hits` | [opt `boomboom_hits`] |
+| 8.11 | `qol::hammer_breaks_tiles(locks, bridges)` · `qol/hammer_breaks_tiles` | [tri `hammer_breaks_locks` ∨ `hammer_breaks_bridges`] |
+| 8.12 | `qol::apply_early_sun` · `qol/early_sun` | [opt `early_sun`] |
+| 8.13 | `qol::apply_bro_battle_timer` · `qol/bro_battle_timer` | [opt `bro_battle_timer`] |
+| 8.14 | `qol::apply_limit_bro_movement` · `qol/limit_bro_movement` | [opt `limit_bro_movement`] |
+| 8.15 | `qol::apply_japanese_damage` · `qol/japanese_damage` | [opt `japanese_damage`] |
+| 8.16 | `qol::apply_infinite_mushroom_houses` · `qol/infinite_mushroom_houses` | [opt `infinite_mushroom_houses`] |
+| 8.17 | `qol::apply_fast_mushroom_house` · `qol/fast_mushroom_house` | [opt `fast_mushroom_house`] |
+| 8.18 | `qol::apply_faster_tail_speed` · `qol/faster_tail_speed` | [opt `faster_tail_speed`] |
+| 8.19 | `qol::apply_no_game_over_penalty` · `qol/no_game_over_penalty` | [opt `no_game_over_penalty` **∨ `world_maze`**] — without it a game over wipes the map completions the maze is built on |
+| 8.20 | `qol::card_speed_clear` · `qol/card_speed_clear` | [opt `card_speed_clear`] |
+
+### 9 · Title screen, starting items, final always-on patches, stamp
+
+| # | Step · tag | Gate |
+|---|---|---|
+| 9.1 | `title_screen::write_seed_hash` · `title_screen` | [opt `!skip_rom_validation`] — hooks `STA $0736` at 0x308E2, assumes vanilla PRG031 offsets |
+| 9.2 | `qol::write_starting_items(..., first_slot)` · `qol/starting_items` | [when resolved items non-empty] — **after `title_screen`** (both write the lives-init region; this one wins and replays the intro-skip bytes). `first_slot = 1` in the maze, which owns slot 0 for its permanent whistle |
+| 9.3 | `qol::apply_macobra_patches` · `qol/macobra` | [always] |
+| 9.4 | `qol::apply_remove_flashing` · `qol/remove_flashing` | [opt `remove_flashing`] |
+| 9.5 | `qol::apply_lakitu_stays_down` · `qol/lakitu_stays_down` | [opt `lakitu_stays_down`] |
+| 9.6 | `qol::apply_faster_frog` · `qol/faster_frog` | [opt `faster_frog`] — **must follow macobra**: two writes land inside the tail-swim routine it writes |
+| 9.7 | `qol::apply_modern_powerups` · `qol/modern_powerups` | [opt `modern_powerups`] |
+| 9.8 | `fire_flower::apply` · `fire_flower` | [opt `fire_flower != Off`] — static patch, no RNG |
+| 9.9 | `poison_mushroom::apply` · `poison_mushrooms` | [opt `poison_mushrooms`] — after `world_order` so the position salt is final |
+| 9.10 | stamp `"S3R"` + key length + flag key + seed at `STAMP_OFFSET` · `stamp` | [always] |
+
+Then control returns to `lib.rs`, which either diffs to an IPS patch or emits
+the full ROM.
 
 ## Key ordering constraints (why the sequence is what it is)
 
@@ -261,5 +227,25 @@ flowchart TD
   at 0x308E0; the starting-items trampoline incorporates the intro-skip hook.
 - **`faster_frog` after `apply_macobra_patches`**: two of its writes patch inside
   the always-on tail-swim routine macobra writes unconditionally.
+- **Inside the maze block, every grid writer runs before `world_persist`**: the
+  packed completion store derives its stencil from the map grids as they finally
+  stand. Today's two grid writers happen to be bit-neutral, so only the tail of
+  that order is load-bearing — but the order is kept, because the day someone
+  picks a tile that *does* claim a completion bit, the alternative is a stencil
+  that silently disagrees with the map by one bit.
+- **`lock_keys` after both the maze block and `world_order`**: after the maze
+  because that is where the assignment is decided when the mode is on; after
+  `world_order` because a numbered lock shows the world number the *player*
+  sees, read from the display table that pass writes. Running it earlier would
+  stamp numbers that appear nowhere in the game, silently — the tiles are still
+  well-formed and the locks still open.
+- **`credits::reorder_world_pictures` after `render_world_maps`**: the reorder
+  permutes the picture pointers the repack rewrites.
+- **`piranha_rooms::clear_vanilla_plants` before the builder**: capacity and
+  eligibility read sprite state straight from the ROM.
+- **`poison_mushroom` after `world_order`** so its position salt is final.
 - **Palettes use OS entropy**, not the seed — cosmetic and intentionally not
   reproducible from the seed / flag key.
+- **Two options force other options on**, and both are easy to miss when reading
+  the gates: `world_maze` forces `world_order`, `remove_whistles` and
+  `no_game_over_penalty`; `king_quotes` gates only its writes, never its draw.

@@ -11,3 +11,6 @@
 tools/rom_map.json
 tools/southbird-smb3/
 __pycache__/
+
+# Claude Code per-project memory (personal, not project docs)
+.claude/projects/

@@ -7,12 +7,13 @@ mechanisms discovered along the way, and the measured numbers. The rest of the
 charter remains the plain-English contract the work is measured against. No
 Rust here on purpose.
 
-> **A note on the name.** This started as a "mission-first" builder, and the code
-> still carries that name (the `Mission` struct, the `--mission-overworld` flag).
-> That name describes a *mechanism* — placing pieces to realize a per-world
-> progression — not the goal. The goal is the one thing below: **generate choices
-> for the player.** A mission is one tool we use to produce them. Read "mission"
-> throughout as an ingredient, never the north star.
+> **A note on the name.** This started as a "mission-first" builder. That name
+> described a *mechanism* — placing pieces to realize a per-world progression —
+> not the goal. The goal is the one thing below: **generate choices for the
+> player.** The naming residue is gone from the code as well: there is no
+> `Mission` struct and no `--mission-overworld` flag any more, and the
+> `WorldPlan` / `LockRole` archetype layer they belonged to was deleted when the
+> measured route structure took over the decision (see "Implementation status").
 
 ## What it is
 
@@ -484,12 +485,21 @@ level 3 / fort 5 / rock 8, each clearable charged once) that enumerates every
 distinct near-optimal route (identity = level-set), drops dominated superset
 detours, and calls a world *choiceful* when ≥2 routes sit within 3 points.
 
-**Pipeline** (per world): connectivity pipes → levels placed as the terrain
-(`place_levels` — first half greedy, second half measured) → measured fort
-shaping (`shape.rs`) → fort sections renumbered by BFS rank → locks → spare
-pipes. The `WorldPlan` archetype /
-`LockRole` layer is deleted — the measured route structure decides directly.
-No rerolls: worlds whose terrain can't fork stay honestly linear.
+**Pipeline** (per world), as of the 2026-07-30 session and still current —
+`overworld_build/mod.rs`'s own module doc is the authority: `Connectivity`
+(bridge islands with pipe pairs) → `Levels` → `Forts` → `Locks` → `Shaping`
+(the diagnosis-driven improvement loop) → `SparePipes` (the full vanilla pipe
+budget is always spent; the guard steers where), the whole thing wrapped in
+`run_shaped_with_web_retries` so a world finishing below the C1 floor redeals
+its pipe web. Then across worlds: the secret-exit-safety backstop, hammer-bro
+fill, toad-house / spade promotion, wandering-sprite redistribution.
+
+> The July 27 version of this paragraph had fort shaping running *before* locks,
+> in a `shape.rs` that no longer exists — shaping became its own phase in
+> `shaping.rs`, after `Locks`, so that it can diagnose a world that already has
+> its gates in place. The `WorldPlan` archetype / `LockRole` layer is deleted:
+> the measured route structure decides directly. No rerolls beyond the pipe-web
+> redeal — worlds whose terrain can't fork stay honestly linear.
 
 **Mechanisms, in the order the censuses forced them into existence:**
 

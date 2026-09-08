@@ -1,8 +1,9 @@
 # ROM Write Log — current state and planned enhancements
 
-Status: Enhancement 1 (free-space auditor) is implemented — see "Enhancement 1"
-below for what it does and what it found. Enhancements 2 and 3 are still design
-only.
+Status: Enhancement 1 (free-space auditor) and Enhancement 2 (`apply_ips_patch`
+routed through `write_range`, for the `Rom` path) are **implemented** — see
+their sections below for what each does and what it found. Enhancement 3
+(un-leakable tags) is still design only.
 
 ## What exists today
 
@@ -23,7 +24,8 @@ pub struct WriteRecord {
   (new bytes equal old), so the log holds only real changes.
 - The tag comes from a stack: `set_tag` replaces it (used by the orchestrator
   before each pass), `push_tag`/`pop_tag` nest a sub-tag within a pass. There
-  are 83 `set_tag` call sites and 8 `push_tag`.
+  are ~100 `set_tag` call sites and a dozen `push_tag` — a count that grows with
+  every pass, so treat it as a scale, not a figure to maintain.
 - Consumers today: `main.rs`'s write-log dump and `find_collisions()`, and
   `testrom`'s patch-collision guard (`testrom::collisions`), which checks each
   incoming IPS record against `rom.writes_in_range`.
@@ -77,8 +79,8 @@ subsequently emitted. The collision guard reported six overlaps against
 investigation after an optional feature instead of the routine under test.
 
 The fix applied was local (drop the stray tag, tag the writer, sub-tag the FX
-patch). The structural problem remains: correctness depends on every one of 83
-call sites being disciplined.
+patch). The structural problem remains: correctness depends on every one of the
+call sites being disciplined — and there are more of them every release.
 
 ### 3. No dynamic free-space verification — **fixed, see Enhancement 1**
 
@@ -262,7 +264,7 @@ let _t = rom.tag("qol/starting_items");   // restores the previous tag on drop
 
 This makes leaking structurally impossible rather than a matter of discipline.
 
-**Cost:** 83 `set_tag` call sites plus 8 `push_tag`. Mechanical but wide, and
+**Cost:** every `set_tag`/`push_tag` call site — ~110 of them today. Mechanical but wide, and
 touching every randomization pass. Worth doing *after* Enhancement 1, so the
 audit can confirm whether any other tag is currently wrong — that determines
 whether this is urgent or merely tidy.

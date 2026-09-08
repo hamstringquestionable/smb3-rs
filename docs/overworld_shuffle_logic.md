@@ -1,5 +1,23 @@
 # Overworld Shuffle — Logic & Rules
 
+> **HISTORICAL (2026-02) — this is not the design that was built.** The overworld
+> builder was rebuilt from scratch. The live design authority is
+> **`docs/choice_first_charter.md`**, and the code is `src/randomize/overworld_build/`.
+> Nothing here proposes what the builder does today, and several sections would
+> actively mislead:
+>
+> | Section | Status |
+> |---|---|
+> | §1 Goal, §2 Scope | Historical framing. The goal survived; "Approach A-D" did not. |
+> | §3 World Map Data Structures | **Still accurate ROM geometry** — grid offsets, entry counts, `ByRowType`, BGM, airship travel. Spot-checked against `rom_data/tables.rs`. §3.5's FortressFX slot table is *vanilla only*: it was retired 2026-09-06 and replaced by the position-keyed table in `lock_keys.rs`. |
+> | §4 Entry Types | **Detection column is wrong.** The shipped classifier reads hardcoded vanilla `(world, entry_idx)` tables for fortress/airship/bowser and a `PIPEWAYCONTROLLER` map for pipes — not Boom-Boom scans or level length. See `node_catalog/classify.rs`. |
+> | §5 Approach B, §6 Algorithm Sketch, §9 Implementation Steps | **Superseded.** None of it was built. The builder clears each world to blank tiles and rebuilds it; it does not shuffle occupied/empty positions in a fixed path network, and it does not exclude W5/W8. |
+> | §7 Research TODO | Answered elsewhere: path-tile encoding by `VALID_HORZ`/`VALID_VERT` in `rom_data/tables.rs`; the `Max_PanR` question by the comment in `completion_bits.rs` (W5/W8 are `$00` because they never pan). |
+> | §8 Risk Assessment | Historical. The FX risk was removed by design rather than mitigated. |
+> | §10 File Offsets Summary | **Still accurate** (after the `Map_Y_Starts` correction below). |
+>
+> Kept for the §3/§10 ROM geometry and for the record of what was considered.
+
 ## 1. Goal
 
 Shuffle the world map layouts so that each playthrough has a visually different overworld with level nodes in new positions, while preserving completability. This is distinct from existing **level shuffle** (which swaps what level data a map node points to) — overworld shuffle changes the map itself.
@@ -198,7 +216,7 @@ These are **hard-wired to specific map tile positions**. If fortress positions m
 
 | Data | Location | Notes |
 |------|----------|-------|
-| `Map_Y_Starts` | PRG010 (offset TBD) | 8 bytes, one Y coord per world |
+| `Map_Y_Starts` | `0x3C39A` (PRG030) | 8 bytes, one Y coord per world. Lives in PRG030's world-enter routine, not PRG010 — see `MAP_Y_STARTS_OFF` in `rom_data/free_space.rs` |
 | X start | Fixed at 0x20 | Same for all worlds |
 
 ### 3.7 World BGM Table
@@ -212,6 +230,13 @@ Per-world airship travel destination tables in PRG011. Each world has 3 sets of 
 ---
 
 ## 4. Entry Types on the Map
+
+> **The "Detection" column below is not how the shipped classifier works.** See
+> `node_catalog/classify.rs`: fortress, airship and Bowser are read from
+> hardcoded vanilla `(world, entry_idx)` tables, and pipes from an explicit map
+> built off `PIPEWAYCONTROLLER` references plus the W5 spiral entries. Nothing
+> scans for Boom-Boom or measures level length. The *type list* is still right;
+> only the detection heuristics are historical.
 
 Each pointer table entry represents one "interactive tile" on the map. Entry types (determined by `ObjSets` and `LevelLayouts` pointer values):
 
@@ -558,4 +583,4 @@ Research the linear stage sequence. Determine what's shuffleable (hand traps, fo
 | FortressFX tables | 0x147CD–0x148B7 | ~235 bytes | PRG010 |
 | Map object tables | PRG011 (0x16010–0x1800F) | varies | PRG011 |
 | World_BGM | 0x3C424 | 9 bytes | PRG030 |
-| Map_Y_Starts | TBD (PRG010) | 8 bytes | PRG010 |
+| Map_Y_Starts | 0x3C39A | 8 bytes | PRG030 |
