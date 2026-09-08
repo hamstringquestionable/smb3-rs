@@ -40,6 +40,17 @@ A doc goes stale in one of two ways, and they need different fixes:
   Do not hand-copy those figures in the first place — cite the command or the
   registry row that produces them (`smb3-rs <rom> --free-space`,
   `FREE_SPACE_ALLOCATIONS`).
+
+  **Measured percentages are the worst offenders, because nothing can catch
+  them.** A free-space figure has a test behind it; a census percentage does
+  not — no test asserts "linearity is 7.6%", so a stale one never fails, it just
+  sits there reading like a current fact. Every such figure in
+  `choice_first_charter.md`, `world_maze_design.md` and `fx_table_redesign.md`
+  is a dated snapshot, and those docs now say so at the top of the sections that
+  carry them. The rule: quote them for shape and for which lever moved what,
+  **but re-run the census before settling a decision on one**, and when you
+  compare, re-measure the baseline in the same run rather than diffing a fresh
+  number against a written one. Then update the section and date it.
 - **A mechanism was replaced.** A banner at the top of the *section that is now
   wrong* beats a note at the bottom of the document, because the reader who
   needs it arrives in the middle. When a doc reverses an earlier decision, go

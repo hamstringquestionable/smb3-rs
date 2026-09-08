@@ -7,6 +7,28 @@ mechanisms discovered along the way, and the measured numbers. The rest of the
 charter remains the plain-English contract the work is measured against. No
 Rust here on purpose.
 
+> **Every measured number in this document is a dated snapshot, and may have
+> drifted.** The percentages below — linearity, forced-fort rates, route-choice
+> bands, the Fred comparison, the W8 bridge distribution — were each true of the
+> builder on the date its section carries. The builder has changed since, more
+> than once, and nothing re-checks these figures: no test asserts them, so they
+> cannot fail. They are a record of what was measured, not a live readout.
+>
+> **Do not settle a decision on a number from this document without re-running
+> the census that produced it.** The two that matter, from CLAUDE.md — each a
+> few minutes:
+>
+> ```sh
+> CENSUS_SEEDS=500 cargo test --release --lib all_world_targets_reachable
+> CENSUS_SEEDS=1000 cargo test --release --lib test_route_census -- --ignored --nocapture
+> ```
+>
+> Reading them for orientation — "roughly what shape was this?", "which lever
+> moved it?" — is exactly what they are for. Quoting one as the current value,
+> or comparing a fresh measurement against one to claim an improvement or a
+> regression, is not: re-measure the baseline in the same run and compare like
+> with like. When you do re-run one, update the section and date it.
+
 > **A note on the name.** This started as a "mission-first" builder. That name
 > described a *mechanism* — placing pieces to realize a per-world progression —
 > not the goal. The goal is the one thing below: **generate choices for the
