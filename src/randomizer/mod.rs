@@ -522,7 +522,7 @@ fn randomize_inner(
     //
     // **Forced ON in the maze, not off.** The mode grants a permanent whistle
     // of its own — `completion_bits`' new-game init writes one into inventory
-    // slot 3, and it is never consumed — so a whistle in a chest, a Hammer Bro
+    // slot 0, and it is never consumed — so a whistle in a chest, a Hammer Bro
     // drop or a Toad House is a duplicate of an item the player cannot run out
     // of: it occupies a slot and does nothing.
     //
