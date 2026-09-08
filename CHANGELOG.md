@@ -79,6 +79,12 @@ deploys.
 
 ### Fixed
 
+- **Sky locks looked wrong outside World Maze.** Hints are a World Maze feature —
+  they say which world holds a fortress's lock — but the setting was being read
+  on every seed, and with the default "some" it recoloured every sky lock to the
+  variant that means "your key is nearby". Hints are now ignored unless World
+  Maze is on, so a sky lock outside it looks like a sky lock again.
+
 - **World Maze: the hammer could not break a numbered lock.** The breakable-tile
   table was built from vanilla's three lock bytes, so every lock the hint system
   had renumbered or recoloured was immune — "Hammer Breaks Locks" quietly

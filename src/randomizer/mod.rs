@@ -300,6 +300,24 @@ fn randomize_inner(
         randomize::troll_pipes::mark_troll_pipes(&mut build, &mut rng);
     }
 
+    // **Hints describe a maze, so they are off without one.**
+    //
+    // Both things a hint can say are maze-only: a fortress design says which
+    // world its lock is in, and outside the maze that is always "this one"; a
+    // lock's colour says its key is elsewhere, which cannot happen. The web
+    // form already greys the control out (`enabledWhen: { world_maze: true }`),
+    // but a flag key or a CLI run can still carry `hints: some` with the mode
+    // off — and `some` is the default.
+    //
+    // Both consumers are no-ops there anyway: nothing sets `SlotAssignment::
+    // lock_hint` outside the maze, and `lock_keys::stamp_hint_locks` only
+    // touches away locks. That is an accident of two other modules rather than
+    // a decision, though, and the day either changes it would switch a
+    // maze-only feature on in standard mode with nothing to say it should not.
+    // Say it here instead. The key still encodes what the player chose; this
+    // only decides what the run does with it.
+    let hints = if options.world_maze { options.hints } else { crate::HintMode::Off };
+
     // World maze: the eight world maps stop being a sequence and become the
     // rooms of one Metroidvania — telepads between them, a fortress that can
     // bust a lock in another world, and map progress that survives leaving.
@@ -364,7 +382,7 @@ fn randomize_inner(
             shuffle_hammer_bros: options.shuffle_hammer_bros,
             piranha: options.piranha_shuffle,
             friendlier_levels: options.friendlier_levels,
-            hints: options.hints.hints_at_all(),
+            hints: hints.hints_at_all(),
             deja_vu: options.deja_vu,
             deja_vu_forts: options.deja_vu_forts,
         },
@@ -413,11 +431,7 @@ fn randomize_inner(
     rom.set_tag("lock_keys");
     // One source, both modes: `stamp_into` wrote the maze's pairing into the
     // build, so the writer's rows already carry it.
-    randomize::lock_keys::apply(
-        rom,
-        &randomize::overworld_writer::lock_entries(&build),
-        options.hints,
-    );
+    randomize::lock_keys::apply(rom, &randomize::overworld_writer::lock_entries(&build), hints);
 
     // Big [?] bonus-room shuffle: every level with a Big [?] pipe draws from a
     // pool of 19 rooms (11 vanilla + 8 in the otherwise-dead "Unused Level 5").

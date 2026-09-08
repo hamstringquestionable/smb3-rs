@@ -311,3 +311,17 @@ bytes, because `assign` splits HammerBro slots into sprite slots and filler
 slots and feeds the two different pools). No map tile grid byte, no
 map-object reward byte, no level byte and no flag-key byte moved, and the
 RNG draw count is unchanged, so nothing downstream shifted.
+
+Re-captured 2026-09-08 for the map-hints gate. `hints` had no effect outside
+the world maze by accident rather than by decision, and the accident did not
+hold: `lock_keys::stamp_hint_locks` returns early only when hints are *off*,
+so with the default `hints: some` and no away locks it fell through to
+`move_local_sky_locks` with an empty remote set — which recoloured **every**
+sky lock on the map to the maze's local-sky tile `$7B`. Standard mode has
+nothing to hint at, so those locks were wearing a distinction that means
+nothing there. `randomize_inner` now forces `HintMode::Off` without the maze.
+
+Three of the twenty seeds moved: 8, 16 and 18 — the ones with a sky lock on
+the finished map. `randomizer::tests::hints_change_nothing_without_the_maze`
+pins the rule now, and fails by 33 bytes on seed 8 if the gate is removed.
+

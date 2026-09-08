@@ -2213,3 +2213,44 @@ fn map_object_slot_budget() {
     println!("   + the 2-slot buffer dropped         {need_all} of {n}");
     println!("plants placed per world: {:?}", plants_sum.map(|v| v as f64 / seeds as f64));
 }
+
+/// **Hints do nothing without a maze, and that is enforced rather than
+/// incidental.**
+///
+/// Every hint is a statement about another world: a fortress design says which
+/// world holds its lock, a lock's colour says its key is elsewhere. Outside the
+/// world maze the first is always "this one" and the second cannot happen.
+///
+/// It looked inert before it was enforced, and it was not.
+/// `lock_keys::stamp_hint_locks` returns early only when hints are *off*; with
+/// hints on and no away locks it fell through to `move_local_sky_locks` with an
+/// empty remote set, which recoloured **every** sky lock on the map to the
+/// maze's local-sky tile. `hints: Partial` is the default, so that was every
+/// standard-mode seed with a sky lock on it.
+#[test]
+fn hints_change_nothing_without_the_maze() {
+    let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
+        eprintln!("SKIP: requires the ROM");
+        return;
+    };
+    let opts = |hints| crate::Options {
+        hints,
+        palettes: false,
+        palette_themed: false,
+        ..crate::Options::default()
+    };
+    for seed in 1..=12u64 {
+        let off = crate::generate_patched_rom(&bytes, seed, &opts(crate::HintMode::Off), None)
+            .expect("generate");
+        for mode in [crate::HintMode::Partial, crate::HintMode::Full] {
+            let on =
+                crate::generate_patched_rom(&bytes, seed, &opts(mode), None).expect("generate");
+            let diff = off.iter().zip(&on).filter(|(a, b)| a != b).count();
+            assert_eq!(
+                diff, 0,
+                "seed {seed}: {mode:?} changed {diff} bytes with the maze off — a hint reached \
+                 a map that has nothing to hint at"
+            );
+        }
+    }
+}
