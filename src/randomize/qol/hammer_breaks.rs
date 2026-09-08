@@ -57,6 +57,14 @@ fn push_numbered(
             continue;
         }
         if let Some((revealed, anim)) = lock_keys::numbered_lock(tile) {
+            // Belt and braces: `numbered_lock` already declines vanilla's own
+            // lock tiles, so this cannot fire today. It stays because being
+            // wrong costs a duplicate row, and removing it costs finding out the
+            // hard way that some future family overlaps vanilla's again.
+            debug_assert!(
+                !rom_data::LOCK_TILES.contains(&tile) && tile != rom_data::WATER_GAP_TILE,
+                "{tile:#04X} is both a vanilla lock and a hint tile"
+            );
             breakable.push(tile);
             replace.push(revealed);
             tilefix.push(anim);
@@ -255,9 +263,10 @@ mod tests {
             return;
         };
 
-        let build = |locks: crate::Tri, bridges: crate::Tri| {
+        let build = |locks: crate::Tri, bridges: crate::Tri, hints: crate::HintMode| {
             let options = crate::Options {
                 world_maze: true,
+                hints,
                 hammer_breaks_locks: locks,
                 hammer_breaks_bridges: bridges,
                 palettes: false,
@@ -273,36 +282,43 @@ mod tests {
             rom.read_range(FS_HAMMER_TABLES, n).to_vec()
         };
 
-        let rom = build(crate::Tri::On, crate::Tri::Off);
-        let present = lock_keys::tiles_on_map(&rom);
-        let numbered: Vec<u8> = (0..=255u8)
-            .filter(|&t| present[t as usize] && lock_keys::numbered_lock(t).is_some())
-            .collect();
-        assert!(!numbered.is_empty(), "seed 5 has no numbered locks, so this proves nothing");
-        assert!(
-            numbered.iter().any(|&t| lock_keys::numbered_lock_is_water(t)),
-            "seed 5 has no numbered water gap, so the split below proves nothing"
-        );
-
-        // Locks on, bridges off: the path locks break, the water gaps do not.
-        // Giving a bridge gap a digit must not move it onto the other switch.
-        let table = breakable(&rom);
-        for &tile in &numbered {
-            let water = lock_keys::numbered_lock_is_water(tile);
-            assert_eq!(
-                table.contains(&tile),
-                !water,
-                "numbered {} {tile:#04X}: breakable={}, expected {}",
-                if water { "water gap" } else { "lock" },
-                table.contains(&tile),
-                !water
+        // Both hint modes, because they stamp different tile families and the
+        // hammer has to know both. It knew only one of them once already.
+        for hints in [crate::HintMode::Full, crate::HintMode::Partial] {
+            let rom = build(crate::Tri::On, crate::Tri::Off, hints);
+            let present = lock_keys::tiles_on_map(&rom);
+            let numbered: Vec<u8> = (0..=255u8)
+                .filter(|&t| present[t as usize] && lock_keys::numbered_lock(t).is_some())
+                .collect();
+            assert!(
+                !numbered.is_empty(),
+                "{hints:?}: seed 5 has no hint locks, so this proves nothing"
             );
-        }
+            assert!(
+                numbered.iter().any(|&t| lock_keys::numbered_lock_is_water(t)),
+                "{hints:?}: seed 5 has no hint water gap, so the split below proves nothing"
+            );
 
-        // Both on: everything numbered breaks.
-        let table = breakable(&build(crate::Tri::On, crate::Tri::On));
-        for &tile in &numbered {
-            assert!(table.contains(&tile), "{tile:#04X} unbreakable with both switches on");
+            // Locks on, bridges off: the path locks break, the water gaps do not.
+            // Giving a bridge gap a digit must not move it onto the other switch.
+            let table = breakable(&rom);
+            for &tile in &numbered {
+                let water = lock_keys::numbered_lock_is_water(tile);
+                assert_eq!(
+                    table.contains(&tile),
+                    !water,
+                    "numbered {} {tile:#04X}: breakable={}, expected {}",
+                    if water { "water gap" } else { "lock" },
+                    table.contains(&tile),
+                    !water
+                );
+            }
+
+            // Both on: everything numbered breaks.
+            let table = breakable(&build(crate::Tri::On, crate::Tri::On, hints));
+            for &tile in &numbered {
+                assert!(table.contains(&tile), "{tile:#04X} unbreakable with both switches on");
+            }
         }
     }
 

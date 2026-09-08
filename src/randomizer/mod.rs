@@ -17,9 +17,9 @@ use options::*;
 // Public API re-exported by the crate root (see lib.rs).
 pub use flag_key::{current_flag_key_version, flag_key_fields, flag_key_version_of};
 pub use options::{
-    DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, ITEM_RANDOM, ITEM_RANDOM_NO_WHISTLE,
-    ITEM_RANDOM_SUIT_ONLY, ITEMS, Options, PiranhaMode, STARTING_LIVES_VALUES, Tri, WildChaser,
-    item_display_name, item_id,
+    DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, HintMode, ITEM_RANDOM,
+    ITEM_RANDOM_NO_WHISTLE, ITEM_RANDOM_SUIT_ONLY, ITEMS, Options, PiranhaMode,
+    STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
 };
 
 #[cfg(test)]
@@ -420,7 +420,9 @@ fn randomize_inner(
         randomize::maze::writer::stamp_pad_tiles(rom, &state);
         // And the same question from the fortress's end: which of the three
         // fortress tiles it wears says where the lock it opens is.
-        randomize::maze::writer::stamp_fort_tiles(rom, &state);
+        if options.hints.hints_at_all() {
+            randomize::maze::writer::stamp_fort_tiles(rom, &state);
+        }
         rom.set_tag("wand_gate");
         randomize::wand_gate::apply(rom, wands);
         // Last of the grid writers, and the first thing that reads them: this
@@ -450,7 +452,7 @@ fn randomize_inner(
     // the table is a permutation, which is what catches the wrong order.
     rom.set_tag("lock_keys");
     let lock_entries = maze_lock_keys.unwrap_or_else(|| lock_pairing.lock_entries(&build));
-    randomize::lock_keys::apply(rom, &lock_entries);
+    randomize::lock_keys::apply(rom, &lock_entries, options.hints);
 
     // Big [?] bonus-room shuffle: every level with a Big [?] pipe draws from a
     // pool of 19 rooms (11 vanilla + 8 in the otherwise-dead "Unused Level 5").

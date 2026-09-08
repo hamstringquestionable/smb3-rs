@@ -256,6 +256,80 @@ pub enum DejaVuMode {
     Wild,
 }
 
+/// How much the world maze's map tells you about which fortress opens which
+/// lock. Inert outside the maze, where every lock is local and every fortress
+/// opens something in the world you are standing in.
+///
+/// # The three rungs
+///
+/// * **Off** — nothing is said. Fortresses wear one of their three designs at
+///   random, as they did before any of this, and locks are the plain tiles.
+/// * **Partial** (`some`) — a fortress's design says whether the lock it opens is in this
+///   world, another one, or World 8; and a lock in the alternate colour is one
+///   whose key is somewhere else. Two independent readings of the same fact,
+///   from either end.
+/// * **Full** — as Partial, and the lock carries the *number* of the world its
+///   fortress is in.
+///
+/// # Why the order is not the ladder
+///
+/// Declaration order is the flag-key wire format, and the key's whole
+/// compatibility story is that an unset field decodes as zero *and zero is the
+/// default* — see the `flag_key` module header. So `Partial` is declared first.
+/// [`HintMode::rung`] is the ladder; nothing should read the declaration order
+/// as one.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    modular_bitfield::Specifier,
+)]
+#[bits = 2]
+#[serde(rename_all = "snake_case")]
+pub enum HintMode {
+    /// Fortress designs, and a lock's colour says whether its key is local.
+    /// The default: it answers the question a player actually has without
+    /// handing them the whole map.
+    ///
+    /// Named `Partial` rather than `Some` so it never reads as `Option::Some`
+    /// at a match site — the same trick [`HazardLimit::Sparse`] plays. The
+    /// serde/CLI/web value stays "some".
+    #[default]
+    #[serde(rename = "some")]
+    Partial,
+    /// As Partial, and the lock carries the number of the world to go to.
+    Full,
+    /// No hints at all; fortress designs go back to being random.
+    Off,
+}
+
+impl HintMode {
+    /// Position on the ladder — 0 Off, 1 Some, 2 Full — so callers can ask
+    /// "at least Some" without caring that the encoding is in the other order.
+    pub fn rung(self) -> u8 {
+        match self {
+            HintMode::Off => 0,
+            HintMode::Partial => 1,
+            HintMode::Full => 2,
+        }
+    }
+
+    /// Does the map say anything at all about which fortress opens which lock?
+    pub fn hints_at_all(self) -> bool {
+        self.rung() >= HintMode::Partial.rung()
+    }
+
+    /// Do locks carry the world number, rather than only a colour?
+    pub fn numbers_locks(self) -> bool {
+        self == HintMode::Full
+    }
+}
+
 /// A level-wide chaser the wild-injection pass can seed into a level. The
 /// option is the *set* of these the player allowed — an empty set is off.
 ///
@@ -660,6 +734,10 @@ pub struct Options {
     /// How many times one level may appear on the map. See [`DejaVuMode`].
     #[serde(default)]
     pub deja_vu: DejaVuMode,
+    /// How much the world maze's map says about which fortress opens which
+    /// lock. See [`HintMode`]. Inert outside the maze.
+    #[serde(default)]
+    pub hints: HintMode,
     /// Deja Vu counts fortresses too. A modifier on [`Options::deja_vu`]
     /// rather than an option of its own: it is ignored when that is off, and
     /// takes its mode from it when it is on.
@@ -759,6 +837,7 @@ impl Default for Options {
             friendlier_levels: false,
             deja_vu: DejaVuMode::Off,
             deja_vu_forts: false,
+            hints: HintMode::Partial,
             wild_injections: Vec::new(),
             starting_lives: default_starting_lives(),
             starting_items: Vec::new(),

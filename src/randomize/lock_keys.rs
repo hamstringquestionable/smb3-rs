@@ -309,6 +309,37 @@ const HINT_REVEALS: [(u8, u8); 4] = [
 /// the wrong color.
 const WATER_ORIENTATION: usize = 3;
 
+/// **`HintMode::Partial`'s vocabulary: the same padlock in the other colour.**
+///
+/// One per orientation, in [`HINT_REVEALS`] order. A remote lock wears the
+/// alternate colour and a local lock does not — that is the whole message, and
+/// it costs no glyph.
+///
+/// The colour *is* the palette page: `$54`/`$56` are page 1 and `$E4` is page 3,
+/// identical CHR. So an alt lock has to live in page 3, and on a ground path it
+/// reveals a page-1 tile. The effect writes no attribute byte, so the revealed
+/// path draws in the lock's colours until the next map reload — accepted
+/// deliberately, the same trade the numbered bridge gaps take.
+///
+/// `$FC`-`$FE` are the last three usable page-3 indices (`$FF` is a background
+/// tile), so this fills the page.
+const ALT_REMOTE_TILES: [u8; 4] = [0xFC, 0xFD, 0xE4, 0xFE];
+
+/// **The local sky lock has to move, or every sky lock would lie.**
+///
+/// Sky's plain lock is `$E4`, which is *already* page 3 — the alt colour. Left
+/// alone, a local sky lock would wear the mark that means "elsewhere". So in
+/// this mode local sky takes a page-1 tile revealing `$DA`, `$E4` becomes
+/// remote-sky, and the rule "alternate colour means the key is elsewhere" holds
+/// everywhere instead of almost everywhere.
+///
+/// Sky locks are rare — far rarer than the other three — which is an argument
+/// for not noticing this, not for letting it lie.
+const ALT_LOCAL_SKY: u8 = 0x7B;
+
+/// Index of the sky orientation in [`HINT_REVEALS`] / [`ALT_REMOTE_TILES`].
+const SKY_ORIENTATION: usize = 2;
+
 /// The level panels' lower-right quadrants for worlds 1-8: the digit glyphs.
 ///
 /// **The whole art budget of this feature.** A variant is the tile it stands in
@@ -348,6 +379,14 @@ pub(crate) fn obstacle_vocabulary() -> Vec<(u8, u8)> {
             out.push((tile, HINT_REVEALS[o].1));
         }
     }
+    // `HintMode::Partial`'s set. `$E4` is already a base row, so only the three
+    // new remote tiles and the relocated local sky lock are added.
+    for (o, &tile) in ALT_REMOTE_TILES.iter().enumerate() {
+        if tile != HINT_REVEALS[o].0 {
+            out.push((tile, HINT_REVEALS[o].1));
+        }
+    }
+    out.push((ALT_LOCAL_SKY, HINT_REVEALS[SKY_ORIENTATION].1));
     out
 }
 
@@ -847,9 +886,39 @@ pub(crate) fn tiles_on_map(rom: &Rom) -> [bool; 256] {
 /// The animation index is the hammer's, and the vertical set is the odd one out
 /// — the same `1, 0, 0` the plain locks use, for the same reason.
 pub(crate) fn numbered_lock(tile: u8) -> Option<(u8, u8)> {
-    HINT_TILES.iter().position(|set| set.contains(&tile)).map(|orientation| {
+    hint_orientation(tile).map(|orientation| {
         (HINT_REVEALS[orientation].1, u8::from(orientation == VERTICAL_ORIENTATION))
     })
+}
+
+/// Which orientation a hint lock belongs to, across **every** family this module
+/// can stamp: the numbered set, the alternate-colour set, and the relocated
+/// local sky lock.
+///
+/// **One lookup on purpose.** The hammer builds its breakable table from this,
+/// and a family missing here is a family the hammer silently refuses to break —
+/// which is exactly the bug the numbered set shipped with once already. Adding a
+/// family means adding it here, not at the call sites.
+///
+/// **`$E4` is not a hint tile, even though it is in [`ALT_REMOTE_TILES`].** Sky's
+/// remote tile is its plain tile — the alternate colour was already the sky
+/// lock's colour — so a cell wearing `$E4` may be a remote sky lock or an
+/// ordinary one, and nothing about the byte says which. Claiming it here made
+/// every plain sky lock count as a hint and put `the_obstacle_table_never_overflows`
+/// one over. Callers that need `$E4` have it from `rom_data::LOCK_TILES`.
+fn hint_orientation(tile: u8) -> Option<usize> {
+    // A tile that is some orientation's *plain* lock belongs to vanilla's
+    // vocabulary, not this module's, whichever list it also appears in.
+    if HINT_REVEALS.iter().any(|&(plain, _)| plain == tile) {
+        return None;
+    }
+    if let Some(o) = HINT_TILES.iter().position(|set| set.contains(&tile)) {
+        return Some(o);
+    }
+    if let Some(o) = ALT_REMOTE_TILES.iter().position(|&t| t == tile) {
+        return Some(o);
+    }
+    (tile == ALT_LOCAL_SKY).then_some(SKY_ORIENTATION)
 }
 
 /// Is this numbered lock a water gap rather than a path lock?
@@ -859,7 +928,7 @@ pub(crate) fn numbered_lock(tile: u8) -> Option<(u8, u8)> {
 /// locks", and giving a bridge gap a digit must not quietly move it from one
 /// switch to the other.
 pub(crate) fn numbered_lock_is_water(tile: u8) -> bool {
-    HINT_TILES[WATER_ORIENTATION].contains(&tile)
+    hint_orientation(tile) == Some(WATER_ORIENTATION)
 }
 
 /// The index of the vertical set in [`HINT_TILES`] / [`HINT_REVEALS`].
@@ -919,7 +988,10 @@ pub(crate) fn removable_rows(rom: &Rom) -> Vec<(u8, u8)> {
 /// The digit is the *fortress's* world, because that is the question the player
 /// is asking: not where am I, but where do I have to go. A local lock keeps the
 /// plain tile, and the absence of a digit is itself the answer.
-fn stamp_numbered_locks(rom: &mut Rom, entries: &[LockEntry]) {
+fn stamp_hint_locks(rom: &mut Rom, entries: &[LockEntry], hints: crate::HintMode) {
+    if !hints.hints_at_all() {
+        return;
+    }
     for e in entries.iter().filter(|e| e.is_away()) {
         let off = rom_data::map_tile_offset(e.target_world, e.target_pos.0, e.target_pos.1);
         let plain = rom.read_byte(off);
@@ -934,12 +1006,68 @@ fn stamp_numbered_locks(rom: &mut Rom, entries: &[LockEntry]) {
             );
             continue;
         };
-        // Keyed by the number shown, not the internal index, so a tile means the
-        // same thing in every seed: `$6B` is always "horizontal, world 1".
-        let shown = displayed_world(rom, e.key_world);
-        let tile = HINT_TILES[orientation][shown - 1];
-        rom.write_byte(off, tile);
-        write_hint_metatile(rom, tile, plain, shown - 1);
+        if hints.numbers_locks() {
+            // Keyed by the number shown, not the internal index, so a tile means
+            // the same thing in every seed: `$6B` is always "horizontal, world 1".
+            let shown = displayed_world(rom, e.key_world);
+            let tile = HINT_TILES[orientation][shown - 1];
+            rom.write_byte(off, tile);
+            write_hint_metatile(rom, tile, plain, shown - 1);
+        } else {
+            let tile = ALT_REMOTE_TILES[orientation];
+            rom.write_byte(off, tile);
+            write_plain_metatile(rom, tile, plain);
+        }
+    }
+
+    if !hints.numbers_locks() {
+        let remote: std::collections::HashSet<(usize, (usize, usize))> = entries
+            .iter()
+            .filter(|e| e.is_away())
+            .map(|e| (e.target_world, e.target_pos))
+            .collect();
+        move_local_sky_locks(rom, &remote);
+    }
+}
+
+/// Give every *local* sky lock the page-1 tile, so the alternate colour keeps
+/// meaning "elsewhere" on a sky path too.
+///
+/// **`remote` is not an optimisation, it is the whole correctness of this.** Sky
+/// is the one orientation whose remote tile is the plain tile — `$E4` is already
+/// the alternate colour, so stamping a remote sky lock leaves the byte alone.
+/// A sweep that looked only at the tile would therefore find every sky lock
+/// still wearing `$E4`, remote ones included, and move them all to the local
+/// tile. Measured before this argument existed: 10 seeds in 30 had a sky lock,
+/// and *every one* came back local.
+fn move_local_sky_locks(
+    rom: &mut Rom,
+    remote: &std::collections::HashSet<(usize, (usize, usize))>,
+) {
+    let plain_sky = HINT_REVEALS[SKY_ORIENTATION].0;
+    for world in 0..8 {
+        let info = &rom_data::MAP_TILE_GRIDS[world];
+        for screen in 0..info.screens {
+            for row in 0..9 {
+                for col in 0..16 {
+                    let pos = (row, screen * 16 + col);
+                    let off = rom_data::map_tile_offset(world, pos.0, pos.1);
+                    if rom.read_byte(off) == plain_sky && !remote.contains(&(world, pos)) {
+                        rom.write_byte(off, ALT_LOCAL_SKY);
+                        write_plain_metatile(rom, ALT_LOCAL_SKY, plain_sky);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Copy a tile's whole 2x2 art onto another index, changing nothing but which
+/// palette page it lands in.
+fn write_plain_metatile(rom: &mut Rom, tile: u8, plain: u8) {
+    for plane in 0..4 {
+        let pattern = rom.read_byte(PRG012_FILE_BASE + plane * 256 + plain as usize);
+        rom.write_byte(PRG012_FILE_BASE + plane * 256 + tile as usize, pattern);
     }
 }
 
@@ -1097,13 +1225,13 @@ fn assert_one_key_per_lock(entries: &[LockEntry]) {
 /// If [`assert_one_key_per_lock`] is violated, or if more than [`MAX_ENTRIES`]
 /// are handed over. Truncating would leave a lock no fortress opens, which is an
 /// unwinnable seed; a build-time failure is the better end of that trade.
-pub fn apply(rom: &mut Rom, entries: &[LockEntry]) {
+pub fn apply(rom: &mut Rom, entries: &[LockEntry], hints: crate::HintMode) {
     assert_one_key_per_lock(entries);
 
     // Order matters and is one-way. The numbered tiles are stamped onto the map
     // first, because `removable_rows` reads the map to decide what the table
     // needs; the table is written next, because `mirror_bytes` reads the table.
-    stamp_numbered_locks(rom, entries);
+    stamp_hint_locks(rom, entries, hints);
     relocate_removable_tables(rom, &removable_rows(rom));
 
     let mirror = mirror_bytes(rom);
@@ -1290,13 +1418,26 @@ mod asm_checks {
         // are the rows nobody wrote out by hand.
         let vocabulary = obstacle_vocabulary();
         for &(obstacle, revealed) in &vocabulary[8..] {
-            // **The water-gap variants are a deliberate exception**, and the
-            // only one. Page 2 has no index to spare, so they sit in page 3 and
-            // reveal a page-2 bridge: the lock draws in the wrong palette, and
-            // so does the bridge until the next map reload. See
-            // [`WATER_ORIENTATION`] for why that trade was taken.
+            // **Two deliberate exceptions, and both are the same trade.** The
+            // water-gap variants sit in page 3 because page 2 has no index to
+            // spare; the alternate-colour set sits in page 3 because being in
+            // another page *is* what the colour is. Both reveal a tile from the
+            // page their path lives in, so the revealed tile draws in the lock's
+            // colours until the next map reload. See [`WATER_ORIENTATION`] and
+            // [`ALT_REMOTE_TILES`].
             if HINT_TILES[WATER_ORIENTATION].contains(&obstacle) {
                 assert_eq!(revealed, rom_data::BRIDGE_TILE, "a water variant reveals a bridge");
+                continue;
+            }
+            if ALT_REMOTE_TILES.contains(&obstacle) || obstacle == ALT_LOCAL_SKY {
+                let orientation = HINT_REVEALS
+                    .iter()
+                    .position(|&(_, path)| path == revealed)
+                    .expect("an alt lock reveals one of the four path tiles");
+                assert_eq!(
+                    revealed, HINT_REVEALS[orientation].1,
+                    "{obstacle:#04X} reveals the wrong path for its orientation"
+                );
                 continue;
             }
             assert_eq!(
@@ -1348,6 +1489,9 @@ mod asm_checks {
         for seed in 0..seeds() {
             let options = crate::Options {
                 world_maze: true,
+                // Explicit: `Partial` is the default now, and neither of these
+                // measures anything with the numbered tiles switched off.
+                hints: crate::HintMode::Full,
                 palettes: false,
                 palette_themed: false,
                 ..Default::default()
@@ -1424,6 +1568,9 @@ mod asm_checks {
         for seed in 0..seeds() {
             let options = crate::Options {
                 world_maze: true,
+                // Explicit: `Partial` is the default now, and neither of these
+                // measures anything with the numbered tiles switched off.
+                hints: crate::HintMode::Full,
                 palettes: false,
                 palette_themed: false,
                 ..Default::default()
@@ -1467,6 +1614,79 @@ mod asm_checks {
             );
         }
         eprintln!("worst row count {worst}/{REMOVABLE_COUNT}");
+    }
+
+    /// **Every away lock wears the alternate colour, sky included.**
+    ///
+    /// Sky is the orientation that gets this wrong quietly. Its remote tile *is*
+    /// its plain tile — `$E4` is already the alternate colour — so stamping a
+    /// remote sky lock changes no byte, and a local-sky sweep that keyed on the
+    /// tile alone swept the remote ones up with the local ones. Measured before
+    /// the skip set existed: 10 seeds in 30 had a sky lock and every one came
+    /// back local, which no other assertion in this file would have noticed.
+    ///
+    /// Counting is enough to catch it: a remote lock moved onto the local tile
+    /// stops being counted, so the totals stop matching.
+    #[test]
+    fn every_away_lock_wears_the_alternate_colour() {
+        let Ok(bytes) = std::fs::read(ROM_PATH) else {
+            eprintln!("SKIP: requires the ROM");
+            return;
+        };
+        let mut sky_local = 0usize;
+        let mut sky_remote = 0usize;
+        for seed in 0..seeds() {
+            let options = crate::Options {
+                world_maze: true,
+                hints: crate::HintMode::Partial,
+                palettes: false,
+                palette_themed: false,
+                ..Default::default()
+            };
+            let Ok((rom, _)) =
+                crate::randomize_rom_with_overworld_capture(&bytes, seed, &options, None)
+            else {
+                continue;
+            };
+
+            let away = decode_entries(&rom).iter().filter(|e| e.away).count();
+            let mut marked = 0usize;
+            for world in 0..8 {
+                let info = &rom_data::MAP_TILE_GRIDS[world];
+                for screen in 0..info.screens {
+                    for row in 0..9 {
+                        for col in 0..16 {
+                            let off = rom_data::map_tile_offset(world, row, screen * 16 + col);
+                            let tile = rom.read_byte(off);
+                            if ALT_REMOTE_TILES.contains(&tile) {
+                                marked += 1;
+                                if tile == ALT_REMOTE_TILES[SKY_ORIENTATION] {
+                                    sky_remote += 1;
+                                }
+                            }
+                            if tile == ALT_LOCAL_SKY {
+                                sky_local += 1;
+                            }
+                            // No numbered tile may exist in this mode.
+                            assert!(
+                                !HINT_TILES.iter().any(|set| set.contains(&tile)),
+                                "seed {seed}: Partial mode stamped the numbered tile {tile:#04X}"
+                            );
+                        }
+                    }
+                }
+            }
+            assert_eq!(
+                marked, away,
+                "seed {seed}: {away} away locks but {marked} wearing the alternate colour"
+            );
+        }
+        // Both sides of the sky split have to occur, or the skip set is untested.
+        assert!(
+            sky_local > 0 && sky_remote > 0,
+            "sampled seeds produced {sky_local} local and {sky_remote} remote sky locks; \
+             raise CENSUS_SEEDS until both appear or this proves nothing"
+        );
     }
 
     /// The helper decodes, fits its allocation, and its self-reference resolves.
@@ -1616,7 +1836,7 @@ mod asm_checks {
         );
 
         let mut patched = rom.clone();
-        apply(&mut patched, &[]);
+        apply(&mut patched, &[], crate::HintMode::Full);
         assert_eq!(patched.read_range(MAP_OP8_VECTOR, 2), FORTRESS_FX_CPU.to_le_bytes());
     }
 
@@ -1724,7 +1944,7 @@ mod asm_checks {
         }
 
         let mut patched = rom.clone();
-        apply(&mut patched, &[]);
+        apply(&mut patched, &[], crate::HintMode::Full);
         assert_eq!(patched.read_range(FS_LOCK_MIRROR, MIRROR_LEN), mirror);
     }
 
@@ -1748,7 +1968,7 @@ mod asm_checks {
             );
         }
         let mut patched = rom.clone();
-        apply(&mut patched, &[]);
+        apply(&mut patched, &[], crate::HintMode::Full);
         for &off in &rom_data::BOOMBOOM_Y_OFFSETS {
             assert_eq!(patched.read_byte(off), rom.read_byte(off), "{off:#07X} was written");
         }
@@ -1893,7 +2113,7 @@ mod asm_checks {
     fn one_lock(rom: &Rom, e: LockEntry) -> (Rom, Option<[u8; 2]>) {
         let base = with_locks(rom, &[e]);
         let mut patched = base.clone();
-        apply(&mut patched, &[e]);
+        apply(&mut patched, &[e], crate::HintMode::Full);
         let payload = e.is_away().then(|| {
             let map = CompletionMap::from_rom(&base);
             away_target(&map, e.target_world, e.target_pos).expect("the cell owns a bit")
@@ -2237,7 +2457,7 @@ mod asm_checks {
 
         let base = with_locks(&rom, &entries);
         let mut patched = base.clone();
-        apply(&mut patched, &entries);
+        apply(&mut patched, &entries, crate::HintMode::Full);
         assert_eq!(decode_entries(&patched).len(), MAX_ENTRIES, "the table must be full");
         let map = CompletionMap::from_rom(&base);
 

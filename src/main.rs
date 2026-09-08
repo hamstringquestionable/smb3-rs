@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process;
 
 use smb3_rs::{
-    DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, ITEMS, Options, PiranhaMode,
+    DejaVuMode, EnemyMode, FireFlowerMode, HazardLimit, HintMode, ITEMS, Options, PiranhaMode,
     STARTING_LIVES_VALUES, Tri, WildChaser, item_display_name, item_id,
 };
 
@@ -85,6 +85,16 @@ fn parse_deja_vu(s: &str) -> Result<DejaVuMode, String> {
         "double" => Ok(DejaVuMode::Double),
         "wild" => Ok(DejaVuMode::Wild),
         _ => Err("valid values: off, double, wild".to_string()),
+    }
+}
+
+/// clap value parser for `--hints` (off/some/full).
+fn parse_hints(s: &str) -> Result<HintMode, String> {
+    match s {
+        "off" => Ok(HintMode::Off),
+        "some" => Ok(HintMode::Partial),
+        "full" => Ok(HintMode::Full),
+        _ => Err("valid values: off, some, full".to_string()),
     }
 }
 
@@ -457,6 +467,14 @@ struct Cli {
     #[arg(long, default_value = "off", value_parser = parse_deja_vu)]
     deja_vu: DejaVuMode,
 
+    /// World maze: how much the map tells you about which fortress opens which
+    /// lock — off, some, or full (default: some). `some` gives each fortress a
+    /// design saying whether its lock is local, elsewhere, or in World 8, and
+    /// tints a lock whose key is in another world; `full` also numbers that lock
+    /// with the world to go to. Ignored outside `--world-maze`.
+    #[arg(long, default_value = "some", value_parser = parse_hints)]
+    hints: HintMode,
+
     /// Deja Vu counts fortresses too, in whatever mode `--deja-vu` is set to,
     /// so a fortress can take two map tiles or none. Ignored with `--deja-vu
     /// off`. 1-F is always dealt exactly once: it holds the warp whistle, and
@@ -641,6 +659,7 @@ fn build_options(cli: &Cli) -> Options {
             friendlier_levels: cli.friendlier_levels,
             deja_vu: cli.deja_vu,
             deja_vu_forts: cli.deja_vu_forts,
+            hints: cli.hints,
             wild_injections: cli.wild_injections.0.clone(),
             starting_lives: cli.starting_lives,
             starting_items,

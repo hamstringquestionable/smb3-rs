@@ -78,6 +78,12 @@ const OFF_SOME_ALL = [
 	{ value: "all", label: "All" },
 ];
 
+const OFF_SOME_FULL = [
+	{ value: "off", label: "Off" },
+	{ value: "some", label: "Some" },
+	{ value: "full", label: "Full" },
+];
+
 // Off / On / Wild pill for Random Fire Flower. "Wild" widens the pool to also
 // include the Small/Big downgrade outcomes. Values match the Rust
 // `FireFlowerMode` enum's serde representation.
@@ -98,6 +104,8 @@ const OFF_DOUBLE_WILD = [
 // Categories rendered as <fieldset> sections, in order.
 export const GROUPS = [
 	{ id: "map", label: "Map" },
+	{ id: "maze", label: "World Maze",
+		note: "Only affects World Maze. With the mode off these are ignored, and they leave your flag key alone." },
 	{ id: "enemies", label: "Enemies" },
 	{ id: "bosses", label: "Bosses" },
 	{ id: "items", label: "Items & Pickups" },
@@ -306,16 +314,25 @@ export const SCHEMA = [
 		tip: "Number of worlds before Dark Land (fewer = shorter game)",
 		group: "map", inFlagKey: true,
 		enabledWhen: { world_order: true } },
+
+	// --- World Maze ---
+	// The mode switch first; everything under it is inert without it, which is
+	// what the group note says.
 	{ id: "world_maze", type: "bool", default: false,
 		label: "World Maze",
 		tip: "The eight maps become one big maze. Warp pads link them, a fortress can open a lock in another world, and your progress in a world is still there when you come back. Turns World Order on.",
-		group: "map", inFlagKey: true },
+		group: "maze", inFlagKey: true },
 	{ id: "maze_wands", type: "tri", numeric: true,
 		options: [0,1,2,3,4,5,6,7].map(n => ({ value: n, label: String(n) })),
 		default: 3,
 		label: "Wands To Enter",
 		tip: "Wands needed before Bowser's castle will open. Fewer is a shorter game; 0 lets you walk straight in if you find a way there.",
-		group: "map", inFlagKey: true,
+		group: "maze", inFlagKey: true,
+		enabledWhen: { world_maze: true } },
+	{ id: "hints", type: "tri", options: OFF_SOME_FULL, default: "some",
+		label: "Hints",
+		tip: "How much the map gives away about which fortress opens which lock. Some marks a fortress with the design for where its lock is, and tints a lock whose key is in another world. Full also stamps that lock with the world number to go to.",
+		group: "maze", inFlagKey: true,
 		enabledWhen: { world_maze: true } },
 
 	// --- Enemies ---
