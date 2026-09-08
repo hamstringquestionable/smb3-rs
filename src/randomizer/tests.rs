@@ -1098,6 +1098,11 @@ fn fnv1a(data: &[u8]) -> u64 {
 fn all_off_options() -> Options {
     Options {
         fire_flower: FireFlowerMode::Off,
+        // Not "off": with the maze off this option is inert, and the key
+        // normalizes it to the default the way it does maze_wands. Claiming
+        // Off here would fail the round trip against a decoder that
+        // deliberately returns the default.
+        hints: crate::HintMode::default(),
         friendlier_levels: false,
         deja_vu: DejaVuMode::Off,
         deja_vu_forts: false,
@@ -1175,6 +1180,7 @@ fn all_off_options() -> Options {
 fn all_on_options() -> Options {
     Options {
         fire_flower: FireFlowerMode::On,
+        hints: crate::HintMode::default(),
         limit_hazards: HazardLimit::All,
         friendlier_levels: true,
         deja_vu: DejaVuMode::Wild,

@@ -44,7 +44,7 @@ pub(super) const MAYBE_SALT: u64 = 0x4D41_5942_455F_5631; // "MAYBE_V1"
 
 /// Bytes of payload the format can address, past the two-byte envelope.
 ///
-/// 97 bits are spent today, leaving 143 in reserve — years of headroom at the
+/// 99 bits are spent today, leaving 141 in reserve — years of headroom at the
 /// rate this project has actually added options (the layout was bumped six
 /// times in the 38 days to 2026-08-06). It is deliberately generous rather than
 /// "one more byte than we need": running out of reserve is the one thing that
@@ -427,10 +427,19 @@ mod payload {
         /// `world_maze` is on**, so a key from a seed that never touches the
         /// mode is byte-for-byte what it was before this field existed. Zero is
         /// a real value with the maze on (a pure maze, no gate).
+        /// How much the maze's map says about which fortress opens which lock.
+        /// **Only written when `world_maze` is on**, like `maze_wands` above, so
+        /// a key from a seed that never touches the mode is byte-for-byte what
+        /// it was before this field existed.
+        ///
+        /// `Full` is the zero discriminant on purpose — see [`HintMode`]. A key
+        /// minted before this option decodes to the hints it was minted with
+        /// rather than to silence.
+        pub(super) hints: HintMode,
         pub(super) maze_wands: B3,
 
         // --- Reserve ---
-        // 134 bits. Adding an option is: declare it immediately above this
+        // 132 bits. Adding an option is: declare it immediately above this
         // block, then take the same number of bits off `B19`. An older key
         // simply has those bits zero, which is "off" for a bool and the default
         // for every enum here, so it stays a correct key for the settings it
@@ -445,7 +454,7 @@ mod payload {
         #[skip]
         __: B128,
         #[skip]
-        __: B6,
+        __: B4,
     }
 }
 
@@ -489,7 +498,7 @@ impl Options {
             cannons, water, bros, hb_encounters, limit_hazards, friendlier_levels,
             bro_battle_timer, deja_vu, deja_vu_forts,
             fire_flower, piranha_shuffle, wild_injections,
-            starting_lives, world_count, world_maze, maze_wands, starting_items,
+            starting_lives, world_count, world_maze, maze_wands, hints, starting_items,
             // Not encoded — see NOT_ENCODED for the reason on each.
             palettes: _, palette_themed: _, player_color: _,
             remove_flashing: _, king_quotes: _, skip_rom_validation: _,
@@ -568,6 +577,7 @@ impl Options {
             // default key string for every seed that never touches the mode —
             // which is a flag-key compatibility event bought for nothing.
             .with_maze_wands(if *world_maze { (*maze_wands).min(7) } else { 0 })
+            .with_hints(if *world_maze { *hints } else { HintMode::default() })
             .with_starting_item_0(sanitize_item(item(0)))
             .with_starting_item_1(sanitize_item(item(1)))
             .with_starting_item_2(sanitize_item(item(2)))
@@ -666,6 +676,11 @@ impl Options {
             // castle — so it is taken at face value there. With the maze off
             // the field was never encoded, so the default is the honest read.
             maze_wands: if f.world_maze() { f.maze_wands() } else { default_maze_wands() },
+            hints: if f.world_maze() {
+                f.hints_or_err().unwrap_or_default()
+            } else {
+                HintMode::default()
+            },
             world_count: match f.world_count() {
                 0 => default_world_count(),
                 n => n,

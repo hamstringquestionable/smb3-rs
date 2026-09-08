@@ -45,6 +45,13 @@ deploys.
   World 8 — the ones that open the way to Bowser. Worth knowing before you
   decide a fortress isn't worth the detour.
 
+- **World Maze: Hints, a setting.** Off, Some or Full, defaulting to Some. Off
+  says nothing and goes back to giving fortresses their design at random. Some
+  marks each fortress with the design for where its lock is, and tints a lock
+  whose key is in another world. Full also stamps that lock with the number of
+  the world to go to. Only affects World Maze, and with the mode off it leaves
+  your flag key alone.
+
 - **World Maze: a lock now tells you which world its key is in.** A lock opened
   from another world wears that world's number; a lock with no number is opened
   by a fortress in the world you're standing in. So a locked path is no longer a
