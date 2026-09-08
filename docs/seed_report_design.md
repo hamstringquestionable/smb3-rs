@@ -34,15 +34,22 @@ actually plays, so a writer bug shows up in the spoiler — which is correct,
 because the game has it too. `BuildResult` may *enrich* the report with things
 bytes cannot recover, but must never re-derive a field the ROM already answers.
 
-Concretely: fortress→lock comes from decoding the FX tables, **not** from
-`LockAssignment::fort_section`, even though the latter is easier to read.
+Concretely: fortress→lock comes from decoding the ROM's own lock table, **not**
+from `LockAssignment::fort_section`, even though the latter is easier to read.
+
+> **Updated 2026-09-08.** When this was written that meant decoding vanilla's 17
+> FX slot tables. Those are retired: a built ROM now carries one position-keyed
+> table written by `lock_keys.rs` (`FS_LOCK_ENTRIES`, 4 bytes per lock), and
+> that is what a decoder should read. The principle is unchanged and is in fact
+> easier to satisfy — see `docs/fx_table_redesign.md`. The FX-table decoding
+> notes in the table below are therefore historical.
 
 ## Recoverability of the wanted content
 
 | Content | From ROM? | Notes |
 |---|---|---|
-| Overworld topology, locks, pipes | yes | tiles + pointer tables + FX tables |
-| Fortress → lock it opens | yes | FX tables; layout is documented in `smb3_rom_reference.md` § "Fortress Lock & Bridge FX (PRG010: 0x147CD–0x148B7)" — **read it, do not re-derive from the disassembly.** Doing the latter cost a wrong answer once: `FortressFX_W1–W8` is 32 bytes of slots at `0x14888` *followed* by the 8-byte `FortressFXBase_ByWorld` at `0x148A8`, not the other way round. Validate any decoder against vanilla, where W8 must read `0D 0E 0F 10`. |
+| Overworld topology, locks, pipes | yes | tiles + pointer tables + the `FS_LOCK_ENTRIES` lock table |
+| Fortress → lock it opens | yes | the position-keyed lock table (`lock_keys.rs`). Historical, for vanilla ROMs only: the FX-slot layout is documented in `smb3_rom_reference.md` § "Fortress Lock & Bridge FX (PRG010: 0x147CD–0x148B7)" — **read it, do not re-derive from the disassembly.** Doing the latter cost a wrong answer once: `FortressFX_W1–W8` is 32 bytes of slots at `0x14888` *followed* by the 8-byte `FortressFXBase_ByWorld` at `0x148A8`, not the other way round. Validate any decoder against vanilla, where W8 must read `0D 0E 0F 10`. |
 | World order (e.g. `3,5,6`) | yes | `FS_WORLD_ORDER` holds routine + display table |
 | Inventory item sources (HB1 = Fire Flower, 1F secret exit = Hammer) | probably | written to tables; **not yet verified where each source lives** |
 | Antechamber/lobby donor (e.g. "7-5 donated") | **no** | `antechambers::shuffle(rom, rng, beta)` returns nothing; the write destroys provenance |

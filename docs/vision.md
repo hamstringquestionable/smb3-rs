@@ -73,15 +73,19 @@ What SMB3-RS deliberately is not, and does not intend to become:
 - **Not multi-version.** Targets SMB3 USA Rev 1 (PRG1). Other revisions are out
   of scope. (PRG0 is text-only today; see `docs`/memory for the current limit.)
 
-## What 1.0 means
+## Released, and what that changed
 
-SMB3-RS is currently **unreleased**. It reaches 1.0 when both are true:
+SMB3-RS **released on 2026-07-27** and is on 1.3.0 as of 2026-09-05. The two
+bars 1.0 was defined against — feature parity with **SMB3R** and enough
+community confidence that seeds are beatable and free of game-breaking bugs —
+were the right bars, and clearing them changed the rules in one specific way:
 
-1. **Feature parity.** The feature set is roughly on par with **SMB3R**, the
-   established randomizer, with no marquee feature missing that would make a
-   player switch back to it.
-2. **Community confidence.** Enough of the community trusts that all seeds are
-   beatable and that there are no game-breaking bugs.
+**Flag keys are now compatibility surface.** Before release, bit assignments
+were free to move. They are not any more: a key someone posted in a race or a
+Discord thread has to keep meaning the same thing. Adding an option means
+claiming reserved bits and bumping the key version deliberately — never
+renumbering what is already out there. Everything else in this document was
+written to outlast the release and still holds.
 
-Until then, nothing is frozen — including, notably, flag-key bit assignments,
-which may change before 1.0.
+Beta work lands on `beta/next`, which deploys its own build; `main` deploys the
+public site.

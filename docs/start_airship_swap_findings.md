@@ -110,7 +110,7 @@ unswapped / page-0 worlds get no-op stores.
 
 ## Verification tooling
 
-The W3 reachability bug was caught by `test_required_progression` in `src/randomize/overworld_build.rs`, a Dijkstra-based must-clear analyzer. Useful flow when changing anything SAS-related:
+The W3 reachability bug was caught by `test_required_progression` in `src/randomize/overworld_build/`, a Dijkstra-based must-clear analyzer. Useful flow when changing anything SAS-related:
 
 ```sh
 nix-shell -p gcc --run 'export PATH="$HOME/.cargo/bin:$PATH" && \

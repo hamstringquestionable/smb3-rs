@@ -1,7 +1,10 @@
 # World Maze — design charter
 
-*Branch `experiment/world-maze`, off `beta/next`. Supersedes the parked
-`experiment/mega-map` fold.*
+*Shipped to `beta/next` 2026-09-07 (PRs #215/#216/#217) — the
+`experiment/world-maze` branch is gone. **Never playtested end to end.**
+Supersedes the parked `experiment/mega-map` fold. Sections written before
+2026-09-06 predate the fortress-FX rework; where that matters they carry their
+own SUPERSEDED banner — read those before trusting a mechanism described here.*
 
 A mode in which the eight world maps stop being a sequence and become the rooms
 of one Metroidvania. Every world keeps its own palette, music, king, tileset and
@@ -43,14 +46,16 @@ document does not repeat it. The engine-level facts they rest on are in
 | `walk.rs` | the two cross-world walkers — reachability, and the level-cost Dijkstra |
 | `graph.rs` | the world-graph pass: spine, pad budget, roles, the `Knobs` |
 | `roles.rs` | what a pad is for, and which terrain can host it |
-| `fill.rs` | the key-assignment swap search |
+| `fill.rs` | the key assignment: a constructive forward fill, with the swap search as fallback |
 | `metrics.rs` | how many levels a run beats, and how many it cannot avoid |
 | `writer.rs` | converters to the specs the ROM side takes |
 
 The ROM side is `world_persist.rs` (arrivals, `PAD_ENTER`), `completion_bits.rs`
 (the packed store, the new-game signal), `maze_state.rs` (the SRAM map),
 `world_travel.rs` (whistle fast travel, the visited marker), `wand_gate.rs` and
-`foreign_locks.rs`. Ordering between them is stated once, in
+`lock_keys.rs` (every lock in the game, home and away, in one position-keyed
+table — it absorbed what an earlier `foreign_locks.rs` did; see
+`docs/fx_table_redesign.md`). Ordering between them is stated once, in
 `randomizer::randomize_inner`.
 
 ## Settled decisions
@@ -133,6 +138,19 @@ Over eight grids with cross-world edges it becomes both the global verifier and,
 run incrementally, the generator.
 
 ### The decomposition
+
+> **REVERSED 2026-09-07 — read this before the paragraph below.** The swap
+> search is no longer the producer; the constructive forward fill is, with the
+> swap search kept only as the fallback for gates the fill could not place
+> (`fill.rs`'s `assign_keys` calls `constructive()` first). The reason the
+> reversal happened is in `fill.rs`'s own doc comment: **a swap has nothing to
+> aim with.** Measured, the constructive fill reaches 72% cross-world locks
+> neutral / 73% preferring cross, against the swap search's worse spread — and
+> the bridge gain came from the algorithm, not the aiming. The structural
+> objection below turned out to be answerable rather than fatal: a stalled fill
+> keeps the builder's assignment for what it could not place, which is the same
+> safety net the swap search started from. See also "Measured 2026-09-06: the
+> key-assignment fill rests on a false premise" later in this document.
 
 **The forward fill was replaced by a swap search, and the reason is structural.**
 The forward fill's first step needs a fortress inside the start region with
@@ -540,8 +558,9 @@ Four findings, and they redraw the plan:
 4. ~~**Pad placement** by role~~ **DONE** — `maze/roles.rs`. On finished worlds
    rather than in the per-world pass; see "The island pad" for why that is
    enough, and what it costs.
-5. ~~**The key-assignment fill**~~ **DONE** — `maze/fill.rs`, as a swap search
-   rather than a forward fill; see below.
+5. ~~**The key-assignment fill**~~ **DONE** — `maze/fill.rs`. Shipped first as a
+   swap search, then reversed on 2026-09-07 to the charter's constructive
+   forward fill, with the swap search kept as the fallback; see below.
 
 ### Step 1 in detail
 
@@ -824,6 +843,18 @@ Two couplings to remember:
 
 ## Cross-world locks
 
+> **SUPERSEDED by the fortress-FX rework (2026-09-06), one day after this was
+> written.** Everything below reasons about vanilla's 17 FX slots
+> (`FX_MAP_COMP_IDX`, `FortressFX_W1_W8`, `FortressFXBase_ByWorld`) and about
+> budgeting cross-world locks against them. That whole chain is deleted: one
+> jump-table word now points map operation 8 at a from-scratch, position-keyed
+> routine, so there are no slots left to run out of and no separate cross-world
+> mechanism — `lock_keys.rs` holds every lock in the game, home and away, in one
+> table. **The current mechanism is `docs/fx_table_redesign.md` § "The design".**
+> Kept because the engine facts it establishes (what `Map_Reload_with_Completions`
+> replays, what an FX slot actually buys) are still true of vanilla and are what
+> the replacement was designed against.
+
 `Map_Reload_with_Completions` rebuilds the map from ROM and replays the
 completion bitfield, swapping tiles via `Map_Removable_Tiles`. The lock tiles
 are in that table, so **setting the bit is sufficient** — the FX system is not
@@ -885,7 +916,9 @@ numbering has to be invented or kept in sync. Mask `Y` with `$3F` to drop the
 player half.
 
 The routine lives in PRG011, which is mapped by definition since the hook is in
-it (390 bytes free, largest gap 277).
+it. (This paragraph used to quote "390 bytes free, largest gap 277" — a
+2026-09-05 measurement that the allocations made since have overtaken. Never
+hand-copy those figures; run `smb3-rs <rom> --free-space`.)
 
 **Two things to verify when building it:**
 
@@ -927,6 +960,15 @@ that is neither a rock nor a lock is broken by nothing at all, so
 player who enables it and hammers past something has chosen that, and the
 zero-hammer invariant is unaffected either way.)
 
+> **NOT WHAT SHIPPED (both paragraphs below).** The wand gate never joined the
+> removable/completable tables: `wand_gate.rs` stamps `WAND_GATE_TILE` (`$D5`)
+> into the grid directly and lifts it from its own routine, hooked on map reload
+> and fill-attr. Its tests pin exactly that — `the gate byte is removable` and
+> `the gate byte is completable` are both *assert-not*. The table relocation
+> that did land (2026-09-07) was for the hint-locks feature's sky variant, and
+> it used a 32-entry stride, not the 9-byte copies planned here. Kept for the
+> costing, which is still a fair account of what growing those tables takes.
+
 **Cost of the ninth removable entry.** The tables are packed and adjacent —
 `Map_Removable_Tiles` (8) at `0x18447`, `Map_RemoveTo_Tiles` (8) at `0x1844F`,
 `Map_Completable_Tiles` (5) at `0x18457` — and the loop bound is an `LDX #7`
@@ -934,7 +976,9 @@ immediate. Growing in place is impossible; relocate both tables to 9-byte copies
 and repoint three absolute operands (`CMP Map_Removable_Tiles,X` and `LDA
 Map_RemoveTo_Tiles,X` in PRG012, plus our own `IS_COMPLETABLE`, which reads the
 same table) and two `LDX` immediates. PRG012 has 908 free bytes with a 576-byte
-gap at `0x19DD0`, and PRG012 is mapped whenever this code runs. The gap still
+gap at `0x19DD0`, and PRG012 is mapped whenever this code runs. (Those two
+figures are a 2026-09-05 measurement and are now well out of date — see
+`--free-space`.) The gap still
 needs the unreferenced check before it is claimed.
 
 **Opening it** is then the same mechanism as everything else: when the wand
@@ -1124,6 +1168,14 @@ requested pad role distribution.
   CHR region comes out untouched.
 
 ### Not every fortress can open a cross-world lock
+
+> **SUPERSEDED by the fortress-FX rework (2026-09-06).** The constraint this
+> section describes was a property of the old hook, and the code it names is
+> gone — there is no `GlobalState::crumbling`, no `crumbling_forts`, no
+> `FillReport::rejected_uncrumbling`, and no
+> `every_cross_world_lock_names_a_crumbling_fortress` test. **A cross-world lock
+> can be keyed to a tank now**, which the old hook forbade. Kept as the record
+> of why the rework was worth doing.
 
 A foreign lock fires from `Map_MarkLevelComplete`'s fortress branch, gated on
 the tile under the player being `TILE_FORTRUBBLE` or `TILE_ALTRUBBLE`. Only

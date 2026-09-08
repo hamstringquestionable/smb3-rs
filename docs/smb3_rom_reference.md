@@ -959,7 +959,8 @@ but not sufficient.
 
 After scanning the entry-point's enemy data, continue scanning forward past 0xFF
 terminators to find sub-area headers and check their `enemy_ptr` fields for
-Boom-Boom. This was implemented in `levels.rs` with `has_boomboom_in_sub_areas()`.
+Boom-Boom. This was implemented in `levels.rs` as a `has_boomboom_in_sub_areas`
+helper (long since deleted — the approach failed, see below).
 
 **Why it failed:** There is no reliable way to know where one level's sub-areas end
 and another level's data begins. Level data regions pack multiple levels contiguously,
@@ -1007,13 +1008,14 @@ is excluded from FORTRESS_ENTRIES.
 **Approach 5: Hardcoded constant (chosen for Rust implementation)**
 
 Given that the ROM is fixed (USA Rev 1) and the fortress set never changes, all
-17 entries are hardcoded as `FORTRESS_ENTRIES` in `src/randomize/levels.rs`. This
-is consistent with the existing `AIRSHIP_ENTRIES` and `BOWSER_CASTLE` patterns.
+17 entries are hardcoded as `FORTRESS_ENTRIES` in
+`src/randomize/rom_data/tables.rs`. This is consistent with the existing
+`AIRSHIP_ENTRIES` and `BOWSER_ENTRY` patterns.
 The values were derived from `rom_map.py`'s `build_level_groups()` analysis and
 manually verified against known gameplay.
 
-**Bowser's castle exclusion:** W8[40] (`BOWSER_CASTLE` constant, `(7, 40)`) is
-explicitly excluded from level shuffle in `collect_shuffleable()`. The game ending
+**Bowser's castle exclusion:** W8[40] (`BOWSER_ENTRY` constant, `(7, 40)`) is
+excluded from shuffling. The game ending
 sequence is hardcoded to trigger from this specific level — shuffling it to another
 map slot would make the game unwinnable. This exclusion is separate from the
 `FORTRESS_ENTRIES` filter (which also excludes W8[40] as a Boom-Boom group member).
@@ -1996,7 +1998,17 @@ count; the body is raw NES color bytes. Identified by reverse-engineering the
 "Super Mario Bros. 3 Recolored v1.0" IPS — every cluster below is wholly rewritten
 by Recolored, proving these are the master per-tileset/area palette tables.
 
-| File Offset | Size | Pattern | Likely Purpose |
+> **Confirmed vs inferred, in this subsection only.** That these clusters *are*
+> the master palette tables is confirmed — Recolored rewrites all of them, and
+> the shipped randomizer writes into them. What each individual table means is
+> **inferred from structural patterns and the Recolored diff, not read out of
+> the disassembly**, and the rows below say so individually ("Likely Purpose",
+> "still untested", "hypothesis unverified"). Treat the offsets as solid and the
+> semantics as a working model: confirm against the disassembly before basing a
+> new write on any one row. This is the one section of this document that states
+> unverified semantics, and it is marked rather than silently mixed in.
+
+| File Offset | Size | Pattern | Likely Purpose (inferred — see caveat above) |
 |-------------|------|---------|----------------|
 | 0x33046–0x331A2 | 349 B | 8 × `00 3F 00 20 0F 0F …32 colors…` (32-byte full BG+sprite palette set) | **Per-tileset full-palette upload table** — 8 entries; one per BG palette index used by level loader |
 | 0x331BB–0x331DE | 35 B  | dense ≤0x3F bytes | Adjunct palette set (FG vs BG?) |
@@ -2871,6 +2883,21 @@ load LevelLayouts pointer into `Level_LayPtr_AddrL/H` → bank-switch via
 
 ### Fortress Lock & Bridge FX (PRG010: 0x147CD–0x148B7)
 
+> **VANILLA ONLY — the randomizer no longer uses any of this (2026-09-06).**
+> The whole 17-slot subsystem is retired: one word of the map-operation jump
+> table (`MAP_OP8_VECTOR`, file `0x144D2`) now points operation 8 at a
+> from-scratch, position-keyed routine that occupies this very address range as
+> `FS_FORTRESS_FX` (537 bytes at `0x147CD`). There are no FX slots to index, no
+> `FortressFX_W1–W8`, and no `FortressFXBase_ByWorld` in an output ROM.
+> **What the randomizer does today: `src/randomize/lock_keys.rs` and
+> `docs/fx_table_redesign.md`.** The screen-check patch this section describes
+> at file `0x15554` is likewise gone — that run now holds `FS_LOCK_ENTRIES`, the
+> new position-keyed lock table, and the check is inline in a routine we own.
+>
+> This section stays because it is still an accurate account of the *vanilla*
+> mechanism, which `overworld_pickup::open_fx_gaps` reads before placement and
+> which the replacement was designed against.
+
 When a fortress is cleared (Boom-Boom defeated, magic ball collected), the game triggers
 a map effect that busts a lock or builds a bridge, opening progression on the overworld.
 The entire system lives in PRG010 and uses **17 FX slots** (0x00–0x10), one per
@@ -3021,7 +3048,9 @@ The map DATA update (replacement tile via screen pointer table + `Map_Completion
 is NOT screen-relative and always works correctly. So the correct tile IS placed at
 the lock position; the visual animation is what goes wrong.
 
-**Fix:** Hook 3 bytes at file 0x148F6 (CPU $C8E6) to `JMP $D544` (PRG010 free
+**Fix (retired — see the table below; neither this 39 nor the 46 stated there is
+live, and file 0x15554 now holds `FS_LOCK_ENTRIES`):** Hook 3 bytes at file
+0x148F6 (CPU $C8E6) to `JMP $D544` (PRG010 free
 space at file 0x15554, 39 bytes). Custom code checks whether the lock is on a
 visible screen by comparing `FortressFX_MapLocation[slot] & 0x0F` (lock screen)
 against the current viewport state. The map scrolls in 128-pixel half-screen
@@ -3069,7 +3098,7 @@ PRG030 is the fixed bank, always mapped at $8000–$9FFF. Free space starts at 0
 
 | Offset | Size | Purpose |
 |--------|------|---------|
-| 0x15554 | 46 | FX screen-check patch (JMP target from $C8E6) |
+| 0x15554 | ~~46~~ | ~~FX screen-check patch (JMP target from $C8E6)~~ — **retired 2026-09-06.** This run now holds `FS_LOCK_ENTRIES` (112 bytes); the screen check is inline in the routine that replaced `MO_DoFortressFX`. The old figure was also stated as 39 bytes elsewhere in this section; neither number is live |
 | 0x15DF0 | 35 | Canoe softlock fix: save death respawn position (JSR target from $C6EA) |
 
 **PRG011 free space usage (file 0x17D00 / CPU $BCF0):**
@@ -3274,25 +3303,34 @@ ordinal; the lower nibble is Boom-Boom's spawn Y position on screen.
   overwrites `$88,X` with 1 (resetting the Y-page for gameplay).
 - Crystal ball handler at `$A8F6` (PRG003): reads `$7F,X` and stores it to
   `Map_DoFortressFX` (`$0745`).
-- `MO_DoFortressFX` at `$A8B0` (PRG010): decrements `$0745`, adds
+- `MO_DoFortressFX` at `$C8A9` (PRG010): decrements `$0745`, adds
   `FortressFXBase_ByWorld[World_Num]`, and indexes into `FortressFX_W1–W8` to get
   the FX slot.
 
 All 17 Boom-Boom Y-byte ROM offsets are in PRG006 enemy data (`$C000` bank, file
-base `0x0C010`). See `BOOMBOOM_Y_OFFSETS` in `src/randomize/levels.rs` for the
-complete list.
+base `0x0C010`). See `BOOMBOOM_Y_OFFSETS` in `src/randomize/rom_data/tables.rs`
+for the complete list — **test-only since the fortress-FX rework**, because
+production writes no enemy data for this at all.
 
-**Interaction with fortress shuffling:**
+**Interaction with fortress shuffling — retired (2026-09-06):**
 
-When `randomize_fortresses` swaps level data between fortress map slots, the Boom-Boom
-enemy data travels with the level — including the Y-byte whose upper nibble determines
-which lock/bridge to break. After shuffling, `randomize_fortresses` patches each
-Boom-Boom's Y-byte upper nibble to match its new position's ordinal within the
-destination world (preserving the lower nibble spawn position). The `FortressFX_W1–W8`
-table is **not** modified — it remains correct because each fortress now reports the
-right ordinal for its new world.
+This used to matter. When fortress level data moved between map slots, the
+Boom-Boom enemy data travelled with it, including the Y-byte whose upper nibble
+picked the FX slot, so the shuffler had to rewrite that nibble to the new
+position's ordinal. None of that survives: `lock_keys::apply` **masks the spawn
+Y-nibble of all 17 unconditionally**, and which lock a fortress opens is read
+from the position-keyed table rather than derived from the nibble. There is no
+`randomize_fortresses` function any more — placement is `node_catalog` →
+`overworld_build` → `overworld_writer`.
 
 ### Lock Shuffle Design Constraints
+
+> **HISTORICAL — the FX-slot ordinal model below is not how locks work now.**
+> These constraints came out of the abandoned `lock-shuffle-wip` branch, which
+> reasoned in FX slots ("beating fort with ordinal N opens FX slot N−1"). The
+> shipped design has no FX-slot ordinal at all: `lock_keys.rs` pairs a fortress
+> and a lock **directly by map position** (`key_pos` / `target_pos`). Kept for
+> the engine constraints it records, which remain true of vanilla.
 
 Key constraints discovered while implementing lock shuffle (see `lock-shuffle-wip` branch
 for the failed attempt):
@@ -4051,7 +4089,7 @@ partial tables in the sections above are subsets of this data.
 | 0xB3 | $0B | $0B | +4 | ObjectEntryB3 |
 
 All 180 entries verified byte-for-byte against ROM (2025-04-13). Matches
-`sprite_bank()` in `enemies.rs` with zero discrepancies.
+`sprite_bank()` in `enemies/sprite_bank.rs` with zero discrepancies.
 
 #### Cannon Fire Family CHR Behavior (PRG007, verified 2026-07-12)
 
@@ -4489,7 +4527,7 @@ the swap pool at curated `ExcludeHazards` offsets:
 excluded *unless the vanilla enemy there was the same category*, so within-category
 shuffle (e.g. Thwomp variants) still works and a designed-in hazard is never
 stripped — only *introducing* a new hazard category is blocked. See
-`hazard_excluded` / `HAZARD_CATEGORIES` in `enemies.rs`.
+`hazard_excluded` / `HAZARD_CATEGORIES` in `enemies/tables.rs`.
 
 Current `ExcludeHazards` levels (`enemy_protections.rs`):
 - **7F2** Boom-Boom sub-area (0xD45C): tight boss arena
@@ -4588,6 +4626,23 @@ this and the `ExcludeHazards` filter over many seeds.
 | $797E–$797F | Death respawn map Y (Mario/Luigi) |
 | $7980–$7981 | Death respawn map X high (Mario/Luigi) |
 | $7982–$7983 | Death respawn map X low (Mario/Luigi) |
+| $0075–$0076 | `World_Map_Y` — **live** map row (zero page, Mario/Luigi) |
+| $0077–$0078 | `World_Map_XHi` — live map page |
+| $0079–$007A | `World_Map_X` — live map column, low pixel |
+| $0722–$0723 | `Map_Prev_XOff` — primary camera-scroll backup (low) |
+| $0724–$0725 | `Map_Prev_XHi` — primary camera-scroll backup (page) |
+| $7986–$7987 | `Map_Prev_XOff2` — secondary camera-scroll backup (low); the afar-skid target |
+| $7988–$7989 | `Map_Prev_XHi2` — secondary camera-scroll backup (page) |
+
+**The two scroll-backup pairs are load-bearing, not curiosities.** `$7976/$7978/$797A`
+is where the player *stands*; the `Map_Prev_*` pairs are where the *camera* goes
+back to, and the engine keeps two of them — a near pair and an "afar skid" pair.
+Both must be seeded together or a death/level-exit puts the player at the right
+tile with the camera on the wrong screen. `world_persist.rs` (which restores a
+world's position on re-entry) and `start_airship_swap.rs` both write all four;
+their constants are the authority (`MAP_PREV_XOFF` `$0722`, `MAP_PREV_XHI`
+`$0724`, `MAP_PREV_XOFF2` `$7986`, `MAP_PREV_XHI2` `$7988`). Live camera scroll
+itself is `Horz_Scroll` `$00FD` / `Horz_Scroll_Hi` `$0012`.
 | $0596 | `Map_MarchInit` — marching data initialized this cycle |
 | $0597 | `Map_InCanoe_Flag` — player is in the canoe |
 | $0598 | `World_8_Dark` — W8 darkness active; counts 0–7 while the effect sets up |
@@ -5292,5 +5347,6 @@ variant is a new row rather than a per-instance field.
   reload special-cases only `TILE_FORT` and `TILE_ALTFORT` (`:348`), and `$6A`
   is in neither `Map_Removable_Tiles` nor `Map_Completable_Tiles` — so it takes
   the threshold branch and reloads as an M/L panel. Vanilla never places it;
-  this randomizer does (`FORTRESS_TILES`). The fix is one row pairing
-  `$6A` → `$60`.
+  this randomizer does (`FORTRESS_TILES`). **Fixed** — `lock_keys.rs`'s
+  `REMOVABLE_PAIRS` carries the row pairing `$6A` → `$60` (large fortress →
+  rubble).

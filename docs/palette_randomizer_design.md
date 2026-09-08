@@ -1,9 +1,25 @@
 # Palette Randomizer — Design Draft
 
-**Status**: plains MVP shipped (as of 2026-04-21). Variant-swap approach is the
-active design; earlier pool-based sections kept below for historical context.
+> **HISTORICAL RFC.** This was written at the moment "Option B" was chosen
+> (2026-04-21) and was never updated for what actually shipped. Do not read
+> §§2-7 as a description of current behavior. **The shipped system is described
+> by `palettes.rs`'s own doc comments** (`randomize_themed`, around line 208) and
+> lives in `palettes.rs` + `palette_variants.rs`. Two things diverged materially:
+>
+> - **Coverage.** The variant library is no longer plains-only. `palette_variants.rs`
+>   covers all 8 themed slots and all 4 per-tileset slices.
+> - **Technique.** What shipped is *two* layers — variant-swap **plus** a
+>   context-aware hue rotation over 9 `THEME_GROUPS`. The hue-rotation half is
+>   the very technique §"Rejected approaches" below rejects. It works here
+>   because it is grouped by context rather than applied per byte; the rejection
+>   text stands as a record of the original reasoning, not as current policy.
+> - **Options.** There is no `--palettes <mode>` enum and no "chaos" mode. Two
+>   independent booleans shipped: `palettes` (player colors, default on) and
+>   `palette_themed` (world colors, default off). Both are cosmetic and stay out
+>   of the flag key. §5's colorblind modes were never built, and the theme-pool
+>   mechanism they would have extended is not the mechanism that shipped.
 
-## Current approach (shipped MVP)
+## Current approach (2026-04-21 — plains only; see the banner above)
 
 **Variant-swap** — for each palette position where we have curated alternatives,
 the randomizer picks one whole 4-byte variant. No per-byte picking, no color
@@ -266,6 +282,10 @@ for players who find a palette they like and want to share it. Defaults to
 OS-random like today. Still never encoded in the flag key.
 
 ### 3.5 User-facing options
+
+> **Never built in this shape.** Two booleans shipped instead — `palettes`
+> (player colors, on) and `palette_themed` (world colors, off). No mode enum, no
+> chaos mode, no colorblind flag. See the banner at the top.
 
 - `--palettes none` (new) — skip palette randomization entirely.
 - `--palettes characters` **(default)** — current behavior (Mario/Luigi body+highlight only).

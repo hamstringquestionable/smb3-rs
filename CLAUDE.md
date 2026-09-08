@@ -18,14 +18,21 @@ wasm-pack build --target web --out-dir pkg   # WASM module -> pkg/
 
 ## Lint Policy
 
-This project is **lint-clean**: `cargo clippy --all-targets` must produce zero warnings. CI (`.github/workflows/ci.yml`) enforces this by running `cargo clippy --all-targets -- -D warnings`, which converts any warning into a build failure.
+This project is **lint-clean**: `cargo clippy --all-targets` must produce zero warnings. CI (`.github/workflows/ci.yml`) enforces this with three gates, in this order — `cargo fmt --check`, then clippy on the native target, then clippy on wasm32. Each converts a warning into a build failure.
 
 Before committing:
 
 ```sh
+cargo fmt --check            # the repo IS rustfmt-formatted; CI checks this FIRST
 cargo clippy --all-targets   # must show no warnings
+cargo clippy --lib --target wasm32-unknown-unknown   # CI's second pass
 cargo test                   # must pass
 ```
+
+The wasm pass is not redundant: native clippy never evaluates code behind
+`cfg(target_arch = "wasm32")`, so a warning that only exists there is invisible
+until CI fails. Note also that `cargo fmt --check` runs *before* both clippy
+passes — a formatting slip fails the build before a single lint is reported.
 
 **If you touched overworld logic, `cargo test` alone is not enough.** The
 builder's guarantees are statistical, and the suite runs them shallow on
@@ -211,7 +218,7 @@ running into the `$FF` filler after it, every relative branch lands on an
 instruction boundary, the code fits its `FREE_SPACE_ALLOCATIONS` row without
 crossing its bank, and absolute references back into the routine still resolve.
 
-Four builder methods, each for a real shape:
+Six builder methods, each for a real shape:
 
 | Method | Use when |
 |---|---|
@@ -220,6 +227,16 @@ Four builder methods, each for a real shape:
 | `.data_from(n)` | the tail is a lookup table, not code |
 | `.fragment()` | it is spliced in place over vanilla, or continues into a sibling write |
 | `.hook(&vanilla, off, &bytes)` | it is reached from a hook — checks whole instructions are displaced, and that a `JSR`/`JMP` hook names the origin |
+| `.zero_page(max, &[vars])` | the routine runs long enough for the NMI to land inside its loops — see below |
+
+`.zero_page` is the one that came from a real, invisible failure. The NMI pushes
+and pulls exactly `Temp_Var1`-`Temp_Var3` (`$00`-`$02`) each frame and leaves the
+rest of the page to whoever was using it, so a long-running routine that parks
+anything in `$03` or above has it destroyed mid-loop *on hardware only* — no
+emulated-CPU test can see it, and three playtests failed on it while every test
+passed. The `engine_vars` list is the escape hatch: a map-side routine that
+legitimately reads `World_Map_Y` (`$75`) names it, and every other byte outside
+the protected three stays a failure. Reads count as well as writes.
 
 `.fragment()` narrows the check rather than switching it off; branches landing
 inside the array are still verified. Prefer fixing the array over reaching for
@@ -324,37 +341,59 @@ Randomization modules follow a **decide then write** pattern. Each feature area 
 ```
 src/
   lib.rs               # Public API: generate_patch(), generate_patched_rom()
-  main.rs              # CLI (clap): file I/O, arg parsing
+  main.rs              # CLI (clap): file I/O, arg parsing, --free-space, --write-log
   rom.rs               # iNES header parsing, ROM validation, Rom struct
   ips.rs               # IPS patch builder (build_ips_patch) and applier (apply_ips_patch)
-  randomizer.rs        # Orchestration: Options struct, calls randomize modules
+  randomizer/          # Orchestration
+    mod.rs             #   randomize_inner(): calls every randomize module, in order
+    options.rs         #   the Options struct — one field per player-facing choice
+    flag_key.rs        #   Options <-> the shareable flag key
   testrom.rs           # Playtest ROM builder (native-only) — see below
   bin/testrom.rs       # `testrom` CLI: thin clap wrapper over testrom.rs
   wasm.rs              # wasm-bindgen glue (only compiled for wasm32)
   randomize/
-    mod.rs
-    rom_data.rs        # Shared ROM constants, data structures, read helpers
+    mod.rs             # THE LIVING MODULE INDEX — 46 modules, several documented
+                       #   in place. Read this rather than trusting any list here.
+    rom_data/          # Shared ROM constants and read helpers, split by concern:
+                       #   tables.rs (offset tables), free_space.rs (the allocation
+                       #   registry), asm.rs (the 6502 patch checker), access.rs
+                       #   (bank<->file mapping), grid.rs, tiles.rs, engine.rs,
+                       #   fingerprint.rs (the overworld baseline hash)
     # --- Overworld builder pipeline (catalog → pickup → build → write) ---
-    node_catalog.rs    # Phase 1: classify all 340 pointer table entries
+    node_catalog/      # Phase 1: classify all 340 pointer table entries
     overworld_pickup.rs # Phase 2: clear map, build level/HB pools
-    overworld_build/   # Phase 3: choice-first builder (placement phases + shaping loop + censuses)
-    overworld_writer.rs # Phase 4: write assignments to ROM (pointer tables, FX, map tiles)
+    overworld_build/   # Phase 3: choice-first builder. Per world:
+                       #   connectivity → levels → forts → locks → shaping → spare
+                       #   pipes, plus route_choice.rs (the cost model) and the
+                       #   censuses in builder_tests.rs
+    overworld_writer/  # Phase 4: write assignments to ROM (pointer tables, FX,
+                       #   map tiles, sprites, march veto)
     overworld_helpers.rs # Shared overworld write helpers (locks, FX, gap tiles)
     # --- Helper modules (ROM write operations, no RNG) ---
     pipe_helpers.rs    # Pipe destination tables, entry swaps, pointer table re-sorting
     level_helpers.rs   # Shared shuffle_entries() for level entry shuffling
-    # --- Feature modules ---
+    # --- The world maze (see docs/world_maze_design.md) ---
+    maze/              # The generator: 8 world states, cross-world edges, the
+                       #   winnability fixpoint, the shaping passes
+    maze_state.rs      # Its battery-backed SRAM map — the one place those
+                       #   addresses are decided
+    completion_bits.rs # Packed per-world map completions (8 worlds in 84 bytes)
+    world_persist.rs / world_travel.rs / map_objects.rs / wand_gate.rs
+    lock_keys.rs       # Every lock a fortress opens, keyed by position. Replaces
+                       #   vanilla's fortress-FX slot tables outright.
+    # --- Feature modules (a sample; mod.rs is the full list) ---
     map_walker.rs      # BFS map walker for overworld connectivity analysis
     levels.rs          # Airship shuffle (the one cross-world level shuffle that's still independent of the overworld builder)
     powerups.rs        # ? block item randomization
-    palettes.rs        # Player wardrobe colors + themed world palettes
-    enemies.rs         # Enemy type swapping within class
-    world_order.rs     # Shuffle world progression order
-    items.rs           # Chest/reward item randomization
-    qol.rs             # Quality-of-life patches (lives, drawbridges, W2 rock)
-    autoscroll.rs      # Autoscroll removal
-    title_screen.rs    # Title screen seed hash icons
-    king_quotes.rs     # Randomized king rescue quotes
+    palettes.rs / palette_variants.rs  # Wardrobe colors + themed world palettes
+    enemies/           # Enemy type swapping within class, wild injection, protections
+    qol/               # Quality-of-life patches, grouped by subject rather than
+                       #   one file per patch: overworld_map.rs alone holds the
+                       #   rocks, W1 shortcut, W8 bridges, drawbridges and
+                       #   N-card patches; starting_state.rs holds lives AND
+                       #   starting items. Also canoe.rs, cards.rs,
+                       #   hammer_breaks.rs, macobra.rs, map_warp.rs, ...
+    world_order.rs / items.rs / autoscroll.rs / title_screen.rs / king_quotes.rs
 web/
   index.html           # Browser frontend
   style.css
@@ -367,6 +406,8 @@ web/
                        #   only way sprite art is legible (a flat tile grid
                        #   interleaves each sprite's halves). Emits icon specs
                        #   for options.js, or ICON_TILES rows in title-hash mode.
+  chr-viewer.html      # Plain CHR browser for the player's ROM
+  visual-patches/      # Bundled optional IPS patches (they claim free space too)
 tools/
   README.md            # INDEX OF ALL 16 TOOLS — read this before writing a throwaway script
   rom_map.py           # ROM map generator + diagnostic modes (see below)
@@ -376,10 +417,14 @@ tools/
   map_walker.py        # BFS map connectivity + fortress progression
   fx_check.py          # Cross-checks FX slots against actual map tiles
   level_sim.py         # Level tile simulator for debugging individual levels
-  offset_dups.py       # Flags ROM offsets that bypass their rom_data.rs constant
+  offset_dups.py       # Flags ROM offsets that bypass their rom_data constant
   ... 9 more           # See tools/README.md
-docs/
+docs/                  # See docs/README.md for the index and each doc's status
   smb3_rom_reference.md # ROM hacking reference (offsets, data structures, RAM map)
+  vision.md            # What the project is for, and what it refuses to be
+  choice_first_charter.md # The overworld builder's design authority
+  world_maze_design.md # The world maze
+  application_flow.md  # The pipeline, in execution order
 ```
 
 ## Overworld Builder Pipeline

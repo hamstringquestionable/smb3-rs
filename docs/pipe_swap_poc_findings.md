@@ -1,5 +1,15 @@
 # Pipe Swap POC - Session Findings
 
+> **HISTORICAL (2026-02) — superseded, and the code it describes is deleted.**
+> `src/randomize/overworld.rs`, `poc_pipe_swap()` and the `--poc-pipe-swap`
+> option are all gone (commit `fd6e0d8`). The live account of pipe shuffling is
+> `docs/smb3_rom_reference.md` § "Pipe Destination Tables & Pipe Shuffle", and
+> the write side is `pipe_helpers.rs`. One claim here is now **actively wrong**:
+> §7's "no special pipe destination handling needed" — the shipped system does
+> maintain destination tables (`PIPE_MAP_XHI/X/Y/SCRL_XHI` in
+> `rom_data/tables.rs`). The ROM constants it quotes were spot-checked and still
+> agree with `rom_data/tables.rs`; it is the architecture that is obsolete.
+
 ## Summary
 Successfully implemented a proof-of-concept for swapping level positions on the overworld map. The swap correctly exchanges both level data (obj/lay/tileset pointers) and visual map tiles between two entries.
 

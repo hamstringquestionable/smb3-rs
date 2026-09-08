@@ -52,7 +52,7 @@ If the patch claims a region not already registered:
   before taking it, and record what you found in the registry comment, the way
   the PRG004 and PRG006 tails are
 - The bank must be mapped when the code runs. That is the first filter, not the
-  last: a 2537-byte gap in PRG026 is useless to a routine that runs in-level
+  last: PRG026's largest gap is useless to a routine that runs in-level
 
 ### 3. Patch Site Review
 
@@ -87,7 +87,7 @@ Flag if the patch writes to any of these ranges:
 ### 5. Ordering Concerns
 
 - If the patch touches pointer tables or airship entries, check ordering
-  relative to autoscroll and overworld builder in `randomizer.rs`
+  relative to autoscroll and overworld builder in `randomizer/mod.rs`
 - Autoscroll MUST run before overworld builder (writes to hardcoded vanilla
   offsets that get displaced by `resort_pointer_table`)
 
