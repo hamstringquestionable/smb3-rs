@@ -28,7 +28,6 @@ Status column:
 | [overworld_baseline_log.md](overworld_baseline_log.md) | **Live** | The overworld baseline recapture log. Restarted 2026-09-08, when the baseline began hashing the overworld rather than the whole ROM. |
 | [start_airship_swap_findings.md](start_airship_swap_findings.md) | **Reference** | Engine internals behind the start ↔ airship swap. Verified against the disassembly. |
 | [seed_report_design.md](seed_report_design.md) | **Design note** | A spoiler log. **Nothing is implemented** — the doc says so itself. |
-| [overworld_shuffle_logic.md](overworld_shuffle_logic.md) | **Historical** | The pre-rebuild overworld design (2026-02). §3 and §10 are still-good ROM geometry; §§5-6, 9 describe an architecture that was never built. |
 | [palette_randomizer_design.md](palette_randomizer_design.md) | **Historical** | An RFC frozen at the moment "Option B" was picked. What shipped diverged in coverage, technique and options — `palettes.rs`'s doc comments are the live account. |
 | [pipe_swap_poc_findings.md](pipe_swap_poc_findings.md) | **Historical** | A February POC whose module and CLI flag were deleted. Superseded by the pipe-shuffle section of the ROM reference. |
 
@@ -57,3 +56,29 @@ A doc goes stale in one of two ways, and they need different fixes:
   back and mark the paragraph that said the opposite — most of the
   contradictions found in the 2026-09-08 sweep were exactly one day of drift
   between a design note and the commit that obsoleted it.
+
+## When a doc has nothing left
+
+A banner is a holding action, not an end state. Once a historical doc's only
+remaining value is *design* history — the plan, the approaches weighed, the
+risks predicted — the ROM facts belong in `smb3_rom_reference.md` and the file
+belongs in git history, where it is still one `git log --diff-filter=D` away.
+
+`overworld_shuffle_logic.md` was retired that way on 2026-09-08: its still-true
+ROM geometry (§3, §10) turned out to be **already in the reference**, in places
+verbatim — the tile-grid pointer table, the entry counts, the `ByRowType` /
+`ByScrCol` coordinate mapping with its `grid_row = row_nibble - 2` derivation,
+the tile-ID category table, `Max_PanR`, the map-object tables, the airship
+travel data, `World_BGM`. Exactly one fact in 580 lines was not: `Map_Y_Starts`
+at `0x3C39A` in PRG030, which moved to the reference in the same commit. The
+rest was a design that was never built.
+
+The check worth repeating before deleting one: extract every offset from the
+doomed file and confirm each already appears in the reference —
+
+```sh
+grep -ohE '0x[0-9A-Fa-f]{4,5}|\$[0-9A-F]{4}' docs/<doomed>.md | sort -u \
+  | while read -r a; do grep -qF -- "$a" docs/smb3_rom_reference.md || echo "$a"; done
+```
+
+Whatever it prints is the extraction list. Empty output means delete freely.
