@@ -132,6 +132,17 @@ the global fixpoint decides.
 
 ## The generator
 
+> **The percentages throughout this section are dated snapshots.** Cross-world
+> lock rates, bridge-key rates, fallback rates, the invariant-3 hold rate — each
+> was measured on the date its passage carries, over the seed count it names,
+> and nothing re-checks them: no test asserts a percentage, so none of them can
+> fail. Several were taken before the constructive fill replaced the swap search
+> and before the fortress-FX rework. Read them for shape and for *which lever
+> moved what*; re-run the measurement before settling a decision on one, and
+> re-measure the baseline in the same run rather than comparing a fresh number
+> against one written here. `fill.rs`'s own doc comment carries the fill's
+> current table and is the closer thing to a live figure.
+
 `WorldState::completable_sealed` is already the solver: close all locks, walk,
 beat every reachable fort, open its locks, repeat. Each iteration is a sphere.
 Over eight grids with cross-world edges it becomes both the global verifier and,

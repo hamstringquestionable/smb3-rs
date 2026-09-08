@@ -656,8 +656,11 @@ row-7/8 shared-bit rule (#212) into play for the new tile. It is not a free knob
    keys, because a key is a position, so the Y-byte clobber this rework was
    worried about is simply not reachable any more. The fortress deck is redealt
    exactly as the level deck is, with 1-F seeded once and never a source.
-   Measured over 300 seeds, of the 17 fortress tiles: `Double` places 13.0
-   distinct forts (max 2 copies), `Wild` 11.3 (max 6 observed). It also made
+   Measured over 300 seeds **on 2026-09-06**, of the 17 fortress tiles:
+   `Double` places 13.0 distinct forts (max 2 copies), `Wild` 11.3 (max 6
+   observed). Dated snapshot, not a live readout — the hint-locks and
+   fortress-deck-redeal work landed after it and nothing re-checks these
+   figures. Re-run the census before deciding anything on them. It also made
    fortress *removal* expressible, which retired Friendlier Levels'
    park-on-a-safe-slot ladder.
 4. **Stage 3 — expand `Map_Removable_Tiles`** for new obstacle types, with its

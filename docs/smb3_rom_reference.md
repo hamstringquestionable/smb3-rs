@@ -2876,10 +2876,10 @@ load LevelLayouts pointer into `Level_LayPtr_AddrL/H` → bank-switch via
 
 ### World Map Starting Positions
 
-| Label | Description |
-|-------|-------------|
-| `Map_Y_Starts` | Per-world initial Y coordinate |
-| Fixed X = 0x20 | Same X start for all worlds |
+| Label | File Offset | Description |
+|-------|-------------|-------------|
+| `Map_Y_Starts` | `0x3C39A` (PRG030), 8 bytes | Per-world initial Y coordinate. Lives in PRG030's world-enter routine — **not** PRG010, where the map's other tables are. `MAP_Y_STARTS_OFF` in `rom_data/free_space.rs` is the constant; `world_travel.rs` reads it through `prg030_file_to_cpu`. |
+| Fixed X = 0x20 | — | Same X start for all worlds |
 
 ### Fortress Lock & Bridge FX (PRG010: 0x147CD–0x148B7)
 
