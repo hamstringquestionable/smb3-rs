@@ -1313,6 +1313,47 @@ fn the_pads_still_fit_the_packed_store() {
     eprintln!("  worst packed plane with pads: {worst} of {PLANE_RESERVE} (seed {worst_seed})");
 }
 
+/// **The wand gate's masonry reaches the map as a model edit.**
+///
+/// The other half of `wand_gate::tests::apply_touches_no_map_grid_and_repoints
+/// _no_metatile`: that one pins that the ROM-side install writes no tile, this
+/// one pins that the tile still gets there. `wand_gate::apply` installs the
+/// opener; `stamp_into` puts the wall on World 8's grid for the overworld
+/// writer to emit.
+///
+/// K = 0 is a pure maze with no gate at all, so nothing is stamped.
+#[test]
+fn the_wand_gate_is_stamped_onto_the_build() {
+    use crate::randomize::rom_data::{W8_IDX, W8_WAND_GATE_POS, WAND_GATE_TILE};
+
+    let Some(raw) = load_rom() else { return };
+    let (row, col) = W8_WAND_GATE_POS;
+
+    for k in [0u8, super::DEFAULT_WANDS_REQUIRED] {
+        let (_, mut build) = census_build(&raw, 1);
+        let was = build.worlds[W8_IDX].grid.get(row, col);
+        assert_ne!(was, WAND_GATE_TILE, "the builder must not place the gate itself");
+
+        let mut rng = ChaCha8Rng::seed_from_u64(0x5EED_1234);
+        let (state, _) = super::generate(
+            &build,
+            &IDENTITY_SPINE,
+            k,
+            &Knobs::default(),
+            SEALABLE_NEEDED,
+            &mut rng,
+        );
+        super::stamp_into(&mut build, &state);
+
+        let got = build.worlds[W8_IDX].grid.get(row, col);
+        if k == 0 {
+            assert_eq!(got, was, "K=0 is a pure maze — no gate, so nothing to stamp");
+        } else {
+            assert_eq!(got, WAND_GATE_TILE, "K={k}: the gate never reached the grid");
+        }
+    }
+}
+
 /// **The maze holds under start↔airship swap**, including on seeds where every
 /// eligible world is swapped.
 ///

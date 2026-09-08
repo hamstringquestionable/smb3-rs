@@ -66,18 +66,24 @@
 //!
 //! # Ordering the integration must honour
 //!
-//! 1. after `world_order::randomize` — it shares the airship hook site;
-//! 2. after the overworld writer — [`apply`] stamps the gate tile into World
-//!    8's map grid, and the writer rewrites that grid wholesale. It must also
-//!    not be visible to the *builder*, which would see Bowser's castle walled
-//!    off and fail its own reachability invariant.
+//! 1. after `world_order::randomize` — it shares the airship hook site.
+//!
+//! That is the whole of it. [`apply`] writes no map tile, so it has no ordering
+//! relationship with the overworld writer at all: the gate cell is stamped onto
+//! World 8's grid by `maze::stamp_into`, as a model edit, and the writer emits
+//! it in its own pass.
+//!
+//! The masonry must still be invisible to the *builder*, which would otherwise
+//! see Bowser's castle walled off and fail its own reachability invariant — so
+//! `stamp_into` runs after the build, and W8 reserves the cell up front
+//! (`WorldState::wand_gate_reserved`) so no lock or content is dealt onto it.
 
 use crate::rom::Rom;
 
 use super::maze_state::WAND_COUNT;
 use super::rom_data::{
     BRIDGE_TILE, FS_MAZE_WAND_COUNT, FS_MAZE_WAND_GATE, MAP_RELOAD_CPU, PRG012_FILE_BASE, W8_IDX,
-    W8_WAND_GATE_POS, WAND_GATE_TILE, WORLD_NUM, map_tile_offset, prg030_file_to_cpu,
+    W8_WAND_GATE_POS, WORLD_NUM, prg030_file_to_cpu,
 };
 use super::world_order::WORLD_INC_OFFSET;
 
@@ -296,9 +302,12 @@ pub(crate) fn apply(rom: &mut Rom, wands_required: u8) {
     // future attempt needs a different instrument — an emulator trace of what
     // the map screen actually writes to the nametable, not a grep.
 
-    // The gate cell itself, over the finished map.
-    let (row, col) = W8_WAND_GATE_POS;
-    rom.write_byte(map_tile_offset(W8_IDX, row, col), WAND_GATE_TILE);
+    // **The gate cell itself is not written here.** It is a map tile, so it is
+    // a model edit: `maze::stamp_into` puts `WAND_GATE_TILE` on W8's grid and
+    // the overworld writer emits it in its own pass. Writing it here meant
+    // writing over a grid the writer had already committed — it collided with
+    // `qol`'s W8 bridge write, and it was one of the reasons the ordering in
+    // `randomize_inner` was load-bearing.
 
     // The opener, and its two hooks.
     rom.write_range(FS_MAZE_WAND_GATE, &wand_gate_routine(k));
@@ -321,6 +330,7 @@ const fn jmp_free(opcode: u8, target: u16) -> [u8; 3] {
 mod tests {
     use super::*;
     use crate::randomize::rom_data::asm;
+    use crate::randomize::rom_data::{WAND_GATE_TILE, map_tile_offset};
 
     const K: u8 = 3;
 
@@ -500,15 +510,45 @@ mod tests {
         assert_eq!(patched.data, rom.data, "K = 0 must leave the ROM alone");
     }
 
+    /// **`apply` writes no map tile, and repoints no metatile.**
+    ///
+    /// The gate cell is a map tile like any other, so it is stamped onto World
+    /// 8's grid by `maze::stamp_into` and emitted by the overworld writer.
+    /// Writing it here meant writing over a grid the writer had already
+    /// committed: it collided with `qol`'s W8 bridge write in the audit, and it
+    /// was one of the reasons this module carried an ordering rule against the
+    /// writer. `maze::tests::a_generated_maze_writes_only_pad_tiles_and_free
+    /// _space` is the general form of the first half.
     #[test]
-    fn apply_stamps_the_gate_and_repoints_the_metatile() {
+    fn apply_touches_no_map_grid_and_repoints_no_metatile() {
         let Some(mut rom) = vanilla() else { return };
         crate::randomize::qol::apply_w8_bridges(&mut rom);
+        let before = rom.clone();
         let (row, col) = W8_WAND_GATE_POS;
         assert_eq!(rom.read_byte(map_tile_offset(W8_IDX, row, col)), BRIDGE_TILE);
 
         apply(&mut rom, K);
-        assert_eq!(rom.read_byte(map_tile_offset(W8_IDX, row, col)), WAND_GATE_TILE);
+
+        // The gate cell — and every other map cell in every world — is exactly
+        // as the writer left it.
+        for world in 0..8 {
+            let info = &crate::randomize::rom_data::MAP_TILE_GRIDS[world];
+            for screen in 0..info.screens {
+                for r in 0..9 {
+                    for c in 0..16 {
+                        let off = map_tile_offset(world, r, screen * 16 + c);
+                        assert_eq!(
+                            rom.read_byte(off),
+                            before.read_byte(off),
+                            "the gate wrote W{} ({r},{}) — map edits belong in `stamp_into`",
+                            world + 1,
+                            screen * 16 + c
+                        );
+                    }
+                }
+            }
+        }
+
         // The metatile is untouched too: the gate wears the tile's own art.
         let van = vanilla().unwrap();
         for plane in 0..4 {
@@ -900,6 +940,7 @@ mod chokepoint {
     use crate::randomize::overworld_build::{BuildFlags, OverworldData, build, stamp_slots};
     use crate::randomize::overworld_helpers::find_target;
     use crate::randomize::overworld_pickup::{PickupFlags, pick_up};
+    use crate::randomize::rom_data::WAND_GATE_TILE;
     use crate::randomize::{qol, start_airship_swap};
 
     /// One seed's World 8, over the same three flag arms the overworld and

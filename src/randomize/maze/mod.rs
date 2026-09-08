@@ -801,6 +801,15 @@ pub(crate) fn generate<R: Rng>(
 ///
 /// Consumes no RNG.
 pub(crate) fn stamp_into(build: &mut BuildResult, state: &GlobalState) {
+    // The wand gate's masonry. `wand_gate::apply` installs the opener and its
+    // hooks; the cell it stands on is a map tile like any other, and `W8`'s
+    // builder reserved it (`WorldState::wand_gate_reserved`) so nothing else
+    // claimed it.
+    if state.wands_required > 0 {
+        let (row, col) = rom_data::W8_WAND_GATE_POS;
+        build.worlds[rom_data::W8_IDX].grid.set(row, col, rom_data::WAND_GATE_TILE);
+    }
+
     for (world, built) in build.worlds.iter_mut().enumerate() {
         for ((pad_world, (row, col)), _) in state.pad_edges() {
             if pad_world == world {
