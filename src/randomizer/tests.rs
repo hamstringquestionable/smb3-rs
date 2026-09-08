@@ -2214,8 +2214,13 @@ fn map_object_slot_budget() {
     println!("plants placed per world: {:?}", plants_sum.map(|v| v as f64 / seeds as f64));
 }
 
-/// **Hints do nothing without a maze, and that is enforced rather than
-/// incidental.**
+/// **Every World Maze option does nothing without the maze, and that is
+/// enforced rather than incidental.**
+///
+/// Two options are maze-only — `maze_wands` and `hints` — and the web form
+/// greys both out without it (`enabledWhen: { world_maze: true }`). Nothing
+/// stopped a flag key or a CLI run carrying them anyway, and the flag key
+/// normalises `hints` to its *default*, which is `Partial`, not `Off`.
 ///
 /// Every hint is a statement about another world: a fortress design says which
 /// world holds its lock, a lock's colour says its key is elsewhere. Outside the
@@ -2228,7 +2233,7 @@ fn map_object_slot_budget() {
 /// maze's local-sky tile. `hints: Partial` is the default, so that was every
 /// standard-mode seed with a sky lock on it.
 #[test]
-fn hints_change_nothing_without_the_maze() {
+fn maze_options_change_nothing_without_the_maze() {
     let Ok(bytes) = std::fs::read("roms/Super Mario Bros. 3 (USA) (Rev 1).nes") else {
         eprintln!("SKIP: requires the ROM");
         return;
